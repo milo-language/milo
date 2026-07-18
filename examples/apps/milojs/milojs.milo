@@ -1,0 +1,1481 @@
+// milojs — stage 1: a tree-walking interpreter for a small JavaScript subset,
+// written in pure Milo. Goal (later stages): replace minibun's JavaScriptCore
+// dependency with this engine.
+//
+// Stage 1 scope: primitives (number/string/bool/null/undefined), variables,
+// arithmetic/comparison/logic with JS-ish coercion, if/else, while, functions,
+// closures, console.log. No objects/arrays/prototypes/this/GC/exceptions yet.
+//
+// Design notes:
+// - AST is index-based: enums hold i64 indices into flat Vecs in Prog (the
+//   std/json cursor pattern) — recursive types without stored references.
+// - Scopes live in an append-only arena (Vec<Scope>, parent by index) so a
+//   closure can capture its defining scope by index. Nothing is ever freed;
+//   stage 2 (mark-sweep GC) reclaims dead scopes.
+//
+// Run: milo run examples/apps/milojs/milojs.milo -- path/to/script.js
+
+from "std/io" import {
+    readFile
+}
+from "std/args" import {
+    args
+}
+from "std/strconv" import {
+    parseFloat
+}
+from "std/os" import {
+    snprintf
+}
+
+extern fn floor(x: f64): f64
+
+extern fn fmod(x: f64, y: f64): f64
+
+extern fn fabs(x: f64): f64
+
+// ── Tokens ──
+
+let T_NUM: i32 = 0
+let T_STR: i32 = 1
+let T_IDENT: i32 = 2
+let T_LET: i32 = 3
+let T_VAR: i32 = 4
+let T_CONST: i32 = 5
+let T_FUNCTION: i32 = 6
+let T_RETURN: i32 = 7
+let T_IF: i32 = 8
+let T_ELSE: i32 = 9
+let T_WHILE: i32 = 10
+let T_TRUE: i32 = 11
+let T_FALSE: i32 = 12
+let T_NULL: i32 = 13
+let T_UNDEFINED: i32 = 14
+let T_PLUS: i32 = 15
+let T_MINUS: i32 = 16
+let T_STAR: i32 = 17
+let T_SLASH: i32 = 18
+let T_PERCENT: i32 = 19
+let T_EQEQ: i32 = 20
+let T_NEQ: i32 = 21
+let T_LT: i32 = 22
+let T_GT: i32 = 23
+let T_LE: i32 = 24
+let T_GE: i32 = 25
+let T_EQ: i32 = 26
+let T_ANDAND: i32 = 27
+let T_OROR: i32 = 28
+let T_NOT: i32 = 29
+let T_LPAREN: i32 = 30
+let T_RPAREN: i32 = 31
+let T_LBRACE: i32 = 32
+let T_RBRACE: i32 = 33
+let T_COMMA: i32 = 34
+let T_SEMI: i32 = 35
+let T_DOT: i32 = 36
+let T_EOF: i32 = 37
+
+struct Token {
+    kind: i32,
+    num: f64,
+    text: string,
+}
+
+fn isSpace(c: u8): bool {
+    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8
+}
+
+fn isDigit(c: u8): bool {
+    return c >= '0' && c <= '9'
+}
+
+fn isIdentStart(c: u8): bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$'
+}
+
+fn keywordKind(s: &string): i32 {
+    if s == "let" {
+        return T_LET
+    }
+    if s == "var" {
+        return T_VAR
+    }
+    if s == "const" {
+        return T_CONST
+    }
+    if s == "function" {
+        return T_FUNCTION
+    }
+    if s == "return" {
+        return T_RETURN
+    }
+    if s == "if" {
+        return T_IF
+    }
+    if s == "else" {
+        return T_ELSE
+    }
+    if s == "while" {
+        return T_WHILE
+    }
+    if s == "true" {
+        return T_TRUE
+    }
+    if s == "false" {
+        return T_FALSE
+    }
+    if s == "null" {
+        return T_NULL
+    }
+    if s == "undefined" {
+        return T_UNDEFINED
+    }
+    return T_IDENT
+}
+
+fn pushTok(toks: &mut Vec<Token>, kind: i32) {
+    toks.push(Token {
+        kind: kind, num: 0.0, text: ""
+    }
+    )
+}
+
+fn lex(src: &string): Vec<Token> {
+    var toks: Vec<Token> = Vec.new()
+    let n = src.len()
+    var i: i64 = 0
+    while i < n {
+        let c = src[i]
+        if isSpace(c) {
+            i = i + 1
+        } else if c == '/' && i + 1 < n && src[i + 1] == '/' {
+            // line comment
+            while i < n && src[i] != 10 as u8 {
+                i = i + 1
+            }
+        } else if c == '/' && i + 1 < n && src[i + 1] == '*' {
+            // block comment
+            i = i + 2
+            while i + 1 < n && !(src[i] == '*' && src[i + 1] == '/') {
+                i = i + 1
+            }
+            i = i + 2
+        } else if isDigit(c) || (c == '.' && i + 1 < n && isDigit(src[i + 1])) {
+            var txt = String.withCapacity(16)
+            while i < n && (isDigit(src[i]) || src[i] == '.') {
+                txt.push(src[i])
+                i = i + 1
+            }
+            var v: f64 = 0.0
+            match parseFloat(txt) {
+                Option.Some(x) => {
+                    v = x
+                }
+                Option.None => {
+                    v = 0.0
+                }
+            }
+            toks.push(Token {
+                kind: T_NUM, num: v, text: ""
+            }
+            )
+        } else if isIdentStart(c) {
+            var name = String.withCapacity(16)
+            while i < n && (isIdentStart(src[i]) || isDigit(src[i])) {
+                name.push(src[i])
+                i = i + 1
+            }
+            let k = keywordKind(name)
+            toks.push(Token {
+                kind: k, num: 0.0, text: name
+            }
+            )
+        } else if c == 34 as u8 || c == 39 as u8 {
+            // string literal, ' or "
+            let quote = c
+            i = i + 1
+            var s = String.withCapacity(16)
+            while i < n && src[i] != quote {
+                if src[i] == 92 as u8 && i + 1 < n {
+                    let e = src[i + 1]
+                    if e == 'n' {
+                        s.push(10 as u8)
+                    } else if e == 't' {
+                        s.push(9 as u8)
+                    } else if e == 'r' {
+                        s.push(13 as u8)
+                    } else if e == '0' {
+                        s.push(0 as u8)
+                    } else {
+                        // \\ \' \" and anything else: the char itself
+                        s.push(e)
+                    }
+                    i = i + 2
+                } else {
+                    s.push(src[i])
+                    i = i + 1
+                }
+            }
+            i = i + 1
+            toks.push(Token {
+                kind: T_STR, num: 0.0, text: s
+            }
+            )
+        } else if c == '=' && i + 1 < n && src[i + 1] == '=' {
+            // == and === lex the same (strictness difference is out of stage-1 scope)
+            i = i + 2
+            if i < n && src[i] == '=' {
+                i = i + 1
+            }
+            pushTok(toks, T_EQEQ)
+        } else if c == '!' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            if i < n && src[i] == '=' {
+                i = i + 1
+            }
+            pushTok(toks, T_NEQ)
+        } else if c == '<' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_LE)
+        } else if c == '>' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_GE)
+        } else if c == '&' && i + 1 < n && src[i + 1] == '&' {
+            i = i + 2
+            pushTok(toks, T_ANDAND)
+        } else if c == '|' && i + 1 < n && src[i + 1] == '|' {
+            i = i + 2
+            pushTok(toks, T_OROR)
+        } else {
+            var k: i32 = -1
+            if c == '+' {
+                k = T_PLUS
+            } else if c == '-' {
+                k = T_MINUS
+            } else if c == '*' {
+                k = T_STAR
+            } else if c == '/' {
+                k = T_SLASH
+            } else if c == '%' {
+                k = T_PERCENT
+            } else if c == '<' {
+                k = T_LT
+            } else if c == '>' {
+                k = T_GT
+            } else if c == '=' {
+                k = T_EQ
+            } else if c == '!' {
+                k = T_NOT
+            } else if c == '(' {
+                k = T_LPAREN
+            } else if c == ')' {
+                k = T_RPAREN
+            } else if c == '{' {
+                k = T_LBRACE
+            } else if c == '}' {
+                k = T_RBRACE
+            } else if c == ',' {
+                k = T_COMMA
+            } else if c == ';' {
+                k = T_SEMI
+            } else if c == '.' {
+                k = T_DOT
+            }
+            if k >= 0 {
+                pushTok(toks, k)
+            }
+            // unknown chars are skipped
+            i = i + 1
+        }
+    }
+    pushTok(toks, T_EOF)
+    return toks
+}
+
+// ── AST ──
+// All child links are i64 indices into the Prog arenas; -1 means "none".
+
+enum Expr {
+    Num(f64),
+    StrLit(string),
+    BoolLit(bool),
+    NullLit,
+    UndefLit,
+    Ident(string),
+    Bin(string, i64, i64),
+    Un(string, i64),
+    Assign(string, i64),
+    Call(i64, i64),
+    Member(i64, string),
+    FuncExpr(i64),
+}
+
+enum Stmt {
+    Decl(string, i64),
+    ExprStmt(i64),
+    If(i64, i64, i64),
+    While(i64, i64),
+    Ret(i64),
+    Block(i64),
+    FuncDecl(i64),
+    Empty,
+}
+
+struct FuncDef {
+    name: string,
+    params: Vec<string>,
+    body: i64,
+}
+
+struct Prog {
+    exprs: Vec<Expr>,
+    stmts: Vec<Stmt>,
+    blocks: Vec<Vec<i64>>,
+    argLists: Vec<Vec<i64>>,
+    funcs: Vec<FuncDef>,
+}
+
+fn cloneExpr(e: &Expr): Expr {
+    match e {
+        Expr.Num(n) => {
+            return Expr.Num(n)
+        }
+        Expr.StrLit(s) => {
+            return Expr.StrLit(s.clone())
+        }
+        Expr.BoolLit(b) => {
+            return Expr.BoolLit(b)
+        }
+        Expr.NullLit => {
+            return Expr.NullLit
+        }
+        Expr.UndefLit => {
+            return Expr.UndefLit
+        }
+        Expr.Ident(name) => {
+            return Expr.Ident(name.clone())
+        }
+        Expr.Bin(op, a, b) => {
+            return Expr.Bin(op.clone(), a, b)
+        }
+        Expr.Un(op, a) => {
+            return Expr.Un(op.clone(), a)
+        }
+        Expr.Assign(name, v) => {
+            return Expr.Assign(name.clone(), v)
+        }
+        Expr.Call(callee, argsIdx) => {
+            return Expr.Call(callee, argsIdx)
+        }
+        Expr.Member(obj, name) => {
+            return Expr.Member(obj, name.clone())
+        }
+        Expr.FuncExpr(f) => {
+            return Expr.FuncExpr(f)
+        }
+    }
+}
+
+fn cloneStmt(s: &Stmt): Stmt {
+    match s {
+        Stmt.Decl(name, e) => {
+            return Stmt.Decl(name.clone(), e)
+        }
+        Stmt.ExprStmt(e) => {
+            return Stmt.ExprStmt(e)
+        }
+        Stmt.If(c, t, f) => {
+            return Stmt.If(c, t, f)
+        }
+        Stmt.While(c, b) => {
+            return Stmt.While(c, b)
+        }
+        Stmt.Ret(e) => {
+            return Stmt.Ret(e)
+        }
+        Stmt.Block(b) => {
+            return Stmt.Block(b)
+        }
+        Stmt.FuncDecl(f) => {
+            return Stmt.FuncDecl(f)
+        }
+        Stmt.Empty => {
+            return Stmt.Empty
+        }
+    }
+}
+
+fn getExpr(prog: &Prog, i: i64): Expr {
+    return cloneExpr(prog.exprs[i])
+}
+
+fn getStmt(prog: &Prog, i: i64): Stmt {
+    return cloneStmt(prog.stmts[i])
+}
+
+fn addExpr(prog: &mut Prog, e: Expr): i64 {
+    prog.exprs.push(e)
+    return prog.exprs.len() - 1
+}
+
+fn addStmt(prog: &mut Prog, s: Stmt): i64 {
+    prog.stmts.push(s)
+    return prog.stmts.len() - 1
+}
+
+// ── Parser (recursive descent) ──
+
+struct PState {
+    toks: Vec<Token>,
+    pos: i64,
+}
+
+fn peekKind(p: &PState): i32 {
+    if p.pos < p.toks.len() {
+        return p.toks[p.pos].kind
+    }
+    return T_EOF
+}
+
+fn advance(p: &mut PState) {
+    p.pos = p.pos + 1
+}
+
+// Consume `kind` if present; parser is forgiving (bad input still terminates).
+fn expect(p: &mut PState, kind: i32) {
+    if peekKind(p) == kind {
+        advance(p)
+    } else {
+        print("milojs: parse error near token " + i64ToStr(p.pos))
+    }
+}
+
+fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
+    let k = peekKind(p)
+    if k == T_NUM {
+        let v = p.toks[p.pos].num
+        advance(p)
+        return addExpr(prog, Expr.Num(v))
+    }
+    if k == T_STR {
+        let s = p.toks[p.pos].text.clone()
+        advance(p)
+        return addExpr(prog, Expr.StrLit(s))
+    }
+    if k == T_TRUE {
+        advance(p)
+        return addExpr(prog, Expr.BoolLit(true))
+    }
+    if k == T_FALSE {
+        advance(p)
+        return addExpr(prog, Expr.BoolLit(false))
+    }
+    if k == T_NULL {
+        advance(p)
+        return addExpr(prog, Expr.NullLit)
+    }
+    if k == T_UNDEFINED {
+        advance(p)
+        return addExpr(prog, Expr.UndefLit)
+    }
+    if k == T_IDENT {
+        let name = p.toks[p.pos].text.clone()
+        advance(p)
+        return addExpr(prog, Expr.Ident(name))
+    }
+    if k == T_LPAREN {
+        advance(p)
+        let e = parseExpr(p, prog)
+        expect(p, T_RPAREN)
+        return e
+    }
+    if k == T_FUNCTION {
+        let f = parseFunction(p, prog)
+        return addExpr(prog, Expr.FuncExpr(f))
+    }
+    // unexpected token: consume it so parsing always makes progress
+    advance(p)
+    return addExpr(prog, Expr.UndefLit)
+}
+
+fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
+    var e = parsePrimary(p, prog)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_LPAREN {
+            advance(p)
+            var argIdxs: Vec<i64> = Vec.new()
+            if peekKind(p) != T_RPAREN {
+                argIdxs.push(parseExpr(p, prog))
+                while peekKind(p) == T_COMMA {
+                    advance(p)
+                    argIdxs.push(parseExpr(p, prog))
+                }
+            }
+            expect(p, T_RPAREN)
+            prog.argLists.push(argIdxs)
+            let listIdx = prog.argLists.len() - 1
+            e = addExpr(prog, Expr.Call(e, listIdx))
+        } else if k == T_DOT {
+            advance(p)
+            var name = ""
+            if peekKind(p) == T_IDENT {
+                name = p.toks[p.pos].text.clone()
+                advance(p)
+            }
+            e = addExpr(prog, Expr.Member(e, name))
+        } else {
+            go = false
+        }
+    }
+    return e
+}
+
+fn parseUnary(p: &mut PState, prog: &mut Prog): i64 {
+    let k = peekKind(p)
+    if k == T_MINUS {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Un("-", e))
+    }
+    if k == T_NOT {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Un("!", e))
+    }
+    return parsePostfix(p, prog)
+}
+
+fn parseMul(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseUnary(p, prog)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_STAR || k == T_SLASH || k == T_PERCENT {
+            advance(p)
+            var op = "*"
+            if k == T_SLASH {
+                op = "/"
+            } else if k == T_PERCENT {
+                op = "%"
+            }
+            let right = parseUnary(p, prog)
+            left = addExpr(prog, Expr.Bin(op, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parseAdd(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseMul(p, prog)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_PLUS || k == T_MINUS {
+            advance(p)
+            var op = "+"
+            if k == T_MINUS {
+                op = "-"
+            }
+            let right = parseMul(p, prog)
+            left = addExpr(prog, Expr.Bin(op, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parseRel(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseAdd(p, prog)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_LT || k == T_GT || k == T_LE || k == T_GE {
+            advance(p)
+            var op = "<"
+            if k == T_GT {
+                op = ">"
+            } else if k == T_LE {
+                op = "<="
+            } else if k == T_GE {
+                op = ">="
+            }
+            let right = parseAdd(p, prog)
+            left = addExpr(prog, Expr.Bin(op, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parseEq(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseRel(p, prog)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_EQEQ || k == T_NEQ {
+            advance(p)
+            var op = "=="
+            if k == T_NEQ {
+                op = "!="
+            }
+            let right = parseRel(p, prog)
+            left = addExpr(prog, Expr.Bin(op, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parseAnd(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseEq(p, prog)
+    while peekKind(p) == T_ANDAND {
+        advance(p)
+        let right = parseEq(p, prog)
+        left = addExpr(prog, Expr.Bin("&&", left, right))
+    }
+    return left
+}
+
+fn parseOr(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseAnd(p, prog)
+    while peekKind(p) == T_OROR {
+        advance(p)
+        let right = parseAnd(p, prog)
+        left = addExpr(prog, Expr.Bin("||", left, right))
+    }
+    return left
+}
+
+fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
+    let left = parseOr(p, prog)
+    if peekKind(p) == T_EQ {
+        advance(p)
+        let rhs = parseExpr(p, prog)
+        let leftNode = getExpr(prog, left)
+        match leftNode {
+            Expr.Ident(name) => {
+                return addExpr(prog, Expr.Assign(name, rhs))
+            }
+            _ => {
+                // non-identifier assignment target: evaluate rhs, drop the target
+                return rhs
+            }
+        }
+    }
+    return left
+}
+
+// function [name] ( params ) { body } — returns index into prog.funcs
+fn parseFunction(p: &mut PState, prog: &mut Prog): i64 {
+    expect(p, T_FUNCTION)
+    var name = ""
+    if peekKind(p) == T_IDENT {
+        name = p.toks[p.pos].text.clone()
+        advance(p)
+    }
+    expect(p, T_LPAREN)
+    var params: Vec<string> = Vec.new()
+    if peekKind(p) == T_IDENT {
+        params.push(p.toks[p.pos].text.clone())
+        advance(p)
+        while peekKind(p) == T_COMMA {
+            advance(p)
+            if peekKind(p) == T_IDENT {
+                params.push(p.toks[p.pos].text.clone())
+                advance(p)
+            }
+        }
+    }
+    expect(p, T_RPAREN)
+    let body = parseBraceBlock(p, prog)
+    prog.funcs.push(FuncDef {
+        name: name, params: params, body: body
+    }
+    )
+    return prog.funcs.len() - 1
+}
+
+// { stmt* } — returns index into prog.blocks
+fn parseBraceBlock(p: &mut PState, prog: &mut Prog): i64 {
+    expect(p, T_LBRACE)
+    var list: Vec<i64> = Vec.new()
+    while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
+        list.push(parseStmt(p, prog))
+    }
+    expect(p, T_RBRACE)
+    prog.blocks.push(list)
+    return prog.blocks.len() - 1
+}
+
+fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
+    let k = peekKind(p)
+    if k == T_SEMI {
+        advance(p)
+        return addStmt(prog, Stmt.Empty)
+    }
+    if k == T_LET || k == T_VAR || k == T_CONST {
+        advance(p)
+        var name = ""
+        if peekKind(p) == T_IDENT {
+            name = p.toks[p.pos].text.clone()
+            advance(p)
+        }
+        var init = -1
+        if peekKind(p) == T_EQ {
+            advance(p)
+            init = parseExpr(p, prog)
+        }
+        if init < 0 {
+            init = addExpr(prog, Expr.UndefLit)
+        }
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        }
+        return addStmt(prog, Stmt.Decl(name, init))
+    }
+    if k == T_FUNCTION {
+        let f = parseFunction(p, prog)
+        return addStmt(prog, Stmt.FuncDecl(f))
+    }
+    if k == T_IF {
+        advance(p)
+        expect(p, T_LPAREN)
+        let cond = parseExpr(p, prog)
+        expect(p, T_RPAREN)
+        let thenS = parseStmt(p, prog)
+        var elseS = -1
+        if peekKind(p) == T_ELSE {
+            advance(p)
+            elseS = parseStmt(p, prog)
+        }
+        return addStmt(prog, Stmt.If(cond, thenS, elseS))
+    }
+    if k == T_WHILE {
+        advance(p)
+        expect(p, T_LPAREN)
+        let cond = parseExpr(p, prog)
+        expect(p, T_RPAREN)
+        let body = parseStmt(p, prog)
+        return addStmt(prog, Stmt.While(cond, body))
+    }
+    if k == T_RETURN {
+        advance(p)
+        var e = -1
+        let nk = peekKind(p)
+        if nk != T_SEMI && nk != T_RBRACE && nk != T_EOF {
+            e = parseExpr(p, prog)
+        }
+        if e < 0 {
+            e = addExpr(prog, Expr.UndefLit)
+        }
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        }
+        return addStmt(prog, Stmt.Ret(e))
+    }
+    if k == T_LBRACE {
+        let b = parseBraceBlock(p, prog)
+        return addStmt(prog, Stmt.Block(b))
+    }
+    let e = parseExpr(p, prog)
+    if peekKind(p) == T_SEMI {
+        advance(p)
+    }
+    return addStmt(prog, Stmt.ExprStmt(e))
+}
+
+fn parseProgram(p: &mut PState, prog: &mut Prog): i64 {
+    var list: Vec<i64> = Vec.new()
+    while peekKind(p) != T_EOF {
+        list.push(parseStmt(p, prog))
+    }
+    prog.blocks.push(list)
+    return prog.blocks.len() - 1
+}
+
+// ── Values ──
+
+enum JSValue {
+    Undefined,
+    Null,
+    Bool(bool),
+    Number(f64),
+    Str(string),
+    // (funcs index, captured scope index) — the closure's environment link
+    Func(i64, i64),
+}
+
+fn cloneValue(v: &JSValue): JSValue {
+    match v {
+        JSValue.Undefined => {
+            return JSValue.Undefined
+        }
+        JSValue.Null => {
+            return JSValue.Null
+        }
+        JSValue.Bool(b) => {
+            return JSValue.Bool(b)
+        }
+        JSValue.Number(n) => {
+            return JSValue.Number(n)
+        }
+        JSValue.Str(s) => {
+            return JSValue.Str(s.clone())
+        }
+        JSValue.Func(f, env) => {
+            return JSValue.Func(f, env)
+        }
+    }
+}
+
+fn jsNan(): f64 {
+    // runtime 0/0 so constant folding can't reject it; IEEE floats don't trap
+    var z = 0.0
+    return z / z
+}
+
+fn isFiniteF(n: f64): bool {
+    // inf*0 and nan*0 are both NaN; finite*0 == 0
+    return n * 0.0 == 0.0
+}
+
+fn i64ToStr(n: i64): string {
+    var buf: [u8; 32] = [0; 32]
+    unsafe {
+        snprintf(buf, 32, "%lld", n)
+        return _cstrToString(buf as *u8)
+    }
+}
+
+fn floatG(n: f64, prec: i32): string {
+    var buf: [u8; 40] = [0; 40]
+    unsafe {
+        snprintf(buf, 40, "%.*g", prec, n)
+        return _cstrToString(buf as *u8)
+    }
+}
+
+// JS Number→string: integrals without ".0", otherwise the shortest decimal
+// text that round-trips to the same double (probe %g precision 1..17).
+fn numToStr(n: f64): string {
+    // NaN check via !(n == n): Milo's f64 != is an ordered compare, so n != n
+    // is false even for NaN
+    if !(n == n) {
+        return "NaN"
+    }
+    if !isFiniteF(n) {
+        if n > 0.0 {
+            return "Infinity"
+        }
+        return "-Infinity"
+    }
+    if floor(n) == n && fabs(n) < 1000000000000000.0 {
+        return i64ToStr(n as i64)
+    }
+    var p: i32 = 1
+    while p <= 17 {
+        let s = floatG(n, p)
+        match parseFloat(s.clone()) {
+            Option.Some(v) => {
+                if v == n {
+                    return s
+                }
+            }
+            Option.None => {
+            }
+        }
+        p = p + 1
+    }
+    return floatG(n, 17)
+}
+
+fn toStr(v: &JSValue): string {
+    match v {
+        JSValue.Undefined => {
+            return "undefined"
+        }
+        JSValue.Null => {
+            return "null"
+        }
+        JSValue.Bool(b) => {
+            if b {
+                return "true"
+            }
+            return "false"
+        }
+        JSValue.Number(n) => {
+            return numToStr(n)
+        }
+        JSValue.Str(s) => {
+            return s.clone()
+        }
+        JSValue.Func(_f, _env) => {
+            return "function"
+        }
+    }
+}
+
+fn toNum(v: &JSValue): f64 {
+    match v {
+        JSValue.Undefined => {
+            return jsNan()
+        }
+        JSValue.Null => {
+            return 0.0
+        }
+        JSValue.Bool(b) => {
+            if b {
+                return 1.0
+            }
+            return 0.0
+        }
+        JSValue.Number(n) => {
+            return n
+        }
+        JSValue.Str(s) => {
+            if s.len() == 0 {
+                return 0.0
+            }
+            match parseFloat(s.clone()) {
+                Option.Some(n) => {
+                    return n
+                }
+                Option.None => {
+                    return jsNan()
+                }
+            }
+        }
+        JSValue.Func(_f, _env) => {
+            return jsNan()
+        }
+    }
+}
+
+fn truthy(v: &JSValue): bool {
+    match v {
+        JSValue.Undefined => {
+            return false
+        }
+        JSValue.Null => {
+            return false
+        }
+        JSValue.Bool(b) => {
+            return b
+        }
+        JSValue.Number(n) => {
+            return n != 0.0 && n == n
+        }
+        JSValue.Str(s) => {
+            return s.len() > 0
+        }
+        JSValue.Func(_f, _env) => {
+            return true
+        }
+    }
+}
+
+fn isStr(v: &JSValue): bool {
+    match v {
+        JSValue.Str(_s) => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+fn strLess(a: &string, b: &string): bool {
+    let la = a.len()
+    let lb = b.len()
+    var i: i64 = 0
+    while i < la && i < lb {
+        if a[i] != b[i] {
+            return a[i] < b[i]
+        }
+        i = i + 1
+    }
+    return la < lb
+}
+
+// JS loose equality, simplified: null==undefined, same-type direct, mixed via
+// numeric coercion.
+fn jsEquals(a: &JSValue, b: &JSValue): bool {
+    match a {
+        JSValue.Undefined => {
+            match b {
+                JSValue.Undefined => {
+                    return true
+                }
+                JSValue.Null => {
+                    return true
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Null => {
+            match b {
+                JSValue.Undefined => {
+                    return true
+                }
+                JSValue.Null => {
+                    return true
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Str(s1) => {
+            match b {
+                JSValue.Str(s2) => {
+                    return s1 == s2
+                }
+                JSValue.Undefined => {
+                    return false
+                }
+                JSValue.Null => {
+                    return false
+                }
+                _ => {
+                    return toNum(a) == toNum(b)
+                }
+            }
+        }
+        JSValue.Func(f1, e1) => {
+            match b {
+                JSValue.Func(f2, e2) => {
+                    return f1 == f2 && e1 == e2
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        _ => {
+            match b {
+                JSValue.Undefined => {
+                    return false
+                }
+                JSValue.Null => {
+                    return false
+                }
+                JSValue.Func(_f, _e) => {
+                    return false
+                }
+                _ => {
+                    return toNum(a) == toNum(b)
+                }
+            }
+        }
+    }
+}
+
+// ── Environment: an append-only scope arena; closures capture by index ──
+
+struct Binding {
+    name: string,
+    value: JSValue,
+}
+
+struct Scope {
+    parent: i64,
+    vars: Vec<Binding>,
+}
+
+struct Interp {
+    scopes: Vec<Scope>,
+}
+
+fn newScope(st: &mut Interp, parent: i64): i64 {
+    st.scopes.push(Scope {
+        parent: parent, vars: Vec.new()
+    }
+    )
+    return st.scopes.len() - 1
+}
+
+fn scopeDefine(st: &mut Interp, scope: i64, name: string, value: JSValue) {
+    // redeclaration in the same scope overwrites (sloppy JS)
+    var i = st.scopes[scope].vars.len() - 1
+    while i >= 0 {
+        if st.scopes[scope].vars[i].name == name {
+            st.scopes[scope].vars[i] = Binding {
+                name: name, value: value
+            }
+            return
+        }
+        i = i - 1
+    }
+    st.scopes[scope].vars.push(Binding {
+        name: name, value: value
+    }
+    )
+}
+
+fn scopeLookup(st: &Interp, scope: i64, name: &string): JSValue {
+    var s = scope
+    while s >= 0 {
+        var i = st.scopes[s].vars.len() - 1
+        while i >= 0 {
+            if st.scopes[s].vars[i].name == name {
+                return cloneValue(st.scopes[s].vars[i].value)
+            }
+            i = i - 1
+        }
+        s = st.scopes[s].parent
+    }
+    return JSValue.Undefined
+}
+
+// Assignment walks the chain; if unbound, creates a global (sloppy JS).
+fn scopeAssign(st: &mut Interp, scope: i64, name: string, value: JSValue) {
+    var s = scope
+    while s >= 0 {
+        var i = st.scopes[s].vars.len() - 1
+        while i >= 0 {
+            if st.scopes[s].vars[i].name == name {
+                st.scopes[s].vars[i] = Binding {
+                    name: name, value: value
+                }
+                return
+            }
+            i = i - 1
+        }
+        s = st.scopes[s].parent
+    }
+    st.scopes[0].vars.push(Binding {
+        name: name, value: value
+    }
+    )
+}
+
+// ── Evaluator ──
+
+enum Flow {
+    Normal,
+    Ret(JSValue),
+}
+
+fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
+    if op == "+" {
+        if isStr(a) || isStr(b) {
+            return JSValue.Str(toStr(a) + toStr(b))
+        }
+        return JSValue.Number(toNum(a) + toNum(b))
+    }
+    if op == "-" {
+        return JSValue.Number(toNum(a) - toNum(b))
+    }
+    if op == "*" {
+        return JSValue.Number(toNum(a) * toNum(b))
+    }
+    if op == "/" {
+        return JSValue.Number(toNum(a) / toNum(b))
+    }
+    if op == "%" {
+        return JSValue.Number(fmod(toNum(a), toNum(b)))
+    }
+    if op == "==" {
+        return JSValue.Bool(jsEquals(a, b))
+    }
+    if op == "!=" {
+        return JSValue.Bool(!jsEquals(a, b))
+    }
+    // relational: string<string is lexicographic, else numeric (NaN → false)
+    if isStr(a) && isStr(b) {
+        let sa = toStr(a)
+        let sb = toStr(b)
+        if op == "<" {
+            return JSValue.Bool(strLess(sa, sb))
+        }
+        if op == ">" {
+            return JSValue.Bool(strLess(sb, sa))
+        }
+        if op == "<=" {
+            return JSValue.Bool(!strLess(sb, sa))
+        }
+        if op == ">=" {
+            return JSValue.Bool(!strLess(sa, sb))
+        }
+    }
+    let x = toNum(a)
+    let y = toNum(b)
+    if op == "<" {
+        return JSValue.Bool(x < y)
+    }
+    if op == ">" {
+        return JSValue.Bool(x > y)
+    }
+    if op == "<=" {
+        return JSValue.Bool(x <= y)
+    }
+    if op == ">=" {
+        return JSValue.Bool(x >= y)
+    }
+    return JSValue.Undefined
+}
+
+fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
+    let node = getExpr(prog, idx)
+    match node {
+        Expr.Num(n) => {
+            return JSValue.Number(n)
+        }
+        Expr.StrLit(s) => {
+            return JSValue.Str(s)
+        }
+        Expr.BoolLit(b) => {
+            return JSValue.Bool(b)
+        }
+        Expr.NullLit => {
+            return JSValue.Null
+        }
+        Expr.UndefLit => {
+            return JSValue.Undefined
+        }
+        Expr.Ident(name) => {
+            return scopeLookup(st, scope, name)
+        }
+        Expr.Bin(op, a, b) => {
+            // && and || short-circuit and yield the operand value, JS-style
+            if op == "&&" {
+                let va = evalExpr(prog, a, st, scope)
+                if !truthy(va) {
+                    return va
+                }
+                return evalExpr(prog, b, st, scope)
+            }
+            if op == "||" {
+                let va = evalExpr(prog, a, st, scope)
+                if truthy(va) {
+                    return va
+                }
+                return evalExpr(prog, b, st, scope)
+            }
+            let va = evalExpr(prog, a, st, scope)
+            let vb = evalExpr(prog, b, st, scope)
+            return evalBin(op, va, vb)
+        }
+        Expr.Un(op, a) => {
+            let va = evalExpr(prog, a, st, scope)
+            if op == "-" {
+                return JSValue.Number(0.0 - toNum(va))
+            }
+            return JSValue.Bool(!truthy(va))
+        }
+        Expr.Assign(name, e) => {
+            let v = evalExpr(prog, e, st, scope)
+            scopeAssign(st, scope, name, cloneValue(v))
+            return v
+        }
+        Expr.Call(callee, argsIdx) => {
+            return evalCall(prog, callee, argsIdx, st, scope)
+        }
+        Expr.Member(_obj, _name) => {
+            // no objects in stage 1; console.log is intercepted at call sites
+            return JSValue.Undefined
+        }
+        Expr.FuncExpr(f) => {
+            return JSValue.Func(f, scope)
+        }
+    }
+}
+
+fn evalArgs(prog: &Prog, argsIdx: i64, st: &mut Interp, scope: i64): Vec<JSValue> {
+    var out: Vec<JSValue> = Vec.new()
+    var j: i64 = 0
+    let n = prog.argLists[argsIdx].len()
+    while j < n {
+        let eIdx = prog.argLists[argsIdx][j]
+        out.push(evalExpr(prog, eIdx, st, scope))
+        j = j + 1
+    }
+    return out
+}
+
+fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
+    // builtin: console.log(...)
+    let calleeNode = getExpr(prog, calleeIdx)
+    match calleeNode {
+        Expr.Member(objIdx, name) => {
+            let objNode = getExpr(prog, objIdx)
+            match objNode {
+                Expr.Ident(objName) => {
+                    if objName == "console" && (name == "log" || name == "error" || name == "warn" || name == "info") {
+                        let argVals = evalArgs(prog, argsIdx, st, scope)
+                        var line = ""
+                        var j: i64 = 0
+                        while j < argVals.len() {
+                            if j > 0 {
+                                line = line + " "
+                            }
+                            line = line + toStr(argVals[j])
+                            j = j + 1
+                        }
+                        print(line)
+                        return JSValue.Undefined
+                    }
+                }
+                _ => {
+                }
+            }
+        }
+        _ => {
+        }
+    }
+
+    let calleeVal = evalExpr(prog, calleeIdx, st, scope)
+    match calleeVal {
+        JSValue.Func(fIdx, envIdx) => {
+            let argVals = evalArgs(prog, argsIdx, st, scope)
+            // call scope hangs off the closure's captured scope — lexical, not dynamic
+            let callScope = newScope(st, envIdx)
+            var j: i64 = 0
+            let nParams = prog.funcs[fIdx].params.len()
+            while j < nParams {
+                let pName = prog.funcs[fIdx].params[j].clone()
+                var v = JSValue.Undefined
+                if j < argVals.len() {
+                    v = cloneValue(argVals[j])
+                }
+                scopeDefine(st, callScope, pName, v)
+                j = j + 1
+            }
+            let body = prog.funcs[fIdx].body
+            let flow = execBlock(prog, body, st, callScope)
+            match flow {
+                Flow.Ret(v) => {
+                    return v
+                }
+                Flow.Normal => {
+                    return JSValue.Undefined
+                }
+            }
+        }
+        _ => {
+            print("milojs: TypeError: value is not a function")
+            return JSValue.Undefined
+        }
+    }
+}
+
+fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
+    let node = getStmt(prog, idx)
+    match node {
+        Stmt.Decl(name, e) => {
+            let v = evalExpr(prog, e, st, scope)
+            scopeDefine(st, scope, name, v)
+            return Flow.Normal
+        }
+        Stmt.ExprStmt(e) => {
+            evalExpr(prog, e, st, scope)
+            return Flow.Normal
+        }
+        Stmt.If(c, t, f) => {
+            let vc = evalExpr(prog, c, st, scope)
+            if truthy(vc) {
+                return execStmt(prog, t, st, scope)
+            }
+            if f >= 0 {
+                return execStmt(prog, f, st, scope)
+            }
+            return Flow.Normal
+        }
+        Stmt.While(c, body) => {
+            var looping = true
+            while looping {
+                let vc = evalExpr(prog, c, st, scope)
+                if !truthy(vc) {
+                    looping = false
+                } else {
+                    let flow = execStmt(prog, body, st, scope)
+                    match flow {
+                        Flow.Ret(v) => {
+                            return Flow.Ret(v)
+                        }
+                        Flow.Normal => {
+                        }
+                    }
+                }
+            }
+            return Flow.Normal
+        }
+        Stmt.Ret(e) => {
+            let v = evalExpr(prog, e, st, scope)
+            return Flow.Ret(v)
+        }
+        Stmt.Block(b) => {
+            let child = newScope(st, scope)
+            return execBlock(prog, b, st, child)
+        }
+        Stmt.FuncDecl(f) => {
+            let name = prog.funcs[f].name.clone()
+            scopeDefine(st, scope, name, JSValue.Func(f, scope))
+            return Flow.Normal
+        }
+        Stmt.Empty => {
+            return Flow.Normal
+        }
+    }
+}
+
+fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
+    var j: i64 = 0
+    let n = prog.blocks[blockIdx].len()
+    while j < n {
+        let sIdx = prog.blocks[blockIdx][j]
+        let flow = execStmt(prog, sIdx, st, scope)
+        match flow {
+            Flow.Ret(v) => {
+                return Flow.Ret(v)
+            }
+            Flow.Normal => {
+            }
+        }
+        j = j + 1
+    }
+    return Flow.Normal
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len() < 2 {
+        print("usage: milojs <file.js>")
+        return 1
+    }
+    let path = argv[1].clone()
+    let r = readFile(path)
+    match r {
+        Result.Ok(src) => {
+            let toks = lex(src)
+            var prog = Prog {
+                exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new()
+            }
+            var p = PState {
+                toks: toks, pos: 0
+            }
+            let top = parseProgram(p, prog)
+            var st = Interp {
+                scopes: Vec.new()
+            }
+            // scope 0 = global
+            newScope(st, -1)
+            execBlock(prog, top, st, 0)
+            return 0
+        }
+        Result.Err(_e) => {
+            print("milojs: cannot read file")
+            return 1
+        }
+    }
+}
