@@ -251,6 +251,24 @@ impl Lexer {
                 s.push(self.advance())
             }
         }
+        // scientific notation: e/E, optional +/- sign, >=1 digit (1e18, 1.5e-3).
+        // Consume `e` only when a digit follows, else it's an identifier butted
+        // against the number and splitting it would corrupt the literal.
+        if self.peek() == 101 || self.peek() == 69 {
+            var k: i64 = 1
+            if self.peekAt(1) == 43 || self.peekAt(1) == 45 {
+                k = 2
+            }
+            if charIsDigit(self.peekAt(k)) {
+                s.push(self.advance())
+                if self.peek() == 43 || self.peek() == 45 {
+                    s.push(self.advance())
+                }
+                while self.pos < self.src.len && (charIsDigit(self.peek()) || self.peek() == 95) {
+                    s.push(self.advance())
+                }
+            }
+        }
         return s
     }
 

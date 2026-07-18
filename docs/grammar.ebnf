@@ -58,7 +58,9 @@ arg_list    = expr { "," expr } ;
 
 (* Tokens *)
 IDENT       = letter { letter | digit | "_" } ;
-INT         = digit { digit } ;
+INT         = digit { digit } ;   (* also 0x.. hex and 0b.. binary; "_" separators allowed *)
+FLOAT       = digit { digit } [ "." digit { digit } ] [ ( "e" | "E" ) [ "+" | "-" ] digit { digit } ] ;
+              (* a float has a "." fraction, an exponent, or both — e.g. 1.5, 1e18, 1.5e-3, 2E+9 *)
 STRING      = '"' { char | escape } '"' ;
 letter      = "a".."z" | "A".."Z" | "_" ;
 digit       = "0".."9" ;

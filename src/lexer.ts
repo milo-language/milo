@@ -172,19 +172,36 @@ export class Lexer {
       return this.token(TokenKind.Int, n.toString(), line, col);
     }
     let value = "";
+    let isFloat = false;
     while (this.pos < this.source.length && ((this.peek() >= "0" && this.peek() <= "9") || this.peek() === "_")) {
       const c = this.advance();
       if (c !== "_") value += c;
     }
     if (this.peek() === "." && this.source[this.pos + 1] >= "0" && this.source[this.pos + 1] <= "9") {
+      isFloat = true;
       value += this.advance(); // the dot
       while (this.pos < this.source.length && ((this.peek() >= "0" && this.peek() <= "9") || this.peek() === "_")) {
         const c = this.advance();
         if (c !== "_") value += c;
       }
-      return this.token(TokenKind.Float, value, line, col);
     }
-    return this.token(TokenKind.Int, value, line, col);
+    // Scientific notation: e/E, optional sign, ≥1 digit (e.g. 1e18, 1.5e-3, 2E+9).
+    // Only consume `e` when a digit actually follows — otherwise it's an identifier
+    // butted against an int (leave `e...` for the ident lexer), not a malformed float.
+    if (this.peek() === "e" || this.peek() === "E") {
+      let k = this.pos + 1;
+      if (this.source[k] === "+" || this.source[k] === "-") k++;
+      if (this.source[k] >= "0" && this.source[k] <= "9") {
+        isFloat = true;
+        value += this.advance(); // e/E
+        if (this.peek() === "+" || this.peek() === "-") value += this.advance();
+        while (this.pos < this.source.length && ((this.peek() >= "0" && this.peek() <= "9") || this.peek() === "_")) {
+          const c = this.advance();
+          if (c !== "_") value += c;
+        }
+      }
+    }
+    return this.token(isFloat ? TokenKind.Float : TokenKind.Int, value, line, col);
   }
 
   private lexIdent(line: number, col: number): Token {

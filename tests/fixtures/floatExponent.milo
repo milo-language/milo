@@ -1,0 +1,12 @@
+// Scientific-notation float literals: e/E, optional sign.
+fn main(): void {
+    let big = 1e3
+    // @expect: 1000
+    print(big as i64)
+    let small = 1.5e-3
+    // @expect: 15
+    print((small * 10000.0) as i64)
+    let signed = 2E+2
+    // @expect: 200
+    print(signed as i64)
+}

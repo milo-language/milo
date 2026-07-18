@@ -199,6 +199,16 @@ Not silent — the resolver always catches it, so no wrong values reach codegen.
 that, have the lexer special-case a digit-adjacent `e<digits>` and say "exponent
 notation is not supported" instead of surfacing it as an identifier.
 
+**RESOLVED (2026-07-18):** `1e18`, `1.5e-3`, `2E+9` now lex as float literals.
+`lexNumber` (`src/lexer.ts`) consumes `e`/`E`, an optional `+`/`-`, then digits — but
+*only* when a digit actually follows, so a digit-adjacent identifier (`1x`, a bare
+`1e`) is still left alone rather than mis-swallowed. Mirrored in the formatter's own
+lexer (`examples/cli-tools/fmt.milo` `lexNumber`) — without that, `milo fmt` split
+`1.0e18` into `1.0` + `e18` and corrupted the source (the "formatter is part of
+definition-of-done" rule in action). Added `FLOAT` production to `docs/grammar.ebnf`
+(floats were entirely undocumented) and fixture `tests/fixtures/floatExponent.milo`.
+The `value.milo` spelled-out `1000000000000000000.0` can now be `1e18`.
+
 ## 7. `fn` is reserved, so it cannot be a struct field name (papercut)
 
 `struct ClassMember { name: string, fn: i64, isStatic: bool }` is rejected with
