@@ -255,11 +255,18 @@ fn main(): i32 {
     // from natives. It must share this Prog: a JSValue.Func carries a function
     // index into prog.funcs, so a function parsed into a different Prog indexes
     // the wrong table when it is finally called.
+    // the spec-builtin layer the engine also installs — the runtime is the engine
+    // plus node shims, so it needs both, this one first
+    let enginePreludeIdx = preloadGraph("builtin:engine-prelude", prog, st)
     let preludeIdx = preloadGraph("builtin:prelude", prog, st)
     let entryIdx = preloadGraph(path.clone(), prog, st)
     if entryIdx < 0 {
         eprint("milojs: cannot read '" + path + "'")
         return 1
+    }
+    if enginePreludeIdx >= 0 {
+        hoistBlock(prog, st.modBlocks[enginePreludeIdx], st, 0)
+        execBlock(prog, st.modBlocks[enginePreludeIdx], st, 0)
     }
     if preludeIdx >= 0 {
         // run in global scope, so its declarations become globals

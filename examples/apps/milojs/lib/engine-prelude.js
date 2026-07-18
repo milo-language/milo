@@ -2,6 +2,18 @@
 // Engine-level, so this is NOT the node runtime's prelude (lib/prelude.js) — only
 // things the language spec itself defines belong here.
 
+// --- destructuring support ---------------------------------------------------
+// Target of the `{ a, ...rest }` desugar: every own enumerable key except the
+// ones the pattern already bound.
+function __objRest(src, keys) {
+  var out = {};
+  if (src === null || src === undefined) return out;
+  for (var k in src) {
+    if (keys.indexOf(k) < 0) out[k] = src[k];
+  }
+  return out;
+}
+
 // --- Symbol registry ---------------------------------------------------------
 // Symbols are interned strings ("@@sym:<desc>:<n>") in this engine, so a registry
 // keyed by description gives Symbol.for its required identity guarantee:

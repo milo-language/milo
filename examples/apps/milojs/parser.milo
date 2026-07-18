@@ -296,44 +296,75 @@ fn withDefault(prog: &mut Prog, valExpr: i64, dflt: i64): i64 {
 fn patternDecls(p: &mut PState, prog: &mut Prog, srcName: string, out: &mut Vec<DeclItem>) {
     if peekKind(p) == T_LBRACE {
         advance(p)
+        // keys bound so far, so a trailing `...rest` can exclude them
+        var seenKeys: Vec<string> = Vec.new()
         while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
-            var key = ""
-            if isPropName(p) || peekKind(p) == T_STR {
-                key = p.toks[p.pos].text.clone()
-            }
-            advance(p)
-            let srcIdx = addExpr(prog, Expr.Ident(srcName.clone()))
-            var valExpr = addExpr(prog, Expr.Member(srcIdx, key.clone()))
-            var target = key.clone()
-            var nested = false
-            if peekKind(p) == T_COLON {
+            // { a, ...rest } — rest takes every own key not already bound
+            if peekKind(p) == T_SPREAD {
                 advance(p)
-                if peekKind(p) == T_LBRACE || peekKind(p) == T_LBRACKET {
-                    nested = true
-                    let tmp = "__d" + i64ToStr(p.pos)
-                    out.push(DeclItem {
-                        name: tmp.clone(), init: valExpr, isVar: false
-                    }
-                    )
-                    patternDecls(p, prog, tmp, out)
-                } else {
-                    target = p.toks[p.pos].text.clone()
-                    advance(p)
+                let restName = p.toks[p.pos].text.clone()
+                advance(p)
+                let srcIdx = addExpr(prog, Expr.Ident(srcName.clone()))
+                var keyEls: Vec<i64> = Vec.new()
+                var ki: i64 = 0
+                while ki < seenKeys.len() {
+                    keyEls.push(addExpr(prog, Expr.StrLit(seenKeys[ki].clone())))
+                    ki = ki + 1
                 }
-            }
-            if !nested {
-                if peekKind(p) == T_EQ {
-                    advance(p)
-                    let dflt = parseExpr(p, prog)
-                    valExpr = withDefault(prog, valExpr, dflt)
-                }
+                prog.arrLits.push(keyEls)
+                let keysArr = addExpr(prog, Expr.ArrLit(prog.arrLits.len() - 1))
+                var restArgs: Vec<i64> = Vec.new()
+                restArgs.push(srcIdx)
+                restArgs.push(keysArr)
+                prog.argLists.push(restArgs)
+                let callee = addExpr(prog, Expr.Ident("__objRest"))
                 out.push(DeclItem {
-                    name: target, init: valExpr, isVar: false
+                    name: restName, init: addExpr(prog, Expr.Call(callee, prog.argLists.len() - 1)), isVar: false
                 }
                 )
-            }
-            if peekKind(p) == T_COMMA {
+                if peekKind(p) == T_COMMA {
+                    advance(p)
+                }
+            } else {
+                var key = ""
+                if isPropName(p) || peekKind(p) == T_STR {
+                    key = p.toks[p.pos].text.clone()
+                }
+                seenKeys.push(key.clone())
                 advance(p)
+                let srcIdx = addExpr(prog, Expr.Ident(srcName.clone()))
+                var valExpr = addExpr(prog, Expr.Member(srcIdx, key.clone()))
+                var target = key.clone()
+                var nested = false
+                if peekKind(p) == T_COLON {
+                    advance(p)
+                    if peekKind(p) == T_LBRACE || peekKind(p) == T_LBRACKET {
+                        nested = true
+                        let tmp = "__d" + i64ToStr(p.pos)
+                        out.push(DeclItem {
+                            name: tmp.clone(), init: valExpr, isVar: false
+                        }
+                        )
+                        patternDecls(p, prog, tmp, out)
+                    } else {
+                        target = p.toks[p.pos].text.clone()
+                        advance(p)
+                    }
+                }
+                if !nested {
+                    if peekKind(p) == T_EQ {
+                        advance(p)
+                        let dflt = parseExpr(p, prog)
+                        valExpr = withDefault(prog, valExpr, dflt)
+                    }
+                    out.push(DeclItem {
+                        name: target, init: valExpr, isVar: false
+                    }
+                    )
+                }
+                if peekKind(p) == T_COMMA {
+                    advance(p)
+                }
             }
         }
         expect(p, T_RBRACE)
@@ -346,6 +377,23 @@ fn patternDecls(p: &mut PState, prog: &mut Prog, srcName: string, out: &mut Vec<
             // elision: [, x] skips a slot
             advance(p)
             i = i + 1
+        } else if peekKind(p) == T_SPREAD {
+            // [a, ...rest] — rest is everything from this position on
+            advance(p)
+            let restName = p.toks[p.pos].text.clone()
+            advance(p)
+            let srcIdx = addExpr(prog, Expr.Ident(srcName.clone()))
+            var sliceArgs: Vec<i64> = Vec.new()
+            sliceArgs.push(addExpr(prog, Expr.Num(i as f64)))
+            prog.argLists.push(sliceArgs)
+            let callee = addExpr(prog, Expr.Member(srcIdx, "slice"))
+            out.push(DeclItem {
+                name: restName, init: addExpr(prog, Expr.Call(callee, prog.argLists.len() - 1)), isVar: false
+            }
+            )
+            if peekKind(p) == T_COMMA {
+                advance(p)
+            }
         } else {
             let srcIdx = addExpr(prog, Expr.Ident(srcName.clone()))
             let idxE = addExpr(prog, Expr.Num(i as f64))
