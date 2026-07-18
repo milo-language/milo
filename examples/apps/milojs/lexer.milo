@@ -405,15 +405,13 @@ fn lex(src: &string): Vec<Token> {
             if radix > 0 {
                 i = i + 2
                 var acc: f64 = 0.0
-                var going = true
-                while i < n && going {
+                while i < n {
                     let d = hexDigitVal(src[i])
                     if d < 0 || d >= radix {
-                        going = false
-                    } else {
-                        acc = acc * (radix as f64) + (d as f64)
-                        i = i + 1
+                        break
                     }
+                    acc = acc * (radix as f64) + (d as f64)
+                    i = i + 1
                 }
                 v = acc
                 toks.push(Token {
