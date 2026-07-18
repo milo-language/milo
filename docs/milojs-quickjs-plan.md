@@ -9,13 +9,24 @@ update-when: a lane lands (update the score, delete the lane) or the sweep harne
 
 Working plan for driving `scripts/quickjs-sweep.ts` toward 100%. Written for agents
 picking up individual lanes; each lane is independent and lists exact anchors.
-Current: **55/149 cases (36.9%)**. Delete lanes here as they land.
+Current: **60/149 cases (40.3%)**. Delete lanes here as they land.
 
-**Lane 1 (ESM) is now the only thing that matters: it blocks 73 of the 94 failures.**
-Landing `yield` (24a0099) fixed 29 parse failures but moved all 29 into the import
-bucket — `test_builtin.js` parses now and dies on its first line, `import { assert }
-from "./assert.js"`. Every remaining bucket is ≤5 cases. Do lane 1, re-measure, and
-expect a large step plus a crop of newly-visible runtime gaps.
+**All infrastructure blockers are gone.** Lanes 1 and 2 landed; every remaining
+failure is a genuine engine gap rather than a file that won't load. The profile is
+now a long tail — biggest bucket is 20, most are 1-5 — so from here progress is
+incremental builtin work, not single fixes worth 30 cases.
+
+Current top buckets (`-v` for the per-case list):
+
+| n | cause | likely lane |
+|---|---|---|
+| 20 | `value is not a constructor` | missing constructors (Iterator, DisposableStack, resizable ArrayBuffer) |
+| 15 | `assertion failed: got \|…\|` | real semantic divergences — bisect individually |
+| 11 | `cannot read property of a non-object` | missing builtin objects |
+| 5 | parse errors | remaining syntax gaps (BigInt literals, `for await`) |
+| 5 | `eval is not defined` | deferred, see below |
+| 3 | `generator functions are not supported` | needs Stage-4 VM |
+| 2 each | `Error.captureStackTrace`, `Symbol.for`, `Array.fromAsync`, `escape` | one-line builtin adds |
 
 ## Ground rules (read first, all of them)
 
@@ -44,7 +55,34 @@ expect a large step plus a crop of newly-visible runtime gaps.
 5. Tests importing `qjs:std` / `qjs:os` / workers / bjson are host-facility tests,
    not conformance gaps — they stay in `SKIP_FILES` in the sweep.
 
-## Lane 1 — ESM import/export: 73 cases, the whale
+## Lane 1 — ESM import/export: DONE (c846eb7, da5a4b8)
+
+Landed as a parse-time desugar onto the CommonJS loader, deliberately touching
+only `parser.milo` / `lexer.milo` / `milojs-engine.milo` to avoid colliding with
+another agent holding `modules.milo` at the time:
+
+- `T_IMPORT` / `T_EXPORT` tokens; `from` and `as` stay contextual identifiers.
+- `parseImport` emits ONE `MultiDecl` per import (`const __esm_N = require(spec),
+  a = __esm_N["a"], …`), which is why no extra statements need to escape
+  `parseStmt`. Named imports use `Index` not `Member` so string-named imports work.
+- `export` is handled in `parseProgram` (top-level only, as the spec requires),
+  appending `exports.x = x` after the declaration — so no `PState` field was
+  needed, which would have forced edits in every construction site.
+- Discovery: module preloading scans *tokens*, before the desugar exists, so
+  `scanImports` in `milojs-engine.milo` walks the ESM edges and `preloadWithImports`
+  BFSes them into `preloadGraph`. The engine only takes the module path when the
+  file actually has imports; plain scripts still run in global scope via `runSource`.
+- `qjs:std` / `qjs:os` stubs (`lib/qjs-*.js`) + a real `gc()` global wired to
+  `collect()`. One unresolvable host import was killing all 30 `test_builtin.js`
+  cases; `gc()` collects for real rather than no-opping, so the GC tests that call
+  it aren't passing vacuously.
+
+**Known limits** (fine for the suite, revisit if real code hits them): exports are
+snapshots, not ESM live bindings; no default *imports* (`import x from "m"`); no
+re-export chains (`export … from "m"`); `import` is a keyword everywhere, so
+`obj.import` would misparse.
+
+## Lane 1b — old ESM notes, kept for the forms table
 
 `import` is not a token today; it evaluates as an undefined identifier →
 `ReferenceError: import is not defined` × 44. Strategy: **desugar ESM onto the
