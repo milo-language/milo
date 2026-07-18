@@ -1247,7 +1247,28 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 let key = prog.objLits[litIdx][i].key.clone()
                 let valIdx = prog.objLits[litIdx][i].val
                 let v = evalExpr(prog, valIdx, st, scope)
-                objSet(st, obj, key, v)
+                if key == "..." {
+                    let src = objHandle(v)
+                    if src >= 0 {
+                        if st.objects[src].isArray {
+                            var e: i64 = 0
+                            let ne = arrLen(st, src)
+                            while e < ne {
+                                objSet(st, obj, i64ToStr(e), arrGet(st, src, e))
+                                e = e + 1
+                            }
+                        }
+                        var k: i64 = 0
+                        while k < st.objects[src].props.len() {
+                            let pk = st.objects[src].props[k].key.clone()
+                            let pv = cloneValue(st.objects[src].props[k].value)
+                            objSet(st, obj, pk, pv)
+                            k = k + 1
+                        }
+                    }
+                } else {
+                    objSet(st, obj, key, v)
+                }
                 i = i + 1
             }
             popTemp(st)
@@ -1551,13 +1572,24 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
     }
     var j: i64 = 0
     let nParams = prog.funcs[fIdx].params.len()
+    let restFrom = prog.funcs[fIdx].restFrom
     while j < nParams {
         let pName = prog.funcs[fIdx].params[j].clone()
-        var v = JSValue.Undefined
-        if j < argVals.len() {
-            v = cloneValue(argVals[j])
+        if j == restFrom {
+            let rest = newArray(st)
+            var r = j
+            while r < argVals.len() {
+                arrPush(st, rest, cloneValue(argVals[r]))
+                r = r + 1
+            }
+            scopeDefine(st, callScope, pName, JSValue.Obj(rest))
+        } else {
+            var v = JSValue.Undefined
+            if j < argVals.len() {
+                v = cloneValue(argVals[j])
+            }
+            scopeDefine(st, callScope, pName, v)
         }
-        scopeDefine(st, callScope, pName, v)
         j = j + 1
     }
     // `arguments` — ES5 libraries lean on it for variadics (path.join etc).

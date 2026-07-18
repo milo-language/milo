@@ -83,6 +83,8 @@ struct FuncDef {
     isArrow: bool,
     // async functions wrap their return value in a resolved promise
     isAsync: bool,
+    // index of a `...rest` parameter, or -1 — it collects the remaining args
+    restFrom: i64,
 }
 
 // one declarator in a `let a = 1, b, c = 3` statement

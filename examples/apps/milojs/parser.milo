@@ -16,6 +16,8 @@ from "./value" import {
 struct PState {
     toks: Vec<Token>,
     pos: i64,
+    // source path, so a parse error names the module it came from
+    file: string,
 }
 
 fn peekKind(p: &PState): i32 {
@@ -60,7 +62,7 @@ fn expect(p: &mut PState, kind: i32) {
     if peekKind(p) == kind {
         advance(p)
     } else {
-        eprint("milojs: parse error at token " + i64ToStr(p.pos) + ": expected <" + i64ToStr(kind as i64) + ">, got '" + tokenDesc(p, p.pos) + "'  …" + tokenDesc(p, p.pos - 2) + " " + tokenDesc(p, p.pos - 1) + " >>" + tokenDesc(p, p.pos) + "<< " + tokenDesc(p, p.pos + 1) + " " + tokenDesc(p, p.pos + 2) + "…")
+        eprint("milojs: parse error in " + p.file + " at token " + i64ToStr(p.pos) + ": expected <" + i64ToStr(kind as i64) + ">, got '" + tokenDesc(p, p.pos) + "'  …" + tokenDesc(p, p.pos - 2) + " " + tokenDesc(p, p.pos - 1) + " >>" + tokenDesc(p, p.pos) + "<< " + tokenDesc(p, p.pos + 1) + " " + tokenDesc(p, p.pos + 2) + "…")
     }
 }
 
@@ -105,7 +107,7 @@ fn parseArg(p: &mut PState, prog: &mut Prog): i64 {
 // Build an arrow function from its parameter list; the caller has consumed `=>`.
 // Body is a block `{ }` or a single expression (implicit return). isArrow=true so
 // it doesn't bind its own `this`.
-fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool, prelude: Vec<DeclItem>): i64 {
+fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool, prelude: Vec<DeclItem>, mkRestFrom: i64): i64 {
     var body = -1
     if peekKind(p) == T_LBRACE {
         body = parseBraceBlock(p, prog)
@@ -122,7 +124,7 @@ fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool
         prependStmt(prog, body, unpack)
     }
     prog.funcs.push(FuncDef {
-        name: "", params: params, body: body, isArrow: true, isAsync: isAsync
+        name: "", params: params, body: body, isArrow: true, isAsync: isAsync, restFrom: mkRestFrom
     }
     )
     let f = prog.funcs.len() - 1
@@ -155,16 +157,20 @@ fn looksLikeArrow(p: &PState): bool {
 }
 
 // Consume `( params ) =>`, which looksLikeArrow has already confirmed.
-fn parseArrowHead(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude: &mut Vec<DeclItem>) {
+fn parseArrowHead(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude: &mut Vec<DeclItem>): i64 {
+    var rest: i64 = -1
     expect(p, T_LPAREN)
     while peekKind(p) != T_RPAREN && peekKind(p) != T_EOF {
-        parseParam(p, prog, params, prelude)
+        if parseParam(p, prog, params, prelude) {
+            rest = params.len() - 1
+        }
         if peekKind(p) == T_COMMA {
             advance(p)
         }
     }
     expect(p, T_RPAREN)
     expect(p, T_ARROW)
+    return rest
 }
 
 // `x = <default>` in a pattern: JS only substitutes on undefined. This compares
@@ -266,16 +272,17 @@ fn patternDecls(p: &mut PState, prog: &mut Prog, srcName: string, out: &mut Vec<
 
 // Parse one parameter. A destructuring pattern becomes a synthetic parameter
 // name plus declarators that unpack it at the top of the body.
-fn parseParam(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude: &mut Vec<DeclItem>) {
+fn parseParam(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude: &mut Vec<DeclItem>): bool {
     if peekKind(p) == T_LBRACE || peekKind(p) == T_LBRACKET {
         let tmp = "__a" + i64ToStr(p.pos)
         params.push(tmp.clone())
         patternDecls(p, prog, tmp, prelude)
-        return
+        return false
     }
+    var isRest = false
     if peekKind(p) == T_SPREAD {
-        // rest params aren't supported yet; bind the name so arity still lines up
         advance(p)
+        isRest = true
     }
     if peekKind(p) == T_IDENT {
         let name = p.toks[p.pos].text.clone()
@@ -290,9 +297,10 @@ fn parseParam(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude
             )
         }
         params.push(name)
-        return
+        return isRest
     }
     advance(p)
+    return false
 }
 
 fn isPatternStart(p: &PState): bool {
@@ -356,7 +364,7 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
             var ap: Vec<string> = Vec.new()
             ap.push(name)
             var noPrelude: Vec<DeclItem> = Vec.new()
-            return makeArrow(p, prog, ap, false, noPrelude)
+            return makeArrow(p, prog, ap, false, noPrelude, -1)
         }
         advance(p)
         return addExpr(prog, Expr.Ident(name))
@@ -365,8 +373,8 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
         if looksLikeArrow(p) {
             var arrowParams: Vec<string> = Vec.new()
             var arrowPrelude: Vec<DeclItem> = Vec.new()
-            parseArrowHead(p, prog, arrowParams, arrowPrelude)
-            return makeArrow(p, prog, arrowParams, false, arrowPrelude)
+            let arrowRest = parseArrowHead(p, prog, arrowParams, arrowPrelude)
+            return makeArrow(p, prog, arrowParams, false, arrowPrelude, arrowRest)
         }
         advance(p)
         var e = parseExpr(p, prog)
@@ -398,15 +406,15 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
             var ap1: Vec<string> = Vec.new()
             ap1.push(pname)
             var noPrelude1: Vec<DeclItem> = Vec.new()
-            return makeArrow(p, prog, ap1, true, noPrelude1)
+            return makeArrow(p, prog, ap1, true, noPrelude1, -1)
         }
         if nk == T_LPAREN {
             advance(p)
             if looksLikeArrow(p) {
                 var aparams: Vec<string> = Vec.new()
                 var aprelude: Vec<DeclItem> = Vec.new()
-                parseArrowHead(p, prog, aparams, aprelude)
-                return makeArrow(p, prog, aparams, true, aprelude)
+                let arest = parseArrowHead(p, prog, aparams, aprelude)
+                return makeArrow(p, prog, aparams, true, aprelude, arest)
             }
             // not an arrow after all — `async` was a plain identifier call
             p.pos = p.pos - 1
@@ -509,55 +517,72 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_LBRACE)
     var props: Vec<PropInit> = Vec.new()
     while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
-        var key = ""
-        var isMethodAsync = false
-        // `async foo() {}` — `async` is only a modifier when a method name follows
-        if peekKind(p) == T_ASYNC && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_COLON && p.toks[p.pos + 1].kind != T_COMMA && p.toks[p.pos + 1].kind != T_RBRACE && p.toks[p.pos + 1].kind != T_LPAREN {
-            isMethodAsync = true
+        if peekKind(p) == T_SPREAD {
+            // `{ ...src, k: v }` — recorded with the reserved key "..." and
+            // expanded at eval time, in source order so later keys win
             advance(p)
-        }
-        if isPropName(p) || peekKind(p) == T_STR {
-            key = p.toks[p.pos].text.clone()
-            advance(p)
-        } else {
-            advance(p)
-        }
-        // shorthand `{ req, ip }` is `{ req: req, ip: ip }`
-        var valIdx = -1
-        if peekKind(p) == T_LPAREN {
-            // method shorthand `{ foo(a) { ... } }` — a plain function-valued prop
-            advance(p)
-            var mparams: Vec<string> = Vec.new()
-            var mprelude: Vec<DeclItem> = Vec.new()
-            while peekKind(p) != T_RPAREN && peekKind(p) != T_EOF {
-                parseParam(p, prog, mparams, mprelude)
-                if peekKind(p) == T_COMMA {
-                    advance(p)
-                }
-            }
-            expect(p, T_RPAREN)
-            let mbody = parseBraceBlock(p, prog)
-            if mprelude.len() > 0 {
-                let munpack = declsToStmt(prog, mprelude)
-                prependStmt(prog, mbody, munpack)
-            }
-            prog.funcs.push(FuncDef {
-                name: key.clone(), params: mparams, body: mbody, isArrow: false, isAsync: isMethodAsync
+            let se = parseExpr(p, prog)
+            props.push(PropInit {
+                key: "...", val: se
             }
             )
-            valIdx = addExpr(prog, Expr.FuncExpr(prog.funcs.len() - 1))
-        } else if peekKind(p) == T_COLON {
-            advance(p)
-            valIdx = parseExpr(p, prog)
+            if peekKind(p) == T_COMMA {
+                advance(p)
+            }
         } else {
-            valIdx = addExpr(prog, Expr.Ident(key.clone()))
-        }
-        props.push(PropInit {
-            key: key, val: valIdx
-        }
-        )
-        if peekKind(p) == T_COMMA {
-            advance(p)
+            var key = ""
+            var isMethodAsync = false
+            // `async foo() {}` — `async` is only a modifier when a method name follows
+            if peekKind(p) == T_ASYNC && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_COLON && p.toks[p.pos + 1].kind != T_COMMA && p.toks[p.pos + 1].kind != T_RBRACE && p.toks[p.pos + 1].kind != T_LPAREN {
+                isMethodAsync = true
+                advance(p)
+            }
+            if isPropName(p) || peekKind(p) == T_STR {
+                key = p.toks[p.pos].text.clone()
+                advance(p)
+            } else {
+                advance(p)
+            }
+            // shorthand `{ req, ip }` is `{ req: req, ip: ip }`
+            var valIdx = -1
+            if peekKind(p) == T_LPAREN {
+                // method shorthand `{ foo(a) { ... } }` — a plain function-valued prop
+                advance(p)
+                var mparams: Vec<string> = Vec.new()
+                var mprelude: Vec<DeclItem> = Vec.new()
+                var mrest: i64 = -1
+                while peekKind(p) != T_RPAREN && peekKind(p) != T_EOF {
+                    if parseParam(p, prog, mparams, mprelude) {
+                        mrest = mparams.len() - 1
+                    }
+                    if peekKind(p) == T_COMMA {
+                        advance(p)
+                    }
+                }
+                expect(p, T_RPAREN)
+                let mbody = parseBraceBlock(p, prog)
+                if mprelude.len() > 0 {
+                    let munpack = declsToStmt(prog, mprelude)
+                    prependStmt(prog, mbody, munpack)
+                }
+                prog.funcs.push(FuncDef {
+                    name: key.clone(), params: mparams, body: mbody, isArrow: false, isAsync: isMethodAsync, restFrom: mrest
+                }
+                )
+                valIdx = addExpr(prog, Expr.FuncExpr(prog.funcs.len() - 1))
+            } else if peekKind(p) == T_COLON {
+                advance(p)
+                valIdx = parseExpr(p, prog)
+            } else {
+                valIdx = addExpr(prog, Expr.Ident(key.clone()))
+            }
+            props.push(PropInit {
+                key: key, val: valIdx
+            }
+            )
+            if peekKind(p) == T_COMMA {
+                advance(p)
+            }
         }
     }
     expect(p, T_RBRACE)
@@ -927,8 +952,11 @@ fn parseFunction(p: &mut PState, prog: &mut Prog, isAsync: bool): i64 {
     expect(p, T_LPAREN)
     var params: Vec<string> = Vec.new()
     var prelude: Vec<DeclItem> = Vec.new()
+    var restFrom: i64 = -1
     while peekKind(p) != T_RPAREN && peekKind(p) != T_EOF {
-        parseParam(p, prog, params, prelude)
+        if parseParam(p, prog, params, prelude) {
+            restFrom = params.len() - 1
+        }
         if peekKind(p) == T_COMMA {
             advance(p)
         }
@@ -940,7 +968,7 @@ fn parseFunction(p: &mut PState, prog: &mut Prog, isAsync: bool): i64 {
         prependStmt(prog, body, unpack)
     }
     prog.funcs.push(FuncDef {
-        name: name, params: params, body: body, isArrow: false, isAsync: isAsync
+        name: name, params: params, body: body, isArrow: false, isAsync: isAsync, restFrom: restFrom
     }
     )
     return prog.funcs.len() - 1

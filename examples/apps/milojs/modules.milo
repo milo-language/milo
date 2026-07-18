@@ -130,6 +130,14 @@ fn builtinSource(name: &string): string {
     return ""
 }
 
+fn hasJsonExt(path: &string): bool {
+    let n = path.len()
+    if n < 5 {
+        return false
+    }
+    return path[n - 5] == '.' && path[n - 4] == 'j' && path[n - 3] == 's' && path[n - 2] == 'o' && path[n - 1] == 'n'
+}
+
 fn isBuiltinPath(path: &string): bool {
     return path.len() > 8 && path[0] == 'b' && path[1] == 'u' && path[2] == 'i' && path[3] == 'l' && path[4] == 't' && path[5] == 'i' && path[6] == 'n' && path[7] == ':'
 }
@@ -313,7 +321,7 @@ fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
             let src = builtinSource(builtinNameOf(path))
             let toks = lex(src)
             var bp = PState {
-                toks: toks, pos: 0
+                toks: toks, pos: 0, file: path.clone()
             }
             let btop = parseProgram(bp, prog)
             st.modPaths.push(path.clone())
@@ -323,10 +331,17 @@ fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
         } else {
             match readFile(path.clone()) {
                 Result.Ok(src) => {
-                    let toks = lex(src)
+                    // a .json module is its parsed contents — JSON is a subset of
+                    // JS literal syntax, so wrapping it as an assignment reuses
+                    // the object/array literal parser instead of a second reader
+                    var text = src
+                    if hasJsonExt(path) {
+                        text = "module.exports = " + text
+                    }
+                    let toks = lex(text)
                     let specs = scanRequires(toks)
                     var p = PState {
-                        toks: toks, pos: 0
+                        toks: toks, pos: 0, file: path.clone()
                     }
                     let top = parseProgram(p, prog)
                     st.modPaths.push(path.clone())
