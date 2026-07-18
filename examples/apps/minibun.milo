@@ -81,6 +81,11 @@ extern fn JSObjectCallAsFunction(ctx: *u8, object: *u8, thisObject: *u8, argumen
 
 extern fn JSValueToNumber(ctx: *u8, value: *u8, exception: *u8): f64
 
+extern fn JSValueToBoolean(ctx: *u8, value: *u8): bool
+
+// Sleep until the next due timer (the accept loop's timer pump — see pumpTimers).
+extern fn usleep(usec: u32): i32
+
 extern fn JSValueProtect(ctx: *u8, value: *u8): void
 
 extern fn JSObjectGetProperty(ctx: *u8, object: *u8, propertyName: *u8, exception: *u8): *u8
@@ -132,6 +137,18 @@ fn callJs1(ctx: *u8, func: *u8, arg: *u8): *u8 {
         var exc: *u8 = 0 as *u8
         let r = JSObjectCallAsFunction(ctx, func, 0 as *u8, 1, argArr, (exc.addrOf()) as *u8)
         free(argArr)
+        if exc as i64 != 0 {
+            return 0 as *u8
+        }
+        return r
+    }
+}
+
+// Call a 0-arg JS function; returns its result, or null on a thrown exception.
+fn callJs0(ctx: *u8, func: *u8): *u8 {
+    unsafe {
+        var exc: *u8 = 0 as *u8
+        let r = JSObjectCallAsFunction(ctx, func, 0 as *u8, 0, 0 as *u8, (exc.addrOf()) as *u8)
         if exc as i64 != 0 {
             return 0 as *u8
         }
@@ -322,6 +339,70 @@ fn nativeFetch(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, argume
 // then sees the finished response. (A nested call — e.g. if listen() blocked here directly —
 // would NOT drain, and async handlers would return empty bodies.) `handler` returns the JS
 // `res` object; `getRaw` renders it to a raw HTTP response string.
+// Drive JS timers (setTimeout/setInterval) for one in-flight request: JSC has no timer loop,
+// so after the handler returns we sleep to each due timer and fire it, until the response is
+// finished. This makes `await new Promise(r => setTimeout(r, ms))` inside a handler resolve.
+// Most responses finish synchronously (via microtasks) — the first __resDone check is true and
+// this returns immediately with zero overhead.
+fn pumpTimers(ctx: *u8, resObj: *u8, nextDelayFn: *u8, runFn: *u8, resDoneFn: *u8): void {
+    var guard: i64 = 0
+    while guard < 200000 {
+        let doneVal = callJs1(ctx, resDoneFn, resObj)
+        if doneVal as i64 != 0 {
+            if JSValueToBoolean(ctx, doneVal) {
+                return
+            }
+        }
+        let delayVal = callJs0(ctx, nextDelayFn)
+        if delayVal as i64 == 0 {
+            return
+        }
+        let delayMs = JSValueToNumber(ctx, delayVal, 0 as *u8)
+        if delayMs < 0.0 {
+            // No pending timers and the response isn't done — nothing left to advance it.
+            return
+        }
+        if delayMs > 0.0 {
+            // Cap each sleep so a long timeout doesn't block past the response completing.
+            var capMs = delayMs
+            if capMs > 2000.0 {
+                capMs = 2000.0
+            }
+            usleep(((capMs * 1000.0) as i64) as u32)
+        }
+        // Firing runs due callbacks; JSC drains their microtasks when this call returns.
+        let _ = callJs0(ctx, runFn)
+        guard = guard + 1
+    }
+}
+
+// Standalone (non-server) timer drain: run pending timers to completion so a plain script's
+// setTimeout/setInterval fire after the entry finishes. Bounded so an unbounded setInterval
+// can't wedge the process forever.
+fn drainTimers(ctx: *u8): void {
+    let nextDelayFn = lookupGlobal(ctx, "__timersNextDelay")
+    let runFn = lookupGlobal(ctx, "__timersRun")
+    if JSValueIsUndefined(ctx, nextDelayFn) || JSValueIsUndefined(ctx, runFn) {
+        return
+    }
+    var guard: i64 = 0
+    while guard < 1000000 {
+        let delayVal = callJs0(ctx, nextDelayFn)
+        if delayVal as i64 == 0 {
+            return
+        }
+        let delayMs = JSValueToNumber(ctx, delayVal, 0 as *u8)
+        if delayMs < 0.0 {
+            return
+        }
+        if delayMs > 0.0 {
+            usleep(((delayMs * 1000.0) as i64) as u32)
+        }
+        let _ = callJs0(ctx, runFn)
+        guard = guard + 1
+    }
+}
+
 fn serveMain(ctx: *u8, port: u16, handler: *u8, getRaw: *u8): void {
     let lr = TcpListener.bind(port)
     match lr {
@@ -333,6 +414,15 @@ fn serveMain(ctx: *u8, port: u16, handler: *u8, getRaw: *u8): void {
         Result.Ok(listener) => {
             JSValueProtect(ctx, handler)
             JSValueProtect(ctx, getRaw)
+            let nextDelayFn = lookupGlobal(ctx, "__timersNextDelay")
+            let runFn = lookupGlobal(ctx, "__timersRun")
+            let resDoneFn = lookupGlobal(ctx, "__resDone")
+            let haveTimers = !JSValueIsUndefined(ctx, nextDelayFn) && !JSValueIsUndefined(ctx, runFn) && !JSValueIsUndefined(ctx, resDoneFn)
+            if haveTimers {
+                JSValueProtect(ctx, nextDelayFn)
+                JSValueProtect(ctx, runFn)
+                JSValueProtect(ctx, resDoneFn)
+            }
             while true {
                 let ar = listener.accept()
                 match ar {
@@ -343,6 +433,9 @@ fn serveMain(ctx: *u8, port: u16, handler: *u8, getRaw: *u8): void {
                         let resObj = callJs1(ctx, handler, jsString(ctx, reqText))
                         var respText = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                         if resObj as i64 != 0 {
+                            if haveTimers {
+                                pumpTimers(ctx, resObj, nextDelayFn, runFn, resDoneFn)
+                            }
                             let rawVal = callJs1(ctx, getRaw, resObj)
                             if rawVal as i64 != 0 {
                                 respText = jsToString(ctx, rawVal)
@@ -451,6 +544,9 @@ fn main(): i32 {
                 let handler = getProp(ctx, serverObj, "handler")
                 let getRaw = lookupGlobal(ctx, "__mbGetRaw")
                 serveMain(ctx, port, handler, getRaw)
+            } else {
+                // Standalone script (no server): drain pending timers so setTimeout/setInterval fire.
+                drainTimers(ctx)
             }
         }
 

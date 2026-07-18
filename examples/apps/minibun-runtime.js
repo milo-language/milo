@@ -513,7 +513,25 @@
   var __envOverlay={}; var __env; try{ __env=new Proxy(__envOverlay,{ get:function(t,k){ if(Object.prototype.hasOwnProperty.call(t,k)) return t[k]; if(typeof k!=='string') return undefined; var v=__getenv(k); return v; }, set:function(t,k,v){ t[k]=(v==null?v:String(v)); return true; }, has:function(t,k){ if(Object.prototype.hasOwnProperty.call(t,k)) return true; return typeof k==='string' && __getenv(k)!==undefined; }, deleteProperty:function(t,k){ delete t[k]; return true; } }); }catch(e){ __env=__envOverlay; }
   if(!globalThis.process){ globalThis.process={ env:__env, argv:['minibun', __entryPath], platform:'darwin', arch:'arm64', version:'v18.0.0', versions:{node:'18.0.0'}, pid:1, title:'minibun', cwd:function(){ return dirname(__entryPath); }, nextTick:function(f){ var a=Array.prototype.slice.call(arguments,1); Promise.resolve().then(function(){ f.apply(null,a); }); }, on:function(){ return this; }, once:function(){ return this; }, emit:function(){ return false; }, exit:function(){}, hrtime:(function(){ var f=function(t){ return [0,0]; }; f.bigint=function(){ return BigInt(0); }; return f; })(), memoryUsage:(function(){ var f=function(){ return { rss:0, heapTotal:0, heapUsed:0, external:0, arrayBuffers:0 }; }; f.rss=function(){ return 0; }; return f; })(), uptime:function(){ return 0; }, stdout:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\n') s=s.slice(0,-1); console.log(s); return true; }, isTTY:false, on:function(){ return this; }, once:function(){ return this; } }, stderr:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\n') s=s.slice(0,-1); console.log(s); return true; }, isTTY:false, on:function(){ return this; }, once:function(){ return this; } } }; }
   builtins.process=globalThis.process; builtins['node:process']=globalThis.process;
-  if(!globalThis.setTimeout){ globalThis.setTimeout=function(f,ms){ return 0; }; globalThis.clearTimeout=function(){}; globalThis.setInterval=function(){ return 0; }; globalThis.clearInterval=function(){}; globalThis.setImmediate=function(f){ Promise.resolve().then(f); return 0; }; globalThis.clearImmediate=function(){}; }
+  // Real timers. JSC has no timer loop, so we keep a queue and let the Milo accept loop pump it
+  // (__timersNextDelay/__timersRun) — after a request, it sleeps to the next due timer and fires
+  // it, so `await new Promise(r=>setTimeout(r,ms))` inside a handler resolves. Background
+  // intervals only advance while a request is being serviced (single-threaded blocking model).
+  if(!globalThis.__mbTimers){
+    var __timers={}; var __tid=1;
+    function __timerHandle(id){ return { id:id, ref:function(){return this;}, unref:function(){return this;}, hasRef:function(){return true;}, refresh:function(){ if(__timers[id]) __timers[id].due=Date.now()+(__timers[id].ms||0); return this; }, close:function(){ delete __timers[id]; } }; }
+    function __schedule(cb, ms, args, interval){ var id=__tid++; __timers[id]={ id:id, due:Date.now()+(ms||0), ms:ms||0, cb:cb, args:args, interval:interval }; return __timerHandle(id); }
+    function __clear(h){ if(h==null) return; var id=(typeof h==='object')?h.id:h; delete __timers[id]; }
+    globalThis.__mbTimers=__timers;
+    globalThis.setTimeout=function(f,ms){ return __schedule(f, ms, Array.prototype.slice.call(arguments,2), null); };
+    globalThis.setInterval=function(f,ms){ return __schedule(f, ms, Array.prototype.slice.call(arguments,2), (ms||1)); };
+    globalThis.setImmediate=function(f){ return __schedule(f, 0, Array.prototype.slice.call(arguments,1), null); };
+    globalThis.clearTimeout=__clear; globalThis.clearInterval=__clear; globalThis.clearImmediate=__clear;
+    // Consumed by the Milo accept loop:
+    globalThis.__timersNextDelay=function(){ var now=Date.now(); var best=-1; for(var k in __timers){ var d=__timers[k].due-now; if(d<0) d=0; if(best<0||d<best) best=d; } return best; };
+    globalThis.__timersRun=function(){ var now=Date.now(); var due=[]; for(var k in __timers){ if(__timers[k].due<=now) due.push(__timers[k]); } due.sort(function(a,b){ return a.due-b.due; }); var ran=0; for(var i=0;i<due.length;i++){ var t=due[i]; if(!__timers[t.id]) continue; if(t.interval!=null) t.due=now+t.interval; else delete __timers[t.id]; try{ t.cb.apply(null, t.args||[]); }catch(e){ if(globalThis.console&&console.error) console.error('timer error:', e&&(e.stack||e.message||e)); } ran++; } return ran; };
+    globalThis.__resDone=function(res){ return !!(res && res._finished); };
+  }
   globalThis.__mbGetRaw=function(res){ return res._raw(); };
   globalThis.__runEntry=function(entry){ return loadModule(entry); };
 })();
