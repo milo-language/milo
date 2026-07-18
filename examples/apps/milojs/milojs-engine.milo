@@ -42,7 +42,7 @@ fn main(): i32 {
                 Option.None => {
                 }
             }
-            var st = makeInterp(gcStats)
+            var st = makeInterp(gcStats, 1024)
             bootInterp(st)
             return runSource(src, st)
         }

@@ -1,0 +1,12 @@
+console.log(5 & 3, 5 | 3, 5 ^ 3, ~5);
+console.log(1 << 10, -16 >> 2, -16 >>> 28);
+console.log(2 ** 10, +"42", void 0);
+console.log(1e10 | 0, 0xFFFFFFFF | 0, 1 << 31);
+console.log(1e10, 1.5e-3, 0xFF, 0b1011, 0o17, 2.5E3);
+var b = 6; b >>= 1; b |= 8; b &= 12; b ^= 1; b <<= 2; console.log(b);
+var u = -16; u >>>= 28; console.log(u);
+var e = 2; e **= 5; console.log(e);
+var res = [];
+for (var i = 0, len = 3; i < len; i++) res.push(i);
+for (var j = 0, k = 10; j < 2; j += 1, k -= 1) res.push(j + ":" + k);
+console.log(res.join(","));

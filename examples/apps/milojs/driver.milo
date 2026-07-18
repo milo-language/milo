@@ -21,14 +21,17 @@ from "./eval" import {
     execBlock, setupGlobals
 }
 
-fn makeInterp(gcStats: bool): Interp {
+// gcThreshold is the allocation count that triggers a collection. Lowering it to
+// 1 collects at every safepoint, which is how GC-rooting bugs are shaken out —
+// see MILOJS_GC_THRESHOLD.
+fn makeInterp(gcStats: bool, gcThreshold: i64): Interp {
     return Interp {
         scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
         objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
         modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(),
         throwing: false, thrownValue: JSValue.Undefined,
         rngState: 88172645463325252,
-        allocSinceGc: 0, promiseCtorObj: -1, gcThreshold: 1024, gcRuns: 0, gcStats: gcStats
+        allocSinceGc: 0, promiseCtorObj: -1, gcThreshold: gcThreshold, gcRuns: 0, gcStats: gcStats
     }
 }
 

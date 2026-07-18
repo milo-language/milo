@@ -13,6 +13,9 @@
 from "std/io" import {
     readFile
 }
+from "std/strconv" import {
+    parseInt
+}
 from "std/env" import {
     getEnv
 }
@@ -87,7 +90,7 @@ fn main(): i32 {
     let argv = args()
     if argv.len() < 2 {
         // no script → interactive REPL
-        var st = makeInterp(false)
+        var st = makeInterp(false, 1024)
         bootInterp(st)
         setupNodeGlobals(st, "<repl>")
         return repl(st)
@@ -102,7 +105,25 @@ fn main(): i32 {
         Option.None => {
         }
     }
-    var st = makeInterp(gcStats)
+    // MILOJS_GC_THRESHOLD=1 collects at every safepoint — used by the GC-stress
+    // test pass to catch values left unrooted across a nested call
+    var gcThreshold: i64 = 1024
+    match getEnv("MILOJS_GC_THRESHOLD") {
+        Option.Some(v) => {
+            match parseInt(v) {
+                Option.Some(n) => {
+                    if n > 0 {
+                        gcThreshold = n
+                    }
+                }
+                Option.None => {
+                }
+            }
+        }
+        Option.None => {
+        }
+    }
+    var st = makeInterp(gcStats, gcThreshold)
     bootInterp(st)
     setupNodeGlobals(st, path.clone())
 

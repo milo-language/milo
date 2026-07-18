@@ -179,7 +179,10 @@ fn readLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
         }
         Expr.Index(objIdx, keyIdx) => {
             let ov = evalExpr(prog, objIdx, st, scope)
+            // the key expression can run user code and collect the base
+            pushTemp(st, cloneValue(ov))
             let kv = evalExpr(prog, keyIdx, st, scope)
+            popTemp(st)
             let key = toStr(kv)
             match ov {
                 JSValue.Obj(o) => {
@@ -214,7 +217,10 @@ fn writeLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64, value: 
         }
         Expr.Index(objIdx, keyIdx) => {
             let ov = evalExpr(prog, objIdx, st, scope)
+            // the key expression can run user code and collect the base
+            pushTemp(st, cloneValue(ov))
             let kv = evalExpr(prog, keyIdx, st, scope)
+            popTemp(st)
             let key = toStr(kv)
             match ov {
                 JSValue.Obj(o) => {
@@ -936,7 +942,25 @@ fn instanceOf(st: &Interp, val: &JSValue, ctor: &JSValue): bool {
         JSValue.Obj(o) => {
             match ctor {
                 JSValue.Func(fIdx, _e) => {
-                    return st.objects[o].ctor == fIdx
+                    if st.objects[o].ctor == fIdx {
+                        return true
+                    }
+                    // a subclass instance is also an instance of every base, so
+                    // walk the prototype chain: Dog.prototype's proto is
+                    // Animal.prototype (linked by instantiateClass)
+                    if fIdx < st.funcProtos.len() {
+                        let target = st.funcProtos[fIdx]
+                        if target >= 0 {
+                            var p = st.objects[o].proto
+                            while p >= 0 {
+                                if p == target {
+                                    return true
+                                }
+                                p = st.objects[p].proto
+                            }
+                        }
+                    }
+                    return false
                 }
                 JSValue.Native(id) => {
                     if !st.objects[o].isError {
@@ -1125,11 +1149,16 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             }
             if op == "instanceof" {
                 let lv = evalExpr(prog, a, st, scope)
+                pushTemp(st, cloneValue(lv))
                 let rv = evalExpr(prog, b, st, scope)
+                popTemp(st)
                 return JSValue.Bool(instanceOf(st, lv, rv))
             }
             let va = evalExpr(prog, a, st, scope)
+            // evaluating the right operand can run user code and collect
+            pushTemp(st, cloneValue(va))
             let vb = evalExpr(prog, b, st, scope)
+            popTemp(st)
             return evalBin(op, va, vb)
         }
         Expr.Un(op, a) => {
@@ -1204,7 +1233,10 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.Index(objIdx, keyIdx) => {
             let ov = evalExpr(prog, objIdx, st, scope)
+            // the key expression can run user code and collect the base
+            pushTemp(st, cloneValue(ov))
             let kv = evalExpr(prog, keyIdx, st, scope)
+            popTemp(st)
             let key = toStr(kv)
             match ov {
                 JSValue.Obj(o) => {
@@ -1225,9 +1257,13 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.SetMember(objIdx, keyIdx, valIdx) => {
             let ov = evalExpr(prog, objIdx, st, scope)
+            // both key and value can run user code, so the target stays rooted
+            // across both — else obj[f()] = g() writes into a reused slot
+            pushTemp(st, cloneValue(ov))
             let kv = evalExpr(prog, keyIdx, st, scope)
             let key = toStr(kv)
             let v = evalExpr(prog, valIdx, st, scope)
+            popTemp(st)
             match ov {
                 JSValue.Obj(o) => {
                     setMember(st, o, key, cloneValue(v))
@@ -1454,8 +1490,13 @@ fn spreadInto(out: &mut Vec<JSValue>, v: &JSValue, st: &Interp) {
     }
 }
 
+// `out` is a plain Milo local, invisible to the collector, but evaluating a later
+// argument can run user code and therefore collect — so each finished argument is
+// temp-rooted until the whole list is built. Without this, f([1,2], g()) can see
+// the array swept and its slot reused while g() runs.
 fn evalArgs(prog: &Prog, argsIdx: i64, st: &mut Interp, scope: i64): Vec<JSValue> {
     var out: Vec<JSValue> = Vec.new()
+    var rooted: i64 = 0
     var j: i64 = 0
     let n = prog.argLists[argsIdx].len()
     while j < n {
@@ -1464,13 +1505,25 @@ fn evalArgs(prog: &Prog, argsIdx: i64, st: &mut Interp, scope: i64): Vec<JSValue
         match node {
             Expr.Spread(inner) => {
                 let v = evalExpr(prog, inner, st, scope)
+                pushTemp(st, cloneValue(v))
+                rooted = rooted + 1
                 spreadInto(out, v, st)
             }
             _ => {
-                out.push(evalExpr(prog, eIdx, st, scope))
+                let v = evalExpr(prog, eIdx, st, scope)
+                pushTemp(st, cloneValue(v))
+                rooted = rooted + 1
+                out.push(v)
             }
         }
         j = j + 1
+    }
+    // the caller binds these into a scope before the next safepoint, so the
+    // temp roots can be released here
+    var r: i64 = 0
+    while r < rooted {
+        popTemp(st)
+        r = r + 1
     }
     return out
 }
