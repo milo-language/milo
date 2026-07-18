@@ -54,6 +54,14 @@ let userPicked = false
 function show(i) {
   slides.forEach((el, n) => el.classList.toggle('cc-active', n === i))
   current.value = i
+  fit(i)
+}
+
+// The stage height follows the active slide (animated via the CSS transition),
+// so a 4-line hello-world isn't displayed inside a 17-line-tall box.
+function fit(i) {
+  const el = slides[i]
+  if (el && stage.value) stage.value.style.height = el.offsetHeight + 'px'
 }
 
 function select(i) {
@@ -74,13 +82,21 @@ onMounted(() => {
   slides = Array.from(stage.value.children)
   slides.forEach((el) => el.classList.add('cc-slide'))
   show(0)
+  // Re-measure once layout settles (web fonts) and on viewport changes.
+  requestAnimationFrame(() => fit(current.value))
+  window.addEventListener('resize', onResize)
   // Auto-advance is decoration. Honour the OS setting rather than animating at someone
   // who has asked things to hold still.
   const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
   if (!still && slides.length > 1) timer = setInterval(advance, props.interval)
 })
 
-onBeforeUnmount(() => { if (timer) clearInterval(timer) })
+function onResize() { fit(current.value) }
+
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer)
+  window.removeEventListener('resize', onResize)
+})
 </script>
 
 <style scoped>
@@ -132,9 +148,16 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
   margin-top: 2px;
 }
 
-/* The stage is as tall as its tallest slide: slides stack in the same grid cell, so
-   switching never reflows the page under the reader's cursor. */
-.cc-stage { display: grid; }
+/* Slides stack in the same grid cell; JS pins the stage height to the ACTIVE slide
+   (see fit()) so short examples aren't framed by the tallest one. align-items: start
+   keeps each slide at its natural height so offsetHeight measures honestly. Before
+   JS runs there is no explicit height, so the no-JS fallback is tallest-slide. */
+.cc-stage {
+  display: grid;
+  align-items: start;
+  overflow: hidden;
+  transition: height 0.3s ease;
+}
 /* :deep() is REQUIRED here, not stylistic. Slides come from a <slot>, so index.md renders
    them and they carry no scope attribute of ours. Plain `.cc-stage > *` compiles to
    `.cc-stage[data-v-x] > *` (attribute on the stage — matches), but `.cc-stage > .cc-active`
@@ -172,6 +195,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .cc-stage { transition: none; }
   .cc-stage :deep(.cc-slide) { transition: none; }
 }
 </style>
