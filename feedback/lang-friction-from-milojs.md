@@ -61,6 +61,23 @@ closed the one remaining definition-of-done gap: added `break`/`continue`/`for`
 productions to `docs/grammar.ebnf` (they were undocumented). Labeled break/continue
 not implemented and not needed so far. Nothing more to do here.
 
+**Follow-up (2026-07-18): the milojs codebase still uses the old flag-loops — convert
+them, they're no longer needed.** ~65 `var going = true` sites remain across milojs
+(`eval.milo` 19, `parser.milo` 16, `regex.milo` 12, `builtins.milo` 5, `lexer.milo`
+0 — converted). Conversion is mechanical: `going = false` → `break`, and
+`if done { going = false } else { <body> }` → `if done { break }` + de-indent the
+body. Done for `lexer.milo` (`scanTmplChunk`/`scanRegexLit`/radix scan, byte-identical
+to bun, commit `89a5736`). The rest are best done when the concurrent milojs agent is
+idle — it actively rewrites `eval.milo`/`parser.milo`, so edits there collide.
+
+**On the milojs agent's "mis-indented `} else {`" note — NOT a language/formatter bug.**
+It came from scripted text-substitution edits that didn't reindent. `milo fmt` already
+fixes it: the formatter re-derives indentation from brace depth, and the committed
+milojs files are fmt-clean (`milo fmt parser.milo` = 0 changes). The `}` immediately
+above a `} else {` at a shallower indent is *correct* nesting (inner block closes, then
+the `if` closes into `else`) — it only reads dense. Just run `milo fmt` (or rely on the
+pre-commit hook). This is distinct from the still-open struct-literal formatter bug (#4).
+
 ## 3. `from` / `in` as reserved words collide with parameter names (papercut)
 
 `from` and `in` are reserved (import syntax / for-in), so natural parameter and
