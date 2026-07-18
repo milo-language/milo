@@ -79,8 +79,14 @@ collector — `markScope` gained a `markValue` that follows `Obj` handles into t
 object arena sweeps alongside scopes. Validated the Stage 2 design claim: adding a heap type was
 extra `markScope` variants, nothing more. `console.log` inspect matches bun (multi-line, 2-space
 indent, double-quoted values). GC stress with 100k short-lived objects stays byte-identical.
-**Still open:** arrays (as objects with integer keys + `length`), prototype-chain lookup, `this`
-binding, `new`. Closures capturing heap environment records.
+**Arrays done (c3f3c44):** literals, indexed get/set with grow-on-write, `.length`, `push`/`pop`,
+nesting, arrays-of-objects — arrays reuse the object heap (a JSObj with an `elems` Vec + `isArray`
+flag), so the GC marks elements alongside props for free. `console.log` matches bun for scalar
+arrays; the multi-line wrap bun applies to arrays *containing* objects/arrays is a known cosmetic
+gap (bun's inspect layout heuristic), not a semantic one.
+**Still open:** prototype-chain lookup, `this` binding, `new`, general method dispatch (object
+methods stored as function-valued props already call, minus `this`). Closures capturing heap
+environment records.
 **Gate:** prototype-based method dispatch + array push/index round-trips; a class-ish pattern
 (constructor + prototype methods) runs.
 
