@@ -92,9 +92,15 @@ A **temp-root stack** (`Interp.tempRoots`, marked by `collect`) keeps in-flight 
 closures, and part-built literals alive across a GC triggered mid-dispatch (a call argument can be
 another call) — verified byte-identical under 177 collections. This closed a real
 memory-safety hazard, not a theoretical one.
+**Landed since:** `for` loops (97ac34b), `typeof`, `try`/`catch`/`throw`/`finally` (exceptions via
+an unwinding flag that crosses call boundaries; pending values GC-rooted across finally), and
+`++`/`--` + compound assignment + ternary (39cd87f, shared readLValue/writeLValue). During this
+work a real **Milo compiler bug** surfaced and was fixed (7e77a0d): match-binding allocas were
+numbered from a different counter than `let`/for allocas, so two same-named locals of different
+types could collide on one `%name.N.addr` SSA name → link error.
 **Still open:** prototype-*chain* lookup for *shared* methods (`Ctor.prototype.m`) — needs
-functions to carry a prototype object; today each instance gets its own methods. `for` loops,
-ternary, `typeof`, `instanceof`, `throw`/`try`/`catch`.
+functions to carry a prototype object; today each instance gets its own methods. `instanceof`,
+`Error` objects, `switch`, `for...in`/`for...of`, bitwise ops, string/array methods.
 **Gate:** prototype-based method dispatch + a class-ish pattern (constructor + prototype methods).
 
 **Test yardstick (decided):** milojs *is* the engine, so unlike minibun's JSC, both test262 and
