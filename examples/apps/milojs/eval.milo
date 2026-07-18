@@ -12,7 +12,7 @@ from "./runtime" import {
     Interp
 }
 from "./builtins" import {
-    stringMethod, charAt
+    stringMethod, charAt, mjStringifyVal, mjJsonParse, mjJsonOmitted
 }
 from "std/math" import {
     mathMod
@@ -188,6 +188,8 @@ let NATIVE_TYPE_ERROR: i64 = 1
 let NATIVE_RANGE_ERROR: i64 = 2
 let NATIVE_SYNTAX_ERROR: i64 = 3
 let NATIVE_REFERENCE_ERROR: i64 = 4
+let NATIVE_JSON_STRINGIFY: i64 = 5
+let NATIVE_JSON_PARSE: i64 = 6
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -222,6 +224,20 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         objSet(st, o, "message", JSValue.Str(msg))
         return JSValue.Obj(o)
+    }
+    if id == NATIVE_JSON_STRINGIFY {
+        if argVals.len() == 0 || mjJsonOmitted(argVals[0]) {
+            // JSON.stringify(undefined) / a function is the JS value undefined
+            return JSValue.Undefined
+        }
+        return JSValue.Str(mjStringifyVal(argVals[0], st))
+    }
+    if id == NATIVE_JSON_PARSE {
+        if argVals.len() == 0 {
+            return JSValue.Undefined
+        }
+        let text = toStr(argVals[0])
+        return mjJsonParse(text, st)
     }
     return JSValue.Undefined
 }
@@ -263,6 +279,11 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "RangeError", JSValue.Native(NATIVE_RANGE_ERROR))
     scopeDefine(st, 0, "SyntaxError", JSValue.Native(NATIVE_SYNTAX_ERROR))
     scopeDefine(st, 0, "ReferenceError", JSValue.Native(NATIVE_REFERENCE_ERROR))
+    // JSON is a plain object whose methods are native functions
+    let json = newObject(st)
+    objSet(st, json, "stringify", JSValue.Native(NATIVE_JSON_STRINGIFY))
+    objSet(st, json, "parse", JSValue.Native(NATIVE_JSON_PARSE))
+    scopeDefine(st, 0, "JSON", JSValue.Obj(json))
 }
 
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).
@@ -917,6 +938,12 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 JSValue.Func(fIdx, envIdx) => {
                     let argVals = evalArgs(prog, argsIdx, st, scope)
                     let r = callFunction(prog, fIdx, envIdx, argVals, JSValue.Obj(o), st)
+                    popTemp(st)
+                    return r
+                }
+                JSValue.Native(id) => {
+                    let argVals = evalArgs(prog, argsIdx, st, scope)
+                    let r = callNative(id, argVals, st)
                     popTemp(st)
                     return r
                 }

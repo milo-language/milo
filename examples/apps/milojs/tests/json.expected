@@ -1,0 +1,17 @@
+42
+"hi"
+true false null
+{"a":1,"b":"two","c":true}
+[1,2,3]
+{"nested":{"x":[1,2],"y":"z"},"list":[{"n":1},{"n":2}]}
+{"a":1}
+[1,null,3]
+"quote\"back\\slash\nnewline\ttab"
+{"n":null,"i":null}
+42 str true null
+ada 36 b 2
+3 40
+42 2
+7 x-y true
+6
+[{"v":2},{"v":3}]

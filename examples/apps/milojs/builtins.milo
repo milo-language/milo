@@ -15,8 +15,13 @@ fn isWs(c: u8): bool {
     return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8
 }
 
-// Normalize a possibly-negative slice index to [0, len], JS-style.
-fn clampIndex(idx: i64, len: i64): i64 {
+// Normalize a possibly-negative slice index to [0, len], JS-style. The postcondition is the
+// safety contract every caller relies on: the returned index is always in bounds for a
+// buffer of `len`, so `s[clampIndex(..)]` up to (not including) `len` can never read OOB.
+fn clampIndex(idx: i64, len: i64): i64
+requires len >= 0
+ensures result >= 0 && result <= len
+{
     var i = idx
     if i < 0 {
         i = len + i
@@ -36,7 +41,10 @@ fn strSlice(s: &string, start: i64, end: i64): string {
     let b = clampIndex(end, len)
     var out = String.withCapacity(0)
     var i = a
-    while i < b {
+    while i < b
+    invariant
+    i >= 0 && i <= len
+    {
         out.push(s[i])
         i = i + 1
     }
@@ -60,10 +68,17 @@ fn jsIndexOf(s: &string, sub: &string, start: i64): i64 {
     if i < 0 {
         i = 0
     }
-    while i + m <= n {
+    while i + m <= n
+    invariant
+    i >= 0
+    {
         var j: i64 = 0
         var matched = true
-        while j < m {
+        while j < m
+        invariant
+        j >= 0 && j <= m
+        {
+            // safe: i+j < i+m <= n = s.len(), and j < m = sub.len()
             if s[i + j] != sub[j] {
                 matched = false
                 j = m
@@ -89,7 +104,10 @@ fn jsStartsWith(s: &string, sub: &string): bool {
         return false
     }
     var j: i64 = 0
-    while j < m {
+    while j < m
+    invariant
+    j >= 0 && j <= m
+    {
         if s[j] != sub[j] {
             return false
         }
@@ -105,7 +123,11 @@ fn jsEndsWith(s: &string, sub: &string): bool {
         return false
     }
     var j: i64 = 0
-    while j < m {
+    while j < m
+    invariant
+    j >= 0 && j <= m
+    {
+        // safe: m <= n guarded above, so n-m >= 0 and n-m+j < n = s.len()
         if s[n - m + j] != sub[j] {
             return false
         }
@@ -117,7 +139,10 @@ fn jsEndsWith(s: &string, sub: &string): bool {
 fn strUpper(s: &string): string {
     var out = String.withCapacity(s.len())
     var i: i64 = 0
-    while i < s.len() {
+    while i < s.len()
+    invariant
+    i >= 0 && i <= s.len()
+    {
         var c = s[i]
         if c >= 'a' && c <= 'z' {
             c = c - 32
@@ -131,7 +156,10 @@ fn strUpper(s: &string): string {
 fn strLower(s: &string): string {
     var out = String.withCapacity(s.len())
     var i: i64 = 0
-    while i < s.len() {
+    while i < s.len()
+    invariant
+    i >= 0 && i <= s.len()
+    {
         var c = s[i]
         if c >= 'A' && c <= 'Z' {
             c = c + 32
@@ -285,4 +313,292 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         return JSValue.Str(strSlice(s, 0, idx) + rep + strSlice(s, idx + pat.len(), s.len()))
     }
     return JSValue.Undefined
+}
+
+// ── JSON ── (mj-prefixed to avoid colliding with std/json in the flat namespace)
+
+fn mjJsonEscape(s: &string): string {
+    var out = String.withCapacity(s.len() + 2)
+    out.push(34 as u8)
+    var i: i64 = 0
+    while i < s.len() {
+        let c = s[i]
+        if c == 34 as u8 {
+            out.push(92 as u8)
+            out.push(34 as u8)
+        } else if c == 92 as u8 {
+            out.push(92 as u8)
+            out.push(92 as u8)
+        } else if c == 10 as u8 {
+            out.push(92 as u8)
+            out.push('n')
+        } else if c == 9 as u8 {
+            out.push(92 as u8)
+            out.push('t')
+        } else if c == 13 as u8 {
+            out.push(92 as u8)
+            out.push('r')
+        } else {
+            out.push(c)
+        }
+        i = i + 1
+    }
+    out.push(34 as u8)
+    return out
+}
+
+fn mjJsonOmitted(v: &JSValue): bool {
+    match v {
+        JSValue.Undefined => {
+            return true
+        }
+        JSValue.Func(_f, _e) => {
+            return true
+        }
+        JSValue.Native(_id) => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+// Compact JSON text for a value (no indentation). undefined/function become
+// "null" in arrays; object props holding them are omitted. NaN/Infinity → null.
+fn mjStringifyVal(v: &JSValue, st: &Interp): string {
+    match v {
+        JSValue.Null => {
+            return "null"
+        }
+        JSValue.Undefined => {
+            return "null"
+        }
+        JSValue.Func(_f, _e) => {
+            return "null"
+        }
+        JSValue.Native(_id) => {
+            return "null"
+        }
+        JSValue.Bool(b) => {
+            if b {
+                return "true"
+            }
+            return "false"
+        }
+        JSValue.Number(n) => {
+            if !(n == n) || !isFiniteF(n) {
+                return "null"
+            }
+            return numToStr(n)
+        }
+        JSValue.Str(s) => {
+            return mjJsonEscape(s)
+        }
+        JSValue.Obj(o) => {
+            if st.objects[o].isArray {
+                var out = "["
+                var i: i64 = 0
+                let n = st.objects[o].elems.len()
+                while i < n {
+                    if i > 0 {
+                        out = out + ","
+                    }
+                    let e = cloneValue(st.objects[o].elems[i])
+                    out = out + mjStringifyVal(e, st)
+                    i = i + 1
+                }
+                return out + "]"
+            }
+            var out = "{"
+            var first = true
+            var i: i64 = 0
+            let n = st.objects[o].props.len()
+            while i < n {
+                let key = st.objects[o].props[i].key.clone()
+                let val = cloneValue(st.objects[o].props[i].value)
+                if !mjJsonOmitted(val) {
+                    if !first {
+                        out = out + ","
+                    }
+                    first = false
+                    out = out + mjJsonEscape(key) + ":" + mjStringifyVal(val, st)
+                }
+                i = i + 1
+            }
+            return out + "}"
+        }
+    }
+}
+
+// ── JSON parser (recursive descent over a byte cursor) ──
+
+struct JCur {
+    pos: i64,
+}
+
+fn mjSkipWs(s: &string, c: &mut JCur) {
+    while c.pos < s.len() && isWs(s[c.pos]) {
+        c.pos = c.pos + 1
+    }
+}
+
+fn mjParseString(s: &string, c: &mut JCur): string {
+    c.pos = c.pos + 1
+    var out = String.withCapacity(16)
+    while c.pos < s.len() && s[c.pos] != 34 as u8 {
+        let ch = s[c.pos]
+        if ch == 92 as u8 && c.pos + 1 < s.len() {
+            let e = s[c.pos + 1]
+            if e == 'n' {
+                out.push(10 as u8)
+            } else if e == 't' {
+                out.push(9 as u8)
+            } else if e == 'r' {
+                out.push(13 as u8)
+            } else if e == 34 as u8 {
+                out.push(34 as u8)
+            } else if e == 92 as u8 {
+                out.push(92 as u8)
+            } else if e == '/' {
+                out.push('/')
+            } else {
+                out.push(e)
+            }
+            c.pos = c.pos + 2
+        } else {
+            out.push(ch)
+            c.pos = c.pos + 1
+        }
+    }
+    c.pos = c.pos + 1
+    return out
+}
+
+fn mjParseNumber(s: &string, c: &mut JCur): JSValue {
+    let start = c.pos
+    var going = true
+    while going {
+        if c.pos >= s.len() {
+            going = false
+        } else {
+            let ch = s[c.pos]
+            if (ch >= '0' && ch <= '9') || ch == '-' || ch == '+' || ch == '.' || ch == 'e' || ch == 'E' {
+                c.pos = c.pos + 1
+            } else {
+                going = false
+            }
+        }
+    }
+    let numStr = strSlice(s, start, c.pos)
+    match parseFloat(numStr) {
+        Option.Some(n) => {
+            return JSValue.Number(n)
+        }
+        Option.None => {
+            return JSValue.Number(jsNan())
+        }
+    }
+}
+
+fn mjParseArray(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
+    c.pos = c.pos + 1
+    let arr = newArray(st)
+    pushTemp(st, JSValue.Obj(arr))
+    mjSkipWs(s, c)
+    if c.pos < s.len() && s[c.pos] == ']' {
+        c.pos = c.pos + 1
+        popTemp(st)
+        return JSValue.Obj(arr)
+    }
+    var going = true
+    while going {
+        let v = mjParseVal(s, c, st)
+        arrPush(st, arr, v)
+        mjSkipWs(s, c)
+        if c.pos < s.len() && s[c.pos] == ',' {
+            c.pos = c.pos + 1
+        } else {
+            going = false
+        }
+    }
+    if c.pos < s.len() && s[c.pos] == ']' {
+        c.pos = c.pos + 1
+    }
+    popTemp(st)
+    return JSValue.Obj(arr)
+}
+
+fn mjParseObject(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
+    c.pos = c.pos + 1
+    let obj = newObject(st)
+    pushTemp(st, JSValue.Obj(obj))
+    mjSkipWs(s, c)
+    if c.pos < s.len() && s[c.pos] == '}' {
+        c.pos = c.pos + 1
+        popTemp(st)
+        return JSValue.Obj(obj)
+    }
+    var going = true
+    while going {
+        mjSkipWs(s, c)
+        var key = ""
+        if c.pos < s.len() && s[c.pos] == 34 as u8 {
+            key = mjParseString(s, c)
+        }
+        mjSkipWs(s, c)
+        if c.pos < s.len() && s[c.pos] == ':' {
+            c.pos = c.pos + 1
+        }
+        let v = mjParseVal(s, c, st)
+        objSet(st, obj, key, v)
+        mjSkipWs(s, c)
+        if c.pos < s.len() && s[c.pos] == ',' {
+            c.pos = c.pos + 1
+        } else {
+            going = false
+        }
+    }
+    if c.pos < s.len() && s[c.pos] == '}' {
+        c.pos = c.pos + 1
+    }
+    popTemp(st)
+    return JSValue.Obj(obj)
+}
+
+fn mjParseVal(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
+    mjSkipWs(s, c)
+    if c.pos >= s.len() {
+        return JSValue.Undefined
+    }
+    let ch = s[c.pos]
+    if ch == '{' {
+        return mjParseObject(s, c, st)
+    }
+    if ch == '[' {
+        return mjParseArray(s, c, st)
+    }
+    if ch == 34 as u8 {
+        return JSValue.Str(mjParseString(s, c))
+    }
+    if ch == 't' {
+        c.pos = c.pos + 4
+        return JSValue.Bool(true)
+    }
+    if ch == 'f' {
+        c.pos = c.pos + 5
+        return JSValue.Bool(false)
+    }
+    if ch == 'n' {
+        c.pos = c.pos + 4
+        return JSValue.Null
+    }
+    return mjParseNumber(s, c)
+}
+
+fn mjJsonParse(s: &string, st: &mut Interp): JSValue {
+    var c = JCur {
+        pos: 0
+    }
+    return mjParseVal(s, c, st)
 }
