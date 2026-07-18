@@ -315,6 +315,87 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
     return JSValue.Undefined
 }
 
+// ── Math ── pure Milo for the arithmetic ops; only sqrt/pow reach for the
+// hardware/libc version (sqrt must be IEEE correctly-rounded, which is a CPU
+// instruction, and pow is hard to get last-bit-accurate by hand).
+
+extern fn sqrt(x: f64): f64
+
+extern fn pow(x: f64, y: f64): f64
+
+let TWO53: f64 = 9007199254740992.0
+
+fn mjIsNan(x: f64): bool {
+    return !(x == x)
+}
+
+fn mjFloor(x: f64): f64 {
+    if mjIsNan(x) || !isFiniteF(x) {
+        return x
+    }
+    // |x| >= 2^53 is already integral; also keeps the i64 cast in range
+    if x >= TWO53 || x <= 0.0 - TWO53 {
+        return x
+    }
+    let t = (x as i64) as f64
+    if t > x {
+        return t - 1.0
+    }
+    return t
+}
+
+fn mjCeil(x: f64): f64 {
+    return 0.0 - mjFloor(0.0 - x)
+}
+
+fn mjTrunc(x: f64): f64 {
+    if mjIsNan(x) || !isFiniteF(x) {
+        return x
+    }
+    if x >= TWO53 || x <= 0.0 - TWO53 {
+        return x
+    }
+    return (x as i64) as f64
+}
+
+fn mjRound(x: f64): f64 {
+    if mjIsNan(x) || !isFiniteF(x) {
+        return x
+    }
+    // JS rounds halves toward +Infinity: round(2.5)=3, round(-2.5)=-2
+    return mjFloor(x + 0.5)
+}
+
+fn mjAbs(x: f64): f64 {
+    if x < 0.0 {
+        return 0.0 - x
+    }
+    return x
+}
+
+fn mjSign(x: f64): f64 {
+    if mjIsNan(x) {
+        return x
+    }
+    if x > 0.0 {
+        return 1.0
+    }
+    if x < 0.0 {
+        return 0.0 - 1.0
+    }
+    return x
+}
+
+// xorshift64 — a pure-Milo PRNG for Math.random(). Deterministic seed (a real
+// runtime would seed from entropy); good enough for [0,1) values, not crypto.
+fn mjNextRandom(state: i64): i64 {
+    var x = state
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    return x
+}
+
 // ── JSON ── (mj-prefixed to avoid colliding with std/json in the flat namespace)
 
 fn mjJsonEscape(s: &string): string {

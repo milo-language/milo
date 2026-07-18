@@ -72,6 +72,8 @@ struct Interp {
     // boundaries where the call returns a JSValue, not a Flow.)
     throwing: bool,
     thrownValue: JSValue,
+    // Math.random() PRNG state (xorshift64)
+    rngState: i64,
     allocSinceGc: i64,
     gcThreshold: i64,
     gcRuns: i64,

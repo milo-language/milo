@@ -198,6 +198,17 @@ let NATIVE_SYNTAX_ERROR: i64 = 3
 let NATIVE_REFERENCE_ERROR: i64 = 4
 let NATIVE_JSON_STRINGIFY: i64 = 5
 let NATIVE_JSON_PARSE: i64 = 6
+let NATIVE_MATH_FLOOR: i64 = 7
+let NATIVE_MATH_CEIL: i64 = 8
+let NATIVE_MATH_ROUND: i64 = 9
+let NATIVE_MATH_TRUNC: i64 = 10
+let NATIVE_MATH_ABS: i64 = 11
+let NATIVE_MATH_SIGN: i64 = 12
+let NATIVE_MATH_SQRT: i64 = 13
+let NATIVE_MATH_POW: i64 = 14
+let NATIVE_MATH_MIN: i64 = 15
+let NATIVE_MATH_MAX: i64 = 16
+let NATIVE_MATH_RANDOM: i64 = 17
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -247,6 +258,91 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         let text = toStr(argVals[0])
         return mjJsonParse(text, st)
     }
+    if id >= NATIVE_MATH_FLOOR && id <= NATIVE_MATH_RANDOM {
+        return mathNative(id, argVals, st)
+    }
+    return JSValue.Undefined
+}
+
+fn mathNative(id: i64, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+    if id == NATIVE_MATH_RANDOM {
+        let next = mjNextRandom(st.rngState)
+        st.rngState = next
+        var bits = next
+        if bits < 0 {
+            bits = 0 - bits
+        }
+        let m = bits % 9007199254740992
+        return JSValue.Number((m as f64) / 9007199254740992.0)
+    }
+    if id == NATIVE_MATH_MIN {
+        if args.len() == 0 {
+            return JSValue.Number(jsInf())
+        }
+        var m = toNum(args[0])
+        var i: i64 = 0
+        while i < args.len() {
+            let v = toNum(args[i])
+            if !(v == v) {
+                return JSValue.Number(jsNan())
+            }
+            if v < m {
+                m = v
+            }
+            i = i + 1
+        }
+        return JSValue.Number(m)
+    }
+    if id == NATIVE_MATH_MAX {
+        if args.len() == 0 {
+            return JSValue.Number(0.0 - jsInf())
+        }
+        var m = toNum(args[0])
+        var i: i64 = 0
+        while i < args.len() {
+            let v = toNum(args[i])
+            if !(v == v) {
+                return JSValue.Number(jsNan())
+            }
+            if v > m {
+                m = v
+            }
+            i = i + 1
+        }
+        return JSValue.Number(m)
+    }
+    var x = 0.0
+    if args.len() > 0 {
+        x = toNum(args[0])
+    }
+    if id == NATIVE_MATH_FLOOR {
+        return JSValue.Number(mjFloor(x))
+    }
+    if id == NATIVE_MATH_CEIL {
+        return JSValue.Number(mjCeil(x))
+    }
+    if id == NATIVE_MATH_ROUND {
+        return JSValue.Number(mjRound(x))
+    }
+    if id == NATIVE_MATH_TRUNC {
+        return JSValue.Number(mjTrunc(x))
+    }
+    if id == NATIVE_MATH_ABS {
+        return JSValue.Number(mjAbs(x))
+    }
+    if id == NATIVE_MATH_SIGN {
+        return JSValue.Number(mjSign(x))
+    }
+    if id == NATIVE_MATH_SQRT {
+        return JSValue.Number(sqrt(x))
+    }
+    if id == NATIVE_MATH_POW {
+        var y = 0.0
+        if args.len() > 1 {
+            y = toNum(args[1])
+        }
+        return JSValue.Number(pow(x, y))
+    }
     return JSValue.Undefined
 }
 
@@ -292,6 +388,22 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, json, "stringify", JSValue.Native(NATIVE_JSON_STRINGIFY))
     objSet(st, json, "parse", JSValue.Native(NATIVE_JSON_PARSE))
     scopeDefine(st, 0, "JSON", JSValue.Obj(json))
+    // Math likewise: native-fn methods + numeric constants
+    let math = newObject(st)
+    objSet(st, math, "floor", JSValue.Native(NATIVE_MATH_FLOOR))
+    objSet(st, math, "ceil", JSValue.Native(NATIVE_MATH_CEIL))
+    objSet(st, math, "round", JSValue.Native(NATIVE_MATH_ROUND))
+    objSet(st, math, "trunc", JSValue.Native(NATIVE_MATH_TRUNC))
+    objSet(st, math, "abs", JSValue.Native(NATIVE_MATH_ABS))
+    objSet(st, math, "sign", JSValue.Native(NATIVE_MATH_SIGN))
+    objSet(st, math, "sqrt", JSValue.Native(NATIVE_MATH_SQRT))
+    objSet(st, math, "pow", JSValue.Native(NATIVE_MATH_POW))
+    objSet(st, math, "min", JSValue.Native(NATIVE_MATH_MIN))
+    objSet(st, math, "max", JSValue.Native(NATIVE_MATH_MAX))
+    objSet(st, math, "random", JSValue.Native(NATIVE_MATH_RANDOM))
+    objSet(st, math, "PI", JSValue.Number(3.141592653589793))
+    objSet(st, math, "E", JSValue.Number(2.718281828459045))
+    scopeDefine(st, 0, "Math", JSValue.Obj(math))
 }
 
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).

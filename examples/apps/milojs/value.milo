@@ -61,6 +61,11 @@ fn jsNan(): f64 {
     return z / z
 }
 
+fn jsInf(): f64 {
+    var z = 0.0
+    return 1.0 / z
+}
+
 fn isFiniteF(n: f64): bool {
     // inf*0 and nan*0 are both NaN; finite*0 == 0
     return n * 0.0 == 0.0
