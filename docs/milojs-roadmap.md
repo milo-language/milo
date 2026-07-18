@@ -52,14 +52,25 @@ two independent counters, closure-over-loop-var, compose). Friction found: no `1
 literals; f64 `!=` is an *ordered* compare so `n != n` is false for NaN (must write `!(n == n)`)
 — candidate for a checker lint / `std/math` `isNan`.
 
-### Stage 2 — managed heap + mark-sweep GC ⬜  ⟶ the crux
-JS objects are cyclic; Milo ownership cannot hold a cycle. Build an explicit managed heap:
-objects live in a Milo `Vec<Obj>`, references are `u32` handles (not Milo pointers), and a
-**mark-sweep collector** walks roots (scope chain + value stack) and frees unreachable slots.
-Extend `JSValue` with an `Obj(u32)` handle variant. This is the memory model note your design
-has carried as "arenas for cyclic data (deferred)" — made concrete and JS-specific.
-**Gate:** allocate a cyclic object graph, drop all roots, collect, observe the slots reclaimed
-(instrument the sweep count). No leak, no double-free (ASAN clean under the Milo host).
+### Stage 2 — mark-sweep GC over the scope arena ✅ (this session)
+Scopes leaked (one per block/call — a while loop grew the arena unbounded). Added a mark-sweep
+collector: **stable slots + free-list reuse, no compaction** (closures + parent links reference
+scopes by index — moving a slot would need a fixup reaching in-flight values on the native
+stack, which is unreachable). Roots = global scope 0 + an explicit `active` dynamic-call-stack
+`Vec` (a fib frame's `parent` is global/lexical, not its caller/dynamic, so the parent chain
+alone under-roots the live call stack). Mark walks parent + any `Func(fn, envIdx)` closure envs
+in bindings; sweep adds unmarked non-free slots to the free-list and clears their vars.
+**Safepoint discipline — the key idea:** GC runs *only* at `execBlock` statement boundaries
+(one `maybeGc` call), the sole point where every live value is stored in a scope binding and no
+closure is in-flight mid-expression. This makes transient closure refs safe with no temp-root
+plumbing — keeps the collector ~130 lines of plain loops, no `unsafe`, no lifetimes.
+**Proof:** GC stress (`tests/gc.js`, ~800k scope allocations) stays byte-identical to `bun`
+*and* `MILOJS_GC_STATS=1` shows the **arena capped at 1028 slots** (vs ~800k without GC), 586
+collections, live working set 2–4, free-list fully reused. Extend `markScope` with object/array
+variants when Stage 3's heap lands — same index-walk shape.
+- **Note:** this GCs *scopes*; Stage 3 adds an object/array heap (`Obj(u32)` handle variant on
+  `JSValue`) to the same collector. The scope arena proved the model on the cyclic case
+  (closure ↔ env) first.
 
 ### Stage 3 — objects, prototypes, closures over the heap ⬜
 Object literals, property get/set, arrays (as objects with integer keys + `length`),

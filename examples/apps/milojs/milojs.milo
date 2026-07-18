@@ -2,16 +2,19 @@
 // written in pure Milo. Goal (later stages): replace minibun's JavaScriptCore
 // dependency with this engine.
 //
-// Stage 1 scope: primitives (number/string/bool/null/undefined), variables,
+// Scope so far: primitives (number/string/bool/null/undefined), variables,
 // arithmetic/comparison/logic with JS-ish coercion, if/else, while, functions,
-// closures, console.log. No objects/arrays/prototypes/this/GC/exceptions yet.
+// closures, console.log, and a mark-sweep GC over the scope arena (stage 2).
+// No objects/arrays/prototypes/this/exceptions yet.
 //
 // Design notes:
 // - AST is index-based: enums hold i64 indices into flat Vecs in Prog (the
 //   std/json cursor pattern) — recursive types without stored references.
-// - Scopes live in an append-only arena (Vec<Scope>, parent by index) so a
-//   closure can capture its defining scope by index. Nothing is ever freed;
-//   stage 2 (mark-sweep GC) reclaims dead scopes.
+// - Scopes live in an arena (Vec<Scope>, parent by index) so a closure can
+//   capture its defining scope by index. Dead scopes are reclaimed by mark-sweep
+//   (see collect): slots stay stable and are reused via a free-list, never moved,
+//   because closures and parent links reference scopes by index. GC runs only at
+//   execBlock statement boundaries — the one point with no closure in-flight.
 //
 // Run: milo run examples/apps/milojs/milojs.milo -- path/to/script.js
 
@@ -26,6 +29,9 @@ from "std/strconv" import {
 }
 from "std/os" import {
     snprintf
+}
+from "std/env" import {
+    getEnv
 }
 
 extern fn floor(x: f64): f64
@@ -1087,21 +1093,132 @@ struct Binding {
     value: JSValue,
 }
 
+// A freed scope slot is marked by parent == GC_FREE so the sweep skips it and
+// newScope can reuse it. Real parents are >= 0 (global) or -1 (global's parent).
+let GC_FREE: i64 = -2
+
 struct Scope {
     parent: i64,
     vars: Vec<Binding>,
+    mark: bool,
 }
 
 struct Interp {
     scopes: Vec<Scope>,
+    // reusable dead-scope slots (indices stay stable — closures hold them by index)
+    freeList: Vec<i64>,
+    // the dynamic call/block stack: scopes live on the native eval stack but not
+    // reachable via lexical parent links (a fib frame's parent is global, not its
+    // caller). This is the extra GC root set the parent chain can't provide.
+    active: Vec<i64>,
+    allocSinceGc: i64,
+    gcThreshold: i64,
+    gcRuns: i64,
+    gcStats: bool,
 }
 
 fn newScope(st: &mut Interp, parent: i64): i64 {
+    st.allocSinceGc = st.allocSinceGc + 1
+    if st.freeList.len() > 0 {
+        let idx = st.freeList.pop()
+        st.scopes[idx] = Scope {
+            parent: parent, vars: Vec.new(), mark: false
+        }
+        return idx
+    }
     st.scopes.push(Scope {
-        parent: parent, vars: Vec.new()
+        parent: parent, vars: Vec.new(), mark: false
     }
     )
     return st.scopes.len() - 1
+}
+
+// Roots pushed/popped around every call and block body. Popping makes a
+// completed frame collectable at the next GC safepoint.
+fn pushActive(st: &mut Interp, scope: i64) {
+    st.active.push(scope)
+}
+
+fn popActive(st: &mut Interp) {
+    st.active.pop()
+}
+
+// Mark a scope live, then everything it can reach: its lexical parent and the
+// captured environments of any closures bound in it. Idempotent via the mark
+// flag, so cyclic closure graphs terminate.
+fn markScope(st: &mut Interp, i: i64) {
+    if i < 0 {
+        return
+    }
+    if st.scopes[i].mark {
+        return
+    }
+    st.scopes[i].mark = true
+    let parent = st.scopes[i].parent
+    var envs: Vec<i64> = Vec.new()
+    var k: i64 = 0
+    let n = st.scopes[i].vars.len()
+    while k < n {
+        let v = cloneValue(st.scopes[i].vars[k].value)
+        match v {
+            JSValue.Func(_f, envIdx) => {
+                envs.push(envIdx)
+            }
+            _ => {
+            }
+        }
+        k = k + 1
+    }
+    markScope(st, parent)
+    var m: i64 = 0
+    while m < envs.len() {
+        markScope(st, envs[m])
+        m = m + 1
+    }
+}
+
+// Mark-sweep over the scope arena. SAFE ONLY at execBlock statement boundaries:
+// there every live value is stored in a scope binding (a root) and no closure is
+// in-flight on the native stack mid-expression, so nothing reachable is missed.
+fn collect(st: &mut Interp) {
+    var i: i64 = 0
+    while i < st.scopes.len() {
+        st.scopes[i].mark = false
+        i = i + 1
+    }
+    // roots: global scope 0 + the whole dynamic call/block stack
+    markScope(st, 0)
+    var a: i64 = 0
+    while a < st.active.len() {
+        markScope(st, st.active[a])
+        a = a + 1
+    }
+    var freed: i64 = 0
+    var s: i64 = 0
+    while s < st.scopes.len() {
+        let isFree = st.scopes[s].parent == GC_FREE
+        if s != 0 && !isFree && !st.scopes[s].mark {
+            st.scopes[s].vars = Vec.new()
+            st.scopes[s].parent = GC_FREE
+            st.freeList.push(s)
+            freed = freed + 1
+        }
+        s = s + 1
+    }
+    st.gcRuns = st.gcRuns + 1
+    st.allocSinceGc = 0
+    if st.gcStats {
+        let liveSlots = st.scopes.len() - st.freeList.len()
+        print("[gc] run " + i64ToStr(st.gcRuns) + ": freed " + i64ToStr(freed) + ", live " + i64ToStr(liveSlots) + ", arena " + i64ToStr(st.scopes.len()))
+    }
+}
+
+// Run a collection if enough scopes were allocated since the last one. Called
+// only from execBlock between statements (the GC safepoint).
+fn maybeGc(st: &mut Interp) {
+    if st.allocSinceGc >= st.gcThreshold {
+        collect(st)
+    }
 }
 
 fn scopeDefine(st: &mut Interp, scope: i64, name: string, value: JSValue) {
@@ -1340,6 +1457,9 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
             let argVals = evalArgs(prog, argsIdx, st, scope)
             // call scope hangs off the closure's captured scope — lexical, not dynamic
             let callScope = newScope(st, envIdx)
+            // root the frame across the whole call so a GC inside the body (or in
+            // a nested call) can't reclaim it
+            pushActive(st, callScope)
             var j: i64 = 0
             let nParams = prog.funcs[fIdx].params.len()
             while j < nParams {
@@ -1353,6 +1473,7 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
             }
             let body = prog.funcs[fIdx].body
             let flow = execBlock(prog, body, st, callScope)
+            popActive(st)
             match flow {
                 Flow.Ret(v) => {
                     return v
@@ -1416,7 +1537,10 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
         }
         Stmt.Block(b) => {
             let child = newScope(st, scope)
-            return execBlock(prog, b, st, child)
+            pushActive(st, child)
+            let flow = execBlock(prog, b, st, child)
+            popActive(st)
+            return flow
         }
         Stmt.FuncDecl(f) => {
             let name = prog.funcs[f].name.clone()
@@ -1433,6 +1557,9 @@ fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
     var j: i64 = 0
     let n = prog.blocks[blockIdx].len()
     while j < n {
+        // statement boundary = the only GC safepoint (no closure in-flight, all
+        // live values rooted in scopes)
+        maybeGc(st)
         let sIdx = prog.blocks[blockIdx][j]
         let flow = execStmt(prog, sIdx, st, scope)
         match flow {
@@ -1465,12 +1592,25 @@ fn main(): i32 {
                 toks: toks, pos: 0
             }
             let top = parseProgram(p, prog)
-            var st = Interp {
-                scopes: Vec.new()
+            var gcStats = false
+            match getEnv("MILOJS_GC_STATS") {
+                Option.Some(_v) => {
+                    gcStats = true
+                }
+                Option.None => {
+                }
             }
-            // scope 0 = global
+            var st = Interp {
+                scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
+                allocSinceGc: 0, gcThreshold: 1024, gcRuns: 0, gcStats: gcStats
+            }
+            // scope 0 = global (never collected — always a GC root)
             newScope(st, -1)
             execBlock(prog, top, st, 0)
+            if st.gcStats {
+                collect(st)
+                print("[gc] total runs " + i64ToStr(st.gcRuns) + ", arena slots " + i64ToStr(st.scopes.len()) + ", free " + i64ToStr(st.freeList.len()))
+            }
             return 0
         }
         Result.Err(_e) => {
