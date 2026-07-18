@@ -3,7 +3,7 @@
 // compile error; identical bodies still merge; prelude override keeps working; and
 // separately-compiled objects keep their own copies at link time (internal linkage).
 import { test, expect } from "bun:test";
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import { writeFileSync, mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -11,13 +11,11 @@ import { tmpdir } from "os";
 const COMPILER = join(import.meta.dir, "..", "src", "main.ts");
 const DIR = mkdtempSync(join(tmpdir(), "milo-modules-"));
 
+// spawnSync (not execSync) so stderr is captured on BOTH exit paths — a non-fatal
+// warning exits 0, and execSync only surfaces stderr on a non-zero exit.
 function milo(args: string): { code: number; out: string; err: string } {
-  try {
-    const out = execSync(`bun run ${COMPILER} ${args}`, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
-    return { code: 0, out, err: "" };
-  } catch (e: any) {
-    return { code: e.status ?? 1, out: e.stdout?.toString() ?? "", err: e.stderr?.toString() ?? "" };
-  }
+  const r = spawnSync("bun", ["run", COMPILER, ...args.split(" ").filter(Boolean)], { encoding: "utf-8" });
+  return { code: r.status ?? 1, out: r.stdout ?? "", err: r.stderr ?? "" };
 }
 
 function write(name: string, content: string): string {
@@ -39,7 +37,7 @@ fn main(): void {
   const r = milo(`run ${main}`);
   expect(r.code).not.toBe(0);
   const msg = r.err + r.out;
-  expect(msg).toContain("duplicate-fn");
+  expect(msg).toContain("defined in two modules with different bodies");
   expect(msg).toContain("dup_a.milo");
   expect(msg).toContain("dup_b.milo");
 });
@@ -59,16 +57,32 @@ fn main(): void {
   expect(r.out.trim()).toBe("14");
 });
 
-test("user redefinition of a prelude-provided fn still overrides silently", () => {
-  const main = write("override_main.milo", `fn strTrim(s: string): string { return "overridden" }
+test("user redefinition of a prelude fn (same signature) warns but still overrides", () => {
+  // Same signature as std/string's strIndexOf, different body. Compiles — the sigs
+  // match — but the flat namespace makes this body win everywhere, so it warns
+  // (shadows-stdlib-override) rather than rebinding silently.
+  const main = write("override_main.milo", `fn strIndexOf(haystack: &string, needle: &string): i64 { return -42 }
+fn main(): void {
+    print(strIndexOf("hello", "l"))
+}
+`);
+  const r = milo(`run ${main}`);
+  expect(r.code).toBe(0);
+  expect(r.out.trim()).toBe("-42");
+  expect(r.err).toContain("shadows a standard-library function");
+});
+
+test("user redefinition of a prelude fn with a DIFFERENT signature is a hard error", () => {
+  // std/string's strTrim is (s: &string): string; this (s: string) mismatches, so
+  // the library's own calls would break — rejected outright, not merely warned.
+  const main = write("override_sig_main.milo", `fn strTrim(s: string): string { return "overridden" }
 fn main(): void {
     print(strTrim("  x  "))
 }
 `);
   const r = milo(`run ${main}`);
-  expect(r.err).toBe("");
-  expect(r.code).toBe(0);
-  expect(r.out.trim()).toBe("overridden");
+  expect(r.code).not.toBe(0);
+  expect(r.err).toContain("shadows a standard-library function");
 });
 
 // The hades case: two separately-compiled objects whose imported helpers share a

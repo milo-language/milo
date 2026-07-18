@@ -27,6 +27,18 @@ name as a std/imported symbol (or any prior top-level def). Better: real
 module-scoped namespacing so a local `charAt` can't rebind std's. A warning alone
 would have caught all three.
 
+**RESOLVED (2026-07-18):** the resolver already *errored* on a user fn shadowing a
+stdlib fn with a **different** signature (`shadows-stdlib`) — the arity/type-mismatch
+trap. The silent case that bit here was a **same-signature, different-body** shadow:
+it type-checks, so it was the "documented last-wins override" path and warned about
+nothing, yet it silently rebinds the library's own internal calls to the user's body
+(exactly how std broke from the inside). Now emits `shadows-stdlib-override`
+(`src/resolver.ts` collects it, `src/checker.ts` warns), **on by default**,
+suppressible with `--allow=shadows-stdlib-override` and escalatable with `--deny`.
+Covered by `tests/shadowStdlibLint.test.ts` + updated `tests/modules.test.ts`. Full
+module-scoped namespacing (so a local `charAt` can't rebind std's *at all*) remains
+the bigger fix, not done — but the silent footgun is now surfaced.
+
 ## 2. No `break` / `continue` — the single biggest readability hit — ✅ SHIPPED (already landed in 8e7b4c8)
 
 Without loop control I write `var going = true` flag-loops everywhere, which is

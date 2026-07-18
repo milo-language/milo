@@ -261,6 +261,16 @@ let NATIVE_FILE_EXISTS: i64 = 26
 let NATIVE_OBJECT_VALUES: i64 = 27
 let NATIVE_OBJECT_ENTRIES: i64 = 28
 let NATIVE_OBJECT_FREEZE: i64 = 29
+let NATIVE_PROMISE_RESOLVE: i64 = 30
+let NATIVE_PROMISE_REJECT: i64 = 31
+let NATIVE_PROMISE_ALL: i64 = 32
+let NATIVE_PROMISE_ALLSETTLED: i64 = 33
+let NATIVE_PROMISE_RACE: i64 = 34
+// `new Promise(cb)` hands its executor a resolve/reject pair bound to one
+// specific promise. Natives are identified by a bare id, so the promise handle
+// is encoded into the id itself: base + handle*2 + (0 resolve | 1 reject).
+let NATIVE_PROMISE: i64 = 35
+let NATIVE_RESOLVER_BASE: i64 = 1000000
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -393,6 +403,95 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                 return target
             }
         }
+    }
+    if id >= NATIVE_RESOLVER_BASE {
+        let off = id - NATIVE_RESOLVER_BASE
+        let target = off / 2
+        var v = JSValue.Undefined
+        if argVals.len() > 0 {
+            v = cloneValue(argVals[0])
+        }
+        // first settle wins, as in JS
+        if st.objects[target].promiseState == 0 {
+            st.objects[target].promiseState = 1 + (off % 2)
+            st.objects[target].promiseValue = v
+        }
+        return JSValue.Undefined
+    }
+    if id == NATIVE_PROMISE_RESOLVE || id == NATIVE_PROMISE_REJECT {
+        var v = JSValue.Undefined
+        if argVals.len() > 0 {
+            v = cloneValue(argVals[0])
+        }
+        if id == NATIVE_PROMISE_RESOLVE {
+            // Promise.resolve(p) is p
+            let h = objHandle(v)
+            if h >= 0 && isPromise(st, h) {
+                return v
+            }
+            return JSValue.Obj(newPromise(st, 1, v))
+        }
+        return JSValue.Obj(newPromise(st, 2, v))
+    }
+    if id == NATIVE_PROMISE_ALL || id == NATIVE_PROMISE_ALLSETTLED || id == NATIVE_PROMISE_RACE {
+        let arr = newArray(st)
+        pushTemp(st, JSValue.Obj(arr))
+        var rejected = false
+        var rejectVal = JSValue.Undefined
+        var raceVal = JSValue.Undefined
+        var haveRace = false
+        if argVals.len() > 0 {
+            let src = objHandle(argVals[0])
+            if src >= 0 && st.objects[src].isArray {
+                var i: i64 = 0
+                let n = arrLen(st, src)
+                while i < n {
+                    let e = arrGet(st, src, i)
+                    let h = objHandle(e)
+                    var state: i64 = 1
+                    var val = cloneValue(e)
+                    if h >= 0 && isPromise(st, h) {
+                        state = st.objects[h].promiseState
+                        val = cloneValue(st.objects[h].promiseValue)
+                    }
+                    if !haveRace {
+                        raceVal = cloneValue(val)
+                        haveRace = true
+                    }
+                    if id == NATIVE_PROMISE_ALLSETTLED {
+                        let rec = newObject(st)
+                        pushTemp(st, JSValue.Obj(rec))
+                        if state == 2 {
+                            objSet(st, rec, "status", JSValue.Str("rejected"))
+                            objSet(st, rec, "reason", val)
+                        } else {
+                            objSet(st, rec, "status", JSValue.Str("fulfilled"))
+                            objSet(st, rec, "value", val)
+                        }
+                        popTemp(st)
+                        arrPush(st, arr, JSValue.Obj(rec))
+                    } else {
+                        if state == 2 && !rejected {
+                            rejected = true
+                            rejectVal = cloneValue(val)
+                        }
+                        arrPush(st, arr, val)
+                    }
+                    i = i + 1
+                }
+            }
+        }
+        popTemp(st)
+        if id == NATIVE_PROMISE_RACE {
+            if rejected {
+                return JSValue.Obj(newPromise(st, 2, rejectVal))
+            }
+            return JSValue.Obj(newPromise(st, 1, raceVal))
+        }
+        if rejected {
+            return JSValue.Obj(newPromise(st, 2, rejectVal))
+        }
+        return JSValue.Obj(newPromise(st, 1, JSValue.Obj(arr)))
     }
     if id == NATIVE_OBJECT_FREEZE {
         // no real immutability yet — callers only rely on the identity return
@@ -888,6 +987,14 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, math, "E", JSValue.Number(2.718281828459045))
     scopeDefine(st, 0, "Math", JSValue.Obj(math))
     scopeDefine(st, 0, "RegExp", JSValue.Native(NATIVE_REGEXP))
+    let promiseCtor = newObject(st)
+    st.promiseCtorObj = promiseCtor
+    objSet(st, promiseCtor, "resolve", JSValue.Native(NATIVE_PROMISE_RESOLVE))
+    objSet(st, promiseCtor, "reject", JSValue.Native(NATIVE_PROMISE_REJECT))
+    objSet(st, promiseCtor, "all", JSValue.Native(NATIVE_PROMISE_ALL))
+    objSet(st, promiseCtor, "allSettled", JSValue.Native(NATIVE_PROMISE_ALLSETTLED))
+    objSet(st, promiseCtor, "race", JSValue.Native(NATIVE_PROMISE_RACE))
+    scopeDefine(st, 0, "Promise", JSValue.Obj(promiseCtor))
     let objectCtor = newObject(st)
     objSet(st, objectCtor, "defineProperty", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTY))
     objSet(st, objectCtor, "keys", JSValue.Native(NATIVE_OBJECT_KEYS))
@@ -1036,6 +1143,24 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             if op == "void" {
                 return JSValue.Undefined
             }
+            if op == "await" {
+                let po = objHandle(va)
+                if po >= 0 && isPromise(st, po) {
+                    let ps = st.objects[po].promiseState
+                    let pv = cloneValue(st.objects[po].promiseValue)
+                    if ps == 2 {
+                        st.throwing = true
+                        st.thrownValue = pv
+                        return JSValue.Undefined
+                    }
+                    if ps == 1 {
+                        return pv
+                    }
+                    // still pending: nothing can ever settle it
+                    return JSValue.Undefined
+                }
+                return va
+            }
             if op == "+" {
                 return JSValue.Number(toNum(va))
             }
@@ -1162,6 +1287,33 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.New(calleeIdx, argsIdx) => {
             let calleeVal = evalExpr(prog, calleeIdx, st, scope)
+            // `new Promise(executor)` runs its executor immediately with a
+            // resolve/reject pair bound to the new promise. Handled here rather
+            // than in callNative because the executor is a user function and
+            // needs the program to run.
+            let ph = objHandle(calleeVal)
+            if ph >= 0 && isPromiseCtor(st, ph) {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                let pr = newPromise(st, 0, JSValue.Undefined)
+                pushTemp(st, JSValue.Obj(pr))
+                if argVals.len() > 0 {
+                    var exArgs: Vec<JSValue> = Vec.new()
+                    exArgs.push(JSValue.Native(NATIVE_RESOLVER_BASE + pr * 2))
+                    exArgs.push(JSValue.Native(NATIVE_RESOLVER_BASE + pr * 2 + 1))
+                    let _ = callValue(prog, argVals[0], exArgs, JSValue.Undefined, st)
+                    if st.throwing {
+                        let err = cloneValue(st.thrownValue)
+                        st.throwing = false
+                        st.thrownValue = JSValue.Undefined
+                        if st.objects[pr].promiseState == 0 {
+                            st.objects[pr].promiseState = 2
+                            st.objects[pr].promiseValue = err
+                        }
+                    }
+                }
+                popTemp(st)
+                return JSValue.Obj(pr)
+            }
             match calleeVal {
                 JSValue.Func(fIdx, envIdx) => {
                     pushTemp(st, JSValue.Func(fIdx, envIdx))
@@ -1422,14 +1574,31 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
     let body = prog.funcs[fIdx].body
     let flow = execBlock(prog, body, st, callScope)
     popActive(st)
+    var result = JSValue.Undefined
     match flow {
         Flow.Ret(v) => {
-            return v
+            result = v
         }
         _ => {
-            return JSValue.Undefined
         }
     }
+    if prog.funcs[fIdx].isAsync {
+        // an async body that threw yields a rejected promise instead of
+        // propagating the throw to its (synchronous) caller
+        if st.throwing {
+            let err = cloneValue(st.thrownValue)
+            st.throwing = false
+            st.thrownValue = JSValue.Undefined
+            return JSValue.Obj(newPromise(st, 2, err))
+        }
+        // already-promise results are adopted rather than double-wrapped
+        let ro = objHandle(result)
+        if ro >= 0 && isPromise(st, ro) {
+            return result
+        }
+        return JSValue.Obj(newPromise(st, 1, result))
+    }
+    return result
 }
 
 // Invoke any callable JSValue (user function or native).
@@ -1463,6 +1632,72 @@ fn isArrayMethod(name: &string): bool {
 // Dispatch a built-in Array method. `o` (the array) is temp-rooted by the caller;
 // the result array and the callback are additionally rooted while callbacks run
 // (a callback can allocate and collect).
+// .then/.catch/.finally on an already-settled promise. Callbacks run immediately
+// (no microtask queue), so ordering differs from real JS, but the value flow and
+// the rejection-skips-onFulfilled rule match.
+fn promiseMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+    let state = st.objects[o].promiseState
+    let value = cloneValue(st.objects[o].promiseValue)
+    if name == "finally" {
+        if args.len() > 0 {
+            var noArgs: Vec<JSValue> = Vec.new()
+            let _ = callValue(prog, args[0], noArgs, JSValue.Undefined, st)
+        }
+        return JSValue.Obj(o)
+    }
+    var cb = JSValue.Undefined
+    if name == "catch" {
+        if state != 2 {
+            return JSValue.Obj(o)
+        }
+        if args.len() > 0 {
+            cb = cloneValue(args[0])
+        }
+    } else {
+        if state == 1 && args.len() > 0 {
+            cb = cloneValue(args[0])
+        } else if state == 2 {
+            if args.len() > 1 {
+                cb = cloneValue(args[1])
+            } else {
+                return JSValue.Obj(o)
+            }
+        }
+    }
+    if objHandle(cb) < 0 && !isCallable(cb) {
+        // no handler for this state — the promise passes through unchanged
+        return JSValue.Obj(o)
+    }
+    var cbArgs: Vec<JSValue> = Vec.new()
+    cbArgs.push(value)
+    let r = callValue(prog, cb, cbArgs, JSValue.Undefined, st)
+    if st.throwing {
+        let err = cloneValue(st.thrownValue)
+        st.throwing = false
+        st.thrownValue = JSValue.Undefined
+        return JSValue.Obj(newPromise(st, 2, err))
+    }
+    let ro = objHandle(r)
+    if ro >= 0 && isPromise(st, ro) {
+        return r
+    }
+    return JSValue.Obj(newPromise(st, 1, r))
+}
+
+fn isCallable(v: &JSValue): bool {
+    match v {
+        JSValue.Func(_f, _e) => {
+            return true
+        }
+        JSValue.Native(_i) => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
 fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     let n = arrLen(st, o)
     if name == "push" {
@@ -1707,6 +1942,12 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
             if st.objects[o].regexId >= 0 {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
                 let r = regexMethod(st, o, name, argVals)
+                popTemp(st)
+                return r
+            }
+            if isPromise(st, o) && (name == "then" || name == "catch" || name == "finally") {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                let r = promiseMethod(prog, o, name, argVals, st)
                 popTemp(st)
                 return r
             }

@@ -81,6 +81,8 @@ struct FuncDef {
     body: i64,
     // arrows don't bind their own `this` (it stays lexical)
     isArrow: bool,
+    // async functions wrap their return value in a resolved promise
+    isAsync: bool,
 }
 
 // one declarator in a `let a = 1, b, c = 3` statement

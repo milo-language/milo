@@ -50,6 +50,11 @@ struct JSObj {
     isError: bool,
     // a compiled-regex handle (index into Interp.regexes) if this is a RegExp, else -1
     regexId: i64,
+    // promise settlement: -1 not a promise, 0 pending, 1 fulfilled, 2 rejected.
+    // Promises settle synchronously here — there is no event loop yet, so a
+    // promise left pending by its executor stays pending forever.
+    promiseState: i64,
+    promiseValue: JSValue,
     mark: bool,
     free: bool,
 }
@@ -92,6 +97,8 @@ struct Interp {
     // Math.random() PRNG state (xorshift64)
     rngState: i64,
     allocSinceGc: i64,
+    // the global Promise object, so `new Promise(...)` can be recognised
+    promiseCtorObj: i64,
     gcThreshold: i64,
     gcRuns: i64,
     gcStats: bool,
@@ -100,7 +107,7 @@ struct Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, regexId: -1, mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena
@@ -119,6 +126,23 @@ fn newObject(st: &mut Interp): i64 {
 
 fn newArray(st: &mut Interp): i64 {
     return allocObj(st, true)
+}
+
+// Promises settle synchronously — there is no event loop, so `new Promise(cb)`
+// whose cb resolves later never settles and awaiting it yields undefined.
+fn newPromise(st: &mut Interp, state: i64, value: JSValue): i64 {
+    let o = allocObj(st, false)
+    st.objects[o].promiseState = state
+    st.objects[o].promiseValue = value
+    return o
+}
+
+fn isPromise(st: &Interp, o: i64): bool {
+    return st.objects[o].promiseState >= 0
+}
+
+fn isPromiseCtor(st: &Interp, o: i64): bool {
+    return st.promiseCtorObj >= 0 && o == st.promiseCtorObj
 }
 
 fn objGet(st: &Interp, obj: i64, key: &string): JSValue {
@@ -298,6 +322,10 @@ fn markObject(st: &mut Interp, i: i64) {
     while e < ne {
         vals.push(cloneValue(st.objects[i].elems[e]))
         e = e + 1
+    }
+    // a settled promise keeps its value alive
+    if st.objects[i].promiseState >= 0 {
+        vals.push(cloneValue(st.objects[i].promiseValue))
     }
     // an object keeps its prototype alive
     if proto >= 0 {

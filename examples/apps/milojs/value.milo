@@ -177,6 +177,19 @@ fn toUint32(v: &JSValue): i64 {
     return toInt32(v) & 4294967295
 }
 
+// object handle if v is an object, else -1 — lets callers test a value's shape
+// without moving it into a match
+fn objHandle(v: &JSValue): i64 {
+    match v {
+        JSValue.Obj(o) => {
+            return o
+        }
+        _ => {
+            return -1
+        }
+    }
+}
+
 fn toNum(v: &JSValue): f64 {
     match v {
         JSValue.Undefined => {

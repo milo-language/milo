@@ -884,6 +884,12 @@ export class TypeChecker {
         u.span,
         `remove it from the import list — unless the import exists to force '${u.path}' to link, which this lint cannot see`);
     }
+    for (const s of program.shadowedStdlib ?? []) {
+      this.warn("shadows-stdlib-override",
+        `'fn ${s.name}' shadows a standard-library function of the same name and signature`,
+        s.span,
+        `the standard library defines '${s.name}' in '${s.stdlibFile}'. The signatures match, so this compiles — but Milo's flat namespace makes this definition win everywhere, including the library's own internal calls to '${s.name}', which now run this body. Rename it, or pass --allow=shadows-stdlib-override if the override is deliberate`);
+    }
     this._userImplKeys = program.userImplKeys;
     // register built-in functions
     const ptrU8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };

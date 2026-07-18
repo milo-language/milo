@@ -28,7 +28,7 @@ fn makeInterp(gcStats: bool): Interp {
         modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(),
         throwing: false, thrownValue: JSValue.Undefined,
         rngState: 88172645463325252,
-        allocSinceGc: 0, gcThreshold: 1024, gcRuns: 0, gcStats: gcStats
+        allocSinceGc: 0, promiseCtorObj: -1, gcThreshold: 1024, gcRuns: 0, gcStats: gcStats
     }
 }
 

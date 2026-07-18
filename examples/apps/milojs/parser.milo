@@ -105,7 +105,7 @@ fn parseArg(p: &mut PState, prog: &mut Prog): i64 {
 // Build an arrow function from its parameter list; the caller has consumed `=>`.
 // Body is a block `{ }` or a single expression (implicit return). isArrow=true so
 // it doesn't bind its own `this`.
-fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>): i64 {
+fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool): i64 {
     var body = -1
     if peekKind(p) == T_LBRACE {
         body = parseBraceBlock(p, prog)
@@ -118,7 +118,7 @@ fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>): i64 {
         body = prog.blocks.len() - 1
     }
     prog.funcs.push(FuncDef {
-        name: "", params: params, body: body, isArrow: true
+        name: "", params: params, body: body, isArrow: true, isAsync: isAsync
     }
     )
     let f = prog.funcs.len() - 1
@@ -196,7 +196,7 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
             advance(p)
             var ap: Vec<string> = Vec.new()
             ap.push(name)
-            return makeArrow(p, prog, ap)
+            return makeArrow(p, prog, ap, false)
         }
         advance(p)
         return addExpr(prog, Expr.Ident(name))
@@ -204,7 +204,7 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
     if k == T_LPAREN {
         var arrowParams: Vec<string> = Vec.new()
         if scanArrowParams(p, arrowParams) {
-            return makeArrow(p, prog, arrowParams)
+            return makeArrow(p, prog, arrowParams, false)
         }
         advance(p)
         var e = parseExpr(p, prog)
@@ -218,8 +218,34 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
         return e
     }
     if k == T_FUNCTION {
-        let f = parseFunction(p, prog)
+        let f = parseFunction(p, prog, false)
         return addExpr(prog, Expr.FuncExpr(f))
+    }
+    if k == T_ASYNC && p.pos + 1 < p.toks.len() {
+        let nk = p.toks[p.pos + 1].kind
+        if nk == T_FUNCTION {
+            advance(p)
+            let f = parseFunction(p, prog, true)
+            return addExpr(prog, Expr.FuncExpr(f))
+        }
+        if nk == T_IDENT && p.pos + 2 < p.toks.len() && p.toks[p.pos + 2].kind == T_ARROW {
+            advance(p)
+            let pname = p.toks[p.pos].text.clone()
+            advance(p)
+            advance(p)
+            var ap1: Vec<string> = Vec.new()
+            ap1.push(pname)
+            return makeArrow(p, prog, ap1, true)
+        }
+        if nk == T_LPAREN {
+            advance(p)
+            var aparams: Vec<string> = Vec.new()
+            if scanArrowParams(p, aparams) {
+                return makeArrow(p, prog, aparams, true)
+            }
+            // not an arrow after all — `async` was a plain identifier call
+            p.pos = p.pos - 1
+        }
     }
     if k == T_LBRACE {
         return parseObjectLiteral(p, prog)
@@ -319,6 +345,12 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
     var props: Vec<PropInit> = Vec.new()
     while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
         var key = ""
+        var isMethodAsync = false
+        // `async foo() {}` — `async` is only a modifier when a method name follows
+        if peekKind(p) == T_ASYNC && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_COLON && p.toks[p.pos + 1].kind != T_COMMA && p.toks[p.pos + 1].kind != T_RBRACE && p.toks[p.pos + 1].kind != T_LPAREN {
+            isMethodAsync = true
+            advance(p)
+        }
         if isPropName(p) || peekKind(p) == T_STR {
             key = p.toks[p.pos].text.clone()
             advance(p)
@@ -343,7 +375,7 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
             expect(p, T_RPAREN)
             let mbody = parseBraceBlock(p, prog)
             prog.funcs.push(FuncDef {
-                name: key.clone(), params: mparams, body: mbody, isArrow: false
+                name: key.clone(), params: mparams, body: mbody, isArrow: false, isAsync: isMethodAsync
             }
             )
             valIdx = addExpr(prog, Expr.FuncExpr(prog.funcs.len() - 1))
@@ -446,6 +478,11 @@ fn parseUnary(p: &mut PState, prog: &mut Prog): i64 {
         advance(p)
         let e = parseUnary(p, prog)
         return addExpr(prog, Expr.Un("void", e))
+    }
+    if k == T_AWAIT {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Un("await", e))
     }
     if k == T_TILDE {
         advance(p)
@@ -713,7 +750,7 @@ fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
 }
 
 // function [name] ( params ) { body } — returns index into prog.funcs
-fn parseFunction(p: &mut PState, prog: &mut Prog): i64 {
+fn parseFunction(p: &mut PState, prog: &mut Prog, isAsync: bool): i64 {
     expect(p, T_FUNCTION)
     var name = ""
     if peekKind(p) == T_IDENT {
@@ -736,7 +773,7 @@ fn parseFunction(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_RPAREN)
     let body = parseBraceBlock(p, prog)
     prog.funcs.push(FuncDef {
-        name: name, params: params, body: body, isArrow: false
+        name: name, params: params, body: body, isArrow: false, isAsync: isAsync
     }
     )
     return prog.funcs.len() - 1
@@ -797,7 +834,12 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         return addStmt(prog, Stmt.MultiDecl(prog.declLists.len() - 1))
     }
     if k == T_FUNCTION {
-        let f = parseFunction(p, prog)
+        let f = parseFunction(p, prog, false)
+        return addStmt(prog, Stmt.FuncDecl(f))
+    }
+    if k == T_ASYNC && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind == T_FUNCTION {
+        advance(p)
+        let f = parseFunction(p, prog, true)
         return addStmt(prog, Stmt.FuncDecl(f))
     }
     if k == T_IF {

@@ -241,19 +241,28 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   const readSourceSafe = (p?: string) => { try { return p ? readSource(p) : undefined; } catch { return undefined; } };
 
   // Stdlib/prelude signatures, to detect user shadows. First occurrence wins.
-  const stdlibSigs = new Map<string, { file: string; sig: string }>();
+  const stdlibSigs = new Map<string, { file: string; sig: string; body: string }>();
   for (const f of functions) {
     if (f.isExtern) continue;
     if (f.sourceFile && preludeFiles.has(f.sourceFile) && !stdlibSigs.has(f.name)) {
-      stdlibSigs.set(f.name, { file: f.sourceFile, sig: sigKey(f) });
+      stdlibSigs.set(f.name, { file: f.sourceFile, sig: sigKey(f), body: JSON.stringify(f, stripForCompare) });
     }
   }
 
+  const shadowedStdlib: { name: string; stdlibFile: string; span?: Span }[] = [];
   const fnDefs = new Map<string, { file: string; body: string }>();
   for (const f of functions) {
     if (f.isExtern || (f.sourceFile && preludeFiles.has(f.sourceFile))) continue;
 
     const shadowed = stdlibSigs.get(f.name);
+    // Same signature, different body: this is the "documented last-wins override"
+    // path — not an error, because the library's own calls still type-check. But it
+    // silently rebinds those calls to the user's body, which is a footgun (a user's
+    // `strIndexOf`/`charAt` can break std from the inside). Surface it as a warning
+    // the user can `--allow` when the override is deliberate.
+    if (shadowed && shadowed.sig === sigKey(f) && shadowed.body !== JSON.stringify(f, stripForCompare)) {
+      shadowedStdlib.push({ name: f.name, stdlibFile: shadowed.file, span: f.span });
+    }
     if (shadowed && shadowed.sig !== sigKey(f)) {
       throw new ParseError({
         severity: "error",
@@ -327,5 +336,5 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // the separate arrays above), so its impls are the user's own.
   const userImplKeys = new Set<string>();
   for (const impl of program.impls) for (const m of impl.methods) userImplKeys.add(`${impl.typeName}.${m.name}`);
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib };
 }

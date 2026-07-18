@@ -86,6 +86,8 @@ let T_CARET: i32 = 73
 let T_TILDE: i32 = 74
 let T_STARSTAR: i32 = 75
 let T_VOID: i32 = 76
+let T_ASYNC: i32 = 77
+let T_AWAIT: i32 = 78
 
 struct Token {
     kind: i32,
@@ -179,6 +181,12 @@ fn keywordKind(s: &string): i32 {
     }
     if s == "void" {
         return T_VOID
+    }
+    if s == "async" {
+        return T_ASYNC
+    }
+    if s == "await" {
+        return T_AWAIT
     }
     if s == "instanceof" {
         return T_INSTANCEOF
