@@ -94,7 +94,15 @@ fn getMember(st: &Interp, o: i64, key: &string): JSValue {
             return arrGet(st, o, ai)
         }
     }
-    return objGet(st, o, key)
+    // own property first, then walk the prototype chain
+    var cur = o
+    while cur >= 0 {
+        if objHas(st, cur, key) {
+            return objGet(st, cur, key)
+        }
+        cur = st.objects[cur].proto
+    }
+    return JSValue.Undefined
 }
 
 fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
@@ -396,6 +404,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     }
                     return JSValue.Undefined
                 }
+                JSValue.Func(fIdx, _e) => {
+                    if name == "prototype" {
+                        return JSValue.Obj(getFuncProto(st, fIdx))
+                    }
+                    return JSValue.Undefined
+                }
                 _ => {
                     return JSValue.Undefined
                 }
@@ -477,8 +491,11 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     pushTemp(st, JSValue.Func(fIdx, envIdx))
                     let argVals = evalArgs(prog, argsIdx, st, scope)
                     let obj = newObject(st)
-                    // record the constructor so `obj instanceof Ctor` can match
+                    // record the constructor (for instanceof) and link the
+                    // instance to the constructor's prototype (for shared methods)
                     st.objects[obj].ctor = fIdx
+                    let proto = getFuncProto(st, fIdx)
+                    st.objects[obj].proto = proto
                     pushTemp(st, JSValue.Obj(obj))
                     let result = callFunction(prog, fIdx, envIdx, argVals, JSValue.Obj(obj), st)
                     popTemp(st)

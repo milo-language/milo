@@ -39,6 +39,9 @@ struct JSObj {
     isArray: bool,
     // the user-function index that `new`'d this object (for instanceof), or -1
     ctor: i64,
+    // the object's prototype (index into objects), or -1 — the fallback for
+    // property lookup; set by `new F()` to F's prototype object
+    proto: i64,
     // objects produced by the Error-family native constructors; the specific
     // kind lives in the `name` property
     isError: bool,
@@ -57,6 +60,8 @@ struct Interp {
     // heap-object arena + its own free-list, GC'd by the same collector as scopes
     objects: Vec<JSObj>,
     objFreeList: Vec<i64>,
+    // fnIdx → its `.prototype` object (index), created lazily; a GC root
+    funcProtos: Vec<i64>,
     // values held on the native stack across an operation that may collect (e.g. a
     // method receiver while its arguments — which can themselves be calls — are
     // evaluated). Rooted by collect so an in-flight object/closure isn't swept.
@@ -76,7 +81,7 @@ struct Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, isError: false, mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena
@@ -169,6 +174,31 @@ fn arrSet(st: &mut Interp, obj: i64, idx: i64, value: JSValue) {
     st.objects[obj].elems[idx] = value
 }
 
+fn objHas(st: &Interp, o: i64, key: &string): bool {
+    var i: i64 = 0
+    let n = st.objects[o].props.len()
+    while i < n {
+        if st.objects[o].props[i].key == key {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// The .prototype object for a function, created on first access and cached
+// (a GC root via funcProtos). Grows the sparse map as needed.
+fn getFuncProto(st: &mut Interp, fnIdx: i64): i64 {
+    while st.funcProtos.len() <= fnIdx {
+        st.funcProtos.push(-1)
+    }
+    if st.funcProtos[fnIdx] < 0 {
+        let p = newObject(st)
+        st.funcProtos[fnIdx] = p
+    }
+    return st.funcProtos[fnIdx]
+}
+
 fn arrLen(st: &Interp, obj: i64): i64 {
     return st.objects[obj].elems.len()
 }
@@ -236,6 +266,7 @@ fn markObject(st: &mut Interp, i: i64) {
         return
     }
     st.objects[i].mark = true
+    let proto = st.objects[i].proto
     var vals: Vec<JSValue> = Vec.new()
     var k: i64 = 0
     let n = st.objects[i].props.len()
@@ -248,6 +279,10 @@ fn markObject(st: &mut Interp, i: i64) {
     while e < ne {
         vals.push(cloneValue(st.objects[i].elems[e]))
         e = e + 1
+    }
+    // an object keeps its prototype alive
+    if proto >= 0 {
+        markObject(st, proto)
     }
     var m: i64 = 0
     while m < vals.len() {
@@ -313,6 +348,14 @@ fn collect(st: &mut Interp) {
     if st.throwing {
         let tv = cloneValue(st.thrownValue)
         markValue(st, tv)
+    }
+    // every function's .prototype object is a root (methods live on it)
+    var fp: i64 = 0
+    while fp < st.funcProtos.len() {
+        if st.funcProtos[fp] >= 0 {
+            markObject(st, st.funcProtos[fp])
+        }
+        fp = fp + 1
     }
     var freed: i64 = 0
     var s: i64 = 0
