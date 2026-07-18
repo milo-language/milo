@@ -838,6 +838,9 @@ fn tokenName(kind: i32): string {
     if kind == T_TYPEOF {
         return "'typeof'"
     }
+    if kind == T_DELETE {
+        return "'delete'"
+    }
     if kind == T_INC {
         return "'++'"
     }
