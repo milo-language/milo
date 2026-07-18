@@ -90,8 +90,13 @@ fn normalizePath(path: &string): string {
     return out
 }
 
+// A CommonJS source file: .js or .cjs. Packages that ship both ESM and CJS name
+// the CommonJS entry .cjs, and their package.json "main" points at it.
 fn endsWithJs(p: &string): bool {
     let n = p.len()
+    if n >= 4 && p[n - 4] == '.' && p[n - 3] == 'c' && p[n - 2] == 'j' && p[n - 1] == 's' {
+        return true
+    }
     if n < 3 {
         return false
     }
@@ -257,6 +262,10 @@ fn resolveAsFileOrDir(base: &string): string {
     if fileExists(asJs) {
         return asJs
     }
+    let asCjs = base + ".cjs"
+    if fileExists(asCjs) {
+        return asCjs
+    }
     let pkg = base + "/package.json"
     match readFile(pkg.clone()) {
         Result.Ok(txt) => {
@@ -270,6 +279,10 @@ fn resolveAsFileOrDir(base: &string): string {
                 if fileExists(mpJs) {
                     return mpJs
                 }
+                let mpCjs = mp + ".cjs"
+                if fileExists(mpCjs) {
+                    return mpCjs
+                }
                 let mpIdx = mp + "/index.js"
                 if fileExists(mpIdx) {
                     return mpIdx
@@ -282,6 +295,10 @@ fn resolveAsFileOrDir(base: &string): string {
     let asIndex = base + "/index.js"
     if fileExists(asIndex) {
         return asIndex
+    }
+    let asIndexCjs = base + "/index.cjs"
+    if fileExists(asIndexCjs) {
+        return asIndexCjs
     }
     return ""
 }

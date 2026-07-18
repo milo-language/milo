@@ -27,3 +27,19 @@ exports.readFileSync = readFileSync;
 exports.existsSync = existsSync;
 exports.readFile = readFile;
 exports.promises = {};
+
+exports.writeFileSync = function (path, data) {
+  if (!__writeFileSync(String(path), String(data), false)) {
+    throw new Error("ENOENT: cannot write '" + path + "'");
+  }
+};
+exports.appendFileSync = function (path, data) {
+  if (!__writeFileSync(String(path), String(data), true)) {
+    throw new Error("ENOENT: cannot append to '" + path + "'");
+  }
+};
+exports.writeFile = function (path, data, optsOrCb, maybeCb) {
+  var cb = typeof optsOrCb === 'function' ? optsOrCb : maybeCb;
+  var ok = __writeFileSync(String(path), String(data), false);
+  if (cb) cb(ok ? null : new Error("ENOENT: cannot write '" + path + "'"));
+};

@@ -39,7 +39,7 @@ from "std/datetime" import {
     dateTimeFromEpoch, dateTimeFromEpochLocal
 }
 from "std/fs" import {
-    currentDir
+    currentDir, writeFile, appendFile
 }
 from "std/math" import {
     mathMod, mathPow
@@ -541,6 +541,7 @@ let NATIVE_TCP_SEND: i64 = 71
 let NATIVE_TCP_CLOSE: i64 = 72
 let NATIVE_HTTP_REGISTER: i64 = 73
 let NATIVE_HTTP_UNREGISTER: i64 = 74
+let NATIVE_WRITE_FILE: i64 = 75
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -1005,6 +1006,35 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             st.connOpen[idx] = false
         }
         return JSValue.Undefined
+    }
+    if id == NATIVE_WRITE_FILE {
+        if argVals.len() < 2 {
+            return JSValue.Bool(false)
+        }
+        let path = toStr(argVals[0])
+        let data = toStr(argVals[1])
+        var append = false
+        if argVals.len() > 2 {
+            append = truthy(argVals[2])
+        }
+        if append {
+            match appendFile(path, data) {
+                Result.Ok(_v) => {
+                    return JSValue.Bool(true)
+                }
+                Result.Err(_e) => {
+                    return JSValue.Bool(false)
+                }
+            }
+        }
+        match writeFile(path, data) {
+            Result.Ok(_v) => {
+                return JSValue.Bool(true)
+            }
+            Result.Err(_e) => {
+                return JSValue.Bool(false)
+            }
+        }
     }
     if id == NATIVE_HTTP_REGISTER {
         if argVals.len() > 0 {
@@ -1852,6 +1882,7 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "__tcpClose", JSValue.Native(NATIVE_TCP_CLOSE))
     scopeDefine(st, 0, "__httpRegister", JSValue.Native(NATIVE_HTTP_REGISTER))
     scopeDefine(st, 0, "__httpUnregister", JSValue.Native(NATIVE_HTTP_UNREGISTER))
+    scopeDefine(st, 0, "__writeFileSync", JSValue.Native(NATIVE_WRITE_FILE))
     scopeDefine(st, 0, "__readFileSync", JSValue.Native(NATIVE_READ_FILE_SYNC))
     scopeDefine(st, 0, "__fileExists", JSValue.Native(NATIVE_FILE_EXISTS))
 }
@@ -2368,7 +2399,8 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     return callNative(id, argVals, st)
                 }
                 _ => {
-                    print("milojs: TypeError: value is not a constructor")
+                    st.throwing = true
+                    st.thrownValue = makeError(st, "TypeError", "value is not a constructor")
                     return JSValue.Undefined
                 }
             }
@@ -4035,7 +4067,8 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 }
                 _ => {
                     popTemp(st)
-                    print("milojs: TypeError: ." + name.clone() + " is not a function")
+                    st.throwing = true
+                    st.thrownValue = makeError(st, "TypeError", name.clone() + " is not a function")
                     return JSValue.Undefined
                 }
             }
@@ -4062,7 +4095,8 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                     return callValue(prog, m, argVals, JSValue.Undefined, st)
                 }
             }
-            print("milojs: TypeError: ." + name.clone() + " is not a function (on a builtin)")
+            st.throwing = true
+            st.thrownValue = makeError(st, "TypeError", name.clone() + " is not a function")
             return JSValue.Undefined
         }
         JSValue.Func(bf, benv) => {
@@ -4120,11 +4154,13 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 let argVals = evalArgs(prog, argsIdx, st, scope)
                 return callValue(prog, m, argVals, JSValue.Func(bf, benv), st)
             }
-            print("milojs: TypeError: ." + name.clone() + " is not a function (on a function value)")
+            st.throwing = true
+            st.thrownValue = makeError(st, "TypeError", name.clone() + " is not a function")
             return JSValue.Undefined
         }
         _ => {
-            print("milojs: TypeError: cannot call ." + name.clone() + " on a non-object")
+            st.throwing = true
+            st.thrownValue = makeError(st, "TypeError", "cannot read property '" + name.clone() + "' of a non-object")
             return JSValue.Undefined
         }
     }
@@ -4193,6 +4229,10 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                             j = j + 1
                         }
                         print(line)
+                        // node line-buffers to a terminal; without flushing here
+                        // a Ctrl-C or SIGKILL discards everything the program
+                        // printed, which makes a long-running server look silent
+                        flush()
                         return JSValue.Undefined
                     }
                 }
@@ -4268,11 +4308,13 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                         let argVals = evalArgs(prog, argsIdx, st, scope)
                         return makeArrayFromCtor(st, argVals)
                     }
-                    print("milojs: TypeError: " + describeCallee(prog, calleeIdx) + " is not a function")
+                    st.throwing = true
+                    st.thrownValue = makeError(st, "TypeError", describeCallee(prog, calleeIdx) + " is not a function")
                     return JSValue.Undefined
                 }
                 _ => {
-                    print("milojs: TypeError: " + describeCallee(prog, calleeIdx) + " is not a function")
+                    st.throwing = true
+                    st.thrownValue = makeError(st, "TypeError", describeCallee(prog, calleeIdx) + " is not a function")
                     return JSValue.Undefined
                 }
             }
