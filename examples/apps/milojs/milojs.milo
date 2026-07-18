@@ -50,7 +50,7 @@ from "./eval" import {
     runModule
 }
 from "./eval" import {
-    execBlock, runEventLoop
+    execBlock, hoistBlock, runEventLoop
 }
 from "./value" import {
     toStr
@@ -247,6 +247,7 @@ fn main(): i32 {
     }
     if preludeIdx >= 0 {
         // run in global scope, so its declarations become globals
+        hoistBlock(prog, st.modBlocks[preludeIdx], st, 0)
         execBlock(prog, st.modBlocks[preludeIdx], st, 0)
     }
     runModule(prog, entryIdx, st)

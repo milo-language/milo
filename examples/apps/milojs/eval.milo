@@ -29,6 +29,9 @@ from "std/os" import {
 from "std/env" import {
     getEnv
 }
+from "std/net" import {
+    TcpListener, TcpStream
+}
 from "std/time" import {
     epochMillis, sleepMs
 }
@@ -523,6 +526,13 @@ let NATIVE_CLEAR_TIMER: i64 = 64
 let NATIVE_SET_IMMEDIATE: i64 = 65
 let NATIVE_QUEUE_MICROTASK: i64 = 66
 let NATIVE_ARRAY_CTOR: i64 = 67
+let NATIVE_TCP_LISTEN: i64 = 68
+let NATIVE_TCP_ACCEPT: i64 = 69
+let NATIVE_TCP_RECV: i64 = 70
+let NATIVE_TCP_SEND: i64 = 71
+let NATIVE_TCP_CLOSE: i64 = 72
+let NATIVE_HTTP_REGISTER: i64 = 73
+let NATIVE_HTTP_UNREGISTER: i64 = 74
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -910,6 +920,107 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             popTemp(st)
         }
         return JSValue.Obj(arr)
+    }
+    if id == NATIVE_TCP_LISTEN {
+        var port: i64 = 0
+        if argVals.len() > 0 {
+            port = toNum(argVals[0]) as i64
+        }
+        match TcpListener.bind(port as u16) {
+            Result.Ok(l) => {
+                st.listeners.push(l)
+                return JSValue.Number((st.listeners.len() - 1) as f64)
+            }
+            Result.Err(_e) => {
+                return JSValue.Number(0.0 - 1.0)
+            }
+        }
+    }
+    if id == NATIVE_TCP_ACCEPT {
+        // blocking: the event loop only calls this when nothing else is runnable
+        var idx: i64 = 0
+        if argVals.len() > 0 {
+            idx = toNum(argVals[0]) as i64
+        }
+        if idx < 0 || idx >= st.listeners.len() {
+            return JSValue.Number(0.0 - 1.0)
+        }
+        match st.listeners[idx].accept() {
+            Result.Ok(conn) => {
+                st.conns.push(conn)
+                st.connOpen.push(true)
+                return JSValue.Number((st.conns.len() - 1) as f64)
+            }
+            Result.Err(_e) => {
+                return JSValue.Number(0.0 - 1.0)
+            }
+        }
+    }
+    if id == NATIVE_TCP_RECV {
+        var idx: i64 = 0
+        if argVals.len() > 0 {
+            idx = toNum(argVals[0]) as i64
+        }
+        if idx < 0 || idx >= st.conns.len() || !st.connOpen[idx] {
+            return JSValue.Str("")
+        }
+        return JSValue.Str(st.conns[idx].recvOnce())
+    }
+    if id == NATIVE_TCP_SEND {
+        var idx: i64 = 0
+        if argVals.len() > 0 {
+            idx = toNum(argVals[0]) as i64
+        }
+        if idx < 0 || idx >= st.conns.len() || !st.connOpen[idx] {
+            return JSValue.Bool(false)
+        }
+        var data = ""
+        if argVals.len() > 1 {
+            data = toStr(argVals[1])
+        }
+        match st.conns[idx].send(data) {
+            Result.Ok(_n) => {
+                return JSValue.Bool(true)
+            }
+            Result.Err(_e) => {
+                return JSValue.Bool(false)
+            }
+        }
+    }
+    if id == NATIVE_TCP_CLOSE {
+        var idx: i64 = 0
+        if argVals.len() > 0 {
+            idx = toNum(argVals[0]) as i64
+        }
+        if idx >= 0 && idx < st.connOpen.len() {
+            // the stream's Drop closes the fd when the slot is overwritten
+            st.connOpen[idx] = false
+        }
+        return JSValue.Undefined
+    }
+    if id == NATIVE_HTTP_REGISTER {
+        if argVals.len() > 0 {
+            let h = objHandle(argVals[0])
+            if h >= 0 {
+                st.httpServers.push(h)
+            }
+        }
+        return JSValue.Undefined
+    }
+    if id == NATIVE_HTTP_UNREGISTER {
+        if argVals.len() > 0 {
+            let h = objHandle(argVals[0])
+            var kept: Vec<i64> = Vec.new()
+            var i: i64 = 0
+            while i < st.httpServers.len() {
+                if st.httpServers[i] != h {
+                    kept.push(st.httpServers[i])
+                }
+                i = i + 1
+            }
+            st.httpServers = kept
+        }
+        return JSValue.Undefined
     }
     if id == NATIVE_PROCESS_EXIT {
         var code: i64 = 0
@@ -1722,6 +1833,14 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, arrayCtor, "from", JSValue.Native(NATIVE_ARRAY_FROM))
     scopeDefine(st, 0, "Array", JSValue.Obj(arrayCtor))
     // file natives, named as minibun's runtime expects them
+    // raw TCP, used by the http builtin; not part of the JS surface
+    scopeDefine(st, 0, "__tcpListen", JSValue.Native(NATIVE_TCP_LISTEN))
+    scopeDefine(st, 0, "__tcpAccept", JSValue.Native(NATIVE_TCP_ACCEPT))
+    scopeDefine(st, 0, "__tcpRecv", JSValue.Native(NATIVE_TCP_RECV))
+    scopeDefine(st, 0, "__tcpSend", JSValue.Native(NATIVE_TCP_SEND))
+    scopeDefine(st, 0, "__tcpClose", JSValue.Native(NATIVE_TCP_CLOSE))
+    scopeDefine(st, 0, "__httpRegister", JSValue.Native(NATIVE_HTTP_REGISTER))
+    scopeDefine(st, 0, "__httpUnregister", JSValue.Native(NATIVE_HTTP_UNREGISTER))
     scopeDefine(st, 0, "__readFileSync", JSValue.Native(NATIVE_READ_FILE_SYNC))
     scopeDefine(st, 0, "__fileExists", JSValue.Native(NATIVE_FILE_EXISTS))
 }
@@ -2769,9 +2888,49 @@ fn runEventLoop(prog: &Prog, st: &mut Interp) {
         drainMicrotasks(prog, st)
         compactTimers(st)
         if !runOneTimer(prog, st) {
-            going = false
+            // No timers left. If an http server is listening, block accepting a
+            // connection; otherwise there is nothing left to do and the program
+            // is finished.
+            if !serveHttpOnce(prog, st) {
+                going = false
+            }
         }
     }
+}
+
+// Ask each registered http server to accept and handle one connection. Returns
+// false when no server is listening.
+fn serveHttpOnce(prog: &Prog, st: &mut Interp): bool {
+    if st.httpServers.len() == 0 {
+        return false
+    }
+    var i: i64 = 0
+    while i < st.httpServers.len() {
+        let so = st.httpServers[i]
+        if so >= 0 {
+            let server = JSValue.Obj(so)
+            var noArgs: Vec<JSValue> = Vec.new()
+            let r = callMemberValue(prog, server, "_serveOnce", noArgs, st)
+            let _ = r
+            if st.throwing {
+                eprint("Uncaught (in request handler) " + describeThrownValue(st, st.thrownValue))
+                st.throwing = false
+                st.thrownValue = JSValue.Undefined
+            }
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// Call a method on an object with already-evaluated arguments.
+fn callMemberValue(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSValue>, st: &mut Interp): JSValue {
+    let o = objHandle(recv)
+    if o < 0 {
+        return JSValue.Undefined
+    }
+    let m = getMemberDyn(prog, o, name, st)
+    return callValue(prog, m, args, cloneValue(recv), st)
 }
 
 // Drop cancelled timers so the list cannot grow without bound in a long run.

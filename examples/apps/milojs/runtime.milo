@@ -5,6 +5,9 @@
 // boundaries — the single point where every live value sits in a scope binding
 // and no closure is in-flight mid-expression.
 
+from "std/net" import {
+    TcpListener, TcpStream
+}
 from "./value" import {
     JSValue
 }
@@ -190,6 +193,12 @@ struct Interp {
     newTarget: JSValue,
     // module specifiers already reported as unresolvable, to avoid repeats
     reportedMissing: Vec<string>,
+    // listening TCP sockets and accepted connections, addressed by index from JS
+    // http.Server objects that are listening; the event loop services these
+    httpServers: Vec<i64>,
+    listeners: Vec<TcpListener>,
+    conns: Vec<TcpStream>,
+    connOpen: Vec<bool>,
     gcThreshold: i64,
     gcRuns: i64,
     gcStats: bool,
@@ -711,6 +720,12 @@ fn collect(st: &mut Interp) {
     }
     if st.promiseCtorObj >= 0 {
         markObject(st, st.promiseCtorObj)
+    }
+    // a listening server is reachable only from this registry
+    var hs: i64 = 0
+    while hs < st.httpServers.len() {
+        markObject(st, st.httpServers[hs])
+        hs = hs + 1
     }
     // native-constructor property bags are roots too
     var np: i64 = 0
