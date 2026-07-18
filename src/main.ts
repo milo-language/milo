@@ -400,12 +400,15 @@ function detectLibs(ir: string, target: TargetInfo): string {
   return libs;
 }
 
-function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, forceOverflowChecks = false): string {
+function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, forceOverflowChecks: boolean | null = null): string {
   const source = readFileSync(sourcePath, "utf-8");
   // Arithmetic traps at -O0 but silently WRAPS at -O2/-O3 — the one real footgun left
-  // (Rust's wart; Swift traps in every mode). `--overflow-checks` turns them on at any -O
-  // so the cost can be measured before deciding whether to flip the default.
-  const debugOverflow = optFlag === "-O0" || forceOverflowChecks;
+  // (Rust's wart; Swift traps in every mode). Checks are only *defaulted* from -O, never
+  // welded to it: `--overflow-checks` forces them on at any -O and `--no-overflow-checks`
+  // forces them off, so -O0's fast build is usable without also changing arithmetic
+  // semantics. Both directions matter — the cost has to be measurable before the default
+  // can be flipped.
+  const debugOverflow = forceOverflowChecks ?? (optFlag === "-O0");
   // DWARF is gated on -g alone (compose `-g --debug` for -O0 + line info). Keeping it
   // off --debug leaves the -O0 path — used by the runtime-error test harness — byte
   // -identical and free of per-build dsymutil / .dSYM litter.
@@ -525,7 +528,7 @@ async function runTests(testFiles: string[], target: TargetInfo, optFlag: string
 // rlimits, and one runaway allocation (e.g. a milo-self memory bug) swaps the
 // whole machine to death. Raise with MILO_RUN_MEM_MB, disable with
 // MILO_RUN_UNGUARDED=1. No wall-clock timeout — long-running programs are legal.
-async function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, overflowChecks = false) {
+async function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, overflowChecks: boolean | null = null) {
   const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize, emitDebug, heapSize, overflowChecks);
   try {
     if (target.bareMetal) {
@@ -601,7 +604,7 @@ function parseHeapSize(s: string): number | null {
   return n * mult;
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean | null } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
@@ -615,15 +618,21 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   const rest: string[] = [];
   const denied = new Set<string>();
   const allowed = new Set<string>();
-  let overflowChecks = false;
+  let overflowChecks: boolean | null = null;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
     else if (args[i] === "--release") { optFlag = "-O3"; }
     else if (args[i] === "--debug") { optFlag = "-O0"; }
+    // Fast edit-loop builds: -O0 is ~2x quicker to compile but would flip arithmetic from
+    // wrapping to trapping, so pair it with checks off to keep -O2's semantics. Runtime is
+    // up to ~2.4x slower, which is why this is opt-in rather than the default for `run`.
+    // A later explicit --overflow-checks still wins (the loop is order-sensitive).
+    else if (args[i] === "--fast") { optFlag = "-O0"; overflowChecks = false; }
     else if (args[i] === "-g") { emitDebug = true; } // DWARF line info, composes with any -O
     else if (args[i] === "--no-entry") { noEntry = true; }
     else if (args[i] === "--sanitize") { sanitize = true; }
     else if (args[i] === "--overflow-checks") { overflowChecks = true; }
+    else if (args[i] === "--no-overflow-checks") { overflowChecks = false; }
     else if (args[i] === "--emit-header") { emitHeader = true; }
     else if (args[i] === "-O" && i + 1 < args.length) { optFlag = `-O${args[++i]}`; }
     else if (/^-O[0-3sz]$/.test(args[i])) { optFlag = args[i]; }
@@ -1077,6 +1086,8 @@ async function main() {
     console.log("  -O<level>              clang opt level: 0,1,2,3,s,z (default: -O2)");
     console.log("  --sanitize             link with AddressSanitizer (requires clang)");
     console.log("  --overflow-checks     trap on +/-/* overflow at any -O (default: only --debug)");
+    console.log("  --no-overflow-checks  wrap on +/-/* overflow at any -O (e.g. fast -O0 builds)");
+    console.log("  --fast                quick edit-loop build: -O0, wrapping (~2x faster compile)");
     console.log("  --deny=<warning>       treat warning as error (e.g. --deny=unused-variable)");
     console.log("  --allow=<warning>      suppress warning (e.g. --allow=unused-result)");
     console.log("  --deny-all             treat all warnings as errors");
