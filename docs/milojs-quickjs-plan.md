@@ -9,7 +9,22 @@ update-when: a lane lands (update the score, delete the lane) or the sweep harne
 
 Working plan for driving `scripts/quickjs-sweep.ts` toward 100%. Written for agents
 picking up individual lanes; each lane is independent and lists exact anchors.
-Current: **60/149 cases (40.3%)**. Delete lanes here as they land.
+Current: **63/149 cases (42.3%)**. Delete lanes here as they land.
+
+Engine-level spec builtins now live in `lib/engine-prelude.js` (loaded by
+`milojs-engine.milo` into the shared `Prog` before the entry runs) — distinct from
+`lib/prelude.js`, which is the *node runtime's* prelude. Anything the ECMAScript
+spec defines that is easier to write in JS than as a native belongs there:
+`Symbol.for`/`keyFor`, `escape`/`unescape`, `WeakRef`, `FinalizationRegistry`,
+`DOMException`, `Error.captureStackTrace`, `Array.fromAsync`. Note `WeakRef` and
+`FinalizationRegistry` hold targets STRONGLY (no weak refs in the collector), so a
+test asserting a target was actually collected will correctly fail rather than
+pass vacuously.
+
+Known engine bugs found while measuring, not yet fixed:
+- **array rest destructuring is broken**: `const [g, ...h] = [7,8,9]` binds `h = 9`
+  instead of `[8, 9]`. Affects `destructured-export.js`; likely more.
+- `null.x` does not throw a `TypeError` (`null_or_undefined.js`).
 
 **All infrastructure blockers are gone.** Lanes 1 and 2 landed; every remaining
 failure is a genuine engine gap rather than a file that won't load. The profile is
