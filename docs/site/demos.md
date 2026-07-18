@@ -67,7 +67,7 @@ TUIs in [`examples/apps/`](https://github.com/cs01/milo/tree/main/examples/apps)
 
 | Program | What it is |
 |---------|-----------|
-| [milojs](https://github.com/cs01/milo/tree/main/examples/apps/milojs) | A JavaScript engine in Milo — parser, evaluator, mark-sweep GC. Runs express |
+| [milojs](https://github.com/cs01/milo/tree/main/examples/apps/milojs) | A JavaScript engine in Milo: parser, evaluator, mark-sweep GC. Runs express |
 | [kvstore](https://github.com/cs01/milo/blob/main/examples/apps/kvstore.milo) | Page-based key-value store with cursors, in the sled/buffer-pool style |
 | [minilang](https://github.com/cs01/milo/blob/main/examples/apps/minilang.milo) | Tree-walking interpreter for a small expression language |
 
@@ -75,8 +75,8 @@ TUIs in [`examples/apps/`](https://github.com/cs01/milo/tree/main/examples/apps)
 
 | Program | What it is |
 |---------|-----------|
-| [src-milo](https://github.com/cs01/milo/tree/main/src-milo) | The Milo compiler, in Milo — self-hosting, rebuilds itself byte-for-byte identical |
-| [smtSolve](https://github.com/cs01/milo/blob/main/tools/smtSolve.milo) | The SMT solver behind `milo prove` — Milo's contracts are discharged by a Milo binary |
+| [src-milo](https://github.com/cs01/milo/tree/main/src-milo) | The Milo compiler, in Milo. Self-hosting, rebuilds itself byte-for-byte identical |
+| [smtSolve](https://github.com/cs01/milo/blob/main/tools/smtSolve.milo) | The SMT solver behind `milo prove`. Milo's contracts are discharged by a Milo binary |
 | [fmt](https://github.com/cs01/milo/blob/main/examples/cli-tools/fmt.milo) | The Milo source formatter, in Milo |
 
 ## CLI tools

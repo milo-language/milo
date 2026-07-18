@@ -1,8 +1,8 @@
 # Milo
 
-A memory-safe, intentionally simple systems language with formal verification — friendly to humans and AI.
+A memory-safe, intentionally simple systems language with formal verification. Friendly to humans and AI.
 
-**→ [cs01.github.io/milo](https://cs01.github.io/milo/)** — docs, language tour, playground, and demos you can play in the browser.
+**→ [cs01.github.io/milo](https://cs01.github.io/milo/)**: docs, language tour, playground, and demos you can play in the browser.
 
 ```milo
 from "std/http" import { Request, Response, serve }
@@ -15,7 +15,7 @@ fn main(): i32 {
 }
 ```
 
-We build the language by building applications with it — game-console emulators, a debugger, servers, a JavaScript engine, and the compiler itself, all written in Milo. Dogfooding real programs is faster than theory and analysis, and it yields a better language.
+We build the language by building applications with it: game-console emulators, a debugger, servers, a JavaScript engine, and the compiler itself, all written in Milo. Dogfooding real programs is faster than theory and analysis, and it yields a better language.
 
 ## Install
 

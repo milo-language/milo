@@ -21,7 +21,7 @@ hero:
 
 <div class="intro">
 
-Milo is a memory-safe systems language that guides you to simple, correct, readable programs. Contracts are built in, enabling formal verification that guarantees correctness across your codebase — no matter how large. People and AI alike ship with confidence that their code is correct. <a href="/milo/language/">Learn more →</a>
+Milo is a memory-safe systems language that guides you to simple, correct, readable programs. Contracts are built in, enabling formal verification that guarantees correctness across your codebase, no matter how large. People and AI ship with confidence that their code is correct. <a href="/milo/language/">Learn more →</a>
 
 </div>
 
@@ -29,7 +29,7 @@ Milo is a memory-safe systems language that guides you to simple, correct, reada
   :titles="['Hello World', 'Contracts', 'Ownership']"
   :captions="[
     'No boilerplate, no ceremony. One command compiles it to a native binary and runs it.',
-    'requires and ensures are part of the language. The prover checks that clamp keeps its promise for every input — not just the ones you tested.',
+    'requires and ensures are part of the language. The prover checks that clamp keeps its promise for every input, not just the ones you tested.',
     'Hand a value to someone else and you no longer have it. The compiler catches the mistake at compile time, not at 3am.',
   ]"
 >
@@ -55,7 +55,7 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
 ```milo
 fn main() {
     let name = "milo"
-    let greeting = name   // `name` moves here — it is no longer yours
+    let greeting = name   // `name` moves here. It is no longer yours
 
     print(greeting)       // "milo"
     print(name)           // error: use of moved variable 'name'
@@ -67,7 +67,7 @@ fn main() {
 <div class="showcase">
   <div class="showcase-head">
     <h2>Built in Milo</h2>
-    <p>We build the language by building things with it — we've found that faster than theory and analysis, and it yields a better language. The emulators run right here in your browser: the same Milo source compiles to a native binary <em>and</em> to JavaScript.</p>
+    <p>We build the language by building things with it. We've found that faster than theory and analysis, and it yields a better language. The emulators run right here in your browser: the same Milo source compiles to a native binary <em>and</em> to JavaScript.</p>
   </div>
   <div class="tile-grid">
     <a class="tile" href="/milo/nes/">
@@ -86,12 +86,12 @@ fn main() {
       <span class="tile-play">▶ PLAY</span>
       <div class="tile-emoji">👾</div>
       <h3>SNES Emulator</h3>
-      <p>A Super Nintendo — Mario World, Donkey Kong Country, Star Fox.</p>
+      <p>A Super Nintendo. Mario World, Donkey Kong Country, Star Fox.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/src-milo">
       <div class="tile-emoji">🪞</div>
       <h3>The Compiler</h3>
-      <p>The Milo compiler is written in Milo — it rebuilds itself, byte-for-byte.</p>
+      <p>The Milo compiler is written in Milo. It rebuilds itself, byte-for-byte.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/milojs">
       <div class="tile-emoji">⚡</div>
@@ -101,7 +101,7 @@ fn main() {
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/hades">
       <div class="tile-emoji">🐛</div>
       <h3>Debugger</h3>
-      <p>hades — debug any program from the browser, with an AI in the loop.</p>
+      <p>hades: debug any program from the browser, with an AI in the loop.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/weather">
       <div class="tile-emoji">🌦️</div>
@@ -131,7 +131,7 @@ fn main() {
     <a class="tile" href="https://github.com/cs01/milo/blob/main/tools/smtSolve.milo">
       <div class="tile-emoji">🧮</div>
       <h3>The Prover</h3>
-      <p>The SMT prover that verifies Milo contracts — written in Milo.</p>
+      <p>The SMT prover that verifies Milo contracts, written in Milo.</p>
     </a>
   </div>
   <div class="showcase-cta">
