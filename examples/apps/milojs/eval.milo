@@ -4211,8 +4211,12 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
         Stmt.ForOf(name, objExpr, body) => {
             let ov = evalExpr(prog, objExpr, st, scope)
             // the snapshot's element handles are only kept alive by the source
-            // object, so it must stay rooted for the whole loop
+            // object, so it must stay rooted for the whole loop. `holder` keeps
+            // alive any values synthesised during iteration (Map pairs), which
+            // the source does not reference.
             pushTemp(st, cloneValue(ov))
+            let holder = newArray(st)
+            pushTemp(st, JSValue.Obj(holder))
             var vals: Vec<JSValue> = Vec.new()
             var iterable = false
             match ov {
@@ -4226,7 +4230,10 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                             e = e + 1
                         }
                     } else if st.objects[o].isMap || st.objects[o].isSet {
-                        // a Map yields [key, value] pairs; a Set yields values
+                        // a Map yields freshly built [key, value] pairs; a Set
+                        // yields its values. The pairs exist only in `vals`,
+                        // which the collector cannot see, so they are also held
+                        // in a rooted holder array for the life of the loop.
                         iterable = true
                         let isSet = st.objects[o].isSet
                         var e: i64 = 0
@@ -4239,6 +4246,7 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                                 arrPush(st, pair, cloneValue(st.objects[o].mapKeys[e]))
                                 arrPush(st, pair, cloneValue(st.objects[o].mapVals[e]))
                                 popTemp(st)
+                                arrPush(st, holder, JSValue.Obj(pair))
                                 vals.push(JSValue.Obj(pair))
                             }
                             e = e + 1
@@ -4259,6 +4267,7 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
             }
             if !iterable {
                 popTemp(st)
+                popTemp(st)
                 st.throwing = true
                 st.thrownValue = JSValue.Str("TypeError: value is not iterable")
                 return Flow.Normal
@@ -4273,6 +4282,7 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                 match flow {
                     Flow.Ret(v) => {
                         popActive(st)
+                        popTemp(st)
                         popTemp(st)
                         return Flow.Ret(v)
                     }
@@ -4290,6 +4300,7 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                 i = i + 1
             }
             popActive(st)
+            popTemp(st)
             popTemp(st)
             return Flow.Normal
         }

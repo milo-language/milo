@@ -136,6 +136,9 @@ fn builtinSource(name: &string): string {
     if name == "tty" {
         return embedFile("lib/tty.js")
     }
+    if name == "crypto" {
+        return embedFile("lib/crypto.js")
+    }
     if name == "prelude" {
         return embedFile("lib/prelude.js")
     }
