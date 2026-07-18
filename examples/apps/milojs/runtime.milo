@@ -1,0 +1,310 @@
+// The interpreter's memory: a scope arena and an object heap, both index-
+// addressed and reclaimed by one mark-sweep collector (see collect). Slots are
+// stable and reused via free-lists, never moved, because closures and object
+// handles refer to them by index. GC is safe to run only at execBlock statement
+// boundaries — the single point where every live value sits in a scope binding
+// and no closure is in-flight mid-expression.
+
+from "./value" import {
+    JSValue
+}
+
+struct Binding {
+    name: string,
+    value: JSValue,
+}
+
+// A freed scope slot is marked by parent == GC_FREE so the sweep skips it and
+// newScope can reuse it. Real parents are >= 0 (global) or -1 (global's parent).
+let GC_FREE: i64 = -2
+
+struct Scope {
+    parent: i64,
+    vars: Vec<Binding>,
+    mark: bool,
+}
+
+// A heap object: an ordered list of string-keyed properties. `free` marks a
+// reclaimed slot the sweep skips and newObject can reuse.
+struct Prop {
+    key: string,
+    value: JSValue,
+}
+
+struct JSObj {
+    props: Vec<Prop>,
+    mark: bool,
+    free: bool,
+}
+
+struct Interp {
+    scopes: Vec<Scope>,
+    // reusable dead-scope slots (indices stay stable — closures hold them by index)
+    freeList: Vec<i64>,
+    // the dynamic call/block stack: scopes live on the native eval stack but not
+    // reachable via lexical parent links (a fib frame's parent is global, not its
+    // caller). This is the extra GC root set the parent chain can't provide.
+    active: Vec<i64>,
+    // heap-object arena + its own free-list, GC'd by the same collector as scopes
+    objects: Vec<JSObj>,
+    objFreeList: Vec<i64>,
+    allocSinceGc: i64,
+    gcThreshold: i64,
+    gcRuns: i64,
+    gcStats: bool,
+}
+
+fn newObject(st: &mut Interp): i64 {
+    st.allocSinceGc = st.allocSinceGc + 1
+    if st.objFreeList.len() > 0 {
+        let idx = st.objFreeList.pop()
+        st.objects[idx] = JSObj {
+            props: Vec.new(), mark: false, free: false
+        }
+        return idx
+    }
+    st.objects.push(JSObj {
+        props: Vec.new(), mark: false, free: false
+    }
+    )
+    return st.objects.len() - 1
+}
+
+fn objGet(st: &Interp, obj: i64, key: &string): JSValue {
+    var i: i64 = 0
+    let n = st.objects[obj].props.len()
+    while i < n {
+        if st.objects[obj].props[i].key == key {
+            return cloneValue(st.objects[obj].props[i].value)
+        }
+        i = i + 1
+    }
+    return JSValue.Undefined
+}
+
+fn objSet(st: &mut Interp, obj: i64, key: string, value: JSValue) {
+    var i: i64 = 0
+    let n = st.objects[obj].props.len()
+    while i < n {
+        if st.objects[obj].props[i].key == key {
+            st.objects[obj].props[i] = Prop {
+                key: key, value: value
+            }
+            return
+        }
+        i = i + 1
+    }
+    st.objects[obj].props.push(Prop {
+        key: key, value: value
+    }
+    )
+}
+
+fn newScope(st: &mut Interp, parent: i64): i64 {
+    st.allocSinceGc = st.allocSinceGc + 1
+    if st.freeList.len() > 0 {
+        let idx = st.freeList.pop()
+        st.scopes[idx] = Scope {
+            parent: parent, vars: Vec.new(), mark: false
+        }
+        return idx
+    }
+    st.scopes.push(Scope {
+        parent: parent, vars: Vec.new(), mark: false
+    }
+    )
+    return st.scopes.len() - 1
+}
+
+// Roots pushed/popped around every call and block body. Popping makes a
+// completed frame collectable at the next GC safepoint.
+fn pushActive(st: &mut Interp, scope: i64) {
+    st.active.push(scope)
+}
+
+fn popActive(st: &mut Interp) {
+    st.active.pop()
+}
+
+// Mark whatever a value keeps alive: a closure roots its captured scope, an
+// object handle roots its heap slot; primitives root nothing. The three mark
+// functions are mutually recursive and all idempotent (mark flags), so cyclic
+// closure/object graphs terminate.
+fn markValue(st: &mut Interp, v: &JSValue) {
+    match v {
+        JSValue.Func(_f, envIdx) => {
+            markScope(st, envIdx)
+        }
+        JSValue.Obj(objIdx) => {
+            markObject(st, objIdx)
+        }
+        _ => {
+        }
+    }
+}
+
+// Mark an object live, then everything its property values reach.
+fn markObject(st: &mut Interp, i: i64) {
+    if i < 0 {
+        return
+    }
+    if st.objects[i].mark {
+        return
+    }
+    st.objects[i].mark = true
+    var vals: Vec<JSValue> = Vec.new()
+    var k: i64 = 0
+    let n = st.objects[i].props.len()
+    while k < n {
+        vals.push(cloneValue(st.objects[i].props[k].value))
+        k = k + 1
+    }
+    var m: i64 = 0
+    while m < vals.len() {
+        markValue(st, vals[m])
+        m = m + 1
+    }
+}
+
+// Mark a scope live, then everything it can reach: its lexical parent and every
+// value bound in it (closures → their env, objects → their heap slot).
+fn markScope(st: &mut Interp, i: i64) {
+    if i < 0 {
+        return
+    }
+    if st.scopes[i].mark {
+        return
+    }
+    st.scopes[i].mark = true
+    let parent = st.scopes[i].parent
+    var vals: Vec<JSValue> = Vec.new()
+    var k: i64 = 0
+    let n = st.scopes[i].vars.len()
+    while k < n {
+        vals.push(cloneValue(st.scopes[i].vars[k].value))
+        k = k + 1
+    }
+    markScope(st, parent)
+    var m: i64 = 0
+    while m < vals.len() {
+        markValue(st, vals[m])
+        m = m + 1
+    }
+}
+
+// Mark-sweep over both arenas. SAFE ONLY at execBlock statement boundaries: there
+// every live value is stored in a scope binding (a root) and no closure/object is
+// in-flight on the native stack mid-expression, so nothing reachable is missed.
+fn collect(st: &mut Interp) {
+    var i: i64 = 0
+    while i < st.scopes.len() {
+        st.scopes[i].mark = false
+        i = i + 1
+    }
+    var oi: i64 = 0
+    while oi < st.objects.len() {
+        st.objects[oi].mark = false
+        oi = oi + 1
+    }
+    // roots: global scope 0 + the whole dynamic call/block stack. Objects are
+    // marked transitively from the values bound in reachable scopes.
+    markScope(st, 0)
+    var a: i64 = 0
+    while a < st.active.len() {
+        markScope(st, st.active[a])
+        a = a + 1
+    }
+    var freed: i64 = 0
+    var s: i64 = 0
+    while s < st.scopes.len() {
+        let isFree = st.scopes[s].parent == GC_FREE
+        if s != 0 && !isFree && !st.scopes[s].mark {
+            st.scopes[s].vars = Vec.new()
+            st.scopes[s].parent = GC_FREE
+            st.freeList.push(s)
+            freed = freed + 1
+        }
+        s = s + 1
+    }
+    var ofreed: i64 = 0
+    var os: i64 = 0
+    while os < st.objects.len() {
+        if !st.objects[os].free && !st.objects[os].mark {
+            st.objects[os].props = Vec.new()
+            st.objects[os].free = true
+            st.objFreeList.push(os)
+            ofreed = ofreed + 1
+        }
+        os = os + 1
+    }
+    st.gcRuns = st.gcRuns + 1
+    st.allocSinceGc = 0
+    if st.gcStats {
+        let liveSlots = st.scopes.len() - st.freeList.len()
+        let liveObjs = st.objects.len() - st.objFreeList.len()
+        print("[gc] run " + i64ToStr(st.gcRuns) + ": freed " + i64ToStr(freed) + " scopes / " + i64ToStr(ofreed) + " objs, live " + i64ToStr(liveSlots) + " scopes / " + i64ToStr(liveObjs) + " objs, arena " + i64ToStr(st.scopes.len()) + "/" + i64ToStr(st.objects.len()))
+    }
+}
+
+// Run a collection if enough allocations happened since the last one. Called
+// only from execBlock between statements (the GC safepoint).
+fn maybeGc(st: &mut Interp) {
+    if st.allocSinceGc >= st.gcThreshold {
+        collect(st)
+    }
+}
+
+fn scopeDefine(st: &mut Interp, scope: i64, name: string, value: JSValue) {
+    // redeclaration in the same scope overwrites (sloppy JS)
+    var i = st.scopes[scope].vars.len() - 1
+    while i >= 0 {
+        if st.scopes[scope].vars[i].name == name {
+            st.scopes[scope].vars[i] = Binding {
+                name: name, value: value
+            }
+            return
+        }
+        i = i - 1
+    }
+    st.scopes[scope].vars.push(Binding {
+        name: name, value: value
+    }
+    )
+}
+
+fn scopeLookup(st: &Interp, scope: i64, name: &string): JSValue {
+    var s = scope
+    while s >= 0 {
+        var i = st.scopes[s].vars.len() - 1
+        while i >= 0 {
+            if st.scopes[s].vars[i].name == name {
+                return cloneValue(st.scopes[s].vars[i].value)
+            }
+            i = i - 1
+        }
+        s = st.scopes[s].parent
+    }
+    return JSValue.Undefined
+}
+
+// Assignment walks the chain; if unbound, creates a global (sloppy JS).
+fn scopeAssign(st: &mut Interp, scope: i64, name: string, value: JSValue) {
+    var s = scope
+    while s >= 0 {
+        var i = st.scopes[s].vars.len() - 1
+        while i >= 0 {
+            if st.scopes[s].vars[i].name == name {
+                st.scopes[s].vars[i] = Binding {
+                    name: name, value: value
+                }
+                return
+            }
+            i = i - 1
+        }
+        s = st.scopes[s].parent
+    }
+    st.scopes[0].vars.push(Binding {
+        name: name, value: value
+    }
+    )
+}

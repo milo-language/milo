@@ -1,0 +1,154 @@
+// AST node types plus the Prog arena that owns them. Every child link is an i64
+// index into one of Prog's flat Vecs (-1 means "none"), so the recursive tree is
+// expressed without recursive owned types. getExpr/getStmt clone a node out by
+// index for matching; addExpr/addStmt append and return the new index.
+
+enum Expr {
+    Num(f64),
+    StrLit(string),
+    BoolLit(bool),
+    NullLit,
+    UndefLit,
+    Ident(string),
+    Bin(string, i64, i64),
+    Un(string, i64),
+    Assign(string, i64),
+    Call(i64, i64),
+    Member(i64, string),
+    FuncExpr(i64),
+    // object literal: index into prog.objLits (a list of key/value-expr pairs)
+    ObjLit(i64),
+    // computed member read: obj[keyExpr]
+    Index(i64, i64),
+    // property write: obj, keyExpr, valExpr — backs both obj.x = v and obj[k] = v
+    SetMember(i64, i64, i64),
+}
+
+// One key/value pair in an object literal; val is an expr index.
+struct PropInit {
+    key: string,
+    val: i64,
+}
+
+enum Stmt {
+    Decl(string, i64),
+    ExprStmt(i64),
+    If(i64, i64, i64),
+    While(i64, i64),
+    Ret(i64),
+    Block(i64),
+    FuncDecl(i64),
+    Empty,
+}
+
+struct FuncDef {
+    name: string,
+    params: Vec<string>,
+    body: i64,
+}
+
+struct Prog {
+    exprs: Vec<Expr>,
+    stmts: Vec<Stmt>,
+    blocks: Vec<Vec<i64>>,
+    argLists: Vec<Vec<i64>>,
+    funcs: Vec<FuncDef>,
+    objLits: Vec<Vec<PropInit>>,
+}
+
+fn cloneExpr(e: &Expr): Expr {
+    match e {
+        Expr.Num(n) => {
+            return Expr.Num(n)
+        }
+        Expr.StrLit(s) => {
+            return Expr.StrLit(s.clone())
+        }
+        Expr.BoolLit(b) => {
+            return Expr.BoolLit(b)
+        }
+        Expr.NullLit => {
+            return Expr.NullLit
+        }
+        Expr.UndefLit => {
+            return Expr.UndefLit
+        }
+        Expr.Ident(name) => {
+            return Expr.Ident(name.clone())
+        }
+        Expr.Bin(op, a, b) => {
+            return Expr.Bin(op.clone(), a, b)
+        }
+        Expr.Un(op, a) => {
+            return Expr.Un(op.clone(), a)
+        }
+        Expr.Assign(name, v) => {
+            return Expr.Assign(name.clone(), v)
+        }
+        Expr.Call(callee, argsIdx) => {
+            return Expr.Call(callee, argsIdx)
+        }
+        Expr.Member(obj, name) => {
+            return Expr.Member(obj, name.clone())
+        }
+        Expr.FuncExpr(f) => {
+            return Expr.FuncExpr(f)
+        }
+        Expr.ObjLit(i) => {
+            return Expr.ObjLit(i)
+        }
+        Expr.Index(obj, key) => {
+            return Expr.Index(obj, key)
+        }
+        Expr.SetMember(obj, key, val) => {
+            return Expr.SetMember(obj, key, val)
+        }
+    }
+}
+
+fn cloneStmt(s: &Stmt): Stmt {
+    match s {
+        Stmt.Decl(name, e) => {
+            return Stmt.Decl(name.clone(), e)
+        }
+        Stmt.ExprStmt(e) => {
+            return Stmt.ExprStmt(e)
+        }
+        Stmt.If(c, t, f) => {
+            return Stmt.If(c, t, f)
+        }
+        Stmt.While(c, b) => {
+            return Stmt.While(c, b)
+        }
+        Stmt.Ret(e) => {
+            return Stmt.Ret(e)
+        }
+        Stmt.Block(b) => {
+            return Stmt.Block(b)
+        }
+        Stmt.FuncDecl(f) => {
+            return Stmt.FuncDecl(f)
+        }
+        Stmt.Empty => {
+            return Stmt.Empty
+        }
+    }
+}
+
+fn getExpr(prog: &Prog, i: i64): Expr {
+    return cloneExpr(prog.exprs[i])
+}
+
+fn getStmt(prog: &Prog, i: i64): Stmt {
+    return cloneStmt(prog.stmts[i])
+}
+
+fn addExpr(prog: &mut Prog, e: Expr): i64 {
+    prog.exprs.push(e)
+    return prog.exprs.len() - 1
+}
+
+fn addStmt(prog: &mut Prog, s: Stmt): i64 {
+    prog.stmts.push(s)
+    return prog.stmts.len() - 1
+}

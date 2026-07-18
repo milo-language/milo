@@ -1,0 +1,271 @@
+// Tokenizer: source text → a flat Vec<Token>. Token kinds are plain i32 tags;
+// numbers carry their f64 value, identifiers and strings their text.
+
+from "std/strconv" import {
+    parseFloat
+}
+
+let T_NUM: i32 = 0
+let T_STR: i32 = 1
+let T_IDENT: i32 = 2
+let T_LET: i32 = 3
+let T_VAR: i32 = 4
+let T_CONST: i32 = 5
+let T_FUNCTION: i32 = 6
+let T_RETURN: i32 = 7
+let T_IF: i32 = 8
+let T_ELSE: i32 = 9
+let T_WHILE: i32 = 10
+let T_TRUE: i32 = 11
+let T_FALSE: i32 = 12
+let T_NULL: i32 = 13
+let T_UNDEFINED: i32 = 14
+let T_PLUS: i32 = 15
+let T_MINUS: i32 = 16
+let T_STAR: i32 = 17
+let T_SLASH: i32 = 18
+let T_PERCENT: i32 = 19
+let T_EQEQ: i32 = 20
+let T_NEQ: i32 = 21
+let T_LT: i32 = 22
+let T_GT: i32 = 23
+let T_LE: i32 = 24
+let T_GE: i32 = 25
+let T_EQ: i32 = 26
+let T_ANDAND: i32 = 27
+let T_OROR: i32 = 28
+let T_NOT: i32 = 29
+let T_LPAREN: i32 = 30
+let T_RPAREN: i32 = 31
+let T_LBRACE: i32 = 32
+let T_RBRACE: i32 = 33
+let T_COMMA: i32 = 34
+let T_SEMI: i32 = 35
+let T_DOT: i32 = 36
+let T_EOF: i32 = 37
+let T_LBRACKET: i32 = 38
+let T_RBRACKET: i32 = 39
+let T_COLON: i32 = 40
+
+struct Token {
+    kind: i32,
+    num: f64,
+    text: string,
+}
+
+fn isSpace(c: u8): bool {
+    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8
+}
+
+fn isDigit(c: u8): bool {
+    return c >= '0' && c <= '9'
+}
+
+fn isIdentStart(c: u8): bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$'
+}
+
+fn keywordKind(s: &string): i32 {
+    if s == "let" {
+        return T_LET
+    }
+    if s == "var" {
+        return T_VAR
+    }
+    if s == "const" {
+        return T_CONST
+    }
+    if s == "function" {
+        return T_FUNCTION
+    }
+    if s == "return" {
+        return T_RETURN
+    }
+    if s == "if" {
+        return T_IF
+    }
+    if s == "else" {
+        return T_ELSE
+    }
+    if s == "while" {
+        return T_WHILE
+    }
+    if s == "true" {
+        return T_TRUE
+    }
+    if s == "false" {
+        return T_FALSE
+    }
+    if s == "null" {
+        return T_NULL
+    }
+    if s == "undefined" {
+        return T_UNDEFINED
+    }
+    return T_IDENT
+}
+
+fn pushTok(toks: &mut Vec<Token>, kind: i32) {
+    toks.push(Token {
+        kind: kind, num: 0.0, text: ""
+    }
+    )
+}
+
+fn lex(src: &string): Vec<Token> {
+    var toks: Vec<Token> = Vec.new()
+    let n = src.len()
+    var i: i64 = 0
+    while i < n {
+        let c = src[i]
+        if isSpace(c) {
+            i = i + 1
+        } else if c == '/' && i + 1 < n && src[i + 1] == '/' {
+            // line comment
+            while i < n && src[i] != 10 as u8 {
+                i = i + 1
+            }
+        } else if c == '/' && i + 1 < n && src[i + 1] == '*' {
+            // block comment
+            i = i + 2
+            while i + 1 < n && !(src[i] == '*' && src[i + 1] == '/') {
+                i = i + 1
+            }
+            i = i + 2
+        } else if isDigit(c) || (c == '.' && i + 1 < n && isDigit(src[i + 1])) {
+            var txt = String.withCapacity(16)
+            while i < n && (isDigit(src[i]) || src[i] == '.') {
+                txt.push(src[i])
+                i = i + 1
+            }
+            var v: f64 = 0.0
+            match parseFloat(txt) {
+                Option.Some(x) => {
+                    v = x
+                }
+                Option.None => {
+                    v = 0.0
+                }
+            }
+            toks.push(Token {
+                kind: T_NUM, num: v, text: ""
+            }
+            )
+        } else if isIdentStart(c) {
+            var name = String.withCapacity(16)
+            while i < n && (isIdentStart(src[i]) || isDigit(src[i])) {
+                name.push(src[i])
+                i = i + 1
+            }
+            let k = keywordKind(name)
+            toks.push(Token {
+                kind: k, num: 0.0, text: name
+            }
+            )
+        } else if c == 34 as u8 || c == 39 as u8 {
+            // string literal, ' or "
+            let quote = c
+            i = i + 1
+            var s = String.withCapacity(16)
+            while i < n && src[i] != quote {
+                if src[i] == 92 as u8 && i + 1 < n {
+                    let e = src[i + 1]
+                    if e == 'n' {
+                        s.push(10 as u8)
+                    } else if e == 't' {
+                        s.push(9 as u8)
+                    } else if e == 'r' {
+                        s.push(13 as u8)
+                    } else if e == '0' {
+                        s.push(0 as u8)
+                    } else {
+                        // \\ \' \" and anything else: the char itself
+                        s.push(e)
+                    }
+                    i = i + 2
+                } else {
+                    s.push(src[i])
+                    i = i + 1
+                }
+            }
+            i = i + 1
+            toks.push(Token {
+                kind: T_STR, num: 0.0, text: s
+            }
+            )
+        } else if c == '=' && i + 1 < n && src[i + 1] == '=' {
+            // == and === lex the same token (strict-vs-loose is applied at eval)
+            i = i + 2
+            if i < n && src[i] == '=' {
+                i = i + 1
+            }
+            pushTok(toks, T_EQEQ)
+        } else if c == '!' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            if i < n && src[i] == '=' {
+                i = i + 1
+            }
+            pushTok(toks, T_NEQ)
+        } else if c == '<' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_LE)
+        } else if c == '>' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_GE)
+        } else if c == '&' && i + 1 < n && src[i + 1] == '&' {
+            i = i + 2
+            pushTok(toks, T_ANDAND)
+        } else if c == '|' && i + 1 < n && src[i + 1] == '|' {
+            i = i + 2
+            pushTok(toks, T_OROR)
+        } else {
+            var k: i32 = -1
+            if c == '+' {
+                k = T_PLUS
+            } else if c == '-' {
+                k = T_MINUS
+            } else if c == '*' {
+                k = T_STAR
+            } else if c == '/' {
+                k = T_SLASH
+            } else if c == '%' {
+                k = T_PERCENT
+            } else if c == '<' {
+                k = T_LT
+            } else if c == '>' {
+                k = T_GT
+            } else if c == '=' {
+                k = T_EQ
+            } else if c == '!' {
+                k = T_NOT
+            } else if c == '(' {
+                k = T_LPAREN
+            } else if c == ')' {
+                k = T_RPAREN
+            } else if c == '{' {
+                k = T_LBRACE
+            } else if c == '}' {
+                k = T_RBRACE
+            } else if c == ',' {
+                k = T_COMMA
+            } else if c == ';' {
+                k = T_SEMI
+            } else if c == '.' {
+                k = T_DOT
+            } else if c == '[' {
+                k = T_LBRACKET
+            } else if c == ']' {
+                k = T_RBRACKET
+            } else if c == ':' {
+                k = T_COLON
+            }
+            if k >= 0 {
+                pushTok(toks, k)
+            }
+            // unknown chars are skipped
+            i = i + 1
+        }
+    }
+    pushTok(toks, T_EOF)
+    return toks
+}

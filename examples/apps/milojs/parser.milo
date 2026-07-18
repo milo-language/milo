@@ -1,0 +1,433 @@
+// Recursive-descent parser: tokens → AST indices in Prog. Precedence climbs
+// primary → postfix → unary → mul → add → rel → eq → and → or → assignment.
+// It is deliberately forgiving: malformed input still terminates (unexpected
+// tokens are consumed) so a bad script can't hang the parser.
+
+from "./lexer" import {
+    Token
+}
+from "./ast" import {
+    Prog
+}
+from "./value" import {
+    i64ToStr
+}
+
+struct PState {
+    toks: Vec<Token>,
+    pos: i64,
+}
+
+fn peekKind(p: &PState): i32 {
+    if p.pos < p.toks.len() {
+        return p.toks[p.pos].kind
+    }
+    return T_EOF
+}
+
+fn advance(p: &mut PState) {
+    p.pos = p.pos + 1
+}
+
+// Consume `kind` if present; parser is forgiving (bad input still terminates).
+fn expect(p: &mut PState, kind: i32) {
+    if peekKind(p) == kind {
+        advance(p)
+    } else {
+        print("milojs: parse error near token " + i64ToStr(p.pos))
+    }
+}
+
+fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
+    let k = peekKind(p)
+    if k == T_NUM {
+        let v = p.toks[p.pos].num
+        advance(p)
+        return addExpr(prog, Expr.Num(v))
+    }
+    if k == T_STR {
+        let s = p.toks[p.pos].text.clone()
+        advance(p)
+        return addExpr(prog, Expr.StrLit(s))
+    }
+    if k == T_TRUE {
+        advance(p)
+        return addExpr(prog, Expr.BoolLit(true))
+    }
+    if k == T_FALSE {
+        advance(p)
+        return addExpr(prog, Expr.BoolLit(false))
+    }
+    if k == T_NULL {
+        advance(p)
+        return addExpr(prog, Expr.NullLit)
+    }
+    if k == T_UNDEFINED {
+        advance(p)
+        return addExpr(prog, Expr.UndefLit)
+    }
+    if k == T_IDENT {
+        let name = p.toks[p.pos].text.clone()
+        advance(p)
+        return addExpr(prog, Expr.Ident(name))
+    }
+    if k == T_LPAREN {
+        advance(p)
+        let e = parseExpr(p, prog)
+        expect(p, T_RPAREN)
+        return e
+    }
+    if k == T_FUNCTION {
+        let f = parseFunction(p, prog)
+        return addExpr(prog, Expr.FuncExpr(f))
+    }
+    if k == T_LBRACE {
+        return parseObjectLiteral(p, prog)
+    }
+    // unexpected token: consume it so parsing always makes progress
+    advance(p)
+    return addExpr(prog, Expr.UndefLit)
+}
+
+// { key: expr, key: expr, ... } — keys are identifiers or string literals
+fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
+    expect(p, T_LBRACE)
+    var props: Vec<PropInit> = Vec.new()
+    while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
+        var key = ""
+        if peekKind(p) == T_IDENT || peekKind(p) == T_STR {
+            key = p.toks[p.pos].text.clone()
+            advance(p)
+        } else {
+            advance(p)
+        }
+        expect(p, T_COLON)
+        let valIdx = parseExpr(p, prog)
+        props.push(PropInit {
+            key: key, val: valIdx
+        }
+        )
+        if peekKind(p) == T_COMMA {
+            advance(p)
+        }
+    }
+    expect(p, T_RBRACE)
+    prog.objLits.push(props)
+    let idx = prog.objLits.len() - 1
+    return addExpr(prog, Expr.ObjLit(idx))
+}
+
+fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
+    var e = parsePrimary(p, prog)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_LPAREN {
+            advance(p)
+            var argIdxs: Vec<i64> = Vec.new()
+            if peekKind(p) != T_RPAREN {
+                argIdxs.push(parseExpr(p, prog))
+                while peekKind(p) == T_COMMA {
+                    advance(p)
+                    argIdxs.push(parseExpr(p, prog))
+                }
+            }
+            expect(p, T_RPAREN)
+            prog.argLists.push(argIdxs)
+            let listIdx = prog.argLists.len() - 1
+            e = addExpr(prog, Expr.Call(e, listIdx))
+        } else if k == T_DOT {
+            advance(p)
+            var name = ""
+            if peekKind(p) == T_IDENT {
+                name = p.toks[p.pos].text.clone()
+                advance(p)
+            }
+            e = addExpr(prog, Expr.Member(e, name))
+        } else if k == T_LBRACKET {
+            advance(p)
+            let keyIdx = parseExpr(p, prog)
+            expect(p, T_RBRACKET)
+            e = addExpr(prog, Expr.Index(e, keyIdx))
+        } else {
+            go = false
+        }
+    }
+    return e
+}
+
+fn parseUnary(p: &mut PState, prog: &mut Prog): i64 {
+    let k = peekKind(p)
+    if k == T_MINUS {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Un("-", e))
+    }
+    if k == T_NOT {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Un("!", e))
+    }
+    return parsePostfix(p, prog)
+}
+
+fn parseMul(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseUnary(p, prog)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_STAR || k == T_SLASH || k == T_PERCENT {
+            advance(p)
+            var op = "*"
+            if k == T_SLASH {
+                op = "/"
+            } else if k == T_PERCENT {
+                op = "%"
+            }
+            let right = parseUnary(p, prog)
+            left = addExpr(prog, Expr.Bin(op, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parseAdd(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseMul(p, prog)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_PLUS || k == T_MINUS {
+            advance(p)
+            var op = "+"
+            if k == T_MINUS {
+                op = "-"
+            }
+            let right = parseMul(p, prog)
+            left = addExpr(prog, Expr.Bin(op, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parseRel(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseAdd(p, prog)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_LT || k == T_GT || k == T_LE || k == T_GE {
+            advance(p)
+            var op = "<"
+            if k == T_GT {
+                op = ">"
+            } else if k == T_LE {
+                op = "<="
+            } else if k == T_GE {
+                op = ">="
+            }
+            let right = parseAdd(p, prog)
+            left = addExpr(prog, Expr.Bin(op, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parseEq(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseRel(p, prog)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_EQEQ || k == T_NEQ {
+            advance(p)
+            var op = "=="
+            if k == T_NEQ {
+                op = "!="
+            }
+            let right = parseRel(p, prog)
+            left = addExpr(prog, Expr.Bin(op, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parseAnd(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseEq(p, prog)
+    while peekKind(p) == T_ANDAND {
+        advance(p)
+        let right = parseEq(p, prog)
+        left = addExpr(prog, Expr.Bin("&&", left, right))
+    }
+    return left
+}
+
+fn parseOr(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseAnd(p, prog)
+    while peekKind(p) == T_OROR {
+        advance(p)
+        let right = parseAnd(p, prog)
+        left = addExpr(prog, Expr.Bin("||", left, right))
+    }
+    return left
+}
+
+fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
+    let left = parseOr(p, prog)
+    if peekKind(p) == T_EQ {
+        advance(p)
+        let rhs = parseExpr(p, prog)
+        let leftNode = getExpr(prog, left)
+        match leftNode {
+            Expr.Ident(name) => {
+                return addExpr(prog, Expr.Assign(name, rhs))
+            }
+            Expr.Member(objIdx, name) => {
+                // obj.x = v  →  synthesize the string key "x"
+                let keyIdx = addExpr(prog, Expr.StrLit(name))
+                return addExpr(prog, Expr.SetMember(objIdx, keyIdx, rhs))
+            }
+            Expr.Index(objIdx, keyIdx) => {
+                return addExpr(prog, Expr.SetMember(objIdx, keyIdx, rhs))
+            }
+            _ => {
+                // non-lvalue assignment target: evaluate rhs, drop the target
+                return rhs
+            }
+        }
+    }
+    return left
+}
+
+// function [name] ( params ) { body } — returns index into prog.funcs
+fn parseFunction(p: &mut PState, prog: &mut Prog): i64 {
+    expect(p, T_FUNCTION)
+    var name = ""
+    if peekKind(p) == T_IDENT {
+        name = p.toks[p.pos].text.clone()
+        advance(p)
+    }
+    expect(p, T_LPAREN)
+    var params: Vec<string> = Vec.new()
+    if peekKind(p) == T_IDENT {
+        params.push(p.toks[p.pos].text.clone())
+        advance(p)
+        while peekKind(p) == T_COMMA {
+            advance(p)
+            if peekKind(p) == T_IDENT {
+                params.push(p.toks[p.pos].text.clone())
+                advance(p)
+            }
+        }
+    }
+    expect(p, T_RPAREN)
+    let body = parseBraceBlock(p, prog)
+    prog.funcs.push(FuncDef {
+        name: name, params: params, body: body
+    }
+    )
+    return prog.funcs.len() - 1
+}
+
+// { stmt* } — returns index into prog.blocks
+fn parseBraceBlock(p: &mut PState, prog: &mut Prog): i64 {
+    expect(p, T_LBRACE)
+    var list: Vec<i64> = Vec.new()
+    while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
+        list.push(parseStmt(p, prog))
+    }
+    expect(p, T_RBRACE)
+    prog.blocks.push(list)
+    return prog.blocks.len() - 1
+}
+
+fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
+    let k = peekKind(p)
+    if k == T_SEMI {
+        advance(p)
+        return addStmt(prog, Stmt.Empty)
+    }
+    if k == T_LET || k == T_VAR || k == T_CONST {
+        advance(p)
+        var name = ""
+        if peekKind(p) == T_IDENT {
+            name = p.toks[p.pos].text.clone()
+            advance(p)
+        }
+        var init = -1
+        if peekKind(p) == T_EQ {
+            advance(p)
+            init = parseExpr(p, prog)
+        }
+        if init < 0 {
+            init = addExpr(prog, Expr.UndefLit)
+        }
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        }
+        return addStmt(prog, Stmt.Decl(name, init))
+    }
+    if k == T_FUNCTION {
+        let f = parseFunction(p, prog)
+        return addStmt(prog, Stmt.FuncDecl(f))
+    }
+    if k == T_IF {
+        advance(p)
+        expect(p, T_LPAREN)
+        let cond = parseExpr(p, prog)
+        expect(p, T_RPAREN)
+        let thenS = parseStmt(p, prog)
+        var elseS = -1
+        if peekKind(p) == T_ELSE {
+            advance(p)
+            elseS = parseStmt(p, prog)
+        }
+        return addStmt(prog, Stmt.If(cond, thenS, elseS))
+    }
+    if k == T_WHILE {
+        advance(p)
+        expect(p, T_LPAREN)
+        let cond = parseExpr(p, prog)
+        expect(p, T_RPAREN)
+        let body = parseStmt(p, prog)
+        return addStmt(prog, Stmt.While(cond, body))
+    }
+    if k == T_RETURN {
+        advance(p)
+        var e = -1
+        let nk = peekKind(p)
+        if nk != T_SEMI && nk != T_RBRACE && nk != T_EOF {
+            e = parseExpr(p, prog)
+        }
+        if e < 0 {
+            e = addExpr(prog, Expr.UndefLit)
+        }
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        }
+        return addStmt(prog, Stmt.Ret(e))
+    }
+    if k == T_LBRACE {
+        let b = parseBraceBlock(p, prog)
+        return addStmt(prog, Stmt.Block(b))
+    }
+    let e = parseExpr(p, prog)
+    if peekKind(p) == T_SEMI {
+        advance(p)
+    }
+    return addStmt(prog, Stmt.ExprStmt(e))
+}
+
+fn parseProgram(p: &mut PState, prog: &mut Prog): i64 {
+    var list: Vec<i64> = Vec.new()
+    while peekKind(p) != T_EOF {
+        list.push(parseStmt(p, prog))
+    }
+    prog.blocks.push(list)
+    return prog.blocks.len() - 1
+}

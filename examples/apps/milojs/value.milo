@@ -1,0 +1,320 @@
+// The runtime value type and JS coercion rules (ToString / ToNumber / ToBoolean /
+// loose equality). A JSValue is a tagged union; Func and Obj carry indices into
+// the interpreter's scope and object arenas rather than owning anything.
+
+from "std/strconv" import {
+    parseFloat
+}
+from "std/os" import {
+    snprintf
+}
+from "std/math" import {
+    mathFloor, mathAbs
+}
+
+enum JSValue {
+    Undefined,
+    Null,
+    Bool(bool),
+    Number(f64),
+    Str(string),
+    // (funcs index, captured scope index) — the closure's environment link
+    Func(i64, i64),
+    // heap object handle — index into Interp.objects (stable, GC-managed)
+    Obj(i64),
+}
+
+fn cloneValue(v: &JSValue): JSValue {
+    match v {
+        JSValue.Undefined => {
+            return JSValue.Undefined
+        }
+        JSValue.Null => {
+            return JSValue.Null
+        }
+        JSValue.Bool(b) => {
+            return JSValue.Bool(b)
+        }
+        JSValue.Number(n) => {
+            return JSValue.Number(n)
+        }
+        JSValue.Str(s) => {
+            return JSValue.Str(s.clone())
+        }
+        JSValue.Func(f, env) => {
+            return JSValue.Func(f, env)
+        }
+        JSValue.Obj(o) => {
+            return JSValue.Obj(o)
+        }
+    }
+}
+
+fn jsNan(): f64 {
+    // runtime 0/0 so constant folding can't reject it; IEEE floats don't trap
+    var z = 0.0
+    return z / z
+}
+
+fn isFiniteF(n: f64): bool {
+    // inf*0 and nan*0 are both NaN; finite*0 == 0
+    return n * 0.0 == 0.0
+}
+
+fn i64ToStr(n: i64): string {
+    var buf: [u8; 32] = [0; 32]
+    unsafe {
+        snprintf(buf, 32, "%lld", n)
+        return _cstrToString(buf as *u8)
+    }
+}
+
+fn floatG(n: f64, prec: i32): string {
+    var buf: [u8; 40] = [0; 40]
+    unsafe {
+        snprintf(buf, 40, "%.*g", prec, n)
+        return _cstrToString(buf as *u8)
+    }
+}
+
+// JS Number→string: integrals without ".0", otherwise the shortest decimal
+// text that round-trips to the same double (probe %g precision 1..17).
+fn numToStr(n: f64): string {
+    // NaN check via !(n == n): Milo's f64 != is an ordered compare, so n != n
+    // is false even for NaN
+    if !(n == n) {
+        return "NaN"
+    }
+    if !isFiniteF(n) {
+        if n > 0.0 {
+            return "Infinity"
+        }
+        return "-Infinity"
+    }
+    if mathFloor(n) == n && mathAbs(n) < 1000000000000000.0 {
+        return i64ToStr(n as i64)
+    }
+    var p: i32 = 1
+    while p <= 17 {
+        let s = floatG(n, p)
+        match parseFloat(s.clone()) {
+            Option.Some(v) => {
+                if v == n {
+                    return s
+                }
+            }
+            Option.None => {
+            }
+        }
+        p = p + 1
+    }
+    return floatG(n, 17)
+}
+
+fn toStr(v: &JSValue): string {
+    match v {
+        JSValue.Undefined => {
+            return "undefined"
+        }
+        JSValue.Null => {
+            return "null"
+        }
+        JSValue.Bool(b) => {
+            if b {
+                return "true"
+            }
+            return "false"
+        }
+        JSValue.Number(n) => {
+            return numToStr(n)
+        }
+        JSValue.Str(s) => {
+            return s.clone()
+        }
+        JSValue.Func(_f, _env) => {
+            return "function"
+        }
+        JSValue.Obj(_o) => {
+            // string coercion (""+obj, String(obj)); console.log uses inspect() instead
+            return "[object Object]"
+        }
+    }
+}
+
+fn toNum(v: &JSValue): f64 {
+    match v {
+        JSValue.Undefined => {
+            return jsNan()
+        }
+        JSValue.Null => {
+            return 0.0
+        }
+        JSValue.Bool(b) => {
+            if b {
+                return 1.0
+            }
+            return 0.0
+        }
+        JSValue.Number(n) => {
+            return n
+        }
+        JSValue.Str(s) => {
+            if s.len() == 0 {
+                return 0.0
+            }
+            match parseFloat(s.clone()) {
+                Option.Some(n) => {
+                    return n
+                }
+                Option.None => {
+                    return jsNan()
+                }
+            }
+        }
+        JSValue.Func(_f, _env) => {
+            return jsNan()
+        }
+        JSValue.Obj(_o) => {
+            return jsNan()
+        }
+    }
+}
+
+fn truthy(v: &JSValue): bool {
+    match v {
+        JSValue.Undefined => {
+            return false
+        }
+        JSValue.Null => {
+            return false
+        }
+        JSValue.Bool(b) => {
+            return b
+        }
+        JSValue.Number(n) => {
+            return n != 0.0 && n == n
+        }
+        JSValue.Str(s) => {
+            return s.len() > 0
+        }
+        JSValue.Func(_f, _env) => {
+            return true
+        }
+        JSValue.Obj(_o) => {
+            return true
+        }
+    }
+}
+
+fn isStr(v: &JSValue): bool {
+    match v {
+        JSValue.Str(_s) => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+fn strLess(a: &string, b: &string): bool {
+    let la = a.len()
+    let lb = b.len()
+    var i: i64 = 0
+    while i < la && i < lb {
+        if a[i] != b[i] {
+            return a[i] < b[i]
+        }
+        i = i + 1
+    }
+    return la < lb
+}
+
+// JS loose equality, simplified: null==undefined, same-type direct, mixed via
+// numeric coercion.
+fn jsEquals(a: &JSValue, b: &JSValue): bool {
+    match a {
+        JSValue.Undefined => {
+            match b {
+                JSValue.Undefined => {
+                    return true
+                }
+                JSValue.Null => {
+                    return true
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Null => {
+            match b {
+                JSValue.Undefined => {
+                    return true
+                }
+                JSValue.Null => {
+                    return true
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Str(s1) => {
+            match b {
+                JSValue.Str(s2) => {
+                    return s1 == s2
+                }
+                JSValue.Undefined => {
+                    return false
+                }
+                JSValue.Null => {
+                    return false
+                }
+                _ => {
+                    return toNum(a) == toNum(b)
+                }
+            }
+        }
+        JSValue.Func(f1, e1) => {
+            match b {
+                JSValue.Func(f2, e2) => {
+                    return f1 == f2 && e1 == e2
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Obj(o1) => {
+            // object equality is by reference (same heap slot)
+            match b {
+                JSValue.Obj(o2) => {
+                    return o1 == o2
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        _ => {
+            match b {
+                JSValue.Undefined => {
+                    return false
+                }
+                JSValue.Null => {
+                    return false
+                }
+                JSValue.Func(_f, _e) => {
+                    return false
+                }
+                JSValue.Obj(_o) => {
+                    return false
+                }
+                _ => {
+                    return toNum(a) == toNum(b)
+                }
+            }
+        }
+    }
+}

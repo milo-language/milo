@@ -1,0 +1,421 @@
+// The tree-walking evaluator: walks the AST (by index into Prog) and produces
+// JSValues, driving the runtime's scopes, object heap, and GC. Statement
+// execution returns a Flow so `return` can unwind out of nested blocks.
+
+from "./ast" import {
+    Prog
+}
+from "./value" import {
+    JSValue
+}
+from "./runtime" import {
+    Interp
+}
+from "std/math" import {
+    mathMod
+}
+
+enum Flow {
+    Normal,
+    Ret(JSValue),
+}
+
+fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
+    if op == "+" {
+        if isStr(a) || isStr(b) {
+            return JSValue.Str(toStr(a) + toStr(b))
+        }
+        return JSValue.Number(toNum(a) + toNum(b))
+    }
+    if op == "-" {
+        return JSValue.Number(toNum(a) - toNum(b))
+    }
+    if op == "*" {
+        return JSValue.Number(toNum(a) * toNum(b))
+    }
+    if op == "/" {
+        return JSValue.Number(toNum(a) / toNum(b))
+    }
+    if op == "%" {
+        return JSValue.Number(mathMod(toNum(a), toNum(b)))
+    }
+    if op == "==" {
+        return JSValue.Bool(jsEquals(a, b))
+    }
+    if op == "!=" {
+        return JSValue.Bool(!jsEquals(a, b))
+    }
+    // relational: string<string is lexicographic, else numeric (NaN → false)
+    if isStr(a) && isStr(b) {
+        let sa = toStr(a)
+        let sb = toStr(b)
+        if op == "<" {
+            return JSValue.Bool(strLess(sa, sb))
+        }
+        if op == ">" {
+            return JSValue.Bool(strLess(sb, sa))
+        }
+        if op == "<=" {
+            return JSValue.Bool(!strLess(sb, sa))
+        }
+        if op == ">=" {
+            return JSValue.Bool(!strLess(sa, sb))
+        }
+    }
+    let x = toNum(a)
+    let y = toNum(b)
+    if op == "<" {
+        return JSValue.Bool(x < y)
+    }
+    if op == ">" {
+        return JSValue.Bool(x > y)
+    }
+    if op == "<=" {
+        return JSValue.Bool(x <= y)
+    }
+    if op == ">=" {
+        return JSValue.Bool(x >= y)
+    }
+    return JSValue.Undefined
+}
+
+fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
+    let node = getExpr(prog, idx)
+    match node {
+        Expr.Num(n) => {
+            return JSValue.Number(n)
+        }
+        Expr.StrLit(s) => {
+            return JSValue.Str(s)
+        }
+        Expr.BoolLit(b) => {
+            return JSValue.Bool(b)
+        }
+        Expr.NullLit => {
+            return JSValue.Null
+        }
+        Expr.UndefLit => {
+            return JSValue.Undefined
+        }
+        Expr.Ident(name) => {
+            return scopeLookup(st, scope, name)
+        }
+        Expr.Bin(op, a, b) => {
+            // && and || short-circuit and yield the operand value, JS-style
+            if op == "&&" {
+                let va = evalExpr(prog, a, st, scope)
+                if !truthy(va) {
+                    return va
+                }
+                return evalExpr(prog, b, st, scope)
+            }
+            if op == "||" {
+                let va = evalExpr(prog, a, st, scope)
+                if truthy(va) {
+                    return va
+                }
+                return evalExpr(prog, b, st, scope)
+            }
+            let va = evalExpr(prog, a, st, scope)
+            let vb = evalExpr(prog, b, st, scope)
+            return evalBin(op, va, vb)
+        }
+        Expr.Un(op, a) => {
+            let va = evalExpr(prog, a, st, scope)
+            if op == "-" {
+                return JSValue.Number(0.0 - toNum(va))
+            }
+            return JSValue.Bool(!truthy(va))
+        }
+        Expr.Assign(name, e) => {
+            let v = evalExpr(prog, e, st, scope)
+            scopeAssign(st, scope, name, cloneValue(v))
+            return v
+        }
+        Expr.Call(callee, argsIdx) => {
+            return evalCall(prog, callee, argsIdx, st, scope)
+        }
+        Expr.Member(objIdx, name) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            match ov {
+                JSValue.Obj(o) => {
+                    return objGet(st, o, name)
+                }
+                _ => {
+                    return JSValue.Undefined
+                }
+            }
+        }
+        Expr.Index(objIdx, keyIdx) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            let kv = evalExpr(prog, keyIdx, st, scope)
+            let key = toStr(kv)
+            match ov {
+                JSValue.Obj(o) => {
+                    return objGet(st, o, key)
+                }
+                _ => {
+                    return JSValue.Undefined
+                }
+            }
+        }
+        Expr.SetMember(objIdx, keyIdx, valIdx) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            let kv = evalExpr(prog, keyIdx, st, scope)
+            let key = toStr(kv)
+            let v = evalExpr(prog, valIdx, st, scope)
+            match ov {
+                JSValue.Obj(o) => {
+                    objSet(st, o, key, cloneValue(v))
+                }
+                _ => {
+                }
+            }
+            return v
+        }
+        Expr.ObjLit(litIdx) => {
+            let obj = newObject(st)
+            var i: i64 = 0
+            let n = prog.objLits[litIdx].len()
+            while i < n {
+                let key = prog.objLits[litIdx][i].key.clone()
+                let valIdx = prog.objLits[litIdx][i].val
+                let v = evalExpr(prog, valIdx, st, scope)
+                objSet(st, obj, key, v)
+                i = i + 1
+            }
+            return JSValue.Obj(obj)
+        }
+        Expr.FuncExpr(f) => {
+            return JSValue.Func(f, scope)
+        }
+    }
+}
+
+fn evalArgs(prog: &Prog, argsIdx: i64, st: &mut Interp, scope: i64): Vec<JSValue> {
+    var out: Vec<JSValue> = Vec.new()
+    var j: i64 = 0
+    let n = prog.argLists[argsIdx].len()
+    while j < n {
+        let eIdx = prog.argLists[argsIdx][j]
+        out.push(evalExpr(prog, eIdx, st, scope))
+        j = j + 1
+    }
+    return out
+}
+
+fn spaces(n: i64): string {
+    var s = ""
+    var i: i64 = 0
+    while i < n {
+        s = s + " "
+        i = i + 1
+    }
+    return s
+}
+
+// Reproduces bun's console.log object rendering: one property per line, indented
+// two spaces per level, a trailing comma after every entry, string *values*
+// double-quoted, closing brace at the parent indent. `{}` stays inline. Nesting
+// past depth 2 collapses to `[Object]`. A top-level string prints raw (see
+// inspectTop) — only nested strings are quoted.
+fn inspectInner(st: &Interp, v: &JSValue, depth: i64): string {
+    match v {
+        JSValue.Str(s) => {
+            return "\"" + s + "\""
+        }
+        JSValue.Obj(o) => {
+            return inspectObj(st, o, depth)
+        }
+        _ => {
+            return toStr(v)
+        }
+    }
+}
+
+fn inspectObj(st: &Interp, o: i64, depth: i64): string {
+    if depth > 2 {
+        return "[Object]"
+    }
+    let n = st.objects[o].props.len()
+    if n == 0 {
+        return "{}"
+    }
+    let inner = spaces((depth + 1) * 2)
+    let outer = spaces(depth * 2)
+    var out = "{\n"
+    var i: i64 = 0
+    while i < n {
+        let key = st.objects[o].props[i].key.clone()
+        let val = cloneValue(st.objects[o].props[i].value)
+        out = out + inner + key + ": " + inspectInner(st, val, depth + 1) + ",\n"
+        i = i + 1
+    }
+    out = out + outer + "}"
+    return out
+}
+
+fn inspectTop(st: &Interp, v: &JSValue): string {
+    match v {
+        JSValue.Obj(o) => {
+            return inspectObj(st, o, 0)
+        }
+        _ => {
+            return toStr(v)
+        }
+    }
+}
+
+fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
+    // builtin: console.log(...)
+    let calleeNode = getExpr(prog, calleeIdx)
+    match calleeNode {
+        Expr.Member(objIdx, name) => {
+            let objNode = getExpr(prog, objIdx)
+            match objNode {
+                Expr.Ident(objName) => {
+                    if objName == "console" && (name == "log" || name == "error" || name == "warn" || name == "info") {
+                        let argVals = evalArgs(prog, argsIdx, st, scope)
+                        var line = ""
+                        var j: i64 = 0
+                        while j < argVals.len() {
+                            if j > 0 {
+                                line = line + " "
+                            }
+                            line = line + inspectTop(st, argVals[j])
+                            j = j + 1
+                        }
+                        print(line)
+                        return JSValue.Undefined
+                    }
+                }
+                _ => {
+                }
+            }
+        }
+        _ => {
+        }
+    }
+
+    let calleeVal = evalExpr(prog, calleeIdx, st, scope)
+    match calleeVal {
+        JSValue.Func(fIdx, envIdx) => {
+            let argVals = evalArgs(prog, argsIdx, st, scope)
+            // call scope hangs off the closure's captured scope — lexical, not dynamic
+            let callScope = newScope(st, envIdx)
+            // root the frame across the whole call so a GC inside the body (or in
+            // a nested call) can't reclaim it
+            pushActive(st, callScope)
+            var j: i64 = 0
+            let nParams = prog.funcs[fIdx].params.len()
+            while j < nParams {
+                let pName = prog.funcs[fIdx].params[j].clone()
+                var v = JSValue.Undefined
+                if j < argVals.len() {
+                    v = cloneValue(argVals[j])
+                }
+                scopeDefine(st, callScope, pName, v)
+                j = j + 1
+            }
+            let body = prog.funcs[fIdx].body
+            let flow = execBlock(prog, body, st, callScope)
+            popActive(st)
+            match flow {
+                Flow.Ret(v) => {
+                    return v
+                }
+                Flow.Normal => {
+                    return JSValue.Undefined
+                }
+            }
+        }
+        _ => {
+            print("milojs: TypeError: value is not a function")
+            return JSValue.Undefined
+        }
+    }
+}
+
+fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
+    let node = getStmt(prog, idx)
+    match node {
+        Stmt.Decl(name, e) => {
+            let v = evalExpr(prog, e, st, scope)
+            scopeDefine(st, scope, name, v)
+            return Flow.Normal
+        }
+        Stmt.ExprStmt(e) => {
+            evalExpr(prog, e, st, scope)
+            return Flow.Normal
+        }
+        Stmt.If(c, t, f) => {
+            let vc = evalExpr(prog, c, st, scope)
+            if truthy(vc) {
+                return execStmt(prog, t, st, scope)
+            }
+            if f >= 0 {
+                return execStmt(prog, f, st, scope)
+            }
+            return Flow.Normal
+        }
+        Stmt.While(c, body) => {
+            var looping = true
+            while looping {
+                let vc = evalExpr(prog, c, st, scope)
+                if !truthy(vc) {
+                    looping = false
+                } else {
+                    let flow = execStmt(prog, body, st, scope)
+                    match flow {
+                        Flow.Ret(v) => {
+                            return Flow.Ret(v)
+                        }
+                        Flow.Normal => {
+                        }
+                    }
+                }
+            }
+            return Flow.Normal
+        }
+        Stmt.Ret(e) => {
+            let v = evalExpr(prog, e, st, scope)
+            return Flow.Ret(v)
+        }
+        Stmt.Block(b) => {
+            let child = newScope(st, scope)
+            pushActive(st, child)
+            let flow = execBlock(prog, b, st, child)
+            popActive(st)
+            return flow
+        }
+        Stmt.FuncDecl(f) => {
+            let name = prog.funcs[f].name.clone()
+            scopeDefine(st, scope, name, JSValue.Func(f, scope))
+            return Flow.Normal
+        }
+        Stmt.Empty => {
+            return Flow.Normal
+        }
+    }
+}
+
+fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
+    var j: i64 = 0
+    let n = prog.blocks[blockIdx].len()
+    while j < n {
+        // statement boundary = the only GC safepoint (no closure in-flight, all
+        // live values rooted in scopes)
+        maybeGc(st)
+        let sIdx = prog.blocks[blockIdx][j]
+        let flow = execStmt(prog, sIdx, st, scope)
+        match flow {
+            Flow.Ret(v) => {
+                return Flow.Ret(v)
+            }
+            Flow.Normal => {
+            }
+        }
+        j = j + 1
+    }
+    return Flow.Normal
+}
