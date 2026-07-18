@@ -719,6 +719,12 @@ export class TypeChecker {
       case "vec": return { ...simpleType("Vec"), typeArgs: [this.typeKindToMiloType(t.element)] };
       case "heap": return { ...simpleType("Heap"), typeArgs: [this.typeKindToMiloType(t.inner)] };
       case "ref": return { ...simpleType(typeName(t.inner)), isRef: !t.mutable, isRefMut: t.mutable };
+      case "ptr": {
+        // unwrap nested ptrs so `**u8` round-trips at the right depth, not collapsed
+        let depth = 0; let cur: TypeKind = t;
+        while (cur.tag === "ptr") { depth++; cur = cur.inner; }
+        return { ...simpleType(typeName(cur)), isPtr: true, ptrDepth: depth };
+      }
       case "fn": return { ...simpleType(""), isFn: true, fnParams: t.params.map(p => this.typeKindToMiloType(p)), fnRet: this.typeKindToMiloType(t.ret) };
       default: return simpleType(typeName(t));
     }
@@ -738,7 +744,7 @@ export class TypeChecker {
       // `&P`, not value `P`. Dropping isRef here collapsed the param to by-value,
       // so a generic fn taking `&T` passed a struct where a ptr was expected.
       if (ty.isRef || ty.isRefMut || ty.isPtr) {
-        return { ...sub, isRef: ty.isRef, isRefMut: ty.isRefMut, isPtr: ty.isPtr };
+        return { ...sub, isRef: ty.isRef, isRefMut: ty.isRefMut, isPtr: ty.isPtr, ptrDepth: ty.ptrDepth };
       }
       return sub;
     }

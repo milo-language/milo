@@ -1,0 +1,10 @@
+// A **u8 value must not satisfy a *u8 binding — the depths differ. Before the fix
+// both collapsed to *u8 and this wrongly type-checked.
+extern fn get2(): **u8
+fn main(): void {
+  unsafe {
+    // @error: declared as *u8 but got **u8
+    let bad: *u8 = get2()
+    print(bad[0] as i64)
+  }
+}

@@ -16,7 +16,7 @@ export type TypeKind =
   | { tag: "interface"; name: string }
   | { tag: "unknown" };
 
-export function typeFromAst(ty: { name: string; isPtr: boolean; isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null; isFn?: boolean; fnParams?: any[]; fnRet?: any; rangeMin?: number; rangeMax?: number }): TypeKind {
+export function typeFromAst(ty: { name: string; isPtr: boolean; ptrDepth?: number; isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null; isFn?: boolean; fnParams?: any[]; fnRet?: any; rangeMin?: number; rangeMax?: number }): TypeKind {
   if (ty.isFn && ty.fnParams && ty.fnRet) {
     return { tag: "fn", params: ty.fnParams.map(typeFromAst), ret: typeFromAst(ty.fnRet) };
   }
@@ -42,7 +42,11 @@ export function typeFromAst(ty: { name: string; isPtr: boolean; isRef: boolean; 
   }
   let result: TypeKind = base;
   if (ty.isArray) result = { tag: "array", element: base, size: ty.arraySize };
-  if (ty.isPtr) return { tag: "ptr", inner: result };
+  const depth = ty.ptrDepth ?? (ty.isPtr ? 1 : 0);
+  if (depth > 0) {
+    for (let i = 0; i < depth; i++) result = { tag: "ptr", inner: result };
+    return result;
+  }
   if (ty.isRef) return { tag: "ref", inner: result, mutable: false };
   if (ty.isRefMut) return { tag: "ref", inner: result, mutable: true };
   return result;

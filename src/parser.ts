@@ -176,10 +176,15 @@ export class Parser {
       const inner = this.parseType();
       return { ...inner, isRef: !isMut, isRefMut: isMut };
     }
-    // *T
-    if (this.match(TokenKind.Star)) {
+    // *T — count nesting so `**u8` is depth 2, not a collapsed single level.
+    // `char***` (depth 3, e.g. _NSGetEnviron) is real; only guard against runaway
+    // typos like `********…`. 16 is far past any legitimate use (C99 requires ≥12).
+    if (this.at(TokenKind.Star)) {
+      const star = this.advance();
       const inner = this.parseType();
-      return { ...inner, isPtr: true };
+      const depth = (inner.ptrDepth ?? (inner.isPtr ? 1 : 0)) + 1;
+      if (depth > 16) this.error(`pointer nesting too deep (${depth}); max is 16`, star);
+      return { ...inner, isPtr: true, ptrDepth: depth };
     }
     // [T] or [T; N]
     if (this.match(TokenKind.LBracket)) {

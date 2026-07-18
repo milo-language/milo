@@ -4,6 +4,7 @@ export interface MiloType {
   name: string; // "i32", "u8", "bool", "void", etc.
   typeArgs?: MiloType[]; // generic type arguments, e.g. Option<i32>
   isPtr: boolean;
+  ptrDepth?: number;   // pointer nesting: `**u8` has depth 2. Absent ⇒ isPtr?1:0 (single level)
   isRef: boolean;      // &T
   isRefMut: boolean;   // &mut T
   isArray: boolean;    // [T]

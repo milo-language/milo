@@ -186,7 +186,7 @@ function formatMiloType(t: import("./ast").MiloType): string {
   }
   if (t.isRef) return `&${base}`;
   if (t.isRefMut) return `&mut ${base}`;
-  if (t.isPtr) return `*${base}`;
+  if (t.isPtr) return `${"*".repeat(t.ptrDepth ?? 1)}${base}`;
   return base;
 }
 
