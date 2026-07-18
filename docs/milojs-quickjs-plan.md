@@ -9,7 +9,7 @@ update-when: a lane lands (update the score, delete the lane) or the sweep harne
 
 Working plan for driving `scripts/quickjs-sweep.ts` toward 100%. Written for agents
 picking up individual lanes; each lane is independent and lists exact anchors.
-Current: **64/149 cases (43.0%)**. Delete lanes here as they land.
+Current: **65/149 cases (43.6%)**. Delete lanes here as they land.
 
 Engine-level spec builtins now live in `lib/engine-prelude.js` (loaded by
 `milojs-engine.milo` into the shared `Prog` before the entry runs) — distinct from
@@ -34,8 +34,40 @@ doesn't move the score):
   throws `TypeError: cannot read property 'x' of null`, matching the spec text.
   Optional chaining (`?.`) is a separate AST node and still yields undefined.
 
+- ~~`Array.prototype.fill` ignored its range args~~ (fea6143): `[1,2,3].fill(0,1)`
+  overwrote the whole array. `fill(value, start, end)` now honors both, negative
+  indices included.
+
 Still open, found the same way:
 - error objects have no `.constructor`, so `e.constructor.name` throws.
+- `Symbol.prototype.description` is undefined and `sym.toString()` leaks the
+  internal representation (`@@sym:d:1` instead of `Symbol(d)`).
+- `Number.prototype.toPrecision` ignores its argument (`(123.456).toPrecision(4)`
+  → `123.4560`, want `123.5`).
+
+## Lane 4 — missing standard builtins (inventoried, mechanical)
+
+**Key constraint discovered: `Array.prototype` and `String.prototype` are NOT
+extensible from JS.** Array and string methods are dispatched natively by name
+(`isArrayMethod` / `stringMethod`), never through a prototype chain, so assigning
+`Array.prototype.at = …` in the prelude parses and runs but the method is
+unreachable. Anything on those two prototypes must be added in Milo. `Number.*`
+and other constructor statics DO accept assignment, so they belong in the prelude.
+
+Confirmed missing, grouped by where the fix goes:
+
+- **Prelude (easy)** — DONE for `Number.*`. Nothing else outstanding here.
+- **`eval.milo`, array methods** (add to the `isArrayMethod` name list, then
+  implement alongside `fill`/`at`): `flatMap`, `findLast`, `findLastIndex`,
+  `copyWithin`, `reduceRight`, and the iterator trio `entries`/`keys`/`values`
+  (these need an iterator protocol, so do them last).
+- **`builtins.milo`, string methods** (add to `stringMethod`): `at`, `replaceAll`,
+  `codePointAt`, `localeCompare`, `normalize`, `matchAll`.
+- **`Object`**: `isFrozen`, `fromEntries`.
+- **`Array.of`** (constructor static).
+
+Each is small and independent — good parallel work. Re-run the sweep after each
+group; several assertion-bucket cases are gated on more than one of these.
 
 **All infrastructure blockers are gone.** Lanes 1 and 2 landed; every remaining
 failure is a genuine engine gap rather than a file that won't load. The profile is
