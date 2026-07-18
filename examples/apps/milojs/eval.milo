@@ -12,10 +12,13 @@ from "./runtime" import {
     Interp
 }
 from "./builtins" import {
-    stringMethod, charAt, mjStringifyVal, mjJsonParse, mjJsonOmitted
+    stringMethod, jsCharAt, mjStringifyVal, mjJsonParse, mjJsonOmitted
 }
 from "./regex" import {
     regexCompile, regexExec
+}
+from "./modules" import {
+    dirOf, resolveSpec, findModule
 }
 from "std/math" import {
     mathMod
@@ -537,6 +540,64 @@ fn regexStrMatch(st: &mut Interp, s: &string, rid: i64): JSValue {
     return JSValue.Obj(arr)
 }
 
+// Execute a pre-loaded module in a fresh CommonJS scope and cache its exports.
+// A module already loading (a require cycle) returns its partial exports, which
+// is what Node does.
+fn runModule(prog: &Prog, idx: i64, st: &mut Interp): JSValue {
+    if st.modState[idx] == 2 {
+        return cloneValue(st.modExports[idx])
+    }
+    if st.modState[idx] == 1 {
+        return cloneValue(st.modExports[idx])
+    }
+    st.modState[idx] = 1
+    let path = st.modPaths[idx].clone()
+    let dir = dirOf(path)
+
+    let modScope = newScope(st, 0)
+    pushActive(st, modScope)
+    let moduleObj = newObject(st)
+    let exportsObj = newObject(st)
+    objSet(st, moduleObj, "exports", JSValue.Obj(exportsObj))
+    scopeDefine(st, modScope, "module", JSValue.Obj(moduleObj))
+    scopeDefine(st, modScope, "exports", JSValue.Obj(exportsObj))
+    scopeDefine(st, modScope, "__filename", JSValue.Str(path.clone()))
+    scopeDefine(st, modScope, "__dirname", JSValue.Str(dir.clone()))
+    // publish partial exports up front so a cycle sees something
+    st.modExports[idx] = JSValue.Obj(exportsObj)
+
+    st.modDirStack.push(dir)
+    let blk = st.modBlocks[idx]
+    execBlock(prog, blk, st, modScope)
+    let _ = st.modDirStack.pop()
+    popActive(st)
+
+    // module.exports may have been reassigned wholesale
+    let finalExports = getMember(st, moduleObj, "exports")
+    st.modExports[idx] = cloneValue(finalExports)
+    st.modState[idx] = 2
+    return finalExports
+}
+
+// require(spec) — resolved against the directory of the module doing the calling.
+fn requireModule(prog: &Prog, spec: &string, st: &mut Interp): JSValue {
+    var dir = ""
+    if st.modDirStack.len() > 0 {
+        dir = st.modDirStack[st.modDirStack.len() - 1].clone()
+    }
+    let path = resolveSpec(dir, spec)
+    if path.len() == 0 {
+        eprint("milojs: cannot resolve '" + spec + "' — npm package resolution is not implemented yet")
+        return JSValue.Undefined
+    }
+    let idx = findModule(st, path)
+    if idx < 0 {
+        eprint("milojs: module was not pre-loaded: '" + path + "'")
+        return JSValue.Undefined
+    }
+    return runModule(prog, idx, st)
+}
+
 fn instanceOf(st: &Interp, val: &JSValue, ctor: &JSValue): bool {
     match val {
         JSValue.Obj(o) => {
@@ -728,7 +789,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     // s[i] → a single-character string (or undefined out of range)
                     let i = toNum(kv) as i64
                     if i >= 0 && i < s.len() {
-                        return JSValue.Str(charAt(s, i))
+                        return JSValue.Str(jsCharAt(s, i))
                     }
                     return JSValue.Undefined
                 }
@@ -1353,6 +1414,18 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
     // builtin: console.log(...)
     let calleeNode = getExpr(prog, calleeIdx)
     match calleeNode {
+        Expr.Ident(fname) => {
+            // require(spec) is handled here rather than as a native because it
+            // needs the program (to run the required module's block)
+            if fname == "require" {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                var spec = ""
+                if argVals.len() > 0 {
+                    spec = toStr(argVals[0])
+                }
+                return requireModule(prog, spec, st)
+            }
+        }
         Expr.Member(objIdx, name) => {
             let objNode = getExpr(prog, objIdx)
             match objNode {

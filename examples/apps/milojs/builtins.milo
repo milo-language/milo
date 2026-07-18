@@ -197,7 +197,7 @@ fn jsRepeat(s: &string, count: i64): string {
     return out
 }
 
-fn charAt(s: &string, idx: i64): string {
+fn jsCharAt(s: &string, idx: i64): string {
     var out = String.withCapacity(1)
     if idx >= 0 && idx < s.len() {
         out.push(s[idx])
@@ -230,7 +230,7 @@ fn jsSplit(s: &string, args: &Vec<JSValue>, st: &mut Interp): i64 {
     if sep.len() == 0 {
         var i: i64 = 0
         while i < s.len() {
-            arrPush(st, arr, JSValue.Str(charAt(s, i)))
+            arrPush(st, arr, JSValue.Str(jsCharAt(s, i)))
             i = i + 1
         }
         return arr
@@ -262,7 +262,7 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         return JSValue.Str(s.clone())
     }
     if name == "charAt" {
-        return JSValue.Str(charAt(s, argNum(args, 0, 0)))
+        return JSValue.Str(jsCharAt(s, argNum(args, 0, 0)))
     }
     if name == "charCodeAt" {
         let i = argNum(args, 0, 0)

@@ -29,7 +29,16 @@ from "./runtime" import {
     Interp, newObject, newArray, objSet, arrPush, scopeDefine
 }
 from "./driver" import {
-    makeInterp, bootInterp, runSource
+    makeInterp, bootInterp
+}
+from "./modules" import {
+    preloadGraph
+}
+from "./eval" import {
+    runModule
+}
+from "./value" import {
+    toStr
 }
 from "./repl" import {
     repl
@@ -85,25 +94,32 @@ fn main(): i32 {
     }
     let path = argv[1].clone()
 
-    let r = readFile(path.clone())
-    match r {
-        Result.Ok(src) => {
-            var gcStats = false
-            match getEnv("MILOJS_GC_STATS") {
-                Option.Some(_v) => {
-                    gcStats = true
-                }
-                Option.None => {
-                }
-            }
-            var st = makeInterp(gcStats)
-            bootInterp(st)
-            setupNodeGlobals(st, path)
-            return runSource(src, st)
+    var gcStats = false
+    match getEnv("MILOJS_GC_STATS") {
+        Option.Some(_v) => {
+            gcStats = true
         }
-        Result.Err(_e) => {
-            eprint("milojs: cannot read '" + path + "'")
-            return 1
+        Option.None => {
         }
     }
+    var st = makeInterp(gcStats)
+    bootInterp(st)
+    setupNodeGlobals(st, path.clone())
+
+    // Parse the entry and everything it requires into one shared program, then
+    // run the entry as a CommonJS module.
+    var prog = Prog {
+        exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new()
+    }
+    let entryIdx = preloadGraph(path.clone(), prog, st)
+    if entryIdx < 0 {
+        eprint("milojs: cannot read '" + path + "'")
+        return 1
+    }
+    runModule(prog, entryIdx, st)
+    if st.throwing {
+        eprint("Uncaught " + toStr(st.thrownValue))
+        return 1
+    }
+    return 0
 }

@@ -1,6 +1,7 @@
-// Interactive REPL for the milojs runtime. Reads a line, lexes/parses/executes it
-// against a persistent interpreter, and echoes the value of a trailing expression
-// (Node-style, but undefined results are suppressed to cut noise).
+// Interactive REPL for the milojs runtime. Reads a line with a raw-mode line
+// editor (history via up/down, backspace, Ctrl-C/Ctrl-D), then lexes/parses/
+// executes it against a persistent interpreter and echoes the value of a trailing
+// expression (Node-style, but undefined results are suppressed to cut noise).
 //
 // Key design: one Prog is reused for the whole session and each line's parse is
 // APPENDED to it. Closures carry a func index into prog.funcs (JSValue.Func), so a
@@ -9,7 +10,16 @@
 // every index valid for the session's lifetime.
 
 from "std/io" import {
-    writeStdout, readLine
+    writeStdout, readFd
+}
+from "std/term" import {
+    TermState, enableRawModeBlocking, restoreTerminal
+}
+from "std/ansi" import {
+    clearLine, fg24, ansiReset, pushFg24, pushBg24
+}
+from "std/color" import {
+    bold, gray, dim
 }
 from "./lexer" import {
     lex
@@ -30,6 +40,176 @@ from "./runtime" import {
     Interp
 }
 
+enum LineResult {
+    Line(string),
+    Eof,
+}
+
+let SPR_W: i64 = 18
+let SPR_ROWS: i64 = 18 // pixel rows (even → SPR_ROWS/2 terminal rows tall)
+
+// Milo the chihuahua, the mascot — same pixel-art bitmap as examples/apps/chihuahua.milo.
+// Legend: space=transparent d=dark-brown b=brown-shadow t=tan l=light-tan
+// w=cream W=white-highlight k=eye/nose g=eye-glint p=pink
+fn spriteRow(i: i64): string {
+    if i == 0 {
+        return "  dd          dd  "
+    } else if i == 1 {
+        return " dddd        dddd "
+    } else if i == 2 {
+        return " dpdd        ddpd "
+    } else if i == 3 {
+        return " ddpdb      bdpdd "
+    } else if i == 4 {
+        return "  ddbtttttttttbdd "
+    } else if i == 5 {
+        return "   btttttttttttb  "
+    } else if i == 6 {
+        return "  bttlllllllllttb "
+    } else if i == 7 {
+        return " bttllllllllllllb "
+    } else if i == 8 {
+        return " btllkkllllkkllltb"
+    } else if i == 9 {
+        return " btllkgllllkglltb "
+    } else if i == 10 {
+        return " bttllllllllllttb "
+    } else if i == 11 {
+        return " bbttttwwwwttttbb "
+    } else if i == 12 {
+        return "  bttwwwwwwwwttb  "
+    } else if i == 13 {
+        return "  bttwwwkkwwwttb  "
+    } else if i == 14 {
+        return "   bttwwkkwwttb   "
+    } else if i == 15 {
+        return "   bbttwppwttbb   "
+    } else if i == 16 {
+        return "    bttwwwwttb    "
+    }
+    return "     bbtttbb      "
+}
+
+fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
+    out[0] = r
+    out[1] = g
+    out[2] = b
+    out[3] = 1
+}
+
+// Map a palette char to an RGB color; out[3]=0 marks a transparent pixel.
+fn charRGB(ch: u8, out: &mut [i64; 4]): void {
+    let c = ch as i64
+    if c == 100 {
+        setC(out, 96, 60, 38) // d  dark brown (ear/outline)
+    } else if c == 98 {
+        setC(out, 145, 96, 58) // b  brown shadow
+    } else if c == 116 {
+        setC(out, 200, 152, 104) // t  tan
+    } else if c == 108 {
+        setC(out, 226, 192, 150) // l  light tan
+    } else if c == 119 {
+        setC(out, 240, 226, 206) // w  cream muzzle
+    } else if c == 87 {
+        setC(out, 255, 250, 245) // W  white highlight
+    } else if c == 107 {
+        setC(out, 34, 28, 24) // k  eye / nose
+    } else if c == 103 {
+        setC(out, 255, 255, 255) // g  eye glint
+    } else if c == 112 {
+        setC(out, 226, 150, 162) // p  pink inner ear
+    } else {
+        out[3] = 0 // space → transparent
+    }
+}
+
+// name-prefixed: builtins.milo already defines a charAt, and Milo merges all
+// modules into one namespace
+fn sprCharAt(row: &string, c: i64): u8 {
+    if c < row.len {
+        return row[c]
+    }
+    return 32 as u8
+}
+
+fn emit(buf: &mut string, s: &string): void {
+    for i in 0..s.len {
+        buf.push(s[i])
+    }
+}
+
+// The wordmark printed to the right of the dog, one entry per sprite row so the
+// two line up. Sprite is 9 rows tall, wordmark 6 — offset by 1 to sit centered.
+fn wordmarkRow(tr: i64): string {
+    if tr == 1 {
+        return fg24(120, 220, 255) + "███╗   ███╗██╗██╗      ██████╗      ██╗███████╗"
+    } else if tr == 2 {
+        return fg24(130, 205, 255) + "████╗ ████║██║██║     ██╔═══██╗     ██║██╔════╝"
+    } else if tr == 3 {
+        return fg24(150, 185, 255) + "██╔████╔██║██║██║     ██║   ██║     ██║███████╗"
+    } else if tr == 4 {
+        return fg24(175, 165, 255) + "██║╚██╔╝██║██║██║     ██║   ██║██   ██║╚════██║"
+    } else if tr == 5 {
+        return fg24(200, 145, 255) + "██║ ╚═╝ ██║██║███████╗╚██████╔╝╚█████╔╝███████║"
+    } else if tr == 6 {
+        return fg24(225, 130, 240) + "╚═╝     ╚═╝╚═╝╚══════╝ ╚═════╝  ╚════╝ ╚══════╝"
+    }
+    return ""
+}
+
+// Milo the chihuahua beside the wordmark. Each terminal cell packs two vertically
+// stacked pixels via ▀ (fg=top half, bg=bottom half), so the 18-row sprite fits in
+// 9 rows. Built as ONE string and written with a single raw write(2): print()
+// buffers through libc stdout, so mixing the two would reorder the output.
+fn banner(): void {
+    var buf = ""
+    var tcol: [i64; 4] = [0; 4]
+    var bcol: [i64; 4] = [0; 4]
+    let hc = SPR_ROWS / 2
+
+    emit(buf, "\n")
+    for tr in 0..hc {
+        emit(buf, "  ")
+        let rowTop = spriteRow(tr * 2)
+        let rowBot = spriteRow(tr * 2 + 1)
+        for c in 0..SPR_W {
+            charRGB(sprCharAt(rowTop, c), tcol)
+            charRGB(sprCharAt(rowBot, c), bcol)
+            let topOp = tcol[3] == 1
+            let botOp = bcol[3] == 1
+            if topOp && botOp {
+                pushFg24(buf, tcol[0], tcol[1], tcol[2])
+                pushBg24(buf, bcol[0], bcol[1], bcol[2])
+                emit(buf, "▀")
+            } else if topOp {
+                emit(buf, "\x1b[49m") // default bg for the empty lower half
+                pushFg24(buf, tcol[0], tcol[1], tcol[2])
+                emit(buf, "▀")
+            } else if botOp {
+                emit(buf, "\x1b[49m")
+                pushFg24(buf, bcol[0], bcol[1], bcol[2])
+                emit(buf, "▄")
+            } else {
+                emit(buf, "\x1b[49m")
+                buf.push(32 as u8)
+            }
+        }
+        emit(buf, ansiReset())
+        emit(buf, "  ")
+        emit(buf, wordmarkRow(tr))
+        emit(buf, ansiReset())
+        emit(buf, "\n")
+    }
+
+    emit(buf, "\n")
+    emit(buf, "  " + bold("a JavaScript engine written from scratch in Milo.") + "\n")
+    emit(buf, "  " + gray("lexer → parser → interpreter → mark-sweep GC — no C, no JIT,") + "\n")
+    emit(buf, "  " + gray("no dependencies. every byte of it is Milo.") + "\n\n")
+    emit(buf, "  " + dim("github.com/cs01/milo") + "\n\n")
+    emit(buf, "  " + dim("↑/↓ history · Ctrl-C cancel line · Ctrl-D exit") + "\n\n")
+    writeStdout(buf)
+}
+
 fn isUndefined(v: &JSValue): bool {
     match v {
         JSValue.Undefined => {
@@ -39,6 +219,130 @@ fn isUndefined(v: &JSValue): bool {
             return false
         }
     }
+}
+
+// string has push but no pop — rebuild without the final byte
+fn dropLast(s: &string): string {
+    var out = ""
+    let n = s.len() - 1
+    var i: i64 = 0
+    while i < n {
+        out.push(s[i])
+        i = i + 1
+    }
+    return out
+}
+
+// Repaint the edited line in place: carriage-return to column 0, redraw prompt +
+// buffer, then clear to end-of-line so a shrinking line leaves no stale tail.
+fn redraw(prompt: &string, line: &string): void {
+    writeStdout("\r" + prompt + line + clearLine())
+}
+
+// Raw-mode line editor. Owns the prompt so it can repaint on history recall.
+// Raw mode clears ISIG, so Ctrl-C arrives as byte 3 rather than a signal — the
+// double-tap-to-exit is handled here, no signal handler needed.
+fn readLineEdited(prompt: &string, history: &Vec<string>): LineResult {
+    let ts = enableRawModeBlocking()
+    var line = ""
+    // history.len() == "editing a fresh line", below that indexes older entries
+    var navIdx = history.len()
+    var ctrlcArmed = false
+    var buf: [u8; 3] = [0; 3]
+
+    // user code's console.log goes through print()'s buffered stdout; drain it
+    // before the raw-write prompt so results never appear after the next prompt
+    flush()
+    writeStdout(prompt)
+
+    while true {
+        let n = readFd(0, buf, 1)
+        if n <= 0 {
+            restoreTerminal(ts)
+            return LineResult.Eof
+        }
+        let b = buf[0]
+
+        if b == 13 || b == 10 {
+            writeStdout("\r\n")
+            restoreTerminal(ts)
+            return LineResult.Line(line)
+        }
+
+        // Ctrl-D: EOF only on an empty line, like a shell
+        if b == 4 {
+            if line.len() == 0 {
+                writeStdout("\r\n")
+                restoreTerminal(ts)
+                return LineResult.Eof
+            }
+            continue
+        }
+
+        if b == 3 {
+            if line.len() == 0 {
+                if ctrlcArmed {
+                    writeStdout("\r\n")
+                    restoreTerminal(ts)
+                    return LineResult.Eof
+                }
+                ctrlcArmed = true
+                writeStdout("\r\n" + gray("(To exit, press Ctrl-C again or Ctrl-D)") + "\r\n")
+                writeStdout(prompt)
+                continue
+            }
+            line = ""
+            navIdx = history.len()
+            redraw(prompt, line)
+            continue
+        }
+
+        // any other key disarms the pending Ctrl-C exit
+        ctrlcArmed = false
+
+        if b == 127 || b == 8 {
+            if line.len() > 0 {
+                line = dropLast(line)
+                redraw(prompt, line)
+            }
+            continue
+        }
+
+        // ESC [ A/B — arrow keys walk the history
+        if b == 27 {
+            let m = readFd(0, buf, 2)
+            if m == 2 && buf[0] == 91 {
+                if buf[1] == 65 {
+                    if navIdx > 0 {
+                        navIdx = navIdx - 1
+                        line = history[navIdx].clone()
+                        redraw(prompt, line)
+                    }
+                }
+                if buf[1] == 66 {
+                    if navIdx < history.len() {
+                        navIdx = navIdx + 1
+                        if navIdx == history.len() {
+                            line = ""
+                        } else {
+                            line = history[navIdx].clone()
+                        }
+                        redraw(prompt, line)
+                    }
+                }
+            }
+            continue
+        }
+
+        if b >= 32 && b < 127 {
+            line.push(b)
+            var ch = ""
+            ch.push(b)
+            writeStdout(ch)
+        }
+    }
+    restoreTerminal(ts)
+    return LineResult.Eof
 }
 
 // Run one already-parsed top block: execute every statement, and if the last one
@@ -72,25 +376,27 @@ fn runLine(prog: &Prog, top: i64, st: &mut Interp): JSValue {
 
 // The read-eval-print loop. `st` must already have globals + Node globals installed.
 fn repl(st: &mut Interp): i32 {
-    print("milojs REPL — Ctrl-D to exit")
+    banner()
 
     // one growing Prog: func indices stay valid across lines (see file header)
     var prog = Prog {
         exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(),
         funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new()
     }
+    var history: Vec<string> = Vec.new()
+    let prompt = fg24(130, 205, 255) + "❯ " + ansiReset()
 
     while true {
-        writeStdout("> ")
-        match readLine() {
-            Option.None => {
-                print("")
+        match readLineEdited(prompt, history) {
+            LineResult.Eof => {
                 return 0
             }
-            Option.Some(line) => {
+            LineResult.Line(line) => {
                 if line.len() == 0 {
                     continue
                 }
+                history.push(line.clone())
+
                 let toks = lex(line)
                 var p = PState {
                     toks: toks, pos: 0

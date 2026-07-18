@@ -69,6 +69,16 @@ struct Interp {
     funcProtos: Vec<i64>,
     // compiled regexes, indexed by JSObj.regexId (never freed — interp-lifetime)
     regexes: Vec<Regex>,
+    // CommonJS module registry. The whole graph is parsed into one shared Prog
+    // before execution (so require never has to mutate the program mid-eval);
+    // these parallel arrays map a resolved path to its top-level block and, once
+    // run, its cached module.exports. modState: 0 unloaded, 1 loading, 2 loaded.
+    modPaths: Vec<string>,
+    modBlocks: Vec<i64>,
+    modExports: Vec<JSValue>,
+    modState: Vec<i64>,
+    // directory of the module currently executing, for relative resolution
+    modDirStack: Vec<string>,
     // values held on the native stack across an operation that may collect (e.g. a
     // method receiver while its arguments — which can themselves be calls — are
     // evaluated). Rooted by collect so an in-flight object/closure isn't swept.
@@ -357,6 +367,13 @@ fn collect(st: &mut Interp) {
     if st.throwing {
         let tv = cloneValue(st.thrownValue)
         markValue(st, tv)
+    }
+    // cached module.exports are roots — a loaded module's exports outlive its scope
+    var me: i64 = 0
+    while me < st.modExports.len() {
+        let mv = cloneValue(st.modExports[me])
+        markValue(st, mv)
+        me = me + 1
     }
     // every function's .prototype object is a root (methods live on it)
     var fp: i64 = 0
