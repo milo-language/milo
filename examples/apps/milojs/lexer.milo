@@ -105,6 +105,8 @@ let T_STRICTEQ: i32 = 93
 let T_STRICTNEQ: i32 = 94
 let T_DELETE: i32 = 95
 let T_YIELD: i32 = 96
+let T_IMPORT: i32 = 97
+let T_EXPORT: i32 = 98
 let T_DO: i32 = 89
 let T_SWITCH: i32 = 90
 let T_CASE: i32 = 91
@@ -240,6 +242,14 @@ fn keywordKind(s: &string): i32 {
     }
     if s == "yield" {
         return T_YIELD
+    }
+    // `from` and `as` stay ordinary identifiers — they are contextual in ESM and
+    // appear as plain variable names all over real code
+    if s == "import" {
+        return T_IMPORT
+    }
+    if s == "export" {
+        return T_EXPORT
     }
     if s == "instanceof" {
         return T_INSTANCEOF

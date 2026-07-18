@@ -10,7 +10,7 @@
 //   bun scripts/quickjs-sweep.ts            # summary + top error buckets
 //   bun scripts/quickjs-sweep.ts -v         # also list every failing case
 //   bun scripts/quickjs-sweep.ts -f loop    # only files whose name matches
-import { readdirSync, readFileSync, writeFileSync, mkdtempSync } from "fs";
+import { readdirSync, readFileSync, writeFileSync, mkdtempSync, copyFileSync } from "fs";
 import { execFileSync } from "child_process";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -29,7 +29,13 @@ const SKIP_FILES = new Set([
   "fixture_cyclic_import.js", "fixture_string_exports.js", "fixture_throwing_module.js",
 ]);
 
+// Cases run from a temp dir, but they import siblings ("./assert.js", the
+// fixture_*.js modules), so the suite has to sit next to them or every relative
+// import fails to resolve.
 const tmp = mkdtempSync(join(tmpdir(), "qjs-sweep-"));
+for (const f of readdirSync(QJS)) {
+  if (f.endsWith(".js")) copyFileSync(join(QJS, f), join(tmp, f));
+}
 
 // The trailing invocation list: a bare call at column 0, optionally with a
 // `.catch(...)` tail for the async cases.
@@ -67,7 +73,7 @@ function casesFor(file: string): Case[] {
 
 // Classify a failure into a bucket so the histogram ranks causes, not instances.
 function bucket(out: string): string {
-  const s = out.trim().split("\n")[0] ?? "";
+  const s = (out.trim().split("\n")[0] ?? "").split(tmp).join("");
   return s
     .replace(/\|[^|]*\|/g, "|…|")               // assert payloads
     .replace(/'[^']*'/g, "'…'")

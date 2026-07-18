@@ -25,7 +25,95 @@ from "std/argparse" import {
     newParser
 }
 from "./driver" import {
-    makeInterp, bootInterp, runSource
+    makeInterp, bootInterp, runSource, describeThrown
+}
+from "./lexer" import {
+    lex, Token
+}
+from "./ast" import {
+    Prog
+}
+from "./modules" import {
+    preloadGraph, resolveSpec, dirOf
+}
+from "./eval" import {
+    runModule, runEventLoop
+}
+
+// Specifiers of every `import ... from "spec"` / `import "spec"` in a token
+// stream. The parser desugars ESM imports to require() calls, but module
+// discovery runs on tokens *before* parsing — so modules.milo's require scan
+// cannot see them and this finds them instead.
+fn scanImports(toks: &Vec<Token>): Vec<string> {
+    var out: Vec<string> = Vec.new()
+    var i: i64 = 0
+    while i < toks.len() {
+        if toks[i].kind == T_IMPORT {
+            // `import(` is the dynamic form, which is an ordinary expression
+            if i + 1 < toks.len() && toks[i + 1].kind != T_LPAREN {
+                // scan ahead to this import's specifier string, bounded so a
+                // malformed import can't run to the end of the file
+                var j = i + 1
+                var limit = i + 64
+                if limit > toks.len() {
+                    limit = toks.len()
+                }
+                var done = false
+                while j < limit && !done {
+                    if toks[j].kind == T_STR {
+                        out.push(toks[j].text.clone())
+                        done = true
+                    } else if toks[j].kind == T_SEMI {
+                        done = true
+                    }
+                    j = j + 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// Register the entry module and everything it imports, transitively.
+// preloadGraph already follows require() edges; this walks the ESM ones.
+fn preloadWithImports(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
+    let entryIdx = preloadGraph(entryPath.clone(), prog, st)
+    var queue: Vec<string> = Vec.new()
+    queue.push(entryPath)
+    var head: i64 = 0
+    while head < queue.len() {
+        let path = queue[head].clone()
+        head = head + 1
+        match readFile(path.clone()) {
+            Result.Ok(src) => {
+                let specs = scanImports(lex(src))
+                let dir = dirOf(path)
+                var s: i64 = 0
+                while s < specs.len() {
+                    let resolved = resolveSpec(dir, specs[s])
+                    if resolved.len() > 0 {
+                        var seen = false
+                        var q: i64 = 0
+                        while q < queue.len() {
+                            if queue[q] == resolved {
+                                seen = true
+                            }
+                            q = q + 1
+                        }
+                        if !seen {
+                            let _ = preloadGraph(resolved.clone(), prog, st)
+                            queue.push(resolved)
+                        }
+                    }
+                    s = s + 1
+                }
+            }
+            Result.Err(_e) => {
+            }
+        }
+    }
+    return entryIdx
 }
 
 fn main(): i32 {
@@ -65,7 +153,29 @@ fn main(): i32 {
             }
             var st = makeInterp(gcStats, gcThreshold)
             bootInterp(st)
-            return runSource(src, st)
+            // A file with ESM imports has to run as a module: its desugared
+            // require() calls need the whole graph pre-loaded. Plain scripts keep
+            // the simpler path, which leaves them in global scope.
+            if scanImports(lex(src.clone())).len() == 0 {
+                return runSource(src, st)
+            }
+            var prog = Prog {
+                exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
+            }
+            let entryIdx = preloadWithImports(path.clone(), prog, st)
+            if entryIdx < 0 {
+                eprint("milojs-engine: cannot load '" + path + "'")
+                return 1
+            }
+            runModule(prog, entryIdx, st)
+            if !st.throwing {
+                runEventLoop(prog, st)
+            }
+            if st.throwing {
+                eprint("Uncaught " + describeThrown(st, st.thrownValue))
+                return 1
+            }
+            return 0
         }
         Result.Err(_e) => {
             eprint("milojs-engine: cannot read '" + path + "'")

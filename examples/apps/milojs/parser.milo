@@ -1294,6 +1294,9 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         prog.declLists.push(items)
         return addStmt(prog, Stmt.MultiDecl(prog.declLists.len() - 1))
     }
+    if k == T_IMPORT && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_LPAREN {
+        return parseImport(p, prog)
+    }
     if k == T_FUNCTION {
         // in statement position a name is mandatory; without this the missing
         // name surfaces as a confusing complaint about the `(` that follows
@@ -1665,10 +1668,214 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
     return prog.classes.len() - 1
 }
 
+// require("<spec>") as an expression.
+fn requireCall(prog: &mut Prog, spec: string): i64 {
+    let callee = addExpr(prog, Expr.Ident("require"))
+    var args: Vec<i64> = Vec.new()
+    args.push(addExpr(prog, Expr.StrLit(spec)))
+    prog.argLists.push(args)
+    return addExpr(prog, Expr.Call(callee, prog.argLists.len() - 1))
+}
+
+// ESM `import` desugared onto the CommonJS loader:
+//
+//   import { a, b as c } from "m"   →   const __esm_N = require("m"),
+//                                             a = __esm_N.a, c = __esm_N.b
+//   import * as ns from "m"         →   const ns = require("m")
+//   import "m"                      →   const __esm_N = require("m")
+//
+// One MultiDecl covers every form, which keeps this a single statement and so
+// avoids threading extra statements out of parseStmt. Default imports are not
+// used by the QuickJS suite and are not supported.
+fn parseImport(p: &mut PState, prog: &mut Prog): i64 {
+    advance(p)
+    var items: Vec<DeclItem> = Vec.new()
+    // unique per import so two imports in one file can't collide
+    let tmp = "__esm_" + i64ToStr(prog.exprs.len())
+
+    // import "m" — side effect only
+    if peekKind(p) == T_STR {
+        let spec = p.toks[p.pos].text.clone()
+        advance(p)
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        }
+        items.push(DeclItem {
+            name: tmp, init: requireCall(prog, spec), isVar: false
+        }
+        )
+        prog.declLists.push(items)
+        return addStmt(prog, Stmt.MultiDecl(prog.declLists.len() - 1))
+    }
+
+    // import * as ns from "m"
+    var nsName = ""
+    var named: Vec<string> = Vec.new()
+    var locals: Vec<string> = Vec.new()
+    if peekKind(p) == T_STAR {
+        advance(p)
+        if peekKind(p) == T_IDENT && p.toks[p.pos].text == "as" {
+            advance(p)
+        }
+        nsName = p.toks[p.pos].text.clone()
+        advance(p)
+    } else if peekKind(p) == T_LBRACE {
+        advance(p)
+        while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
+            // `import { "string-name" as x }` — the imported name may be a string
+            let imported = p.toks[p.pos].text.clone()
+            advance(p)
+            var local = imported.clone()
+            if peekKind(p) == T_IDENT && p.toks[p.pos].text == "as" {
+                advance(p)
+                local = p.toks[p.pos].text.clone()
+                advance(p)
+            }
+            named.push(imported)
+            locals.push(local)
+            if peekKind(p) == T_COMMA {
+                advance(p)
+            }
+        }
+        if peekKind(p) == T_RBRACE {
+            advance(p)
+        }
+    }
+
+    // `from`
+    if peekKind(p) == T_IDENT && p.toks[p.pos].text == "from" {
+        advance(p)
+    }
+    var spec = ""
+    if peekKind(p) == T_STR {
+        spec = p.toks[p.pos].text.clone()
+        advance(p)
+    }
+    if peekKind(p) == T_SEMI {
+        advance(p)
+    }
+
+    if nsName.len() > 0 {
+        items.push(DeclItem {
+            name: nsName, init: requireCall(prog, spec), isVar: false
+        }
+        )
+    } else {
+        items.push(DeclItem {
+            name: tmp.clone(), init: requireCall(prog, spec), isVar: false
+        }
+        )
+        var i: i64 = 0
+        while i < named.len() {
+            // index rather than member access, so string-named imports work
+            let base = addExpr(prog, Expr.Ident(tmp.clone()))
+            let key = addExpr(prog, Expr.StrLit(named[i].clone()))
+            items.push(DeclItem {
+                name: locals[i].clone(), init: addExpr(prog, Expr.Index(base, key)), isVar: false
+            }
+            )
+            i = i + 1
+        }
+    }
+    prog.declLists.push(items)
+    return addStmt(prog, Stmt.MultiDecl(prog.declLists.len() - 1))
+}
+
+// `exports.name = local` as a statement — the desugaring target for every
+// `export` form.
+fn exportAssign(prog: &mut Prog, name: string, local: string): i64 {
+    let obj = addExpr(prog, Expr.Ident("exports"))
+    let key = addExpr(prog, Expr.StrLit(name))
+    let val = addExpr(prog, Expr.Ident(local))
+    return addStmt(prog, Stmt.ExprStmt(addExpr(prog, Expr.SetMember(obj, key, val))))
+}
+
+// ESM `export` is only legal at the top level, so it is handled here rather than
+// in parseStmt: the declaration is parsed normally and the matching
+// `exports.x = x` statements are appended to the same statement list. Bindings
+// are therefore snapshots, not ESM live bindings — see docs/milojs-quickjs-plan.md.
+fn parseExport(p: &mut PState, prog: &mut Prog, list: &mut Vec<i64>) {
+    advance(p)
+    let k = peekKind(p)
+
+    // export default <expr>  →  exports.default = <expr>
+    if k == T_DEFAULT {
+        advance(p)
+        let obj = addExpr(prog, Expr.Ident("exports"))
+        let key = addExpr(prog, Expr.StrLit("default"))
+        let val = parseExpr(p, prog)
+        list.push(addStmt(prog, Stmt.ExprStmt(addExpr(prog, Expr.SetMember(obj, key, val)))))
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        }
+        return
+    }
+
+    // export { a, b as c }  →  exports.a = a; exports.c = b
+    if k == T_LBRACE {
+        advance(p)
+        while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
+            var local = p.toks[p.pos].text.clone()
+            advance(p)
+            var exported = local.clone()
+            if peekKind(p) == T_IDENT && p.toks[p.pos].text == "as" {
+                advance(p)
+                exported = p.toks[p.pos].text.clone()
+                advance(p)
+            }
+            list.push(exportAssign(prog, exported, local))
+            if peekKind(p) == T_COMMA {
+                advance(p)
+            }
+        }
+        if peekKind(p) == T_RBRACE {
+            advance(p)
+        }
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        }
+        return
+    }
+
+    // export <decl> — emit the declaration, then export every name it bound
+    let s = parseStmt(p, prog)
+    list.push(s)
+    match prog.stmts[s] {
+        Stmt.FuncDecl(f) => {
+            let n = prog.funcs[f].name.clone()
+            if n.len() > 0 {
+                list.push(exportAssign(prog, n.clone(), n))
+            }
+        }
+        Stmt.ClassDecl(c) => {
+            let n = prog.classes[c].name.clone()
+            if n.len() > 0 {
+                list.push(exportAssign(prog, n.clone(), n))
+            }
+        }
+        Stmt.MultiDecl(d) => {
+            var i: i64 = 0
+            while i < prog.declLists[d].len() {
+                let n = prog.declLists[d][i].name.clone()
+                if n.len() > 0 {
+                    list.push(exportAssign(prog, n.clone(), n))
+                }
+                i = i + 1
+            }
+        }
+        _ => {
+        }
+    }
+}
+
 fn parseProgram(p: &mut PState, prog: &mut Prog): i64 {
     var list: Vec<i64> = Vec.new()
     while peekKind(p) != T_EOF {
-        list.push(parseStmt(p, prog))
+        if peekKind(p) == T_EXPORT {
+            parseExport(p, prog, list)
+        } else {
+            list.push(parseStmt(p, prog))
+        }
     }
     prog.blocks.push(list)
     return prog.blocks.len() - 1
