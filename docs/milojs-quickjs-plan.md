@@ -9,7 +9,7 @@ update-when: a lane lands (update the score, delete the lane) or the sweep harne
 
 Working plan for driving `scripts/quickjs-sweep.ts` toward 100%. Written for agents
 picking up individual lanes; each lane is independent and lists exact anchors.
-Current: **63/149 cases (42.3%)**. Delete lanes here as they land.
+Current: **64/149 cases (43.0%)**. Delete lanes here as they land.
 
 Engine-level spec builtins now live in `lib/engine-prelude.js` (loaded by
 `milojs-engine.milo` into the shared `Prog` before the entry runs) — distinct from
@@ -21,10 +21,21 @@ spec defines that is easier to write in JS than as a native belongs there:
 test asserting a target was actually collected will correctly fail rather than
 pass vacuously.
 
-Known engine bugs found while measuring, not yet fixed:
-- **array rest destructuring is broken**: `const [g, ...h] = [7,8,9]` binds `h = 9`
-  instead of `[8, 9]`. Affects `destructured-export.js`; likely more.
-- `null.x` does not throw a `TypeError` (`null_or_undefined.js`).
+Engine bugs found by measuring and since FIXED (all were real language bugs, not
+suite artifacts — the suite is earning its keep as a bug-finder even where it
+doesn't move the score):
+- ~~array/object rest in destructuring~~ (30c689b): `...` was never handled in
+  `patternDecls`, so `const [g, ...h] = [7,8,9]` bound `h = 9` and
+  `const {x, ...y}` bound `y = undefined`. Array rest lowers to `src.slice(i)`;
+  object rest to an `__objRest(src, boundKeys)` helper in the engine prelude.
+  The node runtime now loads `engine-prelude` too (it is engine + node shims, so
+  it needs the spec layer as well).
+- ~~reading a property of null/undefined returned undefined~~ (e66377a): now
+  throws `TypeError: cannot read property 'x' of null`, matching the spec text.
+  Optional chaining (`?.`) is a separate AST node and still yields undefined.
+
+Still open, found the same way:
+- error objects have no `.constructor`, so `e.constructor.name` throws.
 
 **All infrastructure blockers are gone.** Lanes 1 and 2 landed; every remaining
 failure is a genuine engine gap rather than a file that won't load. The profile is
