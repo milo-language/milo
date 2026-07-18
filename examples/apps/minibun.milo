@@ -29,7 +29,10 @@ from "std/io" import {
     readFile
 }
 from "std/fs" import {
-    isFile, isDir, fileSizePath
+    isFile, isDir, fileSizePath, currentDir
+}
+from "std/string" import {
+    strStartsWith
 }
 from "std/net" import {
     TcpListener, fetchWith, FetchOptions, NetError, Response
@@ -85,6 +88,9 @@ extern fn JSValueToBoolean(ctx: *u8, value: *u8): bool
 
 // Sleep until the next due timer (the accept loop's timer pump — see pumpTimers).
 extern fn usleep(usec: u32): i32
+
+// Flush buffered stdout so a piped (non-TTY) server's logs appear promptly. NULL flushes all.
+extern fn fflush(stream: *u8): i32
 
 extern fn JSValueProtect(ctx: *u8, value: *u8): void
 
@@ -190,6 +196,9 @@ fn consoleLog(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, argumen
             i = i + 1
         }
         print(line)
+        // Flush: stdout is block-buffered when piped (not a TTY), so a long-running server's
+        // logs would otherwise never appear. fflush(NULL) flushes all open streams.
+        fflush(0 as *u8)
         return JSValueMakeUndefined(ctx)
     }
 }
@@ -509,7 +518,19 @@ fn main(): i32 {
         print("usage: minibun <file.js>")
         return 1
     }
-    let path = argv[1]
+    // Node makes __filename/__dirname absolute regardless of how the entry was invoked; a
+    // relative entry (e.g. `-- dist/index.js`) otherwise yields a relative __dirname, so the
+    // app's path.join(__dirname, ...) misses files (e.g. its built frontend). Resolve up front.
+    var path = argv[1]
+    if !strStartsWith(path, "/") {
+        match currentDir() {
+            Result.Ok(cwd) => {
+                path = cwd + "/" + path
+            }
+            Result.Err(_e) => {
+            }
+        }
+    }
 
     unsafe {
         let ctx = JSGlobalContextCreate(0 as *u8)
