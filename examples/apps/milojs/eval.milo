@@ -249,10 +249,49 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
                 }
                 return JSValue.Bool(objOwnIndex(st, o, key) >= 0 || (st.objects[o].isArray && asArrayIndex(key) >= 0 && asArrayIndex(key) < arrLen(st, o)))
             }
+            if name == "toString" {
+                if st.objects[o].isArray {
+                    return JSValue.Str("[object Array]")
+                }
+                if st.objects[o].isError {
+                    return JSValue.Str("[object Error]")
+                }
+                if st.objects[o].isDate {
+                    return JSValue.Str("[object Date]")
+                }
+                return JSValue.Str("[object Object]")
+            }
+            if name == "valueOf" {
+                return JSValue.Obj(o)
+            }
+            if name == "isPrototypeOf" {
+                if args.len() == 0 {
+                    return JSValue.Bool(false)
+                }
+                let other = objHandle(args[0])
+                if other < 0 {
+                    return JSValue.Bool(false)
+                }
+                var pcur = st.objects[other].proto
+                while pcur >= 0 {
+                    if pcur == o {
+                        return JSValue.Bool(true)
+                    }
+                    pcur = st.objects[pcur].proto
+                }
+                return JSValue.Bool(false)
+            }
+            if name == "propertyIsEnumerable" {
+                var key = ""
+                if args.len() > 0 {
+                    key = toStr(args[0])
+                }
+                return JSValue.Bool(objOwnIndex(st, o, key) >= 0)
+            }
             if st.objects[o].isArray && isArrayMethod(name) {
                 return arrayMethod(prog, o, name, args, st)
             }
-            let m = getMember(st, o, name)
+            let m = getMemberDyn(prog, o, name, st)
             return callValue(prog, m, args, JSValue.Obj(o), st)
         }
         JSValue.Func(bf, benv) => {
@@ -320,7 +359,37 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             return JSValue.Undefined
         }
         _ => {
+            if name == "toString" {
+                return JSValue.Str("[object " + objectTypeTag(recv) + "]")
+            }
+            if name == "valueOf" {
+                return cloneValue(recv)
+            }
             return primitiveMethod(name, recv, args)
+        }
+    }
+}
+
+// The tag Object.prototype.toString uses for a primitive receiver.
+fn objectTypeTag(v: &JSValue): string {
+    match v {
+        JSValue.Undefined => {
+            return "Undefined"
+        }
+        JSValue.Null => {
+            return "Null"
+        }
+        JSValue.Bool(_b) => {
+            return "Boolean"
+        }
+        JSValue.Number(_n) => {
+            return "Number"
+        }
+        JSValue.Str(_s) => {
+            return "String"
+        }
+        _ => {
+            return "Object"
         }
     }
 }
@@ -1226,6 +1295,32 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                 st.objects[o].proto = proto
             }
         }
+        // second argument: property descriptors, same shape as
+        // Object.defineProperties. express builds app.request/app.response with
+        // this to hang `app` off the prototype, so ignoring it left req.app and
+        // res.app undefined.
+        if argVals.len() > 1 {
+            let descs = objHandle(argVals[1])
+            if descs >= 0 {
+                pushTemp(st, JSValue.Obj(o))
+                var di: i64 = 0
+                while di < st.objects[descs].props.len() {
+                    let key = st.objects[descs].props[di].key.clone()
+                    let dh = objHandle(cloneValue(st.objects[descs].props[di].value))
+                    if dh >= 0 {
+                        let g = getMember(st, dh, "get")
+                        let sfn = getMember(st, dh, "set")
+                        if isCallable(g) || isCallable(sfn) {
+                            objDefineAccessor(st, o, key, g, sfn)
+                        } else {
+                            objSet(st, o, key, getMember(st, dh, "value"))
+                        }
+                    }
+                    di = di + 1
+                }
+                popTemp(st)
+            }
+        }
         return JSValue.Obj(o)
     }
     if id == NATIVE_OBJECT_GETPROTO {
@@ -1830,6 +1925,11 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "getOwnPropertyNames", JSValue.Native(NATIVE_OBJECT_GETOWNPROPNAMES))
     let objectProto = newObject(st)
     objSet(st, objectProto, "hasOwnProperty", makeBoundMethod(st, JSValue.Undefined, "hasOwnProperty"))
+    // Object.prototype.toString.call(x) is the standard type-detection idiom
+    objSet(st, objectProto, "toString", makeBoundMethod(st, JSValue.Undefined, "toString"))
+    objSet(st, objectProto, "valueOf", makeBoundMethod(st, JSValue.Undefined, "valueOf"))
+    objSet(st, objectProto, "isPrototypeOf", makeBoundMethod(st, JSValue.Undefined, "isPrototypeOf"))
+    objSet(st, objectProto, "propertyIsEnumerable", makeBoundMethod(st, JSValue.Undefined, "propertyIsEnumerable"))
     objSet(st, objectCtor, "prototype", JSValue.Obj(objectProto))
     scopeDefine(st, 0, "Object", JSValue.Obj(objectCtor))
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
@@ -2198,6 +2298,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     let bag = getNativeProps(st, nid)
                     return getMember(st, bag, name)
                 }
+                JSValue.Null => {
+                    return throwNullMember(st, name, "null")
+                }
+                JSValue.Undefined => {
+                    return throwNullMember(st, name, "undefined")
+                }
                 _ => {
                     return JSValue.Undefined
                 }
@@ -2234,6 +2340,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                         return JSValue.Str(jsCharAt(s, i))
                     }
                     return JSValue.Undefined
+                }
+                JSValue.Null => {
+                    return throwNullMember(st, key, "null")
+                }
+                JSValue.Undefined => {
+                    return throwNullMember(st, key, "undefined")
                 }
                 _ => {
                     return JSValue.Undefined
@@ -4276,6 +4388,15 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
             return JSValue.Undefined
         }
     }
+}
+
+// Reading a property of null/undefined is a TypeError, not undefined. Returning
+// undefined instead turns a typo into a value that fails much later, somewhere
+// unrelated.
+fn throwNullMember(st: &mut Interp, name: &string, base: &string): JSValue {
+    st.throwing = true
+    st.thrownValue = makeError(st, "TypeError", "cannot read property '" + name.clone() + "' of " + base.clone() + currentModule(st))
+    return JSValue.Undefined
 }
 
 fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
