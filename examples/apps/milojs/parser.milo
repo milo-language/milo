@@ -105,7 +105,7 @@ fn parseArg(p: &mut PState, prog: &mut Prog): i64 {
 // Build an arrow function from its parameter list; the caller has consumed `=>`.
 // Body is a block `{ }` or a single expression (implicit return). isArrow=true so
 // it doesn't bind its own `this`.
-fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool): i64 {
+fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool, prelude: Vec<DeclItem>): i64 {
     var body = -1
     if peekKind(p) == T_LBRACE {
         body = parseBraceBlock(p, prog)
@@ -116,6 +116,10 @@ fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool
         list.push(ret)
         prog.blocks.push(list)
         body = prog.blocks.len() - 1
+    }
+    if prelude.len() > 0 {
+        let unpack = declsToStmt(prog, prelude)
+        prependStmt(prog, body, unpack)
     }
     prog.funcs.push(FuncDef {
         name: "", params: params, body: body, isArrow: true, isAsync: isAsync
@@ -128,36 +132,191 @@ fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool
 // Try to read `( id, id, ... ) =>` starting at a '('. On success, consumes
 // through `=>` and returns true with params in `out`. On failure, restores the
 // position so the caller can parse a normal parenthesized expression.
-fn scanArrowParams(p: &mut PState, out: &mut Vec<string>): bool {
-    let save = p.pos
-    advance(p)
-    var ok = true
-    if peekKind(p) != T_RPAREN {
-        var going = true
-        while going {
-            if peekKind(p) == T_IDENT {
-                out.push(p.toks[p.pos].text.clone())
+fn looksLikeArrow(p: &PState): bool {
+    // token-only scan to the matching ')' — a real parse would allocate AST
+    // nodes that a rollback couldn't reclaim
+    var i = p.pos + 1
+    var depth: i64 = 0
+    while i < p.toks.len() {
+        let k = p.toks[i].kind
+        if k == T_LPAREN || k == T_LBRACKET || k == T_LBRACE {
+            depth = depth + 1
+        } else if k == T_RBRACKET || k == T_RBRACE {
+            depth = depth - 1
+        } else if k == T_RPAREN {
+            if depth == 0 {
+                return i + 1 < p.toks.len() && p.toks[i + 1].kind == T_ARROW
+            }
+            depth = depth - 1
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// Consume `( params ) =>`, which looksLikeArrow has already confirmed.
+fn parseArrowHead(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude: &mut Vec<DeclItem>) {
+    expect(p, T_LPAREN)
+    while peekKind(p) != T_RPAREN && peekKind(p) != T_EOF {
+        parseParam(p, prog, params, prelude)
+        if peekKind(p) == T_COMMA {
+            advance(p)
+        }
+    }
+    expect(p, T_RPAREN)
+    expect(p, T_ARROW)
+}
+
+// `x = <default>` in a pattern: JS only substitutes on undefined. This compares
+// loosely, so an explicit null also takes the default — a small deviation.
+fn withDefault(prog: &mut Prog, valExpr: i64, dflt: i64): i64 {
+    let undef = addExpr(prog, Expr.UndefLit)
+    let cond = addExpr(prog, Expr.Bin("==", valExpr, undef))
+    return addExpr(prog, Expr.Cond(cond, dflt, valExpr))
+}
+
+// Destructuring is desugared at parse time into a flat list of declarators that
+// read out of `srcName`. Nested patterns bind an intermediate temp and recurse;
+// the temp name is keyed on token position so it can't collide.
+fn patternDecls(p: &mut PState, prog: &mut Prog, srcName: string, out: &mut Vec<DeclItem>) {
+    if peekKind(p) == T_LBRACE {
+        advance(p)
+        while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
+            var key = ""
+            if isPropName(p) || peekKind(p) == T_STR {
+                key = p.toks[p.pos].text.clone()
+            }
+            advance(p)
+            let srcIdx = addExpr(prog, Expr.Ident(srcName.clone()))
+            var valExpr = addExpr(prog, Expr.Member(srcIdx, key.clone()))
+            var target = key.clone()
+            var nested = false
+            if peekKind(p) == T_COLON {
                 advance(p)
-                if peekKind(p) == T_COMMA {
-                    advance(p)
+                if peekKind(p) == T_LBRACE || peekKind(p) == T_LBRACKET {
+                    nested = true
+                    let tmp = "__d" + i64ToStr(p.pos)
+                    out.push(DeclItem {
+                        name: tmp.clone(), init: valExpr
+                    }
+                    )
+                    patternDecls(p, prog, tmp, out)
                 } else {
-                    going = false
+                    target = p.toks[p.pos].text.clone()
+                    advance(p)
                 }
+            }
+            if !nested {
+                if peekKind(p) == T_EQ {
+                    advance(p)
+                    let dflt = parseExpr(p, prog)
+                    valExpr = withDefault(prog, valExpr, dflt)
+                }
+                out.push(DeclItem {
+                    name: target, init: valExpr
+                }
+                )
+            }
+            if peekKind(p) == T_COMMA {
+                advance(p)
+            }
+        }
+        expect(p, T_RBRACE)
+        return
+    }
+    expect(p, T_LBRACKET)
+    var i: i64 = 0
+    while peekKind(p) != T_RBRACKET && peekKind(p) != T_EOF {
+        if peekKind(p) == T_COMMA {
+            // elision: [, x] skips a slot
+            advance(p)
+            i = i + 1
+        } else {
+            let srcIdx = addExpr(prog, Expr.Ident(srcName.clone()))
+            let idxE = addExpr(prog, Expr.Num(i as f64))
+            var valExpr = addExpr(prog, Expr.Index(srcIdx, idxE))
+            if peekKind(p) == T_LBRACE || peekKind(p) == T_LBRACKET {
+                let tmp = "__d" + i64ToStr(p.pos)
+                out.push(DeclItem {
+                    name: tmp.clone(), init: valExpr
+                }
+                )
+                patternDecls(p, prog, tmp, out)
             } else {
-                ok = false
-                going = false
+                let name = p.toks[p.pos].text.clone()
+                advance(p)
+                if peekKind(p) == T_EQ {
+                    advance(p)
+                    let dflt = parseExpr(p, prog)
+                    valExpr = withDefault(prog, valExpr, dflt)
+                }
+                out.push(DeclItem {
+                    name: name, init: valExpr
+                }
+                )
+            }
+            i = i + 1
+            if peekKind(p) == T_COMMA {
+                advance(p)
             }
         }
     }
-    if ok && peekKind(p) == T_RPAREN {
-        advance(p)
-        if peekKind(p) == T_ARROW {
-            advance(p)
-            return true
-        }
+    expect(p, T_RBRACKET)
+}
+
+// Parse one parameter. A destructuring pattern becomes a synthetic parameter
+// name plus declarators that unpack it at the top of the body.
+fn parseParam(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude: &mut Vec<DeclItem>) {
+    if peekKind(p) == T_LBRACE || peekKind(p) == T_LBRACKET {
+        let tmp = "__a" + i64ToStr(p.pos)
+        params.push(tmp.clone())
+        patternDecls(p, prog, tmp, prelude)
+        return
     }
-    p.pos = save
-    return false
+    if peekKind(p) == T_SPREAD {
+        // rest params aren't supported yet; bind the name so arity still lines up
+        advance(p)
+    }
+    if peekKind(p) == T_IDENT {
+        let name = p.toks[p.pos].text.clone()
+        advance(p)
+        if peekKind(p) == T_EQ {
+            advance(p)
+            let dflt = parseExpr(p, prog)
+            let src = addExpr(prog, Expr.Ident(name.clone()))
+            prelude.push(DeclItem {
+                name: name.clone(), init: withDefault(prog, src, dflt)
+            }
+            )
+        }
+        params.push(name)
+        return
+    }
+    advance(p)
+}
+
+fn isPatternStart(p: &PState): bool {
+    let k = peekKind(p)
+    return k == T_LBRACE || k == T_LBRACKET
+}
+
+// Wrap desugared declarators into one statement.
+fn declsToStmt(prog: &mut Prog, items: Vec<DeclItem>): i64 {
+    prog.declLists.push(items)
+    return addStmt(prog, Stmt.MultiDecl(prog.declLists.len() - 1))
+}
+
+// Put a statement at the front of an already-parsed block (used to unpack
+// destructured parameters and for-of bindings before the body runs).
+fn prependStmt(prog: &mut Prog, blockIdx: i64, stmtIdx: i64) {
+    var merged: Vec<i64> = Vec.new()
+    merged.push(stmtIdx)
+    var i: i64 = 0
+    while i < prog.blocks[blockIdx].len() {
+        merged.push(prog.blocks[blockIdx][i])
+        i = i + 1
+    }
+    prog.blocks[blockIdx] = merged
 }
 
 fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
@@ -196,15 +355,18 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
             advance(p)
             var ap: Vec<string> = Vec.new()
             ap.push(name)
-            return makeArrow(p, prog, ap, false)
+            var noPrelude: Vec<DeclItem> = Vec.new()
+            return makeArrow(p, prog, ap, false, noPrelude)
         }
         advance(p)
         return addExpr(prog, Expr.Ident(name))
     }
     if k == T_LPAREN {
-        var arrowParams: Vec<string> = Vec.new()
-        if scanArrowParams(p, arrowParams) {
-            return makeArrow(p, prog, arrowParams, false)
+        if looksLikeArrow(p) {
+            var arrowParams: Vec<string> = Vec.new()
+            var arrowPrelude: Vec<DeclItem> = Vec.new()
+            parseArrowHead(p, prog, arrowParams, arrowPrelude)
+            return makeArrow(p, prog, arrowParams, false, arrowPrelude)
         }
         advance(p)
         var e = parseExpr(p, prog)
@@ -235,13 +397,16 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
             advance(p)
             var ap1: Vec<string> = Vec.new()
             ap1.push(pname)
-            return makeArrow(p, prog, ap1, true)
+            var noPrelude1: Vec<DeclItem> = Vec.new()
+            return makeArrow(p, prog, ap1, true, noPrelude1)
         }
         if nk == T_LPAREN {
             advance(p)
-            var aparams: Vec<string> = Vec.new()
-            if scanArrowParams(p, aparams) {
-                return makeArrow(p, prog, aparams, true)
+            if looksLikeArrow(p) {
+                var aparams: Vec<string> = Vec.new()
+                var aprelude: Vec<DeclItem> = Vec.new()
+                parseArrowHead(p, prog, aparams, aprelude)
+                return makeArrow(p, prog, aparams, true, aprelude)
             }
             // not an arrow after all — `async` was a plain identifier call
             p.pos = p.pos - 1
@@ -363,17 +528,19 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
             // method shorthand `{ foo(a) { ... } }` — a plain function-valued prop
             advance(p)
             var mparams: Vec<string> = Vec.new()
+            var mprelude: Vec<DeclItem> = Vec.new()
             while peekKind(p) != T_RPAREN && peekKind(p) != T_EOF {
-                if peekKind(p) == T_IDENT {
-                    mparams.push(p.toks[p.pos].text.clone())
-                }
-                advance(p)
+                parseParam(p, prog, mparams, mprelude)
                 if peekKind(p) == T_COMMA {
                     advance(p)
                 }
             }
             expect(p, T_RPAREN)
             let mbody = parseBraceBlock(p, prog)
+            if mprelude.len() > 0 {
+                let munpack = declsToStmt(prog, mprelude)
+                prependStmt(prog, mbody, munpack)
+            }
             prog.funcs.push(FuncDef {
                 name: key.clone(), params: mparams, body: mbody, isArrow: false, isAsync: isMethodAsync
             }
@@ -759,19 +926,19 @@ fn parseFunction(p: &mut PState, prog: &mut Prog, isAsync: bool): i64 {
     }
     expect(p, T_LPAREN)
     var params: Vec<string> = Vec.new()
-    if peekKind(p) == T_IDENT {
-        params.push(p.toks[p.pos].text.clone())
-        advance(p)
-        while peekKind(p) == T_COMMA {
+    var prelude: Vec<DeclItem> = Vec.new()
+    while peekKind(p) != T_RPAREN && peekKind(p) != T_EOF {
+        parseParam(p, prog, params, prelude)
+        if peekKind(p) == T_COMMA {
             advance(p)
-            if peekKind(p) == T_IDENT {
-                params.push(p.toks[p.pos].text.clone())
-                advance(p)
-            }
         }
     }
     expect(p, T_RPAREN)
     let body = parseBraceBlock(p, prog)
+    if prelude.len() > 0 {
+        let unpack = declsToStmt(prog, prelude)
+        prependStmt(prog, body, unpack)
+    }
     prog.funcs.push(FuncDef {
         name: name, params: params, body: body, isArrow: false, isAsync: isAsync
     }
@@ -802,29 +969,62 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         var items: Vec<DeclItem> = Vec.new()
         var more = true
         while more {
-            var name = ""
-            if peekKind(p) == T_IDENT {
-                name = p.toks[p.pos].text.clone()
-                advance(p)
-            }
-            var init = -1
-            if peekKind(p) == T_EQ {
-                advance(p)
-                // parseExpr stops at ',' (no comma operator), so each declarator's
-                // initializer parses independently
-                init = parseExpr(p, prog)
-            }
-            if init < 0 {
-                init = addExpr(prog, Expr.UndefLit)
-            }
-            items.push(DeclItem {
-                name: name, init: init
-            }
-            )
-            if peekKind(p) == T_COMMA {
-                advance(p)
+            if isPatternStart(p) {
+                // `const { a, b } = expr` — bind the initializer to a temp, then
+                // let the desugared declarators read out of it
+                let save = p.pos
+                var pat: Vec<DeclItem> = Vec.new()
+                let tmp = "__d" + i64ToStr(save)
+                patternDecls(p, prog, tmp.clone(), pat)
+                var tinit = -1
+                if peekKind(p) == T_EQ {
+                    advance(p)
+                    tinit = parseExpr(p, prog)
+                } else {
+                    tinit = addExpr(prog, Expr.UndefLit)
+                }
+                items.push(DeclItem {
+                    name: tmp, init: tinit
+                }
+                )
+                var pi: i64 = 0
+                while pi < pat.len() {
+                    items.push(DeclItem {
+                        name: pat[pi].name.clone(), init: pat[pi].init
+                    }
+                    )
+                    pi = pi + 1
+                }
+                if peekKind(p) == T_COMMA {
+                    advance(p)
+                } else {
+                    more = false
+                }
             } else {
-                more = false
+                var name = ""
+                if peekKind(p) == T_IDENT {
+                    name = p.toks[p.pos].text.clone()
+                    advance(p)
+                }
+                var init = -1
+                if peekKind(p) == T_EQ {
+                    advance(p)
+                    // parseExpr stops at ',' (no comma operator), so each declarator's
+                    // initializer parses independently
+                    init = parseExpr(p, prog)
+                }
+                if init < 0 {
+                    init = addExpr(prog, Expr.UndefLit)
+                }
+                items.push(DeclItem {
+                    name: name, init: init
+                }
+                )
+                if peekKind(p) == T_COMMA {
+                    advance(p)
+                } else {
+                    more = false
+                }
             }
         }
         if peekKind(p) == T_SEMI {
@@ -875,6 +1075,33 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         var isOf = false
         if peekKind(p) == T_VAR || peekKind(p) == T_LET || peekKind(p) == T_CONST {
             advance(p)
+        }
+        if isPatternStart(p) {
+            // for (const [k, v] of pairs) — iterate into a temp, then unpack it
+            // into a block wrapped around the body
+            let tmp = "__f" + i64ToStr(p.pos)
+            var pat: Vec<DeclItem> = Vec.new()
+            patternDecls(p, prog, tmp.clone(), pat)
+            var patIsOf = false
+            if peekKind(p) == T_IN {
+                advance(p)
+            } else if peekKind(p) == T_IDENT && p.toks[p.pos].text == "of" {
+                advance(p)
+                patIsOf = true
+            }
+            let objExpr = parseExpr(p, prog)
+            expect(p, T_RPAREN)
+            let inner = parseStmt(p, prog)
+            let unpack = declsToStmt(prog, pat)
+            var wrapped: Vec<i64> = Vec.new()
+            wrapped.push(unpack)
+            wrapped.push(inner)
+            prog.blocks.push(wrapped)
+            let body = addStmt(prog, Stmt.Block(prog.blocks.len() - 1))
+            if patIsOf {
+                return addStmt(prog, Stmt.ForOf(tmp, objExpr, body))
+            }
+            return addStmt(prog, Stmt.ForIn(tmp, objExpr, body))
         }
         if peekKind(p) == T_IDENT {
             let cand = p.toks[p.pos].text.clone()
