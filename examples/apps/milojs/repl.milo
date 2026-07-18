@@ -385,7 +385,7 @@ fn repl(st: &mut Interp): i32 {
         funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
     }
     var history: Vec<string> = Vec.new()
-    let prompt = fg24(226, 192, 150) + "❯ " + ansiReset()
+    let prompt = fg24(226, 192, 150) + "milojs> " + ansiReset()
 
     while true {
         match readLineEdited(prompt, history) {
@@ -405,7 +405,7 @@ fn repl(st: &mut Interp): i32 {
                 let top = parseProgram(p, prog)
                 let val = runLine(prog, top, st)
                 if st.throwing {
-                    eprint("Uncaught " + toStr(st.thrownValue))
+                    eprint("Uncaught " + describeThrown(st, st.thrownValue))
                     st.throwing = false
                     st.thrownValue = JSValue.Undefined
                 } else {
