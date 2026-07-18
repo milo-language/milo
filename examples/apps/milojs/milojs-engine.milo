@@ -25,7 +25,10 @@ from "std/argparse" import {
     newParser
 }
 from "./driver" import {
-    makeInterp, bootInterp, runSource, describeThrown
+    makeInterp, bootInterp, describeThrown
+}
+from "./parser" import {
+    PState, parseProgram
 }
 from "./lexer" import {
     lex, Token
@@ -37,7 +40,7 @@ from "./modules" import {
     preloadGraph, resolveSpec, dirOf
 }
 from "./eval" import {
-    runModule, runEventLoop
+    runModule, runEventLoop, hoistBlock, execBlock
 }
 
 // Specifiers of every `import ... from "spec"` / `import "spec"` in a token
@@ -153,21 +156,42 @@ fn main(): i32 {
             }
             var st = makeInterp(gcStats, gcThreshold)
             bootInterp(st)
-            // A file with ESM imports has to run as a module: its desugared
-            // require() calls need the whole graph pre-loaded. Plain scripts keep
-            // the simpler path, which leaves them in global scope.
-            if scanImports(lex(src.clone())).len() == 0 {
-                return runSource(src, st)
-            }
+            // The prelude and the program must share one Prog: a JSValue.Func
+            // carries an index into prog.funcs, so a function parsed into a
+            // different Prog would index the wrong table when called.
             var prog = Prog {
                 exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
             }
-            let entryIdx = preloadWithImports(path.clone(), prog, st)
-            if entryIdx < 0 {
-                eprint("milojs-engine: cannot load '" + path + "'")
+            // spec builtins that are written in JS rather than as natives; run in
+            // global scope so its declarations become globals
+            let preludeIdx = preloadGraph("builtin:engine-prelude", prog, st)
+            if preludeIdx >= 0 {
+                hoistBlock(prog, st.modBlocks[preludeIdx], st, 0)
+                execBlock(prog, st.modBlocks[preludeIdx], st, 0)
+            }
+            if st.throwing {
+                eprint("milojs-engine: prelude failed: " + describeThrown(st, st.thrownValue))
                 return 1
             }
-            runModule(prog, entryIdx, st)
+            // A file with ESM imports has to run as a module: its desugared
+            // require() calls need the whole graph pre-loaded. A plain script is
+            // parsed straight into the shared Prog and left in global scope.
+            var entryIdx: i64 = -1
+            if scanImports(lex(src.clone())).len() == 0 {
+                var p = PState {
+                    toks: lex(src), pos: 0, curClass: "", file: path.clone(), errored: false, eofError: false, quiet: false
+                }
+                let top = parseProgram(p, prog)
+                hoistBlock(prog, top, st, 0)
+                execBlock(prog, top, st, 0)
+            } else {
+                entryIdx = preloadWithImports(path.clone(), prog, st)
+                if entryIdx < 0 {
+                    eprint("milojs-engine: cannot load '" + path + "'")
+                    return 1
+                }
+                runModule(prog, entryIdx, st)
+            }
             if !st.throwing {
                 runEventLoop(prog, st)
             }
