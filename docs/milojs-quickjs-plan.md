@@ -39,20 +39,23 @@ Still open, found the same way:
 
 **All infrastructure blockers are gone.** Lanes 1 and 2 landed; every remaining
 failure is a genuine engine gap rather than a file that won't load. The profile is
-now a long tail — biggest bucket is 20, most are 1-5 — so from here progress is
-incremental builtin work, not single fixes worth 30 cases.
+a long tail — no single remaining fix is worth more than a handful of cases, so
+from here it is incremental builtin and semantics work.
 
 Current top buckets (`-v` for the per-case list):
 
 | n | cause | likely lane |
 |---|---|---|
-| 20 | `value is not a constructor` | missing constructors (Iterator, DisposableStack, resizable ArrayBuffer) |
-| 15 | `assertion failed: got \|…\|` | real semantic divergences — bisect individually |
-| 11 | `cannot read property of a non-object` | missing builtin objects |
-| 5 | parse errors | remaining syntax gaps (BigInt literals, `for await`) |
-| 5 | `eval is not defined` | deferred, see below |
+| 16 | `assertion failed: got \|…\|` | real semantic divergences — bisect individually, highest value |
+| 15 | `value is not a constructor` | `Proxy` / `Reflect` / resizable `ArrayBuffer` — need evaluator traps, NOT expressible in the prelude |
+| 12 | `cannot read property of a non-object` | missing builtin objects |
+| 6 | `cannot read property of undefined` | surfaced by e66377a; each needs a look |
+| 5 | parse errors | BigInt literals, `for await` |
+| 5 | `eval is not defined` | deferred by design, see below |
 | 3 | `generator functions are not supported` | needs Stage-4 VM |
-| 2 each | `Error.captureStackTrace`, `Symbol.for`, `Array.fromAsync`, `escape` | one-line builtin adds |
+
+The cheap-builtin seam is exhausted: what is left in the constructor bucket is
+`Proxy`/`Reflect`, which cannot be written in JS and needs evaluator support.
 
 ## Ground rules (read first, all of them)
 
