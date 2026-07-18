@@ -98,6 +98,8 @@ let T_STARSTAREQ: i32 = 85
 let T_CLASS: i32 = 86
 let T_EXTENDS: i32 = 87
 let T_SUPER: i32 = 88
+let T_STRICTEQ: i32 = 93
+let T_STRICTNEQ: i32 = 94
 let T_DO: i32 = 89
 let T_SWITCH: i32 = 90
 let T_CASE: i32 = 91
@@ -529,18 +531,21 @@ fn lex(src: &string): Vec<Token> {
                 pushTok(toks, T_RBRACE)
             }
         } else if c == '=' && i + 1 < n && src[i + 1] == '=' {
-            // == and === lex the same token (strict-vs-loose is applied at eval)
             i = i + 2
             if i < n && src[i] == '=' {
                 i = i + 1
+                pushTok(toks, T_STRICTEQ)
+            } else {
+                pushTok(toks, T_EQEQ)
             }
-            pushTok(toks, T_EQEQ)
         } else if c == '!' && i + 1 < n && src[i + 1] == '=' {
             i = i + 2
             if i < n && src[i] == '=' {
                 i = i + 1
+                pushTok(toks, T_STRICTNEQ)
+            } else {
+                pushTok(toks, T_NEQ)
             }
-            pushTok(toks, T_NEQ)
         } else if c == '>' && i + 3 < n && src[i + 1] == '>' && src[i + 2] == '>' && src[i + 3] == '=' {
             i = i + 4
             pushTok(toks, T_USHREQ)

@@ -88,6 +88,12 @@ fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
     if op == "!=" {
         return JSValue.Bool(!jsEquals(a, b))
     }
+    if op == "===" {
+        return JSValue.Bool(jsStrictEquals(a, b))
+    }
+    if op == "!==" {
+        return JSValue.Bool(!jsStrictEquals(a, b))
+    }
     // relational: string<string is lexicographic, else numeric (NaN → false)
     if isStr(a) && isStr(b) {
         let sa = toStr(a)
@@ -276,6 +282,9 @@ let NATIVE_PROMISE_RACE: i64 = 34
 // specific promise. Natives are identified by a bare id, so the promise handle
 // is encoded into the id itself: base + handle*2 + (0 resolve | 1 reject).
 let NATIVE_PROMISE: i64 = 35
+let NATIVE_IS_NAN: i64 = 36
+let NATIVE_IS_FINITE: i64 = 37
+let NATIVE_ARRAY_ISARRAY: i64 = 38
 let NATIVE_RESOLVER_BASE: i64 = 1000000
 
 fn nativeErrorName(id: i64): string {
@@ -498,6 +507,26 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             return JSValue.Obj(newPromise(st, 2, rejectVal))
         }
         return JSValue.Obj(newPromise(st, 1, JSValue.Obj(arr)))
+    }
+    if id == NATIVE_IS_NAN || id == NATIVE_IS_FINITE {
+        var x = jsNan()
+        if argVals.len() > 0 {
+            x = toNum(argVals[0])
+        }
+        let isNan = x != x
+        if id == NATIVE_IS_NAN {
+            return JSValue.Bool(isNan)
+        }
+        return JSValue.Bool(!isNan && x != jsInfinity() && x != (0.0 - jsInfinity()))
+    }
+    if id == NATIVE_ARRAY_ISARRAY {
+        if argVals.len() > 0 {
+            let h = objHandle(argVals[0])
+            if h >= 0 {
+                return JSValue.Bool(st.objects[h].isArray)
+            }
+        }
+        return JSValue.Bool(false)
     }
     if id == NATIVE_OBJECT_FREEZE {
         // no real immutability yet — callers only rely on the identity return
@@ -1030,6 +1059,13 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
     scopeDefine(st, 0, "String", JSValue.Native(NATIVE_STRING))
     scopeDefine(st, 0, "Boolean", JSValue.Native(NATIVE_BOOLEAN))
+    scopeDefine(st, 0, "NaN", JSValue.Number(jsNan()))
+    scopeDefine(st, 0, "Infinity", JSValue.Number(jsInfinity()))
+    scopeDefine(st, 0, "isNaN", JSValue.Native(NATIVE_IS_NAN))
+    scopeDefine(st, 0, "isFinite", JSValue.Native(NATIVE_IS_FINITE))
+    let arrayCtor = newObject(st)
+    objSet(st, arrayCtor, "isArray", JSValue.Native(NATIVE_ARRAY_ISARRAY))
+    scopeDefine(st, 0, "Array", JSValue.Obj(arrayCtor))
     // file natives, named as minibun's runtime expects them
     scopeDefine(st, 0, "__readFileSync", JSValue.Native(NATIVE_READ_FILE_SYNC))
     scopeDefine(st, 0, "__fileExists", JSValue.Native(NATIVE_FILE_EXISTS))
@@ -2375,9 +2411,7 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                     }
                 } else {
                     let tv = evalExpr(prog, test, st, scope)
-                    // JS switch matches strictly; the engine has no strict
-                    // equality yet (=== lexes as ==), so this is loose
-                    if jsEquals(dv, tv) {
+                    if jsStrictEquals(dv, tv) {
                         start = i
                     }
                 }

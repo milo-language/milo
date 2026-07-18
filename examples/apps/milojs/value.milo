@@ -179,6 +179,13 @@ fn toUint32(v: &JSValue): i64 {
 
 // object handle if v is an object, else -1 — lets callers test a value's shape
 // without moving it into a match
+fn jsInfinity(): f64 {
+    // runtime 1/0 so constant folding can't reject it
+    var z = 0.0
+    var one = 1.0
+    return one / z
+}
+
 fn objHandle(v: &JSValue): i64 {
     match v {
         JSValue.Obj(o) => {
@@ -299,6 +306,94 @@ fn strLess(a: &string, b: &string): bool {
 
 // JS loose equality, simplified: null==undefined, same-type direct, mixed via
 // numeric coercion.
+// Strict equality (===): same type, same value, no coercion. Objects, functions
+// and natives compare by identity (their handle/index).
+fn jsStrictEquals(a: &JSValue, b: &JSValue): bool {
+    match a {
+        JSValue.Undefined => {
+            match b {
+                JSValue.Undefined => {
+                    return true
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Null => {
+            match b {
+                JSValue.Null => {
+                    return true
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Bool(x) => {
+            match b {
+                JSValue.Bool(y) => {
+                    return x == y
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Number(x) => {
+            match b {
+                JSValue.Number(y) => {
+                    // NaN === NaN is false, which falls out of IEEE comparison
+                    return x == y
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Str(x) => {
+            match b {
+                JSValue.Str(y) => {
+                    return x == y
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Obj(x) => {
+            match b {
+                JSValue.Obj(y) => {
+                    return x == y
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Func(x, _e) => {
+            match b {
+                JSValue.Func(y, _e2) => {
+                    return x == y
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Native(x) => {
+            match b {
+                JSValue.Native(y) => {
+                    return x == y
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+    }
+}
+
 fn jsEquals(a: &JSValue, b: &JSValue): bool {
     match a {
         JSValue.Undefined => {

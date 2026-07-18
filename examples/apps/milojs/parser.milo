@@ -828,11 +828,15 @@ fn parseEq(p: &mut PState, prog: &mut Prog): i64 {
     var go = true
     while go {
         let k = peekKind(p)
-        if k == T_EQEQ || k == T_NEQ {
+        if k == T_EQEQ || k == T_NEQ || k == T_STRICTEQ || k == T_STRICTNEQ {
             advance(p)
             var op = "=="
             if k == T_NEQ {
                 op = "!="
+            } else if k == T_STRICTEQ {
+                op = "==="
+            } else if k == T_STRICTNEQ {
+                op = "!=="
             }
             let right = parseRel(p, prog)
             left = addExpr(prog, Expr.Bin(op, left, right))
