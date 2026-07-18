@@ -150,6 +150,20 @@ fn hasJsonExt(path: &string): bool {
     return path[n - 5] == '.' && path[n - 4] == 'j' && path[n - 3] == 's' && path[n - 2] == 'o' && path[n - 1] == 'n'
 }
 
+// Each missing module is reported once; a package required from twenty places
+// otherwise produces twenty identical lines and buries the real failure.
+fn reportUnresolved(st: &mut Interp, spec: &string) {
+    var i: i64 = 0
+    while i < st.reportedMissing.len() {
+        if st.reportedMissing[i] == spec {
+            return
+        }
+        i = i + 1
+    }
+    st.reportedMissing.push(spec.clone())
+    reportUnresolved(st, spec)
+}
+
 fn isBuiltinPath(path: &string): bool {
     return path.len() > 8 && path[0] == 'b' && path[1] == 'u' && path[2] == 'i' && path[3] == 'l' && path[4] == 't' && path[5] == 'i' && path[6] == 'n' && path[7] == ':'
 }
@@ -336,7 +350,7 @@ fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
             // own requires have to be queued like any other module's
             let bspecs = scanRequires(toks)
             var bp = PState {
-                toks: toks, pos: 0, curClass: "", file: path.clone(), errored: false
+                toks: toks, pos: 0, curClass: "", file: path.clone(), errored: false, eofError: false, quiet: false
             }
             let btop = parseProgram(bp, prog)
             st.modPaths.push(path.clone())
@@ -364,7 +378,7 @@ fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
                     let toks = lex(text)
                     let specs = scanRequires(toks)
                     var p = PState {
-                        toks: toks, pos: 0, curClass: "", file: path.clone(), errored: false
+                        toks: toks, pos: 0, curClass: "", file: path.clone(), errored: false, eofError: false, quiet: false
                     }
                     let top = parseProgram(p, prog)
                     st.modPaths.push(path.clone())

@@ -18,7 +18,7 @@ from "./runtime" import {
     Interp, newScope, collect
 }
 from "./eval" import {
-    execBlock, runEventLoop, setupGlobals
+    execBlock, hoistBlock, runEventLoop, setupGlobals
 }
 
 // gcThreshold is the allocation count that triggers a collection. Lowering it to
@@ -46,7 +46,7 @@ fn makeInterp(gcStats: bool, gcThreshold: i64): Interp {
         modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(),
         throwing: false, thrownValue: JSValue.Undefined,
         rngState: 88172645463325252,
-        allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, dateCtorProps: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, gcThreshold: gcThreshold, gcRuns: 0, gcStats: gcStats
+        allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, dateCtorProps: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, reportedMissing: Vec.new(), gcThreshold: gcThreshold, gcRuns: 0, gcStats: gcStats
     }
 }
 
@@ -64,9 +64,10 @@ fn runSource(src: &string, st: &mut Interp): i32 {
         exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
     }
     var p = PState {
-        toks: toks, pos: 0, curClass: "", file: "<entry>", errored: false
+        toks: toks, pos: 0, curClass: "", file: "<entry>", errored: false, eofError: false, quiet: false
     }
     let top = parseProgram(p, prog)
+    hoistBlock(prog, top, st, 0)
     execBlock(prog, top, st, 0)
     // the script only schedules callbacks; without draining, every .then handler
     // and timer queued by it would be silently dropped

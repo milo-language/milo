@@ -24,6 +24,13 @@ struct PState {
     // the parser never stops at a bad token, so one mistake cascades into a
     // string of confusing follow-on errors. Only the first is worth showing.
     errored: bool,
+    // set when the first error was hitting end-of-input rather than a wrong
+    // token — the REPL reads that as "incomplete", not "broken", and asks for
+    // another line instead of reporting a syntax error
+    eofError: bool,
+    // suppress diagnostics entirely; the REPL parses each line once speculatively
+    // just to classify it, and that probe must stay silent
+    quiet: bool,
 }
 
 fn peekKind(p: &PState): i32 {
@@ -85,11 +92,17 @@ fn tokenContext(p: &PState): string {
 fn expect(p: &mut PState, kind: i32) {
     if peekKind(p) == kind {
         advance(p)
-    } else {
-        if !p.errored {
-            p.errored = true
-            eprint("milojs: " + p.file + ": expected " + tokenName(kind) + ", found " + tokenDesc(p, p.pos) + "\n  " + tokenContext(p))
-        }
+        return
+    }
+    if p.errored {
+        return
+    }
+    p.errored = true
+    if peekKind(p) == T_EOF {
+        p.eofError = true
+    }
+    if !p.quiet {
+        eprint("milojs: " + p.file + ": expected " + tokenName(kind) + ", found " + tokenDesc(p, p.pos) + "\n  " + tokenContext(p))
     }
 }
 
@@ -230,7 +243,7 @@ fn patternDecls(p: &mut PState, prog: &mut Prog, srcName: string, out: &mut Vec<
                     nested = true
                     let tmp = "__d" + i64ToStr(p.pos)
                     out.push(DeclItem {
-                        name: tmp.clone(), init: valExpr
+                        name: tmp.clone(), init: valExpr, isVar: false
                     }
                     )
                     patternDecls(p, prog, tmp, out)
@@ -246,7 +259,7 @@ fn patternDecls(p: &mut PState, prog: &mut Prog, srcName: string, out: &mut Vec<
                     valExpr = withDefault(prog, valExpr, dflt)
                 }
                 out.push(DeclItem {
-                    name: target, init: valExpr
+                    name: target, init: valExpr, isVar: false
                 }
                 )
             }
@@ -271,7 +284,7 @@ fn patternDecls(p: &mut PState, prog: &mut Prog, srcName: string, out: &mut Vec<
             if peekKind(p) == T_LBRACE || peekKind(p) == T_LBRACKET {
                 let tmp = "__d" + i64ToStr(p.pos)
                 out.push(DeclItem {
-                    name: tmp.clone(), init: valExpr
+                    name: tmp.clone(), init: valExpr, isVar: false
                 }
                 )
                 patternDecls(p, prog, tmp, out)
@@ -284,7 +297,7 @@ fn patternDecls(p: &mut PState, prog: &mut Prog, srcName: string, out: &mut Vec<
                     valExpr = withDefault(prog, valExpr, dflt)
                 }
                 out.push(DeclItem {
-                    name: name, init: valExpr
+                    name: name, init: valExpr, isVar: false
                 }
                 )
             }
@@ -319,7 +332,7 @@ fn parseParam(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude
             let dflt = parseExpr(p, prog)
             let src = addExpr(prog, Expr.Ident(name.clone()))
             prelude.push(DeclItem {
-                name: name.clone(), init: withDefault(prog, src, dflt)
+                name: name.clone(), init: withDefault(prog, src, dflt), isVar: false
             }
             )
         }
@@ -691,12 +704,20 @@ fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
             e = addExpr(prog, Expr.Member(e, name))
         } else if k == T_OPTCHAIN {
             advance(p)
-            var name = ""
-            if isPropName(p) {
-                name = p.toks[p.pos].text.clone()
+            if peekKind(p) == T_LBRACKET {
+                // a?.[k]
                 advance(p)
+                let keyIdx = parseExpr(p, prog)
+                expect(p, T_RBRACKET)
+                e = addExpr(prog, Expr.OptIndex(e, keyIdx))
+            } else {
+                var name = ""
+                if isPropName(p) {
+                    name = p.toks[p.pos].text.clone()
+                    advance(p)
+                }
+                e = addExpr(prog, Expr.OptMember(e, name))
             }
-            e = addExpr(prog, Expr.OptMember(e, name))
         } else if k == T_LBRACKET {
             advance(p)
             let keyIdx = parseExpr(p, prog)
@@ -1092,6 +1113,7 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         return addStmt(prog, Stmt.Empty)
     }
     if k == T_LET || k == T_VAR || k == T_CONST {
+        let declaredVar = k == T_VAR
         advance(p)
         var items: Vec<DeclItem> = Vec.new()
         var more = true
@@ -1111,13 +1133,13 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
                     tinit = addExpr(prog, Expr.UndefLit)
                 }
                 items.push(DeclItem {
-                    name: tmp, init: tinit
+                    name: tmp, init: tinit, isVar: declaredVar
                 }
                 )
                 var pi: i64 = 0
                 while pi < pat.len() {
                     items.push(DeclItem {
-                        name: pat[pi].name.clone(), init: pat[pi].init
+                        name: pat[pi].name.clone(), init: pat[pi].init, isVar: declaredVar
                     }
                     )
                     pi = pi + 1
@@ -1144,7 +1166,7 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
                     init = addExpr(prog, Expr.UndefLit)
                 }
                 items.push(DeclItem {
-                    name: name, init: init
+                    name: name, init: init, isVar: declaredVar
                 }
                 )
                 if peekKind(p) == T_COMMA {
@@ -1165,7 +1187,9 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         // name surfaces as a confusing complaint about the `(` that follows
         if p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_IDENT && !p.errored {
             p.errored = true
-            eprint("milojs: " + p.file + ": function statements require a name")
+            if !p.quiet {
+                eprint("milojs: " + p.file + ": function statements require a name")
+            }
         }
         let f = parseFunction(p, prog, false)
         return addStmt(prog, Stmt.FuncDecl(f))

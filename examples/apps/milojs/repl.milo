@@ -10,7 +10,13 @@
 // every index valid for the session's lifetime.
 
 from "std/io" import {
-    writeStdout, readFd
+    writeStdout, readFd, readFile
+}
+from "std/fs" import {
+    writeFile
+}
+from "std/env" import {
+    getEnv
 }
 from "std/term" import {
     TermState, enableRawModeBlocking, restoreTerminal
@@ -46,6 +52,9 @@ from "./complete" import {
 enum LineResult {
     Line(string),
     Eof,
+    // Ctrl-C while a multi-line block was being collected: throw the block away
+    // rather than arming the exit prompt
+    Cancel,
 }
 
 let SPR_W: i64 = 18
@@ -212,6 +221,127 @@ fn banner(): void {
     emit(buf, "  " + dim("github.com/cs01/milo") + "\n\n")
     emit(buf, "  " + dim("Tab complete · ↑/↓ history · Ctrl-C cancel line · Ctrl-D exit") + "\n\n")
     writeStdout(buf)
+}
+
+let HISTORY_MAX: i64 = 1000
+
+fn historyPath(): string {
+    match getEnv("HOME") {
+        Option.Some(h) => {
+            return h + "/.milojs_history"
+        }
+        Option.None => {
+            return ""
+        }
+    }
+}
+
+// One entry per line. A multi-line block would break that, so its newlines are
+// escaped on the way out and restored on the way in.
+fn escapeEntry(s: &string): string {
+    var out = ""
+    for i in 0..s.len() {
+        if s[i] == 10 as u8 {
+            out.push(92 as u8)
+            out.push('n')
+        } else if s[i] == 92 as u8 {
+            out.push(92 as u8)
+            out.push(92 as u8)
+        } else {
+            out.push(s[i])
+        }
+    }
+    return out
+}
+
+fn unescapeEntry(s: &string): string {
+    var out = ""
+    var i: i64 = 0
+    while i < s.len() {
+        if s[i] == 92 as u8 && i + 1 < s.len() {
+            if s[i + 1] == 'n' {
+                out.push(10 as u8)
+                i = i + 2
+                continue
+            }
+            if s[i + 1] == 92 as u8 {
+                out.push(92 as u8)
+                i = i + 2
+                continue
+            }
+        }
+        out.push(s[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn loadHistory(history: &mut Vec<string>) {
+    let path = historyPath()
+    if path.len() == 0 {
+        return
+    }
+    match readFile(path) {
+        Result.Ok(text) => {
+            var cur = ""
+            for i in 0..text.len() {
+                if text[i] == 10 as u8 {
+                    if cur.len() > 0 {
+                        history.push(unescapeEntry(cur))
+                    }
+                    cur = ""
+                } else {
+                    cur.push(text[i])
+                }
+            }
+            if cur.len() > 0 {
+                history.push(unescapeEntry(cur))
+            }
+        }
+        Result.Err(e) => {
+            // no history file yet, or unreadable — starting empty is fine
+        }
+    }
+}
+
+// Whole-file rewrite on exit, keeping only the newest HISTORY_MAX entries. Two
+// REPLs exiting at once means last-writer-wins; node has the same behaviour.
+fn saveHistory(history: &Vec<string>) {
+    let path = historyPath()
+    if path.len() == 0 {
+        return
+    }
+    var start: i64 = 0
+    if history.len() > HISTORY_MAX {
+        start = history.len() - HISTORY_MAX
+    }
+    var out = ""
+    var i = start
+    while i < history.len() {
+        out = out + escapeEntry(history[i]) + "\n"
+        i = i + 1
+    }
+    match writeFile(path, out) {
+        Result.Ok(n) => {
+        }
+        Result.Err(e) => {
+        }
+    }
+}
+
+// The line editor is one line, so a recalled multi-line block has its newlines
+// flattened to spaces. JS only depends on newlines through semicolon insertion,
+// and a block that already parsed keeps parsing on one line.
+fn flattenEntry(s: &string): string {
+    var out = ""
+    for i in 0..s.len() {
+        if s[i] == 10 as u8 {
+            out.push(32 as u8)
+        } else {
+            out.push(s[i])
+        }
+    }
+    return out
 }
 
 fn isUndefined(v: &JSValue): bool {
@@ -485,7 +615,7 @@ fn formatCandidates(cands: &Vec<string>, kinds: &Vec<i64>): string {
 // Raw-mode line editor. Owns the prompt so it can repaint on history recall.
 // Raw mode clears ISIG, so Ctrl-C arrives as byte 3 rather than a signal — the
 // double-tap-to-exit is handled here, no signal handler needed.
-fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp, builtinCount: i64): LineResult {
+fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp, builtinCount: i64, inBlock: bool): LineResult {
     let ts = enableRawModeBlocking()
     var line = ""
     // history.len() == "editing a fresh line", below that indexes older entries
@@ -535,6 +665,13 @@ fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp, builtinCo
         }
 
         if b == 3 {
+            // inside an unfinished block Ctrl-C means "forget it", the same as
+            // node — the exit prompt would be the wrong offer here
+            if inBlock {
+                writeStdout("\r\n")
+                restoreTerminal(ts)
+                return LineResult.Cancel
+            }
             if line.len() == 0 {
                 if ctrlcArmed {
                     writeStdout("\r\n")
@@ -648,7 +785,7 @@ fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp, builtinCo
             if k == K_UP {
                 if navIdx > 0 {
                     navIdx = navIdx - 1
-                    line = history[navIdx].clone()
+                    line = flattenEntry(history[navIdx])
                     cur = line.len()
                     redraw(prompt, line, cur)
                 }
@@ -658,7 +795,7 @@ fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp, builtinCo
                     if navIdx == history.len() {
                         line = ""
                     } else {
-                        line = history[navIdx].clone()
+                        line = flattenEntry(history[navIdx])
                     }
                     cur = line.len()
                     redraw(prompt, line, cur)
@@ -758,25 +895,58 @@ fn repl(st: &mut Interp): i32 {
         funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
     }
     var history: Vec<string> = Vec.new()
+    loadHistory(history)
     // everything already in the global scope is a builtin; anything appended past
     // this point was defined by the user, and completion highlights it as such
     let builtinCount = st.scopes[0].vars.len()
     let prompt = fg24(226, 192, 150) + "milojs> " + ansiReset()
+    let contPrompt = gray("... ") + ansiReset()
+    // lines of a block that is not syntactically finished yet
+    var pending = ""
 
     while true {
-        match readLineEdited(prompt, history, st, builtinCount) {
+        var activePrompt = prompt.clone()
+        if pending.len() > 0 {
+            activePrompt = contPrompt.clone()
+        }
+        match readLineEdited(activePrompt, history, st, builtinCount, pending.len() > 0) {
             LineResult.Eof => {
+                saveHistory(history)
                 return 0
             }
+            LineResult.Cancel => {
+                pending = ""
+            }
             LineResult.Line(line) => {
-                if line.len() == 0 {
+                var source = line.clone()
+                if pending.len() > 0 {
+                    source = pending.clone() + "\n" + line
+                }
+                if source.len() == 0 {
                     continue
                 }
-                history.push(line.clone())
 
-                let toks = lex(line)
+                // Probe first: parsing appends to `prog`, and a half-finished
+                // block would leave nodes behind that the retry then duplicates.
+                // The probe gets its own throwaway Prog, so only complete input
+                // ever touches the session's.
+                var scratch = Prog {
+                    exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(),
+                    funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
+                }
+                var probe = PState {
+                    toks: lex(source), pos: 0, curClass: "", file: "<repl>", errored: false, eofError: false, quiet: true
+                }
+                let probeTop = parseProgram(probe, scratch)
+                if probe.eofError {
+                    pending = source.clone()
+                    continue
+                }
+                pending = ""
+                history.push(source.clone())
+
                 var p = PState {
-                    toks: toks, pos: 0, curClass: "", file: "<repl>", errored: false
+                    toks: lex(source), pos: 0, curClass: "", file: "<repl>", errored: false, eofError: false, quiet: false
                 }
                 let top = parseProgram(p, prog)
                 let val = runLine(prog, top, st)
