@@ -1,0 +1,113 @@
+<!-- doc-meta
+system: roadmap
+purpose: staged plan to grow examples/apps/milojs into a pure-Milo JS engine that replaces the JavaScriptCore dependency in minibun
+key-files: examples/apps/milojs/milojs.milo, examples/apps/minibun.milo, docs/minibun-roadmap.md
+update-when: a stage lands (check the box, note the commit) or the acceptance target changes
+last-verified: 2026-07-17
+-->
+
+# milojs roadmap — a JavaScript engine written in Milo
+
+**Acceptance target:** `minibun` runs its Node/Express workload with `milojs` as the engine
+instead of JavaScriptCore. The JSC `extern` block in `examples/apps/minibun.milo`
+(`JSEvaluateScript`, `JSObjectMake`, …) is deleted; the same node-compat runtime executes on a
+Milo-native VM. No system framework, no V8, no JSC — one static binary.
+
+**Why this is the endgame, not a detour:** [[minibun]] already proved the *runtime* (module
+loader, http server, event loop) is memory-safe Milo — JSC only supplies the *engine*. milojs
+replaces that last C++ dependency. The two roadmaps meet at milojs Stage 5.
+
+**The thesis this proves:** Milo already self-hosts its own compiler (lexer → parser → checker →
+codegen → LLVM). A JS interpreter is strictly *less* than that — no monomorphization, no LLVM
+backend. The only piece Milo's ownership model does not hand us for free is a garbage collector,
+because JS object graphs are cyclic (`a.b = a`) and single-owner move semantics cannot express a
+cycle. That GC is the one genuinely new thing built here (Stage 2); everything else is parsing +
+dispatch Milo is already good at.
+
+## Do NOT port QuickJS line-by-line
+
+QuickJS is ~50k LOC of dense C: NaN-boxing, ref-counting-with-cycle-collector, hand-rolled
+allocators. Porting C→Milo fights the ownership model on every line. Use QuickJS as an
+*architecture reference* (value model, opcode set, builtin coverage) and write idiomatic Milo:
+tagged-enum values, a managed heap of `u32` handles, a mark-sweep collector.
+
+## Stages (critical-path order)
+
+### Stage 1 — tree-walking interpreter: primitives + closures ⬜ (in progress)
+Lexer, parser → AST (Milo enums), `JSValue` tagged enum (Undefined/Null/Bool/Number(f64)/
+Str/Function), tree-walking evaluator with a lexical scope chain, `console.log`. Statements:
+let/var/const, function decl, if/else, while, return, block, expression. Expressions: literals,
+identifiers, binary/unary/logical ops (`+` concatenates when either side is a string), calls,
+closures capturing their defining scope. **Out of scope:** objects, arrays, `this`, GC, regex,
+for-loops, ternary, exceptions, bytecode.
+**Proves:** the value model and eval loop on the subset that needs no heap.
+**Gate:** a `.js` demo (arithmetic, string concat, if/while, a closure counter) compiles and
+prints correct output under `milo run`.
+
+### Stage 2 — managed heap + mark-sweep GC ⬜  ⟶ the crux
+JS objects are cyclic; Milo ownership cannot hold a cycle. Build an explicit managed heap:
+objects live in a Milo `Vec<Obj>`, references are `u32` handles (not Milo pointers), and a
+**mark-sweep collector** walks roots (scope chain + value stack) and frees unreachable slots.
+Extend `JSValue` with an `Obj(u32)` handle variant. This is the memory model note your design
+has carried as "arenas for cyclic data (deferred)" — made concrete and JS-specific.
+**Gate:** allocate a cyclic object graph, drop all roots, collect, observe the slots reclaimed
+(instrument the sweep count). No leak, no double-free (ASAN clean under the Milo host).
+
+### Stage 3 — objects, prototypes, closures over the heap ⬜
+Object literals, property get/set, arrays (as objects with integer keys + `length`),
+prototype chain lookup, `this` binding, `new`. Closures now capture heap-allocated environment
+records (GC roots). This is where the language gets genuinely usable.
+**Gate:** prototype-based method dispatch + array push/index round-trips; a class-ish pattern
+(constructor + prototype methods) runs.
+
+### Stage 4 — bytecode VM ⬜
+Compile the AST to a register or stack bytecode; retire the tree-walker. Needed for speed and
+for a sane implementation of exceptions (`try`/`catch`/`throw` as unwinding), generators, and
+`for`/`switch`. Keep the tree-walker as an oracle to differential-test the VM against.
+**Gate:** every Stage 1–3 demo produces identical output on the VM; exceptions work.
+
+### Stage 5 — builtins to boot minibun without JSC ⬜  ⟶ roadmaps merge here
+Implement the standard library minibun's node shims actually reach: `Object`/`Array`/`String`/
+`Number`/`Math`/`JSON`/`Date`/`RegExp`/`Promise` + microtask queue + `TypedArray`/`ArrayBuffer`
+(Buffer sits on these). Swap minibun's JSC `extern` block for a milojs embedding API. The
+microtask drain that minibun's M3 solved for JSC's API boundary is now *our* event loop — we
+own the queue, so no more "drain only at the outermost boundary" gymnastics.
+**Gate:** `examples/apps/minibun-notes.js` (the Express-style CRUD demo) serves requests with
+milojs as the engine. `RegExp` is the likeliest long pole — scope to what express needs.
+
+### Stage 6 — test262 conformance lock ⬜
+Same probe → fix → lock pattern used for JSON (RFC 8259) and base64: run a test262 subset as the
+oracle, fix failures, lock a passing subset as a regression fixture set. Full ES2020 conformance
+is a decade (it is for QuickJS too — one person's life work); we lock the subset our apps need
+and grow it, logging exactly what is unimplemented (no silent truncation).
+
+## Critical path & honesty
+
+Stage 1 → 2 → 3 → 4 → 5 → 6, mostly linear (2 and 3 are the hard middle; 4 can overlap 5 once
+the value model is frozen). **Where it genuinely stalls:** the GC (Stage 2) and `RegExp` +
+`Date` + Number formatting edge cases (Stage 5) — big surface where "expressible" and
+"spec-correct" diverge. Everything else is mechanical parsing/dispatch.
+
+**This is a from-scratch engine, unlike minibun (a binding effort).** That makes it larger, but
+also the thing that removes the last non-Milo dependency in the JS story. Each stage is
+independently demoable: Stage 1 runs closures; Stage 3 runs OO JS; Stage 5 kills JSC.
+
+## Embedding — how others FFI in (the "like bun/QuickJS" surface)
+Milo exposes a **stable C ABI**: top-level `fn`s use the C calling convention, and
+`milo build-lib libmilojs.milo -o libmilojs.a` emits the archive **+ a companion `libmilojs.h`**.
+The public embedding API is opaque-pointer + scalar (`MiloJSContext*`, handle-based values) —
+exactly QuickJS's `JSContext*`/`JSValue` shape, and exactly what minibun already does when it
+hands Milo function pointers to JSC as C callbacks. So milojs is embeddable from C/C++/Rust
+(cgo/ctypes too) the day its API is C-spellable. (Caveat: define-side struct-by-value *return*
+is not yet lowered — irrelevant, an engine API is opaque pointers anyway.)
+
+## Open questions
+- Value representation: tagged Milo enum (clean, a word of tag overhead) vs NaN-boxed f64
+  (QuickJS-style, denser, unsafe bit-twiddling). Lean: **tagged enum through Stage 4**, revisit
+  boxing only if the VM benchmarks demand it.
+- GC: mark-sweep (simple, stop-the-world) vs ref-count-with-cycle-collector (QuickJS's choice,
+  incremental but complex). Lean: **mark-sweep first** — correctness before pause times.
+- Keep the tree-walker permanently as a differential oracle, or delete it after Stage 4? (lean:
+  keep — it is the cheapest VM correctness check we will ever have.)
+- Reuse [[minibun]]'s pure-JS node shims verbatim on milojs, or rewrite the hot ones as Milo
+  builtins for speed? (lean: reuse first, profile, promote later.)
