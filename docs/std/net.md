@@ -320,6 +320,18 @@ task — the uniform async-read API shared with pty/child/pipe. Iterate with
 `for chunk in stream.incoming()`; the channel closes when the peer does.
 (Plaintext only — TlsStream needs an SSL-aware pump.)
 
+### `TcpStream.rawFd`
+
+```milo
+fn TcpStream.rawFd(self: &TcpStream): i32
+```
+
+Borrow the underlying fd read-only, WITHOUT transferring ownership: the stream
+still closes it on drop. Use when you want to do a bounded read/write on the raw
+fd and let the stream's own Drop close it — avoids `take()` (which needs `&mut`,
+forcing a move out of an immutable match binding) and the manual close that pairs
+with it. Do not close the returned fd yourself.
+
 ### `TcpStream.recv`
 
 ```milo
@@ -329,6 +341,17 @@ fn TcpStream.recv(self: &TcpStream): Result<string, NetError>
 Read everything until the peer closes, as one string (blocks to EOF).
 Prefer `incoming()` for streaming/incremental consumption — it delivers
 chunks as they arrive instead of buffering the whole response.
+
+### `TcpStream.recvOnce`
+
+```milo
+fn TcpStream.recvOnce(self: &TcpStream): string
+```
+
+A single read of whatever is currently available, unlike `recv()` which loops until
+the peer closes. A keep-alive HTTP client never closes its write half while waiting
+for the response, so `recv()` would deadlock; this returns after one segment — enough
+for a request's headers.
 
 ### `TcpStream.send`
 
