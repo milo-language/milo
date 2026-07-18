@@ -98,9 +98,19 @@ an unwinding flag that crosses call boundaries; pending values GC-rooted across 
 work a real **Milo compiler bug** surfaced and was fixed (7e77a0d): match-binding allocas were
 numbered from a different counter than `let`/for allocas, so two same-named locals of different
 types could collide on one `%name.N.addr` SSA name → link error.
+**Native builtins + methods landed (6f312af):** `JSValue.Native` for built-in functions; the
+Error family (`Error`/`TypeError`/`RangeError`/`SyntaxError`/`ReferenceError`) + `instanceof`
+(per-object `ctor` slot for user constructors, error-kind match for the Error family); and the
+big one — String methods (`length`/index/`toUpperCase`/`trim`/`slice`/`split`/`indexOf`/
+`includes`/`replace`/…) and Array methods (`map`/`filter`/`reduce`/`forEach`/`join`/`indexOf`/
+`slice`/`reverse`/`concat`/…), all byte-identical to bun, including `.split().map().join()`
+chaining. String helpers live in a new `builtins.milo`; callback array methods stay in `eval.milo`
+(they need `callFunction`). *Hazard found:* Milo flat-compiles all files into one namespace, so
+milojs helper names must not collide with std (mine shadowed `std/string`'s `strIndexOf` and broke
+std internally until renamed).
 **Still open:** prototype-*chain* lookup for *shared* methods (`Ctor.prototype.m`) — needs
-functions to carry a prototype object; today each instance gets its own methods. `instanceof`,
-`Error` objects, `switch`, `for...in`/`for...of`, bitwise ops, string/array methods.
+functions to carry a prototype object; today each instance gets its own methods. `JSON`,
+`Math`, `switch`, `for...in`/`for...of`, bitwise ops, real `===` (currently aliases `==`).
 **Gate:** prototype-based method dispatch + a class-ish pattern (constructor + prototype methods).
 
 **Test yardstick (decided):** milojs *is* the engine, so unlike minibun's JSC, both test262 and
