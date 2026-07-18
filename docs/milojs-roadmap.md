@@ -72,10 +72,15 @@ variants when Stage 3's heap lands — same index-walk shape.
   `JSValue`) to the same collector. The scope arena proved the model on the cyclic case
   (closure ↔ env) first.
 
-### Stage 3 — objects, prototypes, closures over the heap ⬜
-Object literals, property get/set, arrays (as objects with integer keys + `length`),
-prototype chain lookup, `this` binding, `new`. Closures now capture heap-allocated environment
-records (GC roots). This is where the language gets genuinely usable.
+### Stage 3 — objects, prototypes, closures over the heap 🟡 (objects landed)
+**Objects done (b956706):** object literals, dot + computed property get/set, nested objects,
+reference equality, and an `Obj(u32)` heap cell that flows through the *same* mark-sweep
+collector — `markScope` gained a `markValue` that follows `Obj` handles into their props; the
+object arena sweeps alongside scopes. Validated the Stage 2 design claim: adding a heap type was
+extra `markScope` variants, nothing more. `console.log` inspect matches bun (multi-line, 2-space
+indent, double-quoted values). GC stress with 100k short-lived objects stays byte-identical.
+**Still open:** arrays (as objects with integer keys + `length`), prototype-chain lookup, `this`
+binding, `new`. Closures capturing heap environment records.
 **Gate:** prototype-based method dispatch + array push/index round-trips; a class-ish pattern
 (constructor + prototype methods) runs.
 

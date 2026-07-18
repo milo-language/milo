@@ -57,6 +57,8 @@ MILOJS_GC_STATS=1 bun run src/main.ts run examples/apps/milojs/milojs.milo -- ex
 - Stage 3: objects, arrays, prototypes, `this` — add an `Obj(u32)` heap cell as
   a new `JSValue` variant, collected by the same `markScope` (extra variants,
   same index-walk shape)
+- Stage 3 (in progress): objects landed (literals, get/set, nesting,
+  reference equality, GC'd object heap); arrays, prototypes, `this`, `new` next
 - Stage 4: bytecode VM (compile AST → bytecode, dispatch loop)
 - Stage 5: enough builtins (JSON, Math, String/Array methods, timers) to run
   minibun's node shims without JSC
