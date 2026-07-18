@@ -8,6 +8,9 @@
 from "./value" import {
     JSValue
 }
+from "./regex" import {
+    Regex
+}
 
 struct Binding {
     name: string,
@@ -45,6 +48,8 @@ struct JSObj {
     // objects produced by the Error-family native constructors; the specific
     // kind lives in the `name` property
     isError: bool,
+    // a compiled-regex handle (index into Interp.regexes) if this is a RegExp, else -1
+    regexId: i64,
     mark: bool,
     free: bool,
 }
@@ -62,6 +67,8 @@ struct Interp {
     objFreeList: Vec<i64>,
     // fnIdx → its `.prototype` object (index), created lazily; a GC root
     funcProtos: Vec<i64>,
+    // compiled regexes, indexed by JSObj.regexId (never freed — interp-lifetime)
+    regexes: Vec<Regex>,
     // values held on the native stack across an operation that may collect (e.g. a
     // method receiver while its arguments — which can themselves be calls — are
     // evaluated). Rooted by collect so an in-flight object/closure isn't swept.
@@ -83,7 +90,7 @@ struct Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, regexId: -1, mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena

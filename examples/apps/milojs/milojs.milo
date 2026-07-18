@@ -65,7 +65,7 @@ fn main(): i32 {
             }
             var st = Interp {
                 scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
-                objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), tempRoots: Vec.new(),
+                objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
                 throwing: false, thrownValue: JSValue.Undefined,
                 rngState: 88172645463325252,
                 allocSinceGc: 0, gcThreshold: 1024, gcRuns: 0, gcStats: gcStats

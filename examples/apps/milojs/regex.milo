@@ -1,0 +1,770 @@
+// A small backtracking regex engine (JS flavor), pure Milo — no C library. The
+// pattern is parsed to a node tree, compiled to a flat instruction program, and
+// matched by a recursive backtracking VM. Capture groups are recorded in a saves
+// array (slot 2g = start, 2g+1 = end; group 0 = whole match).
+//
+// Supported: literals, ., char classes [ ] with ranges/negation, \d \w \s (and
+// negations), anchors ^ $, groups ( ) and (?: ), alternation |, quantifiers
+// * + ? {n} {n,} {n,m} greedy and lazy, \b \B, common escapes. Flags i, g, m.
+// Not yet: backreferences, lookaround, named groups, Unicode property escapes.
+
+from "./value" import {
+    JSValue
+}
+
+// ── node tree ──
+enum ReNode {
+    Char(u8),
+    Any,
+    ClassRef(i64),
+    Bol,
+    Eol,
+    WordB,
+    NWordB,
+    Concat(i64),
+    Alt(i64),
+    Star(i64, bool),
+    Plus(i64, bool),
+    Quest(i64, bool),
+    Repeat(i64, i64, i64, bool),
+    Group(i64, i64),
+    Empty,
+}
+
+// A character class: parallel range bounds [lo[i], hi[i]] plus a negation flag.
+// Shorthands (\d etc) are expanded into ranges at parse time.
+struct ReClass {
+    negated: bool,
+    lo: Vec<u8>,
+    hi: Vec<u8>,
+}
+
+struct ReInst {
+    op: i32,
+    a: i64,
+    b: i64,
+}
+
+struct Regex {
+    prog: Vec<ReInst>,
+    classes: Vec<ReClass>,
+    nGroups: i64,
+    flagI: bool,
+    flagG: bool,
+    flagM: bool,
+    source: string,
+    flags: string,
+    valid: bool,
+}
+
+let RE_CHAR: i32 = 0
+let RE_ANY: i32 = 1
+let RE_CLASS: i32 = 2
+let RE_MATCH: i32 = 3
+let RE_JMP: i32 = 4
+let RE_SPLIT: i32 = 5
+let RE_SAVE: i32 = 6
+let RE_BOL: i32 = 7
+let RE_EOL: i32 = 8
+let RE_WORDB: i32 = 9
+let RE_NWORDB: i32 = 10
+
+struct ReParse {
+    pat: Vec<u8>,
+    pos: i64,
+    nodes: Vec<ReNode>,
+    lists: Vec<Vec<i64>>,
+    classes: Vec<ReClass>,
+    ngroup: i64,
+}
+
+fn reAddNode(p: &mut ReParse, n: ReNode): i64 {
+    p.nodes.push(n)
+    return p.nodes.len() - 1
+}
+
+fn reIsDigit(c: u8): bool {
+    return c >= '0' && c <= '9'
+}
+
+fn reIsWord(c: u8): bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+fn reIsSpace(c: u8): bool {
+    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8 || c == 12 as u8 || c == 11 as u8
+}
+
+// Add a shorthand's ranges into a class's lo/hi arrays. `kind`: 'd','w','s'.
+fn reAddShorthand(cls: &mut ReClass, kind: u8) {
+    if kind == 'd' {
+        cls.lo.push('0')
+        cls.hi.push('9')
+    } else if kind == 'w' {
+        cls.lo.push('a')
+        cls.hi.push('z')
+        cls.lo.push('A')
+        cls.hi.push('Z')
+        cls.lo.push('0')
+        cls.hi.push('9')
+        cls.lo.push('_')
+        cls.hi.push('_')
+    } else if kind == 's' {
+        cls.lo.push(' ')
+        cls.hi.push(' ')
+        cls.lo.push(9 as u8)
+        cls.hi.push(13 as u8)
+    }
+}
+
+// Build a single-shorthand class node (\d \w \s and negations \D \W \S).
+fn reShorthandClass(p: &mut ReParse, kind: u8, negated: bool): i64 {
+    var cls = ReClass {
+        negated: negated, lo: Vec.new(), hi: Vec.new()
+    }
+    reAddShorthand(cls, kind)
+    p.classes.push(cls)
+    let ci = p.classes.len() - 1
+    return reAddNode(p, ReNode.ClassRef(ci))
+}
+
+fn reEscapedChar(e: u8): u8 {
+    if e == 'n' {
+        return 10 as u8
+    }
+    if e == 't' {
+        return 9 as u8
+    }
+    if e == 'r' {
+        return 13 as u8
+    }
+    if e == 'f' {
+        return 12 as u8
+    }
+    if e == 'v' {
+        return 11 as u8
+    }
+    if e == '0' {
+        return 0 as u8
+    }
+    return e
+}
+
+// Parse a bracketed [ ... ] class starting just after '['.
+fn reParseClass(p: &mut ReParse): i64 {
+    var negated = false
+    if p.pos < p.pat.len() && p.pat[p.pos] == '^' {
+        negated = true
+        p.pos = p.pos + 1
+    }
+    var cls = ReClass {
+        negated: negated, lo: Vec.new(), hi: Vec.new()
+    }
+    var going = true
+    while going {
+        if p.pos >= p.pat.len() || p.pat[p.pos] == ']' {
+            going = false
+        } else {
+            var c = p.pat[p.pos]
+            if c == 92 as u8 && p.pos + 1 < p.pat.len() {
+                let e = p.pat[p.pos + 1]
+                if e == 'd' || e == 'w' || e == 's' {
+                    reAddShorthand(cls, e)
+                    p.pos = p.pos + 2
+                } else {
+                    let ch = reEscapedChar(e)
+                    cls.lo.push(ch)
+                    cls.hi.push(ch)
+                    p.pos = p.pos + 2
+                }
+            } else {
+                // possible range a-z
+                if p.pos + 2 < p.pat.len() && p.pat[p.pos + 1] == '-' && p.pat[p.pos + 2] != ']' {
+                    let hi = p.pat[p.pos + 2]
+                    cls.lo.push(c)
+                    cls.hi.push(hi)
+                    p.pos = p.pos + 3
+                } else {
+                    cls.lo.push(c)
+                    cls.hi.push(c)
+                    p.pos = p.pos + 1
+                }
+            }
+        }
+    }
+    if p.pos < p.pat.len() && p.pat[p.pos] == ']' {
+        p.pos = p.pos + 1
+    }
+    p.classes.push(cls)
+    let ci = p.classes.len() - 1
+    return reAddNode(p, ReNode.ClassRef(ci))
+}
+
+fn reParseAtom(p: &mut ReParse): i64 {
+    let c = p.pat[p.pos]
+    if c == '(' {
+        p.pos = p.pos + 1
+        var capIdx = p.ngroup + 1
+        var capturing = true
+        if p.pos + 1 < p.pat.len() && p.pat[p.pos] == '?' && p.pat[p.pos + 1] == ':' {
+            capturing = false
+            capIdx = -1
+            p.pos = p.pos + 2
+        }
+        if capturing {
+            p.ngroup = p.ngroup + 1
+        }
+        let inner = reParseAlt(p)
+        if p.pos < p.pat.len() && p.pat[p.pos] == ')' {
+            p.pos = p.pos + 1
+        }
+        return reAddNode(p, ReNode.Group(inner, capIdx))
+    }
+    if c == '[' {
+        p.pos = p.pos + 1
+        return reParseClass(p)
+    }
+    if c == '.' {
+        p.pos = p.pos + 1
+        return reAddNode(p, ReNode.Any)
+    }
+    if c == '^' {
+        p.pos = p.pos + 1
+        return reAddNode(p, ReNode.Bol)
+    }
+    if c == '$' {
+        p.pos = p.pos + 1
+        return reAddNode(p, ReNode.Eol)
+    }
+    if c == 92 as u8 && p.pos + 1 < p.pat.len() {
+        let e = p.pat[p.pos + 1]
+        if e == 'd' {
+            p.pos = p.pos + 2
+            return reShorthandClass(p, 'd', false)
+        }
+        if e == 'D' {
+            p.pos = p.pos + 2
+            return reShorthandClass(p, 'd', true)
+        }
+        if e == 'w' {
+            p.pos = p.pos + 2
+            return reShorthandClass(p, 'w', false)
+        }
+        if e == 'W' {
+            p.pos = p.pos + 2
+            return reShorthandClass(p, 'w', true)
+        }
+        if e == 's' {
+            p.pos = p.pos + 2
+            return reShorthandClass(p, 's', false)
+        }
+        if e == 'S' {
+            p.pos = p.pos + 2
+            return reShorthandClass(p, 's', true)
+        }
+        if e == 'b' {
+            p.pos = p.pos + 2
+            return reAddNode(p, ReNode.WordB)
+        }
+        if e == 'B' {
+            p.pos = p.pos + 2
+            return reAddNode(p, ReNode.NWordB)
+        }
+        p.pos = p.pos + 2
+        return reAddNode(p, ReNode.Char(reEscapedChar(e)))
+    }
+    p.pos = p.pos + 1
+    return reAddNode(p, ReNode.Char(c))
+}
+
+// Parse a quantifier suffix on `atom`, if any.
+fn reParseRepeat(p: &mut ReParse, atom: i64): i64 {
+    if p.pos >= p.pat.len() {
+        return atom
+    }
+    let c = p.pat[p.pos]
+    if c == '*' || c == '+' || c == '?' {
+        p.pos = p.pos + 1
+        var greedy = true
+        if p.pos < p.pat.len() && p.pat[p.pos] == '?' {
+            greedy = false
+            p.pos = p.pos + 1
+        }
+        if c == '*' {
+            return reAddNode(p, ReNode.Star(atom, greedy))
+        }
+        if c == '+' {
+            return reAddNode(p, ReNode.Plus(atom, greedy))
+        }
+        return reAddNode(p, ReNode.Quest(atom, greedy))
+    }
+    if c == '{' {
+        // {n} {n,} {n,m}
+        let save = p.pos
+        p.pos = p.pos + 1
+        var minV: i64 = 0
+        var haveMin = false
+        while p.pos < p.pat.len() && reIsDigit(p.pat[p.pos]) {
+            minV = minV * 10 + (p.pat[p.pos] as i64 - 48)
+            haveMin = true
+            p.pos = p.pos + 1
+        }
+        var maxV = minV
+        if p.pos < p.pat.len() && p.pat[p.pos] == ',' {
+            p.pos = p.pos + 1
+            if p.pos < p.pat.len() && p.pat[p.pos] == '}' {
+                maxV = -1
+            } else {
+                maxV = 0
+                while p.pos < p.pat.len() && reIsDigit(p.pat[p.pos]) {
+                    maxV = maxV * 10 + (p.pat[p.pos] as i64 - 48)
+                    p.pos = p.pos + 1
+                }
+            }
+        }
+        if p.pos < p.pat.len() && p.pat[p.pos] == '}' && haveMin {
+            p.pos = p.pos + 1
+            var greedy = true
+            if p.pos < p.pat.len() && p.pat[p.pos] == '?' {
+                greedy = false
+                p.pos = p.pos + 1
+            }
+            return reAddNode(p, ReNode.Repeat(atom, minV, maxV, greedy))
+        }
+        // not a valid quantifier — treat '{' literally
+        p.pos = save
+        return atom
+    }
+    return atom
+}
+
+fn reParseConcat(p: &mut ReParse): i64 {
+    var items: Vec<i64> = Vec.new()
+    var going = true
+    while going {
+        if p.pos >= p.pat.len() {
+            going = false
+        } else {
+            let c = p.pat[p.pos]
+            if c == '|' || c == ')' {
+                going = false
+            } else {
+                let atom = reParseAtom(p)
+                let quant = reParseRepeat(p, atom)
+                items.push(quant)
+            }
+        }
+    }
+    if items.len() == 1 {
+        return items[0]
+    }
+    p.lists.push(items)
+    return reAddNode(p, ReNode.Concat(p.lists.len() - 1))
+}
+
+fn reParseAlt(p: &mut ReParse): i64 {
+    var branches: Vec<i64> = Vec.new()
+    branches.push(reParseConcat(p))
+    while p.pos < p.pat.len() && p.pat[p.pos] == '|' {
+        p.pos = p.pos + 1
+        branches.push(reParseConcat(p))
+    }
+    if branches.len() == 1 {
+        return branches[0]
+    }
+    p.lists.push(branches)
+    return reAddNode(p, ReNode.Alt(p.lists.len() - 1))
+}
+
+// ── compile node tree → instruction program ──
+
+fn reEmit(prog: &mut Vec<ReInst>, op: i32, a: i64, b: i64): i64 {
+    prog.push(ReInst {
+        op: op, a: a, b: b
+    }
+    )
+    return prog.len() - 1
+}
+
+fn reCompileNode(p: &ReParse, idx: i64, prog: &mut Vec<ReInst>) {
+    let node = reCloneNode(p.nodes[idx])
+    match node {
+        ReNode.Char(c) => {
+            reEmit(prog, RE_CHAR, c as i64, 0)
+        }
+        ReNode.Any => {
+            reEmit(prog, RE_ANY, 0, 0)
+        }
+        ReNode.ClassRef(ci) => {
+            reEmit(prog, RE_CLASS, ci, 0)
+        }
+        ReNode.Bol => {
+            reEmit(prog, RE_BOL, 0, 0)
+        }
+        ReNode.Eol => {
+            reEmit(prog, RE_EOL, 0, 0)
+        }
+        ReNode.WordB => {
+            reEmit(prog, RE_WORDB, 0, 0)
+        }
+        ReNode.NWordB => {
+            reEmit(prog, RE_NWORDB, 0, 0)
+        }
+        ReNode.Empty => {
+        }
+        ReNode.Concat(listIdx) => {
+            var i: i64 = 0
+            let n = p.lists[listIdx].len()
+            while i < n {
+                reCompileNode(p, p.lists[listIdx][i], prog)
+                i = i + 1
+            }
+        }
+        ReNode.Alt(listIdx) => {
+            var jmpEnds: Vec<i64> = Vec.new()
+            var i: i64 = 0
+            let n = p.lists[listIdx].len()
+            while i < n {
+                if i < n - 1 {
+                    let sp = reEmit(prog, RE_SPLIT, 0, 0)
+                    reCompileNode(p, p.lists[listIdx][i], prog)
+                    let jp = reEmit(prog, RE_JMP, 0, 0)
+                    jmpEnds.push(jp)
+                    prog[sp].a = sp + 1
+                    prog[sp].b = prog.len()
+                } else {
+                    reCompileNode(p, p.lists[listIdx][i], prog)
+                }
+                i = i + 1
+            }
+            let end = prog.len()
+            var k: i64 = 0
+            while k < jmpEnds.len() {
+                prog[jmpEnds[k]].a = end
+                k = k + 1
+            }
+        }
+        ReNode.Star(child, greedy) => {
+            let sp = reEmit(prog, RE_SPLIT, 0, 0)
+            reCompileNode(p, child, prog)
+            reEmit(prog, RE_JMP, sp, 0)
+            let after = prog.len()
+            if greedy {
+                prog[sp].a = sp + 1
+                prog[sp].b = after
+            } else {
+                prog[sp].a = after
+                prog[sp].b = sp + 1
+            }
+        }
+        ReNode.Plus(child, greedy) => {
+            let l1 = prog.len()
+            reCompileNode(p, child, prog)
+            let sp = reEmit(prog, RE_SPLIT, 0, 0)
+            let after = prog.len()
+            if greedy {
+                prog[sp].a = l1
+                prog[sp].b = after
+            } else {
+                prog[sp].a = after
+                prog[sp].b = l1
+            }
+        }
+        ReNode.Quest(child, greedy) => {
+            let sp = reEmit(prog, RE_SPLIT, 0, 0)
+            reCompileNode(p, child, prog)
+            let after = prog.len()
+            if greedy {
+                prog[sp].a = sp + 1
+                prog[sp].b = after
+            } else {
+                prog[sp].a = after
+                prog[sp].b = sp + 1
+            }
+        }
+        ReNode.Repeat(child, minV, maxV, greedy) => {
+            var k: i64 = 0
+            while k < minV {
+                reCompileNode(p, child, prog)
+                k = k + 1
+            }
+            if maxV < 0 {
+                let sp = reEmit(prog, RE_SPLIT, 0, 0)
+                reCompileNode(p, child, prog)
+                reEmit(prog, RE_JMP, sp, 0)
+                let after = prog.len()
+                if greedy {
+                    prog[sp].a = sp + 1
+                    prog[sp].b = after
+                } else {
+                    prog[sp].a = after
+                    prog[sp].b = sp + 1
+                }
+            } else {
+                var splits: Vec<i64> = Vec.new()
+                var j = minV
+                while j < maxV {
+                    let sp = reEmit(prog, RE_SPLIT, 0, 0)
+                    splits.push(sp)
+                    reCompileNode(p, child, prog)
+                    j = j + 1
+                }
+                let after = prog.len()
+                var m: i64 = 0
+                while m < splits.len() {
+                    let sp = splits[m]
+                    if greedy {
+                        prog[sp].a = sp + 1
+                        prog[sp].b = after
+                    } else {
+                        prog[sp].a = after
+                        prog[sp].b = sp + 1
+                    }
+                    m = m + 1
+                }
+            }
+        }
+        ReNode.Group(child, capIdx) => {
+            if capIdx >= 0 {
+                reEmit(prog, RE_SAVE, 2 * capIdx, 0)
+            }
+            reCompileNode(p, child, prog)
+            if capIdx >= 0 {
+                reEmit(prog, RE_SAVE, 2 * capIdx + 1, 0)
+            }
+        }
+    }
+}
+
+fn reCloneNode(n: &ReNode): ReNode {
+    match n {
+        ReNode.Char(c) => {
+            return ReNode.Char(c)
+        }
+        ReNode.Any => {
+            return ReNode.Any
+        }
+        ReNode.ClassRef(ci) => {
+            return ReNode.ClassRef(ci)
+        }
+        ReNode.Bol => {
+            return ReNode.Bol
+        }
+        ReNode.Eol => {
+            return ReNode.Eol
+        }
+        ReNode.WordB => {
+            return ReNode.WordB
+        }
+        ReNode.NWordB => {
+            return ReNode.NWordB
+        }
+        ReNode.Concat(l) => {
+            return ReNode.Concat(l)
+        }
+        ReNode.Alt(l) => {
+            return ReNode.Alt(l)
+        }
+        ReNode.Star(c, g) => {
+            return ReNode.Star(c, g)
+        }
+        ReNode.Plus(c, g) => {
+            return ReNode.Plus(c, g)
+        }
+        ReNode.Quest(c, g) => {
+            return ReNode.Quest(c, g)
+        }
+        ReNode.Repeat(c, mn, mx, g) => {
+            return ReNode.Repeat(c, mn, mx, g)
+        }
+        ReNode.Group(c, ci) => {
+            return ReNode.Group(c, ci)
+        }
+        ReNode.Empty => {
+            return ReNode.Empty
+        }
+    }
+}
+
+fn regexCompile(source: string, flags: string): Regex {
+    var patBytes: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < source.len() {
+        patBytes.push(source[i])
+        i = i + 1
+    }
+    var p = ReParse {
+        pat: patBytes, pos: 0, nodes: Vec.new(), lists: Vec.new(), classes: Vec.new(), ngroup: 0
+    }
+    let root = reParseAlt(p)
+    var prog: Vec<ReInst> = Vec.new()
+    reEmit(prog, RE_SAVE, 0, 0)
+    reCompileNode(p, root, prog)
+    reEmit(prog, RE_SAVE, 1, 0)
+    reEmit(prog, RE_MATCH, 0, 0)
+    var fi = false
+    var fg = false
+    var fm = false
+    var fj: i64 = 0
+    while fj < flags.len() {
+        let fc = flags[fj]
+        if fc == 'i' {
+            fi = true
+        } else if fc == 'g' {
+            fg = true
+        } else if fc == 'm' {
+            fm = true
+        }
+        fj = fj + 1
+    }
+    return Regex {
+        prog: prog, classes: p.classes, nGroups: p.ngroup, flagI: fi, flagG: fg, flagM: fm, source: source, flags: flags, valid: true
+    }
+}
+
+// ── backtracking VM ──
+
+fn reLowerByte(c: u8): u8 {
+    if c >= 'A' && c <= 'Z' {
+        return c + 32
+    }
+    return c
+}
+
+fn reCharEq(a: u8, b: u8, fold: bool): bool {
+    if a == b {
+        return true
+    }
+    if fold {
+        return reLowerByte(a) == reLowerByte(b)
+    }
+    return false
+}
+
+fn reClassMatch(cls: &ReClass, c: u8, fold: bool): bool {
+    var matched = false
+    var i: i64 = 0
+    while i < cls.lo.len() {
+        let lo = cls.lo[i]
+        let hi = cls.hi[i]
+        if c >= lo && c <= hi {
+            matched = true
+        }
+        if fold {
+            let cl = reLowerByte(c)
+            if cl >= reLowerByte(lo) && cl <= reLowerByte(hi) {
+                matched = true
+            }
+        }
+        i = i + 1
+    }
+    if cls.negated {
+        return !matched
+    }
+    return matched
+}
+
+fn reIsWordAt(s: &string, i: i64): bool {
+    if i < 0 || i >= s.len() {
+        return false
+    }
+    return reIsWord(s[i])
+}
+
+// Recursive backtracking. SAVE restores its slot on failure, so SPLIT needs no
+// snapshot. Returns true if the program matches starting at instruction `pc`,
+// input position `sp`.
+fn reRun(re: &Regex, pc: i64, s: &string, sp: i64, saves: &mut Vec<i64>): bool {
+    let inst = re.prog[pc]
+    let op = inst.op
+    if op == RE_MATCH {
+        return true
+    }
+    if op == RE_CHAR {
+        if sp < s.len() && reCharEq(s[sp], inst.a as u8, re.flagI) {
+            return reRun(re, pc + 1, s, sp + 1, saves)
+        }
+        return false
+    }
+    if op == RE_ANY {
+        if sp < s.len() && s[sp] != 10 as u8 {
+            return reRun(re, pc + 1, s, sp + 1, saves)
+        }
+        return false
+    }
+    if op == RE_CLASS {
+        if sp < s.len() && reClassMatch(re.classes[inst.a], s[sp], re.flagI) {
+            return reRun(re, pc + 1, s, sp + 1, saves)
+        }
+        return false
+    }
+    if op == RE_JMP {
+        return reRun(re, inst.a, s, sp, saves)
+    }
+    if op == RE_SPLIT {
+        if reRun(re, inst.a, s, sp, saves) {
+            return true
+        }
+        return reRun(re, inst.b, s, sp, saves)
+    }
+    if op == RE_SAVE {
+        let slot = inst.a
+        let old = saves[slot]
+        saves[slot] = sp
+        if reRun(re, pc + 1, s, sp, saves) {
+            return true
+        }
+        saves[slot] = old
+        return false
+    }
+    if op == RE_BOL {
+        if sp == 0 || (re.flagM && sp > 0 && s[sp - 1] == 10 as u8) {
+            return reRun(re, pc + 1, s, sp, saves)
+        }
+        return false
+    }
+    if op == RE_EOL {
+        if sp == s.len() || (re.flagM && s[sp] == 10 as u8) {
+            return reRun(re, pc + 1, s, sp, saves)
+        }
+        return false
+    }
+    if op == RE_WORDB {
+        let before = reIsWordAt(s, sp - 1)
+        let after = reIsWordAt(s, sp)
+        if before != after {
+            return reRun(re, pc + 1, s, sp, saves)
+        }
+        return false
+    }
+    if op == RE_NWORDB {
+        let before = reIsWordAt(s, sp - 1)
+        let after = reIsWordAt(s, sp)
+        if before == after {
+            return reRun(re, pc + 1, s, sp, saves)
+        }
+        return false
+    }
+    return false
+}
+
+// Try to match anywhere at or after `startPos`. Returns a saves vector; saves[0] < 0
+// (and length 0) means no match. On success, saves has 2*(nGroups+1) entries.
+fn regexExec(re: &Regex, s: &string, startPos: i64): Vec<i64> {
+    var start = startPos
+    let slots = 2 * (re.nGroups + 1)
+    while start <= s.len() {
+        var saves: Vec<i64> = Vec.new()
+        var k: i64 = 0
+        while k < slots {
+            saves.push(-1)
+            k = k + 1
+        }
+        if reRun(re, 0, s, start, saves) {
+            return saves
+        }
+        start = start + 1
+    }
+    var empty: Vec<i64> = Vec.new()
+    return empty
+}
