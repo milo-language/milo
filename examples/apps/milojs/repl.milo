@@ -40,7 +40,7 @@ from "./runtime" import {
     Interp
 }
 from "./complete" import {
-    completeAt, cmplCommonPrefix, cmplSlice
+    completeAt, cmplCommonPrefix, cmplSlice, cmplIsIdentByte, CMPL_SESSION, CMPL_KEYWORD
 }
 
 enum LineResult {
@@ -225,22 +225,187 @@ fn isUndefined(v: &JSValue): bool {
     }
 }
 
-// string has push but no pop — rebuild without the final byte
-fn dropLast(s: &string): string {
+// Repaint the edited line in place: carriage-return to column 0, redraw prompt +
+// buffer, then clear to end-of-line so a shrinking line leaves no stale tail.
+// Finally walk the cursor back from end-of-line to `cur`. Moving relatively (not
+// to an absolute column) keeps this correct without having to know how wide the
+// prompt renders — it is full of escape bytes that occupy no columns.
+fn redraw(prompt: &string, line: &string, cur: i64): void {
+    var s = "\r" + prompt + line + clearLine()
+    let back = line.len() - cur
+    if back > 0 {
+        s = s + "\x1b[" + back.toString() + "D"
+    }
+    writeStdout(s)
+}
+
+fn strInsert(s: &string, at: i64, b: u8): string {
     var out = ""
-    let n = s.len() - 1
-    var i: i64 = 0
-    while i < n {
+    for i in 0..at {
+        out.push(s[i])
+    }
+    out.push(b)
+    var i = at
+    while i < s.len() {
         out.push(s[i])
         i = i + 1
     }
     return out
 }
 
-// Repaint the edited line in place: carriage-return to column 0, redraw prompt +
-// buffer, then clear to end-of-line so a shrinking line leaves no stale tail.
-fn redraw(prompt: &string, line: &string): void {
-    writeStdout("\r" + prompt + line + clearLine())
+// The half-open span [from, to) removed.
+fn strCut(s: &string, from: i64, to: i64): string {
+    var out = ""
+    for i in 0..from {
+        out.push(s[i])
+    }
+    var i = to
+    while i < s.len() {
+        out.push(s[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn isSpaceByte(b: u8): bool {
+    return b == 32 as u8 || b == 9 as u8
+}
+
+// Word motion, readline-style: skip any run of separators, then the word itself.
+// `bigWord` uses whitespace as the only separator (what Ctrl-W kills in a shell);
+// otherwise anything non-alphanumeric separates, so `foo.bar` is two words.
+fn wordSep(b: u8, bigWord: bool): bool {
+    if bigWord {
+        return isSpaceByte(b)
+    }
+    return !cmplIsIdentByte(b)
+}
+
+fn wordLeft(line: &string, cur: i64, bigWord: bool): i64 {
+    var i = cur
+    while i > 0 && wordSep(line[i - 1], bigWord) {
+        i = i - 1
+    }
+    while i > 0 && !wordSep(line[i - 1], bigWord) {
+        i = i - 1
+    }
+    return i
+}
+
+fn wordRight(line: &string, cur: i64, bigWord: bool): i64 {
+    var i = cur
+    while i < line.len() && wordSep(line[i], bigWord) {
+        i = i + 1
+    }
+    while i < line.len() && !wordSep(line[i], bigWord) {
+        i = i + 1
+    }
+    return i
+}
+
+// Keys that arrive as multi-byte escape sequences, normalised to one id.
+let K_NONE: i64 = 0
+let K_UP: i64 = 1
+let K_DOWN: i64 = 2
+let K_LEFT: i64 = 3
+let K_RIGHT: i64 = 4
+let K_HOME: i64 = 5
+let K_END: i64 = 6
+let K_DELETE: i64 = 7
+let K_WORD_LEFT: i64 = 8
+let K_WORD_RIGHT: i64 = 9
+let K_DELETE_WORD: i64 = 10
+
+fn csiFinal(c: u8, num: i64): i64 {
+    if c == 65 as u8 {
+        return K_UP
+    }
+    if c == 66 as u8 {
+        return K_DOWN
+    }
+    if c == 67 as u8 {
+        return K_RIGHT
+    }
+    if c == 68 as u8 {
+        return K_LEFT
+    }
+    if c == 72 as u8 {
+        return K_HOME
+    }
+    if c == 70 as u8 {
+        return K_END
+    }
+    if c == 126 as u8 {
+        // ESC [ n ~ — the numeric form of the same keys on other terminals
+        if num == 1 || num == 7 {
+            return K_HOME
+        }
+        if num == 3 {
+            return K_DELETE
+        }
+        if num == 4 || num == 8 {
+            return K_END
+        }
+    }
+    return K_NONE
+}
+
+// Decode the rest of an escape sequence, ESC already consumed. Handles the CSI
+// forms (`ESC [ … final`, including the `ESC [ 1 ; 5 C` modifier form terminals
+// send for Ctrl-arrow) and the Alt-<letter> forms readline binds to word motion.
+fn readEscapeKey(): i64 {
+    var buf: [u8; 4] = [0; 4]
+    if readFd(0, buf, 1) <= 0 {
+        return K_NONE
+    }
+    let e1 = buf[0]
+
+    if e1 == 98 as u8 {
+        return K_WORD_LEFT // Alt-B
+    }
+    if e1 == 102 as u8 {
+        return K_WORD_RIGHT // Alt-F
+    }
+    if e1 == 100 as u8 {
+        return K_DELETE_WORD // Alt-D
+    }
+    // SS3 (`ESC O H`) is what some terminals send for Home/End in application mode
+    if e1 != 91 as u8 && e1 != 79 as u8 {
+        return K_NONE
+    }
+
+    var num: i64 = 0
+    var modified = false
+    while true {
+        if readFd(0, buf, 1) <= 0 {
+            return K_NONE
+        }
+        let c = buf[0]
+        if c >= 48 as u8 && c <= 57 as u8 {
+            let d = (c as i64) - 48
+            if modified {
+                // a modifier param (`;5` = Ctrl); Ctrl+arrow means word motion
+            } else {
+                num = num * 10 + d
+            }
+            continue
+        }
+        if c == 59 as u8 {
+            modified = true
+            continue
+        }
+        let k = csiFinal(c, num)
+        if modified {
+            if k == K_LEFT {
+                return K_WORD_LEFT
+            }
+            if k == K_RIGHT {
+                return K_WORD_RIGHT
+            }
+        }
+        return k
+    }
+    return K_NONE
 }
 
 let CMPL_MAX_SHOWN: i64 = 120
@@ -255,9 +420,24 @@ fn padTo(s: &string, w: i64): string {
     return out
 }
 
-// Candidate list, laid out in fixed-width columns across an assumed 80-col
-// terminal. Ends with a newline so the caller can reprint the prompt under it.
-fn formatCandidates(cands: &Vec<string>): string {
+// Colour by kind, so a glance separates what this session defined from the ~90
+// builtins it's buried among. Padding is applied to the bare name first — escape
+// bytes count toward .len() but occupy no columns.
+fn paintCandidate(name: &string, kind: i64, w: i64): string {
+    let cell = padTo(name, w + 2)
+    if kind == CMPL_SESSION {
+        return fg24(226, 192, 150) + cell + ansiReset()
+    }
+    if kind == CMPL_KEYWORD {
+        return gray(cell)
+    }
+    return cell
+}
+
+// Candidate list in fixed-width columns across an assumed 80-col terminal, with a
+// blank line between kinds (node groups its listing the same way, one group per
+// object in the prototype chain).
+fn formatCandidates(cands: &Vec<string>, kinds: &Vec<i64>): string {
     var w: i64 = 0
     for i in 0..cands.len() {
         if cands[i].len() > w {
@@ -268,20 +448,32 @@ fn formatCandidates(cands: &Vec<string>): string {
     if cols < 1 {
         cols = 1
     }
-    var out = ""
     var shown = cands.len()
     if shown > CMPL_MAX_SHOWN {
         shown = CMPL_MAX_SHOWN
     }
+
+    var out = ""
+    var col: i64 = 0
     var i: i64 = 0
     while i < shown {
-        out = out + padTo(cands[i], w + 2)
-        i = i + 1
-        if i % cols == 0 {
+        // cmplSort groups kinds contiguously, so a change means a group boundary
+        if i > 0 && kinds[i] != kinds[i - 1] {
+            if col != 0 {
+                out = out + "\r\n"
+            }
             out = out + "\r\n"
+            col = 0
         }
+        out = out + paintCandidate(cands[i], kinds[i], w)
+        col = col + 1
+        if col == cols {
+            out = out + "\r\n"
+            col = 0
+        }
+        i = i + 1
     }
-    if shown % cols != 0 {
+    if col != 0 {
         out = out + "\r\n"
     }
     if shown < cands.len() {
@@ -293,13 +485,15 @@ fn formatCandidates(cands: &Vec<string>): string {
 // Raw-mode line editor. Owns the prompt so it can repaint on history recall.
 // Raw mode clears ISIG, so Ctrl-C arrives as byte 3 rather than a signal — the
 // double-tap-to-exit is handled here, no signal handler needed.
-fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp): LineResult {
+fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp, builtinCount: i64): LineResult {
     let ts = enableRawModeBlocking()
     var line = ""
     // history.len() == "editing a fresh line", below that indexes older entries
     var navIdx = history.len()
     var ctrlcArmed = false
     var buf: [u8; 3] = [0; 3]
+    // insertion point, as a byte offset into `line`; line.len() == at the end
+    var cur: i64 = 0
 
     // user code's console.log goes through print()'s buffered stdout; drain it
     // before the raw-write prompt so results never appear after the next prompt
@@ -315,17 +509,27 @@ fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp): LineResu
         let b = buf[0]
 
         if b == 13 || b == 10 {
+            // park the cursor at end-of-line first, else the newline lands
+            // mid-text and the echoed line comes out split
+            let fwd = line.len() - cur
+            if fwd > 0 {
+                writeStdout("\x1b[" + fwd.toString() + "C")
+            }
             writeStdout("\r\n")
             restoreTerminal(ts)
             return LineResult.Line(line)
         }
 
-        // Ctrl-D: EOF only on an empty line, like a shell
+        // Ctrl-D: delete forward, but EOF on an empty line, like a shell
         if b == 4 {
             if line.len() == 0 {
                 writeStdout("\r\n")
                 restoreTerminal(ts)
                 return LineResult.Eof
+            }
+            if cur < line.len() {
+                line = strCut(line, cur, cur + 1)
+                redraw(prompt, line, cur)
             }
             continue
         }
@@ -343,8 +547,9 @@ fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp): LineResu
                 continue
             }
             line = ""
+            cur = 0
             navIdx = history.len()
-            redraw(prompt, line)
+            redraw(prompt, line, cur)
             continue
         }
 
@@ -352,67 +557,162 @@ fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp): LineResu
         ctrlcArmed = false
 
         if b == 9 {
+            // complete the word ending at the cursor, not at end-of-line
+            let head = cmplSlice(line, 0, cur)
+            let tail = cmplSlice(line, cur, line.len())
             var cands: Vec<string> = Vec.new()
-            let start = completeAt(st, line, cands)
+            var kinds: Vec<i64> = Vec.new()
+            let start = completeAt(st, head, cands, kinds, builtinCount)
             if cands.len() == 0 {
                 continue
             }
-            let typed = cmplSlice(line, start, line.len())
+            let typed = cmplSlice(head, start, head.len())
             let common = cmplCommonPrefix(cands)
             // unambiguous extension available → fill it in silently
             if common.len() > typed.len() {
-                line = cmplSlice(line, 0, start) + common
+                line = cmplSlice(head, 0, start) + common + tail
+                cur = start + common.len()
                 navIdx = history.len()
-                redraw(prompt, line)
+                redraw(prompt, line, cur)
                 continue
             }
             // already at the common prefix: show what the choices are
             if cands.len() > 1 {
-                writeStdout("\r\n" + formatCandidates(cands))
-                writeStdout(prompt + line + clearLine())
+                writeStdout("\r\n" + formatCandidates(cands, kinds))
+                redraw(prompt, line, cur)
             }
             continue
         }
 
         if b == 127 || b == 8 {
-            if line.len() > 0 {
-                line = dropLast(line)
-                redraw(prompt, line)
+            if cur > 0 {
+                line = strCut(line, cur - 1, cur)
+                cur = cur - 1
+                redraw(prompt, line, cur)
             }
             continue
         }
 
-        // ESC [ A/B — arrow keys walk the history
+        if b == 1 { // Ctrl-A
+            cur = 0
+            redraw(prompt, line, cur)
+            continue
+        }
+        if b == 5 { // Ctrl-E
+            cur = line.len()
+            redraw(prompt, line, cur)
+            continue
+        }
+        if b == 2 { // Ctrl-B
+            if cur > 0 {
+                cur = cur - 1
+                redraw(prompt, line, cur)
+            }
+            continue
+        }
+        if b == 6 { // Ctrl-F
+            if cur < line.len() {
+                cur = cur + 1
+                redraw(prompt, line, cur)
+            }
+            continue
+        }
+        if b == 11 { // Ctrl-K — kill to end of line
+            line = cmplSlice(line, 0, cur)
+            redraw(prompt, line, cur)
+            continue
+        }
+        if b == 21 { // Ctrl-U — kill to start of line
+            line = cmplSlice(line, cur, line.len())
+            cur = 0
+            redraw(prompt, line, cur)
+            continue
+        }
+        if b == 23 { // Ctrl-W — kill the word before the cursor
+            let from = wordLeft(line, cur, true)
+            if from < cur {
+                line = strCut(line, from, cur)
+                cur = from
+                redraw(prompt, line, cur)
+            }
+            continue
+        }
+        if b == 12 { // Ctrl-L — clear screen, keep the line being edited
+            writeStdout("\x1b[2J\x1b[H")
+            redraw(prompt, line, cur)
+            continue
+        }
+
         if b == 27 {
-            let m = readFd(0, buf, 2)
-            if m == 2 && buf[0] == 91 {
-                if buf[1] == 65 {
-                    if navIdx > 0 {
-                        navIdx = navIdx - 1
-                        line = history[navIdx].clone()
-                        redraw(prompt, line)
-                    }
+            let k = readEscapeKey()
+            if k == K_UP {
+                if navIdx > 0 {
+                    navIdx = navIdx - 1
+                    line = history[navIdx].clone()
+                    cur = line.len()
+                    redraw(prompt, line, cur)
                 }
-                if buf[1] == 66 {
-                    if navIdx < history.len() {
-                        navIdx = navIdx + 1
-                        if navIdx == history.len() {
-                            line = ""
-                        } else {
-                            line = history[navIdx].clone()
-                        }
-                        redraw(prompt, line)
+            } else if k == K_DOWN {
+                if navIdx < history.len() {
+                    navIdx = navIdx + 1
+                    if navIdx == history.len() {
+                        line = ""
+                    } else {
+                        line = history[navIdx].clone()
                     }
+                    cur = line.len()
+                    redraw(prompt, line, cur)
+                }
+            } else if k == K_LEFT {
+                if cur > 0 {
+                    cur = cur - 1
+                    redraw(prompt, line, cur)
+                }
+            } else if k == K_RIGHT {
+                if cur < line.len() {
+                    cur = cur + 1
+                    redraw(prompt, line, cur)
+                }
+            } else if k == K_HOME {
+                cur = 0
+                redraw(prompt, line, cur)
+            } else if k == K_END {
+                cur = line.len()
+                redraw(prompt, line, cur)
+            } else if k == K_DELETE {
+                if cur < line.len() {
+                    line = strCut(line, cur, cur + 1)
+                    redraw(prompt, line, cur)
+                }
+            } else if k == K_WORD_LEFT {
+                cur = wordLeft(line, cur, false)
+                redraw(prompt, line, cur)
+            } else if k == K_WORD_RIGHT {
+                cur = wordRight(line, cur, false)
+                redraw(prompt, line, cur)
+            } else if k == K_DELETE_WORD {
+                let to = wordRight(line, cur, false)
+                if to > cur {
+                    line = strCut(line, cur, to)
+                    redraw(prompt, line, cur)
                 }
             }
             continue
         }
 
         if b >= 32 && b < 127 {
-            line.push(b)
-            var ch = ""
-            ch.push(b)
-            writeStdout(ch)
+            // appending is the common case and only needs an echo, not a repaint
+            if cur == line.len() {
+                line.push(b)
+                cur = cur + 1
+                var ch = ""
+                ch.push(b)
+                writeStdout(ch)
+            } else {
+                line = strInsert(line, cur, b)
+                cur = cur + 1
+                redraw(prompt, line, cur)
+            }
         }
     }
     restoreTerminal(ts)
@@ -458,10 +758,13 @@ fn repl(st: &mut Interp): i32 {
         funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
     }
     var history: Vec<string> = Vec.new()
+    // everything already in the global scope is a builtin; anything appended past
+    // this point was defined by the user, and completion highlights it as such
+    let builtinCount = st.scopes[0].vars.len()
     let prompt = fg24(226, 192, 150) + "milojs> " + ansiReset()
 
     while true {
-        match readLineEdited(prompt, history, st) {
+        match readLineEdited(prompt, history, st, builtinCount) {
             LineResult.Eof => {
                 return 0
             }
