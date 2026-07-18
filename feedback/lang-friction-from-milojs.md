@@ -257,3 +257,38 @@ field-access position), the way item 3 made `from`/`in` contextual.
 - **Mis-indented `} else {` in milojs.** Not a formatter bug: indentation is derived
   from brace depth and `milo fmt` reports zero changes on the committed files. Any
   drift from scripted edits self-heals on the next format.
+
+## 8. Pointer depth is a boolean, so `**T` is unspellable
+
+`*T` is parsed as a flag rather than a level (`src/parser.ts:180`):
+
+```ts
+if (this.match(TokenKind.Star)) {
+  const inner = this.parseType();
+  return { ...inner, isPtr: true };   // already true for *u8 → no-op
+}
+```
+
+so `**u8` and `*u8` produce the identical type, and `src/types.ts:45` wraps once
+(`if (ty.isPtr) return { tag: "ptr", inner: result }`). The error direction
+reverses depending on which side is which, which is the giveaway:
+
+```
+let pp: **u8 = <a **u8 value>   // declared as *u8 but got **u8
+let pp: **u8 = <a *u8 value>    // declared as *u8 but got u8
+```
+
+The declared side collapses to `*u8` both times while the checker's inferred side
+tracks true depth, so they can never agree. Parenthesised pointer types
+(`**(*u8)`) are also a parse error.
+
+**Cost:** any C API taking or returning `char **` is unreachable. Concretely,
+`char **environ` and macOS's `_NSGetEnviron(): char***` cannot be declared, so
+there is no way to enumerate the process environment from Milo. `milojs` had to
+make `process.env` lazy (resolve unknown keys through `getEnv` on read) and still
+cannot implement `Object.keys(process.env)` correctly.
+
+**Proposed fix:** small — the checker's own `TypeKind` is already properly
+recursive (`{tag:"ptr", inner}`); only the AST-facing `isPtr: boolean` is lossy.
+Carry a depth (or nest the AST type) and have `typeFromAst` wrap N times. Also
+allow parenthesised pointer types.
