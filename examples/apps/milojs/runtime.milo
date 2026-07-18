@@ -25,7 +25,9 @@ struct Scope {
 }
 
 // A heap object: an ordered list of string-keyed properties. `free` marks a
-// reclaimed slot the sweep skips and newObject can reuse.
+// reclaimed slot the sweep skips and newObject can reuse. When `isArray`, `elems`
+// holds the integer-indexed elements (JS arrays are objects, so a JSObj can carry
+// both — string props and dense elements).
 struct Prop {
     key: string,
     value: JSValue,
@@ -33,6 +35,8 @@ struct Prop {
 
 struct JSObj {
     props: Vec<Prop>,
+    elems: Vec<JSValue>,
+    isArray: bool,
     mark: bool,
     free: bool,
 }
@@ -54,20 +58,28 @@ struct Interp {
     gcStats: bool,
 }
 
-fn newObject(st: &mut Interp): i64 {
+fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     if st.objFreeList.len() > 0 {
         let idx = st.objFreeList.pop()
         st.objects[idx] = JSObj {
-            props: Vec.new(), mark: false, free: false
+            props: Vec.new(), elems: Vec.new(), isArray: isArray, mark: false, free: false
         }
         return idx
     }
     st.objects.push(JSObj {
-        props: Vec.new(), mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), isArray: isArray, mark: false, free: false
     }
     )
     return st.objects.len() - 1
+}
+
+fn newObject(st: &mut Interp): i64 {
+    return allocObj(st, false)
+}
+
+fn newArray(st: &mut Interp): i64 {
+    return allocObj(st, true)
 }
 
 fn objGet(st: &Interp, obj: i64, key: &string): JSValue {
@@ -98,6 +110,56 @@ fn objSet(st: &mut Interp, obj: i64, key: string, value: JSValue) {
         key: key, value: value
     }
     )
+}
+
+// A key names an array element only if it is a canonical non-negative integer
+// ("0", "1", ...); returns that index, or -1 for any other key (which addresses a
+// string property instead, per JS).
+fn asArrayIndex(key: &string): i64 {
+    let n = key.len()
+    if n == 0 {
+        return -1
+    }
+    if key[0] == '0' && n > 1 {
+        return -1
+    }
+    var idx: i64 = 0
+    var i: i64 = 0
+    while i < n {
+        let c = key[i]
+        if c < '0' || c > '9' {
+            return -1
+        }
+        idx = idx * 10 + (c as i64 - 48)
+        i = i + 1
+    }
+    return idx
+}
+
+fn arrGet(st: &Interp, obj: i64, idx: i64): JSValue {
+    if idx < 0 || idx >= st.objects[obj].elems.len() {
+        return JSValue.Undefined
+    }
+    return cloneValue(st.objects[obj].elems[idx])
+}
+
+// Assigning past the end grows the array with holes (undefined), matching JS.
+fn arrSet(st: &mut Interp, obj: i64, idx: i64, value: JSValue) {
+    if idx < 0 {
+        return
+    }
+    while st.objects[obj].elems.len() <= idx {
+        st.objects[obj].elems.push(JSValue.Undefined)
+    }
+    st.objects[obj].elems[idx] = value
+}
+
+fn arrLen(st: &Interp, obj: i64): i64 {
+    return st.objects[obj].elems.len()
+}
+
+fn arrPush(st: &mut Interp, obj: i64, value: JSValue) {
+    st.objects[obj].elems.push(value)
 }
 
 fn newScope(st: &mut Interp, parent: i64): i64 {
@@ -158,6 +220,12 @@ fn markObject(st: &mut Interp, i: i64) {
     while k < n {
         vals.push(cloneValue(st.objects[i].props[k].value))
         k = k + 1
+    }
+    var e: i64 = 0
+    let ne = st.objects[i].elems.len()
+    while e < ne {
+        vals.push(cloneValue(st.objects[i].elems[e]))
+        e = e + 1
     }
     var m: i64 = 0
     while m < vals.len() {
@@ -231,6 +299,7 @@ fn collect(st: &mut Interp) {
     while os < st.objects.len() {
         if !st.objects[os].free && !st.objects[os].mark {
             st.objects[os].props = Vec.new()
+            st.objects[os].elems = Vec.new()
             st.objects[os].free = true
             st.objFreeList.push(os)
             ofreed = ofreed + 1

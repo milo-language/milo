@@ -22,6 +22,8 @@ enum Expr {
     Index(i64, i64),
     // property write: obj, keyExpr, valExpr — backs both obj.x = v and obj[k] = v
     SetMember(i64, i64, i64),
+    // array literal: index into prog.arrLits (a list of element-expr indices)
+    ArrLit(i64),
 }
 
 // One key/value pair in an object literal; val is an expr index.
@@ -54,6 +56,7 @@ struct Prog {
     argLists: Vec<Vec<i64>>,
     funcs: Vec<FuncDef>,
     objLits: Vec<Vec<PropInit>>,
+    arrLits: Vec<Vec<i64>>,
 }
 
 fn cloneExpr(e: &Expr): Expr {
@@ -102,6 +105,9 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.SetMember(obj, key, val) => {
             return Expr.SetMember(obj, key, val)
+        }
+        Expr.ArrLit(i) => {
+            return Expr.ArrLit(i)
         }
     }
 }

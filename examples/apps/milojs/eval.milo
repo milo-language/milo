@@ -79,6 +79,32 @@ fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
     return JSValue.Undefined
 }
 
+// Property read that understands arrays: `length` and integer indices hit the
+// element vector, everything else the string-keyed props.
+fn getMember(st: &Interp, o: i64, key: &string): JSValue {
+    if st.objects[o].isArray {
+        if key == "length" {
+            return JSValue.Number(arrLen(st, o) as f64)
+        }
+        let ai = asArrayIndex(key)
+        if ai >= 0 {
+            return arrGet(st, o, ai)
+        }
+    }
+    return objGet(st, o, key)
+}
+
+fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
+    if st.objects[o].isArray {
+        let ai = asArrayIndex(key)
+        if ai >= 0 {
+            arrSet(st, o, ai, value)
+            return
+        }
+    }
+    objSet(st, o, key, value)
+}
+
 fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
     let node = getExpr(prog, idx)
     match node {
@@ -139,7 +165,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             let ov = evalExpr(prog, objIdx, st, scope)
             match ov {
                 JSValue.Obj(o) => {
-                    return objGet(st, o, name)
+                    return getMember(st, o, name)
                 }
                 _ => {
                     return JSValue.Undefined
@@ -152,7 +178,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             let key = toStr(kv)
             match ov {
                 JSValue.Obj(o) => {
-                    return objGet(st, o, key)
+                    return getMember(st, o, key)
                 }
                 _ => {
                     return JSValue.Undefined
@@ -166,7 +192,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             let v = evalExpr(prog, valIdx, st, scope)
             match ov {
                 JSValue.Obj(o) => {
-                    objSet(st, o, key, cloneValue(v))
+                    setMember(st, o, key, cloneValue(v))
                 }
                 _ => {
                 }
@@ -185,6 +211,18 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 i = i + 1
             }
             return JSValue.Obj(obj)
+        }
+        Expr.ArrLit(litIdx) => {
+            let arr = newArray(st)
+            var i: i64 = 0
+            let n = prog.arrLits[litIdx].len()
+            while i < n {
+                let elemIdx = prog.arrLits[litIdx][i]
+                let v = evalExpr(prog, elemIdx, st, scope)
+                arrPush(st, arr, v)
+                i = i + 1
+            }
+            return JSValue.Obj(arr)
         }
         Expr.FuncExpr(f) => {
             return JSValue.Func(f, scope)
@@ -233,7 +271,33 @@ fn inspectInner(st: &Interp, v: &JSValue, depth: i64): string {
     }
 }
 
+// bun renders short arrays inline: `[ 1, 2, "x" ]`, empty as `[]`.
+fn inspectArr(st: &Interp, o: i64, depth: i64): string {
+    if depth > 2 {
+        return "[Array]"
+    }
+    let n = st.objects[o].elems.len()
+    if n == 0 {
+        return "[]"
+    }
+    var out = "[ "
+    var i: i64 = 0
+    while i < n {
+        if i > 0 {
+            out = out + ", "
+        }
+        let v = cloneValue(st.objects[o].elems[i])
+        out = out + inspectInner(st, v, depth + 1)
+        i = i + 1
+    }
+    out = out + " ]"
+    return out
+}
+
 fn inspectObj(st: &Interp, o: i64, depth: i64): string {
+    if st.objects[o].isArray {
+        return inspectArr(st, o, depth)
+    }
     if depth > 2 {
         return "[Object]"
     }
@@ -290,6 +354,40 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                     }
                 }
                 _ => {
+                }
+            }
+        }
+        _ => {
+        }
+    }
+
+    // array methods: arr.push(...) / arr.pop(). Guard on the name first so a
+    // non-method member access isn't evaluated twice.
+    let methodNode = getExpr(prog, calleeIdx)
+    match methodNode {
+        Expr.Member(objIdx, name) => {
+            if name == "push" || name == "pop" {
+                let recv = evalExpr(prog, objIdx, st, scope)
+                match recv {
+                    JSValue.Obj(o) => {
+                        if st.objects[o].isArray {
+                            let argVals = evalArgs(prog, argsIdx, st, scope)
+                            if name == "push" {
+                                var j: i64 = 0
+                                while j < argVals.len() {
+                                    arrPush(st, o, cloneValue(argVals[j]))
+                                    j = j + 1
+                                }
+                                return JSValue.Number(arrLen(st, o) as f64)
+                            }
+                            if arrLen(st, o) == 0 {
+                                return JSValue.Undefined
+                            }
+                            return st.objects[o].elems.pop()
+                        }
+                    }
+                    _ => {
+                    }
                 }
             }
         }

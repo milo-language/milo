@@ -34,7 +34,7 @@ fn expect(p: &mut PState, kind: i32) {
     if peekKind(p) == kind {
         advance(p)
     } else {
-        print("milojs: parse error near token " + i64ToStr(p.pos))
+        eprint("milojs: parse error near token " + i64ToStr(p.pos))
     }
 }
 
@@ -84,9 +84,28 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
     if k == T_LBRACE {
         return parseObjectLiteral(p, prog)
     }
+    if k == T_LBRACKET {
+        return parseArrayLiteral(p, prog)
+    }
     // unexpected token: consume it so parsing always makes progress
     advance(p)
     return addExpr(prog, Expr.UndefLit)
+}
+
+// [ expr, expr, ... ] — element expressions, trailing comma tolerated
+fn parseArrayLiteral(p: &mut PState, prog: &mut Prog): i64 {
+    expect(p, T_LBRACKET)
+    var elems: Vec<i64> = Vec.new()
+    while peekKind(p) != T_RBRACKET && peekKind(p) != T_EOF {
+        elems.push(parseExpr(p, prog))
+        if peekKind(p) == T_COMMA {
+            advance(p)
+        }
+    }
+    expect(p, T_RBRACKET)
+    prog.arrLits.push(elems)
+    let idx = prog.arrLits.len() - 1
+    return addExpr(prog, Expr.ArrLit(idx))
 }
 
 // { key: expr, key: expr, ... } — keys are identifiers or string literals
