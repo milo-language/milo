@@ -292,3 +292,19 @@ cannot implement `Object.keys(process.env)` correctly.
 recursive (`{tag:"ptr", inner}`); only the AST-facing `isPtr: boolean` is lossy.
 Carry a depth (or nest the AST type) and have `typeFromAst` wrap N times. Also
 allow parenthesised pointer types.
+
+**RESOLVED (2026-07-18, commit `568f31c`):** exactly as proposed. `MiloType` now
+carries `ptrDepth?: number` (`src/ast.ts`); the parser counts the stars
+(`src/parser.ts`), `typeFromAst` wraps N times (`src/types.ts`), and both the
+generic-substitution copy + the reverse `typeKindToMiloType` bridge and the LSP type
+printer are depth-aware (`src/checker.ts`, `src/lsp.ts`). `*u8`, `**u8`, `***u8`,
+`****u8` are now distinct; mismatches report the true depths (`declared as *u8 but got
+**u8`). No codegen change — LLVM uses opaque `ptr`, so depth is a type-check-only
+concern. A sanity cap errors past depth 16 (`pointer nesting too deep`) to catch
+runaway `****…` typos; C99's ≥12 requirement and real uses (`char***`) sit well under
+it. **Verified end-to-end:** `_NSGetEnviron(): ***u8` now type-checks and a real
+environ walk (`envpp[0]` → `**u8`, `envp[i]` → `*u8`) enumerates the whole process
+environment — so `Object.keys(process.env)` is now implementable. Fixtures
+`tests/fixtures/ptrDepth.milo` + `tests/errors/ptrDepthMismatch.milo`.
+**Still open (minor):** parenthesised pointer types (`**(*u8)`) — the star-counting
+handles linear `***T` fine, so this wasn't needed for environ; left unspanned.
