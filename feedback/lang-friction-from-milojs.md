@@ -138,3 +138,90 @@ on a 1000-line formatter locked by `tests/fmtCorpus.test.ts`:
 Deferred deliberately: low value (cosmetic) vs high risk (must regenerate the corpus
 and not collapse literals that legitimately span lines). Do it as its own focused
 change, not tacked onto unrelated work.
+
+---
+
+# Second pass (2026-07-18) — from async/await, classes, destructuring, bitwise
+
+Everything above was already resolved or deliberately deferred before this batch.
+These are new, and each was verified with a minimal repro before filing.
+
+## 5. `match` on a by-value enum consumes it whenever *any* variant is non-Copy
+
+The single biggest friction in this batch. Matching an enum by value moves it —
+even when the arm actually taken binds only an `i64`, and even when the payload
+you touch is Copy. It is the *declaration* that decides: one `Str(string)` variant
+makes the whole enum move-on-match.
+
+```milo
+enum V { A, S(string), N(i64) }
+let v = V.N(7)
+match v { V.N(x) => {...} _ => {} }
+match v { V.N(x) => {...} _ => {} }   // error: use of moved variable 'v'
+```
+Drop the `S(string)` variant and both matches compile.
+
+There is no inline escape hatch. `&v` is not an expression ("borrows are
+implicit"), and binding it another way yields `*V`, which `match` rejects:
+`match subject must be an enum, integer, float, string, or bool, got *V`.
+
+The only workaround is to push the match into a function taking `&V`, which does
+*not* move. So every shape test becomes a one-line accessor:
+```milo
+fn objHandle(v: &JSValue): i64 {
+    match v { JSValue.Obj(o) => { return o } _ => { return -1 } }
+}
+```
+`milojs` now carries `objHandle` and `funcHandle` (`value.milo`) that exist purely
+to ask "what shape is this value" without consuming it. `JSValue` is matched
+constantly, so this recurs.
+**Cost:** boilerplate accessors, and the failure lands as "use of moved variable"
+far from the `match` that caused it.
+**Proposed fix:** allow `match` through a borrow — either implicitly when no arm
+binds a non-Copy payload by value, or explicitly via a borrow-match form. Even
+just allowing `match` on a `&T` subject would remove the helper-fn tax.
+
+## 6. No float exponent literals (`1.0e18`) — and the diagnostic depends on position
+
+Exponent notation is not lexed. `1.0e18` becomes the number `1.0` followed by the
+identifier `e18`, so the failure mode varies by where it appears:
+- statement position → `undefined variable 'e18'` (correct, but points at name
+  resolution rather than at the missing lexer feature)
+- control-flow header → `expected '{', got IDENT ('e18')`, which is baffling:
+
+```milo
+if n > 1.0e18 { }        // expected '{', got 'IDENT' ('e18')
+```
+Not silent — the resolver always catches it, so no wrong values reach codegen.
+**Cost:** in `milojs` this forced `1000000000000000000.0` spelled out in
+`value.milo`'s ToInt32 range guard.
+**Proposed fix:** lex `e`/`E` with optional sign as part of a float literal. Failing
+that, have the lexer special-case a digit-adjacent `e<digits>` and say "exponent
+notation is not supported" instead of surfacing it as an identifier.
+
+## 7. `fn` is reserved, so it cannot be a struct field name (papercut)
+
+`struct ClassMember { name: string, fn: i64, isStatic: bool }` is rejected with
+`expected 'IDENT', got 'fn'`. Field position is unambiguous — no expression can
+start there — so this is the same contextual-keyword issue resolved for `from`/`in`
+in item 3, just for a different word. Renamed to `fnIdx`.
+**Proposed fix:** allow keywords as struct field names (and as property names in
+field-access position), the way item 3 made `from`/`in` contextual.
+
+---
+
+## Non-issues — checked and dismissed, recorded so they are not re-filed
+
+- **Cast vs bitwise precedence.** `a & b as f64` parses as `a & (b as f64)`, same
+  as C and Rust, and the mismatch is caught with a clear message
+  (`type mismatch in '&': i64 vs f64`). Working as intended.
+- **Compiler warnings polluting program output.** Warnings go to **stderr**;
+  `milo run` keeps stdout clean. A milojs test harness that merged the streams with
+  `2>&1` made all 16 fixtures appear to fail at once. Harness bug, not a Milo bug —
+  commit ec61529's message describes this incorrectly.
+- **Flag-loops / no `break`/`continue`.** Fixed long ago (item 2). `milojs` still
+  has ~60 unconverted `var going = true` loops, but that is milojs debt, not a
+  language gap.
+- **Mis-indented `} else {` in milojs.** Not a formatter bug: indentation is derived
+  from brace depth and `milo fmt` reports zero changes on the committed files. Any
+  drift from scripted edits self-heals on the next format.
