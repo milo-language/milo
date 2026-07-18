@@ -33,7 +33,7 @@ tagged-enum values, a managed heap of `u32` handles, a mark-sweep collector.
 
 ## Stages (critical-path order)
 
-### Stage 1 — tree-walking interpreter: primitives + closures ⬜ (in progress)
+### Stage 1 — tree-walking interpreter: primitives + closures ✅ (f08b267)
 Lexer, parser → AST (Milo enums), `JSValue` tagged enum (Undefined/Null/Bool/Number(f64)/
 Str/Function), tree-walking evaluator with a lexical scope chain, `console.log`. Statements:
 let/var/const, function decl, if/else, while, return, block, expression. Expressions: literals,
@@ -43,6 +43,14 @@ for-loops, ternary, exceptions, bytecode.
 **Proves:** the value model and eval loop on the subset that needs no heap.
 **Gate:** a `.js` demo (arithmetic, string concat, if/while, a closure counter) compiles and
 prints correct output under `milo run`.
+**Landed:** `examples/apps/milojs/milojs.milo` (~1480 LOC). Value model
+`enum JSValue { Undefined, Null, Bool, Number(f64), Str, Func(fnIdx, scopeIdx) }` — `Func`'s
+scope index *is* the closure. AST is index-based enums into flat `Vec` arenas (std/json cursor
+pattern), scopes an append-only parent-linked `Vec<Scope>` (chosen so Stage 2 marking is an
+index walk). `tests/{basics,closures}.js` output verified **byte-identical to `bun`** (fib(20),
+two independent counters, closure-over-loop-var, compose). Friction found: no `1e15` float
+literals; f64 `!=` is an *ordered* compare so `n != n` is false for NaN (must write `!(n == n)`)
+— candidate for a checker lint / `std/math` `isNan`.
 
 ### Stage 2 — managed heap + mark-sweep GC ⬜  ⟶ the crux
 JS objects are cyclic; Milo ownership cannot hold a cycle. Build an explicit managed heap:
