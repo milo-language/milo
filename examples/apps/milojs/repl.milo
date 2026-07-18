@@ -39,6 +39,9 @@ from "./eval" import {
 from "./runtime" import {
     Interp
 }
+from "./complete" import {
+    completeAt, cmplCommonPrefix, cmplSlice
+}
 
 enum LineResult {
     Line(string),
@@ -207,7 +210,7 @@ fn banner(): void {
     emit(buf, "  " + gray("lexer → parser → interpreter → mark-sweep GC — no C, no JIT,") + "\n")
     emit(buf, "  " + gray("no dependencies. every byte of it is Milo.") + "\n\n")
     emit(buf, "  " + dim("github.com/cs01/milo") + "\n\n")
-    emit(buf, "  " + dim("↑/↓ history · Ctrl-C cancel line · Ctrl-D exit") + "\n\n")
+    emit(buf, "  " + dim("Tab complete · ↑/↓ history · Ctrl-C cancel line · Ctrl-D exit") + "\n\n")
     writeStdout(buf)
 }
 
@@ -240,10 +243,57 @@ fn redraw(prompt: &string, line: &string): void {
     writeStdout("\r" + prompt + line + clearLine())
 }
 
+let CMPL_MAX_SHOWN: i64 = 120
+
+fn padTo(s: &string, w: i64): string {
+    var out = s.clone()
+    var i = s.len()
+    while i < w {
+        out.push(32 as u8)
+        i = i + 1
+    }
+    return out
+}
+
+// Candidate list, laid out in fixed-width columns across an assumed 80-col
+// terminal. Ends with a newline so the caller can reprint the prompt under it.
+fn formatCandidates(cands: &Vec<string>): string {
+    var w: i64 = 0
+    for i in 0..cands.len() {
+        if cands[i].len() > w {
+            w = cands[i].len()
+        }
+    }
+    var cols = 78 / (w + 2)
+    if cols < 1 {
+        cols = 1
+    }
+    var out = ""
+    var shown = cands.len()
+    if shown > CMPL_MAX_SHOWN {
+        shown = CMPL_MAX_SHOWN
+    }
+    var i: i64 = 0
+    while i < shown {
+        out = out + padTo(cands[i], w + 2)
+        i = i + 1
+        if i % cols == 0 {
+            out = out + "\r\n"
+        }
+    }
+    if shown % cols != 0 {
+        out = out + "\r\n"
+    }
+    if shown < cands.len() {
+        out = out + gray("… " + (cands.len() - shown).toString() + " more") + "\r\n"
+    }
+    return out
+}
+
 // Raw-mode line editor. Owns the prompt so it can repaint on history recall.
 // Raw mode clears ISIG, so Ctrl-C arrives as byte 3 rather than a signal — the
 // double-tap-to-exit is handled here, no signal handler needed.
-fn readLineEdited(prompt: &string, history: &Vec<string>): LineResult {
+fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp): LineResult {
     let ts = enableRawModeBlocking()
     var line = ""
     // history.len() == "editing a fresh line", below that indexes older entries
@@ -300,6 +350,29 @@ fn readLineEdited(prompt: &string, history: &Vec<string>): LineResult {
 
         // any other key disarms the pending Ctrl-C exit
         ctrlcArmed = false
+
+        if b == 9 {
+            var cands: Vec<string> = Vec.new()
+            let start = completeAt(st, line, cands)
+            if cands.len() == 0 {
+                continue
+            }
+            let typed = cmplSlice(line, start, line.len())
+            let common = cmplCommonPrefix(cands)
+            // unambiguous extension available → fill it in silently
+            if common.len() > typed.len() {
+                line = cmplSlice(line, 0, start) + common
+                navIdx = history.len()
+                redraw(prompt, line)
+                continue
+            }
+            // already at the common prefix: show what the choices are
+            if cands.len() > 1 {
+                writeStdout("\r\n" + formatCandidates(cands))
+                writeStdout(prompt + line + clearLine())
+            }
+            continue
+        }
 
         if b == 127 || b == 8 {
             if line.len() > 0 {
@@ -388,7 +461,7 @@ fn repl(st: &mut Interp): i32 {
     let prompt = fg24(226, 192, 150) + "milojs> " + ansiReset()
 
     while true {
-        match readLineEdited(prompt, history) {
+        match readLineEdited(prompt, history, st) {
             LineResult.Eof => {
                 return 0
             }

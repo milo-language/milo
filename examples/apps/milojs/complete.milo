@@ -1,0 +1,264 @@
+// Tab-completion for the REPL line editor.
+//
+// Completion is *live* — candidates come from the running interpreter's global
+// scope and heap, not a static keyword table, so anything the session defined
+// (`let foo = ...`, `function bar() {}`) completes immediately. Two shapes:
+//
+//   `Ma<tab>`        → global bindings + keywords with that prefix
+//   `Math.fl<tab>`   → resolve `Math` in scope, walk its props (+ proto chain)
+//
+// The dotted form resolves the base by *reading* bindings and properties only;
+// it never calls a getter or a function, so pressing tab can't run user code or
+// mutate the session.
+
+from "./value" import {
+    JSValue
+}
+from "./runtime" import {
+    Interp, objHas, scopeHas, scopeLookup
+}
+from "./eval" import {
+    getMember
+}
+
+fn cmplIsIdentByte(b: u8): bool {
+    let c = b as i64
+    if c >= 97 && c <= 122 {
+        return true
+    }
+    if c >= 65 && c <= 90 {
+        return true
+    }
+    if c >= 48 && c <= 57 {
+        return true
+    }
+    return c == 95 || c == 36 // _ $
+}
+
+fn cmplSlice(s: &string, from: i64, to: i64): string {
+    var out = ""
+    var i = from
+    while i < to {
+        out.push(s[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn cmplStartsWith(s: &string, pre: &string): bool {
+    if pre.len() > s.len() {
+        return false
+    }
+    var i: i64 = 0
+    while i < pre.len() {
+        if s[i] != pre[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn cmplLess(a: &string, b: &string): bool {
+    var i: i64 = 0
+    while i < a.len() && i < b.len() {
+        if a[i] != b[i] {
+            return (a[i] as i64) < (b[i] as i64)
+        }
+        i = i + 1
+    }
+    return a.len() < b.len()
+}
+
+fn cmplContains(v: &Vec<string>, s: &string): bool {
+    for i in 0..v.len() {
+        if v[i] == s {
+            return true
+        }
+    }
+    return false
+}
+
+// push if it matches the prefix and isn't already present — property lookup walks
+// a proto chain, so a shadowed key would otherwise appear twice
+fn cmplAdd(out: &mut Vec<string>, name: &string, prefix: &string) {
+    if cmplStartsWith(name, prefix) && !cmplContains(out, name) {
+        out.push(name.clone())
+    }
+}
+
+fn cmplAddAll(out: &mut Vec<string>, names: &string, prefix: &string) {
+    var cur = ""
+    for i in 0..names.len() {
+        if names[i] == 32 as u8 {
+            if cur.len() > 0 {
+                cmplAdd(out, cur, prefix)
+            }
+            cur = ""
+        } else {
+            cur.push(names[i])
+        }
+    }
+    if cur.len() > 0 {
+        cmplAdd(out, cur, prefix)
+    }
+}
+
+fn cmplSort(v: &mut Vec<string>) {
+    var i: i64 = 1
+    while i < v.len() {
+        var j = i
+        while j > 0 && cmplLess(v[j], v[j - 1]) {
+            let t = v[j].clone()
+            v[j] = v[j - 1].clone()
+            v[j - 1] = t
+            j = j - 1
+        }
+        i = i + 1
+    }
+}
+
+// Kept in sync by hand with builtins.milo's stringMethod / eval.milo's
+// isArrayMethod — those dispatch on a name rather than holding a table, so
+// there's nothing to enumerate at runtime.
+fn cmplStringMethods(): string {
+    return "charAt charCodeAt concat endsWith includes indexOf lastIndexOf length padEnd padStart repeat replace slice split startsWith substring toLowerCase toString toUpperCase trim trimEnd trimStart"
+}
+
+fn cmplArrayMethods(): string {
+    return "concat every fill filter find findIndex flat forEach includes indexOf join lastIndexOf length map pop push reduce reverse shift slice some sort splice unshift"
+}
+
+fn cmplKeywords(): string {
+    return "async await break case catch class const continue delete do else export false finally for function if import instanceof let new null of return static super switch this throw true try typeof undefined var void while yield"
+}
+
+// Resolve a dotted base like `foo.bar` by reading bindings/properties only.
+// Returns Undefined when any hop is missing or non-object.
+fn cmplResolveBase(st: &Interp, base: &string): JSValue {
+    var cur = JSValue.Undefined
+    var seg = ""
+    var first = true
+    var i: i64 = 0
+    let n = base.len()
+    while i <= n {
+        let atEnd = i == n
+        if atEnd || base[i] == 46 as u8 {
+            if seg.len() == 0 {
+                return JSValue.Undefined
+            }
+            if first {
+                if !scopeHas(st, 0, seg) {
+                    return JSValue.Undefined
+                }
+                cur = scopeLookup(st, 0, seg)
+                first = false
+            } else {
+                match cur {
+                    JSValue.Obj(o) => {
+                        cur = getMember(st, o, seg)
+                    }
+                    _ => {
+                        return JSValue.Undefined
+                    }
+                }
+            }
+            seg = ""
+        } else {
+            seg.push(base[i])
+        }
+        i = i + 1
+    }
+    return cur
+}
+
+fn cmplObjectProps(st: &Interp, o: i64, prefix: &string, out: &mut Vec<string>) {
+    var cur = o
+    while cur >= 0 {
+        for i in 0..st.objects[cur].props.len() {
+            cmplAdd(out, st.objects[cur].props[i].key, prefix)
+        }
+        cur = st.objects[cur].proto
+    }
+    if st.objects[o].isArray {
+        cmplAddAll(out, cmplArrayMethods(), prefix)
+    }
+}
+
+// `console` and `require` are recognised by name at the call site in eval.milo
+// rather than being scope bindings, so they never show up in a scope walk —
+// completion has to know about them explicitly.
+fn cmplPseudoGlobals(): string {
+    return "console require"
+}
+
+fn cmplConsoleMethods(): string {
+    return "error info log warn"
+}
+
+fn cmplMembers(st: &Interp, base: &string, prefix: &string, out: &mut Vec<string>) {
+    if base == "console" {
+        cmplAddAll(out, cmplConsoleMethods(), prefix)
+        return
+    }
+    match cmplResolveBase(st, base) {
+        JSValue.Obj(o) => {
+            cmplObjectProps(st, o, prefix, out)
+        }
+        JSValue.Str(s) => {
+            cmplAddAll(out, cmplStringMethods(), prefix)
+        }
+        _ => {
+        }
+    }
+}
+
+fn cmplGlobals(st: &Interp, prefix: &string, out: &mut Vec<string>) {
+    for i in 0..st.scopes[0].vars.len() {
+        cmplAdd(out, st.scopes[0].vars[i].name, prefix)
+    }
+    cmplAddAll(out, cmplPseudoGlobals(), prefix)
+    cmplAddAll(out, cmplKeywords(), prefix)
+}
+
+// Fill `out` with sorted candidates for the word ending at the end of `line`, and
+// return the byte offset where that word starts (so the caller knows how much of
+// the line a chosen candidate replaces).
+fn completeAt(st: &Interp, line: &string, out: &mut Vec<string>): i64 {
+    var start = line.len()
+    while start > 0 && cmplIsIdentByte(line[start - 1]) {
+        start = start - 1
+    }
+    let prefix = cmplSlice(line, start, line.len())
+
+    if start > 0 && line[start - 1] == 46 as u8 {
+        var bs = start - 1
+        while bs > 0 && (cmplIsIdentByte(line[bs - 1]) || line[bs - 1] == 46 as u8) {
+            bs = bs - 1
+        }
+        let base = cmplSlice(line, bs, start - 1)
+        cmplMembers(st, base, prefix, out)
+    } else {
+        cmplGlobals(st, prefix, out)
+    }
+
+    cmplSort(out)
+    return start
+}
+
+// Longest byte prefix shared by every candidate — what tab expands to when the
+// match isn't unique.
+fn cmplCommonPrefix(cands: &Vec<string>): string {
+    if cands.len() == 0 {
+        return ""
+    }
+    var out = cands[0].clone()
+    for i in 1..cands.len() {
+        var k: i64 = 0
+        while k < out.len() && k < cands[i].len() && out[k] == cands[i][k] {
+            k = k + 1
+        }
+        out = cmplSlice(out, 0, k)
+    }
+    return out
+}
