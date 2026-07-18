@@ -2667,7 +2667,11 @@ export class Codegen {
     lines.push(`  ${payloadPtr} = getelementptr ${subjTy}, ptr ${subjAddr}, i32 0, i32 1`);
 
     const bind = (name: string, ty: string, fieldKind: TypeKind, fieldPtr: string) => {
-      const uid = this.labelCounter++;
+      // Use scopeCounter (not labelCounter) so a match-binding's `%name.N.addr`
+      // shares one disambiguation namespace with `let`/for-loop allocas. Two
+      // counters could otherwise mint the same SSA name for same-named locals of
+      // different types → "multiple definition of local value" at link time.
+      const uid = this.scopeCounter++;
       // Ref-match of a non-Copy payload: bind a BORROW — the local holds a
       // pointer into the still-owned subject. No load, no zeroing, no drop, so
       // there is no double-free with the subject's real owner.
