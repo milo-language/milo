@@ -181,6 +181,28 @@ far from the `match` that caused it.
 binds a non-Copy payload by value, or explicitly via a borrow-match form. Even
 just allowing `match` on a `&T` subject would remove the helper-fn tax.
 
+**RESOLVED (2026-07-18) — the implicit-borrow option, conservatively.** Matching an
+owned enum *local* now borrows instead of moving **when no arm binds a non-Copy
+payload to a named binding** — i.e. every non-Copy payload is a `_` (or the payload is
+Copy). The subject stays usable afterward. The doc's exact repro compiles as-written
+(the `_` arm covers `S(string)`), and a "what shape" match that reads only Copy
+payloads never consumes. Mechanically this reuses the existing place-match machinery
+(`match s.field` / `v[i]` / `*h` already borrow): `checkMatchLike` sets `subjBorrows`
+for the owned-Ident case, so non-Copy `_` payloads bind as `&T` and the subject isn't
+`tryMove`d (`src/checker.ts`); codegen reads the local in place with no zeroing, so the
+owned local's normal scope-end drop still fires exactly once (verified leak/double-free
+clean over 100k heap-payload iterations). Fixture `tests/fixtures/matchOwnedInspect.milo`.
+
+**What is NOT covered (deliberately):** a *named* non-Copy binding — `V.S(s)` where you
+then only read `s` — still consumes, because a named binding is allowed to move the
+payload out and the checker can't yet prove you didn't. The fix is purely additive (it
+never changes a binding's type), so it can't break code that legitimately destructures
+owned data. If you only want to inspect, bind the non-Copy payload as `_`. Full
+match-ergonomics (bind `s` as `&string` when it isn't moved out) is the larger,
+potentially-breaking change left for later; so is allowing `match &v` / a `*V` subject.
+The `objHandle`/`funcHandle` helpers in `value.milo` can now be inlined where their
+payloads are Copy or ignored.
+
 ## 6. No float exponent literals (`1.0e18`) — and the diagnostic depends on position
 
 Exponent notation is not lexed. `1.0e18` becomes the number `1.0` followed by the

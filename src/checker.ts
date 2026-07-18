@@ -5401,7 +5401,28 @@ export class TypeChecker {
     const subjIsPlace = !subjIsRef && subjType.tag === "enum" &&
       (subject.kind === "FieldAccess" || subject.kind === "IndexAccess" ||
        (subject.kind === "UnaryOp" && subject.op === "*"));
-    const subjBorrows = subjIsRef || subjIsPlace;
+    // Matching an OWNED enum local to inspect its shape shouldn't consume it when no
+    // arm actually moves a non-Copy payload out — i.e. every non-Copy payload is
+    // ignored (`_`). Then the match only reads, so borrow it (like the place case)
+    // instead of moving, and it stays usable afterward. This is purely additive: it
+    // never changes a binding's type (there are no named non-Copy bindings in this
+    // case — Copy bindings stay by-value either way), so a match that legitimately
+    // destructures owned data still consumes exactly as before.
+    let subjIsOwnedInspect = false;
+    if (!subjIsRef && !subjIsPlace && subjType.tag === "enum" && subject.kind === "Ident") {
+      const einfo = this.enums.get(subjType.name);
+      if (einfo) {
+        subjIsOwnedInspect = arms.every(arm => {
+          if (arm.pattern.kind !== "EnumPattern") return true;
+          const v = einfo.variants.get(arm.pattern.variant);
+          if (!v) return true;
+          return arm.pattern.bindings.every((b, i) =>
+            b === "_" || i >= v.fields.length ||
+            isCopy(v.fields[i], (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n)));
+        });
+      }
+    }
+    const subjBorrows = subjIsRef || subjIsPlace || subjIsOwnedInspect;
     if (subjBorrows) this.matchSubjectRef.add(subject);
     const isEnum = subjType.tag === "enum";
     const isLiteralType = subjType.tag === "int" || subjType.tag === "float" || subjType.tag === "string" || subjType.tag === "bool";

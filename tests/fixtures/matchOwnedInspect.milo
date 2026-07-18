@@ -1,0 +1,49 @@
+// Matching an owned enum local to inspect its shape does NOT consume it when every
+// non-Copy payload is ignored (`_`) — so it stays usable for a second match. A named
+// non-Copy binding would still move it.
+enum V {
+    A, S(string), N(i64)
+}
+
+fn main(): void {
+    let v = V.N(42)
+    // @expect: 42
+    match v {
+        V.N(n) => {
+            print(n)
+        }
+        V.A => {
+            print(0)
+        }
+        V.S(_) => {
+            print(1)
+        }
+    }
+    // v still owned here — inspect again
+    // @expect: 42
+    match v {
+        V.A => {
+            print(9)
+        }
+        V.N(n) => {
+            print(n)
+        }
+        V.S(_) => {
+            print(2)
+        }
+    }
+    // heap payload path: borrow-inspect then normal scope-end drop (no double free)
+    let s = V.S("hi")
+    // @expect: 7
+    match s {
+        V.S(_) => {
+            print(7)
+        }
+        V.A => {
+            print(0)
+        }
+        V.N(_) => {
+            print(0)
+        }
+    }
+}
