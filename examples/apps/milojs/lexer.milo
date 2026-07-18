@@ -62,6 +62,7 @@ let T_SLASHEQ: i32 = 53
 let T_PERCENTEQ: i32 = 54
 let T_QUESTION: i32 = 55
 let T_INSTANCEOF: i32 = 56
+let T_ARROW: i32 = 57
 
 struct Token {
     kind: i32,
@@ -258,6 +259,9 @@ fn lex(src: &string): Vec<Token> {
         } else if c == '|' && i + 1 < n && src[i + 1] == '|' {
             i = i + 2
             pushTok(toks, T_OROR)
+        } else if c == '=' && i + 1 < n && src[i + 1] == '>' {
+            i = i + 2
+            pushTok(toks, T_ARROW)
         } else if c == '+' && i + 1 < n && src[i + 1] == '+' {
             i = i + 2
             pushTok(toks, T_INC)

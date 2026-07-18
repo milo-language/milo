@@ -962,7 +962,10 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
     // root the frame across the whole call so a GC inside the body (or a nested
     // call) can't reclaim it
     pushActive(st, callScope)
-    scopeDefine(st, callScope, "this", thisVal)
+    // arrows have no own `this` — it stays lexical (resolved up the scope chain)
+    if !prog.funcs[fIdx].isArrow {
+        scopeDefine(st, callScope, "this", thisVal)
+    }
     var j: i64 = 0
     let nParams = prog.funcs[fIdx].params.len()
     while j < nParams {
@@ -1450,6 +1453,18 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
         Stmt.Decl(name, e) => {
             let v = evalExpr(prog, e, st, scope)
             scopeDefine(st, scope, name, v)
+            return Flow.Normal
+        }
+        Stmt.MultiDecl(listIdx) => {
+            var i: i64 = 0
+            let n = prog.declLists[listIdx].len()
+            while i < n {
+                let name = prog.declLists[listIdx][i].name.clone()
+                let initIdx = prog.declLists[listIdx][i].init
+                let v = evalExpr(prog, initIdx, st, scope)
+                scopeDefine(st, scope, name, v)
+                i = i + 1
+            }
             return Flow.Normal
         }
         Stmt.ExprStmt(e) => {

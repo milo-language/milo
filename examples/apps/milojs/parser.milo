@@ -38,6 +38,64 @@ fn expect(p: &mut PState, kind: i32) {
     }
 }
 
+// Build an arrow function from its parameter list; the caller has consumed `=>`.
+// Body is a block `{ }` or a single expression (implicit return). isArrow=true so
+// it doesn't bind its own `this`.
+fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>): i64 {
+    var body = -1
+    if peekKind(p) == T_LBRACE {
+        body = parseBraceBlock(p, prog)
+    } else {
+        let e = parseExpr(p, prog)
+        let ret = addStmt(prog, Stmt.Ret(e))
+        var list: Vec<i64> = Vec.new()
+        list.push(ret)
+        prog.blocks.push(list)
+        body = prog.blocks.len() - 1
+    }
+    prog.funcs.push(FuncDef {
+        name: "", params: params, body: body, isArrow: true
+    }
+    )
+    let f = prog.funcs.len() - 1
+    return addExpr(prog, Expr.FuncExpr(f))
+}
+
+// Try to read `( id, id, ... ) =>` starting at a '('. On success, consumes
+// through `=>` and returns true with params in `out`. On failure, restores the
+// position so the caller can parse a normal parenthesized expression.
+fn scanArrowParams(p: &mut PState, out: &mut Vec<string>): bool {
+    let save = p.pos
+    advance(p)
+    var ok = true
+    if peekKind(p) != T_RPAREN {
+        var going = true
+        while going {
+            if peekKind(p) == T_IDENT {
+                out.push(p.toks[p.pos].text.clone())
+                advance(p)
+                if peekKind(p) == T_COMMA {
+                    advance(p)
+                } else {
+                    going = false
+                }
+            } else {
+                ok = false
+                going = false
+            }
+        }
+    }
+    if ok && peekKind(p) == T_RPAREN {
+        advance(p)
+        if peekKind(p) == T_ARROW {
+            advance(p)
+            return true
+        }
+    }
+    p.pos = save
+    return false
+}
+
 fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
     let k = peekKind(p)
     if k == T_NUM {
@@ -68,10 +126,22 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
     }
     if k == T_IDENT {
         let name = p.toks[p.pos].text.clone()
+        // single-parameter arrow: x => body
+        if p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind == T_ARROW {
+            advance(p)
+            advance(p)
+            var ap: Vec<string> = Vec.new()
+            ap.push(name)
+            return makeArrow(p, prog, ap)
+        }
         advance(p)
         return addExpr(prog, Expr.Ident(name))
     }
     if k == T_LPAREN {
+        var arrowParams: Vec<string> = Vec.new()
+        if scanArrowParams(p, arrowParams) {
+            return makeArrow(p, prog, arrowParams)
+        }
         advance(p)
         let e = parseExpr(p, prog)
         expect(p, T_RPAREN)
@@ -445,7 +515,7 @@ fn parseFunction(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_RPAREN)
     let body = parseBraceBlock(p, prog)
     prog.funcs.push(FuncDef {
-        name: name, params: params, body: body
+        name: name, params: params, body: body, isArrow: false
     }
     )
     return prog.funcs.len() - 1
@@ -471,23 +541,39 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
     }
     if k == T_LET || k == T_VAR || k == T_CONST {
         advance(p)
-        var name = ""
-        if peekKind(p) == T_IDENT {
-            name = p.toks[p.pos].text.clone()
-            advance(p)
-        }
-        var init = -1
-        if peekKind(p) == T_EQ {
-            advance(p)
-            init = parseExpr(p, prog)
-        }
-        if init < 0 {
-            init = addExpr(prog, Expr.UndefLit)
+        var items: Vec<DeclItem> = Vec.new()
+        var more = true
+        while more {
+            var name = ""
+            if peekKind(p) == T_IDENT {
+                name = p.toks[p.pos].text.clone()
+                advance(p)
+            }
+            var init = -1
+            if peekKind(p) == T_EQ {
+                advance(p)
+                // parseExpr stops at ',' (no comma operator), so each declarator's
+                // initializer parses independently
+                init = parseExpr(p, prog)
+            }
+            if init < 0 {
+                init = addExpr(prog, Expr.UndefLit)
+            }
+            items.push(DeclItem {
+                name: name, init: init
+            }
+            )
+            if peekKind(p) == T_COMMA {
+                advance(p)
+            } else {
+                more = false
+            }
         }
         if peekKind(p) == T_SEMI {
             advance(p)
         }
-        return addStmt(prog, Stmt.Decl(name, init))
+        prog.declLists.push(items)
+        return addStmt(prog, Stmt.MultiDecl(prog.declLists.len() - 1))
     }
     if k == T_FUNCTION {
         let f = parseFunction(p, prog)

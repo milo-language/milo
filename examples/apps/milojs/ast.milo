@@ -53,6 +53,8 @@ enum Stmt {
     // (-1 when absent), body a stmt idx
     For(i64, i64, i64, i64),
     Throw(i64),
+    // let/var/const with one or more declarators: index into prog.declLists
+    MultiDecl(i64),
     // try block, catch-param name ("" if none), catch block idx (-1 if none),
     // finally block idx (-1 if none). Block idxs index prog.blocks.
     Try(i64, string, i64, i64),
@@ -62,6 +64,14 @@ struct FuncDef {
     name: string,
     params: Vec<string>,
     body: i64,
+    // arrows don't bind their own `this` (it stays lexical)
+    isArrow: bool,
+}
+
+// one declarator in a `let a = 1, b, c = 3` statement
+struct DeclItem {
+    name: string,
+    init: i64,
 }
 
 struct Prog {
@@ -72,6 +82,7 @@ struct Prog {
     funcs: Vec<FuncDef>,
     objLits: Vec<Vec<PropInit>>,
     arrLits: Vec<Vec<i64>>,
+    declLists: Vec<Vec<DeclItem>>,
 }
 
 fn cloneExpr(e: &Expr): Expr {
@@ -173,6 +184,9 @@ fn cloneStmt(s: &Stmt): Stmt {
         }
         Stmt.Try(tryB, param, catchB, finallyB) => {
             return Stmt.Try(tryB, param.clone(), catchB, finallyB)
+        }
+        Stmt.MultiDecl(listIdx) => {
+            return Stmt.MultiDecl(listIdx)
         }
     }
 }
