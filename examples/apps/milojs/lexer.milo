@@ -47,6 +47,12 @@ let T_LBRACKET: i32 = 38
 let T_RBRACKET: i32 = 39
 let T_COLON: i32 = 40
 let T_NEW: i32 = 41
+let T_FOR: i32 = 42
+let T_TRY: i32 = 43
+let T_CATCH: i32 = 44
+let T_FINALLY: i32 = 45
+let T_THROW: i32 = 46
+let T_TYPEOF: i32 = 47
 
 struct Token {
     kind: i32,
@@ -105,6 +111,24 @@ fn keywordKind(s: &string): i32 {
     }
     if s == "new" {
         return T_NEW
+    }
+    if s == "for" {
+        return T_FOR
+    }
+    if s == "try" {
+        return T_TRY
+    }
+    if s == "catch" {
+        return T_CATCH
+    }
+    if s == "finally" {
+        return T_FINALLY
+    }
+    if s == "throw" {
+        return T_THROW
+    }
+    if s == "typeof" {
+        return T_TYPEOF
     }
     return T_IDENT
 }

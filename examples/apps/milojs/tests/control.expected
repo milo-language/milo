@@ -1,0 +1,12 @@
+10
+9
+100
+number string boolean undefined
+object object object function
+undefined
+caught: boom
+42 bad
+propagated: from deep
+[ "try", "catch", "finally" ]
+ret [ "fin" ]
+stopped at 3 via stop

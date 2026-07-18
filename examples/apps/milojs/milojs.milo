@@ -35,7 +35,7 @@ from "./eval" import {
     execBlock
 }
 from "./value" import {
-    i64ToStr
+    i64ToStr, toStr
 }
 
 fn main(): i32 {
@@ -66,11 +66,16 @@ fn main(): i32 {
             var st = Interp {
                 scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
                 objects: Vec.new(), objFreeList: Vec.new(), tempRoots: Vec.new(),
+                throwing: false, thrownValue: JSValue.Undefined,
                 allocSinceGc: 0, gcThreshold: 1024, gcRuns: 0, gcStats: gcStats
             }
             // scope 0 = global (never collected — always a GC root)
             newScope(st, -1)
             execBlock(prog, top, st, 0)
+            if st.throwing {
+                eprint("Uncaught " + toStr(st.thrownValue))
+                return 1
+            }
             if st.gcStats {
                 collect(st)
                 print("[gc] total runs " + i64ToStr(st.gcRuns) + ", arena slots " + i64ToStr(st.scopes.len()) + ", free " + i64ToStr(st.freeList.len()))

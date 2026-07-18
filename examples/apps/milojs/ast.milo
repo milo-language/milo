@@ -43,6 +43,13 @@ enum Stmt {
     Block(i64),
     FuncDecl(i64),
     Empty,
+    // for (init; cond; update) body — init is a stmt idx, cond/update expr idxs
+    // (-1 when absent), body a stmt idx
+    For(i64, i64, i64, i64),
+    Throw(i64),
+    // try block, catch-param name ("" if none), catch block idx (-1 if none),
+    // finally block idx (-1 if none). Block idxs index prog.blocks.
+    Try(i64, string, i64, i64),
 }
 
 struct FuncDef {
@@ -142,6 +149,15 @@ fn cloneStmt(s: &Stmt): Stmt {
         }
         Stmt.Empty => {
             return Stmt.Empty
+        }
+        Stmt.For(init, cond, update, body) => {
+            return Stmt.For(init, cond, update, body)
+        }
+        Stmt.Throw(e) => {
+            return Stmt.Throw(e)
+        }
+        Stmt.Try(tryB, param, catchB, finallyB) => {
+            return Stmt.Try(tryB, param.clone(), catchB, finallyB)
         }
     }
 }

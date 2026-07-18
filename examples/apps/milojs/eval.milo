@@ -105,7 +105,38 @@ fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
     objSet(st, o, key, value)
 }
 
+// typeof: never throws, even for an unbound name (scopeLookup returns undefined).
+fn typeofStr(v: &JSValue): string {
+    match v {
+        JSValue.Undefined => {
+            return "undefined"
+        }
+        JSValue.Null => {
+            return "object"
+        }
+        JSValue.Bool(_b) => {
+            return "boolean"
+        }
+        JSValue.Number(_n) => {
+            return "number"
+        }
+        JSValue.Str(_s) => {
+            return "string"
+        }
+        JSValue.Func(_f, _e) => {
+            return "function"
+        }
+        JSValue.Obj(_o) => {
+            return "object"
+        }
+    }
+}
+
 fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
+    // an exception is unwinding — stop evaluating, produce a placeholder
+    if st.throwing {
+        return JSValue.Undefined
+    }
     let node = getExpr(prog, idx)
     match node {
         Expr.Num(n) => {
@@ -150,6 +181,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             let va = evalExpr(prog, a, st, scope)
             if op == "-" {
                 return JSValue.Number(0.0 - toNum(va))
+            }
+            if op == "typeof" {
+                return JSValue.Str(typeofStr(va))
             }
             return JSValue.Bool(!truthy(va))
         }
@@ -508,7 +542,84 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
     }
 }
 
+// try/catch/finally. The catch binding and both the pending throw value and any
+// pending return value are rooted across the finally block (which can allocate
+// and collect). finally overrides: its own throw or return wins; otherwise the
+// try/catch's pending throw or return is restored.
+fn execTry(prog: &Prog, tryB: i64, param: &string, catchB: i64, finallyB: i64, st: &mut Interp, scope: i64): Flow {
+    let tryScope = newScope(st, scope)
+    pushActive(st, tryScope)
+    var flow = execBlock(prog, tryB, st, tryScope)
+    popActive(st)
+
+    if st.throwing && catchB >= 0 {
+        let caught = cloneValue(st.thrownValue)
+        st.throwing = false
+        st.thrownValue = JSValue.Undefined
+        let catchScope = newScope(st, scope)
+        pushActive(st, catchScope)
+        if param.len() > 0 {
+            scopeDefine(st, catchScope, param.clone(), caught)
+        }
+        flow = execBlock(prog, catchB, st, catchScope)
+        popActive(st)
+    }
+
+    if finallyB < 0 {
+        return flow
+    }
+
+    // capture what try/catch left pending, then run finally with a clean slate
+    let hadThrow = st.throwing
+    var savedThrow = cloneValue(st.thrownValue)
+    var hadRet = false
+    var savedRet = JSValue.Undefined
+    match flow {
+        Flow.Ret(v) => {
+            hadRet = true
+            savedRet = cloneValue(v)
+        }
+        Flow.Normal => {
+        }
+    }
+    st.throwing = false
+    st.thrownValue = JSValue.Undefined
+    // stash the captured values on the temp-root stack so finally's allocations
+    // can't collect them, then recover them afterward (Vec.pop returns the value)
+    pushTemp(st, savedThrow)
+    pushTemp(st, savedRet)
+    let finScope = newScope(st, scope)
+    pushActive(st, finScope)
+    let finFlow = execBlock(prog, finallyB, st, finScope)
+    popActive(st)
+    savedRet = st.tempRoots.pop()
+    savedThrow = st.tempRoots.pop()
+
+    match finFlow {
+        Flow.Ret(fv) => {
+            return Flow.Ret(fv)
+        }
+        Flow.Normal => {
+        }
+    }
+    if st.throwing {
+        return Flow.Normal
+    }
+    if hadThrow {
+        st.throwing = true
+        st.thrownValue = savedThrow
+        return Flow.Normal
+    }
+    if hadRet {
+        return Flow.Ret(savedRet)
+    }
+    return Flow.Normal
+}
+
 fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
+    if st.throwing {
+        return Flow.Normal
+    }
     let node = getStmt(prog, idx)
     match node {
         Stmt.Decl(name, e) => {
@@ -534,7 +645,7 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
             var looping = true
             while looping {
                 let vc = evalExpr(prog, c, st, scope)
-                if !truthy(vc) {
+                if st.throwing || !truthy(vc) {
                     looping = false
                 } else {
                     let flow = execStmt(prog, body, st, scope)
@@ -545,9 +656,64 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                         Flow.Normal => {
                         }
                     }
+                    if st.throwing {
+                        looping = false
+                    }
                 }
             }
             return Flow.Normal
+        }
+        Stmt.For(init, cond, update, body) => {
+            // the loop gets its own scope so `let`/`var` in the init clause don't
+            // leak, and closures made per-iteration capture it
+            let loopScope = newScope(st, scope)
+            pushActive(st, loopScope)
+            if init >= 0 {
+                execStmt(prog, init, st, loopScope)
+            }
+            var looping = true
+            while looping {
+                if st.throwing {
+                    looping = false
+                } else {
+                    var run = true
+                    if cond >= 0 {
+                        let vc = evalExpr(prog, cond, st, loopScope)
+                        run = truthy(vc)
+                    }
+                    if !run || st.throwing {
+                        looping = false
+                    } else {
+                        let flow = execStmt(prog, body, st, loopScope)
+                        match flow {
+                            Flow.Ret(v) => {
+                                popActive(st)
+                                return Flow.Ret(v)
+                            }
+                            Flow.Normal => {
+                            }
+                        }
+                        if st.throwing {
+                            looping = false
+                        } else if update >= 0 {
+                            evalExpr(prog, update, st, loopScope)
+                        }
+                    }
+                }
+            }
+            popActive(st)
+            return Flow.Normal
+        }
+        Stmt.Throw(e) => {
+            let v = evalExpr(prog, e, st, scope)
+            if !st.throwing {
+                st.throwing = true
+                st.thrownValue = v
+            }
+            return Flow.Normal
+        }
+        Stmt.Try(tryB, param, catchB, finallyB) => {
+            return execTry(prog, tryB, param, catchB, finallyB, st, scope)
         }
         Stmt.Ret(e) => {
             let v = evalExpr(prog, e, st, scope)
@@ -586,6 +752,10 @@ fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
             }
             Flow.Normal => {
             }
+        }
+        // an exception raised in this statement unwinds out of the block
+        if st.throwing {
+            return Flow.Normal
         }
         j = j + 1
     }

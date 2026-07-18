@@ -221,6 +221,11 @@ fn parseUnary(p: &mut PState, prog: &mut Prog): i64 {
         let e = parseUnary(p, prog)
         return addExpr(prog, Expr.Un("!", e))
     }
+    if k == T_TYPEOF {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Un("typeof", e))
+    }
     return parsePostfix(p, prog)
 }
 
@@ -449,6 +454,65 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         expect(p, T_RPAREN)
         let body = parseStmt(p, prog)
         return addStmt(prog, Stmt.While(cond, body))
+    }
+    if k == T_FOR {
+        advance(p)
+        expect(p, T_LPAREN)
+        // init clause (consumes its own terminating ;)
+        var init = -1
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        } else if peekKind(p) == T_LET || peekKind(p) == T_VAR || peekKind(p) == T_CONST {
+            init = parseStmt(p, prog)
+        } else {
+            let ie = parseExpr(p, prog)
+            init = addStmt(prog, Stmt.ExprStmt(ie))
+            expect(p, T_SEMI)
+        }
+        var cond = -1
+        if peekKind(p) != T_SEMI {
+            cond = parseExpr(p, prog)
+        }
+        expect(p, T_SEMI)
+        var update = -1
+        if peekKind(p) != T_RPAREN {
+            update = parseExpr(p, prog)
+        }
+        expect(p, T_RPAREN)
+        let body = parseStmt(p, prog)
+        return addStmt(prog, Stmt.For(init, cond, update, body))
+    }
+    if k == T_THROW {
+        advance(p)
+        let e = parseExpr(p, prog)
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        }
+        return addStmt(prog, Stmt.Throw(e))
+    }
+    if k == T_TRY {
+        advance(p)
+        let tryB = parseBraceBlock(p, prog)
+        var param = ""
+        var catchB = -1
+        if peekKind(p) == T_CATCH {
+            advance(p)
+            if peekKind(p) == T_LPAREN {
+                advance(p)
+                if peekKind(p) == T_IDENT {
+                    param = p.toks[p.pos].text.clone()
+                    advance(p)
+                }
+                expect(p, T_RPAREN)
+            }
+            catchB = parseBraceBlock(p, prog)
+        }
+        var finallyB = -1
+        if peekKind(p) == T_FINALLY {
+            advance(p)
+            finallyB = parseBraceBlock(p, prog)
+        }
+        return addStmt(prog, Stmt.Try(tryB, param, catchB, finallyB))
     }
     if k == T_RETURN {
         advance(p)

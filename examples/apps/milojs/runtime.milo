@@ -56,6 +56,12 @@ struct Interp {
     // method receiver while its arguments — which can themselves be calls — are
     // evaluated). Rooted by collect so an in-flight object/closure isn't swept.
     tempRoots: Vec<JSValue>,
+    // exception state: `throwing` is set while an exception unwinds toward the
+    // nearest try/catch; evalExpr/execStmt/execBlock/loops bail while it is set.
+    // (A flag, not a Flow variant, because exceptions cross function-call
+    // boundaries where the call returns a JSValue, not a Flow.)
+    throwing: bool,
+    thrownValue: JSValue,
     allocSinceGc: i64,
     gcThreshold: i64,
     gcRuns: i64,
@@ -64,17 +70,17 @@ struct Interp {
 
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
-    if st.objFreeList.len() > 0 {
-        let idx = st.objFreeList.pop()
-        st.objects[idx] = JSObj {
-            props: Vec.new(), elems: Vec.new(), isArray: isArray, mark: false, free: false
-        }
-        return idx
-    }
-    st.objects.push(JSObj {
+    let obj = JSObj {
         props: Vec.new(), elems: Vec.new(), isArray: isArray, mark: false, free: false
     }
-    )
+    // reuse a freed slot if one exists (indices are stable — handles hold them),
+    // otherwise grow the arena
+    if st.objFreeList.len() > 0 {
+        let idx = st.objFreeList.pop()
+        st.objects[idx] = obj
+        return idx
+    }
+    st.objects.push(obj)
     return st.objects.len() - 1
 }
 
@@ -168,17 +174,15 @@ fn arrPush(st: &mut Interp, obj: i64, value: JSValue) {
 
 fn newScope(st: &mut Interp, parent: i64): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
-    if st.freeList.len() > 0 {
-        let idx = st.freeList.pop()
-        st.scopes[idx] = Scope {
-            parent: parent, vars: Vec.new(), mark: false
-        }
-        return idx
-    }
-    st.scopes.push(Scope {
+    let sc = Scope {
         parent: parent, vars: Vec.new(), mark: false
     }
-    )
+    if st.freeList.len() > 0 {
+        let idx = st.freeList.pop()
+        st.scopes[idx] = sc
+        return idx
+    }
+    st.scopes.push(sc)
     return st.scopes.len() - 1
 }
 
@@ -299,6 +303,10 @@ fn collect(st: &mut Interp) {
         let tv = cloneValue(st.tempRoots[t])
         markValue(st, tv)
         t = t + 1
+    }
+    if st.throwing {
+        let tv = cloneValue(st.thrownValue)
+        markValue(st, tv)
     }
     var freed: i64 = 0
     var s: i64 = 0
