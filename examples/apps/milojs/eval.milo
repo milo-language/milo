@@ -21,7 +21,7 @@ from "std/io" import {
     readFile
 }
 from "./modules" import {
-    dirOf, resolveSpec, findModule
+    dirOf, resolveSpec, findModule, reportUnresolved
 }
 from "std/os" import {
     exit
@@ -318,6 +318,12 @@ fn setMemberDyn(prog: &Prog, o: i64, key: string, v: JSValue, st: &mut Interp) {
         let _ = callValue(prog, sfn, args, JSValue.Obj(o), st)
         return
     }
+    // a getter with no setter: writing is a silent no-op in sloppy mode, and
+    // must not replace the accessor with a plain data property
+    let own = objOwnIndex(st, o, key)
+    if own >= 0 && st.objects[o].props[own].isAccessor {
+        return
+    }
     setMember(st, o, key, v)
 }
 
@@ -347,6 +353,10 @@ fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
         let ai = asArrayIndex(key)
         if ai >= 0 {
             arrSet(st, o, ai, value)
+            return
+        }
+        if key == "length" {
+            setArrayLength(st, o, toNum(value) as i64)
             return
         }
     }
@@ -512,6 +522,7 @@ let NATIVE_SET_INTERVAL: i64 = 63
 let NATIVE_CLEAR_TIMER: i64 = 64
 let NATIVE_SET_IMMEDIATE: i64 = 65
 let NATIVE_QUEUE_MICROTASK: i64 = 66
+let NATIVE_ARRAY_CTOR: i64 = 67
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -1514,6 +1525,9 @@ fn runModule(prog: &Prog, idx: i64, st: &mut Interp): JSValue {
 
     st.modDirStack.push(dir)
     let blk = st.modBlocks[idx]
+    // a module body is function-like: its vars and function declarations hoist
+    // to the module scope
+    hoistBlock(prog, blk, st, modScope)
     execBlock(prog, blk, st, modScope)
     let _ = st.modDirStack.pop()
     popActive(st)
@@ -1535,7 +1549,7 @@ fn requireModule(prog: &Prog, spec: &string, st: &mut Interp): JSValue {
     if path.len() == 0 {
         // relative and node_modules specifiers resolve; what lands here is a node
         // builtin (path/fs/http/...) which still needs a shim module
-        eprint("milojs: cannot resolve '" + spec + "' — no such package, and node builtin modules are not implemented yet")
+        reportUnresolved(st, spec)
         return JSValue.Undefined
     }
     let idx = findModule(st, path)
@@ -1689,7 +1703,21 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "WeakMap", JSValue.Native(NATIVE_MAP))
     scopeDefine(st, 0, "Set", JSValue.Native(NATIVE_SET))
     scopeDefine(st, 0, "WeakSet", JSValue.Native(NATIVE_SET))
+    // Array.prototype.<m> as a bound-method value, so the ES5 idiom
+    // Array.prototype.slice.call(arguments) resolves
+    let arrayProto = newObject(st)
+    objSet(st, arrayProto, "slice", makeBoundMethod(st, JSValue.Undefined, "slice"))
+    objSet(st, arrayProto, "map", makeBoundMethod(st, JSValue.Undefined, "map"))
+    objSet(st, arrayProto, "filter", makeBoundMethod(st, JSValue.Undefined, "filter"))
+    objSet(st, arrayProto, "forEach", makeBoundMethod(st, JSValue.Undefined, "forEach"))
+    objSet(st, arrayProto, "indexOf", makeBoundMethod(st, JSValue.Undefined, "indexOf"))
+    objSet(st, arrayProto, "join", makeBoundMethod(st, JSValue.Undefined, "join"))
+    objSet(st, arrayProto, "push", makeBoundMethod(st, JSValue.Undefined, "push"))
+    objSet(st, arrayProto, "concat", makeBoundMethod(st, JSValue.Undefined, "concat"))
     let arrayCtor = newObject(st)
+    st.objects[arrayCtor].isFunctionLike = true
+    objSet(st, arrayCtor, "prototype", JSValue.Obj(arrayProto))
+    st.arrayCtorObj = arrayCtor
     objSet(st, arrayCtor, "isArray", JSValue.Native(NATIVE_ARRAY_ISARRAY))
     objSet(st, arrayCtor, "from", JSValue.Native(NATIVE_ARRAY_FROM))
     scopeDefine(st, 0, "Array", JSValue.Obj(arrayCtor))
@@ -1960,6 +1988,10 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     let statics = getFuncStatics(st, fIdx)
                     return getMember(st, statics, name)
                 }
+                JSValue.Native(nid) => {
+                    let bag = getNativeProps(st, nid)
+                    return getMember(st, bag, name)
+                }
                 _ => {
                     return JSValue.Undefined
                 }
@@ -2001,6 +2033,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             match ov {
                 JSValue.Obj(o) => {
                     setMemberDyn(prog, o, key, cloneValue(v), st)
+                }
+                JSValue.Native(nid) => {
+                    // assigning onto a builtin constructor, e.g.
+                    // Error.captureStackTrace = fn
+                    let bag = getNativeProps(st, nid)
+                    objSet(st, bag, key, cloneValue(v))
                 }
                 _ => {
                 }
@@ -2106,6 +2144,11 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             // resolve/reject pair bound to the new promise. Handled here rather
             // than in callNative because the executor is a user function and
             // needs the program to run.
+            let ah = objHandle(calleeVal)
+            if ah >= 0 && st.arrayCtorObj >= 0 && ah == st.arrayCtorObj {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                return makeArrayFromCtor(st, argVals)
+            }
             let ph = objHandle(calleeVal)
             if ph >= 0 && isPromiseCtor(st, ph) {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
@@ -2203,11 +2246,23 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         Expr.RegexLit(pat, flags) => {
             return makeRegex(st, pat, flags)
         }
+        Expr.OptIndex(objIdx, keyIdx) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            let o = objHandle(ov)
+            if o < 0 {
+                // null/undefined base short-circuits to undefined
+                return JSValue.Undefined
+            }
+            pushTemp(st, cloneValue(ov))
+            let kv = evalExpr(prog, keyIdx, st, scope)
+            popTemp(st)
+            return getMemberDyn(prog, o, toStr(kv), st)
+        }
         Expr.OptMember(objIdx, name) => {
             let ov = evalExpr(prog, objIdx, st, scope)
             match ov {
                 JSValue.Obj(o) => {
-                    return getMember(st, o, name)
+                    return getMemberDyn(prog, o, name, st)
                 }
                 JSValue.Str(s) => {
                     if name == "length" {
@@ -2373,6 +2428,17 @@ fn inspectTop(st: &Interp, v: &JSValue): string {
 // Invoke a Milo-level JS function: a fresh scope off the closure's captured env,
 // with `this` and the parameters bound, then run the body. argVals is consumed.
 fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
+    // Without this, runaway recursion exhausts the native stack and the process
+    // dies with no JS-level error — express's error middleware expects a
+    // catchable RangeError instead.
+    // 2000 was too deep: each JS frame costs several native Milo frames, so the
+    // real stack ran out before the guard fired
+    if st.callDepth >= 400 {
+        st.throwing = true
+        st.thrownValue = makeError(st, "RangeError", "Maximum call stack size exceeded")
+        return JSValue.Undefined
+    }
+    st.callDepth = st.callDepth + 1
     let callScope = newScope(st, envIdx)
     // root the frame across the whole call so a GC inside the body (or a nested
     // call) can't reclaim it
@@ -2421,8 +2487,11 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
         scopeDefine(st, callScope, "arguments", JSValue.Obj(argsArr))
     }
     let body = prog.funcs[fIdx].body
+    // `var`s and nested function declarations belong to the whole call frame
+    hoistBlock(prog, body, st, callScope)
     let flow = execBlock(prog, body, st, callScope)
     popActive(st)
+    st.callDepth = st.callDepth - 1
     var result = JSValue.Undefined
     match flow {
         Flow.Ret(v) => {
@@ -2468,6 +2537,9 @@ fn describeCallee(prog: &Prog, calleeIdx: i64): string {
         }
         Expr.OptMember(_o, n) => {
             return "?." + n.clone()
+        }
+        Expr.OptIndex(_o, _k) => {
+            return "?.[]"
         }
         _ => {
             return "value"
@@ -2746,6 +2818,31 @@ fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
             return JSValue.Bool(false)
         }
     }
+}
+
+// new Array(n) preallocates n holes; new Array(a, b, ...) is a literal list.
+fn makeArrayFromCtor(st: &mut Interp, argVals: &Vec<JSValue>): JSValue {
+    let arr = newArray(st)
+    if argVals.len() == 1 {
+        match cloneValue(argVals[0]) {
+            JSValue.Number(n) => {
+                var i: i64 = 0
+                while i < (n as i64) {
+                    arrPush(st, arr, JSValue.Undefined)
+                    i = i + 1
+                }
+                return JSValue.Obj(arr)
+            }
+            _ => {
+            }
+        }
+    }
+    var k: i64 = 0
+    while k < argVals.len() {
+        arrPush(st, arr, cloneValue(argVals[k]))
+        k = k + 1
+    }
+    return JSValue.Obj(arr)
 }
 
 fn isSuperName(name: &string): bool {
@@ -3674,7 +3771,9 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 popTemp(st)
                 return r
             }
-            let m = getMember(st, o, name)
+            // getMemberDyn so a property whose value comes from a getter is
+            // callable, e.g. Object.defineProperty(o, "fn", { get: () => f })
+            let m = getMemberDyn(prog, o, name, st)
             match m {
                 JSValue.Func(fIdx, envIdx) => {
                     let argVals = evalArgs(prog, argsIdx, st, scope)
@@ -3697,6 +3796,12 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
         }
         JSValue.Native(nid) => {
             // statics hanging off a native constructor, e.g. String.fromCharCode
+            let bag = getNativeProps(st, nid)
+            let assigned = getMember(st, bag, name)
+            if isCallable(assigned) {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                return callValue(prog, assigned, argVals, JSValue.Native(nid), st)
+            }
             if nid == NATIVE_DATE && st.dateCtorProps >= 0 {
                 let m = getMember(st, st.dateCtorProps, name)
                 if isCallable(m) {
@@ -3912,6 +4017,11 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                         let argVals = evalArgs(prog, argsIdx, st, scope)
                         return callValue(prog, JSValue.Obj(bo), argVals, JSValue.Undefined, st)
                     }
+                    // Array(n) without `new` behaves identically to new Array(n)
+                    if st.arrayCtorObj >= 0 && bo == st.arrayCtorObj {
+                        let argVals = evalArgs(prog, argsIdx, st, scope)
+                        return makeArrayFromCtor(st, argVals)
+                    }
                     print("milojs: TypeError: " + describeCallee(prog, calleeIdx) + " is not a function")
                     return JSValue.Undefined
                 }
@@ -4115,6 +4225,24 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                             vals.push(arrGet(st, o, e))
                             e = e + 1
                         }
+                    } else if st.objects[o].isMap || st.objects[o].isSet {
+                        // a Map yields [key, value] pairs; a Set yields values
+                        iterable = true
+                        let isSet = st.objects[o].isSet
+                        var e: i64 = 0
+                        while e < st.objects[o].mapKeys.len() {
+                            if isSet {
+                                vals.push(cloneValue(st.objects[o].mapKeys[e]))
+                            } else {
+                                let pair = newArray(st)
+                                pushTemp(st, JSValue.Obj(pair))
+                                arrPush(st, pair, cloneValue(st.objects[o].mapKeys[e]))
+                                arrPush(st, pair, cloneValue(st.objects[o].mapVals[e]))
+                                popTemp(st)
+                                vals.push(JSValue.Obj(pair))
+                            }
+                            e = e + 1
+                        }
                     }
                 }
                 JSValue.Str(s) => {
@@ -4228,7 +4356,13 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                 let name = prog.declLists[listIdx][i].name.clone()
                 let initIdx = prog.declLists[listIdx][i].init
                 let v = evalExpr(prog, initIdx, st, scope)
-                scopeDefine(st, scope, name, v)
+                if prog.declLists[listIdx][i].isVar {
+                    // `var` was already bound in the function scope by hoisting;
+                    // assign there rather than shadowing it in this block
+                    scopeAssign(st, scope, name, v)
+                } else {
+                    scopeDefine(st, scope, name, v)
+                }
                 i = i + 1
             }
             return Flow.Normal
@@ -4279,8 +4413,25 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
             // leak, and closures made per-iteration capture it
             let loopScope = newScope(st, scope)
             pushActive(st, loopScope)
+            var letNames: Vec<string> = Vec.new()
             if init >= 0 {
                 execStmt(prog, init, st, loopScope)
+                // names the init clause declared with let/const need re-binding
+                // per iteration
+                let initNode = getStmt(prog, init)
+                match initNode {
+                    Stmt.MultiDecl(listIdx) => {
+                        var di: i64 = 0
+                        while di < prog.declLists[listIdx].len() {
+                            if !prog.declLists[listIdx][di].isVar {
+                                letNames.push(prog.declLists[listIdx][di].name.clone())
+                            }
+                            di = di + 1
+                        }
+                    }
+                    _ => {
+                    }
+                }
             }
             var looping = true
             while looping {
@@ -4295,7 +4446,29 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                     if !run || st.throwing {
                         looping = false
                     } else {
-                        let flow = execStmt(prog, body, st, loopScope)
+                        // `for (let i ...)` gives each iteration its own binding,
+                        // so a closure made in the body captures that iteration's
+                        // value rather than the final one
+                        var bodyScope = loopScope
+                        if letNames.len() > 0 {
+                            bodyScope = newScope(st, loopScope)
+                            pushActive(st, bodyScope)
+                            var li: i64 = 0
+                            while li < letNames.len() {
+                                scopeDefine(st, bodyScope, letNames[li].clone(), scopeLookup(st, loopScope, letNames[li]))
+                                li = li + 1
+                            }
+                        }
+                        let flow = execStmt(prog, body, st, bodyScope)
+                        if letNames.len() > 0 {
+                            // copy back so the update clause sees the body's writes
+                            var lo: i64 = 0
+                            while lo < letNames.len() {
+                                scopeAssign(st, loopScope, letNames[lo].clone(), scopeLookup(st, bodyScope, letNames[lo]))
+                                lo = lo + 1
+                            }
+                            popActive(st)
+                        }
                         var broke = false
                         match flow {
                             Flow.Ret(v) => {
@@ -4362,37 +4535,89 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
     }
 }
 
-fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
+// Bind `var` declarations and function declarations for a whole function body
+// before it runs. JS hoists both to the function scope through arbitrary
+// nesting, so this walks into blocks, loops, if/else, switch and try — unlike
+// let/const, which stay in the block they are written in.
+fn hoistBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64) {
+    var i: i64 = 0
     let n = prog.blocks[blockIdx].len()
-    // Hoisting: function declarations are bound before any statement runs, and
-    // `var`s are pre-bound as undefined. Mutually recursive helpers and any call
-    // that precedes its declaration depend on this.
-    var h: i64 = 0
-    while h < n {
-        let hIdx = prog.blocks[blockIdx][h]
-        let hNode = getStmt(prog, hIdx)
-        match hNode {
-            Stmt.FuncDecl(fIdx) => {
-                let fname = prog.funcs[fIdx].name.clone()
-                if fname.len() > 0 {
-                    scopeDefine(st, scope, fname, JSValue.Func(fIdx, scope))
-                }
+    while i < n {
+        hoistStmt(prog, prog.blocks[blockIdx][i], st, scope)
+        i = i + 1
+    }
+}
+
+fn hoistStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64) {
+    if idx < 0 {
+        return
+    }
+    let node = getStmt(prog, idx)
+    match node {
+        Stmt.FuncDecl(fIdx) => {
+            let fname = prog.funcs[fIdx].name.clone()
+            if fname.len() > 0 {
+                scopeDefine(st, scope, fname, JSValue.Func(fIdx, scope))
             }
-            Stmt.MultiDecl(listIdx) => {
-                var d: i64 = 0
-                while d < prog.declLists[listIdx].len() {
+        }
+        Stmt.MultiDecl(listIdx) => {
+            var d: i64 = 0
+            while d < prog.declLists[listIdx].len() {
+                if prog.declLists[listIdx][d].isVar {
                     let dname = prog.declLists[listIdx][d].name.clone()
                     if dname.len() > 0 && !scopeHasOwn(st, scope, dname) {
                         scopeDefine(st, scope, dname, JSValue.Undefined)
                     }
-                    d = d + 1
                 }
-            }
-            _ => {
+                d = d + 1
             }
         }
-        h = h + 1
+        Stmt.Block(b) => {
+            hoistBlock(prog, b, st, scope)
+        }
+        Stmt.If(_c, thenS, elseS) => {
+            hoistStmt(prog, thenS, st, scope)
+            hoistStmt(prog, elseS, st, scope)
+        }
+        Stmt.While(_c, body) => {
+            hoistStmt(prog, body, st, scope)
+        }
+        Stmt.DoWhile(body, _c) => {
+            hoistStmt(prog, body, st, scope)
+        }
+        Stmt.For(init, _c, _u, body) => {
+            hoistStmt(prog, init, st, scope)
+            hoistStmt(prog, body, st, scope)
+        }
+        Stmt.ForIn(_nm, _o, body) => {
+            hoistStmt(prog, body, st, scope)
+        }
+        Stmt.ForOf(_nm, _o, body) => {
+            hoistStmt(prog, body, st, scope)
+        }
+        Stmt.Try(tryB, _p, catchB, finallyB) => {
+            hoistBlock(prog, tryB, st, scope)
+            if catchB >= 0 {
+                hoistBlock(prog, catchB, st, scope)
+            }
+            if finallyB >= 0 {
+                hoistBlock(prog, finallyB, st, scope)
+            }
+        }
+        Stmt.Switch(_d, casesIdx) => {
+            var c: i64 = 0
+            while c < prog.switches[casesIdx].len() {
+                hoistBlock(prog, prog.switches[casesIdx][c].body, st, scope)
+                c = c + 1
+            }
+        }
+        _ => {
+        }
     }
+}
+
+fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
+    let n = prog.blocks[blockIdx].len()
     var j: i64 = 0
     while j < n {
         // statement boundary = the only GC safepoint (no closure in-flight, all

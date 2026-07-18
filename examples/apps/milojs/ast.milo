@@ -43,6 +43,8 @@ enum Expr {
     OptMember(i64, string),
     // class expression: index into prog.classes
     ClassExpr(i64),
+    // a?.[k] — computed sibling of OptMember
+    OptIndex(i64, i64),
 }
 
 // One key/value pair in an object literal; val is an expr index.
@@ -103,6 +105,9 @@ struct FuncDef {
 struct DeclItem {
     name: string,
     init: i64,
+    // `var` hoists to the enclosing function and has no per-iteration binding;
+    // let/const do neither, so the distinction has to survive parsing
+    isVar: bool,
 }
 
 // One `name() {}` inside a class body. Statics hang off the constructor, the
@@ -220,6 +225,9 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.ClassExpr(idx) => {
             return Expr.ClassExpr(idx)
+        }
+        Expr.OptIndex(o, k) => {
+            return Expr.OptIndex(o, k)
         }
         Expr.OptMember(obj, name) => {
             return Expr.OptMember(obj, name.clone())

@@ -106,6 +106,35 @@ fn expect(p: &mut PState, kind: i32) {
     }
 }
 
+// Is the parser at a point where a statement may legally end? JS accepts an
+// explicit `;`, the `}` closing the enclosing block, end of input, or a line
+// break before the next token (automatic semicolon insertion). Anything else
+// means the statement ran into a token that does not belong to it.
+fn atStatementEnd(p: &PState): bool {
+    let k = peekKind(p)
+    if k == T_SEMI || k == T_RBRACE || k == T_EOF {
+        return true
+    }
+    if p.pos < p.toks.len() {
+        return p.toks[p.pos].nlBefore
+    }
+    return true
+}
+
+// Report a token that has no business continuing the current statement.
+fn expectStatementEnd(p: &mut PState) {
+    if atStatementEnd(p) {
+        return
+    }
+    if p.errored {
+        return
+    }
+    p.errored = true
+    if !p.quiet {
+        eprint("milojs: " + p.file + ": unexpected " + tokenDesc(p, p.pos) + " after declaration\n  " + tokenContext(p))
+    }
+}
+
 // A template literal desugars to string concatenation, starting from a string
 // chunk so the whole chain coerces to string: `a${x}b` → "a" + x + "b".
 fn parseTemplate(p: &mut PState, prog: &mut Prog): i64 {
@@ -1176,6 +1205,7 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
                 }
             }
         }
+        expectStatementEnd(p)
         if peekKind(p) == T_SEMI {
             advance(p)
         }

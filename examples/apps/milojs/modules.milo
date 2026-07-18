@@ -161,7 +161,7 @@ fn reportUnresolved(st: &mut Interp, spec: &string) {
         i = i + 1
     }
     st.reportedMissing.push(spec.clone())
-    reportUnresolved(st, spec)
+    eprint("milojs: cannot resolve '" + spec + "' — no such package, and node builtin modules are not implemented yet")
 }
 
 fn isBuiltinPath(path: &string): bool {

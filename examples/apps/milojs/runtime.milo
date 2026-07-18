@@ -171,14 +171,23 @@ struct Interp {
     promiseCtorObj: i64,
     // property bag for statics on the String constructor (fromCharCode)
     stringCtorProps: i64,
+    // nativeId -> property object, so `Error.captureStackTrace = fn` sticks;
+    // natives otherwise have nowhere to hold assigned properties
+    nativeProps: Vec<i64>,
     // property bag for statics on the Date constructor (Date.now)
     dateCtorProps: i64,
+    // the Array constructor object, so `new Array(n)` is recognised
+    arrayCtorObj: i64,
     // monotonic counter behind Symbol(); symbols are unique strings here
     symbolCounter: i64,
     // the event loop: microtasks drain to empty before any timer fires
     timers: Vec<Timer>,
     microtasks: Vec<Microtask>,
     nextTimerId: i64,
+    // native recursion depth, so runaway recursion throws instead of crashing
+    callDepth: i64,
+    // module specifiers already reported as unresolvable, to avoid repeats
+    reportedMissing: Vec<string>,
     gcThreshold: i64,
     gcRuns: i64,
     gcStats: bool,
@@ -299,6 +308,21 @@ fn objDefineAccessor(st: &mut Interp, obj: i64, key: string, getter: JSValue, se
 
 // Remove an own property. An array index becomes a hole (undefined) rather than
 // shifting the remaining elements, matching JS.
+// Writing array.length truncates or extends with holes; JS treats it as a real
+// operation, and `arr.length = 0` is the standard way to clear an array.
+fn setArrayLength(st: &mut Interp, obj: i64, n: i64) {
+    var target = n
+    if target < 0 {
+        target = 0
+    }
+    while st.objects[obj].elems.len() > target {
+        let _ = st.objects[obj].elems.pop()
+    }
+    while st.objects[obj].elems.len() < target {
+        st.objects[obj].elems.push(JSValue.Undefined)
+    }
+}
+
 fn objDeleteKey(st: &mut Interp, obj: i64, key: &string) {
     if st.objects[obj].isArray {
         let ai = asArrayIndex(key)
@@ -392,6 +416,18 @@ fn objHas(st: &Interp, o: i64, key: &string): bool {
 // (a GC root via funcProtos). Grows the sparse map as needed.
 // Property bag for a function's own (static) properties. Separate from
 // funcProtos, which holds what instances inherit.
+// Lazily created property bag for a native constructor.
+fn getNativeProps(st: &mut Interp, nativeId: i64): i64 {
+    while st.nativeProps.len() <= nativeId {
+        st.nativeProps.push(-1)
+    }
+    if st.nativeProps[nativeId] < 0 {
+        let o = newObject(st)
+        st.nativeProps[nativeId] = o
+    }
+    return st.nativeProps[nativeId]
+}
+
 fn getFuncStatics(st: &mut Interp, fnIdx: i64): i64 {
     while st.funcStatics.len() <= fnIdx {
         st.funcStatics.push(-1)
@@ -659,6 +695,14 @@ fn collect(st: &mut Interp) {
             markObject(st, st.microtasks[mt].derived)
         }
         mt = mt + 1
+    }
+    // native-constructor property bags are roots too
+    var np: i64 = 0
+    while np < st.nativeProps.len() {
+        if st.nativeProps[np] >= 0 {
+            markObject(st, st.nativeProps[np])
+        }
+        np = np + 1
     }
     // as are static-property bags
     var fs: i64 = 0

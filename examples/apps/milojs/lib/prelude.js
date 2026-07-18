@@ -111,6 +111,16 @@ Promise.any = function (items) {
   });
 };
 
+// --- Error.captureStackTrace ------------------------------------------------
+// A V8 extension that express, depd and debug all call. There are no stack
+// frames to capture here, so record an empty trace rather than failing.
+Error.captureStackTrace = function (target, ctor) {
+  if (target && typeof target === 'object') target.stack = '';
+  return undefined;
+};
+Error.prepareStackTrace = undefined;
+Error.stackTraceLimit = 10;
+
 // --- globalThis ------------------------------------------------------------
 // Not a real global object (there is no property bag behind the scope chain),
 // but code that only reads well-known globals off it works.
