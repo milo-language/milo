@@ -32,7 +32,7 @@ from "std/fs" import {
     isFile, isDir, fileSizePath
 }
 from "std/net" import {
-    TcpListener
+    TcpListener, fetchWith, FetchOptions, NetError, Response
 }
 from "std/args" import {
     args
@@ -245,6 +245,77 @@ fn nativeFileSize(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arg
     }
 }
 
+fn netErrString(e: &NetError): string {
+    match e {
+        NetError.DnsFailure(m) => {
+            return "dns: " + m.clone()
+        }
+        NetError.ConnectionFailed(m) => {
+            return "connect: " + m.clone()
+        }
+        NetError.TlsError(m) => {
+            return "tls: " + m.clone()
+        }
+        NetError.SendFailed(m) => {
+            return "send: " + m.clone()
+        }
+        NetError.Other(m) => {
+            return m.clone()
+        }
+    }
+}
+
+// Set one property on a JS object from Milo.
+fn setObjProp(ctx: *u8, obj: *u8, name: string, val: *u8): void {
+    unsafe {
+        let n = JSStringCreateWithUTF8CString(name)
+        JSObjectSetProperty(ctx, obj, n, val, 0 as u32, 0 as *u8)
+        JSStringRelease(n)
+    }
+}
+
+// __fetch(url, method, headers, body) -> { status, headers, body } | { status:0, error }.
+// Blocking: does the whole HTTPS request synchronously via std/net (which links the system
+// OpenSSL). The JS `fetch` shim wraps this in a Promise + Response — see moduleBootstrap.
+fn nativeFetch(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        let obj = JSObjectMake(ctx, 0 as *u8, 0 as *u8)
+        if argCount < 1 {
+            setObjProp(ctx, obj, "status", JSValueMakeNumber(ctx, 0.0))
+            setObjProp(ctx, obj, "error", jsString(ctx, "fetch: missing url"))
+            return obj
+        }
+        let url = jsToString(ctx, loadPtr(arguments))
+        var method = "GET"
+        var headers = ""
+        var body = ""
+        if argCount >= 2 {
+            method = jsToString(ctx, loadPtr((arguments as i64 + 8) as *u8))
+        }
+        if argCount >= 3 {
+            headers = jsToString(ctx, loadPtr((arguments as i64 + 16) as *u8))
+        }
+        if argCount >= 4 {
+            body = jsToString(ctx, loadPtr((arguments as i64 + 24) as *u8))
+        }
+        let opts = FetchOptions {
+            method: method, headers: headers, body: body
+        }
+        match fetchWith(url, opts) {
+            Result.Ok(resp) => {
+                setObjProp(ctx, obj, "status", JSValueMakeNumber(ctx, (resp.status) as f64))
+                setObjProp(ctx, obj, "headers", jsString(ctx, resp.headers.clone()))
+                setObjProp(ctx, obj, "body", jsString(ctx, resp.body.clone()))
+            }
+            Result.Err(e) => {
+                setObjProp(ctx, obj, "status", JSValueMakeNumber(ctx, 0.0))
+                setObjProp(ctx, obj, "error", jsString(ctx, netErrString(e)))
+            }
+        }
+        return obj
+    }
+}
+
 // The server accept loop — run from main() at the TOP LEVEL (not nested inside the entry
 // eval), so each `handler(reqText)` call is an outermost JSC API entry: JSC drains the
 // microtask queue when it returns, running any async route continuations, so `__mbGetRaw`
@@ -439,6 +510,9 @@ fn moduleBootstrap(): string {
     "  if(!globalThis.Buffer){ function Buffer2(a,b){ if(typeof a==='number') return Buffer2.alloc(a); if(a!=null) return Buffer2.from(a,b); return Buffer2.from([]); } Buffer2.from=function(x){ if(typeof x==='string'){ var a=[]; for(var i=0;i<x.length;i++) a.push(x.charCodeAt(i)&0xff); a._str=x; a.toString=function(){ return this._str; }; return a; } if(Array.isArray(x)){ x.toString=function(){ var s=''; for(var i=0;i<this.length;i++) s+=String.fromCharCode(this[i]); return s; }; return x; } return x; }; Buffer2.alloc=function(n,f){ var a=[]; for(var i=0;i<n;i++) a.push(f||0); a._str=''; a.toString=function(){ return this._str; }; return a; }; Buffer2.isBuffer=function(x){ return Array.isArray(x)&&x._str!==undefined; }; Buffer2.concat=function(list){ var s=''; for(var i=0;i<list.length;i++) s+=(list[i]&&list[i].toString?list[i].toString():''); return Buffer2.from(s); }; Buffer2.byteLength=function(s){ return String(s).length; }; globalThis.Buffer=Buffer2; }\n" +
     "  builtins.buffer={ Buffer:globalThis.Buffer, kMaxLength:2147483647, constants:{ MAX_LENGTH:2147483647 }, SlowBuffer:globalThis.Buffer, INSPECT_MAX_BYTES:50 };\n" +
     "  builtins.compression=function(){ var mw=function(req,res,next){ res.flush=res.flush||function(){}; if(typeof next==='function') next(); }; mw.filter=function(){ return false; }; return mw; };\n" +
+    "  if(!globalThis.fetch){ function __hdrLines(h){ if(!h) return ''; var out=[]; if(typeof h.entries==='function'){ var es=h.entries(); for(var i=0;i<es.length;i++){ var k=String(es[i][0]).toLowerCase(); if(k==='host'||k==='content-length'||k==='connection') continue; out.push(es[i][0]+': '+es[i][1]); } } else { for(var k in h){ if(!h.hasOwnProperty(k)) continue; var kl=k.toLowerCase(); if(kl==='host'||kl==='content-length'||kl==='connection') continue; out.push(k+': '+h[k]); } } return out.join('\\r\\n'); }\n" +
+    "    globalThis.fetch=function(url, opts){ opts=opts||{}; try{ var method=String(opts.method||'GET').toUpperCase(); var headers=__hdrLines(opts.headers); var body=(opts.body!=null)?(typeof opts.body==='string'?opts.body:String(opts.body)):''; var raw=__fetch(String(url), method, headers, body); if(!raw){ return Promise.reject(new Error('fetch failed: null response ('+url+')')); } if(raw.error){ var er=new Error('fetch failed: '+raw.error+' ('+url+')'); er.code=raw.error; return Promise.reject(er); } var hm={}; String(raw.headers||'').split('\\r\\n').forEach(function(l){ var i=l.indexOf(':'); if(i>0) hm[l.slice(0,i).trim().toLowerCase()]=l.slice(i+1).trim(); }); var bodyStr=raw.body||''; var res={ status:raw.status, statusText:'', ok:(raw.status>=200&&raw.status<300), url:String(url), redirected:false, type:'basic', bodyUsed:false, headers:{ get:function(n){ var v=hm[String(n).toLowerCase()]; return v===undefined?null:v; }, has:function(n){ return hm[String(n).toLowerCase()]!==undefined; }, forEach:function(cb){ for(var k in hm) cb(hm[k],k,this); }, entries:function(){ var a=[]; for(var k in hm) a.push([k,hm[k]]); return a; }, keys:function(){ return Object.keys(hm); } }, text:function(){ this.bodyUsed=true; return Promise.resolve(bodyStr); }, json:function(){ this.bodyUsed=true; try{ return Promise.resolve(JSON.parse(bodyStr)); }catch(e){ return Promise.reject(e); } }, arrayBuffer:function(){ this.bodyUsed=true; return Promise.resolve(bodyStr); }, blob:function(){ this.bodyUsed=true; return Promise.resolve(bodyStr); }, clone:function(){ return res; } }; return Promise.resolve(res); }catch(e){ return Promise.reject(e); } };\n" +
+    "    globalThis.Headers=globalThis.Headers||function(init){ var m={}; if(init){ if(typeof init.forEach==='function'&&!Array.isArray(init)){ init.forEach(function(v,k){ m[String(k).toLowerCase()]=v; }); } else if(Array.isArray(init)){ init.forEach(function(p){ m[String(p[0]).toLowerCase()]=p[1]; }); } else { for(var k in init){ if(init.hasOwnProperty(k)) m[k.toLowerCase()]=init[k]; } } } this.get=function(k){ var v=m[String(k).toLowerCase()]; return v===undefined?null:v; }; this.set=function(k,v){ m[String(k).toLowerCase()]=v; }; this.has=function(k){ return m[String(k).toLowerCase()]!==undefined; }; this.append=this.set; this['delete']=function(k){ delete m[String(k).toLowerCase()]; }; this.forEach=function(cb){ for(var k in m) cb(m[k],k,this); }; this.entries=function(){ var a=[]; for(var k in m) a.push([k,m[k]]); return a; }; this.keys=function(){ return Object.keys(m); }; }; }\n" +
     "  if(globalThis.console){ var __c=globalThis.console; if(!__c.error)__c.error=__c.log; if(!__c.warn)__c.warn=__c.log; if(!__c.info)__c.info=__c.log; if(!__c.debug)__c.debug=__c.log; if(!__c.trace)__c.trace=__c.log; if(!__c.dir)__c.dir=__c.log; if(!__c.group)__c.group=function(){}; if(!__c.groupEnd)__c.groupEnd=function(){}; if(!__c.table)__c.table=__c.log; if(!__c.assert)__c.assert=function(){}; if(!__c.time)__c.time=function(){}; if(!__c.timeEnd)__c.timeEnd=function(){}; }\n" +
     "  var __envOverlay={}; var __env; try{ __env=new Proxy(__envOverlay,{ get:function(t,k){ if(Object.prototype.hasOwnProperty.call(t,k)) return t[k]; if(typeof k!=='string') return undefined; var v=__getenv(k); return v; }, set:function(t,k,v){ t[k]=(v==null?v:String(v)); return true; }, has:function(t,k){ if(Object.prototype.hasOwnProperty.call(t,k)) return true; return typeof k==='string' && __getenv(k)!==undefined; }, deleteProperty:function(t,k){ delete t[k]; return true; } }); }catch(e){ __env=__envOverlay; }\n" +
     "  if(!globalThis.process){ globalThis.process={ env:__env, argv:['minibun', __entryPath], platform:'darwin', arch:'arm64', version:'v18.0.0', versions:{node:'18.0.0'}, pid:1, title:'minibun', cwd:function(){ return dirname(__entryPath); }, nextTick:function(f){ var a=Array.prototype.slice.call(arguments,1); Promise.resolve().then(function(){ f.apply(null,a); }); }, on:function(){ return this; }, once:function(){ return this; }, emit:function(){ return false; }, exit:function(){}, hrtime:function(t){ return [0,0]; }, stdout:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } }, stderr:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } } }; }\n" +
@@ -483,6 +557,7 @@ fn main(): i32 {
         setGlobalFn(ctx, global, "__getenv", nativeGetenv as *u8)
         setGlobalFn(ctx, global, "__isDir", nativeIsDir as *u8)
         setGlobalFn(ctx, global, "__fileSize", nativeFileSize as *u8)
+        setGlobalFn(ctx, global, "__fetch", nativeFetch as *u8)
 
         // Hand the entry path to the bootstrap as a global, avoiding string-quoting in a
         // constructed launcher.
