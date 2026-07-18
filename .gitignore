@@ -90,3 +90,4 @@ tmp/
 # self-host stage binaries
 .selfhost/
 roms/
+.test-suite.lock

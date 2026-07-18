@@ -1,0 +1,3 @@
+[test]
+# Serialize test runs machine-wide — see tests/lock.ts (prevents concurrent-run thrash).
+preload = ["./tests/lock.ts"]
