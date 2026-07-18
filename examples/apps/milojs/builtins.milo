@@ -8,7 +8,19 @@ from "./value" import {
     JSValue
 }
 from "./runtime" import {
-    Interp
+    Interp, newObject, objSet
+}
+
+// A minimal error object (same shape makeError in eval.milo builds — that one
+// can't be imported here without a cycle).
+fn throwRange(st: &mut Interp, msg: string): JSValue {
+    let o = newObject(st)
+    st.objects[o].isError = true
+    objSet(st, o, "name", JSValue.Str("RangeError"))
+    objSet(st, o, "message", JSValue.Str(msg))
+    st.throwing = true
+    st.thrownValue = JSValue.Obj(o)
+    return JSValue.Undefined
 }
 
 fn isWs(c: u8): bool {
@@ -326,6 +338,11 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
     }
     if name == "padStart" || name == "padEnd" {
         let target = argNum(args, 0, 0)
+        // V8's string cap is 2^29; a huge pad request (str-pad-leak.js asks for
+        // 2^31) must throw, not grind through gigabytes of concatenation
+        if target > 536870888 {
+            return throwRange(st, "Invalid string length")
+        }
         var pad = " "
         if args.len() > 1 {
             pad = toStr(args[1])
