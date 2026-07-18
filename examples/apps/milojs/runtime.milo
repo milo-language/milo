@@ -198,6 +198,10 @@ struct Interp {
     // listening TCP sockets and accepted connections, addressed by index from JS
     // http.Server objects that are listening; the event loop services these
     httpServers: Vec<i64>,
+    // rejected promises nobody has handled yet — reported once the loop is idle
+    unhandledRejects: Vec<i64>,
+    // nested-drain await budget in ms (MILOJS_AWAIT_BUDGET_MS overrides)
+    awaitBudgetMs: f64,
     listeners: Vec<TcpListener>,
     conns: Vec<TcpStream>,
     connOpen: Vec<bool>,
@@ -236,6 +240,12 @@ fn newPromise(st: &mut Interp, state: i64, value: JSValue): i64 {
     let o = allocObj(st, false)
     st.objects[o].promiseState = state
     st.objects[o].promiseValue = value
+    // born rejected with no handlers — an async body that threw builds its
+    // result this way, bypassing settlePromise, so track it here or the
+    // rejection is silently droppable
+    if state == 2 {
+        st.unhandledRejects.push(o)
+    }
     return o
 }
 

@@ -2107,8 +2107,21 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     // the promise may be a temporary (await new Promise(...)),
                     // reachable from nothing while the drain runs user code
                     pushTemp(st, JSValue.Obj(po))
+                    // Budget: an unrelated interval keeps the loop runnable
+                    // forever, so "nothing runnable" alone cannot detect a stuck
+                    // await — the tahoeroads bundle hung silently for exactly
+                    // this reason (its 2s interval kept feeding the drain).
+                    // Node abandons the continuation instead; without coroutines
+                    // the honest alternative is a loud error after a deadline.
+                    let awaitDeadline = (epochMillis() as f64) + st.awaitBudgetMs
                     var spins: i64 = 0
                     while st.objects[po].promiseState == 0 && !st.throwing {
+                        if (epochMillis() as f64) > awaitDeadline {
+                            popTemp(st)
+                            st.throwing = true
+                            st.thrownValue = makeError(st, "TypeError", "await did not settle within budget — likely a promise nothing will ever resolve" + currentModule(st))
+                            return JSValue.Undefined
+                        }
                         if st.microtasks.len() > 0 {
                             drainMicrotasks(prog, st)
                         } else {
@@ -2116,7 +2129,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             if !runOneTimer(prog, st) {
                                 popTemp(st)
                                 st.throwing = true
-                                st.thrownValue = makeError(st, "TypeError", "await on a promise that can never settle (no pending work)")
+                                st.thrownValue = makeError(st, "TypeError", "await on a promise that can never settle (no pending work)" + currentModule(st))
                                 return JSValue.Undefined
                             }
                         }
@@ -2811,6 +2824,11 @@ fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
     }
     st.objects[p].promiseState = state
     st.objects[p].promiseValue = cloneValue(value)
+    if state == 2 && st.objects[p].reactions.len() == 0 {
+        // nobody is waiting on this rejection; report it when the loop idles
+        // unless a .catch attaches first
+        st.unhandledRejects.push(p)
+    }
     var i: i64 = 0
     while i < st.objects[p].reactions.len() {
         var handler = cloneValue(st.objects[p].reactions[i].onFulfilled)
@@ -2829,6 +2847,18 @@ fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
 // Make `derived` follow `source`: settle now if it already has, else register.
 fn adoptPromise(st: &mut Interp, derived: i64, source: i64) {
     let state = st.objects[source].promiseState
+    if state == 2 {
+        // the derived promise now observes the source's rejection
+        var kept: Vec<i64> = Vec.new()
+        var ki: i64 = 0
+        while ki < st.unhandledRejects.len() {
+            if st.unhandledRejects[ki] != source {
+                kept.push(st.unhandledRejects[ki])
+            }
+            ki = ki + 1
+        }
+        st.unhandledRejects = kept
+    }
     if state == 0 {
         st.objects[source].reactions.push(Reaction {
             onFulfilled: JSValue.Undefined, onRejected: JSValue.Undefined, derived: derived, isFinally: false
@@ -2845,6 +2875,21 @@ fn describeThrownValue(st: &Interp, v: &JSValue): string {
         return toStr(objGet(st, h, "name")) + ": " + toStr(objGet(st, h, "message"))
     }
     return toStr(v)
+}
+
+// Node reports (and by default dies on) rejections nothing handles; silently
+// dropping them turned a thrown await-deadline error into an invisible hang.
+fn reportUnhandledRejections(st: &mut Interp) {
+    var i: i64 = 0
+    while i < st.unhandledRejects.len() {
+        let p = st.unhandledRejects[i]
+        if isPromise(st, p) && st.objects[p].promiseState == 2 {
+            let v = cloneValue(st.objects[p].promiseValue)
+            eprint("Unhandled promise rejection: " + describeThrownValue(st, v))
+        }
+        i = i + 1
+    }
+    st.unhandledRejects = Vec.new()
 }
 
 fn drainMicrotasks(prog: &Prog, st: &mut Interp) {
@@ -2973,6 +3018,7 @@ fn runEventLoop(prog: &Prog, st: &mut Interp) {
     var going = true
     while going {
         drainMicrotasks(prog, st)
+        reportUnhandledRejections(st)
         compactTimers(st)
         // Order matters: run timers that are already due, then service a
         // listening server, and only sleep for a future timer when no server is
@@ -3492,6 +3538,17 @@ fn promiseMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): J
     }
     let derived = newPromise(st, 0, JSValue.Undefined)
     let state = st.objects[o].promiseState
+    if state == 2 {
+        var ki: i64 = 0
+        var kept: Vec<i64> = Vec.new()
+        while ki < st.unhandledRejects.len() {
+            if st.unhandledRejects[ki] != o {
+                kept.push(st.unhandledRejects[ki])
+            }
+            ki = ki + 1
+        }
+        st.unhandledRejects = kept
+    }
     if state == 0 {
         st.objects[o].reactions.push(Reaction {
             onFulfilled: onFul, onRejected: onRej, derived: derived, isFinally: isFinally
