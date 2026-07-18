@@ -175,6 +175,20 @@ fn objHandle(v: &JSValue): i64 {
 `milojs` now carries `objHandle` and `funcHandle` (`value.milo`) that exist purely
 to ask "what shape is this value" without consuming it. `JSValue` is matched
 constantly, so this recurs.
+
+**RESOLVED (verified 2026-07-18):** matching an owned enum local to inspect its
+shape no longer consumes it. Verified beyond what the fix claimed — it holds when
+the arm *binds* a Copy payload, not only when payloads are ignored with `_`:
+
+```milo
+enum V { A, S(string), N(i64) }
+let v = V.N(7)
+match v { V.N(x) => {...} _ => {} }
+match v { V.N(x) => {...} _ => {} }   // was: use of moved variable 'v'
+```
+
+`objHandle`/`funcHandle` remain in milojs because they read well at call sites,
+but they are no longer forced.
 **Cost:** boilerplate accessors, and the failure lands as "use of moved variable"
 far from the `match` that caused it.
 **Proposed fix:** allow `match` through a borrow — either implicitly when no arm
