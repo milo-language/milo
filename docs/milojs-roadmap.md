@@ -129,10 +129,15 @@ object with native-fn methods.
 `$3/$2/$1` date reformat). No C dependency. Represented as an `Obj` with a hidden `regexId`.
 Deferred: `/.../ ` literal lexing, `str.split(regex)`, backreferences, lookaround, named groups.
 
-**Highest-leverage next (from the other agent's QuickJS-corpus data — 67 files):** `let`/`const`
-multi-declarator (`let a, b`) blocks parsing on 72% of files; **arrow functions** `=>` on 46%.
-Those two are cheap parser work with outsized payoff for a real parity number. Then: template
-literals, spread/rest, destructuring, `class` sugar, generators, async.
+**Parser: arrows + let/const multi-declarator (b73b4b6), template literals + spread (this fire)** —
+all byte-identical to bun. The QuickJS corpus should now parse on most files.
+
+**Two-binary split (4be585e): `milojs-engine` (the engine) + `milojs` (the runtime).** Runtime has
+process/global; ran the tahoeroads express bundle → it's a CommonJS module (`require` ×15,
+`Object.defineProperty`, express/compression/trpc/prisma...). Booting it is the whole Stage-5
+runtime: **module loader (`require`) is the critical next build**, then `Object.defineProperty`,
+fs/http shims, and every npm package express pulls in (minibun spent many sessions on 20/21
+packages — same surface). Minor parser gaps left: comma operator, `void`/`delete`, `in`, bitwise.
 **Still open (runtime):** **Promises + async event model** (the big one, ties to the green
 scheduler), `switch`, `for...in`/`for...of`, bitwise ops in JS, real `===`. These + minibun's node
 shims are the Stage-5 path to booting minibun on the engine.
