@@ -121,6 +121,11 @@ Error.captureStackTrace = function (target, ctor) {
 Error.prepareStackTrace = undefined;
 Error.stackTraceLimit = 10;
 
+// --- Buffer -----------------------------------------------------------------
+// Node exposes Buffer as a global, not only via require('buffer'). express and
+// body-parser both reach for it directly.
+var Buffer = require('buffer').Buffer;
+
 // --- globalThis ------------------------------------------------------------
 // Not a real global object (there is no property bag behind the scope chain),
 // but code that only reads well-known globals off it works.

@@ -256,6 +256,14 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             return callValue(prog, m, args, JSValue.Obj(o), st)
         }
         JSValue.Func(bf, benv) => {
+            if name == "hasOwnProperty" {
+                var key = ""
+                if args.len() > 0 {
+                    key = toStr(args[0])
+                }
+                let statics = getFuncStatics(st, bf)
+                return JSValue.Bool(objOwnIndex(st, statics, key) >= 0)
+            }
             // Function.prototype.apply.call(fn, thisArg, args) lands here with
             // recv = fn: re-dispatch against the function itself
             if name == "call" || name == "apply" {
@@ -646,7 +654,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         let target = cloneValue(argVals[0])
         let key = toStr(argVals[1])
-        let o = objHandle(target)
+        let o = propertyBagOf(st, target)
         if o < 0 {
             return target
         }
@@ -809,7 +817,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         if argVals.len() < 2 {
             return JSValue.Undefined
         }
-        let o = objHandle(argVals[0])
+        let o = propertyBagOf(st, argVals[0])
         let descs = objHandle(argVals[1])
         if o < 0 || descs < 0 {
             return cloneValue(argVals[0])
@@ -864,7 +872,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     if id == NATIVE_OBJECT_GETOWNPROPNAMES {
         let arr = newArray(st)
         if argVals.len() > 0 {
-            let h = objHandle(argVals[0])
+            let h = propertyBagOf(st, argVals[0])
             if h >= 0 {
                 pushTemp(st, JSValue.Obj(arr))
                 if st.objects[h].isArray {
@@ -1179,7 +1187,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     }
     if id == NATIVE_OBJECT_GETPROTO {
         if argVals.len() > 0 {
-            let h = objHandle(argVals[0])
+            let h = propertyBagOf(st, argVals[0])
             if h >= 0 && st.objects[h].proto >= 0 {
                 return JSValue.Obj(st.objects[h].proto)
             }
@@ -1188,9 +1196,12 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     }
     if id == NATIVE_OBJECT_SETPROTO {
         if argVals.len() > 1 {
-            let h = objHandle(argVals[0])
+            // express's Router is a function whose prototype chain is set to the
+            // router proto object, so the bag a function's properties live in is
+            // what has to inherit
+            let h = propertyBagOf(st, argVals[0])
             if h >= 0 {
-                let p = objHandle(argVals[1])
+                let p = propertyBagOf(st, argVals[1])
                 st.objects[h].proto = p
             }
         }
@@ -1203,7 +1214,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         if argVals.len() < 2 {
             return JSValue.Undefined
         }
-        let h = objHandle(argVals[0])
+        let h = propertyBagOf(st, argVals[0])
         if h < 0 {
             return JSValue.Undefined
         }
@@ -1291,7 +1302,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         let arr = newArray(st)
         if argVals.len() > 0 {
             pushTemp(st, JSValue.Obj(arr))
-            match cloneValue(argVals[0]) {
+            match JSValue.Obj(propertyBagOf(st, argVals[0])) {
                 JSValue.Obj(o) => {
                     if st.objects[o].isArray {
                         var i: i64 = 0
@@ -2127,6 +2138,19 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 JSValue.Obj(o) => {
                     return getMemberDyn(prog, o, key, st)
                 }
+                JSValue.Func(fIdx, _fe) => {
+                    // computed read of a property assigned onto a function, e.g.
+                    // statuses[404] after statuses[code] = message
+                    if key == "prototype" {
+                        return JSValue.Obj(getFuncProto(st, fIdx))
+                    }
+                    let statics = getFuncStatics(st, fIdx)
+                    return getMember(st, statics, key)
+                }
+                JSValue.Native(nid) => {
+                    let bag = getNativeProps(st, nid)
+                    return getMember(st, bag, key)
+                }
                 JSValue.Str(s) => {
                     // s[i] → a single-character string (or undefined out of range)
                     let i = toNum(kv) as i64
@@ -2324,10 +2348,15 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     st.newTarget = JSValue.Undefined
                     popTemp(st)
                     popTemp(st)
-                    // a constructor that returns an object replaces the new instance
+                    // A constructor that returns an object OR a function replaces
+                    // the new instance. express's Router is a factory that returns
+                    // an inner function; discarding it yielded an empty object.
                     match result {
                         JSValue.Obj(r) => {
                             return JSValue.Obj(r)
+                        }
+                        JSValue.Func(rf, renv) => {
+                            return JSValue.Func(rf, renv)
                         }
                         _ => {
                             return JSValue.Obj(obj)
@@ -2873,7 +2902,7 @@ fn runOneTimer(prog: &Prog, st: &mut Interp): bool {
     }
     let _ = callValue(prog, cb, args, JSValue.Undefined, st)
     if st.throwing {
-        eprint("Uncaught (in timer) " + toStr(st.thrownValue))
+        eprint("Uncaught (in timer) " + describeThrownValue(st, st.thrownValue))
         st.throwing = false
         st.thrownValue = JSValue.Undefined
     }
@@ -2887,15 +2916,32 @@ fn runEventLoop(prog: &Prog, st: &mut Interp) {
     while going {
         drainMicrotasks(prog, st)
         compactTimers(st)
-        if !runOneTimer(prog, st) {
-            // No timers left. If an http server is listening, block accepting a
-            // connection; otherwise there is nothing left to do and the program
-            // is finished.
-            if !serveHttpOnce(prog, st) {
-                going = false
-            }
+        // Order matters: run timers that are already due, then service a
+        // listening server, and only sleep for a future timer when no server is
+        // waiting. Sleeping first would block accept() for the whole delay — a
+        // pending 9s timer made the server unreachable for 9s.
+        if runDueTimer(prog, st) {
+            // ran one; loop round
+        } else if serveHttpOnce(prog, st) {
+            // handled a connection (or found none ready)
+        } else if runOneTimer(prog, st) {
+            // nothing to serve, so waiting for the next timer is correct
+        } else {
+            going = false
         }
     }
+}
+
+// Run a timer only if it is already due; never sleeps.
+fn runDueTimer(prog: &Prog, st: &mut Interp): bool {
+    let idx = earliestTimer(st)
+    if idx < 0 {
+        return false
+    }
+    if st.timers[idx].dueMs > (epochMillis() as f64) {
+        return false
+    }
+    return runOneTimer(prog, st)
 }
 
 // Ask each registered http server to accept and handle one connection. Returns
@@ -3024,6 +3070,25 @@ fn makeArrayFromCtor(st: &mut Interp, argVals: &Vec<JSValue>): JSValue {
         k = k + 1
     }
     return JSValue.Obj(arr)
+}
+
+// The object that holds a value's properties: itself for an object, the statics
+// bag for a function, the native bag for a builtin. Functions are property
+// carriers in JS, and express builds its app by copying descriptors onto one.
+fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
+    let o = objHandle(v)
+    if o >= 0 {
+        return o
+    }
+    let f = funcHandle(v)
+    if f >= 0 {
+        return getFuncStatics(st, f)
+    }
+    let n = nativeHandle(v)
+    if n >= 0 {
+        return getNativeProps(st, n)
+    }
+    return -1
 }
 
 fn isSuperName(name: &string): bool {
