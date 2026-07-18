@@ -88,3 +88,36 @@ looks off.
 **Proposed fix:** keep the closer on the same line for short/inline struct literals
 (match the threshold the rest of the formatter uses for collapsing). Needs a repro
 snippet — capture one next time it triggers.
+
+**REPRO (captured 2026-07-18):** `bun run src/main.ts fmt` on
+```milo
+let p = Point { x: 1, y: 2 }
+foo(Point { x: 5, y: 6 })
+```
+yields
+```
+let p = Point {
+    x: 1, y: 2
+}
+foo(Point {
+    x: 5, y: 6
+}
+)                  <-- the dangling ')' — worst part
+```
+**ROOT CAUSE:** the formatter (`examples/cli-tools/fmt.milo`, built to `bin/milo-fmt`)
+is a token-stream reflow pass, not AST-based. Every `{` unconditionally forces
+`\n`+indent and every `}` forces `\n` (see the `LBrace`/`RBrace` blocks ~line
+1113-1159) — it does NOT distinguish a *block* brace from a *struct-literal* brace, so
+literals always explode, and a `}` mid-call pushes the trailing `)` onto its own line.
+**FIX (scoped, DEFERRED — not a quick edit):** teach the reflow pass to keep a
+struct-literal `{...}` inline when it fits. Two hard parts, both real regression risk
+on a 1000-line formatter locked by `tests/fmtCorpus.test.ts`:
+  1. *Classify the brace.* A struct-lit `{` follows a type name (Ident / generic `>`)
+     in value position, but so does a control-flow header (`if x {`, `for i in xs {`).
+     Token-stream disambiguation needs to know whether a governing control keyword
+     opened the current logical line — the formatter tracks keywords but not this.
+  2. *Fits-on-one-line test.* Need matching-`}` lookahead + a width budget (and bail
+     to multiline if the span contains a nested `{` or a line comment).
+Deferred deliberately: low value (cosmetic) vs high risk (must regenerate the corpus
+and not collapse literals that legitimately span lines). Do it as its own focused
+change, not tacked onto unrelated work.
