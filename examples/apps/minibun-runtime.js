@@ -456,7 +456,10 @@
     res.pipe = function (dest) { res.on('data', function (c) { if (dest.write) dest.write(c); }); res.on('end', function () { if (dest.end) dest.end(); }); res.on('error', function (e) { if (dest.emit) dest.emit('error', e); }); return dest; };
     var body = raw.body || '';
     this.emit('response', res);
-    Promise.resolve().then(function () { if (!res.destroyed) { if (body) res.emit('data', body); res.emit('end'); res.emit('close'); } });
+    // Emit the body as a Buffer, not a string: Node consumers (node-fetch) do Buffer.concat on
+    // the chunks, which reconstructs from byte values — a string chunk would decode to NUL bytes.
+    var chunk = (body && globalThis.Buffer) ? globalThis.Buffer.from(body) : body;
+    Promise.resolve().then(function () { if (!res.destroyed) { if (body) res.emit('data', chunk); res.emit('end'); res.emit('close'); } });
   };
   function __clientRequest(defProto) { return function (options, cb) { return new ClientRequest(options, cb, defProto); }; }
   function __clientGet(defProto) { return function (options, cb) { var r = new ClientRequest(options, cb, defProto); r.end(); return r; }; }
