@@ -239,6 +239,12 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             return stringMethod(name, sv, args, st)
         }
         JSValue.Obj(o) => {
+            // Date-specific methods dispatch here (Date.prototype.toISOString.call);
+            // toString/valueOf are left to the Object.prototype type-tag logic
+            // below, so Object.prototype.toString.call(date) stays [object Date]
+            if st.objects[o].isDate && name != "toString" && name != "valueOf" {
+                return dateMethod(st, o, name, args)
+            }
             if st.objects[o].isMap || st.objects[o].isSet {
                 return mapMethod(prog, o, name, args, st)
             }
@@ -1933,7 +1939,7 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "prototype", JSValue.Obj(objectProto))
     scopeDefine(st, 0, "Object", JSValue.Obj(objectCtor))
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
-    let stringCtorObj = newObject(st)
+    let stringCtorObj = getNativeProps(st, NATIVE_STRING)
     objSet(st, stringCtorObj, "fromCharCode", JSValue.Native(NATIVE_STRING_FROMCHARCODE))
     // String.prototype methods as bound-method values, so
     // String.prototype.replace.call(str, ...) — the qs module's pattern — works
@@ -1953,8 +1959,15 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "parseInt", JSValue.Native(NATIVE_PARSE_INT))
     scopeDefine(st, 0, "parseFloat", JSValue.Native(NATIVE_PARSE_FLOAT))
     scopeDefine(st, 0, "Symbol", JSValue.Native(NATIVE_SYMBOL))
-    let dateCtorObj = newObject(st)
+    let dateCtorObj = getNativeProps(st, NATIVE_DATE)
     objSet(st, dateCtorObj, "now", JSValue.Native(NATIVE_DATE_NOW))
+    // Date.prototype methods as bound-method values, so
+    // Date.prototype.toISOString.call(d) — qs's pattern — works
+    let dateProto = newObject(st)
+    for dm in dateProtoMethodNames() {
+        objSet(st, dateProto, dm.clone(), makeBoundMethod(st, JSValue.Undefined, dm.clone()))
+    }
+    objSet(st, dateCtorObj, "prototype", JSValue.Obj(dateProto))
     st.dateCtorProps = dateCtorObj
     scopeDefine(st, 0, "Date", JSValue.Native(NATIVE_DATE))
     // Function.prototype.{call,apply,bind} are bound-method values: invoking
@@ -3338,6 +3351,31 @@ fn isBoundThisSet(st: &Interp, o: i64): bool {
             return true
         }
     }
+}
+
+fn dateProtoMethodNames(): Vec<string> {
+    var out: Vec<string> = Vec.new()
+    out.push("getTime")
+    out.push("valueOf")
+    out.push("toISOString")
+    out.push("toJSON")
+    out.push("toString")
+    out.push("toUTCString")
+    out.push("toDateString")
+    out.push("toLocaleString")
+    out.push("toLocaleDateString")
+    out.push("toLocaleTimeString")
+    out.push("getFullYear")
+    out.push("getMonth")
+    out.push("getDate")
+    out.push("getDay")
+    out.push("getHours")
+    out.push("getMinutes")
+    out.push("getSeconds")
+    out.push("getMilliseconds")
+    out.push("getTimezoneOffset")
+    out.push("setTime")
+    return out
 }
 
 fn strProtoMethodNames(): Vec<string> {
