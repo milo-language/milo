@@ -260,7 +260,21 @@
   function Writable(){ Stream.call(this); } inherits(Writable, Stream); Writable.prototype.write=function(){ return true; }; Writable.prototype.end=function(){ return this; };
   function Duplex(){ Readable.call(this); } inherits(Duplex, Readable); Duplex.prototype.write=function(){ return true; }; Duplex.prototype.end=function(){ return this; };
   function Transform(){ Duplex.call(this); } inherits(Transform, Duplex);
-  function PassThrough(){ Transform.call(this); } inherits(PassThrough, Transform);
+  // Real buffering PassThrough: node-fetch does `res.pipe(new PassThrough())` then reads it via
+  // .on('data'). A stub that drops writes makes node-fetch hang. This buffers writes until a
+  // 'data'/'readable' listener attaches (flowing mode), then flushes — enough for that pattern.
+  function PassThrough(){ Transform.call(this); this._pbuf=[]; this._pended=false; this._pflow=false; }
+  inherits(PassThrough, Transform);
+  PassThrough.prototype._pflush=function(){ while(this._pbuf.length) this.emit('data', this._pbuf.shift()); if(this._pended){ this.emit('end'); this.emit('close'); } };
+  PassThrough.prototype.write=function(c){ if(c==null) return true; if(this._pflow) this.emit('data', c); else this._pbuf.push(c); return true; };
+  PassThrough.prototype.end=function(c){ if(c!=null && typeof c!=='function') this.write(c); this._pended=true; this.emit('finish'); if(this._pflow) this._pflush(); return this; };
+  PassThrough.prototype.on=function(ev,cb){ EventEmitter.prototype.on.call(this,ev,cb); if((ev==='data'||ev==='readable')&&!this._pflow){ this._pflow=true; var self=this; Promise.resolve().then(function(){ self._pflush(); }); } return this; };
+  PassThrough.prototype.addListener=PassThrough.prototype.on;
+  PassThrough.prototype.once=function(ev,cb){ var self=this; function g(){ self.removeListener(ev,g); return cb.apply(this,arguments); } g.listener=cb; return self.on(ev,g); };
+  PassThrough.prototype.resume=function(){ if(!this._pflow){ this._pflow=true; var self=this; Promise.resolve().then(function(){ self._pflush(); }); } return this; };
+  PassThrough.prototype.pause=function(){ this._pflow=false; return this; };
+  PassThrough.prototype.read=function(){ return this._pbuf.length?this._pbuf.shift():null; };
+  PassThrough.prototype.pipe=function(dest){ this.on('data', function(c){ if(dest.write) dest.write(c); }); this.on('end', function(){ if(dest.end) dest.end(); }); return dest; };
   Stream.Readable=Readable; Stream.Writable=Writable; Stream.Duplex=Duplex; Stream.Transform=Transform; Stream.PassThrough=PassThrough; Stream.Stream=Stream;
   var streamMod=Stream;
   function parseRequest(text){ var idx=text.indexOf('\r\n\r\n'); var headPart=idx>=0?text.slice(0,idx):text; var body=idx>=0?text.slice(idx+4):''; var lines=headPart.split('\r\n'); var first=(lines[0]||'').split(' '); var method=first[0]||'GET'; var url=first[1]||'/'; var headers={}; for(var i=1;i<lines.length;i++){ var c=lines[i].indexOf(':'); if(c>0) headers[lines[i].slice(0,c).trim().toLowerCase()]=lines[i].slice(c+1).trim(); } var req=new Readable(); req.method=method; req.url=url; req.originalUrl=url; req.headers=headers; req.rawHeaders=[]; req.httpVersion='1.1'; req.body=body; req.socket={ remoteAddress:'127.0.0.1', remotePort:0, encrypted:false }; req.connection=req.socket; req.on=function(ev,cb){ if(ev==='data'&&body) cb(body); if(ev==='end') cb(); return this; }; req.setTimeout=function(){ return this; }; return req; }
@@ -324,16 +338,25 @@
     if (this.destroyed) return;
     var self = this;
     var lines = [];
-    for (var k in this._headers) if (Object.prototype.hasOwnProperty.call(this._headers, k)) lines.push(k + ': ' + this._headers[k]);
+    for (var k in this._headers) {
+      if (!Object.prototype.hasOwnProperty.call(this._headers, k)) continue;
+      // Force identity: minibun has no real zlib, so we must not let the server gzip the body
+      // (node-fetch/others set Accept-Encoding: gzip and would then try to decompress).
+      if (k.toLowerCase() === 'accept-encoding') continue;
+      lines.push(k + ': ' + this._headers[k]);
+    }
+    lines.push('Accept-Encoding: identity');
     var raw;
     try { raw = __fetch(this._url, this._method, lines.join('\r\n'), this._body); }
     catch (e) { this.emit('error', e); return; }
     if (!raw || raw.error) { var er = new Error('request failed: ' + ((raw && raw.error) || 'unknown') + ' (' + this._url + ')'); this.emit('error', er); return; }
     var res = new Readable();
-    res.statusCode = raw.status; res.statusMessage = ''; res.httpVersion = '1.1';
+    res.statusCode = raw.status; res.statusMessage = ''; res.httpVersion = '1.1'; res.complete = true;
     res.headers = {}; res.rawHeaders = [];
     String(raw.headers || '').split('\r\n').forEach(function (l) { var i = l.indexOf(':'); if (i > 0) { var name = l.slice(0, i).trim(); var val = l.slice(i + 1).trim(); res.headers[name.toLowerCase()] = val; res.rawHeaders.push(name, val); } });
     res.setEncoding = function () { return this; };
+    // Real pipe: forward emitted body/end/error to the destination (node-fetch does res.pipe(PassThrough)).
+    res.pipe = function (dest) { res.on('data', function (c) { if (dest.write) dest.write(c); }); res.on('end', function () { if (dest.end) dest.end(); }); res.on('error', function (e) { if (dest.emit) dest.emit('error', e); }); return dest; };
     var body = raw.body || '';
     this.emit('response', res);
     Promise.resolve().then(function () { if (!res.destroyed) { if (body) res.emit('data', body); res.emit('end'); res.emit('close'); } });
@@ -363,6 +386,7 @@
   if(!globalThis.fetch){ function __hdrLines(h){ if(!h) return ''; var out=[]; if(typeof h.entries==='function'){ var es=h.entries(); for(var i=0;i<es.length;i++){ var k=String(es[i][0]).toLowerCase(); if(k==='host'||k==='content-length'||k==='connection') continue; out.push(es[i][0]+': '+es[i][1]); } } else { for(var k in h){ if(!h.hasOwnProperty(k)) continue; var kl=k.toLowerCase(); if(kl==='host'||kl==='content-length'||kl==='connection') continue; out.push(k+': '+h[k]); } } return out.join('\r\n'); }
     globalThis.fetch=function(url, opts){ opts=opts||{}; try{ var method=String(opts.method||'GET').toUpperCase(); var headers=__hdrLines(opts.headers); var body=(opts.body!=null)?(typeof opts.body==='string'?opts.body:String(opts.body)):''; var raw=__fetch(String(url), method, headers, body); if(!raw){ return Promise.reject(new Error('fetch failed: null response ('+url+')')); } if(raw.error){ var er=new Error('fetch failed: '+raw.error+' ('+url+')'); er.code=raw.error; return Promise.reject(er); } var hm={}; String(raw.headers||'').split('\r\n').forEach(function(l){ var i=l.indexOf(':'); if(i>0) hm[l.slice(0,i).trim().toLowerCase()]=l.slice(i+1).trim(); }); var bodyStr=raw.body||''; var res={ status:raw.status, statusText:'', ok:(raw.status>=200&&raw.status<300), url:String(url), redirected:false, type:'basic', bodyUsed:false, headers:{ get:function(n){ var v=hm[String(n).toLowerCase()]; return v===undefined?null:v; }, has:function(n){ return hm[String(n).toLowerCase()]!==undefined; }, forEach:function(cb){ for(var k in hm) cb(hm[k],k,this); }, entries:function(){ var a=[]; for(var k in hm) a.push([k,hm[k]]); return a; }, keys:function(){ return Object.keys(hm); } }, text:function(){ this.bodyUsed=true; return Promise.resolve(bodyStr); }, json:function(){ this.bodyUsed=true; try{ return Promise.resolve(JSON.parse(bodyStr)); }catch(e){ return Promise.reject(e); } }, arrayBuffer:function(){ this.bodyUsed=true; return Promise.resolve(bodyStr); }, blob:function(){ this.bodyUsed=true; return Promise.resolve(bodyStr); }, clone:function(){ return res; } }; return Promise.resolve(res); }catch(e){ return Promise.reject(e); } };
     globalThis.Headers=globalThis.Headers||function(init){ var m={}; if(init){ if(typeof init.forEach==='function'&&!Array.isArray(init)){ init.forEach(function(v,k){ m[String(k).toLowerCase()]=v; }); } else if(Array.isArray(init)){ init.forEach(function(p){ m[String(p[0]).toLowerCase()]=p[1]; }); } else { for(var k in init){ if(init.hasOwnProperty(k)) m[k.toLowerCase()]=init[k]; } } } this.get=function(k){ var v=m[String(k).toLowerCase()]; return v===undefined?null:v; }; this.set=function(k,v){ m[String(k).toLowerCase()]=v; }; this.has=function(k){ return m[String(k).toLowerCase()]!==undefined; }; this.append=this.set; this['delete']=function(k){ delete m[String(k).toLowerCase()]; }; this.forEach=function(cb){ for(var k in m) cb(m[k],k,this); }; this.entries=function(){ var a=[]; for(var k in m) a.push([k,m[k]]); return a; }; this.keys=function(){ return Object.keys(m); }; }; }
+  if(!globalThis.SharedArrayBuffer){ globalThis.SharedArrayBuffer=ArrayBuffer; }
   if(!globalThis.queueMicrotask){ globalThis.queueMicrotask=function(cb){ Promise.resolve().then(cb); }; }
   if(!globalThis.structuredClone){ globalThis.structuredClone=function(o){ return (o==null||typeof o!=='object')?o:JSON.parse(JSON.stringify(o)); }; }
   if(!globalThis.crypto||!globalThis.crypto.getRandomValues){ globalThis.crypto=globalThis.crypto||{}; if(!globalThis.crypto.getRandomValues) globalThis.crypto.getRandomValues=function(a){ for(var i=0;i<a.length;i++) a[i]=Math.floor(Math.random()*256); return a; }; if(!globalThis.crypto.randomUUID) globalThis.crypto.randomUUID=function(){ return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){ var r=Math.random()*16|0,v=c==='x'?r:(r&0x3|0x8); return v.toString(16); }); }; }
