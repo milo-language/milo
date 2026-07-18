@@ -1,0 +1,26 @@
+1 2
+{
+  x: 1,
+  y: 2,
+}
+10 3
+{
+  x: 10,
+  y: 2,
+  z: 3,
+}
+2
+42
+ada london
+{
+  name: "ada",
+  addr: {
+    city: "london",
+    zip: "n1",
+  },
+}
+99
+true false
+1 2 3
+undefined
+10000000000

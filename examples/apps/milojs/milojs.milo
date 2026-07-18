@@ -1,22 +1,17 @@
-// milojs — stage 1: a tree-walking interpreter for a small JavaScript subset,
-// written in pure Milo. Goal (later stages): replace minibun's JavaScriptCore
-// dependency with this engine.
+// milojs — a JavaScript interpreter written in pure Milo, aimed at replacing
+// minibun's JavaScriptCore dependency with an engine that has no C++ in it.
 //
-// Scope so far: primitives (number/string/bool/null/undefined), variables,
-// arithmetic/comparison/logic with JS-ish coercion, if/else, while, functions,
-// closures, console.log, and a mark-sweep GC over the scope arena (stage 2).
-// No objects/arrays/prototypes/this/exceptions yet.
-//
-// Design notes:
-// - AST is index-based: enums hold i64 indices into flat Vecs in Prog (the
-//   std/json cursor pattern) — recursive types without stored references.
-// - Scopes live in an arena (Vec<Scope>, parent by index) so a closure can
-//   capture its defining scope by index. Dead scopes are reclaimed by mark-sweep
-//   (see collect): slots stay stable and are reused via a free-list, never moved,
-//   because closures and parent links reference scopes by index. GC runs only at
-//   execBlock statement boundaries — the one point with no closure in-flight.
-//
-// Run: milo run examples/apps/milojs/milojs.milo -- path/to/script.js
+// Two design choices carry most of the weight:
+// - The AST is index-based: enum nodes hold i64 indices into flat Vecs in Prog,
+//   never direct references. That sidesteps needing recursive owned types and
+//   lets any node be cloned out cheaply for matching.
+// - Scopes and heap objects live in arenas (Vec<Scope>, Vec<JSObj>) and reference
+//   each other by index, so a mark-sweep collector can reclaim them. Slots are
+//   stable and reused via a free-list, never moved — closures and parent links
+//   hold indices, and moving a slot would need a fixup reaching values in-flight
+//   on the native stack. GC runs only at execBlock statement boundaries, the one
+//   point where every live value sits in a scope binding and no closure is
+//   in-flight mid-expression.
 
 from "std/io" import {
     readFile
@@ -33,12 +28,9 @@ from "std/os" import {
 from "std/env" import {
     getEnv
 }
-
-extern fn floor(x: f64): f64
-
-extern fn fmod(x: f64, y: f64): f64
-
-extern fn fabs(x: f64): f64
+from "std/math" import {
+    mathFloor, mathAbs, mathMod
+}
 
 // ── Tokens ──
 
@@ -80,6 +72,9 @@ let T_COMMA: i32 = 34
 let T_SEMI: i32 = 35
 let T_DOT: i32 = 36
 let T_EOF: i32 = 37
+let T_LBRACKET: i32 = 38
+let T_RBRACKET: i32 = 39
+let T_COLON: i32 = 40
 
 struct Token {
     kind: i32,
@@ -228,7 +223,7 @@ fn lex(src: &string): Vec<Token> {
             }
             )
         } else if c == '=' && i + 1 < n && src[i + 1] == '=' {
-            // == and === lex the same (strictness difference is out of stage-1 scope)
+            // == and === lex the same token (strict-vs-loose is applied at eval)
             i = i + 2
             if i < n && src[i] == '=' {
                 i = i + 1
@@ -286,6 +281,12 @@ fn lex(src: &string): Vec<Token> {
                 k = T_SEMI
             } else if c == '.' {
                 k = T_DOT
+            } else if c == '[' {
+                k = T_LBRACKET
+            } else if c == ']' {
+                k = T_RBRACKET
+            } else if c == ':' {
+                k = T_COLON
             }
             if k >= 0 {
                 pushTok(toks, k)
@@ -314,6 +315,18 @@ enum Expr {
     Call(i64, i64),
     Member(i64, string),
     FuncExpr(i64),
+    // object literal: index into prog.objLits (a list of key/value-expr pairs)
+    ObjLit(i64),
+    // computed member read: obj[keyExpr]
+    Index(i64, i64),
+    // property write: obj, keyExpr, valExpr — backs both obj.x = v and obj[k] = v
+    SetMember(i64, i64, i64),
+}
+
+// One key/value pair in an object literal; val is an expr index.
+struct PropInit {
+    key: string,
+    val: i64,
 }
 
 enum Stmt {
@@ -339,6 +352,7 @@ struct Prog {
     blocks: Vec<Vec<i64>>,
     argLists: Vec<Vec<i64>>,
     funcs: Vec<FuncDef>,
+    objLits: Vec<Vec<PropInit>>,
 }
 
 fn cloneExpr(e: &Expr): Expr {
@@ -378,6 +392,15 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.FuncExpr(f) => {
             return Expr.FuncExpr(f)
+        }
+        Expr.ObjLit(i) => {
+            return Expr.ObjLit(i)
+        }
+        Expr.Index(obj, key) => {
+            return Expr.Index(obj, key)
+        }
+        Expr.SetMember(obj, key, val) => {
+            return Expr.SetMember(obj, key, val)
         }
     }
 }
@@ -499,9 +522,40 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
         let f = parseFunction(p, prog)
         return addExpr(prog, Expr.FuncExpr(f))
     }
+    if k == T_LBRACE {
+        return parseObjectLiteral(p, prog)
+    }
     // unexpected token: consume it so parsing always makes progress
     advance(p)
     return addExpr(prog, Expr.UndefLit)
+}
+
+// { key: expr, key: expr, ... } — keys are identifiers or string literals
+fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
+    expect(p, T_LBRACE)
+    var props: Vec<PropInit> = Vec.new()
+    while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
+        var key = ""
+        if peekKind(p) == T_IDENT || peekKind(p) == T_STR {
+            key = p.toks[p.pos].text.clone()
+            advance(p)
+        } else {
+            advance(p)
+        }
+        expect(p, T_COLON)
+        let valIdx = parseExpr(p, prog)
+        props.push(PropInit {
+            key: key, val: valIdx
+        }
+        )
+        if peekKind(p) == T_COMMA {
+            advance(p)
+        }
+    }
+    expect(p, T_RBRACE)
+    prog.objLits.push(props)
+    let idx = prog.objLits.len() - 1
+    return addExpr(prog, Expr.ObjLit(idx))
 }
 
 fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
@@ -531,6 +585,11 @@ fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
                 advance(p)
             }
             e = addExpr(prog, Expr.Member(e, name))
+        } else if k == T_LBRACKET {
+            advance(p)
+            let keyIdx = parseExpr(p, prog)
+            expect(p, T_RBRACKET)
+            e = addExpr(prog, Expr.Index(e, keyIdx))
         } else {
             go = false
         }
@@ -669,8 +728,16 @@ fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
             Expr.Ident(name) => {
                 return addExpr(prog, Expr.Assign(name, rhs))
             }
+            Expr.Member(objIdx, name) => {
+                // obj.x = v  →  synthesize the string key "x"
+                let keyIdx = addExpr(prog, Expr.StrLit(name))
+                return addExpr(prog, Expr.SetMember(objIdx, keyIdx, rhs))
+            }
+            Expr.Index(objIdx, keyIdx) => {
+                return addExpr(prog, Expr.SetMember(objIdx, keyIdx, rhs))
+            }
             _ => {
-                // non-identifier assignment target: evaluate rhs, drop the target
+                // non-lvalue assignment target: evaluate rhs, drop the target
                 return rhs
             }
         }
@@ -816,6 +883,8 @@ enum JSValue {
     Str(string),
     // (funcs index, captured scope index) — the closure's environment link
     Func(i64, i64),
+    // heap object handle — index into Interp.objects (stable, GC-managed)
+    Obj(i64),
 }
 
 fn cloneValue(v: &JSValue): JSValue {
@@ -837,6 +906,9 @@ fn cloneValue(v: &JSValue): JSValue {
         }
         JSValue.Func(f, env) => {
             return JSValue.Func(f, env)
+        }
+        JSValue.Obj(o) => {
+            return JSValue.Obj(o)
         }
     }
 }
@@ -882,7 +954,7 @@ fn numToStr(n: f64): string {
         }
         return "-Infinity"
     }
-    if floor(n) == n && fabs(n) < 1000000000000000.0 {
+    if mathFloor(n) == n && mathAbs(n) < 1000000000000000.0 {
         return i64ToStr(n as i64)
     }
     var p: i32 = 1
@@ -925,6 +997,10 @@ fn toStr(v: &JSValue): string {
         JSValue.Func(_f, _env) => {
             return "function"
         }
+        JSValue.Obj(_o) => {
+            // string coercion (""+obj, String(obj)); console.log uses inspect() instead
+            return "[object Object]"
+        }
     }
 }
 
@@ -961,6 +1037,9 @@ fn toNum(v: &JSValue): f64 {
         JSValue.Func(_f, _env) => {
             return jsNan()
         }
+        JSValue.Obj(_o) => {
+            return jsNan()
+        }
     }
 }
 
@@ -982,6 +1061,9 @@ fn truthy(v: &JSValue): bool {
             return s.len() > 0
         }
         JSValue.Func(_f, _env) => {
+            return true
+        }
+        JSValue.Obj(_o) => {
             return true
         }
     }
@@ -1067,6 +1149,17 @@ fn jsEquals(a: &JSValue, b: &JSValue): bool {
                 }
             }
         }
+        JSValue.Obj(o1) => {
+            // object equality is by reference (same heap slot)
+            match b {
+                JSValue.Obj(o2) => {
+                    return o1 == o2
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
         _ => {
             match b {
                 JSValue.Undefined => {
@@ -1076,6 +1169,9 @@ fn jsEquals(a: &JSValue, b: &JSValue): bool {
                     return false
                 }
                 JSValue.Func(_f, _e) => {
+                    return false
+                }
+                JSValue.Obj(_o) => {
                     return false
                 }
                 _ => {
@@ -1103,6 +1199,20 @@ struct Scope {
     mark: bool,
 }
 
+// A heap object: an ordered list of string-keyed properties. `free` marks a
+// reclaimed slot the sweep skips and newObject can reuse (indices stay stable —
+// JSValue.Obj holds them, so slots are never moved).
+struct Prop {
+    key: string,
+    value: JSValue,
+}
+
+struct JSObj {
+    props: Vec<Prop>,
+    mark: bool,
+    free: bool,
+}
+
 struct Interp {
     scopes: Vec<Scope>,
     // reusable dead-scope slots (indices stay stable — closures hold them by index)
@@ -1111,10 +1221,59 @@ struct Interp {
     // reachable via lexical parent links (a fib frame's parent is global, not its
     // caller). This is the extra GC root set the parent chain can't provide.
     active: Vec<i64>,
+    // heap-object arena + its own free-list, GC'd by the same collector as scopes
+    objects: Vec<JSObj>,
+    objFreeList: Vec<i64>,
     allocSinceGc: i64,
     gcThreshold: i64,
     gcRuns: i64,
     gcStats: bool,
+}
+
+fn newObject(st: &mut Interp): i64 {
+    st.allocSinceGc = st.allocSinceGc + 1
+    if st.objFreeList.len() > 0 {
+        let idx = st.objFreeList.pop()
+        st.objects[idx] = JSObj {
+            props: Vec.new(), mark: false, free: false
+        }
+        return idx
+    }
+    st.objects.push(JSObj {
+        props: Vec.new(), mark: false, free: false
+    }
+    )
+    return st.objects.len() - 1
+}
+
+fn objGet(st: &Interp, obj: i64, key: &string): JSValue {
+    var i: i64 = 0
+    let n = st.objects[obj].props.len()
+    while i < n {
+        if st.objects[obj].props[i].key == key {
+            return cloneValue(st.objects[obj].props[i].value)
+        }
+        i = i + 1
+    }
+    return JSValue.Undefined
+}
+
+fn objSet(st: &mut Interp, obj: i64, key: string, value: JSValue) {
+    var i: i64 = 0
+    let n = st.objects[obj].props.len()
+    while i < n {
+        if st.objects[obj].props[i].key == key {
+            st.objects[obj].props[i] = Prop {
+                key: key, value: value
+            }
+            return
+        }
+        i = i + 1
+    }
+    st.objects[obj].props.push(Prop {
+        key: key, value: value
+    }
+    )
 }
 
 fn newScope(st: &mut Interp, parent: i64): i64 {
@@ -1143,9 +1302,48 @@ fn popActive(st: &mut Interp) {
     st.active.pop()
 }
 
-// Mark a scope live, then everything it can reach: its lexical parent and the
-// captured environments of any closures bound in it. Idempotent via the mark
-// flag, so cyclic closure graphs terminate.
+// Mark whatever a value keeps alive: a closure roots its captured scope, an
+// object handle roots its heap slot; primitives root nothing. The three mark
+// functions are mutually recursive and all idempotent (mark flags), so cyclic
+// closure/object graphs terminate.
+fn markValue(st: &mut Interp, v: &JSValue) {
+    match v {
+        JSValue.Func(_f, envIdx) => {
+            markScope(st, envIdx)
+        }
+        JSValue.Obj(objIdx) => {
+            markObject(st, objIdx)
+        }
+        _ => {
+        }
+    }
+}
+
+// Mark an object live, then everything its property values reach.
+fn markObject(st: &mut Interp, i: i64) {
+    if i < 0 {
+        return
+    }
+    if st.objects[i].mark {
+        return
+    }
+    st.objects[i].mark = true
+    var vals: Vec<JSValue> = Vec.new()
+    var k: i64 = 0
+    let n = st.objects[i].props.len()
+    while k < n {
+        vals.push(cloneValue(st.objects[i].props[k].value))
+        k = k + 1
+    }
+    var m: i64 = 0
+    while m < vals.len() {
+        markValue(st, vals[m])
+        m = m + 1
+    }
+}
+
+// Mark a scope live, then everything it can reach: its lexical parent and every
+// value bound in it (closures → their env, objects → their heap slot).
 fn markScope(st: &mut Interp, i: i64) {
     if i < 0 {
         return
@@ -1155,24 +1353,17 @@ fn markScope(st: &mut Interp, i: i64) {
     }
     st.scopes[i].mark = true
     let parent = st.scopes[i].parent
-    var envs: Vec<i64> = Vec.new()
+    var vals: Vec<JSValue> = Vec.new()
     var k: i64 = 0
     let n = st.scopes[i].vars.len()
     while k < n {
-        let v = cloneValue(st.scopes[i].vars[k].value)
-        match v {
-            JSValue.Func(_f, envIdx) => {
-                envs.push(envIdx)
-            }
-            _ => {
-            }
-        }
+        vals.push(cloneValue(st.scopes[i].vars[k].value))
         k = k + 1
     }
     markScope(st, parent)
     var m: i64 = 0
-    while m < envs.len() {
-        markScope(st, envs[m])
+    while m < vals.len() {
+        markValue(st, vals[m])
         m = m + 1
     }
 }
@@ -1186,7 +1377,13 @@ fn collect(st: &mut Interp) {
         st.scopes[i].mark = false
         i = i + 1
     }
-    // roots: global scope 0 + the whole dynamic call/block stack
+    var oi: i64 = 0
+    while oi < st.objects.len() {
+        st.objects[oi].mark = false
+        oi = oi + 1
+    }
+    // roots: global scope 0 + the whole dynamic call/block stack. Objects are
+    // marked transitively from the values bound in reachable scopes.
     markScope(st, 0)
     var a: i64 = 0
     while a < st.active.len() {
@@ -1205,11 +1402,23 @@ fn collect(st: &mut Interp) {
         }
         s = s + 1
     }
+    var ofreed: i64 = 0
+    var os: i64 = 0
+    while os < st.objects.len() {
+        if !st.objects[os].free && !st.objects[os].mark {
+            st.objects[os].props = Vec.new()
+            st.objects[os].free = true
+            st.objFreeList.push(os)
+            ofreed = ofreed + 1
+        }
+        os = os + 1
+    }
     st.gcRuns = st.gcRuns + 1
     st.allocSinceGc = 0
     if st.gcStats {
         let liveSlots = st.scopes.len() - st.freeList.len()
-        print("[gc] run " + i64ToStr(st.gcRuns) + ": freed " + i64ToStr(freed) + ", live " + i64ToStr(liveSlots) + ", arena " + i64ToStr(st.scopes.len()))
+        let liveObjs = st.objects.len() - st.objFreeList.len()
+        print("[gc] run " + i64ToStr(st.gcRuns) + ": freed " + i64ToStr(freed) + " scopes / " + i64ToStr(ofreed) + " objs, live " + i64ToStr(liveSlots) + " scopes / " + i64ToStr(liveObjs) + " objs, arena " + i64ToStr(st.scopes.len()) + "/" + i64ToStr(st.objects.len()))
     }
 }
 
@@ -1300,7 +1509,7 @@ fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
         return JSValue.Number(toNum(a) / toNum(b))
     }
     if op == "%" {
-        return JSValue.Number(fmod(toNum(a), toNum(b)))
+        return JSValue.Number(mathMod(toNum(a), toNum(b)))
     }
     if op == "==" {
         return JSValue.Bool(jsEquals(a, b))
@@ -1398,9 +1607,56 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         Expr.Call(callee, argsIdx) => {
             return evalCall(prog, callee, argsIdx, st, scope)
         }
-        Expr.Member(_obj, _name) => {
-            // no objects in stage 1; console.log is intercepted at call sites
-            return JSValue.Undefined
+        Expr.Member(objIdx, name) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            match ov {
+                JSValue.Obj(o) => {
+                    return objGet(st, o, name)
+                }
+                _ => {
+                    return JSValue.Undefined
+                }
+            }
+        }
+        Expr.Index(objIdx, keyIdx) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            let kv = evalExpr(prog, keyIdx, st, scope)
+            let key = toStr(kv)
+            match ov {
+                JSValue.Obj(o) => {
+                    return objGet(st, o, key)
+                }
+                _ => {
+                    return JSValue.Undefined
+                }
+            }
+        }
+        Expr.SetMember(objIdx, keyIdx, valIdx) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            let kv = evalExpr(prog, keyIdx, st, scope)
+            let key = toStr(kv)
+            let v = evalExpr(prog, valIdx, st, scope)
+            match ov {
+                JSValue.Obj(o) => {
+                    objSet(st, o, key, cloneValue(v))
+                }
+                _ => {
+                }
+            }
+            return v
+        }
+        Expr.ObjLit(litIdx) => {
+            let obj = newObject(st)
+            var i: i64 = 0
+            let n = prog.objLits[litIdx].len()
+            while i < n {
+                let key = prog.objLits[litIdx][i].key.clone()
+                let valIdx = prog.objLits[litIdx][i].val
+                let v = evalExpr(prog, valIdx, st, scope)
+                objSet(st, obj, key, v)
+                i = i + 1
+            }
+            return JSValue.Obj(obj)
         }
         Expr.FuncExpr(f) => {
             return JSValue.Func(f, scope)
@@ -1420,6 +1676,68 @@ fn evalArgs(prog: &Prog, argsIdx: i64, st: &mut Interp, scope: i64): Vec<JSValue
     return out
 }
 
+fn spaces(n: i64): string {
+    var s = ""
+    var i: i64 = 0
+    while i < n {
+        s = s + " "
+        i = i + 1
+    }
+    return s
+}
+
+// Reproduces bun's console.log object rendering: one property per line, indented
+// two spaces per level, a trailing comma after every entry, string *values*
+// double-quoted, closing brace at the parent indent. `{}` stays inline. Nesting
+// past depth 2 collapses to `[Object]`. A top-level string prints raw (see
+// inspectTop) — only nested strings are quoted.
+fn inspectInner(st: &Interp, v: &JSValue, depth: i64): string {
+    match v {
+        JSValue.Str(s) => {
+            return "\"" + s + "\""
+        }
+        JSValue.Obj(o) => {
+            return inspectObj(st, o, depth)
+        }
+        _ => {
+            return toStr(v)
+        }
+    }
+}
+
+fn inspectObj(st: &Interp, o: i64, depth: i64): string {
+    if depth > 2 {
+        return "[Object]"
+    }
+    let n = st.objects[o].props.len()
+    if n == 0 {
+        return "{}"
+    }
+    let inner = spaces((depth + 1) * 2)
+    let outer = spaces(depth * 2)
+    var out = "{\n"
+    var i: i64 = 0
+    while i < n {
+        let key = st.objects[o].props[i].key.clone()
+        let val = cloneValue(st.objects[o].props[i].value)
+        out = out + inner + key + ": " + inspectInner(st, val, depth + 1) + ",\n"
+        i = i + 1
+    }
+    out = out + outer + "}"
+    return out
+}
+
+fn inspectTop(st: &Interp, v: &JSValue): string {
+    match v {
+        JSValue.Obj(o) => {
+            return inspectObj(st, o, 0)
+        }
+        _ => {
+            return toStr(v)
+        }
+    }
+}
+
 fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
     // builtin: console.log(...)
     let calleeNode = getExpr(prog, calleeIdx)
@@ -1436,7 +1754,7 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                             if j > 0 {
                                 line = line + " "
                             }
-                            line = line + toStr(argVals[j])
+                            line = line + inspectTop(st, argVals[j])
                             j = j + 1
                         }
                         print(line)
@@ -1574,19 +1892,33 @@ fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
     return Flow.Normal
 }
 
+fn printUsage() {
+    print("milojs — a JavaScript interpreter written in Milo")
+    print("")
+    print("usage:")
+    print("  milo run examples/apps/milojs/milojs.milo -- <file.js>")
+    print("")
+    print("env:")
+    print("  MILOJS_GC_STATS=1   print garbage-collector statistics")
+}
+
 fn main(): i32 {
     let argv = args()
     if argv.len() < 2 {
-        print("usage: milojs <file.js>")
+        printUsage()
         return 1
     }
     let path = argv[1].clone()
+    if path == "--help" || path == "-h" {
+        printUsage()
+        return 0
+    }
     let r = readFile(path)
     match r {
         Result.Ok(src) => {
             let toks = lex(src)
             var prog = Prog {
-                exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new()
+                exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new()
             }
             var p = PState {
                 toks: toks, pos: 0
@@ -1602,6 +1934,7 @@ fn main(): i32 {
             }
             var st = Interp {
                 scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
+                objects: Vec.new(), objFreeList: Vec.new(),
                 allocSinceGc: 0, gcThreshold: 1024, gcRuns: 0, gcStats: gcStats
             }
             // scope 0 = global (never collected — always a GC root)
