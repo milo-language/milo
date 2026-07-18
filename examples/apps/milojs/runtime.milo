@@ -71,6 +71,15 @@ struct JSObj {
     // when non-empty, this bound object names a builtin method (Array/String
     // prototype) rather than wrapping a user function: [].slice, "".charAt
     boundMethod: string,
+    // Map/Set: insertion-ordered parallel key/value lists. Keys are compared by
+    // strict equality (SameValueZero), so object keys work by identity.
+    // process.env: unknown keys are resolved from the real environment on read,
+    // because there is no portable way to enumerate it from Milo yet
+    isEnv: bool,
+    isMap: bool,
+    isSet: bool,
+    mapKeys: Vec<JSValue>,
+    mapVals: Vec<JSValue>,
     mark: bool,
     free: bool,
 }
@@ -127,7 +136,7 @@ struct Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena
@@ -193,6 +202,29 @@ fn objSet(st: &mut Interp, obj: i64, key: string, value: JSValue) {
         key: key, value: value, getter: JSValue.Undefined, setter: JSValue.Undefined, isAccessor: false
     }
     )
+}
+
+// Index of `key` in a Map/Set's entry list, or -1. Keys compare by strict
+// equality, so objects match by identity.
+fn mapFind(st: &Interp, o: i64, key: &JSValue): i64 {
+    var i: i64 = 0
+    while i < st.objects[o].mapKeys.len() {
+        if jsStrictEquals(st.objects[o].mapKeys[i], key) {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn mapPut(st: &mut Interp, o: i64, key: JSValue, value: JSValue) {
+    let at = mapFind(st, o, key)
+    if at >= 0 {
+        st.objects[o].mapVals[at] = value
+        return
+    }
+    st.objects[o].mapKeys.push(key)
+    st.objects[o].mapVals.push(value)
 }
 
 // Define (or replace) an accessor property.
@@ -397,6 +429,19 @@ fn markObject(st: &mut Interp, i: i64) {
     if st.objects[i].promiseState >= 0 {
         vals.push(cloneValue(st.objects[i].promiseValue))
     }
+    // a Map/Set keeps its entries alive
+    if st.objects[i].isMap || st.objects[i].isSet {
+        var mk: i64 = 0
+        while mk < st.objects[i].mapKeys.len() {
+            vals.push(cloneValue(st.objects[i].mapKeys[mk]))
+            mk = mk + 1
+        }
+        var mv: i64 = 0
+        while mv < st.objects[i].mapVals.len() {
+            vals.push(cloneValue(st.objects[i].mapVals[mv]))
+            mv = mv + 1
+        }
+    }
     // a bound function keeps its target, receiver and pre-bound args alive
     if st.objects[i].isBound {
         vals.push(cloneValue(st.objects[i].boundTarget))
@@ -571,6 +616,24 @@ fn scopeLookup(st: &Interp, scope: i64, name: &string): JSValue {
         s = st.scopes[s].parent
     }
     return JSValue.Undefined
+}
+
+// Is `name` bound anywhere on the scope chain? Distinguishes an undeclared
+// identifier from one declared and holding undefined — the two are otherwise
+// indistinguishable, which silently turns typos into undefined.
+fn scopeHas(st: &Interp, scope: i64, name: &string): bool {
+    var s = scope
+    while s >= 0 {
+        var i = st.scopes[s].vars.len() - 1
+        while i >= 0 {
+            if st.scopes[s].vars[i].name == name {
+                return true
+            }
+            i = i - 1
+        }
+        s = st.scopes[s].parent
+    }
+    return false
 }
 
 // Assignment walks the chain; if unbound, creates a global (sloppy JS).

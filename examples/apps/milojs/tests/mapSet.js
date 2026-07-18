@@ -1,0 +1,16 @@
+const m = new Map();
+m.set("a", 1).set("b", 2);
+console.log(m.get("a"), m.size, m.has("a"), m.has("z"), m.get("zz"));
+m.delete("a"); console.log(m.size, JSON.stringify([...m.keys()]), JSON.stringify([...m.values()]));
+const k = {id:1};
+const m2 = new Map([[k, "obj"], ["s", "str"]]);
+console.log(m2.get(k), m2.get({id:1}), m2.size);
+const s = new Set([1,2,2,3]);
+console.log(s.size, s.has(2), s.has(9));
+s.add(4); s.delete(1); console.log(s.size, JSON.stringify([...s.values()]));
+const out = []; m2.forEach((v, key) => out.push(typeof key + ":" + v)); console.log(out.join(","));
+for (const [kk, vv] of m2.entries()) out.push(vv);
+console.log(out.length);
+console.log(JSON.stringify(Object.getOwnPropertyNames({a:1,b:2})));
+console.log(JSON.stringify(Array.from(new Set([5,5,6]))), JSON.stringify(Array.from("ab")));
+m.clear(); console.log(m.size);

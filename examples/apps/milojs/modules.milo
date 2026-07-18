@@ -320,6 +320,9 @@ fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
         } else if isBuiltinPath(path) {
             let src = builtinSource(builtinNameOf(path))
             let toks = lex(src)
+            // a builtin can require another builtin (http needs events), so its
+            // own requires have to be queued like any other module's
+            let bspecs = scanRequires(toks)
             var bp = PState {
                 toks: toks, pos: 0, curClass: "", file: path.clone()
             }
@@ -328,6 +331,14 @@ fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
             st.modBlocks.push(btop)
             st.modExports.push(JSValue.Undefined)
             st.modState.push(0)
+            var bs: i64 = 0
+            while bs < bspecs.len() {
+                let resolved = resolveSpec("", bspecs[bs])
+                if resolved.len() > 0 {
+                    queue.push(resolved)
+                }
+                bs = bs + 1
+            }
         } else {
             match readFile(path.clone()) {
                 Result.Ok(src) => {

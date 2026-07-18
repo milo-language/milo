@@ -13,6 +13,9 @@
 from "std/io" import {
     readFile
 }
+from "std/os" import {
+    getpid
+}
 from "std/strconv" import {
     parseInt
 }
@@ -67,6 +70,8 @@ fn setupNodeGlobals(st: &mut Interp, entryPath: string) {
     objSet(st, proc, "argv", JSValue.Obj(argv))
 
     let env = newObject(st)
+    // reads of any other variable fall through to the real environment
+    st.objects[env].isEnv = true
     addEnvVar(st, env, "PORT")
     addEnvVar(st, env, "NODE_ENV")
     addEnvVar(st, env, "HOME")
@@ -76,6 +81,15 @@ fn setupNodeGlobals(st: &mut Interp, entryPath: string) {
     objSet(st, proc, "platform", JSValue.Str("darwin"))
     objSet(st, proc, "version", JSValue.Str("v20.0.0"))
     objSet(st, proc, "exitCode", JSValue.Number(0.0))
+    objSet(st, proc, "exit", JSValue.Native(NATIVE_PROCESS_EXIT))
+    objSet(st, proc, "cwd", JSValue.Native(NATIVE_PROCESS_CWD))
+    objSet(st, proc, "hrtime", JSValue.Native(NATIVE_PROCESS_HRTIME))
+    // no event loop yet, so these accept a callback and drop it rather than
+    // failing the require that installs them
+    objSet(st, proc, "nextTick", JSValue.Native(NATIVE_NOOP))
+    objSet(st, proc, "on", JSValue.Native(NATIVE_NOOP))
+    objSet(st, proc, "emitWarning", JSValue.Native(NATIVE_NOOP))
+    objSet(st, proc, "pid", JSValue.Number(getpid() as f64))
 
     scopeDefine(st, 0, "process", JSValue.Obj(proc))
 

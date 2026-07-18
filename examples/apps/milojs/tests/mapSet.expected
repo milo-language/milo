@@ -1,0 +1,10 @@
+1 2 true false undefined
+1 ["b"] [2]
+obj undefined 2
+3 true false
+3 [2,3,4]
+object:obj,string:str
+4
+["a","b"]
+[5,6] ["a","b"]
+0

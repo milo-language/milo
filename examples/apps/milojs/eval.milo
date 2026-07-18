@@ -23,6 +23,15 @@ from "std/io" import {
 from "./modules" import {
     dirOf, resolveSpec, findModule
 }
+from "std/os" import {
+    exit
+}
+from "std/env" import {
+    getEnv
+}
+from "std/fs" import {
+    currentDir
+}
 from "std/math" import {
     mathMod, mathPow
 }
@@ -165,6 +174,21 @@ fn findSetter(st: &Interp, o: i64, key: &string): JSValue {
 
 // Property read that honours accessors; `this` inside the getter is the object.
 fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
+    if st.objects[o].isEnv && objOwnIndex(st, o, key) < 0 {
+        match getEnv(key.clone()) {
+            Option.Some(v) => {
+                let val = JSValue.Str(v)
+                objSet(st, o, key.clone(), cloneValue(val))
+                return val
+            }
+            Option.None => {
+                return JSValue.Undefined
+            }
+        }
+    }
+    if (st.objects[o].isMap || st.objects[o].isSet) && key == "size" {
+        return JSValue.Number(st.objects[o].mapKeys.len() as f64)
+    }
     let g = findGetter(st, o, key)
     if isCallable(g) {
         var noArgs: Vec<JSValue> = Vec.new()
@@ -206,6 +230,9 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             return stringMethod(name, sv, args, st)
         }
         JSValue.Obj(o) => {
+            if st.objects[o].isMap || st.objects[o].isSet {
+                return mapMethod(prog, o, name, args, st)
+            }
             if name == "hasOwnProperty" {
                 var key = ""
                 if args.len() > 0 {
@@ -276,6 +303,14 @@ fn readLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
     let t = getExpr(prog, targetIdx)
     match t {
         Expr.Ident(name) => {
+            // reading an undeclared identifier is a ReferenceError in JS; without
+            // this a typo just evaluates to undefined and the failure surfaces
+            // somewhere else entirely
+            if !scopeHas(st, scope, name) {
+                st.throwing = true
+                st.thrownValue = makeError(st, "ReferenceError", name.clone() + " is not defined")
+                return JSValue.Undefined
+            }
             return scopeLookup(st, scope, name)
         }
         Expr.Member(objIdx, name) => {
@@ -399,6 +434,14 @@ let NATIVE_PARSE_INT: i64 = 43
 let NATIVE_PARSE_FLOAT: i64 = 44
 let NATIVE_SYMBOL: i64 = 45
 let NATIVE_OBJECT_DEFINEPROPERTIES: i64 = 46
+let NATIVE_MAP: i64 = 47
+let NATIVE_SET: i64 = 48
+let NATIVE_OBJECT_GETOWNPROPNAMES: i64 = 49
+let NATIVE_ARRAY_FROM: i64 = 50
+let NATIVE_PROCESS_EXIT: i64 = 51
+let NATIVE_NOOP: i64 = 52
+let NATIVE_PROCESS_HRTIME: i64 = 53
+let NATIVE_PROCESS_CWD: i64 = 54
 let NATIVE_RESOLVER_BASE: i64 = 1000000
 
 fn nativeErrorName(id: i64): string {
@@ -692,6 +735,123 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             i = i + 1
         }
         return JSValue.Obj(o)
+    }
+    if id == NATIVE_MAP || id == NATIVE_SET {
+        let o = newObject(st)
+        if id == NATIVE_MAP {
+            st.objects[o].isMap = true
+        } else {
+            st.objects[o].isSet = true
+        }
+        pushTemp(st, JSValue.Obj(o))
+        // new Map([[k, v], ...]) / new Set([v, ...])
+        if argVals.len() > 0 {
+            let src = objHandle(argVals[0])
+            if src >= 0 && st.objects[src].isArray {
+                var i: i64 = 0
+                while i < arrLen(st, src) {
+                    let e = arrGet(st, src, i)
+                    if id == NATIVE_SET {
+                        mapPut(st, o, e, JSValue.Bool(true))
+                    } else {
+                        let pair = objHandle(e)
+                        if pair >= 0 && st.objects[pair].isArray && arrLen(st, pair) >= 2 {
+                            mapPut(st, o, arrGet(st, pair, 0), arrGet(st, pair, 1))
+                        }
+                    }
+                    i = i + 1
+                }
+            }
+        }
+        popTemp(st)
+        return JSValue.Obj(o)
+    }
+    if id == NATIVE_OBJECT_GETOWNPROPNAMES {
+        let arr = newArray(st)
+        if argVals.len() > 0 {
+            let h = objHandle(argVals[0])
+            if h >= 0 {
+                pushTemp(st, JSValue.Obj(arr))
+                if st.objects[h].isArray {
+                    var e: i64 = 0
+                    while e < arrLen(st, h) {
+                        arrPush(st, arr, JSValue.Str(i64ToStr(e)))
+                        e = e + 1
+                    }
+                    arrPush(st, arr, JSValue.Str("length"))
+                }
+                var k: i64 = 0
+                while k < st.objects[h].props.len() {
+                    arrPush(st, arr, JSValue.Str(st.objects[h].props[k].key.clone()))
+                    k = k + 1
+                }
+                popTemp(st)
+            }
+        }
+        return JSValue.Obj(arr)
+    }
+    if id == NATIVE_ARRAY_FROM {
+        let arr = newArray(st)
+        if argVals.len() > 0 {
+            pushTemp(st, JSValue.Obj(arr))
+            let h = objHandle(argVals[0])
+            if h >= 0 {
+                if st.objects[h].isArray {
+                    var i: i64 = 0
+                    while i < arrLen(st, h) {
+                        arrPush(st, arr, arrGet(st, h, i))
+                        i = i + 1
+                    }
+                } else if st.objects[h].isMap || st.objects[h].isSet {
+                    var i: i64 = 0
+                    while i < st.objects[h].mapKeys.len() {
+                        arrPush(st, arr, cloneValue(st.objects[h].mapKeys[i]))
+                        i = i + 1
+                    }
+                }
+            } else {
+                match cloneValue(argVals[0]) {
+                    JSValue.Str(sv) => {
+                        var i: i64 = 0
+                        while i < sv.len() {
+                            arrPush(st, arr, JSValue.Str(jsCharAt(sv, i)))
+                            i = i + 1
+                        }
+                    }
+                    _ => {
+                    }
+                }
+            }
+            popTemp(st)
+        }
+        return JSValue.Obj(arr)
+    }
+    if id == NATIVE_PROCESS_EXIT {
+        var code: i64 = 0
+        if argVals.len() > 0 {
+            code = toNum(argVals[0]) as i64
+        }
+        exit(code as i32)
+        return JSValue.Undefined
+    }
+    if id == NATIVE_NOOP {
+        return JSValue.Undefined
+    }
+    if id == NATIVE_PROCESS_CWD {
+        match currentDir() {
+            Result.Ok(d) => {
+                return JSValue.Str(d)
+            }
+            Result.Err(_e) => {
+                return JSValue.Str(".")
+            }
+        }
+    }
+    if id == NATIVE_PROCESS_HRTIME {
+        let arr = newArray(st)
+        arrPush(st, arr, JSValue.Number(0.0))
+        arrPush(st, arr, JSValue.Number(0.0))
+        return JSValue.Obj(arr)
     }
     if id == NATIVE_OBJECT_CREATE {
         let o = newObject(st)
@@ -1288,6 +1448,7 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "setPrototypeOf", JSValue.Native(NATIVE_OBJECT_SETPROTO))
     objSet(st, objectCtor, "getOwnPropertyDescriptor", JSValue.Native(NATIVE_OBJECT_GETOWNPROPDESC))
     objSet(st, objectCtor, "defineProperties", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTIES))
+    objSet(st, objectCtor, "getOwnPropertyNames", JSValue.Native(NATIVE_OBJECT_GETOWNPROPNAMES))
     let objectProto = newObject(st)
     objSet(st, objectProto, "hasOwnProperty", makeBoundMethod(st, JSValue.Undefined, "hasOwnProperty"))
     objSet(st, objectCtor, "prototype", JSValue.Obj(objectProto))
@@ -1302,8 +1463,13 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "parseInt", JSValue.Native(NATIVE_PARSE_INT))
     scopeDefine(st, 0, "parseFloat", JSValue.Native(NATIVE_PARSE_FLOAT))
     scopeDefine(st, 0, "Symbol", JSValue.Native(NATIVE_SYMBOL))
+    scopeDefine(st, 0, "Map", JSValue.Native(NATIVE_MAP))
+    scopeDefine(st, 0, "WeakMap", JSValue.Native(NATIVE_MAP))
+    scopeDefine(st, 0, "Set", JSValue.Native(NATIVE_SET))
+    scopeDefine(st, 0, "WeakSet", JSValue.Native(NATIVE_SET))
     let arrayCtor = newObject(st)
     objSet(st, arrayCtor, "isArray", JSValue.Native(NATIVE_ARRAY_ISARRAY))
+    objSet(st, arrayCtor, "from", JSValue.Native(NATIVE_ARRAY_FROM))
     scopeDefine(st, 0, "Array", JSValue.Obj(arrayCtor))
     // file natives, named as minibun's runtime expects them
     scopeDefine(st, 0, "__readFileSync", JSValue.Native(NATIVE_READ_FILE_SYNC))
@@ -1363,6 +1529,14 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             return JSValue.Undefined
         }
         Expr.Ident(name) => {
+            // reading an undeclared identifier is a ReferenceError in JS; without
+            // this a typo just evaluates to undefined and the failure surfaces
+            // somewhere else entirely
+            if !scopeHas(st, scope, name) {
+                st.throwing = true
+                st.thrownValue = makeError(st, "ReferenceError", name.clone() + " is not defined")
+                return JSValue.Undefined
+            }
             return scopeLookup(st, scope, name)
         }
         Expr.Bin(op, a, b) => {
@@ -1437,6 +1611,19 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             return evalBin(op, va, vb)
         }
         Expr.Un(op, a) => {
+            // typeof is the one context where an undeclared name is legal
+            if op == "typeof" {
+                let inner = getExpr(prog, a)
+                match inner {
+                    Expr.Ident(iname) => {
+                        if !scopeHas(st, scope, iname) {
+                            return JSValue.Str("undefined")
+                        }
+                    }
+                    _ => {
+                    }
+                }
+            }
             let va = evalExpr(prog, a, st, scope)
             if op == "-" {
                 return JSValue.Number(0.0 - toNum(va))
@@ -2003,6 +2190,15 @@ fn describeCallee(prog: &Prog, calleeIdx: i64): string {
     }
 }
 
+// A real Error object, so catch blocks see .name/.message and instanceof works.
+fn makeError(st: &mut Interp, kind: string, msg: string): JSValue {
+    let o = newObject(st)
+    st.objects[o].isError = true
+    objSet(st, o, "name", JSValue.Str(kind))
+    objSet(st, o, "message", JSValue.Str(msg))
+    return JSValue.Obj(o)
+}
+
 fn isSymbolValue(v: &JSValue): bool {
     match v {
         JSValue.Str(s) => {
@@ -2104,6 +2300,130 @@ fn makeCbArgs(st: &Interp, o: i64, i: i64): Vec<JSValue> {
     v.push(JSValue.Number(i as f64))
     v.push(JSValue.Obj(o))
     return v
+}
+
+// Map and Set share one entry list; a Set just stores true as every value.
+fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+    let isSet = st.objects[o].isSet
+    if name == "get" {
+        var key = JSValue.Undefined
+        if args.len() > 0 {
+            key = cloneValue(args[0])
+        }
+        let at = mapFind(st, o, key)
+        if at < 0 {
+            return JSValue.Undefined
+        }
+        return cloneValue(st.objects[o].mapVals[at])
+    }
+    if name == "set" || name == "add" {
+        var key = JSValue.Undefined
+        if args.len() > 0 {
+            key = cloneValue(args[0])
+        }
+        var val = JSValue.Bool(true)
+        if !isSet && args.len() > 1 {
+            val = cloneValue(args[1])
+        }
+        mapPut(st, o, key, val)
+        return JSValue.Obj(o)
+    }
+    if name == "has" {
+        var key = JSValue.Undefined
+        if args.len() > 0 {
+            key = cloneValue(args[0])
+        }
+        return JSValue.Bool(mapFind(st, o, key) >= 0)
+    }
+    if name == "delete" {
+        var key = JSValue.Undefined
+        if args.len() > 0 {
+            key = cloneValue(args[0])
+        }
+        let at = mapFind(st, o, key)
+        if at < 0 {
+            return JSValue.Bool(false)
+        }
+        var nk: Vec<JSValue> = Vec.new()
+        var nv: Vec<JSValue> = Vec.new()
+        var i: i64 = 0
+        while i < st.objects[o].mapKeys.len() {
+            if i != at {
+                nk.push(cloneValue(st.objects[o].mapKeys[i]))
+                nv.push(cloneValue(st.objects[o].mapVals[i]))
+            }
+            i = i + 1
+        }
+        st.objects[o].mapKeys = nk
+        st.objects[o].mapVals = nv
+        return JSValue.Bool(true)
+    }
+    if name == "clear" {
+        st.objects[o].mapKeys = Vec.new()
+        st.objects[o].mapVals = Vec.new()
+        return JSValue.Undefined
+    }
+    if name == "keys" || name == "values" || name == "entries" {
+        // returns an array rather than a real iterator; spread and for-of both
+        // work over arrays, which is how this is used in practice
+        let arr = newArray(st)
+        pushTemp(st, JSValue.Obj(arr))
+        var i: i64 = 0
+        while i < st.objects[o].mapKeys.len() {
+            let k = cloneValue(st.objects[o].mapKeys[i])
+            let v = cloneValue(st.objects[o].mapVals[i])
+            if name == "keys" {
+                arrPush(st, arr, k)
+            } else if name == "values" {
+                if isSet {
+                    arrPush(st, arr, k)
+                } else {
+                    arrPush(st, arr, v)
+                }
+            } else {
+                let pair = newArray(st)
+                pushTemp(st, JSValue.Obj(pair))
+                arrPush(st, pair, k)
+                if isSet {
+                    arrPush(st, pair, cloneValue(st.objects[o].mapKeys[i]))
+                } else {
+                    arrPush(st, pair, v)
+                }
+                popTemp(st)
+                arrPush(st, arr, JSValue.Obj(pair))
+            }
+            i = i + 1
+        }
+        popTemp(st)
+        return JSValue.Obj(arr)
+    }
+    if name == "forEach" {
+        if args.len() == 0 {
+            return JSValue.Undefined
+        }
+        let cb = cloneValue(args[0])
+        pushTemp(st, cloneValue(cb))
+        var i: i64 = 0
+        while i < st.objects[o].mapKeys.len() {
+            let k = cloneValue(st.objects[o].mapKeys[i])
+            var v = cloneValue(st.objects[o].mapVals[i])
+            if isSet {
+                v = cloneValue(st.objects[o].mapKeys[i])
+            }
+            var cbArgs: Vec<JSValue> = Vec.new()
+            cbArgs.push(v)
+            cbArgs.push(k)
+            cbArgs.push(JSValue.Obj(o))
+            let _ = callValue(prog, cb, cbArgs, JSValue.Undefined, st)
+            if st.throwing {
+                i = st.objects[o].mapKeys.len()
+            }
+            i = i + 1
+        }
+        popTemp(st)
+        return JSValue.Undefined
+    }
+    return JSValue.Undefined
 }
 
 fn isArrayMethod(name: &string): bool {
@@ -2721,6 +3041,12 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 popTemp(st)
                 return r
             }
+            if st.objects[o].isMap || st.objects[o].isSet {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                let r = mapMethod(prog, o, name, argVals, st)
+                popTemp(st)
+                return r
+            }
             if isPromise(st, o) && (name == "then" || name == "catch" || name == "finally") {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
                 let r = promiseMethod(prog, o, name, argVals, st)
@@ -2868,6 +3194,10 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                 Expr.Ident(objName) => {
                     if objName == "console" && (name == "log" || name == "error" || name == "warn" || name == "info") {
                         let argVals = evalArgs(prog, argsIdx, st, scope)
+                        // an argument that threw must not still be printed
+                        if st.throwing {
+                            return JSValue.Undefined
+                        }
                         var line = ""
                         var j: i64 = 0
                         while j < argVals.len() {
