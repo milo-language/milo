@@ -118,6 +118,22 @@
 
 /* ---- home page sections ---- */
 
+.intro {
+  max-width: 720px;
+  margin: 0 auto 3rem;
+  padding: 0 24px;
+  text-align: center;
+  font-size: 1.15rem;
+  line-height: 1.7;
+  color: var(--vp-c-text-1);
+}
+.intro a {
+  color: var(--vp-c-brand-1);
+  font-weight: 600;
+  text-decoration: none;
+}
+.intro a:hover { text-decoration: underline; }
+
 .section-break {
   max-width: 720px;
   margin: 0 auto 2rem;

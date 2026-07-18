@@ -18,7 +18,7 @@
         @click="select(i)"
       >
         <span class="cc-tab-title">{{ t }}</span>
-        <span class="cc-tab-sub">{{ subtitles[i] }}</span>
+        <span v-if="subtitles[i]" class="cc-tab-sub">{{ subtitles[i] }}</span>
       </button>
     </div>
 

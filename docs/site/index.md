@@ -19,41 +19,25 @@ hero:
       link: /nes/
 ---
 
-## What Milo is
+<div class="intro">
 
-Milo keeps ownership and drops the machinery: references exist only as function parameters — [the design Rust's creator wanted](https://github.com/cs01/milo/blob/main/docs/design.md#alignment-with-graydon-hoares-the-rust-i-wanted) — so there are no lifetimes and no borrow-checker puzzles. Contracts (`requires` / `ensures`) are part of the language, discharged by an SMT prover written in Milo itself.
+Milo is a memory-safe systems language that guides you to simple, correct, readable programs. Contracts are built in, enabling formal verification that guarantees correctness across your codebase — no matter how large. People and AI alike ship with confidence that their code is correct. <a href="/milo/language/">Learn more →</a>
+
+</div>
 
 <CodeCarousel
-  :titles="['Ownership', 'Concurrency', 'Contracts']"
-  :subtitles="['One owner per value', 'Green tasks, no mutex', 'Proved before it runs']"
+  :titles="['Hello World', 'Contracts', 'Ownership']"
   :captions="[
-    'Hand a value to someone else and you no longer have it. That one rule is where memory safety comes from — no lifetime annotations, no borrow-checker puzzles. The compiler catches the mistake at compile time, not at 3am.',
-    'Two HTTP+TLS requests overlap instead of queueing. Promise.run starts a green task, not an OS thread, so thousands are cheap. There is no mutex because there is nothing to guard: each task owns its URL, and the same move rules that stop use-after-free stop data races. HTTP, TLS and the scheduler are all stdlib.',
-    'requires and ensures are part of the language, and the SMT solver that discharges them is written in Milo. It proves clamp keeps its promise for every input that meets the precondition — not tested on a few. The precondition is enforced too: constants that violate it are rejected at compile time, and debug builds assert it at every call. Release compiles the checks out.',
+    'No boilerplate, no ceremony. One command compiles it to a native binary and runs it.',
+    'requires and ensures are part of the language. The prover checks that clamp keeps its promise for every input — not just the ones you tested.',
+    'Hand a value to someone else and you no longer have it. The compiler catches the mistake at compile time, not at 3am.',
   ]"
 >
 
 ```milo
 fn main() {
-    let name = "milo"
-    let greeting = name   // `name` moves here — it is no longer yours
-
-    print(greeting)       // "milo"
-    print(name)           // error: use of moved variable 'name'
-}
-```
-
-```milo
-from "std/net" import { fetch }
-from "std/runtime" import { Promise }
-
-fn main() {
-    // Two requests in flight at once. Each task owns its URL — nothing is
-    // shared, so there is no mutex and no data race to get wrong.
-    let a = Promise<i32>.run(() => fetch("https://example.com")!.status)
-    let b = Promise<i32>.run(() => fetch("https://httpbin.org/get")!.status)
-
-    print($"{a.await()!} {b.await()!}")   // 200 200
+    let name = "world"
+    print($"hello, {name}")
 }
 ```
 
@@ -68,6 +52,16 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
 }
 ```
 
+```milo
+fn main() {
+    let name = "milo"
+    let greeting = name   // `name` moves here — it is no longer yours
+
+    print(greeting)       // "milo"
+    print(name)           // error: use of moved variable 'name'
+}
+```
+
 </CodeCarousel>
 
 <div class="showcase">
@@ -79,65 +73,65 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
     <a class="tile" href="/milo/nes/">
       <span class="tile-play">▶ PLAY</span>
       <div class="tile-emoji">🎮</div>
-      <h3>NES</h3>
-      <p>Complete console — 6502, PPU, APU. 60 fps with sound.</p>
+      <h3>NES Emulator</h3>
+      <p>A complete Nintendo, playable right here in your browser.</p>
     </a>
     <a class="tile" href="/milo/genesis/">
       <span class="tile-play">▶ PLAY</span>
       <div class="tile-emoji">🕹️</div>
-      <h3>Genesis</h3>
-      <p>68000 + Z80 + VDP + FM synth. Sonic runs.</p>
+      <h3>Genesis Emulator</h3>
+      <p>A complete Sega Genesis. Sonic runs.</p>
     </a>
     <a class="tile" href="/milo/snes/">
       <span class="tile-play">▶ PLAY</span>
       <div class="tile-emoji">👾</div>
-      <h3>SNES</h3>
-      <p>65C816 + PPU + Super FX. Mario World, DKC, Star Fox.</p>
+      <h3>SNES Emulator</h3>
+      <p>A Super Nintendo — Mario World, Donkey Kong Country, Star Fox.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/src-milo">
       <div class="tile-emoji">🪞</div>
-      <h3>the compiler</h3>
-      <p>Self-hosting — rebuilds itself byte-for-byte identical.</p>
+      <h3>The Compiler</h3>
+      <p>The Milo compiler is written in Milo — it rebuilds itself, byte-for-byte.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/milojs">
       <div class="tile-emoji">⚡</div>
-      <h3>milojs</h3>
-      <p>A JavaScript engine. Runs express.</p>
+      <h3>JS Engine</h3>
+      <p>A JavaScript engine that runs real Node apps like express.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/hades">
       <div class="tile-emoji">🐛</div>
-      <h3>hades</h3>
-      <p>Web + AI debugger for any DAP backend.</p>
+      <h3>Debugger</h3>
+      <p>hades — debug any program from the browser, with an AI in the loop.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/weather">
       <div class="tile-emoji">🌦️</div>
-      <h3>weather</h3>
-      <p>weather.gov frontend from one static binary.</p>
+      <h3>Weather App</h3>
+      <p>A weather website served from a single static binary.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/termpair">
       <div class="tile-emoji">🖥️</div>
       <h3>termpair</h3>
-      <p>Your terminal in a browser, end-to-end encrypted.</p>
+      <p>Share your terminal in the browser, end-to-end encrypted.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/apps/tetris.milo">
       <div class="tile-emoji">🧱</div>
-      <h3>tetris</h3>
-      <p>Event-driven terminal tetris. One green task, no polling.</p>
+      <h3>Tetris</h3>
+      <p>The classic, in your terminal.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/apps/sysmon.milo">
       <div class="tile-emoji">📊</div>
-      <h3>sysmon</h3>
-      <p>htop-style live system monitor.</p>
+      <h3>System Monitor</h3>
+      <p>A live htop-style view of your machine.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo">
       <div class="tile-emoji">📦</div>
-      <h3>pkg</h3>
-      <p>Package manager — git transport, lockfile.</p>
+      <h3>Package Manager</h3>
+      <p>Install and publish Milo packages straight from git.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/blob/main/tools/smtSolve.milo">
       <div class="tile-emoji">🧮</div>
-      <h3>the prover</h3>
-      <p>The SMT solver behind <code>milo prove</code>.</p>
+      <h3>The Prover</h3>
+      <p>The SMT prover that verifies Milo contracts — written in Milo.</p>
     </a>
   </div>
   <div class="showcase-cta">
