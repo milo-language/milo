@@ -1,0 +1,12 @@
+// @error: shadows a standard-library function
+
+// strIndexOf is a prelude/std function taking (s, sub). Redefining it with a
+// different signature would rebind std/string's own internal calls to this body
+// and break them — the resolver rejects it. (A same-signature override is fine.)
+fn strIndexOf(s: &string, sub: &string, start: i64): i64 {
+    return start
+}
+
+fn main(): i32 {
+    return strIndexOf("a", "b", 0) as i32
+}

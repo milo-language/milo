@@ -318,10 +318,11 @@ export class Parser {
   private parseExternFn(): Function {
     this.expect(TokenKind.Extern);
     this.expect(TokenKind.Fn);
-    const name = this.expect(TokenKind.Ident).value;
+    const nameTok = this.expect(TokenKind.Ident);
+    const name = nameTok.value;
     const { params, variadic } = this.parseParamList();
     const retType = this.parseReturnType();
-    return { kind: "Function", name, typeParams: [], params, retType, contracts: [], body: [], isExtern: true, isVariadic: variadic };
+    return { kind: "Function", name, typeParams: [], params, retType, contracts: [], body: [], isExtern: true, isVariadic: variadic, span: this.span(nameTok) };
   }
 
   private parseExternType(): StructDecl {
@@ -354,7 +355,8 @@ export class Parser {
 
   private parseFn(): Function {
     this.expect(TokenKind.Fn);
-    const name = this.expect(TokenKind.Ident).value;
+    const nameTok = this.expect(TokenKind.Ident);
+    const name = nameTok.value;
     const typeParams = this.parseTypeParams();
     const { params, variadic } = this.parseParamList();
     const retType = this.parseReturnType();
@@ -362,7 +364,7 @@ export class Parser {
     this.expect(TokenKind.LBrace);
     const body = this.parseStmts();
     this.expect(TokenKind.RBrace);
-    return { kind: "Function", name, typeParams, params, retType, contracts, body, isExtern: false, isVariadic: variadic };
+    return { kind: "Function", name, typeParams, params, retType, contracts, body, isExtern: false, isVariadic: variadic, span: this.span(nameTok) };
   }
 
   private parseContracts(): import("./ast").Contract[] {

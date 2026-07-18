@@ -5,6 +5,7 @@ import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { homedir } from "os";
 import type { Program, Span } from "./ast";
+import { ParseError } from "./diagnostics";
 import type { TargetInfo } from "./target";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
@@ -220,24 +221,61 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
 
   processImports(program, sourceDir);
 
-  // Same-name top-level fns from different modules would silently merge below
-  // (dedup keeps one body and every call site runs it — issue #5). Identical
-  // bodies merge harmlessly, so only reject when the bodies actually differ.
-  // Exemptions: prelude + its transitive imports (user redefinition is the
-  // documented override path) and externs (redeclarations all bind the same C symbol).
+  // Same-name top-level fns collapse in the flat namespace: dedup (below) keeps
+  // the last body, and every call site — including the *other* module's own
+  // internal calls — then runs it. Two failure modes are flagged here:
+  //   1. A user fn shadows a stdlib/prelude fn of the same name with a DIFFERENT
+  //      signature. The library's own calls to that name rebind to the user's fn
+  //      and break (wrong arity/types) — this is the "expects 3, got 2" trap. A
+  //      signature-compatible override is the documented path and stays allowed.
+  //   2. Two non-prelude modules define the same fn with different bodies.
+  // Externs are exempt (redeclarations all bind the same C symbol).
+  const stripSpan = (k: string, v: unknown) =>
+    k === "span" ? undefined : typeof v === "bigint" ? `${v}n` : v;
   const stripForCompare = (k: string, v: unknown) =>
     k === "span" || k === "sourceFile" ? undefined : typeof v === "bigint" ? `${v}n` : v;
+  // Signature identity ignores param *names* — only arity, param types, and the
+  // return type decide whether one fn can stand in for another.
+  const sigKey = (f: typeof functions[number]) =>
+    f.params.map(p => JSON.stringify(p.type, stripSpan)).join(",") + "=>" + JSON.stringify(f.retType, stripSpan);
+  const readSourceSafe = (p?: string) => { try { return p ? readSource(p) : undefined; } catch { return undefined; } };
+
+  // Stdlib/prelude signatures, to detect user shadows. First occurrence wins.
+  const stdlibSigs = new Map<string, { file: string; sig: string }>();
+  for (const f of functions) {
+    if (f.isExtern) continue;
+    if (f.sourceFile && preludeFiles.has(f.sourceFile) && !stdlibSigs.has(f.name)) {
+      stdlibSigs.set(f.name, { file: f.sourceFile, sig: sigKey(f) });
+    }
+  }
+
   const fnDefs = new Map<string, { file: string; body: string }>();
   for (const f of functions) {
     if (f.isExtern || (f.sourceFile && preludeFiles.has(f.sourceFile))) continue;
+
+    const shadowed = stdlibSigs.get(f.name);
+    if (shadowed && shadowed.sig !== sigKey(f)) {
+      throw new ParseError({
+        severity: "error",
+        code: "shadows-stdlib",
+        span: f.span,
+        len: f.name.length,
+        message: `'fn ${f.name}' shadows a standard-library function of the same name, with a different signature`,
+        hint: `the standard library defines '${f.name}' in '${shadowed.file}'. Milo merges every module into one namespace, so the library's own calls to '${f.name}' would bind to this definition and break. Rename this function, or match the library's signature exactly to override it deliberately.`,
+      }, readSourceSafe(f.sourceFile), f.sourceFile);
+    }
+
     const body = JSON.stringify(f, stripForCompare);
     const prev = fnDefs.get(f.name);
     if (prev && prev.body !== body && prev.file !== f.sourceFile) {
-      throw new Error(
-        `error[duplicate-fn]: 'fn ${f.name}' is defined with different bodies in '${prev.file}' and '${f.sourceFile}'.\n` +
-        `  milo compiles all modules into one namespace, so only one body would survive and both call sites would run it.\n` +
-        `  rename one of them, or move the shared implementation into a single module both files import.`
-      );
+      throw new ParseError({
+        severity: "error",
+        code: "duplicate-fn",
+        span: f.span,
+        len: f.name.length,
+        message: `'fn ${f.name}' is defined in two modules with different bodies`,
+        hint: `also defined in '${prev.file}'. Milo compiles all modules into one namespace, so only one body survives and every call site runs it. Rename one, or move the shared implementation into a single module both import.`,
+      }, readSourceSafe(f.sourceFile), f.sourceFile);
     }
     if (!prev) fnDefs.set(f.name, { file: f.sourceFile ?? "(unknown)", body });
   }

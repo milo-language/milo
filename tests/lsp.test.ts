@@ -78,6 +78,14 @@ const BUILTIN_SRC = `fn main() {
 `;
 const BUILTIN_URI = "file:///tmp/milo-lsp-builtin.milo";
 
+// A user fn shadowing a prelude/std fn (strIndexOf) with a different signature.
+// Must surface as a diagnostic squiggled on the fn name, not a dead file.
+const SHADOW_SRC = `fn strIndexOf(s: &string, sub: &string, start: i64): i64 {
+    return start
+}
+`;
+const SHADOW_URI = "file:///tmp/milo-lsp-shadow.milo";
+
 // Goto-definition on a local impl-method call (`s.greet()`). Methods live in
 // program.impls, not program.functions, so this used to resolve nowhere.
 const IMPL_SRC = `struct Speaker {
@@ -162,6 +170,8 @@ const GLOBAL_URI = "file:///tmp/milo-lsp-global.milo";
 let proc: Subprocess<"pipe", "pipe", "inherit">;
 let buf = new Uint8Array(0);
 const pending = new Map<number, (v: any) => void>();
+// Latest published diagnostics per document URI (server→client notifications).
+const diagnosticsByUri = new Map<string, any[]>();
 
 function frame(msg: any): Uint8Array {
   const body = JSON.stringify(msg);
@@ -182,6 +192,7 @@ function pump() {
     const msg = JSON.parse(new TextDecoder().decode(buf.slice(start, start + len)));
     buf = buf.slice(start + len);
     if (msg.id !== undefined && pending.has(msg.id)) { pending.get(msg.id)!(msg.result); pending.delete(msg.id); }
+    else if (msg.method === "textDocument/publishDiagnostics") { diagnosticsByUri.set(msg.params.uri, msg.params.diagnostics); }
   }
 }
 
@@ -209,7 +220,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -242,6 +253,23 @@ test("hover on builtin Vec type and Vec.new constructor", async () => {
   // `new` in `Vec.new()` (line 1, char 27).
   const onCtor = await req(23, "textDocument/hover", { textDocument: { uri: BUILTIN_URI }, position: { line: 1, character: 27 } });
   expect(onCtor?.contents?.value).toContain("Vec.new");
+});
+
+test("shadowing a stdlib fn with a different signature is a squiggled diagnostic", async () => {
+  // Diagnostics are async notifications published after didOpen — poll briefly.
+  const deadline = Date.now() + 4000;
+  let diags: any[] | undefined;
+  while (Date.now() < deadline) {
+    diags = diagnosticsByUri.get(SHADOW_URI);
+    if (diags && diags.length) break;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  expect(diags && diags.length).toBeTruthy();
+  const shadow = diags!.find(d => /shadows a standard-library function/.test(d.message));
+  expect(shadow).toBeTruthy();
+  // Squiggled on the fn name (`strIndexOf` starts at line 0, char 3), not floating at file top.
+  expect(shadow.range.start.line).toBe(0);
+  expect(shadow.range.start.character).toBe(3);
 });
 
 test("hover on builtin Vec instance methods (.push / .pop) shows a specialized sig", async () => {

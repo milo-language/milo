@@ -163,9 +163,9 @@ export interface Function {
   body: Stmt[];
   isExtern: boolean;
   isVariadic: boolean;
-  // Nothing populates this today — the parser builds Function nodes without a
-  // span, so diagnostics that pass `fn.span` currently render with no source
-  // context. Declared optional to match that reality.
+  // Set by the parser to the function-name token — the anchor for fn-level
+  // diagnostics (duplicate/shadow definitions). Optional: synthetic Function
+  // nodes (e.g. monomorphized generics) may omit it.
   span?: Span;
 }
 
