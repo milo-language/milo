@@ -9,7 +9,7 @@ from "./value" import {
     JSValue
 }
 from "./runtime" import {
-    Interp, Timer, Microtask, Reaction, NATIVE_RESOLVER_BASE
+    Interp, Timer, Microtask, Reaction, NATIVE_RESOLVER_BASE, collect
 }
 from "./builtins" import {
     stringMethod, jsCharAt, mjStringifyVal, mjJsonParse, mjJsonOmitted
@@ -548,6 +548,7 @@ let NATIVE_TCP_CLOSE: i64 = 72
 let NATIVE_HTTP_REGISTER: i64 = 73
 let NATIVE_HTTP_UNREGISTER: i64 = 74
 let NATIVE_WRITE_FILE: i64 = 75
+let NATIVE_GC: i64 = 76
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -599,6 +600,12 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     }
     if id >= NATIVE_MATH_FLOOR && id <= NATIVE_MATH_RANDOM {
         return mathNative(id, argVals, st)
+    }
+    if id == NATIVE_GC {
+        // a real collection, not a no-op: the QuickJS GC tests call this to force
+        // finalization, and a stub would make them pass without exercising anything
+        collect(st)
+        return JSValue.Undefined
     }
     if id == NATIVE_REGEXP {
         var pat = ""
@@ -1834,6 +1841,7 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "NaN", JSValue.Number(jsNan()))
     scopeDefine(st, 0, "Infinity", JSValue.Number(jsInfinity()))
     scopeDefine(st, 0, "isNaN", JSValue.Native(NATIVE_IS_NAN))
+    scopeDefine(st, 0, "gc", JSValue.Native(NATIVE_GC))
     scopeDefine(st, 0, "isFinite", JSValue.Native(NATIVE_IS_FINITE))
     scopeDefine(st, 0, "parseInt", JSValue.Native(NATIVE_PARSE_INT))
     scopeDefine(st, 0, "parseFloat", JSValue.Native(NATIVE_PARSE_FLOAT))

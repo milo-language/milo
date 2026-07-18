@@ -186,6 +186,13 @@ fn builtinSource(name: &string): string {
     if name == "prelude" {
         return embedFile("lib/prelude.js")
     }
+    // QuickJS host modules, so its test suite can be run against this engine
+    if name == "qjs:std" {
+        return embedFile("lib/qjs-std.js")
+    }
+    if name == "qjs:os" {
+        return embedFile("lib/qjs-os.js")
+    }
     return ""
 }
 
