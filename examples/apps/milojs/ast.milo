@@ -34,6 +34,11 @@ enum Expr {
     Cond(i64, i64, i64),
     // ...expr in a call-arg or array-literal position
     Spread(i64),
+    // the comma/sequence operator: evaluate left for effect, yield right.
+    // Shows up constantly in TS-compiled CommonJS as `(0, mod.fn)(...)`.
+    Comma(i64, i64),
+    // /pattern/flags written literally
+    RegexLit(string, string),
 }
 
 // One key/value pair in an object literal; val is an expr index.
@@ -151,6 +156,12 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.Spread(e) => {
             return Expr.Spread(e)
+        }
+        Expr.Comma(a, b) => {
+            return Expr.Comma(a, b)
+        }
+        Expr.RegexLit(pat, flags) => {
+            return Expr.RegexLit(pat.clone(), flags.clone())
         }
     }
 }

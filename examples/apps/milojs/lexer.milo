@@ -69,6 +69,11 @@ let T_TEMPLATE_BEGIN: i32 = 58
 let T_TEMPLATE_CHUNK: i32 = 59
 let T_TEMPLATE_END: i32 = 60
 let T_SPREAD: i32 = 61
+let T_NULLISH: i32 = 62
+// regex literal; text is "pattern\nflags" (a raw newline can't appear in a
+// regex literal, so it's a safe separator)
+let T_REGEX: i32 = 63
+let T_IN: i32 = 64
 
 struct Token {
     kind: i32,
@@ -149,6 +154,9 @@ fn keywordKind(s: &string): i32 {
     if s == "instanceof" {
         return T_INSTANCEOF
     }
+    if s == "in" {
+        return T_IN
+    }
     return T_IDENT
 }
 
@@ -218,6 +226,65 @@ fn scanTmplChunk(src: &string, start: i64, toks: &mut Vec<Token>): ChunkResult {
     }
 }
 
+// After these tokens a `/` is division; anywhere else it starts a regex literal.
+// (Standard JS lexer heuristic — the grammar is genuinely context-dependent here.)
+fn prevAllowsRegex(toks: &Vec<Token>): bool {
+    if toks.len() == 0 {
+        return true
+    }
+    let k = toks[toks.len() - 1].kind
+    if k == T_IDENT || k == T_NUM || k == T_STR || k == T_RPAREN || k == T_RBRACKET || k == T_TEMPLATE_END {
+        return false
+    }
+    return true
+}
+
+// Scan a /pattern/flags literal starting at the opening slash. Returns the new
+// position; pushes a T_REGEX token holding "pattern\nflags".
+fn scanRegexLit(src: &string, start: i64, toks: &mut Vec<Token>): i64 {
+    var i = start + 1
+    let n = src.len()
+    var pat = String.withCapacity(16)
+    var inClass = false
+    var going = true
+    while going {
+        if i >= n {
+            going = false
+        } else {
+            let c = src[i]
+            if c == 92 as u8 && i + 1 < n {
+                pat.push(c)
+                pat.push(src[i + 1])
+                i = i + 2
+            } else if c == '[' {
+                inClass = true
+                pat.push(c)
+                i = i + 1
+            } else if c == ']' {
+                inClass = false
+                pat.push(c)
+                i = i + 1
+            } else if c == '/' && !inClass {
+                i = i + 1
+                going = false
+            } else {
+                pat.push(c)
+                i = i + 1
+            }
+        }
+    }
+    var flags = String.withCapacity(4)
+    while i < n && isIdentStart(src[i]) {
+        flags.push(src[i])
+        i = i + 1
+    }
+    toks.push(Token {
+        kind: T_REGEX, num: 0.0, text: pat + "\n" + flags
+    }
+    )
+    return i
+}
+
 fn lex(src: &string): Vec<Token> {
     var toks: Vec<Token> = Vec.new()
     let n = src.len()
@@ -243,6 +310,8 @@ fn lex(src: &string): Vec<Token> {
                 i = i + 1
             }
             i = i + 2
+        } else if c == '/' && prevAllowsRegex(toks) {
+            i = scanRegexLit(src, i, toks)
         } else if isDigit(c) || (c == '.' && i + 1 < n && isDigit(src[i + 1])) {
             var txt = String.withCapacity(16)
             while i < n && (isDigit(src[i]) || src[i] == '.') {
@@ -362,6 +431,9 @@ fn lex(src: &string): Vec<Token> {
         } else if c == '|' && i + 1 < n && src[i + 1] == '|' {
             i = i + 2
             pushTok(toks, T_OROR)
+        } else if c == '?' && i + 1 < n && src[i + 1] == '?' {
+            i = i + 2
+            pushTok(toks, T_NULLISH)
         } else if c == '=' && i + 1 < n && src[i + 1] == '>' {
             i = i + 2
             pushTok(toks, T_ARROW)

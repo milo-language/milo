@@ -29,12 +29,38 @@ fn advance(p: &mut PState) {
     p.pos = p.pos + 1
 }
 
+// Can the current token serve as a property name? Identifiers and any keyword
+// (obj.catch / obj.default / obj.function are all legal JS), but not literals.
+fn isPropName(p: &PState): bool {
+    if p.pos >= p.toks.len() {
+        return false
+    }
+    let k = p.toks[p.pos].kind
+    if k == T_STR || k == T_NUM {
+        return false
+    }
+    return p.toks[p.pos].text.len() > 0
+}
+
+// Human-readable text for a token, for diagnostics.
+fn tokenDesc(p: &PState, i: i64): string {
+    if i < 0 || i >= p.toks.len() {
+        return "<eof>"
+    }
+    if p.toks[i].text.len() > 0 {
+        return p.toks[i].text.clone()
+    }
+    return "<" + i64ToStr(p.toks[i].kind as i64) + ">"
+}
+
 // Consume `kind` if present; parser is forgiving (bad input still terminates).
+// On mismatch, report the offending token with its neighbours so the unsupported
+// syntax is identifiable rather than just a token index.
 fn expect(p: &mut PState, kind: i32) {
     if peekKind(p) == kind {
         advance(p)
     } else {
-        eprint("milojs: parse error near token " + i64ToStr(p.pos))
+        eprint("milojs: parse error at token " + i64ToStr(p.pos) + ": expected <" + i64ToStr(kind as i64) + ">, got '" + tokenDesc(p, p.pos) + "'  …" + tokenDesc(p, p.pos - 2) + " " + tokenDesc(p, p.pos - 1) + " >>" + tokenDesc(p, p.pos) + "<< " + tokenDesc(p, p.pos + 1) + " " + tokenDesc(p, p.pos + 2) + "…")
     }
 }
 
@@ -181,7 +207,13 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
             return makeArrow(p, prog, arrowParams)
         }
         advance(p)
-        let e = parseExpr(p, prog)
+        var e = parseExpr(p, prog)
+        // comma/sequence operator inside parens: (a, b) yields b
+        while peekKind(p) == T_COMMA {
+            advance(p)
+            let right = parseExpr(p, prog)
+            e = addExpr(prog, Expr.Comma(e, right))
+        }
         expect(p, T_RPAREN)
         return e
     }
@@ -197,6 +229,34 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
     }
     if k == T_TEMPLATE_BEGIN {
         return parseTemplate(p, prog)
+    }
+    if k == T_REGEX {
+        // token text is "pattern\nflags"
+        let raw = p.toks[p.pos].text.clone()
+        advance(p)
+        var cut = raw.len()
+        var i: i64 = 0
+        var found = false
+        while i < raw.len() && !found {
+            if raw[i] == 10 as u8 {
+                cut = i
+                found = true
+            }
+            i = i + 1
+        }
+        var pat = String.withCapacity(cut)
+        var j: i64 = 0
+        while j < cut {
+            pat.push(raw[j])
+            j = j + 1
+        }
+        var flags = String.withCapacity(4)
+        var f = cut + 1
+        while f < raw.len() {
+            flags.push(raw[f])
+            f = f + 1
+        }
+        return addExpr(prog, Expr.RegexLit(pat, flags))
     }
     if k == T_NEW {
         return parseNew(p, prog)
@@ -259,7 +319,7 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
     var props: Vec<PropInit> = Vec.new()
     while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
         var key = ""
-        if peekKind(p) == T_IDENT || peekKind(p) == T_STR {
+        if isPropName(p) || peekKind(p) == T_STR {
             key = p.toks[p.pos].text.clone()
             advance(p)
         } else {
@@ -303,7 +363,9 @@ fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
         } else if k == T_DOT {
             advance(p)
             var name = ""
-            if peekKind(p) == T_IDENT {
+            // property names may be reserved words: obj.catch, obj.default,
+            // obj.function, obj.delete. Keyword tokens still carry their text.
+            if isPropName(p) {
                 name = p.toks[p.pos].text.clone()
                 advance(p)
             }
@@ -422,6 +484,10 @@ fn parseRel(p: &mut PState, prog: &mut Prog): i64 {
             advance(p)
             let right = parseAdd(p, prog)
             left = addExpr(prog, Expr.Bin("instanceof", left, right))
+        } else if k == T_IN {
+            advance(p)
+            let right = parseAdd(p, prog)
+            left = addExpr(prog, Expr.Bin("in", left, right))
         } else {
             go = false
         }
@@ -461,10 +527,19 @@ fn parseAnd(p: &mut PState, prog: &mut Prog): i64 {
 
 fn parseOr(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseAnd(p, prog)
-    while peekKind(p) == T_OROR {
-        advance(p)
-        let right = parseAnd(p, prog)
-        left = addExpr(prog, Expr.Bin("||", left, right))
+    var going = true
+    while going {
+        if peekKind(p) == T_OROR {
+            advance(p)
+            let right = parseAnd(p, prog)
+            left = addExpr(prog, Expr.Bin("||", left, right))
+        } else if peekKind(p) == T_NULLISH {
+            advance(p)
+            let right = parseAnd(p, prog)
+            left = addExpr(prog, Expr.Bin("??", left, right))
+        } else {
+            going = false
+        }
     }
     return left
 }

@@ -823,6 +823,47 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 }
                 return evalExpr(prog, b, st, scope)
             }
+            if op == "??" {
+                // nullish coalescing: only null/undefined fall through
+                let va = evalExpr(prog, a, st, scope)
+                match va {
+                    JSValue.Null => {
+                        return evalExpr(prog, b, st, scope)
+                    }
+                    JSValue.Undefined => {
+                        return evalExpr(prog, b, st, scope)
+                    }
+                    _ => {
+                        return va
+                    }
+                }
+            }
+            if op == "in" {
+                let kv = evalExpr(prog, a, st, scope)
+                let ov = evalExpr(prog, b, st, scope)
+                let key = toStr(kv)
+                match ov {
+                    JSValue.Obj(o) => {
+                        if st.objects[o].isArray {
+                            let ai = asArrayIndex(key)
+                            if ai >= 0 && ai < arrLen(st, o) {
+                                return JSValue.Bool(true)
+                            }
+                        }
+                        var cur = o
+                        while cur >= 0 {
+                            if objHas(st, cur, key) {
+                                return JSValue.Bool(true)
+                            }
+                            cur = st.objects[cur].proto
+                        }
+                        return JSValue.Bool(false)
+                    }
+                    _ => {
+                        return JSValue.Bool(false)
+                    }
+                }
+            }
             if op == "instanceof" {
                 let lv = evalExpr(prog, a, st, scope)
                 let rv = evalExpr(prog, b, st, scope)
@@ -1025,6 +1066,13 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             // evaluated directly only in odd positions; flattening happens in
             // evalArgs / array literals
             return evalExpr(prog, inner, st, scope)
+        }
+        Expr.Comma(a, b) => {
+            evalExpr(prog, a, st, scope)
+            return evalExpr(prog, b, st, scope)
+        }
+        Expr.RegexLit(pat, flags) => {
+            return makeRegex(st, pat, flags)
         }
         Expr.FuncExpr(f) => {
             return JSValue.Func(f, scope)
