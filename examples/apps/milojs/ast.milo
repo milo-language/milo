@@ -41,6 +41,8 @@ enum Expr {
     RegexLit(string, string),
     // a?.b — yields undefined when the base is null/undefined
     OptMember(i64, string),
+    // class expression: index into prog.classes
+    ClassExpr(i64),
 }
 
 // One key/value pair in an object literal; val is an expr index.
@@ -70,6 +72,12 @@ enum Stmt {
     ForOf(string, i64, i64),
     Break,
     Continue,
+    // class declaration: index into prog.classes
+    ClassDecl(i64),
+    // do body while (cond) — body runs before the first test
+    DoWhile(i64, i64),
+    // switch (discr) { ... } — index into prog.switches
+    Switch(i64, i64),
     // try block, catch-param name ("" if none), catch block idx (-1 if none),
     // finally block idx (-1 if none). Block idxs index prog.blocks.
     Try(i64, string, i64, i64),
@@ -93,6 +101,33 @@ struct DeclItem {
     init: i64,
 }
 
+// One `name() {}` inside a class body. Statics hang off the constructor, the
+// rest off its prototype.
+struct ClassMember {
+    name: string,
+    fnIdx: i64,
+    isStatic: bool,
+}
+
+struct ClassDef {
+    name: string,
+    // base class identifier, or "" — only a bare name is supported, not an
+    // arbitrary expression
+    superName: string,
+    // constructor function index, or -1 when the class declares none
+    ctorFn: i64,
+    // an empty function used as the constructor when none is declared
+    defaultCtor: i64,
+    members: Vec<ClassMember>,
+}
+
+// One `case v:` / `default:` arm. `test` is -1 for default. Bodies are separate
+// blocks but fall through to the next arm unless a break intervenes.
+struct SwitchCase {
+    test: i64,
+    body: i64,
+}
+
 struct Prog {
     exprs: Vec<Expr>,
     stmts: Vec<Stmt>,
@@ -102,6 +137,8 @@ struct Prog {
     objLits: Vec<Vec<PropInit>>,
     arrLits: Vec<Vec<i64>>,
     declLists: Vec<Vec<DeclItem>>,
+    classes: Vec<ClassDef>,
+    switches: Vec<Vec<SwitchCase>>,
 }
 
 fn cloneExpr(e: &Expr): Expr {
@@ -175,6 +212,9 @@ fn cloneExpr(e: &Expr): Expr {
         Expr.RegexLit(pat, flags) => {
             return Expr.RegexLit(pat.clone(), flags.clone())
         }
+        Expr.ClassExpr(idx) => {
+            return Expr.ClassExpr(idx)
+        }
         Expr.OptMember(obj, name) => {
             return Expr.OptMember(obj, name.clone())
         }
@@ -224,6 +264,15 @@ fn cloneStmt(s: &Stmt): Stmt {
         }
         Stmt.ForOf(name, objExpr, body) => {
             return Stmt.ForOf(name.clone(), objExpr, body)
+        }
+        Stmt.ClassDecl(idx) => {
+            return Stmt.ClassDecl(idx)
+        }
+        Stmt.DoWhile(body, cond) => {
+            return Stmt.DoWhile(body, cond)
+        }
+        Stmt.Switch(discr, idx) => {
+            return Stmt.Switch(discr, idx)
         }
         Stmt.Break => {
             return Stmt.Break

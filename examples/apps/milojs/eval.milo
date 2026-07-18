@@ -1194,7 +1194,8 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     if name == "prototype" {
                         return JSValue.Obj(getFuncProto(st, fIdx))
                     }
-                    return JSValue.Undefined
+                    let statics = getFuncStatics(st, fIdx)
+                    return getMember(st, statics, name)
                 }
                 _ => {
                     return JSValue.Undefined
@@ -1235,6 +1236,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 }
             }
             return v
+        }
+        Expr.ClassExpr(classIdx) => {
+            return instantiateClass(prog, classIdx, st, scope)
         }
         Expr.ObjLit(litIdx) => {
             let obj = newObject(st)
@@ -1634,6 +1638,51 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
 }
 
 // Invoke any callable JSValue (user function or native).
+// Build a class: the constructor becomes the class value, instance methods go on
+// its prototype, statics on its own property bag. `extends` chains the prototype
+// so instances inherit the base's methods, and records the base constructor
+// under __super$<Name> so super(...) can find it.
+fn isSuperName(name: &string): bool {
+    if name.len() < 8 {
+        return false
+    }
+    return name[0] == '_' && name[1] == '_' && name[2] == 's' && name[3] == 'u' && name[4] == 'p' && name[5] == 'e' && name[6] == 'r' && name[7] == '$'
+}
+
+fn instantiateClass(prog: &Prog, classIdx: i64, st: &mut Interp, scope: i64): JSValue {
+    var ctorFn = prog.classes[classIdx].ctorFn
+    if ctorFn < 0 {
+        // no declared constructor — reuse an empty one so the class is callable
+        ctorFn = prog.classes[classIdx].defaultCtor
+    }
+    let classVal = JSValue.Func(ctorFn, scope)
+    let proto = getFuncProto(st, ctorFn)
+    let superName = prog.classes[classIdx].superName.clone()
+    if superName.len() > 0 {
+        let baseVal = scopeLookup(st, scope, superName)
+        let baseFn = funcHandle(baseVal)
+        if baseFn >= 0 {
+            let baseProto = getFuncProto(st, baseFn)
+            st.objects[proto].proto = baseProto
+        }
+        scopeDefine(st, scope, "__super$" + prog.classes[classIdx].name.clone(), baseVal)
+    }
+    var i: i64 = 0
+    while i < prog.classes[classIdx].members.len() {
+        let mName = prog.classes[classIdx].members[i].name.clone()
+        let mFn = prog.classes[classIdx].members[i].fnIdx
+        let mv = JSValue.Func(mFn, scope)
+        if prog.classes[classIdx].members[i].isStatic {
+            let statics = getFuncStatics(st, ctorFn)
+            objSet(st, statics, mName, mv)
+        } else {
+            objSet(st, proto, mName, mv)
+        }
+        i = i + 1
+    }
+    return classVal
+}
+
 fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
     match fnVal {
         JSValue.Func(fIdx, envIdx) => {
@@ -2010,6 +2059,47 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 }
             }
         }
+        JSValue.Func(bf, benv) => {
+            // method call on a function value: either a static (Class.make())
+            // or .call/.apply, which retarget `this`
+            if name == "call" || name == "apply" {
+                var argVals = evalArgs(prog, argsIdx, st, scope)
+                var thisArg = JSValue.Undefined
+                var rest: Vec<JSValue> = Vec.new()
+                if argVals.len() > 0 {
+                    thisArg = cloneValue(argVals[0])
+                }
+                if name == "apply" {
+                    // apply takes the args as one array
+                    if argVals.len() > 1 {
+                        let ah = objHandle(argVals[1])
+                        if ah >= 0 && st.objects[ah].isArray {
+                            var ai: i64 = 0
+                            while ai < arrLen(st, ah) {
+                                rest.push(arrGet(st, ah, ai))
+                                ai = ai + 1
+                            }
+                        }
+                    }
+                } else {
+                    var ai: i64 = 1
+                    while ai < argVals.len() {
+                        rest.push(cloneValue(argVals[ai]))
+                        ai = ai + 1
+                    }
+                }
+                return callFunction(prog, bf, benv, rest, thisArg, st)
+            }
+            let statics = getFuncStatics(st, bf)
+            let m = getMember(st, statics, name)
+            let mf = funcHandle(m)
+            if mf >= 0 {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                return callValue(prog, m, argVals, JSValue.Func(bf, benv), st)
+            }
+            print("milojs: TypeError: value is not a function")
+            return JSValue.Undefined
+        }
         _ => {
             print("milojs: TypeError: value is not a function")
             return JSValue.Undefined
@@ -2022,6 +2112,15 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
     let calleeNode = getExpr(prog, calleeIdx)
     match calleeNode {
         Expr.Ident(fname) => {
+            // super(...) — parsed as a call of __super$<Class>. The base
+            // constructor runs against the instance being built, so `this` has
+            // to be threaded through explicitly.
+            if isSuperName(fname) {
+                let baseVal = scopeLookup(st, scope, fname)
+                let thisVal = scopeLookup(st, scope, "this")
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                return callValue(prog, baseVal, argVals, thisVal, st)
+            }
             // require(spec) is handled here rather than as a native because it
             // needs the program (to run the required module's block)
             if fname == "require" {
@@ -2180,6 +2279,97 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
         Stmt.Decl(name, e) => {
             let v = evalExpr(prog, e, st, scope)
             scopeDefine(st, scope, name, v)
+            return Flow.Normal
+        }
+        Stmt.DoWhile(body, cond) => {
+            var looping = true
+            while looping {
+                let flow = execStmt(prog, body, st, scope)
+                match flow {
+                    Flow.Ret(v) => {
+                        return Flow.Ret(v)
+                    }
+                    Flow.Break => {
+                        looping = false
+                    }
+                    Flow.Continue => {
+                    }
+                    Flow.Normal => {
+                    }
+                }
+                if looping {
+                    if st.throwing || !truthy(evalExpr(prog, cond, st, scope)) {
+                        looping = false
+                    }
+                }
+            }
+            return Flow.Normal
+        }
+        Stmt.Switch(discrIdx, casesIdx) => {
+            let dv = evalExpr(prog, discrIdx, st, scope)
+            pushTemp(st, cloneValue(dv))
+            let n = prog.switches[casesIdx].len()
+            // pick the arm, then run every arm from there on: fallthrough is the
+            // default in JS and only break stops it
+            var start = -1
+            var defaultAt = -1
+            var i: i64 = 0
+            while i < n && start < 0 {
+                let test = prog.switches[casesIdx][i].test
+                if test < 0 {
+                    if defaultAt < 0 {
+                        defaultAt = i
+                    }
+                } else {
+                    let tv = evalExpr(prog, test, st, scope)
+                    // JS switch matches strictly; the engine has no strict
+                    // equality yet (=== lexes as ==), so this is loose
+                    if jsEquals(dv, tv) {
+                        start = i
+                    }
+                }
+                i = i + 1
+            }
+            if start < 0 {
+                start = defaultAt
+            }
+            var result = Flow.Normal
+            if start >= 0 {
+                let switchScope = newScope(st, scope)
+                pushActive(st, switchScope)
+                var c = start
+                var going = true
+                while going && c < n {
+                    let flow = execBlock(prog, prog.switches[casesIdx][c].body, st, switchScope)
+                    match flow {
+                        Flow.Ret(v) => {
+                            result = Flow.Ret(v)
+                            going = false
+                        }
+                        Flow.Break => {
+                            going = false
+                        }
+                        Flow.Continue => {
+                            // a continue belongs to an enclosing loop
+                            result = Flow.Continue
+                            going = false
+                        }
+                        Flow.Normal => {
+                        }
+                    }
+                    if st.throwing {
+                        going = false
+                    }
+                    c = c + 1
+                }
+                popActive(st)
+            }
+            popTemp(st)
+            return result
+        }
+        Stmt.ClassDecl(classIdx) => {
+            let v = instantiateClass(prog, classIdx, st, scope)
+            scopeDefine(st, scope, prog.classes[classIdx].name.clone(), v)
             return Flow.Normal
         }
         Stmt.ForOf(name, objExpr, body) => {

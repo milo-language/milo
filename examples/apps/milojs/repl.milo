@@ -382,7 +382,7 @@ fn repl(st: &mut Interp): i32 {
     // one growing Prog: func indices stay valid across lines (see file header)
     var prog = Prog {
         exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(),
-        funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new()
+        funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
     }
     var history: Vec<string> = Vec.new()
     let prompt = fg24(226, 192, 150) + "❯ " + ansiReset()
@@ -400,7 +400,7 @@ fn repl(st: &mut Interp): i32 {
 
                 let toks = lex(line)
                 var p = PState {
-                    toks: toks, pos: 0, file: "<repl>"
+                    toks: toks, pos: 0, curClass: "", file: "<repl>"
                 }
                 let top = parseProgram(p, prog)
                 let val = runLine(prog, top, st)

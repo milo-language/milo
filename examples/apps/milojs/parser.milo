@@ -18,6 +18,9 @@ struct PState {
     pos: i64,
     // source path, so a parse error names the module it came from
     file: string,
+    // enclosing class name while parsing a class body, so `super(...)` can be
+    // rewritten to a call of that class's recorded base constructor
+    curClass: string,
 }
 
 fn peekKind(p: &PState): i32 {
@@ -398,6 +401,15 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
         }
         expect(p, T_RPAREN)
         return e
+    }
+    if k == T_SUPER {
+        advance(p)
+        return addExpr(prog, Expr.Ident("__super$" + p.curClass))
+    }
+    if k == T_CLASS {
+        // class expression: `const C = class { ... }`
+        let c = parseClass(p, prog)
+        return addExpr(prog, Expr.ClassExpr(c))
     }
     if k == T_FUNCTION {
         let f = parseFunction(p, prog, false)
@@ -1098,6 +1110,57 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         let f = parseFunction(p, prog, false)
         return addStmt(prog, Stmt.FuncDecl(f))
     }
+    if k == T_CLASS {
+        let c = parseClass(p, prog)
+        return addStmt(prog, Stmt.ClassDecl(c))
+    }
+    if k == T_DO {
+        advance(p)
+        let body = parseStmt(p, prog)
+        expect(p, T_WHILE)
+        expect(p, T_LPAREN)
+        let cond = parseExpr(p, prog)
+        expect(p, T_RPAREN)
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        }
+        return addStmt(prog, Stmt.DoWhile(body, cond))
+    }
+    if k == T_SWITCH {
+        advance(p)
+        expect(p, T_LPAREN)
+        let discr = parseExpr(p, prog)
+        expect(p, T_RPAREN)
+        expect(p, T_LBRACE)
+        var cases: Vec<SwitchCase> = Vec.new()
+        while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
+            var test = -1
+            if peekKind(p) == T_CASE {
+                advance(p)
+                test = parseExpr(p, prog)
+            } else if peekKind(p) == T_DEFAULT {
+                advance(p)
+            } else {
+                // stray token inside the switch body — drop it rather than spin
+                advance(p)
+            }
+            if peekKind(p) == T_COLON {
+                advance(p)
+            }
+            var stmts: Vec<i64> = Vec.new()
+            while peekKind(p) != T_CASE && peekKind(p) != T_DEFAULT && peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
+                stmts.push(parseStmt(p, prog))
+            }
+            prog.blocks.push(stmts)
+            cases.push(SwitchCase {
+                test: test, body: prog.blocks.len() - 1
+            }
+            )
+        }
+        expect(p, T_RBRACE)
+        prog.switches.push(cases)
+        return addStmt(prog, Stmt.Switch(discr, prog.switches.len() - 1))
+    }
     if k == T_ASYNC && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind == T_FUNCTION {
         advance(p)
         let f = parseFunction(p, prog, true)
@@ -1279,6 +1342,118 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         advance(p)
     }
     return addStmt(prog, Stmt.ExprStmt(e))
+}
+
+// class Name [extends Base] { [static] [async] name(params) { body } ... }
+// Class fields and getters are not supported; a getter parses as a method.
+fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
+    expect(p, T_CLASS)
+    var name = ""
+    if peekKind(p) == T_IDENT {
+        name = p.toks[p.pos].text.clone()
+        advance(p)
+    }
+    let savedClass = p.curClass.clone()
+    p.curClass = name.clone()
+    var superName = ""
+    if peekKind(p) == T_EXTENDS {
+        advance(p)
+        if peekKind(p) == T_IDENT {
+            superName = p.toks[p.pos].text.clone()
+            advance(p)
+        }
+        // a non-identifier base (`extends f().Base`) is skipped to the body
+        while peekKind(p) != T_LBRACE && peekKind(p) != T_EOF {
+            advance(p)
+        }
+    }
+    expect(p, T_LBRACE)
+    var ctorFn: i64 = -1
+    var members: Vec<ClassMember> = Vec.new()
+    while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        } else {
+            var isStatic = false
+            var isAsyncM = false
+            if peekKind(p) == T_IDENT && p.toks[p.pos].text == "static" {
+                isStatic = true
+                advance(p)
+            }
+            if peekKind(p) == T_ASYNC && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_LPAREN {
+                isAsyncM = true
+                advance(p)
+            }
+            // get/set are parsed as ordinary methods; the accessor is lost
+            if (peekKind(p) == T_IDENT && (p.toks[p.pos].text == "get" || p.toks[p.pos].text == "set")) && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_LPAREN {
+                advance(p)
+            }
+            var mname = ""
+            if isPropName(p) || peekKind(p) == T_STR {
+                mname = p.toks[p.pos].text.clone()
+            }
+            advance(p)
+            if peekKind(p) == T_LPAREN {
+                advance(p)
+                var mparams: Vec<string> = Vec.new()
+                var mprelude: Vec<DeclItem> = Vec.new()
+                var mrest: i64 = -1
+                while peekKind(p) != T_RPAREN && peekKind(p) != T_EOF {
+                    if parseParam(p, prog, mparams, mprelude) {
+                        mrest = mparams.len() - 1
+                    }
+                    if peekKind(p) == T_COMMA {
+                        advance(p)
+                    }
+                }
+                expect(p, T_RPAREN)
+                let mbody = parseBraceBlock(p, prog)
+                if mprelude.len() > 0 {
+                    let munpack = declsToStmt(prog, mprelude)
+                    prependStmt(prog, mbody, munpack)
+                }
+                prog.funcs.push(FuncDef {
+                    name: mname.clone(), params: mparams, body: mbody, isArrow: false, isAsync: isAsyncM, restFrom: mrest
+                }
+                )
+                let fidx = prog.funcs.len() - 1
+                if mname == "constructor" && !isStatic {
+                    ctorFn = fidx
+                } else {
+                    members.push(ClassMember {
+                        name: mname, fnIdx: fidx, isStatic: isStatic
+                    }
+                    )
+                }
+            } else {
+                // a class field — skip its initializer, it is not supported
+                if peekKind(p) == T_EQ {
+                    advance(p)
+                    let _ = parseExpr(p, prog)
+                }
+                if peekKind(p) == T_SEMI {
+                    advance(p)
+                }
+            }
+        }
+    }
+    expect(p, T_RBRACE)
+    p.curClass = savedClass
+    // a class with no constructor still needs a callable function to be the
+    // class value, so synthesise an empty one
+    var emptyBody: Vec<i64> = Vec.new()
+    prog.blocks.push(emptyBody)
+    var noParams: Vec<string> = Vec.new()
+    prog.funcs.push(FuncDef {
+        name: name.clone(), params: noParams, body: prog.blocks.len() - 1, isArrow: false, isAsync: false, restFrom: -1
+    }
+    )
+    let defaultCtor = prog.funcs.len() - 1
+    prog.classes.push(ClassDef {
+        name: name, superName: superName, ctorFn: ctorFn, defaultCtor: defaultCtor, members: members
+    }
+    )
+    return prog.classes.len() - 1
 }
 
 fn parseProgram(p: &mut PState, prog: &mut Prog): i64 {

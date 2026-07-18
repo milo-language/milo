@@ -321,7 +321,7 @@ fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
             let src = builtinSource(builtinNameOf(path))
             let toks = lex(src)
             var bp = PState {
-                toks: toks, pos: 0, file: path.clone()
+                toks: toks, pos: 0, curClass: "", file: path.clone()
             }
             let btop = parseProgram(bp, prog)
             st.modPaths.push(path.clone())
@@ -341,7 +341,7 @@ fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
                     let toks = lex(text)
                     let specs = scanRequires(toks)
                     var p = PState {
-                        toks: toks, pos: 0, file: path.clone()
+                        toks: toks, pos: 0, curClass: "", file: path.clone()
                     }
                     let top = parseProgram(p, prog)
                     st.modPaths.push(path.clone())

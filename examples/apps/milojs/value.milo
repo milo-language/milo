@@ -190,6 +190,18 @@ fn objHandle(v: &JSValue): i64 {
     }
 }
 
+// function index if v is a user function, else -1
+fn funcHandle(v: &JSValue): i64 {
+    match v {
+        JSValue.Func(f, _e) => {
+            return f
+        }
+        _ => {
+            return -1
+        }
+    }
+}
+
 fn toNum(v: &JSValue): f64 {
     match v {
         JSValue.Undefined => {

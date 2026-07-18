@@ -72,6 +72,8 @@ struct Interp {
     objFreeList: Vec<i64>,
     // fnIdx → its `.prototype` object (index), created lazily; a GC root
     funcProtos: Vec<i64>,
+    // fnIdx → its static-property object, created lazily; also a GC root
+    funcStatics: Vec<i64>,
     // compiled regexes, indexed by JSObj.regexId (never freed — interp-lifetime)
     regexes: Vec<Regex>,
     // CommonJS module registry. The whole graph is parsed into one shared Prog
@@ -231,6 +233,19 @@ fn objHas(st: &Interp, o: i64, key: &string): bool {
 
 // The .prototype object for a function, created on first access and cached
 // (a GC root via funcProtos). Grows the sparse map as needed.
+// Property bag for a function's own (static) properties. Separate from
+// funcProtos, which holds what instances inherit.
+fn getFuncStatics(st: &mut Interp, fnIdx: i64): i64 {
+    while st.funcStatics.len() <= fnIdx {
+        st.funcStatics.push(-1)
+    }
+    if st.funcStatics[fnIdx] < 0 {
+        let o = newObject(st)
+        st.funcStatics[fnIdx] = o
+    }
+    return st.funcStatics[fnIdx]
+}
+
 fn getFuncProto(st: &mut Interp, fnIdx: i64): i64 {
     while st.funcProtos.len() <= fnIdx {
         st.funcProtos.push(-1)
@@ -410,6 +425,14 @@ fn collect(st: &mut Interp) {
             markObject(st, st.funcProtos[fp])
         }
         fp = fp + 1
+    }
+    // as are static-property bags
+    var fs: i64 = 0
+    while fs < st.funcStatics.len() {
+        if st.funcStatics[fs] >= 0 {
+            markObject(st, st.funcStatics[fs])
+        }
+        fs = fs + 1
     }
     var freed: i64 = 0
     var s: i64 = 0

@@ -109,7 +109,7 @@ fn main(): i32 {
     // Parse the entry and everything it requires into one shared program, then
     // run the entry as a CommonJS module.
     var prog = Prog {
-        exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new()
+        exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
     }
     let entryIdx = preloadGraph(path.clone(), prog, st)
     if entryIdx < 0 {

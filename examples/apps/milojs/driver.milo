@@ -24,7 +24,7 @@ from "./eval" import {
 fn makeInterp(gcStats: bool): Interp {
     return Interp {
         scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
-        objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
+        objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
         modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(),
         throwing: false, thrownValue: JSValue.Undefined,
         rngState: 88172645463325252,
@@ -43,10 +43,10 @@ fn bootInterp(st: &mut Interp) {
 fn runSource(src: &string, st: &mut Interp): i32 {
     let toks = lex(src)
     var prog = Prog {
-        exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new()
+        exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
     }
     var p = PState {
-        toks: toks, pos: 0, file: "<entry>"
+        toks: toks, pos: 0, curClass: "", file: "<entry>"
     }
     let top = parseProgram(p, prog)
     execBlock(prog, top, st, 0)

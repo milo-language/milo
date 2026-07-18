@@ -95,6 +95,13 @@ let T_AMPEQ: i32 = 82
 let T_PIPEEQ: i32 = 83
 let T_CARETEQ: i32 = 84
 let T_STARSTAREQ: i32 = 85
+let T_CLASS: i32 = 86
+let T_EXTENDS: i32 = 87
+let T_SUPER: i32 = 88
+let T_DO: i32 = 89
+let T_SWITCH: i32 = 90
+let T_CASE: i32 = 91
+let T_DEFAULT: i32 = 92
 
 struct Token {
     kind: i32,
@@ -192,6 +199,27 @@ fn keywordKind(s: &string): i32 {
     if s == "async" {
         return T_ASYNC
     }
+    if s == "class" {
+        return T_CLASS
+    }
+    if s == "do" {
+        return T_DO
+    }
+    if s == "switch" {
+        return T_SWITCH
+    }
+    if s == "case" {
+        return T_CASE
+    }
+    if s == "default" {
+        return T_DEFAULT
+    }
+    if s == "extends" {
+        return T_EXTENDS
+    }
+    if s == "super" {
+        return T_SUPER
+    }
     if s == "await" {
         return T_AWAIT
     }
@@ -230,41 +258,39 @@ fn scanTmplChunk(src: &string, start: i64, toks: &mut Vec<Token>): ChunkResult {
     let n = src.len()
     var buf = String.withCapacity(16)
     var isHole = false
-    var going = true
-    while going {
+    while true {
         if i >= n {
-            going = false
-        } else {
-            let c = src[i]
-            if c == 96 as u8 {
-                i = i + 1
-                going = false
-            } else if c == '$' && i + 1 < n && src[i + 1] == '{' {
-                i = i + 2
-                isHole = true
-                going = false
-            } else if c == 92 as u8 && i + 1 < n {
-                let e = src[i + 1]
-                if e == 'n' {
-                    buf.push(10 as u8)
-                } else if e == 't' {
-                    buf.push(9 as u8)
-                } else if e == 'r' {
-                    buf.push(13 as u8)
-                } else if e == 96 as u8 {
-                    buf.push(96 as u8)
-                } else if e == '$' {
-                    buf.push('$')
-                } else if e == 92 as u8 {
-                    buf.push(92 as u8)
-                } else {
-                    buf.push(e)
-                }
-                i = i + 2
+            break
+        }
+        let c = src[i]
+        if c == 96 as u8 {
+            i = i + 1
+            break
+        } else if c == '$' && i + 1 < n && src[i + 1] == '{' {
+            i = i + 2
+            isHole = true
+            break
+        } else if c == 92 as u8 && i + 1 < n {
+            let e = src[i + 1]
+            if e == 'n' {
+                buf.push(10 as u8)
+            } else if e == 't' {
+                buf.push(9 as u8)
+            } else if e == 'r' {
+                buf.push(13 as u8)
+            } else if e == 96 as u8 {
+                buf.push(96 as u8)
+            } else if e == '$' {
+                buf.push('$')
+            } else if e == 92 as u8 {
+                buf.push(92 as u8)
             } else {
-                buf.push(c)
-                i = i + 1
+                buf.push(e)
             }
+            i = i + 2
+        } else {
+            buf.push(c)
+            i = i + 1
         }
     }
     toks.push(Token {
@@ -296,31 +322,29 @@ fn scanRegexLit(src: &string, start: i64, toks: &mut Vec<Token>): i64 {
     let n = src.len()
     var pat = String.withCapacity(16)
     var inClass = false
-    var going = true
-    while going {
+    while true {
         if i >= n {
-            going = false
+            break
+        }
+        let c = src[i]
+        if c == 92 as u8 && i + 1 < n {
+            pat.push(c)
+            pat.push(src[i + 1])
+            i = i + 2
+        } else if c == '[' {
+            inClass = true
+            pat.push(c)
+            i = i + 1
+        } else if c == ']' {
+            inClass = false
+            pat.push(c)
+            i = i + 1
+        } else if c == '/' && !inClass {
+            i = i + 1
+            break
         } else {
-            let c = src[i]
-            if c == 92 as u8 && i + 1 < n {
-                pat.push(c)
-                pat.push(src[i + 1])
-                i = i + 2
-            } else if c == '[' {
-                inClass = true
-                pat.push(c)
-                i = i + 1
-            } else if c == ']' {
-                inClass = false
-                pat.push(c)
-                i = i + 1
-            } else if c == '/' && !inClass {
-                i = i + 1
-                going = false
-            } else {
-                pat.push(c)
-                i = i + 1
-            }
+            pat.push(c)
+            i = i + 1
         }
     }
     var flags = String.withCapacity(4)
