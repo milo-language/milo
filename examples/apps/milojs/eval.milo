@@ -778,8 +778,23 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             let n = prog.arrLits[litIdx].len()
             while i < n {
                 let elemIdx = prog.arrLits[litIdx][i]
-                let v = evalExpr(prog, elemIdx, st, scope)
-                arrPush(st, arr, v)
+                let node = getExpr(prog, elemIdx)
+                match node {
+                    Expr.Spread(inner) => {
+                        let sv = evalExpr(prog, inner, st, scope)
+                        var tmp: Vec<JSValue> = Vec.new()
+                        spreadInto(tmp, sv, st)
+                        var t: i64 = 0
+                        while t < tmp.len() {
+                            arrPush(st, arr, cloneValue(tmp[t]))
+                            t = t + 1
+                        }
+                    }
+                    _ => {
+                        let v = evalExpr(prog, elemIdx, st, scope)
+                        arrPush(st, arr, v)
+                    }
+                }
                 i = i + 1
             }
             popTemp(st)
@@ -849,8 +864,31 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             }
             return evalExpr(prog, b, st, scope)
         }
+        Expr.Spread(inner) => {
+            // evaluated directly only in odd positions; flattening happens in
+            // evalArgs / array literals
+            return evalExpr(prog, inner, st, scope)
+        }
         Expr.FuncExpr(f) => {
             return JSValue.Func(f, scope)
+        }
+    }
+}
+
+// Spread an array value's elements into `out` (a no-op for non-arrays).
+fn spreadInto(out: &mut Vec<JSValue>, v: &JSValue, st: &Interp) {
+    match v {
+        JSValue.Obj(o) => {
+            if st.objects[o].isArray {
+                var k: i64 = 0
+                let m = arrLen(st, o)
+                while k < m {
+                    out.push(arrGet(st, o, k))
+                    k = k + 1
+                }
+            }
+        }
+        _ => {
         }
     }
 }
@@ -861,7 +899,16 @@ fn evalArgs(prog: &Prog, argsIdx: i64, st: &mut Interp, scope: i64): Vec<JSValue
     let n = prog.argLists[argsIdx].len()
     while j < n {
         let eIdx = prog.argLists[argsIdx][j]
-        out.push(evalExpr(prog, eIdx, st, scope))
+        let node = getExpr(prog, eIdx)
+        match node {
+            Expr.Spread(inner) => {
+                let v = evalExpr(prog, inner, st, scope)
+                spreadInto(out, v, st)
+            }
+            _ => {
+                out.push(evalExpr(prog, eIdx, st, scope))
+            }
+        }
         j = j + 1
     }
     return out

@@ -32,6 +32,8 @@ enum Expr {
     CompoundAssign(i64, string, i64),
     // ternary c ? a : b
     Cond(i64, i64, i64),
+    // ...expr in a call-arg or array-literal position
+    Spread(i64),
 }
 
 // One key/value pair in an object literal; val is an expr index.
@@ -146,6 +148,9 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.Cond(c, a, b) => {
             return Expr.Cond(c, a, b)
+        }
+        Expr.Spread(e) => {
+            return Expr.Spread(e)
         }
     }
 }

@@ -1,4 +1,4 @@
-// milojs — the runtime (a Node/Bun-style host) built on the milojs engine. Where
+// milojs — the runtime (a Node/Deno/Bun-style host) built on the milojs engine. Where
 // milojs-engine runs raw JS, milojs adds the things a program expects from Node:
 // process/global, and (being built out) a CommonJS module loader plus fs/http/etc.
 // shims — the same node-compat layer minibun-runtime.js provides, but running on
@@ -30,6 +30,9 @@ from "./runtime" import {
 }
 from "./driver" import {
     makeInterp, bootInterp, runSource
+}
+from "./repl" import {
+    repl
 }
 
 fn addEnvVar(st: &mut Interp, envObj: i64, name: string) {
@@ -74,8 +77,11 @@ fn setupNodeGlobals(st: &mut Interp, entryPath: string) {
 fn main(): i32 {
     let argv = args()
     if argv.len() < 2 {
-        eprint("usage: milojs <app.js>")
-        return 1
+        // no script → interactive REPL
+        var st = makeInterp(false)
+        bootInterp(st)
+        setupNodeGlobals(st, "<repl>")
+        return repl(st)
     }
     let path = argv[1].clone()
 

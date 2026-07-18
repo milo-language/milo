@@ -38,6 +38,44 @@ fn expect(p: &mut PState, kind: i32) {
     }
 }
 
+// A template literal desugars to string concatenation, starting from a string
+// chunk so the whole chain coerces to string: `a${x}b` → "a" + x + "b".
+fn parseTemplate(p: &mut PState, prog: &mut Prog): i64 {
+    expect(p, T_TEMPLATE_BEGIN)
+    var result = -1
+    if peekKind(p) == T_TEMPLATE_CHUNK {
+        let chunk = p.toks[p.pos].text.clone()
+        advance(p)
+        result = addExpr(prog, Expr.StrLit(chunk))
+    } else {
+        result = addExpr(prog, Expr.StrLit(""))
+    }
+    while peekKind(p) != T_TEMPLATE_END && peekKind(p) != T_EOF {
+        let e = parseExpr(p, prog)
+        result = addExpr(prog, Expr.Bin("+", result, e))
+        if peekKind(p) == T_TEMPLATE_CHUNK {
+            let chunk = p.toks[p.pos].text.clone()
+            advance(p)
+            let cs = addExpr(prog, Expr.StrLit(chunk))
+            result = addExpr(prog, Expr.Bin("+", result, cs))
+        }
+    }
+    if peekKind(p) == T_TEMPLATE_END {
+        advance(p)
+    }
+    return result
+}
+
+// One call-argument or array element, possibly a `...spread`.
+fn parseArg(p: &mut PState, prog: &mut Prog): i64 {
+    if peekKind(p) == T_SPREAD {
+        advance(p)
+        let e = parseExpr(p, prog)
+        return addExpr(prog, Expr.Spread(e))
+    }
+    return parseExpr(p, prog)
+}
+
 // Build an arrow function from its parameter list; the caller has consumed `=>`.
 // Body is a block `{ }` or a single expression (implicit return). isArrow=true so
 // it doesn't bind its own `this`.
@@ -157,6 +195,9 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
     if k == T_LBRACKET {
         return parseArrayLiteral(p, prog)
     }
+    if k == T_TEMPLATE_BEGIN {
+        return parseTemplate(p, prog)
+    }
     if k == T_NEW {
         return parseNew(p, prog)
     }
@@ -183,10 +224,10 @@ fn parseNew(p: &mut PState, prog: &mut Prog): i64 {
     if peekKind(p) == T_LPAREN {
         advance(p)
         if peekKind(p) != T_RPAREN {
-            argIdxs.push(parseExpr(p, prog))
+            argIdxs.push(parseArg(p, prog))
             while peekKind(p) == T_COMMA {
                 advance(p)
-                argIdxs.push(parseExpr(p, prog))
+                argIdxs.push(parseArg(p, prog))
             }
         }
         expect(p, T_RPAREN)
@@ -201,7 +242,7 @@ fn parseArrayLiteral(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_LBRACKET)
     var elems: Vec<i64> = Vec.new()
     while peekKind(p) != T_RBRACKET && peekKind(p) != T_EOF {
-        elems.push(parseExpr(p, prog))
+        elems.push(parseArg(p, prog))
         if peekKind(p) == T_COMMA {
             advance(p)
         }
@@ -249,10 +290,10 @@ fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
             advance(p)
             var argIdxs: Vec<i64> = Vec.new()
             if peekKind(p) != T_RPAREN {
-                argIdxs.push(parseExpr(p, prog))
+                argIdxs.push(parseArg(p, prog))
                 while peekKind(p) == T_COMMA {
                     advance(p)
-                    argIdxs.push(parseExpr(p, prog))
+                    argIdxs.push(parseArg(p, prog))
                 }
             }
             expect(p, T_RPAREN)

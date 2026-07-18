@@ -1,0 +1,113 @@
+// Interactive REPL for the milojs runtime. Reads a line, lexes/parses/executes it
+// against a persistent interpreter, and echoes the value of a trailing expression
+// (Node-style, but undefined results are suppressed to cut noise).
+//
+// Key design: one Prog is reused for the whole session and each line's parse is
+// APPENDED to it. Closures carry a func index into prog.funcs (JSValue.Func), so a
+// function defined on one line must still resolve when called on a later line — a
+// fresh Prog per line would invalidate those indices. Growing a single Prog keeps
+// every index valid for the session's lifetime.
+
+from "std/io" import {
+    writeStdout, readLine
+}
+from "./lexer" import {
+    lex
+}
+from "./parser" import {
+    PState, parseProgram
+}
+from "./ast" import {
+    Prog, Stmt, getStmt
+}
+from "./value" import {
+    JSValue, toStr
+}
+from "./eval" import {
+    execStmt, evalExpr, inspectTop
+}
+from "./runtime" import {
+    Interp
+}
+
+fn isUndefined(v: &JSValue): bool {
+    match v {
+        JSValue.Undefined => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+// Run one already-parsed top block: execute every statement, and if the last one
+// is a bare expression, return its value for echoing.
+fn runLine(prog: &Prog, top: i64, st: &mut Interp): JSValue {
+    var result = JSValue.Undefined
+    let n = prog.blocks[top].len()
+    var i: i64 = 0
+    while i < n {
+        let sIdx = prog.blocks[top][i]
+        let isLast = i == n - 1
+        match getStmt(prog, sIdx) {
+            Stmt.ExprStmt(e) => {
+                if isLast {
+                    result = evalExpr(prog, e, st, 0)
+                } else {
+                    evalExpr(prog, e, st, 0)
+                }
+            }
+            _ => {
+                execStmt(prog, sIdx, st, 0)
+            }
+        }
+        if st.throwing {
+            return JSValue.Undefined
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// The read-eval-print loop. `st` must already have globals + Node globals installed.
+fn repl(st: &mut Interp): i32 {
+    print("milojs REPL — Ctrl-D to exit")
+
+    // one growing Prog: func indices stay valid across lines (see file header)
+    var prog = Prog {
+        exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(),
+        funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new()
+    }
+
+    while true {
+        writeStdout("> ")
+        match readLine() {
+            Option.None => {
+                print("")
+                return 0
+            }
+            Option.Some(line) => {
+                if line.len() == 0 {
+                    continue
+                }
+                let toks = lex(line)
+                var p = PState {
+                    toks: toks, pos: 0
+                }
+                let top = parseProgram(p, prog)
+                let val = runLine(prog, top, st)
+                if st.throwing {
+                    eprint("Uncaught " + toStr(st.thrownValue))
+                    st.throwing = false
+                    st.thrownValue = JSValue.Undefined
+                } else {
+                    if !isUndefined(val) {
+                        print(inspectTop(st, val))
+                    }
+                }
+            }
+        }
+    }
+    return 0
+}

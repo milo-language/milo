@@ -68,6 +68,7 @@ let T_ARROW: i32 = 57
 let T_TEMPLATE_BEGIN: i32 = 58
 let T_TEMPLATE_CHUNK: i32 = 59
 let T_TEMPLATE_END: i32 = 60
+let T_SPREAD: i32 = 61
 
 struct Token {
     kind: i32,
@@ -158,10 +159,74 @@ fn pushTok(toks: &mut Vec<Token>, kind: i32) {
     )
 }
 
+struct ChunkResult {
+    pos: i64,
+    isHole: bool,
+}
+
+// Scan a template-literal text chunk from `start` (just after ` or after a hole's
+// closing }). Pushes a T_TEMPLATE_CHUNK token. Stops at ` (chunk done, whole
+// template ends) or ${ (a hole follows). isHole distinguishes the two.
+fn scanTmplChunk(src: &string, start: i64, toks: &mut Vec<Token>): ChunkResult {
+    var i = start
+    let n = src.len()
+    var buf = String.withCapacity(16)
+    var isHole = false
+    var going = true
+    while going {
+        if i >= n {
+            going = false
+        } else {
+            let c = src[i]
+            if c == 96 as u8 {
+                i = i + 1
+                going = false
+            } else if c == '$' && i + 1 < n && src[i + 1] == '{' {
+                i = i + 2
+                isHole = true
+                going = false
+            } else if c == 92 as u8 && i + 1 < n {
+                let e = src[i + 1]
+                if e == 'n' {
+                    buf.push(10 as u8)
+                } else if e == 't' {
+                    buf.push(9 as u8)
+                } else if e == 'r' {
+                    buf.push(13 as u8)
+                } else if e == 96 as u8 {
+                    buf.push(96 as u8)
+                } else if e == '$' {
+                    buf.push('$')
+                } else if e == 92 as u8 {
+                    buf.push(92 as u8)
+                } else {
+                    buf.push(e)
+                }
+                i = i + 2
+            } else {
+                buf.push(c)
+                i = i + 1
+            }
+        }
+    }
+    toks.push(Token {
+        kind: T_TEMPLATE_CHUNK, num: 0.0, text: buf
+    }
+    )
+    return ChunkResult {
+        pos: i, isHole: isHole
+    }
+}
+
 fn lex(src: &string): Vec<Token> {
     var toks: Vec<Token> = Vec.new()
     let n = src.len()
     var i: i64 = 0
+    // brace nesting, and the brace depth at each open template hole — so the `}`
+    // that closes a `${ ... }` hole (vs an object/block) can be recognized and the
+    // template text resumed
+    var braceDepth: i64 = 0
+    var tmplHoles: Vec<i64> = Vec.new()
     while i < n {
         let c = src[i]
         if isSpace(c) {
@@ -239,6 +304,39 @@ fn lex(src: &string): Vec<Token> {
                 kind: T_STR, num: 0.0, text: s
             }
             )
+        } else if c == 96 as u8 {
+            // ` template literal
+            pushTok(toks, T_TEMPLATE_BEGIN)
+            let res = scanTmplChunk(src, i + 1, toks)
+            i = res.pos
+            if res.isHole {
+                tmplHoles.push(braceDepth)
+            } else {
+                pushTok(toks, T_TEMPLATE_END)
+            }
+        } else if c == '.' && i + 2 < n && src[i + 1] == '.' && src[i + 2] == '.' {
+            i = i + 3
+            pushTok(toks, T_SPREAD)
+        } else if c == '{' {
+            braceDepth = braceDepth + 1
+            i = i + 1
+            pushTok(toks, T_LBRACE)
+        } else if c == '}' {
+            if tmplHoles.len() > 0 && braceDepth == tmplHoles[tmplHoles.len() - 1] {
+                // this } closes a ${ } hole — resume the template text after it
+                let _ = tmplHoles.pop()
+                let res = scanTmplChunk(src, i + 1, toks)
+                i = res.pos
+                if res.isHole {
+                    tmplHoles.push(braceDepth)
+                } else {
+                    pushTok(toks, T_TEMPLATE_END)
+                }
+            } else {
+                braceDepth = braceDepth - 1
+                i = i + 1
+                pushTok(toks, T_RBRACE)
+            }
         } else if c == '=' && i + 1 < n && src[i + 1] == '=' {
             // == and === lex the same token (strict-vs-loose is applied at eval)
             i = i + 2
