@@ -122,10 +122,20 @@ class pattern works. This was the last core *language* gap.
 (byte-identical to bun — no FFI), `sqrt`/`pow` via the hardware/libc extern (IEEE
 correctly-rounded), `random` via a pure-Milo xorshift64 PRNG, plus `PI`/`E`. `Math` is a global
 object with native-fn methods.
-**Still open (library, not language):** **regex** (implement in Milo — backtracking, JS-flavor
-subset; do NOT link C), Promises/async event model, `switch`, `for...in`/`for...of`, bitwise
-operators exposed to JS, real `===` (currently aliases `==`), more String/Object/Number static
-methods. These + minibun's node shims are the Stage-5 path to booting minibun on the engine.
+**Regex landed (4481b3f):** a pure-Milo backtracking engine in `regex.milo` (pattern → node tree
+→ bytecode → recursive backtracking VM). Char classes/ranges/negation, `\d\w\s`, quantifiers
+`*+?{n,m}` greedy+lazy, groups/`(?:)`, alternation, anchors `^$`, `\b\B`, flags `i/g/m`.
+`new RegExp` + `re.test`/`re.exec` + `str.replace(re,$1)`/`str.match`. Byte-identical to bun (incl.
+`$3/$2/$1` date reformat). No C dependency. Represented as an `Obj` with a hidden `regexId`.
+Deferred: `/.../ ` literal lexing, `str.split(regex)`, backreferences, lookaround, named groups.
+
+**Highest-leverage next (from the other agent's QuickJS-corpus data — 67 files):** `let`/`const`
+multi-declarator (`let a, b`) blocks parsing on 72% of files; **arrow functions** `=>` on 46%.
+Those two are cheap parser work with outsized payoff for a real parity number. Then: template
+literals, spread/rest, destructuring, `class` sugar, generators, async.
+**Still open (runtime):** **Promises + async event model** (the big one, ties to the green
+scheduler), `switch`, `for...in`/`for...of`, bitwise ops in JS, real `===`. These + minibun's node
+shims are the Stage-5 path to booting minibun on the engine.
 **Gate:** prototype-based method dispatch + a class-ish pattern (constructor + prototype methods).
 
 **Test yardstick (decided):** milojs *is* the engine, so unlike minibun's JSC, both test262 and
