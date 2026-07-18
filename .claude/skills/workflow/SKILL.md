@@ -9,7 +9,7 @@ Load and follow `AGENT_WORKFLOW.md` (repo root) for this task. It is the canonic
 
 ## Do this now
 1. Read `AGENTS.md` to route to the docs/skills for what you're touching.
-2. Open a worksheet — copy `worksheets/TEMPLATE.md` to `worksheets/<date>-<slug>.md`. Record goal + plan there and keep it live (mandatory if running autonomously).
+2. Open a worksheet — copy `docs/worksheets/TEMPLATE.md` to `docs/worksheets/<date>-<slug>.md`. Record goal + plan there and keep it live (mandatory if running autonomously).
 3. Work the loop in `AGENT_WORKFLOW.md`:
    - **Research** → understand the real code path; fix any doc that lied. Review gate: `scripts/agent_review.sh research` for non-trivial approaches.
    - **Plan** → write it in the worksheet, terse, end with open questions. Gate: `scripts/agent_review.sh plan`.

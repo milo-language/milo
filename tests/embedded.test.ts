@@ -91,7 +91,7 @@ test("build --target=stm32f4 (chip alias) links an ARM ELF executable", () => {
 }, COMPILE_TIMEOUT);
 
 test("bare-metal runtime files (startup + linker script) are present", () => {
-  const ed = join(import.meta.dir, "..", "embedded", "cortex-m");
+  const ed = join(import.meta.dir, "..", "tools", "cortex-m");
   expect(existsSync(join(ed, "startup.c"))).toBe(true);
   expect(existsSync(join(ed, "mps2.ld"))).toBe(true);
 }, COMPILE_TIMEOUT);

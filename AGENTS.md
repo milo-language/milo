@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: agent-router
 purpose: entry point that routes any agent to the right skill, doc, script, or convention
-key-files: AGENT_WORKFLOW.md, CONVENTIONS.md, CLAUDE.md, docs/, scripts/, worksheets/
+key-files: AGENT_WORKFLOW.md, CONVENTIONS.md, CLAUDE.md, docs/, scripts/, docs/worksheets/
 update-when: a new skill/doc/script/convention is added, or a routing entry goes stale
 last-verified: 2026-07-11
 -->
@@ -14,7 +14,7 @@ Every doc in this repo starts with a 7-line `<!-- doc-meta ... -->` block. To fi
 
 ## Start every session here
 
-1. **What am I doing?** → open a worksheet: [worksheets/README.md](worksheets/README.md). Autonomous/async work: the worksheet is mandatory — another agent must be able to finish from it alone.
+1. **What am I doing?** → open a worksheet: [docs/worksheets/README.md](docs/worksheets/README.md). Autonomous/async work: the worksheet is mandatory — another agent must be able to finish from it alone.
 2. **How do I work in this repo?** → [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md) (the loop: research → plan → implement → run → review → wrap-up).
 3. **What are the rules?** → [CLAUDE.md](CLAUDE.md) (guards, commands) + [CONVENTIONS.md](CONVENTIONS.md) (code style reviewers enforce).
 
@@ -29,8 +29,8 @@ Every doc in this repo starts with a 7-line `<!-- doc-meta ... -->` block. To fi
 | Get my work reviewed by a different model | [docs/agent-review.md](docs/agent-review.md) → `scripts/agent_review.sh` |
 | Add a helper script / bin tool | [docs/scripts.md](docs/scripts.md) |
 | Write or update a system doc | [docs/doc-standards.md](docs/doc-standards.md) |
-| Track / hand off in-progress work | [worksheets/README.md](worksheets/README.md) |
-| Leave you feedback about the workflow | [feedback/README.md](feedback/README.md) |
+| Track / hand off in-progress work | [docs/worksheets/README.md](docs/worksheets/README.md) |
+| Leave you feedback about the workflow | [docs/feedback/README.md](docs/feedback/README.md) |
 | Sweep recent commits for regressions | skill `/commit-sweep` |
 | Debug an emulator bug (black screen, garbled gfx, freeze) | skill `/emu-debug` |
 | Understand the compiler internals | [CLAUDE.md](CLAUDE.md) §Architecture, [docs/design.md](docs/design.md) |

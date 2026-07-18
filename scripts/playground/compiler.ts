@@ -1,14 +1,14 @@
 // Browser-compatible compiler entry point.
 // Source → JS string (or error). Eval in browser, capture output.
 
-import { Lexer } from "../src/lexer";
-import { Parser } from "../src/parser";
-import { TypeChecker } from "../src/checker";
-import type { Program } from "../src/ast";
-import type { TargetInfo } from "../src/target";
-import { lower } from "../src/lower";
-import { CodegenJS } from "../src/codegen-js";
-import { formatDiagnostic } from "../src/diagnostics";
+import { Lexer } from "../../src/lexer";
+import { Parser } from "../../src/parser";
+import { TypeChecker } from "../../src/checker";
+import type { Program } from "../../src/ast";
+import type { TargetInfo } from "../../src/target";
+import { lower } from "../../src/lower";
+import { CodegenJS } from "../../src/codegen-js";
+import { formatDiagnostic } from "../../src/diagnostics";
 
 declare const STDLIB_FILES: Record<string, string>;
 

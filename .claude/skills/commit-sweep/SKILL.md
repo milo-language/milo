@@ -18,7 +18,7 @@ Per-commit review sees one diff at a time. This sweep looks *across* recent comm
    - **TODO/FIXME left behind** without an owner or issue.
 3. **Verify before reporting.** For each suspected issue, confirm it (grep, run the fixture, break-and-test). Don't report speculation — this is where a second-model check helps: `scripts/agent_review.sh implementation --diff HEAD~15`.
 4. **Report** as a terse list: `commit <sha> · file:line · problem · fix`. Group by theme. File anything mechanical into `scripts/lint.ts` and anything judgmental into `CONVENTIONS.md` so it's caught automatically next time.
-5. **Log** recurring findings in `feedback/README.md` so the workflow tightens.
+5. **Log** recurring findings in `docs/feedback/README.md` so the workflow tightens.
 
 ## Output
 A ranked list, most-severe first, each with a concrete fix. If clean, say so and note what you checked — a sweep that finds nothing should still show its work.

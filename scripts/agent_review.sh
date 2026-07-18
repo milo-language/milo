@@ -50,7 +50,7 @@ done
 # --- gather the material under review --------------------------------------
 case "$stage" in
   research|plan)
-    latest_ws=$(ls -t worksheets/*.md 2>/dev/null | grep -v README | grep -v TEMPLATE | head -1 || true)
+    latest_ws=$(ls -t docs/worksheets/*.md 2>/dev/null | grep -v README | grep -v TEMPLATE | head -1 || true)
     if [ -n "$latest_ws" ]; then material=$(cat "$latest_ws"); src="worksheet $latest_ws";
     elif [ ! -t 0 ]; then material=$(cat); src="stdin";
     else echo "no worksheet found and no stdin — nothing to review" >&2; exit 1; fi

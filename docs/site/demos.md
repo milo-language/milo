@@ -67,8 +67,17 @@ TUIs in [`examples/apps/`](https://github.com/cs01/milo/tree/main/examples/apps)
 
 | Program | What it is |
 |---------|-----------|
+| [milojs](https://github.com/cs01/milo/tree/main/examples/apps/milojs) | A JavaScript engine in Milo — parser, evaluator, mark-sweep GC. Runs express |
 | [kvstore](https://github.com/cs01/milo/blob/main/examples/apps/kvstore.milo) | Page-based key-value store with cursors, in the sled/buffer-pool style |
 | [minilang](https://github.com/cs01/milo/blob/main/examples/apps/minilang.milo) | Tree-walking interpreter for a small expression language |
+
+## The language, feeding itself
+
+| Program | What it is |
+|---------|-----------|
+| [src-milo](https://github.com/cs01/milo/tree/main/src-milo) | The Milo compiler, in Milo — self-hosting, rebuilds itself byte-for-byte identical |
+| [smtSolve](https://github.com/cs01/milo/blob/main/tools/smtSolve.milo) | The SMT solver behind `milo prove` — Milo's contracts are discharged by a Milo binary |
+| [fmt](https://github.com/cs01/milo/blob/main/examples/cli-tools/fmt.milo) | The Milo source formatter, in Milo |
 
 ## CLI tools
 
@@ -87,7 +96,6 @@ Coreutils-style tools in [`examples/cli-tools/`](https://github.com/cs01/milo/tr
 | [calc](https://github.com/cs01/milo/blob/main/examples/cli-tools/calc.milo) | Expression evaluator |
 | [parallel](https://github.com/cs01/milo/blob/main/examples/cli-tools/parallel.milo) | Run shell commands in parallel across input lines (fork-based) |
 | [timeout](https://github.com/cs01/milo/blob/main/examples/cli-tools/timeout.milo) | Run a command with a time limit |
-| [fmt](https://github.com/cs01/milo/blob/main/examples/cli-tools/fmt.milo) | Milo source formatter |
 | [pkg](https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo) | Package manager for Milo — git transport, GitHub registry, lockfile |
 
 ## Run these yourself

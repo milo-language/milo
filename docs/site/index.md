@@ -3,7 +3,7 @@ layout: home
 hero:
   name: Milo
   text: "A memory-safe systems language."
-  tagline: "Easy to use right, hard to use wrong. Simple syntax, simple mental model."
+  tagline: "Intentionally simple, with formal verification built in. Friendly to humans and AI."
   image:
     src: /logo.svg
     alt: Milo
@@ -21,9 +21,7 @@ hero:
 
 ## What Milo is
 
-Milo is a systems language built on **second-class references** — the design [Rust's creator wanted and didn't get](https://github.com/cs01/milo/blob/main/docs/design.md#alignment-with-graydon-hoares-the-rust-i-wanted). A reference may appear only as a function parameter: never stored in a struct, never returned. That one restriction removes lifetimes, lifetime annotations, and the borrow-checker puzzles that come with them.
-
-What's left is a **simpler Rust with contracts** — `requires` / `ensures` are part of the language, and an SMT prover discharges them across the codebase rather than trusting them. That combination is deliberately AI-friendly: a machine writing Milo gets loud compiler errors and machine-checked contracts instead of conventions it has to infer.
+Milo keeps ownership and drops the machinery: references exist only as function parameters — [the design Rust's creator wanted](https://github.com/cs01/milo/blob/main/docs/design.md#alignment-with-graydon-hoares-the-rust-i-wanted) — so there are no lifetimes and no borrow-checker puzzles. Contracts (`requires` / `ensures`) are part of the language, discharged by an SMT prover written in Milo itself.
 
 <CodeCarousel
   :titles="['Ownership', 'Concurrency', 'Contracts']"
@@ -74,26 +72,76 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
 
 <div class="showcase">
   <div class="showcase-head">
-    <h2>See what's shipping with Milo</h2>
-    <p>Game-console emulators, CLI tools, high-performance servers — all written in Milo. The emulators below run right here in your browser: the same source compiles to a native binary <em>and</em> to this JavaScript, with identical output. No wasm, no rewrite.</p>
+    <h2>Built in Milo</h2>
+    <p>We build the language by building things with it — we've found that faster than theory and analysis, and it yields a better language. The emulators run right here in your browser: the same Milo source compiles to a native binary <em>and</em> to JavaScript.</p>
   </div>
-  <div class="showcase-grid">
-    <a class="app-card" href="/milo/nes/">
-      <div class="app-emoji">🎮</div>
+  <div class="tile-grid">
+    <a class="tile" href="/milo/nes/">
+      <span class="tile-play">▶ PLAY</span>
+      <div class="tile-emoji">🎮</div>
       <h3>NES</h3>
-      <p>6502 CPU · PPU · APU — a complete Nintendo Entertainment System. Commercial and homebrew ROMs at 60&nbsp;fps with sound.</p>
-      <span class="app-play">▶ Play in your browser</span>
+      <p>Complete console — 6502, PPU, APU. 60 fps with sound.</p>
     </a>
-    <a class="app-card" href="/milo/genesis/">
-      <div class="app-emoji">🕹️</div>
+    <a class="tile" href="/milo/genesis/">
+      <span class="tile-play">▶ PLAY</span>
+      <div class="tile-emoji">🕹️</div>
       <h3>Genesis</h3>
-      <p>68000 + Z80 + VDP + YM2612 — a complete Sega Genesis / Mega&nbsp;Drive. Sonic, Golden Axe, and homebrew, with stereo sound.</p>
-      <span class="app-play">▶ Play in your browser</span>
+      <p>68000 + Z80 + VDP + FM synth. Sonic runs.</p>
+    </a>
+    <a class="tile" href="/milo/snes/">
+      <span class="tile-play">▶ PLAY</span>
+      <div class="tile-emoji">👾</div>
+      <h3>SNES</h3>
+      <p>65C816 + PPU + Super FX. Mario World, DKC, Star Fox.</p>
+    </a>
+    <a class="tile" href="https://github.com/cs01/milo/tree/main/src-milo">
+      <div class="tile-emoji">🪞</div>
+      <h3>the compiler</h3>
+      <p>Self-hosting — rebuilds itself byte-for-byte identical.</p>
+    </a>
+    <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/milojs">
+      <div class="tile-emoji">⚡</div>
+      <h3>milojs</h3>
+      <p>A JavaScript engine. Runs express.</p>
+    </a>
+    <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/hades">
+      <div class="tile-emoji">🐛</div>
+      <h3>hades</h3>
+      <p>Web + AI debugger for any DAP backend.</p>
+    </a>
+    <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/weather">
+      <div class="tile-emoji">🌦️</div>
+      <h3>weather</h3>
+      <p>weather.gov frontend from one static binary.</p>
+    </a>
+    <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/termpair">
+      <div class="tile-emoji">🖥️</div>
+      <h3>termpair</h3>
+      <p>Your terminal in a browser, end-to-end encrypted.</p>
+    </a>
+    <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/apps/tetris.milo">
+      <div class="tile-emoji">🧱</div>
+      <h3>tetris</h3>
+      <p>Event-driven terminal tetris. One green task, no polling.</p>
+    </a>
+    <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/apps/sysmon.milo">
+      <div class="tile-emoji">📊</div>
+      <h3>sysmon</h3>
+      <p>htop-style live system monitor.</p>
+    </a>
+    <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo">
+      <div class="tile-emoji">📦</div>
+      <h3>pkg</h3>
+      <p>Package manager — git transport, lockfile.</p>
+    </a>
+    <a class="tile" href="https://github.com/cs01/milo/blob/main/tools/smtSolve.milo">
+      <div class="tile-emoji">🧮</div>
+      <h3>the prover</h3>
+      <p>The SMT solver behind <code>milo prove</code>.</p>
     </a>
   </div>
   <div class="showcase-cta">
     <a class="showcase-cta-btn" href="/milo/demos">Explore the full showcase →</a>
-    <p class="showcase-cta-sub">SNES emulator · web + AI debugger · HTTP/TLS servers · terminal apps · the compiler itself</p>
   </div>
 </div>
 

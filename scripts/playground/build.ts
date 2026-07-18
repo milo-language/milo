@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "fs";
 import { resolve, join } from "path";
 
-const ROOT = resolve(import.meta.dir, "..");
+const ROOT = resolve(import.meta.dir, "..", "..");
 const STD_DIR = join(ROOT, "std");
 const DIST = join(import.meta.dir, "dist");
 
@@ -64,4 +64,4 @@ if (!result.success) {
   process.exit(1);
 }
 
-console.log(`Built playground/dist/compiler.js (${(result.outputs[0].size / 1024).toFixed(0)} KB)`);
+console.log(`Built scripts/playground/dist/compiler.js (${(result.outputs[0].size / 1024).toFixed(0)} KB)`);

@@ -6,12 +6,12 @@ evals it with captured output. No LLVM — the JS backend (`src/codegen-js.ts`) 
 browser target. (LLVM-in-browser is impractical; JS backend is the right call.)
 
 ## Working
-- `playground/compiler.ts` — browser entry: resolves imports from bundled stdlib
+- `scripts/playground/compiler.ts` — browser entry: resolves imports from bundled stdlib
   (prelude + `std/*.milo`, minus a BLOCKED list of native-only modules), compiles Milo →
   JS via `generateBody` (body only), evals with a captured-output runtime.
-- `playground/build.ts` — bundles compiler + all `std/*.milo` into one ESM, stubs Node
-  APIs. `bun run playground/build.ts` → `dist/compiler.js` (~1.45 MB).
-- `playground/index.html` — dark-theme UI, editor, output panel, 6 examples, Ctrl+Enter.
+- `scripts/playground/build.ts` — bundles compiler + all `std/*.milo` into one ESM, stubs Node
+  APIs. `bun run scripts/playground/build.ts` → `dist/compiler.js` (~1.45 MB).
+- `scripts/playground/index.html` — dark-theme UI, editor, output panel, 6 examples, Ctrl+Enter.
 - **All 6 built-in examples compile + run in-browser, byte-identical to the native
   binary** (fizzbuzz, structs, enums, closures, generics, vec).
 

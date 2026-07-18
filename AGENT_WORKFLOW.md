@@ -1,8 +1,8 @@
 <!-- doc-meta
 system: agent-workflow
 purpose: the standard loop for working in this repo — research, plan, implement, run, review, wrap-up
-key-files: AGENTS.md, CONVENTIONS.md, docs/testing.md, docs/agent-review.md, worksheets/
-update-when: the workflow changes, a new gate is added, or feedback/ reveals a recurring miss
+key-files: AGENTS.md, CONVENTIONS.md, docs/testing.md, docs/agent-review.md, docs/worksheets/
+update-when: the workflow changes, a new gate is added, or docs/feedback/ reveals a recurring miss
 last-verified: 2026-07-11
 -->
 
@@ -16,7 +16,7 @@ The one rule under all of it: **do not claim something works until you have run 
 
 ### 0. Orient (2 min)
 - Read [AGENTS.md](AGENTS.md) to find the relevant docs/skills.
-- Open a worksheet ([worksheets/README.md](worksheets/README.md)) — even for small tasks if autonomous. Record goal + plan there as you go so a fresh agent could take over.
+- Open a worksheet ([docs/worksheets/README.md](docs/worksheets/README.md)) — even for small tasks if autonomous. Record goal + plan there as you go so a fresh agent could take over.
 - Skim the `doc-meta` of docs for the system you're touching. Grep: `grep -rl "system:" docs *.md`.
 
 ### 1. Research
@@ -56,7 +56,7 @@ If it failed, say so with the output. Skipped a step? Say that. No hedging when 
 - Update every doc your change made stale; bump `last-verified`.
 - Commit (directly to `main` — no feature branches for Milo; per repo convention). One-line, lowercase, no "coded with claude". Commit the worksheet + any feedback with the work.
 - Tag the commit with the worksheet name so it's findable later: `git tag ws/<worksheet-slug>`.
-- Drop a line in [feedback/README.md](feedback/README.md) if the workflow itself got in your way — that's how it improves.
+- Drop a line in [docs/feedback/README.md](docs/feedback/README.md) if the workflow itself got in your way — that's how it improves.
 
 ## Autonomous / night-shift mode
 Running unattended? All of the above, plus: worksheet is non-negotiable and updated after every step; on any failure you can't resolve, write the blocker into the worksheet and stop rather than thrash; end with the full wrap-up validation so the tree is pristine on return.

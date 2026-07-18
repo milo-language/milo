@@ -205,7 +205,7 @@ function clangTargetFlags(target: TargetInfo): string {
 // Directory holding the bare-metal runtime (startup + linker scripts), resolved
 // relative to this file so it works regardless of the caller's cwd.
 function embeddedDir(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "embedded", "cortex-m");
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "tools", "cortex-m");
 }
 
 // Link a bare-metal Cortex-M executable: the Milo program's IR + the freestanding
