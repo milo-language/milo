@@ -157,6 +157,8 @@ struct Interp {
     modState: Vec<i64>,
     // directory of the module currently executing, for relative resolution
     modDirStack: Vec<string>,
+    // module paths currently executing, so a runtime error can name its file
+    modPathStack: Vec<string>,
     // values held on the native stack across an operation that may collect (e.g. a
     // method receiver while its arguments — which can themselves be calls — are
     // evaluated). Rooted by collect so an in-flight object/closure isn't swept.

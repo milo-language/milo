@@ -121,6 +121,21 @@ Error.captureStackTrace = function (target, ctor) {
 Error.prepareStackTrace = undefined;
 Error.stackTraceLimit = 10;
 
+// --- BigInt -----------------------------------------------------------------
+// Not arbitrary precision: values are ordinary doubles, so anything above
+// 2^53 loses precision. whatwg-url uses BigInt for IPv6 arithmetic, which stays
+// well inside that range; genuine big-integer maths would be wrong here.
+function BigInt(v) {
+  if (typeof v === 'string') {
+    var t = v.trim();
+    if (t.slice(-1) === 'n') t = t.slice(0, -1);
+    return Number(t);
+  }
+  return Number(v);
+}
+BigInt.asUintN = function (bits, v) { return Number(v); };
+BigInt.asIntN = function (bits, v) { return Number(v); };
+
 // --- Buffer -----------------------------------------------------------------
 // Node exposes Buffer as a global, not only via require('buffer'). express and
 // body-parser both reach for it directly.

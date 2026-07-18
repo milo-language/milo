@@ -233,7 +233,7 @@ fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool
         prependStmt(prog, body, unpack)
     }
     prog.funcs.push(FuncDef {
-        name: "", params: params, body: body, isArrow: true, isAsync: isAsync, restFrom: mkRestFrom
+        name: "", params: params, body: body, isArrow: true, isAsync: isAsync, restFrom: mkRestFrom, isGenerator: false
     }
     )
     let f = prog.funcs.len() - 1
@@ -688,6 +688,7 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
                 }
                 advance(p)
             }
+            var isMethodGen = false
             var isMethodAsync = false
             // `async foo() {}` — `async` is only a modifier when a method name follows
             if peekKind(p) == T_ASYNC && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_COLON && p.toks[p.pos + 1].kind != T_COMMA && p.toks[p.pos + 1].kind != T_RBRACE && p.toks[p.pos + 1].kind != T_LPAREN {
@@ -705,6 +706,10 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
             }
             // shorthand `{ req, ip }` is `{ req: req, ip: ip }`
             var valIdx = -1
+            if peekKind(p) == T_STAR {
+                advance(p)
+                isMethodGen = true
+            }
             if peekKind(p) == T_LPAREN {
                 // method shorthand `{ foo(a) { ... } }` — a plain function-valued prop
                 advance(p)
@@ -726,7 +731,7 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
                     prependStmt(prog, mbody, munpack)
                 }
                 prog.funcs.push(FuncDef {
-                    name: key.clone(), params: mparams, body: mbody, isArrow: false, isAsync: isMethodAsync, restFrom: mrest
+                    name: key.clone(), params: mparams, body: mbody, isArrow: false, isAsync: isMethodAsync, restFrom: mrest, isGenerator: isMethodGen
                 }
                 )
                 valIdx = addExpr(prog, Expr.FuncExpr(prog.funcs.len() - 1))
@@ -1144,6 +1149,13 @@ fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
 // function [name] ( params ) { body } — returns index into prog.funcs
 fn parseFunction(p: &mut PState, prog: &mut Prog, isAsync: bool): i64 {
     expect(p, T_FUNCTION)
+    // generator star: parsed so the surrounding module loads. Generators need
+    // suspension, which the engine cannot do, so calling one throws.
+    var isGenerator = false
+    if peekKind(p) == T_STAR {
+        advance(p)
+        isGenerator = true
+    }
     var name = ""
     if peekKind(p) == T_IDENT {
         name = p.toks[p.pos].text.clone()
@@ -1168,7 +1180,7 @@ fn parseFunction(p: &mut PState, prog: &mut Prog, isAsync: bool): i64 {
         prependStmt(prog, body, unpack)
     }
     prog.funcs.push(FuncDef {
-        name: name, params: params, body: body, isArrow: false, isAsync: isAsync, restFrom: restFrom
+        name: name, params: params, body: body, isArrow: false, isAsync: isAsync, restFrom: restFrom, isGenerator: isGenerator
     }
     )
     return prog.funcs.len() - 1
@@ -1266,7 +1278,12 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
     if k == T_FUNCTION {
         // in statement position a name is mandatory; without this the missing
         // name surfaces as a confusing complaint about the `(` that follows
-        if p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_IDENT && !p.errored {
+        // `function* name()` puts the star between the keyword and the name
+        var nameAt = p.pos + 1
+        if nameAt < p.toks.len() && p.toks[nameAt].kind == T_STAR {
+            nameAt = nameAt + 1
+        }
+        if nameAt < p.toks.len() && p.toks[nameAt].kind != T_IDENT && !p.errored {
             p.errored = true
             if !p.quiet {
                 eprint("milojs: " + p.file + ": function statements require a name")
@@ -1558,6 +1575,9 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
                 }
                 advance(p)
             }
+            if peekKind(p) == T_STAR {
+                advance(p)
+            }
             var mname = ""
             if isPropName(p) || peekKind(p) == T_STR {
                 mname = p.toks[p.pos].text.clone()
@@ -1583,7 +1603,7 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
                     prependStmt(prog, mbody, munpack)
                 }
                 prog.funcs.push(FuncDef {
-                    name: mname.clone(), params: mparams, body: mbody, isArrow: false, isAsync: isAsyncM, restFrom: mrest
+                    name: mname.clone(), params: mparams, body: mbody, isArrow: false, isAsync: isAsyncM, restFrom: mrest, isGenerator: false
                 }
                 )
                 let fidx = prog.funcs.len() - 1
@@ -1615,7 +1635,7 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
     prog.blocks.push(emptyBody)
     var noParams: Vec<string> = Vec.new()
     prog.funcs.push(FuncDef {
-        name: name.clone(), params: noParams, body: prog.blocks.len() - 1, isArrow: false, isAsync: false, restFrom: -1
+        name: name.clone(), params: noParams, body: prog.blocks.len() - 1, isArrow: false, isAsync: false, restFrom: -1, isGenerator: false
     }
     )
     let defaultCtor = prog.funcs.len() - 1

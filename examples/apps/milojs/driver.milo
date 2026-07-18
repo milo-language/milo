@@ -43,7 +43,7 @@ fn makeInterp(gcStats: bool, gcThreshold: i64): Interp {
     return Interp {
         scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
         objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
-        modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(),
+        modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(), modPathStack: Vec.new(),
         throwing: false, thrownValue: JSValue.Undefined,
         rngState: 88172645463325252,
         allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: gcThreshold, gcRuns: 0, gcStats: gcStats

@@ -99,6 +99,9 @@ struct FuncDef {
     isAsync: bool,
     // index of a `...rest` parameter, or -1 — it collects the remaining args
     restFrom: i64,
+    // `function*`: parsed so modules containing generators load, but calling one
+    // throws — suspension is not available without coroutines
+    isGenerator: bool,
 }
 
 // one declarator in a `let a = 1, b, c = 3` statement
