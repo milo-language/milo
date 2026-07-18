@@ -170,7 +170,59 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
         var noArgs: Vec<JSValue> = Vec.new()
         return callValue(prog, g, noArgs, JSValue.Obj(o), st)
     }
-    return getMember(st, o, key)
+    let direct = getMember(st, o, key)
+    // Builtin methods are dispatched by name at the call site, so they have no
+    // value form. Reading one (var slice = [].slice) hands back a bound-method
+    // object that remembers the receiver, so .call/.apply still work.
+    if isUndefinedValue(direct) && st.objects[o].isArray && isArrayMethod(key) {
+        return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+    }
+    return direct
+}
+
+fn isUndefinedValue(v: &JSValue): bool {
+    match v {
+        JSValue.Undefined => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+fn makeBoundMethod(st: &mut Interp, recv: JSValue, name: string): JSValue {
+    let bo = newObject(st)
+    st.objects[bo].isBound = true
+    st.objects[bo].boundThis = recv
+    st.objects[bo].boundMethod = name
+    return JSValue.Obj(bo)
+}
+
+// Invoke a builtin method by name against an already-evaluated receiver+args.
+fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSValue>, st: &mut Interp): JSValue {
+    match recv {
+        JSValue.Str(sv) => {
+            return stringMethod(name, sv, args, st)
+        }
+        JSValue.Obj(o) => {
+            if name == "hasOwnProperty" {
+                var key = ""
+                if args.len() > 0 {
+                    key = toStr(args[0])
+                }
+                return JSValue.Bool(objOwnIndex(st, o, key) >= 0 || (st.objects[o].isArray && asArrayIndex(key) >= 0 && asArrayIndex(key) < arrLen(st, o)))
+            }
+            if st.objects[o].isArray && isArrayMethod(name) {
+                return arrayMethod(prog, o, name, args, st)
+            }
+            let m = getMember(st, o, name)
+            return callValue(prog, m, args, JSValue.Obj(o), st)
+        }
+        _ => {
+            return primitiveMethod(name, recv, args)
+        }
+    }
 }
 
 fn setMemberDyn(prog: &Prog, o: i64, key: string, v: JSValue, st: &mut Interp) {
@@ -1236,6 +1288,9 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "setPrototypeOf", JSValue.Native(NATIVE_OBJECT_SETPROTO))
     objSet(st, objectCtor, "getOwnPropertyDescriptor", JSValue.Native(NATIVE_OBJECT_GETOWNPROPDESC))
     objSet(st, objectCtor, "defineProperties", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTIES))
+    let objectProto = newObject(st)
+    objSet(st, objectProto, "hasOwnProperty", makeBoundMethod(st, JSValue.Undefined, "hasOwnProperty"))
+    objSet(st, objectCtor, "prototype", JSValue.Obj(objectProto))
     scopeDefine(st, 0, "Object", JSValue.Obj(objectCtor))
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
     scopeDefine(st, 0, "String", JSValue.Native(NATIVE_STRING))
@@ -2014,6 +2069,11 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
         JSValue.Obj(o) => {
             // a bind() result: the captured receiver wins over the call site's
             if st.objects[o].isBound {
+                if st.objects[o].boundMethod.len() > 0 {
+                    let mname = st.objects[o].boundMethod.clone()
+                    let recvV = cloneValue(st.objects[o].boundThis)
+                    return callBuiltinByName(prog, recvV, mname, args, st)
+                }
                 let target = cloneValue(st.objects[o].boundTarget)
                 let boundThis = cloneValue(st.objects[o].boundThis)
                 var merged: Vec<JSValue> = Vec.new()
@@ -2605,6 +2665,59 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
             if st.objects[o].regexId >= 0 {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
                 let r = regexMethod(st, o, name, argVals)
+                popTemp(st)
+                return r
+            }
+            // .call/.apply on a bound-method value: [].slice.call(arguments, 1)
+            if st.objects[o].isBound && (name == "call" || name == "apply" || name == "bind") {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                var newThis = JSValue.Undefined
+                if argVals.len() > 0 {
+                    newThis = cloneValue(argVals[0])
+                }
+                var rest: Vec<JSValue> = Vec.new()
+                if name == "apply" {
+                    if argVals.len() > 1 {
+                        let ah = objHandle(argVals[1])
+                        if ah >= 0 && st.objects[ah].isArray {
+                            var ai: i64 = 0
+                            while ai < arrLen(st, ah) {
+                                rest.push(arrGet(st, ah, ai))
+                                ai = ai + 1
+                            }
+                        }
+                    }
+                } else {
+                    var ai: i64 = 1
+                    while ai < argVals.len() {
+                        rest.push(cloneValue(argVals[ai]))
+                        ai = ai + 1
+                    }
+                }
+                let mname = st.objects[o].boundMethod.clone()
+                popTemp(st)
+                if name == "bind" {
+                    return makeBoundMethod(st, newThis, mname)
+                }
+                if mname.len() > 0 {
+                    return callBuiltinByName(prog, newThis, mname, rest, st)
+                }
+                let target = cloneValue(st.objects[o].boundTarget)
+                return callValue(prog, target, rest, newThis, st)
+            }
+            if st.objects[o].isBound && st.objects[o].boundMethod.len() == 0 {
+                // any other method on a bind() result goes to its target
+                let target = cloneValue(st.objects[o].boundTarget)
+                let th = objHandle(target)
+                if th >= 0 {
+                    let r = callMember(prog, target, name, argsIdx, st, scope)
+                    popTemp(st)
+                    return r
+                }
+            }
+            if name == "hasOwnProperty" {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                let r = callBuiltinByName(prog, JSValue.Obj(o), name, argVals, st)
                 popTemp(st)
                 return r
             }
