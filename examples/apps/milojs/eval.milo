@@ -1935,6 +1935,13 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
     let stringCtorObj = newObject(st)
     objSet(st, stringCtorObj, "fromCharCode", JSValue.Native(NATIVE_STRING_FROMCHARCODE))
+    // String.prototype methods as bound-method values, so
+    // String.prototype.replace.call(str, ...) — the qs module's pattern — works
+    let stringProto = newObject(st)
+    for sm in strProtoMethodNames() {
+        objSet(st, stringProto, sm.clone(), makeBoundMethod(st, JSValue.Undefined, sm.clone()))
+    }
+    objSet(st, stringCtorObj, "prototype", JSValue.Obj(stringProto))
     st.stringCtorProps = stringCtorObj
     scopeDefine(st, 0, "String", JSValue.Native(NATIVE_STRING))
     scopeDefine(st, 0, "Boolean", JSValue.Native(NATIVE_BOOLEAN))
@@ -3331,6 +3338,36 @@ fn isBoundThisSet(st: &Interp, o: i64): bool {
             return true
         }
     }
+}
+
+fn strProtoMethodNames(): Vec<string> {
+    var out: Vec<string> = Vec.new()
+    out.push("replace")
+    out.push("split")
+    out.push("slice")
+    out.push("substring")
+    out.push("substr")
+    out.push("indexOf")
+    out.push("lastIndexOf")
+    out.push("charAt")
+    out.push("charCodeAt")
+    out.push("toUpperCase")
+    out.push("toLowerCase")
+    out.push("trim")
+    out.push("trimStart")
+    out.push("trimEnd")
+    out.push("startsWith")
+    out.push("endsWith")
+    out.push("includes")
+    out.push("repeat")
+    out.push("padStart")
+    out.push("padEnd")
+    out.push("concat")
+    out.push("match")
+    out.push("search")
+    out.push("toString")
+    out.push("valueOf")
+    return out
 }
 
 fn isSuperName(name: &string): bool {
