@@ -13,6 +13,9 @@
 from "std/io" import {
     readFile
 }
+from "std/environ" import {
+    envVars
+}
 from "std/os" import {
     getpid
 }
@@ -70,12 +73,11 @@ fn setupNodeGlobals(st: &mut Interp, entryPath: string) {
     objSet(st, proc, "argv", JSValue.Obj(argv))
 
     let env = newObject(st)
-    // reads of any other variable fall through to the real environment
+    // reads of a variable added after startup still fall through to getEnv
     st.objects[env].isEnv = true
-    addEnvVar(st, env, "PORT")
-    addEnvVar(st, env, "NODE_ENV")
-    addEnvVar(st, env, "HOME")
-    addEnvVar(st, env, "PATH")
+    for entry in envVars() {
+        objSet(st, env, entry.name.clone(), JSValue.Str(entry.value.clone()))
+    }
     objSet(st, proc, "env", JSValue.Obj(env))
 
     objSet(st, proc, "platform", JSValue.Str("darwin"))
@@ -153,7 +155,7 @@ fn main(): i32 {
     }
     runModule(prog, entryIdx, st)
     if st.throwing {
-        eprint("Uncaught " + toStr(st.thrownValue))
+        eprint("Uncaught " + describeThrown(st, st.thrownValue))
         return 1
     }
     return 0

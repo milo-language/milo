@@ -442,6 +442,7 @@ let NATIVE_PROCESS_EXIT: i64 = 51
 let NATIVE_NOOP: i64 = 52
 let NATIVE_PROCESS_HRTIME: i64 = 53
 let NATIVE_PROCESS_CWD: i64 = 54
+let NATIVE_STRING_FROMCHARCODE: i64 = 55
 let NATIVE_RESOLVER_BASE: i64 = 1000000
 
 fn nativeErrorName(id: i64): string {
@@ -836,6 +837,15 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     }
     if id == NATIVE_NOOP {
         return JSValue.Undefined
+    }
+    if id == NATIVE_STRING_FROMCHARCODE {
+        var out = String.withCapacity(argVals.len())
+        var i: i64 = 0
+        while i < argVals.len() {
+            out.push(toNum(argVals[i]) as u8)
+            i = i + 1
+        }
+        return JSValue.Str(out)
     }
     if id == NATIVE_PROCESS_CWD {
         match currentDir() {
@@ -1454,6 +1464,9 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "prototype", JSValue.Obj(objectProto))
     scopeDefine(st, 0, "Object", JSValue.Obj(objectCtor))
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
+    let stringCtorObj = newObject(st)
+    objSet(st, stringCtorObj, "fromCharCode", JSValue.Native(NATIVE_STRING_FROMCHARCODE))
+    st.stringCtorProps = stringCtorObj
     scopeDefine(st, 0, "String", JSValue.Native(NATIVE_STRING))
     scopeDefine(st, 0, "Boolean", JSValue.Native(NATIVE_BOOLEAN))
     scopeDefine(st, 0, "NaN", JSValue.Number(jsNan()))
@@ -1532,7 +1545,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             // reading an undeclared identifier is a ReferenceError in JS; without
             // this a typo just evaluates to undefined and the failure surfaces
             // somewhere else entirely
-            if !scopeHas(st, scope, name) {
+            // `this` is never a ReferenceError — unbound at module top level it is
+            // simply undefined, and CommonJS code reads it freely
+            if !scopeHas(st, scope, name) && name != "this" {
                 st.throwing = true
                 st.thrownValue = makeError(st, "ReferenceError", name.clone() + " is not defined")
                 return JSValue.Undefined
@@ -3080,6 +3095,18 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 }
             }
         }
+        JSValue.Native(nid) => {
+            // statics hanging off a native constructor, e.g. String.fromCharCode
+            if nid == NATIVE_STRING && st.stringCtorProps >= 0 {
+                let m = getMember(st, st.stringCtorProps, name)
+                if isCallable(m) {
+                    let argVals = evalArgs(prog, argsIdx, st, scope)
+                    return callValue(prog, m, argVals, JSValue.Undefined, st)
+                }
+            }
+            print("milojs: TypeError: ." + name.clone() + " is not a function (on a builtin)")
+            return JSValue.Undefined
+        }
         JSValue.Func(bf, benv) => {
             // method call on a function value: either a static (Class.make())
             // or .call/.apply, which retarget `this`
@@ -3723,8 +3750,37 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
 }
 
 fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
-    var j: i64 = 0
     let n = prog.blocks[blockIdx].len()
+    // Hoisting: function declarations are bound before any statement runs, and
+    // `var`s are pre-bound as undefined. Mutually recursive helpers and any call
+    // that precedes its declaration depend on this.
+    var h: i64 = 0
+    while h < n {
+        let hIdx = prog.blocks[blockIdx][h]
+        let hNode = getStmt(prog, hIdx)
+        match hNode {
+            Stmt.FuncDecl(fIdx) => {
+                let fname = prog.funcs[fIdx].name.clone()
+                if fname.len() > 0 {
+                    scopeDefine(st, scope, fname, JSValue.Func(fIdx, scope))
+                }
+            }
+            Stmt.MultiDecl(listIdx) => {
+                var d: i64 = 0
+                while d < prog.declLists[listIdx].len() {
+                    let dname = prog.declLists[listIdx][d].name.clone()
+                    if dname.len() > 0 && !scopeHasOwn(st, scope, dname) {
+                        scopeDefine(st, scope, dname, JSValue.Undefined)
+                    }
+                    d = d + 1
+                }
+            }
+            _ => {
+            }
+        }
+        h = h + 1
+    }
+    var j: i64 = 0
     while j < n {
         // statement boundary = the only GC safepoint (no closure in-flight, all
         // live values rooted in scopes)

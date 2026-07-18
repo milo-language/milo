@@ -24,6 +24,21 @@ from "./eval" import {
 // gcThreshold is the allocation count that triggers a collection. Lowering it to
 // 1 collects at every safepoint, which is how GC-rooting bugs are shaken out —
 // see MILOJS_GC_THRESHOLD.
+// An Error object stringifies as [object Object], which says nothing about what
+// went wrong. Report name and message when the thrown value is an error.
+fn describeThrown(st: &Interp, v: &JSValue): string {
+    let h = objHandle(v)
+    if h >= 0 && st.objects[h].isError {
+        let name = toStr(objGet(st, h, "name"))
+        let msg = toStr(objGet(st, h, "message"))
+        if msg.len() > 0 {
+            return name + ": " + msg
+        }
+        return name
+    }
+    return toStr(v)
+}
+
 fn makeInterp(gcStats: bool, gcThreshold: i64): Interp {
     return Interp {
         scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
@@ -31,7 +46,7 @@ fn makeInterp(gcStats: bool, gcThreshold: i64): Interp {
         modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(),
         throwing: false, thrownValue: JSValue.Undefined,
         rngState: 88172645463325252,
-        allocSinceGc: 0, promiseCtorObj: -1, symbolCounter: 0, gcThreshold: gcThreshold, gcRuns: 0, gcStats: gcStats
+        allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, symbolCounter: 0, gcThreshold: gcThreshold, gcRuns: 0, gcStats: gcStats
     }
 }
 
@@ -54,7 +69,7 @@ fn runSource(src: &string, st: &mut Interp): i32 {
     let top = parseProgram(p, prog)
     execBlock(prog, top, st, 0)
     if st.throwing {
-        eprint("Uncaught " + toStr(st.thrownValue))
+        eprint("Uncaught " + describeThrown(st, st.thrownValue))
         return 1
     }
     if st.gcStats {

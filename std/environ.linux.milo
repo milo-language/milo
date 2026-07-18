@@ -1,0 +1,66 @@
+// std/environ — enumerate the whole process environment.
+//
+// getEnv reads one variable by name; this lists every variable, which is what a
+// language runtime needs to expose something like Node's process.env.
+//
+// Linux exposes the environment as NUL-separated NAME=VALUE records in
+// /proc/self/environ, which avoids needing the `environ` global symbol.
+
+from "std/fs" import {
+    readFile
+}
+
+struct EnvEntry {
+    name: string,
+    value: string,
+}
+
+// Every variable in the process environment, in the order the OS supplies them.
+fn envVars(): Vec<EnvEntry> {
+    var out: Vec<EnvEntry> = Vec.new()
+    match readFile("/proc/self/environ") {
+        Result.Ok(blob) => {
+            var start: i64 = 0
+            var i: i64 = 0
+            while i <= blob.len() {
+                let atEnd = i == blob.len()
+                if atEnd || blob[i] == 0 as u8 {
+                    if i > start {
+                        // entries are NAME=VALUE; a value may itself contain '='
+                        var eq: i64 = -1
+                        var k = start
+                        while k < i && eq < 0 {
+                            if blob[k] == '=' {
+                                eq = k
+                            }
+                            k = k + 1
+                        }
+                        if eq > start {
+                            var name = String.withCapacity(eq - start)
+                            var n = start
+                            while n < eq {
+                                name.push(blob[n])
+                                n = n + 1
+                            }
+                            var value = String.withCapacity(i - eq)
+                            var v = eq + 1
+                            while v < i {
+                                value.push(blob[v])
+                                v = v + 1
+                            }
+                            out.push(EnvEntry {
+                                name: name, value: value
+                            }
+                            )
+                        }
+                    }
+                    start = i + 1
+                }
+                i = i + 1
+            }
+        }
+        Result.Err(_e) => {
+        }
+    }
+    return out
+}

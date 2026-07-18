@@ -1,0 +1,61 @@
+// std/environ — enumerate the whole process environment.
+//
+// getEnv reads one variable by name; this lists every variable, which is what a
+// language runtime needs to expose something like Node's process.env.
+//
+// macOS does not export `environ` to a shared library, so the supported route is
+// _NSGetEnviron(), which returns a pointer to it.
+
+extern fn _NSGetEnviron(): ***u8
+
+struct EnvEntry {
+    name: string,
+    value: string,
+}
+
+// Every variable in the process environment, in the order the OS supplies them.
+fn envVars(): Vec<EnvEntry> {
+    var out: Vec<EnvEntry> = Vec.new()
+    unsafe {
+        let envp: **u8 = *_NSGetEnviron()
+        var i: i64 = 0
+        var going = true
+        while going {
+            let entry: *u8 = envp[i]
+            if (entry as i64) == 0 {
+                going = false
+            } else {
+                let text = _cstrToString(entry)
+                // entries are NAME=VALUE; a value may itself contain '='
+                var eq: i64 = -1
+                var k: i64 = 0
+                while k < text.len() && eq < 0 {
+                    if text[k] == '=' {
+                        eq = k
+                    }
+                    k = k + 1
+                }
+                if eq > 0 {
+                    var name = String.withCapacity(eq)
+                    var n: i64 = 0
+                    while n < eq {
+                        name.push(text[n])
+                        n = n + 1
+                    }
+                    var value = String.withCapacity(text.len() - eq)
+                    var v = eq + 1
+                    while v < text.len() {
+                        value.push(text[v])
+                        v = v + 1
+                    }
+                    out.push(EnvEntry {
+                        name: name, value: value
+                    }
+                    )
+                }
+                i = i + 1
+            }
+        }
+    }
+    return out
+}

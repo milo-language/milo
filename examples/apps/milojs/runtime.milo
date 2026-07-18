@@ -126,6 +126,8 @@ struct Interp {
     allocSinceGc: i64,
     // the global Promise object, so `new Promise(...)` can be recognised
     promiseCtorObj: i64,
+    // property bag for statics on the String constructor (fromCharCode)
+    stringCtorProps: i64,
     // monotonic counter behind Symbol(); symbols are unique strings here
     symbolCounter: i64,
     gcThreshold: i64,
@@ -632,6 +634,19 @@ fn scopeHas(st: &Interp, scope: i64, name: &string): bool {
             i = i - 1
         }
         s = st.scopes[s].parent
+    }
+    return false
+}
+
+// Is `name` bound in this scope itself (not a parent)? Hoisting must not
+// clobber a binding of the same name from an enclosing scope.
+fn scopeHasOwn(st: &Interp, scope: i64, name: &string): bool {
+    var i = st.scopes[scope].vars.len() - 1
+    while i >= 0 {
+        if st.scopes[scope].vars[i].name == name {
+            return true
+        }
+        i = i - 1
     }
     return false
 }

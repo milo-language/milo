@@ -248,6 +248,25 @@ fn jsSplit(s: &string, args: &Vec<JSValue>, st: &mut Interp): i64 {
 
 // Dispatch a String method by name. Callback-taking methods don't exist on
 // strings, so this needs nothing from eval — only heap access for split.
+fn isJsSpace(c: u8): bool {
+    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8 || c == 12 as u8 || c == 11 as u8
+}
+
+// Does `needle` occur in `s` starting exactly at `at`?
+fn jsSubstringAt(s: &string, needle: &string, at: i64): bool {
+    if at + needle.len() > s.len() {
+        return false
+    }
+    var k: i64 = 0
+    while k < needle.len() {
+        if s[at + k] != needle[k] {
+            return false
+        }
+        k = k + 1
+    }
+    return true
+}
+
 fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     if name == "toUpperCase" {
         return JSValue.Str(strUpper(s))
@@ -287,6 +306,62 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         let a = argNum(args, 0, 0)
         let b = argNum(args, 1, s.len())
         return JSValue.Str(strSlice(s, a, b))
+    }
+    if name == "lastIndexOf" {
+        let needle = argStr(args, 0)
+        if needle.len() == 0 {
+            return JSValue.Number(s.len() as f64)
+        }
+        if needle.len() > s.len() {
+            return JSValue.Number(0.0 - 1.0)
+        }
+        var i = s.len() - needle.len()
+        while i >= 0 {
+            if jsSubstringAt(s, needle, i) {
+                return JSValue.Number(i as f64)
+            }
+            i = i - 1
+        }
+        return JSValue.Number(0.0 - 1.0)
+    }
+    if name == "padStart" || name == "padEnd" {
+        let target = argNum(args, 0, 0)
+        var pad = " "
+        if args.len() > 1 {
+            pad = toStr(args[1])
+        }
+        if pad.len() == 0 || s.len() >= target {
+            return JSValue.Str(s.clone())
+        }
+        var fill = ""
+        while fill.len() < target - s.len() {
+            fill = fill + pad
+        }
+        // the pad is truncated to exactly the missing width
+        var cut = String.withCapacity(16)
+        var fi: i64 = 0
+        while fi < target - s.len() {
+            cut.push(fill[fi])
+            fi = fi + 1
+        }
+        if name == "padStart" {
+            return JSValue.Str(cut + s.clone())
+        }
+        return JSValue.Str(s.clone() + cut)
+    }
+    if name == "trimStart" || name == "trimLeft" {
+        var i: i64 = 0
+        while i < s.len() && isJsSpace(s[i]) {
+            i = i + 1
+        }
+        return JSValue.Str(strSlice(s, i, s.len()))
+    }
+    if name == "trimEnd" || name == "trimRight" {
+        var e = s.len()
+        while e > 0 && isJsSpace(s[e - 1]) {
+            e = e - 1
+        }
+        return JSValue.Str(strSlice(s, 0, e))
     }
     if name == "repeat" {
         return JSValue.Str(jsRepeat(s, argNum(args, 0, 0)))
