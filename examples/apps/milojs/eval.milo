@@ -130,6 +130,60 @@ fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
 
 // Property read that understands arrays: `length` and integer indices hit the
 // element vector, everything else the string-keyed props.
+// Getter for `key` on `o` or anywhere up its prototype chain, else Undefined.
+// Kept separate from getMember because invoking a getter needs the program and a
+// mutable interpreter, which the plain reader does not have.
+fn findGetter(st: &Interp, o: i64, key: &string): JSValue {
+    var cur = o
+    while cur >= 0 {
+        let idx = objOwnIndex(st, cur, key)
+        if idx >= 0 {
+            if st.objects[cur].props[idx].isAccessor {
+                return cloneValue(st.objects[cur].props[idx].getter)
+            }
+            return JSValue.Undefined
+        }
+        cur = st.objects[cur].proto
+    }
+    return JSValue.Undefined
+}
+
+fn findSetter(st: &Interp, o: i64, key: &string): JSValue {
+    var cur = o
+    while cur >= 0 {
+        let idx = objOwnIndex(st, cur, key)
+        if idx >= 0 {
+            if st.objects[cur].props[idx].isAccessor {
+                return cloneValue(st.objects[cur].props[idx].setter)
+            }
+            return JSValue.Undefined
+        }
+        cur = st.objects[cur].proto
+    }
+    return JSValue.Undefined
+}
+
+// Property read that honours accessors; `this` inside the getter is the object.
+fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
+    let g = findGetter(st, o, key)
+    if isCallable(g) {
+        var noArgs: Vec<JSValue> = Vec.new()
+        return callValue(prog, g, noArgs, JSValue.Obj(o), st)
+    }
+    return getMember(st, o, key)
+}
+
+fn setMemberDyn(prog: &Prog, o: i64, key: string, v: JSValue, st: &mut Interp) {
+    let sfn = findSetter(st, o, key)
+    if isCallable(sfn) {
+        var args: Vec<JSValue> = Vec.new()
+        args.push(v)
+        let _ = callValue(prog, sfn, args, JSValue.Obj(o), st)
+        return
+    }
+    setMember(st, o, key, v)
+}
+
 fn getMember(st: &Interp, o: i64, key: &string): JSValue {
     if st.objects[o].isArray {
         if key == "length" {
@@ -285,6 +339,10 @@ let NATIVE_PROMISE: i64 = 35
 let NATIVE_IS_NAN: i64 = 36
 let NATIVE_IS_FINITE: i64 = 37
 let NATIVE_ARRAY_ISARRAY: i64 = 38
+let NATIVE_OBJECT_CREATE: i64 = 39
+let NATIVE_OBJECT_GETPROTO: i64 = 40
+let NATIVE_OBJECT_SETPROTO: i64 = 41
+let NATIVE_OBJECT_GETOWNPROPDESC: i64 = 42
 let NATIVE_RESOLVER_BASE: i64 = 1000000
 
 fn nativeErrorName(id: i64): string {
@@ -394,30 +452,28 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
     }
     if id == NATIVE_OBJECT_DEFINEPROPERTY {
-        // only the data-descriptor form: {value: ...}. get/set accessors are not
-        // supported yet, so a descriptor without `value` defines undefined.
         if argVals.len() < 3 {
             return JSValue.Undefined
         }
         let target = cloneValue(argVals[0])
         let key = toStr(argVals[1])
-        match target {
-            JSValue.Obj(o) => {
-                var v = JSValue.Undefined
-                match cloneValue(argVals[2]) {
-                    JSValue.Obj(d) => {
-                        v = getMember(st, d, "value")
-                    }
-                    _ => {
-                    }
-                }
-                setMember(st, o, key, v)
+        let o = objHandle(target)
+        if o < 0 {
+            return target
+        }
+        let d = objHandle(argVals[2])
+        if d >= 0 {
+            let g = getMember(st, d, "get")
+            let sfn = getMember(st, d, "set")
+            if isCallable(g) || isCallable(sfn) {
+                objDefineAccessor(st, o, key, g, sfn)
                 return JSValue.Obj(o)
             }
-            _ => {
-                return target
-            }
+            setMember(st, o, key, getMember(st, d, "value"))
+            return JSValue.Obj(o)
         }
+        setMember(st, o, key, JSValue.Undefined)
+        return JSValue.Obj(o)
     }
     if id >= NATIVE_RESOLVER_BASE {
         let off = id - NATIVE_RESOLVER_BASE
@@ -527,6 +583,69 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             }
         }
         return JSValue.Bool(false)
+    }
+    if id == NATIVE_OBJECT_CREATE {
+        let o = newObject(st)
+        if argVals.len() > 0 {
+            let proto = objHandle(argVals[0])
+            if proto >= 0 {
+                st.objects[o].proto = proto
+            }
+        }
+        return JSValue.Obj(o)
+    }
+    if id == NATIVE_OBJECT_GETPROTO {
+        if argVals.len() > 0 {
+            let h = objHandle(argVals[0])
+            if h >= 0 && st.objects[h].proto >= 0 {
+                return JSValue.Obj(st.objects[h].proto)
+            }
+        }
+        return JSValue.Null
+    }
+    if id == NATIVE_OBJECT_SETPROTO {
+        if argVals.len() > 1 {
+            let h = objHandle(argVals[0])
+            if h >= 0 {
+                let p = objHandle(argVals[1])
+                st.objects[h].proto = p
+            }
+        }
+        if argVals.len() > 0 {
+            return cloneValue(argVals[0])
+        }
+        return JSValue.Undefined
+    }
+    if id == NATIVE_OBJECT_GETOWNPROPDESC {
+        if argVals.len() < 2 {
+            return JSValue.Undefined
+        }
+        let h = objHandle(argVals[0])
+        if h < 0 {
+            return JSValue.Undefined
+        }
+        let key = toStr(argVals[1])
+        let idx = objOwnIndex(st, h, key)
+        if idx < 0 {
+            return JSValue.Undefined
+        }
+        let isAcc = st.objects[h].props[idx].isAccessor
+        let pv = cloneValue(st.objects[h].props[idx].value)
+        let pg = cloneValue(st.objects[h].props[idx].getter)
+        let ps = cloneValue(st.objects[h].props[idx].setter)
+        let d = newObject(st)
+        pushTemp(st, JSValue.Obj(d))
+        if isAcc {
+            objSet(st, d, "get", pg)
+            objSet(st, d, "set", ps)
+        } else {
+            objSet(st, d, "value", pv)
+            objSet(st, d, "writable", JSValue.Bool(true))
+        }
+        objSet(st, d, "enumerable", JSValue.Bool(true))
+        objSet(st, d, "configurable", JSValue.Bool(true))
+        popTemp(st)
+        return JSValue.Obj(d)
     }
     if id == NATIVE_OBJECT_FREEZE {
         // no real immutability yet — callers only rely on the identity return
@@ -1055,6 +1174,10 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "values", JSValue.Native(NATIVE_OBJECT_VALUES))
     objSet(st, objectCtor, "entries", JSValue.Native(NATIVE_OBJECT_ENTRIES))
     objSet(st, objectCtor, "freeze", JSValue.Native(NATIVE_OBJECT_FREEZE))
+    objSet(st, objectCtor, "create", JSValue.Native(NATIVE_OBJECT_CREATE))
+    objSet(st, objectCtor, "getPrototypeOf", JSValue.Native(NATIVE_OBJECT_GETPROTO))
+    objSet(st, objectCtor, "setPrototypeOf", JSValue.Native(NATIVE_OBJECT_SETPROTO))
+    objSet(st, objectCtor, "getOwnPropertyDescriptor", JSValue.Native(NATIVE_OBJECT_GETOWNPROPDESC))
     scopeDefine(st, 0, "Object", JSValue.Obj(objectCtor))
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
     scopeDefine(st, 0, "String", JSValue.Native(NATIVE_STRING))
@@ -1251,7 +1374,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             let ov = evalExpr(prog, objIdx, st, scope)
             match ov {
                 JSValue.Obj(o) => {
-                    return getMember(st, o, name)
+                    return getMemberDyn(prog, o, name, st)
                 }
                 JSValue.Str(s) => {
                     if name == "length" {
@@ -1280,7 +1403,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             let key = toStr(kv)
             match ov {
                 JSValue.Obj(o) => {
-                    return getMember(st, o, key)
+                    return getMemberDyn(prog, o, key, st)
                 }
                 JSValue.Str(s) => {
                     // s[i] → a single-character string (or undefined out of range)
@@ -1306,7 +1429,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             popTemp(st)
             match ov {
                 JSValue.Obj(o) => {
-                    setMember(st, o, key, cloneValue(v))
+                    setMemberDyn(prog, o, key, cloneValue(v), st)
                 }
                 _ => {
                 }
@@ -1800,7 +1923,7 @@ fn makeCbArgs(st: &Interp, o: i64, i: i64): Vec<JSValue> {
 }
 
 fn isArrayMethod(name: &string): bool {
-    return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop"
+    return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop" || name == "find" || name == "findIndex" || name == "some" || name == "every" || name == "shift" || name == "unshift" || name == "splice" || name == "sort" || name == "lastIndexOf" || name == "flat" || name == "fill"
 }
 
 // Dispatch a built-in Array method. `o` (the array) is temp-rooted by the caller;
@@ -1895,6 +2018,209 @@ fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut
             return JSValue.Undefined
         }
         return st.objects[o].elems.pop()!
+    }
+    if name == "shift" {
+        if n == 0 {
+            return JSValue.Undefined
+        }
+        let head = arrGet(st, o, 0)
+        var rest: Vec<JSValue> = Vec.new()
+        var i: i64 = 1
+        while i < n {
+            rest.push(arrGet(st, o, i))
+            i = i + 1
+        }
+        st.objects[o].elems = rest
+        return head
+    }
+    if name == "unshift" {
+        var merged: Vec<JSValue> = Vec.new()
+        var a: i64 = 0
+        while a < args.len() {
+            merged.push(cloneValue(args[a]))
+            a = a + 1
+        }
+        var i: i64 = 0
+        while i < n {
+            merged.push(arrGet(st, o, i))
+            i = i + 1
+        }
+        st.objects[o].elems = merged
+        return JSValue.Number((n + args.len()) as f64)
+    }
+    if name == "find" || name == "findIndex" || name == "some" || name == "every" {
+        if args.len() == 0 {
+            if name == "every" {
+                return JSValue.Bool(true)
+            }
+            if name == "some" {
+                return JSValue.Bool(false)
+            }
+            if name == "findIndex" {
+                return JSValue.Number(0.0 - 1.0)
+            }
+            return JSValue.Undefined
+        }
+        let cb = cloneValue(args[0])
+        pushTemp(st, cloneValue(cb))
+        var i: i64 = 0
+        var found = -1
+        var allTrue = true
+        var anyTrue = false
+        while i < arrLen(st, o) && found < 0 {
+            let cbArgs = makeCbArgs(st, o, i)
+            let r = callValue(prog, cb, cbArgs, JSValue.Undefined, st)
+            let t = truthy(r)
+            if t {
+                anyTrue = true
+                if name == "find" || name == "findIndex" || name == "some" {
+                    found = i
+                }
+            } else {
+                allTrue = false
+                if name == "every" {
+                    found = i
+                }
+            }
+            if st.throwing {
+                found = i
+            }
+            i = i + 1
+        }
+        popTemp(st)
+        if name == "every" {
+            return JSValue.Bool(allTrue)
+        }
+        if name == "some" {
+            return JSValue.Bool(anyTrue)
+        }
+        if name == "findIndex" {
+            return JSValue.Number(found as f64)
+        }
+        if found >= 0 {
+            return arrGet(st, o, found)
+        }
+        return JSValue.Undefined
+    }
+    if name == "lastIndexOf" {
+        var target = JSValue.Undefined
+        if args.len() > 0 {
+            target = cloneValue(args[0])
+        }
+        var i = n - 1
+        while i >= 0 {
+            if jsStrictEquals(arrGet(st, o, i), target) {
+                return JSValue.Number(i as f64)
+            }
+            i = i - 1
+        }
+        return JSValue.Number(0.0 - 1.0)
+    }
+    if name == "fill" {
+        var v = JSValue.Undefined
+        if args.len() > 0 {
+            v = cloneValue(args[0])
+        }
+        var i: i64 = 0
+        while i < n {
+            st.objects[o].elems[i] = cloneValue(v)
+            i = i + 1
+        }
+        return JSValue.Obj(o)
+    }
+    if name == "splice" {
+        // splice(start, deleteCount, ...items) — mutates and returns the removed
+        var start: i64 = 0
+        if args.len() > 0 {
+            start = toNum(args[0]) as i64
+        }
+        if start < 0 {
+            start = n + start
+        }
+        if start < 0 {
+            start = 0
+        }
+        if start > n {
+            start = n
+        }
+        var delCount = n - start
+        if args.len() > 1 {
+            delCount = toNum(args[1]) as i64
+        }
+        if delCount < 0 {
+            delCount = 0
+        }
+        if start + delCount > n {
+            delCount = n - start
+        }
+        let removed = newArray(st)
+        pushTemp(st, JSValue.Obj(removed))
+        var kept: Vec<JSValue> = Vec.new()
+        var i: i64 = 0
+        while i < n {
+            if i == start {
+                var a: i64 = 2
+                while a < args.len() {
+                    kept.push(cloneValue(args[a]))
+                    a = a + 1
+                }
+            }
+            if i >= start && i < start + delCount {
+                arrPush(st, removed, arrGet(st, o, i))
+            } else {
+                kept.push(arrGet(st, o, i))
+            }
+            i = i + 1
+        }
+        if start >= n {
+            var a: i64 = 2
+            while a < args.len() {
+                kept.push(cloneValue(args[a]))
+                a = a + 1
+            }
+        }
+        st.objects[o].elems = kept
+        popTemp(st)
+        return JSValue.Obj(removed)
+    }
+    if name == "sort" {
+        // insertion sort; default order is by string value, as in JS
+        var hasCmp = false
+        var cmp = JSValue.Undefined
+        if args.len() > 0 && isCallable(args[0]) {
+            hasCmp = true
+            cmp = cloneValue(args[0])
+        }
+        pushTemp(st, cloneValue(cmp))
+        var i: i64 = 1
+        while i < arrLen(st, o) {
+            let key = arrGet(st, o, i)
+            var j = i - 1
+            var placed = false
+            while j >= 0 && !placed {
+                let cur = arrGet(st, o, j)
+                var greater = false
+                if hasCmp {
+                    var cargs: Vec<JSValue> = Vec.new()
+                    cargs.push(cloneValue(cur))
+                    cargs.push(cloneValue(key))
+                    let r = callValue(prog, cmp, cargs, JSValue.Undefined, st)
+                    greater = toNum(r) > 0.0
+                } else {
+                    greater = strLess(toStr(key), toStr(cur))
+                }
+                if greater {
+                    st.objects[o].elems[j + 1] = cur
+                    j = j - 1
+                } else {
+                    placed = true
+                }
+            }
+            st.objects[o].elems[j + 1] = key
+            i = i + 1
+        }
+        popTemp(st)
+        return JSValue.Obj(o)
     }
     if name == "join" {
         var sep = ","
@@ -2220,6 +2546,24 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                 let baseVal = scopeLookup(st, scope, fname)
                 let thisVal = scopeLookup(st, scope, "this")
                 let argVals = evalArgs(prog, argsIdx, st, scope)
+                // A native base constructor (class X extends Error) would build
+                // and return its own object, discarding `this`. Initialise the
+                // instance in place instead, so this.message is set and the
+                // instance is recognised by instanceof Error.
+                let baseNative = nativeHandle(baseVal)
+                if baseNative >= 0 && isErrorCtor(baseNative) {
+                    let selfObj = objHandle(thisVal)
+                    if selfObj >= 0 {
+                        st.objects[selfObj].isError = true
+                        objSet(st, selfObj, "name", JSValue.Str(nativeErrorName(baseNative)))
+                        var msg = ""
+                        if argVals.len() > 0 {
+                            msg = toStr(argVals[0])
+                        }
+                        objSet(st, selfObj, "message", JSValue.Str(msg))
+                    }
+                    return JSValue.Undefined
+                }
                 return callValue(prog, baseVal, argVals, thisVal, st)
             }
             // require(spec) is handled here rather than as a native because it
@@ -2265,6 +2609,26 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
     let methodNode = getExpr(prog, calleeIdx)
     match methodNode {
         Expr.Member(objIdx, name) => {
+            // super.method() — the base's *prototype* holds the method, and it
+            // must run against the current `this`, not against the base itself
+            let baseNode = getExpr(prog, objIdx)
+            match baseNode {
+                Expr.Ident(bname) => {
+                    if isSuperName(bname) {
+                        let baseVal = scopeLookup(st, scope, bname)
+                        let bf = funcHandle(baseVal)
+                        if bf >= 0 {
+                            let baseProto = getFuncProto(st, bf)
+                            let m = getMember(st, baseProto, name)
+                            let thisVal = scopeLookup(st, scope, "this")
+                            let argVals = evalArgs(prog, argsIdx, st, scope)
+                            return callValue(prog, m, argVals, thisVal, st)
+                        }
+                    }
+                }
+                _ => {
+                }
+            }
             let recv = evalExpr(prog, objIdx, st, scope)
             return callMember(prog, recv, name, argsIdx, st, scope)
         }

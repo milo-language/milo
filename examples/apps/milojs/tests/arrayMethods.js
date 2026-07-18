@@ -1,0 +1,12 @@
+const a = [5,1,4,2,3];
+console.log(a.find(x => x > 3), a.findIndex(x => x > 3));
+console.log(a.some(x => x > 4), a.every(x => x > 0), a.every(x => x > 2));
+const b = [1,2,3]; console.log(b.shift(), JSON.stringify(b));
+b.unshift(9, 8); console.log(JSON.stringify(b));
+const c = [1,2,3,4,5];
+console.log(JSON.stringify(c.splice(1,2)), JSON.stringify(c));
+const d = [1,2,3]; d.splice(1,0,"X"); console.log(JSON.stringify(d));
+console.log(JSON.stringify([10,9,80,1].sort()));
+console.log(JSON.stringify([10,9,80,1].sort((x,y) => x-y)));
+console.log([1,2,1].lastIndexOf(1), JSON.stringify([1,2,3].fill(0)));
+console.log(a.find(x => x > 99), a.findIndex(x => x > 99));

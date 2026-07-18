@@ -186,6 +186,18 @@ fn jsInfinity(): f64 {
     return one / z
 }
 
+// native id if v is a builtin function/constructor, else -1
+fn nativeHandle(v: &JSValue): i64 {
+    match v {
+        JSValue.Native(id) => {
+            return id
+        }
+        _ => {
+            return -1
+        }
+    }
+}
+
 fn objHandle(v: &JSValue): i64 {
     match v {
         JSValue.Obj(o) => {
