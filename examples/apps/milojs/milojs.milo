@@ -46,6 +46,9 @@ from "./modules" import {
 from "./eval" import {
     runModule
 }
+from "./eval" import {
+    execBlock
+}
 from "./value" import {
     toStr
 }
@@ -148,10 +151,19 @@ fn main(): i32 {
     var prog = Prog {
         exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
     }
+    // The prelude defines globals that are easier to write in JS than to build
+    // from natives. It must share this Prog: a JSValue.Func carries a function
+    // index into prog.funcs, so a function parsed into a different Prog indexes
+    // the wrong table when it is finally called.
+    let preludeIdx = preloadGraph("builtin:prelude", prog, st)
     let entryIdx = preloadGraph(path.clone(), prog, st)
     if entryIdx < 0 {
         eprint("milojs: cannot read '" + path + "'")
         return 1
+    }
+    if preludeIdx >= 0 {
+        // run in global scope, so its declarations become globals
+        execBlock(prog, st.modBlocks[preludeIdx], st, 0)
     }
     runModule(prog, entryIdx, st)
     if st.throwing {

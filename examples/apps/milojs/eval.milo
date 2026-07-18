@@ -1836,7 +1836,11 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             var i: i64 = 0
             let n = prog.objLits[litIdx].len()
             while i < n {
-                let key = prog.objLits[litIdx][i].key.clone()
+                var key = prog.objLits[litIdx][i].key.clone()
+                let keyExprIdx = prog.objLits[litIdx][i].keyExpr
+                if keyExprIdx >= 0 {
+                    key = toStr(evalExpr(prog, keyExprIdx, st, scope))
+                }
                 let valIdx = prog.objLits[litIdx][i].val
                 let v = evalExpr(prog, valIdx, st, scope)
                 let propKind = prog.objLits[litIdx][i].kind
@@ -2194,6 +2198,12 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
     // arrows have no own `this` — it stays lexical (resolved up the scope chain)
     if !prog.funcs[fIdx].isArrow {
         scopeDefine(st, callScope, "this", thisVal)
+        // a named function expression can refer to itself by name from inside its
+        // own body, even though the name is not bound in the enclosing scope
+        let selfName = prog.funcs[fIdx].name.clone()
+        if selfName.len() > 0 {
+            scopeDefine(st, callScope, selfName, JSValue.Func(fIdx, envIdx))
+        }
     }
     var j: i64 = 0
     let nParams = prog.funcs[fIdx].params.len()

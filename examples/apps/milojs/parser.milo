@@ -547,7 +547,7 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
             advance(p)
             let se = parseExpr(p, prog)
             props.push(PropInit {
-                key: "...", val: se, kind: 0
+                key: "...", val: se, kind: 0, keyExpr: -1
             }
             )
             if peekKind(p) == T_COMMA {
@@ -555,6 +555,13 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
             }
         } else {
             var key = ""
+            var keyExpr = -1
+            // `{ [expr]: v }` — the key is evaluated at construction time
+            if peekKind(p) == T_LBRACKET {
+                advance(p)
+                keyExpr = parseExpr(p, prog)
+                expect(p, T_RBRACKET)
+            }
             var accessorKind: i64 = 0
             // `get name() {}` / `set name(v) {}` — only an accessor when a name
             // and parameter list follow, since `get` is a valid property name too
@@ -572,11 +579,14 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
                 isMethodAsync = true
                 advance(p)
             }
-            if isPropName(p) || peekKind(p) == T_STR {
-                key = p.toks[p.pos].text.clone()
-                advance(p)
-            } else {
-                advance(p)
+            if keyExpr < 0 {
+                if isPropName(p) || peekKind(p) == T_STR {
+                    key = p.toks[p.pos].text.clone()
+                    advance(p)
+                } else {
+                    // unrecognised key token — drop it rather than spin
+                    advance(p)
+                }
             }
             // shorthand `{ req, ip }` is `{ req: req, ip: ip }`
             var valIdx = -1
@@ -612,7 +622,7 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
                 valIdx = addExpr(prog, Expr.Ident(key.clone()))
             }
             props.push(PropInit {
-                key: key, val: valIdx, kind: accessorKind
+                key: key, val: valIdx, kind: accessorKind, keyExpr: keyExpr
             }
             )
             if peekKind(p) == T_COMMA {

@@ -51,6 +51,8 @@ struct PropInit {
     val: i64,
     // 0 plain, 1 getter, 2 setter — accessors are installed rather than assigned
     kind: i64,
+    // computed key `{ [expr]: v }`: expression index, or -1 for a literal key
+    keyExpr: i64,
 }
 
 enum Stmt {
