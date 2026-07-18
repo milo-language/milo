@@ -29,7 +29,7 @@ from "std/io" import {
     readFile
 }
 from "std/fs" import {
-    isFile
+    isFile, isDir, fileSizePath
 }
 from "std/net" import {
     TcpListener
@@ -69,6 +69,8 @@ extern fn JSValueMakeString(ctx: *u8, s: *u8): *u8
 
 extern fn JSValueMakeBoolean(ctx: *u8, boolean: bool): *u8
 
+extern fn JSValueMakeNumber(ctx: *u8, number: f64): *u8
+
 extern fn JSObjectMakeFunctionWithCallback(ctx: *u8, name: *u8, callAsFunction: *u8): *u8
 
 extern fn JSObjectMake(ctx: *u8, jsClass: *u8, data: *u8): *u8
@@ -82,6 +84,10 @@ extern fn JSValueToNumber(ctx: *u8, value: *u8, exception: *u8): f64
 extern fn JSValueProtect(ctx: *u8, value: *u8): void
 
 extern fn JSObjectGetProperty(ctx: *u8, object: *u8, propertyName: *u8, exception: *u8): *u8
+
+// libc getenv — backs process.env so node code reading JWT_SECRET/PORT/etc. sees the
+// real environment the minibun process was launched with (minibun has no dotenv).
+extern fn getenv(name: *u8): *u8
 
 // Read a pointer out of a C array of pointers (the callback's `arguments[]`).
 fn loadPtr(p: *u8): *u8 {
@@ -171,6 +177,21 @@ fn consoleLog(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, argumen
     }
 }
 
+// __getenv(name) -> string | undefined. Backs process.env (see moduleBootstrap).
+fn nativeGetenv(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        if argCount < 1 {
+            return JSValueMakeUndefined(ctx)
+        }
+        let name = jsToString(ctx, loadPtr(arguments))
+        let v = getenv(name)
+        if v as i64 == 0 {
+            return JSValueMakeUndefined(ctx)
+        }
+        return jsString(ctx, CStr.wrap(v)!.toString())
+    }
+}
+
 // __readFileSync(path) -> string | undefined. The module loader's file access.
 fn nativeReadFileSync(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
     unsafe {
@@ -202,6 +223,28 @@ fn nativeFileExists(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, a
     }
 }
 
+// __isDir(path) -> bool. Lets fs.stat report isDirectory correctly, which express.static/
+// send need to decide between an index-file lookup and streaming a path as a file.
+fn nativeIsDir(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        if argCount < 1 {
+            return JSValueMakeBoolean(ctx, false)
+        }
+        return JSValueMakeBoolean(ctx, isDir(jsToString(ctx, loadPtr(arguments))))
+    }
+}
+
+// __fileSize(path) -> number (bytes, or -1 if absent). Feeds fs.stat().size so send can set
+// Content-Length; a 0 size (the old stub) made static responses empty.
+fn nativeFileSize(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        if argCount < 1 {
+            return JSValueMakeNumber(ctx, -1.0)
+        }
+        return JSValueMakeNumber(ctx, (fileSizePath(jsToString(ctx, loadPtr(arguments)))) as f64)
+    }
+}
+
 // The server accept loop — run from main() at the TOP LEVEL (not nested inside the entry
 // eval), so each `handler(reqText)` call is an outermost JSC API entry: JSC drains the
 // microtask queue when it returns, running any async route continuations, so `__mbGetRaw`
@@ -212,6 +255,9 @@ fn serveMain(ctx: *u8, port: u16, handler: *u8, getRaw: *u8): void {
     let lr = TcpListener.bind(port)
     match lr {
         Result.Err(_e) => {
+            // Silent return here reads as a mysterious clean exit right after "listening"
+            // (usual cause: the port is already held by another process).
+            print("minibun: failed to bind port " + port.toString() + " (already in use?)")
         }
         Result.Ok(listener) => {
             JSValueProtect(ctx, handler)
@@ -331,7 +377,12 @@ fn moduleBootstrap(): string {
     "  assertFn.ok=assertFn; assertFn.equal=function(a,b,m){ if(a!=b) throw new Error(m||(a+' != '+b)); }; assertFn.notEqual=function(a,b,m){ if(a==b) throw new Error(m||'notEqual'); }; assertFn.strictEqual=function(a,b,m){ if(a!==b) throw new Error(m||(a+' !== '+b)); }; assertFn.deepEqual=function(){}; assertFn.deepStrictEqual=function(){}; assertFn.fail=function(m){ throw new Error(m||'fail'); };\n" +
     "  function __parseCallSites(){ var raw=new Error().stack||''; var lines=raw.split('\\n'); var out=[]; for(var i=0;i<lines.length;i++){ var ln=lines[i]; var at=ln.lastIndexOf('@'); var loc=at>=0?ln.slice(at+1):ln; var fn=at>=0?ln.slice(0,at):''; var m=loc.match(/^(.*):(\\d+):(\\d+)$/); var file=m?m[1]:loc; var no=m?Number(m[2]):0; var col=m?Number(m[3]):0; (function(file,no,col,fn){ out.push({ getFileName:function(){ return file||null; }, getLineNumber:function(){ return no; }, getColumnNumber:function(){ return col; }, getFunctionName:function(){ return fn||null; }, getMethodName:function(){ return null; }, getTypeName:function(){ return null; }, getThis:function(){ return undefined; }, isNative:function(){ return false; }, isEval:function(){ return false; }, isConstructor:function(){ return false; }, isToplevel:function(){ return true; }, toString:function(){ return (fn?fn+' ':'')+'('+file+':'+no+':'+col+')'; } }); })(file,no,col,fn); } return out.slice(1); }\n" +
     "  function __depd(ns){ function deprecate(msg){} deprecate.function=function(fn){ return fn; }; deprecate.property=function(){}; deprecate._namespace=ns; return deprecate; }\n" +
-    "  var fsMod={ readFileSync:function(p){ var s=__readFileSync(p); if(s===undefined) throw new Error('ENOENT: '+p); return s; }, existsSync:function(p){ return __fileExists(p); }, readdirSync:function(){ return []; }, statSync:function(p){ if(!__fileExists(p)) throw new Error('ENOENT: '+p); return { isFile:function(){ return true; }, isDirectory:function(){ return false; }, size:0, mtime:new Date(0) }; }, lstatSync:function(p){ return fsMod.statSync(p); }, writeFileSync:function(){}, appendFileSync:function(){}, mkdirSync:function(){}, realpathSync:function(p){ return p; }, readFile:function(p,enc,cb){ if(typeof enc==='function') cb=enc; var s=__readFileSync(p); Promise.resolve().then(function(){ if(s===undefined) cb(new Error('ENOENT')); else cb(null,s); }); }, stat:function(p,cb){ if(typeof cb!=='function') return; var ex=__fileExists(p); Promise.resolve().then(function(){ if(!ex){ var e=new Error('ENOENT: '+p); e.code='ENOENT'; cb(e); } else cb(null, { isFile:function(){ return true; }, isDirectory:function(){ return false; }, isSymbolicLink:function(){ return false; }, size:0, mtime:new Date(0), mtimeMs:0, ctime:new Date(0), atime:new Date(0), ino:0, dev:0, mode:33188 }); }); }, lstat:function(p,cb){ return fsMod.stat(p,cb); }, constants:{}, promises:{ readFile:function(p){ var s=__readFileSync(p); return s===undefined?Promise.reject(new Error('ENOENT')):Promise.resolve(s); }, stat:function(p){ return __fileExists(p)?Promise.resolve({ isFile:function(){ return true; }, isDirectory:function(){ return false; }, size:0 }):Promise.reject(new Error('ENOENT')); } } };\n" +
+    // Real stat (dir flag + byte size) and a working createReadStream so express.static/send
+    // can serve files. Readable/Writable are function-declaration-hoisted below, so referencing
+    // them here (call-time only) is fine. A 0 size or missing isDirectory silently broke static.
+    "  function __statOf(p){ var isd=__isDir(p); var isf=__fileExists(p); if(!isd&&!isf) return null; var sz=isd?0:__fileSize(p); if(sz<0) sz=0; var mt=new Date(0); return { isFile:function(){ return isf&&!isd; }, isDirectory:function(){ return isd; }, isSymbolicLink:function(){ return false; }, isBlockDevice:function(){ return false; }, isCharacterDevice:function(){ return false; }, isFIFO:function(){ return false; }, isSocket:function(){ return false; }, size:sz, mtime:mt, mtimeMs:0, ctime:mt, ctimeMs:0, atime:mt, atimeMs:0, birthtime:mt, birthtimeMs:0, ino:1, dev:1, nlink:1, uid:0, gid:0, rdev:0, blksize:4096, blocks:0, mode:isd?16877:33188 }; }\n" +
+    "  function __mkReadStream(p,opts){ opts=opts||{}; var s=new Readable(); s.path=p; s.bytesRead=0; s.pending=true; s.destroyed=false; var start=opts.start||0; var end=(opts.end!=null&&opts.end!==Infinity)?(opts.end+1):undefined; var started=false; s.destroy=function(e){ this.destroyed=true; if(e){ var self=this; Promise.resolve().then(function(){ self.emit('error',e); }); } return this; }; s.close=function(){ return this; }; s.setEncoding=function(){ return this; }; function run(dest){ Promise.resolve().then(function(){ if(s.destroyed) return; var c=__readFileSync(p); if(c===undefined){ var e=new Error('ENOENT: '+p); e.code='ENOENT'; s.emit('error',e); return; } var body=(start||end!=null)?c.slice(start,end):c; s.bytesRead=body.length; s.pending=false; if(dest){ dest.write(body); } else { s.emit('data',body); } s.emit('end'); s.emit('close'); if(dest&&dest.end) dest.end(); }); } s.pipe=function(dest){ if(!started){ started=true; run(dest); } return dest; }; var _on=Readable.prototype.on; s.on=function(ev,cb){ _on.call(this,ev,cb); if(ev==='data'&&!started){ started=true; run(null); } return this; }; s.addListener=s.on; s.resume=function(){ if(!started){ started=true; run(null); } return this; }; return s; }\n" +
+    "  var fsMod={ readFileSync:function(p,enc){ var s=__readFileSync(p); if(s===undefined){ var e=new Error('ENOENT: '+p); e.code='ENOENT'; throw e; } return s; }, existsSync:function(p){ return __fileExists(p)||__isDir(p); }, readdirSync:function(){ return []; }, statSync:function(p){ var st=__statOf(p); if(!st){ var e=new Error('ENOENT: '+p); e.code='ENOENT'; throw e; } return st; }, lstatSync:function(p){ return fsMod.statSync(p); }, writeFileSync:function(){}, appendFileSync:function(){}, mkdirSync:function(){}, realpathSync:function(p){ return p; }, createReadStream:function(p,o){ return __mkReadStream(p,o); }, createWriteStream:function(){ var w=new Writable(); w.write=function(){ return true; }; w.end=function(cb){ if(typeof cb==='function') cb(); this.emit('finish'); this.emit('close'); return this; }; return w; }, readFile:function(p,enc,cb){ if(typeof enc==='function') cb=enc; var s=__readFileSync(p); Promise.resolve().then(function(){ if(s===undefined){ var e=new Error('ENOENT: '+p); e.code='ENOENT'; cb(e); } else cb(null,s); }); }, stat:function(p,cb){ if(typeof cb!=='function') return; var st=__statOf(p); Promise.resolve().then(function(){ if(!st){ var e=new Error('ENOENT: '+p); e.code='ENOENT'; cb(e); } else cb(null, st); }); }, lstat:function(p,cb){ return fsMod.stat(p,cb); }, access:function(p,m,cb){ if(typeof m==='function') cb=m; var ok=__fileExists(p)||__isDir(p); Promise.resolve().then(function(){ if(ok) cb(null); else { var e=new Error('ENOENT: '+p); e.code='ENOENT'; cb(e); } }); }, constants:{ F_OK:0, R_OK:4, W_OK:2, X_OK:1 }, promises:{ readFile:function(p,enc){ var s=__readFileSync(p); if(s===undefined){ var e=new Error('ENOENT: '+p); e.code='ENOENT'; return Promise.reject(e); } return Promise.resolve(s); }, stat:function(p){ var st=__statOf(p); return st?Promise.resolve(st):Promise.reject(new Error('ENOENT: '+p)); }, access:function(p){ return (__fileExists(p)||__isDir(p))?Promise.resolve():Promise.reject(new Error('ENOENT: '+p)); }, writeFile:function(){ return Promise.resolve(); }, mkdir:function(){ return Promise.resolve(); } } };\n" +
     "  var osMod={ platform:function(){ return 'darwin'; }, arch:function(){ return 'arm64'; }, type:function(){ return 'Darwin'; }, release:function(){ return '0'; }, hostname:function(){ return 'minibun'; }, cpus:function(){ return [{}]; }, totalmem:function(){ return 0; }, freemem:function(){ return 0; }, homedir:function(){ return '/'; }, tmpdir:function(){ return '/tmp'; }, EOL:'\\n', endianness:function(){ return 'LE'; }, networkInterfaces:function(){ return {}; } };\n" +
     "  var ttyMod={ isatty:function(){ return false; }, ReadStream:function(){}, WriteStream:function(){} };\n" +
     "  function __qsParse(s){ var o={}; if(!s) return o; s=String(s); if(s.charAt(0)==='?') s=s.slice(1); var ps=s.split('&'); for(var i=0;i<ps.length;i++){ if(!ps[i]) continue; var kv=ps[i].split('='); var k=decodeURIComponent(kv[0]); var v=kv.length>1?decodeURIComponent(kv[1]):''; if(o[k]===undefined) o[k]=v; else if(Array.isArray(o[k])) o[k].push(v); else o[k]=[o[k],v]; } return o; }\n" +
@@ -344,12 +395,17 @@ fn moduleBootstrap(): string {
     "  var zlibMod={ createGzip:function(){ return {}; }, createDeflate:function(){ return {}; }, gzipSync:function(x){ return x; }, gunzipSync:function(x){ return x; } };\n" +
     "  function __statusText(c){ var m={200:'OK',201:'Created',202:'Accepted',204:'No Content',301:'Moved Permanently',302:'Found',303:'See Other',304:'Not Modified',307:'Temporary Redirect',308:'Permanent Redirect',400:'Bad Request',401:'Unauthorized',403:'Forbidden',404:'Not Found',405:'Method Not Allowed',409:'Conflict',422:'Unprocessable Entity',429:'Too Many Requests',500:'Internal Server Error',502:'Bad Gateway',503:'Service Unavailable'}; return m[c]||'OK'; }\n" +
     "  function __byteLen(s){ try{ return unescape(encodeURIComponent(s)).length; }catch(e){ return String(s).length; } }\n" +
-    "  function Readable(){ EventEmitter.call(this); } inherits(Readable, EventEmitter); Readable.prototype.pipe=function(d){ return d; }; Readable.prototype.read=function(){ return null; }; Readable.prototype.setEncoding=function(){ return this; }; Readable.prototype.resume=function(){ return this; }; Readable.prototype.pause=function(){ return this; }; Readable.prototype.unpipe=function(){ return this; };\n" +
-    "  function Writable(){ EventEmitter.call(this); } inherits(Writable, EventEmitter); Writable.prototype.write=function(){ return true; }; Writable.prototype.end=function(){ return this; };\n" +
+    "  function Stream(){ EventEmitter.call(this); } inherits(Stream, EventEmitter); Stream.prototype.pipe=function(d){ return d; };\n" +
+    "  function Readable(){ Stream.call(this); } inherits(Readable, Stream); Readable.prototype.pipe=function(d){ return d; }; Readable.prototype.read=function(){ return null; }; Readable.prototype.setEncoding=function(){ return this; }; Readable.prototype.resume=function(){ return this; }; Readable.prototype.pause=function(){ return this; }; Readable.prototype.unpipe=function(){ return this; };\n" +
+    "  function Writable(){ Stream.call(this); } inherits(Writable, Stream); Writable.prototype.write=function(){ return true; }; Writable.prototype.end=function(){ return this; };\n" +
     "  function Duplex(){ Readable.call(this); } inherits(Duplex, Readable); Duplex.prototype.write=function(){ return true; }; Duplex.prototype.end=function(){ return this; };\n" +
     "  function Transform(){ Duplex.call(this); } inherits(Transform, Duplex);\n" +
     "  function PassThrough(){ Transform.call(this); } inherits(PassThrough, Transform);\n" +
-    "  var streamMod={ Readable:Readable, Writable:Writable, Duplex:Duplex, Transform:Transform, PassThrough:PassThrough, Stream:Readable };\n" +
+    // require('stream') must be the Stream CONSTRUCTOR (Node shape), not a plain object: the
+    // `send` module does `Stream.call(this)` + `inherits(SendStream, Stream)`. An object super
+    // has no .prototype/.call, which broke express.static and produced the 'inherits' warnings.
+    "  Stream.Readable=Readable; Stream.Writable=Writable; Stream.Duplex=Duplex; Stream.Transform=Transform; Stream.PassThrough=PassThrough; Stream.Stream=Stream;\n" +
+    "  var streamMod=Stream;\n" +
     "  function parseRequest(text){ var idx=text.indexOf('\\r\\n\\r\\n'); var headPart=idx>=0?text.slice(0,idx):text; var body=idx>=0?text.slice(idx+4):''; var lines=headPart.split('\\r\\n'); var first=(lines[0]||'').split(' '); var method=first[0]||'GET'; var url=first[1]||'/'; var headers={}; for(var i=1;i<lines.length;i++){ var c=lines[i].indexOf(':'); if(c>0) headers[lines[i].slice(0,c).trim().toLowerCase()]=lines[i].slice(c+1).trim(); } var req=new Readable(); req.method=method; req.url=url; req.originalUrl=url; req.headers=headers; req.rawHeaders=[]; req.httpVersion='1.1'; req.body=body; req.socket={ remoteAddress:'127.0.0.1', remotePort:0, encrypted:false }; req.connection=req.socket; req.on=function(ev,cb){ if(ev==='data'&&body) cb(body); if(ev==='end') cb(); return this; }; req.setTimeout=function(){ return this; }; return req; }\n" +
     "  function ServerResponse(){ this.statusCode=200; this.statusMessage=''; this.headers={}; this._body=''; this._finished=false; this.headersSent=false; this.locals={}; }\n" +
     "  ServerResponse.prototype.setHeader=function(k,v){ this.headers[String(k).toLowerCase()]=v; return this; };\n" +
@@ -383,7 +439,9 @@ fn moduleBootstrap(): string {
     "  if(!globalThis.Buffer){ function Buffer2(a,b){ if(typeof a==='number') return Buffer2.alloc(a); if(a!=null) return Buffer2.from(a,b); return Buffer2.from([]); } Buffer2.from=function(x){ if(typeof x==='string'){ var a=[]; for(var i=0;i<x.length;i++) a.push(x.charCodeAt(i)&0xff); a._str=x; a.toString=function(){ return this._str; }; return a; } if(Array.isArray(x)){ x.toString=function(){ var s=''; for(var i=0;i<this.length;i++) s+=String.fromCharCode(this[i]); return s; }; return x; } return x; }; Buffer2.alloc=function(n,f){ var a=[]; for(var i=0;i<n;i++) a.push(f||0); a._str=''; a.toString=function(){ return this._str; }; return a; }; Buffer2.isBuffer=function(x){ return Array.isArray(x)&&x._str!==undefined; }; Buffer2.concat=function(list){ var s=''; for(var i=0;i<list.length;i++) s+=(list[i]&&list[i].toString?list[i].toString():''); return Buffer2.from(s); }; Buffer2.byteLength=function(s){ return String(s).length; }; globalThis.Buffer=Buffer2; }\n" +
     "  builtins.buffer={ Buffer:globalThis.Buffer, kMaxLength:2147483647, constants:{ MAX_LENGTH:2147483647 }, SlowBuffer:globalThis.Buffer, INSPECT_MAX_BYTES:50 };\n" +
     "  builtins.compression=function(){ var mw=function(req,res,next){ res.flush=res.flush||function(){}; if(typeof next==='function') next(); }; mw.filter=function(){ return false; }; return mw; };\n" +
-    "  if(!globalThis.process){ globalThis.process={ env:{}, argv:['minibun', __entryPath], platform:'darwin', arch:'arm64', version:'v18.0.0', versions:{node:'18.0.0'}, pid:1, title:'minibun', cwd:function(){ return dirname(__entryPath); }, nextTick:function(f){ var a=Array.prototype.slice.call(arguments,1); Promise.resolve().then(function(){ f.apply(null,a); }); }, on:function(){ return this; }, once:function(){ return this; }, emit:function(){ return false; }, exit:function(){}, hrtime:function(t){ return [0,0]; }, stdout:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } }, stderr:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } } }; }\n" +
+    "  if(globalThis.console){ var __c=globalThis.console; if(!__c.error)__c.error=__c.log; if(!__c.warn)__c.warn=__c.log; if(!__c.info)__c.info=__c.log; if(!__c.debug)__c.debug=__c.log; if(!__c.trace)__c.trace=__c.log; if(!__c.dir)__c.dir=__c.log; if(!__c.group)__c.group=function(){}; if(!__c.groupEnd)__c.groupEnd=function(){}; if(!__c.table)__c.table=__c.log; if(!__c.assert)__c.assert=function(){}; if(!__c.time)__c.time=function(){}; if(!__c.timeEnd)__c.timeEnd=function(){}; }\n" +
+    "  var __envOverlay={}; var __env; try{ __env=new Proxy(__envOverlay,{ get:function(t,k){ if(Object.prototype.hasOwnProperty.call(t,k)) return t[k]; if(typeof k!=='string') return undefined; var v=__getenv(k); return v; }, set:function(t,k,v){ t[k]=(v==null?v:String(v)); return true; }, has:function(t,k){ if(Object.prototype.hasOwnProperty.call(t,k)) return true; return typeof k==='string' && __getenv(k)!==undefined; }, deleteProperty:function(t,k){ delete t[k]; return true; } }); }catch(e){ __env=__envOverlay; }\n" +
+    "  if(!globalThis.process){ globalThis.process={ env:__env, argv:['minibun', __entryPath], platform:'darwin', arch:'arm64', version:'v18.0.0', versions:{node:'18.0.0'}, pid:1, title:'minibun', cwd:function(){ return dirname(__entryPath); }, nextTick:function(f){ var a=Array.prototype.slice.call(arguments,1); Promise.resolve().then(function(){ f.apply(null,a); }); }, on:function(){ return this; }, once:function(){ return this; }, emit:function(){ return false; }, exit:function(){}, hrtime:function(t){ return [0,0]; }, stdout:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } }, stderr:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } } }; }\n" +
     "  if(!globalThis.setTimeout){ globalThis.setTimeout=function(f,ms){ return 0; }; globalThis.clearTimeout=function(){}; globalThis.setInterval=function(){ return 0; }; globalThis.clearInterval=function(){}; globalThis.setImmediate=function(f){ Promise.resolve().then(f); return 0; }; globalThis.clearImmediate=function(){}; }\n" +
     "  globalThis.__mbGetRaw=function(res){ return res._raw(); };\n" +
     "  globalThis.__runEntry=function(entry){ return loadModule(entry); };\n" +
@@ -422,6 +480,9 @@ fn main(): i32 {
         installConsole(ctx, global)
         setGlobalFn(ctx, global, "__readFileSync", nativeReadFileSync as *u8)
         setGlobalFn(ctx, global, "__fileExists", nativeFileExists as *u8)
+        setGlobalFn(ctx, global, "__getenv", nativeGetenv as *u8)
+        setGlobalFn(ctx, global, "__isDir", nativeIsDir as *u8)
+        setGlobalFn(ctx, global, "__fileSize", nativeFileSize as *u8)
 
         // Hand the entry path to the bootstrap as a global, avoiding string-quoting in a
         // constructed launcher.
