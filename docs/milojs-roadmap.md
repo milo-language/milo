@@ -118,10 +118,14 @@ functions; `callMember` now dispatches `Native`-valued props. The real path
 prototype chain (own props shadow). Shared methods, `this`-chaining through prototype methods,
 `instanceof`, and shared function identity (`a.m === b.m`) all byte-identical to bun — the ES5
 class pattern works. This was the last core *language* gap.
-**Still open (library, not language):** `Math`, **regex** (implement in Milo — backtracking,
-JS-flavor subset; do NOT link C), Promises/async event model, `switch`, `for...in`/`for...of`,
-bitwise ops, real `===` (currently aliases `==`). These + minibun's node shims are the Stage-5
-path to booting minibun on the engine.
+**Math landed (231fbbe):** `floor`/`ceil`/`round`/`trunc`/`abs`/`sign`/`min`/`max` in **pure Milo**
+(byte-identical to bun — no FFI), `sqrt`/`pow` via the hardware/libc extern (IEEE
+correctly-rounded), `random` via a pure-Milo xorshift64 PRNG, plus `PI`/`E`. `Math` is a global
+object with native-fn methods.
+**Still open (library, not language):** **regex** (implement in Milo — backtracking, JS-flavor
+subset; do NOT link C), Promises/async event model, `switch`, `for...in`/`for...of`, bitwise
+operators exposed to JS, real `===` (currently aliases `==`), more String/Object/Number static
+methods. These + minibun's node shims are the Stage-5 path to booting minibun on the engine.
 **Gate:** prototype-based method dispatch + a class-ish pattern (constructor + prototype methods).
 
 **Test yardstick (decided):** milojs *is* the engine, so unlike minibun's JSC, both test262 and
