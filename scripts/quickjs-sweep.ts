@@ -37,6 +37,18 @@ const CALL_RE = /^([A-Za-z_$][\w$]*)\(\)\s*(\.catch\([^\n]*\))?\s*;?\s*$/;
 
 type Case = { file: string; name: string; src: string };
 
+// A few tests carry test262-style frontmatter declaring that throwing IS the pass
+// condition. Scoring those by "did anything throw" marks a correct engine wrong.
+//   /*---
+//   negative:
+//     phase: runtime
+//     type: RangeError
+//   ---*/
+function negativeType(src: string): string | null {
+  const m = /negative:\s*\n\s*phase:\s*\w+\s*\n\s*type:\s*(\w+)/.exec(src);
+  return m ? m[1]! : null;
+}
+
 function casesFor(file: string): Case[] {
   const text = readFileSync(join(QJS, file), "utf-8");
   const lines = text.split("\n");
@@ -75,13 +87,17 @@ for (const file of files) {
   for (const c of casesFor(file)) {
     const path = join(tmp, "case.js");
     writeFileSync(path, c.src);
+    const want = negativeType(c.src);
     let out = "", ok = false;
     try {
       out = execFileSync(ENGINE, [path], { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
       // The engine reports uncaught throws on stdout and still exits 0.
-      ok = !/^Uncaught /m.test(out);
+      const threw = /^Uncaught /m.exec(out);
+      ok = want ? !!threw && threw.input.includes(want) : !threw;
+      if (want && !ok) out = threw ? out : `expected uncaught ${want}, nothing thrown`;
     } catch (e: any) {
       out = (e.stdout ?? "") + (e.stderr ?? "") || `timeout/crash (${e.signal ?? e.status})`;
+      if (want) out = `expected uncaught ${want}, got ${out.trim()}`;
     }
     if (ok) pass++;
     else {
