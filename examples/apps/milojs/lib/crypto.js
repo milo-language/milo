@@ -23,17 +23,8 @@ function toBytes(input, encoding) {
     return out;
   }
   if (encoding === 'base64') return b64Decode(input);
-  // default utf-8
-  for (var i = 0; i < input.length; i++) {
-    var code = input.charCodeAt(i);
-    if (code < 0x80) {
-      out.push(code);
-    } else if (code < 0x800) {
-      out.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
-    } else {
-      out.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
-    }
-  }
+  // milojs strings are already UTF-8 byte buffers, so each charCodeAt is a byte
+  for (var i = 0; i < input.length; i++) out.push(input.charCodeAt(i) & 0xff);
   return out;
 }
 

@@ -136,6 +136,18 @@ fn builtinSource(name: &string): string {
     if name == "tty" {
         return embedFile("lib/tty.js")
     }
+    if name == "buffer" {
+        return embedFile("lib/buffer.js")
+    }
+    if name == "stream" {
+        return embedFile("lib/stream.js")
+    }
+    if name == "string_decoder" {
+        return embedFile("lib/string_decoder.js")
+    }
+    if name == "zlib" {
+        return embedFile("lib/zlib.js")
+    }
     if name == "crypto" {
         return embedFile("lib/crypto.js")
     }

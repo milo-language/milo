@@ -1,0 +1,12 @@
+const { Buffer } = require('buffer');
+const b = Buffer.from("hello");
+console.log(b.length, b.toString(), b.toString('hex'), b.toString('base64'));
+console.log(Buffer.from("aGk=", 'base64').toString());
+console.log(Buffer.byteLength("héllo"), Buffer.byteLength("abc"));
+console.log(Buffer.concat([Buffer.from("ab"), Buffer.from("cd")]).toString());
+console.log(Buffer.alloc(3).length, Buffer.isBuffer(b), Buffer.isBuffer("x"));
+console.log(b.slice(1,3).toString(), b.indexOf("ll"));
+const s = require('stream');
+const r = new s.Readable(); const got = [];
+r.on('data', c => got.push(c)); r.on('end', () => console.log("stream:", got.join("|")));
+r.push("a"); r.push("b"); r.push(null);

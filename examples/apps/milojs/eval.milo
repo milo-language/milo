@@ -2040,6 +2040,23 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     let bag = getNativeProps(st, nid)
                     objSet(st, bag, key, cloneValue(v))
                 }
+                JSValue.Func(sf, _senv) => {
+                    if key == "prototype" {
+                        // `Child.prototype = Object.create(Parent.prototype)` —
+                        // the ES5 inheritance idiom. Replacing the prototype
+                        // object is what makes instances inherit from Parent.
+                        let newProto = objHandle(v)
+                        if newProto >= 0 {
+                            while st.funcProtos.len() <= sf {
+                                st.funcProtos.push(-1)
+                            }
+                            st.funcProtos[sf] = newProto
+                        }
+                    } else {
+                        let statics = getFuncStatics(st, sf)
+                        objSet(st, statics, key, cloneValue(v))
+                    }
+                }
                 _ => {
                 }
             }

@@ -1,0 +1,164 @@
+// node:buffer — a Buffer backed by a plain array of byte values.
+//
+// There are no typed arrays in the engine, so this is not a real Uint8Array
+// subclass; it carries its bytes in `.bytes` and implements the surface express,
+// body-parser and node-fetch actually touch. Buffer.byteLength in particular is
+// on the path of every response that sets Content-Length.
+
+var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+// milojs strings are UTF-8 byte buffers, so charCodeAt already yields a byte and
+// the string is its own encoding. Re-encoding here would double-encode anything
+// non-ASCII — "h\u00e9llo" would measure 8 bytes instead of 6.
+function utf8Encode(str) {
+  var out = [];
+  for (var i = 0; i < str.length; i++) out.push(str.charCodeAt(i) & 0xff);
+  return out;
+}
+
+// The inverse of utf8Encode: bytes map straight back to string positions.
+function utf8Decode(bytes) {
+  var out = '';
+  for (var i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i] & 0xff);
+  return out;
+}
+
+function hexDecode(str) {
+  var out = [];
+  for (var i = 0; i + 1 < str.length; i += 2) out.push(parseInt(str.substr(i, 2), 16));
+  return out;
+}
+
+function hexEncode(bytes) {
+  var out = '';
+  for (var i = 0; i < bytes.length; i++) {
+    var h = (bytes[i] & 0xff).toString(16);
+    if (h.length < 2) h = '0' + h;
+    out += h;
+  }
+  return out;
+}
+
+function b64Encode(bytes) {
+  var out = '';
+  for (var i = 0; i < bytes.length; i += 3) {
+    var b0 = bytes[i], b1 = bytes[i + 1], b2 = bytes[i + 2];
+    out += B64[b0 >> 2];
+    out += B64[((b0 & 3) << 4) | ((b1 === undefined ? 0 : b1) >> 4)];
+    out += b1 === undefined ? '=' : B64[((b1 & 15) << 2) | ((b2 === undefined ? 0 : b2) >> 6)];
+    out += b2 === undefined ? '=' : B64[b2 & 63];
+  }
+  return out;
+}
+
+function b64Decode(str) {
+  var out = [];
+  var buf = 0, bits = 0;
+  for (var i = 0; i < str.length; i++) {
+    var ch = str[i];
+    if (ch === '=') continue;
+    var v = B64.indexOf(ch);
+    if (v < 0) continue;
+    buf = (buf << 6) | v;
+    bits += 6;
+    if (bits >= 8) { bits -= 8; out.push((buf >> bits) & 0xff); }
+  }
+  return out;
+}
+
+function decodeTo(bytes, encoding) {
+  var enc = (encoding || 'utf8').toLowerCase();
+  if (enc === 'hex') return hexEncode(bytes);
+  if (enc === 'base64') return b64Encode(bytes);
+  if (enc === 'latin1' || enc === 'binary' || enc === 'ascii') {
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i] & 0xff);
+    return s;
+  }
+  return utf8Decode(bytes);
+}
+
+function encodeFrom(str, encoding) {
+  var enc = (encoding || 'utf8').toLowerCase();
+  if (enc === 'hex') return hexDecode(str);
+  if (enc === 'base64') return b64Decode(str);
+  if (enc === 'latin1' || enc === 'binary' || enc === 'ascii') {
+    var out = [];
+    for (var i = 0; i < str.length; i++) out.push(str.charCodeAt(i) & 0xff);
+    return out;
+  }
+  return utf8Encode(str);
+}
+
+function Buffer(bytes) {
+  this.bytes = bytes || [];
+  this.length = this.bytes.length;
+}
+
+Buffer.prototype.toString = function (encoding, start, end) {
+  var s = start === undefined ? 0 : start;
+  var e = end === undefined ? this.bytes.length : end;
+  return decodeTo(this.bytes.slice(s, e), encoding);
+};
+Buffer.prototype.slice = function (start, end) {
+  return new Buffer(this.bytes.slice(start, end));
+};
+Buffer.prototype.toJSON = function () {
+  return { type: 'Buffer', data: this.bytes.slice() };
+};
+Buffer.prototype.equals = function (other) {
+  var o = other && other.bytes ? other.bytes : [];
+  if (o.length !== this.bytes.length) return false;
+  for (var i = 0; i < o.length; i++) if (o[i] !== this.bytes[i]) return false;
+  return true;
+};
+Buffer.prototype.indexOf = function (v) {
+  var needle = typeof v === 'string' ? utf8Encode(v) : (v && v.bytes ? v.bytes : [v]);
+  for (var i = 0; i + needle.length <= this.bytes.length; i++) {
+    var hit = true;
+    for (var j = 0; j < needle.length; j++) if (this.bytes[i + j] !== needle[j]) { hit = false; break; }
+    if (hit) return i;
+  }
+  return -1;
+};
+
+Buffer.from = function (value, encoding) {
+  if (typeof value === 'string') return new Buffer(encodeFrom(value, encoding));
+  if (value && value.bytes) return new Buffer(value.bytes.slice());
+  if (Array.isArray(value)) {
+    var copy = [];
+    for (var i = 0; i < value.length; i++) copy.push(value[i] & 0xff);
+    return new Buffer(copy);
+  }
+  return new Buffer([]);
+};
+
+Buffer.alloc = function (size, fill) {
+  var out = [];
+  var f = typeof fill === 'number' ? (fill & 0xff) : 0;
+  for (var i = 0; i < size; i++) out.push(f);
+  return new Buffer(out);
+};
+
+Buffer.concat = function (list, totalLength) {
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var b = list[i];
+    var bytes = b && b.bytes ? b.bytes : (typeof b === 'string' ? utf8Encode(b) : []);
+    for (var j = 0; j < bytes.length; j++) out.push(bytes[j]);
+  }
+  if (typeof totalLength === 'number' && totalLength < out.length) out = out.slice(0, totalLength);
+  return new Buffer(out);
+};
+
+Buffer.byteLength = function (value, encoding) {
+  if (value && value.bytes) return value.bytes.length;
+  if (typeof value !== 'string') return 0;
+  return encodeFrom(value, encoding).length;
+};
+
+Buffer.isBuffer = function (v) { return !!(v && v.bytes && typeof v.length === 'number'); };
+
+exports.Buffer = Buffer;
+exports.kMaxLength = 2147483647;
+exports.constants = { MAX_LENGTH: 2147483647, MAX_STRING_LENGTH: 536870888 };
