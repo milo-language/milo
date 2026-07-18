@@ -79,7 +79,7 @@ TUIs in [`examples/apps/`](https://github.com/cs01/milo/tree/main/examples/apps)
 
 | Program | What it is |
 |---------|-----------|
-| [src-milo](https://github.com/cs01/milo/tree/main/src-milo) | The Milo compiler, in Milo. Self-hosting, rebuilds itself byte-for-byte identical |
+| [src-milo](https://github.com/cs01/milo/tree/main/src-milo) | The Milo compiler, in Milo. Self-hosting: it compiles itself, and the result is identical every time |
 | [smtSolve](https://github.com/cs01/milo/blob/main/tools/smtSolve.milo) | The SMT solver behind `milo prove`. Milo's contracts are discharged by a Milo binary |
 | [fmt](https://github.com/cs01/milo/blob/main/examples/cli-tools/fmt.milo) | The Milo source formatter, in Milo |
 
