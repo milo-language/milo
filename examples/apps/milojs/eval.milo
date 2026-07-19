@@ -4668,6 +4668,18 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 popTemp(st)
                 return r
             }
+            // err.toString() -> "Name: message"; arr.toString() -> join(",").
+            // Object.prototype.toString.call(x) still gives the type tag (it
+            // reaches callBuiltinByName directly, a separate path).
+            if name == "toString" && st.objects[o].isError {
+                let en = toStr(objGet(st, o, "name"))
+                let em = toStr(objGet(st, o, "message"))
+                popTemp(st)
+                if em.len() > 0 {
+                    return JSValue.Str(en + ": " + em)
+                }
+                return JSValue.Str(en)
+            }
             if st.objects[o].isDate {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
                 let r = dateMethod(st, o, name, argVals)
