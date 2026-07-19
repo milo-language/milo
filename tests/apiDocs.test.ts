@@ -23,3 +23,16 @@ test("undocumented APIs are marked, not silently blank", () => {
   const md = api("--module std/runtime --markdown");
   expect(md).toContain("_Undocumented._");
 });
+
+// A leaked `impl` scope printed free functions as `File.splitLines` — a name that
+// looks like a real call path but isn't callable. std/io is the regression case:
+// its free fns all sit after `impl File`.
+test("free fns after an impl block are not impl-prefixed", () => {
+  const out = api("--module std/io");
+  expect(out).toContain("fn splitLines(");
+  expect(out).toContain("fn readStdin(");
+  expect(out).not.toContain("File.splitLines");
+  expect(out).not.toContain("File.readStdin");
+  // methods genuinely inside `impl File` keep their prefix
+  expect(out).toContain("fn File.readAll(");
+});

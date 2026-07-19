@@ -90,7 +90,9 @@ function parseModule(file: string, root?: string): Entry[] {
     const implMatch = trimmed.match(/^impl\s+([A-Za-z_][A-Za-z0-9_]*)/);
     if (implMatch) implStack.push({ type: implMatch[1], depth });
     // Brace bookkeeping (approximate; good enough to scope impl blocks).
-    for (const c of line) { if (c === "{") depth++; else if (c === "}") { depth--; if (implStack.length && depth < implStack[implStack.length - 1].depth) implStack.pop(); } }
+    // `depth` is recorded before the impl's own `{`, so the block closes when depth
+    // returns to it — `<` would never fire and would leak the impl over later free fns.
+    for (const c of line) { if (c === "{") depth++; else if (c === "}") { depth--; if (implStack.length && depth <= implStack[implStack.length - 1].depth) implStack.pop(); } }
 
     if (/^(pub\s+)?fn\s/.test(trimmed)) {
       const { sig, end } = readSignature(lines, i);
