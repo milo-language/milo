@@ -181,6 +181,18 @@ fn main(): i32 {
             // clone was never needed, and scanImports only borrows the tokens
             let toks = lex(src)
             if scanImports(toks).len() == 0 {
+                // A plain script still runs in GLOBAL scope (so top-level decls
+                // stay globals), but its require() graph has to be registered
+                // first or every require fails with "module was not pre-loaded".
+                // preloadGraph walks require() edges from the entry; the entry's
+                // own parse here is what actually executes.
+                let _ = preloadGraph(path.clone(), prog, st)
+                // require() resolves against the CURRENT module's directory, and
+                // preload resolved against the entry's. Without pushing it the two
+                // disagree for anything but a bare builtin: preload registers
+                // <dir>/x.json while the runtime looks up x.json.
+                st.modDirStack.push(dirOf(path))
+                st.modPathStack.push(path.clone())
                 var p = PState {
                     toks: toks, pos: 0, curClass: "", file: path.clone(), errored: false, eofError: false, quiet: false
                 }
