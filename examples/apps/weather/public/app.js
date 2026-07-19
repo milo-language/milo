@@ -573,7 +573,15 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   }
 
   var hero =
-    '<div class="hero-city">' + esc(city) + "</div>" +
+    '<div class="hero-city">' +
+    esc(city) +
+    '<button class="fav-btn" id="favBtn" title="Save to favorites" ' +
+    'aria-label="Save to favorites" aria-pressed="' +
+    (isFavorite(city) ? "true" : "false") +
+    '">' +
+    starSvg(isFavorite(city)) +
+    "</button>" +
+    "</div>" +
     '<div class="hero-temp">' + currentTemp + "°</div>" +
     '<div class="hero-condition">' + esc(now.shortForecast) + "</div>" +
     '<div class="hero-stats">' + stats + "</div>" +
@@ -656,6 +664,18 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     '<div class="wx-divider"><div class="tiles">' + tiles + "</div></div>" +
     "</div></div>";
 
+  // wired after innerHTML so the button exists; lat/lon come from the globals
+  // the fetch set, which are what a restored favorite needs to re-query
+  var favBtn = document.getElementById("favBtn");
+  if (favBtn) {
+    favBtn.addEventListener("click", function () {
+      var on = toggleFavorite(city, currentLat, currentLon);
+      favBtn.innerHTML = starSvg(on);
+      favBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      favBtn.title = on ? "Remove from favorites" : "Save to favorites";
+    });
+  }
+
   // 7-day forecast (neutral list card)
   var days = [];
   var allLo = 999;
@@ -712,6 +732,45 @@ function loadJson(key) {
   }
 }
 
+// ── Favorites ──
+// Keyed by label ("Redwood City, CA"), which is what the typeahead and the URL
+// both round-trip, so a starred place survives a reload.
+function loadFavorites() {
+  var f = loadJson("weatherFavorites");
+  return f && f.length ? f : [];
+}
+
+function isFavorite(label) {
+  var favs = loadFavorites();
+  for (var i = 0; i < favs.length; i++) {
+    if (favs[i].label === label) return true;
+  }
+  return false;
+}
+
+function toggleFavorite(label, lat, lon) {
+  var favs = loadFavorites();
+  for (var i = 0; i < favs.length; i++) {
+    if (favs[i].label === label) {
+      favs.splice(i, 1);
+      localStorage.setItem("weatherFavorites", JSON.stringify(favs));
+      return false;
+    }
+  }
+  favs.unshift({ label: label, lat: String(lat), lon: String(lon) });
+  localStorage.setItem("weatherFavorites", JSON.stringify(favs.slice(0, 12)));
+  return true;
+}
+
+function starSvg(filled) {
+  return (
+    '<svg viewBox="0 0 24 24" aria-hidden="true" class="star' +
+    (filled ? " filled" : "") +
+    '"><path d="M12 2.6 L15 9.2 L22 10 L16.9 14.8 L18.3 21.7 L12 18.3 ' +
+    'L5.7 21.7 L7.1 14.8 L2 10 L9 9.2 Z"/></svg>'
+  );
+}
+
 function saveRecent(label, lat, lon) {
   try {
     var rec = loadJson("weatherRecents") || [];
@@ -760,18 +819,25 @@ function pickSuggestion(item) {
 
 function renderSuggestions(items) {
   sugEl.innerHTML = "";
-  sugItems = items;
+  // "Use my location" is pinned to every list, so it stays reachable without
+  // having to clear whatever you've already typed.
+  sugItems = [{ kind: "locate", label: "Use my location", sub: "" }].concat(items || []);
   sugIndex = -1;
-  if (items.length === 0) {
-    closeSuggestions();
-    return;
-  }
-  items.forEach(function (item, i) {
+  sugItems.forEach(function (item, i) {
     var div = document.createElement("div");
-    div.className = "suggestion-item";
+    div.className = "suggestion-item" + (item.kind ? " " + item.kind : "");
     div.id = "sug-opt-" + i;
     div.setAttribute("role", "option");
-    var icon = item.kind === "locate" ? "\uD83D\uDCCD " : item.kind === "recent" ? "\uD83D\uDD52 " : "";
+    var icon = "";
+    if (item.kind === "locate") {
+      icon =
+        '<svg class="sug-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+        '<path d="M21 3 L3 10.5 L10.5 13.5 L13.5 21 Z" /></svg>';
+    } else if (item.kind === "fav") {
+      icon = starSvg(true);
+    } else if (item.kind === "recent") {
+      icon = '<span class="sug-icon">\uD83D\uDD52</span>';
+    }
     div.innerHTML =
       '<span class="sug-city">' +
       icon +
@@ -886,9 +952,24 @@ function fetchSuggestions(q) {
 }
 
 function showDefaultSuggestions() {
-  var items = [{ kind: "locate", label: "My location", sub: "" }];
+  // the locate row is prepended by renderSuggestions for every list
+  var items = [];
+  var favs = loadFavorites();
+  var seen = {};
+  for (var f = 0; f < favs.length; f++) {
+    seen[favs[f].label] = 1;
+    items.push({
+      kind: "fav",
+      label: favs[f].label,
+      sub: "",
+      lat: favs[f].lat,
+      lon: favs[f].lon,
+    });
+  }
   var rec = loadJson("weatherRecents") || [];
   for (var i = 0; i < rec.length; i++) {
+    // a starred place is already listed above; don't show it twice
+    if (seen[rec[i].label]) continue;
     items.push({ kind: "recent", label: rec[i].label, sub: "", lat: rec[i].lat, lon: rec[i].lon });
   }
   renderSuggestions(items);
@@ -896,9 +977,21 @@ function showDefaultSuggestions() {
 
 function doSearch() {
   var z = zipInput.value.trim();
-  if (z && sugItems.length > 0 && !sugItems[0].kind) {
-    pickSuggestion(sugItems[sugIndex >= 0 ? sugIndex : 0]);
-    return;
+  if (z && sugItems.length > 0) {
+    // index 0 is the pinned locate row — Enter should take the top *place*
+    // unless the user explicitly arrowed onto something.
+    var firstPlace = -1;
+    for (var si = 0; si < sugItems.length; si++) {
+      if (!sugItems[si].kind) {
+        firstPlace = si;
+        break;
+      }
+    }
+    var pick = sugIndex >= 0 ? sugIndex : firstPlace;
+    if (pick >= 0) {
+      pickSuggestion(sugItems[pick]);
+      return;
+    }
   }
   closeSuggestions();
   if (z) geocodeAndFetch(z);
@@ -996,18 +1089,47 @@ locateBtn.addEventListener("click", function () {
   );
 });
 
-var params = new URLSearchParams(window.location.search);
-var urlQuery = params.get("q") || params.get("zip");
-if (urlQuery && urlQuery.replace(/\+/g, " ").trim().toLowerCase() === "current location") {
-  locateBtn.click();
-} else if (urlQuery) {
-  zipInput.value = urlQuery;
-  geocodeAndFetch(urlQuery);
-} else {
+function loadLastOrDefault() {
   var last = loadJson("weatherLast");
   if (last && last.lat) {
     fetchWeather(last.lat, last.lon, last.label, false);
   } else {
     fetchWeather(defaultLat, defaultLon, defaultCity, false);
   }
+}
+
+// Using the locate button rewrites the URL to ?q=current+location, so that URL
+// gets bookmarked and reloaded. Re-locating on load must never *raise* the
+// permission prompt — only resolve silently when permission is already granted.
+function autoLocateIfPermitted() {
+  if (!navigator.permissions || !navigator.permissions.query) {
+    loadLastOrDefault();
+    return;
+  }
+  navigator.permissions
+    .query({ name: "geolocation" })
+    .then(function (status) {
+      if (status.state === "granted") locateBtn.click();
+      else loadLastOrDefault();
+    })
+    .catch(loadLastOrDefault);
+}
+
+var params = new URLSearchParams(window.location.search);
+var urlQuery = params.get("q") || params.get("zip");
+if (urlQuery && urlQuery.replace(/\+/g, " ").trim().toLowerCase() === "current location") {
+  autoLocateIfPermitted();
+} else if (urlQuery) {
+  zipInput.value = urlQuery;
+  geocodeAndFetch(urlQuery);
+} else {
+  loadLastOrDefault();
+}
+
+// Installed/home-screen support. Registration failure is non-fatal — the app
+// works fine as a normal page, so never surface it to the user.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("sw.js").catch(function () {});
+  });
 }

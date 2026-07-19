@@ -214,6 +214,31 @@ body {
   background: rgba(242, 242, 242, 0.9);
 }
 
+/* pinned action row, so it reads as distinct from the place results below it */
+.suggestion-item.locate {
+  border-top: none;
+  border-bottom: 1px solid var(--base-300);
+  color: var(--primary);
+}
+
+.suggestion-item.locate .sug-city {
+  font-weight: 600;
+}
+
+.sug-icon {
+  margin-right: 0.4rem;
+}
+
+svg.sug-icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  vertical-align: -1px;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
 .sug-city {
   font-size: 0.875rem;
   font-weight: 500;
@@ -402,12 +427,60 @@ body {
 /* ── Hero block ── */
 
 .hero-city {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
   font-size: 0.875rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.025em;
   opacity: 0.8;
   text-align: center;
+}
+
+.fav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.15rem;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.75;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+}
+
+.fav-btn:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+.star {
+  width: 1rem;
+  height: 1rem;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
+/* filled = saved; the amber reads as "starred" against every card gradient */
+.star.filled {
+  fill: #fbbf24;
+  stroke: #fbbf24;
+}
+
+.suggestion-item.fav .star {
+  width: 0.85rem;
+  height: 0.85rem;
+  margin-right: 0.4rem;
+  display: inline-block;
+  vertical-align: -2px;
 }
 
 .hero-temp {

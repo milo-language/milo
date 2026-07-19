@@ -121,6 +121,33 @@ fn scriptHandler(ctx: &mut Context): Response {
     return Response.Status(200, "application/javascript; charset=utf-8", embedFile("public/app.js"))
 }
 
+fn manifestHandler(ctx: &mut Context): Response {
+    ctx.setHeader("Cache-Control", "public, max-age=3600")
+    return Response.Status(200, "application/manifest+json; charset=utf-8", embedFile("public/manifest.webmanifest"))
+}
+
+// Served from the app root so its scope covers every page, including under
+// nginx's /weather/ prefix. Never cached: a stale worker pins a stale shell.
+fn swHandler(ctx: &mut Context): Response {
+    ctx.setHeader("Cache-Control", "no-cache")
+    return Response.Status(200, "application/javascript; charset=utf-8", embedFile("public/sw.js"))
+}
+
+fn icon192Handler(ctx: &mut Context): Response {
+    ctx.setHeader("Cache-Control", "public, max-age=604800")
+    return Response.Status(200, "image/png", embedFile("public/icons/icon-192.png"))
+}
+
+fn icon512Handler(ctx: &mut Context): Response {
+    ctx.setHeader("Cache-Control", "public, max-age=604800")
+    return Response.Status(200, "image/png", embedFile("public/icons/icon-512.png"))
+}
+
+fn appleIconHandler(ctx: &mut Context): Response {
+    ctx.setHeader("Cache-Control", "public, max-age=604800")
+    return Response.Status(200, "image/png", embedFile("public/icons/apple-touch-icon.png"))
+}
+
 fn healthHandler(ctx: &mut Context): Response {
     return ctx.json({
         status: "ok", app: "weather", cities: cities.len
@@ -149,6 +176,11 @@ fn main(): i32 {
     r.get("/style.css", styleHandler)
     r.get("/app.js", scriptHandler)
     r.get("/api/cities", citiesHandler)
+    r.get("/manifest.webmanifest", manifestHandler)
+    r.get("/sw.js", swHandler)
+    r.get("/icons/icon-192.png", icon192Handler)
+    r.get("/icons/icon-512.png", icon512Handler)
+    r.get("/icons/apple-touch-icon.png", appleIconHandler)
     r.get("/healthz", healthHandler)
 
     if let Result.Err(msg) = serveRouter(port, r) {
