@@ -183,6 +183,12 @@ fn findSetter(st: &Interp, o: i64, key: &string): JSValue {
 
 // Property read that honours accessors; `this` inside the getter is the object.
 fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
+    // globalThis.x reads the global binding, so it stays in step with bare `x`
+    if st.objects[o].isGlobal && objOwnIndex(st, o, key) < 0 {
+        if scopeHasOwn(st, 0, key) {
+            return scopeLookup(st, 0, key)
+        }
+    }
     if st.objects[o].isEnv && objOwnIndex(st, o, key) < 0 {
         match getEnv(key.clone()) {
             Option.Some(v) => {
@@ -444,6 +450,11 @@ fn getMember(st: &Interp, o: i64, key: &string): JSValue {
 fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
     // sloppy mode drops writes to a frozen object rather than throwing
     if st.objects[o].frozen {
+        return
+    }
+    // globalThis.x = v defines/updates the global binding, not a detached property
+    if st.objects[o].isGlobal {
+        scopeDefine(st, 0, key, value)
         return
     }
     if st.objects[o].isArray {
@@ -2017,6 +2028,10 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "isFinite", JSValue.Native(NATIVE_IS_FINITE))
     scopeDefine(st, 0, "parseInt", JSValue.Native(NATIVE_PARSE_INT))
     scopeDefine(st, 0, "parseFloat", JSValue.Native(NATIVE_PARSE_FLOAT))
+    // globalThis: a real object whose properties ARE the global bindings
+    let globalObj = newObject(st)
+    st.objects[globalObj].isGlobal = true
+    scopeDefine(st, 0, "globalThis", JSValue.Obj(globalObj))
     scopeDefine(st, 0, "Symbol", JSValue.Native(NATIVE_SYMBOL))
     let symbolCtorObj = getNativeProps(st, NATIVE_SYMBOL)
     objSet(st, symbolCtorObj, "iterator", JSValue.Str(symIteratorKey()))

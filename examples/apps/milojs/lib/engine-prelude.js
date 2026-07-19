@@ -51,6 +51,48 @@ Array.of = function () {
   return out;
 };
 
+// --- Reflect -----------------------------------------------------------------
+// Thin wrappers over operations the evaluator already has. Proxy is NOT here:
+// intercepting every property access needs evaluator traps, not a JS shim.
+var Reflect = {
+  get: function (target, key) {
+    return target[key];
+  },
+  set: function (target, key, value) {
+    target[key] = value;
+    return true;
+  },
+  has: function (target, key) {
+    return key in target;
+  },
+  deleteProperty: function (target, key) {
+    return delete target[key];
+  },
+  ownKeys: function (target) {
+    return Object.getOwnPropertyNames(target);
+  },
+  getPrototypeOf: function (target) {
+    return Object.getPrototypeOf(target);
+  },
+  setPrototypeOf: function (target, proto) {
+    Object.setPrototypeOf(target, proto);
+    return true;
+  },
+  defineProperty: function (target, key, desc) {
+    Object.defineProperty(target, key, desc);
+    return true;
+  },
+  getOwnPropertyDescriptor: function (target, key) {
+    return Object.getOwnPropertyDescriptor(target, key);
+  },
+  apply: function (fn, thisArg, args) {
+    return fn.apply(thisArg, args);
+  },
+  construct: function (target, args) {
+    return new target(...args);
+  },
+};
+
 // --- Symbol registry ---------------------------------------------------------
 // Symbols are interned strings ("@@sym:<desc>:<n>") in this engine, so a registry
 // keyed by description gives Symbol.for its required identity guarantee:
