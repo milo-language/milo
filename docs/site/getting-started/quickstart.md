@@ -41,6 +41,24 @@ The binary is standalone — no runtime needed. Typically under 300KB.
 
 `-g` emits DWARF debug info and composes with any optimization level. See [Debugging](/getting-started/debugging).
 
+## Runtime dependencies
+
+A Milo binary links libc and nothing else — no runtime, no GC, no shared Milo library. Native
+libraries are linked only when you actually use them: OpenSSL for `std/net` TLS, sqlite for
+`std/sqlite`. Check with `otool -L app` (macOS) or `ldd app` (Linux).
+
+Programs that use TLS link OpenSSL dynamically by default, so they pick up system security
+fixes without a rebuild — but they then need OpenSSL installed wherever they run. To ship one
+of those to a machine that may not have it:
+
+```bash
+./milo build app.milo -o app --static-deps   # bakes in openssl/sqlite; libc-only binary
+```
+
+The tradeoff is size (roughly +5MB) and losing system security updates for the baked-in
+copy — a CVE means rebuilding and redistributing. Programs that don't use TLS or sqlite need
+neither the flag nor the thought.
+
 ## See the LLVM IR
 
 ```bash

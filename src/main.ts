@@ -377,30 +377,63 @@ function buildLib(sourcePaths: string[], outputPath: string, target: TargetInfo,
   writeHeader(sourcePaths[0], outputPath.replace(/\.a$/, "") + ".h", target, warningConfig);
 }
 
-function detectLibs(ir: string, target: TargetInfo): string {
-  let libs = "";
-  if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
-    libs += target.os === "darwin"
-      ? " -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto"
-      : " -lssl -lcrypto";
+// Resolve `-lfoo` to a link spec. Dynamic is the default because a system dylib
+// picks up OpenSSL security fixes without a rebuild; --static-deps trades that away
+// for a binary that runs on machines with no Homebrew/openssl installed at all.
+function libSpec(names: string[], darwinPrefix: string, target: TargetInfo, staticDeps: boolean): string {
+  const flags = names.map((n) => `-l${n}`).join(" ");
+  if (!staticDeps) {
+    return target.os === "darwin" ? ` -L${darwinPrefix}/lib ${flags}` : ` ${flags}`;
   }
-  if (!libs.includes("-lcrypto") && (ir.includes("@SHA256") || ir.includes("@MD5"))) {
-    libs += " -lcrypto";
+  if (target.os !== "darwin") {
+    // GNU ld: -Bstatic/-Bdynamic are positional, so restore dynamic for libc after.
+    return ` -Wl,-Bstatic ${flags} -Wl,-Bdynamic`;
+  }
+  // ld64 has no -Bstatic; naming the archive directly is the supported way to force
+  // a static member pull while everything else stays dynamic.
+  const archives = names.map((n) => `${darwinPrefix}/lib/lib${n}.a`);
+  const missing = archives.filter((a) => !existsSync(a));
+  if (missing.length) {
+    console.error(`error: --static-deps needs static archives that aren't installed: ${missing.join(", ")}`);
+    console.error(`hint: Homebrew ships them alongside the dylibs — try 'brew install ${basename(darwinPrefix)}'`);
+    process.exit(1);
+  }
+  return " " + archives.join(" ");
+}
+
+function detectLibs(ir: string, target: TargetInfo, staticDeps = false): string {
+  let libs = "";
+  const openssl = "/opt/homebrew/opt/openssl@3";
+  if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
+    libs += libSpec(["ssl", "crypto"], openssl, target, staticDeps);
+  }
+  if (!libs.includes("-lcrypto") && !libs.includes("libcrypto.a") && (ir.includes("@SHA256") || ir.includes("@MD5"))) {
+    libs += libSpec(["crypto"], openssl, target, staticDeps);
   }
   if (ir.includes("@sqlite3_")) {
-    libs += target.os === "darwin"
-      ? " -L/opt/homebrew/opt/sqlite/lib -lsqlite3"
-      : " -lsqlite3";
+    libs += libSpec(["sqlite3"], "/opt/homebrew/opt/sqlite", target, staticDeps);
   }
   // JavaScriptCore: a system framework on darwin (zero install); on linux it's the
   // heavier libjavascriptcoregtk, so we only auto-link on darwin.
   if (ir.includes("@JSGlobalContextCreate") || ir.includes("@JSEvaluateScript")) {
     if (target.os === "darwin") libs += " -framework JavaScriptCore";
   }
+  // The greps above run on pre-optimization IR, so they over-approximate badly:
+  // std/os declares the TLS externs and defines wrappers around them, and every
+  // program using std/io imports std/os — so `wc` picked up -lssl even though LLVM
+  // dead-strips those unreachable wrappers and the binary needs zero SSL symbols.
+  // The cost was a hard load command on a Homebrew-only absolute path, i.e. dyld
+  // failure at startup on any machine without openssl@3 installed. Let the linker
+  // drop libraries no surviving symbol actually references.
+  if (libs) {
+    // -dead_strip_dylibs is global on ld64; --as-needed is a positional toggle on
+    // GNU ld, so it only affects -l flags that come after it.
+    libs = target.os === "darwin" ? libs + " -Wl,-dead_strip_dylibs" : " -Wl,--as-needed" + libs;
+  }
   return libs;
 }
 
-function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, forceOverflowChecks: boolean | null = null): string {
+function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, forceOverflowChecks: boolean | null = null, staticDeps = false): string {
   const source = readFileSync(sourcePath, "utf-8");
   // Arithmetic traps at -O0 but silently WRAPS at -O2/-O3 — the one real footgun left
   // (Rust's wart; Swift traps in every mode). Checks are only *defaulted* from -O, never
@@ -430,7 +463,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
       // Freestanding link: program IR + startup runtime + linker script → ELF.
       linkBareMetal(tmpLl, out, target, optFlag, heapSize);
     } else {
-      const libs = detectLibs(ir, target);
+      const libs = detectLibs(ir, target, staticDeps);
       const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
       linkIR(tmpLl, out, optFlag, libs, extra, sanitize, emitDebug, target);
     }
@@ -604,7 +637,7 @@ function parseHeapSize(s: string): number | null {
   return n * mult;
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean | null } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean | null; staticDeps: boolean } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
@@ -612,6 +645,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   let noEntry = false;
   let safetyLevel: string | null = null;
   let sanitize = false;
+  let staticDeps = false;
   let targetName: string | null = null;
   let emitHeader = false;
   let heapSize: number | null = null;
@@ -631,6 +665,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "-g") { emitDebug = true; } // DWARF line info, composes with any -O
     else if (args[i] === "--no-entry") { noEntry = true; }
     else if (args[i] === "--sanitize") { sanitize = true; }
+    else if (args[i] === "--static-deps") { staticDeps = true; }
     else if (args[i] === "--overflow-checks") { overflowChecks = true; }
     else if (args[i] === "--no-overflow-checks") { overflowChecks = false; }
     else if (args[i] === "--emit-header") { emitHeader = true; }
@@ -655,7 +690,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, staticDeps };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -1085,6 +1120,7 @@ async function main() {
     console.log("  -g                     emit DWARF line info (source-level lldb/hades); composes with any -O / --debug");
     console.log("  -O<level>              clang opt level: 0,1,2,3,s,z (default: -O2)");
     console.log("  --sanitize             link with AddressSanitizer (requires clang)");
+    console.log("  --static-deps          static-link native deps (openssl/sqlite) for a portable binary");
     console.log("  --overflow-checks     trap on +/-/* overflow at any -O (default: only --debug)");
     console.log("  --no-overflow-checks  wrap on +/-/* overflow at any -O (e.g. fast -O0 builds)");
     console.log("  --fast                quick edit-loop build: -O0, wrapping (~2x faster compile)");
@@ -1200,7 +1236,7 @@ async function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, staticDeps } = parseArgs(args.slice(1));
   let target = getHostTarget();
   if (targetName) {
     const resolved = resolveTarget(targetName);
@@ -1343,7 +1379,7 @@ async function main() {
     await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize, overflowChecks);
   } else if (cmd === "build") {
     const t0 = Date.now();
-    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug, heapSize, overflowChecks);
+    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug, heapSize, overflowChecks, staticDeps);
     reportCompiled(source!, bin, Date.now() - t0);
   } else if (cmd === "emit-ir") {
     compileToIr(source!, output, target, warningConfig, optFlag === "-O0", emitDebug);
