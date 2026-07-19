@@ -38,10 +38,16 @@ doesn't move the score):
   overwrote the whole array. `fill(value, start, end)` now honors both, negative
   indices included.
 
+- ~~symbols leaked their internal representation~~ (f2095e5): `String(sym)` and
+  `sym.toString()` returned `@@sym:d:1`; `.description` was undefined.
+  **Milo gotcha found here:** `isSymbolValue(ov)` inside `match ov { JSValue.Str(s) => … }`
+  silently returns false — matching MOVES the value, so reading the original
+  binding in the arm sees a zeroed slot. The check compiles and runs, it is just
+  always false. Use the arm's own binding (`isSymbolStr(s)`) instead. Worth
+  remembering: this failure mode is invisible, no error and no warning.
+
 Still open, found the same way:
 - error objects have no `.constructor`, so `e.constructor.name` throws.
-- `Symbol.prototype.description` is undefined and `sym.toString()` leaks the
-  internal representation (`@@sym:d:1` instead of `Symbol(d)`).
 - `Number.prototype.toPrecision` ignores its argument (`(123.456).toPrecision(4)`
   → `123.4560`, want `123.5`).
 
