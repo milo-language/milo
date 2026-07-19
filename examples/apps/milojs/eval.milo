@@ -42,7 +42,7 @@ from "std/fs" import {
     currentDir, writeFile, appendFile
 }
 from "examples/apps/milojs/napi" import {
-    napiInvoke, napiLoadAddon, napiTakePending, napiPollTsfn, napiRunTsfnCall, napiHasTsfn
+    napiInvoke, napiLoadAddon, napiTakePending, napiPollTsfn, napiRunTsfnCall, napiHasTsfn, napiHasPendingWork, napiWaitBriefly
 }
 from "std/math" import {
     mathMod, mathPow
@@ -4421,6 +4421,11 @@ fn runEventLoop(prog: &Prog, st: &mut Interp) {
             // handled a connection (or found none ready)
         } else if runOneTimer(prog, st) {
             // nothing to serve, so waiting for the next timer is correct
+        } else if napiHasPendingWork() {
+            // an addon still owes us a settlement, and it will arrive on one of its
+            // own threads — there is no timer or socket to wait on, so yield briefly
+            // rather than spinning a core while the worker finishes.
+            napiWaitBriefly()
         } else {
             going = false
         }
