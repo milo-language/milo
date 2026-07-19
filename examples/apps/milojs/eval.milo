@@ -42,7 +42,7 @@ from "std/fs" import {
     currentDir, writeFile, appendFile
 }
 from "examples/apps/milojs/napi" import {
-    napiInvoke, napiLoadAddon
+    napiInvoke, napiLoadAddon, napiTakePending
 }
 from "std/math" import {
     mathMod, mathPow
@@ -4161,6 +4161,16 @@ fn symbolDisplay(s: &string): string {
 // JS runs the queue to exhaustion before the next timer.
 // Settle a promise and queue every reaction that was waiting on it. Settling
 // twice is ignored, as in JS.
+// Apply promise settlements an addon requested while it held control.
+fn napiDrainSettlements(st: &mut Interp) {
+    var q = napiTakePending()
+    var i: i64 = 0
+    while i < q.len() {
+        settlePromise(st, q[i].promise, q[i].state, cloneValue(q[i].value))
+        i = i + 1
+    }
+}
+
 fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
     if p < 0 || !isPromise(st, p) {
         return
@@ -4928,7 +4938,9 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
         JSValue.Obj(o) => {
             // implemented by a loaded node-api addon: dispatch to its C callback
             if st.objects[o].napiFn >= 0 {
-                return napiInvoke(st.objects[o].napiFn, args, thisVal)
+                let r = napiInvoke(st.objects[o].napiFn, args, thisVal)
+                napiDrainSettlements(st)
+                return r
             }
             // a bind() result: the captured receiver wins over the call site's
             if st.objects[o].isBound {

@@ -49,6 +49,15 @@ struct NapiCall {
     fnIdx: i64,
 }
 
+// A settlement requested by an addon. settlePromise lives in eval.milo, which
+// already imports this module, so recording the request here and draining it there
+// avoids an import cycle.
+struct NapiPending {
+    promise: i64,
+    state: i64,
+    value: JSValue,
+}
+
 struct NapiState {
     // handle index -> the value it denotes; slot 0 is unused so handle 0 can mean null
     handles: Vec<JSValue>,
@@ -56,10 +65,11 @@ struct NapiState {
     registered: bool,
     fns: Vec<NapiFn>,
     calls: Vec<NapiCall>,
+    pending: Vec<NapiPending>,
 }
 
 var gNapi: NapiState = NapiState {
-    handles: Vec.new(), registered: false, fns: Vec.new(), calls: Vec.new()
+    handles: Vec.new(), registered: false, fns: Vec.new(), calls: Vec.new(), pending: Vec.new()
 }
 
 // Wrap a value in a fresh handle. Handles are never reused within a run: the addon
@@ -522,11 +532,6 @@ fn napi_create_external_buffer(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8,
 }
 
 @export
-fn napi_create_promise(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
 fn napi_create_threadsafe_function(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8, _a5: *u8, _a6: *u8, _a7: *u8, _a8: *u8, _a9: *u8, _a10: *u8): i32 {
     return NAPI_OK
 }
@@ -566,17 +571,7 @@ fn napi_get_value_bigint_words(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8)
 }
 
 @export
-fn napi_reject_deferred(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
 fn napi_release_threadsafe_function(_a0: *u8, _a1: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_resolve_deferred(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
     return NAPI_OK
 }
 
@@ -701,7 +696,12 @@ fn napi_unwrap(_env: *u8, jsObject: i64, result: *u8): i32 {
 // ── remaining mechanical surface ──
 
 @export
-fn napi_get_element(_env: *u8, object: i64, index: i64, result: *u8): i32 {
+
+// index is uint32_t, NOT size_t. Declaring it i64 reads the undefined upper half
+// of the 32-bit argument slot on AArch64, so the index came through as garbage and
+// every element resolved to undefined.
+fn napi_get_element(_env: *u8, object: i64, index32: i32, result: *u8): i32 {
+    let index = index32 as i64
     match napiValueOf(object) {
         JSValue.Obj(o) => {
             if index >= 0 && index < gInterp.objects[o].elems.len() {
@@ -718,7 +718,8 @@ fn napi_get_element(_env: *u8, object: i64, index: i64, result: *u8): i32 {
 }
 
 @export
-fn napi_set_element(_env: *u8, object: i64, index: i64, value: i64): i32 {
+fn napi_set_element(_env: *u8, object: i64, index32: i32, value: i64): i32 {
+    let index = index32 as i64
     match napiValueOf(object) {
         JSValue.Obj(o) => {
             while gInterp.objects[o].elems.len() <= index {
@@ -904,7 +905,7 @@ fn napi_is_buffer(_env: *u8, value: i64, result: *u8): i32 {
 // collector yet, so a reference is simply a handle that is never released — it
 // over-retains rather than freeing something the addon still points at.
 @export
-fn napi_create_reference(_env: *u8, value: i64, _initialRefcount: i64, result: *u8): i32 {
+fn napi_create_reference(_env: *u8, value: i64, _initialRefcount: i32, result: *u8): i32 {
     napiWriteHandle(result, napiHandle(napiValueOf(value)))
     return NAPI_OK
 }
@@ -928,4 +929,61 @@ fn napi_reference_unref(_env: *u8, _ref: i64, result: *u8): i32 {
         }
     }
     return NAPI_OK
+}
+
+// ── promises ──
+
+// napi_create_promise(env, deferred, promise)
+//
+// The deferred and the promise are the same underlying object here, handed out as
+// two handles: milojs settles a promise in place, so there is no separate resolver
+// state to track.
+fn napiSettle(p: i64, state: i64, value: JSValue) {
+    gNapi.pending.push(NapiPending {
+        promise: p, state: state, value: value
+    }
+    )
+}
+
+// Drained by the interpreter after any call into an addon.
+fn napiTakePending(): Vec<NapiPending> {
+    var out: Vec<NapiPending> = Vec.new()
+    while gNapi.pending.len() > 0 {
+        out.push(gNapi.pending.remove(0))
+    }
+    return out
+}
+
+@export
+fn napi_create_promise(_env: *u8, deferred: *u8, promise: *u8): i32 {
+    let p = newPromise(gInterp, 0, JSValue.Undefined)
+    napiWriteHandle(deferred, napiHandle(JSValue.Obj(p)))
+    napiWriteHandle(promise, napiHandle(JSValue.Obj(p)))
+    return NAPI_OK
+}
+
+@export
+fn napi_resolve_deferred(_env: *u8, deferred: i64, resolution: i64): i32 {
+    match napiValueOf(deferred) {
+        JSValue.Obj(p) => {
+            napiSettle(p, 1, napiValueOf(resolution))
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
+}
+
+@export
+fn napi_reject_deferred(_env: *u8, deferred: i64, rejection: i64): i32 {
+    match napiValueOf(deferred) {
+        JSValue.Obj(p) => {
+            napiSettle(p, 2, napiValueOf(rejection))
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
 }
