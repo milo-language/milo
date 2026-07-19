@@ -165,9 +165,10 @@ fn builtinSource(name: &string): string {
     if name == "depd" {
         return embedFile("lib/depd.js")
     }
-    if name == "@prisma/client" {
-        return embedFile("lib/prisma-client.js")
-    }
+    // @prisma/client is NOT shimmed here anymore: the real package works now that
+    // the node-api surface can load its query engine. resolveNodeModule falls back
+    // to lib/prisma-client.js only when the package is absent, so a project without
+    // prisma installed still gets the explanatory stub rather than a resolve error.
     if name == "buffer" {
         return embedFile("lib/buffer.js")
     }
@@ -360,7 +361,20 @@ fn resolveSpec(dir: &string, spec: &string): string {
     if builtinSource(bare).len() > 0 {
         return "builtin:" + bare
     }
+    // Only "./" and "../" are relative. A bare leading dot is part of a PACKAGE
+    // name — @prisma/client requires ".prisma/client", which node resolves through
+    // node_modules, not against the requiring file's directory.
+    var isRelative = false
     if spec[0] == '.' {
+        if spec.len() == 1 {
+            isRelative = true
+        } else if spec[1] == '/' {
+            isRelative = true
+        } else if spec[1] == '.' {
+            isRelative = true
+        }
+    }
+    if isRelative {
         var joined = spec.clone()
         if dir.len() > 0 {
             joined = dir + "/" + spec
