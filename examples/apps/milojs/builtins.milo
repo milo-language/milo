@@ -772,6 +772,11 @@ fn hexNibble(v: i64): u8 {
 
 fn mjJsonEscape(s: &string): string {
     var out = String.withCapacity(s.len() + 2)
+    mjPushJsonEscaped(out, s)
+    return out
+}
+
+fn mjPushJsonEscaped(out: &mut string, s: &string) {
     out.push(34 as u8)
     var i: i64 = 0
     while i < s.len() {
@@ -812,7 +817,6 @@ fn mjJsonEscape(s: &string): string {
         i = i + 1
     }
     out.push(34 as u8)
-    return out
 }
 
 fn mjJsonOmitted(v: &JSValue): bool {
@@ -835,66 +839,81 @@ fn mjJsonOmitted(v: &JSValue): bool {
 // Compact JSON text for a value (no indentation). undefined/function become
 // "null" in arrays; object props holding them are omitted. NaN/Infinity → null.
 fn mjStringifyVal(v: &JSValue, st: &Interp): string {
+    var out = String.withCapacity(64)
+    mjPushStringified(out, v, st)
+    return out
+}
+
+// Appends into a single growing buffer rather than returning a string per node.
+// Returning strings made the top-level accumulator `out = out + piece` copy the
+// whole prefix once per element — quadratic, and it allocated ~35x the output
+// size in short-lived intermediates that the allocator never returned to the OS.
+fn mjPushStringified(out: &mut string, v: &JSValue, st: &Interp) {
     match v {
         JSValue.Null => {
-            return "null"
+            out.pushStr("null")
         }
         JSValue.Undefined => {
-            return "null"
+            out.pushStr("null")
         }
         JSValue.Func(_f, _e) => {
-            return "null"
+            out.pushStr("null")
         }
         JSValue.Native(_id) => {
-            return "null"
+            out.pushStr("null")
         }
         JSValue.Bool(b) => {
             if b {
-                return "true"
+                out.pushStr("true")
+            } else {
+                out.pushStr("false")
             }
-            return "false"
         }
         JSValue.Number(n) => {
             if !(n == n) || !isFiniteF(n) {
-                return "null"
+                out.pushStr("null")
+            } else {
+                out.pushStr(numToStr(n))
             }
-            return numToStr(n)
         }
         JSValue.Str(s) => {
-            return mjJsonEscape(s)
+            mjPushJsonEscaped(out, s)
         }
         JSValue.Obj(o) => {
             if st.objects[o].isArray {
-                var out = "["
+                out.push('[')
                 var i: i64 = 0
                 let n = st.objects[o].elems.len()
                 while i < n {
                     if i > 0 {
-                        out = out + ","
+                        out.push(',')
                     }
                     let e = cloneValue(st.objects[o].elems[i])
-                    out = out + mjStringifyVal(e, st)
+                    mjPushStringified(out, e, st)
                     i = i + 1
                 }
-                return out + "]"
-            }
-            var out = "{"
-            var first = true
-            var i: i64 = 0
-            let n = st.objects[o].props.len()
-            while i < n {
-                let key = st.objects[o].props[i].key.clone()
-                let val = cloneValue(st.objects[o].props[i].value)
-                if !mjJsonOmitted(val) {
-                    if !first {
-                        out = out + ","
+                out.push(']')
+            } else {
+                out.push('{')
+                var first = true
+                var i: i64 = 0
+                let n = st.objects[o].props.len()
+                while i < n {
+                    let key = st.objects[o].props[i].key.clone()
+                    let val = cloneValue(st.objects[o].props[i].value)
+                    if !mjJsonOmitted(val) {
+                        if !first {
+                            out.push(',')
+                        }
+                        first = false
+                        mjPushJsonEscaped(out, key)
+                        out.push(':')
+                        mjPushStringified(out, val, st)
                     }
-                    first = false
-                    out = out + mjJsonEscape(key) + ":" + mjStringifyVal(val, st)
+                    i = i + 1
                 }
-                i = i + 1
+                out.push('}')
             }
-            return out + "}"
         }
     }
 }

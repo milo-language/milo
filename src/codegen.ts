@@ -1611,8 +1611,14 @@ export class Codegen {
         }
         return [lines, true];
       case "ExprStmt": {
-        const [exprLines] = this.genExpr(stmt.expr);
+        const [exprLines, exprVal, exprLLTy] = this.genExpr(stmt.expr);
         lines.push(...exprLines);
+        // A call in statement position still returns an owned value; with nobody
+        // to bind it, nothing else will ever free it. Only call forms qualify —
+        // place expressions (Ident/FieldAccess/IndexAccess) name storage someone
+        // else owns, and dropping those would double-free. Returned `&T` can't
+        // occur: references are second-class and never leave a function.
+        this.dropOwnedTemp(lines, exprVal, exprLLTy, stmt.expr);
         return [lines, false];
       }
       case "Match":
@@ -3200,9 +3206,28 @@ export class Codegen {
         lines.push(...ll, ...rl);
 
         if (llt === "%String") {
-          if (expr.op === "+") return this.genStringConcat(lines, lv, rv);
-          if (expr.op === "==" || expr.op === "!=") return this.genStringCmp(lines, lv, rv, expr.op === "==");
-          if (expr.op === "<" || expr.op === ">" || expr.op === "<=" || expr.op === ">=") return this.genStringOrd(lines, lv, rv, expr.op);
+          // These all read out of their operands into a fresh result, so an
+          // operand that was a call temporary (`mk(a) + mk(b)`) has no owner
+          // afterwards and would otherwise never be freed.
+          const dropOperands = (out: string[]) => {
+            this.dropOwnedTemp(out, lv, llt, expr.left);
+            this.dropOwnedTemp(out, rv, llt, expr.right);
+          };
+          if (expr.op === "+") {
+            const [cl, cv, ct] = this.genStringConcat(lines, lv, rv);
+            dropOperands(cl);
+            return [cl, cv, ct];
+          }
+          if (expr.op === "==" || expr.op === "!=") {
+            const [cl, cv, ct] = this.genStringCmp(lines, lv, rv, expr.op === "==");
+            dropOperands(cl);
+            return [cl, cv, ct];
+          }
+          if (expr.op === "<" || expr.op === ">" || expr.op === "<=" || expr.op === ">=") {
+            const [cl, cv, ct] = this.genStringOrd(lines, lv, rv, expr.op);
+            dropOperands(cl);
+            return [cl, cv, ct];
+          }
         }
 
         // enum equality: compare tag field only (checker rejects payload-bearing enums)
@@ -8031,6 +8056,24 @@ export class Codegen {
     this.dropHelperBodies.push(body);
     this.tempCounter = savedTemp;
     this.labelCounter = savedLabel;
+  }
+
+  // True for expression forms that yield a freshly-owned value. Place expressions
+  // (Ident/FieldAccess/IndexAccess) name storage owned by someone else, so freeing
+  // their result would double-free. A call can't hand back a borrow: references are
+  // second-class and never returned.
+  private isOwnedTempExpr(expr: HIRExpr): boolean {
+    return expr.kind === "Call" || expr.kind === "ClosureCall" || expr.kind === "InterfaceMethodCall";
+  }
+
+  // Free a value that was produced by a call and then consumed in-place by an
+  // operator, leaving nothing that will ever drop it.
+  private dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr) {
+    if (!this.isOwnedTempExpr(expr) || !this.needsDropCg(expr.type)) return;
+    const tmpAddr = `%__tmpdrop.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${tmpAddr} = alloca ${llTy}`);
+    lines.push(this.valStore(llTy, val, tmpAddr));
+    this.emitDropValue(lines, tmpAddr, expr.type);
   }
 
   private emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {
