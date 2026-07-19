@@ -1647,6 +1647,9 @@ fn buildMatchArray(st: &mut Interp, s: &string, saves: &Vec<i64>): JSValue {
         }
         g = g + 1
     }
+    // .index (match start) and .input, which callers like content-type read
+    objSet(st, arr, "index", JSValue.Number(saves[0] as f64))
+    objSet(st, arr, "input", JSValue.Str(s.clone()))
     popTemp(st)
     return JSValue.Obj(arr)
 }
@@ -1662,9 +1665,31 @@ fn regexMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSV
         return JSValue.Bool(saves.len() > 0)
     }
     if name == "exec" {
-        let saves = regexExec(st.regexes[rid], subject, 0)
+        // a global (or sticky) regex resumes from lastIndex and advances it, so
+        // `while ((m = re.exec(s)))` terminates instead of re-matching forever
+        let isG = st.regexes[rid].flagG
+        var start: i64 = 0
+        if isG {
+            start = toNum(objGet(st, o, "lastIndex")) as i64
+            if start < 0 || start > subject.len() {
+                objSet(st, o, "lastIndex", JSValue.Number(0.0))
+                return JSValue.Null
+            }
+        }
+        let saves = regexExec(st.regexes[rid], subject, start)
         if saves.len() == 0 {
+            if isG {
+                objSet(st, o, "lastIndex", JSValue.Number(0.0))
+            }
             return JSValue.Null
+        }
+        if isG {
+            var next = saves[1]
+            // a zero-width match must still advance, or the loop stalls
+            if next <= start {
+                next = start + 1
+            }
+            objSet(st, o, "lastIndex", JSValue.Number(next as f64))
         }
         return buildMatchArray(st, subject, saves)
     }
@@ -4735,8 +4760,11 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
 // undefined instead turns a typo into a value that fails much later, somewhere
 // unrelated.
 fn throwNullMember(st: &mut Interp, name: &string, base: &string): JSValue {
+    // No currentModule() suffix here: this message is spec-defined text that real
+    // code (and the conformance suite) compares against, so decorating it would
+    // corrupt e.message.
     st.throwing = true
-    st.thrownValue = makeError(st, "TypeError", "cannot read property '" + name.clone() + "' of " + base.clone() + currentModule(st))
+    st.thrownValue = makeError(st, "TypeError", "cannot read property '" + name.clone() + "' of " + base.clone())
     return JSValue.Undefined
 }
 

@@ -319,6 +319,24 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         let b = argNum(args, 1, s.len())
         return JSValue.Str(strSlice(s, a, b))
     }
+    if name == "substr" {
+        // substr(start, length) — a count, not an end index (unlike slice)
+        var start = argNum(args, 0, 0)
+        if start < 0 {
+            start = s.len() + start
+            if start < 0 {
+                start = 0
+            }
+        }
+        var count = s.len() - start
+        if args.len() > 1 {
+            count = argNum(args, 1, count)
+        }
+        if count < 0 {
+            count = 0
+        }
+        return JSValue.Str(strSlice(s, start, start + count))
+    }
     if name == "lastIndexOf" {
         let needle = argStr(args, 0)
         if needle.len() == 0 {
