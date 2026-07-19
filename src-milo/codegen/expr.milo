@@ -2182,31 +2182,34 @@ fn genHeapClone(cg: &mut Cgen, boxPtr: &string, heapTy: &string): Val {
     }
 }
 
-// Vec.pop: panic if empty, else len-- and return the (former) last element.
+// Vec.pop: Option<T> — None on empty, else len-- and MOVE the (former) last
+// element into Some. No clone: the slot is past the new len, so ownership
+// transfers to the caller rather than being shared with the Vec.
 fn genVecPop(cg: &mut Cgen, addr: &string, vecTy: &string): Val {
     let elemTy = unwrapVec(vecTy)
     let elemLl = llType(elemTy)
+    // Mangle the whole Option<elemTy> so nested generics resolve to the mono
+    // enum the checker registered (see genHashMapGet).
+    let optName = stripPercent(resolveTyStr(cg, "Option<" + elemTy + ">"))
+    let optTy = "%" + optName
+    let someTag = lookupVariantTag(cg, optName, "Some")
+    let noneTag = lookupVariantTag(cg, optName, "None")
+    let resAddr = nextTemp(cg)
+    emit(cg, "  " + resAddr + " = alloca " + optTy + "\n")
+    emit(cg, "  store " + optTy + " zeroinitializer, ptr " + resAddr + "\n")
+    let tagPtr = nextTemp(cg)
+    emit(cg, "  " + tagPtr + " = getelementptr " + optTy + ", ptr " + resAddr + ", i32 0, i32 0\n")
+    emit(cg, "  store i32 " + noneTag.toString() + ", ptr " + tagPtr + "\n")
     let lenPtr = nextTemp(cg)
     emit(cg, "  " + lenPtr + " = getelementptr %Vec, ptr " + addr + ", i32 0, i32 1\n")
     let len = nextTemp(cg)
     emit(cg, "  " + len + " = load i64, ptr " + lenPtr + "\n")
     let isEmpty = nextTemp(cg)
     emit(cg, "  " + isEmpty + " = icmp eq i64 " + len + ", 0\n")
-    let panicLbl = nextLabel(cg, "pop.panic")
-    let okLbl = nextLabel(cg, "pop.ok")
-    emit(cg, "  br i1 " + isEmpty + ", label %" + panicLbl + ", label %" + okLbl + "\n")
-    emit(cg, panicLbl + ":\n")
-    if !cg.declaredPrintf {
-        emitG(cg, "declare i32 @printf(ptr, ...)\n")
-        cg.declaredPrintf = true
-    }
-    ensureExit(cg)
-    let msgLbl = emitStringLit(cg, "pop on empty Vec\\n")
-    let pcall = nextTemp(cg)
-    emit(cg, "  " + pcall + " = call i32 (ptr, ...) @printf(ptr " + msgLbl + ")\n")
-    emit(cg, "  call void @exit(i32 1)\n")
-    emit(cg, "  unreachable\n")
-    emit(cg, okLbl + ":\n")
+    let someLbl = nextLabel(cg, "pop.some")
+    let endLbl = nextLabel(cg, "pop.end")
+    emit(cg, "  br i1 " + isEmpty + ", label %" + endLbl + ", label %" + someLbl + "\n")
+    emit(cg, someLbl + ":\n")
     let newLen = nextTemp(cg)
     emit(cg, "  " + newLen + " = sub i64 " + len + ", 1\n")
     emit(cg, "  store i64 " + newLen + ", ptr " + lenPtr + "\n")
@@ -2218,8 +2221,19 @@ fn genVecPop(cg: &mut Cgen, addr: &string, vecTy: &string): Val {
     emit(cg, "  " + elemPtr + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + newLen + "\n")
     let val = nextTemp(cg)
     emit(cg, "  " + val + " = load " + elemLl + ", ptr " + elemPtr + "\n")
+    emit(cg, "  store i32 " + someTag.toString() + ", ptr " + tagPtr + "\n")
+    let payPtr = nextTemp(cg)
+    emit(cg, "  " + payPtr + " = getelementptr " + optTy + ", ptr " + resAddr + ", i32 0, i32 1\n")
+    let pstructTy = "{ " + elemLl + " }"
+    let fp = nextTemp(cg)
+    emit(cg, "  " + fp + " = getelementptr " + pstructTy + ", ptr " + payPtr + ", i32 0, i32 0\n")
+    emit(cg, "  store " + elemLl + " " + val + ", ptr " + fp + "\n")
+    emit(cg, "  br label %" + endLbl + "\n")
+    emit(cg, endLbl + ":\n")
+    let r = nextTemp(cg)
+    emit(cg, "  " + r + " = load " + optTy + ", ptr " + resAddr + "\n")
     return Val {
-        v: val, ty: elemTy
+        v: r, ty: optName
     }
 }
 

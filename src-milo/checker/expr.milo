@@ -2024,7 +2024,11 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         if !isRootMutable(ck, obj) {
             error(ck, "cannot pop from immutable Vec", cloneSpan(span))
         }
-        return elem.clone()
+        // pop returns Option<T> — Some(last) / None on empty, matching the TS oracle
+        var optArgs: Vec<TypeKind> = Vec.new()
+        optArgs.push(elem.clone())
+        let mangled = monomorphizeEnum(ck, "Option", optArgs)
+        return TypeKind.TEnum(mangled)
     }
     if method == "remove" {
         if args.len != 1 {
