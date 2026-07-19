@@ -405,8 +405,28 @@ var DOM_ERROR_CODES = {
 class DOMException extends Error {
   constructor(message, name) {
     super(message === undefined ? "" : String(message));
-    this.name = name === undefined ? "Error" : String(name);
-    this.code = DOM_ERROR_CODES[this.name] || 0;
+    var msg = message === undefined ? "" : String(message);
+    var nm = name === undefined ? "Error" : String(name);
+    // message/name/code are READ-ONLY on a DOMException: they are getter-only
+    // accessors, so assigning to them must throw rather than silently stick.
+    Object.defineProperty(this, "message", {
+      get: function () { return msg; },
+      set: function () { throw new TypeError("DOMException.message is read-only"); },
+      enumerable: false,
+      configurable: true,
+    });
+    Object.defineProperty(this, "name", {
+      get: function () { return nm; },
+      set: function () { throw new TypeError("DOMException.name is read-only"); },
+      enumerable: false,
+      configurable: true,
+    });
+    Object.defineProperty(this, "code", {
+      get: function () { return DOM_ERROR_CODES[nm] || 0; },
+      set: function () { throw new TypeError("DOMException.code is read-only"); },
+      enumerable: false,
+      configurable: true,
+    });
   }
 }
 
@@ -656,3 +676,16 @@ Promise.any = function (items) {
     }
   });
 };
+
+// --- queueMicrotask argument validation --------------------------------------
+// The native queues whatever it is handed; the spec requires a TypeError for a
+// non-callable, which is what catches the common `queueMicrotask(fn())` typo.
+if (typeof queueMicrotask === "function") {
+  var __nativeQueueMicrotask = queueMicrotask;
+  queueMicrotask = function (cb) {
+    if (typeof cb !== "function") {
+      throw new TypeError("queueMicrotask requires a function argument");
+    }
+    return __nativeQueueMicrotask(cb);
+  };
+}
