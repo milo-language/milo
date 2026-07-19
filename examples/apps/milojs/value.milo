@@ -231,6 +231,43 @@ fn numToRadix(n: f64, radix: i64): string {
     return out
 }
 
+// Number.prototype.toPrecision — `digits` SIGNIFICANT digits, not decimal places.
+// (It was previously aliased to toFixed, which is a different function entirely:
+// (123.456).toPrecision(4) is 123.5, whereas toFixed(4) is 123.4560.)
+// Fixed-notation only; JS switches to exponential when the exponent is < -6 or
+// >= precision, which this does not implement.
+fn numToPrecision(n: f64, digits: i64): string {
+    if n != n {
+        return "NaN"
+    }
+    if digits <= 0 {
+        return numToStr(n)
+    }
+    var mag = n
+    if mag < 0.0 {
+        mag = 0.0 - mag
+    }
+    if mag == 0.0 {
+        return numToFixed(n, digits - 1)
+    }
+    // how many digits sit left of the decimal point
+    var intDigits: i64 = 1
+    var scaled = mag
+    while scaled >= 10.0 {
+        scaled = scaled / 10.0
+        intDigits = intDigits + 1
+    }
+    while scaled < 1.0 {
+        scaled = scaled * 10.0
+        intDigits = intDigits - 1
+    }
+    var decimals = digits - intDigits
+    if decimals < 0 {
+        decimals = 0
+    }
+    return numToFixed(n, decimals)
+}
+
 // Number.prototype.toFixed — fixed-point with `digits` decimals, half-up.
 fn numToFixed(n: f64, digits: i64): string {
     if n != n {

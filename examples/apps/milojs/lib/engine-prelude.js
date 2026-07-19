@@ -45,6 +45,28 @@ Object.fromEntries = function (entries) {
   for (var pair of entries) out[pair[0]] = pair[1];
   return out;
 };
+// Array.from must accept an iterator, which the native cannot: driving next()
+// means calling back into user code, and natives have no access to the program.
+// Built-ins (array/string/Set/Map) fall through to the native, which handles the
+// array-like case (`{length: 2}`) that has no iterator at all.
+var __nativeArrayFrom = Array.from;
+Array.from = function (src, mapFn, thisArg) {
+  var out;
+  if (src && typeof src.next === "function") {
+    out = [];
+    while (true) {
+      var step = src.next();
+      if (step.done) break;
+      out.push(step.value);
+    }
+  } else {
+    out = __nativeArrayFrom(src);
+  }
+  if (typeof mapFn !== "function") return out;
+  var mapped = [];
+  for (var i = 0; i < out.length; i++) mapped.push(mapFn.call(thisArg, out[i], i));
+  return mapped;
+};
 Array.of = function () {
   var out = [];
   for (var i = 0; i < arguments.length; i++) out.push(arguments[i]);

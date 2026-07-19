@@ -183,6 +183,12 @@ fn findSetter(st: &Interp, o: i64, key: &string): JSValue {
 
 // Property read that honours accessors; `this` inside the getter is the object.
 fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
+    // arr[Symbol.iterator] — a bound `values`, so arr[Symbol.iterator]() yields
+    // the same iterator for-of drives. Lives here rather than in getMember
+    // because building the bound method allocates and getMember is immutable.
+    if st.objects[o].isArray && key == symIteratorKey() && objOwnIndex(st, o, key) < 0 {
+        return makeBoundMethod(st, JSValue.Obj(o), "values")
+    }
     // globalThis.x reads the global binding, so it stays in step with bare `x`
     if st.objects[o].isGlobal && objOwnIndex(st, o, key) < 0 {
         if scopeHasOwn(st, 0, key) {
@@ -238,6 +244,54 @@ fn makeBoundMethod(st: &mut Interp, recv: JSValue, name: string): JSValue {
     return JSValue.Obj(bo)
 }
 
+// An array iterator: a plain object holding the source array plus a cursor, with
+// `next` and `[Symbol.iterator]` as bound builtin methods. Built this way because
+// a native has no per-instance state and JSValue has nowhere to carry a cursor.
+// kind: 0 values, 1 keys, 2 entries.
+fn makeArrayIterator(st: &mut Interp, arr: i64, kind: i64): JSValue {
+    let it = newObject(st)
+    pushTemp(st, JSValue.Obj(it))
+    objSet(st, it, "__ai_arr", JSValue.Obj(arr))
+    objSet(st, it, "__ai_i", JSValue.Number(0.0))
+    objSet(st, it, "__ai_kind", JSValue.Number(kind as f64))
+    let nextFn = makeBoundMethod(st, JSValue.Obj(it), "__arrayIterNext")
+    objSet(st, it, "next", nextFn)
+    let selfFn = makeBoundMethod(st, JSValue.Obj(it), "__arrayIterSelf")
+    objSet(st, it, symIteratorKey(), selfFn)
+    popTemp(st)
+    return JSValue.Obj(it)
+}
+
+fn arrayIterNext(st: &mut Interp, it: i64): JSValue {
+    let arrV = getMember(st, it, "__ai_arr")
+    let arr = objHandle(arrV)
+    let i = toNum(getMember(st, it, "__ai_i")) as i64
+    let kind = toNum(getMember(st, it, "__ai_kind")) as i64
+    let res = newObject(st)
+    pushTemp(st, JSValue.Obj(res))
+    if arr < 0 || i >= arrLen(st, arr) {
+        objSet(st, res, "done", JSValue.Bool(true))
+        objSet(st, res, "value", JSValue.Undefined)
+    } else {
+        objSet(st, it, "__ai_i", JSValue.Number((i + 1) as f64))
+        var v = arrGet(st, arr, i)
+        if kind == 1 {
+            v = JSValue.Number(i as f64)
+        } else if kind == 2 {
+            let pair = newArray(st)
+            pushTemp(st, JSValue.Obj(pair))
+            arrPush(st, pair, JSValue.Number(i as f64))
+            arrPush(st, pair, arrGet(st, arr, i))
+            popTemp(st)
+            v = JSValue.Obj(pair)
+        }
+        objSet(st, res, "value", v)
+        objSet(st, res, "done", JSValue.Bool(false))
+    }
+    popTemp(st)
+    return JSValue.Obj(res)
+}
+
 // Invoke a builtin method by name against an already-evaluated receiver+args.
 fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSValue>, st: &mut Interp): JSValue {
     match recv {
@@ -248,6 +302,14 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             return stringMethod(name, sv, args, st)
         }
         JSValue.Obj(o) => {
+            // array iterator steps: state lives in properties on the iterator
+            // object itself, which is also the bound receiver
+            if name == "__arrayIterNext" {
+                return arrayIterNext(st, o)
+            }
+            if name == "__arrayIterSelf" {
+                return JSValue.Obj(o)
+            }
             // Date-specific methods dispatch here (Date.prototype.toISOString.call);
             // toString/valueOf are left to the Object.prototype type-tag logic
             // below, so Object.prototype.toString.call(date) stays [object Date]
@@ -1790,6 +1852,85 @@ fn regexReplace(st: &mut Interp, s: &string, rid: i64, repl: &string): JSValue {
     }
     out = out + strSlice(s, last, s.len())
     return JSValue.Str(out)
+}
+
+// s.replace(re, fn): the callback receives (match, ...groups, offset, string) and
+// its return value is substituted. Without this the function was coerced with
+// toStr and the literal text "function" ended up in the output.
+fn regexReplaceFn(prog: &Prog, st: &mut Interp, s: &string, rid: i64, fn_: &JSValue): JSValue {
+    let global = st.regexes[rid].flagG
+    var out = String.withCapacity(s.len())
+    var last: i64 = 0
+    var searchPos: i64 = 0
+    var going = true
+    while going && !st.throwing {
+        let saves = regexExec(st.regexes[rid], s, searchPos)
+        if saves.len() == 0 {
+            going = false
+        } else {
+            let mstart = saves[0]
+            let mend = saves[1]
+            out = out + strSlice(s, last, mstart)
+            var args: Vec<JSValue> = Vec.new()
+            args.push(JSValue.Str(strSlice(s, mstart, mend)))
+            var g: i64 = 1
+            let ng = saves.len() / 2
+            while g < ng {
+                let a = saves[2 * g]
+                let b = saves[2 * g + 1]
+                if a < 0 || b < 0 {
+                    args.push(JSValue.Undefined)
+                } else {
+                    args.push(JSValue.Str(strSlice(s, a, b)))
+                }
+                g = g + 1
+            }
+            args.push(JSValue.Number(mstart as f64))
+            args.push(JSValue.Str(s.clone()))
+            let r = callValue(prog, fn_, args, JSValue.Undefined, st)
+            out = out + toStr(r)
+            last = mend
+            if mend == mstart {
+                searchPos = mend + 1
+            } else {
+                searchPos = mend
+            }
+            if !global || searchPos > s.len() {
+                going = false
+            }
+        }
+    }
+    out = out + strSlice(s, last, s.len())
+    return JSValue.Str(out)
+}
+
+// s.split(re) — the separator is whatever the pattern matches. A zero-width
+// match advances by one so the split cannot loop forever.
+fn regexSplit(st: &mut Interp, s: &string, rid: i64): JSValue {
+    let arr = newArray(st)
+    pushTemp(st, JSValue.Obj(arr))
+    var last: i64 = 0
+    var searchPos: i64 = 0
+    var going = true
+    while going {
+        let saves = regexExec(st.regexes[rid], s, searchPos)
+        if saves.len() == 0 || searchPos > s.len() {
+            going = false
+        } else {
+            let mstart = saves[0]
+            let mend = saves[1]
+            if mend == mstart {
+                searchPos = mend + 1
+            } else {
+                arrPush(st, arr, JSValue.Str(strSlice(s, last, mstart)))
+                last = mend
+                searchPos = mend
+            }
+        }
+    }
+    arrPush(st, arr, JSValue.Str(strSlice(s, last, s.len())))
+    popTemp(st)
+    return JSValue.Obj(arr)
 }
 
 // s.match(re): with the g flag, an array of all matched substrings (or null);
@@ -3907,7 +4048,7 @@ fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSVa
 }
 
 fn isArrayMethod(name: &string): bool {
-    return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop" || name == "find" || name == "findIndex" || name == "some" || name == "every" || name == "shift" || name == "unshift" || name == "splice" || name == "sort" || name == "lastIndexOf" || name == "flat" || name == "fill" || name == "at" || name == "findLast" || name == "findLastIndex" || name == "copyWithin" || name == "reduceRight" || name == "flatMap"
+    return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop" || name == "find" || name == "findIndex" || name == "some" || name == "every" || name == "shift" || name == "unshift" || name == "splice" || name == "sort" || name == "lastIndexOf" || name == "flat" || name == "fill" || name == "at" || name == "findLast" || name == "findLastIndex" || name == "copyWithin" || name == "reduceRight" || name == "flatMap" || name == "values" || name == "keys" || name == "entries"
 }
 
 // Dispatch a built-in Array method. `o` (the array) is temp-rooted by the caller;
@@ -3986,6 +4127,20 @@ fn isCallable(v: &JSValue): bool {
             return false
         }
     }
+}
+
+// isCallable, but also true for bound-method objects (Function.prototype.bind
+// results and the builtin bound methods). They are ordinary JSObjs, so the
+// JSValue-only test above cannot see them — typeof already reports "function".
+fn isCallableIn(st: &Interp, v: &JSValue): bool {
+    if isCallable(v) {
+        return true
+    }
+    let h = objHandle(v)
+    if h >= 0 {
+        return st.objects[h].isBound
+    }
+    return false
 }
 
 fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
@@ -4107,6 +4262,15 @@ fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut
             i = i - 1
         }
         return JSValue.Number(0.0 - 1.0)
+    }
+    if name == "values" || name == "keys" || name == "entries" {
+        var kind: i64 = 0
+        if name == "keys" {
+            kind = 1
+        } else if name == "entries" {
+            kind = 2
+        }
+        return makeArrayIterator(st, o, kind)
     }
     if name == "at" {
         var idx: i64 = 0
@@ -4584,6 +4748,12 @@ fn primitiveMethod(name: &string, recv: &JSValue, args: &Vec<JSValue>): JSValue 
         if args.len() > 0 {
             digits = toNum(args[0]) as i64
         }
+        if name == "toPrecision" {
+            if args.len() == 0 {
+                return JSValue.Str(toStr(recv))
+            }
+            return JSValue.Str(numToPrecision(toNum(recv), digits))
+        }
         return JSValue.Str(numToFixed(toNum(recv), digits))
     }
     // toString(radix) — only meaningful for numbers, and only for integers here
@@ -4612,7 +4782,10 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
             // regex-based string ops when the first arg is a RegExp
             if argVals.len() > 0 && regexIdOf(st, argVals[0]) >= 0 {
                 let rid = regexIdOf(st, argVals[0])
-                if name == "replace" {
+                if name == "replace" || name == "replaceAll" {
+                    if argVals.len() > 1 && isCallable(argVals[1]) {
+                        return regexReplaceFn(prog, st, s, rid, argVals[1])
+                    }
                     var repl = ""
                     if argVals.len() > 1 {
                         repl = toStr(argVals[1])
@@ -4621,6 +4794,9 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 }
                 if name == "match" {
                     return regexStrMatch(st, s, rid)
+                }
+                if name == "split" {
+                    return regexSplit(st, s, rid)
                 }
             }
             return stringMethod(name, s, argVals, st)
@@ -5215,7 +5391,7 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
             let srcH = objHandle(ov)
             if srcH >= 0 && !st.objects[srcH].isArray && !st.objects[srcH].isMap && !st.objects[srcH].isSet {
                 let itFn = getMember(st, srcH, symIteratorKey())
-                if isCallable(itFn) {
+                if isCallableIn(st, itFn) {
                     var noArgs: Vec<JSValue> = Vec.new()
                     let iter = callValue(prog, itFn, noArgs, cloneValue(ov), st)
                     pushTemp(st, cloneValue(iter))
@@ -5226,7 +5402,7 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                     var out = Flow.Normal
                     while running && !st.throwing && iterH >= 0 {
                         let nextFn = getMember(st, iterH, "next")
-                        if !isCallable(nextFn) {
+                        if !isCallableIn(st, nextFn) {
                             st.throwing = true
                             st.thrownValue = makeError(st, "TypeError", "iterator has no next method" + currentModule(st))
                             running = false
