@@ -243,10 +243,14 @@ fn jsSplit(s: &string, args: &Vec<JSValue>, st: &mut Interp): i64 {
     }
     let sep = toStr(args[0])
     if sep.len() == 0 {
-        var i: i64 = 0
-        while i < s.len() {
-            arrPush(st, arr, JSValue.Str(jsCharAt(s, i)))
-            i = i + 1
+        // one entry per CODEPOINT. JS splits per UTF-16 unit, which would put the
+        // two halves of an astral pair in separate entries — lone surrogates are
+        // unrepresentable in UTF-8, so the whole character stays together.
+        var b: i64 = 0
+        while b < s.len() {
+            let cp = decodeCodepoint(s, b)
+            arrPush(st, arr, JSValue.Str(strSlice(s, b, b + cp.size)))
+            b = b + cp.size
         }
         return arr
     }
@@ -388,6 +392,63 @@ fn utf16CodePointAt(s: &string, idx: i64): i64 {
     return cp.value as i64
 }
 
+// UTF-16 index -> byte offset. Past the end returns s.len(), so callers can use
+// it directly as a slice bound.
+fn utf16ToByte(s: &string, idx: i64): i64 {
+    if idx <= 0 {
+        return 0
+    }
+    var unit: i64 = 0
+    var b: i64 = 0
+    while b < s.len() {
+        if unit >= idx {
+            return b
+        }
+        let cp = decodeCodepoint(s, b)
+        unit = unit + utf16UnitCount(cp.value)
+        b = b + cp.size
+    }
+    return s.len()
+}
+
+// byte offset -> UTF-16 index (the inverse, for indexOf-style results).
+fn byteToUtf16(s: &string, at: i64): i64 {
+    if at <= 0 {
+        return 0
+    }
+    var unit: i64 = 0
+    var b: i64 = 0
+    while b < s.len() && b < at {
+        let cp = decodeCodepoint(s, b)
+        unit = unit + utf16UnitCount(cp.value)
+        b = b + cp.size
+    }
+    return unit
+}
+
+// Slice by UTF-16 indices, JS-style (negative counts from the end, bounds clamp).
+fn utf16Slice(s: &string, start: i64, end: i64): string {
+    let n = utf16Length(s)
+    var a = start
+    var b = end
+    if a < 0 {
+        a = n + a
+    }
+    if b < 0 {
+        b = n + b
+    }
+    if a < 0 {
+        a = 0
+    }
+    if b > n {
+        b = n
+    }
+    if b < a {
+        b = a
+    }
+    return strSlice(s, utf16ToByte(s, a), utf16ToByte(s, b))
+}
+
 fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     if name == "toUpperCase" {
         return JSValue.Str(strUpper(s))
@@ -402,7 +463,9 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         return JSValue.Str(s.clone())
     }
     if name == "charAt" {
-        return JSValue.Str(jsCharAt(s, argNum(args, 0, 0)))
+        // a lone surrogate is unrepresentable in UTF-8, so an index landing on
+        // either half of a pair yields the whole character
+        return JSValue.Str(utf16Slice(s, argNum(args, 0, 0), argNum(args, 0, 0) + 1))
     }
     if name == "charCodeAt" {
         let u = utf16UnitAt(s, argNum(args, 0, 0))
@@ -412,7 +475,11 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         return JSValue.Number(u as f64)
     }
     if name == "indexOf" {
-        return JSValue.Number(jsIndexOf(s, argStr(args, 0), 0) as f64)
+        let at = jsIndexOf(s, argStr(args, 0), 0)
+        if at < 0 {
+            return JSValue.Number(0.0 - 1.0)
+        }
+        return JSValue.Number(byteToUtf16(s, at) as f64)
     }
     if name == "includes" {
         return JSValue.Bool(jsContains(s, argStr(args, 0)))
@@ -424,27 +491,29 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         return JSValue.Bool(jsEndsWith(s, argStr(args, 0)))
     }
     if name == "slice" || name == "substring" {
+        let n = utf16Length(s)
         let a = argNum(args, 0, 0)
-        let b = argNum(args, 1, s.len())
-        return JSValue.Str(strSlice(s, a, b))
+        let b = argNum(args, 1, n)
+        return JSValue.Str(utf16Slice(s, a, b))
     }
     if name == "substr" {
         // substr(start, length) — a count, not an end index (unlike slice)
+        let n = utf16Length(s)
         var start = argNum(args, 0, 0)
         if start < 0 {
-            start = s.len() + start
+            start = n + start
             if start < 0 {
                 start = 0
             }
         }
-        var count = s.len() - start
+        var count = n - start
         if args.len() > 1 {
             count = argNum(args, 1, count)
         }
         if count < 0 {
             count = 0
         }
-        return JSValue.Str(strSlice(s, start, start + count))
+        return JSValue.Str(utf16Slice(s, start, start + count))
     }
     if name == "lastIndexOf" {
         let needle = argStr(args, 0)
@@ -457,7 +526,7 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         var i = s.len() - needle.len()
         while i >= 0 {
             if jsSubstringAt(s, needle, i) {
-                return JSValue.Number(i as f64)
+                return JSValue.Number(byteToUtf16(s, i) as f64)
             }
             i = i - 1
         }
@@ -474,20 +543,16 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         if args.len() > 1 {
             pad = toStr(args[1])
         }
-        if pad.len() == 0 || s.len() >= target {
+        let curLen = utf16Length(s)
+        if pad.len() == 0 || curLen >= target {
             return JSValue.Str(s.clone())
         }
         var fill = ""
-        while fill.len() < target - s.len() {
+        while utf16Length(fill) < target - curLen {
             fill = fill + pad
         }
         // the pad is truncated to exactly the missing width
-        var cut = String.withCapacity(16)
-        var fi: i64 = 0
-        while fi < target - s.len() {
-            cut.push(fill[fi])
-            fi = fi + 1
-        }
+        let cut = utf16Slice(fill, 0, target - curLen)
         if name == "padStart" {
             return JSValue.Str(cut + s.clone())
         }
@@ -521,13 +586,14 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
     }
     if name == "at" {
         var idx = argNum(args, 0, 0)
+        let n = utf16Length(s)
         if idx < 0 {
-            idx = s.len() + idx
+            idx = n + idx
         }
-        if idx < 0 || idx >= s.len() {
+        if idx < 0 || idx >= n {
             return JSValue.Undefined
         }
-        return JSValue.Str(jsCharAt(s, idx))
+        return JSValue.Str(utf16Slice(s, idx, idx + 1))
     }
     if name == "codePointAt" {
         let cp = utf16CodePointAt(s, argNum(args, 0, 0))
