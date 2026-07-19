@@ -186,6 +186,23 @@ fn findSetter(st: &Interp, o: i64, key: &string): JSValue {
 
 // Property read that honours accessors; `this` inside the getter is the object.
 fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
+    if st.objects[o].isProxy {
+        let trap = proxyTrap(st, o, "get")
+        let target = cloneValue(st.objects[o].proxyTarget)
+        if isCallableIn(st, trap) {
+            var args: Vec<JSValue> = Vec.new()
+            args.push(cloneValue(target))
+            args.push(JSValue.Str(key.clone()))
+            args.push(JSValue.Obj(o))
+            return callValue(prog, trap, args, cloneValue(st.objects[o].proxyHandler), st)
+        }
+        // no trap: forward to the target
+        let th = objHandle(target)
+        if th >= 0 {
+            return getMemberDyn(prog, th, key, st)
+        }
+        return JSValue.Undefined
+    }
     // promise.then/catch/finally dispatch natively, so reading them as VALUES
     // returned undefined. The standard thenable test every library uses is
     // `typeof x.then === "function"`, which that silently failed — hand back a
@@ -699,6 +716,24 @@ fn objectTypeTag(v: &JSValue): string {
 }
 
 fn setMemberDyn(prog: &Prog, o: i64, key: string, v: JSValue, st: &mut Interp) {
+    if st.objects[o].isProxy {
+        let trap = proxyTrap(st, o, "set")
+        let target = cloneValue(st.objects[o].proxyTarget)
+        if isCallableIn(st, trap) {
+            var args: Vec<JSValue> = Vec.new()
+            args.push(cloneValue(target))
+            args.push(JSValue.Str(key.clone()))
+            args.push(cloneValue(v))
+            args.push(JSValue.Obj(o))
+            let _r = callValue(prog, trap, args, cloneValue(st.objects[o].proxyHandler), st)
+            return
+        }
+        let th = objHandle(target)
+        if th >= 0 {
+            setMemberDyn(prog, th, key, v, st)
+        }
+        return
+    }
     let sfn = findSetter(st, o, key)
     if isCallable(sfn) {
         var args: Vec<JSValue> = Vec.new()
@@ -1017,6 +1052,8 @@ let NATIVE_NAPI_LOAD: i64 = 105
 // runtime does `console.debug || console.log` — needs `console` to be a real
 // object whose properties are callable values.
 let NATIVE_CONSOLE_LOG: i64 = 106
+// new Proxy(target, handler)
+let NATIVE_PROXY: i64 = 107
 let NATIVE_ARRAYBUFFER: i64 = 78
 // the typed-array constructors occupy a contiguous block so the element kind is
 // just (id - NATIVE_TA_BASE); keep in step with the TA_* order in runtime.milo
@@ -2036,6 +2073,25 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         // primitives are never extensible
         return JSValue.Bool(false)
     }
+    if id == NATIVE_PROXY {
+        if argVals.len() < 2 {
+            return throwTypeErr(st, "Cannot create proxy with a non-object as target or handler")
+        }
+        let t = cloneValue(argVals[0])
+        let h = cloneValue(argVals[1])
+        if objHandle(t) < 0 || objHandle(h) < 0 {
+            return throwTypeErr(st, "Cannot create proxy with a non-object as target or handler")
+        }
+        let o = newObject(st)
+        st.objects[o].isProxy = true
+        st.objects[o].proxyTarget = t
+        st.objects[o].proxyHandler = h
+        // a proxy over a callable must itself report as callable
+        if isCallableIn(st, st.objects[o].proxyTarget) {
+            st.objects[o].isFunctionLike = true
+        }
+        return JSValue.Obj(o)
+    }
     if id == NATIVE_CONSOLE_LOG {
         var line = ""
         var j: i64 = 0
@@ -2934,6 +2990,7 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, consoleObj, "warn", JSValue.Native(NATIVE_CONSOLE_LOG))
     objSet(st, consoleObj, "error", JSValue.Native(NATIVE_CONSOLE_LOG))
     scopeDefine(st, 0, "console", JSValue.Obj(consoleObj))
+    scopeDefine(st, 0, "Proxy", JSValue.Native(NATIVE_PROXY))
 }
 
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).
@@ -4118,6 +4175,22 @@ fn describeCallee(prog: &Prog, calleeIdx: i64): string {
 }
 
 // A real Error object, so catch blocks see .name/.message and instanceof works.
+// Raise a TypeError and yield undefined, for the proxy traps.
+fn throwTypeErr(st: &mut Interp, msg: string): JSValue {
+    st.throwing = true
+    st.thrownValue = makeError(st, "TypeError", msg)
+    return JSValue.Undefined
+}
+
+// The handler trap `name`, or undefined when the handler does not define it.
+fn proxyTrap(st: &Interp, o: i64, name: &string): JSValue {
+    let h = objHandle(st.objects[o].proxyHandler)
+    if h < 0 {
+        return JSValue.Undefined
+    }
+    return getMember(st, h, name)
+}
+
 fn makeError(st: &mut Interp, kind: string, msg: string): JSValue {
     let o = newObject(st)
     st.objects[o].isError = true
