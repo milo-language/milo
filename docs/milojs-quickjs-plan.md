@@ -102,8 +102,8 @@ Confirmed missing, grouped by where the fix goes:
   `replaceAll`, `localeCompare`, `normalize`. Still open: `matchAll` (needs the
   regex iterator). Note `codePointAt`/`localeCompare` are byte-oriented, matching
   the ASCII-only limit the rest of that file already carries.
-- **Still open — `Object`**: `isFrozen`, `fromEntries`.
-- **Still open — `Array.of`** (constructor static).
+- ~~**`Object`**~~ DONE (1d51cbe): `isFrozen` (native, real), `fromEntries` (prelude).
+- ~~**`Array.of`**~~ DONE (1d51cbe, prelude).
 
 Adding an array method means two edits: the name must be added to the
 `isArrayMethod` gate list or the dispatch is never reached.
@@ -117,8 +117,8 @@ Current top buckets (`-v` for the per-case list):
 
 | n | cause | likely lane |
 |---|---|---|
-| 16 | `assertion failed: got \|…\|` | real semantic divergences — bisect individually, highest value |
 | 15 | `value is not a constructor` | `Proxy` / `Reflect` / resizable `ArrayBuffer` — need evaluator traps, NOT expressible in the prelude |
+| 14 | `assertion failed: got \|…\|` | real semantic divergences — bisect individually |
 | 12 | `cannot read property of a non-object` | missing builtin objects |
 | 6 | `cannot read property of undefined` | surfaced by e66377a; each needs a look |
 | 5 | parse errors | BigInt literals, `for await` |
