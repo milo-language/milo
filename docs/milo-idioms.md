@@ -134,6 +134,8 @@ let content = match readFile(path) {
 }
 ```
 
+`Result` also has `map`/`mapErr`/`andThen` for transforming without unwrapping. Note they **consume the receiver when the forwarded payload is non-Copy** — `map` forwards the `Err` payload, so `r.map(f)` consumes `r` when `E` is a `string`. That's what stops the receiver and the result from both owning the same buffer. `Option.map` never consumes, because `None` has no payload to forward.
+
 Reach for a nested `match` only when the types genuinely nest — patterns are one level deep (`Ok(Some(x))` does not parse), so `Result<Option<T>>` does require two levels.
 
 Note `unwrapOr`/`unwrapOrElse` are rejected on non-Copy payloads (`string`, `Vec<T>`) because they'd alias the heap buffer; `??` has no such restriction. Prefer `??`.
