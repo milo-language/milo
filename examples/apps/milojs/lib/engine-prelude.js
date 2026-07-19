@@ -515,3 +515,53 @@ class WeakSet {
     return this._s.delete(v);
   }
 }
+
+// --- Iterator.prototype accessors --------------------------------------------
+// The spec defines Iterator.prototype[@@toStringTag] and .constructor as
+// get/set ACCESSOR pairs, not data properties, with
+// SetterThatIgnoresPrototypeProperties semantics: assigning through an inheriting
+// object defines an own property on that object, while assigning directly on
+// Iterator.prototype itself throws. Real code reads these descriptors (frameworks
+// probe .constructor), so the shape has to be right, not just the value.
+Symbol.toStringTag = Symbol("Symbol.toStringTag");
+
+function __protoIgnoringSetter(home, key, label) {
+  return function (v) {
+    // a primitive receiver has nowhere to define an own property
+    if (this === undefined || this === null || typeof this !== "object") {
+      throw new TypeError("cannot set " + label + " on a non-object");
+    }
+    if (this === home) {
+      throw new TypeError("cannot set " + label + " on the prototype itself");
+    }
+    var existing = Object.getOwnPropertyDescriptor(this, key);
+    if (existing && existing.writable === false) {
+      throw new TypeError(label + " is not writable");
+    }
+    Object.defineProperty(this, key, {
+      value: v,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    return undefined;
+  };
+}
+
+Object.defineProperty(__iteratorProto, Symbol.toStringTag, {
+  get: function () {
+    return "Iterator";
+  },
+  set: __protoIgnoringSetter(__iteratorProto, Symbol.toStringTag, "@@toStringTag"),
+  enumerable: false,
+  configurable: true,
+});
+
+Object.defineProperty(__iteratorProto, "constructor", {
+  get: function () {
+    return Iterator;
+  },
+  set: __protoIgnoringSetter(__iteratorProto, "constructor", "constructor"),
+  enumerable: false,
+  configurable: true,
+});
