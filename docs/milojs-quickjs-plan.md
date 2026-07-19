@@ -9,7 +9,7 @@ update-when: a lane lands (update the score, delete the lane) or the sweep harne
 
 Working plan for driving `scripts/quickjs-sweep.ts` toward 100%. Written for agents
 picking up individual lanes; each lane is independent and lists exact anchors.
-Current: **65/149 cases (43.6%)**. Delete lanes here as they land.
+Current: **66/149 cases (44.3%)**. Delete lanes here as they land.
 
 Engine-level spec builtins now live in `lib/engine-prelude.js` (loaded by
 `milojs-engine.milo` into the shared `Prog` before the entry runs) — distinct from
@@ -56,18 +56,19 @@ and other constructor statics DO accept assignment, so they belong in the prelud
 
 Confirmed missing, grouped by where the fix goes:
 
-- **Prelude (easy)** — DONE for `Number.*`. Nothing else outstanding here.
-- **`eval.milo`, array methods** (add to the `isArrayMethod` name list, then
-  implement alongside `fill`/`at`): `flatMap`, `findLast`, `findLastIndex`,
-  `copyWithin`, `reduceRight`, and the iterator trio `entries`/`keys`/`values`
-  (these need an iterator protocol, so do them last).
-- **`builtins.milo`, string methods** (add to `stringMethod`): `at`, `replaceAll`,
-  `codePointAt`, `localeCompare`, `normalize`, `matchAll`.
-- **`Object`**: `isFrozen`, `fromEntries`.
-- **`Array.of`** (constructor static).
+- ~~**Prelude**~~ DONE — `Number.*` statics and constants (fea6143).
+- ~~**`eval.milo`, array methods**~~ DONE (fea6143, 54db2d7): `at`, `findLast`,
+  `findLastIndex`, `copyWithin`, `reduceRight`, `flatMap`. Still open: the
+  iterator trio `entries`/`keys`/`values`, which need an iterator protocol first.
+- ~~**`builtins.milo`, string methods**~~ DONE (1299f8c): `at`, `codePointAt`,
+  `replaceAll`, `localeCompare`, `normalize`. Still open: `matchAll` (needs the
+  regex iterator). Note `codePointAt`/`localeCompare` are byte-oriented, matching
+  the ASCII-only limit the rest of that file already carries.
+- **Still open — `Object`**: `isFrozen`, `fromEntries`.
+- **Still open — `Array.of`** (constructor static).
 
-Each is small and independent — good parallel work. Re-run the sweep after each
-group; several assertion-bucket cases are gated on more than one of these.
+Adding an array method means two edits: the name must be added to the
+`isArrayMethod` gate list or the dispatch is never reached.
 
 **All infrastructure blockers are gone.** Lanes 1 and 2 landed; every remaining
 failure is a genuine engine gap rather than a file that won't load. The profile is
