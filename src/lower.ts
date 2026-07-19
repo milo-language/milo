@@ -840,6 +840,9 @@ class LowerCtx {
           if (expr.method === "push") {
             return { kind: "StringPush", str: this.lowerExpr(expr.object), byte: this.lowerExpr(expr.args[0]), type, span: expr.span };
           }
+          if (expr.method === "pushStr") {
+            return { kind: "StringPushStr", str: this.lowerExpr(expr.object), other: this.lowerExpr(expr.args[0]), type, span: expr.span };
+          }
           if (expr.method === "substr") {
             return { kind: "StringSubstr", str: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), type, span: expr.span };
           }

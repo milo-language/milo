@@ -3783,6 +3783,8 @@ export class Codegen {
       }
       case "StringPush":
         return this.genStringPush(expr, lines);
+      case "StringPushStr":
+        return this.genStringPushStr(expr, lines);
       case "StringSubstr":
         return this.genStringSubstr(expr, lines);
       case "StringSlice":
@@ -5829,6 +5831,106 @@ export class Codegen {
     lines.push(`  ${newLen} = add i64 ${curLen}, 1`);
     lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
     // null-terminate for FFI safety
+    const nullPtr = this.nextTemp();
+    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${curData}, i64 ${newLen}`);
+    lines.push(`  store i8 0, ptr ${nullPtr}`);
+
+    return [lines, "void", "void"];
+  }
+
+  // Append a whole string in place. `s = s + t` reallocates and copies the
+  // accumulator on every concat (quadratic when building in a loop); this grows
+  // amortized like Vec.push and copies only the addition.
+  private genStringPushStr(expr: HIRExpr & { kind: "StringPushStr" }, lines: string[]): [string[], string, string] {
+    this.hasStringType = true;
+    this.needsMalloc = true;
+    this.needsFree = true;
+    this.needsMemcpy = true;
+
+    const [strPtrLines, strPtr] = this.genLValue(expr.str);
+    lines.push(...strPtrLines);
+    const [otherLines, otherVal] = this.genExpr(expr.other);
+    lines.push(...otherLines);
+
+    const addPtr = this.nextTemp();
+    lines.push(`  ${addPtr} = extractvalue %String ${otherVal}, 0`);
+    const addLen = this.nextTemp();
+    lines.push(`  ${addLen} = extractvalue %String ${otherVal}, 1`);
+
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
+    const lenPtr = this.nextTemp();
+    lines.push(`  ${lenPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
+    const capPtr = this.nextTemp();
+    lines.push(`  ${capPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 2`);
+    const oldBuf = this.nextTemp();
+    lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+    const cap = this.nextTemp();
+    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+
+    const newLen = this.nextTemp();
+    lines.push(`  ${newLen} = add i64 ${len}, ${addLen}`);
+    // +1 keeps room for the null terminator, matching StringPush
+    const need = this.nextTemp();
+    lines.push(`  ${need} = add i64 ${newLen}, 1`);
+    const needsGrow = this.nextTemp();
+    lines.push(`  ${needsGrow} = icmp ugt i64 ${need}, ${cap}`);
+    const growLabel = this.nextLabel("strs.grow");
+    const inPlaceLabel = this.nextLabel("strs.inplace");
+    const endLabel = this.nextLabel("strs.end");
+    lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${inPlaceLabel}`);
+
+    lines.push(`${growLabel}:`);
+    const doubled = this.nextTemp();
+    lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
+    const doubleFits = this.nextTemp();
+    lines.push(`  ${doubleFits} = icmp ugt i64 ${doubled}, ${need}`);
+    const newCap = this.nextTemp();
+    lines.push(`  ${newCap} = select i1 ${doubleFits}, i64 ${doubled}, i64 ${need}`);
+    const newBuf = this.nextTemp();
+    lines.push(`  ${newBuf} = call ptr @malloc(i64 ${newCap})`);
+    const hasData = this.nextTemp();
+    lines.push(`  ${hasData} = icmp ne ptr ${oldBuf}, null`);
+    const copyLabel = this.nextLabel("strs.copy");
+    const appendLabel = this.nextLabel("strs.append");
+    lines.push(`  br i1 ${hasData}, label %${copyLabel}, label %${appendLabel}`);
+    lines.push(`${copyLabel}:`);
+    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${oldBuf}, i64 ${len})`);
+    lines.push(`  br label %${appendLabel}`);
+    lines.push(`${appendLabel}:`);
+    // Append BEFORE freeing the old buffer: `s.pushStr(s)` makes `addPtr` alias
+    // it, and freeing first would read released memory.
+    const growDst = this.nextTemp();
+    lines.push(`  ${growDst} = getelementptr i8, ptr ${newBuf}, i64 ${len}`);
+    lines.push(`  call ptr @memcpy(ptr ${growDst}, ptr ${addPtr}, i64 ${addLen})`);
+    // cap == 0 marks a static/unowned buffer — never free those
+    const canFree = this.nextTemp();
+    lines.push(`  ${canFree} = icmp ugt i64 ${cap}, 0`);
+    const freeLabel = this.nextLabel("strs.free");
+    const storeLabel = this.nextLabel("strs.store");
+    lines.push(`  br i1 ${canFree}, label %${freeLabel}, label %${storeLabel}`);
+    lines.push(`${freeLabel}:`);
+    lines.push(`  call void @free(ptr ${oldBuf})`);
+    lines.push(`  br label %${storeLabel}`);
+    lines.push(`${storeLabel}:`);
+    lines.push(`  store ptr ${newBuf}, ptr ${dataPtr}`);
+    lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
+    lines.push(`  br label %${endLabel}`);
+
+    lines.push(`${inPlaceLabel}:`);
+    // Self-append in the in-place path is safe: source [0,len) and destination
+    // [len,2*len) cannot overlap.
+    const dst = this.nextTemp();
+    lines.push(`  ${dst} = getelementptr i8, ptr ${oldBuf}, i64 ${len}`);
+    lines.push(`  call ptr @memcpy(ptr ${dst}, ptr ${addPtr}, i64 ${addLen})`);
+    lines.push(`  br label %${endLabel}`);
+
+    lines.push(`${endLabel}:`);
+    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+    const curData = this.nextTemp();
+    lines.push(`  ${curData} = load ptr, ptr ${dataPtr}`);
     const nullPtr = this.nextTemp();
     lines.push(`  ${nullPtr} = getelementptr i8, ptr ${curData}, i64 ${newLen}`);
     lines.push(`  store i8 0, ptr ${nullPtr}`);

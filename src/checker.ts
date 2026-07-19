@@ -36,7 +36,7 @@ export interface VarInfo {
 // receiver with a live borrow (slice or active for-in). Read-only and in-place
 // element ops are intentionally absent.
 const MUTATING_COLLECTION_METHODS = new Set([
-  "push", "pop", "insert", "remove", "reverse", "swap", "sort", "sortBy", "sortByKey",
+  "push", "pushStr", "pop", "insert", "remove", "reverse", "swap", "sort", "sortBy", "sortByKey",
 ]);
 
 export interface CaptureInfo {
@@ -5021,6 +5021,19 @@ export class TypeChecker {
             if (!typeEq(u8t, argType) && argType.tag !== "unknown") {
               this.error(`string.push: expected u8, got ${typeName(argType)}`, sp);
             }
+            return this.setType(expr, { tag: "void" });
+          }
+          if (expr.method === "pushStr") {
+            if (expr.args.length !== 1) { this.error(`'pushStr' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot push to immutable string`, sp, `declare with 'var' to make it mutable`);
+            }
+            const argType = this.checkExpr(expr.args[0]);
+            const argInner = this.deref(argType);
+            if (argInner.tag !== "string" && argInner.tag !== "unknown") {
+              this.error(`string.pushStr: expected string, got ${typeName(argType)}`, sp);
+            }
+            this.setAutoBorrowChecked(expr.args[0], false);
             return this.setType(expr, { tag: "void" });
           }
           if (expr.method === "substr") {

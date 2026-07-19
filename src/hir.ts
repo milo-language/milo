@@ -50,6 +50,7 @@ export type HIRExpr =
   | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringWithCapacity"; capacity: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringPush"; str: HIRExpr; byte: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "StringPushStr"; str: HIRExpr; other: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringSubstr"; str: HIRExpr; start: HIRExpr; end: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringSlice"; str: HIRExpr; start: HIRExpr; end: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecSlice"; vec: HIRExpr; start: HIRExpr; end: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }

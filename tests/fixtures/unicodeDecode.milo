@@ -1,0 +1,72 @@
+// Allocation-free UTF-8 scanning: decodeCodepoint returns value + byte width so
+// a lexer advances its own cursor without materializing a Vec<i32>.
+// Malformed input must never read past the end and never return a partial
+// codepoint — every bad case yields U+FFFD (65533) with size 1 so a scan still
+// makes progress.
+// @expect: bytes=10 cps=4 utf16units=5
+// @expect: at 0 value=97 size=1
+// @expect: at 1 value=233 size=2
+// @expect: at 3 value=28450 size=3
+// @expect: at 6 value=127881 size=4
+// @expect: roundtrip ok=true
+// @expect: surrogates 55356 57225 back=127881
+// @expect: lone continuation=65533
+// @expect: truncated lead=65533
+// @expect: overlong=65533
+// @expect: surrogate encoded=65533
+// @expect: out of bounds=65533
+
+from "std/unicode" import {
+    decodeCodepoint, encodeCodepoint, codepointCount, utf16UnitCount, highSurrogate, lowSurrogate, fromSurrogatePair
+}
+
+fn main() {
+    let s = "aé漢🎉"
+    var units: i64 = 0
+    var u: i64 = 0
+    while u < s.len {
+        let c = decodeCodepoint(s, u)
+        units = units + utf16UnitCount(c.value)
+        u = u + c.size
+    }
+    print($"bytes={s.len} cps={codepointCount(s)} utf16units={units}")
+
+    var i: i64 = 0
+    var out = ""
+    while i < s.len {
+        let cp = decodeCodepoint(s, i)
+        print($"at {i} value={cp.value} size={cp.size}")
+        encodeCodepoint(out, cp.value)
+        i = i + cp.size
+    }
+    print($"roundtrip ok={out == s}")
+
+    let emoji = decodeCodepoint("🎉", 0)
+    let hi = highSurrogate(emoji.value)
+    let lo = lowSurrogate(emoji.value)
+    print($"surrogates {hi} {lo} back={fromSurrogatePair(hi, lo)}")
+
+    var lone = ""
+    lone.push(128)
+    print($"lone continuation={decodeCodepoint(lone, 0).value}")
+
+    var trunc = ""
+    trunc.push(226)
+    trunc.push(150)
+    print($"truncated lead={decodeCodepoint(trunc, 0).value}")
+
+    // C0 80 is an overlong encoding of U+0000
+    var overlong = ""
+    overlong.push(192)
+    overlong.push(128)
+    print($"overlong={decodeCodepoint(overlong, 0).value}")
+
+    // ED A0 80 is U+D800, a surrogate — not a legal UTF-8 codepoint
+    var sur = ""
+    sur.push(237)
+    sur.push(160)
+    sur.push(128)
+    print($"surrogate encoded={decodeCodepoint(sur, 0).value}")
+
+    print($"out of bounds={decodeCodepoint(s, 999).value}")
+}

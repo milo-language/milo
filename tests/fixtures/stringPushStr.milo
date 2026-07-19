@@ -1,0 +1,38 @@
+// In-place string append. `s = s + t` reallocates and recopies the whole
+// accumulator per concat; pushStr grows amortized and copies only the addition.
+// Covers the cases the growth path can get wrong: a cap==0 static buffer (must
+// not be freed), self-append (source aliases the buffer being grown), and an
+// empty addition.
+// @expect: ab0ab1ab2ab3ab4
+// @expect: len=15
+// @expect: xyxy
+// @expect: empty len=0
+// @expect: head-tail
+// @expect: src still=tail
+
+fn main() {
+    var out = ""
+    var i: i64 = 0
+    while i < 5 {
+        out.pushStr("ab")
+        out.push(48 + i as u8)
+        i = i + 1
+    }
+    print(out)
+    print($"len={out.len}")
+
+    // self-append: addPtr aliases the buffer being reallocated
+    var s = "xy"
+    s.pushStr(s)
+    print(s)
+
+    var e = String.withCapacity(8)
+    e.pushStr("")
+    print($"empty len={e.len}")
+
+    let src = "tail"
+    var t = "head-"
+    t.pushStr(src)
+    print(t)
+    print($"src still={src}")
+}

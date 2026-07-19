@@ -90,28 +90,137 @@ fn isAlphaStr(s: &string): bool {
     return true
 }
 
-// Decode UTF-8 string into Unicode codepoints.
+// U+FFFD REPLACEMENT CHARACTER — substituted for any malformed sequence.
+let REPLACEMENT_CHAR: i32 = 65533
+
+// One decoded codepoint plus the number of bytes it occupied, so a caller can
+// advance without re-inspecting the lead byte.
+struct CodePoint {
+    value: i32,
+    size: i64,
+}
+
+// Decode the UTF-8 codepoint starting at byte offset `at`, without allocating.
+// This is the primitive to scan text with: a lexer keeps its own byte cursor and
+// advances by `.size`, so no Vec<i32> is materialized just to walk a string.
+//
+// Malformed input never reads out of bounds and never returns a partial
+// codepoint: a bad lead byte, a truncated tail, or a non-continuation byte all
+// yield U+FFFD with size 1, so a scan advances and terminates on any input.
+// Overlong forms and surrogate-range values are rejected the same way, which is
+// what keeps decode/encode round-trips honest.
+fn decodeCodepoint(s: &string, at: i64): CodePoint {
+    if at < 0 || at >= s.len {
+        return CodePoint {
+            value: REPLACEMENT_CHAR, size: 1
+        }
+    }
+    let b = s[at]
+    if b < 128 {
+        return CodePoint {
+            value: b as i32, size: 1
+        }
+    }
+    var size: i64 = 0
+    var cp: i32 = 0
+    if (b & 224) == 192 {
+        size = 2
+        cp = (b & 31) as i32
+    } else if (b & 240) == 224 {
+        size = 3
+        cp = (b & 15) as i32
+    } else if (b & 248) == 240 {
+        size = 4
+        cp = (b & 7) as i32
+    } else {
+        // continuation byte or 5/6-byte form: not a legal lead
+        return CodePoint {
+            value: REPLACEMENT_CHAR, size: 1
+        }
+    }
+    if at + size > s.len {
+        return CodePoint {
+            value: REPLACEMENT_CHAR, size: 1
+        }
+    }
+    var k: i64 = 1
+    while k < size {
+        let c = s[at + k]
+        if (c & 192) != 128 {
+            return CodePoint {
+                value: REPLACEMENT_CHAR, size: 1
+            }
+        }
+        cp = (cp << 6) | ((c & 63) as i32)
+        k = k + 1
+    }
+    // Reject overlongs, surrogates, and out-of-range: each has a shorter or no
+    // legal encoding, so accepting them would let two byte sequences compare
+    // unequal while decoding to the same codepoint.
+    if size == 2 && cp < 128 {
+        return CodePoint {
+            value: REPLACEMENT_CHAR, size: 1
+        }
+    }
+    if size == 3 && cp < 2048 {
+        return CodePoint {
+            value: REPLACEMENT_CHAR, size: 1
+        }
+    }
+    if size == 4 && cp < 65536 {
+        return CodePoint {
+            value: REPLACEMENT_CHAR, size: 1
+        }
+    }
+    if cp > 1114111 || (cp >= 55296 && cp <= 57343) {
+        return CodePoint {
+            value: REPLACEMENT_CHAR, size: 1
+        }
+    }
+    return CodePoint {
+        value: cp, size: size
+    }
+}
+
+// Byte offset of the next codepoint boundary at or after `at`.
+fn nextCodepointBoundary(s: &string, at: i64): i64 {
+    let cp = decodeCodepoint(s, at)
+    return at + cp.size
+}
+
+// Append `cp` to `out` as UTF-8. Invalid codepoints encode as U+FFFD rather
+// than emitting bytes that would not decode back.
+fn encodeCodepoint(out: &mut string, cp: i32): void {
+    var c = cp
+    if c < 0 || c > 1114111 || (c >= 55296 && c <= 57343) {
+        c = REPLACEMENT_CHAR
+    }
+    if c < 128 {
+        out.push(c as u8)
+    } else if c < 2048 {
+        out.push((192 | (c >> 6)) as u8)
+        out.push((128 | (c & 63)) as u8)
+    } else if c < 65536 {
+        out.push((224 | (c >> 12)) as u8)
+        out.push((128 | ((c >> 6) & 63)) as u8)
+        out.push((128 | (c & 63)) as u8)
+    } else {
+        out.push((240 | (c >> 18)) as u8)
+        out.push((128 | ((c >> 12) & 63)) as u8)
+        out.push((128 | ((c >> 6) & 63)) as u8)
+        out.push((128 | (c & 63)) as u8)
+    }
+}
+
+// Decode UTF-8 string into Unicode codepoints. Allocates; prefer
+// decodeCodepoint in a scan loop.
 fn codepoints(s: &string): Vec<i32> {
     var result: Vec<i32> = Vec.new()
     var i: i64 = 0
     while i < s.len {
-        let b = s[i]
-        if b < 128 {
-            result.push(b as i32)
-            i = i + 1
-        } else if (b & 224) == 192 {
-            let cp = (((b & 31) as i32) << 6) | ((s[i + 1] & 63) as i32)
-            result.push(cp)
-            i = i + 2
-        } else if (b & 240) == 224 {
-            let cp = (((b & 15) as i32) << 12) | (((s[i + 1] & 63) as i32) << 6) | ((s[i + 2] & 63) as i32)
-            result.push(cp)
-            i = i + 3
-        } else {
-            let cp = (((b & 7) as i32) << 18) | (((s[i + 1] & 63) as i32) << 12) | (((s[i + 2] & 63) as i32) << 6) | ((s[i + 3] & 63) as i32)
-            result.push(cp)
-            i = i + 4
-        }
+        let cp = decodeCodepoint(s, i)
+        result.push(cp.value)
+        i = i + cp.size
     }
     return result
 }
@@ -121,17 +230,36 @@ fn codepointCount(s: &string): i64 {
     var count: i64 = 0
     var i: i64 = 0
     while i < s.len {
-        let b = s[i]
-        if b < 128 {
-            i = i + 1
-        } else if (b & 224) == 192 {
-            i = i + 2
-        } else if (b & 240) == 224 {
-            i = i + 3
-        } else {
-            i = i + 4
-        }
+        i = i + decodeCodepoint(s, i).size
         count = count + 1
     }
     return count
+}
+
+// UTF-16 conversion. A codepoint above the BMP is a single codepoint but TWO
+// UTF-16 code units, encoded as a surrogate pair — so a byte- or
+// codepoint-oriented count is not a UTF-16 index. Needed by anything crossing a
+// UTF-16 boundary (Windows wide-char APIs, JVM strings).
+fn isSupplementary(cp: i32): bool {
+    return cp > 65535
+}
+
+fn utf16UnitCount(cp: i32): i64 {
+    if isSupplementary(cp) {
+        return 2
+    }
+    return 1
+}
+
+fn highSurrogate(cp: i32): i32 {
+    return 55296 + ((cp - 65536) >> 10)
+}
+
+fn lowSurrogate(cp: i32): i32 {
+    return 56320 + ((cp - 65536) & 1023)
+}
+
+// Combine a surrogate pair back into a single codepoint.
+fn fromSurrogatePair(high: i32, low: i32): i32 {
+    return 65536 + ((high - 55296) << 10) + (low - 56320)
 }
