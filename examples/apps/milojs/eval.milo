@@ -779,6 +779,10 @@ fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
     if st.objects[o].frozen {
         return
     }
+    // non-extensible: existing properties stay writable, new ones are refused
+    if st.objects[o].noExtend && objOwnIndex(st, o, key) < 0 && !st.objects[o].isArray {
+        return
+    }
     if st.objects[o].taBuf >= 0 {
         let ti = asArrayIndex(key)
         if ti >= 0 {
@@ -988,6 +992,10 @@ let NATIVE_HTTP_UNREGISTER: i64 = 74
 let NATIVE_WRITE_FILE: i64 = 75
 let NATIVE_GC: i64 = 76
 let NATIVE_OBJECT_ISFROZEN: i64 = 77
+let NATIVE_OBJECT_PREVENTEXT: i64 = 100
+let NATIVE_OBJECT_ISEXT: i64 = 101
+let NATIVE_OBJECT_SEAL: i64 = 102
+let NATIVE_OBJECT_ISSEALED: i64 = 103
 let NATIVE_ARRAYBUFFER: i64 = 78
 // the typed-array constructors occupy a contiguous block so the element kind is
 // just (id - NATIVE_TA_BASE); keep in step with the TA_* order in runtime.milo
@@ -1974,6 +1982,38 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         return makeTypedArray(st, kind, argVals)
     }
+    if id == NATIVE_OBJECT_PREVENTEXT || id == NATIVE_OBJECT_SEAL {
+        if argVals.len() > 0 {
+            let h = objHandle(argVals[0])
+            if h >= 0 {
+                st.objects[h].noExtend = true
+                if id == NATIVE_OBJECT_SEAL {
+                    st.objects[h].sealed = true
+                }
+            }
+            return cloneValue(argVals[0])
+        }
+        return JSValue.Undefined
+    }
+    if id == NATIVE_OBJECT_ISEXT {
+        if argVals.len() > 0 {
+            let h = objHandle(argVals[0])
+            if h >= 0 {
+                return JSValue.Bool(!st.objects[h].noExtend && !st.objects[h].frozen)
+            }
+        }
+        // primitives are never extensible
+        return JSValue.Bool(false)
+    }
+    if id == NATIVE_OBJECT_ISSEALED {
+        if argVals.len() > 0 {
+            let h = objHandle(argVals[0])
+            if h >= 0 {
+                return JSValue.Bool(st.objects[h].sealed || st.objects[h].frozen)
+            }
+        }
+        return JSValue.Bool(true)
+    }
     if id == NATIVE_OBJECT_ISFROZEN {
         if argVals.len() > 0 {
             let fh = objHandle(argVals[0])
@@ -2675,6 +2715,10 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "entries", JSValue.Native(NATIVE_OBJECT_ENTRIES))
     objSet(st, objectCtor, "freeze", JSValue.Native(NATIVE_OBJECT_FREEZE))
     objSet(st, objectCtor, "isFrozen", JSValue.Native(NATIVE_OBJECT_ISFROZEN))
+    objSet(st, objectCtor, "preventExtensions", JSValue.Native(NATIVE_OBJECT_PREVENTEXT))
+    objSet(st, objectCtor, "isExtensible", JSValue.Native(NATIVE_OBJECT_ISEXT))
+    objSet(st, objectCtor, "seal", JSValue.Native(NATIVE_OBJECT_SEAL))
+    objSet(st, objectCtor, "isSealed", JSValue.Native(NATIVE_OBJECT_ISSEALED))
     objSet(st, objectCtor, "create", JSValue.Native(NATIVE_OBJECT_CREATE))
     objSet(st, objectCtor, "getPrototypeOf", JSValue.Native(NATIVE_OBJECT_GETPROTO))
     objSet(st, objectCtor, "setPrototypeOf", JSValue.Native(NATIVE_OBJECT_SETPROTO))
@@ -4351,7 +4395,7 @@ fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
             let ov = evalExpr(prog, objIdx, st, scope)
             let o = objHandle(ov)
             if o >= 0 {
-                if st.objects[o].frozen {
+                if st.objects[o].frozen || st.objects[o].sealed {
                     return JSValue.Bool(false)
                 }
                 objDeleteKey(st, o, name)
@@ -4366,7 +4410,7 @@ fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
             let key = toStr(kv)
             let o = objHandle(ov)
             if o >= 0 {
-                if st.objects[o].frozen {
+                if st.objects[o].frozen || st.objects[o].sealed {
                     return JSValue.Bool(false)
                 }
                 objDeleteKey(st, o, key)
