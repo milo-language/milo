@@ -17,6 +17,9 @@ from "./value" import {
 from "./runtime" import {
     Interp, newObject, objSet
 }
+from "std/math" import {
+    mathSqrt, mathPow, mathExp, mathLog, mathLog2, mathLog10, mathSin, mathCos, mathTan, mathAtan2
+}
 from "std/unicode" import {
     decodeCodepoint, utf16UnitCount, highSurrogate, lowSurrogate, isSupplementary, encodeCodepoint
 }
@@ -684,10 +687,6 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
 // ── Math ── pure Milo for the arithmetic ops; only sqrt/pow reach for the
 // hardware/libc version (sqrt must be IEEE correctly-rounded, which is a CPU
 // instruction, and pow is hard to get last-bit-accurate by hand).
-
-extern fn sqrt(x: f64): f64
-
-extern fn pow(x: f64, y: f64): f64
 
 let TWO53: f64 = 9007199254740992.0
 

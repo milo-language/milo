@@ -909,6 +909,17 @@ let NATIVE_MATH_ROUND: i64 = 9
 let NATIVE_MATH_TRUNC: i64 = 10
 let NATIVE_MATH_ABS: i64 = 11
 let NATIVE_MATH_SIGN: i64 = 12
+let NATIVE_MATH_LOG2: i64 = 98
+let NATIVE_MATH_LOG10: i64 = 99
+let NATIVE_MATH_EXP: i64 = 89
+let NATIVE_MATH_LOG: i64 = 90
+let NATIVE_MATH_SIN: i64 = 91
+let NATIVE_MATH_COS: i64 = 92
+let NATIVE_MATH_TAN: i64 = 93
+let NATIVE_MATH_ASIN: i64 = 94
+let NATIVE_MATH_ACOS: i64 = 95
+let NATIVE_MATH_ATAN: i64 = 96
+let NATIVE_MATH_ATAN2: i64 = 97
 let NATIVE_MATH_SQRT: i64 = 13
 let NATIVE_MATH_POW: i64 = 14
 let NATIVE_MATH_MIN: i64 = 15
@@ -1159,6 +1170,11 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         return mjJsonParse(text, st)
     }
     if id >= NATIVE_MATH_FLOOR && id <= NATIVE_MATH_RANDOM {
+        return mathNative(id, argVals, st)
+    }
+    // the transcendentals were appended after the original block, so they sit
+    // outside the contiguous FLOOR..RANDOM range the gate above covers
+    if (id >= NATIVE_MATH_EXP && id <= NATIVE_MATH_ATAN2) || id == NATIVE_MATH_LOG2 || id == NATIVE_MATH_LOG10 {
         return mathNative(id, argVals, st)
     }
     if id == NATIVE_GC {
@@ -2151,6 +2167,43 @@ fn mathNative(id: i64, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     if id == NATIVE_MATH_SIGN {
         return JSValue.Number(mjSign(x))
     }
+    if id == NATIVE_MATH_EXP {
+        return JSValue.Number(mathExp(x))
+    }
+    if id == NATIVE_MATH_LOG {
+        return JSValue.Number(mathLog(x))
+    }
+    if id == NATIVE_MATH_LOG2 {
+        return JSValue.Number(mathLog2(x))
+    }
+    if id == NATIVE_MATH_LOG10 {
+        return JSValue.Number(mathLog10(x))
+    }
+    if id == NATIVE_MATH_SIN {
+        return JSValue.Number(mathSin(x))
+    }
+    if id == NATIVE_MATH_COS {
+        return JSValue.Number(mathCos(x))
+    }
+    if id == NATIVE_MATH_TAN {
+        return JSValue.Number(mathTan(x))
+    }
+    if id == NATIVE_MATH_ASIN {
+        return JSValue.Number(mathAtan2(x, mathSqrt(1.0 - x * x)))
+    }
+    if id == NATIVE_MATH_ACOS {
+        return JSValue.Number(mathAtan2(mathSqrt(1.0 - x * x), x))
+    }
+    if id == NATIVE_MATH_ATAN {
+        return JSValue.Number(mathAtan2(x, 1.0))
+    }
+    if id == NATIVE_MATH_ATAN2 {
+        var y2 = 0.0
+        if args.len() > 1 {
+            y2 = toNum(args[1])
+        }
+        return JSValue.Number(mathAtan2(x, y2))
+    }
     if id == NATIVE_MATH_SQRT {
         return JSValue.Number(sqrt(x))
     }
@@ -2585,6 +2638,23 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, math, "min", JSValue.Native(NATIVE_MATH_MIN))
     objSet(st, math, "max", JSValue.Native(NATIVE_MATH_MAX))
     objSet(st, math, "random", JSValue.Native(NATIVE_MATH_RANDOM))
+    objSet(st, math, "exp", JSValue.Native(NATIVE_MATH_EXP))
+    objSet(st, math, "log", JSValue.Native(NATIVE_MATH_LOG))
+    objSet(st, math, "log2", JSValue.Native(NATIVE_MATH_LOG2))
+    objSet(st, math, "log10", JSValue.Native(NATIVE_MATH_LOG10))
+    objSet(st, math, "sin", JSValue.Native(NATIVE_MATH_SIN))
+    objSet(st, math, "cos", JSValue.Native(NATIVE_MATH_COS))
+    objSet(st, math, "tan", JSValue.Native(NATIVE_MATH_TAN))
+    objSet(st, math, "asin", JSValue.Native(NATIVE_MATH_ASIN))
+    objSet(st, math, "acos", JSValue.Native(NATIVE_MATH_ACOS))
+    objSet(st, math, "atan", JSValue.Native(NATIVE_MATH_ATAN))
+    objSet(st, math, "atan2", JSValue.Native(NATIVE_MATH_ATAN2))
+    objSet(st, math, "LN2", JSValue.Number(0.6931471805599453))
+    objSet(st, math, "LN10", JSValue.Number(2.302585092994046))
+    objSet(st, math, "LOG2E", JSValue.Number(1.4426950408889634))
+    objSet(st, math, "LOG10E", JSValue.Number(0.4342944819032518))
+    objSet(st, math, "SQRT2", JSValue.Number(1.4142135623730951))
+    objSet(st, math, "SQRT1_2", JSValue.Number(0.7071067811865476))
     objSet(st, math, "PI", JSValue.Number(3.141592653589793))
     objSet(st, math, "E", JSValue.Number(2.718281828459045))
     scopeDefine(st, 0, "Math", JSValue.Obj(math))
@@ -3008,6 +3078,20 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             match ov {
                 JSValue.Obj(o) => {
                     return getMemberDyn(prog, o, name, st)
+                }
+                JSValue.Number(_nv) => {
+                    // number primitives answer these by dispatch; without this a
+                    // read yields undefined, which breaks feature detection
+                    if isPrimitiveMethodName(name) {
+                        return makeBoundMethod(st, cloneValue(ov), name.clone())
+                    }
+                    return JSValue.Undefined
+                }
+                JSValue.Bool(_bv) => {
+                    if isPrimitiveMethodName(name) {
+                        return makeBoundMethod(st, cloneValue(ov), name.clone())
+                    }
+                    return JSValue.Undefined
                 }
                 JSValue.Str(s) => {
                     if name == "length" {
@@ -3441,6 +3525,20 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             match ov {
                 JSValue.Obj(o) => {
                     return getMemberDyn(prog, o, name, st)
+                }
+                JSValue.Number(_nv) => {
+                    // number primitives answer these by dispatch; without this a
+                    // read yields undefined, which breaks feature detection
+                    if isPrimitiveMethodName(name) {
+                        return makeBoundMethod(st, cloneValue(ov), name.clone())
+                    }
+                    return JSValue.Undefined
+                }
+                JSValue.Bool(_bv) => {
+                    if isPrimitiveMethodName(name) {
+                        return makeBoundMethod(st, cloneValue(ov), name.clone())
+                    }
+                    return JSValue.Undefined
                 }
                 JSValue.Str(s) => {
                     if name == "length" {
@@ -4353,6 +4451,10 @@ fn isBoundThisSet(st: &Interp, o: i64): bool {
 // and method extraction (`Array.prototype.slice.call(args)`). These predicates say
 // whether a receiver answers to a name, so the member paths can hand back a bound
 // method instead of undefined.
+fn isPrimitiveMethodName(n: &string): bool {
+    return n == "toString" || n == "valueOf" || n == "toFixed" || n == "toPrecision" || n == "toExponential" || n == "toLocaleString"
+}
+
 fn isStringMethodName(n: &string): bool {
     return n == "charAt" || n == "charCodeAt" || n == "codePointAt" || n == "at" || n == "indexOf" || n == "lastIndexOf" || n == "includes" || n == "startsWith" || n == "endsWith" || n == "slice" || n == "substring" || n == "substr" || n == "split" || n == "replace" || n == "replaceAll" || n == "toUpperCase" || n == "toLowerCase" || n == "trim" || n == "trimStart" || n == "trimEnd" || n == "trimLeft" || n == "trimRight" || n == "padStart" || n == "padEnd" || n == "repeat" || n == "concat" || n == "localeCompare" || n == "normalize" || n == "match" || n == "toString" || n == "valueOf"
 }
@@ -5837,6 +5939,12 @@ fn primitiveMethod(name: &string, recv: &JSValue, args: &Vec<JSValue>): JSValue 
         _ => {
         }
     }
+    if name == "toExponential" {
+        if args.len() == 0 {
+            return JSValue.Str(numToExponential(toNum(recv), 0, false))
+        }
+        return JSValue.Str(numToExponential(toNum(recv), toNum(args[0]) as i64, true))
+    }
     if name == "toFixed" || name == "toPrecision" {
         var digits: i64 = 0
         if args.len() > 0 {
@@ -5863,7 +5971,7 @@ fn primitiveMethod(name: &string, recv: &JSValue, args: &Vec<JSValue>): JSValue 
 fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
     // Methods every primitive answers to. JS boxes the receiver for these; here
     // they are answered directly, which covers the cases real code uses.
-    if name == "toString" || name == "valueOf" || name == "toFixed" || name == "toPrecision" || name == "toLocaleString" {
+    if name == "toString" || name == "valueOf" || name == "toFixed" || name == "toPrecision" || name == "toExponential" || name == "toLocaleString" {
         let isPrimitive = objHandle(recv) < 0 && funcHandle(recv) < 0
         if isPrimitive {
             let argVals = evalArgs(prog, argsIdx, st, scope)

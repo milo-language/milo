@@ -83,8 +83,48 @@ fn floatG(n: f64, prec: i32): string {
     var buf: [u8; 40] = [0; 40]
     unsafe {
         snprintf(buf, 40, "%.*g", prec, n)
-        return _cstrToString(buf as *u8)
+        return stripExpZeros(_cstrToString(buf as *u8))
     }
+}
+
+// C's %g pads the exponent to at least two digits (1e-07); JS does not (1e-7).
+// Only leading zeros go — 1e+21 and 1e-100 are already correct.
+fn stripExpZeros(s: &string): string {
+    var e: i64 = -1
+    var i: i64 = 0
+    while i < s.len() {
+        if s[i] == 'e' || s[i] == 'E' {
+            e = i
+        }
+        i = i + 1
+    }
+    if e < 0 || e + 2 >= s.len() {
+        return s.clone()
+    }
+    var signAt = e + 1
+    if s[signAt] != '+' && s[signAt] != '-' {
+        return s.clone()
+    }
+    var d = signAt + 1
+    // keep at least one digit
+    while d < s.len() - 1 && s[d] == '0' {
+        d = d + 1
+    }
+    if d == signAt + 1 {
+        return s.clone()
+    }
+    var out = String.withCapacity(s.len())
+    var k: i64 = 0
+    while k <= signAt {
+        out.push(s[k])
+        k = k + 1
+    }
+    var j = d
+    while j < s.len() {
+        out.push(s[j])
+        j = j + 1
+    }
+    return out
 }
 
 // JS Number→string: integrals without ".0", otherwise the shortest decimal
@@ -266,6 +306,51 @@ fn numToPrecision(n: f64, digits: i64): string {
         decimals = 0
     }
     return numToFixed(n, decimals)
+}
+
+// Number.prototype.toExponential — d.dddde±x, with `digits` fraction digits
+// (or the shortest form that round-trips when the argument is omitted).
+fn numToExponential(n: f64, digits: i64, haveDigits: bool): string {
+    if n != n {
+        return "NaN"
+    }
+    if !isFiniteF(n) {
+        if n > 0.0 {
+            return "Infinity"
+        }
+        return "-Infinity"
+    }
+    var neg = false
+    var mag = n
+    if mag < 0.0 {
+        neg = true
+        mag = 0.0 - mag
+    }
+    var exp: i64 = 0
+    if mag != 0.0 {
+        while mag >= 10.0 {
+            mag = mag / 10.0
+            exp = exp + 1
+        }
+        while mag < 1.0 {
+            mag = mag * 10.0
+            exp = exp - 1
+        }
+    }
+    var mant = ""
+    if haveDigits {
+        mant = numToFixed(mag, digits)
+    } else {
+        mant = numToStr(mag)
+    }
+    var out = mant
+    if neg {
+        out = "-" + out
+    }
+    if exp < 0 {
+        return out + "e-" + i64ToStr(0 - exp)
+    }
+    return out + "e+" + i64ToStr(exp)
 }
 
 // Number.prototype.toFixed — fixed-point with `digits` decimals, half-up.

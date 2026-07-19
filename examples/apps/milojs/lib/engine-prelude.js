@@ -786,3 +786,52 @@ JSON.parse = function (text, reviver) {
   }
   return walk({ "": parsed }, "");
 };
+
+// --- Math gap-fillers --------------------------------------------------------
+// Expressible on top of the natives that exist. Math.fround is NOT here: rounding
+// to f32 precision needs a bit-level reinterpret the engine has no primitive for,
+// and an approximation would be wrong in exactly the cases people use it to test.
+Math.cbrt = function (x) {
+  if (x === 0 || !isFinite(x) || x !== x) return x;
+  return x < 0 ? -Math.pow(-x, 1 / 3) : Math.pow(x, 1 / 3);
+};
+Math.log1p = function (x) {
+  return Math.log(1 + x);
+};
+Math.expm1 = function (x) {
+  return Math.exp(x) - 1;
+};
+Math.hypot = function () {
+  var sum = 0;
+  for (var i = 0; i < arguments.length; i++) {
+    var v = Number(arguments[i]);
+    if (v !== v) return NaN;
+    sum += v * v;
+  }
+  return Math.sqrt(sum);
+};
+Math.clz32 = function (x) {
+  var v = x >>> 0;
+  if (v === 0) return 32;
+  var n = 0;
+  while ((v & 0x80000000) === 0) {
+    v = v << 1;
+    n++;
+  }
+  return n;
+};
+Math.imul = function (a, b) {
+  // 32-bit multiply via 16-bit halves, so the product never leaves the range
+  // where doubles are exact
+  var ah = (a >>> 16) & 0xffff, al = a & 0xffff;
+  var bh = (b >>> 16) & 0xffff, bl = b & 0xffff;
+  return (al * bl + (((ah * bl + al * bh) << 16) >>> 0)) | 0;
+};
+Math.sinh = function (x) { return (Math.exp(x) - Math.exp(-x)) / 2; };
+Math.cosh = function (x) { return (Math.exp(x) + Math.exp(-x)) / 2; };
+Math.tanh = function (x) {
+  if (x === Infinity) return 1;
+  if (x === -Infinity) return -1;
+  var e = Math.exp(2 * x);
+  return (e - 1) / (e + 1);
+};
