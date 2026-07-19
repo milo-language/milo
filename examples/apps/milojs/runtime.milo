@@ -187,6 +187,10 @@ struct Interp {
     nativeProps: Vec<i64>,
     // property bag for statics on the Date constructor (Date.now)
     dateCtorProps: i64,
+    // shared prototype for all iterator objects, so the helper methods installed
+    // by the prelude are reachable from array iterators too (a real proto chain
+    // rather than copying methods onto every instance)
+    iterProtoObj: i64,
     // the Array constructor object, so `new Array(n)` is recognised
     arrayCtorObj: i64,
     // monotonic counter behind Symbol(); symbols are unique strings here

@@ -258,6 +258,9 @@ fn makeArrayIterator(st: &mut Interp, arr: i64, kind: i64): JSValue {
     objSet(st, it, "next", nextFn)
     let selfFn = makeBoundMethod(st, JSValue.Obj(it), "__arrayIterSelf")
     objSet(st, it, symIteratorKey(), selfFn)
+    if st.iterProtoObj >= 0 {
+        st.objects[it].proto = st.iterProtoObj
+    }
     popTemp(st)
     return JSValue.Obj(it)
 }
@@ -2169,6 +2172,12 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "isFinite", JSValue.Native(NATIVE_IS_FINITE))
     scopeDefine(st, 0, "parseInt", JSValue.Native(NATIVE_PARSE_INT))
     scopeDefine(st, 0, "parseFloat", JSValue.Native(NATIVE_PARSE_FLOAT))
+    // The shared iterator prototype. The prelude installs the helper methods
+    // (map/filter/take/...) onto this one object; every iterator the engine
+    // builds points its proto here, so helpers work on array iterators too.
+    let iterProto = newObject(st)
+    st.iterProtoObj = iterProto
+    scopeDefine(st, 0, "__iteratorProto", JSValue.Obj(iterProto))
     // globalThis: a real object whose properties ARE the global bindings
     let globalObj = newObject(st)
     st.objects[globalObj].isGlobal = true

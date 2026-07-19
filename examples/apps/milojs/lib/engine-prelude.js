@@ -74,173 +74,177 @@ Array.of = function () {
 };
 
 // --- Iterator helpers --------------------------------------------------------
-// Built on [Symbol.iterator], which the evaluator drives natively. Every helper
-// is LAZY: take(1) on a long (or endless) source must pull one element, not
-// materialise the source first. Each returns a fresh wrapper holding only a
-// reference to the upstream iterator.
-// A derived helper: its own next(), plus a return() that forwards to the stage
-// above it so closing the tail of a chain closes the whole chain.
-function __derive(upstream, nextFn) {
-  return __iterWrap({
+// Installed on the shared iterator prototype the engine exposes as
+// __iteratorProto, so they work on ANY iterator the engine builds — array
+// iterators from arr.values() included — via the normal proto chain, rather
+// than being copied onto each instance.
+//
+// Every helper is LAZY: take(1) on an endless source pulls exactly one element.
+// `this` is the upstream iterator; each helper returns a fresh iterator that
+// also inherits from __iteratorProto, so chains compose.
+function __mkIter(nextFn, upstream) {
+  var o = {
     next: nextFn,
+    // closing forwards to the stage above exactly once, then no-ops
     return: function (v) {
-      if (typeof upstream.return === "function") return upstream.return(v);
+      if (!o.__closed) {
+        o.__closed = true;
+        if (upstream && typeof upstream.return === "function") {
+          return upstream.return(v);
+        }
+      }
       return { done: true, value: undefined };
     },
-  });
+  };
+  Object.setPrototypeOf(o, __iteratorProto);
+  return o;
 }
 
-function __iterWrap(it) {
-  var w = {
-    next: function (v) {
-      return it.next(v);
-    },
-  };
-  w[Symbol.iterator] = function () {
-    return w;
-  };
-  // Closing a helper forwards to the source's return() exactly once, and is a
-  // no-op afterwards. A source without return() (a plain array iterator) still
-  // reports completion rather than throwing.
-  var closed = false;
-  w.return = function (value) {
-    if (!closed) {
-      closed = true;
-      if (typeof it.return === "function") return it.return(value);
-    }
-    return { done: true, value: undefined };
-  };
-  w.map = function (fn) {
-    var i = 0;
-    return __derive(it, function () {
+__iteratorProto[Symbol.iterator] = function () {
+  return this;
+};
+__iteratorProto.map = function (fn) {
+  var it = this;
+  var i = 0;
+  return __mkIter(function () {
+    var s = it.next();
+    if (s.done) return { done: true };
+    return { value: fn(s.value, i++), done: false };
+  }, it);
+};
+__iteratorProto.filter = function (fn) {
+  var it = this;
+  var i = 0;
+  return __mkIter(function () {
+    while (true) {
       var s = it.next();
       if (s.done) return { done: true };
-      return { value: fn(s.value, i++), done: false };
-    });
-  };
-  w.filter = function (fn) {
-    var i = 0;
-    return __derive(it, function () {
-      while (true) {
-        var s = it.next();
-        if (s.done) return { done: true };
-        if (fn(s.value, i++)) return { value: s.value, done: false };
-      }
-    });
-  };
-  w.take = function (n) {
-    var left = n;
-    return __derive(it, function () {
-      if (left <= 0) return { done: true };
+      if (fn(s.value, i++)) return { value: s.value, done: false };
+    }
+  }, it);
+};
+__iteratorProto.take = function (n) {
+  var it = this;
+  var left = n;
+  return __mkIter(function () {
+    if (left <= 0) return { done: true };
+    left--;
+    return it.next();
+  }, it);
+};
+__iteratorProto.drop = function (n) {
+  var it = this;
+  var left = n;
+  return __mkIter(function () {
+    while (left > 0) {
       left--;
-      return it.next();
-    });
-  };
-  w.drop = function (n) {
-    var left = n;
-    return __derive(it, function () {
-      while (left > 0) {
-        left--;
-        if (it.next().done) return { done: true };
+      if (it.next().done) return { done: true };
+    }
+    return it.next();
+  }, it);
+};
+__iteratorProto.flatMap = function (fn) {
+  var it = this;
+  var inner = null;
+  return __mkIter(function () {
+    while (true) {
+      if (inner) {
+        var is = inner.next();
+        if (!is.done) return is;
+        inner = null;
       }
-      return it.next();
-    });
-  };
-  w.flatMap = function (fn) {
-    var inner = null;
-    return __derive(it, function () {
-        while (true) {
-          if (inner) {
-            var is = inner.next();
-            if (!is.done) return is;
-            inner = null;
-          }
-          var s = it.next();
-          if (s.done) return { done: true };
-          // a returned array has no [Symbol.iterator] property (built-ins are
-          // iterated natively), so route everything through Iterator.from
-          var sub = fn(s.value);
-          inner = typeof sub.next === "function" ? sub : Iterator.from(sub);
-        }
-    });
-  };
-  w.toArray = function () {
-    var out = [];
-    while (true) {
       var s = it.next();
-      if (s.done) return out;
-      out.push(s.value);
+      if (s.done) return { done: true };
+      // a returned array has no [Symbol.iterator] property (built-ins are
+      // iterated natively), so route everything through Iterator.from
+      var sub = fn(s.value);
+      inner = typeof sub.next === "function" ? sub : Iterator.from(sub);
     }
-  };
-  w.forEach = function (fn) {
-    var i = 0;
-    while (true) {
-      var s = it.next();
-      if (s.done) return undefined;
-      fn(s.value, i++);
+  }, it);
+};
+__iteratorProto.toArray = function () {
+  var out = [];
+  while (true) {
+    var s = this.next();
+    if (s.done) return out;
+    out.push(s.value);
+  }
+};
+__iteratorProto.forEach = function (fn) {
+  var i = 0;
+  while (true) {
+    var s = this.next();
+    if (s.done) return undefined;
+    fn(s.value, i++);
+  }
+};
+__iteratorProto.find = function (fn) {
+  while (true) {
+    var s = this.next();
+    if (s.done) return undefined;
+    if (fn(s.value)) return s.value;
+  }
+};
+__iteratorProto.some = function (fn) {
+  while (true) {
+    var s = this.next();
+    if (s.done) return false;
+    if (fn(s.value)) return true;
+  }
+};
+__iteratorProto.every = function (fn) {
+  while (true) {
+    var s = this.next();
+    if (s.done) return true;
+    if (!fn(s.value)) return false;
+  }
+};
+__iteratorProto.reduce = function (fn, init) {
+  var acc = init;
+  var first = arguments.length < 2;
+  while (true) {
+    var s = this.next();
+    if (s.done) return acc;
+    if (first) {
+      acc = s.value;
+      first = false;
+    } else {
+      acc = fn(acc, s.value);
     }
-  };
-  w.find = function (fn) {
-    while (true) {
-      var s = it.next();
-      if (s.done) return undefined;
-      if (fn(s.value)) return s.value;
-    }
-  };
-  w.some = function (fn) {
-    while (true) {
-      var s = it.next();
-      if (s.done) return false;
-      if (fn(s.value)) return true;
-    }
-  };
-  w.every = function (fn) {
-    while (true) {
-      var s = it.next();
-      if (s.done) return true;
-      if (!fn(s.value)) return false;
-    }
-  };
-  w.reduce = function (fn, init) {
-    var acc = init;
-    var first = arguments.length < 2;
-    while (true) {
-      var s = it.next();
-      if (s.done) return acc;
-      if (first) {
-        acc = s.value;
-        first = false;
-      } else {
-        acc = fn(acc, s.value);
-      }
-    }
-  };
-  return w;
-}
+  }
+};
 
 // Index-walk an array-like. Built-in arrays/strings/Set/Map are iterated natively
 // by for-of and do NOT carry a [Symbol.iterator] property, so they can't be
 // unwrapped the same way a user iterable can.
 function __indexIter(arr) {
   var i = 0;
-  return {
-    next: function () {
-      if (i >= arr.length) return { done: true };
-      return { value: arr[i++], done: false };
-    },
-  };
+  return __mkIter(function () {
+    if (i >= arr.length) return { done: true };
+    return { value: arr[i++], done: false };
+  }, null);
 }
 
-var Iterator = {
-  from: function (src) {
-    if (src && typeof src.next === "function") return __iterWrap(src);
-    if (src && typeof src[Symbol.iterator] === "function") {
-      return __iterWrap(src[Symbol.iterator]());
+// A real constructor, not a bare object: `class X extends Iterator` has to give
+// its instances the helpers, which only works if Iterator.prototype IS the shared
+// prototype.
+function Iterator() {}
+Iterator.prototype = __iteratorProto;
+Iterator.from = (function () {
+  return function (src) {
+    if (src && typeof src.next === "function") {
+      // already an iterator: give it the helpers if it lacks them
+      if (typeof src.map === "function") return src;
+      return __mkIter(function () {
+        return src.next();
+      }, src);
     }
-    // built-in iterable: Array.from handles array/string/Set/Map natively
-    return __iterWrap(__indexIter(Array.from(src)));
-  },
-};
+    if (src && typeof src[Symbol.iterator] === "function") {
+      return Iterator.from(src[Symbol.iterator]());
+    }
+    return __indexIter(__nativeArrayFrom(src));
+  };
+})();
 
 // --- Reflect -----------------------------------------------------------------
 // Thin wrappers over operations the evaluator already has. Proxy is NOT here:

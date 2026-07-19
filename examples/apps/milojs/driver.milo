@@ -46,7 +46,7 @@ fn makeInterp(gcStats: bool, gcThreshold: i64): Interp {
         modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(), modPathStack: Vec.new(),
         throwing: false, thrownValue: JSValue.Undefined,
         rngState: 88172645463325252,
-        allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: gcThreshold, gcRuns: 0, gcStats: gcStats
+        allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: gcThreshold, gcRuns: 0, gcStats: gcStats
     }
 }
 
