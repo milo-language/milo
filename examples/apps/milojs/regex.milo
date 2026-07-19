@@ -35,6 +35,8 @@ enum ReNode {
     // (?=inner) / (?!inner): match inner at the current position without
     // consuming input. `negated` inverts the result.
     Look(i64, bool),
+    // \1 .. \9 — matches the text a previous capture group captured
+    Backref(i64),
     Empty,
 }
 
@@ -59,6 +61,8 @@ struct Regex {
     flagI: bool,
     flagG: bool,
     flagM: bool,
+    // dotAll: `.` also matches newline
+    flagS: bool,
     source: string,
     flags: string,
     valid: bool,
@@ -80,6 +84,8 @@ let RE_NWORDB: i32 = 10
 let RE_LOOK: i32 = 11
 // terminator of a lookahead sub-program — succeeds without consuming
 let RE_LOOKEND: i32 = 12
+// backreference: a = group number
+let RE_BACKREF: i32 = 13
 
 struct ReParse {
     pat: Vec<u8>,
@@ -258,6 +264,11 @@ fn reParseAtom(p: &mut ReParse): i64 {
     }
     if c == 92 as u8 && p.pos + 1 < p.pat.len() {
         let e = p.pat[p.pos + 1]
+        // \1 .. \9 — a backreference, not an escape. \0 stays the NUL escape.
+        if e >= '1' && e <= '9' {
+            p.pos = p.pos + 2
+            return reAddNode(p, ReNode.Backref((e - '0') as i64))
+        }
         if e == 'd' {
             p.pos = p.pos + 2
             return reShorthandClass(p, 'd', false)
@@ -544,6 +555,9 @@ fn reCompileNode(p: &ReParse, idx: i64, prog: &mut Vec<ReInst>) {
                 }
             }
         }
+        ReNode.Backref(g) => {
+            reEmit(prog, RE_BACKREF, g, 0)
+        }
         ReNode.Look(child, negated) => {
             // layout: JMP after / <inner> LOOKEND / LOOK(innerStart, neg)
             // the jump keeps the inner program out of the normal instruction flow
@@ -614,6 +628,9 @@ fn reCloneNode(n: &ReNode): ReNode {
         ReNode.Look(c, neg) => {
             return ReNode.Look(c, neg)
         }
+        ReNode.Backref(g) => {
+            return ReNode.Backref(g)
+        }
         ReNode.Group(c, ci) => {
             return ReNode.Group(c, ci)
         }
@@ -642,6 +659,7 @@ fn regexCompile(source: string, flags: string): Regex {
     var fi = false
     var fg = false
     var fm = false
+    var fs_ = false
     var fj: i64 = 0
     while fj < flags.len() {
         let fc = flags[fj]
@@ -651,11 +669,13 @@ fn regexCompile(source: string, flags: string): Regex {
             fg = true
         } else if fc == 'm' {
             fm = true
+        } else if fc == 's' {
+            fs_ = true
         }
         fj = fj + 1
     }
     return Regex {
-        prog: prog, classes: p.classes, nGroups: p.ngroup, flagI: fi, flagG: fg, flagM: fm, source: source, flags: flags, valid: true
+        prog: prog, classes: p.classes, nGroups: p.ngroup, flagI: fi, flagG: fg, flagM: fm, flagS: fs_, source: source, flags: flags, valid: true
     }
 }
 
@@ -724,7 +744,7 @@ fn reRun(re: &Regex, pc: i64, s: &string, sp: i64, saves: &mut Vec<i64>): bool {
         return false
     }
     if op == RE_ANY {
-        if sp < s.len() && s[sp] != 10 as u8 {
+        if sp < s.len() && (re.flagS || s[sp] != 10 as u8) {
             return reRun(re, pc + 1, s, sp + 1, saves)
         }
         return false
@@ -737,6 +757,27 @@ fn reRun(re: &Regex, pc: i64, s: &string, sp: i64, saves: &mut Vec<i64>): bool {
     }
     if op == RE_JMP {
         return reRun(re, inst.a, s, sp, saves)
+    }
+    if op == RE_BACKREF {
+        let g = inst.a
+        let a = saves[2 * g]
+        let b = saves[2 * g + 1]
+        // an unmatched group backreferences as the empty string, per spec
+        if a < 0 || b < 0 {
+            return reRun(re, pc + 1, s, sp, saves)
+        }
+        let n = b - a
+        if sp + n > s.len() {
+            return false
+        }
+        var k: i64 = 0
+        while k < n {
+            if !reCharEq(s[sp + k], s[a + k], re.flagI) {
+                return false
+            }
+            k = k + 1
+        }
+        return reRun(re, pc + 1, s, sp + n, saves)
     }
     if op == RE_LOOKEND {
         // the inner program matched; unwind without consuming
