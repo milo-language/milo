@@ -3313,14 +3313,27 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 st.optShort = true
                 return JSValue.Undefined
             }
-            let o = objHandle(ov)
-            if o < 0 {
-                return JSValue.Undefined
-            }
             pushTemp(st, cloneValue(ov))
             let kv = evalExpr(prog, keyIdx, st, scope)
             popTemp(st)
-            return getMemberDyn(prog, o, toStr(kv), st)
+            let key = toStr(kv)
+            let o = objHandle(ov)
+            if o >= 0 {
+                return getMemberDyn(prog, o, key, st)
+            }
+            // non-nullish function/native base is a property carrier too
+            match ov {
+                JSValue.Func(fIdx, fe) => {
+                    let statics = getFuncStatics(st, fIdx, fe)
+                    return getMember(st, statics, key)
+                }
+                JSValue.Native(nid) => {
+                    return getMember(st, getNativeProps(st, nid), key)
+                }
+                _ => {
+                    return JSValue.Undefined
+                }
+            }
         }
         Expr.OptMember(objIdx, name) => {
             let ov = evalExpr(prog, objIdx, st, scope)
@@ -3343,6 +3356,26 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                         return JSValue.Str(symbolDescription(s))
                     }
                     return JSValue.Undefined
+                }
+                JSValue.Func(fIdx, fe) => {
+                    // a non-nullish function base reads like `.` does: a function
+                    // is a property carrier (fn?._def, fn?.name). This was the
+                    // missing case — @trpc's `procedure?._def.type`.
+                    if name == "prototype" {
+                        return JSValue.Obj(getFuncProto(st, fIdx))
+                    }
+                    if name == "length" {
+                        return JSValue.Number(funcArity(prog, fIdx) as f64)
+                    }
+                    if name == "name" {
+                        return JSValue.Str(prog.funcs[fIdx].name.clone())
+                    }
+                    let statics = getFuncStatics(st, fIdx, fe)
+                    return getMember(st, statics, name)
+                }
+                JSValue.Native(nid) => {
+                    let bag = getNativeProps(st, nid)
+                    return getMember(st, bag, name)
                 }
                 _ => {
                     return JSValue.Undefined
@@ -5600,10 +5633,35 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                     }
                 }
                 let mname = st.objects[o].boundMethod.clone()
-                popTemp(st)
                 if name == "bind" {
-                    return makeBoundMethod(st, newThis, mname)
+                    // re-binding an already-bound function: JS keeps the ORIGINAL
+                    // this and only APPENDS args (the second bind's thisArg is
+                    // ignored). The old code dropped to makeBoundMethod with the
+                    // (usually empty) method name, so a double bind returned a
+                    // broken value — which silently made zod's constructor-bound
+                    // parseAsync return undefined once tRPC bound it again.
+                    // newObject runs while `o` is still temp-rooted (popTemp below).
+                    let nb = newObject(st)
+                    st.objects[nb].isBound = true
+                    st.objects[nb].boundTarget = cloneValue(st.objects[o].boundTarget)
+                    st.objects[nb].boundMethod = mname.clone()
+                    st.objects[nb].boundThis = cloneValue(st.objects[o].boundThis)
+                    var na: Vec<JSValue> = Vec.new()
+                    var oi: i64 = 0
+                    while oi < st.objects[o].boundArgs.len() {
+                        na.push(cloneValue(st.objects[o].boundArgs[oi]))
+                        oi = oi + 1
+                    }
+                    var ri: i64 = 0
+                    while ri < rest.len() {
+                        na.push(cloneValue(rest[ri]))
+                        ri = ri + 1
+                    }
+                    st.objects[nb].boundArgs = na
+                    popTemp(st)
+                    return JSValue.Obj(nb)
                 }
+                popTemp(st)
                 if mname.len() > 0 {
                     return callBuiltinByName(prog, newThis, mname, rest, st)
                 }
