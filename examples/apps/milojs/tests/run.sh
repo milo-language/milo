@@ -1,16 +1,32 @@
 #!/usr/bin/env bash
 # Run every tests/*.js through milojs and diff against its *.expected (captured
 # from bun). Regenerate an expected file with:  bun tests/foo.js > tests/foo.expected
+#
+# The engine is compiled ONCE up front and the binary reused. `milo run` rebuilds
+# on every invocation, so the old per-test `milo run` cost a full LLVM compile per
+# test file — 49 compiles per suite run, enough to peg a core and set macOS
+# scanning every fresh binary. Set MILOJS_ENGINE_BIN to reuse an existing build.
 set -u
 cd "$(dirname "$0")/../../../.." || exit 1
-ENGINE="examples/apps/milojs/milojs-engine.milo"
 DIR="examples/apps/milojs/tests"
+
+if [ -n "${MILOJS_ENGINE_BIN:-}" ]; then
+  ENGINE_BIN="$MILOJS_ENGINE_BIN"
+else
+  ENGINE_BIN="$(mktemp -t milojs-engine)"
+  trap 'rm -f "$ENGINE_BIN"' EXIT
+  if ! bun run src/main.ts build examples/apps/milojs/milojs-engine.milo -o "$ENGINE_BIN" >/dev/null; then
+    echo "FAIL: engine did not build"
+    exit 1
+  fi
+fi
+
 fail=0
 for js in "$DIR"/*.js; do
   name="$(basename "$js" .js)"
   exp="$DIR/$name.expected"
   [ -f "$exp" ] || { echo "SKIP $name (no .expected)"; continue; }
-  got="$(bun run src/main.ts run "$ENGINE" -- "$js" 2>&1)"
+  got="$("$ENGINE_BIN" "$js" 2>&1)"
   if [ "$got" = "$(cat "$exp")" ]; then
     echo "ok   $name"
   else
