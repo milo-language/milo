@@ -2068,6 +2068,10 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                     var k: i64 = 0
                     let np = st.objects[o].props.len()
                     while k < np {
+                        if !st.objects[o].props[k].enumerable {
+                            k = k + 1
+                            continue
+                        }
                         let key = st.objects[o].props[k].key.clone()
                         let v = cloneValue(st.objects[o].props[k].value)
                         if wantPairs {
@@ -2107,7 +2111,9 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                     var k: i64 = 0
                     let np = st.objects[o].props.len()
                     while k < np {
-                        arrPush(st, arr, JSValue.Str(st.objects[o].props[k].key.clone()))
+                        if st.objects[o].props[k].enumerable {
+                            arrPush(st, arr, JSValue.Str(st.objects[o].props[k].key.clone()))
+                        }
                         k = k + 1
                     }
                 }
@@ -2132,9 +2138,11 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                             var k: i64 = 0
                             let np = st.objects[src].props.len()
                             while k < np {
-                                let key = st.objects[src].props[k].key.clone()
-                                let v = cloneValue(st.objects[src].props[k].value)
-                                setMember(st, t, key, v)
+                                if st.objects[src].props[k].enumerable {
+                                    let key = st.objects[src].props[k].key.clone()
+                                    let v = cloneValue(st.objects[src].props[k].value)
+                                    setMember(st, t, key, v)
+                                }
                                 k = k + 1
                             }
                         }
@@ -3350,6 +3358,10 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                         }
                         var k: i64 = 0
                         while k < st.objects[src].props.len() {
+                            if !st.objects[src].props[k].enumerable {
+                                k = k + 1
+                                continue
+                            }
                             let pk = st.objects[src].props[k].key.clone()
                             let pv = cloneValue(st.objects[src].props[k].value)
                             objSet(st, obj, pk, pv)
@@ -3856,6 +3868,10 @@ fn inspectObj(st: &Interp, o: i64, depth: i64): string {
     var out = "{\n"
     var i: i64 = 0
     while i < n {
+        if !st.objects[o].props[i].enumerable {
+            i = i + 1
+            continue
+        }
         let key = st.objects[o].props[i].key.clone()
         let val = cloneValue(st.objects[o].props[i].value)
         out = out + inner + key + ": " + inspectInner(st, val, depth + 1) + ",\n"
@@ -6890,7 +6906,9 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                         var k: i64 = 0
                         let np = st.objects[cur].props.len()
                         while k < np {
-                            keys.push(st.objects[cur].props[k].key.clone())
+                            if st.objects[cur].props[k].enumerable {
+                                keys.push(st.objects[cur].props[k].key.clone())
+                            }
                             k = k + 1
                         }
                         cur = st.objects[cur].proto
