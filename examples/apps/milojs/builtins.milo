@@ -764,6 +764,13 @@ fn mjNextRandom(state: i64): i64 {
 
 // ── JSON ── (mj-prefixed to avoid colliding with std/json in the flat namespace)
 
+fn hexNibble(v: i64): u8 {
+    if v < 10 {
+        return ('0' as i64 + v) as u8
+    }
+    return ('a' as i64 + (v - 10)) as u8
+}
+
 fn mjJsonEscape(s: &string): string {
     var out = String.withCapacity(s.len() + 2)
     out.push(34 as u8)
@@ -785,6 +792,21 @@ fn mjJsonEscape(s: &string): string {
         } else if c == 13 as u8 {
             out.push(92 as u8)
             out.push('r')
+        } else if c == 8 as u8 {
+            out.push(92 as u8)
+            out.push('b')
+        } else if c == 12 as u8 {
+            out.push(92 as u8)
+            out.push('f')
+        } else if c < 32 as u8 {
+            // any other control character MUST be \uXXXX-escaped; emitting it raw
+            // produces output no JSON parser will accept
+            out.push(92 as u8)
+            out.push('u')
+            out.push('0')
+            out.push('0')
+            out.push(hexNibble(((c as i64) >> 4) & 15))
+            out.push(hexNibble((c as i64) & 15))
         } else {
             out.push(c)
         }
@@ -890,6 +912,24 @@ fn mjSkipWs(s: &string, c: &mut JCur) {
     }
 }
 
+// Four hex digits at `at`, or -1 if they are not all hex.
+fn jsonHex4(s: &string, at: i64): i64 {
+    var v: i64 = 0
+    var k: i64 = 0
+    while k < 4 {
+        if at + k >= s.len() {
+            return -1
+        }
+        let d = hexDigitVal(s[at + k])
+        if d < 0 {
+            return -1
+        }
+        v = v * 16 + d
+        k = k + 1
+    }
+    return v
+}
+
 fn mjParseString(s: &string, c: &mut JCur): string {
     c.pos = c.pos + 1
     var out = String.withCapacity(16)
@@ -909,6 +949,32 @@ fn mjParseString(s: &string, c: &mut JCur): string {
                 out.push(92 as u8)
             } else if e == '/' {
                 out.push('/')
+            } else if e == 'b' {
+                out.push(8 as u8)
+            } else if e == 'f' {
+                out.push(12 as u8)
+            } else if e == 'u' && c.pos + 5 < s.len() {
+                // \uXXXX — decode to a codepoint and UTF-8 encode it. This used
+                // to fall through to the default branch, which emitted a literal
+                // 'u' and left the four hex digits in the string.
+                var cp = jsonHex4(s, c.pos + 2)
+                var consumed: i64 = 6
+                // a surrogate PAIR is two escapes back to back; combine them
+                if cp >= 55296 && cp <= 56319 && c.pos + 11 < s.len() && s[c.pos + 6] == 92 as u8 && s[c.pos + 7] == 'u' {
+                    let lo = jsonHex4(s, c.pos + 8)
+                    if lo >= 56320 && lo <= 57343 {
+                        cp = 65536 + ((cp - 55296) * 1024) + (lo - 56320)
+                        consumed = 12
+                    }
+                }
+                if cp < 0 {
+                    out.push('u')
+                    c.pos = c.pos + 2
+                } else {
+                    encodeCodepoint(out, cp as i32)
+                    c.pos = c.pos + consumed
+                }
+                continue
             } else {
                 out.push(e)
             }
