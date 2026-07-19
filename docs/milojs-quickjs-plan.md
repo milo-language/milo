@@ -84,8 +84,41 @@ doesn't move the score):
   special-cases them natively), so `Iterator.from(arr)` and `flatMap` returning an
   array both have to route through `Array.from`, not through the symbol.
 
+- ~~regex had no lookahead~~ (dfa7976): `(?=)` / `(?!)` now compile to a
+  `RE_LOOK`/`RE_LOOKEND` pair — the inner program is emitted inline behind a JMP
+  so normal flow skips it, and the VM runs it at the current position without
+  consuming. Captures written inside a failed or negative lookahead are rolled
+  back from a snapshot, so `/x(?!(y))./.exec("xz")[1]` is undefined as required.
+
+## Lane 5 — regex gaps (regex.milo, self-contained, good parallel work)
+
+Probing the engine surfaced a cluster of missing features, all in `regex.milo`
+except where noted. Ranked by how often real code hits them:
+
+1. **`replace(re, fn)` ignores the callback** — `"ab".replace(/./g, fn)` returns
+   `"functionfunction"`, i.e. it stringifies the function instead of calling it.
+   Silent garbage, and the callback form is very common. Fix is in `eval.milo`'s
+   regex-based string ops, not `regex.milo`.
+2. **`split(regex)` is unsupported** — `"a1b2c".split(/\d/)` returns the whole
+   string unsplit rather than throwing. Also `eval.milo`.
+3. **lookbehind `(?<=)` / `(?<!)`** — needs the VM to report a match END position
+   so the inner match can be required to finish exactly at `sp`; `reRun` returns
+   only a bool today. That signature change is the whole job.
+4. **backreferences `\1`** — needs the VM to read a capture's text mid-match.
+5. **named groups `(?<name>)` + `.groups`** — parse side is easy; the match result
+   needs a `groups` object built from a name→index table on the Regex.
+6. **`s` (dotAll) flag** — `RE_ANY` hardcodes "not newline"; needs a flag check.
+
 Still open, found the same way:
 - error objects have no `.constructor`, so `e.constructor.name` throws.
+- **`Number.prototype.toPrecision` is aliased to `toFixed`** — flat wrong
+  (significant digits vs decimal places): `(123.456).toPrecision(4)` gives
+  `123.4560`, want `123.5`. Fix is a `numToPrecision` in `value.milo` plus three
+  lines of dispatch in `eval.milo` (`primitiveMethod`).
+- **no `BigInt` whatsoever** — no value type, no global, and the lexer rejects the
+  `123n` literal suffix. Lexing `n` as a plain number would be a lie (BigInt has
+  distinct `typeof` and exact semantics), so this is a real lane: a `JSValue`
+  variant plus arbitrary-precision arithmetic. Blocks all 4 `test_bigint` cases.
 - **`arr[Symbol.iterator]()` and `arr.values()/keys()/entries()` do not exist.**
   This is what still blocks `bug1557` (which also needs `class X extends Iterator`)
   and `bug1572`. Fixing it needs `eval.milo`: expose `Symbol.iterator` as a real
