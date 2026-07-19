@@ -174,6 +174,12 @@ struct Prop {
     getter: JSValue,
     setter: JSValue,
     isAccessor: bool,
+    // property attributes. Default true everywhere (a plain assignment creates a
+    // writable/enumerable/configurable property); Object.defineProperty is what
+    // turns them off.
+    writable: bool,
+    enumerable: bool,
+    configurable: bool,
 }
 
 // A pending timer. intervalMs > 0 reschedules after firing (setInterval).
@@ -438,14 +444,14 @@ fn objSet(st: &mut Interp, obj: i64, key: string, value: JSValue) {
     while i < n {
         if st.objects[obj].props[i].key == key {
             st.objects[obj].props[i] = Prop {
-                key: key, value: value, getter: JSValue.Undefined, setter: JSValue.Undefined, isAccessor: false
+                key: key, value: value, getter: JSValue.Undefined, setter: JSValue.Undefined, isAccessor: false, writable: true, enumerable: true, configurable: true
             }
             return
         }
         i = i + 1
     }
     st.objects[obj].props.push(Prop {
-        key: key, value: value, getter: JSValue.Undefined, setter: JSValue.Undefined, isAccessor: false
+        key: key, value: value, getter: JSValue.Undefined, setter: JSValue.Undefined, isAccessor: false, writable: true, enumerable: true, configurable: true
     }
     )
 }
@@ -504,14 +510,14 @@ fn objDefineAccessor(st: &mut Interp, obj: i64, key: string, getter: JSValue, se
     while i < n {
         if st.objects[obj].props[i].key == key {
             st.objects[obj].props[i] = Prop {
-                key: key, value: JSValue.Undefined, getter: getter, setter: setter, isAccessor: true
+                key: key, value: JSValue.Undefined, getter: getter, setter: setter, isAccessor: true, writable: true, enumerable: true, configurable: true
             }
             return
         }
         i = i + 1
     }
     st.objects[obj].props.push(Prop {
-        key: key, value: JSValue.Undefined, getter: getter, setter: setter, isAccessor: true
+        key: key, value: JSValue.Undefined, getter: getter, setter: setter, isAccessor: true, writable: true, enumerable: true, configurable: true
     }
     )
 }
@@ -546,7 +552,7 @@ fn objDeleteKey(st: &mut Interp, obj: i64, key: &string) {
     while i < st.objects[obj].props.len() {
         if st.objects[obj].props[i].key != key {
             kept.push(Prop {
-                key: st.objects[obj].props[i].key.clone(), value: cloneValue(st.objects[obj].props[i].value), getter: cloneValue(st.objects[obj].props[i].getter), setter: cloneValue(st.objects[obj].props[i].setter), isAccessor: st.objects[obj].props[i].isAccessor
+                key: st.objects[obj].props[i].key.clone(), value: cloneValue(st.objects[obj].props[i].value), getter: cloneValue(st.objects[obj].props[i].getter), setter: cloneValue(st.objects[obj].props[i].setter), isAccessor: st.objects[obj].props[i].isAccessor, writable: st.objects[obj].props[i].writable, enumerable: st.objects[obj].props[i].enumerable, configurable: st.objects[obj].props[i].configurable
             }
             )
         }

@@ -558,6 +558,10 @@ function __protoIgnoringSetter(home, key, label) {
     if (existing && existing.writable === false) {
       throw new TypeError(label + " is not writable");
     }
+    // CreateDataPropertyOrThrow: adding to a non-extensible receiver throws
+    if (!existing && !Object.isExtensible(this)) {
+      throw new TypeError("cannot add " + label + " to a non-extensible object");
+    }
     Object.defineProperty(this, key, {
       value: v,
       writable: true,

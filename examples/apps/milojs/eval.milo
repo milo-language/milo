@@ -783,6 +783,11 @@ fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
     if st.objects[o].noExtend && objOwnIndex(st, o, key) < 0 && !st.objects[o].isArray {
         return
     }
+    // a non-writable data property silently ignores assignment in sloppy mode
+    let own = objOwnIndex(st, o, key)
+    if own >= 0 && !st.objects[o].props[own].isAccessor && !st.objects[o].props[own].writable {
+        return
+    }
     if st.objects[o].taBuf >= 0 {
         let ti = asArrayIndex(key)
         if ti >= 0 {
@@ -1275,7 +1280,17 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                 objDefineAccessor(st, o, key, g, sfn)
                 return JSValue.Obj(o)
             }
-            setMember(st, o, key, getMember(st, d, "value"))
+            // defineProperty bypasses the writable check (it is what SETS it),
+            // so write through objSet rather than setMember
+            objSet(st, o, key.clone(), getMember(st, d, "value"))
+            let at = objOwnIndex(st, o, key)
+            if at >= 0 {
+                // an omitted attribute defaults to FALSE for defineProperty,
+                // unlike a plain assignment where everything is true
+                st.objects[o].props[at].writable = truthy(getMember(st, d, "writable"))
+                st.objects[o].props[at].enumerable = truthy(getMember(st, d, "enumerable"))
+                st.objects[o].props[at].configurable = truthy(getMember(st, d, "configurable"))
+            }
             return JSValue.Obj(o)
         }
         setMember(st, o, key, JSValue.Undefined)
@@ -1917,10 +1932,10 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             objSet(st, d, "set", ps)
         } else {
             objSet(st, d, "value", pv)
-            objSet(st, d, "writable", JSValue.Bool(true))
+            objSet(st, d, "writable", JSValue.Bool(st.objects[h].props[idx].writable))
         }
-        objSet(st, d, "enumerable", JSValue.Bool(true))
-        objSet(st, d, "configurable", JSValue.Bool(true))
+        objSet(st, d, "enumerable", JSValue.Bool(st.objects[h].props[idx].enumerable))
+        objSet(st, d, "configurable", JSValue.Bool(st.objects[h].props[idx].configurable))
         popTemp(st)
         return JSValue.Obj(d)
     }
