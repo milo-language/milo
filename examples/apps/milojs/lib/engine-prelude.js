@@ -565,3 +565,94 @@ Object.defineProperty(__iteratorProto, "constructor", {
   enumerable: false,
   configurable: true,
 });
+
+// --- Promise combinators -----------------------------------------------------
+// The native versions read each element's settled value SYNCHRONOUSLY at call
+// time, so a promise still pending contributed undefined:
+//   Promise.all([slowPromise, Promise.resolve(1)])  ->  [null, 1]
+// Written here instead, on top of .then, so they actually wait. Doing it in JS
+// also means a rejection inside allSettled is genuinely handled, rather than
+// surfacing as a bogus "unhandled promise rejection".
+Promise.all = function (items) {
+  return new Promise(function (resolve, reject) {
+    var list = Array.from(items);
+    var out = [];
+    var remaining = list.length;
+    if (remaining === 0) {
+      resolve(out);
+      return;
+    }
+    for (var i = 0; i < list.length; i++) {
+      (function (idx, item) {
+        Promise.resolve(item).then(
+          function (v) {
+            out[idx] = v;
+            remaining--;
+            if (remaining === 0) resolve(out);
+          },
+          function (e) {
+            reject(e);
+          }
+        );
+      })(i, list[i]);
+    }
+  });
+};
+
+Promise.allSettled = function (items) {
+  return new Promise(function (resolve) {
+    var list = Array.from(items);
+    var out = [];
+    var remaining = list.length;
+    if (remaining === 0) {
+      resolve(out);
+      return;
+    }
+    for (var i = 0; i < list.length; i++) {
+      (function (idx, item) {
+        Promise.resolve(item).then(
+          function (v) {
+            out[idx] = { status: "fulfilled", value: v };
+            remaining--;
+            if (remaining === 0) resolve(out);
+          },
+          function (e) {
+            out[idx] = { status: "rejected", reason: e };
+            remaining--;
+            if (remaining === 0) resolve(out);
+          }
+        );
+      })(i, list[i]);
+    }
+  });
+};
+
+Promise.race = function (items) {
+  return new Promise(function (resolve, reject) {
+    var list = Array.from(items);
+    for (var i = 0; i < list.length; i++) {
+      Promise.resolve(list[i]).then(resolve, reject);
+    }
+  });
+};
+
+Promise.any = function (items) {
+  return new Promise(function (resolve, reject) {
+    var list = Array.from(items);
+    var remaining = list.length;
+    var errors = [];
+    if (remaining === 0) {
+      reject(new Error("all promises were rejected"));
+      return;
+    }
+    for (var i = 0; i < list.length; i++) {
+      (function (idx, item) {
+        Promise.resolve(item).then(resolve, function (e) {
+          errors[idx] = e;
+          remaining--;
+          if (remaining === 0) reject(new Error("all promises were rejected"));
+        });
+      })(i, list[i]);
+    }
+  });
+};
