@@ -201,6 +201,13 @@ Buffer.concat = function (list, totalLength) {
 Buffer.byteLength = function (value, encoding) {
   if (value && value.bytes) return value.bytes.length;
   if (typeof value !== 'string') return 0;
+  // An engine string already IS its UTF-8 bytes, so ask for that count directly.
+  // Round-tripping through charCodeAt loses data on any byte that isn't valid
+  // UTF-8: binary decodes to U+FFFD and re-encodes to 3 bytes, so a 48KB font
+  // measured 90KB. Only fall back to re-encoding for a declared text encoding.
+  if (encoding === undefined || encoding === null || encoding === 'utf8' || encoding === 'utf-8') {
+    return __byteLength(value);
+  }
   return encodeFrom(value, encoding).length;
 };
 

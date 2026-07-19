@@ -26,7 +26,10 @@ function readFile(p, opts, cb) {
 function makeStats(p) {
   var content = __readFileSync(p);
   var isDir = content === null || content === undefined ? true : false;
-  var size = content ? content.length : 0;
+  // NOT content.length: that counts code points, so any file whose bytes decode
+  // as multi-byte UTF-8 (every font, image, archive) reports short and the
+  // Content-Length built from it truncates the response.
+  var size = content ? __byteLength(content) : 0;
   var now = Date.now();
   return {
     size: size,

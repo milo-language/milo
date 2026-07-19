@@ -1001,6 +1001,11 @@ let NATIVE_OBJECT_PREVENTEXT: i64 = 100
 let NATIVE_OBJECT_ISEXT: i64 = 101
 let NATIVE_OBJECT_SEAL: i64 = 102
 let NATIVE_OBJECT_ISSEALED: i64 = 103
+// __byteLength(s): the raw UTF-8 byte count of an engine string. JS `.length`
+// decodes to code points and charCodeAt is lossy on bytes that aren't valid
+// UTF-8, so neither can measure file content read as a string. Content-Length
+// must come from here or binary responses (fonts, images) get truncated.
+let NATIVE_BYTE_LENGTH: i64 = 104
 let NATIVE_ARRAYBUFFER: i64 = 78
 // the typed-array constructors occupy a contiguous block so the element kind is
 // just (id - NATIVE_TA_BASE); keep in step with the TA_* order in runtime.milo
@@ -2020,6 +2025,12 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         // primitives are never extensible
         return JSValue.Bool(false)
     }
+    if id == NATIVE_BYTE_LENGTH {
+        if argVals.len() == 0 {
+            return JSValue.Number(0.0)
+        }
+        return JSValue.Number(toStr(argVals[0]).len() as f64)
+    }
     if id == NATIVE_OBJECT_ISSEALED {
         if argVals.len() > 0 {
             let h = objHandle(argVals[0])
@@ -2868,6 +2879,7 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "__writeFileSync", JSValue.Native(NATIVE_WRITE_FILE))
     scopeDefine(st, 0, "__readFileSync", JSValue.Native(NATIVE_READ_FILE_SYNC))
     scopeDefine(st, 0, "__fileExists", JSValue.Native(NATIVE_FILE_EXISTS))
+    scopeDefine(st, 0, "__byteLength", JSValue.Native(NATIVE_BYTE_LENGTH))
 }
 
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).

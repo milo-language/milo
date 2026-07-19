@@ -153,7 +153,10 @@ ServerResponse.prototype.end = function (chunk, encoding, cb) {
   if (this._sent) { if (cb) cb(); return this; }
   var body = (this._pending || '') + chunkToString(chunk);
   if (this.getHeader('content-length') === undefined) {
-    this.setHeader('Content-Length', body.length);
+    // byte count, not code-point count — see fs.makeStats. A short Content-Length
+    // makes the client stop reading mid-body, which is what turned served fonts
+    // into "incorrect file size in WOFF header".
+    this.setHeader('Content-Length', __byteLength(body));
   }
   var reason = this.statusMessage || STATUS_CODES[this.statusCode] || 'OK';
   var out = 'HTTP/1.1 ' + this.statusCode + ' ' + reason + '\r\n';
