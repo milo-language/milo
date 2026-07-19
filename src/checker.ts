@@ -1106,8 +1106,17 @@ export class TypeChecker {
       if (fn.attributes) {
         for (const attr of fn.attributes) {
           if (attr.name === "cSig") this.checkCSig(fn, attr);
+          // @export forces external linkage — see lower.ts. Needed when the only
+          // caller is a dlopen'd library resolving against this executable, which
+          // no reachability analysis can see.
+          else if (attr.name === "export") {
+            if (fn.isExtern) {
+              this.error(`'@export' on extern fn '${fn.name}' — extern declares a function defined elsewhere, so there is nothing here to export`, undefined,
+                `drop '@export', or remove 'extern' if you meant to define it`);
+            }
+          }
           else this.error(`'@${attr.name}' is not supported on functions — '${fn.name}'`, undefined,
-            `only '@cSig' applies to a fn; it would be silently ignored otherwise`);
+            `only '@cSig' and '@export' apply to a fn; it would be silently ignored otherwise`);
         }
       }
       this.checkVariadicExtern(fn);
