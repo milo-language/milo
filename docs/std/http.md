@@ -2,18 +2,18 @@
 
 ## std/http
 
-### `Context.bufToStr`
+### `bufToStr`
 
 ```milo
-fn Context.bufToStr(buf: &[u8; 8192], start: i64, end: i64): string
+fn bufToStr(buf: &[u8; 8192], start: i64, end: i64): string
 ```
 
 _Undocumented._
 
-### `Context.bufToStrFromString`
+### `bufToStrFromString`
 
 ```milo
-fn Context.bufToStrFromString(s: &string, start: i64, end: i64): string
+fn bufToStrFromString(s: &string, start: i64, end: i64): string
 ```
 
 _Undocumented._
@@ -34,14 +34,6 @@ fn Context.deleteCookie(self: &mut Context, name: string): void
 
 _Undocumented._
 
-### `Context.eqIgnoreCase`
-
-```milo
-fn Context.eqIgnoreCase(a: &string, b: &string): bool
-```
-
-_Undocumented._
-
 ### `Context.header`
 
 ```milo
@@ -49,14 +41,6 @@ fn Context.header(self: &Context, name: &string): string
 ```
 
 _Undocumented._
-
-### `Context.hexNibble`
-
-```milo
-fn Context.hexNibble(ch: u8): i32
-```
-
-Value of a single hex digit, or -1 if the byte isn't one.
 
 ### `Context.html`
 
@@ -82,38 +66,6 @@ fn Context.param(self: &Context, name: &string): string
 
 _Undocumented._
 
-### `Context.parseContentLength`
-
-```milo
-fn Context.parseContentLength(s: &string): i64
-```
-
-_Undocumented._
-
-### `Context.parseCookieValue`
-
-```milo
-fn Context.parseCookieValue(cookieHeader: string, name: &string): string
-```
-
-_Undocumented._
-
-### `Context.parseQueryString`
-
-```milo
-fn Context.parseQueryString(qs: &string): Vec<Param>
-```
-
-_Undocumented._
-
-### `Context.parseRequest`
-
-```milo
-fn Context.parseRequest(buf: &[u8; 8192], n: i64): Request
-```
-
-_Undocumented._
-
 ### `Context.query`
 
 ```milo
@@ -126,22 +78,6 @@ _Undocumented._
 
 ```milo
 fn Context.redirect(self: &Context, url: string): Response
-```
-
-_Undocumented._
-
-### `Context.sendRaw`
-
-```milo
-fn Context.sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders: &Vec<Param>): void
-```
-
-_Undocumented._
-
-### `Context.sendResponse`
-
-```milo
-fn Context.sendResponse(fd: i32, response: Response, headers: &Vec<Param>): void
 ```
 
 _Undocumented._
@@ -178,14 +114,6 @@ fn Context.setStatus(self: &mut Context, code: i32): void
 
 _Undocumented._
 
-### `Context.statusText`
-
-```milo
-fn Context.statusText(status: i32): string
-```
-
-_Undocumented._
-
 ### `Context.text`
 
 ```milo
@@ -193,24 +121,6 @@ fn Context.text(self: &Context, body: string): Response
 ```
 
 _Undocumented._
-
-### `Context.toLower`
-
-```milo
-fn Context.toLower(ch: u8): u8
-```
-
-_Undocumented._
-
-### `Context.urlDecode`
-
-```milo
-fn Context.urlDecode(s: &string): string
-```
-
-Percent-decode a query component. '+' means space (form-urlencoded) and %XX
-is a raw byte. A malformed escape is passed through literally rather than
-dropped, so a stray '%' in user input can't truncate the value.
 
 ### `Drop.drop`
 
@@ -220,10 +130,66 @@ fn Drop.drop(self: &mut Drop): void
 
 _Undocumented._
 
-### `Drop.serve`
+### `eqIgnoreCase`
 
 ```milo
-fn Drop.serve(port: u16?, handler: (&Request) => Response): Result<void>
+fn eqIgnoreCase(a: &string, b: &string): bool
+```
+
+_Undocumented._
+
+### `extractParamNames`
+
+```milo
+fn extractParamNames(pattern: &string): Vec<string>
+```
+
+_Undocumented._
+
+### `hexNibble`
+
+```milo
+fn hexNibble(ch: u8): i32
+```
+
+Value of a single hex digit, or -1 if the byte isn't one.
+
+### `matchRoute`
+
+```milo
+fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option<Vec<Param>>
+```
+
+_Undocumented._
+
+### `parseContentLength`
+
+```milo
+fn parseContentLength(s: &string): i64
+```
+
+_Undocumented._
+
+### `parseCookieValue`
+
+```milo
+fn parseCookieValue(cookieHeader: string, name: &string): string
+```
+
+_Undocumented._
+
+### `parseQueryString`
+
+```milo
+fn parseQueryString(qs: &string): Vec<Param>
+```
+
+_Undocumented._
+
+### `parseRequest`
+
+```milo
+fn parseRequest(buf: &[u8; 8192], n: i64): Request
 ```
 
 _Undocumented._
@@ -252,14 +218,6 @@ fn Router.delete(self: &mut Router, pattern: string, h: (&mut Context) => Respon
 
 _Undocumented._
 
-### `Router.extractParamNames`
-
-```milo
-fn Router.extractParamNames(pattern: &string): Vec<string>
-```
-
-_Undocumented._
-
 ### `Router.get`
 
 ```milo
@@ -272,14 +230,6 @@ _Undocumented._
 
 ```milo
 fn Router.handle(self: &Router, req: Request): HandledResponse
-```
-
-_Undocumented._
-
-### `Router.matchRoute`
-
-```milo
-fn Router.matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option<Vec<Param>>
 ```
 
 _Undocumented._
@@ -308,22 +258,6 @@ fn Router.put(self: &mut Router, pattern: string, h: (&mut Context) => Response)
 
 _Undocumented._
 
-### `Router.serveRouter`
-
-```milo
-fn Router.serveRouter(port: u16?, router: &Router): Result<void>
-```
-
-Start an HTTP server using a Router (headers from Context are sent on the wire).
-
-### `Router.splitPath`
-
-```milo
-fn Router.splitPath(path: &string): Vec<string>
-```
-
-_Undocumented._
-
 ### `Router.use`
 
 ```milo
@@ -331,3 +265,69 @@ fn Router.use(self: &mut Router, mw: (&mut Context, (&mut Context) => Response) 
 ```
 
 _Undocumented._
+
+### `sendRaw`
+
+```milo
+fn sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders: &Vec<Param>): void
+```
+
+_Undocumented._
+
+### `sendResponse`
+
+```milo
+fn sendResponse(fd: i32, response: Response, headers: &Vec<Param>): void
+```
+
+_Undocumented._
+
+### `serve`
+
+```milo
+fn serve(port: u16?, handler: (&Request) => Response): Result<void>
+```
+
+_Undocumented._
+
+### `serveRouter`
+
+```milo
+fn serveRouter(port: u16?, router: &Router): Result<void>
+```
+
+Start an HTTP server using a Router (headers from Context are sent on the wire).
+
+### `splitPath`
+
+```milo
+fn splitPath(path: &string): Vec<string>
+```
+
+_Undocumented._
+
+### `statusText`
+
+```milo
+fn statusText(status: i32): string
+```
+
+_Undocumented._
+
+### `toLower`
+
+```milo
+fn toLower(ch: u8): u8
+```
+
+_Undocumented._
+
+### `urlDecode`
+
+```milo
+fn urlDecode(s: &string): string
+```
+
+Percent-decode a query component. '+' means space (form-urlencoded) and %XX
+is a raw byte. A malformed escape is passed through literally rather than
+dropped, so a stray '%' in user input can't truncate the value.
