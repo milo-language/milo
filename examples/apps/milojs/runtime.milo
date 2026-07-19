@@ -9,7 +9,7 @@ from "std/net" import {
     TcpListener, TcpStream
 }
 from "./value" import {
-    JSValue
+    JSValue, roundHalfAwayFromZero
 }
 from "./regex" import {
     Regex
@@ -20,6 +20,114 @@ struct Binding {
     value: JSValue,
 }
 
+// Typed-array element kinds. The order is arbitrary but fixed: taKind is stored
+// on the view object.
+let TA_U8: i64 = 0
+let TA_I8: i64 = 1
+let TA_U16: i64 = 2
+let TA_I16: i64 = 3
+let TA_U32: i64 = 4
+let TA_I32: i64 = 5
+let TA_F32: i64 = 6
+let TA_F64: i64 = 7
+let TA_U8C: i64 = 8
+
+fn taWidth(kind: i64): i64 {
+    if kind == TA_U8 || kind == TA_I8 || kind == TA_U8C {
+        return 1
+    }
+    if kind == TA_U16 || kind == TA_I16 {
+        return 2
+    }
+    if kind == TA_F64 {
+        return 8
+    }
+    return 4
+}
+
+fn taName(kind: i64): string {
+    if kind == TA_U8 {
+        return "Uint8Array"
+    }
+    if kind == TA_I8 {
+        return "Int8Array"
+    }
+    if kind == TA_U8C {
+        return "Uint8ClampedArray"
+    }
+    if kind == TA_U16 {
+        return "Uint16Array"
+    }
+    if kind == TA_I16 {
+        return "Int16Array"
+    }
+    if kind == TA_U32 {
+        return "Uint32Array"
+    }
+    if kind == TA_I32 {
+        return "Int32Array"
+    }
+    if kind == TA_F32 {
+        return "Float32Array"
+    }
+    return "Float64Array"
+}
+
+// Read one element out of a buffer's bytes, little-endian.
+// Integer kinds only: Float32/Float64 need a bit-level reinterpret of f64, which
+// Milo has no safe primitive for, so those constructors are rejected up front
+// rather than silently storing wrong bytes.
+fn taLoad(bytes: &Vec<u8>, kind: i64, at: i64): f64 {
+    if kind == TA_U8 || kind == TA_U8C {
+        return bytes[at] as f64
+    }
+    if kind == TA_I8 {
+        let b = bytes[at] as i64
+        if b >= 128 {
+            return (b - 256) as f64
+        }
+        return b as f64
+    }
+    if kind == TA_U16 || kind == TA_I16 {
+        let v = (bytes[at] as i64) | ((bytes[at + 1] as i64) << 8)
+        if kind == TA_I16 && v >= 32768 {
+            return (v - 65536) as f64
+        }
+        return v as f64
+    }
+    let v = (bytes[at] as i64) | ((bytes[at + 1] as i64) << 8) | ((bytes[at + 2] as i64) << 16) | ((bytes[at + 3] as i64) << 24)
+    if kind == TA_I32 && v >= 2147483648 {
+        return (v - 4294967296) as f64
+    }
+    return v as f64
+}
+
+// Store one element, applying the kind's wrapping (or clamping) rules.
+fn taStore(bytes: &mut Vec<u8>, kind: i64, at: i64, v: f64) {
+    var n: i64 = 0
+    if v == v {
+        if kind == TA_U8C {
+            // Uint8ClampedArray saturates instead of wrapping
+            var c = v
+            if c < 0.0 {
+                c = 0.0
+            }
+            if c > 255.0 {
+                c = 255.0
+            }
+            n = roundHalfAwayFromZero(c)
+        } else {
+            n = v as i64
+        }
+    }
+    let w = taWidth(kind)
+    var i: i64 = 0
+    while i < w {
+        bytes[at + i] = ((n >> (8 * i)) & 255) as u8
+        i = i + 1
+    }
+}
+
 // A freed scope slot is marked by parent == GC_FREE so the sweep skips it and
 // newScope can reuse it. Real parents are >= 0 (global) or -1 (global's parent).
 let GC_FREE: i64 = -2
@@ -28,6 +136,14 @@ struct Scope {
     parent: i64,
     vars: Vec<Binding>,
     mark: bool,
+    // per-activation function-object statics: for each function whose closure env
+    // IS this scope, fnStatKeys[k] is its fnIdx and fnStatVals[k] its static-
+    // property object. Keyed here (not globally by fnIdx) so two closures of the
+    // same literal from different calls have separate properties and identity.
+    // Lifetime is the scope's: reusing a freed scope slot resets both, so a
+    // recycled env index can never surface a dead closure's statics.
+    fnStatKeys: Vec<i64>,
+    fnStatVals: Vec<i64>,
 }
 
 // A heap object: an ordered list of string-keyed properties. `free` marks a
@@ -98,6 +214,15 @@ struct JSObj {
     // the globalThis object: property reads and writes are routed to the global
     // scope's bindings, so globalThis.x and bare x are the same variable
     isGlobal: bool,
+    // ArrayBuffer: the raw bytes. Typed arrays are views onto one of these.
+    isArrayBuffer: bool,
+    bytes: Vec<u8>,
+    // typed-array view: the backing buffer's object handle (-1 when not a view),
+    // the element kind (see TA_* below), and the window into the buffer
+    taBuf: i64,
+    taKind: i64,
+    taOffset: i64,
+    taLen: i64,
     // a compiled-regex handle (index into Interp.regexes) if this is a RegExp, else -1
     regexId: i64,
     // promise settlement: -1 not a promise, 0 pending, 1 fulfilled, 2 rejected.
@@ -223,7 +348,7 @@ struct Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, isGlobal: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena
@@ -461,15 +586,31 @@ fn getNativeProps(st: &mut Interp, nativeId: i64): i64 {
     return st.nativeProps[nativeId]
 }
 
-fn getFuncStatics(st: &mut Interp, fnIdx: i64): i64 {
-    while st.funcStatics.len() <= fnIdx {
-        st.funcStatics.push(-1)
+fn getFuncStatics(st: &mut Interp, fnIdx: i64, envIdx: i64): i64 {
+    // no valid closure env (e.g. a synthesized value): fall back to the global
+    // fnIdx-keyed slot — collisions there are the pre-existing, rarer behavior
+    if envIdx < 0 || envIdx >= st.scopes.len() {
+        while st.funcStatics.len() <= fnIdx {
+            st.funcStatics.push(-1)
+        }
+        if st.funcStatics[fnIdx] < 0 {
+            let o = newObject(st)
+            st.funcStatics[fnIdx] = o
+        }
+        return st.funcStatics[fnIdx]
     }
-    if st.funcStatics[fnIdx] < 0 {
-        let o = newObject(st)
-        st.funcStatics[fnIdx] = o
+    var k: i64 = 0
+    let n = st.scopes[envIdx].fnStatKeys.len()
+    while k < n {
+        if st.scopes[envIdx].fnStatKeys[k] == fnIdx {
+            return st.scopes[envIdx].fnStatVals[k]
+        }
+        k = k + 1
     }
-    return st.funcStatics[fnIdx]
+    let o = newObject(st)
+    st.scopes[envIdx].fnStatKeys.push(fnIdx)
+    st.scopes[envIdx].fnStatVals.push(o)
+    return o
 }
 
 fn getFuncProto(st: &mut Interp, fnIdx: i64): i64 {
@@ -494,7 +635,8 @@ fn arrPush(st: &mut Interp, obj: i64, value: JSValue) {
 fn newScope(st: &mut Interp, parent: i64): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let sc = Scope {
-        parent: parent, vars: Vec.new(), mark: false
+        parent: parent, vars: Vec.new(), mark: false,
+        fnStatKeys: Vec.new(), fnStatVals: Vec.new()
     }
     if st.freeList.len() > 0 {
         let idx = st.freeList.pop()!
@@ -645,11 +787,24 @@ fn markScope(st: &mut Interp, i: i64) {
         vals.push(cloneValue(st.scopes[i].vars[k].value))
         k = k + 1
     }
+    // this scope's per-instance function statics are roots for anything they hold
+    var fsvals: Vec<i64> = Vec.new()
+    var fk: i64 = 0
+    let fn2 = st.scopes[i].fnStatVals.len()
+    while fk < fn2 {
+        fsvals.push(st.scopes[i].fnStatVals[fk])
+        fk = fk + 1
+    }
     markScope(st, parent)
     var m: i64 = 0
     while m < vals.len() {
         markValue(st, vals[m])
         m = m + 1
+    }
+    var fm: i64 = 0
+    while fm < fsvals.len() {
+        markObject(st, fsvals[fm])
+        fm = fm + 1
     }
 }
 

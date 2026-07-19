@@ -568,6 +568,19 @@ fn funcHandle(v: &JSValue): i64 {
     }
 }
 
+// The closure env (scope index) of a function value, or -1 for non-functions.
+// Function statics are keyed by (fnIdx, env) so per-call closures stay distinct.
+fn funcEnv(v: &JSValue): i64 {
+    match v {
+        JSValue.Func(_f, e) => {
+            return e
+        }
+        _ => {
+            return -1
+        }
+    }
+}
+
 fn toNum(v: &JSValue): f64 {
     match v {
         JSValue.Undefined => {
@@ -730,10 +743,12 @@ fn jsStrictEquals(a: &JSValue, b: &JSValue): bool {
                 }
             }
         }
-        JSValue.Func(x, _e) => {
+        JSValue.Func(x, e) => {
             match b {
-                JSValue.Func(y, _e2) => {
-                    return x == y
+                JSValue.Func(y, e2) => {
+                    // identity is the closure instance, not the source literal: two
+                    // closures of the same fn from different calls (envs) differ
+                    return x == y && e == e2
                 }
                 _ => {
                     return false

@@ -295,6 +295,84 @@ fn arrayIterNext(st: &mut Interp, it: i64): JSValue {
     return JSValue.Obj(res)
 }
 
+// new <T>Array(n | buffer | array) — allocates its own buffer except when handed
+// an existing ArrayBuffer, which it views in place (mutations are shared).
+fn makeTypedArray(st: &mut Interp, kind: i64, args: &Vec<JSValue>): JSValue {
+    let w = taWidth(kind)
+    var bufH: i64 = -1
+    var len: i64 = 0
+    var seed: Vec<f64> = Vec.new()
+    if args.len() > 0 {
+        let h = objHandle(args[0])
+        if h >= 0 && st.objects[h].isArrayBuffer {
+            bufH = h
+            len = st.objects[h].bytes.len() / w
+        } else if h >= 0 && st.objects[h].isArray {
+            var i: i64 = 0
+            while i < arrLen(st, h) {
+                seed.push(toNum(arrGet(st, h, i)))
+                i = i + 1
+            }
+            len = seed.len()
+        } else if h >= 0 && st.objects[h].taBuf >= 0 {
+            // from another typed array: copy the element values
+            var i: i64 = 0
+            while i < st.objects[h].taLen {
+                seed.push(taElem(st, h, i))
+                i = i + 1
+            }
+            len = seed.len()
+        } else {
+            len = toNum(args[0]) as i64
+            if len < 0 {
+                len = 0
+            }
+        }
+    }
+    if bufH < 0 {
+        let nb = newObject(st)
+        st.objects[nb].isArrayBuffer = true
+        var b: Vec<u8> = Vec.new()
+        var i: i64 = 0
+        while i < len * w {
+            b.push(0 as u8)
+            i = i + 1
+        }
+        st.objects[nb].bytes = b
+        bufH = nb
+    }
+    let view = newObject(st)
+    st.objects[view].taBuf = bufH
+    st.objects[view].taKind = kind
+    st.objects[view].taOffset = 0
+    st.objects[view].taLen = len
+    var k: i64 = 0
+    while k < seed.len() {
+        taSetElem(st, view, k, seed[k])
+        k = k + 1
+    }
+    return JSValue.Obj(view)
+}
+
+fn taElem(st: &Interp, view: i64, i: i64): f64 {
+    let buf = st.objects[view].taBuf
+    if buf < 0 || i < 0 || i >= st.objects[view].taLen {
+        return 0.0
+    }
+    let at = st.objects[view].taOffset + i * taWidth(st.objects[view].taKind)
+    return taLoad(st.objects[buf].bytes, st.objects[view].taKind, at)
+}
+
+fn taSetElem(st: &mut Interp, view: i64, i: i64, v: f64) {
+    let buf = st.objects[view].taBuf
+    if buf < 0 || i < 0 || i >= st.objects[view].taLen {
+        return
+    }
+    let kind = st.objects[view].taKind
+    let at = st.objects[view].taOffset + i * taWidth(kind)
+    taStore(st.objects[buf].bytes, kind, at, v)
+}
+
 // Invoke a builtin method by name against an already-evaluated receiver+args.
 fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSValue>, st: &mut Interp): JSValue {
     match recv {
@@ -384,7 +462,7 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
                 if args.len() > 0 {
                     key = toStr(args[0])
                 }
-                let statics = getFuncStatics(st, bf)
+                let statics = getFuncStatics(st, bf, benv)
                 return JSValue.Bool(objOwnIndex(st, statics, key) >= 0)
             }
             // Function.prototype.apply.call(fn, thisArg, args) lands here with
@@ -431,7 +509,7 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
                 st.objects[bo].boundArgs = extra
                 return JSValue.Obj(bo)
             }
-            let statics = getFuncStatics(st, bf)
+            let statics = getFuncStatics(st, bf, benv)
             let m = getMember(st, statics, name)
             if isCallable(m) {
                 return callValue(prog, m, args, JSValue.Func(bf, benv), st)
@@ -492,6 +570,33 @@ fn setMemberDyn(prog: &Prog, o: i64, key: string, v: JSValue, st: &mut Interp) {
 }
 
 fn getMember(st: &Interp, o: i64, key: &string): JSValue {
+    if st.objects[o].taBuf >= 0 {
+        if key == "length" {
+            return JSValue.Number(st.objects[o].taLen as f64)
+        }
+        if key == "byteLength" {
+            return JSValue.Number((st.objects[o].taLen * taWidth(st.objects[o].taKind)) as f64)
+        }
+        if key == "byteOffset" {
+            return JSValue.Number(st.objects[o].taOffset as f64)
+        }
+        if key == "BYTES_PER_ELEMENT" {
+            return JSValue.Number(taWidth(st.objects[o].taKind) as f64)
+        }
+        if key == "buffer" {
+            return JSValue.Obj(st.objects[o].taBuf)
+        }
+        let ti = asArrayIndex(key)
+        if ti >= 0 {
+            if ti >= st.objects[o].taLen {
+                return JSValue.Undefined
+            }
+            return JSValue.Number(taElem(st, o, ti))
+        }
+    }
+    if st.objects[o].isArrayBuffer && key == "byteLength" {
+        return JSValue.Number(st.objects[o].bytes.len() as f64)
+    }
     if st.objects[o].isArray {
         if key == "length" {
             return JSValue.Number(arrLen(st, o) as f64)
@@ -516,6 +621,13 @@ fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
     // sloppy mode drops writes to a frozen object rather than throwing
     if st.objects[o].frozen {
         return
+    }
+    if st.objects[o].taBuf >= 0 {
+        let ti = asArrayIndex(key)
+        if ti >= 0 {
+            taSetElem(st, o, ti, toNum(value))
+            return
+        }
     }
     // globalThis.x = v defines/updates the global binding, not a detached property
     if st.objects[o].isGlobal {
@@ -708,6 +820,10 @@ let NATIVE_HTTP_UNREGISTER: i64 = 74
 let NATIVE_WRITE_FILE: i64 = 75
 let NATIVE_GC: i64 = 76
 let NATIVE_OBJECT_ISFROZEN: i64 = 77
+let NATIVE_ARRAYBUFFER: i64 = 78
+// the typed-array constructors occupy a contiguous block so the element kind is
+// just (id - NATIVE_TA_BASE); keep in step with the TA_* order in runtime.milo
+let NATIVE_TA_BASE: i64 = 79
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -1490,6 +1606,36 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         return JSValue.Undefined
     }
+    if id == NATIVE_ARRAYBUFFER {
+        var n: i64 = 0
+        if argVals.len() > 0 {
+            n = toNum(argVals[0]) as i64
+        }
+        if n < 0 {
+            n = 0
+        }
+        let bo = newObject(st)
+        st.objects[bo].isArrayBuffer = true
+        var b: Vec<u8> = Vec.new()
+        var i: i64 = 0
+        while i < n {
+            b.push(0 as u8)
+            i = i + 1
+        }
+        st.objects[bo].bytes = b
+        return JSValue.Obj(bo)
+    }
+    if id >= NATIVE_TA_BASE && id <= NATIVE_TA_BASE + TA_U8C {
+        let kind = id - NATIVE_TA_BASE
+        if kind == TA_F32 || kind == TA_F64 {
+            // storing an f64 bit pattern needs a reinterpret Milo has no safe
+            // primitive for; fail loudly rather than write wrong bytes
+            st.throwing = true
+            st.thrownValue = makeError(st, "TypeError", taName(kind) + " is not implemented")
+            return JSValue.Undefined
+        }
+        return makeTypedArray(st, kind, argVals)
+    }
     if id == NATIVE_OBJECT_ISFROZEN {
         if argVals.len() > 0 {
             let fh = objHandle(argVals[0])
@@ -2222,6 +2368,12 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "decodeURIComponent", JSValue.Native(NATIVE_DECODE_URI_COMPONENT))
     scopeDefine(st, 0, "encodeURI", JSValue.Native(NATIVE_ENCODE_URI))
     scopeDefine(st, 0, "decodeURI", JSValue.Native(NATIVE_DECODE_URI))
+    scopeDefine(st, 0, "ArrayBuffer", JSValue.Native(NATIVE_ARRAYBUFFER))
+    var tk: i64 = 0
+    while tk <= TA_U8C {
+        scopeDefine(st, 0, taName(tk), JSValue.Native(NATIVE_TA_BASE + tk))
+        tk = tk + 1
+    }
     scopeDefine(st, 0, "Map", JSValue.Native(NATIVE_MAP))
     scopeDefine(st, 0, "WeakMap", JSValue.Native(NATIVE_MAP))
     scopeDefine(st, 0, "Set", JSValue.Native(NATIVE_SET))
@@ -2536,7 +2688,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     }
                     return JSValue.Undefined
                 }
-                JSValue.Func(fIdx, _e) => {
+                JSValue.Func(fIdx, fe) => {
                     if name == "prototype" {
                         return JSValue.Obj(getFuncProto(st, fIdx))
                     }
@@ -2546,7 +2698,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     if name == "name" {
                         return JSValue.Str(prog.funcs[fIdx].name.clone())
                     }
-                    let statics = getFuncStatics(st, fIdx)
+                    let statics = getFuncStatics(st, fIdx, fe)
                     return getMember(st, statics, name)
                 }
                 JSValue.Native(nid) => {
@@ -2575,13 +2727,13 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 JSValue.Obj(o) => {
                     return getMemberDyn(prog, o, key, st)
                 }
-                JSValue.Func(fIdx, _fe) => {
+                JSValue.Func(fIdx, fe) => {
                     // computed read of a property assigned onto a function, e.g.
                     // statuses[404] after statuses[code] = message
                     if key == "prototype" {
                         return JSValue.Obj(getFuncProto(st, fIdx))
                     }
-                    let statics = getFuncStatics(st, fIdx)
+                    let statics = getFuncStatics(st, fIdx, fe)
                     return getMember(st, statics, key)
                 }
                 JSValue.Native(nid) => {
@@ -2626,7 +2778,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     let bag = getNativeProps(st, nid)
                     objSet(st, bag, key, cloneValue(v))
                 }
-                JSValue.Func(sf, _senv) => {
+                JSValue.Func(sf, senv) => {
                     if key == "prototype" {
                         // `Child.prototype = Object.create(Parent.prototype)` —
                         // the ES5 inheritance idiom. Replacing the prototype
@@ -2639,7 +2791,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             st.funcProtos[sf] = newProto
                         }
                     } else {
-                        let statics = getFuncStatics(st, sf)
+                        let statics = getFuncStatics(st, sf, senv)
                         objSet(st, statics, key, cloneValue(v))
                     }
                 }
@@ -3658,7 +3810,7 @@ fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
     }
     let f = funcHandle(v)
     if f >= 0 {
-        return getFuncStatics(st, f)
+        return getFuncStatics(st, f, funcEnv(v))
     }
     let n = nativeHandle(v)
     if n >= 0 {
@@ -3786,7 +3938,7 @@ fn instantiateClass(prog: &Prog, classIdx: i64, st: &mut Interp, scope: i64): JS
         let mKind = prog.classes[classIdx].members[i].kind
         var target = proto
         if prog.classes[classIdx].members[i].isStatic {
-            target = getFuncStatics(st, ctorFn)
+            target = getFuncStatics(st, ctorFn, scope)
         }
         if mKind > 0 {
             let existing = objOwnIndex(st, target, mName)
@@ -5027,7 +5179,7 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 }
                 return callFunction(prog, bf, benv, rest, thisArg, st)
             }
-            let statics = getFuncStatics(st, bf)
+            let statics = getFuncStatics(st, bf, benv)
             let m = getMember(st, statics, name)
             let mf = funcHandle(m)
             if mf >= 0 {
