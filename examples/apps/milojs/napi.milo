@@ -58,6 +58,13 @@ struct NapiPending {
     value: JSValue,
 }
 
+// A threadsafe function: a JS callback an addon may invoke from any thread.
+struct NapiTsfn {
+    jsFunc: JSValue,
+    callJsCb: i64,
+    context: i64,
+}
+
 struct NapiState {
     // handle index -> the value it denotes; slot 0 is unused so handle 0 can mean null
     handles: Vec<JSValue>,
@@ -66,10 +73,14 @@ struct NapiState {
     fns: Vec<NapiFn>,
     calls: Vec<NapiCall>,
     pending: Vec<NapiPending>,
+    tsfns: Vec<NapiTsfn>,
+    // self-pipe: a foreign thread writes a queued call here, the event loop reads it
+    tsfnR: i32,
+    tsfnW: i32,
 }
 
 var gNapi: NapiState = NapiState {
-    handles: Vec.new(), registered: false, fns: Vec.new(), calls: Vec.new(), pending: Vec.new()
+    handles: Vec.new(), registered: false, fns: Vec.new(), calls: Vec.new(), pending: Vec.new(), tsfns: Vec.new(), tsfnR: -1, tsfnW: -1
 }
 
 // Wrap a value in a fresh handle. Handles are never reused within a run: the addon
@@ -502,11 +513,6 @@ fn napi_call_function(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8, _a5: *u8
 }
 
 @export
-fn napi_call_threadsafe_function(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
 fn napi_coerce_to_object(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
     return NAPI_OK
 }
@@ -528,11 +534,6 @@ fn napi_create_buffer_copy(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8): i3
 
 @export
 fn napi_create_external_buffer(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8, _a5: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_create_threadsafe_function(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8, _a5: *u8, _a6: *u8, _a7: *u8, _a8: *u8, _a9: *u8, _a10: *u8): i32 {
     return NAPI_OK
 }
 
@@ -567,16 +568,6 @@ fn napi_get_value_bigint_uint64(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8): i32 {
 
 @export
 fn napi_get_value_bigint_words(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_release_threadsafe_function(_a0: *u8, _a1: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_unref_threadsafe_function(_a0: *u8, _a1: *u8): i32 {
     return NAPI_OK
 }
 
@@ -986,4 +977,150 @@ fn napi_reject_deferred(_env: *u8, deferred: i64, rejection: i64): i32 {
             return NAPI_INVALID_ARG
         }
     }
+}
+
+// ── threadsafe functions ──
+//
+// Prisma runs a tokio worker pool and settles its promises from those threads.
+// A worker must never touch the interpreter, so napi_call_threadsafe_function does
+// exactly one thing: write the queued call into a self-pipe. The event loop drains
+// it on the main thread, where calling into JS is safe.
+//
+// No mutex is needed. A write of <= PIPE_BUF is atomic, so concurrent workers cannot
+// interleave within a record.
+
+extern fn pipe(_fds: *u8): i32
+
+extern fn read(_fd: i32, _buf: *u8, _n: i64): i64
+
+extern fn write(_fd: i32, _buf: *u8, _n: i64): i64
+
+fn napiEnsurePipe() {
+    if gNapi.tsfnR >= 0 {
+        return
+    }
+    unsafe {
+        var fds: [i32; 2] = [0; 2]
+        if pipe(fds as *u8) != 0 {
+            return
+        }
+        // the loop polls; a blocking read would stall the whole interpreter
+        let _r = setNonblocking(fds[0])
+        gNapi.tsfnR = fds[0]
+        gNapi.tsfnW = fds[1]
+    }
+}
+
+@export
+fn napi_create_threadsafe_function(_env: *u8, func: i64, _asyncResource: i64, _asyncResourceName: i64, _maxQueueSize: i64, _initialThreadCount: i64, _threadFinalizeData: i64, _threadFinalizeCb: i64, context: i64, callJsCb: i64, result: *u8): i32 {
+    napiEnsurePipe()
+    gNapi.tsfns.push(NapiTsfn {
+        jsFunc: napiValueOf(func), callJsCb: callJsCb, context: context
+    }
+    )
+    // the opaque handle is 1-based so a valid tsfn is never a null pointer
+    napiWriteHandle(result, gNapi.tsfns.len())
+    return NAPI_OK
+}
+
+// CALLED FROM A FOREIGN THREAD. Touch nothing but the pipe fd, which is read-only
+// after setup.
+@export
+fn napi_call_threadsafe_function(func: i64, data: i64, _isBlocking: i32): i32 {
+    unsafe {
+        if gNapi.tsfnW < 0 {
+            return NAPI_INVALID_ARG
+        }
+        var rec: [i64; 2] = [func; 2]
+        rec[1] = data
+        let n = write(gNapi.tsfnW, rec as *u8, 16)
+        if n != 16 {
+            return NAPI_INVALID_ARG
+        }
+    }
+    return NAPI_OK
+}
+
+@export
+fn napi_get_threadsafe_function_context(func: i64, result: *u8): i32 {
+    let i = func - 1
+    if i < 0 || i >= gNapi.tsfns.len() {
+        return NAPI_INVALID_ARG
+    }
+    napiWriteHandle(result, gNapi.tsfns[i].context)
+    return NAPI_OK
+}
+
+@export
+fn napi_acquire_threadsafe_function(_func: i64): i32 {
+    return NAPI_OK
+}
+
+@export
+fn napi_release_threadsafe_function(_func: i64, _mode: i32): i32 {
+    return NAPI_OK
+}
+
+@export
+fn napi_unref_threadsafe_function(_env: *u8, _func: i64): i32 {
+    return NAPI_OK
+}
+
+@export
+fn napi_ref_threadsafe_function(_env: *u8, _func: i64): i32 {
+    return NAPI_OK
+}
+
+// One queued threadsafe call, taken off the pipe on the main thread.
+struct NapiTsfnCall {
+    tsfn: i64,
+    data: i64,
+}
+
+// Non-blocking drain. Returns the calls that were waiting.
+fn napiPollTsfn(): Vec<NapiTsfnCall> {
+    var out: Vec<NapiTsfnCall> = Vec.new()
+    if gNapi.tsfnR < 0 {
+        return out
+    }
+    unsafe {
+        var going = true
+        while going {
+            var rec: [i64; 2] = [0; 2]
+            let n = read(gNapi.tsfnR, rec as *u8, 16)
+            if n == 16 {
+                out.push(NapiTsfnCall {
+                    tsfn: rec[0], data: rec[1]
+                }
+                )
+            } else {
+                going = false
+            }
+        }
+    }
+    return out
+}
+
+// Run one queued call on the main thread. When the addon supplied a call_js_cb it
+// owns the dispatch entirely (that is where it converts `data` into JS values);
+// otherwise the spec says to invoke the JS function with no arguments.
+fn napiRunTsfnCall(c: &NapiTsfnCall): JSValue {
+    let i = c.tsfn - 1
+    if i < 0 || i >= gNapi.tsfns.len() {
+        return JSValue.Undefined
+    }
+    let cb = gNapi.tsfns[i].callJsCb
+    if cb != 0 {
+        let jsh = napiHandle(cloneValue(gNapi.tsfns[i].jsFunc))
+        unsafe {
+            let f = (cb as *u8) as extern (*u8, i64, i64, i64) => void
+            f(0 as *u8, jsh, gNapi.tsfns[i].context, c.data)
+        }
+        return JSValue.Undefined
+    }
+    return cloneValue(gNapi.tsfns[i].jsFunc)
+}
+
+fn napiHasTsfn(): bool {
+    return gNapi.tsfns.len() > 0
 }

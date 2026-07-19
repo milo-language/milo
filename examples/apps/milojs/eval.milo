@@ -42,7 +42,7 @@ from "std/fs" import {
     currentDir, writeFile, appendFile
 }
 from "examples/apps/milojs/napi" import {
-    napiInvoke, napiLoadAddon, napiTakePending
+    napiInvoke, napiLoadAddon, napiTakePending, napiPollTsfn, napiRunTsfnCall, napiHasTsfn
 }
 from "std/math" import {
     mathMod, mathPow
@@ -4161,6 +4161,22 @@ fn symbolDisplay(s: &string): string {
 // JS runs the queue to exhaustion before the next timer.
 // Settle a promise and queue every reaction that was waiting on it. Settling
 // twice is ignored, as in JS.
+// Run threadsafe-function calls queued by an addon's own threads, then apply any
+// promise settlements they made. This is the only place a foreign thread's work
+// crosses into the interpreter.
+fn napiServiceTsfn(st: &mut Interp) {
+    if !napiHasTsfn() {
+        return
+    }
+    var q = napiPollTsfn()
+    var i: i64 = 0
+    while i < q.len() {
+        let _r = napiRunTsfnCall(q[i])
+        i = i + 1
+    }
+    napiDrainSettlements(st)
+}
+
 // Apply promise settlements an addon requested while it held control.
 fn napiDrainSettlements(st: &mut Interp) {
     var q = napiTakePending()
@@ -4389,6 +4405,9 @@ fn runOneTimer(prog: &Prog, st: &mut Interp): bool {
 fn runEventLoop(prog: &Prog, st: &mut Interp) {
     var going = true
     while going {
+        // Deliver anything an addon's worker threads queued. Runs before
+        // microtasks so a settlement made off-thread is visible in this turn.
+        napiServiceTsfn(st)
         drainMicrotasks(prog, st)
         reportUnhandledRejections(st)
         compactTimers(st)
