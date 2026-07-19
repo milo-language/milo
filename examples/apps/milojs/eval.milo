@@ -2862,9 +2862,36 @@ fn inspectArr(st: &Interp, o: i64, depth: i64): string {
     return out
 }
 
+fn objIsoOrTag(st: &Interp, o: i64): string {
+    return isoFromMillis(st.objects[o].dateMs)
+}
+
 fn inspectObj(st: &Interp, o: i64, depth: i64): string {
     if st.objects[o].isArray {
         return inspectArr(st, o, depth)
+    }
+    // an Error prints as "Name: message [\n stack]", like node's console
+    if st.objects[o].isError {
+        let ename = toStr(objGet(st, o, "name"))
+        let emsg = toStr(objGet(st, o, "message"))
+        let estack = objGet(st, o, "stack")
+        var head = ename.clone()
+        if emsg.len() > 0 {
+            head = ename + ": " + emsg
+        }
+        match estack {
+            JSValue.Str(sv) => {
+                if sv.len() > 0 {
+                    return head + "\n" + sv
+                }
+            }
+            _ => {
+            }
+        }
+        return head
+    }
+    if st.objects[o].isDate {
+        return objIsoOrTag(st, o)
     }
     if depth > 2 {
         return "[Object]"

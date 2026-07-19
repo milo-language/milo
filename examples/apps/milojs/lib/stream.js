@@ -139,12 +139,32 @@ function pipeline() {
   return args[args.length - 1];
 }
 
+// node's require('stream') is the legacy Stream constructor itself, carrying
+// Readable/Writable/etc as properties. send does Stream.call(this) and inherits
+// from it, so the export has to be callable.
+function Stream() { EventEmitter.call(this); }
+Stream.prototype = Object.create(EventEmitter.prototype);
+Stream.prototype.constructor = Stream;
+Stream.prototype.pipe = Readable.prototype.pipe;
+
+Stream.Readable = Readable;
+Stream.Writable = Writable;
+Stream.Duplex = Transform;
+Stream.Transform = Transform;
+Stream.PassThrough = PassThrough;
+Stream.Stream = Stream;
+Stream.pipeline = pipeline;
+Stream.finished = function (stream, cb) {
+  if (stream && stream.on) stream.on('end', function () { cb(null); });
+};
+
+module.exports = Stream;
+exports = module.exports;
 exports.Readable = Readable;
 exports.Writable = Writable;
 exports.Duplex = Transform;
 exports.Transform = Transform;
 exports.PassThrough = PassThrough;
-exports.Stream = Readable;
 exports.pipeline = pipeline;
 exports.finished = function (stream, cb) {
   if (stream && stream.on) stream.on('end', function () { cb(null); });
