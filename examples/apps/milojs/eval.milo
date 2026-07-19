@@ -1012,6 +1012,11 @@ let NATIVE_BYTE_LENGTH: i64 = 104
 // __napiLoad(path): dlopen a .node addon, run napi_register_module_v1, return its
 // exports. This is what require() resolves a .node file to.
 let NATIVE_NAPI_LOAD: i64 = 105
+// console.* as real functions. The identifier fast path above handles the common
+// `console.log(x)` call shape, but code that passes the method around — prisma's
+// runtime does `console.debug || console.log` — needs `console` to be a real
+// object whose properties are callable values.
+let NATIVE_CONSOLE_LOG: i64 = 106
 let NATIVE_ARRAYBUFFER: i64 = 78
 // the typed-array constructors occupy a contiguous block so the element kind is
 // just (id - NATIVE_TA_BASE); keep in step with the TA_* order in runtime.milo
@@ -2031,6 +2036,20 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         // primitives are never extensible
         return JSValue.Bool(false)
     }
+    if id == NATIVE_CONSOLE_LOG {
+        var line = ""
+        var j: i64 = 0
+        while j < argVals.len() {
+            if j > 0 {
+                line = line + " "
+            }
+            line = line + inspectTop(st, argVals[j])
+            j = j + 1
+        }
+        print(line)
+        flush()
+        return JSValue.Undefined
+    }
     if id == NATIVE_NAPI_LOAD {
         if argVals.len() == 0 {
             return JSValue.Undefined
@@ -2906,6 +2925,15 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "__fileExists", JSValue.Native(NATIVE_FILE_EXISTS))
     scopeDefine(st, 0, "__byteLength", JSValue.Native(NATIVE_BYTE_LENGTH))
     scopeDefine(st, 0, "__napiLoad", JSValue.Native(NATIVE_NAPI_LOAD))
+    let consoleObj = newObject(st)
+    objSet(st, consoleObj, "log", JSValue.Native(NATIVE_CONSOLE_LOG))
+    objSet(st, consoleObj, "info", JSValue.Native(NATIVE_CONSOLE_LOG))
+    objSet(st, consoleObj, "debug", JSValue.Native(NATIVE_CONSOLE_LOG))
+    objSet(st, consoleObj, "trace", JSValue.Native(NATIVE_CONSOLE_LOG))
+    objSet(st, consoleObj, "dir", JSValue.Native(NATIVE_CONSOLE_LOG))
+    objSet(st, consoleObj, "warn", JSValue.Native(NATIVE_CONSOLE_LOG))
+    objSet(st, consoleObj, "error", JSValue.Native(NATIVE_CONSOLE_LOG))
+    scopeDefine(st, 0, "console", JSValue.Obj(consoleObj))
 }
 
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).
@@ -6513,7 +6541,7 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
         Expr.Member(objIdx, name) => {
             match prog.exprs[objIdx] {
                 Expr.Ident(objName) => {
-                    if objName == "console" && (name == "log" || name == "error" || name == "warn" || name == "info") {
+                    if objName == "console" && (name == "log" || name == "error" || name == "warn" || name == "info" || name == "debug" || name == "trace" || name == "dir") {
                         let argVals = evalArgs(prog, argsIdx, st, scope)
                         // an argument that threw must not still be printed
                         if st.throwing {

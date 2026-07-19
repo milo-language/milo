@@ -169,6 +169,9 @@ fn builtinSource(name: &string): string {
     // the node-api surface can load its query engine. resolveNodeModule falls back
     // to lib/prisma-client.js only when the package is absent, so a project without
     // prisma installed still gets the explanatory stub rather than a resolve error.
+    if name == "fs/promises" {
+        return embedFile("lib/fs-promises.js")
+    }
     if name == "buffer" {
         return embedFile("lib/buffer.js")
     }
