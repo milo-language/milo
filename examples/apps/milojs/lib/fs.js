@@ -23,6 +23,47 @@ function readFile(p, opts, cb) {
   }
 }
 
+function makeStats(p) {
+  var content = __readFileSync(p);
+  var isDir = content === null || content === undefined ? true : false;
+  var size = content ? content.length : 0;
+  var now = Date.now();
+  return {
+    size: size,
+    mtimeMs: now, ctimeMs: now, atimeMs: now, birthtimeMs: now,
+    mtime: new Date(now), ctime: new Date(now), atime: new Date(now), birthtime: new Date(now),
+    mode: 33188, ino: 0, dev: 0, nlink: 1, uid: 0, gid: 0, blksize: 4096, blocks: 0,
+    isFile: function () { return !isDir; },
+    isDirectory: function () { return isDir; },
+    isSymbolicLink: function () { return false; },
+    isBlockDevice: function () { return false; },
+    isCharacterDevice: function () { return false; },
+    isFIFO: function () { return false; },
+    isSocket: function () { return false; }
+  };
+}
+
+function statSync(p, opts) {
+  if (!__fileExists(p)) {
+    var e = new Error("ENOENT: no such file or directory, stat '" + p + "'");
+    e.code = "ENOENT";
+    e.errno = -2;
+    e.path = p;
+    throw e;
+  }
+  return makeStats(p);
+}
+
+function stat(p, optsOrCb, maybeCb) {
+  var cb = typeof optsOrCb === 'function' ? optsOrCb : maybeCb;
+  try { var st = statSync(p); if (cb) cb(null, st); }
+  catch (e) { if (cb) cb(e); }
+}
+
+exports.statSync = statSync;
+exports.lstatSync = statSync;
+exports.stat = stat;
+exports.lstat = stat;
 exports.readFileSync = readFileSync;
 exports.existsSync = existsSync;
 exports.readFile = readFile;

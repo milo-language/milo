@@ -2390,6 +2390,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     if name == "prototype" {
                         return JSValue.Obj(getFuncProto(st, fIdx))
                     }
+                    if name == "length" {
+                        return JSValue.Number(funcArity(prog, fIdx) as f64)
+                    }
+                    if name == "name" {
+                        return JSValue.Str(prog.funcs[fIdx].name.clone())
+                    }
                     let statics = getFuncStatics(st, fIdx)
                     return getMember(st, statics, name)
                 }
@@ -3583,6 +3589,18 @@ fn strProtoMethodNames(): Vec<string> {
     out.push("toString")
     out.push("valueOf")
     return out
+}
+
+// Function.prototype.length: the count of parameters before the first one with
+// a default or a rest parameter. milojs does not record defaults per-param, so
+// this counts declared params minus a trailing rest — enough for express, which
+// only checks length === 4 to detect error-handler middleware.
+fn funcArity(prog: &Prog, fIdx: i64): i64 {
+    var n = prog.funcs[fIdx].params.len()
+    if prog.funcs[fIdx].restFrom >= 0 {
+        n = prog.funcs[fIdx].restFrom
+    }
+    return n
 }
 
 fn isSuperName(name: &string): bool {
