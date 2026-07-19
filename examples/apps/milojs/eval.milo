@@ -6801,7 +6801,9 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                     return callNative(id, argVals, st)
                 }
                 JSValue.Obj(bo) => {
-                    if st.objects[bo].isBound {
+                    // bound methods, addon functions and proxies are all callable
+                    // objects rather than Func/Native values
+                    if st.objects[bo].isBound || st.objects[bo].isProxy || st.objects[bo].napiFn >= 0 {
                         let argVals = evalArgs(prog, argsIdx, st, scope)
                         return callValue(prog, JSValue.Obj(bo), argVals, JSValue.Undefined, st)
                     }
