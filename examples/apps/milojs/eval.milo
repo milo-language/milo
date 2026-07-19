@@ -2982,7 +2982,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     Expr.Spread(inner) => {
                         let sv = evalExpr(prog, inner, st, scope)
                         var tmp: Vec<JSValue> = Vec.new()
-                        spreadInto(tmp, sv, st)
+                        spreadInto(prog, tmp, sv, st)
                         var t: i64 = 0
                         while t < tmp.len() {
                             arrPush(st, arr, cloneValue(tmp[t]))
@@ -3154,10 +3154,57 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
 }
 
 // Spread an array value's elements into `out` (a no-op for non-arrays).
-// Spread the built-in iterables. A user object with [Symbol.iterator] is NOT
-// handled: driving it means calling back into user code, and this runs with an
-// immutable interpreter. for-of does support the protocol — see Stmt.ForOf.
-fn spreadInto(out: &mut Vec<JSValue>, v: &JSValue, st: &Interp) {
+// Spread any iterable: the built-ins directly, and anything carrying
+// [Symbol.iterator] by driving its next(). Driving calls back into user code, so
+// this needs the program and a mutable interpreter — which is why it is not the
+// immutable helper it once was.
+fn spreadInto(prog: &Prog, out: &mut Vec<JSValue>, v: &JSValue, st: &mut Interp) {
+    let h = objHandle(v)
+    // a Map spreads to freshly built [key, value] pairs, which needs allocation
+    if h >= 0 && st.objects[h].isMap {
+        var mi: i64 = 0
+        while mi < st.objects[h].mapKeys.len() {
+            let pair = newArray(st)
+            pushTemp(st, JSValue.Obj(pair))
+            arrPush(st, pair, cloneValue(st.objects[h].mapKeys[mi]))
+            arrPush(st, pair, cloneValue(st.objects[h].mapVals[mi]))
+            popTemp(st)
+            out.push(JSValue.Obj(pair))
+            mi = mi + 1
+        }
+        return
+    }
+    if h >= 0 && !st.objects[h].isArray && !st.objects[h].isSet {
+        let itFn = getMember(st, h, symIteratorKey())
+        if isCallableIn(st, itFn) {
+            var noArgs: Vec<JSValue> = Vec.new()
+            let iter = callValue(prog, itFn, noArgs, cloneValue(v), st)
+            pushTemp(st, cloneValue(iter))
+            let ih = objHandle(iter)
+            var guard: i64 = 0
+            while ih >= 0 && !st.throwing && guard < 100000000 {
+                let nextFn = getMember(st, ih, "next")
+                if !isCallableIn(st, nextFn) {
+                    guard = 100000000
+                } else {
+                    var nArgs: Vec<JSValue> = Vec.new()
+                    let step = callValue(prog, nextFn, nArgs, cloneValue(iter), st)
+                    let sh = objHandle(step)
+                    if sh < 0 || truthy(getMember(st, sh, "done")) {
+                        guard = 100000000
+                    } else {
+                        out.push(getMember(st, sh, "value"))
+                    }
+                }
+            }
+            popTemp(st)
+            return
+        }
+    }
+    spreadBuiltin(out, v, st)
+}
+
+fn spreadBuiltin(out: &mut Vec<JSValue>, v: &JSValue, st: &Interp) {
     match v {
         JSValue.Obj(o) => {
             if st.objects[o].isArray {
@@ -3204,7 +3251,7 @@ fn evalArgs(prog: &Prog, argsIdx: i64, st: &mut Interp, scope: i64): Vec<JSValue
                 let v = evalExpr(prog, inner, st, scope)
                 pushTemp(st, cloneValue(v))
                 rooted = rooted + 1
-                spreadInto(out, v, st)
+                spreadInto(prog, out, v, st)
             }
             _ => {
                 let v = evalExpr(prog, eIdx, st, scope)
@@ -4185,8 +4232,10 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
         return JSValue.Undefined
     }
     if name == "keys" || name == "values" || name == "entries" {
-        // returns an array rather than a real iterator; spread and for-of both
-        // work over arrays, which is how this is used in practice
+        // Snapshot into an array, then hand back a real iterator over it — so
+        // .next(), the Iterator.prototype helpers, for-of and Array.from all
+        // work. (A snapshot, not a live view: mutating the map mid-iteration
+        // will not be observed, which JS would show.)
         let arr = newArray(st)
         pushTemp(st, JSValue.Obj(arr))
         var i: i64 = 0
@@ -4215,8 +4264,9 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
             }
             i = i + 1
         }
+        let it = makeArrayIterator(st, arr, 0)
         popTemp(st)
-        return JSValue.Obj(arr)
+        return it
     }
     if name == "forEach" {
         if args.len() == 0 {

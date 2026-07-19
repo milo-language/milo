@@ -429,10 +429,34 @@ fn objSet(st: &mut Interp, obj: i64, key: string, value: JSValue) {
 
 // Index of `key` in a Map/Set's entry list, or -1. Keys compare by strict
 // equality, so objects match by identity.
+// Map/Set key identity is SameValueZero, not strict equality: the one difference
+// that matters is NaN, which is its own key here even though NaN !== NaN. Without
+// this a NaN key can be stored but never looked up again.
+fn sameValueZero(a: &JSValue, b: &JSValue): bool {
+    match a {
+        JSValue.Number(x) => {
+            match b {
+                JSValue.Number(y) => {
+                    if x != x && y != y {
+                        return true
+                    }
+                    return x == y
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        _ => {
+        }
+    }
+    return jsStrictEquals(a, b)
+}
+
 fn mapFind(st: &Interp, o: i64, key: &JSValue): i64 {
     var i: i64 = 0
     while i < st.objects[o].mapKeys.len() {
-        if jsStrictEquals(st.objects[o].mapKeys[i], key) {
+        if sameValueZero(st.objects[o].mapKeys[i], key) {
             return i
         }
         i = i + 1
