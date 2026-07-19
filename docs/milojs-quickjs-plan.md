@@ -74,8 +74,26 @@ doesn't move the score):
   the evaluator already had (`new target(...args)` works, so even `construct` is
   expressible). `Proxy` is deliberately NOT shimmed — see below.
 
+- ~~no `Iterator` / iterator helpers~~ (ee0b818): `Iterator.from` plus lazy
+  `map`/`filter`/`take`/`drop`/`flatMap`/`toArray`/`forEach`/`find`/`some`/
+  `every`/`reduce`, in the prelude on top of `[Symbol.iterator]`. Laziness is the
+  point — `take(2)` over an endless source pulls exactly 2. `.return()` forwards
+  to the source exactly once and is a no-op after (chained stages forward upward
+  via `__derive`). Two traps hit while writing it, both from the same root cause:
+  **built-in arrays/strings/Set/Map have no `[Symbol.iterator]` property** (for-of
+  special-cases them natively), so `Iterator.from(arr)` and `flatMap` returning an
+  array both have to route through `Array.from`, not through the symbol.
+
 Still open, found the same way:
 - error objects have no `.constructor`, so `e.constructor.name` throws.
+- **`arr[Symbol.iterator]()` and `arr.values()/keys()/entries()` do not exist.**
+  This is what still blocks `bug1557` (which also needs `class X extends Iterator`)
+  and `bug1572`. Fixing it needs `eval.milo`: expose `Symbol.iterator` as a real
+  array method and have `values()` return an iterator object — probably a JSObj
+  holding the array + index with `next` as a bound builtin method (the
+  `makeBoundMethod` pattern used for Date/String prototypes).
+- `Error.prototype.stack` is empty, so `bug858` (stack must name its file) fails;
+  needs real frame tracking.
 - **`Proxy` cannot be a prelude shim.** Intercepting every property get/set needs
   a trap check in `getMemberDyn`/`setMember`, i.e. evaluator support. It is the
   bulk of what remains in the `not a constructor` bucket, together with
