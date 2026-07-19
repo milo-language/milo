@@ -95,12 +95,11 @@ doesn't move the score):
 Probing the engine surfaced a cluster of missing features, all in `regex.milo`
 except where noted. Ranked by how often real code hits them:
 
-1. **`replace(re, fn)` ignores the callback** — `"ab".replace(/./g, fn)` returns
-   `"functionfunction"`, i.e. it stringifies the function instead of calling it.
-   Silent garbage, and the callback form is very common. Fix is in `eval.milo`'s
-   regex-based string ops, not `regex.milo`.
-2. **`split(regex)` is unsupported** — `"a1b2c".split(/\d/)` returns the whole
-   string unsplit rather than throwing. Also `eval.milo`.
+1. ~~**`replace(re, fn)` ignored the callback**~~ DONE (d6a224c) — it stringified
+   the function, so `"ab".replace(/./g, fn)` returned `"functionfunction"`.
+   `regexReplaceFn` now passes `(match, ...groups, offset, string)`.
+2. ~~**`split(regex)` unsupported**~~ DONE (d6a224c) — returned the string
+   unsplit. A zero-width match advances by one so it cannot loop forever.
 3. **lookbehind `(?<=)` / `(?<!)`** — needs the VM to report a match END position
    so the inner match can be required to finish exactly at `sp`; `reRun` returns
    only a bool today. That signature change is the whole job.
@@ -111,10 +110,20 @@ except where noted. Ranked by how often real code hits them:
 
 Still open, found the same way:
 - error objects have no `.constructor`, so `e.constructor.name` throws.
-- **`Number.prototype.toPrecision` is aliased to `toFixed`** — flat wrong
-  (significant digits vs decimal places): `(123.456).toPrecision(4)` gives
-  `123.4560`, want `123.5`. Fix is a `numToPrecision` in `value.milo` plus three
-  lines of dispatch in `eval.milo` (`primitiveMethod`).
+- ~~`toPrecision` aliased to `toFixed`~~ DONE (d6a224c): `numToPrecision` in
+  `value.milo` computes significant digits. Fixed-notation only — JS switches to
+  exponential when the exponent is < -6 or >= precision, which this does not do.
+- ~~array `values()`/`keys()`/`entries()`/`[Symbol.iterator]`~~ DONE (d6a224c):
+  a `JSObj` holding array+cursor with `next` and `[Symbol.iterator]` as bound
+  builtin methods (`makeBoundMethod`), since a native has no per-instance state.
+  Needed `isCallableIn` — bound methods are ordinary JSObjs, so the JSValue-only
+  `isCallable` could not see them even though `typeof` already said "function".
+  `Array.from` moved to the prelude to consume iterators (a native cannot: driving
+  `next()` calls back into user code, which natives have no program access for).
+- **array iterators carry no helper methods**: `[1,2].values().filter(...)` fails
+  because real JS inherits those from `Iterator.prototype` and this engine has no
+  such chain — `Iterator.from([1,2]).filter(...)` is the working form. This is
+  what still blocks `bug1572`.
 - **no `BigInt` whatsoever** — no value type, no global, and the lexer rejects the
   `123n` literal suffix. Lexing `n` as a plain number would be a lie (BigInt has
   distinct `typeof` and exact semantics), so this is a real lane: a `JSValue`
