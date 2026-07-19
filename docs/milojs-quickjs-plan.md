@@ -9,7 +9,7 @@ update-when: a lane lands (update the score, delete the lane) or the sweep harne
 
 Working plan for driving `scripts/quickjs-sweep.ts` toward 100%. Written for agents
 picking up individual lanes; each lane is independent and lists exact anchors.
-Current: **66/149 cases (44.3%)**. Delete lanes here as they land.
+Current: **67/149 cases (45.0%)**. Delete lanes here as they land.
 
 Engine-level spec builtins now live in `lib/engine-prelude.js` (loaded by
 `milojs-engine.milo` into the shared `Prog` before the entry runs) — distinct from
@@ -55,8 +55,26 @@ doesn't move the score):
   Well-known symbol keys are fixed interned strings (`@@sym:Symbol.iterator:0`);
   counter 0 is reserved since user symbols start at 1.
 
+- ~~`Object.freeze` was a no-op~~ (1d51cbe): it returned the object and froze
+  nothing, so code relying on it for immutability got silent non-protection —
+  arguably the worst class of bug here. Now a `frozen` flag on `JSObj`, enforced
+  in `setMember`, in `arrayMethod` (push/pop/sort/… write through `arrPush` and
+  bypass `setMember`), and in both `delete` branches (`Expr.Member` AND
+  `Expr.Index` — the computed one is separate and was missed on the first pass).
+  `Object.isFrozen` added alongside; primitives report frozen, per spec.
+- ~~`e.message` was decorated with the module name~~ (1d51cbe): `throwNullMember`
+  appended `currentModule(st)`, so `e.message` never equalled the spec text any
+  comparison expects. Dropped for spec-defined messages.
+
 Still open, found the same way:
 - error objects have no `.constructor`, so `e.constructor.name` throws.
+- **no sparse arrays**: `delete arr[1]` stores `undefined` rather than a hole, so
+  `1 in arr` stays true (`bug1430.js`). A real fix needs a `Hole` variant in
+  `JSValue`, threaded through every array op — faking it via "undefined means
+  absent" would break `[undefined]`, where `0 in a` must be true. Left alone
+  deliberately.
+- `Object.freeze` is shallow and does not stop internal `objSet` calls; engine
+  internals can still mutate a frozen object. Fine today, worth knowing.
 - **spread does not honor `[Symbol.iterator]`** on user objects (for-of does).
   `spreadInto` takes an immutable `&Interp` and so cannot call back into user
   code; fixing it means threading `prog` + `&mut Interp` through its 3 call sites.
