@@ -1393,7 +1393,7 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         let body = parseStmt(p, prog)
         expect(p, T_WHILE)
         expect(p, T_LPAREN)
-        let cond = parseExpr(p, prog)
+        let cond = parseCommaSeq(p, prog)
         expect(p, T_RPAREN)
         if peekKind(p) == T_SEMI {
             advance(p)
@@ -1403,7 +1403,7 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
     if k == T_SWITCH {
         advance(p)
         expect(p, T_LPAREN)
-        let discr = parseExpr(p, prog)
+        let discr = parseCommaSeq(p, prog)
         expect(p, T_RPAREN)
         expect(p, T_LBRACE)
         var cases: Vec<SwitchCase> = Vec.new()
@@ -1443,7 +1443,10 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
     if k == T_IF {
         advance(p)
         expect(p, T_LPAREN)
-        let cond = parseExpr(p, prog)
+        // the grammar here is Expression, which INCLUDES the comma operator:
+        // minified code leans on `if (x = f(x), !cond)` to fold a statement into
+        // the test. parseExpr stops at the comma and the paren never closes.
+        let cond = parseCommaSeq(p, prog)
         expect(p, T_RPAREN)
         let thenS = parseStmt(p, prog)
         var elseS = -1
@@ -1456,7 +1459,7 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
     if k == T_WHILE {
         advance(p)
         expect(p, T_LPAREN)
-        let cond = parseExpr(p, prog)
+        let cond = parseCommaSeq(p, prog)
         expect(p, T_RPAREN)
         let body = parseStmt(p, prog)
         return addStmt(prog, Stmt.While(cond, body))
@@ -1597,7 +1600,9 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         var e = -1
         let nk = peekKind(p)
         if nk != T_SEMI && nk != T_RBRACE && nk != T_EOF {
-            e = parseExpr(p, prog)
+            // `return a(), b` returns b — the comma operator is part of the
+            // returned Expression, not a statement separator.
+            e = parseCommaSeq(p, prog)
         }
         if e < 0 {
             e = addExpr(prog, Expr.UndefLit)
@@ -1611,7 +1616,9 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         let b = parseBraceBlock(p, prog)
         return addStmt(prog, Stmt.Block(b))
     }
-    let e = parseExpr(p, prog)
+    // An ExpressionStatement is a full Expression, comma operator included.
+    // Minified bundles chain whole statements this way: `f(3), i = 0;`
+    let e = parseCommaSeq(p, prog)
     if peekKind(p) == T_SEMI {
         advance(p)
     }
