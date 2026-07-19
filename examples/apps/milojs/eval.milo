@@ -1784,13 +1784,13 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         return JSValue.Obj(o)
     }
     if id == NATIVE_STRING_FROMCHARCODE {
-        var out = String.withCapacity(argVals.len())
+        var units: Vec<i64> = Vec.new()
         var i: i64 = 0
         while i < argVals.len() {
-            out.push(toNum(argVals[i]) as u8)
+            units.push(toNum(argVals[i]) as i64)
             i = i + 1
         }
-        return JSValue.Str(out)
+        return JSValue.Str(stringFromUtf16Units(units))
     }
     if id == NATIVE_PROCESS_CWD {
         match currentDir() {
@@ -4191,6 +4191,13 @@ fn serveHttpOnce(prog: &Prog, st: &mut Interp): bool {
         }
         i = i + 1
     }
+    // A request's transient graph — the parsed body, fetched response strings
+    // (each a single but often multi-MB allocation), the Request/Response objects
+    // — is garbage the moment the response is sent. The alloc-COUNT GC threshold
+    // barely moves for a few huge strings, so without this the heap grows
+    // unbounded across requests (observed: ~30 MB/request to >1 GB). This request
+    // boundary is a safe collection point: nothing is in flight on the eval stack.
+    collect(st)
     return true
 }
 

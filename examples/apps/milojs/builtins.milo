@@ -11,7 +11,7 @@ from "./runtime" import {
     Interp, newObject, objSet
 }
 from "std/unicode" import {
-    decodeCodepoint, utf16UnitCount, highSurrogate, lowSurrogate, isSupplementary
+    decodeCodepoint, utf16UnitCount, highSurrogate, lowSurrogate, isSupplementary, encodeCodepoint
 }
 
 // A minimal error object (same shape makeError in eval.milo builds — that one
@@ -280,6 +280,28 @@ fn jsSubstringAt(s: &string, needle: &string, at: i64): bool {
         k = k + 1
     }
     return true
+}
+
+// Build a string from UTF-16 code units, combining surrogate pairs into one
+// codepoint and UTF-8 encoding the result. String.fromCharCode used to push each
+// unit as a raw BYTE, so fromCharCode(0x4E2D) truncated to '-' and anything above
+// U+00FF was destroyed.
+fn stringFromUtf16Units(units: &Vec<i64>): string {
+    var out = String.withCapacity(units.len())
+    var i: i64 = 0
+    while i < units.len() {
+        var cp = units[i]
+        if cp >= 55296 && cp <= 56319 && i + 1 < units.len() {
+            let lo = units[i + 1]
+            if lo >= 56320 && lo <= 57343 {
+                cp = 65536 + ((cp - 55296) * 1024) + (lo - 56320)
+                i = i + 1
+            }
+        }
+        encodeCodepoint(out, cp as i32)
+        i = i + 1
+    }
+    return out
 }
 
 // ── UTF-16 indexing ──────────────────────────────────────────────────────────

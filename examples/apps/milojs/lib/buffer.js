@@ -10,16 +10,63 @@ var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 // milojs strings are UTF-8 byte buffers, so charCodeAt already yields a byte and
 // the string is its own encoding. Re-encoding here would double-encode anything
 // non-ASCII — "h\u00e9llo" would measure 8 bytes instead of 6.
+// Real UTF-8, not a latin1 truncation. This used to be `charCodeAt(i) & 0xff`,
+// which happened to work only while engine strings were byte-indexed; once
+// charCodeAt returned proper UTF-16 units it silently mangled anything non-ASCII
+// (Buffer.byteLength("héllo") gave 5 instead of 6).
 function utf8Encode(str) {
   var out = [];
-  for (var i = 0; i < str.length; i++) out.push(str.charCodeAt(i) & 0xff);
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charCodeAt(i);
+    // combine a surrogate pair back into one code point
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
+      var lo = str.charCodeAt(i + 1);
+      if (lo >= 0xdc00 && lo <= 0xdfff) {
+        c = 0x10000 + ((c - 0xd800) << 10) + (lo - 0xdc00);
+        i++;
+      }
+    }
+    if (c < 0x80) {
+      out.push(c);
+    } else if (c < 0x800) {
+      out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+    } else if (c < 0x10000) {
+      out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+    } else {
+      out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 0x3f), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+    }
+  }
   return out;
 }
 
-// The inverse of utf8Encode: bytes map straight back to string positions.
 function utf8Decode(bytes) {
   var out = '';
-  for (var i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i] & 0xff);
+  var i = 0;
+  while (i < bytes.length) {
+    var b = bytes[i] & 0xff;
+    var cp, need;
+    if (b < 0x80) { cp = b; need = 0; }
+    else if ((b & 0xe0) === 0xc0) { cp = b & 0x1f; need = 1; }
+    else if ((b & 0xf0) === 0xe0) { cp = b & 0x0f; need = 2; }
+    else if ((b & 0xf8) === 0xf0) { cp = b & 0x07; need = 3; }
+    else { out += String.fromCharCode(0xfffd); i++; continue; }
+    if (i + need >= bytes.length + 0 && i + need > bytes.length - 1) {
+      out += String.fromCharCode(0xfffd);
+      break;
+    }
+    for (var k = 1; k <= need; k++) {
+      var cb = bytes[i + k] & 0xff;
+      if ((cb & 0xc0) !== 0x80) { cp = 0xfffd; break; }
+      cp = (cp << 6) | (cb & 0x3f);
+    }
+    i += need + 1;
+    if (cp > 0xffff) {
+      cp -= 0x10000;
+      out += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
+    } else {
+      out += String.fromCharCode(cp);
+    }
+  }
   return out;
 }
 
