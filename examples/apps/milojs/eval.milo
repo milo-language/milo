@@ -30,7 +30,7 @@ from "std/env" import {
     getEnv
 }
 from "std/net" import {
-    TcpListener, TcpStream
+    TcpListener, TcpStream, TlsStream
 }
 from "std/time" import {
     epochMillis, sleepMs
@@ -913,6 +913,9 @@ let NATIVE_ARRAYBUFFER: i64 = 78
 // the typed-array constructors occupy a contiguous block so the element kind is
 // just (id - NATIVE_TA_BASE); keep in step with the TA_* order in runtime.milo
 let NATIVE_TA_BASE: i64 = 79
+// __httpFetch(method, url, headersJson, body): synchronous outbound HTTP/HTTPS.
+// Above the TA block (79..87). node-fetch is built on this.
+let NATIVE_HTTP_FETCH: i64 = 88
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -936,6 +939,131 @@ fn isErrorCtor(id: i64): bool {
 
 // Invoke a native function/constructor. Error(msg) and new Error(msg) behave the
 // same (both mint an error object), matching JS.
+// Synchronous outbound HTTP/HTTPS. Milo has no coroutines and the event loop is
+// drained in place on await, so a blocking request is consistent with the rest of
+// the runtime (the server side blocks on accept too). Returns the raw HTTP
+// response text prefixed with 'O', or 'E' + message on any failure — the JS side
+// (lib/node-fetch.js) strips the sentinel and parses the response.
+fn doHttpFetch(method: &string, url: &string, headersRaw: &string, body: &string): string {
+    // parse scheme://host[:port]/path
+    var rest = url.clone()
+    var tls = true
+    var defPort: i64 = 443
+    if jsStartsWith(rest, "https://") {
+        rest = strSlice(rest, 8, rest.len())
+    } else if jsStartsWith(rest, "http://") {
+        tls = false
+        defPort = 80
+        rest = strSlice(rest, 7, rest.len())
+    } else {
+        return "Eunsupported URL scheme: " + url.clone()
+    }
+    // host[:port] is up to the first '/'
+    var slash = jsIndexOf(rest, "/", 0)
+    var authority = rest.clone()
+    var path = "/"
+    if slash >= 0 {
+        authority = strSlice(rest, 0, slash)
+        path = strSlice(rest, slash, rest.len())
+    }
+    var host = authority.clone()
+    var port = defPort
+    let colon = jsIndexOf(authority, ":", 0)
+    if colon >= 0 {
+        host = strSlice(authority, 0, colon)
+        let portStr = strSlice(authority, colon + 1, authority.len())
+        port = toNum(JSValue.Str(portStr)) as i64
+        if port <= 0 {
+            port = defPort
+        }
+    }
+    // DNS
+    var ip: u32 = 0
+    match resolve(host) {
+        Result.Ok(a) => {
+            ip = a
+        }
+        Result.Err(_e) => {
+            return "Ecannot resolve host: " + host.clone()
+        }
+    }
+    // build the request. HTTP/1.1 with Connection: close so the read loop ends at
+    // EOF instead of needing to parse content-length/chunked to know when to stop.
+    var req = method.clone() + " " + path.clone() + " HTTP/1.1\r\n"
+    req = req + "Host: " + host.clone() + "\r\n"
+    req = req + headersRaw.clone()
+    req = req + "Connection: close\r\n"
+    if body.len() > 0 {
+        req = req + "Content-Length: " + i64ToStr(body.len()) + "\r\n"
+    }
+    req = req + "\r\n" + body.clone()
+
+    if tls {
+        match TlsStream.connect(ip, port as u16, host) {
+            Result.Ok(conn) => {
+                match conn.send(req) {
+                    Result.Ok(_n) => {
+                    }
+                    Result.Err(_e) => {
+                        return "Esend failed"
+                    }
+                }
+                var resp = ""
+                var reading = true
+                while reading {
+                    match conn.recv() {
+                        Result.Ok(chunk) => {
+                            if chunk.len() == 0 {
+                                reading = false
+                            } else {
+                                resp = resp + chunk
+                            }
+                        }
+                        Result.Err(_e) => {
+                            reading = false
+                        }
+                    }
+                }
+                return "O" + resp
+            }
+            Result.Err(_e) => {
+                return "ETLS connect failed to " + host.clone()
+            }
+        }
+    }
+    match TcpStream.connect(ip, port as u16) {
+        Result.Ok(conn) => {
+            match conn.send(req) {
+                Result.Ok(_n) => {
+                }
+                Result.Err(_e) => {
+                    return "Esend failed"
+                }
+            }
+            var resp = ""
+            var reading = true
+            while reading {
+                match conn.recv() {
+                    Result.Ok(chunk) => {
+                        if chunk.len() == 0 {
+                            reading = false
+                        } else {
+                            resp = resp + chunk
+                        }
+                    }
+                    Result.Err(_e) => {
+                        reading = false
+                    }
+                }
+            }
+            return "O" + resp
+        }
+        Result.Err(_e) => {
+            return "ETCP connect failed to " + host.clone()
+        }
+    }
+}
+
 fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     if isErrorCtor(id) {
         let o = newObject(st)
@@ -1394,6 +1522,25 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             st.connOpen[idx] = false
         }
         return JSValue.Undefined
+    }
+    if id == NATIVE_HTTP_FETCH {
+        var method = "GET"
+        var url = ""
+        var headersRaw = ""
+        var body = ""
+        if argVals.len() > 0 {
+            method = toStr(argVals[0])
+        }
+        if argVals.len() > 1 {
+            url = toStr(argVals[1])
+        }
+        if argVals.len() > 2 {
+            headersRaw = toStr(argVals[2])
+        }
+        if argVals.len() > 3 {
+            body = toStr(argVals[3])
+        }
+        return JSValue.Str(doHttpFetch(method, url, headersRaw, body))
     }
     if id == NATIVE_WRITE_FILE {
         if argVals.len() < 2 {
@@ -2510,6 +2657,7 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "__tcpRecv", JSValue.Native(NATIVE_TCP_RECV))
     scopeDefine(st, 0, "__tcpSend", JSValue.Native(NATIVE_TCP_SEND))
     scopeDefine(st, 0, "__tcpClose", JSValue.Native(NATIVE_TCP_CLOSE))
+    scopeDefine(st, 0, "__httpFetch", JSValue.Native(NATIVE_HTTP_FETCH))
     scopeDefine(st, 0, "__httpRegister", JSValue.Native(NATIVE_HTTP_REGISTER))
     scopeDefine(st, 0, "__httpUnregister", JSValue.Native(NATIVE_HTTP_UNREGISTER))
     scopeDefine(st, 0, "__writeFileSync", JSValue.Native(NATIVE_WRITE_FILE))
@@ -4225,6 +4373,107 @@ fn makeCbArgs(st: &Interp, o: i64, i: i64): Vec<JSValue> {
 }
 
 // Map and Set share one entry list; a Set just stores true as every value.
+// Call a method by name on a user object (set-like argument plumbing).
+fn callObjMethod(prog: &Prog, st: &mut Interp, recv: &JSValue, name: &string, args: Vec<JSValue>): JSValue {
+    let h = objHandle(recv)
+    if h < 0 {
+        return JSValue.Undefined
+    }
+    let f = getMember(st, h, name)
+    if !isCallableIn(st, f) {
+        st.throwing = true
+        st.thrownValue = makeError(st, "TypeError", name.clone() + " is not a function")
+        return JSValue.Undefined
+    }
+    return callValue(prog, f, args, cloneValue(recv), st)
+}
+
+// The set-methods proposal takes "set-like" objects: {size, has, keys}. `size` is
+// validated first and its diagnostics must name `.size`, which the suite checks.
+// Returns the size, or -1.0 after throwing.
+fn setLikeSize(_prog: &Prog, st: &mut Interp, other: &JSValue): f64 {
+    let h = objHandle(other)
+    if h < 0 {
+        st.throwing = true
+        st.thrownValue = makeError(st, "TypeError", "set-like argument has no .size")
+        return 0.0 - 1.0
+    }
+    // a real Set answers .size itself
+    if st.objects[h].isSet || st.objects[h].isMap {
+        return st.objects[h].mapKeys.len() as f64
+    }
+    let sv = getMember(st, h, "size")
+    let n = toNum(sv)
+    if n != n {
+        st.throwing = true
+        st.thrownValue = makeError(st, "TypeError", "set-like argument has a NaN .size")
+        return 0.0 - 1.0
+    }
+    if n < 0.0 {
+        st.throwing = true
+        st.thrownValue = makeError(st, "RangeError", "set-like argument has a negative .size")
+        return 0.0 - 1.0
+    }
+    return n
+}
+
+// other.keys() — the iterator a set-like exposes.
+fn setLikeKeys(prog: &Prog, st: &mut Interp, other: &JSValue): JSValue {
+    let h = objHandle(other)
+    if h >= 0 && (st.objects[h].isSet || st.objects[h].isMap) {
+        var noArgs: Vec<JSValue> = Vec.new()
+        return mapMethod(prog, h, "keys", noArgs, st)
+    }
+    var noArgs: Vec<JSValue> = Vec.new()
+    return callObjMethod(prog, st, other, "keys", noArgs)
+}
+
+// One step of an iterator: returns done via the out-param slot.
+fn iterStep(prog: &Prog, st: &mut Interp, iter: &JSValue, done: &mut bool): JSValue {
+    var noArgs: Vec<JSValue> = Vec.new()
+    let step = callObjMethod(prog, st, iter, "next", noArgs)
+    let sh = objHandle(step)
+    if sh < 0 || st.throwing {
+        done = true
+        return JSValue.Undefined
+    }
+    done = truthy(getMember(st, sh, "done"))
+    if done {
+        return JSValue.Undefined
+    }
+    return getMember(st, sh, "value")
+}
+
+// Closing an iterator early is observable (the suite counts return() calls), so
+// every early exit from a set method has to do it.
+fn iterClose(prog: &Prog, st: &mut Interp, iter: &JSValue) {
+    let h = objHandle(iter)
+    if h < 0 {
+        return
+    }
+    let f = getMember(st, h, "return")
+    if isCallableIn(st, f) {
+        var noArgs: Vec<JSValue> = Vec.new()
+        let _ = callValue(prog, f, noArgs, cloneValue(iter), st)
+    }
+}
+
+fn setHasValue(st: &Interp, o: i64, v: &JSValue): bool {
+    return mapFind(st, o, v) >= 0
+}
+
+// `other.has(v)` where other may be a real Set (whose `has` is native dispatch,
+// not a property) or a user set-like (where it is a property).
+fn setLikeHas(prog: &Prog, st: &mut Interp, other: &JSValue, v: &JSValue): bool {
+    let h = objHandle(other)
+    if h >= 0 && (st.objects[h].isSet || st.objects[h].isMap) {
+        return mapFind(st, h, v) >= 0
+    }
+    var hargs: Vec<JSValue> = Vec.new()
+    hargs.push(cloneValue(v))
+    return truthy(callObjMethod(prog, st, other, "has", hargs))
+}
+
 fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     let isSet = st.objects[o].isSet
     if name == "get" {
@@ -4284,6 +4533,114 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
         st.objects[o].mapKeys = Vec.new()
         st.objects[o].mapVals = Vec.new()
         return JSValue.Undefined
+    }
+    if name == "isSupersetOf" || name == "isSubsetOf" || name == "isDisjointFrom" || name == "union" || name == "intersection" || name == "difference" {
+        var other = JSValue.Undefined
+        if args.len() > 0 {
+            other = cloneValue(args[0])
+        }
+        let osize = setLikeSize(prog, st, other)
+        if st.throwing {
+            return JSValue.Undefined
+        }
+        let mine = st.objects[o].mapKeys.len() as f64
+
+        if name == "isSupersetOf" {
+            if mine < osize {
+                return JSValue.Bool(false)
+            }
+            let iter = setLikeKeys(prog, st, other)
+            pushTemp(st, cloneValue(iter))
+            var done = false
+            var ok = true
+            while !done && !st.throwing {
+                let v = iterStep(prog, st, iter, done)
+                if !done && !setHasValue(st, o, v) {
+                    iterClose(prog, st, iter)
+                    ok = false
+                    done = true
+                }
+            }
+            popTemp(st)
+            return JSValue.Bool(ok)
+        }
+        if name == "isSubsetOf" {
+            if mine > osize {
+                return JSValue.Bool(false)
+            }
+            var i: i64 = 0
+            while i < st.objects[o].mapKeys.len() && !st.throwing {
+                let mk = cloneValue(st.objects[o].mapKeys[i])
+                if !setLikeHas(prog, st, other, mk) {
+                    return JSValue.Bool(false)
+                }
+                i = i + 1
+            }
+            return JSValue.Bool(true)
+        }
+        if name == "isDisjointFrom" {
+            // walk whichever side is smaller; only the other-side walk uses an
+            // iterator, which is what makes the suite's call counts meaningful
+            if mine <= osize {
+                var i: i64 = 0
+                while i < st.objects[o].mapKeys.len() && !st.throwing {
+                    let mk = cloneValue(st.objects[o].mapKeys[i])
+                    if setLikeHas(prog, st, other, mk) {
+                        return JSValue.Bool(false)
+                    }
+                    i = i + 1
+                }
+                return JSValue.Bool(true)
+            }
+            let iter = setLikeKeys(prog, st, other)
+            pushTemp(st, cloneValue(iter))
+            var done = false
+            var disjoint = true
+            while !done && !st.throwing {
+                let v = iterStep(prog, st, iter, done)
+                if !done && setHasValue(st, o, v) {
+                    iterClose(prog, st, iter)
+                    disjoint = false
+                    done = true
+                }
+            }
+            popTemp(st)
+            return JSValue.Bool(disjoint)
+        }
+        // union / intersection / difference all build a fresh Set
+        let res = newObject(st)
+        st.objects[res].isSet = true
+        pushTemp(st, JSValue.Obj(res))
+        if name == "union" {
+            var i: i64 = 0
+            while i < st.objects[o].mapKeys.len() {
+                mapPut(st, res, cloneValue(st.objects[o].mapKeys[i]), JSValue.Bool(true))
+                i = i + 1
+            }
+            let iter = setLikeKeys(prog, st, other)
+            pushTemp(st, cloneValue(iter))
+            var done = false
+            while !done && !st.throwing {
+                let v = iterStep(prog, st, iter, done)
+                if !done {
+                    mapPut(st, res, v, JSValue.Bool(true))
+                }
+            }
+            popTemp(st)
+        } else {
+            let wantIn = name == "intersection"
+            var i: i64 = 0
+            while i < st.objects[o].mapKeys.len() && !st.throwing {
+                let k = cloneValue(st.objects[o].mapKeys[i])
+                let inOther = setLikeHas(prog, st, other, k)
+                if inOther == wantIn {
+                    mapPut(st, res, k, JSValue.Bool(true))
+                }
+                i = i + 1
+            }
+        }
+        popTemp(st)
+        return JSValue.Obj(res)
     }
     if name == "keys" || name == "values" || name == "entries" {
         // Snapshot into an array, then hand back a real iterator over it — so

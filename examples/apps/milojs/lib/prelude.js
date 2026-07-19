@@ -257,3 +257,133 @@ var global = globalThis;
 function structuredClone(v) {
   return JSON.parse(JSON.stringify(v));
 }
+
+// --- global fetch (Node 18+ / undici surface) ------------------------------
+// Backed by the __httpFetch native (synchronous connect+TLS+request/response in
+// Milo). node-fetch re-exports these. Enough of the surface for the app's data
+// layer: fetch(url, {method,headers,body}) -> Response with ok/status/json/text.
+function Headers(init) {
+  this._h = {};
+  if (init) {
+    if (typeof init.forEach === 'function' && !Array.isArray(init)) {
+      var self = this;
+      init.forEach(function (v, k) { self._h[String(k).toLowerCase()] = v; });
+    } else if (Array.isArray(init)) {
+      for (var i = 0; i < init.length; i++) this._h[String(init[i][0]).toLowerCase()] = init[i][1];
+    } else {
+      var keys = Object.keys(init);
+      for (var j = 0; j < keys.length; j++) this._h[keys[j].toLowerCase()] = init[keys[j]];
+    }
+  }
+}
+Headers.prototype.get = function (k) { var v = this._h[String(k).toLowerCase()]; return v === undefined ? null : v; };
+Headers.prototype.set = function (k, v) { this._h[String(k).toLowerCase()] = v; return this; };
+Headers.prototype.has = function (k) { return this._h[String(k).toLowerCase()] !== undefined; };
+Headers.prototype.delete = function (k) { delete this._h[String(k).toLowerCase()]; };
+Headers.prototype.forEach = function (cb) {
+  var keys = Object.keys(this._h);
+  for (var i = 0; i < keys.length; i++) cb(this._h[keys[i]], keys[i], this);
+};
+Headers.prototype.entries = function () {
+  var out = [], keys = Object.keys(this._h);
+  for (var i = 0; i < keys.length; i++) out.push([keys[i], this._h[keys[i]]]);
+  return out;
+};
+
+function Request(url, options) { this.url = url; this.options = options || {}; }
+
+function Response(body, init) {
+  init = init || {};
+  this._body = body == null ? '' : String(body);
+  this.status = init.status === undefined ? 200 : init.status;
+  this.statusText = init.statusText || '';
+  this.ok = this.status >= 200 && this.status < 300;
+  this.headers = init.headers instanceof Headers ? init.headers : new Headers(init.headers || {});
+  this.url = init.url || '';
+  this.bodyUsed = false;
+}
+Response.prototype.text = function () { this.bodyUsed = true; return Promise.resolve(this._body); };
+Response.prototype.json = function () {
+  var b = this._body;
+  return new Promise(function (resolve, reject) {
+    try { resolve(JSON.parse(b)); } catch (e) { reject(e); }
+  });
+};
+Response.prototype.clone = function () {
+  return new Response(this._body, { status: this.status, statusText: this.statusText, headers: this.headers, url: this.url });
+};
+
+// AbortController/AbortSignal — accepted and ignored (fetch is synchronous here,
+// so a request can't actually be aborted mid-flight; the surface just has to exist)
+function AbortController() {
+  this.signal = { aborted: false, addEventListener: function () {}, removeEventListener: function () {}, onabort: null };
+}
+AbortController.prototype.abort = function () { this.signal.aborted = true; };
+var AbortSignal = {
+  timeout: function () { return { aborted: false, addEventListener: function () {}, removeEventListener: function () {} }; },
+  abort: function () { return { aborted: true, addEventListener: function () {}, removeEventListener: function () {} }; }
+};
+
+function __fetchDechunk(body) {
+  var out = '', pos = 0;
+  while (pos < body.length) {
+    var nl = body.indexOf('\r\n', pos);
+    if (nl < 0) break;
+    var size = parseInt(body.slice(pos, nl).split(';')[0].trim(), 16);
+    if (isNaN(size) || size === 0) break;
+    var start = nl + 2;
+    out += body.slice(start, start + size);
+    pos = start + size + 2;
+  }
+  return out;
+}
+
+function __fetchParse(raw, url) {
+  var sep = raw.indexOf('\r\n\r\n');
+  var headPart = sep < 0 ? raw : raw.slice(0, sep);
+  var body = sep < 0 ? '' : raw.slice(sep + 4);
+  var lines = headPart.split('\r\n');
+  var sp = (lines[0] || 'HTTP/1.1 200 OK').split(' ');
+  var status = parseInt(sp[1], 10) || 200;
+  var headers = new Headers();
+  for (var i = 1; i < lines.length; i++) {
+    var line = lines[i];
+    if (!line) continue;
+    var c = line.indexOf(':');
+    if (c < 0) continue;
+    headers.set(line.slice(0, c).trim(), line.slice(c + 1).trim());
+  }
+  if (String(headers.get('transfer-encoding') || '').toLowerCase().indexOf('chunked') >= 0) body = __fetchDechunk(body);
+  return new Response(body, { status: status, statusText: sp.slice(2).join(' '), headers: headers, url: url });
+}
+
+function fetch(url, options) {
+  options = options || {};
+  var method = (options.method || 'GET').toUpperCase();
+  var u = typeof url === 'string' ? url : (url && url.url) || String(url);
+  var hdrs = {};
+  if (options.headers) {
+    if (options.headers instanceof Headers) {
+      var es = options.headers.entries();
+      for (var i = 0; i < es.length; i++) hdrs[es[i][0]] = es[i][1];
+    } else {
+      var ks = Object.keys(options.headers);
+      for (var j = 0; j < ks.length; j++) hdrs[ks[j].toLowerCase()] = options.headers[ks[j]];
+    }
+  }
+  if (hdrs['accept'] === undefined) hdrs['accept'] = '*/*';
+  hdrs['accept-encoding'] = 'identity';
+  if (hdrs['user-agent'] === undefined) hdrs['user-agent'] = 'milojs-fetch/1.0';
+  var body = '';
+  if (options.body != null) {
+    body = typeof options.body === 'string' ? options.body : (options.body && options.body.bytes ? options.body.toString() : JSON.stringify(options.body));
+    if (hdrs['content-type'] === undefined && typeof options.body !== 'string') hdrs['content-type'] = 'application/json';
+  }
+  var headerRaw = '', hk = Object.keys(hdrs);
+  for (var k = 0; k < hk.length; k++) headerRaw += hk[k] + ': ' + hdrs[hk[k]] + '\r\n';
+  return new Promise(function (resolve, reject) {
+    var res = __httpFetch(method, u, headerRaw, body);
+    if (res.length > 0 && res.charAt(0) === 'E') { reject(new Error('fetch failed: ' + res.slice(1) + ' (' + u + ')')); return; }
+    resolve(__fetchParse(res.length > 0 ? res.slice(1) : '', u));
+  });
+}
