@@ -51,8 +51,10 @@ fn loadCities(): void {
     }
 }
 
-// Built by concatenation rather than an object literal: those lower to anonymous
-// structs, and this needs a raw fragment to splice into the response array.
+// Concatenated rather than built with jsonStringify({...}) because lat/lon must
+// survive verbatim: jsonStringify formats floats with %g (6 significant digits),
+// which silently truncates -122.2364 to -122.236. Passing the TSV's own text
+// through keeps the coordinates exact.
 fn cityJson(c: &City): string {
     let q = "\""
     var s = "{" + q + "name" + q + ":" + q + jsonEscapeStr(c.name) + q
