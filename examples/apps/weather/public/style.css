@@ -1,3 +1,17 @@
+/* Design tokens mirror the tahoeroads (chadsmith.dev) widget system: a light
+   neutral shell with one weather-tinted gradient card as the centerpiece. */
+:root {
+  --base-100: #ffffff;
+  --base-200: #f2f2f2;
+  --base-300: #e5e6e6;
+  --content: #1f2937;
+  --primary: #63bf74;
+  --radius-box: 1rem;
+  --radius-tile: 0.75rem;
+  --radius-btn: 0.5rem;
+  --shadow-card: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -5,220 +19,175 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  background: linear-gradient(180deg, #1a3a5c 0%, #0f1f3d 40%, #0a1628 100%);
-  color: #fff;
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  background: var(--base-100);
+  color: var(--content);
   min-height: 100vh;
   min-height: 100dvh;
-  padding: 1.5rem 1rem 2rem;
-  position: relative;
-  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  -webkit-font-smoothing: antialiased;
 }
 
-.sun-flare {
-  position: fixed;
+/* ── Nav ── */
+
+.nav {
+  background: var(--base-200);
+  border-bottom: 1px solid var(--base-300);
+  position: sticky;
   top: 0;
-  left: 0;
-  width: 0;
-  height: 0;
-  pointer-events: none;
-  z-index: 0;
-  display: none;
+  z-index: 30;
 }
 
-.sun-flare.active {
-  display: block;
-}
-
-.flare-core {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 120px;
-  height: 120px;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(255, 255, 255, 0.95) 0%,
-    rgba(255, 255, 240, 0.6) 25%,
-    rgba(255, 250, 220, 0.2) 50%,
-    transparent 75%
-  );
-}
-
-.flare-glow {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 450px;
-  height: 450px;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(255, 255, 250, 0.25) 0%,
-    rgba(255, 250, 230, 0.1) 25%,
-    rgba(200, 220, 255, 0.04) 50%,
-    transparent 70%
-  );
-}
-
-.flare-rays {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 600px;
-  height: 600px;
-  transform: translate(-50%, -50%);
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    rgba(255, 255, 255, 0.06) 5deg,
-    transparent 10deg,
-    transparent 30deg,
-    rgba(255, 255, 255, 0.04) 35deg,
-    transparent 40deg,
-    transparent 60deg,
-    rgba(255, 255, 255, 0.05) 65deg,
-    transparent 70deg,
-    transparent 90deg,
-    rgba(255, 255, 255, 0.03) 95deg,
-    transparent 100deg,
-    transparent 120deg,
-    rgba(255, 255, 255, 0.06) 125deg,
-    transparent 130deg,
-    transparent 150deg,
-    rgba(255, 255, 255, 0.04) 155deg,
-    transparent 160deg,
-    transparent 180deg,
-    rgba(255, 255, 255, 0.05) 185deg,
-    transparent 190deg,
-    transparent 210deg,
-    rgba(255, 255, 255, 0.03) 215deg,
-    transparent 220deg,
-    transparent 240deg,
-    rgba(255, 255, 255, 0.04) 245deg,
-    transparent 250deg,
-    transparent 270deg,
-    rgba(255, 255, 255, 0.06) 275deg,
-    transparent 280deg,
-    transparent 300deg,
-    rgba(255, 255, 255, 0.04) 305deg,
-    transparent 310deg,
-    transparent 330deg,
-    rgba(255, 255, 255, 0.05) 335deg,
-    transparent 340deg,
-    transparent 360deg
-  );
-  border-radius: 50%;
-  filter: blur(2px);
-}
-
-.flare-streak {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 500px;
-  height: 3px;
-  transform-origin: 0 50%;
-  transform: rotate(35deg);
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.4) 0%,
-    rgba(200, 230, 255, 0.15) 20%,
-    rgba(180, 200, 255, 0.06) 40%,
-    rgba(220, 180, 255, 0.04) 60%,
-    transparent 80%
-  );
-  filter: blur(3px);
-}
-
-.flare-streak2 {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 350px;
-  height: 2px;
-  transform-origin: 0 50%;
-  transform: rotate(55deg);
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.2) 0%,
-    rgba(180, 220, 255, 0.1) 30%,
-    transparent 70%
-  );
-  filter: blur(2px);
-}
-
-.flare-orb {
-  position: absolute;
-  top: 180px;
-  left: 250px;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(180, 210, 255, 0.12) 0%, transparent 70%);
-}
-
-.flare-orb2 {
-  position: absolute;
-  top: 280px;
-  left: 380px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(200, 180, 255, 0.08) 0%, transparent 70%);
-}
-
-.container {
-  position: relative;
-  z-index: 1;
-}
-
-.container {
-  max-width: 900px;
+.nav-row {
+  max-width: 64rem;
   margin: 0 auto;
+  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
 }
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--content);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.brand-mark {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+/* ── Search widget ── */
 
 .search-bar {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
-  margin-bottom: 1.5rem;
-  justify-content: center;
-}
-
-.search-bar input {
-  width: 260px;
-  padding: 0.85rem 1.1rem;
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
-  color: #fff;
-  font-size: 1.05rem;
-  text-align: center;
-  outline: none;
+  flex: 1 1 18rem;
+  max-width: 30rem;
+  margin-left: auto;
 }
 
 .search-wrap {
   position: relative;
-  display: inline-block;
+  flex: 1;
+}
+
+.search-bar input {
+  width: 100%;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.875rem;
+  font-family: inherit;
+  color: var(--content);
+  background: var(--base-100);
+  border: 1px solid var(--base-300);
+  border-radius: var(--radius-btn);
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.search-bar input::placeholder {
+  color: rgba(31, 41, 55, 0.45);
+}
+
+.search-bar input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(99, 191, 116, 0.2);
+}
+
+.search-bar button {
+  padding: 0.5rem 0.9rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-family: inherit;
+  color: #fff;
+  background: var(--primary);
+  border: none;
+  border-radius: var(--radius-btn);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s;
+}
+
+.search-bar button:hover:not(:disabled) {
+  background: #4faa60;
+}
+
+.search-bar button:disabled,
+.locate-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.locate-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  line-height: 1;
+  font-family: inherit;
+  color: rgba(31, 41, 55, 0.7);
+  background: var(--base-100);
+  border: 1px solid var(--base-300);
+  border-radius: var(--radius-btn);
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+
+.locate-btn svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: block;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.locate-btn:hover:not(:disabled) {
+  background: var(--base-200);
+  color: var(--primary);
+}
+
+.locate-btn.locating {
+  animation: locate-pulse 1s ease-in-out infinite;
+}
+
+@keyframes locate-pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .suggestions {
+  display: none;
   position: absolute;
-  top: 100%;
+  top: calc(100% + 0.25rem);
   left: 0;
   right: 0;
-  margin-top: 4px;
-  background: rgba(30, 41, 59, 0.95);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
-  overflow: hidden;
-  z-index: 10;
-  display: none;
+  z-index: 40;
+  background: var(--base-100);
+  border: 1px solid var(--base-300);
+  border-radius: var(--radius-btn);
+  box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.18);
+  max-height: 20rem;
+  overflow-y: auto;
 }
 
 .suggestions.active {
@@ -226,294 +195,418 @@ body {
 }
 
 .suggestion-item {
-  padding: 0.65rem 1rem;
-  cursor: pointer;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  text-align: left;
   display: flex;
   align-items: baseline;
-  gap: 0.4rem;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.85rem;
+  cursor: pointer;
+  border-top: 1px solid rgba(31, 41, 55, 0.06);
+  transition: background-color 0.15s;
 }
 
-.suggestion-item:last-child {
-  border-bottom: none;
+.suggestion-item:first-child {
+  border-top: none;
 }
 
-.suggestion-item:hover {
-  background: rgba(255, 255, 255, 0.12);
+.suggestion-item:hover,
+.suggestion-item.active {
+  background: rgba(242, 242, 242, 0.9);
 }
 
 .sug-city {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
 }
 
 .sug-region {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(31, 41, 55, 0.6);
 }
 
-.locate-btn {
-  padding: 0.85rem;
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  color: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
-  font-size: 1.1rem;
-  cursor: pointer;
-  line-height: 1;
+/* ── Page shell ── */
+
+.container {
+  width: 100%;
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 2rem;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
 }
 
-.locate-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
-}
-
-.search-bar input::placeholder {
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.search-bar input:focus {
-  border-color: rgba(255, 255, 255, 0.4);
-}
-
-.search-bar button {
-  padding: 0.7rem 1.25rem;
-  background: rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(10px);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.search-bar button:hover {
-  background: rgba(255, 255, 255, 0.3);
-}
-
-.search-bar button:disabled {
-  opacity: 0.4;
-  cursor: wait;
-}
-
-/* Hero */
-.hero-section {
+.error-msg {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-tile);
+  background: rgba(185, 28, 28, 0.08);
+  border: 1px solid rgba(185, 28, 28, 0.25);
+  color: #b91c1c;
+  font-size: 0.875rem;
   text-align: center;
-  padding: 1.5rem 0 2rem;
 }
+
+.loading {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: rgba(31, 41, 55, 0.5);
+  font-size: 0.875rem;
+}
+
+/* ── Gradient weather card ──
+   Condition class picks the backdrop; `.on-light` flips text to dark for the
+   pale snow/cloud gradients, which white text can't survive. */
+
+.wx-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-box);
+  padding: 1.25rem;
+  box-shadow: var(--shadow-card);
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 40, 100, 0.45);
+  background: linear-gradient(180deg, #2a6cc8 0%, #3b8ad9 50%, #4d9fe0 100%);
+}
+
+.wx-card.night {
+  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.wx-card.cloudy {
+  background: linear-gradient(180deg, #6b7d8a 0%, #7a8c9a 40%, #8a9caa 100%);
+}
+
+.wx-card.rain {
+  background: linear-gradient(180deg, #2c5364 0%, #203a43 50%, #0f2027 100%);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.wx-card.snow {
+  background: linear-gradient(180deg, #7ba7d7 0%, #9fc5e8 50%, #c0dde3 100%);
+}
+
+.wx-card.on-light {
+  color: var(--content);
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.5);
+}
+
+/* Sun disc glow plus its halo ring, clear-day only. */
+.wx-card.clear-day::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      circle 210px at 78% 0%,
+      rgba(255, 255, 255, 0.95) 0%,
+      rgba(255, 255, 255, 0.5) 15%,
+      rgba(255, 255, 255, 0.18) 42%,
+      transparent 100%
+    ),
+    radial-gradient(
+      circle 320px at 78% 0%,
+      transparent 74%,
+      rgba(255, 255, 255, 0.08) 84%,
+      transparent 96%
+    );
+}
+
+.wx-card.night::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 420px 300px at 30% 20%,
+    rgba(100, 100, 150, 0.3) 0%,
+    transparent 100%
+  );
+}
+
+.wx-body {
+  position: relative;
+  z-index: 2;
+}
+
+/* Drifting cloud wisps — blurred ellipses on staggered long loops. */
+.wispy-clouds {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.wisp {
+  position: absolute;
+  width: 55%;
+  height: 40%;
+  filter: blur(10px);
+  animation: wisp-drift linear infinite;
+}
+
+.wisp-1 {
+  top: 6%;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.22), transparent 70%);
+  transform: skewX(-12deg);
+  opacity: 0.7;
+  animation-duration: 48s;
+  animation-delay: -6s;
+}
+
+.wisp-2 {
+  top: 30%;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.16), transparent 70%);
+  transform: skewX(-5deg);
+  opacity: 0.55;
+  animation-duration: 65s;
+  animation-delay: -30s;
+}
+
+.wisp-3 {
+  top: 52%;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.12), transparent 70%);
+  transform: skewX(-15deg);
+  opacity: 0.6;
+  animation-duration: 40s;
+  animation-delay: -18s;
+}
+
+.wisp-4 {
+  top: 72%;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.14), transparent 70%);
+  transform: skewX(-9deg);
+  opacity: 0.5;
+  animation-duration: 57s;
+  animation-delay: -44s;
+}
+
+@keyframes wisp-drift {
+  from {
+    left: -60%;
+  }
+  to {
+    left: 105%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wisp {
+    animation: none;
+  }
+}
+
+/* ── Hero block ── */
 
 .hero-city {
-  font-size: 2rem;
-  font-weight: 300;
-  letter-spacing: 0.02em;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  opacity: 0.8;
+  text-align: center;
 }
 
 .hero-temp {
-  font-size: 6rem;
-  font-weight: 100;
-  line-height: 1;
-  margin: 0.25rem 0;
+  font-size: 3.75rem;
+  font-weight: 300;
+  letter-spacing: -0.05em;
+  line-height: 1.05;
+  text-align: center;
+  margin-top: 0.25rem;
 }
 
 .hero-condition {
-  font-size: 1.1rem;
-  font-weight: 400;
+  font-size: 1rem;
+  text-align: center;
   opacity: 0.9;
 }
 
-.hero-feels {
-  font-size: 0.95rem;
-  opacity: 0.7;
+.hero-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem 2rem;
+  margin-top: 0.75rem;
 }
 
-.hero-hilo {
-  font-size: 1rem;
-  opacity: 0.7;
-  margin-top: 0.15rem;
+.stat {
+  text-align: center;
 }
 
-/* Glass card */
-.glass {
-  background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 14px;
-}
-
-/* Hourly */
-.hourly-card {
-  padding: 1rem;
-  margin-bottom: 0.75rem;
-}
-
-.hourly-label {
-  font-size: 0.7rem;
+.stat-label {
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  opacity: 0.6;
-  margin-bottom: 0.75rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  letter-spacing: 0.025em;
+  opacity: 0.7;
 }
+
+.stat-value {
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-detail {
+  margin-top: 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  opacity: 0.85;
+  text-align: center;
+}
+
+/* Section divider inside the gradient card — the core visual rhythm. */
+.wx-divider {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.on-light .wx-divider {
+  border-top-color: rgba(31, 41, 55, 0.18);
+}
+
+.wx-section-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  opacity: 0.8;
+  margin-bottom: 0.5rem;
+}
+
+/* ── Hourly strip ── */
 
 .hourly-scroll {
   display: flex;
-  gap: 1.25rem;
   overflow-x: auto;
+  gap: 0.25rem;
   padding-bottom: 0.5rem;
-  scrollbar-width: none;
+  scrollbar-width: thin;
 }
 
 .hourly-scroll::-webkit-scrollbar {
-  display: none;
+  height: 4px;
+}
+
+.hourly-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
 }
 
 .hourly-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.4rem;
-  min-width: 48px;
+  gap: 0.375rem;
+  min-width: 3.5rem;
+  padding: 0.5rem 0.375rem;
+  border-radius: var(--radius-btn);
+  transition: background-color 0.15s;
+}
+
+.hourly-item:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.on-light .hourly-item:hover {
+  background: rgba(31, 41, 55, 0.1);
 }
 
 .hourly-time {
-  font-size: 0.75rem;
-  font-weight: 500;
-  opacity: 0.7;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  opacity: 0.75;
 }
 
 .hourly-icon {
   font-size: 1.25rem;
+  line-height: 1;
 }
 
 .hourly-temp {
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
-/* Daily forecast */
-.daily-card {
-  padding: 1rem;
-  margin-bottom: 0.75rem;
+/* ── Detail tiles ── */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  /* tiles carry different amounts of content (arc, compass, bare value) —
+     let each size to its own height instead of stretching to the row */
+  align-items: start;
 }
 
-.daily-label {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  opacity: 0.6;
-  margin-bottom: 0.5rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+@media (min-width: 640px) {
+  .tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
-.daily-row {
+.tile {
+  border-radius: var(--radius-tile);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.1);
+  padding: 0.75rem;
+  text-align: left;
+}
+
+.on-light .tile {
+  border-color: rgba(31, 41, 55, 0.1);
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.tile-label {
   display: flex;
   align-items: center;
-  padding: 0.6rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.daily-row:last-child {
-  border-bottom: none;
-}
-
-.daily-name {
-  width: 55px;
-  font-size: 0.85rem;
-  font-weight: 500;
-}
-
-.daily-icon {
-  width: 30px;
-  font-size: 1.1rem;
-  text-align: center;
-}
-
-.daily-low {
-  width: 35px;
-  text-align: right;
-  font-size: 0.85rem;
-  opacity: 0.5;
-}
-
-.daily-bar-wrap {
-  flex: 1;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-  margin: 0 0.5rem;
-  position: relative;
-}
-
-.daily-bar {
-  position: absolute;
-  height: 100%;
-  border-radius: 2px;
-  background: linear-gradient(90deg, #5ac8fa, #ffcc00, #ff9500);
-}
-
-.daily-high {
-  width: 35px;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-/* Dashboard grid */
-.dashboard {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.75rem;
-  margin-bottom: 1rem;
-}
-
-.dash-card {
-  padding: 1rem;
-}
-
-.dash-title {
-  font-size: 0.65rem;
+  gap: 0.25rem;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  opacity: 0.5;
-  margin-bottom: 0.5rem;
+  letter-spacing: 0.025em;
+  opacity: 0.8;
 }
 
-.dash-value {
-  font-size: 2rem;
-  font-weight: 300;
-  line-height: 1.2;
+.tile-value {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 0.125rem;
+  font-variant-numeric: tabular-nums;
 }
 
-.dash-unit {
-  font-size: 1rem;
-  opacity: 0.6;
+.tile-unit {
+  font-size: 0.875rem;
+  font-weight: 500;
+  opacity: 0.8;
 }
 
-.dash-detail {
-  font-size: 0.8rem;
-  opacity: 0.6;
-  margin-top: 0.35rem;
-  line-height: 1.3;
+.tile-sub {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  margin-top: 0.125rem;
 }
+
+/* ── Sun arc + wind compass (live inside tiles) ── */
 
 .sun-arc-wrap {
   position: relative;
+  margin-top: 0.25rem;
   cursor: pointer;
 }
 
 .sun-arc {
   width: 100%;
   height: auto;
-  margin: 0.5rem 0 0.25rem;
-}
-
-.sun-dot {
-  cursor: pointer;
+  display: block;
 }
 
 .sun-tooltip {
@@ -522,157 +615,195 @@ body {
   bottom: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(15, 23, 42, 0.95);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
   padding: 0.6rem 0.8rem;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: none;
   font-size: 0.72rem;
   line-height: 1.5;
   white-space: nowrap;
-  color: rgba(255, 255, 255, 0.85);
-  z-index: 5;
   pointer-events: none;
+  z-index: 5;
 }
 
 .sun-arc-wrap:hover .sun-tooltip {
   display: block;
 }
 
-.sun-time {
-  font-size: 1.75rem;
-}
-
 .wind-compass {
-  width: 140px;
-  height: 140px;
+  width: 100%;
+  max-width: 6rem;
+  height: auto;
   margin: 0.25rem auto 0;
+  display: block;
 }
 
-/* Error & Loading */
-.error-msg {
-  background: rgba(239, 68, 68, 0.15);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: 14px;
-  padding: 1rem;
-  color: #fca5a5;
-  text-align: center;
+/* ── Neutral list card (7-day forecast) ── */
+
+.card {
+  border-radius: var(--radius-tile);
+  border: 1px solid var(--base-300);
+  background: var(--base-100);
+  overflow: hidden;
 }
 
-.loading {
-  text-align: center;
-  opacity: 0.6;
-  padding: 3rem 0;
-  font-size: 1rem;
+.card-head {
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  color: rgba(31, 41, 55, 0.7);
+  border-bottom: 1px solid var(--base-300);
+  background: rgba(242, 242, 242, 0.4);
 }
 
-.powered-by {
-  text-align: center;
-  padding: 2rem 0 1rem;
-  font-size: 1.1rem;
+.daily-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  border-top: 1px solid rgba(31, 41, 55, 0.06);
+  transition: background-color 0.15s;
+}
+
+.daily-row:first-of-type {
+  border-top: none;
+}
+
+.daily-row:hover {
+  background: rgba(242, 242, 242, 0.6);
+}
+
+.daily-name {
+  width: 2.75rem;
+  font-size: 0.875rem;
   font-weight: 500;
-  opacity: 0.6;
-  letter-spacing: 0.02em;
 }
 
-.powered-by a {
-  color: #fff;
-  text-decoration: none;
+.daily-icon {
+  width: 1.75rem;
+  font-size: 1.125rem;
+  text-align: center;
+}
+
+.daily-low,
+.daily-high {
+  width: 2.25rem;
+  font-size: 0.875rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-low {
+  color: rgba(31, 41, 55, 0.5);
+}
+
+.daily-high {
+  font-weight: 600;
+}
+
+.daily-bar-wrap {
+  position: relative;
+  flex: 1;
+  height: 0.375rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(31, 41, 55, 0.1);
+}
+
+.daily-bar {
+  position: absolute;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #60a5fa, #fbbf24);
+}
+
+/* ── Footer ── */
+
+.footer {
+  background: var(--base-200);
+  border-top: 1px solid var(--base-300);
+  margin-top: auto;
+}
+
+.footer-inner {
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1.5rem;
+}
+
+.footer-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.footer-title {
+  font-size: 0.75rem;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(31, 41, 55, 0.65);
 }
 
-.powered-by a:hover {
-  opacity: 1;
+.footer-link {
+  font-size: 0.9375rem;
+  color: rgba(31, 41, 55, 0.85);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+/* the two claims worth reading first: what built it, and who */
+.footer-link.strong {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--content);
+}
+
+.footer-link:hover {
+  color: var(--content);
   text-decoration: underline;
 }
 
-@media (max-width: 700px) {
-  .dashboard {
-    grid-template-columns: repeat(2, 1fr);
-  }
+.footer-legal {
+  padding: 0 1.5rem 2rem;
+  text-align: center;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: rgba(31, 41, 55, 0.75);
 }
 
-@media (max-width: 600px) {
-  body {
-    padding: 1rem 0.5rem 2.5rem;
+/* ── Narrow screens ── */
+
+@media (max-width: 640px) {
+  .nav-row {
+    gap: 0.5rem;
   }
-  .hero-city {
-    font-size: 1.5rem;
+  .search-bar {
+    flex: 1 1 100%;
+    max-width: none;
+    margin-left: 0;
   }
   .hero-temp {
-    font-size: 4.5rem;
+    font-size: 3rem;
   }
-  .hourly-scroll {
-    gap: 0.75rem;
-  }
-  .hourly-item {
-    min-width: 40px;
+  .hero-stats {
+    gap: 0.5rem 1.25rem;
   }
   .daily-name {
-    width: 45px;
-    font-size: 0.8rem;
-  }
-  .dashboard {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .dash-value {
-    font-size: 1.5rem;
-  }
-  .wind-compass {
-    width: 100px;
-    height: 100px;
-  }
-  .search-bar input {
-    width: 180px;
-    font-size: 0.95rem;
-    padding: 0.75rem 0.8rem;
-  }
-  .search-bar button {
-    padding: 0.6rem 1rem;
-    font-size: 0.85rem;
+    width: 2.5rem;
+    font-size: 0.8125rem;
   }
   .daily-low,
   .daily-high {
-    width: 30px;
-    font-size: 0.8rem;
+    width: 2rem;
+    font-size: 0.8125rem;
   }
-}
-
-@media (max-width: 380px) {
-  .hero-temp {
-    font-size: 3.5rem;
-  }
-  .dashboard {
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
-  }
-  .dash-card {
-    padding: 0.75rem;
-  }
-  .wind-compass {
-    width: 80px;
-    height: 80px;
-  }
-  .search-bar input {
-    width: 140px;
-  }
-  .sun-time {
-    font-size: 1.4rem;
-  }
-}
-
-.suggestion-item.active {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.locate-btn:disabled {
-  cursor: default;
-}
-
-.locate-btn.locating {
-  animation: locate-pulse 1s ease-in-out infinite;
-}
-
-@keyframes locate-pulse {
-  50% { opacity: 0.35; }
 }

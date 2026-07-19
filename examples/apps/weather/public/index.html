@@ -3,50 +3,78 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f2f2f2" />
     <title>Weather by Milo</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <div class="sun-flare" id="flare">
-      <div class="flare-rays"></div>
-      <div class="flare-glow"></div>
-      <div class="flare-core"></div>
-      <div class="flare-streak"></div>
-      <div class="flare-streak2"></div>
-      <div class="flare-orb"></div>
-      <div class="flare-orb2"></div>
-    </div>
-    <div class="container">
-      <div class="search-bar">
-        <button class="locate-btn" id="locate" title="Use my location" aria-label="Use my location">&#x1F4CD;</button>
-        <div class="search-wrap">
-          <input
-            type="text"
-            id="zip"
-            placeholder="City or ZIP code"
-            autocomplete="off"
-            enterkeyhint="search"
-            role="combobox"
-            aria-autocomplete="list"
-            aria-expanded="false"
-            aria-controls="suggestions"
-          />
-          <div class="suggestions" id="suggestions" role="listbox"></div>
+    <nav class="nav">
+      <div class="nav-row">
+        <a class="brand" href="./">
+          <span class="brand-mark">&#x26C5;</span>
+          <span>Weather</span>
+        </a>
+        <div class="search-bar">
+          <button class="locate-btn" id="locate" title="Use my location" aria-label="Use my location">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 3 L3 10.5 L10.5 13.5 L13.5 21 Z" />
+            </svg>
+          </button>
+          <div class="search-wrap">
+            <input
+              type="text"
+              id="zip"
+              placeholder="City or ZIP code"
+              autocomplete="off"
+              enterkeyhint="search"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="suggestions"
+            />
+            <div class="suggestions" id="suggestions" role="listbox"></div>
+          </div>
+          <button id="search">Search</button>
         </div>
-        <button id="search">Search</button>
       </div>
+    </nav>
+
+    <main class="container">
       <div id="error"></div>
       <div id="hero"></div>
-      <div id="hourly"></div>
       <div id="daily"></div>
-      <div class="dashboard" id="dashboard"></div>
-      <div class="powered-by">
-        Built with
-        <a href="https://github.com/cs01/milo" target="_blank">Milo</a>
-        &mdash;
-        <a href="https://chadsmith.dev" target="_blank">chadsmith.dev</a>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        <div class="footer-col">
+          <div class="footer-title">Built with</div>
+          <a class="footer-link strong" href="https://github.com/cs01/milo" target="_blank" rel="noopener">
+            Milo &mdash; a memory-safe systems language
+          </a>
+          <a class="footer-link strong" href="https://chadsmith.dev" target="_blank" rel="noopener">
+            chadsmith.dev
+          </a>
+          <a class="footer-link" href="https://github.com/cs01/milo" target="_blank" rel="noopener">
+            github.com/cs01/milo
+          </a>
+        </div>
+        <div class="footer-col">
+          <div class="footer-title">Data</div>
+          <a class="footer-link" href="https://www.weather.gov" target="_blank" rel="noopener">
+            Forecasts from weather.gov
+          </a>
+          <a class="footer-link" href="https://www.geonames.org" target="_blank" rel="noopener">
+            Place names from GeoNames (CC BY 4.0)
+          </a>
+          <a class="footer-link" href="https://nominatim.openstreetmap.org" target="_blank" rel="noopener">
+            ZIP lookup by Nominatim
+          </a>
+        </div>
       </div>
-    </div>
+      <div class="footer-legal">One static binary. No framework, no runtime, no GC.</div>
+    </footer>
+
     <script src="app.js"></script>
   </body>
 </html>

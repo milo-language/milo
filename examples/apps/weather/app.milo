@@ -1,9 +1,136 @@
-// weather — weather.gov frontend served from a single static Milo binary
+// weather — weather.gov frontend served from a single static Milo binary.
+// Assets and the US place-name index are compiled in with embedFile, so the
+// deploy artifact is one file with no adjacent data directory to keep in sync.
 from "std/http" import {
-    Request, Response, serve
+    Context, Response, Router, serveRouter
 }
 from "std/argparse" import {
     newParser
+}
+from "std/string" import {
+    strSplit, strStartsWith, strToLower, strTrim, strContains
+}
+from "std/json" import {
+    jsonEscapeStr
+}
+
+struct City {
+    name: string,
+    state: string,
+    lat: string,
+    lon: string,
+    // name lowercased once at load; matching every keystroke against 17k
+    // freshly-lowercased strings would dominate the request
+    key: string,
+}
+
+// Populated by loadCities() at startup. Module scope only permits a
+// compile-time-constant initializer, hence the empty literal.
+var cities: Vec<City> = []
+
+let MAX_SUGGESTIONS = 8
+
+// Rows are "name<TAB>state<TAB>lat<TAB>lon<TAB>population", pre-sorted by
+// population descending, so a first-match-wins scan is already popularity-ranked.
+fn loadCities(): void {
+    let raw = embedFile("data/uscities.tsv")
+    let lines = strSplit(raw, "\n")
+    for line in lines {
+        let f = strSplit(line, "\t")
+        if f.len < 4 {
+            continue
+        }
+        cities.push(City {
+            name: f[0].clone(),
+            state: f[1].clone(),
+            lat: f[2].clone(),
+            lon: f[3].clone(),
+            key: strToLower(f[0]),
+        }
+        )
+    }
+}
+
+// Built by concatenation rather than an object literal: those lower to anonymous
+// structs, and this needs a raw fragment to splice into the response array.
+fn cityJson(c: &City): string {
+    let q = "\""
+    var s = "{" + q + "name" + q + ":" + q + jsonEscapeStr(c.name) + q
+    s = s + "," + q + "state" + q + ":" + q + c.state.clone() + q
+    s = s + "," + q + "lat" + q + ":" + c.lat.clone()
+    s = s + "," + q + "lon" + q + ":" + c.lon.clone() + "}"
+    return s
+}
+
+// Typeahead over US place names. Nominatim is a geocoder, not a search index —
+// it can't prefix-match ("red" never reaches Redwood City) — so the lookup that
+// actually drives the search box lives here.
+fn citiesHandler(ctx: &mut Context): Response {
+    let q = strToLower(strTrim(ctx.query("q")))
+    if q.len == 0 {
+        return ctx.json("[]")
+    }
+
+    var out: Vec<string> = []
+    // Prefix hits first; only backfill with interior matches if there's room,
+    // so "red" ranks Redwood City above Coreopsis Red.
+    for c in cities {
+        if out.len >= MAX_SUGGESTIONS {
+            break
+        }
+        if strStartsWith(c.key, q) {
+            out.push(cityJson(c))
+        }
+    }
+    if out.len < MAX_SUGGESTIONS {
+        for c in cities {
+            if out.len >= MAX_SUGGESTIONS {
+                break
+            }
+            if !strStartsWith(c.key, q) && strContains(c.key, q) {
+                out.push(cityJson(c))
+            }
+        }
+    }
+
+    var body = "["
+    for i in 0..out.len {
+        if i > 0 {
+            body = body + ","
+        }
+        body = body + out[i]
+    }
+    body = body + "]"
+
+    ctx.setHeader("Cache-Control", "public, max-age=600")
+    return ctx.json(body)
+}
+
+fn indexHandler(ctx: &mut Context): Response {
+    ctx.setHeader("Cache-Control", "no-cache")
+    return ctx.html(embedFile("public/index.html"))
+}
+
+fn styleHandler(ctx: &mut Context): Response {
+    ctx.setHeader("Cache-Control", "public, max-age=3600")
+    return Response.Status(200, "text/css; charset=utf-8", embedFile("public/style.css"))
+}
+
+fn scriptHandler(ctx: &mut Context): Response {
+    ctx.setHeader("Cache-Control", "public, max-age=3600")
+    return Response.Status(200, "application/javascript; charset=utf-8", embedFile("public/app.js"))
+}
+
+fn healthHandler(ctx: &mut Context): Response {
+    return ctx.json({
+        status: "ok", app: "weather", cities: cities.len
+    }
+    )
+}
+
+fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Response {
+    print($"{ctx.req.method} {ctx.req.path}")
+    return next(ctx)
 }
 
 fn main(): i32 {
@@ -12,32 +139,21 @@ fn main(): i32 {
     let args = parser.parse()
     let port = args.getU16("port")
 
-    let indexHtml = embedFile("public/index.html")
-    let styleCss = embedFile("public/style.css")
-    let appJs = embedFile("public/app.js")
+    loadCities()
+    print($"Weather App (Milo) — {cities.len} US places indexed")
 
-    print("Weather App (Milo)")
+    var r: Router = Router.new()
+    r.use(logMiddleware)
+    r.get("/", indexHandler)
+    r.get("/index.html", indexHandler)
+    r.get("/style.css", styleHandler)
+    r.get("/app.js", scriptHandler)
+    r.get("/api/cities", citiesHandler)
+    r.get("/healthz", healthHandler)
 
-    let result = serve(port, (req: &Request) => {
-        if req.path == "/" || req.path == "/index.html" {
-            return Response.Html(indexHtml.clone())
-        }
-        if req.path == "/style.css" {
-            return Response.Status(200, "text/css; charset=utf-8", styleCss.clone())
-        }
-        if req.path == "/app.js" {
-            return Response.Status(200, "application/javascript; charset=utf-8", appJs.clone())
-        }
-        return Response.NotFound
-    }
-    )
-    match result {
-        Result.Err(msg) => {
-            print($"error: {msg}")
-            return 1
-        }
-        _ => {
-        }
+    if let Result.Err(msg) = serveRouter(port, r) {
+        print($"error: {msg}")
+        return 1
     }
     return 0
 }

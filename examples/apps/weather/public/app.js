@@ -1,7 +1,5 @@
 var heroEl = document.getElementById("hero");
-var hourlyEl = document.getElementById("hourly");
 var dailyEl = document.getElementById("daily");
-var dashEl = document.getElementById("dashboard");
 var zipInput = document.getElementById("zip");
 var searchBtn = document.getElementById("search");
 var errorEl = document.getElementById("error");
@@ -171,31 +169,21 @@ function calcSunTimes(lat, lon, date, timeZone) {
   };
 }
 
-function setWeatherBg(forecast, isDaytime) {
+// Maps a weather.gov shortForecast onto one of the gradient card's backdrops.
+function conditionClass(forecast, isDaytime) {
   var f = forecast.toLowerCase();
-  var bg;
-  var showFlare = false;
-  if (!isDaytime) {
-    bg = "linear-gradient(180deg, #0a1628 0%, #1a1a3e 40%, #0d0d1f 100%)";
-  } else if (f.indexOf("rain") !== -1 || f.indexOf("shower") !== -1) {
-    bg = "linear-gradient(180deg, #374151 0%, #1f2937 40%, #111827 100%)";
-  } else if (f.indexOf("snow") !== -1) {
-    bg = "linear-gradient(180deg, #64748b 0%, #475569 40%, #334155 100%)";
-  } else if (f.indexOf("cloud") !== -1 || f.indexOf("overcast") !== -1) {
-    bg = "linear-gradient(180deg, #3b5e8a 0%, #2d4a6f 40%, #1a3050 100%)";
-  } else if (f.indexOf("fog") !== -1 || f.indexOf("haze") !== -1) {
-    bg = "linear-gradient(180deg, #6b7b8d 0%, #4a5568 40%, #2d3748 100%)";
-  } else {
-    bg = "linear-gradient(180deg, #4a8fe7 0%, #3a7bd5 35%, #2a6cb5 65%, #1a5276 100%)";
-    showFlare = isDaytime;
+  if (!isDaytime) return "night";
+  if (f.indexOf("rain") !== -1 || f.indexOf("shower") !== -1 || f.indexOf("thunder") !== -1) {
+    return "rain";
   }
-  document.body.style.background = bg;
-  var flare = document.getElementById("flare");
-  if (showFlare) {
-    flare.classList.add("active");
-  } else {
-    flare.classList.remove("active");
+  if (f.indexOf("snow") !== -1 || f.indexOf("sleet") !== -1 || f.indexOf("ice") !== -1) {
+    // pale gradient; white text would wash out
+    return "snow on-light";
   }
+  if (f.indexOf("cloud") !== -1 || f.indexOf("overcast") !== -1 || f.indexOf("fog") !== -1) {
+    return "cloudy";
+  }
+  return "clear-day";
 }
 
 function dirToDeg(dir) {
@@ -284,7 +272,10 @@ function windCompassSvg(dir, speed) {
     '" y="' +
     (cy + 4) +
     '" text-anchor="middle" fill="rgba(255,255,255,0.5)" font-size="10" font-weight="600">W</text>';
-  var spdNum = parseInt(speed) || speed;
+  // weather.gov gives ranges ("0 to 5 mph"); parseInt returns a falsy 0 there,
+  // so pull every number out and render them compactly inside the dial
+  var spdNums = String(speed).match(/\d+/g);
+  var spdNum = spdNums ? spdNums.join("–") : speed;
   svg +=
     '<text x="' +
     cx +
@@ -343,19 +334,15 @@ function windCompassSvg(dir, speed) {
 
 function showError(msg) {
   heroEl.innerHTML = "";
-  hourlyEl.innerHTML = "";
   dailyEl.innerHTML = "";
-  dashEl.innerHTML = "";
   errorEl.innerHTML = '<div class="error-msg">' + msg + "</div>";
 }
 
 function fetchWeather(lat, lon, city, saveLoc) {
   currentLat = lat;
   currentLon = lon;
-  heroEl.innerHTML = '<div class="loading">Loading...</div>';
-  hourlyEl.innerHTML = "";
+  heroEl.innerHTML = '<div class="loading">Loading\u2026</div>';
   dailyEl.innerHTML = "";
-  dashEl.innerHTML = "";
   errorEl.textContent = "";
   searchBtn.disabled = true;
 
@@ -400,13 +387,33 @@ function fetchWeather(lat, lon, city, saveLoc) {
 
 function geocodeAndFetch(query) {
   errorEl.textContent = "";
-  heroEl.innerHTML = '<div class="loading">Looking up location...</div>';
-  hourlyEl.innerHTML = "";
+  heroEl.innerHTML = '<div class="loading">Looking up location\u2026</div>';
   dailyEl.innerHTML = "";
-  dashEl.innerHTML = "";
   searchBtn.disabled = true;
 
   var isZip = /^\d{5}$/.test(query.trim());
+
+  // Non-ZIP text resolves against our own index first, so pressing Enter lands
+  // on the same place the typeahead would have offered.
+  if (!isZip) {
+    fetch("api/cities?q=" + encodeURIComponent(query))
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (rows) {
+        if (!rows || !rows.length) throw new Error("no local match");
+        var top = rows[0];
+        var label = top.state ? top.name + ", " + top.state : top.name;
+        history.replaceState(null, "", "?q=" + encodeURIComponent(query));
+        fetchWeather(String(top.lat), String(top.lon), label, true);
+      })
+      .catch(function () {
+        searchBtn.disabled = false;
+        showError('Could not find "' + esc(query) + '". Try a city name or US ZIP code.');
+      });
+    return;
+  }
+
   var url = isZip
     ? "https://nominatim.openstreetmap.org/search?postalcode=" +
       encodeURIComponent(query) +
@@ -450,6 +457,78 @@ function getGridVal(grid, field) {
   return v[v.length - 1].value;
 }
 
+function tile(label, value, sub, extra) {
+  return (
+    '<div class="tile">' +
+    '<div class="tile-label">' + label + "</div>" +
+    '<div class="tile-value">' + value + "</div>" +
+    (extra || "") +
+    (sub ? '<div class="tile-sub">' + sub + "</div>" : "") +
+    "</div>"
+  );
+}
+
+// Sun position arc for the sunrise/sunset tile, plus a hover tooltip of the
+// derived solar facts. Coordinates are in the 100x38 viewBox, not pixels.
+function sunArcSvg(sunTimes, timeZone, nowTime) {
+  var tzOff = timeZone ? getTzOffset(timeZone, nowTime) : -nowTime.getTimezoneOffset();
+  var nowLocalMin = nowTime.getUTCHours() * 60 + nowTime.getUTCMinutes() + tzOff;
+  var riseFrac = sunTimes.riseLocalMin / 1440;
+  var setFrac = sunTimes.setLocalMin / 1440;
+  var dayFrac = nowLocalMin / 1440;
+  var horizY = 28;
+  var amp = 16;
+
+  function sunPt(frac) {
+    var phase = ((frac - riseFrac) / (setFrac - riseFrac)) * Math.PI;
+    return { x: 5 + frac * 90, y: horizY - Math.sin(phase) * amp };
+  }
+
+  var fullPts = [];
+  var boldPts = [];
+  for (var i = 0; i <= 80; i++) {
+    var p = sunPt(i / 80);
+    fullPts.push(p.x.toFixed(1) + "," + p.y.toFixed(1));
+    if (p.y <= horizY) boldPts.push(p.x.toFixed(1) + "," + p.y.toFixed(1));
+  }
+  var sp = sunPt(dayFrac);
+  var aboveHorizon = sp.y < horizY;
+
+  var dayHrs = Math.floor(sunTimes.dayLength / 60);
+  var dayMins = Math.round(sunTimes.dayLength % 60);
+  var goldenRise = new Date(sunTimes.sunrise.getTime() + 30 * 60000);
+  var goldenSet = new Date(sunTimes.sunset.getTime() - 30 * 60000);
+  var tooltipLines = [
+    aboveHorizon ? "☀️ Sun is up" : "🌙 Sun is down",
+    "Solar noon: " + fmtTimeInTz(sunTimes.solarNoon, timeZone),
+    "Day length: " + dayHrs + "h " + dayMins + "m",
+    "Golden hour: " + fmtTimeInTz(goldenRise, timeZone) + ", " + fmtTimeInTz(goldenSet, timeZone),
+    "Declination: " + sunTimes.declination.toFixed(1) + "°",
+  ];
+
+  return (
+    '<div class="sun-arc-wrap">' +
+    '<svg viewBox="0 0 100 38" class="sun-arc">' +
+    '<path d="M ' + fullPts.join(" L ") +
+    '" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="1.5"/>' +
+    (boldPts.length > 1
+      ? '<path d="M ' + boldPts.join(" L ") +
+        '" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="2"/>'
+      : "") +
+    '<line x1="5" y1="' + horizY + '" x2="95" y2="' + horizY +
+    '" stroke="rgba(255,255,255,0.25)" stroke-width="0.5"/>' +
+    '<circle cx="' + sp.x.toFixed(1) + '" cy="' + sp.y.toFixed(1) + '" r="3.5" fill="' +
+    (aboveHorizon ? "#fff" : "rgba(200,200,220,0.5)") + '"/>' +
+    (aboveHorizon
+      ? '<circle cx="' + sp.x.toFixed(1) + '" cy="' + sp.y.toFixed(1) +
+        '" r="6" fill="rgba(255,255,255,0.15)"/>'
+      : "") +
+    "</svg>" +
+    '<div class="sun-tooltip">' + tooltipLines.join("<br>") + "</div>" +
+    "</div>"
+  );
+}
+
 function render(city, forecast, hourlyData, grid, timeZone) {
   var periods = forecast.properties.periods;
   if (!periods || periods.length === 0) {
@@ -472,58 +551,112 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   var hrs = hourlyData.properties.periods;
   var currentTemp = hrs.length > 0 ? hrs[0].temperature : now.temperature;
 
-  setWeatherBg(now.shortForecast, now.isDaytime);
-
   var feelsLike = getGridVal(grid, "apparentTemperature");
-  var feelsHtml =
-    feelsLike !== null
-      ? '<div class="hero-feels">Feels Like: ' + cToF(feelsLike) + "\u00B0</div>"
-      : "";
+  var humidity = getGridVal(grid, "relativeHumidity");
+  var dewpoint = getGridVal(grid, "dewpoint");
+  var visibility = getGridVal(grid, "visibility");
+  var precip = now.probabilityOfPrecipitation ? now.probabilityOfPrecipitation.value : null;
 
-  heroEl.innerHTML =
-    '<div class="hero-section">' +
-    '<div class="hero-city">' +
-    esc(city) +
-    "</div>" +
-    '<div class="hero-temp">' +
-    currentTemp +
-    "\u00B0</div>" +
-    feelsHtml +
-    '<div class="hero-condition">' +
-    now.shortForecast +
-    "</div>" +
-    '<div class="hero-hilo">H:' +
-    hi +
-    "\u00B0  L:" +
-    lo +
-    "\u00B0</div>" +
-    "</div>";
+  // Hero
+  var stats =
+    '<div class="stat"><div class="stat-label">High / Low</div>' +
+    '<div class="stat-value">' + hi + "° / " + lo + "°</div></div>";
+  if (feelsLike !== null) {
+    stats +=
+      '<div class="stat"><div class="stat-label">Feels Like</div>' +
+      '<div class="stat-value">' + cToF(feelsLike) + "°</div></div>";
+  }
+  if (precip !== null) {
+    stats +=
+      '<div class="stat"><div class="stat-label">Precip</div>' +
+      '<div class="stat-value">' + precip + "%</div></div>";
+  }
 
-  // Hourly
-  var hHtml =
-    '<div class="hourly-card glass"><div class="hourly-label">' +
-    now.detailedForecast.substring(0, 80) +
-    '</div><div class="hourly-scroll">';
+  var hero =
+    '<div class="hero-city">' + esc(city) + "</div>" +
+    '<div class="hero-temp">' + currentTemp + "°</div>" +
+    '<div class="hero-condition">' + esc(now.shortForecast) + "</div>" +
+    '<div class="hero-stats">' + stats + "</div>" +
+    '<div class="hero-detail">' + esc(now.detailedForecast) + "</div>";
+
+  // Hourly strip
+  var hourly = '<div class="hourly-scroll">';
   var hCount = Math.min(hrs.length, 24);
   for (var i = 0; i < hCount; i++) {
     var h = hrs[i];
-    var label = i === 0 ? "Now" : fmtHour(h.startTime, timeZone);
-    hHtml +=
+    hourly +=
       '<div class="hourly-item">' +
-      '<div class="hourly-time">' +
-      label +
-      "</div>" +
-      '<div class="hourly-icon">' +
-      icon(h.shortForecast, h.isDaytime) +
-      "</div>" +
-      '<div class="hourly-temp">' +
-      h.temperature +
-      "\u00B0</div></div>";
+      '<div class="hourly-time">' + (i === 0 ? "Now" : fmtHour(h.startTime, timeZone)) + "</div>" +
+      '<div class="hourly-icon">' + icon(h.shortForecast, h.isDaytime) + "</div>" +
+      '<div class="hourly-temp">' + h.temperature + "°</div>" +
+      "</div>";
   }
-  hHtml += "</div></div>";
-  hourlyEl.innerHTML = hHtml;
+  hourly += "</div>";
 
-  // Daily
+  // Detail tiles
+  var nowTime = new Date();
+  var sunTimes = calcSunTimes(parseFloat(currentLat), parseFloat(currentLon), nowTime, timeZone);
+  var beforeSunset = nowTime < sunTimes.sunset;
+  var tiles = tile(
+    "🌅 " + (beforeSunset ? "Sunset" : "Sunrise"),
+    fmtTimeInTz(beforeSunset ? sunTimes.sunset : sunTimes.sunrise, timeZone),
+    beforeSunset
+      ? "Sunrise: " + fmtTimeInTz(sunTimes.sunrise, timeZone)
+      : "Sunset: " + fmtTimeInTz(sunTimes.sunset, timeZone),
+    sunArcSvg(sunTimes, timeZone, nowTime)
+  );
+
+  tiles += tile(
+    "💨 Wind",
+    esc(now.windSpeed),
+    now.windDirection ? "From the " + esc(now.windDirection) : "",
+    windCompassSvg(now.windDirection, now.windSpeed)
+  );
+
+  if (humidity !== null) {
+    tiles += tile(
+      "💧 Humidity",
+      Math.round(humidity) + '<span class="tile-unit">%</span>',
+      dewpoint !== null ? "Dew point " + cToF(dewpoint) + "°F" : ""
+    );
+  }
+
+  tiles += tile(
+    "☔ Precipitation",
+    (precip || 0) + '<span class="tile-unit">%</span>',
+    "Chance today"
+  );
+
+  if (visibility !== null) {
+    var visMi = Math.round(visibility / 1609);
+    tiles += tile(
+      "👁️ Visibility",
+      visMi + '<span class="tile-unit"> mi</span>',
+      visMi >= 10 ? "Clear view" : visMi >= 5 ? "Moderate" : "Low visibility"
+    );
+  }
+
+  if (feelsLike !== null) {
+    tiles += tile(
+      "🌡️ Feels Like",
+      cToF(feelsLike) + "°",
+      "Actual " + currentTemp + "°"
+    );
+  }
+
+  heroEl.innerHTML =
+    '<div class="wx-card ' + conditionClass(now.shortForecast, now.isDaytime) + '">' +
+    '<div class="wispy-clouds">' +
+    '<div class="wisp wisp-1"></div><div class="wisp wisp-2"></div>' +
+    '<div class="wisp wisp-3"></div><div class="wisp wisp-4"></div>' +
+    "</div>" +
+    '<div class="wx-body">' +
+    hero +
+    '<div class="wx-divider"><div class="wx-section-title">Next 24 hours</div>' + hourly + "</div>" +
+    '<div class="wx-divider"><div class="tiles">' + tiles + "</div></div>" +
+    "</div></div>";
+
+  // 7-day forecast (neutral list card)
   var days = [];
   var allLo = 999;
   var allHi = -999;
@@ -544,10 +677,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   }
 
   var range = allHi - allLo || 1;
-  var dHtml =
-    '<div class="daily-card glass"><div class="daily-label">\uD83D\uDCC5 ' +
-    days.length +
-    "-Day Forecast</div>";
+  var dHtml = '<div class="card"><div class="card-head">' + days.length + "-Day Forecast</div>";
   for (var j = 0; j < days.length; j++) {
     var d = days[j];
     var barLeft = ((d.lo - allLo) / range) * 100;
@@ -555,199 +685,16 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     if (barWidth < 8) barWidth = 8;
     dHtml +=
       '<div class="daily-row">' +
-      '<div class="daily-name">' +
-      d.name +
-      "</div>" +
-      '<div class="daily-icon">' +
-      icon(d.forecast, true) +
-      "</div>" +
-      '<div class="daily-low">' +
-      d.lo +
-      "\u00B0</div>" +
-      '<div class="daily-bar-wrap"><div class="daily-bar" style="left:' +
-      barLeft +
-      "%;width:" +
-      barWidth +
-      '%"></div></div>' +
-      '<div class="daily-high">' +
-      d.hi +
-      "\u00B0</div></div>";
+      '<div class="daily-name">' + d.name + "</div>" +
+      '<div class="daily-icon">' + icon(d.forecast, true) + "</div>" +
+      '<div class="daily-low">' + d.lo + "°</div>" +
+      '<div class="daily-bar-wrap"><div class="daily-bar" style="left:' + barLeft +
+      "%;width:" + barWidth + '%"></div></div>' +
+      '<div class="daily-high">' + d.hi + "°</div>" +
+      "</div>";
   }
   dHtml += "</div>";
   dailyEl.innerHTML = dHtml;
-
-  // Dashboard cards
-  var humidity = getGridVal(grid, "relativeHumidity");
-  var dewpoint = getGridVal(grid, "dewpoint");
-  var visibility = getGridVal(grid, "visibility");
-  var windGust = getGridVal(grid, "windGust");
-  var precip = now.probabilityOfPrecipitation ? now.probabilityOfPrecipitation.value : null;
-
-  var cards = "";
-
-  var sunTimes = calcSunTimes(parseFloat(currentLat), parseFloat(currentLon), new Date(), timeZone);
-  var nowTime = new Date();
-  var isBeforeSunset = nowTime < sunTimes.sunset;
-  var sunLabel = isBeforeSunset ? "Sunset" : "Sunrise";
-  var sunValue = isBeforeSunset
-    ? fmtTimeInTz(sunTimes.sunset, timeZone)
-    : fmtTimeInTz(sunTimes.sunrise, timeZone);
-  var sunDetail = isBeforeSunset
-    ? "Sunrise: " + fmtTimeInTz(sunTimes.sunrise, timeZone)
-    : "Sunset: " + fmtTimeInTz(sunTimes.sunset, timeZone);
-  var tzOff = timeZone ? getTzOffset(timeZone, nowTime) : -nowTime.getTimezoneOffset();
-  var nowLocalMin = nowTime.getUTCHours() * 60 + nowTime.getUTCMinutes() + tzOff;
-  var riseFrac = sunTimes.riseLocalMin / 1440;
-  var setFrac = sunTimes.setLocalMin / 1440;
-  var dayFrac = nowLocalMin / 1440;
-  var horizY = 28;
-  var amp = 16;
-  function sunPt(frac) {
-    var phase = ((frac - riseFrac) / (setFrac - riseFrac)) * Math.PI;
-    return { x: 5 + frac * 90, y: horizY - Math.sin(phase) * amp };
-  }
-  var fullPts = [];
-  for (var ci = 0; ci <= 80; ci++) {
-    var cp = sunPt(ci / 80);
-    fullPts.push(cp.x.toFixed(1) + "," + cp.y.toFixed(1));
-  }
-  var fullD = "M " + fullPts.join(" L ");
-  var boldPts = [];
-  for (var bi = 0; bi <= 80; bi++) {
-    var bf = bi / 80;
-    var bp = sunPt(bf);
-    if (bp.y <= horizY) boldPts.push(bp.x.toFixed(1) + "," + bp.y.toFixed(1));
-  }
-  var boldD = boldPts.length > 1 ? "M " + boldPts.join(" L ") : "";
-  var sp = sunPt(dayFrac);
-  var aboveHorizon = sp.y < horizY;
-  var dayHrs = Math.floor(sunTimes.dayLength / 60);
-  var dayMins = Math.round(sunTimes.dayLength % 60);
-  var goldenRise = new Date(sunTimes.sunrise.getTime() + 30 * 60000);
-  var goldenSet = new Date(sunTimes.sunset.getTime() - 30 * 60000);
-  var tooltipLines = [
-    aboveHorizon ? "\u2600\uFE0F Sun is up" : "\uD83C\uDF19 Sun is down",
-    "Solar noon: " + fmtTimeInTz(sunTimes.solarNoon, timeZone),
-    "Day length: " + dayHrs + "h " + dayMins + "m",
-    "Golden hour: " + fmtTimeInTz(goldenRise, timeZone) + ", " + fmtTimeInTz(goldenSet, timeZone),
-    "Declination: " + sunTimes.declination.toFixed(1) + "\u00B0",
-  ];
-  var riseX = sunPt(riseFrac).x;
-  var setX = sunPt(setFrac).x;
-  var arcSvg =
-    '<div class="sun-arc-wrap">' +
-    '<svg viewBox="0 0 100 38" class="sun-arc">' +
-    '<path d="' +
-    fullD +
-    '" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1.5"/>' +
-    (boldD
-      ? '<path d="' + boldD + '" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="2"/>'
-      : "") +
-    '<line x1="5" y1="' +
-    horizY +
-    '" x2="95" y2="' +
-    horizY +
-    '" stroke="rgba(255,255,255,0.2)" stroke-width="0.5"/>' +
-    '<text x="' +
-    riseX.toFixed(1) +
-    '" y="' +
-    (horizY + 7) +
-    '" text-anchor="middle" fill="rgba(255,255,255,0.4)" font-size="3.5">' +
-    fmtTimeInTz(sunTimes.sunrise, timeZone) +
-    "</text>" +
-    '<text x="' +
-    setX.toFixed(1) +
-    '" y="' +
-    (horizY + 7) +
-    '" text-anchor="middle" fill="rgba(255,255,255,0.4)" font-size="3.5">' +
-    fmtTimeInTz(sunTimes.sunset, timeZone) +
-    "</text>" +
-    '<circle class="sun-dot" cx="' +
-    sp.x.toFixed(1) +
-    '" cy="' +
-    sp.y.toFixed(1) +
-    '" r="3.5" fill="' +
-    (aboveHorizon ? "#fff" : "rgba(200,200,220,0.5)") +
-    '"/>' +
-    (aboveHorizon
-      ? '<circle class="sun-dot" cx="' +
-        sp.x.toFixed(1) +
-        '" cy="' +
-        sp.y.toFixed(1) +
-        '" r="6" fill="rgba(255,255,255,0.15)"/>'
-      : "") +
-    "</svg>" +
-    '<div class="sun-tooltip">' +
-    tooltipLines.join("<br>") +
-    "</div></div>";
-  cards +=
-    '<div class="dash-card glass"><div class="dash-title">\uD83C\uDF05 ' +
-    sunLabel +
-    "</div>" +
-    '<div class="dash-value sun-time">' +
-    sunValue +
-    "</div>" +
-    arcSvg +
-    '<div class="dash-detail">' +
-    sunDetail +
-    "</div></div>";
-
-  // Wind with compass
-  cards +=
-    '<div class="dash-card glass"><div class="dash-title">\uD83D\uDCA8 Wind</div>' +
-    '<div class="dash-value">' +
-    now.windSpeed +
-    "</div>" +
-    windCompassSvg(now.windDirection, now.windSpeed) +
-    "</div>";
-
-  // Humidity
-  if (humidity !== null) {
-    cards +=
-      '<div class="dash-card glass"><div class="dash-title">\uD83D\uDCA7 Humidity</div>' +
-      '<div class="dash-value">' +
-      Math.round(humidity) +
-      '<span class="dash-unit">%</span></div>';
-    if (dewpoint !== null) {
-      cards += '<div class="dash-detail">Dew point is ' + cToF(dewpoint) + "\u00B0F</div>";
-    }
-    cards += "</div>";
-  }
-
-  // Precipitation
-  cards +=
-    '<div class="dash-card glass"><div class="dash-title">\u2614 Precipitation</div>' +
-    '<div class="dash-value">' +
-    (precip || 0) +
-    '<span class="dash-unit">%</span></div>' +
-    '<div class="dash-detail">Chance today</div></div>';
-
-  // Visibility
-  if (visibility !== null) {
-    var visMi = Math.round(visibility / 1609);
-    cards +=
-      '<div class="dash-card glass"><div class="dash-title">\uD83D\uDC41\uFE0F Visibility</div>' +
-      '<div class="dash-value">' +
-      visMi +
-      '<span class="dash-unit"> mi</span></div>' +
-      '<div class="dash-detail">' +
-      (visMi >= 10 ? "Clear view" : visMi >= 5 ? "Moderate" : "Low visibility") +
-      "</div></div>";
-  }
-
-  // Feels Like (as card if not in hero for some reason)
-  if (feelsLike !== null) {
-    cards +=
-      '<div class="dash-card glass"><div class="dash-title">\uD83C\uDF21\uFE0F Feels Like</div>' +
-      '<div class="dash-value">' +
-      cToF(feelsLike) +
-      "\u00B0</div>" +
-      '<div class="dash-detail">Actual: ' +
-      currentTemp +
-      "\u00B0</div></div>";
-  }
-
-  dashEl.innerHTML = cards;
 }
 
 // ── Search / typeahead ──
@@ -848,11 +795,37 @@ function renderSuggestions(items) {
   zipInput.setAttribute("aria-expanded", "true");
 }
 
-function nominatimToItems(results) {
+// abbreviation -> full state name, for the muted right-hand column
+var stateNames = {};
+Object.keys(stateAbbrs).forEach(function (full) {
+  stateNames[stateAbbrs[full]] = full;
+});
+
+// /api/cities is already prefix-ranked by population server-side, so this is a
+// straight mapping — no client-side re-ranking needed.
+function cityApiToItems(rows) {
+  if (!rows || !rows.length) return [];
+  return rows.map(function (r) {
+    return {
+      label: r.state ? r.name + ", " + r.state : r.name,
+      sub: stateNames[r.state] || r.state || "",
+      lat: String(r.lat),
+      lon: String(r.lon),
+    };
+  });
+}
+
+// Nominatim ranks by its own importance score, which floats big cities to the
+// top even when the typed prefix doesn't match their name at all ("red" →
+// "Plymouth, MA"). Re-rank so name-prefix matches win, then substring matches;
+// anything that doesn't contain the query is dropped.
+function nominatimToItems(results, query) {
   var items = [];
   var seen = {};
   if (!results) return items;
-  for (var i = 0; i < results.length && items.length < 5; i++) {
+  var q = (query || "").trim().toLowerCase();
+
+  for (var i = 0; i < results.length; i++) {
     var r = results[i];
     var ad = r.address || {};
     var city = ad.city || ad.town || ad.village || ad.hamlet || r.display_name.split(",")[0].trim();
@@ -860,26 +833,54 @@ function nominatimToItems(results) {
     var label = st ? city + ", " + (stateAbbrs[st] || st) : city;
     if (seen[label]) continue;
     seen[label] = 1;
-    items.push({ label: label, sub: st || ad.postcode || "", lat: r.lat, lon: r.lon });
+
+    var name = city.toLowerCase();
+    var rank;
+    if (!q || name.indexOf(q) === 0) {
+      rank = 0;
+    } else if (name.indexOf(q) !== -1) {
+      rank = 1;
+    } else {
+      continue;
+    }
+    items.push({ label: label, sub: st || ad.postcode || "", lat: r.lat, lon: r.lon, rank: rank });
   }
-  return items;
+
+  items.sort(function (a, b) {
+    return a.rank - b.rank;
+  });
+  return items.slice(0, 5);
 }
 
 function fetchSuggestions(q) {
+  // Place names come from our own /api/cities index. Nominatim is a geocoder,
+  // not a search index — it can't prefix-match, so "red" never reached Redwood
+  // City. ZIPs still go to Nominatim, which handles postalcode lookups fine.
   var isZip = /^\d{3,5}$/.test(q);
-  var url = isZip
-    ? "https://nominatim.openstreetmap.org/search?postalcode=" +
-      encodeURIComponent(q) +
-      "&country=US&format=json&limit=5&addressdetails=1"
-    : "https://nominatim.openstreetmap.org/search?q=" +
-      encodeURIComponent(q) +
-      "&countrycodes=us&format=json&limit=5&addressdetails=1";
+  if (!isZip) {
+    fetch("api/cities?q=" + encodeURIComponent(q))
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (data) {
+        if (zipInput.value.trim() !== q) return;
+        renderSuggestions(cityApiToItems(data));
+      })
+      .catch(function () {});
+    return;
+  }
+
+  var url =
+    "https://nominatim.openstreetmap.org/search?postalcode=" +
+    encodeURIComponent(q) +
+    "&country=US&format=json&limit=5&addressdetails=1";
   fetch(url, { headers: { Accept: "application/json" } })
     .then(function (r) {
       return r.json();
     })
     .then(function (data) {
-      if (zipInput.value.trim() === q) renderSuggestions(nominatimToItems(data));
+      if (zipInput.value.trim() !== q) return;
+      renderSuggestions(nominatimToItems(data, ""));
     })
     .catch(function () {});
 }
@@ -910,13 +911,16 @@ zipInput.addEventListener("input", function () {
     showDefaultSuggestions();
     return;
   }
-  if (q.length < 3) {
-    closeSuggestions();
+  // City names hit our own /api/cities (sub-millisecond, no rate limit), so
+  // fire on every keystroke from the first character. Only ZIPs, which still go
+  // out to Nominatim, need the debounce.
+  if (/^\d{3,5}$/.test(q)) {
+    searchTimer = setTimeout(function () {
+      fetchSuggestions(q);
+    }, 400);
     return;
   }
-  searchTimer = setTimeout(function () {
-    fetchSuggestions(q);
-  }, 400);
+  fetchSuggestions(q);
 });
 
 zipInput.addEventListener("focus", function () {
