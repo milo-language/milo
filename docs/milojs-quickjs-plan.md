@@ -191,11 +191,21 @@ Still open, found the same way:
   deliberately.
 - `Object.freeze` is shallow and does not stop internal `objSet` calls; engine
   internals can still mutate a frozen object. Fine today, worth knowing.
-- **spread does not honor `[Symbol.iterator]`** on user objects (for-of does).
-  `spreadInto` takes an immutable `&Interp` and so cannot call back into user
-  code; fixing it means threading `prog` + `&mut Interp` through its 3 call sites.
-- `Array.prototype.entries`/`keys`/`values` and `String.prototype.matchAll` can be
-  built on the protocol now — they return iterator objects, which is expressible.
+- ~~spread ignored `[Symbol.iterator]`~~ DONE (bc941d9): `spreadInto` now takes
+  `prog` + `&mut Interp` and drives `next()`, so user iterables, array iterators
+  and Map/Set iterators all spread. Map itself spreads to `[k, v]` pairs (that
+  needed allocation, so it lives in the mutable path). This became mandatory
+  rather than optional: making Map/Set return real iterators broke `[...m.keys()]`
+  until spread understood them.
+- ~~Map/Set `keys`/`values`/`entries` returned arrays, not iterators~~ DONE
+  (bc941d9): they snapshot into an array and hand back a real iterator over it, so
+  `.next()`, the `Iterator.prototype` helpers, for-of and `Array.from` all work.
+  Snapshot semantics: mutating the map mid-iteration is not observed, which real
+  JS would show.
+- ~~Map/Set keys used strict equality~~ DONE (bc941d9): now SameValueZero, so a
+  `NaN` key can be looked up again and `new Set([NaN, NaN])` has size 1.
+  Previously a NaN key could be stored but never retrieved.
+- `String.prototype.matchAll` can be built on the protocol now.
 - `Number.prototype.toPrecision` ignores its argument (`(123.456).toPrecision(4)`
   → `123.4560`, want `123.5`).
 
