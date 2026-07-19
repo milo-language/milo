@@ -1,0 +1,27 @@
+// @expect: opened self
+// @expect: missing symbol absent
+// std/dl smoke test with no external artifact. Deliberately does NOT assert that
+// a symbol of this program resolves: that needs -Wl,-export_dynamic, which the
+// fixture runner does not pass, so such an assertion would pass for the wrong
+// reason. Symbol lookup + calling through an extern fn pointer is covered by
+// tests/dl.test.ts, which controls its own link flags.
+from "std/dl" import {
+    dlSelf
+}
+
+fn main(): i32 {
+    match dlSelf() {
+        Result.Ok(lib) => {
+            print("opened self")
+            if lib.has("definitely_not_a_real_symbol_xyz") {
+                print("missing symbol present")
+            } else {
+                print("missing symbol absent")
+            }
+        }
+        Result.Err(_e) => {
+            print("dlSelf failed")
+        }
+    }
+    return 0
+}

@@ -1,0 +1,122 @@
+// Dynamic loading of shared libraries at runtime (dlopen/dlsym).
+//
+// Loading a library is only half of it: a plugin usually needs to call back into
+// the host, which requires the host's own symbols to be visible to the loaded
+// object. Link the host with `-Wl,-export_dynamic` for that — without it, dlOpen
+// fails with an unresolved-symbol error for anything the library expects from you.
+//
+// Symbols come back as raw pointers. Use the `extern` function-pointer type to
+// call one:
+//
+//     let lib = dlOpen("libfoo.dylib")!
+//     let p = lib.sym("add")!
+//     let add = p as extern (i32, i32) => i32
+//     let sum = add(2, 3)
+//
+// Nothing here can be checked by the compiler: a wrong signature on that cast is
+// undefined behavior exactly as it is in C.
+
+from "std/cstr" import {
+    CStr
+}
+
+@cSig("dlfcn.h", "void *dlopen(const char *, int)")
+extern fn dlopen(_path: *u8, _flags: i32): *u8
+
+@cSig("dlfcn.h", "void *dlsym(void *, const char *)")
+extern fn dlsym(_handle: *u8, _symbol: *u8): *u8
+
+@cSig("dlfcn.h", "int dlclose(void *)")
+extern fn dlclose(_handle: *u8): i32
+
+@cSig("dlfcn.h", "char *dlerror(void)")
+extern fn dlerror(): *u8
+
+// Resolve every symbol at load time rather than on first call. Same value on
+// darwin and linux. RTLD_GLOBAL is deliberately not exposed — it differs between
+// the two platforms (0x8 vs 0x100), and promoting a library's symbols into the
+// global namespace is rarely what a caller wants.
+let RTLD_NOW: i32 = 2
+
+struct Lib {
+    handle: *u8,
+}
+
+// The most recent loader error, or a generic message when the loader has none.
+// dlerror() also CLEARS the error, so this must be read exactly once per failure.
+fn dlLastError(): string {
+    unsafe {
+        let e = dlerror()
+        match CStr.wrap(e) {
+            Option.Some(c) => {
+                return c.toString()
+            }
+            Option.None => {
+                return "unknown dynamic loader error"
+            }
+        }
+    }
+}
+
+// Load a shared library. `path` may be a filename resolved via the loader search
+// path, or an explicit path.
+fn dlOpen(path: &string): Result<Lib, string> {
+    unsafe {
+        let h = dlopen(path as *u8, RTLD_NOW)
+        if (h as i64) == 0 {
+            return Result.Err(dlLastError())
+        }
+        return Result.Ok(Lib {
+            handle: h
+        }
+        )
+    }
+}
+
+// A handle to the running program itself, for looking up symbols the executable
+// exports. Requires linking with `-Wl,-export_dynamic`, same as letting a loaded
+// library resolve against the host.
+fn dlSelf(): Result<Lib, string> {
+    unsafe {
+        let h = dlopen(0 as *u8, RTLD_NOW)
+        if (h as i64) == 0 {
+            return Result.Err(dlLastError())
+        }
+        return Result.Ok(Lib {
+            handle: h
+        }
+        )
+    }
+}
+
+impl Lib {
+    // Address of a symbol, for casting to an `extern` function-pointer type or
+    // reading as data. A symbol whose value is legitimately zero is
+    // indistinguishable from an error here, as with plain dlsym.
+    fn sym(self: &Lib, name: &string): Result < *u8, string > {
+        unsafe {
+            let p = dlsym(self.handle, name as *u8)
+            if (p as i64) == 0 {
+                return Result.Err(dlLastError())
+            }
+            return Result.Ok(p)
+        }
+    }
+
+    // Whether a symbol is present, without treating absence as an error.
+    fn has(self: &Lib, name: &string): bool {
+        unsafe {
+            let p = dlsym(self.handle, name as *u8)
+            return (p as i64) != 0
+        }
+    }
+
+    // Release the handle. Pointers obtained from sym() dangle afterwards, and any
+    // still-running thread the library started keeps running — closing does not
+    // stop it.
+    fn close(self: &Lib): bool {
+        unsafe {
+            return dlclose(self.handle) == 0
+        }
+    }
+}

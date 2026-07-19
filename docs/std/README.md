@@ -13,6 +13,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/cstr](./cstr.md)
 - [std/csv](./csv.md)
 - [std/datetime](./datetime.md)
+- [std/dl](./dl.md)
 - [std/env](./env.md)
 - [std/environ.darwin](./environ.darwin.md)
 - [std/environ.linux](./environ.linux.md)
