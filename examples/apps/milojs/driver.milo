@@ -39,7 +39,7 @@ fn describeThrown(st: &Interp, v: &JSValue): string {
     return toStr(v)
 }
 
-fn makeInterp(gcStats: bool, gcThreshold: i64): Interp {
+fn makeInterp(gcStats: bool, gcThreshold: i64, gcGrowth: i64): Interp {
     return Interp {
         scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
         objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
@@ -47,7 +47,7 @@ fn makeInterp(gcStats: bool, gcThreshold: i64): Interp {
         throwing: false, thrownValue: JSValue.Undefined,
         optShort: false,
         rngState: 88172645463325252,
-        allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: gcThreshold, gcRuns: 0, gcStats: gcStats
+        allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: gcThreshold, gcMinThreshold: gcThreshold, gcGrowthFactor: gcGrowth, gcRuns: 0, gcStats: gcStats
     }
 }
 

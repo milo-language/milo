@@ -374,7 +374,15 @@ struct Interp {
     listeners: Vec<TcpListener>,
     conns: Vec<TcpStream>,
     connOpen: Vec<bool>,
+    // Current allocation count that triggers a collection. Recomputed after every
+    // collect() to track the live set (see collect); gcMinThreshold is the
+    // configured floor it never drops below.
     gcThreshold: i64,
+    gcMinThreshold: i64,
+    // How much headroom to leave between collections, as a multiple of the live
+    // set. Higher trades peak memory for less marking; the marking cost per
+    // allocation is amortized 1/gcGrowthFactor.
+    gcGrowthFactor: i64,
     gcRuns: i64,
     gcStats: bool,
 }
@@ -1004,6 +1012,19 @@ fn collect(st: &mut Interp) {
     }
     st.gcRuns = st.gcRuns + 1
     st.allocSinceGc = 0
+
+    // Proportional heap growth: let the next collection wait until roughly as
+    // many allocations have happened as there are live cells. A FIXED threshold
+    // makes total marking O(n^2) — the live set grows with the program's data
+    // while collections keep firing every `threshold` allocations, so each of
+    // the O(n/threshold) runs marks O(n) cells. Scaling the trigger with the
+    // live set amortizes marking to O(1) per allocation.
+    let live = (st.scopes.len() - st.freeList.len()) + (st.objects.len() - st.objFreeList.len())
+    st.gcThreshold = live * st.gcGrowthFactor
+    if st.gcThreshold < st.gcMinThreshold {
+        st.gcThreshold = st.gcMinThreshold
+    }
+
     if st.gcStats {
         let liveSlots = st.scopes.len() - st.freeList.len()
         let liveObjs = st.objects.len() - st.objFreeList.len()

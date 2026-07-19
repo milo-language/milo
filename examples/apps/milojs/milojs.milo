@@ -174,7 +174,7 @@ fn main(): i32 {
     }
     if path.len() == 0 {
         // no script → interactive REPL
-        var st = makeInterp(false, 1024)
+        var st = makeInterp(false, 1024, 2)
         bootInterp(st)
         setupNodeGlobals(st, "<repl>")
         return repl(st)
@@ -206,7 +206,24 @@ fn main(): i32 {
         Option.None => {
         }
     }
-    var st = makeInterp(gcStats, gcThreshold)
+    // Headroom multiple over the live set between collections (see collect).
+    var gcGrowth: i64 = 2
+    match getEnv("MILOJS_GC_GROWTH") {
+        Option.Some(gv) => {
+            match parseInt(gv) {
+                Option.Some(n) => {
+                    if n > 0 {
+                        gcGrowth = n
+                    }
+                }
+                Option.None => {
+                }
+            }
+        }
+        Option.None => {
+        }
+    }
+    var st = makeInterp(gcStats, gcThreshold, gcGrowth)
     // MILOJS_AWAIT_BUDGET_MS shortens the stuck-await deadline for debugging
     match getEnv("MILOJS_AWAIT_BUDGET_MS") {
         Option.Some(bv) => {

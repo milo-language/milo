@@ -154,7 +154,7 @@ fn main(): i32 {
                 Option.None => {
                 }
             }
-            var st = makeInterp(gcStats, gcThreshold)
+            var st = makeInterp(gcStats, gcThreshold, 2)
             bootInterp(st)
             // The prelude and the program must share one Prog: a JSValue.Func
             // carries an index into prog.funcs, so a function parsed into a
