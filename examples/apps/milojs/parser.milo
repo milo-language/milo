@@ -1541,7 +1541,8 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         }
         var cond = -1
         if peekKind(p) != T_SEMI {
-            cond = parseExpr(p, prog)
+            // the test is an Expression too: `for (;a, b;)` is legal
+            cond = parseCommaSeq(p, prog)
         }
         expect(p, T_SEMI)
         var update = -1
