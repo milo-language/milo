@@ -9,7 +9,7 @@ update-when: a lane lands (update the score, delete the lane) or the sweep harne
 
 Working plan for driving `scripts/quickjs-sweep.ts` toward 100%. Written for agents
 picking up individual lanes; each lane is independent and lists exact anchors.
-Current: **67/149 cases (45.0%)**. Delete lanes here as they land.
+Current: **69/149 cases (46.3%)**. Delete lanes here as they land.
 
 Engine-level spec builtins now live in `lib/engine-prelude.js` (loaded by
 `milojs-engine.milo` into the shared `Prog` before the entry runs) — distinct from
@@ -120,10 +120,19 @@ Still open, found the same way:
   `isCallable` could not see them even though `typeof` already said "function".
   `Array.from` moved to the prelude to consume iterators (a native cannot: driving
   `next()` calls back into user code, which natives have no program access for).
-- **array iterators carry no helper methods**: `[1,2].values().filter(...)` fails
-  because real JS inherits those from `Iterator.prototype` and this engine has no
-  such chain — `Iterator.from([1,2]).filter(...)` is the working form. This is
-  what still blocks `bug1572`.
+- ~~array iterators carried no helper methods~~ DONE (641b3f0): there is now a
+  real shared iterator prototype. The engine creates one object, stores it in
+  `Interp.iterProtoObj`, and exposes it to the prelude as `__iteratorProto`; every
+  iterator it builds points its `proto` there. The prelude installs the helpers as
+  `this`-based methods on that single object, so `[1,2].values().filter(...)`,
+  `Iterator.from(x).filter(...)` and `class X extends Iterator` all resolve through
+  the normal proto chain — one implementation, no per-instance copying.
+  `Iterator` is a real constructor with `Iterator.prototype === __iteratorProto`,
+  which is what makes `extends` work.
+  **This is the lesson of the last few iterations**: the previous per-instance
+  bound-method approach worked for exactly the shapes it was written for and
+  nothing else. Building the structure flipped 2 cases at once
+  (`iterator-filter-leak`, plus progress on `bug1557`/`bug1572`).
 - **no `BigInt` whatsoever** — no value type, no global, and the lexer rejects the
   `123n` literal suffix. Lexing `n` as a plain number would be a lie (BigInt has
   distinct `typeof` and exact semantics), so this is a real lane: a `JSValue`
