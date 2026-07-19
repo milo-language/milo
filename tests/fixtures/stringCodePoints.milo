@@ -1,0 +1,76 @@
+// `for b in s` yields BYTES (the right default for scanning ASCII delimiters);
+// `for cp in s.codePoints()` yields decoded codepoints without materializing a
+// Vec<i32>, so the UTF-8-correct loop costs no more to write than the shortcut.
+//
+// Desugars to a byte-cursor while loop, which is where the sharp edges are:
+// the cursor advances BEFORE the body (or `continue` would spin forever), the
+// index binding is the pre-advance offset, an rvalue receiver is bound once
+// rather than re-evaluated per iteration, and nested loops need distinct
+// cursors.
+// @expect: cp=97
+// @expect: cp=233
+// @expect: cp=28450
+// @expect: cp=127881
+// @expect: at 0 = 97
+// @expect: at 1 = 233
+// @expect: at 3 = 28450
+// @expect: at 6 = 127881
+// @expect: nonAscii=3
+// @expect: first=97
+// @expect: tmp cp=97
+// @expect: tmp cp=233
+// @expect: nested 97-120
+// @expect: nested 97-121
+// @expect: nested 98-120
+// @expect: nested 98-121
+// @expect: empty count=0
+// @expect: s still usable len=10
+
+fn twoChars(): string {
+    return "aé"
+}
+
+fn main() {
+    let s = "aé漢🎉"
+    for cp in s.codePoints() {
+        print($"cp={cp}")
+    }
+    for i, cp in s.codePoints() {
+        print($"at {i} = {cp}")
+    }
+
+    // `continue` must not skip the cursor advance
+    var n: i64 = 0
+    for cp in s.codePoints() {
+        if cp < 128 {
+            continue
+        }
+        n = n + 1
+    }
+    print($"nonAscii={n}")
+
+    for cp in s.codePoints() {
+        print($"first={cp}")
+        break
+    }
+
+    // rvalue receiver: bound once, not re-evaluated per iteration
+    for cp in twoChars().codePoints() {
+        print($"tmp cp={cp}")
+    }
+
+    for a in "ab".codePoints() {
+        for b in "xy".codePoints() {
+            print($"nested {a}-{b}")
+        }
+    }
+
+    var empty: i64 = 0
+    for cp in "".codePoints() {
+        empty = empty + 1
+    }
+    print($"empty count={empty}")
+
+    // the subject is only read, never consumed
+    print($"s still usable len={s.len}")
+}

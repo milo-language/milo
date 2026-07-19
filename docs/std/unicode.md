@@ -16,7 +16,49 @@ Number of Unicode codepoints in a string (not bytes).
 fn codepoints(s: &string): Vec<i32>
 ```
 
-Decode UTF-8 string into Unicode codepoints.
+Decode UTF-8 string into Unicode codepoints. Allocates; prefer
+decodeCodepoint in a scan loop.
+
+### `decodeCodepoint`
+
+```milo
+fn decodeCodepoint(s: &string, at: i64): CodePoint
+```
+
+Decode the UTF-8 codepoint starting at byte offset `at`, without allocating.
+This is the primitive to scan text with: a lexer keeps its own byte cursor and
+advances by `.size`, so no Vec<i32> is materialized just to walk a string.
+
+Malformed input never reads out of bounds and never returns a partial
+codepoint: a bad lead byte, a truncated tail, or a non-continuation byte all
+yield U+FFFD with size 1, so a scan advances and terminates on any input.
+Overlong forms and surrogate-range values are rejected the same way, which is
+what keeps decode/encode round-trips honest.
+
+### `encodeCodepoint`
+
+```milo
+fn encodeCodepoint(out: &mut string, cp: i32): void
+```
+
+Append `cp` to `out` as UTF-8. Invalid codepoints encode as U+FFFD rather
+than emitting bytes that would not decode back.
+
+### `fromSurrogatePair`
+
+```milo
+fn fromSurrogatePair(high: i32, low: i32): i32
+```
+
+Combine a surrogate pair back into a single codepoint.
+
+### `highSurrogate`
+
+```milo
+fn highSurrogate(cp: i32): i32
+```
+
+_Undocumented._
 
 ### `isAlpha`
 
@@ -106,6 +148,17 @@ fn isPunctuation(ch: u8): bool
 
 _Undocumented._
 
+### `isSupplementary`
+
+```milo
+fn isSupplementary(cp: i32): bool
+```
+
+UTF-16 conversion. A codepoint above the BMP is a single codepoint but TWO
+UTF-16 code units, encoded as a surrogate pair — so a byte- or
+codepoint-oriented count is not a UTF-16 index. Needed by anything crossing a
+UTF-16 boundary (Windows wide-char APIs, JVM strings).
+
 ### `isUpper`
 
 ```milo
@@ -122,6 +175,22 @@ fn isWhitespace(ch: u8): bool
 
 _Undocumented._
 
+### `lowSurrogate`
+
+```milo
+fn lowSurrogate(cp: i32): i32
+```
+
+_Undocumented._
+
+### `nextCodepointBoundary`
+
+```milo
+fn nextCodepointBoundary(s: &string, at: i64): i64
+```
+
+Byte offset of the next codepoint boundary at or after `at`.
+
 ### `toLowerChar`
 
 ```milo
@@ -134,6 +203,14 @@ Case conversion for ASCII bytes.
 
 ```milo
 fn toUpperChar(ch: u8): u8
+```
+
+_Undocumented._
+
+### `utf16UnitCount`
+
+```milo
+fn utf16UnitCount(cp: i32): i64
 ```
 
 _Undocumented._

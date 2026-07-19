@@ -10,6 +10,7 @@ import type {
 
 export class Parser {
   private pos = 0;
+  private codePointLoopCounter = 0;
 
   // `source`/`filePath` are optional — when provided, thrown ParseErrors carry them
   // so the CLI renders the offending file's source line + caret (essential for errors
@@ -139,6 +140,12 @@ export class Parser {
       } else {
         this.error(`expected declaration, got '${this.peek().kind}'`, this.peek());
       }
+    }
+    // Injected only when a `for .. in ..codePoints()` desugar actually fired.
+    // Putting it in the prelude instead would cost every program the parse and
+    // check of std/unicode (~10ms on a trivial build) to serve a rare construct.
+    if (this.codePointLoopCounter > 0 && !imports.some(i => i.path === "std/unicode" && i.names === null)) {
+      imports.push({ kind: "ImportDecl", path: "std/unicode", names: ["CodePoint", "decodeCodepoint"] });
     }
     return { structs, enums, functions, imports, traits, impls, typeAliases, interfaces, globals };
   }
@@ -801,7 +808,80 @@ export class Parser {
     this.expect(TokenKind.LBrace);
     const body = this.parseStmts();
     this.expect(TokenKind.RBrace);
+    if (iterable.kind === "MethodCall" && iterable.method === "codePoints" && iterable.args.length === 0) {
+      return this.desugarCodePointsLoop(varName, varName2, iterable.object, body, s);
+    }
     return { kind: "ForInStmt", varName, varName2, iterable, body, span: s };
+  }
+
+  // `for cp in s.codePoints() { .. }` → a byte-cursor while loop over
+  // decodeCodepoint. Iterating a string directly yields BYTES (the right default
+  // for scanning ASCII delimiters); this form yields decoded codepoints without
+  // materializing a Vec<i32>, so the UTF-8-correct loop is no more expensive to
+  // write than the byte shortcut.
+  //
+  // Desugared here rather than in the checker because `for` has no iterator
+  // protocol to hook: every iterable shape is hardcoded per builtin type. The
+  // cost is that `codePoints` is effectively reserved as a for-in iterable
+  // method name — a user type defining one gets this rewrite instead.
+  private desugarCodePointsLoop(
+    varName: string, varName2: string | null, subject: Expr, body: Stmt[], s: Span | undefined,
+  ): Stmt {
+    const i64Type: MiloType = { name: "i64", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    const int = (n: number): Expr => ({ kind: "IntLit", value: BigInt(n), span: s });
+    const id = (name: string): Expr => ({ kind: "Ident", name, span: s });
+    // Unique-ish names: a nested codePoints loop must not shadow the outer
+    // cursor, and neither may collide with a user binding.
+    const uid = this.codePointLoopCounter++;
+    const cursor = `__cpAt${uid}`;
+    const decoded = `__cp${uid}`;
+
+    const pre: Stmt[] = [];
+    // A place expression is read in situ; anything else is a temporary that must
+    // be bound once, or `.len` and each decode would re-evaluate it. Binding a
+    // place would MOVE it — and a borrow can't be bound to a local at all.
+    let src = subject;
+    if (subject.kind !== "Ident" && subject.kind !== "FieldAccess" && subject.kind !== "IndexAccess") {
+      const tmp = `__cpSrc${uid}`;
+      pre.push({ kind: "LetDecl", name: tmp, type: null, value: subject, span: s });
+      src = id(tmp);
+    }
+    pre.push({ kind: "VarDecl", name: cursor, type: i64Type, value: int(0), span: s });
+
+    const loopBody: Stmt[] = [
+      { kind: "LetDecl", name: decoded, type: null,
+        // cloned: the checker keys its per-expression maps (types, moves,
+        // auto-borrows) by node identity, so one node cannot sit in two places
+        value: { kind: "Call", func: "decodeCodepoint", args: [this.cloneExpr(src), id(cursor)], span: s }, span: s },
+    ];
+    // The index binding is the offset of the codepoint just decoded, so it must
+    // be taken BEFORE the cursor advances.
+    if (varName2) {
+      loopBody.push({ kind: "LetDecl", name: varName, type: null, value: id(cursor), span: s });
+      loopBody.push({ kind: "LetDecl", name: varName2, type: null,
+        value: { kind: "FieldAccess", object: id(decoded), field: "value", span: s }, span: s });
+    } else {
+      loopBody.push({ kind: "LetDecl", name: varName, type: null,
+        value: { kind: "FieldAccess", object: id(decoded), field: "value", span: s }, span: s });
+    }
+    // Advance BEFORE the body: a `continue` in the body would otherwise skip the
+    // increment and spin forever.
+    loopBody.push({
+      kind: "Assign", target: id(cursor),
+      value: { kind: "BinOp", op: "+", left: id(cursor),
+               right: { kind: "FieldAccess", object: id(decoded), field: "size", span: s }, span: s },
+      span: s,
+    });
+    loopBody.push(...body);
+
+    pre.push({
+      kind: "WhileStmt",
+      cond: { kind: "BinOp", op: "<", left: id(cursor), right: { kind: "FieldAccess", object: this.cloneExpr(src), field: "len", span: s }, span: s },
+      invariants: [], body: loopBody, span: s,
+    });
+    // `if true` is just a scope: it keeps the cursor and any subject temporary
+    // from leaking into the enclosing block. There is no bare-block statement.
+    return { kind: "IfStmt", cond: { kind: "BoolLit", value: true, span: s }, thenBody: pre, elseBody: null, span: s };
   }
 
   // ── Match ──

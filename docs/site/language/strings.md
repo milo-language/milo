@@ -30,7 +30,7 @@ s.trim()                         // removes leading/trailing whitespace
 
 s.split(", ")                    // Vec<string>: ["Hello", "World!"]
 s.replace("World", "Milo")      // "Hello, Milo!"
-s.indexOf("World")             // Option<i64>: Some(7)
+s.indexOf("World")             // i64: 7, or -1 if not found
 s.repeat(3)                      // "Hello, World!Hello, World!Hello, World!"
 ```
 
@@ -38,9 +38,53 @@ s.repeat(3)                      // "Hello, World!Hello, World!Hello, World!"
 
 ```milo
 var s: string = ""
-s.push('h')
+s.push('h')            // one byte
 s.push('i')
-// s is now "hi"
+s.pushStr(" there")    // a whole string, appended in place
+// s is now "hi there"
+```
+
+`pushStr` grows the buffer amortized. `s = s + t` in a loop is quadratic — it
+reallocates and recopies the whole accumulator on every concat.
+
+## Iterating
+
+A string is a UTF-8 byte buffer, and iterating one directly yields **bytes**:
+
+```milo
+for b in s {              // b: u8
+    if b == 44 { ... }    // scanning for ',' — no decoding needed
+}
+
+for i, b in s { ... }     // i: i64 byte offset, b: u8
+```
+
+For text, iterate codepoints instead. This decodes as it goes rather than
+building a `Vec<i32>`:
+
+```milo
+for cp in "héllo".codePoints() {     // cp: i32
+    print($"{cp}")
+}
+
+for at, cp in "héllo".codePoints() { // at: i64 BYTE offset of cp
+    print($"{at}: {cp}")
+}
+```
+
+Malformed UTF-8 never stalls or reads out of bounds — a bad sequence yields
+U+FFFD and advances one byte.
+
+Indexing is byte-oriented, so `s[i]` is a `u8` and `charAt` will split a
+multi-byte codepoint. To decode at a known offset without a loop, use
+`decodeCodepoint` from `std/unicode`, which returns the value and its byte
+width:
+
+```milo
+from "std/unicode" import { decodeCodepoint }
+
+let c = decodeCodepoint(s, 0)
+print($"{c.value} occupies {c.size} bytes")
 ```
 
 ## Number to string
