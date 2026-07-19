@@ -689,3 +689,100 @@ if (typeof queueMicrotask === "function") {
     return __nativeQueueMicrotask(cb);
   };
 }
+
+// --- JSON: toJSON, indent, reviver -------------------------------------------
+// The native stringify/parse cannot call back into user code (natives have no
+// access to the program), so the parts that need to — a toJSON() hook, a replacer,
+// and parse's reviver — live here. String escaping still goes through the native,
+// which is the piece that has to be exactly right.
+var __nativeStringify = JSON.stringify;
+var __nativeParse = JSON.parse;
+
+JSON.stringify = function (value, replacer, space) {
+  var unit = "";
+  if (typeof space === "number") {
+    var n = space > 10 ? 10 : space;
+    for (var i = 0; i < n; i++) unit += " ";
+  } else if (typeof space === "string") {
+    unit = space.length > 10 ? space.slice(0, 10) : space;
+  }
+  var replFn = typeof replacer === "function" ? replacer : null;
+  var allow = null;
+  if (replacer && typeof replacer !== "function" && replacer.length !== undefined) {
+    allow = [];
+    for (var k = 0; k < replacer.length; k++) allow.push(String(replacer[k]));
+  }
+
+  function pad(depth) {
+    var out = "";
+    for (var i = 0; i < depth; i++) out += unit;
+    return out;
+  }
+
+  function ser(holder, key, v, depth) {
+    if (v !== null && v !== undefined && typeof v.toJSON === "function") {
+      v = v.toJSON(key);
+    }
+    if (replFn) v = replFn.call(holder, key, v);
+    if (v === null) return "null";
+    var t = typeof v;
+    if (t === "number") return isFinite(v) ? String(v) : "null";
+    if (t === "boolean") return v ? "true" : "false";
+    if (t === "string") return __nativeStringify(v);
+    if (t === "function" || t === "undefined" || t === "symbol") return undefined;
+
+    var open = "", close = "", sep = ",", colon = ":";
+    if (unit) {
+      open = "\n" + pad(depth + 1);
+      close = "\n" + pad(depth);
+      sep = ",\n" + pad(depth + 1);
+      colon = ": ";
+    }
+    if (Array.isArray(v)) {
+      if (v.length === 0) return "[]";
+      var parts = [];
+      for (var i = 0; i < v.length; i++) {
+        var e = ser(v, String(i), v[i], depth + 1);
+        // an unserialisable ELEMENT becomes null, unlike a dropped property
+        parts.push(e === undefined ? "null" : e);
+      }
+      return "[" + open + parts.join(sep) + close + "]";
+    }
+    var out = [];
+    for (var pk in v) {
+      if (allow && allow.indexOf(pk) < 0) continue;
+      var sv = ser(v, pk, v[pk], depth + 1);
+      if (sv !== undefined) out.push(__nativeStringify(pk) + colon + sv);
+    }
+    if (out.length === 0) return "{}";
+    return "{" + open + out.join(sep) + close + "}";
+  }
+
+  return ser({ "": value }, "", value, 0);
+};
+
+JSON.parse = function (text, reviver) {
+  var parsed = __nativeParse(text);
+  if (typeof reviver !== "function") return parsed;
+  // bottom-up walk; returning undefined deletes the entry
+  function walk(holder, key) {
+    var val = holder[key];
+    if (val !== null && typeof val === "object") {
+      if (Array.isArray(val)) {
+        for (var i = 0; i < val.length; i++) {
+          var r = walk(val, String(i));
+          if (r === undefined) delete val[i];
+          else val[i] = r;
+        }
+      } else {
+        for (var k in val) {
+          var r2 = walk(val, k);
+          if (r2 === undefined) delete val[k];
+          else val[k] = r2;
+        }
+      }
+    }
+    return reviver.call(holder, key, val);
+  }
+  return walk({ "": parsed }, "");
+};
