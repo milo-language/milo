@@ -2,7 +2,7 @@
 //
 // Bump CACHE whenever a shell asset changes — the binary embeds these files at
 // build time, so a deploy with a stale cache name would keep serving the old UI.
-var CACHE = "weather-v2";
+var CACHE = "weather-v3";
 
 // Relative to the SW's scope, so this works under nginx's /weather/ subpath.
 var SHELL = [
@@ -20,7 +20,13 @@ self.addEventListener("install", function (e) {
     caches
       .open(CACHE)
       .then(function (c) {
-        return c.addAll(SHELL);
+        return Promise.all(
+          SHELL.map(function (u) {
+            return fetch(u, { cache: "no-store" }).then(function (r) {
+              return c.put(u, r);
+            });
+          }),
+        );
       })
       .then(function () {
         return self.skipWaiting();
@@ -63,7 +69,7 @@ self.addEventListener("fetch", function (e) {
   // works offline for anything already typed once.
   if (url.pathname.indexOf("/api/cities") !== -1) {
     e.respondWith(
-      fetch(req)
+      fetch(req, { cache: "no-store" })
         .then(function (res) {
           var copy = res.clone();
           caches.open(CACHE).then(function (c) {
@@ -83,8 +89,11 @@ self.addEventListener("fetch", function (e) {
   // Cache-first would serve a stale UI for one full load after every deploy —
   // which is exactly how a shipped feature appears "missing". The assets have
   // no content hash to bust, so freshness has to come from the request.
+  // cache:"no-store" so this bypasses the HTTP cache. Without it a previously
+  // stored max-age response keeps satisfying the SW's own fetch, and
+  // "network-first" quietly serves a stale shell until that entry expires.
   e.respondWith(
-    fetch(req)
+    fetch(req, { cache: "no-store" })
       .then(function (res) {
         if (res && res.status === 200) {
           var copy = res.clone();

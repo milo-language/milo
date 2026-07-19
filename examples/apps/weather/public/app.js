@@ -1,5 +1,6 @@
 var heroEl = document.getElementById("hero");
 var dailyEl = document.getElementById("daily");
+var savedEl = document.getElementById("saved");
 var zipInput = document.getElementById("zip");
 var searchBtn = document.getElementById("search");
 var errorEl = document.getElementById("error");
@@ -575,7 +576,8 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   var hero =
     '<div class="hero-city">' +
     esc(city) +
-    '<button class="fav-btn" id="favBtn" title="Save to favorites" ' +
+    '<button class="fav-btn" id="favBtn" data-city="' + esc(city) + '" ' +
+    'title="Save to favorites" ' +
     'aria-label="Save to favorites" aria-pressed="' +
     (isFavorite(city) ? "true" : "false") +
     '">' +
@@ -673,6 +675,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
       favBtn.innerHTML = starSvg(on);
       favBtn.setAttribute("aria-pressed", on ? "true" : "false");
       favBtn.title = on ? "Remove from favorites" : "Save to favorites";
+      renderSaved();
     });
   }
 
@@ -715,6 +718,8 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   }
   dHtml += "</div>";
   dailyEl.innerHTML = dHtml;
+
+  renderSaved();
 }
 
 // ── Search / typeahead ──
@@ -730,6 +735,127 @@ function loadJson(key) {
   } catch (e) {
     return null;
   }
+}
+
+
+// ── Saved cities list ──
+// Starring is only worth anything if the saved places show their conditions at
+// a glance, so each row fetches its own current temp. Results are memoised for
+// the session: re-rendering the list (after a star toggle, say) must not refire
+// two weather.gov requests per city.
+var savedWxCache = {};
+
+function savedRowHtml(fav, wx) {
+  var right = wx
+    ? '<div class="saved-temp">' + wx.temp + "\u00B0</div>" +
+      '<div class="saved-hilo">H:' + wx.hi + "\u00B0 L:" + wx.lo + "\u00B0</div>"
+    : '<div class="saved-temp saved-pending">--\u00B0</div>';
+  var cond = wx ? esc(wx.cond) : "Loading\u2026";
+  return (
+    '<div class="saved-row" data-label="' + esc(fav.label) + '">' +
+    '<div class="saved-left">' +
+    '<div class="saved-name">' + esc(fav.label) + "</div>" +
+    '<div class="saved-cond">' + cond + "</div>" +
+    "</div>" +
+    '<div class="saved-right">' + right + "</div>" +
+    '<button class="saved-remove" data-remove="' + esc(fav.label) + '" ' +
+    'title="Remove from favorites" aria-label="Remove from favorites">\u00D7</button>' +
+    "</div>"
+  );
+}
+
+function fetchSavedWx(fav) {
+  if (savedWxCache[fav.label]) return Promise.resolve(savedWxCache[fav.label]);
+  return fetch("https://api.weather.gov/points/" + fav.lat + "," + fav.lon)
+    .then(function (r) {
+      if (!r.ok) throw new Error("points");
+      return r.json();
+    })
+    .then(function (pts) {
+      return fetch(pts.properties.forecast).then(function (r) {
+        return r.json();
+      });
+    })
+    .then(function (fc) {
+      var ps = fc.properties.periods;
+      if (!ps || !ps.length) throw new Error("empty");
+      var now = ps[0];
+      var hi, lo;
+      if (now.isDaytime) {
+        hi = now.temperature;
+        lo = ps.length > 1 && !ps[1].isDaytime ? ps[1].temperature : now.temperature;
+      } else {
+        lo = now.temperature;
+        hi = ps.length > 1 && ps[1].isDaytime ? ps[1].temperature : now.temperature;
+      }
+      var wx = { temp: now.temperature, hi: hi, lo: lo, cond: now.shortForecast };
+      savedWxCache[fav.label] = wx;
+      return wx;
+    })
+    .catch(function () {
+      return null;
+    });
+}
+
+function renderSaved() {
+  var favs = loadFavorites();
+  if (!favs.length) {
+    savedEl.innerHTML = "";
+    return;
+  }
+
+  var rows = "";
+  for (var i = 0; i < favs.length; i++) {
+    rows += savedRowHtml(favs[i], savedWxCache[favs[i].label]);
+  }
+  savedEl.innerHTML =
+    '<div class="card"><div class="card-head">Saved</div>' + rows + "</div>";
+
+  savedEl.querySelectorAll(".saved-row").forEach(function (row) {
+    row.addEventListener("click", function (e) {
+      if (e.target.hasAttribute("data-remove")) return;
+      var label = row.getAttribute("data-label");
+      for (var j = 0; j < favs.length; j++) {
+        if (favs[j].label === label) {
+          zipInput.value = "";
+          history.replaceState(null, "", "?q=" + encodeURIComponent(label));
+          fetchWeather(favs[j].lat, favs[j].lon, label, true);
+          return;
+        }
+      }
+    });
+  });
+
+  savedEl.querySelectorAll("[data-remove]").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var label = btn.getAttribute("data-remove");
+      var f = loadFavorites().filter(function (x) {
+        return x.label !== label;
+      });
+      localStorage.setItem("weatherFavorites", JSON.stringify(f));
+      renderSaved();
+      syncFavButton();
+    });
+  });
+
+  // fill in the rows that don't have conditions yet
+  favs.forEach(function (fav) {
+    if (savedWxCache[fav.label]) return;
+    fetchSavedWx(fav).then(function (wx) {
+      if (wx) renderSaved();
+    });
+  });
+}
+
+// keeps the hero star in sync when a place is removed from the list below
+function syncFavButton() {
+  var btn = document.getElementById("favBtn");
+  if (!btn) return;
+  var label = btn.getAttribute("data-city") || "";
+  var on = isFavorite(label);
+  btn.innerHTML = starSvg(on);
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
 }
 
 // ── Favorites ──

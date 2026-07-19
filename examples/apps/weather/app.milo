@@ -64,11 +64,34 @@ fn cityJson(c: &City): string {
     return s
 }
 
+// An empty state filter matches everything; otherwise the two-letter code must
+// match exactly, so "Springfield, IL" can't return the Missouri one.
+fn cityMatchesState(c: &City, stateQ: &string): bool {
+    if stateQ.len == 0 {
+        return true
+    }
+    return strToLower(c.state) == stateQ
+}
+
 // Typeahead over US place names. Nominatim is a geocoder, not a search index —
 // it can't prefix-match ("red" never reaches Redwood City) — so the lookup that
 // actually drives the search box lives here.
 fn citiesHandler(ctx: &mut Context): Response {
-    let q = strToLower(strTrim(ctx.query("q")))
+    let raw = strToLower(strTrim(ctx.query("q")))
+    if raw.len == 0 {
+        return ctx.json("[]")
+    }
+
+    // Queries arrive in two shapes: a bare prefix as you type ("santa ro"), and
+    // a full label ("Santa Rosa, CA"). The app writes the label form into ?q=
+    // and into saved favorites, so it has to round-trip — matching the whole
+    // label against a bare city name would find nothing.
+    let parts = strSplit(raw, ",")
+    let q = strTrim(parts[0])
+    var stateQ = ""
+    if parts.len > 1 {
+        stateQ = strTrim(parts[1])
+    }
     if q.len == 0 {
         return ctx.json("[]")
     }
@@ -80,7 +103,7 @@ fn citiesHandler(ctx: &mut Context): Response {
         if out.len >= MAX_SUGGESTIONS {
             break
         }
-        if strStartsWith(c.key, q) {
+        if strStartsWith(c.key, q) && cityMatchesState(c, stateQ) {
             out.push(cityJson(c))
         }
     }
@@ -89,7 +112,8 @@ fn citiesHandler(ctx: &mut Context): Response {
             if out.len >= MAX_SUGGESTIONS {
                 break
             }
-            if !strStartsWith(c.key, q) && strContains(c.key, q) {
+            if !strStartsWith(c.key, q) && strContains(c.key, q)
+            && cityMatchesState(c, stateQ) {
                 out.push(cityJson(c))
             }
         }
@@ -108,30 +132,34 @@ fn citiesHandler(ctx: &mut Context): Response {
     return ctx.json(body)
 }
 
+// no-store, not no-cache, on every embedded text asset: no-cache only promises
+// revalidation, and revalidation needs an ETag or Last-Modified — which this
+// server doesn't send. Chrome then reuses its cached copy and a deploy stays
+// invisible. Costs a ~50KB refetch per visit; the service worker covers offline.
 fn indexHandler(ctx: &mut Context): Response {
-    ctx.setHeader("Cache-Control", "no-cache")
+    ctx.setHeader("Cache-Control", "no-store")
     return ctx.html(embedFile("public/index.html"))
 }
 
 fn styleHandler(ctx: &mut Context): Response {
-    ctx.setHeader("Cache-Control", "no-cache")
+    ctx.setHeader("Cache-Control", "no-store")
     return Response.Status(200, "text/css; charset=utf-8", embedFile("public/style.css"))
 }
 
 fn scriptHandler(ctx: &mut Context): Response {
-    ctx.setHeader("Cache-Control", "no-cache")
+    ctx.setHeader("Cache-Control", "no-store")
     return Response.Status(200, "application/javascript; charset=utf-8", embedFile("public/app.js"))
 }
 
 fn manifestHandler(ctx: &mut Context): Response {
-    ctx.setHeader("Cache-Control", "no-cache")
+    ctx.setHeader("Cache-Control", "no-store")
     return Response.Status(200, "application/manifest+json; charset=utf-8", embedFile("public/manifest.webmanifest"))
 }
 
 // Served from the app root so its scope covers every page, including under
 // nginx's /weather/ prefix. Never cached: a stale worker pins a stale shell.
 fn swHandler(ctx: &mut Context): Response {
-    ctx.setHeader("Cache-Control", "no-cache")
+    ctx.setHeader("Cache-Control", "no-store")
     return Response.Status(200, "application/javascript; charset=utf-8", embedFile("public/sw.js"))
 }
 
