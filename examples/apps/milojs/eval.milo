@@ -442,6 +442,10 @@ fn getMember(st: &Interp, o: i64, key: &string): JSValue {
 }
 
 fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
+    // sloppy mode drops writes to a frozen object rather than throwing
+    if st.objects[o].frozen {
+        return
+    }
     if st.objects[o].isArray {
         let ai = asArrayIndex(key)
         if ai >= 0 {
@@ -627,6 +631,7 @@ let NATIVE_HTTP_REGISTER: i64 = 73
 let NATIVE_HTTP_UNREGISTER: i64 = 74
 let NATIVE_WRITE_FILE: i64 = 75
 let NATIVE_GC: i64 = 76
+let NATIVE_OBJECT_ISFROZEN: i64 = 77
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -1400,11 +1405,25 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         return JSValue.Obj(d)
     }
     if id == NATIVE_OBJECT_FREEZE {
-        // no real immutability yet — callers only rely on the identity return
         if argVals.len() > 0 {
+            let fh = objHandle(argVals[0])
+            if fh >= 0 {
+                st.objects[fh].frozen = true
+            }
             return cloneValue(argVals[0])
         }
         return JSValue.Undefined
+    }
+    if id == NATIVE_OBJECT_ISFROZEN {
+        if argVals.len() > 0 {
+            let fh = objHandle(argVals[0])
+            if fh >= 0 {
+                return JSValue.Bool(st.objects[fh].frozen)
+            }
+            // primitives are frozen by definition
+            return JSValue.Bool(true)
+        }
+        return JSValue.Bool(true)
     }
     if id == NATIVE_OBJECT_VALUES || id == NATIVE_OBJECT_ENTRIES {
         let wantPairs = id == NATIVE_OBJECT_ENTRIES
@@ -1962,6 +1981,7 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "values", JSValue.Native(NATIVE_OBJECT_VALUES))
     objSet(st, objectCtor, "entries", JSValue.Native(NATIVE_OBJECT_ENTRIES))
     objSet(st, objectCtor, "freeze", JSValue.Native(NATIVE_OBJECT_FREEZE))
+    objSet(st, objectCtor, "isFrozen", JSValue.Native(NATIVE_OBJECT_ISFROZEN))
     objSet(st, objectCtor, "create", JSValue.Native(NATIVE_OBJECT_CREATE))
     objSet(st, objectCtor, "getPrototypeOf", JSValue.Native(NATIVE_OBJECT_GETPROTO))
     objSet(st, objectCtor, "setPrototypeOf", JSValue.Native(NATIVE_OBJECT_SETPROTO))
@@ -3374,6 +3394,9 @@ fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
             let ov = evalExpr(prog, objIdx, st, scope)
             let o = objHandle(ov)
             if o >= 0 {
+                if st.objects[o].frozen {
+                    return JSValue.Bool(false)
+                }
                 objDeleteKey(st, o, name)
             }
             return JSValue.Bool(true)
@@ -3386,6 +3409,9 @@ fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
             let key = toStr(kv)
             let o = objHandle(ov)
             if o >= 0 {
+                if st.objects[o].frozen {
+                    return JSValue.Bool(false)
+                }
                 objDeleteKey(st, o, key)
             }
             return JSValue.Bool(true)
@@ -3904,6 +3930,13 @@ fn isCallable(v: &JSValue): bool {
 
 fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     let n = arrLen(st, o)
+    // the mutating methods write through arrPush/elems directly, bypassing
+    // setMember's frozen check, so a frozen array has to be caught here too
+    if st.objects[o].frozen {
+        if name == "push" || name == "pop" || name == "shift" || name == "unshift" || name == "splice" || name == "sort" || name == "reverse" || name == "fill" || name == "copyWithin" {
+            return JSValue.Number(n as f64)
+        }
+    }
     if name == "push" {
         var j: i64 = 0
         while j < args.len() {
