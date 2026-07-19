@@ -360,15 +360,32 @@ fn utf16Locate(s: &string, idx: i64): Utf16Pos {
 }
 
 // Total length in UTF-16 code units — what JS reports as .length.
-fn utf16Length(s: &string): i64 {
-    var unit: i64 = 0
-    var b: i64 = 0
+// Counts from `from`, whose prefix is known to be `from` ASCII units.
+fn utf16LengthFrom(s: &string, from: i64): i64 {
+    var unit: i64 = from
+    var b: i64 = from
     while b < s.len() {
         let cp = decodeCodepoint(s, b)
         unit = unit + utf16UnitCount(cp.value)
         b = b + cp.size
     }
     return unit
+}
+
+// `.length` is one of the hottest string reads, and the general path calls
+// decodeCodepoint per character. For an all-ASCII string — overwhelmingly the
+// common case — the UTF-16 length equals the byte length, and proving that is a
+// tight byte scan instead of a decode per character. Falls back to the general
+// path from the first non-ASCII byte, so no work is repeated.
+fn utf16Length(s: &string): i64 {
+    var b: i64 = 0
+    while b < s.len() {
+        if s[b] >= 128 as u8 {
+            return utf16LengthFrom(s, b)
+        }
+        b = b + 1
+    }
+    return s.len()
 }
 
 // The UTF-16 code unit at `idx`, or -1 when out of range. A supplementary
