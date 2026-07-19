@@ -1,0 +1,91 @@
+// Result.map(f): Result<T,E> -> Result<U,E>.
+//
+// Two regressions this pins:
+//   - the Err branch has a payload to carry (unlike Option.map, whose None branch is
+//     empty). Store only the tag and the real error is silently replaced by a zeroed
+//     value — still an Err, so an isErr()-only assertion passes. Every Err case below
+//     asserts the error VALUE.
+//   - that forwarded Err payload leaves the receiver and the result both owning one
+//     buffer, so a non-Copy E must CONSUME the receiver. Payloads here are built with
+//     pushStr rather than written as literals on purpose: a literal has cap == 0, marking
+//     a static buffer that drop glue skips, which hides the double-free entirely.
+//
+// The callback takes the Ok payload by REF, so nothing is moved out of it — that is why
+// there is no Copy gate on T.
+fn heapStr(tail: &string): string {
+    var s = ""
+    s.pushStr("boom-")
+    s.pushStr(tail)
+    return s
+}
+
+fn describe(r: Result<i64, string>): string {
+    match r {
+        Result.Ok(v) => {
+            return "ok:" + v.toString()
+        }
+        Result.Err(e) => {
+            return "err:" + e
+        }
+    }
+}
+
+fn main() {
+    let ok: Result<i64, string> = Result.Ok(21)
+    // @expect: ok:42
+    print(describe(ok.map((n) => n * 2)))
+
+    // The heap error value must survive the map byte-for-byte.
+    let bad: Result<i64, string> = Result.Err(heapStr("alpha"))
+    // @expect: err:boom-alpha
+    print(describe(bad.map((n) => n * 2)))
+
+    // U need not equal T.
+    let ok2: Result<i64, string> = Result.Ok(7)
+    // @expect: true
+    print(ok2.map((n) => n > 5).unwrapOr(false))
+
+    // f must run ONLY on Ok: "mapped" appears exactly once across both calls below.
+    let ok3: Result<i64, string> = Result.Ok(3)
+    let err3: Result<i64, string> = Result.Err(heapStr("nope"))
+    // @expect: mapped
+    // @expect: 30
+    print(ok3.map((n) => {
+        print("mapped")
+        return n * 10
+    }
+    ).unwrapOr(0))
+    // @expect: 0
+    print(err3.map((n) => {
+        print("mapped")
+        return n * 10
+    }
+    ).unwrapOr(0))
+
+    // Closures capture.
+    let base = 100
+    let ok4: Result<i64, string> = Result.Ok(2)
+    // @expect: 200
+    print(ok4.map((n) => n * base).unwrapOr(0))
+
+    // Non-Copy on BOTH sides. The callback sees &string so the Ok payload is never moved
+    // out; the Err payload is forwarded, so ok5 is consumed and only the result is read.
+    let ok5: Result<string, string> = Result.Ok(heapStr("payload"))
+    let lens = ok5.map((v) => v.len)
+    // @expect: 12
+    print(lens.unwrapOr(0))
+
+    // Same shape, Err side: the heap error travels into the mapped result and is freed
+    // exactly once (run under --sanitize --debug to check).
+    let err5: Result<string, string> = Result.Err(heapStr("carried"))
+    let mapped5 = err5.map((v) => v.len)
+    match mapped5 {
+        Result.Ok(v) => {
+            print("unreachable")
+        }
+        Result.Err(e) => {
+            // @expect: boom-carried
+            print(e)
+        }
+    }
+}

@@ -8689,6 +8689,116 @@ export class Codegen {
       return [lines, out, resTy];
     }
 
+    // Result map/mapErr/andThen. Unlike Option.map, the branch that does NOT run the
+    // callback still carries a payload, and it must be copied from the source enum into the
+    // result enum — skipping it leaves the zeroinitializer, i.e. `map` over an Err would
+    // silently produce a zeroed error value instead of the real one.
+    if (expr.op === "resultMap" || expr.op === "resultMapErr" || expr.op === "resultAndThen") {
+      if (expr.type.tag !== "enum") throw new Error(`Result.${expr.op} result is not an enum`);
+      const resEnum = expr.type.name;
+      const resTy = `%${resEnum}`;
+      const resLayout = this.enumLayouts.get(resEnum);
+      const srcLayout = this.enumLayouts.get(expr.enumName);
+      if (!resLayout || !srcLayout) throw new Error(`enum layout not found for ${resEnum}/${expr.enumName}`);
+      const resOk = resLayout.variants.get("Ok");
+      const resErr = resLayout.variants.get("Err");
+      const srcOk = srcLayout.variants.get("Ok");
+      const srcErr = srcLayout.variants.get("Err");
+      if (!resOk || !resErr || !srcOk || !srcErr) throw new Error("Result enum missing Ok/Err variants");
+
+      // The closure value is built unconditionally (just a {fn,env} pair); only the CALL is
+      // conditional, so a side-effecting callback runs on exactly one branch.
+      const [cl, cv] = this.genExpr(expr.default!);
+      lines.push(...cl);
+      const fnPtr = this.nextTemp();
+      lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
+      const envPtr = this.nextTemp();
+      lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+
+      const resAddr = `%__resmap.${this.scopeCounter++}.addr`;
+      this.entryAllocas.push(`  ${resAddr} = alloca ${resTy}`);
+      lines.push(`  store ${resTy} zeroinitializer, ptr ${resAddr}`);
+
+      const okLabel = this.nextLabel("resmap.ok");
+      const errLabel = this.nextLabel("resmap.err");
+      const contLabel = this.nextLabel("resmap.cont");
+      lines.push(`  br i1 ${isSome}, label %${okLabel}, label %${errLabel}`);
+
+      // the checker types the callback param as &X, so the payload goes by pointer — that is
+      // what keeps a non-Copy payload from being moved out of the receiver
+      const cbType = expr.default!.type;
+      const paramIsRef = cbType.tag === "fn" && cbType.params.length > 0 && cbType.params[0].tag === "ref";
+      const srcPayload = (): string => {
+        const p = this.nextTemp();
+        lines.push(`  ${p} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 1`);
+        return p;
+      };
+      const callArgOf = (srcFieldTy: string): [string, string] => {
+        const p = srcPayload();
+        if (paramIsRef) return [p, "ptr"];
+        const loaded = this.nextTemp();
+        lines.push(`  ${loaded} = load ${srcFieldTy}, ptr ${p}`);
+        return [loaded, srcFieldTy];
+      };
+      const storeTag = (tag: number) => {
+        const tp = this.nextTemp();
+        lines.push(`  ${tp} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 0`);
+        lines.push(`  store i32 ${tag}, ptr ${tp}`);
+      };
+      const storePayload = (ty: string, val: string) => {
+        const pp = this.nextTemp();
+        lines.push(`  ${pp} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 1`);
+        lines.push(`  store ${ty} ${val}, ptr ${pp}`);
+      };
+      // forward the untouched side's payload verbatim; the result variant's slot is at least
+      // as wide because that side's type is unchanged
+      const copyThrough = (srcFieldTy: string | undefined, tag: number) => {
+        storeTag(tag);
+        if (!srcFieldTy) return;
+        const p = srcPayload();
+        const v = this.nextTemp();
+        lines.push(`  ${v} = load ${srcFieldTy}, ptr ${p}`);
+        storePayload(srcFieldTy, v);
+      };
+
+      lines.push(`${okLabel}:`);
+      if (expr.op === "resultMapErr") {
+        copyThrough(srcOk.fieldTypes[0], resOk.tag);
+      } else if (expr.op === "resultAndThen") {
+        // the callback already returns the whole Result — store it wholesale, no re-tagging
+        const [arg, argTy] = callArgOf(srcOk.fieldTypes[0] ?? "i64");
+        const called = this.nextTemp();
+        lines.push(`  ${called} = call ${resTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
+        lines.push(`  store ${resTy} ${called}, ptr ${resAddr}`);
+      } else {
+        const [arg, argTy] = callArgOf(srcOk.fieldTypes[0] ?? "i64");
+        const outTy = resOk.fieldTypes[0] ?? "i64";
+        const called = this.nextTemp();
+        lines.push(`  ${called} = call ${outTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
+        storeTag(resOk.tag);
+        storePayload(outTy, called);
+      }
+      lines.push(`  br label %${contLabel}`);
+
+      lines.push(`${errLabel}:`);
+      if (expr.op === "resultMapErr") {
+        const [arg, argTy] = callArgOf(srcErr.fieldTypes[0] ?? "i64");
+        const outTy = resErr.fieldTypes[0] ?? "i64";
+        const called = this.nextTemp();
+        lines.push(`  ${called} = call ${outTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
+        storeTag(resErr.tag);
+        storePayload(outTy, called);
+      } else {
+        copyThrough(srcErr.fieldTypes[0], resErr.tag);
+      }
+      lines.push(`  br label %${contLabel}`);
+
+      lines.push(`${contLabel}:`);
+      const out = this.nextTemp();
+      lines.push(`  ${out} = load ${resTy}, ptr ${resAddr}`);
+      return [lines, out, resTy];
+    }
+
     // unwrapOr / unwrapOrElse
     const payloadTy = this.llvmType(expr.type);
     const payloadPtr = this.nextTemp();

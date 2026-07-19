@@ -578,9 +578,60 @@ match s { Option.Some(v) => { print(v) } Option.None => {} }   // still owns "he
 ```
 
 `map`'s result type is independent of `T` — `Option<i64>.map((n) => n > 5)` is
-`Option<bool>`. `isOk`/`isErr`/`unwrapOr` mirror these on `Result`.
+`Option<bool>`.
 
-These also work with `Result`. Writing `Result<T>` with one type argument defaults the error type to `string` — `Result<i32>` is `Result<i32, string>`:
+### Result Combinators
+
+`isOk`/`isErr`/`unwrapOr` mirror the Option versions on `Result`, plus three that thread the
+error through:
+
+```milo
+fn halve(n: &i64): Result<i64, string> {
+    if n % 2 != 0 { return Result.Err("odd") }
+    return Result.Ok(n / 2)
+}
+
+fn halveI(n: &i64): Result<i64, i64> {
+    if n % 2 != 0 { return Result.Err(-1) }
+    return Result.Ok(n / 2)
+}
+
+fn combinators(r: Result<i64, string>): void {
+    print(r.isOk())                          // bool
+    print(r.isErr())                         // bool
+    print(r.unwrapOr(0))                     // T — Copy inner only, like Option
+    // E is `string` (non-Copy), so map/andThen each consume `r` — one call per value.
+    print(r.map((n) => n * 2).isOk())        // Result<U,E> — Ok payload transformed, Err passed through unchanged
+}
+
+fn copyErr(r: Result<i64, i64>): void {
+    // E is Copy here, so `r` stays live across every call.
+    print(r.map((n) => n * 2).isOk())        // Result<U,E>
+    print(r.mapErr((e) => e * 2).isErr())    // Result<T,F> — Err payload transformed, Ok passed through unchanged
+    print(r.andThen((n) => halveI(n)).isOk()) // Result<U,E> — f returns a Result; an Err receiver short-circuits
+}
+```
+
+`map` and `andThen` pass the Ok payload to the callback by reference; `mapErr` does the same
+with the Err payload. Nothing is moved out of the receiver on the callback's side, so there
+is no Copy gate on it.
+
+The *other* side is different. Each combinator forwards the variant it does not transform
+into its result untouched — `map` and `andThen` carry the Err payload through, `mapErr`
+carries the Ok payload through. When that forwarded payload is non-Copy the receiver and the
+result would both own one heap buffer and both free it, so the combinator **consumes the
+receiver** in that case: use it afterwards and you get a use-after-move error. Clone at the
+call site to keep it. When the forwarded payload is Copy, duplicating it is sound and the
+receiver stays usable — the same Copy gate `unwrapOr` uses.
+
+`Option.map` needs no such rule: the variant it forwards is `None`, which carries no
+payload, so there is never anything to double-own.
+
+`andThen`'s callback must return a `Result` whose error type equals the receiver's — the
+short-circuit path forwards the receiver's error verbatim, so there is no conversion
+available.
+
+`!`, `?` and `??` also work with `Result`. Writing `Result<T>` with one type argument defaults the error type to `string` — `Result<i32>` is `Result<i32, string>`:
 
 ```milo
 fn validate(x: i32): Result<i32> {

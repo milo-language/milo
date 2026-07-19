@@ -1,0 +1,21 @@
+// @error: use of moved variable 'r'
+// map forwards the Err payload into its result untouched. With a non-Copy E that would
+// leave the receiver and the result both owning one heap buffer, and both run drop glue —
+// an ASAN double-free. So map consumes the receiver when E is non-Copy, and touching it
+// afterwards must be rejected here rather than crashing at runtime.
+//
+// The error is built with pushStr, not a literal: a literal string has cap == 0, marking a
+// static buffer that drop glue skips, so a literal payload would not expose the bug this
+// rule exists to prevent.
+fn makeErr(): Result<i64, string> {
+    var s = ""
+    s.pushStr("boom-")
+    s.pushStr("heap-allocated-tail")
+    return Result.Err(s)
+}
+
+fn main() {
+    let r = makeErr()
+    let m = r.map((n) => n * 2)
+    print($"r isErr={r.isErr()} m isErr={m.isErr()}")
+}

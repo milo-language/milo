@@ -1,0 +1,52 @@
+// map/mapErr/andThen consume the receiver only when the payload they forward through is
+// non-Copy. This pins the other half of that rule: with a Copy payload on the forwarded
+// side, duplicating it is sound (no heap buffer, no drop glue), so the receiver must stay
+// live and usable afterwards. Same Copy gate as unwrapOr.
+//
+// If the gate ever widens to consume unconditionally, this fixture stops compiling.
+fn halveEven(n: &i64): Result<i64, i64> {
+    if n % 2 != 0 {
+        return Result.Err(-1)
+    }
+    return Result.Ok(n / 2)
+}
+
+fn describe(r: Result<i64, i64>): string {
+    match r {
+        Result.Ok(v) => {
+            return "ok:" + v.toString()
+        }
+        Result.Err(e) => {
+            return "err:" + e.toString()
+        }
+    }
+}
+
+fn main() {
+    // E is i64 (Copy) — map forwards the Err payload, so r survives every call.
+    let r: Result<i64, i64> = Result.Ok(10)
+    // @expect: ok:20
+    print(describe(r.map((n) => n * 2)))
+    // @expect: ok:30
+    print(describe(r.map((n) => n * 3)))
+    // @expect: ok:10
+    print(describe(r))
+
+    // andThen forwards the Err payload too — same Copy gate, same reuse.
+    let e: Result<i64, i64> = Result.Err(42)
+    // @expect: err:42
+    print(describe(e.andThen((n) => halveEven(n))))
+    // @expect: err:42
+    print(describe(e.andThen((n) => halveEven(n))))
+    // @expect: err:42
+    print(describe(e))
+
+    // mapErr forwards the OK payload, so the Copy side is T here.
+    let t: Result<i64, i64> = Result.Ok(5)
+    // @expect: ok:5
+    print(describe(t.mapErr((x) => x * 2)))
+    // @expect: ok:5
+    print(describe(t.mapErr((x) => x * 3)))
+    // @expect: ok:5
+    print(describe(t))
+}

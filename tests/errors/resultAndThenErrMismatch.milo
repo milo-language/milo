@@ -1,0 +1,12 @@
+// @error: 'andThen': callback's error type must be string, got i64
+// andThen forwards the receiver's Err payload verbatim on the short-circuit path, so there
+// is nowhere to convert an error type. A mismatched E must be rejected up front — otherwise
+// codegen would store an i64 into a slot the reader interprets as a string.
+fn main() {
+    let ok: Result<i64, string> = Result.Ok(8)
+    let _bad = ok.andThen((n) => {
+        let r: Result<i64, i64> = Result.Ok(n)
+        return r
+    }
+    )
+}

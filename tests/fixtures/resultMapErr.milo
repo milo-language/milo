@@ -1,0 +1,81 @@
+// Result.mapErr(f): Result<T,E> -> Result<T,F> — the mirror image of map.
+//
+// Both regressions flip sides here: the OK branch is the one that forwards the source
+// payload into the result. Miss the copy and `mapErr` on an Ok yields Ok(0) — still Ok, so
+// an isOk()-only assertion would not catch it, hence every Ok case asserts the value. And
+// because that Ok payload is forwarded, a non-Copy T must CONSUME the receiver.
+//
+// Ok payloads below are built with pushStr, never written as literals: a literal has
+// cap == 0, marking a static buffer that drop glue skips, which would hide the double-free.
+fn heapStr(tail: &string): string {
+    var s = ""
+    s.pushStr("val-")
+    s.pushStr(tail)
+    return s
+}
+
+fn describe(r: Result<i64, i64>): string {
+    match r {
+        Result.Ok(v) => {
+            return "ok:" + v.toString()
+        }
+        Result.Err(e) => {
+            return "err:" + e.toString()
+        }
+    }
+}
+
+fn main() {
+    // T is i64 (Copy) here, so these receivers are NOT consumed and stay usable.
+    let bad: Result<i64, string> = Result.Err("boom")
+    // @expect: err:4
+    print(describe(bad.mapErr((e) => e.len)))
+
+    // The Ok value must survive mapErr untouched.
+    let ok: Result<i64, string> = Result.Ok(99)
+    // @expect: ok:99
+    print(describe(ok.mapErr((e) => e.len)))
+
+    // f runs ONLY on Err. Reusing bad/ok proves the Copy-T case stays non-consuming.
+    // @expect: converting
+    // @expect: err:4
+    print(describe(bad.mapErr((e) => {
+        print("converting")
+        return e.len
+    }
+    )))
+    // @expect: ok:99
+    print(describe(ok.mapErr((e) => {
+        print("converting")
+        return e.len
+    }
+    )))
+
+    // Non-Copy Ok payload forwarded through the Ok branch: the heap string moves into the
+    // new enum (consuming s) and is freed exactly once. The callback never touched it.
+    let s: Result<string, i64> = Result.Ok(heapStr("hello"))
+    let mapped = s.mapErr((e) => "code" + e.toString())
+    match mapped {
+        Result.Ok(v) => {
+            // @expect: val-hello
+            print(v)
+        }
+        Result.Err(e) => {
+            print("unreachable")
+        }
+    }
+
+    // Same shape on the Err path: non-Copy T consumes the receiver, and the mapped error
+    // is a fresh heap string owned solely by the result.
+    let s2: Result<string, i64> = Result.Err(7)
+    let mapped2 = s2.mapErr((e) => "code" + e.toString())
+    match mapped2 {
+        Result.Ok(v) => {
+            print("unreachable")
+        }
+        Result.Err(e) => {
+            // @expect: code7
+            print(e)
+        }
+    }
+}

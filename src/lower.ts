@@ -693,6 +693,19 @@ class LowerCtx {
             enumName: objType.name, type, span: expr.span,
           };
         }
+        // map/mapErr/andThen get their OWN ops rather than reusing Option's "map": all three
+        // must copy the untouched side's payload through to the result enum (Option's None
+        // branch has no payload to carry), so the codegen paths differ.
+        if (objType?.tag === "enum" && this.c.enums.get(objType.name)?.baseName === "Result"
+            && (expr.method === "map" || expr.method === "mapErr" || expr.method === "andThen")) {
+          const op = expr.method === "map" ? "resultMap" : expr.method === "mapErr" ? "resultMapErr" : "resultAndThen";
+          return {
+            kind: "OptionOp", op, value: this.lowerExpr(expr.object),
+            // the slot carries the CLOSURE; `type` already names the result enum
+            default: this.lowerExpr(expr.args[0]),
+            enumName: objType.name, type, span: expr.span,
+          };
+        }
         if (objType?.tag === "int") {
           const bitIntrinsics: Record<string, string> = {
             countOnes: "ctpop", leadingZeros: "ctlz", trailingZeros: "cttz", reverseBits: "bitreverse",

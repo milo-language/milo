@@ -2868,6 +2868,16 @@ export class TypeChecker {
     return false;
   }
 
+  // A combinator that copies one variant's payload straight into its result leaves that
+  // payload owned twice over. Consuming the receiver keeps a single owner. Only needed
+  // when the forwarded payload is non-Copy — a Copy payload is safe to duplicate, and
+  // staying non-consuming there keeps the common `Result<i64, i64>` case ergonomic
+  // (same Copy gate as unwrapOr).
+  private consumeForwardedPayload(receiver: Expr, forwarded: TypeKind) {
+    if (isCopy(forwarded, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) return;
+    this.tryMove(receiver);
+  }
+
   private tryMove(expr: Expr) {
     if (expr.kind === "Ident") {
       const info = this.lookup(expr.name);
@@ -4583,6 +4593,12 @@ export class TypeChecker {
           // why this needs no Copy gate (unlike unwrapOr/unwrapOrElse, which load the
           // payload out): nothing is moved out of the receiver, so an owned inner can't be
           // aliased into two owners.
+          //
+          // Nor does this consume the receiver, unlike Result.map/mapErr/andThen. Those
+          // forward the OTHER variant's payload into the result untouched, so receiver and
+          // result would both own one buffer. Option's other variant is None, which carries
+          // no payload — there is nothing to forward, so the asymmetry is real, not an
+          // oversight.
           if (expr.method === "map") {
             if (expr.args.length !== 1) { this.error(`'map' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
             const inner = this.unwrapableInner(objType);
@@ -4648,6 +4664,79 @@ export class TypeChecker {
               return this.setType(expr, inner);
             }
             return this.setType(expr, { tag: "unknown" });
+          }
+          // map(f): Result<T,E> -> Result<U,E>. Like Option.map the callback takes the
+          // payload BY REF, which is why there is no Copy gate: nothing is moved out of
+          // the receiver, so an owned Ok payload can't end up with two owners.
+          // The Err payload IS forwarded into the result untouched though, so a non-Copy
+          // E must consume the receiver — see the consume block below.
+          if (expr.method === "map") {
+            if (expr.args.length !== 1) { this.error(`'map' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const inner = this.unwrapableInner(objType);
+            const errT = this.unwrapableErr(objType);
+            if (!inner || !errT) return this.setType(expr, { tag: "unknown" });
+            const cbHint: TypeKind = { tag: "fn", params: [{ tag: "ref", inner, mutable: false }], ret: { tag: "unknown" } };
+            const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbType.tag !== "fn") {
+              this.error(`'map' argument must be a function`, sp);
+              return this.setType(expr, { tag: "unknown" });
+            }
+            if (cbType.ret.tag === "void") {
+              this.error(`'map': callback must return a value — use 'match' for a side effect`, sp);
+              return this.setType(expr, { tag: "unknown" });
+            }
+            // Err payload is copied through into the result. Owned E would then be
+            // reachable from both the receiver and the result, and both get drop glue.
+            this.consumeForwardedPayload(expr.object, errT);
+            return this.setType(expr, { tag: "enum", name: this.monomorphizeEnum("Result", [cbType.ret, errT]) });
+          }
+          // mapErr(f): Result<T,E> -> Result<T,F> — the mirror of map, callback on the Err side.
+          if (expr.method === "mapErr") {
+            if (expr.args.length !== 1) { this.error(`'mapErr' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const inner = this.unwrapableInner(objType);
+            const errT = this.unwrapableErr(objType);
+            if (!inner || !errT) return this.setType(expr, { tag: "unknown" });
+            const cbHint: TypeKind = { tag: "fn", params: [{ tag: "ref", inner: errT, mutable: false }], ret: { tag: "unknown" } };
+            const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbType.tag !== "fn") {
+              this.error(`'mapErr' argument must be a function`, sp);
+              return this.setType(expr, { tag: "unknown" });
+            }
+            if (cbType.ret.tag === "void") {
+              this.error(`'mapErr': callback must return a value — use 'match' for a side effect`, sp);
+              return this.setType(expr, { tag: "unknown" });
+            }
+            // Mirror of map: mapErr forwards the OK payload through untouched.
+            this.consumeForwardedPayload(expr.object, inner);
+            return this.setType(expr, { tag: "enum", name: this.monomorphizeEnum("Result", [inner, cbType.ret]) });
+          }
+          // andThen(f): Result<T,E> -> Result<U,E>, f returning the whole Result. The Err
+          // type must match the receiver's: the Err branch forwards the receiver's payload
+          // unchanged, so there is no conversion available for a mismatched E.
+          if (expr.method === "andThen") {
+            if (expr.args.length !== 1) { this.error(`'andThen' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const inner = this.unwrapableInner(objType);
+            const errT = this.unwrapableErr(objType);
+            if (!inner || !errT) return this.setType(expr, { tag: "unknown" });
+            const cbHint: TypeKind = { tag: "fn", params: [{ tag: "ref", inner, mutable: false }], ret: { tag: "unknown" } };
+            const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbType.tag !== "fn") {
+              this.error(`'andThen' argument must be a function`, sp);
+              return this.setType(expr, { tag: "unknown" });
+            }
+            const ret = cbType.ret;
+            if (ret.tag !== "enum" || this.enums.get(ret.name)?.baseName !== "Result") {
+              this.error(`'andThen': callback must return a Result, got ${typeName(ret)}`, sp);
+              return this.setType(expr, { tag: "unknown" });
+            }
+            const cbErr = this.unwrapableErr(ret);
+            if (cbErr && !typeEq(cbErr, errT)) {
+              this.error(`'andThen': callback's error type must be ${typeName(errT)}, got ${typeName(cbErr)}`, sp);
+              return this.setType(expr, { tag: "unknown" });
+            }
+            // Like map, the Err payload is forwarded into the result untouched.
+            this.consumeForwardedPayload(expr.object, errT);
+            return this.setType(expr, ret);
           }
         }
         // wrapping/saturating/checked arithmetic methods on integers

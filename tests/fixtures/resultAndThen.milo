@@ -1,0 +1,85 @@
+// Result.andThen(f): Result<T,E> -> Result<U,E>, where f itself returns a Result.
+//
+// Three things this pins that map() does not:
+//   - the Ok branch stores the callback's returned enum WHOLESALE (it is already a Result);
+//     re-tagging it as Ok would wrap an Err back into an Ok.
+//   - the Err branch forwards the receiver's error payload, so a short-circuited chain keeps
+//     the ORIGINAL error rather than a zeroed one. Asserted by value below.
+//   - that forwarded payload means a non-Copy E CONSUMES the receiver, otherwise receiver
+//     and result both own the error's buffer and both run drop glue on it.
+//
+// Errors below are built with pushStr, never written as literals: a literal has cap == 0,
+// marking a static buffer that drop glue skips, which would hide the double-free.
+//
+// The callback's Err type must equal the receiver's — there is no conversion on the
+// forwarding path (see tests/errors/resultAndThenErrMismatch.milo).
+fn heapStr(tail: &string): string {
+    var s = ""
+    s.pushStr(tail)
+    s.pushStr("!")
+    return s
+}
+
+fn halve(n: &i64): Result<i64, string> {
+    if n % 2 != 0 {
+        return Result.Err(heapStr("odd"))
+    }
+    return Result.Ok(n / 2)
+}
+
+fn describe(r: Result<i64, string>): string {
+    match r {
+        Result.Ok(v) => {
+            return "ok:" + v.toString()
+        }
+        Result.Err(e) => {
+            return "err:" + e
+        }
+    }
+}
+
+fn main() {
+    let ok: Result<i64, string> = Result.Ok(8)
+    // @expect: ok:4
+    print(describe(ok.andThen((n) => halve(n))))
+
+    // callback returns Err — must NOT come back as Ok, and the heap error survives
+    let odd: Result<i64, string> = Result.Ok(7)
+    // @expect: err:odd!
+    print(describe(odd.andThen((n) => halve(n))))
+
+    // receiver is already Err — f must not run, and the original heap error is forwarded
+    // into the result intact (and freed exactly once, since bad is consumed)
+    let bad: Result<i64, string> = Result.Err(heapStr("upstream"))
+    // @expect: err:upstream!
+    print(describe(bad.andThen((n) => {
+        print("ran")
+        return halve(n)
+    }
+    )))
+
+    // chaining, including a chain that short-circuits in the middle
+    let start: Result<i64, string> = Result.Ok(16)
+    // @expect: ok:4
+    print(describe(start.andThen((n) => halve(n)).andThen((n) => halve(n))))
+    let start2: Result<i64, string> = Result.Ok(6)
+    // @expect: err:odd!
+    print(describe(start2.andThen((n) => halve(n)).andThen((n) => halve(n))))
+
+    // U need not equal T
+    let ok2: Result<i64, string> = Result.Ok(4)
+    let widened = ok2.andThen((n) => {
+        let r: Result<string, string> = Result.Ok(heapStr("n=" + n.toString()))
+        return r
+    }
+    )
+    match widened {
+        Result.Ok(v) => {
+            // @expect: n=4!
+            print(v)
+        }
+        Result.Err(e) => {
+            print("unreachable")
+        }
+    }
+}
