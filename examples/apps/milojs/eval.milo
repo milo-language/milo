@@ -3514,6 +3514,36 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     let argVals = evalArgs(prog, argsIdx, st, scope)
                     return callNative(id, argVals, st)
                 }
+                JSValue.Obj(co) => {
+                    // a class defined by a node-api addon (napi_define_class): build
+                    // the instance here and link its prototype, then let the addon's
+                    // constructor callback populate it — typically via napi_wrap.
+                    if st.objects[co].napiFn >= 0 {
+                        let argVals = evalArgs(prog, argsIdx, st, scope)
+                        let inst = newObject(st)
+                        match objGet(st, co, "prototype") {
+                            JSValue.Obj(pr) => {
+                                st.objects[inst].proto = pr
+                            }
+                            _ => {
+                            }
+                        }
+                        pushTemp(st, JSValue.Obj(inst))
+                        let r = napiInvoke(st.objects[co].napiFn, argVals, JSValue.Obj(inst))
+                        popTemp(st)
+                        match r {
+                            JSValue.Obj(ro) => {
+                                return JSValue.Obj(ro)
+                            }
+                            _ => {
+                                return JSValue.Obj(inst)
+                            }
+                        }
+                    }
+                    st.throwing = true
+                    st.thrownValue = makeError(st, "TypeError", "value is not a constructor" + currentModule(st))
+                    return JSValue.Undefined
+                }
                 _ => {
                     st.throwing = true
                     st.thrownValue = makeError(st, "TypeError", "value is not a constructor" + currentModule(st))

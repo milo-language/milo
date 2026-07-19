@@ -502,11 +502,6 @@ fn napi_coerce_to_object(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
 }
 
 @export
-fn napi_coerce_to_string(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
 fn napi_create_bigint_words(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8): i32 {
     return NAPI_OK
 }
@@ -522,11 +517,6 @@ fn napi_create_buffer_copy(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8): i3
 }
 
 @export
-fn napi_create_error(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
 fn napi_create_external_buffer(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8, _a5: *u8): i32 {
     return NAPI_OK
 }
@@ -537,22 +527,7 @@ fn napi_create_promise(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
 }
 
 @export
-fn napi_create_reference(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
 fn napi_create_threadsafe_function(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8, _a5: *u8, _a6: *u8, _a7: *u8, _a8: *u8, _a9: *u8, _a10: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_define_class(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8, _a5: *u8, _a6: *u8, _a7: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_delete_reference(_a0: *u8, _a1: *u8): i32 {
     return NAPI_OK
 }
 
@@ -576,31 +551,6 @@ fn napi_get_buffer_info(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8): i32 {
 }
 
 @export
-fn napi_get_element(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_get_global(_a0: *u8, _a1: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_get_property(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_get_property_names(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_get_reference_value(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
 fn napi_get_value_bigint_int64(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8): i32 {
     return NAPI_OK
 }
@@ -612,31 +562,6 @@ fn napi_get_value_bigint_uint64(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8): i32 {
 
 @export
 fn napi_get_value_bigint_words(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_get_value_string_utf8(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_get_value_uint32(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_has_named_property(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_is_buffer(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_reference_unref(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
     return NAPI_OK
 }
 
@@ -656,31 +581,351 @@ fn napi_resolve_deferred(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
 }
 
 @export
-fn napi_set_element(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_throw(_a0: *u8, _a1: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
-fn napi_throw_error(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
-    return NAPI_OK
-}
-
-@export
 fn napi_unref_threadsafe_function(_a0: *u8, _a1: *u8): i32 {
     return NAPI_OK
 }
 
+// ── classes and native state ──
+
+// napi_property_descriptor, verified against js_native_api_types.h with the real
+// compiler (sizeof 64):
+//   0 utf8name  8 name  16 method  24 getter  32 setter  40 value  48 attributes  56 data
+let NAPI_PD_SIZE: i64 = 64
+let NAPI_PD_UTF8NAME: i64 = 0
+let NAPI_PD_METHOD: i64 = 16
+let NAPI_PD_VALUE: i64 = 40
+// napi_static — a static member lives on the constructor, not the prototype
+let NAPI_STATIC: i32 = 1024
+let NAPI_PD_ATTRIBUTES: i64 = 48
+
+fn napiLoadI64(p: *u8): i64 {
+    unsafe {
+        var b: [i64; 1] = [0; 1]
+        memcpy(b as *u8, p, 8)
+        return b[0]
+    }
+}
+
+fn napiLoadI32(p: *u8): i32 {
+    unsafe {
+        var b: [i32; 1] = [0; 1]
+        memcpy(b as *u8, p, 4)
+        return b[0]
+    }
+}
+
+// Register a callback and return the milojs object that dispatches to it.
+fn napiMakeFn(cb: i64, data: i64): i64 {
+    gNapi.fns.push(NapiFn {
+        fnPtr: cb, data: data
+    }
+    )
+    let o = newObject(gInterp)
+    gInterp.objects[o].napiFn = gNapi.fns.len() - 1
+    gInterp.objects[o].isFunctionLike = true
+    return o
+}
+
+// napi_define_class(env, utf8name, length, constructor, data, property_count,
+//                   properties, result)
+//
+// Produces a constructor object plus a prototype carrying the instance methods.
+// `new Ctor()` links the instance's proto here, so method lookup finds them.
 @export
-fn napi_unwrap(_a0: *u8, _a1: *u8, _a2: *u8): i32 {
+fn napi_define_class(_env: *u8, _utf8name: *u8, _length: i64, constructor: i64, data: i64, propertyCount: i64, properties: *u8, result: *u8): i32 {
+    if constructor == 0 {
+        return NAPI_INVALID_ARG
+    }
+    let ctor = napiMakeFn(constructor, data)
+    let proto = newObject(gInterp)
+    var i: i64 = 0
+    unsafe {
+        while i < propertyCount {
+            let base = (properties as i64) + i * NAPI_PD_SIZE
+            let namePtr = napiLoadI64((base + NAPI_PD_UTF8NAME) as *u8)
+            if namePtr != 0 {
+                let pname = napiReadStr(namePtr as *u8, -1)
+                let method = napiLoadI64((base + NAPI_PD_METHOD) as *u8)
+                let attrs = napiLoadI32((base + NAPI_PD_ATTRIBUTES) as *u8)
+                // static members hang off the constructor; everything else off the prototype
+                var target = proto
+                if (attrs & NAPI_STATIC) != 0 {
+                    target = ctor
+                }
+                if method != 0 {
+                    let m = napiMakeFn(method, napiLoadI64((base + 56) as *u8))
+                    objSet(gInterp, target, pname, JSValue.Obj(m))
+                } else {
+                    let vh = napiLoadI64((base + NAPI_PD_VALUE) as *u8)
+                    objSet(gInterp, target, pname, napiValueOf(vh))
+                }
+            }
+            i = i + 1
+        }
+    }
+    objSet(gInterp, ctor, "prototype", JSValue.Obj(proto))
+    napiWriteHandle(result, napiHandle(JSValue.Obj(ctor)))
+    return NAPI_OK
+}
+
+// napi_wrap(env, js_object, native_object, finalize_cb, finalize_hint, result)
+//
+// The finalizer is accepted but never invoked yet: milojs's collector has no
+// finalizer hook, so a wrapped native allocation outlives its JS object.
+@export
+fn napi_wrap(_env: *u8, jsObject: i64, nativeObject: i64, _finalizeCb: i64, _finalizeHint: i64, _result: *u8): i32 {
+    match napiValueOf(jsObject) {
+        JSValue.Obj(o) => {
+            gInterp.objects[o].napiWrap = nativeObject
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
+}
+
+@export
+fn napi_unwrap(_env: *u8, jsObject: i64, result: *u8): i32 {
+    match napiValueOf(jsObject) {
+        JSValue.Obj(o) => {
+            napiWriteHandle(result, gInterp.objects[o].napiWrap)
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
+}
+
+// ── remaining mechanical surface ──
+
+@export
+fn napi_get_element(_env: *u8, object: i64, index: i64, result: *u8): i32 {
+    match napiValueOf(object) {
+        JSValue.Obj(o) => {
+            if index >= 0 && index < gInterp.objects[o].elems.len() {
+                napiWriteHandle(result, napiHandle(cloneValue(gInterp.objects[o].elems[index])))
+            } else {
+                napiWriteHandle(result, napiHandle(JSValue.Undefined))
+            }
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
+}
+
+@export
+fn napi_set_element(_env: *u8, object: i64, index: i64, value: i64): i32 {
+    match napiValueOf(object) {
+        JSValue.Obj(o) => {
+            while gInterp.objects[o].elems.len() <= index {
+                gInterp.objects[o].elems.push(JSValue.Undefined)
+            }
+            gInterp.objects[o].elems[index] = napiValueOf(value)
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
+}
+
+@export
+fn napi_has_named_property(_env: *u8, object: i64, utf8name: *u8, result: *u8): i32 {
+    match napiValueOf(object) {
+        JSValue.Obj(o) => {
+            let key = napiReadStr(utf8name, -1)
+            var found = false
+            var i: i64 = 0
+            while i < gInterp.objects[o].props.len() {
+                if gInterp.objects[o].props[i].key == key {
+                    found = true
+                }
+                i = i + 1
+            }
+            napiWriteBool(result, found)
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
+}
+
+@export
+fn napi_get_value_uint32(_env: *u8, value: i64, result: *u8): i32 {
+    napiWriteI32(result, toNum(napiValueOf(value)) as i32)
+    return NAPI_OK
+}
+
+// napi_get_value_string_utf8(env, value, buf, bufsize, result)
+// A NULL buf means "just tell me the length", which is how addons size their
+// allocation before the real call.
+@export
+fn napi_get_value_string_utf8(_env: *u8, value: i64, buf: *u8, bufsize: i64, result: *u8): i32 {
+    let s = toStr(napiValueOf(value))
+    unsafe {
+        if (buf as i64) == 0 {
+            if (result as i64) != 0 {
+                napiWriteHandle(result, s.len())
+            }
+            return NAPI_OK
+        }
+        var n = s.len()
+        if n > bufsize - 1 {
+            n = bufsize - 1
+        }
+        var i: i64 = 0
+        while i < n {
+            var one: [u8; 1] = [s[i]; 1]
+            memcpy(((buf as i64) + i) as *u8, one as *u8, 1)
+            i = i + 1
+        }
+        var z: [u8; 1] = [0 as u8; 1]
+        memcpy(((buf as i64) + n) as *u8, z as *u8, 1)
+        if (result as i64) != 0 {
+            napiWriteHandle(result, n)
+        }
+    }
     return NAPI_OK
 }
 
 @export
-fn napi_wrap(_a0: *u8, _a1: *u8, _a2: *u8, _a3: *u8, _a4: *u8, _a5: *u8): i32 {
+fn napi_coerce_to_string(_env: *u8, value: i64, result: *u8): i32 {
+    napiWriteHandle(result, napiHandle(JSValue.Str(toStr(napiValueOf(value)))))
+    return NAPI_OK
+}
+
+// ── errors and globals ──
+
+// napi_get_property(env, object, key, result) — key is a napi_value, not a C string
+@export
+fn napi_get_property(_env: *u8, object: i64, key: i64, result: *u8): i32 {
+    match napiValueOf(object) {
+        JSValue.Obj(o) => {
+            let v = objGet(gInterp, o, toStr(napiValueOf(key)))
+            napiWriteHandle(result, napiHandle(v))
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
+}
+
+@export
+fn napi_get_global(_env: *u8, result: *u8): i32 {
+    // scope 0 is the global scope; addons use this to reach globalThis
+    let o = newObject(gInterp)
+    gInterp.objects[o].isGlobal = true
+    napiWriteHandle(result, napiHandle(JSValue.Obj(o)))
+    return NAPI_OK
+}
+
+fn napiMakeError(msgVal: JSValue): i64 {
+    let o = newObject(gInterp)
+    gInterp.objects[o].isError = true
+    objSet(gInterp, o, "name", JSValue.Str("Error"))
+    objSet(gInterp, o, "message", JSValue.Str(toStr(msgVal)))
+    return o
+}
+
+@export
+fn napi_create_error(_env: *u8, _code: i64, msg: i64, result: *u8): i32 {
+    let o = napiMakeError(napiValueOf(msg))
+    napiWriteHandle(result, napiHandle(JSValue.Obj(o)))
+    return NAPI_OK
+}
+
+// Raise a JS exception. The addon returns to us immediately afterwards, and the
+// pending throw is what callers observe.
+@export
+fn napi_throw(_env: *u8, error: i64): i32 {
+    gInterp.throwing = true
+    gInterp.thrownValue = napiValueOf(error)
+    return NAPI_OK
+}
+
+@export
+fn napi_throw_error(_env: *u8, _code: *u8, msg: *u8): i32 {
+    let o = napiMakeError(JSValue.Str(napiReadStr(msg, -1)))
+    gInterp.throwing = true
+    gInterp.thrownValue = JSValue.Obj(o)
+    return NAPI_OK
+}
+
+// napi_get_property_names(env, object, result) — own enumerable string keys, as an
+// array. napi-rs's serde deserializer walks this to build a struct, so a stub that
+// returns napi_ok without writing anything leaves it reading an uninitialized
+// handle off its own stack.
+@export
+fn napi_get_property_names(_env: *u8, object: i64, result: *u8): i32 {
+    match napiValueOf(object) {
+        JSValue.Obj(o) => {
+            let arr = newArray(gInterp)
+            var i: i64 = 0
+            while i < gInterp.objects[o].props.len() {
+                let k = gInterp.objects[o].props[i].key.clone()
+                gInterp.objects[arr].elems.push(JSValue.Str(k))
+                i = i + 1
+            }
+            napiWriteHandle(result, napiHandle(JSValue.Obj(arr)))
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
+}
+
+// ── buffers and references ──
+
+// Every predicate MUST write its out-param. Returning napi_ok without doing so
+// leaves the caller reading an uninitialized bool off its own stack — napi-rs then
+// took a plain string for a Buffer and the whole deserialize failed with a bare
+// InvalidArg and no reason string.
+@export
+fn napi_is_buffer(_env: *u8, value: i64, result: *u8): i32 {
+    match napiValueOf(value) {
+        JSValue.Obj(o) => {
+            napiWriteBool(result, gInterp.objects[o].isArrayBuffer)
+        }
+        _ => {
+            napiWriteBool(result, false)
+        }
+    }
+    return NAPI_OK
+}
+
+// References keep a value alive across calls. There is no finalizer hook in the
+// collector yet, so a reference is simply a handle that is never released — it
+// over-retains rather than freeing something the addon still points at.
+@export
+fn napi_create_reference(_env: *u8, value: i64, _initialRefcount: i64, result: *u8): i32 {
+    napiWriteHandle(result, napiHandle(napiValueOf(value)))
+    return NAPI_OK
+}
+
+@export
+fn napi_get_reference_value(_env: *u8, ref: i64, result: *u8): i32 {
+    napiWriteHandle(result, napiHandle(napiValueOf(ref)))
+    return NAPI_OK
+}
+
+@export
+fn napi_delete_reference(_env: *u8, _ref: i64): i32 {
+    return NAPI_OK
+}
+
+@export
+fn napi_reference_unref(_env: *u8, _ref: i64, result: *u8): i32 {
+    unsafe {
+        if (result as i64) != 0 {
+            napiWriteI32(result, 0)
+        }
+    }
     return NAPI_OK
 }

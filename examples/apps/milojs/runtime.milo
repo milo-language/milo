@@ -290,6 +290,9 @@ struct JSObj {
     // index into gNapi.fns when this object is a function implemented by a loaded
     // node-api addon, else -1. Calling it dispatches to a C function pointer.
     napiFn: i64,
+    // native pointer attached by napi_wrap, else 0. This is how an addon keeps its
+    // own state on a JS object — Prisma's QueryEngine instance lives behind it.
+    napiWrap: i64,
     mark: bool,
     free: bool,
 }
@@ -412,7 +415,7 @@ var gInterp: Interp = Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), abMaxLen: -1, abDetached: false, taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), napiFn: -1, mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), abMaxLen: -1, abDetached: false, taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), napiFn: -1, napiWrap: 0, mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena
