@@ -1,6 +1,13 @@
-// Built-in String methods (and the string-building helpers they need). These
-// operate on byte offsets — correct for ASCII, which is all the test corpus
-// needs; a UTF-16-accurate length/index is future work. Array methods that take
+// Built-in String methods (and the string-building helpers they need).
+//
+// JS strings are UTF-16 code units; milo strings are UTF-8 bytes. Every method
+// taking or returning an INDEX converts between the two (utf16ToByte /
+// byteToUtf16 / utf16Slice) — they agree only for ASCII, and byte offsets used to
+// cut characters in half on anything else.
+//
+// One thing UTF-8 cannot represent: a LONE SURROGATE. So charAt/at on either half
+// of an astral pair return the whole character, and split("") splits per codepoint
+// rather than per UTF-16 unit. Both differ from JS only for astral input. Array methods that take
 // a callback (map/filter/forEach/reduce) live in eval.milo, where callFunction
 // is; the callback-free ones (join/indexOf/slice/…) are here.
 
