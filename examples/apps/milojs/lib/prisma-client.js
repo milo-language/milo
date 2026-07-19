@@ -36,6 +36,15 @@ function PrismaClient(options) {
   this.$queryRawUnsafe = function () { return notAvailable('$queryRawUnsafe'); };
   this.$executeRawUnsafe = function () { return notAvailable('$executeRawUnsafe'); };
   this.$extends = function () { return this; };
+  // Milo has no Proxy, so the model accessors can't be synthesized on demand;
+  // list them explicitly. Each returns a modelProxy whose ops reject cleanly, so
+  // a caller's `prisma.x.create(...).catch(...)` swallows the failure instead of
+  // throwing "cannot read property 'create' of undefined" (which then surfaces as
+  // a spurious unhandled rejection on every request).
+  var models = ['alertSubscription', 'analyticsEvent', 'chainControlEvent',
+    'dailySummary', 'feedback', 'ipRateLimit', 'post', 'rateLimit',
+    'roadCondition', 'thread', 'user', 'weatherForecast', 'weatherObservation'];
+  for (var mi = 0; mi < models.length; mi++) this[models[mi]] = modelProxy(models[mi]);
 }
 
 exports.PrismaClient = PrismaClient;
