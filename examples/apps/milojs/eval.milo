@@ -4091,6 +4091,7 @@ fn inspectTop(st: &Interp, v: &JSValue): string {
 
 // Invoke a Milo-level JS function: a fresh scope off the closure's captured env,
 // with `this` and the parameters bound, then run the body. argVals is consumed.
+
 fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
     // Without this, runaway recursion exhausts the native stack and the process
     // dies with no JS-level error — express's error middleware expects a
@@ -5062,7 +5063,7 @@ fn instantiateClass(prog: &Prog, classIdx: i64, st: &mut Interp, scope: i64): JS
             let baseProto = getFuncProto(st, baseFn)
             st.objects[proto].proto = baseProto
         }
-        scopeDefine(st, scope, "__super$" + prog.classes[classIdx].name.clone(), baseVal)
+        scopeDefine(st, scope, "__super$" + prog.classes[classIdx].superKey.clone(), baseVal)
     }
     var i: i64 = 0
     while i < prog.classes[classIdx].members.len() {

@@ -1638,8 +1638,16 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
         name = p.toks[p.pos].text.clone()
         advance(p)
     }
+    // the slot is reserved before the body is parsed so the class has a unique
+    // index to key its super binding on while `super(...)` is being rewritten
+    prog.classes.push(ClassDef {
+        name: "", superKey: "", superName: "", ctorFn: -1, defaultCtor: -1, members: Vec.new()
+    }
+    )
+    let classIdx = prog.classes.len() - 1
+    let superKey = name.clone() + "$" + i64ToStr(classIdx)
     let savedClass = p.curClass.clone()
-    p.curClass = name.clone()
+    p.curClass = superKey.clone()
     var superName = ""
     if peekKind(p) == T_EXTENDS {
         advance(p)
@@ -1739,7 +1747,7 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
     // constructor and its instance fields (this._def) stay unset.
     var defaultBody: Vec<i64> = Vec.new()
     if superName.len() > 0 {
-        let superRef = addExpr(prog, Expr.Ident("__super$" + name.clone()))
+        let superRef = addExpr(prog, Expr.Ident("__super$" + superKey.clone()))
         let argsRef = addExpr(prog, Expr.Ident("arguments"))
         let spread = addExpr(prog, Expr.Spread(argsRef))
         var callArgs: Vec<i64> = Vec.new()
@@ -1755,11 +1763,10 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
     }
     )
     let defaultCtor = prog.funcs.len() - 1
-    prog.classes.push(ClassDef {
-        name: name, superName: superName, ctorFn: ctorFn, defaultCtor: defaultCtor, members: members
+    prog.classes[classIdx] = ClassDef {
+        name: name, superKey: superKey, superName: superName, ctorFn: ctorFn, defaultCtor: defaultCtor, members: members
     }
-    )
-    return prog.classes.len() - 1
+    return classIdx
 }
 
 // require("<spec>") as an expression.

@@ -137,6 +137,12 @@ struct ClassMember {
 
 struct ClassDef {
     name: string,
+    // unique-per-class binding name the base constructor is stored under. Two
+    // classes in the same scope (very common in minified bundles, where most
+    // classes are anonymous and share the name "") would otherwise both bind
+    // `__super$<name>`; the second definition then makes the first class's
+    // super() call resolve to the first class itself and recurse forever.
+    superKey: string,
     // base class identifier, or "" — only a bare name is supported, not an
     // arbitrary expression
     superName: string,
