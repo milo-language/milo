@@ -305,6 +305,10 @@ struct Interp {
     // boundaries where the call returns a JSValue, not a Flow.)
     throwing: bool,
     thrownValue: JSValue,
+    // set when a `?.` link short-circuits on a nullish base; propagates up through
+    // the enclosing chain's Member/Index/Call nodes so the whole chain yields
+    // undefined, and is scoped/consumed by the OptChainRoot wrapping the chain.
+    optShort: bool,
     // Math.random() PRNG state (xorshift64)
     rngState: i64,
     allocSinceGc: i64,

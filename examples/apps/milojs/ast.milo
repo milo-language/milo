@@ -48,6 +48,12 @@ enum Expr {
     ClassExpr(i64),
     // a?.[k] — computed sibling of OptMember
     OptIndex(i64, i64),
+    // wraps the outermost expression of a postfix chain that contains a `?.`.
+    // A nullish `?.` base short-circuits the ENTIRE rest of the chain to
+    // undefined (a?.b.c[d]() is all-or-nothing), so the runtime sets a flag that
+    // propagates up through the chain's Member/Index/Call nodes; this node is
+    // where the flag is scoped and consumed.
+    OptChainRoot(i64),
 }
 
 // One key/value pair in an object literal; val is an expr index.
@@ -237,6 +243,9 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.OptMember(obj, name) => {
             return Expr.OptMember(obj, name.clone())
+        }
+        Expr.OptChainRoot(inner) => {
+            return Expr.OptChainRoot(inner)
         }
     }
 }

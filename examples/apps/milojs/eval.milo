@@ -1181,7 +1181,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         let text = toStr(argVals[0])
         if id == NATIVE_PARSE_FLOAT {
-            return JSValue.Number(jsParsePrefixNum(text, 10))
+            return JSValue.Number(jsParseFloatPrefix(text))
         }
         var radix: i64 = 10
         if argVals.len() > 1 {
@@ -2703,6 +2703,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     let ps = st.objects[po].promiseState
                     let pv = cloneValue(st.objects[po].promiseValue)
                     if ps == 2 {
+                        markRejectHandled(st, po)
                         st.throwing = true
                         st.thrownValue = pv
                         return JSValue.Undefined
@@ -2755,6 +2756,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     let settled = st.objects[po].promiseState
                     let sv = cloneValue(st.objects[po].promiseValue)
                     if settled == 2 {
+                        markRejectHandled(st, po)
                         st.throwing = true
                         st.thrownValue = sv
                         return JSValue.Undefined
@@ -2782,6 +2784,11 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.Member(objIdx, name) => {
             let ov = evalExpr(prog, objIdx, st, scope)
+            // a preceding `?.` in this chain short-circuited: the whole chain,
+            // including this member access, is undefined
+            if st.optShort {
+                return JSValue.Undefined
+            }
             match ov {
                 JSValue.Obj(o) => {
                     return getMemberDyn(prog, o, name, st)
@@ -2825,6 +2832,10 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.Index(objIdx, keyIdx) => {
             let ov = evalExpr(prog, objIdx, st, scope)
+            // a preceding `?.` short-circuited this chain
+            if st.optShort {
+                return JSValue.Undefined
+            }
             // the key expression can run user code and collect the base
             pushTemp(st, cloneValue(ov))
             let kv = evalExpr(prog, keyIdx, st, scope)
@@ -3115,11 +3126,31 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         Expr.RegexLit(pat, flags) => {
             return makeRegex(st, pat.clone(), flags.clone())
         }
+        Expr.OptChainRoot(inner) => {
+            // scope the short-circuit flag to this chain: a nullish `?.` link
+            // anywhere inside makes the whole chain undefined, and nested chains
+            // (in args) mustn't leak their own short-circuit outward
+            let saved = st.optShort
+            st.optShort = false
+            let v = evalExpr(prog, inner, st, scope)
+            let shorted = st.optShort
+            st.optShort = saved
+            if shorted {
+                return JSValue.Undefined
+            }
+            return v
+        }
         Expr.OptIndex(objIdx, keyIdx) => {
             let ov = evalExpr(prog, objIdx, st, scope)
+            if st.optShort {
+                return JSValue.Undefined
+            }
+            if isNullish(ov) {
+                st.optShort = true
+                return JSValue.Undefined
+            }
             let o = objHandle(ov)
             if o < 0 {
-                // null/undefined base short-circuits to undefined
                 return JSValue.Undefined
             }
             pushTemp(st, cloneValue(ov))
@@ -3129,6 +3160,13 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.OptMember(objIdx, name) => {
             let ov = evalExpr(prog, objIdx, st, scope)
+            if st.optShort {
+                return JSValue.Undefined
+            }
+            if isNullish(ov) {
+                st.optShort = true
+                return JSValue.Undefined
+            }
             match ov {
                 JSValue.Obj(o) => {
                     return getMemberDyn(prog, o, name, st)
@@ -3615,6 +3653,22 @@ fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
         i = i + 1
     }
     st.objects[p].reactions = Vec.new()
+}
+
+// Awaiting or attaching a handler to a rejected promise counts as handling it,
+// so drop it from the unhandled-rejection set reported at loop end. (Without this,
+// `try { await Promise.reject(e) } catch {}` still printed a spurious unhandled
+// rejection — GC-masked, since a collected promise slot was skipped at reporting.)
+fn markRejectHandled(st: &mut Interp, p: i64) {
+    var kept: Vec<i64> = Vec.new()
+    var ki: i64 = 0
+    while ki < st.unhandledRejects.len() {
+        if st.unhandledRejects[ki] != p {
+            kept.push(st.unhandledRejects[ki])
+        }
+        ki = ki + 1
+    }
+    st.unhandledRejects = kept
 }
 
 // Make `derived` follow `source`: settle now if it already has, else register.
@@ -5475,16 +5529,52 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                 }
             }
             let recv = evalExpr(prog, objIdx, st, scope)
+            if st.optShort {
+                return JSValue.Undefined
+            }
             return callMember(prog, recv, name, argsIdx, st, scope)
         }
         Expr.Index(objIdx, keyIdx) => {
             let recv = evalExpr(prog, objIdx, st, scope)
+            if st.optShort {
+                return JSValue.Undefined
+            }
+            let kv = evalExpr(prog, keyIdx, st, scope)
+            let key = toStr(kv)
+            return callMember(prog, recv, key, argsIdx, st, scope)
+        }
+        Expr.OptMember(objIdx, name) => {
+            // a?.method(args): dispatch as a method call on the base (so string/
+            // native methods resolve) unless the base is nullish
+            let recv = evalExpr(prog, objIdx, st, scope)
+            if st.optShort {
+                return JSValue.Undefined
+            }
+            if isNullish(recv) {
+                st.optShort = true
+                return JSValue.Undefined
+            }
+            return callMember(prog, recv, name, argsIdx, st, scope)
+        }
+        Expr.OptIndex(objIdx, keyIdx) => {
+            let recv = evalExpr(prog, objIdx, st, scope)
+            if st.optShort {
+                return JSValue.Undefined
+            }
+            if isNullish(recv) {
+                st.optShort = true
+                return JSValue.Undefined
+            }
             let kv = evalExpr(prog, keyIdx, st, scope)
             let key = toStr(kv)
             return callMember(prog, recv, key, argsIdx, st, scope)
         }
         _ => {
             let calleeVal = evalExpr(prog, calleeIdx, st, scope)
+            // a preceding `?.` short-circuited: the call is skipped, result undefined
+            if st.optShort {
+                return JSValue.Undefined
+            }
             // evaluating the callee can throw (an undeclared name is a
             // ReferenceError); reporting "is not a function" on top of that just
             // buries the real error
@@ -5742,8 +5832,13 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                                 running = false
                             } else {
                                 pushTemp(st, cloneValue(step))
-                                scopeDefine(st, loopScope2, name.clone(), getMember(st, stepH, "value"))
-                                let flow = execStmt(prog, body, st, loopScope2)
+                                // fresh per-iteration binding so body closures don't
+                                // all capture the final value (for-of over let/const)
+                                let iterScope = newScope(st, loopScope2)
+                                pushActive(st, iterScope)
+                                scopeDefine(st, iterScope, name.clone(), getMember(st, stepH, "value"))
+                                let flow = execStmt(prog, body, st, iterScope)
+                                popActive(st)
                                 popTemp(st)
                                 match flow {
                                     Flow.Ret(v) => {
@@ -5829,8 +5924,14 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
             var i: i64 = 0
             var looping = true
             while looping && i < vals.len() {
-                scopeDefine(st, loopScope, name.clone(), cloneValue(vals[i]))
-                let flow = execStmt(prog, body, st, loopScope)
+                // each iteration gets its own binding (for-of over let/const), so a
+                // closure made in the body captures that iteration's value, not the
+                // last — the isbot `for (let key of ...) getters[key]=...` idiom
+                let iterScope = newScope(st, loopScope)
+                pushActive(st, iterScope)
+                scopeDefine(st, iterScope, name.clone(), cloneValue(vals[i]))
+                let flow = execStmt(prog, body, st, iterScope)
+                popActive(st)
                 match flow {
                     Flow.Ret(v) => {
                         popActive(st)
@@ -5889,8 +5990,13 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
             var i: i64 = 0
             var looping = true
             while looping && i < keys.len() {
-                scopeDefine(st, loopScope, name.clone(), JSValue.Str(keys[i].clone()))
-                let flow = execStmt(prog, body, st, loopScope)
+                // fresh per-iteration binding (for-in over let/const) so a closure
+                // in the body captures this key, not the last one enumerated
+                let iterScope = newScope(st, loopScope)
+                pushActive(st, iterScope)
+                scopeDefine(st, iterScope, name.clone(), JSValue.Str(keys[i].clone()))
+                let flow = execStmt(prog, body, st, iterScope)
+                popActive(st)
                 match flow {
                     Flow.Ret(v) => {
                         popActive(st)

@@ -807,6 +807,7 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
 fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
     var e = parsePrimary(p, prog)
     var go = true
+    var sawOpt = false
     while go {
         let k = peekKind(p)
         if k == T_LPAREN {
@@ -835,6 +836,7 @@ fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
             e = addExpr(prog, Expr.Member(e, name))
         } else if k == T_OPTCHAIN {
             advance(p)
+            sawOpt = true
             if peekKind(p) == T_LBRACKET {
                 // a?.[k]
                 advance(p)
@@ -859,6 +861,11 @@ fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
         } else {
             go = false
         }
+    }
+    // a chain with any `?.` link is wrapped so a nullish base short-circuits the
+    // whole chain (a?.b.c()) to undefined rather than only its own access
+    if sawOpt {
+        e = addExpr(prog, Expr.OptChainRoot(e))
     }
     // postfix ++/-- binds to the completed postfix expression, applies once
     let pk = peekKind(p)

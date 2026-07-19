@@ -9,7 +9,7 @@ update-when: a lane lands (update the score, delete the lane) or the sweep harne
 
 Working plan for driving `scripts/quickjs-sweep.ts` toward 100%. Written for agents
 picking up individual lanes; each lane is independent and lists exact anchors.
-Current: **71/149 cases (47.7%)**. Delete lanes here as they land.
+Current: **73/149 cases (49.0%)**. Delete lanes here as they land.
 
 Engine-level spec builtins now live in `lib/engine-prelude.js` (loaded by
 `milojs-engine.milo` into the shared `Prog` before the entry runs) — distinct from
@@ -100,9 +100,12 @@ except where noted. Ranked by how often real code hits them:
    `regexReplaceFn` now passes `(match, ...groups, offset, string)`.
 2. ~~**`split(regex)` unsupported**~~ DONE (d6a224c) — returned the string
    unsplit. A zero-width match advances by one so it cannot loop forever.
-3. **lookbehind `(?<=)` / `(?<!)`** — needs the VM to report a match END position
-   so the inner match can be required to finish exactly at `sp`; `reRun` returns
-   only a bool today. That signature change is the whole job.
+3. ~~**lookbehind `(?<=)` / `(?<!)`**~~ DONE (fe1cdba): no `reRun` signature change
+   was needed after all. The body is retried from every earlier start position and
+   must finish exactly at the current one; the required end position rides in a
+   scratch save slot appended past the captures (`regexExec` now allocates
+   `2*(nGroups+1)+1`). Variable-width bodies and captures inside the lookbehind
+   both work.
 4. ~~**backreferences `\1`**~~ DONE (12c5b74): `RE_BACKREF` re-reads the captured
    span from `saves` and compares it (honoring `flagI`). An unmatched group
    backreferences as the empty string, per spec.
@@ -142,6 +145,12 @@ only the typed-array files would have broken main.
 
 Still open, found the same way:
 - error objects have no `.constructor`, so `e.constructor.name` throws.
+- **`Set` methods proposal missing** (`isSupersetOf`/`isSubsetOf`/`isDisjointFrom`/
+  `union`/`intersection`/`difference`/`symmetricDifference`), which is what
+  `test_builtin.js:test_set` needs. They take "set-like" objects (`size`/`has`/
+  `keys`) and must drive the iterator's `return()` on early exit. Set methods
+  dispatch natively via `mapMethod`, so `Set.prototype` is not extensible from the
+  prelude — this has to go in `eval.milo`.
 - ~~`toPrecision` aliased to `toFixed`~~ DONE (d6a224c): `numToPrecision` in
   `value.milo` computes significant digits. Fixed-notation only — JS switches to
   exponential when the exponent is < -6 or >= precision, which this does not do.
@@ -202,6 +211,10 @@ Still open, found the same way:
   `.next()`, the `Iterator.prototype` helpers, for-of and `Array.from` all work.
   Snapshot semantics: mutating the map mid-iteration is not observed, which real
   JS would show.
+- ~~`WeakMap`/`WeakSet` accepted any key~~ DONE (d1eb160): they were bare aliases
+  of the Map/Set natives. Now real prelude classes that throw TypeError on
+  primitives and registered symbols. Keys are still held STRONGLY, so a test
+  asserting a key was collected correctly fails rather than passing vacuously.
 - ~~Map/Set keys used strict equality~~ DONE (bc941d9): now SameValueZero, so a
   `NaN` key can be looked up again and `new Set([NaN, NaN])` has size 1.
   Previously a NaN key could be stored but never retrieved.
