@@ -499,8 +499,19 @@ export class TypeChecker {
     }
     // type alias resolution
     const alias = this.typeAliases.get(ty.name);
-    if (alias && !ty.isPtr && !ty.isRef && !ty.isRefMut && !ty.isArray && !ty.typeArgs?.length) {
-      return this.resolve(alias);
+    if (alias && !ty.isArray && !ty.typeArgs?.length) {
+      // The ptr/ref flags belong to the *use site* (`&Board`), not to the alias:
+      // expand the alias body, then re-apply the wrapper the use site asked for.
+      const inner = this.resolve(alias);
+      const depth = ty.ptrDepth ?? (ty.isPtr ? 1 : 0);
+      if (depth > 0) {
+        let result = inner;
+        for (let i = 0; i < depth; i++) result = { tag: "ptr", inner: result };
+        return result;
+      }
+      if (ty.isRef) return { tag: "ref", inner, mutable: false };
+      if (ty.isRefMut) return { tag: "ref", inner, mutable: true };
+      return inner;
     }
     const typeArgs = ty.typeArgs ?? [];
     if (typeArgs.length > 0) {

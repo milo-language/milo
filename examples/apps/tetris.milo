@@ -40,6 +40,9 @@ from "std/color" import {
 let W: i64 = 10
 let H: i64 = 20
 
+// the well, row-major, W*H cells
+type Board = [i32; 200]
+
 // tetromino kinds
 let KIND_I: i64 = 0
 let KIND_O: i64 = 1
@@ -167,7 +170,7 @@ fn pieceCells(kind: i64, rot: i64, out: &mut [i64; 8]): void {
 }
 
 // true if piece at (px,py) is off-board or overlaps a settled cell
-fn collides(board: &[i32; 200], kind: i64, rot: i64, px: i64, py: i64): bool {
+fn collides(board: &Board, kind: i64, rot: i64, px: i64, py: i64): bool {
     var cells: [i64; 8] = [0; 8]
     pieceCells(kind, rot, cells)
     for i in 0..4 {
@@ -183,7 +186,7 @@ fn collides(board: &[i32; 200], kind: i64, rot: i64, px: i64, py: i64): bool {
     return false
 }
 
-fn lockPiece(board: &mut [i32; 200], kind: i64, rot: i64, px: i64, py: i64): void {
+fn lockPiece(board: &mut Board, kind: i64, rot: i64, px: i64, py: i64): void {
     var cells: [i64; 8] = [0; 8]
     pieceCells(kind, rot, cells)
     let color = pieceColor(kind)
@@ -197,7 +200,7 @@ fn lockPiece(board: &mut [i32; 200], kind: i64, rot: i64, px: i64, py: i64): voi
 }
 
 // compact full rows downward; return count cleared
-fn clearLines(board: &mut [i32; 200]): i64 {
+fn clearLines(board: &mut Board): i64 {
     var write: i64 = H - 1
     var read: i64 = H - 1
     var cleared: i64 = 0
@@ -278,7 +281,7 @@ fn renderNext(buf: &mut string, kind: i64, row: i64, col: i64): void {
     }
 }
 
-fn render(buf: &mut string, board: &[i32; 200], kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
+fn render(buf: &mut string, board: &Board, kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
     var cells: [i64; 8] = [0; 8]
     pieceCells(kind, rot, cells)
     var pcx: [i64; 4] = [0; 4]
@@ -365,7 +368,7 @@ fn render(buf: &mut string, board: &[i32; 200], kind: i64, rot: i64, px: i64, py
     emit(buf, bold(yellow("★ github.com/cs01/milo")))
 }
 
-fn drawFrame(board: &[i32; 200], kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
+fn drawFrame(board: &Board, kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
     var buf = ""
     render(buf, board, kind, rot, px, py, score, lines, nextKind)
     writeStdout(buf)
@@ -390,7 +393,7 @@ fn waitForQuit(): void {
 }
 
 fn runGame(): void {
-    var board: [i32; 200] = [0; 200]
+    var board: Board = [0; 200]
     var kind = randInt(NUM_KINDS)
     var nextKind = randInt(NUM_KINDS)
     var rot: i64 = 0

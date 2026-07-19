@@ -1,0 +1,36 @@
+// A type alias must expand behind `&` / `&mut` / `*` too — the ptr/ref flags
+// belong to the use site, not to the alias body.
+from "std/io" import {
+    writeStr
+}
+
+type Board = [i32; 4]
+type Count = i64
+
+fn sum(b: &Board): i64 {
+    var t = 0
+    for i in 0..4 {
+        t = t + b[i] as i64
+    }
+    return t
+}
+
+fn bump(b: &mut Board): void {
+    b[0] = b[0] + 10
+}
+
+fn double(n: &Count): i64 {
+    return n * 2
+}
+
+fn main() {
+    var b: Board = [1, 2, 3, 4]
+    bump(b)
+    writeStr(sum(b).toString())
+    writeStr("\n")
+    let c: Count = 21
+    writeStr(double(c).toString())
+    writeStr("\n")
+}
+// @expect: 20
+// @expect: 42
