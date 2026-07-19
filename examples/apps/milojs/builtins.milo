@@ -10,6 +10,9 @@ from "./value" import {
 from "./runtime" import {
     Interp, newObject, objSet
 }
+from "std/unicode" import {
+    decodeCodepoint, utf16UnitCount, highSurrogate, lowSurrogate, isSupplementary
+}
 
 // A minimal error object (same shape makeError in eval.milo builds — that one
 // can't be imported here without a cycle).
@@ -279,6 +282,90 @@ fn jsSubstringAt(s: &string, needle: &string, at: i64): bool {
     return true
 }
 
+// ── UTF-16 indexing ──────────────────────────────────────────────────────────
+// JS strings are sequences of UTF-16 code units, but milo strings are UTF-8
+// bytes. For ASCII the two indexings coincide, which is why byte offsets got
+// this far; for anything above U+007F they diverge, and a codepoint above
+// U+FFFF occupies TWO UTF-16 units (a surrogate pair). These walk the UTF-8
+// bytes while counting UTF-16 units, so charCodeAt/codePointAt agree with JS.
+//
+// They are O(n) per call. Fine at the sizes this engine sees; a UTF-16 index
+// cache would be the fix if it ever shows up in a profile.
+
+// Byte offset of the UTF-16 unit at `idx`, plus whether it is the LOW half of a
+// surrogate pair. Returns -1 when idx is past the end.
+struct Utf16Pos {
+    byteAt: i64,
+    isLowHalf: bool,
+}
+
+fn utf16Locate(s: &string, idx: i64): Utf16Pos {
+    if idx < 0 {
+        return Utf16Pos {
+            byteAt: -1, isLowHalf: false
+        }
+    }
+    var unit: i64 = 0
+    var b: i64 = 0
+    while b < s.len() {
+        let cp = decodeCodepoint(s, b)
+        let w = utf16UnitCount(cp.value)
+        if idx < unit + w {
+            return Utf16Pos {
+                byteAt: b, isLowHalf: idx > unit
+            }
+        }
+        unit = unit + w
+        b = b + cp.size
+    }
+    return Utf16Pos {
+        byteAt: -1, isLowHalf: false
+    }
+}
+
+// Total length in UTF-16 code units — what JS reports as .length.
+fn utf16Length(s: &string): i64 {
+    var unit: i64 = 0
+    var b: i64 = 0
+    while b < s.len() {
+        let cp = decodeCodepoint(s, b)
+        unit = unit + utf16UnitCount(cp.value)
+        b = b + cp.size
+    }
+    return unit
+}
+
+// The UTF-16 code unit at `idx`, or -1 when out of range. A supplementary
+// codepoint yields its high surrogate at the first index and its low at the next.
+fn utf16UnitAt(s: &string, idx: i64): i64 {
+    let pos = utf16Locate(s, idx)
+    if pos.byteAt < 0 {
+        return -1
+    }
+    let cp = decodeCodepoint(s, pos.byteAt)
+    if isSupplementary(cp.value) {
+        if pos.isLowHalf {
+            return lowSurrogate(cp.value) as i64
+        }
+        return highSurrogate(cp.value) as i64
+    }
+    return cp.value as i64
+}
+
+// The full codepoint at `idx` — like utf16UnitAt, except that landing on a high
+// surrogate returns the whole codepoint rather than the half.
+fn utf16CodePointAt(s: &string, idx: i64): i64 {
+    let pos = utf16Locate(s, idx)
+    if pos.byteAt < 0 {
+        return -1
+    }
+    let cp = decodeCodepoint(s, pos.byteAt)
+    if isSupplementary(cp.value) && pos.isLowHalf {
+        return lowSurrogate(cp.value) as i64
+    }
+    return cp.value as i64
+}
+
 fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     if name == "toUpperCase" {
         return JSValue.Str(strUpper(s))
@@ -296,11 +383,11 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         return JSValue.Str(jsCharAt(s, argNum(args, 0, 0)))
     }
     if name == "charCodeAt" {
-        let i = argNum(args, 0, 0)
-        if i >= 0 && i < s.len() {
-            return JSValue.Number(s[i] as f64)
+        let u = utf16UnitAt(s, argNum(args, 0, 0))
+        if u < 0 {
+            return JSValue.Number(jsNan())
         }
-        return JSValue.Number(jsNan())
+        return JSValue.Number(u as f64)
     }
     if name == "indexOf" {
         return JSValue.Number(jsIndexOf(s, argStr(args, 0), 0) as f64)
@@ -421,13 +508,11 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         return JSValue.Str(jsCharAt(s, idx))
     }
     if name == "codePointAt" {
-        // byte-oriented like charCodeAt — correct for ASCII, which is the same
-        // limit the rest of this file carries
-        let i = argNum(args, 0, 0)
-        if i < 0 || i >= s.len() {
+        let cp = utf16CodePointAt(s, argNum(args, 0, 0))
+        if cp < 0 {
             return JSValue.Undefined
         }
-        return JSValue.Number(s[i] as f64)
+        return JSValue.Number(cp as f64)
     }
     if name == "replaceAll" {
         let pat = argStr(args, 0)
@@ -460,7 +545,9 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         return JSValue.Str(out)
     }
     if name == "localeCompare" {
-        // no ICU here, so this is a plain byte-order comparison
+        // No ICU, so this is codepoint order rather than locale collation. The
+        // byte loop is sufficient for that: UTF-8 byte order and codepoint order
+        // agree by construction.
         let other = argStr(args, 0)
         var i: i64 = 0
         while i < s.len() && i < other.len() {

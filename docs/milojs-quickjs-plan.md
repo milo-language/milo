@@ -40,11 +40,10 @@ doesn't move the score):
 
 - ~~symbols leaked their internal representation~~ (f2095e5): `String(sym)` and
   `sym.toString()` returned `@@sym:d:1`; `.description` was undefined.
-  **Milo gotcha found here:** `isSymbolValue(ov)` inside `match ov { JSValue.Str(s) => … }`
-  silently returns false — matching MOVES the value, so reading the original
-  binding in the arm sees a zeroed slot. The check compiles and runs, it is just
-  always false. Use the arm's own binding (`isSymbolStr(s)`) instead. Worth
-  remembering: this failure mode is invisible, no error and no warning.
+  Milo note: matching MOVES the scrutinee, so read the arm's binding
+  (`isSymbolStr(s)`), not the original (`isSymbolValue(ov)`). This used to fail
+  SILENTLY (always-false predicate); as of milo 9064779 it is a compile error with
+  a hint, so the trap is gone — kept here only to explain the shape of the fix.
 
 - ~~no iterator protocol at all~~ (ef6c5fc): `Symbol.iterator` did not exist, and
   `for-of` worked only by special-casing arrays/strings/Map/Set — a user object
