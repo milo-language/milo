@@ -142,8 +142,27 @@ This commit also carried a concurrent session's uncommitted `funcEnv` +
 and was interleaved in the same files — splitting was impossible and committing
 only the typed-array files would have broken main.
 
+- ~~builtin methods were invisible as VALUES~~ (9dbb35b, 6f913d7, 9f434b0): they
+  dispatch natively by name and were never properties, so `typeof re.test` was
+  undefined while `re.test(s)` worked. That silently breaks the two commonest
+  patterns in real bundles — feature detection (`typeof x.then === "function"`,
+  the standard thenable test) and method extraction (`Array.prototype.slice.call`).
+  Now fixed for Array/String/Promise/Map/Set/RegExp/Date/ArrayBuffer/Error via
+  BOTH dot and computed access. Typed arrays are deliberately excluded: they have
+  no methods implemented, and advertising them caused the failure below.
+  **Two traps worth remembering.** (1) A bound method re-dispatches through
+  `callBuiltinByName`; if that has no case for the receiver type, an extracted
+  method makes the process unwind SILENTLY — no throw, no output, exit 0. Any new
+  entry in the visibility predicates needs a matching dispatch case. (2) The dot
+  path (`Expr.Member`) and the computed path (`Expr.Index`) are separate; fixing
+  one leaves the other broken, which is easy to miss since probes usually use one.
+- ~~`"abc"["slice"]` returned `"a"`~~ (9f434b0): a non-numeric key was coerced via
+  `toNum` to index 0 rather than treated as a property name.
+
 Still open, found the same way:
 - error objects have no `.constructor`, so `e.constructor.name` throws.
+- **typed arrays have no methods at all** (`fill`/`set`/`subarray`/`slice`/…) —
+  only indexing and the length/byteLength/buffer props exist.
 - **`Set` methods proposal missing** (`isSupersetOf`/`isSubsetOf`/`isDisjointFrom`/
   `union`/`intersection`/`difference`/`symmetricDifference`), which is what
   `test_builtin.js:test_set` needs. They take "set-like" objects (`size`/`has`/
