@@ -1441,6 +1441,21 @@ export class Parser {
   }
 
   // $"hello {name}, you are {age} years old" → format("hello ", name, ", you are ", age, " years old")
+  // Recursively overwrite every span in a parsed subtree. Generic over node
+  // shape so it can't miss a variant the way a hand-written per-kind walk would.
+  private stampSpan(node: unknown, span: Span): void {
+    if (Array.isArray(node)) {
+      for (const child of node) this.stampSpan(child, span);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    const rec = node as Record<string, unknown>;
+    if (typeof rec.kind === "string") rec.span = span;
+    for (const key of Object.keys(rec)) {
+      if (key !== "span") this.stampSpan(rec[key], span);
+    }
+  }
+
   private parseFString(raw: string, span: Span): Expr {
     const args: Expr[] = [];
     let lit = "";
@@ -1459,6 +1474,13 @@ export class Parser {
         }
         const tokens = new Lexer(exprStr).tokenize();
         const expr = new Parser(tokens).parseExpr();
+        // The sub-parser lexes a bare fragment, so every span in it starts over
+        // at 1:1 — any later error on an interpolated expression pointed at the
+        // first line of the FILE. Restamp to the f-string's own span. Columns
+        // within the fragment aren't recoverable here (the lexer already
+        // resolved escapes, so offsets into `raw` don't map back to source
+        // columns), but the line and the statement are now right.
+        this.stampSpan(expr, span);
         args.push(expr);
       } else {
         lit += raw[i];
