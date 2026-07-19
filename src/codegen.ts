@@ -9067,12 +9067,43 @@ export class Codegen {
   private getConstantInitializer(g: import("./hir").HIRGlobal): string {
     const constVal = this.tryConstantExpr(g.value);
     if (constVal !== null) return constVal;
+    // A struct literal is not a single constant expression, but its fields usually
+    // are. Falling straight through to zeroinitializer silently discarded them —
+    // `S { a: -1, c: 42 }` came out as all zeros, which is the exact failure the
+    // non-const module-scope check exists to prevent.
+    const structInit = this.tryConstantStructInit(g.value, g.type);
+    if (structInit !== null) return structInit;
     if (g.type.tag === "ptr") return "null";
     const tag = g.type.tag;
     if (tag === "struct" || tag === "array" || tag === "enum" || tag === "string" || tag === "vec" || tag === "hashmap") {
       return "zeroinitializer";
     }
     return "0";
+  }
+
+  // Build an LLVM constant struct from a struct-literal global. Fields that are not
+  // compile-time constants (Vec.new(), String literals needing a heap buffer) fall
+  // back to zeroinitializer for that field alone, which is their correct empty form.
+  private tryConstantStructInit(value: import("./hir").HIRExpr, type: TypeKind): string | null {
+    if (!value || value.kind !== "StructLit" || type.tag !== "struct") return null;
+    const layout = this.structLayouts.get(type.name);
+    if (!layout) return null;
+    const byName = new Map(value.fields.map(f => [f.name, f.value]));
+    const parts: string[] = [];
+    for (const f of layout.fields) {
+      const expr = byName.get(f.name);
+      const c = expr ? this.tryConstantExpr(expr) : null;
+      if (c !== null) {
+        parts.push(`${f.type} ${c}`);
+      } else if (f.type.startsWith("%") || f.type.startsWith("[") || f.type.startsWith("{")) {
+        parts.push(`${f.type} zeroinitializer`);
+      } else if (f.type === "ptr") {
+        parts.push("ptr null");
+      } else {
+        parts.push(`${f.type} 0`);
+      }
+    }
+    return `{ ${parts.join(", ")} }`;
   }
 
   private emitDropGlue(lines: string[]) {
