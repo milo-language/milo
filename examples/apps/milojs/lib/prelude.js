@@ -19,6 +19,10 @@ var Intl = {
       }
       return String(num);
     };
+    // one integer part is enough for code that reassembles the number from parts
+    this.formatToParts = function (n) {
+      return [{ type: 'integer', value: this.format(n) }];
+    };
     this.resolvedOptions = function () { return { locale: this.locale || 'en-US' }; };
   },
   DateTimeFormat: function DateTimeFormat(locale, options) {
@@ -28,6 +32,9 @@ var Intl = {
     this.format = function (d) {
       var date = (d instanceof Date) ? d : new Date(d);
       return date.toISOString();
+    };
+    this.formatToParts = function (d) {
+      return [{ type: 'literal', value: this.format(d) }];
     };
     this.resolvedOptions = function () {
       return { locale: this.locale || 'en-US', timeZone: 'UTC' };
@@ -42,6 +49,21 @@ var Intl = {
       return 0;
     };
   }
+};
+
+// --- Date.UTC ---------------------------------------------------------------
+// Milliseconds since the epoch for a UTC calendar date. Uses Howard Hinnant's
+// days-from-civil algorithm so there is no dependence on a native UTC primitive.
+Date.UTC = function (y, m, d, h, mi, s, ms) {
+  var month = (m || 0) + 1; // JS months are 0-based; the algorithm wants 1-based
+  var day = d === undefined ? 1 : d;
+  var yy = y - (month <= 2 ? 1 : 0);
+  var era = Math.floor((yy >= 0 ? yy : yy - 399) / 400);
+  var yoe = yy - era * 400;
+  var doy = Math.floor((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1;
+  var doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  var days = era * 146097 + doe - 719468;
+  return ((days * 24 + (h || 0)) * 60 + (mi || 0)) * 60 * 1000 + (s || 0) * 1000 + (ms || 0);
 };
 
 // --- Promise combinators ---------------------------------------------------
