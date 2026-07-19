@@ -202,6 +202,9 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
         if st.objects[o].isArrayBuffer && (key == "slice" || key == "resize" || key == "transfer") {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
+        if st.objects[o].taBuf >= 0 && isTypedArrayMethodName(key) {
+            return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+        }
         if st.objects[o].isArray && isArrayMethod(key) {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
@@ -513,6 +516,9 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             // nothing (no throw, no result — the process just unwinds)
             if st.objects[o].regexId >= 0 && isRegexMethodName(name) {
                 return regexMethod(st, o, name, args)
+            }
+            if st.objects[o].taBuf >= 0 && isTypedArrayMethodName(name) {
+                return typedArrayMethod(prog, o, name, args, st)
             }
 
             if name == "hasOwnProperty" {
@@ -4328,6 +4334,189 @@ fn isMapSetMethodName(n: &string): bool {
 
 fn isRegexMethodName(n: &string): bool {
     return n == "test" || n == "exec" || n == "toString"
+}
+
+fn isTypedArrayMethodName(n: &string): bool {
+    return n == "fill" || n == "set" || n == "subarray" || n == "slice" || n == "at" || n == "indexOf" || n == "includes" || n == "join" || n == "toString"
+}
+
+// Typed-array methods. Views share their buffer, so subarray returns a new view
+// over the SAME bytes while slice copies — getting that backwards is the classic
+// typed-array bug.
+fn typedArrayMethod(_prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+    let n = st.objects[o].taLen
+    let kind = st.objects[o].taKind
+    let w = taWidth(kind)
+
+    if name == "at" {
+        var idx: i64 = 0
+        if args.len() > 0 {
+            idx = toNum(args[0]) as i64
+        }
+        if idx < 0 {
+            idx = n + idx
+        }
+        if idx < 0 || idx >= n {
+            return JSValue.Undefined
+        }
+        return JSValue.Number(taElem(st, o, idx))
+    }
+    if name == "fill" {
+        var v: f64 = 0.0
+        if args.len() > 0 {
+            v = toNum(args[0])
+        }
+        var start: i64 = 0
+        if args.len() > 1 {
+            start = toNum(args[1]) as i64
+            if start < 0 {
+                start = n + start
+            }
+        }
+        var end = n
+        if args.len() > 2 {
+            end = toNum(args[2]) as i64
+            if end < 0 {
+                end = n + end
+            }
+        }
+        if start < 0 {
+            start = 0
+        }
+        if end > n {
+            end = n
+        }
+        var i = start
+        while i < end {
+            taSetElem(st, o, i, v)
+            i = i + 1
+        }
+        return JSValue.Obj(o)
+    }
+    if name == "indexOf" || name == "includes" {
+        var target: f64 = 0.0
+        if args.len() > 0 {
+            target = toNum(args[0])
+        }
+        var i: i64 = 0
+        while i < n {
+            if taElem(st, o, i) == target {
+                if name == "includes" {
+                    return JSValue.Bool(true)
+                }
+                return JSValue.Number(i as f64)
+            }
+            i = i + 1
+        }
+        if name == "includes" {
+            return JSValue.Bool(false)
+        }
+        return JSValue.Number(0.0 - 1.0)
+    }
+    if name == "join" || name == "toString" {
+        var sep = ","
+        if name == "join" && args.len() > 0 {
+            sep = toStr(args[0])
+        }
+        var out = ""
+        var i: i64 = 0
+        while i < n {
+            if i > 0 {
+                out = out + sep
+            }
+            out = out + numToStr(taElem(st, o, i))
+            i = i + 1
+        }
+        return JSValue.Str(out)
+    }
+    if name == "set" {
+        // set(source, offset) — copies element values in
+        if args.len() == 0 {
+            return JSValue.Undefined
+        }
+        var off: i64 = 0
+        if args.len() > 1 {
+            off = toNum(args[1]) as i64
+        }
+        let sh = objHandle(args[0])
+        if sh < 0 {
+            return JSValue.Undefined
+        }
+        if st.objects[sh].isArray {
+            var i: i64 = 0
+            while i < arrLen(st, sh) {
+                taSetElem(st, o, off + i, toNum(arrGet(st, sh, i)))
+                i = i + 1
+            }
+        } else if st.objects[sh].taBuf >= 0 {
+            var i: i64 = 0
+            while i < st.objects[sh].taLen {
+                taSetElem(st, o, off + i, taElem(st, sh, i))
+                i = i + 1
+            }
+        }
+        return JSValue.Undefined
+    }
+    if name == "subarray" || name == "slice" {
+        var start: i64 = 0
+        if args.len() > 0 {
+            start = toNum(args[0]) as i64
+            if start < 0 {
+                start = n + start
+            }
+        }
+        var end = n
+        if args.len() > 1 {
+            end = toNum(args[1]) as i64
+            if end < 0 {
+                end = n + end
+            }
+        }
+        if start < 0 {
+            start = 0
+        }
+        if end > n {
+            end = n
+        }
+        if end < start {
+            end = start
+        }
+        let count = end - start
+        if name == "subarray" {
+            // a VIEW over the same buffer: writes through it are visible in the
+            // original, which is the whole point of subarray
+            let view = newObject(st)
+            st.objects[view].taBuf = st.objects[o].taBuf
+            st.objects[view].taKind = kind
+            st.objects[view].taOffset = st.objects[o].taOffset + start * w
+            st.objects[view].taLen = count
+            return JSValue.Obj(view)
+        }
+        // slice COPIES into a fresh buffer
+        let nb = newObject(st)
+        st.objects[nb].isArrayBuffer = true
+        pushTemp(st, JSValue.Obj(nb))
+        var bytes: Vec<u8> = Vec.new()
+        var bi: i64 = 0
+        while bi < count * w {
+            bytes.push(0 as u8)
+            bi = bi + 1
+        }
+        st.objects[nb].bytes = bytes
+        let view = newObject(st)
+        st.objects[view].taBuf = nb
+        st.objects[view].taKind = kind
+        st.objects[view].taOffset = 0
+        st.objects[view].taLen = count
+        var i: i64 = 0
+        while i < count {
+            taSetElem(st, view, i, taElem(st, o, start + i))
+            i = i + 1
+        }
+        popTemp(st)
+        return JSValue.Obj(view)
+    }
+    return JSValue.Undefined
 }
 
 fn dateProtoMethodNames(): Vec<string> {
