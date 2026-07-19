@@ -481,7 +481,16 @@ class LowerCtx {
           if (!existsSync(absPath)) {
             throw new Error(`error[embed]: ${expr.span?.line}:${expr.span?.col}: cannot open '${path}'`);
           }
-          const contents = readFileSync(absPath, "utf-8");
+          // Read as bytes, not UTF-8: embedding a PNG/font/any binary through a
+          // UTF-8 decode silently corrupts it (invalid sequences become U+FFFD,
+          // and the re-encode inflates every byte >= 0x80). Bytes >= 0x80 ride
+          // the same U+F7xx private-use sentinel that \xNN escapes use, which
+          // codegen emits back as raw single bytes.
+          const bytes = readFileSync(absPath);
+          let contents = "";
+          for (const byte of bytes) {
+            contents += byte < 0x80 ? String.fromCharCode(byte) : String.fromCharCode(0xF700 + byte);
+          }
           return { kind: "StringLit", value: contents, type: { tag: "string" as const }, span: expr.span };
         }
         if (expr.func === "jsonStringify") {

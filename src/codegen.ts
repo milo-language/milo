@@ -507,13 +507,16 @@ export class Codegen {
   // Zero `ptr` as type `ty`. For large aggregates, emit llvm.memset instead of a
   // first-class `store [N x i8] zeroinitializer` — clang's InstCombine is
   // superlinear on big aggregate zero-stores (a 64KB stack buffer alone pushed
-  // an -O2 build to ~110s; memset drops it to ~1s). LLVM auto-recognizes the
-  // intrinsic, so no `declare` is needed. memset is never worse, so the
-  // threshold only needs to sit below the first painful size.
+  // an -O2 build to ~110s; memset drops it to ~1s). The intrinsic must still be
+  // declared: newer LLVM parsers synthesize `llvm.*` declarations implicitly,
+  // but clang 15 (what the linux deploy image ships) rejects the module with
+  // "use of undefined value". memset is never worse, so the threshold only
+  // needs to sit below the first painful size.
   private static ZERO_STORE_MEMSET_THRESHOLD = 128;
   private zeroStore(ty: string, ptr: string): string {
     const size = this.typeSize(ty);
     if (size >= Codegen.ZERO_STORE_MEMSET_THRESHOLD) {
+      this.needsMemsetIntrinsic = true;
       return `  call void @llvm.memset.p0.i64(ptr ${ptr}, i8 0, i64 ${size}, i1 false)`;
     }
     return `  store ${ty} zeroinitializer, ptr ${ptr}`;
@@ -1060,6 +1063,11 @@ export class Codegen {
       this.output.splice(1, 0, "declare double @strtod(ptr, ptr)");
     if (this.needsMemset && !declaredExterns.has("memset"))
       this.output.splice(1, 0, "declare ptr @memset(ptr, i32, i64)");
+    if (this.needsMemsetIntrinsic)
+      this.output.splice(
+        1, 0,
+        "declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)",
+      );
     if (this.needsGetentropy && !declaredExterns.has("getentropy"))
       this.output.splice(1, 0, "declare i32 @getentropy(ptr, i64)");
     if (this.needsMemcmp && !declaredExterns.has("memcmp"))
@@ -7216,6 +7224,7 @@ export class Codegen {
   }
 
   private needsMemset = false;
+  private needsMemsetIntrinsic = false;
   private needsSnprintf = false;
 
   // Append printf-style format fragments for a value of type `tk`. `val` is the loaded
