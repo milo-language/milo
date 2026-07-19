@@ -2,7 +2,7 @@
 // used to collapse to the same type because isPtr was a boolean, not a count).
 // Vec<*u8>.ptr() yields **u8; deref once to *u8, once more to the byte.
 fn main(): void {
-    var v: Vec < *u8 > = Vec.new()
+    var v: Vec<*u8> = Vec.new()
     let s = "hi"
     unsafe {
         v.push(s.cstr())

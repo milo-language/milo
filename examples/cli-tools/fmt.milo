@@ -707,7 +707,14 @@ fn isGenericOpen(tokens: &Vec<Token>, i: i64): bool {
                 return true
             }
         } else if t.kind == TokKind.Ident || t.kind == TokKind.Keyword ||
-        t.kind == TokKind.Comma || t.kind == TokKind.Amp {
+        t.kind == TokKind.Comma || t.kind == TokKind.Amp ||
+        // Star is a pointer type here, not multiplication: without it
+        // `Result<*u8, string>` reads as a comparison and gets spaced out into
+        // `Result < *u8, string >`. Brackets/Int/Semi cover array types such as
+        // `Vec<[u8; 4]>`, and Question covers `Option`-style shorthand.
+        t.kind == TokKind.Star || t.kind == TokKind.LBracket ||
+        t.kind == TokKind.RBracket || t.kind == TokKind.Int ||
+        t.kind == TokKind.Semi || t.kind == TokKind.Question {
             // type-like tokens — keep scanning
         } else {
             return false

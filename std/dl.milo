@@ -93,7 +93,7 @@ impl Lib {
     // Address of a symbol, for casting to an `extern` function-pointer type or
     // reading as data. A symbol whose value is legitimately zero is
     // indistinguishable from an error here, as with plain dlsym.
-    fn sym(self: &Lib, name: &string): Result < *u8, string > {
+    fn sym(self: &Lib, name: &string): Result<*u8, string> {
         unsafe {
             let p = dlsym(self.handle, name as *u8)
             if (p as i64) == 0 {

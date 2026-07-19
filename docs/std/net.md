@@ -133,7 +133,7 @@ _Undocumented._
 ### `ip6`
 
 ```milo
-fn ip6(text: &string): Option < [u8; 16] >
+fn ip6(text: &string): Option<[u8; 16]>
 ```
 
 Construct an IPv4 address from four octets.
