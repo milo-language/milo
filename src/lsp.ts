@@ -712,6 +712,7 @@ const BUILTIN_METHOD_HOVERS: Record<string, (recv: string, elem: string) => stri
   sort: (r, _t) => `\`\`\`milo\nfn ${r}.sort()\n\`\`\`\nSorts ascending in place; requires a comparable element (int, float, string, bool). Mutates — receiver must be \`var\`.`,
   len: (r, _t) => `\`\`\`milo\nfn ${r}.len(): i64\n\`\`\`\nNumber of elements.`,
   isEmpty: (r, _t) => `\`\`\`milo\nfn ${r}.isEmpty(): bool\n\`\`\`\n\`true\` when \`len() == 0\`.`,
+  clone: (r, _t) => `\`\`\`milo\nfn ${r}.clone(): ${r}\n\`\`\`\nDeep copy — each element is cloned, so the result owns independent heap data. Use it to pass a value where the original is still needed (e.g. alongside a \`&var\` argument off the same variable).`,
 };
 
 // Hover for a builtin instance method (`v.pop()`). Only fires when there is an

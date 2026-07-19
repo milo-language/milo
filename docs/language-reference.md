@@ -797,6 +797,37 @@ users.sortByKey((u: &User) => u.name)                 // works with strings too
 
 `sort` works on Vec of int, float, string, or bool. `sortBy` and `sortByKey` work on any type. All require `var`.
 
+### clone
+
+`clone()` returns a deep copy: every element is cloned too, so the copy owns independent heap data and later mutations to either side are invisible to the other.
+
+```milo
+var v: Vec<string> = ["a", "b"]
+var w = v.clone()
+w.push("c")                     // v is still ["a", "b"]
+
+var nested: Vec<Vec<string>> = [["x"]]
+var n = nested.clone()
+n[0].push("y")                  // nested[0] is still ["x"] — elements are cloned, not shared
+```
+
+The common use is passing a Vec somewhere the original is still needed. A call that takes both a `&var` argument and a `&` argument reached through the same variable is rejected, because the mutation could reallocate what the shared reference points into — an inline `clone()` breaks the aliasing:
+
+```milo
+struct State { keys: Vec<string>, log: Vec<string> }
+
+fn recordLookup(st: &mut State, keys: &Vec<string>): bool {
+    st.log.push("lookup")       // may reallocate st's storage
+    return keys.len() > 0
+}
+
+var st = State { keys: ["a"], log: [] }
+// recordLookup(st, st.keys) is rejected — st is borrowed mutably and shared
+let found = recordLookup(st, st.keys.clone())   // ok — the callee gets its own copy
+```
+
+`clone()` is unavailable on `Vec<SomeInterface>` (the concrete type is erased and the itable carries no clone slot) and on Vec of closures.
+
 ---
 
 ## HashMap\<K, V\>

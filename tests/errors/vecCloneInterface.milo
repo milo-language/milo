@@ -1,0 +1,24 @@
+// @error: an interface value has no clone
+
+// A `Vec<Interface>` holds interface values, whose itables carry no clone slot
+// — there is no way to duplicate the erased concrete value.
+
+interface Shape {
+    fn area(self: &Self): i64
+}
+
+struct Square {
+    side: i64,
+}
+
+impl Square {
+    fn area(self: &Self): i64 {
+        return self.side * self.side
+    }
+}
+
+fn main() {
+    let shapes: Vec<Shape> = [Square { side: 2 }]
+    let copied = shapes.clone()
+    print($"{copied.len()}")
+}

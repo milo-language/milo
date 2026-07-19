@@ -1,0 +1,63 @@
+// @expect: 2 3 a c
+// @expect: 1 3
+// @expect: 1 2
+// @expect: 1 2
+// @expect: 0
+// @expect: 1 2
+// @expect: 1 2
+
+// Vec.clone(): deep copy — every element is cloned, so the source and the clone
+// own independent heap data and neither aliases the other after a mutation.
+
+struct Person {
+    name: string,
+    tags: Vec<string>,
+}
+
+// Clone through a `&Vec` param: the borrow is read-only, the result is owned.
+fn dup(v: &Vec<string>): Vec<string> {
+    var out = v.clone()
+    out.push("extra")
+    return out
+}
+
+fn main() {
+    var v: Vec<string> = ["a", "b"]
+    var w = v.clone()
+    w.push("c")
+    print($"{v.len()} {w.len()} {v[0]} {w[2]}")
+
+    var nums: Vec<i64> = [1, 2, 3]
+    var n2 = nums.clone()
+    n2.swap(0, 2)
+    print($"{nums[0]} {n2[0]}")
+
+    var nested: Vec<Vec<string>> = [["x"], ["y"]]
+    var n3 = nested.clone()
+    n3[0].push("z")
+    print($"{nested[0].len()} {n3[0].len()}")
+
+    var people: Vec<Person> = [Person {
+        name: "a", tags: ["t1"]
+    }
+    ]
+    var people2 = people.clone()
+    people2[0].tags.push("t2")
+    print($"{people[0].tags.len()} {people2[0].tags.len()}")
+
+    var empty: Vec<string> = []
+    let empty2 = empty.clone()
+    print($"{empty2.len()}")
+
+    let src: Vec<string> = ["a"]
+    let copied = dup(src)
+    print($"{src.len()} {copied.len()}")
+
+    var maps: Vec<HashMap<string, i64>> = []
+    var m: HashMap<string, i64> = HashMap.new()
+    m.insert("k", 1)
+    maps.push(m)
+    var maps2 = maps.clone()
+    maps2[0].insert("j", 2)
+    print($"{maps[0].len()} {maps2[0].len()}")
+}

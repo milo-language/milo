@@ -131,7 +131,9 @@ export class CodegenJS {
     this.emit("function __displayVal(v) { if (typeof v === 'string') return JSON.stringify(v); if (typeof v === 'boolean') return String(v); if (typeof v === 'number') return Number.isInteger(v) ? String(v) : __fmtG(v); if (v && typeof v === 'object' && v.constructor && v.constructor.name !== 'Object') return __displayStruct(v); return String(v); }");
     this.emit("function __displayStruct(v) { const ks = Object.keys(v); return v.constructor.name + ' { ' + ks.map(k => k + ': ' + __displayVal(v[k])).join(', ') + ' }'; }");
     this.emit("function __displayEnum(v, name) { const e = __enumMeta[name][v.tag]; return e[1] === 0 ? e[0] : e[0] + '(' + v.data.map(__displayVal).join(', ') + ')'; }");
-    this.emit("function __clone(v) { if (v === null || typeof v !== 'object') return v; if (Array.isArray(v)) return v.map(__clone); const o = Object.create(Object.getPrototypeOf(v)); for (const k of Object.keys(v)) o[k] = __clone(v[k]); return o; }");
+    // Maps need the explicit branch: Object.keys of a Map is empty, so the
+    // generic object path would silently produce an empty HashMap.
+    this.emit("function __clone(v) { if (v === null || typeof v !== 'object') return v; if (Array.isArray(v)) return v.map(__clone); if (v instanceof Map) return new Map(Array.from(v, ([k, x]) => [k, __clone(x)])); const o = Object.create(Object.getPrototypeOf(v)); for (const k of Object.keys(v)) o[k] = __clone(v[k]); return o; }");
     this.emit("function __eq(a, b) { if (a === b) return true; if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return a === b; if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((v, i) => __eq(v, b[i])); const ka = Object.keys(a), kb = Object.keys(b); return ka.length === kb.length && ka.every(k => __eq(a[k], b[k])); }");
     this.emit("");
   }
@@ -447,6 +449,8 @@ export class CodegenJS {
         // pop(): Option<T> — Some(last)/None. Bind the array once so the length
         // check and the mutating .pop() hit the same reference.
         return `((_v) => _v.length > 0 ? ${expr.optionEnumName}.Some(_v.pop()) : ${expr.optionEnumName}.None())(${this.genExpr(expr.vec)})`;
+      case "VecClone":
+        return `__clone(${this.genExpr(expr.object)})`;
       case "VecReverse":
         return `${this.genExpr(expr.object)}.reverse()`;
       case "VecSwap": {
@@ -520,7 +524,7 @@ export class CodegenJS {
       case "VecAll":
         return `${this.genExpr(expr.vec)}.every(${this.genExpr(expr.callback)})`;
       case "InterfaceCoerce":
-        // JS is duck-typed: a trait object is just the concrete instance. Dispatch
+        // JS is duck-typed: an interface value is just the concrete instance. Dispatch
         // later reads its constructor.name, so no boxing needed.
         return this.genExpr(expr.value);
       case "InterfaceMethodCall": {

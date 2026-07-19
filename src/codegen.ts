@@ -3721,6 +3721,19 @@ export class Codegen {
         lines.push(`  ${len} = extractvalue %Vec ${ov}, 1`);
         return [lines, len, "i64"];
       }
+      case "VecClone": {
+        this.hasVecType = true;
+        const [ol, ov] = this.genExpr(expr.object);
+        lines.push(...ol);
+        // emitDeepCloneFromPtr reads through a pointer, so spill the loaded %Vec
+        // into a scratch slot first. The spill is a shallow copy that is never
+        // dropped — only the clone it produces is owned by the caller.
+        const slot = this.nextTemp();
+        lines.push(`  ${slot} = alloca %Vec`);
+        lines.push(`  store %Vec ${ov}, ptr ${slot}`);
+        const cloned = this.emitDeepCloneFromPtr(lines, slot, { tag: "vec", element: expr.elementType });
+        return [lines, cloned, "%Vec"];
+      }
       case "VecMap":
         return this.genVecMap(expr, lines);
       case "VecFilter":
@@ -4137,9 +4150,9 @@ export class Codegen {
         const recv = expr.object;
         if (recv.kind === "IndexAccess" && recv.object.type.tag === "vec") {
           // Borrow the fat pointer straight from the Vec slot. Dispatch only
-          // reads data+itable, so don't deep-clone the element — a boxed trait
-          // object can't be cloned (no vtable clone slot), and cloning it as a
-          // thin Heap mis-handles the fat pointer.
+          // reads data+itable, so don't deep-clone the element — an interface
+          // value can't be cloned (the itable carries no clone slot), and
+          // cloning it as a thin Heap mis-handles the fat pointer.
           const [, slotPtr] = this.genVecBoundsCheckedPtr(recv, lines);
           objVal = this.nextTemp();
           lines.push(`  ${objVal} = load { ptr, ptr }, ptr ${slotPtr}`);

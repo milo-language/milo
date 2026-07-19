@@ -827,6 +827,9 @@ class LowerCtx {
           if (expr.method === "len") {
             return { kind: "VecLen", object: this.lowerExpr(expr.object), type, span: expr.span };
           }
+          if (expr.method === "clone") {
+            return { kind: "VecClone", object: this.lowerExpr(expr.object), elementType: objType.element, type, span: expr.span };
+          }
         }
         if (objType?.tag === "hashmap") {
           if (expr.method === "insert") {

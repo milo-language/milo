@@ -41,6 +41,7 @@ export type HIRExpr =
   | { kind: "VecPush"; vec: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecPop"; vec: HIRExpr; elementType: TypeKind; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "VecLen"; object: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "VecClone"; object: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "HashMapNew"; keyType: TypeKind; valueType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "HashMapInsert"; map: HIRExpr; key: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapGet"; map: HIRExpr; key: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span }

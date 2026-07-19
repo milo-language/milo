@@ -3154,7 +3154,7 @@ export class TypeChecker {
       for (const s of shared) {
         if (m.root === s.root && overlaps(m.fields, s.fields)) {
           this.error(`'${m.root}' is borrowed mutably and shared in the same call`, m.span,
-            `a mutation through the '&var'/'&mut' argument could invalidate the '&' argument into '${m.root}' — pass a copy or split the call`);
+            `a mutation through the '&var'/'&mut' argument could invalidate the '&' argument into '${m.root}' — clone the shared argument inline (e.g. 'x.clone()') or split the call into two statements`);
         }
       }
     }
@@ -5028,6 +5028,19 @@ export class TypeChecker {
             if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
             return this.setType(expr, { tag: "int", bits: 64, signed: true });
           }
+          if (expr.method === "clone") {
+            if (expr.args.length !== 0) { this.error(`'clone' takes no arguments`, sp); }
+            // An interface value's itable has no clone slot, and a closure's
+            // captured environment has no copy path — neither can be duplicated.
+            const el = objType.element;
+            if (el.tag === "interface") {
+              this.error(`cannot clone Vec<${typeName(el)}>: an interface value has no clone`, sp,
+                `the concrete type is erased and the itable carries no clone slot — build a new Vec from the concrete values instead`);
+            } else if (el.tag === "fn") {
+              this.error(`cannot clone Vec<${typeName(el)}>: closures cannot be cloned`, sp);
+            }
+            return this.setType(expr, objType);
+          }
           this.error(`Vec has no method '${expr.method}'`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
@@ -5262,7 +5275,7 @@ export class TypeChecker {
                   this.tryMove(expr.args[i]);
                 }
               }
-              // compute method index for vtable slot
+              // compute method index for itable slot
               let methodIndex = 0;
               for (const [name] of iface.methods) {
                 if (name === expr.method) break;
