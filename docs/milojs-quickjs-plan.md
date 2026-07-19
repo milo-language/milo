@@ -46,8 +46,22 @@ doesn't move the score):
   always false. Use the arm's own binding (`isSymbolStr(s)`) instead. Worth
   remembering: this failure mode is invisible, no error and no warning.
 
+- ~~no iterator protocol at all~~ (ef6c5fc): `Symbol.iterator` did not exist, and
+  `for-of` worked only by special-casing arrays/strings/Map/Set — a user object
+  with `[Symbol.iterator]` threw "not iterable". Now `for-of` drives the real
+  protocol, calling `next()` **lazily**, one pull per iteration, so iterators with
+  side effects observe JS ordering and `break` stops pulling. Spread also learned
+  Set and string (`[...new Set(x)]` silently produced `[]` before).
+  Well-known symbol keys are fixed interned strings (`@@sym:Symbol.iterator:0`);
+  counter 0 is reserved since user symbols start at 1.
+
 Still open, found the same way:
 - error objects have no `.constructor`, so `e.constructor.name` throws.
+- **spread does not honor `[Symbol.iterator]`** on user objects (for-of does).
+  `spreadInto` takes an immutable `&Interp` and so cannot call back into user
+  code; fixing it means threading `prog` + `&mut Interp` through its 3 call sites.
+- `Array.prototype.entries`/`keys`/`values` and `String.prototype.matchAll` can be
+  built on the protocol now — they return iterator objects, which is expressible.
 - `Number.prototype.toPrecision` ignores its argument (`(123.456).toPrecision(4)`
   → `123.4560`, want `123.5`).
 
