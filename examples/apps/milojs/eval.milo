@@ -187,8 +187,25 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
     // returned undefined. The standard thenable test every library uses is
     // `typeof x.then === "function"`, which that silently failed — hand back a
     // bound method instead.
-    if st.objects[o].promiseState >= 0 && objOwnIndex(st, o, key) < 0 {
-        if key == "then" || key == "catch" || key == "finally" {
+    if objOwnIndex(st, o, key) < 0 {
+        // builtin methods are dispatched by name, not stored as properties, so
+        // reading one as a value needs a bound method synthesised here
+        if st.objects[o].promiseState >= 0 && (key == "then" || key == "catch" || key == "finally") {
+            return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+        }
+        if (st.objects[o].isMap || st.objects[o].isSet) && isMapSetMethodName(key) {
+            return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+        }
+        if st.objects[o].regexId >= 0 && isRegexMethodName(key) {
+            return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+        }
+        if st.objects[o].isArrayBuffer && (key == "slice" || key == "resize" || key == "transfer") {
+            return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+        }
+        if st.objects[o].isArray && isArrayMethod(key) {
+            return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+        }
+        if st.objects[o].isError && (key == "toString" || key == "valueOf") {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
     }
@@ -484,6 +501,13 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             if st.objects[o].isMap || st.objects[o].isSet {
                 return mapMethod(prog, o, name, args, st)
             }
+            // a bound regex/buffer/typed-array method re-dispatches through here,
+            // so these must be reachable or an extracted method silently does
+            // nothing (no throw, no result — the process just unwinds)
+            if st.objects[o].regexId >= 0 && isRegexMethodName(name) {
+                return regexMethod(st, o, name, args)
+            }
+
             if name == "hasOwnProperty" {
                 var key = ""
                 if args.len() > 0 {
@@ -2952,10 +2976,13 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 }
                 JSValue.Str(s) => {
                     if name == "length" {
-                        return JSValue.Number(s.len() as f64)
+                        return JSValue.Number(utf16Length(s) as f64)
                     }
                     if name == "description" && isSymbolStr(s) {
                         return JSValue.Str(symbolDescription(s))
+                    }
+                    if isStringMethodName(name) {
+                        return makeBoundMethod(st, JSValue.Str(s.clone()), name.clone())
                     }
                     return JSValue.Undefined
                 }
@@ -3359,10 +3386,13 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 }
                 JSValue.Str(s) => {
                     if name == "length" {
-                        return JSValue.Number(s.len() as f64)
+                        return JSValue.Number(utf16Length(s) as f64)
                     }
                     if name == "description" && isSymbolStr(s) {
                         return JSValue.Str(symbolDescription(s))
+                    }
+                    if isStringMethodName(name) {
+                        return makeBoundMethod(st, JSValue.Str(s.clone()), name.clone())
                     }
                     return JSValue.Undefined
                 }
@@ -4250,6 +4280,24 @@ fn isBoundThisSet(st: &Interp, o: i64): bool {
             return true
         }
     }
+}
+
+// Builtin methods dispatch natively by name; they are not properties. Reading one
+// as a VALUE therefore used to yield undefined even though calling it worked, which
+// breaks two very common patterns: feature detection (`typeof x.test === "function"`)
+// and method extraction (`Array.prototype.slice.call(args)`). These predicates say
+// whether a receiver answers to a name, so the member paths can hand back a bound
+// method instead of undefined.
+fn isStringMethodName(n: &string): bool {
+    return n == "charAt" || n == "charCodeAt" || n == "codePointAt" || n == "at" || n == "indexOf" || n == "lastIndexOf" || n == "includes" || n == "startsWith" || n == "endsWith" || n == "slice" || n == "substring" || n == "substr" || n == "split" || n == "replace" || n == "replaceAll" || n == "toUpperCase" || n == "toLowerCase" || n == "trim" || n == "trimStart" || n == "trimEnd" || n == "trimLeft" || n == "trimRight" || n == "padStart" || n == "padEnd" || n == "repeat" || n == "concat" || n == "localeCompare" || n == "normalize" || n == "match" || n == "toString" || n == "valueOf"
+}
+
+fn isMapSetMethodName(n: &string): bool {
+    return n == "get" || n == "set" || n == "add" || n == "has" || n == "delete" || n == "clear" || n == "forEach" || n == "keys" || n == "values" || n == "entries" || n == "isSupersetOf" || n == "isSubsetOf" || n == "isDisjointFrom" || n == "union" || n == "intersection" || n == "difference"
+}
+
+fn isRegexMethodName(n: &string): bool {
+    return n == "test" || n == "exec" || n == "toString"
 }
 
 fn dateProtoMethodNames(): Vec<string> {
