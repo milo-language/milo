@@ -9,7 +9,7 @@ update-when: a lane lands (update the score, delete the lane) or the sweep harne
 
 Working plan for driving `scripts/quickjs-sweep.ts` toward 100%. Written for agents
 picking up individual lanes; each lane is independent and lists exact anchors.
-Current: **69/149 cases (46.3%)**. Delete lanes here as they land.
+Current: **70/149 cases (47.0%)**. Delete lanes here as they land.
 
 Engine-level spec builtins now live in `lib/engine-prelude.js` (loaded by
 `milojs-engine.milo` into the shared `Prog` before the entry runs) — distinct from
@@ -103,10 +103,32 @@ except where noted. Ranked by how often real code hits them:
 3. **lookbehind `(?<=)` / `(?<!)`** — needs the VM to report a match END position
    so the inner match can be required to finish exactly at `sp`; `reRun` returns
    only a bool today. That signature change is the whole job.
-4. **backreferences `\1`** — needs the VM to read a capture's text mid-match.
+4. ~~**backreferences `\1`**~~ DONE (12c5b74): `RE_BACKREF` re-reads the captured
+   span from `saves` and compares it (honoring `flagI`). An unmatched group
+   backreferences as the empty string, per spec.
 5. **named groups `(?<name>)` + `.groups`** — parse side is easy; the match result
-   needs a `groups` object built from a name→index table on the Regex.
-6. **`s` (dotAll) flag** — `RE_ANY` hardcodes "not newline"; needs a flag check.
+   needs a `groups` object built from a name→index table on the Regex. Note the
+   result-building half lives in `eval.milo` (`buildMatchArray`), not `regex.milo`.
+6. ~~**`s` (dotAll) flag**~~ DONE (12c5b74): `RE_ANY` now checks `flagS`.
+
+## Typed arrays — BUILT BUT UNCOMMITTED (see note)
+
+`ArrayBuffer` + `Uint8Array`/`Int8Array`/`Uint8ClampedArray`/`Uint16Array`/
+`Int16Array`/`Uint32Array`/`Int32Array` are implemented and verified (24 assertions:
+wrapping, sign extension, clamping, shared buffers, little-endian multi-byte reads,
+views over an existing buffer). Storage is `JSObj.bytes` on the buffer plus
+`taBuf`/`taKind`/`taOffset`/`taLen` on each view; `taLoad`/`taStore` in
+`runtime.milo` are the codecs; indexing and `length`/`byteLength`/`buffer` hang off
+`getMember`/`setMember`.
+
+`Float32Array`/`Float64Array` deliberately **throw** "not implemented": storing an
+f64 needs a bit-level reinterpret and Milo has no safe primitive for it (only
+unsafe pointer casts). A silently-wrong float array is worse than a missing one.
+
+The diff sits in `eval.milo` + `runtime.milo`, entangled with another agent's
+concurrent `getFuncStatics`/`funcEnv` change; committing it would sweep their work,
+and committing only my files would break main (their `eval.milo` calls `funcEnv`
+from their `value.milo`). Backed up at `scratchpad/typedarrays.patch`.
 
 Still open, found the same way:
 - error objects have no `.constructor`, so `e.constructor.name` throws.
