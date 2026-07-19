@@ -123,8 +123,18 @@ ServerResponse.prototype.writeHead = function (status, reasonOrHeaders, maybeHea
   }
   return this;
 };
-ServerResponse.prototype.write = function (chunk) {
+// Node internal that compression and other middleware call to force the status
+// line + headers out before streaming a body. There is no header/body split
+// here (end() writes the whole response at once), so it only needs to exist.
+ServerResponse.prototype._implicitHeader = function () {
+  this.headersSent = true;
+};
+ServerResponse.prototype.flushHeaders = function () { this.headersSent = true; };
+ServerResponse.prototype.writeContinue = function () {};
+ServerResponse.prototype.write = function (chunk, encoding, cb) {
+  if (typeof encoding === 'function') { cb = encoding; }
   this._pending = (this._pending || '') + (chunk == null ? '' : String(chunk));
+  if (typeof cb === 'function') cb();
   return true;
 };
 ServerResponse.prototype.end = function (chunk, encoding, cb) {
