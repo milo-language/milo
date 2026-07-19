@@ -336,13 +336,35 @@ fn arrayIterNext(st: &mut Interp, it: i64): JSValue {
 fn makeTypedArray(st: &mut Interp, kind: i64, args: &Vec<JSValue>): JSValue {
     let w = taWidth(kind)
     var bufH: i64 = -1
+    var viewOffset: i64 = 0
     var len: i64 = 0
     var seed: Vec<f64> = Vec.new()
     if args.len() > 0 {
         let h = objHandle(args[0])
         if h >= 0 && st.objects[h].isArrayBuffer {
             bufH = h
-            len = st.objects[h].bytes.len() / w
+            // new T(buffer, byteOffset, length) — a window into the buffer, not
+            // necessarily the whole thing
+            var boff: i64 = 0
+            if args.len() > 1 {
+                boff = toNum(args[1]) as i64
+                if boff < 0 {
+                    boff = 0
+                }
+            }
+            let avail = st.objects[h].bytes.len() - boff
+            var count = avail / w
+            if count < 0 {
+                count = 0
+            }
+            if args.len() > 2 {
+                let want = toNum(args[2]) as i64
+                if want >= 0 && want < count {
+                    count = want
+                }
+            }
+            viewOffset = boff
+            len = count
         } else if h >= 0 && st.objects[h].isArray {
             var i: i64 = 0
             while i < arrLen(st, h) {
@@ -380,7 +402,7 @@ fn makeTypedArray(st: &mut Interp, kind: i64, args: &Vec<JSValue>): JSValue {
     let view = newObject(st)
     st.objects[view].taBuf = bufH
     st.objects[view].taKind = kind
-    st.objects[view].taOffset = 0
+    st.objects[view].taOffset = viewOffset
     st.objects[view].taLen = len
     var k: i64 = 0
     while k < seed.len() {
