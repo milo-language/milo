@@ -5472,6 +5472,17 @@ fn primitiveMethod(name: &string, recv: &JSValue, args: &Vec<JSValue>): JSValue 
     if name == "valueOf" {
         return cloneValue(recv)
     }
+    // symbols are interned strings, so a direct sym.toString() lands here before
+    // the builtin-method path and would otherwise leak the internal form
+    match recv {
+        JSValue.Str(sv) => {
+            if isSymbolStr(sv) && name == "toString" {
+                return JSValue.Str(symbolDisplay(sv))
+            }
+        }
+        _ => {
+        }
+    }
     if name == "toFixed" || name == "toPrecision" {
         var digits: i64 = 0
         if args.len() > 0 {
