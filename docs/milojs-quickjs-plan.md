@@ -66,8 +66,23 @@ doesn't move the score):
   appended `currentModule(st)`, so `e.message` never equalled the spec text any
   comparison expects. Dropped for spec-defined messages.
 
+- ~~no `globalThis`, no `Reflect`~~ (1f4cf62): `globalThis` is a real object with
+  an `isGlobal` flag (mirroring the existing `isEnv` pattern) whose reads and
+  writes route to the global scope's bindings — so `globalThis.x = 1; x` and
+  `var y = 2; globalThis.y` both work, rather than being a detached bag.
+  `Reflect` is a prelude object; every operation is a thin wrapper over something
+  the evaluator already had (`new target(...args)` works, so even `construct` is
+  expressible). `Proxy` is deliberately NOT shimmed — see below.
+
 Still open, found the same way:
 - error objects have no `.constructor`, so `e.constructor.name` throws.
+- **`Proxy` cannot be a prelude shim.** Intercepting every property get/set needs
+  a trap check in `getMemberDyn`/`setMember`, i.e. evaluator support. It is the
+  bulk of what remains in the `not a constructor` bucket, together with
+  `ArrayBuffer`/typed arrays/`DataView` (a genuinely large lane: `bug492` alone is
+  6 cases, plus `test_typed_array`).
+- `globalThis` does not enumerate: `Object.keys(globalThis)` is empty, since the
+  global scope's bindings are not materialised as properties.
 - **no sparse arrays**: `delete arr[1]` stores `undefined` rather than a hole, so
   `1 in arr` stays true (`bug1430.js`). A real fix needs a `Hole` variant in
   `JSValue`, threaded through every array op — faking it via "undefined means
