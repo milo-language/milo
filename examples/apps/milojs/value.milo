@@ -309,7 +309,17 @@ fn roundHalfAwayFromZero(x: f64): i64 {
 
 // parseInt/parseFloat: read the longest valid numeric prefix, NaN if none.
 // Unlike toNum, trailing garbage is ignored rather than poisoning the result.
+// parseInt auto-detects an 0x prefix; parseFloat must NOT (parseFloat("0x1234")
+// is 0, because it stops at the 'x'). autoHex distinguishes the two callers.
 fn jsParsePrefixNum(s: &string, radix: i64): f64 {
+    return jsParsePrefixNumEx(s, radix, true)
+}
+
+fn jsParseFloatPrefix(s: &string): f64 {
+    return jsParsePrefixNumEx(s, 10, false)
+}
+
+fn jsParsePrefixNumEx(s: &string, radix: i64, autoHex: bool): f64 {
     var i: i64 = 0
     let n = s.len()
     while i < n && (s[i] == ' ' || s[i] == 9 as u8 || s[i] == 10 as u8 || s[i] == 13 as u8) {
@@ -320,9 +330,30 @@ fn jsParsePrefixNum(s: &string, radix: i64): f64 {
         neg = s[i] == '-'
         i = i + 1
     }
+    if i < n && s[i] == 'I' {
+        var want = "Infinity"
+        var k: i64 = 0
+        var hit = i + want.len() <= n
+        while hit && k < want.len() {
+            if s[i + k] != want[k] {
+                hit = false
+            }
+            k = k + 1
+        }
+        if hit {
+            if neg {
+                return 0.0 - jsInf()
+            }
+            return jsInf()
+        }
+    }
+    if !autoHex {
+        // the parseFloat caller: exponents allowed, no 0x auto-detect
+        return jsParseDigitsEx(s, i, radix, neg, true)
+    }
     if radix == 16 && i + 1 < n && s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X') {
         i = i + 2
-    } else if radix == 10 && i + 1 < n && s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X') {
+    } else if autoHex && radix == 10 && i + 1 < n && s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X') {
         // an 0x prefix forces hex even when no radix was given
         i = i + 2
         return jsParseDigits(s, i, 16, neg)
@@ -330,7 +361,13 @@ fn jsParsePrefixNum(s: &string, radix: i64): f64 {
     return jsParseDigits(s, i, radix, neg)
 }
 
+// allowExp: parseFloat and ToNumber accept 1e3; parseInt does NOT (parseInt("12e3")
+// is 12, stopping at the 'e').
 fn jsParseDigits(s: &string, start: i64, radix: i64, neg: bool): f64 {
+    return jsParseDigitsEx(s, start, radix, neg, false)
+}
+
+fn jsParseDigitsEx(s: &string, start: i64, radix: i64, neg: bool, allowExp: bool): f64 {
     var i = start
     let n = s.len()
     var acc: f64 = 0.0
@@ -350,6 +387,36 @@ fn jsParseDigits(s: &string, start: i64, radix: i64, neg: bool): f64 {
         if c == '.' && radix == 10 && !seenDot {
             seenDot = true
             i = i + 1
+        } else if (c == 'e' || c == 'E') && radix == 10 && any && allowExp {
+            // scientific notation: parseFloat("123.2e3") is 123200, not 123.2
+            var j = i + 1
+            var expNeg = false
+            if j < n && (s[j] == '+' || s[j] == '-') {
+                expNeg = s[j] == '-'
+                j = j + 1
+            }
+            var expVal: i64 = 0
+            var expAny = false
+            while j < n && s[j] >= '0' && s[j] <= '9' {
+                expVal = expVal * 10 + ((s[j] - '0') as i64)
+                expAny = true
+                j = j + 1
+            }
+            if expAny {
+                var k: i64 = 0
+                while k < expVal {
+                    if expNeg {
+                        acc = acc / 10.0
+                    } else {
+                        acc = acc * 10.0
+                    }
+                    k = k + 1
+                }
+                i = j
+            } else {
+                // a bare trailing 'e' is not part of the number
+                i = n
+            }
         } else if d < 0 || d >= radix {
             i = n
         } else {
@@ -568,6 +635,21 @@ fn funcHandle(v: &JSValue): i64 {
     }
 }
 
+// null or undefined — the nullish set that a `?.` link short-circuits on.
+fn isNullish(v: &JSValue): bool {
+    match v {
+        JSValue.Undefined => {
+            return true
+        }
+        JSValue.Null => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
 // The closure env (scope index) of a function value, or -1 for non-functions.
 // Function statics are keyed by (fnIdx, env) so per-call closures stay distinct.
 fn funcEnv(v: &JSValue): i64 {
@@ -579,6 +661,181 @@ fn funcEnv(v: &JSValue): i64 {
             return -1
         }
     }
+}
+
+// ToNumber on a string. Surrounding whitespace is ignored ("  12  " is 12, and
+// an all-whitespace string is 0), and the 0x/0o/0b radix prefixes are honored —
+// none of which plain parseFloat does.
+fn strToNum(s: &string): f64 {
+    var a: i64 = 0
+    var b = s.len()
+    while a < b && isJsWs(s[a]) {
+        a = a + 1
+    }
+    while b > a && isJsWs(s[b - 1]) {
+        b = b - 1
+    }
+    if a >= b {
+        return 0.0
+    }
+    var t = String.withCapacity(b - a)
+    var i = a
+    while i < b {
+        t.push(s[i])
+        i = i + 1
+    }
+    // radix prefixes, optionally signed
+    var neg = false
+    var p: i64 = 0
+    if t.len() > 0 && (t[0] == '+' || t[0] == '-') {
+        neg = t[0] == '-'
+        p = 1
+    }
+    if t.len() > p + 2 && t[p] == '0' {
+        let c = t[p + 1]
+        var radix: i64 = 0
+        if c == 'x' || c == 'X' {
+            radix = 16
+        } else if c == 'o' || c == 'O' {
+            radix = 8
+        } else if c == 'b' || c == 'B' {
+            radix = 2
+        }
+        if radix > 0 {
+            var acc: f64 = 0.0
+            var j = p + 2
+            var any = false
+            while j < t.len() {
+                let d = hexDigitVal(t[j])
+                if d < 0 || d >= radix {
+                    return jsNan()
+                }
+                acc = acc * (radix as f64) + (d as f64)
+                any = true
+                j = j + 1
+            }
+            if !any {
+                return jsNan()
+            }
+            if neg {
+                return 0.0 - acc
+            }
+            return acc
+        }
+    }
+    if !isNumericLiteral(t) {
+        return jsNan()
+    }
+    // the underlying parseFloat does not know the Infinity keyword
+    if startsWithInfinity(t) {
+        if neg {
+            return 0.0 - jsInf()
+        }
+        return jsInf()
+    }
+    match parseFloat(t) {
+        Option.Some(n) => {
+            return n
+        }
+        Option.None => {
+            return jsNan()
+        }
+    }
+}
+
+// ToNumber requires the ENTIRE string to be a numeric literal — unlike
+// parseFloat, which happily stops at the first bad character. Without this
+// Number("12abc") would be 12 instead of NaN.
+fn startsWithInfinity(t: &string): bool {
+    var i: i64 = 0
+    if i < t.len() && (t[i] == '+' || t[i] == '-') {
+        i = i + 1
+    }
+    var want = "Infinity"
+    if t.len() - i != want.len() {
+        return false
+    }
+    var k: i64 = 0
+    while k < want.len() {
+        if t[i + k] != want[k] {
+            return false
+        }
+        k = k + 1
+    }
+    return true
+}
+
+fn isNumericLiteral(t: &string): bool {
+    var i: i64 = 0
+    let n = t.len()
+    if i < n && (t[i] == '+' || t[i] == '-') {
+        i = i + 1
+    }
+    if i >= n {
+        return false
+    }
+    // the Infinity keyword is a valid literal here
+    if t[i] == 'I' {
+        var want = "Infinity"
+        if n - i != want.len() {
+            return false
+        }
+        var k: i64 = 0
+        while k < want.len() {
+            if t[i + k] != want[k] {
+                return false
+            }
+            k = k + 1
+        }
+        return true
+    }
+    var digits = false
+    while i < n && t[i] >= '0' && t[i] <= '9' {
+        digits = true
+        i = i + 1
+    }
+    if i < n && t[i] == '.' {
+        i = i + 1
+        while i < n && t[i] >= '0' && t[i] <= '9' {
+            digits = true
+            i = i + 1
+        }
+    }
+    if !digits {
+        return false
+    }
+    if i < n && (t[i] == 'e' || t[i] == 'E') {
+        i = i + 1
+        if i < n && (t[i] == '+' || t[i] == '-') {
+            i = i + 1
+        }
+        var expDigits = false
+        while i < n && t[i] >= '0' && t[i] <= '9' {
+            expDigits = true
+            i = i + 1
+        }
+        if !expDigits {
+            return false
+        }
+    }
+    return i == n
+}
+
+fn isJsWs(c: u8): bool {
+    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8 || c == 12 as u8 || c == 11 as u8
+}
+
+fn hexDigitVal(c: u8): i64 {
+    if c >= '0' && c <= '9' {
+        return (c - '0') as i64
+    }
+    if c >= 'a' && c <= 'f' {
+        return (c - 'a') as i64 + 10
+    }
+    if c >= 'A' && c <= 'F' {
+        return (c - 'A') as i64 + 10
+    }
+    return -1
 }
 
 fn toNum(v: &JSValue): f64 {
@@ -599,17 +856,7 @@ fn toNum(v: &JSValue): f64 {
             return n
         }
         JSValue.Str(s) => {
-            if s.len() == 0 {
-                return 0.0
-            }
-            match parseFloat(s.clone()) {
-                Option.Some(n) => {
-                    return n
-                }
-                Option.None => {
-                    return jsNan()
-                }
-            }
+            return strToNum(s)
         }
         JSValue.Func(_f, _env) => {
             return jsNan()
