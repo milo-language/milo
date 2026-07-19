@@ -28,6 +28,9 @@ enum ReNode {
     Quest(i64, bool),
     Repeat(i64, i64, i64, bool),
     Group(i64, i64),
+    // (?=inner) / (?!inner): match inner at the current position without
+    // consuming input. `negated` inverts the result.
+    Look(i64, bool),
     Empty,
 }
 
@@ -68,6 +71,11 @@ let RE_BOL: i32 = 7
 let RE_EOL: i32 = 8
 let RE_WORDB: i32 = 9
 let RE_NWORDB: i32 = 10
+// zero-width assertion: a = pc of the inner sub-program, b = 1 when negated.
+// The inner program is compiled inline after a jump so normal flow skips it.
+let RE_LOOK: i32 = 11
+// terminator of a lookahead sub-program — succeeds without consuming
+let RE_LOOKEND: i32 = 12
 
 struct ReParse {
     pat: Vec<u8>,
@@ -210,6 +218,14 @@ fn reParseAtom(p: &mut ReParse): i64 {
             capturing = false
             capIdx = -1
             p.pos = p.pos + 2
+        } else if p.pos + 1 < p.pat.len() && p.pat[p.pos] == '?' && (p.pat[p.pos + 1] == '=' || p.pat[p.pos + 1] == '!') {
+            let negated = p.pat[p.pos + 1] == '!'
+            p.pos = p.pos + 2
+            let body = reParseAlt(p)
+            if p.pos < p.pat.len() && p.pat[p.pos] == ')' {
+                p.pos = p.pos + 1
+            }
+            return reAddNode(p, ReNode.Look(body, negated))
         }
         if capturing {
             p.ngroup = p.ngroup + 1
@@ -524,6 +540,20 @@ fn reCompileNode(p: &ReParse, idx: i64, prog: &mut Vec<ReInst>) {
                 }
             }
         }
+        ReNode.Look(child, negated) => {
+            // layout: JMP after / <inner> LOOKEND / LOOK(innerStart, neg)
+            // the jump keeps the inner program out of the normal instruction flow
+            let jmp = reEmit(prog, RE_JMP, 0, 0)
+            let innerStart = prog.len()
+            reCompileNode(p, child, prog)
+            reEmit(prog, RE_LOOKEND, 0, 0)
+            prog[jmp].a = prog.len()
+            var negFlag: i64 = 0
+            if negated {
+                negFlag = 1
+            }
+            reEmit(prog, RE_LOOK, innerStart, negFlag)
+        }
         ReNode.Group(child, capIdx) => {
             if capIdx >= 0 {
                 reEmit(prog, RE_SAVE, 2 * capIdx, 0)
@@ -576,6 +606,9 @@ fn reCloneNode(n: &ReNode): ReNode {
         }
         ReNode.Repeat(c, mn, mx, g) => {
             return ReNode.Repeat(c, mn, mx, g)
+        }
+        ReNode.Look(c, neg) => {
+            return ReNode.Look(c, neg)
         }
         ReNode.Group(c, ci) => {
             return ReNode.Group(c, ci)
@@ -700,6 +733,37 @@ fn reRun(re: &Regex, pc: i64, s: &string, sp: i64, saves: &mut Vec<i64>): bool {
     }
     if op == RE_JMP {
         return reRun(re, inst.a, s, sp, saves)
+    }
+    if op == RE_LOOKEND {
+        // the inner program matched; unwind without consuming
+        return true
+    }
+    if op == RE_LOOK {
+        // captures set inside a failed (or negative) lookahead must not leak out
+        var snapshot: Vec<i64> = Vec.new()
+        var si: i64 = 0
+        while si < saves.len() {
+            snapshot.push(saves[si])
+            si = si + 1
+        }
+        let hit = reRun(re, inst.a, s, sp, saves)
+        let wantMiss = inst.b == 1
+        if hit == wantMiss {
+            var r: i64 = 0
+            while r < snapshot.len() {
+                saves[r] = snapshot[r]
+                r = r + 1
+            }
+            return false
+        }
+        if wantMiss {
+            var r2: i64 = 0
+            while r2 < snapshot.len() {
+                saves[r2] = snapshot[r2]
+                r2 = r2 + 1
+            }
+        }
+        return reRun(re, pc + 1, s, sp, saves)
     }
     if op == RE_SPLIT {
         if reRun(re, inst.a, s, sp, saves) {
