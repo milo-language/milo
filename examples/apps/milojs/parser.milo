@@ -1700,9 +1700,22 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_RBRACE)
     p.curClass = savedClass
     // a class with no constructor still needs a callable function to be the
-    // class value, so synthesise an empty one
-    var emptyBody: Vec<i64> = Vec.new()
-    prog.blocks.push(emptyBody)
+    // class value. For a derived class the default constructor forwards to the
+    // parent: `constructor(...args) { super(...args) }`. Without this, a subclass
+    // that only inherits (ZodString extends ZodType) never runs the base
+    // constructor and its instance fields (this._def) stay unset.
+    var defaultBody: Vec<i64> = Vec.new()
+    if superName.len() > 0 {
+        let superRef = addExpr(prog, Expr.Ident("__super$" + name.clone()))
+        let argsRef = addExpr(prog, Expr.Ident("arguments"))
+        let spread = addExpr(prog, Expr.Spread(argsRef))
+        var callArgs: Vec<i64> = Vec.new()
+        callArgs.push(spread)
+        prog.argLists.push(callArgs)
+        let superCall = addExpr(prog, Expr.Call(superRef, prog.argLists.len() - 1))
+        defaultBody.push(addStmt(prog, Stmt.ExprStmt(superCall)))
+    }
+    prog.blocks.push(defaultBody)
     var noParams: Vec<string> = Vec.new()
     prog.funcs.push(FuncDef {
         name: name.clone(), params: noParams, body: prog.blocks.len() - 1, isArrow: false, isAsync: false, restFrom: -1, isGenerator: false
