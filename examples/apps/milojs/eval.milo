@@ -208,6 +208,13 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
         if st.objects[o].isError && (key == "toString" || key == "valueOf") {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
+        if st.objects[o].isDate {
+            for dn in dateProtoMethodNames() {
+                if dn == key {
+                    return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+                }
+            }
+        }
     }
     // arr[Symbol.iterator] — a bound `values`, so arr[Symbol.iterator]() yields
     // the same iterator for-of drives. Lives here rather than in getMember
@@ -2990,6 +2997,15 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     if name == "prototype" {
                         return JSValue.Obj(getFuncProto(st, fIdx))
                     }
+                    // fn.call / fn.apply / fn.bind as VALUES. They already work
+                    // when invoked directly; this is the extraction form real
+                    // bundles use (var slice = Array.prototype.slice; slice.call).
+                    if name == "call" || name == "apply" || name == "bind" {
+                        let statics0 = getFuncStatics(st, fIdx, fe)
+                        if objOwnIndex(st, statics0, name) < 0 {
+                            return makeBoundMethod(st, JSValue.Func(fIdx, fe), name.clone())
+                        }
+                    }
                     if name == "length" {
                         return JSValue.Number(funcArity(prog, fIdx) as f64)
                     }
@@ -3036,6 +3052,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                         return JSValue.Obj(getFuncProto(st, fIdx))
                     }
                     let statics = getFuncStatics(st, fIdx, fe)
+                    if (key == "call" || key == "apply" || key == "bind") && objOwnIndex(st, statics, key) < 0 {
+                        return makeBoundMethod(st, JSValue.Func(fIdx, fe), key.clone())
+                    }
                     return getMember(st, statics, key)
                 }
                 JSValue.Native(nid) => {
@@ -3043,6 +3062,17 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     return getMember(st, bag, key)
                 }
                 JSValue.Str(s) => {
+                    // s["slice"] is the METHOD, not s[NaN] — asArrayIndex rejects
+                    // non-numeric keys, which toNum would have coerced to 0
+                    if asArrayIndex(key) < 0 {
+                        if key == "length" {
+                            return JSValue.Number(utf16Length(s) as f64)
+                        }
+                        if isStringMethodName(key) {
+                            return makeBoundMethod(st, JSValue.Str(s.clone()), key.clone())
+                        }
+                        return JSValue.Undefined
+                    }
                     // s[i] → a single-character string (or undefined out of range)
                     let i = toNum(kv) as i64
                     if i >= 0 && i < s.len() {
