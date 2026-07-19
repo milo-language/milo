@@ -99,6 +99,23 @@ fn setupNodeGlobals(st: &mut Interp, entryPath: string) {
     objSet(st, proc, "emitWarning", JSValue.Native(NATIVE_NOOP))
     objSet(st, proc, "pid", JSValue.Number(getpid() as f64))
 
+    // Libraries probe process.stdout/stderr for .fd (tty.isatty) and .isTTY to
+    // decide on colour; absent them they crash reading .fd of undefined.
+    let stdoutObj = newObject(st)
+    objSet(st, stdoutObj, "fd", JSValue.Number(1.0))
+    objSet(st, stdoutObj, "isTTY", JSValue.Bool(false))
+    objSet(st, stdoutObj, "write", JSValue.Native(NATIVE_CONSOLE_LOG))
+    objSet(st, proc, "stdout", JSValue.Obj(stdoutObj))
+    let stderrObj = newObject(st)
+    objSet(st, stderrObj, "fd", JSValue.Number(2.0))
+    objSet(st, stderrObj, "isTTY", JSValue.Bool(false))
+    objSet(st, stderrObj, "write", JSValue.Native(NATIVE_CONSOLE_LOG))
+    objSet(st, proc, "stderr", JSValue.Obj(stderrObj))
+    let stdinObj = newObject(st)
+    objSet(st, stdinObj, "fd", JSValue.Number(0.0))
+    objSet(st, stdinObj, "isTTY", JSValue.Bool(false))
+    objSet(st, proc, "stdin", JSValue.Obj(stdinObj))
+
     scopeDefine(st, 0, "process", JSValue.Obj(proc))
 
     // `global` mirrors the global object; a bare {} for now (getters would need

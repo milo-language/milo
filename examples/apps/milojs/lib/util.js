@@ -91,6 +91,35 @@ function deprecate(fn, msg) {
   return fn;
 }
 
+// Node's callback->Promise adapter. Honors util.promisify.custom, which is how
+// child_process.exec advertises its {stdout,stderr} shape instead of the plain
+// single-value callback contract.
+function promisify(original) {
+  if (typeof original !== 'function') {
+    throw new TypeError('The "original" argument must be of type function');
+  }
+  var custom = original[promisify.custom];
+  if (custom) {
+    if (typeof custom !== 'function') {
+      throw new TypeError('The "promisify.custom" property must be of type function');
+    }
+    return custom;
+  }
+  function fn() {
+    var args = Array.prototype.slice.call(arguments);
+    var self = this;
+    return new Promise(function (resolve, reject) {
+      args.push(function (err, value) {
+        if (err) { reject(err); } else { resolve(value); }
+      });
+      original.apply(self, args);
+    });
+  }
+  return fn;
+}
+promisify.custom = '__util_promisify_custom__';
+
+exports.promisify = promisify;
 exports.inherits = inherits;
 exports.inspect = inspect;
 exports.format = format;
