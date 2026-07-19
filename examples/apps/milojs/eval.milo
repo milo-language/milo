@@ -236,6 +236,9 @@ fn makeBoundMethod(st: &mut Interp, recv: JSValue, name: string): JSValue {
 fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSValue>, st: &mut Interp): JSValue {
     match recv {
         JSValue.Str(sv) => {
+            if isSymbolStr(sv) && name == "toString" {
+                return JSValue.Str(symbolDisplay(sv))
+            }
             return stringMethod(name, sv, args, st)
         }
         JSValue.Obj(o) => {
@@ -702,6 +705,17 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     if id == NATIVE_STRING {
         if argVals.len() == 0 {
             return JSValue.Str("")
+        }
+        // String(sym) is the one conversion the spec allows for a symbol, and it
+        // must show Symbol(desc) rather than the internal tagged string
+        match argVals[0] {
+            JSValue.Str(sv) => {
+                if isSymbolStr(sv) {
+                    return JSValue.Str(symbolDisplay(sv))
+                }
+            }
+            _ => {
+            }
         }
         return JSValue.Str(toStr(argVals[0]))
     }
@@ -2305,6 +2319,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     if name == "length" {
                         return JSValue.Number(s.len() as f64)
                     }
+                    if name == "description" && isSymbolStr(s) {
+                        return JSValue.Str(symbolDescription(s))
+                    }
                     return JSValue.Undefined
                 }
                 JSValue.Func(fIdx, _e) => {
@@ -2643,6 +2660,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     if name == "length" {
                         return JSValue.Number(s.len() as f64)
                     }
+                    if name == "description" && isSymbolStr(s) {
+                        return JSValue.Str(symbolDescription(s))
+                    }
                     return JSValue.Undefined
                 }
                 _ => {
@@ -2949,6 +2969,45 @@ fn isSymbolValue(v: &JSValue): bool {
             return false
         }
     }
+}
+
+// Symbol test on the raw string. The JSValue-level isSymbolValue cannot be used
+// from inside a `match` arm on that same value: matching moves it, so reading the
+// original binding afterwards sees a zeroed slot and the test silently fails.
+fn isSymbolStr(s: &string): bool {
+    if s.len() < 6 {
+        return false
+    }
+    return s[0] == '@' && s[1] == '@' && s[2] == 's' && s[3] == 'y' && s[4] == 'm' && s[5] == ':'
+}
+
+// The description inside "@@sym:<desc>:<counter>". The counter is what makes two
+// same-description symbols distinct, so it is stripped from the LAST colon —
+// a description may itself contain colons.
+fn symbolDescription(s: &string): string {
+    var cut = s.len()
+    var i = s.len() - 1
+    var found = false
+    while i >= 6 && !found {
+        if s[i] == ':' {
+            cut = i
+            found = true
+        }
+        i = i - 1
+    }
+    var out = String.withCapacity(cut)
+    var j: i64 = 6
+    while j < cut {
+        out.push(s[j])
+        j = j + 1
+    }
+    return out
+}
+
+// What a symbol shows as: Symbol(desc). Without this the internal representation
+// leaks out of String(sym) and sym.toString().
+fn symbolDisplay(s: &string): string {
+    return "Symbol(" + symbolDescription(s) + ")"
 }
 
 // Drain every queued microtask. Microtasks may enqueue more, which is correct:
