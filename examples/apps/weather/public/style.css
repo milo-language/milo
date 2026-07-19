@@ -443,12 +443,12 @@ svg.sug-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.15rem;
+  padding: 0.2rem;
   background: none;
   border: none;
   color: inherit;
   cursor: pointer;
-  opacity: 0.75;
+  opacity: 0.9;
   transition:
     opacity 0.15s,
     transform 0.15s;
@@ -460,8 +460,8 @@ svg.sug-icon {
 }
 
 .star {
-  width: 1rem;
-  height: 1rem;
+  width: 1.25rem;
+  height: 1.25rem;
   display: block;
   fill: none;
   stroke: currentColor;

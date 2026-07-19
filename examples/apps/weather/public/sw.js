@@ -2,7 +2,7 @@
 //
 // Bump CACHE whenever a shell asset changes — the binary embeds these files at
 // build time, so a deploy with a stale cache name would keep serving the old UI.
-var CACHE = "weather-v1";
+var CACHE = "weather-v2";
 
 // Relative to the SW's scope, so this works under nginx's /weather/ subpath.
 var SHELL = [
@@ -78,23 +78,24 @@ self.addEventListener("fetch", function (e) {
     return;
   }
 
-  // Shell: cache first, revalidating in the background.
+  // Shell: network first, falling back to cache when offline.
+  //
+  // Cache-first would serve a stale UI for one full load after every deploy —
+  // which is exactly how a shipped feature appears "missing". The assets have
+  // no content hash to bust, so freshness has to come from the request.
   e.respondWith(
-    caches.match(req).then(function (hit) {
-      var net = fetch(req)
-        .then(function (res) {
-          if (res && res.status === 200) {
-            var copy = res.clone();
-            caches.open(CACHE).then(function (c) {
-              c.put(req, copy);
-            });
-          }
-          return res;
-        })
-        .catch(function () {
-          return hit;
-        });
-      return hit || net;
-    }),
+    fetch(req)
+      .then(function (res) {
+        if (res && res.status === 200) {
+          var copy = res.clone();
+          caches.open(CACHE).then(function (c) {
+            c.put(req, copy);
+          });
+        }
+        return res;
+      })
+      .catch(function () {
+        return caches.match(req);
+      }),
   );
 });

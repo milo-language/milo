@@ -114,17 +114,17 @@ fn indexHandler(ctx: &mut Context): Response {
 }
 
 fn styleHandler(ctx: &mut Context): Response {
-    ctx.setHeader("Cache-Control", "public, max-age=3600")
+    ctx.setHeader("Cache-Control", "no-cache")
     return Response.Status(200, "text/css; charset=utf-8", embedFile("public/style.css"))
 }
 
 fn scriptHandler(ctx: &mut Context): Response {
-    ctx.setHeader("Cache-Control", "public, max-age=3600")
+    ctx.setHeader("Cache-Control", "no-cache")
     return Response.Status(200, "application/javascript; charset=utf-8", embedFile("public/app.js"))
 }
 
 fn manifestHandler(ctx: &mut Context): Response {
-    ctx.setHeader("Cache-Control", "public, max-age=3600")
+    ctx.setHeader("Cache-Control", "no-cache")
     return Response.Status(200, "application/manifest+json; charset=utf-8", embedFile("public/manifest.webmanifest"))
 }
 
