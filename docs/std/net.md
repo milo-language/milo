@@ -2,10 +2,18 @@
 
 ## std/net
 
-### `Drop.drop`
+### `decodeChunked`
 
 ```milo
-fn Drop.drop(self: &mut Drop): void
+fn decodeChunked(rawBody: &string): string
+```
+
+_Undocumented._
+
+### `doFetch`
+
+```milo
+fn doFetch(url: string, opts: FetchOptions): Result<Response, NetError>
 ```
 
 _Undocumented._
@@ -26,18 +34,106 @@ fn Drop.drop(self: &mut Drop): void
 
 _Undocumented._
 
-### `Drop.ip4`
+### `Drop.drop`
 
 ```milo
-fn Drop.ip4(a: u8, b: u8, c: u8, d: u8): u32
+fn Drop.drop(self: &mut Drop): void
 ```
 
 _Undocumented._
 
-### `Drop.ip6`
+### `fetch`
 
 ```milo
-fn Drop.ip6(text: &string): Option < [u8; 16] >
+fn fetch(url: &string): Result<Response, NetError>
+```
+
+_Undocumented._
+
+### `fetchDelete`
+
+```milo
+fn fetchDelete(url: &string): Result<Response, NetError>
+```
+
+_Undocumented._
+
+### `fetchPatch`
+
+```milo
+fn fetchPatch(url: &string, body: &string): Result<Response, NetError>
+```
+
+_Undocumented._
+
+### `fetchPost`
+
+```milo
+fn fetchPost(url: &string, body: &string): Result<Response, NetError>
+```
+
+_Undocumented._
+
+### `fetchPut`
+
+```milo
+fn fetchPut(url: &string, body: &string): Result<Response, NetError>
+```
+
+_Undocumented._
+
+### `fetchWith`
+
+```milo
+fn fetchWith(url: &string, opts: FetchOptions): Result<Response, NetError>
+```
+
+_Undocumented._
+
+### `findHeader`
+
+```milo
+fn findHeader(headers: &string, name: &string): string
+```
+
+_Undocumented._
+
+### `hexDigit`
+
+```milo
+fn hexDigit(c: u8): i64
+```
+
+_Undocumented._
+
+### `httpDo`
+
+```milo
+fn httpDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError>
+```
+
+_Undocumented._
+
+### `httpsDo`
+
+```milo
+fn httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError>
+```
+
+_Undocumented._
+
+### `ip4`
+
+```milo
+fn ip4(a: u8, b: u8, c: u8, d: u8): u32
+```
+
+_Undocumented._
+
+### `ip6`
+
+```milo
+fn ip6(text: &string): Option < [u8; 16] >
 ```
 
 Construct an IPv4 address from four octets.
@@ -46,74 +142,74 @@ Parse an IPv6 literal ("::1", "2001:db8::1") into its 16 raw bytes.
 None if the text isn't a valid v6 address — inet_pton is strict, and a v4 literal like
 "127.0.0.1" is NOT auto-mapped, so it returns None here rather than a v4-mapped address.
 
-### `Response.decodeChunked`
+### `isHttps`
 
 ```milo
-fn Response.decodeChunked(rawBody: &string): string
+fn isHttps(url: &string): bool
 ```
 
 _Undocumented._
 
-### `Response.doFetch`
+### `parseBody`
 
 ```milo
-fn Response.doFetch(url: string, opts: FetchOptions): Result<Response, NetError>
+fn parseBody(raw: &string): string
 ```
 
 _Undocumented._
 
-### `Response.fetch`
+### `parseHost`
 
 ```milo
-fn Response.fetch(url: &string): Result<Response, NetError>
+fn parseHost(url: &string): string
 ```
 
 _Undocumented._
 
-### `Response.fetchDelete`
+### `parsePath`
 
 ```milo
-fn Response.fetchDelete(url: &string): Result<Response, NetError>
+fn parsePath(url: &string): string
 ```
 
 _Undocumented._
 
-### `Response.fetchPatch`
+### `parsePort`
 
 ```milo
-fn Response.fetchPatch(url: &string, body: &string): Result<Response, NetError>
+fn parsePort(url: &string): u16
 ```
 
 _Undocumented._
 
-### `Response.fetchPost`
+### `parseRawHeaders`
 
 ```milo
-fn Response.fetchPost(url: &string, body: &string): Result<Response, NetError>
+fn parseRawHeaders(raw: &string): string
 ```
 
 _Undocumented._
 
-### `Response.fetchPut`
+### `parseResponse`
 
 ```milo
-fn Response.fetchPut(url: &string, body: &string): Result<Response, NetError>
+fn parseResponse(raw: string): Response
 ```
 
 _Undocumented._
 
-### `Response.fetchWith`
+### `parseStatus`
 
 ```milo
-fn Response.fetchWith(url: &string, opts: FetchOptions): Result<Response, NetError>
+fn parseStatus(raw: &string): i32
 ```
 
 _Undocumented._
 
-### `Response.findHeader`
+### `resolve`
 
 ```milo
-fn Response.findHeader(headers: &string, name: &string): string
+fn resolve(hostname: &string): Result<u32, NetError>
 ```
 
 _Undocumented._
@@ -125,38 +221,6 @@ fn Response.header(self: &Response, name: &string): string
 ```
 
 Look up a response header by name (case-insensitive).
-
-### `Response.hexDigit`
-
-```milo
-fn Response.hexDigit(c: u8): i64
-```
-
-_Undocumented._
-
-### `Response.httpDo`
-
-```milo
-fn Response.httpDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError>
-```
-
-_Undocumented._
-
-### `Response.httpsDo`
-
-```milo
-fn Response.httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError>
-```
-
-_Undocumented._
-
-### `Response.isHttps`
-
-```milo
-fn Response.isHttps(url: &string): bool
-```
-
-_Undocumented._
 
 ### `Response.json`
 
@@ -174,86 +238,6 @@ fn Response.ok(self: &Response): bool
 
 Return true if the status code is 2xx (success).
 
-### `Response.parseBody`
-
-```milo
-fn Response.parseBody(raw: &string): string
-```
-
-_Undocumented._
-
-### `Response.parseHost`
-
-```milo
-fn Response.parseHost(url: &string): string
-```
-
-_Undocumented._
-
-### `Response.parsePath`
-
-```milo
-fn Response.parsePath(url: &string): string
-```
-
-_Undocumented._
-
-### `Response.parsePort`
-
-```milo
-fn Response.parsePort(url: &string): u16
-```
-
-_Undocumented._
-
-### `Response.parseRawHeaders`
-
-```milo
-fn Response.parseRawHeaders(raw: &string): string
-```
-
-_Undocumented._
-
-### `Response.parseResponse`
-
-```milo
-fn Response.parseResponse(raw: string): Response
-```
-
-_Undocumented._
-
-### `Response.parseStatus`
-
-```milo
-fn Response.parseStatus(raw: &string): i32
-```
-
-_Undocumented._
-
-### `Response.schemeOffset`
-
-```milo
-fn Response.schemeOffset(url: &string): i64
-```
-
-_Undocumented._
-
-### `Response.startsWith`
-
-```milo
-fn Response.startsWith(s: &string, prefix: &string): bool
-```
-
-_Undocumented._
-
-### `Response.strEqNocase`
-
-```milo
-fn Response.strEqNocase(a: &string, ai: i64, b: &string, blen: i64): bool
-```
-
-_Undocumented._
-
 ### `Response.text`
 
 ```milo
@@ -261,6 +245,30 @@ fn Response.text(self: &Response): string
 ```
 
 Return the response body as a string.
+
+### `schemeOffset`
+
+```milo
+fn schemeOffset(url: &string): i64
+```
+
+_Undocumented._
+
+### `startsWith`
+
+```milo
+fn startsWith(s: &string, prefix: &string): bool
+```
+
+_Undocumented._
+
+### `strEqNocase`
+
+```milo
+fn strEqNocase(a: &string, ai: i64, b: &string, blen: i64): bool
+```
+
+_Undocumented._
 
 ### `TcpListener.accept`
 
@@ -400,14 +408,6 @@ fn TlsStream.recv(self: &TlsStream): Result<string, NetError>
 
 Read everything until the peer closes, as one string (blocks to EOF).
 Prefer `incoming()` for streaming/incremental consumption.
-
-### `TlsStream.resolve`
-
-```milo
-fn TlsStream.resolve(hostname: &string): Result<u32, NetError>
-```
-
-_Undocumented._
 
 ### `TlsStream.send`
 

@@ -50,6 +50,14 @@ fn Context.header(self: &Context, name: &string): string
 
 _Undocumented._
 
+### `Context.hexNibble`
+
+```milo
+fn Context.hexNibble(ch: u8): i32
+```
+
+Value of a single hex digit, or -1 if the byte isn't one.
+
 ### `Context.html`
 
 ```milo
@@ -193,6 +201,16 @@ fn Context.toLower(ch: u8): u8
 ```
 
 _Undocumented._
+
+### `Context.urlDecode`
+
+```milo
+fn Context.urlDecode(s: &string): string
+```
+
+Percent-decode a query component. '+' means space (form-urlencoded) and %XX
+is a raw byte. A malformed escape is passed through literally rather than
+dropped, so a stray '%' in user input can't truncate the value.
 
 ### `Drop.drop`
 

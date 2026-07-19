@@ -10,30 +10,21 @@ fn Drop.drop(self: &mut Drop): void
 
 _Undocumented._
 
-### `Drop.extractWsKey`
+### `extractWsKey`
 
 ```milo
-fn Drop.extractWsKey(raw: &string): string
+fn extractWsKey(raw: &string): string
 ```
 
 Extract Sec-WebSocket-Key from raw HTTP request.
 
-### `Drop.isWsUpgrade`
+### `isWsUpgrade`
 
 ```milo
-fn Drop.isWsUpgrade(raw: &string): bool
+fn isWsUpgrade(raw: &string): bool
 ```
 
 Check if raw HTTP request bytes contain a WebSocket upgrade request.
-
-### `Drop.wsAccept`
-
-```milo
-fn Drop.wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string>
-```
-
-Accept a WebSocket upgrade on an already-accepted TCP fd.
-Pass the raw HTTP request bytes so the handshake can be completed.
 
 ### `WS_BINARY`
 
@@ -83,6 +74,15 @@ fn WS_TEXT(): u8
 
 _Undocumented._
 
+### `wsAccept`
+
+```milo
+fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string>
+```
+
+Accept a WebSocket upgrade on an already-accepted TCP fd.
+Pass the raw HTTP request bytes so the handshake can be completed.
+
 ### `WsConn.close`
 
 ```milo
@@ -123,19 +123,19 @@ fn WsConn.sendText(self: &WsConn, msg: &string): Result<i32, string>
 
 Send a text message.
 
-### `WsConn.wsConnect`
+### `wsConnect`
 
 ```milo
-fn WsConn.wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string>
+fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string>
 ```
 
 Connect to a WebSocket server. Performs TCP connect + HTTP upgrade handshake.
 Returns a WsConn on successful 101 response.
 
-### `WsConn.wsConnectTls`
+### `wsConnectTls`
 
 ```milo
-fn WsConn.wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<WsConn, string>
+fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<WsConn, string>
 ```
 
 Connect to a WebSocket server over TLS (wss://). Performs TCP connect, TLS

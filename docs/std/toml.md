@@ -42,50 +42,50 @@ fn Toml.table(self: &Toml, key: &string): Option<Toml>
 
 _Undocumented._
 
-### `Toml.tomlGetBool`
+### `tomlGetBool`
 
 ```milo
-fn Toml.tomlGetBool(s: &string, start: i64, end: i64, key: &string): Option<bool>
+fn tomlGetBool(s: &string, start: i64, end: i64, key: &string): Option<bool>
 ```
 
 _Undocumented._
 
-### `Toml.tomlGetF64`
+### `tomlGetF64`
 
 ```milo
-fn Toml.tomlGetF64(s: &string, start: i64, end: i64, key: &string): Option<f64>
+fn tomlGetF64(s: &string, start: i64, end: i64, key: &string): Option<f64>
 ```
 
 _Undocumented._
 
-### `Toml.tomlGetI64`
+### `tomlGetI64`
 
 ```milo
-fn Toml.tomlGetI64(s: &string, start: i64, end: i64, key: &string): Option<i64>
+fn tomlGetI64(s: &string, start: i64, end: i64, key: &string): Option<i64>
 ```
 
 _Undocumented._
 
-### `Toml.tomlGetStr`
+### `tomlGetStr`
 
 ```milo
-fn Toml.tomlGetStr(s: &string, start: i64, end: i64, key: &string): Option<string>
+fn tomlGetStr(s: &string, start: i64, end: i64, key: &string): Option<string>
 ```
 
 _Undocumented._
 
-### `Toml.tomlGetTable`
+### `tomlGetTable`
 
 ```milo
-fn Toml.tomlGetTable(s: &string, start: i64, end: i64, key: &string): Option<Toml>
+fn tomlGetTable(s: &string, start: i64, end: i64, key: &string): Option<Toml>
 ```
 
 _Undocumented._
 
-### `Toml.tomlParse`
+### `tomlParse`
 
 ```milo
-fn Toml.tomlParse(s: string): Result<Toml>
+fn tomlParse(s: string): Result<Toml>
 ```
 
 _Undocumented._

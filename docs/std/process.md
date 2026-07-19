@@ -2,10 +2,10 @@
 
 ## std/process
 
-### `Child.capture`
+### `capture`
 
 ```milo
-fn Child.capture(cmd: &string): Result<string>
+fn capture(cmd: &string): Result<string>
 ```
 
 _Undocumented._

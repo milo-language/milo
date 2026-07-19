@@ -165,22 +165,6 @@ the recv and the destroy, so don't recv off this handle yourself.
 Handing out the channel is safe because Channel<T> is a single *u8 and therefore an
 implicitly Copy handle — this is an alias, not a transfer of ownership.
 
-### `Promise.promiseAll`
-
-```milo
-fn Promise.promiseAll<T>(promises: Vec<Promise<T>>): Promise<Vec<T>>
-```
-
-standalone generic functions to avoid recursive struct monomorphization
-
-### `Promise.promiseRace`
-
-```milo
-fn Promise.promiseRace<T>(promises: Vec<Promise<T>>): Promise<T>
-```
-
-_Undocumented._
-
 ### `Promise.run`
 
 ```milo
@@ -189,79 +173,18 @@ fn Promise.run(f: () => T): Promise<T>
 
 _Undocumented._
 
-### `Promise.schedulerCurrent`
+### `promiseAll`
 
 ```milo
-fn Promise.schedulerCurrent(): *u8
+fn promiseAll<T>(promises: Vec<Promise<T>>): Promise<Vec<T>>
 ```
 
-_Undocumented._
+standalone generic functions to avoid recursive struct monomorphization
 
-### `Promise.schedulerExists`
-
-```milo
-fn Promise.schedulerExists(): bool
-```
-
-True once a green scheduler has been created on this thread. Lets a main-
-context waiter (schedulerCurrent()==0) tell "drive the scheduler" apart from
-"pure pthread, block on a cond".
-
-### `Promise.schedulerPark`
+### `promiseRace`
 
 ```milo
-fn Promise.schedulerPark(): void
-```
-
-Suspend the current task and switch to the scheduler. The task lands on no
-scheduler list: the caller must have stashed schedulerCurrent() somewhere a
-future schedulerUnpark can find it, or the task never runs again.
-Unpark must not precede park on the same thread — cross-thread unparks are
-safe at any time because they are applied only in scheduler context.
-
-### `Promise.schedulerRunToCompletion`
-
-```milo
-fn Promise.schedulerRunToCompletion(): void
-```
-
-Drive the scheduler until every spawned task has finished, then tear it down.
-Go exit semantics mean main no longer calls this implicitly; it stays as an
-explicit "run all outstanding tasks to completion" entry for programs that
-want the old drain-to-quiescence behavior (e.g. spawn a fleet of workers and
-block main until they all return without a WaitGroup).
-
-### `Promise.schedulerUnpark`
-
-```milo
-fn Promise.schedulerUnpark(task: *u8): void
-```
-
-Make a parked task runnable. Safe from any thread: on the task's own
-scheduler thread it goes straight to the run queue; from a foreign thread
-it is pushed onto the mutex-guarded transfer list and the scheduler's
-wakeup event is signaled so a blocked poll returns promptly.
-
-### `Promise.schedulerWaitRead`
-
-```milo
-fn Promise.schedulerWaitRead(fd: i32): void
-```
-
-_Undocumented._
-
-### `Promise.schedulerWaitWrite`
-
-```milo
-fn Promise.schedulerWaitWrite(fd: i32): void
-```
-
-_Undocumented._
-
-### `Promise.schedulerYield`
-
-```milo
-fn Promise.schedulerYield(): void
+fn promiseRace<T>(promises: Vec<Promise<T>>): Promise<T>
 ```
 
 _Undocumented._
@@ -274,10 +197,87 @@ fn schedStructSize(): i64
 
 _Undocumented._
 
+### `schedulerCurrent`
+
+```milo
+fn schedulerCurrent(): *u8
+```
+
+_Undocumented._
+
 ### `schedulerEnsureInit`
 
 ```milo
 fn schedulerEnsureInit(): void
+```
+
+_Undocumented._
+
+### `schedulerExists`
+
+```milo
+fn schedulerExists(): bool
+```
+
+True once a green scheduler has been created on this thread. Lets a main-
+context waiter (schedulerCurrent()==0) tell "drive the scheduler" apart from
+"pure pthread, block on a cond".
+
+### `schedulerPark`
+
+```milo
+fn schedulerPark(): void
+```
+
+Suspend the current task and switch to the scheduler. The task lands on no
+scheduler list: the caller must have stashed schedulerCurrent() somewhere a
+future schedulerUnpark can find it, or the task never runs again.
+Unpark must not precede park on the same thread — cross-thread unparks are
+safe at any time because they are applied only in scheduler context.
+
+### `schedulerRunToCompletion`
+
+```milo
+fn schedulerRunToCompletion(): void
+```
+
+Drive the scheduler until every spawned task has finished, then tear it down.
+Go exit semantics mean main no longer calls this implicitly; it stays as an
+explicit "run all outstanding tasks to completion" entry for programs that
+want the old drain-to-quiescence behavior (e.g. spawn a fleet of workers and
+block main until they all return without a WaitGroup).
+
+### `schedulerUnpark`
+
+```milo
+fn schedulerUnpark(task: *u8): void
+```
+
+Make a parked task runnable. Safe from any thread: on the task's own
+scheduler thread it goes straight to the run queue; from a foreign thread
+it is pushed onto the mutex-guarded transfer list and the scheduler's
+wakeup event is signaled so a blocked poll returns promptly.
+
+### `schedulerWaitRead`
+
+```milo
+fn schedulerWaitRead(fd: i32): void
+```
+
+_Undocumented._
+
+### `schedulerWaitWrite`
+
+```milo
+fn schedulerWaitWrite(fd: i32): void
+```
+
+_Undocumented._
+
+### `schedulerYield`
+
+```milo
+fn schedulerYield(): void
 ```
 
 _Undocumented._

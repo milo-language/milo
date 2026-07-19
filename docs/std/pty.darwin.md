@@ -18,6 +18,14 @@ fn isInteractive(): bool
 
 Returns true if stdin is a terminal (process is interactive).
 
+### `openAndSpawn`
+
+```milo
+fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string>
+```
+
+Convenience: open + spawn in one call
+
 ### `Pty.close`
 
 ```milo
@@ -43,14 +51,6 @@ fn Pty.open(): Result<Pty, string>
 ```
 
 _Undocumented._
-
-### `Pty.openAndSpawn`
-
-```milo
-fn Pty.openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string>
-```
-
-Convenience: open + spawn in one call
 
 ### `Pty.output`
 

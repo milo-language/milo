@@ -78,14 +78,6 @@ fn File.openWrite(path: &string): Result<File, IoError>
 
 _Undocumented._
 
-### `File.putChar`
-
-```milo
-fn File.putChar(ch: u8): void
-```
-
-Write a single byte to stdout.
-
 ### `File.readAll`
 
 ```milo
@@ -93,40 +85,6 @@ fn File.readAll(self: &File): Result<string, IoError>
 ```
 
 _Undocumented._
-
-### `File.readFile`
-
-```milo
-fn File.readFile(path: &string): Result<string, IoError>
-```
-
-Read an entire file into a string. Returns an IoError (NotFound, permission,
-etc.) rather than throwing; propagate with `?` or match on it.
-
-### `File.readLine`
-
-```milo
-fn File.readLine(): Option<string>
-```
-
-Read a single line from stdin. Returns None at EOF.
-
-### `File.readLines`
-
-```milo
-fn File.readLines(path: &string): Result<Vec<string>, IoError>
-```
-
-Read a file and return its contents as a Vec of lines.
-
-### `File.readStdin`
-
-```milo
-fn File.readStdin(): string
-```
-
-Read all of stdin into a string (blocks to EOF). Prefer `stdinChannel()` for
-streaming/incremental consumption.
 
 ### `File.size`
 
@@ -136,14 +94,6 @@ fn File.size(self: &File): i64
 
 _Undocumented._
 
-### `File.splitLines`
-
-```milo
-fn File.splitLines(content: &string): Vec<string>
-```
-
-Split a string into lines on newline boundaries.
-
 ### `File.writeAll`
 
 ```milo
@@ -152,13 +102,55 @@ fn File.writeAll(self: &File, data: &string): Result<i64, IoError>
 
 _Undocumented._
 
-### `File.writeStr`
+### `putChar`
 
 ```milo
-fn File.writeStr(s: &string): void
+fn putChar(ch: u8): void
 ```
 
-Write a string to stdout without a trailing newline.
+Write a single byte to stdout.
+
+### `readFile`
+
+```milo
+fn readFile(path: &string): Result<string, IoError>
+```
+
+Read an entire file into a string. Returns an IoError (NotFound, permission,
+etc.) rather than throwing; propagate with `?` or match on it.
+
+### `readLine`
+
+```milo
+fn readLine(): Option<string>
+```
+
+Read a single line from stdin. Returns None at EOF.
+
+### `readLines`
+
+```milo
+fn readLines(path: &string): Result<Vec<string>, IoError>
+```
+
+Read a file and return its contents as a Vec of lines.
+
+### `readStdin`
+
+```milo
+fn readStdin(): string
+```
+
+Read all of stdin into a string (blocks to EOF). Prefer `stdinChannel()` for
+streaming/incremental consumption.
+
+### `splitLines`
+
+```milo
+fn splitLines(content: &string): Vec<string>
+```
+
+Split a string into lines on newline boundaries.
 
 ### `stdinChannel`
 
@@ -179,3 +171,11 @@ fn writeStdout(s: &string): void
 ```
 
 Write a string to stdout without appending a newline.
+
+### `writeStr`
+
+```milo
+fn writeStr(s: &string): void
+```
+
+Write a string to stdout without a trailing newline.

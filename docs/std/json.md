@@ -275,42 +275,6 @@ fn Json.isStr(self: &Json): bool
 
 _Undocumented._
 
-### `Json.jsonExtractSubtree`
-
-```milo
-fn Json.jsonExtractSubtree(src: &Json, nodeIdx: i64): Json
-```
-
-_Undocumented._
-
-### `Json.jsonNodeRawStr`
-
-```milo
-fn Json.jsonNodeRawStr(doc: &Json, nodeIdx: i64): string
-```
-
-_Undocumented._
-
-### `Json.jsonParse`
-
-```milo
-fn Json.jsonParse(s: string): Result<Json>
-```
-
-_Undocumented._
-
-### `Json.jsonStripJsonc`
-
-```milo
-fn Json.jsonStripJsonc(s: &string): string
-```
-
-JSONC (Microsoft/VS Code flavor): JSON plus // and /* */ comments and trailing commas.
-No formal spec exists; this matches the de-facto jsonc-parser behavior. Implemented as a
-string-aware preprocessor that emits strict JSON, so everything else inherits jsonParse's
-exact RFC-8259 validation — JSONC is strictly a superset of comments + trailing commas, not
-a second, looser parser.
-
 ### `Json.keys`
 
 ```milo
@@ -351,6 +315,14 @@ fn Json.strAt(self: &Json, index: i64, key: &string): Option<string>
 
 _Undocumented._
 
+### `jsonArr`
+
+```milo
+fn jsonArr(): JsonArr
+```
+
+_Undocumented._
+
 ### `JsonArr.arr`
 
 ```milo
@@ -387,31 +359,6 @@ _Undocumented._
 
 ```milo
 fn JsonArr.int(self: JsonArr, val: i64): JsonArr
-```
-
-_Undocumented._
-
-### `JsonArr.jsonPull`
-
-```milo
-fn JsonArr.jsonPull(src: string): JsonPull
-```
-
-_Undocumented._
-
-### `JsonArr.jsonPullNumber`
-
-```milo
-fn JsonArr.jsonPullNumber(s: &string, pos: &mut i64): f64
-```
-
-Standalone number → f64 (int . frac e exp), advancing pos past the literal.
-The flat-pool parser's jsonParseNumber is node-coupled, so the scan is inlined.
-
-### `JsonArr.jsonTok`
-
-```milo
-fn JsonArr.jsonTok(k: JsonEvent): JsonToken
 ```
 
 _Undocumented._
@@ -480,6 +427,14 @@ fn jsonEscapeStr(s: &string): string
 
 _Undocumented._
 
+### `jsonExtractSubtree`
+
+```milo
+fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json
+```
+
+_Undocumented._
+
 ### `jsonKeyEq`
 
 ```milo
@@ -492,6 +447,14 @@ _Undocumented._
 
 ```milo
 fn jsonMaterializeStr(source: &string, start: i64, len: i64): string
+```
+
+_Undocumented._
+
+### `jsonNodeRawStr`
+
+```milo
+fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string
 ```
 
 _Undocumented._
@@ -576,14 +539,6 @@ fn JsonObj.intOpt(self: JsonObj, key: string, val: Option<i64>): JsonObj
 
 _Undocumented._
 
-### `JsonObj.jsonArr`
-
-```milo
-fn JsonObj.jsonArr(): JsonArr
-```
-
-_Undocumented._
-
 ### `JsonObj.nil`
 
 ```milo
@@ -634,6 +589,14 @@ fn JsonObj.val(self: JsonObj, key: string, val: JsonVal): JsonObj
 
 _Undocumented._
 
+### `jsonParse`
+
+```milo
+fn jsonParse(s: string): Result<Json>
+```
+
+_Undocumented._
+
 ### `jsonParseArray`
 
 ```milo
@@ -677,6 +640,14 @@ fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
 
 _Undocumented._
 
+### `jsonPull`
+
+```milo
+fn jsonPull(src: string): JsonPull
+```
+
+_Undocumented._
+
 ### `JsonPull.next`
 
 ```milo
@@ -684,6 +655,15 @@ fn JsonPull.next(self: &mut JsonPull): JsonToken
 ```
 
 _Undocumented._
+
+### `jsonPullNumber`
+
+```milo
+fn jsonPullNumber(s: &string, pos: &mut i64): f64
+```
+
+Standalone number → f64 (int . frac e exp), advancing pos past the literal.
+The flat-pool parser's jsonParseNumber is node-coupled, so the scan is inlined.
 
 ### `jsonScanString`
 
@@ -726,6 +706,26 @@ _Undocumented._
 
 ```milo
 fn jsonSkipWs(s: &string, pos: &mut i64)
+```
+
+_Undocumented._
+
+### `jsonStripJsonc`
+
+```milo
+fn jsonStripJsonc(s: &string): string
+```
+
+JSONC (Microsoft/VS Code flavor): JSON plus // and /* */ comments and trailing commas.
+No formal spec exists; this matches the de-facto jsonc-parser behavior. Implemented as a
+string-aware preprocessor that emits strict JSON, so everything else inherits jsonParse's
+exact RFC-8259 validation — JSONC is strictly a superset of comments + trailing commas, not
+a second, looser parser.
+
+### `jsonTok`
+
+```milo
+fn jsonTok(k: JsonEvent): JsonToken
 ```
 
 _Undocumented._
