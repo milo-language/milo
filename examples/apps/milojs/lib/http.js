@@ -92,6 +92,11 @@ function ServerResponse(connId) {
   this.statusMessage = null;
   this.headersSent = false;
   this.finished = false;
+  // trpc's node-http adapter streams the body with `while(...){ if(!res.writable)
+  // break; res.write(chunk) }` — without this flag res.writable is undefined, the
+  // loop breaks before the first write, and every response goes out with an empty
+  // body (200 but 0 bytes → every client widget stuck on its loading skeleton).
+  this.writable = true;
   this.socket = { destroy: function () {} };
 }
 ServerResponse.prototype = Object.create(EventEmitter.prototype);
@@ -167,6 +172,7 @@ ServerResponse.prototype.end = function (chunk, encoding, cb) {
   this._sent = true;
   this.headersSent = true;
   this.finished = true;
+  this.writable = false;
   this.emit('finish');
   this.emit('close');
   if (cb) cb();
