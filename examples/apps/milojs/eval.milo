@@ -1973,6 +1973,8 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "parseInt", JSValue.Native(NATIVE_PARSE_INT))
     scopeDefine(st, 0, "parseFloat", JSValue.Native(NATIVE_PARSE_FLOAT))
     scopeDefine(st, 0, "Symbol", JSValue.Native(NATIVE_SYMBOL))
+    let symbolCtorObj = getNativeProps(st, NATIVE_SYMBOL)
+    objSet(st, symbolCtorObj, "iterator", JSValue.Str(symIteratorKey()))
     let dateCtorObj = getNativeProps(st, NATIVE_DATE)
     objSet(st, dateCtorObj, "now", JSValue.Native(NATIVE_DATE_NOW))
     // Date.prototype methods as bound-method values, so
@@ -2677,6 +2679,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
 }
 
 // Spread an array value's elements into `out` (a no-op for non-arrays).
+// Spread the built-in iterables. A user object with [Symbol.iterator] is NOT
+// handled: driving it means calling back into user code, and this runs with an
+// immutable interpreter. for-of does support the protocol — see Stmt.ForOf.
 fn spreadInto(out: &mut Vec<JSValue>, v: &JSValue, st: &Interp) {
     match v {
         JSValue.Obj(o) => {
@@ -2687,6 +2692,20 @@ fn spreadInto(out: &mut Vec<JSValue>, v: &JSValue, st: &Interp) {
                     out.push(arrGet(st, o, k))
                     k = k + 1
                 }
+            } else if st.objects[o].isSet {
+                var k: i64 = 0
+                while k < st.objects[o].mapKeys.len() {
+                    out.push(cloneValue(st.objects[o].mapKeys[k]))
+                    k = k + 1
+                }
+            }
+        }
+        JSValue.Str(s) => {
+            // [..."ab"] is ["a","b"]
+            var k: i64 = 0
+            while k < s.len() {
+                out.push(JSValue.Str(jsCharAt(s, k)))
+                k = k + 1
             }
         }
         _ => {
@@ -2969,6 +2988,12 @@ fn isSymbolValue(v: &JSValue): bool {
             return false
         }
     }
+}
+
+// The well-known @@iterator key. Symbols are interned strings, so this is just a
+// fixed one; counter 0 is reserved because user symbols start at 1.
+fn symIteratorKey(): string {
+    return "@@sym:Symbol.iterator:0"
 }
 
 // Symbol test on the raw string. The JSValue-level isSymbolValue cannot be used
@@ -5049,6 +5074,66 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
             pushTemp(st, cloneValue(ov))
             let holder = newArray(st)
             pushTemp(st, JSValue.Obj(holder))
+
+            // A user object carrying [Symbol.iterator] drives the real protocol:
+            // next() is called lazily, one step per iteration, so an iterator with
+            // side effects (or one the body mutates) observes the same order it
+            // would in JS. Built-in types below keep their eager snapshot.
+            let srcH = objHandle(ov)
+            if srcH >= 0 && !st.objects[srcH].isArray && !st.objects[srcH].isMap && !st.objects[srcH].isSet {
+                let itFn = getMember(st, srcH, symIteratorKey())
+                if isCallable(itFn) {
+                    var noArgs: Vec<JSValue> = Vec.new()
+                    let iter = callValue(prog, itFn, noArgs, cloneValue(ov), st)
+                    pushTemp(st, cloneValue(iter))
+                    let iterH = objHandle(iter)
+                    let loopScope2 = newScope(st, scope)
+                    pushActive(st, loopScope2)
+                    var running = true
+                    var out = Flow.Normal
+                    while running && !st.throwing && iterH >= 0 {
+                        let nextFn = getMember(st, iterH, "next")
+                        if !isCallable(nextFn) {
+                            st.throwing = true
+                            st.thrownValue = makeError(st, "TypeError", "iterator has no next method" + currentModule(st))
+                            running = false
+                        } else {
+                            var nArgs: Vec<JSValue> = Vec.new()
+                            let step = callValue(prog, nextFn, nArgs, cloneValue(iter), st)
+                            let stepH = objHandle(step)
+                            if stepH < 0 || st.throwing {
+                                running = false
+                            } else if truthy(getMember(st, stepH, "done")) {
+                                running = false
+                            } else {
+                                pushTemp(st, cloneValue(step))
+                                scopeDefine(st, loopScope2, name.clone(), getMember(st, stepH, "value"))
+                                let flow = execStmt(prog, body, st, loopScope2)
+                                popTemp(st)
+                                match flow {
+                                    Flow.Ret(v) => {
+                                        out = Flow.Ret(v)
+                                        running = false
+                                    }
+                                    Flow.Break => {
+                                        running = false
+                                    }
+                                    Flow.Continue => {
+                                    }
+                                    Flow.Normal => {
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    popActive(st)
+                    popTemp(st)
+                    popTemp(st)
+                    popTemp(st)
+                    return out
+                }
+            }
+
             var vals: Vec<JSValue> = Vec.new()
             var iterable = false
             match ov {
