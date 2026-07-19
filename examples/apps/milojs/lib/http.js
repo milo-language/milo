@@ -131,16 +131,22 @@ ServerResponse.prototype._implicitHeader = function () {
 };
 ServerResponse.prototype.flushHeaders = function () { this.headersSent = true; };
 ServerResponse.prototype.writeContinue = function () {};
+function chunkToString(chunk) {
+  if (chunk == null) return '';
+  // express passes a Buffer to res.end; String(buffer) would give [object Object]
+  if (chunk.bytes && typeof chunk.toString === 'function') return chunk.toString();
+  return String(chunk);
+}
 ServerResponse.prototype.write = function (chunk, encoding, cb) {
   if (typeof encoding === 'function') { cb = encoding; }
-  this._pending = (this._pending || '') + (chunk == null ? '' : String(chunk));
+  this._pending = (this._pending || '') + chunkToString(chunk);
   if (typeof cb === 'function') cb();
   return true;
 };
 ServerResponse.prototype.end = function (chunk, encoding, cb) {
   if (typeof chunk === 'function') { cb = chunk; chunk = undefined; }
   if (this._sent) { if (cb) cb(); return this; }
-  var body = (this._pending || '') + (chunk == null ? '' : String(chunk));
+  var body = (this._pending || '') + chunkToString(chunk);
   if (this.getHeader('content-length') === undefined) {
     this.setHeader('Content-Length', body.length);
   }

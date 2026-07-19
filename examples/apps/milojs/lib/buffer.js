@@ -159,6 +159,22 @@ Buffer.byteLength = function (value, encoding) {
 
 Buffer.isBuffer = function (v) { return !!(v && v.bytes && typeof v.length === 'number'); };
 
+// safe-buffer takes its pass-through path only when all four exist; otherwise it
+// rebuilds Buffer via for-in copyProps, which drops the static methods here
+Buffer.allocUnsafe = function (size) { return Buffer.alloc(size); };
+Buffer.allocUnsafeSlow = function (size) { return Buffer.alloc(size); };
+Buffer.isEncoding = function (enc) {
+  var e = String(enc).toLowerCase();
+  return e === 'utf8' || e === 'utf-8' || e === 'hex' || e === 'base64' || e === 'ascii' || e === 'latin1' || e === 'binary';
+};
+Buffer.compare = function (a, b) {
+  var x = a && a.bytes ? a.bytes : [], y = b && b.bytes ? b.bytes : [];
+  for (var i = 0; i < Math.min(x.length, y.length); i++) {
+    if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
+  }
+  return x.length === y.length ? 0 : (x.length < y.length ? -1 : 1);
+};
+
 exports.Buffer = Buffer;
 exports.kMaxLength = 2147483647;
 exports.constants = { MAX_LENGTH: 2147483647, MAX_STRING_LENGTH: 536870888 };

@@ -39,6 +39,18 @@ Number.isSafeInteger = function (v) {
 Number.parseFloat = parseFloat;
 Number.parseInt = parseInt;
 
+// --- Object / Array statics --------------------------------------------------
+Object.fromEntries = function (entries) {
+  var out = {};
+  for (var pair of entries) out[pair[0]] = pair[1];
+  return out;
+};
+Array.of = function () {
+  var out = [];
+  for (var i = 0; i < arguments.length; i++) out.push(arguments[i]);
+  return out;
+};
+
 // --- Symbol registry ---------------------------------------------------------
 // Symbols are interned strings ("@@sym:<desc>:<n>") in this engine, so a registry
 // keyed by description gives Symbol.for its required identity guarantee:
