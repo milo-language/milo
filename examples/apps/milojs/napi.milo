@@ -1,0 +1,362 @@
+// Node-API (N-API) host surface — enough of the C ABI for a real .node addon to
+// register itself and run against milojs.
+//
+// A .node addon is a plain shared library whose only entry point is
+// napi_register_module_v1. It exports no JS API; it BUILDS one by calling back
+// into these functions. So the addon's undefined-symbol list is the exact contract
+// (see scripts/napi-probe.ts), and every function here is an adapter between the
+// C ABI and the interpreter.
+//
+// Two things make this work at all:
+//   - milo emits unmangled C symbols, so `fn napi_get_undefined` IS the symbol the
+//     addon links against. nothing needs exporting or annotating.
+//   - the host must be linked with -Wl,-export_dynamic, or the addon's undefined
+//     symbols can't resolve against it and dlopen fails outright.
+//
+// napi_value is an opaque pointer-sized handle. It is NOT a JSValue: values move
+// as the object arena compacts, and the addon holds handles across calls. So a
+// handle is an index into gNapi.handles (biased by 1 so that 0 is a valid "null
+// handle"), and the table is a GC root for as long as the addon can reach it.
+
+from "std/io" import {
+    writeStdout
+}
+from "examples/apps/milojs/value" import {
+    JSValue, cloneValue, toNum, truthy
+}
+from "examples/apps/milojs/runtime" import {
+    Interp, gInterp, newObject, newArray, objGet, objSet
+}
+
+// napi_status — only the values this surface can actually produce.
+let NAPI_OK: i32 = 0
+let NAPI_INVALID_ARG: i32 = 1
+
+struct NapiState {
+    // handle index -> the value it denotes; slot 0 is unused so handle 0 can mean null
+    handles: Vec<JSValue>,
+    // set once the addon has been handed its exports object
+    registered: bool,
+}
+
+var gNapi: NapiState = NapiState {
+    handles: Vec.new(), registered: false
+}
+
+// Wrap a value in a fresh handle. Handles are never reused within a run: the addon
+// may hold one indefinitely, and recycling a slot would silently retarget it.
+fn napiHandle(v: JSValue): i64 {
+    if gNapi.handles.len() == 0 {
+        // slot 0 reserved so a returned handle is never the null pointer
+        gNapi.handles.push(JSValue.Undefined)
+    }
+    gNapi.handles.push(v)
+    return gNapi.handles.len() - 1
+}
+
+// Resolve a handle back to its value. Out-of-range yields Undefined rather than
+// trapping — a misbehaving addon must not take the process down.
+fn napiValueOf(h: i64): JSValue {
+    if h <= 0 || h >= gNapi.handles.len() {
+        return JSValue.Undefined
+    }
+    return cloneValue(gNapi.handles[h])
+}
+
+// Read a pointer-sized handle out of an out-param slot written by the addon.
+extern fn memcpy(_dst: *u8, _src: *u8, _n: i64): *u8
+
+fn napiReadHandle(p: *u8): i64 {
+    unsafe {
+        var buf: [i64; 1] = [0; 1]
+        memcpy(buf as *u8, p, 8)
+        return buf[0]
+    }
+}
+
+fn napiWriteHandle(p: *u8, h: i64) {
+    unsafe {
+        var buf: [i64; 1] = [h; 1]
+        memcpy(p, buf as *u8, 8)
+    }
+}
+
+// Number of handles currently live — for tests and diagnostics.
+fn napiHandleCount(): i64 {
+    if gNapi.handles.len() == 0 {
+        return 0
+    }
+    return gNapi.handles.len() - 1
+}
+
+fn napiReset() {
+    gNapi.handles = Vec.new()
+    gNapi.registered = false
+}
+
+// ── C ABI helpers ──
+
+// Out-params are raw C pointers of varying width, so each write is explicit about
+// its size: a handle and a double are 8 bytes, napi_status/typeof enums are 4, and
+// a C bool is 1. Writing the wrong width silently corrupts the addon's stack.
+fn napiWriteI32(p: *u8, v: i32) {
+    unsafe {
+        var buf: [i32; 1] = [v; 1]
+        memcpy(p, buf as *u8, 4)
+    }
+}
+
+fn napiWriteF64(p: *u8, v: f64) {
+    unsafe {
+        var buf: [f64; 1] = [v; 1]
+        memcpy(p, buf as *u8, 8)
+    }
+}
+
+fn napiWriteBool(p: *u8, v: bool) {
+    unsafe {
+        var b: u8 = 0 as u8
+        if v {
+            b = 1 as u8
+        }
+        var buf: [u8; 1] = [b; 1]
+        memcpy(p, buf as *u8, 1)
+    }
+}
+
+// NAPI_AUTO_LENGTH is (size_t)-1: the string is null-terminated instead of counted.
+fn napiReadStr(p: *u8, len: i64): string {
+    unsafe {
+        if len < 0 {
+            return _cstrToString(p)
+        }
+        var out = String.withCapacity(len)
+        var i: i64 = 0
+        while i < len {
+            out.push(_loadU8(((p as i64) + i) as *u8))
+            i = i + 1
+        }
+        return out
+    }
+}
+
+// ── value creation ──
+
+@export
+fn napi_get_undefined(_env: *u8, result: *u8): i32 {
+    napiWriteHandle(result, napiHandle(JSValue.Undefined))
+    return NAPI_OK
+}
+
+@export
+fn napi_get_null(_env: *u8, result: *u8): i32 {
+    napiWriteHandle(result, napiHandle(JSValue.Null))
+    return NAPI_OK
+}
+
+@export
+fn napi_get_boolean(_env: *u8, value: bool, result: *u8): i32 {
+    napiWriteHandle(result, napiHandle(JSValue.Bool(value)))
+    return NAPI_OK
+}
+
+@export
+fn napi_create_int32(_env: *u8, value: i32, result: *u8): i32 {
+    napiWriteHandle(result, napiHandle(JSValue.Number(value as f64)))
+    return NAPI_OK
+}
+
+@export
+fn napi_create_uint32(_env: *u8, value: i32, result: *u8): i32 {
+    napiWriteHandle(result, napiHandle(JSValue.Number((value as i64) as f64)))
+    return NAPI_OK
+}
+
+@export
+fn napi_create_int64(_env: *u8, value: i64, result: *u8): i32 {
+    napiWriteHandle(result, napiHandle(JSValue.Number(value as f64)))
+    return NAPI_OK
+}
+
+@export
+fn napi_create_double(_env: *u8, value: f64, result: *u8): i32 {
+    napiWriteHandle(result, napiHandle(JSValue.Number(value)))
+    return NAPI_OK
+}
+
+@export
+fn napi_create_string_utf8(_env: *u8, str: *u8, length: i64, result: *u8): i32 {
+    napiWriteHandle(result, napiHandle(JSValue.Str(napiReadStr(str, length))))
+    return NAPI_OK
+}
+
+@export
+fn napi_create_object(_env: *u8, result: *u8): i32 {
+    let o = newObject(gInterp)
+    napiWriteHandle(result, napiHandle(JSValue.Obj(o)))
+    return NAPI_OK
+}
+
+@export
+fn napi_create_array(_env: *u8, result: *u8): i32 {
+    let o = newArray(gInterp)
+    napiWriteHandle(result, napiHandle(JSValue.Obj(o)))
+    return NAPI_OK
+}
+
+@export
+fn napi_create_array_with_length(_env: *u8, length: i64, result: *u8): i32 {
+    let o = newArray(gInterp)
+    var i: i64 = 0
+    while i < length {
+        gInterp.objects[o].elems.push(JSValue.Undefined)
+        i = i + 1
+    }
+    napiWriteHandle(result, napiHandle(JSValue.Obj(o)))
+    return NAPI_OK
+}
+
+// ── properties ──
+
+@export
+fn napi_set_named_property(_env: *u8, object: i64, utf8name: *u8, value: i64): i32 {
+    match napiValueOf(object) {
+        JSValue.Obj(o) => {
+            objSet(gInterp, o, napiReadStr(utf8name, -1), napiValueOf(value))
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
+}
+
+@export
+fn napi_get_named_property(_env: *u8, object: i64, utf8name: *u8, result: *u8): i32 {
+    match napiValueOf(object) {
+        JSValue.Obj(o) => {
+            let v = objGet(gInterp, o, napiReadStr(utf8name, -1))
+            napiWriteHandle(result, napiHandle(v))
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
+}
+
+// ── value extraction ──
+
+@export
+fn napi_get_value_double(_env: *u8, value: i64, result: *u8): i32 {
+    napiWriteF64(result, toNum(napiValueOf(value)))
+    return NAPI_OK
+}
+
+@export
+fn napi_get_value_int32(_env: *u8, value: i64, result: *u8): i32 {
+    napiWriteI32(result, toNum(napiValueOf(value)) as i32)
+    return NAPI_OK
+}
+
+@export
+fn napi_get_value_bool(_env: *u8, value: i64, result: *u8): i32 {
+    napiWriteBool(result, truthy(napiValueOf(value)))
+    return NAPI_OK
+}
+
+// napi_valuetype: undefined 0, null 1, boolean 2, number 3, string 4, symbol 5,
+// object 6, function 7, external 8, bigint 9
+@export
+fn napi_typeof(_env: *u8, value: i64, result: *u8): i32 {
+    match napiValueOf(value) {
+        JSValue.Undefined => {
+            napiWriteI32(result, 0)
+        }
+        JSValue.Null => {
+            napiWriteI32(result, 1)
+        }
+        JSValue.Bool(_b) => {
+            napiWriteI32(result, 2)
+        }
+        JSValue.Number(_n) => {
+            napiWriteI32(result, 3)
+        }
+        JSValue.Str(_s) => {
+            napiWriteI32(result, 4)
+        }
+        JSValue.Func(_f, _e) => {
+            napiWriteI32(result, 7)
+        }
+        JSValue.Native(_i) => {
+            napiWriteI32(result, 7)
+        }
+        JSValue.Obj(o) => {
+            if gInterp.objects[o].isFunctionLike {
+                napiWriteI32(result, 7)
+            } else {
+                napiWriteI32(result, 6)
+            }
+        }
+    }
+    return NAPI_OK
+}
+
+@export
+fn napi_is_array(_env: *u8, value: i64, result: *u8): i32 {
+    match napiValueOf(value) {
+        JSValue.Obj(o) => {
+            napiWriteBool(result, gInterp.objects[o].isArray)
+        }
+        _ => {
+            napiWriteBool(result, false)
+        }
+    }
+    return NAPI_OK
+}
+
+@export
+fn napi_get_array_length(_env: *u8, value: i64, result: *u8): i32 {
+    match napiValueOf(value) {
+        JSValue.Obj(o) => {
+            napiWriteI32(result, gInterp.objects[o].elems.len() as i32)
+            return NAPI_OK
+        }
+        _ => {
+            return NAPI_INVALID_ARG
+        }
+    }
+}
+
+// Nothing in Milo calls these — only a loaded addon does, through the dynamic
+// symbol table — so they are unreachable from main() and get dead-stripped before
+// the linker ever sees them. Taking each address here forces emission. Call this
+// once from main() before loading any addon; without it dlopen fails with
+// "symbol not found in flat namespace '_napi_...'".
+fn napiExportAll(): i64 {
+    // The addresses must genuinely escape. Returning addrs.len() instead let LLVM
+    // fold the count to a constant, drop every push, and strip the functions again.
+    var acc: i64 = 0
+    unsafe {
+        acc = acc + ((napi_get_undefined as *u8) as i64)
+        acc = acc + ((napi_get_null as *u8) as i64)
+        acc = acc + ((napi_get_boolean as *u8) as i64)
+        acc = acc + ((napi_create_int32 as *u8) as i64)
+        acc = acc + ((napi_create_uint32 as *u8) as i64)
+        acc = acc + ((napi_create_int64 as *u8) as i64)
+        acc = acc + ((napi_create_double as *u8) as i64)
+        acc = acc + ((napi_create_string_utf8 as *u8) as i64)
+        acc = acc + ((napi_create_object as *u8) as i64)
+        acc = acc + ((napi_create_array as *u8) as i64)
+        acc = acc + ((napi_create_array_with_length as *u8) as i64)
+        acc = acc + ((napi_set_named_property as *u8) as i64)
+        acc = acc + ((napi_get_named_property as *u8) as i64)
+        acc = acc + ((napi_get_value_double as *u8) as i64)
+        acc = acc + ((napi_get_value_int32 as *u8) as i64)
+        acc = acc + ((napi_get_value_bool as *u8) as i64)
+        acc = acc + ((napi_typeof as *u8) as i64)
+        acc = acc + ((napi_is_array as *u8) as i64)
+        acc = acc + ((napi_get_array_length as *u8) as i64)
+    }
+    return acc
+}
