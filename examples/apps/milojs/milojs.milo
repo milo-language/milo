@@ -174,10 +174,10 @@ fn main(): i32 {
     }
     if path.len() == 0 {
         // no script → interactive REPL
-        var st = makeInterp(false, 1024)
-        bootInterp(st)
-        setupNodeGlobals(st, "<repl>")
-        return repl(st)
+        gInterp = makeInterp(false, 1024)
+        bootInterp(gInterp)
+        setupNodeGlobals(gInterp, "<repl>")
+        return repl(gInterp)
     }
 
     var gcStats = false
@@ -206,14 +206,14 @@ fn main(): i32 {
         Option.None => {
         }
     }
-    var st = makeInterp(gcStats, gcThreshold)
+    gInterp = makeInterp(gcStats, gcThreshold)
     // MILOJS_AWAIT_BUDGET_MS shortens the stuck-await deadline for debugging
     match getEnv("MILOJS_AWAIT_BUDGET_MS") {
         Option.Some(bv) => {
             match parseInt(bv) {
                 Option.Some(n) => {
                     if n > 0 {
-                        st.awaitBudgetMs = n as f64
+                        gInterp.awaitBudgetMs = n as f64
                     }
                 }
                 Option.None => {
@@ -223,10 +223,10 @@ fn main(): i32 {
         Option.None => {
         }
     }
-    bootInterp(st)
-    setupNodeGlobals(st, path.clone())
+    bootInterp(gInterp)
+    setupNodeGlobals(gInterp, path.clone())
     if envFile.len() > 0 {
-        loadEnvFile(st, envFile)
+        loadEnvFile(gInterp, envFile)
     } else {
         // Convenience over node, which needs --env-file: find the nearest .env
         // walking up from the entry script. A bundle usually lives in dist/
@@ -237,7 +237,7 @@ fn main(): i32 {
         while !found && depth < 6 && dir.len() > 1 {
             let candidate = dir + "/.env"
             if fileExists(candidate) {
-                loadEnvFile(st, candidate)
+                loadEnvFile(gInterp, candidate)
                 found = true
             } else {
                 dir = dirOf(dir)
@@ -257,27 +257,27 @@ fn main(): i32 {
     // the wrong table when it is finally called.
     // the spec-builtin layer the engine also installs — the runtime is the engine
     // plus node shims, so it needs both, this one first
-    let enginePreludeIdx = preloadGraph("builtin:engine-prelude", prog, st)
-    let preludeIdx = preloadGraph("builtin:prelude", prog, st)
-    let entryIdx = preloadGraph(path.clone(), prog, st)
+    let enginePreludeIdx = preloadGraph("builtin:engine-prelude", prog, gInterp)
+    let preludeIdx = preloadGraph("builtin:prelude", prog, gInterp)
+    let entryIdx = preloadGraph(path.clone(), prog, gInterp)
     if entryIdx < 0 {
         eprint("milojs: cannot read '" + path + "'")
         return 1
     }
     if enginePreludeIdx >= 0 {
-        hoistBlock(prog, st.modBlocks[enginePreludeIdx], st, 0)
-        execBlock(prog, st.modBlocks[enginePreludeIdx], st, 0)
+        hoistBlock(prog, gInterp.modBlocks[enginePreludeIdx], gInterp, 0)
+        execBlock(prog, gInterp.modBlocks[enginePreludeIdx], gInterp, 0)
     }
     if preludeIdx >= 0 {
         // run in global scope, so its declarations become globals
-        hoistBlock(prog, st.modBlocks[preludeIdx], st, 0)
-        execBlock(prog, st.modBlocks[preludeIdx], st, 0)
+        hoistBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
+        execBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
     }
-    runModule(prog, entryIdx, st)
+    runModule(prog, entryIdx, gInterp)
     // the entry module only schedules work; the loop is what keeps a server alive
-    runEventLoop(prog, st)
-    if st.throwing {
-        eprint("Uncaught " + describeThrown(st, st.thrownValue))
+    runEventLoop(prog, gInterp)
+    if gInterp.throwing {
+        eprint("Uncaught " + describeThrown(gInterp, gInterp.thrownValue))
         return 1
     }
     return 0

@@ -154,8 +154,8 @@ fn main(): i32 {
                 Option.None => {
                 }
             }
-            var st = makeInterp(gcStats, gcThreshold)
-            bootInterp(st)
+            gInterp = makeInterp(gcStats, gcThreshold)
+            bootInterp(gInterp)
             // The prelude and the program must share one Prog: a JSValue.Func
             // carries an index into prog.funcs, so a function parsed into a
             // different Prog would index the wrong table when called.
@@ -164,13 +164,13 @@ fn main(): i32 {
             }
             // spec builtins that are written in JS rather than as natives; run in
             // global scope so its declarations become globals
-            let preludeIdx = preloadGraph("builtin:engine-prelude", prog, st)
+            let preludeIdx = preloadGraph("builtin:engine-prelude", prog, gInterp)
             if preludeIdx >= 0 {
-                hoistBlock(prog, st.modBlocks[preludeIdx], st, 0)
-                execBlock(prog, st.modBlocks[preludeIdx], st, 0)
+                hoistBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
+                execBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
             }
-            if st.throwing {
-                eprint("milojs-engine: prelude failed: " + describeThrown(st, st.thrownValue))
+            if gInterp.throwing {
+                eprint("milojs-engine: prelude failed: " + describeThrown(gInterp, gInterp.thrownValue))
                 return 1
             }
             // A file with ESM imports has to run as a module: its desugared
@@ -186,32 +186,32 @@ fn main(): i32 {
                 // first or every require fails with "module was not pre-loaded".
                 // preloadGraph walks require() edges from the entry; the entry's
                 // own parse here is what actually executes.
-                let _ = preloadGraph(path.clone(), prog, st)
+                let _ = preloadGraph(path.clone(), prog, gInterp)
                 // require() resolves against the CURRENT module's directory, and
                 // preload resolved against the entry's. Without pushing it the two
                 // disagree for anything but a bare builtin: preload registers
                 // <dir>/x.json while the runtime looks up x.json.
-                st.modDirStack.push(dirOf(path))
-                st.modPathStack.push(path.clone())
+                gInterp.modDirStack.push(dirOf(path))
+                gInterp.modPathStack.push(path.clone())
                 var p = PState {
                     toks: toks, pos: 0, curClass: "", file: path.clone(), errored: false, eofError: false, quiet: false
                 }
                 let top = parseProgram(p, prog)
-                hoistBlock(prog, top, st, 0)
-                execBlock(prog, top, st, 0)
+                hoistBlock(prog, top, gInterp, 0)
+                execBlock(prog, top, gInterp, 0)
             } else {
-                entryIdx = preloadWithImports(path.clone(), prog, st)
+                entryIdx = preloadWithImports(path.clone(), prog, gInterp)
                 if entryIdx < 0 {
                     eprint("milojs-engine: cannot load '" + path + "'")
                     return 1
                 }
-                runModule(prog, entryIdx, st)
+                runModule(prog, entryIdx, gInterp)
             }
-            if !st.throwing {
-                runEventLoop(prog, st)
+            if !gInterp.throwing {
+                runEventLoop(prog, gInterp)
             }
-            if st.throwing {
-                eprint("Uncaught " + describeThrown(st, st.thrownValue))
+            if gInterp.throwing {
+                eprint("Uncaught " + describeThrown(gInterp, gInterp.thrownValue))
                 return 1
             }
             return 0

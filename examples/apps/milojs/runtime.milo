@@ -379,6 +379,25 @@ struct Interp {
     gcStats: bool,
 }
 
+// The interpreter, reachable without being threaded through a parameter.
+//
+// Node-API callbacks arrive from C with no context: the addon calls napi_* on some
+// foreign stack, and there is no way to hand it a &mut Interp. A raw pointer back to
+// a local is not expressible either (`*u8 as &mut Interp` is correctly rejected), so
+// the state itself lives here and every entry point borrows it.
+//
+// Module-scope runtime initialization is not supported, so this is a zero literal
+// that main() overwrites with makeInterp().
+var gInterp: Interp = Interp {
+    scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
+    objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
+    modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(), modPathStack: Vec.new(),
+    throwing: false, thrownValue: JSValue.Undefined,
+    optShort: false,
+    rngState: 88172645463325252,
+    allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcRuns: 0, gcStats: false
+}
+
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
