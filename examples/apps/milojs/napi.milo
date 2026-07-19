@@ -989,12 +989,6 @@ fn napi_reject_deferred(_env: *u8, deferred: i64, rejection: i64): i32 {
 // No mutex is needed. A write of <= PIPE_BUF is atomic, so concurrent workers cannot
 // interleave within a record.
 
-extern fn pipe(_fds: *u8): i32
-
-extern fn read(_fd: i32, _buf: *u8, _n: i64): i64
-
-extern fn write(_fd: i32, _buf: *u8, _n: i64): i64
-
 fn napiEnsurePipe() {
     if gNapi.tsfnR >= 0 {
         return
@@ -1002,6 +996,12 @@ fn napiEnsurePipe() {
     unsafe {
         var fds: [i32; 2] = [0; 2]
         if pipe(fds as *u8) != 0 {
+            return
+        }
+        // fd 0/1 would mean pipe() never wrote the array: reading stdin returns EOF
+        // and writing "succeeds" straight to the terminal, so the queue silently
+        // never delivers. Refuse rather than run in that state.
+        if fds[0] <= 2 || fds[1] <= 2 {
             return
         }
         // the loop polls; a blocking read would stall the whole interpreter
