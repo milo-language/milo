@@ -1,0 +1,23 @@
+// @error: use of moved variable 'x'
+// Same arm-entry consumption as `match` (see matchSubjectReadInArm.milo), via
+// the if-let path: the then-branch destructures a non-Copy payload, so the
+// subject is zeroed before the branch body runs. The else-branch never
+// destructures and must stay free to read the subject.
+
+enum Val { Str(string), Num(i64) }
+
+fn describe(v: &Val): i64 {
+    match v {
+        Val.Str(s) => { return s.len }
+        Val.Num(n) => { return 0 }
+    }
+}
+
+fn main() {
+    var x = Val.Str("hello world")
+    if let Val.Str(s) = x {
+        print($"{describe(x)}")
+    } else {
+        print($"{describe(x)}")
+    }
+}

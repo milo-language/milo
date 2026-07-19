@@ -220,6 +220,10 @@ export class TypeChecker {
   private rewrittenStructLits = new Map<Expr, string>();
   private movedExprs = new Set<Expr>();
   private borrowedExprs = new Set<Expr>();
+  // Subjects consumed by the destructuring arm/pattern currently being checked.
+  // Only drives the wording of the use-after-move error, which is otherwise
+  // misleading here (the transfer point is the pattern, not an earlier stmt).
+  private movedByPattern = new Set<object>();
   private autoWrappedOption = new Map<Expr, string>();
   private arrayToVecCoercions = new Set<Expr>();
   private closureCaptures = new Map<Expr, CaptureInfo[]>();
@@ -2636,7 +2640,22 @@ export class TypeChecker {
                 copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.subject)) });
             }
           }
+          // Same arm-entry consumption as match: a destructuring then-branch
+          // zeroes the payload before its body runs, so the subject is dead
+          // there. The else-branch never destructures, so it stays readable.
+          let patternMovedInfo: { moved: boolean } | null = null;
+          if (!subjBorrows && this.armConsumesSubject(stmt.pattern, enumInfo)) {
+            this.tryMove(stmt.subject);
+            if (stmt.subject.kind === "Ident") {
+              const info = this.lookup(stmt.subject.name);
+              if (info) { patternMovedInfo = info; this.movedByPattern.add(info); }
+            }
+          }
           for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
+          if (patternMovedInfo) {
+            this.movedByPattern.delete(patternMovedInfo);
+            patternMovedInfo.moved = false; // re-marked by the tryMove below, after the else-branch
+          }
           this.popScope();
         } else {
           this.pushScope();
@@ -2829,6 +2848,24 @@ export class TypeChecker {
         }
       }
     }
+  }
+
+  // An arm that binds a non-Copy payload by value consumes the subject at ARM
+  // ENTRY — codegen zeroes the payload slot there (see extractBindings) — so
+  // reading the subject inside that arm sees zeroed data. Arms with no bindings,
+  // or only Copy ones, leave the subject intact and may still read it.
+  private armConsumesSubject(
+    pattern: Pattern,
+    enumInfo: { variants: Map<string, { fields: TypeKind[] }> },
+  ): boolean {
+    if (pattern.kind !== "EnumPattern" || pattern.bindings.length === 0) return false;
+    const variant = enumInfo.variants.get(pattern.variant);
+    if (!variant) return false;
+    const n = Math.min(pattern.bindings.length, variant.fields.length);
+    for (let i = 0; i < n; i++) {
+      if (!isCopy(variant.fields[i], (x) => this.isAllCopyEnum(x), (x) => this.isAllCopyStruct(x))) return true;
+    }
+    return false;
   }
 
   private tryMove(expr: Expr) {
@@ -3392,11 +3429,19 @@ export class TypeChecker {
         }
         info.read = true;
         if (info.moved) {
-          this.error(
-            `use of moved variable '${expr.name}'`,
-            sp,
-            `ownership of '${expr.name}' was transferred earlier and it can no longer be used here. To keep it alive, clone it at the point of transfer: '${expr.name}.clone()'.`,
-          );
+          if (this.movedByPattern.has(info)) {
+            this.error(
+              `use of moved variable '${expr.name}'`,
+              sp,
+              `the pattern moved '${expr.name}''s payload out, so reading '${expr.name}' here would see a zeroed value. Use the pattern's binding instead, or compute what you need from '${expr.name}' before the match.`,
+            );
+          } else {
+            this.error(
+              `use of moved variable '${expr.name}'`,
+              sp,
+              `ownership of '${expr.name}' was transferred earlier and it can no longer be used here. To keep it alive, clone it at the point of transfer: '${expr.name}.clone()'.`,
+            );
+          }
           return this.setType(expr, this.deref(info.type));
         }
         return this.setType(expr, this.deref(info.type));
@@ -5530,7 +5575,21 @@ export class TypeChecker {
             this.patternBindingTypes.set(arm.pattern, bindTypes);
           }
         }
+        // Consume BEFORE the body, not after the whole match: a destructuring arm
+        // zeroes the payload at arm entry, so a read of the subject inside that
+        // arm is a use-after-move. Deferring the move to the end of the match let
+        // those reads through silently and they saw zeroed data.
+        const armConsumes = !subjBorrows && this.armConsumesSubject(arm.pattern, enumInfo);
+        let patternMovedInfo: object | null = null;
+        if (armConsumes) {
+          this.tryMove(subject);
+          if (subject.kind === "Ident") {
+            const info = this.lookup(subject.name);
+            if (info) { patternMovedInfo = info; this.movedByPattern.add(info); }
+          }
+        }
         for (const s of arm.body) this.checkStmt(s, fnRetType);
+        if (patternMovedInfo) this.movedByPattern.delete(patternMovedInfo);
         armTypes.push(this.blockExprType(arm.body));
         this.popScope();
         for (const [info, moved] of this.snapshotMoveState()) {

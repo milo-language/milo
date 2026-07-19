@@ -1,0 +1,32 @@
+// @error: use of moved variable 'x'
+// Reading the match subject inside an arm that destructures a non-Copy payload
+// used to compile and silently read zeroed memory: codegen zeroes the payload
+// slot at ARM ENTRY (extractBindings), but the checker deferred the subject's
+// move to the END of the whole match, so the arm body saw it as still-live.
+//
+// The failure mode was worse than "always false" — the enum TAG survives the
+// zeroing, so a discriminant-only predicate still answered correctly while a
+// payload-reading one silently didn't.
+//
+// The `_` arm is deliberately non-destructuring: it must stay legal to read the
+// subject there, since nothing is zeroed on that path.
+
+enum Val { Str(string), Num(i64) }
+
+fn startsHello(v: &Val): bool {
+    match v {
+        Val.Str(s) => { return s.startsWith("hello") }
+        Val.Num(n) => { return false }
+    }
+}
+
+fn main() {
+    var x = Val.Str("hello world")
+    match x {
+        Val.Str(s) => {
+            let bad = startsHello(x)
+            print($"{bad}")
+        }
+        Val.Num(n) => { print("num") }
+    }
+}

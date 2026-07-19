@@ -1,0 +1,82 @@
+// Counterpart to tests/errors/matchSubjectReadInArm.milo: arms that don't move a
+// non-Copy payload out leave the subject intact at runtime, so reading it there
+// must keep compiling. Covers the three non-consuming shapes:
+//   - a wildcard `_` arm
+//   - an arm binding only Copy payloads
+//   - an arm with no bindings at all
+// and the else-branch of an if-let, which never destructures.
+// @expect: tag=str len=11
+// @expect: num arm sees 7
+// @expect: unit arm sees len 11
+// @expect: else sees len 11
+
+enum Val {
+    Str(string), Num(i64), Unit
+}
+
+fn describe(v: &Val): i64 {
+    match v {
+        Val.Str(s) => {
+            return s.len
+        }
+        Val.Num(n) => {
+            return n
+        }
+        Val.Unit => {
+            return -1
+        }
+    }
+}
+
+fn isStr(v: &Val): bool {
+    match v {
+        Val.Str(s) => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+fn main() {
+    let s = Val.Str("hello world")
+    // wildcard arm: nothing destructured, subject still readable
+    match s {
+        Val.Num(n) => {
+            print("unreachable")
+        }
+        _ => {
+            print($"tag=str len={describe(s)}")
+        }
+    }
+
+    let n = Val.Num(7)
+    // Copy payload binds by value; the subject is not consumed
+    match n {
+        Val.Num(v) => {
+            print($"num arm sees {describe(n)}")
+        }
+        _ => {
+            print("unreachable")
+        }
+    }
+
+    let u = Val.Str("hello world")
+    // zero-binding arm
+    match u {
+        Val.Unit => {
+            print("unreachable")
+        }
+        _ => {
+            print($"unit arm sees len {describe(u)}")
+        }
+    }
+
+    let e = Val.Str("hello world")
+    if let Val.Num(v) = e {
+        print("unreachable")
+    } else {
+        print($"else sees len {describe(e)}")
+    }
+}

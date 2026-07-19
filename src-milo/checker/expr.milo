@@ -2428,10 +2428,14 @@ fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, arg
             while i < args.len && (i + 1) < sig.params.len {
                 let argType = checkExpr(ck, *args[i])
                 let paramType = sig.params[i + 1].ty
+                // display name computed BEFORE the match: the TRef arm moves the
+                // inner Heap out, leaving `paramType` zeroed (same hazard as the
+                // free-function path above)
+                let ptName = typeName(paramType)
                 match paramType {
                     TypeKind.TRef(inner, mutable) => {
                         if !typeEq(*inner, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(*inner, argType, *args[i]) {
-                            error(ck, "argument " + (i + 1).toString() + " of '" + method.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), cloneSpan(span))
+                            error(ck, "argument " + (i + 1).toString() + " of '" + method.clone() + "': expected " + ptName + ", got " + typeName(argType), cloneSpan(span))
                         }
                     }
                     _ => {
