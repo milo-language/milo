@@ -2079,7 +2079,8 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         let t = cloneValue(argVals[0])
         let h = cloneValue(argVals[1])
-        if objHandle(t) < 0 || objHandle(h) < 0 {
+        // a function target is legal and common — `new Proxy(fn, {apply})`
+        if (objHandle(t) < 0 && !isCallable(t)) || objHandle(h) < 0 {
             return throwTypeErr(st, "Cannot create proxy with a non-object as target or handler")
         }
         let o = newObject(st)
@@ -3600,6 +3601,49 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     return callNative(id, argVals, st)
                 }
                 JSValue.Obj(co) => {
+                    if st.objects[co].isProxy {
+                        let trap = proxyTrap(st, co, "construct")
+                        let target = cloneValue(st.objects[co].proxyTarget)
+                        let argVals = evalArgs(prog, argsIdx, st, scope)
+                        if isCallableIn(st, trap) {
+                            // construct(target, argsArray, newTarget)
+                            let arr = newArray(st)
+                            var ai: i64 = 0
+                            while ai < argVals.len() {
+                                st.objects[arr].elems.push(cloneValue(argVals[ai]))
+                                ai = ai + 1
+                            }
+                            var targs: Vec<JSValue> = Vec.new()
+                            targs.push(cloneValue(target))
+                            targs.push(JSValue.Obj(arr))
+                            targs.push(JSValue.Obj(co))
+                            return callValue(prog, trap, targs, cloneValue(st.objects[co].proxyHandler), st)
+                        }
+                        // no construct trap: build the instance ourselves and run
+                        // the target as its constructor, matching `new target()`
+                        let inst = newObject(st)
+                        let th = objHandle(target)
+                        if th >= 0 {
+                            match objGet(st, th, "prototype") {
+                                JSValue.Obj(pr) => {
+                                    st.objects[inst].proto = pr
+                                }
+                                _ => {
+                                }
+                            }
+                        }
+                        pushTemp(st, JSValue.Obj(inst))
+                        let cr = callValue(prog, target, argVals, JSValue.Obj(inst), st)
+                        popTemp(st)
+                        match cr {
+                            JSValue.Obj(ro) => {
+                                return JSValue.Obj(ro)
+                            }
+                            _ => {
+                                return JSValue.Obj(inst)
+                            }
+                        }
+                    }
                     // a class defined by a node-api addon (napi_define_class): build
                     // the instance here and link its prototype, then let the addon's
                     // constructor callback populate it — typically via napi_wrap.
@@ -5061,6 +5105,25 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
             return callNative(id, args, st)
         }
         JSValue.Obj(o) => {
+            if st.objects[o].isProxy {
+                let trap = proxyTrap(st, o, "apply")
+                let target = cloneValue(st.objects[o].proxyTarget)
+                if isCallableIn(st, trap) {
+                    // apply(target, thisArg, argsArray)
+                    let arr = newArray(st)
+                    var i: i64 = 0
+                    while i < args.len() {
+                        st.objects[arr].elems.push(cloneValue(args[i]))
+                        i = i + 1
+                    }
+                    var targs: Vec<JSValue> = Vec.new()
+                    targs.push(cloneValue(target))
+                    targs.push(cloneValue(thisVal))
+                    targs.push(JSValue.Obj(arr))
+                    return callValue(prog, trap, targs, cloneValue(st.objects[o].proxyHandler), st)
+                }
+                return callValue(prog, target, args, thisVal, st)
+            }
             // implemented by a loaded node-api addon: dispatch to its C callback
             if st.objects[o].napiFn >= 0 {
                 let r = napiInvoke(st.objects[o].napiFn, args, thisVal)
@@ -5607,7 +5670,11 @@ fn isCallableIn(st: &Interp, v: &JSValue): bool {
     }
     let h = objHandle(v)
     if h >= 0 {
-        // napiFn objects are functions implemented by a loaded addon
+        // napiFn objects are functions implemented by a loaded addon; a proxy is
+        // callable when whatever it wraps is
+        if st.objects[h].isProxy {
+            return isCallableIn(st, st.objects[h].proxyTarget)
+        }
         return st.objects[h].isBound || st.objects[h].napiFn >= 0
     }
     return false
@@ -6437,7 +6504,7 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 JSValue.Obj(fo) => {
                     // a bound-method or bind() result stored as a property: it is
                     // callable (typeof reports "function") but is not a Func/Native
-                    if st.objects[fo].isBound || st.objects[fo].napiFn >= 0 {
+                    if st.objects[fo].isBound || st.objects[fo].napiFn >= 0 || st.objects[fo].isProxy {
                         let argVals = evalArgs(prog, argsIdx, st, scope)
                         let r = callValue(prog, JSValue.Obj(fo), argVals, JSValue.Obj(o), st)
                         popTemp(st)
