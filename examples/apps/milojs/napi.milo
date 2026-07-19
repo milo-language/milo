@@ -32,15 +32,34 @@ from "examples/apps/milojs/runtime" import {
 let NAPI_OK: i32 = 0
 let NAPI_INVALID_ARG: i32 = 1
 
+// A function implemented by the addon. `fnPtr` is a napi_callback:
+//   napi_value (*)(napi_env, napi_callback_info)
+// `data` is the opaque void* the addon asked us to hand back via napi_get_cb_info.
+struct NapiFn {
+    fnPtr: i64,
+    data: i64,
+}
+
+// One in-flight call into an addon callback. napi_callback_info is opaque to the
+// addon, so it is just an index into this stack — which must be a stack, not a
+// single slot: a callback can call back into JS, which can call another callback.
+struct NapiCall {
+    args: Vec<JSValue>,
+    thisVal: JSValue,
+    fnIdx: i64,
+}
+
 struct NapiState {
     // handle index -> the value it denotes; slot 0 is unused so handle 0 can mean null
     handles: Vec<JSValue>,
     // set once the addon has been handed its exports object
     registered: bool,
+    fns: Vec<NapiFn>,
+    calls: Vec<NapiCall>,
 }
 
 var gNapi: NapiState = NapiState {
-    handles: Vec.new(), registered: false
+    handles: Vec.new(), registered: false, fns: Vec.new(), calls: Vec.new()
 }
 
 // Wrap a value in a fresh handle. Handles are never reused within a run: the addon
@@ -325,5 +344,132 @@ fn napi_get_array_length(_env: *u8, value: i64, result: *u8): i32 {
         _ => {
             return NAPI_INVALID_ARG
         }
+    }
+}
+
+// ── functions implemented by the addon ──
+
+// napi_create_function(env, utf8name, length, cb, data, result)
+//
+// The result is a milojs object carrying the callback's registry index. It reports
+// as a function to typeof and is dispatched by callValue, so from JS it is
+// indistinguishable from any other callable.
+@export
+fn napi_create_function(_env: *u8, _utf8name: *u8, _length: i64, cb: i64, data: i64, result: *u8): i32 {
+    if cb == 0 {
+        return NAPI_INVALID_ARG
+    }
+    gNapi.fns.push(NapiFn {
+        fnPtr: cb, data: data
+    }
+    )
+    let o = newObject(gInterp)
+    gInterp.objects[o].napiFn = gNapi.fns.len() - 1
+    gInterp.objects[o].isFunctionLike = true
+    napiWriteHandle(result, napiHandle(JSValue.Obj(o)))
+    return NAPI_OK
+}
+
+// napi_get_cb_info(env, cbinfo, argc, argv, this_arg, data)
+//
+// `argc` is in/out: on entry the size of the addon's argv buffer, on exit the
+// number of arguments actually copied. Real argument count is reported even when
+// the buffer is smaller, which is how addons detect being under-called.
+@export
+fn napi_get_cb_info(_env: *u8, cbinfo: i64, argc: *u8, argv: *u8, thisArg: *u8, data: *u8): i32 {
+    if cbinfo < 0 || cbinfo >= gNapi.calls.len() {
+        return NAPI_INVALID_ARG
+    }
+    let total = gNapi.calls[cbinfo].args.len()
+    var want: i64 = 0
+    unsafe {
+        if (argv as i64) != 0 && (argc as i64) != 0 {
+            var abuf: [i64; 1] = [0; 1]
+            memcpy(abuf as *u8, argc, 8)
+            want = abuf[0]
+            var i: i64 = 0
+            while i < want {
+                var h: i64 = 0
+                if i < total {
+                    h = napiHandle(cloneValue(gNapi.calls[cbinfo].args[i]))
+                } else {
+                    // JS pads missing arguments with undefined
+                    h = napiHandle(JSValue.Undefined)
+                }
+                napiWriteHandle(((argv as i64) + i * 8) as *u8, h)
+                i = i + 1
+            }
+        }
+        if (argc as i64) != 0 {
+            napiWriteHandle(argc, total)
+        }
+        if (thisArg as i64) != 0 {
+            napiWriteHandle(thisArg, napiHandle(cloneValue(gNapi.calls[cbinfo].thisVal)))
+        }
+        if (data as i64) != 0 {
+            let fi = gNapi.calls[cbinfo].fnIdx
+            var dv: i64 = 0
+            if fi >= 0 && fi < gNapi.fns.len() {
+                dv = gNapi.fns[fi].data
+            }
+            napiWriteHandle(data, dv)
+        }
+    }
+    return NAPI_OK
+}
+
+// Invoke an addon-implemented function. Called by callValue when a JS call lands on
+// an object whose napiFn is set.
+fn napiInvoke(fnIdx: i64, args: Vec<JSValue>, thisVal: JSValue): JSValue {
+    if fnIdx < 0 || fnIdx >= gNapi.fns.len() {
+        return JSValue.Undefined
+    }
+    let ptr = gNapi.fns[fnIdx].fnPtr
+    gNapi.calls.push(NapiCall {
+        args: args, thisVal: thisVal, fnIdx: fnIdx
+    }
+    )
+    let cbinfo = gNapi.calls.len() - 1
+    unsafe {
+        let f = (ptr as *u8) as extern (*u8, i64) => i64
+        let rh = f(0 as *u8, cbinfo)
+        // pop only our own frame; a nested call already popped its own
+        while gNapi.calls.len() > cbinfo {
+            let _d = gNapi.calls.pop()
+        }
+        return napiValueOf(rh)
+    }
+}
+
+// ── module loading ──
+
+extern fn dlopen(_path: *u8, _flags: i32): *u8
+
+extern fn dlsym(_handle: *u8, _symbol: *u8): *u8
+
+// Load a .node addon and run its registration, returning the exports it produced.
+//
+// The real entry point is napi_register_module_v1(env, exports): we hand it a fresh
+// object and it populates it, but it may also return a DIFFERENT value, which then
+// becomes module.exports. Both shapes are legal and addons use both.
+fn napiLoadAddon(path: &string): Result<JSValue, string> {
+    unsafe {
+        let h = dlopen(path as *u8, 2)
+        if (h as i64) == 0 {
+            return Result.Err("dlopen failed for " + path.clone())
+        }
+        let sym = dlsym(h, "napi_register_module_v1")
+        if (sym as i64) == 0 {
+            return Result.Err("not a node-api addon (no napi_register_module_v1): " + path.clone())
+        }
+        let exportsObj = newObject(gInterp)
+        let eh = napiHandle(JSValue.Obj(exportsObj))
+        let reg = (sym as *u8) as extern (*u8, i64) => i64
+        let rh = reg(0 as *u8, eh)
+        gNapi.registered = true
+        if rh != 0 && rh != eh {
+            return Result.Ok(napiValueOf(rh))
+        }
+        return Result.Ok(JSValue.Obj(exportsObj))
     }
 }

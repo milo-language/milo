@@ -41,6 +41,9 @@ from "std/datetime" import {
 from "std/fs" import {
     currentDir, writeFile, appendFile
 }
+from "examples/apps/milojs/napi" import {
+    napiInvoke, napiLoadAddon
+}
 from "std/math" import {
     mathMod, mathPow
 }
@@ -1006,6 +1009,9 @@ let NATIVE_OBJECT_ISSEALED: i64 = 103
 // UTF-8, so neither can measure file content read as a string. Content-Length
 // must come from here or binary responses (fonts, images) get truncated.
 let NATIVE_BYTE_LENGTH: i64 = 104
+// __napiLoad(path): dlopen a .node addon, run napi_register_module_v1, return its
+// exports. This is what require() resolves a .node file to.
+let NATIVE_NAPI_LOAD: i64 = 105
 let NATIVE_ARRAYBUFFER: i64 = 78
 // the typed-array constructors occupy a contiguous block so the element kind is
 // just (id - NATIVE_TA_BASE); keep in step with the TA_* order in runtime.milo
@@ -2025,6 +2031,25 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         // primitives are never extensible
         return JSValue.Bool(false)
     }
+    if id == NATIVE_NAPI_LOAD {
+        if argVals.len() == 0 {
+            return JSValue.Undefined
+        }
+        match napiLoadAddon(toStr(argVals[0])) {
+            Result.Ok(v) => {
+                return v
+            }
+            Result.Err(e) => {
+                let eo = newObject(st)
+                st.objects[eo].isError = true
+                objSet(st, eo, "name", JSValue.Str("Error"))
+                objSet(st, eo, "message", JSValue.Str(e))
+                st.throwing = true
+                st.thrownValue = JSValue.Obj(eo)
+                return JSValue.Undefined
+            }
+        }
+    }
     if id == NATIVE_BYTE_LENGTH {
         if argVals.len() == 0 {
             return JSValue.Number(0.0)
@@ -2880,6 +2905,7 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "__readFileSync", JSValue.Native(NATIVE_READ_FILE_SYNC))
     scopeDefine(st, 0, "__fileExists", JSValue.Native(NATIVE_FILE_EXISTS))
     scopeDefine(st, 0, "__byteLength", JSValue.Native(NATIVE_BYTE_LENGTH))
+    scopeDefine(st, 0, "__napiLoad", JSValue.Native(NATIVE_NAPI_LOAD))
 }
 
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).
@@ -4870,6 +4896,10 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
             return callNative(id, args, st)
         }
         JSValue.Obj(o) => {
+            // implemented by a loaded node-api addon: dispatch to its C callback
+            if st.objects[o].napiFn >= 0 {
+                return napiInvoke(st.objects[o].napiFn, args, thisVal)
+            }
             // a bind() result: the captured receiver wins over the call site's
             if st.objects[o].isBound {
                 if st.objects[o].boundMethod.len() > 0 {
@@ -5410,7 +5440,8 @@ fn isCallableIn(st: &Interp, v: &JSValue): bool {
     }
     let h = objHandle(v)
     if h >= 0 {
-        return st.objects[h].isBound
+        // napiFn objects are functions implemented by a loaded addon
+        return st.objects[h].isBound || st.objects[h].napiFn >= 0
     }
     return false
 }
@@ -6239,7 +6270,7 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 JSValue.Obj(fo) => {
                     // a bound-method or bind() result stored as a property: it is
                     // callable (typeof reports "function") but is not a Func/Native
-                    if st.objects[fo].isBound {
+                    if st.objects[fo].isBound || st.objects[fo].napiFn >= 0 {
                         let argVals = evalArgs(prog, argsIdx, st, scope)
                         let r = callValue(prog, JSValue.Obj(fo), argVals, JSValue.Obj(o), st)
                         popTemp(st)
