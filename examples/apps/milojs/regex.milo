@@ -5,12 +5,11 @@
 //
 // Supported: literals, ., char classes [ ] with ranges/negation, \d \w \s (and
 // negations), anchors ^ $, groups ( ) and (?: ), alternation |, quantifiers
-// * + ? {n} {n,} {n,m} greedy and lazy, \b \B, common escapes. Flags i, g, m,
-// and lookahead (?=) / (?!).
-// Not yet: lookBEHIND, backreferences, named groups, the s (dotAll) flag,
-// Unicode property escapes. Lookbehind needs the VM to report a match END
-// position (to require the inner match to finish exactly at sp); reRun only
-// returns bool today.
+// * + ? {n} {n,} {n,m} greedy and lazy, \b \B, common escapes. Flags i, g, m, s,
+// lookahead (?=) / (?!), and backreferences \1..\9.
+// Not yet: lookBEHIND, named groups, Unicode property escapes. Lookbehind needs
+// the VM to report a match END position (to require the inner match to finish
+// exactly at sp); reRun only returns bool today.
 
 from "./value" import {
     JSValue
