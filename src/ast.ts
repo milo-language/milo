@@ -10,6 +10,7 @@ export interface MiloType {
   isArray: boolean;    // [T]
   arraySize: number | null; // [T; N] — null for dynamic
   isFn?: boolean;      // fn(T): R
+  isCFn?: boolean;     // extern (T) => R — bare C function pointer
   fnParams?: MiloType[];
   fnRet?: MiloType;
   rangeMin?: number;   // i32(0..50000) — range constraint

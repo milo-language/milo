@@ -203,6 +203,13 @@ export class Parser {
       this.expect(TokenKind.RBracket);
       return { name: inner.name, isPtr: false, isRef: false, isRefMut: false, isArray: true, arraySize };
     }
+    // extern (T1, T2) => R — a C function pointer, e.g. the result of dlsym
+    if (this.at(TokenKind.Extern)) {
+      this.advance();
+      const cf = this.parseType();
+      if (!cf.isFn) this.error("expected a function type after 'extern'", this.peek());
+      return { ...cf, isCFn: true };
+    }
     // (T1, T2) => R
     if (this.at(TokenKind.LParen) && this.isFnType()) {
       this.advance();

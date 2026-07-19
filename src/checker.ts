@@ -106,6 +106,7 @@ export interface CheckResult {
   monomorphizedStructs: StructDecl[];
   closureCaptures: Map<Expr, CaptureInfo[]>;
   closureCalls: Map<Expr, TypeKind>;
+  cfnCalls: Map<Expr, TypeKind>;
   resolvedMethods: Map<Expr, string>;
   // method calls whose receiver was auto-dereffed through a Heap<T>
   heapMethodReceivers: Set<Expr>;
@@ -228,6 +229,7 @@ export class TypeChecker {
   private arrayToVecCoercions = new Set<Expr>();
   private closureCaptures = new Map<Expr, CaptureInfo[]>();
   private closureCalls = new Map<Expr, TypeKind>();
+  private cfnCalls = new Map<Expr, TypeKind>();
   private sizeOfTypes = new Map<Expr, TypeKind>();
   private cSigs = new Map<string, CSig>();
   private offsetOfFields = new Map<Expr, string>();
@@ -495,7 +497,8 @@ export class TypeChecker {
 
   private resolve(ty: MiloType): TypeKind {
     if (ty.isFn && ty.fnParams && ty.fnRet) {
-      return { tag: "fn", params: ty.fnParams.map(p => this.resolve(p)), ret: this.resolve(ty.fnRet) };
+      const tag = ty.isCFn ? "cfn" as const : "fn" as const;
+      return { tag, params: ty.fnParams.map(p => this.resolve(p)), ret: this.resolve(ty.fnRet) };
     }
     // type alias resolution
     const alias = this.typeAliases.get(ty.name);
@@ -597,6 +600,7 @@ export class TypeChecker {
 
   private mangleTypeName(t: TypeKind): string {
     switch (t.tag) {
+      case "cfn": return `cfn${t.params.length}`;
       case "int": return `${t.signed ? "i" : "u"}${t.bits}`;
       case "float": return `f${t.bits}`;
       case "bool": return "bool";
@@ -1226,6 +1230,7 @@ export class TypeChecker {
       monomorphizedStructs: this.monomorphizedStructDecls,
       closureCaptures: this.closureCaptures,
       closureCalls: this.closureCalls,
+      cfnCalls: this.cfnCalls,
       resolvedMethods: this.resolvedMethods,
       heapMethodReceivers: this.heapMethodReceivers,
       resolvedOperators: this.resolvedOperators,
@@ -3817,10 +3822,10 @@ export class TypeChecker {
         // against its own param, reporting a type error inside a file the user never
         // opened. Innermost binding wins, as everywhere else in the language.
         const localCallable = this.lookup(expr.func);
-        const sig = (localCallable && localCallable.type.tag === "fn") ? undefined : this.functions.get(expr.func);
+        const sig = (localCallable && (localCallable.type.tag === "fn" || localCallable.type.tag === "cfn")) ? undefined : this.functions.get(expr.func);
         if (!sig) {
           const varInfo = localCallable;
-          if (varInfo && varInfo.type.tag === "fn") {
+          if (varInfo && (varInfo.type.tag === "fn" || varInfo.type.tag === "cfn")) {
             varInfo.read = true;
             const fnType = varInfo.type;
             if (expr.args.length !== fnType.params.length) {
@@ -3850,7 +3855,8 @@ export class TypeChecker {
               }
               this.tryMove(expr.args[i]);
             }
-            this.closureCalls.set(expr, fnType);
+            if (fnType.tag === "cfn") this.cfnCalls.set(expr, fnType);
+            else this.closureCalls.set(expr, fnType);
             return this.setType(expr, fnType.ret);
           }
           // Promise(fn) → Promise<T>.run(fn) with T inferred from closure return type
@@ -4477,8 +4483,9 @@ export class TypeChecker {
       case "CastExpr": {
         const fromType = this.checkExpr(expr.operand);
         const toType = this.resolve(expr.targetType);
-        const fromOk = isNumeric(fromType) || fromType.tag === "bool" || fromType.tag === "ptr" || fromType.tag === "array" || fromType.tag === "fn" || fromType.tag === "string" || fromType.tag === "unknown";
-        const toOk = isNumeric(toType) || toType.tag === "ptr";
+        const fromOk = isNumeric(fromType) || fromType.tag === "bool" || fromType.tag === "ptr" || fromType.tag === "array" || fromType.tag === "fn" || fromType.tag === "cfn" || fromType.tag === "string" || fromType.tag === "unknown";
+        // ptr -> cfn is how a dlsym result becomes callable; cfn -> ptr passes one back out
+        const toOk = isNumeric(toType) || toType.tag === "ptr" || toType.tag === "cfn";
         if (!fromOk) {
           this.error(`cannot cast from ${typeName(fromType)}`, sp);
         }

@@ -430,6 +430,7 @@ export class Codegen {
       case "struct": return `%${t.name}`;
       case "enum":   return `%${t.name}`;
       case "fn":     return "{ ptr, ptr }";
+      case "cfn":    return "ptr";
       case "array":
         if (t.size !== null) return `[${t.size} x ${this.llvmType(t.element)}]`;
         // unsized [T] = slice view: same {ptr,len,cap} layout as Vec, cap=0 → non-owning
@@ -4031,6 +4032,32 @@ export class Codegen {
           lines.push(`  ${closurePair2} = insertvalue { ptr, ptr } ${closurePair}, ptr null, 1`);
           return [lines, closurePair2, "{ ptr, ptr }"];
         }
+      }
+      case "CFnCall": {
+        // a bare C function pointer: call it directly, with no env prepended
+        const [calLines, calVal] = this.genExpr(expr.callee);
+        lines.push(...calLines);
+        const argVals: { val: string; type: string }[] = [];
+        for (const arg of expr.args) {
+          if (arg.passByRef) {
+            const [al, aPtr] = this.genLValueForArg(arg.expr);
+            lines.push(...al);
+            argVals.push({ val: aPtr, type: "ptr" });
+          } else {
+            const [al, av, at] = this.genExpr(arg.expr);
+            lines.push(...al);
+            argVals.push({ val: av, type: at });
+          }
+        }
+        const cArgsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
+        const cRetTy = this.llvmType(expr.type);
+        if (cRetTy === "void") {
+          lines.push(`  call void ${calVal}(${cArgsStr})`);
+          return [lines, "void", "void"];
+        }
+        const cResult = this.nextTemp();
+        lines.push(`  ${cResult} = call ${cRetTy} ${calVal}(${cArgsStr})`);
+        return [lines, cResult, cRetTy];
       }
       case "ClosureCall": {
         // load the { fn_ptr, env_ptr } pair from the callee

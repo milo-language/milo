@@ -497,6 +497,20 @@ class LowerCtx {
           const argType = this.typeOf(expr.args[0]) ?? { tag: "unknown" as const };
           return { kind: "JsonStringify", value: this.lowerExpr(expr.args[0]), valueType: argType, type, span: expr.span };
         }
+        const cfnType = this.c.cfnCalls.get(expr);
+        if (cfnType) {
+          const cargs: HIRArg[] = expr.args.map(arg => {
+            const borrowed = this.c.autoBorrowed.get(arg);
+            return { expr: this.lowerExpr(arg), passByRef: !!borrowed, refMut: borrowed?.mutable ?? false };
+          });
+          return {
+            kind: "CFnCall",
+            callee: { kind: "Ident", name: expr.func, type: cfnType, span: expr.span },
+            args: cargs,
+            type,
+            span: expr.span,
+          };
+        }
         const closureFnType = this.c.closureCalls.get(expr);
         if (closureFnType) {
           const args: HIRArg[] = expr.args.map(arg => {

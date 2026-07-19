@@ -13,12 +13,17 @@ export type TypeKind =
   | { tag: "hashmap"; key: TypeKind; value: TypeKind }
   | { tag: "array"; element: TypeKind; size: number | null }
   | { tag: "fn"; params: TypeKind[]; ret: TypeKind }
+  // A bare C function pointer (one word, no closure env). `fn` is a fat {ptr,ptr}
+  // pair, so a pointer obtained from dlsym cannot become one — calling it would
+  // pass an env argument the C callee never declared.
+  | { tag: "cfn"; params: TypeKind[]; ret: TypeKind }
   | { tag: "interface"; name: string }
   | { tag: "unknown" };
 
-export function typeFromAst(ty: { name: string; isPtr: boolean; ptrDepth?: number; isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null; isFn?: boolean; fnParams?: any[]; fnRet?: any; rangeMin?: number; rangeMax?: number }): TypeKind {
+export function typeFromAst(ty: { name: string; isPtr: boolean; ptrDepth?: number; isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null; isFn?: boolean; isCFn?: boolean; fnParams?: any[]; fnRet?: any; rangeMin?: number; rangeMax?: number }): TypeKind {
   if (ty.isFn && ty.fnParams && ty.fnRet) {
-    return { tag: "fn", params: ty.fnParams.map(typeFromAst), ret: typeFromAst(ty.fnRet) };
+    const tag = ty.isCFn ? "cfn" as const : "fn" as const;
+    return { tag, params: ty.fnParams.map(typeFromAst), ret: typeFromAst(ty.fnRet) };
   }
   let base: TypeKind;
   switch (ty.name) {
@@ -69,7 +74,7 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
       const ba = b as typeof a;
       return typeEq(a.element, ba.element) && a.size === ba.size;
     }
-    case "fn": {
+    case "fn": case "cfn": {
       const bf = b as typeof a;
       return a.params.length === bf.params.length && a.params.every((p, i) => typeEq(p, bf.params[i])) && typeEq(a.ret, bf.ret);
     }
@@ -96,6 +101,7 @@ export function typeName(t: TypeKind): string {
     case "enum": return t.name;
     case "array": return t.size !== null ? `[${typeName(t.element)}; ${t.size}]` : `[${typeName(t.element)}]`;
     case "fn": return `(${t.params.map(typeName).join(", ")}) => ${typeName(t.ret)}`;
+    case "cfn": return `extern (${t.params.map(typeName).join(", ")}) => ${typeName(t.ret)}`;
     case "interface": return t.name;
     case "unknown": return "<unknown>";
   }
@@ -118,7 +124,7 @@ export function isFloat(t: TypeKind): boolean {
 // The optional `enumIsPayloadFree` callback lets the caller (the checker) inject its
 // view of which enums have payload-bearing variants without us reaching into checker state here.
 export function isCopy(t: TypeKind, enumIsCopy?: (name: string) => boolean, structIsAllCopy?: (name: string) => boolean): boolean {
-  if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr" || t.tag === "fn" || t.tag === "ref") return true;
+  if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr" || t.tag === "fn" || t.tag === "cfn" || t.tag === "ref") return true;
   if (t.tag === "enum" && enumIsCopy && enumIsCopy(t.name)) return true;
   if (t.tag === "struct" && structIsAllCopy && structIsAllCopy(t.name)) return true;
   // A fixed-size array of Copy elements is itself Copy — it is a value with no heap and no
