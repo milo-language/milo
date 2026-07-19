@@ -372,6 +372,9 @@ struct Interp {
     nextTimerId: i64,
     // native recursion depth, so runaway recursion throws instead of crashing
     callDepth: i64,
+    // loaded .node addons, cached by absolute path
+    napiAddonPaths: Vec<string>,
+    napiAddonExports: Vec<JSValue>,
     // the constructor of the call currently being set up, for new.target
     newTarget: JSValue,
     // module specifiers already reported as unresolvable, to avoid repeats
@@ -415,7 +418,7 @@ var gInterp: Interp = Interp {
     throwing: false, thrownValue: JSValue.Undefined,
     optShort: false,
     rngState: 88172645463325252,
-    allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
+    allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
 }
 
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
@@ -667,6 +670,19 @@ fn objHas(st: &Interp, o: i64, key: &string): bool {
     return false
 }
 
+// objHas over the prototype chain, so a synthesised fallback method never
+// shadows one a prototype actually defines.
+fn objHasInChain(st: &Interp, o: i64, key: &string): bool {
+    var cur = o
+    while cur >= 0 {
+        if objHas(st, cur, key) {
+            return true
+        }
+        cur = st.objects[cur].proto
+    }
+    return false
+}
+
 // The .prototype object for a function, created on first access and cached
 // (a GC root via funcProtos). Grows the sparse map as needed.
 // Property bag for a function's own (static) properties. Separate from
@@ -719,6 +735,23 @@ fn getFuncProto(st: &mut Interp, fnIdx: i64): i64 {
         st.funcProtos[fnIdx] = p
     }
     return st.funcProtos[fnIdx]
+}
+
+// `Foo.prototype.constructor` — non-enumerable, so it stays out of for-in and
+// Object.keys on every instance that inherits it. Needs the constructor's
+// closure env, which getFuncProto doesn't have, so callers pass it in.
+fn linkProtoConstructor(st: &mut Interp, proto: i64, fnIdx: i64, envIdx: i64) {
+    var i: i64 = 0
+    while i < st.objects[proto].props.len() {
+        if st.objects[proto].props[i].key == "constructor" {
+            return
+        }
+        i = i + 1
+    }
+    st.objects[proto].props.push(Prop {
+        key: "constructor", value: JSValue.Func(fnIdx, envIdx), getter: JSValue.Undefined, setter: JSValue.Undefined, isAccessor: false, writable: true, enumerable: false, configurable: true
+    }
+    )
 }
 
 fn arrLen(st: &Interp, obj: i64): i64 {
@@ -794,6 +827,70 @@ fn markValue(st: &mut Interp, v: &JSValue) {
 }
 
 // Mark an object live, then everything its property values reach.
+// The heap slot a value keeps alive, as bare indices (-1 = none). Returned by
+// value so the caller's borrow of the arena element ends before it recurses.
+struct MarkTarget {
+    obj: i64,
+    scope: i64,
+}
+
+// Mirrors markValue's cases exactly, but yields handles instead of a value.
+fn markTargetOf(v: &JSValue): MarkTarget {
+    match v {
+        JSValue.Func(_f, envIdx) => {
+            return MarkTarget {
+                obj: -1, scope: envIdx
+            }
+        }
+        JSValue.Obj(o) => {
+            return MarkTarget {
+                obj: o, scope: -1
+            }
+        }
+        JSValue.Native(id) => {
+            // a resolve/reject function encodes its promise handle in the native
+            // id, so it must keep that promise alive
+            if id >= NATIVE_RESOLVER_BASE {
+                return MarkTarget {
+                    obj: (id - NATIVE_RESOLVER_BASE) / 2, scope: -1
+                }
+            }
+            return MarkTarget {
+                obj: -1, scope: -1
+            }
+        }
+        _ => {
+            // other primitives reference no heap slot
+            return MarkTarget {
+                obj: -1, scope: -1
+            }
+        }
+    }
+}
+
+// Mark whatever the value at an already-borrowed slot references.
+fn markVia(st: &mut Interp, t: MarkTarget) {
+    markObject(st, t.obj)
+    markScope(st, t.scope)
+}
+
+// Append a value's reference targets to pending work lists.
+fn pushMarkTargets(v: &JSValue, objs: &mut Vec<i64>, scopes: &mut Vec<i64>) {
+    let t = markTargetOf(v)
+    if t.obj >= 0 {
+        objs.push(t.obj)
+    }
+    if t.scope >= 0 {
+        scopes.push(t.scope)
+    }
+}
+
+// The children are gathered into local Vecs before being marked because a borrow
+// of st.objects[i] cannot be held across the recursive markObject(st, ..) call.
+// Gather HANDLES, not values: this previously cloned every property and element
+// into a Vec<JSValue>, so each collection deep-copied the whole live heap
+// (strings included). That made marking, not tracing, the dominant cost of a
+// GC — 43% of matmul.
 fn markObject(st: &mut Interp, i: i64) {
     if i < 0 {
         return
@@ -803,32 +900,33 @@ fn markObject(st: &mut Interp, i: i64) {
     }
     st.objects[i].mark = true
     let proto = st.objects[i].proto
-    var vals: Vec<JSValue> = Vec.new()
+    var objs: Vec<i64> = Vec.new()
+    var scopes: Vec<i64> = Vec.new()
     var k: i64 = 0
     let n = st.objects[i].props.len()
     while k < n {
-        vals.push(cloneValue(st.objects[i].props[k].value))
+        pushMarkTargets(st.objects[i].props[k].value, objs, scopes)
         // an accessor property keeps its getter/setter alive
         if st.objects[i].props[k].isAccessor {
-            vals.push(cloneValue(st.objects[i].props[k].getter))
-            vals.push(cloneValue(st.objects[i].props[k].setter))
+            pushMarkTargets(st.objects[i].props[k].getter, objs, scopes)
+            pushMarkTargets(st.objects[i].props[k].setter, objs, scopes)
         }
         k = k + 1
     }
     var e: i64 = 0
     let ne = st.objects[i].elems.len()
     while e < ne {
-        vals.push(cloneValue(st.objects[i].elems[e]))
+        pushMarkTargets(st.objects[i].elems[e], objs, scopes)
         e = e + 1
     }
     // a promise keeps its value and every pending reaction alive
     if st.objects[i].promiseState >= 0 {
-        vals.push(cloneValue(st.objects[i].promiseValue))
+        pushMarkTargets(st.objects[i].promiseValue, objs, scopes)
         var r: i64 = 0
         while r < st.objects[i].reactions.len() {
-            vals.push(cloneValue(st.objects[i].reactions[r].onFulfilled))
-            vals.push(cloneValue(st.objects[i].reactions[r].onRejected))
-            markObject(st, st.objects[i].reactions[r].derived)
+            pushMarkTargets(st.objects[i].reactions[r].onFulfilled, objs, scopes)
+            pushMarkTargets(st.objects[i].reactions[r].onRejected, objs, scopes)
+            objs.push(st.objects[i].reactions[r].derived)
             r = r + 1
         }
     }
@@ -836,22 +934,22 @@ fn markObject(st: &mut Interp, i: i64) {
     if st.objects[i].isMap || st.objects[i].isSet {
         var mk: i64 = 0
         while mk < st.objects[i].mapKeys.len() {
-            vals.push(cloneValue(st.objects[i].mapKeys[mk]))
+            pushMarkTargets(st.objects[i].mapKeys[mk], objs, scopes)
             mk = mk + 1
         }
         var mv: i64 = 0
         while mv < st.objects[i].mapVals.len() {
-            vals.push(cloneValue(st.objects[i].mapVals[mv]))
+            pushMarkTargets(st.objects[i].mapVals[mv], objs, scopes)
             mv = mv + 1
         }
     }
     // a bound function keeps its target, receiver and pre-bound args alive
     if st.objects[i].isBound {
-        vals.push(cloneValue(st.objects[i].boundTarget))
-        vals.push(cloneValue(st.objects[i].boundThis))
+        pushMarkTargets(st.objects[i].boundTarget, objs, scopes)
+        pushMarkTargets(st.objects[i].boundThis, objs, scopes)
         var b: i64 = 0
         while b < st.objects[i].boundArgs.len() {
-            vals.push(cloneValue(st.objects[i].boundArgs[b]))
+            pushMarkTargets(st.objects[i].boundArgs[b], objs, scopes)
             b = b + 1
         }
     }
@@ -859,10 +957,11 @@ fn markObject(st: &mut Interp, i: i64) {
     if proto >= 0 {
         markObject(st, proto)
     }
-    var m: i64 = 0
-    while m < vals.len() {
-        markValue(st, vals[m])
-        m = m + 1
+    for child in objs {
+        markObject(st, child)
+    }
+    for sc in scopes {
+        markScope(st, sc)
     }
 }
 
@@ -877,11 +976,13 @@ fn markScope(st: &mut Interp, i: i64) {
     }
     st.scopes[i].mark = true
     let parent = st.scopes[i].parent
-    var vals: Vec<JSValue> = Vec.new()
+    // handles, not cloned values — see markObject
+    var objs: Vec<i64> = Vec.new()
+    var scopes: Vec<i64> = Vec.new()
     var k: i64 = 0
     let n = st.scopes[i].vars.len()
     while k < n {
-        vals.push(cloneValue(st.scopes[i].vars[k].value))
+        pushMarkTargets(st.scopes[i].vars[k].value, objs, scopes)
         k = k + 1
     }
     // this scope's per-instance function statics are roots for anything they hold
@@ -893,15 +994,14 @@ fn markScope(st: &mut Interp, i: i64) {
         fk = fk + 1
     }
     markScope(st, parent)
-    var m: i64 = 0
-    while m < vals.len() {
-        markValue(st, vals[m])
-        m = m + 1
+    for child in objs {
+        markObject(st, child)
     }
-    var fm: i64 = 0
-    while fm < fsvals.len() {
-        markObject(st, fsvals[fm])
-        fm = fm + 1
+    for sc in scopes {
+        markScope(st, sc)
+    }
+    for fs in fsvals {
+        markObject(st, fs)
     }
 }
 

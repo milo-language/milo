@@ -9,7 +9,7 @@ from "./value" import {
     JSValue
 }
 from "./runtime" import {
-    Interp, Timer, Microtask, Reaction, NATIVE_RESOLVER_BASE, collect
+    Interp, Timer, Microtask, Reaction, NATIVE_RESOLVER_BASE, collect, linkProtoConstructor, objHasInChain
 }
 from "./builtins" import {
     stringMethod, jsCharAt, mjStringifyVal, mjJsonParse, mjJsonOmitted
@@ -227,6 +227,14 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
         }
         if st.objects[o].isArray && isArrayMethod(key) {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+        }
+        // every object inherits these from Object.prototype, including the
+        // built-in constructors — `Object.hasOwnProperty.call(x, k)` is a common
+        // way to borrow the method, and it read as undefined before
+        if key == "hasOwnProperty" || key == "isPrototypeOf" || key == "propertyIsEnumerable" {
+            if !objHasInChain(st, o, key) {
+                return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+            }
         }
         if st.objects[o].isError && (key == "toString" || key == "valueOf") {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
@@ -453,6 +461,14 @@ fn taSetElem(st: &mut Interp, view: i64, i: i64, v: f64) {
 
 // Invoke a builtin method by name against an already-evaluated receiver+args.
 fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSValue>, st: &mut Interp): JSValue {
+    // Object.prototype.toString applied to ANY receiver, ignoring overrides
+    if name == "@@objProtoToString" {
+        let o = objHandle(recv)
+        if o >= 0 {
+            return JSValue.Str("[object " + objectTag(st, o) + "]")
+        }
+        return JSValue.Str("[object " + objectTypeTag(recv) + "]")
+    }
     match recv {
         JSValue.Str(sv) => {
             if isSymbolStr(sv) && name == "toString" {
@@ -691,6 +707,35 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
     }
 }
 
+// The tag Object.prototype.toString uses for a heap-object receiver.
+fn objectTag(st: &Interp, o: i64): string {
+    if st.objects[o].isArray {
+        return "Array"
+    }
+    if st.objects[o].isError {
+        return "Error"
+    }
+    if st.objects[o].isDate {
+        return "Date"
+    }
+    if st.objects[o].regexId >= 0 {
+        return "RegExp"
+    }
+    if st.objects[o].isMap {
+        return "Map"
+    }
+    if st.objects[o].isSet {
+        return "Set"
+    }
+    if st.objects[o].promiseState >= 0 {
+        return "Promise"
+    }
+    if st.objects[o].isBound || st.objects[o].isFunctionLike {
+        return "Function"
+    }
+    return "Object"
+}
+
 // The tag Object.prototype.toString uses for a primitive receiver.
 fn objectTypeTag(v: &JSValue): string {
     match v {
@@ -706,8 +751,19 @@ fn objectTypeTag(v: &JSValue): string {
         JSValue.Number(_n) => {
             return "Number"
         }
-        JSValue.Str(_s) => {
+        JSValue.Str(s) => {
+            // symbols are interned strings in this engine, so the tag has to come
+            // from the marker rather than the value kind
+            if isSymbolStr(s) {
+                return "Symbol"
+            }
             return "String"
+        }
+        JSValue.Func(_f, _e) => {
+            return "Function"
+        }
+        JSValue.Native(_n) => {
+            return "Function"
         }
         _ => {
             return "Object"
@@ -1054,6 +1110,9 @@ let NATIVE_NAPI_LOAD: i64 = 105
 let NATIVE_CONSOLE_LOG: i64 = 106
 // new Proxy(target, handler)
 let NATIVE_PROXY: i64 = 107
+// Object.is — SameValue: like ===, except NaN equals itself and +0 differs
+// from -0. ts-pattern (bundled into prisma's runtime) matches literals with it.
+let NATIVE_OBJECT_IS: i64 = 108
 let NATIVE_ARRAYBUFFER: i64 = 78
 // the typed-array constructors occupy a contiguous block so the element kind is
 // just (id - NATIVE_TA_BASE); keep in step with the TA_* order in runtime.milo
@@ -2132,6 +2191,12 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         return JSValue.Number(toStr(argVals[0]).len() as f64)
     }
+    if id == NATIVE_OBJECT_IS {
+        if argVals.len() < 2 {
+            return JSValue.Bool(argVals.len() == 0 || isUndefinedValue(argVals[0]))
+        }
+        return JSValue.Bool(sameValue(argVals[0], argVals[1]))
+    }
     if id == NATIVE_OBJECT_ISSEALED {
         if argVals.len() > 0 {
             let h = objHandle(argVals[0])
@@ -2722,6 +2787,35 @@ fn requireModule(prog: &Prog, spec: &string, st: &mut Interp): JSValue {
     if st.modDirStack.len() > 0 {
         dir = st.modDirStack[st.modDirStack.len() - 1].clone()
     }
+    // A .node file is a shared library, not JS: it never goes through the module
+    // pre-loader, so it is dlopened here. prisma reaches its query engine this
+    // way (require(<abs>/libquery_engine.node)).
+    if hasNodeAddonExt(spec) {
+        var addonPath = spec.clone()
+        if spec[0] != '/' && dir.len() > 0 {
+            addonPath = dir + "/" + spec
+        }
+        let cached = findNapiAddon(st, addonPath)
+        match cached {
+            Option.Some(v) => {
+                return v
+            }
+            Option.None => {
+            }
+        }
+        match napiLoadAddon(addonPath) {
+            Result.Ok(v) => {
+                st.napiAddonPaths.push(addonPath)
+                st.napiAddonExports.push(cloneValue(v))
+                return v
+            }
+            Result.Err(e) => {
+                st.throwing = true
+                st.thrownValue = makeError(st, "Error", e)
+                return JSValue.Undefined
+            }
+        }
+    }
     let path = resolveSpec(dir, spec)
     if path.len() == 0 {
         // relative and node_modules specifiers resolve; what lands here is a node
@@ -2860,10 +2954,15 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "getOwnPropertyDescriptor", JSValue.Native(NATIVE_OBJECT_GETOWNPROPDESC))
     objSet(st, objectCtor, "defineProperties", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTIES))
     objSet(st, objectCtor, "getOwnPropertyNames", JSValue.Native(NATIVE_OBJECT_GETOWNPROPNAMES))
+    objSet(st, objectCtor, "is", JSValue.Native(NATIVE_OBJECT_IS))
     let objectProto = newObject(st)
     objSet(st, objectProto, "hasOwnProperty", makeBoundMethod(st, JSValue.Undefined, "hasOwnProperty"))
     // Object.prototype.toString.call(x) is the standard type-detection idiom
-    objSet(st, objectProto, "toString", makeBoundMethod(st, JSValue.Undefined, "toString"))
+    // bound under a private name, not "toString": dispatching by the plain name
+    // sent Object.prototype.toString.call(x) into x's OWN toString (a function
+    // printed its source, a regex returned undefined), which broke the
+    // `Object.prototype.toString.call(o).slice(8, -1)` type-tag idiom.
+    objSet(st, objectProto, "toString", makeBoundMethod(st, JSValue.Undefined, "@@objProtoToString"))
     objSet(st, objectProto, "valueOf", makeBoundMethod(st, JSValue.Undefined, "valueOf"))
     objSet(st, objectProto, "isPrototypeOf", makeBoundMethod(st, JSValue.Undefined, "isPrototypeOf"))
     objSet(st, objectProto, "propertyIsEnumerable", makeBoundMethod(st, JSValue.Undefined, "propertyIsEnumerable"))
@@ -3157,7 +3256,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             }
             let va = evalExpr(prog, a, st, scope)
             if op == "-" {
-                return JSValue.Number(0.0 - toNum(va))
+                // negate, don't subtract from zero: 0.0 - 0.0 is +0, so `-0`
+                // lost its sign and Object.is(0, -0) came out true
+                return JSValue.Number(-toNum(va))
             }
             if op == "typeof" {
                 // a bind() result is an object internally but a function to JS
@@ -3533,6 +3634,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.New(calleeIdx, argsIdx) => {
             let calleeVal = evalExpr(prog, calleeIdx, st, scope)
+            // a throw while resolving the constructor expression must propagate:
+            // continuing here replaced the real error with "value is not a
+            // constructor", which pointed at the wrong line entirely
+            if st.throwing {
+                return JSValue.Undefined
+            }
             // `new Promise(executor)` runs its executor immediately with a
             // resolve/reject pair bound to the new promise. Handled here rather
             // than in callNative because the executor is a user function and
@@ -3574,6 +3681,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     // instance to the constructor's prototype (for shared methods)
                     st.objects[obj].ctor = fIdx
                     let proto = getFuncProto(st, fIdx)
+                    linkProtoConstructor(st, proto, fIdx, envIdx)
                     st.objects[obj].proto = proto
                     pushTemp(st, JSValue.Obj(obj))
                     st.newTarget = JSValue.Func(fIdx, envIdx)
@@ -4750,6 +4858,86 @@ fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
 }
 
 // The module currently executing, for error messages. Empty at top level.
+
+fn hasNodeAddonExt(p: &string): bool {
+    let n = p.len()
+    if n < 6 {
+        return false
+    }
+    return p[n - 5] == '.' && p[n - 4] == 'n' && p[n - 3] == 'o' && p[n - 2] == 'd' && p[n - 1] == 'e'
+}
+
+// dlopen is not idempotent for addon state: a second registration would hand back
+// a fresh exports object and re-run module init, so loaded addons are cached by
+// path exactly like JS modules are.
+fn findNapiAddon(st: &Interp, path: &string): Option<JSValue> {
+    var i: i64 = 0
+    while i < st.napiAddonPaths.len() {
+        if st.napiAddonPaths[i] == path {
+            return Option.Some(cloneValue(st.napiAddonExports[i]))
+        }
+        i = i + 1
+    }
+    return Option.None
+}
+
+fn isUndefinedValue(v: &JSValue): bool {
+    match v {
+        JSValue.Undefined => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+// SameValue: strict equality with the two exceptions the spec carves out —
+// NaN is equal to itself, and +0 is not equal to -0.
+fn sameValue(a: &JSValue, b: &JSValue): bool {
+    match a {
+        JSValue.Number(x) => {
+            match b {
+                JSValue.Number(y) => {
+                    if x != x && y != y {
+                        return true
+                    }
+                    if x == 0.0 && y == 0.0 {
+                        // 1/x distinguishes the zeroes; the sign bit is not
+                        // otherwise reachable from f64 here
+                        return (1.0 / x) == (1.0 / y)
+                    }
+                    return x == y
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        _ => {
+            return jsStrictEquals(a, b)
+        }
+    }
+}
+
+// A single JS identifier and nothing else — what the limited eval accepts.
+fn isIdentifierText(s: &string): bool {
+    if s.len() == 0 {
+        return false
+    }
+    var i: i64 = 0
+    while i < s.len() {
+        let c = s[i]
+        let alpha = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$'
+        let digit = c >= '0' && c <= '9'
+        if !alpha && !(digit && i > 0) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
 fn currentModule(st: &Interp): string {
     if st.modPathStack.len() == 0 {
         return ""
@@ -5053,8 +5241,20 @@ fn instantiateClass(prog: &Prog, classIdx: i64, st: &mut Interp, scope: i64): JS
         // no declared constructor — reuse an empty one so the class is callable
         ctorFn = prog.classes[classIdx].defaultCtor
     }
-    let classVal = JSValue.Func(ctorFn, scope)
+    // A named class expression binds its own name inside the class body, in a
+    // scope of its own: `X = class e { static empty() { return new e } }` — `e`
+    // exists only in there, and prisma's runtime is built out of exactly this.
+    // Methods and the constructor close over this scope rather than the defining
+    // one; the super binding lives here too, so it can't be seen by siblings.
+    let classScope = newScope(st, scope)
+    pushActive(st, classScope)
+    let classVal = JSValue.Func(ctorFn, classScope)
+    let className = prog.classes[classIdx].name.clone()
+    if className.len() > 0 {
+        scopeDefine(st, classScope, className, JSValue.Func(ctorFn, classScope))
+    }
     let proto = getFuncProto(st, ctorFn)
+    linkProtoConstructor(st, proto, ctorFn, classScope)
     let superName = prog.classes[classIdx].superName.clone()
     if superName.len() > 0 {
         let baseVal = scopeLookup(st, scope, superName)
@@ -5063,17 +5263,17 @@ fn instantiateClass(prog: &Prog, classIdx: i64, st: &mut Interp, scope: i64): JS
             let baseProto = getFuncProto(st, baseFn)
             st.objects[proto].proto = baseProto
         }
-        scopeDefine(st, scope, "__super$" + prog.classes[classIdx].superKey.clone(), baseVal)
+        scopeDefine(st, classScope, "__super$" + prog.classes[classIdx].superKey.clone(), baseVal)
     }
     var i: i64 = 0
     while i < prog.classes[classIdx].members.len() {
         let mName = prog.classes[classIdx].members[i].name.clone()
         let mFn = prog.classes[classIdx].members[i].fnIdx
-        let mv = JSValue.Func(mFn, scope)
+        let mv = JSValue.Func(mFn, classScope)
         let mKind = prog.classes[classIdx].members[i].kind
         var target = proto
         if prog.classes[classIdx].members[i].isStatic {
-            target = getFuncStatics(st, ctorFn, scope)
+            target = getFuncStatics(st, ctorFn, classScope)
         }
         if mKind > 0 {
             let existing = objOwnIndex(st, target, mName)
@@ -5094,6 +5294,7 @@ fn instantiateClass(prog: &Prog, classIdx: i64, st: &mut Interp, scope: i64): JS
         }
         i = i + 1
     }
+    popActive(st)
     return classVal
 }
 
@@ -6668,6 +6869,24 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                 }
                 return callValue(prog, baseVal, argVals, thisVal, st)
             }
+            // eval of a bare identifier, resolved in the calling scope. Not a
+            // real eval — there is no runtime compiler — but it covers the one
+            // shape bundled libraries actually use to reach past a bundler:
+            // `eval("__dirname")` (prisma) and `eval("require")`. Anything else
+            // is a hard error rather than a silent wrong answer.
+            if fname == "eval" && !scopeHas(st, scope, "eval") {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                var src = ""
+                if argVals.len() > 0 {
+                    src = toStr(argVals[0])
+                }
+                if isIdentifierText(src) && scopeHas(st, scope, src) {
+                    return scopeLookup(st, scope, src)
+                }
+                st.throwing = true
+                st.thrownValue = makeError(st, "EvalError", "eval is limited to a bare identifier in scope, got: " + src)
+                return JSValue.Undefined
+            }
             // require(spec) is handled here rather than as a native because it
             // needs the program (to run the required module's block)
             if fname == "require" {
@@ -6740,11 +6959,21 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
             if st.optShort {
                 return JSValue.Undefined
             }
+            // a throw while evaluating the receiver must propagate. Continuing
+            // called the method on `undefined`, so a real error deep in a
+            // method chain surfaced as "cannot read property 'x' of a
+            // non-object" at the NEXT link — pointing at the wrong code.
+            if st.throwing {
+                return JSValue.Undefined
+            }
             return callMember(prog, recv, name, argsIdx, st, scope)
         }
         Expr.Index(objIdx, keyIdx) => {
             let recv = evalExpr(prog, objIdx, st, scope)
             if st.optShort {
+                return JSValue.Undefined
+            }
+            if st.throwing {
                 return JSValue.Undefined
             }
             let kv = evalExpr(prog, keyIdx, st, scope)

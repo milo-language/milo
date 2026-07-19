@@ -154,3 +154,6 @@ exports.extname = extname;
 exports.isAbsolute = isAbsolute;
 exports.relative = relative;
 exports.posix = exports;
+
+// posix no-op (only Windows namespaces paths); prisma calls it before dlopen
+exports.toNamespacedPath = function (p) { return p; };

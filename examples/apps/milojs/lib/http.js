@@ -197,8 +197,15 @@ Server.prototype.listen = function (port, hostOrCb, maybeCb) {
   this._listenerId = __tcpListen(Number(p) || 0);
   if (this._listenerId < 0) {
     var err = new Error('EADDRINUSE: failed to bind port ' + p);
-    this.emit('error', err);
-    return this;
+    err.code = 'EADDRINUSE';
+    // node exits on an unhandled 'error' event. Swallowing it left the process
+    // running, never firing the listen callback, while an OLDER process on the
+    // port answered requests — the failure looked like a hang in unrelated code.
+    if (this.listenerCount && this.listenerCount('error') > 0) {
+      this.emit('error', err);
+      return this;
+    }
+    throw err;
   }
   this.listening = true;
   // registered natively so the event loop can find and service it

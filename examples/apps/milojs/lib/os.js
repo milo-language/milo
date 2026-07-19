@@ -16,3 +16,9 @@ exports.endianness = function () { return 'LE'; };
 exports.userInfo = function () { return { username: 'milojs', homedir: exports.homedir() }; };
 exports.networkInterfaces = function () { return {}; };
 exports.constants = { signals: {}, errno: {} };
+
+// only the dlopen flags matter here: prisma ORs them together before calling
+// process.dlopen, and our loader ignores the result
+exports.constants = {
+  dlopen: { RTLD_LAZY: 1, RTLD_NOW: 2, RTLD_GLOBAL: 8, RTLD_LOCAL: 4, RTLD_DEEPBIND: 8 },
+};

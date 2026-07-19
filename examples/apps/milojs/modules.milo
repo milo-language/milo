@@ -138,6 +138,9 @@ fn builtinSource(name: &string): string {
     if name == "url" {
         return embedFile("lib/url.js")
     }
+    if name == "async_hooks" {
+        return embedFile("lib/async_hooks.js")
+    }
     if name == "tty" {
         return embedFile("lib/tty.js")
     }

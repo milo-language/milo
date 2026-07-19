@@ -87,6 +87,9 @@ fn setupNodeGlobals(st: &mut Interp, entryPath: string) {
     objSet(st, proc, "env", JSValue.Obj(env))
 
     objSet(st, proc, "platform", JSValue.Str("darwin"))
+    // prisma picks its native query-engine binary from platform + arch; without
+    // arch it resolves the target as bare "darwin" and cannot find the engine
+    objSet(st, proc, "arch", JSValue.Str("arm64"))
     objSet(st, proc, "version", JSValue.Str("v20.0.0"))
     objSet(st, proc, "exitCode", JSValue.Number(0.0))
     objSet(st, proc, "exit", JSValue.Native(NATIVE_PROCESS_EXIT))

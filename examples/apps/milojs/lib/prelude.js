@@ -584,3 +584,20 @@ Response.json = function (data, init) {
   if (!h.has('content-type')) h.set('content-type', 'application/json');
   return new Response(JSON.stringify(data), { status: init.status || 200, statusText: init.statusText, headers: h });
 };
+
+// atob/btoa: web globals node also exposes. prisma's runtime decodes its
+// embedded schema with them.
+function atob(data) {
+  return require("buffer").Buffer.from(String(data), "base64").toString("binary");
+}
+
+function btoa(data) {
+  return require("buffer").Buffer.from(String(data), "binary").toString("base64");
+}
+
+// process.dlopen(module, path, flags): how node loads a .node addon. prisma's
+// query-engine loader calls it directly rather than going through require.
+process.dlopen = function (mod, filename, _flags) {
+  mod.exports = __napiLoad(filename);
+  return mod.exports;
+};
