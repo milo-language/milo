@@ -183,6 +183,15 @@ fn findSetter(st: &Interp, o: i64, key: &string): JSValue {
 
 // Property read that honours accessors; `this` inside the getter is the object.
 fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
+    // promise.then/catch/finally dispatch natively, so reading them as VALUES
+    // returned undefined. The standard thenable test every library uses is
+    // `typeof x.then === "function"`, which that silently failed — hand back a
+    // bound method instead.
+    if st.objects[o].promiseState >= 0 && objOwnIndex(st, o, key) < 0 {
+        if key == "then" || key == "catch" || key == "finally" {
+            return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+        }
+    }
     // arr[Symbol.iterator] — a bound `values`, so arr[Symbol.iterator]() yields
     // the same iterator for-of drives. Lives here rather than in getMember
     // because building the bound method allocates and getMember is immutable.
