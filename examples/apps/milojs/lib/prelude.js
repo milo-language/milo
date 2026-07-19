@@ -387,3 +387,178 @@ function fetch(url, options) {
     resolve(__fetchParse(res.length > 0 ? res.slice(1) : '', u));
   });
 }
+
+// make Headers for-of iterable ([[k,v],...]) — the node-http adapter does
+// `for (const [k,v] of response.headers)`
+Headers.prototype[Symbol.iterator] = function () { return this.entries()[Symbol.iterator](); };
+Headers.prototype.keys = function () { return Object.keys(this._h)[Symbol.iterator](); };
+
+// --- URLSearchParams / URL (WHATWG) ----------------------------------------
+function URLSearchParams(init) {
+  this._p = [];
+  if (typeof init === 'string') {
+    var s = init.charAt(0) === '?' ? init.slice(1) : init;
+    if (s.length > 0) {
+      var parts = s.split('&');
+      for (var i = 0; i < parts.length; i++) {
+        var eq = parts[i].indexOf('=');
+        var k = eq < 0 ? parts[i] : parts[i].slice(0, eq);
+        var v = eq < 0 ? '' : parts[i].slice(eq + 1);
+        this._p.push([decodeURIComponent(k.split('+').join(' ')), decodeURIComponent(v.split('+').join(' '))]);
+      }
+    }
+  } else if (init && typeof init === 'object') {
+    var ks = Object.keys(init);
+    for (var j = 0; j < ks.length; j++) this._p.push([ks[j], String(init[ks[j]])]);
+  }
+}
+URLSearchParams.prototype.get = function (k) { for (var i = 0; i < this._p.length; i++) if (this._p[i][0] === k) return this._p[i][1]; return null; };
+URLSearchParams.prototype.getAll = function (k) { var o = []; for (var i = 0; i < this._p.length; i++) if (this._p[i][0] === k) o.push(this._p[i][1]); return o; };
+URLSearchParams.prototype.has = function (k) { return this.get(k) !== null; };
+URLSearchParams.prototype.set = function (k, v) { for (var i = 0; i < this._p.length; i++) if (this._p[i][0] === k) { this._p[i][1] = String(v); return; } this._p.push([k, String(v)]); };
+URLSearchParams.prototype.append = function (k, v) { this._p.push([k, String(v)]); };
+URLSearchParams.prototype.forEach = function (cb) { for (var i = 0; i < this._p.length; i++) cb(this._p[i][1], this._p[i][0], this); };
+URLSearchParams.prototype.entries = function () { return this._p.slice(); };
+URLSearchParams.prototype.toString = function () {
+  var o = [];
+  for (var i = 0; i < this._p.length; i++) o.push(encodeURIComponent(this._p[i][0]) + '=' + encodeURIComponent(this._p[i][1]));
+  return o.join('&');
+};
+URLSearchParams.prototype[Symbol.iterator] = function () { return this._p.slice()[Symbol.iterator](); };
+
+function URL(url, base) {
+  var href = String(url);
+  if (base && href.indexOf('://') < 0) {
+    var b = String(base);
+    href = b.replace(/\/+$/, '') + (href.charAt(0) === '/' ? '' : '/') + href;
+  }
+  var m = href.match(/^([a-zA-Z][a-zA-Z0-9+.-]*:)\/\/([^\/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/);
+  if (!m) throw new TypeError('Invalid URL: ' + href);
+  this.protocol = m[1];
+  var authority = m[2];
+  var at = authority.indexOf('@');
+  if (at >= 0) authority = authority.slice(at + 1);
+  var colon = authority.indexOf(':');
+  this.hostname = colon < 0 ? authority : authority.slice(0, colon);
+  this.port = colon < 0 ? '' : authority.slice(colon + 1);
+  this.host = authority;
+  this.pathname = m[3] || '/';
+  this.search = m[4] || '';
+  this.hash = m[5] || '';
+  this.searchParams = new URLSearchParams(this.search);
+  this.origin = this.protocol + '//' + this.host;
+  this.href = href;
+}
+URL.prototype.toString = function () { return this.href; };
+
+// --- ReadableStream ---------------------------------------------------------
+// Enough for the trpc node-http adapter: a pull/push queue with getReader().
+// A read() before data arrives returns a pending promise that enqueue()/close()
+// settle — which the in-place event-loop drain on await resolves.
+function ReadableStream(source) {
+  var self = this;
+  this._chunks = [];
+  this._closed = false;
+  this._err = null;
+  this._waiters = [];
+  var controller = {
+    enqueue: function (chunk) {
+      if (self._waiters.length > 0) self._waiters.shift().resolve({ value: chunk, done: false });
+      else self._chunks.push(chunk);
+    },
+    close: function () {
+      self._closed = true;
+      while (self._waiters.length > 0) self._waiters.shift().resolve({ value: undefined, done: true });
+    },
+    error: function (e) {
+      self._err = e;
+      while (self._waiters.length > 0) self._waiters.shift().reject(e);
+    },
+    get desiredSize() { return 1; }
+  };
+  this._controller = controller;
+  if (source && typeof source.start === 'function') {
+    try { source.start(controller); } catch (e) { controller.error(e); }
+  }
+}
+ReadableStream.prototype.getReader = function () {
+  var self = this;
+  return {
+    read: function () {
+      return new Promise(function (resolve, reject) {
+        if (self._err) { reject(self._err); return; }
+        if (self._chunks.length > 0) { resolve({ value: self._chunks.shift(), done: false }); return; }
+        if (self._closed) { resolve({ value: undefined, done: true }); return; }
+        self._waiters.push({ resolve: resolve, reject: reject });
+      });
+    },
+    releaseLock: function () {},
+    cancel: function () { self._closed = true; return Promise.resolve(); }
+  };
+};
+ReadableStream.prototype.cancel = function () { this._closed = true; return Promise.resolve(); };
+// collect the whole stream into one string — used by Request/Response body accessors
+function __streamToString(stream) {
+  var reader = stream.getReader();
+  var acc = '';
+  function step() {
+    return reader.read().then(function (r) {
+      if (r.done) return acc;
+      acc += (r.value && r.value.bytes && typeof r.value.toString === 'function') ? r.value.toString() : String(r.value);
+      return step();
+    });
+  }
+  return step();
+}
+
+// --- upgrade Request/Response to the streaming WHATWG surface ---------------
+function Request(input, init) {
+  init = init || {};
+  this.url = (input && input.href) ? input.href : String(input);
+  this.method = (init.method || (input && input.method) || 'GET').toUpperCase();
+  this.headers = init.headers instanceof Headers ? init.headers : new Headers(init.headers || (input && input.headers) || {});
+  this._bodyInit = init.body !== undefined ? init.body : (input && input._bodyInit);
+  this.signal = init.signal || { aborted: false, addEventListener: function () {}, removeEventListener: function () {} };
+  this.bodyUsed = false;
+}
+Object.defineProperty(Request.prototype, 'body', {
+  get: function () {
+    var b = this._bodyInit;
+    if (b == null) return null;
+    if (b instanceof ReadableStream) return b;
+    return new ReadableStream({ start: function (c) { c.enqueue(String(b)); c.close(); } });
+  }
+});
+Request.prototype.text = function () {
+  var b = this._bodyInit;
+  this.bodyUsed = true;
+  if (b instanceof ReadableStream) return __streamToString(b);
+  return Promise.resolve(b == null ? '' : String(b));
+};
+Request.prototype.json = function () { return this.text().then(function (t) { return JSON.parse(t); }); };
+Request.prototype.clone = function () { var r = new Request(this.url, { method: this.method, headers: this.headers, body: this._bodyInit }); return r; };
+
+// Response gains a streaming body (the adapter reads response.body.getReader())
+Response.prototype.json = function () {
+  var self = this;
+  return this.text().then(function (t) { return JSON.parse(t); });
+};
+Response.prototype.text = function () {
+  this.bodyUsed = true;
+  if (this._body instanceof ReadableStream) return __streamToString(this._body);
+  return Promise.resolve(this._body == null ? '' : String(this._body));
+};
+Object.defineProperty(Response.prototype, 'body', {
+  get: function () {
+    if (this._body == null) return null;
+    if (this._body instanceof ReadableStream) return this._body;
+    var b = this._body;
+    return new ReadableStream({ start: function (c) { c.enqueue(String(b)); c.close(); } });
+  }
+});
+Response.json = function (data, init) {
+  init = init || {};
+  var h = new Headers(init.headers || {});
+  if (!h.has('content-type')) h.set('content-type', 'application/json');
+  return new Response(JSON.stringify(data), { status: init.status || 200, statusText: init.statusText, headers: h });
+};

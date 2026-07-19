@@ -3288,6 +3288,22 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             }
             return v
         }
+        Expr.OptCall(calleeIdx, argsIdx) => {
+            // f?.(args): skip the call (result undefined) when f is nullish or an
+            // earlier `?.` in the chain already short-circuited
+            let calleeVal = evalExpr(prog, calleeIdx, st, scope)
+            if st.optShort {
+                return JSValue.Undefined
+            }
+            if isNullish(calleeVal) {
+                st.optShort = true
+                return JSValue.Undefined
+            }
+            pushTemp(st, cloneValue(calleeVal))
+            let argVals = evalArgs(prog, argsIdx, st, scope)
+            popTemp(st)
+            return callValue(prog, calleeVal, argVals, JSValue.Undefined, st)
+        }
         Expr.OptIndex(objIdx, keyIdx) => {
             let ov = evalExpr(prog, objIdx, st, scope)
             if st.optShort {

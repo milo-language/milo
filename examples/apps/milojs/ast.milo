@@ -54,6 +54,9 @@ enum Expr {
     // propagates up through the chain's Member/Index/Call nodes; this node is
     // where the flag is scoped and consumed.
     OptChainRoot(i64),
+    // f?.(args) — optional call: if the callee is nullish the call is skipped and
+    // the result is undefined, else it is called. (callee expr, argList index)
+    OptCall(i64, i64),
 }
 
 // One key/value pair in an object literal; val is an expr index.
@@ -246,6 +249,9 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.OptChainRoot(inner) => {
             return Expr.OptChainRoot(inner)
+        }
+        Expr.OptCall(callee, args) => {
+            return Expr.OptCall(callee, args)
         }
     }
 }

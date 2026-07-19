@@ -837,7 +837,22 @@ fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
         } else if k == T_OPTCHAIN {
             advance(p)
             sawOpt = true
-            if peekKind(p) == T_LBRACKET {
+            if peekKind(p) == T_LPAREN {
+                // f?.(args) — optional call
+                advance(p)
+                var callArgs: Vec<i64> = Vec.new()
+                if peekKind(p) != T_RPAREN {
+                    callArgs.push(parseArg(p, prog))
+                    while peekKind(p) == T_COMMA {
+                        advance(p)
+                        callArgs.push(parseArg(p, prog))
+                    }
+                }
+                expect(p, T_RPAREN)
+                prog.argLists.push(callArgs)
+                let clistIdx = prog.argLists.len() - 1
+                e = addExpr(prog, Expr.OptCall(e, clistIdx))
+            } else if peekKind(p) == T_LBRACKET {
                 // a?.[k]
                 advance(p)
                 let keyIdx = parseExpr(p, prog)
