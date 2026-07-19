@@ -455,3 +455,63 @@ Array.fromAsync = async function (items, mapFn, thisArg) {
   }
   return out;
 };
+
+// --- WeakMap / WeakSet -------------------------------------------------------
+// The engine aliases these to Map/Set natives, which accept ANY key. The spec
+// requires a TypeError for primitives (and for registered symbols), which real
+// code relies on to catch mistakes — so they are real classes here.
+//
+// They still hold their keys STRONGLY: the collector has no weak references, so
+// entries are never dropped. A test asserting that a key disappeared after its
+// last reference died will correctly fail rather than pass vacuously.
+function __weakKeyOk(k) {
+  var t = typeof k;
+  if (t === "object") return k !== null;
+  if (t === "function") return true;
+  // an unregistered symbol is a valid weak key; Symbol.for() ones are not
+  if (t === "symbol") return Symbol.keyFor(k) === undefined;
+  return false;
+}
+
+class WeakMap {
+  constructor(entries) {
+    this._m = new Map();
+    if (entries) {
+      for (var pair of entries) this.set(pair[0], pair[1]);
+    }
+  }
+  set(k, v) {
+    if (!__weakKeyOk(k)) throw new TypeError("invalid value used as WeakMap key");
+    this._m.set(k, v);
+    return this;
+  }
+  get(k) {
+    return this._m.get(k);
+  }
+  has(k) {
+    return this._m.has(k);
+  }
+  delete(k) {
+    return this._m.delete(k);
+  }
+}
+
+class WeakSet {
+  constructor(values) {
+    this._s = new Set();
+    if (values) {
+      for (var v of values) this.add(v);
+    }
+  }
+  add(v) {
+    if (!__weakKeyOk(v)) throw new TypeError("invalid value used as WeakSet key");
+    this._s.add(v);
+    return this;
+  }
+  has(v) {
+    return this._s.has(v);
+  }
+  delete(v) {
+    return this._s.delete(v);
+  }
+}
