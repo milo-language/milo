@@ -70,10 +70,13 @@ fn tokenDesc(p: &PState, i: i64): string {
 
 // The offending token with a couple on each side, so an error points at
 // recognisable source text rather than a bare token index.
+// A wide window matters more than a line number: the files this fails on are
+// minified into a few enormous lines, so "line 3" locates nothing. Twelve tokens
+// either side is usually enough to grep the construct out of the bundle.
 fn tokenContext(p: &PState): string {
     var out = ""
-    var i = p.pos - 2
-    while i <= p.pos + 2 {
+    var i = p.pos - 12
+    while i <= p.pos + 12 {
         if i >= 0 && i < p.toks.len() {
             if i == p.pos {
                 out = out + " >>" + tokenDesc(p, i) + "<<"
