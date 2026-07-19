@@ -179,24 +179,27 @@ __iteratorProto.forEach = function (fn) {
   }
 };
 __iteratorProto.find = function (fn) {
+  var i = 0;
   while (true) {
     var s = this.next();
     if (s.done) return undefined;
-    if (fn(s.value)) return s.value;
+    if (fn(s.value, i++)) return s.value;
   }
 };
 __iteratorProto.some = function (fn) {
+  var i = 0;
   while (true) {
     var s = this.next();
     if (s.done) return false;
-    if (fn(s.value)) return true;
+    if (fn(s.value, i++)) return true;
   }
 };
 __iteratorProto.every = function (fn) {
+  var i = 0;
   while (true) {
     var s = this.next();
     if (s.done) return true;
-    if (!fn(s.value)) return false;
+    if (!fn(s.value, i++)) return false;
   }
 };
 __iteratorProto.reduce = function (fn, init) {

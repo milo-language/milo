@@ -391,6 +391,81 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             if name == "__arrayIterSelf" {
                 return JSValue.Obj(o)
             }
+            if st.objects[o].isArrayBuffer {
+                if name == "resize" {
+                    var to: i64 = 0
+                    if args.len() > 0 {
+                        to = toNum(args[0]) as i64
+                    }
+                    // only a buffer created with {maxByteLength} may resize, and
+                    // only within [0, cap]
+                    if st.objects[o].abMaxLen < 0 || to < 0 || to > st.objects[o].abMaxLen {
+                        st.throwing = true
+                        st.thrownValue = makeError(st, "RangeError", "ArrayBuffer.prototype.resize: invalid length")
+                        return JSValue.Undefined
+                    }
+                    var b: Vec<u8> = Vec.new()
+                    var ci: i64 = 0
+                    while ci < to {
+                        if ci < st.objects[o].bytes.len() {
+                            b.push(st.objects[o].bytes[ci])
+                        } else {
+                            b.push(0 as u8)
+                        }
+                        ci = ci + 1
+                    }
+                    st.objects[o].bytes = b
+                    return JSValue.Undefined
+                }
+                if name == "transfer" {
+                    let nb = newObject(st)
+                    st.objects[nb].isArrayBuffer = true
+                    var tb: Vec<u8> = Vec.new()
+                    var ti: i64 = 0
+                    while ti < st.objects[o].bytes.len() {
+                        tb.push(st.objects[o].bytes[ti])
+                        ti = ti + 1
+                    }
+                    st.objects[nb].bytes = tb
+                    st.objects[nb].abMaxLen = st.objects[o].abMaxLen
+                    st.objects[o].bytes = Vec.new()
+                    st.objects[o].abDetached = true
+                    return JSValue.Obj(nb)
+                }
+                if name == "slice" {
+                    let n = st.objects[o].bytes.len()
+                    var a: i64 = 0
+                    if args.len() > 0 {
+                        a = toNum(args[0]) as i64
+                    }
+                    if a < 0 {
+                        a = n + a
+                    }
+                    var e = n
+                    if args.len() > 1 {
+                        e = toNum(args[1]) as i64
+                        if e < 0 {
+                            e = n + e
+                        }
+                    }
+                    if a < 0 {
+                        a = 0
+                    }
+                    if e > n {
+                        e = n
+                    }
+                    let nb = newObject(st)
+                    st.objects[nb].isArrayBuffer = true
+                    var b: Vec<u8> = Vec.new()
+                    var i = a
+                    while i < e {
+                        b.push(st.objects[o].bytes[i])
+                        i = i + 1
+                    }
+                    st.objects[nb].bytes = b
+                    return JSValue.Obj(nb)
+                }
+            }
             // Date-specific methods dispatch here (Date.prototype.toISOString.call);
             // toString/valueOf are left to the Object.prototype type-tag logic
             // below, so Object.prototype.toString.call(date) stays [object Date]
@@ -594,8 +669,22 @@ fn getMember(st: &Interp, o: i64, key: &string): JSValue {
             return JSValue.Number(taElem(st, o, ti))
         }
     }
-    if st.objects[o].isArrayBuffer && key == "byteLength" {
-        return JSValue.Number(st.objects[o].bytes.len() as f64)
+    if st.objects[o].isArrayBuffer {
+        if key == "byteLength" {
+            return JSValue.Number(st.objects[o].bytes.len() as f64)
+        }
+        if key == "maxByteLength" {
+            if st.objects[o].abMaxLen >= 0 {
+                return JSValue.Number(st.objects[o].abMaxLen as f64)
+            }
+            return JSValue.Number(st.objects[o].bytes.len() as f64)
+        }
+        if key == "resizable" {
+            return JSValue.Bool(st.objects[o].abMaxLen >= 0)
+        }
+        if key == "detached" {
+            return JSValue.Bool(st.objects[o].abDetached)
+        }
     }
     if st.objects[o].isArray {
         if key == "length" {
@@ -1616,6 +1705,24 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         let bo = newObject(st)
         st.objects[bo].isArrayBuffer = true
+        // new ArrayBuffer(n, { maxByteLength }) — resizable up to the cap
+        if argVals.len() > 1 {
+            let oh = objHandle(argVals[1])
+            if oh >= 0 {
+                let cap = getMember(st, oh, "maxByteLength")
+                match cap {
+                    JSValue.Undefined => {
+                    }
+                    _ => {
+                        var c = toNum(cap) as i64
+                        if c < n {
+                            c = n
+                        }
+                        st.objects[bo].abMaxLen = c
+                    }
+                }
+            }
+        }
         var b: Vec<u8> = Vec.new()
         var i: i64 = 0
         while i < n {
@@ -4964,6 +5071,14 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
         }
         JSValue.Obj(o) => {
             pushTemp(st, JSValue.Obj(o))
+            // ArrayBuffer methods (resize/transfer/slice) live in
+            // callBuiltinByName; route them there rather than duplicating
+            if st.objects[o].isArrayBuffer {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                let r = callBuiltinByName(prog, JSValue.Obj(o), name, argVals, st)
+                popTemp(st)
+                return r
+            }
             if st.objects[o].regexId >= 0 {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
                 let r = regexMethod(st, o, name, argVals)
