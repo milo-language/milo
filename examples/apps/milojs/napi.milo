@@ -327,36 +327,3 @@ fn napi_get_array_length(_env: *u8, value: i64, result: *u8): i32 {
         }
     }
 }
-
-// Nothing in Milo calls these — only a loaded addon does, through the dynamic
-// symbol table — so they are unreachable from main() and get dead-stripped before
-// the linker ever sees them. Taking each address here forces emission. Call this
-// once from main() before loading any addon; without it dlopen fails with
-// "symbol not found in flat namespace '_napi_...'".
-fn napiExportAll(): i64 {
-    // The addresses must genuinely escape. Returning addrs.len() instead let LLVM
-    // fold the count to a constant, drop every push, and strip the functions again.
-    var acc: i64 = 0
-    unsafe {
-        acc = acc + ((napi_get_undefined as *u8) as i64)
-        acc = acc + ((napi_get_null as *u8) as i64)
-        acc = acc + ((napi_get_boolean as *u8) as i64)
-        acc = acc + ((napi_create_int32 as *u8) as i64)
-        acc = acc + ((napi_create_uint32 as *u8) as i64)
-        acc = acc + ((napi_create_int64 as *u8) as i64)
-        acc = acc + ((napi_create_double as *u8) as i64)
-        acc = acc + ((napi_create_string_utf8 as *u8) as i64)
-        acc = acc + ((napi_create_object as *u8) as i64)
-        acc = acc + ((napi_create_array as *u8) as i64)
-        acc = acc + ((napi_create_array_with_length as *u8) as i64)
-        acc = acc + ((napi_set_named_property as *u8) as i64)
-        acc = acc + ((napi_get_named_property as *u8) as i64)
-        acc = acc + ((napi_get_value_double as *u8) as i64)
-        acc = acc + ((napi_get_value_int32 as *u8) as i64)
-        acc = acc + ((napi_get_value_bool as *u8) as i64)
-        acc = acc + ((napi_typeof as *u8) as i64)
-        acc = acc + ((napi_is_array as *u8) as i64)
-        acc = acc + ((napi_get_array_length as *u8) as i64)
-    }
-    return acc
-}
