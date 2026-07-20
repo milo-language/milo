@@ -839,3 +839,10 @@ Math.tanh = function (x) {
   var e = Math.exp(2 * x);
   return (e - 1) / (e + 1);
 };
+
+// Not shared memory — milojs is single-threaded — but the global has to exist:
+// `x instanceof SharedArrayBuffer` is a common way to test for a binary buffer,
+// and an undefined identifier there is a ReferenceError that aborts the call.
+function SharedArrayBuffer(length) {
+  return new ArrayBuffer(length);
+}

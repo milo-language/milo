@@ -605,3 +605,11 @@ process.dlopen = function (mod, filename, _flags) {
   mod.exports = __napiLoad(filename);
   return mod.exports;
 };
+
+// Not shared memory — milojs is single-threaded — but the global has to exist:
+// `x instanceof SharedArrayBuffer` is a common way to test for a binary buffer
+// (prisma does it next to the ArrayBuffer check), and an undefined identifier
+// there is a ReferenceError that aborts the whole call.
+function SharedArrayBuffer(length) {
+  return new ArrayBuffer(length);
+}
