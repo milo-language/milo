@@ -28,6 +28,13 @@ extern fn open(path: *u8, flags: i32,...): i32
 @cSig("unistd.h", "int close(int)")
 extern fn close(fd: i32): i32
 
+// signal(SIGPIPE, SIG_IGN). Writing to a socket whose peer has gone away raises
+// SIGPIPE, whose default action is to kill the process — a server dies silently
+// (exit 141) the first time a client disconnects mid-response. Every runtime
+// that serves connections ignores it and handles the EPIPE from write instead.
+@cSig("signal.h", "void (*signal(int, void (*)(int)))(int)")
+extern fn signal(sig: i32, handler: *u8): *u8
+
 @cSig("unistd.h", "off_t lseek(int, off_t, int)")
 extern fn lseek(fd: i32, offset: i64, whence: i32): i64
 

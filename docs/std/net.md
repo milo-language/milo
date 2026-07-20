@@ -122,6 +122,14 @@ fn httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions):
 
 _Undocumented._
 
+### `ignoreSigpipe`
+
+```milo
+fn ignoreSigpipe(): void
+```
+
+_Undocumented._
+
 ### `ip4`
 
 ```milo

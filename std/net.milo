@@ -1,7 +1,7 @@
 // std/net — TCP, DNS, HTTP client with automatic cleanup
 
 from "std/os" import {
-    SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl, SSL_free, SSL_get_verify_result, SSL_new, SSL_set1_host, SSL_set_fd, TLS_client_method, acceptFd, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd, connectFdIn6, bindIn6, inet_pton
+    signal, SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl, SSL_free, SSL_get_verify_result, SSL_new, SSL_set1_host, SSL_set_fd, TLS_client_method, acceptFd, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd, connectFdIn6, bindIn6, inet_pton
 }
 from "std/platform" import {
     SockAddrIn, addrinfoAddrOffset, makeSockaddr, solSocket, soReuseaddr, makeSockaddr6, afInet6
@@ -95,6 +95,7 @@ fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
 
 impl TcpStream {
     fn connect(ip: u32, port: u16): Result<TcpStream, NetError> {
+        ignoreSigpipe()
         let AF_INET: i32 = 2
         let SOCK_STREAM: i32 = 1
 
@@ -221,11 +222,30 @@ impl Drop for TcpListener {
     }
 }
 
+// SIGPIPE's default action is to kill the process, so writing to a socket whose
+// peer has already gone away takes the whole server down — silently, with exit
+// status 141 and nothing logged. Every runtime that serves connections ignores
+// it and deals with the EPIPE that write() returns instead. Called when a
+// listener or a stream is created, so any program doing socket IO is covered.
+var gSigpipeIgnored: bool = false
+
+fn ignoreSigpipe(): void {
+    if gSigpipeIgnored {
+        return
+    }
+    gSigpipeIgnored = true
+    unsafe {
+        // SIGPIPE is 13 on both darwin and linux; SIG_IGN is the handler value 1
+        let _prev = signal(13, 1 as *u8)
+    }
+}
+
 impl TcpListener {
     // Bind to 0.0.0.0:port and start listening. SO_REUSEADDR is set so a quick
     // restart doesn't fail with "address already in use". Pass port 0 to let the
     // OS choose a free port (recover it via the accepted peer or getsockname).
     fn bind(port: u16): Result<TcpListener, NetError> {
+        ignoreSigpipe()
         let AF_INET: i32 = 2
         let SOCK_STREAM: i32 = 1
 

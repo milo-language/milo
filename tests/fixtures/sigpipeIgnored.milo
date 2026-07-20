@@ -1,0 +1,39 @@
+// @expect: write to closed pipe returned -1
+// @expect: process survived
+
+// Writing to a pipe or socket whose reader has gone away raises SIGPIPE, and
+// SIGPIPE's default action is to kill the process. A server that writes a
+// response to a client that already hung up would die silently with status 141
+// — which is exactly what took down the milojs HTTP server under load.
+//
+// std/net ignores SIGPIPE when a listener or stream is created, so the write
+// reports EPIPE and the program decides what to do.
+from "std/net" import {
+    ignoreSigpipe
+}
+from "std/os" import {
+    close, pipe, write
+}
+
+fn main(): i32 {
+    ignoreSigpipe()
+    var fds: [i32; 2] = [0; 2]
+    unsafe {
+        if pipe(fds as *u8) != 0 {
+            print("pipe() failed")
+            return 1
+        }
+        // drop the read end: any write now raises SIGPIPE
+        let _closedRead = close(fds[0])
+        var payload: [u8; 4] = [65; 4]
+        let n = write(fds[1], payload as *u8, 4)
+        if n < 0 {
+            print("write to closed pipe returned -1")
+        } else {
+            print("write unexpectedly succeeded")
+        }
+        let _closedWrite = close(fds[1])
+    }
+    print("process survived")
+    return 0
+}
