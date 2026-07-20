@@ -18,7 +18,7 @@ document, and the document changes first if the plan changes.
 | Interpreter runs on a green task | done (`530dfe8`) |
 | `Task.spawnWithStack` for interpreter-sized stacks | done (`5613f78`) |
 | Ordering mechanism (caller parks, body unparks it) | proven, `tests/fixtures/asyncCallOrdering.milo` |
-| R1 async call returns at first await | attempted, reverted — see "R1: what went wrong" |
+| R1 async call returns at first await | attempted twice, reverted twice — blocked on the pre-existing GC bug below |
 | R2 suspension is per-activation | core done (`ceb9aea`) — park/wake on a promise; not yet wired to the `await` path |
 | R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
 | R4 settle/reject semantics | not started |
@@ -197,6 +197,29 @@ Everything else in `Interp` is global — heap arenas, the module registry, the
 timer and microtask queues, the waiter registry — and must *not* be saved or
 restored. `microtasks` and `unhandledRejects` especially: an activation that
 settles a promise and then parks has to leave the reaction visible to the loop.
+
+## A pre-existing GC bug found underneath this work
+
+Building an app-shaped test for R1 surfaced a bug that has nothing to do with
+suspension: it reproduces on committed main with none of this work involved.
+See `examples/apps/milojs/known-bugs/promiseAllGcRoot.js`.
+
+A live promise chain is collected. The symptom is
+`ReferenceError: out is not defined`, where `out` is the accumulator inside the
+prelude's self-hosted `Promise.all` — a closure a reaction captured has been
+freed while the chain was still pending. It needs nested async calls, a
+fire-and-forget async call whose promise nobody holds, and enough allocation to
+collect; any one alone passes.
+
+This matters for the plan of record for two reasons:
+
+1. It is the **same failure class** as the `ReferenceError: value is not
+   defined` that both R1 attempts produced from the app. Some of what was
+   attributed to R1 may be this. R1 should not be retried until this is fixed,
+   or the next attempt will be debugging two bugs at once.
+2. It shows the async fixtures are the wrong shape. They are small, symmetric
+   and allocation-light; the app is none of those. R5 ("existing values
+   unchanged") is satisfied by tests that cannot see this class of bug.
 
 ## Risks
 
