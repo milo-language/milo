@@ -1592,7 +1592,11 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
     }
     if k == T_THROW {
         advance(p)
-        let e = parseExpr(p, prog)
+        // `throw e.code = x, e` throws e — the comma operator is part of the
+        // thrown Expression, not a statement separator (same rule as `return`).
+        // Stopping at the comma threw the assignment's value instead, so prisma
+        // errors arrived as the bare clientVersion string.
+        let e = parseCommaSeq(p, prog)
         if peekKind(p) == T_SEMI {
             advance(p)
         }
