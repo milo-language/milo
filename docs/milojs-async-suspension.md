@@ -24,7 +24,8 @@ document, and the document changes first if the plan changes.
 | R2 suspension is per-activation | core done (`ceb9aea`) — park/wake on a promise; not yet wired to the `await` path |
 | R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
 | R4 settle/reject semantics | done — already held; locked in by `tests/asyncSettleReject.js`, clean under GC stress |
-| R4a async body returns a pending promise | fix ready, not committed — an activation returning a pending promise must adopt it, not read its state; see below. Guarded by `tests/runtime/asyncReturnsPendingPromise.js` |
+| R4a async body returns a pending promise | done (`0391271`) — an activation returning a pending promise adopts it, not reads its state; guarded by `tests/runtime/asyncReturnsPendingPromise.js` (new runtime harness pass) |
+| Per-binary JS recursion limit | done (`2843607`) — `callDepthLimit` field; engine 20 (main-thread Linux stack), runtime 500 (8 MB green task). Fixes a spurious `RangeError` on tahoeroads without regressing the engine's Linux-catchability. Not an async requirement, tracked here because it interacts with activation stacks |
 | R5 existing values unchanged | holds (nothing landed yet) |
 | R6 per-activation execution state | done (`3215822`, corrected `c079770`) — 9 fields, contexts reclaimed by task identity |
 | R7 GC over suspended activations | done (`3215822`) — collect walks parked roots, fixture proves it fails without |
@@ -228,13 +229,29 @@ which only executes on the runtime, so the engine harness cannot exercise it —
 the R1b gap made concrete. The test hangs on a pre-fix runtime binary and
 passes on a post-fix one.
 
-**Caveat — this fix alone does not fix the app.** The same route still hangs,
-now without an error, and `fetchData`'s body never begins (its first log never
-prints), so the activation for it never runs. Every isolated replica works;
-only the full app hangs. Under investigation — likely the route handler runs
-with `schedulerCurrent() == 0` (dispatched from a microtask or timer, not an
-activation), changing how the nested async calls spawn. The adoption fix is a
-correct prerequisite, not the whole story.
+**Caveat — this fix alone does not fix the app.** A cold tahoeroads route still
+hangs: `fetchData`'s body never begins (its first log never prints), so its
+activation never runs. What has been RULED OUT by testing, so the next
+investigation does not repeat it:
+
+- Not the recursion limit / stack size — zero RangeErrors in the hang; the
+  per-binary `callDepthLimit` fix is unrelated.
+- Not the adoption fix — that is correct and committed.
+- Not the per-activation stack size — 8 MB and 1 MB stacks hang identically.
+- Not the `std/runtime` `stackBytes` change — reverting it still hangs.
+- Not reproducible in isolation — faithful UrlCache replicas (single, nested,
+  `.json()`, inFlight Map, 3 concurrent) all work. Only the FULL app hangs.
+
+The distinguishing feature of the full app is scale and background work:
+startup worker jobs (`dist/worker/jobs/capture*.js`) that spawn their own
+concurrent fetches, `setInterval` timers, napi/prisma, and many more concurrent
+activations than any replica. The leading hypothesis is exhaustion of some fixed
+capacity — the green-task scheduler, the activation-tracking vectors, or the
+fetch worker-thread pool — so a new activation is created but never scheduled.
+An earlier "works" reading was the app serving a **warm cache** (worker jobs
+had pre-populated it), not a successful cold fetch; `Fetching` logs zero times
+in both the warm-serve and the hang, so cache state, not the fetch path, decided
+the outcome. This is the top open tahoeroads item.
 
 ## A pre-existing GC bug found underneath this work
 
