@@ -178,6 +178,15 @@ struct Prog {
     switches: Vec<Vec<SwitchCase>>,
 }
 
+// The one program every execution shares, for the same reason gInterp exists: a
+// green task's body cannot capture a `&Prog` belonging to a caller's frame, and
+// an async activation outlives the call that started it. Module-scope runtime
+// initialization is not supported, so this is a zero literal that main()
+// overwrites once parsing is done.
+var gProg: Prog = Prog {
+    exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
+}
+
 fn cloneExpr(e: &Expr): Expr {
     match e {
         Expr.Num(n) => {

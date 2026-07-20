@@ -35,7 +35,7 @@ from "std/args" import {
     args
 }
 from "./ast" import {
-    Prog
+    Prog, gProg
 }
 from "./value" import {
     JSValue, objHandle
@@ -293,34 +293,35 @@ fn main(): i32 {
 
     // Parse the entry and everything it requires into one shared program, then
     // run the entry as a CommonJS module.
-    var prog = Prog {
-        exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
-    }
+    // Everything below works on gProg directly rather than a local: an async
+    // activation runs on its own green task, which cannot capture a `&Prog`
+    // from the frame that started it, so the program has to outlive this frame
+    // the same way the interpreter does in gInterp.
     // The prelude defines globals that are easier to write in JS than to build
     // from natives. It must share this Prog: a JSValue.Func carries a function
     // index into prog.funcs, so a function parsed into a different Prog indexes
     // the wrong table when it is finally called.
     // the spec-builtin layer the engine also installs — the runtime is the engine
     // plus node shims, so it needs both, this one first
-    let enginePreludeIdx = preloadGraph("builtin:engine-prelude", prog, gInterp)
-    let preludeIdx = preloadGraph("builtin:prelude", prog, gInterp)
-    let entryIdx = preloadGraph(path.clone(), prog, gInterp)
+    let enginePreludeIdx = preloadGraph("builtin:engine-prelude", gProg, gInterp)
+    let preludeIdx = preloadGraph("builtin:prelude", gProg, gInterp)
+    let entryIdx = preloadGraph(path.clone(), gProg, gInterp)
     if entryIdx < 0 {
         eprint("milojs: cannot read '" + path + "'")
         return 1
     }
     if enginePreludeIdx >= 0 {
-        hoistBlock(prog, gInterp.modBlocks[enginePreludeIdx], gInterp, 0)
-        execBlock(prog, gInterp.modBlocks[enginePreludeIdx], gInterp, 0)
+        hoistBlock(gProg, gInterp.modBlocks[enginePreludeIdx], gInterp, 0)
+        execBlock(gProg, gInterp.modBlocks[enginePreludeIdx], gInterp, 0)
     }
     if preludeIdx >= 0 {
         // run in global scope, so its declarations become globals
-        hoistBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
-        execBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
+        hoistBlock(gProg, gInterp.modBlocks[preludeIdx], gInterp, 0)
+        execBlock(gProg, gInterp.modBlocks[preludeIdx], gInterp, 0)
     }
     let interpTask = Task.spawnWithStack(move(): void => {
-        runModule(prog, entryIdx, gInterp)
-        runEventLoop(prog, gInterp)
+        runModule(gProg, entryIdx, gInterp)
+        runEventLoop(gProg, gInterp)
     }
     , 8388608)
     interpTask.join()
