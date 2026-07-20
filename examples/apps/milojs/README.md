@@ -70,6 +70,35 @@ f(); console.log("B");
 // node: A B C      milojs: A C B
 ```
 
+This is not only cosmetic. Calling an async function does not return at its
+first `await` — it returns when the whole body finishes — so two async calls
+that have to interleave deadlock:
+
+```js
+function makeLock(n) {                       // releases once n participants arrive
+  let release; const gate = new Promise((r) => (release = r));
+  return { then(cb) { if (--n === 0) release("open"); return cb?.(gate); } };
+}
+const lock = makeLock(2);
+async function participant(id) { await lock; return "done" + id; }
+Promise.all([participant(1), participant(2)]);
+// node: resolves      milojs: participant(2) is never called, so the lock
+//                     never opens and participant(1) waits forever
+```
+
+prisma batches a multi-statement `$transaction` behind exactly this barrier, so
+`$transaction([a, b])` hangs while `$transaction([a])` and the callback form
+both work.
+
+Fixing it means running each async activation on its own green task and parking
+at `await`. Milo has green tasks with real stacks, and they only switch at
+explicit park points, so the interpreter's *native* stack is already per-task.
+What has to move with it is the Interp bookkeeping that describes the current
+execution: the throw flag and thrown value, call depth, the temp-root stack, the
+active-scope stack, and the module path/dir stacks. The temp roots and active
+scopes are GC roots, so they cannot simply be swapped out — the collector has to
+walk every parked task's roots, not just the running one.
+
 Fixing it means running each async activation on its own green task and
 suspending at `await`, which requires the interpreter's "current execution"
 state (throw flag, call depth, temp roots, active scopes, module stack) to
