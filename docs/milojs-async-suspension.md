@@ -24,6 +24,7 @@ document, and the document changes first if the plan changes.
 | R2 suspension is per-activation | core done (`ceb9aea`) — park/wake on a promise; not yet wired to the `await` path |
 | R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
 | R4 settle/reject semantics | done — already held; locked in by `tests/asyncSettleReject.js`, clean under GC stress |
+| R4a async body returns a pending promise | fix ready, not committed — an activation returning a pending promise must adopt it, not read its state; see below. Guarded by `tests/runtime/asyncReturnsPendingPromise.js` |
 | R5 existing values unchanged | holds (nothing landed yet) |
 | R6 per-activation execution state | done (`3215822`, corrected `c079770`) — 9 fields, contexts reclaimed by task identity |
 | R7 GC over suspended activations | done (`3215822`) — collect walks parked roots, fixture proves it fails without |
@@ -199,6 +200,41 @@ Everything else in `Interp` is global — heap arenas, the module registry, the
 timer and microtask queues, the waiter registry — and must *not* be saved or
 restored. `microtasks` and `unhandledRejects` especially: an activation that
 settles a promise and then parks has to leave the reaction visible to the loop.
+
+## R4a: an async body that returns a pending promise must adopt it
+
+Found while debugging a real tahoeroads route hang. The tahoeroads HTTP cache
+does `async get(url) { return fetchData(url).then(...) }` — an async function
+whose return value is a **pending** promise.
+
+`spawnActivation`'s completion read the returned promise's state at the moment
+of return and settled the activation's own promise with it. A pending promise
+has state 0, so it settled the activation with "pending" — a no-op — and the
+caller's `await` then hung forever with no error (a genuinely stuck promise, so
+even the unsettleable-promise budget net eventually fired: "await did not settle
+within budget").
+
+The fix adopts instead: when the returned promise is still pending, register a
+reaction on it whose `derived` is the activation's promise and whose handlers
+are non-callable. `settlePromise`'s existing passthrough then forwards the
+returned promise's eventual settlement — value or rejection — straight through.
+When it is already settled, settle directly as before.
+
+Verified on the runtime and against faithful replicas of the cache wrapper
+(single, nested, `.json()`, concurrent). Guarded by
+`tests/runtime/asyncReturnsPendingPromise.js`, which runs on the **runtime**
+(see the new runtime pass in `run.sh`): the fix lives in `spawnActivation`,
+which only executes on the runtime, so the engine harness cannot exercise it —
+the R1b gap made concrete. The test hangs on a pre-fix runtime binary and
+passes on a post-fix one.
+
+**Caveat — this fix alone does not fix the app.** The same route still hangs,
+now without an error, and `fetchData`'s body never begins (its first log never
+prints), so the activation for it never runs. Every isolated replica works;
+only the full app hangs. Under investigation — likely the route handler runs
+with `schedulerCurrent() == 0` (dispatched from a microtask or timer, not an
+activation), changing how the nested async calls spawn. The adoption fix is a
+correct prerequisite, not the whole story.
 
 ## A pre-existing GC bug found underneath this work
 

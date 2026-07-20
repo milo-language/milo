@@ -4870,7 +4870,21 @@ fn spawnActivation(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSVal
         } else {
             let ro = objHandle(r)
             if ro >= 0 && isPromise(gInterp, ro) {
-                settlePromise(gInterp, p, gInterp.objects[ro].promiseState, cloneValue(gInterp.objects[ro].promiseValue))
+                let rs = gInterp.objects[ro].promiseState
+                if rs == 0 {
+                    // The body returned a still-pending promise (e.g. `return
+                    // fetchData(url).then(...)`). Reading its state now settles the
+                    // activation's promise with `pending`, which is a no-op — the
+                    // caller's await then hangs forever. Instead adopt it: a
+                    // reaction with non-callable handlers passes the returned
+                    // promise's eventual settlement straight through to `p`.
+                    gInterp.objects[ro].reactions.push(Reaction {
+                        onFulfilled: JSValue.Undefined, onRejected: JSValue.Undefined, derived: p, isFinally: false
+                    }
+                    )
+                } else {
+                    settlePromise(gInterp, p, rs, cloneValue(gInterp.objects[ro].promiseValue))
+                }
             } else {
                 settlePromise(gInterp, p, 1, r)
             }
