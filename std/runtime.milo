@@ -371,6 +371,16 @@ impl Task {
     // `join`). Each task gets its own guard-paged stack. Await completion with
     // `task.join()`.
     fn spawn(f: () => void): Task {
+        return Task.spawnWithStack(f, defaultStackSize())
+    }
+
+    // Same as spawn, with an explicit stack size. The default 1 MB is generous
+    // for ordinary tasks but far too small for a recursive interpreter: milojs
+    // budgets its JS call depth against the 8 MB the OS main thread gets, so
+    // running it on a green task needs a comparable stack. The mapping is
+    // anonymous and lazily committed, so a larger reservation costs address
+    // space rather than resident memory.
+    fn spawnWithStack(f: () => void, stackBytes: i64): Task {
         unsafe {
             schedulerEnsureInit()
             let sched = _getSched()
@@ -387,7 +397,7 @@ impl Task {
             _rtWritePtr(task, tClosureEnv(), envPtr)
             _rtWritePtr(task, tSched(), sched)
 
-            let total = guardPageSize() + defaultStackSize()
+            let total = guardPageSize() + stackBytes
             let stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0 as i64)
             _rtWritePtr(task, tStack(), stackMem)
             _rtWriteI64(task, tStackSize(), total)

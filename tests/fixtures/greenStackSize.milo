@@ -1,0 +1,40 @@
+// @expect: deep recursion on a large green stack: ok
+// @expect: default stack still works
+
+// Green tasks get a 1 MB stack, which is generous for ordinary work and far too
+// small for a recursive interpreter — milojs budgets its JS call depth against
+// the 8 MB the OS main thread provides. spawnWithStack lets a task ask for a
+// comparable stack; the mapping is anonymous and lazily committed, so the larger
+// reservation costs address space rather than resident memory.
+from "std/runtime" import {
+    Task
+}
+
+fn deep(n: i64): i64 {
+    var pad: [i64; 256] = [0; 256]
+    pad[0] = n
+    if n <= 0 {
+        return pad[0]
+    }
+    return deep(n - 1) + 1
+}
+
+fn main(): i32 {
+    // ~2 KB of frame each: 2000 frames needs about 4 MB, over the 1 MB default
+    let big = Task.spawnWithStack(move(): void => {
+        if deep(2000) == 2000 {
+            print("deep recursion on a large green stack: ok")
+        }
+    }
+    , 8388608)
+    big.join()
+
+    let small = Task.spawn(move(): void => {
+        if deep(50) == 50 {
+            print("default stack still works")
+        }
+    }
+    )
+    small.join()
+    return 0
+}

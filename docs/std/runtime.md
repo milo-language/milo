@@ -448,6 +448,19 @@ the scheduler is driven (by a blocking IO op, `schedulerYield`, or a
 `join`). Each task gets its own guard-paged stack. Await completion with
 `task.join()`.
 
+### `Task.spawnWithStack`
+
+```milo
+fn Task.spawnWithStack(f: () => void, stackBytes: i64): Task
+```
+
+Same as spawn, with an explicit stack size. The default 1 MB is generous
+for ordinary tasks but far too small for a recursive interpreter: milojs
+budgets its JS call depth against the 8 MB the OS main thread gets, so
+running it on a green task needs a comparable stack. The mapping is
+anonymous and lazily committed, so a larger reservation costs address
+space rather than resident memory.
+
 ### `taskDone`
 
 ```milo
