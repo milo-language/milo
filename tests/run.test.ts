@@ -67,8 +67,18 @@ afterAll(() => {
 // binaries then run serially inside each test — timing-sensitive fixtures
 // (green threads, channels, select) flake under concurrent CPU load, so the
 // run phase stays sequential.
+// A fixture may carry `// @skip-os: <platform>` (comma-separated) when it
+// asserts a layout or behaviour that is genuinely platform-specific — e.g. a C
+// struct whose member types differ across targets — so it neither builds nor
+// runs on that platform. Uses process.platform values ("darwin", "linux").
+function skippedHere(dir: string, file: string): boolean {
+  const m = readFileSync(join(dir, file), "utf-8").match(/\/\/\s*@skip-os:\s*(.+)/);
+  if (!m) return false;
+  return m[1].split(",").map(s => s.trim()).includes(process.platform);
+}
+
 describe("fixtures (compile + run)", () => {
-  const files = readdirSync(FIXTURES_DIR).filter(f => f.endsWith(".milo"));
+  const files = readdirSync(FIXTURES_DIR).filter(f => f.endsWith(".milo") && !skippedHere(FIXTURES_DIR, f));
   const builds = new Map<string, RunResult>();
 
   beforeAll(async () => {

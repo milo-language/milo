@@ -1,3 +1,11 @@
+// @skip-os: linux
+// struct timeval's tv_usec is suseconds_t, which is i32 on macOS but i64 on
+// 64-bit Linux. This fixture declares tv_usec: i32 (+ i32 opaque padding),
+// which is the macOS layout; on Linux @cLayout correctly rejects it as not
+// matching the header. The @cOpaque feature under test is platform-independent
+// — only this particular struct's layout is macOS-specific — so the test runs
+// on macOS and is skipped on Linux rather than asserting a wrong layout there.
+//
 // @cOpaque marks a field as filler with no C counterpart, so @cLayout skips it.
 //
 // Needed for structs padded out to a size C dictates: node-milo's `Rusage` names only
