@@ -208,6 +208,12 @@ struct ExecCtx {
     throwing: bool,
     thrownValue: JSValue,
     callDepth: i64,
+    // set before a constructor call and cleared only after it returns, so it is
+    // live for the whole body — a park inside one would otherwise leak the
+    // constructor to every other activation
+    newTarget: JSValue,
+    // the `?.` short-circuit flag, saved and restored around an optional chain
+    optShort: bool,
     // GC roots: a suspended activation keeps these alive (see collect)
     tempRoots: Vec<JSValue>,
     active: Vec<i64>,
@@ -249,6 +255,8 @@ fn saveExecCtx(st: &mut Interp): ExecCtx {
         throwing: st.throwing,
         thrownValue: cloneValue(st.thrownValue),
         callDepth: st.callDepth,
+        newTarget: cloneValue(st.newTarget),
+        optShort: st.optShort,
         tempRoots: temps,
         active: actives,
         modDirStack: dirs,
@@ -257,6 +265,8 @@ fn saveExecCtx(st: &mut Interp): ExecCtx {
     st.throwing = false
     st.thrownValue = JSValue.Undefined
     st.callDepth = 0
+    st.newTarget = JSValue.Undefined
+    st.optShort = false
     st.tempRoots = Vec.new()
     st.active = Vec.new()
     st.modDirStack = Vec.new()
@@ -270,6 +280,8 @@ fn restoreExecCtx(st: &mut Interp, ctx: ExecCtx) {
     st.throwing = ctx.throwing
     st.thrownValue = ctx.thrownValue
     st.callDepth = ctx.callDepth
+    st.newTarget = ctx.newTarget
+    st.optShort = ctx.optShort
     st.tempRoots = ctx.tempRoots
     st.active = ctx.active
     st.modDirStack = ctx.modDirStack
@@ -476,6 +488,11 @@ struct Interp {
     // every object would pay for it, and the object header is already too fat.
     awaitPromise: Vec<i64>,
     awaitTask: Vec<*u8>,
+    // Task each suspended context belongs to, parallel to `suspended`. Without
+    // it a resuming activation takes whichever entry happens to be last, which
+    // hands it another activation's execution: its pops then unroot the other
+    // activation's scopes and the collector sweeps frames that are still live.
+    suspendedTask: Vec<*u8>,
     // execution contexts of activations that are parked. Their roots are marked
     // by collect: they are live even though nothing is running them.
     suspended: Vec<ExecCtx>,
@@ -524,7 +541,7 @@ var gInterp: Interp = Interp {
     throwing: false, thrownValue: JSValue.Undefined,
     optShort: false,
     rngState: 88172645463325252,
-    allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, mainTask: 0 as *u8, awaitPromise: Vec.new(), awaitTask: Vec.new(), suspended: Vec.new(), fetches: Vec.new(), napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
+    allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, mainTask: 0 as *u8, awaitPromise: Vec.new(), awaitTask: Vec.new(), suspended: Vec.new(), suspendedTask: Vec.new(), fetches: Vec.new(), napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
 }
 
 fn allocObj(st: &mut Interp, isArray: bool): i64 {

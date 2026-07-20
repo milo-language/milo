@@ -47,7 +47,7 @@ fn makeInterp(gcStats: bool, gcThreshold: i64, gcGrowth: i64): Interp {
         throwing: false, thrownValue: JSValue.Undefined,
         optShort: false,
         rngState: 88172645463325252,
-        allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, mainTask: 0 as *u8, awaitPromise: Vec.new(), awaitTask: Vec.new(), suspended: Vec.new(), fetches: Vec.new(), napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: gcThreshold, gcMinThreshold: gcThreshold, gcGrowthFactor: gcGrowth, gcRuns: 0, gcStats: gcStats
+        allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, mainTask: 0 as *u8, awaitPromise: Vec.new(), awaitTask: Vec.new(), suspended: Vec.new(), suspendedTask: Vec.new(), fetches: Vec.new(), napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: gcThreshold, gcMinThreshold: gcThreshold, gcGrowthFactor: gcGrowth, gcRuns: 0, gcStats: gcStats
     }
 }
 

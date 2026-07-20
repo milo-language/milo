@@ -4745,6 +4745,21 @@ fn napiDrainSettlements(st: &mut Interp) {
     }
 }
 
+// Take back the execution belonging to `task`, wherever it sits in the parked
+// set. Parks and wakes interleave, so position says nothing about ownership.
+fn resumeExecCtx(st: &mut Interp, task: *u8) {
+    var i: i64 = 0
+    while i < st.suspendedTask.len() {
+        if st.suspendedTask[i] as i64 == task as i64 {
+            let back = st.suspended.remove(i)
+            st.suspendedTask.remove(i)
+            restoreExecCtx(st, back)
+            return
+        }
+        i = i + 1
+    }
+}
+
 // R2 of docs/milojs-async-suspension.md. Park the running activation until
 // `p` settles. Only legal off the main task: the main task runs the event loop,
 // so parking it would stop the timers and off-thread servicing that settle
@@ -4767,11 +4782,13 @@ fn parkOnPromise(st: &mut Interp, p: i64): bool {
     // starts clean, and collect keeps these roots alive (R6, R7)
     let ctx = saveExecCtx(st)
     st.suspended.push(ctx)
+    st.suspendedTask.push(me)
     schedulerPark()
-    // resumed: take our execution back
-    var idx = st.suspended.len() - 1
-    let back = st.suspended.remove(idx)
-    restoreExecCtx(st, back)
+    // Resumed: take back OUR execution, found by task identity. Taking the last
+    // entry instead hands this activation someone else's state — its pops then
+    // unroot that activation's scopes and the collector sweeps frames that are
+    // still live, which surfaces later as an identifier that no longer resolves.
+    resumeExecCtx(st, me)
     return true
 }
 
