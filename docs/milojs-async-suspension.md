@@ -23,7 +23,7 @@ document, and the document changes first if the plan changes.
 | R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
 | R4 settle/reject semantics | not started |
 | R5 existing values unchanged | holds (nothing landed yet) |
-| R6 per-activation execution state | done (`3215822`) — ExecCtx + save/restore |
+| R6 per-activation execution state | done (`3215822`, corrected `c079770`) — 9 fields, contexts reclaimed by task identity |
 | R7 GC over suspended activations | done (`3215822`) — collect walks parked roots, fixture proves it fails without |
 | R8 unsettleable promise still reported | holds today, must survive |
 
@@ -169,11 +169,34 @@ the body binds them, so a collection in that window frees them. That fix is in
 the stash and works. It was not sufficient.
 
 **R6 is therefore revised.** It is not "save these seven fields" but "no
-interpreter state is ambient across a suspension point". The next attempt should
-start by enumerating every `Interp` field and classifying it as per-activation,
-global, or provably irrelevant — and the enumeration should be checked against
-the struct rather than assembled from memory, so it cannot silently miss one.
-Patching symptoms as they appear is the wrong shape of work here.
+interpreter state is ambient across a suspension point".
+
+That enumeration has since been done, field by field against the struct. Two
+findings:
+
+1. **The actual bug was not a missing field.** `parkOnPromise` reclaimed
+   `st.suspended`'s *last* entry on resume. Nothing tied an entry to a task, so
+   interleaved parks and wakes made activations restore each other's execution.
+   The damage is heap corruption, not a wrong value: A wakes holding B's
+   context, A's frames pop scopes belonging to B, B's frames end up in no root
+   set, the collector sweeps them, and B resumes with scope indices pointing at
+   recycled slots — which is exactly `ReferenceError: value is not defined`.
+   Fixed in `c079770`; contexts now carry their task and are reclaimed by
+   identity.
+
+   This also explains why the barrier repro passed under `MILOJS_GC_THRESHOLD=1`
+   while the app failed: symmetric participants keep everything over-rooted, so
+   the bug needs asymmetric interleaving *and* allocation pressure.
+
+2. **Nine fields are per-activation, not seven.** `newTarget` (live for a whole
+   constructor body, since it is cleared only after the call returns) and
+   `optShort` (the `?.` short-circuit flag) were missing. Both are now in
+   ExecCtx.
+
+Everything else in `Interp` is global — heap arenas, the module registry, the
+timer and microtask queues, the waiter registry — and must *not* be saved or
+restored. `microtasks` and `unhandledRejects` especially: an activation that
+settles a promise and then parks has to leave the reaction visible to the loop.
 
 ## Risks
 
