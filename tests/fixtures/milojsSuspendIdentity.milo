@@ -1,0 +1,96 @@
+// @expect: A resumed with its own state
+// @expect: B resumed with its own state
+
+// A parked activation must get back ITS OWN execution, not whichever context
+// was parked most recently.
+//
+// The suspended set was reclaimed by position — `st.suspended.remove(len - 1)`.
+// Nothing tied an entry to a task, so two activations parking and waking in
+// different orders swap executions. The damage is not a wrong value: the
+// resumed activation pops scopes belonging to the other one, whose frames then
+// sit in no root set, and the collector recycles slots that are still live. It
+// surfaced much later as an identifier that no longer resolved.
+//
+// Here A parks first and wakes first, so a position-based reclaim hands A the
+// context B parked second.
+from "../../examples/apps/milojs/runtime" import {
+    Interp, gInterp, restoreExecCtx, saveExecCtx
+}
+from "../../examples/apps/milojs/eval" import {
+    resumeExecCtx
+}
+from "../../examples/apps/milojs/driver" import {
+    bootInterp, makeInterp
+}
+from "std/runtime" import {
+    Task, schedulerCurrent, schedulerPark, schedulerUnpark, schedulerYield
+}
+
+var gA: *u8 = 0 as *u8
+var gB: *u8 = 0 as *u8
+var gDone: i64 = 0
+
+// Park with a distinctive call depth, then check it comes back intact.
+fn parkWith(depth: i64, label: string) {
+    let me = schedulerCurrent()
+    gInterp.callDepth = depth
+    let ctx = saveExecCtx(gInterp)
+    gInterp.suspended.push(ctx)
+    gInterp.suspendedTask.push(me)
+    schedulerPark()
+    resumeExecCtx(gInterp, me)
+    if gInterp.callDepth == depth {
+        print(label + " resumed with its own state")
+    } else {
+        print(label + " GOT ANOTHER ACTIVATION'S STATE")
+    }
+    gDone = gDone + 1
+}
+
+fn driver(): void {
+    gInterp = makeInterp(false, 1024, 2)
+    bootInterp(gInterp)
+    gInterp.mainTask = schedulerCurrent()
+
+    let _a = Task.spawnWithStack(move(): void => {
+        gA = schedulerCurrent()
+        parkWith(11, "A")
+    }
+    , 1048576)
+    let _b = Task.spawnWithStack(move(): void => {
+        gB = schedulerCurrent()
+        parkWith(22, "B")
+    }
+    , 1048576)
+
+    // let both reach their park: A parks first, B second
+    var spins: i64 = 0
+    while gInterp.suspended.len() < 2 && spins < 1000 {
+        schedulerYield()
+        spins = spins + 1
+    }
+
+    // wake in the order they parked — the opposite of what a position-based
+    // reclaim assumes
+    schedulerUnpark(gA)
+    var s2: i64 = 0
+    while gDone < 1 && s2 < 1000 {
+        schedulerYield()
+        s2 = s2 + 1
+    }
+    schedulerUnpark(gB)
+    var s3: i64 = 0
+    while gDone < 2 && s3 < 1000 {
+        schedulerYield()
+        s3 = s3 + 1
+    }
+}
+
+fn main(): i32 {
+    let d = Task.spawnWithStack(move(): void => {
+        driver()
+    }
+    , 4194304)
+    d.join()
+    return 0
+}
