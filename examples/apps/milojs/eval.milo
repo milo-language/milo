@@ -6,7 +6,7 @@ from "./ast" import {
     Prog
 }
 from "./value" import {
-    JSValue
+    JSValue, i64ToStr
 }
 from "./runtime" import {
     Interp, Timer, Microtask, Reaction, NATIVE_RESOLVER_BASE, collect, linkProtoConstructor, objHasInChain
@@ -42,7 +42,7 @@ from "std/fs" import {
     currentDir, writeFile, appendFile
 }
 from "examples/apps/milojs/napi" import {
-    napiInvoke, napiLoadAddon, napiTakePending, napiPollTsfn, napiRunTsfnCall, napiHasTsfn, napiHasPendingWork, napiWaitBriefly
+    napiInvoke, napiLoadAddon, napiTakePending, napiPollTsfn, napiRunTsfnCall, napiHasTsfn, napiHasPendingWork, napiMayDeliver, napiWaitBriefly
 }
 from "std/math" import {
     mathMod, mathPow
@@ -2306,36 +2306,55 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             return JSValue.Undefined
         }
         let target = cloneValue(argVals[0])
-        match target {
-            JSValue.Obj(t) => {
-                var s: i64 = 1
-                while s < argVals.len() {
-                    match cloneValue(argVals[s]) {
-                        JSValue.Obj(src) => {
-                            var k: i64 = 0
-                            let np = st.objects[src].props.len()
-                            while k < np {
-                                if st.objects[src].props[k].enumerable {
-                                    let key = st.objects[src].props[k].key.clone()
-                                    let v = cloneValue(st.objects[src].props[k].value)
-                                    setMember(st, t, key, v)
-                                }
-                                k = k + 1
-                            }
-                        }
-                        _ => {
-                        }
-                    }
-                    s = s + 1
-                }
-                return JSValue.Obj(t)
-            }
-            _ => {
-                return target
-            }
+        let t = propertyBagOf(st, target)
+        if t < 0 {
+            return target
         }
+        var s: i64 = 1
+        while s < argVals.len() {
+            let srcVal = cloneValue(argVals[s])
+            let src = propertyBagOf(st, srcVal)
+            if src >= 0 {
+                var k: i64 = 0
+                while k < st.objects[src].props.len() {
+                    if st.objects[src].props[k].enumerable {
+                        let key = st.objects[src].props[k].key.clone()
+                        let v = cloneValue(st.objects[src].props[k].value)
+                        setMember(st, t, key, v)
+                    }
+                    k = k + 1
+                }
+                // enumerable elements come across too (assign from an array)
+                var e: i64 = 0
+                while e < st.objects[src].elems.len() {
+                    let ev = cloneValue(st.objects[src].elems[e])
+                    setMember(st, t, i64ToStr(e), ev)
+                    e = e + 1
+                }
+            }
+            s = s + 1
+        }
+        return target
     }
     return JSValue.Undefined
+}
+
+// The property bag a value carries, or -1. A function's own properties live in
+// its statics bag, not in an object slot, so Object.assign has to look there for
+// both its target and its sources — prisma's debug module is a function on both
+// sides of `Object.assign(fn, otherFn)`.
+fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
+    match v {
+        JSValue.Obj(o) => {
+            return o
+        }
+        JSValue.Func(f, env) => {
+            return getFuncStatics(st, f, env)
+        }
+        _ => {
+            return -1
+        }
+    }
 }
 
 fn mathNative(id: i64, args: &Vec<JSValue>, st: &mut Interp): JSValue {
@@ -3276,72 +3295,142 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 return JSValue.Undefined
             }
             if op == "await" {
-                let po = objHandle(va)
-                if po >= 0 && isPromise(st, po) {
-                    let ps = st.objects[po].promiseState
-                    let pv = cloneValue(st.objects[po].promiseValue)
-                    if ps == 2 {
-                        markRejectHandled(st, po)
-                        st.throwing = true
-                        st.thrownValue = pv
-                        return JSValue.Undefined
-                    }
-                    if ps == 1 {
-                        return pv
-                    }
-                    // Pending. Milo has no coroutines, so this native frame
-                    // cannot suspend; instead the event loop is drained in place
-                    // until the promise settles. Ordering therefore differs from
-                    // real JS — work queued *after* this await can run before the
-                    // awaiting function resumes — but the value flow is correct.
-                    // If nothing is runnable the await can never complete, which
-                    // is a deadlock and is reported as one.
-                    // the promise may be a temporary (await new Promise(...)),
-                    // reachable from nothing while the drain runs user code
-                    pushTemp(st, JSValue.Obj(po))
-                    // Budget: an unrelated interval keeps the loop runnable
-                    // forever, so "nothing runnable" alone cannot detect a stuck
-                    // await — the tahoeroads bundle hung silently for exactly
-                    // this reason (its 2s interval kept feeding the drain).
-                    // Node abandons the continuation instead; without coroutines
-                    // the honest alternative is a loud error after a deadline.
-                    let awaitDeadline = (epochMillis() as f64) + st.awaitBudgetMs
-                    var spins: i64 = 0
-                    while st.objects[po].promiseState == 0 && !st.throwing {
-                        if (epochMillis() as f64) > awaitDeadline {
+                var awaited = cloneValue(va)
+                // Resolution is recursive: a thenable may resolve with another
+                // thenable, and each one has to be unwrapped in turn. The bound
+                // is a runaway guard — a self-resolving chain would spin here.
+                var rounds: i64 = 0
+                while rounds < 1000 {
+                    rounds = rounds + 1
+                    // `await thenable` adopts it: the spec resolves the awaited value
+                    // through Promise.resolve, which calls .then on anything that has
+                    // one. prisma's query builders return a PrismaPromise (a plain
+                    // object with .then), and without this `await model.findMany()`
+                    // handed the builder itself back instead of the rows.
+                    let th = objHandle(awaited)
+                    if th >= 0 && !isPromise(st, th) {
+                        let thenFn = getMemberDyn(prog, th, "then", st)
+                        if isCallableIn(st, thenFn) {
+                            let adopted = newPromise(st, 0, JSValue.Undefined)
+                            pushTemp(st, JSValue.Obj(adopted))
+                            var thenArgs: Vec<JSValue> = Vec.new()
+                            thenArgs.push(JSValue.Native(NATIVE_RESOLVER_BASE + adopted * 2))
+                            thenArgs.push(JSValue.Native(NATIVE_RESOLVER_BASE + adopted * 2 + 1))
+                            let _tr = callValue(prog, thenFn, thenArgs, JSValue.Obj(th), st)
                             popTemp(st)
-                            st.throwing = true
-                            st.thrownValue = makeError(st, "TypeError", "await did not settle within budget — likely a promise nothing will ever resolve" + currentModule(st))
-                            return JSValue.Undefined
-                        }
-                        if st.microtasks.len() > 0 {
-                            drainMicrotasks(prog, st)
-                        } else {
-                            compactTimers(st)
-                            if !runOneTimer(prog, st) {
-                                popTemp(st)
-                                st.throwing = true
-                                st.thrownValue = makeError(st, "TypeError", "await on a promise that can never settle (no pending work)" + currentModule(st))
+                            if st.throwing {
                                 return JSValue.Undefined
                             }
+                            awaited = JSValue.Obj(adopted)
                         }
-                        spins = spins + 1
                     }
-                    popTemp(st)
-                    if st.throwing {
-                        return JSValue.Undefined
+                    let po = objHandle(awaited)
+                    if po >= 0 && isPromise(st, po) {
+                        let ps = st.objects[po].promiseState
+                        let pv = cloneValue(st.objects[po].promiseValue)
+                        if ps == 2 {
+                            markRejectHandled(st, po)
+                            st.throwing = true
+                            st.thrownValue = pv
+                            return JSValue.Undefined
+                        }
+                        if ps == 1 {
+                            // already settled — but with a thenable, which the
+                            // loop above still has to unwrap
+                            let fh = objHandle(pv)
+                            var fnested = false
+                            if fh >= 0 && !isPromise(st, fh) {
+                                let fthen = getMemberDyn(prog, fh, "then", st)
+                                if isCallableIn(st, fthen) {
+                                    fnested = true
+                                }
+                            }
+                            if !fnested {
+                                return pv
+                            }
+                            awaited = pv
+                        } else {
+                            // Pending. Milo has no coroutines, so this native frame
+                            // cannot suspend; instead the event loop is drained in place
+                            // until the promise settles. Ordering therefore differs from
+                            // real JS — work queued *after* this await can run before the
+                            // awaiting function resumes — but the value flow is correct.
+                            // If nothing is runnable the await can never complete, which
+                            // is a deadlock and is reported as one.
+                            // the promise may be a temporary (await new Promise(...)),
+                            // reachable from nothing while the drain runs user code
+                            pushTemp(st, JSValue.Obj(po))
+                            // Budget: an unrelated interval keeps the loop runnable
+                            // forever, so "nothing runnable" alone cannot detect a stuck
+                            // await — the tahoeroads bundle hung silently for exactly
+                            // this reason (its 2s interval kept feeding the drain).
+                            // Node abandons the continuation instead; without coroutines
+                            // the honest alternative is a loud error after a deadline.
+                            let awaitDeadline = (epochMillis() as f64) + st.awaitBudgetMs
+                            var spins: i64 = 0
+                            while st.objects[po].promiseState == 0 && !st.throwing {
+                                if (epochMillis() as f64) > awaitDeadline {
+                                    popTemp(st)
+                                    st.throwing = true
+                                    st.thrownValue = makeError(st, "TypeError", "await did not settle within budget — likely a promise nothing will ever resolve" + currentModule(st))
+                                    return JSValue.Undefined
+                                }
+                                if st.microtasks.len() > 0 {
+                                    drainMicrotasks(prog, st)
+                                } else {
+                                    compactTimers(st)
+                                    if !runOneTimer(prog, st) {
+                                        // A node-api addon settles from its own threads,
+                                        // so there is no timer or microtask to run while
+                                        // it works — this await is waiting on exactly
+                                        // that. Without it, `await engine.connect()`
+                                        // (prisma's query engine) was reported as an
+                                        // unsettleable promise the moment it was made.
+                                        napiServiceTsfn(st)
+                                        if napiMayDeliver() {
+                                            napiWaitBriefly()
+                                        } else if st.microtasks.len() == 0 {
+                                            popTemp(st)
+                                            st.throwing = true
+                                            st.thrownValue = makeError(st, "TypeError", "await on a promise that can never settle (no pending work)" + currentModule(st))
+                                            return JSValue.Undefined
+                                        }
+                                    }
+                                }
+                                spins = spins + 1
+                            }
+                            popTemp(st)
+                            if st.throwing {
+                                return JSValue.Undefined
+                            }
+                            let settled = st.objects[po].promiseState
+                            let sv = cloneValue(st.objects[po].promiseValue)
+                            if settled == 2 {
+                                markRejectHandled(st, po)
+                                st.throwing = true
+                                st.thrownValue = sv
+                                return JSValue.Undefined
+                            }
+                            // resolved with another thenable: unwrap it too
+                            let sh = objHandle(sv)
+                            var nested = false
+                            if sh >= 0 && !isPromise(st, sh) {
+                                let nthen = getMemberDyn(prog, sh, "then", st)
+                                if isCallableIn(st, nthen) {
+                                    nested = true
+                                }
+                            }
+                            if !nested {
+                                return sv
+                            }
+                            awaited = sv
+                        }
+                    } else {
+                        return awaited
                     }
-                    let settled = st.objects[po].promiseState
-                    let sv = cloneValue(st.objects[po].promiseValue)
-                    if settled == 2 {
-                        markRejectHandled(st, po)
-                        st.throwing = true
-                        st.thrownValue = sv
-                        return JSValue.Undefined
-                    }
-                    return sv
+
                 }
-                return va
+                return awaited
             }
             if op == "+" {
                 return JSValue.Number(toNum(va))

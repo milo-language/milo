@@ -63,6 +63,13 @@ struct NapiTsfn {
     jsFunc: JSValue,
     callJsCb: i64,
     context: i64,
+    // Threads that still hold this function. It keeps the event loop alive while
+    // positive (node does the same), so releasing every reference is what lets a
+    // script exit after prisma's $disconnect.
+    refs: i64,
+    // napi_unref_threadsafe_function: still callable, but no longer a reason to
+    // keep the loop running
+    unrefed: bool,
 }
 
 struct NapiState {
@@ -946,7 +953,40 @@ fn napiSettle(p: i64, state: i64, value: JSValue) {
 // True while an addon owes us a settlement. Keeps the event loop from exiting
 // before a worker thread replies.
 fn napiHasPendingWork(): bool {
-    return gNapi.liveDeferred > 0 || gNapi.pending.len() > 0
+    // A live threadsafe function counts: napi-rs resolves an async call by
+    // invoking one from a tokio worker, without ever creating a deferred here,
+    // so a registered tsfn means a settlement can still arrive from off-thread.
+    // Node keeps its loop alive for a ref'd tsfn for the same reason.
+    if gNapi.liveDeferred > 0 || gNapi.pending.len() > 0 {
+        return true
+    }
+    var i: i64 = 0
+    while i < gNapi.tsfns.len() {
+        if gNapi.tsfns[i].refs > 0 && !gNapi.tsfns[i].unrefed {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// Whether a settlement can still arrive from an addon's own threads. Unlike
+// napiHasPendingWork this ignores unref'd-ness: napi-rs unrefs its threadsafe
+// functions (so they must not keep the process alive), yet they are exactly how
+// a query result comes back, so a blocked await still has to wait on them.
+// The await's own deadline is the backstop if the addon never answers.
+fn napiMayDeliver(): bool {
+    if gNapi.liveDeferred > 0 || gNapi.pending.len() > 0 {
+        return true
+    }
+    var i: i64 = 0
+    while i < gNapi.tsfns.len() {
+        if gNapi.tsfns[i].refs > 0 {
+            return true
+        }
+        i = i + 1
+    }
+    return false
 }
 
 // Drained by the interpreter after any call into an addon.
@@ -1028,8 +1068,12 @@ fn napiEnsurePipe() {
 @export
 fn napi_create_threadsafe_function(_env: *u8, func: i64, _asyncResource: i64, _asyncResourceName: i64, _maxQueueSize: i64, _initialThreadCount: i64, _threadFinalizeData: i64, _threadFinalizeCb: i64, context: i64, callJsCb: i64, result: *u8): i32 {
     napiEnsurePipe()
+    var initialRefs = _initialThreadCount
+    if initialRefs < 1 {
+        initialRefs = 1
+    }
     gNapi.tsfns.push(NapiTsfn {
-        jsFunc: napiValueOf(func), callJsCb: callJsCb, context: context
+        jsFunc: napiValueOf(func), callJsCb: callJsCb, context: context, refs: initialRefs, unrefed: false
     }
     )
     // the opaque handle is 1-based so a valid tsfn is never a null pointer
@@ -1067,21 +1111,42 @@ fn napi_get_threadsafe_function_context(func: i64, result: *u8): i32 {
 
 @export
 fn napi_acquire_threadsafe_function(_func: i64): i32 {
+    let i = _func - 1
+    if i >= 0 && i < gNapi.tsfns.len() {
+        gNapi.tsfns[i].refs = gNapi.tsfns[i].refs + 1
+    }
     return NAPI_OK
 }
 
 @export
 fn napi_release_threadsafe_function(_func: i64, _mode: i32): i32 {
+    let i = _func - 1
+    if i >= 0 && i < gNapi.tsfns.len() {
+        // mode 1 is napi_tsfn_abort: drop every outstanding reference at once
+        if _mode == 1 {
+            gNapi.tsfns[i].refs = 0
+        } else if gNapi.tsfns[i].refs > 0 {
+            gNapi.tsfns[i].refs = gNapi.tsfns[i].refs - 1
+        }
+    }
     return NAPI_OK
 }
 
 @export
 fn napi_unref_threadsafe_function(_env: *u8, _func: i64): i32 {
+    let i = _func - 1
+    if i >= 0 && i < gNapi.tsfns.len() {
+        gNapi.tsfns[i].unrefed = true
+    }
     return NAPI_OK
 }
 
 @export
 fn napi_ref_threadsafe_function(_env: *u8, _func: i64): i32 {
+    let i = _func - 1
+    if i >= 0 && i < gNapi.tsfns.len() {
+        gNapi.tsfns[i].unrefed = false
+    }
     return NAPI_OK
 }
 

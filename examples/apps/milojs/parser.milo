@@ -436,7 +436,30 @@ fn parseParam(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude
     if peekKind(p) == T_LBRACE || peekKind(p) == T_LBRACKET {
         let tmp = "__a" + i64ToStr(p.pos)
         params.push(tmp.clone())
-        patternDecls(p, prog, tmp, prelude)
+        // the pattern's decls are gathered separately so a default on the
+        // WHOLE pattern (`function f({a, ...r} = {}, n)`) can be spliced in
+        // ahead of them — it has to run before the unpacking reads the temp.
+        // Leaving the `= {}` unparsed also swallowed the following parameter,
+        // so `n` arrived undefined.
+        var inner: Vec<DeclItem> = Vec.new()
+        patternDecls(p, prog, tmp.clone(), inner)
+        if peekKind(p) == T_EQ {
+            advance(p)
+            let dflt = parseExpr(p, prog)
+            let src = addExpr(prog, Expr.Ident(tmp.clone()))
+            prelude.push(DeclItem {
+                name: tmp.clone(), init: withDefault(prog, src, dflt), isVar: false
+            }
+            )
+        }
+        var di: i64 = 0
+        while di < inner.len() {
+            prelude.push(DeclItem {
+                name: inner[di].name.clone(), init: inner[di].init, isVar: inner[di].isVar
+            }
+            )
+            di = di + 1
+        }
         return false
     }
     var isRest = false

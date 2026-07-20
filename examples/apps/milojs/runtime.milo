@@ -953,6 +953,18 @@ fn markObject(st: &mut Interp, i: i64) {
             b = b + 1
         }
     }
+    // a proxy keeps its target and handler alive. Without this the target was
+    // collected while the proxy was still reachable, and its slot was reused —
+    // a live prisma client silently lost every property the moment a second
+    // client was constructed.
+    if st.objects[i].isProxy {
+        pushMarkTargets(st.objects[i].proxyTarget, objs, scopes)
+        pushMarkTargets(st.objects[i].proxyHandler, objs, scopes)
+    }
+    // a typed-array view keeps its backing ArrayBuffer alive
+    if st.objects[i].taBuf >= 0 {
+        objs.push(st.objects[i].taBuf)
+    }
     // an object keeps its prototype alive
     if proto >= 0 {
         markObject(st, proto)

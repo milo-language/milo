@@ -1,0 +1,4 @@
+function base:q
+function true false
+["a"] T
+true
