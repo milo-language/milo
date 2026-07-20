@@ -98,11 +98,18 @@ unpark reachable at all — both are no-ops in the OS main context.
 
 Three things still stand between that and working suspension:
 
-1. **A direct-switch primitive.** JS runs an async body synchronously up to its
-   first `await`, and only then does the call return. `Task.spawn` merely
-   queues, so the body would not start until the next scheduler turn and
-   `f(); log("B")` would print B before anything in f. The scheduler needs "run
-   this task now, come back here when it parks" rather than round-robin.
+1. **Ordering: the body must run before the call returns.** JS runs an async
+   body synchronously up to its first `await`. `Task.spawn` merely queues, so
+   the body would not start until the next scheduler turn and `f(); log("B")`
+   would print B before anything in f.
+
+   This does *not* need a new scheduler primitive. The caller spawns the child
+   and then parks itself; the child runs, and at its first `await` — or on
+   completion, whichever comes first — it unparks the caller before parking.
+   The scheduler then resumes the caller, by which time the body's synchronous
+   portion has run. Only park and unpark are used, both of which already exist,
+   so the change stays inside milojs instead of touching the task struct and
+   every green-thread user (channels, select, net).
 
 2. **Per-task execution state.** The Interp bookkeeping describing the current
    execution — throw flag and thrown value, call depth, the temp-root stack, the
