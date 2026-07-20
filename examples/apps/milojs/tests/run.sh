@@ -33,12 +33,35 @@ else
   fi
 fi
 
+# A hung fixture must not hang the suite. gtimeout is the GNU build on macOS;
+# without either, run unguarded rather than refusing to test.
+PER_TEST_TIMEOUT="${MILOJS_TEST_TIMEOUT:-120}"
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT="timeout -s KILL $PER_TEST_TIMEOUT $ENGINE_BIN"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT="gtimeout -s KILL $PER_TEST_TIMEOUT $ENGINE_BIN"
+else
+  echo "warning: no timeout(1); a hung fixture will hang this suite"
+  TIMEOUT="$ENGINE_BIN"
+fi
+
 fail=0
 for js in "$DIR"/*.js; do
   name="$(basename "$js" .js)"
   exp="$DIR/$name.expected"
   [ -f "$exp" ] || { echo "SKIP $name (no .expected)"; continue; }
-  got="$("$ENGINE_BIN" "$js" 2>&1)"
+  # -s KILL, not the default TERM: a wedged green scheduler never reaches a
+  # point where it handles a signal, so a hung fixture ignores TERM and survives
+  # the timeout entirely. One such process ran for hours unnoticed, skewing every
+  # timing-sensitive measurement taken after it. Without KILL a single bad build
+  # hangs this loop forever, which in CI means a wedged job rather than a failure.
+  got="$($TIMEOUT "$js" 2>&1)"
+  status=$?
+  if [ $status -eq 137 ] || [ $status -eq 124 ]; then
+    echo "FAIL $name (hung, killed after ${PER_TEST_TIMEOUT}s)"
+    fail=$((fail + 1))
+    continue
+  fi
   if [ "$got" = "$(cat "$exp")" ]; then
     echo "ok   $name"
   else
