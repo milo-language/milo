@@ -4985,14 +4985,19 @@ export class Codegen {
     const pushLabel = this.nextLabel("vec.push");
     lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${pushLabel}`);
 
-    // grow: new_cap = cap == 0 ? 8 : cap * 2
+    // grow: new_cap = cap == 0 ? initialCap : cap * 2
+    // The first allocation is sized in BYTES, not elements: a flat 8 elements
+    // costs 64 bytes for a Vec<i64> but 1 KB for a Vec of 128-byte structs, and
+    // an object with one property paid that full kilobyte (milojs: ~1 KB per
+    // property, measured). Cap the first allocation near 64 bytes instead.
+    const initialCap = Math.max(1, Math.min(8, Math.floor(64 / Math.max(1, elemSize))));
     lines.push(`${growLabel}:`);
     const isZero = this.nextTemp();
     lines.push(`  ${isZero} = icmp eq i64 ${cap}, 0`);
     const newCap = this.nextTemp();
     const doubled = this.nextTemp();
     lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
-    lines.push(`  ${newCap} = select i1 ${isZero}, i64 8, i64 ${doubled}`);
+    lines.push(`  ${newCap} = select i1 ${isZero}, i64 ${initialCap}, i64 ${doubled}`);
     const newBytes = this.nextTemp();
     lines.push(`  ${newBytes} = mul i64 ${newCap}, ${elemSize}`);
     const newBuf = this.nextTemp();
