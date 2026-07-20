@@ -2272,6 +2272,31 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         let arr = newArray(st)
         if argVals.len() > 0 {
             pushTemp(st, JSValue.Obj(arr))
+            // a string enumerates as its characters, keyed by index
+            match cloneValue(argVals[0]) {
+                JSValue.Str(sv) => {
+                    if !isSymbolStr(sv) {
+                        var si: i64 = 0
+                        let slen = utf16Length(sv)
+                        while si < slen {
+                            let ch = JSValue.Str(strSlice(sv, si, si + 1))
+                            if wantPairs {
+                                let spair = newArray(st)
+                                pushTemp(st, JSValue.Obj(spair))
+                                arrPush(st, spair, JSValue.Str(i64ToStr(si)))
+                                arrPush(st, spair, ch)
+                                popTemp(st)
+                                arrPush(st, arr, JSValue.Obj(spair))
+                            } else {
+                                arrPush(st, arr, ch)
+                            }
+                            si = si + 1
+                        }
+                    }
+                }
+                _ => {
+                }
+            }
             match cloneValue(argVals[0]) {
                 JSValue.Obj(o) => {
                     if st.objects[o].isArray {
@@ -2325,8 +2350,30 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         let arr = newArray(st)
         if argVals.len() > 0 {
             pushTemp(st, JSValue.Obj(arr))
-            match JSValue.Obj(propertyBagOf(st, argVals[0])) {
+            // A string exposes its character indices; any other primitive has no
+            // own keys. Neither has a property bag, and indexing the heap with
+            // the -1 that stands for "none" crashed the engine outright.
+            match cloneValue(argVals[0]) {
+                JSValue.Str(sv) => {
+                    if !isSymbolStr(sv) {
+                        var si: i64 = 0
+                        let slen = utf16Length(sv)
+                        while si < slen {
+                            arrPush(st, arr, JSValue.Str(i64ToStr(si)))
+                            si = si + 1
+                        }
+                    }
+                }
+                _ => {
+                }
+            }
+            let keysBag = propertyBagOf(st, argVals[0])
+            match JSValue.Obj(keysBag) {
                 JSValue.Obj(o) => {
+                    if keysBag < 0 {
+                        popTemp(st)
+                        return JSValue.Obj(arr)
+                    }
                     if st.objects[o].isArray {
                         var i: i64 = 0
                         let n = arrLen(st, o)
