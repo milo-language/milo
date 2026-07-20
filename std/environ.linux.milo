@@ -6,7 +6,7 @@
 // Linux exposes the environment as NUL-separated NAME=VALUE records in
 // /proc/self/environ, which avoids needing the `environ` global symbol.
 
-from "std/fs" import {
+from "std/io" import {
     readFile
 }
 

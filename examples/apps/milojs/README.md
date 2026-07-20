@@ -58,68 +58,18 @@ concurrent requests overlap. (A green task does not work here — the interprete
 loop runs on the OS main thread and never parks, so `schedulerYield` is a no-op
 and a green task would never be scheduled.)
 
-## Known gap: await does not suspend
+## Async suspension
 
-Milo has no coroutines, so `await` cannot suspend its native frame. Instead the
-event loop is drained in place until the awaited promise settles. Values are
-correct, ordering is not: continuations run earlier than they should.
+Async activations run on Milo green tasks and park at pending `await`s. The
+caller resumes after the async body reaches its first await (or completes), so
+JavaScript ordering and concurrent async calls now match the differential
+fixtures. Per-activation execution state and parked-task GC roots are preserved
+across task switches.
 
-```js
-async function f() { console.log("A"); await null; console.log("C"); }
-f(); console.log("B");
-// node: A B C      milojs: A C B
-```
-
-This is not only cosmetic. Calling an async function does not return at its
-first `await` — it returns when the whole body finishes — so two async calls
-that have to interleave deadlock:
-
-```js
-function makeLock(n) {                       // releases once n participants arrive
-  let release; const gate = new Promise((r) => (release = r));
-  return { then(cb) { if (--n === 0) release("open"); return cb?.(gate); } };
-}
-const lock = makeLock(2);
-async function participant(id) { await lock; return "done" + id; }
-Promise.all([participant(1), participant(2)]);
-// node: resolves      milojs: participant(2) is never called, so the lock
-//                     never opens and participant(1) waits forever
-```
-
-prisma batches a multi-statement `$transaction` behind exactly this barrier, so
-`$transaction([a, b])` hangs while `$transaction([a])` and the callback form
-both work.
-
-Fixing it means running each async activation on its own green task and parking
-at `await`. Milo has green tasks with real stacks, and they only switch at
-explicit park points, so the interpreter's *native* stack is already per-task.
-The interpreter itself now runs on a green task, which is what makes park and
-unpark reachable at all — both are no-ops in the OS main context.
-
-Three things still stand between that and working suspension:
-
-1. **Ordering: the body must run before the call returns.** JS runs an async
-   body synchronously up to its first `await`. `Task.spawn` merely queues, so
-   the body would not start until the next scheduler turn and `f(); log("B")`
-   would print B before anything in f.
-
-   This does *not* need a new scheduler primitive. The caller spawns the child
-   and then parks itself; the child runs, and at its first `await` — or on
-   completion, whichever comes first — it unparks the caller before parking.
-   The scheduler then resumes the caller, by which time the body's synchronous
-   portion has run. Only park and unpark are used, both of which already exist,
-   so the change stays inside milojs instead of touching the task struct and
-   every green-thread user (channels, select, net).
-
-2. **Per-task execution state.** The Interp bookkeeping describing the current
-   execution — throw flag and thrown value, call depth, the temp-root stack, the
-   active-scope stack, the module path/dir stacks — is global. Switches happen
-   only at park points, so saving it into the task record on park and restoring
-   on resume is enough; it needs no finer granularity.
-
-3. **GC over parked tasks.** Temp roots and active scopes are roots, so the
-   collector has to walk every parked task's saved state, not just the running
-   one.
+The remaining async work is broader compatibility and stress coverage, not the
+old synchronous-await model. The suite covers ordering, timers, thenables,
+settlement/rejection, promise combinators, and GC rooting under forced
+collection.
 
 ## Stage 1 — tree-walking interpreter
 
@@ -169,14 +119,15 @@ MILOJS_GC_STATS=1 bun run src/main.ts run examples/apps/milojs/milojs.milo -- ex
 `tests/*.js` each have a `tests/*.expected` file; output is byte-identical to
 `bun <script>` for all.
 
-## Roadmap
+## Current status
 
-- Stage 3: objects, arrays, prototypes, `this` — add an `Obj(u32)` heap cell as
-  a new `JSValue` variant, collected by the same `markScope` (extra variants,
-  same index-walk shape)
-- Stage 3 (in progress): objects landed (literals, get/set, nesting,
-  reference equality, GC'd object heap); arrays, prototypes, `this`, `new` next
-- Stage 4: bytecode VM (compile AST → bytecode, dispatch loop)
-- Stage 5: enough builtins (JSON, Math, String/Array methods, timers) to run
-  minibun's node shims without JSC
-- Stage 6: test262 conformance lock
+- Tree-walking engine: objects, arrays, classes/prototypes, exceptions, modules,
+  promises/async suspension, timers, regex, typed arrays, and core builtins.
+- Node-style runtime: CommonJS/ESM loading, process globals, filesystem/network
+  shims, HTTP serving/fetch, and Node-API native addon loading. The documented
+  proof case reaches Prisma's real native query engine.
+- Still open: bytecode VM/performance work, generators and remaining syntax
+  edges, complete Node host APIs (notably client HTTP/TLS), and a pinned test262
+  conformance score.
+
+See `docs/milojs-roadmap.md` for milestone history and the current gaps.

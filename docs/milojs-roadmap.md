@@ -3,10 +3,34 @@ system: roadmap
 purpose: staged plan to grow examples/apps/milojs into a pure-Milo JS engine that replaces the JavaScriptCore dependency in minibun
 key-files: examples/apps/milojs/milojs.milo, examples/apps/minibun.milo, docs/minibun-roadmap.md
 update-when: a stage lands (check the box, note the commit) or the acceptance target changes
-last-verified: 2026-07-17
+last-verified: 2026-07-20
 -->
 
 # milojs roadmap — a JavaScript engine written in Milo
+
+## Current snapshot (2026-07-20)
+
+The detailed stage notes below preserve the implementation history, but several
+"next" and "still open" paragraphs inside Stage 3 predate the latest work and
+are no longer a current backlog. Since then MiloJS has landed CommonJS/ESM module
+loading, strict equality and additional syntax, promises and a microtask/event
+loop, green-task suspension at `await`, Node compatibility shims, Node-API addon
+loading, and an end-to-end Prisma query-engine proof.
+
+The engine differential suite currently covers 74 expected-output JavaScript
+files (plus one unscored memory benchmark) and is also run with collection at
+every GC safepoint. The remaining roadmap is:
+
+- **Stage 4:** replace or supplement the tree walker with bytecode for practical
+  performance and shallower native stacks.
+- **Stage 5:** complete host compatibility. Server HTTP and async fetch work;
+  client `http.request`/`http.get`, TLS serving, child processes, generators,
+  class fields/getters, computed `require`, and other package-facing edges do not.
+- **Stage 6:** run and publish a pinned test262 score. The QuickJS sweep harness
+  exists, but it depends on a separate local QuickJS test checkout.
+
+The source and locked fixtures are authoritative when an older stage narrative
+below conflicts with this snapshot.
 
 **Acceptance target:** `minibun` runs its Node/Express workload with `milojs` as the engine
 instead of JavaScriptCore. The JSC `extern` block in `examples/apps/minibun.milo`

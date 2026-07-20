@@ -408,7 +408,7 @@ impl Task {
 
             let usable = (stackMem as i64 + guardPageSize()) as *u8
             _rtWritePtr(ctx, uctxStackPtrOffset(), usable)
-            _rtWriteI64(ctx, uctxStackSizeOffset(), defaultStackSize())
+            _rtWriteI64(ctx, uctxStackSizeOffset(), stackBytes)
 
             let schedCtx = _rtReadPtr(sched, sCtx())
             _rtWritePtr(ctx, uctxLinkOffset(), schedCtx)
