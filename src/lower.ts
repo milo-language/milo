@@ -8,7 +8,7 @@ import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRS
 import type { TypeKind } from "./types";
 import { typeFromAst } from "./types";
 import { readFileSync, existsSync } from "fs";
-import { resolve } from "path";
+import { resolve, dirname } from "path";
 
 export function lower(program: Program, checked: CheckResult, sourceDir?: string): HIRModule {
   const ctx = new LowerCtx(checked, sourceDir ?? process.cwd());
@@ -485,7 +485,12 @@ class LowerCtx {
         }
         if (expr.func === "embedFile") {
           const path = (expr.args[0] as { value: string }).value;
-          const absPath = resolve(this.sourceDir, path);
+          // Relative to the file containing the call, not the entry file. An
+          // imported module embedding "lib/x.js" means its own lib/x.js — it
+          // moved wherever the module was imported from otherwise, so a module
+          // using embedFile could only ever be compiled from one entry point.
+          const callerDir = expr.span?.file ? dirname(expr.span.file) : this.sourceDir;
+          const absPath = resolve(callerDir, path);
           if (!existsSync(absPath)) {
             throw new Error(`error[embed]: ${expr.span?.line}:${expr.span?.col}: cannot open '${path}'`);
           }
