@@ -1,0 +1,69 @@
+// @expect: parked: interp state cleared
+// @expect: resumed: state restored
+// @expect: survived
+
+// R6/R7 of docs/milojs-async-suspension.md, at the interpreter level: an
+// execution that is parked keeps its own state, and the collector treats that
+// parked state as roots.
+//
+// Without the root walk, an object referenced only by a suspended activation is
+// swept while the activation is parked, and using it after resume reads a
+// recycled slot.
+from "../../examples/apps/milojs/runtime" import {
+    Interp, collect, newObject, objGet, objSet, pushTemp, restoreExecCtx, saveExecCtx
+}
+from "../../examples/apps/milojs/driver" import {
+    bootInterp, makeInterp
+}
+from "../../examples/apps/milojs/value" import {
+    JSValue
+}
+
+fn main(): i32 {
+    var st = makeInterp(false, 1, 2)
+    // creates global scope 0, which collect marks as a root
+    bootInterp(st)
+
+    // an object reachable ONLY through the running execution's temp roots
+    let keep = newObject(st)
+    objSet(st, keep, "marker", JSValue.Str("survived"))
+    pushTemp(st, JSValue.Obj(keep))
+    st.callDepth = 7
+    st.throwing = true
+    st.thrownValue = JSValue.Str("pending-throw")
+
+    // park it: state leaves the Interp and goes into the activation's context
+    let ctx = saveExecCtx(st)
+    st.suspended.push(ctx)
+
+    if st.callDepth == 0 && !st.throwing {
+        print("parked: interp state cleared")
+    }
+
+    // run something else, collecting hard while the activation is parked
+    var i: i64 = 0
+    while i < 200 {
+        let junk = newObject(st)
+        objSet(st, junk, "n", JSValue.Number(i as f64))
+        i = i + 1
+    }
+    collect(st)
+    collect(st)
+
+    // resume
+    let back = st.suspended.pop()!
+    restoreExecCtx(st, back)
+
+    if st.callDepth == 7 && st.throwing {
+        print("resumed: state restored")
+    }
+    match objGet(st, keep, "marker") {
+        JSValue.Str(v) => {
+            print(v)
+        }
+        _ => {
+            print("LOST: object was collected under the parked activation")
+        }
+    }
+    return 0
+}

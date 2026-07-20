@@ -195,6 +195,87 @@ struct PendingFetch {
     chan: Channel<string>,
 }
 
+// The interpreter state that describes ONE execution in progress. Global today
+// because only one execution exists at a time; an async activation that suspends
+// has to take its own copy with it, or the activation that resumes next would
+// inherit a half-finished throw, the wrong call depth, or another activation's
+// GC roots.
+//
+// Switches happen only at park points, so saving on park and restoring on resume
+// is enough — nothing observes these fields mid-statement from another
+// activation.
+struct ExecCtx {
+    throwing: bool,
+    thrownValue: JSValue,
+    callDepth: i64,
+    // GC roots: a suspended activation keeps these alive (see collect)
+    tempRoots: Vec<JSValue>,
+    active: Vec<i64>,
+    modDirStack: Vec<string>,
+    modPathStack: Vec<string>,
+}
+
+// Lift the running execution out of the Interp, leaving it clean for whoever
+// runs next. The caller owns the returned context until it restores it.
+fn saveExecCtx(st: &mut Interp): ExecCtx {
+    // Copied element by element rather than moved out of the borrow: taking the
+    // Vec fields directly leaves the context pointing at buffers that the reset
+    // below then frees.
+    var temps: Vec<JSValue> = Vec.new()
+    var ti: i64 = 0
+    while ti < st.tempRoots.len() {
+        temps.push(cloneValue(st.tempRoots[ti]))
+        ti = ti + 1
+    }
+    var actives: Vec<i64> = Vec.new()
+    var ai: i64 = 0
+    while ai < st.active.len() {
+        actives.push(st.active[ai])
+        ai = ai + 1
+    }
+    var dirs: Vec<string> = Vec.new()
+    var di: i64 = 0
+    while di < st.modDirStack.len() {
+        dirs.push(st.modDirStack[di].clone())
+        di = di + 1
+    }
+    var paths: Vec<string> = Vec.new()
+    var pi: i64 = 0
+    while pi < st.modPathStack.len() {
+        paths.push(st.modPathStack[pi].clone())
+        pi = pi + 1
+    }
+    let ctx = ExecCtx {
+        throwing: st.throwing,
+        thrownValue: cloneValue(st.thrownValue),
+        callDepth: st.callDepth,
+        tempRoots: temps,
+        active: actives,
+        modDirStack: dirs,
+        modPathStack: paths,
+    }
+    st.throwing = false
+    st.thrownValue = JSValue.Undefined
+    st.callDepth = 0
+    st.tempRoots = Vec.new()
+    st.active = Vec.new()
+    st.modDirStack = Vec.new()
+    st.modPathStack = Vec.new()
+    return ctx
+}
+
+// Put a saved execution back. Whatever was running is discarded, so the caller
+// must have saved it first.
+fn restoreExecCtx(st: &mut Interp, ctx: ExecCtx) {
+    st.throwing = ctx.throwing
+    st.thrownValue = ctx.thrownValue
+    st.callDepth = ctx.callDepth
+    st.tempRoots = ctx.tempRoots
+    st.active = ctx.active
+    st.modDirStack = ctx.modDirStack
+    st.modPathStack = ctx.modPathStack
+}
+
 struct Timer {
     id: i64,
     dueMs: f64,
@@ -387,6 +468,9 @@ struct Interp {
     // loaded .node addons, cached by absolute path
     napiAddonPaths: Vec<string>,
     napiAddonExports: Vec<JSValue>,
+    // execution contexts of activations that are parked. Their roots are marked
+    // by collect: they are live even though nothing is running them.
+    suspended: Vec<ExecCtx>,
     // outbound fetches still in flight
     fetches: Vec<PendingFetch>,
     // the constructor of the call currently being set up, for new.target
@@ -432,7 +516,7 @@ var gInterp: Interp = Interp {
     throwing: false, thrownValue: JSValue.Undefined,
     optShort: false,
     rngState: 88172645463325252,
-    allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, fetches: Vec.new(), napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
+    allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, suspended: Vec.new(), fetches: Vec.new(), napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
 }
 
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
@@ -1062,6 +1146,29 @@ fn collect(st: &mut Interp) {
     if st.throwing {
         let tv = cloneValue(st.thrownValue)
         markValue(st, tv)
+    }
+    // A suspended activation is not running, so its roots are not in st.active
+    // or st.tempRoots — they were lifted into its saved context. Skipping them
+    // frees objects out from under an activation that is only parked, which
+    // surfaces as a use-after-free when it resumes.
+    var sc: i64 = 0
+    while sc < st.suspended.len() {
+        var ai: i64 = 0
+        while ai < st.suspended[sc].active.len() {
+            markScope(st, st.suspended[sc].active[ai])
+            ai = ai + 1
+        }
+        var ti: i64 = 0
+        while ti < st.suspended[sc].tempRoots.len() {
+            let sv = cloneValue(st.suspended[sc].tempRoots[ti])
+            markValue(st, sv)
+            ti = ti + 1
+        }
+        if st.suspended[sc].throwing {
+            let sv = cloneValue(st.suspended[sc].thrownValue)
+            markValue(st, sv)
+        }
+        sc = sc + 1
     }
     // cached module.exports are roots — a loaded module's exports outlive its scope
     var me: i64 = 0
