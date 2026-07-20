@@ -261,7 +261,12 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
         try { unlinkSync(obj); } catch {}
       }
     } else {
-      execSync(`${tc.path}${tgt}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
+      // -lm: numToStr and other std math call floor/pow from libm. macOS folds
+      // libm into libSystem so clang links it implicitly; Linux does not, so
+      // without this the link fails with `undefined reference to 'floor'` for
+      // any program that reaches those paths (the llc+cc branch already passes
+      // it). Harmless on macOS where libm is always present.
+      execSync(`${tc.path}${tgt}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra} -lm`, { stdio: ["pipe", "pipe", "pipe"] });
     }
   } else {
     if (sanitize) {
