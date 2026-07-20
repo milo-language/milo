@@ -1048,9 +1048,11 @@ let NATIVE_OBJECT_ENTRIES: i64 = 28
 let NATIVE_OBJECT_FREEZE: i64 = 29
 let NATIVE_PROMISE_RESOLVE: i64 = 30
 let NATIVE_PROMISE_REJECT: i64 = 31
-let NATIVE_PROMISE_ALL: i64 = 32
-let NATIVE_PROMISE_ALLSETTLED: i64 = 33
-let NATIVE_PROMISE_RACE: i64 = 34
+// 32/33/34 were Promise.all/allSettled/race. They are self-hosted in the prelude
+// now: the native took a synchronous snapshot of each input's state instead of
+// subscribing to it, and could not adopt a thenable at all (calling user .then
+// needs the program, which a native does not have). Ids left retired rather than
+// reused so an old id in a serialized form can never mean something new.
 // `new Promise(cb)` hands its executor a resolve/reject pair bound to one
 // specific promise. Natives are identified by a bare id, so the promise handle
 // is encoded into the id itself: base + handle*2 + (0 resolve | 1 reject).
@@ -1450,66 +1452,6 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             return JSValue.Obj(newPromise(st, 1, v))
         }
         return JSValue.Obj(newPromise(st, 2, v))
-    }
-    if id == NATIVE_PROMISE_ALL || id == NATIVE_PROMISE_ALLSETTLED || id == NATIVE_PROMISE_RACE {
-        let arr = newArray(st)
-        pushTemp(st, JSValue.Obj(arr))
-        var rejected = false
-        var rejectVal = JSValue.Undefined
-        var raceVal = JSValue.Undefined
-        var haveRace = false
-        if argVals.len() > 0 {
-            let src = objHandle(argVals[0])
-            if src >= 0 && st.objects[src].isArray {
-                var i: i64 = 0
-                let n = arrLen(st, src)
-                while i < n {
-                    let e = arrGet(st, src, i)
-                    let h = objHandle(e)
-                    var state: i64 = 1
-                    var val = cloneValue(e)
-                    if h >= 0 && isPromise(st, h) {
-                        state = st.objects[h].promiseState
-                        val = cloneValue(st.objects[h].promiseValue)
-                    }
-                    if !haveRace {
-                        raceVal = cloneValue(val)
-                        haveRace = true
-                    }
-                    if id == NATIVE_PROMISE_ALLSETTLED {
-                        let rec = newObject(st)
-                        pushTemp(st, JSValue.Obj(rec))
-                        if state == 2 {
-                            objSet(st, rec, "status", JSValue.Str("rejected"))
-                            objSet(st, rec, "reason", val)
-                        } else {
-                            objSet(st, rec, "status", JSValue.Str("fulfilled"))
-                            objSet(st, rec, "value", val)
-                        }
-                        popTemp(st)
-                        arrPush(st, arr, JSValue.Obj(rec))
-                    } else {
-                        if state == 2 && !rejected {
-                            rejected = true
-                            rejectVal = cloneValue(val)
-                        }
-                        arrPush(st, arr, val)
-                    }
-                    i = i + 1
-                }
-            }
-        }
-        popTemp(st)
-        if id == NATIVE_PROMISE_RACE {
-            if rejected {
-                return JSValue.Obj(newPromise(st, 2, rejectVal))
-            }
-            return JSValue.Obj(newPromise(st, 1, raceVal))
-        }
-        if rejected {
-            return JSValue.Obj(newPromise(st, 2, rejectVal))
-        }
-        return JSValue.Obj(newPromise(st, 1, JSValue.Obj(arr)))
     }
     if id == NATIVE_IS_NAN || id == NATIVE_IS_FINITE {
         var x = jsNan()
@@ -3048,9 +2990,6 @@ fn setupGlobals(st: &mut Interp) {
     st.promiseCtorObj = promiseCtor
     objSet(st, promiseCtor, "resolve", JSValue.Native(NATIVE_PROMISE_RESOLVE))
     objSet(st, promiseCtor, "reject", JSValue.Native(NATIVE_PROMISE_REJECT))
-    objSet(st, promiseCtor, "all", JSValue.Native(NATIVE_PROMISE_ALL))
-    objSet(st, promiseCtor, "allSettled", JSValue.Native(NATIVE_PROMISE_ALLSETTLED))
-    objSet(st, promiseCtor, "race", JSValue.Native(NATIVE_PROMISE_RACE))
     scopeDefine(st, 0, "Promise", JSValue.Obj(promiseCtor))
     let objectCtor = newObject(st)
     objSet(st, objectCtor, "defineProperty", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTY))
@@ -3150,6 +3089,13 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "clearImmediate", JSValue.Native(NATIVE_CLEAR_TIMER))
     scopeDefine(st, 0, "setImmediate", JSValue.Native(NATIVE_SET_IMMEDIATE))
     scopeDefine(st, 0, "queueMicrotask", JSValue.Native(NATIVE_QUEUE_MICROTASK))
+    // The raw "wrap a value in a resolved promise" primitive, exposed under its
+    // own name so the prelude can build the public Promise.resolve on top of it.
+    // Capturing `Promise.resolve` from JS does not work: reading a method off a
+    // native constructor yields a late-bound dispatcher that looks the name up
+    // again at call time, so a wrapper calling the captured value re-entered
+    // itself forever.
+    scopeDefine(st, 0, "__promiseResolveValue", JSValue.Native(NATIVE_PROMISE_RESOLVE))
     scopeDefine(st, 0, "encodeURIComponent", JSValue.Native(NATIVE_ENCODE_URI_COMPONENT))
     scopeDefine(st, 0, "decodeURIComponent", JSValue.Native(NATIVE_DECODE_URI_COMPONENT))
     scopeDefine(st, 0, "encodeURI", JSValue.Native(NATIVE_ENCODE_URI))

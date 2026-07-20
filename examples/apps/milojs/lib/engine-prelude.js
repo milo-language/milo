@@ -846,3 +846,14 @@ Math.tanh = function (x) {
 function SharedArrayBuffer(length) {
   return new ArrayBuffer(length);
 }
+
+// Promise.resolve adopts any thenable, not just promises this engine created.
+// Every combinator below is written on top of it, so this is the one place
+// adoption has to happen — prisma's query builders are plain objects with a
+// .then, and without this Promise.all resolved with the builders themselves.
+Promise.resolve = function (x) {
+  if (x !== null && (typeof x === 'object' || typeof x === 'function') && typeof x.then === 'function') {
+    return new Promise(function (res, rej) { x.then(res, rej); });
+  }
+  return __promiseResolveValue(x);
+};
