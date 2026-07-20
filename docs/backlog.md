@@ -85,3 +85,36 @@ primitives carried it, but these gaps are where the friction was. Ranked.
 - **Byte views (#7) gate the zero-copy form of the JSON byte-feed (#8).** #8 works without it (materialize per event), but hands out copies until #7 lands.
 - **The child-exit arm is the pattern to copy** for any event-driven child wait: `installSignalPipe(sigchld())` + `sel.onRead(fd)` + `waitpid(..., WNOHANG)` (`tests/fixtures/selectChildExit.milo`, and `examples/cli-tools/timeout.milo` for a real use incl. the fork/inherit hazards).
 - **Compile-time reduction likely wants MIR (Tier 3)** for real wins — profile before committing.
+
+## milojs: Array change-by-copy methods (ES2023) — gap, and why the easy fix fails
+
+`with`, `toReversed`, `toSorted`, `toSpliced` are missing. Found by the QuickJS
+sweep (`with is not a function`, 3 cases).
+
+They cannot be added to `lib/engine-prelude.js`. Array methods are natives
+dispatched by a **name whitelist** in `eval.milo` (`isArrayMethod`, ~line 6349),
+and member lookup on an array never falls back to `Array.prototype` — so
+`Array.prototype.with = ...` in the prelude is unreachable dead code. I wrote
+that version, watched it have no effect, and backed it out.
+
+Adding them means implementing natively: extend the whitelist and add the cases
+alongside `findLast`/`findLastIndex`. Each is pure array shuffling; the only
+subtlety is spec index handling — a negative index counts from the end, and a
+fractional or out-of-range index throws `RangeError` rather than clamping.
+
+Worth noting for anything else "missing" from the sweep: check whether the
+method is prototype-dispatched or whitelisted before assuming the prelude is the
+place to put it.
+
+### Not gaps, despite the sweep's wording
+
+`concat`, `sort`, `apply`, `toString`, `escape` all work on ordinary receivers —
+those sweep failures are on unusual receivers (typed arrays and similar), not
+missing methods. Probe before implementing.
+
+### Math.fround stays out
+
+The existing exclusion comment in the prelude is correct and should not be
+"fixed": rounding to f32 needs a bit-level reinterpret the engine has no
+primitive for. The usual JS workaround, `new Float32Array([x])[0]`, is not
+available either — `Float32Array` is not implemented.
