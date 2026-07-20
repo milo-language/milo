@@ -18,7 +18,9 @@ document, and the document changes first if the plan changes.
 | Interpreter runs on a green task | done (`530dfe8`) |
 | `Task.spawnWithStack` for interpreter-sized stacks | done (`5613f78`) |
 | Ordering mechanism (caller parks, body unparks it) | proven, `tests/fixtures/asyncCallOrdering.milo` |
-| R1 async call returns at first await | attempted twice, reverted twice; the GC bug that likely caused both is now fixed — ready to retry |
+| R1 async call returns at first await | done in the **runtime** for a pending awaited promise — matches node; 71/71 fixtures, tahoeroads green (0 errors, ~34ms) |
+| R1b same in the engine binary | not met — `milojs-engine` never spawns a green task, so activations never spawn there |
+| R1a `await` of a non-thenable yields | not met — deferred, see below; a bare yield bypasses R6 save/restore |
 | R2 suspension is per-activation | core done (`ceb9aea`) — park/wake on a promise; not yet wired to the `await` path |
 | R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
 | R4 settle/reject semantics | not started |
@@ -113,7 +115,7 @@ Each requirement gets a fixture, checked against `bun` where it is JS.
 
 | req | test |
 |-----|------|
-| R1  | `async function f(){ log("A"); await null; log("C") } f(); log("B")` → `A B C` |
+| R1  | `async function f(){ log("A"); await sleep(0); log("C") } f(); log("B")` → `A B C`. Uses a real promise deliberately: `await null` is covered by R1a, which is not met. |
 | R2  | barrier repro: two participants await one barrier, both resolve |
 | R2  | a timer keeps firing while an activation is suspended |
 | R3  | three activations await one promise; all resume, in order |
@@ -220,6 +222,64 @@ This matters for the plan of record for two reasons:
 2. It shows the async fixtures are the wrong shape. They are small, symmetric
    and allocation-light; the app is none of those. R5 ("existing values
    unchanged") is satisfied by tests that cannot see this class of bug.
+
+## R1b: R1 is runtime-only — the engine does not run on a green task
+
+`milojs.milo` runs the program on a green task, so `schedulerCurrent()` is
+non-zero and an async call can spawn an activation. `milojs-engine.milo` calls
+`runModule`/`runEventLoop` directly on the main thread, so R1 is simply dormant
+there — the engine still runs an async body to completion at its first await.
+
+This matters for testing, not just for parity: `tests/run.sh` runs every `*.js`
+fixture through the **engine**, so R1 cannot be covered by a fixture in that
+harness. An ordering fixture added there would either fail or, worse, be
+captured against the engine's current behaviour and lock the wrong ordering in.
+R1 is currently verified by the app and by hand against node.
+
+Not just a missing `Task.spawnWithStack` call: the engine builds a local `Prog`,
+while an activation's task body cannot borrow from the frame that spawned it and
+has to reach the program through `gProg` (see
+docs/proposal-task-shared-state.md). Making the engine mirror the runtime means
+moving it onto `gProg` first.
+
+## R1a: `await` of a non-thenable does not yield — deferred, with the reason
+
+R1's test was originally written with `await null`. The implementation yields to
+the caller only when the awaited value is a pending promise, so an async body
+that awaits an already-settled value still runs to completion before its caller
+resumes. Node yields either way: the spec resolves the awaited value through
+`Promise.resolve`, which queues a microtask even for a non-thenable.
+
+Splitting that off as **R1a** rather than folding it into R1, because R1 is
+otherwise met and useful, and R1a needs work R1 does not.
+
+The obvious fix — release the caller and `schedulerYield()` on every await —
+was implemented and **reverted**, twice, and the evidence took two tries to get
+right. A fixture run that appeared to show 71/71 → 67/71 was invalid: it passed
+the runtime binary to `tests/run.sh`, which expects an engine binary, so the
+failures were a prelude mismatch and not the change. Measured correctly, the
+fixtures stay **71/71 with the yield in place** — they cannot see this defect at
+all.
+
+The app can. Against tahoeroads: 0 errors and ~34ms per route without the yield,
+13 errors and 6s per route with it, including
+`ReferenceError: dl is not defined` — the unrooted-scope signature — and prisma
+failing to read `version` and `loadEngine` off a non-object.
+
+The reason is an R6 violation, and it is the useful part of this finding: a bare
+yield creates a **new suspension point that bypasses the `ExecCtx` save and
+restore**. While the activation sits yielded, `tempRoots` and the active scope
+stack belong to whoever resumes; the yielding activation's own scopes are
+therefore unrooted, and a collection during that window frees them.
+
+So R1a is not "add a yield". It is "make every suspension point go through the
+same save/restore path", which is R6 applied to a second kind of park. Doing it
+properly means `yieldAtAwait` pushing an `ExecCtx` and reclaiming it by task
+identity exactly as `parkOnPromise` does.
+
+Deferred rather than dropped: it is observable behaviour real code depends on,
+but no tahoeroads route needs it, and it is not worth destabilising a working
+R1 to land it in the same slice.
 
 ## A pre-existing GC bug found underneath this work — fixed
 

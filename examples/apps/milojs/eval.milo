@@ -3,7 +3,7 @@
 // execution returns a Flow so `return` can unwind out of nested blocks.
 
 from "./ast" import {
-    Prog
+    Prog, gProg
 }
 from "./value" import {
     JSValue, i64ToStr, daysFromCivil
@@ -30,7 +30,7 @@ from "std/env" import {
     getEnv
 }
 from "std/runtime" import {
-    _spawnOsThreadDetached, schedulerCurrent, schedulerPark, schedulerUnpark
+    _spawnOsThreadDetached, schedulerCurrent, schedulerPark, schedulerUnpark, schedulerYield, Task
 }
 from "std/sync" import {
     Channel
@@ -3488,8 +3488,26 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             }
                             awaited = pv
                         } else {
-                            // Pending. Milo has no coroutines, so this native frame
-                            // cannot suspend; instead the event loop is drained in place
+                            // Pending. On an activation task this suspends properly:
+                            // the task parks and the settle wakes it, so other
+                            // activations and the event loop keep running (R2).
+                            if parkOnPromise(st, po) {
+                                popTemp(st)
+                                let ps2 = st.objects[po].promiseState
+                                let pv2 = cloneValue(st.objects[po].promiseValue)
+                                if ps2 == 2 {
+                                    markRejectHandled(st, po)
+                                    st.throwing = true
+                                    st.thrownValue = pv2
+                                    return JSValue.Undefined
+                                }
+                                if ps2 == 1 {
+                                    return pv2
+                                }
+                                pushTemp(st, JSValue.Obj(po))
+                            }
+                            // On the main task there is nowhere to suspend to — it
+                            // runs the event loop — so the loop is drained in place
                             // until the promise settles. Ordering therefore differs from
                             // real JS — work queued *after* this await can run before the
                             // awaiting function resumes — but the value flow is correct.
@@ -4475,6 +4493,16 @@ fn inspectTop(st: &Interp, v: &JSValue): string {
 // with `this` and the parameters bound, then run the body. argVals is consumed.
 
 fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
+    // R1: an async call runs its body on its own activation and returns at that
+    // body's first await. Cleared immediately so a nested async call spawns.
+    let alreadyOnActivation = st.suppressAsyncSpawn
+    st.suppressAsyncSpawn = false
+    if prog.funcs[fIdx].isAsync && !alreadyOnActivation {
+        let caller = schedulerCurrent()
+        if caller as i64 != 0 {
+            return spawnActivation(fIdx, envIdx, argVals, thisVal, st, caller)
+        }
+    }
     // Without this, runaway recursion exhausts the native stack and the process
     // dies with no JS-level error — express's error middleware expects a
     // catchable RangeError instead.
@@ -4745,6 +4773,125 @@ fn napiDrainSettlements(st: &mut Interp) {
     }
 }
 
+// Let the caller of this activation continue. Called at the activation's first
+// suspension point, and at completion if it never suspends — an async call
+// returns once its body reaches the first await, not when the body finishes.
+fn releaseCreatorOnce(st: &mut Interp) {
+    let me = schedulerCurrent()
+    if me as i64 == 0 {
+        return
+    }
+    var i: i64 = 0
+    while i < st.actTask.len() {
+        if st.actTask[i] as i64 == me as i64 {
+            if !st.actNotified[i] {
+                st.actNotified[i] = true
+                schedulerUnpark(st.actCreator[i])
+            }
+            return
+        }
+        i = i + 1
+    }
+}
+
+// Drop this activation's bookkeeping and its pre-bind roots once the body ends.
+// An activation reaching any await hands control back to whoever called it and
+// lets the scheduler run them before this body continues. A no-op off an
+// activation: the main task owns the event loop and must not yield here.
+fn yieldAtAwait(st: &mut Interp) {
+    let me = schedulerCurrent()
+    if me as i64 == 0 {
+        return
+    }
+    var onActivation = false
+    var i: i64 = 0
+    while i < st.actTask.len() {
+        if st.actTask[i] as i64 == me as i64 {
+            onActivation = true
+        }
+        i = i + 1
+    }
+    if !onActivation {
+        return
+    }
+    releaseCreatorOnce(st)
+    schedulerYield()
+}
+
+fn endActivation(st: &mut Interp) {
+    let me = schedulerCurrent()
+    if me as i64 == 0 {
+        return
+    }
+    var i: i64 = 0
+    while i < st.actTask.len() {
+        if st.actTask[i] as i64 == me as i64 {
+            st.actTask.remove(i)
+            st.actCreator.remove(i)
+            st.actNotified.remove(i)
+            st.actEnv.remove(i)
+            st.actArgs.remove(i)
+            st.actThis.remove(i)
+            return
+        }
+        i = i + 1
+    }
+}
+
+// R1: run an async body on its own green task and hand the caller a pending
+// promise as soon as that body reaches its first await.
+//
+// The caller parks straight after spawning. Tasks are cooperative and only one
+// runs at a time, so the body cannot start before that park — there is no race
+// between spawning and waiting.
+fn spawnActivation(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp, caller: *u8): JSValue {
+    let p = newPromise(st, 0, JSValue.Undefined)
+    var rootedArgs: Vec<JSValue> = Vec.new()
+    var ri: i64 = 0
+    while ri < argVals.len() {
+        rootedArgs.push(cloneValue(argVals[ri]))
+        ri = ri + 1
+    }
+    let rootedThis = cloneValue(thisVal)
+    var args = argVals
+    let body = Task.spawnWithStack(move(): void => {
+        // gProg/gInterp rather than captured references: a task body cannot hold
+        // a borrow from the frame that spawned it (docs/proposal-task-shared-state.md)
+        gInterp.suppressAsyncSpawn = true
+        let r = callFunction(gProg, fIdx, envIdx, args, thisVal, gInterp)
+        if gInterp.throwing {
+            let err = cloneValue(gInterp.thrownValue)
+            gInterp.throwing = false
+            gInterp.thrownValue = JSValue.Undefined
+            settlePromise(gInterp, p, 2, err)
+        } else {
+            let ro = objHandle(r)
+            if ro >= 0 && isPromise(gInterp, ro) {
+                settlePromise(gInterp, p, gInterp.objects[ro].promiseState, cloneValue(gInterp.objects[ro].promiseValue))
+            } else {
+                settlePromise(gInterp, p, 1, r)
+            }
+        }
+        // a body that never awaited still has to let its caller go
+        releaseCreatorOnce(gInterp)
+        endActivation(gInterp)
+    }
+    , 8388608)
+    st.actTask.push(body._ptr)
+    st.actCreator.push(caller)
+    st.actNotified.push(false)
+    st.actEnv.push(envIdx)
+    st.actArgs.push(rootedArgs)
+    st.actThis.push(rootedThis)
+    // the body runs while this task is parked; it unparks us at its first await
+    let ctx = saveExecCtx(st)
+    st.suspended.push(ctx)
+    st.suspendedTask.push(caller)
+    schedulerPark()
+    resumeExecCtx(st, caller)
+    return JSValue.Obj(p)
+}
+
 // Take back the execution belonging to `task`, wherever it sits in the parked
 // set. Parks and wakes interleave, so position says nothing about ownership.
 fn resumeExecCtx(st: &mut Interp, task: *u8) {
@@ -4776,6 +4923,8 @@ fn parkOnPromise(st: &mut Interp, p: i64): bool {
     if st.objects[p].promiseState != 0 {
         return true
     }
+    // reaching an await is what makes the async call return to its caller
+    releaseCreatorOnce(st)
     st.awaitPromise.push(p)
     st.awaitTask.push(me)
     // the activation's execution leaves the Interp with it; whoever runs next
@@ -5030,6 +5179,34 @@ fn runOneTimer(prog: &Prog, st: &mut Interp): bool {
 
 // The event loop: microtasks to exhaustion, then one timer, repeat. Returns when
 // nothing is left to run — which for a server with an interval never happens.
+// Give any runnable activation the CPU. Returns true if one was there to run,
+// so the event loop prefers a live continuation over sleeping on a timer.
+fn schedulerYieldedToActivation(st: &mut Interp): bool {
+    var ready = false
+    var i: i64 = 0
+    while i < st.actTask.len() {
+        if !isParkedOnPromise(st, st.actTask[i]) {
+            ready = true
+        }
+        i = i + 1
+    }
+    if ready {
+        schedulerYield()
+    }
+    return ready
+}
+
+fn isParkedOnPromise(st: &Interp, t: *u8): bool {
+    var i: i64 = 0
+    while i < st.awaitTask.len() {
+        if st.awaitTask[i] as i64 == t as i64 {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
 fn runEventLoop(prog: &Prog, st: &mut Interp) {
     var going = true
     while going {
@@ -5048,6 +5225,11 @@ fn runEventLoop(prog: &Prog, st: &mut Interp) {
             // ran one; loop round
         } else if serveHttpOnce(prog, st) {
             // handled a connection (or found none ready)
+        } else if st.actTask.len() > 0 && schedulerYieldedToActivation(st) {
+            // An activation woken by a settle is runnable now. Yield to it before
+            // sleeping on a timer: runOneTimer sleeps until the earliest timer is
+            // due, so a far-future timer would otherwise fire long before an
+            // activation that is ready right now.
         } else if runOneTimer(prog, st) {
             // nothing to serve, so waiting for the next timer is correct
         } else if hasPendingFetches(st) {
@@ -5058,6 +5240,10 @@ fn runEventLoop(prog: &Prog, st: &mut Interp) {
             // own threads — there is no timer or socket to wait on, so yield briefly
             // rather than spinning a core while the worker finishes.
             napiWaitBriefly()
+        } else if st.actTask.len() > 0 {
+            // activations are still live; their continuations are real work, so
+            // exiting here would drop them on the floor
+            schedulerYield()
         } else {
             going = false
         }
