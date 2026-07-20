@@ -4921,9 +4921,11 @@ fn drainMicrotasks(prog: &Prog, st: &mut Interp) {
         }
         st.microtasks = rest
         if derived < 0 {
+            pushTemp(st, cloneValue(task))
             var args: Vec<JSValue> = Vec.new()
             args.push(arg)
             let _ = callValue(prog, task, args, JSValue.Undefined, st)
+            popTemp(st)
             if st.throwing {
                 eprint("Uncaught (in microtask) " + describeThrownValue(st, st.thrownValue))
                 st.throwing = false
@@ -4937,14 +4939,18 @@ fn drainMicrotasks(prog: &Prog, st: &mut Interp) {
             }
             settlePromise(st, derived, passState, arg)
         } else {
-            // the handler runs user code, so the settlement value and the derived
-            // promise must stay rooted across it — the microtask that held them
-            // has already been popped off the queue
+            // The queue entry has already been popped, so it no longer roots
+            // anything: the handler, the settlement value and the derived promise
+            // must all be rooted across the call, which runs user code and can
+            // collect. Omitting the handler let a collection free the scope it
+            // captured, and it resumed with its closure variables gone.
+            pushTemp(st, cloneValue(task))
             pushTemp(st, cloneValue(arg))
             pushTemp(st, JSValue.Obj(derived))
             var args: Vec<JSValue> = Vec.new()
             args.push(cloneValue(arg))
             let r = callValue(prog, task, args, JSValue.Undefined, st)
+            popTemp(st)
             popTemp(st)
             popTemp(st)
             if st.throwing {
