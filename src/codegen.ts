@@ -1468,13 +1468,28 @@ export class Codegen {
         this.entryAllocas.push(`  ${addrName} = alloca ${declTy}`);
         // Zero-init droppable allocas so a drop-glue pass over a never-initialized
         // branch-local (e.g. `let s` inside an `if` that wasn't taken) reads cap=0 and skips free.
+        // Alive flag is allocated up front so the loop's overwrite-drop below can
+        // be guarded by it.
+        const declAliveFlag = `${addrName}.alive`;
+        const declDroppable = !isRefLocal && this.needsDropCg(stmt.type) &&
+          !(stmt.value.kind === "IndexAccess" && stmt.value.isBorrowed);
+        if (declDroppable) {
+          this.entryAllocas.push(`  ${declAliveFlag} = alloca i1`);
+          this.entryAllocas.push(`  store i1 0, ptr ${declAliveFlag}`);
+        }
         if (this.needsDropCg(stmt.type)) {
           this.entryAllocas.push(this.zeroStore(declTy, addrName));
-          // Drop old value before overwriting — needed when this decl is inside a loop
-          // and runs multiple times at runtime. The zero-init above makes the first-iteration
-          // drop a no-op (null ptr / zero cap guards skip the free).
+          // Drop the old value before overwriting — this decl may run many times
+          // inside a loop. Guarded by the alive flag: a zeroed slot is a no-op
+          // for String/Vec (null ptr, zero cap), but drop glue for a struct with
+          // a user Drop impl calls that impl regardless, so the first iteration
+          // used to run the user's drop on a never-initialized slot.
           if (this.loopHeader !== null) {
-            this.emitDropValue(lines, addrName, stmt.type);
+            if (declDroppable) {
+              this.emitGuardedDrop(lines, { name: stmt.name, typeKind: stmt.type, aliveFlag: declAliveFlag });
+            } else {
+              this.emitDropValue(lines, addrName, stmt.type);
+            }
           }
         }
         if (bigTmp) this.emitMemcpy(lines, addrName, bigTmp, declTy);
@@ -1485,14 +1500,10 @@ export class Codegen {
           const signed = stmt.type.tag === "int" && stmt.type.signed;
           this.emitRangeCheck(lines, val, declTy, signed, stmt.rangeCheck.min, stmt.rangeCheck.max, stmt.span?.line ?? 0);
         }
-        // Don't drop locals that borrow from a ref (shallow copy, data owned elsewhere)
-        const isBorrowedInit = stmt.value.kind === "IndexAccess" && stmt.value.isBorrowed;
-        if (!isRefLocal && this.needsDropCg(stmt.type) && !isBorrowedInit) {
-          const aliveFlag = `${addrName}.alive`;
-          this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
-          this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
-          lines.push(`  store i1 1, ptr ${aliveFlag}`);
-          this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type, aliveFlag });
+        // Locals that borrow from a ref are a shallow copy — data owned elsewhere.
+        if (declDroppable) {
+          lines.push(`  store i1 1, ptr ${declAliveFlag}`);
+          this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type, aliveFlag: declAliveFlag });
         }
         return [lines, false];
       }

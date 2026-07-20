@@ -1,0 +1,155 @@
+// @expect: 1
+// @expect: 5
+// @expect: 1
+// @expect: 1
+// @expect: 1
+// @expect: 4
+// @expect: 2
+// @expect: 4
+// @expect: 1
+
+// Drop accounting: every shape where the compiler decides whether a value is
+// dropped, asserted by exact count. Memory bugs do not announce themselves the
+// way wrong output does — three drop-emission bugs shipped green test suites
+// (leaked match bindings, Drop-impl structs treated as Copy, double-allocating
+// index clones), so the counts are pinned here.
+//
+// Each block resets the counter, runs one shape, and prints the count.
+struct Tracked {
+    id: i64,
+}
+
+impl Drop for Tracked {
+    fn drop(self: &mut Self): void {
+        gDrops = gDrops + 1
+    }
+}
+
+var gDrops: i64 = 0
+
+fn make(id: i64): Tracked {
+    return Tracked {
+        id: id,
+    }
+}
+
+fn makeResult(): Result<Tracked, string> {
+    return Result.Ok(make(1))
+}
+
+// a plain local dies at function exit
+fn localAtExit(): i64 {
+    let t = make(1)
+    return t.id
+}
+
+// one drop per iteration, not one at the end
+fn loopLocal(iters: i64): i64 {
+    var seen: i64 = 0
+    var i: i64 = 0
+    while i < iters {
+        let t = make(i)
+        seen = seen + t.id
+        i = i + 1
+    }
+    return seen
+}
+
+// returning from inside the arm still drops the binding it owns
+fn matchEarlyReturn(): i64 {
+    match makeResult() {
+        Result.Ok(t) => {
+            return t.id
+        }
+        Result.Err(_e) => {
+            return -1
+        }
+    }
+}
+
+// the arm falls through: the binding dies at arm exit
+fn matchFallThrough(): i64 {
+    var out: i64 = 0
+    match makeResult() {
+        Result.Ok(t) => {
+            out = t.id
+        }
+        Result.Err(_e) => {
+            out = -1
+        }
+    }
+    return out
+}
+
+// moved into the callee, which owns it from then on
+fn consume(t: Tracked): i64 {
+    return t.id
+}
+
+// break leaves the loop body early — the live local must still go
+fn loopBreak(): i64 {
+    var i: i64 = 0
+    while i < 10 {
+        let t = make(i)
+        if t.id == 3 {
+            break
+        }
+        i = i + 1
+    }
+    return i
+}
+
+// overwriting a binding drops the value it held
+fn reassign(): i64 {
+    var t = make(1)
+    t = make(2)
+    return t.id
+}
+
+fn main(): i32 {
+    gDrops = 0
+    let _a = localAtExit()
+    print(gDrops)
+
+    gDrops = 0
+    let _b = loopLocal(5)
+    print(gDrops)
+
+    gDrops = 0
+    let _c = matchEarlyReturn()
+    print(gDrops)
+
+    gDrops = 0
+    let _d = matchFallThrough()
+    print(gDrops)
+
+    gDrops = 0
+    let _e = consume(make(7))
+    print(gDrops)
+
+    gDrops = 0
+    let _f = loopBreak()
+    print(gDrops)
+
+    gDrops = 0
+    let _g = reassign()
+    print(gDrops)
+
+    // a value moved into a Vec belongs to the Vec: no drop while it lives there
+    gDrops = 0
+    var kept: Vec<Tracked> = Vec.new()
+    var k: i64 = 0
+    while k < 4 {
+        match makeResult() {
+            Result.Ok(t) => {
+                kept.push(t)
+            }
+            Result.Err(_e) => {
+            }
+        }
+        k = k + 1
+    }
+    print(kept.len())
+    print(kept[0].id)
+    return 0
+}
