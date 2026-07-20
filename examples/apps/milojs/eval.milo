@@ -6346,7 +6346,7 @@ fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSVa
 }
 
 fn isArrayMethod(name: &string): bool {
-    return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop" || name == "find" || name == "findIndex" || name == "some" || name == "every" || name == "shift" || name == "unshift" || name == "splice" || name == "sort" || name == "lastIndexOf" || name == "flat" || name == "fill" || name == "at" || name == "findLast" || name == "findLastIndex" || name == "copyWithin" || name == "reduceRight" || name == "flatMap" || name == "values" || name == "keys" || name == "entries"
+    return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop" || name == "find" || name == "findIndex" || name == "some" || name == "every" || name == "shift" || name == "unshift" || name == "splice" || name == "sort" || name == "lastIndexOf" || name == "flat" || name == "fill" || name == "at" || name == "findLast" || name == "findLastIndex" || name == "copyWithin" || name == "reduceRight" || name == "flatMap" || name == "values" || name == "keys" || name == "entries" || name == "with" || name == "toReversed" || name == "toSorted" || name == "toSpliced"
 }
 
 // Dispatch a built-in Array method. `o` (the array) is temp-rooted by the caller;
@@ -6587,6 +6587,114 @@ fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut
             return JSValue.Undefined
         }
         return arrGet(st, o, idx)
+    }
+    // ES2023 change-by-copy: build a new array, never touch the receiver. These
+    // live here rather than in the prelude because array member lookup never
+    // falls back to Array.prototype — a method has to be on the whitelist above
+    // and implemented here to be reachable at all.
+    if name == "with" {
+        var wi: i64 = 0
+        if args.len() > 0 {
+            wi = toNum(args[0]) as i64
+        }
+        if wi < 0 {
+            wi = wi + n
+        }
+        // spec: out of range throws rather than clamping, so a bad index is a
+        // loud error instead of a silently misplaced element
+        if wi < 0 || wi >= n {
+            st.throwing = true
+            st.thrownValue = makeError(st, "RangeError", "Invalid index")
+            return JSValue.Undefined
+        }
+        var wv = JSValue.Undefined
+        if args.len() > 1 {
+            wv = cloneValue(args[1])
+        }
+        let wout = newArray(st)
+        pushTemp(st, JSValue.Obj(wout))
+        var wk: i64 = 0
+        while wk < n {
+            if wk == wi {
+                arrPush(st, wout, cloneValue(wv))
+            } else {
+                arrPush(st, wout, arrGet(st, o, wk))
+            }
+            wk = wk + 1
+        }
+        popTemp(st)
+        return JSValue.Obj(wout)
+    }
+    if name == "toReversed" {
+        let rout = newArray(st)
+        pushTemp(st, JSValue.Obj(rout))
+        var rk = n - 1
+        while rk >= 0 {
+            arrPush(st, rout, arrGet(st, o, rk))
+            rk = rk - 1
+        }
+        popTemp(st)
+        return JSValue.Obj(rout)
+    }
+    if name == "toSorted" {
+        let sout = newArray(st)
+        pushTemp(st, JSValue.Obj(sout))
+        var sk: i64 = 0
+        while sk < n {
+            arrPush(st, sout, arrGet(st, o, sk))
+            sk = sk + 1
+        }
+        // sort the copy in place with the existing implementation, so the two
+        // orderings cannot drift apart
+        let sorted = arrayMethod(prog, sout, "sort", args, st)
+        popTemp(st)
+        return sorted
+    }
+    if name == "toSpliced" {
+        var ss: i64 = 0
+        if args.len() > 0 {
+            ss = toNum(args[0]) as i64
+        }
+        if ss < 0 {
+            ss = n + ss
+            if ss < 0 {
+                ss = 0
+            }
+        } else if ss > n {
+            ss = n
+        }
+        // no args deletes nothing; a lone start deletes the whole tail
+        var sd: i64 = 0
+        if args.len() == 1 {
+            sd = n - ss
+        } else if args.len() > 1 {
+            sd = toNum(args[1]) as i64
+            if sd < 0 {
+                sd = 0
+            }
+            if sd > n - ss {
+                sd = n - ss
+            }
+        }
+        let tout = newArray(st)
+        pushTemp(st, JSValue.Obj(tout))
+        var tk: i64 = 0
+        while tk < ss {
+            arrPush(st, tout, arrGet(st, o, tk))
+            tk = tk + 1
+        }
+        var ta: i64 = 2
+        while ta < args.len() {
+            arrPush(st, tout, cloneValue(args[ta]))
+            ta = ta + 1
+        }
+        var tb = ss + sd
+        while tb < n {
+            arrPush(st, tout, arrGet(st, o, tb))
+            tb = tb + 1
+        }
+        popTemp(st)
+        return JSValue.Obj(tout)
     }
     if name == "findLast" || name == "findLastIndex" {
         if args.len() == 0 {
