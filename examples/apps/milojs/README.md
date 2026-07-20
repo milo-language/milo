@@ -93,16 +93,26 @@ both work.
 Fixing it means running each async activation on its own green task and parking
 at `await`. Milo has green tasks with real stacks, and they only switch at
 explicit park points, so the interpreter's *native* stack is already per-task.
-What has to move with it is the Interp bookkeeping that describes the current
-execution: the throw flag and thrown value, call depth, the temp-root stack, the
-active-scope stack, and the module path/dir stacks. The temp roots and active
-scopes are GC roots, so they cannot simply be swapped out — the collector has to
-walk every parked task's roots, not just the running one.
+The interpreter itself now runs on a green task, which is what makes park and
+unpark reachable at all — both are no-ops in the OS main context.
 
-Fixing it means running each async activation on its own green task and
-suspending at `await`, which requires the interpreter's "current execution"
-state (throw flag, call depth, temp roots, active scopes, module stack) to
-become per-task rather than global.
+Three things still stand between that and working suspension:
+
+1. **A direct-switch primitive.** JS runs an async body synchronously up to its
+   first `await`, and only then does the call return. `Task.spawn` merely
+   queues, so the body would not start until the next scheduler turn and
+   `f(); log("B")` would print B before anything in f. The scheduler needs "run
+   this task now, come back here when it parks" rather than round-robin.
+
+2. **Per-task execution state.** The Interp bookkeeping describing the current
+   execution — throw flag and thrown value, call depth, the temp-root stack, the
+   active-scope stack, the module path/dir stacks — is global. Switches happen
+   only at park points, so saving it into the task record on park and restoring
+   on resume is enough; it needs no finer granularity.
+
+3. **GC over parked tasks.** Temp roots and active scopes are roots, so the
+   collector has to walk every parked task's saved state, not just the running
+   one.
 
 ## Stage 1 — tree-walking interpreter
 
