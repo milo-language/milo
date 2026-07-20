@@ -3751,6 +3751,27 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             return JSValue.Obj(obj)
         }
 
+        Expr.TemplateStrings(litIdx) => {
+            // cooked chunks, plus a `raw` array. The chunks are already unescaped
+            // by the lexer and token text carries no source offsets, so `raw`
+            // holds the same strings — correct for everything without escape
+            // sequences, which covers the SQL that tag functions are used for.
+            let arr = newArray(st)
+            pushTemp(st, JSValue.Obj(arr))
+            let rawArr = newArray(st)
+            pushTemp(st, JSValue.Obj(rawArr))
+            var ti: i64 = 0
+            while ti < prog.arrLits[litIdx].len() {
+                let v = evalExpr(prog, prog.arrLits[litIdx][ti], st, scope)
+                arrPush(st, arr, cloneValue(v))
+                arrPush(st, rawArr, v)
+                ti = ti + 1
+            }
+            objSet(st, arr, "raw", JSValue.Obj(rawArr))
+            popTemp(st)
+            popTemp(st)
+            return JSValue.Obj(arr)
+        }
         Expr.ArrLit(litIdx) => {
             let arr = newArray(st)
             // root the part-built array so a GC while evaluating later elements

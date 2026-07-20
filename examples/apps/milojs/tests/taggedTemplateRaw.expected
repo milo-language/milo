@@ -1,0 +1,8 @@
+true 3 2
+true 3
+"SELECT " "SELECT "
+SELECT | FROM | x::1,t
+true 1 0
+true 1
+"no holes" "no holes"
+no holes::

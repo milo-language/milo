@@ -2839,6 +2839,16 @@ export class TypeChecker {
 
   private allCopyCache = new Map<string, boolean>();
   private isAllCopyStruct(name: string): boolean {
+    // Checked before the cache: Drop impls are registered while checking impl
+    // blocks, which can be after a first copy-ness query has already cached
+    // `true` for this struct.
+    //
+    // A type with a Drop impl is never Copy, however plain its fields are.
+    // Treating it as Copy meant passing it recorded no move, so the source kept
+    // its drop glue and the value was dropped once per copy — TcpStream and
+    // TlsStream are exactly this shape (integer fds + a Drop that closes them),
+    // so an accepted connection could be closed while still in use.
+    if (this.dropImpls.has(name)) return false;
     const cached = this.allCopyCache.get(name);
     if (cached !== undefined) return cached;
     const info = this.structs.get(name);

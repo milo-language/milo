@@ -194,7 +194,7 @@ fn parseTaggedTemplate(p: &mut PState, prog: &mut Prog, tagExpr: i64): i64 {
         advance(p)
     }
     prog.arrLits.push(chunks)
-    let stringsArr = addExpr(prog, Expr.ArrLit(prog.arrLits.len() - 1))
+    let stringsArr = addExpr(prog, Expr.TemplateStrings(prog.arrLits.len() - 1))
     var args: Vec<i64> = Vec.new()
     args.push(stringsArr)
     var h: i64 = 0

@@ -27,6 +27,11 @@ enum Expr {
     SetMember(i64, i64, i64),
     // array literal: index into prog.arrLits (a list of element-expr indices)
     ArrLit(i64),
+    // the strings array a tagged template hands its tag function: an array of
+    // the literal chunks that also carries a `raw` property. Libraries detect
+    // tagged-template usage by looking for `raw` (prisma's $executeRaw rejects
+    // the call without it), so a plain ArrLit is not enough.
+    TemplateStrings(i64),
     // new Ctor(args): constructor expr, arg-list index
     New(i64, i64),
     // ++/-- on an lvalue: target expr, isIncrement, isPrefix
@@ -219,6 +224,9 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.SetMember(obj, key, val) => {
             return Expr.SetMember(obj, key, val)
+        }
+        Expr.TemplateStrings(i) => {
+            return Expr.TemplateStrings(i)
         }
         Expr.ArrLit(i) => {
             return Expr.ArrLit(i)

@@ -2442,6 +2442,13 @@ export class Codegen {
         const [vl, vv] = this.genExpr(last.expr);
         lines.push(...vl);
         if (vv !== "void") lines.push(`  store ${resultSlot.ty} ${vv}, ptr ${resultSlot.addr}`);
+        // Yielding a droppable local out of the arm hands its heap data to the
+        // result slot — a move, not a copy. Clear the alive flag so the arm's
+        // drop does not free what the match's value now owns.
+        if (vv !== "void" && last.expr.kind === "Ident") {
+          const yielded = this.droppableLocals.find(d => d.name === (last.expr as { name: string }).name);
+          if (yielded) lines.push(`  store i1 0, ptr ${yielded.aliveFlag}`);
+        }
       } else {
         const [sl, t] = this.genStmt(last);
         lines.push(...sl);
@@ -2658,11 +2665,21 @@ export class Codegen {
     let allArmsTerminated = true;
     for (const { label, arm } of armLabels) {
       lines.push(`${label}:`);
+      const armDropStart = this.droppableLocals.length;
       if (arm.pattern.kind === "EnumPattern" && arm.pattern.bindings.length > 0) {
         const variant = layout.variants.get(arm.pattern.variant)!;
         this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern, !!stmt.subjectIsRef);
       }
       const armTerminated = this.emitMatchArmBody(lines, arm.body, resultSlot);
+      // Drop the arm's own bindings when it falls through: the alloca is reused
+      // on the next visit, so waiting for the function epilogue would drop only
+      // the final binding and leak every earlier one (a match inside a loop).
+      // emitGuardedDrop clears the alive flag, so the epilogue's drop is a no-op.
+      if (!armTerminated) {
+        for (let d = armDropStart; d < this.droppableLocals.length; d++) {
+          this.emitGuardedDrop(lines, this.droppableLocals[d]);
+        }
+      }
       if (!armTerminated) lines.push(`  br label %${endLabel}`);
       if (!armTerminated) allArmsTerminated = false;
     }
@@ -2735,6 +2752,17 @@ export class Codegen {
       lines.push(`  ${addr} = alloca ${ty}`);
       lines.push(this.valStore(ty, val, addr));
       this.locals.set(name, { type: ty, typeKind: fieldKind, mutable: false, isRef: false, addr });
+      // An owned match binding owns its payload — it was moved out of the subject
+      // (the source is zeroed above), so nothing else will free it. Without drop
+      // glue, `match f() { Ok(r) => { return r.id } }` leaked r entirely: one
+      // SSL_CTX (~1 MB) per HTTPS request in milojs.
+      if (this.needsDropCg(fieldKind)) {
+        const aliveFlag = `${addr}.alive`;
+        this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
+        this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
+        lines.push(`  store i1 1, ptr ${aliveFlag}`);
+        this.droppableLocals.push({ name, typeKind: fieldKind, aliveFlag });
+      }
     };
 
     if (pattern.bindings.length === 1) {

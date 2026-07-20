@@ -1,0 +1,63 @@
+// @expect: 1000
+// @expect: 100
+// @expect: 7
+
+// A value bound by a match arm owns its payload, so it must be dropped when the
+// arm exits — including via `return` from inside the arm, which previously
+// dropped nothing at all (one leaked SSL_CTX per HTTPS request in milojs).
+// A binding moved out of the arm must NOT be dropped: it now belongs elsewhere.
+struct Res {
+    id: i64
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        gDropped = gDropped + 1
+    }
+}
+
+var gDropped: i64 = 0
+
+fn make(): Result<Res, string> {
+    return Result.Ok(Res {
+        id: 7
+    }
+    )
+}
+
+fn returnFromArm(): i64 {
+    match make() {
+        Result.Ok(r) => {
+            return r.id
+        }
+        Result.Err(_e) => {
+            return -1
+        }
+    }
+}
+
+fn main(): i32 {
+    var i: i64 = 0
+    while i < 1000 {
+        let _v = returnFromArm()
+        i = i + 1
+    }
+    print(gDropped)
+
+    // moved into a Vec: the Vec owns them now
+    var kept: Vec<Res> = Vec.new()
+    var k: i64 = 0
+    while k < 100 {
+        match make() {
+            Result.Ok(r) => {
+                kept.push(r)
+            }
+            Result.Err(_e) => {
+            }
+        }
+        k = k + 1
+    }
+    print(kept.len())
+    print(kept[0].id)
+    return 0
+}
