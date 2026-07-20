@@ -252,6 +252,16 @@ fn main(): i32 {
         }
     }
     gInterp = makeInterp(gcStats, gcThreshold, gcGrowth)
+    // The runtime runs the program on an 8 MB green task (interpTask below), not
+    // the main thread, so it affords a far deeper JS call stack than the engine's
+    // default of 20 — express/tRPC middleware nests well past 20 and hit the
+    // recursion guard as a spurious RangeError. The native stack overflows around
+    // 1050 JS frames here (each JS frame costs ~8 KB of tree-walker native
+    // stack), and that overflow is a silent crash rather than a catchable error,
+    // so the guard must fire well below it. 500 keeps ~2x margin under the
+    // measured ceiling while sitting far above anything real request handling
+    // needs.
+    gInterp.callDepthLimit = 500
     // MILOJS_AWAIT_BUDGET_MS shortens the stuck-await deadline for debugging
     match getEnv("MILOJS_AWAIT_BUDGET_MS") {
         Option.Some(bv) => {

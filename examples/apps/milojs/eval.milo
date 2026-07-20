@@ -4509,10 +4509,16 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
     // Without this, runaway recursion exhausts the native stack and the process
     // dies with no JS-level error — express's error middleware expects a
     // catchable RangeError instead.
-    // Each JS frame costs several large native tree-walker frames. Higher limits
-    // exhaust the Linux main-thread stack before the guard can construct and
-    // unwind the catchable error; 20 still covers the recursive suite fixtures.
-    if st.callDepth >= 20 {
+    // Each JS frame costs several large native tree-walker frames, so the safe
+    // limit tracks the stack the interpreter runs on: st.callDepthLimit, set per
+    // binary. The engine runs the program on the main thread (a small default
+    // stack on Linux), where a high limit exhausts the native stack before the
+    // guard can construct and unwind the catchable error — so it stays low (20).
+    // The runtime runs the program on an 8 MB green task, where 20 is far too
+    // shallow for real code (express/tRPC middleware nests well past it and threw
+    // the very RangeError this guard exists to make catchable), so it sets a much
+    // higher limit that still lands safely inside 8 MB.
+    if st.callDepth >= st.callDepthLimit {
         st.throwing = true
         st.thrownValue = makeError(st, "RangeError", "Maximum call stack size exceeded")
         return JSValue.Undefined
