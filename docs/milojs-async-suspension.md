@@ -23,8 +23,8 @@ document, and the document changes first if the plan changes.
 | R3 resume order | not started |
 | R4 settle/reject semantics | not started |
 | R5 existing values unchanged | holds (nothing landed yet) |
-| R6 per-activation execution state | not started |
-| R7 GC over suspended activations | not started |
+| R6 per-activation execution state | done (`3215822`) — ExecCtx + save/restore |
+| R7 GC over suspended activations | done (`3215822`) — collect walks parked roots, fixture proves it fails without |
 | R8 unsettleable promise still reported | holds today, must survive |
 
 ## Why
