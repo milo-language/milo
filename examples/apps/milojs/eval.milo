@@ -57,9 +57,12 @@ from "std/math" import {
 enum Flow {
     Normal,
     Ret(JSValue),
-    // loop control; these never escape a function boundary
-    Break,
-    Continue,
+    // loop control; these never escape a function boundary. The string is the
+    // target label, "" when unlabeled. A loop consumes an unlabeled signal or
+    // one naming its own label, and re-propagates any other so an outer labeled
+    // loop can catch it.
+    Break(string),
+    Continue(string),
 }
 
 fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
@@ -7806,6 +7809,12 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
     if st.throwing {
         return Flow.Normal
     }
+    // Take any label handed down by an enclosing Stmt.Labeled and clear it, so
+    // it reaches only the statement being executed now (a loop reads myLabel; a
+    // block or if drops it). Cleared globally here, re-set only by Labeled just
+    // before it recurses, so it cannot leak into a nested loop.
+    let myLabel = st.pendingLabel.clone()
+    st.pendingLabel = ""
     match prog.stmts[idx] {
         Stmt.Decl(name, e) => {
             let v = evalExpr(prog, e, st, scope)
@@ -7820,10 +7829,17 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                     Flow.Ret(v) => {
                         return Flow.Ret(v)
                     }
-                    Flow.Break => {
-                        looping = false
+                    Flow.Break(l) => {
+                        if l == "" || l == myLabel {
+                            looping = false
+                        } else {
+                            return Flow.Break(l.clone())
+                        }
                     }
-                    Flow.Continue => {
+                    Flow.Continue(l) => {
+                        if l != "" && l != myLabel {
+                            return Flow.Continue(l.clone())
+                        }
                     }
                     Flow.Normal => {
                     }
@@ -7875,12 +7891,17 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                             result = Flow.Ret(v)
                             going = false
                         }
-                        Flow.Break => {
+                        Flow.Break(l) => {
+                            // an unlabeled break ends the switch; a labeled one
+                            // targets an enclosing statement, so let it out
                             going = false
+                            if l != "" {
+                                result = Flow.Break(l.clone())
+                            }
                         }
-                        Flow.Continue => {
-                            // a continue belongs to an enclosing loop
-                            result = Flow.Continue
+                        Flow.Continue(l) => {
+                            // a continue always belongs to an enclosing loop
+                            result = Flow.Continue(l.clone())
                             going = false
                         }
                         Flow.Normal => {
@@ -7956,10 +7977,19 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                                         out = Flow.Ret(v)
                                         running = false
                                     }
-                                    Flow.Break => {
+                                    Flow.Break(l) => {
+                                        // an unmatched label re-propagates through
+                                        // out so the loop's cleanup below still runs
                                         running = false
+                                        if l != "" && l != myLabel {
+                                            out = Flow.Break(l.clone())
+                                        }
                                     }
-                                    Flow.Continue => {
+                                    Flow.Continue(l) => {
+                                        if l != "" && l != myLabel {
+                                            out = Flow.Continue(l.clone())
+                                            running = false
+                                        }
                                     }
                                     Flow.Normal => {
                                     }
@@ -8050,10 +8080,22 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                         popTemp(st)
                         return Flow.Ret(v)
                     }
-                    Flow.Break => {
+                    Flow.Break(l) => {
                         looping = false
+                        if l != "" && l != myLabel {
+                            popActive(st)
+                            popTemp(st)
+                            popTemp(st)
+                            return Flow.Break(l.clone())
+                        }
                     }
-                    Flow.Continue => {
+                    Flow.Continue(l) => {
+                        if l != "" && l != myLabel {
+                            popActive(st)
+                            popTemp(st)
+                            popTemp(st)
+                            return Flow.Continue(l.clone())
+                        }
                     }
                     Flow.Normal => {
                     }
@@ -8115,10 +8157,18 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                         popActive(st)
                         return Flow.Ret(v)
                     }
-                    Flow.Break => {
+                    Flow.Break(l) => {
                         looping = false
+                        if l != "" && l != myLabel {
+                            popActive(st)
+                            return Flow.Break(l.clone())
+                        }
                     }
-                    Flow.Continue => {
+                    Flow.Continue(l) => {
+                        if l != "" && l != myLabel {
+                            popActive(st)
+                            return Flow.Continue(l.clone())
+                        }
                     }
                     Flow.Normal => {
                     }
@@ -8175,10 +8225,16 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                         Flow.Ret(v) => {
                             return Flow.Ret(v)
                         }
-                        Flow.Break => {
+                        Flow.Break(l) => {
                             looping = false
+                            if l != "" && l != myLabel {
+                                return Flow.Break(l.clone())
+                            }
                         }
-                        Flow.Continue => {
+                        Flow.Continue(l) => {
+                            if l != "" && l != myLabel {
+                                return Flow.Continue(l.clone())
+                            }
                         }
                         Flow.Normal => {
                         }
@@ -8256,10 +8312,18 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                                 popActive(st)
                                 return Flow.Ret(v)
                             }
-                            Flow.Break => {
+                            Flow.Break(l) => {
                                 broke = true
+                                if l != "" && l != myLabel {
+                                    popActive(st)
+                                    return Flow.Break(l.clone())
+                                }
                             }
-                            Flow.Continue => {
+                            Flow.Continue(l) => {
+                                if l != "" && l != myLabel {
+                                    popActive(st)
+                                    return Flow.Continue(l.clone())
+                                }
                             }
                             Flow.Normal => {
                             }
@@ -8307,11 +8371,31 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
         Stmt.Empty => {
             return Flow.Normal
         }
-        Stmt.Break => {
-            return Flow.Break
+        Stmt.Break(label) => {
+            return Flow.Break(label.clone())
         }
-        Stmt.Continue => {
-            return Flow.Continue
+        Stmt.Continue(label) => {
+            return Flow.Continue(label.clone())
+        }
+        Stmt.Labeled(label, body) => {
+            // Hand the label to the wrapped statement (a loop reads it), then run
+            // it. A loop consumes a break/continue naming this label and returns
+            // Normal. A labeled non-loop (e.g. `foo: { ... break foo }`) does not,
+            // so catch a matching break here — that is what makes break out of a
+            // labeled block work.
+            st.pendingLabel = label.clone()
+            let f = execStmt(prog, body, st, scope)
+            match f {
+                Flow.Break(l) => {
+                    if l == label {
+                        return Flow.Normal
+                    }
+                    return Flow.Break(l.clone())
+                }
+                _ => {
+                    return f
+                }
+            }
         }
     }
 }
@@ -8409,11 +8493,11 @@ fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
             Flow.Ret(v) => {
                 return Flow.Ret(v)
             }
-            Flow.Break => {
-                return Flow.Break
+            Flow.Break(l) => {
+                return Flow.Break(l.clone())
             }
-            Flow.Continue => {
-                return Flow.Continue
+            Flow.Continue(l) => {
+                return Flow.Continue(l.clone())
             }
             Flow.Normal => {
             }

@@ -93,8 +93,12 @@ enum Stmt {
     ForIn(string, i64, i64),
     // for (name of iterExpr) body
     ForOf(string, i64, i64),
-    Break,
-    Continue,
+    // break/continue carry their target label, "" when unlabeled
+    Break(string),
+    Continue(string),
+    // label: stmt — a labeled statement. break/continue naming this label
+    // target the statement it wraps (a loop, or a block for break).
+    Labeled(string, i64),
     // class declaration: index into prog.classes
     ClassDecl(i64),
     // do body while (cond) — body runs before the first test
@@ -332,11 +336,14 @@ fn cloneStmt(s: &Stmt): Stmt {
         Stmt.Switch(discr, idx) => {
             return Stmt.Switch(discr, idx)
         }
-        Stmt.Break => {
-            return Stmt.Break
+        Stmt.Break(label) => {
+            return Stmt.Break(label.clone())
         }
-        Stmt.Continue => {
-            return Stmt.Continue
+        Stmt.Continue(label) => {
+            return Stmt.Continue(label.clone())
+        }
+        Stmt.Labeled(label, body) => {
+            return Stmt.Labeled(label.clone(), body)
         }
     }
 }

@@ -451,6 +451,12 @@ struct Interp {
     // the enclosing chain's Member/Index/Call nodes so the whole chain yields
     // undefined, and is scoped/consumed by the OptChainRoot wrapping the chain.
     optShort: bool,
+    // label of the enclosing `label:` statement, handed to the loop it wraps so
+    // the loop can consume a break/continue naming it. Set by Stmt.Labeled just
+    // before executing its body and read once at the top of execStmt, so it
+    // never leaks past the labeled statement — and is therefore never live
+    // across a suspension point, which is why it is not part of ExecCtx.
+    pendingLabel: string,
     // Math.random() PRNG state (xorshift64)
     rngState: i64,
     allocSinceGc: i64,
@@ -556,7 +562,7 @@ var gInterp: Interp = Interp {
     objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
     modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(), modPathStack: Vec.new(),
     throwing: false, thrownValue: JSValue.Undefined,
-    optShort: false,
+    optShort: false, pendingLabel: "",
     rngState: 88172645463325252,
     allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, mainTask: 0 as *u8, awaitPromise: Vec.new(), awaitTask: Vec.new(), suspended: Vec.new(), suspendedTask: Vec.new(), actTask: Vec.new(), actCreator: Vec.new(), actNotified: Vec.new(), actEnv: Vec.new(), actArgs: Vec.new(), actThis: Vec.new(), suppressAsyncSpawn: false, fetches: Vec.new(), napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
 }

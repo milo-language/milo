@@ -1319,6 +1319,16 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         advance(p)
         return addStmt(prog, Stmt.Empty)
     }
+    // `label: stmt`. At statement position an identifier followed by a colon is
+    // unambiguously a label — no other statement starts that way (object
+    // literals and the ternary colon are expression-internal).
+    if k == T_IDENT && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind == T_COLON {
+        let lname = p.toks[p.pos].text.clone()
+        advance(p)
+        advance(p)
+        let body = parseStmt(p, prog)
+        return addStmt(prog, Stmt.Labeled(lname, body))
+    }
     if k == T_LET || k == T_VAR || k == T_CONST {
         let declaredVar = k == T_VAR
         advance(p)
@@ -1578,17 +1588,29 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
     }
     if k == T_BREAK {
         advance(p)
+        // `break label` — the label must follow on the same statement. No ASI
+        // tracking here, so a bare identifier after break is taken as the label.
+        var blabel = ""
+        if peekKind(p) == T_IDENT {
+            blabel = p.toks[p.pos].text.clone()
+            advance(p)
+        }
         if peekKind(p) == T_SEMI {
             advance(p)
         }
-        return addStmt(prog, Stmt.Break)
+        return addStmt(prog, Stmt.Break(blabel))
     }
     if k == T_CONTINUE {
         advance(p)
+        var clabel = ""
+        if peekKind(p) == T_IDENT {
+            clabel = p.toks[p.pos].text.clone()
+            advance(p)
+        }
         if peekKind(p) == T_SEMI {
             advance(p)
         }
-        return addStmt(prog, Stmt.Continue)
+        return addStmt(prog, Stmt.Continue(clabel))
     }
     if k == T_THROW {
         advance(p)
