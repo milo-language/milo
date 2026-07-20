@@ -6327,6 +6327,20 @@ export class Codegen {
     this.hasStringType = true;
     this.needsMalloc = true;
     this.needsMemcpy = true;
+    // `v[i].clone()` clones straight from the element rather than from a copy of
+    // it. Indexing a collection of non-Copy elements materialises an independent
+    // value (see IndexAccess), so going through genExpr here allocated twice and
+    // nothing owned the intermediate — one leaked buffer per evaluation, which
+    // is unbounded inside a loop.
+    const src = expr.str;
+    if (src.kind === "IndexAccess") {
+      const eff = src.object.type.tag === "ref" ? src.object.type.inner : src.object.type;
+      if ((eff.tag === "vec" || (eff.tag === "array" && eff.size === null)) && this.needsDropCg(eff.element)) {
+        const [, elemPtr] = this.genVecBoundsCheckedPtr(src, lines);
+        const clonedFromPtr = this.emitDeepCloneFromPtr(lines, elemPtr, eff.element);
+        return [lines, clonedFromPtr, "%String"];
+      }
+    }
     const [sLines, sVal] = this.genExpr(expr.str);
     lines.push(...sLines);
     const data = this.nextTemp();

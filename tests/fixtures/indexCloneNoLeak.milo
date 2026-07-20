@@ -1,0 +1,31 @@
+// @expect: 93
+// @expect: a-heap-allocated-string-payload
+// @expect: replaced
+
+// Cloning an element of a borrowed collection must allocate exactly once.
+// Indexing a collection of non-Copy elements materialises an independent value,
+// so `v[i].clone()` used to allocate twice and leak the intermediate — unbounded
+// inside a loop.
+fn cloneInLoop(v: &Vec<string>, iters: i64): i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < iters {
+        let s = v[0].clone()
+        total = total + s.len()
+        i = i + 1
+    }
+    return total
+}
+
+fn main(): i32 {
+    var src: Vec<string> = Vec.new()
+    src.push("a-heap-allocated-string-payload")
+    print(cloneInLoop(src, 3))
+    // the clone is independent of the source
+    let first = src[0].clone()
+    src[0] = "replaced"
+    print(first)
+    let now = src[0].clone()
+    print(now)
+    return 0
+}
