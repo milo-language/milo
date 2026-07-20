@@ -6,7 +6,7 @@ from "./ast" import {
     Prog
 }
 from "./value" import {
-    JSValue, i64ToStr
+    JSValue, i64ToStr, daysFromCivil
 }
 from "./runtime" import {
     Interp, Timer, Microtask, Reaction, PendingFetch, NATIVE_RESOLVER_BASE, collect, linkProtoConstructor, objHasInChain
@@ -1079,6 +1079,11 @@ let NATIVE_PROCESS_CWD: i64 = 54
 let NATIVE_STRING_FROMCHARCODE: i64 = 55
 let NATIVE_DATE: i64 = 56
 let NATIVE_DATE_NOW: i64 = 57
+// Date.UTC(year, month[, day, hours, minutes, seconds, ms]) — the fields are
+// interpreted as UTC and out-of-range values roll over (month 12 is January of
+// the next year), which falls out of doing the arithmetic in days and seconds
+// rather than validating each field.
+let NATIVE_DATE_UTC: i64 = 110
 let NATIVE_ENCODE_URI_COMPONENT: i64 = 58
 let NATIVE_DECODE_URI_COMPONENT: i64 = 59
 let NATIVE_ENCODE_URI: i64 = 60
@@ -1907,6 +1912,54 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     }
     if id == NATIVE_DATE_NOW {
         return JSValue.Number(epochMillis() as f64)
+    }
+    if id == NATIVE_DATE_UTC {
+        if argVals.len() == 0 {
+            return JSValue.Number(jsNan())
+        }
+        var year = toNum(argVals[0])
+        if year != year {
+            return JSValue.Number(jsNan())
+        }
+        // years 0-99 mean 1900-1999
+        var y = year as i64
+        if y >= 0 && y <= 99 {
+            y = y + 1900
+        }
+        var month: i64 = 0
+        var day: i64 = 1
+        var hour: i64 = 0
+        var minute: i64 = 0
+        var second: i64 = 0
+        var millis: i64 = 0
+        if argVals.len() > 1 {
+            month = toNum(argVals[1]) as i64
+        }
+        if argVals.len() > 2 {
+            day = toNum(argVals[2]) as i64
+        }
+        if argVals.len() > 3 {
+            hour = toNum(argVals[3]) as i64
+        }
+        if argVals.len() > 4 {
+            minute = toNum(argVals[4]) as i64
+        }
+        if argVals.len() > 5 {
+            second = toNum(argVals[5]) as i64
+        }
+        if argVals.len() > 6 {
+            millis = toNum(argVals[6]) as i64
+        }
+        // a month outside 0-11 rolls the year, matching the spec's MakeDay
+        y = y + month / 12
+        var m = month % 12
+        if m < 0 {
+            m = m + 12
+            y = y - 1
+        }
+        let days = daysFromCivil(y, m + 1, day)
+        let total = (days * 86400 + hour * 3600 + minute * 60 + second) * 1000 + millis
+        return JSValue.Number(total as f64)
     }
     if id == NATIVE_DATE {
         let o = newObject(st)
@@ -3058,6 +3111,7 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, symbolCtorObj, "iterator", JSValue.Str(symIteratorKey()))
     let dateCtorObj = getNativeProps(st, NATIVE_DATE)
     objSet(st, dateCtorObj, "now", JSValue.Native(NATIVE_DATE_NOW))
+    objSet(st, dateCtorObj, "UTC", JSValue.Native(NATIVE_DATE_UTC))
     // Date.prototype methods as bound-method values, so
     // Date.prototype.toISOString.call(d) — qs's pattern — works
     let dateProto = newObject(st)
