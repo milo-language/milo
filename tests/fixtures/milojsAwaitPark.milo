@@ -1,0 +1,80 @@
+// @expect: promise pending
+// @expect: waiter-sees-pending settler-runs waiter-resumed
+
+// R2 of docs/milojs-async-suspension.md at the interpreter level: an activation
+// parks on a pending promise and resumes when it settles, while the task that
+// settles it keeps running.
+//
+// The main task is excluded on purpose — it runs the event loop, so parking it
+// would stop the very machinery that settles promises.
+from "../../examples/apps/milojs/runtime" import {
+    Interp, gInterp, isPromise, newPromise
+}
+from "../../examples/apps/milojs/eval" import {
+    parkOnPromise, settlePromise
+}
+from "../../examples/apps/milojs/driver" import {
+    bootInterp, makeInterp
+}
+from "../../examples/apps/milojs/value" import {
+    JSValue
+}
+from "std/runtime" import {
+    Task, schedulerCurrent, schedulerYield
+}
+
+var gLog: string = ""
+
+fn driver(): void {
+    // Through the global, not a local: the waiter task below cannot capture a
+    // reference to a local interpreter — the reason gInterp exists at all
+    // (see docs/proposal-task-shared-state.md).
+    gInterp = makeInterp(false, 1024, 2)
+    bootInterp(gInterp)
+    gInterp.mainTask = schedulerCurrent()
+
+    let p = newPromise(gInterp, 0, JSValue.Undefined)
+    if isPromise(gInterp, p) {
+        print("promise pending")
+    }
+
+    let waiter = Task.spawnWithStack(move(): void => {
+        // prove the wake path is what runs, not the already-settled shortcut
+        if gInterp.objects[p].promiseState == 0 {
+            gLog = gLog + "waiter-sees-pending "
+        } else {
+            gLog = gLog + "waiter-sees-settled "
+        }
+        let parked = parkOnPromise(gInterp, p)
+        if parked {
+            gLog = gLog + "waiter-resumed "
+        } else {
+            gLog = gLog + "waiter-could-not-park "
+        }
+    }
+    , 1048576)
+
+    // Wait until the waiter has actually registered on the promise, so this
+    // exercises the wake path rather than the already-settled shortcut. A bare
+    // yield is not enough — it does not guarantee the waiter reaches its park.
+    var spins: i64 = 0
+    while gInterp.awaitPromise.len() == 0 && spins < 1000 {
+        schedulerYield()
+        spins = spins + 1
+    }
+    gLog = gLog + "settler-runs "
+    settlePromise(gInterp, p, 1, JSValue.Str("value"))
+    waiter.join()
+    print(gLog.trim())
+}
+
+fn main(): i32 {
+    // The driver runs on a green task: schedulerYield and park are no-ops in the
+    // OS main context, so a fixture that stays there cannot exercise either.
+    let d = Task.spawnWithStack(move(): void => {
+        driver()
+    }
+    , 4194304)
+    d.join()
+    return 0
+}

@@ -30,7 +30,7 @@ from "std/env" import {
     getEnv
 }
 from "std/runtime" import {
-    _spawnOsThreadDetached
+    _spawnOsThreadDetached, schedulerCurrent, schedulerPark, schedulerUnpark
 }
 from "std/sync" import {
     Channel
@@ -4745,6 +4745,51 @@ fn napiDrainSettlements(st: &mut Interp) {
     }
 }
 
+// R2 of docs/milojs-async-suspension.md. Park the running activation until
+// `p` settles. Only legal off the main task: the main task runs the event loop,
+// so parking it would stop the timers and off-thread servicing that settle
+// promises in the first place — that path still drains in place.
+//
+// Returns false when parking is not possible, so the caller can fall back.
+fn parkOnPromise(st: &mut Interp, p: i64): bool {
+    let me = schedulerCurrent()
+    if me as i64 == 0 || me as i64 == st.mainTask as i64 {
+        return false
+    }
+    // Already settled: there is nothing to wait for, and parking would be
+    // permanent — the wake happens at settle time, which has passed.
+    if st.objects[p].promiseState != 0 {
+        return true
+    }
+    st.awaitPromise.push(p)
+    st.awaitTask.push(me)
+    // the activation's execution leaves the Interp with it; whoever runs next
+    // starts clean, and collect keeps these roots alive (R6, R7)
+    let ctx = saveExecCtx(st)
+    st.suspended.push(ctx)
+    schedulerPark()
+    // resumed: take our execution back
+    var idx = st.suspended.len() - 1
+    let back = st.suspended.remove(idx)
+    restoreExecCtx(st, back)
+    return true
+}
+
+// Wake every activation waiting on `p`, in the order they began awaiting (R3).
+fn wakeAwaiters(st: &mut Interp, p: i64) {
+    var i: i64 = 0
+    while i < st.awaitPromise.len() {
+        if st.awaitPromise[i] == p {
+            let t = st.awaitTask[i]
+            st.awaitPromise.remove(i)
+            st.awaitTask.remove(i)
+            schedulerUnpark(t)
+        } else {
+            i = i + 1
+        }
+    }
+}
+
 fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
     if p < 0 || !isPromise(st, p) {
         return
@@ -4754,6 +4799,8 @@ fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
     }
     st.objects[p].promiseState = state
     st.objects[p].promiseValue = cloneValue(value)
+    // wake activations parked on this promise before running reactions (R2/R3)
+    wakeAwaiters(st, p)
     if state == 2 && st.objects[p].reactions.len() == 0 {
         // nobody is waiting on this rejection; report it when the loop idles
         // unless a .catch attaches first

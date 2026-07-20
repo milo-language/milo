@@ -20,7 +20,7 @@ from "std/environ" import {
     envVars
 }
 from "std/runtime" import {
-    Task
+    Task, schedulerCurrent
 }
 from "std/os" import {
     getpid
@@ -320,6 +320,8 @@ fn main(): i32 {
         execBlock(gProg, gInterp.modBlocks[preludeIdx], gInterp, 0)
     }
     let interpTask = Task.spawnWithStack(move(): void => {
+        // this task runs the event loop, so it never parks on an await
+        gInterp.mainTask = schedulerCurrent()
         runModule(gProg, entryIdx, gInterp)
         runEventLoop(gProg, gInterp)
     }
