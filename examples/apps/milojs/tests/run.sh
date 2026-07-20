@@ -12,6 +12,18 @@ DIR="examples/apps/milojs/tests"
 
 if [ -n "${MILOJS_ENGINE_BIN:-}" ]; then
   ENGINE_BIN="$MILOJS_ENGINE_BIN"
+  # Reject the runtime binary. The expectations here are captured against the
+  # ENGINE (milojs-engine.milo); the runtime (milojs.milo) loads a different
+  # prelude, so it runs every fixture and reports plausible, wrong failures
+  # instead of erroring. That cost a long debugging detour once: a valid 71/71
+  # and an invalid 67/71 were compared as though they measured the same thing.
+  # The runtime defines process, the engine does not.
+  probe="$(printf 'console.log(typeof process)' | "$ENGINE_BIN" /dev/stdin 2>/dev/null)"
+  if [ "$probe" = "object" ]; then
+    echo "FAIL: MILOJS_ENGINE_BIN=$ENGINE_BIN looks like the runtime (milojs), not the engine."
+    echo "      These fixtures expect a build of milojs-engine.milo."
+    exit 1
+  fi
 else
   ENGINE_BIN="$(mktemp -t milojs-engine)"
   trap 'rm -f "$ENGINE_BIN"' EXIT
