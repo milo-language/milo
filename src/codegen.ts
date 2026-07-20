@@ -69,7 +69,10 @@ export class Codegen {
   private loopDropStart: number = 0;
   private globalVars = new Map<string, { type: string; typeKind: TypeKind }>();
   private userFnNames = new Set<string>();
-  private droppableLocals: { name: string; typeKind: TypeKind; aliveFlag: string }[] = [];
+  // Droppable locals are identified by their slot ADDRESS. A function can hold
+  // several locals with the same name in different scopes, so re-resolving a
+  // name through the current scope picks an unrelated slot.
+  private droppableLocals: { name: string; typeKind: TypeKind; aliveFlag: string; addr: string }[] = [];
   private droppableEnums = new Set<string>();
   private dropImpls = new Set<string>();
   private structDropCache = new Map<string, boolean>();
@@ -584,7 +587,7 @@ export class Codegen {
             if (expr.isMove && this.needsDropCg(expr.type) && !identLocal?.isRef) {
               lines.push(this.zeroStore(ty, srcPtr));
               if (expr.kind === "Ident") {
-                const dl = this.droppableLocals.find(d => this.localAddr(d.name) === srcPtr);
+                const dl = this.droppableLocals.find(d => d.addr === srcPtr);
                 if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
               }
             }
@@ -1336,7 +1339,7 @@ export class Codegen {
           const aliveFlag = `%${p.name}.alive`;
           lines.push(`  ${aliveFlag} = alloca i1`);
           lines.push(`  store i1 1, ptr ${aliveFlag}`);
-          this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag });
+          this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag, addr: `%${p.name}.addr` });
         }
       }
     }
@@ -1486,7 +1489,7 @@ export class Codegen {
           // used to run the user's drop on a never-initialized slot.
           if (this.loopHeader !== null) {
             if (declDroppable) {
-              this.emitGuardedDrop(lines, { name: stmt.name, typeKind: stmt.type, aliveFlag: declAliveFlag });
+              this.emitGuardedDrop(lines, { name: stmt.name, typeKind: stmt.type, aliveFlag: declAliveFlag, addr: addrName });
             } else {
               this.emitDropValue(lines, addrName, stmt.type);
             }
@@ -1503,7 +1506,7 @@ export class Codegen {
         // Locals that borrow from a ref are a shallow copy — data owned elsewhere.
         if (declDroppable) {
           lines.push(`  store i1 1, ptr ${declAliveFlag}`);
-          this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type, aliveFlag: declAliveFlag });
+          this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type, aliveFlag: declAliveFlag, addr: addrName });
         }
         return [lines, false];
       }
@@ -2015,7 +2018,7 @@ export class Codegen {
       this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
       this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
       lines.push(`  store i1 1, ptr ${aliveFlag}`);
-      this.droppableLocals.push({ name, typeKind: iterable.type, aliveFlag });
+      this.droppableLocals.push({ name, typeKind: iterable.type, aliveFlag, addr });
     }
     return [lines, addr, iterTy];
   }
@@ -2456,8 +2459,13 @@ export class Codegen {
         // Yielding a droppable local out of the arm hands its heap data to the
         // result slot — a move, not a copy. Clear the alive flag so the arm's
         // drop does not free what the match's value now owns.
+        // Matched on the local's ADDRESS, not its name: a function can hold
+        // several droppable locals called the same thing in different scopes,
+        // and by-name lookup cleared the first entry's flag — dropping a live
+        // value belonging to an unrelated scope.
         if (vv !== "void" && last.expr.kind === "Ident") {
-          const yielded = this.droppableLocals.find(d => d.name === (last.expr as { name: string }).name);
+          const yieldedAddr = this.localAddr((last.expr as { name: string }).name);
+          const yielded = this.droppableLocals.find(d => d.addr === yieldedAddr);
           if (yielded) lines.push(`  store i1 0, ptr ${yielded.aliveFlag}`);
         }
       } else {
@@ -2772,7 +2780,7 @@ export class Codegen {
         this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
         this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
         lines.push(`  store i1 1, ptr ${aliveFlag}`);
-        this.droppableLocals.push({ name, typeKind: fieldKind, aliveFlag });
+        this.droppableLocals.push({ name, typeKind: fieldKind, aliveFlag, addr });
       }
     };
 
@@ -3229,7 +3237,7 @@ export class Codegen {
         lines.push(`  ${tmp} = load ${local.type}, ptr ${addr}`);
         if (expr.isMove && this.needsDropCg(local.typeKind)) {
           lines.push(this.zeroStore(local.type, addr));
-          const dl = this.droppableLocals.find(d => this.localAddr(d.name) === addr);
+          const dl = this.droppableLocals.find(d => d.addr === addr);
           if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
         }
         return [lines, tmp, local.type];
@@ -4044,7 +4052,7 @@ export class Codegen {
                 // zero source so parent's drop glue won't free moved data
                 if (this.needsDropCg(cap.type)) {
                   lines.push(this.zeroStore(capTy, capAddr));
-                  const dl = this.droppableLocals.find(d => this.localAddr(d.name) === capAddr);
+                  const dl = this.droppableLocals.find(d => d.addr === capAddr);
                   if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
                 }
               }
@@ -9176,21 +9184,21 @@ export class Codegen {
     }
   }
 
-  private emitGuardedDrop(lines: string[], local: { name: string; typeKind: TypeKind; aliveFlag: string }) {
+  private emitGuardedDrop(lines: string[], local: { name: string; typeKind: TypeKind; aliveFlag: string; addr: string }) {
     const check = this.nextTemp();
     lines.push(`  ${check} = load i1, ptr ${local.aliveFlag}`);
     const dropLabel = this.nextLabel("drop.alive");
     const skipLabel = this.nextLabel("drop.skip");
     lines.push(`  br i1 ${check}, label %${dropLabel}, label %${skipLabel}`);
     lines.push(`${dropLabel}:`);
-    this.emitDropValue(lines, this.localAddr(local.name), local.typeKind);
+    this.emitDropValue(lines, local.addr, local.typeKind);
     // Make the guarded drop idempotent: clear the alive-flag and zero the slot.
     // A loop `break`/`continue` drops loop-scoped locals via emitLoopDropGlue;
     // without this, the function epilogue (after break) or the next iteration's
     // overwrite-drop (after continue) would free the same buffer again.
     lines.push(`  store i1 0, ptr ${local.aliveFlag}`);
     const slotTy = this.llvmType(local.typeKind);
-    lines.push(this.zeroStore(slotTy, this.localAddr(local.name)));
+    lines.push(this.zeroStore(slotTy, local.addr));
     lines.push(`  br label %${skipLabel}`);
     lines.push(`${skipLabel}:`);
   }

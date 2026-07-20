@@ -7,6 +7,8 @@
 // @expect: 2
 // @expect: 4
 // @expect: 1
+// @expect: 0
+// @expect: 12
 
 // Drop accounting: every shape where the compiler decides whether a value is
 // dropped, asserted by exact count. Memory bugs do not announce themselves the
@@ -151,5 +153,34 @@ fn main(): i32 {
     }
     print(kept.len())
     print(kept[0].id)
+
+    // the same move, written the three ways a value reaches a Vec
+    gDrops = 0
+    var direct: Vec<Tracked> = Vec.new()
+    var d: i64 = 0
+    while d < 5 {
+        direct.push(Tracked {
+            id: d,
+        }
+        )
+        d = d + 1
+    }
+    var fromCall: Vec<Tracked> = Vec.new()
+    var f2: i64 = 0
+    while f2 < 5 {
+        fromCall.push(make(f2))
+        f2 = f2 + 1
+    }
+    var viaLocal: Vec<Tracked> = Vec.new()
+    var v: i64 = 0
+    while v < 5 {
+        // deliberately reuses the name the match arm above binds: droppable
+        // locals must be tracked per slot, not per name
+        let t = make(v)
+        viaLocal.push(t)
+        v = v + 1
+    }
+    print(gDrops)
+    print(direct[4].id + fromCall[4].id + viaLocal[4].id)
     return 0
 }
