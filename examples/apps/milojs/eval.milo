@@ -1084,6 +1084,10 @@ let NATIVE_DATE_NOW: i64 = 57
 // the next year), which falls out of doing the arithmetic in days and seconds
 // rather than validating each field.
 let NATIVE_DATE_UTC: i64 = 110
+// The Object constructor itself. Registering the global as a plain object made
+// `typeof Object` report "object" and `new Object()` fail outright — both used
+// constantly, and by three of the QuickJS builtin tests.
+let NATIVE_OBJECT_CTOR: i64 = 111
 let NATIVE_ENCODE_URI_COMPONENT: i64 = 58
 let NATIVE_DECODE_URI_COMPONENT: i64 = 59
 let NATIVE_ENCODE_URI: i64 = 60
@@ -1909,6 +1913,26 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             return JSValue.Undefined
         }
         return JSValue.Str(uriDecode(text))
+    }
+    if id == NATIVE_OBJECT_CTOR {
+        // Object(x) and new Object(x): a nullish argument (or none) makes a fresh
+        // empty object, anything else is returned as-is.
+        if argVals.len() > 0 {
+            let h = objHandle(argVals[0])
+            if h >= 0 {
+                return cloneValue(argVals[0])
+            }
+            match argVals[0] {
+                JSValue.Undefined => {
+                }
+                JSValue.Null => {
+                }
+                _ => {
+                    return cloneValue(argVals[0])
+                }
+            }
+        }
+        return JSValue.Obj(newObject(st))
     }
     if id == NATIVE_DATE_NOW {
         return JSValue.Number(epochMillis() as f64)
@@ -2974,6 +2998,10 @@ fn instanceOf(st: &Interp, val: &JSValue, ctor: &JSValue): bool {
                     return false
                 }
                 JSValue.Native(id) => {
+                    // every object inherits from Object.prototype
+                    if id == NATIVE_OBJECT_CTOR {
+                        return true
+                    }
                     if !st.objects[o].isError {
                         return false
                     }
@@ -3044,7 +3072,10 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, promiseCtor, "resolve", JSValue.Native(NATIVE_PROMISE_RESOLVE))
     objSet(st, promiseCtor, "reject", JSValue.Native(NATIVE_PROMISE_REJECT))
     scopeDefine(st, 0, "Promise", JSValue.Obj(promiseCtor))
-    let objectCtor = newObject(st)
+    // Object's statics live in the property bag that belongs to the native id,
+    // so reading `Object.keys` as a value and calling `Object.keys(o)` both go
+    // through the same place. A standalone object would only serve the call path.
+    let objectCtor = getNativeProps(st, NATIVE_OBJECT_CTOR)
     objSet(st, objectCtor, "defineProperty", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTY))
     objSet(st, objectCtor, "keys", JSValue.Native(NATIVE_OBJECT_KEYS))
     objSet(st, objectCtor, "assign", JSValue.Native(NATIVE_OBJECT_ASSIGN))
@@ -3075,7 +3106,16 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectProto, "isPrototypeOf", makeBoundMethod(st, JSValue.Undefined, "isPrototypeOf"))
     objSet(st, objectProto, "propertyIsEnumerable", makeBoundMethod(st, JSValue.Undefined, "propertyIsEnumerable"))
     objSet(st, objectCtor, "prototype", JSValue.Obj(objectProto))
-    scopeDefine(st, 0, "Object", JSValue.Obj(objectCtor))
+    // Object is itself an object, so it carries the Object.prototype methods.
+    // Code borrows them from the constructor — `Object.hasOwnProperty.call(o, k)`
+    // is a common way to avoid a shadowed own property — and the native's bag
+    // does not inherit, so they are installed explicitly.
+    objSet(st, objectCtor, "hasOwnProperty", makeBoundMethod(st, JSValue.Undefined, "hasOwnProperty"))
+    objSet(st, objectCtor, "isPrototypeOf", makeBoundMethod(st, JSValue.Undefined, "isPrototypeOf"))
+    objSet(st, objectCtor, "propertyIsEnumerable", makeBoundMethod(st, JSValue.Undefined, "propertyIsEnumerable"))
+    objSet(st, objectCtor, "toString", makeBoundMethod(st, JSValue.Undefined, "@@objProtoToString"))
+    objSet(st, objectCtor, "valueOf", makeBoundMethod(st, JSValue.Undefined, "valueOf"))
+    scopeDefine(st, 0, "Object", JSValue.Native(NATIVE_OBJECT_CTOR))
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
     let stringCtorObj = getNativeProps(st, NATIVE_STRING)
     objSet(st, stringCtorObj, "fromCharCode", JSValue.Native(NATIVE_STRING_FROMCHARCODE))
