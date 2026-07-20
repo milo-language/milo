@@ -1,0 +1,4 @@
+return settles: 42
+throw rejects: boom
+await of rejection: caught boom
+allSettled: fulfilled,rejected

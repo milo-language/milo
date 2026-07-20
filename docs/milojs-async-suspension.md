@@ -23,7 +23,7 @@ document, and the document changes first if the plan changes.
 | R1a `await` of a non-thenable yields | not met — deferred, see below; a bare yield bypasses R6 save/restore |
 | R2 suspension is per-activation | core done (`ceb9aea`) — park/wake on a promise; not yet wired to the `await` path |
 | R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
-| R4 settle/reject semantics | not started |
+| R4 settle/reject semantics | done — already held; locked in by `tests/asyncSettleReject.js`, clean under GC stress |
 | R5 existing values unchanged | holds (nothing landed yet) |
 | R6 per-activation execution state | done (`3215822`, corrected `c079770`) — 9 fields, contexts reclaimed by task identity |
 | R7 GC over suspended activations | done (`3215822`) — collect walks parked roots, fixture proves it fails without |
