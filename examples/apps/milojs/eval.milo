@@ -9,7 +9,7 @@ from "./value" import {
     JSValue, i64ToStr
 }
 from "./runtime" import {
-    Interp, Timer, Microtask, Reaction, NATIVE_RESOLVER_BASE, collect, linkProtoConstructor, objHasInChain
+    Interp, Timer, Microtask, Reaction, PendingFetch, NATIVE_RESOLVER_BASE, collect, linkProtoConstructor, objHasInChain
 }
 from "./builtins" import {
     stringMethod, jsCharAt, mjStringifyVal, mjJsonParse, mjJsonOmitted
@@ -28,6 +28,12 @@ from "std/os" import {
 }
 from "std/env" import {
     getEnv
+}
+from "std/runtime" import {
+    _spawnOsThreadDetached
+}
+from "std/sync" import {
+    Channel
 }
 from "std/net" import {
     TcpListener, TcpStream, TlsStream
@@ -1113,6 +1119,9 @@ let NATIVE_PROXY: i64 = 107
 // Object.is — SameValue: like ===, except NaN equals itself and +0 differs
 // from -0. ts-pattern (bundled into prisma's runtime) matches literals with it.
 let NATIVE_OBJECT_IS: i64 = 108
+// __httpFetchAsync(method, url, headersJson, body): runs the request on a worker
+// OS thread and returns a promise the event loop settles with the raw response.
+let NATIVE_HTTP_FETCH_ASYNC: i64 = 109
 let NATIVE_ARRAYBUFFER: i64 = 78
 // the typed-array constructors occupy a contiguous block so the element kind is
 // just (id - NATIVE_TA_BASE); keep in step with the TA_* order in runtime.milo
@@ -1760,6 +1769,47 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             body = toStr(argVals[3])
         }
         return JSValue.Str(doHttpFetch(method, url, headersRaw, body))
+    }
+    if id == NATIVE_HTTP_FETCH_ASYNC {
+        var method = "GET"
+        var url = ""
+        var headersRaw = ""
+        var body = ""
+        if argVals.len() > 0 {
+            method = toStr(argVals[0])
+        }
+        if argVals.len() > 1 {
+            url = toStr(argVals[1])
+        }
+        if argVals.len() > 2 {
+            headersRaw = toStr(argVals[2])
+        }
+        if argVals.len() > 3 {
+            body = toStr(argVals[3])
+        }
+        let p = newPromise(st, 0, JSValue.Undefined)
+        match Channel<string>.new(1) {
+            Result.Ok(ch) => {
+                let chForTask = ch
+                // A real OS thread, not a green task: the interpreter loop runs on
+                // the OS main thread and never parks, so schedulerYield is a no-op
+                // and a green task would never be scheduled. The worker touches
+                // nothing but its own arguments and the channel.
+                _spawnOsThreadDetached(move(): void => {
+                    let r = doHttpFetch(method, url, headersRaw, body)
+                    let _s = chForTask.send(r)
+                }
+                )
+                st.fetches.push(PendingFetch {
+                    promise: p, chan: ch
+                }
+                )
+            }
+            Result.Err(_e) => {
+                settlePromise(st, p, 1, JSValue.Str("Ecannot start request"))
+            }
+        }
+        return JSValue.Obj(p)
     }
     if id == NATIVE_WRITE_FILE {
         if argVals.len() < 2 {
@@ -3100,6 +3150,7 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "__fileExists", JSValue.Native(NATIVE_FILE_EXISTS))
     scopeDefine(st, 0, "__byteLength", JSValue.Native(NATIVE_BYTE_LENGTH))
     scopeDefine(st, 0, "__napiLoad", JSValue.Native(NATIVE_NAPI_LOAD))
+    scopeDefine(st, 0, "__httpFetchAsync", JSValue.Native(NATIVE_HTTP_FETCH_ASYNC))
     let consoleObj = newObject(st)
     objSet(st, consoleObj, "log", JSValue.Native(NATIVE_CONSOLE_LOG))
     objSet(st, consoleObj, "info", JSValue.Native(NATIVE_CONSOLE_LOG))
@@ -3387,7 +3438,10 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                                         // (prisma's query engine) was reported as an
                                         // unsettleable promise the moment it was made.
                                         napiServiceTsfn(st)
-                                        if napiMayDeliver() {
+                                        serviceFetches(st)
+                                        if hasPendingFetches(st) {
+                                            napiWaitBriefly()
+                                        } else if napiMayDeliver() {
                                             napiWaitBriefly()
                                         } else if st.microtasks.len() == 0 {
                                             popTemp(st)
@@ -4507,6 +4561,36 @@ fn symbolDisplay(s: &string): string {
 // Run threadsafe-function calls queued by an addon's own threads, then apply any
 // promise settlements they made. This is the only place a foreign thread's work
 // crosses into the interpreter.
+// Settle any fetch whose worker thread has finished. Called from the event loop
+// and from a blocked await, the same way node-api work is serviced.
+fn serviceFetches(st: &mut Interp) {
+    var i: i64 = 0
+    while i < st.fetches.len() {
+        var done = false
+        var payload = ""
+        match st.fetches[i].chan.tryRecv() {
+            Option.Some(v) => {
+                payload = v
+                done = true
+            }
+            Option.None => {
+            }
+        }
+        if done {
+            let p = st.fetches[i].promise
+            st.fetches[i].chan.destroy()
+            st.fetches.remove(i)
+            settlePromise(st, p, 1, JSValue.Str(payload))
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+fn hasPendingFetches(st: &Interp): bool {
+    return st.fetches.len() > 0
+}
+
 fn napiServiceTsfn(st: &mut Interp) {
     if !napiHasTsfn() {
         return
@@ -4751,6 +4835,7 @@ fn runEventLoop(prog: &Prog, st: &mut Interp) {
         // Deliver anything an addon's worker threads queued. Runs before
         // microtasks so a settlement made off-thread is visible in this turn.
         napiServiceTsfn(st)
+        serviceFetches(st)
         drainMicrotasks(prog, st)
         reportUnhandledRejections(st)
         compactTimers(st)
@@ -4764,6 +4849,9 @@ fn runEventLoop(prog: &Prog, st: &mut Interp) {
             // handled a connection (or found none ready)
         } else if runOneTimer(prog, st) {
             // nothing to serve, so waiting for the next timer is correct
+        } else if hasPendingFetches(st) {
+            // a worker thread owes us a response; sleep rather than spin a core
+            napiWaitBriefly()
         } else if napiHasPendingWork() {
             // an addon still owes us a settlement, and it will arrive on one of its
             // own threads — there is no timer or socket to wait on, so yield briefly

@@ -1,0 +1,6 @@
+1 sync start
+2 sync end
+3 async body runs sync
+4 microtask
+5 queueMicrotask
+6 timeout 0

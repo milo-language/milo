@@ -4,6 +4,77 @@ A JavaScript interpreter written in Milo. Long-term goal: replace the
 JavaScriptCore dependency in `examples/apps/minibun.milo` with a pure-Milo
 engine.
 
+## Node-API: real native addons
+
+milojs implements enough of the Node-API (N-API) C ABI to load and run real
+`.node` addons — compiled shared libraries, not shims. `require("x.node")` and
+`process.dlopen()` both reach the loader, which `dlopen`s the library and calls
+its `napi_register_module_v1` entry point.
+
+The proof case is Prisma. Its query engine is a Rust binary
+(`libquery_engine-darwin-arm64.dylib.node`) that talks to the host through
+threadsafe functions and a tokio worker pool. It loads, connects to sqlite, and
+returns rows:
+
+```
+$ milojs query.js
+connected
+rows: 3
+first: {"id":1,"roadName":"Highway 50","areaName":"IN THE SACRAMENTO VALLEY..."}
+count: 134301
+done
+```
+
+That is the real engine doing real SQL — no emulation of Prisma, and no
+JavaScript reimplementation of the driver.
+
+What this needed beyond the C ABI itself:
+
+- **Threadsafe functions** are ref-counted, and "can still deliver a result"
+  is tracked separately from "keeps the process alive". napi-rs unrefs its own
+  threadsafe functions, so conflating the two either hangs the process after
+  `$disconnect` or kills an in-flight query.
+- **A blocked `await` services node-api work.** An addon settles from its own
+  threads, so there is no timer or microtask to run while it works; without
+  servicing it, `await engine.connect()` looks like a promise nothing will
+  settle.
+- **`await` adopts thenables**, since a query returns a `PrismaPromise` (a
+  plain object with `.then`), not a native promise.
+
+## Running real applications
+
+The engine runs the tahoeroads backend unmodified: Express, tRPC, zod,
+cookie-parser, compression, jsonwebtoken, and Prisma, from the app's own
+`node_modules`.
+
+```
+Will use port 3009
+TahoeRoads server listening at http://localhost:3009
+```
+
+`fetch` is async: the request runs on a worker OS thread and the event loop
+settles a pending promise when the response arrives, so timers keep firing and
+concurrent requests overlap. (A green task does not work here — the interpreter
+loop runs on the OS main thread and never parks, so `schedulerYield` is a no-op
+and a green task would never be scheduled.)
+
+## Known gap: await does not suspend
+
+Milo has no coroutines, so `await` cannot suspend its native frame. Instead the
+event loop is drained in place until the awaited promise settles. Values are
+correct, ordering is not: continuations run earlier than they should.
+
+```js
+async function f() { console.log("A"); await null; console.log("C"); }
+f(); console.log("B");
+// node: A B C      milojs: A C B
+```
+
+Fixing it means running each async activation on its own green task and
+suspending at `await`, which requires the interpreter's "current execution"
+state (throw flag, call depth, temp roots, active scopes, module stack) to
+become per-task rather than global.
+
 ## Stage 1 — tree-walking interpreter
 
 Implements a small JS subset end to end: lexer → AST → evaluator.

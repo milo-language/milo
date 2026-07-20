@@ -8,6 +8,9 @@
 from "std/net" import {
     TcpListener, TcpStream
 }
+from "std/sync" import {
+    Channel
+}
 from "./value" import {
     JSValue, roundHalfAwayFromZero
 }
@@ -183,6 +186,15 @@ struct Prop {
 }
 
 // A pending timer. intervalMs > 0 reschedules after firing (setInterval).
+// An outbound HTTP request running on a worker OS thread. The worker does the
+// blocking connect/TLS/read and hands the raw response back over the channel;
+// the event loop settles `promise` with it. This is what keeps one slow upstream
+// from stalling every other request.
+struct PendingFetch {
+    promise: i64,
+    chan: Channel<string>,
+}
+
 struct Timer {
     id: i64,
     dueMs: f64,
@@ -375,6 +387,8 @@ struct Interp {
     // loaded .node addons, cached by absolute path
     napiAddonPaths: Vec<string>,
     napiAddonExports: Vec<JSValue>,
+    // outbound fetches still in flight
+    fetches: Vec<PendingFetch>,
     // the constructor of the call currently being set up, for new.target
     newTarget: JSValue,
     // module specifiers already reported as unresolvable, to avoid repeats
@@ -418,7 +432,7 @@ var gInterp: Interp = Interp {
     throwing: false, thrownValue: JSValue.Undefined,
     optShort: false,
     rngState: 88172645463325252,
-    allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
+    allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, fetches: Vec.new(), napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
 }
 
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
@@ -1109,6 +1123,11 @@ fn collect(st: &mut Interp) {
     }
     // a listening server is reachable only from this registry
     var hs: i64 = 0
+    var pf: i64 = 0
+    while pf < st.fetches.len() {
+        markObject(st, st.fetches[pf].promise)
+        pf = pf + 1
+    }
     while hs < st.httpServers.len() {
         markObject(st, st.httpServers[hs])
         hs = hs + 1

@@ -403,10 +403,14 @@ function fetch(url, options) {
   }
   var headerRaw = '', hk = Object.keys(hdrs);
   for (var k = 0; k < hk.length; k++) headerRaw += hk[k] + ': ' + hdrs[hk[k]] + '\r\n';
-  return new Promise(function (resolve, reject) {
-    var res = __httpFetch(method, u, headerRaw, body);
-    if (res.length > 0 && res.charAt(0) === 'E') { reject(new Error('fetch failed: ' + res.slice(1) + ' (' + u + ')')); return; }
-    resolve(__fetchParse(res.length > 0 ? res.slice(1) : '', u));
+  // The request runs on a green task: the event loop keeps serving other work
+  // while it is in flight, which is what node does and what the synchronous
+  // native could not do (one slow upstream stalled every other request).
+  return __httpFetchAsync(method, u, headerRaw, body).then(function (res) {
+    if (res.length > 0 && res.charAt(0) === 'E') {
+      throw new Error('fetch failed: ' + res.slice(1) + ' (' + u + ')');
+    }
+    return __fetchParse(res.length > 0 ? res.slice(1) : '', u);
   });
 }
 
