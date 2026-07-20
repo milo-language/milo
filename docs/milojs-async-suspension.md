@@ -19,7 +19,7 @@ document, and the document changes first if the plan changes.
 | `Task.spawnWithStack` for interpreter-sized stacks | done (`5613f78`) |
 | Ordering mechanism (caller parks, body unparks it) | proven, `tests/fixtures/asyncCallOrdering.milo` |
 | R1 async call returns at first await | done in the **runtime** for a pending awaited promise — matches node; 71/71 fixtures, tahoeroads green (0 errors, ~34ms) |
-| R1b same in the engine binary | not met — `milojs-engine` never spawns a green task, so activations never spawn there |
+| R1b same in the engine binary | attempted, **not landed** — ordering becomes correct but one fixture hangs unkillably; see below |
 | R1a `await` of a non-thenable yields | not met — deferred, see below; a bare yield bypasses R6 save/restore |
 | R2 suspension is per-activation | core done (`ceb9aea`) — park/wake on a promise; not yet wired to the `await` path |
 | R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
@@ -241,6 +241,32 @@ while an activation's task body cannot borrow from the frame that spawned it and
 has to reach the program through `gProg` (see
 docs/proposal-task-shared-state.md). Making the engine mirror the runtime means
 moving it onto `gProg` first.
+
+### R1b attempt 1: correct ordering, but a wedged scheduler
+
+Moving the engine onto `gProg` and running the whole program on a green task
+does fix the ordering — the engine matches node on the R1 test. It is still not
+landed, because `microtaskHandlerGcRoot` then **hangs**, and hangs in the worst
+way: the process does not die on SIGTERM, so `timeout` cannot reap it. A wedged
+green scheduler never reaches a point where the signal is handled.
+
+Isolated: the same fixture passes on main's engine (`s5 ok 3`) and hangs on the
+R1b build. It is the fire-and-forget + churn + nested-async shape — the same
+shape that exposed the microtask rooting bug.
+
+Two notes for whoever picks this up:
+
+- Putting only `runEventLoop` on the green task is not enough and looks like it
+  works. An async call spawns an activation only when it is already on a green
+  task, so the program's top level has to run there too. The half version
+  produces correct-looking startup and wrong ordering.
+- An unkillable hang is a worse failure mode than a wrong answer, and the
+  fixture harness has no per-test timeout that survives it. Landing this without
+  fixing that would make one bad build able to wedge CI.
+
+So the engine keeps running on the main thread for now, and R1 stays
+runtime-only. `tests/run.sh` therefore still cannot cover R1 — that gap is real
+and is the reason the R1 ordering fixture is not in the tree.
 
 ## R1a: `await` of a non-thenable does not yield — deferred, with the reason
 
