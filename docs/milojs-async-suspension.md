@@ -18,7 +18,7 @@ document, and the document changes first if the plan changes.
 | Interpreter runs on a green task | done (`530dfe8`) |
 | `Task.spawnWithStack` for interpreter-sized stacks | done (`5613f78`) |
 | Ordering mechanism (caller parks, body unparks it) | proven, `tests/fixtures/asyncCallOrdering.milo` |
-| R1 async call returns at first await | attempted twice, reverted twice — blocked on the pre-existing GC bug below |
+| R1 async call returns at first await | attempted twice, reverted twice; the GC bug that likely caused both is now fixed — ready to retry |
 | R2 suspension is per-activation | core done (`ceb9aea`) — park/wake on a promise; not yet wired to the `await` path |
 | R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
 | R4 settle/reject semantics | not started |
@@ -220,6 +220,36 @@ This matters for the plan of record for two reasons:
 2. It shows the async fixtures are the wrong shape. They are small, symmetric
    and allocation-light; the app is none of those. R5 ("existing values
    unchanged") is satisfied by tests that cannot see this class of bug.
+
+## A pre-existing GC bug found underneath this work — fixed
+
+Building an app-shaped test for R1 surfaced a bug with nothing to do with
+suspension: it reproduced on committed main with none of this work involved.
+Fixed in 4cf6ebd; fixture `examples/apps/milojs/tests/microtaskHandlerGcRoot.js`.
+
+`drainMicrotasks` pops a queue entry into locals before invoking it. Once
+popped, the entry roots nothing — but only `arg` and `derived` were pushed as
+temp roots. The handler itself was unrooted for exactly the duration of the
+call that runs user code and can collect. A collection during the handler freed
+the scope that handler had captured, and it resumed with its closure variables
+gone.
+
+The symptom was a `ReferenceError` naming a variable that appears nowhere in
+the running program — `out`, the accumulator inside the prelude's self-hosted
+`Promise.all`.
+
+Two consequences for this plan:
+
+1. It is the **same failure class** as the `ReferenceError: value is not
+   defined` both R1 attempts produced from the app, so some of what was
+   attributed to R1 was this. R1 is no longer blocked; retry it from
+   `stash@{0}` against a build that has this fix.
+2. It shows the async fixtures were the wrong shape. The repro needs nested
+   async calls, a fire-and-forget call whose promise nobody holds, and enough
+   allocation to collect — any one alone passes. R5 ("existing values
+   unchanged") was being satisfied by tests structurally unable to see this
+   class of bug. New async work needs at least one fixture with all three
+   properties.
 
 ## Risks
 
