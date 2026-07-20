@@ -3483,7 +3483,16 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                                     drainMicrotasks(prog, st)
                                 } else {
                                     compactTimers(st)
-                                    if !runOneTimer(prog, st) {
+                                    // Only timers that are ALREADY due: runOneTimer
+                                    // sleeps until the earliest timer fires, which is
+                                    // right for an idle event loop but not here. A
+                                    // blocked await is waiting on a worker thread or
+                                    // an addon that can answer at any moment, so
+                                    // sleeping through a far-future timer made the
+                                    // await take that timer's delay — a request that
+                                    // fetched in a second took 32s behind a 30s cache
+                                    // timer.
+                                    if !runDueTimer(prog, st) {
                                         // A node-api addon settles from its own threads,
                                         // so there is no timer or microtask to run while
                                         // it works — this await is waiting on exactly
@@ -3495,6 +3504,14 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                                         if hasPendingFetches(st) {
                                             napiWaitBriefly()
                                         } else if napiMayDeliver() {
+                                            napiWaitBriefly()
+                                        } else if earliestTimer(st) >= 0 {
+                                            // A timer will fire eventually — very
+                                            // likely the one that settles this await.
+                                            // Wait in slices rather than sleeping to
+                                            // its due time, so a worker thread or an
+                                            // addon that answers sooner is still
+                                            // picked up promptly.
                                             napiWaitBriefly()
                                         } else if st.microtasks.len() == 0 {
                                             popTemp(st)
