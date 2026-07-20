@@ -18,7 +18,7 @@ document, and the document changes first if the plan changes.
 | Interpreter runs on a green task | done (`530dfe8`) |
 | `Task.spawnWithStack` for interpreter-sized stacks | done (`5613f78`) |
 | Ordering mechanism (caller parks, body unparks it) | proven, `tests/fixtures/asyncCallOrdering.milo` |
-| R1 async call returns at first await | not started |
+| R1 async call returns at first await | attempted, reverted — see "R1: what went wrong" |
 | R2 suspension is per-activation | core done (`ceb9aea`) — park/wake on a promise; not yet wired to the `await` path |
 | R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
 | R4 settle/reject semantics | not started |
@@ -53,8 +53,13 @@ R3. Settling a promise resumes every activation awaiting it, in the order they
 R4. An async body that returns settles its promise with the value; one that
     throws rejects it. `await` on a rejected promise throws at the await site.
 R5. Values are unchanged from today. Only ordering and liveness change.
-R6. A suspended activation holds its state: locals, the JS call stack, the
-    pending throw, and the module it belongs to.
+R6. No interpreter state is ambient across a suspension point. A suspended
+    activation holds everything describing its own execution — locals, the JS
+    call stack, the pending throw, the module it belongs to — and inherits
+    nothing from whoever ran in between. The set of such state must be
+    established by going through the Interp struct field by field, not from
+    memory: an omission does not fail loudly, it corrupts an unrelated
+    activation.
 R7. Nothing reachable from a suspended activation is collected while it is
     suspended.
 R8. A promise nobody can ever settle must still be reported rather than hanging
@@ -142,6 +147,33 @@ which is why `gInterp` was already built this way. But it is worth naming as a
 recurring cost: anything in Milo that needs long-lived state shared across tasks
 lands in the same place. If Milo ever grows a way to express shared ownership,
 this is the first thing that should change.
+
+## R1: what went wrong
+
+An implementation was written and reverted (stashed as `wip-r1-async-activations`).
+It worked in isolation — the barrier repro that deadlocks under the old engine
+printed `BOTH: ["done1","done2"]`, matching node, and held up under
+`MILOJS_GC_THRESHOLD=1` — but running the tahoeroads app produced
+`ReferenceError: value is not defined` and then stalls.
+
+The failure says an activation's execution is not fully isolated from its
+caller's. R6 named seven fields to move per-activation. That list was assembled
+by reading the code, and the symptom says it is incomplete: `newTarget` is
+ambient too, `callDepth` is a proxy for a native stack that a copy does not
+capture, and the event loop's ordering between the main task and activations is
+not pinned by any requirement.
+
+Rooting was part of it and is now understood: an activation's closure env,
+arguments and `this` are reachable only from the spawned task's closure until
+the body binds them, so a collection in that window frees them. That fix is in
+the stash and works. It was not sufficient.
+
+**R6 is therefore revised.** It is not "save these seven fields" but "no
+interpreter state is ambient across a suspension point". The next attempt should
+start by enumerating every `Interp` field and classifying it as per-activation,
+global, or provably irrelevant — and the enumeration should be checked against
+the struct rather than assembled from memory, so it cannot silently miss one.
+Patching symptoms as they appear is the wrong shape of work here.
 
 ## Risks
 
