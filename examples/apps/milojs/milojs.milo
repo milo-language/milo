@@ -19,6 +19,9 @@ from "std/string" import {
 from "std/environ" import {
     envVars
 }
+from "std/runtime" import {
+    Task
+}
 from "std/os" import {
     getpid
 }
@@ -315,9 +318,12 @@ fn main(): i32 {
         hoistBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
         execBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
     }
-    runModule(prog, entryIdx, gInterp)
-    // the entry module only schedules work; the loop is what keeps a server alive
-    runEventLoop(prog, gInterp)
+    let interpTask = Task.spawnWithStack(move(): void => {
+        runModule(prog, entryIdx, gInterp)
+        runEventLoop(prog, gInterp)
+    }
+    , 8388608)
+    interpTask.join()
     if gInterp.throwing {
         eprint("Uncaught " + describeThrown(gInterp, gInterp.thrownValue))
         return 1
