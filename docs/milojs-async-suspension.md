@@ -19,8 +19,8 @@ document, and the document changes first if the plan changes.
 | `Task.spawnWithStack` for interpreter-sized stacks | done (`5613f78`) |
 | Ordering mechanism (caller parks, body unparks it) | proven, `tests/fixtures/asyncCallOrdering.milo` |
 | R1 async call returns at first await | not started |
-| R2 suspension is per-activation | not started |
-| R3 resume order | not started |
+| R2 suspension is per-activation | core done (`ceb9aea`) — park/wake on a promise; not yet wired to the `await` path |
+| R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
 | R4 settle/reject semantics | not started |
 | R5 existing values unchanged | holds (nothing landed yet) |
 | R6 per-activation execution state | done (`3215822`) — ExecCtx + save/restore |
