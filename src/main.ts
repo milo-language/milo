@@ -243,6 +243,14 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
   const san = sanitize ? " -fsanitize=address" : "";
   // Empty when the target is the host, so the common path is unchanged.
   const tgt = target ? clangTargetFlags(target) : "";
+  // On Linux a dlopen'd library resolves a callback into the host (std/dl's
+  // `probe`) only if the host exported its symbols into the dynamic table.
+  // ELF hides them by default, so without -rdynamic the callback fails with
+  // "undefined symbol". Mach-O exports them anyway, so macOS never needed it.
+  // -ldl for dlopen itself (a harmless no-op on glibc >= 2.34 where it folds
+  // into libc). Host/target-aware so a cross-compile to Linux gets it too.
+  const targetIsLinux = target ? target.os === "linux" : process.platform === "linux";
+  const linuxLink = targetIsLinux ? " -rdynamic -ldl" : "";
   if (tc.kind === "clang") {
     const opt = optFlag ? ` ${optFlag}` : "";
     // Mach-O keeps DWARF in the .o and references it from the executable via a debug
@@ -266,7 +274,7 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
       // without this the link fails with `undefined reference to 'floor'` for
       // any program that reaches those paths (the llc+cc branch already passes
       // it). Harmless on macOS where libm is always present.
-      execSync(`${tc.path}${tgt}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra} -lm`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`${tc.path}${tgt}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra} -lm${linuxLink}`, { stdio: ["pipe", "pipe", "pipe"] });
     }
   } else {
     if (sanitize) {
@@ -277,7 +285,7 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
     const opt = optFlag || "-O2";
     try {
       execSync(`llc -filetype=obj ${opt} ${llFile} -o ${tmpObj}`, { stdio: ["pipe", "pipe", "pipe"] });
-      execSync(`cc ${tmpObj} -o ${outFile}${libs}${extra} -lm`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`cc ${tmpObj} -o ${outFile}${libs}${extra} -lm${linuxLink}`, { stdio: ["pipe", "pipe", "pipe"] });
     } finally {
       try { unlinkSync(tmpObj); } catch {}
     }
