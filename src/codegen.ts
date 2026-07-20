@@ -1121,13 +1121,6 @@ export class Codegen {
     if (this.needsRangeCheck) {
       this.output.splice(1, 0, `@.range_err = private unnamed_addr constant [44 x i8] c"runtime error: value out of range at %s:%d\\0A\\00"`);
     }
-    if (this.hasHashMapType)
-      this.output.splice(1, 0, `%HashMap = type { ptr, i64, i64, i64 }`);
-    if (this.hasVecType)
-      this.output.splice(1, 0, `%Vec = type { ptr, i64, i64 }`);
-    if (this.hasStringType)
-      this.output.splice(1, 0, `%String = type { ptr, i64, i64 }`);
-
     // always emit argc/argv globals since main stores to them
     this.output.splice(1, 0, "@_milo_argv_global = internal global ptr null");
     this.output.splice(1, 0, "@_milo_argc_global = internal global i32 0");
@@ -1179,6 +1172,20 @@ export class Codegen {
         this.output.splice(1, 0, `%${name} = type { i32 }`);
       }
     }
+
+    // Builtin struct types LAST, so these splice(1,0) land them at the very
+    // front of the module — ahead of every global. A module global initialized
+    // with `%String zeroinitializer` needs %String already defined (sized) at
+    // that point; emitting these earlier put them after the globals loop above,
+    // so `@gLog = internal global %String zeroinitializer` referenced an as-yet
+    // opaque %String and clang rejected it ("invalid type for null constant").
+    // The failure was order-dependent, hence intermittent across builds.
+    if (this.hasHashMapType)
+      this.output.splice(1, 0, `%HashMap = type { ptr, i64, i64, i64 }`);
+    if (this.hasVecType)
+      this.output.splice(1, 0, `%Vec = type { ptr, i64, i64 }`);
+    if (this.hasStringType)
+      this.output.splice(1, 0, `%String = type { ptr, i64, i64 }`);
 
     // insert extern declarations
     for (const ext of externs) {
