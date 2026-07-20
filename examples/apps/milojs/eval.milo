@@ -3420,6 +3420,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             let awaitDeadline = (epochMillis() as f64) + st.awaitBudgetMs
                             var spins: i64 = 0
                             while st.objects[po].promiseState == 0 && !st.throwing {
+                                // Service off-thread work on EVERY iteration, not
+                                // only when no timer is runnable: an app with a
+                                // live interval always has a timer to run, so a
+                                // response delivered by a worker thread was never
+                                // picked up and the await ran out its budget.
+                                serviceFetches(st)
                                 if (epochMillis() as f64) > awaitDeadline {
                                     popTemp(st)
                                     st.throwing = true
