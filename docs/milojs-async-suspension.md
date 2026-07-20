@@ -1,8 +1,31 @@
+<!-- doc-meta
+system: milojs-async-suspension
+purpose: plan of record for making await suspend in milojs — requirements, design, per-requirement status, and test plan
+key-files: examples/apps/milojs/eval.milo, examples/apps/milojs/runtime.milo, std/runtime.milo, tests/fixtures/asyncCallOrdering.milo
+update-when: a requirement is implemented, dropped, or revised, or the suspension mechanism changes
+last-verified: 2026-07-20
+-->
+
 # milojs: await suspension
 
-Status: design agreed, not implemented. Ordering mechanism proven by
-`tests/fixtures/asyncCallOrdering.milo`; the interpreter already runs on a green
-task (`530dfe8`).
+This is the **plan of record**: work on await suspension implements this
+document, and the document changes first if the plan changes.
+
+## Status
+
+| item | state |
+|------|-------|
+| Interpreter runs on a green task | done (`530dfe8`) |
+| `Task.spawnWithStack` for interpreter-sized stacks | done (`5613f78`) |
+| Ordering mechanism (caller parks, body unparks it) | proven, `tests/fixtures/asyncCallOrdering.milo` |
+| R1 async call returns at first await | not started |
+| R2 suspension is per-activation | not started |
+| R3 resume order | not started |
+| R4 settle/reject semantics | not started |
+| R5 existing values unchanged | holds (nothing landed yet) |
+| R6 per-activation execution state | not started |
+| R7 GC over suspended activations | not started |
+| R8 unsettleable promise still reported | holds today, must survive |
 
 ## Why
 

@@ -1,0 +1,51 @@
+// @expect: body-start caller-continues body-resumed
+
+// The ordering an async call needs, expressed with green tasks: JS runs an
+// async body synchronously up to its first `await`, and only then does the call
+// return to the caller.
+//
+// Task.spawn alone will not do it — a queued task does not start until the next
+// scheduler turn, so the caller would run first. Park and unpark are enough:
+// the caller spawns the body then parks, and the body unparks the caller at its
+// first suspension point before parking itself. No scheduler primitive is
+// needed, which is what keeps await suspension inside milojs rather than in the
+// task struct that channels, select and net all share.
+from "std/runtime" import {
+    Task, schedulerCurrent, schedulerPark, schedulerUnpark
+}
+
+var gLog: string = ""
+
+fn note(s: string): void {
+    gLog = gLog + s + " "
+}
+
+fn taskPtr(t: Task): *u8 {
+    return t._ptr
+}
+
+fn callAsyncLike(): void {
+    let caller = schedulerCurrent()
+    let child = Task.spawnWithStack(move(): void => {
+        note("body-start")
+        // the first `await`: hand control back, then suspend
+        schedulerUnpark(caller)
+        schedulerPark()
+        note("body-resumed")
+    }
+    , 1048576)
+    schedulerPark()
+    note("caller-continues")
+    schedulerUnpark(taskPtr(child))
+    child.join()
+}
+
+fn main(): i32 {
+    let t = Task.spawnWithStack(move(): void => {
+        callAsyncLike()
+    }
+    , 1048576)
+    t.join()
+    print(gLog.trim())
+    return 0
+}
