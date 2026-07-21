@@ -13,7 +13,7 @@
       <img class="lab-mascot" :src="base + 'mascot.svg'" alt="Milo the lab dog" width="72" height="72" />
       <div class="kicker">Interactive · runs in your browser</div>
       <h2 class="title">Learn Milo by running it</h2>
-      <p class="sub">{{ concepts.length }} short programs, each editable and live. Or jump to the Sandbox and write your own — same real compiler, no install.</p>
+      <p class="sub">Try Milo in your browser! Milo has multiple backends — it builds native binaries, and also JavaScript to run right here in your browser.</p>
     </div>
 
     <!-- rail: Sandbox (free play) first, then the 10 lessons -->
