@@ -1,7 +1,7 @@
 // std/net — TCP, DNS, HTTP client with automatic cleanup
 
 from "std/os" import {
-    signal, SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl, SSL_free, SSL_get_verify_result, SSL_new, SSL_set1_host, SSL_set_fd, TLS_client_method, acceptFd, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd, connectFdIn6, bindIn6, inet_pton
+    signal, SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl, SSL_free, SSL_get_verify_result, SSL_new, SSL_set1_host, SSL_set_fd, TLS_client_method, acceptFd, acceptFdNb, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd, connectFdIn6, bindIn6, inet_pton
 }
 from "std/platform" import {
     SockAddrIn, addrinfoAddrOffset, makeSockaddr, solSocket, soReuseaddr, makeSockaddr6, afInet6
@@ -303,6 +303,21 @@ impl TcpListener {
         let clientFd = acceptFd(self.fd)
         if clientFd < 0 {
             return Result.Err(NetError.ConnectionFailed("accept() failed"))
+        }
+        return Result.Ok(TcpStream {
+            fd: clientFd
+        }
+        )
+    }
+
+    // Accept without parking: Ok(stream) only when a connection is already
+    // pending, Err otherwise. For callers that multiplex accept with other
+    // event sources — accept() parks the calling task on the listener, which
+    // stalls everything else that task drives until a client connects.
+    fn acceptNb(self: &Self): Result<TcpStream, NetError> {
+        let clientFd = acceptFdNb(self.fd)
+        if clientFd < 0 {
+            return Result.Err(NetError.ConnectionFailed("no pending connection"))
         }
         return Result.Ok(TcpStream {
             fd: clientFd

@@ -12,6 +12,17 @@ Accept one connection; returns the client fd (<0 on error). In a green task
 the client fd is left nonblocking so later readFd/writeFd calls skip a
 redundant fcntl round-trip.
 
+### `acceptFdNb`
+
+```milo
+fn acceptFdNb(fd: i32): i32
+```
+
+Single-shot nonblocking accept: the client fd, or -1 when no connection is
+pending. For event loops that multiplex accept with other work and must not
+park on the listener — a blocking accept stops every other event source
+until the next connection arrives (milojs's cold-fetch hang).
+
 ### `bindIn`
 
 ```milo

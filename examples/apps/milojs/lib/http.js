@@ -227,9 +227,12 @@ Server.prototype.close = function (cb) {
   return this;
 };
 
-// Accept one connection and run the handler. Called by the event loop.
-Server.prototype._serveOnce = function () {
-  var connId = __tcpAccept(this._listenerId);
+// Accept one connection and run the handler. Called by the event loop, which
+// passes mayBlock=true only when it is idle enough to park on the listener —
+// a blocking accept stalls timers/microtasks/fetch servicing until the next
+// connection, so it must never happen while other work is pending.
+Server.prototype._serveOnce = function (mayBlock) {
+  var connId = __tcpAccept(this._listenerId, mayBlock);
   if (connId < 0) return false;
   var raw = __tcpRecv(connId);
   if (!raw || raw.length === 0) { __tcpClose(connId); return true; }

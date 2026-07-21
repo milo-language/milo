@@ -288,6 +288,17 @@ Accept one connection. Inside the green scheduler this yields (via the
 event loop) until a client is ready rather than blocking the whole
 runtime; outside it, it blocks.
 
+### `TcpListener.acceptNb`
+
+```milo
+fn TcpListener.acceptNb(self: &TcpListener): Result<TcpStream, NetError>
+```
+
+Accept without parking: Ok(stream) only when a connection is already
+pending, Err otherwise. For callers that multiplex accept with other
+event sources — accept() parks the calling task on the listener, which
+stalls everything else that task drives until a client connects.
+
 ### `TcpListener.bind`
 
 ```milo

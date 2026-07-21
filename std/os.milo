@@ -441,6 +441,21 @@ fn acceptFd(fd: i32): i32 {
     return -1
 }
 
+// Single-shot nonblocking accept: the client fd, or -1 when no connection is
+// pending. For event loops that multiplex accept with other work and must not
+// park on the listener — a blocking accept stops every other event source
+// until the next connection arrives (milojs's cold-fetch hang).
+fn acceptFdNb(fd: i32): i32 {
+    setNonblocking(fd)
+    var clientAddr = makeZeroedSockaddrStorage()
+    var addrlen: u32 = sockAddrStorageLen()
+    let clientFd = accept(fd, clientAddr, addrlen)
+    if clientFd >= 0 {
+        setNonblocking(clientFd)
+    }
+    return clientFd
+}
+
 // connect(2). In a green task: nonblocking connect, park until writable,
 // then check SO_ERROR. Returns 0 on success, <0 on failure.
 // Green-aware connect. Takes the raw seam so it serves every family; the per-family

@@ -1644,15 +1644,36 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
     }
     if id == NATIVE_TCP_ACCEPT {
-        // blocking: the event loop only calls this when nothing else is runnable
+        // Nonblocking by default: a blocking accept parks the event-loop task on
+        // the listener, which stalls timers, microtasks and fetch servicing until
+        // the NEXT connection arrives — with R1 activations that wedged every
+        // request whose completion needed the loop (the cold-fetch hang). The
+        // second argument opts back into the blocking accept; serveHttpOnce sets
+        // it only when the loop is verifiably idle.
         var idx: i64 = 0
         if argVals.len() > 0 {
             idx = toNum(argVals[0]) as i64
         }
+        var mayBlock = false
+        if argVals.len() > 1 {
+            mayBlock = truthy(argVals[1])
+        }
         if idx < 0 || idx >= st.listeners.len() {
             return JSValue.Number(0.0 - 1.0)
         }
-        match st.listeners[idx].accept() {
+        if mayBlock {
+            match st.listeners[idx].accept() {
+                Result.Ok(conn) => {
+                    st.conns.push(conn)
+                    st.connOpen.push(true)
+                    return JSValue.Number((st.conns.len() - 1) as f64)
+                }
+                Result.Err(_e) => {
+                    return JSValue.Number(0.0 - 1.0)
+                }
+            }
+        }
+        match st.listeners[idx].acceptNb() {
             Result.Ok(conn) => {
                 st.conns.push(conn)
                 st.connOpen.push(true)
@@ -1700,7 +1721,16 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             idx = toNum(argVals[0]) as i64
         }
         if idx >= 0 && idx < st.connOpen.len() {
-            // the stream's Drop closes the fd when the slot is overwritten
+            if st.connOpen[idx] {
+                // Overwrite the slot so the stream's Drop closes the fd NOW.
+                // Slots are append-only, so "closed when the slot is reused"
+                // meant never: the peer waiting for EOF (a reader draining to
+                // connection-close, e.g. our own doHttpFetch) blocked forever,
+                // and every served request leaked an fd. fd 0 drops as a no-op.
+                st.conns[idx] = TcpStream {
+                    fd: 0
+                }
+            }
             st.connOpen[idx] = false
         }
         return JSValue.Undefined
@@ -3494,20 +3524,34 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             // Pending. On an activation task this suspends properly:
                             // the task parks and the settle wakes it, so other
                             // activations and the event loop keep running (R2).
+                            //
+                            // Root the awaited promise for the whole park: the temp
+                            // rides in the saved ExecCtx that collect marks. Without
+                            // this the promise (often an activation's own promise,
+                            // referenced from nothing else) was swept mid-park — its
+                            // settle then hit a recycled slot and was silently
+                            // dropped, wedging the awaiter forever. Worse, the old
+                            // popTemp here had NO matching push, so each park stole
+                            // an unrelated live temp root from the resumed
+                            // activation — that unrooted objects at random under
+                            // concurrent fetches ("json is not a function").
+                            pushTemp(st, JSValue.Obj(po))
                             if parkOnPromise(st, po) {
-                                popTemp(st)
                                 let ps2 = st.objects[po].promiseState
                                 let pv2 = cloneValue(st.objects[po].promiseValue)
                                 if ps2 == 2 {
+                                    popTemp(st)
                                     markRejectHandled(st, po)
                                     st.throwing = true
                                     st.thrownValue = pv2
                                     return JSValue.Undefined
                                 }
                                 if ps2 == 1 {
+                                    popTemp(st)
                                     return pv2
                                 }
-                                pushTemp(st, JSValue.Obj(po))
+                                // still pending (spurious wake): keep the temp and
+                                // fall through to the drain, which pops on exit
                             }
                             // On the main task there is nowhere to suspend to — it
                             // runs the event loop — so the loop is drained in place
@@ -3516,9 +3560,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             // awaiting function resumes — but the value flow is correct.
                             // If nothing is runnable the await can never complete, which
                             // is a deadlock and is reported as one.
-                            // the promise may be a temporary (await new Promise(...)),
-                            // reachable from nothing while the drain runs user code
-                            pushTemp(st, JSValue.Obj(po))
+                            // (the temp root pushed above stays live for the drain: the
+                            // promise may be a temporary reachable from nothing while
+                            // the drain runs user code)
                             // Budget: an unrelated interval keeps the loop runnable
                             // forever, so "nothing runnable" alone cannot detect a stuck
                             // await — the tahoeroads bundle hung silently for exactly
@@ -4842,6 +4886,7 @@ fn endActivation(st: &mut Interp) {
             st.actEnv.remove(i)
             st.actArgs.remove(i)
             st.actThis.remove(i)
+            st.actPromise.remove(i)
             return
         }
         i = i + 1
@@ -4907,12 +4952,22 @@ fn spawnActivation(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSVal
     st.actEnv.push(envIdx)
     st.actArgs.push(rootedArgs)
     st.actThis.push(rootedThis)
+    st.actPromise.push(p)
+    // Root the activation's promise across the park: until this task resumes
+    // and its caller binds the returned value, `p` is held only by native
+    // locals and the body closure — neither is a GC root — so a collect while
+    // the body runs sweeps it and recycles the slot. Observed as awaits
+    // resolving with foreign values ("json is not a function") or never
+    // (reaction list wiped on reuse) under concurrent fetches. Pushed before
+    // saveExecCtx so it rides in the suspended ctx that collect marks.
+    pushTemp(st, JSValue.Obj(p))
     // the body runs while this task is parked; it unparks us at its first await
     let ctx = saveExecCtx(st)
     st.suspended.push(ctx)
     st.suspendedTask.push(caller)
     schedulerPark()
     resumeExecCtx(st, caller)
+    popTemp(st)
     return JSValue.Obj(p)
 }
 
@@ -5248,22 +5303,30 @@ fn runEventLoop(prog: &Prog, st: &mut Interp) {
         if runDueTimer(prog, st) {
             // ran one; loop round
         } else if serveHttpOnce(prog, st) {
-            // handled a connection (or found none ready)
+            // handled a connection
         } else if st.actTask.len() > 0 && schedulerYieldedToActivation(st) {
             // An activation woken by a settle is runnable now. Yield to it before
             // sleeping on a timer: runOneTimer sleeps until the earliest timer is
             // due, so a far-future timer would otherwise fire long before an
             // activation that is ready right now.
-        } else if runOneTimer(prog, st) {
-            // nothing to serve, so waiting for the next timer is correct
         } else if hasPendingFetches(st) {
-            // a worker thread owes us a response; sleep rather than spin a core
+            // A worker thread owes us a response; sleep rather than spin a core.
+            // Checked BEFORE runOneTimer: serveHttpOnce no longer swallows this
+            // branch, and runOneTimer sleeps to the next due timer — behind a
+            // far-future timer the fetch would sit delivered but unserviced.
             napiWaitBriefly()
         } else if napiHasPendingWork() {
             // an addon still owes us a settlement, and it will arrive on one of its
             // own threads — there is no timer or socket to wait on, so yield briefly
             // rather than spinning a core while the worker finishes.
             napiWaitBriefly()
+        } else if st.httpServers.len() > 0 {
+            // A listener with nothing pending, but the loop was not idle enough
+            // for a blocking accept (live activations or an armed timer). Sleep a
+            // slice and re-probe; due timers are caught at the top of the loop.
+            sleepMs(1)
+        } else if runOneTimer(prog, st) {
+            // nothing to serve, so waiting for the next timer is correct
         } else if st.actTask.len() > 0 {
             // activations are still live; their continuations are real work, so
             // exiting here would drop them on the floor
@@ -5287,19 +5350,31 @@ fn runDueTimer(prog: &Prog, st: &mut Interp): bool {
 }
 
 // Ask each registered http server to accept and handle one connection. Returns
-// false when no server is listening.
+// true only when a connection was actually handled, so the event loop can tell
+// a served request apart from an idle listener.
 fn serveHttpOnce(prog: &Prog, st: &mut Interp): bool {
     if st.httpServers.len() == 0 {
         return false
     }
+    // A blocking accept is only safe when nothing else needs the loop: any live
+    // activation, in-flight fetch, queued microtask, pending addon settlement or
+    // armed timer must keep being serviced, and a park on the listener stops all
+    // of them until the next connection arrives. That park was the cold-fetch
+    // hang: a request whose handler awaited an upstream fetch parked, the loop
+    // re-entered accept, and the response sat unserviced in its channel forever.
+    let mayBlock = st.httpServers.len() == 1 && st.actTask.len() == 0 && st.fetches.len() == 0 && st.microtasks.len() == 0 && earliestTimer(st) < 0 && !napiHasPendingWork()
+    var handled = false
     var i: i64 = 0
     while i < st.httpServers.len() {
         let so = st.httpServers[i]
         if so >= 0 {
             let server = JSValue.Obj(so)
-            var noArgs: Vec<JSValue> = Vec.new()
-            let r = callMemberValue(prog, server, "_serveOnce", noArgs, st)
-            let _ = r
+            var args: Vec<JSValue> = Vec.new()
+            args.push(JSValue.Bool(mayBlock))
+            let r = callMemberValue(prog, server, "_serveOnce", args, st)
+            if truthy(r) {
+                handled = true
+            }
             if st.throwing {
                 eprint("Uncaught (in request handler) " + describeThrownValue(st, st.thrownValue))
                 st.throwing = false
@@ -5314,8 +5389,10 @@ fn serveHttpOnce(prog: &Prog, st: &mut Interp): bool {
     // barely moves for a few huge strings, so without this the heap grows
     // unbounded across requests (observed: ~30 MB/request to >1 GB). This request
     // boundary is a safe collection point: nothing is in flight on the eval stack.
-    collect(st)
-    return true
+    if handled {
+        collect(st)
+    }
+    return handled
 }
 
 // Call a method on an object with already-evaluated arguments.
