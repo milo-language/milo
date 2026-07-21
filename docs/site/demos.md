@@ -18,13 +18,19 @@ Three retro-console cores. Same Milo source runs two ways: native binary on desk
 
 Cycle-stepped 6502, PPU, and APU with DMC audio and multiple mappers. Ships six free homebrew games playable in one click: **Blade Buster**, **Battle Kid**, **Super PakPak**, **Sir Ababol**, **Lawn Mower**, **Mad Wizard**. Drag in your own `.nes` ROM to play anything else.
 
+![Super Mario Bros. 3 running on the Milo NES emulator](/showcase/nes.png)
+
 ### <a href="/milo/genesis/" target="_self">Genesis / Mega Drive</a>
 
 Motorola 68000 + Z80 dual-CPU core with the VDP graphics processor and FM/PSG audio. Preset homebrew: **Headship**, **Astro Perdido**, **Gravity Pig**, **Dragon's Castle**. Accepts `.md` / `.bin` / `.gen` / `.smd` ROMs.
 
+![Sonic the Hedgehog running on the Milo Genesis emulator](/showcase/genesis.png)
+
 ### <a href="/milo/snes/" target="_self">SNES</a>
 
 65C816 CPU plus the SNES PPU, including a Super FX (GSU) coprocessor core. Plays Super Mario World and Donkey Kong Country; Star Fox boots with GSU-rendered 3D. Load an `.sfc` / `.smc` ROM.
+
+![Super Mario World running on the Milo SNES emulator](/showcase/snes.png)
 
 > All three run natively too: `examples/apps/arcade.sh <rom>` builds the right core with SDL video, audio, and input. [`examples/apps/retro/`](https://github.com/cs01/milo/tree/main/examples/apps/retro) turns them into a Raspberry Pi couch console with a gamepad-driven menu.
 

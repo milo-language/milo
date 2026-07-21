@@ -184,6 +184,7 @@
 .cat-dev  { --cat: #3b82f6; }
 .cat-web  { --cat: #0d9488; }
 .cat-term { --cat: #ec4899; }
+.cat-crypto { --cat: #16a34a; }
 .tile-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -202,27 +203,24 @@
   background: color-mix(in srgb, var(--cat, transparent) 7%, var(--vp-c-bg-soft));
   text-decoration: none !important;
   overflow: hidden;
-  transition: transform .22s cubic-bezier(.34, 1.56, .64, 1),
-              border-color .18s ease, box-shadow .18s ease;
 }
-/* CRT-style sheen sweep on hover */
-.tile::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.09) 50%, transparent 60%);
-  transform: translateX(-110%);
-  pointer-events: none;
-}
+/* static hover highlight — no motion */
 .tile:hover {
-  transform: translateY(-4px) scale(1.03);
   border-color: var(--cat, var(--vp-c-brand-1));
-  box-shadow: 0 0 0 1px var(--cat, var(--vp-c-brand-1)),
-              0 14px 40px -8px color-mix(in srgb, var(--cat, var(--vp-c-brand-1)) 45%, transparent);
+  box-shadow: 0 0 0 1px var(--cat, var(--vp-c-brand-1));
 }
-.tile:hover::after {
-  transform: translateX(110%);
-  transition: transform .55s ease;
+/* no external-link arrow icon on the tiles */
+.tile .vp-external-link-icon { display: none !important; }
+/* screenshot header — bleeds to the tile edges, sits under the accent border */
+.tile-img {
+  display: block;
+  width: calc(100% + 2.2rem);
+  margin: -1.1rem -1.1rem 0.6rem;
+  height: 132px;
+  object-fit: cover;
+  object-position: center top;
+  background: var(--vp-c-bg);
+  border-bottom: 1px solid var(--vp-c-divider);
 }
 .tile h3 {
   margin: 0;
@@ -240,6 +238,46 @@
   font-size: 0.82rem;
   line-height: 1.45;
   text-align: left;
+}
+/* tech-stack chips: what this project stresses in the language/stdlib */
+.tile-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: auto; /* pin to the bottom so chips align across a row */
+  padding-top: 0.6rem;
+}
+.tile-tags span {
+  font-family: var(--milo-display);
+  font-size: 0.6rem;
+  letter-spacing: 0.02em;
+  color: var(--vp-c-text-3);
+  padding: 0.08rem 0.35rem;
+  border: 1px solid color-mix(in srgb, var(--cat, var(--vp-c-divider)) 30%, var(--vp-c-divider));
+  border-radius: 3px;
+  white-space: nowrap;
+}
+/* copy-the-run-command chip */
+.tile-copy {
+  display: block;
+  margin-top: 0.6rem;
+  font-family: var(--milo-display);
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  color: var(--vp-c-text-2);
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--cat, var(--vp-c-divider)) 40%, var(--vp-c-divider));
+  border-radius: 3px;
+  padding: 0.32rem 0.4rem;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+}
+.tile-copy:hover,
+.tile-copy.copied {
+  color: var(--cat, var(--vp-c-brand-1));
+  border-color: var(--cat, var(--vp-c-brand-1));
+  border-style: solid;
 }
 .tile-play {
   position: absolute;

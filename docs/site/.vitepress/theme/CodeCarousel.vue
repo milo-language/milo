@@ -1,11 +1,5 @@
 <template>
-  <div
-    class="cc"
-    @mouseenter="pause"
-    @mouseleave="resume"
-    @focusin="pause"
-    @focusout="resume"
-  >
+  <div class="cc">
     <div class="cc-tabs" role="tablist">
       <button
         v-for="(t, i) in titles"
@@ -29,27 +23,22 @@
       <slot />
     </div>
 
-    <p class="cc-caption">{{ captions[current] }}</p>
+    <p v-if="captions[current]" class="cc-caption">{{ captions[current] }}</p>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 
-const props = defineProps({
+defineProps({
   titles: { type: Array, required: true },
   subtitles: { type: Array, default: () => [] },
   captions: { type: Array, default: () => [] },
-  interval: { type: Number, default: 7000 },
 })
 
 const current = ref(0)
 const stage = ref(null)
 let slides = []
-let timer = null
-let paused = false
-// Someone who clicks a tab has chosen — don't yank it away from them.
-let userPicked = false
 
 function show(i) {
   slides.forEach((el, n) => el.classList.toggle('cc-active', n === i))
@@ -57,25 +46,15 @@ function show(i) {
   fit(i)
 }
 
-// The stage height follows the active slide (animated via the CSS transition),
-// so a 4-line hello-world isn't displayed inside a 17-line-tall box.
+// The stage height follows the active slide, so a 4-line hello-world isn't
+// displayed inside a 17-line-tall box.
 function fit(i) {
   const el = slides[i]
   if (el && stage.value) stage.value.style.height = el.offsetHeight + 'px'
 }
 
-function select(i) {
-  userPicked = true
-  show(i)
-}
-
-function advance() {
-  if (paused || userPicked || slides.length === 0) return
-  show((current.value + 1) % slides.length)
-}
-
-function pause() { paused = true }
-function resume() { paused = false }
+// Tabs only change on click — no auto-advance.
+function select(i) { show(i) }
 
 onMounted(() => {
   if (!stage.value) return
@@ -85,16 +64,11 @@ onMounted(() => {
   // Re-measure once layout settles (web fonts) and on viewport changes.
   requestAnimationFrame(() => fit(current.value))
   window.addEventListener('resize', onResize)
-  // Auto-advance is decoration. Honour the OS setting rather than animating at someone
-  // who has asked things to hold still.
-  const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-  if (!still && slides.length > 1) timer = setInterval(advance, props.interval)
 })
 
 function onResize() { fit(current.value) }
 
 onBeforeUnmount(() => {
-  if (timer) clearInterval(timer)
   window.removeEventListener('resize', onResize)
 })
 </script>
@@ -192,6 +166,13 @@ onBeforeUnmount(() => {
   color: var(--vp-c-text-2);
   border-top: 1px solid var(--vp-c-divider);
   background: var(--vp-c-bg);
+}
+
+/* small mobile: let the tab row wrap onto multiple lines instead of scrolling */
+@media (max-width: 640px) {
+  .cc-tabs { flex-wrap: wrap; overflow-x: visible; }
+  .cc-tab { flex: 1 1 auto; min-width: 0; padding: 8px 12px; text-align: center; }
+  .cc-tab-title { font-size: 13px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
