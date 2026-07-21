@@ -184,3 +184,16 @@ Net: the per-slice work becomes mechanical field-access rewrites + one
 mark-worklist pass per table, with NO new sweep logic. Sweep-removing stale
 entries is then a pure memory optimization (bound the tables), not a correctness
 requirement — do it later if the tables grow.
+
+### Slice-order caveat: several rare capabilities are app-critical
+
+The proxy mark path is load-bearing for the integration app — prisma wraps its
+client in a Proxy, and the existing comment on the proxy mark records that
+dropping it "silently lost every property the moment a second client was
+constructed." So a subtle GC error in the proxy slice breaks priority-1, and GC
+bugs of that kind can pass a smoke test and only surface under specific
+alloc/collect timing. Same goes for bound (zod pre-binds) and likely Map. So:
+run the FULL app (not just the self-fetch guard) under the moved slice, and run
+GC stress with a workload that constructs/drops many of that capability. Given
+the stakes, the memory refactor is best done with fresh context, one slice at a
+time, app-verified — not rushed.
