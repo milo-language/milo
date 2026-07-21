@@ -79,13 +79,89 @@ fn taName(kind: i64): string {
     return "Float64Array"
 }
 
+// f64 <-> raw IEEE-754 bits, via a byte view of the value's own storage. The
+// language has no bitcast, so this reads/writes the stack slot through a raw
+// pointer (unsafe, like std's other pointer work). Little-endian host assumed —
+// the same assumption the integer paths below already make.
+fn f64ToBits(x: f64): i64 {
+    var xv = x
+    var bits: i64 = 0
+    var i: i64 = 0
+    while i < 8 {
+        var byte: u8 = 0
+        unsafe {
+            byte = *(((xv.addrOf() as i64) + i) as *u8)
+        }
+        bits = bits | ((byte as i64) << (8 * i))
+        i = i + 1
+    }
+    return bits
+}
+
+fn bitsToF64(bits: i64): f64 {
+    var y: f64 = 0.0
+    var i: i64 = 0
+    while i < 8 {
+        let byte = ((bits >> (8 * i)) & 255) as u8
+        unsafe {
+            *(((y.addrOf() as i64) + i) as *u8) = byte
+        }
+        i = i + 1
+    }
+    return y
+}
+
+// f64 -> 32-bit float, then its 4 IEEE-754 bits. `as f32` does the rounding.
+fn f32ToBits(x: f64): i64 {
+    var f = x as f32
+    var bits: i64 = 0
+    var i: i64 = 0
+    while i < 4 {
+        var byte: u8 = 0
+        unsafe {
+            byte = *(((f.addrOf() as i64) + i) as *u8)
+        }
+        bits = bits | ((byte as i64) << (8 * i))
+        i = i + 1
+    }
+    return bits
+}
+
+fn bitsToF32(bits: i64): f64 {
+    var f: f32 = 0.0
+    var i: i64 = 0
+    while i < 4 {
+        let byte = ((bits >> (8 * i)) & 255) as u8
+        unsafe {
+            *(((f.addrOf() as i64) + i) as *u8) = byte
+        }
+        i = i + 1
+    }
+    return f as f64
+}
+
 // Read one element out of a buffer's bytes, little-endian.
-// Integer kinds only: Float32/Float64 need a bit-level reinterpret of f64, which
-// Milo has no safe primitive for, so those constructors are rejected up front
-// rather than silently storing wrong bytes.
 fn taLoad(bytes: &Vec<u8>, kind: i64, at: i64): f64 {
     if kind == TA_U8 || kind == TA_U8C {
         return bytes[at] as f64
+    }
+    if kind == TA_F64 {
+        var bits: i64 = 0
+        var k: i64 = 0
+        while k < 8 {
+            bits = bits | ((bytes[at + k] as i64) << (8 * k))
+            k = k + 1
+        }
+        return bitsToF64(bits)
+    }
+    if kind == TA_F32 {
+        var bits: i64 = 0
+        var k: i64 = 0
+        while k < 4 {
+            bits = bits | ((bytes[at + k] as i64) << (8 * k))
+            k = k + 1
+        }
+        return bitsToF32(bits)
     }
     if kind == TA_I8 {
         let b = bytes[at] as i64
@@ -111,6 +187,22 @@ fn taLoad(bytes: &Vec<u8>, kind: i64, at: i64): f64 {
 // Store one element, applying the kind's wrapping (or clamping) rules.
 fn taStore(bytes: &mut Vec<u8>, kind: i64, at: i64, v: f64) {
     var n: i64 = 0
+    // Float kinds store the raw IEEE-754 bits (via f32/f64 rounding), including
+    // NaN/Inf — so they bypass the integer coercion below entirely.
+    if kind == TA_F64 || kind == TA_F32 {
+        if kind == TA_F64 {
+            n = f64ToBits(v)
+        } else {
+            n = f32ToBits(v)
+        }
+        let fw = taWidth(kind)
+        var fi: i64 = 0
+        while fi < fw {
+            bytes[at + fi] = ((n >> (8 * fi)) & 255) as u8
+            fi = fi + 1
+        }
+        return
+    }
     if v == v {
         if kind == TA_U8C {
             // Uint8ClampedArray saturates instead of wrapping, and ToUint8Clamp

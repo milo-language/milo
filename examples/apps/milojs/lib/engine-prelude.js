@@ -792,9 +792,14 @@ JSON.parse = function (text, reviver) {
 };
 
 // --- Math gap-fillers --------------------------------------------------------
-// Expressible on top of the natives that exist. Math.fround is NOT here: rounding
-// to f32 precision needs a bit-level reinterpret the engine has no primitive for,
-// and an approximation would be wrong in exactly the cases people use it to test.
+// Expressible on top of the natives that exist. Math.fround rounds to f32
+// precision by round-tripping through a Float32Array — exact now that the engine
+// stores real IEEE-754 f32 bytes.
+Math.fround = function (x) {
+  froundBuf[0] = x;
+  return froundBuf[0];
+};
+var froundBuf = new Float32Array(1);
 Math.cbrt = function (x) {
   if (x === 0 || !isFinite(x) || x !== x) return x;
   return x < 0 ? -Math.pow(-x, 1 / 3) : Math.pow(x, 1 / 3);

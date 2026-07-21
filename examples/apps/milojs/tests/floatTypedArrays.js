@@ -1,0 +1,11 @@
+const f64 = new Float64Array(3);
+f64[0] = 1.5; f64[1] = 1.3; f64[2] = -0.25;
+console.log(f64[0], f64[1], f64[2]);
+const f32 = new Float32Array(2);
+f32[0] = 1.3; f32[1] = 3.14159;
+console.log(f32[0], f32[1]);
+f64[0] = NaN; f64[1] = Infinity; f64[2] = -Infinity;
+console.log(Number.isNaN(f64[0]), f64[1], f64[2]);
+const bytes = new Uint8Array(f32.buffer);
+console.log(bytes[0], bytes[1], bytes[2], bytes[3]);
+console.log(Math.fround(1.3), Math.fround(5.5));

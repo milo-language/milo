@@ -2217,13 +2217,8 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     }
     if id >= NATIVE_TA_BASE && id <= NATIVE_TA_BASE + TA_U8C {
         let kind = id - NATIVE_TA_BASE
-        if kind == TA_F32 || kind == TA_F64 {
-            // storing an f64 bit pattern needs a reinterpret Milo has no safe
-            // primitive for; fail loudly rather than write wrong bytes
-            st.throwing = true
-            st.thrownValue = makeError(st, "TypeError", taName(kind) + " is not implemented")
-            return JSValue.Undefined
-        }
+        // Float32/Float64 now store real IEEE-754 bytes via taStore's f32/f64
+        // reinterpret (runtime.milo), so every kind is constructible.
         return makeTypedArray(st, kind, argVals)
     }
     if id == NATIVE_OBJECT_PREVENTEXT || id == NATIVE_OBJECT_SEAL {
