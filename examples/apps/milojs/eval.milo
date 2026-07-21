@@ -4196,7 +4196,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     let po = objHandle(awaited)
                     if po >= 0 && isPromise(st, po) {
                         let ps = st.objects[po].promiseState
-                        let pv = cloneValue(st.objects[po].promiseValue)
+                        let pv = cloneValue(st.objExtras[st.objects[po].extra].promiseValue)
                         if ps == 2 {
                             awaitYieldMicrotasks(prog, st)
                             markRejectHandled(st, po)
@@ -4238,7 +4238,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             pushTemp(st, JSValue.Obj(po))
                             if parkOnPromise(st, po) {
                                 let ps2 = st.objects[po].promiseState
-                                let pv2 = cloneValue(st.objects[po].promiseValue)
+                                let pv2 = cloneValue(st.objExtras[st.objects[po].extra].promiseValue)
                                 if ps2 == 2 {
                                     popTemp(st)
                                     markRejectHandled(st, po)
@@ -4333,7 +4333,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                                 return JSValue.Undefined
                             }
                             let settled = st.objects[po].promiseState
-                            let sv = cloneValue(st.objects[po].promiseValue)
+                            let sv = cloneValue(st.objExtras[st.objects[po].extra].promiseValue)
                             if settled == 2 {
                                 markRejectHandled(st, po)
                                 st.throwing = true
@@ -4807,7 +4807,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                         st.thrownValue = JSValue.Undefined
                         if st.objects[pr].promiseState == 0 {
                             st.objects[pr].promiseState = 2
-                            st.objects[pr].promiseValue = err
+                            st.objExtras[st.objects[pr].extra].promiseValue = err
                         }
                     }
                 }
@@ -5885,7 +5885,7 @@ fn spawnActivation(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSVal
                     // caller's await then hangs forever. Instead adopt it: a
                     // reaction with non-callable handlers passes the returned
                     // promise's eventual settlement straight through to `p`.
-                    gInterp.objects[ro].reactions.push(Reaction {
+                    gInterp.objExtras[gInterp.objects[ro].extra].reactions.push(Reaction {
                         onFulfilled: JSValue.Undefined, onRejected: JSValue.Undefined, derived: p, isFinally: false
                     }
                     )
@@ -5899,7 +5899,7 @@ fn spawnActivation(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSVal
                     if rs == 2 {
                         markRejectHandled(gInterp, ro)
                     }
-                    settlePromise(gInterp, p, rs, cloneValue(gInterp.objects[ro].promiseValue))
+                    settlePromise(gInterp, p, rs, cloneValue(gInterp.objExtras[gInterp.objects[ro].extra].promiseValue))
                 }
             } else {
                 settlePromise(gInterp, p, 1, r)
@@ -6280,27 +6280,27 @@ fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
         return
     }
     st.objects[p].promiseState = state
-    st.objects[p].promiseValue = cloneValue(value)
+    st.objExtras[st.objects[p].extra].promiseValue = cloneValue(value)
     // wake activations parked on this promise before running reactions (R2/R3)
     wakeAwaiters(st, p)
-    if state == 2 && st.objects[p].reactions.len() == 0 {
+    if state == 2 && st.objExtras[st.objects[p].extra].reactions.len() == 0 {
         // nobody is waiting on this rejection; report it when the loop idles
         // unless a .catch attaches first
         st.unhandledRejects.push(p)
     }
     var i: i64 = 0
-    while i < st.objects[p].reactions.len() {
-        var handler = cloneValue(st.objects[p].reactions[i].onFulfilled)
+    while i < st.objExtras[st.objects[p].extra].reactions.len() {
+        var handler = cloneValue(st.objExtras[st.objects[p].extra].reactions[i].onFulfilled)
         if state == 2 {
-            handler = cloneValue(st.objects[p].reactions[i].onRejected)
+            handler = cloneValue(st.objExtras[st.objects[p].extra].reactions[i].onRejected)
         }
         st.microtasks.push(Microtask {
-            cb: handler, arg: cloneValue(value), derived: st.objects[p].reactions[i].derived, passthroughReject: state == 2, isFinally: st.objects[p].reactions[i].isFinally, noArgs: false
+            cb: handler, arg: cloneValue(value), derived: st.objExtras[st.objects[p].extra].reactions[i].derived, passthroughReject: state == 2, isFinally: st.objExtras[st.objects[p].extra].reactions[i].isFinally, noArgs: false
         }
         )
         i = i + 1
     }
-    st.objects[p].reactions = Vec.new()
+    st.objExtras[st.objects[p].extra].reactions = Vec.new()
 }
 
 // Awaiting or attaching a handler to a rejected promise counts as handling it,
@@ -6335,13 +6335,13 @@ fn adoptPromise(st: &mut Interp, derived: i64, source: i64) {
         st.unhandledRejects = kept
     }
     if state == 0 {
-        st.objects[source].reactions.push(Reaction {
+        st.objExtras[st.objects[source].extra].reactions.push(Reaction {
             onFulfilled: JSValue.Undefined, onRejected: JSValue.Undefined, derived: derived, isFinally: false
         }
         )
         return
     }
-    settlePromise(st, derived, state, cloneValue(st.objects[source].promiseValue))
+    settlePromise(st, derived, state, cloneValue(st.objExtras[st.objects[source].extra].promiseValue))
 }
 
 fn describeThrownValue(st: &Interp, v: &JSValue): string {
@@ -6359,7 +6359,7 @@ fn reportUnhandledRejections(st: &mut Interp) {
     while i < st.unhandledRejects.len() {
         let p = st.unhandledRejects[i]
         if isPromise(st, p) && st.objects[p].promiseState == 2 {
-            let v = cloneValue(st.objects[p].promiseValue)
+            let v = cloneValue(st.objExtras[st.objects[p].extra].promiseValue)
             eprint("Unhandled promise rejection: " + describeThrownValue(st, v))
         }
         i = i + 1
@@ -8190,7 +8190,7 @@ fn promiseMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): J
         st.unhandledRejects = kept
     }
     if state == 0 {
-        st.objects[o].reactions.push(Reaction {
+        st.objExtras[st.objects[o].extra].reactions.push(Reaction {
             onFulfilled: onFul, onRejected: onRej, derived: derived, isFinally: isFinally
         }
         )
@@ -8200,7 +8200,7 @@ fn promiseMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): J
             handler = onRej
         }
         st.microtasks.push(Microtask {
-            cb: handler, arg: cloneValue(st.objects[o].promiseValue), derived: derived, passthroughReject: state == 2, isFinally: isFinally, noArgs: false
+            cb: handler, arg: cloneValue(st.objExtras[st.objects[o].extra].promiseValue), derived: derived, passthroughReject: state == 2, isFinally: isFinally, noArgs: false
         }
         )
     }
