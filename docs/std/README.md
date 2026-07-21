@@ -74,5 +74,6 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/url](./url.md)
 - [std/uuid](./uuid.md)
 - [std/ws](./ws.md)
+- [std/xxhash](./xxhash.md)
 - [std/zip](./zip.md)
 - [std/zstd](./zstd.md)
