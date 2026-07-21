@@ -140,6 +140,9 @@ function encodeFrom(str, encoding) {
 function Buffer(bytes) {
   this.bytes = bytes || [];
   this.length = this.bytes.length;
+  // non-enumerable marker so the engine can index buf[i] into .bytes without
+  // mistaking a user object shaped { bytes, length } for a Buffer
+  Object.defineProperty(this, '__isBuf', { value: true, enumerable: false });
 }
 
 Buffer.prototype.toString = function (encoding, start, end) {
@@ -225,6 +228,27 @@ Buffer.prototype.copy = function (target, targetStart, sourceStart, sourceEnd) {
 };
 Buffer.prototype.subarray = function (start, end) { return new Buffer(this.bytes.slice(start, end)); };
 Buffer.prototype.includes = function (v) { return this.indexOf(v) >= 0; };
+// iterable over its bytes, like a Uint8Array: [...buf], for-of, Array.from(buf).
+// The returned iterators are self-iterable (Symbol.iterator returns this) so
+// [...buf.keys()] and for-of over them work too.
+function bufIter(next) {
+  var it = { next: next };
+  it[Symbol.iterator] = function () { return this; };
+  return it;
+}
+Buffer.prototype[Symbol.iterator] = function () {
+  var self = this, i = 0;
+  return bufIter(function () { return i < self.bytes.length ? { value: self.bytes[i++], done: false } : { value: undefined, done: true }; });
+};
+Buffer.prototype.values = function () { return this[Symbol.iterator](); };
+Buffer.prototype.keys = function () {
+  var self = this, i = 0;
+  return bufIter(function () { return i < self.bytes.length ? { value: i++, done: false } : { value: undefined, done: true }; });
+};
+Buffer.prototype.entries = function () {
+  var self = this, i = 0;
+  return bufIter(function () { return i < self.bytes.length ? { value: [i, self.bytes[i++]], done: false } : { value: undefined, done: true }; });
+};
 Buffer.prototype.write = function (str, offset, length, encoding) {
   var off = typeof offset === 'number' ? offset : 0;
   var enc = typeof offset === 'string' ? offset : (typeof length === 'string' ? length : encoding);

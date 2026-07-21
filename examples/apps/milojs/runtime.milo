@@ -1066,6 +1066,33 @@ fn objOwnIndex(st: &Interp, obj: i64, key: &string): i64 {
     return -1
 }
 
+// If `o` is a milojs Buffer, return the handle of its backing byte array, else
+// -1. This is what lets buf[i] read and write a byte: node's Buffer is a
+// Uint8Array, but milojs backs it with a plain object holding a JS array in
+// `.bytes`, so the numeric property is not otherwise present and buf[i] would be
+// undefined. Gated on the non-enumerable `__isBuf` marker the Buffer constructor
+// stamps (buffer.js) — NOT the mere shape — so a user object that happens to
+// have `{ bytes, length }` is never mis-indexed as a buffer.
+fn bufferBytesHandle(st: &Interp, o: i64): i64 {
+    if objOwnIndex(st, o, "__isBuf") < 0 {
+        return -1
+    }
+    let bi = objOwnIndex(st, o, "bytes")
+    if bi < 0 {
+        return -1
+    }
+    match st.objects[o].props[bi].value {
+        JSValue.Obj(bh) => {
+            if st.objects[bh].isArray {
+                return bh
+            }
+        }
+        _ => {
+        }
+    }
+    return -1
+}
+
 // A key names an array element only if it is a canonical non-negative integer
 // ("0", "1", ...); returns that index, or -1 for any other key (which addresses a
 // string property instead, per JS).

@@ -1989,21 +1989,43 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                         elems.push(arrGet(st, h, i))
                         i = i + 1
                     }
-                } else if st.objects[h].isMap || st.objects[h].isSet {
+                } else if st.objects[h].isSet {
+                    // Array.from(set) → its values
                     var i: i64 = 0
                     while i < st.objExtras[st.objects[h].extra].mapKeys.len() {
                         elems.push(cloneValue(st.objExtras[st.objects[h].extra].mapKeys[i]))
                         i = i + 1
                     }
-                } else {
-                    // array-like: use its `length` and index 0..length-1
-                    // (covers the common Array.from({length:n}, fn) idiom)
-                    let lenV = getMember(st, h, "length")
-                    let len = toNum(lenV) as i64
+                } else if st.objects[h].isMap {
+                    // Array.from(map) → [key, value] PAIRS, not just keys
                     var i: i64 = 0
-                    while i < len {
-                        elems.push(getMember(st, h, i64ToStr(i)))
+                    while i < st.objExtras[st.objects[h].extra].mapKeys.len() {
+                        let pair = newArray(st)
+                        pushTemp(st, JSValue.Obj(pair))
+                        arrPush(st, pair, cloneValue(st.objExtras[st.objects[h].extra].mapKeys[i]))
+                        arrPush(st, pair, cloneValue(st.objExtras[st.objects[h].extra].mapVals[i]))
+                        popTemp(st)
+                        elems.push(JSValue.Obj(pair))
                         i = i + 1
+                    }
+                } else {
+                    let itFn = getMember(st, h, symIteratorKey())
+                    if isCallableIn(st, itFn) {
+                        // a real iterable (Buffer, custom [Symbol.iterator], …) —
+                        // drive its iterator, exactly as spread does. Comes before
+                        // the array-like path so an iterable with a length still
+                        // iterates rather than index-reads.
+                        spreadInto(gProg, elems, JSValue.Obj(h), st)
+                    } else {
+                        // array-like: use its `length` and index 0..length-1
+                        // (covers the common Array.from({length:n}, fn) idiom)
+                        let lenV = getMember(st, h, "length")
+                        let len = toNum(lenV) as i64
+                        var i: i64 = 0
+                        while i < len {
+                            elems.push(getMember(st, h, i64ToStr(i)))
+                            i = i + 1
+                        }
                     }
                 }
             } else {
@@ -4654,6 +4676,15 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             let key = toStr(kv)
             match ov {
                 JSValue.Obj(o) => {
+                    // buf[i] indexes a Buffer's bytes (it is a plain object, not a
+                    // Uint8Array, so the numeric property is not otherwise present)
+                    let bidx = asArrayIndex(key)
+                    if bidx >= 0 {
+                        let bh = bufferBytesHandle(st, o)
+                        if bh >= 0 {
+                            return arrGet(st, bh, bidx)
+                        }
+                    }
                     return getMemberDyn(prog, o, key, st)
                 }
                 JSValue.Func(fIdx, fe) => {
@@ -4723,6 +4754,17 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             popTemp(st)
             match ov {
                 JSValue.Obj(o) => {
+                    // buf[i] = n writes the byte (masked to 0-255) into the
+                    // Buffer's backing array, matching Uint8Array assignment
+                    let bwidx = asArrayIndex(key)
+                    if bwidx >= 0 {
+                        let bh = bufferBytesHandle(st, o)
+                        if bh >= 0 && bwidx < st.objects[bh].elems.len() {
+                            let byte = (toNum(v) as i64) & 255
+                            st.objects[bh].elems[bwidx] = JSValue.Number(byte as f64)
+                            return cloneValue(v)
+                        }
+                    }
                     setMemberDyn(prog, o, key, cloneValue(v), st)
                 }
                 JSValue.Native(nid) => {
