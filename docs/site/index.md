@@ -15,8 +15,8 @@ hero:
       text: Learn the Language
       link: /language/
     - theme: alt
-      text: ▶ Play a demo
-      link: /nes/
+      text: ▶ Try it live
+      link: /playground
 ---
 
 <div class="intro">
