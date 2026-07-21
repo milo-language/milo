@@ -3785,6 +3785,24 @@ fn instanceOf(st: &Interp, val: &JSValue, ctor: &JSValue): bool {
                     if id == NATIVE_OBJECT_CTOR {
                         return true
                     }
+                    // the built-in exotic constructors are recognised by the
+                    // object's internal kind (Date/Map/Set/RegExp/ArrayBuffer are
+                    // Native values, so `x instanceof Date` reaches here)
+                    if id == NATIVE_DATE {
+                        return st.objects[o].isDate
+                    }
+                    if id == NATIVE_MAP {
+                        return st.objects[o].isMap
+                    }
+                    if id == NATIVE_SET {
+                        return st.objects[o].isSet
+                    }
+                    if id == NATIVE_REGEXP {
+                        return st.objExtras[st.objects[o].extra].regexId >= 0
+                    }
+                    if id == NATIVE_ARRAYBUFFER {
+                        return st.objects[o].isArrayBuffer
+                    }
                     if !st.objects[o].isError {
                         return false
                     }
@@ -3799,6 +3817,11 @@ fn instanceOf(st: &Interp, val: &JSValue, ctor: &JSValue): bool {
                     // so `[] instanceof Array` reaches here — match by the array flag
                     if c == st.arrayCtorObj {
                         return st.objects[o].isArray
+                    }
+                    // Promise's constructor is an Obj too; a promise is recognised
+                    // by its settlement-state slot
+                    if st.promiseCtorObj >= 0 && c == st.promiseCtorObj {
+                        return st.objects[o].promiseState >= 0
                     }
                     // a constructor object with a .prototype linked into the
                     // object's chain (user functions assigned as constructors)
