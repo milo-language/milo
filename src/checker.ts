@@ -30,6 +30,11 @@ export interface VarInfo {
   // statement ends) — so a binding can only ever adopt a width at its FIRST
   // read, never retroactively after an i32 use was already committed.
   flexInt?: { leaves: Expr[]; valueExpr: Expr };
+  // The closure literal this binding was initialized with, if any. A closure that
+  // escapes (returned by identifier) must own its captures; the Return path uses
+  // this to promote the underlying literal to `move` even when the return value is
+  // the binding, not the literal itself (`let f = ...; return f`).
+  boundClosure?: Expr;
 }
 
 // Builtins that may realloc, free, or shift collection memory — illegal on a
@@ -2240,6 +2245,10 @@ export class TypeChecker {
             if (info) info.flexInt = { leaves, valueExpr: stmt.value };
           }
         }
+        if (stmt.value.kind === "Closure") {
+          const info = this.lookup(stmt.name);
+          if (info) info.boundClosure = stmt.value;
+        }
         this.tryMove(stmt.value);
         break;
       }
@@ -2279,6 +2288,10 @@ export class TypeChecker {
           const bindingType = hint ?? valType;
           if (bindingType.tag !== "ref") for (const vi of newlyFrozen) vi.borrowed = false;
           this.declare(stmt.name, { type: bindingType, mutable: true, moved: false, borrowed: false, read: false, span: sp, ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
+        }
+        if (stmt.value.kind === "Closure") {
+          const info = this.lookup(stmt.name);
+          if (info) info.boundClosure = stmt.value;
         }
         this.tryMove(stmt.value);
         break;
@@ -2349,6 +2362,12 @@ export class TypeChecker {
           // moves the captures into the closure's heap env instead of aliasing locals.
           if (stmt.value.kind === "Closure" && !(stmt.value as any).isMove) {
             (stmt.value as any).isMove = true;
+          } else if (stmt.value.kind === "Ident") {
+            // `let f = <closure>; return f` escapes the same way a direct return does,
+            // but the return value is the binding, not the literal. Promote the literal
+            // it was bound to so its captures are heap-owned rather than dangling refs.
+            const bound = this.lookup(stmt.value.name)?.boundClosure;
+            if (bound && !(bound as any).isMove) (bound as any).isMove = true;
           }
           this.tryMove(stmt.value);
           this.inReturnInLoop = prev;

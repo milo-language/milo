@@ -35,8 +35,14 @@ gracefully.
 
 - [x] **C3 — escaping non-`move` closure captures by reference.** Returned/stored non-`move`
   closure captures a local by reference into the dead frame. `checker.ts:1151` assumes
-  escaping closures are `move` but never enforces it. Fix: require `move` (or reject escape)
-  for a closure that captures a non-Copy local and escapes.
+  escaping closures are `move` but never enforces it. Fix: the Return path promotes an
+  escaping closure to `move` so its captures are heap-owned — both when the closure literal
+  is returned directly (`return (…) => …`) and when it is bound to a local and returned by
+  name (`let f = …; return f`), tracked via `VarInfo.boundClosure`.
+  Still open (not this pass): a closure that escapes *indirectly* — stored into a struct or
+  Vec that is then returned, or returned by a caller after being passed in — is not yet
+  promoted. Those need general escape analysis; tracked as follow-up, workaround is explicit
+  `move`.
 
 - [ ] **H1 — `f()(x)` / `arr[i](x)` callee never invoked.** Call-result / index callee is
   mis-codegen'd: closure computed then discarded, arg printed raw with wrong format
