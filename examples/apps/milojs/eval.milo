@@ -194,6 +194,74 @@ fn findSetter(st: &Interp, o: i64, key: &string): JSValue {
 }
 
 // Property read that honours accessors; `this` inside the getter is the object.
+// Array.prototype.join / toString, prog-free so string-coercion paths (which have
+// no Prog) can reuse it. Nested arrays join recursively; null/undefined render
+// empty; every other element goes through toStr (plain objects -> [object Object]).
+fn joinArray(st: &mut Interp, o: i64, sep: &string): string {
+    var out = ""
+    var i: i64 = 0
+    let n = arrLen(st, o)
+    while i < n {
+        if i > 0 {
+            out = out + sep
+        }
+        let e = arrGet(st, o, i)
+        match e {
+            JSValue.Null => {
+            }
+            JSValue.Undefined => {
+            }
+            _ => {
+                let eh = objHandle(e)
+                if eh >= 0 && st.objects[eh].isArray {
+                    out = out + joinArray(st, eh, sep)
+                } else {
+                    out = out + toStr(e)
+                }
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// JS ToPrimitive with the "default" hint (used by `+`): try valueOf, then
+// toString, taking the first that yields a primitive. Arrays and plain objects
+// valueOf to themselves, so toString decides — arrays join, plain objects give
+// "[object Object]". A non-object value is already primitive.
+fn toPrimitiveDefault(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
+    let h = objHandle(v)
+    if h < 0 {
+        return cloneValue(v)
+    }
+    // arrays join directly — reading their toString as a bound value does not
+    // route back to the join, so short-circuit here
+    if st.objects[h].isArray {
+        return JSValue.Str(joinArray(st, h, ","))
+    }
+    pushTemp(st, JSValue.Obj(h))
+    let vf = getMemberDyn(prog, h, "valueOf", st)
+    if isCallableIn(st, vf) {
+        var noA: Vec<JSValue> = Vec.new()
+        let r = callValue(prog, vf, noA, JSValue.Obj(h), st)
+        if objHandle(r) < 0 && funcHandle(r) < 0 {
+            popTemp(st)
+            return r
+        }
+    }
+    let tf = getMemberDyn(prog, h, "toString", st)
+    if isCallableIn(st, tf) {
+        var noB: Vec<JSValue> = Vec.new()
+        let r2 = callValue(prog, tf, noB, JSValue.Obj(h), st)
+        if objHandle(r2) < 0 && funcHandle(r2) < 0 {
+            popTemp(st)
+            return r2
+        }
+    }
+    popTemp(st)
+    return JSValue.Str("[object Object]")
+}
+
 fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
     if st.objects[o].isProxy {
         let trap = proxyTrap(st, o, "get")
@@ -1440,6 +1508,11 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             }
             _ => {
             }
+        }
+        // arrays coerce to their join, not "[object Object]"
+        let a0h = objHandle(argVals[0])
+        if a0h >= 0 && st.objects[a0h].isArray {
+            return JSValue.Str(joinArray(st, a0h, ","))
         }
         return JSValue.Str(toStr(argVals[0]))
     }
@@ -3714,6 +3787,21 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             pushTemp(st, cloneValue(va))
             let vb = evalExpr(prog, b, st, scope)
             popTemp(st)
+            // `+` on an object operand needs interp-aware ToPrimitive (arrays join,
+            // objects with valueOf/toString call them). evalBin is a pure function
+            // with no interp access, so do the coercion here. Gated on an object
+            // operand to keep the hot number/string path free of overhead.
+            if op == "+" && (objHandle(va) >= 0 || objHandle(vb) >= 0) {
+                pushTemp(st, cloneValue(va))
+                pushTemp(st, cloneValue(vb))
+                let pa = toPrimitiveDefault(prog, va, st)
+                pushTemp(st, cloneValue(pa))
+                let pb = toPrimitiveDefault(prog, vb, st)
+                popTemp(st)
+                popTemp(st)
+                popTemp(st)
+                return evalBin("+", pa, pb)
+            }
             return evalBin(op, va, vb)
         }
         Expr.Un(op, a) => {
@@ -7902,34 +7990,7 @@ fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut
         if name == "join" && args.len() > 0 {
             sep = toStr(args[0])
         }
-        var out = ""
-        var i: i64 = 0
-        while i < n {
-            if i > 0 {
-                out = out + sep
-            }
-            let e = arrGet(st, o, i)
-            // JS renders null/undefined as empty in join
-            match e {
-                JSValue.Null => {
-                }
-                JSValue.Undefined => {
-                }
-                _ => {
-                    // nested arrays join recursively ([1,[2,3]].toString() is
-                    // "1,2,3"); plain objects stay "[object Object]" as in JS
-                    let eh = objHandle(e)
-                    if eh >= 0 && st.objects[eh].isArray {
-                        var noA: Vec<JSValue> = Vec.new()
-                        out = out + toStr(arrayMethod(prog, eh, "join", noA, st))
-                    } else {
-                        out = out + toStr(e)
-                    }
-                }
-            }
-            i = i + 1
-        }
-        return JSValue.Str(out)
+        return JSValue.Str(joinArray(st, o, sep))
     }
     if name == "indexOf" {
         var i: i64 = 0
