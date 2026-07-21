@@ -824,6 +824,8 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
             } else if peekKind(p) == T_COLON {
                 advance(p)
                 valIdx = parseExpr(p, prog)
+                // `{ handler: () => {} }` — the anonymous value takes the key name
+                inferFuncName(prog, valIdx, key)
             } else if peekKind(p) == T_EQ {
                 // shorthand with default, only meaningful in a destructuring
                 // pattern: `{ g = 10 }` — record it as `g = default` so
@@ -1300,6 +1302,25 @@ fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
 }
 
 // function [name] ( params ) { body } — returns index into prog.funcs
+// JS NamedEvaluation: `const f = () => {}` gives the arrow the name "f". The
+// binding name is known statically, so set it on the anonymous FuncDef at parse
+// time — no per-instance runtime name slot needed. Only anonymous functions are
+// affected; a named function expression keeps its own name.
+fn inferFuncName(prog: &mut Prog, initIdx: i64, name: &string) {
+    if initIdx < 0 || name.len() == 0 {
+        return
+    }
+    match prog.exprs[initIdx] {
+        Expr.FuncExpr(f) => {
+            if prog.funcs[f].name.len() == 0 {
+                prog.funcs[f].name = name.clone()
+            }
+        }
+        _ => {
+        }
+    }
+}
+
 fn parseFunction(p: &mut PState, prog: &mut Prog, isAsync: bool): i64 {
     expect(p, T_FUNCTION)
     // generator star: parsed so the surrounding module loads. Generators need
@@ -1416,6 +1437,9 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
                     // parseExpr stops at ',' (no comma operator), so each declarator's
                     // initializer parses independently
                     init = parseExpr(p, prog)
+                    // `const bar = () => {}` / `= function(){}` — an anonymous
+                    // function expression inherits the binding name (JS NamedEvaluation)
+                    inferFuncName(prog, init, name)
                 }
                 if init < 0 {
                     init = addExpr(prog, Expr.UndefLit)
