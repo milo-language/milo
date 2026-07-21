@@ -245,6 +245,22 @@ fn argStr(args: &Vec<JSValue>, i: i64): string {
 }
 
 // s.split(sep) → a new heap array. No arg → [s]; empty sep → one entry per char.
+// A string's Unicode code points, one substring each. JS string iteration
+// (for-of, spread, Array.from) yields code points — since milojs strings are
+// UTF-8, that means walking by decoded codepoint width, NOT by byte, or a
+// multibyte char (é = 2 bytes, 😀 = 4) is chopped into invalid pieces that
+// render as U+FFFD. Shared so every iteration site behaves identically.
+fn strCodePoints(s: &string): Vec<string> {
+    var out: Vec<string> = Vec.new()
+    var b: i64 = 0
+    while b < s.len() {
+        let cp = decodeCodepoint(s, b)
+        out.push(strSlice(s, b, b + cp.size))
+        b = b + cp.size
+    }
+    return out
+}
+
 fn jsSplit(s: &string, args: &Vec<JSValue>, st: &mut Interp): i64 {
     let arr = newArray(st)
     // second arg caps the result length; undefined means no limit

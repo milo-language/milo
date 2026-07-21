@@ -2001,10 +2001,9 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             } else {
                 match cloneValue(argVals[0]) {
                     JSValue.Str(sv) => {
-                        var i: i64 = 0
-                        while i < sv.len() {
-                            elems.push(JSValue.Str(jsCharAt(sv, i)))
-                            i = i + 1
+                        // code points, not bytes — Array.from("café") is 4 chars
+                        for cp in strCodePoints(sv) {
+                            elems.push(JSValue.Str(cp.clone()))
                         }
                     }
                     _ => {
@@ -5247,11 +5246,9 @@ fn spreadBuiltin(out: &mut Vec<JSValue>, v: &JSValue, st: &Interp) {
             }
         }
         JSValue.Str(s) => {
-            // [..."ab"] is ["a","b"]
-            var k: i64 = 0
-            while k < s.len() {
-                out.push(JSValue.Str(jsCharAt(s, k)))
-                k = k + 1
+            // [..."café"] is ["c","a","f","é"] — code points, not UTF-8 bytes
+            for cp in strCodePoints(s) {
+                out.push(JSValue.Str(cp.clone()))
             }
         }
         _ => {
@@ -9947,11 +9944,9 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                 }
                 JSValue.Str(s) => {
                     iterable = true
-                    var e: i64 = 0
-                    let ne = s.len()
-                    while e < ne {
-                        vals.push(JSValue.Str(jsCharAt(s, e)))
-                        e = e + 1
+                    // iterate Unicode code points, not bytes (é/😀 must stay whole)
+                    for cp in strCodePoints(s) {
+                        vals.push(JSValue.Str(cp.clone()))
                     }
                 }
                 _ => {
