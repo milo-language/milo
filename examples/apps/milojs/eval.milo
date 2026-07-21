@@ -415,8 +415,9 @@ fn isUndefinedValue(v: &JSValue): bool {
 fn makeBoundMethod(st: &mut Interp, recv: JSValue, name: string): JSValue {
     let bo = newObject(st)
     st.objects[bo].isBound = true
-    st.objects[bo].boundThis = recv
-    st.objects[bo].boundMethod = name
+    let ex = ensureExtra(st, bo)
+    st.objExtras[ex].boundThis = recv
+    st.objExtras[ex].boundMethod = name
     return JSValue.Obj(bo)
 }
 
@@ -810,17 +811,18 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             if name == "bind" {
                 let bo = newObject(st)
                 st.objects[bo].isBound = true
-                st.objects[bo].boundTarget = JSValue.Func(bf, benv)
-                if args.len() > 0 {
-                    st.objects[bo].boundThis = cloneValue(args[0])
-                }
                 var extra: Vec<JSValue> = Vec.new()
                 var bi: i64 = 1
                 while bi < args.len() {
                     extra.push(cloneValue(args[bi]))
                     bi = bi + 1
                 }
-                st.objects[bo].boundArgs = extra
+                let ex = ensureExtra(st, bo)
+                st.objExtras[ex].boundTarget = JSValue.Func(bf, benv)
+                if args.len() > 0 {
+                    st.objExtras[ex].boundThis = cloneValue(args[0])
+                }
+                st.objExtras[ex].boundArgs = extra
                 return JSValue.Obj(bo)
             }
             let statics = getFuncStatics(st, bf, benv)
@@ -863,17 +865,18 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             if name == "bind" {
                 let bo = newObject(st)
                 st.objects[bo].isBound = true
-                st.objects[bo].boundTarget = cloneValue(recv)
-                if args.len() > 0 {
-                    st.objects[bo].boundThis = cloneValue(args[0])
-                }
                 var extra: Vec<JSValue> = Vec.new()
                 var bi: i64 = 1
                 while bi < args.len() {
                     extra.push(cloneValue(args[bi]))
                     bi = bi + 1
                 }
-                st.objects[bo].boundArgs = extra
+                let ex = ensureExtra(st, bo)
+                st.objExtras[ex].boundTarget = cloneValue(recv)
+                if args.len() > 0 {
+                    st.objExtras[ex].boundThis = cloneValue(args[0])
+                }
+                st.objExtras[ex].boundArgs = extra
                 return JSValue.Obj(bo)
             }
             if name == "toString" {
@@ -6870,7 +6873,7 @@ fn currentModule(st: &Interp): string {
 }
 
 fn isBoundThisSet(st: &Interp, o: i64): bool {
-    match st.objects[o].boundThis {
+    match st.objExtras[st.objects[o].extra].boundThis {
         JSValue.Undefined => {
             return false
         }
@@ -7555,9 +7558,10 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
             }
             // a bind() result: the captured receiver wins over the call site's
             if st.objects[o].isBound {
-                if st.objects[o].boundMethod.len() > 0 {
-                    let mname = st.objects[o].boundMethod.clone()
-                    var recvV = cloneValue(st.objects[o].boundThis)
+                let ex = st.objects[o].extra
+                if st.objExtras[ex].boundMethod.len() > 0 {
+                    let mname = st.objExtras[ex].boundMethod.clone()
+                    var recvV = cloneValue(st.objExtras[ex].boundThis)
                     // an unbound builtin method (Object.prototype.toString stored
                     // with no bound this) takes the call-site receiver, so
                     // ({}).toString() gets `this` = {} rather than undefined
@@ -7566,12 +7570,12 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
                     }
                     return callBuiltinByName(prog, recvV, mname, args, st)
                 }
-                let target = cloneValue(st.objects[o].boundTarget)
-                let boundThis = cloneValue(st.objects[o].boundThis)
+                let target = cloneValue(st.objExtras[ex].boundTarget)
+                let boundThis = cloneValue(st.objExtras[ex].boundThis)
                 var merged: Vec<JSValue> = Vec.new()
                 var b: i64 = 0
-                while b < st.objects[o].boundArgs.len() {
-                    merged.push(cloneValue(st.objects[o].boundArgs[b]))
+                while b < st.objExtras[ex].boundArgs.len() {
+                    merged.push(cloneValue(st.objExtras[ex].boundArgs[b]))
                     b = b + 1
                 }
                 var a: i64 = 0
@@ -9095,7 +9099,8 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                         ai = ai + 1
                     }
                 }
-                let mname = st.objects[o].boundMethod.clone()
+                let exo = st.objects[o].extra
+                let mname = st.objExtras[exo].boundMethod.clone()
                 if name == "bind" {
                     // re-binding an already-bound function: JS keeps the ORIGINAL
                     // this and only APPENDS args (the second bind's thisArg is
@@ -9104,15 +9109,10 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                     // broken value — which silently made zod's constructor-bound
                     // parseAsync return undefined once tRPC bound it again.
                     // newObject runs while `o` is still temp-rooted (popTemp below).
-                    let nb = newObject(st)
-                    st.objects[nb].isBound = true
-                    st.objects[nb].boundTarget = cloneValue(st.objects[o].boundTarget)
-                    st.objects[nb].boundMethod = mname.clone()
-                    st.objects[nb].boundThis = cloneValue(st.objects[o].boundThis)
                     var na: Vec<JSValue> = Vec.new()
                     var oi: i64 = 0
-                    while oi < st.objects[o].boundArgs.len() {
-                        na.push(cloneValue(st.objects[o].boundArgs[oi]))
+                    while oi < st.objExtras[exo].boundArgs.len() {
+                        na.push(cloneValue(st.objExtras[exo].boundArgs[oi]))
                         oi = oi + 1
                     }
                     var ri: i64 = 0
@@ -9120,7 +9120,15 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                         na.push(cloneValue(rest[ri]))
                         ri = ri + 1
                     }
-                    st.objects[nb].boundArgs = na
+                    let bTarget = cloneValue(st.objExtras[exo].boundTarget)
+                    let bThis = cloneValue(st.objExtras[exo].boundThis)
+                    let nb = newObject(st)
+                    st.objects[nb].isBound = true
+                    let exn = ensureExtra(st, nb)
+                    st.objExtras[exn].boundTarget = bTarget
+                    st.objExtras[exn].boundMethod = mname.clone()
+                    st.objExtras[exn].boundThis = bThis
+                    st.objExtras[exn].boundArgs = na
                     popTemp(st)
                     return JSValue.Obj(nb)
                 }
@@ -9128,12 +9136,12 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 if mname.len() > 0 {
                     return callBuiltinByName(prog, newThis, mname, rest, st)
                 }
-                let target = cloneValue(st.objects[o].boundTarget)
+                let target = cloneValue(st.objExtras[exo].boundTarget)
                 return callValue(prog, target, rest, newThis, st)
             }
-            if st.objects[o].isBound && st.objects[o].boundMethod.len() == 0 {
+            if st.objects[o].isBound && st.objExtras[st.objects[o].extra].boundMethod.len() == 0 {
                 // any other method on a bind() result goes to its target
-                let target = cloneValue(st.objects[o].boundTarget)
+                let target = cloneValue(st.objExtras[st.objects[o].extra].boundTarget)
                 let th = objHandle(target)
                 if th >= 0 {
                     let r = callMember(prog, target, name, argsIdx, st, scope)
@@ -9266,19 +9274,20 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
             // or .call/.apply, which retarget `this`
             if name == "bind" {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
-                let bo = newObject(st)
-                st.objects[bo].isBound = true
-                st.objects[bo].boundTarget = JSValue.Func(bf, benv)
-                if argVals.len() > 0 {
-                    st.objects[bo].boundThis = cloneValue(argVals[0])
-                }
                 var extra: Vec<JSValue> = Vec.new()
                 var bi: i64 = 1
                 while bi < argVals.len() {
                     extra.push(cloneValue(argVals[bi]))
                     bi = bi + 1
                 }
-                st.objects[bo].boundArgs = extra
+                let bo = newObject(st)
+                st.objects[bo].isBound = true
+                let ex = ensureExtra(st, bo)
+                st.objExtras[ex].boundTarget = JSValue.Func(bf, benv)
+                if argVals.len() > 0 {
+                    st.objExtras[ex].boundThis = cloneValue(argVals[0])
+                }
+                st.objExtras[ex].boundArgs = extra
                 return JSValue.Obj(bo)
             }
             if name == "call" || name == "apply" {

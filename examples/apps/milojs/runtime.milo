@@ -418,6 +418,31 @@ struct Reaction {
     isFinally: bool,
 }
 
+// Rare per-object capability payload, held OUT of JSObj in a side table keyed by
+// JSObj.extra. Every JS object carried these fields inline (a bound function's
+// target/args, a promise's value, a proxy's handler, …) even though almost all
+// objects are plain — ~968 bytes for an empty {}. The discriminator BOOLS stay
+// in JSObj (hot: property access checks isProxy/isBound), only the heavy payload
+// moves here, allocated lazily on first write. Index 0 is a shared read-only
+// default so reads never need an -1 guard; ensureExtra() hands out a private
+// slot on first write and the sweep returns it to objExtraFree.
+struct JSObjExtra {
+    // Function.prototype.bind payload (isBound stays inline in JSObj)
+    boundTarget: JSValue,
+    boundThis: JSValue,
+    boundArgs: Vec<JSValue>,
+    boundMethod: string,
+}
+
+fn defaultExtra(): JSObjExtra {
+    return JSObjExtra {
+        boundTarget: JSValue.Undefined,
+        boundThis: JSValue.Undefined,
+        boundArgs: Vec.new(),
+        boundMethod: "",
+    }
+}
+
 struct JSObj {
     props: Vec<Prop>,
     elems: Vec<JSValue>,
@@ -474,15 +499,10 @@ struct JSObj {
     // handlers registered while this promise was still pending
     reactions: Vec<Reaction>,
     // Function.prototype.bind result: calling this object calls boundTarget with
-    // boundThis and boundArgs prepended. Objects are used because a JSValue has
-    // nowhere to carry the captured receiver.
+    // boundThis and boundArgs prepended. The isBound discriminator stays inline
+    // (call dispatch checks it); the target/receiver/args payload lives in the
+    // side table (JSObjExtra) reached through `extra`.
     isBound: bool,
-    boundTarget: JSValue,
-    boundThis: JSValue,
-    boundArgs: Vec<JSValue>,
-    // when non-empty, this bound object names a builtin method (Array/String
-    // prototype) rather than wrapping a user function: [].slice, "".charAt
-    boundMethod: string,
     // Map/Set: insertion-ordered parallel key/value lists. Keys are compared by
     // strict equality (SameValueZero), so object keys work by identity.
     // process.env: unknown keys are resolved from the real environment on read,
@@ -514,6 +534,9 @@ struct JSObj {
     // dedicated green task; the per-generator state (task, sent/yielded values,
     // done flag) lives in the Interp gen* vectors, keyed by this object's index.
     isGenerator: bool,
+    // index into Interp.objExtras for this object's rare-capability payload, or 0
+    // for the shared read-only default (no rare fields set). See JSObjExtra.
+    extra: i64,
     mark: bool,
     free: bool,
 }
@@ -529,6 +552,12 @@ struct Interp {
     // heap-object arena + its own free-list, GC'd by the same collector as scopes
     objects: Vec<JSObj>,
     objFreeList: Vec<i64>,
+    // side table of rare-capability payloads (JSObjExtra), keyed by JSObj.extra.
+    // Slot 0 is the shared read-only default; freed slots return to objExtraFree
+    // when their object is swept. Not a GC root set of its own — the collector
+    // reaches an extra only through its live owning object (see markObject).
+    objExtras: Vec<JSObjExtra>,
+    objExtraFree: Vec<i64>,
     // fnIdx → its `.prototype` object (index), created lazily; a GC root
     funcProtos: Vec<i64>,
     // fnIdx → its static-property object, created lazily; also a GC root
@@ -715,7 +744,7 @@ struct Interp {
 // that main() overwrites with makeInterp().
 var gInterp: Interp = Interp {
     scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
-    objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
+    objects: Vec.new(), objFreeList: Vec.new(), objExtras: Vec.new(), objExtraFree: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
     modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(), modPathStack: Vec.new(),
     throwing: false, thrownValue: JSValue.Undefined,
     optShort: false, pendingLabel: "", callDepthLimit: 20,
@@ -726,7 +755,7 @@ var gInterp: Interp = Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), abMaxLen: -1, abDetached: false, taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, isDataView: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), isProxy: false, proxyTarget: JSValue.Undefined, proxyHandler: JSValue.Undefined, napiFn: -1, napiWrap: 0, isGenerator: false, mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), abMaxLen: -1, abDetached: false, taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, isDataView: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), isProxy: false, proxyTarget: JSValue.Undefined, proxyHandler: JSValue.Undefined, napiFn: -1, napiWrap: 0, isGenerator: false, extra: 0, mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena
@@ -737,6 +766,39 @@ fn allocObj(st: &mut Interp, isArray: bool): i64 {
     }
     st.objects.push(obj)
     return st.objects.len() - 1
+}
+
+// Give object `o` a PRIVATE JSObjExtra slot (allocating or reusing one) and
+// return its index, so a rare field can be written. Idempotent: an object that
+// already owns a slot keeps it. Never returns 0 (the shared default).
+fn ensureExtra(st: &mut Interp, o: i64): i64 {
+    let cur = st.objects[o].extra
+    if cur != 0 {
+        return cur
+    }
+    if st.objExtraFree.len() > 0 {
+        let idx = st.objExtraFree.pop()!
+        // a reused slot may hold a swept object's stale values — reset it
+        st.objExtras[idx] = defaultExtra()
+        st.objects[o].extra = idx
+        return idx
+    }
+    st.objExtras.push(defaultExtra())
+    let idx = st.objExtras.len() - 1
+    st.objects[o].extra = idx
+    return idx
+}
+
+// Return an object's private extra slot to the free list (called by the sweep).
+// A no-op for the shared default (0). Clearing the payload here rather than at
+// reuse keeps freed slots from pinning JSValues the collector already released.
+fn releaseExtra(st: &mut Interp, o: i64) {
+    let ex = st.objects[o].extra
+    if ex != 0 {
+        st.objExtras[ex] = defaultExtra()
+        st.objExtraFree.push(ex)
+        st.objects[o].extra = 0
+    }
 }
 
 fn newObject(st: &mut Interp): i64 {
@@ -1376,12 +1438,14 @@ fn markObject(st: &mut Interp, i: i64) {
         }
     }
     // a bound function keeps its target, receiver and pre-bound args alive
+    // (payload in the side table; isBound never set without a private extra)
     if st.objects[i].isBound {
-        pushMarkTargets(st.objects[i].boundTarget, objs, scopes)
-        pushMarkTargets(st.objects[i].boundThis, objs, scopes)
+        let ex = st.objects[i].extra
+        pushMarkTargets(st.objExtras[ex].boundTarget, objs, scopes)
+        pushMarkTargets(st.objExtras[ex].boundThis, objs, scopes)
         var b: i64 = 0
-        while b < st.objects[i].boundArgs.len() {
-            pushMarkTargets(st.objects[i].boundArgs[b], objs, scopes)
+        while b < st.objExtras[ex].boundArgs.len() {
+            pushMarkTargets(st.objExtras[ex].boundArgs[b], objs, scopes)
             b = b + 1
         }
     }
@@ -1654,6 +1718,7 @@ fn collect(st: &mut Interp) {
     var os: i64 = 0
     while os < st.objects.len() {
         if !st.objects[os].free && !st.objects[os].mark {
+            releaseExtra(st, os)
             st.objects[os].props = Vec.new()
             st.objects[os].elems = Vec.new()
             st.objects[os].free = true

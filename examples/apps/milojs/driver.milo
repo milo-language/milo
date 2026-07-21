@@ -42,7 +42,7 @@ fn describeThrown(st: &Interp, v: &JSValue): string {
 fn makeInterp(gcStats: bool, gcThreshold: i64, gcGrowth: i64): Interp {
     return Interp {
         scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
-        objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
+        objects: Vec.new(), objFreeList: Vec.new(), objExtras: Vec.new(), objExtraFree: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
         modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(), modPathStack: Vec.new(),
         throwing: false, thrownValue: JSValue.Undefined,
         optShort: false, pendingLabel: "", callDepthLimit: 20,
@@ -53,6 +53,10 @@ fn makeInterp(gcStats: bool, gcThreshold: i64, gcGrowth: i64): Interp {
 
 // scope 0 = global (never collected — always a GC root), then install builtins
 fn bootInterp(st: &mut Interp) {
+    // objExtras[0] = the shared read-only default: every object starts with
+    // extra==0, so reads of a rare field are valid before any private slot is
+    // allocated. ensureExtra never returns 0, so this slot is never mutated.
+    st.objExtras.push(defaultExtra())
     newScope(st, -1)
     setupGlobals(st)
 }
