@@ -34,7 +34,7 @@ from "./lexer" import {
     lex, Token
 }
 from "./ast" import {
-    Prog
+    Prog, gProg
 }
 from "./modules" import {
     preloadGraph, resolveSpec, dirOf
@@ -158,16 +158,16 @@ fn main(): i32 {
             bootInterp(gInterp)
             // The prelude and the program must share one Prog: a JSValue.Func
             // carries an index into prog.funcs, so a function parsed into a
-            // different Prog would index the wrong table when called.
-            var prog = Prog {
-                exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
-            }
+            // different Prog would index the wrong table when called. Work on
+            // gProg (like milojs.milo does), not a local: natives that invoke
+            // user callbacks (proxy ownKeys from Object.keys) reach the program
+            // through gProg, and a local would leave it empty.
             // spec builtins that are written in JS rather than as natives; run in
             // global scope so its declarations become globals
-            let preludeIdx = preloadGraph("builtin:engine-prelude", prog, gInterp)
+            let preludeIdx = preloadGraph("builtin:engine-prelude", gProg, gInterp)
             if preludeIdx >= 0 {
-                hoistBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
-                execBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
+                hoistBlock(gProg, gInterp.modBlocks[preludeIdx], gInterp, 0)
+                execBlock(gProg, gInterp.modBlocks[preludeIdx], gInterp, 0)
             }
             if gInterp.throwing {
                 eprint("milojs-engine: prelude failed: " + describeThrown(gInterp, gInterp.thrownValue))
@@ -186,7 +186,7 @@ fn main(): i32 {
                 // first or every require fails with "module was not pre-loaded".
                 // preloadGraph walks require() edges from the entry; the entry's
                 // own parse here is what actually executes.
-                let _ = preloadGraph(path.clone(), prog, gInterp)
+                let _ = preloadGraph(path.clone(), gProg, gInterp)
                 // require() resolves against the CURRENT module's directory, and
                 // preload resolved against the entry's. Without pushing it the two
                 // disagree for anything but a bare builtin: preload registers
@@ -196,19 +196,19 @@ fn main(): i32 {
                 var p = PState {
                     toks: toks, pos: 0, curClass: "", file: path.clone(), errored: false, eofError: false, quiet: false
                 }
-                let top = parseProgram(p, prog)
-                hoistBlock(prog, top, gInterp, 0)
-                execBlock(prog, top, gInterp, 0)
+                let top = parseProgram(p, gProg)
+                hoistBlock(gProg, top, gInterp, 0)
+                execBlock(gProg, top, gInterp, 0)
             } else {
-                entryIdx = preloadWithImports(path.clone(), prog, gInterp)
+                entryIdx = preloadWithImports(path.clone(), gProg, gInterp)
                 if entryIdx < 0 {
                     eprint("milojs-engine: cannot load '" + path + "'")
                     return 1
                 }
-                runModule(prog, entryIdx, gInterp)
+                runModule(gProg, entryIdx, gInterp)
             }
             if !gInterp.throwing {
-                runEventLoop(prog, gInterp)
+                runEventLoop(gProg, gInterp)
             }
             if gInterp.throwing {
                 eprint("Uncaught " + describeThrown(gInterp, gInterp.thrownValue))

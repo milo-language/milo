@@ -2426,6 +2426,18 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                         popTemp(st)
                         return JSValue.Obj(arr)
                     }
+                    if st.objects[o].isProxy {
+                        // ownKeys/getOwnPropertyDescriptor traps decide, not
+                        // the proxy object's (empty) own bag
+                        let pk = proxyOwnEnumKeys(gProg, st, o)
+                        var i: i64 = 0
+                        while i < pk.len() {
+                            arrPush(st, arr, JSValue.Str(pk[i].clone()))
+                            i = i + 1
+                        }
+                        popTemp(st)
+                        return JSValue.Obj(arr)
+                    }
                     if st.objects[o].isArray {
                         var i: i64 = 0
                         let n = arrLen(st, o)
@@ -4710,6 +4722,89 @@ fn proxyTrap(st: &Interp, o: i64, name: &string): JSValue {
         return JSValue.Undefined
     }
     return getMember(st, h, name)
+}
+
+// Enumerable own string keys of a proxy: the ownKeys trap supplies the list,
+// then each key is kept only if its descriptor (getOwnPropertyDescriptor trap,
+// falling back to the target's own descriptor) says enumerable. Missing ownKeys
+// forwards to the target. Feeds for-in and Object.keys.
+fn proxyOwnEnumKeys(prog: &Prog, st: &mut Interp, o: i64): Vec<string> {
+    var out: Vec<string> = Vec.new()
+    let target = cloneValue(st.objects[o].proxyTarget)
+    let trap = proxyTrap(st, o, "ownKeys")
+    var keyList: Vec<string> = Vec.new()
+    if isCallableIn(st, trap) {
+        var args: Vec<JSValue> = Vec.new()
+        args.push(cloneValue(target))
+        let res = callValue(prog, trap, args, cloneValue(st.objects[o].proxyHandler), st)
+        if st.throwing {
+            return out
+        }
+        let rh = objHandle(res)
+        if rh >= 0 && st.objects[rh].isArray {
+            var i: i64 = 0
+            while i < arrLen(st, rh) {
+                let kv = arrGet(st, rh, i)
+                keyList.push(toStr(kv))
+                i = i + 1
+            }
+        }
+    } else {
+        let th = objHandle(target)
+        if th >= 0 {
+            if st.objects[th].isArray {
+                var e: i64 = 0
+                while e < arrLen(st, th) {
+                    if !arrIsHole(st, th, e) {
+                        out.push(i64ToStr(e))
+                    }
+                    e = e + 1
+                }
+            }
+            var k: i64 = 0
+            while k < st.objects[th].props.len() {
+                if st.objects[th].props[k].enumerable {
+                    out.push(st.objects[th].props[k].key.clone())
+                }
+                k = k + 1
+            }
+        }
+        return out
+    }
+    let dtrap = proxyTrap(st, o, "getOwnPropertyDescriptor")
+    var i: i64 = 0
+    while i < keyList.len() {
+        if isCallableIn(st, dtrap) {
+            var dargs: Vec<JSValue> = Vec.new()
+            dargs.push(cloneValue(target))
+            dargs.push(JSValue.Str(keyList[i].clone()))
+            let d = callValue(prog, dtrap, dargs, cloneValue(st.objects[o].proxyHandler), st)
+            if st.throwing {
+                return out
+            }
+            let dh = objHandle(d)
+            if dh >= 0 && truthy(getMember(st, dh, "enumerable")) {
+                out.push(keyList[i].clone())
+            }
+        } else {
+            let th = objHandle(target)
+            if th >= 0 {
+                let pi = objOwnIndex(st, th, keyList[i])
+                if pi >= 0 {
+                    if st.objects[th].props[pi].enumerable {
+                        out.push(keyList[i].clone())
+                    }
+                } else if st.objects[th].isArray {
+                    let ai = asArrayIndex(keyList[i])
+                    if ai >= 0 && ai < arrLen(st, th) && !arrIsHole(st, th, ai) {
+                        out.push(keyList[i].clone())
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    return out
 }
 
 fn makeError(st: &mut Interp, kind: string, msg: string): JSValue {
@@ -8259,6 +8354,9 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
             var keys: Vec<string> = Vec.new()
             match ov {
                 JSValue.Obj(o) => {
+                    if st.objects[o].isProxy {
+                        keys = proxyOwnEnumKeys(prog, st, o)
+                    }
                     if st.objects[o].isArray {
                         var e: i64 = 0
                         let ne = arrLen(st, o)
