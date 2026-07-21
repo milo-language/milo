@@ -91,8 +91,31 @@ Import modules with `from "std/<name>" import { symbols }`.
 | [`std/sort`](sort) | Sorting for Vec — `sortI32`, `sortI64`, `sortStrings` |
 | [`std/testing`](testing) | `assert`, `assertEqual`, `assertStrEqual` |
 | [`std/log`](log) | Leveled logging to stderr — `logDebug`, `logInfo`, `logWarn`, `logError` |
-| [`std/crypto`](crypto) | `sha256`, `md5` hashing |
 | [`std/mem`](mem) | `mmapAnon`, `mmapFile`, bump-allocator arena |
+
+## Cryptography
+
+OpenSSL-backed hashing plus pure-Milo hashing, MAC, and token modules (no C codec dependency; constant-time and WCET-analyzable).
+
+| Module | What it provides |
+|--------|-----------------|
+| [`std/crypto`](crypto) | `sha256`, `sha1`, `md5`, and `aesGcmEncrypt`/`aesGcmDecrypt` (128/256-bit AES-GCM) |
+| [`std/sha256`](sha256) | Pure-Milo SHA-256 — `sha256`, `sha256Bytes` |
+| [`std/sha1`](sha1) | Pure-Milo SHA-1 — `sha1`, `sha1Bytes` |
+| [`std/hmac`](hmac) | HMAC-SHA256 / HMAC-SHA1 — `hmacSha256`, `hmacSha1Bytes` |
+| [`std/jwt`](jwt) | JWT sign/verify (HS256) — `jwtSignHS256`, `jwtVerifyHS256` |
+| [`std/totp`](totp) | RFC 6238 TOTP / RFC 4226 HOTP one-time passwords — `totp`, `hotp` |
+| [`std/base32`](base32) | Base32 encode/decode (RFC 4648) — `base32Encode`, `base32Decode` |
+
+## Compression
+
+Pure-Milo DEFLATE (RFC 1951) and the gzip / zlib / zip containers built on it.
+
+| Module | What it provides |
+|--------|-----------------|
+| [`std/deflate`](deflate) | Compress — raw DEFLATE, `gzipCompress`, `zlibCompress` |
+| [`std/inflate`](inflate) | Decompress — `inflate`, `gzipDecompress`, `zlibDecompress` |
+| [`std/zip`](zip) | Read ZIP archives — `zipRead` (`.zip`/`.jar`/`.epub`/`.docx`) |
 
 ## HTTP Server Example
 

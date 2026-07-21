@@ -34,7 +34,7 @@ export default defineConfig({
       { text: 'Docs', link: '/getting-started/installation' },
       { text: 'Language', link: '/language/' },
       { text: 'Playground', link: '/playground' },
-      { text: 'Showcase', link: '/demos' },
+      { text: 'Built with Milo', link: '/demos' },
       {
         text: 'More',
         items: [
@@ -183,8 +183,29 @@ export default defineConfig({
                 { text: 'std/sort', link: '/stdlib/sort' },
                 { text: 'std/testing', link: '/stdlib/testing' },
                 { text: 'std/log', link: '/stdlib/log' },
-                { text: 'std/crypto', link: '/stdlib/crypto' },
                 { text: 'std/mem', link: '/stdlib/mem' },
+              ]
+            },
+            {
+              text: 'Cryptography',
+              collapsed: true,
+              items: [
+                { text: 'std/crypto', link: '/stdlib/crypto' },
+                { text: 'std/sha256', link: '/stdlib/sha256' },
+                { text: 'std/sha1', link: '/stdlib/sha1' },
+                { text: 'std/hmac', link: '/stdlib/hmac' },
+                { text: 'std/jwt', link: '/stdlib/jwt' },
+                { text: 'std/totp', link: '/stdlib/totp' },
+                { text: 'std/base32', link: '/stdlib/base32' },
+              ]
+            },
+            {
+              text: 'Compression',
+              collapsed: true,
+              items: [
+                { text: 'std/deflate', link: '/stdlib/deflate' },
+                { text: 'std/inflate', link: '/stdlib/inflate' },
+                { text: 'std/zip', link: '/stdlib/zip' },
               ]
             },
           ]
@@ -192,7 +213,7 @@ export default defineConfig({
         {
           text: 'More',
           items: [
-            { text: 'Showcase', link: '/demos' },
+            { text: 'Built with Milo', link: '/demos' },
             { text: 'Benchmarks', link: '/benchmarks' },
             { text: 'Quick Reference', link: '/reference' },
             { text: 'Roadmap', link: '/roadmap' },

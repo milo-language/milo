@@ -100,81 +100,68 @@ fn main() {
 
 <div class="showcase">
   <div class="showcase-head">
-    <h2>Built in Milo</h2>
+    <h2>Built with Milo</h2>
     <p>We build the language by building things with it. We've found that faster than theory and analysis, and it yields a better language. The emulators run right here in your browser: the same Milo source compiles to a native binary <em>and</em> to JavaScript.</p>
   </div>
   <div class="tile-grid">
     <a class="tile" href="/milo/nes/">
       <span class="tile-play">▶ PLAY</span>
-      <div class="tile-emoji">🎮</div>
       <h3>NES Emulator</h3>
       <p>A complete Nintendo, playable right here in your browser.</p>
     </a>
     <a class="tile" href="/milo/genesis/">
       <span class="tile-play">▶ PLAY</span>
-      <div class="tile-emoji">🕹️</div>
       <h3>Genesis Emulator</h3>
       <p>A complete Sega Genesis. Sonic runs.</p>
     </a>
     <a class="tile" href="/milo/snes/">
       <span class="tile-play">▶ PLAY</span>
-      <div class="tile-emoji">👾</div>
       <h3>SNES Emulator</h3>
       <p>A Super Nintendo. Mario World, Donkey Kong Country, Star Fox.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/src-milo">
-      <div class="tile-emoji">🪞</div>
       <h3>The Compiler</h3>
       <p>The Milo compiler is written in Milo. It compiles itself.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/milojs">
-      <div class="tile-emoji">⚡</div>
       <h3>JS Engine</h3>
       <p>A JavaScript engine that runs real Node apps like express.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/hades">
-      <div class="tile-emoji">🐛</div>
       <h3>Debugger</h3>
       <p>hades: debug any program from the browser, with an AI in the loop.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/weather">
-      <div class="tile-emoji">🌦️</div>
       <h3>Weather App</h3>
       <p>A weather website served from a single static binary.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/termpair">
-      <div class="tile-emoji">🖥️</div>
       <h3>termpair</h3>
       <p>Share your terminal in the browser, end-to-end encrypted.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/apps/tetris.milo">
-      <div class="tile-emoji">🧱</div>
       <h3>Tetris</h3>
       <p>The classic, in your terminal.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/java-dap">
-      <div class="tile-emoji">☕</div>
       <h3>Java Debugger</h3>
       <p>A JVM debug adapter, so hades debugs Java too.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/apps/sysmon.milo">
-      <div class="tile-emoji">📊</div>
       <h3>System Monitor</h3>
       <p>A live htop-style view of your machine.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo">
-      <div class="tile-emoji">📦</div>
       <h3>Package Manager</h3>
       <p>Milo's own package manager. Install and publish packages over git.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/blob/main/tools/smtSolve.milo">
-      <div class="tile-emoji">🧮</div>
       <h3>The Prover</h3>
       <p>The SMT prover that verifies Milo contracts, written in Milo.</p>
     </a>
   </div>
   <div class="showcase-cta">
-    <a class="showcase-cta-btn" href="/milo/demos">Explore the full showcase</a>
+    <a class="showcase-cta-btn" href="/milo/demos">Everything built with Milo</a>
   </div>
 </div>
 

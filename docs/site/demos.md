@@ -6,7 +6,7 @@ update-when: a demo is added/removed or its capabilities change
 last-verified: 2026-07-15
 -->
 
-# Showcase
+# Built with Milo
 
 Real programs written in Milo. Every one is a single `.milo` file. Clone the repo and [run or build any of them yourself](#run-these-yourself) with the `./milo` wrapper. They double as integration tests for the standard library.
 
