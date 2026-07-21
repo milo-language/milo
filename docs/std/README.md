@@ -75,3 +75,4 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/uuid](./uuid.md)
 - [std/ws](./ws.md)
 - [std/zip](./zip.md)
+- [std/zstd](./zstd.md)

@@ -1,0 +1,139 @@
+// std/zstd — pure-Milo Zstandard frame decoder (RFC 8878).
+//
+// Scope today: the frame layer + Raw and RLE blocks. This decodes any all-Raw/RLE
+// zstd frame byte-for-byte — which is what `zstd` emits for tiny or incompressible
+// input (it does not waste an entropy stage on data that would not shrink). Compressed
+// blocks (type 2: FSE + Huffman literals + FSE-coded sequences) return a clear
+// "not yet supported" error and are the tracked next slice; the frame/block scaffolding
+// here is exactly what that slice plugs into.
+//
+// The 4-byte content checksum (XXH64, when the frame header flags it) is parsed past
+// but not verified — XXH64 is a separate module. Structure mirrors std/inflate: a
+// borrowed &string input, an owned output string, integer status on the hot path.
+
+// Read a little-endian unsigned integer of `n` bytes (n in 1..8) at `pos`.
+fn _leN(src: &string, pos: i64, n: i64): i64 {
+    var v: i64 = 0
+    for i in 0..n {
+        v = v | ((src[pos + i] as i64) << (8 * i))
+    }
+    return v
+}
+
+// Parsed zstd frame header (RFC 8878 §3.1.1). `headerLen` is the byte length of the
+// whole header (magic + descriptor + optional window/dict-id/content-size fields), so
+// the first block begins at `headerLen`.
+struct ZstdHeader {
+    headerLen: i64,
+    hasChecksum: bool,
+}
+
+let ZSTD_MAGIC: i64 = 0xFD2FB528
+
+// Parse the frame header. Returns headerLen < 0 on malformed input.
+fn _parseHeader(src: &string): ZstdHeader {
+    if src.len < 5 {
+        return ZstdHeader {
+            headerLen: -1, hasChecksum: false
+        }
+    }
+    if _leN(src, 0, 4) != ZSTD_MAGIC {
+        return ZstdHeader {
+            headerLen: -1, hasChecksum: false
+        }
+    }
+    let desc = src[4] as i64
+    let fcsFlag = (desc >> 6) & 3
+    let singleSegment = (desc >> 5) & 1
+    let checksumFlag = (desc >> 2) & 1
+    let dictIdFlag = desc & 3
+    var pos: i64 = 5
+    // Window descriptor: present only when not single-segment.
+    if singleSegment == 0 {
+        pos = pos + 1
+    }
+    // Dictionary ID: 0, 1, 2, or 4 bytes per the flag.
+    var dictIdSize: i64 = 0
+    if dictIdFlag == 1 {
+        dictIdSize = 1
+    } else if dictIdFlag == 2 {
+        dictIdSize = 2
+    } else if dictIdFlag == 3 {
+        dictIdSize = 4
+    }
+    pos = pos + dictIdSize
+    // Frame content size: size is 0/2/4/8 by flag, but single-segment forces a
+    // 1-byte field even when the flag is 0.
+    var fcsSize: i64 = 0
+    if fcsFlag == 0 {
+        if singleSegment == 1 {
+            fcsSize = 1
+        }
+    } else if fcsFlag == 1 {
+        fcsSize = 2
+    } else if fcsFlag == 2 {
+        fcsSize = 4
+    } else {
+        fcsSize = 8
+    }
+    pos = pos + fcsSize
+    if pos > src.len {
+        return ZstdHeader {
+            headerLen: -1, hasChecksum: false
+        }
+    }
+    return ZstdHeader {
+        headerLen: pos, hasChecksum: checksumFlag == 1
+    }
+}
+
+// Decompress a single zstd frame. Multi-frame concatenation is not handled — one
+// frame per call, like `zstd`'s default single-frame output.
+fn zstdDecompress(src: &string): Result<string, string> {
+    let hdr = _parseHeader(src)
+    if hdr.headerLen < 0 {
+        return Result.Err("zstd: bad frame header")
+    }
+    var pos = hdr.headerLen
+    var out = ""
+    var lastBlock = false
+    while !lastBlock {
+        if pos + 3 > src.len {
+            return Result.Err("zstd: truncated block header")
+        }
+        let bh = _leN(src, pos, 3)
+        pos = pos + 3
+        lastBlock = (bh & 1) == 1
+        let blockType = (bh >> 1) & 3
+        let blockSize = bh >> 3
+        if blockType == 0 {
+            // Raw block: blockSize literal bytes.
+            if pos + blockSize > src.len {
+                return Result.Err("zstd: truncated raw block")
+            }
+            for i in 0..blockSize {
+                out.push(src[pos + i])
+            }
+            pos = pos + blockSize
+        } else if blockType == 1 {
+            // RLE block: one byte repeated blockSize times.
+            if pos + 1 > src.len {
+                return Result.Err("zstd: truncated RLE block")
+            }
+            let b = src[pos]
+            pos = pos + 1
+            for _i in 0..blockSize {
+                out.push(b)
+            }
+        } else if blockType == 2 {
+            return Result.Err("zstd: compressed blocks (FSE/Huffman) not yet supported")
+        } else {
+            return Result.Err("zstd: reserved block type")
+        }
+    }
+    // Skip the 4-byte content checksum if present (XXH64, not yet verified).
+    if hdr.hasChecksum {
+        pos = pos + 4
+    }
+    return Result.Ok(out)
+}
