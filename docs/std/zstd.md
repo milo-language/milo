@@ -9,9 +9,10 @@ fn zstdCompress(src: &string): string
 ```
 
 Compress `src` to a real zstd frame: greedy LZ77 + FSE-coded sequences (Predefined or
-custom per-block tables), Raw literals, per-block Raw fallback so output never expands.
-Single-segment header with a 4-byte content size and an appended XXH64 content checksum
-— decodable by `zstdDecompress` above and the reference `zstd -d`.
+custom per-block tables), repeat-offset codes for recurring back-distances, and Huffman-
+coded literals (litType 2, ASCII/text; Raw for wider alphabets), with a per-block Raw
+fallback so output never expands. Single-segment header with a 4-byte content size and an
+appended XXH64 content checksum — decodable by `zstdDecompress` above and reference `zstd -d`.
 
 ### `zstdCompressRaw`
 

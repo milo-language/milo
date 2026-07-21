@@ -74,6 +74,20 @@ fn main() {
     // @expect: true
     print(compressedLen(big) < big.len / 2)
 
+    // literal-heavy ASCII prose (two varying numbers per line keep the match offsets
+    // shifting, so much of each line stays as literals) — Huffman-coded literals plus
+    // repeat-offset sequence codes push it well below what Raw literals reach.
+    var prose = ""
+    var p: i64 = 0
+    while prose.len < 200000 {
+        prose = prose + "entry number " + p.toString() + " says the quick brown fox jumps over lazy dogs near " + (p * 7).toString() + "\n"
+        p = p + 1
+    }
+    // @expect: true
+    print(roundtrips(prose))
+    // @expect: true
+    print(compressedLen(prose) < prose.len / 13)
+
     // incompressible pseudo-random data still round-trips and never expands past framing
     var rnd = ""
     var seed: i64 = 123456789

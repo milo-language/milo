@@ -1393,6 +1393,40 @@ struct SeqCodes {
     ofVal: Vec<i64>, // offBase = offset + 3
 }
 
+// Choose the offBase (raw offset code) for a sequence, preferring a repeat-offset code
+// (1/2/3, coded in 0–1 offset bits) when the actual back-distance matches recent history
+// over a full offset+3 code. The exact inverse of the decoder's `_computeOffset`; advancing
+// `rep` through the same call keeps encoder and decoder repeat histories in lockstep by
+// construction. Cheapest match wins.
+fn _encodeOffsetBase(offset: i64, litLen: i64, rep: &mut Vec<i64>): i64 {
+    var offBase: i64 = 0
+    if litLen == 0 {
+        // litLen 0 shifts the repeat slots (decoder adds 1 to the index): 1→rep1, 2→rep2,
+        // 3→rep0-1. rep0 itself is unreachable here, so it costs a full offset code.
+        if offset == rep[1] {
+            offBase = 1
+        } else if offset == rep[2] {
+            offBase = 2
+        } else if offset == rep[0] - 1 {
+            offBase = 3
+        } else {
+            offBase = offset + 3
+        }
+    } else {
+        if offset == rep[0] {
+            offBase = 1
+        } else if offset == rep[1] {
+            offBase = 2
+        } else if offset == rep[2] {
+            offBase = 3
+        } else {
+            offBase = offset + 3
+        }
+    }
+    _computeOffset(offBase, litLen, rep) // advance rep exactly as the decoder will
+    return offBase
+}
+
 fn _computeCodes(seqs: &Vec<Seq3>): SeqCodes {
     let nb = seqs.len
     let llCodeTbl = _llCodeTable()
@@ -1403,11 +1437,12 @@ fn _computeCodes(seqs: &Vec<Seq3>): SeqCodes {
     var llVal = _zeroVec(nb)
     var mlVal = _zeroVec(nb)
     var ofVal = _zeroVec(nb)
+    var rep: Vec<i64> = [1, 4, 8] // repeat-offset history, decoder's initial state
     for i in 0..nb {
         let s = seqs[i]
         let litLen = s.litLen
         let mlBase = s.matchLen - 3
-        let offBase = s.offset + 3
+        let offBase = _encodeOffsetBase(s.offset, litLen, rep)
         if litLen > 63 {
             ll[i] = _highestSetBit(litLen) + 19
         } else {
@@ -1511,6 +1546,268 @@ fn _planStream(codes: &Vec<i64>, predefDist: Vec<i64>, predefLog: i64, maxAcc: i
     }
 }
 
+// ── Huffman literals encoder ──
+//
+// Codes the literals with a per-block Huffman tree (litType 2), the inverse of the decoder's
+// `_decodeHufTable`/`_hufBuildFromWeights`/`_hufDecode1Stream`. Weights use the Direct format
+// (header ≥ 128), which needs the highest literal ≤ 128, so this covers ASCII/text — where
+// the entropy win is largest — and falls back to Raw literals for wider alphabets or when
+// Huffman fails to shrink. Tree depth is capped at 11; deeper trees (very skewed inputs)
+// fall back rather than length-limit (a later slice). No expansion: the caller keeps the
+// smaller of the Huffman and Raw sections.
+
+fn _emitLE(out: &mut string, value: i64, nbytes: i64) {
+    var v = value
+    for _i in 0..nbytes {
+        out.push((v & 0xff) as u8)
+        v = v >> 8
+    }
+}
+
+// Plain Huffman code lengths from a symbol histogram (0 = symbol absent). Repeated
+// merge-two-smallest over ≤129 symbols, then each leaf's length is its depth to the root.
+fn _hufCodeLengths(freq: &Vec<i64>, maxSymbol: i64): Vec<i64> {
+    let n = maxSymbol + 1
+    let cap = 2 * n
+    var nodeFreq = _zeroVec(cap)
+    var parent = _zeroVec(cap) // parent index + 1; 0 = none yet (leaves and root)
+    var active = _zeroVec(cap)
+    for s in 0..n {
+        if freq[s] > 0 {
+            nodeFreq[s] = freq[s]
+            active[s] = 1
+        }
+    }
+    var next = n
+    var more = true
+    while more {
+        var a: i64 = -1
+        var b: i64 = -1
+        for i in 0..next {
+            if active[i] == 1 {
+                if a < 0 || nodeFreq[i] < nodeFreq[a] {
+                    b = a
+                    a = i
+                } else if b < 0 || nodeFreq[i] < nodeFreq[b] {
+                    b = i
+                }
+            }
+        }
+        if b < 0 {
+            more = false // one active node left: the root
+        } else {
+            nodeFreq[next] = nodeFreq[a] + nodeFreq[b]
+            active[a] = 0
+            active[b] = 0
+            parent[a] = next + 1
+            parent[b] = next + 1
+            active[next] = 1
+            next = next + 1
+        }
+    }
+    var codeLen = _zeroVec(n)
+    for s in 0..n {
+        if freq[s] > 0 {
+            var d: i64 = 0
+            var cur = s
+            while parent[cur] != 0 {
+                cur = parent[cur] - 1
+                d = d + 1
+            }
+            codeLen[s] = d
+        }
+    }
+    return codeLen
+}
+
+// Assign canonical Huffman codes from code lengths, byte-identical to the decoder's
+// `_hufBuildFromBits` table layout (longest codes at the low table indices, symbol order
+// within a length). Returns each symbol's `codeLen`-bit code, MSB-first.
+fn _hufBuildCodes(codeLen: &Vec<i64>, numSymbs: i64, maxBits: i64): Vec<i64> {
+    var rankCount = _zeroVec(maxBits + 2)
+    for s in 0..numSymbs {
+        let b = codeLen[s]
+        if b > 0 {
+            rankCount[b] = rankCount[b] + 1
+        }
+    }
+    var rankIdx = _zeroVec(maxBits + 2)
+    var i = maxBits
+    while i >= 1 {
+        rankIdx[i - 1] = rankIdx[i] + rankCount[i] * (1 << (maxBits - i))
+        i = i - 1
+    }
+    var codes = _zeroVec(numSymbs)
+    for s in 0..numSymbs {
+        let b = codeLen[s]
+        if b > 0 {
+            let idx = rankIdx[b]
+            codes[s] = idx >> (maxBits - b)
+            rankIdx[b] = idx + (1 << (maxBits - b))
+        }
+    }
+    return codes
+}
+
+// Huffman-code `literals[from..to)` into one backward bitstream (the inverse of
+// `_hufDecode1Stream`): symbols written last-first, each code appended MSB-aligned, then a
+// '1' padding marker + byte-align. The decoder's window reader recovers them in order.
+fn _hufEncode1Stream(literals: &string, from: i64, to: i64, hufCode: &Vec<i64>, hufLen: &Vec<i64>): string {
+    var b = BitCS {
+        bytes: "", acc: 0, nb: 0
+    }
+    var i = to - 1
+    while i >= from {
+        let s = literals[i] as i64
+        _bcAdd(b, hufCode[s], hufLen[s])
+        i = i - 1
+    }
+    _bcClose(b)
+    return b.bytes
+}
+
+// Build a full Huffman literals section, or "" if Huffman isn't viable (tiny input, alphabet
+// past symbol 128, tree deeper than 11 bits, or the size field can't hold the result).
+fn _hufLiteralsSection(literals: &string): string {
+    let regen = literals.len
+    if regen < 8 {
+        return ""
+    }
+    var freq = _zeroVec(256)
+    var maxSymbol: i64 = 0
+    var distinct: i64 = 0
+    for i in 0..regen {
+        let s = literals[i] as i64
+        if freq[s] == 0 {
+            distinct = distinct + 1
+        }
+        freq[s] = freq[s] + 1
+        if s > maxSymbol {
+            maxSymbol = s
+        }
+    }
+    if distinct < 2 || maxSymbol > 128 {
+        return ""
+    }
+    let codeLen = _hufCodeLengths(freq, maxSymbol)
+    var maxBits: i64 = 0
+    for s in 0..(maxSymbol + 1) {
+        if codeLen[s] > maxBits {
+            maxBits = codeLen[s]
+        }
+    }
+    if maxBits > 11 {
+        return ""
+    }
+    let numSymbs = maxSymbol + 1
+    let hufCode = _hufBuildCodes(codeLen, numSymbs, maxBits)
+    // Direct weight description: transmit weights for symbols 0..maxSymbol-1 (4 bits each,
+    // high nibble first); the decoder infers symbol maxSymbol so the tree stays complete.
+    var weightsDesc = ""
+    weightsDesc.push((127 + maxSymbol) as u8)
+    var wi: i64 = 0
+    while wi < maxSymbol {
+        var hi: i64 = 0
+        if codeLen[wi] > 0 {
+            hi = maxBits + 1 - codeLen[wi]
+        }
+        var lo: i64 = 0
+        if wi + 1 < maxSymbol && codeLen[wi + 1] > 0 {
+            lo = maxBits + 1 - codeLen[wi + 1]
+        }
+        weightsDesc.push(((hi << 4) | lo) as u8)
+        wi = wi + 2
+    }
+    // 1 stream under 1 KiB (sizeFormat 0); otherwise 4 streams with a 6-byte jump table, so
+    // regen/comp need the wider 14- or 18-bit size fields (sizeFormat 2/3).
+    var streamsData = ""
+    var sizeFormat: i64 = 0
+    if regen <= 1023 {
+        streamsData = _hufEncode1Stream(literals, 0, regen, hufCode, codeLen)
+    } else {
+        if regen <= 16383 {
+            sizeFormat = 2
+        } else {
+            sizeFormat = 3
+        }
+        let seg = regen / 4
+        let s1 = _hufEncode1Stream(literals, 0, seg, hufCode, codeLen)
+        let s2 = _hufEncode1Stream(literals, seg, 2 * seg, hufCode, codeLen)
+        let s3 = _hufEncode1Stream(literals, 2 * seg, 3 * seg, hufCode, codeLen)
+        let s4 = _hufEncode1Stream(literals, 3 * seg, regen, hufCode, codeLen)
+        _emitLE(streamsData, s1.len, 2)
+        _emitLE(streamsData, s2.len, 2)
+        _emitLE(streamsData, s3.len, 2)
+        for i in 0..s1.len {
+            streamsData.push(s1[i])
+        }
+        for i in 0..s2.len {
+            streamsData.push(s2[i])
+        }
+        for i in 0..s3.len {
+            streamsData.push(s3[i])
+        }
+        for i in 0..s4.len {
+            streamsData.push(s4[i])
+        }
+    }
+    var hufData = ""
+    for i in 0..weightsDesc.len {
+        hufData.push(weightsDesc[i])
+    }
+    for i in 0..streamsData.len {
+        hufData.push(streamsData[i])
+    }
+    let compSize = hufData.len
+    var headerVal: i64 = 0
+    var headerBytes: i64 = 0
+    if sizeFormat == 0 {
+        if compSize > 1023 {
+            return "" // won't fit the 10-bit field (input didn't compress)
+        }
+        headerVal = 2 | (regen << 4) | (compSize << 14)
+        headerBytes = 3
+    } else if sizeFormat == 2 {
+        if compSize > 16383 {
+            return ""
+        }
+        headerVal = 2 | (2 << 2) | (regen << 4) | (compSize << 18)
+        headerBytes = 4
+    } else {
+        if compSize > 262143 {
+            return ""
+        }
+        headerVal = 2 | (3 << 2) | (regen << 4) | (compSize << 22)
+        headerBytes = 5
+    }
+    var section = ""
+    _emitLE(section, headerVal, headerBytes)
+    for i in 0..hufData.len {
+        section.push(hufData[i])
+    }
+    return section
+}
+
+// Raw literals section (header + bytes), the never-expands fallback.
+fn _rawLiteralsSection(literals: &string): string {
+    var out = ""
+    _encRawLiteralsHeader(out, literals.len)
+    for i in 0..literals.len {
+        out.push(literals[i])
+    }
+    return out
+}
+
+// Encode the literals section, choosing Huffman when it shrinks below Raw.
+fn _encodeLiterals(literals: &string): string {
+    let raw = _rawLiteralsSection(literals)
+    let huf = _hufLiteralsSection(literals)
+    if huf.len > 0 && huf.len < raw.len {
+        return huf
+    }
+    return raw
+}
+
 // Raw literals section header (RFC 8878 §3.1.1.3.1.1): 1/2/3-byte forms by size.
 fn _encRawLiteralsHeader(out: &mut string, size: i64) {
     if size < 32 {
@@ -1571,9 +1868,9 @@ fn _compressBlock(block: &string): BlockResult {
     let mlPlan = _planStream(codes.ml, _mlDefaultDist(), 6, 9)
 
     var out = ""
-    _encRawLiteralsHeader(out, lz.literals.len)
-    for i in 0..lz.literals.len {
-        out.push(lz.literals[i])
+    let litSection = _encodeLiterals(lz.literals)
+    for i in 0..litSection.len {
+        out.push(litSection[i])
     }
     _encSeqCount(out, lz.seqs.len)
     // Sequence-compression modes byte: LL in bits 7:6, OF in 5:4, ML in 3:2.
@@ -1598,9 +1895,10 @@ fn _compressBlock(block: &string): BlockResult {
 }
 
 // Compress `src` to a real zstd frame: greedy LZ77 + FSE-coded sequences (Predefined or
-// custom per-block tables), Raw literals, per-block Raw fallback so output never expands.
-// Single-segment header with a 4-byte content size and an appended XXH64 content checksum
-// — decodable by `zstdDecompress` above and the reference `zstd -d`.
+// custom per-block tables), repeat-offset codes for recurring back-distances, and Huffman-
+// coded literals (litType 2, ASCII/text; Raw for wider alphabets), with a per-block Raw
+// fallback so output never expands. Single-segment header with a 4-byte content size and an
+// appended XXH64 content checksum — decodable by `zstdDecompress` above and reference `zstd -d`.
 fn zstdCompress(src: &string): string {
     var out = ""
     out.push(0x28 as u8)
