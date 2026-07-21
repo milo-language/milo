@@ -3237,6 +3237,23 @@ fn instanceOf(st: &Interp, val: &JSValue, ctor: &JSValue): bool {
                     let nm = objGet(st, o, "name")
                     return toStr(nm) == nativeErrorName(id)
                 }
+                JSValue.Obj(c) => {
+                    // Array is an object constructor (JSValue.Obj), not a Native,
+                    // so `[] instanceof Array` reaches here — match by the array flag
+                    if c == st.arrayCtorObj {
+                        return st.objects[o].isArray
+                    }
+                    // a constructor object with a .prototype linked into the
+                    // object's chain (user functions assigned as constructors)
+                    var p = st.objects[o].proto
+                    while p >= 0 {
+                        if p == c {
+                            return true
+                        }
+                        p = st.objects[p].proto
+                    }
+                    return false
+                }
                 _ => {
                     return false
                 }
