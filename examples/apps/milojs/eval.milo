@@ -217,6 +217,15 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
     // `typeof x.then === "function"`, which that silently failed — hand back a
     // bound method instead.
     if objOwnIndex(st, o, key) < 0 {
+        // obj.__proto__ mirrors Object.getPrototypeOf (a Object.prototype accessor
+        // in the spec); resolve it through the same type-based helper
+        if key == "__proto__" {
+            let pp = protoOfHandle(st, o)
+            if pp >= 0 {
+                return JSValue.Obj(pp)
+            }
+            return JSValue.Null
+        }
         // builtin methods are dispatched by name, not stored as properties, so
         // reading one as a value needs a bound method synthesised here
         if st.objects[o].promiseState >= 0 && (key == "then" || key == "catch" || key == "finally") {
@@ -2148,8 +2157,9 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     if id == NATIVE_OBJECT_GETPROTO {
         if argVals.len() > 0 {
             let h = propertyBagOf(st, argVals[0])
-            if h >= 0 && st.objects[h].proto >= 0 {
-                return JSValue.Obj(st.objects[h].proto)
+            let p = protoOfHandle(st, h)
+            if p >= 0 {
+                return JSValue.Obj(p)
             }
         }
         return JSValue.Null
@@ -2581,6 +2591,30 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
 // its statics bag, not in an object slot, so Object.assign has to look there for
 // both its target and its sources — prisma's debug module is a function on both
 // sides of `Object.assign(fn, otherFn)`.
+// The prototype object index for object `h`, or -1 (null). milojs fakes the
+// prototype chain — a plain `{}` has proto -1 and inherits Object.prototype
+// methods by dispatch — so getPrototypeOf / `__proto__` / `constructor` resolve
+// the right singleton by type here rather than reading a real link.
+fn protoOfHandle(st: &Interp, h: i64): i64 {
+    if h < 0 {
+        return -1
+    }
+    // Object.prototype is the top of the chain; its own proto is null
+    if h == st.objectProtoObj {
+        return -1
+    }
+    // an explicit link (user `new F()`, Object.create, setPrototypeOf) wins
+    if st.objects[h].proto >= 0 {
+        return st.objects[h].proto
+    }
+    if st.objects[h].isArray && st.arrayProtoObj >= 0 {
+        return st.arrayProtoObj
+    }
+    // functions, errors and plain objects fall back to Object.prototype
+    // (Function.prototype / Error.prototype are not distinct singletons here)
+    return st.objectProtoObj
+}
+
 fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
     match v {
         JSValue.Obj(o) => {
@@ -3228,6 +3262,7 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectProto, "isPrototypeOf", makeBoundMethod(st, JSValue.Undefined, "isPrototypeOf"))
     objSet(st, objectProto, "propertyIsEnumerable", makeBoundMethod(st, JSValue.Undefined, "propertyIsEnumerable"))
     objSet(st, objectCtor, "prototype", JSValue.Obj(objectProto))
+    st.objectProtoObj = objectProto
     // Object is itself an object, so it carries the Object.prototype methods.
     // Code borrows them from the constructor — `Object.hasOwnProperty.call(o, k)`
     // is a common way to avoid a shadowed own property — and the native's bag
@@ -3342,6 +3377,7 @@ fn setupGlobals(st: &mut Interp) {
     st.objects[arrayCtor].isFunctionLike = true
     objSet(st, arrayCtor, "prototype", JSValue.Obj(arrayProto))
     st.arrayCtorObj = arrayCtor
+    st.arrayProtoObj = arrayProto
     objSet(st, arrayCtor, "isArray", JSValue.Native(NATIVE_ARRAY_ISARRAY))
     objSet(st, arrayCtor, "from", JSValue.Native(NATIVE_ARRAY_FROM))
     scopeDefine(st, 0, "Array", JSValue.Obj(arrayCtor))
