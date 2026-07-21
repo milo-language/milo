@@ -169,6 +169,73 @@ Buffer.prototype.indexOf = function (v) {
   return -1;
 };
 
+// --- numeric accessors ------------------------------------------------------
+// Integer read/write (LE/BE, 8/16/32-bit + the generic byte-length forms binary
+// protocol code uses). Values are the plain 0-255 bytes in this.bytes. Up to 48
+// bits stays exact in a double, which is node's own limit for the non-Big forms.
+function _rdU(bytes, off, len, be) {
+  var v = 0;
+  for (var i = 0; i < len; i++) v = v * 256 + (bytes[off + (be ? i : len - 1 - i)] & 0xff);
+  return v;
+}
+function _wrU(bytes, val, off, len, be) {
+  var v = val;
+  for (var i = 0; i < len; i++) { var b = v % 256; bytes[off + (be ? len - 1 - i : i)] = b & 0xff; v = Math.floor(v / 256); }
+  return off + len;
+}
+function _sgn(v, bits) { var m = Math.pow(2, bits); return v >= m / 2 ? v - m : v; }
+
+Buffer.prototype.readUInt8 = function (o) { return this.bytes[o || 0] & 0xff; };
+Buffer.prototype.readUInt16BE = function (o) { return _rdU(this.bytes, o || 0, 2, true); };
+Buffer.prototype.readUInt16LE = function (o) { return _rdU(this.bytes, o || 0, 2, false); };
+Buffer.prototype.readUInt32BE = function (o) { return _rdU(this.bytes, o || 0, 4, true); };
+Buffer.prototype.readUInt32LE = function (o) { return _rdU(this.bytes, o || 0, 4, false); };
+Buffer.prototype.readUIntBE = function (o, len) { return _rdU(this.bytes, o || 0, len, true); };
+Buffer.prototype.readUIntLE = function (o, len) { return _rdU(this.bytes, o || 0, len, false); };
+Buffer.prototype.readInt8 = function (o) { return _sgn(this.bytes[o || 0] & 0xff, 8); };
+Buffer.prototype.readInt16BE = function (o) { return _sgn(_rdU(this.bytes, o || 0, 2, true), 16); };
+Buffer.prototype.readInt16LE = function (o) { return _sgn(_rdU(this.bytes, o || 0, 2, false), 16); };
+Buffer.prototype.readInt32BE = function (o) { return _sgn(_rdU(this.bytes, o || 0, 4, true), 32); };
+Buffer.prototype.readInt32LE = function (o) { return _sgn(_rdU(this.bytes, o || 0, 4, false), 32); };
+Buffer.prototype.writeUInt8 = function (v, o) { o = o || 0; this.bytes[o] = v & 0xff; return o + 1; };
+Buffer.prototype.writeUInt16BE = function (v, o) { return _wrU(this.bytes, v, o || 0, 2, true); };
+Buffer.prototype.writeUInt16LE = function (v, o) { return _wrU(this.bytes, v, o || 0, 2, false); };
+Buffer.prototype.writeUInt32BE = function (v, o) { return _wrU(this.bytes, v, o || 0, 4, true); };
+Buffer.prototype.writeUInt32LE = function (v, o) { return _wrU(this.bytes, v, o || 0, 4, false); };
+Buffer.prototype.writeUIntBE = function (v, o, len) { return _wrU(this.bytes, v, o || 0, len, true); };
+Buffer.prototype.writeUIntLE = function (v, o, len) { return _wrU(this.bytes, v, o || 0, len, false); };
+Buffer.prototype.writeInt8 = function (v, o) { o = o || 0; this.bytes[o] = v & 0xff; return o + 1; };
+Buffer.prototype.writeInt16BE = function (v, o) { return _wrU(this.bytes, v < 0 ? v + 0x10000 : v, o || 0, 2, true); };
+Buffer.prototype.writeInt16LE = function (v, o) { return _wrU(this.bytes, v < 0 ? v + 0x10000 : v, o || 0, 2, false); };
+Buffer.prototype.writeInt32BE = function (v, o) { return _wrU(this.bytes, v < 0 ? v + 0x100000000 : v, o || 0, 4, true); };
+Buffer.prototype.writeInt32LE = function (v, o) { return _wrU(this.bytes, v < 0 ? v + 0x100000000 : v, o || 0, 4, false); };
+
+Buffer.prototype.fill = function (val, start, end) {
+  var s = start || 0, e = end === undefined ? this.bytes.length : end;
+  var b = typeof val === 'number' ? (val & 0xff) : (utf8Encode(String(val))[0] || 0);
+  for (var i = s; i < e; i++) this.bytes[i] = b;
+  return this;
+};
+Buffer.prototype.copy = function (target, targetStart, sourceStart, sourceEnd) {
+  var ts = targetStart || 0, ss = sourceStart || 0, se = sourceEnd === undefined ? this.bytes.length : sourceEnd;
+  var n = 0;
+  for (var i = ss; i < se; i++) { target.bytes[ts + n] = this.bytes[i]; n++; }
+  if (target.bytes.length > target.length) target.length = target.bytes.length;
+  return n;
+};
+Buffer.prototype.subarray = function (start, end) { return new Buffer(this.bytes.slice(start, end)); };
+Buffer.prototype.includes = function (v) { return this.indexOf(v) >= 0; };
+Buffer.prototype.write = function (str, offset, length, encoding) {
+  var off = typeof offset === 'number' ? offset : 0;
+  var enc = typeof offset === 'string' ? offset : (typeof length === 'string' ? length : encoding);
+  var enc2 = enc || 'utf8';
+  var src = encodeFrom(str, enc2);
+  var max = typeof length === 'number' ? length : src.length;
+  var n = 0;
+  for (var i = 0; i < src.length && n < max; i++) { this.bytes[off + n] = src[i]; n++; }
+  return n;
+};
+
 Buffer.from = function (value, encoding) {
   if (typeof value === 'string') return new Buffer(encodeFrom(value, encoding));
   if (value && value.bytes) return new Buffer(value.bytes.slice());
