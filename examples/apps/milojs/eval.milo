@@ -4151,6 +4151,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                         let ps = st.objects[po].promiseState
                         let pv = cloneValue(st.objects[po].promiseValue)
                         if ps == 2 {
+                            awaitYieldMicrotasks(prog, st)
                             markRejectHandled(st, po)
                             st.throwing = true
                             st.thrownValue = pv
@@ -4168,6 +4169,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                                 }
                             }
                             if !fnested {
+                                awaitYieldMicrotasks(prog, st)
                                 return pv
                             }
                             awaited = pv
@@ -4236,7 +4238,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                                     return JSValue.Undefined
                                 }
                                 if st.microtasks.len() > 0 {
-                                    drainMicrotasks(prog, st)
+                                    drainMicrotasks(prog, st, 1000000)
                                 } else {
                                     compactTimers(st)
                                     // Only timers that are ALREADY due: runOneTimer
@@ -4306,6 +4308,8 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             awaited = sv
                         }
                     } else {
+                        // await of a non-thenable value: still yields a microtask tick
+                        awaitYieldMicrotasks(prog, st)
                         return awaited
                     }
 
@@ -5902,6 +5906,23 @@ fn resumeExecCtx(st: &mut Interp, task: *u8) {
 // promises in the first place — that path still drains in place.
 //
 // Returns false when parking is not possible, so the caller can fall back.
+// A settled `await` still yields to the microtask queue in node (the continuation
+// is queued as a microtask). Run the microtasks pending RIGHT NOW — a snapshot,
+// so ones they queue run after this await, matching node — inline: no park, so
+// the activation's own ExecCtx (tempRoots/active scopes) stays live in the Interp
+// and rooted (the reverted R1a attempt bypassed that by yielding the task). Only
+// on an activation task; the main event-loop task drains microtasks itself.
+fn awaitYieldMicrotasks(prog: &Prog, st: &mut Interp) {
+    let me = schedulerCurrent()
+    if me as i64 == 0 || me as i64 == st.mainTask as i64 {
+        return
+    }
+    let snap = st.microtasks.len()
+    if snap > 0 {
+        drainMicrotasks(prog, st, snap)
+    }
+}
+
 fn parkOnPromise(st: &mut Interp, p: i64): bool {
     let me = schedulerCurrent()
     if me as i64 == 0 || me as i64 == st.mainTask as i64 {
@@ -6296,9 +6317,14 @@ fn reportUnhandledRejections(st: &mut Interp) {
     st.unhandledRejects = Vec.new()
 }
 
-fn drainMicrotasks(prog: &Prog, st: &mut Interp) {
+// Run queued microtasks. `limit` caps how many are processed (also the runaway
+// guard); pass a large value to drain the whole queue. A bounded limit lets an
+// `await` run exactly the microtasks pending at the await point — matching node,
+// which queues the await continuation as a microtask, so microtasks queued
+// before it run first and ones they queue run after.
+fn drainMicrotasks(prog: &Prog, st: &mut Interp, limit: i64) {
     var guard: i64 = 0
-    while st.microtasks.len() > 0 && guard < 1000000 {
+    while st.microtasks.len() > 0 && guard < limit {
         let task = cloneValue(st.microtasks[0].cb)
         let arg = cloneValue(st.microtasks[0].arg)
         let derived = st.microtasks[0].derived
@@ -6462,7 +6488,7 @@ fn runEventLoop(prog: &Prog, st: &mut Interp) {
         // microtasks so a settlement made off-thread is visible in this turn.
         napiServiceTsfn(st)
         serviceFetches(st)
-        drainMicrotasks(prog, st)
+        drainMicrotasks(prog, st, 1000000)
         reportUnhandledRejections(st)
         compactTimers(st)
         // Order matters: run timers that are already due, then service a

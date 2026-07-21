@@ -20,7 +20,7 @@ document, and the document changes first if the plan changes.
 | Ordering mechanism (caller parks, body unparks it) | proven, `tests/fixtures/asyncCallOrdering.milo` |
 | R1 async call returns at first await | done in the **runtime** for a pending awaited promise — matches node; 71/71 fixtures, integration app green (0 errors, ~34ms) |
 | R1b same in the engine binary | **still not landed**, but the cause is now narrowed: the engine running on `gProg` alone is SAFE (landed independently for proxy traps, `adae042`, CI green). The unkillable hang came from `gProg` **plus** running the whole program on a green task — that combination, not `gProg` itself, is what wedged. So R1b needs the green-task part done differently |
-| R1a `await` of a non-thenable yields | not met — deferred, see below; a bare yield bypasses R6 save/restore |
+| R1a `await` of a non-thenable / settled value yields a microtask tick | **met** — a settled/non-thenable await runs the microtasks pending AT the await point (a snapshot) INLINE via `awaitYieldMicrotasks` (drainMicrotasks with a `limit`), then continues. No park, so the activation's ExecCtx stays live in the Interp and rooted — which is why this is safe where the reverted bare-`schedulerYield` was not. Covered by `tests/runtime/awaitMicrotaskYield.js`; app stays clean (0 errors, ~3ms/route) and run.sh 119/119, GC-stress clean |
 | R2 suspension is per-activation | done — park/wake on a promise (`ceb9aea`), wired into the `await` path (`parkOnPromise` at eval.milo:3619, taken on an activation task). Covered by `tests/runtime/r2r3Barrier.js` (both participants suspend on a pending barrier) + `r2TimerDuringSuspend.js` (a self-rescheduling timer chain keeps firing while an activation is parked) |
 | R3 resume order | done (`ceb9aea`) — `wakeAwaiters` walks the registry front-to-back, so waiters resume in registration order. Covered by `tests/runtime/r2r3Barrier.js` (a resumes before b) |
 | R4 settle/reject semantics | done — already held; locked in by `tests/asyncSettleReject.js`, clean under GC stress |
@@ -371,6 +371,27 @@ So R1a is not "add a yield". It is "make every suspension point go through the
 same save/restore path", which is R6 applied to a second kind of park. Doing it
 properly means `yieldAtAwait` pushing an `ExecCtx` and reclaiming it by task
 identity exactly as `parkOnPromise` does.
+
+### R1a MET — the simpler safe path (no park at all)
+
+The insight that landed it: a settled await does not need to *park* to yield a
+microtask tick — it only needs the microtasks that are pending right now to run
+before its continuation. Those can run **inline**, as nested calls, while the
+activation's own `tempRoots`/active-scope stack are still live in the Interp
+(never lifted into a saved ExecCtx). So there is no unrooted-scope window at all
+— the failure mode that sank the two bare-`schedulerYield` attempts simply cannot
+occur, because no task switch happens.
+
+`awaitYieldMicrotasks` snapshots `st.microtasks.len()` and drains exactly that
+many (a `limit` on `drainMicrotasks`), so microtasks queued *by* those run after
+this await — matching node, which queues the await continuation as a microtask at
+the await point. Called at the settled/rejected/non-thenable return paths of
+`await`; the pending path still uses `parkOnPromise` (whose event-loop drain
+already yields microtasks), and only on an activation task (the main event-loop
+task drains microtasks itself). Gauntlet: `mt`/`awaitMicrotaskYield.js` match
+node, the integration app is 0 errors and ~3 ms/route (the reverted attempt was
+13 errors / 6 s), run.sh 119/119, and the ordering holds under
+`MILOJS_GC_THRESHOLD=1`.
 
 Deferred rather than dropped: it is observable behaviour real code depends on,
 but no the integration app route needs it, and it is not worth destabilising a working
