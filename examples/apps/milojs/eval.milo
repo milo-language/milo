@@ -7344,7 +7344,7 @@ fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSVa
 }
 
 fn isArrayMethod(name: &string): bool {
-    return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop" || name == "find" || name == "findIndex" || name == "some" || name == "every" || name == "shift" || name == "unshift" || name == "splice" || name == "sort" || name == "lastIndexOf" || name == "flat" || name == "fill" || name == "at" || name == "findLast" || name == "findLastIndex" || name == "copyWithin" || name == "reduceRight" || name == "flatMap" || name == "values" || name == "keys" || name == "entries" || name == "with" || name == "toReversed" || name == "toSorted" || name == "toSpliced"
+    return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "toString" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop" || name == "find" || name == "findIndex" || name == "some" || name == "every" || name == "shift" || name == "unshift" || name == "splice" || name == "sort" || name == "lastIndexOf" || name == "flat" || name == "fill" || name == "at" || name == "findLast" || name == "findLastIndex" || name == "copyWithin" || name == "reduceRight" || name == "flatMap" || name == "values" || name == "keys" || name == "entries" || name == "with" || name == "toReversed" || name == "toSorted" || name == "toSpliced"
 }
 
 // Dispatch a built-in Array method. `o` (the array) is temp-rooted by the caller;
@@ -7895,9 +7895,11 @@ fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut
         popTemp(st)
         return JSValue.Obj(o)
     }
-    if name == "join" {
+    if name == "join" || name == "toString" {
+        // Array.prototype.toString is join(",") — NOT the [object Array] type tag
+        // (that is Object.prototype.toString.call(arr), a separate dispatch)
         var sep = ","
-        if args.len() > 0 {
+        if name == "join" && args.len() > 0 {
             sep = toStr(args[0])
         }
         var out = ""
@@ -7914,7 +7916,15 @@ fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut
                 JSValue.Undefined => {
                 }
                 _ => {
-                    out = out + toStr(e)
+                    // nested arrays join recursively ([1,[2,3]].toString() is
+                    // "1,2,3"); plain objects stay "[object Object]" as in JS
+                    let eh = objHandle(e)
+                    if eh >= 0 && st.objects[eh].isArray {
+                        var noA: Vec<JSValue> = Vec.new()
+                        out = out + toStr(arrayMethod(prog, eh, "join", noA, st))
+                    } else {
+                        out = out + toStr(e)
+                    }
                 }
             }
             i = i + 1
