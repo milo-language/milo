@@ -86,6 +86,15 @@ Milo can't store the `&[u8]`. But **zero-copy does not require storing a pointer
 
 What you actually trade away is narrow: the compile-time *tie* between a view and its buffer (a span is just integers, so nothing stops you indexing it into the wrong buffer — still memory-safe via bounds checks, but a logic bug Rust's `&'a` would have caught), plus a featherweight generational check on arena access.
 
+## Long-lived state shared across tasks
+
+A green task's body cannot borrow from the frame that spawned it: a `&Prog` or `&mut Interp` living in a caller's stack frame is exactly the stored reference the one rule forbids. So state that both **outlives the call that created it** and is **reached from more than one task** cannot travel by reference. Two sanctioned shapes — neither a workaround to feel bad about:
+
+- **A module-level arena + handles.** Put the shared pool in a `var` at module scope (`var gNodes: Arena<Node>`) and pass `Handle<Node>` around — copyable, storable in fields, safe to hand to any task. A genuine one-of (a single interpreter, a loaded config) can be a plain global singleton instead. This is the same move milojs's `gInterp`/`gProg` make, and it is **endorsed, not shameful**: Milo has no way to say "this reference outlives the frame," so long-lived cross-task state lives at the one scope that outlives every frame — module scope. The cost is real and worth naming — one process holds one such pool, so it is not re-entrant, and there are now two ways to reach the same object (by handle and by the `&T` parameter functions still take) — but that is the correct shape for the constraint, not a failure to find a better one. When re-entrancy matters, promote the singleton to a registry: `var gEngines: Arena<Engine>` handed out per program, so one process can hold many.
+- **No shared state at all — actors over channels.** Give each task its own state and have tasks communicate by sending values over a `std/sync` `Channel`, CSP-style. Nothing is shared, so nothing needs a shared reference. Prefer this when the units are naturally independent; reach for the global arena when they genuinely operate on one graph.
+
+A specialized garbage-collected heap is the exception that proves the rule: milojs backs its JS objects with a hand-rolled `Vec<JSObj>` + integer handles rather than `std/arena`, because a mark-sweep collector already iterates every slot and already guarantees no handle outlives its object — the arena's per-slot generation check would be pure overhead. Hand-roll the heap when you *are* the memory manager; use `std/arena` everywhere else.
+
 ## When each model wins
 
 - **Owns-its-data work** (emulators, interpreters, servers, most application code): Milo's model is a clean win — it deletes the ceremony *and* the footguns, with nothing lost.

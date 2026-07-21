@@ -140,17 +140,20 @@ lifetimes or refcounting, so there is no way to say "this reference outlives the
 frame".
 
 The consequence is `gProg` alongside the existing `gInterp`: mutable global
-singletons. This is a workaround for the language, not a preference. It costs
+singletons. This is the **sanctioned** shape for long-lived state shared across
+green tasks, not a workaround to apologize for — see the "Long-lived state shared
+across tasks" section of [ownership-model.md](ownership-model.md). Module scope is
+the one scope that outlives every frame, so that is where such state lives. It
+still costs
 
 - **re-entrancy** — one process can never run two programs, and
 - **clarity** — functions still take `prog: &Prog` while a global must be the
   same object, so there are two ways to reach the program.
 
-It is defensible in that a milojs process *is* one program and one interpreter,
-which is why `gInterp` was already built this way. But it is worth naming as a
-recurring cost: anything in Milo that needs long-lived state shared across tasks
-lands in the same place. If Milo ever grows a way to express shared ownership,
-this is the first thing that should change.
+A milojs process *is* one program and one interpreter, which is why `gInterp` was
+built this way. When multi-program-per-process matters, the recipe is to promote
+the singleton to a registry — `gEngines: Arena<Engine>` handed out by handle —
+rather than to reach for a language feature Milo deliberately omits.
 
 ## R1: what went wrong
 
