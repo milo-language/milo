@@ -105,6 +105,8 @@ bump(x)          // ok — 'x' is declared mutable
 
 This is a soundness rule, not a style choice: `let` means *immutable, SSA-register*, and taking its address for a `&mut` write would silently spill it to memory and mutate it — breaking both halves of what `let` promises. It also mirrors what method receivers already enforce (`v.push(...)` on a `let` Vec is rejected). So an `&T` → `&mut T` change is loud exactly for the callers who declared their data immutable, and silent only for those who already opted into mutation with `var` — the safety of the marker, without the ceremony.
 
+**The fence: second-class is final.** `&T` will never gain storage, return, or generic-storage rights. Every future ergonomic pressure on references — iterators holding borrows, borrowed struct fields, returned views — routes to spans, arenas, or restructuring around functions, never to loosening the reference rules. Each exception would be the first step back toward lifetimes; the model only stays annotation-free if the door stays shut. Hylo reaches the same place from the other direction: its `let`/`inout` parameter conventions compile to frame-confined references — no reference type in the surface language at all. Milo keeps the Rust-familiar `&T` spelling with the same semantics; what Hylo makes unrepresentable, Milo forbids by rule, and this paragraph is the commitment that the rule holds.
+
 ### 3. Bounds-checked arrays
 
 Array access is checked at runtime. Out-of-bounds = clear panic, not silent corruption.
