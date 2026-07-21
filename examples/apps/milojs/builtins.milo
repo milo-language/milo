@@ -647,7 +647,13 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         return JSValue.Str(strSlice(s, 0, e))
     }
     if name == "repeat" {
-        return JSValue.Str(jsRepeat(s, argNum(args, 0, 0)))
+        let cnt = argNum(args, 0, 0)
+        if cnt < 0 {
+            st.throwing = true
+            st.thrownValue = makeError(st, "RangeError", "Invalid count value: " + i64ToStr(cnt))
+            return JSValue.Undefined
+        }
+        return JSValue.Str(jsRepeat(s, cnt))
     }
     if name == "concat" {
         var out = s.clone()

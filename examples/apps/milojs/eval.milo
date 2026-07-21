@@ -1415,6 +1415,7 @@ let NATIVE_QUEUE_MICROTASK_JS: i64 = 112
 let NATIVE_DATAVIEW: i64 = 113
 let NATIVE_OBJECT_HASOWN: i64 = 114
 let NATIVE_STRING_RAW: i64 = 115
+let NATIVE_STRING_FROMCODEPOINT: i64 = 116
 let NATIVE_ARRAY_CTOR: i64 = 67
 let NATIVE_TCP_LISTEN: i64 = 68
 let NATIVE_TCP_ACCEPT: i64 = 69
@@ -2468,6 +2469,17 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         return JSValue.Str(stringFromUtf16Units(units))
     }
+    if id == NATIVE_STRING_FROMCODEPOINT {
+        // String.fromCodePoint: each argument is a full Unicode code point (may be
+        // astral, unlike fromCharCode's UTF-16 units), encoded straight to UTF-8
+        var out = String.withCapacity(16)
+        var i: i64 = 0
+        while i < argVals.len() {
+            out = out + codePointToUtf8(toNum(argVals[i]) as i64)
+            i = i + 1
+        }
+        return JSValue.Str(out)
+    }
     if id == NATIVE_PROCESS_CWD {
         match currentDir() {
             Result.Ok(d) => {
@@ -3415,6 +3427,27 @@ fn regexSplit(st: &mut Interp, s: &string, rid: i64): JSValue {
 
 // s.match(re): with the g flag, an array of all matched substrings (or null);
 // otherwise the first match array (whole + groups) or null.
+// Encode a single Unicode code point to UTF-8 (milojs's string encoding).
+fn codePointToUtf8(cp: i64): string {
+    var out = String.withCapacity(4)
+    if cp < 128 {
+        out.push(cp as u8)
+    } else if cp < 2048 {
+        out.push((192 | (cp >> 6)) as u8)
+        out.push((128 | (cp & 63)) as u8)
+    } else if cp < 65536 {
+        out.push((224 | (cp >> 12)) as u8)
+        out.push((128 | ((cp >> 6) & 63)) as u8)
+        out.push((128 | (cp & 63)) as u8)
+    } else {
+        out.push((240 | (cp >> 18)) as u8)
+        out.push((128 | ((cp >> 12) & 63)) as u8)
+        out.push((128 | ((cp >> 6) & 63)) as u8)
+        out.push((128 | (cp & 63)) as u8)
+    }
+    return out
+}
+
 fn regexStrMatch(st: &mut Interp, s: &string, rid: i64): JSValue {
     let global = st.regexes[rid].flagG
     if !global {
@@ -3749,6 +3782,7 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
     let stringCtorObj = getNativeProps(st, NATIVE_STRING)
     objSet(st, stringCtorObj, "fromCharCode", JSValue.Native(NATIVE_STRING_FROMCHARCODE))
+    objSet(st, stringCtorObj, "fromCodePoint", JSValue.Native(NATIVE_STRING_FROMCODEPOINT))
     objSet(st, stringCtorObj, "raw", JSValue.Native(NATIVE_STRING_RAW))
     // String.prototype methods as bound-method values, so
     // String.prototype.replace.call(str, ...) — the qs module's pattern — works
@@ -6849,7 +6883,7 @@ fn isPrimitiveMethodName(n: &string): bool {
 }
 
 fn isStringMethodName(n: &string): bool {
-    return n == "charAt" || n == "charCodeAt" || n == "codePointAt" || n == "at" || n == "indexOf" || n == "lastIndexOf" || n == "includes" || n == "startsWith" || n == "endsWith" || n == "slice" || n == "substring" || n == "substr" || n == "split" || n == "replace" || n == "replaceAll" || n == "toUpperCase" || n == "toLowerCase" || n == "trim" || n == "trimStart" || n == "trimEnd" || n == "trimLeft" || n == "trimRight" || n == "padStart" || n == "padEnd" || n == "repeat" || n == "concat" || n == "localeCompare" || n == "normalize" || n == "match" || n == "matchAll" || n == "toString" || n == "valueOf"
+    return n == "charAt" || n == "charCodeAt" || n == "codePointAt" || n == "at" || n == "indexOf" || n == "lastIndexOf" || n == "includes" || n == "startsWith" || n == "endsWith" || n == "slice" || n == "substring" || n == "substr" || n == "split" || n == "replace" || n == "replaceAll" || n == "toUpperCase" || n == "toLowerCase" || n == "trim" || n == "trimStart" || n == "trimEnd" || n == "trimLeft" || n == "trimRight" || n == "padStart" || n == "padEnd" || n == "repeat" || n == "concat" || n == "localeCompare" || n == "normalize" || n == "match" || n == "matchAll" || n == "search" || n == "toString" || n == "valueOf"
 }
 
 fn isMapSetMethodName(n: &string): bool {
@@ -8999,6 +9033,14 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 }
                 if name == "split" {
                     return regexSplit(st, s, rid)
+                }
+                if name == "search" {
+                    // index of the first match, or -1 (UTF-16 units)
+                    let saves = regexExec(st.regexes[rid], s, 0)
+                    if saves.len() == 0 {
+                        return JSValue.Number(0.0 - 1.0)
+                    }
+                    return JSValue.Number(byteToUtf16(s, saves[0]) as f64)
                 }
             }
             return stringMethod(name, s, argVals, st)
