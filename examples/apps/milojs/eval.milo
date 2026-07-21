@@ -1120,8 +1120,10 @@ fn destructElement(_prog: &Prog, value: &JSValue, i: i64, st: &mut Interp): JSVa
     }
     match value {
         JSValue.Str(s) => {
-            if i >= 0 && i < s.len() {
-                return JSValue.Str(jsCharAt(s, i))
+            // s[i] indexes UTF-16 code units like charAt, not raw UTF-8 bytes —
+            // "café"[3] is "é", not the first byte of its 2-byte encoding
+            if i >= 0 && i < utf16Length(s) {
+                return JSValue.Str(utf16Slice(s, i, i + 1))
             }
         }
         _ => {
@@ -4600,10 +4602,11 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                         }
                         return JSValue.Undefined
                     }
-                    // s[i] → a single-character string (or undefined out of range)
+                    // s[i] → the i-th UTF-16 code unit as a string (charAt
+                    // semantics), or undefined out of range — not a raw byte
                     let i = toNum(kv) as i64
-                    if i >= 0 && i < s.len() {
-                        return JSValue.Str(jsCharAt(s, i))
+                    if i >= 0 && i < utf16Length(s) {
+                        return JSValue.Str(utf16Slice(s, i, i + 1))
                     }
                     return JSValue.Undefined
                 }
