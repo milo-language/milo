@@ -2,6 +2,12 @@
 // Engine-level, so this is NOT the node runtime's prelude (lib/prelude.js) — only
 // things the language spec itself defines belong here.
 
+// print: the QuickJS/test262 shell global — write the space-joined arguments and
+// a newline, like console.log.
+var print = function () {
+  console.log.apply(console, arguments);
+};
+
 // --- destructuring support ---------------------------------------------------
 // Target of the `{ a, ...rest }` desugar: every own enumerable key except the
 // ones the pattern already bound.
