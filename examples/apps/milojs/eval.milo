@@ -6826,7 +6826,7 @@ fn isRegexMethodName(n: &string): bool {
 }
 
 fn isTypedArrayMethodName(n: &string): bool {
-    return n == "fill" || n == "set" || n == "subarray" || n == "slice" || n == "at" || n == "indexOf" || n == "includes" || n == "join" || n == "toString" || n == "forEach" || n == "map" || n == "filter" || n == "reduce" || n == "reduceRight" || n == "find" || n == "findIndex" || n == "findLast" || n == "findLastIndex" || n == "some" || n == "every" || n == "reverse" || n == "sort"
+    return n == "fill" || n == "set" || n == "subarray" || n == "slice" || n == "at" || n == "indexOf" || n == "includes" || n == "join" || n == "toString" || n == "forEach" || n == "map" || n == "filter" || n == "reduce" || n == "reduceRight" || n == "find" || n == "findIndex" || n == "findLast" || n == "findLastIndex" || n == "some" || n == "every" || n == "reverse" || n == "sort" || n == "with"
 }
 
 // Typed-array methods. Views share their buffer, so subarray returns a new view
@@ -7128,6 +7128,32 @@ fn typedArrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st:
             return JSValue.Undefined
         }
         return JSValue.Number(0.0 - 1.0)
+    }
+    if name == "with" {
+        // a copy with one element replaced (negative index from the end)
+        var idx: i64 = 0
+        if args.len() > 0 {
+            idx = toNum(args[0]) as i64
+        }
+        if idx < 0 {
+            idx = n + idx
+        }
+        var lenArgs: Vec<JSValue> = Vec.new()
+        lenArgs.push(JSValue.Number(n as f64))
+        let out = makeTypedArray(st, kind, lenArgs)
+        let oh = objHandle(out)
+        pushTemp(st, cloneValue(out))
+        var i: i64 = 0
+        while i < n {
+            if i == idx && args.len() > 1 {
+                taSetElem(st, oh, i, toNum(args[1]))
+            } else {
+                taSetElem(st, oh, i, taElem(st, o, i))
+            }
+            i = i + 1
+        }
+        popTemp(st)
+        return out
     }
     if name == "reverse" {
         var i: i64 = 0
