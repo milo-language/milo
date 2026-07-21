@@ -35,7 +35,10 @@ struct Huff {
     symbol: Vec<i64>,
 }
 
-fn _zeros(n: i64): Vec<i64> {
+fn _zeros(n: i64): Vec<i64>
+requires n >= 0
+ensures result.len == n
+{
     var v: Vec<i64> = Vec.new()
     for _i in 0..n {
         v.push(0)
@@ -45,7 +48,15 @@ fn _zeros(n: i64): Vec<i64> {
 
 // Pull `need` bits LSB-first. On exhausted input, latches err and returns 0 so
 // callers unwind via their err checks rather than looping forever.
-fn _bits(st: &mut InfState, src: &string, need: i64): i64 {
+// Contract note: `result >= 0` and the bit-accumulator invariants are true but not
+// stated — Milo's VC translator has no bitvector theory (`&`/`<<`), and loop
+// invariants over struct fields aren't yet modelled. The linear precondition below
+// is what the prover discharges at every call site, pinning `need` to the range the
+// mask/shift math is valid for.
+fn _bits(st: &mut InfState, src: &string, need: i64): i64
+requires need >= 0
+requires need <= 32
+{
     var val = st.bitbuf
     while st.bitcnt < need {
         if st.inpos >= src.len {
@@ -62,7 +73,9 @@ fn _bits(st: &mut InfState, src: &string, need: i64): i64 {
 }
 
 // Decode one symbol from stream using table h. Returns symbol, or negative on error.
-fn _decode(st: &mut InfState, src: &string, h: &Huff): i64 {
+fn _decode(st: &mut InfState, src: &string, h: &Huff): i64
+requires h.count.len >= 16
+{
     var code: i64 = 0
     var first: i64 = 0
     var index: i64 = 0
@@ -86,7 +99,13 @@ fn _decode(st: &mut InfState, src: &string, h: &Huff): i64 {
 // Build a canonical Huffman table from code lengths length[off .. off+n].
 // Returns 0 for a complete code, >0 for an incomplete (under-subscribed) code,
 // <0 if over-subscribed (invalid).
-fn _construct(h: &mut Huff, length: &Vec<i64>, off: i64, n: i64): i64 {
+fn _construct(h: &mut Huff, length: &Vec<i64>, off: i64, n: i64): i64
+requires off >= 0
+requires n >= 0
+requires off + n <= length.len
+requires h.count.len >= 16
+requires h.symbol.len >= n
+{
     for len in 0..16 {
         h.count[len] = 0
     }
@@ -185,7 +204,9 @@ fn _codes(st: &mut InfState, src: &string, lencode: &Huff, distcode: &Huff): i64
 }
 
 // A stored (uncompressed) block: byte-align, LEN, ~LEN, then LEN raw bytes.
-fn _stored(st: &mut InfState, src: &string): i64 {
+fn _stored(st: &mut InfState, src: &string): i64
+ensures result <= 0
+{
     st.bitbuf = 0
     st.bitcnt = 0
     if st.inpos + 4 > src.len {
