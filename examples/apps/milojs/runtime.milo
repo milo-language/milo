@@ -983,6 +983,12 @@ fn asArrayIndex(key: &string): i64 {
     if key[0] == '0' && n > 1 {
         return -1
     }
+    // A valid array index is a canonical uint32 STRICTLY less than 2^32-1, so the
+    // largest is 4294967294 (10 digits). >10 digits can't be an index and would
+    // overflow the i64 accumulator into a bogus small value — reject up front.
+    if n > 10 {
+        return -1
+    }
     var idx: i64 = 0
     var i: i64 = 0
     while i < n {
@@ -992,6 +998,10 @@ fn asArrayIndex(key: &string): i64 {
         }
         idx = idx * 10 + (c as i64 - 48)
         i = i + 1
+    }
+    // 4294967295 (2^32-1) and above are string keys, not indices, in JS
+    if idx >= 4294967295 {
+        return -1
     }
     return idx
 }
