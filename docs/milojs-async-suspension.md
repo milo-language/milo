@@ -3,7 +3,7 @@ system: milojs-async-suspension
 purpose: plan of record for making await suspend in milojs — requirements, design, per-requirement status, and test plan
 key-files: examples/apps/milojs/eval.milo, examples/apps/milojs/runtime.milo, std/runtime.milo, tests/fixtures/asyncCallOrdering.milo
 update-when: a requirement is implemented, dropped, or revised, or the suspension mechanism changes
-last-verified: 2026-07-20
+last-verified: 2026-07-21
 -->
 
 # milojs: await suspension
@@ -21,14 +21,14 @@ document, and the document changes first if the plan changes.
 | R1 async call returns at first await | done in the **runtime** for a pending awaited promise — matches node; 71/71 fixtures, integration app green (0 errors, ~34ms) |
 | R1b same in the engine binary | **still not landed**, but the cause is now narrowed: the engine running on `gProg` alone is SAFE (landed independently for proxy traps, `adae042`, CI green). The unkillable hang came from `gProg` **plus** running the whole program on a green task — that combination, not `gProg` itself, is what wedged. So R1b needs the green-task part done differently |
 | R1a `await` of a non-thenable yields | not met — deferred, see below; a bare yield bypasses R6 save/restore |
-| R2 suspension is per-activation | core done (`ceb9aea`) — park/wake on a promise; not yet wired to the `await` path |
-| R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
+| R2 suspension is per-activation | done — park/wake on a promise (`ceb9aea`), wired into the `await` path (`parkOnPromise` at eval.milo:3619, taken on an activation task). Covered by `tests/runtime/r2r3Barrier.js` (both participants suspend on a pending barrier) + `r2TimerDuringSuspend.js` (a self-rescheduling timer chain keeps firing while an activation is parked) |
+| R3 resume order | done (`ceb9aea`) — `wakeAwaiters` walks the registry front-to-back, so waiters resume in registration order. Covered by `tests/runtime/r2r3Barrier.js` (a resumes before b) |
 | R4 settle/reject semantics | done — already held; locked in by `tests/asyncSettleReject.js`, clean under GC stress |
 | R4a async body returns a pending promise | done (`0391271`) — an activation returning a pending promise adopts it, not reads its state; guarded by `tests/runtime/asyncReturnsPendingPromise.js` (new runtime harness pass) |
 | Per-binary JS recursion limit | done (`2843607`) — `callDepthLimit` field; engine 20 (main-thread Linux stack), runtime 500 (8 MB green task). Fixes a spurious `RangeError` on the integration app without regressing the engine's Linux-catchability. Not an async requirement, tracked here because it interacts with activation stacks |
 | R5 existing values unchanged | holds (nothing landed yet) |
-| R6 per-activation execution state | done (`3215822`, corrected `c079770`) — 9 fields, contexts reclaimed by task identity |
-| R7 GC over suspended activations | done (`3215822`) — collect walks parked roots, fixture proves it fails without |
+| R6 per-activation execution state | done (`3215822`, corrected `c079770`) — 9 fields, contexts reclaimed by task identity. Covered end-to-end by `tests/runtime/r6LocalsLiveAcrossSuspend.js` (locals live across a mid-loop suspend) |
+| R7 GC over suspended activations | done (`3215822`) — collect walks parked roots. Covered by `tests/runtime/r7GcOverSuspended.js`, which `run.sh` runs under `MILOJS_GC_THRESHOLD=1` (any `*Gc*` fixture) so a collection actually fires during the park |
 | R8 unsettleable promise still reported | holds today, must survive |
 
 ## Why
@@ -118,13 +118,13 @@ Each requirement gets a fixture, checked against `bun` where it is JS.
 | req | test |
 |-----|------|
 | R1  | `async function f(){ log("A"); await sleep(0); log("C") } f(); log("B")` → `A B C`. Uses a real promise deliberately: `await null` is covered by R1a, which is not met. |
-| R2  | barrier repro: two participants await one barrier, both resolve |
-| R2  | a timer keeps firing while an activation is suspended |
-| R3  | three activations await one promise; all resume, in order |
+| R2  | barrier repro: two participants await one pending barrier, both suspend, both resolve — `tests/runtime/r2r3Barrier.js`. Barrier settled by an outside timer, not a participant, so neither hits the already-settled-await path (R1a) |
+| R2  | a timer keeps firing while an activation is suspended — `tests/runtime/r2TimerDuringSuspend.js` |
+| R3  | two activations await one promise; both resume in registration order — `tests/runtime/r2r3Barrier.js` (a before b) |
 | R4  | return settles; `throw` rejects; `await` of a rejection throws at the site |
 | R5  | every existing async fixture keeps passing unchanged |
-| R6  | suspend mid-loop with locals live, resume, check locals |
-| R7  | suspend an activation holding the only reference to an object, force GC, resume and use it |
+| R6  | suspend mid-loop with locals live, resume, check locals — `tests/runtime/r6LocalsLiveAcrossSuspend.js` |
+| R7  | suspend an activation holding the only reference to an object, force GC, resume and use it — `tests/runtime/r7GcOverSuspended.js`, run under `MILOJS_GC_THRESHOLD=1` |
 | R8  | await a promise nobody settles → reported, other activations unaffected |
 
 Integration: prisma `$transaction([a, b])` returns rows, and the app's analytics

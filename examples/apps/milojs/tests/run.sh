@@ -50,7 +50,12 @@ run_pass() {
     name="$(basename "$js" .js)"
     exp="$dir/$name.expected"
     [ -f "$exp" ] || { echo "SKIP $name (no .expected)"; continue; }
-    got="$($runner "$js" 2>&1)"
+    # A GC-rooting fixture is vacuous at the default collection threshold — it
+    # only exercises the root walk if a collection actually happens during the
+    # window it sets up. Force one per allocation so `*Gc*` fixtures test R7.
+    local gcenv=""
+    case "$name" in *Gc*) gcenv="MILOJS_GC_THRESHOLD=1" ;; esac
+    got="$(env $gcenv $runner "$js" 2>&1)"
     status=$?
     if [ $status -eq 137 ] || [ $status -eq 124 ]; then
       echo "FAIL $name ($kind, hung, killed after ${PER_TEST_TIMEOUT}s)"
