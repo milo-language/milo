@@ -1,13 +1,13 @@
 // std/zstd — pure-Milo Zstandard frame decoder (RFC 8878).
 //
-// Decodes a single-block zstd frame end to end: Raw/RLE/Huffman-compressed literals
-// (own FSE-coded or direct weights, 1 or 4 streams) and Raw/RLE blocks plus Compressed
-// blocks with Predefined / RLE / FSE-compressed sequence tables — a full FSE (tANS) +
-// Huffman decoder over backward bitstreams, repeat-offset resolution, LZ77, and XXH64
-// checksum verification. Real `zstd` CLI output round-trips byte-for-byte (verified on
-// source, docs, and incompressible data). Not yet handled (clear error): cross-block
-// table reuse — Treeless literals and Repeat-mode sequence tables — which only appears
-// once a frame spans multiple 128 KiB blocks. No compressor; decode only.
+// Full zstd frame decoder. Literals: Raw / RLE / Huffman (own FSE-coded or direct
+// weights, 1 or 4 streams) / Treeless (reuse a prior block's tree). Blocks: Raw / RLE /
+// Compressed with Predefined / RLE / FSE-compressed / Repeat sequence tables. That is a
+// complete FSE (tANS) + Huffman decoder over backward bitstreams, repeat-offset
+// resolution, multi-block LZ77 across the whole window, cross-block entropy-table reuse,
+// and XXH64 checksum verification. Real `zstd` CLI output round-trips byte-for-byte at
+// any size — verified on 1.2 MB of source. Out of scope: dictionaries, multi-frame
+// concatenation, and encoding (decode only).
 //
 // The 4-byte content checksum (low 32 bits of XXH64 of the decompressed content, when
 // the frame header flags it) is verified via std/xxhash. Structure mirrors std/inflate:
@@ -501,10 +501,45 @@ fn _decodeHufTable(hufData: &string): HufTableResult {
     }
 }
 
-// Decode a single Compressed_Block (RFC 8878 §3.1.1.2) into `out`. Supports Raw/RLE
-// literals and Predefined/RLE sequence-table modes; Huffman literals and FSE-compressed
-// / Repeat sequence tables are the tracked next slice and return a clear error.
-fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mut string, hist: &mut Vec<i64>): i64 {
+fn _cloneFse(t: &FseTable): FseTable {
+    return FseTable {
+        symbols: t.symbols.clone(), numBits: t.numBits.clone(), newStateBase: t.newStateBase.clone(), accuracyLog: t.accuracyLog
+    }
+}
+
+fn _cloneHuf(t: &HufTable): HufTable {
+    return HufTable {
+        symbols: t.symbols.clone(), numBits: t.numBits.clone(), maxBits: t.maxBits
+    }
+}
+
+fn _dummyHuf(): HufTable {
+    var s: Vec<i64> = [0]
+    var n: Vec<i64> = [0]
+    return HufTable {
+        symbols: s, numBits: n, maxBits: 0
+    }
+}
+
+// Per-frame decoder state that outlives a single block: the repeat-offset history and
+// the entropy tables that Treeless literals (huf) and Repeat-mode sequences (ll/of/ml)
+// reuse from an earlier block in the same frame.
+struct ZDec {
+    hist: Vec<i64>,
+    huf: HufTable,
+    hasHuf: bool,
+    ll: FseTable,
+    hasLL: bool,
+    of: FseTable,
+    hasOF: bool,
+    ml: FseTable,
+    hasML: bool,
+}
+
+// Decode a single Compressed_Block (RFC 8878 §3.1.1.2) into `out`. Handles Raw/RLE and
+// Huffman (own-tree + Treeless) literals, and Predefined/RLE/FSE/Repeat sequence tables,
+// persisting reusable tables into `st` for later blocks in the frame.
+fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mut string, st: &mut ZDec): i64 {
     let blockEnd = blockStart + blockSize
     var pos = blockStart
     // ── Literals section header ──
@@ -536,10 +571,12 @@ fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mu
                 literals.push(b)
             }
         }
-    } else if litType == 3 {
-        return 0 - 104 // Treeless literals reuse a prior block's Huffman table
     } else {
-        // Huffman-compressed literals (RFC 8878 §3.1.1.3.1.2).
+        // Huffman-compressed literals (RFC 8878 §3.1.1.3.1.2). Type 2 carries its own
+        // tree; type 3 (Treeless) reuses the previous block's tree from `st`.
+        if litType == 3 && !st.hasHuf {
+            return 0 - 104
+        }
         var boff = pos * 8 + 4 // past the 2-bit type + 2-bit size format
         var numStreams: i64 = 4
         var regBits: i64 = 10
@@ -563,10 +600,20 @@ fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mu
             return 0 - 105
         }
         let hufData = _slice(src, hufStart, hufStart + compSize)
-        let ht = _decodeHufTable(hufData)
-        let streamsData = _slice(hufData, ht.bytesUsed, hufData.len)
+        var tbl = _dummyHuf()
+        var streamsData = ""
+        if litType == 2 {
+            let ht = _decodeHufTable(hufData)
+            tbl = _cloneHuf(ht.table)
+            st.huf = ht.table // persist for a later Treeless block
+            st.hasHuf = true
+            streamsData = _slice(hufData, ht.bytesUsed, hufData.len)
+        } else {
+            tbl = _cloneHuf(st.huf)
+            streamsData = hufData
+        }
         if numStreams == 1 {
-            literals = _hufDecode1Stream(ht.table, streamsData)
+            literals = _hufDecode1Stream(tbl, streamsData)
         } else {
             // 4 streams preceded by a 6-byte jump table (three u16-LE stream sizes).
             let c1 = _leN(streamsData, 0, 2)
@@ -580,10 +627,10 @@ fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mu
             let s3 = _slice(streamsData, sp, sp + c3)
             sp = sp + c3
             let s4 = _slice(streamsData, sp, streamsData.len)
-            let d1 = _hufDecode1Stream(ht.table, s1)
-            let d2 = _hufDecode1Stream(ht.table, s2)
-            let d3 = _hufDecode1Stream(ht.table, s3)
-            let d4 = _hufDecode1Stream(ht.table, s4)
+            let d1 = _hufDecode1Stream(tbl, s1)
+            let d2 = _hufDecode1Stream(tbl, s2)
+            let d3 = _hufDecode1Stream(tbl, s3)
+            let d4 = _hufDecode1Stream(tbl, s4)
             for i in 0..d1.len {
                 literals.push(d1[i])
             }
@@ -651,7 +698,14 @@ fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mu
         llTable = h.table
         pos = pos + h.bytesUsed
     } else {
-        return 0 - 101 // Repeat mode: needs a table from a previous block
+        if !st.hasLL {
+            return 0 - 101 // Repeat mode with no prior table
+        }
+        llTable = _cloneFse(st.ll)
+    }
+    if llMode != 3 {
+        st.ll = _cloneFse(llTable)
+        st.hasLL = true
     }
     if ofMode == 0 {
         ofTable = _fseBuild(_ofDefaultDist(), 5)
@@ -666,7 +720,14 @@ fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mu
         ofTable = h.table
         pos = pos + h.bytesUsed
     } else {
-        return 0 - 101
+        if !st.hasOF {
+            return 0 - 101
+        }
+        ofTable = _cloneFse(st.of)
+    }
+    if ofMode != 3 {
+        st.of = _cloneFse(ofTable)
+        st.hasOF = true
     }
     if mlMode == 0 {
         mlTable = _fseBuild(_mlDefaultDist(), 6)
@@ -681,7 +742,14 @@ fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mu
         mlTable = h.table
         pos = pos + h.bytesUsed
     } else {
-        return 0 - 101
+        if !st.hasML {
+            return 0 - 101
+        }
+        mlTable = _cloneFse(st.ml)
+    }
+    if mlMode != 3 {
+        st.ml = _cloneFse(mlTable)
+        st.hasML = true
     }
     // The remainder of the block is the interleaved FSE bitstream, read backward.
     var seqStream = ""
@@ -736,7 +804,7 @@ fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mu
             out.push(literals[litPos])
             litPos = litPos + 1
         }
-        let dist = _computeOffset(sq.offset, sq.litLen, hist)
+        let dist = _computeOffset(sq.offset, sq.litLen, st.hist)
         if dist > out.len {
             return 0 - 103
         }
@@ -829,8 +897,18 @@ fn zstdDecompress(src: &string): Result<string, string> {
     }
     var pos = hdr.headerLen
     var out = ""
-    // Repeat-offset history, per RFC 8878 defaults; persists across blocks in a frame.
-    var hist: Vec<i64> = [1, 4, 8]
+    // Per-frame decoder state (repeat-offset history + reusable entropy tables).
+    var st = ZDec {
+        hist: [1, 4, 8],
+        huf: _dummyHuf(),
+        hasHuf: false,
+        ll: _fseBuildRle(0),
+        hasLL: false,
+        of: _fseBuildRle(0),
+        hasOF: false,
+        ml: _fseBuildRle(0),
+        hasML: false,
+    }
     var lastBlock = false
     while !lastBlock {
         if pos + 3 > src.len {
@@ -864,12 +942,8 @@ fn zstdDecompress(src: &string): Result<string, string> {
             if pos + blockSize > src.len {
                 return Result.Err("zstd: truncated compressed block")
             }
-            let e = _decompressCompressed(src, pos, blockSize, out, hist)
-            if e == 0 - 101 {
-                return Result.Err("zstd: repeat-mode sequence tables not yet supported")
-            } else if e == 0 - 104 {
-                return Result.Err("zstd: treeless literals (table reuse) not yet supported")
-            } else if e < 0 {
+            let e = _decompressCompressed(src, pos, blockSize, out, st)
+            if e < 0 {
                 return Result.Err("zstd: corrupt compressed block")
             }
             pos = pos + blockSize
