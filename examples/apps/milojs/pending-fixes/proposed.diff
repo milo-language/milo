@@ -1,0 +1,1094 @@
+diff -ru --ex /Users/csmith/git/milo/examples/apps/milojs/eval.milo /private/tmp/mjx/milojs-fix/eval.milo
+--- /Users/csmith/git/milo/examples/apps/milojs/eval.milo	2026-07-20 16:53:02
++++ /private/tmp/mjx/milojs-fix/eval.milo	2026-07-20 20:40:21
+@@ -47,7 +47,7 @@
+ from "std/fs" import {
+     currentDir, writeFile, appendFile
+ }
+-from "examples/apps/milojs/napi" import {
++from "./napi" import {
+     napiInvoke, napiLoadAddon, napiTakePending, napiPollTsfn, napiRunTsfnCall, napiHasTsfn, napiHasPendingWork, napiMayDeliver, napiWaitBriefly
+ }
+ from "std/math" import {
+@@ -593,7 +593,7 @@
+                 if args.len() > 0 {
+                     key = toStr(args[0])
+                 }
+-                return JSValue.Bool(objOwnIndex(st, o, key) >= 0 || (st.objects[o].isArray && asArrayIndex(key) >= 0 && asArrayIndex(key) < arrLen(st, o)))
++                return JSValue.Bool(objOwnIndex(st, o, key) >= 0 || (st.objects[o].isArray && asArrayIndex(key) >= 0 && asArrayIndex(key) < arrLen(st, o) && !arrIsHole(st, o, asArrayIndex(key))))
+             }
+             if name == "toString" {
+                 if st.objects[o].isArray {
+@@ -2426,11 +2426,25 @@
+                         popTemp(st)
+                         return JSValue.Obj(arr)
+                     }
++                    if st.objects[o].isProxy {
++                        // ownKeys/getOwnPropertyDescriptor traps decide, not
++                        // the proxy object's (empty) own bag
++                        let pk = proxyOwnEnumKeys(gProg, st, o)
++                        var i: i64 = 0
++                        while i < pk.len() {
++                            arrPush(st, arr, JSValue.Str(pk[i].clone()))
++                            i = i + 1
++                        }
++                        popTemp(st)
++                        return JSValue.Obj(arr)
++                    }
+                     if st.objects[o].isArray {
+                         var i: i64 = 0
+                         let n = arrLen(st, o)
+                         while i < n {
+-                            arrPush(st, arr, JSValue.Str(i64ToStr(i)))
++                            if !arrIsHole(st, o, i) {
++                                arrPush(st, arr, JSValue.Str(i64ToStr(i)))
++                            }
+                             i = i + 1
+                         }
+                     }
+@@ -3396,7 +3410,9 @@
+                         if st.objects[o].isArray {
+                             let ai = asArrayIndex(key)
+                             if ai >= 0 && ai < arrLen(st, o) {
+-                                return JSValue.Bool(true)
++                                // a deleted / never-written slot is a hole:
++                                // in-range but NOT present
++                                return JSValue.Bool(!arrIsHole(st, o, ai))
+                             }
+                         }
+                         var cur = o
+@@ -3950,6 +3966,14 @@
+             let n = prog.arrLits[litIdx].len()
+             while i < n {
+                 let elemIdx = prog.arrLits[litIdx][i]
++                if elemIdx < 0 {
++                    // elision sentinel from the parser: a hole
++                    let at = arrLen(st, arr)
++                    arrPush(st, arr, JSValue.Undefined)
++                    arrMarkHole(st, arr, at)
++                    i = i + 1
++                    continue
++                }
+                 match prog.exprs[elemIdx] {
+                     Expr.Spread(inner) => {
+                         let sv = evalExpr(prog, inner, st, scope)
+@@ -4700,6 +4724,89 @@
+     return getMember(st, h, name)
+ }
+ 
++// Enumerable own string keys of a proxy: the ownKeys trap supplies the list,
++// then each key is kept only if its descriptor (getOwnPropertyDescriptor trap,
++// falling back to the target's own descriptor) says enumerable. Missing ownKeys
++// forwards to the target. Feeds for-in and Object.keys.
++fn proxyOwnEnumKeys(prog: &Prog, st: &mut Interp, o: i64): Vec<string> {
++    var out: Vec<string> = Vec.new()
++    let target = cloneValue(st.objects[o].proxyTarget)
++    let trap = proxyTrap(st, o, "ownKeys")
++    var keyList: Vec<string> = Vec.new()
++    if isCallableIn(st, trap) {
++        var args: Vec<JSValue> = Vec.new()
++        args.push(cloneValue(target))
++        let res = callValue(prog, trap, args, cloneValue(st.objects[o].proxyHandler), st)
++        if st.throwing {
++            return out
++        }
++        let rh = objHandle(res)
++        if rh >= 0 && st.objects[rh].isArray {
++            var i: i64 = 0
++            while i < arrLen(st, rh) {
++                let kv = arrGet(st, rh, i)
++                keyList.push(toStr(kv))
++                i = i + 1
++            }
++        }
++    } else {
++        let th = objHandle(target)
++        if th >= 0 {
++            if st.objects[th].isArray {
++                var e: i64 = 0
++                while e < arrLen(st, th) {
++                    if !arrIsHole(st, th, e) {
++                        out.push(i64ToStr(e))
++                    }
++                    e = e + 1
++                }
++            }
++            var k: i64 = 0
++            while k < st.objects[th].props.len() {
++                if st.objects[th].props[k].enumerable {
++                    out.push(st.objects[th].props[k].key.clone())
++                }
++                k = k + 1
++            }
++        }
++        return out
++    }
++    let dtrap = proxyTrap(st, o, "getOwnPropertyDescriptor")
++    var i: i64 = 0
++    while i < keyList.len() {
++        if isCallableIn(st, dtrap) {
++            var dargs: Vec<JSValue> = Vec.new()
++            dargs.push(cloneValue(target))
++            dargs.push(JSValue.Str(keyList[i].clone()))
++            let d = callValue(prog, dtrap, dargs, cloneValue(st.objects[o].proxyHandler), st)
++            if st.throwing {
++                return out
++            }
++            let dh = objHandle(d)
++            if dh >= 0 && truthy(getMember(st, dh, "enumerable")) {
++                out.push(keyList[i].clone())
++            }
++        } else {
++            let th = objHandle(target)
++            if th >= 0 {
++                let pi = objOwnIndex(st, th, keyList[i])
++                if pi >= 0 {
++                    if st.objects[th].props[pi].enumerable {
++                        out.push(keyList[i].clone())
++                    }
++                } else if st.objects[th].isArray {
++                    let ai = asArrayIndex(keyList[i])
++                    if ai >= 0 && ai < arrLen(st, th) && !arrIsHole(st, th, ai) {
++                        out.push(keyList[i].clone())
++                    }
++                }
++            }
++        }
++        i = i + 1
++    }
++    return out
++}
++
+ fn makeError(st: &mut Interp, kind: string, msg: string): JSValue {
+     let o = newObject(st)
+     st.objects[o].isError = true
+@@ -6355,22 +6462,56 @@
+         }
+         let cb = cloneValue(args[0])
+         pushTemp(st, cloneValue(cb))
++        // The callback may delete entries (including the current one) or add
++        // new ones; the backing vecs compact on delete, so a plain i++ would
++        // skip the entry that shifted into slot i. Re-sync the cursor against
++        // the just-visited key after every call; if that key is gone, resume at
++        // the first entry not yet visited (keys are unique, so this is sound).
++        var visited: Vec<JSValue> = Vec.new()
+         var i: i64 = 0
+-        while i < st.objects[o].mapKeys.len() {
++        while i < st.objects[o].mapKeys.len() && !st.throwing {
+             let k = cloneValue(st.objects[o].mapKeys[i])
+             var v = cloneValue(st.objects[o].mapVals[i])
+             if isSet {
+                 v = cloneValue(st.objects[o].mapKeys[i])
+             }
++            visited.push(cloneValue(k))
+             var cbArgs: Vec<JSValue> = Vec.new()
+             cbArgs.push(v)
+-            cbArgs.push(k)
++            cbArgs.push(cloneValue(k))
+             cbArgs.push(JSValue.Obj(o))
+             let _ = callValue(prog, cb, cbArgs, JSValue.Undefined, st)
+             if st.throwing {
+-                i = st.objects[o].mapKeys.len()
++                break
+             }
+-            i = i + 1
++            if i < st.objects[o].mapKeys.len() && sameValue(st.objects[o].mapKeys[i], k) {
++                i = i + 1
++            } else {
++                let j = mapFind(st, o, k)
++                if j >= 0 {
++                    i = j + 1
++                } else {
++                    var p: i64 = 0
++                    var next = st.objects[o].mapKeys.len()
++                    while p < st.objects[o].mapKeys.len() {
++                        var seen = false
++                        var q: i64 = 0
++                        while q < visited.len() {
++                            if sameValue(st.objects[o].mapKeys[p], visited[q]) {
++                                seen = true
++                                q = visited.len()
++                            }
++                            q = q + 1
++                        }
++                        if !seen {
++                            next = p
++                            p = st.objects[o].mapKeys.len()
++                        }
++                        p = p + 1
++                    }
++                    i = next
++                }
++            }
+         }
+         popTemp(st)
+         return JSValue.Undefined
+@@ -8213,11 +8354,16 @@
+             var keys: Vec<string> = Vec.new()
+             match ov {
+                 JSValue.Obj(o) => {
++                    if st.objects[o].isProxy {
++                        keys = proxyOwnEnumKeys(prog, st, o)
++                    }
+                     if st.objects[o].isArray {
+                         var e: i64 = 0
+                         let ne = arrLen(st, o)
+                         while e < ne {
+-                            keys.push(i64ToStr(e))
++                            if !arrIsHole(st, o, e) {
++                                keys.push(i64ToStr(e))
++                            }
+                             e = e + 1
+                         }
+                     }
+diff -ru --ex /Users/csmith/git/milo/examples/apps/milojs/lexer.milo /private/tmp/mjx/milojs-fix/lexer.milo
+--- /Users/csmith/git/milo/examples/apps/milojs/lexer.milo	2026-07-18 19:41:34
++++ /private/tmp/mjx/milojs-fix/lexer.milo	2026-07-20 20:24:58
+@@ -4,6 +4,9 @@
+ from "std/strconv" import {
+     parseFloat
+ }
++from "std/unicode" import {
++    encodeCodepoint
++}
+ from "./value" import {
+     i64ToStr
+ }
+@@ -141,6 +144,108 @@
+     return -1
+ }
+ 
++// four hex digits starting at src[at], or -1
++fn hex4At(src: &string, at: i64): i64 {
++    if at + 3 >= src.len() {
++        return -1
++    }
++    var v: i64 = 0
++    var k: i64 = 0
++    while k < 4 {
++        let d = hexDigitVal(src[at + k])
++        if d < 0 {
++            return -1
++        }
++        v = v * 16 + d
++        k = k + 1
++    }
++    return v
++}
++
++// Decode the backslash escape at src[i] (caller guarantees src[i]=='\\' and
++// i+1 < n), appending its expansion to `out`. Returns the position after the
++// escape. Handles \n \t \r \b \f \v \0 \xHH \uHHHH \u{H..H} and surrogate-pair
++// \uD8xx\uDCxx combining; a lone surrogate becomes U+FFFD (engine strings are
++// UTF-8 and cannot hold one). Unrecognized escapes yield the escaped char.
++fn scanEscape(src: &string, i: i64, out: &mut string): i64 {
++    let n = src.len()
++    let e = src[i + 1]
++    if e == 'n' {
++        out.push(10 as u8)
++        return i + 2
++    }
++    if e == 't' {
++        out.push(9 as u8)
++        return i + 2
++    }
++    if e == 'r' {
++        out.push(13 as u8)
++        return i + 2
++    }
++    if e == 'b' {
++        out.push(8 as u8)
++        return i + 2
++    }
++    if e == 'f' {
++        out.push(12 as u8)
++        return i + 2
++    }
++    if e == 'v' {
++        out.push(11 as u8)
++        return i + 2
++    }
++    if e == '0' && (i + 2 >= n || src[i + 2] < '0' || src[i + 2] > '9') {
++        out.push(0 as u8)
++        return i + 2
++    }
++    if e == 'x' && i + 3 < n {
++        let h1 = hexDigitVal(src[i + 2])
++        let h2 = hexDigitVal(src[i + 3])
++        if h1 >= 0 && h2 >= 0 {
++            encodeCodepoint(out, (h1 * 16 + h2) as i32)
++            return i + 4
++        }
++    }
++    if e == 'u' {
++        if i + 2 < n && src[i + 2] == '{' {
++            var j = i + 3
++            var cp: i64 = 0
++            var any = false
++            var ok = true
++            while j < n && src[j] != '}' {
++                let d = hexDigitVal(src[j])
++                if d < 0 || cp > 1114111 {
++                    ok = false
++                    break
++                }
++                cp = cp * 16 + d
++                any = true
++                j = j + 1
++            }
++            if ok && any && j < n && src[j] == '}' && cp <= 1114111 {
++                encodeCodepoint(out, cp as i32)
++                return j + 1
++            }
++        } else {
++            let u = hex4At(src, i + 2)
++            if u >= 0 {
++                if u >= 55296 && u <= 56319 && i + 7 < n && src[i + 6] == 92 as u8 && src[i + 7] == 'u' {
++                    let lo = hex4At(src, i + 8)
++                    if lo >= 56320 && lo <= 57343 {
++                        encodeCodepoint(out, (65536 + (u - 55296) * 1024 + (lo - 56320)) as i32)
++                        return i + 12
++                    }
++                }
++                encodeCodepoint(out, u as i32)
++                return i + 6
++            }
++        }
++    }
++    // \' \" \\ \` \$ and anything unrecognized: the char itself
++    out.push(e)
++    return i + 2
++}
++
+ fn isDigitByte(c: u8): bool {
+     return c >= '0' && c <= '9'
+ }
+@@ -299,23 +404,7 @@
+             isHole = true
+             break
+         } else if c == 92 as u8 && i + 1 < n {
+-            let e = src[i + 1]
+-            if e == 'n' {
+-                buf.push(10 as u8)
+-            } else if e == 't' {
+-                buf.push(9 as u8)
+-            } else if e == 'r' {
+-                buf.push(13 as u8)
+-            } else if e == 96 as u8 {
+-                buf.push(96 as u8)
+-            } else if e == '$' {
+-                buf.push('$')
+-            } else if e == 92 as u8 {
+-                buf.push(92 as u8)
+-            } else {
+-                buf.push(e)
+-            }
+-            i = i + 2
++            i = scanEscape(src, i, buf)
+         } else {
+             buf.push(c)
+             i = i + 1
+@@ -512,20 +601,7 @@
+             var s = String.withCapacity(16)
+             while i < n && src[i] != quote {
+                 if src[i] == 92 as u8 && i + 1 < n {
+-                    let e = src[i + 1]
+-                    if e == 'n' {
+-                        s.push(10 as u8)
+-                    } else if e == 't' {
+-                        s.push(9 as u8)
+-                    } else if e == 'r' {
+-                        s.push(13 as u8)
+-                    } else if e == '0' {
+-                        s.push(0 as u8)
+-                    } else {
+-                        // \\ \' \" and anything else: the char itself
+-                        s.push(e)
+-                    }
+-                    i = i + 2
++                    i = scanEscape(src, i, s)
+                 } else {
+                     s.push(src[i])
+                     i = i + 1
+diff -ru --ex /Users/csmith/git/milo/examples/apps/milojs/milojs-engine.milo /private/tmp/mjx/milojs-fix/milojs-engine.milo
+--- /Users/csmith/git/milo/examples/apps/milojs/milojs-engine.milo	2026-07-18 23:17:24
++++ /private/tmp/mjx/milojs-fix/milojs-engine.milo	2026-07-20 20:31:34
+@@ -34,7 +34,7 @@
+     lex, Token
+ }
+ from "./ast" import {
+-    Prog
++    Prog, gProg
+ }
+ from "./modules" import {
+     preloadGraph, resolveSpec, dirOf
+@@ -158,16 +158,16 @@
+             bootInterp(gInterp)
+             // The prelude and the program must share one Prog: a JSValue.Func
+             // carries an index into prog.funcs, so a function parsed into a
+-            // different Prog would index the wrong table when called.
+-            var prog = Prog {
+-                exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
+-            }
++            // different Prog would index the wrong table when called. Work on
++            // gProg (like milojs.milo does), not a local: natives that invoke
++            // user callbacks (proxy ownKeys from Object.keys) reach the program
++            // through gProg, and a local would leave it empty.
+             // spec builtins that are written in JS rather than as natives; run in
+             // global scope so its declarations become globals
+-            let preludeIdx = preloadGraph("builtin:engine-prelude", prog, gInterp)
++            let preludeIdx = preloadGraph("builtin:engine-prelude", gProg, gInterp)
+             if preludeIdx >= 0 {
+-                hoistBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
+-                execBlock(prog, gInterp.modBlocks[preludeIdx], gInterp, 0)
++                hoistBlock(gProg, gInterp.modBlocks[preludeIdx], gInterp, 0)
++                execBlock(gProg, gInterp.modBlocks[preludeIdx], gInterp, 0)
+             }
+             if gInterp.throwing {
+                 eprint("milojs-engine: prelude failed: " + describeThrown(gInterp, gInterp.thrownValue))
+@@ -186,7 +186,7 @@
+                 // first or every require fails with "module was not pre-loaded".
+                 // preloadGraph walks require() edges from the entry; the entry's
+                 // own parse here is what actually executes.
+-                let _ = preloadGraph(path.clone(), prog, gInterp)
++                let _ = preloadGraph(path.clone(), gProg, gInterp)
+                 // require() resolves against the CURRENT module's directory, and
+                 // preload resolved against the entry's. Without pushing it the two
+                 // disagree for anything but a bare builtin: preload registers
+@@ -196,19 +196,19 @@
+                 var p = PState {
+                     toks: toks, pos: 0, curClass: "", file: path.clone(), errored: false, eofError: false, quiet: false
+                 }
+-                let top = parseProgram(p, prog)
+-                hoistBlock(prog, top, gInterp, 0)
+-                execBlock(prog, top, gInterp, 0)
++                let top = parseProgram(p, gProg)
++                hoistBlock(gProg, top, gInterp, 0)
++                execBlock(gProg, top, gInterp, 0)
+             } else {
+-                entryIdx = preloadWithImports(path.clone(), prog, gInterp)
++                entryIdx = preloadWithImports(path.clone(), gProg, gInterp)
+                 if entryIdx < 0 {
+                     eprint("milojs-engine: cannot load '" + path + "'")
+                     return 1
+                 }
+-                runModule(prog, entryIdx, gInterp)
++                runModule(gProg, entryIdx, gInterp)
+             }
+             if !gInterp.throwing {
+-                runEventLoop(prog, gInterp)
++                runEventLoop(gProg, gInterp)
+             }
+             if gInterp.throwing {
+                 eprint("Uncaught " + describeThrown(gInterp, gInterp.thrownValue))
+diff -ru --ex /Users/csmith/git/milo/examples/apps/milojs/napi.milo /private/tmp/mjx/milojs-fix/napi.milo
+--- /Users/csmith/git/milo/examples/apps/milojs/napi.milo	2026-07-19 18:11:29
++++ /private/tmp/mjx/milojs-fix/napi.milo	2026-07-20 20:16:57
+@@ -21,10 +21,10 @@
+ from "std/io" import {
+     writeStdout
+ }
+-from "examples/apps/milojs/value" import {
++from "./value" import {
+     JSValue, cloneValue, toNum, truthy
+ }
+-from "examples/apps/milojs/runtime" import {
++from "./runtime" import {
+     Interp, gInterp, newObject, newArray, objGet, objSet
+ }
+ 
+diff -ru --ex /Users/csmith/git/milo/examples/apps/milojs/parser.milo /private/tmp/mjx/milojs-fix/parser.milo
+--- /Users/csmith/git/milo/examples/apps/milojs/parser.milo	2026-07-20 13:44:33
++++ /private/tmp/mjx/milojs-fix/parser.milo	2026-07-20 20:40:16
+@@ -714,9 +714,16 @@
+     expect(p, T_LBRACKET)
+     var elems: Vec<i64> = Vec.new()
+     while peekKind(p) != T_RBRACKET && peekKind(p) != T_EOF {
+-        elems.push(parseArg(p, prog))
+         if peekKind(p) == T_COMMA {
++            // elision [1, , 3]: a HOLE, recorded as sentinel -1 (a real slot in
++            // length terms, but `in`/hasOwnProperty/keys say absent)
++            elems.push(0 - 1)
+             advance(p)
++        } else {
++            elems.push(parseArg(p, prog))
++            if peekKind(p) == T_COMMA {
++                advance(p)
++            }
+         }
+     }
+     expect(p, T_RBRACKET)
+diff -ru --ex /Users/csmith/git/milo/examples/apps/milojs/runtime.milo /private/tmp/mjx/milojs-fix/runtime.milo
+--- /Users/csmith/git/milo/examples/apps/milojs/runtime.milo	2026-07-20 16:48:48
++++ /private/tmp/mjx/milojs-fix/runtime.milo	2026-07-20 20:27:16
+@@ -325,6 +325,11 @@
+ struct JSObj {
+     props: Vec<Prop>,
+     elems: Vec<JSValue>,
++    // indices in elems that are HOLES (delete arr[i], length-grow padding,
++    // sparse writes): `i in arr` / hasOwnProperty are false there even though
++    // the dense elems slot reads as undefined. Empty for normal arrays, so the
++    // fast paths never scan it.
++    holes: Vec<i64>,
+     isArray: bool,
+     // the user-function index that `new`'d this object (for instanceof), or -1
+     ctor: i64,
+@@ -581,7 +586,7 @@
+ fn allocObj(st: &mut Interp, isArray: bool): i64 {
+     st.allocSinceGc = st.allocSinceGc + 1
+     let obj = JSObj {
+-        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), abMaxLen: -1, abDetached: false, taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), isProxy: false, proxyTarget: JSValue.Undefined, proxyHandler: JSValue.Undefined, napiFn: -1, napiWrap: 0, mark: false, free: false
++        props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), abMaxLen: -1, abDetached: false, taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), isProxy: false, proxyTarget: JSValue.Undefined, proxyHandler: JSValue.Undefined, napiFn: -1, napiWrap: 0, mark: false, free: false
+     }
+     // reuse a freed slot if one exists (indices are stable — handles hold them),
+     // otherwise grow the arena
+@@ -725,6 +730,39 @@
+ // shifting the remaining elements, matching JS.
+ // Writing array.length truncates or extends with holes; JS treats it as a real
+ // operation, and `arr.length = 0` is the standard way to clear an array.
++fn arrIsHole(st: &Interp, obj: i64, idx: i64): bool {
++    var i: i64 = 0
++    let n = st.objects[obj].holes.len()
++    while i < n {
++        if st.objects[obj].holes[i] == idx {
++            return true
++        }
++        i = i + 1
++    }
++    return false
++}
++
++fn arrMarkHole(st: &mut Interp, obj: i64, idx: i64) {
++    if !arrIsHole(st, obj, idx) {
++        st.objects[obj].holes.push(idx)
++    }
++}
++
++fn arrClearHole(st: &mut Interp, obj: i64, idx: i64) {
++    if st.objects[obj].holes.len() == 0 {
++        return
++    }
++    var kept: Vec<i64> = Vec.new()
++    var i: i64 = 0
++    while i < st.objects[obj].holes.len() {
++        if st.objects[obj].holes[i] != idx {
++            kept.push(st.objects[obj].holes[i])
++        }
++        i = i + 1
++    }
++    st.objects[obj].holes = kept
++}
++
+ fn setArrayLength(st: &mut Interp, obj: i64, n: i64) {
+     var target = n
+     if target < 0 {
+@@ -733,7 +771,21 @@
+     while st.objects[obj].elems.len() > target {
+         let _ = st.objects[obj].elems.pop()
+     }
++    // shrink: forget hole records past the new end
++    if st.objects[obj].holes.len() > 0 {
++        var kept: Vec<i64> = Vec.new()
++        var i: i64 = 0
++        while i < st.objects[obj].holes.len() {
++            if st.objects[obj].holes[i] < target {
++                kept.push(st.objects[obj].holes[i])
++            }
++            i = i + 1
++        }
++        st.objects[obj].holes = kept
++    }
++    // grow: the padded slots are holes, not own elements
+     while st.objects[obj].elems.len() < target {
++        arrMarkHole(st, obj, st.objects[obj].elems.len())
+         st.objects[obj].elems.push(JSValue.Undefined)
+     }
+ }
+@@ -742,7 +794,10 @@
+     if st.objects[obj].isArray {
+         let ai = asArrayIndex(key)
+         if ai >= 0 && ai < st.objects[obj].elems.len() {
++            // delete leaves length alone but the slot becomes a HOLE:
++            // `ai in arr` and hasOwnProperty must say false from now on
+             st.objects[obj].elems[ai] = JSValue.Undefined
++            arrMarkHole(st, obj, ai)
+             return
+         }
+     }
+@@ -809,10 +864,17 @@
+     if idx < 0 {
+         return
+     }
+-    while st.objects[obj].elems.len() <= idx {
++    // sparse write (a[4]=x on a shorter array): the skipped slots are holes
++    while st.objects[obj].elems.len() < idx {
++        arrMarkHole(st, obj, st.objects[obj].elems.len())
+         st.objects[obj].elems.push(JSValue.Undefined)
+     }
+-    st.objects[obj].elems[idx] = value
++    if st.objects[obj].elems.len() == idx {
++        st.objects[obj].elems.push(value)
++    } else {
++        st.objects[obj].elems[idx] = value
++        arrClearHole(st, obj, idx)
++    }
+ }
+ 
+ fn objHas(st: &Interp, o: i64, key: &string): bool {
+diff -ru --ex /Users/csmith/git/milo/examples/apps/milojs/value.milo /private/tmp/mjx/milojs-fix/value.milo
+--- /Users/csmith/git/milo/examples/apps/milojs/value.milo	2026-07-18 21:50:52
++++ /private/tmp/mjx/milojs-fix/value.milo	2026-07-20 20:38:14
+@@ -9,9 +9,14 @@
+     snprintf
+ }
+ from "std/math" import {
+-    mathFloor, mathAbs
++    mathFloor, mathAbs, mathMod
+ }
+ 
++// libm: needed for half-ulp precision bound in numToRadix (no bit-level f64
++// access in Milo, so the "how many digits are meaningful" question is answered
++// by asking libm for the adjacent double)
++extern fn nextafter(x: f64, y: f64): f64
++
+ enum JSValue {
+     Undefined,
+     Null,
+@@ -127,6 +132,85 @@
+     return out
+ }
+ 
++// %g picks exponent form well before JS does. The spec uses plain decimal
++// whenever the decimal point lands in (-6, 21]: 1e16 prints as
++// "10000000000000000" and 1e-6 as "0.000001"; exponent form starts at 1e21 and
++// 1e-7. Expand a %g exponent form back to plain decimal when JS requires it.
++fn jsExpandExpForm(s: &string): string {
++    var e: i64 = -1
++    var i: i64 = 0
++    while i < s.len() {
++        if s[i] == 'e' || s[i] == 'E' {
++            e = i
++        }
++        i = i + 1
++    }
++    if e < 0 {
++        return s.clone()
++    }
++    var exp: i64 = 0
++    var expNeg = false
++    var j = e + 1
++    if j < s.len() && (s[j] == '+' || s[j] == '-') {
++        expNeg = s[j] == '-'
++        j = j + 1
++    }
++    while j < s.len() {
++        exp = exp * 10 + ((s[j] - '0') as i64)
++        j = j + 1
++    }
++    if expNeg {
++        exp = 0 - exp
++    }
++    // point position after the first digit: n = exp + 1 (per the spec's k/n)
++    let pointAt = exp + 1
++    if pointAt > 21 || pointAt <= -6 {
++        return s.clone()
++    }
++    var neg = false
++    var digits = String.withCapacity(32)
++    var m: i64 = 0
++    while m < e {
++        if s[m] == '-' {
++            neg = true
++        } else if s[m] != '.' && s[m] != '+' {
++            digits.push(s[m])
++        }
++        m = m + 1
++    }
++    let k = digits.len()
++    var out = String.withCapacity(32)
++    if neg {
++        out.push('-')
++    }
++    if pointAt >= k {
++        out = out + digits
++        var z = k
++        while z < pointAt {
++            out.push('0')
++            z = z + 1
++        }
++    } else if pointAt > 0 {
++        var p: i64 = 0
++        while p < k {
++            if p == pointAt {
++                out.push('.')
++            }
++            out.push(digits[p])
++            p = p + 1
++        }
++    } else {
++        out = out + "0."
++        var z = pointAt
++        while z < 0 {
++            out.push('0')
++            z = z + 1
++        }
++        out = out + digits
++    }
++    return out
++}
++
+ // JS Number→string: integrals without ".0", otherwise the shortest decimal
+ // text that round-trips to the same double (probe %g precision 1..17).
+ fn numToStr(n: f64): string {
+@@ -150,7 +234,7 @@
+         match parseFloat(s.clone()) {
+             Option.Some(v) => {
+                 if v == n {
+-                    return s
++                    return jsExpandExpForm(s)
+                 }
+             }
+             Option.None => {
+@@ -158,7 +242,7 @@
+         }
+         p = p + 1
+     }
+-    return floatG(n, 17)
++    return jsExpandExpForm(floatG(n, 17))
+ }
+ 
+ fn toStr(v: &JSValue): string {
+@@ -238,36 +322,218 @@
+     }
+ }
+ 
+-// Integer-to-radix, matching Number.prototype.toString(radix). The fractional
+-// part is dropped — real code uses this for hex/binary of integers.
++fn radixDigitChar(d: i64): u8 {
++    if d < 10 {
++        return ('0' as i64 + d) as u8
++    }
++    return ('a' as i64 + (d - 10)) as u8
++}
++
++// Exact fixed-point fraction: 32-bit limbs, limbs[i] weighs 2^-(32*(i+1)).
++// A double's fraction part has < 1075 significant bits, so extraction by
++// repeated exact *2^32 scaling terminates (power-of-two scaling and
++// x - floor(x) are both exact in IEEE arithmetic).
++fn fracToLimbs(x0: f64, nLimbs: i64): Vec<i64> {
++    var out: Vec<i64> = Vec.new()
++    var x = x0
++    var i: i64 = 0
++    while i < nLimbs {
++        x = x * 4294967296.0
++        let hi = mathFloor(x)
++        x = x - hi
++        out.push(hi as i64)
++        i = i + 1
++    }
++    return out
++}
++
++// limbs *= m (m <= 36); returns the integer carry-out (the next digit)
++fn limbsMulSmall(limbs: &mut Vec<i64>, m: i64): i64 {
++    var carry: i64 = 0
++    var i = limbs.len() - 1
++    while i >= 0 {
++        let t = limbs[i] * m + carry
++        limbs[i] = t % 4294967296
++        carry = t / 4294967296
++        i = i - 1
++    }
++    return carry
++}
++
++fn limbsLess(a: &Vec<i64>, b: &Vec<i64>): bool {
++    var i: i64 = 0
++    while i < a.len() {
++        if a[i] != b[i] {
++            return a[i] < b[i]
++        }
++        i = i + 1
++    }
++    return false
++}
++
++// does a + b carry past 1.0?
++fn limbsSumOverflows(a: &Vec<i64>, b: &Vec<i64>): bool {
++    var carry: i64 = 0
++    var i = a.len() - 1
++    while i >= 0 {
++        let t = a[i] + b[i] + carry
++        if t >= 4294967296 {
++            carry = 1
++        } else {
++            carry = 0
++        }
++        i = i - 1
++    }
++    return carry > 0
++}
++
++// Number.prototype.toString(radix). Fraction digits via the free-format
++// (Steele-White) loop over EXACT fixed-point arithmetic: emit digits until the
++// remainder is within half an ulp of the source double, then round to nearest
++// (ties to even). This matches QuickJS/JSC shortest-round-trip output; V8's
++// double-loop version differs in the last digit for some inputs.
+ fn numToRadix(n: f64, radix: i64): string {
+-    if n != n {
++    if !(n == n) {
+         return "NaN"
+     }
+-    var i = n as i64
+-    if i == 0 {
+-        return "0"
++    if !isFiniteF(n) {
++        if n > 0.0 {
++            return "Infinity"
++        }
++        return "-Infinity"
+     }
++    var v = n
+     var neg = false
+-    if i < 0 {
++    if v < 0.0 {
+         neg = true
+-        i = 0 - i
++        v = 0.0 - v
+     }
+-    var out = ""
+-    while i > 0 {
+-        let d = i % radix
+-        var ch = String.withCapacity(1)
+-        if d < 10 {
+-            ch.push(('0' as i64 + d) as u8)
+-        } else {
+-            ch.push(('a' as i64 + (d - 10)) as u8)
++    let radixF = radix as f64
++    var integer = mathFloor(v)
++    let fraction = v - integer
++    // digits beyond half the gap to the next double are noise, stop there
++    var delta = 0.5 * (nextafter(v, jsInf()) - v)
++    let minDenorm = nextafter(0.0, 1.0)
++    if delta < minDenorm {
++        delta = minDenorm
++    }
++    var fracDigits: Vec<i64> = Vec.new()
++    var fracLen: i64 = 0
++    if fraction >= delta {
++        // 34 limbs = 1088 bits, enough for any double fraction (max 1074)
++        let nLimbs: i64 = 35
++        var r = fracToLimbs(fraction, nLimbs)
++        var m = fracToLimbs(delta, nLimbs)
++        // once the scaled tolerance reaches 1.0 its integer part falls off the
++        // limb array; from then on ANY remainder is within tolerance (sticky)
++        var mBig = false
++        var guard: i64 = 0
++        while guard < 1200 {
++            guard = guard + 1
++            let digit = limbsMulSmall(r, radix)
++            if limbsMulSmall(m, radix) > 0 {
++                mBig = true
++            }
++            fracDigits.push(digit)
++            fracLen = fracLen + 1
++            let low = mBig || limbsLess(r, m)
++            let high = mBig || limbsSumOverflows(r, m)
++            if !low && !high {
++                continue
++            }
++            // last digit: pick d or d+1 by nearest (2r vs 1), ties to even
++            var roundUp = false
++            if high && !low {
++                roundUp = true
++            } else if high && low {
++                if r[0] > 2147483648 {
++                    roundUp = true
++                } else if r[0] == 2147483648 {
++                    var rest: i64 = 0
++                    var q: i64 = 1
++                    while q < nLimbs {
++                        rest = rest + r[q]
++                        q = q + 1
++                    }
++                    if rest > 0 {
++                        roundUp = true
++                    } else {
++                        // exact tie: round to even
++                        roundUp = digit % 2 == 1
++                    }
++                } else {
++                    roundUp = false
++                }
++            }
++            if roundUp {
++                // drop trailing (radix-1) digits, bump the first incrementable
++                // one; all-maxed carries into the integer part
++                var k = fracLen - 1
++                var carried = false
++                while k >= 0 {
++                    if fracDigits[k] + 1 < radix {
++                        fracDigits[k] = fracDigits[k] + 1
++                        fracLen = k + 1
++                        carried = true
++                        break
++                    }
++                    k = k - 1
++                }
++                if !carried {
++                    fracLen = 0
++                    integer = integer + 1.0
++                }
++            } else {
++                // strip trailing zeros the round-down may leave
++                while fracLen > 0 && fracDigits[fracLen - 1] == 0 {
++                    fracLen = fracLen - 1
++                }
++            }
++            break
+         }
+-        out = ch + out
+-        i = i / radix
+     }
++    var out = ""
+     if neg {
+-        return "-" + out
++        out.push('-')
+     }
++    if integer == 0.0 {
++        out.push('0')
++    } else if integer < 9007199254740992.0 {
++        // fits the exact-integer range: fast i64 loop
++        var i = integer as i64
++        var digits = String.withCapacity(64)
++        while i > 0 {
++            digits.push(radixDigitChar(i % radix))
++            i = i / radix
++        }
++        var p = digits.len() - 1
++        while p >= 0 {
++            out.push(digits[p])
++            p = p - 1
++        }
++    } else {
++        // beyond 2^53: peel digits with exact fmod (low digits reflect the
++        // double's exact value, matching V8)
++        var digits = String.withCapacity(1100)
++        while integer > 0.0 {
++            let rem = mathMod(integer, radixF)
++            digits.push(radixDigitChar(rem as i64))
++            integer = (integer - rem) / radixF
++        }
++        var p = digits.len() - 1
++        while p >= 0 {
++            out.push(digits[p])
++            p = p - 1
++        }
++    }
++    if fracLen > 0 {
++        out.push('.')
++        var k: i64 = 0
++        while k < fracLen {
++            out.push(radixDigitChar(fracDigits[k]))
++            k = k + 1
++        }
++    }
+     return out
+ }
+ 
+@@ -301,10 +567,24 @@
+         scaled = scaled * 10.0
+         intDigits = intDigits - 1
+     }
+-    var decimals = digits - intDigits
+-    if decimals < 0 {
+-        decimals = 0
++    // The exponent is that of the ROUNDED value: 99.9 at precision 2 rounds to
++    // 100, gaining a digit (and with it exponential form).
++    var p10 = 1.0
++    var q: i64 = 0
++    while q < digits - 1 {
++        p10 = p10 * 10.0
++        q = q + 1
+     }
++    if roundHalfAwayFromZero(scaled * p10) >= (p10 * 10.0) as i64 {
++        intDigits = intDigits + 1
++    }
++    // spec: when the exponent falls outside [-6, precision) the result is
++    // exponential notation with precision-1 fraction digits — (25).toPrecision(1)
++    // is "3e+1", not "25"
++    if intDigits - 1 >= digits || intDigits - 1 < -6 {
++        return numToExponential(n, digits - 1, true)
++    }
++    let decimals = digits - intDigits
+     return numToFixed(n, decimals)
+ }
+ 
+@@ -320,6 +600,18 @@
+         }
+         return "-Infinity"
+     }
++    // Past double precision the repeated /10 mantissa walk is meaningless —
++    // the spec wants the EXACT decimal expansion of the double, which libc's
++    // %e produces. (Ties can't happen out there, so C's half-even rounding
++    // can't disagree with JS.) The exponent just needs JS formatting: e+2, not
++    // e+02.
++    if haveDigits && digits > 17 && isFiniteF(n) {
++        var ebuf: [u8; 160] = [0; 160]
++        unsafe {
++            snprintf(ebuf, 160, "%.*e", digits as i32, n)
++            return stripExpZeros(_cstrToString(ebuf as *u8))
++        }
++    }
+     var neg = false
+     var mag = n
+     if mag < 0.0 {
+@@ -339,7 +631,20 @@
+     }
+     var mant = ""
+     if haveDigits {
+-        mant = numToFixed(mag, digits)
++        // the mantissa can round up to 10.0 (99.9 → 9.99e+1 → "10.0e+1");
++        // renormalize to keep it in [1, 10)
++        var m10 = 1.0
++        var mq: i64 = 0
++        while mq < digits {
++            m10 = m10 * 10.0
++            mq = mq + 1
++        }
++        if mag != 0.0 && roundHalfAwayFromZero(mag * m10) >= (m10 * 10.0) as i64 {
++            exp = exp + 1
++            mant = numToFixed(1.0, digits)
++        } else {
++            mant = numToFixed(mag, digits)
++        }
+     } else {
+         mant = numToStr(mag)
+     }
+@@ -358,8 +663,15 @@
+     if n != n {
+         return "NaN"
+     }
++    // a negative value that rounds to zero keeps its sign: (-1e-10).toFixed(0)
++    // is "-0", (-0.04).toFixed(1) is "-0.0"
++    let signNeg = n < 0.0
+     if digits <= 0 {
+-        return i64ToStr(roundHalfAwayFromZero(n))
++        let r = roundHalfAwayFromZero(n)
++        if r == 0 && signNeg {
++            return "-0"
++        }
++        return i64ToStr(r)
+     }
+     var scale = 1.0
+     var k: i64 = 0
+@@ -373,6 +685,9 @@
+     if v < 0 {
+         neg = true
+         v = 0 - v
++    }
++    if scaled == 0 && signNeg {
++        neg = true
+     }
+     var frac = i64ToStr(v % (scale as i64))
+     while frac.len() < digits {
