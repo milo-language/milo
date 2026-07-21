@@ -1,0 +1,68 @@
+// std/totp — HOTP (RFC 4226) and TOTP (RFC 6238) one-time passwords, pure Milo.
+//
+// HOTP(K, C) truncates HMAC-SHA1(K, C) to an N-digit code; TOTP is HOTP with the
+// counter set to floor(time / step). This is the algorithm behind Google
+// Authenticator / Authy 2FA codes. Built on std/hmac's HMAC-SHA1. Codes match
+// `oathtool` and the RFC test vectors bit-for-bit.
+//
+// The secret is passed as raw key bytes (decode base32 with std/base32 if you have
+// an otpauth:// secret). Time and counter are caller-supplied — this module has no
+// clock dependency, which also makes it deterministic to test.
+
+from "std/hmac" import {
+    hmacSha1Bytes
+}
+
+fn _pow10(n: i64): i64 {
+    var p: i64 = 1
+    for _i in 0..n {
+        p = p * 10
+    }
+    return p
+}
+
+// Left-pad a non-negative integer to exactly `width` decimal digits.
+fn _zeroPad(value: i64, width: i64): string {
+    var s = ""
+    var v = value
+    if v == 0 {
+        s.push('0')
+    }
+    while v > 0 {
+        s.push(((v % 10) + 48) as u8)
+        v = v / 10
+    }
+    while s.len < width {
+        s.push('0')
+    }
+    // Digits were emitted least-significant first; reverse in place.
+    var out = ""
+    var i = s.len - 1
+    while i >= 0 {
+        out.push(s[i])
+        i = i - 1
+    }
+    return out
+}
+
+// HOTP value for a moving counter (RFC 4226 §5.3), `digits` long (6–8 typical).
+fn hotp(secret: &string, counter: i64, digits: i64): string {
+    // 8-byte big-endian counter is the HMAC message.
+    var msg = ""
+    for i in 0..8 {
+        msg.push(((counter >> ((7 - i) * 8)) & 0xff) as u8)
+    }
+    let h = hmacSha1Bytes(secret, msg)
+    // Dynamic truncation: low nibble of the last byte selects a 4-byte window.
+    let offset = (h[19] as i64) & 0x0f
+    let bin = (((h[offset] as i64) & 0x7f) << 24)
+    | (((h[offset + 1] as i64) & 0xff) << 16)
+    | (((h[offset + 2] as i64) & 0xff) << 8)
+    | ((h[offset + 3] as i64) & 0xff)
+    return _zeroPad(bin % _pow10(digits), digits)
+}
+
+// TOTP value for a Unix timestamp (RFC 6238): HOTP over floor(time / step).
+fn totp(secret: &string, unixTime: i64, step: i64, digits: i64): string {
+    return hotp(secret, unixTime / step, digits)
+}

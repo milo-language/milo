@@ -1,0 +1,20 @@
+// @expect: 755224
+// @expect: 287082
+// @expect: 359152
+// @expect: 94287082
+// @expect: 07081804
+from "std/totp" import {
+    hotp, totp
+}
+
+// RFC 4226 Appendix D (HOTP, counters 0..2) and RFC 6238 Appendix B (TOTP, SHA-1,
+// 8 digits). Same values `oathtool --totp` prints.
+fn main(): i32 {
+    let secret = "12345678901234567890"
+    print(hotp(secret, 0, 6))
+    print(hotp(secret, 1, 6))
+    print(hotp(secret, 2, 6))
+    print(totp(secret, 59, 30, 8))
+    print(totp(secret, 1111111109, 30, 8))
+    return 0
+}

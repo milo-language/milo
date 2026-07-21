@@ -19,7 +19,7 @@ fn _hexNibble(v: i64): u8 {
     return (v - 10 + 97) as u8
 }
 
-fn _pad(input: &string): string {
+fn _padSha1(input: &string): string {
     var m = ""
     for i in 0..input.len {
         m.push(input[i])
@@ -37,7 +37,7 @@ fn _pad(input: &string): string {
 
 // SHA-1 digest as 20 raw bytes.
 fn sha1Bytes(input: &string): string {
-    let m = _pad(input)
+    let m = _padSha1(input)
     var h0: i64 = 0x67452301
     var h1: i64 = 0xefcdab89
     var h2: i64 = 0x98badcfe
