@@ -150,3 +150,17 @@ smoke test, not folded into an unrelated change.
 Related: several QuickJS sweep failures reported as `X is not a function` are
 methods called on unusual receivers rather than missing methods (see the
 change-by-copy note above). Probe before implementing.
+
+## Language ergonomics: `for (i, x) in vec` tuple binding (user-requested 2026-07-20)
+
+for-in already accepts any iterator and `Vec.enumerate()` already exists, but
+for-in binds a SINGLE name — there is no tuple/destructuring binding form. So an
+index-and-element loop still has to be a C-style `while i < v.len() { … i=i+1 }`.
+Add destructuring binding to for-in: `for (i, x) in vec.enumerate()` (or sugar
+`for (i, x) in vec`). This converts a large class of `while i < .len()` loops
+(common across milojs eval.milo, the compiler, and std) into for-in — the only
+reason many of them can't today is that they need the index. Pairs with a
+cleanup sweep replacing read-only index loops with plain `for x in v`.
+Scope: parser (tuple pattern after `for`), checker (destructure the iterator's
+item type), lower/codegen (bind the pattern per iteration). Precedent: match
+already destructures tuples/enums, so the pattern machinery exists.
