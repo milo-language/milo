@@ -7713,6 +7713,89 @@ fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSVa
     if name == "toISOString" || name == "toJSON" {
         return JSValue.Str(isoFromMillis(ms))
     }
+    // the set*/setUTC* family. milojs keeps dates in UTC with a 0 offset, so the
+    // local and UTC setters are equivalent — normalise setUTCFoo -> setFoo. The
+    // date is decomposed to civil parts, the requested field(s) replaced, and
+    // recomposed to epoch ms.
+    var sname = name.clone()
+    if sname.len() >= 6 && strSlice(sname, 0, 6) == "setUTC" {
+        sname = "set" + strSlice(sname, 6, sname.len())
+    }
+    if sname == "setFullYear" || sname == "setMonth" || sname == "setDate" || sname == "setHours" || sname == "setMinutes" || sname == "setSeconds" || sname == "setMilliseconds" {
+        let secs = (ms / 1000.0) as i64
+        let dt = dateTimeFromEpoch(secs)
+        var frac = mathMod(ms, 1000.0) as i64
+        if frac < 0 {
+            frac = frac + 1000
+        }
+        var year = dt.year as i64
+        var month = dt.month as i64
+        var day = dt.day as i64
+        var hour = dt.hour as i64
+        var minute = dt.minute as i64
+        var second = dt.second as i64
+        var millis = frac
+        if sname == "setFullYear" {
+            if args.len() > 0 {
+                year = toNum(args[0]) as i64
+            }
+            if args.len() > 1 {
+                month = (toNum(args[1]) as i64) + 1
+            }
+            if args.len() > 2 {
+                day = toNum(args[2]) as i64
+            }
+        } else if sname == "setMonth" {
+            if args.len() > 0 {
+                month = (toNum(args[0]) as i64) + 1
+            }
+            if args.len() > 1 {
+                day = toNum(args[1]) as i64
+            }
+        } else if sname == "setDate" {
+            if args.len() > 0 {
+                day = toNum(args[0]) as i64
+            }
+        } else if sname == "setHours" {
+            if args.len() > 0 {
+                hour = toNum(args[0]) as i64
+            }
+            if args.len() > 1 {
+                minute = toNum(args[1]) as i64
+            }
+            if args.len() > 2 {
+                second = toNum(args[2]) as i64
+            }
+            if args.len() > 3 {
+                millis = toNum(args[3]) as i64
+            }
+        } else if sname == "setMinutes" {
+            if args.len() > 0 {
+                minute = toNum(args[0]) as i64
+            }
+            if args.len() > 1 {
+                second = toNum(args[1]) as i64
+            }
+            if args.len() > 2 {
+                millis = toNum(args[2]) as i64
+            }
+        } else if sname == "setSeconds" {
+            if args.len() > 0 {
+                second = toNum(args[0]) as i64
+            }
+            if args.len() > 1 {
+                millis = toNum(args[1]) as i64
+            }
+        } else if sname == "setMilliseconds" {
+            if args.len() > 0 {
+                millis = toNum(args[0]) as i64
+            }
+        }
+        let days = daysFromCivil(year, month, day)
+        let newMs = ((days * 86400 + hour * 3600 + minute * 60 + second) * 1000 + millis) as f64
+        st.objects[o].dateMs = newMs
+        return JSValue.Number(newMs)
+    }
     // getUTC* mirrors the local accessors but decomposes in UTC; normalise
     // getUTCFoo -> getFoo for the branch match and pick the decomposition by
     // whether the caller asked for UTC.
