@@ -78,13 +78,19 @@ fn isFile(path: &string): bool {
 
 // Get file size in bytes. Returns -1 if file doesn't exist.
 fn fileSizePath(path: &string): i64 {
-    let info = fileInfo(path)
+    // Size via open + lseek(SEEK_END), not the struct-stat st_size field: that
+    // offset is arch-specific (like st_mode; see isDir) and was wrong on arm64
+    // Linux. lseek is arch/libc-independent. -1 if the file can't be opened.
     var negOne: i64 = 0
     negOne = negOne - 1
-    if !info.exists {
-        return negOne
+    match File.openRead(path) {
+        Result.Ok(f) => {
+            return f.size()
+        }
+        Result.Err(_e) => {
+            return negOne
+        }
     }
-    return info.size
 }
 
 // Directory entry from readDir().
