@@ -213,6 +213,63 @@ Buffer.prototype.writeInt16LE = function (v, o) { return _wrU(this.bytes, v < 0 
 Buffer.prototype.writeInt32BE = function (v, o) { return _wrU(this.bytes, v < 0 ? v + 0x100000000 : v, o || 0, 4, true); };
 Buffer.prototype.writeInt32LE = function (v, o) { return _wrU(this.bytes, v < 0 ? v + 0x100000000 : v, o || 0, 4, false); };
 
+// IEEE-754 pack/unpack (the canonical ieee754-package algorithm) — milojs typed
+// arrays don't expose a shared .buffer to borrow the native conversion from, so
+// Float/Double read+write are done by hand over the byte array.
+function ieeeRead(bytes, offset, isLE, mLen, nBytes) {
+  var e, m;
+  var eLen = nBytes * 8 - mLen - 1;
+  var eMax = (1 << eLen) - 1;
+  var eBias = eMax >> 1;
+  var nBits = -7;
+  var i = isLE ? nBytes - 1 : 0;
+  var d = isLE ? -1 : 1;
+  var s = bytes[offset + i]; i += d;
+  e = s & ((1 << (-nBits)) - 1); s >>= (-nBits); nBits += eLen;
+  for (; nBits > 0; e = e * 256 + bytes[offset + i], i += d, nBits -= 8) {}
+  m = e & ((1 << (-nBits)) - 1); e >>= (-nBits); nBits += mLen;
+  for (; nBits > 0; m = m * 256 + bytes[offset + i], i += d, nBits -= 8) {}
+  if (e === 0) { e = 1 - eBias; }
+  else if (e === eMax) { return m ? NaN : ((s ? -1 : 1) * Infinity); }
+  else { m = m + Math.pow(2, mLen); e = e - eBias; }
+  return (s ? -1 : 1) * m * Math.pow(2, e - mLen);
+}
+function ieeeWrite(bytes, value, offset, isLE, mLen, nBytes) {
+  var e, m, c;
+  var eLen = nBytes * 8 - mLen - 1;
+  var eMax = (1 << eLen) - 1;
+  var eBias = eMax >> 1;
+  var rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0);
+  var i = isLE ? 0 : nBytes - 1;
+  var d = isLE ? 1 : -1;
+  var s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0;
+  value = Math.abs(value);
+  if (isNaN(value) || value === Infinity) {
+    m = isNaN(value) ? 1 : 0; e = eMax;
+  } else {
+    e = Math.floor(Math.log(value) / Math.LN2);
+    if (value * (c = Math.pow(2, -e)) < 1) { e--; c *= 2; }
+    if (e + eBias >= 1) { value += rt / c; } else { value += rt * Math.pow(2, 1 - eBias); }
+    if (value * c >= 2) { e++; c /= 2; }
+    if (e + eBias >= eMax) { m = 0; e = eMax; }
+    else if (e + eBias >= 1) { m = (value * c - 1) * Math.pow(2, mLen); e = e + eBias; }
+    else { m = value * Math.pow(2, eBias - 1) * Math.pow(2, mLen); e = 0; }
+  }
+  for (; mLen >= 8; bytes[offset + i] = m & 0xff, i += d, m /= 256, mLen -= 8) {}
+  e = (e << mLen) | m;
+  eLen += mLen;
+  for (; eLen > 0; bytes[offset + i] = e & 0xff, i += d, e /= 256, eLen -= 8) {}
+  bytes[offset + i - d] |= s * 128;
+}
+Buffer.prototype.readFloatLE = function (o) { return ieeeRead(this.bytes, o || 0, true, 23, 4); };
+Buffer.prototype.readFloatBE = function (o) { return ieeeRead(this.bytes, o || 0, false, 23, 4); };
+Buffer.prototype.readDoubleLE = function (o) { return ieeeRead(this.bytes, o || 0, true, 52, 8); };
+Buffer.prototype.readDoubleBE = function (o) { return ieeeRead(this.bytes, o || 0, false, 52, 8); };
+Buffer.prototype.writeFloatLE = function (v, o) { o = o || 0; ieeeWrite(this.bytes, v, o, true, 23, 4); return o + 4; };
+Buffer.prototype.writeFloatBE = function (v, o) { o = o || 0; ieeeWrite(this.bytes, v, o, false, 23, 4); return o + 4; };
+Buffer.prototype.writeDoubleLE = function (v, o) { o = o || 0; ieeeWrite(this.bytes, v, o, true, 52, 8); return o + 8; };
+Buffer.prototype.writeDoubleBE = function (v, o) { o = o || 0; ieeeWrite(this.bytes, v, o, false, 52, 8); return o + 8; };
+
 Buffer.prototype.fill = function (val, start, end) {
   var s = start || 0, e = end === undefined ? this.bytes.length : end;
   var b = typeof val === 'number' ? (val & 0xff) : (utf8Encode(String(val))[0] || 0);
