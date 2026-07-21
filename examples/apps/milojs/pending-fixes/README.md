@@ -14,14 +14,7 @@ ALREADY LANDED (`bb7628c`, `37e7e67`) — apply only the hunks for the three bel
 - Apply, then build BOTH binaries, run `tests/run.sh` (76+ fixtures incl. the
   tahoeroads self-fetch guard) AND the app smoke, per fix.
 
-## The three pending fixes
-
-### #3 Map/Set forEach skips entries when the callback deletes
-`m.forEach((v,k)=>m.delete(k))` leaves size 2 (node: 0). eval.milo iterates
-`mapKeys` by index; delete compacts the vecs so `i++` steps over the shifted
-entry. Fix re-syncs the cursor after each callback. Localized to the Map.forEach
-region; uses existing `mapFind`/`sameValue`. **Lowest risk of the three.**
-Fixture: fixtures/mapForEachMutate.
+## Remaining pending fixes (#3 Map.forEach LANDED)
 
 ### #5 Array holes (`delete a[i]` leaves `i in a` true)
 Adds a `holes: Vec<i64>` field to `JSObj` (empty for dense arrays), maintained by

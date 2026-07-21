@@ -6355,22 +6355,56 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
         }
         let cb = cloneValue(args[0])
         pushTemp(st, cloneValue(cb))
+        // The callback may delete entries (including the current one) or add
+        // new ones; the backing vecs compact on delete, so a plain i++ would
+        // skip the entry that shifted into slot i. Re-sync the cursor against
+        // the just-visited key after every call; if that key is gone, resume at
+        // the first entry not yet visited (keys are unique, so this is sound).
+        var visited: Vec<JSValue> = Vec.new()
         var i: i64 = 0
-        while i < st.objects[o].mapKeys.len() {
+        while i < st.objects[o].mapKeys.len() && !st.throwing {
             let k = cloneValue(st.objects[o].mapKeys[i])
             var v = cloneValue(st.objects[o].mapVals[i])
             if isSet {
                 v = cloneValue(st.objects[o].mapKeys[i])
             }
+            visited.push(cloneValue(k))
             var cbArgs: Vec<JSValue> = Vec.new()
             cbArgs.push(v)
-            cbArgs.push(k)
+            cbArgs.push(cloneValue(k))
             cbArgs.push(JSValue.Obj(o))
             let _ = callValue(prog, cb, cbArgs, JSValue.Undefined, st)
             if st.throwing {
-                i = st.objects[o].mapKeys.len()
+                break
             }
-            i = i + 1
+            if i < st.objects[o].mapKeys.len() && sameValue(st.objects[o].mapKeys[i], k) {
+                i = i + 1
+            } else {
+                let j = mapFind(st, o, k)
+                if j >= 0 {
+                    i = j + 1
+                } else {
+                    var p: i64 = 0
+                    var next = st.objects[o].mapKeys.len()
+                    while p < st.objects[o].mapKeys.len() {
+                        var seen = false
+                        var q: i64 = 0
+                        while q < visited.len() {
+                            if sameValue(st.objects[o].mapKeys[p], visited[q]) {
+                                seen = true
+                                q = visited.len()
+                            }
+                            q = q + 1
+                        }
+                        if !seen {
+                            next = p
+                            p = st.objects[o].mapKeys.len()
+                        }
+                        p = p + 1
+                    }
+                    i = next
+                }
+            }
         }
         popTemp(st)
         return JSValue.Undefined
