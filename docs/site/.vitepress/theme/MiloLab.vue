@@ -27,7 +27,7 @@
         :aria-selected="i === cur && !sandbox"
         :title="(i + 1) + '. ' + c.title"
         @click="go(i)">
-        <span v-if="ran[i]" class="tick">✓</span><span v-else>{{ i + 1 }}</span>
+        <span class="tick">{{ ran[i] ? '✓' : (i + 1) }}</span>{{ c.short }}
       </button>
     </div>
 
@@ -65,10 +65,6 @@
               <span class="tri">{{ running ? '▶' : (!sandbox && ran[cur] ? '↻' : '▶') }}</span>
               {{ running ? 'Running' : (!sandbox && ran[cur] ? 'Run again' : 'Run') }}
             </button>
-            <transition name="pop">
-              <button v-if="!sandbox && ran[cur] && cur < concepts.length - 1" class="btn next-cta" @click="next">Next →</button>
-              <button v-else-if="!sandbox && ran[cur]" class="btn next-cta" @click="openSandbox">Sandbox</button>
-            </transition>
           </div>
           <div class="editor"><div ref="cmEl" class="cm-host"></div></div>
         </div>
@@ -97,11 +93,15 @@
         <span v-html="concepts[cur].take"></span>
       </div>
 
-      <div class="foot">
-        <button v-if="!sandbox" class="nav" :disabled="cur === 0" @click="go(cur - 1)">← Back</button>
-        <span v-if="!sandbox" class="prog"><b>{{ ranCount }}</b> / {{ concepts.length }} run</span>
-        <span v-if="!sandbox && !ran[cur]" class="foot-hint">Run the program to unlock the next lesson</span>
-        <span v-if="sandbox" class="foot-hint sb-hint">Back to <a @click.prevent="go(0)" href="#">the lessons</a></span>
+      <div v-if="!sandbox" class="foot">
+        <button class="nav" :disabled="cur === 0" @click="go(cur - 1)">← Back</button>
+        <span class="prog"><b>{{ ranCount }}</b> / {{ concepts.length }} run</span>
+        <span v-if="!ran[cur]" class="foot-hint">Run the program to unlock the next lesson</span>
+        <button v-if="cur < concepts.length - 1" class="nav next" :class="{ ready: ran[cur] }" :disabled="!ran[cur]" @click="next">Next →</button>
+        <button v-else class="nav next" :class="{ ready: ran[cur] }" :disabled="!ran[cur]" @click="openSandbox">Sandbox →</button>
+      </div>
+      <div v-else class="foot">
+        <span class="foot-hint sb-hint">Back to <a @click.prevent="go(0)" href="#">the lessons</a></span>
       </div>
     </div>
 
@@ -129,7 +129,7 @@ const base = import.meta.env.BASE_URL
 
 // ---- lessons: verified programs + captured native output (fallback) ----
 const concepts = [
-  { title: 'Immutable by default (let vs var)', file: 'values.milo',
+  { title: 'Immutable by default (let vs var)', short: 'Immutability', file: 'values.milo',
     desc: 'A <code>let</code> binding is immutable; a <code>var</code> is mutable. You opt <em>in</em> to change.',
     take: 'Immutable by default — you always know what can change out from under you.',
     out: ['hello from Milo, count = 3'],
@@ -140,7 +140,7 @@ const concepts = [
     print($"hello from {name}, count = {count}")
     return 0
 }` },
-  { title: 'Structs and borrows', file: 'geometry.milo',
+  { title: 'Structs and borrows', short: 'Structs', file: 'geometry.milo',
     desc: 'Group data in a <code>struct</code>; functions borrow it with <code>&</code> — read access without taking ownership.',
     take: 'A <code>&Point</code> is a second-class reference: usable as an argument, never stored or returned.',
     out: ['distance = 5'],
@@ -160,7 +160,7 @@ fn main(): i32 {
     print($"distance = {dist(origin, p)}")
     return 0
 }` },
-  { title: 'Enums and exhaustive match', file: 'shapes.milo',
+  { title: 'Enums and exhaustive match', short: 'Enums', file: 'shapes.milo',
     desc: 'Enums are sum types that carry data. <code>match</code> must handle every variant — miss one and it won’t compile.',
     take: 'Forget a case and the checker stops you, so new variants surface everywhere they matter.',
     out: ['circle: 12.5664', 'rect:   12'],
@@ -181,7 +181,23 @@ fn main(): i32 {
     print($"rect:   {area(Shape.Rect(3.0, 4.0))}")
     return 0
 }` },
-  { title: 'Contracts — checked or proven', file: 'clamp.milo', err: true,
+  { title: 'Collections', short: 'Collections', file: 'scores.milo',
+    desc: 'A growable <code>Vec</code> and a <code>HashMap</code> come built in. Lookups return an <code>Option</code>.',
+    take: 'A missing key is <code>Option.None</code>, not a crash — you handle it at the <code>match</code>.',
+    out: ['alice scored 92', 'players: 2'],
+    code: `fn main(): i32 {
+    var scores: HashMap<string, i32> = HashMap.new()
+    scores.insert("alice", 92)
+    scores.insert("bob", 87)
+
+    match scores.get("alice") {
+        Option.Some(s) => { print($"alice scored {s}") }
+        Option.None    => { print("no score") }
+    }
+    print($"players: {scores.len}")
+    return 0
+}` },
+  { title: 'Contracts — checked or proven', short: 'Contracts', file: 'clamp.milo', err: true,
     desc: 'Annotate a function with <code>requires</code> (what the caller must guarantee) and <code>ensures</code> (what it promises back), written in ordinary Milo. This <code>clamp</code> has a bug you could easily type: the low branch returns <code>value</code> instead of <code>lo</code>. Run it — the first call is fine, but <code>clamp(-5, 0, 10)</code> returns <code>-5</code>, which breaks <code>ensures</code>, and the contract stops it. Fix line 5 to <code>return lo</code> and it passes.',
     take: 'Here that check runs at runtime (the browser has no solver). With <code>z3</code>, <code>milo prove</code> discharges the same conditions at compile time and deletes the check — gradual verification, no hand-written proofs. Contracts prove the properties <em>you state</em>, not that the whole program is bug-free; memory safety (no use-after-free, no data races) is separate and always on.',
     out: ['10', 'runtime error: ensures clause violated'],
@@ -199,7 +215,7 @@ fn main(): i32 {
     print(clamp(-5, 0, 10))   // returns -5 → violates ensures
     return 0
 }` },
-  { title: 'Errors are values, not exceptions', file: 'errors.milo',
+  { title: 'Errors are values, not exceptions', short: 'Errors', file: 'errors.milo',
     desc: 'Fallible functions return <code>Result</code>. The <code>?</code> operator unwraps success and returns the error early.',
     take: 'Every failure is in the type signature; <code>?</code> keeps the happy path readable.',
     out: ['next year: 43', 'error: empty input'],
@@ -224,7 +240,7 @@ fn main(): i32 {
     }
     return 0
 }` },
-  { title: 'Parse JSON into typed values', file: 'json.milo',
+  { title: 'Parse JSON into typed values', short: 'JSON', file: 'json.milo',
     desc: '<code>jsonParse</code> returns a <code>Result</code>; <code>!</code> unwraps it or aborts. <code>.get()</code> returns an <code>Option</code> per key, and typed accessors like <code>asStr</code> / <code>asI64</code> pull each value out — an <code>Option</code> you must handle.',
     take: 'JSON lives in the standard library, written in Milo. Values come out <em>typed</em> — <code>asI64</code>, <code>asStr</code>, <code>asBool</code> — no stringly-typed blobs, no unchecked casts.',
     out: ['name: milo', 'stars: 42'],
@@ -243,7 +259,7 @@ fn main(): i32 {
     }
     return 0
 }` },
-  { title: 'Closures and iterators', file: 'closures.milo',
+  { title: 'Closures and iterators', short: 'Closures', file: 'closures.milo',
     desc: 'Pass a lambda to <code>.map</code>. Closures capture their environment and compose over collections.',
     take: 'Functions are values — closures, <code>.map</code>, <code>.filter</code>, <code>for..in</code> all work as you’d hope.',
     out: ['2', '4', '6'],
@@ -258,7 +274,7 @@ fn main(): i32 {
     }
     return 0
 }` },
-  { title: 'Generics, monomorphized', file: 'generics.milo',
+  { title: 'Generics, monomorphized', short: 'Generics', file: 'generics.milo',
     desc: 'Write once over a type parameter; the compiler stamps out a specialized copy per concrete type — no boxing.',
     take: 'Inference fills in the type params; monomorphization keeps it as fast as hand-written code.',
     out: ['milo 42'],
@@ -273,7 +289,7 @@ fn main(): i32 {
     print($"{p.first} {p.second}")
     return 0
 }` },
-  { title: 'Interfaces and dynamic dispatch', file: 'traits.milo',
+  { title: 'Interfaces and dynamic dispatch', short: 'Interfaces', file: 'traits.milo',
     desc: 'An <code>interface</code> defines behavior; any struct can <code>impl</code> it. A <code>&Greeter</code> is a trait object.',
     take: 'One call site, many concrete types — dispatched through a fat pointer of data plus a method table.',
     out: ['Woof', 'Meow'],
@@ -296,23 +312,7 @@ fn main(): i32 {
     announce(Cat {})
     return 0
 }` },
-  { title: 'Collections', file: 'scores.milo',
-    desc: 'A growable <code>Vec</code> and a <code>HashMap</code> come built in. Lookups return an <code>Option</code>.',
-    take: 'A missing key is <code>Option.None</code>, not a crash — you handle it at the <code>match</code>.',
-    out: ['alice scored 92', 'players: 2'],
-    code: `fn main(): i32 {
-    var scores: HashMap<string, i32> = HashMap.new()
-    scores.insert("alice", 92)
-    scores.insert("bob", 87)
-
-    match scores.get("alice") {
-        Option.Some(s) => { print($"alice scored {s}") }
-        Option.None    => { print("no score") }
-    }
-    print($"players: {scores.len}")
-    return 0
-}` },
-  { title: 'Ownership and moves', file: 'ownership.milo', err: true,
+  { title: 'Ownership and moves', short: 'Ownership', file: 'ownership.milo', err: true,
     desc: 'A heap value like <code>string</code> has one owner. <code>let b = a</code> <em>moves</em> it, so using <code>a</code> after is a compile error. Run it as-is — then change line 3 to <code>a.clone()</code> and run again.',
     take: 'Small types (<code>i32</code>, <code>f64</code>) copy automatically. For heap values you pick: <code>.clone()</code> for a real copy, or <code>&a</code> to borrow and just read it. Copies are never silent, and there’s no GC cleaning up behind you.',
     out: ['error: use of moved variable \'a\'', '  ──> ownership.milo:4:11', '  │', '4 │     print(a)             // error: a was moved away', '  │           ^', '  hint: ownership of \'a\' was transferred earlier and it can no longer be used here. To keep it alive, clone it at the point of transfer: \'a.clone()\'.'],
@@ -323,7 +323,7 @@ fn main(): i32 {
     print(b)
     return 0
 }` },
-  { title: 'Putting it together', file: 'sales.milo',
+  { title: 'Putting it together', short: 'Capstone', file: 'sales.milo',
     desc: 'A small program using the pieces from earlier lessons at once: <code>struct</code>s in a <code>Vec</code>, a computed field, an <code>if</code> used as an expression, and <code>.filter</code> with a closure.',
     take: 'Nothing new here — structs, a Vec, an if-expression, and a closure compose into a real program. That’s the whole surface for everyday code.',
     out: ['widget: 3 x 250 = 750  <- big', 'gadget: 1 x 999 = 999  <- big', 'gizmo: 5 x 120 = 600', 'total = 2349 cents across 3 sales, 2 in bulk'],
@@ -667,19 +667,26 @@ onMounted(() => {
 .rail { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin: 0 0 20px; }
 .rail-label { font-family: var(--vp-font-family-mono); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--vp-c-text-3); margin: 0 2px 0 6px; }
 .pip {
-  width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--edge);
+  height: 32px; padding: 0 11px; border-radius: 8px; border: 1px solid var(--edge);
   background: var(--vp-c-bg-soft); color: var(--vp-c-text-2);
-  font-family: var(--vp-font-family-mono); font-size: 13px; font-weight: 600; cursor: pointer;
-  display: grid; place-items: center; transition: all .15s;
+  font-family: var(--vp-font-family-mono); font-size: 12.5px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; transition: all .15s;
 }
 .pip:hover { border-color: var(--brand); color: var(--vp-c-text-1); }
 .pip.cur { border-color: var(--brand); color: var(--brand); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 22%, transparent); }
 .pip.ok { color: #fff; background: var(--brand); border-color: var(--brand); }
 .pip.ok.cur { box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 30%, transparent); }
-.pip .tick { font-size: 15px; }
-/* Sandbox is a text pill, not a number pip: auto width, sits first with a small
-   gap before the numbered lessons. */
-.pip.sb { width: auto; padding: 0 13px; margin-right: 6px; border-style: dashed; font-size: 12.5px; letter-spacing: .01em; }
+/* Leading index badge; flips to a ✓ once the lesson is run. Muted vs the title so
+   the word reads first. */
+.pip .tick {
+  font-size: 11px; min-width: 15px; height: 15px; border-radius: 4px;
+  display: inline-grid; place-items: center; color: var(--vp-c-text-3);
+  background: color-mix(in srgb, var(--vp-c-text-3) 12%, transparent);
+}
+.pip.cur .tick { color: var(--brand); background: color-mix(in srgb, var(--brand) 15%, transparent); }
+.pip.ok .tick { color: #fff; background: rgba(255,255,255,.22); }
+/* Sandbox is a dashed text pill, sits first with a small gap before the lessons. */
+.pip.sb { margin-right: 6px; border-style: dashed; letter-spacing: .01em; }
 
 .card { border: 1px solid var(--edge); border-radius: 16px; overflow: hidden; background: var(--vp-c-bg); }
 .chead { padding: 22px 22px 4px; }
@@ -722,22 +729,10 @@ onMounted(() => {
 .btn.ghost:hover { color: var(--con-text); }
 .tri { font-size: 10px; }
 
-.btn.next-cta {
-  background: color-mix(in srgb, var(--brand) 16%, transparent);
-  color: var(--brand); border: 1px solid var(--brand); font-weight: 700;
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 45%, transparent);
-  animation: cta 1.8s ease-in-out infinite;
-}
-.btn.next-cta:hover { background: var(--brand); color: #fff; }
-@media (prefers-reduced-motion: reduce) { .btn.next-cta { animation: none; } }
 @keyframes cta {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 45%, transparent); }
   50% { box-shadow: 0 0 0 6px transparent; }
 }
-.pop-enter-active { transition: transform .28s cubic-bezier(.2,1.3,.5,1), opacity .28s ease; }
-.pop-leave-active { transition: opacity .12s ease; }
-.pop-enter-from { transform: scale(.6) translateX(-6px); opacity: 0; }
-.pop-leave-to { opacity: 0; }
 
 .editor { min-height: 240px; max-height: 460px; overflow: hidden; }
 /* oneDark re-applies its cool #282c34 to .cm-editor; scoped :deep wins on
@@ -759,6 +754,12 @@ onMounted(() => {
 .nav { font-family: var(--vp-font-family-base); font-size: 13.5px; font-weight: 600; border: 1px solid var(--edge); background: var(--vp-c-bg-soft); color: var(--vp-c-text-1); border-radius: 8px; padding: 8px 16px; cursor: pointer; }
 .nav:disabled { opacity: .45; cursor: default; }
 .nav:not(:disabled):hover { border-color: var(--brand); }
+/* Next pins right and stays present always (disabled until the lesson runs), so the
+   Run button never shifts. Once unlocked it pulses to point forward. */
+.nav.next { margin-left: auto; }
+.nav.next.ready { border-color: var(--brand); color: var(--brand); font-weight: 700; animation: cta 1.8s ease-in-out infinite; }
+.nav.next.ready:hover { background: var(--brand); color: #fff; }
+@media (prefers-reduced-motion: reduce) { .nav.next.ready { animation: none; } }
 .prog { color: var(--vp-c-text-2); font-size: 13px; }
 .prog b { color: var(--vp-c-text-1); }
 .foot-hint { margin-left: auto; color: var(--vp-c-text-3); font-size: 13px; }
