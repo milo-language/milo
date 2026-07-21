@@ -1,0 +1,126 @@
+// std/httpmw — optional HTTP middleware: JWT bearer auth + gzip response compression.
+//
+// Split out of std/http so a plain server never drags in the crypto/compression
+// stdlib. These are free functions over &Context (not impl methods on Context, which
+// would have to live in http.milo) precisely so this file stays a pure add-on: import
+// it only when you want auth or compression.
+
+from "std/http" import {
+    Context, Response, eqIgnoreCase
+}
+from "std/jwt" import {
+    jwtVerifyHS256
+}
+from "std/deflate" import {
+    gzipCompress
+}
+
+// ── JWT bearer auth ──
+
+// Token from an `Authorization: Bearer <token>` header; "" if absent or wrong
+// scheme. Scheme match is case-insensitive (RFC 7235 §2.1), the token is not.
+fn bearerToken(ctx: &Context): string {
+    let auth = ctx.header("Authorization")
+    let prefixLen: i64 = 7 // "Bearer "
+    if auth.len <= prefixLen {
+        return ""
+    }
+    var scheme = ""
+    for i in 0..prefixLen {
+        scheme.push(auth[i])
+    }
+    if !eqIgnoreCase(scheme, "Bearer ") {
+        return ""
+    }
+    var token = ""
+    for i in prefixLen..auth.len {
+        token.push(auth[i])
+    }
+    return token
+}
+
+// True iff the request carries a bearer token with a valid HS256 signature for
+// `secret`. Signature check is constant-time (see std/jwt); does not decode claims.
+fn verifyBearer(ctx: &Context, secret: &string): bool {
+    let token = bearerToken(ctx)
+    if token.len == 0 {
+        return false
+    }
+    return jwtVerifyHS256(token, secret)
+}
+
+// No `jwtGuard(secret)` factory: a middleware that captures `secret` would have to
+// outlive the factory's frame, and Milo closures capture the enclosing frame by
+// reference (they are not heap-promoted), so an escaping closure reads freed stack.
+// Write the guard inline where `secret` is a live local in the serving scope instead:
+//
+//   let secret = loadSecret()
+//   router.use((ctx: &mut Context, next: (&mut Context) => Response) => {
+//       if verifyBearer(ctx, secret) { return next(ctx) }
+//       ctx.setStatus(401)
+//       return ctx.text("unauthorized")
+//   })
+
+// ── gzip response compression ──
+
+// Below this, gzip framing (18 bytes of gzip header+trailer) outweighs any saving,
+// so small bodies are sent as-is.
+let GZIP_MIN: i64 = 256
+
+// Substring test for "gzip" in an Accept-Encoding value. Deliberately loose: it does
+// not parse q-values, so `gzip;q=0` would still match — acceptable, since a client
+// that lists gzip at all can decode it.
+fn acceptsGzip(headerVal: &string): bool {
+    if headerVal.len < 4 {
+        return false
+    }
+    for i in 0..(headerVal.len - 3) {
+        if headerVal[i] == 'g' && headerVal[i + 1] == 'z' && headerVal[i + 2] == 'i' && headerVal[i + 3] == 'p' {
+            return true
+        }
+    }
+    return false
+}
+
+// Middleware: gzip the response body when the client sent `Accept-Encoding: gzip`
+// and the body clears GZIP_MIN. Sets `Content-Encoding: gzip`; Content-Length is
+// recomputed from the (compressed) body downstream, so no manual length bookkeeping.
+fn gzip(ctx: &mut Context, next: (&mut Context) => Response): Response {
+    let resp = next(ctx)
+    if !acceptsGzip(ctx.header("Accept-Encoding")) {
+        return resp
+    }
+    // Flatten the response to (status, contentType, body); NotFound is too small to
+    // bother compressing and is returned untouched.
+    var code: i32 = 200
+    var ct = ""
+    var body = ""
+    match resp {
+        Response.Text(b) => {
+            ct = "text/plain; charset=utf-8"
+            body = b
+        }
+        Response.Html(b) => {
+            ct = "text/html; charset=utf-8"
+            body = b
+        }
+        Response.Json(b) => {
+            ct = "application/json"
+            body = b
+        }
+        Response.Status(c, t, b) => {
+            code = c
+            ct = t
+            body = b
+        }
+        Response.NotFound => {
+            return Response.NotFound
+        }
+    }
+    if body.len < GZIP_MIN {
+        return Response.Status(code, ct, body)
+    }
+    let compressed = gzipCompress(body)
+    ctx.setHeader("Content-Encoding", "gzip")
+    return Response.Status(code, ct, compressed)
+}

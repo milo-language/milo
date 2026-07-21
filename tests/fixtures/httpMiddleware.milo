@@ -1,0 +1,133 @@
+// std/httpmw: JWT bearer auth + gzip response compression, exercised without a socket
+// by building a Context directly, running the middleware, and round-tripping the body.
+
+from "std/http" import {
+    Context, Request, Param, Response
+}
+from "std/httpmw" import {
+    verifyBearer, gzip
+}
+from "std/jwt" import {
+    jwtSignHS256
+}
+from "std/inflate" import {
+    gzipDecompress
+}
+
+fn mkCtx(headers: Vec<Param>): Context {
+    return Context {
+        req: Request {
+            method: "GET",
+            path: "/",
+            queryParams: [],
+            headers: headers,
+            body: "",
+        }
+        ,
+        params: [],
+        statusCode: 200,
+        respHeaders: [],
+    }
+}
+
+fn authHeader(value: string): Vec<Param> {
+    var h: Vec<Param> = []
+    h.push(Param {
+        name: "Authorization", value: value
+    }
+    )
+    return h
+}
+
+// Inline guard: the pattern the docs recommend in place of an (impossible) escaping
+// `jwtGuard(secret)` factory — `secret` stays a live local, so the closure capture
+// is sound. Returns the eventual status a router would send.
+fn guardStatus(ctx: &mut Context, secret: &string): i32 {
+    if verifyBearer(ctx, secret) {
+        return 200
+    }
+    return 401
+}
+
+fn main() {
+    let secret = "s3cr3t"
+    let token = jwtSignHS256("{\"sub\":\"alice\"}", secret)
+
+    // verifyBearer: valid / tampered / missing
+    let ctxOk = mkCtx(authHeader("Bearer " + token))
+    // @expect: true
+    print(verifyBearer(ctxOk, secret))
+    let ctxBad = mkCtx(authHeader("Bearer " + token + "x"))
+    // @expect: false
+    print(verifyBearer(ctxBad, secret))
+    let ctxNone = mkCtx([])
+    // @expect: false
+    print(verifyBearer(ctxNone, secret))
+
+    // inline guard: passes a valid request, 401s an invalid one
+    var g1 = mkCtx(authHeader("Bearer " + token))
+    // @expect: 200
+    print(guardStatus(g1, secret))
+    var g2 = mkCtx(authHeader("Bearer nope"))
+    // @expect: 401
+    print(guardStatus(g2, secret))
+
+    // gzip middleware: compresses a large body, round-trips, sets Content-Encoding
+    var big = ""
+    for _i in 0..40 {
+        big = big + "the quick brown fox jumps over the lazy dog. "
+    }
+    let origLen = big.len
+    var ctxG = mkCtx([])
+    ctxG.req.headers.push(Param {
+        name: "Accept-Encoding", value: "gzip, br"
+    }
+    )
+    let body = big.clone()
+    let resp = gzip(ctxG, (c: &mut Context) => {
+        return Response.Text(body.clone())
+    }
+    )
+    match resp {
+        Response.Status(code, ct, cbody) => {
+            // @expect: true
+            print(cbody.len < origLen)
+            match gzipDecompress(cbody) {
+                Result.Ok(dec) => {
+                    // @expect: true
+                    print(dec.len == origLen)
+                }
+                Result.Err(e) => {
+                    print(e)
+                }
+            }
+        }
+        _ => {
+            print("unexpected")
+        }
+    }
+    var ceSet = false
+    for i in 0..ctxG.respHeaders.len {
+        if ctxG.respHeaders[i].name == "Content-Encoding" {
+            ceSet = true
+        }
+    }
+    // @expect: true
+    print(ceSet)
+
+    // gzip middleware: leaves body untouched when client did not offer gzip
+    var ctxP = mkCtx([])
+    let plain = gzip(ctxP, (c: &mut Context) => {
+        return Response.Text("hello")
+    }
+    )
+    match plain {
+        Response.Text(t) => {
+            // @expect: hello
+            print(t)
+        }
+        _ => {
+            print("unexpected")
+        }
+    }
+}

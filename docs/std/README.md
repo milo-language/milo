@@ -27,6 +27,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/hex](./hex.md)
 - [std/hmac](./hmac.md)
 - [std/http](./http.md)
+- [std/httpmw](./httpmw.md)
 - [std/inflate](./inflate.md)
 - [std/io](./io.md)
 - [std/json](./json.md)
