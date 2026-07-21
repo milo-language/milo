@@ -3139,6 +3139,36 @@ fn regexStrMatch(st: &mut Interp, s: &string, rid: i64): JSValue {
     return JSValue.Obj(arr)
 }
 
+// str.matchAll(re): every match as a full exec-style array (match text, capture
+// groups, .index, .input) — unlike match/g which yields only the match strings.
+// Returned as an array, which is iterable for the usual `[...]` / for-of
+// consumption. Iterates regardless of the /g flag (lenient vs the spec's throw).
+fn regexStrMatchAll(st: &mut Interp, s: &string, rid: i64): JSValue {
+    let arr = newArray(st)
+    pushTemp(st, JSValue.Obj(arr))
+    var pos: i64 = 0
+    var going = true
+    while going {
+        let saves = regexExec(st.regexes[rid], s, pos)
+        if saves.len() == 0 {
+            going = false
+        } else {
+            let m = buildMatchArray(st, s, saves)
+            arrPush(st, arr, m)
+            if saves[1] == saves[0] {
+                pos = saves[1] + 1
+            } else {
+                pos = saves[1]
+            }
+            if pos > s.len() {
+                going = false
+            }
+        }
+    }
+    popTemp(st)
+    return JSValue.Obj(arr)
+}
+
 // Execute a pre-loaded module in a fresh CommonJS scope and cache its exports.
 // A module already loading (a require cycle) returns its partial exports, which
 // is what Node does.
@@ -6358,7 +6388,7 @@ fn isPrimitiveMethodName(n: &string): bool {
 }
 
 fn isStringMethodName(n: &string): bool {
-    return n == "charAt" || n == "charCodeAt" || n == "codePointAt" || n == "at" || n == "indexOf" || n == "lastIndexOf" || n == "includes" || n == "startsWith" || n == "endsWith" || n == "slice" || n == "substring" || n == "substr" || n == "split" || n == "replace" || n == "replaceAll" || n == "toUpperCase" || n == "toLowerCase" || n == "trim" || n == "trimStart" || n == "trimEnd" || n == "trimLeft" || n == "trimRight" || n == "padStart" || n == "padEnd" || n == "repeat" || n == "concat" || n == "localeCompare" || n == "normalize" || n == "match" || n == "toString" || n == "valueOf"
+    return n == "charAt" || n == "charCodeAt" || n == "codePointAt" || n == "at" || n == "indexOf" || n == "lastIndexOf" || n == "includes" || n == "startsWith" || n == "endsWith" || n == "slice" || n == "substring" || n == "substr" || n == "split" || n == "replace" || n == "replaceAll" || n == "toUpperCase" || n == "toLowerCase" || n == "trim" || n == "trimStart" || n == "trimEnd" || n == "trimLeft" || n == "trimRight" || n == "padStart" || n == "padEnd" || n == "repeat" || n == "concat" || n == "localeCompare" || n == "normalize" || n == "match" || n == "matchAll" || n == "toString" || n == "valueOf"
 }
 
 fn isMapSetMethodName(n: &string): bool {
@@ -8225,6 +8255,9 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 }
                 if name == "match" {
                     return regexStrMatch(st, s, rid)
+                }
+                if name == "matchAll" {
+                    return regexStrMatchAll(st, s, rid)
                 }
                 if name == "split" {
                     return regexSplit(st, s, rid)
