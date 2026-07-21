@@ -1,0 +1,111 @@
+// std/zip — read PKZIP archives (APPNOTE.TXT), pure Milo on std/inflate.
+//
+// Reads the central directory, then for each entry seeks its local header and
+// inflates the payload: method 0 (stored) is copied, method 8 (deflate) is fed to
+// std/inflate — which is exactly the raw DEFLATE zip stores, no zlib wrapper. Each
+// entry's CRC-32 is verified against the directory. Read-only and whole-archive
+// (no streaming, no zip64, no encryption) — enough to open .zip/.jar/.epub/.docx.
+
+from "std/inflate" import {
+    inflate
+}
+from "std/checksum" import {
+    crc32
+}
+
+struct ZipEntry {
+    name: string,
+    data: string, // decompressed contents
+}
+
+fn _le16(src: &string, p: i64): i64 {
+    return (src[p] as i64) | ((src[p + 1] as i64) << 8)
+}
+
+fn _le32(src: &string, p: i64): i64 {
+    return (src[p] as i64) | ((src[p + 1] as i64) << 8) | ((src[p + 2] as i64) << 16) | ((src[p + 3] as i64) << 24)
+}
+
+// Locate the End Of Central Directory record by scanning back for its signature
+// (0x06054b50). The trailing comment is variable-length, so we search rather than
+// index from the end.
+fn _findEocd(src: &string): i64 {
+    if src.len < 22 {
+        return -1
+    }
+    var p = src.len - 22
+    while p >= 0 {
+        if _le32(src, p) == 0x06054b50 {
+            return p
+        }
+        p = p - 1
+    }
+    return -1
+}
+
+// Read every entry, decompressing and CRC-checking each.
+fn zipRead(src: &string): Result<Vec<ZipEntry>, string> {
+    let eocd = _findEocd(src)
+    if eocd < 0 {
+        return Result.Err("zip: no end-of-central-directory record")
+    }
+    let count = _le16(src, eocd + 10)
+    var cd = _le32(src, eocd + 16) // central directory offset
+
+    var entries = Vec.new()
+    for _e in 0..count {
+        if _le32(src, cd) != 0x02014b50 {
+            return Result.Err("zip: bad central directory header")
+        }
+        let method = _le16(src, cd + 10)
+        let wantCrc = _le32(src, cd + 16)
+        let compSize = _le32(src, cd + 20)
+        let uncompSize = _le32(src, cd + 24)
+        let nameLen = _le16(src, cd + 28)
+        let extraLen = _le16(src, cd + 30)
+        let commentLen = _le16(src, cd + 32)
+        let localOff = _le32(src, cd + 42)
+
+        var name = ""
+        for i in 0..nameLen {
+            name.push(src[cd + 46 + i])
+        }
+
+        // Local header: 30 fixed bytes + its own name/extra fields (lengths may
+        // differ from the central copy, so read them from the local header).
+        if _le32(src, localOff) != 0x04034b50 {
+            return Result.Err("zip: bad local file header")
+        }
+        let lNameLen = _le16(src, localOff + 26)
+        let lExtraLen = _le16(src, localOff + 28)
+        let dataOff = localOff + 30 + lNameLen + lExtraLen
+
+        var comp = ""
+        for i in 0..compSize {
+            comp.push(src[dataOff + i])
+        }
+
+        var data = ""
+        if method == 0 {
+            data = comp
+        } else if method == 8 {
+            data = inflate(comp)?
+        } else {
+            return Result.Err($"zip: unsupported compression method {method}")
+        }
+
+        if data.len != uncompSize {
+            return Result.Err($"zip: size mismatch for {name}")
+        }
+        if crc32(data) != wantCrc {
+            return Result.Err($"zip: CRC-32 mismatch for {name}")
+        }
+
+        entries.push(ZipEntry {
+            name: name, data: data
+        }
+        )
+        cd = cd + 46 + nameLen + extraLen + commentLen
+    }
+    return Result.Ok(entries)
+}
