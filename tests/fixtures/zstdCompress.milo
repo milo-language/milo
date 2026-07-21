@@ -1,0 +1,88 @@
+// std/zstd compressing encoder ↔ decoder round-trip. zstdCompress does real compression
+// (greedy LZ77 + FSE-coded sequences, Predefined and custom mode-2 tables) into frames the
+// reference `zstd -d` also accepts; here they are closed against the in-language decoder and
+// checked to actually shrink compressible input while never expanding.
+
+from "std/zstd" import {
+    zstdCompress, zstdDecompress
+}
+
+fn roundtrips(src: &string): bool {
+    let framed = zstdCompress(src)
+    match zstdDecompress(framed) {
+        Result.Ok(s) => {
+            return s == src
+        }
+        Result.Err(e) => {
+            return false
+        }
+    }
+}
+
+fn compressedLen(src: &string): i64 {
+    return zstdCompress(src).len
+}
+
+fn main() {
+    // empty
+    // @expect: true
+    print(roundtrips(""))
+
+    // short text
+    // @expect: true
+    print(roundtrips("the quick brown fox"))
+
+    // all byte values 0..255 (binary, includes NUL)
+    var bin = ""
+    for i in 0..256 {
+        bin.push(i as u8)
+    }
+    // @expect: true
+    print(roundtrips(bin))
+
+    // repetitive text — must round-trip and compress well below the original
+    var text = ""
+    for _i in 0..400 {
+        text = text + "the quick brown fox jumps over the lazy dog. "
+    }
+    // @expect: true
+    print(roundtrips(text))
+    // @expect: true
+    print(compressedLen(text) < text.len / 10)
+
+    // long run of one byte collapses to a tiny frame (overlapping LZ77 match)
+    var run = ""
+    for _i in 0..20000 {
+        run.push(65 as u8)
+    }
+    // @expect: true
+    print(roundtrips(run))
+    // @expect: true
+    print(compressedLen(run) < 64)
+
+    // multi-block (> 128 KiB) with a custom-FSE-table-worthy sequence count
+    var big = ""
+    var k: i64 = 0
+    while big.len < 300000 {
+        big = big + "line " + k.toString() + ": pack my box with five dozen liquor jugs\n"
+        k = k + 1
+    }
+    // @expect: true
+    print(big.len > 131072)
+    // @expect: true
+    print(roundtrips(big))
+    // @expect: true
+    print(compressedLen(big) < big.len / 2)
+
+    // incompressible pseudo-random data still round-trips and never expands past framing
+    var rnd = ""
+    var seed: i64 = 123456789
+    for _i in 0..8000 {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff
+        rnd.push(((seed >> 16) & 0xff) as u8)
+    }
+    // @expect: true
+    print(roundtrips(rnd))
+    // @expect: true
+    print(compressedLen(rnd) < rnd.len + 32)
+}

@@ -2,6 +2,17 @@
 
 ## std/zstd
 
+### `zstdCompress`
+
+```milo
+fn zstdCompress(src: &string): string
+```
+
+Compress `src` to a real zstd frame: greedy LZ77 + FSE-coded sequences (Predefined or
+custom per-block tables), Raw literals, per-block Raw fallback so output never expands.
+Single-segment header with a 4-byte content size and an appended XXH64 content checksum
+— decodable by `zstdDecompress` above and the reference `zstd -d`.
+
 ### `zstdCompressRaw`
 
 ```milo
