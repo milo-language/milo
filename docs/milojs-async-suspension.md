@@ -18,14 +18,14 @@ document, and the document changes first if the plan changes.
 | Interpreter runs on a green task | done (`530dfe8`) |
 | `Task.spawnWithStack` for interpreter-sized stacks | done (`5613f78`) |
 | Ordering mechanism (caller parks, body unparks it) | proven, `tests/fixtures/asyncCallOrdering.milo` |
-| R1 async call returns at first await | done in the **runtime** for a pending awaited promise — matches node; 71/71 fixtures, tahoeroads green (0 errors, ~34ms) |
-| R1b same in the engine binary | attempted, **not landed** — ordering becomes correct but one fixture hangs unkillably; see below |
+| R1 async call returns at first await | done in the **runtime** for a pending awaited promise — matches node; 71/71 fixtures, integration app green (0 errors, ~34ms) |
+| R1b same in the engine binary | **still not landed**, but the cause is now narrowed: the engine running on `gProg` alone is SAFE (landed independently for proxy traps, `adae042`, CI green). The unkillable hang came from `gProg` **plus** running the whole program on a green task — that combination, not `gProg` itself, is what wedged. So R1b needs the green-task part done differently |
 | R1a `await` of a non-thenable yields | not met — deferred, see below; a bare yield bypasses R6 save/restore |
 | R2 suspension is per-activation | core done (`ceb9aea`) — park/wake on a promise; not yet wired to the `await` path |
 | R3 resume order | done (`ceb9aea`) — waiters woken in registration order |
 | R4 settle/reject semantics | done — already held; locked in by `tests/asyncSettleReject.js`, clean under GC stress |
 | R4a async body returns a pending promise | done (`0391271`) — an activation returning a pending promise adopts it, not reads its state; guarded by `tests/runtime/asyncReturnsPendingPromise.js` (new runtime harness pass) |
-| Per-binary JS recursion limit | done (`2843607`) — `callDepthLimit` field; engine 20 (main-thread Linux stack), runtime 500 (8 MB green task). Fixes a spurious `RangeError` on tahoeroads without regressing the engine's Linux-catchability. Not an async requirement, tracked here because it interacts with activation stacks |
+| Per-binary JS recursion limit | done (`2843607`) — `callDepthLimit` field; engine 20 (main-thread Linux stack), runtime 500 (8 MB green task). Fixes a spurious `RangeError` on the integration app without regressing the engine's Linux-catchability. Not an async requirement, tracked here because it interacts with activation stacks |
 | R5 existing values unchanged | holds (nothing landed yet) |
 | R6 per-activation execution state | done (`3215822`, corrected `c079770`) — 9 fields, contexts reclaimed by task identity |
 | R7 GC over suspended activations | done (`3215822`) — collect walks parked roots, fixture proves it fails without |
@@ -35,7 +35,7 @@ document, and the document changes first if the plan changes.
 
 `await` cannot suspend today. The event loop is drained in place until the
 awaited promise settles, so an async call runs its whole body before returning.
-Two consequences, both hitting the tahoeroads app:
+Two consequences, both hitting the integration app:
 
 - **Deadlock.** Two async calls that must interleave never do. A barrier that
   releases once N participants arrive is the common shape; prisma puts one in
@@ -157,7 +157,7 @@ this is the first thing that should change.
 An implementation was written and reverted (stashed as `wip-r1-async-activations`).
 It worked in isolation — the barrier repro that deadlocks under the old engine
 printed `BOTH: ["done1","done2"]`, matching node, and held up under
-`MILOJS_GC_THRESHOLD=1` — but running the tahoeroads app produced
+`MILOJS_GC_THRESHOLD=1` — but running the integration app produced
 `ReferenceError: value is not defined` and then stalls.
 
 The failure says an activation's execution is not fully isolated from its
@@ -204,7 +204,7 @@ settles a promise and then parks has to leave the reaction visible to the loop.
 
 ## R4a: an async body that returns a pending promise must adopt it
 
-Found while debugging a real tahoeroads route hang. The tahoeroads HTTP cache
+Found while debugging a real the integration app route hang. The the integration app HTTP cache
 does `async get(url) { return fetchData(url).then(...) }` — an async function
 whose return value is a **pending** promise.
 
@@ -267,7 +267,7 @@ fetch worker-thread pool — so a new activation is created but never scheduled.
 An earlier "works" reading was the app serving a **warm cache** (worker jobs
 had pre-populated it), not a successful cold fetch; `Fetching` logs zero times
 in both the warm-serve and the hang, so cache state, not the fetch path, decided
-the outcome. This is the top open tahoeroads item.
+the outcome. This is the top open the integration app item.
 
 ## A pre-existing GC bug found underneath this work
 
@@ -356,7 +356,7 @@ failures were a prelude mismatch and not the change. Measured correctly, the
 fixtures stay **71/71 with the yield in place** — they cannot see this defect at
 all.
 
-The app can. Against tahoeroads: 0 errors and ~34ms per route without the yield,
+The app can. Against the integration app: 0 errors and ~34ms per route without the yield,
 13 errors and 6s per route with it, including
 `ReferenceError: dl is not defined` — the unrooted-scope signature — and prisma
 failing to read `version` and `loadEngine` off a non-object.
@@ -373,7 +373,7 @@ properly means `yieldAtAwait` pushing an `ExecCtx` and reclaiming it by task
 identity exactly as `parkOnPromise` does.
 
 Deferred rather than dropped: it is observable behaviour real code depends on,
-but no tahoeroads route needs it, and it is not worth destabilising a working
+but no the integration app route needs it, and it is not worth destabilising a working
 R1 to land it in the same slice.
 
 ## A pre-existing GC bug found underneath this work — fixed
