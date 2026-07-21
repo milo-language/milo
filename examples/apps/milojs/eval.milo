@@ -277,13 +277,13 @@ fn toPrimitiveDefault(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
 fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
     if st.objects[o].isProxy {
         let trap = proxyTrap(st, o, "get")
-        let target = cloneValue(st.objects[o].proxyTarget)
+        let target = cloneValue(st.objExtras[st.objects[o].extra].proxyTarget)
         if isCallableIn(st, trap) {
             var args: Vec<JSValue> = Vec.new()
             args.push(cloneValue(target))
             args.push(JSValue.Str(key.clone()))
             args.push(JSValue.Obj(o))
-            return callValue(prog, trap, args, cloneValue(st.objects[o].proxyHandler), st)
+            return callValue(prog, trap, args, cloneValue(st.objExtras[st.objects[o].extra].proxyHandler), st)
         }
         // no trap: forward to the target
         let th = objHandle(target)
@@ -957,14 +957,14 @@ fn objectTypeTag(v: &JSValue): string {
 fn setMemberDyn(prog: &Prog, o: i64, key: string, v: JSValue, st: &mut Interp) {
     if st.objects[o].isProxy {
         let trap = proxyTrap(st, o, "set")
-        let target = cloneValue(st.objects[o].proxyTarget)
+        let target = cloneValue(st.objExtras[st.objects[o].extra].proxyTarget)
         if isCallableIn(st, trap) {
             var args: Vec<JSValue> = Vec.new()
             args.push(cloneValue(target))
             args.push(JSValue.Str(key.clone()))
             args.push(cloneValue(v))
             args.push(JSValue.Obj(o))
-            let _r = callValue(prog, trap, args, cloneValue(st.objects[o].proxyHandler), st)
+            let _r = callValue(prog, trap, args, cloneValue(st.objExtras[st.objects[o].extra].proxyHandler), st)
             return
         }
         let th = objHandle(target)
@@ -2714,10 +2714,11 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         let o = newObject(st)
         st.objects[o].isProxy = true
-        st.objects[o].proxyTarget = t
-        st.objects[o].proxyHandler = h
+        let ex = ensureExtra(st, o)
+        st.objExtras[ex].proxyTarget = t
+        st.objExtras[ex].proxyHandler = h
         // a proxy over a callable must itself report as callable
-        if isCallableIn(st, st.objects[o].proxyTarget) {
+        if isCallableIn(st, st.objExtras[ex].proxyTarget) {
             st.objects[o].isFunctionLike = true
         }
         return JSValue.Obj(o)
@@ -4041,11 +4042,11 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             let trap = proxyTrap(st, o, "has")
                             if isCallableIn(st, trap) {
                                 var hargs: Vec<JSValue> = Vec.new()
-                                hargs.push(cloneValue(st.objects[o].proxyTarget))
+                                hargs.push(cloneValue(st.objExtras[st.objects[o].extra].proxyTarget))
                                 hargs.push(JSValue.Str(key.clone()))
-                                return JSValue.Bool(truthy(callValue(prog, trap, hargs, cloneValue(st.objects[o].proxyHandler), st)))
+                                return JSValue.Bool(truthy(callValue(prog, trap, hargs, cloneValue(st.objExtras[st.objects[o].extra].proxyHandler), st)))
                             }
-                            var pcur = objHandle(st.objects[o].proxyTarget)
+                            var pcur = objHandle(st.objExtras[st.objects[o].extra].proxyTarget)
                             while pcur >= 0 {
                                 if objHas(st, pcur, key) {
                                     return JSValue.Bool(true)
@@ -4848,7 +4849,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 JSValue.Obj(co) => {
                     if st.objects[co].isProxy {
                         let trap = proxyTrap(st, co, "construct")
-                        let target = cloneValue(st.objects[co].proxyTarget)
+                        let target = cloneValue(st.objExtras[st.objects[co].extra].proxyTarget)
                         let argVals = evalArgs(prog, argsIdx, st, scope)
                         if isCallableIn(st, trap) {
                             // construct(target, argsArray, newTarget)
@@ -4862,7 +4863,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             targs.push(cloneValue(target))
                             targs.push(JSValue.Obj(arr))
                             targs.push(JSValue.Obj(co))
-                            return callValue(prog, trap, targs, cloneValue(st.objects[co].proxyHandler), st)
+                            return callValue(prog, trap, targs, cloneValue(st.objExtras[st.objects[co].extra].proxyHandler), st)
                         }
                         // no construct trap: build the instance ourselves and run
                         // the target as its constructor, matching `new target()`
@@ -5551,7 +5552,7 @@ fn throwTypeErr(st: &mut Interp, msg: string): JSValue {
 
 // The handler trap `name`, or undefined when the handler does not define it.
 fn proxyTrap(st: &Interp, o: i64, name: &string): JSValue {
-    let h = objHandle(st.objects[o].proxyHandler)
+    let h = objHandle(st.objExtras[st.objects[o].extra].proxyHandler)
     if h < 0 {
         return JSValue.Undefined
     }
@@ -5564,13 +5565,13 @@ fn proxyTrap(st: &Interp, o: i64, name: &string): JSValue {
 // forwards to the target. Feeds for-in and Object.keys.
 fn proxyOwnEnumKeys(prog: &Prog, st: &mut Interp, o: i64): Vec<string> {
     var out: Vec<string> = Vec.new()
-    let target = cloneValue(st.objects[o].proxyTarget)
+    let target = cloneValue(st.objExtras[st.objects[o].extra].proxyTarget)
     let trap = proxyTrap(st, o, "ownKeys")
     var keyList: Vec<string> = Vec.new()
     if isCallableIn(st, trap) {
         var args: Vec<JSValue> = Vec.new()
         args.push(cloneValue(target))
-        let res = callValue(prog, trap, args, cloneValue(st.objects[o].proxyHandler), st)
+        let res = callValue(prog, trap, args, cloneValue(st.objExtras[st.objects[o].extra].proxyHandler), st)
         if st.throwing {
             return out
         }
@@ -5614,7 +5615,7 @@ fn proxyOwnEnumKeys(prog: &Prog, st: &mut Interp, o: i64): Vec<string> {
             var dargs: Vec<JSValue> = Vec.new()
             dargs.push(cloneValue(target))
             dargs.push(JSValue.Str(keyList[i].clone()))
-            let d = callValue(prog, dtrap, dargs, cloneValue(st.objects[o].proxyHandler), st)
+            let d = callValue(prog, dtrap, dargs, cloneValue(st.objExtras[st.objects[o].extra].proxyHandler), st)
             if st.throwing {
                 return out
             }
@@ -6686,11 +6687,11 @@ fn proxyDelete(prog: &Prog, o: i64, key: string, st: &mut Interp): JSValue {
     let trap = proxyTrap(st, o, "deleteProperty")
     if isCallableIn(st, trap) {
         var dargs: Vec<JSValue> = Vec.new()
-        dargs.push(cloneValue(st.objects[o].proxyTarget))
+        dargs.push(cloneValue(st.objExtras[st.objects[o].extra].proxyTarget))
         dargs.push(JSValue.Str(key.clone()))
-        return JSValue.Bool(truthy(callValue(prog, trap, dargs, cloneValue(st.objects[o].proxyHandler), st)))
+        return JSValue.Bool(truthy(callValue(prog, trap, dargs, cloneValue(st.objExtras[st.objects[o].extra].proxyHandler), st)))
     }
-    let th = objHandle(st.objects[o].proxyTarget)
+    let th = objHandle(st.objExtras[st.objects[o].extra].proxyTarget)
     if th >= 0 {
         objDeleteKey(st, th, key)
     }
@@ -7533,7 +7534,7 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
         JSValue.Obj(o) => {
             if st.objects[o].isProxy {
                 let trap = proxyTrap(st, o, "apply")
-                let target = cloneValue(st.objects[o].proxyTarget)
+                let target = cloneValue(st.objExtras[st.objects[o].extra].proxyTarget)
                 if isCallableIn(st, trap) {
                     // apply(target, thisArg, argsArray)
                     let arr = newArray(st)
@@ -7546,7 +7547,7 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
                     targs.push(cloneValue(target))
                     targs.push(cloneValue(thisVal))
                     targs.push(JSValue.Obj(arr))
-                    return callValue(prog, trap, targs, cloneValue(st.objects[o].proxyHandler), st)
+                    return callValue(prog, trap, targs, cloneValue(st.objExtras[st.objects[o].extra].proxyHandler), st)
                 }
                 return callValue(prog, target, args, thisVal, st)
             }
@@ -8227,7 +8228,7 @@ fn isCallableIn(st: &Interp, v: &JSValue): bool {
         // napiFn objects are functions implemented by a loaded addon; a proxy is
         // callable when whatever it wraps is
         if st.objects[h].isProxy {
-            return isCallableIn(st, st.objects[h].proxyTarget)
+            return isCallableIn(st, st.objExtras[st.objects[h].extra].proxyTarget)
         }
         return st.objects[h].isBound || st.objects[h].napiFn >= 0
     }
