@@ -3,7 +3,7 @@ system: milojs-object-footprint
 purpose: measured per-object memory cost in milojs and the plan to shrink JSObj by moving rare capabilities to a side table
 key-files: examples/apps/milojs/runtime.milo
 update-when: JSObj gains or loses fields, or the side-table split lands
-last-verified: 2026-07-20
+last-verified: 2026-07-21
 -->
 
 # milojs: object footprint
@@ -224,3 +224,55 @@ prepared to leave the hot ones inline. The headline "1.3 KB → ~350 B" assumed
 moving all 28 fields; if the hot ones stay, the realistic target is higher but
 the app stays fast. Net: this refactor needs a measure-first spike, not a
 blind move-everything pass.
+
+## Measure-first spike done (2026-07-21) — the strategic call
+
+Re-measured on the engine, `/usr/bin/time -l`, delta over a `console.log(0)`
+base of 3.75 MB:
+
+| program | RSS | per object |
+|---|---|---|
+| 50k numbers | 7.42 MB | 73 B/slot |
+| 50k `{}`    | 69.34 MB | **1311 B** |
+| 50k `{a:1}` | 76.55 MB | +144 B/prop |
+
+Confirms ~1279–1311 B/empty. The number is real and worth attacking.
+
+**The win is in the HOT fields — this is the decision that matters.** Of the
+~465 B struct, ~250 B is the promise/proxy/bound/map payloads (5 JSValues +
+several Vecs); only ~90 B is cold scalars (typed-array view i64s, ArrayBuffer
+`bytes`, regexId, dateMs, napi). So:
+
+- **Cold-only slice** (ta/ab/date/regex/napi): saves ~90 B of struct → after the
+  arena's ~2.75× headroom, roughly 1311 → ~1050 B measured. A real but modest
+  ~20% win, and a wide refactor for it.
+- **Hot-field slice** (proxy/promise/bound/map payloads): where the 3-4× lives.
+
+**The access-frequency objection is defused by the flags-inline refinement
+above, and that reconciles this section with the "proxy first" slice order.**
+Keep the 1-byte flags/sentinels inline (`isProxy`, `isBound`, `promiseState`,
+`isMap`); move only the large *payloads* to side tables. Then the hot GATE checks
+— `isPromise` on every await, `isProxy` on every property read — stay inline
+field reads. A side-table lookup is paid only when the flag is already true, i.e.
+only for a genuine proxy/promise/bound object, on a path (trap dispatch,
+promise settle) whose cost already dwarfs a hashmap probe. Store handles (i64
+object indices), not 32-byte JSValue copies, so the lookup returns 8 bytes.
+
+**Reconciled slice order** (supersedes both the "proxy first" list and the
+"cold first" caveat, which were written at different times):
+1. Prove the pattern on ONE cold group with a real payload — ArrayBuffer `bytes`
+   (a 24 B Vec, genuinely cold: the app touches it only in fetch-body decode).
+   Smallest blast radius, exercises mark + the flags-inline gate end to end.
+2. typed-array view fields + `date` + `regexId` + `napi` — remaining cold.
+3. **bound** payload (`boundTarget/boundThis/boundArgs/boundMethod`) — zod
+   pre-binds; flag `isBound` stays inline.
+4. **proxy** payload (`proxyTarget/proxyHandler`) — app-critical (prisma); flag
+   `isProxy` stays inline; run the FULL app, not just the self-fetch guard.
+5. **map/set** payload (`mapKeys/mapVals`) — the 73-site one.
+6. **promise** payload (`promiseValue/reactions`) LAST — most entangled; sentinel
+   `promiseState` stays inline so `isPromise` stays a field read.
+
+Every slice: change → `tests/run.sh` → `MILOJS_GC_THRESHOLD=1` stress that
+constructs+drops many of that capability → app smoke → re-measure `50k {}` →
+commit. Expect the empty-object number to barely move until the hot payloads
+(steps 3-6) land — that is where the 250 B lives.
