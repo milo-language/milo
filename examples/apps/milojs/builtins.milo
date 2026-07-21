@@ -161,19 +161,42 @@ fn jsEndsWith(s: &string, sub: &string): bool {
     return true
 }
 
+// Case mapping over code points, covering ASCII and the Latin-1 Supplement
+// letters (À-Þ / à-þ, the accented characters French/Spanish/Portuguese/German
+// use), with the ÷/× math-symbol holes skipped and ÿ→Ÿ's irregular target. Wider
+// scripts (Latin Extended, Greek, Cyrillic) are not mapped — a documented limit.
+fn upperCp(cp: i32): i32 {
+    let v = cp as i64
+    if v >= 97 && v <= 122 {
+        return (v - 32) as i32
+    }
+    if (v >= 224 && v <= 246) || (v >= 248 && v <= 254) {
+        return (v - 32) as i32
+    }
+    if v == 255 {
+        return 376 as i32
+    }
+    return cp
+}
+
+fn lowerCp(cp: i32): i32 {
+    let v = cp as i64
+    if v >= 65 && v <= 90 {
+        return (v + 32) as i32
+    }
+    if (v >= 192 && v <= 214) || (v >= 216 && v <= 222) {
+        return (v + 32) as i32
+    }
+    return cp
+}
+
 fn strUpper(s: &string): string {
     var out = String.withCapacity(s.len())
     var i: i64 = 0
-    while i < s.len()
-    invariant
-    i >= 0 && i <= s.len()
-    {
-        var c = s[i]
-        if c >= 'a' && c <= 'z' {
-            c = c - 32
-        }
-        out.push(c)
-        i = i + 1
+    while i < s.len() {
+        let cp = decodeCodepoint(s, i)
+        encodeCodepoint(out, upperCp(cp.value))
+        i = i + cp.size
     }
     return out
 }
@@ -181,16 +204,10 @@ fn strUpper(s: &string): string {
 fn strLower(s: &string): string {
     var out = String.withCapacity(s.len())
     var i: i64 = 0
-    while i < s.len()
-    invariant
-    i >= 0 && i <= s.len()
-    {
-        var c = s[i]
-        if c >= 'A' && c <= 'Z' {
-            c = c + 32
-        }
-        out.push(c)
-        i = i + 1
+    while i < s.len() {
+        let cp = decodeCodepoint(s, i)
+        encodeCodepoint(out, lowerCp(cp.value))
+        i = i + cp.size
     }
     return out
 }
