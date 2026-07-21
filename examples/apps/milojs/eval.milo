@@ -6291,9 +6291,23 @@ fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
     }
     st.objects[p].promiseState = state
     st.objExtras[st.objects[p].extra].promiseValue = cloneValue(value)
+    // an activation parked in `await p` IS a handler — the rejection is delivered
+    // to it (to catch, or to re-reject its own promise). Capture that before
+    // wakeAwaiters clears the registry, or Promise.any-style rejections that are
+    // awaited-and-caught get falsely reported as unhandled.
+    var hadAwaiter = false
+    var ai: i64 = 0
+    while ai < st.awaitPromise.len() {
+        if st.awaitPromise[ai] == p {
+            hadAwaiter = true
+            ai = st.awaitPromise.len()
+        } else {
+            ai = ai + 1
+        }
+    }
     // wake activations parked on this promise before running reactions (R2/R3)
     wakeAwaiters(st, p)
-    if state == 2 && st.objExtras[st.objects[p].extra].reactions.len() == 0 {
+    if state == 2 && st.objExtras[st.objects[p].extra].reactions.len() == 0 && !hadAwaiter {
         // nobody is waiting on this rejection; report it when the loop idles
         // unless a .catch attaches first
         st.unhandledRejects.push(p)
