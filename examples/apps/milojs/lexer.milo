@@ -4,6 +4,9 @@
 from "std/strconv" import {
     parseFloat
 }
+from "std/unicode" import {
+    encodeCodepoint
+}
 from "./value" import {
     i64ToStr
 }
@@ -139,6 +142,108 @@ fn hexDigitVal(c: u8): i64 {
         return (c - 'A') as i64 + 10
     }
     return -1
+}
+
+// four hex digits starting at src[at], or -1
+fn hex4At(src: &string, at: i64): i64 {
+    if at + 3 >= src.len() {
+        return -1
+    }
+    var v: i64 = 0
+    var k: i64 = 0
+    while k < 4 {
+        let d = hexDigitVal(src[at + k])
+        if d < 0 {
+            return -1
+        }
+        v = v * 16 + d
+        k = k + 1
+    }
+    return v
+}
+
+// Decode the backslash escape at src[i] (caller guarantees src[i]=='\\' and
+// i+1 < n), appending its expansion to `out`. Returns the position after the
+// escape. Handles \n \t \r \b \f \v \0 \xHH \uHHHH \u{H..H} and surrogate-pair
+// \uD8xx\uDCxx combining; a lone surrogate becomes U+FFFD (engine strings are
+// UTF-8 and cannot hold one). Unrecognized escapes yield the escaped char.
+fn scanEscape(src: &string, i: i64, out: &mut string): i64 {
+    let n = src.len()
+    let e = src[i + 1]
+    if e == 'n' {
+        out.push(10 as u8)
+        return i + 2
+    }
+    if e == 't' {
+        out.push(9 as u8)
+        return i + 2
+    }
+    if e == 'r' {
+        out.push(13 as u8)
+        return i + 2
+    }
+    if e == 'b' {
+        out.push(8 as u8)
+        return i + 2
+    }
+    if e == 'f' {
+        out.push(12 as u8)
+        return i + 2
+    }
+    if e == 'v' {
+        out.push(11 as u8)
+        return i + 2
+    }
+    if e == '0' && (i + 2 >= n || src[i + 2] < '0' || src[i + 2] > '9') {
+        out.push(0 as u8)
+        return i + 2
+    }
+    if e == 'x' && i + 3 < n {
+        let h1 = hexDigitVal(src[i + 2])
+        let h2 = hexDigitVal(src[i + 3])
+        if h1 >= 0 && h2 >= 0 {
+            encodeCodepoint(out, (h1 * 16 + h2) as i32)
+            return i + 4
+        }
+    }
+    if e == 'u' {
+        if i + 2 < n && src[i + 2] == '{' {
+            var j = i + 3
+            var cp: i64 = 0
+            var any = false
+            var ok = true
+            while j < n && src[j] != '}' {
+                let d = hexDigitVal(src[j])
+                if d < 0 || cp > 1114111 {
+                    ok = false
+                    break
+                }
+                cp = cp * 16 + d
+                any = true
+                j = j + 1
+            }
+            if ok && any && j < n && src[j] == '}' && cp <= 1114111 {
+                encodeCodepoint(out, cp as i32)
+                return j + 1
+            }
+        } else {
+            let u = hex4At(src, i + 2)
+            if u >= 0 {
+                if u >= 55296 && u <= 56319 && i + 7 < n && src[i + 6] == 92 as u8 && src[i + 7] == 'u' {
+                    let lo = hex4At(src, i + 8)
+                    if lo >= 56320 && lo <= 57343 {
+                        encodeCodepoint(out, (65536 + (u - 55296) * 1024 + (lo - 56320)) as i32)
+                        return i + 12
+                    }
+                }
+                encodeCodepoint(out, u as i32)
+                return i + 6
+            }
+        }
+    }
+    // \' \" \\ \` \$ and anything unrecognized: the char itself
+    out.push(e)
+    return i + 2
 }
 
 fn isDigitByte(c: u8): bool {
@@ -299,23 +404,7 @@ fn scanTmplChunk(src: &string, start: i64, toks: &mut Vec<Token>): ChunkResult {
             isHole = true
             break
         } else if c == 92 as u8 && i + 1 < n {
-            let e = src[i + 1]
-            if e == 'n' {
-                buf.push(10 as u8)
-            } else if e == 't' {
-                buf.push(9 as u8)
-            } else if e == 'r' {
-                buf.push(13 as u8)
-            } else if e == 96 as u8 {
-                buf.push(96 as u8)
-            } else if e == '$' {
-                buf.push('$')
-            } else if e == 92 as u8 {
-                buf.push(92 as u8)
-            } else {
-                buf.push(e)
-            }
-            i = i + 2
+            i = scanEscape(src, i, buf)
         } else {
             buf.push(c)
             i = i + 1
@@ -512,20 +601,7 @@ fn lex(src: &string): Vec<Token> {
             var s = String.withCapacity(16)
             while i < n && src[i] != quote {
                 if src[i] == 92 as u8 && i + 1 < n {
-                    let e = src[i + 1]
-                    if e == 'n' {
-                        s.push(10 as u8)
-                    } else if e == 't' {
-                        s.push(9 as u8)
-                    } else if e == 'r' {
-                        s.push(13 as u8)
-                    } else if e == '0' {
-                        s.push(0 as u8)
-                    } else {
-                        // \\ \' \" and anything else: the char itself
-                        s.push(e)
-                    }
-                    i = i + 2
+                    i = scanEscape(src, i, s)
                 } else {
                     s.push(src[i])
                     i = i + 1
