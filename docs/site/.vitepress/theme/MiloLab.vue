@@ -14,6 +14,7 @@
       <div class="kicker">Interactive · runs in your browser</div>
       <h2 class="title">Learn Milo by running it</h2>
       <p class="sub">Try Milo in your browser! Milo has multiple backends — it builds native binaries, and also JavaScript to run right here in your browser.</p>
+      <a class="sub-link" :href="base + 'language/javascript-target'">Learn how it works — the emit-js backend →</a>
     </div>
 
     <!-- rail: Sandbox (free play) first, then the 10 lessons -->
@@ -645,6 +646,16 @@ onMounted(() => {
 .kicker { font-family: var(--vp-font-family-mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--brand); }
 .title { font-size: 1.9rem; font-weight: 750; letter-spacing: -.02em; margin: 8px 0 6px; border: 0; padding: 0; }
 .sub { color: var(--vp-c-text-2); margin: 0; }
+.sub-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-family: var(--vp-font-family-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brand);
+  text-decoration: none;
+}
+.sub-link:hover { text-decoration: underline; }
 
 .rail { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 0 0 20px; }
 .pip {
