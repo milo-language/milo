@@ -41,6 +41,10 @@ enum Expr {
     // logical assignment: target, op ("&&"/"||"/"??"), rhs. Short-circuits — rhs
     // is evaluated and stored only when the op says the target needs updating.
     LogicalAssign(i64, string, i64),
+    // destructuring assignment to existing targets: `[a,b] = rhs` /
+    // `({a,b} = rhs)`. First index is the pattern (an ArrLit/ObjLit), second the
+    // rhs. Distinct from `let [a,b] = rhs` (a declaration, handled at parse time).
+    DestructAssign(i64, i64),
     // ternary c ? a : b
     Cond(i64, i64, i64),
     // ...expr in a call-arg or array-literal position
@@ -263,6 +267,9 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.LogicalAssign(target, op, rhs) => {
             return Expr.LogicalAssign(target, op.clone(), rhs)
+        }
+        Expr.DestructAssign(pat, rhs) => {
+            return Expr.DestructAssign(pat, rhs)
         }
         Expr.Cond(c, a, b) => {
             return Expr.Cond(c, a, b)

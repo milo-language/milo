@@ -1034,6 +1034,111 @@ fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
     objSet(st, o, key, value)
 }
 
+// One element of a value being destructured: `value[i]`. Arrays/array-likes go
+// through getMember by index; a string yields its i-th character.
+fn destructElement(_prog: &Prog, value: &JSValue, i: i64, st: &mut Interp): JSValue {
+    let vh = objHandle(value)
+    if vh >= 0 {
+        return getMember(st, vh, i64ToStr(i))
+    }
+    match value {
+        JSValue.Str(s) => {
+            if i >= 0 && i < s.len() {
+                return JSValue.Str(jsCharAt(s, i))
+            }
+        }
+        _ => {
+        }
+    }
+    return JSValue.Undefined
+}
+
+// Assign `value` to a single destructuring target: a nested pattern recurses; a
+// `name = default` element applies the default when value is undefined; otherwise
+// the target is an ordinary lvalue (identifier / member / index).
+fn assignTarget(prog: &Prog, targetIdx: i64, value: JSValue, st: &mut Interp, scope: i64) {
+    match prog.exprs[targetIdx] {
+        Expr.ArrLit(_li) => {
+            assignPattern(prog, targetIdx, value, st, scope)
+        }
+        Expr.ObjLit(_li) => {
+            assignPattern(prog, targetIdx, value, st, scope)
+        }
+        Expr.Assign(name, defaultIdx) => {
+            var v = cloneValue(value)
+            if isUndefinedValue(value) {
+                v = evalExpr(prog, defaultIdx, st, scope)
+            }
+            scopeAssign(st, scope, name.clone(), cloneValue(v))
+        }
+        _ => {
+            writeLValue(prog, targetIdx, st, scope, cloneValue(value))
+        }
+    }
+}
+
+// Destructure `value` into a pattern (ArrLit / ObjLit) of existing lvalue
+// targets. Handles nesting, holes, `...rest`, and `= default` elements.
+fn assignPattern(prog: &Prog, patIdx: i64, value: JSValue, st: &mut Interp, scope: i64) {
+    match prog.exprs[patIdx] {
+        Expr.ArrLit(litIdx) => {
+            pushTemp(st, cloneValue(value))
+            var i: i64 = 0
+            while i < prog.arrLits[litIdx].len() {
+                let e = prog.arrLits[litIdx][i]
+                if e < 0 {
+                    // elision: skip this position
+                    i = i + 1
+                    continue
+                }
+                match prog.exprs[e] {
+                    Expr.Spread(target) => {
+                        // ...rest — the remaining elements as a fresh array
+                        let rest = newArray(st)
+                        pushTemp(st, JSValue.Obj(rest))
+                        let vh = objHandle(value)
+                        if vh >= 0 {
+                            let vn = arrLen(st, vh)
+                            var j = i
+                            while j < vn {
+                                arrPush(st, rest, arrGet(st, vh, j))
+                                j = j + 1
+                            }
+                        }
+                        popTemp(st)
+                        assignTarget(prog, target, JSValue.Obj(rest), st, scope)
+                    }
+                    _ => {
+                        let ev = destructElement(prog, value, i, st)
+                        assignTarget(prog, e, ev, st, scope)
+                    }
+                }
+                i = i + 1
+            }
+            popTemp(st)
+        }
+        Expr.ObjLit(litIdx) => {
+            pushTemp(st, cloneValue(value))
+            let vh = objHandle(value)
+            var i: i64 = 0
+            while i < prog.objLits[litIdx].len() {
+                let key = prog.objLits[litIdx][i].key.clone()
+                let target = prog.objLits[litIdx][i].val
+                var pv = JSValue.Undefined
+                if vh >= 0 {
+                    pv = getMemberDyn(prog, vh, key, st)
+                }
+                assignTarget(prog, target, pv, st, scope)
+                i = i + 1
+            }
+            popTemp(st)
+        }
+        _ => {
+            assignTarget(prog, patIdx, value, st, scope)
+        }
+    }
+}
+
 // Read an assignable target (identifier / member / computed index) as a value.
 // Backs ++/-- and compound assignment; the base object of a member target is
 // evaluated here and again by writeLValue (harmless unless the base has side
@@ -4674,6 +4779,14 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             }
             let rhs = evalExpr(prog, rhsIdx, st, scope)
             writeLValue(prog, targetIdx, st, scope, cloneValue(rhs))
+            return rhs
+        }
+        Expr.DestructAssign(patIdx, rhsIdx) => {
+            let rhs = evalExpr(prog, rhsIdx, st, scope)
+            pushTemp(st, cloneValue(rhs))
+            assignPattern(prog, patIdx, cloneValue(rhs), st, scope)
+            popTemp(st)
+            // the assignment expression evaluates to the whole rhs
             return rhs
         }
         Expr.Cond(c, a, b) => {

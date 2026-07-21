@@ -819,6 +819,13 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
             } else if peekKind(p) == T_COLON {
                 advance(p)
                 valIdx = parseExpr(p, prog)
+            } else if peekKind(p) == T_EQ {
+                // shorthand with default, only meaningful in a destructuring
+                // pattern: `{ g = 10 }` — record it as `g = default` so
+                // destructuring applies the default when the key is missing
+                advance(p)
+                let defExpr = parseTernary(p, prog)
+                valIdx = addExpr(prog, Expr.Assign(key.clone(), defExpr))
             } else {
                 valIdx = addExpr(prog, Expr.Ident(key.clone()))
             }
@@ -1252,6 +1259,14 @@ fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
             }
             Expr.Index(objIdx, keyIdx) => {
                 return addExpr(prog, Expr.SetMember(objIdx, keyIdx, rhs))
+            }
+            Expr.ArrLit(_li) => {
+                // array destructuring assignment: [a, b] = rhs
+                return addExpr(prog, Expr.DestructAssign(left, rhs))
+            }
+            Expr.ObjLit(_li) => {
+                // object destructuring assignment: ({a, b} = rhs)
+                return addExpr(prog, Expr.DestructAssign(left, rhs))
             }
             _ => {
                 // non-lvalue assignment target: evaluate rhs, drop the target
