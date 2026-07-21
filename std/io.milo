@@ -279,7 +279,12 @@ impl File {
         // Erroring here made `readFile` unable to read any of them. The size is only a
         // presize hint, so fall back to a page and let the push loop grow as needed.
         var capacity: i64 = 4096
-        if size > 0 {
+        // Cap the presize: opening a DIRECTORY (or some char devices) and asking
+        // lseek(SEEK_END) yields a garbage, near-INT64_MAX "size", and `size + 1`
+        // then overflowed to INT64_MIN — a negative-capacity crash. No real file
+        // is this large; a genuine huge file just falls back to the growing push
+        // loop. 1 GiB is a generous ceiling that also bounds a hostile presize.
+        if size > 0 && size <= 1073741824 {
             // Presize to the stat'd size (+1 for the NUL) so the push loop never reallocs;
             // push still grows safely if the file grew between size() and read().
             capacity = size + 1
