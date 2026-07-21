@@ -53,12 +53,18 @@ fn pathExists(path: &string): bool {
 
 // Check if a path is a directory.
 fn isDir(path: &string): bool {
-    let info = fileInfo(path)
-    if !info.exists {
-        return false
+    // opendir succeeds only for a directory (ENOTDIR for a file, ENOENT for a
+    // missing path) — arch- and libc-independent, unlike reading the S_IFDIR bit
+    // out of a struct stat whose st_mode offset differs across Linux arches
+    // (24 on x86_64, 16 on arm64) while std/platform is only OS-split.
+    unsafe {
+        let dir = opendir(path)
+        if dir as i64 == 0 as i64 {
+            return false
+        }
+        closedir(dir)
+        return true
     }
-    // S_IFDIR = 0x4000 = 16384, S_IFMT = 0xF000 = 61440
-    return (info.mode & 61440) == 16384
 }
 
 // Check if a path is a regular file.
