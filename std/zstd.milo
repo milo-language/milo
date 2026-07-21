@@ -1,12 +1,13 @@
 // std/zstd — pure-Milo Zstandard frame decoder (RFC 8878).
 //
-// Scope today: the frame layer + Raw/RLE blocks + Compressed blocks with Raw/RLE
-// literals and Predefined / RLE / FSE-compressed sequence tables. That is a full FSE
-// (tANS) decoder over a backward bitstream — predefined AND in-stream distribution
-// headers — plus repeat-offset resolution and LZ77 reconstruction. Still unsupported
-// (clear error, tracked next slice): Huffman-compressed literals (the literals entropy
-// stage) and Repeat-mode sequence tables (reuse across blocks). The scaffolding here
-// already plugs into those.
+// Decodes a single-block zstd frame end to end: Raw/RLE/Huffman-compressed literals
+// (own FSE-coded or direct weights, 1 or 4 streams) and Raw/RLE blocks plus Compressed
+// blocks with Predefined / RLE / FSE-compressed sequence tables — a full FSE (tANS) +
+// Huffman decoder over backward bitstreams, repeat-offset resolution, LZ77, and XXH64
+// checksum verification. Real `zstd` CLI output round-trips byte-for-byte (verified on
+// source, docs, and incompressible data). Not yet handled (clear error): cross-block
+// table reuse — Treeless literals and Repeat-mode sequence tables — which only appears
+// once a frame spans multiple 128 KiB blocks. No compressor; decode only.
 //
 // The 4-byte content checksum (low 32 bits of XXH64 of the decompressed content, when
 // the frame header flags it) is verified via std/xxhash. Structure mirrors std/inflate:
@@ -325,6 +326,181 @@ fn _computeOffset(rawOffset: i64, litLen: i64, hist: &mut Vec<i64>): i64 {
     return offset
 }
 
+// ── Huffman literals ──
+
+struct HufTable {
+    symbols: Vec<i64>,
+    numBits: Vec<i64>,
+    maxBits: i64,
+}
+
+// Build a Huffman decode table from per-symbol bit lengths (RFC 8878 §4.2.1).
+fn _hufBuildFromBits(bits: &Vec<i64>, numSymbs: i64): HufTable {
+    var maxBits: i64 = 0
+    var rankCount = _zeroVec(17)
+    for i in 0..numSymbs {
+        let b = bits[i]
+        if b > maxBits {
+            maxBits = b
+        }
+        rankCount[b] = rankCount[b] + 1
+    }
+    let tableSize = 1 << maxBits
+    var symbols = _zeroVec(tableSize)
+    var numBits = _zeroVec(tableSize)
+    var rankIdx = _zeroVec(17)
+    rankIdx[maxBits] = 0
+    var i = maxBits
+    while i >= 1 {
+        rankIdx[i - 1] = rankIdx[i] + rankCount[i] * (1 << (maxBits - i))
+        for j in rankIdx[i]..rankIdx[i - 1] {
+            numBits[j] = i
+        }
+        i = i - 1
+    }
+    for s in 0..numSymbs {
+        if bits[s] != 0 {
+            let code = rankIdx[bits[s]]
+            let span = 1 << (maxBits - bits[s])
+            for j in 0..span {
+                symbols[code + j] = s
+            }
+            rankIdx[bits[s]] = code + span
+        }
+    }
+    return HufTable {
+        symbols: symbols, numBits: numBits, maxBits: maxBits
+    }
+}
+
+// Build a Huffman table from transmitted weights; the final symbol's weight is
+// inferred so the implied code lengths complete a full tree (RFC 8878 §4.2.1.1).
+fn _hufBuildFromWeights(weights: &Vec<i64>, numSymbs: i64): HufTable {
+    var weightSum: i64 = 0
+    for i in 0..numSymbs {
+        if weights[i] > 0 {
+            weightSum = weightSum + (1 << (weights[i] - 1))
+        }
+    }
+    let maxBits = _highestSetBit(weightSum) + 1
+    let leftOver = (1 << maxBits) - weightSum
+    let lastWeight = _highestSetBit(leftOver) + 1
+    var bits = _zeroVec(numSymbs + 1)
+    for i in 0..numSymbs {
+        if weights[i] > 0 {
+            bits[i] = maxBits + 1 - weights[i]
+        } else {
+            bits[i] = 0
+        }
+    }
+    bits[numSymbs] = maxBits + 1 - lastWeight
+    return _hufBuildFromBits(bits, numSymbs + 1)
+}
+
+// Decode one Huffman-coded stream (read backward) to bytes.
+fn _hufDecode1Stream(t: &HufTable, stream: &string): string {
+    var out = ""
+    if stream.len == 0 {
+        return out
+    }
+    let lastByte = stream[stream.len - 1] as i64
+    let padding = 8 - _highestSetBit(lastByte)
+    var r = Rev {
+        off: stream.len * 8 - padding
+    }
+    var state = _streamRead(stream, t.maxBits, r)
+    let mask = (1 << t.maxBits) - 1
+    while r.off > 0 - t.maxBits {
+        let symb = t.symbols[state]
+        let bits = t.numBits[state]
+        let rest = _streamRead(stream, bits, r)
+        state = ((state << bits) + rest) & mask
+        out.push(symb as u8)
+    }
+    return out
+}
+
+// FSE decode with two interleaved states (used only for Huffman weights).
+fn _fseDecompressInterleaved2(t: &FseTable, stream: &string): Vec<i64> {
+    var out: Vec<i64> = Vec.new()
+    if stream.len == 0 {
+        return out
+    }
+    let lastByte = stream[stream.len - 1] as i64
+    let padding = 8 - _highestSetBit(lastByte)
+    var r = Rev {
+        off: stream.len * 8 - padding
+    }
+    var s1 = _fseInitState(t, stream, r)
+    var s2 = _fseInitState(t, stream, r)
+    var done = false
+    while !done {
+        out.push(t.symbols[s1])
+        s1 = _fseUpdate(t, s1, stream, r)
+        if r.off < 0 {
+            out.push(t.symbols[s2])
+            done = true
+        } else {
+            out.push(t.symbols[s2])
+            s2 = _fseUpdate(t, s2, stream, r)
+            if r.off < 0 {
+                out.push(t.symbols[s1])
+                done = true
+            }
+        }
+    }
+    return out
+}
+
+// Extract src[from .. to) into an owned string.
+fn _slice(src: &string, from: i64, to: i64): string {
+    var s = ""
+    for i in from..to {
+        s.push(src[i])
+    }
+    return s
+}
+
+struct HufTableResult {
+    table: HufTable,
+    bytesUsed: i64,
+}
+
+// Decode the Huffman table description at the start of the literals payload.
+fn _decodeHufTable(hufData: &string): HufTableResult {
+    let header = hufData[0] as i64
+    var weights: Vec<i64> = Vec.new()
+    var numSymbs: i64 = 0
+    var bytesUsed: i64 = 0
+    if header >= 128 {
+        // Direct: (header-127) weights, 4 bits each, high nibble first.
+        numSymbs = header - 127
+        let wbytes = (numSymbs + 1) / 2
+        for i in 0..numSymbs {
+            let byte = hufData[1 + i / 2] as i64
+            if i % 2 == 0 {
+                weights.push(byte >> 4)
+            } else {
+                weights.push(byte & 0xf)
+            }
+        }
+        bytesUsed = 1 + wbytes
+    } else {
+        // FSE-compressed weights: `header` bytes hold a forward distribution header
+        // followed by a backward interleaved-2 weight bitstream (max accuracy 7).
+        let fseLen = header
+        let fseStream = _slice(hufData, 1, 1 + fseLen)
+        let hdr = _fseDecodeHeader(fseStream, 0, 7)
+        let weightBits = _slice(fseStream, hdr.bytesUsed, fseLen)
+        weights = _fseDecompressInterleaved2(hdr.table, weightBits)
+        numSymbs = weights.len
+        bytesUsed = 1 + fseLen
+    }
+    return HufTableResult {
+        table: _hufBuildFromWeights(weights, numSymbs), bytesUsed: bytesUsed
+    }
+}
+
 // Decode a single Compressed_Block (RFC 8878 §3.1.1.2) into `out`. Supports Raw/RLE
 // literals and Predefined/RLE sequence-table modes; Huffman literals and FSE-compressed
 // / Repeat sequence tables are the tracked next slice and return a clear error.
@@ -335,8 +511,9 @@ fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mu
     let l0 = src[pos] as i64
     let litType = l0 & 3
     let sizeFormat = (l0 >> 2) & 3
-    var regenSize: i64 = 0
+    var literals = ""
     if litType == 0 || litType == 1 {
+        var regenSize: i64 = 0
         if sizeFormat == 0 || sizeFormat == 2 {
             regenSize = l0 >> 3
             pos = pos + 1
@@ -347,21 +524,83 @@ fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mu
             regenSize = (l0 >> 4) | ((src[pos + 1] as i64) << 4) | ((src[pos + 2] as i64) << 12)
             pos = pos + 3
         }
-    } else {
-        return 0 - 100 // Huffman literals not yet supported
-    }
-    var literals = ""
-    if litType == 0 {
-        for i in 0..regenSize {
-            literals.push(src[pos + i])
+        if litType == 0 {
+            for i in 0..regenSize {
+                literals.push(src[pos + i])
+            }
+            pos = pos + regenSize
+        } else {
+            let b = src[pos]
+            pos = pos + 1
+            for _i in 0..regenSize {
+                literals.push(b)
+            }
         }
-        pos = pos + regenSize
+    } else if litType == 3 {
+        return 0 - 104 // Treeless literals reuse a prior block's Huffman table
     } else {
-        let b = src[pos]
-        pos = pos + 1
-        for _i in 0..regenSize {
-            literals.push(b)
+        // Huffman-compressed literals (RFC 8878 §3.1.1.3.1.2).
+        var boff = pos * 8 + 4 // past the 2-bit type + 2-bit size format
+        var numStreams: i64 = 4
+        var regBits: i64 = 10
+        var compBits: i64 = 10
+        if sizeFormat == 0 {
+            numStreams = 1
+        } else if sizeFormat == 2 {
+            regBits = 14
+            compBits = 14
+        } else if sizeFormat == 3 {
+            regBits = 18
+            compBits = 18
         }
+        let regenSize = _readBitsLE(src, regBits, boff)
+        boff = boff + regBits
+        let compSize = _readBitsLE(src, compBits, boff)
+        boff = boff + compBits
+        let headerBytes = (boff - pos * 8) / 8
+        let hufStart = pos + headerBytes
+        if hufStart + compSize > blockEnd {
+            return 0 - 105
+        }
+        let hufData = _slice(src, hufStart, hufStart + compSize)
+        let ht = _decodeHufTable(hufData)
+        let streamsData = _slice(hufData, ht.bytesUsed, hufData.len)
+        if numStreams == 1 {
+            literals = _hufDecode1Stream(ht.table, streamsData)
+        } else {
+            // 4 streams preceded by a 6-byte jump table (three u16-LE stream sizes).
+            let c1 = _leN(streamsData, 0, 2)
+            let c2 = _leN(streamsData, 2, 2)
+            let c3 = _leN(streamsData, 4, 2)
+            var sp: i64 = 6
+            let s1 = _slice(streamsData, sp, sp + c1)
+            sp = sp + c1
+            let s2 = _slice(streamsData, sp, sp + c2)
+            sp = sp + c2
+            let s3 = _slice(streamsData, sp, sp + c3)
+            sp = sp + c3
+            let s4 = _slice(streamsData, sp, streamsData.len)
+            let d1 = _hufDecode1Stream(ht.table, s1)
+            let d2 = _hufDecode1Stream(ht.table, s2)
+            let d3 = _hufDecode1Stream(ht.table, s3)
+            let d4 = _hufDecode1Stream(ht.table, s4)
+            for i in 0..d1.len {
+                literals.push(d1[i])
+            }
+            for i in 0..d2.len {
+                literals.push(d2[i])
+            }
+            for i in 0..d3.len {
+                literals.push(d3[i])
+            }
+            for i in 0..d4.len {
+                literals.push(d4[i])
+            }
+        }
+        if literals.len != regenSize {
+            return 0 - 105
+        }
+        pos = pos + headerBytes + compSize
     }
     // ── Sequences section ──
     if pos >= blockEnd {
@@ -626,10 +865,10 @@ fn zstdDecompress(src: &string): Result<string, string> {
                 return Result.Err("zstd: truncated compressed block")
             }
             let e = _decompressCompressed(src, pos, blockSize, out, hist)
-            if e == 0 - 100 {
-                return Result.Err("zstd: Huffman-compressed literals not yet supported")
-            } else if e == 0 - 101 {
-                return Result.Err("zstd: FSE-compressed/repeat sequence tables not yet supported")
+            if e == 0 - 101 {
+                return Result.Err("zstd: repeat-mode sequence tables not yet supported")
+            } else if e == 0 - 104 {
+                return Result.Err("zstd: treeless literals (table reuse) not yet supported")
             } else if e < 0 {
                 return Result.Err("zstd: corrupt compressed block")
             }
