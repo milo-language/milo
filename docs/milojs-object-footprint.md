@@ -157,3 +157,30 @@ one:
 Also confirm the language has a usable `HashMap<i64, T>` (the design assumes one);
 if not, a parallel `Vec` indexed by object id with an `Option`/sentinel works but
 wastes the sparsity — prefer the map.
+
+### Refinement: keep the 1-byte flags inline, move only the large fields
+
+The sweep-remove hazard above is AVOIDABLE. Keep the capability booleans
+(`isProxy`, `isMap`, `isBound`, `isDataView`, `promiseState` sentinel…) INLINE on
+JSObj — they are 1 byte and are reset to their empty value by the newObject
+literal when an index is recycled, so they correctly gate access. Move only the
+LARGE fields to side tables: the 32-byte JSValues (`promiseValue`,
+`boundTarget/boundThis`, `proxyTarget/proxyHandler`) and 24-byte Vecs
+(`reactions`, `boundArgs`, `mapKeys/mapVals`, `bytes`). Those are ~90% of the
+movable bytes; the flags are noise.
+
+Why this is safer:
+- A stale side-table entry (dead proxy's index not yet reused) is never READ,
+  because the inline `isProxy` flag on whatever now occupies that index is false.
+  When the index is reused as a new proxy, `setProxy` overwrites the entry. So
+  **no sweep-remove is required for correctness** — the flag does the gating.
+- GC still marks LIVE entries only: iterate each side table, and for an entry
+  whose object is currently marked, push its JSValues onto the existing mark
+  worklist (same as today's inline `pushMarkTargets(proxyTarget)`, just sourced
+  from the table). A stale entry's object is unmarked, so its value is not marked
+  and is free to collect; the dangling handle in the stale entry is never read.
+
+Net: the per-slice work becomes mechanical field-access rewrites + one
+mark-worklist pass per table, with NO new sweep logic. Sweep-removing stale
+entries is then a pure memory optimization (bound the tables), not a correctness
+requirement — do it later if the tables grow.
