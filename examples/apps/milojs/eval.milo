@@ -7237,30 +7237,40 @@ fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSVa
     if name == "toISOString" || name == "toJSON" {
         return JSValue.Str(isoFromMillis(ms))
     }
-    if name == "getFullYear" || name == "getMonth" || name == "getDate" || name == "getHours" || name == "getMinutes" || name == "getSeconds" || name == "getMilliseconds" || name == "getDay" {
-        // getFullYear/getHours/... are local-time accessors in JS; only the
-        // getUTC* family and toISOString work in UTC
-        let dt = dateTimeFromEpochLocal((ms / 1000.0) as i64)
-        if name == "getFullYear" {
+    // getUTC* mirrors the local accessors but decomposes in UTC; normalise
+    // getUTCFoo -> getFoo for the branch match and pick the decomposition by
+    // whether the caller asked for UTC.
+    var gname = name.clone()
+    var isUtc = false
+    if gname.len() >= 6 && strSlice(gname, 0, 6) == "getUTC" {
+        isUtc = true
+        gname = "get" + strSlice(gname, 6, gname.len())
+    }
+    if gname == "getFullYear" || gname == "getMonth" || gname == "getDate" || gname == "getHours" || gname == "getMinutes" || gname == "getSeconds" || gname == "getMilliseconds" || gname == "getDay" {
+        var dt = dateTimeFromEpochLocal((ms / 1000.0) as i64)
+        if isUtc {
+            dt = dateTimeFromEpoch((ms / 1000.0) as i64)
+        }
+        if gname == "getFullYear" {
             return JSValue.Number(dt.year as f64)
         }
-        if name == "getMonth" {
+        if gname == "getMonth" {
             // JS months are zero-based
             return JSValue.Number((dt.month - 1) as f64)
         }
-        if name == "getDate" {
+        if gname == "getDate" {
             return JSValue.Number(dt.day as f64)
         }
-        if name == "getHours" {
+        if gname == "getHours" {
             return JSValue.Number(dt.hour as f64)
         }
-        if name == "getMinutes" {
+        if gname == "getMinutes" {
             return JSValue.Number(dt.minute as f64)
         }
-        if name == "getSeconds" {
+        if gname == "getSeconds" {
             return JSValue.Number(dt.second as f64)
         }
-        if name == "getDay" {
+        if gname == "getDay" {
             return JSValue.Number(dt.weekday as f64)
         }
         return JSValue.Number(mathMod(ms, 1000.0))
