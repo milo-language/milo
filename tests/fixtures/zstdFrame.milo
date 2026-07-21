@@ -6,6 +6,9 @@
 from "std/zstd" import {
     zstdDecompress
 }
+from "std/xxhash" import {
+    xxh64Hex
+}
 
 fn _hexVal(c: u8): i64 {
     if c >= '0' && c <= '9' {
@@ -90,4 +93,10 @@ fn main() {
     // Same, with content checksum — decode AND XXH64 verification must both pass.
     // @expect: 100
     print(decode("28b52ffd045845000010414101003f012cd372475e").len)
+
+    // FSE-compressed sequence tables (modes ll=of=ml=2): 600 bytes of random
+    // foo/bar/baz/qux. Content verified via XXH64 of the decoded output matching the
+    // original's digest (compact stand-in for a 600-char @expect line).
+    // @expect: a85946506e3225f8
+    print(xxh64Hex(decode("28b52ffd0058450500a402666f6f62617a6261727a6261727271757871757862617a7272727a7a72666f6f71757872727a72727a7245a8802d64980360029931e30d1010e588a924c3185f323192a02003596f49e94b6f395d209000c1ee72f1166e897fc3026f9e8fc32577e6f77eae04cc81ac50baa809d20804da9c6f58b23d420860ca3205a30324e91325a54ee42b7cb99eeb2ef2a6efd82d5fbc0ff2539c9a8d744e0d7e93f384537d7742d23749"), 0))
 }
