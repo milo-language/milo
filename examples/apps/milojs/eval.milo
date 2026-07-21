@@ -820,6 +820,51 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             return JSValue.Undefined
         }
         _ => {
+            // .apply / .call / .bind on a native function (Math.max.apply, …).
+            // recv is the function; re-dispatch it through callValue, which
+            // routes a Native to callNative.
+            if name == "apply" || name == "call" {
+                var thisArg = JSValue.Undefined
+                if args.len() > 0 {
+                    thisArg = cloneValue(args[0])
+                }
+                var rest: Vec<JSValue> = Vec.new()
+                if name == "apply" {
+                    if args.len() > 1 {
+                        let ah = objHandle(args[1])
+                        if ah >= 0 && st.objects[ah].isArray {
+                            var ai: i64 = 0
+                            while ai < arrLen(st, ah) {
+                                rest.push(arrGet(st, ah, ai))
+                                ai = ai + 1
+                            }
+                        }
+                    }
+                } else {
+                    var ai: i64 = 1
+                    while ai < args.len() {
+                        rest.push(cloneValue(args[ai]))
+                        ai = ai + 1
+                    }
+                }
+                return callValue(prog, recv, rest, thisArg, st)
+            }
+            if name == "bind" {
+                let bo = newObject(st)
+                st.objects[bo].isBound = true
+                st.objects[bo].boundTarget = cloneValue(recv)
+                if args.len() > 0 {
+                    st.objects[bo].boundThis = cloneValue(args[0])
+                }
+                var extra: Vec<JSValue> = Vec.new()
+                var bi: i64 = 1
+                while bi < args.len() {
+                    extra.push(cloneValue(args[bi]))
+                    bi = bi + 1
+                }
+                st.objects[bo].boundArgs = extra
+                return JSValue.Obj(bo)
+            }
             if name == "toString" {
                 return JSValue.Str("[object " + objectTypeTag(recv) + "]")
             }
@@ -4452,6 +4497,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 }
                 JSValue.Native(nid) => {
                     let bag = getNativeProps(st, nid)
+                    if (key == "call" || key == "apply" || key == "bind") && objOwnIndex(st, bag, key) < 0 {
+                        return makeBoundMethod(st, JSValue.Native(nid), key.clone())
+                    }
                     if key == "name" && objOwnIndex(st, bag, "name") < 0 {
                         let nn = nativeCtorName(nid)
                         if nn.len() > 0 {
@@ -8805,6 +8853,12 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
             }
         }
         JSValue.Native(nid) => {
+            // Function.prototype.apply/call/bind on a native function
+            // (Math.max.apply(null, arr) etc.) — dispatch through callBuiltinByName
+            if name == "apply" || name == "call" || name == "bind" {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                return callBuiltinByName(prog, JSValue.Native(nid), name, argVals, st)
+            }
             // statics hanging off a native constructor, e.g. String.fromCharCode
             let bag = getNativeProps(st, nid)
             let assigned = getMember(st, bag, name)
