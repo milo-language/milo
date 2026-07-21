@@ -1,0 +1,45 @@
+// @run: -d
+// @stdin: hello
+// gz — gzip compress/decompress on a pipe, pure Milo (std/deflate + std/inflate).
+//
+// Reads stdin, writes stdout: `gz < f > f.gz`, `gz -d < f.gz > f`. Interoperates
+// with the system tool: `gz < f | gunzip` and `gzip -c f | gz -d` both round-trip.
+// Doubles as an integration smoke test for the compression stdlib.
+//
+// The @run stub above feeds "hello" through -d, which is not a valid gzip stream,
+// so it exercises the error path (prints a diagnostic, exits 1) — the encode path
+// is covered by tests/fixtures/deflateRoundtrip and the interop check in the docs.
+from "std/argparse" import {
+    newParser
+}
+from "std/io" import {
+    readStdin, writeStdout
+}
+from "std/deflate" import {
+    gzipCompress
+}
+from "std/inflate" import {
+    gzipDecompress
+}
+
+fn main(): i32 {
+    var parser = newParser("gz", "gzip compress/decompress a stream")
+    parser.addBool("decompress", "d", "decompress instead of compress")
+    let args = parser.parse()
+
+    let input = readStdin()
+    if args.getBool("decompress") {
+        match gzipDecompress(input) {
+            Result.Ok(out) => {
+                writeStdout(out)
+            }
+            Result.Err(e) => {
+                eprint($"gz: {e}")
+                return 1
+            }
+        }
+    } else {
+        writeStdout(gzipCompress(input))
+    }
+    return 0
+}
