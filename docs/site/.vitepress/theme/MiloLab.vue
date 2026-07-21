@@ -127,7 +127,7 @@ const base = import.meta.env.BASE_URL
 
 // ---- lessons: verified programs + captured native output (fallback) ----
 const concepts = [
-  { title: 'Values that can’t surprise you', file: 'values.milo',
+  { title: 'Immutable by default (let vs var)', file: 'values.milo',
     desc: 'A <code>let</code> binding is immutable; a <code>var</code> is mutable. You opt <em>in</em> to change.',
     take: 'Immutable by default — you always know what can change out from under you.',
     out: ['hello from Milo, count = 3'],
@@ -179,9 +179,9 @@ fn main(): i32 {
     print($"rect:   {area(Shape.Rect(3.0, 4.0))}")
     return 0
 }` },
-  { title: 'Say what must be true — the compiler proves it', file: 'clamp.milo',
+  { title: 'Contracts — checked or proven', file: 'clamp.milo',
     desc: 'Annotate a function with <code>requires</code> (what the caller must guarantee) and <code>ensures</code> (what it promises back), written in ordinary Milo. With no solver installed, each becomes a checked runtime assertion. With <code>z3</code>, <code>milo prove</code> discharges them at compile time and deletes the check.',
-    take: 'Gradual verification: proven conditions cost nothing at runtime, the rest fall back to runtime checks — you are never forced to hand-write a proof the way Lean or Dafny demand. When <code>prove</code> can’t discharge a condition it hands you the failing input, not a proof obligation.',
+    take: 'Gradual verification: proven conditions cost nothing at runtime, the rest fall back to runtime checks — you are never forced to hand-write a proof the way Lean or Dafny demand. When <code>prove</code> can’t discharge a condition it hands you the failing input, not a proof obligation. It proves the properties <em>you state</em> — not that the whole program is bug-free. Memory safety (no use-after-free, no data races) is separate, and always on whether or not you write a single contract.',
     out: ['$ milo prove clamp.milo', '  ✓ [postcondition] clamp: proven', '', '$ milo run clamp.milo', '10'],
     code: `fn clamp(value: i64, lo: i64, hi: i64): i64
 requires lo <= hi
@@ -309,7 +309,7 @@ fn main(): i32 {
     print($"players: {scores.len}")
     return 0
 }` },
-  { title: 'Ownership — you choose the cost', file: 'ownership.milo', err: true,
+  { title: 'Ownership and moves', file: 'ownership.milo', err: true,
     desc: 'A heap value like <code>string</code> has one owner. <code>let b = a</code> <em>moves</em> it, so using <code>a</code> after is a compile error. Run it as-is — then change line 3 to <code>a.clone()</code> and run again.',
     take: 'Small types (<code>i32</code>, <code>f64</code>) copy automatically. For heap values you pick: <code>.clone()</code> for a real copy, or <code>&a</code> to borrow and just read it. Copies are never silent, and there’s no GC cleaning up behind you.',
     out: ['error: use of moved variable \'a\'', '  ──> ownership.milo:4:11', '  │', '4 │     print(a)             // error: a was moved away', '  │           ^', '  hint: ownership of \'a\' was transferred earlier and it can no longer be used here. To keep it alive, clone it at the point of transfer: \'a.clone()\'.'],
@@ -488,8 +488,13 @@ const SB = concepts.length
 const cur = ref(0)
 const sandbox = ref(false)
 const maxReached = ref(0)
-const srcs = ref([...concepts.map(c => c.code), examples['FizzBuzz']])
-const sbExample = ref('FizzBuzz')
+// Sandbox opens on a minimal skeleton, not a full program — a blank slate to type into.
+const sandboxStarter = `fn main(): i32 {
+    print("Hello from Milo!")
+    return 0
+}`
+const srcs = ref([...concepts.map(c => c.code), sandboxStarter])
+const sbExample = ref('')
 const ran = ref(concepts.map(() => false))
 const running = ref(false)
 const outLines = ref([])
