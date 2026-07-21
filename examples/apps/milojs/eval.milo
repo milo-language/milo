@@ -1425,6 +1425,7 @@ let NATIVE_DATAVIEW: i64 = 113
 let NATIVE_OBJECT_HASOWN: i64 = 114
 let NATIVE_STRING_RAW: i64 = 115
 let NATIVE_STRING_FROMCODEPOINT: i64 = 116
+let NATIVE_DATE_PARSE: i64 = 117
 let NATIVE_ARRAY_CTOR: i64 = 67
 let NATIVE_TCP_LISTEN: i64 = 68
 let NATIVE_TCP_ACCEPT: i64 = 69
@@ -2381,6 +2382,13 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     }
     if id == NATIVE_DATE_NOW {
         return JSValue.Number(epochMillis() as f64)
+    }
+    if id == NATIVE_DATE_PARSE {
+        // Date.parse(str) → epoch ms, or NaN. Same parser the Date(str) ctor uses.
+        if argVals.len() == 0 {
+            return JSValue.Number(jsNan())
+        }
+        return JSValue.Number(parseIsoDate(toStr(argVals[0])))
     }
     if id == NATIVE_DATE_UTC {
         if argVals.len() == 0 {
@@ -3840,6 +3848,7 @@ fn setupGlobals(st: &mut Interp) {
     let dateCtorObj = getNativeProps(st, NATIVE_DATE)
     objSet(st, dateCtorObj, "now", JSValue.Native(NATIVE_DATE_NOW))
     objSet(st, dateCtorObj, "UTC", JSValue.Native(NATIVE_DATE_UTC))
+    objSet(st, dateCtorObj, "parse", JSValue.Native(NATIVE_DATE_PARSE))
     // Date.prototype methods as bound-method values, so
     // Date.prototype.toISOString.call(d) — qs's pattern — works
     let dateProto = newObject(st)
