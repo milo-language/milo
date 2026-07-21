@@ -537,10 +537,26 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         return JSValue.Bool(jsContains(s, argStr(args, 0)))
     }
     if name == "startsWith" {
-        return JSValue.Bool(jsStartsWith(s, argStr(args, 0)))
+        // optional start position (UTF-16 units): match from there
+        let pos = argNum(args, 1, 0)
+        if pos <= 0 {
+            return JSValue.Bool(jsStartsWith(s, argStr(args, 0)))
+        }
+        let sub = utf16Slice(s, pos, utf16Length(s))
+        return JSValue.Bool(jsStartsWith(sub, argStr(args, 0)))
     }
     if name == "endsWith" {
-        return JSValue.Bool(jsEndsWith(s, argStr(args, 0)))
+        // optional end position: treat the string as if it ended there
+        let n = utf16Length(s)
+        let ep = argNum(args, 1, n)
+        if ep >= n {
+            return JSValue.Bool(jsEndsWith(s, argStr(args, 0)))
+        }
+        if ep <= 0 {
+            return JSValue.Bool(argStr(args, 0).len() == 0)
+        }
+        let sub = utf16Slice(s, 0, ep)
+        return JSValue.Bool(jsEndsWith(sub, argStr(args, 0)))
     }
     if name == "slice" || name == "substring" {
         let n = utf16Length(s)
