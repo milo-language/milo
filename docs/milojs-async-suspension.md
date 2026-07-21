@@ -229,10 +229,26 @@ which only executes on the runtime, so the engine harness cannot exercise it —
 the R1b gap made concrete. The test hangs on a pre-fix runtime binary and
 passes on a post-fix one.
 
-**Caveat — this fix alone does not fix the app.** A cold tahoeroads route still
-hangs: `fetchData`'s body never begins (its first log never prints), so its
-activation never runs. What has been RULED OUT by testing, so the next
-investigation does not repeat it:
+**The cold-route hang is now FIXED (`79e39a5`).** It was three independent bugs,
+none of them the adoption path: (A) `NATIVE_TCP_ACCEPT` did a *blocking* accept
+on the listener fd every event-loop iteration, so once a request parked on its
+fetch and released back to the loop, the loop blocked in accept and starved
+timers / microtasks / `serviceFetches` — the completed fetch response waited in
+its channel until the next TCP connection arrived (steady connections hid it;
+one request then silence exposed it); (B) three GC-rooting holes that swept
+promises parked activations depend on (await-park `popTemp` with no matching
+push, unrooted `spawnActivation` promise, and a new `actPromise` registry for a
+promise reachable only through the far end of a `.then` chain); (C) `__tcpClose`
+never closed the fd (append-only conn slots, so Drop never ran) — one leaked fd
+per request, hanging any EOF-draining client. The earlier note below reflects
+the investigation *before* the root cause was found; it is kept because its
+ruled-out list was correct and useful. My "`fetchData`'s body never starts" read
+was wrong — the body did start and parked normally; the hang was the event loop
+never delivering the settled fetch.
+
+Original (pre-fix) investigation notes — the ruled-out list here was accurate:
+
+What had been RULED OUT by testing, so the next investigation did not repeat it:
 
 - Not the recursion limit / stack size — zero RangeErrors in the hang; the
   per-binary `callDepthLimit` fix is unrelated.
