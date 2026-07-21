@@ -158,3 +158,31 @@ Add tuple/destructuring binding: `for (i, x) in vec.enumerate()` (`.enumerate()`
 already exists). Converts most `while i < .len()` loops to for-in. match already
 destructures tuples, so the pattern machinery exists. Scope: parser + checker +
 codegen bind the pattern per iteration.
+
+## milojs: DataView (unblocked 2026-07-20, designed, ready to land)
+
+The f64/f32 reinterpret now exists (runtime.milo f64ToBits/bitsToF64/f32ToBits/
+bitsToF32, added with float typed arrays 0affada), so DataView's float methods
+are unblocked. Full design, ready to execute:
+
+- **Reuse the typed-array struct**: `taBuf` (the ArrayBuffer), `taOffset`
+  (byteOffset), `taLen` (byteLength IN BYTES, not elements). Add `isDataView:
+  bool` to JSObj (+ the one literal) to distinguish from typed arrays, which
+  also have `taBuf >= 0`.
+- **Guard the shared taBuf paths** (this is the fiddly part — miss one and it's
+  silently wrong): in `getMember`, a DataView's `byteLength` is `taLen` (NOT
+  `taLen * taWidth`), and a DataView is NOT index-accessible (skip the
+  `asArrayIndex`/`taElem` branch for it). `buffer`/`byteOffset` are the same.
+- **Constructor** `new DataView(buf, byteOffset=0, byteLength=buf.byteLength-off)`
+  → NATIVE_DATAVIEW, bind global "DataView".
+- **Methods**: one `isDataViewMethodName` + one `dataViewMethod` handler (hook it
+  BEFORE the `isTypedArrayMethodName` check at eval.milo ~587 and the
+  method-access check ~234). The 16 get/setInt8/Uint8/Int16/Uint16/Int32/Uint32/
+  Float32/Float64 are thin wrappers over ONE `dvGet(bytes, absPos, width, signed,
+  isFloat, littleEndian)` + one `dvSet`. Endianness: DataView defaults
+  **big-endian** (littleEndian arg defaults false) — read `width` bytes and
+  reverse them when NOT little-endian before interpreting; floats via the
+  reinterpret helpers, signed ints via the sign-extend the taLoad integer cases
+  already do.
+- Fixture: get/set each type, both endiannesses, a Float64 round-trip, and a
+  DataView + Uint8Array over the same buffer agreeing on bytes.
