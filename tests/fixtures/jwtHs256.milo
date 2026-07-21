@@ -1,0 +1,25 @@
+// @expect: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6Im1pbG8iLCJhZG1pbiI6dHJ1ZX0.cLOXONWvn9tpjd1TwQp_UfP_gDAtFrUZA_l2a0l0N9w
+// @expect: verify-ok
+// @expect: badkey-rejected
+from "std/jwt" import {
+    jwtSignHS256, jwtVerifyHS256
+}
+
+// Token is byte-identical to PyJWT/jsonwebtoken for this header+payload+secret.
+fn main(): i32 {
+    let secret = "my-secret-key"
+    let payload = "{\"sub\":\"1234567890\",\"name\":\"milo\",\"admin\":true}"
+    let tok = jwtSignHS256(payload, secret)
+    print(tok)
+    if jwtVerifyHS256(tok, secret) {
+        print("verify-ok")
+    } else {
+        print("verify-FAIL")
+    }
+    if jwtVerifyHS256(tok, "wrong-key") {
+        print("badkey-FAIL")
+    } else {
+        print("badkey-rejected")
+    }
+    return 0
+}

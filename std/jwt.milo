@@ -1,0 +1,77 @@
+// std/jwt — JSON Web Tokens, HS256 (RFC 7519 / 7515), pure Milo.
+//
+// Signs and verifies `base64url(header).base64url(payload).base64url(HMAC-SHA256)`
+// on std/hmac + std/base64. HS256 is deterministic, so a token produced here is
+// byte-identical to PyJWT / jsonwebtoken for the same header, payload, and secret.
+// The payload is passed and returned as its raw JSON string — this module owns the
+// JOSE framing, not the claim schema. Verification recomputes the signature and
+// compares constant-time; alg is pinned to HS256 (no "alg":"none" downgrade).
+
+from "std/hmac" import {
+    hmacSha256Bytes
+}
+from "std/base64" import {
+    base64UrlEncode
+}
+
+// Fixed compact header for HS256; matches the {"alg":"HS256","typ":"JWT"} that
+// mainstream libraries emit, so signatures line up byte-for-byte. A function rather
+// than a module-scope `let` because Milo disallows runtime global initializers.
+fn _hs256Header(): string {
+    return "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
+}
+
+fn _signingInput(payload: &string): string {
+    return base64UrlEncode(_hs256Header()) + "." + base64UrlEncode(payload)
+}
+
+// Sign a JSON payload string with HS256, returning a compact JWS.
+fn jwtSignHS256(payload: &string, secret: &string): string {
+    let si = _signingInput(payload)
+    let sig = base64UrlEncode(hmacSha256Bytes(secret, si))
+    return si + "." + sig
+}
+
+// Byte-for-byte string equality that does not short-circuit on the first mismatch,
+// so verification does not leak where a forged signature diverges.
+fn _constEq(a: &string, b: &string): bool {
+    if a.len != b.len {
+        return false
+    }
+    var diff: i64 = 0
+    for i in 0..a.len {
+        diff = diff | ((a[i] as i64) ^ (b[i] as i64))
+    }
+    return diff == 0
+}
+
+// Verify a compact HS256 JWS against the secret. Returns true iff the token has the
+// exact header.payload.signature shape and the signature matches.
+fn jwtVerifyHS256(token: &string, secret: &string): bool {
+    // Locate the two dots; reject anything that isn't exactly three segments.
+    var firstDot: i64 = -1
+    var lastDot: i64 = -1
+    var dots: i64 = 0
+    for i in 0..token.len {
+        if token[i] == '.' {
+            dots = dots + 1
+            if firstDot < 0 {
+                firstDot = i
+            }
+            lastDot = i
+        }
+    }
+    if dots != 2 {
+        return false
+    }
+    var signingInput = ""
+    for i in 0..lastDot {
+        signingInput.push(token[i])
+    }
+    var sig = ""
+    for i in (lastDot + 1)..token.len {
+        sig.push(token[i])
+    }
+    let expected = base64UrlEncode(hmacSha256Bytes(secret, signingInput))
+    return _constEq(sig, expected)
+}
