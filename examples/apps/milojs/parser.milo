@@ -529,6 +529,11 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
         advance(p)
         return addExpr(prog, Expr.Num(v))
     }
+    if k == T_BIGINT {
+        let s = p.toks[p.pos].text.clone()
+        advance(p)
+        return addExpr(prog, Expr.BigIntLit(s))
+    }
     if k == T_STR {
         let s = p.toks[p.pos].text.clone()
         advance(p)

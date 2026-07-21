@@ -118,6 +118,9 @@ let T_DEFAULT: i32 = 92
 let T_ANDANDEQ: i32 = 99
 let T_OROREQ: i32 = 100
 let T_NULLISHEQ: i32 = 101
+// a BigInt literal (123n) — the decimal digits are carried in `.text`, not `.num`,
+// so no precision is lost before the parser turns them into a JSValue.BigInt
+let T_BIGINT: i32 = 102
 
 struct Token {
     kind: i32,
@@ -430,7 +433,7 @@ fn prevAllowsRegex(toks: &Vec<Token>): bool {
         return true
     }
     let k = toks[toks.len() - 1].kind
-    if k == T_IDENT || k == T_NUM || k == T_STR || k == T_RPAREN || k == T_RBRACKET || k == T_TEMPLATE_END {
+    if k == T_IDENT || k == T_NUM || k == T_BIGINT || k == T_STR || k == T_RPAREN || k == T_RBRACKET || k == T_TEMPLATE_END {
         return false
     }
     return true
@@ -539,13 +542,25 @@ fn lex(src: &string): Vec<Token> {
             if radix > 0 {
                 i = i + 2
                 var acc: f64 = 0.0
+                var raw = String.withCapacity(16)
                 while i < n {
                     let d = hexDigitVal(src[i])
                     if d < 0 || d >= radix {
                         break
                     }
                     acc = acc * (radix as f64) + (d as f64)
+                    raw.push(src[i])
                     i = i + 1
+                }
+                // 0x1Fn / 0b101n / 0o17n: radix-prefixed BigInt literal — convert
+                // the raw digits to a canonical decimal string with full precision
+                if i < n && src[i] == 'n' {
+                    i = i + 1
+                    toks.push(Token {
+                        kind: T_BIGINT, num: 0.0, text: bnFromRadix(raw, radix), nlBefore: false
+                    }
+                    )
+                    continue
                 }
                 v = acc
                 toks.push(Token {
@@ -557,6 +572,26 @@ fn lex(src: &string): Vec<Token> {
             while i < n && (isDigitByte(src[i]) || src[i] == '.') {
                 txt.push(src[i])
                 i = i + 1
+            }
+            // BigInt literal: pure integer digits followed by `n` (123n). A `.` or
+            // exponent makes it a normal float, so only a dot-free run qualifies.
+            if i < n && src[i] == 'n' {
+                var hasDot = false
+                var di: i64 = 0
+                while di < txt.len() {
+                    if txt[di] == '.' {
+                        hasDot = true
+                    }
+                    di = di + 1
+                }
+                if !hasDot {
+                    i = i + 1
+                    toks.push(Token {
+                        kind: T_BIGINT, num: 0.0, text: bigNormalizeDec(txt), nlBefore: false
+                    }
+                    )
+                    continue
+                }
             }
             // exponent part: 1e10, 1.5E-3
             if i < n && (src[i] == 'e' || src[i] == 'E') {

@@ -14,6 +14,9 @@ from "./runtime" import {
 from "./builtins" import {
     stringMethod, jsCharAt, mjStringifyVal, mjJsonParse, mjJsonOmitted
 }
+from "./bigint" import {
+    bigNormalizeDec, bnAdd, bnSub, bnMul, bnDiv, bnMod, bnPow, bnNeg, bnCmp, bnFromF64, bnToRadix, bnFromRadix, isDecimalIntStr
+}
 from "./regex" import {
     regexCompile, regexExec
 }
@@ -1434,6 +1437,7 @@ let NATIVE_UNLINK: i64 = 120
 let NATIVE_RMDIR: i64 = 121
 let NATIVE_RENAME: i64 = 122
 let NATIVE_IS_DIR: i64 = 123
+let NATIVE_BIGINT: i64 = 124
 let NATIVE_ARRAY_CTOR: i64 = 67
 let NATIVE_TCP_LISTEN: i64 = 68
 let NATIVE_TCP_ACCEPT: i64 = 69
@@ -1490,6 +1494,9 @@ fn nativeCtorName(id: i64): string {
     }
     if id == NATIVE_NUMBER {
         return "Number"
+    }
+    if id == NATIVE_BIGINT {
+        return "BigInt"
     }
     if id == NATIVE_STRING {
         return "String"
@@ -1719,6 +1726,48 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             return JSValue.Number(0.0)
         }
         return JSValue.Number(toNum(argVals[0]))
+    }
+    if id == NATIVE_BIGINT {
+        if argVals.len() == 0 {
+            return JSValue.BigInt("0")
+        }
+        match cloneValue(argVals[0]) {
+            JSValue.BigInt(s) => {
+                return JSValue.BigInt(s.clone())
+            }
+            JSValue.Bool(b) => {
+                if b {
+                    return JSValue.BigInt("1")
+                }
+                return JSValue.BigInt("0")
+            }
+            JSValue.Str(s) => {
+                let t = jsTrim(s)
+                if isDecimalIntStr(t) {
+                    return JSValue.BigInt(bigNormalizeDec(t))
+                }
+                // radix-prefixed strings (0x/0b/0o) parse with full precision
+                if t.len() > 2 && t[0] == '0' {
+                    let p = t[1]
+                    if p == 'x' || p == 'X' {
+                        return JSValue.BigInt(bnFromRadix(bnStrFrom(t, 2), 16))
+                    }
+                    if p == 'b' || p == 'B' {
+                        return JSValue.BigInt(bnFromRadix(bnStrFrom(t, 2), 2))
+                    }
+                    if p == 'o' || p == 'O' {
+                        return JSValue.BigInt(bnFromRadix(bnStrFrom(t, 2), 8))
+                    }
+                }
+                // anything else (empty → 0n) via the numeric path
+                return JSValue.BigInt(bnFromF64(strToNum(t)))
+            }
+            _ => {
+                // BigInt(number): must be an integer (JS throws otherwise); we
+                // truncate defensively rather than throw, staying non-crashing
+                return JSValue.BigInt(bnFromF64(toNum(argVals[0])))
+            }
+        }
     }
     if id == NATIVE_STRING {
         if argVals.len() == 0 {
@@ -3948,6 +3997,7 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "valueOf", makeBoundMethod(st, JSValue.Undefined, "valueOf"))
     scopeDefine(st, 0, "Object", JSValue.Native(NATIVE_OBJECT_CTOR))
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
+    scopeDefine(st, 0, "BigInt", JSValue.Native(NATIVE_BIGINT))
     let stringCtorObj = getNativeProps(st, NATIVE_STRING)
     objSet(st, stringCtorObj, "fromCharCode", JSValue.Native(NATIVE_STRING_FROMCHARCODE))
     objSet(st, stringCtorObj, "fromCodePoint", JSValue.Native(NATIVE_STRING_FROMCODEPOINT))
@@ -4111,6 +4161,9 @@ fn typeofStr(v: &JSValue): string {
         JSValue.Str(_s) => {
             return "string"
         }
+        JSValue.BigInt(_s) => {
+            return "bigint"
+        }
         JSValue.Func(_f, _e) => {
             return "function"
         }
@@ -4121,6 +4174,167 @@ fn typeofStr(v: &JSValue): string {
             return "function"
         }
     }
+}
+
+fn isBigIntVal(v: &JSValue): bool {
+    match v {
+        JSValue.BigInt(_s) => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+fn isStrVal(v: &JSValue): bool {
+    match v {
+        JSValue.Str(_s) => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+// the decimal string of a BigInt, or "" for anything else
+fn bigStrOf(v: &JSValue): string {
+    match v {
+        JSValue.BigInt(s) => {
+            return s.clone()
+        }
+        _ => {
+            return ""
+        }
+    }
+}
+
+// Binary operators where at least one operand is a BigInt. Arithmetic requires
+// BOTH to be BigInt (JS throws on a mix); comparison and == coerce across types;
+// === defers to the value-equality rule; bitwise on BigInt is not implemented and
+// throws rather than returning a silently-wrong (double-based) answer.
+fn evalBigIntBin(op: &string, va: JSValue, vb: JSValue, st: &mut Interp): JSValue {
+    let aBig = isBigIntVal(va)
+    let bBig = isBigIntVal(vb)
+    // `+` with a string operand concatenates (BigInt stringifies without the `n`)
+    if op == "+" && (isStrVal(va) || isStrVal(vb)) {
+        return JSValue.Str(toStr(va) + toStr(vb))
+    }
+    if op == "===" {
+        return JSValue.Bool(jsStrictEquals(va, vb))
+    }
+    if op == "!==" {
+        return JSValue.Bool(!jsStrictEquals(va, vb))
+    }
+    // arithmetic: both operands must be BigInt
+    if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" || op == "**" {
+        if !(aBig && bBig) {
+            st.throwing = true
+            st.thrownValue = makeError(st, "TypeError", "Cannot mix BigInt and other types, use explicit conversions")
+            return JSValue.Undefined
+        }
+        let sa = bigStrOf(va)
+        let sb = bigStrOf(vb)
+        if op == "+" {
+            return JSValue.BigInt(bnAdd(sa, sb))
+        }
+        if op == "-" {
+            return JSValue.BigInt(bnSub(sa, sb))
+        }
+        if op == "*" {
+            return JSValue.BigInt(bnMul(sa, sb))
+        }
+        if op == "/" {
+            if sb == "0" {
+                st.throwing = true
+                st.thrownValue = makeError(st, "RangeError", "Division by zero")
+                return JSValue.Undefined
+            }
+            return JSValue.BigInt(bnDiv(sa, sb))
+        }
+        if op == "%" {
+            if sb == "0" {
+                st.throwing = true
+                st.thrownValue = makeError(st, "RangeError", "Division by zero")
+                return JSValue.Undefined
+            }
+            return JSValue.BigInt(bnMod(sa, sb))
+        }
+        // op == "**"
+        if sb.len() > 0 && sb[0] == '-' {
+            st.throwing = true
+            st.thrownValue = makeError(st, "RangeError", "Exponent must be non-negative")
+            return JSValue.Undefined
+        }
+        return JSValue.BigInt(bnPow(sa, sb))
+    }
+    // comparison + loose equality: mixing is allowed. Both BigInt compare exactly;
+    // a BigInt vs Number/String comparison goes through f64 (lossy only past 2^53).
+    if op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=" {
+        var c: i64 = 0
+        if aBig && bBig {
+            c = bnCmp(bigStrOf(va), bigStrOf(vb))
+        } else {
+            let na = toNum(va)
+            let nb = toNum(vb)
+            if na < nb {
+                c = -1
+            } else if na > nb {
+                c = 1
+            } else {
+                c = 0
+            }
+        }
+        if op == "<" {
+            return JSValue.Bool(c < 0)
+        }
+        if op == ">" {
+            return JSValue.Bool(c > 0)
+        }
+        if op == "<=" {
+            return JSValue.Bool(c <= 0)
+        }
+        if op == ">=" {
+            return JSValue.Bool(c >= 0)
+        }
+        if op == "==" {
+            return JSValue.Bool(c == 0)
+        }
+        return JSValue.Bool(c != 0)
+    }
+    // &, |, ^, <<, >> on BigInt. Both operands must be BigInt (like arithmetic).
+    if op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>" {
+        if !(aBig && bBig) {
+            st.throwing = true
+            st.thrownValue = makeError(st, "TypeError", "Cannot mix BigInt and other types, use explicit conversions")
+            return JSValue.Undefined
+        }
+        let sa = bigStrOf(va)
+        let sb = bigStrOf(vb)
+        if op == "<<" {
+            return JSValue.BigInt(bnShl(sa, sb))
+        }
+        if op == ">>" {
+            return JSValue.BigInt(bnShr(sa, sb))
+        }
+        if op == ">>>" {
+            // JS: BigInts are signed, `>>>` has no meaning → TypeError
+            st.throwing = true
+            st.thrownValue = makeError(st, "TypeError", "BigInts have no unsigned right shift, use >> instead")
+            return JSValue.Undefined
+        }
+        var opc: u8 = '&'
+        if op == "|" {
+            opc = '|'
+        } else if op == "^" {
+            opc = '^'
+        }
+        return JSValue.BigInt(bnBitwise(opc, sa, sb))
+    }
+    st.throwing = true
+    st.thrownValue = makeError(st, "TypeError", "BigInt operation not supported")
+    return JSValue.Undefined
 }
 
 fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
@@ -4136,6 +4350,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.StrLit(s) => {
             return JSValue.Str(s.clone())
+        }
+        Expr.BigIntLit(s) => {
+            return JSValue.BigInt(bigNormalizeDec(s))
         }
         Expr.BoolLit(b) => {
             return JSValue.Bool(b)
@@ -4255,6 +4472,11 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             pushTemp(st, cloneValue(va))
             let vb = evalExpr(prog, b, st, scope)
             popTemp(st)
+            // a BigInt operand takes a dedicated path: arbitrary-precision math,
+            // its own mixing rules (BigInt + Number throws), and value equality
+            if isBigIntVal(va) || isBigIntVal(vb) {
+                return evalBigIntBin(op, va, vb, st)
+            }
             // arithmetic/relational operators on an object operand need
             // interp-aware ToPrimitive (a Date valueOf's to its ms, arrays join,
             // objects call valueOf/toString). evalBin is a pure function with no
@@ -4306,9 +4528,17 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             }
             let va = evalExpr(prog, a, st, scope)
             if op == "-" {
+                // BigInt negation stays a BigInt; unary + on a BigInt throws in JS
+                if isBigIntVal(va) {
+                    return JSValue.BigInt(bnNeg(bigStrOf(va)))
+                }
                 // negate, don't subtract from zero: 0.0 - 0.0 is +0, so `-0`
                 // lost its sign and Object.is(0, -0) came out true
                 return JSValue.Number(-toNum(va))
+            }
+            if op == "~" && isBigIntVal(va) {
+                // ~x on a BigInt is -(x+1); exact and cheap without full bitwise
+                return JSValue.BigInt(bnSub(bnNeg(bigStrOf(va)), "1"))
             }
             if op == "typeof" {
                 // a bind() result is an object internally but a function to JS
@@ -5478,6 +5708,10 @@ fn inspectInner(st: &Interp, v: &JSValue, depth: i64): string {
         JSValue.Str(s) => {
             return "\"" + s + "\""
         }
+        JSValue.BigInt(s) => {
+            // console.log shows a BigInt with the trailing `n` (String() does not)
+            return s + "n"
+        }
         JSValue.Obj(o) => {
             return inspectObj(st, o, depth)
         }
@@ -5573,6 +5807,9 @@ fn inspectTop(st: &Interp, v: &JSValue): string {
     match v {
         JSValue.Obj(o) => {
             return inspectObj(st, o, 0)
+        }
+        JSValue.BigInt(s) => {
+            return s + "n"
         }
         _ => {
             return toStr(v)
@@ -9265,7 +9502,17 @@ fn primitiveMethod(name: &string, recv: &JSValue, args: &Vec<JSValue>): JSValue 
         }
         return JSValue.Str(numToFixed(toNum(recv), digits))
     }
-    // toString(radix) — only meaningful for numbers, and only for integers here
+    // toString(radix). BigInt uses arbitrary-precision conversion (bnToRadix);
+    // numbers go through the f64-backed numToRadix. A BigInt is exact at any size.
+    if isBigIntVal(recv) {
+        var radix: i64 = 10
+        if args.len() > 0 {
+            radix = toNum(args[0]) as i64
+        }
+        if radix >= 2 && radix <= 36 {
+            return JSValue.Str(bnToRadix(bigStrOf(recv), radix))
+        }
+    }
     if args.len() > 0 {
         let radix = toNum(args[0]) as i64
         if radix >= 2 && radix <= 36 && radix != 10 {

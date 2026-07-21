@@ -9,6 +9,8 @@
 enum Expr {
     Num(f64),
     StrLit(string),
+    // a BigInt literal (123n) — the canonical decimal string
+    BigIntLit(string),
     BoolLit(bool),
     NullLit,
     UndefLit,
@@ -210,6 +212,9 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.StrLit(s) => {
             return Expr.StrLit(s.clone())
+        }
+        Expr.BigIntLit(s) => {
+            return Expr.BigIntLit(s.clone())
         }
         Expr.BoolLit(b) => {
             return Expr.BoolLit(b)

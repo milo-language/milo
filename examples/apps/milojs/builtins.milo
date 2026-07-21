@@ -965,6 +965,11 @@ fn mjPushStringified(out: &mut string, v: &JSValue, st: &Interp) {
         JSValue.Native(_id) => {
             out.pushStr("null")
         }
+        JSValue.BigInt(s) => {
+            // node's JSON.stringify THROWS on a BigInt; this shim can't throw
+            // (no &mut Interp here), so emit the digits — lenient, non-crashing
+            out.pushStr(s)
+        }
         JSValue.Bool(b) => {
             if b {
                 out.pushStr("true")

@@ -29,6 +29,10 @@ enum JSValue {
     Obj(i64),
     // a built-in function/constructor, identified by a native id (see callNative)
     Native(i64),
+    // an arbitrary-precision integer (BigInt), stored as its canonical decimal
+    // string: "0", "123", "-456" — no leading zeros, "-" only for negatives.
+    // A primitive (by value), not an object.
+    BigInt(string),
 }
 
 fn cloneValue(v: &JSValue): JSValue {
@@ -47,6 +51,9 @@ fn cloneValue(v: &JSValue): JSValue {
         }
         JSValue.Str(s) => {
             return JSValue.Str(s.clone())
+        }
+        JSValue.BigInt(s) => {
+            return JSValue.BigInt(s.clone())
         }
         JSValue.Func(f, env) => {
             return JSValue.Func(f, env)
@@ -263,6 +270,10 @@ fn toStr(v: &JSValue): string {
             return numToStr(n)
         }
         JSValue.Str(s) => {
+            return s.clone()
+        }
+        JSValue.BigInt(s) => {
+            // String(10n) is "10" (no trailing "n")
             return s.clone()
         }
         JSValue.Func(_f, _env) => {
@@ -1258,6 +1269,10 @@ fn toNum(v: &JSValue): f64 {
         JSValue.Str(s) => {
             return strToNum(s)
         }
+        JSValue.BigInt(s) => {
+            // Number(10n) is 10; large magnitudes lose precision past 2^53, as in JS
+            return strToNum(s)
+        }
         JSValue.Func(_f, _env) => {
             return jsNan()
         }
@@ -1286,6 +1301,10 @@ fn truthy(v: &JSValue): bool {
         }
         JSValue.Str(s) => {
             return s.len() > 0
+        }
+        JSValue.BigInt(s) => {
+            // 0n is the only falsy BigInt
+            return s != "0"
         }
         JSValue.Func(_f, _env) => {
             return true
@@ -1373,6 +1392,17 @@ fn jsStrictEquals(a: &JSValue, b: &JSValue): bool {
         JSValue.Str(x) => {
             match b {
                 JSValue.Str(y) => {
+                    return x == y
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.BigInt(x) => {
+            // 10n === 10n is true (by value); 10n === 10 is false (mixed types)
+            match b {
+                JSValue.BigInt(y) => {
                     return x == y
                 }
                 _ => {
