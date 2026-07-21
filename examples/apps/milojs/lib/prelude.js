@@ -187,41 +187,54 @@ function ArrayBuffer(len) {
 }
 ArrayBuffer.isView = function (v) { return !!(v && v._isTypedArray); };
 
-function Uint8Array(arg) {
-  var out;
-  if (typeof arg === 'number') {
-    out = [];
-    for (var i = 0; i < arg; i++) out.push(0);
-  } else if (arg instanceof ArrayBuffer) {
-    out = arg._bytes;
-  } else if (Array.isArray(arg)) {
-    out = arg.slice();
-  } else if (arg && arg.bytes) {
-    // a Buffer
-    out = arg.bytes.slice();
-  } else if (arg && typeof arg.length === 'number') {
-    out = [];
-    for (var j = 0; j < arg.length; j++) out.push(arg[j] & 0xff);
-  } else {
-    out = [];
+// Typed arrays are backed by a plain JS array of ELEMENT VALUES (not bytes), one
+// factory per element type so each coerces its inputs correctly and reports the
+// right BYTES_PER_ELEMENT. Two known limits vs a real typed array: element WRITES
+// (arr[i] = v) are not re-coerced (the interpreter can't intercept them), and a
+// view over an ArrayBuffer of a wider type reads the raw bytes, not reinterpreted
+// elements — neither arises in the code paths this runtime serves. (Int16Array /
+// Float32Array are provided natively by the engine and are left as-is.)
+function _taFactory(bytesPer, coerce) {
+  function TA(arg) {
+    var out;
+    if (typeof arg === 'number') {
+      out = [];
+      for (var i = 0; i < arg; i++) out.push(coerce(0));
+    } else if (arg instanceof ArrayBuffer) {
+      out = arg._bytes; // byte view shares the buffer's storage
+    } else if (Array.isArray(arg) || (arg && arg._isTypedArray)) {
+      out = [];
+      for (var j = 0; j < arg.length; j++) out.push(coerce(arg[j]));
+    } else if (arg && arg.bytes) {
+      out = [];
+      for (var m = 0; m < arg.bytes.length; m++) out.push(coerce(arg.bytes[m]));
+    } else if (arg && typeof arg.length === 'number') {
+      out = [];
+      for (var n = 0; n < arg.length; n++) out.push(coerce(arg[n]));
+    } else {
+      out = [];
+    }
+    out._isTypedArray = true;
+    out.BYTES_PER_ELEMENT = bytesPer;
+    out.byteLength = out.length * bytesPer;
+    out.byteOffset = 0;
+    out.buffer = arg instanceof ArrayBuffer ? arg : null;
+    out.set = function (src, offset) {
+      var o = offset || 0;
+      for (var k = 0; k < src.length; k++) out[o + k] = coerce(src[k]);
+    };
+    out.subarray = function (a, b) { return TA(out.slice(a, b)); };
+    return out;
   }
-  out._isTypedArray = true;
-  out.byteLength = out.length;
-  out.byteOffset = 0;
-  out.buffer = arg instanceof ArrayBuffer ? arg : null;
-  out.set = function (src, offset) {
-    var o = offset || 0;
-    for (var k = 0; k < src.length; k++) out[o + k] = src[k] & 0xff;
-  };
-  out.subarray = function (a, b) { return Uint8Array(out.slice(a, b)); };
-  return out;
+  return TA;
 }
-var Uint8ClampedArray = Uint8Array;
-var Uint16Array = Uint8Array;
-var Uint32Array = Uint8Array;
-var Int8Array = Uint8Array;
-var Int32Array = Uint8Array;
-var Float64Array = Uint8Array;
+var Uint8Array = _taFactory(1, function (v) { return v & 0xff; });
+var Int8Array = _taFactory(1, function (v) { return (v << 24) >> 24; });
+var Uint8ClampedArray = _taFactory(1, function (v) { v = Math.round(v); return v < 0 ? 0 : (v > 255 ? 255 : v); });
+var Uint16Array = _taFactory(2, function (v) { return v & 0xffff; });
+var Uint32Array = _taFactory(4, function (v) { return v >>> 0; });
+var Int32Array = _taFactory(4, function (v) { return v | 0; });
+var Float64Array = _taFactory(8, function (v) { return +v; });
 
 function DataView(buf) {
   if (!(this instanceof DataView)) return new DataView(buf);
