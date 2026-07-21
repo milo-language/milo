@@ -1,0 +1,68 @@
+// std/zstd: decode real `zstd -c` output for Raw/RLE frames, byte-for-byte.
+// Vectors captured from Zstandard CLI v1.5.7 (raw blocks; the checksum/no-check and
+// single-segment-empty header variants) plus a hand-built RLE frame and a compressed
+// block that must be rejected cleanly.
+
+from "std/zstd" import {
+    zstdDecompress
+}
+
+fn _hexVal(c: u8): i64 {
+    if c >= '0' && c <= '9' {
+        return (c - '0') as i64
+    }
+    if c >= 'a' && c <= 'f' {
+        return (c - 'a' + 10) as i64
+    }
+    return 0
+}
+
+fn fromHex(h: &string): string {
+    var out = ""
+    var i: i64 = 0
+    while i + 1 < h.len {
+        let hi = _hexVal(h[i])
+        let lo = _hexVal(h[i + 1])
+        out.push(((hi << 4) | lo) as u8)
+        i = i + 2
+    }
+    return out
+}
+
+fn decode(hex: string): string {
+    let bytes = fromHex(hex)
+    match zstdDecompress(bytes) {
+        Result.Ok(s) => {
+            return s
+        }
+        Result.Err(e) => {
+            return "ERR:" + e
+        }
+    }
+}
+
+fn main() {
+    // Raw block, content-checksum flag set.
+    // @expect: hello world
+    print(decode("28b52ffd045859000068656c6c6f20776f726c6468691eb2"))
+
+    // Raw block, --no-check (no trailing checksum).
+    // @expect: hello world
+    print(decode("28b52ffd005859000068656c6c6f20776f726c64"))
+
+    // Empty input: single-segment header, zero-size raw block.
+    // @expect: 0
+    print(decode("28b52ffd240001000099e9d851").len)
+
+    // 64 incompressible bytes → one raw block of size 64.
+    // @expect: 64
+    print(decode("28b52ffd00580102009c3d1a1acff285675465e775dc34a86787e07574641afcf131e399d81b597464e7e623ce3ea49fc3526a8c8d7283b052a9d5547ee3654c4d188981a8b1352b9c").len)
+
+    // Hand-built RLE frame: window=0x00, block(type=1,size=5,last=1)=0x2b, byte 'Q'.
+    // @expect: QQQQQ
+    print(decode("28b52ffd00002b000051"))
+
+    // Compressed block (type 2) — rejected with a clear error, not a crash.
+    // @expect: true
+    print(decode("28b52ffd0458450000106161010022c002d79af998").startsWith("ERR:zstd: compressed"))
+}
