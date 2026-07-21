@@ -1,0 +1,72 @@
+// std/hmac — HMAC-SHA256 (RFC 2104 / FIPS 198-1) on the pure-Milo SHA-256.
+//
+// HMAC(K, m) = H((K' ^ opad) || H((K' ^ ipad) || m)), where K' is the key sized to
+// the 64-byte block: hashed first if longer, zero-padded otherwise. Built on
+// sha256Bytes so the inner digest stays raw for the outer hash — no hex round-trip.
+// Used for JWT (HS256), AWS SigV4, webhook signatures.
+
+from "std/sha256" import {
+    sha256Bytes, sha256
+}
+
+let BLOCK: i64 = 64
+
+fn _hexNibble(v: i64): u8 {
+    if v < 10 {
+        return (v + 48) as u8
+    }
+    return (v - 10 + 97) as u8
+}
+
+// Normalize the key to exactly BLOCK bytes (RFC 2104 §2).
+fn _blockKey(key: &string): string {
+    var k = ""
+    if key.len > BLOCK {
+        let h = sha256Bytes(key)
+        for i in 0..h.len {
+            k.push(h[i])
+        }
+    } else {
+        for i in 0..key.len {
+            k.push(key[i])
+        }
+    }
+    while k.len < BLOCK {
+        k.push(0 as u8)
+    }
+    return k
+}
+
+// HMAC-SHA256, returning the 32 raw digest bytes.
+fn hmacSha256Bytes(key: &string, msg: &string): string {
+    let k = _blockKey(key)
+    var inner = ""
+    for i in 0..BLOCK {
+        inner.push(((k[i] as i64) ^ 0x36) as u8)
+    }
+    for i in 0..msg.len {
+        inner.push(msg[i])
+    }
+    let innerDigest = sha256Bytes(inner)
+
+    var outer = ""
+    for i in 0..BLOCK {
+        outer.push(((k[i] as i64) ^ 0x5c) as u8)
+    }
+    for i in 0..innerDigest.len {
+        outer.push(innerDigest[i])
+    }
+    return sha256Bytes(outer)
+}
+
+// HMAC-SHA256 as a 64-char lowercase hex string.
+fn hmacSha256(key: &string, msg: &string): string {
+    let digest = hmacSha256Bytes(key, msg)
+    var out = ""
+    for i in 0..digest.len {
+        let byte = digest[i] as i64
+        out.push(_hexNibble((byte >> 4) & 0xf))
+        out.push(_hexNibble(byte & 0xf))
+    }
+    return out
+}

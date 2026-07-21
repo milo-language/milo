@@ -1,0 +1,14 @@
+// @expect: f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8
+// @expect: b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad
+// @expect: 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
+from "std/hmac" import {
+    hmacSha256
+}
+
+// Checked against `openssl dgst -sha256 -hmac`. Third vector is RFC 4231 test 2.
+fn main(): i32 {
+    print(hmacSha256("key", "The quick brown fox jumps over the lazy dog"))
+    print(hmacSha256("", ""))
+    print(hmacSha256("Jefe", "what do ya want for nothing?"))
+    return 0
+}

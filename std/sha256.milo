@@ -55,8 +55,10 @@ fn _hexNibble(v: i64): u8 {
     return (v - 10 + 97) as u8
 }
 
-// Compute the SHA-256 digest of a byte buffer, returned as 64-char lowercase hex.
-fn sha256(input: &string): string {
+// Compute the SHA-256 digest of a byte buffer, returned as 32 raw bytes.
+// Use this when the digest feeds further bytes (HMAC, key derivation); `sha256`
+// wraps it for the common hex-string case.
+fn sha256Bytes(input: &string): string {
     let m = _pad(input)
     var h = _initH()
     let k = _roundK()
@@ -119,15 +121,25 @@ fn sha256(input: &string): string {
         h[7] = (h[7] + hh) & MASK32
     }
 
-    // Serialize H0..H7 big-endian to 64 hex chars.
+    // Serialize H0..H7 big-endian to 32 bytes.
     var out = ""
     for i in 0..8 {
         let word = h[i]
         for b in 0..4 {
-            let byte = (word >> ((3 - b) * 8)) & 0xff
-            out.push(_hexNibble((byte >> 4) & 0xf))
-            out.push(_hexNibble(byte & 0xf))
+            out.push(((word >> ((3 - b) * 8)) & 0xff) as u8)
         }
+    }
+    return out
+}
+
+// Compute the SHA-256 digest of a byte buffer, returned as 64-char lowercase hex.
+fn sha256(input: &string): string {
+    let digest = sha256Bytes(input)
+    var out = ""
+    for i in 0..digest.len {
+        let byte = digest[i] as i64
+        out.push(_hexNibble((byte >> 4) & 0xf))
+        out.push(_hexNibble(byte & 0xf))
     }
     return out
 }
