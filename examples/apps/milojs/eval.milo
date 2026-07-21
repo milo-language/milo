@@ -9009,6 +9009,66 @@ fn flattenInto(st: &mut Interp, out: i64, arr: i64, depth: i64) {
 // properties. The receiver is temp-rooted across argument evaluation (an argument
 // may be a call that triggers GC).
 // toString/valueOf and friends on a number, boolean, string, null or undefined.
+// Number.toLocaleString default (en-US): thousands-grouped integer part, up to 3
+// fraction digits with trailing zeros stripped — (1000000).toLocaleString() is
+// "1,000,000" and (1234.5678) is "1,234.568". Only the default locale; no
+// currency/percent options.
+fn numToLocale(n: f64): string {
+    if !(n == n) {
+        return "NaN"
+    }
+    if !isFiniteF(n) {
+        if n < 0.0 {
+            return "-∞"
+        }
+        return "∞"
+    }
+    let neg = n < 0.0
+    var abs = n
+    if neg {
+        abs = 0.0 - n
+    }
+    // round to 3 fraction digits, then split on the '.'
+    let fixed = numToFixed(abs, 3)
+    var intPart = fixed.clone()
+    var fracPart = ""
+    var dot: i64 = 0
+    while dot < fixed.len() {
+        if fixed[dot] == '.' {
+            intPart = strSlice(fixed, 0, dot)
+            fracPart = strSlice(fixed, dot + 1, fixed.len())
+            dot = fixed.len()
+        } else {
+            dot = dot + 1
+        }
+    }
+    // strip trailing zeros from the fraction
+    var fe = fracPart.len()
+    while fe > 0 && fracPart[fe - 1] == '0' {
+        fe = fe - 1
+    }
+    fracPart = strSlice(fracPart, 0, fe)
+    // group the integer part with commas every three digits from the right
+    var grouped = ""
+    let ilen = intPart.len()
+    var k: i64 = 0
+    while k < ilen {
+        if k > 0 && (ilen - k) % 3 == 0 {
+            grouped = grouped + ","
+        }
+        grouped = grouped + strSlice(intPart, k, k + 1)
+        k = k + 1
+    }
+    var out = grouped
+    if fracPart.len() > 0 {
+        out = out + "." + fracPart
+    }
+    if neg {
+        out = "-" + out
+    }
+    return out
+}
+
 fn primitiveMethod(name: &string, recv: &JSValue, args: &Vec<JSValue>): JSValue {
     if name == "valueOf" {
         return cloneValue(recv)
@@ -9048,6 +9108,16 @@ fn primitiveMethod(name: &string, recv: &JSValue, args: &Vec<JSValue>): JSValue 
         let radix = toNum(args[0]) as i64
         if radix >= 2 && radix <= 36 && radix != 10 {
             return JSValue.Str(numToRadix(toNum(recv), radix))
+        }
+    }
+    // number.toLocaleString() → thousands-grouped default-locale form
+    if name == "toLocaleString" {
+        match recv {
+            JSValue.Number(n) => {
+                return JSValue.Str(numToLocale(n))
+            }
+            _ => {
+            }
         }
     }
     return JSValue.Str(toStr(recv))
