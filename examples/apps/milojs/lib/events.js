@@ -25,6 +25,25 @@ EventEmitter.prototype.addListener = function (name, fn) {
   return this.on(name, fn);
 };
 
+// prepend* register at the FRONT of the listener list (run before existing ones)
+EventEmitter.prototype.prependListener = function (name, fn) {
+  this._list(name).unshift(fn);
+  return this;
+};
+
+EventEmitter.prototype.prependOnceListener = function (name, fn) {
+  var self = this;
+  var fired = false;
+  var wrapper = function () {
+    if (fired) return undefined;
+    fired = true;
+    self.removeListener(name, wrapper);
+    return fn(...arguments);
+  };
+  this._list(name).unshift(wrapper);
+  return this;
+};
+
 EventEmitter.prototype.once = function (name, fn) {
   var self = this;
   var fired = false;
