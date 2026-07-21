@@ -229,6 +229,18 @@ fn joinArray(st: &mut Interp, o: i64, sep: &string): string {
 // toString, taking the first that yields a primitive. Arrays and plain objects
 // valueOf to themselves, so toString decides — arrays join, plain objects give
 // "[object Object]". A non-object value is already primitive.
+// ToPrimitive with the NUMBER hint (used by arithmetic/relational operators).
+// The only object whose number-hint result differs from the default here is a
+// Date: default hint (used by `+`) stringifies it, number hint yields its epoch
+// milliseconds. Everything else follows the same valueOf-then-toString path.
+fn toPrimitiveNumber(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
+    let h = objHandle(v)
+    if h >= 0 && st.objects[h].isDate {
+        return JSValue.Number(st.objects[h].dateMs)
+    }
+    return toPrimitiveDefault(prog, v, st)
+}
+
 fn toPrimitiveDefault(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
     let h = objHandle(v)
     if h < 0 {
@@ -3978,20 +3990,35 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             pushTemp(st, cloneValue(va))
             let vb = evalExpr(prog, b, st, scope)
             popTemp(st)
-            // `+` on an object operand needs interp-aware ToPrimitive (arrays join,
-            // objects with valueOf/toString call them). evalBin is a pure function
-            // with no interp access, so do the coercion here. Gated on an object
-            // operand to keep the hot number/string path free of overhead.
-            if op == "+" && (objHandle(va) >= 0 || objHandle(vb) >= 0) {
+            // arithmetic/relational operators on an object operand need
+            // interp-aware ToPrimitive (a Date valueOf's to its ms, arrays join,
+            // objects call valueOf/toString). evalBin is a pure function with no
+            // interp access, so do the coercion here. Gated on an object operand
+            // to keep the hot number/string path free of overhead. Equality
+            // (==/!=/===/!==) is excluded — it has its own object rules.
+            let coerces = op == "+" || op == "-" || op == "*" || op == "/" || op == "%" || op == "**" || op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>" || op == "<" || op == ">" || op == "<=" || op == ">="
+            if coerces && (objHandle(va) >= 0 || objHandle(vb) >= 0) {
                 pushTemp(st, cloneValue(va))
                 pushTemp(st, cloneValue(vb))
-                let pa = toPrimitiveDefault(prog, va, st)
-                pushTemp(st, cloneValue(pa))
-                let pb = toPrimitiveDefault(prog, vb, st)
+                // `+` uses the default hint (Date -> string); the arithmetic and
+                // relational operators use the number hint (Date -> epoch ms).
+                // Each operand coerced once, so a side-effecting valueOf runs once.
+                var pa = JSValue.Undefined
+                var pb = JSValue.Undefined
+                if op == "+" {
+                    pa = toPrimitiveDefault(prog, va, st)
+                    pushTemp(st, cloneValue(pa))
+                    pb = toPrimitiveDefault(prog, vb, st)
+                    popTemp(st)
+                } else {
+                    pa = toPrimitiveNumber(prog, va, st)
+                    pushTemp(st, cloneValue(pa))
+                    pb = toPrimitiveNumber(prog, vb, st)
+                    popTemp(st)
+                }
                 popTemp(st)
                 popTemp(st)
-                popTemp(st)
-                return evalBin("+", pa, pb)
+                return evalBin(op, pa, pb)
             }
             return evalBin(op, va, vb)
         }
@@ -4295,6 +4322,11 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 return last
             }
             if op == "+" {
+                // unary plus is ToNumber, which ToPrimitive(number)s an object
+                // first (so +new Date(0) is its epoch ms, not NaN)
+                if objHandle(va) >= 0 {
+                    return JSValue.Number(toNum(toPrimitiveNumber(prog, va, st)))
+                }
                 return JSValue.Number(toNum(va))
             }
             if op == "~" {
