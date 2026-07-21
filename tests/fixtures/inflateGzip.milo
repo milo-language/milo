@@ -1,0 +1,26 @@
+// @expect: hello
+// @expect: world
+// @expect: milo pure-milo inflate
+// @expect: hello world hello world hello world
+from "std/inflate" import {
+    gzipDecompress
+}
+
+// Decodes a real gzip stream produced by the system gzip encoder — pins the
+// pure-Milo inflater against an external oracle, not just its own round-trip.
+fn main(): i32 {
+    let gz: [i64; 60] = [31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 203, 72, 205, 201, 201, 231, 42, 207, 47, 202, 73, 225, 202, 205, 204, 201, 87, 40, 40, 45, 74, 213, 5, 179, 50, 243, 210, 114, 18, 75, 82, 185, 50, 64, 74, 20, 192, 74, 20, 112, 176, 1, 33, 235, 55, 226, 70, 0, 0, 0]
+    var src = ""
+    for i in 0..60 {
+        src.push(gz[i] as u8)
+    }
+    match gzipDecompress(src) {
+        Result.Ok(out) => {
+            print(out)
+        }
+        Result.Err(e) => {
+            print(e)
+        }
+    }
+    return 0
+}

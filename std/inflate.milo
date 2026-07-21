@@ -1,0 +1,454 @@
+// std/inflate — pure-Milo DEFLATE decompression (RFC 1951) + gzip (1952) / zlib (1950).
+//
+// No external codec dependency: this is the decompressor everything downstream
+// (gzip HTTP bodies, PNG IDAT, git objects) needs. Structure follows Mark Adler's
+// puff.c — canonical-Huffman decode via count/symbol tables, LSB-first bit reader —
+// but reworked to Milo ownership: state is a struct, input is a borrowed &string,
+// output accumulates in an owned string (bytes, like std/base64).
+//
+// Internal helpers return an i64 status (0 ok, negative = error code) instead of
+// threading Result through the hot path; the public entry points map that to Result.
+
+from "std/checksum" import {
+    crc32, adler32
+}
+
+let MAXBITS: i64 = 15
+let MAXLCODES: i64 = 286
+let MAXDCODES: i64 = 30
+let FIXLCODES: i64 = 288
+
+// Decoder state. `src` is passed alongside as a borrow — a struct can't hold a
+// second-class reference, so only the mutable owned pieces live here.
+struct InfState {
+    inpos: i64, // next input byte index
+    bitbuf: i64, // bit accumulator (LSB-first)
+    bitcnt: i64, // valid bits in bitbuf
+    err: bool, // set when the reader runs off the end of input
+    out: string, // decompressed bytes
+}
+
+// A canonical Huffman table: count[len] = #codes of that bit length,
+// symbol[] = symbols sorted by (length, value).
+struct Huff {
+    count: Vec<i64>,
+    symbol: Vec<i64>,
+}
+
+fn _zeros(n: i64): Vec<i64> {
+    var v: Vec<i64> = Vec.new()
+    for _i in 0..n {
+        v.push(0)
+    }
+    return v
+}
+
+// Pull `need` bits LSB-first. On exhausted input, latches err and returns 0 so
+// callers unwind via their err checks rather than looping forever.
+fn _bits(st: &mut InfState, src: &string, need: i64): i64 {
+    var val = st.bitbuf
+    while st.bitcnt < need {
+        if st.inpos >= src.len {
+            st.err = true
+            return 0
+        }
+        val = val | ((src[st.inpos] as i64) << st.bitcnt)
+        st.inpos = st.inpos + 1
+        st.bitcnt = st.bitcnt + 8
+    }
+    st.bitbuf = val >> need
+    st.bitcnt = st.bitcnt - need
+    return val & ((1 << need) - 1)
+}
+
+// Decode one symbol from stream using table h. Returns symbol, or negative on error.
+fn _decode(st: &mut InfState, src: &string, h: &Huff): i64 {
+    var code: i64 = 0
+    var first: i64 = 0
+    var index: i64 = 0
+    for len in 1..16 {
+        code = code | _bits(st, src, 1)
+        if st.err {
+            return -20
+        }
+        let count = h.count[len]
+        if code - count < first {
+            return h.symbol[index + (code - first)]
+        }
+        index = index + count
+        first = first + count
+        first = first << 1
+        code = code << 1
+    }
+    return -10
+}
+
+// Build a canonical Huffman table from code lengths length[off .. off+n].
+// Returns 0 for a complete code, >0 for an incomplete (under-subscribed) code,
+// <0 if over-subscribed (invalid).
+fn _construct(h: &mut Huff, length: &Vec<i64>, off: i64, n: i64): i64 {
+    for len in 0..16 {
+        h.count[len] = 0
+    }
+    for sym in 0..n {
+        let l = length[off + sym]
+        h.count[l] = h.count[l] + 1
+    }
+    if h.count[0] == n {
+        return 0
+    }
+    var left: i64 = 1
+    for len in 1..16 {
+        left = left << 1
+        left = left - h.count[len]
+        if left < 0 {
+            return left
+        }
+    }
+    var offs = _zeros(16)
+    for len in 1..15 {
+        offs[len + 1] = offs[len] + h.count[len]
+    }
+    for sym in 0..n {
+        let l = length[off + sym]
+        if l != 0 {
+            h.symbol[offs[l]] = sym
+            offs[l] = offs[l] + 1
+        }
+    }
+    return left
+}
+
+// Length base + extra-bit tables for length symbols 257..285.
+fn _lenBase(): [i64; 29] {
+    return [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+}
+
+fn _lenExtra(): [i64; 29] {
+    return [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+}
+
+fn _distBase(): [i64; 30] {
+    return [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+}
+
+fn _distExtra(): [i64; 30] {
+    return [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+}
+
+// Decode length/literal + distance codes for one compressed block.
+fn _codes(st: &mut InfState, src: &string, lencode: &Huff, distcode: &Huff): i64 {
+    let lenBase = _lenBase()
+    let lenExtra = _lenExtra()
+    let distBase = _distBase()
+    let distExtra = _distExtra()
+    var symbol: i64 = 0
+    while true {
+        symbol = _decode(st, src, lencode)
+        if symbol < 0 {
+            return symbol
+        }
+        if symbol < 256 {
+            st.out.push(symbol as u8)
+        } else if symbol == 256 {
+            return 0
+        } else {
+            symbol = symbol - 257
+            if symbol >= 29 {
+                return -10
+            }
+            let len = lenBase[symbol] + _bits(st, src, lenExtra[symbol])
+            let dsym = _decode(st, src, distcode)
+            if dsym < 0 {
+                return dsym
+            }
+            if dsym >= 30 {
+                return -10
+            }
+            let dist = distBase[dsym] + _bits(st, src, distExtra[dsym])
+            if st.err {
+                return -20
+            }
+            if dist > st.out.len {
+                return -11
+            }
+            for _k in 0..len {
+                let b = st.out[st.out.len - dist]
+                st.out.push(b)
+            }
+        }
+        if st.err {
+            return -20
+        }
+    }
+    return 0
+}
+
+// A stored (uncompressed) block: byte-align, LEN, ~LEN, then LEN raw bytes.
+fn _stored(st: &mut InfState, src: &string): i64 {
+    st.bitbuf = 0
+    st.bitcnt = 0
+    if st.inpos + 4 > src.len {
+        return -2
+    }
+    let len = (src[st.inpos] as i64) | ((src[st.inpos + 1] as i64) << 8)
+    let nlen = (src[st.inpos + 2] as i64) | ((src[st.inpos + 3] as i64) << 8)
+    st.inpos = st.inpos + 4
+    if (len ^ 0xffff) != nlen {
+        return -3
+    }
+    if st.inpos + len > src.len {
+        return -2
+    }
+    for _i in 0..len {
+        st.out.push(src[st.inpos])
+        st.inpos = st.inpos + 1
+    }
+    return 0
+}
+
+// Fixed Huffman block (RFC 1951 §3.2.6): lengths are defined by the spec.
+fn _fixed(st: &mut InfState, src: &string): i64 {
+    var lengths = _zeros(FIXLCODES)
+    for sym in 0..144 {
+        lengths[sym] = 8
+    }
+    for sym in 144..256 {
+        lengths[sym] = 9
+    }
+    for sym in 256..280 {
+        lengths[sym] = 7
+    }
+    for sym in 280..288 {
+        lengths[sym] = 8
+    }
+    var lencode = Huff {
+        count: _zeros(16), symbol: _zeros(FIXLCODES)
+    }
+    _construct(lencode, lengths, 0, FIXLCODES)
+    var distLengths = _zeros(MAXDCODES)
+    for sym in 0..MAXDCODES {
+        distLengths[sym] = 5
+    }
+    var distcode = Huff {
+        count: _zeros(16), symbol: _zeros(MAXDCODES)
+    }
+    _construct(distcode, distLengths, 0, MAXDCODES)
+    return _codes(st, src, lencode, distcode)
+}
+
+// Order in which code-length-code lengths appear (RFC 1951 §3.2.7).
+fn _clcOrder(): [i64; 19] {
+    return [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+}
+
+// Dynamic Huffman block: read the two code tables from the stream, then decode.
+fn _dynamic(st: &mut InfState, src: &string): i64 {
+    let nlen = _bits(st, src, 5) + 257
+    let ndist = _bits(st, src, 5) + 1
+    let ncode = _bits(st, src, 4) + 4
+    if st.err {
+        return -20
+    }
+    if nlen > MAXLCODES || ndist > MAXDCODES {
+        return -3
+    }
+    let order = _clcOrder()
+    // Code-length code: 19 symbols, laid out in `order`.
+    var lengths = _zeros(MAXLCODES + MAXDCODES)
+    var clcLen = _zeros(19)
+    for i in 0..ncode {
+        clcLen[order[i]] = _bits(st, src, 3)
+    }
+    var lencode = Huff {
+        count: _zeros(16), symbol: _zeros(19)
+    }
+    let e0 = _construct(lencode, clcLen, 0, 19)
+    if e0 != 0 {
+        return -4
+    }
+    // Repeat-coded lengths for the nlen literal + ndist distance symbols.
+    var index: i64 = 0
+    while index < nlen + ndist {
+        let sym = _decode(st, src, lencode)
+        if sym < 0 {
+            return sym
+        }
+        if sym < 16 {
+            lengths[index] = sym
+            index = index + 1
+        } else {
+            var rep: i64 = 0
+            var val: i64 = 0
+            if sym == 16 {
+                if index == 0 {
+                    return -5
+                }
+                val = lengths[index - 1]
+                rep = 3 + _bits(st, src, 2)
+            } else if sym == 17 {
+                rep = 3 + _bits(st, src, 3)
+            } else {
+                rep = 11 + _bits(st, src, 7)
+            }
+            if index + rep > nlen + ndist {
+                return -6
+            }
+            for _r in 0..rep {
+                lengths[index] = val
+                index = index + 1
+            }
+        }
+        if st.err {
+            return -20
+        }
+    }
+    if lengths[256] == 0 {
+        return -9
+    }
+    var litcode = Huff {
+        count: _zeros(16), symbol: _zeros(MAXLCODES)
+    }
+    let e1 = _construct(litcode, lengths, 0, nlen)
+    // Incomplete literal code is only legal in the degenerate single-symbol case.
+    if e1 != 0 && (e1 < 0 || nlen != litcode.count[0] + litcode.count[1]) {
+        return -7
+    }
+    var distcode = Huff {
+        count: _zeros(16), symbol: _zeros(MAXDCODES)
+    }
+    let e2 = _construct(distcode, lengths, nlen, ndist)
+    if e2 != 0 && (e2 < 0 || ndist != distcode.count[0] + distcode.count[1]) {
+        return -8
+    }
+    return _codes(st, src, litcode, distcode)
+}
+
+// Inflate a raw DEFLATE stream (no gzip/zlib wrapper).
+fn inflate(src: &string): Result<string, string> {
+    var st = InfState {
+        inpos: 0, bitbuf: 0, bitcnt: 0, err: false, out: ""
+    }
+    var last: i64 = 0
+    while last == 0 {
+        last = _bits(st, src, 1)
+        let btype = _bits(st, src, 2)
+        if st.err {
+            return Result.Err("inflate: unexpected end of input")
+        }
+        var e: i64 = 0
+        if btype == 0 {
+            e = _stored(st, src)
+        } else if btype == 1 {
+            e = _fixed(st, src)
+        } else if btype == 2 {
+            e = _dynamic(st, src)
+        } else {
+            return Result.Err("inflate: invalid block type 3")
+        }
+        if e != 0 {
+            return Result.Err("inflate: corrupt stream")
+        }
+    }
+    return Result.Ok(st.out)
+}
+
+// Little-endian 32-bit read at offset `p`, as a value in [0, 2^32).
+fn _le32(src: &string, p: i64): i64 {
+    return (src[p] as i64) | ((src[p + 1] as i64) << 8) | ((src[p + 2] as i64) << 16) | ((src[p + 3] as i64) << 24)
+}
+
+// Inflate a gzip stream (RFC 1952): 10-byte header, optional extra/name/comment/
+// hcrc fields, DEFLATE body, then CRC-32 + ISIZE trailer. Both are verified.
+fn gzipDecompress(src: &string): Result<string, string> {
+    if src.len < 18 {
+        return Result.Err("gzip: too short")
+    }
+    if src[0] != 0x1f || src[1] != 0x8b {
+        return Result.Err("gzip: bad magic")
+    }
+    if src[2] != 8 {
+        return Result.Err("gzip: unsupported compression method")
+    }
+    let flg = src[3] as i64
+    var pos: i64 = 10
+    // FEXTRA (bit 2): 2-byte length then that many bytes.
+    if (flg & 4) != 0 {
+        if pos + 2 > src.len {
+            return Result.Err("gzip: truncated extra field")
+        }
+        let xlen = (src[pos] as i64) | ((src[pos + 1] as i64) << 8)
+        pos = pos + 2 + xlen
+    }
+    // FNAME (bit 3) / FCOMMENT (bit 4): NUL-terminated strings.
+    if (flg & 8) != 0 {
+        while pos < src.len && src[pos] != 0 {
+            pos = pos + 1
+        }
+        pos = pos + 1
+    }
+    if (flg & 16) != 0 {
+        while pos < src.len && src[pos] != 0 {
+            pos = pos + 1
+        }
+        pos = pos + 1
+    }
+    // FHCRC (bit 1): 2-byte header CRC.
+    if (flg & 2) != 0 {
+        pos = pos + 2
+    }
+    if pos + 8 > src.len {
+        return Result.Err("gzip: truncated body")
+    }
+    // Body runs from `pos` up to the 8-byte trailer.
+    var body = ""
+    for i in pos..(src.len - 8) {
+        body.push(src[i])
+    }
+    let out = inflate(body)?
+    let wantCrc = _le32(src, src.len - 8)
+    let wantSize = _le32(src, src.len - 4)
+    if crc32(out) != wantCrc {
+        return Result.Err("gzip: CRC-32 mismatch")
+    }
+    if (out.len & 0xffffffff) != wantSize {
+        return Result.Err("gzip: length mismatch")
+    }
+    return Result.Ok(out)
+}
+
+// Inflate a zlib stream (RFC 1950): 2-byte header, DEFLATE body, Adler-32 trailer.
+fn zlibDecompress(src: &string): Result<string, string> {
+    if src.len < 6 {
+        return Result.Err("zlib: too short")
+    }
+    let cmf = src[0] as i64
+    if (cmf & 15) != 8 {
+        return Result.Err("zlib: unsupported compression method")
+    }
+    // The 16-bit header must be a multiple of 31 (RFC 1950 §2.2).
+    let flg = src[1] as i64
+    if (cmf * 256 + flg) % 31 != 0 {
+        return Result.Err("zlib: bad header check")
+    }
+    var pos: i64 = 2
+    // FDICT (bit 5 of FLG): a 4-byte dictionary id we don't support.
+    if (flg & 32) != 0 {
+        return Result.Err("zlib: preset dictionary not supported")
+    }
+    var body = ""
+    for i in pos..(src.len - 4) {
+        body.push(src[i])
+    }
+    let out = inflate(body)?
+    let wantAdler = _le32BE(src, src.len - 4)
+    if adler32(out) != wantAdler {
+        return Result.Err("zlib: Adler-32 mismatch")
+    }
+    return Result.Ok(out)
+}
+
+// zlib's Adler trailer is big-endian, unlike gzip's little-endian fields.
+fn _le32BE(src: &string, p: i64): i64 {
+    return ((src[p] as i64) << 24) | ((src[p + 1] as i64) << 16) | ((src[p + 2] as i64) << 8) | (src[p + 3] as i64)
+}
