@@ -3,10 +3,43 @@ system: milojs-generators
 purpose: design of record for generator functions in milojs, reusing the async-activation green-task machinery
 key-files: examples/apps/milojs/eval.milo, examples/apps/milojs/parser.milo, examples/apps/milojs/ast.milo
 update-when: generators are implemented or the design changes
-last-verified: 2026-07-20
+last-verified: 2026-07-21
 -->
 
 # milojs: generators (design of record)
+
+## Status (2026-07-21): slice 2 shipped on the runtime
+
+Working and fixture-covered (`tests/runtime/generators.js`,
+`generatorGcRoots.js`), byte-identical to node: `next()`, bidirectional
+`next(v)`, early `return` (value with `done:true`), `for-of` / spread /
+`Array.from` consumption, `yield*` delegation, infinite generators with `break`,
+clean process exit when a generator is abandoned mid-iteration, GC over a
+generator parked at a `yield` (R7-style, under `MILOJS_GC_THRESHOLD=1`), and
+generators interleaved with `async`/`await`.
+
+Two design points that changed during implementation:
+- **No current-generator stack.** Each generator body runs on its own green
+  task, so `yield` resolves its generator by `schedulerCurrent()==genTask`. The
+  per-task stack this doc assumed (for nested generators) is unnecessary — task
+  identity already distinguishes them.
+- **Records are removed on completion.** A finished generator's stale body-task
+  pointer would otherwise collide with a later generator whose freshly-spawned
+  task reuses the freed address, mis-resolving `yield`. `genNext` drops the
+  record on the terminal read; a later `next()` on the object (still flagged
+  `isGenerator`) returns `{done:true}`.
+
+**Runtime only (R1b).** Generators need the green-task scheduler, which only the
+runtime binary runs the program on; on the engine `next()` throws. So the QuickJS
+sweep (engine) does not benefit — that gap is the R1b wall in
+docs/milojs-async-suspension.md, not a generator gap.
+
+Not yet done (slice 3): `gen.return()` / `gen.throw()`, and direct array
+destructuring `const [a,b] = gen()` (the parser desugars destructuring to indexed
+access `_t[0]`, which fails for every non-indexable iterable, not just
+generators; `const [a,b] = [...gen()]` works).
+
+---
 
 `function*` already parses far enough to be detected and throw "generator
 functions are not supported"; some `yield` positions still fail to parse. This is

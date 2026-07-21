@@ -1,0 +1,7 @@
+{"value":1,"done":false} {"value":2,"done":false} {"value":3,"done":false} {"done":true}
+{"value":"first","done":false} {"value":"A","done":false} {"value":"B","done":true}
+{"value":1,"done":false} {"value":99,"done":true} {"done":true}
+forof 60 spread [10,20,30] from [10,20,30]
+yield* [1,"a","b",2]
+nat 0 1 2
+take [0,1,2]

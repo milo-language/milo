@@ -234,6 +234,9 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
         if st.objects[o].isDataView && isDataViewMethodName(key) {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
+        if st.objects[o].isGenerator && (key == "next" || key == symIteratorKey()) {
+            return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+        }
         if st.objects[o].taBuf >= 0 && isTypedArrayMethodName(key) {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
@@ -589,6 +592,15 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             }
             if st.objects[o].isDataView && isDataViewMethodName(name) {
                 return dataViewMethod(o, name, args, st)
+            }
+            if st.objects[o].isGenerator {
+                if name == "next" {
+                    return genNext(o, args, st)
+                }
+                // a generator is its own iterator: gen[Symbol.iterator]() === gen
+                if name == symIteratorKey() {
+                    return JSValue.Obj(o)
+                }
             }
             if st.objects[o].taBuf >= 0 && isTypedArrayMethodName(name) {
                 return typedArrayMethod(prog, o, name, args, st)
@@ -3741,6 +3753,71 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 }
                 return awaited
             }
+            if op == "yield" {
+                return genYield(va, st)
+            }
+            if op == "yield*" {
+                // Delegate: drive the operand's iterator, re-yielding each value to
+                // our own consumer. The value of `yield* it` is the inner
+                // iterator's return value (the value carried by its {done:true}).
+                let vh = objHandle(va)
+                var last = JSValue.Undefined
+                if vh >= 0 && st.objects[vh].isGenerator {
+                    // inner generator: drive genNext directly (its `next` is native)
+                    var guard: i64 = 0
+                    while !st.throwing && guard < 100000000 {
+                        guard = guard + 1
+                        var nA: Vec<JSValue> = Vec.new()
+                        let step = genNext(vh, nA, st)
+                        let sh = objHandle(step)
+                        if sh < 0 {
+                            guard = 100000000
+                        } else if truthy(getMember(st, sh, "done")) {
+                            last = getMember(st, sh, "value")
+                            guard = 100000000
+                        } else {
+                            let v = getMember(st, sh, "value")
+                            let _sent = genYield(v, st)
+                        }
+                    }
+                    return last
+                }
+                // any other iterable: resolve [Symbol.iterator] and drive next()
+                let itFn = getMemberDyn(prog, vh, symIteratorKey(), st)
+                var iter = cloneValue(va)
+                if isCallableIn(st, itFn) {
+                    var noArgs: Vec<JSValue> = Vec.new()
+                    iter = callValue(prog, itFn, noArgs, cloneValue(va), st)
+                }
+                let ih = objHandle(iter)
+                if ih < 0 {
+                    return JSValue.Undefined
+                }
+                pushTemp(st, cloneValue(iter))
+                var guard2: i64 = 0
+                while !st.throwing && guard2 < 100000000 {
+                    guard2 = guard2 + 1
+                    let nextFn = getMemberDyn(prog, objHandle(iter), "next", st)
+                    if !isCallableIn(st, nextFn) {
+                        guard2 = 100000000
+                    } else {
+                        var nArgs: Vec<JSValue> = Vec.new()
+                        let step = callValue(prog, nextFn, nArgs, cloneValue(iter), st)
+                        let sh = objHandle(step)
+                        if sh < 0 {
+                            guard2 = 100000000
+                        } else if truthy(getMember(st, sh, "done")) {
+                            last = getMember(st, sh, "value")
+                            guard2 = 100000000
+                        } else {
+                            let v = getMember(st, sh, "value")
+                            let _sent = genYield(v, st)
+                        }
+                    }
+                }
+                popTemp(st)
+                return last
+            }
             if op == "+" {
                 return JSValue.Number(toNum(va))
             }
@@ -4393,6 +4470,22 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
 // immutable helper it once was.
 fn spreadInto(prog: &Prog, out: &mut Vec<JSValue>, v: &JSValue, st: &mut Interp) {
     let h = objHandle(v)
+    // a generator drives through genNext (its `next` is native, not a property)
+    if h >= 0 && st.objects[h].isGenerator {
+        var guard: i64 = 0
+        while !st.throwing && guard < 100000000 {
+            guard = guard + 1
+            var nA: Vec<JSValue> = Vec.new()
+            let step = genNext(h, nA, st)
+            let sh = objHandle(step)
+            if sh < 0 || truthy(getMember(st, sh, "done")) {
+                guard = 100000000
+            } else {
+                out.push(getMember(st, sh, "value"))
+            }
+        }
+        return
+    }
     // a Map spreads to freshly built [key, value] pairs, which needs allocation
     if h >= 0 && st.objects[h].isMap {
         var mi: i64 = 0
@@ -4655,10 +4748,10 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
         st.thrownValue = makeError(st, "RangeError", "Maximum call stack size exceeded")
         return JSValue.Undefined
     }
-    if prog.funcs[fIdx].isGenerator {
-        st.throwing = true
-        st.thrownValue = makeError(st, "TypeError", "generator functions are not supported")
-        return JSValue.Undefined
+    let genBody = st.suppressGenSpawn
+    st.suppressGenSpawn = false
+    if prog.funcs[fIdx].isGenerator && !genBody {
+        return makeGenerator(fIdx, envIdx, argVals, thisVal, st)
     }
     st.callDepth = st.callDepth + 1
     let callScope = newScope(st, envIdx)
@@ -5189,6 +5282,262 @@ fn parkOnPromise(st: &mut Interp, p: i64): bool {
     // still live, which surfaces later as an identifier that no longer resolves.
     resumeExecCtx(st, me)
     return true
+}
+
+// ── generators ──────────────────────────────────────────────────────────────
+// A `function*` call returns a generator object whose body runs on its own green
+// task, reusing the async-suspension machinery: `yield` and `next()` hand control
+// back and forth via schedulerPark/Unpark + the ExecCtx save/restore that the
+// `suspended` set already does. The body task is spawned LAZILY on the first
+// next(), which is what keeps a fresh generator paused — calling a gen* runs no
+// user code. Because each generator body has its own dedicated task, `yield`
+// finds its generator by schedulerCurrent()==genTask; no per-task current-gen
+// stack is needed even for nested generators (a design simplification over
+// docs/milojs-generators.md, which assumed a shared task).
+
+// True if any generator has been started but not run to completion, so its body
+// task is parked forever. Such a task keeps the scheduler's task count > 0, which
+// would block main's final -1 poll and hang the process at exit — Node instead
+// drops an unfinished generator, so the entry point exits directly when this holds.
+fn anyGenParked(st: &Interp): bool {
+    var i: i64 = 0
+    while i < st.genObj.len() {
+        if st.genStarted[i] && !st.genDone[i] {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// Drop a completed generator's record. Left in place, its stale body-task
+// pointer would collide with a future generator whose freshly-spawned task
+// reuses the same freed address — genIndexOfTask would then resolve `yield` to
+// the wrong (dead) record and write the yielded value into the wrong slot, so
+// the real consumer reads a stale value. Object indices of removed generators
+// are free to be recycled since collect no longer marks them.
+fn removeGen(st: &mut Interp, gi: i64) {
+    st.genObj.remove(gi)
+    st.genFn.remove(gi)
+    st.genTask.remove(gi)
+    st.genEnv.remove(gi)
+    st.genArgs.remove(gi)
+    st.genThis.remove(gi)
+    st.genYielded.remove(gi)
+    st.genSent.remove(gi)
+    st.genDone.remove(gi)
+    st.genThrew.remove(gi)
+    st.genErr.remove(gi)
+    st.genCaller.remove(gi)
+    st.genStarted.remove(gi)
+}
+
+// Index of the gen* record for gen object `o`, or -1.
+fn genIndexOf(st: &Interp, o: i64): i64 {
+    var i: i64 = 0
+    while i < st.genObj.len() {
+        if st.genObj[i] == o {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+// Index of the gen* record whose body task is `task`, or -1 — how `yield`
+// resolves which generator it belongs to.
+fn genIndexOfTask(st: &Interp, task: *u8): i64 {
+    var i: i64 = 0
+    while i < st.genTask.len() {
+        if st.genTask[i] as i64 == task as i64 {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+// Build a `{ value, done }` iterator-result object.
+fn iterResult(st: &mut Interp, value: JSValue, done: bool): JSValue {
+    let r = newObject(st)
+    pushTemp(st, JSValue.Obj(r))
+    objSet(st, r, "value", value)
+    objSet(st, r, "done", JSValue.Bool(done))
+    popTemp(st)
+    return JSValue.Obj(r)
+}
+
+// Called when a generator body finishes (return or fell off the end). Records the
+// return value (or the thrown error), marks it done, and hands control back to
+// whoever is inside next(). Runs on the generator's own task.
+fn genFinish(st: &mut Interp, gi: i64, r: JSValue) {
+    if st.throwing {
+        st.genThrew[gi] = true
+        st.genErr[gi] = cloneValue(st.thrownValue)
+        st.throwing = false
+        st.thrownValue = JSValue.Undefined
+        st.genYielded[gi] = JSValue.Undefined
+    } else {
+        st.genYielded[gi] = cloneValue(r)
+    }
+    st.genDone[gi] = true
+    // hand control back to the next() caller; this task then returns and ends
+    schedulerUnpark(st.genCaller[gi])
+}
+
+// Create a generator object for a `function*` call. Does NOT run the body — that
+// starts on the first next(). Registers the gen* record and returns the object.
+fn makeGenerator(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
+    let g = newObject(st)
+    st.objects[g].isGenerator = true
+    var rootedArgs: Vec<JSValue> = Vec.new()
+    var ri: i64 = 0
+    while ri < argVals.len() {
+        rootedArgs.push(cloneValue(argVals[ri]))
+        ri = ri + 1
+    }
+    st.genObj.push(g)
+    st.genFn.push(fIdx)
+    st.genTask.push(0 as *u8)
+    st.genEnv.push(envIdx)
+    st.genArgs.push(rootedArgs)
+    st.genThis.push(cloneValue(thisVal))
+    st.genYielded.push(JSValue.Undefined)
+    st.genSent.push(JSValue.Undefined)
+    st.genDone.push(false)
+    st.genThrew.push(false)
+    st.genErr.push(JSValue.Undefined)
+    st.genCaller.push(0 as *u8)
+    st.genStarted.push(false)
+    return JSValue.Obj(g)
+}
+
+// gen.next(v): drive the generator one step. Spawns the body task on the first
+// call. Parks the caller and runs the body until its next `yield`, `return`, or
+// throw, then returns `{ value, done }`. If the body threw, the error is
+// re-raised at this next() site.
+fn genNext(o: i64, args: Vec<JSValue>, st: &mut Interp): JSValue {
+    let gi = genIndexOf(st, o)
+    if gi < 0 {
+        // No record: a completed generator whose record was reclaimed (calling
+        // next() on a done generator yields {done:true} forever in JS), or a
+        // genuinely non-generator receiver.
+        if o >= 0 && st.objects[o].isGenerator {
+            return iterResult(st, JSValue.Undefined, true)
+        }
+        st.throwing = true
+        st.thrownValue = makeError(st, "TypeError", "not a generator")
+        return JSValue.Undefined
+    }
+    if st.genDone[gi] {
+        removeGen(st, gi)
+        return iterResult(st, JSValue.Undefined, true)
+    }
+    let caller = schedulerCurrent()
+    if caller as i64 == 0 {
+        // no green task to drive the body (engine main thread) — generators need
+        // the runtime's task scheduler; see the R1b note in the suspension doc
+        st.throwing = true
+        st.thrownValue = makeError(st, "TypeError", "generators require the milojs runtime (not the engine)")
+        return JSValue.Undefined
+    }
+    var sentArg = JSValue.Undefined
+    if args.len() > 0 {
+        sentArg = cloneValue(args[0])
+    }
+    st.genSent[gi] = sentArg
+    st.genCaller[gi] = caller
+    var justSpawned = false
+    if !st.genStarted[gi] {
+        st.genStarted[gi] = true
+        justSpawned = true
+        let fIdx = st.genFn[gi]
+        let envIdx = st.genEnv[gi]
+        var bodyArgs: Vec<JSValue> = Vec.new()
+        var ai: i64 = 0
+        while ai < st.genArgs[gi].len() {
+            bodyArgs.push(cloneValue(st.genArgs[gi][ai]))
+            ai = ai + 1
+        }
+        let bodyThis = cloneValue(st.genThis[gi])
+        let genObjIdx = o
+        let body = Task.spawnWithStack(move(): void => {
+            // gProg/gInterp: a task body cannot borrow from the spawning frame.
+            // Run the function* body (not another makeGenerator) — see callFunction.
+            gInterp.suppressGenSpawn = true
+            let r = callFunction(gProg, fIdx, envIdx, bodyArgs, bodyThis, gInterp)
+            let fgi = genIndexOf(gInterp, genObjIdx)
+            if fgi >= 0 {
+                genFinish(gInterp, fgi, r)
+            }
+        }
+        , 8388608)
+        st.genTask[gi] = body._ptr
+    }
+    // Root the gen object across the park: its record vectors reference it, but
+    // the caller may hold it only in a temp the save/restore does not cover.
+    pushTemp(st, JSValue.Obj(o))
+    let ctx = saveExecCtx(st)
+    st.suspended.push(ctx)
+    st.suspendedTask.push(caller)
+    // A just-spawned body task is already runnable; parking the caller hands it
+    // control (mirrors spawnActivation). Only a body parked at a prior yield
+    // needs an explicit unpark to become runnable again.
+    if !justSpawned {
+        schedulerUnpark(st.genTask[gi])
+    }
+    schedulerPark()
+    resumeExecCtx(st, caller)
+    popTemp(st)
+    // re-read the record: a nested generator could have shuffled the vectors
+    let gj = genIndexOf(st, o)
+    if gj < 0 {
+        return iterResult(st, JSValue.Undefined, true)
+    }
+    if st.genThrew[gj] {
+        st.throwing = true
+        st.thrownValue = cloneValue(st.genErr[gj])
+        // the body ended (by throwing); its record is dead
+        removeGen(st, gj)
+        return JSValue.Undefined
+    }
+    let done = st.genDone[gj]
+    let yielded = cloneValue(st.genYielded[gj])
+    // the body ran off the end / returned; drop the record so its stale task
+    // pointer cannot collide with a future generator's reused task address
+    if done {
+        removeGen(st, gj)
+    }
+    return iterResult(st, yielded, done)
+}
+
+// The `yield e` expression, evaluated on a generator's body task. `handed` is the
+// already-evaluated operand. Hands it out, parks the body, and on resume returns
+// the value the next() caller passed in.
+fn genYield(handed: JSValue, st: &mut Interp): JSValue {
+    let me = schedulerCurrent()
+    let gi = genIndexOfTask(st, me)
+    if gi < 0 {
+        // `yield` outside any generator body — not reachable through the parser,
+        // which only emits it inside a function*, but fail soft rather than wedge
+        return JSValue.Undefined
+    }
+    st.genYielded[gi] = cloneValue(handed)
+    st.genDone[gi] = false
+    // root the gen object across the park, like genNext does
+    pushTemp(st, JSValue.Obj(st.genObj[gi]))
+    let ctx = saveExecCtx(st)
+    st.suspended.push(ctx)
+    st.suspendedTask.push(me)
+    schedulerUnpark(st.genCaller[gi])
+    schedulerPark()
+    resumeExecCtx(st, me)
+    popTemp(st)
+    let gj = genIndexOfTask(st, me)
+    if gj < 0 {
+        return JSValue.Undefined
+    }
+    return cloneValue(st.genSent[gj])
 }
 
 // Wake every activation waiting on `p`, in the order they began awaiting (R3).
@@ -8340,18 +8689,34 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
             // side effects (or one the body mutates) observes the same order it
             // would in JS. Built-in types below keep their eager snapshot.
             let srcH = objHandle(ov)
-            if srcH >= 0 && !st.objects[srcH].isArray && !st.objects[srcH].isMap && !st.objects[srcH].isSet {
+            // A generator is its own iterator but its `next` is a native method,
+            // not a stored property, so it drives through genNext rather than the
+            // getMember(next)+callValue path a user iterator uses.
+            let isGen = srcH >= 0 && st.objects[srcH].isGenerator
+            var driveIter = isGen
+            var iterVal = cloneValue(ov)
+            if srcH >= 0 && !isGen && !st.objects[srcH].isArray && !st.objects[srcH].isMap && !st.objects[srcH].isSet {
                 let itFn = getMember(st, srcH, symIteratorKey())
                 if isCallableIn(st, itFn) {
                     var noArgs: Vec<JSValue> = Vec.new()
-                    let iter = callValue(prog, itFn, noArgs, cloneValue(ov), st)
-                    pushTemp(st, cloneValue(iter))
-                    let iterH = objHandle(iter)
-                    let loopScope2 = newScope(st, scope)
-                    pushActive(st, loopScope2)
-                    var running = true
-                    var out = Flow.Normal
-                    while running && !st.throwing && iterH >= 0 {
+                    iterVal = callValue(prog, itFn, noArgs, cloneValue(ov), st)
+                    driveIter = true
+                }
+            }
+            if driveIter {
+                let iter = cloneValue(iterVal)
+                pushTemp(st, cloneValue(iter))
+                let iterH = objHandle(iter)
+                let loopScope2 = newScope(st, scope)
+                pushActive(st, loopScope2)
+                var running = true
+                var out = Flow.Normal
+                while running && !st.throwing && iterH >= 0 {
+                    var step = JSValue.Undefined
+                    if isGen {
+                        var nArgs: Vec<JSValue> = Vec.new()
+                        step = genNext(iterH, nArgs, st)
+                    } else {
                         let nextFn = getMember(st, iterH, "next")
                         if !isCallableIn(st, nextFn) {
                             st.throwing = true
@@ -8359,53 +8724,55 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                             running = false
                         } else {
                             var nArgs: Vec<JSValue> = Vec.new()
-                            let step = callValue(prog, nextFn, nArgs, cloneValue(iter), st)
-                            let stepH = objHandle(step)
-                            if stepH < 0 || st.throwing {
-                                running = false
-                            } else if truthy(getMember(st, stepH, "done")) {
-                                running = false
-                            } else {
-                                pushTemp(st, cloneValue(step))
-                                // fresh per-iteration binding so body closures don't
-                                // all capture the final value (for-of over let/const)
-                                let iterScope = newScope(st, loopScope2)
-                                pushActive(st, iterScope)
-                                scopeDefine(st, iterScope, name.clone(), getMember(st, stepH, "value"))
-                                let flow = execStmt(prog, body, st, iterScope)
-                                popActive(st)
-                                popTemp(st)
-                                match flow {
-                                    Flow.Ret(v) => {
-                                        out = Flow.Ret(v)
+                            step = callValue(prog, nextFn, nArgs, cloneValue(iter), st)
+                        }
+                    }
+                    if running && !st.throwing {
+                        let stepH = objHandle(step)
+                        if stepH < 0 || st.throwing {
+                            running = false
+                        } else if truthy(getMember(st, stepH, "done")) {
+                            running = false
+                        } else {
+                            pushTemp(st, cloneValue(step))
+                            // fresh per-iteration binding so body closures don't
+                            // all capture the final value (for-of over let/const)
+                            let iterScope = newScope(st, loopScope2)
+                            pushActive(st, iterScope)
+                            scopeDefine(st, iterScope, name.clone(), getMember(st, stepH, "value"))
+                            let flow = execStmt(prog, body, st, iterScope)
+                            popActive(st)
+                            popTemp(st)
+                            match flow {
+                                Flow.Ret(v) => {
+                                    out = Flow.Ret(v)
+                                    running = false
+                                }
+                                Flow.Break(l) => {
+                                    // an unmatched label re-propagates through
+                                    // out so the loop's cleanup below still runs
+                                    running = false
+                                    if l != "" && l != myLabel {
+                                        out = Flow.Break(l.clone())
+                                    }
+                                }
+                                Flow.Continue(l) => {
+                                    if l != "" && l != myLabel {
+                                        out = Flow.Continue(l.clone())
                                         running = false
                                     }
-                                    Flow.Break(l) => {
-                                        // an unmatched label re-propagates through
-                                        // out so the loop's cleanup below still runs
-                                        running = false
-                                        if l != "" && l != myLabel {
-                                            out = Flow.Break(l.clone())
-                                        }
-                                    }
-                                    Flow.Continue(l) => {
-                                        if l != "" && l != myLabel {
-                                            out = Flow.Continue(l.clone())
-                                            running = false
-                                        }
-                                    }
-                                    Flow.Normal => {
-                                    }
+                                }
+                                Flow.Normal => {
                                 }
                             }
                         }
                     }
-                    popActive(st)
-                    popTemp(st)
-                    popTemp(st)
-                    popTemp(st)
-                    return out
                 }
+                popActive(st)
+                popTemp(st)
+                popTemp(st)
+                popTemp(st)
+                return out
             }
 
             var vals: Vec<JSValue> = Vec.new()

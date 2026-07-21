@@ -23,7 +23,7 @@ from "std/runtime" import {
     Task, schedulerCurrent
 }
 from "std/os" import {
-    getpid
+    getpid, exit
 }
 from "std/strconv" import {
     parseInt
@@ -53,7 +53,7 @@ from "./eval" import {
     runModule
 }
 from "./eval" import {
-    execBlock, hoistBlock, runEventLoop
+    execBlock, hoistBlock, runEventLoop, anyGenParked
 }
 from "./value" import {
     toStr
@@ -334,6 +334,18 @@ fn main(): i32 {
         gInterp.mainTask = schedulerCurrent()
         runModule(gProg, entryIdx, gInterp)
         runEventLoop(gProg, gInterp)
+        // A generator consumed only partway leaves its body task parked forever.
+        // The scheduler still counts it, so main's join would block on a final
+        // -1 poll that no event can wake — the process hangs. Node drops such a
+        // generator and exits, so match that: report any pending error exactly as
+        // main would, then terminate rather than returning into a wedged join.
+        if anyGenParked(gInterp) {
+            if gInterp.throwing {
+                eprint("Uncaught " + describeThrown(gInterp, gInterp.thrownValue))
+                exit(1)
+            }
+            exit(0)
+        }
     }
     , 8388608)
     interpTask.join()

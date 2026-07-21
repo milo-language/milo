@@ -510,6 +510,10 @@ struct JSObj {
     // native pointer attached by napi_wrap, else 0. This is how an addon keeps its
     // own state on a JS object — Prisma's QueryEngine instance lives behind it.
     napiWrap: i64,
+    // a generator object produced by calling a `function*`. Its body runs on a
+    // dedicated green task; the per-generator state (task, sent/yielded values,
+    // done flag) lives in the Interp gen* vectors, keyed by this object's index.
+    isGenerator: bool,
     mark: bool,
     free: bool,
 }
@@ -628,6 +632,10 @@ struct Interp {
     // Set for one callFunction entry so a body already running on an activation
     // does not spawn another. Cleared on entry, so nested async calls spawn.
     suppressAsyncSpawn: bool,
+    // Set by a generator body task just before it invokes callFunction, so that
+    // call runs the function* body instead of re-dispatching to makeGenerator.
+    // Cleared on entry, exactly like suppressAsyncSpawn.
+    suppressGenSpawn: bool,
     // Task each suspended context belongs to, parallel to `suspended`. Without
     // it a resuming activation takes whichever entry happens to be last, which
     // hands it another activation's execution: its pops then unroot the other
@@ -636,6 +644,32 @@ struct Interp {
     // execution contexts of activations that are parked. Their roots are marked
     // by collect: they are live even though nothing is running them.
     suspended: Vec<ExecCtx>,
+    // ── generators ── parallel vectors, one entry per live generator object,
+    // keyed by genObj (the JS gen object's index). A generator body runs on its
+    // own green task; `yield` finds its generator by schedulerCurrent()==genTask,
+    // and next() drives it via the same park/unpark + ExecCtx save/restore the
+    // suspended set uses. Body task is spawned LAZILY on the first next(), which
+    // is what keeps a freshly-created generator paused (JS: calling a gen* runs
+    // no body code). genYielded/genSent/genErr and the gen's env/args/this are GC
+    // roots while it is parked — collect marks them.
+    genObj: Vec<i64>,
+    genFn: Vec<i64>,
+    genTask: Vec<*u8>,
+    genEnv: Vec<i64>,
+    genArgs: Vec<Vec<JSValue>>,
+    genThis: Vec<JSValue>,
+    // value the current yield/return handed out (→ the next() caller)
+    genYielded: Vec<JSValue>,
+    // value passed into next(v) (→ the yield expression's result)
+    genSent: Vec<JSValue>,
+    genDone: Vec<bool>,
+    // body ended by throwing: rethrow genErr at the next() site
+    genThrew: Vec<bool>,
+    genErr: Vec<JSValue>,
+    // the task that called next(), to hand control back to at the next yield/end
+    genCaller: Vec<*u8>,
+    // false until the body task is spawned (on the first next())
+    genStarted: Vec<bool>,
     // outbound fetches still in flight
     fetches: Vec<PendingFetch>,
     // the constructor of the call currently being set up, for new.target
@@ -681,13 +715,13 @@ var gInterp: Interp = Interp {
     throwing: false, thrownValue: JSValue.Undefined,
     optShort: false, pendingLabel: "", callDepthLimit: 20,
     rngState: 88172645463325252,
-    allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, mainTask: 0 as *u8, awaitPromise: Vec.new(), awaitTask: Vec.new(), suspended: Vec.new(), suspendedTask: Vec.new(), actTask: Vec.new(), actCreator: Vec.new(), actNotified: Vec.new(), actEnv: Vec.new(), actArgs: Vec.new(), actThis: Vec.new(), actPromise: Vec.new(), suppressAsyncSpawn: false, fetches: Vec.new(), napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
+    allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, mainTask: 0 as *u8, awaitPromise: Vec.new(), awaitTask: Vec.new(), suspended: Vec.new(), genObj: Vec.new(), genFn: Vec.new(), genTask: Vec.new(), genEnv: Vec.new(), genArgs: Vec.new(), genThis: Vec.new(), genYielded: Vec.new(), genSent: Vec.new(), genDone: Vec.new(), genThrew: Vec.new(), genErr: Vec.new(), genCaller: Vec.new(), genStarted: Vec.new(), suspendedTask: Vec.new(), actTask: Vec.new(), actCreator: Vec.new(), actNotified: Vec.new(), actEnv: Vec.new(), actArgs: Vec.new(), actThis: Vec.new(), actPromise: Vec.new(), suppressAsyncSpawn: false, suppressGenSpawn: false, fetches: Vec.new(), napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
 }
 
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), abMaxLen: -1, abDetached: false, taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, isDataView: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), isProxy: false, proxyTarget: JSValue.Undefined, proxyHandler: JSValue.Undefined, napiFn: -1, napiWrap: 0, mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), abMaxLen: -1, abDetached: false, taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, isDataView: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), isProxy: false, proxyTarget: JSValue.Undefined, proxyHandler: JSValue.Undefined, napiFn: -1, napiWrap: 0, isGenerator: false, mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena
@@ -1414,6 +1448,32 @@ fn collect(st: &mut Interp) {
     while awr < st.awaitPromise.len() {
         markObject(st, st.awaitPromise[awr])
         awr = awr + 1
+    }
+    // A generator parked at a yield has its body-task execution in `suspended`
+    // (marked above), but its env/args/this and the in-transit yielded/sent/err
+    // values live only in these vectors — collect must mark them, or a GC while
+    // the generator is suspended frees objects it will use on the next resume.
+    // The gen object itself is marked too: a for-of holds it only as a temp on
+    // the driving frame, and dropping it mid-iteration would orphan its task.
+    var gv: i64 = 0
+    while gv < st.genObj.len() {
+        markObject(st, st.genObj[gv])
+        markScope(st, st.genEnv[gv])
+        var ga: i64 = 0
+        while ga < st.genArgs[gv].len() {
+            let gav = cloneValue(st.genArgs[gv][ga])
+            markValue(st, gav)
+            ga = ga + 1
+        }
+        let gt = cloneValue(st.genThis[gv])
+        markValue(st, gt)
+        let gy = cloneValue(st.genYielded[gv])
+        markValue(st, gy)
+        let gs = cloneValue(st.genSent[gv])
+        markValue(st, gs)
+        let ge = cloneValue(st.genErr[gv])
+        markValue(st, ge)
+        gv = gv + 1
     }
     // cached module.exports are roots — a loaded module's exports outlive its scope
     var me: i64 = 0
