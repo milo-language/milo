@@ -1061,6 +1061,11 @@ fn readLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
                 JSValue.Obj(o) => {
                     return getMember(st, o, name)
                 }
+                JSValue.Func(fIdx, fe) => {
+                    // a class static read as an lvalue (C.count++)
+                    let statics = getFuncStatics(st, fIdx, fe)
+                    return getMember(st, statics, name)
+                }
                 _ => {
                     return JSValue.Undefined
                 }
@@ -1076,6 +1081,10 @@ fn readLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
             match ov {
                 JSValue.Obj(o) => {
                     return getMember(st, o, key)
+                }
+                JSValue.Func(fIdx, fe) => {
+                    let statics = getFuncStatics(st, fIdx, fe)
+                    return getMember(st, statics, key)
                 }
                 _ => {
                     return JSValue.Undefined
@@ -1099,6 +1108,11 @@ fn writeLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64, value: 
                 JSValue.Obj(o) => {
                     setMember(st, o, name.clone(), value)
                 }
+                JSValue.Func(fIdx, fe) => {
+                    // a class static written as an lvalue (C.count++)
+                    let statics = getFuncStatics(st, fIdx, fe)
+                    setMember(st, statics, name.clone(), value)
+                }
                 _ => {
                 }
             }
@@ -1113,6 +1127,10 @@ fn writeLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64, value: 
             match ov {
                 JSValue.Obj(o) => {
                     setMember(st, o, key, value)
+                }
+                JSValue.Func(fIdx, fe) => {
+                    let statics = getFuncStatics(st, fIdx, fe)
+                    setMember(st, statics, key, value)
                 }
                 _ => {
                 }
