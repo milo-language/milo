@@ -164,9 +164,29 @@
   font-size: 1.1rem;
   line-height: 1.6;
 }
+.cat { margin: 0 0 2.2rem; }
+.cat:last-of-type { margin-bottom: 0; }
+.cat-head {
+  margin: 0 0 0.85rem;
+  padding: 0 0 0.4rem;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--cat) 30%, transparent);
+  font-family: var(--milo-display);
+  font-weight: 400;
+  font-size: 0.9rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--cat);
+}
+/* category accent hues — tuned to read on both light and dark backgrounds */
+.cat-emu  { --cat: #a855f7; }
+.cat-lang { --cat: #c07d22; }
+.cat-dev  { --cat: #3b82f6; }
+.cat-web  { --cat: #0d9488; }
+.cat-term { --cat: #ec4899; }
 .tile-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 1rem;
 }
 .tile {
@@ -177,8 +197,9 @@
   gap: 0.4rem;
   padding: 1.1rem 1.1rem 1.2rem;
   border: 1px solid var(--vp-c-divider);
+  border-top: 3px solid var(--cat, var(--vp-c-brand-1)); /* category accent */
   border-radius: 4px; /* square-ish corners — matches the pixel identity */
-  background: var(--vp-c-bg-soft);
+  background: color-mix(in srgb, var(--cat, transparent) 7%, var(--vp-c-bg-soft));
   text-decoration: none !important;
   overflow: hidden;
   transition: transform .22s cubic-bezier(.34, 1.56, .64, 1),
@@ -195,8 +216,9 @@
 }
 .tile:hover {
   transform: translateY(-4px) scale(1.03);
-  border-color: var(--vp-c-brand-1);
-  box-shadow: 0 0 0 1px var(--vp-c-brand-1), 0 14px 40px -8px var(--vp-c-brand-soft);
+  border-color: var(--cat, var(--vp-c-brand-1));
+  box-shadow: 0 0 0 1px var(--cat, var(--vp-c-brand-1)),
+              0 14px 40px -8px color-mix(in srgb, var(--cat, var(--vp-c-brand-1)) 45%, transparent);
 }
 .tile:hover::after {
   transform: translateX(110%);
@@ -225,7 +247,7 @@
   right: 0.6rem;
   font-family: var(--milo-display);
   font-size: 0.62rem;
-  color: var(--vp-c-brand-1);
+  color: var(--cat, var(--vp-c-brand-1));
   letter-spacing: 0.05em;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -260,12 +282,9 @@
   line-height: 1.6;
 }
 @media (max-width: 720px) {
-  .tile-grid { grid-template-columns: repeat(2, 1fr); gap: 0.7rem; }
+  .tile-grid { gap: 0.7rem; }
   .tile h3 { font-size: 0.9rem; }
   .tile p { font-size: 0.76rem; }
-}
-@media (max-width: 460px) {
-  .tile-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* ---- CTA ---- */

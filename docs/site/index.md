@@ -2,8 +2,8 @@
 layout: home
 hero:
   name: Milo
-  text: "A memory-safe systems language."
-  tagline: "Intentionally simple, with formal verification built in. Friendly to humans and AI."
+  text: "works hard to keep your memory safe so you don't have to"
+  tagline: "Safe systems programming language with formal verification built-in"
   image:
     src: /logo.svg
     alt: Milo
@@ -103,62 +103,85 @@ fn main() {
     <h2>Built with Milo</h2>
     <p>We build the language by building things with it. We've found that faster than theory and analysis, and it yields a better language. The emulators run right here in your browser: the same Milo source compiles to a native binary <em>and</em> to JavaScript.</p>
   </div>
-  <div class="tile-grid">
-    <a class="tile" href="/milo/nes/">
-      <span class="tile-play">▶ PLAY</span>
-      <h3>NES Emulator</h3>
-      <p>A complete Nintendo, playable right here in your browser.</p>
-    </a>
-    <a class="tile" href="/milo/genesis/">
-      <span class="tile-play">▶ PLAY</span>
-      <h3>Genesis Emulator</h3>
-      <p>A complete Sega Genesis. Sonic runs.</p>
-    </a>
-    <a class="tile" href="/milo/snes/">
-      <span class="tile-play">▶ PLAY</span>
-      <h3>SNES Emulator</h3>
-      <p>A Super Nintendo. Mario World, Donkey Kong Country, Star Fox.</p>
-    </a>
-    <a class="tile" href="https://github.com/cs01/milo/tree/main/src-milo">
-      <h3>The Compiler</h3>
-      <p>The Milo compiler is written in Milo. It compiles itself.</p>
-    </a>
-    <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/milojs">
-      <h3>JS Engine</h3>
-      <p>A JavaScript engine that runs real Node apps like express.</p>
-    </a>
-    <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/hades">
-      <h3>Debugger</h3>
-      <p>hades: debug any program from the browser, with an AI in the loop.</p>
-    </a>
-    <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/weather">
-      <h3>Weather App</h3>
-      <p>A weather website served from a single static binary.</p>
-    </a>
-    <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/termpair">
-      <h3>termpair</h3>
-      <p>Share your terminal in the browser, end-to-end encrypted.</p>
-    </a>
-    <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/apps/tetris.milo">
-      <h3>Tetris</h3>
-      <p>The classic, in your terminal.</p>
-    </a>
-    <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/java-dap">
-      <h3>Java Debugger</h3>
-      <p>A JVM debug adapter, so hades debugs Java too.</p>
-    </a>
-    <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/apps/sysmon.milo">
-      <h3>System Monitor</h3>
-      <p>A live htop-style view of your machine.</p>
-    </a>
-    <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo">
-      <h3>Package Manager</h3>
-      <p>Milo's own package manager. Install and publish packages over git.</p>
-    </a>
-    <a class="tile" href="https://github.com/cs01/milo/blob/main/tools/smtSolve.milo">
-      <h3>The Prover</h3>
-      <p>The SMT prover that verifies Milo contracts, written in Milo.</p>
-    </a>
+  <div class="cat cat-emu">
+    <h3 class="cat-head">Emulators</h3>
+    <div class="tile-grid">
+      <a class="tile" href="/milo/nes/">
+        <span class="tile-play">▶ PLAY</span>
+        <h3>NES Emulator</h3>
+        <p>A complete Nintendo, playable right here in your browser.</p>
+      </a>
+      <a class="tile" href="/milo/genesis/">
+        <span class="tile-play">▶ PLAY</span>
+        <h3>Genesis Emulator</h3>
+        <p>A complete Sega Genesis. Sonic runs.</p>
+      </a>
+      <a class="tile" href="/milo/snes/">
+        <span class="tile-play">▶ PLAY</span>
+        <h3>SNES Emulator</h3>
+        <p>A Super Nintendo. Mario World, Donkey Kong Country, Star Fox.</p>
+      </a>
+    </div>
+  </div>
+  <div class="cat cat-lang">
+    <h3 class="cat-head">Compilers &amp; interpreters</h3>
+    <div class="tile-grid">
+      <a class="tile" href="https://github.com/cs01/milo/tree/main/src-milo">
+        <h3>The Compiler</h3>
+        <p>The Milo compiler is written in Milo. It compiles itself.</p>
+      </a>
+      <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/milojs">
+        <h3>JS Engine</h3>
+        <p>A JavaScript engine that runs real Node apps like express.</p>
+      </a>
+      <a class="tile" href="https://github.com/cs01/milo/blob/main/tools/smtSolve.milo">
+        <h3>The Prover</h3>
+        <p>The SMT prover that verifies Milo contracts, written in Milo.</p>
+      </a>
+    </div>
+  </div>
+  <div class="cat cat-dev">
+    <h3 class="cat-head">Developer tools</h3>
+    <div class="tile-grid">
+      <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/hades">
+        <h3>Debugger</h3>
+        <p>hades: debug any program from the browser, with an AI in the loop.</p>
+      </a>
+      <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/java-dap">
+        <h3>Java Debugger</h3>
+        <p>A DAP-compliant debugger for the JVM, so hades debugs Java too.</p>
+      </a>
+    </div>
+  </div>
+  <div class="cat cat-web">
+    <h3 class="cat-head">Web &amp; networking</h3>
+    <div class="tile-grid">
+      <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/weather">
+        <h3>Weather App</h3>
+        <p>A weather website served from a single static binary.</p>
+      </a>
+      <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/termpair">
+        <h3>termpair</h3>
+        <p>Share your terminal in the browser, end-to-end encrypted.</p>
+      </a>
+    </div>
+  </div>
+  <div class="cat cat-term">
+    <h3 class="cat-head">Terminal &amp; CLI</h3>
+    <div class="tile-grid">
+      <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/apps/tetris.milo">
+        <h3>Tetris</h3>
+        <p>The classic, in your terminal.</p>
+      </a>
+      <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/apps/sysmon.milo">
+        <h3>System Monitor</h3>
+        <p>A live htop-style view of your machine.</p>
+      </a>
+      <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo">
+        <h3>Package Manager</h3>
+        <p>Milo's own package manager. Install and publish packages over git.</p>
+      </a>
+    </div>
   </div>
   <div class="showcase-cta">
     <a class="showcase-cta-btn" href="/milo/demos">Everything built with Milo</a>
