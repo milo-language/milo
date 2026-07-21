@@ -9,8 +9,13 @@ from "std/os" import {
     snprintf
 }
 from "std/math" import {
-    mathFloor, mathAbs
+    mathFloor, mathAbs, mathMod
 }
+
+// libm: needed for half-ulp precision bound in numToRadix (no bit-level f64
+// access in Milo, so the "how many digits are meaningful" question is answered
+// by asking libm for the adjacent double)
+extern fn nextafter(x: f64, y: f64): f64
 
 enum JSValue {
     Undefined,
@@ -127,6 +132,85 @@ fn stripExpZeros(s: &string): string {
     return out
 }
 
+// %g picks exponent form well before JS does. The spec uses plain decimal
+// whenever the decimal point lands in (-6, 21]: 1e16 prints as
+// "10000000000000000" and 1e-6 as "0.000001"; exponent form starts at 1e21 and
+// 1e-7. Expand a %g exponent form back to plain decimal when JS requires it.
+fn jsExpandExpForm(s: &string): string {
+    var e: i64 = -1
+    var i: i64 = 0
+    while i < s.len() {
+        if s[i] == 'e' || s[i] == 'E' {
+            e = i
+        }
+        i = i + 1
+    }
+    if e < 0 {
+        return s.clone()
+    }
+    var exp: i64 = 0
+    var expNeg = false
+    var j = e + 1
+    if j < s.len() && (s[j] == '+' || s[j] == '-') {
+        expNeg = s[j] == '-'
+        j = j + 1
+    }
+    while j < s.len() {
+        exp = exp * 10 + ((s[j] - '0') as i64)
+        j = j + 1
+    }
+    if expNeg {
+        exp = 0 - exp
+    }
+    // point position after the first digit: n = exp + 1 (per the spec's k/n)
+    let pointAt = exp + 1
+    if pointAt > 21 || pointAt <= -6 {
+        return s.clone()
+    }
+    var neg = false
+    var digits = String.withCapacity(32)
+    var m: i64 = 0
+    while m < e {
+        if s[m] == '-' {
+            neg = true
+        } else if s[m] != '.' && s[m] != '+' {
+            digits.push(s[m])
+        }
+        m = m + 1
+    }
+    let k = digits.len()
+    var out = String.withCapacity(32)
+    if neg {
+        out.push('-')
+    }
+    if pointAt >= k {
+        out = out + digits
+        var z = k
+        while z < pointAt {
+            out.push('0')
+            z = z + 1
+        }
+    } else if pointAt > 0 {
+        var p: i64 = 0
+        while p < k {
+            if p == pointAt {
+                out.push('.')
+            }
+            out.push(digits[p])
+            p = p + 1
+        }
+    } else {
+        out = out + "0."
+        var z = pointAt
+        while z < 0 {
+            out.push('0')
+            z = z + 1
+        }
+        out = out + digits
+    }
+    return out
+}
+
 // JS Number→string: integrals without ".0", otherwise the shortest decimal
 // text that round-trips to the same double (probe %g precision 1..17).
 fn numToStr(n: f64): string {
@@ -150,7 +234,7 @@ fn numToStr(n: f64): string {
         match parseFloat(s.clone()) {
             Option.Some(v) => {
                 if v == n {
-                    return s
+                    return jsExpandExpForm(s)
                 }
             }
             Option.None => {
@@ -158,7 +242,7 @@ fn numToStr(n: f64): string {
         }
         p = p + 1
     }
-    return floatG(n, 17)
+    return jsExpandExpForm(floatG(n, 17))
 }
 
 fn toStr(v: &JSValue): string {
@@ -238,35 +322,217 @@ fn nativeHandle(v: &JSValue): i64 {
     }
 }
 
-// Integer-to-radix, matching Number.prototype.toString(radix). The fractional
-// part is dropped — real code uses this for hex/binary of integers.
+fn radixDigitChar(d: i64): u8 {
+    if d < 10 {
+        return ('0' as i64 + d) as u8
+    }
+    return ('a' as i64 + (d - 10)) as u8
+}
+
+// Exact fixed-point fraction: 32-bit limbs, limbs[i] weighs 2^-(32*(i+1)).
+// A double's fraction part has < 1075 significant bits, so extraction by
+// repeated exact *2^32 scaling terminates (power-of-two scaling and
+// x - floor(x) are both exact in IEEE arithmetic).
+fn fracToLimbs(x0: f64, nLimbs: i64): Vec<i64> {
+    var out: Vec<i64> = Vec.new()
+    var x = x0
+    var i: i64 = 0
+    while i < nLimbs {
+        x = x * 4294967296.0
+        let hi = mathFloor(x)
+        x = x - hi
+        out.push(hi as i64)
+        i = i + 1
+    }
+    return out
+}
+
+// limbs *= m (m <= 36); returns the integer carry-out (the next digit)
+fn limbsMulSmall(limbs: &mut Vec<i64>, m: i64): i64 {
+    var carry: i64 = 0
+    var i = limbs.len() - 1
+    while i >= 0 {
+        let t = limbs[i] * m + carry
+        limbs[i] = t % 4294967296
+        carry = t / 4294967296
+        i = i - 1
+    }
+    return carry
+}
+
+fn limbsLess(a: &Vec<i64>, b: &Vec<i64>): bool {
+    var i: i64 = 0
+    while i < a.len() {
+        if a[i] != b[i] {
+            return a[i] < b[i]
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// does a + b carry past 1.0?
+fn limbsSumOverflows(a: &Vec<i64>, b: &Vec<i64>): bool {
+    var carry: i64 = 0
+    var i = a.len() - 1
+    while i >= 0 {
+        let t = a[i] + b[i] + carry
+        if t >= 4294967296 {
+            carry = 1
+        } else {
+            carry = 0
+        }
+        i = i - 1
+    }
+    return carry > 0
+}
+
+// Number.prototype.toString(radix). Fraction digits via the free-format
+// (Steele-White) loop over EXACT fixed-point arithmetic: emit digits until the
+// remainder is within half an ulp of the source double, then round to nearest
+// (ties to even). This matches QuickJS/JSC shortest-round-trip output; V8's
+// double-loop version differs in the last digit for some inputs.
 fn numToRadix(n: f64, radix: i64): string {
-    if n != n {
+    if !(n == n) {
         return "NaN"
     }
-    var i = n as i64
-    if i == 0 {
-        return "0"
+    if !isFiniteF(n) {
+        if n > 0.0 {
+            return "Infinity"
+        }
+        return "-Infinity"
     }
+    var v = n
     var neg = false
-    if i < 0 {
+    if v < 0.0 {
         neg = true
-        i = 0 - i
+        v = 0.0 - v
+    }
+    let radixF = radix as f64
+    var integer = mathFloor(v)
+    let fraction = v - integer
+    // digits beyond half the gap to the next double are noise, stop there
+    var delta = 0.5 * (nextafter(v, jsInf()) - v)
+    let minDenorm = nextafter(0.0, 1.0)
+    if delta < minDenorm {
+        delta = minDenorm
+    }
+    var fracDigits: Vec<i64> = Vec.new()
+    var fracLen: i64 = 0
+    if fraction >= delta {
+        // 34 limbs = 1088 bits, enough for any double fraction (max 1074)
+        let nLimbs: i64 = 35
+        var r = fracToLimbs(fraction, nLimbs)
+        var m = fracToLimbs(delta, nLimbs)
+        // once the scaled tolerance reaches 1.0 its integer part falls off the
+        // limb array; from then on ANY remainder is within tolerance (sticky)
+        var mBig = false
+        var guard: i64 = 0
+        while guard < 1200 {
+            guard = guard + 1
+            let digit = limbsMulSmall(r, radix)
+            if limbsMulSmall(m, radix) > 0 {
+                mBig = true
+            }
+            fracDigits.push(digit)
+            fracLen = fracLen + 1
+            let low = mBig || limbsLess(r, m)
+            let high = mBig || limbsSumOverflows(r, m)
+            if !low && !high {
+                continue
+            }
+            // last digit: pick d or d+1 by nearest (2r vs 1), ties to even
+            var roundUp = false
+            if high && !low {
+                roundUp = true
+            } else if high && low {
+                if r[0] > 2147483648 {
+                    roundUp = true
+                } else if r[0] == 2147483648 {
+                    var rest: i64 = 0
+                    var q: i64 = 1
+                    while q < nLimbs {
+                        rest = rest + r[q]
+                        q = q + 1
+                    }
+                    if rest > 0 {
+                        roundUp = true
+                    } else {
+                        // exact tie: round to even
+                        roundUp = digit % 2 == 1
+                    }
+                } else {
+                    roundUp = false
+                }
+            }
+            if roundUp {
+                // drop trailing (radix-1) digits, bump the first incrementable
+                // one; all-maxed carries into the integer part
+                var k = fracLen - 1
+                var carried = false
+                while k >= 0 {
+                    if fracDigits[k] + 1 < radix {
+                        fracDigits[k] = fracDigits[k] + 1
+                        fracLen = k + 1
+                        carried = true
+                        break
+                    }
+                    k = k - 1
+                }
+                if !carried {
+                    fracLen = 0
+                    integer = integer + 1.0
+                }
+            } else {
+                // strip trailing zeros the round-down may leave
+                while fracLen > 0 && fracDigits[fracLen - 1] == 0 {
+                    fracLen = fracLen - 1
+                }
+            }
+            break
+        }
     }
     var out = ""
-    while i > 0 {
-        let d = i % radix
-        var ch = String.withCapacity(1)
-        if d < 10 {
-            ch.push(('0' as i64 + d) as u8)
-        } else {
-            ch.push(('a' as i64 + (d - 10)) as u8)
-        }
-        out = ch + out
-        i = i / radix
-    }
     if neg {
-        return "-" + out
+        out.push('-')
+    }
+    if integer == 0.0 {
+        out.push('0')
+    } else if integer < 9007199254740992.0 {
+        // fits the exact-integer range: fast i64 loop
+        var i = integer as i64
+        var digits = String.withCapacity(64)
+        while i > 0 {
+            digits.push(radixDigitChar(i % radix))
+            i = i / radix
+        }
+        var p = digits.len() - 1
+        while p >= 0 {
+            out.push(digits[p])
+            p = p - 1
+        }
+    } else {
+        // beyond 2^53: peel digits with exact fmod (low digits reflect the
+        // double's exact value, matching V8)
+        var digits = String.withCapacity(1100)
+        while integer > 0.0 {
+            let rem = mathMod(integer, radixF)
+            digits.push(radixDigitChar(rem as i64))
+            integer = (integer - rem) / radixF
+        }
+        var p = digits.len() - 1
+        while p >= 0 {
+            out.push(digits[p])
+            p = p - 1
+        }
+    }
+    if fracLen > 0 {
+        out.push('.')
+        var k: i64 = 0
+        while k < fracLen {
+            out.push(radixDigitChar(fracDigits[k]))
+            k = k + 1
+        }
     }
     return out
 }
@@ -301,10 +567,24 @@ fn numToPrecision(n: f64, digits: i64): string {
         scaled = scaled * 10.0
         intDigits = intDigits - 1
     }
-    var decimals = digits - intDigits
-    if decimals < 0 {
-        decimals = 0
+    // The exponent is that of the ROUNDED value: 99.9 at precision 2 rounds to
+    // 100, gaining a digit (and with it exponential form).
+    var p10 = 1.0
+    var q: i64 = 0
+    while q < digits - 1 {
+        p10 = p10 * 10.0
+        q = q + 1
     }
+    if roundHalfAwayFromZero(scaled * p10) >= (p10 * 10.0) as i64 {
+        intDigits = intDigits + 1
+    }
+    // spec: when the exponent falls outside [-6, precision) the result is
+    // exponential notation with precision-1 fraction digits — (25).toPrecision(1)
+    // is "3e+1", not "25"
+    if intDigits - 1 >= digits || intDigits - 1 < -6 {
+        return numToExponential(n, digits - 1, true)
+    }
+    let decimals = digits - intDigits
     return numToFixed(n, decimals)
 }
 
@@ -319,6 +599,18 @@ fn numToExponential(n: f64, digits: i64, haveDigits: bool): string {
             return "Infinity"
         }
         return "-Infinity"
+    }
+    // Past double precision the repeated /10 mantissa walk is meaningless —
+    // the spec wants the EXACT decimal expansion of the double, which libc's
+    // %e produces. (Ties can't happen out there, so C's half-even rounding
+    // can't disagree with JS.) The exponent just needs JS formatting: e+2, not
+    // e+02.
+    if haveDigits && digits > 17 && isFiniteF(n) {
+        var ebuf: [u8; 160] = [0; 160]
+        unsafe {
+            snprintf(ebuf, 160, "%.*e", digits as i32, n)
+            return stripExpZeros(_cstrToString(ebuf as *u8))
+        }
     }
     var neg = false
     var mag = n
@@ -339,7 +631,20 @@ fn numToExponential(n: f64, digits: i64, haveDigits: bool): string {
     }
     var mant = ""
     if haveDigits {
-        mant = numToFixed(mag, digits)
+        // the mantissa can round up to 10.0 (99.9 → 9.99e+1 → "10.0e+1");
+        // renormalize to keep it in [1, 10)
+        var m10 = 1.0
+        var mq: i64 = 0
+        while mq < digits {
+            m10 = m10 * 10.0
+            mq = mq + 1
+        }
+        if mag != 0.0 && roundHalfAwayFromZero(mag * m10) >= (m10 * 10.0) as i64 {
+            exp = exp + 1
+            mant = numToFixed(1.0, digits)
+        } else {
+            mant = numToFixed(mag, digits)
+        }
     } else {
         mant = numToStr(mag)
     }
@@ -358,8 +663,15 @@ fn numToFixed(n: f64, digits: i64): string {
     if n != n {
         return "NaN"
     }
+    // a negative value that rounds to zero keeps its sign: (-1e-10).toFixed(0)
+    // is "-0", (-0.04).toFixed(1) is "-0.0"
+    let signNeg = n < 0.0
     if digits <= 0 {
-        return i64ToStr(roundHalfAwayFromZero(n))
+        let r = roundHalfAwayFromZero(n)
+        if r == 0 && signNeg {
+            return "-0"
+        }
+        return i64ToStr(r)
     }
     var scale = 1.0
     var k: i64 = 0
@@ -373,6 +685,9 @@ fn numToFixed(n: f64, digits: i64): string {
     if v < 0 {
         neg = true
         v = 0 - v
+    }
+    if scaled == 0 && signNeg {
+        neg = true
     }
     var frac = i64ToStr(v % (scale as i64))
     while frac.len() < digits {
