@@ -114,6 +114,10 @@ let T_DO: i32 = 89
 let T_SWITCH: i32 = 90
 let T_CASE: i32 = 91
 let T_DEFAULT: i32 = 92
+// logical-assignment operators (&&=, ||=, ??=)
+let T_ANDANDEQ: i32 = 99
+let T_OROREQ: i32 = 100
+let T_NULLISHEQ: i32 = 101
 
 struct Token {
     kind: i32,
@@ -701,17 +705,32 @@ fn lex(src: &string): Vec<Token> {
             i = i + 2
             pushTok(toks, T_GE)
         } else if c == '&' && i + 1 < n && src[i + 1] == '&' {
-            i = i + 2
-            pushTok(toks, T_ANDAND)
+            if i + 2 < n && src[i + 2] == '=' {
+                i = i + 3
+                pushTok(toks, T_ANDANDEQ)
+            } else {
+                i = i + 2
+                pushTok(toks, T_ANDAND)
+            }
         } else if c == '|' && i + 1 < n && src[i + 1] == '|' {
-            i = i + 2
-            pushTok(toks, T_OROR)
+            if i + 2 < n && src[i + 2] == '=' {
+                i = i + 3
+                pushTok(toks, T_OROREQ)
+            } else {
+                i = i + 2
+                pushTok(toks, T_OROR)
+            }
         } else if c == '?' && i + 1 < n && src[i + 1] == '.' && !(i + 2 < n && isDigitByte(src[i + 2])) {
             i = i + 2
             pushTok(toks, T_OPTCHAIN)
         } else if c == '?' && i + 1 < n && src[i + 1] == '?' {
-            i = i + 2
-            pushTok(toks, T_NULLISH)
+            if i + 2 < n && src[i + 2] == '=' {
+                i = i + 3
+                pushTok(toks, T_NULLISHEQ)
+            } else {
+                i = i + 2
+                pushTok(toks, T_NULLISH)
+            }
         } else if c == '=' && i + 1 < n && src[i + 1] == '>' {
             i = i + 2
             pushTok(toks, T_ARROW)

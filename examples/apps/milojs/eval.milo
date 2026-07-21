@@ -4463,6 +4463,24 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             writeLValue(prog, targetIdx, st, scope, cloneValue(result))
             return result
         }
+        Expr.LogicalAssign(targetIdx, op, rhsIdx) => {
+            // short-circuit: read the target, and only evaluate + store the rhs
+            // when the operator says an update is due (a ||= b assigns only when a
+            // is falsy, &&= only when truthy, ??= only when null/undefined)
+            let cur = readLValue(prog, targetIdx, st, scope)
+            var doAssign = isNullish(cur)
+            if op == "||" {
+                doAssign = !truthy(cur)
+            } else if op == "&&" {
+                doAssign = truthy(cur)
+            }
+            if !doAssign {
+                return cur
+            }
+            let rhs = evalExpr(prog, rhsIdx, st, scope)
+            writeLValue(prog, targetIdx, st, scope, cloneValue(rhs))
+            return rhs
+        }
         Expr.Cond(c, a, b) => {
             let vc = evalExpr(prog, c, st, scope)
             if truthy(vc) {

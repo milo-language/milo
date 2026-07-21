@@ -1265,6 +1265,17 @@ fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
         let rhs = parseExpr(p, prog)
         return addExpr(prog, Expr.CompoundAssign(left, op, rhs))
     }
+    if k == T_ANDANDEQ || k == T_OROREQ || k == T_NULLISHEQ {
+        advance(p)
+        var lop = "&&"
+        if k == T_OROREQ {
+            lop = "||"
+        } else if k == T_NULLISHEQ {
+            lop = "??"
+        }
+        let rhs = parseExpr(p, prog)
+        return addExpr(prog, Expr.LogicalAssign(left, lop, rhs))
+    }
     return left
 }
 

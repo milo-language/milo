@@ -38,6 +38,9 @@ enum Expr {
     Update(i64, bool, bool),
     // x op= y on an lvalue: target expr, op ("+","-","*","/","%"), rhs expr
     CompoundAssign(i64, string, i64),
+    // logical assignment: target, op ("&&"/"||"/"??"), rhs. Short-circuits — rhs
+    // is evaluated and stored only when the op says the target needs updating.
+    LogicalAssign(i64, string, i64),
     // ternary c ? a : b
     Cond(i64, i64, i64),
     // ...expr in a call-arg or array-literal position
@@ -252,6 +255,9 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.CompoundAssign(target, op, rhs) => {
             return Expr.CompoundAssign(target, op.clone(), rhs)
+        }
+        Expr.LogicalAssign(target, op, rhs) => {
+            return Expr.LogicalAssign(target, op.clone(), rhs)
         }
         Expr.Cond(c, a, b) => {
             return Expr.Cond(c, a, b)
