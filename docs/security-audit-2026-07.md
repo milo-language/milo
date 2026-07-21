@@ -41,8 +41,20 @@ gracefully.
   name (`let f = …; return f`), tracked via `VarInfo.boundClosure`.
   Still open (not this pass): a closure that escapes *indirectly* — stored into a struct or
   Vec that is then returned, or returned by a caller after being passed in — is not yet
-  promoted. Those need general escape analysis; tracked as follow-up, workaround is explicit
-  `move`.
+  promoted (verified still crashes, exit 133). Workaround for now: explicit `move`.
+
+  Planned follow-up shape (supersedes the silent-promotion approach above):
+  - **Conservative reject, not silent promote.** A closure that captures a local/param by
+    reference may not escape its defining function (returned, or stored into anything that
+    escapes). One rule catches the direct case *and* the struct/Vec-indirect case — the
+    reject direction needs no full escape analysis; escape analysis only buys permitting more.
+  - **Diagnostic names the culprit:** `closure escapes its scope; captures 'secret' by
+    reference to a frame that ends here` + a hint.
+  - **Opt-in ownership later:** if escaping closures are genuinely wanted, add an explicit
+    owned/boxed closure type (opt-in allocation, à la `move`) — never a silent heap alloc.
+  - **Open decision:** this reject rule would also reject the direct/`let`-return cases the
+    current fix silently boxes. Adopting it means replacing the silent-promotion behavior,
+    not just extending it. Needs a call before implementing.
 
 - [ ] **H1 — `f()(x)` / `arr[i](x)` callee never invoked.** Call-result / index callee is
   mis-codegen'd: closure computed then discarded, arg printed raw with wrong format
