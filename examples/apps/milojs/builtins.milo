@@ -247,6 +247,23 @@ fn argStr(args: &Vec<JSValue>, i: i64): string {
 // s.split(sep) → a new heap array. No arg → [s]; empty sep → one entry per char.
 fn jsSplit(s: &string, args: &Vec<JSValue>, st: &mut Interp): i64 {
     let arr = newArray(st)
+    // second arg caps the result length; undefined means no limit
+    var limit: i64 = -1
+    if args.len() > 1 {
+        match args[1] {
+            JSValue.Undefined => {
+            }
+            _ => {
+                let ln = toNum(args[1])
+                if isFiniteF(ln) && ln >= 0.0 {
+                    limit = ln as i64
+                }
+            }
+        }
+    }
+    if limit == 0 {
+        return arr
+    }
     if args.len() == 0 {
         arrPush(st, arr, JSValue.Str(s.clone()))
         return arr
@@ -258,6 +275,9 @@ fn jsSplit(s: &string, args: &Vec<JSValue>, st: &mut Interp): i64 {
         // unrepresentable in UTF-8, so the whole character stays together.
         var b: i64 = 0
         while b < s.len() {
+            if limit >= 0 && arrLen(st, arr) >= limit {
+                return arr
+            }
             let cp = decodeCodepoint(s, b)
             arrPush(st, arr, JSValue.Str(strSlice(s, b, b + cp.size)))
             b = b + cp.size
@@ -267,11 +287,16 @@ fn jsSplit(s: &string, args: &Vec<JSValue>, st: &mut Interp): i64 {
     var start: i64 = 0
     var idx = jsIndexOf(s, sep, start)
     while idx >= 0 {
+        if limit >= 0 && arrLen(st, arr) >= limit {
+            return arr
+        }
         arrPush(st, arr, JSValue.Str(strSlice(s, start, idx)))
         start = idx + sep.len()
         idx = jsIndexOf(s, sep, start)
     }
-    arrPush(st, arr, JSValue.Str(strSlice(s, start, s.len())))
+    if limit < 0 || arrLen(st, arr) < limit {
+        arrPush(st, arr, JSValue.Str(strSlice(s, start, s.len())))
+    }
     return arr
 }
 
