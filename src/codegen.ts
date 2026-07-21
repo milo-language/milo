@@ -1804,6 +1804,41 @@ export class Codegen {
     lines.push(`${okLabel}:`);
   }
 
+  // Integer `/` and `%` by zero are LLVM UB (unlike `+ - *`, which wrap): sdiv/udiv
+  // on a zero divisor is undefined, not merely wrong, so it must trap in EVERY mode
+  // rather than emit garbage at -O2. For signed ops INT_MIN / -1 has no representable
+  // result and is likewise UB — trap it too. Mirrors the bounds-check trap shape.
+  private emitDivByZeroCheck(lines: string[], divisor: string, dividend: string, llType: string, signed: boolean, bits: number, span?: { line: number; col: number }) {
+    this.needsPrintf = true;
+    this.needsExit = true;
+    const isZero = this.nextTemp();
+    lines.push(`  ${isZero} = icmp eq ${llType} ${divisor}, 0`);
+    let flag = isZero;
+    if (signed) {
+      const minVal = (-(BigInt(2) ** BigInt(bits - 1))).toString();
+      const isMin = this.nextTemp();
+      lines.push(`  ${isMin} = icmp eq ${llType} ${dividend}, ${minVal}`);
+      const isNeg1 = this.nextTemp();
+      lines.push(`  ${isNeg1} = icmp eq ${llType} ${divisor}, -1`);
+      const ovf = this.nextTemp();
+      lines.push(`  ${ovf} = and i1 ${isMin}, ${isNeg1}`);
+      const both = this.nextTemp();
+      lines.push(`  ${both} = or i1 ${isZero}, ${ovf}`);
+      flag = both;
+    }
+    const okLabel = this.nextLabel("divz.ok");
+    const failLabel = this.nextLabel("divz.fail");
+    lines.push(`  br i1 ${flag}, label %${failLabel}, label %${okLabel}`);
+    lines.push(`${failLabel}:`);
+    const { label, length } = this.addString(`milo: division by zero at ${span?.line ?? 0}:${span?.col ?? 0}\n`);
+    const errPtr = this.nextTemp();
+    lines.push(`  ${errPtr} = getelementptr [${length} x i8], ptr ${label}, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr})`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+    lines.push(`${okLabel}:`);
+  }
+
   private emitCheckedArith(lines: string[], op: string, unsigned: boolean, llType: string, lv: string, rv: string, line: number): string {
     this.needsOverflowCheck = true;
     this.needsPrintf = true;
@@ -3345,6 +3380,13 @@ export class Codegen {
           if (this.debugOverflow && !isFloat && expr.op in checkedOps && expr.span) {
             const val = this.emitCheckedArith(lines, checkedOps[expr.op], unsigned, llt, lv, rv, expr.span.line);
             return [lines, val, llt];
+          }
+          // Integer division/remainder by zero (and signed INT_MIN / -1) is UB —
+          // trap it unconditionally, in debug and release alike.
+          if (!isFloat && (expr.op === "/" || expr.op === "%")) {
+            const signed = !unsigned;
+            const bits = expr.left.type.tag === "int" ? expr.left.type.bits : 32;
+            this.emitDivByZeroCheck(lines, rv, lv, llt, signed, bits, expr.span);
           }
           lines.push(`  ${tmp} = ${op} ${llt} ${lv}, ${rv}`);
           return [lines, tmp, llt];
@@ -6142,6 +6184,22 @@ export class Codegen {
     lines.push(`${okLabel}:`);
   }
 
+  // Slice/substr bounds are range-checked and used as GEP offsets in i64. A bound
+  // that is a narrower int (e.g. an `i32` local) would otherwise emit `icmp ... i64
+  // %i32val` — invalid IR that clang rejects. Widen to i64 (sext signed, zext
+  // unsigned) so the bound matches the i64 arithmetic around it.
+  private genBoundI64(bound: HIRExpr, lines: string[]): string {
+    const [bl, bv, bty] = this.genExpr(bound);
+    lines.push(...bl);
+    if (bty === "i8" || bty === "i16" || bty === "i32") {
+      const signed = bound.type.tag === "int" ? bound.type.signed : true;
+      const ext = this.nextTemp();
+      lines.push(`  ${ext} = ${signed ? "sext" : "zext"} ${bty} ${bv} to i64`);
+      return ext;
+    }
+    return bv;
+  }
+
   // String.substr(start, end) — allocate new owned string from s[start..end]
   private genStringSubstr(expr: HIRExpr & { kind: "StringSubstr" }, lines: string[]): [string[], string, string] {
     this.hasStringType = true;
@@ -6150,10 +6208,8 @@ export class Codegen {
 
     const [strLines, strVal] = this.genExpr(expr.str);
     lines.push(...strLines);
-    const [startLines, startVal] = this.genExpr(expr.start);
-    lines.push(...startLines);
-    const [endLines, endVal] = this.genExpr(expr.end);
-    lines.push(...endLines);
+    const startVal = this.genBoundI64(expr.start, lines);
+    const endVal = this.genBoundI64(expr.end, lines);
 
     this.emitStringRangeCheck(lines, startVal, endVal, strVal, "substr", expr.span);
 
@@ -6191,10 +6247,8 @@ export class Codegen {
 
     const [strLines, strVal] = this.genExpr(expr.str);
     lines.push(...strLines);
-    const [startLines, startVal] = this.genExpr(expr.start);
-    lines.push(...startLines);
-    const [endLines, endVal] = this.genExpr(expr.end);
-    lines.push(...endLines);
+    const startVal = this.genBoundI64(expr.start, lines);
+    const endVal = this.genBoundI64(expr.end, lines);
 
     this.emitStringRangeCheck(lines, startVal, endVal, strVal, "slice", expr.span);
 
@@ -6230,10 +6284,8 @@ export class Codegen {
 
     const [vLines, vVal] = this.genExpr(expr.vec);
     lines.push(...vLines);
-    const [startLines, startVal] = this.genExpr(expr.start);
-    lines.push(...startLines);
-    const [endLines, endVal] = this.genExpr(expr.end);
-    lines.push(...endLines);
+    const startVal = this.genBoundI64(expr.start, lines);
+    const endVal = this.genBoundI64(expr.end, lines);
 
     // bounds check against the source Vec's len (field 1), mirroring string slices
     this.needsPrintf = true;
@@ -6286,10 +6338,8 @@ export class Codegen {
   private genArraySlice(expr: HIRExpr & { kind: "VecSlice" }, lines: string[]): [string[], string, string] {
     const [aLines, arrPtr, arrTy] = this.genLValue(expr.vec);
     lines.push(...aLines);
-    const [startLines, startVal] = this.genExpr(expr.start);
-    lines.push(...startLines);
-    const [endLines, endVal] = this.genExpr(expr.end);
-    lines.push(...endLines);
+    const startVal = this.genBoundI64(expr.start, lines);
+    const endVal = this.genBoundI64(expr.end, lines);
 
     const match = arrTy.match(/\[(\d+) x .+\]/);
     const size = match ? parseInt(match[1]) : 0;

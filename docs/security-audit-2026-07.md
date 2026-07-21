@@ -42,19 +42,19 @@ gracefully.
   mis-codegen'd: closure computed then discarded, arg printed raw with wrong format
   (`<unprintable>`). Only plain-variable and struct-field callees work.
 
-- [ ] **M1 — i32 slice bounds emit invalid IR.** `s[a..b]` with `i32` a/b → `icmp slt i64`
+- [x] **M1 — i32 slice bounds emit invalid IR.** `s[a..b]` with `i32` a/b → `icmp slt i64`
   on an i32 value. Checker accepts i32; codegen must widen bounds to i64.
 
 - [ ] **M2 — deep nested `match` emits invalid GEP.** `getelementptr i64, ptr, i32 0, i32 0`.
 
-- [ ] **M3 — unchecked non-arithmetic UB.** div/mod by zero, `INT_MIN / -1`, shift ≥ width,
+- [x] **M3 — unchecked non-arithmetic UB.** div/mod by zero, `INT_MIN / -1`, shift ≥ width,
   float→int out-of-range never trap; garbage at `--release`. Trap div0 (and design shift/
   fptosi: mask vs trap vs `llvm.fptosi.sat`).
 
-- [ ] **D1 — parser stack overflow.** No recursion-depth guard; ~4000-deep nesting →
+- [x] **D1 — parser stack overflow.** No recursion-depth guard; ~4000-deep nesting →
   `RangeError: Maximum call stack`. Add a depth limit with a clean diagnostic.
 
-- [ ] **D2 — infinite monomorphization.** Recursive generic (`grow<Wrap<T>>`) has no
+- [x] **D2 — infinite monomorphization.** Recursive generic (`grow<Wrap<T>>`) has no
   instantiation-depth cap → stack overflow in `monomorphizeFn`. Add a recursion limit.
 
 - [x] **D3 — `prove`/`verify`/`wcet` don't catch `ParseError`.** They dump a raw JS stack
