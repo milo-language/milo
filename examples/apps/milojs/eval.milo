@@ -1441,12 +1441,28 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     if isErrorCtor(id) {
         let o = newObject(st)
         st.objects[o].isError = true
-        objSet(st, o, "name", JSValue.Str(nativeErrorName(id)))
+        let ename = nativeErrorName(id)
+        objSet(st, o, "name", JSValue.Str(ename.clone()))
         var msg = ""
         if argVals.len() > 0 {
             msg = toStr(argVals[0])
         }
-        objSet(st, o, "message", JSValue.Str(msg))
+        objSet(st, o, "message", JSValue.Str(msg.clone()))
+        // error.stack: no real backtrace here, but a string headed "Name: message"
+        // so code that reads or logs e.stack (a typeof check, express's error
+        // middleware) sees a string rather than undefined
+        var stackHead = ename.clone()
+        if msg.len() > 0 {
+            stackHead = stackHead + ": " + msg
+        }
+        objSet(st, o, "stack", JSValue.Str(stackHead))
+        // new Error(msg, { cause }) — ES2022 error chaining
+        if argVals.len() > 1 {
+            let oh = objHandle(argVals[1])
+            if oh >= 0 && objOwnIndex(st, oh, "cause") >= 0 {
+                objSet(st, o, "cause", cloneValue(getMember(st, oh, "cause")))
+            }
+        }
         return JSValue.Obj(o)
     }
     if id == NATIVE_JSON_STRINGIFY {
@@ -5288,8 +5304,15 @@ fn proxyOwnEnumKeys(prog: &Prog, st: &mut Interp, o: i64): Vec<string> {
 fn makeError(st: &mut Interp, kind: string, msg: string): JSValue {
     let o = newObject(st)
     st.objects[o].isError = true
-    objSet(st, o, "name", JSValue.Str(kind))
-    objSet(st, o, "message", JSValue.Str(msg))
+    objSet(st, o, "name", JSValue.Str(kind.clone()))
+    objSet(st, o, "message", JSValue.Str(msg.clone()))
+    // a string stack (headed "Name: message") so a caught runtime error's .stack
+    // is a string, like a constructed Error's — no real backtrace available
+    var stackHead = kind.clone()
+    if msg.len() > 0 {
+        stackHead = stackHead + ": " + msg
+    }
+    objSet(st, o, "stack", JSValue.Str(stackHead))
     return JSValue.Obj(o)
 }
 
