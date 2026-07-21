@@ -276,3 +276,54 @@ Every slice: change → `tests/run.sh` → `MILOJS_GC_THRESHOLD=1` stress that
 constructs+drops many of that capability → app smoke → re-measure `50k {}` →
 commit. Expect the empty-object number to barely move until the hot payloads
 (steps 3-6) land — that is where the 250 B lives.
+
+## BLOCKER found 2026-07-21: HashMap.get deep-clones, and the Vec payloads are where the bytes are
+
+Checked the side-table primitive before coding slice 1. `HashMap<i64, T>`
+exposes only New / Insert / Get / GetOrDefault / Contains / Remove / Len. **`get`
+and `getOrDefault` DEEP-CLONE the value** — the codegen comment is explicit:
+"Deep-clone, don't `load`: a shallow copy aliases the map's heap." There is no
+`getMut`/`entry`/reference accessor, and there cannot cleanly be one: Milo's
+second-class references forbid returning `&V`, which is exactly *why* `get`
+clones. This constraint was not in the plan above, and it reshapes the refactor:
+
+- **The big movable payloads are Vecs, and Vecs cannot be cheaply moved.**
+  `bytes` (typed-array/DataView element access, per-element), `mapKeys/mapVals`
+  (per Map op), `reactions`, `boundArgs` — reading any of these from a side table
+  clones the whole Vec; mutating is clone-out → mutate → clone-back. A
+  `Float64Array` write loop or a growing Map becomes **O(n²)**. Non-viable while
+  the primitive clones. These are ~120 B of the struct — and, kept inline, an
+  unused Vec is just 24 B with no heap, so leaving them inline is cheap anyway.
+- **Only the JSValue payloads (~160 B: proxy/promise/bound targets) and the
+  scalars (~72 B: ta view i64s, regexId, dateMs, napi, abMaxLen) are movable**,
+  paying a bounded 8–32 B clone per access, guarded by an inline flag. Storing an
+  object *index* (i64) instead of a full JSValue where the value is always an
+  object (proxyTarget, boundTarget) shrinks that clone to 8 B.
+
+**Revised achievable target: ~2×, not 3–4×.** Moving the JSValue payloads +
+scalars takes the ~465 B struct to ~233 B → roughly 1311 → ~650 B/empty measured.
+The remaining halving the plan assumed lived in the Vec payloads, which the
+primitive blocks.
+
+**And the ~2× requires touching the app-critical paths.** The movable JSValue
+payloads are proxy (prisma wraps its client — every property read), promise
+(async-heavy) and bound (zod). The clone cost is tolerable (dominated by trap
+dispatch / settle), but a GC-mark or flag-gating slip there breaks priority-1,
+and it can only be *confirmed* by running the full app, which needs the private
+bundle. So the high-value part of this refactor is gated on app-in-the-loop
+verification that the milojs session cannot do alone.
+
+**Three ways forward, in rough ROI order:**
+1. **Deprioritize memory; spend the effort on QuickJS/generators (item 3),** which
+   don't touch the app's critical path and move a headline number. The empty-
+   object cost is real but the app already runs fast (~34 ms/route); 1.3 KB/object
+   is not what's hurting it.
+2. **Land only the safe scalar slice** (ta view fields + regexId + dateMs + napi +
+   abMaxLen, ~72 B, all cold, no GC-mark duty since no JSValues, fixture-
+   verifiable without the app) for a modest ~10–15 % win that proves the side-
+   table infra. Leave the JSValue payloads for an app-in-the-loop session.
+3. **Add a mutable-map-access primitive to Milo** (`getMut`/`entry` returning a
+   borrowable slot) so Vec payloads become movable and the full 3–4× is back on
+   the table. This is a language/compiler change gated by second-class-reference
+   rules — the biggest investment, but it's the only path to the original target
+   and it helps every Milo program, not just milojs.
