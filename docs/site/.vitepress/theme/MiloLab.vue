@@ -20,6 +20,7 @@
     <!-- rail: Sandbox (free play) first, then the 10 lessons -->
     <div class="rail" role="tablist" aria-label="Lessons">
       <button class="pip sb" :class="{ cur: sandbox }" title="Sandbox — free play" @click="openSandbox">Sandbox</button>
+      <span class="rail-label">Lessons</span>
       <button
         v-for="(c, i) in concepts" :key="i"
         class="pip" :class="{ cur: i === cur && !sandbox, ok: ran[i], reachable: i <= maxReached }"
@@ -35,7 +36,7 @@
     <div class="card">
       <div class="chead">
         <template v-if="!sandbox">
-          <span class="step">Step {{ cur + 1 }} of {{ concepts.length }}</span>
+          <span class="step">Lesson {{ cur + 1 }} of {{ concepts.length }}</span>
           <h3 class="ct" v-html="cur + 1 + '. ' + concepts[cur].title"></h3>
           <p class="cd" v-html="concepts[cur].desc"></p>
         </template>
@@ -99,7 +100,7 @@
       <div class="foot">
         <button v-if="!sandbox" class="nav" :disabled="cur === 0" @click="go(cur - 1)">← Back</button>
         <span v-if="!sandbox" class="prog"><b>{{ ranCount }}</b> / {{ concepts.length }} run</span>
-        <span v-if="!sandbox && !ran[cur]" class="foot-hint">Run the program to unlock the next step</span>
+        <span v-if="!sandbox && !ran[cur]" class="foot-hint">Run the program to unlock the next lesson</span>
         <span v-if="sandbox" class="foot-hint sb-hint">Back to <a @click.prevent="go(0)" href="#">the lessons</a></span>
       </div>
     </div>
@@ -657,7 +658,8 @@ onMounted(() => {
 }
 .sub-link:hover { text-decoration: underline; }
 
-.rail { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 0 0 20px; }
+.rail { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin: 0 0 20px; }
+.rail-label { font-family: var(--vp-font-family-mono); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--vp-c-text-3); margin: 0 2px 0 6px; }
 .pip {
   width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--edge);
   background: var(--vp-c-bg-soft); color: var(--vp-c-text-2);
