@@ -10,7 +10,7 @@ from "./ast" import {
     Prog
 }
 from "./value" import {
-    i64ToStr
+    i64ToStr, numToStr
 }
 
 struct PState {
@@ -777,7 +777,12 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
                 advance(p)
             }
             if keyExpr < 0 {
-                if isPropName(p) || peekKind(p) == T_STR {
+                if peekKind(p) == T_NUM {
+                    // a numeric property key `{ 2: v }` — its key is ToString(num)
+                    // ("2", "10", "1.5"), not the token's (empty) text
+                    key = numToStr(p.toks[p.pos].num)
+                    advance(p)
+                } else if isPropName(p) || peekKind(p) == T_STR {
                     key = p.toks[p.pos].text.clone()
                     advance(p)
                 } else {
