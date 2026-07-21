@@ -72,7 +72,11 @@ Check if a path is a directory.
 fn isFile(path: &string): bool
 ```
 
-Check if a path is a regular file.
+Check if a path is a regular file. Defined as "exists and is not a directory"
+so it, like isDir, avoids the struct-stat S_IFREG bit whose offset is
+arch-specific (see isDir). This treats a socket/fifo/device as a file too, but
+those do not appear in the file trees these helpers walk; the file-vs-directory
+distinction the callers actually need is exact.
 
 ### `isSymlink`
 
