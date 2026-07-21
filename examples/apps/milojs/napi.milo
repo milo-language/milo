@@ -396,7 +396,8 @@ fn napi_create_function(_env: *u8, _utf8name: *u8, _length: i64, cb: i64, data: 
     }
     )
     let o = newObject(gInterp)
-    gInterp.objects[o].napiFn = gNapi.fns.len() - 1
+    let _en = ensureExtra(gInterp, o)
+    gInterp.objExtras[gInterp.objects[o].extra].napiFn = gNapi.fns.len() - 1
     gInterp.objects[o].isFunctionLike = true
     napiWriteHandle(result, napiHandle(JSValue.Obj(o)))
     return NAPI_OK
@@ -618,7 +619,8 @@ fn napiMakeFn(cb: i64, data: i64): i64 {
     }
     )
     let o = newObject(gInterp)
-    gInterp.objects[o].napiFn = gNapi.fns.len() - 1
+    let _en = ensureExtra(gInterp, o)
+    gInterp.objExtras[gInterp.objects[o].extra].napiFn = gNapi.fns.len() - 1
     gInterp.objects[o].isFunctionLike = true
     return o
 }
@@ -673,7 +675,8 @@ fn napi_define_class(_env: *u8, _utf8name: *u8, _length: i64, constructor: i64, 
 fn napi_wrap(_env: *u8, jsObject: i64, nativeObject: i64, _finalizeCb: i64, _finalizeHint: i64, _result: *u8): i32 {
     match napiValueOf(jsObject) {
         JSValue.Obj(o) => {
-            gInterp.objects[o].napiWrap = nativeObject
+            let _ew = ensureExtra(gInterp, o)
+            gInterp.objExtras[gInterp.objects[o].extra].napiWrap = nativeObject
             return NAPI_OK
         }
         _ => {
@@ -686,7 +689,7 @@ fn napi_wrap(_env: *u8, jsObject: i64, nativeObject: i64, _finalizeCb: i64, _fin
 fn napi_unwrap(_env: *u8, jsObject: i64, result: *u8): i32 {
     match napiValueOf(jsObject) {
         JSValue.Obj(o) => {
-            napiWriteHandle(result, gInterp.objects[o].napiWrap)
+            napiWriteHandle(result, gInterp.objExtras[gInterp.objects[o].extra].napiWrap)
             return NAPI_OK
         }
         _ => {

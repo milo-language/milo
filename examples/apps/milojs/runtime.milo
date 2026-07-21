@@ -451,6 +451,14 @@ struct JSObjExtra {
     taKind: i64,
     taOffset: i64,
     taLen: i64,
+    // Date epoch ms (isDate stays inline); compiled-regex handle; node-api fn
+    // index + napi_wrap native pointer. All cold — touched only by Date/RegExp/
+    // napi ops, never on the property-access path. regexId/napiFn are their own
+    // -1 discriminators, so they live here rather than needing a bool in JSObj.
+    dateMs: f64,
+    regexId: i64,
+    napiFn: i64,
+    napiWrap: i64,
 }
 
 fn defaultExtra(): JSObjExtra {
@@ -471,6 +479,10 @@ fn defaultExtra(): JSObjExtra {
         taKind: 0,
         taOffset: 0,
         taLen: 0,
+        dateMs: 0.0,
+        regexId: -1,
+        napiFn: -1,
+        napiWrap: 0,
     }
 }
 
@@ -510,13 +522,9 @@ struct JSObj {
     // array, which shares those fields. A DataView is not index-accessible and
     // its methods pick the element type per call.
     isDataView: bool,
-    // a compiled-regex handle (index into Interp.regexes) if this is a RegExp, else -1
-    regexId: i64,
-    // promise settlement: -1 not a promise, 0 pending, 1 fulfilled, 2 rejected.
-    // Promises settle synchronously here — there is no event loop yet, so a
-    // promise left pending by its executor stays pending forever.
     // promise settlement discriminator (-1 not a promise, 0 pending, 1/2
-    // settled); the value + pending reactions live in the side table
+    // settled); the value + pending reactions live in the side table. The
+    // compiled-regex handle (regexId) now lives in the side table too.
     promiseState: i64,
     // Function.prototype.bind result: calling this object calls boundTarget with
     // boundThis and boundArgs prepended. The isBound discriminator stays inline
@@ -532,20 +540,16 @@ struct JSObj {
     // reports as "function" to typeof even though it is an object internally
     // (Function and Function.prototype, which JS specifies as callable)
     isFunctionLike: bool,
+    // Date instance discriminator; the epoch-ms value lives in the side table
     isDate: bool,
-    dateMs: f64,
     isMap: bool,
     isSet: bool,
-    // index into gNapi.fns when this object is a function implemented by a loaded
-    // node-api addon, else -1. Calling it dispatches to a C function pointer.
-    napiFn: i64,
     // Proxy: `target` and `handler` from `new Proxy(target, handler)`. Every
     // property path checks isProxy first and consults the handler's trap, falling
-    // through to the target when the trap is absent.
+    // through to the target when the trap is absent. napiFn (addon fn index) and
+    // napiWrap (napi_wrap native pointer, e.g. Prisma's QueryEngine) live in the
+    // side table.
     isProxy: bool,
-    // native pointer attached by napi_wrap, else 0. This is how an addon keeps its
-    // own state on a JS object — Prisma's QueryEngine instance lives behind it.
-    napiWrap: i64,
     // a generator object produced by calling a `function*`. Its body runs on a
     // dedicated green task; the per-generator state (task, sent/yielded values,
     // done flag) lives in the Interp gen* vectors, keyed by this object's index.
@@ -771,7 +775,7 @@ var gInterp: Interp = Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, abDetached: false, isDataView: false, regexId: -1, promiseState: -1, isBound: false, isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, isProxy: false, napiFn: -1, napiWrap: 0, isGenerator: false, extra: 0, mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, abDetached: false, isDataView: false, promiseState: -1, isBound: false, isEnv: false, isFunctionLike: false, isDate: false, isMap: false, isSet: false, isProxy: false, isGenerator: false, extra: 0, mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena

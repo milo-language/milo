@@ -236,7 +236,7 @@ fn joinArray(st: &mut Interp, o: i64, sep: &string): string {
 fn toPrimitiveNumber(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
     let h = objHandle(v)
     if h >= 0 && st.objects[h].isDate {
-        return JSValue.Number(st.objects[h].dateMs)
+        return JSValue.Number(st.objExtras[st.objects[h].extra].dateMs)
     }
     return toPrimitiveDefault(prog, v, st)
 }
@@ -314,7 +314,7 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
         if (st.objects[o].isMap || st.objects[o].isSet) && isMapSetMethodName(key) {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
-        if st.objects[o].regexId >= 0 && isRegexMethodName(key) {
+        if st.objExtras[st.objects[o].extra].regexId >= 0 && isRegexMethodName(key) {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
         if st.objects[o].isArrayBuffer && (key == "slice" || key == "resize" || key == "transfer") {
@@ -700,7 +700,7 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             // a bound regex/buffer/typed-array method re-dispatches through here,
             // so these must be reachable or an extracted method silently does
             // nothing (no throw, no result — the process just unwinds)
-            if st.objects[o].regexId >= 0 && isRegexMethodName(name) {
+            if st.objExtras[st.objects[o].extra].regexId >= 0 && isRegexMethodName(name) {
                 return regexMethod(st, o, name, args)
             }
             if st.objects[o].isDataView && isDataViewMethodName(name) {
@@ -907,7 +907,7 @@ fn objectTag(st: &Interp, o: i64): string {
     if st.objects[o].isDate {
         return "Date"
     }
-    if st.objects[o].regexId >= 0 {
+    if st.objExtras[st.objects[o].extra].regexId >= 0 {
         return "RegExp"
     }
     if st.objects[o].isMap {
@@ -2433,16 +2433,17 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     if id == NATIVE_DATE {
         let o = newObject(st)
         st.objects[o].isDate = true
+        let _ed = ensureExtra(st, o)
         if argVals.len() == 0 {
-            st.objects[o].dateMs = epochMillis() as f64
+            st.objExtras[st.objects[o].extra].dateMs = epochMillis() as f64
         } else {
             // new Date(ms) or new Date(isoString); anything else is Invalid Date
             match cloneValue(argVals[0]) {
                 JSValue.Str(sv) => {
-                    st.objects[o].dateMs = parseIsoDate(sv)
+                    st.objExtras[st.objects[o].extra].dateMs = parseIsoDate(sv)
                 }
                 _ => {
-                    st.objects[o].dateMs = toNum(argVals[0])
+                    st.objExtras[st.objects[o].extra].dateMs = toNum(argVals[0])
                 }
             }
         }
@@ -3217,7 +3218,8 @@ fn makeRegex(st: &mut Interp, pattern: string, flags: string): JSValue {
     st.regexes.push(re)
     let id = st.regexes.len() - 1
     let o = newObject(st)
-    st.objects[o].regexId = id
+    let _er = ensureExtra(st, o)
+    st.objExtras[st.objects[o].extra].regexId = id
     objSet(st, o, "source", JSValue.Str(pattern))
     objSet(st, o, "flags", JSValue.Str(flags))
     objSet(st, o, "global", JSValue.Bool(isGlobal))
@@ -3228,7 +3230,7 @@ fn makeRegex(st: &mut Interp, pattern: string, flags: string): JSValue {
 fn regexIdOf(st: &Interp, v: &JSValue): i64 {
     match v {
         JSValue.Obj(o) => {
-            return st.objects[o].regexId
+            return st.objExtras[st.objects[o].extra].regexId
         }
         _ => {
             return -1
@@ -3260,7 +3262,7 @@ fn buildMatchArray(st: &mut Interp, s: &string, saves: &Vec<i64>): JSValue {
 }
 
 fn regexMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSValue {
-    let rid = st.objects[o].regexId
+    let rid = st.objExtras[st.objects[o].extra].regexId
     var subject = ""
     if args.len() > 0 {
         subject = toStr(args[0])
@@ -4905,7 +4907,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     // a class defined by a node-api addon (napi_define_class): build
                     // the instance here and link its prototype, then let the addon's
                     // constructor callback populate it — typically via napi_wrap.
-                    if st.objects[co].napiFn >= 0 {
+                    if st.objExtras[st.objects[co].extra].napiFn >= 0 {
                         let argVals = evalArgs(prog, argsIdx, st, scope)
                         let inst = newObject(st)
                         match objGet(st, co, "prototype") {
@@ -4916,7 +4918,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             }
                         }
                         pushTemp(st, JSValue.Obj(inst))
-                        let r = napiInvoke(st.objects[co].napiFn, argVals, JSValue.Obj(inst))
+                        let r = napiInvoke(st.objExtras[st.objects[co].extra].napiFn, argVals, JSValue.Obj(inst))
                         popTemp(st)
                         match r {
                             JSValue.Obj(ro) => {
@@ -5338,7 +5340,7 @@ fn inspectArr(st: &Interp, o: i64, depth: i64): string {
 }
 
 fn objIsoOrTag(st: &Interp, o: i64): string {
-    return isoFromMillis(st.objects[o].dateMs)
+    return isoFromMillis(st.objExtras[st.objects[o].extra].dateMs)
 }
 
 fn inspectObj(st: &Interp, o: i64, depth: i64): string {
@@ -7567,8 +7569,8 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
                 return callValue(prog, target, args, thisVal, st)
             }
             // implemented by a loaded node-api addon: dispatch to its C callback
-            if st.objects[o].napiFn >= 0 {
-                let r = napiInvoke(st.objects[o].napiFn, args, thisVal)
+            if st.objExtras[st.objects[o].extra].napiFn >= 0 {
+                let r = napiInvoke(st.objExtras[st.objects[o].extra].napiFn, args, thisVal)
                 napiDrainSettlements(st)
                 return r
             }
@@ -8005,7 +8007,7 @@ fn isoFromMillis(ms: f64): string {
 }
 
 fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSValue {
-    let ms = st.objects[o].dateMs
+    let ms = st.objExtras[st.objects[o].extra].dateMs
     if name == "getTime" || name == "valueOf" {
         return JSValue.Number(ms)
     }
@@ -8014,7 +8016,7 @@ fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSVa
         if args.len() > 0 {
             v = toNum(args[0])
         }
-        st.objects[o].dateMs = v
+        st.objExtras[st.objects[o].extra].dateMs = v
         return JSValue.Number(v)
     }
     if name == "toISOString" || name == "toJSON" {
@@ -8100,7 +8102,7 @@ fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSVa
         }
         let days = daysFromCivil(year, month, day)
         let newMs = ((days * 86400 + hour * 3600 + minute * 60 + second) * 1000 + millis) as f64
-        st.objects[o].dateMs = newMs
+        st.objExtras[st.objects[o].extra].dateMs = newMs
         return JSValue.Number(newMs)
     }
     // getUTC* mirrors the local accessors but decomposes in UTC; normalise
@@ -8246,7 +8248,7 @@ fn isCallableIn(st: &Interp, v: &JSValue): bool {
         if st.objects[h].isProxy {
             return isCallableIn(st, st.objExtras[st.objects[h].extra].proxyTarget)
         }
-        return st.objects[h].isBound || st.objects[h].napiFn >= 0
+        return st.objects[h].isBound || st.objExtras[st.objects[h].extra].napiFn >= 0
     }
     return false
 }
@@ -9084,7 +9086,7 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 popTemp(st)
                 return r
             }
-            if st.objects[o].regexId >= 0 {
+            if st.objExtras[st.objects[o].extra].regexId >= 0 {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
                 let r = regexMethod(st, o, name, argVals)
                 popTemp(st)
@@ -9227,7 +9229,7 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 JSValue.Obj(fo) => {
                     // a bound-method or bind() result stored as a property: it is
                     // callable (typeof reports "function") but is not a Func/Native
-                    if st.objects[fo].isBound || st.objects[fo].napiFn >= 0 || st.objects[fo].isProxy {
+                    if st.objects[fo].isBound || st.objExtras[st.objects[fo].extra].napiFn >= 0 || st.objects[fo].isProxy {
                         let argVals = evalArgs(prog, argsIdx, st, scope)
                         let r = callValue(prog, JSValue.Obj(fo), argVals, JSValue.Obj(o), st)
                         popTemp(st)
@@ -9561,7 +9563,7 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                 JSValue.Obj(bo) => {
                     // bound methods, addon functions and proxies are all callable
                     // objects rather than Func/Native values
-                    if st.objects[bo].isBound || st.objects[bo].isProxy || st.objects[bo].napiFn >= 0 {
+                    if st.objects[bo].isBound || st.objects[bo].isProxy || st.objExtras[st.objects[bo].extra].napiFn >= 0 {
                         let argVals = evalArgs(prog, argsIdx, st, scope)
                         return callValue(prog, JSValue.Obj(bo), argVals, JSValue.Undefined, st)
                     }
