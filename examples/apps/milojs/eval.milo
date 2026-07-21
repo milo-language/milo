@@ -2727,7 +2727,14 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                 while k < st.objects[src].props.len() {
                     if st.objects[src].props[k].enumerable {
                         let key = st.objects[src].props[k].key.clone()
-                        let v = cloneValue(st.objects[src].props[k].value)
+                        // invoke a getter rather than copying its unused value slot
+                        // (gProg: natives reach user code through the global program)
+                        var v = JSValue.Undefined
+                        if st.objects[src].props[k].isAccessor {
+                            v = getMemberDyn(gProg, src, key, st)
+                        } else {
+                            v = cloneValue(st.objects[src].props[k].value)
+                        }
                         setMember(st, t, key, v)
                     }
                     k = k + 1
@@ -4376,7 +4383,14 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                                 continue
                             }
                             let pk = st.objects[src].props[k].key.clone()
-                            let pv = cloneValue(st.objects[src].props[k].value)
+                            // spread copies the VALUE of an accessor, so invoke the
+                            // getter rather than copying the (unused) value slot
+                            var pv = JSValue.Undefined
+                            if st.objects[src].props[k].isAccessor {
+                                pv = getMemberDyn(prog, src, pk, st)
+                            } else {
+                                pv = cloneValue(st.objects[src].props[k].value)
+                            }
                             objSet(st, obj, pk, pv)
                             k = k + 1
                         }
@@ -5004,10 +5018,13 @@ fn inspectObj(st: &Interp, o: i64, depth: i64): string {
         if emsg.len() > 0 {
             head = ename + ": " + emsg
         }
+        // console.log(error) prints the stack, which already begins with the
+        // "Name: message" header (node appends the trace after it); fall back to
+        // the header when there is no stack
         match estack {
             JSValue.Str(sv) => {
                 if sv.len() > 0 {
-                    return head + "\n" + sv
+                    return sv
                 }
             }
             _ => {
