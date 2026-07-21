@@ -99,4 +99,9 @@ fn main() {
     // original's digest (compact stand-in for a 600-char @expect line).
     // @expect: a85946506e3225f8
     print(xxh64Hex(decode("28b52ffd0058450500a402666f6f62617a6261727a6261727271757871757862617a7272727a7a72666f6f71757872727a72727a7245a8802d64980360029931e30d1010e588a924c3185f323192a02003596f49e94b6f395d209000c1ee72f1166e897fc3026f9e8fc32577e6f77eae04cc81ac50baa809d20804da9c6f58b23d420860ca3205a30324e91325a54ee42b7cb99eeb2ef2a6efd82d5fbc0ff2539c9a8d744e0d7e93f384537d7742d23749"), 0))
+
+    // Huffman-compressed literals: 150 random bytes over {a,b,c,d} (own Huffman tree +
+    // FSE-coded weights + sequences). Content verified via XXH64 of the decoded output.
+    // @expect: 02457e0873b029ec
+    print(xxh64Hex(decode("28b52ffd0058b50100f2870905e00f69b00e7d347162bbf0ae596898148bfb35ae17d532fbbcb618e3651f3780e43cd33f5204005790bf846b9c0dd00a130a"), 0))
 }
