@@ -3926,6 +3926,24 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 let key = toStr(kv)
                 match ov {
                     JSValue.Obj(o) => {
+                        if st.objects[o].isProxy {
+                            // `key in proxy`: the `has` trap, else `in` the target
+                            let trap = proxyTrap(st, o, "has")
+                            if isCallableIn(st, trap) {
+                                var hargs: Vec<JSValue> = Vec.new()
+                                hargs.push(cloneValue(st.objects[o].proxyTarget))
+                                hargs.push(JSValue.Str(key.clone()))
+                                return JSValue.Bool(truthy(callValue(prog, trap, hargs, cloneValue(st.objects[o].proxyHandler), st)))
+                            }
+                            var pcur = objHandle(st.objects[o].proxyTarget)
+                            while pcur >= 0 {
+                                if objHas(st, pcur, key) {
+                                    return JSValue.Bool(true)
+                                }
+                                pcur = st.objects[pcur].proto
+                            }
+                            return JSValue.Bool(false)
+                        }
                         if st.objects[o].isArray {
                             let ai = asArrayIndex(key)
                             if ai >= 0 && ai < arrLen(st, o) {
@@ -6483,12 +6501,31 @@ fn compactTimers(st: &mut Interp) {
 // `delete obj.k` / `delete obj[k]` — remove an own property. Array elements
 // become holes (undefined) rather than shifting, as in JS. Always returns true
 // here; the non-configurable cases the spec reports false for do not arise.
+// `delete proxy[key]`: the deleteProperty trap, else delete on the target.
+fn proxyDelete(prog: &Prog, o: i64, key: string, st: &mut Interp): JSValue {
+    let trap = proxyTrap(st, o, "deleteProperty")
+    if isCallableIn(st, trap) {
+        var dargs: Vec<JSValue> = Vec.new()
+        dargs.push(cloneValue(st.objects[o].proxyTarget))
+        dargs.push(JSValue.Str(key.clone()))
+        return JSValue.Bool(truthy(callValue(prog, trap, dargs, cloneValue(st.objects[o].proxyHandler), st)))
+    }
+    let th = objHandle(st.objects[o].proxyTarget)
+    if th >= 0 {
+        objDeleteKey(st, th, key)
+    }
+    return JSValue.Bool(true)
+}
+
 fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue {
     match prog.exprs[targetIdx] {
         Expr.Member(objIdx, name) => {
             let ov = evalExpr(prog, objIdx, st, scope)
             let o = objHandle(ov)
             if o >= 0 {
+                if st.objects[o].isProxy {
+                    return proxyDelete(prog, o, name.clone(), st)
+                }
                 if st.objects[o].frozen || st.objects[o].sealed {
                     return JSValue.Bool(false)
                 }
@@ -6504,6 +6541,9 @@ fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
             let key = toStr(kv)
             let o = objHandle(ov)
             if o >= 0 {
+                if st.objects[o].isProxy {
+                    return proxyDelete(prog, o, key, st)
+                }
                 if st.objects[o].frozen || st.objects[o].sealed {
                     return JSValue.Bool(false)
                 }
