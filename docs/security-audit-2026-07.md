@@ -49,7 +49,7 @@ gracefully.
 - [ ] **D2 — infinite monomorphization.** Recursive generic (`grow<Wrap<T>>`) has no
   instantiation-depth cap → stack overflow in `monomorphizeFn`. Add a recursion limit.
 
-- [ ] **D3 — `prove`/`verify`/`wcet` don't catch `ParseError`.** They dump a raw JS stack
+- [x] **D3 — `prove`/`verify`/`wcet` don't catch `ParseError`.** They dump a raw JS stack
   trace on syntax errors while `build` renders a clean diagnostic. Add the error boundary.
 
 - [ ] **L1 — self-referential struct by value** (`struct Node { next: Node }`, infinite size)
