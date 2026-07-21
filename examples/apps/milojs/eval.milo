@@ -1154,6 +1154,7 @@ let NATIVE_QUEUE_MICROTASK: i64 = 66
 // arguments per spec while nextTick's behaviour is left untouched.
 let NATIVE_QUEUE_MICROTASK_JS: i64 = 112
 let NATIVE_DATAVIEW: i64 = 113
+let NATIVE_OBJECT_HASOWN: i64 = 114
 let NATIVE_ARRAY_CTOR: i64 = 67
 let NATIVE_TCP_LISTEN: i64 = 68
 let NATIVE_TCP_ACCEPT: i64 = 69
@@ -2414,6 +2415,18 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         return JSValue.Bool(sameValue(argVals[0], argVals[1]))
     }
+    if id == NATIVE_OBJECT_HASOWN {
+        if argVals.len() < 2 {
+            return JSValue.Bool(false)
+        }
+        let o = objHandle(argVals[0])
+        if o < 0 {
+            return JSValue.Bool(false)
+        }
+        let key = toStr(argVals[1])
+        // mirrors hasOwnProperty: own named prop, or a real (non-hole) array index
+        return JSValue.Bool(objOwnIndex(st, o, key) >= 0 || (st.objects[o].isArray && asArrayIndex(key) >= 0 && asArrayIndex(key) < arrLen(st, o) && !arrIsHole(st, o, asArrayIndex(key))))
+    }
     if id == NATIVE_OBJECT_ISSEALED {
         if argVals.len() > 0 {
             let h = objHandle(argVals[0])
@@ -3337,6 +3350,7 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "defineProperties", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTIES))
     objSet(st, objectCtor, "getOwnPropertyNames", JSValue.Native(NATIVE_OBJECT_GETOWNPROPNAMES))
     objSet(st, objectCtor, "is", JSValue.Native(NATIVE_OBJECT_IS))
+    objSet(st, objectCtor, "hasOwn", JSValue.Native(NATIVE_OBJECT_HASOWN))
     let objectProto = newObject(st)
     objSet(st, objectProto, "hasOwnProperty", makeBoundMethod(st, JSValue.Undefined, "hasOwnProperty"))
     // Object.prototype.toString.call(x) is the standard type-detection idiom
