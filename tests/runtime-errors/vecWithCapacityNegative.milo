@@ -1,0 +1,12 @@
+// @runtime-error: negative capacity
+
+fn negCap(): i64 {
+    return -4
+}
+
+fn main(): i32 {
+    var v: Vec<i32> = Vec.withCapacity(negCap())
+    v.push(1)
+    print(v.len() as i32)
+    return 0
+}

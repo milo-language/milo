@@ -997,7 +997,27 @@ export class Parser {
 
   // ── Expression parsing (precedence climbing) ──
 
+  // Recursion-depth guard. parseExpr is the chokepoint every nested expression
+  // (parens, calls, indexes, unary chains) recurses through, so bounding it turns a
+  // pathological input like `((((…))))` 5000-deep from a raw `RangeError: Maximum
+  // call stack` into a clean diagnostic. 2000 is far past any human-written nesting.
+  private static readonly MAX_EXPR_DEPTH = 2000;
+
   private parseExpr(): Expr {
+    if (++this.exprDepth > Parser.MAX_EXPR_DEPTH) {
+      this.error(`expression nesting too deep (>${Parser.MAX_EXPR_DEPTH})`, this.peek(), undefined,
+        `deeply nested expressions exceed the parser's depth limit — flatten the expression`);
+    }
+    try {
+      return this.parseExprInner();
+    } finally {
+      this.exprDepth--;
+    }
+  }
+
+  private exprDepth = 0;
+
+  private parseExprInner(): Expr {
     let left = this.parseOr();
     if (this.at(TokenKind.QuestionQuestion)) {
       this.advance();

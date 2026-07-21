@@ -1,0 +1,13 @@
+// @error: instantiation exceeded depth
+
+// An unbounded recursive generic instantiates itself on an ever-growing type.
+// The monomorphizer must cap the depth and fail cleanly, not blow the JS stack.
+struct Wrap<T> { v: T }
+fn grow<T>(x: T, n: i32): i32 {
+    if n <= 0 { return 0 }
+    let w = Wrap<T> { v: x }
+    return grow<Wrap<T>>(w, n - 1)
+}
+fn main(): i32 {
+    return grow<i32>(0, 100000)
+}

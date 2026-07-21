@@ -1,0 +1,17 @@
+// Slice/substr bounds given as i32 (not i64) must widen cleanly instead of
+// emitting `icmp i64 %i32` invalid IR. Regression for the security audit's M1.
+// @expect: ell
+// @expect: 3
+// @expect: bcd
+fn main(): i32 {
+    let s = "hello"
+    var a: i32 = 1
+    var b: i32 = 4
+    print(s[a..b])
+    var v: Vec<i32> = Vec.filled(6, 0)
+    let sl = v[a..b]
+    print(sl.len() as i32)
+    let owned = "abcdef".substr(a, b)
+    print(owned)
+    return 0
+}

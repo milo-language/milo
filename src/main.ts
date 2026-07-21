@@ -66,6 +66,28 @@ function compile(source: string, target: TargetInfo, filePath?: string, warningC
   return compileWithGuards(source, target, filePath, warningConfig, debugOverflow, emitDebug).ir;
 }
 
+// Parse + resolve imports + type-check, rendering ParseErrors as clean Elm-style
+// diagnostics instead of leaking a JS stack trace. Analysis subcommands (verify/
+// wcet/prove/safety) that stop short of codegen share this so a syntax error is
+// reported the same way `build` reports it, not as an uncaught exception.
+function parseCheckProgram(src: string, target: TargetInfo, filePath: string, warningConfig?: WarningConfig) {
+  const sourceDir = dirname(resolve(filePath));
+  try {
+    const tokens = new Lexer(src).tokenize();
+    let program = new Parser(tokens, src, filePath).parse();
+    program = resolveImports(program, sourceDir, target, filePath);
+    new TypeChecker(warningConfig).check(program);
+    return program;
+  } catch (e: any) {
+    if (e instanceof ParseError) {
+      console.error(formatDiagnostic(e.diagnostic, e.source ?? src, e.filePath ?? filePath));
+    } else {
+      console.error(e.message);
+    }
+    process.exit(1);
+  }
+}
+
 // `cGuards` is the `@cLayout`/`@cSig` verification TU (null when the program declares
 // neither) — see Codegen.cDeclGuards. It rides alongside the IR because only codegen
 // knows the field offsets and return widths it asserts.
@@ -1280,11 +1302,7 @@ async function main() {
 
   if (cmd === "verify") {
     const src = readFileSync(source!, "utf-8");
-    const sourceDir = dirname(resolve(source!));
-    const tokens = new Lexer(src).tokenize();
-    let program = new Parser(tokens, src).parse();
-    program = resolveImports(program, sourceDir, target, source);
-    new TypeChecker(warningConfig).check(program);
+    const program = parseCheckProgram(src, target, source!, warningConfig);
     const result = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: source! });
     console.log(formatVerifyReport(result));
     return;
@@ -1294,11 +1312,7 @@ async function main() {
     // Emit OTAWA flow facts (loop iteration bounds) for WCET analysis. Output
     // goes to -o <file> or stdout. Use after `milo safety` confirms bounded loops.
     const src = readFileSync(source!, "utf-8");
-    const sourceDir = dirname(resolve(source!));
-    const tokens = new Lexer(src).tokenize();
-    let program = new Parser(tokens, src).parse();
-    program = resolveImports(program, sourceDir, target, source);
-    new TypeChecker(warningConfig).check(program);
+    const program = parseCheckProgram(src, target, source!, warningConfig);
     const facts = extractFlowFacts(program, source!);
     // --cycles: go past flow facts to an actual Cortex-M3 cycle bound by
     // disassembling the linked ELF and applying the core timing model.
@@ -1333,11 +1347,7 @@ async function main() {
 
   if (cmd === "prove") {
     const src = readFileSync(source!, "utf-8");
-    const sourceDir = dirname(resolve(source!));
-    const tokens = new Lexer(src).tokenize();
-    let program = new Parser(tokens, src).parse();
-    program = resolveImports(program, sourceDir, target, source);
-    new TypeChecker(warningConfig).check(program);
+    const program = parseCheckProgram(src, target, source!, warningConfig);
     const vcs = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: source! });
     // Default engine is std/smt (the prover written in Milo itself); --solver=z3
     // opts into z3 for the theories std/smt doesn't yet model.
@@ -1356,11 +1366,7 @@ async function main() {
       process.exit(1);
     }
     const src = readFileSync(source!, "utf-8");
-    const sourceDir = dirname(resolve(source!));
-    const tokens = new Lexer(src).tokenize();
-    let program = new Parser(tokens, src).parse();
-    program = resolveImports(program, sourceDir, target, source);
-    new TypeChecker(warningConfig).check(program);
+    const program = parseCheckProgram(src, target, source!, warningConfig);
     const violations = checkSafetyCompliance(program, level);
     console.log(formatSafetyReport(violations, level));
     if (violations.some(v => v.severity === "error")) process.exit(1);

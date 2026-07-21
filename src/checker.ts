@@ -30,6 +30,11 @@ export interface VarInfo {
   // statement ends) — so a binding can only ever adopt a width at its FIRST
   // read, never retroactively after an i32 use was already committed.
   flexInt?: { leaves: Expr[]; valueExpr: Expr };
+  // The closure literal this binding was initialized with, if any. A closure that
+  // escapes (returned by identifier) must own its captures; the Return path uses
+  // this to promote the underlying literal to `move` even when the return value is
+  // the binding, not the literal itself (`let f = ...; return f`).
+  boundClosure?: Expr;
 }
 
 // Builtins that may realloc, free, or shift collection memory — illegal on a
@@ -199,6 +204,12 @@ export class TypeChecker {
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
   private monomorphizedStructDecls: StructDecl[] = [];
   private monomorphizedFns: Function[] = [];
+  // Guard against an unbounded recursive generic (e.g. `fn grow<T>() { grow<Wrap<T>>() }`)
+  // whose every instantiation is a fresh type, so the memo never hits and checkFunction
+  // recurses until the JS stack blows. Cap the instantiation depth and fail cleanly.
+  private static readonly MAX_MONO_DEPTH = 256;
+  private monoDepth = 0;
+  private monoDepthErrored = false;
   private dropImpls = new Set<string>();
   private sendTypes = new Set<string>();
   private syncTypes = new Set<string>();
@@ -784,6 +795,17 @@ export class TypeChecker {
     const mangled = `${baseName}_${typeArgs.map(a => this.mangleTypeName(a)).join("_")}`;
     if (this.functions.has(mangled)) return mangled;
 
+    if (this.monoDepth >= TypeChecker.MAX_MONO_DEPTH) {
+      if (!this.monoDepthErrored) {
+        this.monoDepthErrored = true;
+        this.error(`generic instantiation exceeded depth ${TypeChecker.MAX_MONO_DEPTH} while monomorphizing '${baseName}' — likely an unbounded recursive generic that instantiates itself on an ever-growing type`);
+      }
+      // register a stub sig so callers don't dereference undefined, then stop recursing
+      this.functions.set(mangled, { params: [], ret: { tag: "unknown" }, variadic: false });
+      return mangled;
+    }
+    this.monoDepth++;
+    try {
     const generic = this.genericFns.get(baseName)!;
     const typeMap = new Map<string, TypeKind>();
     generic.typeParams.forEach((p, i) => typeMap.set(p, typeArgs[i]));
@@ -830,6 +852,7 @@ export class TypeChecker {
     this.checkFunction(concreteDecl);
 
     return mangled;
+    } finally { this.monoDepth--; }
   }
 
   private substituteBody(stmts: Stmt[], typeParams: string[], typeArgs: TypeKind[], baseName?: string, mangledName?: string): Stmt[] {
@@ -2222,6 +2245,10 @@ export class TypeChecker {
             if (info) info.flexInt = { leaves, valueExpr: stmt.value };
           }
         }
+        if (stmt.value.kind === "Closure") {
+          const info = this.lookup(stmt.name);
+          if (info) info.boundClosure = stmt.value;
+        }
         this.tryMove(stmt.value);
         break;
       }
@@ -2261,6 +2288,10 @@ export class TypeChecker {
           const bindingType = hint ?? valType;
           if (bindingType.tag !== "ref") for (const vi of newlyFrozen) vi.borrowed = false;
           this.declare(stmt.name, { type: bindingType, mutable: true, moved: false, borrowed: false, read: false, span: sp, ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
+        }
+        if (stmt.value.kind === "Closure") {
+          const info = this.lookup(stmt.name);
+          if (info) info.boundClosure = stmt.value;
         }
         this.tryMove(stmt.value);
         break;
@@ -2323,6 +2354,20 @@ export class TypeChecker {
             if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, fnRetType)) {
               this.error(`return type mismatch: expected ${typeName(fnRetType)}, got ${typeName(valType)}`, sp);
             }
+          }
+          // A returned closure escapes its defining frame, so it must own its captures:
+          // a non-`move` closure captures by reference and would dangle into the dead
+          // frame (a use-after-return in safe code). Promote it to `move` — the same
+          // heap-allocation the call-argument path already applies — so tryMove below
+          // moves the captures into the closure's heap env instead of aliasing locals.
+          if (stmt.value.kind === "Closure" && !(stmt.value as any).isMove) {
+            (stmt.value as any).isMove = true;
+          } else if (stmt.value.kind === "Ident") {
+            // `let f = <closure>; return f` escapes the same way a direct return does,
+            // but the return value is the binding, not the literal. Promote the literal
+            // it was bound to so its captures are heap-owned rather than dangling refs.
+            const bound = this.lookup(stmt.value.name)?.boundClosure;
+            if (bound && !(bound as any).isMove) (bound as any).isMove = true;
           }
           this.tryMove(stmt.value);
           this.inReturnInLoop = prev;
@@ -3193,6 +3238,58 @@ export class TypeChecker {
         }
       }
     }
+    // Two `&mut` arguments where one place is an ancestor of the other (a container
+    // and something derived from it, e.g. `v` and `v[0]`) are UB: mutating through
+    // the container arg (a `push` that reallocs) frees the storage the descendant
+    // arg points into — a use-after-free the muts×shared check above misses because
+    // both sides are mutable. Index-aware steps distinguish an ancestor/descendant
+    // pair (flagged) from two siblings like `v[i]`/`v[j]` (a legitimate two-element
+    // borrow, not flagged). Identical non-indexed places (`v` twice) are two `&mut`
+    // to the same object and are flagged as well.
+    const mutSteps = args.map(a => (this.autoBorrowed.get(a)?.mutable ? this.accessSteps(a) : null));
+    for (let i = 0; i < args.length; i++) {
+      for (let j = i + 1; j < args.length; j++) {
+        const a = mutSteps[i], b = mutSteps[j];
+        if (!a || !b || a.root !== b.root) continue;
+        if (this.aliasesByContainment(a.steps, b.steps)) {
+          const sp = args[i].span ?? args[j].span ?? undefined;
+          this.error(`'${a.root}' is borrowed mutably twice in the same call`, sp,
+            `one argument is a container and the other borrows into it (or they are the same place) — a mutation through one (e.g. a 'push' that reallocates) could invalidate the other; split the call into two statements or clone one argument`);
+        }
+      }
+    }
+  }
+
+  // Index-aware access path: each step is a field name (".f") or an opaque index
+  // ("[]"). Unlike accessPath (which collapses to fields=null at the first index),
+  // this preserves depth so an ancestor/descendant relationship survives an index.
+  private accessSteps(e: Expr): { root: string; steps: string[] } | null {
+    if (e.kind === "Ident") return { root: e.name, steps: [] };
+    if (e.kind === "FieldAccess") {
+      const base = this.accessSteps(e.object);
+      return base ? { root: base.root, steps: [...base.steps, `.${e.field}`] } : null;
+    }
+    if (e.kind === "IndexAccess") {
+      const base = this.accessSteps(e.object);
+      return base ? { root: base.root, steps: [...base.steps, "[]"] } : null;
+    }
+    if (e.kind === "UnaryOp" && e.op === "*") {
+      const base = this.accessSteps(e.operand);
+      return base ? { root: base.root, steps: [...base.steps, "*"] } : null;
+    }
+    return null;
+  }
+
+  // True when the two step chains (same root) are in a containment relation that
+  // makes aliasing them mutably unsafe: one is a proper prefix of the other (an
+  // ancestor container and a descendant), or they are identical with no index step
+  // (provably the same concrete place). Two chains that diverge, or are equal but
+  // pass through an index (siblings that may be distinct elements), are not flagged.
+  private aliasesByContainment(a: string[], b: string[]): boolean {
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false; // diverge → disjoint
+    if (a.length !== b.length) return true;                      // proper prefix → ancestor/descendant
+    return !a.includes("[]");                                    // identical: same place unless index-qualified
   }
 
   // Access path for exclusivity: root variable + chain of field names. `fields` is

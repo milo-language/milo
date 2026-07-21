@@ -1,0 +1,15 @@
+// @error: borrowed mutably twice
+
+// Passing a Vec element and the Vec itself as two &mut args aliases the element
+// into the container; a push inside reallocs and frees the element's storage —
+// a use-after-free. The checker must reject the overlapping mutable borrows.
+fn bad(elem: &mut i32, v: &mut Vec<i32>): i32 {
+    v.push(1)
+    return elem
+}
+
+fn main(): i32 {
+    var v: Vec<i32> = Vec.new()
+    v.push(111)
+    return bad(v[0], v)
+}
