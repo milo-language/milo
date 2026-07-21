@@ -310,6 +310,14 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
     if isUndefinedValue(direct) && st.objects[o].isArray && isArrayMethod(key) {
         return makeBoundMethod(st, JSValue.Obj(o), key.clone())
     }
+    // `constructor` fallback for builtins whose faked prototype chain has none.
+    // Only when the chain gave nothing, so a user constructor is never shadowed.
+    if isUndefinedValue(direct) && key == "constructor" {
+        let c = builtinConstructorOf(st, o)
+        if !isUndefinedValue(c) {
+            return c
+        }
+    }
     return direct
 }
 
@@ -1189,6 +1197,28 @@ let NATIVE_TA_BASE: i64 = 79
 // __httpFetch(method, url, headersJson, body): synchronous outbound HTTP/HTTPS.
 // Above the TA block (79..87). node-fetch is built on this.
 let NATIVE_HTTP_FETCH: i64 = 88
+
+// The `.name` of a native constructor (Object.name === "Object" etc), so
+// `err.constructor.name` and similar resolve. Empty for natives that are not
+// named constructors.
+fn nativeCtorName(id: i64): string {
+    if id >= NATIVE_ERROR && id <= NATIVE_REFERENCE_ERROR {
+        return nativeErrorName(id)
+    }
+    if id == NATIVE_OBJECT_CTOR {
+        return "Object"
+    }
+    if id == NATIVE_NUMBER {
+        return "Number"
+    }
+    if id == NATIVE_STRING {
+        return "String"
+    }
+    if id == NATIVE_BOOLEAN {
+        return "Boolean"
+    }
+    return ""
+}
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -2615,6 +2645,46 @@ fn protoOfHandle(st: &Interp, h: i64): i64 {
     return st.objectProtoObj
 }
 
+// The `constructor` for a builtin object, when the (faked) prototype chain has
+// none. Returns Undefined for anything without a well-defined builtin
+// constructor here, so a real (user) constructor resolved through the chain is
+// never overridden — this is only ever consulted as a fallback.
+fn builtinConstructorOf(st: &Interp, o: i64): JSValue {
+    if o == st.objectProtoObj {
+        return JSValue.Native(NATIVE_OBJECT_CTOR)
+    }
+    if o == st.arrayProtoObj && st.arrayCtorObj >= 0 {
+        return JSValue.Obj(st.arrayCtorObj)
+    }
+    if st.objects[o].isError {
+        // the specific constructor named by the error's `name` (TypeError, …)
+        let nm = getMember(st, o, "name")
+        match nm {
+            JSValue.Str(s) => {
+                if scopeHasOwn(st, 0, s) {
+                    return scopeLookup(st, 0, s)
+                }
+            }
+            _ => {
+            }
+        }
+        if scopeHasOwn(st, 0, "Error") {
+            return scopeLookup(st, 0, "Error")
+        }
+        return JSValue.Undefined
+    }
+    if st.objects[o].isArray && st.arrayCtorObj >= 0 {
+        return JSValue.Obj(st.arrayCtorObj)
+    }
+    // a genuinely plain object → Object; special builtins without a dedicated
+    // constructor here (Map/Set/Date/typed-array/proxy/promise/function…) are
+    // left Undefined rather than mis-reported as Object
+    if !st.objects[o].isMap && !st.objects[o].isSet && !st.objects[o].isDate && !st.objects[o].isProxy && !st.objects[o].isArrayBuffer && st.objects[o].taBuf < 0 && !st.objects[o].isGenerator && st.objects[o].promiseState < 0 && !st.objects[o].isFunctionLike && !st.objects[o].isBound {
+        return JSValue.Native(NATIVE_OBJECT_CTOR)
+    }
+    return JSValue.Undefined
+}
+
 fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
     match v {
         JSValue.Obj(o) => {
@@ -3376,6 +3446,7 @@ fn setupGlobals(st: &mut Interp) {
     let arrayCtor = newObject(st)
     st.objects[arrayCtor].isFunctionLike = true
     objSet(st, arrayCtor, "prototype", JSValue.Obj(arrayProto))
+    objSet(st, arrayCtor, "name", JSValue.Str("Array"))
     st.arrayCtorObj = arrayCtor
     st.arrayProtoObj = arrayProto
     objSet(st, arrayCtor, "isArray", JSValue.Native(NATIVE_ARRAY_ISARRAY))
@@ -3932,6 +4003,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 }
                 JSValue.Native(nid) => {
                     let bag = getNativeProps(st, nid)
+                    if name == "name" && objOwnIndex(st, bag, "name") < 0 {
+                        let nn = nativeCtorName(nid)
+                        if nn.len() > 0 {
+                            return JSValue.Str(nn)
+                        }
+                    }
                     return getMember(st, bag, name)
                 }
                 JSValue.Null => {
@@ -3974,6 +4051,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 }
                 JSValue.Native(nid) => {
                     let bag = getNativeProps(st, nid)
+                    if key == "name" && objOwnIndex(st, bag, "name") < 0 {
+                        let nn = nativeCtorName(nid)
+                        if nn.len() > 0 {
+                            return JSValue.Str(nn)
+                        }
+                    }
                     return getMember(st, bag, key)
                 }
                 JSValue.Str(s) => {
@@ -4486,6 +4569,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 }
                 JSValue.Native(nid) => {
                     let bag = getNativeProps(st, nid)
+                    if name == "name" && objOwnIndex(st, bag, "name") < 0 {
+                        let nn = nativeCtorName(nid)
+                        if nn.len() > 0 {
+                            return JSValue.Str(nn)
+                        }
+                    }
                     return getMember(st, bag, name)
                 }
                 _ => {
