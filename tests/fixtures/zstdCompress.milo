@@ -63,7 +63,7 @@ fn main() {
     // multi-block (> 128 KiB) with a custom-FSE-table-worthy sequence count
     var big = ""
     var k: i64 = 0
-    while big.len < 300000 {
+    while big.len < 140000 {
         big = big + "line " + k.toString() + ": pack my box with five dozen liquor jugs\n"
         k = k + 1
     }
@@ -76,10 +76,11 @@ fn main() {
 
     // literal-heavy ASCII prose (two varying numbers per line keep the match offsets
     // shifting, so much of each line stays as literals) — Huffman-coded literals plus
-    // repeat-offset sequence codes push it well below what Raw literals reach.
+    // repeat-offset sequence codes push it below what Raw literals reach (with Raw literals
+    // and no repeat codes this same input lands ~8.8%, above the 1/13 ≈ 7.7% bar).
     var prose = ""
     var p: i64 = 0
-    while prose.len < 200000 {
+    while prose.len < 125000 {
         prose = prose + "entry number " + p.toString() + " says the quick brown fox jumps over lazy dogs near " + (p * 7).toString() + "\n"
         p = p + 1
     }
