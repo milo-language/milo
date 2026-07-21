@@ -98,3 +98,7 @@ exports.parse = parse;
 exports.format = format;
 exports.resolve = resolve;
 exports.Url = function Url() {};
+// node re-exports the WHATWG URL API from require('url') too — `const { URL } =
+// require('url')` is as common as the global. Both are defined in the prelude.
+exports.URL = URL;
+exports.URLSearchParams = URLSearchParams;
