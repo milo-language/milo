@@ -199,6 +199,12 @@ export class TypeChecker {
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
   private monomorphizedStructDecls: StructDecl[] = [];
   private monomorphizedFns: Function[] = [];
+  // Guard against an unbounded recursive generic (e.g. `fn grow<T>() { grow<Wrap<T>>() }`)
+  // whose every instantiation is a fresh type, so the memo never hits and checkFunction
+  // recurses until the JS stack blows. Cap the instantiation depth and fail cleanly.
+  private static readonly MAX_MONO_DEPTH = 256;
+  private monoDepth = 0;
+  private monoDepthErrored = false;
   private dropImpls = new Set<string>();
   private sendTypes = new Set<string>();
   private syncTypes = new Set<string>();
@@ -784,6 +790,17 @@ export class TypeChecker {
     const mangled = `${baseName}_${typeArgs.map(a => this.mangleTypeName(a)).join("_")}`;
     if (this.functions.has(mangled)) return mangled;
 
+    if (this.monoDepth >= TypeChecker.MAX_MONO_DEPTH) {
+      if (!this.monoDepthErrored) {
+        this.monoDepthErrored = true;
+        this.error(`generic instantiation exceeded depth ${TypeChecker.MAX_MONO_DEPTH} while monomorphizing '${baseName}' — likely an unbounded recursive generic that instantiates itself on an ever-growing type`);
+      }
+      // register a stub sig so callers don't dereference undefined, then stop recursing
+      this.functions.set(mangled, { params: [], ret: { tag: "unknown" }, variadic: false });
+      return mangled;
+    }
+    this.monoDepth++;
+    try {
     const generic = this.genericFns.get(baseName)!;
     const typeMap = new Map<string, TypeKind>();
     generic.typeParams.forEach((p, i) => typeMap.set(p, typeArgs[i]));
@@ -830,6 +847,7 @@ export class TypeChecker {
     this.checkFunction(concreteDecl);
 
     return mangled;
+    } finally { this.monoDepth--; }
   }
 
   private substituteBody(stmts: Stmt[], typeParams: string[], typeArgs: TypeKind[], baseName?: string, mangledName?: string): Stmt[] {
