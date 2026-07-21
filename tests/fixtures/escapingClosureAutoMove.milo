@@ -1,0 +1,26 @@
+// A returned closure that omits `move` must still own its captures: the checker
+// now promotes it to a move closure so captures are heap-allocated, not aliased
+// into the returning frame (which was a use-after-return in safe code).
+// @expect: 15
+// @expect: heap-owned!
+
+fn makeAdder(base: i64): (i64) => i64 {
+    return (p: i64) => {
+        return base + p
+    }
+}
+
+fn makeGreeter(): () => string {
+    let s = "heap-owned"
+    return (): string => {
+        return s + "!"
+    }
+}
+
+fn main(): i32 {
+    let add = makeAdder(5)
+    print(add(10))
+    let g = makeGreeter()
+    print(g())
+    return 0
+}

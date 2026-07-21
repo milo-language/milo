@@ -2324,6 +2324,14 @@ export class TypeChecker {
               this.error(`return type mismatch: expected ${typeName(fnRetType)}, got ${typeName(valType)}`, sp);
             }
           }
+          // A returned closure escapes its defining frame, so it must own its captures:
+          // a non-`move` closure captures by reference and would dangle into the dead
+          // frame (a use-after-return in safe code). Promote it to `move` — the same
+          // heap-allocation the call-argument path already applies — so tryMove below
+          // moves the captures into the closure's heap env instead of aliasing locals.
+          if (stmt.value.kind === "Closure" && !(stmt.value as any).isMove) {
+            (stmt.value as any).isMove = true;
+          }
           this.tryMove(stmt.value);
           this.inReturnInLoop = prev;
         }

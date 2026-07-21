@@ -33,7 +33,7 @@ gracefully.
   `bad(v[0], v)` passes an element ref and the container, inner `push` reallocs → dangling.
   Fix: reject a call where two `&mut` args provably overlap (`v[i]` and `v`).
 
-- [ ] **C3 — escaping non-`move` closure captures by reference.** Returned/stored non-`move`
+- [x] **C3 — escaping non-`move` closure captures by reference.** Returned/stored non-`move`
   closure captures a local by reference into the dead frame. `checker.ts:1151` assumes
   escaping closures are `move` but never enforces it. Fix: require `move` (or reject escape)
   for a closure that captures a non-Copy local and escapes.
