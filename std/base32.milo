@@ -1,0 +1,73 @@
+// std/base32 — Base32 encode/decode (RFC 4648), pure Milo.
+//
+// The encoding otpauth:// URIs use for TOTP/HOTP secrets, and what DNS, S/MIME and
+// many license keys use for case-insensitive, human-transcribable binary. Alphabet
+// A–Z2–7, MSB-first, '=' padding to an 8-char group. Decoding accepts lowercase and
+// skips padding/whitespace, so a secret copied from an authenticator app just works.
+// Output/input are byte strings, matching std/base64.
+
+fn _b32Char(v: i64): u8 {
+    if v < 26 {
+        return (v + 65) as u8 // 'A'..'Z'
+    }
+    return (v - 26 + 50) as u8 // '2'..'7'
+}
+
+// Encode bytes to a padded Base32 string.
+fn base32Encode(input: &string): string {
+    var out = ""
+    var buffer: i64 = 0
+    var bits: i64 = 0
+    for i in 0..input.len {
+        buffer = (buffer << 8) | (input[i] as i64)
+        bits = bits + 8
+        while bits >= 5 {
+            bits = bits - 5
+            out.push(_b32Char((buffer >> bits) & 0x1f))
+        }
+    }
+    // Flush the remaining <5 bits, left-aligned in a final 5-bit group.
+    if bits > 0 {
+        out.push(_b32Char((buffer << (5 - bits)) & 0x1f))
+    }
+    // Pad to a multiple of 8 characters.
+    while out.len % 8 != 0 {
+        out.push('=')
+    }
+    return out
+}
+
+// Decode a Base32 char to its 5-bit value, or -1 if it isn't a symbol.
+fn _b32Val(c: u8): i64 {
+    if c >= 'A' && c <= 'Z' {
+        return (c - 65) as i64
+    }
+    if c >= 'a' && c <= 'z' {
+        return (c - 97) as i64
+    }
+    if c >= '2' && c <= '7' {
+        return (c - 50 + 26) as i64
+    }
+    return -1
+}
+
+// Decode a Base32 string to bytes. Padding, whitespace, and case are tolerated;
+// any other character is skipped so lightly-formatted secrets still decode.
+fn base32Decode(input: &string): string {
+    var out = ""
+    var buffer: i64 = 0
+    var bits: i64 = 0
+    for i in 0..input.len {
+        let v = _b32Val(input[i])
+        if v < 0 {
+            continue
+        }
+        buffer = (buffer << 5) | v
+        bits = bits + 5
+        if bits >= 8 {
+            bits = bits - 8
+            out.push(((buffer >> bits) & 0xff) as u8)
+        }
+    }
+    return out
+}

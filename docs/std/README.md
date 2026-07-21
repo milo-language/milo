@@ -6,6 +6,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/arena](./arena.md)
 - [std/argparse](./argparse.md)
 - [std/args](./args.md)
+- [std/base32](./base32.md)
 - [std/base64](./base64.md)
 - [std/checksum](./checksum.md)
 - [std/color](./color.md)
