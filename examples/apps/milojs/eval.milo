@@ -5077,6 +5077,15 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
 // immutable helper it once was.
 fn spreadInto(prog: &Prog, out: &mut Vec<JSValue>, v: &JSValue, st: &mut Interp) {
     let h = objHandle(v)
+    // typed arrays are iterable by element
+    if h >= 0 && st.objects[h].taBuf >= 0 && !st.objects[h].isDataView {
+        var i: i64 = 0
+        while i < st.objects[h].taLen {
+            out.push(JSValue.Number(taElem(st, h, i)))
+            i = i + 1
+        }
+        return
+    }
     // a generator drives through genNext (its `next` is native, not a property)
     if h >= 0 && st.objects[h].isGenerator {
         var guard: i64 = 0
@@ -6806,13 +6815,13 @@ fn isRegexMethodName(n: &string): bool {
 }
 
 fn isTypedArrayMethodName(n: &string): bool {
-    return n == "fill" || n == "set" || n == "subarray" || n == "slice" || n == "at" || n == "indexOf" || n == "includes" || n == "join" || n == "toString"
+    return n == "fill" || n == "set" || n == "subarray" || n == "slice" || n == "at" || n == "indexOf" || n == "includes" || n == "join" || n == "toString" || n == "forEach" || n == "map" || n == "filter" || n == "reduce" || n == "reduceRight" || n == "find" || n == "findIndex" || n == "findLast" || n == "findLastIndex" || n == "some" || n == "every" || n == "reverse" || n == "sort"
 }
 
 // Typed-array methods. Views share their buffer, so subarray returns a new view
 // over the SAME bytes while slice copies — getting that backwards is the classic
 // typed-array bug.
-fn typedArrayMethod(_prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+fn typedArrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     let n = st.objects[o].taLen
     let kind = st.objects[o].taKind
     let w = taWidth(kind)
@@ -6984,6 +6993,169 @@ fn typedArrayMethod(_prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st
         }
         popTemp(st)
         return JSValue.Obj(view)
+    }
+    // callback-based iteration methods. The element and index are passed to the
+    // callback; map/filter build a new typed array (map keeps the kind).
+    if name == "forEach" {
+        var i: i64 = 0
+        while i < n && !st.throwing {
+            var cbArgs: Vec<JSValue> = Vec.new()
+            cbArgs.push(JSValue.Number(taElem(st, o, i)))
+            cbArgs.push(JSValue.Number(i as f64))
+            let _r = callValue(prog, args[0], cbArgs, JSValue.Undefined, st)
+            i = i + 1
+        }
+        return JSValue.Undefined
+    }
+    if name == "map" {
+        var lenArgs: Vec<JSValue> = Vec.new()
+        lenArgs.push(JSValue.Number(n as f64))
+        let out = makeTypedArray(st, kind, lenArgs)
+        let oh = objHandle(out)
+        pushTemp(st, cloneValue(out))
+        var i: i64 = 0
+        while i < n && !st.throwing {
+            var cbArgs: Vec<JSValue> = Vec.new()
+            cbArgs.push(JSValue.Number(taElem(st, o, i)))
+            cbArgs.push(JSValue.Number(i as f64))
+            let r = callValue(prog, args[0], cbArgs, JSValue.Undefined, st)
+            taSetElem(st, oh, i, toNum(r))
+            i = i + 1
+        }
+        popTemp(st)
+        return out
+    }
+    if name == "filter" {
+        var kept: Vec<f64> = Vec.new()
+        var i: i64 = 0
+        while i < n && !st.throwing {
+            let e = taElem(st, o, i)
+            var cbArgs: Vec<JSValue> = Vec.new()
+            cbArgs.push(JSValue.Number(e))
+            cbArgs.push(JSValue.Number(i as f64))
+            if truthy(callValue(prog, args[0], cbArgs, JSValue.Undefined, st)) {
+                kept.push(e)
+            }
+            i = i + 1
+        }
+        var lenArgs: Vec<JSValue> = Vec.new()
+        lenArgs.push(JSValue.Number(kept.len() as f64))
+        let out = makeTypedArray(st, kind, lenArgs)
+        let oh = objHandle(out)
+        var k: i64 = 0
+        while k < kept.len() {
+            taSetElem(st, oh, k, kept[k])
+            k = k + 1
+        }
+        return out
+    }
+    if name == "reduce" || name == "reduceRight" {
+        let rev = name == "reduceRight"
+        var acc = JSValue.Undefined
+        var started = false
+        if args.len() > 1 {
+            acc = cloneValue(args[1])
+            started = true
+        }
+        var c: i64 = 0
+        while c < n && !st.throwing {
+            let i = if rev {
+                n - 1 - c
+            } else {
+                c
+            }
+            let e = JSValue.Number(taElem(st, o, i))
+            if !started {
+                acc = e
+                started = true
+            } else {
+                var cbArgs: Vec<JSValue> = Vec.new()
+                cbArgs.push(cloneValue(acc))
+                cbArgs.push(e)
+                cbArgs.push(JSValue.Number(i as f64))
+                acc = callValue(prog, args[0], cbArgs, JSValue.Undefined, st)
+            }
+            c = c + 1
+        }
+        return acc
+    }
+    if name == "find" || name == "findIndex" || name == "some" || name == "every" || name == "findLast" || name == "findLastIndex" {
+        let rev = name == "findLast" || name == "findLastIndex"
+        var c: i64 = 0
+        while c < n && !st.throwing {
+            let i = if rev {
+                n - 1 - c
+            } else {
+                c
+            }
+            let e = taElem(st, o, i)
+            var cbArgs: Vec<JSValue> = Vec.new()
+            cbArgs.push(JSValue.Number(e))
+            cbArgs.push(JSValue.Number(i as f64))
+            let hit = truthy(callValue(prog, args[0], cbArgs, JSValue.Undefined, st))
+            if name == "some" && hit {
+                return JSValue.Bool(true)
+            }
+            if name == "every" && !hit {
+                return JSValue.Bool(false)
+            }
+            if (name == "find" || name == "findLast") && hit {
+                return JSValue.Number(e)
+            }
+            if (name == "findIndex" || name == "findLastIndex") && hit {
+                return JSValue.Number(i as f64)
+            }
+            c = c + 1
+        }
+        if name == "some" {
+            return JSValue.Bool(false)
+        }
+        if name == "every" {
+            return JSValue.Bool(true)
+        }
+        if name == "find" || name == "findLast" {
+            return JSValue.Undefined
+        }
+        return JSValue.Number(0.0 - 1.0)
+    }
+    if name == "reverse" {
+        var i: i64 = 0
+        while i < n / 2 {
+            let tmp = taElem(st, o, i)
+            taSetElem(st, o, i, taElem(st, o, n - 1 - i))
+            taSetElem(st, o, n - 1 - i, tmp)
+            i = i + 1
+        }
+        return JSValue.Obj(o)
+    }
+    if name == "sort" {
+        // numeric ascending by default; a comparator (args[0]) overrides. Simple
+        // insertion sort over the element values (typed arrays are usually small).
+        var i: i64 = 1
+        while i < n && !st.throwing {
+            let cur = taElem(st, o, i)
+            var j = i - 1
+            var cont = true
+            while j >= 0 && cont {
+                let ej = taElem(st, o, j)
+                var swap = ej > cur
+                if args.len() > 0 && isCallableIn(st, args[0]) {
+                    var cbArgs: Vec<JSValue> = Vec.new()
+                    cbArgs.push(JSValue.Number(ej))
+                    cbArgs.push(JSValue.Number(cur))
+                    swap = toNum(callValue(prog, args[0], cbArgs, JSValue.Undefined, st)) > 0.0
+                }
+                if swap {
+                    taSetElem(st, o, j + 1, ej)
+                    j = j - 1
+                } else {
+                    cont = false
+                }
+            }
+            taSetElem(st, o, j + 1, cur)
+            i = i + 1
+        }
+        return JSValue.Obj(o)
     }
     return JSValue.Undefined
 }
@@ -9566,6 +9738,14 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                         let ne = arrLen(st, o)
                         while e < ne {
                             vals.push(arrGet(st, o, e))
+                            e = e + 1
+                        }
+                    } else if st.objects[o].taBuf >= 0 && !st.objects[o].isDataView {
+                        // typed array: iterate by element
+                        iterable = true
+                        var e: i64 = 0
+                        while e < st.objects[o].taLen {
+                            vals.push(JSValue.Number(taElem(st, o, e)))
                             e = e + 1
                         }
                     } else if st.objects[o].isMap || st.objects[o].isSet {
