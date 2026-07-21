@@ -125,4 +125,29 @@ exports.inspect = inspect;
 exports.format = format;
 exports.deprecate = deprecate;
 exports.isArray = isArray;
-exports.types = {};
+
+// util.types — type predicates some deps use for defensive checks. Backed by
+// instanceof (which recognizes the built-in exotics) where reliable; the
+// undetectable ones (Proxy, async-function) report false rather than lie.
+exports.types = {
+  isDate: function (v) { return v instanceof Date; },
+  isRegExp: function (v) { return v instanceof RegExp; },
+  isMap: function (v) { return v instanceof Map; },
+  isSet: function (v) { return v instanceof Set; },
+  isPromise: function (v) { return v instanceof Promise; },
+  isNativeError: function (v) { return v instanceof Error; },
+  isArrayBuffer: function (v) { return v instanceof ArrayBuffer; },
+  isAnyArrayBuffer: function (v) { return v instanceof ArrayBuffer; },
+  isTypedArray: function (v) {
+    // the runtime polyfills typed arrays as plain arrays tagged _isTypedArray;
+    // the engine has real ones that answer instanceof
+    if (v && v._isTypedArray) return true;
+    return v instanceof Uint8Array || v instanceof Int8Array || v instanceof Uint8ClampedArray ||
+      v instanceof Uint16Array || v instanceof Int16Array || v instanceof Uint32Array ||
+      v instanceof Int32Array || v instanceof Float32Array || v instanceof Float64Array;
+  },
+  isProxy: function () { return false; },
+  isAsyncFunction: function () { return false; },
+  isGeneratorFunction: function () { return false; },
+  isBoxedPrimitive: function () { return false; },
+};

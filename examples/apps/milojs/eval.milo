@@ -3803,6 +3803,12 @@ fn instanceOf(st: &Interp, val: &JSValue, ctor: &JSValue): bool {
                     if id == NATIVE_ARRAYBUFFER {
                         return st.objects[o].isArrayBuffer
                     }
+                    // a typed-array view instanceof its exact kind (Uint8Array,
+                    // Float64Array, …): a view has taBuf >= 0 and its taKind is
+                    // the ctor's offset from the base id
+                    if id >= NATIVE_TA_BASE && id <= NATIVE_TA_BASE + TA_U8C {
+                        return st.objExtras[st.objects[o].extra].taBuf >= 0 && !st.objects[o].isDataView && st.objExtras[st.objects[o].extra].taKind == (id - NATIVE_TA_BASE)
+                    }
                     if !st.objects[o].isError {
                         return false
                     }
