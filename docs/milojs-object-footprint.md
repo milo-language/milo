@@ -197,3 +197,30 @@ run the FULL app (not just the self-fetch guard) under the moved slice, and run
 GC stress with a workload that constructs/drops many of that capability. Given
 the stakes, the memory refactor is best done with fresh context, one slice at a
 time, app-verified — not rushed.
+
+### CRITICAL: weigh access FREQUENCY, not just object count (found before coding the proxy slice)
+
+A HashMap side table is sparse (memory win) but every access to a moved field
+costs a hash lookup + a copy of the CapData struct out of the map. So moving a
+field trades a per-OBJECT memory saving for a per-ACCESS time cost. That is only
+a win when the capability is rarely ACCESSED, not merely rare in count.
+
+Two capabilities are rare in count but HOT in access, and must NOT be
+naively side-tabled:
+- **proxy** — prisma wraps its client in a Proxy, so every client property read
+  goes through the proxy get trap; a hash lookup + 64-byte copy per property
+  access would slow the app's hottest path.
+- **promise** — async-heavy code touches promiseState/promiseValue constantly.
+
+A Vec-indexed side table (O(1), no hash) does NOT fix this: indexing by object id
+needs one slot per id including non-proxies, which re-inflates every object — the
+opposite of the goal. Sparse storage inherently requires a lookup.
+
+Revised guidance: side-table the rare-AND-cold capabilities first — typed-array
+view fields, ArrayBuffer `bytes`, `date`, `regexId`, `napi` — and MEASURE the
+empty-object win those alone buy. Only consider proxy/promise/bound after
+measuring their access-cost hit on the FULL app (not a microbench), and be
+prepared to leave the hot ones inline. The headline "1.3 KB → ~350 B" assumed
+moving all 28 fields; if the hot ones stay, the realistic target is higher but
+the app stays fast. Net: this refactor needs a measure-first spike, not a
+blind move-everything pass.
