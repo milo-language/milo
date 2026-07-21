@@ -1155,6 +1155,7 @@ let NATIVE_QUEUE_MICROTASK: i64 = 66
 let NATIVE_QUEUE_MICROTASK_JS: i64 = 112
 let NATIVE_DATAVIEW: i64 = 113
 let NATIVE_OBJECT_HASOWN: i64 = 114
+let NATIVE_STRING_RAW: i64 = 115
 let NATIVE_ARRAY_CTOR: i64 = 67
 let NATIVE_TCP_LISTEN: i64 = 68
 let NATIVE_TCP_ACCEPT: i64 = 69
@@ -2123,6 +2124,33 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             }
         }
         return JSValue.Obj(o)
+    }
+    if id == NATIVE_STRING_RAW {
+        // String.raw(template, ...subs): join template.raw segments with the
+        // substitutions interleaved — raw[0] sub[0] raw[1] sub[1] … raw[n-1]
+        if argVals.len() == 0 {
+            return JSValue.Str("")
+        }
+        let tmpl = objHandle(argVals[0])
+        if tmpl < 0 {
+            return JSValue.Str("")
+        }
+        let rawv = getMember(st, tmpl, "raw")
+        let rawh = objHandle(rawv)
+        if rawh < 0 {
+            return JSValue.Str("")
+        }
+        var out = ""
+        var i: i64 = 0
+        let n = arrLen(st, rawh)
+        while i < n {
+            out = out + toStr(arrGet(st, rawh, i))
+            if i + 1 < n && i + 1 < argVals.len() {
+                out = out + toStr(argVals[i + 1])
+            }
+            i = i + 1
+        }
+        return JSValue.Str(out)
     }
     if id == NATIVE_STRING_FROMCHARCODE {
         var units: Vec<i64> = Vec.new()
@@ -3377,6 +3405,7 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
     let stringCtorObj = getNativeProps(st, NATIVE_STRING)
     objSet(st, stringCtorObj, "fromCharCode", JSValue.Native(NATIVE_STRING_FROMCHARCODE))
+    objSet(st, stringCtorObj, "raw", JSValue.Native(NATIVE_STRING_RAW))
     // String.prototype methods as bound-method values, so
     // String.prototype.replace.call(str, ...) — the qs module's pattern — works
     let stringProto = newObject(st)
