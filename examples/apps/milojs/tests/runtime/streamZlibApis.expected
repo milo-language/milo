@@ -1,0 +1,4 @@
+deflateSync true
+roundtrip hi
+brotli function function
+stream: a,b,c

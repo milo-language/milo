@@ -70,6 +70,28 @@ Readable.prototype.read = function () {
   return this._chunks.shift();
 };
 
+// Readable.from(iterable): build a stream that emits each item then ends.
+// Handles arrays, sync iterables, and async iterables (async generators).
+Readable.from = function (iterable, options) {
+  var r = new Readable(options);
+  if (iterable && typeof iterable[Symbol.asyncIterator] === 'function') {
+    var it = iterable[Symbol.asyncIterator]();
+    var pump = function () {
+      it.next().then(function (res) {
+        if (res.done) { r.push(null); }
+        else { r.push(res.value); pump(); }
+      }, function (err) { r.emit('error', err); });
+    };
+    pump();
+    return r;
+  }
+  var items = Array.isArray(iterable) ? iterable.slice()
+    : (iterable && typeof iterable[Symbol.iterator] === 'function') ? Array.from(iterable) : [];
+  for (var i = 0; i < items.length; i++) r.push(items[i]);
+  r.push(null);
+  return r;
+};
+
 function Writable(options) {
   EventEmitter.call(this);
   this.writable = true;
