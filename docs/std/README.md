@@ -39,6 +39,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/path](./path.md)
 - [std/platform.darwin](./platform.darwin.md)
 - [std/platform.linux](./platform.linux.md)
+- [std/png](./png.md)
 - [std/pool](./pool.md)
 - [std/process](./process.md)
 - [std/pty.darwin](./pty.darwin.md)

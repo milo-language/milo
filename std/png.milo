@@ -1,0 +1,156 @@
+// std/png — decode PNG images (RFC 2083), pure Milo on std/inflate.
+//
+// Parses the chunk stream, concatenates IDAT, zlib-inflates it, then reverses the
+// per-scanline filters (None/Sub/Up/Average/Paeth) to recover raw pixels. This is
+// the payload path that motivated the compression stdlib: a real, filtered, zlib-
+// wrapped format decoded end to end. Supports 8-bit truecolor (RGB, colorType 2)
+// and truecolor+alpha (RGBA, colorType 6), no interlace — the common web/screenshot
+// case. Palette, <8-bit, 16-bit, and Adam7 interlace are out of scope for now.
+
+from "std/inflate" import {
+    zlibDecompress
+}
+
+struct PngImage {
+    width: i64,
+    height: i64,
+    channels: i64, // 3 (RGB) or 4 (RGBA)
+    pixels: string, // row-major, channels bytes per pixel, top-down
+}
+
+fn _be32(src: &string, p: i64): i64 {
+    return ((src[p] as i64) << 24) | ((src[p + 1] as i64) << 16) | ((src[p + 2] as i64) << 8) | (src[p + 3] as i64)
+}
+
+// Paeth predictor (RFC 2083 §6.6): pick whichever of a/b/c the initial estimate
+// a+b-c is closest to.
+fn _paeth(a: i64, b: i64, c: i64): i64 {
+    let p = a + b - c
+    var pa = p - a
+    if pa < 0 {
+        pa = 0 - pa
+    }
+    var pb = p - b
+    if pb < 0 {
+        pb = 0 - pb
+    }
+    var pc = p - c
+    if pc < 0 {
+        pc = 0 - pc
+    }
+    if pa <= pb && pa <= pc {
+        return a
+    }
+    if pb <= pc {
+        return b
+    }
+    return c
+}
+
+fn decodePng(src: &string): Result<PngImage, string> {
+    if src.len < 8 {
+        return Result.Err("png: too short")
+    }
+    // Signature: 137 80 78 71 13 10 26 10.
+    if src[0] != 137 || src[1] != 80 || src[2] != 78 || src[3] != 71 {
+        return Result.Err("png: bad signature")
+    }
+
+    var width: i64 = 0
+    var height: i64 = 0
+    var channels: i64 = 0
+    var idat = ""
+
+    var pos: i64 = 8
+    var sawIhdr = false
+    while pos + 8 <= src.len {
+        let clen = _be32(src, pos)
+        let t0 = src[pos + 4]
+        let t1 = src[pos + 5]
+        let t2 = src[pos + 6]
+        let t3 = src[pos + 7]
+        let dataStart = pos + 8
+
+        if t0 == 'I' && t1 == 'H' && t2 == 'D' && t3 == 'R' {
+            width = _be32(src, dataStart)
+            height = _be32(src, dataStart + 4)
+            let bitDepth = src[dataStart + 8] as i64
+            let colorType = src[dataStart + 9] as i64
+            let interlace = src[dataStart + 12] as i64
+            if bitDepth != 8 {
+                return Result.Err("png: only 8-bit depth supported")
+            }
+            if interlace != 0 {
+                return Result.Err("png: interlaced images unsupported")
+            }
+            if colorType == 2 {
+                channels = 3
+            } else if colorType == 6 {
+                channels = 4
+            } else {
+                return Result.Err($"png: unsupported color type {colorType}")
+            }
+            sawIhdr = true
+        } else if t0 == 'I' && t1 == 'D' && t2 == 'A' && t3 == 'T' {
+            for i in 0..clen {
+                idat.push(src[dataStart + i])
+            }
+        } else if t0 == 'I' && t1 == 'E' && t2 == 'N' && t3 == 'D' {
+            break
+        }
+        // Advance past data + 4-byte CRC.
+        pos = dataStart + clen + 4
+    }
+
+    if !sawIhdr {
+        return Result.Err("png: missing IHDR")
+    }
+
+    let raw = zlibDecompress(idat)?
+    let bpp = channels
+    let stride = width * bpp
+    // Each scanline is prefixed by a 1-byte filter type.
+    if raw.len != height * (stride + 1) {
+        return Result.Err("png: decompressed size mismatch")
+    }
+
+    // Unfilter in place into `out` (the reconstruction buffer the filters reference).
+    var out = ""
+    for y in 0..height {
+        let filter = raw[y * (stride + 1)] as i64
+        let inBase = y * (stride + 1) + 1
+        let outBase = y * stride
+        for x in 0..stride {
+            let f = raw[inBase + x] as i64
+            // a = byte bpp to the left, b = byte above, c = byte above-left.
+            var a: i64 = 0
+            if x >= bpp {
+                a = out[outBase + x - bpp] as i64
+            }
+            var b: i64 = 0
+            if y > 0 {
+                b = out[outBase - stride + x] as i64
+            }
+            var c: i64 = 0
+            if y > 0 && x >= bpp {
+                c = out[outBase - stride + x - bpp] as i64
+            }
+            var recon: i64 = f
+            if filter == 1 {
+                recon = f + a
+            } else if filter == 2 {
+                recon = f + b
+            } else if filter == 3 {
+                recon = f + ((a + b) / 2)
+            } else if filter == 4 {
+                recon = f + _paeth(a, b, c)
+            }
+            out.push((recon & 0xff) as u8)
+        }
+    }
+
+    return Result.Ok(PngImage {
+        width: width, height: height, channels: channels, pixels: out
+    }
+    )
+}
