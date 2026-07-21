@@ -120,14 +120,30 @@ Promise.race = function (items) {
   });
 };
 
+// AggregateError: real error subclass carrying the list of failures on .errors.
+// Promise.any rejects with one; some concurrency libs construct it directly.
+function AggregateError(errors, message) {
+  var e = new Error(message);
+  Object.setPrototypeOf(e, AggregateError.prototype);
+  e.name = 'AggregateError';
+  e.errors = Array.from(errors || []);
+  return e;
+}
+AggregateError.prototype = Object.create(Error.prototype);
+AggregateError.prototype.constructor = AggregateError;
+AggregateError.prototype.name = 'AggregateError';
+
 Promise.any = function (items) {
   return new Promise(function (resolve, reject) {
     var remaining = items.length;
-    if (remaining === 0) { reject(new Error('All promises were rejected')); return; }
-    for (var i = 0; i < items.length; i++) {
+    var errors = [];
+    if (remaining === 0) { reject(new AggregateError([], 'All promises were rejected')); return; }
+    for (let i = 0; i < items.length; i++) {
+      errors.push(undefined);
       Promise.resolve(items[i]).then(resolve, function (e) {
+        errors[i] = e;
         remaining -= 1;
-        if (remaining === 0) reject(e);
+        if (remaining === 0) reject(new AggregateError(errors, 'All promises were rejected'));
       });
     }
   });

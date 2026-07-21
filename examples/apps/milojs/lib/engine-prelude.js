@@ -666,13 +666,25 @@ Promise.race = function (items) {
   });
 };
 
+// AggregateError: real error subclass carrying the failures on .errors.
+function AggregateError(errors, message) {
+  var e = new Error(message);
+  Object.setPrototypeOf(e, AggregateError.prototype);
+  e.name = "AggregateError";
+  e.errors = Array.from(errors || []);
+  return e;
+}
+AggregateError.prototype = Object.create(Error.prototype);
+AggregateError.prototype.constructor = AggregateError;
+AggregateError.prototype.name = "AggregateError";
+
 Promise.any = function (items) {
   return new Promise(function (resolve, reject) {
     var list = Array.from(items);
     var remaining = list.length;
     var errors = [];
     if (remaining === 0) {
-      reject(new Error("all promises were rejected"));
+      reject(new AggregateError([], "All promises were rejected"));
       return;
     }
     for (var i = 0; i < list.length; i++) {
@@ -680,7 +692,7 @@ Promise.any = function (items) {
         Promise.resolve(item).then(resolve, function (e) {
           errors[idx] = e;
           remaining--;
-          if (remaining === 0) reject(new Error("all promises were rejected"));
+          if (remaining === 0) reject(new AggregateError(errors, "All promises were rejected"));
         });
       })(i, list[i]);
     }
