@@ -45,7 +45,7 @@ from "std/datetime" import {
     dateTimeFromEpoch, dateTimeFromEpochLocal
 }
 from "std/fs" import {
-    currentDir, writeFile, appendFile
+    currentDir, writeFile, appendFile, readDir, removeFile, makeDir, removeDir, renameFile, isDir
 }
 from "examples/apps/milojs/napi" import {
     napiInvoke, napiLoadAddon, napiTakePending, napiPollTsfn, napiRunTsfnCall, napiHasTsfn, napiHasPendingWork, napiMayDeliver, napiWaitBriefly
@@ -1428,6 +1428,12 @@ let NATIVE_OBJECT_HASOWN: i64 = 114
 let NATIVE_STRING_RAW: i64 = 115
 let NATIVE_STRING_FROMCODEPOINT: i64 = 116
 let NATIVE_DATE_PARSE: i64 = 117
+let NATIVE_MKDIR: i64 = 118
+let NATIVE_READDIR: i64 = 119
+let NATIVE_UNLINK: i64 = 120
+let NATIVE_RMDIR: i64 = 121
+let NATIVE_RENAME: i64 = 122
+let NATIVE_IS_DIR: i64 = 123
 let NATIVE_ARRAY_CTOR: i64 = 67
 let NATIVE_TCP_LISTEN: i64 = 68
 let NATIVE_TCP_ACCEPT: i64 = 69
@@ -2226,6 +2232,85 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                 return JSValue.Bool(false)
             }
         }
+    }
+    if id == NATIVE_MKDIR {
+        // __mkdirSync(path): one directory, no parents (the JS shim walks the
+        // path for {recursive:true}). true on success, false on any error —
+        // "already exists" reads as false, which the shim treats as fine.
+        if argVals.len() < 1 {
+            return JSValue.Bool(false)
+        }
+        match makeDir(toStr(argVals[0]), 511 as i32) {
+            Result.Ok(_v) => {
+                return JSValue.Bool(true)
+            }
+            Result.Err(_e) => {
+                return JSValue.Bool(false)
+            }
+        }
+    }
+    if id == NATIVE_READDIR {
+        // __readdirSync(path) → array of entry name strings, or null on error
+        if argVals.len() < 1 {
+            return JSValue.Null
+        }
+        let entries = readDir(toStr(argVals[0]))
+        let arr = newArray(st)
+        pushTemp(st, JSValue.Obj(arr))
+        var i: i64 = 0
+        while i < entries.len() {
+            arrPush(st, arr, JSValue.Str(entries[i].name.clone()))
+            i = i + 1
+        }
+        popTemp(st)
+        return JSValue.Obj(arr)
+    }
+    if id == NATIVE_UNLINK {
+        if argVals.len() < 1 {
+            return JSValue.Bool(false)
+        }
+        match removeFile(toStr(argVals[0])) {
+            Result.Ok(_v) => {
+                return JSValue.Bool(true)
+            }
+            Result.Err(_e) => {
+                return JSValue.Bool(false)
+            }
+        }
+    }
+    if id == NATIVE_RMDIR {
+        if argVals.len() < 1 {
+            return JSValue.Bool(false)
+        }
+        match removeDir(toStr(argVals[0])) {
+            Result.Ok(_v) => {
+                return JSValue.Bool(true)
+            }
+            Result.Err(_e) => {
+                return JSValue.Bool(false)
+            }
+        }
+    }
+    if id == NATIVE_RENAME {
+        if argVals.len() < 2 {
+            return JSValue.Bool(false)
+        }
+        match renameFile(toStr(argVals[0]), toStr(argVals[1])) {
+            Result.Ok(_v) => {
+                return JSValue.Bool(true)
+            }
+            Result.Err(_e) => {
+                return JSValue.Bool(false)
+            }
+        }
+    }
+    if id == NATIVE_IS_DIR {
+        // __isDir(path): real S_IFDIR check via stat — the read-file-returns-null
+        // heuristic was wrong on macOS (reading a directory yields "" not null)
+        if argVals.len() < 1 {
+            return JSValue.Bool(false)
+        }
+        return JSValue.Bool(isDir(toStr(argVals[0])))
     }
     if id == NATIVE_HTTP_REGISTER {
         if argVals.len() > 0 {
@@ -3935,6 +4020,12 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "__httpUnregister", JSValue.Native(NATIVE_HTTP_UNREGISTER))
     scopeDefine(st, 0, "__writeFileSync", JSValue.Native(NATIVE_WRITE_FILE))
     scopeDefine(st, 0, "__readFileSync", JSValue.Native(NATIVE_READ_FILE_SYNC))
+    scopeDefine(st, 0, "__mkdirSync", JSValue.Native(NATIVE_MKDIR))
+    scopeDefine(st, 0, "__readdirSync", JSValue.Native(NATIVE_READDIR))
+    scopeDefine(st, 0, "__unlinkSync", JSValue.Native(NATIVE_UNLINK))
+    scopeDefine(st, 0, "__rmdirSync", JSValue.Native(NATIVE_RMDIR))
+    scopeDefine(st, 0, "__renameSync", JSValue.Native(NATIVE_RENAME))
+    scopeDefine(st, 0, "__isDir", JSValue.Native(NATIVE_IS_DIR))
     scopeDefine(st, 0, "__fileExists", JSValue.Native(NATIVE_FILE_EXISTS))
     scopeDefine(st, 0, "__byteLength", JSValue.Native(NATIVE_BYTE_LENGTH))
     scopeDefine(st, 0, "__napiLoad", JSValue.Native(NATIVE_NAPI_LOAD))

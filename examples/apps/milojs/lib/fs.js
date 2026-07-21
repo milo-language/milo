@@ -4,7 +4,11 @@
 function readFileSync(p, opts) {
   var s = __readFileSync(p);
   if (s === undefined || s === null) {
-    throw new Error("ENOENT: no such file or directory, open '" + p + "'");
+    // node attaches .code so callers can branch on ENOENT rather than parse the
+    // message — a very common pattern (fs.readFileSync in a try/catch).
+    var e = new Error("ENOENT: no such file or directory, open '" + p + "'");
+    e.code = "ENOENT"; e.errno = -2; e.syscall = "open"; e.path = p;
+    throw e;
   }
   return s;
 }
@@ -24,8 +28,11 @@ function readFile(p, opts, cb) {
 }
 
 function makeStats(p) {
-  var content = __readFileSync(p);
-  var isDir = content === null || content === undefined ? true : false;
+  // real S_IFDIR check — the old "readFile returns null ⇒ directory" heuristic
+  // was wrong on macOS, where reading a directory yields "" (so every dir
+  // reported isDirectory() === false, breaking recursive walks).
+  var isDir = __isDir(p);
+  var content = isDir ? null : __readFileSync(p);
   // NOT content.length: that counts code points, so any file whose bytes decode
   // as multi-byte UTF-8 (every font, image, archive) reports short and the
   // Content-Length built from it truncates the response.
@@ -105,6 +112,115 @@ exports.promises = {
   }
 };
 exports.promises.lstat = exports.promises.stat;
+
+// --- directory + file management (over the runtime's fs natives) -------------
+exports.readdirSync = function (p, opts) {
+  var names = __readdirSync(String(p));
+  if (names === null || names === undefined) {
+    var e = new Error("ENOENT: no such file or directory, scandir '" + p + "'");
+    e.code = "ENOENT"; e.path = p;
+    throw e;
+  }
+  return names;
+};
+exports.readdir = function (p, optsOrCb, maybeCb) {
+  var cb = typeof optsOrCb === 'function' ? optsOrCb : maybeCb;
+  try { var r = exports.readdirSync(p); if (cb) cb(null, r); }
+  catch (e) { if (cb) cb(e); }
+};
+
+exports.mkdirSync = function (p, opts) {
+  p = String(p);
+  if (opts && opts.recursive) {
+    // create every missing ancestor, like `mkdir -p`
+    var parts = p.split('/');
+    var cur = p[0] === '/' ? '' : '.';
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i] === '') continue;
+      cur = cur + '/' + parts[i];
+      if (!__fileExists(cur)) __mkdirSync(cur);
+    }
+    return undefined;
+  }
+  if (!__mkdirSync(p)) {
+    var e = new Error("EEXIST/ENOENT: cannot mkdir '" + p + "'");
+    e.code = __fileExists(p) ? "EEXIST" : "ENOENT"; e.path = p;
+    throw e;
+  }
+};
+exports.mkdir = function (p, optsOrCb, maybeCb) {
+  var cb = typeof optsOrCb === 'function' ? optsOrCb : maybeCb;
+  var opts = typeof optsOrCb === 'object' ? optsOrCb : undefined;
+  try { exports.mkdirSync(p, opts); if (cb) cb(null); }
+  catch (e) { if (cb) cb(e); }
+};
+
+exports.unlinkSync = function (p) {
+  if (!__unlinkSync(String(p))) {
+    var e = new Error("ENOENT: no such file or directory, unlink '" + p + "'");
+    e.code = "ENOENT"; e.path = p;
+    throw e;
+  }
+};
+exports.unlink = function (p, cb) {
+  try { exports.unlinkSync(p); if (cb) cb(null); } catch (e) { if (cb) cb(e); }
+};
+
+exports.rmdirSync = function (p) {
+  if (!__rmdirSync(String(p))) {
+    var e = new Error("ENOENT: cannot rmdir '" + p + "'");
+    e.code = "ENOENT"; e.path = p;
+    throw e;
+  }
+};
+// fs.rmSync(path, {recursive, force}): recursively delete a tree, or a file.
+exports.rmSync = function (p, opts) {
+  p = String(p);
+  var recursive = opts && opts.recursive;
+  var force = opts && opts.force;
+  if (!__fileExists(p)) { if (force) return; var e = new Error("ENOENT: " + p); e.code = "ENOENT"; throw e; }
+  // a path that can't be read as a file is a directory (matches statSync)
+  if (!statSync(p).isDirectory()) {
+    __unlinkSync(p);
+    return;
+  }
+  var names = __readdirSync(p) || [];
+  if (!recursive && names.length > 0) throw new Error("ENOTEMPTY: directory not empty '" + p + "'");
+  for (var i = 0; i < names.length; i++) exports.rmSync(p + '/' + names[i], opts);
+  __rmdirSync(p);
+};
+exports.rm = function (p, optsOrCb, maybeCb) {
+  var cb = typeof optsOrCb === 'function' ? optsOrCb : maybeCb;
+  var opts = typeof optsOrCb === 'object' ? optsOrCb : undefined;
+  try { exports.rmSync(p, opts); if (cb) cb(null); } catch (e) { if (cb) cb(e); }
+};
+
+exports.renameSync = function (from, to) {
+  if (!__renameSync(String(from), String(to))) {
+    var e = new Error("ENOENT: cannot rename '" + from + "' -> '" + to + "'");
+    e.code = "ENOENT"; throw e;
+  }
+};
+exports.rename = function (from, to, cb) {
+  try { exports.renameSync(from, to); if (cb) cb(null); } catch (e) { if (cb) cb(e); }
+};
+
+exports.copyFileSync = function (from, to) {
+  var data = __readFileSync(String(from));
+  if (data === undefined || data === null) { var e = new Error("ENOENT: " + from); e.code = "ENOENT"; throw e; }
+  if (!__writeFileSync(String(to), data, false)) throw new Error("ENOENT: cannot write '" + to + "'");
+};
+exports.copyFile = function (from, to, flagsOrCb, maybeCb) {
+  var cb = typeof flagsOrCb === 'function' ? flagsOrCb : maybeCb;
+  try { exports.copyFileSync(from, to); if (cb) cb(null); } catch (e) { if (cb) cb(e); }
+};
+
+exports.promises.readdir = function (p) { return new Promise(function (res, rej) { try { res(exports.readdirSync(p)); } catch (e) { rej(e); } }); };
+exports.promises.mkdir = function (p, opts) { return new Promise(function (res, rej) { try { exports.mkdirSync(p, opts); res(); } catch (e) { rej(e); } }); };
+exports.promises.unlink = function (p) { return new Promise(function (res, rej) { try { exports.unlinkSync(p); res(); } catch (e) { rej(e); } }); };
+exports.promises.rm = function (p, opts) { return new Promise(function (res, rej) { try { exports.rmSync(p, opts); res(); } catch (e) { rej(e); } }); };
+exports.promises.rename = function (a, b) { return new Promise(function (res, rej) { try { exports.renameSync(a, b); res(); } catch (e) { rej(e); } }); };
+exports.promises.copyFile = function (a, b) { return new Promise(function (res, rej) { try { exports.copyFileSync(a, b); res(); } catch (e) { rej(e); } }); };
 
 exports.writeFileSync = function (path, data) {
   if (!__writeFileSync(String(path), String(data), false)) {

@@ -1,0 +1,7 @@
+readdir b,f.txt,g.txt
+isDir true false
+isFile true
+afterRename b,f.txt,renamed.txt
+afterUnlink false b,renamed.txt
+missing ENOENT
+cleaned false
