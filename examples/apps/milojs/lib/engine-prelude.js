@@ -868,3 +868,10 @@ Promise.resolve = function (x) {
   }
   return __promiseResolveValue(x);
 };
+
+// Promise.withResolvers() (ES2024): a promise plus its resolve/reject exposed.
+Promise.withResolvers = function () {
+  var resolve, reject;
+  var promise = new Promise(function (res, rej) { resolve = res; reject = rej; });
+  return { promise: promise, resolve: resolve, reject: reject };
+};
