@@ -1,12 +1,12 @@
 // std/zstd — pure-Milo Zstandard frame decoder (RFC 8878).
 //
-// Scope today: the frame layer + Raw/RLE blocks + Compressed blocks whose sequences use
-// Predefined or RLE FSE tables and whose literals are Raw or RLE. That covers what `zstd`
-// emits for small and highly-repetitive input: a full FSE (tANS) sequence decoder over a
-// backward bitstream, predefined LL/OF/ML tables, repeat-offset resolution, and LZ77
-// reconstruction. Still unsupported (clear error, tracked next slice): Huffman-compressed
-// literals, and FSE-compressed / Repeat sequence tables (the in-stream distribution
-// header). The frame/block scaffolding already plugs into those.
+// Scope today: the frame layer + Raw/RLE blocks + Compressed blocks with Raw/RLE
+// literals and Predefined / RLE / FSE-compressed sequence tables. That is a full FSE
+// (tANS) decoder over a backward bitstream — predefined AND in-stream distribution
+// headers — plus repeat-offset resolution and LZ77 reconstruction. Still unsupported
+// (clear error, tracked next slice): Huffman-compressed literals (the literals entropy
+// stage) and Repeat-mode sequence tables (reuse across blocks). The scaffolding here
+// already plugs into those.
 //
 // The 4-byte content checksum (low 32 bits of XXH64 of the decompressed content, when
 // the frame header flags it) is verified via std/xxhash. Structure mirrors std/inflate:
@@ -160,6 +160,79 @@ fn _fseBuildRle(symb: i64): FseTable {
     var newStateBase = _zeroVec(1)
     return FseTable {
         symbols: symbols, numBits: numBits, newStateBase: newStateBase, accuracyLog: 0
+    }
+}
+
+// Result of decoding an in-stream FSE distribution header.
+struct FseHdr {
+    table: FseTable,
+    bytesUsed: i64, // bytes the header occupied (it is byte-aligned at the end)
+    ok: bool,
+}
+
+// Decode an FSE distribution table from the forward bitstream at byte `base`
+// (RFC 8878 §4.1.1). Reads probabilities LSB-first, then byte-aligns.
+fn _fseDecodeHeader(src: &string, base: i64, maxAccuracy: i64): FseHdr {
+    var off = base * 8
+    let accuracyLog = 5 + _readBitsLE(src, 4, off)
+    off = off + 4
+    var freqs: Vec<i64> = Vec.new()
+    if accuracyLog > maxAccuracy {
+        return FseHdr {
+            table: _fseBuildRle(0), bytesUsed: 0, ok: false
+        }
+    }
+    var remaining = 1 << accuracyLog
+    while remaining > 0 && freqs.len < 256 {
+        // Bits needed to represent values 0..remaining+1 (a low-value shortcut saves
+        // one bit for the smaller half of the range).
+        let bits = _highestSetBit(remaining + 1) + 1
+        var val = _readBitsLE(src, bits, off)
+        off = off + bits
+        let lowerMask = (1 << (bits - 1)) - 1
+        let threshold = (1 << bits) - 1 - (remaining + 1)
+        if (val & lowerMask) < threshold {
+            off = off - 1
+            val = val & lowerMask
+        } else if val > lowerMask {
+            val = val - threshold
+        }
+        let proba = val - 1
+        var ab = proba
+        if ab < 0 {
+            ab = 0 - proba
+        }
+        remaining = remaining - ab
+        freqs.push(proba)
+        // A zero probability is followed by 2-bit run-length flags of further zeros.
+        if proba == 0 {
+            var repeat = _readBitsLE(src, 2, off)
+            off = off + 2
+            var done = false
+            while !done {
+                for _i in 0..repeat {
+                    if freqs.len < 256 {
+                        freqs.push(0)
+                    }
+                }
+                if repeat == 3 {
+                    repeat = _readBitsLE(src, 2, off)
+                    off = off + 2
+                } else {
+                    done = true
+                }
+            }
+        }
+    }
+    let bitsUsed = off - base * 8
+    let bytesUsed = (bitsUsed + 7) / 8
+    if remaining != 0 {
+        return FseHdr {
+            table: _fseBuildRle(0), bytesUsed: 0, ok: false
+        }
+    }
+    return FseHdr {
+        table: _fseBuild(freqs, accuracyLog), bytesUsed: bytesUsed, ok: true
     }
 }
 
@@ -331,14 +404,28 @@ fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mu
     } else if llMode == 1 {
         llTable = _fseBuildRle(src[pos] as i64)
         pos = pos + 1
+    } else if llMode == 2 {
+        let h = _fseDecodeHeader(src, pos, 9)
+        if !h.ok {
+            return 0 - 102
+        }
+        llTable = h.table
+        pos = pos + h.bytesUsed
     } else {
-        return 0 - 101
+        return 0 - 101 // Repeat mode: needs a table from a previous block
     }
     if ofMode == 0 {
         ofTable = _fseBuild(_ofDefaultDist(), 5)
     } else if ofMode == 1 {
         ofTable = _fseBuildRle(src[pos] as i64)
         pos = pos + 1
+    } else if ofMode == 2 {
+        let h = _fseDecodeHeader(src, pos, 8)
+        if !h.ok {
+            return 0 - 102
+        }
+        ofTable = h.table
+        pos = pos + h.bytesUsed
     } else {
         return 0 - 101
     }
@@ -347,6 +434,13 @@ fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mu
     } else if mlMode == 1 {
         mlTable = _fseBuildRle(src[pos] as i64)
         pos = pos + 1
+    } else if mlMode == 2 {
+        let h = _fseDecodeHeader(src, pos, 9)
+        if !h.ok {
+            return 0 - 102
+        }
+        mlTable = h.table
+        pos = pos + h.bytesUsed
     } else {
         return 0 - 101
     }
