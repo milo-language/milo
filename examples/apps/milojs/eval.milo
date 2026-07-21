@@ -326,7 +326,7 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
         if st.objects[o].isGenerator && (key == "next" || key == symIteratorKey()) {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
-        if st.objects[o].taBuf >= 0 && isTypedArrayMethodName(key) {
+        if st.objExtras[st.objects[o].extra].taBuf >= 0 && isTypedArrayMethodName(key) {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
         if st.objects[o].isArray && isArrayMethod(key) {
@@ -493,7 +493,7 @@ fn makeTypedArray(st: &mut Interp, kind: i64, args: &Vec<JSValue>): JSValue {
                     boff = 0
                 }
             }
-            let avail = st.objects[h].bytes.len() - boff
+            let avail = st.objExtras[st.objects[h].extra].bytes.len() - boff
             var count = avail / w
             if count < 0 {
                 count = 0
@@ -513,10 +513,10 @@ fn makeTypedArray(st: &mut Interp, kind: i64, args: &Vec<JSValue>): JSValue {
                 i = i + 1
             }
             len = seed.len()
-        } else if h >= 0 && st.objects[h].taBuf >= 0 {
+        } else if h >= 0 && st.objExtras[st.objects[h].extra].taBuf >= 0 {
             // from another typed array: copy the element values
             var i: i64 = 0
-            while i < st.objects[h].taLen {
+            while i < st.objExtras[st.objects[h].extra].taLen {
                 seed.push(taElem(st, h, i))
                 i = i + 1
             }
@@ -531,20 +531,22 @@ fn makeTypedArray(st: &mut Interp, kind: i64, args: &Vec<JSValue>): JSValue {
     if bufH < 0 {
         let nb = newObject(st)
         st.objects[nb].isArrayBuffer = true
+        let _e = ensureExtra(st, nb)
         var b: Vec<u8> = Vec.new()
         var i: i64 = 0
         while i < len * w {
             b.push(0 as u8)
             i = i + 1
         }
-        st.objects[nb].bytes = b
+        st.objExtras[st.objects[nb].extra].bytes = b
         bufH = nb
     }
     let view = newObject(st)
-    st.objects[view].taBuf = bufH
-    st.objects[view].taKind = kind
-    st.objects[view].taOffset = viewOffset
-    st.objects[view].taLen = len
+    let _ev = ensureExtra(st, view)
+    st.objExtras[st.objects[view].extra].taBuf = bufH
+    st.objExtras[st.objects[view].extra].taKind = kind
+    st.objExtras[st.objects[view].extra].taOffset = viewOffset
+    st.objExtras[st.objects[view].extra].taLen = len
     var k: i64 = 0
     while k < seed.len() {
         taSetElem(st, view, k, seed[k])
@@ -554,33 +556,33 @@ fn makeTypedArray(st: &mut Interp, kind: i64, args: &Vec<JSValue>): JSValue {
 }
 
 fn taElem(st: &Interp, view: i64, i: i64): f64 {
-    let buf = st.objects[view].taBuf
-    if buf < 0 || i < 0 || i >= st.objects[view].taLen {
+    let buf = st.objExtras[st.objects[view].extra].taBuf
+    if buf < 0 || i < 0 || i >= st.objExtras[st.objects[view].extra].taLen {
         return 0.0
     }
-    let w = taWidth(st.objects[view].taKind)
-    let at = st.objects[view].taOffset + i * w
+    let w = taWidth(st.objExtras[st.objects[view].extra].taKind)
+    let at = st.objExtras[st.objects[view].extra].taOffset + i * w
     // the backing buffer may have been resized/detached under this view (a sort
     // comparator or a length getter can do it) — out-of-range reads yield 0
-    if at < 0 || at + w > st.objects[buf].bytes.len() {
+    if at < 0 || at + w > st.objExtras[st.objects[buf].extra].bytes.len() {
         return 0.0
     }
-    return taLoad(st.objects[buf].bytes, st.objects[view].taKind, at)
+    return taLoad(st.objExtras[st.objects[buf].extra].bytes, st.objExtras[st.objects[view].extra].taKind, at)
 }
 
 fn taSetElem(st: &mut Interp, view: i64, i: i64, v: f64) {
-    let buf = st.objects[view].taBuf
-    if buf < 0 || i < 0 || i >= st.objects[view].taLen {
+    let buf = st.objExtras[st.objects[view].extra].taBuf
+    if buf < 0 || i < 0 || i >= st.objExtras[st.objects[view].extra].taLen {
         return
     }
-    let kind = st.objects[view].taKind
+    let kind = st.objExtras[st.objects[view].extra].taKind
     let w = taWidth(kind)
-    let at = st.objects[view].taOffset + i * w
+    let at = st.objExtras[st.objects[view].extra].taOffset + i * w
     // a resized/detached buffer drops the write rather than overflowing its bytes
-    if at < 0 || at + w > st.objects[buf].bytes.len() {
+    if at < 0 || at + w > st.objExtras[st.objects[buf].extra].bytes.len() {
         return
     }
-    taStore(st.objects[buf].bytes, kind, at, v)
+    taStore(st.objExtras[st.objects[buf].extra].bytes, kind, at, v)
 }
 
 // Invoke a builtin method by name against an already-evaluated receiver+args.
@@ -617,7 +619,7 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
                     }
                     // only a buffer created with {maxByteLength} may resize, and
                     // only within [0, cap]
-                    if st.objects[o].abMaxLen < 0 || to < 0 || to > st.objects[o].abMaxLen {
+                    if st.objExtras[st.objects[o].extra].abMaxLen < 0 || to < 0 || to > st.objExtras[st.objects[o].extra].abMaxLen {
                         st.throwing = true
                         st.thrownValue = makeError(st, "RangeError", "ArrayBuffer.prototype.resize: invalid length")
                         return JSValue.Undefined
@@ -625,33 +627,34 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
                     var b: Vec<u8> = Vec.new()
                     var ci: i64 = 0
                     while ci < to {
-                        if ci < st.objects[o].bytes.len() {
-                            b.push(st.objects[o].bytes[ci])
+                        if ci < st.objExtras[st.objects[o].extra].bytes.len() {
+                            b.push(st.objExtras[st.objects[o].extra].bytes[ci])
                         } else {
                             b.push(0 as u8)
                         }
                         ci = ci + 1
                     }
-                    st.objects[o].bytes = b
+                    st.objExtras[st.objects[o].extra].bytes = b
                     return JSValue.Undefined
                 }
                 if name == "transfer" {
                     let nb = newObject(st)
                     st.objects[nb].isArrayBuffer = true
+                    let _e = ensureExtra(st, nb)
                     var tb: Vec<u8> = Vec.new()
                     var ti: i64 = 0
-                    while ti < st.objects[o].bytes.len() {
-                        tb.push(st.objects[o].bytes[ti])
+                    while ti < st.objExtras[st.objects[o].extra].bytes.len() {
+                        tb.push(st.objExtras[st.objects[o].extra].bytes[ti])
                         ti = ti + 1
                     }
-                    st.objects[nb].bytes = tb
-                    st.objects[nb].abMaxLen = st.objects[o].abMaxLen
-                    st.objects[o].bytes = Vec.new()
+                    st.objExtras[st.objects[nb].extra].bytes = tb
+                    st.objExtras[st.objects[nb].extra].abMaxLen = st.objExtras[st.objects[o].extra].abMaxLen
+                    st.objExtras[st.objects[o].extra].bytes = Vec.new()
                     st.objects[o].abDetached = true
                     return JSValue.Obj(nb)
                 }
                 if name == "slice" {
-                    let n = st.objects[o].bytes.len()
+                    let n = st.objExtras[st.objects[o].extra].bytes.len()
                     var a: i64 = 0
                     if args.len() > 0 {
                         a = toNum(args[0]) as i64
@@ -674,13 +677,14 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
                     }
                     let nb = newObject(st)
                     st.objects[nb].isArrayBuffer = true
+                    let _e = ensureExtra(st, nb)
                     var b: Vec<u8> = Vec.new()
                     var i = a
                     while i < e {
-                        b.push(st.objects[o].bytes[i])
+                        b.push(st.objExtras[st.objects[o].extra].bytes[i])
                         i = i + 1
                     }
-                    st.objects[nb].bytes = b
+                    st.objExtras[st.objects[nb].extra].bytes = b
                     return JSValue.Obj(nb)
                 }
             }
@@ -711,7 +715,7 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
                     return JSValue.Obj(o)
                 }
             }
-            if st.objects[o].taBuf >= 0 && isTypedArrayMethodName(name) {
+            if st.objExtras[st.objects[o].extra].taBuf >= 0 && isTypedArrayMethodName(name) {
                 return typedArrayMethod(prog, o, name, args, st)
             }
 
@@ -997,34 +1001,34 @@ fn getMember(st: &Interp, o: i64, key: &string): JSValue {
     // here and skip the typed-array element path below.
     if st.objects[o].isDataView {
         if key == "byteLength" {
-            return JSValue.Number(st.objects[o].taLen as f64)
+            return JSValue.Number(st.objExtras[st.objects[o].extra].taLen as f64)
         }
         if key == "byteOffset" {
-            return JSValue.Number(st.objects[o].taOffset as f64)
+            return JSValue.Number(st.objExtras[st.objects[o].extra].taOffset as f64)
         }
         if key == "buffer" {
-            return JSValue.Obj(st.objects[o].taBuf)
+            return JSValue.Obj(st.objExtras[st.objects[o].extra].taBuf)
         }
     }
-    if st.objects[o].taBuf >= 0 && !st.objects[o].isDataView {
+    if st.objExtras[st.objects[o].extra].taBuf >= 0 && !st.objects[o].isDataView {
         if key == "length" {
-            return JSValue.Number(st.objects[o].taLen as f64)
+            return JSValue.Number(st.objExtras[st.objects[o].extra].taLen as f64)
         }
         if key == "byteLength" {
-            return JSValue.Number((st.objects[o].taLen * taWidth(st.objects[o].taKind)) as f64)
+            return JSValue.Number((st.objExtras[st.objects[o].extra].taLen * taWidth(st.objExtras[st.objects[o].extra].taKind)) as f64)
         }
         if key == "byteOffset" {
-            return JSValue.Number(st.objects[o].taOffset as f64)
+            return JSValue.Number(st.objExtras[st.objects[o].extra].taOffset as f64)
         }
         if key == "BYTES_PER_ELEMENT" {
-            return JSValue.Number(taWidth(st.objects[o].taKind) as f64)
+            return JSValue.Number(taWidth(st.objExtras[st.objects[o].extra].taKind) as f64)
         }
         if key == "buffer" {
-            return JSValue.Obj(st.objects[o].taBuf)
+            return JSValue.Obj(st.objExtras[st.objects[o].extra].taBuf)
         }
         let ti = asArrayIndex(key)
         if ti >= 0 {
-            if ti >= st.objects[o].taLen {
+            if ti >= st.objExtras[st.objects[o].extra].taLen {
                 return JSValue.Undefined
             }
             return JSValue.Number(taElem(st, o, ti))
@@ -1032,16 +1036,16 @@ fn getMember(st: &Interp, o: i64, key: &string): JSValue {
     }
     if st.objects[o].isArrayBuffer {
         if key == "byteLength" {
-            return JSValue.Number(st.objects[o].bytes.len() as f64)
+            return JSValue.Number(st.objExtras[st.objects[o].extra].bytes.len() as f64)
         }
         if key == "maxByteLength" {
-            if st.objects[o].abMaxLen >= 0 {
-                return JSValue.Number(st.objects[o].abMaxLen as f64)
+            if st.objExtras[st.objects[o].extra].abMaxLen >= 0 {
+                return JSValue.Number(st.objExtras[st.objects[o].extra].abMaxLen as f64)
             }
-            return JSValue.Number(st.objects[o].bytes.len() as f64)
+            return JSValue.Number(st.objExtras[st.objects[o].extra].bytes.len() as f64)
         }
         if key == "resizable" {
-            return JSValue.Bool(st.objects[o].abMaxLen >= 0)
+            return JSValue.Bool(st.objExtras[st.objects[o].extra].abMaxLen >= 0)
         }
         if key == "detached" {
             return JSValue.Bool(st.objects[o].abDetached)
@@ -1081,7 +1085,7 @@ fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
     if own >= 0 && !st.objects[o].props[own].isAccessor && !st.objects[o].props[own].writable {
         return
     }
-    if st.objects[o].taBuf >= 0 && !st.objects[o].isDataView {
+    if st.objExtras[st.objects[o].extra].taBuf >= 0 && !st.objects[o].isDataView {
         let ti = asArrayIndex(key)
         if ti >= 0 {
             taSetElem(st, o, ti, toNum(value))
@@ -2620,6 +2624,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         let bo = newObject(st)
         st.objects[bo].isArrayBuffer = true
+        let _e = ensureExtra(st, bo)
         // new ArrayBuffer(n, { maxByteLength }) — resizable up to the cap
         if argVals.len() > 1 {
             let oh = objHandle(argVals[1])
@@ -2633,7 +2638,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                         if c < n {
                             c = n
                         }
-                        st.objects[bo].abMaxLen = c
+                        st.objExtras[st.objects[bo].extra].abMaxLen = c
                     }
                 }
             }
@@ -2644,7 +2649,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             b.push(0 as u8)
             i = i + 1
         }
-        st.objects[bo].bytes = b
+        st.objExtras[st.objects[bo].extra].bytes = b
         return JSValue.Obj(bo)
     }
     if id >= NATIVE_TA_BASE && id <= NATIVE_TA_BASE + TA_U8C {
@@ -2664,7 +2669,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             st.thrownValue = makeError(st, "TypeError", "First argument to DataView constructor must be an ArrayBuffer")
             return JSValue.Undefined
         }
-        let bufLen = st.objects[bufH].bytes.len()
+        let bufLen = st.objExtras[st.objects[bufH].extra].bytes.len()
         var off: i64 = 0
         if argVals.len() > 1 {
             off = toNum(argVals[1]) as i64
@@ -2680,9 +2685,10 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         let dv = newObject(st)
         st.objects[dv].isDataView = true
-        st.objects[dv].taBuf = bufH
-        st.objects[dv].taOffset = off
-        st.objects[dv].taLen = byteLen
+        let _e = ensureExtra(st, dv)
+        st.objExtras[st.objects[dv].extra].taBuf = bufH
+        st.objExtras[st.objects[dv].extra].taOffset = off
+        st.objExtras[st.objects[dv].extra].taLen = byteLen
         return JSValue.Obj(dv)
     }
     if id == NATIVE_OBJECT_PREVENTEXT || id == NATIVE_OBJECT_SEAL {
@@ -3061,7 +3067,7 @@ fn builtinConstructorOf(st: &Interp, o: i64): JSValue {
     // a genuinely plain object → Object; special builtins without a dedicated
     // constructor here (Map/Set/Date/typed-array/proxy/promise/function…) are
     // left Undefined rather than mis-reported as Object
-    if !st.objects[o].isMap && !st.objects[o].isSet && !st.objects[o].isDate && !st.objects[o].isProxy && !st.objects[o].isArrayBuffer && st.objects[o].taBuf < 0 && !st.objects[o].isGenerator && st.objects[o].promiseState < 0 && !st.objects[o].isFunctionLike && !st.objects[o].isBound {
+    if !st.objects[o].isMap && !st.objects[o].isSet && !st.objects[o].isDate && !st.objects[o].isProxy && !st.objects[o].isArrayBuffer && st.objExtras[st.objects[o].extra].taBuf < 0 && !st.objects[o].isGenerator && st.objects[o].promiseState < 0 && !st.objects[o].isFunctionLike && !st.objects[o].isBound {
         return JSValue.Native(NATIVE_OBJECT_CTOR)
     }
     return JSValue.Undefined
@@ -5143,9 +5149,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
 fn spreadInto(prog: &Prog, out: &mut Vec<JSValue>, v: &JSValue, st: &mut Interp) {
     let h = objHandle(v)
     // typed arrays are iterable by element
-    if h >= 0 && st.objects[h].taBuf >= 0 && !st.objects[h].isDataView {
+    if h >= 0 && st.objExtras[st.objects[h].extra].taBuf >= 0 && !st.objects[h].isDataView {
         var i: i64 = 0
-        while i < st.objects[h].taLen {
+        while i < st.objExtras[st.objects[h].extra].taLen {
             out.push(JSValue.Number(taElem(st, h, i)))
             i = i + 1
         }
@@ -6920,8 +6926,8 @@ fn isTypedArrayMethodName(n: &string): bool {
 // over the SAME bytes while slice copies — getting that backwards is the classic
 // typed-array bug.
 fn typedArrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
-    let n = st.objects[o].taLen
-    let kind = st.objects[o].taKind
+    let n = st.objExtras[st.objects[o].extra].taLen
+    let kind = st.objExtras[st.objects[o].extra].taKind
     let w = taWidth(kind)
 
     if name == "at" {
@@ -7024,9 +7030,9 @@ fn typedArrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st:
                 taSetElem(st, o, off + i, toNum(arrGet(st, sh, i)))
                 i = i + 1
             }
-        } else if st.objects[sh].taBuf >= 0 {
+        } else if st.objExtras[st.objects[sh].extra].taBuf >= 0 {
             var i: i64 = 0
-            while i < st.objects[sh].taLen {
+            while i < st.objExtras[st.objects[sh].extra].taLen {
                 taSetElem(st, o, off + i, taElem(st, sh, i))
                 i = i + 1
             }
@@ -7062,15 +7068,17 @@ fn typedArrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st:
             // a VIEW over the same buffer: writes through it are visible in the
             // original, which is the whole point of subarray
             let view = newObject(st)
-            st.objects[view].taBuf = st.objects[o].taBuf
-            st.objects[view].taKind = kind
-            st.objects[view].taOffset = st.objects[o].taOffset + start * w
-            st.objects[view].taLen = count
+            let _ev = ensureExtra(st, view)
+            st.objExtras[st.objects[view].extra].taBuf = st.objExtras[st.objects[o].extra].taBuf
+            st.objExtras[st.objects[view].extra].taKind = kind
+            st.objExtras[st.objects[view].extra].taOffset = st.objExtras[st.objects[o].extra].taOffset + start * w
+            st.objExtras[st.objects[view].extra].taLen = count
             return JSValue.Obj(view)
         }
         // slice COPIES into a fresh buffer
         let nb = newObject(st)
         st.objects[nb].isArrayBuffer = true
+        let _eb = ensureExtra(st, nb)
         pushTemp(st, JSValue.Obj(nb))
         var bytes: Vec<u8> = Vec.new()
         var bi: i64 = 0
@@ -7078,12 +7086,13 @@ fn typedArrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st:
             bytes.push(0 as u8)
             bi = bi + 1
         }
-        st.objects[nb].bytes = bytes
+        st.objExtras[st.objects[nb].extra].bytes = bytes
         let view = newObject(st)
-        st.objects[view].taBuf = nb
-        st.objects[view].taKind = kind
-        st.objects[view].taOffset = 0
-        st.objects[view].taLen = count
+        let _ev = ensureExtra(st, view)
+        st.objExtras[st.objects[view].extra].taBuf = nb
+        st.objExtras[st.objects[view].extra].taKind = kind
+        st.objExtras[st.objects[view].extra].taOffset = 0
+        st.objExtras[st.objects[view].extra].taLen = count
         var i: i64 = 0
         while i < count {
             taSetElem(st, view, i, taElem(st, o, start + i))
@@ -7315,13 +7324,13 @@ fn dataViewMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): 
     if args.len() > 0 {
         byteOffset = toNum(args[0]) as i64
     }
-    if byteOffset < 0 || byteOffset + width > st.objects[o].taLen {
+    if byteOffset < 0 || byteOffset + width > st.objExtras[st.objects[o].extra].taLen {
         st.throwing = true
         st.thrownValue = makeError(st, "RangeError", "Offset is outside the bounds of the DataView")
         return JSValue.Undefined
     }
-    let buf = st.objects[o].taBuf
-    let absPos = st.objects[o].taOffset + byteOffset
+    let buf = st.objExtras[st.objects[o].extra].taBuf
+    let absPos = st.objExtras[st.objects[o].extra].taOffset + byteOffset
     if isSet {
         var value: f64 = 0.0
         if args.len() > 1 {
@@ -7347,7 +7356,7 @@ fn dataViewMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): 
             if !littleEndian {
                 shift = 8 * (width - 1 - i)
             }
-            st.objects[buf].bytes[absPos + i] = ((bits >> shift) & 255) as u8
+            st.objExtras[st.objects[buf].extra].bytes[absPos + i] = ((bits >> shift) & 255) as u8
             i = i + 1
         }
         return JSValue.Undefined
@@ -7363,7 +7372,7 @@ fn dataViewMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): 
         if !littleEndian {
             shift = 8 * (width - 1 - i)
         }
-        bits = bits | ((st.objects[buf].bytes[absPos + i] as i64) << shift)
+        bits = bits | ((st.objExtras[st.objects[buf].extra].bytes[absPos + i] as i64) << shift)
         i = i + 1
     }
     if isFloat {
@@ -9879,11 +9888,11 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                             vals.push(arrGet(st, o, e))
                             e = e + 1
                         }
-                    } else if st.objects[o].taBuf >= 0 && !st.objects[o].isDataView {
+                    } else if st.objExtras[st.objects[o].extra].taBuf >= 0 && !st.objects[o].isDataView {
                         // typed array: iterate by element
                         iterable = true
                         var e: i64 = 0
-                        while e < st.objects[o].taLen {
+                        while e < st.objExtras[st.objects[o].extra].taLen {
                             vals.push(JSValue.Number(taElem(st, o, e)))
                             e = e + 1
                         }

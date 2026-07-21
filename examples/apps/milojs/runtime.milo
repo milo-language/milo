@@ -442,6 +442,15 @@ struct JSObjExtra {
     // -1/0/1/2 discriminator is read on every await/then without needing payload)
     promiseValue: JSValue,
     reactions: Vec<Reaction>,
+    // ArrayBuffer bytes + resizable cap; typed-array/DataView view geometry.
+    // isArrayBuffer/abDetached/isDataView stay inline as discriminators; taBuf is
+    // -1 when not a view (its own discriminator, so it lives here too).
+    bytes: Vec<u8>,
+    abMaxLen: i64,
+    taBuf: i64,
+    taKind: i64,
+    taOffset: i64,
+    taLen: i64,
 }
 
 fn defaultExtra(): JSObjExtra {
@@ -456,6 +465,12 @@ fn defaultExtra(): JSObjExtra {
         mapVals: Vec.new(),
         promiseValue: JSValue.Undefined,
         reactions: Vec.new(),
+        bytes: Vec.new(),
+        abMaxLen: -1,
+        taBuf: -1,
+        taKind: 0,
+        taOffset: 0,
+        taLen: 0,
     }
 }
 
@@ -488,18 +503,8 @@ struct JSObj {
     isGlobal: bool,
     // ArrayBuffer: the raw bytes. Typed arrays are views onto one of these.
     isArrayBuffer: bool,
-    bytes: Vec<u8>,
-    // resizable ArrayBuffer: the cap passed as {maxByteLength}, or -1 when the
-    // buffer is fixed-length. resize() may only move length within [0, cap].
-    abMaxLen: i64,
     // detached by transfer(): every view over it reads as zero-length
     abDetached: bool,
-    // typed-array view: the backing buffer's object handle (-1 when not a view),
-    // the element kind (see TA_* below), and the window into the buffer
-    taBuf: i64,
-    taKind: i64,
-    taOffset: i64,
-    taLen: i64,
     // a DataView also uses taBuf/taOffset/taLen (taLen is BYTES here, not
     // elements, and taKind is unused); this flag distinguishes it from a typed
     // array, which shares those fields. A DataView is not index-accessible and
@@ -766,7 +771,7 @@ var gInterp: Interp = Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), abMaxLen: -1, abDetached: false, taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, isDataView: false, regexId: -1, promiseState: -1, isBound: false, isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, isProxy: false, napiFn: -1, napiWrap: 0, isGenerator: false, extra: 0, mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, abDetached: false, isDataView: false, regexId: -1, promiseState: -1, isBound: false, isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, isProxy: false, napiFn: -1, napiWrap: 0, isGenerator: false, extra: 0, mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena
@@ -1482,8 +1487,8 @@ fn markObject(st: &mut Interp, i: i64) {
         pushMarkTargets(st.objExtras[ex].proxyHandler, objs, scopes)
     }
     // a typed-array view keeps its backing ArrayBuffer alive
-    if st.objects[i].taBuf >= 0 {
-        objs.push(st.objects[i].taBuf)
+    if st.objExtras[st.objects[i].extra].taBuf >= 0 {
+        objs.push(st.objExtras[st.objects[i].extra].taBuf)
     }
     // an object keeps its prototype alive
     if proto >= 0 {
