@@ -1,0 +1,20 @@
+const buf = new ArrayBuffer(16);
+const dv = new DataView(buf);
+dv.setFloat64(0, 3.14159);
+console.log(dv.getFloat64(0));
+dv.setFloat64(0, 3.14159, true);
+console.log(dv.getFloat64(0, true));
+dv.setInt32(8, -123456);
+console.log(dv.getInt32(8), dv.getUint32(8));
+dv.setInt16(12, -300, true);
+console.log(dv.getInt16(12, true), dv.getUint16(12, true));
+dv.setInt8(14, -1);
+console.log(dv.getInt8(14), dv.getUint8(14));
+dv.setFloat32(0, 2.5, true);
+console.log(dv.getFloat32(0, true));
+const u8 = new Uint8Array(buf);
+dv.setUint32(0, 0xDEADBEEF);
+console.log(u8[0], u8[1], u8[2], u8[3]);
+const dv2 = new DataView(buf, 4, 4);
+console.log(dv2.byteLength, dv2.byteOffset);
+try { dv.getInt32(14); } catch (e) { console.log(e.name); }

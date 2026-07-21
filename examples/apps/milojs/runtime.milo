@@ -459,6 +459,11 @@ struct JSObj {
     taKind: i64,
     taOffset: i64,
     taLen: i64,
+    // a DataView also uses taBuf/taOffset/taLen (taLen is BYTES here, not
+    // elements, and taKind is unused); this flag distinguishes it from a typed
+    // array, which shares those fields. A DataView is not index-accessible and
+    // its methods pick the element type per call.
+    isDataView: bool,
     // a compiled-regex handle (index into Interp.regexes) if this is a RegExp, else -1
     regexId: i64,
     // promise settlement: -1 not a promise, 0 pending, 1 fulfilled, 2 rejected.
@@ -682,7 +687,7 @@ var gInterp: Interp = Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), abMaxLen: -1, abDetached: false, taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), isProxy: false, proxyTarget: JSValue.Undefined, proxyHandler: JSValue.Undefined, napiFn: -1, napiWrap: 0, mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, bytes: Vec.new(), abMaxLen: -1, abDetached: false, taBuf: -1, taKind: 0, taOffset: 0, taLen: 0, isDataView: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), isProxy: false, proxyTarget: JSValue.Undefined, proxyHandler: JSValue.Undefined, napiFn: -1, napiWrap: 0, mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena

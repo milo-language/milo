@@ -231,6 +231,9 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
         if st.objects[o].isArrayBuffer && (key == "slice" || key == "resize" || key == "transfer") {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
+        if st.objects[o].isDataView && isDataViewMethodName(key) {
+            return makeBoundMethod(st, JSValue.Obj(o), key.clone())
+        }
         if st.objects[o].taBuf >= 0 && isTypedArrayMethodName(key) {
             return makeBoundMethod(st, JSValue.Obj(o), key.clone())
         }
@@ -584,6 +587,9 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             if st.objects[o].regexId >= 0 && isRegexMethodName(name) {
                 return regexMethod(st, o, name, args)
             }
+            if st.objects[o].isDataView && isDataViewMethodName(name) {
+                return dataViewMethod(o, name, args, st)
+            }
             if st.objects[o].taBuf >= 0 && isTypedArrayMethodName(name) {
                 return typedArrayMethod(prog, o, name, args, st)
             }
@@ -816,7 +822,21 @@ fn setMemberDyn(prog: &Prog, o: i64, key: string, v: JSValue, st: &mut Interp) {
 }
 
 fn getMember(st: &Interp, o: i64, key: &string): JSValue {
-    if st.objects[o].taBuf >= 0 {
+    // A DataView shares taBuf/taOffset/taLen with typed arrays but is not
+    // index-accessible and its byteLength is already in bytes. Handle its props
+    // here and skip the typed-array element path below.
+    if st.objects[o].isDataView {
+        if key == "byteLength" {
+            return JSValue.Number(st.objects[o].taLen as f64)
+        }
+        if key == "byteOffset" {
+            return JSValue.Number(st.objects[o].taOffset as f64)
+        }
+        if key == "buffer" {
+            return JSValue.Obj(st.objects[o].taBuf)
+        }
+    }
+    if st.objects[o].taBuf >= 0 && !st.objects[o].isDataView {
         if key == "length" {
             return JSValue.Number(st.objects[o].taLen as f64)
         }
@@ -891,7 +911,7 @@ fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
     if own >= 0 && !st.objects[o].props[own].isAccessor && !st.objects[o].props[own].writable {
         return
     }
-    if st.objects[o].taBuf >= 0 {
+    if st.objects[o].taBuf >= 0 && !st.objects[o].isDataView {
         let ti = asArrayIndex(key)
         if ti >= 0 {
             taSetElem(st, o, ti, toNum(value))
@@ -1104,6 +1124,7 @@ let NATIVE_QUEUE_MICROTASK: i64 = 66
 // shares NATIVE_QUEUE_MICROTASK) so it can call the callback with zero
 // arguments per spec while nextTick's behaviour is left untouched.
 let NATIVE_QUEUE_MICROTASK_JS: i64 = 112
+let NATIVE_DATAVIEW: i64 = 113
 let NATIVE_ARRAY_CTOR: i64 = 67
 let NATIVE_TCP_LISTEN: i64 = 68
 let NATIVE_TCP_ACCEPT: i64 = 69
@@ -2221,6 +2242,38 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         // reinterpret (runtime.milo), so every kind is constructible.
         return makeTypedArray(st, kind, argVals)
     }
+    if id == NATIVE_DATAVIEW {
+        // new DataView(buffer, byteOffset = 0, byteLength = buffer.byteLength - offset)
+        var bufH: i64 = -1
+        if argVals.len() > 0 {
+            bufH = objHandle(argVals[0])
+        }
+        if bufH < 0 || !st.objects[bufH].isArrayBuffer {
+            st.throwing = true
+            st.thrownValue = makeError(st, "TypeError", "First argument to DataView constructor must be an ArrayBuffer")
+            return JSValue.Undefined
+        }
+        let bufLen = st.objects[bufH].bytes.len()
+        var off: i64 = 0
+        if argVals.len() > 1 {
+            off = toNum(argVals[1]) as i64
+        }
+        var byteLen = bufLen - off
+        if argVals.len() > 2 {
+            byteLen = toNum(argVals[2]) as i64
+        }
+        if off < 0 || byteLen < 0 || off + byteLen > bufLen {
+            st.throwing = true
+            st.thrownValue = makeError(st, "RangeError", "Invalid DataView length")
+            return JSValue.Undefined
+        }
+        let dv = newObject(st)
+        st.objects[dv].isDataView = true
+        st.objects[dv].taBuf = bufH
+        st.objects[dv].taOffset = off
+        st.objects[dv].taLen = byteLen
+        return JSValue.Obj(dv)
+    }
     if id == NATIVE_OBJECT_PREVENTEXT || id == NATIVE_OBJECT_SEAL {
         if argVals.len() > 0 {
             let h = objHandle(argVals[0])
@@ -3252,6 +3305,7 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "encodeURI", JSValue.Native(NATIVE_ENCODE_URI))
     scopeDefine(st, 0, "decodeURI", JSValue.Native(NATIVE_DECODE_URI))
     scopeDefine(st, 0, "ArrayBuffer", JSValue.Native(NATIVE_ARRAYBUFFER))
+    scopeDefine(st, 0, "DataView", JSValue.Native(NATIVE_DATAVIEW))
     var tk: i64 = 0
     while tk <= TA_U8C {
         scopeDefine(st, 0, taName(tk), JSValue.Native(NATIVE_TA_BASE + tk))
@@ -5944,6 +5998,103 @@ fn typedArrayMethod(_prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st
         return JSValue.Obj(view)
     }
     return JSValue.Undefined
+}
+
+fn isDataViewMethodName(n: &string): bool {
+    return n == "getInt8" || n == "getUint8" || n == "getInt16" || n == "getUint16" || n == "getInt32" || n == "getUint32" || n == "getFloat32" || n == "getFloat64" || n == "setInt8" || n == "setUint8" || n == "setInt16" || n == "setUint16" || n == "setInt32" || n == "setUint32" || n == "setFloat32" || n == "setFloat64"
+}
+
+// DataView get/set. Default endianness is BIG-endian (the littleEndian arg
+// defaults false), unlike typed arrays which store host/little-endian. taLen is
+// the view's byte length here; taBuf/taOffset locate it in the backing buffer.
+fn dataViewMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+    var width: i64 = 1
+    var isFloat = false
+    var signed = false
+    if name == "getInt16" || name == "setInt16" || name == "getUint16" || name == "setUint16" {
+        width = 2
+    } else if name == "getInt32" || name == "setInt32" || name == "getUint32" || name == "setUint32" {
+        width = 4
+    } else if name == "getFloat32" || name == "setFloat32" {
+        width = 4
+        isFloat = true
+    } else if name == "getFloat64" || name == "setFloat64" {
+        width = 8
+        isFloat = true
+    }
+    if name == "getInt8" || name == "setInt8" || name == "getInt16" || name == "setInt16" || name == "getInt32" || name == "setInt32" {
+        signed = true
+    }
+    // "set..." starts with 's' (115), "get..." with 'g'
+    let isSet = name.len() > 0 && name[0] == 115
+    var byteOffset: i64 = 0
+    if args.len() > 0 {
+        byteOffset = toNum(args[0]) as i64
+    }
+    if byteOffset < 0 || byteOffset + width > st.objects[o].taLen {
+        st.throwing = true
+        st.thrownValue = makeError(st, "RangeError", "Offset is outside the bounds of the DataView")
+        return JSValue.Undefined
+    }
+    let buf = st.objects[o].taBuf
+    let absPos = st.objects[o].taOffset + byteOffset
+    if isSet {
+        var value: f64 = 0.0
+        if args.len() > 1 {
+            value = toNum(args[1])
+        }
+        var littleEndian = false
+        if args.len() > 2 {
+            littleEndian = truthy(args[2])
+        }
+        var bits: i64 = 0
+        if isFloat {
+            if width == 8 {
+                bits = f64ToBits(value)
+            } else {
+                bits = f32ToBits(value)
+            }
+        } else {
+            bits = value as i64
+        }
+        var i: i64 = 0
+        while i < width {
+            var shift = 8 * i
+            if !littleEndian {
+                shift = 8 * (width - 1 - i)
+            }
+            st.objects[buf].bytes[absPos + i] = ((bits >> shift) & 255) as u8
+            i = i + 1
+        }
+        return JSValue.Undefined
+    }
+    var littleEndian = false
+    if args.len() > 1 {
+        littleEndian = truthy(args[1])
+    }
+    var bits: i64 = 0
+    var i: i64 = 0
+    while i < width {
+        var shift = 8 * i
+        if !littleEndian {
+            shift = 8 * (width - 1 - i)
+        }
+        bits = bits | ((st.objects[buf].bytes[absPos + i] as i64) << shift)
+        i = i + 1
+    }
+    if isFloat {
+        if width == 8 {
+            return JSValue.Number(bitsToF64(bits))
+        }
+        return JSValue.Number(bitsToF32(bits))
+    }
+    if signed {
+        let signbit = (1 as i64) << (8 * width - 1)
+        if (bits & signbit) != 0 {
+            bits = bits - ((1 as i64) << (8 * width))
+        }
+    }
+    return JSValue.Number(bits as f64)
 }
 
 fn dateProtoMethodNames(): Vec<string> {
