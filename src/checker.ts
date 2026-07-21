@@ -3201,6 +3201,58 @@ export class TypeChecker {
         }
       }
     }
+    // Two `&mut` arguments where one place is an ancestor of the other (a container
+    // and something derived from it, e.g. `v` and `v[0]`) are UB: mutating through
+    // the container arg (a `push` that reallocs) frees the storage the descendant
+    // arg points into — a use-after-free the muts×shared check above misses because
+    // both sides are mutable. Index-aware steps distinguish an ancestor/descendant
+    // pair (flagged) from two siblings like `v[i]`/`v[j]` (a legitimate two-element
+    // borrow, not flagged). Identical non-indexed places (`v` twice) are two `&mut`
+    // to the same object and are flagged as well.
+    const mutSteps = args.map(a => (this.autoBorrowed.get(a)?.mutable ? this.accessSteps(a) : null));
+    for (let i = 0; i < args.length; i++) {
+      for (let j = i + 1; j < args.length; j++) {
+        const a = mutSteps[i], b = mutSteps[j];
+        if (!a || !b || a.root !== b.root) continue;
+        if (this.aliasesByContainment(a.steps, b.steps)) {
+          const sp = args[i].span ?? args[j].span ?? undefined;
+          this.error(`'${a.root}' is borrowed mutably twice in the same call`, sp,
+            `one argument is a container and the other borrows into it (or they are the same place) — a mutation through one (e.g. a 'push' that reallocates) could invalidate the other; split the call into two statements or clone one argument`);
+        }
+      }
+    }
+  }
+
+  // Index-aware access path: each step is a field name (".f") or an opaque index
+  // ("[]"). Unlike accessPath (which collapses to fields=null at the first index),
+  // this preserves depth so an ancestor/descendant relationship survives an index.
+  private accessSteps(e: Expr): { root: string; steps: string[] } | null {
+    if (e.kind === "Ident") return { root: e.name, steps: [] };
+    if (e.kind === "FieldAccess") {
+      const base = this.accessSteps(e.object);
+      return base ? { root: base.root, steps: [...base.steps, `.${e.field}`] } : null;
+    }
+    if (e.kind === "IndexAccess") {
+      const base = this.accessSteps(e.object);
+      return base ? { root: base.root, steps: [...base.steps, "[]"] } : null;
+    }
+    if (e.kind === "UnaryOp" && e.op === "*") {
+      const base = this.accessSteps(e.operand);
+      return base ? { root: base.root, steps: [...base.steps, "*"] } : null;
+    }
+    return null;
+  }
+
+  // True when the two step chains (same root) are in a containment relation that
+  // makes aliasing them mutably unsafe: one is a proper prefix of the other (an
+  // ancestor container and a descendant), or they are identical with no index step
+  // (provably the same concrete place). Two chains that diverge, or are equal but
+  // pass through an index (siblings that may be distinct elements), are not flagged.
+  private aliasesByContainment(a: string[], b: string[]): boolean {
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false; // diverge → disjoint
+    if (a.length !== b.length) return true;                      // proper prefix → ancestor/descendant
+    return !a.includes("[]");                                    // identical: same place unless index-qualified
   }
 
   // Access path for exclusivity: root variable + chain of field names. `fields` is

@@ -29,7 +29,7 @@ gracefully.
   reject of a negative constant where a length is expected. Consider `u64` length params at
   the constructor boundary (Rust/C++ use unsigned size + a capacity-overflow guard).
 
-- [ ] **C1 — mutable-aliasing use-after-free.** No aliasing check between `&mut` params;
+- [x] **C1 — mutable-aliasing use-after-free.** No aliasing check between `&mut` params;
   `bad(v[0], v)` passes an element ref and the container, inner `push` reallocs → dangling.
   Fix: reject a call where two `&mut` args provably overlap (`v[i]` and `v`).
 
