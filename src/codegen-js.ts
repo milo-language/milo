@@ -12,6 +12,11 @@ export class CodegenJS {
   // which JS by-value passing can't do. Ref params + ref-taken locals become boxes.
   private boxed: Set<string> = new Set();
 
+  // When true, emit requires/ensures as runtime checks (like a native `--debug`
+  // build). Off by default so `milo emit-js` output — e.g. the browser emulators —
+  // carries no contract overhead; the playground opts in.
+  constructor(private emitContracts = false) {}
+
   // JS-immutable primitive → needs a box to be shared by reference. Objects (struct/
   // vec/map/enum) are already reference types, so a `&mut` to them works as-is.
   private needsBox(t: any): boolean {
@@ -179,10 +184,22 @@ export class CodegenJS {
     this.collectRefTaken(fn.body, boxed);
     const prevBoxed = this.boxed;
     this.boxed = boxed;
+    const prevOutput = this.output;
+
+    // Contracts. The browser has no solver, so — exactly like a native `--debug`
+    // build — we enforce requires/ensures at runtime: requires at entry, ensures on
+    // the return value. `ensures` refers to `result`, so we funnel the whole body
+    // through an IIFE and bind its value to `result` before checking. Only functions
+    // that actually carry contracts get wrapped; everything else is untouched.
+    const contracts = this.emitContracts ? (fn.contracts ?? []) : [];
+    const scratch: string[] = [];
+    this.output = scratch;
+    const requireChecks = contracts.filter(c => c.kind === "requires").map(c => this.genExpr(c.expr));
+    const ensureChecks = contracts.filter(c => c.kind === "ensures").map(c => this.genExpr(c.expr));
+
     // Emit the body into a buffer so we know whether it used `?`; if so, wrap it in
     // try/catch that turns the propagate sentinel into an early Err/None return.
     const lines: string[] = [];
-    const prevOutput = this.output;
     this.output = lines;
     const prevUsed = this.usedPropagate;
     this.usedPropagate = false;
@@ -191,13 +208,33 @@ export class CodegenJS {
     this.usedPropagate = prevUsed;
     this.output = prevOutput;
     this.boxed = prevBoxed;
-    if (used) {
-      this.emit("try {");
-      for (const l of lines) this.output.push(l);
-      this.emit("} catch (__e) { if (__e && __e.__milo_prop) return __e.__milo_prop; throw __e; }");
+
+    for (const cond of requireChecks)
+      this.emit(`if (!(${cond})) throw new Error("requires clause violated");`);
+
+    const emitBody = () => {
+      if (used) {
+        this.emit("try {");
+        for (const l of lines) this.output.push(l);
+        this.emit("} catch (__e) { if (__e && __e.__milo_prop) return __e.__milo_prop; throw __e; }");
+      } else {
+        for (const l of lines) this.output.push(l);
+      }
+    };
+
+    if (ensureChecks.length) {
+      this.emit("const result = (() => {");
+      this.indent++;
+      emitBody();
+      this.indent--;
+      this.emit("})();");
+      for (const cond of ensureChecks)
+        this.emit(`if (!(${cond})) throw new Error("ensures clause violated");`);
+      this.emit("return result;");
     } else {
-      for (const l of lines) this.output.push(l);
+      emitBody();
     }
+
     this.indent--;
     this.emit("}");
   }

@@ -181,21 +181,22 @@ fn main(): i32 {
     print($"rect:   {area(Shape.Rect(3.0, 4.0))}")
     return 0
 }` },
-  { title: 'Contracts — checked or proven', file: 'clamp.milo',
-    desc: 'Annotate a function with <code>requires</code> (what the caller must guarantee) and <code>ensures</code> (what it promises back), written in ordinary Milo. With no solver installed, each becomes a checked runtime assertion. With <code>z3</code>, <code>milo prove</code> discharges them at compile time and deletes the check.',
-    take: 'Gradual verification: proven conditions cost nothing at runtime, the rest fall back to runtime checks — you are never forced to hand-write a proof the way Lean or Dafny demand. When <code>prove</code> can’t discharge a condition it hands you the failing input, not a proof obligation. It proves the properties <em>you state</em> — not that the whole program is bug-free. Memory safety (no use-after-free, no data races) is separate, and always on whether or not you write a single contract.',
-    out: ['$ milo prove clamp.milo', '  ✓ [postcondition] clamp: proven', '', '$ milo run clamp.milo', '10'],
+  { title: 'Contracts — checked or proven', file: 'clamp.milo', err: true,
+    desc: 'Annotate a function with <code>requires</code> (what the caller must guarantee) and <code>ensures</code> (what it promises back), written in ordinary Milo. This <code>clamp</code> has a bug you could easily type: the low branch returns <code>value</code> instead of <code>lo</code>. Run it — the first call is fine, but <code>clamp(-5, 0, 10)</code> returns <code>-5</code>, which breaks <code>ensures</code>, and the contract stops it. Fix line 5 to <code>return lo</code> and it passes.',
+    take: 'Here that check runs at runtime (the browser has no solver). With <code>z3</code>, <code>milo prove</code> discharges the same conditions at compile time and deletes the check — gradual verification, no hand-written proofs. Contracts prove the properties <em>you state</em>, not that the whole program is bug-free; memory safety (no use-after-free, no data races) is separate and always on.',
+    out: ['10', 'runtime error: ensures clause violated'],
     code: `fn clamp(value: i64, lo: i64, hi: i64): i64
 requires lo <= hi
 ensures result >= lo && result <= hi
 {
-    if value < lo { return lo }
+    if value < lo { return value }   // bug: should be \`return lo\`
     if value > hi { return hi }
     return value
 }
 
 fn main(): i32 {
-    print(clamp(42, 0, 10))
+    print(clamp(42, 0, 10))   // 10 — fine
+    print(clamp(-5, 0, 10))   // returns -5 → violates ensures
     return 0
 }` },
   { title: 'Errors are values, not exceptions', file: 'errors.milo',
@@ -556,6 +557,11 @@ function run() {
       const o = (r.output == null) ? '' : r.output
       const lines = o === '' ? ['(no output)'] : o.replace(/\n$/, '').split('\n')
       showOutput(lines, false, file + ' · compiled to JS · exit 0')
+    } else if (r.runtime) {
+      // The program compiled but aborted at runtime — e.g. a violated contract.
+      const out = (r.output == null || r.output === '') ? [] : r.output.replace(/\n$/, '').split('\n')
+      const msg = String(r.error || 'error').replace(/\x1b\[[0-9;]*m/g, '').replace(/\s+$/, '')
+      showOutput([...out, 'runtime error: ' + msg], true, file + ' · runtime error')
     } else {
       const errLines = String(r.error || 'error').replace(/\x1b\[[0-9;]*m/g, '').replace(/\s+$/, '').split('\n')
       showOutput(errLines, true, file + ' · rejected by the checker')

@@ -117,6 +117,7 @@ export interface CompileResult {
   js?: string;
   output?: string;
   error?: string;
+  runtime?: boolean;   // error came from executing the program, not compiling it
 }
 
 export function compile(source: string): CompileResult {
@@ -133,7 +134,7 @@ export function compile(source: string): CompileResult {
     }
 
     const hirModule = lower(resolved, checked, "/playground");
-    const js = new CodegenJS().generate(hirModule);
+    const js = new CodegenJS(true).generate(hirModule);
     return { ok: true, js };
   } catch (e: any) {
     return { ok: false, error: e.message ?? String(e) };
@@ -154,13 +155,15 @@ export function compileAndRun(source: string): CompileResult {
     }
 
     const hirModule = lower(resolved, checked, "/playground");
-    const fullJs = new CodegenJS().generate(hirModule);
-    const bodyJs = new CodegenJS().generateBody(hirModule);
+    const fullJs = new CodegenJS(true).generate(hirModule);
+    const bodyJs = new CodegenJS(true).generateBody(hirModule);
 
     const captured: string[] = [];
     const runtime = `
       const __out = [];
-      function __print(s) { __out.push(String(s)); }
+      // eager: push each line straight to __captured so output printed before a
+      // runtime abort (e.g. a violated contract) still shows.
+      function __print(s) { __captured.push(String(s)); }
       function __flush() { if (__out.length) { __captured.push(__out.join('')); __out.length = 0; } }
       function __assert(cond, msg) { if (!cond) throw new Error('assertion failed: ' + msg); }
       function __fmtG(x) { if (!isFinite(x)) return String(x); if (x === 0) return '0'; let s = x.toPrecision(6); if (s.indexOf('e') >= 0) { s = Number(s).toExponential(); return s.replace(/e([+-])(\\d)$/, 'e$10$2'); } if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\\.$/, ''); return s; }
@@ -173,7 +176,13 @@ export function compileAndRun(source: string): CompileResult {
       function __eq(a, b) { if (a === b) return true; if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return a === b; if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((v, i) => __eq(v, b[i])); const ka = Object.keys(a), kb = Object.keys(b); return ka.length === kb.length && ka.every(k => __eq(a[k], b[k])); }
     `;
     const fn = new Function("__captured", runtime + bodyJs);
-    fn(captured);
+    // Separate runtime failures (aborts, contract violations) from compile-time
+    // ones so the UI can label them correctly.
+    try {
+      fn(captured);
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? String(e), runtime: true, output: captured.join("") };
+    }
     return { ok: true, js: fullJs, output: captured.join("") };
   } catch (e: any) {
     if (e.message) {
