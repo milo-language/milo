@@ -8038,8 +8038,43 @@ fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut
         popTemp(st)
         return JSValue.Obj(out)
     }
+    if name == "flat" {
+        var depth: i64 = 1
+        if args.len() > 0 {
+            let dn = toNum(args[0])
+            if dn > 1000000.0 {
+                // Infinity / very deep → cap (real arrays never nest this far)
+                depth = 1000000
+            } else if dn < 0.0 || dn != dn {
+                depth = 0
+            } else {
+                depth = dn as i64
+            }
+        }
+        let out = newArray(st)
+        pushTemp(st, JSValue.Obj(out))
+        flattenInto(st, out, o, depth)
+        popTemp(st)
+        popTemp(st)
+        return JSValue.Obj(out)
+    }
     popTemp(st)
     return JSValue.Undefined
+}
+
+// Flatten `arr` into `out` up to `depth` levels of nested arrays.
+fn flattenInto(st: &mut Interp, out: i64, arr: i64, depth: i64) {
+    var i: i64 = 0
+    while i < arrLen(st, arr) {
+        let v = arrGet(st, arr, i)
+        let vh = objHandle(v)
+        if depth > 0 && vh >= 0 && st.objects[vh].isArray {
+            flattenInto(st, out, vh, depth - 1)
+        } else {
+            arrPush(st, out, v)
+        }
+        i = i + 1
+    }
 }
 
 // Call a member as a method: `this` binds to the receiver. String and array
