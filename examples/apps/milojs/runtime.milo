@@ -310,6 +310,10 @@ struct Microtask {
     passthroughReject: bool,
     // .finally: discard the handler's result and keep the original settlement
     isFinally: bool,
+    // queueMicrotask(cb, ...extra) must call cb() with NO arguments (extra args
+    // are ignored per spec); a promise reaction and process.nextTick pass their
+    // one settlement/undefined value. Set only by queueMicrotask.
+    noArgs: bool,
 }
 
 // A .then registration on a not-yet-settled promise: which handlers to run and

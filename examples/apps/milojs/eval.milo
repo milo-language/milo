@@ -1100,6 +1100,10 @@ let NATIVE_SET_INTERVAL: i64 = 63
 let NATIVE_CLEAR_TIMER: i64 = 64
 let NATIVE_SET_IMMEDIATE: i64 = 65
 let NATIVE_QUEUE_MICROTASK: i64 = 66
+// queueMicrotask has its own native (distinct from process.nextTick, which
+// shares NATIVE_QUEUE_MICROTASK) so it can call the callback with zero
+// arguments per spec while nextTick's behaviour is left untouched.
+let NATIVE_QUEUE_MICROTASK_JS: i64 = 112
 let NATIVE_ARRAY_CTOR: i64 = 67
 let NATIVE_TCP_LISTEN: i64 = 68
 let NATIVE_TCP_ACCEPT: i64 = 69
@@ -1920,7 +1924,18 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     if id == NATIVE_QUEUE_MICROTASK {
         if argVals.len() > 0 {
             st.microtasks.push(Microtask {
-                cb: cloneValue(argVals[0]), arg: JSValue.Undefined, derived: -1, passthroughReject: false, isFinally: false
+                cb: cloneValue(argVals[0]), arg: JSValue.Undefined, derived: -1, passthroughReject: false, isFinally: false, noArgs: false
+            }
+            )
+        }
+        return JSValue.Undefined
+    }
+    if id == NATIVE_QUEUE_MICROTASK_JS {
+        if argVals.len() > 0 {
+            // noArgs: extra arguments to queueMicrotask are ignored; the callback
+            // is invoked with none.
+            st.microtasks.push(Microtask {
+                cb: cloneValue(argVals[0]), arg: JSValue.Undefined, derived: -1, passthroughReject: false, isFinally: false, noArgs: true
             }
             )
         }
@@ -3229,7 +3244,7 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "clearInterval", JSValue.Native(NATIVE_CLEAR_TIMER))
     scopeDefine(st, 0, "clearImmediate", JSValue.Native(NATIVE_CLEAR_TIMER))
     scopeDefine(st, 0, "setImmediate", JSValue.Native(NATIVE_SET_IMMEDIATE))
-    scopeDefine(st, 0, "queueMicrotask", JSValue.Native(NATIVE_QUEUE_MICROTASK))
+    scopeDefine(st, 0, "queueMicrotask", JSValue.Native(NATIVE_QUEUE_MICROTASK_JS))
     // The raw "wrap a value in a resolved promise" primitive, exposed under its
     // own name so the prelude can build the public Promise.resolve on top of it.
     // Capturing `Promise.resolve` from JS does not work: reading a method off a
@@ -5165,7 +5180,7 @@ fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
             handler = cloneValue(st.objects[p].reactions[i].onRejected)
         }
         st.microtasks.push(Microtask {
-            cb: handler, arg: cloneValue(value), derived: st.objects[p].reactions[i].derived, passthroughReject: state == 2, isFinally: st.objects[p].reactions[i].isFinally
+            cb: handler, arg: cloneValue(value), derived: st.objects[p].reactions[i].derived, passthroughReject: state == 2, isFinally: st.objects[p].reactions[i].isFinally, noArgs: false
         }
         )
         i = i + 1
@@ -5245,11 +5260,12 @@ fn drainMicrotasks(prog: &Prog, st: &mut Interp) {
         let derived = st.microtasks[0].derived
         let passthrough = st.microtasks[0].passthroughReject
         let isFinallyTask = st.microtasks[0].isFinally
+        let noArgsTask = st.microtasks[0].noArgs
         var rest: Vec<Microtask> = Vec.new()
         var i: i64 = 1
         while i < st.microtasks.len() {
             rest.push(Microtask {
-                cb: cloneValue(st.microtasks[i].cb), arg: cloneValue(st.microtasks[i].arg), derived: st.microtasks[i].derived, passthroughReject: st.microtasks[i].passthroughReject, isFinally: st.microtasks[i].isFinally
+                cb: cloneValue(st.microtasks[i].cb), arg: cloneValue(st.microtasks[i].arg), derived: st.microtasks[i].derived, passthroughReject: st.microtasks[i].passthroughReject, isFinally: st.microtasks[i].isFinally, noArgs: st.microtasks[i].noArgs
             }
             )
             i = i + 1
@@ -5258,7 +5274,9 @@ fn drainMicrotasks(prog: &Prog, st: &mut Interp) {
         if derived < 0 {
             pushTemp(st, cloneValue(task))
             var args: Vec<JSValue> = Vec.new()
-            args.push(arg)
+            if !noArgsTask {
+                args.push(arg)
+            }
             let _ = callValue(prog, task, args, JSValue.Undefined, st)
             popTemp(st)
             if st.throwing {
@@ -6648,7 +6666,7 @@ fn promiseMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): J
             handler = onRej
         }
         st.microtasks.push(Microtask {
-            cb: handler, arg: cloneValue(st.objects[o].promiseValue), derived: derived, passthroughReject: state == 2, isFinally: isFinally
+            cb: handler, arg: cloneValue(st.objects[o].promiseValue), derived: derived, passthroughReject: state == 2, isFinally: isFinally, noArgs: false
         }
         )
     }
