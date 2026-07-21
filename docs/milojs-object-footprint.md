@@ -137,3 +137,23 @@ stress — so run `MILOJS_GC_THRESHOLD=1` on every slice.
 
 Re-measure `50k {}` after each slice; the empty-object number should fall toward
 the ~74-byte hot header as promise/bound/proxy/map/ta drop out.
+
+### GC lifecycle of a side table (subtle — do not skip)
+
+A side table `HashMap<i64, CapData>` keyed by object index has TWO GC duties, not
+one:
+
+1. **Mark**: iterate the table and mark the JSValues (target/handler, keys/vals,
+   promiseValue/reactions…) of entries whose object is live. (The obvious one.)
+2. **Sweep-remove**: when the collector FREES an object index `o`, it must delete
+   `sideTable[o]`. Object indices are recycled from the free-list, so a stale
+   entry left behind makes the NEXT object allocated at `o` silently inherit the
+   freed object's capability — a plain `{}` reusing a proxy's old slot would test
+   as a proxy. This only manifests under GC + allocation churn (a recycled index
+   that happens to reacquire a rare capability), so it passes casual testing and
+   fails under `MILOJS_GC_THRESHOLD=1` with a workload that frees and reallocates
+   rare-capability objects. Every slice's GC-stress test MUST exercise that.
+
+Also confirm the language has a usable `HashMap<i64, T>` (the design assumes one);
+if not, a parallel `Vec` indexed by object id with an `Option`/sentinel works but
+wastes the sparsity — prefer the map.
