@@ -527,7 +527,13 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         return JSValue.Number(u as f64)
     }
     if name == "indexOf" {
-        let at = jsIndexOf(s, argStr(args, 0), 0)
+        // optional fromIndex (UTF-16 units): start the search there
+        var from = argNum(args, 1, 0)
+        if from < 0 {
+            from = 0
+        }
+        let byteStart = utf16Slice(s, 0, from).len()
+        let at = jsIndexOf(s, argStr(args, 0), byteStart)
         if at < 0 {
             return JSValue.Number(0.0 - 1.0)
         }
