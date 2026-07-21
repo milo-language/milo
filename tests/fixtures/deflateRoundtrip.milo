@@ -1,0 +1,45 @@
+// @expect: roundtrip ok
+from "std/deflate" import {
+    gzipCompress, zlibCompress
+}
+from "std/inflate" import {
+    gzipDecompress, zlibDecompress
+}
+
+// Compress then decompress through both container formats; the payload has enough
+// repetition to exercise LZ77 back-references, not just literals.
+fn main(): i32 {
+    var s = ""
+    let base = "The quick brown fox jumps over the lazy dog. "
+    for _i in 0..50 {
+        for j in 0..base.len {
+            s.push(base[j])
+        }
+    }
+    let gz = gzipCompress(s)
+    let zl = zlibCompress(s)
+    var okg = false
+    var okz = false
+    match gzipDecompress(gz) {
+        Result.Ok(o) => {
+            okg = o.len == s.len
+        }
+        Result.Err(e) => {
+            okg = false
+        }
+    }
+    match zlibDecompress(zl) {
+        Result.Ok(o) => {
+            okz = o.len == s.len
+        }
+        Result.Err(e) => {
+            okz = false
+        }
+    }
+    if okg && okz {
+        print("roundtrip ok")
+    } else {
+        print("FAIL")
+    }
+    return 0
+}

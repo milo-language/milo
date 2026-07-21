@@ -1,0 +1,245 @@
+// std/deflate — pure-Milo DEFLATE compression (RFC 1951) + gzip (1952) / zlib (1950).
+//
+// LZ77 (hash-chain matcher, 32 KiB window) over a single fixed-Huffman block.
+// Fixed rather than dynamic Huffman: no per-block tree to build or transmit, ~90%
+// of dynamic's ratio on typical text, and the output is decodable by any conforming
+// inflater — system gunzip and std/inflate both accept it. The matcher is greedy
+// with a bounded chain, so time is O(input × MAXCHAIN), not quadratic.
+//
+// Bit order is the RFC's split: block header and extra bits go LSB-first, Huffman
+// codes go MSB-first. The writer exposes both (_putBits vs _putCode).
+
+from "std/checksum" import {
+    crc32, adler32
+}
+
+let WINDOW: i64 = 32768
+let MINMATCH: i64 = 3
+let MAXMATCH: i64 = 258
+let MAXCHAIN: i64 = 128
+let HASHSIZE: i64 = 32768 // 2^15
+
+struct BitW {
+    acc: i64, // bits accumulated for the current byte (LSB-first)
+    nbits: i64, // how many bits are in acc (0..7)
+    out: string,
+}
+
+fn _putBit(w: &mut BitW, bit: i64) {
+    w.acc = w.acc | ((bit & 1) << w.nbits)
+    w.nbits = w.nbits + 1
+    if w.nbits == 8 {
+        w.out.push((w.acc & 0xff) as u8)
+        w.acc = 0
+        w.nbits = 0
+    }
+}
+
+// LSB-first: bit 0 of val first. Used for the block header and extra bits.
+fn _putBits(w: &mut BitW, val: i64, n: i64) {
+    for k in 0..n {
+        _putBit(w, (val >> k) & 1)
+    }
+}
+
+// MSB-first: bit (n-1) of code first. Used for Huffman codes (RFC 1951 §3.1.1).
+fn _putCode(w: &mut BitW, code: i64, n: i64) {
+    for k in 0..n {
+        _putBit(w, (code >> (n - 1 - k)) & 1)
+    }
+}
+
+// Pad the final partial byte with zero bits and flush it.
+fn _flush(w: &mut BitW) {
+    if w.nbits > 0 {
+        w.out.push((w.acc & 0xff) as u8)
+        w.acc = 0
+        w.nbits = 0
+    }
+}
+
+// Emit a literal/length symbol (0..287) with the fixed-Huffman code table.
+fn _emitSym(w: &mut BitW, s: i64) {
+    if s < 144 {
+        _putCode(w, 48 + s, 8) // 00110000..10111111
+    } else if s < 256 {
+        _putCode(w, 400 + (s - 144), 9) // 110010000..111111111
+    } else if s < 280 {
+        _putCode(w, s - 256, 7) // 0000000..0010111
+    } else {
+        _putCode(w, 192 + (s - 280), 8) // 11000000..11000111
+    }
+}
+
+fn _lenBase(): [i64; 29] {
+    return [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+}
+
+fn _lenExtra(): [i64; 29] {
+    return [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+}
+
+fn _distBase(): [i64; 30] {
+    return [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+}
+
+fn _distExtra(): [i64; 30] {
+    return [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+}
+
+// Emit a back-reference: length symbol (257..285) + extra, then distance code + extra.
+fn _emitMatch(w: &mut BitW, len: i64, dist: i64) {
+    let lenBase = _lenBase()
+    let lenExtra = _lenExtra()
+    // Largest length index whose base does not exceed len.
+    var li: i64 = 28
+    for i in 0..29 {
+        if lenBase[i] > len {
+            li = i - 1
+            break
+        }
+    }
+    _emitSym(w, 257 + li)
+    _putBits(w, len - lenBase[li], lenExtra[li])
+
+    let distBase = _distBase()
+    let distExtra = _distExtra()
+    var di: i64 = 29
+    for i in 0..30 {
+        if distBase[i] > dist {
+            di = i - 1
+            break
+        }
+    }
+    _putCode(w, di, 5) // fixed distance codes are 5 bits, MSB-first
+    _putBits(w, dist - distBase[di], distExtra[di])
+}
+
+// Hash of the 3 bytes at position p (p+2 must be in range).
+fn _hash3(src: &string, p: i64): i64 {
+    return (((src[p] as i64) << 10) ^ ((src[p + 1] as i64) << 5) ^ (src[p + 2] as i64)) & (HASHSIZE - 1)
+}
+
+// Length of the byte run shared by positions a and b (a < b), capped at maxLen.
+fn _matchLen(src: &string, a: i64, b: i64, maxLen: i64): i64 {
+    var n: i64 = 0
+    while n < maxLen && src[a + n] == src[b + n] {
+        n = n + 1
+    }
+    return n
+}
+
+// Compress raw bytes to a single fixed-Huffman DEFLATE stream.
+fn deflate(src: &string): string {
+    var w = BitW {
+        acc: 0, nbits: 0, out: ""
+    }
+    _putBits(w, 1, 1) // BFINAL = 1
+    _putBits(w, 1, 2) // BTYPE  = 01 (fixed Huffman)
+
+    let n = src.len
+    var head = Vec.new() // hash -> most recent position, -1 if none
+    for _i in 0..HASHSIZE {
+        head.push(-1)
+    }
+    var prev = Vec.new() // position -> previous position with same hash
+    for _i in 0..n {
+        prev.push(-1)
+    }
+
+    var pos: i64 = 0
+    while pos < n {
+        var bestLen: i64 = 0
+        var bestDist: i64 = 0
+        if pos + MINMATCH <= n {
+            let h = _hash3(src, pos)
+            var cand = head[h]
+            let maxLen = if n - pos < MAXMATCH {
+                n - pos
+            } else {
+                MAXMATCH
+            }
+            var chain: i64 = 0
+            while cand >= 0 && chain < MAXCHAIN && pos - cand <= WINDOW {
+                let ml = _matchLen(src, cand, pos, maxLen)
+                if ml > bestLen {
+                    bestLen = ml
+                    bestDist = pos - cand
+                    if ml == maxLen {
+                        break
+                    }
+                }
+                cand = prev[cand]
+                chain = chain + 1
+            }
+            prev[pos] = head[h]
+            head[h] = pos
+        }
+        if bestLen >= MINMATCH {
+            _emitMatch(w, bestLen, bestDist)
+            // Register the positions we're skipping so later matches can find them.
+            for k in 1..bestLen {
+                let p = pos + k
+                if p + MINMATCH <= n {
+                    let hh = _hash3(src, p)
+                    prev[p] = head[hh]
+                    head[hh] = p
+                }
+            }
+            pos = pos + bestLen
+        } else {
+            _emitSym(w, src[pos] as i64)
+            pos = pos + 1
+        }
+    }
+    _emitSym(w, 256) // end of block
+    _flush(w)
+    return w.out
+}
+
+fn _push32LE(out: &mut string, v: i64) {
+    out.push((v & 0xff) as u8)
+    out.push(((v >> 8) & 0xff) as u8)
+    out.push(((v >> 16) & 0xff) as u8)
+    out.push(((v >> 24) & 0xff) as u8)
+}
+
+fn _push32BE(out: &mut string, v: i64) {
+    out.push(((v >> 24) & 0xff) as u8)
+    out.push(((v >> 16) & 0xff) as u8)
+    out.push(((v >> 8) & 0xff) as u8)
+    out.push((v & 0xff) as u8)
+}
+
+// Compress to a gzip stream (RFC 1952): fixed 10-byte header, DEFLATE body,
+// CRC-32 + ISIZE trailer. Output is accepted by system gunzip and std/inflate.
+fn gzipCompress(src: &string): string {
+    var out = ""
+    out.push(0x1f as u8)
+    out.push(0x8b as u8)
+    out.push(8 as u8) // CM = deflate
+    out.push(0 as u8) // FLG = none
+    _push32LE(out, 0) // MTIME = 0 (unknown)
+    out.push(0 as u8) // XFL
+    out.push(255 as u8) // OS = unknown
+    let body = deflate(src)
+    for i in 0..body.len {
+        out.push(body[i])
+    }
+    _push32LE(out, crc32(src))
+    _push32LE(out, src.len & 0xffffffff)
+    return out
+}
+
+// Compress to a zlib stream (RFC 1950): 2-byte header, DEFLATE body, Adler-32.
+fn zlibCompress(src: &string): string {
+    var out = ""
+    out.push(0x78 as u8) // CMF: deflate, 32K window
+    out.push(0x9c as u8) // FLG: default level, header check 0x789c % 31 == 0
+    let body = deflate(src)
+    for i in 0..body.len {
+        out.push(body[i])
+    }
+    _push32BE(out, adler32(src))
+    return out
+}
