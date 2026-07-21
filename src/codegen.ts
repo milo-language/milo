@@ -2499,9 +2499,13 @@ export class Codegen {
   }
 
   private genMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: { addr: string; ty: string }): [string[], boolean] {
-    const hasLiteralPattern = stmt.arms.some(a => a.pattern.kind === "LiteralPattern");
-    if (hasLiteralPattern) return this.genLiteralMatch(stmt, resultSlot);
-    return this.genEnumMatch(stmt, resultSlot);
+    // Route by the SUBJECT's type, not just the pattern kinds. genEnumMatch reads a
+    // tag/payload out of the scrutinee via GEP, which is only valid for an enum. A
+    // scalar matched with only a wildcard (`match x { _ => ... }`) has no literal
+    // pattern, but it is NOT an enum — sending it to genEnumMatch emitted an invalid
+    // `getelementptr i64` on the scalar. Only an enum subject uses the enum path.
+    if (stmt.subject.type.tag === "enum") return this.genEnumMatch(stmt, resultSlot);
+    return this.genLiteralMatch(stmt, resultSlot);
   }
 
   // Emit a match arm's body. In statement mode (no resultSlot) every stmt runs

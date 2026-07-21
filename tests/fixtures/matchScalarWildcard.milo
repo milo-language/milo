@@ -1,0 +1,31 @@
+// A scalar matched with only a wildcard/catch-all arm (no literal pattern) must
+// compile: it is not an enum, so the codegen must not extract a tag via GEP.
+// Regression for the security audit's M2 finding (invalid getelementptr).
+// @expect: 7
+// @expect: 3
+// @expect: 42
+fn main(): i32 {
+    let x = 7
+    match x {
+        _ => {
+            print(x)
+        }
+    }
+    let y = 3
+    match y {
+        _ => {
+            match y {
+                _ => {
+                    print(y)
+                }
+            }
+        }
+    }
+    var z: i32 = 42
+    match z {
+        _ => {
+            print(z)
+        }
+    }
+    return 0
+}
