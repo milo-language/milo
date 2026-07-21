@@ -62,12 +62,32 @@ fn main() {
     // @expect: QQQQQ
     print(decode("28b52ffd00002b000051"))
 
-    // Compressed block (type 2) — rejected with a clear error, not a crash.
-    // @expect: true
-    print(decode("28b52ffd0458450000106161010022c002d79af998").startsWith("ERR:zstd: compressed"))
+    // Compressed block (type 2) with content checksum: 32x 'a', predefined tables.
+    // Decodes AND the XXH64 checksum verifies.
+    // @expect: 32
+    print(decode("28b52ffd0458450000106161010022c002d79af998").len)
 
     // Same raw+checksum frame with its last checksum byte flipped b2->b3 — the
     // XXH64 content check must reject it.
     // @expect: true
     print(decode("28b52ffd045859000068656c6c6f20776f726c6468691eb3").startsWith("ERR:zstd: content checksum"))
+
+    // ── Compressed blocks: predefined FSE sequence tables + raw literals ──
+    // (captured from `zstd -c --no-check`; content-verified against the originals)
+
+    // "abc" x10 — one sequence, predefined LL/OF/ML tables.
+    // @expect: abcabcabcabcabcabcabcabcabcabc
+    print(decode("28b52ffd00584d0000186162630100866e08"))
+
+    // A longer repeat with a multi-word match.
+    // @expect: the quick brown fox the quick brown fox the quick brown fox
+    print(decode("28b52ffd0058d50000a074686520717569636b2062726f776e20666f782001005c3999"))
+
+    // 100x 'A' → literals "AA" + a length-98 match at offset 1 (RLE-style overlap).
+    // @expect: 100
+    print(decode("28b52ffd005845000010414101003f012c").len)
+
+    // Same, with content checksum — decode AND XXH64 verification must both pass.
+    // @expect: 100
+    print(decode("28b52ffd045845000010414101003f012cd372475e").len)
 }
