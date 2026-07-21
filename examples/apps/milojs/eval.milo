@@ -5836,6 +5836,15 @@ fn spawnActivation(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSVal
                     }
                     )
                 } else {
+                    // the inner promise's settlement is forwarded to the
+                    // activation promise, so it is handled — clear it from the
+                    // unhandled set (a throwing async body wraps its rejection in
+                    // a fresh newPromise(2) that was flagged unhandled at birth;
+                    // without this a caught `await asyncThatThrows()` printed a
+                    // spurious "unhandled promise rejection")
+                    if rs == 2 {
+                        markRejectHandled(gInterp, ro)
+                    }
                     settlePromise(gInterp, p, rs, cloneValue(gInterp.objects[ro].promiseValue))
                 }
             } else {
