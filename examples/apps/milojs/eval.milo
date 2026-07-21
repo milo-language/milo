@@ -759,7 +759,9 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
                 if args.len() > 0 {
                     key = toStr(args[0])
                 }
-                return JSValue.Bool(objOwnIndex(st, o, key) >= 0)
+                // own AND enumerable — a non-enumerable own prop is still `false`
+                let pi = objOwnIndex(st, o, key)
+                return JSValue.Bool(pi >= 0 && st.objects[o].props[pi].enumerable)
             }
             if st.objects[o].isArray && isArrayMethod(name) {
                 return arrayMethod(prog, o, name, args, st)
@@ -6697,7 +6699,7 @@ fn proxyDelete(prog: &Prog, o: i64, key: string, st: &mut Interp): JSValue {
     }
     let th = objHandle(st.objExtras[st.objects[o].extra].proxyTarget)
     if th >= 0 {
-        objDeleteKey(st, th, key)
+        return JSValue.Bool(objDeleteKey(st, th, key))
     }
     return JSValue.Bool(true)
 }
@@ -6714,7 +6716,7 @@ fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
                 if st.objects[o].frozen || st.objects[o].sealed {
                     return JSValue.Bool(false)
                 }
-                objDeleteKey(st, o, name)
+                return JSValue.Bool(objDeleteKey(st, o, name))
             }
             return JSValue.Bool(true)
         }
@@ -6732,7 +6734,7 @@ fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
                 if st.objects[o].frozen || st.objects[o].sealed {
                     return JSValue.Bool(false)
                 }
-                objDeleteKey(st, o, key)
+                return JSValue.Bool(objDeleteKey(st, o, key))
             }
             return JSValue.Bool(true)
         }

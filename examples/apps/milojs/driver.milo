@@ -28,13 +28,23 @@ from "./eval" import {
 // went wrong. Report name and message when the thrown value is an error.
 fn describeThrown(st: &Interp, v: &JSValue): string {
     let h = objHandle(v)
-    if h >= 0 && st.objects[h].isError {
-        let name = toStr(objGet(st, h, "name"))
+    if h >= 0 {
+        // a real Error, or any error-shaped object (a thrown custom error like
+        // test262's Test262Error carries name+message but is not flagged isError,
+        // and toStr'ing it just gives the useless "[object Object]")
         let msg = toStr(objGet(st, h, "message"))
-        if msg.len() > 0 {
-            return name + ": " + msg
+        if st.objects[h].isError || objOwnIndex(st, h, "message") >= 0 {
+            let name = toStr(objGet(st, h, "name"))
+            if name.len() > 0 && msg.len() > 0 {
+                return name + ": " + msg
+            }
+            if msg.len() > 0 {
+                return msg
+            }
+            if name.len() > 0 {
+                return name
+            }
         }
-        return name
     }
     return toStr(v)
 }

@@ -1010,7 +1010,10 @@ fn setArrayLength(st: &mut Interp, obj: i64, n: i64) {
     }
 }
 
-fn objDeleteKey(st: &mut Interp, obj: i64, key: &string) {
+// Delete an own property. Returns whether the delete "succeeded" in JS terms:
+// true if the key was removed or was absent, false if it is a non-configurable
+// own property (which stays). `delete` evaluates to this bool.
+fn objDeleteKey(st: &mut Interp, obj: i64, key: &string): bool {
     if st.objects[obj].isArray {
         let ai = asArrayIndex(key)
         if ai >= 0 && ai < st.objects[obj].elems.len() {
@@ -1018,8 +1021,13 @@ fn objDeleteKey(st: &mut Interp, obj: i64, key: &string) {
             // `ai in arr` and hasOwnProperty must say false from now on
             st.objects[obj].elems[ai] = JSValue.Undefined
             arrMarkHole(st, obj, ai)
-            return
+            return true
         }
+    }
+    // a non-configurable own property cannot be deleted (delete returns false)
+    let idx = objOwnIndex(st, obj, key)
+    if idx >= 0 && !st.objects[obj].props[idx].configurable {
+        return false
     }
     var kept: Vec<Prop> = Vec.new()
     var i: i64 = 0
@@ -1033,6 +1041,7 @@ fn objDeleteKey(st: &mut Interp, obj: i64, key: &string) {
         i = i + 1
     }
     st.objects[obj].props = kept
+    return true
 }
 
 // Index of `key` on `obj` itself (not its prototype chain), or -1.
