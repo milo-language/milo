@@ -52,6 +52,7 @@ export class Codegen {
   private needsPrintf = false;
   private needsDprintf = false;
   private needsFflush = false;
+  private needsWrite = false;
   private needsPutchar = false;
   private needsExit = false;
   private needsMalloc = false;
@@ -1092,6 +1093,8 @@ export class Codegen {
       this.output.splice(1, 0, "declare i32 @putchar(i32)");
     if (this.needsFflush && !declaredExterns.has("fflush"))
       this.output.splice(1, 0, `declare i32 @fflush(ptr)`);
+    if (this.needsWrite && !declaredExterns.has("write"))
+      this.output.splice(1, 0, `declare i64 @write(i32, ptr, i64)`);
     if (this.needsDprintf && !declaredExterns.has("dprintf"))
       this.output.splice(1, 0, `declare i32 @dprintf(i32, ptr, ...)`);
     if (this.needsPrintf && !declaredExterns.has("printf"))
@@ -2873,24 +2876,24 @@ export class Codegen {
 
   private genBuiltinCall(expr: HIRExpr & { kind: "Call" }, lines: string[]): [string[], string, string] {
     if (expr.func === "print" || expr.func === "format") {
-      this.needsPrintf = true;
-      this.needsPutchar = true;
       this.needsFree = true;
-      // Each arg → one printf call sized to its type. Final newline via putchar.
       const isFormat = expr.func === "format";
-      const partFmts: string[] = [];
-      const partArgs: { val: string; type: string }[] = [];
-      const tempBufs: string[] = []; // bufs to free after the outer call (struct/enum stringification)
-      for (const arg of expr.args) {
-        const [al, av, at] = this.genExpr(arg.expr);
-        lines.push(...al);
-        this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
-      }
-      const fullFmt = partFmts.join("");
-      const fmtStr = this.addString(fullFmt);
-      const argsStr = partArgs.map(a => `, ${a.type} ${a.val}`).join("");
 
+      // format(): stringify every part into one snprintf'd buffer. (Note: snprintf's
+      // %.*s still truncates a string part at an embedded NUL — format() of binary is
+      // a known follow-up; print() below is the NUL-correct path.)
       if (isFormat) {
+        this.needsPrintf = true;
+        const partFmts: string[] = [];
+        const partArgs: { val: string; type: string }[] = [];
+        const tempBufs: string[] = [];
+        for (const arg of expr.args) {
+          const [al, av, at] = this.genExpr(arg.expr);
+          lines.push(...al);
+          this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
+        }
+        const fmtStr = this.addString(partFmts.join(""));
+        const argsStr = partArgs.map(a => `, ${a.type} ${a.val}`).join("");
         this.needsMalloc = true;
         this.needsSnprintf = true;
         this.hasStringType = true;
@@ -2913,7 +2916,45 @@ export class Codegen {
         return [lines, s2, "%String"];
       }
 
-      lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtStr.label}${argsStr})`);
+      // print(): NUL-safe. Milo strings are length-counted, so a string arg is written
+      // by length via write(1, …) — printf's %.*s stops at an embedded NUL. Scalars and
+      // structs still format through printf; a pending printf batch is emitted and the
+      // stdio buffer drained (fflush) before each raw write so buffered printf output and
+      // unbuffered write output keep textual order.
+      this.needsPrintf = true;
+      this.needsPutchar = true;
+      this.needsWrite = true;
+      this.needsFflush = true;
+      let partFmts: string[] = [];
+      let partArgs: { val: string; type: string }[] = [];
+      const tempBufs: string[] = [];
+      const flushBatch = () => {
+        if (partFmts.length === 0) return;
+        const fmtStr = this.addString(partFmts.join(""));
+        const argsStr = partArgs.map(a => `, ${a.type} ${a.val}`).join("");
+        lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtStr.label}${argsStr})`);
+        partFmts = [];
+        partArgs = [];
+      };
+      for (const arg of expr.args) {
+        const [al, av, at] = this.genExpr(arg.expr);
+        lines.push(...al);
+        let dt: any = arg.expr.type;
+        while (dt && dt.tag === "ref") dt = dt.inner;
+        if (dt && dt.tag === "string") {
+          this.hasStringType = true;
+          flushBatch();
+          const dataPtr = this.nextTemp();
+          lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
+          const lenVal = this.nextTemp();
+          lines.push(`  ${lenVal} = extractvalue %String ${av}, 1`);
+          lines.push(`  call i32 @fflush(ptr null)`);
+          lines.push(`  call i64 @write(i32 1, ptr ${dataPtr}, i64 ${lenVal})`);
+        } else {
+          this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
+        }
+      }
+      flushBatch();
       lines.push(`  call i32 @putchar(i32 10)`);
       for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
       return [lines, "void", "void"];
