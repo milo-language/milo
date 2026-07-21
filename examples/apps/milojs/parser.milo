@@ -714,9 +714,16 @@ fn parseArrayLiteral(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_LBRACKET)
     var elems: Vec<i64> = Vec.new()
     while peekKind(p) != T_RBRACKET && peekKind(p) != T_EOF {
-        elems.push(parseArg(p, prog))
         if peekKind(p) == T_COMMA {
+            // elision [1, , 3]: a HOLE, recorded as sentinel -1 (a real slot in
+            // length terms, but `in`/hasOwnProperty/keys say absent)
+            elems.push(0 - 1)
             advance(p)
+        } else {
+            elems.push(parseArg(p, prog))
+            if peekKind(p) == T_COMMA {
+                advance(p)
+            }
         }
     }
     expect(p, T_RBRACKET)

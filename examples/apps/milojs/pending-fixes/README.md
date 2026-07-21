@@ -14,14 +14,7 @@ ALREADY LANDED (`bb7628c`, `37e7e67`) — apply only the hunks for the three bel
 - Apply, then build BOTH binaries, run `tests/run.sh` (76+ fixtures incl. the
   tahoeroads self-fetch guard) AND the app smoke, per fix.
 
-## Remaining pending fixes (#3 Map.forEach LANDED)
-
-### #5 Array holes (`delete a[i]` leaves `i in a` true)
-Adds a `holes: Vec<i64>` field to `JSObj` (empty for dense arrays), maintained by
-delete / length grow-shrink / sparse set / literal elisions (`[1,,3]`, a parser
-`-1` sentinel), consulted by `in` / hasOwnProperty / for-in / Object.keys.
-Touches runtime.milo (struct + GC?), eval.milo, parser.milo. **Verify the GC
-mark path handles the new field.** Fixture: fixtures/arrayHoles.
+## Remaining pending fixes (#3 Map.forEach LANDED, #5 array holes LANDED)
 
 ### #6 Proxy ownKeys/getOwnPropertyDescriptor for for-in and Object.keys
 Adds `proxyOwnEnumKeys` wired into for-in + NATIVE_OBJECT_KEYS. **Requires the
