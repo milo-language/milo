@@ -376,7 +376,7 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
         }
     }
     if (st.objects[o].isMap || st.objects[o].isSet) && key == "size" {
-        return JSValue.Number(st.objects[o].mapKeys.len() as f64)
+        return JSValue.Number(st.objExtras[st.objects[o].extra].mapKeys.len() as f64)
     }
     let g = findGetter(st, o, key)
     if isCallable(g) {
@@ -1907,6 +1907,10 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         } else {
             st.objects[o].isSet = true
         }
+        // Map/Set entries live in the side table — allocate the slot up front so
+        // every later mapKeys/mapVals access reaches a private extra, not the
+        // shared default at index 0.
+        let _me = ensureExtra(st, o)
         pushTemp(st, JSValue.Obj(o))
         // new Map([[k, v], ...]) / new Set([v, ...])
         if argVals.len() > 0 {
@@ -1972,8 +1976,8 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                     }
                 } else if st.objects[h].isMap || st.objects[h].isSet {
                     var i: i64 = 0
-                    while i < st.objects[h].mapKeys.len() {
-                        elems.push(cloneValue(st.objects[h].mapKeys[i]))
+                    while i < st.objExtras[st.objects[h].extra].mapKeys.len() {
+                        elems.push(cloneValue(st.objExtras[st.objects[h].extra].mapKeys[i]))
                         i = i + 1
                     }
                 } else {
@@ -5164,11 +5168,11 @@ fn spreadInto(prog: &Prog, out: &mut Vec<JSValue>, v: &JSValue, st: &mut Interp)
     // a Map spreads to freshly built [key, value] pairs, which needs allocation
     if h >= 0 && st.objects[h].isMap {
         var mi: i64 = 0
-        while mi < st.objects[h].mapKeys.len() {
+        while mi < st.objExtras[st.objects[h].extra].mapKeys.len() {
             let pair = newArray(st)
             pushTemp(st, JSValue.Obj(pair))
-            arrPush(st, pair, cloneValue(st.objects[h].mapKeys[mi]))
-            arrPush(st, pair, cloneValue(st.objects[h].mapVals[mi]))
+            arrPush(st, pair, cloneValue(st.objExtras[st.objects[h].extra].mapKeys[mi]))
+            arrPush(st, pair, cloneValue(st.objExtras[st.objects[h].extra].mapVals[mi]))
             popTemp(st)
             out.push(JSValue.Obj(pair))
             mi = mi + 1
@@ -5217,8 +5221,8 @@ fn spreadBuiltin(out: &mut Vec<JSValue>, v: &JSValue, st: &Interp) {
                 }
             } else if st.objects[o].isSet {
                 var k: i64 = 0
-                while k < st.objects[o].mapKeys.len() {
-                    out.push(cloneValue(st.objects[o].mapKeys[k]))
+                while k < st.objExtras[st.objects[o].extra].mapKeys.len() {
+                    out.push(cloneValue(st.objExtras[st.objects[o].extra].mapKeys[k]))
                     k = k + 1
                 }
             }
@@ -7631,7 +7635,7 @@ fn setLikeSize(_prog: &Prog, st: &mut Interp, other: &JSValue): f64 {
     }
     // a real Set answers .size itself
     if st.objects[h].isSet || st.objects[h].isMap {
-        return st.objects[h].mapKeys.len() as f64
+        return st.objExtras[st.objects[h].extra].mapKeys.len() as f64
     }
     let sv = getMember(st, h, "size")
     let n = toNum(sv)
@@ -7716,7 +7720,7 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
         if at < 0 {
             return JSValue.Undefined
         }
-        return cloneValue(st.objects[o].mapVals[at])
+        return cloneValue(st.objExtras[st.objects[o].extra].mapVals[at])
     }
     if name == "set" || name == "add" {
         var key = JSValue.Undefined
@@ -7749,20 +7753,20 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
         var nk: Vec<JSValue> = Vec.new()
         var nv: Vec<JSValue> = Vec.new()
         var i: i64 = 0
-        while i < st.objects[o].mapKeys.len() {
+        while i < st.objExtras[st.objects[o].extra].mapKeys.len() {
             if i != at {
-                nk.push(cloneValue(st.objects[o].mapKeys[i]))
-                nv.push(cloneValue(st.objects[o].mapVals[i]))
+                nk.push(cloneValue(st.objExtras[st.objects[o].extra].mapKeys[i]))
+                nv.push(cloneValue(st.objExtras[st.objects[o].extra].mapVals[i]))
             }
             i = i + 1
         }
-        st.objects[o].mapKeys = nk
-        st.objects[o].mapVals = nv
+        st.objExtras[st.objects[o].extra].mapKeys = nk
+        st.objExtras[st.objects[o].extra].mapVals = nv
         return JSValue.Bool(true)
     }
     if name == "clear" {
-        st.objects[o].mapKeys = Vec.new()
-        st.objects[o].mapVals = Vec.new()
+        st.objExtras[st.objects[o].extra].mapKeys = Vec.new()
+        st.objExtras[st.objects[o].extra].mapVals = Vec.new()
         return JSValue.Undefined
     }
     if name == "isSupersetOf" || name == "isSubsetOf" || name == "isDisjointFrom" || name == "union" || name == "intersection" || name == "difference" {
@@ -7774,7 +7778,7 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
         if st.throwing {
             return JSValue.Undefined
         }
-        let mine = st.objects[o].mapKeys.len() as f64
+        let mine = st.objExtras[st.objects[o].extra].mapKeys.len() as f64
 
         if name == "isSupersetOf" {
             if mine < osize {
@@ -7800,8 +7804,8 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
                 return JSValue.Bool(false)
             }
             var i: i64 = 0
-            while i < st.objects[o].mapKeys.len() && !st.throwing {
-                let mk = cloneValue(st.objects[o].mapKeys[i])
+            while i < st.objExtras[st.objects[o].extra].mapKeys.len() && !st.throwing {
+                let mk = cloneValue(st.objExtras[st.objects[o].extra].mapKeys[i])
                 if !setLikeHas(prog, st, other, mk) {
                     return JSValue.Bool(false)
                 }
@@ -7814,8 +7818,8 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
             // iterator, which is what makes the suite's call counts meaningful
             if mine <= osize {
                 var i: i64 = 0
-                while i < st.objects[o].mapKeys.len() && !st.throwing {
-                    let mk = cloneValue(st.objects[o].mapKeys[i])
+                while i < st.objExtras[st.objects[o].extra].mapKeys.len() && !st.throwing {
+                    let mk = cloneValue(st.objExtras[st.objects[o].extra].mapKeys[i])
                     if setLikeHas(prog, st, other, mk) {
                         return JSValue.Bool(false)
                     }
@@ -7841,11 +7845,12 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
         // union / intersection / difference all build a fresh Set
         let res = newObject(st)
         st.objects[res].isSet = true
+        let _re = ensureExtra(st, res)
         pushTemp(st, JSValue.Obj(res))
         if name == "union" {
             var i: i64 = 0
-            while i < st.objects[o].mapKeys.len() {
-                mapPut(st, res, cloneValue(st.objects[o].mapKeys[i]), JSValue.Bool(true))
+            while i < st.objExtras[st.objects[o].extra].mapKeys.len() {
+                mapPut(st, res, cloneValue(st.objExtras[st.objects[o].extra].mapKeys[i]), JSValue.Bool(true))
                 i = i + 1
             }
             let iter = setLikeKeys(prog, st, other)
@@ -7861,8 +7866,8 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
         } else {
             let wantIn = name == "intersection"
             var i: i64 = 0
-            while i < st.objects[o].mapKeys.len() && !st.throwing {
-                let k = cloneValue(st.objects[o].mapKeys[i])
+            while i < st.objExtras[st.objects[o].extra].mapKeys.len() && !st.throwing {
+                let k = cloneValue(st.objExtras[st.objects[o].extra].mapKeys[i])
                 let inOther = setLikeHas(prog, st, other, k)
                 if inOther == wantIn {
                     mapPut(st, res, k, JSValue.Bool(true))
@@ -7881,9 +7886,9 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
         let arr = newArray(st)
         pushTemp(st, JSValue.Obj(arr))
         var i: i64 = 0
-        while i < st.objects[o].mapKeys.len() {
-            let k = cloneValue(st.objects[o].mapKeys[i])
-            let v = cloneValue(st.objects[o].mapVals[i])
+        while i < st.objExtras[st.objects[o].extra].mapKeys.len() {
+            let k = cloneValue(st.objExtras[st.objects[o].extra].mapKeys[i])
+            let v = cloneValue(st.objExtras[st.objects[o].extra].mapVals[i])
             if name == "keys" {
                 arrPush(st, arr, k)
             } else if name == "values" {
@@ -7897,7 +7902,7 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
                 pushTemp(st, JSValue.Obj(pair))
                 arrPush(st, pair, k)
                 if isSet {
-                    arrPush(st, pair, cloneValue(st.objects[o].mapKeys[i]))
+                    arrPush(st, pair, cloneValue(st.objExtras[st.objects[o].extra].mapKeys[i]))
                 } else {
                     arrPush(st, pair, v)
                 }
@@ -7923,11 +7928,11 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
         // the first entry not yet visited (keys are unique, so this is sound).
         var visited: Vec<JSValue> = Vec.new()
         var i: i64 = 0
-        while i < st.objects[o].mapKeys.len() && !st.throwing {
-            let k = cloneValue(st.objects[o].mapKeys[i])
-            var v = cloneValue(st.objects[o].mapVals[i])
+        while i < st.objExtras[st.objects[o].extra].mapKeys.len() && !st.throwing {
+            let k = cloneValue(st.objExtras[st.objects[o].extra].mapKeys[i])
+            var v = cloneValue(st.objExtras[st.objects[o].extra].mapVals[i])
             if isSet {
-                v = cloneValue(st.objects[o].mapKeys[i])
+                v = cloneValue(st.objExtras[st.objects[o].extra].mapKeys[i])
             }
             visited.push(cloneValue(k))
             var cbArgs: Vec<JSValue> = Vec.new()
@@ -7938,7 +7943,7 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
             if st.throwing {
                 break
             }
-            if i < st.objects[o].mapKeys.len() && sameValue(st.objects[o].mapKeys[i], k) {
+            if i < st.objExtras[st.objects[o].extra].mapKeys.len() && sameValue(st.objExtras[st.objects[o].extra].mapKeys[i], k) {
                 i = i + 1
             } else {
                 let j = mapFind(st, o, k)
@@ -7946,12 +7951,12 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
                     i = j + 1
                 } else {
                     var p: i64 = 0
-                    var next = st.objects[o].mapKeys.len()
-                    while p < st.objects[o].mapKeys.len() {
+                    var next = st.objExtras[st.objects[o].extra].mapKeys.len()
+                    while p < st.objExtras[st.objects[o].extra].mapKeys.len() {
                         var seen = false
                         var q: i64 = 0
                         while q < visited.len() {
-                            if sameValue(st.objects[o].mapKeys[p], visited[q]) {
+                            if sameValue(st.objExtras[st.objects[o].extra].mapKeys[p], visited[q]) {
                                 seen = true
                                 q = visited.len()
                             }
@@ -7959,7 +7964,7 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
                         }
                         if !seen {
                             next = p
-                            p = st.objects[o].mapKeys.len()
+                            p = st.objExtras[st.objects[o].extra].mapKeys.len()
                         }
                         p = p + 1
                     }
@@ -9888,14 +9893,14 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                         iterable = true
                         let isSet = st.objects[o].isSet
                         var e: i64 = 0
-                        while e < st.objects[o].mapKeys.len() {
+                        while e < st.objExtras[st.objects[o].extra].mapKeys.len() {
                             if isSet {
-                                vals.push(cloneValue(st.objects[o].mapKeys[e]))
+                                vals.push(cloneValue(st.objExtras[st.objects[o].extra].mapKeys[e]))
                             } else {
                                 let pair = newArray(st)
                                 pushTemp(st, JSValue.Obj(pair))
-                                arrPush(st, pair, cloneValue(st.objects[o].mapKeys[e]))
-                                arrPush(st, pair, cloneValue(st.objects[o].mapVals[e]))
+                                arrPush(st, pair, cloneValue(st.objExtras[st.objects[o].extra].mapKeys[e]))
+                                arrPush(st, pair, cloneValue(st.objExtras[st.objects[o].extra].mapVals[e]))
                                 popTemp(st)
                                 arrPush(st, holder, JSValue.Obj(pair))
                                 vals.push(JSValue.Obj(pair))
