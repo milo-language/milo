@@ -557,7 +557,13 @@ fn taElem(st: &Interp, view: i64, i: i64): f64 {
     if buf < 0 || i < 0 || i >= st.objects[view].taLen {
         return 0.0
     }
-    let at = st.objects[view].taOffset + i * taWidth(st.objects[view].taKind)
+    let w = taWidth(st.objects[view].taKind)
+    let at = st.objects[view].taOffset + i * w
+    // the backing buffer may have been resized/detached under this view (a sort
+    // comparator or a length getter can do it) — out-of-range reads yield 0
+    if at < 0 || at + w > st.objects[buf].bytes.len() {
+        return 0.0
+    }
     return taLoad(st.objects[buf].bytes, st.objects[view].taKind, at)
 }
 
@@ -567,7 +573,12 @@ fn taSetElem(st: &mut Interp, view: i64, i: i64, v: f64) {
         return
     }
     let kind = st.objects[view].taKind
-    let at = st.objects[view].taOffset + i * taWidth(kind)
+    let w = taWidth(kind)
+    let at = st.objects[view].taOffset + i * w
+    // a resized/detached buffer drops the write rather than overflowing its bytes
+    if at < 0 || at + w > st.objects[buf].bytes.len() {
+        return
+    }
     taStore(st.objects[buf].bytes, kind, at, v)
 }
 
