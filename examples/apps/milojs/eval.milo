@@ -6940,6 +6940,17 @@ fn instantiateClass(prog: &Prog, classIdx: i64, st: &mut Interp, scope: i64): JS
         }
         i = i + 1
     }
+    // static field initializers, evaluated in the class scope (so they can see
+    // the class binding and static methods) and set on the constructor object
+    var sf: i64 = 0
+    while sf < prog.classes[classIdx].staticFieldNames.len() {
+        let sfName = prog.classes[classIdx].staticFieldNames[sf].clone()
+        let sfInit = prog.classes[classIdx].staticFieldInits[sf]
+        let statics = getFuncStatics(st, ctorFn, classScope)
+        let sfVal = evalExpr(prog, sfInit, st, classScope)
+        objSet(st, statics, sfName, sfVal)
+        sf = sf + 1
+    }
     popActive(st)
     return classVal
 }

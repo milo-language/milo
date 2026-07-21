@@ -163,6 +163,11 @@ struct ClassDef {
     // an empty function used as the constructor when none is declared
     defaultCtor: i64,
     members: Vec<ClassMember>,
+    // static field initializers (name + init expr index) applied to the
+    // constructor object when the class value is built. Instance fields are not
+    // here: they are injected as `this.name = init` statements into the ctor.
+    staticFieldNames: Vec<string>,
+    staticFieldInits: Vec<i64>,
 }
 
 // One `case v:` / `default:` arm. `test` is -1 for default. Bodies are separate

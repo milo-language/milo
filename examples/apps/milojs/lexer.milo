@@ -587,6 +587,21 @@ fn lex(src: &string): Vec<Token> {
                 kind: T_NUM, num: v, text: "", nlBefore: false
             }
             )
+        } else if c == 35 as u8 && i + 1 < n && isIdentStart(src[i + 1]) {
+            // private name #foo — lex as ONE identifier token keeping the '#', so
+            // it occupies a keyspace distinct from the public property `foo` (no
+            // leak, and `#v` never collides with a public `v` accessor)
+            var pname = String.withCapacity(16)
+            pname.push(c)
+            i = i + 1
+            while i < n && (isIdentStart(src[i]) || isDigitByte(src[i])) {
+                pname.push(src[i])
+                i = i + 1
+            }
+            toks.push(Token {
+                kind: T_IDENT, num: 0.0, text: pname, nlBefore: false
+            }
+            )
         } else if isIdentStart(c) {
             var name = String.withCapacity(16)
             while i < n && (isIdentStart(src[i]) || isDigitByte(src[i])) {

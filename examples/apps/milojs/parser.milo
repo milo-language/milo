@@ -1708,7 +1708,7 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
     // the slot is reserved before the body is parsed so the class has a unique
     // index to key its super binding on while `super(...)` is being rewritten
     prog.classes.push(ClassDef {
-        name: "", superKey: "", superName: "", ctorFn: -1, defaultCtor: -1, members: Vec.new()
+        name: "", superKey: "", superName: "", ctorFn: -1, defaultCtor: -1, members: Vec.new(), staticFieldNames: Vec.new(), staticFieldInits: Vec.new()
     }
     )
     let classIdx = prog.classes.len() - 1
@@ -1730,6 +1730,11 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_LBRACE)
     var ctorFn: i64 = -1
     var members: Vec<ClassMember> = Vec.new()
+    // instance-field init statements (this.name = init), in declaration order,
+    // and static-field (name, init) pairs collected while scanning the body
+    var fieldStmts: Vec<i64> = Vec.new()
+    var staticFieldNames: Vec<string> = Vec.new()
+    var staticFieldInits: Vec<i64> = Vec.new()
     while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
         if peekKind(p) == T_SEMI {
             advance(p)
@@ -1794,19 +1799,43 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
                     )
                 }
             } else {
-                // a class field — skip its initializer, it is not supported
+                // a class field `name = init` (or bare `name;`). Instance fields
+                // become `this.name = init` in the constructor; static fields are
+                // applied to the constructor object at class-build time.
+                var initE = addExpr(prog, Expr.UndefLit)
                 if peekKind(p) == T_EQ {
                     advance(p)
-                    let _ = parseExpr(p, prog)
+                    initE = parseExpr(p, prog)
                 }
                 if peekKind(p) == T_SEMI {
                     advance(p)
+                }
+                if isStatic {
+                    staticFieldNames.push(mname.clone())
+                    staticFieldInits.push(initE)
+                } else {
+                    let thisE = addExpr(prog, Expr.Ident("this"))
+                    let keyE = addExpr(prog, Expr.StrLit(mname.clone()))
+                    let setE = addExpr(prog, Expr.SetMember(thisE, keyE, initE))
+                    fieldStmts.push(addStmt(prog, Stmt.ExprStmt(setE)))
                 }
             }
         }
     }
     expect(p, T_RBRACE)
     p.curClass = savedClass
+    // Inject instance-field initializers into a DECLARED constructor: prepend in
+    // reverse so they run in declaration order at the top of the ctor. (milojs
+    // binds `this` for the whole ctor, so this is fine even ahead of a super()
+    // call in a derived ctor.) The default-ctor case is handled below, after the
+    // super() forwarding call, so fields init after super as the spec requires.
+    if ctorFn >= 0 && fieldStmts.len() > 0 {
+        var fi = fieldStmts.len() - 1
+        while fi >= 0 {
+            prependStmt(prog, prog.funcs[ctorFn].body, fieldStmts[fi])
+            fi = fi - 1
+        }
+    }
     // a class with no constructor still needs a callable function to be the
     // class value. For a derived class the default constructor forwards to the
     // parent: `constructor(...args) { super(...args) }`. Without this, a subclass
@@ -1823,6 +1852,15 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
         let superCall = addExpr(prog, Expr.Call(superRef, prog.argLists.len() - 1))
         defaultBody.push(addStmt(prog, Stmt.ExprStmt(superCall)))
     }
+    // no declared ctor: the instance-field inits ARE (most of) the ctor body,
+    // appended after any super() forwarding call
+    if ctorFn < 0 {
+        var fj: i64 = 0
+        while fj < fieldStmts.len() {
+            defaultBody.push(fieldStmts[fj])
+            fj = fj + 1
+        }
+    }
     prog.blocks.push(defaultBody)
     var noParams: Vec<string> = Vec.new()
     prog.funcs.push(FuncDef {
@@ -1831,7 +1869,7 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
     )
     let defaultCtor = prog.funcs.len() - 1
     prog.classes[classIdx] = ClassDef {
-        name: name, superKey: superKey, superName: superName, ctorFn: ctorFn, defaultCtor: defaultCtor, members: members
+        name: name, superKey: superKey, superName: superName, ctorFn: ctorFn, defaultCtor: defaultCtor, members: members, staticFieldNames: staticFieldNames, staticFieldInits: staticFieldInits
     }
     return classIdx
 }

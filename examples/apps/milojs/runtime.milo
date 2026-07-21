@@ -783,19 +783,23 @@ fn objGet(st: &Interp, obj: i64, key: &string): JSValue {
 }
 
 fn objSet(st: &mut Interp, obj: i64, key: string, value: JSValue) {
+    // private fields (#name, the only keys milojs stores with a leading '#') are
+    // non-enumerable: they must not appear in JSON.stringify, Object.keys, for-in
+    // or spread. Setting it here covers every enumeration site at once.
+    let enumer = !(key.len() > 0 && key[0] == 35 as u8)
     var i: i64 = 0
     let n = st.objects[obj].props.len()
     while i < n {
         if st.objects[obj].props[i].key == key {
             st.objects[obj].props[i] = Prop {
-                key: key, value: value, getter: JSValue.Undefined, setter: JSValue.Undefined, isAccessor: false, writable: true, enumerable: true, configurable: true
+                key: key, value: value, getter: JSValue.Undefined, setter: JSValue.Undefined, isAccessor: false, writable: true, enumerable: enumer, configurable: true
             }
             return
         }
         i = i + 1
     }
     st.objects[obj].props.push(Prop {
-        key: key, value: value, getter: JSValue.Undefined, setter: JSValue.Undefined, isAccessor: false, writable: true, enumerable: true, configurable: true
+        key: key, value: value, getter: JSValue.Undefined, setter: JSValue.Undefined, isAccessor: false, writable: true, enumerable: enumer, configurable: true
     }
     )
 }
