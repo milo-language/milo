@@ -1,0 +1,18 @@
+// std/xxhash: XXH64 digests, bit-for-bit against `xxhsum -H64` (seed 0).
+// Vectors span every path: empty, a <32 body (tail 8/4/1 lanes), a 43-byte body
+// (main loop + tail), and a 40-byte body (main 32-byte stripe).
+
+from "std/xxhash" import {
+    xxh64Hex
+}
+
+fn main() {
+    // @expect: ef46db3751d8e999
+    print(xxh64Hex("", 0))
+    // @expect: 45ab6734b21e6968
+    print(xxh64Hex("hello world", 0))
+    // @expect: ed714233c5a9a792
+    print(xxh64Hex("the quick brown fox jumps over the lazy dog", 0))
+    // @expect: c03356d44653358a
+    print(xxh64Hex("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN", 0))
+}

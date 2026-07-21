@@ -65,4 +65,9 @@ fn main() {
     // Compressed block (type 2) — rejected with a clear error, not a crash.
     // @expect: true
     print(decode("28b52ffd0458450000106161010022c002d79af998").startsWith("ERR:zstd: compressed"))
+
+    // Same raw+checksum frame with its last checksum byte flipped b2->b3 — the
+    // XXH64 content check must reject it.
+    // @expect: true
+    print(decode("28b52ffd045859000068656c6c6f20776f726c6468691eb3").startsWith("ERR:zstd: content checksum"))
 }

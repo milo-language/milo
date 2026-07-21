@@ -7,9 +7,13 @@
 // "not yet supported" error and are the tracked next slice; the frame/block scaffolding
 // here is exactly what that slice plugs into.
 //
-// The 4-byte content checksum (XXH64, when the frame header flags it) is parsed past
-// but not verified — XXH64 is a separate module. Structure mirrors std/inflate: a
-// borrowed &string input, an owned output string, integer status on the hot path.
+// The 4-byte content checksum (low 32 bits of XXH64 of the decompressed content, when
+// the frame header flags it) is verified via std/xxhash. Structure mirrors std/inflate:
+// a borrowed &string input, an owned output string, integer status on the hot path.
+
+from "std/xxhash" import {
+    xxh64
+}
 
 // Read a little-endian unsigned integer of `n` bytes (n in 1..8) at `pos`.
 fn _leN(src: &string, pos: i64, n: i64): i64 {
@@ -131,8 +135,16 @@ fn zstdDecompress(src: &string): Result<string, string> {
             return Result.Err("zstd: reserved block type")
         }
     }
-    // Skip the 4-byte content checksum if present (XXH64, not yet verified).
+    // Verify the 4-byte content checksum if present: low 32 bits of XXH64(out, seed 0).
     if hdr.hasChecksum {
+        if pos + 4 > src.len {
+            return Result.Err("zstd: truncated checksum")
+        }
+        let want = _leN(src, pos, 4)
+        let got = (xxh64(out, 0) & 0xffffffff) as i64
+        if got != want {
+            return Result.Err("zstd: content checksum mismatch")
+        }
         pos = pos + 4
     }
     return Result.Ok(out)

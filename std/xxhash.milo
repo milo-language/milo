@@ -1,0 +1,137 @@
+// std/xxhash — pure-Milo XXH64 (Yann Collet's xxHash, the non-cryptographic hash
+// zstd uses for its frame content checksum). Matches `xxhsum -H64` bit-for-bit.
+//
+// All arithmetic is unsigned 64-bit with wraparound, so every add/mul is spelled
+// `.wrappingAdd` / `.wrappingMul` — Milo traps on overflow by default, and XXH64's
+// mixing relies on mod-2^64 wrap. Shifts are on `u64`, so `>>` is logical. The five
+// primes are functions, not module-scope `let`s (Milo forbids runtime global init).
+
+fn _p1(): u64 {
+    return 0x9E3779B185EBCA87
+}
+
+fn _p2(): u64 {
+    return 0xC2B2AE3D27D4EB4F
+}
+
+fn _p3(): u64 {
+    return 0x165667B19E3779F9
+}
+
+fn _p4(): u64 {
+    return 0x85EBCA77C2B2AE63
+}
+
+fn _p5(): u64 {
+    return 0x27D4EB2F165667C5
+}
+
+fn _rotl(x: u64, r: u64): u64 {
+    return (x << r) | (x >> (64 - r))
+}
+
+// One accumulator round: acc = rotl(acc + input*P2, 31) * P1.
+fn _round(acc: u64, input: u64): u64 {
+    let a = acc.wrappingAdd(input.wrappingMul(_p2()))
+    return _rotl(a, 31).wrappingMul(_p1())
+}
+
+// Fold one 64-bit lane into the digest after the main loop.
+fn _mergeRound(acc: u64, val: u64): u64 {
+    let v = _round(0, val)
+    let a = (acc ^ v).wrappingMul(_p1())
+    return a.wrappingAdd(_p4())
+}
+
+fn _read64(src: &string, p: i64): u64 {
+    var v: u64 = 0
+    for i in 0..8 {
+        v = v | ((src[p + i] as u64) << ((8 * i) as u64))
+    }
+    return v
+}
+
+fn _read32(src: &string, p: i64): u64 {
+    var v: u64 = 0
+    for i in 0..4 {
+        v = v | ((src[p + i] as u64) << ((8 * i) as u64))
+    }
+    return v
+}
+
+// XXH64 digest of `src` with the given seed. `xxhsum -H64` uses seed 0.
+fn xxh64(src: &string, seed: u64): u64 {
+    let len = src.len
+    var acc: u64 = 0
+    var p: i64 = 0
+    if len >= 32 {
+        // Four independent lanes, each consuming an 8-byte word per 32-byte stripe.
+        var v1 = seed.wrappingAdd(_p1()).wrappingAdd(_p2())
+        var v2 = seed.wrappingAdd(_p2())
+        var v3 = seed
+        var v4 = seed.wrappingSub(_p1())
+        let limit = len - 32
+        while p <= limit {
+            v1 = _round(v1, _read64(src, p))
+            p = p + 8
+            v2 = _round(v2, _read64(src, p))
+            p = p + 8
+            v3 = _round(v3, _read64(src, p))
+            p = p + 8
+            v4 = _round(v4, _read64(src, p))
+            p = p + 8
+        }
+        acc = _rotl(v1, 1).wrappingAdd(_rotl(v2, 7)).wrappingAdd(_rotl(v3, 12)).wrappingAdd(_rotl(v4, 18))
+        acc = _mergeRound(acc, v1)
+        acc = _mergeRound(acc, v2)
+        acc = _mergeRound(acc, v3)
+        acc = _mergeRound(acc, v4)
+    } else {
+        acc = seed.wrappingAdd(_p5())
+    }
+    acc = acc.wrappingAdd(len as u64)
+    // Tail: 8-byte words, then a 4-byte word, then single bytes.
+    while p + 8 <= len {
+        let k1 = _round(0, _read64(src, p))
+        acc = (acc ^ k1)
+        acc = _rotl(acc, 27).wrappingMul(_p1()).wrappingAdd(_p4())
+        p = p + 8
+    }
+    if p + 4 <= len {
+        acc = acc ^ _read32(src, p).wrappingMul(_p1())
+        acc = _rotl(acc, 23).wrappingMul(_p2()).wrappingAdd(_p3())
+        p = p + 4
+    }
+    while p < len {
+        acc = acc ^ (src[p] as u64).wrappingMul(_p5())
+        acc = _rotl(acc, 11).wrappingMul(_p1())
+        p = p + 1
+    }
+    // Final avalanche.
+    acc = acc ^ (acc >> 33)
+    acc = acc.wrappingMul(_p2())
+    acc = acc ^ (acc >> 29)
+    acc = acc.wrappingMul(_p3())
+    acc = acc ^ (acc >> 32)
+    return acc
+}
+
+fn _hexNibble(n: u64): u8 {
+    if n < 10 {
+        return ('0' as u64 + n) as u8
+    }
+    return ('a' as u64 + (n - 10)) as u8
+}
+
+// 16-char lowercase hex of the digest, matching `xxhsum -H64` output.
+fn xxh64Hex(src: &string, seed: u64): string {
+    let h = xxh64(src, seed)
+    var out = ""
+    var i: i64 = 15
+    while i >= 0 {
+        let nib = (h >> ((i as u64) * 4)) & 0xf
+        out.push(_hexNibble(nib))
+        i = i - 1
+    }
+    return out
+}
