@@ -1,0 +1,120 @@
+// std/sha1 — pure-Milo SHA-1 (FIPS 180-4). No platform crypto dependency.
+//
+// SHA-1 is cryptographically broken for collision resistance — do NOT use it for
+// signatures or dedup against an adversary. It is still the content-address of git
+// objects and the digest in the WebSocket handshake and legacy TLS, so a pure-Milo
+// implementation is what those wire formats need. Same constant-time / fixed-round
+// (80 rounds) shape as std/sha256.
+
+let MASK32: i64 = 0xffffffff
+
+fn _rotl(x: i64, n: i64): i64 {
+    return ((x << n) | (x >> (32 - n))) & MASK32
+}
+
+fn _hexNibble(v: i64): u8 {
+    if v < 10 {
+        return (v + 48) as u8
+    }
+    return (v - 10 + 97) as u8
+}
+
+fn _pad(input: &string): string {
+    var m = ""
+    for i in 0..input.len {
+        m.push(input[i])
+    }
+    m.push(0x80 as u8)
+    while m.len % 64 != 56 {
+        m.push(0 as u8)
+    }
+    let bits = input.len * 8
+    for i in 0..8 {
+        m.push(((bits >> ((7 - i) * 8)) & 0xff) as u8)
+    }
+    return m
+}
+
+// SHA-1 digest as 20 raw bytes.
+fn sha1Bytes(input: &string): string {
+    let m = _pad(input)
+    var h0: i64 = 0x67452301
+    var h1: i64 = 0xefcdab89
+    var h2: i64 = 0x98badcfe
+    var h3: i64 = 0x10325476
+    var h4: i64 = 0xc3d2e1f0
+
+    var w = Vec.new()
+    for _i in 0..80 {
+        w.push(0)
+    }
+
+    let nblocks = m.len / 64
+    for blk in 0..nblocks {
+        let base = blk * 64
+        for t in 0..16 {
+            let o = base + t * 4
+            w[t] = (((m[o] as i64) << 24) | ((m[o + 1] as i64) << 16) | ((m[o + 2] as i64) << 8) | (m[o + 3] as i64)) & MASK32
+        }
+        for t in 16..80 {
+            w[t] = _rotl((w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16]) & MASK32, 1)
+        }
+
+        var a = h0
+        var b = h1
+        var c = h2
+        var d = h3
+        var e = h4
+
+        for t in 0..80 {
+            var f: i64 = 0
+            var k: i64 = 0
+            if t < 20 {
+                f = (b & c) | ((b ^ MASK32) & d)
+                k = 0x5a827999
+            } else if t < 40 {
+                f = b ^ c ^ d
+                k = 0x6ed9eba1
+            } else if t < 60 {
+                f = (b & c) | (b & d) | (c & d)
+                k = 0x8f1bbcdc
+            } else {
+                f = b ^ c ^ d
+                k = 0xca62c1d6
+            }
+            let temp = (_rotl(a, 5) + (f & MASK32) + e + k + w[t]) & MASK32
+            e = d
+            d = c
+            c = _rotl(b, 30)
+            b = a
+            a = temp
+        }
+
+        h0 = (h0 + a) & MASK32
+        h1 = (h1 + b) & MASK32
+        h2 = (h2 + c) & MASK32
+        h3 = (h3 + d) & MASK32
+        h4 = (h4 + e) & MASK32
+    }
+
+    let words: [i64; 5] = [h0, h1, h2, h3, h4]
+    var out = ""
+    for i in 0..5 {
+        for b in 0..4 {
+            out.push(((words[i] >> ((3 - b) * 8)) & 0xff) as u8)
+        }
+    }
+    return out
+}
+
+// SHA-1 as a 40-char lowercase hex string.
+fn sha1(input: &string): string {
+    let digest = sha1Bytes(input)
+    var out = ""
+    for i in 0..digest.len {
+        let byte = digest[i] as i64
+        out.push(_hexNibble((byte >> 4) & 0xf))
+        out.push(_hexNibble(byte & 0xf))
+    }
+    return out
+}

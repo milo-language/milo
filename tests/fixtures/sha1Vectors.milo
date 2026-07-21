@@ -1,0 +1,16 @@
+// @expect: da39a3ee5e6b4b0d3255bfef95601890afd80709
+// @expect: a9993e364706816aba3e25717850c26c9cd0d89d
+// @expect: 2fd4e1c67a2d28fced849ee1bb76e7391b93eb12
+// @expect: de9f2c7fd25e1b3afad3e85a0bd17d9b100db4b3
+from "std/sha1" import {
+    sha1
+}
+
+// Checked against `shasum -a 1`; git blob object ids use this construction.
+fn main(): i32 {
+    print(sha1(""))
+    print(sha1("abc"))
+    print(sha1("The quick brown fox jumps over the lazy dog"))
+    print(sha1("The quick brown fox jumps over the lazy cog"))
+    return 0
+}
