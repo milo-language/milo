@@ -1941,10 +1941,12 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                     }
                     arrPush(st, arr, JSValue.Str("length"))
                 }
-                var k: i64 = 0
-                while k < st.objects[h].props.len() {
+                let order = enumOrder(st, h)
+                var oi: i64 = 0
+                while oi < order.len() {
+                    let k = order[oi]
                     arrPush(st, arr, JSValue.Str(st.objects[h].props[k].key.clone()))
-                    k = k + 1
+                    oi = oi + 1
                 }
                 popTemp(st)
             }
@@ -2844,11 +2846,12 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                             i = i + 1
                         }
                     }
-                    var k: i64 = 0
-                    let np = st.objects[o].props.len()
-                    while k < np {
+                    let order = enumOrder(st, o)
+                    var oi: i64 = 0
+                    while oi < order.len() {
+                        let k = order[oi]
+                        oi = oi + 1
                         if !st.objects[o].props[k].enumerable {
-                            k = k + 1
                             continue
                         }
                         let key = st.objects[o].props[k].key.clone()
@@ -2863,7 +2866,6 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                         } else {
                             arrPush(st, arr, v)
                         }
-                        k = k + 1
                     }
                 }
                 _ => {
@@ -2923,13 +2925,14 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                             i = i + 1
                         }
                     }
-                    var k: i64 = 0
-                    let np = st.objects[o].props.len()
-                    while k < np {
+                    let order = enumOrder(st, o)
+                    var oi: i64 = 0
+                    while oi < order.len() {
+                        let k = order[oi]
                         if st.objects[o].props[k].enumerable {
                             arrPush(st, arr, JSValue.Str(st.objects[o].props[k].key.clone()))
                         }
-                        k = k + 1
+                        oi = oi + 1
                     }
                 }
                 _ => {
@@ -2953,8 +2956,11 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             let srcVal = cloneValue(argVals[s])
             let src = propertyBagOf(st, srcVal)
             if src >= 0 {
-                var k: i64 = 0
-                while k < st.objects[src].props.len() {
+                let order = enumOrder(st, src)
+                var oi: i64 = 0
+                while oi < order.len() {
+                    let k = order[oi]
+                    oi = oi + 1
                     if st.objects[src].props[k].enumerable {
                         let key = st.objects[src].props[k].key.clone()
                         // invoke a getter rather than copying its unused value slot
@@ -2967,7 +2973,6 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                         }
                         setMember(st, t, key, v)
                     }
-                    k = k + 1
                 }
                 // enumerable elements come across too (assign from an array)
                 var e: i64 = 0
@@ -4673,10 +4678,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                                 e = e + 1
                             }
                         }
-                        var k: i64 = 0
-                        while k < st.objects[src].props.len() {
+                        let order = enumOrder(st, src)
+                        var oi: i64 = 0
+                        while oi < order.len() {
+                            let k = order[oi]
+                            oi = oi + 1
                             if !st.objects[src].props[k].enumerable {
-                                k = k + 1
                                 continue
                             }
                             let pk = st.objects[src].props[k].key.clone()
@@ -4689,7 +4696,6 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                                 pv = cloneValue(st.objects[src].props[k].value)
                             }
                             objSet(st, obj, pk, pv)
-                            k = k + 1
                         }
                     }
                 } else {
@@ -5586,12 +5592,14 @@ fn proxyOwnEnumKeys(prog: &Prog, st: &mut Interp, o: i64): Vec<string> {
                     e = e + 1
                 }
             }
-            var k: i64 = 0
-            while k < st.objects[th].props.len() {
+            let order = enumOrder(st, th)
+            var oi: i64 = 0
+            while oi < order.len() {
+                let k = order[oi]
                 if st.objects[th].props[k].enumerable {
                     out.push(st.objects[th].props[k].key.clone())
                 }
-                k = k + 1
+                oi = oi + 1
             }
         }
         return out
@@ -9976,13 +9984,14 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                     // own properties, then inherited ones (JS enumerates the chain)
                     var cur = o
                     while cur >= 0 {
-                        var k: i64 = 0
-                        let np = st.objects[cur].props.len()
-                        while k < np {
+                        let order = enumOrder(st, cur)
+                        var oi: i64 = 0
+                        while oi < order.len() {
+                            let k = order[oi]
                             if st.objects[cur].props[k].enumerable {
                                 keys.push(st.objects[cur].props[k].key.clone())
                             }
-                            k = k + 1
+                            oi = oi + 1
                         }
                         cur = st.objects[cur].proto
                     }

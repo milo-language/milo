@@ -996,6 +996,65 @@ fn asArrayIndex(key: &string): i64 {
     return idx
 }
 
+// JS own-property enumeration order: integer-index keys ascending first, then
+// the remaining string keys in insertion order. Returns prop indices into
+// st.objects[o].props in that order. Symbol-keyed props (stored with the
+// "@@sym:" prefix, including internal ones like Symbol.iterator) are omitted —
+// string-key enumeration never yields symbols in JS. Enumeration sites
+// (Object.keys/values/entries, for-in, spread, Object.assign) iterate these
+// instead of 0..len so `{ 2:a, 1:b, 10:c, x:d }` enumerates 1,2,10,x and a
+// symbol key never leaks into keys()/for-in/JSON — matching V8/node.
+// A property key is a symbol iff it carries the "@@sym:" sentinel prefix that
+// symbol values stringify to (see makeSymbol in eval.milo). Kept here so
+// runtime.milo stays free of an eval.milo import cycle.
+fn isSymbolKey(s: &string): bool {
+    return s.len() >= 6 && s[0] == '@' && s[1] == '@' && s[2] == 's' && s[3] == 'y' && s[4] == 'm' && s[5] == ':'
+}
+
+fn enumOrder(st: &Interp, o: i64): Vec<i64> {
+    let np = st.objects[o].props.len()
+    var ints: Vec<i64> = Vec.new()
+    var strs: Vec<i64> = Vec.new()
+    var i: i64 = 0
+    while i < np {
+        if isSymbolKey(st.objects[o].props[i].key) {
+            i = i + 1
+            continue
+        }
+        if asArrayIndex(st.objects[o].props[i].key) >= 0 {
+            ints.push(i)
+        } else {
+            strs.push(i)
+        }
+        i = i + 1
+    }
+    // insertion sort ints by their integer key value (property sets are small)
+    var a: i64 = 1
+    while a < ints.len() {
+        let cur = ints[a]
+        let curKey = asArrayIndex(st.objects[o].props[cur].key)
+        var b: i64 = a - 1
+        while b >= 0 && asArrayIndex(st.objects[o].props[ints[b]].key) > curKey {
+            ints[b + 1] = ints[b]
+            b = b - 1
+        }
+        ints[b + 1] = cur
+        a = a + 1
+    }
+    var out: Vec<i64> = Vec.new()
+    var j: i64 = 0
+    while j < ints.len() {
+        out.push(ints[j])
+        j = j + 1
+    }
+    j = 0
+    while j < strs.len() {
+        out.push(strs[j])
+        j = j + 1
+    }
+    return out
+}
+
 fn arrGet(st: &Interp, obj: i64, idx: i64): JSValue {
     if idx < 0 || idx >= st.objects[obj].elems.len() {
         return JSValue.Undefined
