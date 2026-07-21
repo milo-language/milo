@@ -1,0 +1,50 @@
+// std/zstd encoder ↔ decoder round-trip. zstdCompressRaw emits a spec-valid zstd frame
+// (Raw blocks + XXH64 trailer) that `zstd -d` also accepts; here it is closed against
+// the in-language decoder across empty, small, multi-block, and binary inputs.
+
+from "std/zstd" import {
+    zstdCompressRaw, zstdDecompress
+}
+
+fn roundtrips(src: &string): bool {
+    let framed = zstdCompressRaw(src)
+    match zstdDecompress(framed) {
+        Result.Ok(s) => {
+            return s == src
+        }
+        Result.Err(e) => {
+            return false
+        }
+    }
+}
+
+fn main() {
+    // empty
+    // @expect: true
+    print(roundtrips(""))
+
+    // short text
+    // @expect: true
+    print(roundtrips("the quick brown fox"))
+
+    // all byte values 0..255 (binary, includes NUL) built into one string
+    var bin = ""
+    for i in 0..256 {
+        bin.push(i as u8)
+    }
+    // @expect: true
+    print(roundtrips(bin))
+
+    // 205000 bytes → spans more than one 128 KiB Raw block
+    var big = ""
+    for _i in 0..5000 {
+        big = big + "pack my box with five dozen liquor jugs. "
+    }
+    // @expect: 205000
+    print(big.len)
+    // raw framing has overhead (no compression), so the frame is larger than input
+    // @expect: true
+    print(zstdCompressRaw(big).len > big.len)
+    // @expect: true
+    print(roundtrips(big))
+}

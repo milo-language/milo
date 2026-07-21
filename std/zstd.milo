@@ -6,8 +6,10 @@
 // complete FSE (tANS) + Huffman decoder over backward bitstreams, repeat-offset
 // resolution, multi-block LZ77 across the whole window, cross-block entropy-table reuse,
 // and XXH64 checksum verification. Real `zstd` CLI output round-trips byte-for-byte at
-// any size — verified on 1.2 MB of source. Out of scope: dictionaries, multi-frame
-// concatenation, and encoding (decode only).
+// any size — verified on 1.2 MB of source. Encoding: `zstdCompressRaw` emits spec-valid
+// Raw-block frames (framing only, no entropy stage yet — `zstd -d` accepts them);
+// LZ77 + FSE-coded compression is the next slice. Out of scope: dictionaries and
+// multi-frame concatenation.
 //
 // The 4-byte content checksum (low 32 bits of XXH64 of the decompressed content, when
 // the frame header flags it) is verified via std/xxhash. Structure mirrors std/inflate:
@@ -964,4 +966,60 @@ fn zstdDecompress(src: &string): Result<string, string> {
         pos = pos + 4
     }
     return Result.Ok(out)
+}
+
+// ── Encoding ──
+
+fn _enc32LE(out: &mut string, v: i64) {
+    out.push((v & 0xff) as u8)
+    out.push(((v >> 8) & 0xff) as u8)
+    out.push(((v >> 16) & 0xff) as u8)
+    out.push(((v >> 24) & 0xff) as u8)
+}
+
+// Emit a Raw block header (3 bytes LE): last-block flag, type 0, block size.
+fn _encRawBlockHeader(out: &mut string, size: i64, last: bool) {
+    var bh = size << 3 // type 0 (Raw) in bits 1..2
+    if last {
+        bh = bh | 1
+    }
+    out.push((bh & 0xff) as u8)
+    out.push(((bh >> 8) & 0xff) as u8)
+    out.push(((bh >> 16) & 0xff) as u8)
+}
+
+// Encode `src` as a zstd frame of Raw blocks (RFC 8878). No entropy stage — this is
+// valid, `zstd -d`-decodable output at zero compression; the compressing path (LZ77 +
+// FSE-coded sequences) builds on this frame scaffolding. Single-segment header carries
+// the content size, and an XXH64 content checksum is appended.
+fn zstdCompressRaw(src: &string): string {
+    let maxBlock: i64 = 131072 // 128 KiB, the zstd block cap
+    var out = ""
+    out.push(0x28 as u8)
+    out.push(0xb5 as u8)
+    out.push(0x2f as u8)
+    out.push(0xfd as u8)
+    // Frame_Header_Descriptor: Single_Segment (0x20) + Content_Checksum (0x04) +
+    // Frame_Content_Size flag 2 → a 4-byte content size (0xc0 = flag 2 in bits 6..7).
+    out.push(0xa4 as u8)
+    _enc32LE(out, src.len)
+    if src.len == 0 {
+        _encRawBlockHeader(out, 0, true)
+    }
+    var pos: i64 = 0
+    while pos < src.len {
+        let remaining = src.len - pos
+        var bsize = remaining
+        if bsize > maxBlock {
+            bsize = maxBlock
+        }
+        let last = pos + bsize >= src.len
+        _encRawBlockHeader(out, bsize, last)
+        for i in 0..bsize {
+            out.push(src[pos + i])
+        }
+        pos = pos + bsize
+    }
+    _enc32LE(out, (xxh64(src, 0) & 0xffffffff) as i64)
+    return out
 }
