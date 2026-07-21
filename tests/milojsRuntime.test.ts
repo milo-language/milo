@@ -38,17 +38,19 @@ for (const file of files) {
   test(`runtime/${file.replace(".js", "")}`, () => {
     const exp = join(RUNTIME_DIR, file.replace(".js", ".expected"));
     if (!existsSync(exp)) return; // no expectation → nothing to assert
-    // -s KILL: a wedged milojs (e.g. a regressed blocking accept) ignores SIGTERM,
-    // so the default signal would leave it running past the timeout. A hung
-    // fixture must fail loudly, not hang the suite.
+    // execSync's own timeout (+ SIGKILL) rather than the timeout(1) binary, which
+    // is absent on the macOS CI runner. A wedged milojs (e.g. a regressed blocking
+    // accept) ignores SIGTERM, so kill with SIGKILL — a hung fixture must fail
+    // loudly, not hang the suite.
     let got: string;
     try {
-      got = execSync(`timeout -s KILL 60 ${OUT} ${join(RUNTIME_DIR, file)}`, {
+      got = execSync(`${OUT} ${join(RUNTIME_DIR, file)}`, {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
+        timeout: 60000,
+        killSignal: "SIGKILL",
       });
     } catch (e: any) {
-      // timeout kills with 124/137; surface the partial output for debugging.
       throw new Error(`runtime fixture ${file} failed or hung:\n${e.stdout ?? ""}${e.stderr ?? ""}`);
     }
     const expected = readFileSync(exp, "utf-8").trim();
