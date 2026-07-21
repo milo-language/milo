@@ -1775,6 +1775,35 @@ export class Codegen {
     lines.push(`${okLabel}:`);
   }
 
+  // Trap if a collection length/capacity is negative. `len`/`cap` are i64 fields and
+  // every index bounds check is an UNSIGNED compare, so a negative count (e.g. from a
+  // literal -1 or a wrapped overflow) would sail through as a huge unsigned bound and
+  // let any index write past a mis-sized (or failed) allocation — an OOB in safe code.
+  // Rust/C++ take unsigned size params + an allocator capacity-overflow guard; this is
+  // the runtime half of that guard for `Vec.filled` / `Vec.withCapacity` /
+  // `String.withCapacity`, whose counts are i64 and can be negative.
+  private emitNonNegativeCheck(lines: string[], val: string, what: string, span?: { line: number; col: number }) {
+    this.needsPrintf = true;
+    this.needsExit = true;
+    const neg = this.nextTemp();
+    const okLabel = this.nextLabel("neglen.ok");
+    const failLabel = this.nextLabel("neglen.fail");
+    lines.push(`  ${neg} = icmp slt i64 ${val}, 0`);
+    lines.push(`  br i1 ${neg}, label %${failLabel}, label %${okLabel}`);
+    lines.push(`${failLabel}:`);
+    const { label: errLabel, length: errLen } = this.addString(`milo: negative ${what} at ${span?.line ?? 0}:${span?.col ?? 0}: `);
+    const errPtr = this.nextTemp();
+    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr})`);
+    const nfmt = this.addString("%lld\n");
+    const nfmtPtr = this.nextTemp();
+    lines.push(`  ${nfmtPtr} = getelementptr [${nfmt.length} x i8], ptr ${nfmt.label}, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${nfmtPtr}, i64 ${val})`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+    lines.push(`${okLabel}:`);
+  }
+
   private emitCheckedArith(lines: string[], op: string, unsigned: boolean, llType: string, lv: string, rv: string, line: number): string {
     this.needsOverflowCheck = true;
     this.needsPrintf = true;
@@ -3162,6 +3191,7 @@ export class Codegen {
         this.needsMalloc = true;
         const [capLines, capVal] = this.genExpr(expr.capacity);
         lines.push(...capLines);
+        this.emitNonNegativeCheck(lines, capVal, "capacity", expr.span);
         const buf = this.nextTemp();
         lines.push(`  ${buf} = call ptr @malloc(i64 ${capVal})`);
         const s0 = this.nextTemp();
@@ -3738,6 +3768,7 @@ export class Codegen {
         const elemSize = this.typeSizeOf(expr.elementType);
         const [capLines, capVal] = this.genExpr(expr.capacity);
         lines.push(...capLines);
+        this.emitNonNegativeCheck(lines, capVal, "capacity", expr.span);
         // malloc(cap * elemSize); empty (len=0) but pre-sized so pushes up to
         // cap don't realloc. cap==0 still allocates 0 bytes — harmless, matches
         // the "buffer or null" invariant push checks (null only when cap==0).
@@ -3760,6 +3791,7 @@ export class Codegen {
         const elemTy = this.llvmType(expr.elementType);
         const [cntLines, cntVal] = this.genExpr(expr.count);
         lines.push(...cntLines);
+        this.emitNonNegativeCheck(lines, cntVal, "length", expr.span);
         const [valLines, valVal] = this.genExpr(expr.value);
         lines.push(...valLines);
         const bytes = this.nextTemp();

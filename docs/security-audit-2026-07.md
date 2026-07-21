@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: security
+purpose: action-item tracker for the 2026-07-20 adversarial memory-safety audit; each box is a fix in flight
+key-files: src/checker.ts, src/codegen.ts, src/parser.ts, src/main.ts
+update-when: an item's fix lands (check the box) or a new finding is triaged
+last-verified: 2026-07-20
+-->
+
 # Security audit — adversarial memory-safety review (2026-07-20)
 
 Black-hat audit of the compiler and its output. Goal was to break the memory-safety
@@ -13,7 +21,7 @@ gracefully.
 
 ## Action items (priority: memory-safety first)
 
-- [ ] **C2 — `Vec.filled(negativeCount, x)` → negative len → OOB.** `Vec.filled`/`withCapacity`
+- [x] **C2 — `Vec.filled(negativeCount, x)` → negative len → OOB.** `Vec.filled`/`withCapacity`
   store `count` verbatim as `len`; the index bounds check is unsigned (`icmp ult`), so a
   negative len becomes a huge bound and every index passes → OOB → SIGSEGV. Reachable at
   `--release` via overflow-wrapped count; a literal `-1` also compiles clean.
