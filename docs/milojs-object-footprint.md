@@ -98,3 +98,42 @@ the collector's mark phase and every capability check. The await-suspension work
 this week produced two changes that passed the full fixture suite and still
 broke the real app, so the order that actually catches things is: change, then
 `tests/run.sh`, then GC stress, then tahoeroads — before believing any of it.
+
+## Execution design (added 2026-07-20, for the fresh session that lands this)
+
+Concrete finding: the Map/Set group alone is **73 accessor sites** (63 in
+eval.milo, 10 in runtime.milo). Every rare field is like this — moving one to a
+side table is a mechanical but large rewrite of its access sites. Milo has no
+property getters, so `st.objects[o].mapKeys` cannot transparently redirect; each
+site must change. Budget for it; don't expect a small diff.
+
+**Side table shape.** One `HashMap<i64, CapData>` per capability, keyed by object
+index (sparse — only objects that use the capability have an entry). E.g.
+`mapData: HashMap<i64, MapData>` with `struct MapData { keys: Vec<JSValue>, vals:
+Vec<JSValue> }`. The old `isMap` boolean becomes `st.mapData.has(o)`.
+
+**Accessors.** Add helper fns so sites change uniformly and once: `mapDataOf(st,
+o): &mut MapData` (inserts an empty entry on first use for a set-path), and
+read-only `isMapObj(st, o): bool`. Convert each site to the helper — grep-driven,
+one capability at a time.
+
+**GC (the one subtle part).** The collector currently marks the JSValue-bearing
+rare fields (`mapKeys/mapVals`, `boundTarget/boundThis/boundArgs`, `proxyTarget/
+proxyHandler`, `promiseValue/reactions`) from inside `JSObj`. After the move it
+must instead iterate each side table and mark the entries of LIVE (marked)
+objects. Miss one table and you get a use-after-free that only shows under GC
+stress — so run `MILOJS_GC_THRESHOLD=1` on every slice.
+
+**Slicing order (each slice: change → run.sh → GC-stress → app smoke → commit).**
+1. **Proxy first** — rarest, self-contained, only get/set/has/ownKeys touch it.
+   Proves the pattern with the least blast radius.
+2. typed-array + arraybuffer (`bytes`, `taBuf/taKind/taOffset/taLen`, `abMax*`).
+3. bound-function (`boundTarget/boundThis/boundArgs/boundMethod`).
+4. Map/Set (the 73-site one).
+5. date, regexId, napi — small, easy.
+6. **promise LAST** — the most common capability and the most entangled (await
+   suspension, reactions, the resolver-native id scheme). Most care, do it once
+   everything else is proven.
+
+Re-measure `50k {}` after each slice; the empty-object number should fall toward
+the ~74-byte hot header as promise/bound/proxy/map/ta drop out.
