@@ -422,4 +422,7 @@ test("hover on a fixed-array local keeps the [T; N] wrapper", async () => {
   // `ev` is on line 2 (0-based 1); 4-space indent + "var " → char 8.
   const hover = await req(17, "textDocument/hover", { textDocument: { uri: ARRAY_URI }, position: { line: 1, character: 8 } });
   expect(hover?.contents?.value).toContain("var ev: [u8; 64]");
+  // Plain-English gloss so `[u8; 64]` isn't jargon + a mystery number.
+  expect(hover?.contents?.value).toContain("64** × `u8`");
+  expect(hover?.contents?.value).toContain("64 bytes");
 });

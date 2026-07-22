@@ -196,6 +196,31 @@ function formatMiloType(t: import("./ast").MiloType): string {
   return base;
 }
 
+// Byte width of the scalar primitives, for spelling out `[T; N]` in plain terms.
+const SCALAR_BYTES: Record<string, number> = {
+  i8: 1, u8: 1, i16: 2, u16: 2, i32: 4, u32: 4, i64: 8, u64: 8, f32: 4, f64: 8, bool: 1,
+};
+
+// A `[u8; 64]` hover means nothing to a reader who doesn't know the `[element; count]`
+// spelling. Append a plain-English gloss: how many of what, and total bytes if the
+// element size is known. Returns "" for non-fixed-array code lines.
+function arrayHoverNote(codeLine: string): string {
+  const m = codeLine.match(/\[([A-Za-z_][\w]*)(<[^\]]*>)?;\s*(\d+)\]/);
+  if (!m) return "";
+  const elem = m[1], n = parseInt(m[3]);
+  let note = `Fixed-size array — **${n.toLocaleString("en-US")}** × \`${elem}${m[2] ?? ""}\``;
+  const eb = SCALAR_BYTES[elem];
+  if (eb !== undefined && !m[2]) {
+    const total = eb * n;
+    note += ` (${eb} byte${eb === 1 ? "" : "s"} each) — ${total.toLocaleString("en-US")} bytes`;
+    if (total >= 1024) {
+      const kib = total / 1024;
+      note += kib >= 1024 ? ` (${(kib / 1024).toFixed(1)} MiB)` : ` (${kib % 1 === 0 ? kib : kib.toFixed(1)} KiB)`;
+    }
+  }
+  return `\n\n---\n\n${note}`;
+}
+
 // ── Doc comment extraction ──
 
 function extractDocComment(source: string, declLineIndex: number): string | null {
@@ -368,7 +393,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
       if (fn.isExtern) continue;
       for (const stmt of fn.body) {
         const info = findHoverInStmt(stmt, line + 1, character + 1, exprTypes, word);
-        if (info) return { contents: { kind: "markdown", value: `\`\`\`milo\n${info}\n\`\`\`` } };
+        if (info) return { contents: { kind: "markdown", value: `\`\`\`milo\n${info}\n\`\`\`${arrayHoverNote(info)}` } };
       }
     }
 
@@ -473,7 +498,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
       }
       const bindTypes = checkResult?.patternBindingTypes ?? new Map();
       const varHover = findVarHover(enclosing.fn.body, word, exprTypes, bindTypes);
-      if (varHover) return { contents: { kind: "markdown", value: `\`\`\`milo\n${varHover}\n\`\`\`` } };
+      if (varHover) return { contents: { kind: "markdown", value: `\`\`\`milo\n${varHover}\n\`\`\`${arrayHoverNote(varHover)}` } };
     }
 
     // Global variables — checked after params/locals so a same-named local
@@ -483,7 +508,8 @@ function handleHover(uri: string, line: number, character: number): object | nul
       let ty = g.type ? formatMiloType(g.type) : null;
       if (!ty) { const tk = exprTypes.get(g.value); if (tk) ty = formatTypeName(tk); }
       const kw = g.mutable ? "var" : "let";
-      return { contents: { kind: "markdown", value: `\`\`\`milo\n${kw} ${g.name}: ${ty ?? "?"}\n\`\`\`` } };
+      const line = `${kw} ${g.name}: ${ty ?? "?"}`;
+      return { contents: { kind: "markdown", value: `\`\`\`milo\n${line}\n\`\`\`${arrayHoverNote(line)}` } };
     }
     lspDebug(`hover word=${JSON.stringify(word)} → no match (globals=${program.globals.length})`);
   } catch (e) {
