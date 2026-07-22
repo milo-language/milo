@@ -190,6 +190,9 @@ fn builtinSource(name: &string): string {
     if name == "crypto" {
         return embedFile("lib/crypto.js")
     }
+    if name == "assert" {
+        return embedFile("lib/assert.js")
+    }
     if name == "prelude" {
         return embedFile("lib/prelude.js")
     }

@@ -1,0 +1,3 @@
+AssertionError,ERR_ASSERTION,deep,custom
+all assertions ok
+function false
