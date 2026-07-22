@@ -21,10 +21,14 @@ export function activate(context: ExtensionContext) {
 
   const mainTs = path.join(miloRoot, "src", "main.ts");
 
+  // `milo.debug` → MILO_LSP_DEBUG so verbose hover/definition tracing can be
+  // toggled from settings without relaunching the editor from a shell.
+  const debug = workspace.getConfiguration("milo").get<boolean>("debug") ? "1" : "0";
   const serverOptions: ServerOptions = {
     command: bunPath,
     args: ["run", mainTs, "lsp"],
     transport: TransportKind.stdio,
+    options: { env: { ...process.env, MILO_LSP_DEBUG: debug } },
   };
 
   const clientOptions: LanguageClientOptions = {
