@@ -1,0 +1,23 @@
+// @expect: none
+// @expect: false
+
+from "std/arena" import {
+    Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaValid
+}
+
+fn main(): i32 {
+    var first: Arena<string> = arenaNew()
+    var second: Arena<string> = arenaNew()
+    let firstHandle: Handle<string> = arenaAlloc(first, "alice")
+    let _secondHandle: Handle<string> = arenaAlloc(second, "carol")
+    match arenaGet(second, firstHandle) {
+        Option.Some(value) => {
+            print(value)
+        }
+        Option.None => {
+            print("none")
+        }
+    }
+    print(arenaValid(second, firstHandle))
+    return 0
+}

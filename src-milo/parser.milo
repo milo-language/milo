@@ -499,15 +499,19 @@ fn parseTraitDecl(p: &mut Parser): TraitDecl {
     }
 }
 
-fn parseImplDecl(p: &mut Parser): ImplDecl {
+fn parseImplDecl(p: &mut Parser, isUnsafe: bool): ImplDecl {
     let tok = expect(p, TokKind.Impl)
     let firstName = expect(p, TokKind.Ident).value
-    let typeParams = parseTypeParams(p)
+    var typeParams = parseTypeParams(p)
     var traitName: Option<string> = Option.None
     var typeName = firstName.clone()
     if matchTok(p, TokKind.For) {
         traitName = Option.Some(firstName)
         typeName = expect(p, TokKind.Ident).value
+        let targetTypeParams = parseTypeParams(p)
+        if targetTypeParams.len > 0 {
+            typeParams = targetTypeParams
+        }
     }
     expect(p, TokKind.LBrace)
     var methods: Vec<Function> = Vec.new()
@@ -520,6 +524,7 @@ fn parseImplDecl(p: &mut Parser): ImplDecl {
         typeName: typeName,
         typeParams: typeParams,
         methods: methods,
+        isUnsafe: isUnsafe,
         span: span(tok),
     }
 }
@@ -1460,7 +1465,10 @@ fn parse(p: &mut Parser): Program {
         } else if at(p, TokKind.Trait) {
             traits.push(parseTraitDecl(p))
         } else if at(p, TokKind.Impl) {
-            impls.push(parseImplDecl(p))
+            impls.push(parseImplDecl(p, false))
+        } else if at(p, TokKind.Unsafe) && peekN(p, 1).kind == TokKind.Impl {
+            advance(p)
+            impls.push(parseImplDecl(p, true))
         } else if at(p, TokKind.Let) || at(p, TokKind.Var) {
             globals.push(parseGlobal(p))
         } else if at(p, TokKind.Ident) && peek(p).value == "type" {

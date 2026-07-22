@@ -201,6 +201,7 @@ export interface ImplDecl {
   typeName: string;
   typeParams: TypeParam[];
   methods: Function[];
+  isUnsafe?: boolean;
   span?: Span;
 }
 

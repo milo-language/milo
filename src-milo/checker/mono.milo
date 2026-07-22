@@ -521,6 +521,7 @@ fn instantiateImpl(ck: &mut Checker, gi: &ImplDecl, mangled: &string, typeArgs: 
         typeName: mangled.clone(),
         typeParams: Vec.new(),
         methods: monoMethods,
+        isUnsafe: gi.isUnsafe,
         span: Option.None,
     }
     registerImpl(ck, concrete)

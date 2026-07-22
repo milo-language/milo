@@ -11,7 +11,7 @@
 // backstop against spin loops.
 //
 // Library:  import { guardedRun } from "../scripts/guard"
-// CLI:      bun scripts/guard.ts [--mem-mb N] [--timeout-s N] -- cmd args...
+// CLI:      bun scripts/guard.ts [--mem-mb N] [--virtual-mem-mb N] [--timeout-s N] -- cmd args...
 //           (required for any manual milo-self invocation — never run it bare)
 import { spawn, execFile } from "child_process";
 import { totalmem } from "os";
@@ -195,14 +195,18 @@ export interface GuardOpts {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   memMb?: number;
+  /** RLIMIT_AS/DATA allowance; may exceed RSS cap for runtimes that reserve sparse address space. */
+  virtualMemMb?: number;
   /** CLI mode: stream child output to this process instead of capturing. */
   inheritStdio?: boolean;
 }
 
 export function guardedRun(cmd: string, args: string[], opts: GuardOpts = {}): Promise<RunResult> {
   const memMb = opts.memMb ?? DEFAULT_MEM_MB;
+  const virtualMemMb = opts.virtualMemMb ?? memMb;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const limitKb = memMb * 1024;
+  const virtualLimitKb = virtualMemMb * 1024;
   const cpuSec = Math.max(30, Math.ceil((timeoutMs / 1000) * 2));
   // In-pgid shell watchdog: the node-side poll dies if this bun process dies
   // (children are detached and would keep running unguarded), and its timers
@@ -214,7 +218,7 @@ export function guardedRun(cmd: string, args: string[], opts: GuardOpts = {}): P
   // Pressure check mirrors the node watchdog: this layer must also fire when a
   // compressed runaway hides from RSS (level 4 = critical → kill own group
   // immediately; level >= 2 sustained 2s → kill). Missing sysctl (linux) reads 1.
-  const ulimits = `ulimit -t ${cpuSec} 2>/dev/null; ulimit -v ${limitKb} 2>/dev/null; ulimit -d ${limitKb} 2>/dev/null
+  const ulimits = `ulimit -t ${cpuSec} 2>/dev/null; ulimit -v ${virtualLimitKb} 2>/dev/null; ulimit -d ${virtualLimitKb} 2>/dev/null
 pgid=$$
 (
   t=0
@@ -384,10 +388,12 @@ export function monitorPidTree(
 if (import.meta.main) {
   const argv = process.argv.slice(2);
   let memMb = DEFAULT_MEM_MB;
+  let virtualMemMb: number | undefined;
   let timeoutMs = DEFAULT_TIMEOUT_MS;
   let i = 0;
   for (; i < argv.length; i++) {
     if (argv[i] === "--mem-mb") memMb = Number(argv[++i]);
+    else if (argv[i] === "--virtual-mem-mb") virtualMemMb = Number(argv[++i]);
     else if (argv[i] === "--timeout-s") timeoutMs = Number(argv[++i]) * 1000;
     else if (argv[i] === "--") {
       i++;
@@ -396,10 +402,10 @@ if (import.meta.main) {
   }
   const [cmd, ...rest] = argv.slice(i);
   if (!cmd) {
-    console.error("usage: bun scripts/guard.ts [--mem-mb N] [--timeout-s N] -- cmd args...");
+    console.error("usage: bun scripts/guard.ts [--mem-mb N] [--virtual-mem-mb N] [--timeout-s N] -- cmd args...");
     process.exit(2);
   }
-  const r = await guardedRun(cmd, rest, { memMb, timeoutMs, inheritStdio: true });
+  const r = await guardedRun(cmd, rest, { memMb, virtualMemMb, timeoutMs, inheritStdio: true });
   if (r.guardKill) console.error(r.stderr.trim());
   process.exit(r.signal ? 137 : r.code);
 }

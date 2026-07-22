@@ -1,4 +1,5 @@
-// Naive arena = Vec + usize index (the common Rust pattern).
+// Baseline arena = Vec + usize index. This deliberately demonstrates why
+// production Rust reaches for a generational-key crate; it is not the steelman.
 // A handle is just an integer; nothing ties it to the value's lifetime.
 fn main() {
     let mut arena: Vec<String> = Vec::new();

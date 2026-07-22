@@ -97,7 +97,7 @@ A specialized garbage-collected heap is the exception that proves the rule: milo
 
 ## Rust → Milo: the lifetime cases, side by side
 
-The patterns that make Rust reach for `<'a>`, `Box`, `Rc<RefCell>`, or `unsafe`, and what you write instead. The last row is the one genuine gap — everything above it is a clean translation, not a workaround.
+The patterns that make Rust reach for `<'a>`, `Box`, `Rc<RefCell>`, or `unsafe`, and what you write instead. The last row is the direct expressivity gap in Milo's reference model; the alternatives above still carry different API, allocation, and runtime-check tradeoffs.
 
 | Problem | Rust | Milo | Runnable |
 |---|---|---|---|
@@ -111,11 +111,11 @@ The patterns that make Rust reach for `<'a>`, `Box`, `Rc<RefCell>`, or `unsafe`,
 | Long-lived cross-task state | `Arc<Mutex<T>>` / `&'static` | module-scope `var pool: Arena<T>`, pass `Handle` | (milojs `gInterp`) |
 | **Type that STORES a borrow** (`Parser<'a> { src: &'a str }`) | `struct Parser<'a> { src: &'a str }` | **no direct equivalent** — own the `string` (clone once) or hold an index into a buffer you own | *the real gap* |
 
-The only unrepresentable row is the last: a struct field that is a *borrow* of data owned elsewhere. Milo's answer is to own the data or refer to it by index — memory-safe via bounds checks, at the cost of the compile-time view↔buffer tie Rust's `&'a` gives you. The three arena rows above are the design production Rust compilers (rustc included) pick *on purpose* to escape `<'a>` propagation, so "Milo forces it" and "Rust chooses it anyway" describe the same code.
+The directly unrepresentable row is the last: a struct field that is a *borrow* of data owned elsewhere. Milo's answer is to own the data or refer to it by index — memory-safe via bounds checks, at the cost of the compile-time view↔buffer tie Rust's `&'a` gives you. Production Rust also often chooses arenas to avoid lifetime propagation, but Rust retains other valid designs (`Rc`, borrowing APIs, and ecosystem arena crates) that Milo deliberately omits.
 
 ## When each model wins
 
-- **Owns-its-data work** (emulators, interpreters, servers, most application code): Milo's model is a clean win — it deletes the ceremony *and* the footguns, with nothing lost.
+- **Owns-its-data work** (emulators, interpreters, servers, most application code): Milo often removes lifetime ceremony, at the cost of a smaller set of representable APIs and occasional runtime identity/generation checks.
 - **Borrow-heavy zero-copy libraries** (a parser handing out `&str` slices into a source file): Rust's lifetimes earn their complexity; Milo expresses the same thing with spans/arenas at the cost of the view↔buffer compile-time tie.
 
 Milo bets that the first case is far more common than the second. For systems code that owns what it touches, that bet pays off on every line.
@@ -124,4 +124,4 @@ Milo bets that the first case is far more common than the second. For systems co
 
 - [language-reference.md](language-reference.md) — reference syntax, slices, arenas
 - [design.md](design.md) — rationale for the second-class-reference choice
-- [memory-safety-vs-rust.md](memory-safety-vs-rust.md) — battle-test: every threat class, compile vs runtime vs Rust
+- [memory-safety-vs-rust.md](memory-safety-vs-rust.md) — retained adversarial probes, compile vs runtime vs Rust

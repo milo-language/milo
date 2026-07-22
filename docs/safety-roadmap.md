@@ -1,8 +1,16 @@
+<!-- doc-meta
+system: safety-roadmap
+purpose: shipped safety mechanisms, explicit trust boundaries, and remaining soundness work
+key-files: src/checker.ts, src/codegen.ts, std/arena.milo, std/runtime.milo, std/sync.milo, tests/errors/, tests/runtime-errors/
+update-when: a safety check ships, a trust boundary changes, or a roadmap gap closes
+last-verified: 2026-07-22
+-->
+
 # Safety Roadmap: Closing the Gaps
 
-Goal: match Rust's compile-time safety guarantees without Rust's complexity. Static analysis first — reject bad programs at compile time. Dynamic checks only for patterns static analysis genuinely can't reach. No lifetime annotations. No borrow checker. No annotation burden.
+Goal: approach Rust's safe-code guarantees with a smaller reference model. Static analysis first; always-on dynamic checks where the chosen arena/bounds model requires them. No lifetime annotations.
 
-Enforced today: memory safety (moves), null safety (Option), race safety (Send/Sync), overflow safety, coercion safety, intraprocedural aliased-mutation tracking (Phase 2). Remaining gaps: arena use-after-free, interprocedural aliasing.
+Enforced today: moves, second-class references, bounds checks, `Option`, structural Send/Sync, explicit unsafe manual Send/Sync implementations, debug overflow traps (or all-mode `--overflow-checks`), coercion checks, intraprocedural borrow invalidation, call-site exclusivity, and arena identity/generation validation. Remaining work is concentrated at explicit trust boundaries (FFI and audited unsafe implementations), richer interprocedural reasoning, and making overflow traps the release default.
 
 ## Phase 1: `unsafe` Blocks + Safe FFI Surface — DONE
 
@@ -25,7 +33,7 @@ Same dataflow framework as the move checker: track which variables are "borrowed
 
 Done: mutating builtins (push/pop/insert/remove/reverse/swap/sort\*) and `&var self` methods are rejected on a receiver with a live borrow — a string-slice binding or an active for-in iteration. Frozen vars are also rejected as `&mut` args at any call site, and callback receivers are frozen during the callback check (`v.each(fn(x){ v.push(x) })` errors). Slice bindings release their freeze at scope pop; for-in at loop end; non-ref bindings (`let x = s[0..n].clone()`) release immediately. In-place element assignment (`v[i] = x`) stays legal — never reallocs.
 
-Remaining: 2c arena scope tainting — needs an `@invalidates_refs`-style annotation since `Arena` is a library type the checker doesn't know.
+Arena handles use always-on identity and generation checks, so stale or wrong-arena access returns `None`/`false` without checker-specific tainting.
 
 ### 2a: Ref-While-Frozen
 
@@ -50,7 +58,7 @@ items.clear()          // invalidates all refs into items
 print(r)               // COMPILE ERROR: r invalidated by items.clear()
 ```
 
-### 2c: Arena Scope Tainting
+### 2c: Arena Scope Tainting — superseded by dynamic identity/generation checks
 
 After `arena.clear()`/`arena.destroy()`, handles derived from that arena are tainted on that control-flow path. Handles tracked like refs; the arena is the source.
 
@@ -67,9 +75,9 @@ a.get(handle)          // COMPILE ERROR: handle invalidated by a.clear()
 - Method annotations (`@invalidates_refs`, `@borrows_from(self)`) mark invalidating operations; stdlib annotated first, user types opt in
 - False negatives acceptable (dynamic checks catch the rest); false positives are not — don't reject correct code
 
-## Phase 3: Interprocedural Static Analysis — not started
+## Phase 3: Interprocedural Static Analysis — 3a shipped
 
-### 3a: Exclusivity at Call Sites
+### 3a: Exclusivity at Call Sites — done
 
 At any call site, a variable cannot appear as both a `&var` argument and the source of a `&` argument. No interprocedural dataflow needed — just argument-origin tracking.
 
@@ -84,7 +92,7 @@ update(&var items, &items[0])  // COMPILE ERROR: items as both &var and & source
 
 3a is conservative — it rejects `fn read(items: &Vec<string>, first: &string)` even though `read` can't mutate. If a function takes only `&T` params, overlapping refs are provably safe. For `&var` params, infer whether the function actually mutates; if proven non-mutating, allow the overlap.
 
-### 3c: Arena Lifetime Scoping
+### 3c: Arena Lifetime Scoping — not required for memory safety today
 
 Any call passing `&var Arena<T>` invalidates all handles derived from that arena before the call — the callee could `.clear()` it. Sound, no annotations, some false positives; users restructure to create handles after the call.
 
@@ -101,13 +109,13 @@ a.get(h)               // COMPILE ERROR: h invalidated (a passed as &var after h
 
 Dynamic checks are the fallback, not the strategy — they cover patterns static analysis would need annotations to prove (callbacks, trait objects, deeply indirect mutation). Shrink this category over time.
 
-### 4a: Debug Ref Counting
+### 4a: Debug Ref Counting — planned, not implemented
 
 While a `&T` is live, bump a refcount on the source; mutation with refcount > 0 panics with a clear diagnostic. Codegen emits inc/dec around ref lifetimes; sources get a hidden `_borrow_count: u32`. Debug builds only — stripped in release. Covers e.g. a trait-object callback mutating a collection something else holds a ref into.
 
 ### 4b: Generational Index Hardening
 
-Already implemented for arenas. Requirements: always-on in debug *and* release (it's a safety check, not a debug aid — one integer comparison), and clear panics: "use-after-free: handle generation 3, slot generation 5".
+Implemented for arenas in debug and release. Handles carry arena identity, slot, and generation; invalid access returns `None`/`false` rather than panicking.
 
 ### 4c: Sanitizer Mode
 
@@ -135,12 +143,11 @@ Via `milo build --profile strict` or per-module annotation.
 
 Contracts (`requires`/`ensures`/`invariant`) are parsed, type-checked, enforced at call sites for compile-time-constant args, and asserted at runtime in debug builds: `requires` at entry, `ensures` at every return (`result` bound), `invariant` at the loop header (entry, every back-edge, exit). Violations print `runtime error: <kind> clause violated at file:line` and exit 1. Release builds compile contracts out.
 
-Remaining gaps:
+`milo prove` now discharges a bounded linear-integer fragment through SMT, and constant-argument precondition violations are ordinary compile errors. Remaining gaps:
 
-- **No static proof — release builds unprotected.** A function can claim `ensures result > 0`, return negative on an untested path, and ship. Options, in order: (1) symbolic range tracking — propagate known ranges through assignments/arithmetic (`n = 42; n = n - 100` → violates `x > 0` at compile time), covers many cases without a solver; (2) SMT integration — `milo verify` in the pipeline for `--safety` profiles, complete for linear arithmetic; (3) opt-in release assertions via `--contracts=on`.
-- **`invariant` is runtime-checked, not proven inductive.** Nothing verifies statically that iterations preserve the invariant or that it implies the postcondition on exit — that requires SMT.
-
-Priority: symbolic range tracking next; SMT is the long game for `--safety=do178c-a/b` profiles.
+- **Unknown proofs leave release builds unprotected.** Nonlinear/bitwise expressions, collection lengths reached through builders, and richer struct invariants report `unknown`; debug builds still assert them, while release compiles contracts out.
+- **Loop/heap reasoning is bounded.** Rich inductive invariants, aliasing heap state, and general functional correctness remain outside the prover's supported fragment.
+- **No opt-in release assertion mode.** An explicit `--contracts=on` mode would preserve unknown clauses in production when policy requires it.
 
 ## Open Questions
 

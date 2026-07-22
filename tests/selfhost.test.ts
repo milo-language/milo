@@ -42,7 +42,9 @@ const CHILD_ENV = { ...process.env, MILO_ROOT };
 // 2GB cap: healthy milo-self compiles use well under this, and the tighter
 // the cap the sooner the watchdog fires — before swap pressure blinds it.
 async function run(cmd: string, args: string[], cwd?: string, timeoutMs = 60000, memMb = 2048): Promise<RunResult> {
-  return guardedRun(cmd, args, { env: CHILD_ENV, cwd, timeoutMs, memMb });
+  // The bootstrap script invokes Bun, which reserves >4 GiB of sparse virtual
+  // address space on Linux. The real RSS cap remains the tighter 2 GiB here.
+  return guardedRun(cmd, args, { env: CHILD_ENV, cwd, timeoutMs, memMb, virtualMemMb: 8192 });
 }
 
 function readManifest(): string[] {

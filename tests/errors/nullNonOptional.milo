@@ -1,0 +1,6 @@
+// @error: cannot infer type parameter(s) 'T' for Option.None
+
+fn main(): i32 {
+    let value: i32 = null
+    return value
+}

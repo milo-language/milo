@@ -1,0 +1,15 @@
+from "std/arena" import {
+    Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaFree
+}
+
+fn main(): i32 {
+    var arena: Arena<string> = arenaNew()
+    let alice: Handle<string> = arenaAlloc(arena, "alice")
+    let _freed = arenaFree(arena, alice)
+    let _carol = arenaAlloc(arena, "carol")
+    match arenaGet(arena, alice) {
+        Option.Some(value) => { print("LEAKED wrong value: ", value) }
+        Option.None => { print("caught: stale handle -> None (no corruption)") }
+    }
+    return 0
+}

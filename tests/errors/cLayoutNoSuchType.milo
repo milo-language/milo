@@ -1,4 +1,4 @@
-// @error: the header declares no such type
+// @error: a declaration does not match the C header it claims to describe
 @cLayout("struct nosuchtype", "time.h")
 extern struct T {
     a: i64,

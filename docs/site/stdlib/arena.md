@@ -47,7 +47,7 @@ fn main(): i32 {
 4. **Update** — `.set()` replaces a value; `.modify()` transforms it with a function
 5. **Remove** — `a.free(handle)` removes the value and recycles the slot
 
-**Handles are cheap.** They're two integers (slot index + generation). Copy them freely, store them in Vecs, pass them around. They don't own anything — the arena does.
+**Handles are cheap.** They contain an arena identity, slot index, and generation. Copy them freely, store them in Vecs, pass them around. They don't own anything — the arena does.
 
 **Stale handles are safe.** Every slot has a generation counter that bumps on free. If you hold a handle from generation 2 but the slot is now on generation 3, `.get()` returns `None` instead of the wrong value.
 
@@ -103,7 +103,7 @@ node2.name = "changed"
 graph.set(handle, node2)
 ```
 
-**Handles aren't tied to a specific arena.** A `Handle<string>` from arena A will type-check against arena B if it's also an `Arena<string>`. You'll get `None` or the wrong value — not a compile error. Keep your arenas and handles organized.
+**Handles are checked against their arena.** A `Handle<string>` from arena A still type-checks against arena B because both have the same element type, but every handle carries an arena identity. Arena B returns `None`/`false` instead of reading a coincidentally matching slot.
 
 **No iteration.** You can't walk all live values in an arena. If you need to visit everything, keep your handles in a `Vec<Handle<T>>` alongside the arena.
 

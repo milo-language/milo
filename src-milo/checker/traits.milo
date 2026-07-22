@@ -346,6 +346,26 @@ fn synthesizeDefaultMethods(ck: &mut Checker, program: &Program) {
 }
 
 fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
+    match implDecl.traitName {
+        Option.Some(marker) => {
+            if marker == "Send" || marker == "Sync" {
+                if !implDecl.isUnsafe {
+                    error(ck, "manual '" + marker.clone() + "' implementation for '" + implDecl.typeName.clone() + "' must be unsafe", cloneSpan(implDecl.span))
+                } else if implDecl.methods.len > 0 {
+                    error(ck, "unsafe impl '" + marker.clone() + "' is a marker and cannot define methods", cloneSpan(implDecl.span))
+                }
+                // Send/Sync capture enforcement is still owned by the TS checker;
+                // milo-self retains the marker so imported stdlib syntax is valid.
+                return
+            }
+        }
+        Option.None => {
+        }
+    }
+    if implDecl.isUnsafe {
+        error(ck, "unsafe impl is only supported for the Send and Sync marker traits", cloneSpan(implDecl.span))
+        return
+    }
     // generic impls park until their type monomorphizes (see mono.milo);
     // types that already monomorphized replay immediately
     if implDecl.typeParams.len > 0 {
@@ -581,6 +601,7 @@ fn deriveEq(s: &StructDecl): Option<ImplDecl> {
         typeName: s.name.clone(),
         typeParams: Vec.new(),
         methods: methods,
+        isUnsafe: false,
         span: Option.None,
     }
     )

@@ -129,6 +129,9 @@ export class Parser {
         traits.push(this.parseTraitDecl());
       } else if (this.at(TokenKind.Impl)) {
         impls.push(this.parseImplDecl());
+      } else if (this.at(TokenKind.Unsafe) && this.peekN(1).kind === TokenKind.Impl) {
+        this.advance();
+        impls.push(this.parseImplDecl(true));
       } else if (this.at(TokenKind.Type)) {
         typeAliases.push(this.parseTypeAlias());
       } else if (this.at(TokenKind.Interface)) {
@@ -526,15 +529,18 @@ export class Parser {
     return { kind: "InterfaceDecl", name, methods, span: this.span(tok) };
   }
 
-  private parseImplDecl(): ImplDecl {
+  private parseImplDecl(isUnsafe = false): ImplDecl {
     const tok = this.expect(TokenKind.Impl);
     const firstName = this.expect(TokenKind.Ident).value;
     let traitName: string | null = null;
     let typeName: string;
-    const typeParams = this.parseTypeParams();
+    const leadingTypeParams = this.parseTypeParams();
+    let typeParams = leadingTypeParams;
     if (this.match(TokenKind.For)) {
       traitName = firstName;
       typeName = this.expect(TokenKind.Ident).value;
+      const targetTypeParams = this.parseTypeParams();
+      if (targetTypeParams.length > 0) typeParams = targetTypeParams;
     } else {
       typeName = firstName;
     }
@@ -544,7 +550,7 @@ export class Parser {
       methods.push(this.parseFn());
     }
     this.expect(TokenKind.RBrace);
-    return { kind: "ImplDecl", traitName, typeName, typeParams, methods, span: this.span(tok) };
+    return { kind: "ImplDecl", traitName, typeName, typeParams, methods, isUnsafe, span: this.span(tok) };
   }
 
   // ── Statements ──

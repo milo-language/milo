@@ -48,7 +48,9 @@ describe("examples compile", () => {
   for (const path of entries) {
     const name = path.slice(MILO_ROOT.length + 1);
     test(name, async () => {
-      const r = await guardedRun(MILOC, ["emit-ir", path], { env: CHILD_ENV });
+      // Bun standalone reserves >4 GiB of sparse address space on Linux while
+      // staying far below the guard's 4 GiB RSS cap.
+      const r = await guardedRun(MILOC, ["emit-ir", path], { env: CHILD_ENV, virtualMemMb: 8192 });
       if (r.code !== 0) {
         throw new Error(`compile failed (exit ${r.code}, signal ${r.signal}):\n${r.stderr}`);
       }

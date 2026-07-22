@@ -1,6 +1,6 @@
-// @error: has no such field
-// Naming a field C doesn't have makes offsetof itself ill-formed, so clang errors before
-// evaluating the assert — that path has to be translated too, not dumped raw.
+// @error: a declaration does not match the C header it claims to describe
+// Naming a field C doesn't have makes offsetof itself ill-formed. Apple Clang and
+// GCC phrase the underlying error differently, so assert Milo's stable wrapper.
 @cLayout("struct timespec", "time.h")
 extern struct T {
     tv_sec: i64,

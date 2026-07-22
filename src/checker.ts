@@ -758,11 +758,9 @@ export class TypeChecker {
       }
     }
 
-    // propagate @send/@sync/@derive attributes from generic struct to monomorphized type
+    // Propagate derives from the generic struct to the monomorphized type.
     if (generic.decl.attributes) {
       for (const attr of generic.decl.attributes) {
-        if (attr.name === "send") this.sendTypes.add(mangled);
-        if (attr.name === "sync") this.syncTypes.add(mangled);
         if (attr.name !== "derive") continue;
         for (const traitName of attr.args) {
           const impl = this.synthesizeDeriveImpl(decl, traitName);
@@ -1086,15 +1084,12 @@ export class TypeChecker {
       }
     }
 
-    // collect @send/@sync annotations
     for (const s of program.structs) {
       this.validateAttributes(s.name, s.attributes, "struct");
       this.validateFieldAttributes(s);
       this.warnUnverifiedExtern(s);
       if (s.attributes) {
         for (const attr of s.attributes) {
-          if (attr.name === "send") this.sendTypes.add(s.name);
-          if (attr.name === "sync") this.syncTypes.add(s.name);
           if (attr.name === "cLayout") this.checkCLayout(s, attr);
         }
       }
@@ -1600,7 +1595,7 @@ export class TypeChecker {
   // in silence, so a typo (`@clayout`, `@drive(Eq)`) looked like it worked while doing
   // nothing — the same silent-failure class @cLayout exists to close. Enums parse
   // attributes but nothing consumes them, so those are rejected rather than ignored.
-  private static readonly KNOWN_ATTRS = ["derive", "send", "sync", "cLayout", "cSig"];
+  private static readonly KNOWN_ATTRS = ["derive", "cLayout", "cSig"];
 
   // `@cSig("unistd.h", "long sysconf(int)")` — the C signature is checked against the real
   // header at build time. Milo's type system can't express C type identity (is `i64` a
@@ -1832,6 +1827,28 @@ export class TypeChecker {
 
   private registerImpl(impl: import("./ast").ImplDecl, program: Program, implFnsToCheck: Function[]) {
     const typeName = impl.typeName;
+
+    if (impl.traitName === "Send" || impl.traitName === "Sync") {
+      if (!impl.isUnsafe) {
+        this.error(`manual '${impl.traitName}' implementation for '${typeName}' must be unsafe`, impl.span,
+          `write 'unsafe impl ${impl.traitName} for ${typeName} {}' because the compiler cannot verify this promise`);
+        return;
+      }
+      if (impl.methods.length > 0) {
+        this.error(`unsafe impl '${impl.traitName}' for '${typeName}' is a marker and cannot define methods`, impl.span);
+        return;
+      }
+      if (!this.structs.has(typeName) && !this.genericStructs.has(typeName)) {
+        this.error(`unsafe impl '${impl.traitName}' requires a struct type, got '${typeName}'`, impl.span);
+        return;
+      }
+      (impl.traitName === "Send" ? this.sendTypes : this.syncTypes).add(typeName);
+      return;
+    }
+    if (impl.isUnsafe) {
+      this.error(`unsafe impl is only supported for the Send and Sync marker traits`, impl.span);
+      return;
+    }
 
     // 'addrOf' is the built-in universal raw address-of operator (x.addrOf(): *T).
     // Reserve the name so `x.addrOf()` means exactly one thing everywhere — a
@@ -2104,6 +2121,11 @@ export class TypeChecker {
       case "struct": {
         if (this.sendTypes.has(ty.name)) return true;
         const info = this.structs.get(ty.name);
+        // A marker on Wrapper<T> audits the wrapper's raw representation, not T.
+        // Keep the ordinary Send requirement for every instantiated argument.
+        if (info?.baseName && this.sendTypes.has(info.baseName)) {
+          return (info.typeArgs ?? []).every(arg => this.isSend(arg));
+        }
         if (!info) return true;
         return info.fields.every(f => this.isSend(f.type));
       }
@@ -2125,7 +2147,7 @@ export class TypeChecker {
       const info = this.structs.get(ty.name);
       if (info) {
         for (const f of info.fields) {
-          if (!this.isSend(f.type)) return `field '${f.name}' of type '${typeName(f.type)}' is not Send — add @send to '${ty.name}' if thread safety is guaranteed`;
+          if (!this.isSend(f.type)) return `field '${f.name}' of type '${typeName(f.type)}' is not Send — a manual override requires 'unsafe impl Send for ${ty.name} {}' and an audited invariant`;
         }
       }
     }
@@ -2156,6 +2178,9 @@ export class TypeChecker {
       case "struct": {
         if (this.syncTypes.has(ty.name)) return true;
         const info = this.structs.get(ty.name);
+        if (info?.baseName && this.syncTypes.has(info.baseName)) {
+          return (info.typeArgs ?? []).every(arg => this.isSync(arg));
+        }
         if (!info) return true;
         return info.fields.every(f => this.isSync(f.type));
       }

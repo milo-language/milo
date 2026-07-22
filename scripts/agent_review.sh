@@ -79,8 +79,9 @@ reviewer_name() {
   echo "claude ($REVIEW_MODEL)"
 }
 
-echo "== agent review: stage=$stage  reviewer=$(reviewer_name)  source=$src =="
-if [ "$reviewer_name" = "claude ($REVIEW_MODEL)" ] && [ "$REVIEW_MODEL" = "opus" ]; then
+reviewer="$(reviewer_name)"
+echo "== agent review: stage=$stage  reviewer=$reviewer  source=$src =="
+if [ "$reviewer" = "claude ($REVIEW_MODEL)" ] && [ "$REVIEW_MODEL" = "opus" ]; then
   echo "WARNING: reviewer model == likely author model. Set REVIEW_MODEL to a different model." >&2
 fi
 

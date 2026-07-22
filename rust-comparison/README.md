@@ -7,7 +7,7 @@ Runnable proof behind the [Memory Safety vs Rust](https://cs01.github.io/milo/la
 ./run.sh --debug    # debug mode (overflow + contract checks turn on)
 ```
 
-Requires `rustc` (release uses `-O`) and the repo's `./milo` wrapper. The runner makes no assertions — it prints the raw outcome of each side. You judge.
+Requires `rustc` (release uses `-O`) and the repo's `./milo` wrapper. Set `RUSTC=/path/to/rustc` for a non-PATH toolchain. The runner asserts every classification and a stable diagnostic/output substring, prints the observed result, and exits nonzero on drift.
 
 ## What each row proves
 
@@ -17,14 +17,20 @@ Requires `rustc` (release uses `-O`) and the repo's `./milo` wrapper. The runner
 | `dangling_ref` | compile-error | compile-error | **parity** — can't return a reference to a local |
 | `oob_index` | runtime-panic | runtime-trap | **parity** — no compile proof here, both trap (no UB) |
 | `overflow` | wrap / debug-panic | wrap / debug-trap | **parity, honestly** — Milo's default matches Rust today |
-| `stale_handle` | **ran clean → wrong value** | **caught → `None`** | **Milo ahead** — a naive Rust arena silently corrupts |
+| `stale_handle` | **ran clean → wrong value** | **caught → `None`** | baseline only — raw indices need hardening |
+| `steelman_arena` | **caught → `None`** | **caught → `None`** | **parity** — generational keys close the stale-slot bug |
 | `contract` | runtime-panic (assert) | **compile-error** | **Milo ahead** — contracts proven at compile time |
 
-## The two that matter
+## The comparisons that matter
 
-**`stale_handle`** is the headline. A naive Rust arena is `Vec<T>` + a `usize` index — the common, idiomatic pattern. Free a slot, let it get reused, and your old index now silently points at a *different* value: `rust` prints `carol` where it held a handle to `alice`, with no panic and no compile error. Milo's `std/arena` gives each slot a generation, so the stale handle reads back `None`. Milo closes a silent-corruption hole that plain-index Rust leaves open. (Rust's own fix is the `generational-arena`/`slotmap` crates — i.e. Milo ships in the stdlib what Rust reaches to crates.io for.)
+**`stale_handle`** is a baseline, not the Rust steelman. It shows why a raw
+`Vec<T>` index is insufficient: after slot reuse, the old index reads a different
+value. **`steelman_arena`** then uses the typed `(slot, generation)` key design of
+Rust's `slotmap` / `generational-arena` ecosystem and catches the stale access,
+just as Milo does. The honest difference is packaging: Milo ships this abstraction
+in `std/arena`; Rust normally gets it from a crate or a small domain-specific arena.
 
-**`contract`** shows the one axis where Milo clearly leads: `requires`/`ensures` are in the language and `milo prove` discharges them at compile time — `clamp(50, 100, 0)` is a compile error because `lo <= hi` is violated with constant arguments. Stable Rust has no built-in contract; the idiomatic equivalent is a runtime `assert!` that only fires when the line executes.
+**`contract`** shows Milo's built-in advantage: `requires`/`ensures` are in the language and `milo prove` discharges its supported linear fragment at compile time. Stable Rust has no built-in stable contract facility; an ordinary call commonly uses `assert!`, while const assertions, newtypes/typestate, and external verification tools cover stronger Rust designs when code is structured for them.
 
 ## Honesty notes
 

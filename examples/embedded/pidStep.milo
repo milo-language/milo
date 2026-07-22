@@ -15,7 +15,7 @@
 let FP_SHIFT: i32 = 16
 
 fn fpMul(a: i32, b: i32): i32
-requires a >= 0 - 2147483648 && b >= 0 - 2147483648
+requires a >= -2147483648 && b >= -2147483648
 ensures result == result
 {
     // (a/2^16)*(b/2^16) = (a*b)/2^16, kept in 64-bit to avoid overflow midway.

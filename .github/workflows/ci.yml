@@ -4,7 +4,7 @@ jobs:
   test:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       # tests/typecheck.test.ts runs tsc, which needs @types/bun from node_modules —
       # without it every `console`/`process`/`Buffer` is an error. `bun test` happens to
@@ -34,7 +34,7 @@ jobs:
   test-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       # z3 mirrors the macOS job's contract gate. lld provides ld.lld for the bare-metal

@@ -33,7 +33,10 @@ describe("prove (std/smt engine)", () => {
     test(file.replace(".milo", ""), async () => {
       const src = readFileSync(join(PROVE_DIR, file), "utf-8");
       // prove exits 1 when a contract is refuted; the report still prints first.
-      const r = await guardedRun(MILOC, ["prove", join(PROVE_DIR, file)], { env: CHILD_ENV });
+      const r = await guardedRun(MILOC, ["prove", join(PROVE_DIR, file)], {
+        env: CHILD_ENV,
+        virtualMemMb: 8192,
+      });
       const out = r.stdout.replace(/\x1b\[[0-9;]*m/g, "");
       const m = out.match(/proven:\s*(\d+)\s+failed:\s*(\d+)\s+unknown:\s*(\d+)\s+errors:\s*(\d+)/);
       if (!m) throw new Error(`no prove report for ${file}:\n${out}\n${r.stderr}`);

@@ -218,7 +218,7 @@ fn pushScope(ck: &mut Checker) {
 }
 
 fn popScope(ck: &mut Checker) {
-    ck.scopes.pop()
+    let _ = ck.scopes.pop()
 }
 
 fn declare(ck: &mut Checker, name: string, info: VarInfo) {

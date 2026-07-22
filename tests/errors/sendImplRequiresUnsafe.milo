@@ -1,0 +1,10 @@
+// @error: manual 'Send' implementation for 'Handle' must be unsafe
+struct Handle {
+    ptr: *u8,
+}
+
+impl Send for Handle {}
+
+fn main(): i32 {
+    return 0
+}

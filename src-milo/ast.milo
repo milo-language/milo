@@ -202,6 +202,7 @@ struct ImplDecl {
     typeName: string,
     typeParams: Vec<TypeParam>,
     methods: Vec<Function>,
+    isUnsafe: bool,
     span: Option<Span>,
 }
 
@@ -731,6 +732,7 @@ impl Clone for ImplDecl {
             typeName: self.typeName.clone(),
             typeParams: cloneTypeParams(self.typeParams),
             methods: methods,
+            isUnsafe: self.isUnsafe,
             span: cloneSpan(self.span),
         }
     }

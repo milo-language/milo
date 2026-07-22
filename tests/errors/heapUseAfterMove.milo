@@ -1,0 +1,11 @@
+// @error: use of moved variable 'value'
+
+fn consume(value: Heap<i32>): void {
+}
+
+fn main(): i32 {
+    let value: Heap<i32> = Heap(42)
+    consume(value)
+    print(*value)
+    return 0
+}

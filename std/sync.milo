@@ -204,11 +204,19 @@ fn channelUnarmSend(ptr: *u8, node: *u8): void {
     }
 }
 
-@send
-@sync
-
 struct Channel<T> {
     _ptr: *u8,
+}
+
+// Safety: every access to ChannelInner is serialized by its pthread mutex; values
+// cross the boundary by move through the owned ring-buffer slots.
+unsafe
+
+impl Send for Channel<T> {
+}
+unsafe
+
+impl Sync for Channel<T> {
 }
 
 impl Channel<T> {
@@ -474,11 +482,18 @@ impl Channel<T> {
 
 // ── AtomicI64 ──
 
-@send
-@sync
-
 struct AtomicI64 {
     _ptr: *u8,
+}
+
+// Safety: the pointee is accessed only through the atomic runtime operations.
+unsafe
+
+impl Send for AtomicI64 {
+}
+unsafe
+
+impl Sync for AtomicI64 {
 }
 
 impl AtomicI64 {
@@ -519,11 +534,18 @@ impl AtomicI64 {
 
 // ── AtomicBool ──
 
-@send
-@sync
-
 struct AtomicBool {
     _ptr: *u8,
+}
+
+// Safety: the pointee is accessed only through the atomic runtime operations.
+unsafe
+
+impl Send for AtomicBool {
+}
+unsafe
+
+impl Sync for AtomicBool {
 }
 
 impl AtomicBool {
@@ -567,11 +589,18 @@ impl AtomicBool {
 //   wg.wait()
 
 // heap layout (32 bytes): 0 mtx, 8 cond, 16 count (i64), 24 greenWaitHead (*u8)
-@send
-@sync
-
 struct WaitGroup {
     _p: *u8,
+}
+
+// Safety: count and waiter-list access are serialized by the embedded mutex.
+unsafe
+
+impl Send for WaitGroup {
+}
+unsafe
+
+impl Sync for WaitGroup {
 }
 
 impl WaitGroup {

@@ -11,7 +11,7 @@ jobs:
   test:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       # tests/typecheck.test.ts runs tsc, which needs @types/bun from node_modules.
       # `bun test` runs fine without deps, so a missing install only shows up as the
@@ -44,12 +44,12 @@ jobs:
             buntarget: bun-linux-arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun run scripts/bundle-stdlib.ts
       - run: bun build --compile --target=${{ matrix.buntarget }} src/main.ts --outfile milo
       - run: tar czf milo-${{ matrix.target }}.tar.gz milo
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         with:
           name: milo-${{ matrix.target }}
           path: milo-${{ matrix.target }}.tar.gz
@@ -58,11 +58,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
       - run: ls -lh milo-*.tar.gz
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: Latest Build

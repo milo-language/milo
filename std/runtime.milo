@@ -499,14 +499,22 @@ fn _spawnOsThreadDetached(f: () => void): void {
 
 // ── Promise<T> — a task that returns a value ──
 
-@send
-@sync
-
 struct Promise<T> {
     _ch: Channel<T>,
     // true when the result is produced on a foreign OS thread (Promise.blocking)
     // rather than a green task. Changes only the main-thread await strategy.
     _blocking: bool,
+}
+
+// Safety: Promise delegates cross-thread synchronization and ownership transfer
+// to its Channel, whose mutex/condition-variable invariants are documented there.
+unsafe
+
+impl Send for Promise<T> {
+}
+unsafe
+
+impl Sync for Promise<T> {
 }
 
 impl Promise<T> {

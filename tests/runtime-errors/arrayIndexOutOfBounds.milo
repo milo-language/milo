@@ -1,0 +1,11 @@
+// @runtime-error: array index out of bounds
+
+fn index(): i64 {
+    return 5
+}
+
+fn main(): i32 {
+    let values: [i32; 3] = [10, 20, 30]
+    print(values[index()])
+    return 0
+}

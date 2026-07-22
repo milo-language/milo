@@ -288,7 +288,7 @@ fn genForInHashMap(cg: &mut Cgen, varName: &string, varName2: &Option<string>, o
         }
     }
     while locs.len > locsPreLen {
-        locs.pop()
+        let _ = locs.pop()
     }
     if !bodyTerm {
         emit(cg, "  br label %" + stepLbl.clone() + "\n")
@@ -336,7 +336,7 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
                 }
             }
             while locs.len > locsPreLen {
-                locs.pop()
+                let _ = locs.pop()
             }
             if !bodyTerm {
                 emit(cg, "  br label %" + stepLbl + "\n")
@@ -392,7 +392,7 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
                     }
                 }
                 while locs.len > locsPre {
-                    locs.pop()
+                    let _ = locs.pop()
                 }
                 if !chTerm {
                     emit(cg, "  br label %" + stepLbl + "\n")
@@ -454,7 +454,7 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
                     }
                 }
                 while locs.len > locsPre {
-                    locs.pop()
+                    let _ = locs.pop()
                 }
                 if !itTerm {
                     emit(cg, "  br label %" + stepLbl + "\n")
@@ -544,7 +544,7 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
                 }
             }
             while locs.len > locsPreLen {
-                locs.pop()
+                let _ = locs.pop()
             }
             if !bodyTerm {
                 emit(cg, "  br label %" + stepLbl + "\n")
@@ -660,7 +660,7 @@ fn genIfLet(cg: &mut Cgen, pattern: &Pattern, subject: &Expr, thenBody: &Vec<Hea
                 }
             }
             while locs.len > locsPreLen {
-                locs.pop()
+                let _ = locs.pop()
             }
         }
         _ => {
@@ -919,7 +919,7 @@ fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<
         }
         // Pop bindings
         while locs.len > locsPreLen {
-            locs.pop()
+            let _ = locs.pop()
         }
         if !armTerm {
             emit(cg, "  br label %" + endLbl + "\n")

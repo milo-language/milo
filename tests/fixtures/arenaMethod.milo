@@ -36,7 +36,7 @@ fn main(): i32 {
     var nums: Arena<i64> = arenaNew()
     let h1 = nums.alloc(42)
     let h2: Handle<i64> = Handle {
-        index: h1.index, generation: h1.generation
+        arenaId: h1.arenaId, index: h1.index, generation: h1.generation
     }
     print(h1 == h2)
 

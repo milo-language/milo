@@ -1,0 +1,16 @@
+// @error: unsafe impl is only supported for the Send and Sync marker traits
+trait Named {
+    fn name(self: &Self): string
+}
+
+struct Item {}
+
+unsafe impl Named for Item {
+    fn name(self: &Self): string {
+        return "item"
+    }
+}
+
+fn main(): i32 {
+    return 0
+}

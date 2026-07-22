@@ -1,4 +1,4 @@
-// @run: -d
+// @run:
 // @stdin: hello
 // gz — gzip compress/decompress on a pipe, pure Milo (std/deflate + std/inflate).
 //
@@ -6,9 +6,8 @@
 // with the system tool: `gz < f | gunzip` and `gzip -c f | gz -d` both round-trip.
 // Doubles as an integration smoke test for the compression stdlib.
 //
-// The @run stub above feeds "hello" through -d, which is not a valid gzip stream,
-// so it exercises the error path (prints a diagnostic, exits 1) — the encode path
-// is covered by tests/fixtures/deflateRoundtrip and the interop check in the docs.
+// The @run stub above exercises the successful encode path with deterministic stdin.
+// Decompression is covered by tests/fixtures/deflateRoundtrip and the interop docs.
 from "std/argparse" import {
     newParser
 }

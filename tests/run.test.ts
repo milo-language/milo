@@ -30,7 +30,10 @@ beforeAll(() => {
 // rlimits, so a miscompiled program that allocates in a loop would otherwise
 // swap the machine to death. The guard SIGKILLs the tree on RSS breach.
 async function run(cmd: string, args: string[]): Promise<RunResult> {
-  return guardedRun(cmd, args, { env: CHILD_ENV });
+  // Bun standalone binaries reserve more than 4 GiB of sparse virtual address
+  // space on Linux while using ~80 MiB RSS. Keep the real-memory guard at 4 GiB,
+  // but give RLIMIT_AS enough headroom for that reservation.
+  return guardedRun(cmd, args, { env: CHILD_ENV, virtualMemMb: 8192 });
 }
 
 // Retry once on signal-based failures (resource pressure under full suite).
@@ -52,7 +55,10 @@ async function mapPool<T>(items: T[], limit: number, fn: (item: T) => Promise<vo
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
-const COMPILE_JOBS = Math.max(2, (navigator.hardwareConcurrency ?? 8) - 2);
+// Keep workers × guard cap below half of RAM (CLAUDE.md). Large CI/dev hosts can
+// report 72+ cores; subtracting two would launch enough clang processes to trip
+// the global guard and return empty, signal-killed build results.
+const COMPILE_JOBS = Math.min(8, Math.max(2, (navigator.hardwareConcurrency ?? 8) - 2));
 
 const binaries: string[] = [];
 afterAll(() => {

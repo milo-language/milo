@@ -1,1 +1,1 @@
-stale_handle: THE key row - naive Rust arena (Vec+usize) silently returns the wrong value; Milo's generational Handle catches the stale access
+stale_handle: baseline only - raw Vec+usize returns the wrong value; see steelman_arena for the fair generational-key comparison

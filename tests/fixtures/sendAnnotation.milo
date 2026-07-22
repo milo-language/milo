@@ -4,10 +4,14 @@ from "std/runtime" import {
     Promise
 }
 
-@send
-
 struct SafeHandle {
     _ptr: *u8,
+}
+
+// Safety: this fixture uses only a null sentinel and never dereferences it.
+unsafe
+
+impl Send for SafeHandle {
 }
 
 fn main(): i32 {

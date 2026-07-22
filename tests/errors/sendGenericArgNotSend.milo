@@ -1,0 +1,23 @@
+// @error: cannot send 'wrapped'
+from "std/runtime" import { Promise }
+
+struct Wrapper<T> {
+    ptr: *u8,
+    value: T,
+}
+
+// Safety: the pointer is only an inert sentinel in this fixture.
+unsafe impl Send for Wrapper<T> {}
+
+fn main(): i32 {
+    let wrapped: Wrapper<*u8> = Wrapper {
+        ptr: 0 as *u8,
+        value: 0 as *u8,
+    }
+    let promise = Promise<i64>.blocking(move (): i64 => {
+        let _ = wrapped
+        return 0
+    })
+    let _ = promise
+    return 0
+}

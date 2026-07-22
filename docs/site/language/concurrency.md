@@ -305,11 +305,11 @@ The same calls work identically on a `Promise.blocking` thread — they just blo
 
 The compiler enforces thread safety at compile time. Because `Promise.blocking` runs its closure on a real OS thread, it requires every captured variable to implement `Send` — safe to transfer across threads. (Green `Task`/`Promise.run` closures stay on one thread and carry no such requirement.)
 
-**Send types** (safe to move to another thread): all primitives, `string`, `Heap<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, and any struct annotated with `@send`.
+**Send types** (safe to move to another thread): all primitives, `string`, `Heap<T>`, `Vec<T>`, `HashMap<K,V>`, and structs/enums where every field is Send. Ordinary types derive this structurally without annotations.
 
-**Sync types** (safe to share via `&T` across threads): same rules, checked via `@sync`.
+**Sync types** (safe to share via `&T` across threads): the same structural rule.
 
-**Non-Send types**: raw pointers (`*T`), structs containing raw pointers (unless annotated).
+**Non-Send types**: raw pointers (`*T`) and structs containing raw pointers, unless an audited `unsafe impl` overrides the structural result.
 
 ```milo
 from "std/runtime" import { Promise }
@@ -329,17 +329,20 @@ fn main(): i32 {
 }
 ```
 
-Use `@send` and `@sync` annotations to mark types with unsafe internals as thread-safe:
+Pointer-backed primitives need an explicit unsafe implementation when their synchronization invariant is outside the type system:
 
 ```milo
-@send
-@sync
 struct MyHandle {
-    _ptr: *u8,   // raw pointer, but we guarantee thread safety
+    _ptr: *u8,
 }
+
+// Safety: every access to the pointee is serialized by its mutex.
+unsafe impl Send for MyHandle {}
+unsafe impl Sync for MyHandle {}
 ```
 
-The compiler error message tells you exactly which field breaks Send and suggests adding the annotation. This prevents data races at compile time — if you can't send a raw pointer to another thread, you can't have unsynchronized shared mutable state.
+The compiler reports which field prevents structural derivation. Manual implementations are proof obligations for the author and reviewer, so they are deliberately marked `unsafe`.
+For a generic wrapper, that override covers only the wrapper representation: every instantiated type argument must still satisfy the same marker. For example, `unsafe impl Send for Wrapper<T> {}` does not make `Wrapper<*u8>` Send.
 
 ## Channels
 
@@ -420,7 +423,7 @@ fn main(): i32 {
 }
 ```
 
-All atomic operations use sequential consistency (seq_cst). `AtomicI64` and `AtomicBool` are `@send` + `@sync` — safe to share across threads.
+All atomic operations use sequential consistency (seq_cst). `AtomicI64` and `AtomicBool` use audited `unsafe impl Send` / `Sync` markers because their raw-pointer internals are accessed only through those atomic operations.
 
 ## Pitfalls
 

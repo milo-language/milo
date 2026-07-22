@@ -16,7 +16,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 out="$root/.selfhost"
 mkdir -p "$out"
 
-bun "$root/scripts/guard.ts" --timeout-s 300 -- \
+bun "$root/scripts/guard.ts" --virtual-mem-mb 8192 --timeout-s 300 -- \
   bun run "$root/src/main.ts" build "$root/src-milo/main.milo" -o "$out/milo-self.bin" "$@"
 
 cat > "$out/milo-self" <<EOF
