@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: language-reference
+purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
+key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
+update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
+last-verified: 2026-07-22
+-->
+
 # The Milo Language Guide
 
 A memory-safe systems language with simple syntax inspired by TypeScript, Python, and Rust. Compiles to native code via LLVM.
@@ -886,6 +894,25 @@ print(sum(tree))   // 3
 ```
 
 Heap auto-frees when it goes out of scope.
+
+`Heap<T>` is single-owner (like Rust's `Box`) — it models trees and recursive types, not cycles or cross-references. For those, use an arena.
+
+## Arenas — cyclic & shared data
+
+`std/arena` provides `Arena<T>` plus a `Copy` generational `Handle<T>`. Nodes store *handles* to each other (never `&T`), so linked lists, graphs, and parent-pointer trees work without lifetimes or `Rc<RefCell>`. A freed handle bumps the slot's generation, so a stale handle reads back as `None` — use-after-free is caught, not UB.
+
+```milo
+from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaModifyMut }
+
+struct GNode { id: i32, edges: Vec<Handle<GNode>> }   // handles stored freely — Copy
+
+var g = arenaNew<GNode>()
+let a = arenaAlloc(g, GNode { id: 0, edges: Vec.new() })
+let b = arenaAlloc(g, GNode { id: 1, edges: Vec.new() })
+arenaModifyMut(g, a, (n: &mut GNode) => { n.edges.push(b) })   // a -> b, no borrow stored
+```
+
+Slices (`v[a..b]`), `Heap<T>`, and `std/arena` together cover the cases Rust uses lifetimes for. The one thing none of them express is a type that *stores a borrow* (`struct Parser<'a> { src: &'a str }`) — own the data or hold an index instead. See [ownership-model.md](ownership-model.md) for the full Rust→Milo mapping.
 
 ---
 

@@ -25,6 +25,7 @@ Every doc in this repo starts with a 7-line `<!-- doc-meta ... -->` block. To fi
 | Understand the workflow / how to approach a task | [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md) |
 | Know the coding conventions reviewers check | [CONVENTIONS.md](CONVENTIONS.md) |
 | Write idiomatic Milo (text handling, ownership, control flow) | [docs/milo-idioms.md](docs/milo-idioms.md) |
+| Do a lifetime-shaped thing (linked list, graph, tree, recursive type, zero-copy) | [docs/ownership-model.md](docs/ownership-model.md) §Rust→Milo — slices, `Heap<T>`, `std/arena` all exist; check here before assuming a gap |
 | Write or run tests, or find what's covered | [docs/testing.md](docs/testing.md) |
 | Run the compiler / prove a change works | [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md) §Run, `bun run scripts/run-examples.ts`, `/verify`, `/run` |
 | Get my work reviewed by a different model | [docs/agent-review.md](docs/agent-review.md) → `scripts/agent_review.sh` |

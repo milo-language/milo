@@ -3,7 +3,7 @@ system: ownership-model
 purpose: why Milo has no lifetimes — second-class references as guardrails, and how that compares to Rust
 key-files: src/checker.ts, docs/language-reference.md, docs/design.md
 update-when: reference semantics change (second-class rule, borrow/exclusivity checks, slices/arenas)
-last-verified: 2026-07-13
+last-verified: 2026-07-22
 -->
 
 # Ownership & references — why there are no lifetimes
@@ -94,6 +94,24 @@ A green task's body cannot borrow from the frame that spawned it: a `&Prog` or `
 - **No shared state at all — actors over channels.** Give each task its own state and have tasks communicate by sending values over a `std/sync` `Channel`, CSP-style. Nothing is shared, so nothing needs a shared reference. Prefer this when the units are naturally independent; reach for the global arena when they genuinely operate on one graph.
 
 A specialized garbage-collected heap is the exception that proves the rule: milojs backs its JS objects with a hand-rolled `Vec<JSObj>` + integer handles rather than `std/arena`, because a mark-sweep collector already iterates every slot and already guarantees no handle outlives its object — the arena's per-slot generation check would be pure overhead. Hand-roll the heap when you *are* the memory manager; use `std/arena` everywhere else.
+
+## Rust → Milo: the lifetime cases, side by side
+
+The patterns that make Rust reach for `<'a>`, `Box`, `Rc<RefCell>`, or `unsafe`, and what you write instead. The last row is the one genuine gap — everything above it is a clean translation, not a workaround.
+
+| Problem | Rust | Milo | Runnable |
+|---|---|---|---|
+| Zero-copy view (within a scope) | `let w: &str = &s[6..11];` | `let w = s[6..11]` — non-owning `&string`, no alloc | — |
+| Recursive data (tree / AST) | `enum Expr { Bin(Box<Expr>, Box<Expr>) }` | `enum Expr { Bin(Heap<Expr>, Heap<Expr>) }`; deref sub-nodes with `*l` | reference §Heap |
+| Recursive struct field | `struct Node { next: Option<Box<Node>> }` | `struct Node { next: Option<Heap<Node>> }` | — |
+| Doubly-linked list | `Rc<RefCell<Node>>` or `unsafe` | arena + `Option<Handle<Node>>` (Copy handles, stored freely) | [linkedList.milo](../examples/linkedList.milo) |
+| Cyclic graph / cross-refs | `petgraph`, arena+indices, or `Rc` | `Arena<GNode>` + `Vec<Handle<GNode>>` for edges | [depgraph.milo](../examples/depgraph.milo) |
+| Tree with parent pointers (DOM) | `Rc<RefCell>` / arena crate | `Arena<Node>` + parent/children as `Handle` | [domArena.milo](../examples/domArena.milo) |
+| Borrow-holding iterator / cursor | `struct Cur<'a> { buf: &'a [u8] }` | own the buffer + an integer `pos`; slice on demand | — |
+| Long-lived cross-task state | `Arc<Mutex<T>>` / `&'static` | module-scope `var pool: Arena<T>`, pass `Handle` | (milojs `gInterp`) |
+| **Type that STORES a borrow** (`Parser<'a> { src: &'a str }`) | `struct Parser<'a> { src: &'a str }` | **no direct equivalent** — own the `string` (clone once) or hold an index into a buffer you own | *the real gap* |
+
+The only unrepresentable row is the last: a struct field that is a *borrow* of data owned elsewhere. Milo's answer is to own the data or refer to it by index — memory-safe via bounds checks, at the cost of the compile-time view↔buffer tie Rust's `&'a` gives you. The three arena rows above are the design production Rust compilers (rustc included) pick *on purpose* to escape `<'a>` propagation, so "Milo forces it" and "Rust chooses it anyway" describe the same code.
 
 ## When each model wins
 
