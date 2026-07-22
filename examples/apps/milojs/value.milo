@@ -623,6 +623,29 @@ fn numToExponential(n: f64, digits: i64, haveDigits: bool): string {
             return stripExpZeros(_cstrToString(ebuf as *u8))
         }
     }
+    // no argument: the shortest form that round-trips. Building the mantissa by
+    // dividing by 10 (below) accumulates f64 error — 12345 -> 1.2345000000000002
+    // — so instead pick the fewest %e fraction digits that reparse to n.
+    if !haveDigits && isFiniteF(n) {
+        var k: i64 = 0
+        while k <= 17 {
+            var sbuf: [u8; 64] = [0; 64]
+            unsafe {
+                snprintf(sbuf, 64, "%.*e", k as i32, n)
+                let s = _cstrToString(sbuf as *u8)
+                match parseFloat(s.clone()) {
+                    Option.Some(x) => {
+                        if x == n {
+                            return stripExpZeros(s)
+                        }
+                    }
+                    Option.None => {
+                    }
+                }
+            }
+            k = k + 1
+        }
+    }
     var neg = false
     var mag = n
     if mag < 0.0 {
