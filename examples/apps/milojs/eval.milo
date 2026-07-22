@@ -5345,6 +5345,20 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.Update(targetIdx, isInc, isPrefix) => {
             let old = readLValue(prog, targetIdx, st, scope)
+            // a BigInt counter increments by 1n and stays a BigInt (x++ on 5n
+            // must yield 5n / store 6n, not coerce through f64)
+            if isBigIntVal(old) {
+                var op = "+"
+                if !isInc {
+                    op = "-"
+                }
+                let updated = evalBigIntBin(op, cloneValue(old), JSValue.BigInt("1"), st)
+                writeLValue(prog, targetIdx, st, scope, cloneValue(updated))
+                if isPrefix {
+                    return updated
+                }
+                return old
+            }
             let oldNum = toNum(old)
             var newNum = oldNum + 1.0
             if !isInc {
@@ -5360,7 +5374,13 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         Expr.CompoundAssign(targetIdx, op, rhsIdx) => {
             let cur = readLValue(prog, targetIdx, st, scope)
             let rhs = evalExpr(prog, rhsIdx, st, scope)
-            let result = evalBin(op, cur, rhs)
+            // a BigInt operand takes the arbitrary-precision path, same as a
+            // plain binary expression — evalBin would coerce it through f64
+            let result = if isBigIntVal(cur) || isBigIntVal(rhs) {
+                evalBigIntBin(op, cloneValue(cur), cloneValue(rhs), st)
+            } else {
+                evalBin(op, cur, rhs)
+            }
             writeLValue(prog, targetIdx, st, scope, cloneValue(result))
             return result
         }

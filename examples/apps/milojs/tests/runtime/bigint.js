@@ -20,3 +20,7 @@ console.log(1n << 64n, 1024n >> 2n, (1n << 64n).toString(16));
 console.log(-1n & 1n, -8n & 5n, -255n & -16n, ~5n, ~-1n);
 console.log(12345678901234567890n & 987654321987654321n);
 try { 5n >>> 1n; } catch (e) { console.log("unsigned:", e.constructor.name); }
+// asUintN/asIntN + compound-assign/increment stay BigInt (regression: were f64-coerced)
+console.log(BigInt.asUintN(8,256n), BigInt.asIntN(8,255n), BigInt.asUintN(64,-1n), BigInt.asIntN(4,-1n), BigInt.asUintN(3,-5n));
+let bx = 5n; let a1 = bx++; let a2 = ++bx; let a3 = bx--; let a4 = --bx; console.log(a1, a2, a3, a4, bx);
+let bs = 10n; bs += 5n; bs *= 2n; bs -= 1n; bs %= 7n; bs <<= 4n; console.log(bs);

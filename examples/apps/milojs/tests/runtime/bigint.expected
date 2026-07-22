@@ -17,3 +17,6 @@ bigint false true false
 1n 0n -256n -6n 0n
 654297432776245904n
 unsigned: TypeError
+0n -1n 18446744073709551615n -1n 3n
+5n 7n 7n 5n 5n
+16n

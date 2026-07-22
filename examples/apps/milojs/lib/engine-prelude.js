@@ -45,6 +45,22 @@ Number.isSafeInteger = function (v) {
 Number.parseFloat = parseFloat;
 Number.parseInt = parseInt;
 
+// --- BigInt statics ----------------------------------------------------------
+// asUintN/asIntN wrap a BigInt to a fixed bit width; expressed with the engine's
+// now-native bigint arithmetic rather than as a dedicated native.
+BigInt.asUintN = function (bits, value) {
+  value = BigInt(value);
+  var mod = 1n << BigInt(bits);
+  var r = value % mod;
+  if (r < 0n) r += mod;
+  return r;
+};
+BigInt.asIntN = function (bits, value) {
+  var u = BigInt.asUintN(bits, value);
+  var half = 1n << BigInt(bits - 1);
+  return u >= half ? u - (1n << BigInt(bits)) : u;
+};
+
 // --- Object / Array statics --------------------------------------------------
 Object.fromEntries = function (entries) {
   var out = {};
