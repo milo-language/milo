@@ -124,3 +124,4 @@ Milo bets that the first case is far more common than the second. For systems co
 
 - [language-reference.md](language-reference.md) — reference syntax, slices, arenas
 - [design.md](design.md) — rationale for the second-class-reference choice
+- [memory-safety-vs-rust.md](memory-safety-vs-rust.md) — battle-test: every threat class, compile vs runtime vs Rust

@@ -16,8 +16,8 @@ Design decisions and rationale. Syntax and semantics live in [language-reference
 
 The compiler is a collaborator, not a gate. It makes the correct path the path of
 least resistance, then stays out of the way. Seven principles, in priority order —
-**when two conflict, the lower number wins** (precedent: overflow traps in release,
-#1, despite a measured runtime cost, #5):
+**when two conflict, the lower number wins** (precedent: array bounds checks stay
+on in release, #1, despite a measured runtime cost, #5):
 
 1. **No silent footgun.** Every hazard is a compile error, never a wrong answer at
    runtime. If the compiler can't rule a mistake out, it says so — it does not guess.
@@ -274,12 +274,21 @@ this file and that one can't drift.
 
 One decision that split from his answer *and* from Rust-as-shipped: **integer
 overflow.** He wanted auto-bignum (off-ethos — unpredictable allocation in a
-safety lane); Rust traps in debug and wraps in release. Milo's default is
-**trap in all build modes**, with `--no-overflow-checks` and the explicit
+safety lane); Rust traps in debug and wraps in release. The **decided** end state
+for Milo is trap in *all* build modes (principle #1 — a wrapped value is a silent
+footgun), with `--no-overflow-checks` and the explicit
 `wrappingAdd`/`saturatingAdd`/`checkedAdd` methods as the opt-outs, and range
-analysis deleting checks where it can prove them safe. Silent release-mode wrap
-was the one footgun Milo had inherited from Rust; trapping by default closes it
-(principle #1).
+analysis deleting checks where it can prove them safe.
+
+**Shipped status (as of 2026-07-22): not yet reached.** The runtime overflow trap
+(`llvm.sadd.with.overflow` → abort) is gated behind `--debug`; `milo run`, the
+default `build` (-O2), and `--release` currently **wrap silently** — i.e. today's
+behavior is Rust-parity, not the decided default. Wrapping is memory-*safe* (defined,
+no UB), so this is a policy gap, not a soundness hole, but the docs above describe the
+target, not the current default. Closing it = ungating the check to all modes (with
+range analysis so the release cost stays near zero). Div-by-zero and `INT_MIN / -1`
+already trap in every mode; overflow is the remaining case. Tracked in
+[memory-safety-vs-rust.md](memory-safety-vs-rust.md).
 
 ## Open Questions
 
