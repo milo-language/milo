@@ -62,7 +62,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 - Second-class references: `&T` only in function params, never stored/returned
 - User-defined generics: `fn foo<T>`, `struct Pair<A,B>`, `enum Maybe<T>` — monomorphization with type inference
 - No GC, no RC, no pointers in safe code
-- Arenas for cyclic data (deferred)
+- Arenas for cyclic data via `std/arena` (`Arena<T>` + generational `Handle<T>`)
 - Strings: owned UTF-8 byte buffers (like Rust's String)
 
 ## Key Rules
