@@ -167,6 +167,15 @@ fn main(): i32 {
 `;
 const GLOBAL_URI = "file:///tmp/milo-lsp-global.milo";
 
+// Hover on a fixed-array-typed local. The explicit-type path used to render
+// `stmt.type.name` (the bare element `u8`), dropping the `[...; N]` wrapper.
+const ARRAY_SRC = `fn main() {
+    var ev: [u8; 64] = [0; 64]
+    print(ev[0] as i64)
+}
+`;
+const ARRAY_URI = "file:///tmp/milo-lsp-array.milo";
+
 let proc: Subprocess<"pipe", "pipe", "inherit">;
 let buf = new Uint8Array(0);
 const pending = new Map<number, (v: any) => void>();
@@ -220,7 +229,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [ARRAY_URI, ARRAY_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -407,4 +416,10 @@ test("codeAction offers to remove an unnecessary unsafe block", async () => {
 test("workspaceSymbol matches by substring across open docs", async () => {
   const syms = await req(16, "workspace/symbol", { query: "Poin" });
   expect(syms.map((s: any) => s.name)).toContain("Point");
+});
+
+test("hover on a fixed-array local keeps the [T; N] wrapper", async () => {
+  // `ev` is on line 2 (0-based 1); 4-space indent + "var " → char 8.
+  const hover = await req(17, "textDocument/hover", { textDocument: { uri: ARRAY_URI }, position: { line: 1, character: 8 } });
+  expect(hover?.contents?.value).toContain("var ev: [u8; 64]");
 });

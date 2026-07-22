@@ -125,7 +125,7 @@ function collectStmtTypeInfo(stmt: Stmt, fn: Function, infos: TypeInfo[]) {
     case "LetDecl":
     case "VarDecl":
       if (stmt.span) {
-        const declType = stmt.type?.name ?? inferLiteralType(stmt.value);
+        const declType = (stmt.type ? formatMiloType(stmt.type) : null) ?? inferLiteralType(stmt.value);
         if (declType) {
           // span points to 'let'/'var', name starts after that + space
           infos.push({
@@ -501,7 +501,7 @@ function findVarHover(
   };
   for (const stmt of stmts) {
     if ((stmt.kind === "LetDecl" || stmt.kind === "VarDecl") && stmt.name === word) {
-      let resolved = stmt.type?.name ?? inferLiteralType(stmt.value);
+      let resolved = (stmt.type ? formatMiloType(stmt.type) : null) ?? inferLiteralType(stmt.value);
       if (!resolved) {
         const tk = exprTypes.get(stmt.value);
         if (tk) resolved = formatTypeName(tk);
@@ -544,7 +544,7 @@ function findVarHover(
 
 function findHoverInStmt(stmt: Stmt, line: number, col: number, exprTypes: Map<Expr, import("./types").TypeKind>, word: string): string | null {
   if ((stmt.kind === "LetDecl" || stmt.kind === "VarDecl") && stmt.span?.line === line && stmt.name === word) {
-    let resolved = stmt.type?.name ?? inferLiteralType(stmt.value);
+    let resolved = (stmt.type ? formatMiloType(stmt.type) : null) ?? inferLiteralType(stmt.value);
     if (!resolved) {
       const tk = exprTypes.get(stmt.value);
       if (tk) resolved = formatTypeName(tk);
