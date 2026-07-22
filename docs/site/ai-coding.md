@@ -123,6 +123,8 @@ An LLM "fixes" this with `.clone()`, `RefCell`, or `unsafe` instead of restructu
 
 **The tradeoff:** C++ lets wrong code compile silently (UB). Rust rejects correct-in-spirit code. Both are bad for LLMs, for opposite reasons. Milo sits in between: strict enough to catch real bugs, simple enough that correct-in-spirit code actually compiles.
 
+For the full threat-by-threat breakdown — what Milo catches at compile time vs runtime, where each language wins, and the arena/`Heap` patterns that replace lifetimes — see [Memory Safety vs Rust](/language/vs-rust).
+
 ## Summary
 
 | Property | C++ | Rust | Milo | Impact on LLM code |
@@ -130,7 +132,7 @@ An LLM "fixes" this with `.clone()`, `RefCell`, or `unsafe` instead of restructu
 | Implicit conversions | ~15 built-in | Zero | Zero | LLMs can't introduce silent type bugs |
 | Undefined behavior | 200+ categories | None in safe code | None in safe code | Wrong code crashes loud, not silent |
 | Null | Raw pointers | `Option<T>` | `Option<T>` | Compiler forces null handling |
-| Memory safety | Manual | Borrow checker + lifetimes | Moves + second-class refs | Use-after-free = compile error (both) |
+| Memory safety | Manual | Borrow checker + lifetimes | Moves + second-class refs | Owned UAF = compile error; cyclic = runtime-caught |
 | Lifetime annotations | N/A | Required, complex | None, ever | No borrow checker fights |
 | Thread safety | Nothing enforced | Send/Sync | Send/Sync | Data races can't compile (both) |
 | Error handling | Exceptions (invisible) | `Result<T,E>` + `?` | `Result<T,E>` + `?` | Error paths can't be ignored (both) |

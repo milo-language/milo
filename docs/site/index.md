@@ -21,7 +21,7 @@ hero:
 
 <div class="intro">
 
-Milo is a memory-safe systems language that guides you to simple, correct, readable programs. Contracts are built in, enabling formal verification that guarantees correctness across your codebase, no matter how large. People and AI ship with confidence that their code is correct. <a href="/milo/language/">Learn more</a>
+Milo is a memory-safe systems language that guides you to simple, correct, readable programs. Contracts are built in, enabling formal verification that guarantees correctness across your codebase, no matter how large. People and AI ship with confidence that their code is correct. <a href="/milo/language/">Learn more</a> or see how it <a href="/milo/language/vs-rust">measures up to Rust</a>.
 
 </div>
 

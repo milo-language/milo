@@ -67,6 +67,7 @@ export default defineConfig({
             { text: 'Enums & Matching', link: '/language/enums' },
             { text: 'Error Handling', link: '/language/error-handling' },
             { text: 'Ownership', link: '/language/ownership' },
+            { text: 'Memory Safety vs Rust', link: '/language/vs-rust' },
             { text: 'Collections', link: '/language/collections' },
             { text: 'Strings', link: '/language/strings' },
             { text: 'Traits', link: '/language/traits' },
