@@ -1,0 +1,8 @@
+fn danger(): &i32 {
+    let x = 5
+    return &x // error: cannot return a reference
+}
+
+fn main(): i32 {
+    return 0
+}

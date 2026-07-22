@@ -1,0 +1,6 @@
+fn main(): i32 {
+    let v: Vec<i32> = Vec.new()
+    let v2 = v // v moved into v2
+    print(v.len()) // error: use of moved variable 'v'
+    return 0
+}

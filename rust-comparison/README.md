@@ -1,0 +1,32 @@
+# Rust vs Milo — memory-safety receipts
+
+Runnable proof behind the [Memory Safety vs Rust](https://cs01.github.io/milo/language/vs-rust) page. Each folder holds the **same bug written twice** — `rust.rs` and `milo.milo` — so you can watch both compilers handle it instead of taking our word.
+
+```bash
+./run.sh            # release mode (the shipped default for both languages)
+./run.sh --debug    # debug mode (overflow + contract checks turn on)
+```
+
+Requires `rustc` (release uses `-O`) and the repo's `./milo` wrapper. The runner makes no assertions — it prints the raw outcome of each side. You judge.
+
+## What each row proves
+
+| Folder | rust | milo | Takeaway |
+|---|---|---|---|
+| `use_after_move` | compile-error | compile-error | **parity** — moved-value use rejected before codegen |
+| `dangling_ref` | compile-error | compile-error | **parity** — can't return a reference to a local |
+| `oob_index` | runtime-panic | runtime-trap | **parity** — no compile proof here, both trap (no UB) |
+| `overflow` | wrap / debug-panic | wrap / debug-trap | **parity, honestly** — Milo's default matches Rust today |
+| `stale_handle` | **ran clean → wrong value** | **caught → `None`** | **Milo ahead** — a naive Rust arena silently corrupts |
+| `contract` | runtime-panic (assert) | **compile-error** | **Milo ahead** — contracts proven at compile time |
+
+## The two that matter
+
+**`stale_handle`** is the headline. A naive Rust arena is `Vec<T>` + a `usize` index — the common, idiomatic pattern. Free a slot, let it get reused, and your old index now silently points at a *different* value: `rust` prints `carol` where it held a handle to `alice`, with no panic and no compile error. Milo's `std/arena` gives each slot a generation, so the stale handle reads back `None`. Milo closes a silent-corruption hole that plain-index Rust leaves open. (Rust's own fix is the `generational-arena`/`slotmap` crates — i.e. Milo ships in the stdlib what Rust reaches to crates.io for.)
+
+**`contract`** shows the one axis where Milo clearly leads: `requires`/`ensures` are in the language and `milo prove` discharges them at compile time — `clamp(50, 100, 0)` is a compile error because `lo <= hi` is violated with constant arguments. Stable Rust has no built-in contract; the idiomatic equivalent is a runtime `assert!` that only fires when the line executes.
+
+## Honesty notes
+
+- **`overflow` is deliberately a tie.** Milo's *decided* default is trap-in-all-modes, but as shipped the trap is gated to `--debug`; release wraps, exactly like Rust. We show the real behavior, not the aspiration.
+- **Not shown here:** the case where Rust genuinely leads — a struct that *stores a borrow* (`Parser<'a> { input: &'a [u8] }`). Milo can't express it (own the buffer + an index instead). That's the real cost of having no lifetimes; see the site page.

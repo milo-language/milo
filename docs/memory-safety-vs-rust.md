@@ -84,7 +84,7 @@ fn clamp(x: i32, lo: i32, hi: i32): i32
 
 ## How to extend this battle-test
 
-Add a probe to `scratchpad/safety/` (or promote the compile-caught ones into `tests/errors/*.milo` with an `// @error:` annotation to lock them as regressions). Each probe should trigger exactly one unsafe outcome. Classify by running it: a compile error or a runtime trap is a pass; a clean run with the corrupt result is a miss to file here. Candidate threats not yet probed: data races across green tasks (channels vs shared `var`), `Promise.blocking` `Send` enforcement, FFI boundary (`extern` returning a freed pointer), slice-into-wrong-buffer (the span↔buffer tie gap), and reentrancy of a module-scope arena.
+Add a probe to `scratchpad/safety/`, or a runnable Rust↔Milo receipt to `rust-comparison/` (with a `rust.rs` + `milo.milo` pair and `./run.sh`), or promote the compile-caught ones into `tests/errors/*.milo` with an `// @error:` annotation to lock them as regressions. Each probe should trigger exactly one unsafe outcome. Classify by running it: a compile error or a runtime trap is a pass; a clean run with the corrupt result is a miss to file here. Candidate threats not yet probed: data races across green tasks (channels vs shared `var`), `Promise.blocking` `Send` enforcement, FFI boundary (`extern` returning a freed pointer), slice-into-wrong-buffer (the span↔buffer tie gap), and reentrancy of a module-scope arena.
 
 ## See also
 

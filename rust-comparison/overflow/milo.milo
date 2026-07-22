@@ -1,0 +1,6 @@
+fn main(): i32 {
+    var x: i32 = 2147483647
+    x = x + 1 // release: wraps; --debug: traps
+    print(x)
+    return 0
+}

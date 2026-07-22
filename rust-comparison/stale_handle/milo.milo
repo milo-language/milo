@@ -1,0 +1,31 @@
+// Milo arena: a Handle is a generational index. Freeing bumps the slot's
+// generation, so a handle to a freed/reused slot no longer matches.
+from "std/arena" import {
+    Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaFree
+}
+
+struct Person {
+    name: string
+}
+
+fn main(): i32 {
+    var a = arenaNew<Person>()
+    let h = arenaAlloc(a, Person {
+        name: "alice"
+    }
+    ) // handle -> alice
+    let _freed = arenaFree(a, h) // free the slot
+    let _carol = arenaAlloc(a, Person {
+        name: "carol"
+    }
+    ) // reuse the same slot
+    match arenaGet(a, h) { // h is stale
+        Option.Some(p) => {
+            print("LEAKED wrong value: ", p.name)
+        }
+        Option.None => {
+            print("caught: stale handle -> None (no corruption)")
+        }
+    }
+    return 0
+}

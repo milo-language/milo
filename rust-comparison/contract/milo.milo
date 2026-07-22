@@ -1,0 +1,16 @@
+fn clamp(x: i32, lo: i32, hi: i32): i32
+requires lo <= hi
+ensures result >= lo && result <= hi
+{
+    if x < lo {
+        return lo
+    }
+    if x > hi {
+        return hi
+    }
+    return x
+}
+
+fn main(): i32 {
+    return clamp(50, 100, 0)
+} // violates lo<=hi -> COMPILE error (constant args)

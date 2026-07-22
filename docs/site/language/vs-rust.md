@@ -1,6 +1,6 @@
 # Memory Safety vs Rust
 
-Rust is the bar for safe systems programming, so the honest question is: what does Milo actually catch, and where does each language win? Every row below is a real program run through the shipped compiler. The rule is **no silent undefined behavior** — a bug is either rejected at compile time (best) or trapped at runtime (a defined abort, never corruption).
+Rust is the industry standard for safe systems code. The table below compares how Rust and Milo each handle the same memory-safety hazards — the rule for both being **no silent corruption**: every bug is either rejected at compile time (best) or trapped at runtime (a defined abort), never undefined behavior. Every row is a real program run through the shipped compiler; the runnable both-sides proofs live in [`rust-comparison/`](https://github.com/cs01/milo/tree/main/rust-comparison).
 
 ## What gets caught
 
@@ -24,13 +24,26 @@ No silent-UB holes: across the sweep, every unsafe pattern is caught at compile 
 
 ## Where the two differ
 
-**Cyclic data — runtime isn't a downgrade.** For a mutable graph, doubly-linked list, or parent-pointer tree, Rust's borrow checker rejects the aliasing outright — there is no compile-time `&'a` version. Real Rust uses `Rc<RefCell>` (runtime `borrow_mut()` panic, refcount cost) or an arena with `usize` indices (a stale index is caught *not at all* — you silently read the wrong slot). Milo's generational `Handle` catches that stale access, so arena-vs-arena, Milo is equal-or-better.
+| Pattern | Rust | Milo | Verdict |
+|---|---|---|---|
+| Mutable cyclic data (graph, doubly-linked list, parent pointers) | `&'a` rejected; use `Rc<RefCell>` (runtime panic + refcount) or arena+`usize` (**stale index caught not at all**) | arena + generational `Handle` — stale access reads `None` | **Milo equal-or-better** arena-vs-arena |
+| Stored borrow (`struct Parser<'a> { input: &'a [u8] }`) | expressible, compile-time view↔buffer tie | can't store a borrow — own the buffer + integer offset (`std/json` does this) | **Rust ahead** — the one real cost of no lifetimes |
 
-**The one place Rust is genuinely ahead — stored borrows.** A type that holds a view into memory it doesn't own — `struct Parser<'a> { input: &'a [u8] }` — Milo can't express. You own the buffer and hold an integer offset instead (`std/json` does exactly this). Still memory-safe via bounds checks; what you give up is the compile-time tie between a view and its buffer, a *logic* bug Rust's `'a` would catch. This is the whole cost of having no lifetimes. See [Ownership](/language/ownership).
+The stored-borrow row is the whole trade: Milo forbids the pattern (still memory-safe via bounds checks) and loses the compile-time tie Rust's `'a` gives — a *logic* bug, not a safety one. See [Ownership](/language/ownership).
 
 ## Beyond memory safety: contracts
 
-Milo has `requires` / `ensures` / `invariant` built in, and `milo prove` discharges them at **compile time** with an SMT solver — a violated precondition with constant arguments is a compile error, not a test that might miss. Rust's `core::contracts` exists but is unstable and **runtime-only**; compile-time proof needs external tools (Kani, Creusot, Prusti). Milo's prover is bounded — it proves linear scalar arithmetic and reports `unknown` for the rest, falling back to runtime asserts in `--debug` — but for the contracts it covers, they're proven away for free. See [Contracts & Safety](/language/safety).
+Memory safety stops corruption; contracts stop *logic* errors — a function fed inputs it forbids, or breaking a promise about its result. This is where Milo pulls ahead: they're in the language, and the prover discharges them at compile time.
+
+| Capability | Rust | Milo |
+|---|---|---|
+| Contracts in the language (`requires` / `ensures` / `invariant`) | `core::contracts`, **unstable** | **yes**, stable |
+| Checked at **compile time** | no — needs external Kani / Creusot / Prusti | **yes** — `milo prove`, SMT solver |
+| Constant-arg precondition violation | not caught | **compile error** |
+| Checked at **runtime** | `-Z contract-checks` (unstable) | `--debug` asserts entry/return/loop |
+| Compiled out in release | yes | yes |
+
+Milo's prover is bounded — it proves linear scalar arithmetic and reports `unknown` for the rest (nonlinear, bitwise, collection lengths), falling back to runtime asserts in `--debug`. But for the contracts it covers, they're proven away for free, no external toolchain. See [Contracts & Safety](/language/safety).
 
 ::: tip Note on integer overflow
 Milo's decided default is to trap overflow in every build mode. As shipped today the trap is gated to `--debug`; `run`, default `build`, and `--release` wrap silently — Rust-parity, not yet the target. Wrapping is defined (memory-safe, no UB); closing the gap is ungating the check to all modes. Div-by-zero and `INT_MIN / -1` already trap everywhere.

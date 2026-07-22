@@ -1,0 +1,7 @@
+fn main(): i32 {
+    var v: Vec<i32> = Vec.new()
+    v.push(1)
+    var i = 7
+    print(v[i]) // runtime trap: array index out of bounds
+    return 0
+}
