@@ -481,7 +481,15 @@ function URL(url, base) {
   this.protocol = m[1];
   var authority = m[2];
   var at = authority.indexOf('@');
-  if (at >= 0) authority = authority.slice(at + 1);
+  this.username = '';
+  this.password = '';
+  if (at >= 0) {
+    var userinfo = authority.slice(0, at);
+    var uc = userinfo.indexOf(':');
+    this.username = uc < 0 ? userinfo : userinfo.slice(0, uc);
+    this.password = uc < 0 ? '' : userinfo.slice(uc + 1);
+    authority = authority.slice(at + 1);
+  }
   var colon = authority.indexOf(':');
   this.hostname = colon < 0 ? authority : authority.slice(0, colon);
   this.port = colon < 0 ? '' : authority.slice(colon + 1);

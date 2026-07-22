@@ -15,7 +15,11 @@ function isArray(x) {
   return x !== null && typeof x === "object" && typeof x.length === "number" && typeof x.push === "undefined" ? false : Array.isArray ? Array.isArray(x) : false;
 }
 
-function inspect(v) {
+// node-style single-line inspection: `{ a: 1, b: 'x' }`, `[ 1, 'two' ]`, nested,
+// single-quoted strings — NOT JSON.stringify (which gives `{"a":1}`). Matches
+// bun's util.inspect for the common cases; does not reproduce its >72-char
+// multi-line wrapping (always inline).
+function inspect(v, seen) {
   if (v === null) {
     return "null";
   }
@@ -26,13 +30,58 @@ function inspect(v) {
   if (t === "string") {
     return "'" + v + "'";
   }
+  if (t === "bigint") {
+    return "" + v + "n";
+  }
   if (t === "number" || t === "boolean") {
     return "" + v;
   }
-  if (t === "function") {
-    return "[Function]";
+  if (t === "symbol") {
+    return v.toString();
   }
-  return JSON.stringify(v);
+  if (t === "function") {
+    return v.name ? "[Function: " + v.name + "]" : "[Function (anonymous)]";
+  }
+  if (v instanceof Date) {
+    return v.toISOString();
+  }
+  if (v instanceof Error) {
+    return v.stack || v.name + ": " + v.message;
+  }
+  seen = seen || [];
+  if (seen.indexOf(v) >= 0) {
+    return "[Circular]";
+  }
+  seen.push(v);
+  var out;
+  if (Array.isArray(v)) {
+    if (v.length === 0) {
+      out = "[]";
+    } else {
+      var parts = [];
+      for (var i = 0; i < v.length; i++) {
+        parts.push(inspect(v[i], seen));
+      }
+      out = "[ " + parts.join(", ") + " ]";
+    }
+  } else {
+    var keys = Object.keys(v);
+    if (keys.length === 0) {
+      out = "{}";
+    } else {
+      var kp = [];
+      for (var j = 0; j < keys.length; j++) {
+        var key = keys[j];
+        // bare identifier keys unquoted, everything else single-quoted
+        var ident = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key);
+        var kd = ident ? key : "'" + key + "'";
+        kp.push(kd + ": " + inspect(v[key], seen));
+      }
+      out = "{ " + kp.join(", ") + " }";
+    }
+  }
+  seen.pop();
+  return out;
 }
 
 // util.format with %s %d %i %j %% — the subset real code uses.

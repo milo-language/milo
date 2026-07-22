@@ -1,0 +1,8 @@
+{"root":"/","dir":"/a","base":"b.txt","ext":".txt","name":"b"}
+{"root":"","dir":"relative","base":"file.tar.gz","ext":".gz","name":"file.tar"}
+/a/b/c.txt /x.js
+user pass host.com 8080 host.com:8080
+"" ""
+'hi' { a: 1, b: 'x' }
+[ 1, 'two', 3 ] { nested: { a: [ 1, 2 ] } }
+null 42n true

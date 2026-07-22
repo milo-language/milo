@@ -122,6 +122,31 @@ function isAbsolute(p) {
   return p.charAt(0) === "/";
 }
 
+// { root, dir, base, ext, name } — the inverse of format()
+function parse(p) {
+  var base = basename(p);
+  var ext = extname(p);
+  var dir = dirname(p);
+  var name = ext ? base.slice(0, base.length - ext.length) : base;
+  return {
+    root: isAbsolute(p) ? "/" : "",
+    dir: dir,
+    base: base,
+    ext: ext,
+    name: name,
+  };
+}
+
+// inverse of parse(): prefer dir+base, else root+name+ext
+function format(o) {
+  var dir = o.dir || o.root || "";
+  var base = o.base || (o.name || "") + (o.ext || "");
+  if (!dir) {
+    return base;
+  }
+  return dir === "/" ? "/" + base : dir + "/" + base;
+}
+
 function relative(a, b) {
   var from = resolve(a).split("/");
   var to = resolve(b).split("/");
@@ -153,6 +178,8 @@ exports.basename = basename;
 exports.extname = extname;
 exports.isAbsolute = isAbsolute;
 exports.relative = relative;
+exports.parse = parse;
+exports.format = format;
 exports.posix = exports;
 
 // posix no-op (only Windows namespaces paths); prisma calls it before dlopen
