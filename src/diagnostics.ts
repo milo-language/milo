@@ -16,6 +16,9 @@ export interface Diagnostic {
 export interface WarningConfig {
   denied: Set<string>;
   allowed: Set<string>;
+  // Byte threshold for the `large-stack-array` lint (`--max-stack-array`).
+  // Undefined → the checker's built-in default (512 KiB).
+  maxStackArrayBytes?: number;
 }
 
 // Thrown by the lexer/parser. Carries a structured Diagnostic so callers can render

@@ -111,6 +111,15 @@ fn process(data: string): i64 {   // warning: parameter 'data' is never moved
 }
 ```
 
+### large-stack-array
+
+A fixed-size local array is a stack allocation of its full size, up front — a big one can silently overflow the stack (worst on secondary threads and in deep recursion). Off by default, since many are intentional; opt in with `--deny=large-stack-array`. The threshold defaults to 512 KiB and is tunable with `--max-stack-array` (accepts a `k`/`m` suffix, e.g. `--max-stack-array=256k`).
+
+```milo
+var fb: [u32; 172800] = [0; 172800]   // warning: 'fb' is a 675 KiB stack allocation
+                                       //   hint: use Vec<u32> for a heap buffer
+```
+
 ## Configuring warnings
 
 Use `--deny` to turn a warning into a hard error, `--allow` to suppress it, or `--deny-all` to treat every warning as an error.
@@ -131,6 +140,7 @@ milo build app.milo --deny-all
 | `unused-variable` | warn | Declared but never read |
 | `unused-result` | warn | `Result` or `Option` value silently discarded |
 | `unused-move` | allow | Owned param never moved — could be a borrow instead |
+| `large-stack-array` | allow | Local fixed array over `--max-stack-array` (default 512 KiB) — stack-overflow risk |
 
 ## Error formatting
 

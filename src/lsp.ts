@@ -204,7 +204,7 @@ const SCALAR_BYTES: Record<string, number> = {
 // A `[u8; 64]` hover means nothing to a reader who doesn't know the `[element; count]`
 // spelling. Append a plain-English gloss: how many of what, and total bytes if the
 // element size is known. Returns "" for non-fixed-array code lines.
-function arrayHoverNote(codeLine: string): string {
+function arrayHoverNote(codeLine: string, storage: "stack" | "static" | null = null): string {
   const m = codeLine.match(/\[([A-Za-z_][\w]*)(<[^\]]*>)?;\s*(\d+)\]/);
   if (!m) return "";
   const elem = m[1], n = parseInt(m[3]);
@@ -218,6 +218,9 @@ function arrayHoverNote(codeLine: string): string {
       note += kib >= 1024 ? ` (${(kib / 1024).toFixed(1)} MiB)` : ` (${kib % 1 === 0 ? kib : kib.toFixed(1)} KiB)`;
     }
   }
+  // Where the storage lives — the thing readers coming from GC languages don't know.
+  if (storage === "stack") note += `\n\nStored inline · local → **stack** allocation`;
+  else if (storage === "static") note += `\n\nStored inline · global → **static** storage (BSS/data)`;
   return `\n\n---\n\n${note}`;
 }
 
@@ -393,7 +396,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
       if (fn.isExtern) continue;
       for (const stmt of fn.body) {
         const info = findHoverInStmt(stmt, line + 1, character + 1, exprTypes, word);
-        if (info) return { contents: { kind: "markdown", value: `\`\`\`milo\n${info}\n\`\`\`${arrayHoverNote(info)}` } };
+        if (info) return { contents: { kind: "markdown", value: `\`\`\`milo\n${info}\n\`\`\`${arrayHoverNote(info, "stack")}` } };
       }
     }
 
@@ -498,7 +501,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
       }
       const bindTypes = checkResult?.patternBindingTypes ?? new Map();
       const varHover = findVarHover(enclosing.fn.body, word, exprTypes, bindTypes);
-      if (varHover) return { contents: { kind: "markdown", value: `\`\`\`milo\n${varHover}\n\`\`\`${arrayHoverNote(varHover)}` } };
+      if (varHover) return { contents: { kind: "markdown", value: `\`\`\`milo\n${varHover}\n\`\`\`${arrayHoverNote(varHover, "stack")}` } };
     }
 
     // Global variables — checked after params/locals so a same-named local
@@ -509,7 +512,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
       if (!ty) { const tk = exprTypes.get(g.value); if (tk) ty = formatTypeName(tk); }
       const kw = g.mutable ? "var" : "let";
       const line = `${kw} ${g.name}: ${ty ?? "?"}`;
-      return { contents: { kind: "markdown", value: `\`\`\`milo\n${line}\n\`\`\`${arrayHoverNote(line)}` } };
+      return { contents: { kind: "markdown", value: `\`\`\`milo\n${line}\n\`\`\`${arrayHoverNote(line, "static")}` } };
     }
     lspDebug(`hover word=${JSON.stringify(word)} → no match (globals=${program.globals.length})`);
   } catch (e) {

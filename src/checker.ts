@@ -299,6 +299,11 @@ export class TypeChecker {
     // every one of them, and the fix ("just delete it") would break the build — so the
     // projects that don't do that opt in.
     if (!config.denied.has("unused-import")) config.allowed.add("unused-import");
+    // large-stack-array is OFF unless asked for. Big fixed-size locals are a real
+    // stack-overflow footgun, but plenty are intentional (main-thread framebuffers
+    // that work fine), so warning by default would nag every graphics program. The
+    // always-on hover note already surfaces the size; projects opt into the hard lint.
+    if (!config.denied.has("large-stack-array")) config.allowed.add("large-stack-array");
     // unused-unsafe is on by default but fires only in user code (see currentFnIsUser):
     // the permissive safe-extern rule makes most stdlib unsafe blocks technically
     // removable, so warning on imported std would flood every compile.
@@ -313,6 +318,43 @@ export class TypeChecker {
     if (this.warningConfig.allowed.has(code)) return;
     const severity = (this.warningConfig.denied.has(code) || this.warningConfig.denied.has("*")) ? "error" : "warning";
     this.diagnostics.push({ severity, span, len, message: msg, hint, code });
+  }
+
+  // Conservative byte size of a fixed-size array whose leaves are scalars.
+  // Returns null when any dimension is dynamic or a leaf isn't a fixed-width
+  // scalar (structs/enums/vecs have layout we don't compute here). Used only to
+  // flag oversized stack allocations — an underestimate is fine, a false alarm is not.
+  private fixedArrayBytes(t: TypeKind): number | null {
+    if (t.tag !== "array" || t.size === null) return null;
+    const elemBytes = (e: TypeKind): number | null => {
+      if (e.tag === "int" || e.tag === "float") return e.bits / 8;
+      if (e.tag === "bool") return 1;
+      if (e.tag === "ptr" || e.tag === "ref") return 8;
+      if (e.tag === "array") return this.fixedArrayBytes(e);
+      return null;
+    };
+    const eb = elemBytes(t.element);
+    return eb === null ? null : eb * t.size;
+  }
+
+  // A local fixed array is a stack allocation of its full size, up front. Big ones
+  // silently overflow the stack at runtime (same trap Rust's `[T; N]` has). Warn so
+  // the fix — a heap `Vec<T>` — is visible at the declaration.
+  private lintStackArray(name: string, ty: TypeKind, span?: Span) {
+    // Opt-in only (see constructor); skip the byte math entirely when suppressed.
+    if (this.warningConfig.allowed.has("large-stack-array")) return;
+    const threshold = this.warningConfig.maxStackArrayBytes ?? 512 * 1024;
+    const bytes = this.fixedArrayBytes(ty);
+    if (bytes === null || bytes <= threshold) return;
+    const kib = bytes / 1024;
+    const human = kib >= 1024 ? `${(kib / 1024).toFixed(1)} MiB` : `${Math.round(kib)} KiB`;
+    const elemName = ty.tag === "array" ? typeName(ty.element) : "T";
+    this.warn(
+      "large-stack-array",
+      `'${name}' is a ${human} stack allocation`,
+      span,
+      `large local arrays can overflow the stack; use Vec<${elemName}> for a heap buffer`,
+    );
   }
 
   // Whether a function name belongs to the user's own file. Mangled names cover
@@ -2265,6 +2307,7 @@ export class TypeChecker {
           const info = this.lookup(stmt.name);
           if (info) info.boundClosure = stmt.value;
         }
+        if (bindingType.tag === "array") this.lintStackArray(stmt.name, bindingType, sp);
         this.tryMove(stmt.value);
         break;
       }
@@ -2304,6 +2347,7 @@ export class TypeChecker {
           const bindingType = hint ?? valType;
           if (bindingType.tag !== "ref") for (const vi of newlyFrozen) vi.borrowed = false;
           this.declare(stmt.name, { type: bindingType, mutable: true, moved: false, borrowed: false, read: false, span: sp, ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
+          if (bindingType.tag === "array") this.lintStackArray(stmt.name, bindingType, sp);
         }
         if (stmt.value.kind === "Closure") {
           const info = this.lookup(stmt.name);

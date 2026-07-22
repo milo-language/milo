@@ -705,6 +705,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   const rest: string[] = [];
   const denied = new Set<string>();
   const allowed = new Set<string>();
+  let maxStackArrayBytes: number | undefined;
   let overflowChecks: boolean | null = null;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
@@ -729,6 +730,12 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--deny" && i + 1 < args.length) { denied.add(args[++i]); }
     else if (args[i].startsWith("--allow=")) { allowed.add(args[i].slice(8)); }
     else if (args[i] === "--allow" && i + 1 < args.length) { allowed.add(args[++i]); }
+    else if (args[i].startsWith("--max-stack-array=") || args[i] === "--max-stack-array") {
+      const raw = args[i] === "--max-stack-array" ? args[++i] : args[i].slice(18);
+      const parsed = raw == null ? null : parseHeapSize(raw);
+      if (parsed == null) { console.error(`error: --max-stack-array expects bytes or a k/m suffix (e.g. 256k, 1m), got '${raw}'`); process.exit(1); }
+      maxStackArrayBytes = parsed;
+    }
     else if (args[i].startsWith("--safety=")) { safetyLevel = args[i].slice(9); }
     else if (args[i] === "--safety" && i + 1 < args.length) { safetyLevel = args[++i]; }
     else if (args[i].startsWith("--target=")) { targetName = args[i].slice(9); }
@@ -743,7 +750,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, staticDeps };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed, maxStackArrayBytes }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, staticDeps };
 }
 
 const SKILL_TEXT = `# Milo Language Guide

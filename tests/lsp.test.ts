@@ -425,4 +425,6 @@ test("hover on a fixed-array local keeps the [T; N] wrapper", async () => {
   // Plain-English gloss so `[u8; 64]` isn't jargon + a mystery number.
   expect(hover?.contents?.value).toContain("64** × `u8`");
   expect(hover?.contents?.value).toContain("64 bytes");
+  // A local fixed array is a stack allocation — say so (readers from GC langs don't know).
+  expect(hover?.contents?.value).toContain("stack");
 });
