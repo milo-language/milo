@@ -46,7 +46,9 @@ rust_outcome() {
 milo_outcome() {
   local src="$1" flags=() out rc clean
   [ "$DEBUG" -eq 1 ] && flags=(--debug)
-  out="$("$MILO" run "${flags[@]}" "$src" 2>&1)"; rc=$?
+  # ${flags[@]+…} guard: on macOS bash 3.2, "${flags[@]}" on an empty array trips
+  # `set -u` ("unbound variable"). This expands to nothing when flags is empty.
+  out="$("$MILO" run ${flags[@]+"${flags[@]}"} "$src" 2>&1)"; rc=$?
   clean="$(printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g')"
   if printf '%s' "$clean" | grep -qiE "runtime error:|milo:.*(bounds|division|overflow)"; then
     printf 'runtime-trap|%s' "$clean"
