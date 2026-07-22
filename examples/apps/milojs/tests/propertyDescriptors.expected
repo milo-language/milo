@@ -1,0 +1,5 @@
+{"a":{"value":1,"writable":true,"enumerable":true,"configurable":true},"b":{"value":2,"writable":true,"enumerable":true,"configurable":true}}
+[ "e" ] false false
+[ "b" ] false
+[ "y" ] 5 9 false
+1 2 [ "p", "q" ]

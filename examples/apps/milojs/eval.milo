@@ -1483,6 +1483,7 @@ let NATIVE_RENAME: i64 = 122
 let NATIVE_IS_DIR: i64 = 123
 let NATIVE_BIGINT: i64 = 124
 let NATIVE_OBJECT_GETOWNPROPSYMBOLS: i64 = 125
+let NATIVE_OBJECT_GETOWNPROPDESCS: i64 = 126
 let NATIVE_ARRAY_CTOR: i64 = 67
 let NATIVE_TCP_LISTEN: i64 = 68
 let NATIVE_TCP_ACCEPT: i64 = 69
@@ -1886,23 +1887,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         let d = objHandle(argVals[2])
         if d >= 0 {
-            let g = getMember(st, d, "get")
-            let sfn = getMember(st, d, "set")
-            if isCallable(g) || isCallable(sfn) {
-                objDefineAccessor(st, o, key, g, sfn)
-                return JSValue.Obj(o)
-            }
-            // defineProperty bypasses the writable check (it is what SETS it),
-            // so write through objSet rather than setMember
-            objSet(st, o, key.clone(), getMember(st, d, "value"))
-            let at = objOwnIndex(st, o, key)
-            if at >= 0 {
-                // an omitted attribute defaults to FALSE for defineProperty,
-                // unlike a plain assignment where everything is true
-                st.objects[o].props[at].writable = truthy(getMember(st, d, "writable"))
-                st.objects[o].props[at].enumerable = truthy(getMember(st, d, "enumerable"))
-                st.objects[o].props[at].configurable = truthy(getMember(st, d, "configurable"))
-            }
+            applyDescriptor(st, o, key, d)
             return JSValue.Obj(o)
         }
         setMember(st, o, key, JSValue.Undefined)
@@ -2003,13 +1988,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             let key = st.objects[descs].props[i].key.clone()
             let d = objHandle(st.objects[descs].props[i].value)
             if d >= 0 {
-                let g = getMember(st, d, "get")
-                let sfn = getMember(st, d, "set")
-                if isCallable(g) || isCallable(sfn) {
-                    objDefineAccessor(st, o, key, g, sfn)
-                } else {
-                    setMember(st, o, key, getMember(st, d, "value"))
-                }
+                applyDescriptor(st, o, key, d)
             }
             i = i + 1
         }
@@ -2771,13 +2750,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                     let key = st.objects[descs].props[di].key.clone()
                     let dh = objHandle(cloneValue(st.objects[descs].props[di].value))
                     if dh >= 0 {
-                        let g = getMember(st, dh, "get")
-                        let sfn = getMember(st, dh, "set")
-                        if isCallable(g) || isCallable(sfn) {
-                            objDefineAccessor(st, o, key, g, sfn)
-                        } else {
-                            objSet(st, o, key, getMember(st, dh, "value"))
-                        }
+                        applyDescriptor(st, o, key, dh)
                     }
                     di = di + 1
                 }
@@ -2825,23 +2798,28 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         if idx < 0 {
             return JSValue.Undefined
         }
-        let isAcc = st.objects[h].props[idx].isAccessor
-        let pv = cloneValue(st.objects[h].props[idx].value)
-        let pg = cloneValue(st.objects[h].props[idx].getter)
-        let ps = cloneValue(st.objects[h].props[idx].setter)
-        let d = newObject(st)
-        pushTemp(st, JSValue.Obj(d))
-        if isAcc {
-            objSet(st, d, "get", pg)
-            objSet(st, d, "set", ps)
-        } else {
-            objSet(st, d, "value", pv)
-            objSet(st, d, "writable", JSValue.Bool(st.objects[h].props[idx].writable))
+        return JSValue.Obj(buildPropDescriptor(st, h, idx))
+    }
+    if id == NATIVE_OBJECT_GETOWNPROPDESCS {
+        let out = newObject(st)
+        if argVals.len() > 0 {
+            let h = propertyBagOf(st, argVals[0])
+            if h >= 0 {
+                pushTemp(st, JSValue.Obj(out))
+                var pi: i64 = 0
+                while pi < st.objects[h].props.len() {
+                    let k = st.objects[h].props[pi].key.clone()
+                    let d = buildPropDescriptor(st, h, pi)
+                    // root d across objSet, which may grow `out` and collect
+                    pushTemp(st, JSValue.Obj(d))
+                    objSet(st, out, k, JSValue.Obj(d))
+                    popTemp(st)
+                    pi = pi + 1
+                }
+                popTemp(st)
+            }
         }
-        objSet(st, d, "enumerable", JSValue.Bool(st.objects[h].props[idx].enumerable))
-        objSet(st, d, "configurable", JSValue.Bool(st.objects[h].props[idx].configurable))
-        popTemp(st)
-        return JSValue.Obj(d)
+        return JSValue.Obj(out)
     }
     if id == NATIVE_OBJECT_FREEZE {
         if argVals.len() > 0 {
@@ -3463,6 +3441,50 @@ fn makeRegex(st: &mut Interp, pattern: string, flags: string): JSValue {
     objSet(st, o, "global", JSValue.Bool(isGlobal))
     objSet(st, o, "lastIndex", JSValue.Number(0.0))
     return JSValue.Obj(o)
+}
+
+// Define `key` on `o` from a descriptor object `d`, applying get/set or value
+// AND the enumerable/configurable/writable attributes (each defaulting to false
+// when omitted, per Object.defineProperty). Shared by defineProperty,
+// defineProperties, and Object.create's second argument — all three previously
+// dropped the attributes for accessors, and the latter two for data props too.
+fn applyDescriptor(st: &mut Interp, o: i64, key: &string, d: i64) {
+    let g = getMember(st, d, "get")
+    let sfn = getMember(st, d, "set")
+    if isCallable(g) || isCallable(sfn) {
+        objDefineAccessor(st, o, key.clone(), g, sfn)
+    } else {
+        objSet(st, o, key.clone(), getMember(st, d, "value"))
+    }
+    let at = objOwnIndex(st, o, key)
+    if at >= 0 {
+        st.objects[o].props[at].enumerable = truthy(getMember(st, d, "enumerable"))
+        st.objects[o].props[at].configurable = truthy(getMember(st, d, "configurable"))
+        st.objects[o].props[at].writable = truthy(getMember(st, d, "writable"))
+    }
+}
+
+// Build a property-descriptor object { value, writable | get, set }+enumerable+
+// configurable for own property `idx` of `h`. Shared by getOwnPropertyDescriptor
+// and getOwnPropertyDescriptors.
+fn buildPropDescriptor(st: &mut Interp, h: i64, idx: i64): i64 {
+    let isAcc = st.objects[h].props[idx].isAccessor
+    let pv = cloneValue(st.objects[h].props[idx].value)
+    let pg = cloneValue(st.objects[h].props[idx].getter)
+    let ps = cloneValue(st.objects[h].props[idx].setter)
+    let d = newObject(st)
+    pushTemp(st, JSValue.Obj(d))
+    if isAcc {
+        objSet(st, d, "get", pg)
+        objSet(st, d, "set", ps)
+    } else {
+        objSet(st, d, "value", pv)
+        objSet(st, d, "writable", JSValue.Bool(st.objects[h].props[idx].writable))
+    }
+    objSet(st, d, "enumerable", JSValue.Bool(st.objects[h].props[idx].enumerable))
+    objSet(st, d, "configurable", JSValue.Bool(st.objects[h].props[idx].configurable))
+    popTemp(st)
+    return d
 }
 
 fn regexIdOf(st: &Interp, v: &JSValue): i64 {
@@ -4097,6 +4119,7 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "getPrototypeOf", JSValue.Native(NATIVE_OBJECT_GETPROTO))
     objSet(st, objectCtor, "setPrototypeOf", JSValue.Native(NATIVE_OBJECT_SETPROTO))
     objSet(st, objectCtor, "getOwnPropertyDescriptor", JSValue.Native(NATIVE_OBJECT_GETOWNPROPDESC))
+    objSet(st, objectCtor, "getOwnPropertyDescriptors", JSValue.Native(NATIVE_OBJECT_GETOWNPROPDESCS))
     objSet(st, objectCtor, "defineProperties", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTIES))
     objSet(st, objectCtor, "getOwnPropertyNames", JSValue.Native(NATIVE_OBJECT_GETOWNPROPNAMES))
     objSet(st, objectCtor, "getOwnPropertySymbols", JSValue.Native(NATIVE_OBJECT_GETOWNPROPSYMBOLS))
