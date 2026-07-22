@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: language-design
+purpose: the why behind Milo's design decisions — memory model, references, concurrency, error handling
+key-files: docs/language-reference.md, src/checker.ts, std/arena.milo
+update-when: a design decision changes, a deferred feature ships, or a fence/tradeoff is revised
+last-verified: 2026-07-22
+-->
+
 # Milo Language Design
 
 Design decisions and rationale. Syntax and semantics live in [language-reference.md](language-reference.md); this doc covers *why*.
