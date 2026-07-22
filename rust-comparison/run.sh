@@ -103,7 +103,7 @@ failures=0
 for d in */; do
   d="${d%/}"; [ -f "$d/rust.rs" ] || continue
   echo
-  echo "[$d] $(cat "$d/about.txt")"
+  echo "[$d] $(cat "$d/README.md")"
   rust="$(rust_outcome "$d/rust.rs")"
   milo="$(milo_outcome "$d/milo.milo")"
   check_outcome "$d" rust "$mode" "$rust" || failures=$((failures + 1))
