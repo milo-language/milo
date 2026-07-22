@@ -1438,6 +1438,7 @@ let NATIVE_RMDIR: i64 = 121
 let NATIVE_RENAME: i64 = 122
 let NATIVE_IS_DIR: i64 = 123
 let NATIVE_BIGINT: i64 = 124
+let NATIVE_OBJECT_GETOWNPROPSYMBOLS: i64 = 125
 let NATIVE_ARRAY_CTOR: i64 = 67
 let NATIVE_TCP_LISTEN: i64 = 68
 let NATIVE_TCP_ACCEPT: i64 = 69
@@ -2018,6 +2019,28 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                     let k = order[oi]
                     arrPush(st, arr, JSValue.Str(st.objects[h].props[k].key.clone()))
                     oi = oi + 1
+                }
+                popTemp(st)
+            }
+        }
+        return JSValue.Obj(arr)
+    }
+    if id == NATIVE_OBJECT_GETOWNPROPSYMBOLS {
+        // the mirror of getOwnPropertyNames: the symbol-valued own keys, which
+        // enumOrder / getOwnPropertyNames deliberately skip. symbols are stored
+        // as "@@sym:..."-prefixed string keys, and a symbol value IS that string.
+        let arr = newArray(st)
+        if argVals.len() > 0 {
+            let h = propertyBagOf(st, argVals[0])
+            if h >= 0 {
+                pushTemp(st, JSValue.Obj(arr))
+                var pi: i64 = 0
+                while pi < st.objects[h].props.len() {
+                    let k = st.objects[h].props[pi].key.clone()
+                    if isSymbolStr(k) {
+                        arrPush(st, arr, JSValue.Str(k))
+                    }
+                    pi = pi + 1
                 }
                 popTemp(st)
             }
@@ -4026,6 +4049,7 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "getOwnPropertyDescriptor", JSValue.Native(NATIVE_OBJECT_GETOWNPROPDESC))
     objSet(st, objectCtor, "defineProperties", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTIES))
     objSet(st, objectCtor, "getOwnPropertyNames", JSValue.Native(NATIVE_OBJECT_GETOWNPROPNAMES))
+    objSet(st, objectCtor, "getOwnPropertySymbols", JSValue.Native(NATIVE_OBJECT_GETOWNPROPSYMBOLS))
     objSet(st, objectCtor, "is", JSValue.Native(NATIVE_OBJECT_IS))
     objSet(st, objectCtor, "hasOwn", JSValue.Native(NATIVE_OBJECT_HASOWN))
     let objectProto = newObject(st)
@@ -5781,6 +5805,11 @@ fn spaces(n: i64): string {
 fn inspectInner(st: &Interp, v: &JSValue, depth: i64): string {
     match v {
         JSValue.Str(s) => {
+            // a symbol is a tagged string internally; console.log shows it as
+            // Symbol(desc) without quotes, not the raw "@@sym:..." form
+            if isSymbolStr(s) {
+                return symbolDisplay(s)
+            }
             return "\"" + s + "\""
         }
         JSValue.BigInt(s) => {
@@ -5885,6 +5914,14 @@ fn inspectTop(st: &Interp, v: &JSValue): string {
         }
         JSValue.BigInt(s) => {
             return s + "n"
+        }
+        JSValue.Str(s) => {
+            // a bare string logs unquoted (console.log("hi") → hi), but a symbol
+            // (a tagged string) logs as Symbol(desc), not its "@@sym:..." form
+            if isSymbolStr(s) {
+                return symbolDisplay(s)
+            }
+            return s.clone()
         }
         _ => {
             return toStr(v)
@@ -9236,7 +9273,8 @@ fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut
         var i: i64 = 0
         while i < n {
             let e = arrGet(st, o, i)
-            if args.len() > 0 && jsEquals(e, args[0]) {
+            // includes uses SameValueZero, so it finds NaN (unlike indexOf's ===)
+            if args.len() > 0 && sameValueZero(e, args[0]) {
                 return JSValue.Bool(true)
             }
             i = i + 1
