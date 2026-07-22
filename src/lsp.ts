@@ -18,6 +18,12 @@ import { spawnSync } from "child_process";
 
 const hostTarget = getHostTarget();
 
+// Verbose LSP tracing — off by default so the output channel stays quiet.
+// `MILO_LSP_DEBUG=1` logs request/notification params and handler results,
+// which is how you find why a hover/definition came back empty.
+const LSP_DEBUG = process.env.MILO_LSP_DEBUG === "1";
+function lspDebug(msg: string) { if (LSP_DEBUG) process.stderr.write(`milod[dbg]: ${msg}\n`); }
+
 // ── Formatter ──
 // bin/milo-fmt is the source of truth (same binary `milo fmt` uses); build it on
 // first use rather than silently formatting differently from the CLI. If it can't
@@ -353,6 +359,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
     try { checkResult = new TypeChecker().check(program); } catch {}
     const exprTypes = checkResult?.exprTypes ?? new Map();
     const word = getWordAt(source, line, character);
+    lspDebug(`hover ${line}:${character} word=${JSON.stringify(word)}`);
 
     // Variable declarations — only when hovering on the variable name itself.
     // Include impl methods (Function[] in program.impls) so decl-site hover works
@@ -478,6 +485,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
       const kw = g.mutable ? "var" : "let";
       return { contents: { kind: "markdown", value: `\`\`\`milo\n${kw} ${g.name}: ${ty ?? "?"}\n\`\`\`` } };
     }
+    lspDebug(`hover word=${JSON.stringify(word)} → no match (globals=${program.globals.length})`);
   } catch (e) {
     process.stderr.write(`milod: hover parse error: ${e instanceof Error ? e.message : String(e)}\n`);
   }
@@ -2069,6 +2077,7 @@ function startServer() {
         const msg = JSON.parse(body);
         if (msg.id !== undefined && msg.method) {
           process.stderr.write(`milod: req ${msg.method}\n`);
+          if (LSP_DEBUG) lspDebug(`req ${msg.method} params=${JSON.stringify(msg.params)}`);
           handleRequest(msg.id, msg.method, msg.params);
         } else if (msg.method) {
           process.stderr.write(`milod: notif ${msg.method}\n`);
@@ -2080,7 +2089,12 @@ function startServer() {
     }
   });
 
-  process.stderr.write("milod: language server started\n");
+  // Identify exactly which server this is — critical when multiple milo
+  // checkouts exist and a stale one could be answering (restarts won't help then).
+  process.stderr.write(
+    `milod: language server started — pid=${process.pid} runtime=${process.execPath} ` +
+    `entry=${fileURLToPath(import.meta.url)} cwd=${process.cwd()} debug=${LSP_DEBUG ? "on" : "off"}\n`,
+  );
 }
 
 startServer();
