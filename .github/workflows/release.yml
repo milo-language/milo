@@ -11,7 +11,7 @@ jobs:
   test:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       # tests/typecheck.test.ts runs tsc, which needs @types/bun from node_modules.
       # `bun test` runs fine without deps, so a missing install only shows up as the
@@ -28,22 +28,28 @@ jobs:
     strategy:
       matrix:
         include:
+          # darwin-x64 cross-compiles from the arm64 mac runner via bun --target;
+          # the free macos-13 Intel runner image is being retired and queues forever.
           - os: macos-latest
             target: darwin-arm64
-          - os: macos-13
+            buntarget: bun-darwin-arm64
+          - os: macos-latest
             target: darwin-x64
+            buntarget: bun-darwin-x64
           - os: ubuntu-latest
             target: linux-x64
+            buntarget: bun-linux-x64
           - os: ubuntu-24.04-arm
             target: linux-arm64
+            buntarget: bun-linux-arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun run scripts/bundle-stdlib.ts
-      - run: bun build --compile src/main.ts --outfile milo
+      - run: bun build --compile --target=${{ matrix.buntarget }} src/main.ts --outfile milo
       - run: tar czf milo-${{ matrix.target }}.tar.gz milo
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: milo-${{ matrix.target }}
           path: milo-${{ matrix.target }}.tar.gz
@@ -52,11 +58,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
       - run: ls -lh milo-*.tar.gz
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: latest
           name: Latest Build
