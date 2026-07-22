@@ -236,10 +236,35 @@ fn joinArray(st: &mut Interp, o: i64, sep: &string): string {
 // The only object whose number-hint result differs from the default here is a
 // Date: default hint (used by `+`) stringifies it, number hint yields its epoch
 // milliseconds. Everything else follows the same valueOf-then-toString path.
+// A user-defined [Symbol.toPrimitive](hint) takes precedence over valueOf/
+// toString. Returns Option.Some(primitive) when the method exists, else None so
+// the caller falls through to the ordinary coercion.
+fn trySymToPrimitive(prog: &Prog, h: i64, hint: &string, st: &mut Interp): Option<JSValue> {
+    let m = getMemberDyn(prog, h, symToPrimitiveKey(), st)
+    if isCallableIn(st, m) {
+        pushTemp(st, JSValue.Obj(h))
+        var args: Vec<JSValue> = Vec.new()
+        args.push(JSValue.Str(hint.clone()))
+        let r = callValue(prog, m, args, JSValue.Obj(h), st)
+        popTemp(st)
+        return Option.Some(r)
+    }
+    return Option.None
+}
+
 fn toPrimitiveNumber(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
     let h = objHandle(v)
-    if h >= 0 && st.objects[h].isDate {
-        return JSValue.Number(st.objExtras[st.objects[h].extra].dateMs)
+    if h >= 0 {
+        match trySymToPrimitive(prog, h, "number", st) {
+            Option.Some(r) => {
+                return r
+            }
+            Option.None => {
+            }
+        }
+        if st.objects[h].isDate {
+            return JSValue.Number(st.objExtras[st.objects[h].extra].dateMs)
+        }
     }
     return toPrimitiveDefault(prog, v, st)
 }
@@ -248,6 +273,13 @@ fn toPrimitiveDefault(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
     let h = objHandle(v)
     if h < 0 {
         return cloneValue(v)
+    }
+    match trySymToPrimitive(prog, h, "default", st) {
+        Option.Some(r) => {
+            return r
+        }
+        Option.None => {
+        }
     }
     // arrays join directly — reading their toString as a bound value does not
     // route back to the join, so short-circuit here
@@ -594,6 +626,18 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
     if name == "@@objProtoToString" {
         let o = objHandle(recv)
         if o >= 0 {
+            // a user [Symbol.toStringTag] (a plain string, possibly via a getter)
+            // wins over the built-in tag: class { get [Symbol.toStringTag](){…} }
+            let tag = getMemberDyn(prog, o, symToStringTagKey(), st)
+            match tag {
+                JSValue.Str(ts) => {
+                    if !isSymbolStr(ts) {
+                        return JSValue.Str("[object " + ts + "]")
+                    }
+                }
+                _ => {
+                }
+            }
             return JSValue.Str("[object " + objectTag(st, o) + "]")
         }
         return JSValue.Str("[object " + objectTypeTag(recv) + "]")
@@ -1725,6 +1769,12 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     if id == NATIVE_NUMBER {
         if argVals.len() == 0 {
             return JSValue.Number(0.0)
+        }
+        // an object coerces via ToPrimitive(number) — honouring a user
+        // [Symbol.toPrimitive]/valueOf — before ToNumber; toNum alone gives NaN
+        if objHandle(argVals[0]) >= 0 {
+            let p = toPrimitiveNumber(gProg, argVals[0], st)
+            return JSValue.Number(toNum(p))
         }
         return JSValue.Number(toNum(argVals[0]))
     }
@@ -4111,6 +4161,11 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "Symbol", JSValue.Native(NATIVE_SYMBOL))
     let symbolCtorObj = getNativeProps(st, NATIVE_SYMBOL)
     objSet(st, symbolCtorObj, "iterator", JSValue.Str(symIteratorKey()))
+    // other well-known symbols — interned keys like @@iterator, counter 0
+    objSet(st, symbolCtorObj, "asyncIterator", JSValue.Str("@@sym:Symbol.asyncIterator:0"))
+    objSet(st, symbolCtorObj, "toPrimitive", JSValue.Str(symToPrimitiveKey()))
+    objSet(st, symbolCtorObj, "toStringTag", JSValue.Str(symToStringTagKey()))
+    objSet(st, symbolCtorObj, "hasInstance", JSValue.Str("@@sym:Symbol.hasInstance:0"))
     let dateCtorObj = getNativeProps(st, NATIVE_DATE)
     objSet(st, dateCtorObj, "now", JSValue.Native(NATIVE_DATE_NOW))
     objSet(st, dateCtorObj, "UTC", JSValue.Native(NATIVE_DATE_UTC))
@@ -6211,6 +6266,14 @@ fn isSymbolValue(v: &JSValue): bool {
 // fixed one; counter 0 is reserved because user symbols start at 1.
 fn symIteratorKey(): string {
     return "@@sym:Symbol.iterator:0"
+}
+
+fn symToPrimitiveKey(): string {
+    return "@@sym:Symbol.toPrimitive:0"
+}
+
+fn symToStringTagKey(): string {
+    return "@@sym:Symbol.toStringTag:0"
 }
 
 // Symbol test on the raw string. The JSValue-level isSymbolValue cannot be used

@@ -565,7 +565,9 @@ class WeakSet {
 // object defines an own property on that object, while assigning directly on
 // Iterator.prototype itself throws. Real code reads these descriptors (frameworks
 // probe .constructor), so the shape has to be right, not just the value.
-Symbol.toStringTag = Symbol("Symbol.toStringTag");
+// (Symbol.toStringTag is provided natively — a stable interned @@iterator-style
+// key that Object.prototype.toString consults; do NOT reassign it here or that
+// native lookup and this one diverge.)
 
 function __protoIgnoringSetter(home, key, label) {
   return function (v) {
