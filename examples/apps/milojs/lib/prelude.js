@@ -624,6 +624,29 @@ process.dlopen = function (mod, filename, _flags) {
   return mod.exports;
 };
 
+// process.hrtime: the native only stubbed [0,0]. Back it with Date.now (so
+// only millisecond resolution, but monotonic-forward and correctly typed).
+// process.hrtime.bigint() returns nanoseconds as a real BigInt — perf-timing
+// libs read it and `typeof` / comparisons against `0n` must hold.
+(function () {
+  var now = Date.now;
+  process.hrtime = function (prev) {
+    var ms = now();
+    var s = Math.floor(ms / 1000);
+    var ns = Math.floor((ms - s * 1000) * 1e6);
+    if (prev) {
+      var ds = s - prev[0];
+      var dn = ns - prev[1];
+      if (dn < 0) { ds -= 1; dn += 1e9; }
+      return [ds, dn];
+    }
+    return [s, ns];
+  };
+  process.hrtime.bigint = function () {
+    return BigInt(now()) * 1000000n;
+  };
+})();
+
 // Not shared memory — milojs is single-threaded — but the global has to exist:
 // `x instanceof SharedArrayBuffer` is a common way to test for a binary buffer
 // (prisma does it next to the ArrayBuffer check), and an undefined identifier
