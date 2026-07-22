@@ -91,11 +91,11 @@ function parseCheckProgram(src: string, target: TargetInfo, filePath: string, wa
 // `cGuards` is the `@cLayout`/`@cSig` verification TU (null when the program declares
 // neither) — see Codegen.cDeclGuards. It rides alongside the IR because only codegen
 // knows the field offsets and return widths it asserts.
-function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, debugOverflow = false, emitDebug = false): { ir: string; cGuards: string | null } {
+function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, debugOverflow = false, emitDebug = false): { ir: string; cGuards: string | null; linkLibs: string[] } {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
   const cg = new Codegen(target, filePath, debugOverflow, emitDebug);
   const ir = cg.generate(hirModule);
-  return { ir, cGuards: cg.cDeclGuards() };
+  return { ir, cGuards: cg.cDeclGuards(), linkLibs: hirModule.linkLibs ?? [] };
 }
 
 // Compile the @cLayout/@cSig guard TU against the real system headers and fail the build
@@ -296,7 +296,11 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
       // without this the link fails with `undefined reference to 'floor'` for
       // any program that reaches those paths (the llc+cc branch already passes
       // it). Harmless on macOS where libm is always present.
-      execSync(`${tc.path}${tgt}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra} -lm${linuxLink}`, { stdio: ["pipe", "pipe", "pipe"] });
+      const cmd = `${tc.path}${tgt}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra} -lm${linuxLink}`;
+      // MILO_VERBOSE=1 surfaces the otherwise-invisible link command — the only
+      // place @link/detected/`--` flags actually land — so a link failure is diagnosable.
+      if (process.env.MILO_VERBOSE === "1") console.error(`link: ${cmd}`);
+      execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] });
     }
   } else {
     if (sanitize) {
@@ -436,6 +440,14 @@ function libSpec(names: string[], darwinPrefix: string, target: TargetInfo, stat
   return " " + archives.join(" ");
 }
 
+// Libs declared in source via @link("name"). Homebrew's prefix is the darwin
+// default (SDL2 etc. live under /opt/homebrew/lib); linux finds them on the default
+// search path. Reuses libSpec so --static-deps stays consistent.
+function declaredLibSpec(names: string[], target: TargetInfo, staticDeps: boolean): string {
+  if (!names.length) return "";
+  return libSpec(names, "/opt/homebrew", target, staticDeps);
+}
+
 function detectLibs(ir: string, target: TargetInfo, staticDeps = false): string {
   let libs = "";
   const openssl = "/opt/homebrew/opt/openssl@3";
@@ -480,7 +492,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   // DWARF is gated on -g alone (compose `-g --debug` for -O0 + line info). Keeping it
   // off --debug leaves the -O0 path — used by the runtime-error test harness — byte
   // -identical and free of per-build dsymutil / .dSYM litter.
-  const { ir, cGuards } = compileWithGuards(source, target, sourcePath, warningConfig, debugOverflow, emitDebug);
+  const { ir, cGuards, linkLibs } = compileWithGuards(source, target, sourcePath, warningConfig, debugOverflow, emitDebug);
   verifyCDecls(cGuards, target);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
@@ -498,12 +510,18 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
       // Freestanding link: program IR + startup runtime + linker script → ELF.
       linkBareMetal(tmpLl, out, target, optFlag, heapSize);
     } else {
-      const libs = detectLibs(ir, target, staticDeps);
+      const libs = detectLibs(ir, target, staticDeps) + declaredLibSpec(linkLibs, target, staticDeps);
       const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
       linkIR(tmpLl, out, optFlag, libs, extra, sanitize, emitDebug, target);
     }
   } catch (e: any) {
     console.error(`error[link]: compilation failed:\n${e.stderr?.toString() ?? e.message}`);
+    // Attribute injected link flags to their source so an "undefined symbol" or
+    // "library not found" is traceable to the @link that requested it (vs an
+    // auto-detected lib or a `--` passthrough). Re-run with MILO_VERBOSE=1 for the full command.
+    if (linkLibs.length) {
+      console.error(`note: ${linkLibs.map(l => `-l${l}`).join(" ")} added by @link(...) in your source — remove the @link or install the library (MILO_VERBOSE=1 to see the full link command)`);
+    }
     const host = getHostTarget();
     if (!target.bareMetal && (target.os !== host.os || target.arch !== host.arch)) {
       console.error(`hint: cross-compiling to ${target.triple} needs a linker and sysroot for that target — the host toolchain can't link it. Until then, build on the target.`);
@@ -516,7 +534,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
 }
 
 function compileSourceToBinary(source: string, sourcePath: string, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig): string {
-  const { ir, cGuards } = compileWithGuards(source, target, sourcePath, warningConfig);
+  const { ir, cGuards, linkLibs } = compileWithGuards(source, target, sourcePath, warningConfig);
   verifyCDecls(cGuards, target);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
@@ -524,7 +542,7 @@ function compileSourceToBinary(source: string, sourcePath: string, target: Targe
   const tmpLl = join(tmpdir(), `milo_${id}.ll`);
   try {
     writeFileSync(tmpLl, ir);
-    const libs = detectLibs(ir, target);
+    const libs = detectLibs(ir, target) + declaredLibSpec(linkLibs, target, false);
     linkIR(tmpLl, out, optFlag, libs, "", false, false, target);
   } catch (e: any) {
     throw new Error(`compilation failed:\n${e.stderr?.toString() ?? e.message}`);

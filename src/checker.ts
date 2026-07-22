@@ -1138,8 +1138,24 @@ export class TypeChecker {
                 `drop '@export', or remove 'extern' if you meant to define it`);
             }
           }
+          else if (attr.name === "link") {
+            if (!fn.isExtern) {
+              this.error(`'@link' on '${fn.name}': only an 'extern fn' links against a native library`, undefined,
+                `put @link on an extern declaration`);
+            }
+            if (attr.args.length === 0) {
+              this.error(`'@link' needs a library name, e.g. @link("SDL2")`, undefined,
+                `the argument is the -l name, so @link("SDL2") links -lSDL2`);
+            }
+            attr.argKinds?.forEach((k, i) => {
+              if (k !== "string") {
+                this.error(`'@link' argument must be a string library name, got '${attr.args[i]}'`, undefined,
+                  `write @link("SDL2"), not @link(SDL2)`);
+              }
+            });
+          }
           else this.error(`'@${attr.name}' is not supported on functions — '${fn.name}'`, undefined,
-            `only '@cSig' and '@export' apply to a fn; it would be silently ignored otherwise`);
+            `only '@cSig', '@export' and '@link' apply to a fn; it would be silently ignored otherwise`);
         }
       }
       this.checkVariadicExtern(fn);

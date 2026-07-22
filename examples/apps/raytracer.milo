@@ -1,0 +1,455 @@
+// Progressive CPU path tracer — real, unbiased Monte-Carlo global illumination
+// running on the CPU with zero GPU / RTX hardware. One jittered sample per pixel
+// per frame accumulates into a radiance buffer, so the image starts noisy and
+// refines toward a clean, physically-lit render the longer you leave it still.
+// Soft shadows, indirect colour bleed, a metal sphere, and an emissive light are
+// all emergent from the bounce integral — none of it is faked.
+//
+// Controls: LEFT/RIGHT orbit the camera (resets accumulation), ESC / close quits.
+//
+// Build/run (SDL2 auto-linked via the @link attribute below — no -- flags needed):
+//   milo run examples/apps/raytracer.milo
+//   milo build examples/apps/raytracer.milo -o /tmp/raytracer
+
+from "std/math" import {
+    mathSqrt, mathSin, mathCos
+}
+
+// ---- SDL2 FFI (mirrors examples/apps/nes/sdlSmoke.milo) --------------------
+@link("SDL2")
+extern fn SDL_Init(flags: u32): i32
+
+extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+
+extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+
+extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+
+extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+
+extern fn SDL_RenderClear(ren: *u8): i32
+
+extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+
+extern fn SDL_RenderPresent(ren: *u8): void
+
+extern fn SDL_PollEvent(event: *u8): i32
+
+extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+
+extern fn SDL_Delay(ms: u32): void
+
+extern fn SDL_DestroyWindow(win: *u8): void
+
+extern fn SDL_Quit(): void
+
+let SDL_INIT_VIDEO: u32 = 0x20
+let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
+let SDL_WINDOW_SHOWN: u32 = 0x4
+let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004 // R,G,B,A byte order in memory
+let SDL_QUIT: u32 = 0x100
+
+// i64 throughout (Milo's default int) so loop counters / array indices agree;
+// cast to i32 only at the SDL FFI boundary.
+let W: i64 = 240
+let H: i64 = 180
+let MAXDEPTH: i64 = 6
+
+// ---- vec3 (a struct of three f64 is Copy, so pass/return by value) ----------
+struct Vec3 {
+    x: f64, y: f64, z: f64
+}
+
+fn v3(x: f64, y: f64, z: f64): Vec3 {
+    return Vec3 {
+        x: x, y: y, z: z
+    }
+}
+
+fn vadd(a: Vec3, b: Vec3): Vec3 {
+    return Vec3 {
+        x: a.x + b.x, y: a.y + b.y, z: a.z + b.z
+    }
+}
+
+fn vsub(a: Vec3, b: Vec3): Vec3 {
+    return Vec3 {
+        x: a.x - b.x, y: a.y - b.y, z: a.z - b.z
+    }
+}
+
+fn vscale(a: Vec3, s: f64): Vec3 {
+    return Vec3 {
+        x: a.x * s, y: a.y * s, z: a.z * s
+    }
+}
+
+fn vmul(a: Vec3, b: Vec3): Vec3 {
+    return Vec3 {
+        x: a.x * b.x, y: a.y * b.y, z: a.z * b.z
+    }
+}
+
+fn vdot(a: Vec3, b: Vec3): f64 {
+    return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fn vlen(a: Vec3): f64 {
+    return mathSqrt(vdot(a, a))
+}
+
+fn vnorm(a: Vec3): Vec3 {
+    let l = vlen(a)
+    return vscale(a, 1.0 / l)
+}
+
+fn vreflect(d: Vec3, n: Vec3): Vec3 {
+    return vsub(d, vscale(n, 2.0 * vdot(d, n)))
+}
+
+// ---- material tags ----------------------------------------------------------
+let MATT_DIFFUSE: i32 = 0
+let MATT_METAL: i32 = 1
+let MATT_LIGHT: i32 = 2
+
+struct Sphere {
+    center: Vec3,
+    radius: f64,
+    albedo: Vec3,
+    mat: i32,
+    fuzz: f64, // metal roughness
+}
+
+struct Hit {
+    hit: bool,
+    t: f64,
+    point: Vec3,
+    normal: Vec3,
+    matIdx: i64, // index into the scene array
+}
+
+// ---- xorshift RNG: fast, deterministic, threaded through &mut ----------------
+fn nextU64(s: &mut u64): u64 {
+    // &mut scalar params auto-deref in Milo: read `s` directly, write via `s = ...`
+    var x = s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    s = x
+    return x
+}
+
+// uniform f64 in [0, 1)
+fn randF(s: &mut u64): f64 {
+    let r = nextU64(s) >> 11 // top 53 bits
+    return (r as f64) * (1.0 / 9007199254740992.0)
+}
+
+// a random vector inside the unit sphere (rejection sampling)
+fn randInUnitSphere(s: &mut u64): Vec3 {
+    var p = v3(0.0, 0.0, 0.0)
+    var tries = 0
+    while tries < 32 {
+        p = v3(randF(s) * 2.0 - 1.0, randF(s) * 2.0 - 1.0, randF(s) * 2.0 - 1.0)
+        if vdot(p, p) < 1.0 {
+            return p
+        }
+        tries = tries + 1
+    }
+    return vnorm(p)
+}
+
+// ---- ray-sphere intersection: nearest positive root -------------------------
+fn hitSphere(sp: Sphere, ro: Vec3, rd: Vec3, tmin: f64, tmax: f64): f64 {
+    let oc = vsub(ro, sp.center)
+    let a = vdot(rd, rd)
+    let halfB = vdot(oc, rd)
+    let c = vdot(oc, oc) - sp.radius * sp.radius
+    let disc = halfB * halfB - a * c
+    if disc < 0.0 {
+        return -1.0
+    }
+    let sq = mathSqrt(disc)
+    var t = (-halfB - sq) / a
+    if t < tmin || t > tmax {
+        t = (-halfB + sq) / a
+        if t < tmin || t > tmax {
+            return -1.0
+        }
+    }
+    return t
+}
+
+fn traceScene(scene: &Vec<Sphere>, ro: Vec3, rd: Vec3): Hit {
+    var best = Hit {
+        hit: false, t: 0.0, point: v3(0.0, 0.0, 0.0), normal: v3(0.0, 0.0, 0.0), matIdx: -1
+    }
+    var closest = 1000000.0
+    var i = 0
+    while i < scene.len {
+        let sp = scene[i]
+        let t = hitSphere(sp, ro, rd, 0.001, closest)
+        if t > 0.0 {
+            closest = t
+            let p = vadd(ro, vscale(rd, t))
+            let n = vnorm(vsub(p, sp.center))
+            best = Hit {
+                hit: true, t: t, point: p, normal: n, matIdx: i
+            }
+        }
+        i = i + 1
+    }
+    return best
+}
+
+// sky: soft blue-white vertical gradient acting as an area light from above
+fn skyColor(rd: Vec3): Vec3 {
+    let unit = vnorm(rd)
+    let a = 0.5 * (unit.y + 1.0)
+    let white = v3(1.0, 1.0, 1.0)
+    let blue = v3(0.5, 0.7, 1.0)
+    return vadd(vscale(white, 1.0 - a), vscale(blue, a))
+}
+
+// iterative path integral: throughput * emission summed over bounces
+fn radiance(scene: &Vec<Sphere>, ro0: Vec3, rd0: Vec3, s: &mut u64): Vec3 {
+    var color = v3(0.0, 0.0, 0.0)
+    var through = v3(1.0, 1.0, 1.0)
+    var ro = ro0
+    var rd = rd0
+    var depth = 0
+    while depth < MAXDEPTH {
+        let h = traceScene(scene, ro, rd)
+        if !h.hit {
+            color = vadd(color, vmul(through, skyColor(rd)))
+            return color
+        }
+        let sp = scene[h.matIdx]
+        if sp.mat == MATT_LIGHT {
+            color = vadd(color, vmul(through, sp.albedo)) // emissive
+            return color
+        }
+        if sp.mat == MATT_METAL {
+            let refl = vreflect(vnorm(rd), h.normal)
+            let fuzzed = vadd(refl, vscale(randInUnitSphere(s), sp.fuzz))
+            ro = h.point
+            rd = fuzzed
+            through = vmul(through, sp.albedo)
+        } else {
+            // lambertian: cosine-ish scatter around the normal
+            let target = vadd(h.normal, vnorm(randInUnitSphere(s)))
+            ro = h.point
+            rd = target
+            through = vmul(through, sp.albedo)
+        }
+        depth = depth + 1
+    }
+    return color // exceeded depth -> black (absorbed)
+}
+
+fn buildScene(): Vec<Sphere> {
+    var scene: Vec<Sphere> = Vec.new()
+    // ground
+    scene.push(Sphere {
+        center: v3(0.0, -1000.0, 0.0), radius: 1000.0, albedo: v3(0.5, 0.5, 0.5), mat: MATT_DIFFUSE, fuzz: 0.0
+    }
+    )
+    // red diffuse
+    scene.push(Sphere {
+        center: v3(-1.1, 0.5, -1.0), radius: 0.5, albedo: v3(0.85, 0.25, 0.25), mat: MATT_DIFFUSE, fuzz: 0.0
+    }
+    )
+    // green diffuse
+    scene.push(Sphere {
+        center: v3(0.2, 0.4, -0.3), radius: 0.4, albedo: v3(0.3, 0.75, 0.35), mat: MATT_DIFFUSE, fuzz: 0.0
+    }
+    )
+    // polished metal
+    scene.push(Sphere {
+        center: v3(1.3, 0.6, -1.2), radius: 0.6, albedo: v3(0.9, 0.9, 0.95), mat: MATT_METAL, fuzz: 0.03
+    }
+    )
+    // brushed metal
+    scene.push(Sphere {
+        center: v3(-0.3, 0.3, 0.6), radius: 0.3, albedo: v3(0.8, 0.6, 0.3), mat: MATT_METAL, fuzz: 0.25
+    }
+    )
+    // emissive light floating above (drives the soft shadows)
+    scene.push(Sphere {
+        center: v3(0.0, 3.0, 0.5), radius: 1.0, albedo: v3(6.0, 5.5, 5.0), mat: MATT_LIGHT, fuzz: 0.0
+    }
+    )
+    return scene
+}
+
+fn main(): i32 {
+    if SDL_Init(SDL_INIT_VIDEO) != 0 {
+        print("SDL_Init failed")
+        return 1
+    }
+
+    let scene = buildScene()
+
+    // camera basis
+    let lookAt = v3(0.0, 0.4, -0.4)
+    let vfov = 45.0
+    let aspect = (W as f64) / (H as f64)
+    let theta = vfov * 3.14159265 / 180.0
+    let halfH = mathSin(theta * 0.5) / mathCos(theta * 0.5) // tan
+    let halfW = aspect * halfH
+
+    // Raw C-pointer handles live for the whole run; null-pointer casts and scalar
+    // extern calls (SDL_Init/Delay/Quit) are safe — only pointer-trafficking SDL
+    // calls and raw-pointer indexing need `unsafe`, so those are the only bits wrapped.
+    var win: *u8 = 0 as *u8
+    var ren: *u8 = 0 as *u8
+    var tex: *u8 = 0 as *u8
+    var ok = true
+    unsafe {
+        let title = "Milo path tracer — progressive CPU global illumination"
+        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (W * 3) as i32, (H * 3) as i32, SDL_WINDOW_SHOWN)
+        ren = SDL_CreateRenderer(win, -1, 0)
+        tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, W as i32, H as i32)
+        if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
+            ok = false
+        }
+    }
+    if !ok {
+        print("SDL setup failed: win/ren/tex NULL")
+        return 2
+    }
+
+    // int-zero literal init is the compiler-cheap path (proven in nes fb).
+    var fb: [u32; 43200] = [0; 43200] // 240 * 180
+    var ev: [u8; 64] = [0; 64]
+
+    // f64 accumulation buffer on the heap: a giant [f64; N] *literal* is
+    // pathological for the backend, so fill a Vec by push instead.
+    var acc: Vec<f64> = Vec.new()
+    var k = 0
+    while k < 43200 * 3 {
+        acc.push(0.0)
+        k = k + 1
+    }
+
+    var seed: u64 = 0x2545F4914F6CDD1D
+    var quit = false
+    var samples: f64 = 0.0
+    var camAngle = 0.6 // orbit angle (radians)
+    var moved = true
+
+    while !quit {
+        // --- input: raw event buffer + keyboard pointer, the only unsafe part ---
+        unsafe {
+            while SDL_PollEvent(ev) != 0 {
+                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
+                if evType == SDL_QUIT {
+                    quit = true
+                }
+            }
+            let ks = SDL_GetKeyboardState(0 as *i32)
+            if ks[80] != 0 {
+                camAngle = camAngle - 0.03
+                moved = true
+            } // Left
+            if ks[79] != 0 {
+                camAngle = camAngle + 0.03
+                moved = true
+            } // Right
+            if ks[41] != 0 {
+                quit = true
+            } // Esc
+        }
+
+        // reset accumulation whenever the camera moves
+        if moved {
+            var z = 0
+            while z < 43200 * 3 {
+                acc[z] = 0.0
+                z = z + 1
+            }
+            samples = 0.0
+            moved = false
+        }
+
+        // camera orbits on a ring around the look-at point
+        let radius = 3.2
+        let eye = v3(mathSin(camAngle) * radius, 1.0, mathCos(camAngle) * radius - 0.4)
+        let wv = vnorm(vsub(eye, lookAt))
+        let up = v3(0.0, 1.0, 0.0)
+        let uv = vnorm(vcross(up, wv))
+        let vv = vcross(wv, uv)
+        let lowerLeft = vsub(vsub(vsub(eye, vscale(uv, halfW)), vscale(vv, halfH)), wv)
+        let horiz = vscale(uv, 2.0 * halfW)
+        let vert = vscale(vv, 2.0 * halfH)
+
+        // one jittered sample per pixel this frame — pure, safe compute
+        samples = samples + 1.0
+        var y = 0
+        while y < H {
+            var x = 0
+            while x < W {
+                let su = ((x as f64) + randF(seed)) / (W as f64)
+                let sv = ((y as f64) + randF(seed)) / (H as f64)
+                // image row 0 is top; flip v so +y is up in world space
+                let dir = vsub(vadd(vadd(lowerLeft, vscale(horiz, su)), vscale(vert, 1.0 - sv)), eye)
+                let col = radiance(scene, eye, vnorm(dir), seed)
+                let base = (y * W + x) * 3
+                acc[base] = acc[base] + col.x
+                acc[base + 1] = acc[base + 1] + col.y
+                acc[base + 2] = acc[base + 2] + col.z
+                x = x + 1
+            }
+            y = y + 1
+        }
+
+        // resolve: average, tone-map (Reinhard), gamma 2.0, pack ABGR
+        let inv = 1.0 / samples
+        var p = 0
+        while p < 43200 {
+            let base = p * 3
+            var r = acc[base] * inv
+            var g = acc[base + 1] * inv
+            var b = acc[base + 2] * inv
+            r = r / (1.0 + r)
+            g = g / (1.0 + g)
+            b = b / (1.0 + b)
+            let ri = (clamp01(mathSqrt(r)) * 255.0) as u32
+            let gi = (clamp01(mathSqrt(g)) * 255.0) as u32
+            let bi = (clamp01(mathSqrt(b)) * 255.0) as u32
+            fb[p] = ri | (gi << 8) | (bi << 16) | (0xFF << 24)
+            p = p + 1
+        }
+
+        // --- present: hand the safe framebuffer to SDL (raw pointers) ---
+        unsafe {
+            SDL_UpdateTexture(tex, 0 as *u8, fb[0].addrOf() as *u8, (W * 4) as i32)
+            SDL_RenderClear(ren)
+            SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
+            SDL_RenderPresent(ren)
+        }
+    }
+
+    SDL_DestroyWindow(win) // passing a pointer in (not receiving one) is safe
+    SDL_Quit()
+    return 0
+}
+
+fn clamp01(x: f64): f64 {
+    if x < 0.0 {
+        return 0.0
+    }
+    if x > 1.0 {
+        return 1.0
+    }
+    return x
+}
+
+fn vcross(a: Vec3, b: Vec3): Vec3 {
+    return Vec3 {
+        x: a.y * b.z - a.z * b.y,
+        y: a.z * b.x - a.x * b.z,
+        z: a.x * b.y - a.y * b.x,
+    }
+}

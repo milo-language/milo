@@ -181,4 +181,6 @@ export interface HIRModule {
   opaqueTypes?: string[];
   // From `@cSig(...)`: extern fn signatures to verify against real C headers at build time.
   cSigs?: { fnName: string; header: string; sig: string; retType: TypeKind }[];
+  // From `@link("SDL2")` on extern fns: native libs to pass to the linker.
+  linkLibs?: string[];
 }

@@ -1,0 +1,496 @@
+// Position-Based Dynamics cloth — the method real cloth engines use. Each node is a
+// point mass advanced by Verlet integration; the weave is a set of *distance
+// constraints* (structural + shear + bending) satisfied by iterative projection
+// every frame. PBD is unconditionally stable — no exploding, no stiff-spring
+// tuning — and the bending constraints actively push folded layers apart, so a
+// yanked crease unfolds on its own instead of sticking. Grab any node and fling it.
+//
+// Pure-CPU, 60fps, no GPU. Sim + render are safe Milo; only the raw SDL pointer FFI
+// sits in small `unsafe` blocks. Links are drawn as antialiased lines tinted by
+// motion (calm teal → warm where the cloth is moving).
+//
+// Controls:
+//   MOUSE drag  grab + fling the nearest node      SPACE  gust of wind
+//   R  reset        ESC / close  quit
+//
+// Build/run (SDL2 auto-linked via the @link attribute below — no -- flags needed):
+//   milo run examples/apps/cloth.milo
+//   milo run examples/apps/cloth.milo --release   (-O3, smoother)
+
+from "std/math" import {
+    mathSqrt, mathFloor, mathAbs
+}
+
+@link("SDL2")
+extern fn SDL_Init(flags: u32): i32
+
+extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+
+extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+
+extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+
+extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+
+extern fn SDL_RenderClear(ren: *u8): i32
+
+extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+
+extern fn SDL_RenderPresent(ren: *u8): void
+
+extern fn SDL_PollEvent(event: *u8): i32
+
+extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+
+extern fn SDL_GetMouseState(x: *i32, y: *i32): u32 // returns button bitmask, fills x/y
+
+extern fn SDL_Delay(ms: u32): void
+
+extern fn SDL_DestroyWindow(win: *u8): void
+
+extern fn SDL_Quit(): void
+
+let SDL_INIT_VIDEO: u32 = 0x20
+let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
+let SDL_WINDOW_SHOWN: u32 = 0x4
+let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
+let SDL_QUIT: u32 = 0x100
+
+// higher render resolution (480×360, 2× window) + a finer weave = smooth drape
+// instead of chunky quads.
+let W: i64 = 480
+let H: i64 = 360
+let SCALE: i64 = 2
+let COLS: i64 = 65
+let ROWS: i64 = 42
+
+struct Node {
+    px: f64, py: f64, // current position
+    ppx: f64, ppy: f64, // previous position — velocity is implicit (px - ppx)
+    pinned: bool,
+}
+
+struct Con {
+    a: i64, b: i64,
+    rest: f64,
+    stiff: f64, // projection strength: 1 = inextensible, softer for bending
+    draw: bool, // only structural links are drawn (clean grid, no crisscross grain)
+}
+
+// ---- antialiased framebuffer primitives (fb is a plain fixed array, all safe) ----
+fn blendPixel(fb: &mut [u32; 172800], idx: i64, col: u32, cov: f64) {
+    let dst = fb[idx]
+    let sr = (col & 0xFF) as f64
+    let sg = ((col >> 8) & 0xFF) as f64
+    let sb = ((col >> 16) & 0xFF) as f64
+    let dr = (dst & 0xFF) as f64
+    let dg = ((dst >> 8) & 0xFF) as f64
+    let db = ((dst >> 16) & 0xFF) as f64
+    let nr = (sr * cov + dr * (1.0 - cov)) as u32
+    let ng = (sg * cov + dg * (1.0 - cov)) as u32
+    let nb = (sb * cov + db * (1.0 - cov)) as u32
+    fb[idx] = nr | (ng << 8) | (nb << 16) | (0xFF << 24)
+}
+
+fn plotAA(fb: &mut [u32; 172800], px: i64, py: i64, col: u32, cov: f64) {
+    if px >= 0 && px < W && py >= 0 && py < H && cov > 0.0 {
+        blendPixel(fb, py * W + px, col, cov)
+    }
+}
+
+// Wu-style antialiased line
+fn drawLineAA(fb: &mut [u32; 172800], x0f: f64, y0f: f64, x1f: f64, y1f: f64, col: u32) {
+    var x0 = x0f
+    var y0 = y0f
+    var x1 = x1f
+    var y1 = y1f
+    let steep = mathAbs(y1 - y0) > mathAbs(x1 - x0)
+    if steep {
+        let tx = x0
+        x0 = y0
+        y0 = tx
+        let ty = x1
+        x1 = y1
+        y1 = ty
+    }
+    if x0 > x1 {
+        let sx = x0
+        x0 = x1
+        x1 = sx
+        let sy = y0
+        y0 = y1
+        y1 = sy
+    }
+    let dx = x1 - x0
+    var grad = 1.0
+    if dx != 0.0 {
+        grad = (y1 - y0) / dx
+    }
+    var xi = x0 as i64
+    let xe = x1 as i64
+    while xi <= xe {
+        let y = y0 + grad * ((xi as f64) - x0)
+        let yf = mathFloor(y)
+        let fr = y - yf
+        let iy = yf as i64
+        if steep {
+            plotAA(fb, iy, xi, col, 1.0 - fr)
+            plotAA(fb, iy + 1, xi, col, fr)
+        } else {
+            plotAA(fb, xi, iy, col, 1.0 - fr)
+            plotAA(fb, xi, iy + 1, col, fr)
+        }
+        xi = xi + 1
+    }
+}
+
+fn fillDot(fb: &mut [u32; 172800], cx: f64, cy: f64, rad: f64, col: u32) {
+    let r = rad
+    var y = (cy - r - 1.0) as i64
+    let yend = (cy + r + 1.0) as i64
+    while y <= yend {
+        var x = (cx - r - 1.0) as i64
+        let xend = (cx + r + 1.0) as i64
+        while x <= xend {
+            let dx = (x as f64) - cx
+            let dy = (y as f64) - cy
+            var cov = r - mathSqrt(dx * dx + dy * dy) + 0.5
+            if cov > 1.0 {
+                cov = 1.0
+            }
+            plotAA(fb, x, y, col, cov)
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+fn lerp(a: f64, b: f64, f: f64): f64 {
+    return a + (b - a) * f
+}
+
+// motion tint: calm teal when still, warm cream where the cloth is moving fast
+fn motionColor(speed: f64): u32 {
+    var t = speed * 0.13
+    if t > 1.0 {
+        t = 1.0
+    }
+    let r = lerp(0.20, 1.00, t)
+    let g = lerp(0.62, 0.86, t)
+    let b = lerp(0.58, 0.45, t)
+    let ri = (r * 255.0) as u32
+    let gi = (g * 255.0) as u32
+    let bi = (b * 255.0) as u32
+    return ri | (gi << 8) | (bi << 16) | (0xFF << 24)
+}
+
+fn addCon(nodes: &Vec<Node>, cons: &mut Vec<Con>, a: i64, b: i64, stiff: f64, draw: bool) {
+    let na = nodes[a]
+    let nb = nodes[b]
+    let dx = nb.px - na.px
+    let dy = nb.py - na.py
+    cons.push(Con {
+        a: a, b: b, rest: mathSqrt(dx * dx + dy * dy), stiff: stiff, draw: draw
+    }
+    )
+}
+
+fn buildCloth(nodes: &mut Vec<Node>, cons: &mut Vec<Con>) {
+    let marginX = 30.0
+    let spacing = ((W as f64) - 2.0 * marginX) / ((COLS - 1) as f64)
+    let startY = 20.0
+    var row = 0
+    while row < ROWS {
+        var coli = 0
+        while coli < COLS {
+            let px = marginX + (coli as f64) * spacing
+            let py = startY + (row as f64) * spacing
+            nodes.push(Node {
+                px: px, py: py, ppx: px, ppy: py, pinned: row == 0
+            }
+            )
+            coli = coli + 1
+        }
+        row = row + 1
+    }
+    // structural (drawn) + shear + bending (skip-one, soft — unfolds creases)
+    var r2 = 0
+    while r2 < ROWS {
+        var c2 = 0
+        while c2 < COLS {
+            let i = r2 * COLS + c2
+            if c2 + 1 < COLS {
+                addCon(nodes, cons, i, i + 1, 1.0, true)
+            } // structural →
+            if r2 + 1 < ROWS {
+                addCon(nodes, cons, i, i + COLS, 1.0, true)
+            } // structural ↓
+            if r2 + 1 < ROWS && c2 + 1 < COLS {
+                addCon(nodes, cons, i, i + COLS + 1, 1.0, false)
+            } // shear ↘
+            if r2 + 1 < ROWS && c2 > 0 {
+                addCon(nodes, cons, i, i + COLS - 1, 1.0, false)
+            } // shear ↙
+            if c2 + 2 < COLS {
+                addCon(nodes, cons, i, i + 2, 0.25, false)
+            } // bend →→
+            if r2 + 2 < ROWS {
+                addCon(nodes, cons, i, i + 2 * COLS, 0.25, false)
+            } // bend ↓↓
+            c2 = c2 + 1
+        }
+        r2 = r2 + 1
+    }
+}
+
+// one Gauss-Seidel sweep: pull every constraint toward its rest length, weighted by
+// stiffness; pinned + the grabbed node are anchors that never move.
+fn solve(nodes: &mut Vec<Node>, cons: &Vec<Con>, grabbed: i64) {
+    var i = 0
+    while i < cons.len {
+        let con = cons[i]
+        let na = nodes[con.a]
+        let nb = nodes[con.b]
+        let dx = nb.px - na.px
+        let dy = nb.py - na.py
+        var d = mathSqrt(dx * dx + dy * dy)
+        if d < 0.0001 {
+            d = 0.0001
+        }
+        let diff = (d - con.rest) / d * con.stiff
+        let ia = na.pinned || con.a == grabbed
+        let ib = nb.pinned || con.b == grabbed
+        if !ia || !ib {
+            if ia {
+                var m = nb
+                m.px = m.px - dx * diff
+                m.py = m.py - dy * diff
+                nodes[con.b] = m
+            } else if ib {
+                var m = na
+                m.px = m.px + dx * diff
+                m.py = m.py + dy * diff
+                nodes[con.a] = m
+            } else {
+                let h = diff * 0.5
+                var ma = na
+                ma.px = ma.px + dx * h
+                ma.py = ma.py + dy * h
+                nodes[con.a] = ma
+                var mb = nb
+                mb.px = mb.px - dx * h
+                mb.py = mb.py - dy * h
+                nodes[con.b] = mb
+            }
+        }
+        i = i + 1
+    }
+}
+
+fn main(): i32 {
+    if SDL_Init(SDL_INIT_VIDEO) != 0 {
+        print("SDL_Init failed")
+        return 1
+    }
+
+    var win: *u8 = 0 as *u8
+    var ren: *u8 = 0 as *u8
+    var tex: *u8 = 0 as *u8
+    var ok = true
+    unsafe {
+        let title = "Milo cloth — position-based dynamics, unconditionally stable"
+        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (W * SCALE) as i32, (H * SCALE) as i32, SDL_WINDOW_SHOWN)
+        ren = SDL_CreateRenderer(win, -1, 0)
+        tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, W as i32, H as i32)
+        if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
+            ok = false
+        }
+    }
+    if !ok {
+        print("SDL setup failed: win/ren/tex NULL")
+        return 2
+    }
+
+    var fb: [u32; 172800] = [0; 172800]
+    var ev: [u8; 64] = [0; 64]
+
+    var nodes: Vec<Node> = Vec.new()
+    var cons: Vec<Con> = Vec.new()
+    buildCloth(nodes, cons)
+    let n = nodes.len
+
+    let dt: f64 = 1.0 / 60.0
+    let dt2 = dt * dt
+    let gravity: f64 = 900.0 // px/s^2
+    let damp: f64 = 0.99 // Verlet velocity retention
+    let iterations = 16 // constraint sweeps per frame (finer mesh needs more to stay taut)
+
+    var grabbed: i64 = -1
+    var prevMouseX: f64 = 0.0
+    var prevMouseY: f64 = 0.0
+    var quit = false
+
+    while !quit {
+        var mouseX: f64 = 0.0
+        var mouseY: f64 = 0.0
+        var mouseDown = false
+        var wantWind = false
+        var wantReset = false
+
+        // --- input: raw event pump + keyboard/mouse pointers (only unsafe part) ---
+        unsafe {
+            while SDL_PollEvent(ev) != 0 {
+                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
+                if evType == SDL_QUIT {
+                    quit = true
+                }
+            }
+            let ks = SDL_GetKeyboardState(0 as *i32)
+            if ks[41] != 0 {
+                quit = true
+            } // Esc
+            if ks[44] != 0 {
+                wantWind = true
+            } // Space
+            if ks[21] != 0 {
+                wantReset = true
+            } // R
+            var mpos: [i32; 2] = [0; 2]
+            let btn = SDL_GetMouseState(mpos[0].addrOf() as *i32, mpos[1].addrOf() as *i32)
+            mouseX = (mpos[0] as f64) / (SCALE as f64)
+            mouseY = (mpos[1] as f64) / (SCALE as f64)
+            mouseDown = (btn & 1) != 0
+        }
+
+        if wantReset {
+            nodes = Vec.new()
+            cons = Vec.new()
+            buildCloth(nodes, cons)
+            grabbed = -1
+        }
+        var wind = 0.0
+        if wantWind {
+            wind = 900.0
+        }
+
+        // grab nearest node on press
+        if mouseDown {
+            if grabbed < 0 {
+                var best: i64 = -1
+                var bestD = 14.0 * 14.0
+                var gi = 0
+                while gi < n {
+                    let nd = nodes[gi]
+                    let dx = nd.px - mouseX
+                    let dy = nd.py - mouseY
+                    let d2 = dx * dx + dy * dy
+                    if d2 < bestD {
+                        bestD = d2
+                        best = gi
+                    }
+                    gi = gi + 1
+                }
+                grabbed = best
+                prevMouseX = mouseX
+                prevMouseY = mouseY
+            }
+        } else {
+            grabbed = -1
+        }
+
+        // --- Verlet integration: x' = x + (x - xprev)*damp + a*dt^2 ---
+        var vi = 0
+        while vi < n {
+            var nd = nodes[vi]
+            if !nd.pinned && vi != grabbed {
+                let vx = (nd.px - nd.ppx) * damp
+                let vy = (nd.py - nd.ppy) * damp
+                nd.ppx = nd.px
+                nd.ppy = nd.py
+                nd.px = nd.px + vx + wind * dt2
+                nd.py = nd.py + vy + gravity * dt2
+                nodes[vi] = nd
+            }
+            vi = vi + 1
+        }
+
+        // pin the grabbed node to the cursor; encode the (clamped) mouse velocity into
+        // its previous position so releasing flings it
+        if grabbed >= 0 {
+            var g = nodes[grabbed]
+            var vx = mouseX - prevMouseX
+            var vy = mouseY - prevMouseY
+            if vx > 18.0 {
+                vx = 18.0
+            }
+            if vx < 0.0 - 18.0 {
+                vx = 0.0 - 18.0
+            }
+            if vy > 18.0 {
+                vy = 18.0
+            }
+            if vy < 0.0 - 18.0 {
+                vy = 0.0 - 18.0
+            }
+            g.px = mouseX
+            g.py = mouseY
+            g.ppx = mouseX - vx
+            g.ppy = mouseY - vy
+            nodes[grabbed] = g
+            prevMouseX = mouseX
+            prevMouseY = mouseY
+        }
+
+        // --- satisfy distance constraints (this is the whole solver) ---
+        var it = 0
+        while it < iterations {
+            solve(nodes, cons, grabbed)
+            it = it + 1
+        }
+
+        // ---- render: dark backdrop, structural grid tinted by motion ----
+        var q = 0
+        while q < 172800 {
+            fb[q] = 0x141420 | (0xFF << 24)
+            q = q + 1
+        }
+        var di = 0
+        while di < cons.len {
+            let con = cons[di]
+            if con.draw {
+                let na = nodes[con.a]
+                let nb = nodes[con.b]
+                let sa = mathSqrt((na.px - na.ppx) * (na.px - na.ppx) + (na.py - na.ppy) * (na.py - na.ppy))
+                let sb = mathSqrt((nb.px - nb.ppx) * (nb.px - nb.ppx) + (nb.py - nb.ppy) * (nb.py - nb.ppy))
+                drawLineAA(fb, na.px, na.py, nb.px, nb.py, motionColor((sa + sb) * 0.5))
+            }
+            di = di + 1
+        }
+        var pi = 0
+        while pi < n {
+            let nd = nodes[pi]
+            if nd.pinned {
+                fillDot(fb, nd.px, nd.py, 2.0, 0xFFE0E0E0)
+            }
+            pi = pi + 1
+        }
+        if grabbed >= 0 {
+            let g = nodes[grabbed]
+            fillDot(fb, g.px, g.py, 3.5, 0xFF40FFFF)
+        }
+
+        // --- present: hand the safe framebuffer to SDL (raw pointers) ---
+        unsafe {
+            SDL_UpdateTexture(tex, 0 as *u8, fb[0].addrOf() as *u8, (W * 4) as i32)
+            SDL_RenderClear(ren)
+            SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
+            SDL_RenderPresent(ren)
+        }
+        SDL_Delay(16)
+    }
+
+    SDL_DestroyWindow(win)
+    SDL_Quit()
+    return 0
+}

@@ -116,7 +116,17 @@ class LowerCtx {
     for (const fn of program.functions) {
       if (fn.attributes?.some(a => a.name === "export")) exported.add(fn.name);
     }
-    return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables, userFnNames: exported, opaqueTypes, cSigs };
+    const linkLibs: string[] = [];
+    for (const fn of program.functions) {
+      if (!fn.attributes) continue;
+      for (const attr of fn.attributes) {
+        if (attr.name !== "link") continue;
+        for (const lib of attr.args) {
+          if (!linkLibs.includes(lib)) linkLibs.push(lib); // dedup across all externs/files
+        }
+      }
+    }
+    return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables, userFnNames: exported, opaqueTypes, cSigs, linkLibs };
   }
 
   private lowerParam(p: import("./ast").Param, sig: import("./checker").FnSig | undefined, i: number) {
