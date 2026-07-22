@@ -544,6 +544,10 @@ fn lex(src: &string): Vec<Token> {
                 var acc: f64 = 0.0
                 var raw = String.withCapacity(16)
                 while i < n {
+                    if src[i] == '_' {
+                        i = i + 1
+                        continue
+                    }
                     let d = hexDigitVal(src[i])
                     if d < 0 || d >= radix {
                         break
@@ -569,9 +573,26 @@ fn lex(src: &string): Vec<Token> {
                 )
                 continue
             }
-            while i < n && (isDigitByte(src[i]) || src[i] == '.') {
+            // integer part (`_` is an ES2021 digit separator — skip it, don't
+            // let it reach parseFloat)
+            while i < n && (isDigitByte(src[i]) || src[i] == '_') {
+                if src[i] != '_' {
+                    txt.push(src[i])
+                }
+                i = i + 1
+            }
+            // at most ONE fractional dot, then more digits. a second dot is a
+            // member access, not part of the number: `0.1.toString()` lexes as
+            // (0.1)(.)(toString), matching JS — the old `|| == '.'` loop ate it.
+            if i < n && src[i] == '.' {
                 txt.push(src[i])
                 i = i + 1
+                while i < n && (isDigitByte(src[i]) || src[i] == '_') {
+                    if src[i] != '_' {
+                        txt.push(src[i])
+                    }
+                    i = i + 1
+                }
             }
             // BigInt literal: pure integer digits followed by `n` (123n). A `.` or
             // exponent makes it a normal float, so only a dot-free run qualifies.
@@ -604,8 +625,10 @@ fn lex(src: &string): Vec<Token> {
                         txt.push(src[i])
                         i = i + 1
                     }
-                    while i < n && isDigitByte(src[i]) {
-                        txt.push(src[i])
+                    while i < n && (isDigitByte(src[i]) || src[i] == '_') {
+                        if src[i] != '_' {
+                            txt.push(src[i])
+                        }
                         i = i + 1
                     }
                 }
