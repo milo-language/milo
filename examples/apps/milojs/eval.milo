@@ -3404,7 +3404,9 @@ fn regexIdOf(st: &Interp, v: &JSValue): i64 {
 }
 
 // [wholeMatch, group1, group2, ...]; a non-participating group is undefined.
-fn buildMatchArray(st: &mut Interp, s: &string, saves: &Vec<i64>): JSValue {
+// `rid` is the regex handle (-1 when none), used to attach `.groups` for named
+// captures (?<name>...).
+fn buildMatchArray(st: &mut Interp, s: &string, saves: &Vec<i64>, rid: i64): JSValue {
     let arr = newArray(st)
     pushTemp(st, JSValue.Obj(arr))
     var g: i64 = 0
@@ -3422,6 +3424,30 @@ fn buildMatchArray(st: &mut Interp, s: &string, saves: &Vec<i64>): JSValue {
     // .index (match start) and .input, which callers like content-type read
     objSet(st, arr, "index", JSValue.Number(saves[0] as f64))
     objSet(st, arr, "input", JSValue.Str(s.clone()))
+    // .groups: an object of named-capture substrings, or undefined when the
+    // pattern has no (?<name>...) groups (matching JS, where .groups is
+    // undefined not {} for an un-named pattern)
+    if rid >= 0 && st.regexes[rid].groupNames.len() > 0 {
+        let groups = newObject(st)
+        var gi: i64 = 0
+        while gi < st.regexes[rid].groupNames.len() {
+            let nm = st.regexes[rid].groupNames[gi].clone()
+            let gnum = st.regexes[rid].groupNums[gi]
+            var gv = JSValue.Undefined
+            if 2 * gnum + 1 < saves.len() {
+                let a = saves[2 * gnum]
+                let b = saves[2 * gnum + 1]
+                if a >= 0 && b >= 0 {
+                    gv = JSValue.Str(strSlice(s, a, b))
+                }
+            }
+            objSet(st, groups, nm, gv)
+            gi = gi + 1
+        }
+        objSet(st, arr, "groups", JSValue.Obj(groups))
+    } else {
+        objSet(st, arr, "groups", JSValue.Undefined)
+    }
     popTemp(st)
     return JSValue.Obj(arr)
 }
@@ -3463,13 +3489,15 @@ fn regexMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSV
             }
             objSet(st, o, "lastIndex", JSValue.Number(next as f64))
         }
-        return buildMatchArray(st, subject, saves)
+        return buildMatchArray(st, subject, saves, rid)
     }
     return JSValue.Undefined
 }
 
-// Expand $1..$9, $&, $$ in a replacement string against a match's saves.
-fn expandRepl(repl: &string, s: &string, saves: &Vec<i64>): string {
+// Expand $1..$9, $&, $$, and $<name> in a replacement string against a match's
+// saves. `re` supplies the named-capture map for $<name> (pass a regex with no
+// named groups to disable it).
+fn expandRepl(repl: &string, s: &string, saves: &Vec<i64>, re: &Regex): string {
     var out = String.withCapacity(repl.len())
     var i: i64 = 0
     while i < repl.len() {
@@ -3482,6 +3510,33 @@ fn expandRepl(repl: &string, s: &string, saves: &Vec<i64>): string {
             } else if n == '&' {
                 out = out + strSlice(s, saves[0], saves[1])
                 i = i + 2
+            } else if n == '<' {
+                // $<name>: substitute the named capture, empty when absent
+                var j = i + 2
+                var nm = String.withCapacity(8)
+                while j < repl.len() && repl[j] != '>' {
+                    nm.push(repl[j])
+                    j = j + 1
+                }
+                var gnum: i64 = -1
+                var k: i64 = 0
+                while k < re.groupNames.len() {
+                    if re.groupNames[k] == nm {
+                        gnum = re.groupNums[k]
+                    }
+                    k = k + 1
+                }
+                if gnum >= 0 && 2 * gnum + 1 < saves.len() {
+                    let a = saves[2 * gnum]
+                    let b = saves[2 * gnum + 1]
+                    if a >= 0 && b >= 0 {
+                        out = out + strSlice(s, a, b)
+                    }
+                }
+                if j < repl.len() {
+                    j = j + 1
+                }
+                i = j
             } else if n >= '1' && n <= '9' {
                 let g = n as i64 - 48
                 if 2 * g + 1 < saves.len() {
@@ -3518,7 +3573,7 @@ fn regexReplace(st: &mut Interp, s: &string, rid: i64, repl: &string): JSValue {
             let mstart = saves[0]
             let mend = saves[1]
             out = out + strSlice(s, last, mstart)
-            out = out + expandRepl(repl, s, saves)
+            out = out + expandRepl(repl, s, saves, st.regexes[rid])
             last = mend
             if mend == mstart {
                 searchPos = mend + 1
@@ -3643,7 +3698,7 @@ fn regexStrMatch(st: &mut Interp, s: &string, rid: i64): JSValue {
         if saves.len() == 0 {
             return JSValue.Null
         }
-        return buildMatchArray(st, s, saves)
+        return buildMatchArray(st, s, saves, rid)
     }
     let arr = newArray(st)
     pushTemp(st, JSValue.Obj(arr))
@@ -3688,7 +3743,7 @@ fn regexStrMatchAll(st: &mut Interp, s: &string, rid: i64): JSValue {
         if saves.len() == 0 {
             going = false
         } else {
-            let m = buildMatchArray(st, s, saves)
+            let m = buildMatchArray(st, s, saves, rid)
             arrPush(st, arr, m)
             if saves[1] == saves[0] {
                 pos = saves[1] + 1

@@ -7,7 +7,8 @@
 // negations), anchors ^ $, groups ( ) and (?: ), alternation |, quantifiers
 // * + ? {n} {n,} {n,m} greedy and lazy, \b \B, common escapes. Flags i, g, m, s,
 // lookahead (?=) / (?!), lookbehind (?<=) / (?<!), and backreferences \1..\9.
-// Not yet: named groups, Unicode property escapes.
+// Named groups (?<name>...) supported (.groups on the result + $<name> in a
+// replacement). Not yet: Unicode property escapes.
 //
 // Lookbehind is variable-width: since the body's length is unknown, it is retried
 // from every earlier start position and must finish exactly at the current one.
@@ -70,6 +71,10 @@ struct Regex {
     source: string,
     flags: string,
     valid: bool,
+    // named capture groups: parallel arrays mapping (?<name>...) to its 1-based
+    // group number, so exec/match can build the result's `.groups` object
+    groupNames: Vec<string>,
+    groupNums: Vec<i64>,
 }
 
 let RE_CHAR: i32 = 0
@@ -103,6 +108,8 @@ struct ReParse {
     lists: Vec<Vec<i64>>,
     classes: Vec<ReClass>,
     ngroup: i64,
+    groupNames: Vec<string>,
+    groupNums: Vec<i64>,
 }
 
 fn reAddNode(p: &mut ReParse, n: ReNode): i64 {
@@ -245,6 +252,28 @@ fn reParseAtom(p: &mut ReParse): i64 {
                 p.pos = p.pos + 1
             }
             return reAddNode(p, ReNode.LookBehind(body, negated))
+        } else if p.pos + 1 < p.pat.len() && p.pat[p.pos] == '?' && p.pat[p.pos + 1] == '<' {
+            // named capture (?<name>...) — a normal capturing group that also
+            // records its name for the result's `.groups` object. (Lookbehind
+            // (?<= / (?<! was handled above, so here the char after < is a name.)
+            p.pos = p.pos + 2
+            var nm = String.withCapacity(8)
+            while p.pos < p.pat.len() && p.pat[p.pos] != '>' {
+                nm.push(p.pat[p.pos])
+                p.pos = p.pos + 1
+            }
+            if p.pos < p.pat.len() && p.pat[p.pos] == '>' {
+                p.pos = p.pos + 1
+            }
+            p.ngroup = p.ngroup + 1
+            let gnum = p.ngroup
+            p.groupNames.push(nm)
+            p.groupNums.push(gnum)
+            let inner = reParseAlt(p)
+            if p.pos < p.pat.len() && p.pat[p.pos] == ')' {
+                p.pos = p.pos + 1
+            }
+            return reAddNode(p, ReNode.Group(inner, gnum))
         } else if p.pos + 1 < p.pat.len() && p.pat[p.pos] == '?' && (p.pat[p.pos + 1] == '=' || p.pat[p.pos + 1] == '!') {
             let negated = p.pat[p.pos + 1] == '!'
             p.pos = p.pos + 2
@@ -680,7 +709,7 @@ fn regexCompile(source: string, flags: string): Regex {
         i = i + 1
     }
     var p = ReParse {
-        pat: patBytes, pos: 0, nodes: Vec.new(), lists: Vec.new(), classes: Vec.new(), ngroup: 0
+        pat: patBytes, pos: 0, nodes: Vec.new(), lists: Vec.new(), classes: Vec.new(), ngroup: 0, groupNames: Vec.new(), groupNums: Vec.new()
     }
     let root = reParseAlt(p)
     var prog: Vec<ReInst> = Vec.new()
@@ -707,7 +736,7 @@ fn regexCompile(source: string, flags: string): Regex {
         fj = fj + 1
     }
     return Regex {
-        prog: prog, classes: p.classes, nGroups: p.ngroup, flagI: fi, flagG: fg, flagM: fm, flagS: fs_, source: source, flags: flags, valid: true
+        prog: prog, classes: p.classes, nGroups: p.ngroup, flagI: fi, flagG: fg, flagM: fm, flagS: fs_, source: source, flags: flags, valid: true, groupNames: p.groupNames, groupNums: p.groupNums
     }
 }
 
