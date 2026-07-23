@@ -427,11 +427,13 @@ function staticTransitiveDeps(name: string, target: TargetInfo): string {
   if (!probe) return "";
   try {
     const out = execSync(probe, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    // Drop the archive/-l entries the caller already emits; keep only the transitive
-    // system deps (frameworks on darwin, -ldl/-lpthread/... on linux).
+    // Deny-list, not allow-list: darwin needs frameworks, linux needs X11/pulse/alsa,
+    // and the set differs per distro and per build config. Keep everything except what
+    // the caller already emits (the archive itself, its -l, and search paths).
     const kept = out.split(/\s+/).filter((tok) =>
-      tok.startsWith("-Wl,-framework") || tok.startsWith("-Wl,-weak_framework") ||
-      tok === "-lobjc" || tok === "-lm" || tok === "-ldl" || tok === "-lpthread" || tok === "-lrt"
+      tok && !tok.startsWith("-L") && !tok.endsWith(`lib${name}.a`) && tok !== `-l${name}` &&
+      // ld errors on undefined symbols anyway; forcing it here only breaks weak frameworks.
+      tok !== "-Wl,--no-undefined"
     );
     return kept.length ? " " + [...new Set(kept)].join(" ") : "";
   } catch {
