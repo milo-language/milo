@@ -552,3 +552,15 @@ fn usleep(usec: u32): i32 {
     }
     return 0
 }
+
+// ── pipe ──
+
+// The UCRT's _pipe takes a buffer size and a text/binary mode that POSIX pipe(2) has no
+// equivalent for. _O_BINARY (0x8000) is essential: in text mode the CRT would translate
+// \n to \r\n through the pipe, corrupting any binary payload and desynchronising any
+// caller that counts bytes.
+extern fn _pipe(fds: *u8, size: u32, mode: i32): i32
+
+fn pipe(fds: *u8): i32 {
+    return _pipe(fds, 4096 as u32, 32768)
+}

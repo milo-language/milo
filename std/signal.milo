@@ -1,10 +1,11 @@
 // std/signal — OS signal handling (POSIX)
 
 from "std/os" import {
-    pipe, read, write
+    read, write
 }
 from "std/platform" import {
-    fcntl, fGetfl, fSetfl, oNonblock, sigchldNum
+    fcntl, fGetfl, fSetfl, oNonblock, sigchldNum,
+    pipe
 }
 
 extern fn signal(signum: i32, handler: *u8): *u8

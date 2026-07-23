@@ -563,10 +563,15 @@ function detectLibs(ir: string, target: TargetInfo, staticDeps = false): string 
   // -lssl becomes a hard "could not open 'ssl.lib'" for any program that merely imports
   // std/io. On Windows these deps have to be requested explicitly via @link.
   if (target.os === "windows") {
-    // The one exception: BCryptGenRandom is emitted by the compiler itself (hashmap seed
-    // init), never requested by user source, so nothing else could carry this @link.
-    // It lives in the SDK next to the CRT, so unlike openssl there is nothing to install.
+    // The exceptions are SDK libraries, not third-party ones: they ship with the
+    // toolchain, so unlike openssl there is nothing to install and nothing to detect
+    // wrongly — either the symbol is referenced or it isn't.
+    // BCryptGenRandom is emitted by the compiler itself (hashmap seed init), so no user
+    // @link could ever carry it.
     if (ir.includes("@BCryptGenRandom")) libs += " -lbcrypt";
+    // Winsock. ioctlsocket reaches this via std/event's setNonblocking, which std/io
+    // calls on ordinary fds — so this is not confined to programs doing networking.
+    if (/@(ioctlsocket|socket|getaddrinfo|freeaddrinfo|WSA[A-Za-z]+)\b/.test(ir)) libs += " -lws2_32";
     return libs;
   }
   const openssl = "/opt/homebrew/opt/openssl@3";

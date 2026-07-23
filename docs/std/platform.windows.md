@@ -218,6 +218,14 @@ _O_BINARY (0x8000) is in both: without it the UCRT translates every \n written t
 a CRT fd into \r\n, so a file written by Milo would not match its own bytes.
 _O_WRONLY|_O_CREAT|_O_TRUNC|_O_BINARY
 
+### `pipe`
+
+```milo
+fn pipe(fds: *u8): i32
+```
+
+_Undocumented._
+
 ### `protNone`
 
 ```milo

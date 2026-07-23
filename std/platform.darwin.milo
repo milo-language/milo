@@ -395,3 +395,7 @@ extern fn mprotect(addr: *u8, len: i64, prot: i32): i32
 extern fn gettimeofday(tv: *u8, tz: *u8): i32
 
 extern fn usleep(usec: u32): i32
+
+// pipe(2). Split out because the UCRT spells it _pipe and takes two extra arguments.
+
+extern fn pipe(fds: *u8): i32

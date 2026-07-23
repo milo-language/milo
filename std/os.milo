@@ -10,7 +10,8 @@ from "std/platform" import {
     pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy,
     pthread_cond_init, pthread_cond_wait, pthread_cond_signal, pthread_cond_broadcast, pthread_cond_destroy,
     pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy,
-    mmap, munmap, mprotect
+    mmap, munmap, mprotect,
+    pipe
 }
 from "std/event" import {
     setNonblocking
@@ -321,8 +322,6 @@ extern fn waitpid(pid: i32, status: *u8, options: i32): i32
 
 extern fn dup2(oldfd: i32, newfd: i32): i32
 
-extern fn pipe(fds: *u8): i32
-
 extern fn kill(pid: i32, sig: i32): i32
 
 extern fn setsid(): i32
@@ -339,7 +338,16 @@ extern fn execvp(file: *u8, argv: *u8): i32
 fn readFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
-        setNonblocking(fd)
+        // A green task depends on this succeeding: without O_NONBLOCK the read below
+        // blocks the whole scheduler thread instead of returning EAGAIN and parking, and
+        // no other task can ever run to satisfy it — the program simply hangs with no
+        // output. On POSIX this never fails; on Windows it fails for anything that is not
+        // a socket (ioctlsocket only covers sockets), which is the IOCP tier of the port.
+        // Say so and stop, rather than deadlocking silently.
+        if setNonblocking(fd) != 0 {
+            eprint("milo: green IO on this fd is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
+            exit(1)
+        }
     }
     while true {
         let n = read(fd, buf, len)
@@ -356,7 +364,11 @@ fn readFd(fd: i32, buf: *u8, len: i64): i64 {
 fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
-        setNonblocking(fd)
+        // Same deadlock risk as readFd above.
+        if setNonblocking(fd) != 0 {
+            eprint("milo: green IO on this fd is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
+            exit(1)
+        }
     }
     unsafe {
         var sent: i64 = 0
