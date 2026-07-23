@@ -1,7 +1,7 @@
 // platform-specific constants and helpers for macOS/BSD
 
 from "std/os" import {
-    htons
+    getpid, htons
 }
 
 // Fields carry C's spelling, not Milo camelCase: @cLayout emits
@@ -334,4 +334,23 @@ fn mapPrivate(): i32 {
 
 fn mapAnon(): i32 {
     return 4096
+}
+
+// ── executable path ──
+
+// macOS has no /proc, so the running binary's path comes from libproc (in libSystem,
+// no extra link flag). proc_pidpath takes everything by value, unlike
+// _NSGetExecutablePath's in/out size pointer, which Milo cannot express without a
+// one-element array dance.
+extern fn proc_pidpath(pid: i32, buf: *u8, bufsize: u32): i32
+
+// Absolute path of the running executable into `buf`. Returns bytes written, or -1.
+fn _exePathInto(buf: *u8, bufsize: i64): i64 {
+    unsafe {
+        let n = proc_pidpath(getpid(), buf, bufsize as u32)
+        if n <= 0 {
+            return -1
+        }
+        return n as i64
+    }
 }

@@ -1,7 +1,7 @@
 // platform-specific constants and helpers for Linux
 
 from "std/os" import {
-    htons
+    htons, readlink
 }
 
 // C's spelling, not Milo camelCase — @cLayout emits offsetof() with the name verbatim.
@@ -318,4 +318,18 @@ fn mapPrivate(): i32 {
 
 fn mapAnon(): i32 {
     return 32
+}
+
+// ── executable path ──
+
+// Linux keeps the running binary's path in /proc/self/exe. readlink does not
+// NUL-terminate, so the caller's buffer must be zeroed or terminated at n.
+fn _exePathInto(buf: *u8, bufsize: i64): i64 {
+    unsafe {
+        let n = readlink("/proc/self/exe", buf, bufsize)
+        if n <= 0 {
+            return -1
+        }
+        return n
+    }
 }
