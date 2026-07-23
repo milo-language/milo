@@ -194,6 +194,63 @@ fn soError(): i32 {
     return 4103
 }
 
+// ── Winsock init + socket errors ──
+//
+// Every Winsock call needs WSAStartup to have run first in the process, or socket()
+// returns INVALID_SOCKET with WSANOTINITIALISED. There is no POSIX equivalent, so the
+// POSIX arms make ensureNetInit() a no-op; here it runs WSAStartup exactly once. std/net
+// calls it before creating any socket, so callers never see the requirement.
+//
+// Socket errors do NOT go through errno on Windows — they come from WSAGetLastError, with
+// their own numbering (WSAEWOULDBLOCK 10035, not EAGAIN 11). netErrno/netEagain/
+// netEinprogress exist on all three arms so std/net can read socket errors portably; on
+// POSIX they fold straight back to errno and its EAGAIN/EINPROGRESS.
+
+@cSig("winsock2.h", "int WSAStartup(WORD, LPWSADATA)")
+extern fn WSAStartup(version: u16, data: *u8): i32
+
+@cSig("winsock2.h", "int WSAGetLastError(void)")
+extern fn WSAGetLastError(): i32
+
+var _wsaInited: bool = false
+
+fn ensureNetInit(): void {
+    if _wsaInited {
+        return
+    }
+    // 0x0202 = Winsock 2.2. WSADATA is ~400 bytes; 512 is a safe receive buffer we never
+    // read back (we only need the version negotiation to succeed).
+    var data: [u8; 512] = [0; 512]
+    unsafe {
+        WSAStartup(514 as u16, data as *u8)
+    }
+    _wsaInited = true
+}
+
+fn netErrno(): i32 {
+    return WSAGetLastError()
+}
+
+// WSAEWOULDBLOCK / WSAEINPROGRESS — the Winsock analogues of EAGAIN / EINPROGRESS.
+fn netEagain(): i32 {
+    return 10035
+}
+
+fn netEinprogress(): i32 {
+    return 10036
+}
+
+// A Windows SOCKET is NOT a CRT fd: closing one with _close() (the `close` in the fd
+// section) trips the CRT invalid-parameter fastfail. closesocket is the only correct
+// teardown. SOCKET is 8 bytes; std carries socket fds as i32 (their values fit in 32
+// bits per MS), so widen once here. POSIX makes closeSocket an alias of close.
+@cSig("winsock2.h", "int closesocket(SOCKET)")
+extern fn closesocket(s: i64): i32
+
+fn closeSocket(fd: i32): i32 {
+    return closesocket(fd as i64)
+}
+
 // ── no-equivalent APIs ──
 //
 // Each `extern fn` below is absent from every Windows library on purpose: declaring it

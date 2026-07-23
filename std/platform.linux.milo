@@ -273,6 +273,30 @@ fn soError(): i32 {
     return 4
 }
 
+// Winsock has no POSIX counterpart: sockets are ready to use with no init, and their
+// errors go through errno like everything else. These fold to that so std/net's socket
+// paths read the same on every platform (see platform.windows for the real work).
+fn ensureNetInit(): void {
+}
+
+fn netErrno(): i32 {
+    return getErrno()
+}
+
+fn netEagain(): i32 {
+    return eagain()
+}
+
+fn netEinprogress(): i32 {
+    return einprogress()
+}
+
+// A POSIX socket IS an fd, so closing it is just close(); Windows needs a distinct
+// closesocket(), which is why this name exists on all arms.
+fn closeSocket(fd: i32): i32 {
+    return close(fd)
+}
+
 // ── ucontext (stackful coroutines) ──
 
 extern fn getcontext(ucp: *u8): i32

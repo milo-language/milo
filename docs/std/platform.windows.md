@@ -34,6 +34,14 @@ fn close(fd: i32): i32
 
 _Undocumented._
 
+### `closeSocket`
+
+```milo
+fn closeSocket(fd: i32): i32
+```
+
+_Undocumented._
+
 ### `devNullPath`
 
 ```milo
@@ -106,6 +114,14 @@ these; wiring that up is part of the net tier, not this one.
 
 ```milo
 fn einprogress(): i32
+```
+
+_Undocumented._
+
+### `ensureNetInit`
+
+```milo
+fn ensureNetInit(): void
 ```
 
 _Undocumented._
@@ -264,6 +280,30 @@ fn munmap(addr: *u8, _len: i64): i32
 
 MEM_RELEASE (0x8000) requires the size to be 0 and the address to be the exact base
 returned by VirtualAlloc — it always frees the whole reservation, unlike munmap.
+
+### `netEagain`
+
+```milo
+fn netEagain(): i32
+```
+
+WSAEWOULDBLOCK / WSAEINPROGRESS — the Winsock analogues of EAGAIN / EINPROGRESS.
+
+### `netEinprogress`
+
+```milo
+fn netEinprogress(): i32
+```
+
+_Undocumented._
+
+### `netErrno`
+
+```milo
+fn netErrno(): i32
+```
+
+_Undocumented._
 
 ### `oNonblock`
 

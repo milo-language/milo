@@ -1,21 +1,20 @@
-// @skip-os: win32
-// std/net on Windows needs Winsock init (WSAStartup) + WSAGetLastError; the
-// TLS paths also need an OpenSSL built for the target sysroot.
-
 // @expect: bind ok
 
+// Blocking-socket smoke test across platforms. On Windows this needs Winsock to be
+// initialised first (ensureNetInit -> WSAStartup); on POSIX that call is a no-op. The
+// async/non-blocking socket fixtures still need the IOCP tier and stay skipped.
+
 from "std/platform" import {
-    SockAddrIn, makeSockaddr
+    SockAddrIn, makeSockaddr, ensureNetInit, closeSocket
 }
 
 extern fn socket(domain: i32, sockType: i32, protocol: i32): i32
-
-extern fn close(fd: i32): i32
 
 // bind takes &SockAddrIn — auto-borrow passes the pointer, matching C ABI
 extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 
 fn main(): i32 {
+    ensureNetInit()
     let fd = socket(2, 1, 0)
     if fd < 0 {
         print("socket failed")
@@ -28,6 +27,6 @@ fn main(): i32 {
     } else {
         print("bind failed: ", result)
     }
-    close(fd)
+    closeSocket(fd)
     return 0
 }

@@ -19,6 +19,15 @@ fn afInet6(): i32
 AF_INET6 is 30 here — one of the few socket constants that actually differs across the
 two platforms (AF_INET and AF_UNIX are both the same on each).
 
+### `closeSocket`
+
+```milo
+fn closeSocket(fd: i32): i32
+```
+
+A POSIX socket IS an fd, so closing it is just close(); Windows needs a distinct
+closesocket(), which is why this name exists on all arms.
+
 ### `devNullPath`
 
 ```milo
@@ -58,6 +67,16 @@ fn einprogress(): i32
 ```
 
 _Undocumented._
+
+### `ensureNetInit`
+
+```milo
+fn ensureNetInit(): void
+```
+
+Winsock has no POSIX counterpart: sockets are ready to use with no init, and their
+errors go through errno like everything else. These fold to that so std/net's socket
+paths read the same on every platform (see platform.windows for the real work).
 
 ### `evAdd`
 
@@ -211,6 +230,30 @@ _Undocumented._
 
 ```milo
 fn mapPrivateAnon(): i32
+```
+
+_Undocumented._
+
+### `netEagain`
+
+```milo
+fn netEagain(): i32
+```
+
+_Undocumented._
+
+### `netEinprogress`
+
+```milo
+fn netEinprogress(): i32
+```
+
+_Undocumented._
+
+### `netErrno`
+
+```milo
+fn netErrno(): i32
 ```
 
 _Undocumented._
