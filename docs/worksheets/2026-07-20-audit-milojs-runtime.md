@@ -3,7 +3,7 @@
 - **Slug / tag:** `ws/audit-milojs-runtime`
 - **Started:** 2026-07-20
 - **Status:** done
-- **Related:** `docs/milojs-roadmap.md`, `examples/apps/milojs/README.md`
+- **Related:** `docs/milojs-roadmap.md`, `examples/runtimes/milojs/README.md`
 
 ## Goal
 Establish the current MiloJS compiler/runtime state from source, docs, and real build/test evidence; report working coverage, failures, and next priorities.
@@ -18,7 +18,7 @@ Audit complete on `c09f532`. Both MiloJS binaries build; all scored engine fixtu
 
 ## Log
 - 2026-07-20 — Read repo routing, workflow, hard rules, and worksheet protocol. Found pre-existing untracked VSIX files and `examples/ai-guardrails/`; leave them untouched.
-- 2026-07-20 — Located MiloJS under `examples/apps/milojs`, its roadmap/docs, runtime fixtures, and repo-local Bun at `~/.bun/bin/bun`.
+- 2026-07-20 — Located MiloJS under `examples/runtimes/milojs`, its roadmap/docs, runtime fixtures, and repo-local Bun at `~/.bun/bin/bun`.
 - 2026-07-20 — Fixed `std/environ.linux.milo` importing `readFile` from the obsolete module, and corrected explicit green-task stack sizing in `std/runtime.milo`.
 - 2026-07-20 — Found Linux native-stack exhaustion in the tree walker before its recursion guard; measured a call-depth limit of 20 that passes both recursive fixtures and makes runaway recursion catchable.
 - 2026-07-20 — Fast-forwarded to `c09f532`; upstream independently landed the LLVM aggregate type-order fix. Resolved the comment-only stash conflict in favor of upstream.
@@ -39,4 +39,4 @@ Audit complete on `c09f532`. Both MiloJS binaries build; all scored engine fixtu
 - [x] ran the app / fixture: built engine + runtime; runtime `modules`, `asyncOrdering`, `eventLoop`, `bufferStream`, and `cryptoMod` match expected output
 - [ ] full `bun test`: attempted; initial run 304 pass / 8 skip / 766 fail / 1 error. With fbsource `nullsafe-clang`, embedded/header targeted tests pass (17 pass / 3 skip / 1 unrelated `std/dl` runtime failure); selfhost and high-concurrency full-suite blockers remain
 - [ ] agent review: not run
-- [x] docs updated (last-verified bumped): `examples/apps/milojs/README.md`, `docs/milojs-roadmap.md`
+- [x] docs updated (last-verified bumped): `examples/runtimes/milojs/README.md`, `docs/milojs-roadmap.md`

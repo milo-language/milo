@@ -1,6 +1,6 @@
 # Rewrite Findings: html5ever-style DOM in Milo
 
-Status: scaffold complete (`examples/domArena.milo`). Answers the open question from `verification-roadmap.md`: *does the no-stored-refs model survive a genuinely big program, or does it force unsafe / handle-index escapes that reintroduce unsafety?*
+Status: scaffold complete (`examples/basics/domArena.milo`). Answers the open question from `verification-roadmap.md`: *does the no-stored-refs model survive a genuinely big program, or does it force unsafe / handle-index escapes that reintroduce unsafety?*
 
 ## The question, and the answer
 
@@ -37,7 +37,7 @@ The rewrite surfaced **two real compiler bugs** — exactly the "does it reintro
 
 ## Milestone: working tokenizer + tree builder
 
-`examples/htmlParse.milo` — an HTML tokenizer + stack-based tree builder over the arena DOM. Handles tags, attributes (quoted/single/unquoted/boolean), text, comments, doctype, void elements, character references (named `&amp;`/`&lt;`/…/`&nbsp;` + numeric `&#87;`/`&#x...`), raw-text elements (`<script>`/`<style>` consume `<` literally) and RCDATA (`<textarea>`/`<title>` literal-tags but entity-decoded), and a pragmatic subset of implicit-close rules (`<li>a<li>b` → siblings; block tags and a new `<p>` close an open `<p>`; `dd`/`dt`, `td`/`th`/`tr`, `option`). Round-trips real HTML and answers a tiny "count elements by tag" query. **Zero unsafe.** Remaining simplifications: no full insertion-mode state machine (foster-parenting, table scoping), small named-entity table. This is the proof that the model carries a real state-machine parser, not just the data structure.
+`examples/basics/htmlParse.milo` — an HTML tokenizer + stack-based tree builder over the arena DOM. Handles tags, attributes (quoted/single/unquoted/boolean), text, comments, doctype, void elements, character references (named `&amp;`/`&lt;`/…/`&nbsp;` + numeric `&#87;`/`&#x...`), raw-text elements (`<script>`/`<style>` consume `<` literally) and RCDATA (`<textarea>`/`<title>` literal-tags but entity-decoded), and a pragmatic subset of implicit-close rules (`<li>a<li>b` → siblings; block tags and a new `<p>` close an open `<p>`; `dd`/`dt`, `td`/`th`/`tr`, `option`). Round-trips real HTML and answers a tiny "count elements by tag" query. **Zero unsafe.** Remaining simplifications: no full insertion-mode state machine (foster-parenting, table scoping), small named-entity table. This is the proof that the model carries a real state-machine parser, not just the data structure.
 
 ## What this unblocks
 
@@ -48,7 +48,7 @@ The rewrite surfaced **two real compiler bugs** — exactly the "does it reintro
 
 Port the html5ever tokenizer state machine (`tokenizer/mod.rs` + `states.rs` + `char_ref/`) and tree-builder insertion modes against this DOM, `Node`-small variant, and measure. That closes the loop on "does it survive a *big* program."
 
-## Probe 2: tree-walking interpreter (`examples/apps/minilang.milo`)
+## Probe 2: tree-walking interpreter (`examples/basics/minilang.milo`)
 
 The next rewrite probe — the "interpreter env holding an AST + values" lifetime pattern. Now a **complete source-to-value interpreter**: lexer → recursive-descent parser (precedence) → AST in a generational arena (recursive payload enums via `Handle`) → recursive `evalExpr` over a scope-stack environment. **Works, zero unsafe** — `1 + 2 * 3 - 4` → 3, `(2+3)*(4+1)` → 25, `let n=10 in if n>5 then n*n else 0` → 100. The lexer/parser/eval all compiled first-try once `match &enum` and the const-int coercions landed — the model carries a real interpreter, not just a data structure.
 
@@ -82,7 +82,7 @@ Stress-tested traits/interfaces beyond the basic fixtures (the survey flagged th
 - **Fixed: `Heap<Interface>` as a struct field** (`struct W { shape: Heap<Shape> }`) — both the initializer coercion (`Heap(Sq{})`→`Heap<Shape>`) and dispatch through the field (`w.shape.area()`) failed. Root: interfaces were registered *after* non-generic struct fields were resolved, so `Heap<Shape>` field types tagged their inner as a default `struct` instead of `interface`. Fixed by pre-registering interface names before struct-field resolution. Fixture: `tests/fixtures/structFieldTraitObject.milo`.
 - **Clarified (by design, not a bug):** `interface` and `trait` are separate. `interface` is for dynamic dispatch (`&Shape`, `Heap<Shape>`, implicit impl via `impl Sq { fn area }`); `trait` is for generic bounds (`trait T`, `impl T for S`, `fn f<X: T>`). Using an `interface` as a generic bound errors ("does not implement trait"); use a `trait`. A clearer diagnostic ("Shape is an interface, not a trait — interfaces can't be used as generic bounds") would help, but the split is intentional.
 
-## Probe 4: page-based KV store (`examples/apps/kvstore.milo`)
+## Probe 4: page-based KV store (`examples/basics/kvstore.milo`)
 
 The last of the five probes — the sled-lite / buffer-pool pattern (sorted pages, split-on-full, point reads, ordered scan). Stresses the **iterator/cursor story**, the one pattern nothing else touched: in Rust a scan is `Iterator<Item = (&K, &V)>` borrowing the pages; under no-stored-refs a cursor cannot hold a borrow of the store. The equivalent shape is a **value cursor + store-per-step**: `scanNext(&store, &mut cursor): Option<Entry>` with copy-out entries. It is idiomatic, safe, and compiled **first-try** — nested lvalue chains (`s.pages[p].entries[slot].value = v`), `Vec.insert/remove` through nested fields, and split logic all just worked.
 

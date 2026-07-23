@@ -1,0 +1,79 @@
+// Verify 64-wide tilemap: with a 64x32 map scrolled by 256px, the on-screen
+// tiles come from the SECOND $400-word screen (not screen 0).
+//   milo run examples/emulators/snes/bgSizeSmoke.milo
+
+from "./ppu" import {
+    Ppu, newPpu, ppuRegWrite, renderFrame
+}
+
+fn hex6(v: i64): string {
+    let d = "0123456789ABCDEF"
+    var s = ""
+    var i: i64 = 20
+    while i >= 0 {
+        s.push(d[(v >> i) & 0xF])
+        i = i - 4
+    }
+    return s
+}
+
+fn setWord(p: &mut Ppu, waddr: i64, w: i64): void {
+    ppuRegWrite(p, 0x16, waddr & 0xFF)
+    ppuRegWrite(p, 0x17, (waddr >> 8) & 0xFF)
+    ppuRegWrite(p, 0x18, w & 0xFF)
+    ppuRegWrite(p, 0x19, (w >> 8) & 0xFF)
+}
+
+fn main(): i32 {
+    var p = newPpu()
+    ppuRegWrite(p, 0x00, 0x0F)
+    ppuRegWrite(p, 0x01, 0x03)
+    ppuRegWrite(p, 0x05, 0x01)
+    ppuRegWrite(p, 0x0B, 0x00)
+    ppuRegWrite(p, 0x15, 0x80)
+    // tile 0 = solid index 1 at char base 0.
+    ppuRegWrite(p, 0x16, 0x00)
+    ppuRegWrite(p, 0x17, 0x00)
+    var r: i64 = 0
+    while r < 8 {
+        ppuRegWrite(p, 0x18, 0xFF)
+        ppuRegWrite(p, 0x19, 0x00)
+        r = r + 1
+    }
+    r = 0
+    while r < 8 {
+        ppuRegWrite(p, 0x18, 0x00)
+        ppuRegWrite(p, 0x19, 0x00)
+        r = r + 1
+    }
+    // color 1 = red
+    ppuRegWrite(p, 0x21, 0x01)
+    ppuRegWrite(p, 0x22, 0x1F)
+    ppuRegWrite(p, 0x22, 0x00)
+
+    // BG1: 64x32 map, base word $0400 -> bgsc0 = $04 | size 1.
+    ppuRegWrite(p, 0x07, 0x05)
+    setWord(p, 0x0400, 0x03FF) // screen 0, tile (0,0) = empty tile $3FF
+    setWord(p, 0x0800, 0x0000) // screen 1, tile (0,0) = tile 0 (red)
+
+    // Scroll BG1 H by 256 (write-twice: low=$00, high 3 bits=$01).
+    ppuRegWrite(p, 0x0D, 0x00)
+    ppuRegWrite(p, 0x0D, 0x01)
+
+    var fb: Vec<i64> = Vec.new()
+    var i: i64 = 0
+    while i < 256 * 224 {
+        fb.push(0)
+        i = i + 1
+    }
+    renderFrame(p, fb)
+
+    let px = fb[0]
+    print("fb[0]=$" + hex6(px) + " (want F80000 from screen 1)")
+    if px == 0xF80000 {
+        print("OK: 64-wide tilemap fetches the second screen when scrolled")
+        return 0
+    }
+    print("FAIL")
+    return 1
+}

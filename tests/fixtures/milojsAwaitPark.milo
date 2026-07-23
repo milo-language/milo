@@ -7,16 +7,16 @@
 //
 // The main task is excluded on purpose — it runs the event loop, so parking it
 // would stop the very machinery that settles promises.
-from "../../examples/apps/milojs/runtime" import {
+from "../../examples/runtimes/milojs/runtime" import {
     Interp, gInterp, isPromise, newPromise
 }
-from "../../examples/apps/milojs/eval" import {
+from "../../examples/runtimes/milojs/eval" import {
     parkOnPromise, settlePromise
 }
-from "../../examples/apps/milojs/driver" import {
+from "../../examples/runtimes/milojs/driver" import {
     bootInterp, makeInterp
 }
-from "../../examples/apps/milojs/value" import {
+from "../../examples/runtimes/milojs/value" import {
     JSValue
 }
 from "std/runtime" import {

@@ -1,0 +1,109 @@
+// Headless ROM runner: load a .sfc, run N frames, dump the rendered frame to a
+// PPM. Validates the whole stack against real assembled ROMs (e.g. krom tests).
+//   milo run examples/emulators/snes/runRom.milo <rom.sfc> [frames]   -> /tmp/snes/out.ppm
+
+from "std/args" import {
+    args
+}
+from "std/fs" import {
+    writeFile, makeDir
+}
+from "./cpu" import {
+    Cpu, Mem, busNew, newCpuReset, stepFrame
+}
+from "./ppu" import {
+    renderFrame
+}
+from "./cartridge" import {
+    loadCartridge
+}
+
+fn atoi(s: &string): i64 {
+    var v: i64 = 0
+    for ch in s {
+        let c = ch as i64
+        if c >= 48 && c <= 57 {
+            v = v * 10 + (c - 48)
+        }
+    }
+    return v
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 2 {
+        print("usage: runRom <rom.sfc> [frames]")
+        return 1
+    }
+    var frames: i64 = 8
+    if argv.len >= 3 {
+        frames = atoi(argv[2])
+    }
+
+    var rom: Vec<u8> = Vec.new()
+    var mapMode: i64 = 0
+    match loadCartridge(argv[1]) {
+        Result.Ok(cart) => {
+            rom = cart.rom
+            mapMode = cart.map
+            print("loaded " + argv[1] + " (" + (if cart.map == 1 {
+                "HiROM"
+            } else {
+                "LoROM"
+            }
+            ) + ")")
+        }
+        Result.Err(e) => {
+            print("load failed: " + e)
+            return 1
+        }
+    }
+
+    var m = busNew(rom, mapMode)
+    var cpu = newCpuReset(m)
+    var f: i64 = 0
+    while f < frames {
+        stepFrame(cpu, m)
+        f = f + 1
+    }
+
+    var fb: Vec<i64> = Vec.new()
+    var i: i64 = 0
+    while i < 256 * 224 {
+        fb.push(0)
+        i = i + 1
+    }
+    renderFrame(m.ppu, fb)
+
+    var out = String.withCapacity(200000)
+    let hdr = "P6\n256 224\n255\n"
+    i = 0
+    while i < hdr.len {
+        out.push(hdr[i])
+        i = i + 1
+    }
+    i = 0
+    while i < 256 * 224 {
+        let px = fb[i]
+        out.push(((px >> 16) & 0xFF) as u8)
+        out.push(((px >> 8) & 0xFF) as u8)
+        out.push((px & 0xFF) as u8)
+        i = i + 1
+    }
+    let _ = makeDir("/tmp/snes", 493)
+    match writeFile("/tmp/snes/out.ppm", out) {
+        Result.Ok(n) => {
+            print("wrote /tmp/snes/out.ppm after " + (if frames > 0 {
+                "some"
+            } else {
+                "0"
+            }
+            ) + " frames")
+            return 0
+        }
+        Result.Err(e) => {
+            print("write failed")
+            return 1
+        }
+    }
+}

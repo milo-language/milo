@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: roadmap
-purpose: staged plan to grow examples/apps/minibun.milo from an eval+console.log MVP into a runtime that boots a real Node CJS Express backend
-key-files: examples/apps/minibun.milo, std/net.milo, std/http.milo, std/io.milo, std/path.milo
+purpose: staged plan to grow examples/runtimes/minibun.milo from an eval+console.log MVP into a runtime that boots a real Node CJS Express backend
+key-files: examples/runtimes/minibun.milo, std/net.milo, std/http.milo, std/io.milo, std/path.milo
 update-when: a milestone lands (check the box, note the commit) or the acceptance target changes
 last-verified: 2026-07-17
 -->
@@ -88,7 +88,7 @@ method, url, headers, body from a hand-written server.
   making all fd `Drop` guards `fd > 0` (zero value drops as a no-op, per the move-zero
   contract); regression fixture `tests/fixtures/dropZeroedFdSlot.milo`. Multi-request serving
   verified with curl against the minibun http server, and with a full CRUD demo
-  (`examples/apps/minibun-notes.js` — a hand-written Express-style JSON API: routing,
+  (`examples/runtimes/minibun-notes.js` — a hand-written Express-style JSON API: routing,
   `:params`, and in-memory state persisting across requests). Still needed here: async response
   (handler that calls `res.send` after a Promise) — needs the M3 event-loop drain.
 

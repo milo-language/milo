@@ -8,7 +8,7 @@ BINARY=./webserver
 
 if [ ! -f "$BINARY" ]; then
     echo "building webserver..."
-    bun run src/main.ts build examples/webserver.milo -o webserver
+    bun run src/main.ts build examples/net/webserver.milo -o webserver
 fi
 
 echo "starting server on :$PORT..."

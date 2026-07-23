@@ -9,13 +9,13 @@
 // Without the root walk, an object referenced only by a suspended activation is
 // swept while the activation is parked, and using it after resume reads a
 // recycled slot.
-from "../../examples/apps/milojs/runtime" import {
+from "../../examples/runtimes/milojs/runtime" import {
     Interp, collect, newObject, objGet, objSet, pushTemp, restoreExecCtx, saveExecCtx
 }
-from "../../examples/apps/milojs/driver" import {
+from "../../examples/runtimes/milojs/driver" import {
     bootInterp, makeInterp
 }
-from "../../examples/apps/milojs/value" import {
+from "../../examples/runtimes/milojs/value" import {
     JSValue
 }
 

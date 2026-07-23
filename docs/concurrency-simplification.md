@@ -96,7 +96,7 @@ that still exist under `Promise.blocking`.
 - `grep -rn "Thread\.\|Mutex\|RwLock\|parallel {" std examples docs src-milo` → no
   public-API hits (pthread FFI internals and ChannelInner comments OK).
 - `bun run src/main.ts api thread mutex` → no public results.
-- hades and `examples/apps/*` still compile and run.
+- hades and `examples/*` still compile and run.
 
 ## Risks / re-add path
 

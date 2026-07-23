@@ -1,0 +1,577 @@
+// minibun — a minimal JavaScript runtime in Milo.
+//
+// JS runs on JavaScriptCore (the system framework on macOS — zero install), but the
+// runtime host — the module loader, the `console.log` binding, the file/exists natives,
+// the exception reporter — is memory-safe, bounds-checked Milo. bun's 82K LOC of C++ glue
+// is for deep JSC integration; the public embedding API JSC exposes is plain C, which is
+// exactly the seam Milo's FFI is built for.
+//
+// Roadmap: docs/minibun-roadmap.md. Working: CommonJS modules (require/cache/resolution),
+// a builtin-module registry (events/path/util/assert/fs/os/http/net/stream/crypto/… — pure
+// JS over a few thin Milo natives), process/global scaffolding, and an HTTP server whose
+// accept loop is Milo and whose request/response semantics are JS.
+//
+// The server serves multiple sequential requests (the fd-0 accept bug was a std Drop-glue
+// issue — fd guards closed fd 0 on zeroed moved-from slots — fixed in std; see
+// docs/minibun-roadmap.md M6).
+//
+// Demo — a hand-written Express-style JSON API (routing, :params, persistent state):
+//   milo run examples/runtimes/minibun.milo -- examples/runtimes/minibun-notes.js
+//   curl localhost:8080/notes  ·  curl -X POST 'localhost:8080/notes?text=hi'
+//
+// Build + run (macOS):
+//   milo run examples/runtimes/minibun.milo -- entry.js      (JSC auto-linked by detectLibs)
+
+from "std/os" import {
+    malloc, free, memcpy
+}
+from "std/io" import {
+    readFile
+}
+from "std/fs" import {
+    isFile, isDir, fileSizePath, currentDir
+}
+from "std/string" import {
+    strStartsWith
+}
+from "std/net" import {
+    TcpListener, fetchWith, FetchOptions, NetError, Response
+}
+from "std/args" import {
+    args
+}
+from "std/cstr" import {
+    CStr
+}
+
+// ── JavaScriptCore C API (public embedding surface — all opaque refs are `*u8`) ──
+
+extern fn JSGlobalContextCreate(globalObjectClass: *u8): *u8
+
+extern fn JSGlobalContextRelease(ctx: *u8): void
+
+extern fn JSContextGetGlobalObject(ctx: *u8): *u8
+
+extern fn JSEvaluateScript(ctx: *u8, script: *u8, thisObject: *u8, sourceURL: *u8, startingLineNumber: i32, exception: *u8): *u8
+
+extern fn JSStringCreateWithUTF8CString(s: *u8): *u8
+
+extern fn JSStringRelease(s: *u8): void
+
+extern fn JSStringGetMaximumUTF8CStringSize(s: *u8): i64
+
+extern fn JSStringGetUTF8CString(s: *u8, buffer: *u8, bufferSize: i64): i64
+
+extern fn JSValueToStringCopy(ctx: *u8, value: *u8, exception: *u8): *u8
+
+extern fn JSValueMakeUndefined(ctx: *u8): *u8
+
+extern fn JSValueIsUndefined(ctx: *u8, value: *u8): bool
+
+extern fn JSValueMakeString(ctx: *u8, s: *u8): *u8
+
+extern fn JSValueMakeBoolean(ctx: *u8, boolean: bool): *u8
+
+extern fn JSValueMakeNumber(ctx: *u8, number: f64): *u8
+
+extern fn JSObjectMakeFunctionWithCallback(ctx: *u8, name: *u8, callAsFunction: *u8): *u8
+
+extern fn JSObjectMake(ctx: *u8, jsClass: *u8, data: *u8): *u8
+
+extern fn JSObjectSetProperty(ctx: *u8, object: *u8, propertyName: *u8, value: *u8, attributes: u32, exception: *u8): void
+
+extern fn JSObjectCallAsFunction(ctx: *u8, object: *u8, thisObject: *u8, argumentCount: i64, arguments: *u8, exception: *u8): *u8
+
+extern fn JSValueToNumber(ctx: *u8, value: *u8, exception: *u8): f64
+
+extern fn JSValueToBoolean(ctx: *u8, value: *u8): bool
+
+// Sleep until the next due timer (the accept loop's timer pump — see pumpTimers).
+extern fn usleep(usec: u32): i32
+
+// Flush buffered stdout so a piped (non-TTY) server's logs appear promptly. NULL flushes all.
+extern fn fflush(stream: *u8): i32
+
+extern fn JSValueProtect(ctx: *u8, value: *u8): void
+
+extern fn JSObjectGetProperty(ctx: *u8, object: *u8, propertyName: *u8, exception: *u8): *u8
+
+// libc getenv — backs process.env so node code reading JWT_SECRET/PORT/etc. sees the
+// real environment the minibun process was launched with (minibun has no dotenv).
+extern fn getenv(name: *u8): *u8
+
+// Read a pointer out of a C array of pointers (the callback's `arguments[]`).
+fn loadPtr(p: *u8): *u8 {
+    unsafe {
+        var out: *u8 = 0 as *u8
+        memcpy((out.addrOf()) as *u8, p, 8)
+        return out
+    }
+}
+
+// A JSValue -> owned Milo string, via JSC's own toString. Reused everywhere a JS value
+// must cross into Milo (console args, native fn args, exception text).
+fn jsToString(ctx: *u8, val: *u8): string {
+    unsafe {
+        let jstr = JSValueToStringCopy(ctx, val, 0 as *u8)
+        let cap = JSStringGetMaximumUTF8CStringSize(jstr)
+        let buf = malloc(cap)
+        JSStringGetUTF8CString(jstr, buf, cap)
+        let out = CStr.wrap(buf)!.toString()
+        free(buf)
+        JSStringRelease(jstr)
+        return out
+    }
+}
+
+// A Milo string -> JS string value.
+fn jsString(ctx: *u8, s: string): *u8 {
+    unsafe {
+        let jstr = JSStringCreateWithUTF8CString(s)
+        let v = JSValueMakeString(ctx, jstr)
+        JSStringRelease(jstr)
+        return v
+    }
+}
+
+// Call a 1-arg JS function; returns its result, or null on a thrown exception.
+fn callJs1(ctx: *u8, func: *u8, arg: *u8): *u8 {
+    unsafe {
+        let argArr = malloc(8)
+        var a = arg
+        memcpy(argArr, (a.addrOf()) as *u8, 8)
+        var exc: *u8 = 0 as *u8
+        let r = JSObjectCallAsFunction(ctx, func, 0 as *u8, 1, argArr, (exc.addrOf()) as *u8)
+        free(argArr)
+        if exc as i64 != 0 {
+            return 0 as *u8
+        }
+        return r
+    }
+}
+
+// Call a 0-arg JS function; returns its result, or null on a thrown exception.
+fn callJs0(ctx: *u8, func: *u8): *u8 {
+    unsafe {
+        var exc: *u8 = 0 as *u8
+        let r = JSObjectCallAsFunction(ctx, func, 0 as *u8, 0, 0 as *u8, (exc.addrOf()) as *u8)
+        if exc as i64 != 0 {
+            return 0 as *u8
+        }
+        return r
+    }
+}
+
+// Read property `name` off a JS object.
+fn getProp(ctx: *u8, obj: *u8, name: string): *u8 {
+    unsafe {
+        let n = JSStringCreateWithUTF8CString(name)
+        let v = JSObjectGetProperty(ctx, obj, n, 0 as *u8)
+        JSStringRelease(n)
+        return v
+    }
+}
+
+// Look up a global by name (a JS function/value on globalThis).
+fn lookupGlobal(ctx: *u8, name: string): *u8 {
+    unsafe {
+        return getProp(ctx, JSContextGetGlobalObject(ctx), name)
+    }
+}
+
+// ── native functions JSC calls directly (C ABI, same mechanism as std/runtime's
+//    pthread trampoline) ──
+
+// console.log(...args) — space-joins and prints one line.
+fn consoleLog(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        var line = ""
+        var i: i64 = 0
+        while i < argCount {
+            let argVal = loadPtr((arguments as i64 + i * 8) as *u8)
+            if i > 0 {
+                line = line + " "
+            }
+            line = line + jsToString(ctx, argVal)
+            i = i + 1
+        }
+        print(line)
+        // Flush: stdout is block-buffered when piped (not a TTY), so a long-running server's
+        // logs would otherwise never appear. fflush(NULL) flushes all open streams.
+        fflush(0 as *u8)
+        return JSValueMakeUndefined(ctx)
+    }
+}
+
+// __getenv(name) -> string | undefined. Backs process.env (see moduleBootstrap).
+fn nativeGetenv(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        if argCount < 1 {
+            return JSValueMakeUndefined(ctx)
+        }
+        let name = jsToString(ctx, loadPtr(arguments))
+        let v = getenv(name)
+        if v as i64 == 0 {
+            return JSValueMakeUndefined(ctx)
+        }
+        return jsString(ctx, CStr.wrap(v)!.toString())
+    }
+}
+
+// __readFileSync(path) -> string | undefined. The module loader's file access.
+fn nativeReadFileSync(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        if argCount < 1 {
+            return JSValueMakeUndefined(ctx)
+        }
+        let path = jsToString(ctx, loadPtr(arguments))
+        let r = readFile(path)
+        match r {
+            Result.Ok(s) => {
+                return jsString(ctx, s)
+            }
+            Result.Err(_e) => {
+                return JSValueMakeUndefined(ctx)
+            }
+        }
+    }
+}
+
+// __fileExists(path) -> bool. Backed by isFile so it is false for directories, which is
+// what the resolver wants (directories are probed via /index.js and /package.json).
+fn nativeFileExists(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        if argCount < 1 {
+            return JSValueMakeBoolean(ctx, false)
+        }
+        let path = jsToString(ctx, loadPtr(arguments))
+        return JSValueMakeBoolean(ctx, isFile(path))
+    }
+}
+
+// __isDir(path) -> bool. Lets fs.stat report isDirectory correctly, which express.static/
+// send need to decide between an index-file lookup and streaming a path as a file.
+fn nativeIsDir(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        if argCount < 1 {
+            return JSValueMakeBoolean(ctx, false)
+        }
+        return JSValueMakeBoolean(ctx, isDir(jsToString(ctx, loadPtr(arguments))))
+    }
+}
+
+// __fileSize(path) -> number (bytes, or -1 if absent). Feeds fs.stat().size so send can set
+// Content-Length; a 0 size (the old stub) made static responses empty.
+fn nativeFileSize(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        if argCount < 1 {
+            return JSValueMakeNumber(ctx, -1.0)
+        }
+        return JSValueMakeNumber(ctx, (fileSizePath(jsToString(ctx, loadPtr(arguments)))) as f64)
+    }
+}
+
+fn netErrString(e: &NetError): string {
+    match e {
+        NetError.DnsFailure(m) => {
+            return "dns: " + m.clone()
+        }
+        NetError.ConnectionFailed(m) => {
+            return "connect: " + m.clone()
+        }
+        NetError.TlsError(m) => {
+            return "tls: " + m.clone()
+        }
+        NetError.SendFailed(m) => {
+            return "send: " + m.clone()
+        }
+        NetError.Other(m) => {
+            return m.clone()
+        }
+    }
+}
+
+// Set one property on a JS object from Milo.
+fn setObjProp(ctx: *u8, obj: *u8, name: string, val: *u8): void {
+    unsafe {
+        let n = JSStringCreateWithUTF8CString(name)
+        JSObjectSetProperty(ctx, obj, n, val, 0 as u32, 0 as *u8)
+        JSStringRelease(n)
+    }
+}
+
+// __fetch(url, method, headers, body) -> { status, headers, body } | { status:0, error }.
+// Blocking: does the whole HTTPS request synchronously via std/net (which links the system
+// OpenSSL). The JS `fetch` shim wraps this in a Promise + Response — see moduleBootstrap.
+fn nativeFetch(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        let obj = JSObjectMake(ctx, 0 as *u8, 0 as *u8)
+        if argCount < 1 {
+            setObjProp(ctx, obj, "status", JSValueMakeNumber(ctx, 0.0))
+            setObjProp(ctx, obj, "error", jsString(ctx, "fetch: missing url"))
+            return obj
+        }
+        let url = jsToString(ctx, loadPtr(arguments))
+        var method = "GET"
+        var headers = ""
+        var body = ""
+        if argCount >= 2 {
+            method = jsToString(ctx, loadPtr((arguments as i64 + 8) as *u8))
+        }
+        if argCount >= 3 {
+            headers = jsToString(ctx, loadPtr((arguments as i64 + 16) as *u8))
+        }
+        if argCount >= 4 {
+            body = jsToString(ctx, loadPtr((arguments as i64 + 24) as *u8))
+        }
+        let opts = FetchOptions {
+            method: method, headers: headers, body: body
+        }
+        match fetchWith(url, opts) {
+            Result.Ok(resp) => {
+                setObjProp(ctx, obj, "status", JSValueMakeNumber(ctx, (resp.status) as f64))
+                setObjProp(ctx, obj, "headers", jsString(ctx, resp.headers.clone()))
+                setObjProp(ctx, obj, "body", jsString(ctx, resp.body.clone()))
+            }
+            Result.Err(e) => {
+                setObjProp(ctx, obj, "status", JSValueMakeNumber(ctx, 0.0))
+                setObjProp(ctx, obj, "error", jsString(ctx, netErrString(e)))
+            }
+        }
+        return obj
+    }
+}
+
+// The server accept loop — run from main() at the TOP LEVEL (not nested inside the entry
+// eval), so each `handler(reqText)` call is an outermost JSC API entry: JSC drains the
+// microtask queue when it returns, running any async route continuations, so `__mbGetRaw`
+// then sees the finished response. (A nested call — e.g. if listen() blocked here directly —
+// would NOT drain, and async handlers would return empty bodies.) `handler` returns the JS
+// `res` object; `getRaw` renders it to a raw HTTP response string.
+// Drive JS timers (setTimeout/setInterval) for one in-flight request: JSC has no timer loop,
+// so after the handler returns we sleep to each due timer and fire it, until the response is
+// finished. This makes `await new Promise(r => setTimeout(r, ms))` inside a handler resolve.
+// Most responses finish synchronously (via microtasks) — the first __resDone check is true and
+// this returns immediately with zero overhead.
+fn pumpTimers(ctx: *u8, resObj: *u8, nextDelayFn: *u8, runFn: *u8, resDoneFn: *u8): void {
+    var guard: i64 = 0
+    while guard < 200000 {
+        let doneVal = callJs1(ctx, resDoneFn, resObj)
+        if doneVal as i64 != 0 {
+            if JSValueToBoolean(ctx, doneVal) {
+                return
+            }
+        }
+        let delayVal = callJs0(ctx, nextDelayFn)
+        if delayVal as i64 == 0 {
+            return
+        }
+        let delayMs = JSValueToNumber(ctx, delayVal, 0 as *u8)
+        if delayMs < 0.0 {
+            // No pending timers and the response isn't done — nothing left to advance it.
+            return
+        }
+        if delayMs > 0.0 {
+            // Cap each sleep so a long timeout doesn't block past the response completing.
+            var capMs = delayMs
+            if capMs > 2000.0 {
+                capMs = 2000.0
+            }
+            usleep(((capMs * 1000.0) as i64) as u32)
+        }
+        // Firing runs due callbacks; JSC drains their microtasks when this call returns.
+        let _ = callJs0(ctx, runFn)
+        guard = guard + 1
+    }
+}
+
+// Standalone (non-server) timer drain: run pending timers to completion so a plain script's
+// setTimeout/setInterval fire after the entry finishes. Bounded so an unbounded setInterval
+// can't wedge the process forever.
+fn drainTimers(ctx: *u8): void {
+    let nextDelayFn = lookupGlobal(ctx, "__timersNextDelay")
+    let runFn = lookupGlobal(ctx, "__timersRun")
+    if JSValueIsUndefined(ctx, nextDelayFn) || JSValueIsUndefined(ctx, runFn) {
+        return
+    }
+    var guard: i64 = 0
+    while guard < 1000000 {
+        let delayVal = callJs0(ctx, nextDelayFn)
+        if delayVal as i64 == 0 {
+            return
+        }
+        let delayMs = JSValueToNumber(ctx, delayVal, 0 as *u8)
+        if delayMs < 0.0 {
+            return
+        }
+        if delayMs > 0.0 {
+            usleep(((delayMs * 1000.0) as i64) as u32)
+        }
+        let _ = callJs0(ctx, runFn)
+        guard = guard + 1
+    }
+}
+
+fn serveMain(ctx: *u8, port: u16, handler: *u8, getRaw: *u8): void {
+    let lr = TcpListener.bind(port)
+    match lr {
+        Result.Err(_e) => {
+            // Silent return here reads as a mysterious clean exit right after "listening"
+            // (usual cause: the port is already held by another process).
+            print("minibun: failed to bind port " + port.toString() + " (already in use?)")
+        }
+        Result.Ok(listener) => {
+            JSValueProtect(ctx, handler)
+            JSValueProtect(ctx, getRaw)
+            let nextDelayFn = lookupGlobal(ctx, "__timersNextDelay")
+            let runFn = lookupGlobal(ctx, "__timersRun")
+            let resDoneFn = lookupGlobal(ctx, "__resDone")
+            let haveTimers = !JSValueIsUndefined(ctx, nextDelayFn) && !JSValueIsUndefined(ctx, runFn) && !JSValueIsUndefined(ctx, resDoneFn)
+            if haveTimers {
+                JSValueProtect(ctx, nextDelayFn)
+                JSValueProtect(ctx, runFn)
+                JSValueProtect(ctx, resDoneFn)
+            }
+            while true {
+                let ar = listener.accept()
+                match ar {
+                    Result.Err(_e2) => {
+                    }
+                    Result.Ok(stream) => {
+                        let reqText = stream.recvOnce()
+                        let resObj = callJs1(ctx, handler, jsString(ctx, reqText))
+                        var respText = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        if resObj as i64 != 0 {
+                            if haveTimers {
+                                pumpTimers(ctx, resObj, nextDelayFn, runFn, resDoneFn)
+                            }
+                            let rawVal = callJs1(ctx, getRaw, resObj)
+                            if rawVal as i64 != 0 {
+                                respText = jsToString(ctx, rawVal)
+                            }
+                        }
+                        let _ = stream.send(respText)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Bind a native callback as a global function `name`.
+fn setGlobalFn(ctx: *u8, global: *u8, name: string, cb: *u8): void {
+    unsafe {
+        let n = JSStringCreateWithUTF8CString(name)
+        let f = JSObjectMakeFunctionWithCallback(ctx, n, cb)
+        JSObjectSetProperty(ctx, global, n, f, 0 as u32, 0 as *u8)
+        JSStringRelease(n)
+    }
+}
+
+// Install `console.log` (nested under a `console` object) on the global.
+fn installConsole(ctx: *u8, global: *u8): void {
+    unsafe {
+        let fnName = JSStringCreateWithUTF8CString("log")
+        let logFn = JSObjectMakeFunctionWithCallback(ctx, fnName, consoleLog as *u8)
+        let console = JSObjectMake(ctx, 0 as *u8, 0 as *u8)
+        let logKey = JSStringCreateWithUTF8CString("log")
+        JSObjectSetProperty(ctx, console, logKey, logFn, 0 as u32, 0 as *u8)
+        let consoleKey = JSStringCreateWithUTF8CString("console")
+        JSObjectSetProperty(ctx, global, consoleKey, console, 0 as u32, 0 as *u8)
+        JSStringRelease(fnName)
+        JSStringRelease(logKey)
+        JSStringRelease(consoleKey)
+    }
+}
+
+// The CommonJS module system + Node/Web builtins, in JS over the natives above. new Function()
+// gives each module the (exports, require, module, __filename, __dirname) wrapper Node uses;
+// resolve() probes .js/.json/index.js/package.json#main and walks node_modules for bare
+// specifiers. Source is minibun-runtime.js (a real, lintable/formattable .js file), inlined
+// at compile time via embedFile so the runtime is still a single self-contained binary.
+fn moduleBootstrap(): string {
+    // The Node/Web runtime host (module loader, builtins, process/global scaffolding)
+    // lives in a real .js file for debuggability; embedFile inlines it at compile time.
+    return embedFile("minibun-runtime.js")
+}
+
+// Evaluate `code`; on an uncaught exception print it and return 1.
+fn evalScript(ctx: *u8, code: string, sourceName: string): i32 {
+    unsafe {
+        let script = JSStringCreateWithUTF8CString(code)
+        let url = JSStringCreateWithUTF8CString(sourceName)
+        var exc: *u8 = 0 as *u8
+        JSEvaluateScript(ctx, script, 0 as *u8, url, 1, (exc.addrOf()) as *u8)
+        JSStringRelease(script)
+        JSStringRelease(url)
+        if exc as i64 != 0 {
+            print("Uncaught " + jsToString(ctx, exc))
+            return 1
+        }
+        return 0
+    }
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 2 {
+        print("usage: minibun <file.js>")
+        return 1
+    }
+    // Node makes __filename/__dirname absolute regardless of how the entry was invoked; a
+    // relative entry (e.g. `-- dist/index.js`) otherwise yields a relative __dirname, so the
+    // app's path.join(__dirname, ...) misses files (e.g. its built frontend). Resolve up front.
+    var path = argv[1]
+    if !strStartsWith(path, "/") {
+        match currentDir() {
+            Result.Ok(cwd) => {
+                path = cwd + "/" + path
+            }
+            Result.Err(_e) => {
+            }
+        }
+    }
+
+    unsafe {
+        let ctx = JSGlobalContextCreate(0 as *u8)
+        let global = JSContextGetGlobalObject(ctx)
+
+        installConsole(ctx, global)
+        setGlobalFn(ctx, global, "__readFileSync", nativeReadFileSync as *u8)
+        setGlobalFn(ctx, global, "__fileExists", nativeFileExists as *u8)
+        setGlobalFn(ctx, global, "__getenv", nativeGetenv as *u8)
+        setGlobalFn(ctx, global, "__isDir", nativeIsDir as *u8)
+        setGlobalFn(ctx, global, "__fileSize", nativeFileSize as *u8)
+        setGlobalFn(ctx, global, "__fetch", nativeFetch as *u8)
+
+        // Hand the entry path to the bootstrap as a global, avoiding string-quoting in a
+        // constructed launcher.
+        let epName = JSStringCreateWithUTF8CString("__entryPath")
+        JSObjectSetProperty(ctx, global, epName, jsString(ctx, path.clone()), 0 as u32, 0 as *u8)
+        JSStringRelease(epName)
+
+        var code = evalScript(ctx, moduleBootstrap(), "<bootstrap>")
+        if code == 0 {
+            code = evalScript(ctx, "try{ __runEntry(__entryPath); }catch(e){ console.log('Uncaught ' + (e && e.message ? e.message : e) + (e && e.stack ? '\\n' + e.stack : '')); throw e; }", path)
+        }
+
+        // If the entry registered an HTTP server (server.listen stores __mbServer and
+        // returns instead of blocking), run its accept loop here — at the top level, so
+        // async route handlers' microtasks drain between requests.
+        if code == 0 {
+            let serverObj = lookupGlobal(ctx, "__mbServer")
+            if !JSValueIsUndefined(ctx, serverObj) {
+                let port = (JSValueToNumber(ctx, getProp(ctx, serverObj, "port"), 0 as *u8)) as u16
+                let handler = getProp(ctx, serverObj, "handler")
+                let getRaw = lookupGlobal(ctx, "__mbGetRaw")
+                serveMain(ctx, port, handler, getRaw)
+            } else {
+                // Standalone script (no server): drain pending timers so setTimeout/setInterval fire.
+                drainTimers(ctx)
+            }
+        }
+
+        JSGlobalContextRelease(ctx)
+        return code
+    }
+}

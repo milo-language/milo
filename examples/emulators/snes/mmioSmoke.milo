@@ -1,0 +1,68 @@
+// M2 MMIO smoke: exercise the CPU multiply/divide registers through a real
+// program (LoROM), the way games poll them.
+//   milo run examples/emulators/snes/mmioSmoke.milo
+//
+// 12 * 10 = 120 (0x78) via $4202/$4203 -> $4216
+// 100 / 7  = 14 rem 2 via $4204-$4206 -> $4214 (quot), $4216 (rem)
+
+from "./cpu" import {
+    Cpu, Mem, busNew, newCpuReset, step, memRead, vecZeros
+}
+
+fn hex2(v: i64): string {
+    let d = "0123456789ABCDEF"
+    var s = ""
+    s.push(d[(v >> 4) & 0xF])
+    s.push(d[v & 0xF])
+    return s
+}
+
+fn main(): i32 {
+    var rom = vecZeros(0x8000)
+    let prog = [0xA9, 0x0C, // LDA #$0C
+    0x8D, 0x02, 0x42, // STA $4202  (mpyA = 12)
+    0xA9, 0x0A, // LDA #$0A
+    0x8D, 0x03, 0x42, // STA $4203  (mpyB = 10 -> product 120)
+    0xAD, 0x16, 0x42, // LDA $4216  (product low)
+    0x8D, 0x00, 0x00, // STA $0000
+    0xA9, 0x64, // LDA #$64
+    0x8D, 0x04, 0x42, // STA $4204  (div lo = 100)
+    0xA9, 0x00, // LDA #$00
+    0x8D, 0x05, 0x42, // STA $4205  (div hi = 0)
+    0xA9, 0x07, // LDA #$07
+    0x8D, 0x06, 0x42, // STA $4206  (divisor 7 -> quot 14 rem 2)
+    0xAD, 0x14, 0x42, // LDA $4214  (quotient low)
+    0x8D, 0x01, 0x00, // STA $0001
+    0xAD, 0x16, 0x42, // LDA $4216  (remainder low)
+    0x8D, 0x02, 0x00, // STA $0002
+    0xEA // NOP
+    ]
+    var i: i64 = 0
+    while i < (prog.len as i64) {
+        rom[i] = prog[i] as u8
+        i = i + 1
+    }
+    rom[0x7FFC] = 0x00 as u8
+    rom[0x7FFD] = 0x80 as u8
+
+    var m = busNew(rom, 0)
+    var cpu = newCpuReset(m)
+    var n: i64 = 0
+    while n < 17 {
+        step(cpu, m)
+        n = n + 1
+    }
+
+    let prod = memRead(m, 0x0000)
+    let quot = memRead(m, 0x0001)
+    let rem = memRead(m, 0x0002)
+    print("12*10 low = $" + hex2(prod) + " (want $78)")
+    print("100/7 quot = " + hex2(quot) + " (want 0E)")
+    print("100/7 rem  = " + hex2(rem) + " (want 02)")
+    if prod == 0x78 && quot == 0x0E && rem == 0x02 {
+        print("OK: mul/div registers working")
+        return 0
+    }
+    print("FAIL")
+    return 1
+}

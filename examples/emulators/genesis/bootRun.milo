@@ -1,0 +1,360 @@
+// Genesis boot runner: load a cart, map it into the bus, seed SP/PC from the
+// reset vector, and execute the 68000. Traces where it gets and dumps VDP state
+// so we can see the init code run before the VDP renderer exists.
+//   milo run examples/emulators/genesis/bootRun.milo roms/games/sonic1.md [maxSteps]
+//
+// The bus lives in the flat 16 MB Mem: ROM copied to $000000, work RAM at
+// $FF0000, device regions ($A0xxxx / $C0000x) dispatched by the m68k memory
+// handlers. The line counter is advanced synthetically so vblank-wait loops exit.
+
+from "std/args" import {
+    args
+}
+from "./cart68k" import {
+    Cart
+}
+from "./cart68kFile" import {
+    loadCart
+}
+from "./m68k" import {
+    M68k, Mem, newCpu, newMem, step, deliverInterrupt, z80Running
+}
+from "./z80" import {
+    stepZ80, z80Interrupt
+}
+from "./sound" import {
+    Synth, newSynth, synthSample
+}
+from "std/fs" import {
+    writeFile
+}
+from "./render" import {
+    renderIndexed, frameWidth, frameHeight, pixelR, pixelG, pixelB
+}
+
+fn loadRom(m: &mut Mem, cart: &Cart) {
+    var i: i64 = 0
+    while i < cart.rom.len && i < 0x400000 {
+        m.ram[i] = cart.rom[i]
+        m.z80.rom.push(cart.rom[i]) // Z80 bank-window ROM copy (DAC samples)
+        i = i + 1
+    }
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 2 {
+        print("usage: bootRun <rom> [maxSteps]")
+        return 1
+    }
+    var maxSteps: i64 = 2000000
+    if argv.len >= 3 {
+        maxSteps = strToI(argv[2])
+    }
+
+    var cart = Cart {
+        rom: Vec.new(), name: "", romEnd: 0
+    }
+    match loadCart(argv[1]) {
+        Result.Ok(c) => {
+            cart = c
+        }
+        Result.Err(e) => {
+            print("load failed: " + e)
+            return 1
+        }
+    }
+    print("ROM: " + cart.name)
+
+    var m = newMem()
+    m.genesis = true
+    m.z80.gen = true
+    loadRom(m, cart)
+
+    let sp = ((m.ram[0] as i64) << 24) | ((m.ram[1] as i64) << 16) | ((m.ram[2] as i64) << 8) | (m.ram[3] as i64)
+    let pc = ((m.ram[4] as i64) << 24) | ((m.ram[5] as i64) << 16) | ((m.ram[6] as i64) << 8) | (m.ram[7] as i64)
+    print("reset SP=" + hex8(sp) + " PC=" + hex8(pc))
+
+    var cpu = newCpu()
+    cpu.a[7] = sp & 0xFFFFFFFF
+    cpu.pc = pc & 0xFFFFFFFF
+    cpu.sr = 0x2700
+
+    var steps: i64 = 0
+    var stopped = ""
+    var frames: i64 = 0
+    var vints: i64 = 0
+    var z80Steps: i64 = 0
+    var z80Fail: i64 = 0
+    var synth = newSynth()
+    var wav: Vec<u8> = Vec.new()
+    // synthetic scanline clock: ~1 line per 130 instructions, 262 lines/frame
+    var lineClock: i64 = 0
+    var hIntCounter: i64 = m.vdpRegs[10]
+    var wasVblank = false
+    while steps < maxSteps {
+        let okPc = cpu.pc
+        let okOp = memRead16Pub(m, cpu.pc)
+        if !step(cpu, m) {
+            stopped = "unimplemented opcode " + hex4(okOp) + " at PC=" + hex8(okPc)
+            break
+        }
+        // Co-run the Z80 at ~half the 68k instruction rate (rough clock ratio).
+        if z80Running(m) && (steps & 1) == 0 {
+            if !stepZ80(m.z80) {
+                z80Fail = z80Fail + 1
+            } else {
+                z80Steps = z80Steps + 1
+            }
+        }
+        if cpu.halted && (cpu.sr & 0x0700) == 0x0700 {
+            stopped = "halted (STOP, ints masked) at PC=" + hex8(cpu.pc)
+            break
+        }
+        lineClock = lineClock + 1
+        if lineClock >= 130 {
+            lineClock = 0
+            m.vdpLine = m.vdpLine + 1
+            // Horizontal interrupt (level 4): counter counts down per active line,
+            // fires an H-int when it expires (reg0 bit4), reloads from reg10; held
+            // reloaded through vblank.
+            if m.vdpLine < 224 {
+                if hIntCounter == 0 {
+                    hIntCounter = m.vdpRegs[10]
+                    if (m.vdpRegs[0] & 0x10) != 0 {
+                        deliverInterrupt(cpu, m, 4)
+                    }
+                } else {
+                    hIntCounter = hIntCounter - 1
+                }
+            } else {
+                hIntCounter = m.vdpRegs[10]
+            }
+            if m.vdpLine >= 262 {
+                m.vdpLine = 0
+                frames = frames + 1
+                // Generate one frame of audio (44100/60 = 735 samples) from the
+                // live YM/PSG register state; append as signed-16 little-endian.
+                var sa: i64 = 0
+                while sa < 735 {
+                    let smp = synthSample(synth, m.z80)
+                    wav.push((smp.l & 0xFF) as u8)
+                    wav.push(((smp.l >> 8) & 0xFF) as u8)
+                    wav.push((smp.r & 0xFF) as u8)
+                    wav.push(((smp.r >> 8) & 0xFF) as u8)
+                    sa = sa + 1
+                }
+            }
+        }
+        // VBlank interrupt on the rising edge of the vblank region, when enabled
+        // by VDP reg1 bit5 (0x20).
+        let inVblank = m.vdpLine >= 224
+        if inVblank && !wasVblank {
+            if (m.vdpRegs[1] & 0x20) != 0 {
+                if deliverInterrupt(cpu, m, 6) {
+                    vints = vints + 1
+                }
+            }
+            // The Z80 INT line is tied to VBlank (independent of the 68k's reg1).
+            if z80Running(m) {
+                z80Interrupt(m.z80)
+            }
+        }
+        wasVblank = inVblank
+        steps = steps + 1
+    }
+
+    if stopped == "" {
+        stopped = "ran " + itoa(maxSteps) + " steps (no stop) at PC=" + hex8(cpu.pc)
+    }
+    print("stop: " + stopped)
+    print("steps executed: " + itoa(steps))
+    print("final PC=" + hex8(cpu.pc) + " SR=" + hex4(cpu.sr) + " A7=" + hex8(cpu.a[7]))
+    print("frames=" + itoa(frames) + " vblank-ints=" + itoa(vints) + " vdpLine=" + itoa(m.vdpLine))
+    print("z80: running=" + boolStr(z80Running(m)) + " steps=" + itoa(z80Steps) + " fail=" + itoa(z80Fail) + " pc=" + hex4(m.z80.pc))
+    var ymNz: i64 = 0
+    var i2: i64 = 0
+    while i2 < 512 {
+        if m.z80.ym[i2] != 0 {
+            ymNz = ymNz + 1
+        }
+        i2 = i2 + 1
+    }
+    var psgNz: i64 = 0
+    i2 = 0
+    while i2 < 8 {
+        if m.z80.psg[i2] != 0 {
+            psgNz = psgNz + 1
+        }
+        i2 = i2 + 1
+    }
+    print("ym-nonzero=" + itoa(ymNz) + "/512  psg-nonzero=" + itoa(psgNz) + "/8")
+    printVdpRegs(m)
+    printCram(m)
+    renderPpm(m, "/tmp/sonic.ppm")
+    print("wrote /tmp/sonic.ppm")
+    writeWav(wav, "/tmp/sonic.wav")
+    print("wrote /tmp/sonic.wav (" + itoa(wav.len / 2) + " samples)")
+    // RMS as a quick "is there audio" check
+    var sumsq: i64 = 0
+    var k: i64 = 0
+    let n = wav.len / 2
+    while k < n {
+        var v = (wav[k * 2] as i64) | ((wav[k * 2 + 1] as i64) << 8)
+        if v >= 32768 {
+            v = v - 65536
+        }
+        sumsq = sumsq + (v * v) / 1000
+        k = k + 1
+    }
+    if n > 0 {
+        print("audio RMS^2/1000 avg = " + itoa(sumsq / n))
+    }
+    return 0
+}
+
+// Minimal 44.1 kHz mono signed-16 WAV.
+fn writeWav(samples: &Vec<u8>, path: &string) {
+    let dataLen = samples.len
+    var out = ""
+    out = out + "RIFF"
+    out = pushLE32(out, 36 + dataLen)
+    out = out + "WAVEfmt "
+    out = pushLE32(out, 16) // fmt chunk size
+    out = pushLE16(out, 1) // PCM
+    out = pushLE16(out, 2) // stereo
+    out = pushLE32(out, 44100)
+    out = pushLE32(out, 44100 * 4) // byte rate (2ch x 2 bytes)
+    out = pushLE16(out, 4) // block align
+    out = pushLE16(out, 16) // bits
+    out = out + "data"
+    out = pushLE32(out, dataLen)
+    for s in samples {
+        out.push(s)
+    }
+    match writeFile(path, out) {
+        Result.Ok(nn) => {
+        }
+        Result.Err(e) => {
+            print("wav write failed")
+        }
+    }
+}
+
+fn pushLE16(s: string, v: i64): string {
+    var r = s
+    r.push((v & 0xFF) as u8)
+    r.push(((v >> 8) & 0xFF) as u8)
+    return r
+}
+
+fn pushLE32(s: string, v: i64): string {
+    var r = s
+    r.push((v & 0xFF) as u8)
+    r.push(((v >> 8) & 0xFF) as u8)
+    r.push(((v >> 16) & 0xFF) as u8)
+    r.push(((v >> 24) & 0xFF) as u8)
+    return r
+}
+
+// Render the current frame to a binary PPM via the shared renderer.
+fn renderPpm(m: &Mem, path: &string) {
+    let width = frameWidth(m)
+    let height = frameHeight(m)
+    let fb = renderIndexed(m)
+    var out = "P6\n" + itoa(width) + " " + itoa(height) + "\n255\n"
+    for px in fb {
+        out.push(pixelR(m, px) as u8)
+        out.push(pixelG(m, px) as u8)
+        out.push(pixelB(m, px) as u8)
+    }
+    match writeFile(path, out) {
+        Result.Ok(n) => {
+        }
+        Result.Err(e) => {
+            print("ppm write failed")
+        }
+    }
+}
+
+fn printVdpRegs(m: &Mem) {
+    var s = "VDP regs:"
+    var i: i64 = 0
+    while i < 24 {
+        s = s + " " + hex2(m.vdpRegs[i])
+        i = i + 1
+    }
+    print(s)
+}
+
+fn printCram(m: &Mem) {
+    var nonzero: i64 = 0
+    var i: i64 = 0
+    while i < 64 {
+        if m.cram[i] != 0 {
+            nonzero = nonzero + 1
+        }
+        i = i + 1
+    }
+    print("CRAM non-zero entries: " + itoa(nonzero) + " / 64")
+}
+
+fn memRead16Pub(m: &Mem, addr: i64): i64 {
+    let a = addr & 0xFFFFFF
+    return ((m.ram[a] as i64) << 8) | (m.ram[(a + 1) & 0xFFFFFF] as i64)
+}
+
+fn boolStr(b: bool): string {
+    if b {
+        return "yes"
+    }
+    return "no"
+}
+
+fn strToI(s: &string): i64 {
+    var v: i64 = 0
+    for ch in s {
+        let c = ch as i64
+        if c >= 48 && c <= 57 {
+            v = v * 10 + (c - 48)
+        }
+    }
+    return v
+}
+
+fn itoa(n: i64): string {
+    if n == 0 {
+        return "0"
+    }
+    var v = n
+    var s = ""
+    while v > 0 {
+        var d = ""
+        d.push((48 + (v % 10)) as u8)
+        s = d + s
+        v = v / 10
+    }
+    return s
+}
+
+fn hexNib(n: i64): string {
+    var s = ""
+    if n < 10 {
+        s.push((48 + n) as u8)
+    } else {
+        s.push((87 + n) as u8)
+    }
+    return s
+}
+
+fn hex2(n: i64): string {
+    return hexNib((n >> 4) & 0xF) + hexNib(n & 0xF)
+}
+
+fn hex4(n: i64): string {
+    return hex2((n >> 8) & 0xFF) + hex2(n & 0xFF)
+}
+
+fn hex8(n: i64): string {
+    return hex4((n >> 16) & 0xFFFF) + hex4(n & 0xFFFF)
+}

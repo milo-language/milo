@@ -1,0 +1,220 @@
+// Harte SPC700 SingleStepTest runner over the flat integer stream from
+// harteConvSpc.ts. Applies each case's initial state, runs one instruction, and
+// diffs final registers + touched RAM.
+//   bun run examples/emulators/snes/harteConvSpc.ts roms/harte-spc700/v1/00.json /tmp/00.flat
+//   milo run examples/emulators/snes/runHarteSpc.milo /tmp/00.flat [maxCases]
+// Driver: examples/emulators/snes/harteSpc.sh
+
+from "std/args" import {
+    args
+}
+from "std/io" import {
+    readFile
+}
+from "./spc" import {
+    Spc, SpcMem, spcMemNew, spcMemReset, spcRead, spcWrite, spcStep
+}
+
+struct Toks {
+    s: string
+    pos: i64
+}
+
+fn nextTok(t: &mut Toks): i64 {
+    while t.pos < t.s.len {
+        let c = t.s[t.pos] as i64
+        if c == 32 || c == 10 || c == 13 || c == 9 {
+            t.pos = t.pos + 1
+        } else {
+            break
+        }
+    }
+    var v: i64 = 0
+    while t.pos < t.s.len {
+        let c = t.s[t.pos] as i64
+        if c >= 48 && c <= 57 {
+            v = v * 10 + (c - 48)
+            t.pos = t.pos + 1
+        } else {
+            break
+        }
+    }
+    return v
+}
+
+fn loadRegs(spc: &mut Spc, m: &mut SpcMem, t: &mut Toks): void {
+    spc.a = nextTok(t)
+    spc.x = nextTok(t)
+    spc.y = nextTok(t)
+    spc.sp = nextTok(t)
+    spc.pc = nextTok(t)
+    spc.psw = nextTok(t)
+    let ramN = nextTok(t)
+    var j: i64 = 0
+    while j < ramN {
+        let addr = nextTok(t)
+        let val = nextTok(t)
+        spcWrite(m, addr, val)
+        j = j + 1
+    }
+}
+
+fn checkFinal(spc: &Spc, m: &SpcMem, t: &mut Toks): string {
+    let fa = nextTok(t)
+    let fx = nextTok(t)
+    let fy = nextTok(t)
+    let fsp = nextTok(t)
+    let fpc = nextTok(t)
+    let fpsw = nextTok(t)
+    let ramN = nextTok(t)
+    var mismatch = ""
+    if spc.a != fa && mismatch == "" {
+        mismatch = "A got " + hex(spc.a) + " want " + hex(fa)
+    }
+    if spc.x != fx && mismatch == "" {
+        mismatch = "X got " + hex(spc.x) + " want " + hex(fx)
+    }
+    if spc.y != fy && mismatch == "" {
+        mismatch = "Y got " + hex(spc.y) + " want " + hex(fy)
+    }
+    if spc.sp != fsp && mismatch == "" {
+        mismatch = "SP got " + hex(spc.sp) + " want " + hex(fsp)
+    }
+    if spc.pc != fpc && mismatch == "" {
+        mismatch = "PC got " + hex(spc.pc) + " want " + hex(fpc)
+    }
+    if spc.psw != fpsw && mismatch == "" {
+        mismatch = "PSW got " + hex(spc.psw) + " want " + hex(fpsw)
+    }
+    var j: i64 = 0
+    while j < ramN {
+        let addr = nextTok(t)
+        let want = nextTok(t)
+        if spcRead(m, addr) != want && mismatch == "" {
+            mismatch = "RAM[" + hex(addr) + "] got " + hex(spcRead(m, addr)) + " want " + hex(want)
+        }
+        j = j + 1
+    }
+    return mismatch
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 2 {
+        print("usage: runHarteSpc <op.flat> [maxCases]")
+        return 1
+    }
+    var maxCases: i64 = 100000000
+    if argv.len >= 3 {
+        maxCases = strToI(argv[2])
+    }
+
+    var raw = ""
+    match readFile(argv[1]) {
+        Result.Ok(s) => {
+            raw = s
+        }
+        Result.Err(e) => {
+            print("cannot read " + argv[1])
+            return 1
+        }
+    }
+
+    var t = Toks {
+        s: raw, pos: 0
+    }
+    let total = nextTok(t)
+    var spc = Spc {
+        a: 0, x: 0, y: 0, sp: 0, pc: 0, psw: 0
+    }
+    var m = spcMemNew()
+    var passed: i64 = 0
+    var failed: i64 = 0
+    var firstFail = ""
+    var i: i64 = 0
+    while i < total {
+        if i >= maxCases {
+            break
+        }
+        spcMemReset(m)
+        loadRegs(spc, m, t)
+        spcStep(spc, m)
+        let mismatch = checkFinal(spc, m, t)
+        if mismatch == "" {
+            passed = passed + 1
+        } else {
+            failed = failed + 1
+            if firstFail == "" {
+                firstFail = "case " + itoa(i) + ": " + mismatch
+            }
+        }
+        i = i + 1
+    }
+
+    print("passed " + itoa(passed) + " / " + itoa(passed + failed) + "  (file has " + itoa(total) + " cases)")
+    if firstFail != "" {
+        print("first fail: " + firstFail)
+    }
+    if failed == 0 {
+        return 0
+    }
+    return 1
+}
+
+fn itoa(n: i64): string {
+    if n == 0 {
+        return "0"
+    }
+    var v = n
+    var s = ""
+    while v > 0 {
+        s = digitStr(v % 10) + s
+        v = v / 10
+    }
+    return s
+}
+
+fn digitStr(d: i64): string {
+    var s = ""
+    s.push((48 + d) as u8)
+    return s
+}
+
+fn hex(n: i64): string {
+    let v = n & 0xFFFFFFFF
+    var s = "0x"
+    var i: i64 = 28
+    var lead = true
+    while i >= 0 {
+        let nib = (v >> i) & 0xF
+        if nib != 0 {
+            lead = false
+        }
+        if !lead || i == 0 {
+            s = s + hexNib(nib)
+        }
+        i = i - 4
+    }
+    return s
+}
+
+fn hexNib(n: i64): string {
+    var s = ""
+    if n < 10 {
+        s.push((48 + n) as u8)
+    } else {
+        s.push((87 + n) as u8)
+    }
+    return s
+}
+
+fn strToI(s: &string): i64 {
+    var v: i64 = 0
+    for ch in s {
+        let c = ch as i64
+        if c >= 48 && c <= 57 {
+            v = v * 10 + (c - 48)
+        }
+    }
+    return v
+}

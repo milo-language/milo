@@ -1,0 +1,271 @@
+// chihuahua — a DVD-logo-style bouncing screensaver, now a shaded truecolor
+// pixel-art head. The sprite is a small bitmap of palette chars; it's drawn with
+// the half-block trick (▀/▄) so each character cell packs two vertically-stacked
+// RGB pixels, giving smooth fur shading, dark eyes with a glint, a cream muzzle,
+// and pink inner ears. It bounces off the walls and flashes on a corner hit.
+//
+// Only the sprite's footprint is repainted each frame, so it glides. q/ctrl-c quits.
+//
+//   milo build examples/graphics/chihuahua.milo -o chihuahua && ./chihuahua
+
+from "std/term" import {
+    enableRawMode, restoreTerminal, readKey, KEY_NONE, KEY_QUIT
+}
+from "std/io" import {
+    writeStdout
+}
+from "std/time" import {
+    sleepMs
+}
+from "std/ansi" import {
+    cursorTo, pushFg24, pushBg24, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
+}
+from "std/color" import {
+    bold, gray
+}
+from "std/os" import {
+    ioctl
+}
+from "std/pty" import {
+    WinSize
+}
+
+let SPR_W: i64 = 18
+let SPR_ROWS: i64 = 18 // pixel rows (even → SPR_ROWS/2 terminal rows tall)
+
+// Pixel-art bitmap. Legend: space/'.'=transparent  d=dark-brown  b=brown-shadow
+// t=tan  l=light-tan  w=cream  W=white-highlight  k=eye/nose  g=eye-glint  p=pink
+fn spriteRow(i: i64): string {
+    if i == 0 {
+        return "  dd          dd  "
+    } else if i == 1 {
+        return " dddd        dddd "
+    } else if i == 2 {
+        return " dpdd        ddpd "
+    } else if i == 3 {
+        return " ddpdb      bdpdd "
+    } else if i == 4 {
+        return "  ddbtttttttttbdd "
+    } else if i == 5 {
+        return "   btttttttttttb  "
+    } else if i == 6 {
+        return "  bttlllllllllttb "
+    } else if i == 7 {
+        return " bttllllllllllllb "
+    } else if i == 8 {
+        return " btllkkllllkkllltb"
+    } else if i == 9 {
+        return " btllkgllllkglltb "
+    } else if i == 10 {
+        return " bttllllllllllttb "
+    } else if i == 11 {
+        return " bbttttwwwwttttbb "
+    } else if i == 12 {
+        return "  bttwwwwwwwwttb  "
+    } else if i == 13 {
+        return "  bttwwwkkwwwttb  "
+    } else if i == 14 {
+        return "   bttwwkkwwttb   "
+    } else if i == 15 {
+        return "   bbttwppwttbb   "
+    } else if i == 16 {
+        return "    bttwwwwttb    "
+    }
+    return "     bbtttbb      "
+}
+
+fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
+    out[0] = r
+    out[1] = g
+    out[2] = b
+    out[3] = 1
+}
+
+// Map a palette char to an RGB color; out[3]=0 marks a transparent pixel.
+fn charRGB(ch: u8, out: &mut [i64; 4]): void {
+    let c = ch as i64
+    if c == 100 {
+        setC(out, 96, 60, 38) // d  dark brown (ear/outline)
+    } else if c == 98 {
+        setC(out, 145, 96, 58) // b  brown shadow
+    } else if c == 116 {
+        setC(out, 200, 152, 104) // t  tan
+    } else if c == 108 {
+        setC(out, 226, 192, 150) // l  light tan
+    } else if c == 119 {
+        setC(out, 240, 226, 206) // w  cream muzzle
+    } else if c == 87 {
+        setC(out, 255, 250, 245) // W  white highlight
+    } else if c == 107 {
+        setC(out, 34, 28, 24) // k  eye / nose
+    } else if c == 103 {
+        setC(out, 255, 255, 255) // g  eye glint
+    } else if c == 112 {
+        setC(out, 226, 150, 162) // p  pink inner ear
+    } else {
+        out[3] = 0 // space / '.' → transparent
+    }
+}
+
+fn charAt(row: &string, c: i64): u8 {
+    if c < row.len {
+        return row[c]
+    }
+    return 32 as u8
+}
+
+fn emit(buf: &mut string, s: &string): void {
+    for i in 0..s.len {
+        buf.push(s[i])
+    }
+}
+
+fn termSize(out: &mut [i64; 2]): void {
+    var ws = WinSize {
+        rows: 0 as u16, cols: 0 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+    }
+    unsafe {
+        ioctl(1, 1074295912, (ws.addrOf()) as *u8)
+    }
+    var rows = ws.rows as i64
+    var cols = ws.cols as i64
+    if rows < 12 {
+        rows = 24
+    }
+    if cols < 20 {
+        cols = 80
+    }
+    out[0] = rows
+    out[1] = cols
+}
+
+// Render the sprite at terminal position (row0, col0) into buf. Two pixel rows
+// per terminal row via half-blocks: ▀ (fg=top,bg=bottom), or ▄/▀ with a default
+// bg when only one half is opaque.
+fn drawSprite(buf: &mut string, row0: i64, col0: i64): void {
+    let hc = SPR_ROWS / 2
+    var tcol: [i64; 4] = [0; 4]
+    var bcol: [i64; 4] = [0; 4]
+    for tr in 0..hc {
+        emit(buf, cursorTo(row0 + tr, col0))
+        let rowTop = spriteRow(tr * 2)
+        let rowBot = spriteRow(tr * 2 + 1)
+        for c in 0..SPR_W {
+            charRGB(charAt(rowTop, c), tcol)
+            charRGB(charAt(rowBot, c), bcol)
+            let topOp = tcol[3] == 1
+            let botOp = bcol[3] == 1
+            if topOp && botOp {
+                pushFg24(buf, tcol[0], tcol[1], tcol[2])
+                pushBg24(buf, bcol[0], bcol[1], bcol[2])
+                emit(buf, "▀")
+            } else if topOp {
+                emit(buf, "\x1b[49m") // default bg for the empty lower half
+                pushFg24(buf, tcol[0], tcol[1], tcol[2])
+                emit(buf, "▀")
+            } else if botOp {
+                emit(buf, "\x1b[49m")
+                pushFg24(buf, bcol[0], bcol[1], bcol[2])
+                emit(buf, "▄")
+            } else {
+                emit(buf, "\x1b[49m")
+                buf.push(32 as u8)
+            }
+        }
+    }
+}
+
+fn eraseRect(buf: &mut string, row0: i64, col0: i64, w: i64, h: i64): void {
+    emit(buf, ansiReset())
+    for r in 0..h {
+        emit(buf, cursorTo(row0 + r, col0))
+        for c in 0..w {
+            buf.push(32 as u8)
+        }
+    }
+}
+
+fn main(): i32 {
+    let termState = enableRawMode()
+    writeStdout(hideCursor() + clearScreen())
+
+    var size: [i64; 2] = [0; 2]
+    termSize(size)
+    let rows = size[0]
+    let cols = size[1]
+
+    let sprH = SPR_ROWS / 2 // terminal rows tall
+    let playTop: i64 = 2 // row 1 is the HUD
+    let maxX = cols - SPR_W
+    let maxY = (rows - 1) - sprH
+
+    var x: i64 = maxX / 2
+    var y: i64 = maxY / 2
+    var vx: i64 = 1
+    var vy: i64 = 1
+    var prevX = x
+    var prevY = y
+    var bounces: i64 = 0
+    var quit = false
+
+    while !quit {
+        var bx = false
+        var by = false
+        x = x + vx
+        if x < 0 {
+            x = 0
+            vx = -vx
+            bx = true
+        } else if x > maxX {
+            x = maxX
+            vx = -vx
+            bx = true
+        }
+        y = y + vy
+        if y < 0 {
+            y = 0
+            vy = -vy
+            by = true
+        } else if y > maxY {
+            y = maxY
+            vy = -vy
+            by = true
+        }
+        if bx || by {
+            bounces = bounces + 1
+        }
+        let corner = bx && by
+
+        var buf = String.withCapacity(16384)
+        eraseRect(buf, prevY + playTop, prevX + 1, SPR_W, sprH)
+        drawSprite(buf, y + playTop, x + 1)
+        emit(buf, ansiReset())
+
+        emit(buf, cursorTo(1, 1))
+        emit(buf, bold(" chihuahua "))
+        emit(buf, gray($" bounces: {bounces}  "))
+        if corner {
+            emit(buf, bold("★ CORNER! ★"))
+        }
+        emit(buf, gray("  ·  q quit          "))
+
+        writeStdout(buf)
+        prevX = x
+        prevY = y
+
+        sleepMs(55)
+
+        var k = readKey()
+        while k != KEY_NONE {
+            if k == KEY_QUIT {
+                quit = true
+            }
+            k = readKey()
+        }
+    }
+
+    writeStdout(showCursor() + clearScreen() + cursorHome() + ansiReset())
+    restoreTerminal(termState)
+    print("bye from the milo chihuahua ♥  https://milo-language.github.io/milo/")
+    return 0
+}

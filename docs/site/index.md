@@ -121,7 +121,7 @@ fn main() {
         <h3>NES Emulator</h3>
         <p>A complete Nintendo, playable right here in your browser.</p>
         <div class="tile-tags"><span>6502 core</span><span>bitwise</span><span>emit-js</span><span>SDL</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="examples/apps/arcade.sh <rom.nes>" title="examples/apps/arcade.sh <rom.nes>">⧉ copy run command</span>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="examples/emulators/arcade.sh <rom.nes>" title="examples/emulators/arcade.sh <rom.nes>">⧉ copy run command</span>
       </a>
       <a class="tile" href="/milo/genesis/">
         <img class="tile-img" src="/showcase/genesis.png" alt="Sonic the Hedgehog running on the Milo Genesis emulator" loading="lazy">
@@ -129,7 +129,7 @@ fn main() {
         <h3>Genesis Emulator</h3>
         <p>A complete Sega Genesis. Sonic runs.</p>
         <div class="tile-tags"><span>68000 + Z80</span><span>DMA</span><span>emit-js</span><span>SDL</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="examples/apps/arcade.sh <rom.md>" title="examples/apps/arcade.sh <rom.md>">⧉ copy run command</span>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="examples/emulators/arcade.sh <rom.md>" title="examples/emulators/arcade.sh <rom.md>">⧉ copy run command</span>
       </a>
       <a class="tile" href="/milo/snes/">
         <img class="tile-img" src="/showcase/snes.png" alt="Super Mario World running on the Milo SNES emulator" loading="lazy">
@@ -137,7 +137,7 @@ fn main() {
         <h3>SNES Emulator</h3>
         <p>A Super Nintendo. Mario World, Donkey Kong Country, Star Fox.</p>
         <div class="tile-tags"><span>Super FX GSU</span><span>bitwise</span><span>emit-js</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="examples/apps/arcade.sh <rom.sfc>" title="examples/apps/arcade.sh <rom.sfc>">⧉ copy run command</span>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="examples/emulators/arcade.sh <rom.sfc>" title="examples/emulators/arcade.sh <rom.sfc>">⧉ copy run command</span>
       </a>
     </div>
   </div>
@@ -150,12 +150,12 @@ fn main() {
         <div class="tile-tags"><span>self-hosting</span><span>LLVM IR</span><span>monomorphization</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="sh scripts/selfhost.sh" title="sh scripts/selfhost.sh">⧉ copy run command</span>
       </a>
-      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/apps/milojs">
+      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/runtimes/milojs">
         <img class="tile-img" src="/showcase/js-engine.png" alt="milojs REPL evaluating console.log('Woof!')" loading="lazy">
         <h3>JS Engine</h3>
         <p>A JavaScript engine and Node-compatible runtime — runs real npm apps (express, tRPC, zod).</p>
         <div class="tile-tags"><span>mark-sweep GC</span><span>closures</span><span>event loop</span><span>TLS fetch</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/apps/milojs/milojs.milo examples/apps/milojs/bench/realistic.js" title="milo run examples/apps/milojs/milojs.milo examples/apps/milojs/bench/realistic.js">⧉ copy run command</span>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/runtimes/milojs/milojs.milo examples/runtimes/milojs/bench/realistic.js" title="milo run examples/runtimes/milojs/milojs.milo examples/runtimes/milojs/bench/realistic.js">⧉ copy run command</span>
       </a>
       <a class="tile" href="https://github.com/milo-language/milo/blob/main/tools/smtSolve.milo">
         <h3>The Prover</h3>
@@ -185,59 +185,59 @@ fn main() {
   <div class="cat cat-dev">
     <h3 class="cat-head">Developer tools</h3>
     <div class="tile-grid">
-      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/apps/hades">
+      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/tools/hades">
         <img class="tile-img" src="/hades/debugging.png" alt="hades web debugger stopped at a breakpoint" loading="lazy">
         <h3>Debugger</h3>
         <p>hades: debug any program from the browser, with an AI in the loop.</p>
         <div class="tile-tags"><span>HTTP server</span><span>WebSockets</span><span>JSON-RPC (DAP)</span><span>PTY</span><span>MCP</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo build examples/apps/hades/src/main.milo -o hades && ./hades web" title="milo build examples/apps/hades/src/main.milo -o hades && ./hades web">⧉ copy run command</span>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo build examples/tools/hades/src/main.milo -o hades && ./hades web" title="milo build examples/tools/hades/src/main.milo -o hades && ./hades web">⧉ copy run command</span>
       </a>
-      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/apps/java-dap">
+      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/tools/java-dap">
         <h3>Java Debugger</h3>
         <p>A DAP-compliant debugger for the JVM, so hades debugs Java too.</p>
         <div class="tile-tags"><span>JDWP</span><span>TCP sockets</span><span>binary protocol</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo build examples/apps/java-dap/src/main.milo -o java-dap" title="milo build examples/apps/java-dap/src/main.milo -o java-dap">⧉ copy run command</span>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo build examples/tools/java-dap/src/main.milo -o java-dap" title="milo build examples/tools/java-dap/src/main.milo -o java-dap">⧉ copy run command</span>
       </a>
     </div>
   </div>
   <div class="cat cat-web">
     <h3 class="cat-head">Web &amp; networking</h3>
     <div class="tile-grid">
-      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/apps/weather">
+      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/net/weather">
         <h3>Weather App</h3>
         <p>A weather website served from a single static binary.</p>
         <div class="tile-tags"><span>HTTP server</span><span>TLS fetch</span><span>JSON</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/apps/weather/app.milo" title="milo run examples/apps/weather/app.milo">⧉ copy run command</span>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/net/weather/app.milo" title="milo run examples/net/weather/app.milo">⧉ copy run command</span>
       </a>
-      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/apps/termpair">
+      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/net/termpair">
         <h3>termpair</h3>
         <p>Share your terminal in the browser, end-to-end encrypted.</p>
         <div class="tile-tags"><span>WebSockets</span><span>AES-GCM</span><span>PTY</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/apps/termpair/server.milo" title="milo run examples/apps/termpair/server.milo">⧉ copy run command</span>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/net/termpair/server.milo" title="milo run examples/net/termpair/server.milo">⧉ copy run command</span>
       </a>
     </div>
   </div>
   <div class="cat cat-term">
     <h3 class="cat-head">Terminal &amp; CLI</h3>
     <div class="tile-grid">
-      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/apps/tetris.milo">
+      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/terminal/tetris.milo">
         <img class="tile-img" src="/showcase/tetris.png" alt="Milo Tetris in the terminal" loading="lazy">
         <h3>Tetris</h3>
         <p>The classic, in your terminal.</p>
         <div class="tile-tags"><span>raw TTY</span><span>green tasks</span><span>channels</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/apps/tetris.milo" title="milo run examples/apps/tetris.milo">⧉ copy run command</span>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/terminal/tetris.milo" title="milo run examples/terminal/tetris.milo">⧉ copy run command</span>
       </a>
-      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/apps/sysmon.milo">
+      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/terminal/sysmon.milo">
         <h3>System Monitor</h3>
         <p>A live htop-style view of your machine.</p>
         <div class="tile-tags"><span>TUI</span><span>syscalls</span><span>truecolor</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/apps/sysmon.milo" title="milo run examples/apps/sysmon.milo">⧉ copy run command</span>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/terminal/sysmon.milo" title="milo run examples/terminal/sysmon.milo">⧉ copy run command</span>
       </a>
-      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/apps/splitPty.milo">
+      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/terminal/splitPty.milo">
         <h3>splitPty</h3>
         <p>Two commands side by side in real PTYs — a mini tmux.</p>
         <div class="tile-tags"><span>PTY</span><span>multiplexing</span><span>green tasks</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/apps/splitPty.milo" title="milo run examples/apps/splitPty.milo">⧉ copy run command</span>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/terminal/splitPty.milo" title="milo run examples/terminal/splitPty.milo">⧉ copy run command</span>
       </a>
       <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/cli-tools/pkg.milo">
         <h3>Package Manager</h3>

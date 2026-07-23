@@ -1,0 +1,403 @@
+// Real-time 2D rigid-body physics — the "physics were the future" demo. No GPU,
+// no raytracing, just Newtonian integration + impulse-based collision response,
+// and it runs at a smooth 60fps on any CPU. Balls fall under gravity, bounce off
+// the walls with restitution, and collide elastically with each other (O(n^2)
+// pair solver with positional correction so nothing sinks or explodes).
+//
+// The simulation + rendering are ordinary safe Milo; only the raw SDL pointer
+// FFI (window/texture creation, keyboard-state pointer, framebuffer upload) is
+// wrapped in small `unsafe` blocks — the physics math never touches a raw pointer.
+//
+// Controls:
+//   SPACE  drop a fresh ball          R    reset the scene
+//   LEFT / RIGHT / UP / DOWN  point gravity that way (shake the jar)
+//   ESC / close  quit
+//
+// Build/run (SDL2 auto-linked via the @link attribute below — no -- flags needed):
+//   milo run examples/simulation/physics.milo
+//   milo build examples/simulation/physics.milo -o /tmp/physics
+
+from "std/math" import {
+    mathSqrt
+}
+
+@link("SDL2")
+extern fn SDL_Init(flags: u32): i32
+
+extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+
+extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+
+extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+
+extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+
+extern fn SDL_RenderClear(ren: *u8): i32
+
+extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+
+extern fn SDL_RenderPresent(ren: *u8): void
+
+extern fn SDL_PollEvent(event: *u8): i32
+
+extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+
+extern fn SDL_GetMouseState(x: *i32, y: *i32): u32 // returns button bitmask, fills x/y
+
+extern fn SDL_Delay(ms: u32): void
+
+extern fn SDL_DestroyWindow(win: *u8): void
+
+extern fn SDL_Quit(): void
+
+let SDL_INIT_VIDEO: u32 = 0x20
+let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
+let SDL_WINDOW_SHOWN: u32 = 0x4
+let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
+let SDL_QUIT: u32 = 0x100
+
+let W: i32 = 320
+let H: i32 = 240
+
+struct Ball {
+    px: f64, py: f64,
+    vx: f64, vy: f64,
+    r: f64,
+    invMass: f64,
+    cr: u32, cg: u32, cb: u32,
+}
+
+// xorshift for spawn variety
+fn nextU64(s: &mut u64): u64 {
+    // &mut scalar params auto-deref in Milo: read `s` directly, write via `s = ...`
+    var x = s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    s = x
+    return x
+}
+
+fn randF(s: &mut u64): f64 {
+    let r = nextU64(s) >> 11
+    return (r as f64) * (1.0 / 9007199254740992.0)
+}
+
+fn spawnBall(balls: &mut Vec<Ball>, s: &mut u64, x: f64, y: f64) {
+    let rad = 5.0 + randF(s) * 9.0
+    let mass = rad * rad // area-proportional
+    balls.push(Ball {
+        px: x, py: y,
+        vx: (randF(s) * 2.0 - 1.0) * 120.0,
+        vy: randF(s) * 40.0,
+        r: rad,
+        invMass: 1.0 / mass,
+        cr: (60.0 + randF(s) * 195.0) as u32,
+        cg: (60.0 + randF(s) * 195.0) as u32,
+        cb: (60.0 + randF(s) * 195.0) as u32,
+    }
+    )
+}
+
+fn resetScene(balls: &mut Vec<Ball>, s: &mut u64) {
+    var m = 0
+    while m < 40 {
+        // seed is borrowed &mut once per call, so compute coords in separate
+        // statements rather than borrowing it several times in one expression.
+        let sx = 40.0 + randF(s) * 240.0
+        let sy = 20.0 + randF(s) * 100.0
+        spawnBall(balls, s, sx, sy)
+        m = m + 1
+    }
+}
+
+// alpha-blend `col` over the existing pixel by `cov` in [0,1]. Blending against
+// whatever is already in the buffer (not a fixed background) means overlapping
+// balls antialias against each other, not just the backdrop.
+fn blendPixel(fb: &mut [u32; 76800], idx: i32, col: u32, cov: f64) {
+    let dst = fb[idx]
+    let sr = (col & 0xFF) as f64
+    let sg = ((col >> 8) & 0xFF) as f64
+    let sb = ((col >> 16) & 0xFF) as f64
+    let dr = (dst & 0xFF) as f64
+    let dg = ((dst >> 8) & 0xFF) as f64
+    let db = ((dst >> 16) & 0xFF) as f64
+    let nr = (sr * cov + dr * (1.0 - cov)) as u32
+    let ng = (sg * cov + dg * (1.0 - cov)) as u32
+    let nb = (sb * cov + db * (1.0 - cov)) as u32
+    fb[idx] = nr | (ng << 8) | (nb << 16) | (0xFF << 24)
+}
+
+// draw a filled circle with a 1px antialiased edge: coverage falls smoothly from
+// 1 inside to 0 one pixel past the radius, so the rim is soft instead of stair-stepped.
+fn fillCircle(fb: &mut [u32; 76800], cx: f64, cy: f64, rad: f64, col: u32) {
+    let r = rad
+    var y = (cy - r - 1.0) as i32
+    let yend = (cy + r + 1.0) as i32
+    while y <= yend {
+        if y >= 0 && y < H {
+            var x = (cx - r - 1.0) as i32
+            let xend = (cx + r + 1.0) as i32
+            while x <= xend {
+                if x >= 0 && x < W {
+                    let dx = (x as f64) - cx
+                    let dy = (y as f64) - cy
+                    let d = mathSqrt(dx * dx + dy * dy)
+                    // signed distance inside the disc; +0.5 centers the 1px ramp on the edge
+                    var cov = r - d + 0.5
+                    if cov > 1.0 {
+                        cov = 1.0
+                    }
+                    if cov > 0.0 {
+                        blendPixel(fb, y * W + x, col, cov)
+                    }
+                }
+                x = x + 1
+            }
+        }
+        y = y + 1
+    }
+}
+
+// advance the whole simulation one substep: integrate, hit walls, resolve pairs
+fn stepSim(balls: &mut Vec<Ball>, gx: f64, gy: f64, sdt: f64, restitution: f64) {
+    // integrate velocities/positions (semi-implicit Euler)
+    var i = 0
+    while i < balls.len {
+        var b = balls[i]
+        b.vx = b.vx + gx * sdt
+        b.vy = b.vy + gy * sdt
+        b.px = b.px + b.vx * sdt
+        b.py = b.py + b.vy * sdt
+        balls[i] = b
+        i = i + 1
+    }
+
+    // wall collisions
+    var w = 0
+    while w < balls.len {
+        var b = balls[w]
+        if b.px - b.r < 0.0 {
+            b.px = b.r
+            b.vx = 0.0 - b.vx * restitution
+        }
+        if b.px + b.r > (W as f64) {
+            b.px = (W as f64) - b.r
+            b.vx = 0.0 - b.vx * restitution
+        }
+        if b.py - b.r < 0.0 {
+            b.py = b.r
+            b.vy = 0.0 - b.vy * restitution
+        }
+        if b.py + b.r > (H as f64) {
+            b.py = (H as f64) - b.r
+            b.vy = 0.0 - b.vy * restitution
+        }
+        balls[w] = b
+        w = w + 1
+    }
+
+    // ball-ball pairwise collisions (O(n^2))
+    var a = 0
+    while a < balls.len {
+        var bi = balls[a]
+        var c = a + 1
+        while c < balls.len {
+            var bj = balls[c]
+            let dx = bj.px - bi.px
+            let dy = bj.py - bi.py
+            let distSq = dx * dx + dy * dy
+            let rsum = bi.r + bj.r
+            if distSq < rsum * rsum && distSq > 0.000001 {
+                let dist = mathSqrt(distSq)
+                let nx = dx / dist
+                let ny = dy / dist
+                // positional correction (split by inverse mass)
+                let overlap = rsum - dist
+                let totInv = bi.invMass + bj.invMass
+                let corrI = overlap * (bi.invMass / totInv)
+                let corrJ = overlap * (bj.invMass / totInv)
+                bi.px = bi.px - nx * corrI
+                bi.py = bi.py - ny * corrI
+                bj.px = bj.px + nx * corrJ
+                bj.py = bj.py + ny * corrJ
+                // relative velocity along the normal
+                let rvx = bj.vx - bi.vx
+                let rvy = bj.vy - bi.vy
+                let velN = rvx * nx + rvy * ny
+                if velN < 0.0 {
+                    let jImp = 0.0 - (1.0 + restitution) * velN / totInv
+                    let ix = jImp * nx
+                    let iy = jImp * ny
+                    bi.vx = bi.vx - ix * bi.invMass
+                    bi.vy = bi.vy - iy * bi.invMass
+                    bj.vx = bj.vx + ix * bj.invMass
+                    bj.vy = bj.vy + iy * bj.invMass
+                }
+                balls[c] = bj
+            }
+            c = c + 1
+        }
+        balls[a] = bi
+        a = a + 1
+    }
+}
+
+fn main(): i32 {
+    if SDL_Init(SDL_INIT_VIDEO) != 0 { // scalar extern call — safe outside unsafe
+        print("SDL_Init failed")
+        return 1
+    }
+
+    // Raw handles outlive the loop; creating them (an extern *returning* a raw
+    // pointer) is the unsafe part, so only that is wrapped.
+    var win: *u8 = 0 as *u8
+    var ren: *u8 = 0 as *u8
+    var tex: *u8 = 0 as *u8
+    var ok = true
+    unsafe {
+        let title = "Milo physics — impulse-based rigid bodies, 60fps CPU"
+        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, W * 3, H * 3, SDL_WINDOW_SHOWN)
+        ren = SDL_CreateRenderer(win, -1, 0)
+        tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, W, H)
+        if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
+            ok = false
+        }
+    }
+    if !ok {
+        print("SDL setup failed: win/ren/tex NULL")
+        return 2
+    }
+
+    var fb: [u32; 76800] = [0; 76800] // 320 * 240
+    var ev: [u8; 64] = [0; 64]
+
+    var seed: u64 = 0x9E3779B97F4A7C15
+    var balls: Vec<Ball> = Vec.new()
+    resetScene(balls, seed)
+
+    let dt: f64 = 1.0 / 60.0
+    let gmag: f64 = 900.0
+    let restitution: f64 = 0.85
+    let substeps = 4
+    let sdt = dt / (substeps as f64)
+
+    var spaceHeld = false
+    var rHeld = false
+    var quit = false
+
+    while !quit {
+        // gravity direction from arrows (default: down)
+        var gx: f64 = 0.0
+        var gy: f64 = gmag
+
+        // --- input: raw event buffer + keyboard/mouse pointers, the only unsafe part ---
+        var wantSpace = false
+        var wantReset = false
+        var mouseX: f64 = 0.0
+        var mouseY: f64 = 0.0
+        var mouseDown = false
+        unsafe {
+            while SDL_PollEvent(ev) != 0 {
+                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
+                if evType == SDL_QUIT {
+                    quit = true
+                }
+            }
+            let ks = SDL_GetKeyboardState(0 as *i32)
+            if ks[41] != 0 {
+                quit = true
+            } // Esc
+            if ks[80] != 0 {
+                gx = 0.0 - gmag
+                gy = 0.0
+            } // Left
+            if ks[79] != 0 {
+                gx = gmag
+                gy = 0.0
+            } // Right
+            if ks[82] != 0 {
+                gx = 0.0
+                gy = 0.0 - gmag
+            } // Up
+            if ks[81] != 0 {
+                gx = 0.0
+                gy = gmag
+            } // Down
+            if ks[44] != 0 {
+                wantSpace = true
+            } // Space
+            if ks[21] != 0 {
+                wantReset = true
+            } // R
+            var mpos: [i32; 2] = [0; 2]
+            let btn = SDL_GetMouseState(mpos[0].addrOf() as *i32, mpos[1].addrOf() as *i32)
+            // window is W*3 × H*3, so scale the cursor back into simulation space
+            mouseX = (mpos[0] as f64) / 3.0
+            mouseY = (mpos[1] as f64) / 3.0
+            mouseDown = (btn & 1) != 0
+        }
+
+        // SPACE: drop one ball on the rising edge
+        if wantSpace {
+            if !spaceHeld && balls.len < 200 {
+                let sx = 40.0 + randF(seed) * 240.0
+                spawnBall(balls, seed, sx, 20.0)
+            }
+            spaceHeld = true
+        } else {
+            spaceHeld = false
+        }
+
+        // R: reset on the rising edge
+        if wantReset {
+            if !rHeld {
+                balls = Vec.new()
+                resetScene(balls, seed)
+            }
+            rHeld = true
+        } else {
+            rHeld = false
+        }
+
+        // MOUSE: hold left button to spray a stream of balls from the cursor
+        if mouseDown && balls.len < 250 {
+            spawnBall(balls, seed, mouseX, mouseY)
+        }
+
+        // ---- integrate + resolve, several substeps for stability (all safe) ----
+        var step = 0
+        while step < substeps {
+            stepSim(balls, gx, gy, sdt, restitution)
+            step = step + 1
+        }
+
+        // ---- render: clear to dark slate, draw every ball (safe) ----
+        var q = 0
+        while q < 76800 {
+            fb[q] = 0x1E1E28 | (0xFF << 24) // dark background
+            q = q + 1
+        }
+        var d = 0
+        while d < balls.len {
+            let b = balls[d]
+            let col = b.cr | (b.cg << 8) | (b.cb << 16) | (0xFF << 24)
+            fillCircle(fb, b.px, b.py, b.r, col)
+            d = d + 1
+        }
+
+        // --- present: hand the safe framebuffer to SDL (raw pointers) ---
+        unsafe {
+            SDL_UpdateTexture(tex, 0 as *u8, fb[0].addrOf() as *u8, W * 4)
+            SDL_RenderClear(ren)
+            SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
+            SDL_RenderPresent(ren)
+        }
+        SDL_Delay(16) // ~60fps — scalar extern, safe
+    }
+
+    SDL_DestroyWindow(win) // passing a pointer in (not receiving one) is safe
+    SDL_Quit()
+    return 0
+}

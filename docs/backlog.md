@@ -61,7 +61,7 @@ Track in [roadmap.md](roadmap.md); pull up when a concrete need appears.
 
 ## Concurrency & TUI findings (2026-07-15, tmuxClone/splitPty session)
 
-Surfaced building a terminal multiplexer (`examples/apps/tmuxClone.milo`) — the
+Surfaced building a terminal multiplexer (`examples/terminal/tmuxClone.milo`) — the
 primitives carried it, but these gaps are where the friction was. Ranked.
 
 | # | Item | ROI | Effort | Detail | Ref |

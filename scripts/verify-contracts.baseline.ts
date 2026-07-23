@@ -23,7 +23,7 @@ export const BASELINE: Record<string, string> = {
     "trap on overflow in a debug build long before fpMul is reached, so the values are " +
     "always in range. Needs range-carrying arithmetic (or a bitvector model) to retire.",
 
-  "examples/apps/genesis/m68k.milo::vramPut":
+  "examples/emulators/genesis/m68k.milo::vramPut":
     "ensures (idx & VRAM_MASK) < m.vram.len holds because the body's " +
     "`while m.vram.len <= i { push }` loop grows the buffer past the masked " +
     "index — but the symbolic executor skips while loops, so it sees vram.len " +

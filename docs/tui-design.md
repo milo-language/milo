@@ -220,7 +220,7 @@ whole pipeline headless-assertable — build it first in phase 1 so 2–4 are TD
 | 2 | Layout | compact flexbox solver → `Rect` per node | fixture layouts vs expected `Rect`s (row/column, grow/shrink, pct, pad/margin/gap, wrap, align/justify) | 4–6 d |
 | 3 | Runtime | `Element` enum; component fns; arena hook table + path-keyed identity; `useState/useEffect/useMemo/useRef`; `FrameRequester` coalescing loop; `useInput/useFocus/useApp/useSize` | hook state persists across frames; reorder w/ `key` preserves state; unvisited slot frees + runs cleanup; effect deps gate re-run; setState coalesces to one repaint | 5–8 d |
 | 4 | Builder + widgets | fluent builder surface; Box, Text, Newline, Spacer, Static, Fragment + List, Table, Gauge, Border, Scrollbar | each widget renders to expected `Buffer` via `TestBackend`; `Static` region grows without re-erasing committed rows | 5–8 d |
-| 5 | Examples | the three apps below, in `examples/apps/` | run as integration smoke tests; snapshot final `Buffer`; scripted-input drives + asserts | 4–6 d |
+| 5 | Examples | the three apps below, under `examples/` | run as integration smoke tests; snapshot final `Buffer`; scripted-input drives + asserts | 4–6 d |
 | 6 | JSX *(deferred, optional)* | lexer/parser extension desugaring to phase-4 builder + **formatter + LSP + grammar.ebnf + language-reference** (definition-of-done) | round-trip fmt; desugar equivalence vs builder; LSP hover/complete on elements | only if builder DX asks for it |
 
 Total v1 (phases 0–5): **~4–6 wks**. Phase 6 is separate and gated on wanting the sugar.

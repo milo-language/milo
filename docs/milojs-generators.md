@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: milojs-generators
 purpose: design of record for generator functions in milojs, reusing the async-activation green-task machinery
-key-files: examples/apps/milojs/eval.milo, examples/apps/milojs/parser.milo, examples/apps/milojs/ast.milo
+key-files: examples/runtimes/milojs/eval.milo, examples/runtimes/milojs/parser.milo, examples/runtimes/milojs/ast.milo
 update-when: generators are implemented or the design changes
 last-verified: 2026-07-21
 -->

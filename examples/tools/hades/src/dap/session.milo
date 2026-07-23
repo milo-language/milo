@@ -1,0 +1,887 @@
+// Shared debug-session core: config canonicalization (VS Code launch.json
+// dialect), the adapter dialect registry, adapter resolution/probing, and
+// launch/initialize body construction. Consumed by both drivers — the web
+// server (green-task, WS-broadcast) and standalone mcp (turn-based) — so
+// neither hardcodes an adapter. Pure over values: callers hold their own
+// LaunchSpec; nothing here reads or writes global state.
+
+from "std/json" import {
+    Json, jsonParse, jsoncParse, jsonObj, jsonArr
+}
+from "std/fs" import {
+    pathExists
+}
+from "std/env" import {
+    getEnvOr
+}
+from "std/string" import {
+    strSplit, strContains, strStartsWith, strEndsWith, strTrim
+}
+from "std/process" import {
+    capture
+}
+
+// The canonical, driver-independent result of applying a config: what to spawn
+// and how to launch. binPath/srcPath are the debuggee + main source; adapterCmd
+// is the resolved (absolute) adapter command line; adapterKind is the dialect;
+// launchExtra is the verbatim user launch body; stopAtMain is the config default.
+// request is "launch"|"attach" (selects the DAP command; must live here, not in
+// launchExtra, since it's a meta key stripped from the body). port>0 means
+// transport is TCP: connect to host:port instead of spawning adapterCmd over
+// stdio (the adapter is a server the user runs, e.g. `dlv dap --listen`).
+struct LaunchSpec {
+    binPath: string,
+    srcPath: string,
+    adapterCmd: string,
+    adapterKind: string,
+    launchExtra: string,
+    stopAtMain: bool,
+    request: string,
+    host: string,
+    port: i64,
+    name: string,
+    // the user's dapPath verbatim (adapterCmd above is the resolved abs-path
+    // command). Kept so a config echo round-trips what the user actually wrote.
+    dapPath: string,
+}
+
+// a resolved adapter: its dialect kind + the spawnable (abs-path) command line.
+struct AdapterSel {
+    kind: string,
+    cmd: string,
+}
+
+// keys that are hades/VS-Code metadata, NOT DAP launch-body fields.
+// `program` is extracted to binPath and re-added to the body by launchArgsFor, so
+// it's stripped here too. `launch` is the retired nested-object shape (old UI) —
+// still stripped so stale stored configs don't leak it into a DAP body, but its
+// contents are ignored. `cmd` is the WS envelope field on setConfig.
+fn isMetaKey(k: &string): bool {
+    return k == "type" || k == "request" || k == "name"
+    || k == "source" || k == "dapPath" || k == "stopAtMain"
+    || k == "program" || k == "launch"
+    || k == "port" || k == "host" // TCP transport routing, not DAP body fields
+    || k == "cmd" // WS envelope field on setConfig
+    || k == "lastRunAt" // history stamp — present when a history entry is re-applied
+}
+
+// ── Dialect registry ──
+
+// A debugger family. `types` are the launch.json `type` values that select it
+// (VS Code dialect keys); `probes` are candidate adapter commands tried in order,
+// first whose executable resolves wins (a leading `xcrun -f` is the macOS
+// Xcode-toolchain locator — its stdout IS the path). `adapterId` tags the DAP
+// initialize + UI output; `supported` false means the type is recognized but a
+// launch is blocked with a clear error (node slot reserved for M10).
+struct Dialect {
+    kind: string,
+    types: Vec<string>,
+    probes: Vec<string>,
+    adapterId: string,
+    supported: bool,
+}
+
+// build a Dialect, taking `types`/`probes` as `|`-joined strings (inline array
+// literals in struct-literal fields lower to empty Vecs, so split explicitly).
+fn mkDialect(kind: string, types: string, probes: string, adapterId: string, supported: bool): Dialect {
+    return Dialect {
+        kind: kind, types: strSplit(types, "|"),
+        probes: pipeSplit(probes), adapterId: adapterId, supported: supported
+    }
+}
+
+// like strSplit(s,"|") but "" → empty Vec (node/go have no probes yet).
+fn pipeSplit(s: string): Vec<string> {
+    if s.len == 0 {
+        return []
+    }
+    return strSplit(s, "|")
+}
+
+// The registry. Keyed by `type` substring-free — exact type match picks a family.
+fn dialects(): Vec<Dialect> {
+    var out: Vec<Dialect> = []
+    out.push(mkDialect("lldb", "lldb|cppdbg|lldb-dap", "lldb-dap|xcrun -f lldb-dap", "lldb", true))
+    out.push(mkDialect("python", "python|debugpy", "python3 -m debugpy.adapter", "debugpy", true))
+    out.push(mkDialect("node", "node|pwa-node", "", "node", false))
+    // delve's DAP mode is a subcommand: `dlv dap` (stdio, Content-Length framed —
+    // same transport as lldb-dap). adapterId "dlv" so an explicit adapter cmd
+    // reverse-maps to go via kindForAdapterCmd.
+    out.push(mkDialect("go", "go", "dlv dap", "dlv", true))
+    // java-dap is this repo's own adapter (examples/tools/java-dap) — a DAP↔JDWP
+    // translator. Probe finds it on PATH; otherwise set "dapPath" to the binary.
+    out.push(mkDialect("java", "java|java-dap", "java-dap", "java-dap", true))
+    return out
+}
+
+fn cloneDialect(d: &Dialect): Dialect {
+    var ty: Vec<string> = []
+    for typ in d.types {
+        ty.push(typ.clone())
+    }
+    var pr: Vec<string> = []
+    for probe in d.probes {
+        pr.push(probe.clone())
+    }
+    return Dialect {
+        kind: d.kind.clone(), types: ty, probes: pr,
+        adapterId: d.adapterId.clone(), supported: d.supported
+    }
+}
+
+fn dialectByType(t: &string): Option<Dialect> {
+    let ds = dialects()
+    for d in ds {
+        for typ in d.types {
+            if typ == t {
+                return Option.Some(cloneDialect(d))
+            }
+        }
+    }
+    return Option.None
+}
+
+fn dialectByKind(k: &string): Option<Dialect> {
+    let ds = dialects()
+    for d in ds {
+        if d.kind == k {
+            return Option.Some(cloneDialect(d))
+        }
+    }
+    return Option.None
+}
+
+// unknown type falls back to lldb (the native debugger) — registry always has it.
+fn dialectFor(t: &string): Dialect {
+    match dialectByType(t) {
+        Option.Some(d) => {
+            return d
+        }
+        Option.None => {
+        }
+    }
+    match dialectByKind("lldb") {
+        Option.Some(l) => {
+            return l
+        }
+        Option.None => {
+        }
+    }
+    return mkDialect("lldb", "lldb", "lldb-dap", "lldb", true) // unreachable: lldb always registered
+}
+
+// `type` unset → guess the dialect from the program's extension (§3).
+fn inferType(prog: &string): string {
+    if strEndsWith(prog, ".py") {
+        return "python"
+    }
+    if strEndsWith(prog, ".js") || strEndsWith(prog, ".ts") {
+        return "node"
+    }
+    if strEndsWith(prog, ".go") {
+        return "go"
+    }
+    if strEndsWith(prog, ".java") {
+        return "java"
+    }
+    return "lldb"
+}
+
+// ── adapter command resolution ──
+
+fn cmdHead(cmd: &string): string {
+    var h: string = ""
+    for ch in cmd {
+        if ch == ' ' {
+            break
+        }
+        h.push(ch)
+    }
+    return h
+}
+
+// everything from the first space on (leading space kept, so head+tail rebuilds).
+fn cmdTail(cmd: &string): string {
+    var seen = false
+    var t: string = ""
+    for ch in cmd {
+        if seen {
+            t.push(ch)
+        } 
+        else if ch == ' ' {
+            seen = true t.push(ch)
+        }
+    }
+    return t
+}
+
+// Find a command's executable on PATH, returning its absolute path or None.
+// A command already containing a slash resolves to itself iff it exists.
+// The adapter must be spawned by absolute path: lldb-dap builds its
+// runInTerminal launcher argv from its own argv[0], and a bare name makes that a
+// CWD-relative path that doesn't exist — the pty launcher then exits 127 and the
+// adapter waits on its comm-file forever.
+fn findInPath(cmd: &string): Option<string> {
+    var hasSlash = false
+    for ch in cmd {
+        if ch == '/' {
+            hasSlash = true
+        }
+    }
+    if hasSlash {
+        if pathExists(cmd.clone()) {
+            return Option.Some(cmd.clone())
+        }
+        return Option.None
+    }
+    let pathVar = getEnvOr("PATH", "/usr/bin:/bin:/usr/local/bin")
+    var start: i64 = 0
+    var i: i64 = 0
+    while i <= pathVar.len {
+        if i == pathVar.len || pathVar[i] == ':' {
+            if i > start {
+                let cand = pathVar.substr(start, i) + "/" + cmd.clone()
+                if pathExists(cand) {
+                    return Option.Some(cand)
+                }
+            }
+            start = i + 1
+        }
+        i = i + 1
+    }
+    return Option.None
+}
+
+// Best-effort PATH resolution: the resolved absolute path, or the command
+// unchanged when it isn't found (an explicit `adapter` is honored as-is).
+fn resolveInPath(cmd: &string): string {
+    match findInPath(cmd) {
+        Option.Some(p) => {
+            return p
+        }
+        Option.None => {
+            return cmd.clone()
+        }
+    }
+}
+
+// Resolve a probe command to a spawnable adapter command line, or None if the
+// probe's executable isn't installed.
+fn probeAdapterCmd(probe: &string): Option<string> {
+    // macOS Xcode-toolchain locator: `xcrun -f TOOL` prints TOOL's absolute path.
+    if strStartsWith(probe, "xcrun -f ") {
+        match capture(probe.clone()) {
+            Result.Ok(out) => {
+                let p = strTrim(out)
+                if p.len > 0 && pathExists(p) {
+                    return Option.Some(p)
+                }
+            }
+            Result.Err(_e) => {
+            }
+        }
+        return Option.None
+    }
+    let head = cmdHead(probe)
+    match findInPath(head) {
+        Option.Some(abs) => {
+            return Option.Some(abs + cmdTail(probe))
+        }
+        Option.None => {
+            return Option.None
+        }
+    }
+}
+
+fn resolveDialectAdapter(d: &Dialect): Option<string> {
+    for probe in d.probes {
+        match probeAdapterCmd(probe) {
+            Option.Some(cmd) => {
+                return Option.Some(cmd)
+            }
+            Option.None => {
+            }
+        }
+    }
+    return Option.None
+}
+
+// actionable failure when no probe resolved — name the adapter + how to get it.
+fn probeErr(d: &Dialect): string {
+    if d.kind == "lldb" {
+        return "lldb-dap not found — brew install llvm (or install Xcode), or set \"dapPath\" to its path"
+    }
+    if d.kind == "python" {
+        return "debugpy not found — pip install debugpy, or set \"dapPath\" to its command"
+    }
+    if d.kind == "go" {
+        return "dlv (delve) not found — go install github.com/go-delve/delve/cmd/dlv@latest, or set \"dapPath\" to its command"
+    }
+    if d.kind == "java" {
+        return "java-dap not found — build it (milo build examples/tools/java-dap/src/main.milo -o ~/bin/java-dap), or set \"dapPath\" to the binary"
+    }
+    return d.kind + " adapter not found — install it or set \"dapPath\" to its command"
+}
+
+// Reverse-map an explicit adapter command to a dialect kind — used when a user
+// supplies `adapter` without `type`. Matches the command against each registered
+// adapterId; defaults to lldb.
+fn kindForAdapterCmd(cmd: &string): string {
+    let ds = dialects()
+    for d in ds {
+        if d.supported && strContains(cmd, d.adapterId) {
+            return d.kind.clone()
+        }
+    }
+    return "lldb"
+}
+
+// Resolve an explicit adapter command → abs-path command + detected dialect kind.
+fn resolveAdapterCmd(cmd: &string): AdapterSel {
+    let head = cmdHead(cmd)
+    let resolved = resolveInPath(head) + cmdTail(cmd)
+    return AdapterSel {
+        kind: kindForAdapterCmd(resolved), cmd: resolved
+    }
+}
+
+// The module token after `-m` in an adapter command (`python3 -m debugpy.adapter`
+// → "debugpy.adapter"), or "" if there's no `-m`.
+fn moduleAfterDashM(cmd: &string): string {
+    let parts = strSplit(cmd, " -m ")
+    if parts.len < 2 {
+        return ""
+    }
+    return cmdHead(parts[1])
+}
+
+// An explicit adapter can resolve on PATH yet still be un-runnable: the classic
+// case is `python3 -m debugpy.adapter` when debugpy isn't installed for that
+// interpreter — the process spawns, prints ModuleNotFoundError, and dies mid-
+// handshake, which downstream looks like a silent "terminated". For the `-m MODULE`
+// form we can pre-flight it: `<interp> -c "import <module>"` fails iff the module
+// is missing. Return the dialect's actionable probeErr in that case. Non-`-m`
+// adapters (lldb-dap, dlv) are plain executables already confirmed by path resolution.
+fn adapterRunnableErr(kind: &string, cmd: &string): Option<string> {
+    let mod = moduleAfterDashM(cmd)
+    if mod.len == 0 {
+        return Option.None
+    }
+    let probe = cmdHead(cmd) + " -c \"import " + mod + "\""
+    match capture(probe) {
+        Result.Ok(_o) => {
+            return Option.None
+        }
+        Result.Err(_e) => {
+            match dialectByKind(kind) {
+                Option.Some(d) => {
+                    return Option.Some(probeErr(d))
+                }
+                Option.None => {
+                    return Option.Some(kind.clone() + " adapter not runnable: " + probe)
+                }
+            }
+        }
+    }
+}
+
+// Resolve type/adapter/program → an AdapterSel, or an error message.
+// Registry-driven (§3): `type` keys the dialect (inferred from `program` when
+// unset); an explicit `adapter` command overrides the probe and is honored
+// verbatim; otherwise probe the dialect and fail fast with an actionable message.
+fn selectAdapter(typ: &string, adapter: &string, prog: &string): Result<AdapterSel> {
+    let typeExplicit = typ.len > 0
+    var t = typ.clone()
+    if t.len == 0 {
+        t = inferType(prog)
+    }
+    let d = dialectFor(t)
+    if !d.supported {
+        return Result.Err(d.kind + " debugging isn't supported yet — adapter slot reserved for a future release")
+    }
+    if adapter.len > 0 {
+        let sel = resolveAdapterCmd(adapter)
+        // an explicit `type` is authoritative over the adapter-path substring
+        // guess in resolveAdapterCmd — keep the user's kind, take only the cmd.
+        var selKind = sel.kind.clone()
+        if typeExplicit {
+            selKind = d.kind.clone()
+        }
+        match adapterRunnableErr(selKind, sel.cmd) {
+            Option.Some(e) => {
+                return Result.Err(e)
+            }
+            Option.None => {
+            }
+        }
+        return Result.Ok(AdapterSel {
+            kind: selKind, cmd: sel.cmd
+        }
+        )
+    }
+    match resolveDialectAdapter(d) {
+        Option.Some(cmd) => {
+            return Result.Ok(AdapterSel {
+                kind: d.kind.clone(), cmd: cmd
+            }
+            )
+        }
+        Option.None => {
+            return Result.Err(probeErr(d))
+        }
+    }
+}
+
+// Split an adapter command line on spaces: first token is the executable
+// (already PATH-resolved), the rest are argv.
+fn adapterArgvOf(cmd: &string): Vec<string> {
+    var parts: Vec<string> = []
+    var cur: string = ""
+    for ch in cmd {
+        if ch == ' ' {
+            if cur.len > 0 {
+                parts.push(cur.clone())
+                cur = ""
+            }
+        } else {
+            cur.push(ch)
+        }
+    }
+    if cur.len > 0 {
+        parts.push(cur)
+    }
+    return parts
+}
+
+// ── config → LaunchSpec ──
+
+// apply a config = a VS Code launch-configuration object (optionally wrapped in
+// {version, configurations:[...]}, selected by name or first). Returns a
+// LaunchSpec, or an error message. Pure: mutates nothing; the caller commits the
+// spec into its own session state.
+fn cfgHas(cfg: &Json, k: &string): bool {
+    match cfg.get(k) {
+        Option.Some(_v) => {
+            return true
+        }
+        Option.None => {
+            return false
+        }
+    }
+}
+
+fn resolveConfig(raw: string, selectName: string): Result<LaunchSpec> {
+    // JSONC, not strict JSON: launch.json files are commented in the wild (VS
+    // Code's own dialect), and the drawer templates ship commented-out options.
+    match jsoncParse(raw.clone()) {
+        Result.Ok(doc) => {
+            return resolveConfigDoc(doc, selectName)
+        }
+        Result.Err(_e) => {
+            return Result.Err("config is not valid JSON")
+        }
+    }
+    return Result.Err("config is not valid JSON")
+}
+
+fn resolveConfigDoc(doc: Json, selectName: string): Result<LaunchSpec> {
+    if !doc.isObject() {
+        return Result.Err("config must be a JSON object")
+    }
+
+    // Unwrap a full launch.json ({version, configurations:[...]}); pick by name
+    // or the first entry. .get/.at return owned Json copies (node-offset views),
+    // so doc stays alive through these borrows and is moved into cfg only after.
+    var picked: Option<Json> = Option.None
+    var isWrapped = false
+    match doc.get("configurations") {
+        Option.Some(arr) => {
+            if arr.isArray() {
+                isWrapped = true
+                let n = arr.len()
+                var i: i64 = 0
+                while i < n {
+                    match arr.at(i) {
+                        Option.Some(el) => {
+                            if selectName.len == 0 || (el.str("name") ?? "") == selectName {
+                                picked = Option.Some(el)
+                                break
+                            }
+                        }
+                        Option.None => {
+                        }
+                    }
+                    i = i + 1
+                }
+            }
+        }
+        Option.None => {
+        }
+    }
+    var cfg = doc // last use of doc; a wrapper overrides with the picked entry
+    if isWrapped {
+        match picked {
+            Option.Some(p) => {
+                cfg = p
+            }
+            Option.None => {
+                if selectName.len > 0 {
+                    return Result.Err("no configuration named \"" + selectName + "\"")
+                }
+                return Result.Err("configurations array is empty")
+            }
+        }
+    }
+
+    let prog = cfg.str("program") ?? ""
+    let src = cfg.str("source") ?? ""
+    let dapPath = cfg.str("dapPath") ?? ""
+    let typ = cfg.str("type") ?? ""
+    let req = cfg.str("request") ?? "launch"
+    let name = cfg.str("name") ?? ""
+    let stopMain = cfg.bool("stopAtMain") ?? false
+    let port = cfg.i64("port") ?? (0 as i64)
+    var host = cfg.str("host") ?? ""
+    if port > 0 && host.len == 0 {
+        host = "127.0.0.1"
+    }
+
+    if req != "launch" && req != "attach" {
+        return Result.Err("\"request\" must be \"launch\" or \"attach\"")
+    }
+    // dapPath spawns an adapter over stdio; port connects to one already running.
+    // Both at once is a contradiction — refuse rather than silently prefer one.
+    if dapPath.len > 0 && port > 0 {
+        return Result.Err("\"dapPath\" and \"port\" conflict — dapPath spawns an adapter over stdio, port connects to a running one")
+    }
+    if req != "attach" {
+        if prog.len == 0 {
+            return Result.Err("config needs a \"program\"")
+        }
+        if !pathExists(prog) {
+            return Result.Err("program not found: " + prog)
+        }
+    } else {
+        // attach needs a target: pid (lldb), processId (debugpy/delve),
+        // connect{} (debugpy remote), or waitFor+program (lldb wait-attach).
+        let hasPid = cfgHas(cfg, "pid") || cfgHas(cfg, "processId")
+        let waitFor = cfg.bool("waitFor") ?? false
+        if !hasPid && !cfgHas(cfg, "connect") && !(waitFor && prog.len > 0) {
+            return Result.Err("attach needs a target: \"pid\"/\"processId\", \"connect\", or \"waitFor\" + \"program\"")
+        }
+    }
+    if src.len > 0 && !pathExists(src) {
+        return Result.Err("source not found: " + src)
+    }
+
+    // Transport split: TCP (port>0) connects to a running adapter — no spawn, no
+    // probe; the dialect kind is derived from `type` purely to tag the DAP init
+    // and pick launch defaults. stdio spawns/probes the adapter command.
+    var selKind: string = ""
+    var selCmd: string = ""
+    if port > 0 {
+        selKind = dialectFor(typ).kind // typ "" → lldb fallback (kind only tags init)
+    } else {
+        let sel = selectAdapter(typ, dapPath, prog)?
+        selKind = sel.kind
+        selCmd = sel.cmd
+    }
+
+    // Body = every non-meta key verbatim (flat launch.json shape; the old nested
+    // "launch" object is stripped by isMetaKey and no longer merged).
+    var b = jsonObj()
+    let ks = cfg.keys()
+    for k in ks {
+        if !isMetaKey(k) {
+            match cfg.get(k) {
+                Option.Some(v) => {
+                    b = b.raw(k.clone(), v.rawStr())
+                }
+                Option.None => {
+                }
+            }
+        }
+    }
+
+    return Result.Ok(LaunchSpec {
+        binPath: prog, srcPath: src,
+        adapterCmd: selCmd, adapterKind: selKind,
+        launchExtra: b.build(), stopAtMain: stopMain,
+        request: req, host: host, port: port, name: name, dapPath: dapPath,
+    }
+    )
+}
+
+// ── launch / initialize body construction ──
+
+// Short, generic name for the active debugger — the UI tags its output lines
+// with this so debugger chatter is distinguishable from program output.
+fn adapterIdForKind(kind: &string): string {
+    match dialectByKind(kind) {
+        Option.Some(d) => {
+            return d.adapterId
+        }
+        Option.None => {
+            return "lldb"
+        }
+    }
+}
+
+// The symbol name for "stop at main" via a function breakpoint. Go's entry is
+// the package-qualified `main.main`; C/C++/Rust just `main`. (Python takes the
+// launch stopOnEntry path instead, so it never reaches here.)
+fn mainSymbolFor(kind: &string): string {
+    if kind == "go" {
+        return "main.main"
+    }
+    return "main"
+}
+
+fn initArgsFor(kind: &string): string {
+    // supportsRunInTerminalRequest is what makes the adapter route the debuggee
+    // through our pty instead of capturing its stdio itself.
+    return jsonObj().str("adapterID", adapterIdForKind(kind))
+        .bool("linesStartAt1", true)
+        .bool("columnsStartAt1", true)
+        .bool("supportsRunInTerminalRequest", true)
+    // Without this, adapters omit memoryReference on variables/evaluate
+    // and the memory viewer has almost no entry points.
+        .bool("supportsMemoryReferences", true)
+        .build()
+}
+
+fn launchExtraDoc(raw: &string): Option<Json> {
+    if raw.len == 0 {
+        return Option.None
+    }
+    let Result.Ok(doc) = jsonParse(raw.clone()) else {
+        return Option.None
+    }
+    if doc.isObject() {
+        return Option.Some(doc)
+    }
+    return Option.None
+}
+
+fn extraHas(doc: &Option<Json>, key: &string): bool {
+    if let Option.Some(d) = doc {
+        return d.get(key).isSome()
+    }
+    return false
+}
+
+// "attach" switches the whole flow (attach vs launch DAP command); everything
+// else about the session (events, stops, evaluate) is identical. request lives
+// on the spec — it's a meta key, stripped from launchExtra, so it can't be
+// re-derived from the body (the flat-form attach bug: a body-only lookup saw
+// "launch" and silently launched with a pid).
+fn launchRequestOf(spec: &LaunchSpec): string {
+    if spec.request == "attach" {
+        return "attach"
+    }
+    return "launch"
+}
+
+// the body converges on a verbatim DAP launch/attach request — dialect defaults
+// first (lldb-dap wants runInTerminal, debugpy wants console:integratedTerminal),
+// then user attributes verbatim; a user key always wins over the default of the
+// same name. This is what lets argv ("args"), env, cwd and lldb hook commands
+// (initCommands/preRunCommands/stopCommands/...) flow with zero hades code.
+// stopAtMain is the per-run value (may override the spec's config default).
+fn launchArgsFor(spec: &LaunchSpec, stopMain: bool): string {
+    let extra = launchExtraDoc(spec.launchExtra)
+    var b = jsonObj()
+    // attach targets a pid, not a program — never inject binPath into an attach
+    // body (it's usually "" for attach anyway, and confuses strict adapters).
+    if spec.request != "attach" && !extraHas(extra, "program") {
+        b = b.str("program", spec.binPath.clone())
+    }
+    if spec.adapterKind == "python" {
+        if !extraHas(extra, "console") {
+            b = b.str("console", "integratedTerminal")
+        }
+        if stopMain && !extraHas(extra, "stopOnEntry") {
+            b = b.bool("stopOnEntry", true)
+        }
+        if !extraHas(extra, "justMyCode") {
+            b = b.bool("justMyCode", true)
+        }
+    } else if spec.adapterKind == "java" {
+        // java-dap derives mainClass/classPaths from `program` when unset and
+        // has no runInTerminal/stopOnEntry — no dialect defaults to inject.
+    } else {
+        if !extraHas(extra, "stopOnEntry") {
+            b = b.bool("stopOnEntry", false)
+        }
+        if !extraHas(extra, "runInTerminal") {
+            b = b.bool("runInTerminal", true)
+        }
+    }
+    match extra {
+        Option.Some(d) => {
+            let ks = d.keys()
+            for k in ks {
+                if k != "request" {
+                    match d.get(k) {
+                        Option.Some(v) => {
+                            b = b.raw(k.clone(), v.rawStr())
+                        }
+                        Option.None => {
+                        }
+                    }
+                }
+            }
+        }
+        Option.None => {
+        }
+    }
+    return b.build()
+}
+
+// ── Config history (server-side; §4) ──
+
+// The canonical launch-config object a resolved spec round-trips to: `type`
+// (the dialect kind) + name + program + source + request/host/port + the launch
+// body (args/env/cwd/...) merged flat. This is what the config editor shows and
+// what a history entry stores — resolveConfig accepts it back verbatim.
+// includeDapPath: the config echo keeps an explicit dapPath so the editor shows
+// what the user wrote; history omits it — re-applying re-probes via `type`, so
+// a stored entry stays portable across machines. lastRunAt > 0 appends the
+// history run stamp. request/host/port are always kept so an attach or TCP
+// session round-trips as the same thing (else it becomes a broken stdio launch).
+fn specConfigJson(spec: &LaunchSpec, includeDapPath: bool, lastRunAt: i64): string {
+    var b = jsonObj().str("type", spec.adapterKind.clone())
+    if spec.name.len > 0 {
+        b = b.str("name", spec.name.clone())
+    }
+    if spec.binPath.len > 0 {
+        b = b.str("program", spec.binPath.clone())
+    }
+    if spec.srcPath.len > 0 {
+        b = b.str("source", spec.srcPath.clone())
+    }
+    if includeDapPath && spec.dapPath.len > 0 {
+        b = b.str("dapPath", spec.dapPath.clone())
+    }
+    if spec.request == "attach" {
+        b = b.str("request", "attach")
+    }
+    if spec.port > 0 {
+        b = b.int("port", spec.port)
+        if spec.host.len > 0 {
+            b = b.str("host", spec.host.clone())
+        }
+    }
+    if spec.stopAtMain {
+        b = b.bool("stopAtMain", true)
+    }
+    match launchExtraDoc(spec.launchExtra) {
+        Option.Some(d) => {
+            let ks = d.keys()
+            for k in ks {
+                match d.get(k) {
+                    Option.Some(v) => {
+                        b = b.raw(k.clone(), v.rawStr())
+                    }
+                    Option.None => {
+                    }
+                }
+            }
+        }
+        Option.None => {
+        }
+    }
+    if lastRunAt > 0 {
+        b = b.int("lastRunAt", lastRunAt)
+    }
+    return b.build()
+}
+
+fn histEntryFor(spec: &LaunchSpec, lastRunAt: i64): string {
+    return specConfigJson(spec, false, lastRunAt)
+}
+
+// Dedup identity: (type, program, args). Two entries that launch the same thing
+// collapse to one (newest wins), rather than raw-stringify equality — so an env
+// tweak or a re-stamp doesn't spawn a duplicate row.
+fn histIdentity(item: &string): string {
+    match jsonParse(item.clone()) {
+        Result.Ok(d) => {
+            let typ = d.str("type") ?? ""
+            let prog = d.str("program") ?? ""
+            var argsStr: string = "[]"
+            match d.get("args") {
+                Option.Some(a) => {
+                    argsStr = a.rawStr()
+                }
+                Option.None => {
+                }
+            }
+            return typ + "\t" + prog + "\t" + argsStr
+        }
+        Result.Err(_e) => {
+            return item.clone()
+        }
+    }
+}
+
+// Prepend `entry` to the history JSON array, dropping any existing entry with the
+// same identity, capped at `cap` (newest first). Returns the new array JSON.
+fn histInsert(histJson: &string, item: &string, cap: i64): string {
+    let key = histIdentity(item)
+    var arr = jsonArr().raw(item.clone())
+    var count: i64 = 1
+    match jsonParse(histJson.clone()) {
+        Result.Ok(d) => {
+            if d.isArray() {
+                let n = d.len()
+                var i: i64 = 0
+                while i < n && count < cap {
+                    match d.at(i) {
+                        Option.Some(el) => {
+                            let es = el.rawStr()
+                            if histIdentity(es) != key {
+                                arr = arr.raw(es)
+                                count = count + 1
+                            }
+                        }
+                        Option.None => {
+                        }
+                    }
+                    i = i + 1
+                }
+            }
+        }
+        Result.Err(_e) => {
+        }
+    }
+    return arr.build()
+}
+
+// Merge legacy client entries (localStorage migration, one-shot) into the history
+// array: each is inserted oldest-first so the newest client entry ends up in
+// front, then the whole thing is de-duped/capped by histInsert.
+fn histMergeMany(histJson: &string, entriesJson: &string, cap: i64): string {
+    var out = histJson.clone()
+    match jsonParse(entriesJson.clone()) {
+        Result.Ok(d) => {
+            if d.isArray() {
+                let n = d.len()
+                var i: i64 = n - 1
+                while i >= 0 {
+                    match d.at(i) {
+                        Option.Some(el) => {
+                            out = histInsert(out, el.rawStr(), cap)
+                        }
+                        Option.None => {
+                        }
+                    }
+                    i = i - 1
+                }
+            }
+        }
+        Result.Err(_e) => {
+        }
+    }
+    return out
+}

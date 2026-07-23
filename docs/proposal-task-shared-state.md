@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: proposal-task-shared-state
 purpose: language options for sharing long-lived state across green tasks without lifetimes, and why milojs needs global singletons today
-key-files: std/runtime.milo, src/checker.ts, examples/apps/milojs/runtime.milo, examples/apps/milojs/ast.milo
+key-files: std/runtime.milo, src/checker.ts, examples/runtimes/milojs/runtime.milo, examples/runtimes/milojs/ast.milo
 update-when: any of these options is adopted, rejected, or the second-class reference rule changes
 last-verified: 2026-07-20
 -->

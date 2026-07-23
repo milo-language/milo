@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: milojs
 purpose: per-lane work plan driving scripts/quickjs-sweep.ts conformance toward 100%
-key-files: scripts/quickjs-sweep.ts, examples/apps/milojs/parser.milo, examples/apps/milojs/modules.milo, docs/milojs-roadmap.md
+key-files: scripts/quickjs-sweep.ts, examples/runtimes/milojs/parser.milo, examples/runtimes/milojs/modules.milo, docs/milojs-roadmap.md
 update-when: a lane lands (update the score, delete the lane) or the sweep harness changes
 -->
 
@@ -288,7 +288,7 @@ The cheap-builtin seam is exhausted: what is left in the constructor bucket is
 ## Ground rules (read first, all of them)
 
 1. **Coordinate on dirty files.** Another agent may hold `ast.milo` / `eval.milo` /
-   `modules.milo` uncommitted. `git status` before touching `examples/apps/milojs/`;
+   `modules.milo` uncommitted. `git status` before touching `examples/runtimes/milojs/`;
    if your target file is dirty with work that isn't yours, take a different lane.
    Commit atomically with explicit file lists — never `git add -A` (a sweep once
    swallowed a colleague's uncommitted work).
@@ -298,7 +298,7 @@ The cheap-builtin seam is exhausted: what is left in the constructor bucket is
    at -O0/--fast and pass at -O2. This cost a debugging session; don't repeat it.
 3. **Measure loop:**
    ```bash
-   bun run src/main.ts build examples/apps/milojs/milojs-engine.milo -o /tmp/milojs-engine
+   bun run src/main.ts build examples/runtimes/milojs/milojs-engine.milo -o /tmp/milojs-engine
    MILOJS_ENGINE=/tmp/milojs-engine bun scripts/quickjs-sweep.ts        # summary
    MILOJS_ENGINE=/tmp/milojs-engine bun scripts/quickjs-sweep.ts -v    # per-case list
    MILOJS_ENGINE=/tmp/milojs-engine bun scripts/quickjs-sweep.ts -f loop  # one file
@@ -307,7 +307,7 @@ The cheap-builtin seam is exhausted: what is left in the constructor bucket is
    `test_x();` call list and runs the body once per call, so one parse error in a
    shared helper no longer hides a whole file — but it also means a parse fix can
    flip 30 cases at once.
-4. **Regression gates before commit:** `examples/apps/milojs/tests/run.sh` (every
+4. **Regression gates before commit:** `examples/runtimes/milojs/tests/run.sh` (every
    `tests/*.js` must stay byte-identical to `bun`), then `bun test` before push.
 5. Tests importing `qjs:std` / `qjs:os` / workers / bjson are host-facility tests,
    not conformance gaps — they stay in `SKIP_FILES` in the sweep.
@@ -364,7 +364,7 @@ export default expr;
 import("./x.js")                                 // dynamic — see note at end
 ```
 
-### Step A — lexer (`examples/apps/milojs/lexer.milo`)
+### Step A — lexer (`examples/runtimes/milojs/lexer.milo`)
 Add `T_IMPORT` / `T_EXPORT` token constants (grep `T_ASYNC =` for the constant
 block) and entries in `keywordKind` (lexer.milo:149). `from` / `as` stay contextual
 identifiers — match on `.text == "from"` in the parser; do NOT make them keywords
@@ -420,7 +420,7 @@ Unresolvable specs (`qjs:std`…) already throw catchable `Error: Cannot find
 module` via requireModule — correct for the skip-listed tests, no work needed.
 
 ### Step E — lock it
-Add `examples/apps/milojs/tests/esm.js` + `.expected` exercising every form above
+Add `examples/runtimes/milojs/tests/esm.js` + `.expected` exercising every form above
 (bun runs ESM in `.js` natively, so `run.sh`'s byte-identical-vs-bun contract
 works unchanged). Re-run the sweep; expect the 44 to convert to a mix of passes
 and *newly visible* runtime gaps — those become new lanes, add them here.

@@ -1,4 +1,4 @@
-// CI coverage for the milojs RUNTIME (examples/apps/milojs/milojs.milo) — the
+// CI coverage for the milojs RUNTIME (examples/runtimes/milojs/milojs.milo) — the
 // binary tahoeroads runs on. R1 async activations exist only on the runtime (the
 // engine executes on the main thread and never spawns one), so these fixtures
 // cannot run through the engine-only fixture harness. Each tests/runtime/*.js is
@@ -16,8 +16,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 const MILO_ROOT = join(import.meta.dir, "..");
-const RUNTIME_DIR = join(MILO_ROOT, "examples/apps/milojs/tests/runtime");
-const RUNTIME_SRC = join(MILO_ROOT, "examples/apps/milojs/milojs.milo");
+const RUNTIME_DIR = join(MILO_ROOT, "examples/runtimes/milojs/tests/runtime");
+const RUNTIME_SRC = join(MILO_ROOT, "examples/runtimes/milojs/milojs.milo");
 const OUT = join(mkdtempSync(join(tmpdir(), "milojs-rt-")), "milojs");
 
 beforeAll(() => {

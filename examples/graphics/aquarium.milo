@@ -1,0 +1,269 @@
+// aquarium — a calm truecolor pixel scene: a depth-shaded water column with
+// swimming fish, rising bubbles, and swaying seaweed. Everything is composited
+// into an RGB pixel framebuffer, then drawn with half-blocks (two pixels per
+// character cell). q/ctrl-c quits.
+//
+//   milo build examples/graphics/aquarium.milo -o aquarium && ./aquarium
+
+from "std/term" import {
+    enableRawMode, restoreTerminal, readKey, KEY_NONE, KEY_QUIT
+}
+from "std/io" import {
+    writeStdout
+}
+from "std/time" import {
+    sleepMs
+}
+from "std/math" import {
+    mathSin
+}
+from "std/random" import {
+    randInt, randFloatRange
+}
+from "std/ansi" import {
+    cursorTo, pushFg24, pushBg24, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
+}
+from "std/color" import {
+    bold, gray
+}
+
+let PW: i64 = 80
+let PH: i64 = 44
+let NPIX: i64 = 3520 // PW * PH
+let NFISH: i64 = 6
+let NBUB: i64 = 26
+
+// ── framebuffer (one packed rgb int per pixel) ──
+
+fn setPx(fb: &mut [i64; 3520], x: i64, y: i64, r: i64, g: i64, b: i64): void {
+    if x >= 0 && x < PW && y >= 0 && y < PH {
+        fb[y * PW + x] = r * 65536 + g * 256 + b
+    }
+}
+
+fn clampU8(x: f64): i64 {
+    if x < 0.0 {
+        return 0
+    }
+    if x > 255.0 {
+        return 255
+    }
+    return x as i64
+}
+
+// ── fish sprite (10x5 mask, facing right). '#' body, 'o' eye, '<' tail fin ──
+
+fn fishRow(i: i64): string {
+    if i == 0 {
+        return "    ####  "
+    } else if i == 1 {
+        return "<<######  "
+    } else if i == 2 {
+        return "<<#####o# "
+    } else if i == 3 {
+        return "<<######  "
+    }
+    return "    ####  "
+}
+
+fn drawFish(fb: &mut [i64; 3520], x0: i64, y0: i64, r: i64, g: i64, b: i64, dir: i64): void {
+    for dy in 0..5 {
+        let dyi = dy as i64
+        let row = fishRow(dyi)
+        for dx in 0..10 {
+            let dxi = dx as i64
+            let ch = row[dxi] as i64
+            if ch != 32 {
+                // dir<0 mirrors the sprite so left-swimmers face left
+                var px = x0 + dxi
+                if dir < 0 {
+                    px = x0 + (9 - dxi)
+                }
+                if ch == 111 {
+                    setPx(fb, px, y0 + dyi, 20, 22, 28) // 'o' eye
+                } else if ch == 60 {
+                    setPx(fb, px, y0 + dyi, r * 7 / 10, g * 7 / 10, b * 7 / 10) // '<' fin (darker)
+                } else {
+                    setPx(fb, px, y0 + dyi, r, g, b) // '#' body
+                }
+            }
+        }
+    }
+}
+
+fn emit(buf: &mut string, s: &string): void {
+    for i in 0..s.len {
+        buf.push(s[i])
+    }
+}
+
+fn set3(out: &mut [i64; 3], a: i64, b: i64, c: i64): void {
+    out[0] = a
+    out[1] = b
+    out[2] = c
+}
+
+fn fishColor(i: i64, out: &mut [i64; 3]): void {
+    var k = i
+    while k >= 6 {
+        k = k - 6
+    }
+    if k == 0 {
+        set3(out, 240, 140, 40)
+    } else if k == 1 {
+        set3(out, 240, 210, 60)
+    } else if k == 2 {
+        set3(out, 225, 80, 65)
+    } else if k == 3 {
+        set3(out, 80, 160, 235)
+    } else if k == 4 {
+        set3(out, 175, 95, 215)
+    } else {
+        set3(out, 50, 205, 185)
+    }
+}
+
+fn main(): i32 {
+    let termState = enableRawMode()
+    writeStdout(hideCursor() + clearScreen())
+
+    var fb: [i64; 3520] = [0; 3520]
+
+    // fish state (parallel arrays dodge Vec-of-struct move rules)
+    var fx: [f64; 6] = [0.0; 6]
+    var fy: [f64; 6] = [0.0; 6]
+    var fvx: [f64; 6] = [0.0; 6]
+    var fcol: [i64; 6] = [0; 6]
+    var tmp: [i64; 3] = [0; 3]
+    for i in 0..NFISH {
+        fcol[i] = i
+        fy[i] = randFloatRange(3.0, (PH - 12) as f64)
+        var v = randFloatRange(0.25, 0.7)
+        if randInt(2) == 0 {
+            v = 0.0 - v
+        }
+        fvx[i] = v
+        fx[i] = randFloatRange(0.0, PW as f64)
+    }
+
+    // bubble state
+    var bx: [f64; 26] = [0.0; 26]
+    var by: [f64; 26] = [0.0; 26]
+    var bsp: [f64; 26] = [0.0; 26]
+    for i in 0..NBUB {
+        bx[i] = randFloatRange(0.0, PW as f64)
+        by[i] = randFloatRange(0.0, PH as f64)
+        bsp[i] = randFloatRange(0.15, 0.4)
+    }
+
+    var t: f64 = 0.0
+    var quit = false
+
+    while !quit {
+        // ── water gradient + caustic shimmer ──
+        for y in 0..PH {
+            let f = (y as f64) / ((PH - 1) as f64)
+            let baseR = 40.0 - 34.0 * f
+            let baseG = 155.0 - 130.0 * f
+            let baseB = 205.0 - 140.0 * f
+            for x in 0..PW {
+                let sh = mathSin((x as f64) * 0.22 + (y as f64) * 0.12 + t) * 6.0
+                setPx(fb, x, y, clampU8(baseR + sh), clampU8(baseG + sh), clampU8(baseB + sh))
+            }
+        }
+
+        // ── seaweed (swaying strands rooted at the sand line) ──
+        let sand = PH - 3
+        for s in 0..4 {
+            let si = s as i64
+            let rootX = 8 + si * 20
+            let height = 16 + si * 2
+            let phase = (si as f64) * 1.3
+            for h in 0..height {
+                let yy = sand - h
+                let sway = mathSin(t * 0.9 + (h as f64) * 0.28 + phase) * 2.2
+                let xx = rootX + (sway as i64)
+                let g = 150 - h * 4
+                setPx(fb, xx, yy, 30, g, 60)
+                setPx(fb, xx + 1, yy, 25, g - 20, 50)
+            }
+        }
+        // sand
+        for x in 0..PW {
+            setPx(fb, x, PH - 2, 180, 165, 120)
+            setPx(fb, x, PH - 1, 150, 135, 95)
+        }
+
+        // ── fish ──
+        for i in 0..NFISH {
+            fx[i] = fx[i] + fvx[i]
+            if fx[i] > (PW as f64) + 2.0 {
+                fx[i] = -12.0
+                fy[i] = randFloatRange(3.0, (PH - 12) as f64)
+            }
+            if fx[i] < -12.0 {
+                fx[i] = (PW as f64) + 2.0
+                fy[i] = randFloatRange(3.0, (PH - 12) as f64)
+            }
+            let bob = mathSin(t * 1.4 + (i as f64)) * 1.2
+            fishColor(fcol[i], tmp)
+            var dir: i64 = 1
+            if fvx[i] < 0.0 {
+                dir = -1
+            }
+            drawFish(fb, fx[i] as i64, (fy[i] + bob) as i64, tmp[0], tmp[1], tmp[2], dir)
+        }
+
+        // ── bubbles (rise + wobble, respawn at the bottom) ──
+        for i in 0..NBUB {
+            by[i] = by[i] - bsp[i]
+            if by[i] < 0.0 {
+                by[i] = (PH as f64) - 3.0
+                bx[i] = randFloatRange(0.0, PW as f64)
+            }
+            let wob = mathSin(t * 2.0 + by[i] * 0.3) * 1.5
+            setPx(fb, (bx[i] + wob) as i64, by[i] as i64, 200, 235, 255)
+        }
+
+        // ── blit framebuffer via half-blocks ──
+        var buf = String.withCapacity(65536)
+        let hc = PH / 2
+        for r in 0..hc {
+            emit(buf, cursorTo(r + 2, 1))
+            for c in 0..PW {
+                let vt = fb[(r * 2) * PW + c]
+                let vb = fb[(r * 2 + 1) * PW + c]
+                let tr = vt / 65536
+                let tg = (vt - tr * 65536) / 256
+                let tb = vt - tr * 65536 - tg * 256
+                let br = vb / 65536
+                let bg = (vb - br * 65536) / 256
+                let bb = vb - br * 65536 - bg * 256
+                pushFg24(buf, tr, tg, tb)
+                pushBg24(buf, br, bg, bb)
+                emit(buf, "▀")
+            }
+        }
+        emit(buf, ansiReset())
+        emit(buf, cursorTo(1, 1))
+        emit(buf, bold(" milo aquarium "))
+        emit(buf, gray("  ·  q quit "))
+        writeStdout(buf)
+
+        t = t + 0.08
+        sleepMs(50)
+
+        var k = readKey()
+        while k != KEY_NONE {
+            if k == KEY_QUIT {
+                quit = true
+            }
+            k = readKey()
+        }
+    }
+
+    writeStdout(showCursor() + clearScreen() + cursorHome() + ansiReset())
+    restoreTerminal(termState)
+    print("milo aquarium — https://milo-language.github.io/milo/")
+    return 0
+}

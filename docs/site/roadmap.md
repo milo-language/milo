@@ -52,7 +52,7 @@ Memory: mem
 
 ### Self-Hosting (Stage-0 Complete)
 
-`milo0` — a Milo compiler written in Milo — compiles a substantial subset: primitives, functions, let/var, if/else/while, structs (construct + field access + mutation), enums (payload-free + single/multi-field payloads + match), `Heap<T>` with deref, strings (literals, slice, index, concat, clone, len, eq), closures, `as` casts, bitwise ops. Verified on `examples/fib.milo`, `examples/fizzbuzz.milo`, `examples/hello.milo`.
+`milo0` — a Milo compiler written in Milo — compiles a substantial subset: primitives, functions, let/var, if/else/while, structs (construct + field access + mutation), enums (payload-free + single/multi-field payloads + match), `Heap<T>` with deref, strings (literals, slice, index, concat, clone, len, eq), closures, `as` casts, bitwise ops. Verified on `examples/basics/fib.milo`, `examples/basics/fizzbuzz.milo`, `examples/hello.milo`.
 
 ---
 

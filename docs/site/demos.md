@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: demos-showcase
 purpose: showcase page listing runnable Milo demos (browser emulators, debugger, TUIs, servers)
-key-files: examples/apps, examples/cli-tools, docs/site/.vitepress/config.mts
+key-files: examples/, examples/cli-tools, docs/site/.vitepress/config.mts
 update-when: a demo is added/removed or its capabilities change
 last-verified: 2026-07-15
 -->
@@ -32,54 +32,54 @@ Motorola 68000 + Z80 dual-CPU core with the VDP graphics processor and FM/PSG au
 
 ![Super Mario World running on the Milo SNES emulator](/showcase/snes.png)
 
-> All three run natively too: `examples/apps/arcade.sh <rom>` builds the right core with SDL video, audio, and input. [`examples/apps/retro/`](https://github.com/milo-language/milo/tree/main/examples/apps/retro) turns them into a Raspberry Pi couch console with a gamepad-driven menu.
+> All three run natively too: `examples/emulators/arcade.sh <rom>` builds the right core with SDL video, audio, and input. [`examples/emulators/retro/`](https://github.com/milo-language/milo/tree/main/examples/emulators/retro) turns them into a Raspberry Pi couch console with a gamepad-driven menu.
 
 ## Debugger
 
-### <a href="https://github.com/milo-language/milo/tree/main/examples/apps/hades" target="_blank">hades</a>
+### <a href="https://github.com/milo-language/milo/tree/main/examples/tools/hades" target="_blank">hades</a>
 
-[![hades web UI stopped at a breakpoint inside classify(), showing the source view, call stack, locals, and a live lldb terminal](/hades/debugging.png)](https://github.com/milo-language/milo/tree/main/examples/apps/hades)
+[![hades web UI stopped at a breakpoint inside classify(), showing the source view, call stack, locals, and a live lldb terminal](/hades/debugging.png)](https://github.com/milo-language/milo/tree/main/examples/tools/hades)
 
 A web + AI interface for any DAP debugger (lldb-dap, debugpy), written in Milo. One binary, two subcommands: `hades web` serves a React + Monaco + xterm.js debugging UI from a Milo HTTP/WebSocket server: breakpoints, stepping, call stacks, expandable locals, watch expressions, an ARM64/x86 disassembly pane, and a real PTY terminal you can type into while your program runs. `hades mcp` exposes the same session to an AI over MCP: both you and the model see and drive the same debuggee. Debugs Milo binaries too; the compiler emits standard DWARF.
 
-### <a href="https://github.com/milo-language/milo/tree/main/examples/apps/java-dap" target="_blank">java-dap</a>
+### <a href="https://github.com/milo-language/milo/tree/main/examples/tools/java-dap" target="_blank">java-dap</a>
 
 A standalone Debug Adapter Protocol server for the JVM, written in Milo. No Eclipse, no jdt.ls, no JVM-side code: the whole adapter is a DAP-to-JDWP protocol translator in about 1300 lines. Works with any DAP client, and hades finds it automatically, so you can debug Java the same way you debug Milo.
 
 ## Terminal & graphics apps
 
-TUIs in [`examples/apps/`](https://github.com/milo-language/milo/tree/main/examples/apps), built on the standard library's terminal, PTY, SDL, and green-thread APIs.
+TUIs in [`examples/terminal/`](https://github.com/milo-language/milo/tree/main/examples/terminal) and [`examples/graphics/`](https://github.com/milo-language/milo/tree/main/examples/graphics), built on the standard library's terminal, PTY, SDL, and green-thread APIs.
 
 | Program | What it is |
 |---------|-----------|
-| [tetris](https://github.com/milo-language/milo/blob/main/examples/apps/tetris.milo) | Event-driven terminal Tetris; one green task parked on a Select, no polling |
-| [sysmon](https://github.com/milo-language/milo/blob/main/examples/apps/sysmon.milo) | htop-style live system monitor |
-| [donut](https://github.com/milo-language/milo/blob/main/examples/apps/donut.milo) | The classic spinning 3D torus, truecolor-shaded |
-| [plasma](https://github.com/milo-language/milo/blob/main/examples/apps/plasma.milo) | Full-screen truecolor animation; doubles as a render-throughput benchmark |
-| [aquarium](https://github.com/milo-language/milo/blob/main/examples/apps/aquarium.milo) | Truecolor pixel aquarium: fish, bubbles, swaying seaweed |
-| [chihuahua](https://github.com/milo-language/milo/blob/main/examples/apps/chihuahua.milo) | DVD-logo-style bouncing screensaver with a shaded pixel-art sprite |
-| [splitPty](https://github.com/milo-language/milo/blob/main/examples/apps/splitPty.milo) | Two commands side-by-side in real PTYs; a mini tmux |
-| [flightController](https://github.com/milo-language/milo/blob/main/examples/apps/flightController.milo) | Single-axis PID altitude controller with an interactive TUI |
-| [menu](https://github.com/milo-language/milo/blob/main/examples/apps/menu.milo) | Fullscreen SDL retro-console front-end with a gamepad/keyboard ROM picker |
+| [tetris](https://github.com/milo-language/milo/blob/main/examples/terminal/tetris.milo) | Event-driven terminal Tetris; one green task parked on a Select, no polling |
+| [sysmon](https://github.com/milo-language/milo/blob/main/examples/terminal/sysmon.milo) | htop-style live system monitor |
+| [donut](https://github.com/milo-language/milo/blob/main/examples/graphics/donut.milo) | The classic spinning 3D torus, truecolor-shaded |
+| [plasma](https://github.com/milo-language/milo/blob/main/examples/graphics/plasma.milo) | Full-screen truecolor animation; doubles as a render-throughput benchmark |
+| [aquarium](https://github.com/milo-language/milo/blob/main/examples/graphics/aquarium.milo) | Truecolor pixel aquarium: fish, bubbles, swaying seaweed |
+| [chihuahua](https://github.com/milo-language/milo/blob/main/examples/graphics/chihuahua.milo) | DVD-logo-style bouncing screensaver with a shaded pixel-art sprite |
+| [splitPty](https://github.com/milo-language/milo/blob/main/examples/terminal/splitPty.milo) | Two commands side-by-side in real PTYs; a mini tmux |
+| [flightController](https://github.com/milo-language/milo/blob/main/examples/embedded/flightController.milo) | Single-axis PID altitude controller with an interactive TUI |
+| [menu](https://github.com/milo-language/milo/blob/main/examples/emulators/menu.milo) | Fullscreen SDL retro-console front-end with a gamepad/keyboard ROM picker |
 
 ## Servers & network apps
 
 | Program | What it is |
 |---------|-----------|
-| [termpair](https://github.com/milo-language/milo/tree/main/examples/apps/termpair) | Share your terminal in the browser: WebSocket relay with end-to-end AES encryption, client and server both in Milo |
-| [weather](https://github.com/milo-language/milo/tree/main/examples/apps/weather) | weather.gov frontend served from a single static binary |
-| [serve](https://github.com/milo-language/milo/blob/main/examples/apps/serve.milo) | Static file server with directory listing |
-| [webserver](https://github.com/milo-language/milo/blob/main/examples/apps/webserver.milo) | HTTP server with routing, path params, middleware |
-| [httpClient](https://github.com/milo-language/milo/blob/main/examples/apps/httpClient.milo) | HTTP client for fetching URLs |
-| [fetch](https://github.com/milo-language/milo/blob/main/examples/apps/fetch.milo) | Fetch an HTTP API over TLS and parse the JSON response |
+| [termpair](https://github.com/milo-language/milo/tree/main/examples/net/termpair) | Share your terminal in the browser: WebSocket relay with end-to-end AES encryption, client and server both in Milo |
+| [weather](https://github.com/milo-language/milo/tree/main/examples/net/weather) | weather.gov frontend served from a single static binary |
+| [serve](https://github.com/milo-language/milo/blob/main/examples/net/serve.milo) | Static file server with directory listing |
+| [webserver](https://github.com/milo-language/milo/blob/main/examples/net/webserver.milo) | HTTP server with routing, path params, middleware |
+| [httpClient](https://github.com/milo-language/milo/blob/main/examples/net/httpClient.milo) | HTTP client for fetching URLs |
+| [fetch](https://github.com/milo-language/milo/blob/main/examples/net/fetch.milo) | Fetch an HTTP API over TLS and parse the JSON response |
 
 ## Data & interpreters
 
 | Program | What it is |
 |---------|-----------|
-| [milojs](https://github.com/milo-language/milo/tree/main/examples/apps/milojs) | A JavaScript engine in Milo: parser, evaluator, mark-sweep GC. Runs express |
-| [kvstore](https://github.com/milo-language/milo/blob/main/examples/apps/kvstore.milo) | Page-based key-value store with cursors, in the sled/buffer-pool style |
-| [minilang](https://github.com/milo-language/milo/blob/main/examples/apps/minilang.milo) | Tree-walking interpreter for a small expression language |
+| [milojs](https://github.com/milo-language/milo/tree/main/examples/runtimes/milojs) | A JavaScript engine in Milo: parser, evaluator, mark-sweep GC. Runs express |
+| [kvstore](https://github.com/milo-language/milo/blob/main/examples/basics/kvstore.milo) | Page-based key-value store with cursors, in the sled/buffer-pool style |
+| [minilang](https://github.com/milo-language/milo/blob/main/examples/basics/minilang.milo) | Tree-walking interpreter for a small expression language |
 
 ## The language, feeding itself
 
@@ -114,7 +114,7 @@ Every program above is a single `.milo` file. Clone the repo and run or build an
 
 ```bash
 ./milo run examples/cli-tools/grep.milo -- "hello" myfile.txt
-./milo build examples/apps/serve.milo -o serve && ./serve
+./milo build examples/net/serve.milo -o serve && ./serve
 ```
 
 ### A taste: grep in Milo

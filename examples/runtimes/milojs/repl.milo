@@ -1,0 +1,977 @@
+// Interactive REPL for the milojs runtime. Reads a line with a raw-mode line
+// editor (history via up/down, backspace, Ctrl-C/Ctrl-D), then lexes/parses/
+// executes it against a persistent interpreter and echoes the value of a trailing
+// expression (Node-style, but undefined results are suppressed to cut noise).
+//
+// Key design: one Prog is reused for the whole session and each line's parse is
+// APPENDED to it. Closures carry a func index into prog.funcs (JSValue.Func), so a
+// function defined on one line must still resolve when called on a later line — a
+// fresh Prog per line would invalidate those indices. Growing a single Prog keeps
+// every index valid for the session's lifetime.
+
+from "std/io" import {
+    writeStdout, readFd, readFile
+}
+from "std/fs" import {
+    writeFile
+}
+from "std/env" import {
+    getEnv
+}
+from "std/term" import {
+    TermState, enableRawModeBlocking, restoreTerminal
+}
+from "std/ansi" import {
+    clearLine, fg24, ansiReset, pushFg24, pushBg24
+}
+from "std/color" import {
+    bold, gray, dim
+}
+from "./lexer" import {
+    lex
+}
+from "./parser" import {
+    PState, parseProgram
+}
+from "./ast" import {
+    Prog, Stmt, getStmt
+}
+from "./value" import {
+    JSValue, toStr
+}
+from "./eval" import {
+    execStmt, evalExpr, inspectTop
+}
+from "./runtime" import {
+    Interp
+}
+from "./complete" import {
+    completeAt, cmplCommonPrefix, cmplSlice, cmplIsIdentByte, CMPL_SESSION, CMPL_KEYWORD
+}
+
+enum LineResult {
+    Line(string),
+    Eof,
+    // Ctrl-C while a multi-line block was being collected: throw the block away
+    // rather than arming the exit prompt
+    Cancel,
+}
+
+let SPR_W: i64 = 18
+let SPR_ROWS: i64 = 18 // pixel rows (even → SPR_ROWS/2 terminal rows tall)
+
+// Milo the chihuahua, the mascot — same pixel-art bitmap as examples/graphics/chihuahua.milo.
+// Legend: space=transparent d=dark-brown b=brown-shadow t=tan l=light-tan
+// w=cream W=white-highlight k=eye/nose g=eye-glint p=pink
+fn spriteRow(i: i64): string {
+    if i == 0 {
+        return "  dd          dd  "
+    } else if i == 1 {
+        return " dddd        dddd "
+    } else if i == 2 {
+        return " dpdd        ddpd "
+    } else if i == 3 {
+        return " ddpdb      bdpdd "
+    } else if i == 4 {
+        return "  ddbtttttttttbdd "
+    } else if i == 5 {
+        return "   btttttttttttb  "
+    } else if i == 6 {
+        return "  bttlllllllllttb "
+    } else if i == 7 {
+        return " bttllllllllllllb "
+    } else if i == 8 {
+        return " btllkkllllkkllltb"
+    } else if i == 9 {
+        return " btllkgllllkglltb "
+    } else if i == 10 {
+        return " bttllllllllllttb "
+    } else if i == 11 {
+        return " bbttttwwwwttttbb "
+    } else if i == 12 {
+        return "  bttwwwwwwwwttb  "
+    } else if i == 13 {
+        return "  bttwwwkkwwwttb  "
+    } else if i == 14 {
+        return "   bttwwkkwwttb   "
+    } else if i == 15 {
+        return "   bbttwppwttbb   "
+    } else if i == 16 {
+        return "    bttwwwwttb    "
+    }
+    return "     bbtttbb      "
+}
+
+fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
+    out[0] = r
+    out[1] = g
+    out[2] = b
+    out[3] = 1
+}
+
+// Map a palette char to an RGB color; out[3]=0 marks a transparent pixel.
+fn charRGB(ch: u8, out: &mut [i64; 4]): void {
+    let c = ch as i64
+    if c == 100 {
+        setC(out, 96, 60, 38) // d  dark brown (ear/outline)
+    } else if c == 98 {
+        setC(out, 145, 96, 58) // b  brown shadow
+    } else if c == 116 {
+        setC(out, 200, 152, 104) // t  tan
+    } else if c == 108 {
+        setC(out, 226, 192, 150) // l  light tan
+    } else if c == 119 {
+        setC(out, 240, 226, 206) // w  cream muzzle
+    } else if c == 87 {
+        setC(out, 255, 250, 245) // W  white highlight
+    } else if c == 107 {
+        setC(out, 34, 28, 24) // k  eye / nose
+    } else if c == 103 {
+        setC(out, 255, 255, 255) // g  eye glint
+    } else if c == 112 {
+        setC(out, 226, 150, 162) // p  pink inner ear
+    } else {
+        out[3] = 0 // space → transparent
+    }
+}
+
+// name-prefixed: builtins.milo already defines a charAt, and Milo merges all
+// modules into one namespace
+fn sprCharAt(row: &string, c: i64): u8 {
+    if c < row.len {
+        return row[c]
+    }
+    return 32 as u8
+}
+
+fn emit(buf: &mut string, s: &string): void {
+    for i in 0..s.len {
+        buf.push(s[i])
+    }
+}
+
+// The wordmark printed to the right of the dog, one entry per sprite row so the
+// two line up. Sprite is 9 rows tall, wordmark 6 — offset by 1 to sit centered.
+fn wordmarkRow(tr: i64): string {
+    // gradient runs light-tan → dark-brown, pulled from the sprite's own palette
+    if tr == 1 {
+        return fg24(240, 226, 206) + "███╗   ███╗██╗██╗      ██████╗      ██╗███████╗"
+    } else if tr == 2 {
+        return fg24(226, 192, 150) + "████╗ ████║██║██║     ██╔═══██╗     ██║██╔════╝"
+    } else if tr == 3 {
+        return fg24(212, 170, 122) + "██╔████╔██║██║██║     ██║   ██║     ██║███████╗"
+    } else if tr == 4 {
+        return fg24(200, 152, 104) + "██║╚██╔╝██║██║██║     ██║   ██║██   ██║╚════██║"
+    } else if tr == 5 {
+        return fg24(172, 124, 81) + "██║ ╚═╝ ██║██║███████╗╚██████╔╝╚█████╔╝███████║"
+    } else if tr == 6 {
+        return fg24(145, 96, 58) + "╚═╝     ╚═╝╚═╝╚══════╝ ╚═════╝  ╚════╝ ╚══════╝"
+    }
+    return ""
+}
+
+// Milo the chihuahua beside the wordmark. Each terminal cell packs two vertically
+// stacked pixels via ▀ (fg=top half, bg=bottom half), so the 18-row sprite fits in
+// 9 rows. Built as ONE string and written with a single raw write(2): print()
+// buffers through libc stdout, so mixing the two would reorder the output.
+fn banner(): void {
+    var buf = ""
+    var tcol: [i64; 4] = [0; 4]
+    var bcol: [i64; 4] = [0; 4]
+    let hc = SPR_ROWS / 2
+
+    emit(buf, "\n")
+    for tr in 0..hc {
+        emit(buf, "  ")
+        let rowTop = spriteRow(tr * 2)
+        let rowBot = spriteRow(tr * 2 + 1)
+        for c in 0..SPR_W {
+            charRGB(sprCharAt(rowTop, c), tcol)
+            charRGB(sprCharAt(rowBot, c), bcol)
+            let topOp = tcol[3] == 1
+            let botOp = bcol[3] == 1
+            if topOp && botOp {
+                pushFg24(buf, tcol[0], tcol[1], tcol[2])
+                pushBg24(buf, bcol[0], bcol[1], bcol[2])
+                emit(buf, "▀")
+            } else if topOp {
+                emit(buf, "\x1b[49m") // default bg for the empty lower half
+                pushFg24(buf, tcol[0], tcol[1], tcol[2])
+                emit(buf, "▀")
+            } else if botOp {
+                emit(buf, "\x1b[49m")
+                pushFg24(buf, bcol[0], bcol[1], bcol[2])
+                emit(buf, "▄")
+            } else {
+                emit(buf, "\x1b[49m")
+                buf.push(32 as u8)
+            }
+        }
+        emit(buf, ansiReset())
+        emit(buf, "  ")
+        emit(buf, wordmarkRow(tr))
+        emit(buf, ansiReset())
+        emit(buf, "\n")
+    }
+
+    emit(buf, "\n")
+    emit(buf, "  " + bold("a JavaScript engine written from scratch in Milo.") + "\n")
+    emit(buf, "  " + dim("github.com/milo-language/milo") + "\n\n")
+    emit(buf, "  " + dim("Tab complete · ↑/↓ history · Ctrl-C cancel line · Ctrl-D exit") + "\n\n")
+    writeStdout(buf)
+}
+
+let HISTORY_MAX: i64 = 1000
+
+fn historyPath(): string {
+    match getEnv("HOME") {
+        Option.Some(h) => {
+            return h + "/.milojs_history"
+        }
+        Option.None => {
+            return ""
+        }
+    }
+}
+
+// One entry per line. A multi-line block would break that, so its newlines are
+// escaped on the way out and restored on the way in.
+fn escapeEntry(s: &string): string {
+    var out = ""
+    for i in 0..s.len() {
+        if s[i] == 10 as u8 {
+            out.push(92 as u8)
+            out.push('n')
+        } else if s[i] == 92 as u8 {
+            out.push(92 as u8)
+            out.push(92 as u8)
+        } else {
+            out.push(s[i])
+        }
+    }
+    return out
+}
+
+fn unescapeEntry(s: &string): string {
+    var out = ""
+    var i: i64 = 0
+    while i < s.len() {
+        if s[i] == 92 as u8 && i + 1 < s.len() {
+            if s[i + 1] == 'n' {
+                out.push(10 as u8)
+                i = i + 2
+                continue
+            }
+            if s[i + 1] == 92 as u8 {
+                out.push(92 as u8)
+                i = i + 2
+                continue
+            }
+        }
+        out.push(s[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn loadHistory(history: &mut Vec<string>) {
+    let path = historyPath()
+    if path.len() == 0 {
+        return
+    }
+    match readFile(path) {
+        Result.Ok(text) => {
+            var cur = ""
+            for i in 0..text.len() {
+                if text[i] == 10 as u8 {
+                    if cur.len() > 0 {
+                        history.push(unescapeEntry(cur))
+                    }
+                    cur = ""
+                } else {
+                    cur.push(text[i])
+                }
+            }
+            if cur.len() > 0 {
+                history.push(unescapeEntry(cur))
+            }
+        }
+        Result.Err(e) => {
+            // no history file yet, or unreadable — starting empty is fine
+        }
+    }
+}
+
+// Whole-file rewrite on exit, keeping only the newest HISTORY_MAX entries. Two
+// REPLs exiting at once means last-writer-wins; node has the same behaviour.
+fn saveHistory(history: &Vec<string>) {
+    let path = historyPath()
+    if path.len() == 0 {
+        return
+    }
+    var start: i64 = 0
+    if history.len() > HISTORY_MAX {
+        start = history.len() - HISTORY_MAX
+    }
+    var out = ""
+    var i = start
+    while i < history.len() {
+        out = out + escapeEntry(history[i]) + "\n"
+        i = i + 1
+    }
+    match writeFile(path, out) {
+        Result.Ok(n) => {
+        }
+        Result.Err(e) => {
+        }
+    }
+}
+
+// The line editor is one line, so a recalled multi-line block has its newlines
+// flattened to spaces. JS only depends on newlines through semicolon insertion,
+// and a block that already parsed keeps parsing on one line.
+fn flattenEntry(s: &string): string {
+    var out = ""
+    for i in 0..s.len() {
+        if s[i] == 10 as u8 {
+            out.push(32 as u8)
+        } else {
+            out.push(s[i])
+        }
+    }
+    return out
+}
+
+fn isUndefined(v: &JSValue): bool {
+    match v {
+        JSValue.Undefined => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+// Repaint the edited line in place: carriage-return to column 0, redraw prompt +
+// buffer, then clear to end-of-line so a shrinking line leaves no stale tail.
+// Finally walk the cursor back from end-of-line to `cur`. Moving relatively (not
+// to an absolute column) keeps this correct without having to know how wide the
+// prompt renders — it is full of escape bytes that occupy no columns.
+fn redraw(prompt: &string, line: &string, cur: i64): void {
+    var s = "\r" + prompt + line + clearLine()
+    let back = line.len() - cur
+    if back > 0 {
+        s = s + "\x1b[" + back.toString() + "D"
+    }
+    writeStdout(s)
+}
+
+fn strInsert(s: &string, at: i64, b: u8): string {
+    var out = ""
+    for i in 0..at {
+        out.push(s[i])
+    }
+    out.push(b)
+    var i = at
+    while i < s.len() {
+        out.push(s[i])
+        i = i + 1
+    }
+    return out
+}
+
+// The half-open span [from, to) removed.
+fn strCut(s: &string, from: i64, to: i64): string {
+    var out = ""
+    for i in 0..from {
+        out.push(s[i])
+    }
+    var i = to
+    while i < s.len() {
+        out.push(s[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn isSpaceByte(b: u8): bool {
+    return b == 32 as u8 || b == 9 as u8
+}
+
+// Word motion, readline-style: skip any run of separators, then the word itself.
+// `bigWord` uses whitespace as the only separator (what Ctrl-W kills in a shell);
+// otherwise anything non-alphanumeric separates, so `foo.bar` is two words.
+fn wordSep(b: u8, bigWord: bool): bool {
+    if bigWord {
+        return isSpaceByte(b)
+    }
+    return !cmplIsIdentByte(b)
+}
+
+fn wordLeft(line: &string, cur: i64, bigWord: bool): i64 {
+    var i = cur
+    while i > 0 && wordSep(line[i - 1], bigWord) {
+        i = i - 1
+    }
+    while i > 0 && !wordSep(line[i - 1], bigWord) {
+        i = i - 1
+    }
+    return i
+}
+
+fn wordRight(line: &string, cur: i64, bigWord: bool): i64 {
+    var i = cur
+    while i < line.len() && wordSep(line[i], bigWord) {
+        i = i + 1
+    }
+    while i < line.len() && !wordSep(line[i], bigWord) {
+        i = i + 1
+    }
+    return i
+}
+
+// Keys that arrive as multi-byte escape sequences, normalised to one id.
+let K_NONE: i64 = 0
+let K_UP: i64 = 1
+let K_DOWN: i64 = 2
+let K_LEFT: i64 = 3
+let K_RIGHT: i64 = 4
+let K_HOME: i64 = 5
+let K_END: i64 = 6
+let K_DELETE: i64 = 7
+let K_WORD_LEFT: i64 = 8
+let K_WORD_RIGHT: i64 = 9
+let K_DELETE_WORD: i64 = 10
+
+fn csiFinal(c: u8, num: i64): i64 {
+    if c == 65 as u8 {
+        return K_UP
+    }
+    if c == 66 as u8 {
+        return K_DOWN
+    }
+    if c == 67 as u8 {
+        return K_RIGHT
+    }
+    if c == 68 as u8 {
+        return K_LEFT
+    }
+    if c == 72 as u8 {
+        return K_HOME
+    }
+    if c == 70 as u8 {
+        return K_END
+    }
+    if c == 126 as u8 {
+        // ESC [ n ~ — the numeric form of the same keys on other terminals
+        if num == 1 || num == 7 {
+            return K_HOME
+        }
+        if num == 3 {
+            return K_DELETE
+        }
+        if num == 4 || num == 8 {
+            return K_END
+        }
+    }
+    return K_NONE
+}
+
+// Decode the rest of an escape sequence, ESC already consumed. Handles the CSI
+// forms (`ESC [ … final`, including the `ESC [ 1 ; 5 C` modifier form terminals
+// send for Ctrl-arrow) and the Alt-<letter> forms readline binds to word motion.
+fn readEscapeKey(): i64 {
+    var buf: [u8; 4] = [0; 4]
+    if readFd(0, buf, 1) <= 0 {
+        return K_NONE
+    }
+    let e1 = buf[0]
+
+    if e1 == 98 as u8 {
+        return K_WORD_LEFT // Alt-B
+    }
+    if e1 == 102 as u8 {
+        return K_WORD_RIGHT // Alt-F
+    }
+    if e1 == 100 as u8 {
+        return K_DELETE_WORD // Alt-D
+    }
+    // SS3 (`ESC O H`) is what some terminals send for Home/End in application mode
+    if e1 != 91 as u8 && e1 != 79 as u8 {
+        return K_NONE
+    }
+
+    var num: i64 = 0
+    var modified = false
+    while true {
+        if readFd(0, buf, 1) <= 0 {
+            return K_NONE
+        }
+        let c = buf[0]
+        if c >= 48 as u8 && c <= 57 as u8 {
+            let d = (c as i64) - 48
+            if modified {
+                // a modifier param (`;5` = Ctrl); Ctrl+arrow means word motion
+            } else {
+                num = num * 10 + d
+            }
+            continue
+        }
+        if c == 59 as u8 {
+            modified = true
+            continue
+        }
+        let k = csiFinal(c, num)
+        if modified {
+            if k == K_LEFT {
+                return K_WORD_LEFT
+            }
+            if k == K_RIGHT {
+                return K_WORD_RIGHT
+            }
+        }
+        return k
+    }
+    return K_NONE
+}
+
+let CMPL_MAX_SHOWN: i64 = 120
+
+fn padTo(s: &string, w: i64): string {
+    var out = s.clone()
+    var i = s.len()
+    while i < w {
+        out.push(32 as u8)
+        i = i + 1
+    }
+    return out
+}
+
+// Colour by kind, so a glance separates what this session defined from the ~90
+// builtins it's buried among. Padding is applied to the bare name first — escape
+// bytes count toward .len() but occupy no columns.
+fn paintCandidate(name: &string, kind: i64, w: i64): string {
+    let cell = padTo(name, w + 2)
+    if kind == CMPL_SESSION {
+        return fg24(226, 192, 150) + cell + ansiReset()
+    }
+    if kind == CMPL_KEYWORD {
+        return gray(cell)
+    }
+    return cell
+}
+
+// Candidate list in fixed-width columns across an assumed 80-col terminal, with a
+// blank line between kinds (node groups its listing the same way, one group per
+// object in the prototype chain).
+fn formatCandidates(cands: &Vec<string>, kinds: &Vec<i64>): string {
+    var w: i64 = 0
+    for i in 0..cands.len() {
+        if cands[i].len() > w {
+            w = cands[i].len()
+        }
+    }
+    var cols = 78 / (w + 2)
+    if cols < 1 {
+        cols = 1
+    }
+    var shown = cands.len()
+    if shown > CMPL_MAX_SHOWN {
+        shown = CMPL_MAX_SHOWN
+    }
+
+    var out = ""
+    var col: i64 = 0
+    var i: i64 = 0
+    while i < shown {
+        // cmplSort groups kinds contiguously, so a change means a group boundary
+        if i > 0 && kinds[i] != kinds[i - 1] {
+            if col != 0 {
+                out = out + "\r\n"
+            }
+            out = out + "\r\n"
+            col = 0
+        }
+        out = out + paintCandidate(cands[i], kinds[i], w)
+        col = col + 1
+        if col == cols {
+            out = out + "\r\n"
+            col = 0
+        }
+        i = i + 1
+    }
+    if col != 0 {
+        out = out + "\r\n"
+    }
+    if shown < cands.len() {
+        out = out + gray("… " + (cands.len() - shown).toString() + " more") + "\r\n"
+    }
+    return out
+}
+
+// Raw-mode line editor. Owns the prompt so it can repaint on history recall.
+// Raw mode clears ISIG, so Ctrl-C arrives as byte 3 rather than a signal — the
+// double-tap-to-exit is handled here, no signal handler needed.
+fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp, builtinCount: i64, inBlock: bool): LineResult {
+    let ts = enableRawModeBlocking()
+    var line = ""
+    // history.len() == "editing a fresh line", below that indexes older entries
+    var navIdx = history.len()
+    var ctrlcArmed = false
+    var buf: [u8; 3] = [0; 3]
+    // insertion point, as a byte offset into `line`; line.len() == at the end
+    var cur: i64 = 0
+
+    // user code's console.log goes through print()'s buffered stdout; drain it
+    // before the raw-write prompt so results never appear after the next prompt
+    flush()
+    writeStdout(prompt)
+
+    while true {
+        let n = readFd(0, buf, 1)
+        if n <= 0 {
+            restoreTerminal(ts)
+            return LineResult.Eof
+        }
+        let b = buf[0]
+
+        if b == 13 || b == 10 {
+            // park the cursor at end-of-line first, else the newline lands
+            // mid-text and the echoed line comes out split
+            let fwd = line.len() - cur
+            if fwd > 0 {
+                writeStdout("\x1b[" + fwd.toString() + "C")
+            }
+            writeStdout("\r\n")
+            restoreTerminal(ts)
+            return LineResult.Line(line)
+        }
+
+        // Ctrl-D: delete forward, but EOF on an empty line, like a shell
+        if b == 4 {
+            if line.len() == 0 {
+                writeStdout("\r\n")
+                restoreTerminal(ts)
+                return LineResult.Eof
+            }
+            if cur < line.len() {
+                line = strCut(line, cur, cur + 1)
+                redraw(prompt, line, cur)
+            }
+            continue
+        }
+
+        if b == 3 {
+            // inside an unfinished block Ctrl-C means "forget it", the same as
+            // node — the exit prompt would be the wrong offer here
+            if inBlock {
+                writeStdout("\r\n")
+                restoreTerminal(ts)
+                return LineResult.Cancel
+            }
+            if line.len() == 0 {
+                if ctrlcArmed {
+                    writeStdout("\r\n")
+                    restoreTerminal(ts)
+                    return LineResult.Eof
+                }
+                ctrlcArmed = true
+                writeStdout("\r\n" + gray("(To exit, press Ctrl-C again or Ctrl-D)") + "\r\n")
+                writeStdout(prompt)
+                continue
+            }
+            line = ""
+            cur = 0
+            navIdx = history.len()
+            redraw(prompt, line, cur)
+            continue
+        }
+
+        // any other key disarms the pending Ctrl-C exit
+        ctrlcArmed = false
+
+        if b == 9 {
+            // complete the word ending at the cursor, not at end-of-line
+            let head = cmplSlice(line, 0, cur)
+            let tail = cmplSlice(line, cur, line.len())
+            var cands: Vec<string> = Vec.new()
+            var kinds: Vec<i64> = Vec.new()
+            let start = completeAt(st, head, cands, kinds, builtinCount)
+            if cands.len() == 0 {
+                continue
+            }
+            let typed = cmplSlice(head, start, head.len())
+            let common = cmplCommonPrefix(cands)
+            // unambiguous extension available → fill it in silently
+            if common.len() > typed.len() {
+                line = cmplSlice(head, 0, start) + common + tail
+                cur = start + common.len()
+                navIdx = history.len()
+                redraw(prompt, line, cur)
+                continue
+            }
+            // already at the common prefix: show what the choices are
+            if cands.len() > 1 {
+                writeStdout("\r\n" + formatCandidates(cands, kinds))
+                redraw(prompt, line, cur)
+            }
+            continue
+        }
+
+        if b == 127 || b == 8 {
+            if cur > 0 {
+                line = strCut(line, cur - 1, cur)
+                cur = cur - 1
+                redraw(prompt, line, cur)
+            }
+            continue
+        }
+
+        if b == 1 { // Ctrl-A
+            cur = 0
+            redraw(prompt, line, cur)
+            continue
+        }
+        if b == 5 { // Ctrl-E
+            cur = line.len()
+            redraw(prompt, line, cur)
+            continue
+        }
+        if b == 2 { // Ctrl-B
+            if cur > 0 {
+                cur = cur - 1
+                redraw(prompt, line, cur)
+            }
+            continue
+        }
+        if b == 6 { // Ctrl-F
+            if cur < line.len() {
+                cur = cur + 1
+                redraw(prompt, line, cur)
+            }
+            continue
+        }
+        if b == 11 { // Ctrl-K — kill to end of line
+            line = cmplSlice(line, 0, cur)
+            redraw(prompt, line, cur)
+            continue
+        }
+        if b == 21 { // Ctrl-U — kill to start of line
+            line = cmplSlice(line, cur, line.len())
+            cur = 0
+            redraw(prompt, line, cur)
+            continue
+        }
+        if b == 23 { // Ctrl-W — kill the word before the cursor
+            let from = wordLeft(line, cur, true)
+            if from < cur {
+                line = strCut(line, from, cur)
+                cur = from
+                redraw(prompt, line, cur)
+            }
+            continue
+        }
+        if b == 12 { // Ctrl-L — clear screen, keep the line being edited
+            writeStdout("\x1b[2J\x1b[H")
+            redraw(prompt, line, cur)
+            continue
+        }
+
+        if b == 27 {
+            let k = readEscapeKey()
+            if k == K_UP {
+                if navIdx > 0 {
+                    navIdx = navIdx - 1
+                    line = flattenEntry(history[navIdx])
+                    cur = line.len()
+                    redraw(prompt, line, cur)
+                }
+            } else if k == K_DOWN {
+                if navIdx < history.len() {
+                    navIdx = navIdx + 1
+                    if navIdx == history.len() {
+                        line = ""
+                    } else {
+                        line = flattenEntry(history[navIdx])
+                    }
+                    cur = line.len()
+                    redraw(prompt, line, cur)
+                }
+            } else if k == K_LEFT {
+                if cur > 0 {
+                    cur = cur - 1
+                    redraw(prompt, line, cur)
+                }
+            } else if k == K_RIGHT {
+                if cur < line.len() {
+                    cur = cur + 1
+                    redraw(prompt, line, cur)
+                }
+            } else if k == K_HOME {
+                cur = 0
+                redraw(prompt, line, cur)
+            } else if k == K_END {
+                cur = line.len()
+                redraw(prompt, line, cur)
+            } else if k == K_DELETE {
+                if cur < line.len() {
+                    line = strCut(line, cur, cur + 1)
+                    redraw(prompt, line, cur)
+                }
+            } else if k == K_WORD_LEFT {
+                cur = wordLeft(line, cur, false)
+                redraw(prompt, line, cur)
+            } else if k == K_WORD_RIGHT {
+                cur = wordRight(line, cur, false)
+                redraw(prompt, line, cur)
+            } else if k == K_DELETE_WORD {
+                let to = wordRight(line, cur, false)
+                if to > cur {
+                    line = strCut(line, cur, to)
+                    redraw(prompt, line, cur)
+                }
+            }
+            continue
+        }
+
+        if b >= 32 && b < 127 {
+            // appending is the common case and only needs an echo, not a repaint
+            if cur == line.len() {
+                line.push(b)
+                cur = cur + 1
+                var ch = ""
+                ch.push(b)
+                writeStdout(ch)
+            } else {
+                line = strInsert(line, cur, b)
+                cur = cur + 1
+                redraw(prompt, line, cur)
+            }
+        }
+    }
+    restoreTerminal(ts)
+    return LineResult.Eof
+}
+
+// Run one already-parsed top block: execute every statement, and if the last one
+// is a bare expression, return its value for echoing.
+fn runLine(prog: &Prog, top: i64, st: &mut Interp): JSValue {
+    var result = JSValue.Undefined
+    let n = prog.blocks[top].len()
+    var i: i64 = 0
+    while i < n {
+        let sIdx = prog.blocks[top][i]
+        let isLast = i == n - 1
+        match getStmt(prog, sIdx) {
+            Stmt.ExprStmt(e) => {
+                if isLast {
+                    result = evalExpr(prog, e, st, 0)
+                } else {
+                    evalExpr(prog, e, st, 0)
+                }
+            }
+            _ => {
+                execStmt(prog, sIdx, st, 0)
+            }
+        }
+        if st.throwing {
+            return JSValue.Undefined
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// The read-eval-print loop. `st` must already have globals + Node globals installed.
+fn repl(st: &mut Interp): i32 {
+    banner()
+
+    // one growing Prog: func indices stay valid across lines (see file header)
+    var prog = Prog {
+        exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(),
+        funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
+    }
+    var history: Vec<string> = Vec.new()
+    loadHistory(history)
+    // everything already in the global scope is a builtin; anything appended past
+    // this point was defined by the user, and completion highlights it as such
+    let builtinCount = st.scopes[0].vars.len()
+    let prompt = fg24(226, 192, 150) + "milojs> " + ansiReset()
+    let contPrompt = gray("... ") + ansiReset()
+    // lines of a block that is not syntactically finished yet
+    var pending = ""
+
+    while true {
+        var activePrompt = prompt.clone()
+        if pending.len() > 0 {
+            activePrompt = contPrompt.clone()
+        }
+        match readLineEdited(activePrompt, history, st, builtinCount, pending.len() > 0) {
+            LineResult.Eof => {
+                saveHistory(history)
+                return 0
+            }
+            LineResult.Cancel => {
+                pending = ""
+            }
+            LineResult.Line(line) => {
+                var source = line.clone()
+                if pending.len() > 0 {
+                    source = pending.clone() + "\n" + line
+                }
+                if source.len() == 0 {
+                    continue
+                }
+
+                // Probe first: parsing appends to `prog`, and a half-finished
+                // block would leave nodes behind that the retry then duplicates.
+                // The probe gets its own throwaway Prog, so only complete input
+                // ever touches the session's.
+                var scratch = Prog {
+                    exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(),
+                    funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
+                }
+                var probe = PState {
+                    toks: lex(source), pos: 0, curClass: "", file: "<repl>", errored: false, eofError: false, quiet: true
+                }
+                let probeTop = parseProgram(probe, scratch)
+                if probe.eofError {
+                    pending = source.clone()
+                    continue
+                }
+                pending = ""
+                history.push(source.clone())
+
+                // A line that doesn't parse is not run at all: the parser
+                // recovers by skipping tokens, so executing the wreckage does
+                // real damage (`let a -6` would bind `a` to undefined). Re-parse
+                // into the throwaway Prog just to emit the diagnostic, leaving
+                // the session's Prog untouched.
+                if probe.errored {
+                    var report = PState {
+                        toks: lex(source), pos: 0, curClass: "", file: "<repl>", errored: false, eofError: false, quiet: false
+                    }
+                    let reportTop = parseProgram(report, scratch)
+                    continue
+                }
+
+                var p = PState {
+                    toks: lex(source), pos: 0, curClass: "", file: "<repl>", errored: false, eofError: false, quiet: false
+                }
+                let top = parseProgram(p, prog)
+                let val = runLine(prog, top, st)
+                if st.throwing {
+                    eprint("Uncaught " + describeThrown(st, st.thrownValue))
+                    st.throwing = false
+                    st.thrownValue = JSValue.Undefined
+                } else {
+                    if !isUndefined(val) {
+                        print(inspectTop(st, val))
+                    }
+                }
+            }
+        }
+    }
+    return 0
+}

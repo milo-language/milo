@@ -10,8 +10,7 @@ import { join } from "path";
 import { guardedRun } from "../scripts/guard";
 
 const MILO_ROOT = join(import.meta.dir, "..");
-const APPS_DIR = join(MILO_ROOT, "examples", "apps");
-const CLI_DIR = join(MILO_ROOT, "examples", "cli-tools");
+const EXAMPLES_DIR = join(MILO_ROOT, "examples");
 const TOOL_DIR = mkdtempSync(join(tmpdir(), "milo-examplesc-"));
 const MILOC = join(TOOL_DIR, "miloc");
 const CHILD_ENV = { ...process.env, MILO_ROOT };
@@ -25,13 +24,20 @@ beforeAll(() => {
 // Multi-file apps (dirs with helper/smoke files) — list the real entry points;
 // a bare glob would try to compile partial modules that have no main().
 const DIR_ENTRIES = [
-  "nes/nes.milo",
-  "genesis/genesis.milo",
-  "snes/snes.milo",
-  "weather/app.milo",
-  "termpair/server.milo",
-  "termpair/client.milo",
-  "hades/src/main.milo",
+  "emulators/nes/nes.milo",
+  "emulators/genesis/genesis.milo",
+  "emulators/snes/snes.milo",
+  "net/weather/app.milo",
+  "net/termpair/server.milo",
+  "net/termpair/client.milo",
+  "tools/hades/src/main.milo",
+];
+
+// Only the top level of each folder: subdirs hold helper modules and smoke
+// programs that aren't standalone entry points (those go in DIR_ENTRIES).
+const TOP_LEVEL_DIRS = [
+  ".", "basics", "cli-tools", "graphics", "simulation",
+  "terminal", "net", "emulators", "embedded", "runtimes",
 ];
 
 function topLevel(dir: string): string[] {
@@ -39,9 +45,8 @@ function topLevel(dir: string): string[] {
 }
 
 const entries = [
-  ...topLevel(APPS_DIR),
-  ...topLevel(CLI_DIR),
-  ...DIR_ENTRIES.map(p => join(APPS_DIR, p)),
+  ...TOP_LEVEL_DIRS.flatMap(d => topLevel(join(EXAMPLES_DIR, d))),
+  ...DIR_ENTRIES.map(p => join(EXAMPLES_DIR, p)),
 ];
 
 describe("examples compile", () => {

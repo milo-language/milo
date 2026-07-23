@@ -1,0 +1,140 @@
+// Multicart game picker: boot the menu, press SELECT `sel` times to move the
+// cursor, launch with START, run, then dump the framebuffer. For checking that
+// games across the 1200-in-1 list launch + render (not just the default cursor).
+//   milo build examples/emulators/nes/selGame.milo -o /tmp/nesdbg/sel --debug
+//   /tmp/nesdbg/sel <rom> <selPresses> <framesAfter> <out.rgb>
+from "std/args" import {
+    args
+}
+from "std/fs" import {
+    writeFile
+}
+from "./cartridge" import {
+    Cartridge
+}
+from "./cartridgeFile" import {
+    loadCartridge
+}
+from "./cpu" import {
+    Cpu, Bus, newBus, newCpuReset, step, clockPpu, clockApu, hex4, serviceInterrupts
+}
+from "./ppu" import {
+    renderFrame
+}
+
+let SELECT: u8 = 0x04
+let START: u8 = 0x08
+let UP: u8 = 0x10
+let DOWN: u8 = 0x20
+
+fn strToInt(s: string): i64 {
+    var n: i64 = 0
+    var neg = false
+    for ch in s {
+        let c = ch as i64
+        if c == 45 {
+            neg = true
+        } else if c >= 48 && c <= 57 {
+            n = n * 10 + (c - 48)
+        }
+    }
+    if neg {
+        return 0 - n
+    }
+    return n
+}
+
+fn runFrame(cpu: &mut Cpu, bus: &mut Bus, buttons: u8): void {
+    bus.buttons = buttons
+    let startFrame = bus.ppu.frame
+    while bus.ppu.frame == startFrame {
+        let before = cpu.cyc
+        step(cpu, bus)
+        let used = cpu.cyc - before
+        var k: i64 = 0
+        while k < used * 3 {
+            clockPpu(bus)
+            k = k + 1
+        }
+        clockApu(bus, used)
+        serviceInterrupts(cpu, bus)
+    }
+}
+
+fn hold(cpu: &mut Cpu, bus: &mut Bus, btn: u8, n: i64): void {
+    var f: i64 = 0
+    while f < n {
+        runFrame(cpu, bus, btn)
+        f = f + 1
+    }
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 5 {
+        print("usage: sel <rom> <selPresses> <framesAfter> <out.rgb>")
+        return 1
+    }
+    match loadCartridge(argv[1]) {
+        Result.Ok(cart) => {
+            let selN = strToInt(argv[2])
+            let after = strToInt(argv[3])
+            var bus = newBus(cart)
+            var cpu = newCpuReset(bus)
+
+            hold(cpu, bus, 0, 60) // menu settle
+
+            // Move the line cursor with D-pad taps: selN>0 = DOWN, selN<0 = UP.
+            // (SELECT paginates by 20; the D-pad moves within a page.)
+            let dir = if selN < 0 {
+                UP
+            } else {
+                DOWN
+            }
+            var steps = if selN < 0 {
+                0 - selN
+            } else {
+                selN
+            }
+            var s: i64 = 0
+            while s < steps {
+                hold(cpu, bus, dir, 4)
+                hold(cpu, bus, 0, 4)
+                s = s + 1
+            }
+
+            // after < 0: menu-calibration mode — render the cursor without launching.
+            if after >= 0 {
+                hold(cpu, bus, START, 6) // launch
+                hold(cpu, bus, 0, after) // let it run
+            }
+
+            renderFrame(bus.ppu)
+            print("sel=" + hex4(selN) + " pc=" + hex4(cpu.pc as i64))
+
+            var data: string = ""
+            var i: i64 = 0
+            while i < 61440 {
+                let px = bus.ppu.fb[i] as i64
+                data.push((px & 0xFF) as u8)
+                data.push(((px >> 8) & 0xFF) as u8)
+                data.push(((px >> 16) & 0xFF) as u8)
+                i = i + 1
+            }
+            match writeFile(argv[4], data) {
+                Result.Ok(n) => {
+                    print("wrote fb")
+                    return 0
+                }
+                Result.Err(e) => {
+                    print("write failed")
+                    return 1
+                }
+            }
+        }
+        Result.Err(e) => {
+            print("load failed: " + e)
+            return 1
+        }
+    }
+}

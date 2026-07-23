@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "request": "launch",
+      "name": "Debug HelloLoop (hades)",
+      "program": "examples/tools/java-dap/tests/fixtures/HelloLoop.java",
+      "source": "examples/tools/java-dap/tests/fixtures/HelloLoop.java",
+      "dapPath": "java-dap",
+      "classPaths": ["examples/tools/java-dap/tests/fixtures"],
+      "sourceRoots": ["examples/tools/java-dap/tests/fixtures"]
+    },
+    {
+      "type": "java",
+      "request": "attach",
+      "name": "Attach to a JVM started with -agentlib:jdwp (direct DAP clients)",
+      "hostName": "localhost",
+      "port": 5005
+    }
+  ]
+}

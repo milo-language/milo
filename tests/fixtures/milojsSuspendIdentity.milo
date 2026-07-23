@@ -13,13 +13,13 @@
 //
 // Here A parks first and wakes first, so a position-based reclaim hands A the
 // context B parked second.
-from "../../examples/apps/milojs/runtime" import {
+from "../../examples/runtimes/milojs/runtime" import {
     Interp, gInterp, restoreExecCtx, saveExecCtx
 }
-from "../../examples/apps/milojs/eval" import {
+from "../../examples/runtimes/milojs/eval" import {
     resumeExecCtx
 }
-from "../../examples/apps/milojs/driver" import {
+from "../../examples/runtimes/milojs/driver" import {
     bootInterp, makeInterp
 }
 from "std/runtime" import {

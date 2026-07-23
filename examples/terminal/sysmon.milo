@@ -1,0 +1,435 @@
+// sysmon — live system monitor TUI (htop-style)
+//
+// Build and run:
+//   milo build examples/terminal/sysmon.milo -o sysmon
+//   ./sysmon
+
+from "std/sysinfo" import {
+    hostname, cpuCount, cpuModel, totalMem, freeMem,
+    uptime, loadAvg
+}
+from "std/term" import {
+    enableRawMode, restoreTerminal, readKey,
+    KEY_UP, KEY_DOWN, KEY_QUIT, KEY_NONE
+}
+from "std/io" import {
+    writeStdout
+}
+from "std/time" import {
+    sleepMs, epochMillis
+}
+from "std/strconv" import {
+    formatFloat
+}
+from "std/fmt" import {
+    padLeft, padRight
+}
+from "std/process" import {
+    capture
+}
+from "std/string" import {
+    strSplit, strSplitWhitespace, strTrim
+}
+from "std/os" import {
+    ioctl
+}
+from "std/pty" import {
+    WinSize
+}
+from "std/math" import {
+    clampF64
+}
+
+// ── terminal size ──
+
+fn termCols(): i64 {
+    var ws = WinSize {
+        rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+    }
+    unsafe {
+        ioctl(1, 1074295912, (ws.addrOf()) as *u8)
+    }
+    return ws.cols as i64
+}
+
+fn termRows(): i64 {
+    var ws = WinSize {
+        rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+    }
+    unsafe {
+        ioctl(1, 1074295912, (ws.addrOf()) as *u8)
+    }
+    return ws.rows as i64
+}
+
+// ── buffer helpers ──
+
+fn emit(buf: &mut string, s: &string): void {
+    for i in 0..s.len {
+        buf.push(s[i])
+    }
+}
+
+fn cursor(buf: &mut string, row: i64, col: i64): void {
+    emit(buf, $"\x1b[{row};{col}H")
+}
+
+fn clr(buf: &mut string): void {
+    emit(buf, "\x1b[K")
+}
+
+fn spaces(buf: &mut string, n: i64): void {
+    for i in 0..n {
+        buf.push(32 as u8)
+    }
+}
+
+// ANSI using i64 to avoid interpolation issues
+fn fg256(code: i64): string {
+    return $"\x1b[38;5;{code}m"
+}
+
+fn bg256(code: i64): string {
+    return $"\x1b[48;5;{code}m"
+}
+
+fn drawBar(buf: &mut string, filled: i64, total: i64, color: &string): void {
+    emit(buf, "[")
+    for i in 0..total {
+        if i < filled {
+            emit(buf, color)
+            emit(buf, "|")
+            emit(buf, "\x1b[0m")
+        } else {
+            emit(buf, "\x1b[90m-\x1b[0m")
+        }
+    }
+    emit(buf, "]")
+}
+
+// ── format helpers ──
+
+fn formatBytes(bytes: i64): string {
+    if bytes >= 1073741824 {
+        return formatFloat(bytes as f64 / 1073741824.0, 1) + " GB"
+    }
+    if bytes >= 1048576 {
+        return formatFloat(bytes as f64 / 1048576.0, 0) + " MB"
+    }
+    return formatFloat(bytes as f64 / 1024.0, 0) + " KB"
+}
+
+fn formatUptime(secs: i64): string {
+    let days = secs / 86400
+    let hours = (secs % 86400) / 3600
+    let mins = (secs % 3600) / 60
+    if days > 0 {
+        return $"{days}d {hours}h {mins}m"
+    }
+    if hours > 0 {
+        return $"{hours}h {mins}m"
+    }
+    return $"{mins}m"
+}
+
+// ── process list ──
+
+struct ProcInfo {
+    pid: string,
+    user: string,
+    cpu: string,
+    mem: string,
+    time: string,
+    command: string,
+}
+
+fn fetchProcesses(maxProcs: i64): Vec<ProcInfo> {
+    var procs: Vec<ProcInfo> = Vec.new()
+    // </dev/null prevents child shell from touching terminal raw mode
+    let cmd = $"ps -eo pid,user,%cpu,%mem,time,comm -r 2>/dev/null </dev/null | head -{maxProcs + 1}"
+    match capture(cmd) {
+        Result.Ok(output) => {
+            let lines = strSplit(output, "\n")
+            for i in 1..lines.len {
+                let line = strTrim(lines[i])
+                if line.len == 0 {
+                    continue
+                }
+                let fields = strSplitWhitespace(line)
+                if fields.len >= 6 {
+                    var cmdName = fields[5].clone()
+                    for j in 6..fields.len {
+                        cmdName = cmdName + " " + fields[j]
+                    }
+                    procs.push(ProcInfo {
+                        pid: fields[0].clone(),
+                        user: fields[1].clone(),
+                        cpu: fields[2].clone(),
+                        mem: fields[3].clone(),
+                        time: fields[4].clone(),
+                        command: cmdName,
+                    }
+                    )
+                }
+            }
+        }
+        Result.Err(_) => {
+        }
+    }
+    return procs
+}
+
+// ── rendering ──
+
+fn renderHeader(buf: &mut string, cols: i64): void {
+    let host = hostname()
+    let model = cpuModel()
+    cursor(buf, 1, 1)
+    emit(buf, "\x1b[7m") // inverse video
+    emit(buf, " sysmon ")
+    emit(buf, "\x1b[27m\x1b[1;36m ")
+    emit(buf, host)
+    emit(buf, " \x1b[0;90m")
+    emit(buf, model)
+    let used = 10 + host.len + 1 + model.len
+    if cols > used {
+        spaces(buf, cols - used)
+    }
+    emit(buf, "\x1b[0m")
+}
+
+fn renderCpuBar(buf: &mut string, row: i64, cols: i64): void {
+    let load = loadAvg()
+    let nCpus = cpuCount()
+    let pct = clampF64(load[0] / nCpus as f64 * 100.0, 0.0, 100.0)
+    let barWidth = cols - 32
+    if barWidth < 10 {
+        return
+    }
+    let filled = (pct / 100.0 * barWidth as f64) as i64
+
+    // color based on load
+    var color = "\x1b[32m" // green
+    if pct > 70.0 {
+        color = "\x1b[33m"
+    } // yellow
+    if pct > 90.0 {
+        color = "\x1b[31m"
+    } // red
+
+    cursor(buf, row, 1)
+    clr(buf)
+    emit(buf, "  \x1b[1mCPU\x1b[0m  ")
+    drawBar(buf, filled, barWidth, color)
+    emit(buf, " " + padLeft(formatFloat(pct, 1), 5, 32) + "%")
+
+    cursor(buf, row + 1, 1)
+    clr(buf)
+    let l1 = formatFloat(load[0], 2)
+    let l5 = formatFloat(load[1], 2)
+    let l15 = formatFloat(load[2], 2)
+    emit(buf, "\x1b[90m         load " + l1 + "  " + l5 + "  " + l15)
+    emit(buf, "  |  " + nCpus.toString() + " cores\x1b[0m")
+}
+
+fn renderMemBar(buf: &mut string, row: i64, cols: i64): void {
+    let total = totalMem()
+    let free = freeMem()
+    let used = total - free
+    let pct = clampF64(used as f64 / total as f64 * 100.0, 0.0, 100.0)
+    let barWidth = cols - 32
+    if barWidth < 10 {
+        return
+    }
+    let filled = (pct / 100.0 * barWidth as f64) as i64
+
+    var color = "\x1b[32m"
+    if pct > 70.0 {
+        color = "\x1b[33m"
+    }
+    if pct > 90.0 {
+        color = "\x1b[31m"
+    }
+
+    cursor(buf, row, 1)
+    clr(buf)
+    emit(buf, "  \x1b[1mMem\x1b[0m  ")
+    drawBar(buf, filled, barWidth, color)
+    emit(buf, " " + padLeft(formatFloat(pct, 1), 5, 32) + "%")
+
+    cursor(buf, row + 1, 1)
+    clr(buf)
+    emit(buf, "\x1b[90m         " + formatBytes(used) + " / " + formatBytes(total) + "\x1b[0m")
+}
+
+fn renderProcessHeader(buf: &mut string, row: i64, cols: i64): void {
+    cursor(buf, row, 1)
+    emit(buf, "\x1b[7;1;36m") // inverse + bold + cyan
+    let header = padRight("  PID", 8, 32) +
+    padRight("USER", 12, 32) +
+    padLeft("CPU%", 6, 32) + "  " +
+    padLeft("MEM%", 6, 32) + "  " +
+    padRight("TIME", 12, 32) +
+    "COMMAND"
+    emit(buf, header)
+    if cols > header.len {
+        spaces(buf, cols - header.len)
+    }
+    emit(buf, "\x1b[0m")
+}
+
+fn renderProcess(buf: &mut string, row: i64, cols: i64, proc: &ProcInfo, highlighted: bool): void {
+    cursor(buf, row, 1)
+    clr(buf)
+
+    if highlighted {
+        emit(buf, "\x1b[7m")
+    }
+
+    let pid = padLeft(proc.pid, 7, 32)
+    var user = proc.user.clone()
+    if user.len > 10 {
+        user = user.substr(0, 10)
+    }
+    let userPad = padRight(user, 12, 32)
+    let cpu = padLeft(proc.cpu, 6, 32)
+    let mem = padLeft(proc.mem, 6, 32)
+    let time = padRight(proc.time, 12, 32)
+
+    let fixedWidth: i64 = 48
+    var maxCmd = cols - fixedWidth - 1
+    if maxCmd < 0 {
+        maxCmd = 0
+    }
+    var cmd = proc.command.clone()
+    if cmd.len > maxCmd {
+        cmd = cmd.substr(0, maxCmd)
+    }
+
+    // highlight high CPU (doesn't start with '0')
+    var cpuColor = "\x1b[0m"
+    if proc.cpu.len > 0 && proc.cpu[0] != 48 {
+        cpuColor = "\x1b[33m"
+    }
+
+    emit(buf, " \x1b[90m" + pid + "\x1b[0m ")
+    emit(buf, "\x1b[36m" + userPad + "\x1b[0m")
+    emit(buf, cpuColor + cpu + "\x1b[0m  ")
+    emit(buf, mem + "  ")
+    emit(buf, "\x1b[90m" + time + "\x1b[0m")
+    if highlighted {
+        emit(buf, "\x1b[7m")
+    }
+    emit(buf, cmd)
+    emit(buf, "\x1b[0m")
+}
+
+fn renderStatusBar(buf: &mut string, row: i64, cols: i64, numProcs: i64): void {
+    cursor(buf, row, 1)
+    let up = formatUptime(uptime())
+    emit(buf, "\x1b[7m") // inverse
+    let status = $" q:quit  arrows:scroll  up {up}  {numProcs} processes "
+    emit(buf, status)
+    if cols > status.len {
+        spaces(buf, cols - status.len)
+    }
+    emit(buf, "\x1b[0m")
+}
+
+// ── main ──
+
+fn main(): i32 {
+    let termState = enableRawMode()
+    writeStdout("\x1b[?25l\x1b[2J")
+
+    var scroll: i64 = 0
+    var procs: Vec<ProcInfo> = Vec.new()
+    var lastRefresh: i64 = 0
+    let refreshInterval: i64 = 2000
+    var needsRender = true
+
+    for tick in 0..999999 {
+        // drain all pending keys
+        var gotQuit = false
+        var key = readKey()
+        while key != KEY_NONE {
+            if key == KEY_QUIT {
+                gotQuit = true
+            }
+            if key == KEY_DOWN {
+                scroll = scroll + 1
+                needsRender = true
+            }
+            if key == KEY_UP {
+                if scroll > 0 {
+                    scroll = scroll - 1
+                    needsRender = true
+                }
+            }
+            key = readKey()
+        }
+        if gotQuit {
+            break
+        }
+
+        let now = epochMillis()
+        let cols = termCols()
+        let rows = termRows()
+
+        if now - lastRefresh > refreshInterval || tick == 0 {
+            let maxVisible = rows - 9
+            procs = fetchProcesses(maxVisible + scroll + 5)
+            lastRefresh = now
+            needsRender = true
+        }
+
+        if !needsRender {
+            sleepMs(16)
+            continue
+        }
+        needsRender = false
+
+        let procAreaRows = rows - 9
+        if procAreaRows < 1 {
+            continue
+        }
+        if scroll > procs.len - procAreaRows {
+            scroll = procs.len - procAreaRows
+        }
+        if scroll < 0 {
+            scroll = 0
+        }
+
+        var buf = ""
+
+        renderHeader(buf, cols)
+        cursor(buf, 2, 1)
+        clr(buf)
+        renderCpuBar(buf, 3, cols)
+        renderMemBar(buf, 5, cols)
+        cursor(buf, 7, 1)
+        clr(buf)
+        renderProcessHeader(buf, 8, cols)
+
+        for i in 0..procAreaRows {
+            let idx = scroll + i
+            if idx < procs.len {
+                renderProcess(buf, 9 + i, cols, procs[idx], i == 0 && scroll > 0)
+            } else {
+                cursor(buf, 9 + i, 1)
+                clr(buf)
+            }
+        }
+
+        renderStatusBar(buf, rows, cols, procs.len as i64)
+        emit(buf, "\x1b[J")
+        writeStdout(buf)
+
+        sleepMs(16)
+    }
+
+    writeStdout("\x1b[?25h\x1b[2J\x1b[H\x1b[0m")
+    restoreTerminal(termState)
+    print("sysmon exited.")
+    return 0
+}

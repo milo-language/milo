@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: milojs-object-footprint
 purpose: measured per-object memory cost in milojs and the plan to shrink JSObj by moving rare capabilities to a side table
-key-files: examples/apps/milojs/runtime.milo
+key-files: examples/runtimes/milojs/runtime.milo
 update-when: JSObj gains or loses fields, or the side-table split lands
 last-verified: 2026-07-21
 -->

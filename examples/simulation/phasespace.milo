@@ -1,0 +1,584 @@
+// Electrostatic Vlasov solver (1 configuration dim x, 1 velocity dim v) — the
+// collisionless kinetic equation ∂f/∂t + v·∂f/∂x + (q/m)E·∂f/∂v = 0 for the phase-
+// space distribution f(x,v,t) of a charged species, in a FIXED external double-well
+// potential φ(x)=A·cos(2x) (field E(x)=2A·sin(2x), wells at x=±π/2). A zero-drift
+// Maxwellian winds up into two trapped-particle "cat's-eye" vortices with fine
+// filamentation — the classic double-well phase portrait.
+//
+// Scheme (matching ElectrostaticVlasov): 2nd-order conservative FINITE-VOLUME,
+// MUSCL reconstruction with a minmod slope limiter + local Lax-Friedrichs (upwind,
+// since the advection speed is constant along each 1-D sweep), dimensionally split
+// over x and v with Strang splitting. Rendered with the magma colormap.
+//
+// Runtime-verified invariant: the scheme is conservative (telescoping fluxes), so
+// total mass ∫∫f dx dv is invariant — checked every second and printed with the
+// worst negative f (the minmod limiter keeps f ~positive but does not prove it).
+// This is a runtime CHECK, not a machine-checked proof.
+//
+// Controls:  SPACE pause/resume   R reset   ESC / close quit
+//
+// Build/run (SDL2 auto-linked via @link — no -- flags needed):
+//   milo run examples/simulation/phasespace.milo --release   (-O3 strongly recommended)
+
+from "std/math" import {
+    mathSqrt, mathSin, mathPow, mathFloor, mathAbs
+}
+from "std/strconv" import {
+    formatFloat
+}
+
+@link("SDL2")
+extern fn SDL_Init(flags: u32): i32
+
+extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+
+extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+
+extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+
+extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+
+extern fn SDL_RenderClear(ren: *u8): i32
+
+extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+
+extern fn SDL_RenderPresent(ren: *u8): void
+
+extern fn SDL_PollEvent(event: *u8): i32
+
+extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+
+extern fn SDL_GetMouseState(x: *i32, y: *i32): u32 // button bitmask, fills x/y
+
+extern fn SDL_GetTicks(): u32 // ms since SDL_Init (for FPS)
+
+extern fn SDL_Delay(ms: u32): void
+
+extern fn SDL_DestroyWindow(win: *u8): void
+
+extern fn SDL_Quit(): void
+
+let SDL_INIT_VIDEO: u32 = 0x20
+let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
+let SDL_WINDOW_SHOWN: u32 = 0x4
+let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
+let SDL_QUIT: u32 = 0x100
+
+// phase-space grid: NX cells in x, NV cells in v (square so one grid cell = one pixel)
+let NX: i64 = 192
+let NV: i64 = 192
+let SCALE: i64 = 3
+
+let XMIN: f64 = -3.14159265358979
+let XMAX: f64 = 3.14159265358979
+let VMIN: f64 = -6.0
+let VMAX: f64 = 6.0
+let AWELL: f64 = 1.0 // potential amplitude; E(x) = 2*AWELL*sin(2x)
+let QM: f64 = 1.0 // q/m
+let FMAX: f64 = 0.40 // color normalization (Maxwellian peak ≈ 0.399)
+let E_CONST: f64 = 2.718281828459045
+
+fn cellX(i: i64, dx: f64): f64 {
+    return XMIN + ((i as f64) + 0.5) * dx
+}
+
+fn cellV(j: i64, dv: f64): f64 {
+    return VMIN + ((j as f64) + 0.5) * dv
+}
+
+// a 1-D scratch line (max grid dimension); aliasing keeps the size in one place
+type Line = [f64; 256]
+
+fn minmod(a: f64, b: f64): f64 {
+    if a * b <= 0.0 {
+        return 0.0
+    }
+    if mathAbs(a) < mathAbs(b) {
+        return a
+    }
+    return b
+}
+
+// One 2nd-order MUSCL-minmod upwind sweep of a 1-D line u -> un (length n ≤ 256) at
+// constant speed s. Conservative flux form: un = u - (dt/dx)*(F_{k+1/2} - F_{k-1/2}).
+// periodic wrap (x) or zero-gradient outflow (v, where f≈0 at the boundary).
+fn advect1D(u: &Line, un: &mut Line, n: i64, s: f64, dtdx: f64, periodic: bool) {
+    var slope: Line = [0.0; 256]
+    var k = 0
+    while k < n {
+        var km = k - 1
+        var kp = k + 1
+        if periodic {
+            if km < 0 {
+                km = n - 1
+            }
+            if kp >= n {
+                kp = 0
+            }
+        } else {
+            if km < 0 {
+                km = 0
+            }
+            if kp >= n {
+                kp = n - 1
+            }
+        }
+        slope[k] = minmod(u[k] - u[km], u[kp] - u[k])
+        k = k + 1
+    }
+    // flux[k] = numerical flux at interface k-1/2 (between cells k-1 and k), k = 0..n
+    var flux: [f64; 257] = [0.0; 257]
+    k = 0
+    while k <= n {
+        var kl = k - 1
+        var kr = k
+        if periodic {
+            if kl < 0 {
+                kl = n - 1
+            }
+            if kr >= n {
+                kr = 0
+            }
+        } else {
+            if kl < 0 {
+                kl = 0
+            }
+            if kr >= n {
+                kr = n - 1
+            }
+        }
+        // MUSCL face states, then upwind (local Lax-Friedrichs with equal L/R speed s)
+        let uL = u[kl] + 0.5 * slope[kl]
+        let uR = u[kr] - 0.5 * slope[kr]
+        var face = uR
+        if s > 0.0 {
+            face = uL
+        }
+        flux[k] = s * face
+        k = k + 1
+    }
+    k = 0
+    while k < n {
+        un[k] = u[k] - dtdx * (flux[k + 1] - flux[k])
+        k = k + 1
+    }
+}
+
+// x-advection of the whole grid: each velocity row j moves at constant speed v_j.
+fn sweepX(f: &Vec<f64>, fout: &mut Vec<f64>, dt: f64, dx: f64, dv: f64) {
+    var uline: Line = [0.0; 256]
+    var un: Line = [0.0; 256]
+    var j = 0
+    while j < NV {
+        let s = cellV(j, dv)
+        var i = 0
+        while i < NX {
+            uline[i] = f[j * NX + i]
+            i = i + 1
+        }
+        advect1D(uline, un, NX, s, dt / dx, true)
+        i = 0
+        while i < NX {
+            fout[j * NX + i] = un[i]
+            i = i + 1
+        }
+        j = j + 1
+    }
+}
+
+// v-advection: each x column i moves at constant speed a_i = (q/m)·E(x_i).
+fn sweepV(f: &Vec<f64>, fout: &mut Vec<f64>, evec: &Vec<f64>, dt: f64, dv: f64) {
+    var uline: Line = [0.0; 256]
+    var un: Line = [0.0; 256]
+    var i = 0
+    while i < NX {
+        let s = QM * evec[i]
+        var j = 0
+        while j < NV {
+            uline[j] = f[j * NX + i]
+            j = j + 1
+        }
+        advect1D(uline, un, NV, s, dt / dv, false)
+        j = 0
+        while j < NV {
+            fout[j * NX + i] = un[j]
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+// magma colormap (8 anchor stops), t in [0,1] -> packed ABGR
+fn magma(tin: f64): u32 {
+    var t = tin
+    if t < 0.0 {
+        t = 0.0
+    }
+    if t > 1.0 {
+        t = 1.0
+    }
+    let mr: [f64; 8] = [0.001, 0.078, 0.232, 0.416, 0.603, 0.788, 0.930, 0.987]
+    let mg: [f64; 8] = [0.000, 0.043, 0.060, 0.091, 0.149, 0.212, 0.318, 0.991]
+    let mb: [f64; 8] = [0.014, 0.206, 0.438, 0.433, 0.404, 0.336, 0.227, 0.749]
+    let seg = t * 7.0
+    var k = seg as i64
+    if k > 6 {
+        k = 6
+    }
+    let fr = seg - (k as f64)
+    let r = mr[k] + (mr[k + 1] - mr[k]) * fr
+    let g = mg[k] + (mg[k + 1] - mg[k]) * fr
+    let b = mb[k] + (mb[k + 1] - mb[k]) * fr
+    let ri = (r * 255.0) as u32
+    let gi = (g * 255.0) as u32
+    let bi = (b * 255.0) as u32
+    return ri | (gi << 8) | (bi << 16) | (0xFF << 24)
+}
+
+// draw one character (A-Z, 0-9; lowercase folds to uppercase) as a 3x5 bitmap,
+// scaled up, into the framebuffer. Space / unknown draws nothing.
+fn drawChar(fb: &mut Vec<u32>, x0: i64, y0: i64, ch: u8, scale: i64, col: u32) {
+    // each glyph = 5 rows, each row a 3-bit pattern (bit2 = leftmost column)
+    let digits: [i64; 50] = [7, 5, 5, 5, 7, 2, 2, 2, 2, 2, 7, 1, 7, 4, 7, 7, 1, 7, 1, 7, 5, 5, 7, 1, 1, 7, 4, 7, 1, 7, 7, 4, 7, 5, 7, 7, 1, 1, 1, 1, 7, 5, 7, 5, 7, 7, 5, 7, 1, 7,]
+    let letters: [i64; 130] = [2, 5, 7, 5, 5, 6, 5, 6, 5, 6, 3, 4, 4, 4, 3, 6, 5, 5, 5, 6, 7, 4, 6, 4, 7, // A B C D E
+    7, 4, 6, 4, 4, 3, 4, 5, 5, 3, 5, 5, 7, 5, 5, 7, 2, 2, 2, 7, 1, 1, 1, 5, 2, // F G H I J
+    5, 6, 4, 6, 5, 4, 4, 4, 4, 7, 5, 7, 7, 5, 5, 5, 7, 7, 7, 5, 2, 5, 5, 5, 2, // K L M N O
+    6, 5, 6, 4, 4, 2, 5, 5, 6, 3, 6, 5, 6, 5, 5, 3, 4, 2, 1, 6, 7, 2, 2, 2, 2, // P Q R S T
+    5, 5, 5, 5, 7, 5, 5, 5, 5, 2, 5, 5, 7, 7, 5, 5, 5, 2, 5, 5, 5, 5, 2, 2, 2, // U V W X Y
+    7, 1, 2, 4, 7, // Z
+    ]
+    let c = ch as i64
+    var base = -1
+    var useDigit = false
+    if c >= 48 && c <= 57 {
+        base = (c - 48) * 5
+        useDigit = true
+    } 
+    else if c >= 65 && c <= 90 {
+        base = (c - 65) * 5
+    } 
+    else if c >= 97 && c <= 122 {
+        base = (c - 97) * 5
+    } // lowercase -> uppercase glyph
+    if base < 0 {
+        return
+    }
+    var row = 0
+    while row < 5 {
+        var pat = 0
+        if useDigit {
+            pat = digits[base + row]
+        } else {
+            pat = letters[base + row]
+        }
+        var cc = 0
+        while cc < 3 {
+            if (pat & (1 << (2 - cc))) != 0 {
+                var yy = 0
+                while yy < scale {
+                    var xx = 0
+                    while xx < scale {
+                        let px = x0 + cc * scale + xx
+                        let py = y0 + row * scale + yy
+                        if px >= 0 && px < NX && py >= 0 && py < NV {
+                            fb[py * NX + px] = col
+                        }
+                        xx = xx + 1
+                    }
+                    yy = yy + 1
+                }
+            }
+            cc = cc + 1
+        }
+        row = row + 1
+    }
+}
+
+fn drawText(fb: &mut Vec<u32>, x0: i64, y0: i64, s: string, scale: i64, col: u32) {
+    var cx = x0
+    var i = 0
+    while i < s.len {
+        drawChar(fb, cx, y0, s[i], scale, col)
+        cx = cx + 4 * scale
+        i = i + 1
+    }
+}
+
+// draw a non-negative integer left-to-right at (x0,y0)
+fn drawInt(fb: &mut Vec<u32>, x0: i64, y0: i64, n: i64, scale: i64, col: u32) {
+    var v = n
+    if v < 0 {
+        v = 0
+    }
+    var digits = 1
+    var t = v
+    while t >= 10 {
+        digits = digits + 1
+        t = t / 10
+    }
+    var i = digits - 1
+    while i >= 0 {
+        drawChar(fb, x0 + i * (4 * scale), y0, (48 + v % 10) as u8, scale, col)
+        v = v / 10
+        i = i - 1
+    }
+}
+
+// total mass ∫∫ f dx dv (the conserved quantity their scheme proves invariant)
+fn massOf(f: &Vec<f64>, dx: f64, dv: f64): f64 {
+    var m = 0.0
+    var c = 0
+    while c < NX * NV {
+        m = m + f[c]
+        c = c + 1
+    }
+    return m * dx * dv
+}
+
+fn initF(f: &mut Vec<f64>, dv: f64) {
+    let norm = 1.0 / mathSqrt(2.0 * 3.14159265358979)
+    var j = 0
+    while j < NV {
+        let v = cellV(j, dv)
+        let fv = norm * mathPow(E_CONST, 0.0 - 0.5 * v * v) // zero-drift Maxwellian, uniform in x
+        var i = 0
+        while i < NX {
+            f[j * NX + i] = fv
+            i = i + 1
+        }
+        j = j + 1
+    }
+}
+
+fn main(): i32 {
+    if SDL_Init(SDL_INIT_VIDEO) != 0 {
+        print("SDL_Init failed")
+        return 1
+    }
+
+    let dx = (XMAX - XMIN) / (NX as f64)
+    let dv = (VMAX - VMIN) / (NV as f64)
+    // explicit finite-volume CFL: dt < min(dx/max|v|, dv/max|qE/m|)
+    let maxV = 6.0
+    let maxA = QM * 2.0 * AWELL
+    var dt = 0.4 * dx / maxV
+    let dtV = 0.4 * dv / maxA
+    if dtV < dt {
+        dt = dtV
+    }
+    let substeps = 16 // sim sub-steps per rendered frame
+
+    var win: *u8 = 0 as *u8
+    var ren: *u8 = 0 as *u8
+    var tex: *u8 = 0 as *u8
+    var ok = true
+    unsafe {
+        let title = "Milo — electrostatic Vlasov (1x1v), double-well phase space"
+        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (NX * SCALE) as i32, (NV * SCALE) as i32, SDL_WINDOW_SHOWN)
+        ren = SDL_CreateRenderer(win, -1, 0)
+        tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, NX as i32, NV as i32)
+        if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
+            ok = false
+        }
+    }
+    if !ok {
+        print("SDL setup failed: win/ren/tex NULL")
+        return 2
+    }
+
+    // framebuffer on the heap (Vec, not a fixed stack array) — no size to hard-code
+    // and no large-stack-array footgun; its backing store still feeds SDL directly.
+    var fb: Vec<u32> = Vec.new()
+    var fbz = 0
+    while fbz < NX * NV {
+        fb.push(0)
+        fbz = fbz + 1
+    }
+    var ev: [u8; 64] = [0; 64]
+
+    // external field E(x_i) = 2*A*sin(2*x_i), precomputed once
+    var evec: Vec<f64> = Vec.new()
+    var ie = 0
+    while ie < NX {
+        evec.push(2.0 * AWELL * mathSin(2.0 * cellX(ie, dx)))
+        ie = ie + 1
+    }
+
+    // two ping-pong grids
+    var f: Vec<f64> = Vec.new()
+    var g: Vec<f64> = Vec.new()
+    var z = 0
+    while z < NX * NV {
+        f.push(0.0)
+        g.push(0.0)
+        z = z + 1
+    }
+    initF(f, dv)
+
+    // reference mass for the conservation check
+    var mass0 = 0.0
+    var mi = 0
+    while mi < NX * NV {
+        mass0 = mass0 + f[mi]
+        mi = mi + 1
+    }
+    mass0 = mass0 * dx * dv
+
+    var t = 0.0
+    var frame = 0
+    var paused = false
+    var rHeld = false
+    var quit = false
+    var lastTicks = SDL_GetTicks() // scalar extern — safe outside unsafe
+    var fpsAvg = 0.0
+    var mouseHeld = false
+
+    while !quit {
+        var wantReset = false
+        var mx: i64 = -1
+        var my: i64 = -1
+        var mouseDown = false
+        unsafe {
+            while SDL_PollEvent(ev) != 0 {
+                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
+                if evType == SDL_QUIT {
+                    quit = true
+                }
+            }
+            let ks = SDL_GetKeyboardState(0 as *i32)
+            if ks[41] != 0 {
+                quit = true
+            } // Esc
+            if ks[44] != 0 {
+                paused = !paused
+            } // Space (edge-ish; fine at 60fps)
+            if ks[21] != 0 {
+                wantReset = true
+            } // R
+            var mpos: [i32; 2] = [0; 2]
+            let btn = SDL_GetMouseState(mpos[0].addrOf() as *i32, mpos[1].addrOf() as *i32)
+            mx = (mpos[0] as i64) / SCALE // grid x
+            my = (mpos[1] as i64) / SCALE // screen row
+            mouseDown = (btn & 1) != 0
+        }
+        if wantReset {
+            if !rHeld {
+                initF(f, dv)
+                t = 0.0
+                mass0 = massOf(f, dx, dv)
+            }
+            rHeld = true
+        } else {
+            rHeld = false
+        }
+
+        // CLICK (rising edge = one clump per click): inject a small Gaussian blob of
+        // particles at the cursor. The phase-space flow shears it into a spiral
+        // filament. Injection adds mass, so re-baseline mass0 (conserved between pokes).
+        if mouseDown && !mouseHeld {
+            let gj = NV - 1 - my // screen row -> velocity index (v up = top)
+            var jj = gj - 8
+            while jj <= gj + 8 {
+                if jj >= 0 && jj < NV {
+                    var ii = mx - 8
+                    while ii <= mx + 8 {
+                        if ii >= 0 && ii < NX {
+                            let ddx = (ii - mx) as f64
+                            let ddy = (jj - gj) as f64
+                            let r2 = ddx * ddx + ddy * ddy
+                            f[jj * NX + ii] = f[jj * NX + ii] + 0.16 * mathPow(E_CONST, 0.0 - r2 / 14.0)
+                        }
+                        ii = ii + 1
+                    }
+                }
+                jj = jj + 1
+            }
+            mass0 = massOf(f, dx, dv)
+        }
+        mouseHeld = mouseDown
+
+        if !paused {
+            var step = 0
+            while step < substeps {
+                // Strang split: half x, full v, half x — result left in f
+                sweepX(f, g, dt * 0.5, dx, dv) // g <- f
+                sweepV(g, f, evec, dt, dv) // f <- g
+                sweepX(f, g, dt * 0.5, dx, dv) // g <- f
+                let tmp = f
+                f = g
+                g = tmp // swap so f holds the result
+                t = t + dt
+                step = step + 1
+            }
+        }
+
+        // ---- render: f -> magma, x horizontal, v vertical (high v at top) ----
+        var p = 0
+        while p < NV {
+            var q = 0
+            while q < NX {
+                let col = magma(f[p * NX + q] / FMAX)
+                let sy = NV - 1 - p
+                fb[sy * NX + q] = col
+                q = q + 1
+            }
+            p = p + 1
+        }
+
+        // FPS from real frame time (SDL ticks), smoothed
+        let now = SDL_GetTicks()
+        var frameMs = (now - lastTicks) as i64
+        lastTicks = now
+        if frameMs < 1 {
+            frameMs = 1
+        }
+        let inst = 1000.0 / (frameMs as f64)
+        if fpsAvg <= 0.0 {
+            fpsAvg = inst
+        } else {
+            fpsAvg = fpsAvg * 0.9 + inst * 0.1
+        }
+
+        // ---- on-canvas labels so the window is self-explanatory ----
+        let ink: u32 = 0xFFF0F0F0
+        drawText(fb, 4, 4, "VLASOV PHASE SPACE", 1, ink)
+        drawText(fb, 4, 12, "DISTRIBUTION F OF X V", 1, ink)
+        drawText(fb, 4, NV - 9, "X POSITION", 1, ink)
+        drawText(fb, NX - 44, NV - 9, "CLICK POKE", 1, ink)
+        // FPS top-right
+        drawInt(fb, NX - 34, 4, fpsAvg as i64, 1, ink)
+        drawText(fb, NX - 18, 4, "FPS", 1, ink)
+
+        unsafe {
+            SDL_UpdateTexture(tex, 0 as *u8, fb[0].addrOf() as *u8, (NX * 4) as i32)
+            SDL_RenderClear(ren)
+            SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
+            SDL_RenderPresent(ren)
+        }
+
+        // ---- runtime invariant check: total mass conserved, worst negative f ----
+        if frame % 60 == 0 {
+            var mass = 0.0
+            var minf = 0.0
+            var c = 0
+            while c < NX * NV {
+                let val = f[c]
+                mass = mass + val
+                if val < minf {
+                    minf = val
+                }
+                c = c + 1
+            }
+            mass = mass * dx * dv
+            let relErr = mathAbs(mass - mass0) / mass0
+            print("t=" + formatFloat(t, 2) + "  massRelErr=" + formatFloat(relErr, 8) + "  min(f)=" + formatFloat(minf, 6))
+        }
+        frame = frame + 1
+        SDL_Delay(4)
+    }
+
+    SDL_DestroyWindow(win)
+    SDL_Quit()
+    return 0
+}

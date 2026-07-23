@@ -1,0 +1,162 @@
+// Lockstep trace harness for our Milo 68k core — mirrors ref/ref.c EXACTLY (no
+// Z80 co-run, no audio/render): boot the cart, run N instructions with the same
+// line/vblank timing model, then dump all registers for byte-for-byte diffing
+// against the Musashi reference. Used to pin the opcode that diverges on GA.
+//   milo run examples/emulators/genesis/ref/traceMilo.milo <rom> <steps>
+from "std/args" import {
+    args
+}
+from "../cart68k" import {
+    Cart
+}
+from "../cart68kFile" import {
+    loadCart
+}
+from "../m68k" import {
+    M68k, Mem, newCpu, newMem, step, deliverInterrupt
+}
+from "std/fs" import {
+    writeFile
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 3 {
+        print("usage: traceMilo <rom> <steps>")
+        return 1
+    }
+    var maxSteps: i64 = strToI(argv[2])
+
+    var cart = Cart {
+        rom: Vec.new(), name: "", romEnd: 0
+    }
+    match loadCart(argv[1]) {
+        Result.Ok(c) => {
+            cart = c
+        }
+        Result.Err(e) => {
+            print("load failed: " + e)
+            return 1
+        }
+    }
+
+    var m = newMem()
+    m.genesis = true
+    var i: i64 = 0
+    while i < cart.rom.len && i < 0x400000 {
+        m.ram[i] = cart.rom[i]
+        i = i + 1
+    }
+    let sp = ((m.ram[0] as i64) << 24) | ((m.ram[1] as i64) << 16) | ((m.ram[2] as i64) << 8) | (m.ram[3] as i64)
+    let pc = ((m.ram[4] as i64) << 24) | ((m.ram[5] as i64) << 16) | ((m.ram[6] as i64) << 8) | (m.ram[7] as i64)
+    var cpu = newCpu()
+    cpu.a[7] = sp & 0xFFFFFFFF
+    cpu.pc = pc & 0xFFFFFFFF
+    cpu.sr = 0x2700
+
+    var steps: i64 = 0
+    var lineClock: i64 = 0
+    var wasVblank = false
+    while steps < maxSteps {
+        step(cpu, m)
+        lineClock = lineClock + 1
+        if lineClock >= 130 {
+            lineClock = 0
+            m.vdpLine = m.vdpLine + 1
+            if m.vdpLine >= 262 {
+                m.vdpLine = 0
+            }
+        }
+        let inVblank = m.vdpLine >= 224
+        if inVblank && !wasVblank {
+            if (m.vdpRegs[1] & 0x20) != 0 {
+                deliverInterrupt(cpu, m, 6)
+            }
+        }
+        wasVblank = inVblank
+        steps = steps + 1
+    }
+
+    // Dump the $FF0000 work-RAM region for byte-diff against the reference.
+    var ram = ""
+    var ri: i64 = 0xFF0000
+    while ri < 0x1000000 {
+        ram.push(m.ram[ri])
+        ri = ri + 1
+    }
+    match writeFile("/tmp/milo-ram.bin", ram) {
+        Result.Ok(nn) => {
+        }
+        Result.Err(e) => {
+            print("ram write failed")
+        }
+    }
+
+    var s = "REGS pc=" + hex6(cpu.pc) + " sr=" + hex4(cpu.sr & 0xFFFF)
+    var r: i64 = 0
+    while r < 8 {
+        s = s + " d" + itoa(r) + "=" + hex8(cpu.d[r] & 0xFFFFFFFF)
+        r = r + 1
+    }
+    r = 0
+    while r < 8 {
+        s = s + " a" + itoa(r) + "=" + hex8(cpu.a[r] & 0xFFFFFFFF)
+        r = r + 1
+    }
+    print(s)
+    return 0
+}
+
+fn strToI(s: &string): i64 {
+    var v: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let c = s[i] as i64
+        if c >= 48 && c <= 57 {
+            v = v * 10 + (c - 48)
+        }
+        i = i + 1
+    }
+    return v
+}
+
+fn itoa(n: i64): string {
+    if n == 0 {
+        return "0"
+    }
+    var v = n
+    var s = ""
+    while v > 0 {
+        var d = ""
+        d.push((48 + (v % 10)) as u8)
+        s = d + s
+        v = v / 10
+    }
+    return s
+}
+
+fn hexNib(n: i64): string {
+    var s = ""
+    if n < 10 {
+        s.push((48 + n) as u8)
+    } else {
+        s.push((87 + n) as u8)
+    }
+    return s
+}
+
+fn hex2(n: i64): string {
+    return hexNib((n >> 4) & 0xF) + hexNib(n & 0xF)
+}
+
+fn hex4(n: i64): string {
+    return hex2((n >> 8) & 0xFF) + hex2(n & 0xFF)
+}
+
+fn hex6(n: i64): string {
+    return hex2((n >> 16) & 0xFF) + hex4(n & 0xFFFF)
+}
+
+fn hex8(n: i64): string {
+    return hex4((n >> 16) & 0xFFFF) + hex4(n & 0xFFFF)
+}

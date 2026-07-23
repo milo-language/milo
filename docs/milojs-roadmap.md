@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: roadmap
-purpose: staged plan to grow examples/apps/milojs into a pure-Milo JS engine that replaces the JavaScriptCore dependency in minibun
-key-files: examples/apps/milojs/milojs.milo, examples/apps/minibun.milo, docs/minibun-roadmap.md
+purpose: staged plan to grow examples/runtimes/milojs into a pure-Milo JS engine that replaces the JavaScriptCore dependency in minibun
+key-files: examples/runtimes/milojs/milojs.milo, examples/runtimes/minibun.milo, docs/minibun-roadmap.md
 update-when: a stage lands (check the box, note the commit) or the acceptance target changes
 last-verified: 2026-07-20
 -->
@@ -33,7 +33,7 @@ The source and locked fixtures are authoritative when an older stage narrative
 below conflicts with this snapshot.
 
 **Acceptance target:** `minibun` runs its Node/Express workload with `milojs` as the engine
-instead of JavaScriptCore. The JSC `extern` block in `examples/apps/minibun.milo`
+instead of JavaScriptCore. The JSC `extern` block in `examples/runtimes/minibun.milo`
 (`JSEvaluateScript`, `JSObjectMake`, …) is deleted; the same node-compat runtime executes on a
 Milo-native VM. No system framework, no V8, no JSC — one static binary.
 
@@ -67,7 +67,7 @@ for-loops, ternary, exceptions, bytecode.
 **Proves:** the value model and eval loop on the subset that needs no heap.
 **Gate:** a `.js` demo (arithmetic, string concat, if/while, a closure counter) compiles and
 prints correct output under `milo run`.
-**Landed:** `examples/apps/milojs/milojs.milo` (~1480 LOC). Value model
+**Landed:** `examples/runtimes/milojs/milojs.milo` (~1480 LOC). Value model
 `enum JSValue { Undefined, Null, Bool, Number(f64), Str, Func(fnIdx, scopeIdx) }` — `Func`'s
 scope index *is* the closure. AST is index-based enums into flat `Vec` arenas (std/json cursor
 pattern), scopes an append-only parent-linked `Vec<Scope>` (chosen so Stage 2 marking is an
@@ -186,7 +186,7 @@ Implement the standard library minibun's node shims actually reach: `Object`/`Ar
 (Buffer sits on these). Swap minibun's JSC `extern` block for a milojs embedding API. The
 microtask drain that minibun's M3 solved for JSC's API boundary is now *our* event loop — we
 own the queue, so no more "drain only at the outermost boundary" gymnastics.
-**Gate:** `examples/apps/minibun-notes.js` (the Express-style CRUD demo) serves requests with
+**Gate:** `examples/runtimes/minibun-notes.js` (the Express-style CRUD demo) serves requests with
 milojs as the engine. `RegExp` is the likeliest long pole — scope to what express needs.
 
 ### Stage 6 — test262 conformance, measured and growing ⬜  ← a first-class goal, not just an app-subset

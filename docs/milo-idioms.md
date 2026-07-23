@@ -8,7 +8,7 @@ last-verified: 2026-07-18
 
 # Milo Idioms
 
-Written after auditing `examples/apps/milojs` — a large hand-written interpreter — against what the language actually offers. Every entry below is a shape that got written the hard way because the easy way wasn't obvious.
+Written after auditing `examples/runtimes/milojs` — a large hand-written interpreter — against what the language actually offers. Every entry below is a shape that got written the hard way because the easy way wasn't obvious.
 
 `CONVENTIONS.md` has the rules reviewers enforce. This doc is narrower: it's the patterns, and the reasoning behind them.
 

@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: milojs-async-suspension
 purpose: plan of record for making await suspend in milojs — requirements, design, per-requirement status, and test plan
-key-files: examples/apps/milojs/eval.milo, examples/apps/milojs/runtime.milo, std/runtime.milo, tests/fixtures/asyncCallOrdering.milo
+key-files: examples/runtimes/milojs/eval.milo, examples/runtimes/milojs/runtime.milo, std/runtime.milo, tests/fixtures/asyncCallOrdering.milo
 update-when: a requirement is implemented, dropped, or revised, or the suspension mechanism changes
 last-verified: 2026-07-21
 -->
@@ -276,7 +276,7 @@ the outcome. This is the top open the integration app item.
 
 Building an app-shaped test for R1 surfaced a bug that has nothing to do with
 suspension: it reproduces on committed main with none of this work involved.
-See `examples/apps/milojs/known-bugs/promiseAllGcRoot.js`.
+See `examples/runtimes/milojs/known-bugs/promiseAllGcRoot.js`.
 
 A live promise chain is collected. The symptom is
 `ReferenceError: out is not defined`, where `out` is the accumulator inside the
@@ -404,7 +404,7 @@ R1 to land it in the same slice.
 
 Building an app-shaped test for R1 surfaced a bug with nothing to do with
 suspension: it reproduced on committed main with none of this work involved.
-Fixed in 4cf6ebd; fixture `examples/apps/milojs/tests/microtaskHandlerGcRoot.js`.
+Fixed in 4cf6ebd; fixture `examples/runtimes/milojs/tests/microtaskHandlerGcRoot.js`.
 
 `drainMicrotasks` pops a queue entry into locals before invoking it. Once
 popped, the entry roots nothing — but only `arg` and `derived` were pushed as

@@ -104,9 +104,9 @@ The patterns that make Rust reach for `<'a>`, `Box`, `Rc<RefCell>`, or `unsafe`,
 | Zero-copy view (within a scope) | `let w: &str = &s[6..11];` | `let w = s[6..11]` — non-owning `&string`, no alloc | — |
 | Recursive data (tree / AST) | `enum Expr { Bin(Box<Expr>, Box<Expr>) }` | `enum Expr { Bin(Heap<Expr>, Heap<Expr>) }`; deref sub-nodes with `*l` | reference §Heap |
 | Recursive struct field | `struct Node { next: Option<Box<Node>> }` | `struct Node { next: Option<Heap<Node>> }` | — |
-| Doubly-linked list | `Rc<RefCell<Node>>` or `unsafe` | arena + `Option<Handle<Node>>` (Copy handles, stored freely) | [linkedList.milo](../examples/linkedList.milo) |
-| Cyclic graph / cross-refs | `petgraph`, arena+indices, or `Rc` | `Arena<GNode>` + `Vec<Handle<GNode>>` for edges | [depgraph.milo](../examples/depgraph.milo) |
-| Tree with parent pointers (DOM) | `Rc<RefCell>` / arena crate | `Arena<Node>` + parent/children as `Handle` | [domArena.milo](../examples/domArena.milo) |
+| Doubly-linked list | `Rc<RefCell<Node>>` or `unsafe` | arena + `Option<Handle<Node>>` (Copy handles, stored freely) | [linkedList.milo](../examples/basics/linkedList.milo) |
+| Cyclic graph / cross-refs | `petgraph`, arena+indices, or `Rc` | `Arena<GNode>` + `Vec<Handle<GNode>>` for edges | [depgraph.milo](../examples/basics/depgraph.milo) |
+| Tree with parent pointers (DOM) | `Rc<RefCell>` / arena crate | `Arena<Node>` + parent/children as `Handle` | [domArena.milo](../examples/basics/domArena.milo) |
 | Borrow-holding iterator / cursor | `struct Cur<'a> { buf: &'a [u8] }` | own the buffer + an integer `pos`; slice on demand | — |
 | Long-lived cross-task state | `Arc<Mutex<T>>` / `&'static` | module-scope `var pool: Arena<T>`, pass `Handle` | (milojs `gInterp`) |
 | **Type that STORES a borrow** (`Parser<'a> { src: &'a str }`) | `struct Parser<'a> { src: &'a str }` | **no direct equivalent** — own the `string` (clone once) or hold an index into a buffer you own | *the real gap* |

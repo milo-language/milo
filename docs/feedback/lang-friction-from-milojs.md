@@ -1,6 +1,6 @@
 # Milo language/runtime friction — from building milojs
 
-Collected building `examples/apps/milojs/` (a pure-Milo JS engine: lexer, parser,
+Collected building `examples/runtimes/milojs/` (a pure-Milo JS engine: lexer, parser,
 AST, tree-walking evaluator with closures, mark-sweep GC, CommonJS module loader —
 targeting the express/tRPC bundle). Complements the emulator friction docs; where
 an item there also bit here I note it as recurring (higher priority).

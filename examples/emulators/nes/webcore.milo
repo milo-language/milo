@@ -1,0 +1,112 @@
+// Browser-target NES core: the pure emulator (cpu+ppu+apu, zero FFI) plus a thin
+// handle API the JS/canvas driver calls. Compile with the JS backend:
+//   bun run src/main.ts emit-js examples/emulators/nes/webcore.milo -o web/nes-core.js
+// The driver (web/index.html) does: createNes(romBytes) -> h; each rAF frame it
+// calls setButtons(h, bits) then stepFrame(h), then blits h.bus.ppu.fb to a canvas.
+from "./cpu" import {
+    Cpu, Bus, newBus, newCpuReset, step, clockPpu, clockApu, serviceInterrupts
+}
+from "./ppu" import {
+    renderFrame
+}
+from "./cartridge" import {
+    Cartridge, parseCartridge
+}
+
+struct NesHandle {
+    cpu: Cpu
+    bus: Bus
+}
+
+// Build a 16 KiB all-NOP PRG bank with the reset vector pointing at $8000, used as
+// a safe fallback when a ROM fails to parse so the driver never gets a null handle.
+fn fallbackCart(): Cartridge {
+    var prg: Vec<u8> = []
+    var i: i64 = 0
+    while i < 16384 {
+        if i == 0x3FFC {
+            prg.push(0x00 as u8)
+        } else {
+            if i == 0x3FFD {
+                prg.push(0x80 as u8)
+            } else {
+                prg.push(0xEA as u8)
+            }
+        }
+        i = i + 1
+    }
+    var chr: Vec<u8> = []
+    i = 0
+    while i < 8192 {
+        chr.push(0 as u8)
+        i = i + 1
+    }
+    return Cartridge {
+        prg: prg, chr: chr, mapper: 0, mirrorVertical: false,
+        hasBattery: false, prg16kBanks: 1, chr8kBanks: 1,
+    }
+}
+
+// Parse `rom` (raw .nes bytes) and boot a fresh system. Never fails: a bad ROM
+// falls back to the NOP cart above so the JS side always gets a usable handle.
+fn createNes(rom: Vec<u8>): NesHandle {
+    var cart = fallbackCart()
+    match parseCartridge(rom) {
+        Result.Ok(c) => {
+            cart = c
+        }
+        Result.Err(e) => {
+            print("ROM parse failed: " + e)
+        }
+    }
+    var bus = newBus(cart)
+    var cpu = newCpuReset(bus)
+    return NesHandle {
+        cpu: cpu, bus: bus,
+    }
+}
+
+// Latch controller-1 state. Bit layout (matches cpu.milo): 0 A, 1 B, 2 Select,
+// 3 Start, 4 Up, 5 Down, 6 Left, 7 Right.
+fn setButtons(h: &mut NesHandle, b: u8): void {
+    h.bus.buttons = b
+}
+
+// Advance one video frame (CPU + PPU + APU), leaving the RGBA framebuffer in
+// h.bus.ppu.fb for the driver to blit.
+fn stepFrame(h: &mut NesHandle): void {
+    let startFrame = h.bus.ppu.frame
+    while h.bus.ppu.frame == startFrame {
+        let before = h.cpu.cyc
+        step(h.cpu, h.bus)
+        let used = h.cpu.cyc - before
+        var k: i64 = 0
+        while k < used * 3 {
+            clockPpu(h.bus)
+            k = k + 1
+        }
+        clockApu(h.bus, used)
+        serviceInterrupts(h.cpu, h.bus)
+    }
+    renderFrame(h.bus.ppu)
+}
+
+// Single CPU instruction + its PPU/APU catch-up — for backend trace diffing.
+fn stepOne(h: &mut NesHandle): void {
+    let before = h.cpu.cyc
+    step(h.cpu, h.bus)
+    let used = h.cpu.cyc - before
+    var k: i64 = 0
+    while k < used * 3 {
+        clockPpu(h.bus)
+        k = k + 1
+    }
+    clockApu(h.bus, used)
+    serviceInterrupts(h.cpu, h.bus)
+}
+
+// emit-js appends `main(); __flush();`; keep it a no-op so importing the module in
+// the browser has no side effects — the driver drives everything.
+fn main(): i32 {
+    return 0
+}

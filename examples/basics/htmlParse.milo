@@ -1,0 +1,764 @@
+// @run:
+// htmlParse — an HTML tokenizer + stack-based tree builder over the arena DOM
+// (examples/basics/domArena.milo). The point: drive a real state-machine parser into
+// the no-stored-refs DOM and round-trip actual HTML. Handles tags, attributes
+// (quoted/unquoted/boolean), text, comments, doctype, void elements, and
+// character references (named + numeric). Not a full html5 insertion-mode
+// engine — a pragmatic stack builder that handles well-formed input.
+
+from "std/arena" import {
+    Arena, Handle, arenaNew, arenaAlloc, arenaWith, arenaModifyMut
+}
+
+struct Attr {
+    name: string,
+    value: string,
+}
+
+enum NodeKind {
+    Document,
+    Element,
+    Text,
+    Comment,
+    Doctype,
+}
+
+struct Node {
+    kind: NodeKind,
+    name: string,
+    text: string,
+    attrs: Vec<Attr>,
+    parent: Option<Handle<Node>>,
+    children: Vec<Handle<Node>>,
+}
+
+struct Dom {
+    arena: Arena<Node>,
+    document: Handle<Node>,
+}
+
+fn emptyNode(kind: NodeKind, name: string, text: string): Node {
+    return Node {
+        kind: kind,
+        name: name,
+        text: text,
+        attrs: Vec.new(),
+        parent: Option.None,
+        children: Vec.new(),
+    }
+}
+
+fn domNew(): Dom {
+    var arena: Arena<Node> = arenaNew()
+    let doc = arenaAlloc(arena, emptyNode(NodeKind.Document, "", ""))
+    return Dom {
+        arena: arena, document: doc
+    }
+}
+
+// ── Field readers (borrow, no whole-node copy) ──
+
+fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
+    let r = arenaWith(dom.arena, h, (n: &Node): NodeKind => n.kind)
+    match r {
+        Option.Some(k) => {
+            return k
+        }
+        Option.None => {
+            assert(false, "nodeKind: stale handle")
+            return NodeKind.Document
+        }
+    }
+}
+
+fn nodeName(dom: &Dom, h: Handle<Node>): string {
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.name.clone())
+    match r {
+        Option.Some(s) => {
+            return s
+        }
+        Option.None => {
+            return ""
+        }
+    }
+}
+
+fn nodeText(dom: &Dom, h: Handle<Node>): string {
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.text.clone())
+    match r {
+        Option.Some(s) => {
+            return s
+        }
+        Option.None => {
+            return ""
+        }
+    }
+}
+
+fn childCount(dom: &Dom, h: Handle<Node>): i64 {
+    let r = arenaWith(dom.arena, h, (n: &Node): i64 => n.children.len())
+    match r {
+        Option.Some(c) => {
+            return c
+        }
+        Option.None => {
+            return 0
+        }
+    }
+}
+
+fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
+    let r = arenaWith(dom.arena, h, (n: &Node): Handle<Node> => n.children[i])
+    match r {
+        Option.Some(c) => {
+            return c
+        }
+        Option.None => {
+            assert(false, "childAt: stale handle")
+            return h
+        }
+    }
+}
+
+fn attrCount(dom: &Dom, h: Handle<Node>): i64 {
+    let r = arenaWith(dom.arena, h, (n: &Node): i64 => n.attrs.len())
+    match r {
+        Option.Some(c) => {
+            return c
+        }
+        Option.None => {
+            return 0
+        }
+    }
+}
+
+fn attrNameAt(dom: &Dom, h: Handle<Node>, i: i64): string {
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.attrs[i].name.clone())
+    match r {
+        Option.Some(s) => {
+            return s
+        }
+        Option.None => {
+            return ""
+        }
+    }
+}
+
+fn attrValueAt(dom: &Dom, h: Handle<Node>, i: i64): string {
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.attrs[i].value.clone())
+    match r {
+        Option.Some(s) => {
+            return s
+        }
+        Option.None => {
+            return ""
+        }
+    }
+}
+
+// ── Mutators ──
+
+fn createElement(dom: &mut Dom, name: string): Handle<Node> {
+    return arenaAlloc(dom.arena, emptyNode(NodeKind.Element, name, ""))
+}
+
+fn createText(dom: &mut Dom, text: string): Handle<Node> {
+    return arenaAlloc(dom.arena, emptyNode(NodeKind.Text, "", text))
+}
+
+fn createComment(dom: &mut Dom, text: string): Handle<Node> {
+    return arenaAlloc(dom.arena, emptyNode(NodeKind.Comment, "", text))
+}
+
+fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
+    arenaModifyMut(dom.arena, parent, (n: &mut Node): void => {
+        n.children.push(child)
+    }
+    )
+    arenaModifyMut(dom.arena, child, (c: &mut Node): void => {
+        c.parent = Option.Some(parent)
+    }
+    )
+}
+
+fn addAttr(dom: &mut Dom, h: Handle<Node>, name: string, value: string) {
+    arenaModifyMut(dom.arena, h, (n: &mut Node): void => {
+        n.attrs.push(Attr {
+            name: name, value: value
+        }
+        )
+    }
+    )
+}
+
+fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
+    let c = childCount(dom, parent)
+    if c > 0 {
+        let last = childAt(dom, parent, c - 1)
+        match nodeKind(dom, last) {
+            NodeKind.Text => {
+                let extra = t.clone()
+                arenaModifyMut(dom.arena, last, (n: &mut Node): void => {
+                    for i in 0..extra.len() {
+                        n.text.push(extra[i])
+                    }
+                }
+                )
+                return
+            }
+            _ => {
+            }
+        }
+    }
+    let tn = createText(dom, t)
+    append(dom, parent, tn)
+}
+
+// ── Lexical helpers ──
+
+fn isSpace(c: u8): bool {
+    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8 || c == 12 as u8
+}
+
+fn isAlpha(c: u8): bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+fn isNameChar(c: u8): bool {
+    return isAlpha(c) || (c >= '0' && c <= '9') || c == '-' || c == ':' || c == '_'
+}
+
+fn lower(c: u8): u8 {
+    if c >= 'A' && c <= 'Z' {
+        return c + 32 as u8
+    }
+    return c
+}
+
+fn isVoidElement(name: &string): bool {
+    return name == "br" || name == "img" || name == "input" || name == "meta"
+    || name == "link" || name == "hr" || name == "area" || name == "base"
+    || name == "col" || name == "embed" || name == "source" || name == "track"
+    || name == "wbr"
+}
+
+// Encode a Unicode code point as UTF-8 into `out` (mirrors std/json).
+fn appendCodepoint(out: &mut string, cp: i64) {
+    if cp < 0x80 {
+        out.push(cp as u8)
+    } else if cp < 0x800 {
+        out.push((0xC0 | (cp >> 6)) as u8)
+        out.push((0x80 | (cp & 0x3F)) as u8)
+    } else if cp < 0x10000 {
+        out.push((0xE0 | (cp >> 12)) as u8)
+        out.push((0x80 | ((cp >> 6) & 0x3F)) as u8)
+        out.push((0x80 | (cp & 0x3F)) as u8)
+    } else {
+        out.push((0xF0 | (cp >> 18)) as u8)
+        out.push((0x80 | ((cp >> 12) & 0x3F)) as u8)
+        out.push((0x80 | ((cp >> 6) & 0x3F)) as u8)
+        out.push((0x80 | (cp & 0x3F)) as u8)
+    }
+}
+
+fn appendStr(out: &mut string, s: &string) {
+    for i in 0..s.len() {
+        out.push(s[i])
+    }
+}
+
+fn namedEntity(name: &string, out: &mut string): bool {
+    if name == "amp" {
+        out.push('&')
+        return true
+    }
+    if name == "lt" {
+        out.push('<')
+        return true
+    }
+    if name == "gt" {
+        out.push('>')
+        return true
+    }
+    if name == "quot" {
+        out.push('"')
+        return true
+    }
+    if name == "apos" {
+        out.push(39 as u8)
+        return true
+    }
+    if name == "nbsp" {
+        appendCodepoint(out, 0xA0)
+        return true
+    }
+    if name == "copy" {
+        appendCodepoint(out, 0xA9)
+        return true
+    }
+    return false
+}
+
+fn hexDigit(c: u8): i64 {
+    if c >= '0' && c <= '9' {
+        return (c - '0') as i64
+    }
+    if c >= 'a' && c <= 'f' {
+        return (c - 'a' + 10 as u8) as i64
+    }
+    if c >= 'A' && c <= 'F' {
+        return (c - 'A' + 10 as u8) as i64
+    }
+    return 0 as i64 - 1
+}
+
+// Decode one character reference at `pos` (which points at '&'); append the
+// result to `out`. Returns the position just past the reference. On a
+// non-entity '&', emits a literal '&'.
+fn decodeEntity(src: &string, pos: i64, n: i64, out: &mut string): i64 {
+    if pos + 1 < n && src[pos + 1] == '#' {
+        var i = pos + 2
+        var hex = false
+        if i < n && (src[i] == 'x' || src[i] == 'X') {
+            hex = true
+            i = i + 1
+        }
+        var code: i64 = 0
+        var any = false
+        var ok = true
+        while i < n && src[i] != ';' && ok {
+            let d = src[i]
+            if hex {
+                let hv = hexDigit(d)
+                if hv < 0 {
+                    ok = false
+                } else {
+                    code = code * 16 + hv
+                }
+            } else {
+                if d >= '0' && d <= '9' {
+                    code = code * 10 + (d - '0') as i64
+                } else {
+                    ok = false
+                }
+            }
+            if ok {
+                any = true
+                i = i + 1
+            }
+        }
+        if any && ok && i < n && src[i] == ';' {
+            appendCodepoint(out, code)
+            return i + 1
+        }
+    } else {
+        var i = pos + 1
+        var name = String.withCapacity(8)
+        while i < n && isAlpha(src[i]) {
+            name.push(src[i])
+            i = i + 1
+        }
+        if i < n && src[i] == ';' {
+            if namedEntity(name, out) {
+                return i + 1
+            }
+        }
+    }
+    out.push('&')
+    return pos + 1
+}
+
+// ── Tokenizer / tree builder ──
+
+fn topOf(stack: &Vec<Handle<Node>>): Handle<Node> {
+    return stack[stack.len() - 1]
+}
+
+fn parseText(dom: &mut Dom, parent: Handle<Node>, src: &string, pos: i64, n: i64): i64 {
+    var out = String.withCapacity(16)
+    var i = pos
+    while i < n && src[i] != '<' {
+        if src[i] == '&' {
+            i = decodeEntity(src, i, n, out)
+        } else {
+            out.push(src[i])
+            i = i + 1
+        }
+    }
+    appendText(dom, parent, out)
+    return i
+}
+
+fn readName(src: &string, pos: i64, n: i64, out: &mut string): i64 {
+    var i = pos
+    while i < n && isNameChar(src[i]) {
+        out.push(lower(src[i]))
+        i = i + 1
+    }
+    return i
+}
+
+fn skipSpaces(src: &string, pos: i64, n: i64): i64 {
+    var i = pos
+    while i < n && isSpace(src[i]) {
+        i = i + 1
+    }
+    return i
+}
+
+// Block-level start tags that implicitly close an open <p>.
+fn closesParagraph(tag: &string): bool {
+    return tag == "p" || tag == "div" || tag == "ul" || tag == "ol" || tag == "table"
+    || tag == "h1" || tag == "h2" || tag == "h3" || tag == "h4" || tag == "h5" || tag == "h6"
+    || tag == "blockquote" || tag == "pre" || tag == "section" || tag == "article"
+    || tag == "header" || tag == "footer" || tag == "nav" || tag == "form" || tag == "hr"
+}
+
+// Whether opening `newTag` should implicitly close a currently-open `open`
+// element (a pragmatic subset of html5's "generate implied end tags").
+fn shouldImplicitClose(open: &string, newTag: &string): bool {
+    if newTag == "li" && open == "li" {
+        return true
+    }
+    if (newTag == "dd" || newTag == "dt") && (open == "dd" || open == "dt") {
+        return true
+    }
+    if newTag == "option" && open == "option" {
+        return true
+    }
+    if (newTag == "td" || newTag == "th") && (open == "td" || open == "th") {
+        return true
+    }
+    if newTag == "tr" && (open == "tr" || open == "td" || open == "th") {
+        return true
+    }
+    if closesParagraph(newTag) && open == "p" {
+        return true
+    }
+    return false
+}
+
+fn closeImplied(dom: &Dom, stack: &mut Vec<Handle<Node>>, newTag: &string) {
+    var go = true
+    while go && stack.len() > 1 {
+        let topName = nodeName(dom, topOf(stack))
+        if shouldImplicitClose(topName, newTag) {
+            stack.pop()!
+        } else {
+            go = false
+        }
+    }
+}
+
+// pos points just past '<'. Parse a start tag, append the element, and push it
+// onto the open-element stack unless it is void or self-closed.
+fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, pos: i64, n: i64): i64 {
+    var name = String.withCapacity(8)
+    var i = readName(src, pos, n, name)
+    closeImplied(dom, stack, name)
+    let el = createElement(dom, name.clone())
+    let parent = topOf(stack)
+    append(dom, parent, el)
+
+    var selfClose = false
+    var done = false
+    while i < n && !done {
+        i = skipSpaces(src, i, n)
+        if i >= n {
+            done = true
+        } else if src[i] == '>' {
+            i = i + 1
+            done = true
+        } else if src[i] == '/' {
+            selfClose = true
+            i = i + 1
+        } else {
+            // attribute name
+            var an = String.withCapacity(8)
+            i = readName(src, i, n, an)
+            if an.len() == 0 {
+                // stray character; skip it to avoid an infinite loop
+                i = i + 1
+            } else {
+                i = skipSpaces(src, i, n)
+                var av = String.withCapacity(8)
+                if i < n && src[i] == '=' {
+                    i = i + 1
+                    i = skipSpaces(src, i, n)
+                    if i < n && (src[i] == '"' || src[i] == 39 as u8) {
+                        let q = src[i]
+                        i = i + 1
+                        while i < n && src[i] != q {
+                            if src[i] == '&' {
+                                i = decodeEntity(src, i, n, av)
+                            } else {
+                                av.push(src[i])
+                                i = i + 1
+                            }
+                        }
+                        if i < n {
+                            i = i + 1
+                        }
+                    } else {
+                        while i < n && !isSpace(src[i]) && src[i] != '>' && src[i] != '/' {
+                            if src[i] == '&' {
+                                i = decodeEntity(src, i, n, av)
+                            } else {
+                                av.push(src[i])
+                                i = i + 1
+                            }
+                        }
+                    }
+                }
+                addAttr(dom, el, an, av)
+            }
+        }
+    }
+
+    if !selfClose && !isVoidElement(name) {
+        stack.push(el)
+    }
+    return i
+}
+
+// pos points just past '</'. Pop the matching open element (and anything still
+// open inside it).
+fn parseEndTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, pos: i64, n: i64): i64 {
+    var name = String.withCapacity(8)
+    var i = readName(src, pos, n, name)
+    while i < n && src[i] != '>' {
+        i = i + 1
+    }
+    if i < n {
+        i = i + 1
+    }
+
+    // find topmost open element with this name
+    var k = stack.len() - 1
+    var found = false
+    while k >= 0 && !found {
+        if nodeName(dom, stack[k]) == name {
+            found = true
+        } else {
+            k = k - 1
+        }
+    }
+    if found {
+        while stack.len() > k {
+            stack.pop()!
+        }
+    }
+    return i
+}
+
+fn parseComment(dom: &mut Dom, parent: Handle<Node>, src: &string, pos: i64, n: i64): i64 {
+    // pos points at '<' of '<!--'
+    var i = pos + 4
+    var out = String.withCapacity(16)
+    var done = false
+    while i < n && !done {
+        if i + 2 < n && src[i] == '-' && src[i + 1] == '-' && src[i + 2] == '>' {
+            done = true
+            i = i + 3
+        } else {
+            out.push(src[i])
+            i = i + 1
+        }
+    }
+    let cm = createComment(dom, out)
+    append(dom, parent, cm)
+    return i
+}
+
+fn skipTo(src: &string, pos: i64, n: i64, target: u8): i64 {
+    var i = pos
+    while i < n && src[i] != target {
+        i = i + 1
+    }
+    if i < n {
+        i = i + 1
+    }
+    return i
+}
+
+// Raw-text elements: content is consumed literally (no tags), entities not
+// decoded. RCDATA elements are literal-tags but entities ARE decoded.
+fn isRawText(name: &string): bool {
+    return name == "script" || name == "style"
+}
+
+fn isRcData(name: &string): bool {
+    return name == "textarea" || name == "title"
+}
+
+// Does src at `pos` spell out `</tag` followed by a tag terminator?
+fn matchesCloseTag(src: &string, pos: i64, n: i64, tag: &string): bool {
+    let tl = tag.len()
+    if pos + tl > n {
+        return false
+    }
+    var ok = true
+    for k in 0..tl {
+        if lower(src[pos + k]) != tag[k] {
+            ok = false
+        }
+    }
+    if !ok {
+        return false
+    }
+    let after = pos + tl
+    if after >= n {
+        return true
+    }
+    let c = src[after]
+    return isSpace(c) || c == '>' || c == '/'
+}
+
+// Consume raw/rcdata content until the matching close tag; the open element is
+// the top of the stack. Emits the content as text and pops the element.
+fn consumeRaw(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, pos: i64, n: i64, decode: bool): i64 {
+    let tag = nodeName(dom, topOf(stack))
+    let here = topOf(stack)
+    var out = String.withCapacity(32)
+    var i = pos
+    var done = false
+    while i < n && !done {
+        if src[i] == '<' && i + 1 < n && src[i + 1] == '/' && matchesCloseTag(src, i + 2, n, tag) {
+            done = true
+        } else if decode && src[i] == '&' {
+            i = decodeEntity(src, i, n, out)
+        } else {
+            out.push(src[i])
+            i = i + 1
+        }
+    }
+    appendText(dom, here, out)
+    if done {
+        i = parseEndTag(dom, stack, src, i + 2, n)
+    }
+    return i
+}
+
+fn parseHtml(dom: &mut Dom, src: &string) {
+    let n = src.len()
+    var stack: Vec<Handle<Node>> = Vec.new()
+    stack.push(dom.document)
+    var pos: i64 = 0
+    while pos < n {
+        let c = src[pos]
+        if c == '<' {
+            if pos + 3 < n && src[pos + 1] == '!' && src[pos + 2] == '-' && src[pos + 3] == '-' {
+                pos = parseComment(dom, topOf(stack), src, pos, n)
+            } else if pos + 1 < n && src[pos + 1] == '!' {
+                pos = skipTo(src, pos, n, '>')
+            } else if pos + 1 < n && src[pos + 1] == '/' {
+                pos = parseEndTag(dom, stack, src, pos + 2, n)
+            } else if pos + 1 < n && isAlpha(src[pos + 1]) {
+                pos = parseStartTag(dom, stack, src, pos + 1, n)
+                // raw-text (script/style) and rcdata (textarea/title) elements
+                // swallow their content literally until the matching close tag.
+                if stack.len() > 1 {
+                    let openName = nodeName(dom, topOf(stack))
+                    if isRawText(openName) {
+                        pos = consumeRaw(dom, stack, src, pos, n, false)
+                    } else if isRcData(openName) {
+                        pos = consumeRaw(dom, stack, src, pos, n, true)
+                    }
+                }
+            } else {
+                // stray '<' — treat as text
+                pos = parseText(dom, topOf(stack), src, pos + 1, n)
+            }
+        } else {
+            pos = parseText(dom, topOf(stack), src, pos, n)
+        }
+    }
+}
+
+// ── Serialize (pretty-ish, for verifying the round trip) ──
+
+fn serialize(dom: &Dom, h: Handle<Node>, out: &mut string) {
+    match nodeKind(dom, h) {
+        NodeKind.Text => {
+            let t = nodeText(dom, h)
+            appendStr(out, t)
+        }
+        NodeKind.Comment => {
+            appendStr(out, "<!--")
+            let t = nodeText(dom, h)
+            appendStr(out, t)
+            appendStr(out, "-->")
+        }
+        NodeKind.Doctype => {
+            appendStr(out, "<!DOCTYPE html>")
+        }
+        NodeKind.Element => {
+            let name = nodeName(dom, h)
+            out.push('<')
+            appendStr(out, name)
+            let na = attrCount(dom, h)
+            for i in 0..na {
+                out.push(' ')
+                let an = attrNameAt(dom, h, i)
+                appendStr(out, an)
+                out.push('=')
+                out.push('"')
+                let av = attrValueAt(dom, h, i)
+                appendStr(out, av)
+                out.push('"')
+            }
+            out.push('>')
+            // Void elements have no children and no end tag.
+            if !isVoidElement(name) {
+                let c = childCount(dom, h)
+                for i in 0..c {
+                    serialize(dom, childAt(dom, h, i), out)
+                }
+                appendStr(out, "</")
+                appendStr(out, name)
+                out.push('>')
+            }
+        }
+        NodeKind.Document => {
+            let c = childCount(dom, h)
+            for i in 0..c {
+                serialize(dom, childAt(dom, h, i), out)
+            }
+        }
+    }
+}
+
+// Count elements with a given tag name (a tiny "querySelectorAll" by tag).
+fn countTag(dom: &Dom, h: Handle<Node>, tag: &string): i64 {
+    var total: i64 = 0
+    match nodeKind(dom, h) {
+        NodeKind.Element => {
+            if nodeName(dom, h) == tag {
+                total = total + 1
+            }
+        }
+        _ => {
+        }
+    }
+    let c = childCount(dom, h)
+    for i in 0..c {
+        total = total + countTag(dom, childAt(dom, h, i), tag)
+    }
+    return total
+}
+
+fn main(): i32 {
+    let html = "<!DOCTYPE html><html><head><title>T &amp; U</title></head><body class=\"main\" data-n=3><!-- hi --><h1>Hello &#87;orld</h1><p>a<br>b<img src=\"x.png\" alt=unq>c</p><ul><li>one<li>two</ul></body></html>"
+
+    var dom = domNew()
+    parseHtml(dom, html)
+
+    var out = String.withCapacity(256)
+    serialize(dom, dom.document, out)
+    print(out)
+
+    print(countTag(dom, dom.document, "li")) // 2
+    print(countTag(dom, dom.document, "p")) // 1
+    print(countTag(dom, dom.document, "img")) // 1 (void, not pushed)
+    return 0
+}

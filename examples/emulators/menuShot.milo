@@ -1,0 +1,81 @@
+// Headless render of the real menu (scans roms/{nes,genesis,snes}) to raw RGB24,
+// for verifying layout without opening a window. Not shipped — verification only.
+//   milo build examples/emulators/menuShot.milo -o /tmp/menushot --debug
+//   /tmp/menushot /tmp/menushot.rgb 0
+//   ffmpeg -f rawvideo -pixel_format rgb24 -video_size 640x360 -i /tmp/menushot.rgb -y /tmp/menushot.png
+from "std/args" import {
+    args
+}
+from "std/fs" import {
+    writeFile
+}
+from "std/string" import {
+    strParseInt
+}
+from "./shared/font" import {
+    MENU_N, fontChars, fontGlyphs
+}
+from "./shared/menucore" import {
+    Row, buildRows, render, LIST_TOP, ROW_H
+}
+
+fn main(): i32 {
+    var rows: Vec<Row> = []
+    var sel: Vec<i64> = []
+    buildRows(rows, sel)
+
+    var selIdx: i64 = 0
+    let argv = args()
+    if argv.len >= 3 {
+        selIdx = strParseInt(argv[2])
+    }
+    if selIdx < 0 {
+        selIdx = 0
+    }
+    if selIdx >= sel.len {
+        selIdx = sel.len - 1
+    }
+    var selRow: i64 = -1
+    if sel.len > 0 {
+        selRow = sel[selIdx]
+    }
+
+    let visN: i64 = (360 - LIST_TOP - 20) / ROW_H
+    var scrollTop: i64 = 0
+    if selRow > scrollTop + visN - 2 {
+        scrollTop = selRow - visN + 2
+    }
+    if scrollTop < 0 {
+        scrollTop = 0
+    }
+
+    let font = fontChars()
+    let glyphs = fontGlyphs()
+    var fb: [u32; 230400] = [0; 230400]
+    render(fb, rows, selRow, scrollTop, visN, font, glyphs)
+
+    var data: string = ""
+    var i: i64 = 0
+    while i < MENU_N {
+        let px = fb[i] as i64
+        data.push((px & 0xFF) as u8)
+        data.push(((px >> 8) & 0xFF) as u8)
+        data.push(((px >> 16) & 0xFF) as u8)
+        i = i + 1
+    }
+    var out = "/tmp/menushot.rgb"
+    if argv.len >= 2 {
+        out = argv[1]
+    }
+    match writeFile(out, data) {
+        Result.Ok(n) => {
+            print("wrote " + out)
+            return 0
+        }
+        Result.Err(e) => {
+            print("write failed")
+            return 1
+        }
+    }
+    return 0
+}

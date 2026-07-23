@@ -1,0 +1,236 @@
+// Altitude controller — single-axis PID with interactive TUI
+// Press up/down to change target altitude, watch the controller converge.
+//
+// The PID controller and physics tick are DO-178 DAL B compliant:
+// no recursion, no unbounded loops, no unsafe, no dynamic allocation,
+// all functions have contracts.
+//
+// Build and run:
+//   milo build examples/embedded/flightController.milo -o flightctl
+//   ./flightctl
+//
+// Verify safety compliance:
+//   milo safety examples/embedded/flightController.milo --safety=do178
+
+from "std/math" import {
+    clampF64
+}
+from "std/io" import {
+    writeStdout
+}
+from "std/time" import {
+    sleepMs
+}
+from "std/strconv" import {
+    formatFloat
+}
+from "std/term" import {
+    enableRawMode, restoreTerminal, readKey, KEY_UP, KEY_DOWN, KEY_QUIT
+}
+
+// ── PID controller ──
+
+struct Pid {
+    kp: f64,
+    ki: f64,
+    kd: f64,
+    integral: f64,
+    prevError: f64,
+    outMin: f64,
+    outMax: f64,
+}
+
+fn pidNew(kp: f64, ki: f64, kd: f64, outMin: f64, outMax: f64): Pid
+requires kp >= 0.0
+requires ki >= 0.0
+requires kd >= 0.0
+requires outMin < outMax
+{
+    return Pid {
+        kp: kp,
+        ki: ki,
+        kd: kd,
+        integral: 0.0,
+        prevError: 0.0,
+        outMin: outMin,
+        outMax: outMax,
+    }
+}
+
+fn pidUpdate(pid: &mut Pid, error: f64, dt: f64): f64
+requires dt > 0.0
+ensures result >= pid.outMin && result <= pid.outMax
+{
+    pid.integral = pid.integral + error * dt
+    let derivative = (error - pid.prevError) / dt
+    pid.prevError = error
+    let output = pid.kp * error + pid.ki * pid.integral + pid.kd * derivative
+    return clampF64(output, pid.outMin, pid.outMax)
+}
+
+// ── 1D altitude physics ──
+
+struct AltState {
+    altitude: f64,
+    velocity: f64,
+}
+
+fn physicsTick(state: &mut AltState, thrust: f64, dt: f64): void
+requires dt > 0.0
+requires thrust >= 0.0 && thrust <= 1.0
+{
+    let maxThrust = 20.0
+    let mass = 1.5
+    let gravity = 9.81
+
+    let force = thrust * maxThrust - mass * gravity
+    let accel = force / mass
+    state.velocity = state.velocity + accel * dt
+    state.velocity = state.velocity * 0.999
+    state.altitude = state.altitude + state.velocity * dt
+
+    if state.altitude < 0.0 {
+        state.altitude = 0.0
+        if state.velocity < 0.0 {
+            state.velocity = 0.0
+        }
+    }
+}
+
+// ── TUI rendering ──
+// pure ASCII + ANSI background colors only — no box-drawing or unicode
+fn cl(s: &string): void
+requires s.len >= 0
+{
+    writeStdout(s)
+    writeStdout("\x1b[K\n")
+}
+
+fn renderFrame(alt: f64, vel: f64, target: f64, thrust: f64, tick: i64): void
+requires tick >= 0
+{
+    writeStdout("\x1b[H")
+
+    let altStr = formatFloat(alt, 1)
+    let targetStr = formatFloat(target, 1)
+    let velStr = formatFloat(vel, 2)
+    let thrustPct = formatFloat(thrust * 100.0, 0)
+
+    cl("")
+    cl("  \x1b[1;36mALTITUDE CONTROLLER\x1b[0m")
+    cl("  \x1b[90mup/dn = target    q = quit\x1b[0m")
+    cl("")
+
+    // 16-row vertical gauge: row 0 = 30m, row 15 = 0m
+    let maxAlt = 30.0
+    let rows = 16
+    let currentRow = clampF64((maxAlt - alt) / 2.0, 0.0, 15.0) as i32
+    let targetRow = clampF64((maxAlt - target) / 2.0, 0.0, 15.0) as i32
+
+    for row in 0..rows {
+        let rowAlt = 30 - row * 2
+        let r = row as i32
+
+        // left label at 0, 10, 20, 30
+        if rowAlt == 30 || rowAlt == 20 || rowAlt == 10 || rowAlt == 0 {
+            if rowAlt < 10 {
+                writeStdout("   ")
+            } else {
+                writeStdout("  ")
+            }
+            writeStdout(formatFloat(rowAlt as f64, 0))
+            writeStdout("  ")
+        } else {
+            writeStdout("      ")
+        }
+
+        // gauge block — 5 chars wide with ANSI bg color
+        if r == currentRow && r == targetRow {
+            writeStdout("\x1b[42m     \x1b[0m")
+            writeStdout("  < " + altStr + "m (at target)")
+        } else {
+            if r == currentRow {
+                writeStdout("\x1b[42m     \x1b[0m")
+                writeStdout("  < " + altStr + "m")
+            } else {
+                if r == targetRow {
+                    writeStdout("\x1b[43m     \x1b[0m")
+                    writeStdout("  < target " + targetStr + "m")
+                } else {
+                    writeStdout("\x1b[48;5;236m     \x1b[0m")
+                }
+            }
+        }
+
+        // right-side info on first few rows
+        if row == 0 {
+            writeStdout("     \x1b[90mvspeed " + velStr + " m/s\x1b[0m")
+        }
+
+        cl("")
+    }
+
+    cl("")
+
+    // thrust bar
+    writeStdout("  thrust  ")
+    let filled = clampF64(thrust * 30.0, 0.0, 30.0) as i64
+    for i in 0..30 {
+        if i < filled {
+            writeStdout("\x1b[42m \x1b[0m")
+        } else {
+            writeStdout("\x1b[48;5;236m \x1b[0m")
+        }
+    }
+    cl("  " + thrustPct + "%")
+
+    cl("")
+    cl("  \x1b[42m  \x1b[0m = current    \x1b[43m  \x1b[0m = target       \x1b[90mtick " + formatFloat(tick as f64, 0) + "\x1b[0m")
+
+    writeStdout("\x1b[J")
+}
+
+// ── Main: interactive simulation loop ──
+
+fn main(): i32 {
+    var state = AltState {
+        altitude: 0.0,
+        velocity: 0.0,
+    }
+
+    var target = 15.0
+    var pid = pidNew(0.6, 0.15, 0.4, -0.5, 0.5)
+
+    let dt = 0.02
+
+    var termState = enableRawMode()
+    writeStdout("\x1b[?25l\x1b[2J")
+
+    var thrust = 0.5
+
+    for tick in 0..30000 {
+        let key = readKey()
+        if key == KEY_QUIT {
+            break
+        }
+        if key == KEY_UP {
+            target = clampF64(target + 1.0, 0.0, 30.0)
+        }
+        if key == KEY_DOWN {
+            target = clampF64(target - 1.0, 0.0, 30.0)
+        }
+
+        let error = target - state.altitude
+        thrust = clampF64(0.5 + pidUpdate(pid, error, dt), 0.0, 1.0)
+        physicsTick(state, thrust, dt)
+
+        renderFrame(state.altitude, state.velocity, target, thrust, tick as i64)
+        sleepMs(20)
+    }
+
+    writeStdout("\x1b[?25h")
+    restoreTerminal(termState)
+    print("\ncontroller terminated.")
+
+    return 0
+}

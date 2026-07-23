@@ -1,0 +1,33 @@
+// Headless nestest runner: executes from $C000 and prints one trace line per
+// instruction (state BEFORE execution) in nestest.log's comparison-column order:
+//   PC A:.. X:.. Y:.. P:.. SP:.. CYC:..
+// Diff against roms/nes-test-roms/other/nestest.log via scripts/nestestDiff.ts.
+//   milo run examples/emulators/nes/runNestest.milo
+from "./cartridgeFile" import {
+    loadCartridge
+}
+from "./cpu" import {
+    newBus, newCpuNestest, step, formatState
+}
+
+fn main(): i32 {
+    let path = "roms/nes-test-roms/other/nestest.nes"
+    match loadCartridge(path) {
+        Result.Ok(cart) => {
+            var bus = newBus(cart)
+            var cpu = newCpuNestest()
+            var i: i64 = 0
+            while i < 9000 {
+                print(formatState(cpu))
+                step(cpu, bus)
+                i = i + 1
+            }
+        }
+        Result.Err(e) => {
+            print("load failed: ")
+            print(e)
+            return 1
+        }
+    }
+    return 0
+}
