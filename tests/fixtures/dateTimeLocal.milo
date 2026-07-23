@@ -1,3 +1,8 @@
+// @skip-os: win32
+// this fixture declares its own POSIX externs (localtime_r, setenv); Windows
+// spells them localtime_s/_putenv_s — a test-side portability limit, not a
+// compiler gap.
+
 from "std/datetime" import {
     dateTimeFormat, dateTimeFromEpochLocal, weekdayName
 }

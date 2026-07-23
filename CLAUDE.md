@@ -87,7 +87,15 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 - Type checker runs before codegen — semantic errors must be caught there, not in codegen
 - LLVM IR uses opaque `ptr` (not `i8*`) — LLVM 15+ requirement
 - Target triple auto-detected via `src/target.ts` (supports darwin + linux, aarch64 + x86_64)
-- Platform-specific stdlib uses suffix split: `std/platform.darwin.milo` vs `std/platform.linux.milo` (resolver picks per host)
+- Platform-specific stdlib uses suffix split: `std/platform.darwin.milo` vs `std/platform.linux.milo` vs `std/platform.windows.milo` (resolver picks per target OS). There is no `#[cfg]`/`#ifdef` — the filename suffix is the whole mechanism, so every arm must export the *same* surface. A name only some platforms can provide still has to exist on all of them; the Windows arm's convention is to implement what it can and let the rest fail loudly (missing `extern` → link error naming the symbol, or an explicit abort), never to return a plausible-looking value.
+- **Windows is a partial target** (core language + std/io yes, IOCP async no — see `docs/roadmap.md`). To build for it from macOS/Linux you need the MSVC CRT + Windows SDK, which `xwin` fetches from Microsoft:
+  ```bash
+  cargo install xwin && xwin --accept-license --arch x86_64 splat --output ~/.xwin
+  MILO_WINDOWS_SDK=~/.xwin PATH="/opt/homebrew/opt/llvm/bin:$PATH" \
+    ./milo build examples/hello.milo --target=windows-x64 -o hello   # needs lld-link
+  WINEDEBUG=-all wine hello.exe                                       # optional: run it locally
+  ```
+  Wine validates the link and the CRT calls but is not the OS — CI's `test-windows` job is the authority on whether generated code actually runs. With `MILO_WINDOWS_SDK` set, `verifyCDecls` DOES run the `@cLayout`/`@cSig` guards on a Windows cross-compile (it compiles the guard TU with `--target=<triple>` against xwin's headers), so a wrong layout is caught on the dev host, not only in CI. Other target≠host crosses still skip (no sysroot to read).
 
 ## Layout
 

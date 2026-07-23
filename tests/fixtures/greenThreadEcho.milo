@@ -1,3 +1,7 @@
+// @skip-os: win32
+// the green scheduler's event loop is kqueue/epoll readiness-based; Windows
+// needs the IOCP completion port rewrite (docs/roadmap.md).
+
 // @expect: server ready
 // @expect: done
 // @expect: client 1 connected
@@ -6,11 +10,32 @@
 // @expect: echo: hello from 2
 
 from "std/os" import {
-    connectIn, bindIn, getSockPort,
-    socket, bind, listen, accept, connect, read, write, close, setsockopt, getsockname, ntohs, pipe
+    connectIn,
+    bindIn,
+    getSockPort,
+    socket,
+    bind,
+    listen,
+    accept,
+    connect,
+    setsockopt,
+    getsockname,
+    ntohs
 }
 from "std/platform" import {
-    SockAddrIn, makeSockaddr, makeZeroedSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, solSocket, soReuseaddr, getErrno, eagain
+    SockAddrIn,
+    makeSockaddr,
+    makeZeroedSockaddr,
+    makeZeroedSockaddrStorage,
+    sockAddrStorageLen,
+    solSocket,
+    soReuseaddr,
+    getErrno,
+    eagain,
+    pipe,
+    read,
+    write,
+    close
 }
 from "std/event" import {
     setNonblocking

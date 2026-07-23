@@ -4,9 +4,9 @@ from "std/runtime" import {
     schedulerCurrent, schedulerYield
 }
 
-extern fn gettimeofday(tv: *u8, tz: *u8): i32
-
-extern fn usleep(usec: u32): i32
+from "std/platform" import {
+    gettimeofday, usleep
+}
 
 // ── helpers ──
 

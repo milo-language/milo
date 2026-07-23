@@ -101,6 +101,21 @@ fs.readFile("data.txt")   // warning: unused Result value — this may contain a
   hint: use 'let _ = ...' to discard explicitly
 ```
 
+### bare-embedfile
+
+`embedFile("path")` reads like an ordinary function call, but it is compile-time-only: the argument has to be a string literal and the file is read and inlined while compiling. `@` is how Milo already marks compiler-level constructs (`@cLayout`, `@cSig`, `@link`), so the embed builtin takes it too.
+
+```milo
+let html = embedFile("index.html")    // warning: 'embedFile' is a compile-time builtin
+let html = @embedFile("index.html")   // preferred
+```
+
+```
+  hint: the '@' marks it as compiler magic, not a runtime call
+```
+
+The bare form still compiles and behaves identically.
+
 ### unused-move
 
 An owned parameter that's never moved might not need ownership. This is off by default.
@@ -139,6 +154,7 @@ milo build app.milo --deny-all
 |---|---|---|
 | `unused-variable` | warn | Declared but never read |
 | `unused-result` | warn | `Result` or `Option` value silently discarded |
+| `bare-embedfile` | warn | `embedFile(...)` written without its `@` sigil |
 | `unused-move` | allow | Owned param never moved — could be a borrow instead |
 | `large-stack-array` | allow | Local fixed array over `--max-stack-array` (default 512 KiB) — stack-overflow risk |
 

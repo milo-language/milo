@@ -1,3 +1,7 @@
+// @skip-os: win32
+// pulls in std/net's TLS path (fetch), which needs an OpenSSL built for the
+// target sysroot; xwin ships the CRT and Windows SDK, not third-party libraries.
+
 // @expect: A resumed with its own state
 // @expect: B resumed with its own state
 

@@ -19,18 +19,12 @@
 from "std/cstr" import {
     CStr
 }
-
-@cSig("dlfcn.h", "void *dlopen(const char *, int)")
-extern fn dlopen(_path: *u8, _flags: i32): *u8
-
-@cSig("dlfcn.h", "void *dlsym(void *, const char *)")
-extern fn dlsym(_handle: *u8, _symbol: *u8): *u8
-
-@cSig("dlfcn.h", "int dlclose(void *)")
-extern fn dlclose(_handle: *u8): i32
-
-@cSig("dlfcn.h", "char *dlerror(void)")
-extern fn dlerror(): *u8
+// The four raw loader calls live in the platform split: Windows has no <dlfcn.h> and
+// spells this LoadLibrary/GetProcAddress. Everything below is the typed layer over
+// them, and is the same on every platform.
+from "std/platform" import {
+    dlopen, dlsym, dlclose, dlerror
+}
 
 // Resolve every symbol at load time rather than on first call. Same value on
 // darwin and linux. RTLD_GLOBAL is deliberately not exposed — it differs between

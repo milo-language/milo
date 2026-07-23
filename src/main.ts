@@ -14,7 +14,7 @@ import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { generateHeader } from "./headergen";
 import { formatDiagnostic, ParseError, RESET, BOLD, GREEN, DIM, type WarningConfig } from "./diagnostics";
-import { type TargetInfo, getHostTarget, resolveTarget, listTargets } from "./target";
+import { type TargetInfo, getHostTarget, resolveTarget, listTargets, UnsupportedHostError } from "./target";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport } from "./verify";
 import { proveWithMilo } from "./prove-milo";
 import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, listSafetyLevels } from "./safety";
@@ -118,16 +118,23 @@ function verifyCDecls(cGuards: string | null, target: TargetInfo): void {
     console.error(`warning: @cLayout/@cSig guards skipped — a bare-metal target is freestanding, so the host's headers don't describe it`);
     return;
   }
-  if (target.os !== host.os || target.arch !== host.arch) {
+  // A Windows cross-compile CAN be verified when the target sysroot is present: compile
+  // the guard TU with the target triple (so clang uses LLP64) against xwin's headers.
+  // Only this exact case — every other target≠host cross has no sysroot to read, so it
+  // still skips, announced.
+  const crossWindows =
+    target.os === "windows" && process.platform !== "win32" && !!process.env.MILO_WINDOWS_SDK;
+  if ((target.os !== host.os || target.arch !== host.arch) && !crossWindows) {
     console.error(`warning: @cLayout/@cSig guards skipped — building for ${target.triple}, but verification would read this ${host.os}-${host.arch} host's headers`);
     return;
   }
   const tc = detectToolchain();
   const cc = tc.kind === "clang" ? tc.path : "cc";
+  const crossFlags = crossWindows ? `--target=${target.triple} ${windowsIncludeFlags()}` : "";
   const tmpC = join(tmpdir(), `milo_cdecl_${crypto.randomUUID().slice(0, 8)}.c`);
   try {
     writeFileSync(tmpC, cGuards);
-    execSync(`${cc} -fsyntax-only "${tmpC}"`, { stdio: ["pipe", "pipe", "pipe"] });
+    execSync(`${cc} -fsyntax-only ${crossFlags} "${tmpC}"`, { stdio: ["pipe", "pipe", "pipe"] });
   } catch (e: any) {
     const stderr = e.stderr?.toString() ?? e.message ?? "";
     // Pull our own message out of each failing assert and drop the rest: the raw text
@@ -299,6 +306,40 @@ function linkBareMetal(llFile: string, outFile: string, target: TargetInfo, optF
   );
 }
 
+// Cross-linking to Windows from a POSIX host: clang can emit COFF unaided, but it has
+// no MSVC CRT or Windows SDK to link against and no MS linker. `xwin splat` produces
+// exactly that tree from Microsoft's own packages; point MILO_WINDOWS_SDK at its root.
+// On a real Windows host clang finds the installed VS toolchain itself, so this is empty
+// there — the flags exist only to make the mac/linux dev loop possible.
+function windowsSysrootFlags(target: TargetInfo): string {
+  if (target.os !== "windows" || process.platform === "win32") return "";
+  const root = process.env.MILO_WINDOWS_SDK;
+  if (!root) {
+    console.error(`error: cross-compiling to ${target.triple} needs the MSVC CRT + Windows SDK, which this host doesn't have.`);
+    console.error(`hint: install them with 'cargo install xwin && xwin --accept-license --arch x86_64 splat --output ~/.xwin',`);
+    console.error(`      then set MILO_WINDOWS_SDK=~/.xwin. (On Windows itself no flags are needed.)`);
+    process.exit(1);
+  }
+  // xwin lays libs out per-arch under these three roots; the include dirs mirror a
+  // VS install (crt = MSVC's own headers, sdk/{ucrt,um,shared} = the Windows SDK).
+  const a = target.arch === "aarch64" ? "aarch64" : "x86_64";
+  const lib = [`crt/lib/${a}`, `sdk/lib/um/${a}`, `sdk/lib/ucrt/${a}`]
+    .map(d => `-L "${root}/${d}"`).join(" ");
+  // lld-link, not ld64/GNU ld: the output is COFF and the host linker cannot produce it.
+  return ` -fuse-ld=lld-link ${windowsIncludeFlags()} ${lib}`;
+}
+
+// The -isystem set for the cross-compiled MSVC CRT + Windows SDK. Shared by the link
+// step and by verifyCDecls, so a cross build's @cLayout/@cSig guards read the TARGET's
+// headers (with the target triple's LLP64 data model) instead of skipping — the same
+// tree that got the ADDRESS_FAMILY include-order bug caught locally instead of in CI.
+function windowsIncludeFlags(): string {
+  const root = process.env.MILO_WINDOWS_SDK;
+  if (!root) return "";
+  return ["crt/include", "sdk/include/ucrt", "sdk/include/um", "sdk/include/shared"]
+    .map(d => `-isystem "${root}/${d}"`).join(" ");
+}
+
 function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false, emitDebug = false, target?: TargetInfo) {
   const tc = detectToolchain();
   const san = sanitize ? " -fsanitize=address" : "";
@@ -312,6 +353,12 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
   // into libc). Host/target-aware so a cross-compile to Linux gets it too.
   const targetIsLinux = target ? target.os === "linux" : process.platform === "linux";
   const linuxLink = targetIsLinux ? " -rdynamic -ldl" : "";
+  const targetIsWindows = target ? target.os === "windows" : process.platform === "win32";
+  // The UCRT has no separate libm — floor/pow live in the CRT proper — and `-lm` reaches
+  // lld-link as a request for `m.lib`, which does not exist, so it is a hard link error
+  // rather than a harmless no-op the way it is on macOS.
+  const mathLink = targetIsWindows ? "" : " -lm";
+  const winSysroot = target ? windowsSysrootFlags(target) : "";
   if (tc.kind === "clang") {
     const opt = optFlag ? ` ${optFlag}` : "";
     // Mach-O keeps DWARF in the .o and references it from the executable via a debug
@@ -320,7 +367,9 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
     // a Mach-O target with debug info, persist the .o, link it, then dsymutil the debug
     // map into out.dSYM (which lldb/hades auto-load). ELF embeds DWARF in the binary
     // directly, so it needs none of this.
-    if (emitDebug && process.platform === "darwin") {
+    // Host-darwin is not enough: cross-linking to Windows from a mac produces COFF/PDB,
+    // which has no debug map and no dsymutil step. Gate on the TARGET's object format.
+    if (emitDebug && process.platform === "darwin" && !targetIsWindows) {
       const obj = `${outFile}.dbg.o`;
       try {
         execSync(`${tc.path}${tgt}${opt}${san} -c ${llFile} -o ${obj} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
@@ -335,7 +384,7 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
       // without this the link fails with `undefined reference to 'floor'` for
       // any program that reaches those paths (the llc+cc branch already passes
       // it). Harmless on macOS where libm is always present.
-      const cmd = `${tc.path}${tgt}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra} -lm${linuxLink}`;
+      const cmd = `${tc.path}${tgt}${winSysroot}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}${mathLink}${linuxLink}`;
       // MILO_VERBOSE=1 surfaces the otherwise-invisible link command — the only
       // place @link/detected/`--` flags actually land — so a link failure is diagnosable.
       if (process.env.MILO_VERBOSE === "1") console.error(`link: ${cmd}`);
@@ -350,7 +399,7 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
     const opt = optFlag || "-O2";
     try {
       execSync(`llc -filetype=obj ${opt} ${llFile} -o ${tmpObj}`, { stdio: ["pipe", "pipe", "pipe"] });
-      execSync(`cc ${tmpObj} -o ${outFile}${libs}${extra} -lm${linuxLink}`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`cc ${tmpObj} -o ${outFile}${libs}${extra}${mathLink}${linuxLink}`, { stdio: ["pipe", "pipe", "pipe"] });
     } finally {
       try { unlinkSync(tmpObj); } catch {}
     }
@@ -524,6 +573,23 @@ function declaredLibSpec(names: string[], target: TargetInfo, staticDeps: boolea
 
 function detectLibs(ir: string, target: TargetInfo, staticDeps = false): string {
   let libs = "";
+  // Auto-detection is a heuristic keyed on Homebrew/apt layouts, and it deliberately
+  // over-approximates (see the note below) — which is survivable only because ld64 and
+  // GNU ld can drop the unused ones. lld-link ignores --as-needed, so a speculative
+  // -lssl becomes a hard "could not open 'ssl.lib'" for any program that merely imports
+  // std/io. On Windows these deps have to be requested explicitly via @link.
+  if (target.os === "windows") {
+    // The exceptions are SDK libraries, not third-party ones: they ship with the
+    // toolchain, so unlike openssl there is nothing to install and nothing to detect
+    // wrongly — either the symbol is referenced or it isn't.
+    // BCryptGenRandom is emitted by the compiler itself (hashmap seed init), so no user
+    // @link could ever carry it.
+    if (ir.includes("@BCryptGenRandom")) libs += " -lbcrypt";
+    // Winsock. ioctlsocket reaches this via std/event's setNonblocking, which std/io
+    // calls on ordinary fds — so this is not confined to programs doing networking.
+    if (/@(ioctlsocket|socket|getaddrinfo|freeaddrinfo|WSA[A-Za-z]+)\b/.test(ir)) libs += " -lws2_32";
+    return libs;
+  }
   const openssl = "/opt/homebrew/opt/openssl@3";
   if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
     libs += libSpec(["ssl", "crypto"], openssl, target, staticDeps);
@@ -570,13 +636,20 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   verifyCDecls(cGuards, target);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
-  const out = outputPath ?? join(tmpdir(), `milo_${base}_${id}`);
+  // Windows won't execute a file without the .exe suffix, and lld-link appends it
+  // itself — so without this the compiler reports one path and writes another.
+  const exeSuffix = target.os === "windows" ? ".exe" : "";
+  const out = (outputPath ?? join(tmpdir(), `milo_${base}_${id}`)) +
+    (exeSuffix && !(outputPath ?? "").endsWith(".exe") ? exeSuffix : "");
   const tmpLl = join(tmpdir(), `milo_${id}.ll`);
 
   // The linker won't create -o's parent dir; without this it errors with
   // "ld: open() failed" on a fresh checkout (e.g. building into a bin/ that
-  // isn't there yet).
-  mkdirSync(dirname(out), { recursive: true });
+  // isn't there yet). Guarded by existsSync because `recursive: true` is not
+  // idempotent on Windows: `mkdir "."` throws EEXIST there rather than
+  // succeeding, so every `-o name` with no directory part died on that runner.
+  const outDir = dirname(out);
+  if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
   try {
     writeFileSync(tmpLl, ir);
@@ -698,8 +771,12 @@ async function runFile(sourcePath: string, extraArgs: string[], target: TargetIn
     const memMb = Number(process.env.MILO_RUN_MEM_MB || 0) || DEFAULT_MEM_MB;
     const child = spawn(bin, extraArgs, { stdio: "inherit" });
     let breached = false;
+    // The watchdog reads phys_footprint / proc rss through POSIX interfaces that don't
+    // exist on Windows. It also isn't needed there for the reason it exists here: the
+    // guard is a macOS mitigation (no enforced rlimits + a compressor that hides a
+    // runaway's RSS). Skipping it on win32 must never widen to darwin/linux.
     const stop =
-      process.env.MILO_RUN_UNGUARDED === "1"
+      process.env.MILO_RUN_UNGUARDED === "1" || process.platform === "win32"
         ? () => {}
         : monitorPidTree(child.pid!, memMb, (rssMb, reason) => {
             breached = true;
@@ -1261,7 +1338,8 @@ async function main() {
     console.log("  --deny=<warning>       treat warning as error (e.g. --deny=unused-variable)");
     console.log("  --allow=<warning>      suppress warning (e.g. --allow=unused-result)");
     console.log("  --deny-all             treat all warnings as errors");
-    console.log("                         (off-by-default warnings: unused-move, unused-unsafe)");
+    console.log("                         (off-by-default warnings: unused-move, unused-import,");
+    console.log("                          unverified-extern, large-stack-array)");
     console.log("  --safety=<level>       enforce safety profile (e.g. --safety=do178)");
     console.log("  --target=<name>        cross-compile target (e.g. cortex-m3)");
     console.log("  --heap-size=<N>        bare-metal heap cap in bytes or k/m (e.g. 64k); default: all free RAM");
@@ -1298,7 +1376,9 @@ async function main() {
   }
 
   if (cmd === "lsp") {
-    import("./lsp");
+    // Awaited so a module-init throw (e.g. UnsupportedHostError from the host-target
+    // probe) surfaces through main()'s handler instead of as an unhandled rejection.
+    await import("./lsp");
     return;
   }
 
@@ -1521,4 +1601,14 @@ async function main() {
   }
 }
 
-await main();
+// An unsupported host is a user-facing condition, not a compiler bug: print the
+// diagnostic, not a stack trace. Anything else still rethrows so real crashes stay loud.
+try {
+  await main();
+} catch (e) {
+  if (e instanceof UnsupportedHostError) {
+    console.error(`error: ${e.message}`);
+    process.exit(1);
+  }
+  throw e;
+}

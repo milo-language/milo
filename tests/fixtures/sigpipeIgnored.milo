@@ -1,3 +1,7 @@
+// @skip-os: win32
+// std/net on Windows needs Winsock init (WSAStartup) + WSAGetLastError; the
+// TLS paths also need an OpenSSL built for the target sysroot.
+
 // @expect: write to closed pipe returned -1
 // @expect: process survived
 
@@ -8,11 +12,13 @@
 //
 // std/net ignores SIGPIPE when a listener or stream is created, so the write
 // reports EPIPE and the program decides what to do.
+from "std/platform" import {
+    pipe,
+    close,
+    write
+}
 from "std/net" import {
     ignoreSigpipe
-}
-from "std/os" import {
-    close, pipe, write
 }
 
 fn main(): i32 {

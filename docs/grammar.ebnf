@@ -52,7 +52,14 @@ unary       = ( "-" | "!" ) unary | primary ;
 
 primary     = INT | STRING | "true" | "false"
             | IDENT [ "(" [ arg_list ] ")" ]
+            | sigil_call
             | "(" expr ")" ;
+
+(* Compile-time builtin. The "@" must hug the name (no whitespace), same as an
+   attribute. Currently only "embedFile", whose argument must be a STRING literal
+   — the compiler reads that file and inlines its bytes. The bare "embedFile(...)"
+   call form is still accepted but warns (bare-embedfile). *)
+sigil_call  = "@" "embedFile" "(" STRING ")" ;
 
 arg_list    = expr { "," expr } ;
 

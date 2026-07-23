@@ -266,7 +266,7 @@ let s = identity("hello")  // T inferred as string
 | `print(fmt, ...)` | Print formatted text with trailing newline |
 | `exit(code)` | Exit the process |
 | `jsonStringify(val)` | Serialize a flat struct (scalar fields only) to JSON string |
-| `embedFile(path)` | Embed file contents as string at compile time |
+| `@embedFile(path)` | Embed file contents as string at compile time (see [Compile-Time File Embedding](#compile-time-file-embedding)) |
 
 ### Contracts
 
@@ -1440,6 +1440,13 @@ checkable at all.
 a C parser; only arity and the return type are verified. The signature sits next to the
 Milo declaration so the two read together.
 
+**When the C declaration differs by platform**, the declaration belongs in the stdlib
+platform split (`std/platform.windows.milo` and friends), not in a conditional
+annotation — the file name states which C library is being described, so the claim in it
+is unconditionally true. Windows spells POSIX `read` as `_read` and returns `int` where
+POSIX returns `ssize_t`; that is two declarations in two files, not one annotation with
+an escape hatch.
+
 Like `@cLayout`, it's opt-in and skipped for bare-metal targets.
 
 #### Verifying the layout: `@cLayout`
@@ -1626,11 +1633,26 @@ Builder methods: `.str/.int/.float/.bool/.nil/.obj/.arr/.val` (chainable, consum
 
 ## Compile-Time File Embedding
 
-`embedFile` inlines file contents as a string at compile time:
+`@embedFile` inlines file contents as a string at compile time:
 
 ```milo
-let html = embedFile("index.html")
+let html = @embedFile("index.html")
 ```
+
+The `@` marks it as compiler magic rather than an ordinary call — like `@cLayout`,
+`@cSig`, and `@link`, it is handled by the compiler, not at runtime. The argument
+must be a string literal (nothing else is known at compile time) and the path is
+resolved relative to the file containing the call, not the entry file. Contents are
+read as raw bytes, so binary assets (PNGs, fonts, wasm) embed intact.
+
+The bare spelling `embedFile("index.html")` still compiles, but warns:
+
+```
+warning: 'embedFile' is a compile-time builtin — write '@embedFile(...)'
+```
+
+Silence it with `--allow=bare-embedfile`, or make it fatal with
+`--deny=bare-embedfile`.
 
 ---
 
@@ -2294,8 +2316,8 @@ The same `stream.send()`/`stream.recv()` calls work identically outside green th
 A concurrent echo server handling multiple clients with green threads:
 
 ```milo
-from "std/os" import { socket, bind, listen, accept, read, write, close, setsockopt, getsockname, ntohs }
-from "std/platform" import { makeSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, solSocket, soReuseaddr, getErrno, eagain }
+from "std/os" import { socket, bind, listen, accept, setsockopt, getsockname, ntohs }
+from "std/platform" import { read, write, close, makeSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, solSocket, soReuseaddr, getErrno, eagain }
 from "std/event" import { setNonblocking }
 from "std/runtime" import { Task, schedulerWaitRead }
 
@@ -2579,7 +2601,7 @@ The parser auto-handles `--help`/`-h` and validates required args, integer forma
 | Derive | `@derive(Eq)` |
 | Generic bound | `<T: Eq + Hash>` |
 | Cast | `expr as Type` |
-| Embed file | `embedFile("path")` |
+| Embed file | `@embedFile("path")` |
 | JSON serialize | `jsonStringify(struct_val)` |
 | String slice | `s[start..end]` |
 | Vec / array slice | `v[start..end]` (non-owning `&[T]` view; works on `Vec` and fixed arrays) |

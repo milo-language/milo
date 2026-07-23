@@ -1,0 +1,695 @@
+// platform-specific constants and helpers for Windows (MSVC / UCRT / Winsock)
+//
+// Every number here was read out of Microsoft's own headers by compiling a probe against
+// the Windows SDK and running it — not inferred from the POSIX arms. Windows disagrees
+// with darwin/linux on nearly all of them: sockaddr_in has no sin_len and a 16-bit
+// family, AF_INET6 is 23 (not 30/10), and the open() flags need _O_BINARY or the CRT
+// silently rewrites \n to \r\n on the way out.
+//
+// PARTIAL BY DESIGN. Windows has no mmap, no fcntl, no ucontext and no dirent, so the
+// constants feeding those live below as inert values whose corresponding `extern fn`
+// does not exist in any Windows library. Anything that actually reaches them fails at
+// LINK time, naming the missing symbol — loudly, not by computing something plausible.
+// The real APIs (VirtualAlloc, ioctlsocket/FIONBIO, CreateFiber, FindFirstFile) are the
+// later tiers in docs/roadmap.md.
+
+from "std/os" import {
+    htons
+}
+
+extern type SockAddr
+
+// No sin_len on Windows — the BSD-derived length byte was never adopted — so the family
+// is a full 16 bits at offset 0 where darwin splits it into two u8s. Same 16 bytes total.
+@cLayout("struct sockaddr_in", "winsock2.h")
+extern struct SockAddrIn {
+    sin_family: u16,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
+}
+
+@cLayout("struct sockaddr_in6", "ws2tcpip.h")
+extern struct SockAddrIn6 {
+    sin6_family: u16,
+    sin6_port: u16,
+    sin6_flowinfo: u32,
+    sin6_addr: [u8; 16],
+    sin6_scope_id: u32,
+}
+
+// 110 bytes with a 108-byte path — matching linux, not darwin's 106/104. sun_path still
+// lands at offset 2. Requires afunix.h (Windows 10 1803+).
+@cLayout("struct sockaddr_un", "afunix.h")
+extern struct SockAddrUn {
+    sun_family: u16,
+    sun_path: [u8; 108],
+}
+
+@cLayout("struct sockaddr_storage", "winsock2.h")
+extern struct SockAddrStorage {
+    ss_family: u16,
+    __ss_pad1: [u8; 6],
+    __ss_align: i64,
+    __ss_pad2: [u8; 112],
+}
+
+fn makeZeroedSockaddrStorage(): SockAddrStorage {
+    unsafe {
+        return zeroed<SockAddrStorage>()
+    }
+}
+
+// 23 here, against 30 on darwin and 10 on linux — no two of the three agree.
+fn afInet6(): i32 {
+    return 23
+}
+
+fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6 {
+    var a = SockAddrIn6 {
+        sin6_family: 23 as u16,
+        sin6_port: htons(port),
+        sin6_flowinfo: 0,
+        sin6_addr: [0; 16],
+        sin6_scope_id: scopeId,
+    }
+    var i: i64 = 0
+    while i < 16 {
+        a.sin6_addr[i] = addr[i]
+        i = i + 1
+    }
+    return a
+}
+
+fn sockAddrInLen(): u32 {
+    return 16
+}
+
+fn sockAddrIn6Len(): u32 {
+    return 28
+}
+
+fn makeSockaddrUn(path: &string): SockAddrUn {
+    var a = SockAddrUn {
+        sun_family: 1 as u16,
+        sun_path: [0; 108],
+    }
+    var i: i64 = 0
+    while i < path.len && i < sockAddrUnMaxPath() {
+        a.sun_path[i] = path[i]
+        i = i + 1
+    }
+    return a
+}
+
+fn sockAddrUnLen(): u32 {
+    return 110
+}
+
+// Longest path that still leaves room for the NUL.
+fn sockAddrUnMaxPath(): i64 {
+    return 107
+}
+
+fn sockAddrStorageLen(): u32 {
+    return 128
+}
+
+fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
+    return SockAddrIn {
+        sin_family: 2 as u16,
+        sin_port: htons(port),
+        sin_addr: addr,
+        sin_zero: [0; 8],
+    }
+}
+
+fn makeZeroedSockaddr(): SockAddrIn {
+    return SockAddrIn {
+        sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+    }
+}
+
+fn solSocket(): i32 {
+    return 65535
+}
+
+fn soReuseaddr(): i32 {
+    return 4
+}
+
+// _O_BINARY (0x8000) is in both: without it the UCRT translates every \n written through
+// a CRT fd into \r\n, so a file written by Milo would not match its own bytes.
+// _O_WRONLY|_O_CREAT|_O_TRUNC|_O_BINARY
+fn oWriteCreateTrunc(): i32 {
+    return 33537
+}
+
+// _O_WRONLY|_O_CREAT|_O_APPEND|_O_BINARY
+fn oWriteCreateAppend(): i32 {
+    return 33033
+}
+
+fn addrinfoAddrOffset(): i64 {
+    return 32
+}
+
+// struct _stat64 — 56 bytes, against darwin's 144. st_mode is a 16-bit field at 6.
+fn statModeOffset(): i64 {
+    return 6
+}
+
+fn statSizeOffset(): i64 {
+    return 24
+}
+
+fn statBufSize(): i64 {
+    return 56
+}
+
+// ── errno ──
+
+// The UCRT's errno is `*_errno()`, the analogue of darwin's __error().
+extern fn _errno(): *u8
+
+fn getErrno(): i32 {
+    unsafe {
+        return _loadI32(_errno())
+    }
+}
+
+// C errno values (errno.h), NOT the Winsock ones. Socket calls on Windows do not set
+// errno at all — they report through WSAGetLastError(), where the corresponding codes are
+// WSAEWOULDBLOCK 10035 and WSAEINPROGRESS 10036. std/net therefore cannot work by reading
+// these; wiring that up is part of the net tier, not this one.
+fn eagain(): i32 {
+    return 11
+}
+
+fn einprogress(): i32 {
+    return 112
+}
+
+fn soError(): i32 {
+    return 4103
+}
+
+// ── no-equivalent APIs ──
+//
+// Each `extern fn` below is absent from every Windows library on purpose: declaring it
+// keeps the platform surface uniform (the split is whole-file, so every arm must export
+// the same names), while any program that actually calls one fails at link with that
+// symbol named. The companion constants are inert — they are only ever arguments to
+// these missing calls.
+
+// Windows uses ioctlsocket(FIONBIO) for sockets and has no fcntl at all.
+extern fn fcntl(fd: i32, cmd: i32,...): i32
+
+fn fGetfl(): i32 {
+    return -1
+}
+
+fn fSetfl(): i32 {
+    return -1
+}
+
+fn oNonblock(): i32 {
+    return -1
+}
+
+// SIGCHLD does not exist: Windows has no SIGCHLD/wait() model, process exit is observed
+// by waiting on the process HANDLE.
+fn sigchldNum(): i32 {
+    return -1
+}
+
+// ── ucontext over Win32 fibers ──
+//
+// std/runtime wants stackful coroutine switching and reads the context layout entirely
+// through the four accessors below, so this arm is free to define its own layout and back
+// it with fibers — which are Windows' native form of exactly this primitive.
+//
+//   [0..8)   fiber handle
+//   [8..16)  stack pointer   (written by runtime; fibers own their stack, so unused)
+//   [16..24) stack size      (passed to CreateFiber)
+//   [24..32) uc_link         (written by runtime but never taken: _taskEntry ends with an
+//                             explicit swapcontext back to the scheduler rather than by
+//                             returning, which matters because a fiber routine that
+//                             RETURNS calls ExitThread and would kill the process)
+
+extern fn ConvertThreadToFiber(param: *u8): i64
+
+extern fn CreateFiber(stackSize: i64, start: *u8, param: *u8): i64
+
+extern fn SwitchToFiber(fiber: i64): void
+
+extern fn DeleteFiber(fiber: i64): void
+
+extern fn IsThreadAFiber(): i32
+
+// GetCurrentFiber() is a TEB-read intrinsic, not an exported symbol, so it cannot be
+// declared as an extern. Tracking the handle ourselves is the workaround — sound because
+// every switch in the runtime goes through swapcontext below, which is the only thing
+// that can change which fiber is running.
+var _currentFiber: i64 = 0
+
+fn getcontext(ucp: *u8): i32 {
+    if IsThreadAFiber() == 0 {
+        _currentFiber = ConvertThreadToFiber(0 as *u8)
+    }
+    unsafe {
+        let slot = ucp as *i64
+        slot[0] = _currentFiber
+    }
+    return 0
+}
+
+fn makecontext(ucp: *u8, func: *u8, _argc: i32): void {
+    unsafe {
+        let slot = ucp as *i64
+        let stackBytes = slot[2]
+        slot[0] = CreateFiber(stackBytes, func, 0 as *u8)
+    }
+}
+
+fn swapcontext(oucp: *u8, ucp: *u8): i32 {
+    unsafe {
+        let from = oucp as *i64
+        let to = ucp as *i64
+        from [0] = _currentFiber
+        let target = to[0]
+        _currentFiber = target
+        SwitchToFiber(target)
+        // Reached again only when something switches back to us, at which point the
+        // running fiber is ours again — the global still names whoever we switched to.
+        _currentFiber = from [0]
+    }
+    return 0
+}
+
+fn uctxSize(): i64 {
+    return 32
+}
+
+fn uctxStackPtrOffset(): i64 {
+    return 8
+}
+
+fn uctxStackSizeOffset(): i64 {
+    return 16
+}
+
+fn uctxLinkOffset(): i64 {
+    return 24
+}
+
+// ── mmap family over VirtualAlloc ──
+//
+// Only the anonymous-private mapping std/runtime and std/mem actually use is supported:
+// a file-backed mapping (fd >= 0) needs CreateFileMapping/MapViewOfFile, which is a
+// different API shape, so it returns failure rather than quietly handing back memory
+// with none of the file's contents in it.
+
+extern fn VirtualAlloc(addr: *u8, size: i64, allocType: u32, protect: u32): *u8
+
+extern fn VirtualFree(addr: *u8, size: i64, freeType: u32): i32
+
+extern fn VirtualProtect(addr: *u8, size: i64, protect: u32, old: *u8): i32
+
+// MEM_COMMIT|MEM_RESERVE = 0x3000, PAGE_READWRITE = 0x04.
+fn mmap(_addr: *u8, len: i64, _prot: i32, _flags: i32, fd: i32, _offset: i64): *u8 {
+    if fd >= 0 {
+        return 0 as *u8
+    }
+    unsafe {
+        return VirtualAlloc(0 as *u8, len, 12288 as u32, 4 as u32)
+    }
+}
+
+// MEM_RELEASE (0x8000) requires the size to be 0 and the address to be the exact base
+// returned by VirtualAlloc — it always frees the whole reservation, unlike munmap.
+fn munmap(addr: *u8, _len: i64): i32 {
+    if VirtualFree(addr, 0, 32768 as u32) == 0 {
+        return -1
+    }
+    return 0
+}
+
+// PAGE_NOACCESS = 0x01, used for the runtime's stack guard page. VirtualProtect must be
+// given somewhere to write the previous protection or it fails.
+fn mprotect(addr: *u8, len: i64, _prot: i32): i32 {
+    var old: u32 = 0
+    unsafe {
+        if VirtualProtect(addr, len, 1 as u32, old.addrOf() as *u8) == 0 {
+            return -1
+        }
+    }
+    return 0
+}
+
+// Windows has no dirent/opendir; directory iteration is FindFirstFileW/FindNextFileW.
+fn direntTypeOffset(): i64 {
+    return -1
+}
+
+fn direntNameOffset(): i64 {
+    return -1
+}
+
+// ── pthreads over Win32 ──
+//
+// std/sync and std/runtime are written against the pthread API, so rather than fork them
+// per-platform this arm provides that API over the native primitives. The mapping is
+// direct: a pthread mutex is an SRWLOCK taken exclusively (both are non-recursive), and a
+// pthread condvar is a CONDITION_VARIABLE. Both are 8 bytes against the 64/48 std/sync
+// mallocs for them, so the caller-allocated storage is already more than large enough.
+//
+// All of these return 0 unconditionally: the Win32 calls are void and cannot fail the way
+// their pthread counterparts can (no EINVAL for an uninitialised object — Initialize* is
+// infallible), so there is no error to propagate rather than one being swallowed.
+
+extern fn InitializeSRWLock(lock: *u8): void
+
+extern fn AcquireSRWLockExclusive(lock: *u8): void
+
+extern fn ReleaseSRWLockExclusive(lock: *u8): void
+
+extern fn AcquireSRWLockShared(lock: *u8): void
+
+extern fn ReleaseSRWLockShared(lock: *u8): void
+
+extern fn InitializeConditionVariable(cond: *u8): void
+
+extern fn SleepConditionVariableSRW(cond: *u8, lock: *u8, ms: u32, flags: u32): i32
+
+extern fn WakeConditionVariable(cond: *u8): void
+
+extern fn WakeAllConditionVariable(cond: *u8): void
+
+extern fn CreateThread(attrs: *u8, stackSize: i64, start: *u8, arg: *u8, flags: u32, threadId: *u8): i64
+
+extern fn WaitForSingleObject(handle: i64, ms: u32): u32
+
+extern fn CloseHandle(handle: i64): i32
+
+fn pthread_mutex_init(mutex: *u8, _attr: *u8): i32 {
+    InitializeSRWLock(mutex)
+    return 0
+}
+
+fn pthread_mutex_lock(mutex: *u8): i32 {
+    AcquireSRWLockExclusive(mutex)
+    return 0
+}
+
+fn pthread_mutex_unlock(mutex: *u8): i32 {
+    ReleaseSRWLockExclusive(mutex)
+    return 0
+}
+
+// An SRWLOCK owns no resources, so there is nothing to release.
+fn pthread_mutex_destroy(_mutex: *u8): i32 {
+    return 0
+}
+
+fn pthread_cond_init(cond: *u8, _attr: *u8): i32 {
+    InitializeConditionVariable(cond)
+    return 0
+}
+
+// INFINITE (0xFFFFFFFF) and flags 0 = wait on the lock held exclusively, matching the
+// SRWLOCK acquired by pthread_mutex_lock above.
+fn pthread_cond_wait(cond: *u8, mutex: *u8): i32 {
+    SleepConditionVariableSRW(cond, mutex, 4294967295 as u32, 0 as u32)
+    return 0
+}
+
+fn pthread_cond_signal(cond: *u8): i32 {
+    WakeConditionVariable(cond)
+    return 0
+}
+
+fn pthread_cond_broadcast(cond: *u8): i32 {
+    WakeAllConditionVariable(cond)
+    return 0
+}
+
+fn pthread_cond_destroy(_cond: *u8): i32 {
+    return 0
+}
+
+// pthread_t is a HANDLE here. The start routine's signature differs — pthread wants
+// void*(*)(void*) and Win32 wants DWORD(*)(LPVOID) — but on x64 both take their argument
+// in RCX and return in RAX, and the return value is discarded by every caller in std, so
+// the mismatch is confined to a wider return register than Win32 reads back.
+fn pthread_create(thread: *u8, _attr: *u8, start: *u8, arg: *u8): i32 {
+    let h = CreateThread(0 as *u8, 0, start, arg, 0 as u32, 0 as *u8)
+    if h == 0 {
+        return -1
+    }
+    unsafe {
+        let slot = thread as *i64
+        slot[0] = h
+    }
+    return 0
+}
+
+fn pthread_join(thread: i64, _retval: *u8): i32 {
+    WaitForSingleObject(thread, 4294967295 as u32)
+    CloseHandle(thread)
+    return 0
+}
+
+fn pthread_detach(thread: i64): i32 {
+    CloseHandle(thread)
+    return 0
+}
+
+fn pthread_rwlock_init(rwlock: *u8, _attr: *u8): i32 {
+    InitializeSRWLock(rwlock)
+    return 0
+}
+
+fn pthread_rwlock_rdlock(rwlock: *u8): i32 {
+    AcquireSRWLockShared(rwlock)
+    return 0
+}
+
+fn pthread_rwlock_wrlock(rwlock: *u8): i32 {
+    AcquireSRWLockExclusive(rwlock)
+    return 0
+}
+
+// SRWLOCK has separate release calls per mode and no way to ask which one is held, so a
+// single unlock cannot serve both. std/sync only ever takes these exclusively; a shared
+// reader that reached here would corrupt the lock state, which is why this is exclusive.
+fn pthread_rwlock_unlock(rwlock: *u8): i32 {
+    ReleaseSRWLockExclusive(rwlock)
+    return 0
+}
+
+fn pthread_rwlock_destroy(_rwlock: *u8): i32 {
+    return 0
+}
+
+// The mmap wrappers above translate these into Win32 page-protection flags themselves,
+// so the values only need to be distinct — they are not a POSIX ABI here.
+fn protRead(): i32 {
+    return 1
+}
+
+fn protWrite(): i32 {
+    return 2
+}
+
+fn protNone(): i32 {
+    return 0
+}
+
+fn mapPrivate(): i32 {
+    return 2
+}
+
+fn mapAnon(): i32 {
+    return 4096
+}
+
+fn mapPrivateAnon(): i32 {
+    return 4098
+}
+
+// ── time ──
+
+// FILETIME counts 100-nanosecond intervals since 1601-01-01 UTC, so converting to a
+// POSIX timeval means subtracting the 11644473600-second gap between that epoch and 1970.
+extern fn GetSystemTimeAsFileTime(ft: *u8): void
+
+extern fn Sleep(ms: u32): void
+
+// Fills a POSIX `struct timeval` — two i64s, seconds then microseconds — because that is
+// the layout std/time reads back out of the buffer it passes.
+fn gettimeofday(tv: *u8, _tz: *u8): i32 {
+    var ft: i64 = 0
+    unsafe {
+        GetSystemTimeAsFileTime(ft.addrOf() as *u8)
+        let ticks = ft
+        let unixTicks = ticks - 116444736000000000
+        let slot = tv as *i64
+        slot[0] = unixTicks / 10000000
+        slot[1] = (unixTicks % 10000000) / 10
+    }
+    return 0
+}
+
+// Sleep() has millisecond resolution, so sub-millisecond requests round up to 1ms rather
+// than to 0 — a busy-wait caller asking for 100us should yield, not spin.
+fn usleep(usec: u32): i32 {
+    let ms = (usec as i64) / 1000
+    if ms < 1 {
+        Sleep(1 as u32)
+    } else {
+        Sleep(ms as u32)
+    }
+    return 0
+}
+
+// ── pipe ──
+
+// The UCRT's _pipe takes a buffer size and a text/binary mode that POSIX pipe(2) has no
+// equivalent for. _O_BINARY (0x8000) is essential: in text mode the CRT would translate
+// \n to \r\n through the pipe, corrupting any binary payload and desynchronising any
+// caller that counts bytes.
+extern fn _pipe(fds: *u8, size: u32, mode: i32): i32
+
+fn pipe(fds: *u8): i32 {
+    return _pipe(fds, 4096 as u32, 32768)
+}
+
+// ── fd I/O ──
+//
+// The UCRT's fd calls are a different SHAPE from POSIX's, not just a different
+// spelling: 32-bit count and 32-bit return where POSIX has size_t/ssize_t. The
+// oldnames shim does export `read`/`write`, which is why declaring the POSIX widths
+// linked cleanly and then miscompiled — Win64 leaves the upper half of RAX undefined
+// for an `int` return, so a -1 could arrive as a large positive i64. Bind the real
+// `_`-prefixed symbols at their true widths and widen here, once.
+
+@cSig("io.h", "int _read(int, void *, unsigned int)")
+extern fn _read(fd: i32, buf: *u8, count: u32): i32
+
+@cSig("io.h", "int _write(int, const void *, unsigned int)")
+extern fn _write(fd: i32, buf: *u8, count: u32): i32
+
+// `open` is the one fd call whose return is `int` on every platform (only the
+// byte-count/offset calls diverge), and it is variadic, so a wrapper fn can't forward
+// the optional mode. The UCRT oldnames layer exports `open` as an alias for `_open`, so
+// declare it directly — no @cSig, since it comes from <io.h> under the `_`-name and the
+// header does not declare the POSIX spelling.
+extern fn open(path: *u8, flags: i32,...): i32
+
+@cSig("io.h", "int _close(int)")
+extern fn _close(fd: i32): i32
+
+// _lseek is 32-bit (`long`, 4 bytes under LLP64); _lseeki64 is the one that can
+// address a file past 2 GB, which is what POSIX lseek's off_t means here.
+@cSig("io.h", "__int64 _lseeki64(int, __int64, int)")
+extern fn _lseeki64(fd: i32, offset: i64, origin: i32): i64
+
+@cSig("io.h", "int _access(const char *, int)")
+extern fn _access(path: *u8, mode: i32): i32
+
+// A count that doesn't fit in the CRT's 32-bit parameter is clamped, not truncated:
+// a short read/write is a contract every caller already handles, whereas truncation
+// would silently transfer the low 32 bits of the requested length.
+fn _clampCount(nbyte: i64): u32 {
+    if nbyte > 2147483647 {
+        return 2147483647 as u32
+    }
+    if nbyte < 0 {
+        return 0 as u32
+    }
+    return nbyte as u32
+}
+
+fn read(fd: i32, buf: *u8, nbyte: i64): i64 {
+    return _read(fd, buf, _clampCount(nbyte)) as i64
+}
+
+fn write(fd: i32, buf: *u8, nbyte: i64): i64 {
+    return _write(fd, buf, _clampCount(nbyte)) as i64
+}
+
+fn close(fd: i32): i32 {
+    return _close(fd)
+}
+
+fn lseek(fd: i32, offset: i64, whence: i32): i64 {
+    return _lseeki64(fd, offset, whence)
+}
+
+fn access(path: *u8, mode: i32): i32 {
+    return _access(path, mode)
+}
+
+// <process.h>, not <unistd.h>; the oldnames shim exports `getpid` too, but binding the
+// real symbol keeps the declaration checkable against the header it actually comes from.
+@cSig("process.h", "int _getpid(void)")
+extern fn _getpid(): i32
+
+fn getpid(): i32 {
+    return _getpid()
+}
+
+// ── dynamic loading ──
+//
+// LoadLibrary/GetProcAddress/FreeLibrary are the same three operations under different
+// names, so the typed layer in std/dl works unchanged. `dlerror` is the one that does
+// not map: Windows reports failure through GetLastError, which is per-thread state with
+// no string form and no read-and-clear semantics. Rather than return null (which std/dl
+// would read as "no error" right after a failure), report a fixed message and let the
+// caller go to GetLastError for detail.
+
+@cSig("libloaderapi.h", "HMODULE LoadLibraryA(LPCSTR)")
+extern fn LoadLibraryA(path: *u8): *u8
+
+@cSig("libloaderapi.h", "FARPROC GetProcAddress(HMODULE, LPCSTR)")
+extern fn GetProcAddress(handle: *u8, name: *u8): *u8
+
+@cSig("libloaderapi.h", "BOOL FreeLibrary(HMODULE)")
+extern fn FreeLibrary(handle: *u8): i32
+
+// A null path means "the running executable" for dlopen; LoadLibraryA(NULL) fails
+// instead, so route that case to GetModuleHandleA(NULL), which is what it means.
+@cSig("libloaderapi.h", "HMODULE GetModuleHandleA(LPCSTR)")
+extern fn GetModuleHandleA(path: *u8): *u8
+
+fn dlopen(_path: *u8, _flags: i32): *u8 {
+    unsafe {
+        if _path as i64 == 0 {
+            return GetModuleHandleA(0 as *u8)
+        }
+        return LoadLibraryA(_path)
+    }
+}
+
+fn dlsym(_handle: *u8, _symbol: *u8): *u8 {
+    unsafe {
+        return GetProcAddress(_handle, _symbol)
+    }
+}
+
+// POSIX dlclose returns 0 on success; FreeLibrary returns nonzero on success.
+fn dlclose(_handle: *u8): i32 {
+    unsafe {
+        if FreeLibrary(_handle) != 0 {
+            return 0
+        }
+        return -1
+    }
+}
+
+fn dlerror(): *u8 {
+    unsafe {
+        return "dynamic load failed — call GetLastError for the code" as *u8
+    }
+}

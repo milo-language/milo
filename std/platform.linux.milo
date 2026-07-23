@@ -333,3 +333,111 @@ fn _exePathInto(buf: *u8, bufsize: i64): i64 {
         return n
     }
 }
+
+// ── pthreads ──
+// Declared in the platform split, not std/os: Windows has no pthreads at all, so its
+// arm implements these same names over SRWLOCK/CONDITION_VARIABLE instead of declaring
+// externs that no library provides.
+
+extern fn pthread_create(thread: *u8, attr: *u8, start: *u8, arg: *u8): i32
+
+extern fn pthread_join(thread: i64, retval: *u8): i32
+
+extern fn pthread_detach(thread: i64): i32
+
+extern fn pthread_mutex_init(mutex: *u8, attr: *u8): i32
+
+extern fn pthread_mutex_lock(mutex: *u8): i32
+
+extern fn pthread_mutex_unlock(mutex: *u8): i32
+
+extern fn pthread_mutex_destroy(mutex: *u8): i32
+
+extern fn pthread_cond_init(cond: *u8, attr: *u8): i32
+
+extern fn pthread_cond_wait(cond: *u8, mutex: *u8): i32
+
+extern fn pthread_cond_signal(cond: *u8): i32
+
+extern fn pthread_cond_broadcast(cond: *u8): i32
+
+extern fn pthread_cond_destroy(cond: *u8): i32
+
+extern fn pthread_rwlock_init(rwlock: *u8, attr: *u8): i32
+
+extern fn pthread_rwlock_rdlock(rwlock: *u8): i32
+
+extern fn pthread_rwlock_wrlock(rwlock: *u8): i32
+
+extern fn pthread_rwlock_unlock(rwlock: *u8): i32
+
+extern fn pthread_rwlock_destroy(rwlock: *u8): i32
+
+// ── mmap family ──
+// In the platform split rather than std/os: Windows has no mmap, and its arm implements
+// these names over VirtualAlloc/VirtualFree/VirtualProtect instead.
+
+@cSig("sys/mman.h", "void *mmap(void *, size_t, int, int, int, off_t)")
+extern fn mmap(addr: *u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): *u8
+
+@cSig("sys/mman.h", "int munmap(void *, size_t)")
+extern fn munmap(addr: *u8, len: i64): i32
+
+@cSig("sys/mman.h", "int mprotect(void *, size_t, int)")
+extern fn mprotect(addr: *u8, len: i64, prot: i32): i32
+
+// ── time ──
+// Split out of std/time because Windows has neither: its arm builds a timeval from
+// GetSystemTimeAsFileTime and sleeps with Sleep().
+
+extern fn gettimeofday(tv: *u8, tz: *u8): i32
+
+extern fn usleep(usec: u32): i32
+
+// pipe(2). Split out because the UCRT spells it _pipe and takes two extra arguments.
+
+extern fn pipe(fds: *u8): i32
+
+// ── fd I/O ──
+//
+// These live here, not in std/os, because the UCRT's are a different shape, not a
+// different spelling: `int _read(int, void *, unsigned int)` against POSIX's
+// `ssize_t read(int, void *, size_t)`. Declaring the POSIX widths everywhere linked
+// (the oldnames shim resolves the symbol) and then miscompiled — Win64 leaves the
+// upper half of RAX undefined for an `int` return, so a -1 could arrive as a large
+// positive i64.
+
+@cSig("unistd.h", "ssize_t read(int, void *, size_t)")
+extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
+
+@cSig("unistd.h", "ssize_t write(int, const void *, size_t)")
+extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
+
+@cSig("fcntl.h", "int open(const char *, int, ...)")
+extern fn open(path: *u8, flags: i32,...): i32
+
+@cSig("unistd.h", "int close(int)")
+extern fn close(fd: i32): i32
+
+@cSig("unistd.h", "off_t lseek(int, off_t, int)")
+extern fn lseek(fd: i32, offset: i64, whence: i32): i64
+
+@cSig("unistd.h", "int access(const char *, int)")
+extern fn access(path: *u8, mode: i32): i32
+
+@cSig("unistd.h", "pid_t getpid(void)")
+extern fn getpid(): i32
+
+// ── dynamic loading ──
+
+@cSig("dlfcn.h", "void *dlopen(const char *, int)")
+extern fn dlopen(_path: *u8, _flags: i32): *u8
+
+@cSig("dlfcn.h", "void *dlsym(void *, const char *)")
+extern fn dlsym(_handle: *u8, _symbol: *u8): *u8
+
+@cSig("dlfcn.h", "int dlclose(void *)")
+extern fn dlclose(_handle: *u8): i32
+
+@cSig("dlfcn.h", "char *dlerror(void)")
+extern fn dlerror(): *u8

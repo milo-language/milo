@@ -1,10 +1,26 @@
 // std/http — high-level HTTP server for Milo
 
 from "std/os" import {
-    accept, bind, close, getsockname, listen, ntohs, read, setsockopt, socket, write, getSockPort
+    accept,
+    bind,
+    getsockname,
+    listen,
+    ntohs,
+    setsockopt,
+    socket,
+    getSockPort
 }
 from "std/platform" import {
-    SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, makeZeroedSockaddrStorage, sockAddrStorageLen
+    SockAddrIn,
+    makeSockaddr,
+    makeZeroedSockaddr,
+    solSocket,
+    soReuseaddr,
+    makeZeroedSockaddrStorage,
+    sockAddrStorageLen,
+    close,
+    read,
+    write
 }
 
 // ── Public types ──

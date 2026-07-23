@@ -85,7 +85,7 @@ fn fizzbuzzText(n: i64): string {
 // ── Route handlers ──
 
 fn homeHandler(ctx: &mut Context): Response {
-    return ctx.html(embedFile("index.html"))
+    return ctx.html(@embedFile("index.html"))
 }
 
 fn helloHandler(ctx: &mut Context): Response {

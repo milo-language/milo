@@ -1,3 +1,7 @@
+// @skip-os: win32
+// POSIX process model: fork/waitpid/kill have no Windows equivalent to bind to
+// — CreateProcess is a different shape, not a translation.
+
 // Two signals can each own a self-pipe at once.
 //
 // _sigPipeW used to be a single global i32, so installing a second signal silently
@@ -11,7 +15,11 @@ from "std/signal" import {
     sigchld, installSignalPipe, SIGWINCH
 }
 from "std/os" import {
-    kill, getpid, read
+    kill
+}
+from "std/platform" import {
+    getpid,
+    read
 }
 
 // The pipes are O_NONBLOCK, so this never stalls when empty.

@@ -1,3 +1,7 @@
+// @skip-os: win32
+// this fixture declares its own POSIX extern (clock_gettime), which the MSVC
+// CRT does not provide — a test-side portability limit, not a compiler gap.
+
 // @cLayout verifies a declared extern-struct layout against the real C header at build
 // time. `struct timespec` is two 64-bit fields on every target Milo hosts, so a correct
 // declaration must build and run. The mismatch cases live in tests/errors/cLayout*.milo.

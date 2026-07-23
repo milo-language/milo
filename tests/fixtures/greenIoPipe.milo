@@ -1,13 +1,22 @@
+// @skip-os: win32
+// the green scheduler's event loop is kqueue/epoll readiness-based; Windows
+// needs the IOCP completion port rewrite (docs/roadmap.md).
+
 // @expect: computed 499500
 // @expect: got hello
 
 // a task parked reading a pipe doesn't block the scheduler: another task
 // computes and then writes, waking the reader — std/os green-aware IO
+from "std/platform" import {
+    pipe,
+    close
+}
 from "std/runtime" import {
     Task, schedulerRunToCompletion
 }
 from "std/os" import {
-    pipe, readFd, writeFd, close
+    readFd,
+    writeFd
 }
 
 fn main(): i32 {

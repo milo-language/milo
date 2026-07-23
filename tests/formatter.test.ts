@@ -19,7 +19,10 @@ beforeAll(() => {
     resolve(root, "examples", "cli-tools", "fmt.milo"), "-o", fmtBin,
   ], { encoding: "utf-8" });
   if (build.status !== 0 || !existsSync(fmtBin)) throw new Error(build.stderr || "could not build bin/milo-fmt");
-});
+// spawnSync re-transpiles src/main.ts and then compiles fmt.milo; on a loaded CI runner
+// that exceeds bun's 5s default hook budget and fails with an empty-stderr timeout that
+// looks like a build error but isn't. Give it room.
+}, 120000);
 
 // Format via the native binary reading stdin (same path the LSP uses).
 function format(source: string): string {

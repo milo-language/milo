@@ -492,7 +492,7 @@ fn installConsole(ctx: *u8, global: *u8): void {
 fn moduleBootstrap(): string {
     // The Node/Web runtime host (module loader, builtins, process/global scaffolding)
     // lives in a real .js file for debuggability; embedFile inlines it at compile time.
-    return embedFile("minibun-runtime.js")
+    return @embedFile("minibun-runtime.js")
 }
 
 // Evaluate `code`; on an uncaught exception print it and return 1.

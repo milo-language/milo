@@ -12,7 +12,10 @@
 // they emit MCP-specific shapes, not the browser wire format.
 
 from "std/os" import {
-    read, exit
+    exit
+}
+from "std/platform" import {
+    read
 }
 from "std/event" import {
     setNonblocking

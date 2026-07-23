@@ -1,12 +1,19 @@
+// @skip-os: win32
+// the green scheduler's event loop is kqueue/epoll readiness-based; Windows
+// needs the IOCP completion port rewrite (docs/roadmap.md).
+
 // @expect: ready
 // @expect: 2
 // @expect: done
 
+from "std/platform" import {
+    pipe,
+    write,
+    read,
+    close
+}
 from "std/event" import {
     eventLoopNew, eventLoopClose, setNonblocking, eventRegisterRead, eventPoll
-}
-from "std/os" import {
-    pipe, write, read, close
 }
 
 fn main(): i32 {

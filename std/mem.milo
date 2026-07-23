@@ -1,10 +1,11 @@
 // std/mem — memory management with automatic cleanup
 
 from "std/os" import {
-    free, malloc, mmap, munmap
+    free, malloc
 }
 from "std/platform" import {
-    mapPrivateAnon
+    mapPrivateAnon,
+    mmap, munmap
 }
 
 // ── MappedMemory ──

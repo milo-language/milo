@@ -8,7 +8,7 @@
 //
 // Scope, stated plainly:
 //   - HOST ONLY. It reads this machine's headers, so on macOS it says nothing about
-//     std/*.linux.milo (and vice versa). Run it on both to cover both.
+//     std/*.linux.milo or std/*.windows.milo (and so on). CI runs it on all three.
 //   - Return types only. Parameters need a C parser (see @cSig's docs).
 //   - Skips pointer/void returns (no width is claimed) and any fn the headers below
 //     don't declare. openssl/sqlite3/mach/CommonCrypto are probed and used when present;
@@ -26,12 +26,20 @@ const SIGNED = new Set(["i8", "i16", "i32", "i64"]);
 const UNSIGNED = new Set(["u8", "u16", "u32", "u64"]);
 
 // Enough of libc to declare most of what std binds. A fn missing from these is skipped,
-// not reported — see the "undeclared" guard below.
-const HEADERS = ["stdio.h", "stdlib.h", "string.h", "unistd.h", "fcntl.h", "time.h", "errno.h",
-  "math.h", "signal.h", "dirent.h", "pthread.h", "sys/stat.h", "sys/mman.h", "sys/time.h",
+// not reported — see the "undeclared" guard below. Each header is probed individually
+// and dropped if absent, so listing POSIX and Windows headers together is safe: the
+// POSIX ones vanish on Windows and vice versa. Order still matters where it's kept —
+// winsock2.h must precede ws2tcpip.h (they use types only winsock2.h declares), so it
+// is listed first here and the probe filter preserves array order.
+const HEADERS = ["stdio.h", "stdlib.h", "string.h", "time.h", "errno.h", "math.h", "signal.h",
+  // POSIX
+  "unistd.h", "fcntl.h", "dirent.h", "pthread.h", "sys/stat.h", "sys/mman.h", "sys/time.h",
   "sys/socket.h", "sys/resource.h", "sys/wait.h", "netinet/in.h", "arpa/inet.h", "netdb.h",
   "termios.h", "poll.h", "spawn.h", "sys/ioctl.h", "regex.h", "sys/sysctl.h", "sys/utsname.h",
-  "pwd.h", "grp.h", "libgen.h", "sys/select.h", "sys/uio.h"];
+  "pwd.h", "grp.h", "libgen.h", "sys/select.h", "sys/uio.h",
+  // Windows (UCRT + SDK): io.h holds _read/_write/_open/_close/_lseeki64/_access;
+  // process.h _getpid; winsock2.h the socket layer; libloaderapi.h LoadLibrary/GetProcAddress.
+  "winsock2.h", "ws2tcpip.h", "afunix.h", "io.h", "process.h", "direct.h", "windows.h", "libloaderapi.h"];
 
 // Non-libc bindings: hand-written, so likelier to drift than libc, but their headers
 // aren't guaranteed present. Each group is probed once and used only if it compiles —
@@ -61,9 +69,9 @@ type Decl = { name: string; arity: number; ret: string; file: string };
 // glibc is meaningless, and worse than meaningless when the name exists on both with
 // different signatures (`sysctl`) — that reports drift where there is none.
 function isForeignPlatform(file: string): boolean {
-  const m = file.match(/\.(darwin|linux)\.milo$/);
+  const m = file.match(/\.(darwin|linux|windows)\.milo$/);
   if (!m) return false;
-  const host = process.platform === "darwin" ? "darwin" : "linux";
+  const host = process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "windows" : "linux";
   return m[1] !== host;
 }
 
@@ -87,16 +95,27 @@ const tmpC = join(tmpdir(), `milo_audit_${crypto.randomUUID().slice(0, 8)}.c`);
 const findings: string[] = [];
 let checked = 0, skipped = 0;
 
+// `cc` is the POSIX spelling; the Windows CI runner has clang (choco llvm) and no `cc`.
+// Pick whichever answers, so this one script covers all three platforms.
+function detectCC(): string {
+  for (const c of ["cc", "clang"]) {
+    try {
+      writeFileSync(tmpC, "int main(void){return 0;}\n");
+      execSync(`${c} -fsyntax-only ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] });
+      return c;
+    } catch {}
+  }
+  return "";
+}
+const CC = detectCC();
+
 // Every check here IS a compile, so no compiler means nothing is verified. Without this
 // probe that failure is invisible: each decl's compile throws, none of the errors match
 // the "undeclared" patterns, and every one falls through to `skipped` — so the audit
 // reports "checked 0" and exits 0. A green run that verified nothing is worse than a red
 // one. (Found by running this in a bun container, which ships no cc.)
-writeFileSync(tmpC, "int main(void){return 0;}\n");
-try {
-  execSync(`cc -fsyntax-only ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] });
-} catch {
-  console.error("error: no C compiler on PATH (`cc`) — this audit is nothing but compiles, so it can verify nothing without one");
+if (!CC) {
+  console.error("error: no C compiler on PATH (tried `cc`, `clang`) — this audit is nothing but compiles, so it can verify nothing without one");
   try { unlinkSync(tmpC); } catch {}
   process.exit(2);
 }
@@ -106,7 +125,7 @@ const available: { headers: string[]; flags: string }[] = [];
 for (const g of OPTIONAL) {
   writeFileSync(tmpC, g.headers.map(h => `#include <${h}>`).join("\n") + "\nint main(void){return 0;}\n");
   try {
-    execSync(`cc -fsyntax-only ${g.flags} ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] });
+    execSync(`${CC} -fsyntax-only ${g.flags} ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] });
     available.push({ headers: g.headers, flags: g.flags });
   } catch { console.log(`note: ${g.name} headers not found — its decls stay unchecked`); }
 }
@@ -120,7 +139,7 @@ const allFlags = available.map(g => g.flags).filter(Boolean).join(" ");
 // Probing beats maintaining the list.
 const allHeaders = [...HEADERS, ...available.flatMap(g => g.headers)].filter(h => {
   writeFileSync(tmpC, `#include <${h}>\n`);
-  try { execSync(`cc -fsyntax-only ${allFlags} ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] }); return true; }
+  try { execSync(`${CC} -fsyntax-only ${allFlags} ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] }); return true; }
   catch { return false; }
 });
 
@@ -129,15 +148,21 @@ try {
     const size = SIZES[d.ret];
     if (size === undefined) { skipped++; continue; }  // pointer/void/struct return: no width claimed
     const args = Array(d.arity).fill("0").join(", ");
+    // Opaque handles (Win32 HANDLE/LPVOID, returned by CreateThread/CreateFiber) are held
+    // as i64 on the Milo side — a pointer, deliberately, not an integer. WIDTH still holds
+    // (pointer == 8 == i64) so a genuinely wrong width like i32 is still caught, but the
+    // SIGN check on a pointer would report drift where there is none. `__builtin_classify_type`
+    // returns 5 for a pointer; guard the sign asserts to pass on that.
+    const notPtr = `__builtin_classify_type(${d.name}(${args})) != 5`;
     const src = [
       ...allHeaders.map(h => `#include <${h}>`),
       `_Static_assert(sizeof(${d.name}(${args})) == ${size}, "WIDTH");`,
-      SIGNED.has(d.ret) ? `_Static_assert((__typeof__(${d.name}(${args})))-1 < 0, "SIGN");` : "",
-      UNSIGNED.has(d.ret) ? `_Static_assert((__typeof__(${d.name}(${args})))-1 > 0, "SIGN");` : "",
+      SIGNED.has(d.ret) ? `_Static_assert(!(${notPtr}) || (__typeof__(${d.name}(${args})))-1 < 0, "SIGN");` : "",
+      UNSIGNED.has(d.ret) ? `_Static_assert(!(${notPtr}) || (__typeof__(${d.name}(${args})))-1 > 0, "SIGN");` : "",
     ].filter(Boolean).join("\n");
     writeFileSync(tmpC, src + "\n");
     try {
-      execSync(`cc -fsyntax-only ${allFlags} ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`${CC} -fsyntax-only ${allFlags} ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] });
       checked++;
     } catch (e: any) {
       const err = e.stderr?.toString() ?? "";

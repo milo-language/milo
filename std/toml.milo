@@ -1,3 +1,7 @@
+from "std/platform" import {
+    read
+}
+
 // std/toml — TOML config file parser
 //
 //   let t = tomlParse(data)!
@@ -5,10 +9,6 @@
 //   let port = t.i64("port")!
 //   let db = t.table("database")!
 //   let host = db.str("host")!
-
-from "std/os" import {
-    read
-}
 
 struct Toml {
     raw: string,

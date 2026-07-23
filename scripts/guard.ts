@@ -201,7 +201,52 @@ export interface GuardOpts {
   inheritStdio?: boolean;
 }
 
+// Windows has none of the machinery the POSIX guard is built on — no fork/pgid,
+// no ps, no footprint(1), no rlimits — and the threat it exists for does not
+// apply either: the guard protects a macOS dev machine that swaps to death
+// because the kernel enforces no rlimits, whereas the only Windows consumer is a
+// disposable CI runner. Keep the one guarantee that ports (wall clock) and kill
+// the whole tree with taskkill. There is deliberately NO memory layer here, so
+// nothing untrusted (milo-self) may be run under it on Windows.
+function windowsRun(cmd: string, args: string[], opts: GuardOpts, timeoutMs: number): Promise<RunResult> {
+  return new Promise(resolve => {
+    const child = spawn(cmd, args, {
+      cwd: opts.cwd,
+      env: opts.env ?? process.env,
+      stdio: ["ignore", opts.inheritStdio ? "inherit" : "pipe", opts.inheritStdio ? "inherit" : "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let captured = 0;
+    let guardKill: GuardKill | undefined;
+    const append = (which: "out" | "err", d: Buffer) => {
+      captured += d.length;
+      if (captured > MAX_CAPTURE_BYTES) return;
+      if (which === "out") stdout += d.toString();
+      else stderr += d.toString();
+    };
+    child.stdout?.on("data", d => append("out", d));
+    child.stderr?.on("data", d => append("err", d));
+
+    const timer = setTimeout(() => {
+      guardKill = "timeout";
+      // /T takes the child's descendants with it; child.kill() would orphan them.
+      if (child.pid !== undefined) execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], () => {});
+    }, timeoutMs);
+    (timer as any).unref?.();
+
+    const finish = (code: number, signal: string | null) => {
+      clearTimeout(timer);
+      if (guardKill === "timeout") stderr += `\n[guard] killed: exceeded ${timeoutMs} ms`;
+      resolve({ stdout, stderr, code, signal, guardKill });
+    };
+    child.on("error", () => finish(127, null));
+    child.on("close", (code, signal) => finish(code ?? 1, signal));
+  });
+}
+
 export function guardedRun(cmd: string, args: string[], opts: GuardOpts = {}): Promise<RunResult> {
+  if (process.platform === "win32") return windowsRun(cmd, args, opts, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const memMb = opts.memMb ?? DEFAULT_MEM_MB;
   const virtualMemMb = opts.virtualMemMb ?? memMb;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -315,6 +360,9 @@ export function monitorPidTree(
   memMb: number,
   onBreach: (rssMb: number, reason?: "memory" | "pressure") => void
 ): () => void {
+  // No ps(1) on Windows: the walk below would spawn a failing process every
+  // 100ms forever. Same reasoning as windowsRun — no memory layer there.
+  if (process.platform === "win32") return () => {};
   const limitKb = memMb * 1024;
   let stopped = false;
   let notified = false;

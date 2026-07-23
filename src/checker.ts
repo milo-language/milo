@@ -3858,6 +3858,14 @@ export class TypeChecker {
           return this.setType(expr, { tag: "heap", inner: argType });
         }
         if (expr.func === "embedFile") {
+          // Bare `embedFile(...)` reads like an ordinary call but is compile-time-only:
+          // the argument must be a literal and the file is inlined during compilation.
+          // `@` is how Milo already marks compiler-level constructs (@cLayout, @link).
+          if (!expr.sigil) {
+            this.warn("bare-embedfile",
+              `'embedFile' is a compile-time builtin — write '@embedFile(...)'`,
+              sp, `the '@' marks it as compiler magic, not a runtime call`, "embedFile".length);
+          }
           if (expr.args.length !== 1) { this.error(`embedFile() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
           const arg = expr.args[0];
           if (arg.kind !== "StringLit") { this.error(`embedFile() argument must be a string literal`, sp); return this.setType(expr, { tag: "unknown" }); }

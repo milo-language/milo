@@ -1,0 +1,12 @@
+// The deprecated bare spelling of the compile-time embed builtin. Kept
+// deliberately un-migrated: it is the only place in the tree that still compiles
+// the bare form, so it proves the form keeps working (and that the
+// `bare-embedfile` warning is a warning, not an error). The warning text itself
+// is asserted in tests/embedFileLint.test.ts.
+// @expect: hello from embedded file
+
+fn main(): i32 {
+    let content = embedFile("lib/hello.txt")
+    print(content)
+    return 0
+}

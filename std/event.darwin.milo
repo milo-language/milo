@@ -1,12 +1,26 @@
 // std/event — cross-platform event loop (macOS/kqueue implementation)
 
 from "std/os" import {
-    close, malloc, free, memset
+    malloc,
+    free,
+    memset
 }
 from "std/platform" import {
-    kqueue, kevent, Kevent,
-    fcntl, fGetfl, fSetfl, oNonblock,
-    evfiltRead, evfiltWrite, evfiltUser, evAdd, evDelete, evClear, noteTrigger
+    kqueue,
+    kevent,
+    Kevent,
+    fcntl,
+    fGetfl,
+    fSetfl,
+    oNonblock,
+    evfiltRead,
+    evfiltWrite,
+    evfiltUser,
+    evAdd,
+    evDelete,
+    evClear,
+    noteTrigger,
+    close
 }
 
 fn keventSize(): i64 {

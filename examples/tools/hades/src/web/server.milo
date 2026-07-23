@@ -27,9 +27,6 @@
 from "std/net" import {
     TcpListener, TcpStream
 }
-from "std/os" import {
-    read, write, close, pipe
-}
 from "std/io" import {
     readFile, fdChannel
 }
@@ -40,7 +37,12 @@ from "std/runtime" import {
     Task, Promise, schedulerWaitRead, schedulerWaitWrite, schedulerYield, schedulerRunToCompletion
 }
 from "std/platform" import {
-    getErrno, eagain
+    getErrno,
+    eagain,
+    pipe,
+    read,
+    write,
+    close
 }
 from "std/sync" import {
     Channel

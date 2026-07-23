@@ -5,7 +5,14 @@
 from "std/platform" import {
     getErrno, eagain, einprogress, solSocket, soError, SockAddr, SockAddrIn, SockAddrIn6, SockAddrUn,
     SockAddrStorage, makeZeroedSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, sockAddrInLen,
-    sockAddrIn6Len, sockAddrUnLen
+    sockAddrIn6Len, sockAddrUnLen,
+    pthread_create, pthread_join, pthread_detach,
+    pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy,
+    pthread_cond_init, pthread_cond_wait, pthread_cond_signal, pthread_cond_broadcast, pthread_cond_destroy,
+    pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy,
+    mmap, munmap, mprotect,
+    pipe,
+    read, write, open, close, lseek, access, getpid
 }
 from "std/event" import {
     setNonblocking
@@ -16,18 +23,6 @@ from "std/runtime" import {
 
 // ── I/O ──
 
-@cSig("unistd.h", "ssize_t read(int, void *, size_t)")
-extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
-
-@cSig("unistd.h", "ssize_t write(int, const void *, size_t)")
-extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
-
-@cSig("fcntl.h", "int open(const char *, int, ...)")
-extern fn open(path: *u8, flags: i32,...): i32
-
-@cSig("unistd.h", "int close(int)")
-extern fn close(fd: i32): i32
-
 // signal(SIGPIPE, SIG_IGN). Writing to a socket whose peer has gone away raises
 // SIGPIPE, whose default action is to kill the process — a server dies silently
 // (exit 141) the first time a client disconnects mid-response. Every runtime
@@ -35,17 +30,11 @@ extern fn close(fd: i32): i32
 @cSig("signal.h", "void (*signal(int, void (*)(int)))(int)")
 extern fn signal(sig: i32, handler: *u8): *u8
 
-@cSig("unistd.h", "off_t lseek(int, off_t, int)")
-extern fn lseek(fd: i32, offset: i64, whence: i32): i64
-
 @cSig("sys/stat.h", "int fstat(int, struct stat *)")
 extern fn fstat(fd: i32, buf: *u8): i32
 
 @cSig("sys/stat.h", "int stat(const char *, struct stat *)")
 extern fn stat(path: *u8, buf: *u8): i32
-
-@cSig("unistd.h", "int access(const char *, int)")
-extern fn access(path: *u8, mode: i32): i32
 
 @cSig("stdio.h", "int puts(const char *)")
 extern fn puts(s: *u8): i32
@@ -72,15 +61,6 @@ extern fn memset(dst: *u8, c: i32, n: i64): *u8
 
 @cSig("string.h", "void *memmove(void *, const void *, size_t)")
 extern fn memmove(dst: *u8, src: *u8, n: i64): *u8
-
-@cSig("sys/mman.h", "void *mmap(void *, size_t, int, int, int, off_t)")
-extern fn mmap(addr: *u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): *u8
-
-@cSig("sys/mman.h", "int munmap(void *, size_t)")
-extern fn munmap(addr: *u8, len: i64): i32
-
-@cSig("sys/mman.h", "int mprotect(void *, size_t, int)")
-extern fn mprotect(addr: *u8, len: i64, prot: i32): i32
 
 // ── Error ──
 
@@ -316,58 +296,17 @@ extern fn system(cmd: *u8): i32
 
 extern fn fork(): i32
 
-@cSig("unistd.h", "pid_t getpid(void)")
-extern fn getpid(): i32
-
 extern fn execl(path: *u8, arg0: *u8,...): i32
 
 extern fn waitpid(pid: i32, status: *u8, options: i32): i32
 
 extern fn dup2(oldfd: i32, newfd: i32): i32
 
-extern fn pipe(fds: *u8): i32
-
 extern fn kill(pid: i32, sig: i32): i32
 
 extern fn setsid(): i32
 
 extern fn execvp(file: *u8, argv: *u8): i32
-
-// ── pthreads ──
-
-extern fn pthread_create(thread: *u8, attr: *u8, start: *u8, arg: *u8): i32
-
-extern fn pthread_join(thread: i64, retval: *u8): i32
-
-extern fn pthread_detach(thread: i64): i32
-
-extern fn pthread_mutex_init(mutex: *u8, attr: *u8): i32
-
-extern fn pthread_mutex_lock(mutex: *u8): i32
-
-extern fn pthread_mutex_unlock(mutex: *u8): i32
-
-extern fn pthread_mutex_destroy(mutex: *u8): i32
-
-extern fn pthread_cond_init(cond: *u8, attr: *u8): i32
-
-extern fn pthread_cond_wait(cond: *u8, mutex: *u8): i32
-
-extern fn pthread_cond_signal(cond: *u8): i32
-
-extern fn pthread_cond_broadcast(cond: *u8): i32
-
-extern fn pthread_cond_destroy(cond: *u8): i32
-
-extern fn pthread_rwlock_init(rwlock: *u8, attr: *u8): i32
-
-extern fn pthread_rwlock_rdlock(rwlock: *u8): i32
-
-extern fn pthread_rwlock_wrlock(rwlock: *u8): i32
-
-extern fn pthread_rwlock_unlock(rwlock: *u8): i32
-
-extern fn pthread_rwlock_destroy(rwlock: *u8): i32
 
 // ── green-aware fd IO ──
 // Safe wrappers over the raw syscalls above. Called from a green task they
@@ -379,7 +318,16 @@ extern fn pthread_rwlock_destroy(rwlock: *u8): i32
 fn readFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
-        setNonblocking(fd)
+        // A green task depends on this succeeding: without O_NONBLOCK the read below
+        // blocks the whole scheduler thread instead of returning EAGAIN and parking, and
+        // no other task can ever run to satisfy it — the program simply hangs with no
+        // output. On POSIX this never fails; on Windows it fails for anything that is not
+        // a socket (ioctlsocket only covers sockets), which is the IOCP tier of the port.
+        // Say so and stop, rather than deadlocking silently.
+        if setNonblocking(fd) != 0 {
+            eprint("milo: green IO on this fd is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
+            exit(1)
+        }
     }
     while true {
         let n = read(fd, buf, len)
@@ -396,7 +344,11 @@ fn readFd(fd: i32, buf: *u8, len: i64): i64 {
 fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
-        setNonblocking(fd)
+        // Same deadlock risk as readFd above.
+        if setNonblocking(fd) != 0 {
+            eprint("milo: green IO on this fd is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
+            exit(1)
+        }
     }
     unsafe {
         var sent: i64 = 0

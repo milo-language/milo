@@ -44,13 +44,17 @@ from "std/fs" import {
     writeFile
 }
 from "std/os" import {
-    ioctl, read
+    ioctl
 }
 from "std/time" import {
     sleepMs
 }
 from "std/platform" import {
-    fcntl, fGetfl, fSetfl, oNonblock
+    fcntl,
+    fGetfl,
+    fSetfl,
+    oNonblock,
+    read
 }
 
 let PREFIX: u8 = 2 // Ctrl-B

@@ -41,5 +41,10 @@ fn main(): i32 {
 Inline file contents as a string at compile time:
 
 ```milo
-let html = embedFile("index.html")
+let html = @embedFile("index.html")
 ```
+
+The `@` marks a compiler-level construct, like `@cLayout` and `@link` above — the
+argument must be a string literal and the path resolves relative to the file
+containing the call. Contents are read as raw bytes, so binary assets embed intact.
+The bare `embedFile("index.html")` still compiles but warns (`bare-embedfile`).

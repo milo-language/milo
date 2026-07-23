@@ -22,7 +22,9 @@ from "std/term" import {
     enableRawMode, restoreTerminal, readKey
 }
 from "std/os" import {
-    ioctl, read, write, exit, isatty
+    ioctl,
+    exit,
+    isatty
 }
 from "std/io" import {
     writeStdout, readStdin, readLine
@@ -37,7 +39,10 @@ from "std/event" import {
     setNonblocking, clearNonblocking
 }
 from "std/platform" import {
-    getErrno, eagain
+    getErrno,
+    eagain,
+    read,
+    write
 }
 from "std/time" import {
     epochSecs, sleepMs
