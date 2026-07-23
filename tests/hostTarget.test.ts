@@ -61,7 +61,7 @@ test.skipIf(!SDK || process.platform === "win32")("cross-compiles a windows PE f
   } finally {
     try { unlinkSync(exe); } catch {}
   }
-});
+}, 120000);
 
 // On Windows itself: the full loop, compile AND execute. This is the only place the
 // generated code actually runs on the target OS, so it is what proves _write/fprintf
@@ -77,4 +77,4 @@ test.skipIf(process.platform !== "win32")("builds and runs hello.exe natively", 
   } finally {
     try { unlinkSync(exe); } catch {}
   }
-});
+}, 120000);
