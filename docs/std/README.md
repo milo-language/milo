@@ -47,6 +47,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/png](./png.md)
 - [std/pool](./pool.md)
 - [std/process](./process.md)
+- [std/process.windows](./process.windows.md)
 - [std/pty.darwin](./pty.darwin.md)
 - [std/pty.linux](./pty.linux.md)
 - [std/random.darwin](./random.darwin.md)

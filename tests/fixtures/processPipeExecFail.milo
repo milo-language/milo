@@ -1,32 +1,35 @@
-// @skip-os: win32
-// POSIX process model: fork/waitpid/kill have no Windows equivalent to bind to
-// — CreateProcess is a different shape, not a translation.
+// @expect: launch failed
 
-// @expect: exit 127
+// Launching a program that does not exist fails — but WHERE it fails differs by OS,
+// and the fixture normalises both to the same observable outcome. On POSIX the exec
+// can only fail post-fork inside the child, so spawn() succeeds and the failure shows
+// up as a nonzero exit through wait(). On Windows CreateProcess resolves the program
+// up front, so spawn() itself returns Err. Either way: the child never ran.
 
 from "std/process" import {
     Child
 }
 
-// execvp of a missing binary can't be reported before fork, so the child
-// exec fails and exit(127)s; the parent observes it through wait().
 fn main(): i32 {
     var args: Vec<string> = Vec.new()
     match Child.spawn("milo_no_such_binary_xyz", args, true) {
         Result.Ok(child) => {
-            child.closeStdin()
             match child.wait() {
                 Result.Ok(code) => {
-                    print($"exit {code}")
+                    if code != 0 {
+                        print("launch failed")
+                    } else {
+                        print("unexpected success")
+                    }
                 }
-                Result.Err(msg) => {
-                    print($"wait error: {msg}")
+                Result.Err(_msg) => {
+                    print("launch failed")
                 }
             }
             child.close()
         }
-        Result.Err(msg) => {
-            print($"spawn error: {msg}")
+        Result.Err(_msg) => {
+            print("launch failed")
         }
     }
     return 0

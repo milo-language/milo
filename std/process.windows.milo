@@ -1,0 +1,416 @@
+// std/process — command execution and process control (Windows).
+//
+// The POSIX arm (std/process.milo) is built on fork + execvp + waitpid + kill. Windows
+// has none of those: a process is created whole by CreateProcess, waited on through its
+// HANDLE, and killed with TerminateProcess. This is a re-expression of the same surface
+// on that model, not a translation — most visibly, a missing program is reported by
+// spawn() here (CreateProcess fails up front) rather than by wait() as on POSIX, where
+// the failure can only happen post-fork in the child.
+//
+// Pipe wiring: _pipe gives non-inheritable CRT fds (mode _O_NOINHERIT); each fd the child
+// needs is made inheritable via its OS handle, the parent's ends are left non-inheritable
+// so the child cannot hold a pipe open and defeat EOF, and CreateProcess is told to
+// inherit handles. read/write then work on the parent-side fds unchanged.
+
+from "std/platform" import {
+    close,
+    read,
+    write
+}
+from "std/io" import {
+    readFile, fdChannel
+}
+from "std/sync" import {
+    Channel
+}
+
+// ── CRT / Win32 bindings ──
+
+@cSig("stdlib.h", "int system(const char *)")
+extern fn system(cmd: *u8): i32
+
+@cSig("io.h", "int _pipe(int *, unsigned int, int)")
+extern fn _pipe(fds: *u8, size: u32, mode: i32): i32
+
+// intptr_t: 8 bytes on Win64, so a CRT fd maps to a full 64-bit OS HANDLE.
+@cSig("io.h", "intptr_t _get_osfhandle(int)")
+extern fn _get_osfhandle(fd: i32): i64
+
+@cSig("windows.h", "BOOL SetHandleInformation(HANDLE, DWORD, DWORD)")
+extern fn SetHandleInformation(handle: i64, mask: u32, flags: u32): i32
+
+@cSig("windows.h", "BOOL CreateProcessA(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL, DWORD, LPVOID, LPCSTR, LPSTARTUPINFOA, LPPROCESS_INFORMATION)")
+extern fn CreateProcessA(appName: *u8, cmdLine: *u8, procAttr: *u8, threadAttr: *u8, inherit: i32, flags: u32, env: *u8, curDir: *u8, si: *u8, pi: *u8): i32
+
+@cSig("windows.h", "DWORD WaitForSingleObject(HANDLE, DWORD)")
+extern fn WaitForSingleObject(handle: i64, ms: u32): u32
+
+@cSig("windows.h", "BOOL GetExitCodeProcess(HANDLE, LPDWORD)")
+extern fn GetExitCodeProcess(handle: i64, code: *u8): i32
+
+@cSig("windows.h", "BOOL TerminateProcess(HANDLE, UINT)")
+extern fn TerminateProcess(handle: i64, exitCode: u32): i32
+
+@cSig("windows.h", "BOOL CloseHandle(HANDLE)")
+extern fn CloseHandle(handle: i64): i32
+
+extern fn malloc(size: i64): *u8
+
+extern fn free(ptr: *u8): void
+
+extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
+
+extern fn memset(dst: *u8, val: i32, n: i64): *u8
+
+// _O_BINARY (0x8000) so the CRT does not rewrite \n through the pipe, _O_NOINHERIT
+// (0x0080) so neither end is inheritable until we opt the child's end in by hand.
+// 0x8080 = 32896; any other bit makes _pipe trip the CRT invalid-parameter fastfail.
+fn _pipeFlags(): i32 {
+    return 32896
+}
+
+// STARTF_USESTDHANDLES — honour the hStdInput/Output/Error fields we set below.
+fn _startfUseStdHandles(): u32 {
+    return 256
+}
+
+// HANDLE_FLAG_INHERIT.
+fn _handleFlagInherit(): u32 {
+    return 1
+}
+
+// ── Simple command execution ──
+
+// Execute a shell command and return its exit code.
+fn run(cmd: &string): Result<i32> {
+    unsafe {
+        // system() reads a C string; a milo string is not guaranteed NUL-terminated.
+        let buf = _cstrCopy(cmd)
+        let status = system(buf)
+        free(buf)
+        if status < 0 {
+            return Result.Err("system() failed")
+        }
+        // Windows system() returns the command's exit code directly — no wait()-status
+        // bit-packing to unwrap the way POSIX needs.
+        return Result.Ok(status)
+    }
+}
+
+// ── Process with lifecycle management ──
+//
+// pid is dwProcessId (a DWORD, fits i32); handle is the process HANDLE that wait/signal
+// operate on. The POSIX arm needs only the pid because waitpid/kill take it directly;
+// Windows needs the HANDLE, so this arm carries an extra field the POSIX struct lacks.
+struct Process {
+    pid: i32,
+    handle: i64,
+}
+
+impl Process {
+    fn spawn(path: &string): Result<Process> {
+        var args: Vec<string> = Vec.new()
+        return _createProcess(path, args, -1, -1, -1)
+    }
+
+    fn wait(self: &Self): Result<i32> {
+        return _waitHandle(self.handle)
+    }
+
+    fn signal(self: &Self, _sig: i32): Result<i32> {
+        // Windows has no signals to a process; the only portable "signal" is a forced
+        // termination. Any sig maps to TerminateProcess, exit code 1.
+        if TerminateProcess(self.handle, 1 as u32) == 0 {
+            return Result.Err("TerminateProcess() failed")
+        }
+        return Result.Ok(0)
+    }
+}
+
+// ── Child with piped stdio ──
+//
+// Same shape and contract as the POSIX arm: parent writes stdin, reads stdout/stderr;
+// reads are blocking; drain both streams when stderr is not merged. handle is the extra
+// Windows-only field (see Process above).
+struct Child {
+    pid: i32,
+    handle: i64,
+    stdinFd: i32,
+    stdoutFd: i32,
+    stderrFd: i32,
+}
+
+impl Child {
+    fn spawn(program: &string, args: &Vec<string>, mergeStderr: bool): Result<Child> {
+        unsafe {
+            var inP: [i32; 2] = [0; 2]
+            var outP: [i32; 2] = [0; 2]
+            var errP: [i32; 2] = [-1; 2]
+            if _pipe(inP as *u8, 4096 as u32, _pipeFlags()) != 0 {
+                return Result.Err("pipe(stdin) failed")
+            }
+            if _pipe(outP as *u8, 4096 as u32, _pipeFlags()) != 0 {
+                close(inP[0])
+                close(inP[1])
+                return Result.Err("pipe(stdout) failed")
+            }
+            if !mergeStderr {
+                if _pipe(errP as *u8, 4096 as u32, _pipeFlags()) != 0 {
+                    close(inP[0])
+                    close(inP[1])
+                    close(outP[0])
+                    close(outP[1])
+                    return Result.Err("pipe(stderr) failed")
+                }
+            }
+
+            // The child reads inP[0] and writes outP[1]/errP[1]; make exactly those
+            // inheritable. The parent's ends stay non-inheritable (from _O_NOINHERIT),
+            // so the child cannot keep the read end of its own stdout open.
+            _makeInheritable(inP[0])
+            _makeInheritable(outP[1])
+            let childErr = if mergeStderr {
+                outP[1]
+            } else {
+                errP[1]
+            }
+            if !mergeStderr {
+                _makeInheritable(errP[1])
+            }
+
+            let res = _createProcess(program, args, inP[0], outP[1], childErr)
+
+            // Parent no longer needs the child-side ends regardless of outcome.
+            close(inP[0])
+            close(outP[1])
+            var errRead: i32 = -1
+            if !mergeStderr {
+                close(errP[1])
+                errRead = errP[0]
+            }
+
+            match res {
+                Result.Err(msg) => {
+                    close(inP[1])
+                    close(outP[0])
+                    if !mergeStderr {
+                        close(errP[0])
+                    }
+                    return Result.Err(msg)
+                }
+                Result.Ok(proc) => {
+                    return Result.Ok(Child {
+                        pid: proc.pid,
+                        handle: proc.handle,
+                        stdinFd: inP[1],
+                        stdoutFd: outP[0],
+                        stderrFd: errRead,
+                    }
+                    )
+                }
+            }
+        }
+    }
+
+    fn writeStdin(self: &Self, buf: *u8, len: i64): i64 {
+        return write(self.stdinFd, buf, len)
+    }
+
+    fn writeStdinStr(self: &Self, s: &string): i64 {
+        unsafe {
+            return write(self.stdinFd, s as *u8, s.len)
+        }
+    }
+
+    fn readStdout(self: &Self, buf: *u8, len: i64): i64 {
+        return read(self.stdoutFd, buf, len)
+    }
+
+    fn readStderr(self: &Self, buf: *u8, len: i64): i64
+    requires
+    self.stderrFd >= 0
+    {
+        return read(self.stderrFd, buf, len)
+    }
+
+    fn stdout(self: &Self): Channel<string> {
+        return fdChannel(self.stdoutFd)
+    }
+
+    fn stderr(self: &Self): Channel<string>
+    requires
+    self.stderrFd >= 0
+    {
+        return fdChannel(self.stderrFd)
+    }
+
+    fn closeStdin(self: &mut Self): void {
+        if self.stdinFd >= 0 {
+            close(self.stdinFd)
+            self.stdinFd = -1
+        }
+    }
+
+    fn wait(self: &Self): Result<i32> {
+        return _waitHandle(self.handle)
+    }
+
+    fn signal(self: &Self, _sig: i32): Result<i32> {
+        if TerminateProcess(self.handle, 1 as u32) == 0 {
+            return Result.Err("TerminateProcess() failed")
+        }
+        return Result.Ok(0)
+    }
+
+    fn close(self: &mut Self): void {
+        self.closeStdin()
+        if self.stdoutFd >= 0 {
+            close(self.stdoutFd)
+            self.stdoutFd = -1
+        }
+        if self.stderrFd >= 0 {
+            close(self.stderrFd)
+            self.stderrFd = -1
+        }
+        if self.handle != 0 {
+            CloseHandle(self.handle)
+            self.handle = 0
+        }
+    }
+}
+
+// Block on a process HANDLE and read its exit code. INFINITE = 0xFFFFFFFF.
+fn _waitHandle(handle: i64): Result<i32> {
+    unsafe {
+        WaitForSingleObject(handle, 4294967295 as u32)
+        var codeBuf: [u32; 1] = [0]
+        if GetExitCodeProcess(handle, codeBuf as *u8) == 0 {
+            return Result.Err("GetExitCodeProcess() failed")
+        }
+        return Result.Ok(codeBuf[0] as i32)
+    }
+}
+
+// Core CreateProcess wrapper. childIn/Out/Err are child-side CRT fds already marked
+// inheritable, or -1 to leave that stream at the parent's (inherited console). Returns a
+// Process holding dwProcessId and the process HANDLE.
+fn _createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: i32, childErr: i32): Result<Process> {
+    unsafe {
+        let cmdLine = _buildCmdLine(program, args)
+
+        // STARTUPINFOA is 104 bytes on x64: cb at 0, dwFlags at 60, hStdInput/Output/Error
+        // at 80/88/96. Zero it, then fill only what we use.
+        var si: [u8; 104] = [0; 104]
+        (si as *u32) [0] = 104 as u32
+        var useHandles = false
+        if childIn >= 0 {
+            (si as *i64) [10] = _get_osfhandle(childIn)
+            useHandles = true
+        }
+        if childOut >= 0 {
+            (si as *i64) [11] = _get_osfhandle(childOut)
+            useHandles = true
+        }
+        if childErr >= 0 {
+            (si as *i64) [12] = _get_osfhandle(childErr)
+            useHandles = true
+        }
+        if useHandles {
+            (si as *u32) [15] = _startfUseStdHandles()
+        }
+
+        // PROCESS_INFORMATION: hProcess at 0, dwProcessId at 16. 24 bytes.
+        var pi: [u8; 24] = [0; 24]
+
+        // appName NULL => the first token of cmdLine is the program and the standard
+        // search (including PATH) applies, matching execvp. inherit=TRUE so the marked
+        // pipe ends cross into the child.
+        let ok = CreateProcessA(0 as *u8, cmdLine, 0 as *u8, 0 as *u8, 1, 0 as u32, 0 as *u8, 0 as *u8, si as *u8, pi as *u8)
+        free(cmdLine)
+        if ok == 0 {
+            // A missing or unlaunchable program lands here — the Windows analogue of the
+            // POSIX child's exec failure, but observable immediately.
+            return Result.Err("CreateProcess() failed")
+        }
+        let handle = (pi as *i64) [0]
+        let pid = (pi as *u32) [4] as i32
+        return Result.Ok(Process {
+            pid: pid, handle: handle
+        }
+        )
+    }
+}
+
+fn _makeInheritable(fd: i32): void {
+    unsafe {
+        SetHandleInformation(_get_osfhandle(fd), _handleFlagInherit(), _handleFlagInherit())
+    }
+}
+
+// Build a single CreateProcess command line: `program arg1 arg2 ...`, each token quoted
+// if it contains whitespace or a quote. Returned buffer is malloc'd + NUL-terminated;
+// CreateProcessA may write into it, so it must be writable (not a string literal).
+fn _buildCmdLine(program: &string, args: &Vec<string>): *u8 {
+    var line = _quoteArg(program)
+    for i in 0..args.len {
+        line.push(' ')
+        line.pushStr(_quoteArg(args[i]))
+    }
+    return _cstrCopy(line)
+}
+
+fn _quoteArg(arg: &string): string {
+    var needsQuote = arg.len == 0
+    for i in 0..arg.len {
+        let c = arg[i]
+        if c == ' ' || c == '\t' || c == '"' {
+            needsQuote = true
+        }
+    }
+    if !needsQuote {
+        return arg.clone()
+    }
+    var out = String.withCapacity(arg.len + 2)
+    out.push('"')
+    for i in 0..arg.len {
+        let c = arg[i]
+        // A double quote inside the token is escaped; backslashes are left as-is, which
+        // is correct for the simple (no trailing-backslash-before-quote) tokens std spawns.
+        if c == '"' {
+            out.push('\\')
+        }
+        out.push(c)
+    }
+    out.push('"')
+    return out
+}
+
+// Copy a milo string into a fresh malloc'd NUL-terminated C buffer.
+fn _cstrCopy(s: &string): *u8 {
+    unsafe {
+        let n = s.len
+        let buf = malloc(n + 1)
+        memcpy(buf, s as *u8, n)
+        memset((buf as i64 + n) as *u8, 0, 1)
+        return buf
+    }
+}
+
+fn capture(cmd: &string): Result<string> {
+    // Relative temp file in the cwd; cmd.exe honours `> file 2>&1` redirection just as a
+    // POSIX shell does, so the capture path is the same modulo the /tmp location.
+    let tmpPath: string = "milo_capture.tmp"
+    let fullCmd = cmd + " > " + tmpPath + " 2>&1"
+    let code = run(fullCmd)!
+    if code != 0 {
+        return Result.Err("command failed with exit code")
+    }
+    match readFile(tmpPath) {
+        Result.Ok(s) => {
+            return Result.Ok(s)
+        }
+        Result.Err(_) => {
+            return Result.Err("failed to read capture output")
+        }
+    }
+}

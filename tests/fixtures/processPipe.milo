@@ -1,8 +1,8 @@
-// @skip-os: win32
-// POSIX process model: fork/waitpid/kill have no Windows equivalent to bind to
-// — CreateProcess is a different shape, not a translation.
-
 // @expect: hello pipe
+
+// std/process is fork/exec on POSIX and CreateProcess on Windows; the Child pipe API
+// is identical either way. `cat` is a stdin->stdout passthrough on POSIX; `sort` is
+// the closest Windows-native equivalent and echoes a single line unchanged.
 
 from "std/process" import {
     Child
@@ -10,7 +10,12 @@ from "std/process" import {
 
 fn main(): i32 {
     var args: Vec<string> = Vec.new()
-    match Child.spawn("cat", args, true) {
+    let prog = if @targetOs() == "windows" {
+        "sort"
+    } else {
+        "cat"
+    }
+    match Child.spawn(prog, args, true) {
         Result.Ok(child) => {
             let _w = child.writeStdinStr("hello pipe\n")
             child.closeStdin()
