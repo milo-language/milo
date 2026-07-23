@@ -416,6 +416,37 @@ function buildLib(sourcePaths: string[], outputPath: string, target: TargetInfo,
   writeHeader(sourcePaths[0], outputPath.replace(/\.a$/, "") + ".h", target, warningConfig);
 }
 
+// A .dylib records its own dependencies (LC_LOAD_DYLIB), so dyld pulls them in at
+// startup and `-lfoo` is self-sufficient. A .a records nothing — its members just
+// carry undefined symbols — so anything a static archive depends on has to be named
+// explicitly at link time or ld fails on symbols it has no way to locate. Upstream
+// ships that list out of band via a *-config script; probe it, since hardcoding a
+// framework set drifts every time the library is rebuilt with different options.
+function staticTransitiveDeps(name: string, target: TargetInfo): string {
+  const probe = STATIC_DEP_PROBES[name];
+  if (!probe) return "";
+  try {
+    const out = execSync(probe, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    // Drop the archive/-l entries the caller already emits; keep only the transitive
+    // system deps (frameworks on darwin, -ldl/-lpthread/... on linux).
+    const kept = out.split(/\s+/).filter((tok) =>
+      tok.startsWith("-Wl,-framework") || tok.startsWith("-Wl,-weak_framework") ||
+      tok === "-lobjc" || tok === "-lm" || tok === "-ldl" || tok === "-lpthread" || tok === "-lrt"
+    );
+    return kept.length ? " " + [...new Set(kept)].join(" ") : "";
+  } catch {
+    if (target.os === "darwin") {
+      console.error(`warning: --static-deps could not run '${probe}' to resolve ${name}'s framework deps;`);
+      console.error(`hint: the link will likely fail on undefined symbols — install the ${name} dev tooling`);
+    }
+    return "";
+  }
+}
+
+const STATIC_DEP_PROBES: Record<string, string> = {
+  SDL2: "sdl2-config --static-libs",
+};
+
 // Resolve `-lfoo` to a link spec. Dynamic is the default because a system dylib
 // picks up OpenSSL security fixes without a rebuild; --static-deps trades that away
 // for a binary that runs on machines with no Homebrew/openssl installed at all.
@@ -424,9 +455,11 @@ function libSpec(names: string[], darwinPrefix: string, target: TargetInfo, stat
   if (!staticDeps) {
     return target.os === "darwin" ? ` -L${darwinPrefix}/lib ${flags}` : ` ${flags}`;
   }
+  const transitive = names.map((n) => staticTransitiveDeps(n, target)).join("");
   if (target.os !== "darwin") {
     // GNU ld: -Bstatic/-Bdynamic are positional, so restore dynamic for libc after.
-    return ` -Wl,-Bstatic ${flags} -Wl,-Bdynamic`;
+    // Transitive deps go after -Bdynamic — they are system libs we want shared.
+    return ` -Wl,-Bstatic ${flags} -Wl,-Bdynamic${transitive}`;
   }
   // ld64 has no -Bstatic; naming the archive directly is the supported way to force
   // a static member pull while everything else stays dynamic.
@@ -437,7 +470,7 @@ function libSpec(names: string[], darwinPrefix: string, target: TargetInfo, stat
     console.error(`hint: Homebrew ships them alongside the dylibs — try 'brew install ${basename(darwinPrefix)}'`);
     process.exit(1);
   }
-  return " " + archives.join(" ");
+  return " " + archives.join(" ") + transitive;
 }
 
 // Libs declared in source via @link("name"). Homebrew's prefix is the darwin
