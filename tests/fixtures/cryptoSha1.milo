@@ -1,6 +1,3 @@
-// @skip-os: win32
-// std/crypto has no Windows arm (it binds OpenSSL).
-
 // @expect: da39a3ee5e6b4b0d3255bfef95601890afd80709
 // @expect: a9993e364706816aba3e25717850c26c9cd0d89d
 

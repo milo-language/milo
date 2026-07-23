@@ -12,6 +12,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/color](./color.md)
 - [std/crypto.darwin](./crypto.darwin.md)
 - [std/crypto.linux](./crypto.linux.md)
+- [std/crypto.windows](./crypto.windows.md)
 - [std/cstr](./cstr.md)
 - [std/csv](./csv.md)
 - [std/datetime](./datetime.md)

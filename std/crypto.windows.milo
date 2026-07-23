@@ -1,0 +1,115 @@
+// std/crypto — cryptographic primitives (Windows, CNG / bcrypt.dll).
+//
+// The POSIX arms bind CommonCrypto (macOS) / OpenSSL (Linux). Windows needs neither an
+// external OpenSSL build nor the pure-Milo hashers: CNG (bcrypt.dll, in the SDK and
+// auto-linked) provides the digests directly. BCryptHash with a versioned pseudo-handle
+// (Windows 10+) is a one-shot hash needing no provider open/close — 0x21 MD5, 0x31 SHA1,
+// 0x41 SHA256, matching bcrypt.h's BCRYPT_*_ALG_HANDLE.
+//
+// AES-GCM is the exception: CNG can do it, but only through BCryptEncrypt with a
+// GCM-chained key and a BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO struct (no one-shot pseudo-
+// handle). That is a larger, separately-verifiable piece of work, so the AES functions
+// here fail loudly with a named error rather than return a plausible-looking result.
+
+// NTSTATUS BCryptHash(BCRYPT_ALG_HANDLE, PUCHAR pbSecret, ULONG cbSecret, PUCHAR pbInput,
+//                     ULONG cbInput, PUCHAR pbOutput, ULONG cbOutput). Secret is the HMAC
+// key; NULL/0 for a plain hash. Returns 0 (STATUS_SUCCESS) on success.
+extern fn BCryptHash(alg: i64, secret: *u8, secretLen: u32, input: *u8, inputLen: u32, output: *u8, outputLen: u32): i32
+
+fn _bcryptHash(algHandle: i64, input: &string, outLen: i64): string {
+    var digest: [u8; 32] = [0; 32]
+    unsafe {
+        BCryptHash(algHandle, 0 as *u8, 0 as u32, input as *u8, input.len as u32, digest as *u8, outLen as u32)
+    }
+    var raw: string = ""
+    for i in 0..outLen {
+        raw.push(digest[i])
+    }
+    return raw
+}
+
+fn _bytesToHex(raw: &string, n: i64): string {
+    var result = ""
+    for i in 0..n {
+        let b = raw[i]
+        let hi = b >> 4
+        let lo = b & 15
+        if hi < 10 {
+            result.push(hi + 48)
+        } else {
+            result.push(hi - 10 + 97)
+        }
+        if lo < 10 {
+            result.push(lo + 48)
+        } else {
+            result.push(lo - 10 + 97)
+        }
+    }
+    return result
+}
+
+// Compute SHA-256 hash of a string. Returns 64-char lowercase hex string.
+fn sha256(input: &string): string {
+    let raw = _bcryptHash(65, input, 32)
+    return _bytesToHex(raw, 32)
+}
+
+// Compute MD5 hash of a string. Returns 32-char lowercase hex string.
+fn md5(input: &string): string {
+    let raw = _bcryptHash(33, input, 16)
+    return _bytesToHex(raw, 16)
+}
+
+// Compute SHA-1 hash. Returns 40-char lowercase hex string.
+fn sha1(input: &string): string {
+    let raw = _bcryptHash(49, input, 20)
+    return _bytesToHex(raw, 20)
+}
+
+// Raw 20-byte SHA-1 digest as a string (for WebSocket handshake, HMAC, etc.)
+fn sha1Bytes(input: &string): string {
+    return _bcryptHash(49, input, 20)
+}
+
+// ── AES-256-GCM ──
+
+struct AesGcmResult {
+    ciphertext: string,
+    tag: string,
+}
+
+// CNG AES-GCM (BCryptEncrypt + BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO) is not wired up yet;
+// fail loudly rather than return a plausible-looking ciphertext. Tracked in docs/roadmap.md.
+fn _aesUnsupported(): Result<AesGcmResult, string> {
+    return Result.Err("std/crypto AES-GCM is not implemented on windows yet (CNG BCryptEncrypt path pending) — see docs/roadmap.md")
+}
+
+fn aesGcmEncrypt(_key: &string, _iv: &string, _plaintext: &string, _aad: &string): Result<AesGcmResult, string>
+requires _key.len == 32
+requires _iv.len == 12
+{
+    return _aesUnsupported()
+}
+
+fn aesGcmDecrypt(_key: &string, _iv: &string, _ciphertext: &string, _tag: &string, _aad: &string): Result<string, string>
+requires _key.len == 32
+requires _iv.len == 12
+requires _tag.len == 16
+{
+    return Result.Err("std/crypto AES-GCM is not implemented on windows yet (CNG BCryptEncrypt path pending) — see docs/roadmap.md")
+}
+
+fn aesGcm128Encrypt(_key: &string, _iv: &string, _plaintext: &string, _aad: &string): Result<AesGcmResult, string>
+requires _key.len == 16
+requires _iv.len == 12
+{
+    return _aesUnsupported()
+}
+
+fn aesGcm128Decrypt(_key: &string, _iv: &string, _ciphertext: &string, _tag: &string, _aad: &string): Result<string, string>
+requires _key.len == 16
+requires _iv.len == 12
+requires _tag.len == 16
+{
+    return Result.Err("std/crypto AES-GCM is not implemented on windows yet (CNG BCryptEncrypt path pending) — see docs/roadmap.md")
+}

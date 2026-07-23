@@ -1,5 +1,6 @@
 // @skip-os: win32
-// std/crypto has no Windows arm (it binds OpenSSL).
+// std/crypto's Windows arm (CNG) implements the hashes but not AES-GCM yet — the CNG
+// BCryptEncrypt path is pending, so the AES functions fail loudly there. See roadmap.md.
 
 // @expect: encrypted 11 bytes
 // @expect: decrypted: hello world
