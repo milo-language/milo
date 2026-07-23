@@ -287,7 +287,7 @@ returned by VirtualAlloc — it always frees the whole reservation, unlike munma
 fn netEagain(): i32
 ```
 
-WSAEWOULDBLOCK / WSAEINPROGRESS — the Winsock analogues of EAGAIN / EINPROGRESS.
+The Winsock analogue of EAGAIN: a non-blocking socket op that cannot complete now.
 
 ### `netEinprogress`
 
@@ -295,7 +295,11 @@ WSAEWOULDBLOCK / WSAEINPROGRESS — the Winsock analogues of EAGAIN / EINPROGRES
 fn netEinprogress(): i32
 ```
 
-_Undocumented._
+The Winsock analogue of EINPROGRESS. On POSIX a non-blocking connect() reports EINPROGRESS;
+on Windows it reports WSAEWOULDBLOCK (10035), NOT WSAEINPROGRESS (10036, which means "a
+blocking call is already in progress" — a different condition). So the in-progress-connect
+code here is 10035, the same value as netEagain(); std/os.connectFd checks against this to
+decide whether to park for the connect to finish.
 
 ### `netErrno`
 
@@ -562,6 +566,22 @@ fn sockAddrUnMaxPath(): i64
 ```
 
 Longest path that still leaves room for the NUL.
+
+### `sockRead`
+
+```milo
+fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64
+```
+
+_Undocumented._
+
+### `sockWrite`
+
+```milo
+fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64
+```
+
+_Undocumented._
 
 ### `soError`
 

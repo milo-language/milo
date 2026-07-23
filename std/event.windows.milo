@@ -11,49 +11,75 @@ from "std/platform" import {
 
 // std/event — cross-platform event loop (Windows arm)
 //
-// The readiness model Windows offers is not the one the darwin/linux arms implement.
-// kqueue and epoll both report "this fd is ready, now go read it"; IOCP instead reports
-// "the read you already started has finished". A full socket-readiness port is a tier of
-// its own (see docs/roadmap.md) and lands incrementally:
+// kqueue/epoll report readiness ("this fd is ready, go read it"); this arm reproduces that
+// readiness model on top of Windows primitives rather than IOCP's completion model, because
+// std/runtime is readiness-shaped and a completion rewrite is a separate tier (docs/roadmap).
 //
-//   Phase 1 (this file, DONE): the loop's *timer + cross-thread wakeup* — everything the
-//     non-socket concurrency needs (Task.spawn, sleepMs-yield, Channel recv across an OS
-//     thread, Promise.blocking join, select-over-channel/timeout). eventPoll is a real
-//     bounded wait on a Win32 auto-reset Event, so a green task that parks waiting only on
-//     a timer deadline or a foreign-thread unpark wakes correctly instead of the loop
-//     spinning or aborting. No sockets involved, so no select()/SOCKET-width entanglement.
+//   * cross-thread wakeup + timers: a Win32 auto-reset Event. eventPoll waits on it (bounded
+//     by the caller's timer deadline), and a foreign thread SetEvent()s it to break the wait.
+//   * socket fd readiness: WSAEventSelect associates each registered socket with a manual-
+//     reset WSAEVENT signaled on FD_READ/FD_WRITE/FD_ACCEPT/FD_CONNECT/FD_CLOSE. eventPoll
+//     folds those handles into one WaitForMultipleObjects alongside the wakeup Event, so a
+//     green task blocked on socket IO and a cross-thread unpark share a single wait.
 //
-//   Phase 2 (pending): fd readiness for sockets, via WSAEventSelect + WaitForMultipleObjects
-//     folded into eventPoll. Until it lands, eventRegisterRead/Write ABORT with a named
-//     message — a green socket/pipe program stops immediately and says why, rather than
-//     silently doing nothing. That is the deliberate fail-loud seam.
+// What is NOT covered: non-socket handles (anonymous pipes, console). WSAEventSelect is
+// sockets-only, so green IO on a pipe fd still cannot park here — std/os.readFd refuses it
+// up front (setNonblocking fails on a non-socket) rather than deadlocking. True pipe
+// readiness needs overlapped IO / IOCP; see docs/roadmap.md.
 
 // ── per-loop state ──
 //
 // The kqueue/epoll arms store the loop as a single kernel fd (`eventLoopFromFd(i32)`
 // reconstructs it, and the scheduler keeps only that i32). A Win32 wait has no such fd, so
-// the state — the wakeup Event handle, and later the socket interest set — lives in a
-// process-wide table indexed by a small slot id, and the slot id is what plays the role of
-// the "fd". The table is written once per loop at scheduler init (on that scheduler's own
-// thread, before any foreign thread can reach it) and thereafter only read cross-thread
-// (eventLoopNotify reads a slot's wakeup handle; SetEvent is itself thread-safe), so it
-// needs no lock for the usage the runtime actually exercises: one loop per scheduler thread,
-// created at startup.
+// the interest set lives in a process-wide table indexed by a small slot id, and the slot id
+// plays the role of the "fd". A slot is written once at scheduler init on that scheduler's
+// own thread, before any foreign thread can reach it; thereafter the owning thread is the
+// only mutator (register/deregister/poll all run there) and foreign threads only read a
+// slot's wakeup handle to SetEvent it (itself thread-safe). One loop per scheduler thread —
+// in practice just the main thread — so no lock is needed for the usage the runtime drives.
+//
+// A loop block is a flat i64 array (indices, not a struct, so the socket arrays are plain
+// pointer-indexed loads/stores):
+//   [0]              wakeup Event HANDLE
+//   [1]              nfds (count of registered sockets)
+//   [2 .. 2+cap)     socks[i]  — registered SOCKET (i32 fd widened; MS: values fit in 32 bits)
+//   [2+cap .. +cap)  wevts[i]  — the WSAEVENT bound to socks[i]
+//   [2+2cap .. +cap) masks[i]  — interest bits: 1=read, 2=write
 
-struct WinLoop {
-    // HANDLE from CreateEventA: the auto-reset Event a foreign thread SetEvent()s to break
-    // this scheduler out of its eventPoll wait.
-    wakeup: i64,
+fn wlCap(): i64 {
+    // 62 sockets + the wakeup handle = 63, under WaitForMultipleObjects' 64-handle ceiling.
+    return 62
 }
 
-fn winLoopSize(): i64 {
-    // One i64 field. Kept explicit so Phase 2 (adding the socket interest set) is a visible
-    // edit here rather than a silent sizeof drift.
-    return 8
+fn wlSize(): i64 {
+    return (2 + 3 * wlCap()) * 8
 }
 
-// 16 concurrent scheduler loops is far beyond any real program (one per OS thread that runs
-// a green scheduler; in practice just the main thread).
+fn wlGet(b: *u8, idx: i64): i64 {
+    unsafe {
+        return (b as *i64) [idx]
+    }
+}
+
+fn wlSet(b: *u8, idx: i64, v: i64): void {
+    unsafe {
+        (b as *i64) [idx] = v
+    }
+}
+
+fn wlSockIdx(i: i64): i64 {
+    return 2 + i
+}
+
+fn wlWevtIdx(i: i64): i64 {
+    return 2 + wlCap() + i
+}
+
+fn wlMaskIdx(i: i64): i64 {
+    return 2 + 2 * wlCap() + i
+}
+
+// 16 concurrent scheduler loops is far beyond any real program.
 fn winLoopTableCap(): i32 {
     return 16
 }
@@ -71,17 +97,17 @@ fn _winLoopTableInit(): void {
     }
 }
 
-fn _winLoopAt(slot: i32): *WinLoop {
+fn _winLoopAt(slot: i32): *u8 {
     unsafe {
         let tbl = _winLoopTable as *i64
-        return tbl[slot as i64] as *WinLoop
+        return tbl[slot as i64] as *u8
     }
 }
 
-// ── Win32 externs (kernel32; already linked via the fiber/VirtualAlloc surface) ──
+// ── Win32 / Winsock externs ──
 //
-// WaitForSingleObject / CloseHandle are imported from std/platform. CreateEventA / SetEvent
-// are unique to this arm.
+// kernel32 (linked via the fiber/VirtualAlloc surface) and ws2_32 (auto-linked once WSA*
+// symbols appear). WaitForSingleObject / CloseHandle come from std/platform.
 
 // HANDLE CreateEventA(LPSECURITY_ATTRIBUTES, BOOL bManualReset, BOOL bInitialState, LPCSTR)
 extern fn CreateEventA(attrs: *u8, manualReset: i32, initial: i32, name: *u8): i64
@@ -89,7 +115,22 @@ extern fn CreateEventA(attrs: *u8, manualReset: i32, initial: i32, name: *u8): i
 // BOOL SetEvent(HANDLE)
 extern fn SetEvent(h: i64): i32
 
-// ── socket non-blocking (the one readiness piece expressible today) ──
+// DWORD WaitForMultipleObjects(DWORD nCount, const HANDLE*, BOOL bWaitAll, DWORD dwMs)
+extern fn WaitForMultipleObjects(count: u32, handles: *u8, waitAll: i32, ms: u32): u32
+
+// WSAEVENT WSACreateEvent(void) — a manual-reset Event HANDLE.
+extern fn WSACreateEvent(): i64
+
+// BOOL WSACloseEvent(WSAEVENT)
+extern fn WSACloseEvent(ev: i64): i32
+
+// int WSAEventSelect(SOCKET, WSAEVENT, long lNetworkEvents) — associates network events with
+// the Event, and puts the socket into non-blocking mode. Passing ev=NULL, events=0 cancels.
+extern fn WSAEventSelect(s: i64, ev: i64, netEvents: i32): i32
+
+// int WSAEnumNetworkEvents(SOCKET, WSAEVENT, LPWSANETWORKEVENTS) — reports which selected
+// events fired (and resets the Event / re-arms edge-triggered events).
+extern fn WSAEnumNetworkEvents(s: i64, ev: i64, out: *u8): i32
 
 // Winsock's ioctlsocket takes the FIONBIO command and a pointer to a u32 flag; nonzero
 // enables non-blocking mode. Sockets only — there is no non-blocking mode for a CRT file
@@ -99,6 +140,33 @@ extern fn ioctlsocket(s: i64, cmd: i32, argp: *u8): i32
 // FIONBIO = 0x8004667E as a signed 32-bit value.
 fn fionbio(): i32 {
     return -2147195266
+}
+
+// ── network-event bit masks ──
+//
+// FD_READ 0x01, FD_WRITE 0x02, FD_ACCEPT 0x08, FD_CONNECT 0x10, FD_CLOSE 0x20.
+// A read waiter selects READ|ACCEPT|CLOSE so an incoming connection and a peer close both
+// wake it. A write waiter selects WRITE|CONNECT so a completed *or failed* non-blocking
+// connect wakes it — FD_CONNECT is how a refused connection surfaces (the connect() caller
+// then reads SO_ERROR), the piece a plain readiness poll cannot see on Windows.
+
+fn maskRead(): i32 {
+    return 1
+}
+
+fn maskWrite(): i32 {
+    return 2
+}
+
+fn maskToNet(mask: i32): i32 {
+    var net: i32 = 0
+    if (mask & maskRead()) != 0 {
+        net = net | 41
+    }
+    if (mask & maskWrite()) != 0 {
+        net = net | 18
+    }
+    return net
 }
 
 fn setNonblocking(fd: i32): i32 {
@@ -123,11 +191,6 @@ struct EventLoop {
     slot: i32,
 }
 
-fn unsupported(what: &string): void {
-    eprint("milo: std/event.", what, " (socket readiness) is not implemented on windows yet — Phase 2 IOCP/WSAEventSelect port pending, see docs/roadmap.md")
-    exit(1)
-}
-
 fn eventLoopNew(): Result<EventLoop, string> {
     _winLoopTableInit()
     unsafe {
@@ -142,8 +205,8 @@ fn eventLoopNew(): Result<EventLoop, string> {
         if slot >= winLoopTableCap() {
             return Result.Err("windows event-loop table full")
         }
-        let st = malloc(winLoopSize())
-        memset(st, 0, winLoopSize())
+        let st = malloc(wlSize())
+        memset(st, 0, wlSize())
         tbl[slot as i64] = st as i64
         return Result.Ok(EventLoop {
             slot: slot
@@ -153,12 +216,12 @@ fn eventLoopNew(): Result<EventLoop, string> {
 }
 
 // Auto-reset Event, initially non-signaled. Auto-reset means a single wait consumes the
-// signal, so there is nothing to drain; multiple notifies before a wait coalesce into one
+// signal and there is nothing to drain; multiple notifies before a wait coalesce into one
 // wakeup, which is exactly right — a wakeup only means "re-check runnable state".
 fn eventLoopInitWakeup(el: &EventLoop): i32 {
+    let st = _winLoopAt(el.slot)
     unsafe {
-        let st = _winLoopAt(el.slot)
-        st.wakeup = CreateEventA(0 as *u8, 0, 0, 0 as *u8)
+        wlSet(st, 0, CreateEventA(0 as *u8, 0, 0, 0 as *u8))
     }
     return wakeupIdentBase()
 }
@@ -172,9 +235,9 @@ fn wakeupIdentBase(): i32 {
 // safe from any thread: SetEvent is thread-safe, and the slot's wakeup handle was written at
 // init before this loop was reachable cross-thread.
 fn eventLoopNotify(el: &EventLoop, _wakeupId: i32): i32 {
+    let st = _winLoopAt(el.slot)
     unsafe {
-        let st = _winLoopAt(el.slot)
-        SetEvent(st.wakeup)
+        SetEvent(wlGet(st, 0))
     }
     return 0
 }
@@ -184,53 +247,159 @@ fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
 }
 
 fn eventLoopCloseWakeup(el: &EventLoop, _wakeupId: i32): void {
+    let st = _winLoopAt(el.slot)
     unsafe {
-        let st = _winLoopAt(el.slot)
-        if st.wakeup != 0 {
-            CloseHandle(st.wakeup)
-            st.wakeup = 0
+        let h = wlGet(st, 0)
+        if h != 0 {
+            CloseHandle(h)
+            wlSet(st, 0, 0)
         }
     }
 }
 
-// poll the loop once. Phase 1: wait up to timeoutMs (negative = block indefinitely) on the
-// wakeup Event. A timer-only waiter is handled by the caller passing the bounded deadline as
-// timeoutMs (std/runtime's _selMinTimeout), so a WAIT_TIMEOUT return lets the scheduler
-// re-check timer arms. Socket readiness is Phase 2 — a program that registered an fd never
-// gets here, because eventRegisterRead/Write abort first.
-fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32): i32 {
+// ── socket fd readiness ──
+
+// Find fd in the interest set, or -1.
+fn _wlFind(st: *u8, fd: i32): i64 {
+    let n = wlGet(st, 1)
+    var i: i64 = 0
+    while i < n {
+        if wlGet(st, wlSockIdx(i)) == fd as i64 {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+// Add the given interest bit to fd, creating its WSAEVENT on first registration, and (re)arm
+// WSAEventSelect with the combined mask.
+fn _wlRegister(st: *u8, fd: i32, bit: i32): i32 {
+    var idx = _wlFind(st, fd)
+    if idx < 0 {
+        let n = wlGet(st, 1)
+        if n >= wlCap() {
+            eprint("milo: std/event windows interest set full (", wlCap(), " sockets)")
+            exit(1)
+        }
+        idx = n
+        wlSet(st, wlSockIdx(idx), fd as i64)
+        unsafe {
+            wlSet(st, wlWevtIdx(idx), WSACreateEvent())
+        }
+        wlSet(st, wlMaskIdx(idx), 0)
+        wlSet(st, 1, n + 1)
+    }
+    let newMask = (wlGet(st, wlMaskIdx(idx)) as i32) | bit
+    wlSet(st, wlMaskIdx(idx), newMask as i64)
+    var r: i32 = 0
     unsafe {
-        let st = _winLoopAt(el.slot)
+        r = WSAEventSelect(fd as i64, wlGet(st, wlWevtIdx(idx)), maskToNet(newMask))
+    }
+    // WSAEventSelect fails (WSAENOTSOCK) on a non-socket fd — an anonymous pipe or console
+    // handle. Windows readiness is sockets-only here, so a caller that registers a pipe fd
+    // (e.g. select's onRead over a pipe) must fail loudly rather than silently never firing
+    // and looking like a timeout. Pipe readiness is the IOCP tier; see docs/roadmap.md.
+    if r != 0 {
+        eprint("milo: std/event windows readiness is socket-only — fd ", fd, " is not a socket (pipe/console readiness needs the IOCP tier, see docs/roadmap.md)")
+        exit(1)
+    }
+    return 0
+}
+
+fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
+    return _wlRegister(_winLoopAt(el.slot), fd, maskRead())
+}
+
+fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
+    return _wlRegister(_winLoopAt(el.slot), fd, maskWrite())
+}
+
+fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
+    let st = _winLoopAt(el.slot)
+    let idx = _wlFind(st, fd)
+    if idx < 0 {
+        return 0
+    }
+    var clearBit = maskRead()
+    if forWrite {
+        clearBit = maskWrite()
+    }
+    let newMask = (wlGet(st, wlMaskIdx(idx)) as i32) & ~clearBit
+    wlSet(st, wlMaskIdx(idx), newMask as i64)
+    if newMask == 0 {
+        unsafe {
+            // cancel the event association, then release the WSAEVENT
+            WSAEventSelect(fd as i64, 0, 0)
+            WSACloseEvent(wlGet(st, wlWevtIdx(idx)))
+        }
+        // compact: move the last entry into this slot
+        let last = wlGet(st, 1) - 1
+        if idx != last {
+            wlSet(st, wlSockIdx(idx), wlGet(st, wlSockIdx(last)))
+            wlSet(st, wlWevtIdx(idx), wlGet(st, wlWevtIdx(last)))
+            wlSet(st, wlMaskIdx(idx), wlGet(st, wlMaskIdx(last)))
+        }
+        wlSet(st, 1, last)
+    } else {
+        unsafe {
+            // re-arm the reduced interest set
+            WSAEventSelect(fd as i64, wlGet(st, wlWevtIdx(idx)), maskToNet(newMask))
+        }
+    }
+    return 0
+}
+
+// poll the loop once. Waits up to timeoutMs (negative = block indefinitely) on the wakeup
+// Event and every registered socket's WSAEVENT together. On wake, reports the wakeup (if it
+// fired) plus every socket with a pending network event, as a flat fd list.
+fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32): i32 {
+    let st = _winLoopAt(el.slot)
+    unsafe {
+        let n = wlGet(st, 1)
+
+        // handle array: [wakeup, wevts...]
+        var handles: [u8; 512] = [0; 512]
+        let hp = handles as *i64
+        hp[0] = wlGet(st, 0)
+        var i: i64 = 0
+        while i < n {
+            hp[1 + i] = wlGet(st, wlWevtIdx(i))
+            i = i + 1
+        }
+
         var ms: u32 = 4294967295 as u32
         if timeoutMs >= 0 {
             ms = timeoutMs as u32
         }
-        let r = WaitForSingleObject(st.wakeup, ms)
-        if r == 0 as u32 {
-            // WAIT_OBJECT_0 — the wakeup fired
-            readyFds[0] = wakeupIdentBase()
-            return 1
+        WaitForMultipleObjects((n + 1) as u32, handles as *u8, 0, ms)
+
+        var k: i32 = 0
+        // Detect the wakeup independently of which handle satisfied the wait: an auto-reset
+        // Event that another handle "won" stays signaled, and this consumes it. Reporting it
+        // is only so the runtime calls eventLoopDrainWakeup (a no-op here) — the real cross-
+        // thread work is the xfer list it drains every poll regardless, so a missed report
+        // costs nothing.
+        if WaitForSingleObject(wlGet(st, 0), 0 as u32) == 0 as u32 {
+            readyFds[k as i64] = wakeupIdentBase()
+            k = k + 1
         }
-        // WAIT_TIMEOUT (0x102) or WAIT_FAILED — nothing ready; caller re-checks timers
-        return 0
+
+        // WSANETWORKEVENTS { long lNetworkEvents; int iErrorCode[10]; } — 44 bytes; we only
+        // read lNetworkEvents at offset 0. Enumerating also resets the WSAEVENT / re-arms it.
+        var evbuf: [u8; 64] = [0; 64]
+        i = 0
+        while i < n {
+            let fd = wlGet(st, wlSockIdx(i))
+            WSAEnumNetworkEvents(fd, wlGet(st, wlWevtIdx(i)), evbuf as *u8)
+            if (evbuf as *i32) [0] != 0 {
+                readyFds[k as i64] = fd as i32
+                k = k + 1
+            }
+            i = i + 1
+        }
+        return k
     }
-}
-
-// ── socket fd readiness (Phase 2, not yet implemented) ──
-
-fn eventRegisterRead(_el: &EventLoop, _fd: i32): i32 {
-    unsupported("eventRegisterRead")
-    return -1
-}
-
-fn eventRegisterWrite(_el: &EventLoop, _fd: i32): i32 {
-    unsupported("eventRegisterWrite")
-    return -1
-}
-
-fn eventDeregister(_el: &EventLoop, _fd: i32, _forWrite: bool): i32 {
-    unsupported("eventDeregister")
-    return -1
 }
 
 // ── reconstruction + teardown ──
@@ -246,13 +415,21 @@ fn eventLoopFd(el: &EventLoop): i32 {
 }
 
 fn eventLoopClose(el: &EventLoop): void {
+    let st = _winLoopAt(el.slot)
     unsafe {
-        let st = _winLoopAt(el.slot)
         if st as i64 != 0 {
-            if st.wakeup != 0 {
-                CloseHandle(st.wakeup)
+            let h = wlGet(st, 0)
+            if h != 0 {
+                CloseHandle(h)
             }
-            free(st as *u8)
+            // release any still-registered socket events
+            let n = wlGet(st, 1)
+            var i: i64 = 0
+            while i < n {
+                WSACloseEvent(wlGet(st, wlWevtIdx(i)))
+                i = i + 1
+            }
+            free(st)
             let tbl = _winLoopTable as *i64
             tbl[el.slot as i64] = 0
         }

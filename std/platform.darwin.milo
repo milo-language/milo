@@ -458,6 +458,17 @@ extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
 @cSig("unistd.h", "ssize_t write(int, const void *, size_t)")
 extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
 
+// Socket data IO seam. On POSIX read()/write() work on socket fds, so these alias them; the
+// Windows arm routes to recv()/send() because a SOCKET there is not a CRT fd (calling the
+// CRT _read/_write on one fast-fails). Named so std/os's green helpers stay single-source.
+fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64 {
+    return read(fd, buf, nbyte)
+}
+
+fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
+    return write(fd, buf, nbyte)
+}
+
 @cSig("fcntl.h", "int open(const char *, int, ...)")
 extern fn open(path: *u8, flags: i32,...): i32
 

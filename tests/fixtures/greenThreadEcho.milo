@@ -1,7 +1,3 @@
-// @skip-os: win32
-// the green scheduler's event loop is kqueue/epoll readiness-based; Windows
-// needs the IOCP completion port rewrite (docs/roadmap.md).
-
 // @expect: server ready
 // @expect: done
 // @expect: client 1 connected
@@ -9,77 +5,43 @@
 // @expect: client 2 connected
 // @expect: echo: hello from 2
 
+// A green echo server: the accept loop and each client park on socket readiness through the
+// scheduler's event loop, so one blocked task never stalls the others. Uses the std/os green
+// helpers (acceptFd/connectFdIn/recvFd/sendFd) rather than raw read/write so it is portable
+// — on Windows a socket is not a CRT fd and needs recv/send, which those helpers route to.
 from "std/os" import {
-    connectIn,
+    socket,
     bindIn,
     getSockPort,
-    socket,
-    bind,
     listen,
-    accept,
-    connect,
     setsockopt,
-    getsockname,
-    ntohs
+    acceptFd,
+    connectFdIn,
+    recvFd,
+    sendFd
 }
 from "std/platform" import {
-    SockAddrIn,
     makeSockaddr,
-    makeZeroedSockaddr,
-    makeZeroedSockaddrStorage,
-    sockAddrStorageLen,
     solSocket,
     soReuseaddr,
-    getErrno,
-    eagain,
-    pipe,
-    read,
-    write,
-    close
-}
-from "std/event" import {
-    setNonblocking
+    ensureNetInit,
+    closeSocket
 }
 from "std/runtime" import {
-    Task, schedulerYield, schedulerWaitRead, schedulerWaitWrite, schedulerCurrent, schedulerRunToCompletion
-}
-
-fn greenRead(fd: i32, buf: &[u8; 4096], size: i64): i64 {
-    while true {
-        let n = read(fd, buf, size)
-        if n < 0 && getErrno() == eagain() {
-            schedulerWaitRead(fd)
-            continue
-        }
-        return n
-    }
-    return -1 as i64
-}
-
-fn greenWrite(fd: i32, data: &string): i64 {
-    while true {
-        let n = write(fd, data, data.len)
-        if n < 0 && getErrno() == eagain() {
-            schedulerWaitWrite(fd)
-            continue
-        }
-        return n
-    }
-    return -1 as i64
+    Task, schedulerRunToCompletion
 }
 
 fn doClient(port: u16, id: i32): void {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
     let fd = socket(AF_INET, SOCK_STREAM, 0)
-    var addr2 = makeSockaddr(port, 16777343)
-    connectIn(fd, addr2)
-    setNonblocking(fd)
+    var addr = makeSockaddr(port, 16777343)
+    connectFdIn(fd, addr)
     print("client ", id, " connected")
     let msg = format("hello from ", id)
-    greenWrite(fd, msg)
+    sendFd(fd, msg, msg.len)
     var buf: [u8; 4096] = [0; 4096]
-    let n = greenRead(fd, buf, 4096)
+    let n = recvFd(fd, buf, 4096)
     if n > 0 {
         var resp: string = ""
         var i: i64 = 0
@@ -89,10 +51,12 @@ fn doClient(port: u16, id: i32): void {
         }
         print(resp)
     }
-    close(fd)
+    closeSocket(fd)
 }
 
 fn main(): i32 {
+    // no-op on POSIX; runs WSAStartup on Windows so socket() below returns a valid handle
+    ensureNetInit()
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
 
@@ -103,33 +67,22 @@ fn main(): i32 {
     bindIn(serverFd, addr)
     listen(serverFd, 128)
 
-    // family-agnostic: sin_port and sin6_port both sit at offset 2
     let port = getSockPort(serverFd)
 
-    setNonblocking(serverFd)
     print("server ready")
 
     // spawn server accept loop
     Task.spawn(move(): void => {
         var handled = 0
         while handled < 2 {
-            // storage-sized: accept lets the kernel pick the peer's family, and a v6
-            // peer does not fit a 16-byte sockaddr_in
-            var clientAddr = makeZeroedSockaddrStorage()
-            var addrlen: u32 = sockAddrStorageLen()
-            let clientFd = accept(serverFd, clientAddr, addrlen)
+            let clientFd = acceptFd(serverFd)
             if clientFd < 0 {
-                if getErrno() == eagain() {
-                    schedulerWaitRead(serverFd)
-                    continue
-                }
                 continue
             }
-            setNonblocking(clientFd)
             let fd = clientFd
             Task.spawn(move(): void => {
                 var buf: [u8; 4096] = [0; 4096]
-                let n = greenRead(fd, buf, 4096)
+                let n = recvFd(fd, buf, 4096)
                 if n > 0 {
                     var msg: string = ""
                     var i: i64 = 0
@@ -138,14 +91,14 @@ fn main(): i32 {
                         i = i + 1
                     }
                     let resp = "echo: " + msg
-                    greenWrite(fd, resp)
+                    sendFd(fd, resp, resp.len)
                 }
-                close(fd)
+                closeSocket(fd)
             }
             )
             handled = handled + 1
         }
-        close(serverFd)
+        closeSocket(serverFd)
     }
     )
 

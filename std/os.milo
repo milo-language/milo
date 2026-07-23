@@ -3,7 +3,7 @@
 // these imports exist for the green-aware wrappers at the bottom of this
 // file; the resolver's visited-set makes the std/os ↔ std/runtime cycle safe
 from "std/platform" import {
-    getErrno, eagain, einprogress, solSocket, soError, SockAddr, SockAddrIn, SockAddrIn6, SockAddrUn,
+    getErrno, eagain, einprogress, netErrno, netEagain, netEinprogress, solSocket, soError, SockAddr, SockAddrIn, SockAddrIn6, SockAddrUn,
     SockAddrStorage, makeZeroedSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, sockAddrInLen,
     sockAddrIn6Len, sockAddrUnLen,
     pthread_create, pthread_join, pthread_detach,
@@ -12,7 +12,8 @@ from "std/platform" import {
     pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy,
     mmap, munmap, mprotect,
     pipe,
-    read, write, open, close, lseek, access, getpid
+    read, write, open, close, lseek, access, getpid,
+    sockRead, sockWrite
 }
 from "std/event" import {
     setNonblocking
@@ -80,6 +81,10 @@ extern fn snprintf(buf: *u8, size: i64, fmt: *u8,...): i32
 
 // ── Network ──
 
+// On Windows this links to the ws2_32 socket(), which returns a SOCKET (UINT_PTR); the i32
+// here takes its low 32 bits, valid because MS documents SOCKET values fit in 32 bits. It
+// also requires WSAStartup to have run — std/net does that via ensureNetInit(), and a raw
+// std/os socket() caller must call ensureNetInit() (a no-op on POSIX) itself first.
 extern fn socket(domain: i32, sockType: i32, protocol: i32): i32
 
 // The socket syscalls take `struct sockaddr *` and read the family from its first bytes,
@@ -331,7 +336,7 @@ fn readFd(fd: i32, buf: *u8, len: i64): i64 {
     }
     while true {
         let n = read(fd, buf, len)
-        if n < 0 && inGreen && getErrno() == eagain() {
+        if n < 0 && inGreen && netErrno() == netEagain() {
             schedulerWaitRead(fd)
             continue
         }
@@ -354,7 +359,56 @@ fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
         var sent: i64 = 0
         while sent < len {
             let n = write(fd, (buf as i64 + sent) as *u8, len - sent)
-            if n < 0 && inGreen && getErrno() == eagain() {
+            if n < 0 && inGreen && netErrno() == netEagain() {
+                schedulerWaitWrite(fd)
+                continue
+            }
+            if n < 0 {
+                return n
+            }
+            sent = sent + n
+        }
+        return sent
+    }
+}
+
+// Green-aware SOCKET read/write. Identical shape to readFd/writeFd but through the
+// sockRead/sockWrite seam: on POSIX that is read/write (a socket fd is a normal fd), but on
+// Windows a SOCKET is NOT a CRT fd — the CRT _read/_write behind read/write fast-fail on one,
+// so socket data must go through recv/send. Socket code (std/net, raw-socket programs) must
+// use these, not readFd/writeFd, which stay bound to the CRT fd path for stdout/stdin/pipes.
+fn recvFd(fd: i32, buf: *u8, len: i64): i64 {
+    let inGreen = schedulerCurrent() as i64 != 0
+    if inGreen {
+        if setNonblocking(fd) != 0 {
+            eprint("milo: green socket IO is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
+            exit(1)
+        }
+    }
+    while true {
+        let n = sockRead(fd, buf, len)
+        if n < 0 && inGreen && netErrno() == netEagain() {
+            schedulerWaitRead(fd)
+            continue
+        }
+        return n
+    }
+    return -1 as i64
+}
+
+fn sendFd(fd: i32, buf: *u8, len: i64): i64 {
+    let inGreen = schedulerCurrent() as i64 != 0
+    if inGreen {
+        if setNonblocking(fd) != 0 {
+            eprint("milo: green socket IO is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
+            exit(1)
+        }
+    }
+    unsafe {
+        var sent: i64 = 0
+        while sent < len {
+            let n = sockWrite(fd, (buf as i64 + sent) as *u8, len - sent)
+            if n < 0 && inGreen && netErrno() == netEagain() {
                 schedulerWaitWrite(fd)
                 continue
             }
@@ -381,7 +435,7 @@ fn acceptFd(fd: i32): i32 {
         var clientAddr = makeZeroedSockaddrStorage()
         var addrlen: u32 = sockAddrStorageLen()
         let clientFd = accept(fd, clientAddr, addrlen)
-        if clientFd < 0 && inGreen && getErrno() == eagain() {
+        if clientFd < 0 && inGreen && netErrno() == netEagain() {
             schedulerWaitRead(fd)
             continue
         }
@@ -421,7 +475,11 @@ fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
     if r == 0 {
         return 0
     }
-    if getErrno() != einprogress() {
+    // Socket would-block/in-progress is netErrno(), not errno: Windows reports socket
+    // errors through WSAGetLastError with its own numbering (WSAEWOULDBLOCK 10035), so a
+    // raw getErrno() here reads the wrong value and the green park path is never taken.
+    // On POSIX netErrno/netEinprogress fold straight back to errno/EINPROGRESS.
+    if netErrno() != netEinprogress() {
         return -1
     }
     schedulerWaitWrite(fd)

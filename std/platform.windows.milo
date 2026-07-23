@@ -231,13 +231,18 @@ fn netErrno(): i32 {
     return WSAGetLastError()
 }
 
-// WSAEWOULDBLOCK / WSAEINPROGRESS — the Winsock analogues of EAGAIN / EINPROGRESS.
+// The Winsock analogue of EAGAIN: a non-blocking socket op that cannot complete now.
 fn netEagain(): i32 {
     return 10035
 }
 
+// The Winsock analogue of EINPROGRESS. On POSIX a non-blocking connect() reports EINPROGRESS;
+// on Windows it reports WSAEWOULDBLOCK (10035), NOT WSAEINPROGRESS (10036, which means "a
+// blocking call is already in progress" — a different condition). So the in-progress-connect
+// code here is 10035, the same value as netEagain(); std/os.connectFd checks against this to
+// decide whether to park for the connect to finish.
 fn netEinprogress(): i32 {
-    return 10036
+    return 10035
 }
 
 // A Windows SOCKET is NOT a CRT fd: closing one with _close() (the `close` in the fd
@@ -249,6 +254,30 @@ extern fn closesocket(s: i64): i32
 
 fn closeSocket(fd: i32): i32 {
     return closesocket(fd as i64)
+}
+
+// ── socket data IO seam ──
+//
+// A SOCKET is not a CRT fd, so the CRT _read/_write fast-fail on one — socket data IO must go
+// through recv/send. The POSIX arms alias sockRead/sockWrite to read/write; here they are the
+// real Winsock calls. len is `int` (32-bit) on Windows, so clamp a large request to a short
+// op rather than truncating it (every caller already handles short IO).
+@cSig("winsock2.h", "int recv(SOCKET, char *, int, int)")
+extern fn recv(s: i64, buf: *u8, len: i32, flags: i32): i32
+
+@cSig("winsock2.h", "int send(SOCKET, const char *, int, int)")
+extern fn send(s: i64, buf: *u8, len: i32, flags: i32): i32
+
+fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64 {
+    unsafe {
+        return recv(fd as i64, buf, _clampCount(nbyte) as i32, 0) as i64
+    }
+}
+
+fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
+    unsafe {
+        return send(fd as i64, buf, _clampCount(nbyte) as i32, 0) as i64
+    }
 }
 
 // ── no-equivalent APIs ──

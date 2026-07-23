@@ -124,6 +124,26 @@ fn readFd(fd: i32, buf: *u8, len: i64): i64
 
 One read(2). Returns bytes read, 0 at EOF, <0 on error.
 
+### `recvFd`
+
+```milo
+fn recvFd(fd: i32, buf: *u8, len: i64): i64
+```
+
+Green-aware SOCKET read/write. Identical shape to readFd/writeFd but through the
+sockRead/sockWrite seam: on POSIX that is read/write (a socket fd is a normal fd), but on
+Windows a SOCKET is NOT a CRT fd — the CRT _read/_write behind read/write fast-fail on one,
+so socket data must go through recv/send. Socket code (std/net, raw-socket programs) must
+use these, not readFd/writeFd, which stay bound to the CRT fd path for stdout/stdin/pipes.
+
+### `sendFd`
+
+```milo
+fn sendFd(fd: i32, buf: *u8, len: i64): i64
+```
+
+_Undocumented._
+
 ### `sslConnectFd`
 
 ```milo

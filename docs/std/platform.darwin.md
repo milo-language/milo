@@ -365,6 +365,24 @@ fn sockAddrUnMaxPath(): i64
 
 Longest path that still leaves room for the NUL the kernel expects.
 
+### `sockRead`
+
+```milo
+fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64
+```
+
+Socket data IO seam. On POSIX read()/write() work on socket fds, so these alias them; the
+Windows arm routes to recv()/send() because a SOCKET there is not a CRT fd (calling the
+CRT _read/_write on one fast-fails). Named so std/os's green helpers stay single-source.
+
+### `sockWrite`
+
+```milo
+fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64
+```
+
+_Undocumented._
+
 ### `soError`
 
 ```milo
