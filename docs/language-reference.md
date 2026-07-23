@@ -2316,8 +2316,8 @@ The same `stream.send()`/`stream.recv()` calls work identically outside green th
 A concurrent echo server handling multiple clients with green threads:
 
 ```milo
-from "std/os" import { socket, bind, listen, accept, read, write, close, setsockopt, getsockname, ntohs }
-from "std/platform" import { makeSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, solSocket, soReuseaddr, getErrno, eagain }
+from "std/os" import { socket, bind, listen, accept, setsockopt, getsockname, ntohs }
+from "std/platform" import { read, write, close, makeSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, solSocket, soReuseaddr, getErrno, eagain }
 from "std/event" import { setNonblocking }
 from "std/runtime" import { Task, schedulerWaitRead }
 

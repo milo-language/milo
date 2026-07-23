@@ -2,6 +2,14 @@
 
 ## std/platform.windows
 
+### `access`
+
+```milo
+fn access(path: *u8, mode: i32): i32
+```
+
+_Undocumented._
+
 ### `addrinfoAddrOffset`
 
 ```milo
@@ -18,6 +26,14 @@ fn afInet6(): i32
 
 23 here, against 30 on darwin and 10 on linux — no two of the three agree.
 
+### `close`
+
+```milo
+fn close(fd: i32): i32
+```
+
+_Undocumented._
+
 ### `direntNameOffset`
 
 ```milo
@@ -33,6 +49,38 @@ fn direntTypeOffset(): i64
 ```
 
 Windows has no dirent/opendir; directory iteration is FindFirstFileW/FindNextFileW.
+
+### `dlclose`
+
+```milo
+fn dlclose(_handle: *u8): i32
+```
+
+POSIX dlclose returns 0 on success; FreeLibrary returns nonzero on success.
+
+### `dlerror`
+
+```milo
+fn dlerror(): *u8
+```
+
+_Undocumented._
+
+### `dlopen`
+
+```milo
+fn dlopen(_path: *u8, _flags: i32): *u8
+```
+
+_Undocumented._
+
+### `dlsym`
+
+```milo
+fn dlsym(_handle: *u8, _symbol: *u8): *u8
+```
+
+_Undocumented._
 
 ### `eagain`
 
@@ -85,6 +133,14 @@ fn getErrno(): i32
 
 _Undocumented._
 
+### `getpid`
+
+```milo
+fn getpid(): i32
+```
+
+_Undocumented._
+
 ### `gettimeofday`
 
 ```milo
@@ -93,6 +149,14 @@ fn gettimeofday(tv: *u8, _tz: *u8): i32
 
 Fills a POSIX `struct timeval` — two i64s, seconds then microseconds — because that is
 the layout std/time reads back out of the buffer it passes.
+
+### `lseek`
+
+```milo
+fn lseek(fd: i32, offset: i64, whence: i32): i64
+```
+
+_Undocumented._
 
 ### `makecontext`
 
@@ -393,6 +457,14 @@ fn pthread_rwlock_wrlock(rwlock: *u8): i32
 
 _Undocumented._
 
+### `read`
+
+```milo
+fn read(fd: i32, buf: *u8, nbyte: i64): i64
+```
+
+_Undocumented._
+
 ### `sigchldNum`
 
 ```milo
@@ -538,3 +610,11 @@ fn usleep(usec: u32): i32
 
 Sleep() has millisecond resolution, so sub-millisecond requests round up to 1ms rather
 than to 0 — a busy-wait caller asking for 100us should yield, not spin.
+
+### `write`
+
+```milo
+fn write(fd: i32, buf: *u8, nbyte: i64): i64
+```
+
+_Undocumented._
