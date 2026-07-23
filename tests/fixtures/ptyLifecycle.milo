@@ -1,0 +1,46 @@
+// @expect: pty opened
+// @expect: exit 5
+// @expect: closed
+
+// Cross-platform pty lifecycle: open a pseudoterminal, spawn a child in it, wait for its
+// exit code, and tear down. POSIX uses openpty/forkpty; Windows uses ConPTY. This asserts
+// only the OS-independent behaviour (a child spawned in the pty runs and its exit code is
+// observed) — the slave-path and EOF-on-exit specifics that differ per OS are left to the
+// POSIX-only pty fixtures.
+
+from "std/pty" import {
+    Pty
+}
+
+fn main(): i32 {
+    match Pty.open() {
+        Result.Ok(pty) => {
+            print("pty opened")
+            var args: Vec<string> = Vec.new()
+            let prog = if @targetOs() == "windows" {
+                args.push("/c")
+                args.push("exit 5")
+                "cmd"
+            } else {
+                args.push("-c")
+                args.push("exit 5")
+                "sh"
+            }
+            match pty.spawn(prog, args) {
+                Result.Ok(_pid) => {
+                    let code = pty.wait()
+                    print($"exit {code}")
+                }
+                Result.Err(msg) => {
+                    print($"spawn error: {msg}")
+                }
+            }
+            pty.close()
+            print("closed")
+        }
+        Result.Err(msg) => {
+            print($"open error: {msg}")
+        }
+    }
+    return 0
+}

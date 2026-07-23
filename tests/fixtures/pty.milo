@@ -1,5 +1,7 @@
 // @skip-os: win32
-// std/pty is POSIX openpty/forkpty; Windows would need ConPTY.
+// std/pty has a Windows ConPTY arm (std/pty.windows.milo) and the OS-independent
+// lifecycle is covered by ptyLifecycle.milo. This fixture asserts a POSIX pts detail —
+// a /dev/... slave path — that ConPTY does not have (its slavePath is always "").
 
 // @expect: pty opened
 // @expect: slave path starts with /dev/

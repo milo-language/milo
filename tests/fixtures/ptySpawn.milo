@@ -1,5 +1,8 @@
 // @skip-os: win32
-// std/pty is POSIX openpty/forkpty; Windows would need ConPTY.
+// std/pty has a Windows ConPTY arm; the OS-independent lifecycle is covered by
+// ptyLifecycle.milo. This fixture reads child output to EOF, which a POSIX pts gives on
+// child exit but a ConPTY output pipe does not (its conhost keeps the write end open) —
+// a different drain model, not a missing feature.
 
 // @expect: pty opened
 // @expect: child spawned

@@ -1,0 +1,358 @@
+// std/pty — pseudoterminal support (Windows, ConPTY).
+//
+// The POSIX arms are openpty/forkpty: a master fd and a /dev/pts slave path, the child
+// re-parented onto the slave. Windows has no such device — the equivalent is ConPTY
+// (Windows 10 1809+): CreatePseudoConsole takes an input pipe the child reads and an
+// output pipe it writes, hands back an HPCON, and a process is attached to it by passing
+// the HPCON through a STARTUPINFOEX proc-thread attribute list to CreateProcess.
+//
+// Surface parity notes: slavePath has no meaning here and is always "" (there is no pts
+// path to hand out); the struct carries a few Windows-only fields (a second pipe fd for
+// input, the HPCON, the process handle, the attribute-list allocation) that the POSIX
+// struct does not, exactly as std/process.windows does with its process HANDLE.
+
+from "std/platform" import {
+    close,
+    read,
+    write
+}
+from "std/sync" import {
+    Channel
+}
+from "std/io" import {
+    fdChannel
+}
+
+// ── bindings ──
+
+@cSig("windows.h", "BOOL CreatePipe(PHANDLE, PHANDLE, LPSECURITY_ATTRIBUTES, DWORD)")
+extern fn CreatePipe(readPipe: *u8, writePipe: *u8, attrs: *u8, size: u32): i32
+
+// COORD is a by-value {SHORT X, SHORT Y} = 4 bytes, which the Win64 ABI passes in a
+// register exactly like an i32 (verified: passing the packed value returns S_OK). Packed
+// as Y<<16 | X — X is columns, Y is rows. No @cSig here: the guard TU would reject i32
+// against the struct type even though the ABI is identical.
+extern fn CreatePseudoConsole(size: i32, hInput: i64, hOutput: i64, flags: u32, hpc: *u8): i32
+
+extern fn ResizePseudoConsole(hpc: i64, size: i32): i32
+
+extern fn ClosePseudoConsole(hpc: i64): void
+
+// _open_osfhandle wraps an OS HANDLE as a CRT fd so read()/write() work on it; the flag
+// is _O_BINARY (0x8000) — the CRT must not rewrite newlines in a VT stream.
+@cSig("io.h", "int _open_osfhandle(intptr_t, int)")
+extern fn _open_osfhandle(handle: i64, flags: i32): i32
+
+@cSig("io.h", "intptr_t _get_osfhandle(int)")
+extern fn _get_osfhandle(fd: i32): i64
+
+// The proc-thread attribute list carries the HPCON into CreateProcess. Called once with a
+// NULL list to size it, once to fill it. PVOID/SIZE_T/DWORD_PTR params are pointer-width;
+// no @cSig (the guard TU can't match milo's i64 against those C spellings).
+extern fn InitializeProcThreadAttributeList(list: *u8, count: u32, flags: u32, size: *u8): i32
+
+extern fn UpdateProcThreadAttribute(list: *u8, flags: u32, attr: i64, value: i64, size: i64, prev: *u8, ret: *u8): i32
+
+extern fn DeleteProcThreadAttributeList(list: *u8): void
+
+@cSig("windows.h", "BOOL CreateProcessA(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL, DWORD, LPVOID, LPCSTR, LPSTARTUPINFOA, LPPROCESS_INFORMATION)")
+extern fn CreateProcessA(appName: *u8, cmdLine: *u8, procAttr: *u8, threadAttr: *u8, inherit: i32, flags: u32, env: *u8, curDir: *u8, si: *u8, pi: *u8): i32
+
+@cSig("windows.h", "DWORD WaitForSingleObject(HANDLE, DWORD)")
+extern fn WaitForSingleObject(handle: i64, ms: u32): u32
+
+@cSig("windows.h", "BOOL GetExitCodeProcess(HANDLE, LPDWORD)")
+extern fn GetExitCodeProcess(handle: i64, code: *u8): i32
+
+@cSig("windows.h", "BOOL TerminateProcess(HANDLE, UINT)")
+extern fn TerminateProcess(handle: i64, exitCode: u32): i32
+
+@cSig("windows.h", "BOOL CloseHandle(HANDLE)")
+extern fn CloseHandle(handle: i64): i32
+
+// DWORD GetFileType(HANDLE) — FILE_TYPE_CHAR (2) means a console/terminal.
+@cSig("windows.h", "DWORD GetFileType(HANDLE)")
+extern fn GetFileType(handle: i64): u32
+
+extern fn malloc(size: i64): *u8
+
+extern fn free(ptr: *u8): void
+
+extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
+
+extern fn memset(dst: *u8, val: i32, n: i64): *u8
+
+// PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
+fn _attrPseudoconsole(): i64 {
+    return 131094
+}
+
+// EXTENDED_STARTUPINFO_PRESENT.
+fn _extendedStartupinfoPresent(): u32 {
+    return 524288
+}
+
+fn _packCoord(rows: u16, cols: u16): i32 {
+    return ((rows as i32) * 65536) + (cols as i32)
+}
+
+struct WinSize {
+    rows: u16,
+    cols: u16,
+    xpixel: u16,
+    ypixel: u16,
+}
+
+struct Pty {
+    masterFd: i32, // CRT fd for the pseudoconsole OUTPUT pipe (child -> parent)
+    slavePath: string, // always "" on Windows — no pts device path exists
+    childPid: i32,
+    _rows: u16,
+    _cols: u16,
+    _inputFd: i32, // CRT fd for the INPUT pipe (parent -> child)
+    _hpcon: i64,
+    _childHandle: i64,
+    _attrList: *u8,
+}
+
+// True if fd is attached to a console (the ConPTY analogue of isatty).
+fn fdIsTerminal(fd: i32): bool {
+    unsafe {
+        return GetFileType(_get_osfhandle(fd)) == 2 as u32
+    }
+}
+
+fn isInteractive(): bool {
+    return fdIsTerminal(0)
+}
+
+impl Pty {
+    fn open(): Result<Pty, string> {
+        unsafe {
+            // Two pipes: the child reads inRead, writes outWrite. After the pseudoconsole
+            // is created it owns duplicates of inRead/outWrite, so the parent closes those
+            // and keeps inWrite (to send input) and outRead (to receive output).
+            var inPipe: [i64; 2] = [0; 2]
+            var outPipe: [i64; 2] = [0; 2]
+            if CreatePipe(inPipe as *u8, ((inPipe as *u8) as i64 + 8) as *u8, 0 as *u8, 0 as u32) == 0 {
+                return Result.Err("CreatePipe(in) failed")
+            }
+            if CreatePipe(outPipe as *u8, ((outPipe as *u8) as i64 + 8) as *u8, 0 as *u8, 0 as u32) == 0 {
+                CloseHandle(inPipe[0])
+                CloseHandle(inPipe[1])
+                return Result.Err("CreatePipe(out) failed")
+            }
+            let inRead = inPipe[0]
+            let inWrite = inPipe[1]
+            let outRead = outPipe[0]
+            let outWrite = outPipe[1]
+
+            var hpc: [i64; 1] = [0]
+            let hr = CreatePseudoConsole(_packCoord(24 as u16, 80 as u16), inRead, outWrite, 0 as u32, hpc as *u8)
+            // The pseudoconsole duplicated the ends it needs; release ours.
+            CloseHandle(inRead)
+            CloseHandle(outWrite)
+            if hr != 0 {
+                CloseHandle(inWrite)
+                CloseHandle(outRead)
+                return Result.Err("CreatePseudoConsole failed")
+            }
+
+            // _O_BINARY = 0x8000.
+            let masterFd = _open_osfhandle(outRead, 32768)
+            let inputFd = _open_osfhandle(inWrite, 32768)
+            return Result.Ok(Pty {
+                masterFd: masterFd,
+                slavePath: "",
+                childPid: -1,
+                _rows: 24 as u16,
+                _cols: 80 as u16,
+                _inputFd: inputFd,
+                _hpcon: hpc[0],
+                _childHandle: 0,
+                _attrList: 0 as *u8,
+            }
+            )
+        }
+    }
+
+    fn spawn(self: &mut Self, program: &string, args: &Vec<string>): Result<i32, string>
+    requires
+    self.masterFd >= 0
+    {
+        unsafe {
+            let cmdLine = _buildCmdLine(program, args)
+
+            // Size, allocate, and initialise the attribute list, then load the HPCON.
+            var sizeBuf: [i64; 1] = [0]
+            InitializeProcThreadAttributeList(0 as *u8, 1 as u32, 0 as u32, sizeBuf as *u8)
+            let attrList = malloc(sizeBuf[0])
+            if InitializeProcThreadAttributeList(attrList, 1 as u32, 0 as u32, sizeBuf as *u8) == 0 {
+                free(attrList)
+                free(cmdLine)
+                return Result.Err("InitializeProcThreadAttributeList failed")
+            }
+            if UpdateProcThreadAttribute(attrList, 0 as u32, _attrPseudoconsole(), self._hpcon, 8, 0 as *u8, 0 as *u8) == 0 {
+                DeleteProcThreadAttributeList(attrList)
+                free(attrList)
+                free(cmdLine)
+                return Result.Err("UpdateProcThreadAttribute failed")
+            }
+
+            // STARTUPINFOEX = STARTUPINFOA (104) + lpAttributeList (at offset 104) = 112.
+            // cb must be the full 112; std handles are NOT set — the pseudoconsole is the
+            // child's console.
+            var six: [u8; 112] = [0; 112]
+            (six as *u32) [0] = 112 as u32
+            (six as *i64) [13] = attrList as i64
+
+            var pi: [u8; 24] = [0; 24]
+            let ok = CreateProcessA(0 as *u8, cmdLine, 0 as *u8, 0 as *u8, 0, _extendedStartupinfoPresent(), 0 as *u8, 0 as *u8, six as *u8, pi as *u8)
+            free(cmdLine)
+            if ok == 0 {
+                DeleteProcThreadAttributeList(attrList)
+                free(attrList)
+                return Result.Err("CreateProcess failed")
+            }
+            self._childHandle = (pi as *i64) [0]
+            self.childPid = (pi as *u32) [4] as i32
+            self._attrList = attrList
+            return Result.Ok(self.childPid)
+        }
+    }
+
+    fn read(self: &Self, buf: *u8, len: i64): i64
+    requires
+    len > 0
+    {
+        return read(self.masterFd, buf, len)
+    }
+
+    fn write(self: &Self, buf: *u8, len: i64): i64
+    requires
+    len > 0
+    {
+        return write(self._inputFd, buf, len)
+    }
+
+    fn writeStr(self: &Self, s: &string): i64 {
+        unsafe {
+            return write(self._inputFd, s as *u8, s.len)
+        }
+    }
+
+    fn output(self: &Self): Channel<string> {
+        return fdChannel(self.masterFd)
+    }
+
+    fn resize(self: &mut Self, rows: u16, cols: u16): i32 {
+        self._rows = rows
+        self._cols = cols
+        unsafe {
+            return ResizePseudoConsole(self._hpcon, _packCoord(rows, cols))
+        }
+    }
+
+    fn winSize(self: &Self): WinSize {
+        return WinSize {
+            rows: self._rows, cols: self._cols, xpixel: 0 as u16, ypixel: 0 as u16
+        }
+    }
+
+    fn wait(self: &Self): i32
+    requires
+    self.childPid > 0
+    {
+        unsafe {
+            WaitForSingleObject(self._childHandle, 4294967295 as u32)
+            var codeBuf: [u32; 1] = [0]
+            GetExitCodeProcess(self._childHandle, codeBuf as *u8)
+            return codeBuf[0] as i32
+        }
+    }
+
+    fn kill(self: &Self): void
+    requires
+    self.childPid > 0
+    {
+        unsafe {
+            TerminateProcess(self._childHandle, 1 as u32)
+        }
+    }
+
+    fn close(self: &mut Self): void {
+        if self.masterFd >= 0 {
+            close(self.masterFd)
+            self.masterFd = -1
+        }
+        if self._inputFd >= 0 {
+            close(self._inputFd)
+            self._inputFd = -1
+        }
+        // Closing the pseudoconsole signals the child's console has gone away.
+        if self._hpcon != 0 {
+            unsafe {
+                ClosePseudoConsole(self._hpcon)
+            }
+            self._hpcon = 0
+        }
+        unsafe {
+            if self._attrList as i64 != 0 {
+                DeleteProcThreadAttributeList(self._attrList)
+                free(self._attrList)
+                self._attrList = 0 as *u8
+            }
+            if self._childHandle != 0 {
+                CloseHandle(self._childHandle)
+                self._childHandle = 0
+            }
+        }
+    }
+}
+
+fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string> {
+    var pty = Pty.open()?
+    pty.spawn(program, args)?
+    return Result.Ok(pty)
+}
+
+// Build a CreateProcess command line: `program arg1 arg2 ...`, quoting tokens that
+// contain whitespace. Malloc'd + NUL-terminated; CreateProcessA may write into it.
+fn _buildCmdLine(program: &string, args: &Vec<string>): *u8 {
+    var line = _quoteArg(program)
+    for i in 0..args.len {
+        line.push(' ')
+        line.pushStr(_quoteArg(args[i]))
+    }
+    unsafe {
+        let n = line.len
+        let buf = malloc(n + 1)
+        memcpy(buf, line as *u8, n)
+        memset((buf as i64 + n) as *u8, 0, 1)
+        return buf
+    }
+}
+
+fn _quoteArg(arg: &string): string {
+    var needsQuote = arg.len == 0
+    for i in 0..arg.len {
+        let c = arg[i]
+        if c == ' ' || c == '\t' || c == '"' {
+            needsQuote = true
+        }
+    }
+    if !needsQuote {
+        return arg.clone()
+    }
+    var out = String.withCapacity(arg.len + 2)
+    out.push('"')
+    for i in 0..arg.len {
+        let c = arg[i]
+        if c == '"' {
+            out.push('\\')
+        }
+        out.push(c)
+    }
+    out.push('"')
+    return out
+}

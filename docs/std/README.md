@@ -50,6 +50,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/process.windows](./process.windows.md)
 - [std/pty.darwin](./pty.darwin.md)
 - [std/pty.linux](./pty.linux.md)
+- [std/pty.windows](./pty.windows.md)
 - [std/random.darwin](./random.darwin.md)
 - [std/random.linux](./random.linux.md)
 - [std/random.windows](./random.windows.md)
