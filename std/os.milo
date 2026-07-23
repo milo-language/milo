@@ -320,7 +320,9 @@ extern fn system(cmd: *u8): i32
 
 extern fn fork(): i32
 
-@cSig("unistd.h", "pid_t getpid(void)")
+// Windows spells it `int _getpid(void)` in <process.h>; the oldnames shim links
+// `getpid` through to it, so the symbol resolves but the header claim does not hold.
+@cSig("unistd.h", "pid_t getpid(void)", "darwin,linux")
 extern fn getpid(): i32
 
 extern fn execl(path: *u8, arg0: *u8,...): i32

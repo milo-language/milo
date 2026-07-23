@@ -20,16 +20,16 @@ from "std/cstr" import {
     CStr
 }
 
-@cSig("dlfcn.h", "void *dlopen(const char *, int)")
+@cSig("dlfcn.h", "void *dlopen(const char *, int)", "darwin,linux")
 extern fn dlopen(_path: *u8, _flags: i32): *u8
 
-@cSig("dlfcn.h", "void *dlsym(void *, const char *)")
+@cSig("dlfcn.h", "void *dlsym(void *, const char *)", "darwin,linux")
 extern fn dlsym(_handle: *u8, _symbol: *u8): *u8
 
-@cSig("dlfcn.h", "int dlclose(void *)")
+@cSig("dlfcn.h", "int dlclose(void *)", "darwin,linux")
 extern fn dlclose(_handle: *u8): i32
 
-@cSig("dlfcn.h", "char *dlerror(void)")
+@cSig("dlfcn.h", "char *dlerror(void)", "darwin,linux")
 extern fn dlerror(): *u8
 
 // Resolve every symbol at load time rather than on first call. Same value on
