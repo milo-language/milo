@@ -1,7 +1,7 @@
 // platform-specific constants and helpers for macOS/BSD
 
 from "std/os" import {
-    getpid, htons
+    htons
 }
 
 // Fields carry C's spelling, not Milo camelCase: @cLayout emits

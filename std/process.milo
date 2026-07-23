@@ -328,7 +328,7 @@ fn capture(cmd: &string): Result<string> {
 
 // Absolute path of the running executable, so a shipped binary can locate assets
 // next to itself instead of relative to whatever cwd the caller happened to be in.
-// Prefer embedFile() for assets small enough to inline; this is for the rest.
+// Prefer @embedFile() for assets small enough to inline; this is for the rest.
 fn exePath(): Result<string> {
     // One under the buffer size: readlink does not NUL-terminate, so a full-length
     // result needs a spare byte to terminate rather than truncating a real path.

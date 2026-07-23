@@ -693,3 +693,23 @@ fn dlerror(): *u8 {
         return "dynamic load failed — call GetLastError for the code" as *u8
     }
 }
+
+// ── executable path ──
+
+// GetModuleFileNameA(NULL, ...) writes the running .exe's path. Returns the
+// character count, or 0 on failure. Unlike readlink it NUL-terminates, but the
+// exePath wrapper zeroes its buffer and terminates at n regardless, so a
+// truncating-without-error result (buffer too small on old Windows) still yields
+// a valid, if short, string rather than reading past the fill.
+@cSig("libloaderapi.h", "DWORD GetModuleFileNameA(HMODULE, LPSTR, DWORD)")
+extern fn GetModuleFileNameA(module: *u8, buf: *u8, size: u32): u32
+
+fn _exePathInto(buf: *u8, bufsize: i64): i64 {
+    unsafe {
+        let n = GetModuleFileNameA(0 as *u8, buf, bufsize as u32)
+        if n == 0 {
+            return -1
+        }
+        return n as i64
+    }
+}

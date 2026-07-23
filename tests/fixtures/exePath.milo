@@ -1,0 +1,22 @@
+// exePath() returns the running binary's own path. The location varies per run
+// (a temp dir) and its shape differs per OS (/… vs C:\…), so assert only the
+// cross-platform invariants: non-empty and within the buffer. Regression guard
+// for the cwd-independent asset lookup that std/process.exePath provides.
+from "std/process" import {
+    exePath
+}
+
+fn main(): void {
+    match exePath() {
+        Result.Ok(p) => {
+            print(p.len > 1)
+            print(p.len < 4096)
+        }
+        Result.Err(_e) => {
+            print(false)
+            print(false)
+        }
+    }
+}
+// @expect: true
+// @expect: true
