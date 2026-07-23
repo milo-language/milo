@@ -1,8 +1,3 @@
-// @skip-os: win32
-// Promise.all over blocking promises collects them on a green task woken cross-thread
-// by eventLoopNotify, which is part of the IOCP tier (docs/roadmap.md). Plain
-// Promise.blocking works on Windows; only the cross-thread collect does not.
-
 // @expect: 4950
 // @expect: done
 

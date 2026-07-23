@@ -1,21 +1,95 @@
+from "std/os" import {
+    malloc,
+    free,
+    memset
+}
 from "std/platform" import {
-    close
+    close,
+    WaitForSingleObject,
+    CloseHandle
 }
 
-// std/event — cross-platform event loop (Windows stub; IOCP not implemented yet)
+// std/event — cross-platform event loop (Windows arm)
 //
 // The readiness model Windows offers is not the one the darwin/linux arms implement.
 // kqueue and epoll both report "this fd is ready, now go read it"; IOCP instead reports
-// "the read you already started has finished". Porting the loop means restructuring
-// std/runtime around completion rather than readiness — a tier of its own
-// (see docs/roadmap.md), not a translation of this file.
+// "the read you already started has finished". A full socket-readiness port is a tier of
+// its own (see docs/roadmap.md) and lands incrementally:
 //
-// So this arm implements exactly the piece that IS expressible today — setNonblocking,
-// via ioctlsocket(FIONBIO) — and makes every loop operation abort with a named message
-// the moment it is reached. That keeps single-threaded, non-async Windows programs (the
-// overwhelming majority of the fixture suite) compiling and running correctly, while any
-// program that actually drives the event loop stops immediately and says why, instead of
-// silently doing nothing and hanging or spinning.
+//   Phase 1 (this file, DONE): the loop's *timer + cross-thread wakeup* — everything the
+//     non-socket concurrency needs (Task.spawn, sleepMs-yield, Channel recv across an OS
+//     thread, Promise.blocking join, select-over-channel/timeout). eventPoll is a real
+//     bounded wait on a Win32 auto-reset Event, so a green task that parks waiting only on
+//     a timer deadline or a foreign-thread unpark wakes correctly instead of the loop
+//     spinning or aborting. No sockets involved, so no select()/SOCKET-width entanglement.
+//
+//   Phase 2 (pending): fd readiness for sockets, via WSAEventSelect + WaitForMultipleObjects
+//     folded into eventPoll. Until it lands, eventRegisterRead/Write ABORT with a named
+//     message — a green socket/pipe program stops immediately and says why, rather than
+//     silently doing nothing. That is the deliberate fail-loud seam.
+
+// ── per-loop state ──
+//
+// The kqueue/epoll arms store the loop as a single kernel fd (`eventLoopFromFd(i32)`
+// reconstructs it, and the scheduler keeps only that i32). A Win32 wait has no such fd, so
+// the state — the wakeup Event handle, and later the socket interest set — lives in a
+// process-wide table indexed by a small slot id, and the slot id is what plays the role of
+// the "fd". The table is written once per loop at scheduler init (on that scheduler's own
+// thread, before any foreign thread can reach it) and thereafter only read cross-thread
+// (eventLoopNotify reads a slot's wakeup handle; SetEvent is itself thread-safe), so it
+// needs no lock for the usage the runtime actually exercises: one loop per scheduler thread,
+// created at startup.
+
+struct WinLoop {
+    // HANDLE from CreateEventA: the auto-reset Event a foreign thread SetEvent()s to break
+    // this scheduler out of its eventPoll wait.
+    wakeup: i64,
+}
+
+fn winLoopSize(): i64 {
+    // One i64 field. Kept explicit so Phase 2 (adding the socket interest set) is a visible
+    // edit here rather than a silent sizeof drift.
+    return 8
+}
+
+// 16 concurrent scheduler loops is far beyond any real program (one per OS thread that runs
+// a green scheduler; in practice just the main thread).
+fn winLoopTableCap(): i32 {
+    return 16
+}
+
+var _winLoopTable: i64 = 0
+
+fn _winLoopTableInit(): void {
+    unsafe {
+        if _winLoopTable == 0 {
+            let bytes = winLoopTableCap() as i64 * 8
+            let t = malloc(bytes)
+            memset(t, 0, bytes)
+            _winLoopTable = t as i64
+        }
+    }
+}
+
+fn _winLoopAt(slot: i32): *WinLoop {
+    unsafe {
+        let tbl = _winLoopTable as *i64
+        return tbl[slot as i64] as *WinLoop
+    }
+}
+
+// ── Win32 externs (kernel32; already linked via the fiber/VirtualAlloc surface) ──
+//
+// WaitForSingleObject / CloseHandle are imported from std/platform. CreateEventA / SetEvent
+// are unique to this arm.
+
+// HANDLE CreateEventA(LPSECURITY_ATTRIBUTES, BOOL bManualReset, BOOL bInitialState, LPCSTR)
+extern fn CreateEventA(attrs: *u8, manualReset: i32, initial: i32, name: *u8): i64
+
+// BOOL SetEvent(HANDLE)
+extern fn SetEvent(h: i64): i32
+
+// ── socket non-blocking (the one readiness piece expressible today) ──
 
 // Winsock's ioctlsocket takes the FIONBIO command and a pointer to a u32 flag; nonzero
 // enables non-blocking mode. Sockets only — there is no non-blocking mode for a CRT file
@@ -25,15 +99,6 @@ extern fn ioctlsocket(s: i64, cmd: i32, argp: *u8): i32
 // FIONBIO = 0x8004667E as a signed 32-bit value.
 fn fionbio(): i32 {
     return -2147195266
-}
-
-struct EventLoop {
-    iocp: i32,
-}
-
-fn unsupported(what: &string): void {
-    eprint("milo: std/event.", what, " is not implemented on windows (IOCP port pending) — see docs/roadmap.md")
-    exit(1)
 }
 
 fn setNonblocking(fd: i32): i32 {
@@ -51,16 +116,107 @@ fn clearNonblocking(fd: i32): i32 {
     }
 }
 
-// Succeeds deliberately. std/runtime constructs a loop during scheduler init, which every
-// program importing std/io reaches — even one that only prints. Failing here would make
-// `print` itself unusable on Windows to report a limitation the program never hits. The
-// loop is inert: the operations that genuinely need IOCP abort when actually reached.
-fn eventLoopNew(): Result<EventLoop, string> {
-    return Result.Ok(EventLoop {
-        iocp: -1
-    }
-    )
+// ── loop lifecycle ──
+
+// EventLoop is just the table slot; all real state hangs off _winLoopAt(slot).
+struct EventLoop {
+    slot: i32,
 }
+
+fn unsupported(what: &string): void {
+    eprint("milo: std/event.", what, " (socket readiness) is not implemented on windows yet — Phase 2 IOCP/WSAEventSelect port pending, see docs/roadmap.md")
+    exit(1)
+}
+
+fn eventLoopNew(): Result<EventLoop, string> {
+    _winLoopTableInit()
+    unsafe {
+        let tbl = _winLoopTable as *i64
+        var slot: i32 = 0
+        while slot < winLoopTableCap() {
+            if tbl[slot as i64] == 0 {
+                break
+            }
+            slot = slot + 1
+        }
+        if slot >= winLoopTableCap() {
+            return Result.Err("windows event-loop table full")
+        }
+        let st = malloc(winLoopSize())
+        memset(st, 0, winLoopSize())
+        tbl[slot as i64] = st as i64
+        return Result.Ok(EventLoop {
+            slot: slot
+        }
+        )
+    }
+}
+
+// Auto-reset Event, initially non-signaled. Auto-reset means a single wait consumes the
+// signal, so there is nothing to drain; multiple notifies before a wait coalesce into one
+// wakeup, which is exactly right — a wakeup only means "re-check runnable state".
+fn eventLoopInitWakeup(el: &EventLoop): i32 {
+    unsafe {
+        let st = _winLoopAt(el.slot)
+        st.wakeup = CreateEventA(0 as *u8, 0, 0, 0 as *u8)
+    }
+    return wakeupIdentBase()
+}
+
+// ident chosen far above any real fd so eventPoll consumers can tell a wakeup apart from fd
+// readiness in the same readyFds array (matches the darwin/linux convention).
+fn wakeupIdentBase(): i32 {
+    return 1073741824
+}
+
+// safe from any thread: SetEvent is thread-safe, and the slot's wakeup handle was written at
+// init before this loop was reachable cross-thread.
+fn eventLoopNotify(el: &EventLoop, _wakeupId: i32): i32 {
+    unsafe {
+        let st = _winLoopAt(el.slot)
+        SetEvent(st.wakeup)
+    }
+    return 0
+}
+
+fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
+    // auto-reset Event was reset by the wait that observed it; nothing to consume
+}
+
+fn eventLoopCloseWakeup(el: &EventLoop, _wakeupId: i32): void {
+    unsafe {
+        let st = _winLoopAt(el.slot)
+        if st.wakeup != 0 {
+            CloseHandle(st.wakeup)
+            st.wakeup = 0
+        }
+    }
+}
+
+// poll the loop once. Phase 1: wait up to timeoutMs (negative = block indefinitely) on the
+// wakeup Event. A timer-only waiter is handled by the caller passing the bounded deadline as
+// timeoutMs (std/runtime's _selMinTimeout), so a WAIT_TIMEOUT return lets the scheduler
+// re-check timer arms. Socket readiness is Phase 2 — a program that registered an fd never
+// gets here, because eventRegisterRead/Write abort first.
+fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32): i32 {
+    unsafe {
+        let st = _winLoopAt(el.slot)
+        var ms: u32 = 4294967295 as u32
+        if timeoutMs >= 0 {
+            ms = timeoutMs as u32
+        }
+        let r = WaitForSingleObject(st.wakeup, ms)
+        if r == 0 as u32 {
+            // WAIT_OBJECT_0 — the wakeup fired
+            readyFds[0] = wakeupIdentBase()
+            return 1
+        }
+        // WAIT_TIMEOUT (0x102) or WAIT_FAILED — nothing ready; caller re-checks timers
+        return 0
+    }
+}
+
+// ── socket fd readiness (Phase 2, not yet implemented) ──
 
 fn eventRegisterRead(_el: &EventLoop, _fd: i32): i32 {
     unsupported("eventRegisterRead")
@@ -77,40 +233,28 @@ fn eventDeregister(_el: &EventLoop, _fd: i32, _forWrite: bool): i32 {
     return -1
 }
 
-fn eventPoll(_el: &EventLoop, _readyFds: *i32, _maxEvents: i32, _timeoutMs: i32): i32 {
-    unsupported("eventPoll")
-    return -1
-}
+// ── reconstruction + teardown ──
 
-// Also init-time; there is no wakeup fd to create, and nothing polls for one.
-fn eventLoopInitWakeup(_el: &EventLoop): i32 {
-    return 0
-}
-
-fn eventLoopNotify(_el: &EventLoop, _wakeupId: i32): i32 {
-    unsupported("eventLoopNotify")
-    return -1
-}
-
-fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
-    unsupported("eventLoopDrainWakeup")
-}
-
-fn eventLoopCloseWakeup(_el: &EventLoop, _wakeupId: i32): void {
-}
-
-fn eventLoopFromFd(fd: i32): EventLoop {
+fn eventLoopFromFd(slot: i32): EventLoop {
     return EventLoop {
-        iocp: fd
+        slot: slot
     }
 }
 
 fn eventLoopFd(el: &EventLoop): i32 {
-    return el.iocp
+    return el.slot
 }
 
 fn eventLoopClose(el: &EventLoop): void {
-    if el.iocp > 0 {
-        close(el.iocp)
+    unsafe {
+        let st = _winLoopAt(el.slot)
+        if st as i64 != 0 {
+            if st.wakeup != 0 {
+                CloseHandle(st.wakeup)
+            }
+            free(st as *u8)
+            let tbl = _winLoopTable as *i64
+            tbl[el.slot as i64] = 0
+        }
     }
 }

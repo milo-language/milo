@@ -1,7 +1,3 @@
-// @skip-os: win32
-// the green scheduler's event loop is kqueue/epoll readiness-based; Windows
-// needs the IOCP completion port rewrite (docs/roadmap.md).
-
 // A timer-only Select on the main context must fire, not spin.
 //
 // Regression test for a hang I introduced fixing C1. The main-context wait loop polls via
