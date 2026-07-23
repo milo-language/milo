@@ -1,8 +1,3 @@
-// @skip-os: win32
-// opens /dev/null, which Windows spells NUL — and a fixture has no way to branch on
-// OS (the platform split is a stdlib mechanism, not a language one). The fd-slot drop
-// behaviour under test is platform-independent; only the path is not.
-
 // @expect: fd0 preserved
 
 // Regression: drop glue runs on zeroed moved-from slots (the move-zero convention),
@@ -11,20 +6,27 @@
 // (payload-zeroed) value each time; with the old `fd >= 0` guard that was close(0),
 // so every 2nd+ accept()/open() in a plain loop returned the freed fd 0 — this
 // killed multi-request TCP servers in the main context.
+//
+// devNull() (not a hard-coded "/dev/null") keeps this runnable on Windows, where the
+// bit-bucket is spelled NUL — the fd-slot behaviour under test is OS-independent.
 from "std/platform" import {
     open
+}
+from "std/fs" import {
+    devNull
 }
 from "std/io" import {
     File
 }
 
 fn main(): i32 {
+    let nul = devNull()
     // Occupy fd 0 if the harness ran us without stdin, so the probe below is
     // deterministic regardless of how the test driver wires the child's stdio.
-    let _pin = open("/dev/null", 0)
+    let _pin = open(nul, 0)
     var i = 0
     while i < 3 {
-        let fr = File.openRead("/dev/null")
+        let fr = File.openRead(nul)
         match fr {
             Result.Err(_e) => {
                 print("open err")
@@ -34,7 +36,7 @@ fn main(): i32 {
         }
         i = i + 1
     }
-    let probe = open("/dev/null", 0)
+    let probe = open(nul, 0)
     if probe > 0 {
         print("fd0 preserved")
     } else {

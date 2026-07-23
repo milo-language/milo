@@ -34,6 +34,15 @@ fn dataSyncFd(fd: i32): Result<bool, IoError>
 
 _Undocumented._
 
+### `devNull`
+
+```milo
+fn devNull(): string
+```
+
+Path of the OS bit-bucket device — /dev/null on POSIX, NUL on Windows. Use this
+instead of hard-coding "/dev/null", which does not exist on Windows.
+
 ### `fileInfo`
 
 ```milo

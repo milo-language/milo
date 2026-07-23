@@ -34,6 +34,15 @@ fn close(fd: i32): i32
 
 _Undocumented._
 
+### `devNullPath`
+
+```milo
+fn devNullPath(): string
+```
+
+The bit-bucket device. Windows spells it NUL (case-insensitive, no path); the CRT's
+fd layer opens it just like a file.
+
 ### `direntNameOffset`
 
 ```milo

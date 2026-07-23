@@ -40,7 +40,14 @@ from "std/platform" import {
     statModeOffset,
     statSizeOffset,
     access,
+    devNullPath,
     read
+}
+
+// Path of the OS bit-bucket device — /dev/null on POSIX, NUL on Windows. Use this
+// instead of hard-coding "/dev/null", which does not exist on Windows.
+fn devNull(): string {
+    return devNullPath()
 }
 
 // File metadata from stat().

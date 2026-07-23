@@ -19,6 +19,14 @@ fn afInet6(): i32
 AF_INET6 is 30 here — one of the few socket constants that actually differs across the
 two platforms (AF_INET and AF_UNIX are both the same on each).
 
+### `devNullPath`
+
+```milo
+fn devNullPath(): string
+```
+
+The bit-bucket device path. POSIX spells it /dev/null; Windows spells it NUL.
+
 ### `direntNameOffset`
 
 ```milo

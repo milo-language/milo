@@ -640,6 +640,12 @@ fn getpid(): i32 {
     return _getpid()
 }
 
+// The bit-bucket device. Windows spells it NUL (case-insensitive, no path); the CRT's
+// fd layer opens it just like a file.
+fn devNullPath(): string {
+    return "NUL"
+}
+
 // ── dynamic loading ──
 //
 // LoadLibrary/GetProcAddress/FreeLibrary are the same three operations under different

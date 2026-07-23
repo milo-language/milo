@@ -428,6 +428,11 @@ extern fn access(path: *u8, mode: i32): i32
 @cSig("unistd.h", "pid_t getpid(void)")
 extern fn getpid(): i32
 
+// The bit-bucket device path. POSIX spells it /dev/null; Windows spells it NUL.
+fn devNullPath(): string {
+    return "/dev/null"
+}
+
 // ── dynamic loading ──
 
 @cSig("dlfcn.h", "void *dlopen(const char *, int)")
