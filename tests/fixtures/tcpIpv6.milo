@@ -1,3 +1,7 @@
+// @skip-os: win32
+// std/net on Windows needs Winsock init (WSAStartup) + WSAGetLastError; the
+// TLS paths also need an OpenSSL built for the target sysroot.
+
 // IPv6 in std/net — a real ::1 round-trip.
 //
 // Added alongside the v4 API rather than replacing it: `ip4()` returns a u32 and

@@ -1,3 +1,7 @@
+// @skip-os: win32
+// std/net on Windows needs Winsock init (WSAStartup) + WSAGetLastError; the
+// TLS paths also need an OpenSSL built for the target sysroot.
+
 // @expect: write to closed pipe returned -1
 // @expect: process survived
 

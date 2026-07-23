@@ -1,3 +1,7 @@
+// @skip-os: win32
+// the green scheduler's event loop is kqueue/epoll readiness-based; Windows
+// needs the IOCP completion port rewrite (docs/roadmap.md).
+
 // @expect: fd woke: hi
 
 // select over an fd read and a channel recv: a task writes the pipe, so the

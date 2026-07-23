@@ -1,3 +1,7 @@
+// @skip-os: win32
+// this fixture declares its own POSIX extern (sysconf), which the MSVC CRT
+// does not provide — a test-side portability limit, not a compiler gap.
+
 // @cSig verifies an extern fn's signature against the real C header at build time.
 // `sysconf` is the case that motivated the design: it returns `long`, and on macOS
 // `int64_t` is `long long` — a distinct type of the same width. So the compiler cannot

@@ -1,7 +1,7 @@
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { readdirSync, readFileSync, unlinkSync, existsSync, mkdtempSync, rmSync } from "fs";
 import { execSync } from "child_process";
-import { tmpdir } from "os";
+import { tmpdir, devNull } from "os";
 import { join } from "path";
 import { parseExpected, parseExpectedError, parseExpectedRuntimeError } from "./annotations";
 import { guardedRun, type RunResult } from "../scripts/guard";
@@ -17,8 +17,21 @@ const MILO_ROOT = join(import.meta.dir, "..");
 // MILO_ROOT tells it where std/ lives since a bundled binary's import.meta.url
 // doesn't map to the repo.
 const TOOL_DIR = mkdtempSync(join(tmpdir(), "milo-testc-"));
-const MILOC = join(TOOL_DIR, "miloc");
+const IS_WINDOWS = process.platform === "win32";
+// `bun build --compile` and `milo build -o` both append .exe on Windows; the
+// paths we spawn have to carry it, since CreateProcess does no PATHEXT lookup
+// for an absolute path.
+const EXE = IS_WINDOWS ? ".exe" : "";
+const MILOC = join(TOOL_DIR, "miloc") + EXE;
 const CHILD_ENV = { ...process.env, MILO_ROOT };
+// Output path for the type-error lane, where the compile is expected to fail
+// before anything is written. Windows' NUL device is not a path lld-link will
+// accept as an output file, so point it at a scratch name there instead.
+const REJECTED_OUT = IS_WINDOWS ? join(TOOL_DIR, "rejected") : devNull;
+// Windows CI runners are ~4 cores and clang-on-COFF is slower than the mac/linux
+// path; the 5-minute pool budget that fits macOS times out there before the
+// fixture set finishes compiling.
+const POOL_TIMEOUT_MS = IS_WINDOWS ? 1_500_000 : 300_000;
 
 beforeAll(() => {
   execSync(`bun build --compile ${join(MILO_ROOT, "src", "main.ts")} --outfile ${MILOC}`, {
@@ -75,8 +88,11 @@ afterAll(() => {
 // run phase stays sequential.
 // A fixture may carry `// @skip-os: <platform>` (comma-separated) when it
 // asserts a layout or behaviour that is genuinely platform-specific — e.g. a C
-// struct whose member types differ across targets — so it neither builds nor
-// runs on that platform. Uses process.platform values ("darwin", "linux").
+// struct whose member types differ across targets, or an API the target has no
+// equivalent for — so it neither builds nor runs on that platform. Uses
+// process.platform values ("darwin", "linux", "win32"). Every skip must say
+// why in a comment beside it: the Windows set is a map of the remaining port
+// work (docs/roadmap.md), and a bare skip would hide it.
 function skippedHere(dir: string, file: string): boolean {
   const m = readFileSync(join(dir, file), "utf-8").match(/\/\/\s*@skip-os:\s*(.+)/);
   if (!m) return false;
@@ -91,7 +107,7 @@ describe("fixtures (compile + run)", () => {
     await mapPool(files, COMPILE_JOBS, async (file) => {
       const path = join(FIXTURES_DIR, file);
       const outBin = join(FIXTURES_DIR, file.replace(".milo", ""));
-      binaries.push(outBin);
+      binaries.push(outBin + EXE);
       // a companion `<name>.c` (C ABI test peers) is linked into the build so Milo
       // and clang agree on struct layout / by-value calling convention
       const companionC = path.replace(/\.milo$/, ".c");
@@ -99,7 +115,7 @@ describe("fixtures (compile + run)", () => {
       if (existsSync(companionC)) buildArgs.push(companionC);
       builds.set(file, await runWithRetry(MILOC, buildArgs));
     });
-  }, 300000);
+  }, POOL_TIMEOUT_MS);
 
   for (const file of files) {
     test(file.replace(".milo", ""), async () => {
@@ -109,7 +125,7 @@ describe("fixtures (compile + run)", () => {
       const build = builds.get(file)!;
       if (build.code !== 0) throw new Error(`build failed for ${file}:\n${build.stderr}`);
 
-      const result = await runWithRetry(join(FIXTURES_DIR, file.replace(".milo", "")), []);
+      const result = await runWithRetry(join(FIXTURES_DIR, file.replace(".milo", "")) + EXE, []);
       const actual = result.stdout.trim().split("\n").map(l => l.trim());
 
       expect(actual).toEqual(expected);
@@ -125,9 +141,9 @@ describe("errors (type checker rejects)", () => {
   // pool and the tests just assert.
   beforeAll(async () => {
     await mapPool(files, COMPILE_JOBS, async (file) => {
-      results.set(file, await run(MILOC, ["build", join(ERRORS_DIR, file), "-o", "/dev/null"]));
+      results.set(file, await run(MILOC, ["build", join(ERRORS_DIR, file), "-o", REJECTED_OUT]));
     });
-  }, 300000);
+  }, POOL_TIMEOUT_MS);
 
   for (const file of files) {
     test(file.replace(".milo", ""), () => {
@@ -152,10 +168,10 @@ describe("runtime errors (debug mode traps)", () => {
     await mapPool(files, COMPILE_JOBS, async (file) => {
       const path = join(RUNTIME_ERRORS_DIR, file);
       const outBin = join(RUNTIME_ERRORS_DIR, file.replace(".milo", ""));
-      binaries.push(outBin);
+      binaries.push(outBin + EXE);
       builds.set(file, await runWithRetry(MILOC, ["build", path, "--debug", "-o", outBin]));
     });
-  }, 300000);
+  }, POOL_TIMEOUT_MS);
 
   for (const file of files) {
     test(file.replace(".milo", ""), async () => {
@@ -165,7 +181,7 @@ describe("runtime errors (debug mode traps)", () => {
       const build = builds.get(file)!;
       if (build.code !== 0) throw new Error(`build failed for ${file}:\n${build.stderr}`);
 
-      const r = await run(join(RUNTIME_ERRORS_DIR, file.replace(".milo", "")), []);
+      const r = await run(join(RUNTIME_ERRORS_DIR, file.replace(".milo", "")) + EXE, []);
       expect(r.code !== 0).toBe(true);
       if (expectedError) {
         expect(r.stdout).toContain(expectedError);
