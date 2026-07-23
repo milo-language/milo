@@ -1,0 +1,52 @@
+// std/regex — regular expression matching (Windows).
+//
+// The POSIX arms wrap regcomp/regexec from <regex.h>. The MSVC CRT and the Windows SDK
+// provide no C-linkable regex at all (std::regex is C++-only), so there is nothing to
+// bind here. The real Windows answer is a pure-Milo regex engine — a standalone piece of
+// work tracked in docs/roadmap.md — which would also let every platform drop the libc
+// dependency.
+//
+// Until then this arm follows the port's fail-loud convention (see std/event.windows):
+// the surface exists so cross-platform code compiles and links on Windows, and any use
+// aborts with a named message rather than returning a plausible-looking wrong result. A
+// program that gates its regex use behind `if @targetOs() != "windows"` builds and runs
+// fine — the dead branch is folded out before it can reach this.
+
+struct Regex {
+    _valid: bool,
+}
+
+struct RegexMatch {
+    start: i64,
+    end: i64,
+}
+
+fn _unsupported(): void {
+    eprint("milo: std/regex is not implemented on windows (no POSIX regex; pure-Milo engine pending) — see docs/roadmap.md")
+    exit(1)
+}
+
+fn regexNewFlags(_pattern: string, _cflags: i32): Option<Regex> {
+    _unsupported()
+    return Option.None
+}
+
+fn regexNew(_pattern: string): Option<Regex> {
+    _unsupported()
+    return Option.None
+}
+
+fn regexMatch(_re: &Regex, _input: &string): bool {
+    _unsupported()
+    return false
+}
+
+fn regexFind(_re: &Regex, _input: &string): Option<RegexMatch> {
+    _unsupported()
+    return Option.None
+}
+
+fn regexFindAll(_re: &Regex, _input: &string): Vec<RegexMatch> {
+    _unsupported()
+    return Vec.new()
+}

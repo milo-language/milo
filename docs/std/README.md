@@ -56,6 +56,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/random.windows](./random.windows.md)
 - [std/regex.darwin](./regex.darwin.md)
 - [std/regex.linux](./regex.linux.md)
+- [std/regex.windows](./regex.windows.md)
 - [std/runtime](./runtime.md)
 - [std/select](./select.md)
 - [std/set](./set.md)
