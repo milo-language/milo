@@ -32,6 +32,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/io](./io.md)
 - [std/json](./json.md)
 - [std/jwt](./jwt.md)
+- [std/keys](./keys.md)
 - [std/log](./log.md)
 - [std/math](./math.md)
 - [std/mem](./mem.md)

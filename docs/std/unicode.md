@@ -2,6 +2,18 @@
 
 ## std/unicode
 
+### `charWidth`
+
+```milo
+fn charWidth(cp: i32): i64
+```
+
+Terminal cells occupied by a single codepoint: 0, 1, or 2.
+
+Control characters report 0 because they advance no column when printed —
+callers that need to reject them should filter before measuring, not rely on
+a negative sentinel.
+
 ### `codepointCount`
 
 ```milo
@@ -34,6 +46,20 @@ codepoint: a bad lead byte, a truncated tail, or a non-continuation byte all
 yield U+FFFD with size 1, so a scan advances and terminates on any input.
 Overlong forms and surrogate-range values are rejected the same way, which is
 what keeps decode/encode round-trips honest.
+
+### `displayWidth`
+
+```milo
+fn displayWidth(s: &string): i64
+```
+
+Columns a string occupies in a terminal.
+
+Measured over grapheme clusters, not codepoints, so the multi-codepoint
+sequences that real text is full of collapse to the one glyph a terminal
+actually paints: ZWJ emoji sequences (family, professions) count once, a
+flag's two regional indicators count once, skin tones and variation
+selectors fold into the emoji they modify.
 
 ### `encodeCodepoint`
 
@@ -92,6 +118,14 @@ fn isAscii(ch: u8): bool
 
 Classify ASCII bytes.
 
+### `isCombining`
+
+```milo
+fn isCombining(cp: i32): bool
+```
+
+Marks that attach to a preceding base character and advance no column.
+
 ### `isControl`
 
 ```milo
@@ -148,6 +182,22 @@ fn isPunctuation(ch: u8): bool
 
 _Undocumented._
 
+### `isRegionalIndicator`
+
+```milo
+fn isRegionalIndicator(cp: i32): bool
+```
+
+Regional indicator symbols — two in a row form one flag glyph.
+
+### `isSkinToneModifier`
+
+```milo
+fn isSkinToneModifier(cp: i32): bool
+```
+
+Emoji skin-tone modifiers, absorbed by the emoji they follow.
+
 ### `isSupplementary`
 
 ```milo
@@ -174,6 +224,22 @@ fn isWhitespace(ch: u8): bool
 ```
 
 _Undocumented._
+
+### `isWide`
+
+```milo
+fn isWide(cp: i32): bool
+```
+
+East Asian Wide/Fullwidth plus the emoji blocks that render double-width.
+
+### `isZeroWidthFormat`
+
+```milo
+fn isZeroWidthFormat(cp: i32): bool
+```
+
+Format/invisible characters: joiners, bidi controls, variation selectors, BOM.
 
 ### `lowSurrogate`
 
@@ -206,6 +272,16 @@ fn toUpperChar(ch: u8): u8
 ```
 
 _Undocumented._
+
+### `truncateToWidth`
+
+```milo
+fn truncateToWidth(s: &string, maxCols: i64): i64
+```
+
+Byte offset just past the longest prefix of `s` that fits in `maxCols`
+columns. Never splits a codepoint, and never leaves half of a double-width
+glyph — a wide character that would straddle the limit is excluded entirely.
 
 ### `utf16UnitCount`
 

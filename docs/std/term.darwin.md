@@ -35,3 +35,11 @@ fn restoreTerminal(state: &TermState): void
 ```
 
 _Undocumented._
+
+### `terminalSize`
+
+```milo
+fn terminalSize(): TermSize
+```
+
+_Undocumented._
