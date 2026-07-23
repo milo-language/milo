@@ -101,6 +101,16 @@ fn Child.writeStdinStr(self: &Child, s: &string): i64
 
 _Undocumented._
 
+### `exePath`
+
+```milo
+fn exePath(): Result<string>
+```
+
+Absolute path of the running executable, so a shipped binary can locate assets
+next to itself instead of relative to whatever cwd the caller happened to be in.
+Prefer @embedFile() for assets small enough to inline; this is for the rest.
+
 ### `Process.signal`
 
 ```milo
