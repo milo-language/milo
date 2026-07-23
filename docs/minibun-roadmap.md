@@ -1,12 +1,20 @@
 <!-- doc-meta
 system: roadmap
-purpose: staged plan to grow examples/runtimes/minibun.milo from an eval+console.log MVP into a runtime that boots a real Node CJS Express backend
-key-files: examples/runtimes/minibun.milo, std/net.milo, std/http.milo, std/io.milo, std/path.milo
-update-when: a milestone lands (check the box, note the commit) or the acceptance target changes
-last-verified: 2026-07-17
+purpose: HISTORICAL — minibun is frozen; kept as a record of the JSC-backed runtime, superseded by docs/milojs-roadmap.md
+key-files: examples/runtimes/minibun.milo, docs/milojs-roadmap.md
+update-when: do not update — minibun is not developed further
+last-verified: 2026-07-22
 -->
 
 # minibun roadmap — from `console.log` to a booting Node backend
+
+> **FROZEN (2026-07-22).** minibun is no longer developed. It stays in the tree as a working
+> record of the JSC-backed approach, and the milestones below are history, not a plan.
+>
+> The JS story is now [milojs](milojs-roadmap.md): Milo's **own** engine and **own** runtime,
+> shipping from [milo-language/milojs](https://github.com/milo-language/milojs). milojs is not a
+> JavaScriptCore replacement for minibun — it stands on its own. The node/bun fork at
+> `~/git/node` is frozen for the same reason.
 
 **Acceptance target:** `minibun ~/git/digitalocean/tahoeroads/backend/dist/index.js` serves HTTP.
 That entry is a 123-line CommonJS bundle: `exports`/`require`×13/`__dirname`, requires the

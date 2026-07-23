@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: roadmap
-purpose: staged plan to grow examples/runtimes/milojs into a pure-Milo JS engine that replaces the JavaScriptCore dependency in minibun
-key-files: examples/runtimes/milojs/milojs.milo, examples/runtimes/minibun.milo, docs/minibun-roadmap.md
+purpose: staged plan to grow milojs into a JavaScript engine AND runtime that stands on its own
+key-files: examples/runtimes/milojs/milojs.milo, examples/runtimes/milojs/milojs-engine.milo
 update-when: a stage lands (check the box, note the commit) or the acceptance target changes
-last-verified: 2026-07-20
+last-verified: 2026-07-22
 -->
 
 # milojs roadmap — a JavaScript engine written in Milo
@@ -32,14 +32,20 @@ every GC safepoint. The remaining roadmap is:
 The source and locked fixtures are authoritative when an older stage narrative
 below conflicts with this snapshot.
 
-**Acceptance target:** `minibun` runs its Node/Express workload with `milojs` as the engine
-instead of JavaScriptCore. The JSC `extern` block in `examples/runtimes/minibun.milo`
-(`JSEvaluateScript`, `JSObjectMake`, …) is deleted; the same node-compat runtime executes on a
-Milo-native VM. No system framework, no V8, no JSC — one static binary.
+**Scope decision (2026-07-22):** milojs is **our own engine and our own runtime** — a destination,
+not a means to an end. It is *not* a JavaScriptCore replacement for minibun. `minibun` and the
+node fork at `~/git/node` are frozen: kept for reference, not developed further. Do not justify
+milojs work by what it unblocks in either.
 
-**Why this is the endgame, not a detour:** [[minibun]] already proved the *runtime* (module
-loader, http server, event loop) is memory-safe Milo — JSC only supplies the *engine*. milojs
-replaces that last C++ dependency. The two roadmaps meet at milojs Stage 5.
+**Acceptance target:** `milojs` runs real Node/Express workloads directly — module loader, event
+loop, and Node-compatible builtins all its own. No system framework, no V8, no JSC. One binary.
+
+**Why this stands alone:** the *engine* (`milojs-engine`) runs raw JavaScript with no host
+bindings, which is what an embedder wants. The *runtime* (`milojs`) adds the module loader, event
+loop, and Node surface. Both ship from
+[milo-language/milojs](https://github.com/milo-language/milojs) with cross-platform release
+binaries. The measure is what real applications it runs and what its conformance number is — not
+whether some other host can swap it in.
 
 **The thesis this proves:** Milo already self-hosts its own compiler (lexer → parser → checker →
 codegen → LLVM). A JS interpreter is strictly *less* than that — no monomorphization, no LLVM
@@ -180,14 +186,13 @@ for a sane implementation of exceptions (`try`/`catch`/`throw` as unwinding), ge
 `for`/`switch`. Keep the tree-walker as an oracle to differential-test the VM against.
 **Gate:** every Stage 1–3 demo produces identical output on the VM; exceptions work.
 
-### Stage 5 — builtins to boot minibun without JSC ⬜  ⟶ roadmaps merge here
-Implement the standard library minibun's node shims actually reach: `Object`/`Array`/`String`/
-`Number`/`Math`/`JSON`/`Date`/`RegExp`/`Promise` + microtask queue + `TypedArray`/`ArrayBuffer`
-(Buffer sits on these). Swap minibun's JSC `extern` block for a milojs embedding API. The
-microtask drain that minibun's M3 solved for JSC's API boundary is now *our* event loop — we
-own the queue, so no more "drain only at the outermost boundary" gymnastics.
-**Gate:** `examples/runtimes/minibun-notes.js` (the Express-style CRUD demo) serves requests with
-milojs as the engine. `RegExp` is the likeliest long pole — scope to what express needs.
+### Stage 5 — host compatibility: the builtins real packages reach for ⬜
+Complete the standard library and Node surface that npm packages actually touch. Server HTTP and
+async `fetch` work; client `http.request`/`http.get`, TLS serving, child processes, generators,
+class fields/getters, and computed `require` do not. We own the microtask queue outright, so
+there is no API-boundary drain to work around.
+**Gate:** a real Express/tRPC application serves its routes under `milojs` end to end. `RegExp`
+and `Date` are the long poles — spec-correctness diverges from "expressible" there.
 
 ### Stage 6 — test262 conformance, measured and growing ⬜  ← a first-class goal, not just an app-subset
 **Why this is a real goal, not a footnote:** an engine that only runs "the subset our apps need"
@@ -210,8 +215,8 @@ Concretely:
   and Number formatting are the big "expressible ≠ spec-correct" cliffs — expect the number to
   stall there and log precisely which sub-areas are unimplemented.
 
-Target ladder (illustrative, to be set from the first real run): boot minibun (Stage 5) needs
-only a slice; a *credible public engine* wants `language/` + core `built-ins/` in the high
+Target ladder (illustrative, to be set from the first real run): host compatibility (Stage 5)
+needs only a slice; a *credible public engine* wants `language/` + core `built-ins/` in the high
 90s%. Measure first (see below — the QuickJS `tests/` microtests are the cheap pre-test262
 smoke), then set the ladder.
 
@@ -222,9 +227,9 @@ the value model is frozen). **Where it genuinely stalls:** the GC (Stage 2) and 
 `Date` + Number formatting edge cases (Stage 5) — big surface where "expressible" and
 "spec-correct" diverge. Everything else is mechanical parsing/dispatch.
 
-**This is a from-scratch engine, unlike minibun (a binding effort).** That makes it larger, but
-also the thing that removes the last non-Milo dependency in the JS story. Each stage is
-independently demoable: Stage 1 runs closures; Stage 3 runs OO JS; Stage 5 kills JSC.
+**This is a from-scratch engine, not a binding effort.** That makes it larger, but it is also
+what makes it ours: no C++ engine underneath, nothing to swap out. Each stage is independently
+demoable: Stage 1 runs closures; Stage 3 runs OO JS; Stage 5 runs real npm packages.
 
 ## Embedding — how others FFI in (the "like bun/QuickJS" surface)
 Milo exposes a **stable C ABI**: top-level `fn`s use the C calling convention, and
@@ -243,5 +248,5 @@ is not yet lowered — irrelevant, an engine API is opaque pointers anyway.)
   incremental but complex). Lean: **mark-sweep first** — correctness before pause times.
 - Keep the tree-walker permanently as a differential oracle, or delete it after Stage 4? (lean:
   keep — it is the cheapest VM correctness check we will ever have.)
-- Reuse [[minibun]]'s pure-JS node shims verbatim on milojs, or rewrite the hot ones as Milo
-  builtins for speed? (lean: reuse first, profile, promote later.)
+- Keep the Node-compat shims as pure JS (`lib/*.js`), or rewrite the hot ones as Milo builtins
+  for speed? (lean: JS first, profile, promote later.)
