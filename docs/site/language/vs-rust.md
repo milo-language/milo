@@ -1,6 +1,6 @@
 # Memory Safety vs Rust
 
-Rust is the industry standard for safe systems code. The table below compares how Rust and Milo handle selected memory-safety hazards in safe code. Each result is retained as either a both-sides program in [`rust-comparison/`](https://github.com/cs01/milo/tree/main/rust-comparison) or a Milo regression fixture. This is evidence for the tested cases, not a proof that every future program is sound; `unsafe` and FFI remain explicit trust boundaries in both languages.
+Rust is the industry standard for safe systems code. The table below compares how Rust and Milo handle selected memory-safety hazards in safe code. Each result is retained as either a both-sides program in [`rust-comparison/`](https://github.com/milo-language/milo/tree/main/rust-comparison) or a Milo regression fixture. This is evidence for the tested cases, not a proof that every future program is sound; `unsafe` and FFI remain explicit trust boundaries in both languages.
 
 ## What gets caught
 

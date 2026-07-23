@@ -2,7 +2,7 @@
 
 A memory-safe, intentionally simple systems language with formal verification. Friendly to humans and AI.
 
-**[cs01.github.io/milo](https://cs01.github.io/milo/)**: docs, language tour, playground, and demos you can play in the browser.
+**[milo-language.github.io/milo](https://milo-language.github.io/milo/)**: docs, language tour, playground, and demos you can play in the browser.
 
 ```milo
 from "std/http" import { Request, Response, serve }
@@ -22,9 +22,9 @@ We build the language by building applications with it: game-console emulators, 
 From source (needs [Bun](https://bun.sh) + LLVM):
 
 ```bash
-git clone https://github.com/cs01/milo.git && cd milo
+git clone https://github.com/milo-language/milo.git && cd milo
 ./milo run examples/hello.milo
 ./milo build examples/hello.milo -o hello
 ```
 
-See **[Installation](https://cs01.github.io/milo/getting-started/installation)** for details.
+See **[Installation](https://milo-language.github.io/milo/getting-started/installation)** for details.

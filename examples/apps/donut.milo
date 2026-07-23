@@ -223,7 +223,7 @@ fn runInteractive(): void {
 
     writeStdout(showCursor() + clearScreen() + cursorHome() + ansiReset())
     restoreTerminal(termState)
-    print("milo donut — https://cs01.github.io/milo/")
+    print("milo donut — https://milo-language.github.io/milo/")
 }
 
 fn main(): i32 {

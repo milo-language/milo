@@ -264,6 +264,6 @@ fn main(): i32 {
 
     writeStdout(showCursor() + clearScreen() + cursorHome() + ansiReset())
     restoreTerminal(termState)
-    print("milo aquarium — https://cs01.github.io/milo/")
+    print("milo aquarium — https://milo-language.github.io/milo/")
     return 0
 }

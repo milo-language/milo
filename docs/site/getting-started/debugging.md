@@ -1,10 +1,10 @@
 # Debugging
 
-Milo emits standard DWARF debug info, so any DWARF-aware debugger — `lldb`, `gdb`, or [hades](https://github.com/cs01/milo/tree/main/examples/apps/hades) — can set breakpoints on Milo source lines and inspect Milo values.
+Milo emits standard DWARF debug info, so any DWARF-aware debugger — `lldb`, `gdb`, or [hades](https://github.com/milo-language/milo/tree/main/examples/apps/hades) — can set breakpoints on Milo source lines and inspect Milo values.
 
 ## Graphical debugging with hades
 
-[hades](https://github.com/cs01/milo/tree/main/examples/apps/hades) is a web + AI debugger written in Milo itself. It drives any DAP backend (`lldb-dap`, `debugpy`), so it debugs Milo binaries directly — same DWARF, no plugin.
+[hades](https://github.com/milo-language/milo/tree/main/examples/apps/hades) is a web + AI debugger written in Milo itself. It drives any DAP backend (`lldb-dap`, `debugpy`), so it debugs Milo binaries directly — same DWARF, no plugin.
 
 ```bash
 ./milo build app.milo -o app -g --debug     # DWARF at -O0

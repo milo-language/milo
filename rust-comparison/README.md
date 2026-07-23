@@ -1,6 +1,6 @@
 # Rust vs Milo — memory-safety receipts
 
-Runnable proof behind the [Memory Safety vs Rust](https://cs01.github.io/milo/language/vs-rust) page. Each folder holds the **same bug written twice** — `rust.rs` and `milo.milo` — so you can watch both compilers handle it instead of taking our word.
+Runnable proof behind the [Memory Safety vs Rust](https://milo-language.github.io/milo/language/vs-rust) page. Each folder holds the **same bug written twice** — `rust.rs` and `milo.milo` — so you can watch both compilers handle it instead of taking our word.
 
 ```bash
 ./run.sh            # release mode (the shipped default for both languages)

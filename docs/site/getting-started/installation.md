@@ -26,7 +26,7 @@ Install LLVM — **macOS:** `brew install llvm` · **Ubuntu/Debian:** `sudo apt 
 ## Clone and run
 
 ```bash
-git clone https://github.com/cs01/milo.git
+git clone https://github.com/milo-language/milo.git
 cd milo
 ```
 

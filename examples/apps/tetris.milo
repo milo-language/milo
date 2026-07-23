@@ -365,7 +365,7 @@ fn render(buf: &mut string, board: &Board, kind: i64, rot: i64, px: i64, py: i64
     cursor(buf, 21, sx)
     emit(buf, gray("select(keys, gravity timer)"))
     cursor(buf, 23, sx)
-    emit(buf, bold(yellow("★ github.com/cs01/milo")))
+    emit(buf, bold(yellow("★ github.com/milo-language/milo")))
 }
 
 fn drawFrame(board: &Board, kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
@@ -521,6 +521,6 @@ fn main(): i32 {
     writeStdout(showCursor() + clearScreen() + cursorHome() + ansiReset())
     restoreTerminal(termState)
     print("thanks for playing milo tetris ♥")
-    print("built with milo — docs & playground: https://cs01.github.io/milo/")
+    print("built with milo — docs & playground: https://milo-language.github.io/milo/")
     return 0
 }

@@ -201,7 +201,7 @@ fn runInteractive(): void {
 
     writeStdout(showCursor() + clearScreen() + cursorHome() + ansiReset())
     restoreTerminal(termState)
-    print("milo plasma — https://cs01.github.io/milo/")
+    print("milo plasma — https://milo-language.github.io/milo/")
 }
 
 fn main(): i32 {

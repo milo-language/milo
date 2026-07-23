@@ -266,6 +266,6 @@ fn main(): i32 {
 
     writeStdout(showCursor() + clearScreen() + cursorHome() + ansiReset())
     restoreTerminal(termState)
-    print("bye from the milo chihuahua ♥  https://cs01.github.io/milo/")
+    print("bye from the milo chihuahua ♥  https://milo-language.github.io/milo/")
     return 0
 }

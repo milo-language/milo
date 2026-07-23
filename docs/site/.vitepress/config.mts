@@ -224,7 +224,7 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/cs01/milo' }
+      { icon: 'github', link: 'https://github.com/milo-language/milo' }
     ],
   }
 })

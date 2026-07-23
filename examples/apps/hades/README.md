@@ -1,6 +1,6 @@
 # hades
 
-Web + AI interface for any DAP debugger. Written in [Milo](https://github.com/cs01/milo).
+Web + AI interface for any DAP debugger. Written in [Milo](https://github.com/milo-language/milo).
 
 One binary, two subcommands:
 

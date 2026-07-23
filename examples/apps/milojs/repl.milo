@@ -216,7 +216,7 @@ fn banner(): void {
 
     emit(buf, "\n")
     emit(buf, "  " + bold("a JavaScript engine written from scratch in Milo.") + "\n")
-    emit(buf, "  " + dim("github.com/cs01/milo") + "\n\n")
+    emit(buf, "  " + dim("github.com/milo-language/milo") + "\n\n")
     emit(buf, "  " + dim("Tab complete · ↑/↓ history · Ctrl-C cancel line · Ctrl-D exit") + "\n\n")
     writeStdout(buf)
 }
