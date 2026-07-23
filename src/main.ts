@@ -182,12 +182,16 @@ function compileToIr(sourcePath: string, outputPath: string | null, target: Targ
 }
 
 // detect clang: prefer /usr/bin/clang (Apple) which is more stable, then PATH clang, then llc+cc
-// Codegen emits opaque pointers (`ptr`, never `i8*`), which LLVM only accepts from
-// 15 onward. Older clang parses the IR and dies on `declare i32 @memcmp(ptr, ...)`
-// with "expected type" — an error that points at our IR and reads like a codegen
-// bug rather than a stale toolchain. Debian bookworm still defaults to clang 14,
-// so this is reachable on a current distro, not a museum piece.
-const MIN_CLANG_MAJOR = 15;
+// Two separate LLVM-version requirements, both verified against real toolchains:
+//   14 and below — rejects opaque pointers outright: `declare i32 @memcmp(ptr, ...)`
+//                  fails with "expected type".
+//   15           — accepts `ptr` as a type but still mangles pointer intrinsics with
+//                  the element type, so our `@llvm.memcpy.p0.p0.i64` is an
+//                  "undefined value". The p0i8 -> p0 change landed in LLVM 16.
+// Both errors point at our IR and read like a codegen bug rather than a stale
+// toolchain. Reachable on current distros: Debian bookworm defaults to clang 14 and
+// Ubuntu 22.04 ships no newer than 15. Confirmed: 16 and 17 build clean.
+const MIN_CLANG_MAJOR = 16;
 
 function clangMajor(versionOutput: string): number | null {
   // "Debian clang version 14.0.6", "Apple clang version 17.0.0", "clang version 18.1.3"
@@ -221,10 +225,11 @@ function detectToolchain(): Toolchain {
   } catch {
     if (tooOld) {
       throw new Error(
-        `clang ${tooOld.major} is too old: milo emits opaque-pointer LLVM IR, which needs clang ${MIN_CLANG_MAJOR}+\n` +
+        `clang ${tooOld.major} is too old: milo emits LLVM IR that needs clang ${MIN_CLANG_MAJOR}+\n` +
         `  found: ${tooOld.path}\n` +
         `  fix:   macOS  xcode-select --install   (or: brew install llvm)\n` +
-        `         Debian/Ubuntu  apt install clang-${MIN_CLANG_MAJOR}  (bookworm defaults to clang 14)\n` +
+        `         Debian/Ubuntu  apt install clang-${MIN_CLANG_MAJOR}  (bookworm ships 14, jammy ships 15)\n` +
+        `                       or use https://apt.llvm.org/llvm.sh\n` +
         `         then put the newer clang first on PATH`
       );
     }
