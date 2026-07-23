@@ -71,7 +71,7 @@ one playable game with audio on the TV beats ten silent ones.
 ## Build / run
 
 ```
-milo build examples/apps/nes/sdlSmoke.milo -o /tmp/sdlSmoke -- -L/opt/homebrew/lib -lSDL2
+milo build examples/apps/nes/sdlSmoke.milo -o /tmp/sdlSmoke
 milo run   examples/apps/nes/testCartridge.milo
 ```
 

@@ -5,8 +5,9 @@
 // menu when the game exits. Keeping the launcher in shell gives crash isolation:
 // an emulator segfault drops back to the menu instead of killing the console.
 //
-// Build + run (windowed, on a dev Mac):
-//   milo build examples/apps/menu.milo -o /tmp/menu --debug -- -L/opt/homebrew/lib -lSDL2
+// Build + run (windowed, on a dev Mac; SDL2 auto-linked via the @link in
+// shared/sdl.milo — no -- flags needed):
+//   milo build examples/apps/menu.milo -o /tmp/menu --debug
 //   /tmp/menu            # add --fullscreen for the TV / Pi
 from "std/args" import {
     args

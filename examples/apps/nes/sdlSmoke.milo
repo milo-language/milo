@@ -2,10 +2,10 @@
 // work: open a window, stream a per-frame RGBA framebuffer through a texture
 // (exactly the pipeline the PPU will feed), quit on window-close.
 //
-// Build (SDL2 via homebrew):
-//   milo build examples/apps/nes/sdlSmoke.milo -o /tmp/sdlSmoke -- \
-//     -L/opt/homebrew/lib -lSDL2
+// Build (SDL2 auto-linked via the @link attribute below — no -- flags needed):
+//   milo build examples/apps/nes/sdlSmoke.milo -o /tmp/sdlSmoke
 
+@link("SDL2")
 extern fn SDL_Init(flags: u32): i32
 
 extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
