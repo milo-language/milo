@@ -1,3 +1,6 @@
+// @skip-os: win32
+// std/crypto has no Windows arm (it binds OpenSSL).
+
 // @expect: accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
 // @expect: is upgrade: true
 // @expect: not upgrade: false

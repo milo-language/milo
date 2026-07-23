@@ -1,3 +1,6 @@
+// @skip-os: win32
+// std/crypto has no Windows arm (it binds OpenSSL).
+
 // @expect: encrypted 11 bytes
 // @expect: decrypted: hello world
 // @expect: roundtrip ok

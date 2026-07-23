@@ -44,3 +44,52 @@ jobs:
       - run: bun test
       # Reads this runner's headers, so it's the only thing that can check the Linux decls.
       - run: bun run scripts/audit-extern-returns.ts
+
+  # Windows is a partial target: the compiler runs, resolves x86_64-pc-windows-msvc, and
+  # builds+runs the fixture suite minus the parts that need APIs Windows has no
+  # equivalent for (IOCP-based green IO, fork/signals, OpenSSL, pty, regex). Those
+  # fixtures carry `// @skip-os: win32` with the reason inline, so the skip list IS the
+  # remaining port work — see docs/roadmap.md.
+  #
+  # This is the only place generated code executes on real Windows. The mac/linux dev
+  # loop cross-compiles via xwin and runs under Wine (`bun scripts/windows-sweep.ts`),
+  # which validates the link and the CRT calls but is not the OS. This job is the
+  # authority on "does it actually run".
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      # clang emits the COFF object and drives the link; the runner's bundled MSVC
+      # supplies the CRT and SDK, which clang locates on its own on a real Windows host
+      # (no xwin / MILO_WINDOWS_SDK needed here — that is the cross-compile path only).
+      - name: Install LLVM
+        run: choco install llvm --no-progress -y
+      # Dump the toolchain up front: when this job goes red, the version/triple it
+      # actually resolved is the first thing you need and the most annoying to get.
+      - name: Toolchain info
+        run: |
+          clang --version
+          clang -print-target-triple
+          bun run src/main.ts --help | Select-String -Pattern "target" -SimpleMatch
+        continue-on-error: true
+      - run: bun test tests/hostTarget.test.ts
+      # The end-to-end proof, kept separate from the test runner so a failure here is
+      # unambiguous: the compiler built a PE and Windows itself executed it.
+      - name: Build and run hello.exe
+        run: |
+          bun run src/main.ts build examples/hello.milo -o hello
+          ./hello.exe
+      # The real coverage: every fixture without `@skip-os: win32` compiles to a PE and
+      # its stdout is matched on Windows. Slower than the other runners (fewer cores,
+      # clang-on-COFF), hence the widened job timeout.
+      - name: Fixture suite
+        run: bun test tests/run.test.ts
+        timeout-minutes: 45
+      # On failure the IR is what you need and cannot get afterwards; emitting it costs
+      # a second and turns a red X into something diagnosable without a second push.
+      - name: Emit IR on failure
+        if: failure()
+        run: bun run src/main.ts emit-ir examples/hello.milo
+        continue-on-error: true

@@ -1,0 +1,8 @@
+// @error: the OS list is empty
+// An empty scope reads as "verified everywhere" but verifies nowhere.
+@cSig("unistd.h", "int close(int)", "")
+extern fn close(fd: i32): i32
+
+fn main() {
+    print(close(-1))
+}

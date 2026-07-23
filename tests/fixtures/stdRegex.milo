@@ -1,3 +1,6 @@
+// @skip-os: win32
+// std/regex binds POSIX regcomp, which the MSVC CRT does not provide.
+
 // @expect: match
 // @expect: no match
 // @expect: 42

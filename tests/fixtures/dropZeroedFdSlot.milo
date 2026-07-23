@@ -1,3 +1,8 @@
+// @skip-os: win32
+// opens /dev/null, which Windows spells NUL — and a fixture has no way to branch on
+// OS (the platform split is a stdlib mechanism, not a language one). The fd-slot drop
+// behaviour under test is platform-independent; only the path is not.
+
 // @expect: fd0 preserved
 
 // Regression: drop glue runs on zeroed moved-from slots (the move-zero convention),

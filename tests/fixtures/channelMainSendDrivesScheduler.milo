@@ -1,3 +1,7 @@
+// @skip-os: win32
+// the green scheduler's event loop is kqueue/epoll readiness-based; Windows
+// needs the IOCP completion port rewrite (docs/roadmap.md).
+
 // @expect: got 1
 // @expect: got 2
 // @expect: got 3

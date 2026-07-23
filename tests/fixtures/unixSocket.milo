@@ -1,3 +1,7 @@
+// @skip-os: win32
+// std/net on Windows needs Winsock init (WSAStartup) + WSAGetLastError; the
+// TLS paths also need an OpenSSL built for the target sysroot.
+
 // std/unix round-trip over an AF_UNIX socket.
 //
 // This is what the std/os sockaddr seam was for: the syscalls take `struct sockaddr *` and

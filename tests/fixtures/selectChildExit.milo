@@ -1,3 +1,7 @@
+// @skip-os: win32
+// POSIX process model: fork/waitpid/kill have no Windows equivalent to bind to
+// — CreateProcess is a different shape, not a translation.
+
 // Child-exit Select arm — the leftover half of backlog C2.
 //
 // No new API was needed; the pieces just never existed at the same time:

@@ -335,3 +335,67 @@ fn mapPrivate(): i32 {
 fn mapAnon(): i32 {
     return 4096
 }
+
+// ── pthreads ──
+// Declared in the platform split, not std/os: Windows has no pthreads at all, so its
+// arm implements these same names over SRWLOCK/CONDITION_VARIABLE instead of declaring
+// externs that no library provides.
+
+extern fn pthread_create(thread: *u8, attr: *u8, start: *u8, arg: *u8): i32
+
+extern fn pthread_join(thread: i64, retval: *u8): i32
+
+extern fn pthread_detach(thread: i64): i32
+
+extern fn pthread_mutex_init(mutex: *u8, attr: *u8): i32
+
+extern fn pthread_mutex_lock(mutex: *u8): i32
+
+extern fn pthread_mutex_unlock(mutex: *u8): i32
+
+extern fn pthread_mutex_destroy(mutex: *u8): i32
+
+extern fn pthread_cond_init(cond: *u8, attr: *u8): i32
+
+extern fn pthread_cond_wait(cond: *u8, mutex: *u8): i32
+
+extern fn pthread_cond_signal(cond: *u8): i32
+
+extern fn pthread_cond_broadcast(cond: *u8): i32
+
+extern fn pthread_cond_destroy(cond: *u8): i32
+
+extern fn pthread_rwlock_init(rwlock: *u8, attr: *u8): i32
+
+extern fn pthread_rwlock_rdlock(rwlock: *u8): i32
+
+extern fn pthread_rwlock_wrlock(rwlock: *u8): i32
+
+extern fn pthread_rwlock_unlock(rwlock: *u8): i32
+
+extern fn pthread_rwlock_destroy(rwlock: *u8): i32
+
+// ── mmap family ──
+// In the platform split rather than std/os: Windows has no mmap, and its arm implements
+// these names over VirtualAlloc/VirtualFree/VirtualProtect instead.
+
+@cSig("sys/mman.h", "void *mmap(void *, size_t, int, int, int, off_t)")
+extern fn mmap(addr: *u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): *u8
+
+@cSig("sys/mman.h", "int munmap(void *, size_t)")
+extern fn munmap(addr: *u8, len: i64): i32
+
+@cSig("sys/mman.h", "int mprotect(void *, size_t, int)")
+extern fn mprotect(addr: *u8, len: i64, prot: i32): i32
+
+// ── time ──
+// Split out of std/time because Windows has neither: its arm builds a timeval from
+// GetSystemTimeAsFileTime and sleeps with Sleep().
+
+extern fn gettimeofday(tv: *u8, tz: *u8): i32
+
+extern fn usleep(usec: u32): i32
+
+// pipe(2). Split out because the UCRT spells it _pipe and takes two extra arguments.
+
+extern fn pipe(fds: *u8): i32

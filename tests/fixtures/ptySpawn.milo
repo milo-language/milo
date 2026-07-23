@@ -1,3 +1,6 @@
+// @skip-os: win32
+// std/pty is POSIX openpty/forkpty; Windows would need ConPTY.
+
 // @expect: pty opened
 // @expect: child spawned
 // @expect: child exited 0

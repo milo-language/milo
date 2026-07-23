@@ -28,7 +28,7 @@ from "std/net" import {
     TcpListener, TcpStream
 }
 from "std/os" import {
-    read, write, close, pipe
+    read, write, close
 }
 from "std/io" import {
     readFile, fdChannel
@@ -41,6 +41,7 @@ from "std/runtime" import {
 }
 from "std/platform" import {
     getErrno, eagain
+    , pipe
 }
 from "std/sync" import {
     Channel

@@ -1,8 +1,15 @@
+// @skip-os: win32
+// the green scheduler's event loop is kqueue/epoll readiness-based; Windows
+// needs the IOCP completion port rewrite (docs/roadmap.md).
+
 // @expect: fd woke: hi
 
 // select over an fd read and a channel recv: a task writes the pipe, so the
 // fd arm wins while the channel arm stays quiet — exercises the scheduler
 // poll claiming a select and tearing down the still-armed channel arm
+from "std/platform" import {
+    pipe
+}
 from "std/runtime" import {
     Task, schedulerRunToCompletion
 }
@@ -13,7 +20,7 @@ from "std/select" import {
     Select, selectRecv
 }
 from "std/os" import {
-    pipe, writeFd, readFd, close
+    writeFd, readFd, close
 }
 
 fn main(): i32 {

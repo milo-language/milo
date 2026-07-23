@@ -1,0 +1,150 @@
+// std/term — terminal raw mode and keyboard input (Windows console)
+//
+// There is no termios here: the equivalent state is a single DWORD of console mode bits
+// fetched with GetConsoleMode and restored with SetConsoleMode, so TermState holds that
+// DWORD rather than a 72-byte struct.
+//
+// Raw mode means clearing ENABLE_LINE_INPUT (line buffering), ENABLE_ECHO_INPUT (echo)
+// and ENABLE_PROCESSED_INPUT (which is what turns ctrl-c into a signal rather than a
+// readable byte) — the same three effects the POSIX arm gets by clearing ICANON, ECHO
+// and ISIG. We additionally SET ENABLE_VIRTUAL_TERMINAL_INPUT so the arrow keys arrive
+// as the same ESC [ A sequences the POSIX arm decodes, instead of Windows' native
+// two-record INPUT_RECORD encoding. That keeps readKey below byte-identical in behaviour
+// to the other platforms rather than forking every caller.
+
+from "std/os" import {
+    read
+}
+
+let KEY_NONE: i32 = 0
+let KEY_UP: i32 = 1
+let KEY_DOWN: i32 = 2
+let KEY_LEFT: i32 = 3
+let KEY_RIGHT: i32 = 4
+let KEY_QUIT: i32 = 5
+let KEY_SPACE: i32 = 6
+
+// STD_INPUT_HANDLE (-10) / STD_OUTPUT_HANDLE (-11) as passed to GetStdHandle.
+extern fn GetStdHandle(which: i32): i64
+
+extern fn GetConsoleMode(handle: i64, mode: *u8): i32
+
+extern fn SetConsoleMode(handle: i64, mode: u32): i32
+
+// CONSOLE_SCREEN_BUFFER_INFO is 22 bytes: COORD size, COORD cursor, WORD attrs, then
+// the SMALL_RECT window (left, top, right, bottom) at offset 10 — the window, not the
+// buffer, is what corresponds to the visible rows/cols that ioctl(TIOCGWINSZ) reports.
+extern fn GetConsoleScreenBufferInfo(handle: i64, info: *u8): i32
+
+struct TermState {
+    saved: u32,
+}
+
+fn stdinHandle(): i64 {
+    return GetStdHandle(-10)
+}
+
+fn getConsoleModeOf(handle: i64): u32 {
+    var mode: u32 = 0
+    unsafe {
+        GetConsoleMode(handle, mode.addrOf() as *u8)
+    }
+    return mode
+}
+
+// ENABLE_PROCESSED_INPUT 0x1 | ENABLE_LINE_INPUT 0x2 | ENABLE_ECHO_INPUT 0x4 cleared,
+// ENABLE_VIRTUAL_TERMINAL_INPUT 0x200 set.
+fn rawModeFrom(saved: u32): u32 {
+    let cleared = (saved as i64) & 4294967288
+    return ((cleared | 512) as u32)
+}
+
+fn enableRawMode(): TermState {
+    let h = stdinHandle()
+    let saved = getConsoleModeOf(h)
+    SetConsoleMode(h, rawModeFrom(saved))
+    return TermState {
+        saved: saved
+    }
+}
+
+// The Windows console has no VMIN/VTIME: ReadFile on a console handle in raw mode
+// already blocks until at least one record is available, which is the blocking
+// behaviour this variant asks for. The two entry points therefore agree here.
+fn enableRawModeBlocking(): TermState {
+    return enableRawMode()
+}
+
+fn restoreTerminal(state: &TermState): void {
+    SetConsoleMode(stdinHandle(), state.saved)
+}
+
+// read a keypress without blocking; returns KEY_* constant.
+// Identical decoding to the POSIX arms because ENABLE_VIRTUAL_TERMINAL_INPUT makes the
+// console emit the same ANSI sequences.
+fn readKey(): i32 {
+    var buf: [u8; 3] = [0; 3]
+    let n = read(0, buf, 1)
+    if n <= 0 {
+        return KEY_NONE
+    }
+    if buf[0] == 113 || buf[0] == 3 {
+        return KEY_QUIT
+    }
+    if buf[0] == 32 {
+        return KEY_SPACE
+    }
+    if buf[0] == 27 {
+        let n2 = read(0, buf, 2)
+        if n2 == 2 && buf[0] == 91 {
+            if buf[1] == 65 {
+                return KEY_UP
+            }
+            if buf[1] == 66 {
+                return KEY_DOWN
+            }
+            if buf[1] == 68 {
+                return KEY_LEFT
+            }
+            if buf[1] == 67 {
+                return KEY_RIGHT
+            }
+        }
+    }
+    return KEY_NONE
+}
+
+struct TermSize {
+    rows: i64,
+    cols: i64,
+}
+
+// Queried on stdout, matching the POSIX arms, so it still works with piped input.
+// Falls back to 80x24 when stdout is not a console (redirected, or under a harness).
+fn terminalSize(): TermSize {
+    var info: [u16; 11] = [0; 11]
+    var ok: i32 = 0
+    unsafe {
+        ok = GetConsoleScreenBufferInfo(GetStdHandle(-11), (info.addrOf()) as *u8)
+    }
+    if ok == 0 {
+        return TermSize {
+            rows: 24, cols: 80
+        }
+    }
+    // srWindow is inclusive on both ends, so the extent is right-left+1 / bottom-top+1.
+    let left = info[5] as i64
+    let top = info[6] as i64
+    let right = info[7] as i64
+    let bottom = info[8] as i64
+    let cols = right - left + 1
+    let rows = bottom - top + 1
+    if rows <= 0 || cols <= 0 {
+        return TermSize {
+            rows: 24, cols: 80
+        }
+    }
+    return TermSize {
+        rows: rows, cols: cols
+    }
+}

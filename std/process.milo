@@ -1,8 +1,10 @@
 // std/process — command execution and process control
 
+from "std/platform" import {
+    pipe
+}
 from "std/os" import {
-    close, dup2, execl, execvp, exit, fork, free, kill, malloc, memcpy,
-    memset, pipe, read, system, waitpid, write
+    close, dup2, execl, execvp, exit, fork, free, kill, malloc, memcpy, memset, read, system, waitpid, write
 }
 from "std/io" import {
     readFile, fdChannel

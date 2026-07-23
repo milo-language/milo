@@ -1,3 +1,7 @@
+// @skip-os: win32
+// asserts on a diagnostic that quotes unistd.h; the MSVC CRT has no such
+// header, so the compile fails for a different reason and proves nothing.
+
 // @error: Milo declares a 4-byte return
 // The C signature is right, but the Milo declaration disagrees with it: `long` is 8
 // bytes, i32 is 4. This is the Milo<->C mapping check — the half that a header-only
