@@ -2,11 +2,14 @@
 // @expect: 2
 // @expect: done
 
+from "std/platform" import {
+    pipe
+}
 from "std/event" import {
     eventLoopNew, eventLoopClose, setNonblocking, eventRegisterRead, eventPoll
 }
 from "std/os" import {
-    pipe, write, read, close
+    write, read, close
 }
 
 fn main(): i32 {
