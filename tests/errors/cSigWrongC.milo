@@ -1,3 +1,7 @@
+// @skip-os: win32
+// asserts on a diagnostic that quotes unistd.h; the MSVC CRT has no such
+// header, so the compile fails for a different reason and proves nothing.
+
 // @error: is not what unistd.h declares
 // The stated C signature is wrong: sysconf returns `long`, not `int`. Checked exactly
 // against the header via __builtin_types_compatible_p.

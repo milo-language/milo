@@ -134,7 +134,10 @@ describe("fixtures (compile + run)", () => {
 });
 
 describe("errors (type checker rejects)", () => {
-  const files = readdirSync(ERRORS_DIR).filter(f => f.endsWith(".milo"));
+  // Same @skip-os contract as the fixture lane: a negative test can be as
+  // platform-bound as a positive one — asserting on a diagnostic that quotes a
+  // POSIX header proves nothing where that header doesn't exist.
+  const files = readdirSync(ERRORS_DIR).filter(f => f.endsWith(".milo") && !skippedHere(ERRORS_DIR, f));
   const results = new Map<string, RunResult>();
 
   // Compile-only lane: the compile IS the test, so results are captured in the
@@ -161,7 +164,7 @@ describe("errors (type checker rejects)", () => {
 
 describe("runtime errors (debug mode traps)", () => {
   let files: string[] = [];
-  try { files = readdirSync(RUNTIME_ERRORS_DIR).filter(f => f.endsWith(".milo")); } catch {}
+  try { files = readdirSync(RUNTIME_ERRORS_DIR).filter(f => f.endsWith(".milo") && !skippedHere(RUNTIME_ERRORS_DIR, f)); } catch {}
   const builds = new Map<string, RunResult>();
 
   beforeAll(async () => {
