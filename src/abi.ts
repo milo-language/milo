@@ -15,6 +15,11 @@
 
 export type Arch = "aarch64" | "x86_64" | "arm";
 
+// The ABI is a function of arch AND OS: x86_64 Windows uses Microsoft x64, not System V,
+// and the two disagree on every struct that isn't exactly 1/2/4/8 bytes. Windows on
+// aarch64 follows AAPCS64 (HFAs included), so only the x86_64 arm needs the split.
+export type Os = "darwin" | "linux" | "windows" | "none";
+
 export interface AbiLeaf {
   offset: number; // byte offset within the struct
   size: number; // 4 or 8 for the scalar kinds that reach the ABI
@@ -88,8 +93,32 @@ function sysvRegs(s: AbiStruct): Reg[] {
   return regs;
 }
 
-export function classifyArg(arch: Arch, s: AbiStruct): ArgClass {
+// Microsoft x64: a struct travels in ONE integer register iff its size is exactly 1, 2,
+// 4, or 8 bytes. Every other size — 3/5/6/7 and anything over 8 — is passed as a pointer
+// to a caller-owned copy. There is no HFA rule and no per-eightbyte classification: the
+// 16-byte struct SysV splits across two registers goes by pointer here, and an all-float
+// struct still rides in an integer register. Mismatching this does not fail to link, it
+// silently passes garbage — externStructLarge returned 4294967297001 instead of 1001.
+function win64InRegister(size: number): boolean {
+  return size === 1 || size === 2 || size === 4 || size === 8;
+}
+
+function win64RegTy(size: number): string {
+  return `i${size * 8}`;
+}
+
+export function classifyArg(arch: Arch, s: AbiStruct, os: Os = "linux"): ArgClass {
   if (arch === "arm") armReject(s.name);
+
+  if (arch === "x86_64" && os === "windows") {
+    if (!win64InRegister(s.size)) {
+      // No byval: MSVC has the caller materialize the copy and pass its address, which
+      // is also what clang emits for this target. byval here would disagree with the
+      // C peer on who owns the temporary.
+      return { kind: "indirect", byval: false, align: s.align, name: s.name };
+    }
+    return { kind: "coerce", regs: [{ ty: win64RegTy(s.size), offset: 0 }], container: s.size };
+  }
 
   if (arch === "aarch64") {
     const h = hfa(s);
@@ -110,8 +139,13 @@ export function classifyArg(arch: Arch, s: AbiStruct): ArgClass {
   return { kind: "coerce", regs, container: eightbytes(s.size) * 8 };
 }
 
-export function classifyRet(arch: Arch, s: AbiStruct): RetClass {
+export function classifyRet(arch: Arch, s: AbiStruct, os: Os = "linux"): RetClass {
   if (arch === "arm") armReject(s.name);
+
+  if (arch === "x86_64" && os === "windows") {
+    if (!win64InRegister(s.size)) return { kind: "sret", align: s.align, name: s.name };
+    return { kind: "coerce", retTy: win64RegTy(s.size), container: s.size };
+  }
 
   if (arch === "aarch64") {
     const h = hfa(s);

@@ -7,7 +7,7 @@ export interface TargetInfo {
   // "none" = bare metal / freestanding (no OS, no syscalls); the stdlib
   // platform split (darwin vs linux) does not apply — such targets use the
   // freestanding core subset and semihosting for I/O instead.
-  os: "darwin" | "linux" | "none";
+  os: "darwin" | "linux" | "windows" | "none";
   arch: "aarch64" | "x86_64" | "arm";
   bareMetal?: boolean;
   // clang codegen flags for embedded cores: -mcpu selects the core (drives the
@@ -27,6 +27,12 @@ const targets: Record<string, TargetInfo> = {
   "macos-x64":   { triple: "x86_64-apple-darwin", os: "darwin", arch: "x86_64" },
   "linux-arm64": { triple: "aarch64-unknown-linux-gnu", os: "linux", arch: "aarch64" },
   "linux-x64":   { triple: "x86_64-unknown-linux-gnu", os: "linux", arch: "x86_64" },
+  // MSVC ABI, not MinGW: it's what the system toolchain and every prebuilt native dep
+  // on Windows use, and clang targets it natively given the VS Build Tools headers.
+  // Data model is LLP64 — `long` is 4 bytes here and 8 on every other target Milo
+  // hosts, so an extern typed i64 on the strength of LP64 is wrong on this target.
+  "windows-x64":   { triple: "x86_64-pc-windows-msvc", os: "windows", arch: "x86_64" },
+  "windows-arm64": { triple: "aarch64-pc-windows-msvc", os: "windows", arch: "aarch64" },
 
   // ── bare-metal ARM Cortex-M (Thumb-only cores; "none" OS, EABI) ──
   // Cortex-M cores execute only the Thumb (Thumb-2) instruction set, hence the
@@ -61,13 +67,33 @@ export function listTargets(): string[] {
   return Object.keys(targets);
 }
 
-export function getHostTarget(): TargetInfo {
-  // Widened to string: the "aarch64" arm below is defensive — os.arch() reports
-  // arm64, never aarch64 — but it is kept rather than silently narrowing the check.
-  const a: string = arch();
-  const p = platform();
-  if (p === "darwin") {
-    return targets[a === "arm64" ? "macos-arm64" : "macos-x64"]!;
+// Thrown when the compiler runs on a host it has no backend for. Distinct from a
+// plain Error so main.ts can print it as a one-line diagnostic instead of a stack.
+export class UnsupportedHostError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnsupportedHostError";
   }
-  return targets[a === "arm64" || a === "aarch64" ? "linux-arm64" : "linux-x64"]!;
+}
+
+// Split from getHostTarget so tests can exercise a host they aren't running on.
+export function hostTargetFor(p: string, a: string): TargetInfo {
+  // The "aarch64" arm is defensive — os.arch() reports arm64, never aarch64 — but it
+  // is kept rather than silently narrowing the check.
+  const isArm = a === "arm64" || a === "aarch64";
+  if (p === "darwin") return targets[isArm ? "macos-arm64" : "macos-x64"]!;
+  if (p === "linux") return targets[isArm ? "linux-arm64" : "linux-x64"]!;
+  if (p === "win32") return targets[isArm ? "windows-arm64" : "windows-x64"]!;
+  // Every unrecognized host used to fall through to the linux entry. On Windows that
+  // meant the compiler silently claimed x86_64-unknown-linux-gnu and emitted ELF-
+  // targeting IR: it didn't fail, it lied, and the eventual link error named neither
+  // the host nor the cause. Refusing is the only honest answer for a host with no
+  // triple, so the fallthrough must never come back.
+  throw new UnsupportedHostError(
+    `${p} is not a supported host platform (supported: darwin, linux, windows).`,
+  );
+}
+
+export function getHostTarget(): TargetInfo {
+  return hostTargetFor(platform(), arch());
 }

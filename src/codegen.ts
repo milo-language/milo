@@ -125,6 +125,41 @@ export class Codegen {
     this.emitDebug = emitDebug;
   }
 
+  // The MSVC CRT is not POSIX: the byte-level I/O the print builtins lower to has
+  // different names (`_write`), narrower types (LLP64 — `_write` takes/returns 32-bit
+  // where POSIX `write` is 64-bit), or no equivalent at all (`dprintf`). Each divergence
+  // is handled at the emission site rather than by a blanket rename table, because the
+  // signatures differ too, and a renamed call with the wrong arity miscompiles silently.
+  private get isWindows(): boolean { return this.target.os === "windows"; }
+
+  // Byte-exact write of `len` bytes at `ptr` to a fd. NUL-correct, unlike printf %s.
+  private emitFdWrite(lines: string[], fd: number, dataPtr: string, lenVal: string): void {
+    this.needsWrite = true;
+    if (!this.isWindows) {
+      lines.push(`  call i64 @write(i32 ${fd}, ptr ${dataPtr}, i64 ${lenVal})`);
+      return;
+    }
+    // _write's count is `unsigned int`, so the i64 length must be truncated. A string
+    // longer than 4 GiB would wrap here; that is also true of the C call itself.
+    const n32 = this.nextTemp();
+    lines.push(`  ${n32} = trunc i64 ${lenVal} to i32`);
+    lines.push(`  call i32 @_write(i32 ${fd}, ptr ${dataPtr}, i32 ${n32})`);
+  }
+
+  // dprintf(fd, fmt, ...) has no UCRT equivalent. stderr is not a linkable data symbol
+  // on MSVC either — it is the macro `__acrt_iob_func(2)` — so eprint lowers to an
+  // fprintf onto that handle.
+  private emitFdPrintf(lines: string[], fd: number, fmtLabel: string, argsStr: string): void {
+    this.needsDprintf = true;
+    if (!this.isWindows) {
+      lines.push(`  call i32 (i32, ptr, ...) @dprintf(i32 ${fd}, ptr ${fmtLabel}${argsStr})`);
+      return;
+    }
+    const iob = this.nextTemp();
+    lines.push(`  ${iob} = call ptr @__acrt_iob_func(i32 ${fd})`);
+    lines.push(`  call i32 (ptr, ptr, ...) @fprintf(ptr ${iob}, ptr ${fmtLabel}${argsStr})`);
+  }
+
   private diEsc(s: string): string { return s.replace(/\\/g, "\\5C").replace(/"/g, "\\22"); }
 
   private diFile(path: string): number {
@@ -1017,10 +1052,10 @@ export class Codegen {
           try {
             const args = fn.params.map(p =>
               byValStruct(p.type, !!(p.isRef || p.isRefMut))
-                ? classifyArg(this.target.arch, this.abiStructOf((p.type as any).name))
+                ? classifyArg(this.target.arch, this.abiStructOf((p.type as any).name), this.target.os)
                 : null);
             const ret: RetClass = byValStruct(fn.retType, false)
-              ? classifyRet(this.target.arch, this.abiStructOf((fn.retType as any).name))
+              ? classifyRet(this.target.arch, this.abiStructOf((fn.retType as any).name), this.target.os)
               : { kind: "direct" };
             this.externAbi.set(fn.name, { args, ret });
           } catch (e) {
@@ -1073,8 +1108,13 @@ export class Codegen {
         1, 0,
         "declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)",
       );
-    if (this.needsGetentropy && !declaredExterns.has("getentropy"))
+    if (this.needsGetentropy && !declaredExterns.has("getentropy")) {
+      // No UCRT equivalent takes a length: rand_s fills 4 bytes at a time and
+      // BCryptGenRandom needs bcrypt.lib. Refusing beats emitting a call that
+      // fails at link time with an undefined symbol that names nothing useful.
+      if (this.isWindows) throw new Error("randomness (getentropy) is not implemented for the windows target yet");
       this.output.splice(1, 0, "declare i32 @getentropy(ptr, i64)");
+    }
     if (this.needsMemcmp && !declaredExterns.has("memcmp"))
       this.output.splice(1, 0, "declare i32 @memcmp(ptr, ptr, i64)");
     if (this.needsStrlen && !declaredExterns.has("strlen"))
@@ -1094,9 +1134,17 @@ export class Codegen {
     if (this.needsFflush && !declaredExterns.has("fflush"))
       this.output.splice(1, 0, `declare i32 @fflush(ptr)`);
     if (this.needsWrite && !declaredExterns.has("write"))
-      this.output.splice(1, 0, `declare i64 @write(i32, ptr, i64)`);
-    if (this.needsDprintf && !declaredExterns.has("dprintf"))
-      this.output.splice(1, 0, `declare i32 @dprintf(i32, ptr, ...)`);
+      this.output.splice(1, 0, this.isWindows
+        ? `declare i32 @_write(i32, ptr, i32)`
+        : `declare i64 @write(i32, ptr, i64)`);
+    if (this.needsDprintf && !declaredExterns.has("dprintf")) {
+      if (this.isWindows) {
+        this.output.splice(1, 0, `declare ptr @__acrt_iob_func(i32)`);
+        this.output.splice(1, 0, `declare i32 @fprintf(ptr, ptr, ...)`);
+      } else {
+        this.output.splice(1, 0, `declare i32 @dprintf(i32, ptr, ...)`);
+      }
+    }
     if (this.needsPrintf && !declaredExterns.has("printf"))
       this.output.splice(1, 0, `declare i32 @printf(ptr, ...)`);
     if (this.usedDbgDeclare)
@@ -2949,7 +2997,7 @@ export class Codegen {
           const lenVal = this.nextTemp();
           lines.push(`  ${lenVal} = extractvalue %String ${av}, 1`);
           lines.push(`  call i32 @fflush(ptr null)`);
-          lines.push(`  call i64 @write(i32 1, ptr ${dataPtr}, i64 ${lenVal})`);
+          this.emitFdWrite(lines, 1, dataPtr, lenVal);
         } else {
           this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
         }
@@ -2973,7 +3021,7 @@ export class Codegen {
       const fullFmt = partFmts.join("") + "\n";
       const fmtStr = this.addString(fullFmt);
       const argsStr = partArgs.map(a => `, ${a.type} ${a.val}`).join("");
-      lines.push(`  call i32 (i32, ptr, ...) @dprintf(i32 2, ptr ${fmtStr.label}${argsStr})`);
+      this.emitFdPrintf(lines, 2, fmtStr.label, argsStr);
       for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
       return [lines, "void", "void"];
     }

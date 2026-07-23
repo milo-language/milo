@@ -301,6 +301,17 @@ Runtime pressure from `node-milo` changes the order here: binary data and FFI sa
 - [x] ~~**LSP: rename + find references**~~ — shipped: `textDocument/references`, `documentHighlight`, and `rename`, plus workspace-wide search over every `.milo` under the workspace root. Name-based like hover/goto (not scope-resolved), which is fine for the read-only ones. Rename is the exception — it WRITES, so params/locals are confined to their enclosing function in their own file; only top-level names get the workspace-wide replace. Before that, renaming `a` in `fn f(a)` also rewrote the unrelated `a` in `fn g(a)`.
 - [ ] **Doc comments + generation** — `///` comments, `milo doc` to generate HTML/markdown
 - [ ] **Cross-compilation** — `--target aarch64-linux` etc. (infrastructure exists in target.ts, needs CLI flag + sysroot handling)
+- [~] **Windows port** — *core language works; std platform arms do not.* `getHostTarget()` used to fall through to the Linux entry for any non-darwin host, so Windows silently claimed `x86_64-unknown-linux-gnu` and emitted ELF-targeting IR — it didn't fail, it lied. Now `windows-x64`/`windows-arm64` are real targets (`x86_64-pc-windows-msvc`), and **302/402 fixtures compile and run correctly** as native PEs.
+  - [x] **target + link** — `windows-x64` entry, COFF via `lld-link`, `.exe` suffix, no `-lm` (the UCRT has no separate libm, and `-lm` is a hard error for `lld-link`, not a no-op).
+  - [x] **CRT divergence** — `print` lowers to `_write` (32-bit count, LLP64) and `eprint` to `fprintf(__acrt_iob_func(2), …)`; MSVC has no `dprintf` and no linkable `stderr` symbol.
+  - [x] **win64 struct ABI** (`abi.ts`) — Microsoft x64, not System V: a struct rides in one integer register **only** at size 1/2/4/8, everything else goes by pointer, and there is no HFA rule. Before this, struct-by-value externs silently returned garbage (`externStructLarge` gave 4294967297001 for 1001) rather than failing to link.
+  - [x] **dev loop** — cross-compile from macOS/Linux with `xwin splat` + `MILO_WINDOWS_SDK`, execute under Wine. CI's `test-windows` job is the authority on real-OS execution.
+  - [ ] **`std/platform.windows.milo`** — the single biggest unlock: 64 of the 100 remaining fixture failures are `cannot open 'std/platform'`.
+  - [ ] **randomness** — `getentropy` has no UCRT equivalent taking a length; needs `BCryptGenRandom` (+bcrypt.lib) or a `rand_s` loop. Currently a hard compile error rather than a bad link (16 fixtures).
+  - [ ] **fs / net / async** — the expensive tier. `event.darwin.milo`/`event.linux.milo` are kqueue/epoll; Windows wants an IOCP arm and Winsock for the BSD-socket externs.
+  - [ ] **pty** — `pty.windows.milo` over ConPTY, replacing `openpty`/`forkpty`.
+  - [ ] **cross-target C decl verification** — `verifyCDecls` skips itself whenever target ≠ host, so the `@cLayout`/`@cSig` guards that would catch LLP64 mistakes (`long` is 4 bytes on Windows, 8 everywhere else Milo hosts) are silently absent on every cross-compile. It needs a target sysroot, not the host's headers.
+  - [ ] **examples** — SDL2 is itself cross-platform, so the emulators may come nearly free once the base exists.
 - [ ] **Benchmarking** — `@bench` annotations, `milo bench` runner
 - [ ] **Documentation / tutorials / "the book"**
 
