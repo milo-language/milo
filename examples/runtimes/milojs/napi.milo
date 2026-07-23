@@ -21,10 +21,10 @@
 from "std/io" import {
     writeStdout
 }
-from "examples/runtimes/milojs/value" import {
+from "./value" import {
     JSValue, cloneValue, toNum, truthy
 }
-from "examples/runtimes/milojs/runtime" import {
+from "./runtime" import {
     Interp, gInterp, newObject, newArray, objGet, objSet
 }
 

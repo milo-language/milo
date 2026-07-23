@@ -50,7 +50,7 @@ from "std/datetime" import {
 from "std/fs" import {
     currentDir, writeFile, appendFile, readDir, removeFile, makeDir, removeDir, renameFile, isDir
 }
-from "examples/runtimes/milojs/napi" import {
+from "./napi" import {
     napiInvoke, napiLoadAddon, napiTakePending, napiPollTsfn, napiRunTsfnCall, napiHasTsfn, napiHasPendingWork, napiMayDeliver, napiWaitBriefly
 }
 from "std/math" import {
