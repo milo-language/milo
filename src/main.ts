@@ -118,16 +118,23 @@ function verifyCDecls(cGuards: string | null, target: TargetInfo): void {
     console.error(`warning: @cLayout/@cSig guards skipped — a bare-metal target is freestanding, so the host's headers don't describe it`);
     return;
   }
-  if (target.os !== host.os || target.arch !== host.arch) {
+  // A Windows cross-compile CAN be verified when the target sysroot is present: compile
+  // the guard TU with the target triple (so clang uses LLP64) against xwin's headers.
+  // Only this exact case — every other target≠host cross has no sysroot to read, so it
+  // still skips, announced.
+  const crossWindows =
+    target.os === "windows" && process.platform !== "win32" && !!process.env.MILO_WINDOWS_SDK;
+  if ((target.os !== host.os || target.arch !== host.arch) && !crossWindows) {
     console.error(`warning: @cLayout/@cSig guards skipped — building for ${target.triple}, but verification would read this ${host.os}-${host.arch} host's headers`);
     return;
   }
   const tc = detectToolchain();
   const cc = tc.kind === "clang" ? tc.path : "cc";
+  const crossFlags = crossWindows ? `--target=${target.triple} ${windowsIncludeFlags()}` : "";
   const tmpC = join(tmpdir(), `milo_cdecl_${crypto.randomUUID().slice(0, 8)}.c`);
   try {
     writeFileSync(tmpC, cGuards);
-    execSync(`${cc} -fsyntax-only "${tmpC}"`, { stdio: ["pipe", "pipe", "pipe"] });
+    execSync(`${cc} -fsyntax-only ${crossFlags} "${tmpC}"`, { stdio: ["pipe", "pipe", "pipe"] });
   } catch (e: any) {
     const stderr = e.stderr?.toString() ?? e.message ?? "";
     // Pull our own message out of each failing assert and drop the rest: the raw text
@@ -316,12 +323,21 @@ function windowsSysrootFlags(target: TargetInfo): string {
   // xwin lays libs out per-arch under these three roots; the include dirs mirror a
   // VS install (crt = MSVC's own headers, sdk/{ucrt,um,shared} = the Windows SDK).
   const a = target.arch === "aarch64" ? "aarch64" : "x86_64";
-  const inc = ["crt/include", "sdk/include/ucrt", "sdk/include/um", "sdk/include/shared"]
-    .map(d => `-isystem "${root}/${d}"`).join(" ");
   const lib = [`crt/lib/${a}`, `sdk/lib/um/${a}`, `sdk/lib/ucrt/${a}`]
     .map(d => `-L "${root}/${d}"`).join(" ");
   // lld-link, not ld64/GNU ld: the output is COFF and the host linker cannot produce it.
-  return ` -fuse-ld=lld-link ${inc} ${lib}`;
+  return ` -fuse-ld=lld-link ${windowsIncludeFlags()} ${lib}`;
+}
+
+// The -isystem set for the cross-compiled MSVC CRT + Windows SDK. Shared by the link
+// step and by verifyCDecls, so a cross build's @cLayout/@cSig guards read the TARGET's
+// headers (with the target triple's LLP64 data model) instead of skipping — the same
+// tree that got the ADDRESS_FAMILY include-order bug caught locally instead of in CI.
+function windowsIncludeFlags(): string {
+  const root = process.env.MILO_WINDOWS_SDK;
+  if (!root) return "";
+  return ["crt/include", "sdk/include/ucrt", "sdk/include/um", "sdk/include/shared"]
+    .map(d => `-isystem "${root}/${d}"`).join(" ");
 }
 
 function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false, emitDebug = false, target?: TargetInfo) {

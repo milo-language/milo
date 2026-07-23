@@ -87,6 +87,11 @@ jobs:
       - name: Fixture suite
         run: bun test tests/run.test.ts
         timeout-minutes: 45
+      # Checks every scalar-returning `extern fn` in the Windows platform arm against this
+      # runner's real UCRT/SDK headers — the class that had `read`/`write` declared at
+      # POSIX widths against the UCRT's 32-bit `_read`/`_write`. Uses clang (choco), which
+      # the script detects since the runner has no `cc`.
+      - run: bun run scripts/audit-extern-returns.ts
       # On failure the IR is what you need and cannot get afterwards; emitting it costs
       # a second and turns a red X into something diagnosable without a second push.
       - name: Emit IR on failure
