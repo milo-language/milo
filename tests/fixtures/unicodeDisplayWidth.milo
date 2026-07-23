@@ -1,0 +1,82 @@
+// Terminal column width: CJK/emoji are 2 cells, combining marks 0, and
+// multi-codepoint grapheme clusters (ZWJ sequences, flags, skin tones) count
+// as the single glyph a terminal paints.
+// @expect: 5
+// @expect: 6
+// @expect: 3
+// @expect: 4
+// @expect: 2
+// @expect: 2
+// @expect: 2
+// @expect: 2
+// @expect: 2
+// @expect: 10
+// @expect: 0
+// @expect: 1
+// @expect: 2
+// @expect: 0
+// @expect: 5
+// @expect: 6
+// @expect: 1
+from "std/unicode" import {
+    displayWidth, charWidth, truncateToWidth, encodeCodepoint
+}
+
+fn main(): i32 {
+    // Plain ASCII: one cell each.
+    print(displayWidth("hello"))
+
+    // CJK: three ideographs at two cells each.
+    print(displayWidth("日本語"))
+
+    // Mixed: "a" + one ideograph = 1 + 2.
+    print(displayWidth("a日"))
+
+    // Combining marks add no columns: "cafe" is 4 cells, and the acute that
+    // turns "e" into "é" adds none.
+    // Built by codepoint because Milo string escapes are byte-oriented (\x),
+    // with no \u{...} form.
+    var accented = "cafe"
+    encodeCodepoint(accented, 769)
+    print(displayWidth(accented))
+
+    // A single emoji is two cells.
+    print(displayWidth("😀"))
+
+    // Skin tone modifier folds into the emoji it modifies.
+    print(displayWidth("👍🏽"))
+
+    // ZWJ sequence (family) is one glyph, not four.
+    print(displayWidth("👨‍👩‍👧"))
+
+    // A flag is two regional indicators, one glyph.
+    print(displayWidth("🇯🇵"))
+
+    // VS16 promotes a text-presentation symbol (1 cell) to emoji width (2).
+    var heart = ""
+    encodeCodepoint(heart, 10084)
+    encodeCodepoint(heart, 65039)
+    print(displayWidth(heart))
+
+    // Fullwidth forms are wide.
+    print(displayWidth("ＡＢＣＤＥ"))
+
+    // charWidth: control, ascii, ideograph, combining mark.
+    print(charWidth(9))
+    print(charWidth(65))
+    print(charWidth(26085))
+    print(charWidth(769))
+
+    // truncateToWidth returns a byte offset, never splitting a codepoint.
+    // "hello" limited to 5 columns keeps all 5 bytes.
+    print(truncateToWidth("hello", 5))
+
+    // "日本語" limited to 5 columns fits two ideographs (4 cols, 6 bytes);
+    // the third would straddle the limit and is dropped whole.
+    print(truncateToWidth("日本語", 5))
+
+    // "a日" limited to 2 columns keeps only "a" (1 byte) — the ideograph
+    // needs 2 more columns and only 1 remains.
+    print(truncateToWidth("a日", 2))
+    return 0
+}

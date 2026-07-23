@@ -1,0 +1,18 @@
+// terminalSize reports the controlling terminal's cell dimensions, falling
+// back to 80x24 when stdout is not a tty — which is the case under the test
+// harness, so these values are deterministic here.
+// @expect: 24
+// @expect: 80
+// @expect: true
+from "std/term" import {
+    terminalSize
+}
+
+fn main(): i32 {
+    let size = terminalSize()
+    print(size.rows)
+    print(size.cols)
+    // Whatever the environment, a frame size must be usable.
+    print(size.rows > 0 && size.cols > 0)
+    return 0
+}

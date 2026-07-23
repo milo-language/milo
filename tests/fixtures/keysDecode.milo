@@ -1,0 +1,179 @@
+// Terminal key decoding over recorded escape sequences: arrows, modifiers,
+// function keys, control bytes, UTF-8 characters, bracketed paste, and the
+// incremental Partial case.
+// @expect: up 0 3
+// @expect: down 0 3
+// @expect: right 0 3
+// @expect: left 0 3
+// @expect: up c 6
+// @expect: up s 6
+// @expect: up a 6
+// @expect: up ca 6
+// @expect: home 0 3
+// @expect: end 0 3
+// @expect: delete 0 4
+// @expect: pageup 0 4
+// @expect: pagedown 0 4
+// @expect: f1 0 3
+// @expect: f5 0 5
+// @expect: f12 0 5
+// @expect: char:113 0 1
+// @expect: char:97 c 1
+// @expect: char:113 a 2
+// @expect: enter 0 1
+// @expect: tab 0 1
+// @expect: backspace 0 1
+// @expect: char:26085 0 3
+// @expect: pastestart 0 6
+// @expect: pasteend 0 6
+// @expect: partial 0 0
+// @expect: partial 0 0
+// @expect: escape 0 1
+// @expect: none 0 0
+from "std/keys" import {
+    decodeKey, decodeKeyFinal, Key, KeyCode
+}
+
+// Render a key as "<name> <modifiers> <bytes consumed>" so a golden line
+// pins the decoded identity, the modifier bits, and the cursor advance.
+fn show(k: Key): string {
+    var name = ""
+    match k.code {
+        KeyCode.None => {
+            name = "none"
+        }
+        KeyCode.Unknown => {
+            name = "unknown"
+        }
+        KeyCode.Partial => {
+            name = "partial"
+        }
+        KeyCode.Char(c) => {
+            name = $"char:{c}"
+        }
+        KeyCode.Enter => {
+            name = "enter"
+        }
+        KeyCode.Tab => {
+            name = "tab"
+        }
+        KeyCode.Escape => {
+            name = "escape"
+        }
+        KeyCode.Backspace => {
+            name = "backspace"
+        }
+        KeyCode.Delete => {
+            name = "delete"
+        }
+        KeyCode.Insert => {
+            name = "insert"
+        }
+        KeyCode.Up => {
+            name = "up"
+        }
+        KeyCode.Down => {
+            name = "down"
+        }
+        KeyCode.Left => {
+            name = "left"
+        }
+        KeyCode.Right => {
+            name = "right"
+        }
+        KeyCode.Home => {
+            name = "home"
+        }
+        KeyCode.End => {
+            name = "end"
+        }
+        KeyCode.PageUp => {
+            name = "pageup"
+        }
+        KeyCode.PageDown => {
+            name = "pagedown"
+        }
+        KeyCode.F(n) => {
+            name = $"f{n}"
+        }
+        KeyCode.PasteStart => {
+            name = "pastestart"
+        }
+        KeyCode.PasteEnd => {
+            name = "pasteend"
+        }
+    }
+    var mods = ""
+    if k.ctrl {
+        mods = mods + "c"
+    }
+    if k.shift {
+        mods = mods + "s"
+    }
+    if k.alt {
+        mods = mods + "a"
+    }
+    if mods == "" {
+        mods = "0"
+    }
+    return $"{name} {mods} {k.size}"
+}
+
+fn emit(bytes: &string): void {
+    print(show(decodeKey(bytes, 0)))
+}
+
+fn main(): i32 {
+    // Arrows: CSI A/B/C/D.
+    emit("\x1b[A")
+    emit("\x1b[B")
+    emit("\x1b[C")
+    emit("\x1b[D")
+
+    // Modified arrows: parameter is 1 + bitmask (shift 1, alt 2, ctrl 4).
+    emit("\x1b[1;5A")
+    emit("\x1b[1;2A")
+    emit("\x1b[1;3A")
+    emit("\x1b[1;7A")
+
+    // Home/End as CSI letters, then the numeric tilde forms.
+    emit("\x1b[H")
+    emit("\x1b[F")
+    emit("\x1b[3~")
+    emit("\x1b[5~")
+    emit("\x1b[6~")
+
+    // Function keys: SS3 for F1, tilde forms for F5 and F12.
+    emit("\x1bOP")
+    emit("\x1b[15~")
+    emit("\x1b[24~")
+
+    // Plain character, ctrl+letter, alt+letter.
+    emit("q")
+    emit("\x01")
+    emit("\x1bq")
+
+    // Enter, Tab, Backspace.
+    emit("\r")
+    emit("\t")
+    emit("\x7f")
+
+    // Multi-byte UTF-8 stays one key and reports its byte length.
+    emit("日")
+
+    // Bracketed paste markers.
+    emit("\x1b[200~")
+    emit("\x1b[201~")
+
+    // Incomplete sequences consume nothing so the caller can wait for more.
+    emit("\x1b[")
+    emit("\x1b[1;")
+
+    // A lone ESC is Partial while streaming, but Escape once input is known
+    // to be complete.
+    print(show(decodeKeyFinal("\x1b", 0)))
+
+    // Empty input.
+    emit("")
+    return 0
+}

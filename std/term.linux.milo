@@ -1,7 +1,7 @@
 // std/term — terminal raw mode and keyboard input (Linux)
 
 from "std/os" import {
-    read, tcgetattr, tcsetattr
+    ioctl, read, tcgetattr, tcsetattr
 }
 
 let KEY_NONE: i32 = 0
@@ -131,5 +131,35 @@ fn readKey(): i32 {
             }
         }
         return KEY_NONE
+    }
+}
+
+// Size of the controlling terminal, in character cells.
+//
+// Queried on stdout rather than stdin so it still works when input is piped.
+// The ioctl request number is platform-specific and is inlined rather than
+// exposed as a helper, because std/pty already defines a `tiocgwinsz` in the
+// same flat namespace and importing both would clash.
+//
+// Falls back to 80x24 when the fd is not a terminal (piped, redirected, or run
+// under a harness) so callers always get a usable frame size.
+struct TermSize {
+    rows: i64,
+    cols: i64,
+}
+
+fn terminalSize(): TermSize {
+    // struct winsize is four u16s: rows, cols, xpixel, ypixel.
+    var ws: [u16; 4] = [0; 4]
+    unsafe {
+        ioctl(1, 21523, (ws.addrOf()) as *u8)
+    }
+    if ws[0] == 0 || ws[1] == 0 {
+        return TermSize {
+            rows: 24, cols: 80
+        }
+    }
+    return TermSize {
+        rows: ws[0] as i64, cols: ws[1] as i64
     }
 }

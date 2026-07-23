@@ -1,0 +1,315 @@
+// Terminal key decoding: raw input bytes -> structured key events.
+//
+// A terminal delivers keys as bytes, and everything that is not a plain
+// character arrives as an escape sequence: arrows, function keys, Home/End,
+// and every modifier combination are all `ESC [ ... final`. Without a decoder
+// an app can only recognise the handful of sequences it hardcodes, which is
+// why `readKey` in std/term tops out at seven keys.
+//
+// Decoding is pure byte->event logic with no syscalls, so it lives here rather
+// than in the platform-split std/term: the caller reads bytes however it likes
+// (blocking, non-blocking, from a poll loop) and feeds them in.
+//
+// The decoder is incremental and allocation-free. `decodeKey` reports how many
+// bytes it consumed so a caller can advance a cursor over a chunk, and returns
+// `Partial` when a chunk ends mid-sequence so the caller can retain the tail
+// and resume once more bytes arrive.
+
+from "std/unicode" import {
+    decodeCodepoint
+}
+
+// Which key was pressed. `Char` carries a Unicode codepoint rather than a
+// string so decoding never allocates.
+enum KeyCode {
+    None,
+    Unknown,
+    Partial,
+    Char(i32),
+    Enter,
+    Tab,
+    Escape,
+    Backspace,
+    Delete,
+    Insert,
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    F(i32),
+    PasteStart,
+    PasteEnd,
+}
+
+// A decoded key plus the number of input bytes it consumed.
+//
+// `size` is 0 only for `None` (empty input) and `Partial` (incomplete
+// sequence); in both cases the caller must not advance, or it would drop the
+// prefix of a sequence still being received.
+struct Key {
+    code: KeyCode,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    size: i64,
+}
+
+let ESC: i64 = 27
+
+fn plainKey(code: KeyCode, size: i64): Key {
+    return Key {
+        code: code, ctrl: false, alt: false, shift: false, size: size
+    }
+}
+
+// xterm encodes modifiers as a parameter of 1 + a bitmask, so `ESC [ 1;5 A`
+// is ctrl+Up. Applies to both CSI and SS3 forms.
+fn applyModifier(k: Key, mod: i64): Key {
+    if mod <= 1 {
+        return k
+    }
+    let bits = mod - 1
+    return Key {
+        code: k.code,
+        shift: (bits & 1) != 0,
+        alt: (bits & 2) != 0,
+        ctrl: (bits & 4) != 0,
+        size: k.size,
+    }
+}
+
+// Map the numeric parameter of a `ESC [ N ~` sequence to its key.
+fn tildeKey(n: i64): KeyCode {
+    if n == 1 || n == 7 {
+        return KeyCode.Home
+    }
+    if n == 2 {
+        return KeyCode.Insert
+    }
+    if n == 3 {
+        return KeyCode.Delete
+    }
+    if n == 4 || n == 8 {
+        return KeyCode.End
+    }
+    if n == 5 {
+        return KeyCode.PageUp
+    }
+    if n == 6 {
+        return KeyCode.PageDown
+    }
+    // Function keys are numbered with gaps: the ranges below skip 16 and 22,
+    // which no terminal assigns.
+    if n >= 11 && n <= 15 {
+        return KeyCode.F((n - 10) as i32)
+    }
+    if n >= 17 && n <= 21 {
+        return KeyCode.F((n - 11) as i32)
+    }
+    if n >= 23 && n <= 26 {
+        return KeyCode.F((n - 12) as i32)
+    }
+    return KeyCode.Unknown
+}
+
+// Final letter of a CSI/SS3 sequence to its key.
+fn letterKey(b: i64): KeyCode {
+    if b == 65 {
+        return KeyCode.Up
+    }
+    if b == 66 {
+        return KeyCode.Down
+    }
+    if b == 67 {
+        return KeyCode.Right
+    }
+    if b == 68 {
+        return KeyCode.Left
+    }
+    if b == 72 {
+        return KeyCode.Home
+    }
+    if b == 70 {
+        return KeyCode.End
+    }
+    // ESC O P..S is F1..F4 on most terminals; some send them as CSI too.
+    if b >= 80 && b <= 83 {
+        return KeyCode.F((b - 79) as i32)
+    }
+    return KeyCode.Unknown
+}
+
+// Control bytes below 0x20 double as ctrl+letter. Tab, Enter and Escape have
+// their own identities and are matched before falling through to ctrl+letter,
+// because a user pressing Tab did not press ctrl+I even though the byte is the
+// same.
+fn controlKey(b: i64): Key {
+    if b == 9 {
+        return plainKey(KeyCode.Tab, 1)
+    }
+    if b == 13 || b == 10 {
+        return plainKey(KeyCode.Enter, 1)
+    }
+    if b == 0 {
+        return Key {
+            code: KeyCode.Char(32), ctrl: true, alt: false, shift: false, size: 1
+        }
+    }
+    if b >= 1 && b <= 26 {
+        // ctrl+a is 0x01, so add back the offset to 'a'.
+        return Key {
+            code: KeyCode.Char((96 + b) as i32), ctrl: true, alt: false, shift: false, size: 1
+        }
+    }
+    if b >= 28 && b <= 31 {
+        // ctrl+\ ] ^ _ — the byte is the character minus 0x40.
+        return Key {
+            code: KeyCode.Char((b + 64) as i32), ctrl: true, alt: false, shift: false, size: 1
+        }
+    }
+    return plainKey(KeyCode.Unknown, 1)
+}
+
+// Decode a CSI sequence: the caller has already matched `ESC [`, and `at`
+// points just past it.
+fn decodeCsi(s: &string, start: i64, at: i64): Key {
+    var i = at
+    // Private-mode sequences (`ESC [ ? ...`) are terminal replies, not keys.
+    var private = false
+    if i < s.len && s[i] == 63 {
+        private = true
+        i = i + 1
+    }
+    // Parse up to two numeric parameters separated by ';'.
+    var first: i64 = 0
+    var second: i64 = 0
+    var haveFirst = false
+    var onSecond = false
+    while i < s.len {
+        let b = s[i] as i64
+        if b >= 48 && b <= 57 {
+            if onSecond {
+                second = second * 10 + (b - 48)
+            } else {
+                first = first * 10 + (b - 48)
+                haveFirst = true
+            }
+            i = i + 1
+            continue
+        }
+        if b == 59 {
+            onSecond = true
+            i = i + 1
+            continue
+        }
+        break
+    }
+    // Ran out of bytes before the final byte — the sequence is still arriving.
+    if i >= s.len {
+        return plainKey(KeyCode.Partial, 0)
+    }
+    let final = s[i] as i64
+    let size = (i + 1) - start
+    if private {
+        return plainKey(KeyCode.Unknown, size)
+    }
+    if final == 126 {
+        // Bracketed paste brackets the pasted text so it is never mistaken for
+        // typed input (and never interpreted as key chords).
+        if first == 200 {
+            return plainKey(KeyCode.PasteStart, size)
+        }
+        if first == 201 {
+            return plainKey(KeyCode.PasteEnd, size)
+        }
+        return applyModifier(plainKey(tildeKey(first), size), second)
+    }
+    let code = letterKey(final)
+    // `ESC [ 1 ; 5 A` puts the modifier second; a bare `ESC [ A` has none.
+    var mod = second
+    if haveFirst && second == 0 && first > 1 {
+        mod = first
+    }
+    return applyModifier(plainKey(code, size), mod)
+}
+
+// Decode one key starting at byte offset `at`.
+//
+// Returns `None` with size 0 on empty input, and `Partial` with size 0 when the
+// bytes end mid-escape-sequence — the caller should keep the tail and retry
+// after reading more.
+fn decodeKey(s: &string, at: i64): Key {
+    if at < 0 || at >= s.len {
+        return plainKey(KeyCode.None, 0)
+    }
+    let b = s[at] as i64
+    if b != ESC {
+        if b == 127 || b == 8 {
+            return plainKey(KeyCode.Backspace, 1)
+        }
+        if b < 32 {
+            return controlKey(b)
+        }
+        let c = decodeCodepoint(s, at)
+        return plainKey(KeyCode.Char(c.value), c.size)
+    }
+    // Lone ESC at end of input: ambiguous between the Escape key and the start
+    // of a sequence whose remainder has not arrived. Report Partial so a caller
+    // reading incrementally can wait; a caller that has already timed out can
+    // treat a 1-byte buffer as Escape itself.
+    if at + 1 >= s.len {
+        return plainKey(KeyCode.Partial, 0)
+    }
+    let next = s[at + 1] as i64
+    if next == 91 {
+        return decodeCsi(s, at, at + 2)
+    }
+    if next == 79 {
+        // SS3: ESC O <letter>, used for arrows in application cursor mode.
+        if at + 2 >= s.len {
+            return plainKey(KeyCode.Partial, 0)
+        }
+        return plainKey(letterKey(s[at + 2] as i64), 3)
+    }
+    // ESC followed by anything else is alt+that key.
+    let inner = decodeKey(s, at + 1)
+    match inner.code {
+        KeyCode.Partial => {
+            return plainKey(KeyCode.Partial, 0)
+        }
+        KeyCode.None => {
+            return plainKey(KeyCode.Escape, 1)
+        }
+        _ => {
+            return Key {
+                code: inner.code,
+                ctrl: inner.ctrl,
+                alt: true,
+                shift: inner.shift,
+                size: inner.size + 1,
+            }
+        }
+    }
+}
+
+// Treat a buffer known to be complete as a finished key: resolves the lone-ESC
+// ambiguity in favour of the Escape key. Use this after an input read has timed
+// out with no further bytes.
+fn decodeKeyFinal(s: &string, at: i64): Key {
+    let k = decodeKey(s, at)
+    match k.code {
+        KeyCode.Partial => {
+            if at < s.len && (s[at] as i64) == ESC {
+                return plainKey(KeyCode.Escape, 1)
+            }
+            return plainKey(KeyCode.Unknown, s.len - at)
+        }
+        _ => {
+            return k
+        }
+    }
+}

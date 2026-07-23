@@ -263,3 +263,267 @@ fn lowSurrogate(cp: i32): i32 {
 fn fromSurrogatePair(high: i32, low: i32): i32 {
     return 65536 + ((high - 55296) << 10) + (low - 56320)
 }
+
+// ---------------------------------------------------------------------------
+// Terminal display width
+//
+// A codepoint count is NOT a column count: CJK and emoji occupy two cells,
+// combining marks occupy none. Any code that aligns text in a terminal — column
+// layout, padding, truncation, box drawing — is wrong without this. Ranges are
+// expressed as comparison chains rather than a table so lookup allocates
+// nothing and stays usable in a per-frame render loop.
+//
+// Coverage is the practically-load-bearing subset of the Unicode data, not the
+// full UCD: the East Asian Wide/Fullwidth blocks, the emoji planes, and the
+// combining-mark blocks in wide use. Rare historic scripts may measure one cell
+// short. Generating the exhaustive table from UnicodeData.txt is the follow-up;
+// this is deliberately the version that fits in a reviewable file.
+// ---------------------------------------------------------------------------
+
+let ZERO_WIDTH_JOINER: i32 = 8205
+let VARIATION_SELECTOR_16: i32 = 65039
+let VARIATION_SELECTOR_15: i32 = 65038
+
+// Marks that attach to a preceding base character and advance no column.
+fn isCombining(cp: i32): bool {
+    // Generic combining blocks: diacriticals, extended, supplement, symbols,
+    // and the half marks used for vertical CJK forms.
+    if (cp >= 768 && cp <= 879) || (cp >= 6832 && cp <= 6911) {
+        return true
+    }
+    if (cp >= 7616 && cp <= 7679) || (cp >= 8400 && cp <= 8432) {
+        return true
+    }
+    if cp >= 65056 && cp <= 65071 {
+        return true
+    }
+    // Hebrew points and Arabic harakat — the dense mark blocks in real text.
+    if (cp >= 1425 && cp <= 1469) || cp == 1471 {
+        return true
+    }
+    if (cp >= 1473 && cp <= 1474) || (cp >= 1476 && cp <= 1477) || cp == 1479 {
+        return true
+    }
+    if (cp >= 1552 && cp <= 1562) || (cp >= 1611 && cp <= 1631) || cp == 1648 {
+        return true
+    }
+    if (cp >= 1750 && cp <= 1756) || (cp >= 1759 && cp <= 1764) {
+        return true
+    }
+    if (cp >= 1767 && cp <= 1768) || (cp >= 1770 && cp <= 1773) {
+        return true
+    }
+    // Devanagari/Bengali nuktas and viramas, then the Thai/Lao mark rows.
+    if cp == 2364 || cp == 2381 || (cp >= 2385 && cp <= 2388) {
+        return true
+    }
+    if cp == 3633 || (cp >= 3636 && cp <= 3642) || (cp >= 3655 && cp <= 3662) {
+        return true
+    }
+    if cp == 3761 || (cp >= 3764 && cp <= 3769) || (cp >= 3784 && cp <= 3789) {
+        return true
+    }
+    return false
+}
+
+// Format/invisible characters: joiners, bidi controls, variation selectors, BOM.
+fn isZeroWidthFormat(cp: i32): bool {
+    if cp >= 8203 && cp <= 8207 {
+        return true
+    }
+    if cp >= 8232 && cp <= 8238 {
+        return true
+    }
+    if cp >= 8288 && cp <= 8303 {
+        return true
+    }
+    if cp >= 65024 && cp <= 65039 {
+        return true
+    }
+    if cp == 65279 {
+        return true
+    }
+    // Variation selectors supplement (tag sequences for flags/subdivisions).
+    if cp >= 917504 && cp <= 921599 {
+        return true
+    }
+    return false
+}
+
+// Regional indicator symbols — two in a row form one flag glyph.
+fn isRegionalIndicator(cp: i32): bool {
+    return cp >= 127462 && cp <= 127487
+}
+
+// Emoji skin-tone modifiers, absorbed by the emoji they follow.
+fn isSkinToneModifier(cp: i32): bool {
+    return cp >= 127995 && cp <= 127999
+}
+
+// East Asian Wide/Fullwidth plus the emoji blocks that render double-width.
+fn isWide(cp: i32): bool {
+    // Hangul Jamo initial consonants.
+    if cp >= 4352 && cp <= 4447 {
+        return true
+    }
+    // CJK radicals through the unified ideographs and Yi syllables.
+    if cp >= 11904 && cp <= 12287 && cp != 12351 {
+        return true
+    }
+    if cp >= 12289 && cp <= 19903 {
+        return true
+    }
+    if cp >= 19968 && cp <= 42191 {
+        return true
+    }
+    // Hangul syllables.
+    if cp >= 44032 && cp <= 55203 {
+        return true
+    }
+    // CJK compatibility ideographs.
+    if cp >= 63744 && cp <= 64255 {
+        return true
+    }
+    // Vertical forms and CJK compatibility forms.
+    if cp >= 65040 && cp <= 65049 {
+        return true
+    }
+    if cp >= 65072 && cp <= 65135 {
+        return true
+    }
+    // Fullwidth ASCII forms and fullwidth signs.
+    if cp >= 65281 && cp <= 65376 {
+        return true
+    }
+    if cp >= 65504 && cp <= 65510 {
+        return true
+    }
+    // Emoji: misc symbols/pictographs, transport, supplemental, extended-A.
+    if cp >= 127744 && cp <= 128767 {
+        return true
+    }
+    if cp >= 128768 && cp <= 128895 {
+        return true
+    }
+    if cp >= 129280 && cp <= 129791 {
+        return true
+    }
+    if cp >= 129792 && cp <= 130047 {
+        return true
+    }
+    // CJK extension planes B onward.
+    if cp >= 131072 && cp <= 196605 {
+        return true
+    }
+    return false
+}
+
+// Terminal cells occupied by a single codepoint: 0, 1, or 2.
+//
+// Control characters report 0 because they advance no column when printed —
+// callers that need to reject them should filter before measuring, not rely on
+// a negative sentinel.
+fn charWidth(cp: i32): i64 {
+    if cp >= 32 && cp < 127 {
+        return 1
+    }
+    if cp < 32 || (cp >= 127 && cp < 160) {
+        return 0
+    }
+    if isCombining(cp) || isZeroWidthFormat(cp) {
+        return 0
+    }
+    if isWide(cp) {
+        return 2
+    }
+    return 1
+}
+
+// Columns a string occupies in a terminal.
+//
+// Measured over grapheme clusters, not codepoints, so the multi-codepoint
+// sequences that real text is full of collapse to the one glyph a terminal
+// actually paints: ZWJ emoji sequences (family, professions) count once, a
+// flag's two regional indicators count once, skin tones and variation
+// selectors fold into the emoji they modify.
+fn displayWidth(s: &string): i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    // Width contributed by the current cluster head, so a following variation
+    // selector can promote or demote it in place.
+    var headWidth: i64 = 0
+    var pendingJoin = false
+    var openRegional = false
+    while i < s.len {
+        let c = decodeCodepoint(s, i)
+        i = i + c.size
+        let cp = c.value
+        if cp == ZERO_WIDTH_JOINER {
+            pendingJoin = true
+            continue
+        }
+        // The element after a ZWJ is part of the same glyph, whatever it is.
+        if pendingJoin {
+            pendingJoin = false
+            openRegional = false
+            continue
+        }
+        // VS16 forces emoji presentation, widening an otherwise 1-cell symbol;
+        // VS15 forces text presentation and narrows it back.
+        if cp == VARIATION_SELECTOR_16 {
+            if headWidth == 1 {
+                total = total + 1
+                headWidth = 2
+            }
+            continue
+        }
+        if cp == VARIATION_SELECTOR_15 {
+            if headWidth == 2 {
+                total = total - 1
+                headWidth = 1
+            }
+            continue
+        }
+        if isSkinToneModifier(cp) {
+            continue
+        }
+        let w = charWidth(cp)
+        if w == 0 {
+            continue
+        }
+        if isRegionalIndicator(cp) {
+            // Second indicator completes the flag already paid for.
+            if openRegional {
+                openRegional = false
+                headWidth = 0
+                continue
+            }
+            openRegional = true
+            total = total + 2
+            headWidth = 2
+            continue
+        }
+        openRegional = false
+        total = total + w
+        headWidth = w
+    }
+    return total
+}
+
+// Byte offset just past the longest prefix of `s` that fits in `maxCols`
+// columns. Never splits a codepoint, and never leaves half of a double-width
+// glyph — a wide character that would straddle the limit is excluded entirely.
+fn truncateToWidth(s: &string, maxCols: i64): i64 {
+    var used: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let c = decodeCodepoint(s, i)
+        let w = charWidth(c.value)
+        if used + w > maxCols {
+            return i
+        }
+        used = used + w
+        i = i + c.size
+    }
+    return s.len
+}

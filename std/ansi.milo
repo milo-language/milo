@@ -105,3 +105,63 @@ fn hideCursor(): string {
 fn showCursor(): string {
     return "\x1b[?25h"
 }
+
+// Alternate screen buffer: a full-screen app switches to it on start and back
+// on exit, so the user's scrollback and prompt are restored untouched rather
+// than overwritten by the app's output.
+fn enterAltScreen(): string {
+    return "\x1b[?1049h"
+}
+
+fn exitAltScreen(): string {
+    return "\x1b[?1049l"
+}
+
+// Cursor position save/restore, for writing outside the live region (a log
+// line, a status write) and returning without recomputing coordinates.
+fn saveCursor(): string {
+    return "\x1b7"
+}
+
+fn restoreCursor(): string {
+    return "\x1b8"
+}
+
+// Relative cursor motion. A frame renderer moving between nearby cells emits
+// far fewer bytes with these than by re-addressing absolutely via cursorTo.
+fn cursorUp(n: i64): string {
+    return $"\x1b[{n}A"
+}
+
+fn cursorDown(n: i64): string {
+    return $"\x1b[{n}B"
+}
+
+fn cursorRight(n: i64): string {
+    return $"\x1b[{n}C"
+}
+
+fn cursorLeft(n: i64): string {
+    return $"\x1b[{n}D"
+}
+
+// Move to column `col` on the current row (1-based).
+fn cursorColumn(col: i64): string {
+    return $"\x1b[{col}G"
+}
+
+// Erase from the cursor to the end of the screen — used to clear a shrinking
+// live region without repainting rows that are already correct.
+fn clearToEnd(): string {
+    return "\x1b[0J"
+}
+
+// Bracketed paste: with this on, pasted text arrives wrapped in
+// ESC[200~ / ESC[201~ so it is never mistaken for typed key chords.
+fn enableBracketedPaste(): string {
+    return "\x1b[?2004h"
+}
+
+fn disableBracketedPaste(): string {
+    return "\x1b[?2004l"
+}
