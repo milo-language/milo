@@ -335,3 +335,42 @@ fn mapPrivate(): i32 {
 fn mapAnon(): i32 {
     return 4096
 }
+
+// ── pthreads ──
+// Declared in the platform split, not std/os: Windows has no pthreads at all, so its
+// arm implements these same names over SRWLOCK/CONDITION_VARIABLE instead of declaring
+// externs that no library provides.
+
+extern fn pthread_create(thread: *u8, attr: *u8, start: *u8, arg: *u8): i32
+
+extern fn pthread_join(thread: i64, retval: *u8): i32
+
+extern fn pthread_detach(thread: i64): i32
+
+extern fn pthread_mutex_init(mutex: *u8, attr: *u8): i32
+
+extern fn pthread_mutex_lock(mutex: *u8): i32
+
+extern fn pthread_mutex_unlock(mutex: *u8): i32
+
+extern fn pthread_mutex_destroy(mutex: *u8): i32
+
+extern fn pthread_cond_init(cond: *u8, attr: *u8): i32
+
+extern fn pthread_cond_wait(cond: *u8, mutex: *u8): i32
+
+extern fn pthread_cond_signal(cond: *u8): i32
+
+extern fn pthread_cond_broadcast(cond: *u8): i32
+
+extern fn pthread_cond_destroy(cond: *u8): i32
+
+extern fn pthread_rwlock_init(rwlock: *u8, attr: *u8): i32
+
+extern fn pthread_rwlock_rdlock(rwlock: *u8): i32
+
+extern fn pthread_rwlock_wrlock(rwlock: *u8): i32
+
+extern fn pthread_rwlock_unlock(rwlock: *u8): i32
+
+extern fn pthread_rwlock_destroy(rwlock: *u8): i32

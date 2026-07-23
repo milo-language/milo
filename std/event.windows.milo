@@ -1,0 +1,110 @@
+// std/event — cross-platform event loop (Windows stub; IOCP not implemented yet)
+//
+// The readiness model Windows offers is not the one the darwin/linux arms implement.
+// kqueue and epoll both report "this fd is ready, now go read it"; IOCP instead reports
+// "the read you already started has finished". Porting the loop means restructuring
+// std/runtime around completion rather than readiness — a tier of its own
+// (see docs/roadmap.md), not a translation of this file.
+//
+// So this arm implements exactly the piece that IS expressible today — setNonblocking,
+// via ioctlsocket(FIONBIO) — and makes every loop operation abort with a named message
+// the moment it is reached. That keeps single-threaded, non-async Windows programs (the
+// overwhelming majority of the fixture suite) compiling and running correctly, while any
+// program that actually drives the event loop stops immediately and says why, instead of
+// silently doing nothing and hanging or spinning.
+
+from "std/os" import {
+    close
+}
+
+// Winsock's ioctlsocket takes the FIONBIO command and a pointer to a u32 flag; nonzero
+// enables non-blocking mode. Sockets only — there is no non-blocking mode for a CRT file
+// descriptor on Windows, which is why the POSIX fcntl path has no analogue here.
+extern fn ioctlsocket(s: i64, cmd: i32, argp: *u8): i32
+
+// FIONBIO = 0x8004667E as a signed 32-bit value.
+fn fionbio(): i32 {
+    return -2147195266
+}
+
+struct EventLoop {
+    iocp: i32,
+}
+
+fn unsupported(what: &string): void {
+    eprint("milo: std/event.", what, " is not implemented on windows (IOCP port pending) — see docs/roadmap.md")
+    exit(1)
+}
+
+fn setNonblocking(fd: i32): i32 {
+    var flag: u32 = 1
+    unsafe {
+        return ioctlsocket(fd as i64, fionbio(), flag.addrOf() as *u8)
+    }
+}
+
+// Restore blocking mode; same socket-only caveat as setNonblocking.
+fn clearNonblocking(fd: i32): i32 {
+    var flag: u32 = 0
+    unsafe {
+        return ioctlsocket(fd as i64, fionbio(), flag.addrOf() as *u8)
+    }
+}
+
+fn eventLoopNew(): Result<EventLoop, string> {
+    return Result.Err("std/event: the event loop is not implemented on windows (IOCP port pending)")
+}
+
+fn eventRegisterRead(_el: &EventLoop, _fd: i32): i32 {
+    unsupported("eventRegisterRead")
+    return -1
+}
+
+fn eventRegisterWrite(_el: &EventLoop, _fd: i32): i32 {
+    unsupported("eventRegisterWrite")
+    return -1
+}
+
+fn eventDeregister(_el: &EventLoop, _fd: i32, _forWrite: bool): i32 {
+    unsupported("eventDeregister")
+    return -1
+}
+
+fn eventPoll(_el: &EventLoop, _readyFds: *i32, _maxEvents: i32, _timeoutMs: i32): i32 {
+    unsupported("eventPoll")
+    return -1
+}
+
+fn eventLoopInitWakeup(_el: &EventLoop): i32 {
+    unsupported("eventLoopInitWakeup")
+    return -1
+}
+
+fn eventLoopNotify(_el: &EventLoop, _wakeupId: i32): i32 {
+    unsupported("eventLoopNotify")
+    return -1
+}
+
+fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
+    unsupported("eventLoopDrainWakeup")
+}
+
+fn eventLoopCloseWakeup(_el: &EventLoop, _wakeupId: i32): void {
+    unsupported("eventLoopCloseWakeup")
+}
+
+fn eventLoopFromFd(fd: i32): EventLoop {
+    return EventLoop {
+        iocp: fd
+    }
+}
+
+fn eventLoopFd(el: &EventLoop): i32 {
+    return el.iocp
+}
+
+fn eventLoopClose(el: &EventLoop): void {
+    if el.iocp > 0 {
+        close(el.iocp)
+    }
+}

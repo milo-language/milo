@@ -1,0 +1,417 @@
+// platform-specific constants and helpers for Windows (MSVC / UCRT / Winsock)
+//
+// Every number here was read out of Microsoft's own headers by compiling a probe against
+// the Windows SDK and running it — not inferred from the POSIX arms. Windows disagrees
+// with darwin/linux on nearly all of them: sockaddr_in has no sin_len and a 16-bit
+// family, AF_INET6 is 23 (not 30/10), and the open() flags need _O_BINARY or the CRT
+// silently rewrites \n to \r\n on the way out.
+//
+// PARTIAL BY DESIGN. Windows has no mmap, no fcntl, no ucontext and no dirent, so the
+// constants feeding those live below as inert values whose corresponding `extern fn`
+// does not exist in any Windows library. Anything that actually reaches them fails at
+// LINK time, naming the missing symbol — loudly, not by computing something plausible.
+// The real APIs (VirtualAlloc, ioctlsocket/FIONBIO, CreateFiber, FindFirstFile) are the
+// later tiers in docs/roadmap.md.
+
+from "std/os" import {
+    htons
+}
+
+extern type SockAddr
+
+// No sin_len on Windows — the BSD-derived length byte was never adopted — so the family
+// is a full 16 bits at offset 0 where darwin splits it into two u8s. Same 16 bytes total.
+@cLayout("struct sockaddr_in", "winsock2.h")
+extern struct SockAddrIn {
+    sin_family: u16,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
+}
+
+@cLayout("struct sockaddr_in6", "ws2tcpip.h")
+extern struct SockAddrIn6 {
+    sin6_family: u16,
+    sin6_port: u16,
+    sin6_flowinfo: u32,
+    sin6_addr: [u8; 16],
+    sin6_scope_id: u32,
+}
+
+// 110 bytes with a 108-byte path — matching linux, not darwin's 106/104. sun_path still
+// lands at offset 2. Requires afunix.h (Windows 10 1803+).
+@cLayout("struct sockaddr_un", "afunix.h")
+extern struct SockAddrUn {
+    sun_family: u16,
+    sun_path: [u8; 108],
+}
+
+@cLayout("struct sockaddr_storage", "winsock2.h")
+extern struct SockAddrStorage {
+    ss_family: u16,
+    __ss_pad1: [u8; 6],
+    __ss_align: i64,
+    __ss_pad2: [u8; 112],
+}
+
+fn makeZeroedSockaddrStorage(): SockAddrStorage {
+    unsafe {
+        return zeroed<SockAddrStorage>()
+    }
+}
+
+// 23 here, against 30 on darwin and 10 on linux — no two of the three agree.
+fn afInet6(): i32 {
+    return 23
+}
+
+fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6 {
+    var a = SockAddrIn6 {
+        sin6_family: 23 as u16,
+        sin6_port: htons(port),
+        sin6_flowinfo: 0,
+        sin6_addr: [0; 16],
+        sin6_scope_id: scopeId,
+    }
+    var i: i64 = 0
+    while i < 16 {
+        a.sin6_addr[i] = addr[i]
+        i = i + 1
+    }
+    return a
+}
+
+fn sockAddrInLen(): u32 {
+    return 16
+}
+
+fn sockAddrIn6Len(): u32 {
+    return 28
+}
+
+fn makeSockaddrUn(path: &string): SockAddrUn {
+    var a = SockAddrUn {
+        sun_family: 1 as u16,
+        sun_path: [0; 108],
+    }
+    var i: i64 = 0
+    while i < path.len && i < sockAddrUnMaxPath() {
+        a.sun_path[i] = path[i]
+        i = i + 1
+    }
+    return a
+}
+
+fn sockAddrUnLen(): u32 {
+    return 110
+}
+
+// Longest path that still leaves room for the NUL.
+fn sockAddrUnMaxPath(): i64 {
+    return 107
+}
+
+fn sockAddrStorageLen(): u32 {
+    return 128
+}
+
+fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
+    return SockAddrIn {
+        sin_family: 2 as u16,
+        sin_port: htons(port),
+        sin_addr: addr,
+        sin_zero: [0; 8],
+    }
+}
+
+fn makeZeroedSockaddr(): SockAddrIn {
+    return SockAddrIn {
+        sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+    }
+}
+
+fn solSocket(): i32 {
+    return 65535
+}
+
+fn soReuseaddr(): i32 {
+    return 4
+}
+
+// _O_BINARY (0x8000) is in both: without it the UCRT translates every \n written through
+// a CRT fd into \r\n, so a file written by Milo would not match its own bytes.
+// _O_WRONLY|_O_CREAT|_O_TRUNC|_O_BINARY
+fn oWriteCreateTrunc(): i32 {
+    return 33537
+}
+
+// _O_WRONLY|_O_CREAT|_O_APPEND|_O_BINARY
+fn oWriteCreateAppend(): i32 {
+    return 33033
+}
+
+fn addrinfoAddrOffset(): i64 {
+    return 32
+}
+
+// struct _stat64 — 56 bytes, against darwin's 144. st_mode is a 16-bit field at 6.
+fn statModeOffset(): i64 {
+    return 6
+}
+
+fn statSizeOffset(): i64 {
+    return 24
+}
+
+fn statBufSize(): i64 {
+    return 56
+}
+
+// ── errno ──
+
+// The UCRT's errno is `*_errno()`, the analogue of darwin's __error().
+extern fn _errno(): *u8
+
+fn getErrno(): i32 {
+    unsafe {
+        return _loadI32(_errno())
+    }
+}
+
+// C errno values (errno.h), NOT the Winsock ones. Socket calls on Windows do not set
+// errno at all — they report through WSAGetLastError(), where the corresponding codes are
+// WSAEWOULDBLOCK 10035 and WSAEINPROGRESS 10036. std/net therefore cannot work by reading
+// these; wiring that up is part of the net tier, not this one.
+fn eagain(): i32 {
+    return 11
+}
+
+fn einprogress(): i32 {
+    return 112
+}
+
+fn soError(): i32 {
+    return 4103
+}
+
+// ── no-equivalent APIs ──
+//
+// Each `extern fn` below is absent from every Windows library on purpose: declaring it
+// keeps the platform surface uniform (the split is whole-file, so every arm must export
+// the same names), while any program that actually calls one fails at link with that
+// symbol named. The companion constants are inert — they are only ever arguments to
+// these missing calls.
+
+// Windows uses ioctlsocket(FIONBIO) for sockets and has no fcntl at all.
+extern fn fcntl(fd: i32, cmd: i32,...): i32
+
+fn fGetfl(): i32 {
+    return -1
+}
+
+fn fSetfl(): i32 {
+    return -1
+}
+
+fn oNonblock(): i32 {
+    return -1
+}
+
+// SIGCHLD does not exist: Windows has no SIGCHLD/wait() model, process exit is observed
+// by waiting on the process HANDLE.
+fn sigchldNum(): i32 {
+    return -1
+}
+
+// ucontext has no Windows equivalent; stackful coroutines want CreateFiber/SwitchToFiber.
+extern fn getcontext(ucp: *u8): i32
+
+extern fn makecontext(ucp: *u8, func: *u8, argc: i32,...): void
+
+extern fn swapcontext(oucp: *u8, ucp: *u8): i32
+
+fn uctxSize(): i64 {
+    return -1
+}
+
+fn uctxStackPtrOffset(): i64 {
+    return -1
+}
+
+fn uctxStackSizeOffset(): i64 {
+    return -1
+}
+
+fn uctxLinkOffset(): i64 {
+    return -1
+}
+
+// mmap has no Windows equivalent; VirtualAlloc / CreateFileMapping are the real APIs.
+fn protRead(): i32 {
+    return -1
+}
+
+fn protWrite(): i32 {
+    return -1
+}
+
+fn protNone(): i32 {
+    return -1
+}
+
+fn mapPrivate(): i32 {
+    return -1
+}
+
+fn mapAnon(): i32 {
+    return -1
+}
+
+fn mapPrivateAnon(): i32 {
+    return -1
+}
+
+// Windows has no dirent/opendir; directory iteration is FindFirstFileW/FindNextFileW.
+fn direntTypeOffset(): i64 {
+    return -1
+}
+
+fn direntNameOffset(): i64 {
+    return -1
+}
+
+// ── pthreads over Win32 ──
+//
+// std/sync and std/runtime are written against the pthread API, so rather than fork them
+// per-platform this arm provides that API over the native primitives. The mapping is
+// direct: a pthread mutex is an SRWLOCK taken exclusively (both are non-recursive), and a
+// pthread condvar is a CONDITION_VARIABLE. Both are 8 bytes against the 64/48 std/sync
+// mallocs for them, so the caller-allocated storage is already more than large enough.
+//
+// All of these return 0 unconditionally: the Win32 calls are void and cannot fail the way
+// their pthread counterparts can (no EINVAL for an uninitialised object — Initialize* is
+// infallible), so there is no error to propagate rather than one being swallowed.
+
+extern fn InitializeSRWLock(lock: *u8): void
+
+extern fn AcquireSRWLockExclusive(lock: *u8): void
+
+extern fn ReleaseSRWLockExclusive(lock: *u8): void
+
+extern fn AcquireSRWLockShared(lock: *u8): void
+
+extern fn ReleaseSRWLockShared(lock: *u8): void
+
+extern fn InitializeConditionVariable(cond: *u8): void
+
+extern fn SleepConditionVariableSRW(cond: *u8, lock: *u8, ms: u32, flags: u32): i32
+
+extern fn WakeConditionVariable(cond: *u8): void
+
+extern fn WakeAllConditionVariable(cond: *u8): void
+
+extern fn CreateThread(attrs: *u8, stackSize: i64, start: *u8, arg: *u8, flags: u32, threadId: *u8): i64
+
+extern fn WaitForSingleObject(handle: i64, ms: u32): u32
+
+extern fn CloseHandle(handle: i64): i32
+
+fn pthread_mutex_init(mutex: *u8, _attr: *u8): i32 {
+    InitializeSRWLock(mutex)
+    return 0
+}
+
+fn pthread_mutex_lock(mutex: *u8): i32 {
+    AcquireSRWLockExclusive(mutex)
+    return 0
+}
+
+fn pthread_mutex_unlock(mutex: *u8): i32 {
+    ReleaseSRWLockExclusive(mutex)
+    return 0
+}
+
+// An SRWLOCK owns no resources, so there is nothing to release.
+fn pthread_mutex_destroy(_mutex: *u8): i32 {
+    return 0
+}
+
+fn pthread_cond_init(cond: *u8, _attr: *u8): i32 {
+    InitializeConditionVariable(cond)
+    return 0
+}
+
+// INFINITE (0xFFFFFFFF) and flags 0 = wait on the lock held exclusively, matching the
+// SRWLOCK acquired by pthread_mutex_lock above.
+fn pthread_cond_wait(cond: *u8, mutex: *u8): i32 {
+    SleepConditionVariableSRW(cond, mutex, 4294967295 as u32, 0 as u32)
+    return 0
+}
+
+fn pthread_cond_signal(cond: *u8): i32 {
+    WakeConditionVariable(cond)
+    return 0
+}
+
+fn pthread_cond_broadcast(cond: *u8): i32 {
+    WakeAllConditionVariable(cond)
+    return 0
+}
+
+fn pthread_cond_destroy(_cond: *u8): i32 {
+    return 0
+}
+
+// pthread_t is a HANDLE here. The start routine's signature differs — pthread wants
+// void*(*)(void*) and Win32 wants DWORD(*)(LPVOID) — but on x64 both take their argument
+// in RCX and return in RAX, and the return value is discarded by every caller in std, so
+// the mismatch is confined to a wider return register than Win32 reads back.
+fn pthread_create(thread: *u8, _attr: *u8, start: *u8, arg: *u8): i32 {
+    let h = CreateThread(0 as *u8, 0, start, arg, 0 as u32, 0 as *u8)
+    if h == 0 {
+        return -1
+    }
+    unsafe {
+        let slot = thread as *i64
+        slot[0] = h
+    }
+    return 0
+}
+
+fn pthread_join(thread: i64, _retval: *u8): i32 {
+    WaitForSingleObject(thread, 4294967295 as u32)
+    CloseHandle(thread)
+    return 0
+}
+
+fn pthread_detach(thread: i64): i32 {
+    CloseHandle(thread)
+    return 0
+}
+
+fn pthread_rwlock_init(rwlock: *u8, _attr: *u8): i32 {
+    InitializeSRWLock(rwlock)
+    return 0
+}
+
+fn pthread_rwlock_rdlock(rwlock: *u8): i32 {
+    AcquireSRWLockShared(rwlock)
+    return 0
+}
+
+fn pthread_rwlock_wrlock(rwlock: *u8): i32 {
+    AcquireSRWLockExclusive(rwlock)
+    return 0
+}
+
+// SRWLOCK has separate release calls per mode and no way to ask which one is held, so a
+// single unlock cannot serve both. std/sync only ever takes these exclusively; a shared
+// reader that reached here would corrupt the lock state, which is why this is exclusive.
+fn pthread_rwlock_unlock(rwlock: *u8): i32 {
+    ReleaseSRWLockExclusive(rwlock)
+    return 0
+}
+
+fn pthread_rwlock_destroy(_rwlock: *u8): i32 {
+    return 0
+}

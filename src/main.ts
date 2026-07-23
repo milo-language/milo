@@ -557,6 +557,12 @@ function declaredLibSpec(names: string[], target: TargetInfo, staticDeps: boolea
 
 function detectLibs(ir: string, target: TargetInfo, staticDeps = false): string {
   let libs = "";
+  // Auto-detection is a heuristic keyed on Homebrew/apt layouts, and it deliberately
+  // over-approximates (see the note below) — which is survivable only because ld64 and
+  // GNU ld can drop the unused ones. lld-link ignores --as-needed, so a speculative
+  // -lssl becomes a hard "could not open 'ssl.lib'" for any program that merely imports
+  // std/io. On Windows these deps have to be requested explicitly via @link.
+  if (target.os === "windows") return libs;
   const openssl = "/opt/homebrew/opt/openssl@3";
   if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
     libs += libSpec(["ssl", "crypto"], openssl, target, staticDeps);
@@ -612,8 +618,11 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
 
   // The linker won't create -o's parent dir; without this it errors with
   // "ld: open() failed" on a fresh checkout (e.g. building into a bin/ that
-  // isn't there yet).
-  mkdirSync(dirname(out), { recursive: true });
+  // isn't there yet). Guarded by existsSync because `recursive: true` is not
+  // idempotent on Windows: `mkdir "."` throws EEXIST there rather than
+  // succeeding, so every `-o name` with no directory part died on that runner.
+  const outDir = dirname(out);
+  if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
   try {
     writeFileSync(tmpLl, ir);
