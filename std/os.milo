@@ -22,16 +22,23 @@ from "std/runtime" import {
 
 // ── I/O ──
 
-@cSig("unistd.h", "ssize_t read(int, void *, size_t)")
+// The `"darwin,linux"` scope on the fd calls below is not a formality. Windows links
+// these through the UCRT's oldnames shim, where the real declarations are `int _read(int,
+// void *, unsigned int)` and `int _write(...)` — 32-bit count, 32-bit return, against the
+// 64-bit ones declared here. Win64 leaves the upper half of RAX undefined for an `int`
+// return, so a `-1` error can arrive as a large positive i64. That is a real bug, tracked
+// in docs/roadmap.md; scoping the annotation records where the claim is true instead of
+// asserting a POSIX header Windows does not have.
+@cSig("unistd.h", "ssize_t read(int, void *, size_t)", "darwin,linux")
 extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
 
-@cSig("unistd.h", "ssize_t write(int, const void *, size_t)")
+@cSig("unistd.h", "ssize_t write(int, const void *, size_t)", "darwin,linux")
 extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
 
-@cSig("fcntl.h", "int open(const char *, int, ...)")
+@cSig("fcntl.h", "int open(const char *, int, ...)", "darwin,linux")
 extern fn open(path: *u8, flags: i32,...): i32
 
-@cSig("unistd.h", "int close(int)")
+@cSig("unistd.h", "int close(int)", "darwin,linux")
 extern fn close(fd: i32): i32
 
 // signal(SIGPIPE, SIG_IGN). Writing to a socket whose peer has gone away raises
@@ -41,7 +48,7 @@ extern fn close(fd: i32): i32
 @cSig("signal.h", "void (*signal(int, void (*)(int)))(int)")
 extern fn signal(sig: i32, handler: *u8): *u8
 
-@cSig("unistd.h", "off_t lseek(int, off_t, int)")
+@cSig("unistd.h", "off_t lseek(int, off_t, int)", "darwin,linux")
 extern fn lseek(fd: i32, offset: i64, whence: i32): i64
 
 @cSig("sys/stat.h", "int fstat(int, struct stat *)")
@@ -50,7 +57,7 @@ extern fn fstat(fd: i32, buf: *u8): i32
 @cSig("sys/stat.h", "int stat(const char *, struct stat *)")
 extern fn stat(path: *u8, buf: *u8): i32
 
-@cSig("unistd.h", "int access(const char *, int)")
+@cSig("unistd.h", "int access(const char *, int)", "darwin,linux")
 extern fn access(path: *u8, mode: i32): i32
 
 @cSig("stdio.h", "int puts(const char *)")

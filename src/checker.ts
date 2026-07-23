@@ -77,10 +77,12 @@ export interface CLayout {
   header: string;
 }
 
-// A verified claim about an extern fn's C signature, from `@cSig(header, sig)`.
+// A verified claim about an extern fn's C signature, from `@cSig(header, sig[, oses])`.
 export interface CSig {
   header: string;
   sig: string;
+  /** OSes the claim holds on; absent means every OS. Verified only when the target is in it. */
+  os?: string[];
 }
 
 export interface EnumInfo {
@@ -1607,12 +1609,32 @@ export class TypeChecker {
         `a Milo fn is compiled from this source — there's no foreign declaration to check it against`);
       return;
     }
-    if (attr.args.length !== 2 || attr.argKinds?.some(k => k !== "string")) {
-      this.error(`@cSig on '${f.name}': expected two string arguments`, undefined,
+    if ((attr.args.length !== 2 && attr.args.length !== 3) || attr.argKinds?.some(k => k !== "string")) {
+      this.error(`@cSig on '${f.name}': expected two string arguments, or three with an OS list`, undefined,
         `write '@cSig("unistd.h", "int ${f.name}(int)")' — the header, then the C signature as the header spells it`);
       return;
     }
     const header = attr.args[0]!, sig = attr.args[1]!;
+    // Optional third argument: the OSes the claim is true on. A signature is a claim
+    // about a specific C library, and libraries disagree — the UCRT spells POSIX `read`
+    // as `_read` and returns `int` where POSIX returns `ssize_t`. Without this, such a
+    // declaration has no honest annotation: claiming unistd.h everywhere fails to
+    // compile on Windows, and dropping the annotation loses the check where it IS true.
+    let os: string[] | undefined;
+    if (attr.args.length === 3) {
+      os = attr.args[2]!.split(",").map(s => s.trim()).filter(s => s.length > 0);
+      const unknown = os.filter(o => !TypeChecker.C_SIG_OSES.includes(o));
+      if (unknown.length > 0) {
+        this.error(`@cSig on '${f.name}': unknown OS '${unknown[0]}'`, undefined,
+          `the third argument is a comma-separated OS list — one or more of: ${TypeChecker.C_SIG_OSES.join(", ")}`);
+        return;
+      }
+      if (os.length === 0) {
+        this.error(`@cSig on '${f.name}': the OS list is empty`, undefined,
+          `drop the third argument if the claim holds everywhere, or name the OSes it holds on`);
+        return;
+      }
+    }
     if (!TypeChecker.C_HEADER_RE.test(header)) {
       this.error(`@cSig on '${f.name}': '${header}' is not a C header path`, undefined,
         `expected a header ending in '.h', as written inside '#include <...>' — e.g. 'unistd.h'`);
@@ -1628,7 +1650,7 @@ export class TypeChecker {
         `'${sig}' must name '${f.name}' — the assert is generated against that symbol`);
       return;
     }
-    this.cSigs.set(f.name, { header, sig });
+    this.cSigs.set(f.name, { header, sig, os });
   }
 
   private validateAttributes(declName: string, attrs: Attribute[] | undefined, target: "struct" | "enum"): void {
@@ -1650,6 +1672,8 @@ export class TypeChecker {
   // type position and inject arbitrary C.
   private static readonly C_TYPE_RE = /^(struct |union |enum )?[A-Za-z_][A-Za-z0-9_]*$/;
   private static readonly C_HEADER_RE = /^[A-Za-z0-9_][A-Za-z0-9_./+-]*\.h$/;
+  // Matches target.ts's `os` values; a typo here would silently disable a guard.
+  private static readonly C_SIG_OSES = ["darwin", "linux", "windows"];
   // A C function signature, pasted verbatim into a generated TU — so it's held to a
   // charset that can't close the assert and inject statements. Allows what real decls
   // need (`ssize_t f(int, void *, size_t)`, `struct tm *g(const time_t *)`, `void h(void)`,

@@ -1,0 +1,13 @@
+// @expect: 5
+// An explicit OS list that names every hosted target: the guard is still emitted and
+// still checked, so this pins the plumbing (checker → HIR → guard TU) rather than the
+// skip. That the skip works is proven by CI's windows job, where std/os's POSIX-scoped
+// claims are the ones NOT emitted — there is no way to express "not the host" here.
+@cSig("string.h", "size_t strlen(const char *)", "darwin,linux,windows")
+extern fn strlen(s: *u8): u64
+
+fn main() {
+    unsafe {
+        print(strlen("hello" as *u8))
+    }
+}

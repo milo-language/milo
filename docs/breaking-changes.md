@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: breaking-changes
+purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
+key-files: std/platform.*.milo, std/os.milo
+update-when: a public stdlib name moves, is renamed, or changes signature
+last-verified: 2026-07-23
+-->
+
 # Breaking changes
 
 Source-level breaks, newest first. Milo is pre-1.0 and does not promise
