@@ -1,16 +1,17 @@
-// Milo SNES — interactive SDL frontend. Loads a .sfc (or a built-in graphics
-// demo), runs the system frame-by-frame, and presents each rendered frame in a
-// window with keyboard->joypad input. Mirrors the NES SDL pipeline.
-//   milo build examples/apps/snes/snes.milo -o /tmp/snes-emu -- -L/opt/homebrew/lib -lSDL2
-//   /tmp/snes-emu roms/game.sfc     (or no arg for the demo)
+// Milo SNES — interactive SDL frontend. Loads a .sfc, runs the system
+// frame-by-frame, and presents each rendered frame in a window with
+// keyboard->joypad input. Mirrors the NES SDL pipeline.
+// SDL2 is auto-linked via the @link attribute below — no -- flags needed.
+//   milo build examples/apps/snes/snes.milo -o /tmp/snes-emu
+//   /tmp/snes-emu roms/game.sfc
 //
 // Keys: arrows=D-pad, Z=B X=A A=Y S=X, Enter=Start, RShift=Select, Q=L W=R, Esc=quit.
 
-from "std/args" import {
-    args
+from "std/argparse" import {
+    newParser
 }
 from "./cpu" import {
-    Cpu, Mem, busNew, newCpuReset, stepFrame, vecZeros, sramToString, sramFromString
+    Cpu, Mem, busNew, newCpuReset, stepFrame, sramToString, sramFromString
 }
 from "std/io" import {
     readFile
@@ -83,6 +84,7 @@ fn queueAudio(m: &mut Mem, dev: u32): void {
     }
 }
 
+@link("SDL2")
 extern fn SDL_Init(flags: u32): i32
 
 extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
@@ -163,79 +165,6 @@ let SDL_TEXTUREACCESS_STREAMING: i32 = 1
 let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
 let SDL_QUIT: u32 = 0x100
 
-fn ldaSta(rom: &mut Vec<u8>, o: i64, imm: i64, addr: i64): i64 {
-    rom[o] = 0xA9 as u8
-    rom[o + 1] = (imm & 0xFF) as u8
-    rom[o + 2] = 0x8D as u8
-    rom[o + 3] = (addr & 0xFF) as u8
-    rom[o + 4] = ((addr >> 8) & 0xFF) as u8
-    return o + 5
-}
-
-fn dmaCfg(rom: &mut Vec<u8>, o: i64, dmap: i64, bbad: i64, src: i64, size: i64): i64 {
-    var p = o
-    p = ldaSta(rom, p, dmap, 0x4300)
-    p = ldaSta(rom, p, bbad, 0x4301)
-    p = ldaSta(rom, p, src & 0xFF, 0x4302)
-    p = ldaSta(rom, p, (src >> 8) & 0xFF, 0x4303)
-    p = ldaSta(rom, p, 0x00, 0x4304)
-    p = ldaSta(rom, p, size & 0xFF, 0x4305)
-    p = ldaSta(rom, p, (size >> 8) & 0xFF, 0x4306)
-    return ldaSta(rom, p, 0x01, 0x420B)
-}
-
-// Built-in demo ROM: DMAs a palette + stripe tile and shows BG1 (same as romGfxDemo).
-fn demoRom(): Vec<u8> {
-    var rom = vecZeros(0x8000)
-    var o: i64 = 0
-    o = ldaSta(rom, o, 0x00, 0x2121)
-    o = dmaCfg(rom, o, 0x00, 0x22, 0x8200, 0x20)
-    o = ldaSta(rom, o, 0x80, 0x2115)
-    o = ldaSta(rom, o, 0x00, 0x2116)
-    o = ldaSta(rom, o, 0x00, 0x2117)
-    o = dmaCfg(rom, o, 0x01, 0x18, 0x8300, 0x20)
-    o = ldaSta(rom, o, 0x01, 0x2105)
-    o = ldaSta(rom, o, 0x04, 0x2107)
-    o = ldaSta(rom, o, 0x00, 0x210B)
-    o = ldaSta(rom, o, 0x0F, 0x2100)
-    rom[o] = 0xEA as u8
-    rom[o + 1] = 0x80 as u8
-    rom[o + 2] = 0xFD as u8
-    let pal = [0x00, 0x00, 0x1F, 0x00, 0xE0, 0x03, 0x00, 0x7C, 0xFF, 0x03]
-    var i: i64 = 0
-    while i < (pal.len as i64) {
-        rom[0x200 + i] = pal[i] as u8
-        i = i + 1
-    }
-    let idx = [1, 2, 3, 4, 1, 2, 3, 4]
-    var row: i64 = 0
-    while row < 8 {
-        let k = idx[row] as i64
-        rom[0x300 + row * 2] = (if (k & 1) != 0 {
-            0xFF
-        } else {
-            0x00
-        }
-        ) as u8
-        rom[0x300 + row * 2 + 1] = (if (k & 2) != 0 {
-            0xFF
-        } else {
-            0x00
-        }
-        ) as u8
-        rom[0x300 + 16 + row * 2] = (if (k & 4) != 0 {
-            0xFF
-        } else {
-            0x00
-        }
-        ) as u8
-        row = row + 1
-    }
-    rom[0x7FFC] = 0x00 as u8
-    rom[0x7FFD] = 0x80 as u8
-    return rom
-}
-
 // Game name from the cartridge header (LoROM $7FC0 / HiROM $FFC0, 21 bytes,
 // space-padded). loadCartridge already strips any 512-byte SMC header. Returns
 // "" if the region isn't a plausible ASCII title.
@@ -305,22 +234,22 @@ fn openPadN(n: i64): *u8 {
 }
 
 fn main(): i32 {
-    let argv = args()
-    var rom = demoRom()
+    var parser = newParser("snes", "Milo SNES emulator (SDL2) — plays .sfc / .smc ROMs.")
+    parser.addPositional("rom", "path to a .sfc or .smc ROM")
+    let pargs = parser.parse() // auto-handles --help / -h; errors out when rom is missing
+    let romPath = pargs.getString("rom")
+    var rom: Vec<u8> = Vec.new()
     var mapMode: i64 = 0
-    if argv.len >= 2 {
-        match loadCartridge(argv[1]) {
-            Result.Ok(cart) => {
-                rom = cart.rom
-                mapMode = cart.map
-                print("loaded " + argv[1])
-            }
-            Result.Err(e) => {
-                print("load failed, using demo: " + e)
-            }
+    match loadCartridge(romPath) {
+        Result.Ok(cart) => {
+            rom = cart.rom
+            mapMode = cart.map
+            print("loaded " + romPath)
         }
-    } else {
-        print("no ROM arg — running built-in demo")
+        Result.Err(e) => {
+            print("load failed: " + e)
+            return 1
+        }
     }
 
     let gameName = snesRomTitle(rom, mapMode) // before busNew moves `rom`
@@ -329,13 +258,10 @@ fn main(): i32 {
 
     // Battery save: <rom>.srm holds the cartridge SRAM across runs. Load it now;
     // it's written back on quit so the game's own saves survive shutdown.
-    var srmPath = ""
-    if argv.len >= 2 {
-        srmPath = argv[1] + ".srm"
-        if let Result.Ok(data) = readFile(srmPath) {
-            sramFromString(m, data)
-            print("loaded save: " + srmPath)
-        }
+    let srmPath = romPath + ".srm"
+    if let Result.Ok(data) = readFile(srmPath) {
+        sramFromString(m, data)
+        print("loaded save: " + srmPath)
     }
 
     if SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0 {
@@ -398,11 +324,7 @@ fn main(): i32 {
         // only write when the game actually changed SRAM.
         var saveTick: i64 = 0
         var lastSaveSum: i64 = -1
-        let statePath = if argv.len >= 2 {
-            argv[1] + ".state"
-        } else {
-            "/tmp/snes/demo.state"
-        }
+        let statePath = romPath + ".state"
         var fpsCarry: i64 = 0 // fractional-ms accumulator for exact 60 fps pacing
         while !quit {
             let frameStart = SDL_GetTicks() as i64

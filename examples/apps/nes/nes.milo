@@ -3,20 +3,14 @@
 // cycle, services NMI at vblank, renders each completed frame, and blits it
 // through an SDL streaming texture (same pipeline as sdlSmoke).
 //
-// Build + run (SDL2 via homebrew, -O0 for fast compile):
-//   milo build examples/apps/nes/nes.milo -o /tmp/nes --debug -- -L/opt/homebrew/lib -lSDL2
+// Build + run (SDL2 auto-linked via the @link attribute below — no -- flags needed):
+//   milo build examples/apps/nes/nes.milo -o /tmp/nes --debug
 //   /tmp/nes roms/nes-test-roms/full_palette/full_palette.nes
 from "std/argparse" import {
     newParser
 }
-from "std/io" import {
-    readLine, writeStdout
-}
 from "std/fs" import {
-    readDir, isDir, writeFile
-}
-from "std/string" import {
-    strEndsWith
+    writeFile
 }
 from "./cartridge" import {
     Cartridge
@@ -31,6 +25,7 @@ from "./ppu" import {
     renderFrame
 }
 
+@link("SDL2")
 extern fn SDL_Init(flags: u32): i32
 
 extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
@@ -127,248 +122,6 @@ let SDL_KEYUP: u32 = 0x301
 // Controller keys (SDL scancodes): arrows = D-pad, Z = B, X = A, Return = Start,
 // Right Shift = Select. Sampled live from SDL_GetKeyboardState in the run loop.
 
-// Recursively collect every *.nes path under `dir` into `out`. Build each path
-// with an exact-capacity buffer: growing a string via `+` can realloc, and a
-// string realloc while the `out` Vec is live can corrupt it (Milo heap bug).
-fn joinPath(dir: &string, name: &string): string {
-    var full = String.withCapacity(dir.len + name.len + 1)
-    var k: i64 = 0
-    while k < dir.len {
-        full.push(dir[k])
-        k = k + 1
-    }
-    full.push(47 as u8) // '/'
-    k = 0
-    while k < name.len {
-        full.push(name[k])
-        k = k + 1
-    }
-    return full
-}
-
-fn collectRoms(dir: string, out: &mut Vec<string>): void {
-    let entries = readDir(dir)
-    for entry in entries {
-        let full = joinPath(dir, entry.name)
-        if entry.isDir {
-            collectRoms(full, out)
-        } else {
-            if strEndsWith(full, ".nes") || strEndsWith(full, ".NES") {
-                out.push(full)
-            }
-        }
-    }
-}
-
-fn intToStr(n: i64): string {
-    if n == 0 {
-        return "0"
-    }
-    var digits: Vec<u8> = []
-    var v = n
-    while v > 0 {
-        digits.push((48 + (v % 10)) as u8)
-        v = v / 10
-    }
-    var s: string = ""
-    var i = digits.len - 1
-    while i >= 0 {
-        s.push(digits[i])
-        i = i - 1
-    }
-    return s
-}
-
-// Read leading decimal digits from a line (tolerates a trailing newline).
-fn parseIndex(s: &string): i64 {
-    var n: i64 = 0
-    var seen = false
-    for ch in s {
-        let c = ch as i64
-        if c >= 48 && c <= 57 {
-            n = n * 10 + (c - 48)
-            seen = true
-        } else {
-            break
-        }
-    }
-    if seen {
-        return n
-    }
-    return -1
-}
-
-// File name after the last '/'.
-fn baseName(p: &string): string {
-    var start: i64 = 0
-    var i: i64 = 0
-    while i < p.len {
-        if p[i] == 47 {
-            start = i + 1
-        } // '/'
-        i = i + 1
-    }
-    var s: string = ""
-    i = start
-    while i < p.len {
-        s.push(p[i])
-        i = i + 1
-    }
-    return s
-}
-
-fn lc(c: i64): i64 {
-    if c >= 65 && c <= 90 {
-        return c + 32
-    }
-    return c
-}
-
-// Case-insensitive substring test.
-fn containsCI(hay: &string, needle: &string): bool {
-    if needle.len == 0 {
-        return true
-    }
-    if needle.len > hay.len {
-        return false
-    }
-    var i: i64 = 0
-    while i <= hay.len - needle.len {
-        var j: i64 = 0
-        var ok = true
-        while j < needle.len {
-            if lc(hay[i + j] as i64) != lc(needle[j] as i64) {
-                ok = false break
-            }
-            j = j + 1
-        }
-        if ok {
-            return true
-        }
-        i = i + 1
-    }
-    return false
-}
-
-// Strip surrounding whitespace / newlines.
-fn trimLine(s: &string): string {
-    var a: i64 = 0
-    var b: i64 = s.len
-    while a < b {
-        let c = s[a] as i64
-        if c == 32 || c == 9 || c == 10 || c == 13 {
-            a = a + 1
-        } else {
-            break
-        }
-    }
-    while b > a {
-        let c = s[b - 1] as i64
-        if c == 32 || c == 9 || c == 10 || c == 13 {
-            b = b - 1
-        } else {
-            break
-        }
-    }
-    var out: string = ""
-    var i = a
-    while i < b {
-        out.push(s[i])
-        i = i + 1
-    }
-    return out
-}
-
-fn strEq(a: &string, b: &string): bool {
-    if a.len != b.len {
-        return false
-    }
-    var i: i64 = 0
-    while i < a.len {
-        if a[i] != b[i] {
-            return false
-        }
-        i = i + 1
-    }
-    return true
-}
-
-// Terminal ROM picker with search + pagination — a bare numbered dump is
-// unusable with hundreds of ROMs (can't scroll back to find one). Type part of a
-// name to filter, then pick a number from the (capped) matches.
-fn pickRom(): string {
-    var scanDir = "roms"
-    if isDir("roms/games") {
-        scanDir = "roms/games"
-    }
-    var roms: Vec<string> = []
-    collectRoms(scanDir.clone(), roms)
-    if roms.len == 0 {
-        print("no .nes ROMs found under ./" + scanDir)
-        return ""
-    }
-    let PAGE: i64 = 30
-    print(intToStr(roms.len) + " ROMs under " + scanDir + ".")
-    while true {
-        writeStdout("\nSearch name (Enter=list, q=quit): ")
-        var query = ""
-        match readLine() {
-            Option.Some(line) => {
-                query = trimLine(line)
-            }
-            Option.None => {
-                return ""
-            }
-        }
-        if strEq(query, "q") {
-            return ""
-        }
-        // Filter to matches, remembering each match's real path.
-        var matches: Vec<string> = []
-        var i: i64 = 0
-        while i < roms.len {
-            if containsCI(baseName(roms[i]), query) {
-                matches.push(roms[i])
-            }
-            i = i + 1
-        }
-        if matches.len == 0 {
-            print("no matches for \"" + query + "\"")
-            continue
-        }
-        var shown = matches.len
-        if shown > PAGE {
-            shown = PAGE
-        }
-        i = 0
-        while i < shown {
-            print("  [" + intToStr(i) + "] " + baseName(matches[i]))
-            i = i + 1
-        }
-        if matches.len > PAGE {
-            print("  ...and " + intToStr(matches.len - PAGE) + " more — narrow your search")
-        }
-        writeStdout("Number to play (Enter=search again): ")
-        match readLine() {
-            Option.Some(sel) => {
-                let t = trimLine(sel)
-                if t.len == 0 {
-                    continue
-                }
-                let idx = parseIndex(t)
-                if idx >= 0 && idx < shown {
-                    return matches[idx]
-                }
-                print("invalid selection")
-            }
-            Option.None => {
-                return ""
-            }
-        }
-    }
-    return ""
-}
-
 // Print the keyboard controls to the terminal at launch.
 fn printControls(): void {
     print("Milo NES — controls:")
@@ -381,16 +134,10 @@ fn printControls(): void {
 
 fn main(): i32 {
     var parser = newParser("nes", "Milo NES emulator (SDL2) — plays iNES (.nes) ROMs.")
-    parser.addOptionalPositional("rom", "path to a .nes ROM (omit to pick from roms/games/)")
-    let pargs = parser.parse() // auto-handles --help / -h
+    parser.addPositional("rom", "path to a .nes ROM")
+    let pargs = parser.parse() // auto-handles --help / -h; errors out when rom is missing
 
-    var romPath = pargs.getString("rom")
-    if romPath == "" {
-        romPath = pickRom() // interactive picker when no ROM given
-        if romPath == "" {
-            return 1
-        }
-    }
+    let romPath = pargs.getString("rom")
 
     // match is statement-only in Milo, so the whole run lives in the Ok arm.
     match loadCartridge(romPath) {

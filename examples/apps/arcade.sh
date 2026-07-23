@@ -9,7 +9,6 @@
 # Ext -> core:  .nes = NES ;  .md/.gen/.bin/.smd = Genesis ;  .sfc/.smc = SNES
 set -uo pipefail
 cd "$(dirname "$0")/../.."
-SDLFLAGS="-L/opt/homebrew/lib -lSDL2"
 
 # echo "<dir> <entry>" for a lowercase extension, or nothing if unknown.
 core_for() {
@@ -31,7 +30,7 @@ run_rom() {
   # Rebuild if the binary is missing or any .milo in the core dir is newer.
   if [ ! -x "$bin" ] || [ -n "$(find "examples/apps/$dir" -name '*.milo' -newer "$bin" 2>/dev/null)" ]; then
     echo "building $dir core..."
-    bun run src/main.ts build "$src" -o "$bin" -- $SDLFLAGS || return 1
+    bun run src/main.ts build "$src" -o "$bin" || return 1
   fi
   echo "running $dir: $rom  (Esc to quit)"
   "$bin" "$rom"

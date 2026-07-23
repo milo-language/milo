@@ -3,8 +3,8 @@
 // SDL texture, and maps the keyboard to controller 1. Same SDL pipeline as the
 // NES frontend (examples/apps/nes/nes.milo).
 //
-// Build (SDL2 via homebrew):
-//   milo build examples/apps/genesis/genesis.milo -o /tmp/genesis -- -L/opt/homebrew/lib -lSDL2
+// Build (SDL2 auto-linked via the @link attribute below — no -- flags needed):
+//   milo build examples/apps/genesis/genesis.milo -o /tmp/genesis
 //   /tmp/genesis roms/games/sonic1.md
 // Keys: arrows = D-pad, Z=B, X=A, C=C, Enter=Start, Esc=quit.
 
@@ -26,10 +26,11 @@ from "./sound" import {
 from "./render" import {
     renderIndexed, frameWidth, frameHeight, pixelR, pixelG, pixelB
 }
-from "std/args" import {
-    args
+from "std/argparse" import {
+    newParser
 }
 
+@link("SDL2")
 extern fn SDL_Init(flags: u32): i32
 
 extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
@@ -210,15 +211,14 @@ fn openPadN(n: i64): *u8 {
 }
 
 fn main(): i32 {
-    let argv = args()
-    if argv.len < 2 {
-        print("usage: genesis <rom>")
-        return 1
-    }
+    var parser = newParser("genesis", "Milo Genesis / Mega Drive emulator (SDL2) — plays .md / .gen / .bin ROMs.")
+    parser.addPositional("rom", "path to a .md, .gen or .bin ROM")
+    let pargs = parser.parse() // auto-handles --help / -h; errors out when rom is missing
+    let romPath = pargs.getString("rom")
     var cart = Cart {
         rom: Vec.new(), name: "", romEnd: 0
     }
-    match loadCart(argv[1]) {
+    match loadCart(romPath) {
         Result.Ok(c) => {
             cart = c
         }

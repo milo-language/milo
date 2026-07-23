@@ -58,7 +58,7 @@ PSG synthesis -> SDL window with video + audio + controller input.
 
 Run it:
 ```
-milo build examples/apps/genesis/genesis.milo -o /tmp/genesis -- -L/opt/homebrew/lib -lSDL2
+milo build examples/apps/genesis/genesis.milo -o /tmp/genesis
 /tmp/genesis roms/games/sonic1.md      # playable, with music
 ```
 Offline (dumps /tmp/sonic.ppm + /tmp/sonic.wav): `bootRun.milo <rom> <maxSteps>`.
@@ -255,6 +255,6 @@ music arrives incrementally.
 
 ```
 milo build examples/apps/genesis/runHarte.milo -o /tmp/runHarte68k --debug
-milo build examples/apps/genesis/genesis.milo -o /tmp/genesis --debug -- -L/opt/homebrew/lib -lSDL2
+milo build examples/apps/genesis/genesis.milo -o /tmp/genesis --debug
 /tmp/genesis roms/games/sonic1.md
 ```

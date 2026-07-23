@@ -261,6 +261,6 @@ handshake; Mode 1 + DMA/HDMA + input = "most games playable, silent"; sound
 
 ```
 milo build examples/apps/snes/runHarte.milo -o /tmp/runHarte --debug
-milo build examples/apps/snes/snes.milo -o /tmp/snes --debug -- -L/opt/homebrew/lib -lSDL2
+milo build examples/apps/snes/snes.milo -o /tmp/snes --debug
 /tmp/snes roms/games/somegame.sfc
 ```

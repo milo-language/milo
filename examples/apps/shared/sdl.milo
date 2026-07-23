@@ -4,6 +4,7 @@
 // none of the emulators bind. The emulators keep their own copies; sharing them
 // would mean refactoring three working programs, so this file serves `menu` only.
 
+@link("SDL2")
 extern fn SDL_Init(flags: u32): i32
 
 extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
