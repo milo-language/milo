@@ -1,0 +1,161 @@
+// std/sysinfo — high-level system information (Windows)
+//
+// Mirrors sysinfo.darwin/linux's surface exactly; only the sources differ. The POSIX
+// arms answer via sysctl/Mach or procfs; this one via the Win32 base APIs (all in
+// kernel32, which the CRT links by default — no extra -l needed).
+//
+// Some POSIX concepts have no Windows analogue: there are no numeric uid/gid (security
+// is SID-based), no load average, and getppid needs a Toolhelp snapshot. Following the
+// same rule the Linux arm states for a missing /proc read, those degrade to the zero/
+// empty value the darwin path returns on failure, so a caller never has to branch on OS.
+
+@cSig("windows.h", "BOOL GetComputerNameA(LPSTR, LPDWORD)")
+extern fn GetComputerNameA(name: *u8, size: *u32): i32
+
+@cSig("windows.h", "DWORD GetCurrentDirectoryA(DWORD, LPSTR)")
+extern fn GetCurrentDirectoryA(len: u32, buf: *u8): u32
+
+@cSig("windows.h", "BOOL SetCurrentDirectoryA(LPCSTR)")
+extern fn SetCurrentDirectoryA(path: *u8): i32
+
+@cSig("windows.h", "DWORD GetCurrentProcessId(void)")
+extern fn GetCurrentProcessId(): u32
+
+// void GetSystemInfo(LPSYSTEM_INFO). dwNumberOfProcessors is a DWORD at offset 32,
+// wProcessorArchitecture a WORD at offset 0. The struct is 48 bytes on x64.
+@cSig("windows.h", "void GetSystemInfo(LPSYSTEM_INFO)")
+extern fn GetSystemInfo(info: *u8): void
+
+// BOOL GlobalMemoryStatusEx(LPMEMORYSTATUSEX). The caller must set dwLength (offset 0)
+// to sizeof = 64 or the call fails. ullTotalPhys is at offset 8, ullAvailPhys at 16.
+@cSig("windows.h", "BOOL GlobalMemoryStatusEx(LPMEMORYSTATUSEX)")
+extern fn GlobalMemoryStatusEx(buf: *u8): i32
+
+// ULONGLONG GetTickCount64(void) — milliseconds since boot, 64-bit so it does not wrap
+// at 49.7 days the way the 32-bit GetTickCount does.
+@cSig("windows.h", "ULONGLONG GetTickCount64(void)")
+extern fn GetTickCount64(): u64
+
+fn hostname(): string {
+    var buf: [u8; 256] = [0; 256]
+    var size: [u32; 1] = [256]
+    unsafe {
+        GetComputerNameA(buf as *u8, size as *u32)
+        return _cstrToString(buf as *u8)
+    }
+}
+
+fn cwd(): string {
+    var buf: [u8; 4096] = [0; 4096]
+    unsafe {
+        GetCurrentDirectoryA(4096 as u32, buf as *u8)
+        return _cstrToString(buf as *u8)
+    }
+}
+
+fn setCwd(path: string): bool {
+    return SetCurrentDirectoryA(path) != 0
+}
+
+fn pid(): i32 {
+    return GetCurrentProcessId() as i32
+}
+
+// No getppid on Windows without a Toolhelp process walk; degrade to 0 like a failed
+// /proc read rather than returning a fabricated parent.
+fn ppid(): i32 {
+    return 0
+}
+
+// Windows identities are SIDs, not numeric ids — there is no uid/gid/euid/egid to
+// report. 0 matches the darwin/linux failure return; it does NOT mean "root".
+fn uid(): u32 {
+    return 0
+}
+
+fn gid(): u32 {
+    return 0
+}
+
+fn euid(): u32 {
+    return 0
+}
+
+fn egid(): u32 {
+    return 0
+}
+
+fn cpuCount(): i64 {
+    var buf: [u8; 64] = [0; 64]
+    unsafe {
+        GetSystemInfo(buf as *u8)
+        // dwNumberOfProcessors: DWORD at byte offset 32 == u32 index 8.
+        let n = (buf as *u32) [8] as i64
+        if n < 1 {
+            return 1
+        }
+        return n
+    }
+}
+
+// Windows has no unprivileged, non-registry brand-string source, so report the
+// processor architecture (honest and label-accurate) rather than a fabricated model.
+fn cpuModel(): string {
+    var buf: [u8; 64] = [0; 64]
+    unsafe {
+        GetSystemInfo(buf as *u8)
+        // wProcessorArchitecture: WORD at offset 0. 9 = x64, 12 = ARM64, 0 = x86.
+        let arch = (buf as *u16) [0] as i64
+        if arch == 9 {
+            return "x86-64"
+        }
+        if arch == 12 {
+            return "ARM64"
+        }
+        if arch == 0 {
+            return "x86"
+        }
+        return "unknown"
+    }
+}
+
+fn totalMem(): i64 {
+    var buf: [u8; 64] = [0; 64]
+    unsafe {
+        (buf as *u32) [0] = 64 as u32
+        if GlobalMemoryStatusEx(buf as *u8) == 0 {
+            return 0
+        }
+        // ullTotalPhys: DWORDLONG at offset 8 == i64 index 1.
+        return (buf as *i64) [1]
+    }
+}
+
+fn freeMem(): i64 {
+    var buf: [u8; 64] = [0; 64]
+    unsafe {
+        (buf as *u32) [0] = 64 as u32
+        if GlobalMemoryStatusEx(buf as *u8) == 0 {
+            return 0
+        }
+        // ullAvailPhys: DWORDLONG at offset 16 == i64 index 2.
+        return (buf as *i64) [2]
+    }
+}
+
+fn uptime(): i64 {
+    return (GetTickCount64() / 1000 as u64) as i64
+}
+
+// Windows has no load-average metric; the darwin/linux arms return this array too, so
+// keep the shape and report zeros rather than inventing a number.
+fn loadAvg(): [f64; 3] {
+    return [0.0; 3]
+}
+
+// The reliable OS version lives behind the registry (RtlGetVersion needs ntdll and a
+// manifest to be truthful), which this arm deliberately avoids. Empty matches the POSIX
+// failure return rather than reporting a version the API is known to lie about.
+fn osRelease(): string {
+    return ""
+}

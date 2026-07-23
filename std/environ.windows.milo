@@ -1,0 +1,73 @@
+// std/environ — enumerate the whole process environment (Windows).
+//
+// Mirrors environ.darwin/linux's surface exactly. Windows has no `environ` global
+// worth relying on; GetEnvironmentStringsA() hands back a private copy of the block
+// as consecutive NUL-terminated NAME=VALUE records ending in a second NUL. The block
+// is owned by the caller and must go back through FreeEnvironmentStringsA.
+
+@cSig("windows.h", "LPCH GetEnvironmentStringsA(void)")
+extern fn GetEnvironmentStringsA(): *u8
+
+@cSig("windows.h", "BOOL FreeEnvironmentStringsA(LPCH)")
+extern fn FreeEnvironmentStringsA(block: *u8): i32
+
+struct EnvEntry {
+    name: string,
+    value: string,
+}
+
+// Every variable in the process environment, in the order the OS supplies them.
+fn envVars(): Vec<EnvEntry> {
+    var out: Vec<EnvEntry> = Vec.new()
+    unsafe {
+        let block: *u8 = GetEnvironmentStringsA()
+        if (block as i64) == 0 {
+            return out
+        }
+        var i: i64 = 0
+        var going = true
+        while going {
+            // Each record runs to its NUL; an empty record is the block's closing NUL.
+            var segEnd = i
+            while block[segEnd] != 0 as u8 {
+                segEnd = segEnd + 1
+            }
+            if segEnd == i {
+                going = false
+            } else {
+                // NAME=VALUE; the value may itself contain '='. Windows also emits
+                // "=C:=C:\dir" drive-cwd pseudo-vars whose '=' is at the start — those
+                // land with eq == i and are skipped by the `eq > i` guard below.
+                var eq: i64 = -1
+                var k = i
+                while k < segEnd && eq < 0 {
+                    if block[k] == '=' {
+                        eq = k
+                    }
+                    k = k + 1
+                }
+                if eq > i {
+                    var name = String.withCapacity(eq - i)
+                    var n = i
+                    while n < eq {
+                        name.push(block[n])
+                        n = n + 1
+                    }
+                    var value = String.withCapacity(segEnd - eq)
+                    var v = eq + 1
+                    while v < segEnd {
+                        value.push(block[v])
+                        v = v + 1
+                    }
+                    out.push(EnvEntry {
+                        name: name, value: value
+                    }
+                    )
+                }
+                i = segEnd + 1
+            }
+        }
+        FreeEnvironmentStringsA(block)
+    }
+    return out
+}
