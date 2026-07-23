@@ -1,0 +1,48 @@
+// @expect: ok
+// @expect: folded
+// @expect: exprfolded
+
+// @targetOs() is a compile-time constant string. The three-way check below is
+// OS-independent (exactly one arm is true on any target), and the always-false
+// arm calls an extern that exists in no library — it must be folded out at lower
+// time, or the link fails with an undefined symbol. That is the real assertion:
+// the dead branch is never lowered or codegen'd, only type-checked.
+
+extern fn __milo_symbol_that_does_not_exist(): i32
+
+fn main(): i32 {
+    let os = @targetOs()
+    var seen = 0
+    if os == "darwin" {
+        seen = seen + 1
+    }
+    if os == "linux" {
+        seen = seen + 1
+    }
+    if os == "windows" {
+        seen = seen + 1
+    }
+    if seen == 1 {
+        print("ok")
+    } else {
+        print("bad")
+    }
+
+    // Statically false — no target is named "nonesuch" — so this branch is dead
+    // and its unresolved extern call must never reach the linker.
+    if @targetOs() == "nonesuch" {
+        let _ = __milo_symbol_that_does_not_exist()
+    } else {
+        print("folded")
+    }
+
+    // Same fold in value position: the dead arm's unresolved call must not be emitted.
+    let tag = if @targetOs() == "nonesuch" {
+        __milo_symbol_that_does_not_exist()
+        "unreached"
+    } else {
+        "exprfolded"
+    }
+    print(tag)
+    return 0
+}

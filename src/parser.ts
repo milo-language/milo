@@ -14,7 +14,7 @@ export class Parser {
 
   // Builtins that may be written with the `@` sigil in expression position. These
   // are compile-time-only: the compiler, not the runtime, does the work.
-  private static SIGIL_BUILTINS = new Set(["embedFile"]);
+  private static SIGIL_BUILTINS = new Set(["embedFile", "targetOs"]);
 
   // `source`/`filePath` are optional — when provided, thrown ParseErrors carry them
   // so the CLI renders the offending file's source line + caret (essential for errors
@@ -1210,7 +1210,7 @@ export class Parser {
       const nameTok = this.peek();
       if (nameTok.kind !== TokenKind.Ident) {
         this.error(`expected a compile-time builtin name after '@'`, nameTok, undefined,
-          `the only '@' expression is '@embedFile("path")'`);
+          `'@' expressions are '@embedFile("path")' and '@targetOs()'`);
       }
       // Same tight-binding rule as attributes: `@embedFile`, never `@ embedFile`.
       if (nameTok.line !== tok.line || nameTok.col !== tok.col + 1) {
@@ -1219,7 +1219,7 @@ export class Parser {
       }
       if (!Parser.SIGIL_BUILTINS.has(nameTok.value)) {
         this.error(`unknown compile-time builtin '@${nameTok.value}'`, nameTok, undefined,
-          `the only '@' expression is '@embedFile("path")'`);
+          `'@' expressions are '@embedFile("path")' and '@targetOs()'`);
       }
       this.advance();
       const args: Expr[] = [];

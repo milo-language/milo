@@ -3871,6 +3871,19 @@ export class TypeChecker {
           if (arg.kind !== "StringLit") { this.error(`embedFile() argument must be a string literal`, sp); return this.setType(expr, { tag: "unknown" }); }
           return this.setType(expr, { tag: "string" });
         }
+        if (expr.func === "targetOs") {
+          // Compile-time constant string naming the target OS ("darwin"/"linux"/
+          // "windows"), resolved during lowering. Like @embedFile it is compiler
+          // magic, not a runtime call, so it wants the `@` sigil; both arms of an
+          // `if @targetOs() == "..."` type-check, only the dead one is folded away.
+          if (!expr.sigil) {
+            this.warn("bare-targetos",
+              `'targetOs' is a compile-time builtin — write '@targetOs()'`,
+              sp, `the '@' marks it as compiler magic, not a runtime call`, "targetOs".length);
+          }
+          if (expr.args.length !== 0) { this.error(`targetOs() takes no arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+          return this.setType(expr, { tag: "string" });
+        }
         if (expr.func === "jsonStringify") {
           if (expr.args.length !== 1) { this.error(`jsonStringify() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
           const argType = this.checkExpr(expr.args[0]);

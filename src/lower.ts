@@ -10,14 +10,55 @@ import { typeFromAst } from "./types";
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 
-export function lower(program: Program, checked: CheckResult, sourceDir?: string): HIRModule {
-  const ctx = new LowerCtx(checked, sourceDir ?? process.cwd());
+export function lower(program: Program, checked: CheckResult, sourceDir?: string, targetOs?: string): HIRModule {
+  // Default to the host OS so callers that don't thread a target (none today) still
+  // resolve @targetOs() to something real rather than a placeholder.
+  const os = targetOs ?? (process.platform === "win32" ? "windows" : process.platform === "linux" ? "linux" : "darwin");
+  const ctx = new LowerCtx(checked, sourceDir ?? process.cwd(), os);
   return ctx.lowerProgram(program);
 }
 
 class LowerCtx {
   private currentRetType: TypeKind = { tag: "void" };
-  constructor(private c: CheckResult, private sourceDir: string) {}
+  constructor(private c: CheckResult, private sourceDir: string, private targetOs: string) {}
+
+  // Evaluate a lowered condition to a compile-time boolean when it rests entirely on
+  // literals (the @targetOs() case: StringLit == StringLit, plus !/&&/|| over those).
+  // Returns null when the value isn't statically known — the ordinary runtime path.
+  // Deliberately conservative: only literal operands fold, so no runtime condition is
+  // ever short-circuited by accident.
+  private constFoldBool(e: HIRExpr): boolean | null {
+    if (e.kind === "BoolLit") return e.value;
+    if (e.kind === "UnaryOp" && e.op === "!") {
+      const inner = this.constFoldBool(e.operand);
+      return inner === null ? null : !inner;
+    }
+    if (e.kind === "BinOp") {
+      if (e.op === "&&") {
+        const l = this.constFoldBool(e.left), r = this.constFoldBool(e.right);
+        if (l === false || r === false) return false;
+        if (l === true && r === true) return true;
+        return null;
+      }
+      if (e.op === "||") {
+        const l = this.constFoldBool(e.left), r = this.constFoldBool(e.right);
+        if (l === true || r === true) return true;
+        if (l === false && r === false) return false;
+        return null;
+      }
+      if (e.op === "==" || e.op === "!=") {
+        const l = this.constString(e.left), r = this.constString(e.right);
+        if (l !== null && r !== null) return e.op === "==" ? l === r : l !== r;
+        const lb = this.constFoldBool(e.left), rb = this.constFoldBool(e.right);
+        if (lb !== null && rb !== null) return e.op === "==" ? lb === rb : lb !== rb;
+      }
+    }
+    return null;
+  }
+
+  private constString(e: HIRExpr): string | null {
+    return e.kind === "StringLit" ? e.value : null;
+  }
 
   lowerProgram(program: Program): HIRModule {
     const structs: HIRStruct[] = [];
@@ -201,14 +242,30 @@ class LowerCtx {
         return { kind: "Assign", target: this.lowerExpr(stmt.target), value: this.lowerExpr(stmt.value), span: stmt.span };
       case "Return":
         return { kind: "Return", value: stmt.value ? this.lowerExpr(stmt.value) : null, retType: fnRetType, span: stmt.span };
-      case "IfStmt":
+      case "IfStmt": {
+        const cond = this.lowerExpr(stmt.cond);
+        // Compile-time-constant condition (@targetOs() comparisons and boolean
+        // algebra over literals): keep only the taken arm, don't even lower the
+        // dead one — its platform-only symbols/embeds must never reach codegen.
+        const folded = this.constFoldBool(cond);
+        if (folded !== null) {
+          const taken = folded ? stmt.thenBody : (stmt.elseBody ?? []);
+          return {
+            kind: "If",
+            cond: { kind: "BoolLit", value: true, type: { tag: "bool" as const } },
+            thenBody: taken.map(s => this.lowerStmt(s, fnRetType)),
+            elseBody: null,
+            span: stmt.span,
+          };
+        }
         return {
           kind: "If",
-          cond: this.lowerExpr(stmt.cond),
+          cond,
           thenBody: stmt.thenBody.map(s => this.lowerStmt(s, fnRetType)),
           elseBody: stmt.elseBody ? stmt.elseBody.map(s => this.lowerStmt(s, fnRetType)) : null,
           span: stmt.span,
         };
+      }
       case "WhileStmt": {
         const invariants = stmt.invariants.map(c => ({ kind: c.kind, expr: this.lowerExpr(c.expr), span: c.span }));
         return {
@@ -515,6 +572,14 @@ class LowerCtx {
             contents += byte < 0x80 ? String.fromCharCode(byte) : String.fromCharCode(0xF700 + byte);
           }
           return { kind: "StringLit", value: contents, type: { tag: "string" as const }, span: expr.span };
+        }
+        if (expr.func === "targetOs") {
+          // Compile-time constant: the OS of the target being built for ("darwin",
+          // "linux", "windows"). Emitting it as a plain StringLit lets constFoldBool
+          // below drop the untaken arm of `if @targetOs() == "..."` — so platform-only
+          // code (a Windows-only extern, an @embedFile of a per-OS asset) in the dead
+          // branch is never lowered or codegen'd, while both arms still type-checked.
+          return { kind: "StringLit", value: this.targetOs, type: { tag: "string" as const }, span: expr.span };
         }
         if (expr.func === "jsonStringify") {
           const argType = this.typeOf(expr.args[0]) ?? { tag: "unknown" as const };
@@ -1047,9 +1112,25 @@ class LowerCtx {
       }
       case "IfExpr": {
         const fnRetType = this.currentRetType;
+        const cond = this.lowerExpr(expr.cond);
+        // Same compile-time fold as the statement form: the value comes from the
+        // taken arm alone (routed through the then-slot with a true cond), so the
+        // dead arm is neither lowered nor emitted.
+        const folded = this.constFoldBool(cond);
+        if (folded !== null) {
+          const taken = folded ? expr.thenBody : expr.elseBody;
+          return {
+            kind: "IfExpr",
+            cond: { kind: "BoolLit", value: true, type: { tag: "bool" as const } },
+            thenBody: taken.map(s => this.lowerStmt(s, fnRetType)),
+            elseBody: [],
+            type,
+            span: expr.span,
+          };
+        }
         return {
           kind: "IfExpr",
-          cond: this.lowerExpr(expr.cond),
+          cond,
           thenBody: expr.thenBody.map(s => this.lowerStmt(s, fnRetType)),
           elseBody: expr.elseBody.map(s => this.lowerStmt(s, fnRetType)),
           type,

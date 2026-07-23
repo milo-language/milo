@@ -1,0 +1,10 @@
+// @error: targetOs() takes no arguments
+
+// @targetOs() is a nullary compile-time builtin — the OS is fixed by the build
+// target, not chosen by an argument. Passing one is a mistake worth naming.
+
+fn main(): i32 {
+    let os = @targetOs("windows")
+    print(os)
+    return 0
+}

@@ -267,6 +267,7 @@ let s = identity("hello")  // T inferred as string
 | `exit(code)` | Exit the process |
 | `jsonStringify(val)` | Serialize a flat struct (scalar fields only) to JSON string |
 | `@embedFile(path)` | Embed file contents as string at compile time (see [Compile-Time File Embedding](#compile-time-file-embedding)) |
+| `@targetOs()` | Compile-time OS string (`"darwin"`/`"linux"`/`"windows"`); folds `if` branches (see [Compile-Time Target OS](#compile-time-target-os)) |
 
 ### Contracts
 
@@ -1654,6 +1655,35 @@ warning: 'embedFile' is a compile-time builtin — write '@embedFile(...)'
 Silence it with `--allow=bare-embedfile`, or make it fatal with
 `--deny=bare-embedfile`.
 
+### Compile-Time Target OS
+
+`@targetOs()` is a compile-time constant naming the OS being built for — one of
+`"darwin"`, `"linux"`, or `"windows"`:
+
+```milo
+let bucket = if @targetOs() == "windows" { "NUL" } else { "/dev/null" }
+```
+
+It exists so ordinary code — not just the stdlib's per-OS file split — can branch on
+the target. Both arms of the `if` are type-checked, but the compiler evaluates the
+condition and keeps only the taken arm: the other is never lowered or code-generated.
+That means the dead branch may reference symbols that exist on no other platform (a
+Windows-only extern, an `@embedFile` of a per-OS asset) without breaking the build:
+
+```milo
+if @targetOs() == "windows" {
+    startWinsock()          // only linked on Windows; folded out elsewhere
+}
+```
+
+The fold triggers on any statically-known condition — `@targetOs()` compared with a
+string literal, and `!`/`&&`/`||` over such comparisons. Like `@embedFile`, the `@`
+marks it as compiler magic; the bare spelling `targetOs()` warns (`bare-targetos`).
+
+For a C declaration that differs by platform, prefer the stdlib file split
+(`std/foo.windows.milo`) over `@targetOs()` — the filename states the OS
+unconditionally. `@targetOs()` is for application code that has no such split.
+
 ---
 
 ## HTTP Server (Standard Library)
@@ -2602,6 +2632,7 @@ The parser auto-handles `--help`/`-h` and validates required args, integer forma
 | Generic bound | `<T: Eq + Hash>` |
 | Cast | `expr as Type` |
 | Embed file | `@embedFile("path")` |
+| Target OS (compile-time) | `@targetOs()` → `"darwin"`/`"linux"`/`"windows"` |
 | JSON serialize | `jsonStringify(struct_val)` |
 | String slice | `s[start..end]` |
 | Vec / array slice | `v[start..end]` (non-owning `&[T]` view; works on `Vec` and fixed arrays) |

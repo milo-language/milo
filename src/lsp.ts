@@ -1297,10 +1297,10 @@ function handleCompletion(uri: string, line: number, character: number): object 
   // `embedFile` is compile-time-only and spelled with the `@` sigil. Suggest the
   // sigil form unless the user already typed the '@' (else they'd get '@@embedFile').
   const afterSigil = /@\w*$/.test(prefix);
-  for (const b of ["print", "eprint", "format", "jsonStringify", "embedFile", "flush", "max", "min"]) {
+  for (const b of ["print", "eprint", "format", "jsonStringify", "embedFile", "targetOs", "flush", "max", "min"]) {
     if (b.startsWith(partial) && !seen.has(b)) {
       seen.add(b);
-      if (b === "embedFile") {
+      if (b === "embedFile" || b === "targetOs") {
         const text = afterSigil ? b : "@" + b;
         items.push({ label: text, insertText: text, filterText: b, kind: CIK_FUNCTION, detail: "compile-time builtin" });
         continue;

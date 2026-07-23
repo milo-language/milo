@@ -59,7 +59,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
     process.exit(1);
   }
 
-  return lower(program, result, sourceDir);
+  return lower(program, result, sourceDir, target.os);
 }
 
 function compile(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, debugOverflow = false, emitDebug = false): string {
