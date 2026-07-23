@@ -29,7 +29,7 @@
 | Derive | `@derive(Eq)` |
 | Generic bound | `<T: Eq + Hash>` |
 | Cast | `expr as Type` |
-| Embed file | `embedFile("path")` |
+| Embed file | `@embedFile("path")` |
 | JSON serialize | `jsonStringify(struct_val)` |
 | String slice | `s[start..end]` |
 | Number to string | `n.toString()` |

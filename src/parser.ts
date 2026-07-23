@@ -12,6 +12,10 @@ export class Parser {
   private pos = 0;
   private codePointLoopCounter = 0;
 
+  // Builtins that may be written with the `@` sigil in expression position. These
+  // are compile-time-only: the compiler, not the runtime, does the work.
+  private static SIGIL_BUILTINS = new Set(["embedFile"]);
+
   // `source`/`filePath` are optional — when provided, thrown ParseErrors carry them
   // so the CLI renders the offending file's source line + caret (essential for errors
   // inside imported files, which would otherwise render against the entry file).
@@ -1198,6 +1202,35 @@ export class Parser {
     const tok = this.peek();
     const s = this.span(tok);
 
+    // `@embedFile("path")` — the sigil spelling of a compile-time builtin. `@` is
+    // otherwise unused in expression position (attributes only precede decls and
+    // struct fields), so there is nothing to disambiguate against here.
+    if (tok.kind === TokenKind.At) {
+      this.advance();
+      const nameTok = this.peek();
+      if (nameTok.kind !== TokenKind.Ident) {
+        this.error(`expected a compile-time builtin name after '@'`, nameTok, undefined,
+          `the only '@' expression is '@embedFile("path")'`);
+      }
+      // Same tight-binding rule as attributes: `@embedFile`, never `@ embedFile`.
+      if (nameTok.line !== tok.line || nameTok.col !== tok.col + 1) {
+        this.error(`no whitespace allowed between '@' and '${nameTok.value}'`, nameTok, undefined,
+          `write '@${nameTok.value}(...)'`);
+      }
+      if (!Parser.SIGIL_BUILTINS.has(nameTok.value)) {
+        this.error(`unknown compile-time builtin '@${nameTok.value}'`, nameTok, undefined,
+          `the only '@' expression is '@embedFile("path")'`);
+      }
+      this.advance();
+      const args: Expr[] = [];
+      this.expect(TokenKind.LParen);
+      while (!this.at(TokenKind.RParen)) {
+        args.push(this.parseExpr());
+        this.match(TokenKind.Comma);
+      }
+      this.expect(TokenKind.RParen);
+      return { kind: "Call", func: nameTok.value, args, sigil: true, span: s };
+    }
     if (tok.kind === TokenKind.Int) {
       this.advance();
       // lexer already normalized hex/binary to a plain decimal string and

@@ -931,6 +931,10 @@ fn formatSource(src: string): string {
     // True while emitting a top-level attribute (`@ derive(...)`) and up to the decl
     // it prefixes, so no blank line is inserted between the attribute and its decl.
     var afterAttr: bool = false
+    // `@` lexes as an Ident, so mid-statement `@embedFile("x")` would look to the
+    // statement-boundary reflow like `<ident> <ident>` — two statements sharing a
+    // line — and get split. The sigil binds to the name that follows it.
+    var prevWasAt: bool = false
 
     for i in 0..tokens.len {
         let tok = tokens[i]
@@ -1075,7 +1079,7 @@ fn formatSource(src: string): string {
         // statement level (depth > 0, outside ( ) and [ ]) and only where the prev
         // token ends a statement and the current one begins a new one. Runs before
         // the source-newline rule so it also fires when the author did wrap.
-        if !atLineStart && depth > 0 && atStmtLevel && !onAttrLine {
+        if !atLineStart && depth > 0 && atStmtLevel && !onAttrLine && !prevWasAt {
             let prevEndsStmt = prevKind == TokKind.Ident || prevKind == TokKind.Int ||
             prevKind == TokKind.Float || prevKind == TokKind.Str ||
             prevKind == TokKind.Char || prevKind == TokKind.RParen ||
@@ -1125,6 +1129,7 @@ fn formatSource(src: string): string {
         lastWasExtern = tok.kind == TokKind.Keyword && tok.text == "extern"
         lastWasOwnLineComment = false
         prevKind = tok.kind
+        prevWasAt = isAtToken(tok)
         // A top-level `@` opens an attribute that prefixes the next decl: hold
         // afterAttr across the attribute so no blank splits it from the decl, then
         // clear it once the decl keyword lands.

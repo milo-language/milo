@@ -121,90 +121,90 @@ fn stripNodePrefix(spec: &string): string {
 
 fn builtinSource(name: &string): string {
     if name == "path" {
-        return embedFile("lib/path.js")
+        return @embedFile("lib/path.js")
     }
     if name == "events" {
-        return embedFile("lib/events.js")
+        return @embedFile("lib/events.js")
     }
     if name == "util" {
-        return embedFile("lib/util.js")
+        return @embedFile("lib/util.js")
     }
     if name == "fs" {
-        return embedFile("lib/fs.js")
+        return @embedFile("lib/fs.js")
     }
     if name == "querystring" {
-        return embedFile("lib/querystring.js")
+        return @embedFile("lib/querystring.js")
     }
     if name == "url" {
-        return embedFile("lib/url.js")
+        return @embedFile("lib/url.js")
     }
     if name == "async_hooks" {
-        return embedFile("lib/async_hooks.js")
+        return @embedFile("lib/async_hooks.js")
     }
     if name == "tty" {
-        return embedFile("lib/tty.js")
+        return @embedFile("lib/tty.js")
     }
     if name == "http" {
-        return embedFile("lib/http.js")
+        return @embedFile("lib/http.js")
     }
     if name == "child_process" {
-        return embedFile("lib/child_process.js")
+        return @embedFile("lib/child_process.js")
     }
     if name == "os" {
-        return embedFile("lib/os.js")
+        return @embedFile("lib/os.js")
     }
     if name == "net" {
-        return embedFile("lib/net.js")
+        return @embedFile("lib/net.js")
     }
     if name == "https" {
-        return embedFile("lib/https.js")
+        return @embedFile("lib/https.js")
     }
     if name == "resend" {
-        return embedFile("lib/resend.js")
+        return @embedFile("lib/resend.js")
     }
     if name == "node-fetch" {
-        return embedFile("lib/node-fetch.js")
+        return @embedFile("lib/node-fetch.js")
     }
     if name == "depd" {
-        return embedFile("lib/depd.js")
+        return @embedFile("lib/depd.js")
     }
     // @prisma/client is NOT shimmed here anymore: the real package works now that
     // the node-api surface can load its query engine. resolveNodeModule falls back
     // to lib/prisma-client.js only when the package is absent, so a project without
     // prisma installed still gets the explanatory stub rather than a resolve error.
     if name == "fs/promises" {
-        return embedFile("lib/fs-promises.js")
+        return @embedFile("lib/fs-promises.js")
     }
     if name == "buffer" {
-        return embedFile("lib/buffer.js")
+        return @embedFile("lib/buffer.js")
     }
     if name == "stream" {
-        return embedFile("lib/stream.js")
+        return @embedFile("lib/stream.js")
     }
     if name == "string_decoder" {
-        return embedFile("lib/string_decoder.js")
+        return @embedFile("lib/string_decoder.js")
     }
     if name == "zlib" {
-        return embedFile("lib/zlib.js")
+        return @embedFile("lib/zlib.js")
     }
     if name == "crypto" {
-        return embedFile("lib/crypto.js")
+        return @embedFile("lib/crypto.js")
     }
     if name == "assert" {
-        return embedFile("lib/assert.js")
+        return @embedFile("lib/assert.js")
     }
     if name == "prelude" {
-        return embedFile("lib/prelude.js")
+        return @embedFile("lib/prelude.js")
     }
     if name == "engine-prelude" {
-        return embedFile("lib/engine-prelude.js")
+        return @embedFile("lib/engine-prelude.js")
     }
     // QuickJS host modules, so its test suite can be run against this engine
     if name == "qjs:std" {
-        return embedFile("lib/qjs-std.js")
+        return @embedFile("lib/qjs-std.js")
     }
     if name == "qjs:os" {
-        return embedFile("lib/qjs-os.js")
+        return @embedFile("lib/qjs-os.js")
     }
     return ""
 }

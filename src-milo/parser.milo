@@ -1086,6 +1086,14 @@ fn parsePrimary(p: &mut Parser): Expr {
     let tok = peek(p)
     let s = span(tok)
 
+    // `@embedFile("path")` — sigil spelling of the compile-time embed builtin.
+    // Drop the '@' and re-enter: the bare and sigil forms lower identically, and
+    // the deprecation warning for the bare form lives in the TS checker only.
+    if tok.kind == TokKind.At && peekN(p, 1).kind == TokKind.Ident && peekN(p, 1).value == "embedFile" {
+        advance(p)
+        return parsePrimary(p)
+    }
+
     // if-else expression: if cond { expr } else { expr }
     if tok.kind == TokKind.If {
         advance(p)

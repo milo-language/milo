@@ -34,6 +34,8 @@ dropStringReturn
 dropUser
 dropWithFields
 dropZeroFirstField
+embedFile
+embedFileBare
 enumBasic
 enumMultiPayload
 enumPayload

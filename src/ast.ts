@@ -72,7 +72,10 @@ export interface CharLit { kind: "CharLit"; value: number; span?: Span }
 export interface Ident { kind: "Ident"; name: string; span?: Span }
 export interface BinOp { kind: "BinOp"; op: string; left: Expr; right: Expr; span?: Span }
 export interface UnaryOp { kind: "UnaryOp"; op: string; operand: Expr; span?: Span }
-export interface Call { kind: "Call"; func: string; args: Expr[]; typeArgs?: MiloType[]; span?: Span }
+// `sigil` is set when the call was written with the `@` prefix (`@embedFile("x")`).
+// Only compile-time builtins accept it; it changes nothing about the semantics, it
+// just tells the checker not to warn about the bare spelling.
+export interface Call { kind: "Call"; func: string; args: Expr[]; typeArgs?: MiloType[]; sigil?: boolean; span?: Span }
 export interface StructLit { kind: "StructLit"; name: string; fields: { name: string; value: Expr }[]; span?: Span }
 export interface FieldAccess { kind: "FieldAccess"; object: Expr; field: string; span?: Span }
 export interface ArrayLit { kind: "ArrayLit"; elements: Expr[]; span?: Span }

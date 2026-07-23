@@ -33,7 +33,7 @@ let MAX_SUGGESTIONS = 8
 // Rows are "name<TAB>state<TAB>lat<TAB>lon<TAB>population", pre-sorted by
 // population descending, so a first-match-wins scan is already popularity-ranked.
 fn loadCities(): void {
-    let raw = embedFile("data/uscities.tsv")
+    let raw = @embedFile("data/uscities.tsv")
     let lines = strSplit(raw, "\n")
     for line in lines {
         let f = strSplit(line, "\t")
@@ -138,44 +138,44 @@ fn citiesHandler(ctx: &mut Context): Response {
 // invisible. Costs a ~50KB refetch per visit; the service worker covers offline.
 fn indexHandler(ctx: &mut Context): Response {
     ctx.setHeader("Cache-Control", "no-store")
-    return ctx.html(embedFile("public/index.html"))
+    return ctx.html(@embedFile("public/index.html"))
 }
 
 fn styleHandler(ctx: &mut Context): Response {
     ctx.setHeader("Cache-Control", "no-store")
-    return Response.Status(200, "text/css; charset=utf-8", embedFile("public/style.css"))
+    return Response.Status(200, "text/css; charset=utf-8", @embedFile("public/style.css"))
 }
 
 fn scriptHandler(ctx: &mut Context): Response {
     ctx.setHeader("Cache-Control", "no-store")
-    return Response.Status(200, "application/javascript; charset=utf-8", embedFile("public/app.js"))
+    return Response.Status(200, "application/javascript; charset=utf-8", @embedFile("public/app.js"))
 }
 
 fn manifestHandler(ctx: &mut Context): Response {
     ctx.setHeader("Cache-Control", "no-store")
-    return Response.Status(200, "application/manifest+json; charset=utf-8", embedFile("public/manifest.webmanifest"))
+    return Response.Status(200, "application/manifest+json; charset=utf-8", @embedFile("public/manifest.webmanifest"))
 }
 
 // Served from the app root so its scope covers every page, including under
 // nginx's /weather/ prefix. Never cached: a stale worker pins a stale shell.
 fn swHandler(ctx: &mut Context): Response {
     ctx.setHeader("Cache-Control", "no-store")
-    return Response.Status(200, "application/javascript; charset=utf-8", embedFile("public/sw.js"))
+    return Response.Status(200, "application/javascript; charset=utf-8", @embedFile("public/sw.js"))
 }
 
 fn icon192Handler(ctx: &mut Context): Response {
     ctx.setHeader("Cache-Control", "public, max-age=604800")
-    return Response.Status(200, "image/png", embedFile("public/icons/icon-192.png"))
+    return Response.Status(200, "image/png", @embedFile("public/icons/icon-192.png"))
 }
 
 fn icon512Handler(ctx: &mut Context): Response {
     ctx.setHeader("Cache-Control", "public, max-age=604800")
-    return Response.Status(200, "image/png", embedFile("public/icons/icon-512.png"))
+    return Response.Status(200, "image/png", @embedFile("public/icons/icon-512.png"))
 }
 
 fn appleIconHandler(ctx: &mut Context): Response {
     ctx.setHeader("Cache-Control", "public, max-age=604800")
-    return Response.Status(200, "image/png", embedFile("public/icons/apple-touch-icon.png"))
+    return Response.Status(200, "image/png", @embedFile("public/icons/apple-touch-icon.png"))
 }
 
 fn healthHandler(ctx: &mut Context): Response {

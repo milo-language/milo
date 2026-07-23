@@ -36,6 +36,11 @@ const cases: Record<string, string> = {
   // the parser then rejects, since an attribute name must hug its `@`. The formatter
   // broke a working file.
   fieldAttribute: `extern struct Timeval {\n    tv_sec: i64,\n    @cOpaque _pad: i32,\n}\n`,
+  // `@embedFile("x")` is the first `@` construct in *expression* position. Same
+  // Ident-lexed `@` hazard as fieldAttribute: `@` then `embedFile` looked like two
+  // statements sharing a line, so the reflow split the call in half.
+  sigilBuiltin: `fn main(): i32 {\n    let s = @embedFile("hello.txt")\n    print(s)\n    return 0\n}\n`,
+  sigilBuiltinNested: `fn body(): string {\n    return wrap(@embedFile("hello.txt"), 1)\n}\n`,
 };
 
 for (const [name, src] of Object.entries(cases)) {

@@ -1261,7 +1261,8 @@ async function main() {
     console.log("  --deny=<warning>       treat warning as error (e.g. --deny=unused-variable)");
     console.log("  --allow=<warning>      suppress warning (e.g. --allow=unused-result)");
     console.log("  --deny-all             treat all warnings as errors");
-    console.log("                         (off-by-default warnings: unused-move, unused-unsafe)");
+    console.log("                         (off-by-default warnings: unused-move, unused-import,");
+    console.log("                          unverified-extern, large-stack-array)");
     console.log("  --safety=<level>       enforce safety profile (e.g. --safety=do178)");
     console.log("  --target=<name>        cross-compile target (e.g. cortex-m3)");
     console.log("  --heap-size=<N>        bare-metal heap cap in bytes or k/m (e.g. 64k); default: all free RAM");

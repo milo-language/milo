@@ -266,7 +266,7 @@ let s = identity("hello")  // T inferred as string
 | `print(fmt, ...)` | Print formatted text with trailing newline |
 | `exit(code)` | Exit the process |
 | `jsonStringify(val)` | Serialize a flat struct (scalar fields only) to JSON string |
-| `embedFile(path)` | Embed file contents as string at compile time |
+| `@embedFile(path)` | Embed file contents as string at compile time (see [Compile-Time File Embedding](#compile-time-file-embedding)) |
 
 ### Contracts
 
@@ -1626,11 +1626,26 @@ Builder methods: `.str/.int/.float/.bool/.nil/.obj/.arr/.val` (chainable, consum
 
 ## Compile-Time File Embedding
 
-`embedFile` inlines file contents as a string at compile time:
+`@embedFile` inlines file contents as a string at compile time:
 
 ```milo
-let html = embedFile("index.html")
+let html = @embedFile("index.html")
 ```
+
+The `@` marks it as compiler magic rather than an ordinary call — like `@cLayout`,
+`@cSig`, and `@link`, it is handled by the compiler, not at runtime. The argument
+must be a string literal (nothing else is known at compile time) and the path is
+resolved relative to the file containing the call, not the entry file. Contents are
+read as raw bytes, so binary assets (PNGs, fonts, wasm) embed intact.
+
+The bare spelling `embedFile("index.html")` still compiles, but warns:
+
+```
+warning: 'embedFile' is a compile-time builtin — write '@embedFile(...)'
+```
+
+Silence it with `--allow=bare-embedfile`, or make it fatal with
+`--deny=bare-embedfile`.
 
 ---
 
@@ -2579,7 +2594,7 @@ The parser auto-handles `--help`/`-h` and validates required args, integer forma
 | Derive | `@derive(Eq)` |
 | Generic bound | `<T: Eq + Hash>` |
 | Cast | `expr as Type` |
-| Embed file | `embedFile("path")` |
+| Embed file | `@embedFile("path")` |
 | JSON serialize | `jsonStringify(struct_val)` |
 | String slice | `s[start..end]` |
 | Vec / array slice | `v[start..end]` (non-owning `&[T]` view; works on `Vec` and fixed arrays) |

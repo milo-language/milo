@@ -1294,9 +1294,17 @@ function handleCompletion(uri: string, line: number, character: number): object 
   const seen = new Set<string>();
 
   // builtins
+  // `embedFile` is compile-time-only and spelled with the `@` sigil. Suggest the
+  // sigil form unless the user already typed the '@' (else they'd get '@@embedFile').
+  const afterSigil = /@\w*$/.test(prefix);
   for (const b of ["print", "eprint", "format", "jsonStringify", "embedFile", "flush", "max", "min"]) {
     if (b.startsWith(partial) && !seen.has(b)) {
       seen.add(b);
+      if (b === "embedFile") {
+        const text = afterSigil ? b : "@" + b;
+        items.push({ label: text, insertText: text, filterText: b, kind: CIK_FUNCTION, detail: "compile-time builtin" });
+        continue;
+      }
       items.push({ label: b, kind: CIK_FUNCTION, detail: "builtin" });
     }
   }
@@ -1529,10 +1537,30 @@ function handleCodeAction(uri: string, range: any): object[] {
 
   const actions: object[] = [];
   for (const d of diags) {
-    if (d.code !== "unused-unsafe" || !d.span) continue;
+    if (!d.span) continue;
     // Only offer the fix if the diagnostic sits within the requested range's lines.
     const dl = d.span.line - 1;
     if (dl < range.start.line || dl > range.end.line) continue;
+
+    if (d.code === "bare-embedfile") {
+      const start = posToOffset(source, dl, d.span.col - 1);
+      if (source.slice(start, start + "embedFile".length) !== "embedFile") continue;
+      actions.push({
+        title: "Use '@embedFile'",
+        kind: "quickfix",
+        diagnostics: [{
+          range: { start: { line: dl, character: d.span.col - 1 }, end: { line: dl, character: d.span.col - 1 + "embedFile".length } },
+          severity: 2, source: "milo", message: d.message,
+        }],
+        edit: { changes: { [uri]: [{
+          range: { start: offsetToPos(source, start), end: offsetToPos(source, start) },
+          newText: "@",
+        }] } },
+      });
+      continue;
+    }
+
+    if (d.code !== "unused-unsafe") continue;
     const edit = unwrapUnsafeEdit(source, d.span.line - 1, d.span.col - 1);
     if (!edit) continue;
     actions.push({
