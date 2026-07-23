@@ -562,7 +562,13 @@ function detectLibs(ir: string, target: TargetInfo, staticDeps = false): string 
   // GNU ld can drop the unused ones. lld-link ignores --as-needed, so a speculative
   // -lssl becomes a hard "could not open 'ssl.lib'" for any program that merely imports
   // std/io. On Windows these deps have to be requested explicitly via @link.
-  if (target.os === "windows") return libs;
+  if (target.os === "windows") {
+    // The one exception: BCryptGenRandom is emitted by the compiler itself (hashmap seed
+    // init), never requested by user source, so nothing else could carry this @link.
+    // It lives in the SDK next to the CRT, so unlike openssl there is nothing to install.
+    if (ir.includes("@BCryptGenRandom")) libs += " -lbcrypt";
+    return libs;
+  }
   const openssl = "/opt/homebrew/opt/openssl@3";
   if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
     libs += libSpec(["ssl", "crypto"], openssl, target, staticDeps);

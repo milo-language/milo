@@ -1108,13 +1108,13 @@ export class Codegen {
         1, 0,
         "declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)",
       );
-    if (this.needsGetentropy && !declaredExterns.has("getentropy")) {
-      // No UCRT equivalent takes a length: rand_s fills 4 bytes at a time and
-      // BCryptGenRandom needs bcrypt.lib. Refusing beats emitting a call that
-      // fails at link time with an undefined symbol that names nothing useful.
-      if (this.isWindows) throw new Error("randomness (getentropy) is not implemented for the windows target yet");
-      this.output.splice(1, 0, "declare i32 @getentropy(ptr, i64)");
-    }
+    if (this.needsGetentropy && !declaredExterns.has("getentropy"))
+      this.output.splice(1, 0, this.isWindows
+        // BCryptGenRandom(NULL, buf, len, BCRYPT_USE_SYSTEM_PREFERRED_RNG) is the
+        // UCRT-era CSPRNG; passing the system-preferred flag is what lets the algorithm
+        // handle be NULL. Returns an NTSTATUS (0 = success), not an errno.
+        ? "declare i32 @BCryptGenRandom(ptr, ptr, i32, i32)"
+        : "declare i32 @getentropy(ptr, i64)");
     if (this.needsMemcmp && !declaredExterns.has("memcmp"))
       this.output.splice(1, 0, "declare i32 @memcmp(ptr, ptr, i64)");
     if (this.needsStrlen && !declaredExterns.has("strlen"))
@@ -1133,7 +1133,10 @@ export class Codegen {
       this.output.splice(1, 0, "declare i32 @putchar(i32)");
     if (this.needsFflush && !declaredExterns.has("fflush"))
       this.output.splice(1, 0, `declare i32 @fflush(ptr)`);
-    if (this.needsWrite && !declaredExterns.has("write"))
+    // The guard must name the symbol we actually emit. On Windows that is `_write`, and
+    // a POSIX `extern fn write` in std/os says nothing about it — suppressing the declare
+    // on that basis left every print() call referencing an undefined @_write.
+    if (this.needsWrite && !declaredExterns.has(this.isWindows ? "_write" : "write"))
       this.output.splice(1, 0, this.isWindows
         ? `declare i32 @_write(i32, ptr, i32)`
         : `declare i64 @write(i32, ptr, i64)`);
@@ -3055,10 +3058,10 @@ export class Codegen {
         const msgPtr = this.nextTemp();
         lines.push(`  ${msgPtr} = extractvalue %String ${msgVal}, 0`);
         const fmtStr = this.addString(`assertion failed at ${file}:${line}:${col}: %s\n`);
-        lines.push(`  call i32 (i32, ptr, ...) @dprintf(i32 2, ptr ${fmtStr.label}, ptr ${msgPtr})`);
+        this.emitFdPrintf(lines, 2, fmtStr.label, `, ptr ${msgPtr}`);
       } else {
         const fmtStr = this.addString(`assertion failed at ${file}:${line}:${col}\n`);
-        lines.push(`  call i32 (i32, ptr, ...) @dprintf(i32 2, ptr ${fmtStr.label})`);
+        this.emitFdPrintf(lines, 2, fmtStr.label, "");
       }
       lines.push(`  call void @exit(i32 1)`);
       lines.push(`  unreachable`);
@@ -6865,7 +6868,10 @@ export class Codegen {
     lines.push(`${initLabel}:`);
     const seedBuf = this.nextTemp();
     lines.push(`  ${seedBuf} = alloca i64`);
-    lines.push(`  call i32 @getentropy(ptr ${seedBuf}, i64 8)`);
+    // 2 = BCRYPT_USE_SYSTEM_PREFERRED_RNG, which is what permits the NULL algorithm
+    // handle; the length is a 32-bit ULONG here, not getentropy's size_t.
+    if (this.isWindows) lines.push(`  call i32 @BCryptGenRandom(ptr null, ptr ${seedBuf}, i32 8, i32 2)`);
+    else lines.push(`  call i32 @getentropy(ptr ${seedBuf}, i64 8)`);
     const newSeed = this.nextTemp();
     lines.push(`  ${newSeed} = load i64, ptr ${seedBuf}`);
     const isStillZero = this.nextTemp();
