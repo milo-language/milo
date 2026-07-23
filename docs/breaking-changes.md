@@ -14,13 +14,26 @@ compatibility, but every break belongs here with the migration spelled out.
 ## `std/os` → `std/platform` (Windows port)
 
 **What moved.** The syscall-shaped bindings that need a per-OS implementation
-left `std/os` for the platform split (`std/platform.darwin.milo`,
-`std/platform.linux.milo`, `std/platform.windows.milo`):
+left `std/os` (and `std/dl`) for the platform split
+(`std/platform.darwin.milo`, `std/platform.linux.milo`,
+`std/platform.windows.milo`):
 
 - `pipe`
 - `mmap`, `munmap`, `mprotect`
 - `gettimeofday`, `usleep`
 - the 17 `pthread_*` bindings (mutex, condvar, thread create/join)
+- `read`, `write`, `open`, `close`, `lseek`, `access`, `getpid`
+- `dlopen`, `dlsym`, `dlclose`, `dlerror` (were in `std/dl`)
+
+The fd calls moved because their C shape differs, not just their spelling: the
+UCRT declares `int _read(int, void *, unsigned int)` where POSIX has
+`ssize_t read(int, void *, size_t)`. Declaring the POSIX widths linked on Windows
+(the oldnames shim resolves the symbol) and then miscompiled — a 64-bit return
+declared over a 32-bit C `int` return reads undefined high bits, so `-1` could
+surface as a large positive `i64`. The rule this establishes: **when a C
+declaration differs by platform, it belongs in the platform split, not in a
+conditional annotation.** The file name states which C library is described, so
+the claim in it is unconditionally true and needs no OS qualifier.
 
 **Migration.** Change the import path; the names and signatures are unchanged:
 

@@ -564,3 +564,132 @@ extern fn _pipe(fds: *u8, size: u32, mode: i32): i32
 fn pipe(fds: *u8): i32 {
     return _pipe(fds, 4096 as u32, 32768)
 }
+
+// ── fd I/O ──
+//
+// The UCRT's fd calls are a different SHAPE from POSIX's, not just a different
+// spelling: 32-bit count and 32-bit return where POSIX has size_t/ssize_t. The
+// oldnames shim does export `read`/`write`, which is why declaring the POSIX widths
+// linked cleanly and then miscompiled — Win64 leaves the upper half of RAX undefined
+// for an `int` return, so a -1 could arrive as a large positive i64. Bind the real
+// `_`-prefixed symbols at their true widths and widen here, once.
+
+@cSig("io.h", "int _read(int, void *, unsigned int)")
+extern fn _read(fd: i32, buf: *u8, count: u32): i32
+
+@cSig("io.h", "int _write(int, const void *, unsigned int)")
+extern fn _write(fd: i32, buf: *u8, count: u32): i32
+
+// `open` is the one fd call whose return is `int` on every platform (only the
+// byte-count/offset calls diverge), and it is variadic, so a wrapper fn can't forward
+// the optional mode. The UCRT oldnames layer exports `open` as an alias for `_open`, so
+// declare it directly — no @cSig, since it comes from <io.h> under the `_`-name and the
+// header does not declare the POSIX spelling.
+extern fn open(path: *u8, flags: i32,...): i32
+
+@cSig("io.h", "int _close(int)")
+extern fn _close(fd: i32): i32
+
+// _lseek is 32-bit (`long`, 4 bytes under LLP64); _lseeki64 is the one that can
+// address a file past 2 GB, which is what POSIX lseek's off_t means here.
+@cSig("io.h", "__int64 _lseeki64(int, __int64, int)")
+extern fn _lseeki64(fd: i32, offset: i64, origin: i32): i64
+
+@cSig("io.h", "int _access(const char *, int)")
+extern fn _access(path: *u8, mode: i32): i32
+
+// A count that doesn't fit in the CRT's 32-bit parameter is clamped, not truncated:
+// a short read/write is a contract every caller already handles, whereas truncation
+// would silently transfer the low 32 bits of the requested length.
+fn _clampCount(nbyte: i64): u32 {
+    if nbyte > 2147483647 {
+        return 2147483647 as u32
+    }
+    if nbyte < 0 {
+        return 0 as u32
+    }
+    return nbyte as u32
+}
+
+fn read(fd: i32, buf: *u8, nbyte: i64): i64 {
+    return _read(fd, buf, _clampCount(nbyte)) as i64
+}
+
+fn write(fd: i32, buf: *u8, nbyte: i64): i64 {
+    return _write(fd, buf, _clampCount(nbyte)) as i64
+}
+
+fn close(fd: i32): i32 {
+    return _close(fd)
+}
+
+fn lseek(fd: i32, offset: i64, whence: i32): i64 {
+    return _lseeki64(fd, offset, whence)
+}
+
+fn access(path: *u8, mode: i32): i32 {
+    return _access(path, mode)
+}
+
+// <process.h>, not <unistd.h>; the oldnames shim exports `getpid` too, but binding the
+// real symbol keeps the declaration checkable against the header it actually comes from.
+@cSig("process.h", "int _getpid(void)")
+extern fn _getpid(): i32
+
+fn getpid(): i32 {
+    return _getpid()
+}
+
+// ── dynamic loading ──
+//
+// LoadLibrary/GetProcAddress/FreeLibrary are the same three operations under different
+// names, so the typed layer in std/dl works unchanged. `dlerror` is the one that does
+// not map: Windows reports failure through GetLastError, which is per-thread state with
+// no string form and no read-and-clear semantics. Rather than return null (which std/dl
+// would read as "no error" right after a failure), report a fixed message and let the
+// caller go to GetLastError for detail.
+
+@cSig("libloaderapi.h", "HMODULE LoadLibraryA(LPCSTR)")
+extern fn LoadLibraryA(path: *u8): *u8
+
+@cSig("libloaderapi.h", "FARPROC GetProcAddress(HMODULE, LPCSTR)")
+extern fn GetProcAddress(handle: *u8, name: *u8): *u8
+
+@cSig("libloaderapi.h", "BOOL FreeLibrary(HMODULE)")
+extern fn FreeLibrary(handle: *u8): i32
+
+// A null path means "the running executable" for dlopen; LoadLibraryA(NULL) fails
+// instead, so route that case to GetModuleHandleA(NULL), which is what it means.
+@cSig("libloaderapi.h", "HMODULE GetModuleHandleA(LPCSTR)")
+extern fn GetModuleHandleA(path: *u8): *u8
+
+fn dlopen(_path: *u8, _flags: i32): *u8 {
+    unsafe {
+        if _path as i64 == 0 {
+            return GetModuleHandleA(0 as *u8)
+        }
+        return LoadLibraryA(_path)
+    }
+}
+
+fn dlsym(_handle: *u8, _symbol: *u8): *u8 {
+    unsafe {
+        return GetProcAddress(_handle, _symbol)
+    }
+}
+
+// POSIX dlclose returns 0 on success; FreeLibrary returns nonzero on success.
+fn dlclose(_handle: *u8): i32 {
+    unsafe {
+        if FreeLibrary(_handle) != 0 {
+            return 0
+        }
+        return -1
+    }
+}
+
+fn dlerror(): *u8 {
+    unsafe {
+        return "dynamic load failed — call GetLastError for the code" as *u8
+    }
+}

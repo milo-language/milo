@@ -50,10 +50,17 @@ from "std/env" import {
     getEnvOr
 }
 from "std/os" import {
-    read, write, close, acceptFd, ioctl
+    acceptFd,
+    ioctl
 }
 from "std/platform" import {
-    fcntl, fGetfl, fSetfl, oNonblock
+    fcntl,
+    fGetfl,
+    fSetfl,
+    oNonblock,
+    read,
+    write,
+    close
 }
 
 let PORT: u16 = 7373

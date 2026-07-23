@@ -11,7 +11,8 @@ from "std/platform" import {
     pthread_cond_init, pthread_cond_wait, pthread_cond_signal, pthread_cond_broadcast, pthread_cond_destroy,
     pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy,
     mmap, munmap, mprotect,
-    pipe
+    pipe,
+    read, write, open, close, lseek, access, getpid
 }
 from "std/event" import {
     setNonblocking
@@ -22,25 +23,6 @@ from "std/runtime" import {
 
 // ── I/O ──
 
-// The `"darwin,linux"` scope on the fd calls below is not a formality. Windows links
-// these through the UCRT's oldnames shim, where the real declarations are `int _read(int,
-// void *, unsigned int)` and `int _write(...)` — 32-bit count, 32-bit return, against the
-// 64-bit ones declared here. Win64 leaves the upper half of RAX undefined for an `int`
-// return, so a `-1` error can arrive as a large positive i64. That is a real bug, tracked
-// in docs/roadmap.md; scoping the annotation records where the claim is true instead of
-// asserting a POSIX header Windows does not have.
-@cSig("unistd.h", "ssize_t read(int, void *, size_t)", "darwin,linux")
-extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
-
-@cSig("unistd.h", "ssize_t write(int, const void *, size_t)", "darwin,linux")
-extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
-
-@cSig("fcntl.h", "int open(const char *, int, ...)", "darwin,linux")
-extern fn open(path: *u8, flags: i32,...): i32
-
-@cSig("unistd.h", "int close(int)", "darwin,linux")
-extern fn close(fd: i32): i32
-
 // signal(SIGPIPE, SIG_IGN). Writing to a socket whose peer has gone away raises
 // SIGPIPE, whose default action is to kill the process — a server dies silently
 // (exit 141) the first time a client disconnects mid-response. Every runtime
@@ -48,17 +30,11 @@ extern fn close(fd: i32): i32
 @cSig("signal.h", "void (*signal(int, void (*)(int)))(int)")
 extern fn signal(sig: i32, handler: *u8): *u8
 
-@cSig("unistd.h", "off_t lseek(int, off_t, int)", "darwin,linux")
-extern fn lseek(fd: i32, offset: i64, whence: i32): i64
-
 @cSig("sys/stat.h", "int fstat(int, struct stat *)")
 extern fn fstat(fd: i32, buf: *u8): i32
 
 @cSig("sys/stat.h", "int stat(const char *, struct stat *)")
 extern fn stat(path: *u8, buf: *u8): i32
-
-@cSig("unistd.h", "int access(const char *, int)", "darwin,linux")
-extern fn access(path: *u8, mode: i32): i32
 
 @cSig("stdio.h", "int puts(const char *)")
 extern fn puts(s: *u8): i32
@@ -319,11 +295,6 @@ extern fn getenv(name: *u8): *u8
 extern fn system(cmd: *u8): i32
 
 extern fn fork(): i32
-
-// Windows spells it `int _getpid(void)` in <process.h>; the oldnames shim links
-// `getpid` through to it, so the symbol resolves but the header claim does not hold.
-@cSig("unistd.h", "pid_t getpid(void)", "darwin,linux")
-extern fn getpid(): i32
 
 extern fn execl(path: *u8, arg0: *u8,...): i32
 

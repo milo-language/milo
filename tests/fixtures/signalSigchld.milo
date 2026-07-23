@@ -17,7 +17,10 @@ from "std/signal" import {
     sigchld, onSignal
 }
 from "std/os" import {
-    kill, getpid
+    kill
+}
+from "std/platform" import {
+    getpid
 }
 
 var seen: i32 = 0

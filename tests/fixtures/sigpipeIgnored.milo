@@ -13,13 +13,12 @@
 // std/net ignores SIGPIPE when a listener or stream is created, so the write
 // reports EPIPE and the program decides what to do.
 from "std/platform" import {
-    pipe
+    pipe,
+    close,
+    write
 }
 from "std/net" import {
     ignoreSigpipe
-}
-from "std/os" import {
-    close, write
 }
 
 fn main(): i32 {

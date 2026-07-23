@@ -1,10 +1,19 @@
 // std/io — file and directory I/O with automatic cleanup
 
 from "std/os" import {
-    close, lseek, open, read, readFd, strerror, writeFd
+    readFd,
+    strerror,
+    writeFd
 }
 from "std/platform" import {
-    eagain, getErrno, oWriteCreateAppend, oWriteCreateTrunc
+    eagain,
+    getErrno,
+    oWriteCreateAppend,
+    oWriteCreateTrunc,
+    close,
+    lseek,
+    open,
+    read
 }
 from "std/sync" import {
     Channel

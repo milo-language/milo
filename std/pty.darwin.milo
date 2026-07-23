@@ -1,9 +1,28 @@
 // std/pty — pseudoterminal support (macOS)
 
 from "std/os" import {
-    close, dup2, execvp, fork, free, grantpt, ioctl, isatty, kill, malloc,
-    memcpy, memset, open, posix_openpt, ptsname, readFd, setsid, unlockpt,
-    waitpid, writeFd
+    dup2,
+    execvp,
+    fork,
+    free,
+    grantpt,
+    ioctl,
+    isatty,
+    kill,
+    malloc,
+    memcpy,
+    memset,
+    posix_openpt,
+    ptsname,
+    readFd,
+    setsid,
+    unlockpt,
+    waitpid,
+    writeFd
+}
+from "std/platform" import {
+    close,
+    open
 }
 from "std/sync" import {
     Channel

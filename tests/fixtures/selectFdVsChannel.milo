@@ -8,7 +8,8 @@
 // fd arm wins while the channel arm stays quiet — exercises the scheduler
 // poll claiming a select and tearing down the still-armed channel arm
 from "std/platform" import {
-    pipe
+    pipe,
+    close
 }
 from "std/runtime" import {
     Task, schedulerRunToCompletion
@@ -20,7 +21,8 @@ from "std/select" import {
     Select, selectRecv
 }
 from "std/os" import {
-    writeFd, readFd, close
+    writeFd,
+    readFd
 }
 
 fn main(): i32 {

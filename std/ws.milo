@@ -1,7 +1,27 @@
 // std/ws — WebSocket server protocol (RFC 6455)
 
 from "std/os" import {
-    close, readFd, writeFd, htons, malloc, free, memcpy, socket, connectFd, TLS_client_method, SSL_CTX_new, SSL_CTX_free, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_new, SSL_set1_host, SSL_set_fd, sslConnectFd, sslReadFd, sslWriteFd, SSL_free, SSL_ctrl
+    readFd,
+    writeFd,
+    htons,
+    malloc,
+    free,
+    memcpy,
+    socket,
+    connectFd,
+    TLS_client_method,
+    SSL_CTX_new,
+    SSL_CTX_free,
+    SSL_CTX_set_default_verify_paths,
+    SSL_CTX_set_verify,
+    SSL_new,
+    SSL_set1_host,
+    SSL_set_fd,
+    sslConnectFd,
+    sslReadFd,
+    sslWriteFd,
+    SSL_free,
+    SSL_ctrl
 }
 from "std/crypto" import {
     sha1Bytes
@@ -10,7 +30,9 @@ from "std/base64" import {
     base64Encode
 }
 from "std/platform" import {
-    SockAddrIn, makeSockaddr
+    SockAddrIn,
+    makeSockaddr,
+    close
 }
 from "std/random" import {
     randBytes

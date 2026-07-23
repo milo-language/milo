@@ -15,7 +15,11 @@ from "std/signal" import {
     sigchld, installSignalPipe, SIGWINCH
 }
 from "std/os" import {
-    kill, getpid, read
+    kill
+}
+from "std/platform" import {
+    getpid,
+    read
 }
 
 // The pipes are O_NONBLOCK, so this never stalls when empty.

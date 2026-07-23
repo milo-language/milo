@@ -1,3 +1,6 @@
+from "std/platform" import {
+    read
+}
 // std/term — terminal raw mode and keyboard input (Windows console)
 //
 // There is no termios here: the equivalent state is a single DWORD of console mode bits
@@ -11,10 +14,6 @@
 // as the same ESC [ A sequences the POSIX arm decodes, instead of Windows' native
 // two-record INPUT_RECORD encoding. That keeps readKey below byte-identical in behaviour
 // to the other platforms rather than forking every caller.
-
-from "std/os" import {
-    read
-}
 
 let KEY_NONE: i32 = 0
 let KEY_UP: i32 = 1

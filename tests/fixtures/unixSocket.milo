@@ -8,14 +8,14 @@
 // pick the family from its first bytes, so bind/connect can't be declared per-family. With
 // the raw *SockAddr extern + typed wrappers, AF_UNIX is an ordinary consumer — this module
 // contains no unsafe at all.
+from "std/platform" import {
+    close
+}
 from "std/unix" import {
     UnixListener, UnixStream, removeSocketFile
 }
 from "std/runtime" import {
     Task, schedulerRunToCompletion
-}
-from "std/os" import {
-    close
 }
 
 fn main(): i32 {

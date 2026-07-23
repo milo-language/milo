@@ -11,10 +11,20 @@
 // typed wrapper per family; this module is a consumer of `bindUn`/`connectFdUn`, and holds
 // no unsafe of its own.
 from "std/os" import {
-    socket, close, listen, acceptFd, readFd, writeFd, unlink, bindUn, connectFdUn
+    socket,
+    listen,
+    acceptFd,
+    readFd,
+    writeFd,
+    unlink,
+    bindUn,
+    connectFdUn
 }
 from "std/platform" import {
-    SockAddrUn, makeSockaddrUn, sockAddrUnMaxPath
+    SockAddrUn,
+    makeSockaddrUn,
+    sockAddrUnMaxPath,
+    close
 }
 from "std/sync" import {
     Channel

@@ -11,11 +11,11 @@
 // (payload-zeroed) value each time; with the old `fd >= 0` guard that was close(0),
 // so every 2nd+ accept()/open() in a plain loop returned the freed fd 0 — this
 // killed multi-request TCP servers in the main context.
+from "std/platform" import {
+    open
+}
 from "std/io" import {
     File
-}
-from "std/os" import {
-    open
 }
 
 fn main(): i32 {

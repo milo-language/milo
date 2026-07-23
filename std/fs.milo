@@ -1,16 +1,46 @@
 // std/fs — filesystem operations
 
 from "std/os" import {
-    access, chdir, chmod, chown, closedir, fchmod, fchown, fdatasync,
-    fsync, ftruncate, getcwd, lchown, link, lstat, mkdir,
-    mkdtemp, opendir, read, readdir, readlink, realpath,
-    rename, rmdir, stat, strerror, strlen, symlink, truncate, unlink
+    chdir,
+    chmod,
+    chown,
+    closedir,
+    fchmod,
+    fchown,
+    fdatasync,
+    fsync,
+    ftruncate,
+    getcwd,
+    lchown,
+    link,
+    lstat,
+    mkdir,
+    mkdtemp,
+    opendir,
+    readdir,
+    readlink,
+    realpath,
+    rename,
+    rmdir,
+    stat,
+    strerror,
+    strlen,
+    symlink,
+    truncate,
+    unlink
 }
 from "std/io" import {
     File, IoError, _ioError
 }
 from "std/platform" import {
-    direntNameOffset, direntTypeOffset, getErrno, statBufSize, statModeOffset, statSizeOffset
+    direntNameOffset,
+    direntTypeOffset,
+    getErrno,
+    statBufSize,
+    statModeOffset,
+    statSizeOffset,
+    access,
+    read
 }
 
 // File metadata from stat().

@@ -54,7 +54,7 @@ export class Codegen {
   private externAbi = new Map<string, ExternAbiInfo>();
   private structLayouts = new Map<string, StructLayout>();
   private cLayoutStructs: HIRStruct[] = [];
-  private cSigs: { fnName: string; header: string; sig: string; os?: string[]; retType: TypeKind }[] = [];
+  private cSigs: { fnName: string; header: string; sig: string; retType: TypeKind }[] = [];
   private enumLayouts = new Map<string, EnumLayout>();
   private userDeclaredFns = new Set<string>();
   private needsBoundsCheck = false;
@@ -862,10 +862,7 @@ export class Codegen {
   // plausible garbage — no crash, no diagnostic. C sees the true header, so it can check
   // the claim; this TU is compiled with `-fsyntax-only` at build time and discarded.
   cDeclGuards(): string | null {
-    // A @cSig scoped to other OSes is a claim about a C library this target doesn't
-    // have; asserting it here checks nothing and, when its header doesn't exist,
-    // breaks the whole TU so the claims that DO apply go unchecked too.
-    const cSigs = this.cSigs.filter(s => !s.os || s.os.includes(this.target.os));
+    const cSigs = this.cSigs;
     if (this.cLayoutStructs.length === 0 && cSigs.length === 0) return null;
     const headers = [...new Set([
       ...this.cLayoutStructs.map(s => s.cLayout!.header),

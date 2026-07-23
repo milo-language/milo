@@ -1,7 +1,12 @@
 // std/term — terminal raw mode and keyboard input (macOS)
 
 from "std/os" import {
-    ioctl, read, tcgetattr, tcsetattr
+    ioctl,
+    tcgetattr,
+    tcsetattr
+}
+from "std/platform" import {
+    read
 }
 
 let KEY_NONE: i32 = 0

@@ -106,7 +106,7 @@ class LowerCtx {
     // (the C signature is the truth; the Milo decl's width/signedness must agree).
     const cSigs = [...this.c.cSigs.entries()].flatMap(([fnName, s]) => {
       const fn = functions.find(f => f.name === fnName);
-      return fn ? [{ fnName, header: s.header, sig: s.sig, os: s.os, retType: fn.retType }] : [];
+      return fn ? [{ fnName, header: s.header, sig: s.sig, retType: fn.retType }] : [];
     });
     // @export joins the entry program's functions in getting external linkage.
     // Imported-module fns are `internal` by default, which is right for dead-code

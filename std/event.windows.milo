@@ -1,3 +1,7 @@
+from "std/platform" import {
+    close
+}
+
 // std/event — cross-platform event loop (Windows stub; IOCP not implemented yet)
 //
 // The readiness model Windows offers is not the one the darwin/linux arms implement.
@@ -12,10 +16,6 @@
 // overwhelming majority of the fixture suite) compiling and running correctly, while any
 // program that actually drives the event loop stops immediately and says why, instead of
 // silently doing nothing and hanging or spinning.
-
-from "std/os" import {
-    close
-}
 
 // Winsock's ioctlsocket takes the FIONBIO command and a pointer to a u32 flag; nonzero
 // enables non-blocking mode. Sockets only — there is no non-blocking mode for a CRT file

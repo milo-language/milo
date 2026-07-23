@@ -1440,20 +1440,12 @@ checkable at all.
 a C parser; only arity and the return type are verified. The signature sits next to the
 Milo declaration so the two read together.
 
-**Scoping a claim to some OSes.** C libraries disagree. The UCRT spells POSIX `read` as
-`_read` and returns `int` where POSIX returns `ssize_t`, and has no `<unistd.h>` at all —
-so a single claim cannot be true everywhere. An optional third argument names the OSes
-the claim holds on (`darwin`, `linux`, `windows`), and the guard is emitted only when
-building for one of them:
-
-```milo
-@cSig("unistd.h", "ssize_t read(int, void *, size_t)", "darwin,linux")
-extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
-```
-
-Omit it and the claim is checked on every hosted target, which is the right default —
-reach for the scope only when the C declaration genuinely differs, and say so in a
-comment, because a scoped claim is an unchecked claim on the OSes it leaves out.
+**When the C declaration differs by platform**, the declaration belongs in the stdlib
+platform split (`std/platform.windows.milo` and friends), not in a conditional
+annotation — the file name states which C library is being described, so the claim in it
+is unconditionally true. Windows spells POSIX `read` as `_read` and returns `int` where
+POSIX returns `ssize_t`; that is two declarations in two files, not one annotation with
+an escape hatch.
 
 Like `@cLayout`, it's opt-in and skipped for bare-metal targets.
 

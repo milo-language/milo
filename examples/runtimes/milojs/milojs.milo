@@ -23,7 +23,10 @@ from "std/runtime" import {
     Task, schedulerCurrent
 }
 from "std/os" import {
-    getpid, exit
+    exit
+}
+from "std/platform" import {
+    getpid
 }
 from "std/strconv" import {
     parseInt

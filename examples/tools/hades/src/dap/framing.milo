@@ -4,15 +4,21 @@
 // any other Content-Length-framed consumer. Green/blocking read strategy is
 // handled entirely by FdReader, so nothing below ever sees an "in green?" flag.
 
-from "std/io" import { FdReader, fdReaderAttach }
-from "std/os" import { write }
+from "std/platform" import {
+    write
+}
+from "std/io" import {
+    FdReader, fdReaderAttach
+}
 
 // Read one complete framed message off fd, returning the raw body.
 // Err on EOF or malformed header.
 fn readFrame(fd: i32): Result<string> {
     let reader = fdReaderAttach(fd)
     let len = _readContentLength(reader)
-    if len < 0 { return Result.Err("eof or bad header") }
+    if len < 0 {
+        return Result.Err("eof or bad header")
+    }
     return reader.readExact(len)
 }
 
@@ -25,7 +31,9 @@ fn writeFrameFd(fd: i32, payload: &string): i64 {
     let msg = $"Content-Length: {payload.len}\r\n\r\n" + payload
     unsafe {
         let n = write(fd, msg, msg.len)
-        if n < msg.len as i64 { return (-1 as i64) }
+        if n < msg.len as i64 {
+            return (-1 as i64)
+        }
         return n
     }
 }
@@ -41,13 +49,17 @@ fn _readContentLength(reader: &FdReader): i64 {
     var c3: i64 = 0
     while true {
         let b = reader.readByte()
-        if b < 0 { return (-1 as i64) }
+        if b < 0 {
+            return (-1 as i64)
+        }
         header.push(b as u8)
         c0 = c1
         c1 = c2
         c2 = c3
         c3 = b
-        if c0 == 13 && c1 == 10 && c2 == 13 && c3 == 10 { break }
+        if c0 == 13 && c1 == 10 && c2 == 13 && c3 == 10 {
+            break
+        }
     }
     return _parseContentLength(header)
 }
@@ -56,35 +68,51 @@ fn _readContentLength(reader: &FdReader): i64 {
 fn _parseContentLength(header: &string): i64 {
     let needle: string = "Content-Length:"
     let idx = _indexOf(header, needle)
-    if idx < 0 { return (-1 as i64) }
+    if idx < 0 {
+        return (-1 as i64)
+    }
     var i = idx + needle.len
     // skip spaces
-    while i < header.len && header[i] == 32 { i = i + 1 }
+    while i < header.len && header[i] == 32 {
+        i = i + 1
+    }
     var n: i64 = 0
     var sawDigit = false
     while i < header.len {
         let ch = header[i]
-        if ch < 48 || ch > 57 { break }
+        if ch < 48 || ch > 57 {
+            break
+        }
         n = n * 10 + ((ch - 48) as i64)
         sawDigit = true
         i = i + 1
     }
-    if !sawDigit { return (-1 as i64) }
+    if !sawDigit {
+        return (-1 as i64)
+    }
     return n
 }
 
 fn _indexOf(haystack: &string, needle: &string): i64 {
-    if needle.len == 0 { return (0 as i64) }
-    if needle.len > haystack.len { return (-1 as i64) }
+    if needle.len == 0 {
+        return (0 as i64)
+    }
+    if needle.len > haystack.len {
+        return (-1 as i64)
+    }
     var i: i64 = 0
     while i <= haystack.len - needle.len {
         var j: i64 = 0
         var matched = true
         while j < needle.len {
-            if haystack[i + j] != needle[j] { matched = false break }
+            if haystack[i + j] != needle[j] {
+                matched = false break
+            }
             j = j + 1
         }
-        if matched { return i }
+        if matched {
+            return i
+        }
         i = i + 1
     }
     return (-1 as i64)

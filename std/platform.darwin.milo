@@ -399,3 +399,47 @@ extern fn usleep(usec: u32): i32
 // pipe(2). Split out because the UCRT spells it _pipe and takes two extra arguments.
 
 extern fn pipe(fds: *u8): i32
+
+// ── fd I/O ──
+//
+// These live here, not in std/os, because the UCRT's are a different shape, not a
+// different spelling: `int _read(int, void *, unsigned int)` against POSIX's
+// `ssize_t read(int, void *, size_t)`. Declaring the POSIX widths everywhere linked
+// (the oldnames shim resolves the symbol) and then miscompiled — Win64 leaves the
+// upper half of RAX undefined for an `int` return, so a -1 could arrive as a large
+// positive i64.
+
+@cSig("unistd.h", "ssize_t read(int, void *, size_t)")
+extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
+
+@cSig("unistd.h", "ssize_t write(int, const void *, size_t)")
+extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
+
+@cSig("fcntl.h", "int open(const char *, int, ...)")
+extern fn open(path: *u8, flags: i32,...): i32
+
+@cSig("unistd.h", "int close(int)")
+extern fn close(fd: i32): i32
+
+@cSig("unistd.h", "off_t lseek(int, off_t, int)")
+extern fn lseek(fd: i32, offset: i64, whence: i32): i64
+
+@cSig("unistd.h", "int access(const char *, int)")
+extern fn access(path: *u8, mode: i32): i32
+
+@cSig("unistd.h", "pid_t getpid(void)")
+extern fn getpid(): i32
+
+// ── dynamic loading ──
+
+@cSig("dlfcn.h", "void *dlopen(const char *, int)")
+extern fn dlopen(_path: *u8, _flags: i32): *u8
+
+@cSig("dlfcn.h", "void *dlsym(void *, const char *)")
+extern fn dlsym(_handle: *u8, _symbol: *u8): *u8
+
+@cSig("dlfcn.h", "int dlclose(void *)")
+extern fn dlclose(_handle: *u8): i32
+
+@cSig("dlfcn.h", "char *dlerror(void)")
+extern fn dlerror(): *u8

@@ -1,6 +1,3 @@
-// @skip-os: win32
-// std/dl binds dlopen/dlsym; Windows would need LoadLibrary/GetProcAddress.
-
 // @expect: opened self
 // @expect: missing symbol absent
 // std/dl smoke test with no external artifact. Deliberately does NOT assert that

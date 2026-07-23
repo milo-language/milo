@@ -19,7 +19,10 @@ from "std/runtime" import {
     Task, schedulerRunToCompletion
 }
 from "std/os" import {
-    close, getSockPort
+    getSockPort
+}
+from "std/platform" import {
+    close
 }
 
 fn main(): i32 {

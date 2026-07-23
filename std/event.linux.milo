@@ -3,12 +3,25 @@
 // we store fd in the data field as i32 + pad
 
 from "std/os" import {
-    close, malloc, free, memset, read, write
+    malloc,
+    free,
+    memset
 }
 from "std/platform" import {
-    epoll_create1, epoll_ctl, epoll_wait,
-    fcntl, fGetfl, fSetfl, oNonblock,
-    epollCtlAdd, epollCtlDel, epollIn, epollOut
+    epoll_create1,
+    epoll_ctl,
+    epoll_wait,
+    fcntl,
+    fGetfl,
+    fSetfl,
+    oNonblock,
+    epollCtlAdd,
+    epollCtlDel,
+    epollIn,
+    epollOut,
+    close,
+    read,
+    write
 }
 
 fn epollEventSize(): i64 {

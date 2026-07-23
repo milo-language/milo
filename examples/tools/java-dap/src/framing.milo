@@ -4,11 +4,11 @@
 // any other Content-Length-framed consumer. Green/blocking read strategy is
 // handled entirely by FdReader, so nothing below ever sees an "in green?" flag.
 
+from "std/platform" import {
+    write
+}
 from "std/io" import {
     FdReader, fdReaderAttach
-}
-from "std/os" import {
-    write
 }
 
 // Read one complete framed message off fd, returning the raw body.

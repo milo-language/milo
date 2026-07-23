@@ -1,11 +1,30 @@
 // termpair server — WebSocket relay for terminal sharing
 
 from "std/os" import {
-    accept, bindIn, close, getSockPort, listen, ntohs, read, write,
-    setsockopt, socket, malloc, free, memcpy
+    accept,
+    bindIn,
+    getSockPort,
+    listen,
+    ntohs,
+    setsockopt,
+    socket,
+    malloc,
+    free,
+    memcpy
 }
 from "std/platform" import {
-    SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain, makeZeroedSockaddrStorage, sockAddrStorageLen
+    SockAddrIn,
+    makeSockaddr,
+    makeZeroedSockaddr,
+    solSocket,
+    soReuseaddr,
+    getErrno,
+    eagain,
+    makeZeroedSockaddrStorage,
+    sockAddrStorageLen,
+    close,
+    read,
+    write
 }
 from "std/event" import {
     setNonblocking

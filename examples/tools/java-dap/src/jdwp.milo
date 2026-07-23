@@ -11,14 +11,14 @@
 // sent. All IDs are stored as i64 (HotSpot uses 8 bytes for everything, but
 // the codec honors whatever the VM reports).
 
+from "std/platform" import {
+    write
+}
 from "std/net" import {
     TcpStream, resolve
 }
 from "std/io" import {
     FdReader, fdReaderAttach
-}
-from "std/os" import {
-    write
 }
 from "std/sync" import {
     Channel
