@@ -182,14 +182,34 @@ function compileToIr(sourcePath: string, outputPath: string | null, target: Targ
 }
 
 // detect clang: prefer /usr/bin/clang (Apple) which is more stable, then PATH clang, then llc+cc
+// Codegen emits opaque pointers (`ptr`, never `i8*`), which LLVM only accepts from
+// 15 onward. Older clang parses the IR and dies on `declare i32 @memcmp(ptr, ...)`
+// with "expected type" — an error that points at our IR and reads like a codegen
+// bug rather than a stale toolchain. Debian bookworm still defaults to clang 14,
+// so this is reachable on a current distro, not a museum piece.
+const MIN_CLANG_MAJOR = 15;
+
+function clangMajor(versionOutput: string): number | null {
+  // "Debian clang version 14.0.6", "Apple clang version 17.0.0", "clang version 18.1.3"
+  const m = versionOutput.match(/clang version (\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
 type Toolchain = { kind: "clang"; path: string } | { kind: "llc+cc" };
 let cachedToolchain: Toolchain | null = null;
 function detectToolchain(): Toolchain {
   if (cachedToolchain) return cachedToolchain;
   const candidates = ["/usr/bin/clang", "clang"];
+  let tooOld: { path: string; major: number } | null = null;
   for (const cc of candidates) {
     try {
-      execSync(`${cc} --version`, { stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+      const out = execSync(`${cc} --version`, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+      const major = clangMajor(out);
+      // An unparseable version string is not a reason to reject a working clang.
+      if (major !== null && major < MIN_CLANG_MAJOR) {
+        tooOld ??= { path: cc, major };
+        continue;
+      }
       cachedToolchain = { kind: "clang", path: cc };
       return cachedToolchain;
     } catch {}
@@ -199,7 +219,21 @@ function detectToolchain(): Toolchain {
     execSync("cc --version", { stdio: ["pipe", "pipe", "pipe"] });
     cachedToolchain = { kind: "llc+cc" };
   } catch {
-    throw new Error("no C compiler found: need either 'clang' or 'llc'+'cc' on PATH");
+    if (tooOld) {
+      throw new Error(
+        `clang ${tooOld.major} is too old: milo emits opaque-pointer LLVM IR, which needs clang ${MIN_CLANG_MAJOR}+\n` +
+        `  found: ${tooOld.path}\n` +
+        `  fix:   macOS  xcode-select --install   (or: brew install llvm)\n` +
+        `         Debian/Ubuntu  apt install clang-${MIN_CLANG_MAJOR}  (bookworm defaults to clang 14)\n` +
+        `         then put the newer clang first on PATH`
+      );
+    }
+    throw new Error(
+      "no C compiler found: need either 'clang' or 'llc'+'cc' on PATH\n" +
+      "  fix: macOS  xcode-select --install\n" +
+      "       Debian/Ubuntu  apt install clang\n" +
+      "       Fedora  dnf install clang"
+    );
   }
   return cachedToolchain;
 }
