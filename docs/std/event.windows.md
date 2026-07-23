@@ -64,7 +64,7 @@ _Undocumented._
 fn eventLoopInitWakeup(_el: &EventLoop): i32
 ```
 
-_Undocumented._
+Also init-time; there is no wakeup fd to create, and nothing polls for one.
 
 ### `eventLoopNew`
 
@@ -72,7 +72,10 @@ _Undocumented._
 fn eventLoopNew(): Result<EventLoop, string>
 ```
 
-_Undocumented._
+Succeeds deliberately. std/runtime constructs a loop during scheduler init, which every
+program importing std/io reaches — even one that only prints. Failing here would make
+`print` itself unusable on Windows to report a limitation the program never hits. The
+loop is inert: the operations that genuinely need IOCP abort when actually reached.
 
 ### `eventLoopNotify`
 

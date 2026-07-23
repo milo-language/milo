@@ -69,10 +69,35 @@ fn fSetfl(): i32
 
 _Undocumented._
 
+### `getcontext`
+
+```milo
+fn getcontext(ucp: *u8): i32
+```
+
+_Undocumented._
+
 ### `getErrno`
 
 ```milo
 fn getErrno(): i32
+```
+
+_Undocumented._
+
+### `gettimeofday`
+
+```milo
+fn gettimeofday(tv: *u8, _tz: *u8): i32
+```
+
+Fills a POSIX `struct timeval` — two i64s, seconds then microseconds — because that is
+the layout std/time reads back out of the buffer it passes.
+
+### `makecontext`
+
+```milo
+fn makecontext(ucp: *u8, func: *u8, _argc: i32): void
 ```
 
 _Undocumented._
@@ -141,6 +166,32 @@ fn mapPrivateAnon(): i32
 
 _Undocumented._
 
+### `mmap`
+
+```milo
+fn mmap(_addr: *u8, len: i64, _prot: i32, _flags: i32, fd: i32, _offset: i64): *u8
+```
+
+MEM_COMMIT|MEM_RESERVE = 0x3000, PAGE_READWRITE = 0x04.
+
+### `mprotect`
+
+```milo
+fn mprotect(addr: *u8, len: i64, _prot: i32): i32
+```
+
+PAGE_NOACCESS = 0x01, used for the runtime's stack guard page. VirtualProtect must be
+given somewhere to write the previous protection or it fails.
+
+### `munmap`
+
+```milo
+fn munmap(addr: *u8, _len: i64): i32
+```
+
+MEM_RELEASE (0x8000) requires the size to be 0 and the address to be the exact base
+returned by VirtualAlloc — it always frees the whole reservation, unlike munmap.
+
 ### `oNonblock`
 
 ```milo
@@ -181,7 +232,8 @@ _Undocumented._
 fn protRead(): i32
 ```
 
-mmap has no Windows equivalent; VirtualAlloc / CreateFileMapping are the real APIs.
+The mmap wrappers above translate these into Win32 page-protection flags themselves,
+so the values only need to be distinct — they are not a POSIX ABI here.
 
 ### `protWrite`
 
@@ -430,6 +482,14 @@ fn statSizeOffset(): i64
 
 _Undocumented._
 
+### `swapcontext`
+
+```milo
+fn swapcontext(oucp: *u8, ucp: *u8): i32
+```
+
+_Undocumented._
+
 ### `uctxLinkOffset`
 
 ```milo
@@ -461,3 +521,12 @@ fn uctxStackSizeOffset(): i64
 ```
 
 _Undocumented._
+
+### `usleep`
+
+```milo
+fn usleep(usec: u32): i32
+```
+
+Sleep() has millisecond resolution, so sub-millisecond requests round up to 1ms rather
+than to 0 — a busy-wait caller asking for 100us should yield, not spin.

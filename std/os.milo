@@ -9,7 +9,8 @@ from "std/platform" import {
     pthread_create, pthread_join, pthread_detach,
     pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy,
     pthread_cond_init, pthread_cond_wait, pthread_cond_signal, pthread_cond_broadcast, pthread_cond_destroy,
-    pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy
+    pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy,
+    mmap, munmap, mprotect
 }
 from "std/event" import {
     setNonblocking
@@ -76,15 +77,6 @@ extern fn memset(dst: *u8, c: i32, n: i64): *u8
 
 @cSig("string.h", "void *memmove(void *, const void *, size_t)")
 extern fn memmove(dst: *u8, src: *u8, n: i64): *u8
-
-@cSig("sys/mman.h", "void *mmap(void *, size_t, int, int, int, off_t)")
-extern fn mmap(addr: *u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): *u8
-
-@cSig("sys/mman.h", "int munmap(void *, size_t)")
-extern fn munmap(addr: *u8, len: i64): i32
-
-@cSig("sys/mman.h", "int mprotect(void *, size_t, int)")
-extern fn mprotect(addr: *u8, len: i64, prot: i32): i32
 
 // ── Error ──
 

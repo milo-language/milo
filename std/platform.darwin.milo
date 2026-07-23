@@ -374,3 +374,24 @@ extern fn pthread_rwlock_wrlock(rwlock: *u8): i32
 extern fn pthread_rwlock_unlock(rwlock: *u8): i32
 
 extern fn pthread_rwlock_destroy(rwlock: *u8): i32
+
+// ── mmap family ──
+// In the platform split rather than std/os: Windows has no mmap, and its arm implements
+// these names over VirtualAlloc/VirtualFree/VirtualProtect instead.
+
+@cSig("sys/mman.h", "void *mmap(void *, size_t, int, int, int, off_t)")
+extern fn mmap(addr: *u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): *u8
+
+@cSig("sys/mman.h", "int munmap(void *, size_t)")
+extern fn munmap(addr: *u8, len: i64): i32
+
+@cSig("sys/mman.h", "int mprotect(void *, size_t, int)")
+extern fn mprotect(addr: *u8, len: i64, prot: i32): i32
+
+// ── time ──
+// Split out of std/time because Windows has neither: its arm builds a timeval from
+// GetSystemTimeAsFileTime and sleeps with Sleep().
+
+extern fn gettimeofday(tv: *u8, tz: *u8): i32
+
+extern fn usleep(usec: u32): i32

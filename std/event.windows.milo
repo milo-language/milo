@@ -51,8 +51,15 @@ fn clearNonblocking(fd: i32): i32 {
     }
 }
 
+// Succeeds deliberately. std/runtime constructs a loop during scheduler init, which every
+// program importing std/io reaches — even one that only prints. Failing here would make
+// `print` itself unusable on Windows to report a limitation the program never hits. The
+// loop is inert: the operations that genuinely need IOCP abort when actually reached.
 fn eventLoopNew(): Result<EventLoop, string> {
-    return Result.Err("std/event: the event loop is not implemented on windows (IOCP port pending)")
+    return Result.Ok(EventLoop {
+        iocp: -1
+    }
+    )
 }
 
 fn eventRegisterRead(_el: &EventLoop, _fd: i32): i32 {
@@ -75,9 +82,9 @@ fn eventPoll(_el: &EventLoop, _readyFds: *i32, _maxEvents: i32, _timeoutMs: i32)
     return -1
 }
 
+// Also init-time; there is no wakeup fd to create, and nothing polls for one.
 fn eventLoopInitWakeup(_el: &EventLoop): i32 {
-    unsupported("eventLoopInitWakeup")
-    return -1
+    return 0
 }
 
 fn eventLoopNotify(_el: &EventLoop, _wakeupId: i32): i32 {
@@ -90,7 +97,6 @@ fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
 }
 
 fn eventLoopCloseWakeup(_el: &EventLoop, _wakeupId: i32): void {
-    unsupported("eventLoopCloseWakeup")
 }
 
 fn eventLoopFromFd(fd: i32): EventLoop {
