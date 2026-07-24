@@ -2,7 +2,7 @@
 
 - **Slug / tag:** `ws/pub-visibility`
 - **Started:** 2026-07-23
-- **Status:** in-progress
+- **Status:** DONE (landed on main 2026-07-24, CI green)
 - **Related:** [docs/plans/package-manager.md](../plans/package-manager.md) §P-1
 
 ## Goal
@@ -35,7 +35,7 @@ Two passes. Pass 1 is behavior-preserving, which is what makes pass 2 safe to do
 
 ## Current state
 
-**Steps 1 done (parse + AST). Steps 2-7 not started.** `pub` parses on struct/enum/type/global/trait/fn/interface/extern, is rejected on `impl` and `import` with a diagnostic naming the rule, and remains usable as an ordinary identifier. **It carries no meaning yet** — nothing enforces it, so this is a pure parse-and-record change and every existing program behaves identically.
+**All steps done.** `pub` parses on struct/enum/type/global/trait/fn/interface/extern, is rejected on `impl` and `import` with a diagnostic naming the rule, and remains usable as an ordinary identifier. **It carries no meaning yet** — nothing enforces it, so this is a pure parse-and-record change and every existing program behaves identically.
 
 Next: formatter (step 2) before anything else — `fmt` will currently drop `pub` on reformat, which would silently strip visibility from source. Do not codemod std (step 3) until the formatter round-trips `pub`.
 
@@ -72,3 +72,28 @@ Next: formatter (step 2) before anything else — `fmt` will currently drop `pub
 - [ ] `bun run scripts/run-examples.ts`
 - [ ] agent review: `scripts/agent_review.sh implementation`
 - [ ] docs updated (language-reference, grammar.ebnf, breaking-changes; bump `last-verified`)
+
+## Outcome (2026-07-24)
+
+Landed on main, CI green (macOS + Linux + Windows). Full suite 1251 pass / 7 skip / 0 fail.
+
+Shipped beyond the original plan:
+- `import { x as y }` aliasing (needed as the collision fix for P0).
+- **`declOrigins`** — the plan assumed visibility could be derived from the merged
+  program. It cannot: the flat namespace discards definitions (identical-body dedup,
+  and user override of a std fn), so a name still defined in the referencing file
+  looked "private to somewhere else". The resolver now records every decl's origin
+  file + pub-ness as each file is parsed, pre-merge.
+- The `_name` privacy convention is retired: 225 helpers renamed, 212 made genuinely
+  private. 43 keep the underscore — an `extern fn` binds its C symbol BY NAME
+  (`_get_osfhandle`, `__errno_location`), so renaming one breaks the link; the rest
+  would collide. **Never rename an extern.**
+
+Corrections to the plan's assumptions:
+- "Examples and tests are leaves, so they need no annotation" is false for any
+  multi-file project: `src-milo/` (175 failures), the import fixtures, and
+  `modules.test.ts`'s inline sources all needed `pub` on cross-file names.
+- Any tool that parses decl lines needs to accept an optional `pub ` prefix.
+  `scripts/audit-extern-returns.ts` silently dropped from 199 checked externs to 0;
+  it only failed CI because it self-guards with "verified nothing — the audit is
+  broken, not the code". Worth copying that guard pattern into other audits.
