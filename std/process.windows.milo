@@ -15,7 +15,8 @@
 from "std/platform" import {
     close,
     read,
-    write
+    write,
+    _exePathInto
 }
 from "std/io" import {
     readFile, fdChannel
@@ -412,5 +413,22 @@ fn capture(cmd: &string): Result<string> {
         Result.Err(_) => {
             return Result.Err("failed to read capture output")
         }
+    }
+}
+
+// ── executable path ──
+
+// Absolute path of the running executable (mirror of the posix arm in std/process.milo;
+// this file replaces std/process.milo wholesale on Windows, so the surface must match).
+// `_exePathInto` resolves to GetModuleFileNameA in std/platform.windows.
+fn exePath(): Result<string> {
+    var buf: [u8; 4096] = [0; 4096]
+    unsafe {
+        let n = _exePathInto(buf as *u8, 4095)
+        if n < 0 {
+            return Result.Err("could not determine executable path")
+        }
+        buf[n] = 0
+        return Result.Ok(_cstrToString(buf as *u8))
     }
 }
