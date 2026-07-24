@@ -3,7 +3,7 @@
 // @expect: 14
 // @expect: 9
 
-fn main(): i32 {
+pub fn main(): i32 {
     var flags = 0b1100
     flags &= 0b1110 // clear bits not in mask -> 0b1100 = 12
     print(flags)

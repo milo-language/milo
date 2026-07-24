@@ -3,9 +3,9 @@
 // @expect: 3
 // @expect: 42
 
-let g: i32 = 7
+pub let g: i32 = 7
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a: [i32; 3] = [1, 2, 3]
     print(a.len)
     let x: i32 = 6 * g

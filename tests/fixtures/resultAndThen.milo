@@ -13,21 +13,21 @@
 //
 // The callback's Err type must equal the receiver's — there is no conversion on the
 // forwarding path (see tests/errors/resultAndThenErrMismatch.milo).
-fn heapStr(tail: &string): string {
+pub fn heapStr(tail: &string): string {
     var s = ""
     s.pushStr(tail)
     s.pushStr("!")
     return s
 }
 
-fn halve(n: &i64): Result<i64, string> {
+pub fn halve(n: &i64): Result<i64, string> {
     if n % 2 != 0 {
         return Result.Err(heapStr("odd"))
     }
     return Result.Ok(n / 2)
 }
 
-fn describe(r: Result<i64, string>): string {
+pub fn describe(r: Result<i64, string>): string {
     match r {
         Result.Ok(v) => {
             return "ok:" + v.toString()
@@ -38,7 +38,7 @@ fn describe(r: Result<i64, string>): string {
     }
 }
 
-fn main() {
+pub fn main() {
     let ok: Result<i64, string> = Result.Ok(8)
     // @expect: ok:4
     print(describe(ok.andThen((n) => halve(n))))

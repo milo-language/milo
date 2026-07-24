@@ -7,7 +7,7 @@ from "std/sync" import {
     Channel
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let ch = Channel<i64>.new(2)!
 
     // tryRecv on empty channel returns None

@@ -12,7 +12,7 @@ from "std/json" import {
     jsonParse
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let j = jsonParse("{\"id\":1572864,\"tid\":1844463,\"f\":0.5,\"e\":1e10,\"neg\":-42,\"arr\":[1572864,1844463],\"obj\":{\"id\":1572864,\"nested\":{\"big\":9007199254740991}}}")!
     print("id=", j.get("id")!.rawStr())
     print("tid=", j.get("tid")!.rawStr())

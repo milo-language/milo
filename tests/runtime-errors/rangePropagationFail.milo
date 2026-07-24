@@ -1,9 +1,10 @@
 // @runtime-error: value out of range
 
-type SmallInt = i32(0..100)
-type TinyInt = i32(0..50)
+pub type SmallInt = i32(0..100)
 
-fn main(): i32 {
+pub type TinyInt = i32(0..50)
+
+pub fn main(): i32 {
     let a: SmallInt = 30
     let b: SmallInt = 40
 

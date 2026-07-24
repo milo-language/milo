@@ -14,7 +14,7 @@
 // Rvalue iterables are now materialized into a temp alloca (and dropped at fn
 // exit). Covers plain, enumerate, and re-evaluation (call runs each loop).
 
-fn makeVec(): Vec<i32> {
+pub fn makeVec(): Vec<i32> {
     var v: Vec<i32> = Vec.new()
     v.push(10)
     v.push(20)
@@ -22,7 +22,7 @@ fn makeVec(): Vec<i32> {
     return v
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     for x in makeVec() {
         print(x)
     }

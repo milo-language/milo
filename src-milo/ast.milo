@@ -1,11 +1,11 @@
 // AST node types for the Milo compiler
 
-struct Span {
+pub struct Span {
     line: i32,
     col: i32,
 }
 
-struct MiloType {
+pub struct MiloType {
     name: string,
     typeArgs: Vec<MiloType>,
     isPtr: bool,
@@ -18,7 +18,7 @@ struct MiloType {
     fnRet: Option<Heap<MiloType>>,
 }
 
-fn simpleType(name: string): MiloType {
+pub fn simpleType(name: string): MiloType {
     return MiloType {
         name: name,
         typeArgs: Vec.new(),
@@ -33,7 +33,7 @@ fn simpleType(name: string): MiloType {
     }
 }
 
-fn ptrType(name: string): MiloType {
+pub fn ptrType(name: string): MiloType {
     return MiloType {
         name: name,
         typeArgs: Vec.new(),
@@ -48,34 +48,34 @@ fn ptrType(name: string): MiloType {
     }
 }
 
-struct Param {
+pub struct Param {
     name: string,
     ty: MiloType,
 }
 
-struct StructField {
+pub struct StructField {
     name: string,
     ty: MiloType,
 }
 
-struct TypeParam {
+pub struct TypeParam {
     name: string,
     bounds: Vec<string>,
 }
 
-struct Attribute {
+pub struct Attribute {
     name: string,
     args: Vec<string>,
 }
 
 // -- Expressions --
 
-struct StructLitField {
+pub struct StructLitField {
     name: string,
     value: Heap<Expr>,
 }
 
-enum Expr {
+pub enum Expr {
     IntLit(i64, Option<Span>),
     FloatLit(f64, Option<Span>),
     BoolLit(bool, Option<Span>),
@@ -107,7 +107,7 @@ enum Expr {
 
 // -- Patterns --
 
-enum LiteralKind {
+pub enum LiteralKind {
     LitInt,
     LitFloat,
     LitString,
@@ -115,7 +115,7 @@ enum LiteralKind {
     LitBool,
 }
 
-enum Pattern {
+pub enum Pattern {
     EnumPattern(string, string, Vec<string>, Option<Span>),
     LiteralPattern(string, LiteralKind, Option<Span>),
     WildcardPattern(Option<Span>),
@@ -123,12 +123,12 @@ enum Pattern {
 
 // -- Statements --
 
-struct MatchArm {
+pub struct MatchArm {
     pattern: Pattern,
     body: Vec<Heap<Stmt>>,
 }
 
-enum Stmt {
+pub enum Stmt {
     LetDecl(string, Option<MiloType>, Heap<Expr>, Option<Span>),
     VarDecl(string, Option<MiloType>, Heap<Expr>, Option<Span>),
     Assign(Heap<Expr>, Heap<Expr>, Option<Span>),
@@ -146,26 +146,26 @@ enum Stmt {
 
 // -- Top-level declarations --
 
-struct StructDecl {
+pub struct StructDecl {
     name: string,
     typeParams: Vec<TypeParam>,
     fields: Vec<StructField>,
     attributes: Vec<Attribute>,
 }
 
-struct EnumVariant {
+pub struct EnumVariant {
     name: string,
     fields: Vec<MiloType>,
 }
 
-struct EnumDecl {
+pub struct EnumDecl {
     name: string,
     typeParams: Vec<TypeParam>,
     variants: Vec<EnumVariant>,
     attributes: Vec<Attribute>,
 }
 
-struct Function {
+pub struct Function {
     name: string,
     typeParams: Vec<TypeParam>,
     params: Vec<Param>,
@@ -175,13 +175,13 @@ struct Function {
     isVariadic: bool,
 }
 
-struct ImportDecl {
+pub struct ImportDecl {
     path: string,
     names: Option<Vec<string>>,
     span: Option<Span>,
 }
 
-struct TraitMethod {
+pub struct TraitMethod {
     name: string,
     params: Vec<Param>,
     retType: MiloType,
@@ -189,7 +189,7 @@ struct TraitMethod {
     span: Option<Span>,
 }
 
-struct TraitDecl {
+pub struct TraitDecl {
     name: string,
     typeParams: Vec<TypeParam>,
     supertraits: Vec<string>,
@@ -197,7 +197,7 @@ struct TraitDecl {
     span: Option<Span>,
 }
 
-struct ImplDecl {
+pub struct ImplDecl {
     traitName: Option<string>,
     typeName: string,
     typeParams: Vec<TypeParam>,
@@ -208,7 +208,7 @@ struct ImplDecl {
 
 // Module-scope `let NAME: T = <const>` — a global constant. Codegen emits it as
 // an LLVM global with a constant initializer; references load it.
-struct GlobalDecl {
+pub struct GlobalDecl {
     name: string,
     ty: Option<MiloType>,
     value: Heap<Expr>,
@@ -218,12 +218,12 @@ struct GlobalDecl {
 
 // `type Name = i32(min..max)` — a named refinement alias over a base int type.
 // The range is advisory (parsed, not yet enforced); the alias resolves to `base`.
-struct TypeAlias {
+pub struct TypeAlias {
     name: string,
     base: MiloType,
 }
 
-struct Program {
+pub struct Program {
     structs: Vec<StructDecl>,
     enums: Vec<EnumDecl>,
     functions: Vec<Function>,
@@ -239,7 +239,7 @@ struct Program {
 // Span is all-Copy so it needs no impl, but Option<Span> is not Copy and generic
 // enum instantiations can't have methods — hence the free helper fns.
 
-fn cloneSpan(sp: &Option<Span>): Option<Span> {
+pub fn cloneSpan(sp: &Option<Span>): Option<Span> {
     match sp {
         Option.Some(s) => {
             return Option.Some(s)
@@ -250,7 +250,7 @@ fn cloneSpan(sp: &Option<Span>): Option<Span> {
     }
 }
 
-fn cloneGlobal(g: &GlobalDecl): GlobalDecl {
+pub fn cloneGlobal(g: &GlobalDecl): GlobalDecl {
     var ty: Option<MiloType> = Option.None
     match g.ty {
         Option.Some(t) => {
@@ -268,7 +268,7 @@ fn cloneGlobal(g: &GlobalDecl): GlobalDecl {
     }
 }
 
-fn cloneOptI64(o: &Option<i64>): Option<i64> {
+pub fn cloneOptI64(o: &Option<i64>): Option<i64> {
     match o {
         Option.Some(n) => {
             return Option.Some(n)
@@ -279,7 +279,7 @@ fn cloneOptI64(o: &Option<i64>): Option<i64> {
     }
 }
 
-fn cloneOptString(o: &Option<string>): Option<string> {
+pub fn cloneOptString(o: &Option<string>): Option<string> {
     match o {
         Option.Some(s) => {
             return Option.Some(s.clone())
@@ -290,7 +290,7 @@ fn cloneOptString(o: &Option<string>): Option<string> {
     }
 }
 
-fn cloneStrings(v: &Vec<string>): Vec<string> {
+pub fn cloneStrings(v: &Vec<string>): Vec<string> {
     var out: Vec<string> = Vec.new()
     for i in 0..v.len {
         out.push(v[i].clone())
@@ -298,7 +298,7 @@ fn cloneStrings(v: &Vec<string>): Vec<string> {
     return out
 }
 
-fn cloneTypes(v: &Vec<MiloType>): Vec<MiloType> {
+pub fn cloneTypes(v: &Vec<MiloType>): Vec<MiloType> {
     var out: Vec<MiloType> = Vec.new()
     for i in 0..v.len {
         out.push(v[i].clone())
@@ -306,7 +306,7 @@ fn cloneTypes(v: &Vec<MiloType>): Vec<MiloType> {
     return out
 }
 
-fn cloneExprs(v: &Vec<Heap<Expr>>): Vec<Heap<Expr>> {
+pub fn cloneExprs(v: &Vec<Heap<Expr>>): Vec<Heap<Expr>> {
     var out: Vec<Heap<Expr>> = Vec.new()
     for i in 0..v.len {
         out.push(Heap((*v[i]).clone()))
@@ -314,7 +314,7 @@ fn cloneExprs(v: &Vec<Heap<Expr>>): Vec<Heap<Expr>> {
     return out
 }
 
-fn cloneStmts(v: &Vec<Heap<Stmt>>): Vec<Heap<Stmt>> {
+pub fn cloneStmts(v: &Vec<Heap<Stmt>>): Vec<Heap<Stmt>> {
     var out: Vec<Heap<Stmt>> = Vec.new()
     for i in 0..v.len {
         out.push(Heap((*v[i]).clone()))
@@ -322,7 +322,7 @@ fn cloneStmts(v: &Vec<Heap<Stmt>>): Vec<Heap<Stmt>> {
     return out
 }
 
-fn cloneOptStmts(o: &Option<Vec<Heap<Stmt>>>): Option<Vec<Heap<Stmt>>> {
+pub fn cloneOptStmts(o: &Option<Vec<Heap<Stmt>>>): Option<Vec<Heap<Stmt>>> {
     match o {
         Option.Some(v) => {
             return Option.Some(cloneStmts(v))
@@ -333,7 +333,7 @@ fn cloneOptStmts(o: &Option<Vec<Heap<Stmt>>>): Option<Vec<Heap<Stmt>>> {
     }
 }
 
-fn cloneOptType(o: &Option<MiloType>): Option<MiloType> {
+pub fn cloneOptType(o: &Option<MiloType>): Option<MiloType> {
     match o {
         Option.Some(t) => {
             return Option.Some(t.clone())
@@ -655,7 +655,7 @@ impl Clone for Function {
     }
 }
 
-fn cloneParams(v: &Vec<Param>): Vec<Param> {
+pub fn cloneParams(v: &Vec<Param>): Vec<Param> {
     var out: Vec<Param> = Vec.new()
     for i in 0..v.len {
         out.push(v[i].clone())
@@ -663,7 +663,7 @@ fn cloneParams(v: &Vec<Param>): Vec<Param> {
     return out
 }
 
-fn cloneTypeParams(v: &Vec<TypeParam>): Vec<TypeParam> {
+pub fn cloneTypeParams(v: &Vec<TypeParam>): Vec<TypeParam> {
     var out: Vec<TypeParam> = Vec.new()
     for i in 0..v.len {
         out.push(v[i].clone())

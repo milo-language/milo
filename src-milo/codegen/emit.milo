@@ -8,7 +8,7 @@ from "src-milo/ast.milo" import {
 // Aggregate constant `%Struct { <f0>, <f1>, … }` for a struct literal whose fields
 // are all const scalars (int/float/bool). Returns "" if the value isn't such a
 // struct literal, or any field is non-scalar (String/Vec/nested struct).
-fn structLitConst(cg: &Cgen, gllTy: &string, value: &Expr): string {
+pub fn structLitConst(cg: &Cgen, gllTy: &string, value: &Expr): string {
     if !(gllTy.len > 0 && gllTy[0] == 37) {
         return ""
     }
@@ -49,7 +49,7 @@ fn structLitConst(cg: &Cgen, gllTy: &string, value: &Expr): string {
     }
 }
 
-fn constInitOf(e: &Expr, llTy: &string): string {
+pub fn constInitOf(e: &Expr, llTy: &string): string {
     // a pointer global can only be a compile-time-constant null (`0 as *T`); LLVM
     // rejects `global ptr 0`, the null pointer constant is spelled `null`.
     if llTy == "ptr" {
@@ -113,7 +113,7 @@ from "src-milo/target.milo" import {
 }
 
 // Build function signature table from program declarations.
-fn buildFnTable(prog: &Program): Vec<CgFnSig> {
+pub fn buildFnTable(prog: &Program): Vec<CgFnSig> {
     var sigs: Vec<CgFnSig> = Vec.new()
     for i in 0..prog.functions.len {
         // Never bind `prog.functions[i]` to a local: that materializes an owned
@@ -139,7 +139,7 @@ fn buildFnTable(prog: &Program): Vec<CgFnSig> {
 
 // True when `t` is a bare (non-ref, non-pointer, non-array) struct type — the only
 // shape that crosses a C extern boundary by value and needs ABI classification.
-fn isByValStruct(cg: &Cgen, t: &MiloType): bool {
+pub fn isByValStruct(cg: &Cgen, t: &MiloType): bool {
     if t.isPtr || t.isRef || t.isRefMut || t.isArray || t.isFn {
         return false
     }
@@ -157,7 +157,7 @@ fn isByValStruct(cg: &Cgen, t: &MiloType): bool {
 // return. The SAME rendering must appear at the declare AND every call site (an
 // sret/byval attr on one but not the other silently miscompiles on x86_64), so both
 // go through this single source of truth. Returns (paramStrs, retStr).
-fn externLoweredParams(cg: &Cgen, f: &Function): Vec<string> {
+pub fn externLoweredParams(cg: &Cgen, f: &Function): Vec<string> {
     var params: Vec<string> = Vec.new()
     if isByValStruct(cg, f.retType) {
         let rname = stripPercent(resolveTyStr(cg, astTypeStr(f.retType)))
@@ -190,7 +190,7 @@ fn externLoweredParams(cg: &Cgen, f: &Function): Vec<string> {
     return params
 }
 
-fn externLoweredRet(cg: &Cgen, f: &Function): string {
+pub fn externLoweredRet(cg: &Cgen, f: &Function): string {
     if isByValStruct(cg, f.retType) {
         let rname = stripPercent(resolveTyStr(cg, astTypeStr(f.retType)))
         let rc = classifyRet(cg.arch, abiStructOf(cg, rname))
@@ -205,7 +205,7 @@ fn externLoweredRet(cg: &Cgen, f: &Function): string {
 }
 
 // Emit a single function definition or extern declaration.
-fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
+pub fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
     if f.isExtern {
         cg.externFns.insert(f.name.clone(), true)
         var ps = ""
@@ -393,7 +393,7 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
 }
 
 // Register structs, enums, functions in Cgen tables, then emit all functions.
-fn genProgram(prog: Program, sourceDir: string): string {
+pub fn genProgram(prog: Program, sourceDir: string): string {
     var cg = cgenNew()
     cg.sourceDir = sourceDir
 

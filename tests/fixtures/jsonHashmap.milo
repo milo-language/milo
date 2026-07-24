@@ -2,7 +2,7 @@
 // @expect: version=1
 // @expect: missing=no
 
-enum JsonValue {
+pub enum JsonValue {
     Null,
     Bool(bool),
     Number(i64),
@@ -10,21 +10,21 @@ enum JsonValue {
     Object(HashMap<string, Heap<JsonValue>>),
 }
 
-fn isWs(ch: u8): bool {
+pub fn isWs(ch: u8): bool {
     return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
 }
 
-fn isDigit(ch: u8): bool {
+pub fn isDigit(ch: u8): bool {
     return ch >= '0' && ch <= '9'
 }
 
-fn skipWs(s: &string, pos: &mut i64) {
+pub fn skipWs(s: &string, pos: &mut i64) {
     while pos < s.len && isWs(s[pos]) {
         pos = pos + 1
     }
 }
 
-fn parseValue(s: &string, pos: &mut i64): Heap<JsonValue> {
+pub fn parseValue(s: &string, pos: &mut i64): Heap<JsonValue> {
     skipWs(s, pos)
     if pos >= s.len {
         return Heap(JsonValue.Null)
@@ -54,7 +54,7 @@ fn parseValue(s: &string, pos: &mut i64): Heap<JsonValue> {
     return Heap(JsonValue.Null)
 }
 
-fn parseNumber(s: &string, pos: &mut i64): Heap<JsonValue> {
+pub fn parseNumber(s: &string, pos: &mut i64): Heap<JsonValue> {
     var neg: bool = false
     if s[pos] == '-' {
         neg = true
@@ -71,12 +71,12 @@ fn parseNumber(s: &string, pos: &mut i64): Heap<JsonValue> {
     return Heap(JsonValue.Number(n))
 }
 
-fn parseString(s: &string, pos: &mut i64): Heap<JsonValue> {
+pub fn parseString(s: &string, pos: &mut i64): Heap<JsonValue> {
     let value = parseStringRaw(s, pos)
     return Heap(JsonValue.Str(value))
 }
 
-fn parseStringRaw(s: &string, pos: &mut i64): string {
+pub fn parseStringRaw(s: &string, pos: &mut i64): string {
     pos = pos + 1
     var result: string = ""
     while pos < s.len && s[pos] != '"' {
@@ -90,7 +90,7 @@ fn parseStringRaw(s: &string, pos: &mut i64): string {
     return result
 }
 
-fn parseObject(s: &string, pos: &mut i64): Heap<JsonValue> {
+pub fn parseObject(s: &string, pos: &mut i64): Heap<JsonValue> {
     pos = pos + 1
     var entries: HashMap<string, Heap<JsonValue>> = HashMap.new()
     skipWs(s, pos)
@@ -117,7 +117,7 @@ fn parseObject(s: &string, pos: &mut i64): Heap<JsonValue> {
     return Heap(JsonValue.Object(entries))
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let input: string = "{\"name\": \"milo\", \"version\": 1, \"active\": true}"
     var pos: i64 = 0
     let result = parseValue(input, pos)

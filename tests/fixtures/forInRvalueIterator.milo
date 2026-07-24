@@ -8,14 +8,14 @@ from "std/sync" import {
     Channel
 }
 
-fn makeChannel(): Channel<i64> {
+pub fn makeChannel(): Channel<i64> {
     let c = Channel<i64>.new(4)!
     c.send(7)!
     c.close()
     return c
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     for x in makeChannel() {
         print(x)
     }

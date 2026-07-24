@@ -1,7 +1,7 @@
 // @expect: hello
 // @expect: world
 
-fn main(): i32 {
+pub fn main(): i32 {
     let s: string = "hello world"
     var view = s[0..5]
     print(view)

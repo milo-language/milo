@@ -7,7 +7,7 @@ from "std/sha1" import {
 }
 
 // Checked against `shasum -a 1`; git blob object ids use this construction.
-fn main(): i32 {
+pub fn main(): i32 {
     print(sha1(""))
     print(sha1("abc"))
     print(sha1("The quick brown fox jumps over the lazy dog"))

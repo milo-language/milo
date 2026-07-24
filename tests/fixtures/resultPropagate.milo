@@ -1,19 +1,19 @@
 // @expect: got 84
 // @expect: failed: negative
 
-fn validate(x: i32): Result<i32> {
+pub fn validate(x: i32): Result<i32> {
     if x < 0 {
         return Result.Err("negative")
     }
     return Result.Ok(x)
 }
 
-fn doubleValid(x: i32): Result<i32> {
+pub fn doubleValid(x: i32): Result<i32> {
     let v = validate(x)?
     return Result.Ok(v * 2)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = doubleValid(42)
     match a {
         Result.Ok(v) => {

@@ -1,7 +1,7 @@
 // @expect: hello stdout
 // @expect: done
 
-fn main(): i32 {
+pub fn main(): i32 {
     print("hello stdout")
     eprint("this goes to stderr")
     flush()

@@ -7,7 +7,7 @@
 
 @derive(Eq)
 
-struct Vec2 {
+pub struct Vec2 {
     x: i32,
     y: i32,
 }
@@ -44,7 +44,7 @@ impl Div for Vec2 {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = Vec2 {
         x: 5, y: 6
     }

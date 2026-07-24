@@ -9,7 +9,7 @@
 // @expect: true
 // @expect: true
 
-fn main(): i32 {
+pub fn main(): i32 {
     // basic ordering
     print("abc" < "abd")
     print("abd" < "abc")

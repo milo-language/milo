@@ -1,10 +1,10 @@
 // @expect: 25
 
-fn square(x: i32): i32 {
+pub fn square(x: i32): i32 {
     return x * x
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(square(5))
     return 0
 }

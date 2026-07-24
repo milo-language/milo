@@ -1,7 +1,7 @@
 // @expect: A
 // @expect: B
 
-fn main(): i32 {
+pub fn main(): i32 {
     print("A")
     print("B")
     return 0

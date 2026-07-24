@@ -1,10 +1,10 @@
 // closure capturing multiple variables
 
-fn apply(f: (i32) => i32, x: i32): i32 {
+pub fn apply(f: (i32) => i32, x: i32): i32 {
     return f(x)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a: i32 = 10
     let b: i32 = 20
     let c: i32 = 12

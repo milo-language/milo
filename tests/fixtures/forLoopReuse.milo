@@ -9,7 +9,7 @@
 // @expect: 6
 // @expect: 7
 
-fn main(): i32 {
+pub fn main(): i32 {
     var v1: Vec<i32> = Vec.new()
     v1.push(1)
     v1.push(2)

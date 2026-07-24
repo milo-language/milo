@@ -3,12 +3,12 @@
 // @expect: true
 // @expect: found some
 
-enum Maybe {
+pub enum Maybe {
     Just(i32),
     Nothing,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = Maybe.Just(42)
     let b = Maybe.Nothing
     print(a is Maybe.Just)

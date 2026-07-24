@@ -1,33 +1,33 @@
 // Milo's manual struct layout must agree with C for nested structs and array
 // fields — the min(size,8) alignment bug placed a 12-byte inner struct at offset 8
 // (C uses 4). Compare Milo's sizeOf/offsetOf against the C peer's ground truth.
-extern struct Inner {
+pub extern struct Inner {
     a: i32,
     b: i32,
     c: i32,
 }
 
-extern struct Outer {
+pub extern struct Outer {
     tag: i32,
     inner: Inner,
 }
 
-extern struct WithArr {
+pub extern struct WithArr {
     x: i32,
     arr: [i32; 3],
 }
 
-extern fn c_sizeof_inner(): i64
+pub extern fn c_sizeof_inner(): i64
 
-extern fn c_sizeof_outer(): i64
+pub extern fn c_sizeof_outer(): i64
 
-extern fn c_offset_inner(): i64
+pub extern fn c_offset_inner(): i64
 
-extern fn c_sizeof_witharr(): i64
+pub extern fn c_sizeof_witharr(): i64
 
-extern fn c_offset_arr(): i64
+pub extern fn c_offset_arr(): i64
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(sizeOf<Inner>() == c_sizeof_inner())
     print(sizeOf<Outer>() == c_sizeof_outer())
     print(offsetOf<Outer>("inner") == c_offset_inner())

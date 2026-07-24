@@ -1,9 +1,9 @@
 // jsonStringify escapes quotes, backslashes, and control chars in string fields
-struct Msg {
+pub struct Msg {
     kind: string, raw: string, n: i64, ok: bool
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let m = Msg {
         kind: "cap\"s", raw: "a\"b\nc\\d\te", n: -7, ok: false
     }

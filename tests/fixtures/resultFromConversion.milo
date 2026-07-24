@@ -2,41 +2,41 @@
 // @expect: io error: not found: missing.txt
 // @expect: parse error: bad format
 
-enum IoError {
+pub enum IoError {
     NotFound(string),
     PermissionDenied(string),
 }
 
-enum ParseError {
+pub enum ParseError {
     BadFormat(string),
 }
 
-enum AppError {
+pub enum AppError {
     Io(IoError),
     Parse(ParseError),
 }
 
-fn readFile(path: string): Result<string, IoError> {
+pub fn readFile(path: string): Result<string, IoError> {
     if path == "missing.txt" {
         return Result.Err(IoError.NotFound(path))
     }
     return Result.Ok(path.clone())
 }
 
-fn parseData(s: string): Result<i32, ParseError> {
+pub fn parseData(s: string): Result<i32, ParseError> {
     if s == "bad.txt" {
         return Result.Err(ParseError.BadFormat("bad format"))
     }
     return Result.Ok(s.len as i32)
 }
 
-fn process(path: string): Result<i32, AppError> {
+pub fn process(path: string): Result<i32, AppError> {
     let contents = readFile(path)?
     let size = parseData(contents)?
     return Result.Ok(size)
 }
 
-fn showError(e: AppError): void {
+pub fn showError(e: AppError): void {
     match e {
         AppError.Io(io) => {
             match io {
@@ -58,7 +58,7 @@ fn showError(e: AppError): void {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     match process("data.txt") {
         Result.Ok(n) => {
             print("size: ", n)

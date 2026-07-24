@@ -11,7 +11,7 @@ from "std/pool" import {
     Pool, poolNew, poolAlloc, poolFree, poolLive, poolAvailable, poolFull, poolEmpty, poolReset
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var pool = poolNew(16, 3)!
 
     print(pool.live())

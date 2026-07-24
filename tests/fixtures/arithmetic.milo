@@ -1,6 +1,6 @@
 // @expect: 42
 
-fn main(): i32 {
+pub fn main(): i32 {
     let x: i32 = 6 * 7
     print(x)
     return 0

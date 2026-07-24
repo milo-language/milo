@@ -26,11 +26,11 @@
 // @expect: empty count=0
 // @expect: s still usable len=10
 
-fn twoChars(): string {
+pub fn twoChars(): string {
     return "aé"
 }
 
-fn main() {
+pub fn main() {
     let s = "aé漢🎉"
     for cp in s.codePoints() {
         print($"cp={cp}")

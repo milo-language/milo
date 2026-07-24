@@ -1,11 +1,11 @@
 // @expect: 84
 
-fn tryDouble(opt: i32?): i32? {
+pub fn tryDouble(opt: i32?): i32? {
     let val = opt?
     return Option.Some(val * 2)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let result = tryDouble(Option.Some(42))
     print(result!)
     return 0

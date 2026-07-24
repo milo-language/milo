@@ -2,7 +2,7 @@
 // @expect: a
 // Reassigning a var from a clone of a slice of itself is safe: the slice borrow
 // is consumed by .clone() within the statement and must not freeze the next one.
-fn main(): i32 {
+pub fn main(): i32 {
     var s = "abc"
     s = s[0..s.len - 1].clone()
     print(s)

@@ -3,18 +3,18 @@
 // registration — before enums existed — so the aliased enum got mis-tagged as a
 // struct and findFromConversion bailed ("no wrapping variant found").
 
-enum ParseError {
+pub enum ParseError {
     BadFormat(string)
 }
 
-enum AppError {
+pub enum AppError {
     Parse(ParseError),
     Other(string),
 }
 
-type Parsed = Result<i32, AppError>
+pub type Parsed = Result<i32, AppError>
 
-fn parseIt(s: string): Result<i32, ParseError> {
+pub fn parseIt(s: string): Result<i32, ParseError> {
     if s == "bad" {
         return Result.Err(ParseError.BadFormat("bad input"))
     }
@@ -22,12 +22,12 @@ fn parseIt(s: string): Result<i32, ParseError> {
 }
 
 // return type is the alias; `?` must still auto-wrap ParseError into AppError.Parse
-fn process(s: string): Parsed {
+pub fn process(s: string): Parsed {
     let n = parseIt(s)?
     return Result.Ok(n + 100)
 }
 
-fn main() {
+pub fn main() {
     // @expect: ok: 102
     match process("hi") {
         Result.Ok(n) => {

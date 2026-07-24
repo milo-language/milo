@@ -4,12 +4,12 @@
 // match on *h through a borrowed Heap reads the pointee in place; it must not
 // consume it. The owned-match path used to zero the pointee through the
 // borrow, so a second read saw an empty payload (silently).
-enum Ex {
+pub enum Ex {
     Name(string),
     Nil,
 }
 
-fn readName(h: &Heap<Ex>): string {
+pub fn readName(h: &Heap<Ex>): string {
     match *h {
         Ex.Name(n) => {
             return n.clone()
@@ -21,7 +21,7 @@ fn readName(h: &Heap<Ex>): string {
     return ""
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let h = Heap(Ex.Name("alpha"))
     print(readName(h))
     print(readName(h))

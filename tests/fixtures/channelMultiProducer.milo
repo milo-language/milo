@@ -7,7 +7,7 @@ from "std/sync" import {
     Channel
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let ch = Channel<i64>.new(16)!
     var workers: Vec<Promise<i64>> = Vec.new()
 

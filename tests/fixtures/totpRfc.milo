@@ -9,7 +9,7 @@ from "std/totp" import {
 
 // RFC 4226 Appendix D (HOTP, counters 0..2) and RFC 6238 Appendix B (TOTP, SHA-1,
 // 8 digits). Same values `oathtool --totp` prints.
-fn main(): i32 {
+pub fn main(): i32 {
     let secret = "12345678901234567890"
     print(hotp(secret, 0, 6))
     print(hotp(secret, 1, 6))

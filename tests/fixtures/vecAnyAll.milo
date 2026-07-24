@@ -3,7 +3,7 @@
 // @expect: any: false
 // @expect: all: true
 
-fn main(): i32 {
+pub fn main(): i32 {
     var nums: Vec<i32> = Vec.new()
     nums.push(1)
     nums.push(2)

@@ -1,10 +1,10 @@
 // @expect: 10
 
-fn double(x: i64): i64 {
+pub fn double(x: i64): i64 {
     return x + x
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let r: i64 = double(5)
     print(r)
     return 0

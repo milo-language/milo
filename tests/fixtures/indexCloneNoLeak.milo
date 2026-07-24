@@ -6,7 +6,7 @@
 // Indexing a collection of non-Copy elements materialises an independent value,
 // so `v[i].clone()` used to allocate twice and leak the intermediate — unbounded
 // inside a loop.
-fn cloneInLoop(v: &Vec<string>, iters: i64): i64 {
+pub fn cloneInLoop(v: &Vec<string>, iters: i64): i64 {
     var total: i64 = 0
     var i: i64 = 0
     while i < iters {
@@ -17,7 +17,7 @@ fn cloneInLoop(v: &Vec<string>, iters: i64): i64 {
     return total
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var src: Vec<string> = Vec.new()
     src.push("a-heap-allocated-string-payload")
     print(cloneInLoop(src, 3))

@@ -16,7 +16,7 @@ from "std/event" import {
     eventLoopNew, eventLoopClose, setNonblocking, eventRegisterRead, eventPoll
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var fds: [u8; 8] = [0; 8]
     unsafe {
         pipe(fds as *u8)

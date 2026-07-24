@@ -13,7 +13,7 @@ from "std/fmt" import {
     fmt1, fmt2, fmt3, fmt4, join, padLeft, padRight, zeroPad
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(fmt1("hello {}", "world"))
     print(fmt2("{} + {} = 3", "1", "2"))
     print(fmt3("{}/{}/{}", "2024", "01", "15"))

@@ -14,6 +14,7 @@
 import type {
   Program, Function, Expr, Stmt, MiloType, Pattern, Span,
   StructDecl, EnumDecl, TraitDecl, InterfaceDecl, TypeAlias, GlobalDecl, ImplDecl,
+  DeclOrigins, DeclOrigin,
 } from "./ast";
 
 export interface VisibilityViolation {
@@ -24,42 +25,26 @@ export interface VisibilityViolation {
   span?: Span;
 }
 
-interface DeclIndex {
-  // names with ≥1 `pub` definition — importable from anywhere
-  pubValues: Set<string>;
-  pubTypes: Set<string>;
-  // private definitions: name → set of files that define it privately
-  privValueFiles: Map<string, Set<string>>;
-  privTypeFiles: Map<string, Set<string>>;
-}
-
-function addPriv(m: Map<string, Set<string>>, name: string, file: string) {
-  let s = m.get(name);
-  if (!s) { s = new Set(); m.set(name, s); }
-  s.add(file);
-}
-
-function buildIndex(prog: Program): DeclIndex {
-  const idx: DeclIndex = {
-    pubValues: new Set(), pubTypes: new Set(),
-    privValueFiles: new Map(), privTypeFiles: new Map(),
+// Fallback index for a program that never went through the resolver (direct
+// TypeChecker use in tests/tools). Derived from the merged decls, so it cannot
+// see definitions the flat namespace already collapsed — the resolver's
+// declOrigins is authoritative whenever it is present.
+function deriveOrigins(prog: Program): DeclOrigins {
+  const origins: DeclOrigins = { values: new Map(), types: new Map() };
+  const note = (m: Map<string, DeclOrigin>, name: string, isPub: boolean | undefined, file?: string) => {
+    let e = m.get(name);
+    if (!e) { e = { files: new Set(), anyPub: false }; m.set(name, e); }
+    if (file) e.files.add(file);
+    if (isPub) e.anyPub = true;
   };
-  const value = (name: string, isPub: boolean | undefined, file?: string) => {
-    if (isPub) idx.pubValues.add(name);
-    else if (file) addPriv(idx.privValueFiles, name, file);
-  };
-  const type = (name: string, isPub: boolean | undefined, file?: string) => {
-    if (isPub) idx.pubTypes.add(name);
-    else if (file) addPriv(idx.privTypeFiles, name, file);
-  };
-  for (const f of prog.functions) value(f.name, f.isPub, f.span?.file ?? f.sourceFile);
-  for (const g of prog.globals) value(g.name, g.isPub, g.span?.file);
-  for (const s of prog.structs) type(s.name, s.isPub, s.span?.file);
-  for (const e of prog.enums) type(e.name, e.isPub, e.span?.file);
-  for (const t of prog.traits) type(t.name, t.isPub, t.span?.file);
-  for (const i of prog.interfaces) type(i.name, i.isPub, i.span?.file);
-  for (const a of prog.typeAliases) type(a.name, a.isPub, a.span?.file);
-  return idx;
+  for (const f of prog.functions) note(origins.values, f.name, f.isPub, f.span?.file ?? f.sourceFile);
+  for (const g of prog.globals) note(origins.values, g.name, g.isPub, g.span?.file);
+  for (const s of prog.structs) note(origins.types, s.name, s.isPub, s.span?.file);
+  for (const e of prog.enums) note(origins.types, e.name, e.isPub, e.span?.file);
+  for (const t of prog.traits) note(origins.types, t.name, t.isPub, t.span?.file);
+  for (const i of prog.interfaces) note(origins.types, i.name, i.isPub, i.span?.file);
+  for (const a of prog.typeAliases) note(origins.types, a.name, a.isPub, a.span?.file);
+  return origins;
 }
 
 // A minimal scope stack. Two namespaces: values (vars/fns) and types (generics).
@@ -77,36 +62,33 @@ class Scopes {
 }
 
 export function checkVisibility(prog: Program): VisibilityViolation[] {
-  const idx = buildIndex(prog);
+  const idx = prog.declOrigins ?? deriveOrigins(prog);
   const out: VisibilityViolation[] = [];
 
   // Report at most one violation per (name, refFile) — repeated uses of the same
   // private import are one mistake, and flooding the diagnostics helps nobody.
   const seen = new Set<string>();
 
-  const refValue = (name: string, sc: Scopes, refFile: string | undefined, span?: Span) => {
-    if (!refFile || sc.hasValue(name)) return;
-    if (idx.pubValues.has(name)) return;
-    const files = idx.privValueFiles.get(name);
-    if (!files) return; // not a user top-level value (builtin/unknown) — skip
-    if (files.has(refFile)) return; // this file's own private decl
-    const key = `v:${name}:${refFile}`;
+  const ref = (
+    kind: "value" | "type", m: Map<string, DeclOrigin>, shadowed: boolean,
+    name: string, refFile: string | undefined, span?: Span,
+  ) => {
+    if (!refFile || shadowed) return;
+    const o = m.get(name);
+    if (!o) return;            // not a user top-level decl (builtin/unknown) — skip
+    if (o.anyPub) return;      // exported by at least one definition
+    if (o.files.has(refFile)) return; // this file defines it itself
+    const key = `${kind}:${name}:${refFile}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ name, kind: "value", refFile, declFiles: [...files], span });
+    out.push({ name, kind, refFile, declFiles: [...o.files], span });
   };
 
-  const refType = (name: string, sc: Scopes, refFile: string | undefined, span?: Span) => {
-    if (!refFile || sc.hasType(name)) return;
-    if (idx.pubTypes.has(name)) return;
-    const files = idx.privTypeFiles.get(name);
-    if (!files) return;
-    if (files.has(refFile)) return;
-    const key = `t:${name}:${refFile}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push({ name, kind: "type", refFile, declFiles: [...files], span });
-  };
+  const refValue = (name: string, sc: Scopes, refFile: string | undefined, span?: Span) =>
+    ref("value", idx.values, sc.hasValue(name), name, refFile, span);
+
+  const refType = (name: string, sc: Scopes, refFile: string | undefined, span?: Span) =>
+    ref("type", idx.types, sc.hasType(name), name, refFile, span);
 
   const walkType = (ty: MiloType | null | undefined, sc: Scopes, refFile: string | undefined, span?: Span) => {
     if (!ty) return;

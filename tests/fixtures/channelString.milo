@@ -9,7 +9,7 @@ from "std/sync" import {
     Channel
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let ch = Channel<string>.new(8)!
 
     let t = Promise<i64>.blocking(move(): i64 => {

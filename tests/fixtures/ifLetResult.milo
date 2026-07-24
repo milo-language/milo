@@ -1,12 +1,12 @@
 // @expect: ok: 99
 // @expect: err: -1
 
-enum Result {
+pub enum Result {
     Ok(i32),
     Err(i32),
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = Result.Ok(99)
     if let Result.Ok(v) = a {
         print("ok: ", v)

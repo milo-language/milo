@@ -1,7 +1,7 @@
 // @expect: 42
 // @expect: 0
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = Option.Some(42)
     let b: i32? = Option.None
     print(a ?? 0)

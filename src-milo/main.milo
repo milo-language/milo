@@ -59,9 +59,9 @@ from "src-milo/target.milo" import {
 // Intermediate artifact paths must be unique per process: `bun test` compiles
 // fixtures concurrently, and a shared /tmp/milo_out.ll had every milo-self build
 // clobbering its neighbours.
-extern fn getpid(): i32
+pub extern fn getpid(): i32
 
-fn tmpPath(stem: &string, ext: &string): string {
+pub fn tmpPath(stem: &string, ext: &string): string {
     var p = "/tmp/milo_"
     p = p + stem.clone()
     p = p + "_"
@@ -69,7 +69,7 @@ fn tmpPath(stem: &string, ext: &string): string {
     return p + ext.clone()
 }
 
-fn findStdlibRoot(sourceDir: &string): string {
+pub fn findStdlibRoot(sourceDir: &string): string {
     match getEnv("MILO_ROOT") {
         Option.Some(root) => {
             return root
@@ -93,7 +93,7 @@ fn findStdlibRoot(sourceDir: &string): string {
     return sourceDir.clone()
 }
 
-fn compile(path: string): string {
+pub fn compile(path: string): string {
     var source = ""
     match readFile(path.clone()) {
         Result.Ok(s) => {
@@ -158,7 +158,7 @@ fn compile(path: string): string {
 
 // Scan the emitted IR for extern symbols that need a link library, mirroring the
 // TS driver's detectLibs. Only SSL/crypto/sqlite are auto-linked.
-fn detectLibs(ir: &string, os: &string): string {
+pub fn detectLibs(ir: &string, os: &string): string {
     var libs = ""
     if ir.contains("@SSL_") || ir.contains("@TLS_client_method") {
         if os == "darwin" {
@@ -183,7 +183,7 @@ fn detectLibs(ir: &string, os: &string): string {
 // Link LLVM IR with clang when available, otherwise mirror the TS driver's
 // llc + system C compiler path. Some Linux dev hosts ship LLVM tools without a
 // clang frontend; linking already-emitted IR does not require that frontend.
-fn linkIr(irFile: &string, output: &string, libs: &string): i32 {
+pub fn linkIr(irFile: &string, output: &string, libs: &string): i32 {
     let objFile = irFile.clone() + ".o"
     let command = "if command -v clang >/dev/null 2>&1; then clang -Wno-override-module -O2 -o " + output.clone() + " " + irFile.clone() + libs.clone() + "; else llc -filetype=obj -O2 " + irFile.clone() + " -o " + objFile.clone() + " && cc -o " + output.clone() + " " + objFile + libs.clone() + "; fi"
     match run(command) {
@@ -196,7 +196,7 @@ fn linkIr(irFile: &string, output: &string, libs: &string): i32 {
     }
 }
 
-fn main() {
+pub fn main() {
     let argv = args()
     if argv.len < 2 {
         print("usage: milo <command> <file> [options]")

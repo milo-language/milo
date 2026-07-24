@@ -1,11 +1,11 @@
 // @expect: bob
 // Returning a concrete boxed value where the fn's return type is a boxed
 // interface coerces to the trait object (parity with let-bindings / call args).
-interface Greeter {
+pub interface Greeter {
     fn name(self: &Self): string
 }
 
-struct P {
+pub struct P {
     n: string
 }
 
@@ -15,14 +15,14 @@ impl P {
     }
 }
 
-fn mk(): Heap<Greeter> {
+pub fn mk(): Heap<Greeter> {
     return Heap(P {
         n: "bob"
     }
     )
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let g = mk()
     print(g.name())
     return 0

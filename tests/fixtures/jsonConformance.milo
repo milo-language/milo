@@ -6,7 +6,7 @@ from "std/json" import {
     jsonParse
 }
 
-fn ck(input: string, want: bool, name: string): i64 {
+pub fn ck(input: string, want: bool, name: string): i64 {
     var got: bool = false
     match jsonParse(input) {
         Result.Ok(j) => {
@@ -23,7 +23,7 @@ fn ck(input: string, want: bool, name: string): i64 {
     return 0
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var fails: i64 = 0
     fails = fails + ck("\"A JSON payload should be an object or array, not a string.\"", true, "fail1_toplevel_string")
     fails = fails + ck("[\"Unclosed array\"", false, "fail2_unclosed_array")

@@ -7,7 +7,7 @@
 // advanceChar (lexer.milo:51) reads lex.src[pos] with NO local guard, relying
 // on its callers' loop condition  pos < len  (and pos >= 0, which holds because
 // pos starts at 0 and only increments). Proven: that index is in bounds.
-fn advanceCharIndex(pos: i64, len: i64): i64
+pub fn advanceCharIndex(pos: i64, len: i64): i64
 requires pos >= 0
 requires pos < len
 ensures result >= 0
@@ -24,7 +24,7 @@ ensures result < len
 // exact hole: prove the version below WITHOUT the `pos + offset >= 0` line and
 // the prover returns a counterexample (pos=0, offset=-1, len>0). With both
 // guards, the access is proven safe for any offset, including negative lookback.
-fn peekCharAtIndex(pos: i64, offset: i64, len: i64): i64
+pub fn peekCharAtIndex(pos: i64, offset: i64, len: i64): i64
 requires pos >= 0
 requires pos < len
 requires pos + offset >= 0
@@ -35,7 +35,7 @@ ensures result < len
     return pos + offset
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(advanceCharIndex(3, 10))
     print(peekCharAtIndex(3, 1, 10))
     return 0

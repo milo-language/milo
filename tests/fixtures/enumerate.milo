@@ -2,7 +2,7 @@
 // @expect: 1: 20
 // @expect: 2: 30
 
-fn main(): i32 {
+pub fn main(): i32 {
     var v: Vec<i32> = [10, 20, 30]
     for i, val in v {
         print($"{i}: {val}")

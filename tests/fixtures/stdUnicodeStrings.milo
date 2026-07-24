@@ -10,7 +10,7 @@ from "std/string" import {
     strContains, strToLower, strToUpper, strTrim, strTrimEnd, strTrimStart
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(strToUpper("hello world"))
     print(strToLower("HELLO WORLD"))
     print(strTrim("  hello  "))

@@ -3,15 +3,15 @@
 // checker never seeded type params from explicit args, so a param nested past
 // what inference walks (T in Vec<Promise<T>>) could not be pinned.
 
-fn identity<T>(x: T): T {
+pub fn identity<T>(x: T): T {
     return x
 }
 
-fn first<T>(v: Vec<T>): T {
+pub fn first<T>(v: Vec<T>): T {
     return v[0]
 }
 
-fn main() {
+pub fn main() {
     // @expect: 42
     let a = identity<i32>(41)
     print((a + 1).toString())

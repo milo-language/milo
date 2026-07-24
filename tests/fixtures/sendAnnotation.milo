@@ -4,7 +4,7 @@ from "std/runtime" import {
     Promise
 }
 
-struct SafeHandle {
+pub struct SafeHandle {
     _ptr: *u8,
 }
 
@@ -14,7 +14,7 @@ unsafe
 impl Send for SafeHandle {
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let h = SafeHandle {
         _ptr: 0 as *u8
     }

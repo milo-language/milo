@@ -2,7 +2,7 @@
 // exit code from main's return register. Regression test for the void-@main codegen fix.
 // @expect: 42
 
-fn main() {
+pub fn main() {
     let answer = 42
     print(answer)
 }

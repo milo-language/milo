@@ -6,7 +6,7 @@
 // @expect: baz
 // @expect: 3
 
-fn main(): i32 {
+pub fn main(): i32 {
     let s = "  hello   world  "
     let words = s.splitWhitespace()
     print(words[0])

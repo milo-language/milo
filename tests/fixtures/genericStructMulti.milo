@@ -1,12 +1,12 @@
 // @expect: 10 20
 // @expect: hello
 
-struct Pair<A, B> {
+pub struct Pair<A, B> {
     first: A,
     second: B,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let p1 = Pair {
         first: 10, second: 20
     }

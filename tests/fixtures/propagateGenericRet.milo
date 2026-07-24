@@ -9,12 +9,12 @@ from "std/sync" import {
     Channel
 }
 
-fn mkChan(): Result<Channel<string>> {
+pub fn mkChan(): Result<Channel<string>> {
     let c = Channel<string>.new(4)?
     return Result.Ok(c)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let ch = mkChan()!
     ch.send("ok")!
     match ch.recv() {

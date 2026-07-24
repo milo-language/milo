@@ -2,11 +2,11 @@
 // @expect: 42
 // @expect: hello
 
-struct Container<T> {
+pub struct Container<T> {
     items: Vec<T>,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var c: Container<i32> = Container {
         items: Vec.new()
     }

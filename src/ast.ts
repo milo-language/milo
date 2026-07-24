@@ -247,6 +247,18 @@ export interface GlobalDecl {
   isPub?: boolean;
 }
 
+// Where each top-level name was declared, recorded per file BEFORE the flat
+// namespace collapses same-named decls. Visibility needs the pre-collapse view:
+// a decl deduped away (identical bodies in two modules) or overridden (a user fn
+// beating a std one) is still a real definition in its own file, and that file's
+// own references to it are legal. Derived from the merged program it would look
+// private-to-somewhere-else and produce false errors.
+export interface DeclOrigin { files: Set<string>; anyPub: boolean }
+export interface DeclOrigins {
+  values: Map<string, DeclOrigin>; // fns, globals
+  types: Map<string, DeclOrigin>;  // structs, enums, traits, interfaces, aliases
+}
+
 export interface Program {
   structs: StructDecl[];
   enums: EnumDecl[];
@@ -257,6 +269,7 @@ export interface Program {
   typeAliases: TypeAlias[];
   interfaces: InterfaceDecl[];
   globals: GlobalDecl[];
+  declOrigins?: DeclOrigins; // set by the resolver; absent for a bare Parser program
   userFnNames?: Set<string>;
   userImplKeys?: Set<string>;   // `${typeName}.${method}` for user-defined impl methods
   entryFile?: string;           // the file being compiled; imports carry their own span.file

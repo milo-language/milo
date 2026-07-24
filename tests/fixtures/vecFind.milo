@@ -1,7 +1,7 @@
 // @expect: found: 3
 // @expect: not found
 
-fn main(): i32 {
+pub fn main(): i32 {
     var nums: Vec<i32> = Vec.new()
     nums.push(1)
     nums.push(2)

@@ -4,7 +4,7 @@
 // @expect: 3232235777
 // @expect: 0 0 0 0 0 0 0 0
 
-struct SockAddrIn {
+pub struct SockAddrIn {
     sinLen: u8,
     sinFamily: u8,
     sinPort: u16,
@@ -12,7 +12,7 @@ struct SockAddrIn {
     sinZero: [u8; 8],
 }
 
-fn printAddr(a: &SockAddrIn): void {
+pub fn printAddr(a: &SockAddrIn): void {
     print(a.sinLen)
     print(a.sinFamily)
     print(a.sinPort)
@@ -20,7 +20,7 @@ fn printAddr(a: &SockAddrIn): void {
     print(a.sinZero[0], " ", a.sinZero[1], " ", a.sinZero[2], " ", a.sinZero[3], " ", a.sinZero[4], " ", a.sinZero[5], " ", a.sinZero[6], " ", a.sinZero[7])
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let addr = SockAddrIn {
         sinLen: 16,
         sinFamily: 2,

@@ -1,12 +1,12 @@
 // @expect: 3
 // @expect: 7
 
-struct Point {
+pub struct Point {
     x: i32,
     y: i32,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let p = Point {
         x: 3, y: 7
     }

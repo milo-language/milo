@@ -2,7 +2,7 @@
 // @expect: 20
 // @expect: 30
 
-fn main(): i32 {
+pub fn main(): i32 {
     let arr = [10, 20, 30]
     print(arr[0])
     print(arr[1])

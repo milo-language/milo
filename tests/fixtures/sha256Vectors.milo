@@ -8,7 +8,7 @@ from "std/sha256" import {
 
 // FIPS 180-4 example vectors + the classic million-'a' vector, checked against
 // the system `shasum -a 256`.
-fn main(): i32 {
+pub fn main(): i32 {
     print(sha256(""))
     print(sha256("abc"))
     print(sha256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"))

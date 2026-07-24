@@ -1,14 +1,14 @@
 // @expect: 42
 
-fn doubleIt(x: &mut i32) {
+pub fn doubleIt(x: &mut i32) {
     x = x * 2
 }
 
-fn readIt(x: &i32): i32 {
+pub fn readIt(x: &i32): i32 {
     return x
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var n: i32 = 21
     doubleIt(n)
     print(readIt(n))

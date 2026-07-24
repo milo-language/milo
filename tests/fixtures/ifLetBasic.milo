@@ -1,12 +1,12 @@
 // @expect: got 42
 // @expect: done
 
-enum Option {
+pub enum Option {
     Some(i32),
     None,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let x = Option.Some(42)
     if let Option.Some(val) = x {
         print("got ", val)

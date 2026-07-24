@@ -4,7 +4,7 @@ from "std/log" import {
     logDebug, logError, logInfo, logWarn
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     logInfo("server starting")
     logWarn("disk space low")
     logError("connection failed")

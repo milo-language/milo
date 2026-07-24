@@ -3,18 +3,18 @@
 // borrowed string payloads must read the arena slot, survive repeated matches,
 // and .clone() out of the borrow must yield an owned copy.
 
-enum Node {
+pub enum Node {
     Word(string),
     Pair(string, i64),
     Num(i64),
     Nothing,
 }
 
-struct Arena {
+pub struct Arena {
     nodes: Vec<Node>,
 }
 
-fn describe(a: &Arena, i: i64): string {
+pub fn describe(a: &Arena, i: i64): string {
     match a.nodes[i] {
         Node.Word(w) => {
             return "word:" + w.clone()
@@ -31,7 +31,7 @@ fn describe(a: &Arena, i: i64): string {
     }
 }
 
-fn total(a: &Arena): i64 {
+pub fn total(a: &Arena): i64 {
     var sum: i64 = 0
     var i: i64 = 0
     while i < a.nodes.len() {
@@ -50,7 +50,7 @@ fn total(a: &Arena): i64 {
     return sum
 }
 
-fn main() {
+pub fn main() {
     var nodes: Vec<Node> = Vec.new()
     nodes.push(Node.Word("hello"))
     nodes.push(Node.Pair("k", 7))

@@ -3,11 +3,11 @@
 // concrete to the interface, and dynamic dispatch through the field works.
 // (Both broke before interface names were pre-registered so `Heap<Counter>`
 // field types resolved their inner to an interface, not a default struct.)
-interface Counter {
+pub interface Counter {
     fn value(self: &Self): i64
 }
 
-struct K {
+pub struct K {
     n: i64
 }
 
@@ -17,11 +17,11 @@ impl K {
     }
 }
 
-struct Wrap {
+pub struct Wrap {
     c: Heap<Counter>
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let w = Wrap {
         c: Heap(K {
             n: 7

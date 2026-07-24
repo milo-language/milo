@@ -10,7 +10,7 @@ from "std/regex" import {
     regexFind, regexFindAll, regexMatch, regexNew
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     match regexNew("[0-9]+") {
         Option.Some(re) => {
             if regexMatch(re, "hello 123") {

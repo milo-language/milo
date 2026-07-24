@@ -1,10 +1,10 @@
 // closure mutating a captured var — visible outside
 
-fn callIt(f: () => void) {
+pub fn callIt(f: () => void) {
     f()
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var count: i32 = 0
     callIt(() => {
         count = count + 1

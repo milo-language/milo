@@ -1,6 +1,6 @@
 // @runtime-error: invariant clause violated
 
-fn main(): i32 {
+pub fn main(): i32 {
     var i: i32 = 0
     while i < 10
     invariant

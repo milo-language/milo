@@ -1,6 +1,6 @@
 // @expect: 99
 
-fn main(): i32 {
+pub fn main(): i32 {
     var arr = [1, 2, 3]
     arr[1] = 99
     print(arr[1])

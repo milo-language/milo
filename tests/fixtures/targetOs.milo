@@ -8,9 +8,9 @@
 // time, or the link fails with an undefined symbol. That is the real assertion:
 // the dead branch is never lowered or codegen'd, only type-checked.
 
-extern fn __milo_symbol_that_does_not_exist(): i32
+pub extern fn __milo_symbol_that_does_not_exist(): i32
 
-fn main(): i32 {
+pub fn main(): i32 {
     let os = @targetOs()
     var seen = 0
     if os == "darwin" {

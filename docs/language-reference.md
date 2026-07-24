@@ -1288,7 +1288,7 @@ All imports must be explicit — list exactly which symbols you use. No `import 
 Declarations are **file-private by default**. A name is visible only inside the file
 that declares it; `pub` exports it so other files can import or reference it.
 
-```milo
+```milo skip
 pub fn parse(s: string): Result<Doc, Error> { ... }   // exported — importable elsewhere
 fn scanToken(s: string, i: i64): Token { ... }        // file-private — this file only
 ```

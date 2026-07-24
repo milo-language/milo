@@ -6,21 +6,21 @@
 // call, which resolved to the user's global instead of http's own parameter and reported
 // `expected &mut Context, got Request` — a type error inside a file the user never opened.
 // The workaround in the docs was to rename the user's function.
-fn apply(cb: (i64) => i64): i64 {
+pub fn apply(cb: (i64) => i64): i64 {
     return cb(1)
 }
 
 // Same name, deliberately incompatible signature: if the global wins, this is a type
 // error rather than a wrong answer, which is how the bug announced itself.
-fn cb(s: string): i64 {
+pub fn cb(s: string): i64 {
     return 99
 }
 
-fn twice(x: i64): i64 {
+pub fn twice(x: i64): i64 {
     return x * 2
 }
 
-fn main() {
+pub fn main() {
     // @expect: 2
     print(apply((x) => x * 2))
 

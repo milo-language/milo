@@ -23,7 +23,7 @@ from "src-milo/codegen/types.milo" import {
 // enum transitively containing one. Recursion terminates because self-reference
 // only ever goes through Heap<T> (a bare ptr), which returns true without
 // recursing into its pointee.
-fn cgNeedsDrop(cg: &Cgen, tyRaw: &string): bool {
+pub fn cgNeedsDrop(cg: &Cgen, tyRaw: &string): bool {
     let ty = resolveTyStr(cg, tyRaw)
     if ty == "string" {
         return true
@@ -65,13 +65,13 @@ fn cgNeedsDrop(cg: &Cgen, tyRaw: &string): bool {
 }
 
 // Zero the slot at `addr` (typed `ty`), so a subsequent drop of it is a no-op.
-fn zeroStore(cg: &mut Cgen, addr: &string, ty: &string) {
+pub fn zeroStore(cg: &mut Cgen, addr: &string, ty: &string) {
     emit(cg, "  store " + llType(resolveTyStr(cg, ty)) + " zeroinitializer, ptr " + addr.clone() + "\n")
 }
 
 // Emit code that drops the value stored at `addr` (a pointer to a value of type
 // `tyRaw`). Guarded so a zeroed/uninitialized slot is a safe no-op.
-fn emitDropValue(cg: &mut Cgen, addr: &string, tyRaw: &string) {
+pub fn emitDropValue(cg: &mut Cgen, addr: &string, tyRaw: &string) {
     ensureFree(cg)
     let ty = resolveTyStr(cg, tyRaw)
     if ty == "string" {
@@ -174,7 +174,7 @@ fn emitDropValue(cg: &mut Cgen, addr: &string, tyRaw: &string) {
 }
 
 // Whether a drop helper of this name has already been emitted this module.
-fn dropHelperEmitted(cg: &Cgen, hn: &string): bool {
+pub fn dropHelperEmitted(cg: &Cgen, hn: &string): bool {
     for i in 0..cg.dropHelpers.len {
         if cg.dropHelpers[i] == hn {
             return true
@@ -186,7 +186,7 @@ fn dropHelperEmitted(cg: &Cgen, hn: &string): bool {
 // Emit `define void @milo.drop.struct.NAME(ptr %self)` — drops each droppable
 // field in declaration order. Reuses genClosure's body-buffer save/swap so the
 // helper is emitted as its own top-level function into cg.globals.
-fn ensureStructDropHelper(cg: &mut Cgen, name: &string) {
+pub fn ensureStructDropHelper(cg: &mut Cgen, name: &string) {
     let hn = "milo.drop.struct." + name.clone()
     if dropHelperEmitted(cg, hn) {
         return
@@ -219,7 +219,7 @@ fn ensureStructDropHelper(cg: &mut Cgen, name: &string) {
 // drops the droppable payload fields of the active variant. Enum layout is
 // `{ i32 tag, [slots x i64] payload }`; the payload blob is reinterpreted as the
 // variant's struct type, exactly as genMatch binds payloads.
-fn ensureEnumDropHelper(cg: &mut Cgen, name: &string) {
+pub fn ensureEnumDropHelper(cg: &mut Cgen, name: &string) {
     let hn = "milo.drop.enum." + name.clone()
     if dropHelperEmitted(cg, hn) {
         return
@@ -288,7 +288,7 @@ fn ensureEnumDropHelper(cg: &mut Cgen, name: &string) {
 
 // Payload struct type `{ ty0, ty1, ... }` — a local copy of expr.milo's
 // variantStructTy (that file imports this one, so it can't be imported back).
-fn variantStructTyDrop(payloadTypes: &Vec<string>): string {
+pub fn variantStructTyDrop(payloadTypes: &Vec<string>): string {
     var s = "{ "
     for i in 0..payloadTypes.len {
         if i > 0 {

@@ -1,24 +1,24 @@
 // @expect: length: 5
 // @expect: missing: readme.md
 
-enum FileError {
+pub enum FileError {
     Missing(string),
     Locked(string),
 }
 
-fn readFile(path: string): Result<string, FileError> {
+pub fn readFile(path: string): Result<string, FileError> {
     if path == "readme.md" {
         return Result.Err(FileError.Missing(path))
     }
     return Result.Ok("hello")
 }
 
-fn fileLength(path: string): Result<i32, FileError> {
+pub fn fileLength(path: string): Result<i32, FileError> {
     let contents = readFile(path)?
     return Result.Ok(contents.len as i32)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     match fileLength("data.txt") {
         Result.Ok(n) => {
             print("length: ", n)

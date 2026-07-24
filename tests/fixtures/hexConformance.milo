@@ -12,7 +12,7 @@ from "std/hex" import {
     hexEncode, hexDecode
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print("empty=[", hexEncode(""), "]")
     print("f=", hexEncode("f"))
     print("fo=", hexEncode("fo"))

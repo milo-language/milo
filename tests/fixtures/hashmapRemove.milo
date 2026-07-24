@@ -6,7 +6,7 @@
 // @expect: has 1: true
 // @expect: has 3: true
 
-fn main(): i32 {
+pub fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap.new()
     m.insert(1, 10)
     m.insert(2, 20)

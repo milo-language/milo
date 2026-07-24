@@ -6,7 +6,7 @@ from "std/xxhash" import {
     xxh64Hex
 }
 
-fn main() {
+pub fn main() {
     // @expect: ef46db3751d8e999
     print(xxh64Hex("", 0))
     // @expect: 45ab6734b21e6968

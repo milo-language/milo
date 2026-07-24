@@ -1,10 +1,10 @@
-var ptr: *u8 = 0 as *u8
+pub var ptr: *u8 = 0 as *u8
 
-fn setPtr(p: *u8): void {
+pub fn setPtr(p: *u8): void {
     ptr = p
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(ptr as i64)
     return 0
 }

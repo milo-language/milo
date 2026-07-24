@@ -1,7 +1,7 @@
 // @expect: 42
 // @expect: hello
 
-fn main(): i32 {
+pub fn main(): i32 {
     let b = Heap(42)
     print(*b)
 

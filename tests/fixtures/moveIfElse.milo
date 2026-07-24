@@ -1,14 +1,14 @@
 // @expect: 1
 
-struct Point {
+pub struct Point {
     x: i32, y: i32
 }
 
-fn consume(p: Point): i32 {
+pub fn consume(p: Point): i32 {
     return p.x
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let p = Point {
         x: 1, y: 2
     }

@@ -5,7 +5,7 @@
 // @expect: big
 // @expect: small
 
-fn main(): i32 {
+pub fn main(): i32 {
     let x = if true {
         10
     } else {

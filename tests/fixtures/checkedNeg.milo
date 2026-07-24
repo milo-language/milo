@@ -3,7 +3,7 @@
 // @expect: negmin
 // @expect: 7
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a: i32 = 5
     print(a.wrappingNeg()) // -5
 

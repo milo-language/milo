@@ -1,7 +1,7 @@
 // @expect: 420
 // @expect: 0
 
-fn main(): i32 {
+pub fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap.new()
     m.insert(42, 420)
     let v1 = m.getOrDefault(42, 0)

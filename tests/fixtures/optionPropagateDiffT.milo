@@ -1,19 +1,19 @@
 // @expect: got 3
 // @expect: none
 
-fn getName(ok: bool): string? {
+pub fn getName(ok: bool): string? {
     if !ok {
         return Option.None
     }
     return Option.Some("abc")
 }
 
-fn nameLen(ok: bool): i32? {
+pub fn nameLen(ok: bool): i32? {
     let s = getName(ok)?
     return Option.Some(s.len as i32)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     match nameLen(true) {
         Option.Some(n) => {
             print("got ", n)

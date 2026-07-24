@@ -4,14 +4,14 @@
 // live and usable afterwards. Same Copy gate as unwrapOr.
 //
 // If the gate ever widens to consume unconditionally, this fixture stops compiling.
-fn halveEven(n: &i64): Result<i64, i64> {
+pub fn halveEven(n: &i64): Result<i64, i64> {
     if n % 2 != 0 {
         return Result.Err(-1)
     }
     return Result.Ok(n / 2)
 }
 
-fn describe(r: Result<i64, i64>): string {
+pub fn describe(r: Result<i64, i64>): string {
     match r {
         Result.Ok(v) => {
             return "ok:" + v.toString()
@@ -22,7 +22,7 @@ fn describe(r: Result<i64, i64>): string {
     }
 }
 
-fn main() {
+pub fn main() {
     // E is i64 (Copy) — map forwards the Err payload, so r survives every call.
     let r: Result<i64, i64> = Result.Ok(10)
     // @expect: ok:20

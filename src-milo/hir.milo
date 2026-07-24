@@ -9,29 +9,29 @@ from "src-milo/checker/types.milo" import {
 
 // -- Expressions --
 
-struct HIRArg {
+pub struct HIRArg {
     expr: Heap<HIRExpr>,
     passByRef: bool,
     refMut: bool,
 }
 
-struct HIRStructField {
+pub struct HIRStructField {
     name: string,
     value: Heap<HIRExpr>,
 }
 
-struct CaptureInfo {
+pub struct CaptureInfo {
     name: string,
     ty: TypeKind,
     mutable: bool,
 }
 
-struct ClosureParam {
+pub struct ClosureParam {
     name: string,
     ty: TypeKind,
 }
 
-enum HIRExpr {
+pub enum HIRExpr {
     IntLit(i64, TypeKind, Option<Span>),
     FloatLit(f64, TypeKind, Option<Span>),
     BoolLit(bool, TypeKind, Option<Span>),
@@ -77,7 +77,7 @@ enum HIRExpr {
 
 // -- Statements --
 
-enum HIRStmt {
+pub enum HIRStmt {
     Let(string, TypeKind, Heap<HIRExpr>, bool, Option<Span>), // name, type, value, mutable
     Assign(Heap<HIRExpr>, Heap<HIRExpr>, Option<Span>),
     Return(Option<Heap<HIRExpr>>, TypeKind, Option<Span>), // value, retType
@@ -94,17 +94,17 @@ enum HIRStmt {
 
 // -- Match arms --
 
-struct HIRMatchArm {
+pub struct HIRMatchArm {
     pattern: HIRPattern,
     body: Vec<Heap<HIRStmt>>,
 }
 
-struct PatternBinding {
+pub struct PatternBinding {
     name: string,
     ty: TypeKind,
 }
 
-enum HIRPattern {
+pub enum HIRPattern {
     EnumPattern(string, Vec<PatternBinding>, i32), // variant, bindings, tag
     LiteralPattern(string, string), // value, literalKind ("int"|"float"|"string"|"char"|"bool")
     WildcardPattern,
@@ -112,14 +112,14 @@ enum HIRPattern {
 
 // -- Top-level --
 
-struct HIRParam {
+pub struct HIRParam {
     name: string,
     ty: TypeKind,
     isRef: bool,
     isRefMut: bool,
 }
 
-struct HIRFunction {
+pub struct HIRFunction {
     name: string,
     params: Vec<HIRParam>,
     retType: TypeKind,
@@ -128,28 +128,28 @@ struct HIRFunction {
     isVariadic: bool,
 }
 
-struct HIRField {
+pub struct HIRField {
     name: string,
     ty: TypeKind,
 }
 
-struct HIRStruct {
+pub struct HIRStruct {
     name: string,
     fields: Vec<HIRField>,
 }
 
-struct HIRVariant {
+pub struct HIRVariant {
     name: string,
     tag: i32,
     fields: Vec<TypeKind>,
 }
 
-struct HIREnum {
+pub struct HIREnum {
     name: string,
     variants: Vec<HIRVariant>,
 }
 
-struct HIRModule {
+pub struct HIRModule {
     structs: Vec<HIRStruct>,
     enums: Vec<HIREnum>,
     functions: Vec<HIRFunction>,

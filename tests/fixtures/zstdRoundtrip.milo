@@ -6,7 +6,7 @@ from "std/zstd" import {
     zstdCompressRaw, zstdDecompress
 }
 
-fn roundtrips(src: &string): bool {
+pub fn roundtrips(src: &string): bool {
     let framed = zstdCompressRaw(src)
     match zstdDecompress(framed) {
         Result.Ok(s) => {
@@ -18,7 +18,7 @@ fn roundtrips(src: &string): bool {
     }
 }
 
-fn main() {
+pub fn main() {
     // empty
     // @expect: true
     print(roundtrips(""))

@@ -4,7 +4,7 @@
 
 // Context-free int literals default to i64, so they mix with i64 values without an `as` cast.
 // Before the i64 default these arms/counters were i32 and `reg & mask` / `i < len` needed casts.
-fn main(): i32 {
+pub fn main(): i32 {
     let reg: i64 = 0x1234
     let wide = true
     let mask = if wide {

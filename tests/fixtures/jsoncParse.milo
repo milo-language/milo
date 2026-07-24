@@ -8,7 +8,7 @@ from "std/json" import {
     jsonParse, jsoncParse
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // line comments, a block comment, and trailing commas in both object and array
     let src = "{\n  // the app name\n  \"name\": \"milo\",\n  \"port\": 8080, /* default */\n  \"tags\": [\"a\", \"b\", \"c\",],\n  \"url\": \"http://x.io//path\",\n}"
 

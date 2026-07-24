@@ -2,7 +2,7 @@
 // @expect: 10 + 20 = 30
 // @expect: plain string
 
-fn main(): i32 {
+pub fn main(): i32 {
     let name = "Milo"
     let version: i32 = 1
     print($"Hello {name}, version {version}!")

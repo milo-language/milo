@@ -6,14 +6,14 @@ from "std/string" import {
     trim
 }
 
-struct TargetInfo {
+pub struct TargetInfo {
     triple: string,
     os: string,
     arch: string,
     ptrSize: i32,
 }
 
-fn getHostTarget(): TargetInfo {
+pub fn getHostTarget(): TargetInfo {
     // std/process no longer exposes platform()/arch(); shell out to uname instead
     var os = ""
     match capture("uname -s") {

@@ -2,11 +2,13 @@
 // @expect: 100
 // @expect: -50
 
-type Altitude = i32(0..50000)
-type SmallUint = u8(0..200)
-type Temperature = i32(-100..100)
+pub type Altitude = i32(0..50000)
 
-fn main(): i32 {
+pub type SmallUint = u8(0..200)
+
+pub type Temperature = i32(-100..100)
+
+pub fn main(): i32 {
     let alt: Altitude = 30000
     print(alt)
 

@@ -1,8 +1,10 @@
-var scores: [i32; 5] = [10, 20, 30, 40, 50]
-var flags: [bool; 3] = [true, false, true]
-let repeatedF64: [f64; 3] = [3.14; 3]
+pub var scores: [i32; 5] = [10, 20, 30, 40, 50]
 
-fn main(): i32 {
+pub var flags: [bool; 3] = [true, false, true]
+
+pub let repeatedF64: [f64; 3] = [3.14; 3]
+
+pub fn main(): i32 {
     print(scores[0])
     print(scores[2])
     print(scores[4])

@@ -14,7 +14,7 @@ from "std/inflate" import {
     gzipDecompress
 }
 
-fn mkCtx(headers: Vec<Param>): Context {
+pub fn mkCtx(headers: Vec<Param>): Context {
     return Context {
         req: Request {
             method: "GET",
@@ -30,7 +30,7 @@ fn mkCtx(headers: Vec<Param>): Context {
     }
 }
 
-fn authHeader(value: string): Vec<Param> {
+pub fn authHeader(value: string): Vec<Param> {
     var h: Vec<Param> = []
     h.push(Param {
         name: "Authorization", value: value
@@ -42,14 +42,14 @@ fn authHeader(value: string): Vec<Param> {
 // Inline guard: the pattern the docs recommend in place of an (impossible) escaping
 // `jwtGuard(secret)` factory — `secret` stays a live local, so the closure capture
 // is sound. Returns the eventual status a router would send.
-fn guardStatus(ctx: &mut Context, secret: &string): i32 {
+pub fn guardStatus(ctx: &mut Context, secret: &string): i32 {
     if verifyBearer(ctx, secret) {
         return 200
     }
     return 401
 }
 
-fn main() {
+pub fn main() {
     let secret = "s3cr3t"
     let token = jwtSignHS256("{\"sub\":\"alice\"}", secret)
 

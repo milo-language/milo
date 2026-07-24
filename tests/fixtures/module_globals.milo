@@ -1,12 +1,14 @@
-let MAX_SIZE: i32 = 100
-let PI: f64 = 3.14159
-var counter: i32 = 0
+pub let MAX_SIZE: i32 = 100
 
-fn increment() {
+pub let PI: f64 = 3.14159
+
+pub var counter: i32 = 0
+
+pub fn increment() {
     counter = counter + 1
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(MAX_SIZE)
     print(PI)
     print(counter)

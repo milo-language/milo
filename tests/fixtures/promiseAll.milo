@@ -4,7 +4,7 @@ from "std/runtime" import {
     Task, Promise
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var promises: Vec<Promise<i64>> = Vec.new()
 
     var i: i64 = 1

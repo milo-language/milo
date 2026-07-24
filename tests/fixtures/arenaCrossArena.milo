@@ -5,7 +5,7 @@ from "std/arena" import {
     Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaValid
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var first: Arena<string> = arenaNew()
     var second: Arena<string> = arenaNew()
     let firstHandle: Handle<string> = arenaAlloc(first, "alice")

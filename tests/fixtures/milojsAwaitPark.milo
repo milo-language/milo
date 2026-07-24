@@ -27,9 +27,9 @@ from "std/runtime" import {
     Task, schedulerCurrent, schedulerYield
 }
 
-var gLog: string = ""
+pub var gLog: string = ""
 
-fn driver(): void {
+pub fn driver(): void {
     // Through the global, not a local: the waiter task below cannot capture a
     // reference to a local interpreter — the reason gInterp exists at all
     // (see docs/proposal-task-shared-state.md).
@@ -72,7 +72,7 @@ fn driver(): void {
     print(gLog.trim())
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // The driver runs on a green task: schedulerYield and park are no-ops in the
     // OS main context, so a fixture that stays there cannot exercise either.
     let d = Task.spawnWithStack(move(): void => {

@@ -2,12 +2,12 @@
 // @expect: not found: config.toml
 // @expect: denied: /etc/secret
 
-enum IoError {
+pub enum IoError {
     NotFound(string),
     PermissionDenied(string),
 }
 
-fn open(path: string): Result<i32, IoError> {
+pub fn open(path: string): Result<i32, IoError> {
     if path == "config.toml" {
         return Result.Err(IoError.NotFound(path))
     }
@@ -17,7 +17,7 @@ fn open(path: string): Result<i32, IoError> {
     return Result.Ok(42)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     match open("data.txt") {
         Result.Ok(fd) => {
             print("got ", fd)

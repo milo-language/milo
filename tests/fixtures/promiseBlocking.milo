@@ -5,7 +5,7 @@ from "std/runtime" import {
     Promise
 }
 
-fn sumTo(n: i64): i64 {
+pub fn sumTo(n: i64): i64 {
     var acc: i64 = 0
     var i: i64 = 0
     while i < n {
@@ -15,7 +15,7 @@ fn sumTo(n: i64): i64 {
     return acc
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // CPU-bound work on a real OS thread; main awaits without a scheduler.
     let p = Promise<i64>.blocking(move(): i64 => {
         return sumTo(50)

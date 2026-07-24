@@ -4,10 +4,11 @@ from "std/io" import {
     writeStr
 }
 
-type Board = [i32; 4]
-type Count = i64
+pub type Board = [i32; 4]
 
-fn sum(b: &Board): i64 {
+pub type Count = i64
+
+pub fn sum(b: &Board): i64 {
     var t = 0
     for i in 0..4 {
         t = t + b[i] as i64
@@ -15,15 +16,15 @@ fn sum(b: &Board): i64 {
     return t
 }
 
-fn bump(b: &mut Board): void {
+pub fn bump(b: &mut Board): void {
     b[0] = b[0] + 10
 }
 
-fn double(n: &Count): i64 {
+pub fn double(n: &Count): i64 {
     return n * 2
 }
 
-fn main() {
+pub fn main() {
     var b: Board = [1, 2, 3, 4]
     bump(b)
     writeStr(sum(b).toString())

@@ -2,6 +2,6 @@ from "math.milo" import {
     square
 }
 
-fn cube(x: i32): i32 {
+pub fn cube(x: i32): i32 {
     return x * square(x)
 }

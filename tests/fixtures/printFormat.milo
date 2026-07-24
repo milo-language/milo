@@ -1,6 +1,6 @@
 // @expect: hello 42
 
-fn main(): i32 {
+pub fn main(): i32 {
     print("hello ", 42)
     return 0
 }

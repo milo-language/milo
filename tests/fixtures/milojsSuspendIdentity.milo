@@ -30,12 +30,14 @@ from "std/runtime" import {
     Task, schedulerCurrent, schedulerPark, schedulerUnpark, schedulerYield
 }
 
-var gA: *u8 = 0 as *u8
-var gB: *u8 = 0 as *u8
-var gDone: i64 = 0
+pub var gA: *u8 = 0 as *u8
+
+pub var gB: *u8 = 0 as *u8
+
+pub var gDone: i64 = 0
 
 // Park with a distinctive call depth, then check it comes back intact.
-fn parkWith(depth: i64, label: string) {
+pub fn parkWith(depth: i64, label: string) {
     let me = schedulerCurrent()
     gInterp.callDepth = depth
     let ctx = saveExecCtx(gInterp)
@@ -51,7 +53,7 @@ fn parkWith(depth: i64, label: string) {
     gDone = gDone + 1
 }
 
-fn driver(): void {
+pub fn driver(): void {
     gInterp = makeInterp(false, 1024, 2)
     bootInterp(gInterp)
     gInterp.mainTask = schedulerCurrent()
@@ -90,7 +92,7 @@ fn driver(): void {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let d = Task.spawnWithStack(move(): void => {
         driver()
     }

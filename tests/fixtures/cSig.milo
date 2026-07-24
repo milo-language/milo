@@ -8,15 +8,15 @@
 // derive the C signature from the Milo one; the declaration states it and the build
 // checks it. Mismatch cases live in tests/errors/cSig*.milo.
 @cSig("unistd.h", "long sysconf(int)")
-extern fn sysconf(name: i32): i64
+pub extern fn sysconf(name: i32): i64
 
 @cSig("unistd.h", "int close(int)")
-extern fn close(fd: i32): i32
+pub extern fn close(fd: i32): i32
 
 @cSig("stdlib.h", "int abs(int)")
-extern fn abs(x: i32): i32
+pub extern fn abs(x: i32): i32
 
-fn main() {
+pub fn main() {
     // _SC_PAGESIZE = 29 on darwin, 30 on linux — both return a sane page size.
     let pageSize = sysconf(29)
     // @expect: true

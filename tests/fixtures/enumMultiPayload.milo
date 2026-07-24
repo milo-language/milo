@@ -1,12 +1,12 @@
 // @expect: 7
 
-enum Shape {
+pub enum Shape {
     Circle(i32),
     Rectangle(i32, i32),
     Point,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let s = Shape.Rectangle(3, 4)
     match s {
         Shape.Circle(r) => {

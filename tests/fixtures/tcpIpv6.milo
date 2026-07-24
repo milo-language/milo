@@ -27,7 +27,7 @@ from "std/platform" import {
     close
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // @expect: parsed ::1 true
     print("parsed ::1 ", ip6("::1").isSome())
 

@@ -21,7 +21,7 @@ from "std/time" import {
     sleepMs
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // Creates a scheduler, then finishes immediately — numTasks drops to 0.
     Task.spawn(move(): void => {
         sleepMs(1)

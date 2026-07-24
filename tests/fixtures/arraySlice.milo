@@ -5,7 +5,7 @@
 // @expect: 10
 // @expect: 50
 
-fn main(): i32 {
+pub fn main(): i32 {
     let arr: [i64; 5] = [10, 20, 30, 40, 50]
 
     // .slice(a,b) view into the array's own storage — no copy

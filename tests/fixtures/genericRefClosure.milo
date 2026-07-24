@@ -2,15 +2,15 @@
 // Regression: a generic fn taking a `&T` closure param used to collapse `&T`
 // to value `T` during monomorphization, passing a struct where the closure
 // expected a ptr — segfault. See substituteMiloType ref-preservation.
-struct P {
+pub struct P {
     x: i64
 }
 
-fn applyG<T>(p: &T, f: (&T) => i64): i64 {
+pub fn applyG<T>(p: &T, f: (&T) => i64): i64 {
     return f(p)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let q = P {
         x: 9
     }

@@ -6,7 +6,7 @@
 // self-hosted lexer's peekCharAt. The prover proves result < len but REFUTES
 // result >= 0 with a counterexample (pos=0, offset=-1) — locking that the
 // counterexample path stays live, not just the proving path.
-fn peekAtAsWritten(pos: i64, offset: i64, len: i64): i64
+pub fn peekAtAsWritten(pos: i64, offset: i64, len: i64): i64
 requires pos >= 0
 requires pos < len
 requires pos + offset < len
@@ -16,7 +16,7 @@ ensures result < len
     return pos + offset
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(peekAtAsWritten(0, 1, 5))
     return 0
 }

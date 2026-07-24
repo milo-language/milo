@@ -6,14 +6,14 @@ from "src-milo/codegen/types.milo" import {
 
 // -- Hex encoding for string literal bytes --
 
-fn hexDigit(n: u8): u8 {
+pub fn hexDigit(n: u8): u8 {
     if n < 10 {
         return n + 48
     }
     return n - 10 + 65
 }
 
-fn hex2(b: u8): string {
+pub fn hex2(b: u8): string {
     var s = ""
     s.push(hexDigit(b >> 4))
     s.push(hexDigit(b & 15))
@@ -22,7 +22,7 @@ fn hex2(b: u8): string {
 
 // Emit a global constant for a string literal. Returns @.strN label.
 // Handles escape sequences: \n \t \r \\ \" \0
-fn emitStringLit(cg: &mut Cgen, raw: &string): string {
+pub fn emitStringLit(cg: &mut Cgen, raw: &string): string {
     let id = cg.strId
     cg.strId = cg.strId + 1
     let label = "@.str" + id.toString()
@@ -50,7 +50,7 @@ fn emitStringLit(cg: &mut Cgen, raw: &string): string {
 }
 
 // Build %String aggregate { @.strN, len, 0 } for a string literal.
-fn genStringLit(cg: &mut Cgen, raw: &string): Val {
+pub fn genStringLit(cg: &mut Cgen, raw: &string): Val {
     ensureStringTy(cg)
     let label = emitStringLit(cg, raw)
     let len = raw.len
@@ -66,7 +66,7 @@ fn genStringLit(cg: &mut Cgen, raw: &string): Val {
 }
 
 // Deep copy a %String value. malloc + memcpy.
-fn genStringClone(cg: &mut Cgen, sv: &string): Val {
+pub fn genStringClone(cg: &mut Cgen, sv: &string): Val {
     ensureStringTy(cg)
     ensureMalloc(cg)
     ensureMemcpy(cg)
@@ -96,7 +96,7 @@ fn genStringClone(cg: &mut Cgen, sv: &string): Val {
 }
 
 // String concat: malloc(a.len + b.len + 1), memcpy both halves.
-fn genStringConcat(cg: &mut Cgen, av: &string, bv: &string): Val {
+pub fn genStringConcat(cg: &mut Cgen, av: &string, bv: &string): Val {
     ensureStringTy(cg)
     ensureMalloc(cg)
     ensureMemcpy(cg)
@@ -138,7 +138,7 @@ fn genStringConcat(cg: &mut Cgen, av: &string, bv: &string): Val {
 // the `place = place + rhs` assign optimization: the naive genStringConcat path
 // allocates a fresh buffer and leaks the old one every append, making an
 // accumulator like `cg.body = cg.body + s` O(n^2) in both time and memory.
-fn genStringAppendInPlace(cg: &mut Cgen, addr: &string, bv: &string) {
+pub fn genStringAppendInPlace(cg: &mut Cgen, addr: &string, bv: &string) {
     ensureStringTy(cg)
     ensureRealloc(cg)
     let dPtr = nextTemp(cg)
@@ -221,7 +221,7 @@ fn genStringAppendInPlace(cg: &mut Cgen, addr: &string, bv: &string) {
 // String equality via length check + memcmp. Returns i1.
 // Lexicographic string comparison for < <= > >=. memcmp over min(len), then the
 // shorter string is "less" on a shared prefix. Returns i1.
-fn genStringCmp(cg: &mut Cgen, av: &string, bv: &string, op: &string): Val {
+pub fn genStringCmp(cg: &mut Cgen, av: &string, bv: &string, op: &string): Val {
     ensureMemcmp(cg)
     let aData = nextTemp(cg)
     emit(cg, "  " + aData + " = extractvalue %String " + av.clone() + ", 0\n")
@@ -263,7 +263,7 @@ fn genStringCmp(cg: &mut Cgen, av: &string, bv: &string, op: &string): Val {
     }
 }
 
-fn genStringEq(cg: &mut Cgen, av: &string, bv: &string, wantEq: bool): Val {
+pub fn genStringEq(cg: &mut Cgen, av: &string, bv: &string, wantEq: bool): Val {
     ensureMemcmp(cg)
     let aLen = nextTemp(cg)
     emit(cg, "  " + aLen + " = extractvalue %String " + av + ", 1\n")
@@ -301,7 +301,7 @@ fn genStringEq(cg: &mut Cgen, av: &string, bv: &string, wantEq: bool): Val {
 }
 
 // Integer → string via snprintf (two-pass: measure then format).
-fn genIntToString(cg: &mut Cgen, val: &string, unsigned: bool): Val {
+pub fn genIntToString(cg: &mut Cgen, val: &string, unsigned: bool): Val {
     ensureStringTy(cg)
     ensureMalloc(cg)
     if !cg.declaredSnprintf {
@@ -335,7 +335,7 @@ fn genIntToString(cg: &mut Cgen, val: &string, unsigned: bool): Val {
 }
 
 // double.toString() — snprintf("%g") into an owned heap buffer
-fn genFloatToString(cg: &mut Cgen, val: &string): Val {
+pub fn genFloatToString(cg: &mut Cgen, val: &string): Val {
     ensureStringTy(cg)
     ensureMalloc(cg)
     if !cg.declaredSnprintf {
@@ -365,7 +365,7 @@ fn genFloatToString(cg: &mut Cgen, val: &string): Val {
 }
 
 // String index: s[i] → load byte
-fn genStringIndex(cg: &mut Cgen, sv: &string, idx: &string): Val {
+pub fn genStringIndex(cg: &mut Cgen, sv: &string, idx: &string): Val {
     let data = nextTemp(cg)
     emit(cg, "  " + data + " = extractvalue %String " + sv + ", 0\n")
     let p = nextTemp(cg)
@@ -378,7 +378,7 @@ fn genStringIndex(cg: &mut Cgen, sv: &string, idx: &string): Val {
 }
 
 // String slice: s[a..b] → owned copy (malloc + memcpy)
-fn genStringSlice(cg: &mut Cgen, sv: &string, av: &string, bv: &string): Val {
+pub fn genStringSlice(cg: &mut Cgen, sv: &string, av: &string, bv: &string): Val {
     ensureMalloc(cg)
     ensureMemcpy(cg)
     let data = nextTemp(cg)
@@ -409,7 +409,7 @@ fn genStringSlice(cg: &mut Cgen, sv: &string, av: &string, bv: &string): Val {
 
 // Append one byte to a %String through its address. Keeps the NUL terminator so
 // the buffer stays printf-safe (print() passes the data pointer to %s).
-fn genStringPush(cg: &mut Cgen, addr: &string, byteVal: &string): Val {
+pub fn genStringPush(cg: &mut Cgen, addr: &string, byteVal: &string): Val {
     ensureStringTy(cg)
     ensureRealloc(cg)
     let dPtr = nextTemp(cg)

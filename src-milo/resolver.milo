@@ -22,7 +22,7 @@ from "src-milo/ast.milo" import {
     GlobalDecl, cloneGlobal
 }
 
-struct ResolverState {
+pub struct ResolverState {
     visited: HashMap<string, bool>,
     structs: Vec<StructDecl>,
     enums: Vec<EnumDecl>,
@@ -35,7 +35,7 @@ struct ResolverState {
     targetOs: string,
 }
 
-fn newResolver(stdlibDir: string, targetOs: string): ResolverState {
+pub fn newResolver(stdlibDir: string, targetOs: string): ResolverState {
     return ResolverState {
         visited: HashMap.new(),
         structs: Vec.new(),
@@ -52,7 +52,7 @@ fn newResolver(stdlibDir: string, targetOs: string): ResolverState {
 
 // Resolve an import path to an absolute file path.
 // Search order: relative to source dir, then stdlib dir, then platform-specific.
-fn resolvePath(rs: &ResolverState, dir: &string, importPath: &string): string {
+pub fn resolvePath(rs: &ResolverState, dir: &string, importPath: &string): string {
     var withExt = importPath.clone()
     if !withExt.endsWith(".milo") {
         withExt = withExt + ".milo"
@@ -81,7 +81,7 @@ fn resolvePath(rs: &ResolverState, dir: &string, importPath: &string): string {
 }
 
 // Parse a source file and return its Program AST.
-fn parseFile(path: &string): Program {
+pub fn parseFile(path: &string): Program {
     var source = ""
     match readFile(path) {
         Result.Ok(s) => {
@@ -96,7 +96,7 @@ fn parseFile(path: &string): Program {
 }
 
 // Recursively process imports from a parsed program.
-fn processImports(rs: &mut ResolverState, prog: &Program, dir: &string) {
+pub fn processImports(rs: &mut ResolverState, prog: &Program, dir: &string) {
     for i in 0..prog.imports.len {
         let imp = prog.imports[i]
         let absPath = resolvePath(rs, dir, imp.path)
@@ -149,7 +149,7 @@ fn processImports(rs: &mut ResolverState, prog: &Program, dir: &string) {
 }
 
 // Dedup declarations by name (last occurrence wins — user overrides prelude).
-fn dedupStructs(arr: Vec<StructDecl>): Vec<StructDecl> {
+pub fn dedupStructs(arr: Vec<StructDecl>): Vec<StructDecl> {
     var seen: HashMap<string, bool> = HashMap.new()
     var result: Vec<StructDecl> = Vec.new()
     var i: i64 = arr.len - 1
@@ -164,7 +164,7 @@ fn dedupStructs(arr: Vec<StructDecl>): Vec<StructDecl> {
     return result
 }
 
-fn dedupEnums(arr: Vec<EnumDecl>): Vec<EnumDecl> {
+pub fn dedupEnums(arr: Vec<EnumDecl>): Vec<EnumDecl> {
     var seen: HashMap<string, bool> = HashMap.new()
     var result: Vec<EnumDecl> = Vec.new()
     var i: i64 = arr.len - 1
@@ -179,7 +179,7 @@ fn dedupEnums(arr: Vec<EnumDecl>): Vec<EnumDecl> {
     return result
 }
 
-fn dedupFunctions(arr: Vec<Function>): Vec<Function> {
+pub fn dedupFunctions(arr: Vec<Function>): Vec<Function> {
     var seen: HashMap<string, bool> = HashMap.new()
     var result: Vec<Function> = Vec.new()
     var i: i64 = arr.len - 1
@@ -194,7 +194,7 @@ fn dedupFunctions(arr: Vec<Function>): Vec<Function> {
     return result
 }
 
-fn dedupTraits(arr: Vec<TraitDecl>): Vec<TraitDecl> {
+pub fn dedupTraits(arr: Vec<TraitDecl>): Vec<TraitDecl> {
     var seen: HashMap<string, bool> = HashMap.new()
     var result: Vec<TraitDecl> = Vec.new()
     var i: i64 = arr.len - 1
@@ -210,7 +210,7 @@ fn dedupTraits(arr: Vec<TraitDecl>): Vec<TraitDecl> {
 }
 
 // Main entry point: resolve all imports and produce a merged Program.
-fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, targetOs: string): Program {
+pub fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, targetOs: string): Program {
     var rs = newResolver(stdlibDir, targetOs)
 
     // Inject prelude before user code

@@ -1,11 +1,11 @@
 // @expect: error: 404
 
-enum Result<T, E> {
+pub enum Result<T, E> {
     Ok(T),
     Err(E),
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let r: Result<i32, i32> = Result.Err(404)
     match r {
         Result.Ok(val) => {

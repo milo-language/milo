@@ -2,7 +2,7 @@
 // @expect: 98
 // @expect: 99
 
-fn main(): i32 {
+pub fn main(): i32 {
     let s = "abc"
     for b in s {
         print(b as i32)

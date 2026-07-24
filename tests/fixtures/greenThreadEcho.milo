@@ -31,7 +31,7 @@ from "std/runtime" import {
     Task, schedulerRunToCompletion
 }
 
-fn doClient(port: u16, id: i32): void {
+pub fn doClient(port: u16, id: i32): void {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
     let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -54,7 +54,7 @@ fn doClient(port: u16, id: i32): void {
     closeSocket(fd)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // no-op on POSIX; runs WSAStartup on Windows so socket() below returns a valid handle
     ensureNetInit()
     let AF_INET: i32 = 2

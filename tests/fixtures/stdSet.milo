@@ -11,7 +11,7 @@ from "std/set" import {
     HashSet, setAdd, setContains, setLen, setNew, setRemove
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var s: HashSet<i32> = setNew()
     setAdd(s, 1)
     setAdd(s, 2)

@@ -1,19 +1,19 @@
 // nested homogeneous-float struct is still an HFA after flattening (3 floats)
-extern struct P2 {
+pub extern struct P2 {
     x: f32,
     y: f32,
 }
 
-extern struct Tri {
+pub extern struct Tri {
     base: P2,
     z: f32,
 }
 
-extern fn tri_sum(t: Tri): f32
+pub extern fn tri_sum(t: Tri): f32
 
-extern fn tri_scale(t: Tri, k: f32): Tri
+pub extern fn tri_scale(t: Tri, k: f32): Tri
 
-fn main(): i32 {
+pub fn main(): i32 {
     let t = Tri {
         base: P2 {
             x: 1.0, y: 2.0

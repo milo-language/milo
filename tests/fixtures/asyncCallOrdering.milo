@@ -14,17 +14,17 @@ from "std/runtime" import {
     Task, schedulerCurrent, schedulerPark, schedulerUnpark
 }
 
-var gLog: string = ""
+pub var gLog: string = ""
 
-fn note(s: string): void {
+pub fn note(s: string): void {
     gLog = gLog + s + " "
 }
 
-fn taskPtr(t: Task): *u8 {
+pub fn taskPtr(t: Task): *u8 {
     return t._ptr
 }
 
-fn callAsyncLike(): void {
+pub fn callAsyncLike(): void {
     let caller = schedulerCurrent()
     let child = Task.spawnWithStack(move(): void => {
         note("body-start")
@@ -40,7 +40,7 @@ fn callAsyncLike(): void {
     child.join()
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let t = Task.spawnWithStack(move(): void => {
         callAsyncLike()
     }

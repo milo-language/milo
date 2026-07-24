@@ -18,7 +18,7 @@ from "std/runtime" import {
     Task, schedulerRunToCompletion
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let path = "/tmp/milo-unixsocket-fixture.sock"
     let lis = UnixListener.bind(path)!
     // @expect: listening true

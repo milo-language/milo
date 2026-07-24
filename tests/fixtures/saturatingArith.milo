@@ -2,7 +2,7 @@
 // @expect: 0
 // @expect: 200
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a: u8 = 200
     let b: u8 = 100
 

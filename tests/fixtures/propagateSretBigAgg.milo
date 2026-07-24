@@ -11,23 +11,23 @@
 // @expect: wrap:boom
 // @expect: 1
 
-struct Big {
+pub struct Big {
     a: string, b: string, c: string, d: string,
     e: string, f: string, g: string,
 }
 
-enum WrapErr {
+pub enum WrapErr {
     S(string),
 }
 
-struct Chainer {
+pub struct Chainer {
 }
 
-fn makeErr(): Result<Big, string> {
+pub fn makeErr(): Result<Big, string> {
     return Result.Err("boom")
 }
 
-fn makeOk(): Result<Big, string> {
+pub fn makeOk(): Result<Big, string> {
     return Result.Ok(Big {
         a: "1", b: "2", c: "3", d: "4", e: "5", f: "6", g: "7"
     }
@@ -56,7 +56,7 @@ impl Chainer {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let c = Chainer {
     }
     match c.run(true) {

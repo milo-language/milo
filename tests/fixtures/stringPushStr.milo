@@ -10,7 +10,7 @@
 // @expect: head-tail
 // @expect: src still=tail
 
-fn main() {
+pub fn main() {
     var out = ""
     var i: i64 = 0
     while i < 5 {

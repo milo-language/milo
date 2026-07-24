@@ -18,7 +18,7 @@ from "std/json" import {
 }
 
 // Streaming pull parser: walk the event stream without building a tree.
-fn main(): i32 {
+pub fn main(): i32 {
     var p = jsonPull("{\"name\":\"milo\",\"n\":42,\"ok\":true,\"arr\":[1,\"x\"]}")
     while true {
         let t = p.next()

@@ -3,11 +3,11 @@
 // @expect: done
 // tests: string drop on scope exit, reassignment drops old value, move zeroes source
 
-fn consume(s: string) {
+pub fn consume(s: string) {
     print(s)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = "hello" + " world"
     consume(a)
 

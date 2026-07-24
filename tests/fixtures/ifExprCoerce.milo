@@ -7,7 +7,7 @@
 // @expect: 16
 // @expect: 5
 // @expect: 16
-fn pick(t: bool): i64 {
+pub fn pick(t: bool): i64 {
     return if t {
         16
     } else {
@@ -15,7 +15,7 @@ fn pick(t: bool): i64 {
     }
 }
 
-fn main(): void {
+pub fn main(): void {
     let h: i64 = if true {
         16
     } else {

@@ -1,14 +1,14 @@
 // @expect: 42
 
-struct Wrapper<T> {
+pub struct Wrapper<T> {
     value: T
 }
 
-fn unbox(b: Wrapper<i32>): i32 {
+pub fn unbox(b: Wrapper<i32>): i32 {
     return b.value
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let b: Wrapper<i32> = Wrapper {
         value: 42
     }

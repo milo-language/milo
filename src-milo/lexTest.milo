@@ -12,7 +12,7 @@ from "std/args" import {
     args
 }
 
-fn escapeValue(s: &string): string {
+pub fn escapeValue(s: &string): string {
     var out: string = ""
     for i in 0..s.len {
         let c = s[i]
@@ -52,7 +52,7 @@ fn escapeValue(s: &string): string {
     return out
 }
 
-fn printTrivia(trivia: &Vec<Trivia>, prefix: &string) {
+pub fn printTrivia(trivia: &Vec<Trivia>, prefix: &string) {
     for i in 0..trivia.len {
         let t = trivia[i]
         if t.kind
@@ -65,7 +65,7 @@ fn printTrivia(trivia: &Vec<Trivia>, prefix: &string) {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
         eprint("usage: lexTest <file.milo>")

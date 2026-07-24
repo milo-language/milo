@@ -4,7 +4,7 @@
 // A large zero-initialized stack buffer must compile fast (memset, not an
 // aggregate zero-store) and still zero every byte. Guards the codegen fix in
 // zeroStore/valStore — before it this file's -O2 build took ~100s.
-fn main(): i32 {
+pub fn main(): i32 {
     var buf: [u8; 65536] = [0; 65536]
     buf[0] = 7
     print(buf[0] as i64)

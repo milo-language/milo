@@ -2,24 +2,24 @@
 // @expect: 42
 // @expect: hello
 
-struct Wrapper<T> {
+pub struct Wrapper<T> {
     val: T,
 }
 
-fn setVal<T>(w: &mut Wrapper<T>, v: T): void {
+pub fn setVal<T>(w: &mut Wrapper<T>, v: T): void {
     w.val = v
 }
 
-fn getVal<T>(w: &Wrapper<T>): T {
+pub fn getVal<T>(w: &Wrapper<T>): T {
     return w.val
 }
 
-fn setAndGet<T>(val: T, w: &mut Wrapper<T>): T {
+pub fn setAndGet<T>(val: T, w: &mut Wrapper<T>): T {
     w.val = val
     return w.val
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var w: Wrapper<i64> = Wrapper {
         val: 0
     }

@@ -19,7 +19,7 @@ from "std/io" import {
     File
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let nul = devNull()
     // Occupy fd 0 if the harness ran us without stdin, so the probe below is
     // deterministic regardless of how the test driver wires the child's stdio.

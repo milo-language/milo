@@ -7,7 +7,7 @@ from "std/sync" import {
     WaitGroup
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let wg = WaitGroup.new()
     wg.add(2)
     let t1 = Promise<i64>.blocking(move(): i64 => {

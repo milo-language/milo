@@ -10,7 +10,7 @@ from "std/crypto" import {
     aesGcmEncrypt, aesGcmDecrypt
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // 32-byte key, 12-byte IV
     let key = "01234567890123456789012345678901"
     let iv = "abcdefghijkl"

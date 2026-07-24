@@ -7,7 +7,7 @@ from "std/time" import {
     durationMicros, durationMillis, durationSecs, epochMillis, now, since, sleepMs
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let start = now()
     let epoch = epochMillis()
     if epoch > 1000000000000 {

@@ -2,7 +2,7 @@
 // @expect: found alice
 // @expect: found bob
 
-fn main(): i32 {
+pub fn main(): i32 {
     var m: HashMap<string, i64> = HashMap.new()
     m.insert("alice", 30)
     m.insert("bob", 25)

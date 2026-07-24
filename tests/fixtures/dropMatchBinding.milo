@@ -6,7 +6,7 @@
 // arm exits — including via `return` from inside the arm, which previously
 // dropped nothing at all (one leaked SSL_CTX per HTTPS request in milojs).
 // A binding moved out of the arm must NOT be dropped: it now belongs elsewhere.
-struct Res {
+pub struct Res {
     id: i64
 }
 
@@ -16,16 +16,16 @@ impl Drop for Res {
     }
 }
 
-var gDropped: i64 = 0
+pub var gDropped: i64 = 0
 
-fn make(): Result<Res, string> {
+pub fn make(): Result<Res, string> {
     return Result.Ok(Res {
         id: 7
     }
     )
 }
 
-fn returnFromArm(): i64 {
+pub fn returnFromArm(): i64 {
     match make() {
         Result.Ok(r) => {
             return r.id
@@ -36,7 +36,7 @@ fn returnFromArm(): i64 {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var i: i64 = 0
     while i < 1000 {
         let _v = returnFromArm()

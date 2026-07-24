@@ -4,20 +4,20 @@
 // @expect: Some(42)
 // @expect: None
 
-struct User {
+pub struct User {
     name: string,
     age: i64,
     happy: bool,
 }
 
-enum Color {
+pub enum Color {
     Red,
     Green,
     Blue,
     Rgb(u8, u8, u8),
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let u = User {
         name: "alice", age: 30, happy: true
     }

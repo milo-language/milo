@@ -3,7 +3,7 @@
 // A block whose tail is a statement-form if/else still yields that if's value
 // in if-expression context: nested `if { if {..} else {..} } else {..}` arms
 // typecheck and codegen as values instead of collapsing to void.
-fn main(): i32 {
+pub fn main(): i32 {
     let c1 = true
     let c2 = false
     var fc: i64 = if c1 {

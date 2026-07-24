@@ -7,14 +7,14 @@
 // (y = x + 0.5). The Tier-1 core reasons over rationals + a bounded integer
 // witness search, finds no integer counterexample, and honestly returns
 // unknown rather than falsely claiming proven. Locks that honesty.
-fn tighten(x: i64, y: i64): i64
+pub fn tighten(x: i64, y: i64): i64
 requires x < y
 ensures result <= y
 {
     return x + 1
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(tighten(2, 5))
     return 0
 }

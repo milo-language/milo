@@ -6,7 +6,7 @@ from "std/runtime" import {
     Promise
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let msg = "hello from thread"
     let val: i64 = 42
 

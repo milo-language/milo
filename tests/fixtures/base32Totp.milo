@@ -11,7 +11,7 @@ from "std/totp" import {
 // End-to-end 2FA chain: the RFC 4226 seed base32-encodes to the string you paste
 // into an authenticator app; decoding it back and running HOTP reproduces the RFC's
 // codes. Proves std/base32 + std/totp compose the way a real otpauth:// URI does.
-fn main(): i32 {
+pub fn main(): i32 {
     let seed = "12345678901234567890"
     let b32 = base32Encode(seed)
     print(b32)

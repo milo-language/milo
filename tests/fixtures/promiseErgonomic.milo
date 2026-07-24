@@ -9,11 +9,11 @@ from "std/runtime" import {
     Task, Promise
 }
 
-fn compute(n: i64): i64 {
+pub fn compute(n: i64): i64 {
     return n * 10
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // auto-move inferred, T inferred from closure return type
     let a = Promise((): i64 => {
         return 42

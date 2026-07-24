@@ -2,11 +2,11 @@
 // @expect: 16
 // @expect: 28.2745
 
-interface Shape {
+pub interface Shape {
     fn area(self: &Self): f64
 }
 
-struct Circle {
+pub struct Circle {
     radius: f64
 }
 
@@ -16,7 +16,7 @@ impl Circle {
     }
 }
 
-struct Square {
+pub struct Square {
     side: f64
 }
 
@@ -26,7 +26,7 @@ impl Square {
     }
 }
 
-struct Triangle {
+pub struct Triangle {
     base: f64, height: f64
 }
 
@@ -36,7 +36,7 @@ impl Triangle {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var shapes: Vec<Heap<Shape>> = Vec.new()
     shapes.push(Heap(Circle {
         radius: 5.0

@@ -22,7 +22,7 @@ from "std/net" import {
     ignoreSigpipe
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     ignoreSigpipe()
     var fds: [i32; 2] = [0; 2]
     unsafe {

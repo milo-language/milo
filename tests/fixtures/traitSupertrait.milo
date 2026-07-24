@@ -1,15 +1,15 @@
 // @expect: equal
 // @expect: less
 
-trait Eq {
+pub trait Eq {
     fn eq(self: &Self, other: &Self): bool
 }
 
-trait Ord: Eq {
+pub trait Ord: Eq {
     fn less(self: &Self, other: &Self): bool
 }
 
-struct Score {
+pub struct Score {
     val: i32
 }
 
@@ -25,7 +25,7 @@ impl Ord for Score {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = Score {
         val: 5
     }

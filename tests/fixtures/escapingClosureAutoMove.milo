@@ -7,20 +7,20 @@
 // @expect: heap-owned!
 // @expect: bound!
 
-fn makeAdder(base: i64): (i64) => i64 {
+pub fn makeAdder(base: i64): (i64) => i64 {
     return (p: i64) => {
         return base + p
     }
 }
 
-fn makeGreeter(): () => string {
+pub fn makeGreeter(): () => string {
     let s = "heap-owned"
     return (): string => {
         return s + "!"
     }
 }
 
-fn makeBound(): () => string {
+pub fn makeBound(): () => string {
     let s = "bound"
     let f = (): string => {
         return s + "!"
@@ -28,7 +28,7 @@ fn makeBound(): () => string {
     return f
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let add = makeAdder(5)
     print(add(10))
     let g = makeGreeter()

@@ -1,20 +1,20 @@
 // @expect: double(7) = 14
 // @expect: triple(7) = 21
 
-fn double(x: i32): i32 {
+pub fn double(x: i32): i32 {
     return x * 2
 }
 
-fn triple(x: i32): i32 {
+pub fn triple(x: i32): i32 {
     return x * 3
 }
 
-struct Op {
+pub struct Op {
     name: string,
     apply: (i32) => i32,
 }
 
-fn dispatch(ops: &Vec<Op>, x: i32): void {
+pub fn dispatch(ops: &Vec<Op>, x: i32): void {
     var i: i64 = 0
     while i < ops.len {
         let op = ops[i]
@@ -23,7 +23,7 @@ fn dispatch(ops: &Vec<Op>, x: i32): void {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var ops: Vec<Op> = Vec.new()
     ops.push(Op {
         name: "double", apply: double

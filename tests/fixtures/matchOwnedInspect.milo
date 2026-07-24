@@ -1,11 +1,11 @@
 // Matching an owned enum local to inspect its shape does NOT consume it when every
 // non-Copy payload is ignored (`_`) — so it stays usable for a second match. A named
 // non-Copy binding would still move it.
-enum V {
+pub enum V {
     A, S(string), N(i64)
 }
 
-fn main(): void {
+pub fn main(): void {
     let v = V.N(42)
     // @expect: 42
     match v {

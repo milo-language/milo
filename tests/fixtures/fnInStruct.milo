@@ -1,14 +1,14 @@
 // @expect: called: 42
 
-struct Handler {
+pub struct Handler {
     callback: (i32) => void
 }
 
-fn printVal(x: i32): void {
+pub fn printVal(x: i32): void {
     print("called: ", x)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let h = Handler {
         callback: printVal
     }

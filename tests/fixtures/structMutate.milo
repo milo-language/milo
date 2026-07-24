@@ -1,12 +1,12 @@
 // @expect: 10
 // @expect: 99
 
-struct Pair {
+pub struct Pair {
     a: i32,
     b: i32,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var p = Pair {
         a: 10, b: 20
     }

@@ -1,6 +1,6 @@
 // @expect: 42
 
-fn main(): i32 {
+pub fn main(): i32 {
     var x: i64 = 42
     unsafe {
         let p = (x.addrOf()) as *u8

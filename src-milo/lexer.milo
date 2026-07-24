@@ -3,14 +3,14 @@ from "src-milo/tokens.milo" import {
     TokKind, TriviaKind, Trivia, Token, keywordKind
 }
 
-struct Lexer {
+pub struct Lexer {
     src: string,
     pos: i64,
     line: i32,
     col: i32,
 }
 
-fn newLexer(src: string): Lexer {
+pub fn newLexer(src: string): Lexer {
     return Lexer {
         src: src, pos: 0, line: 1, col: 1
     }
@@ -18,23 +18,23 @@ fn newLexer(src: string): Lexer {
 
 // -- helpers --
 
-fn isDigit(c: u8): bool {
+pub fn isDigit(c: u8): bool {
     return c >= 48 && c <= 57
 }
 
-fn isAlpha(c: u8): bool {
+pub fn isAlpha(c: u8): bool {
     return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
 }
 
-fn isAlnum(c: u8): bool {
+pub fn isAlnum(c: u8): bool {
     return isDigit(c) || isAlpha(c)
 }
 
-fn isHexDigit(c: u8): bool {
+pub fn isHexDigit(c: u8): bool {
     return isDigit(c) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102)
 }
 
-fn hexVal(c: u8): i64 {
+pub fn hexVal(c: u8): i64 {
     if c >= 48 && c <= 57 {
         return (c - 48) as i64
     }
@@ -47,14 +47,14 @@ fn hexVal(c: u8): i64 {
     return 0
 }
 
-fn peekChar(lex: &Lexer): u8 {
+pub fn peekChar(lex: &Lexer): u8 {
     if lex.pos < lex.src.len {
         return lex.src[lex.pos]
     }
     return 0
 }
 
-fn peekCharAt(lex: &Lexer, offset: i64): u8 {
+pub fn peekCharAt(lex: &Lexer, offset: i64): u8 {
     let idx = lex.pos + offset
     if idx < lex.src.len {
         return lex.src[idx]
@@ -62,7 +62,7 @@ fn peekCharAt(lex: &Lexer, offset: i64): u8 {
     return 0
 }
 
-fn advanceChar(lex: &mut Lexer): u8 {
+pub fn advanceChar(lex: &mut Lexer): u8 {
     let ch = lex.src[lex.pos]
     lex.pos = lex.pos + 1
     if ch == 10 {
@@ -75,7 +75,7 @@ fn advanceChar(lex: &mut Lexer): u8 {
     return ch
 }
 
-fn lexError(msg: &string, line: i32, col: i32) {
+pub fn lexError(msg: &string, line: i32, col: i32) {
     eprint($"error[lex]: {line}:{col}: {msg}")
     unsafe {
         exit(1)
@@ -84,7 +84,7 @@ fn lexError(msg: &string, line: i32, col: i32) {
 
 // -- trivia --
 
-fn readLeadingTrivia(lex: &mut Lexer): Vec<Trivia> {
+pub fn readLeadingTrivia(lex: &mut Lexer): Vec<Trivia> {
     var trivia: Vec<Trivia> = Vec.new()
     var newlines: i32 = 0
     var emittedBlank = false
@@ -121,7 +121,7 @@ fn readLeadingTrivia(lex: &mut Lexer): Vec<Trivia> {
     return trivia
 }
 
-fn readTrailingTrivia(lex: &mut Lexer): Vec<Trivia> {
+pub fn readTrailingTrivia(lex: &mut Lexer): Vec<Trivia> {
     while lex.pos < lex.src.len {
         let ch = peekChar(lex)
         if ch == 32 || ch == 9 || ch == 13 {
@@ -149,13 +149,13 @@ fn readTrailingTrivia(lex: &mut Lexer): Vec<Trivia> {
 
 // -- literal lexing --
 
-fn lexHexEscape(lex: &mut Lexer): u8 {
+pub fn lexHexEscape(lex: &mut Lexer): u8 {
     let h1 = advanceChar(lex)
     let h2 = advanceChar(lex)
     return (hexVal(h1) * 16 + hexVal(h2)) as u8
 }
 
-fn resolveEscape(c: u8): u8 {
+pub fn resolveEscape(c: u8): u8 {
     if c == 110 {
         return 10
     }
@@ -177,7 +177,7 @@ fn resolveEscape(c: u8): u8 {
     return c
 }
 
-fn lexString(lex: &mut Lexer, line: i32, col: i32): Token {
+pub fn lexString(lex: &mut Lexer, line: i32, col: i32): Token {
     advanceChar(lex)
     var value: string = ""
     while peekChar(lex) != 34 {
@@ -204,7 +204,7 @@ fn lexString(lex: &mut Lexer, line: i32, col: i32): Token {
     }
 }
 
-fn lexChar(lex: &mut Lexer, line: i32, col: i32): Token {
+pub fn lexChar(lex: &mut Lexer, line: i32, col: i32): Token {
     advanceChar(lex)
     if lex.pos >= lex.src.len {
         lexError("unterminated char literal", line, col)
@@ -248,7 +248,7 @@ fn lexChar(lex: &mut Lexer, line: i32, col: i32): Token {
     }
 }
 
-fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
+pub fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
     advanceChar(lex)
     advanceChar(lex)
     var value: string = ""
@@ -318,7 +318,7 @@ fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
     }
 }
 
-fn hexToDecStr(raw: &string): string {
+pub fn hexToDecStr(raw: &string): string {
     var val: i64 = 0
     for i in 0..raw.len {
         val = val * 16 + hexVal(raw[i])
@@ -326,7 +326,7 @@ fn hexToDecStr(raw: &string): string {
     return val.toString()
 }
 
-fn binToDecStr(raw: &string): string {
+pub fn binToDecStr(raw: &string): string {
     var val: i64 = 0
     for i in 0..raw.len {
         val = val * 2 + (raw[i] - 48) as i64
@@ -334,7 +334,7 @@ fn binToDecStr(raw: &string): string {
     return val.toString()
 }
 
-fn lexNumber(lex: &mut Lexer, line: i32, col: i32): Token {
+pub fn lexNumber(lex: &mut Lexer, line: i32, col: i32): Token {
     var lt: Vec<Trivia> = Vec.new()
     var tt: Vec<Trivia> = Vec.new()
     // hex
@@ -399,7 +399,7 @@ fn lexNumber(lex: &mut Lexer, line: i32, col: i32): Token {
     }
 }
 
-fn lexIdent(lex: &mut Lexer, line: i32, col: i32): Token {
+pub fn lexIdent(lex: &mut Lexer, line: i32, col: i32): Token {
     var value: string = ""
     while lex.pos < lex.src.len && isAlnum(peekChar(lex)) {
         value.push(advanceChar(lex))
@@ -414,7 +414,7 @@ fn lexIdent(lex: &mut Lexer, line: i32, col: i32): Token {
 
 // -- main dispatch --
 
-fn makeToken(kind: TokKind, value: string, line: i32, col: i32): Token {
+pub fn makeToken(kind: TokKind, value: string, line: i32, col: i32): Token {
     var lt: Vec<Trivia> = Vec.new()
     var tt: Vec<Trivia> = Vec.new()
     return Token {
@@ -422,7 +422,7 @@ fn makeToken(kind: TokKind, value: string, line: i32, col: i32): Token {
     }
 }
 
-fn nextToken(lex: &mut Lexer): Token {
+pub fn nextToken(lex: &mut Lexer): Token {
     if lex.pos >= lex.src.len {
         return makeToken(TokKind.Eof, "", lex.line, lex.col)
     }
@@ -654,7 +654,7 @@ fn nextToken(lex: &mut Lexer): Token {
 
 // -- public API --
 
-fn tokenize(src: string): Vec<Token> {
+pub fn tokenize(src: string): Vec<Token> {
     var lex = newLexer(src)
     var tokens: Vec<Token> = Vec.new()
     var pendingLeading = readLeadingTrivia(lex)

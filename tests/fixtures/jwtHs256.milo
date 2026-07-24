@@ -6,7 +6,7 @@ from "std/jwt" import {
 }
 
 // Token is byte-identical to PyJWT/jsonwebtoken for this header+payload+secret.
-fn main(): i32 {
+pub fn main(): i32 {
     let secret = "my-secret-key"
     let payload = "{\"sub\":\"1234567890\",\"name\":\"milo\",\"admin\":true}"
     let tok = jwtSignHS256(payload, secret)

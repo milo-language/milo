@@ -1,5 +1,5 @@
 // valid: slice used without reassigning the source
-fn main(): i32 {
+pub fn main(): i32 {
     let s = "hello world"
     let first = s[0..5]
     let second = s[6..11]

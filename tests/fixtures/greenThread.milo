@@ -18,7 +18,7 @@ from "std/sync" import {
     WaitGroup
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print("start")
     let wg = WaitGroup.new()
     var i = 0

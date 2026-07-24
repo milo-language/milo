@@ -6,7 +6,7 @@ from "std/process" import {
     exePath
 }
 
-fn main(): void {
+pub fn main(): void {
     match exePath() {
         Result.Ok(p) => {
             print(p.len > 1)

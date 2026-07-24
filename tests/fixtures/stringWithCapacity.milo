@@ -3,7 +3,7 @@
 // @expect:
 // @expect: 0
 
-fn main(): i32 {
+pub fn main(): i32 {
     var s = String.withCapacity(64)
     s = s + "hello" + " " + "world"
     print(s)

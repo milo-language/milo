@@ -8,7 +8,7 @@ from "std/runtime" import {
     Task, Promise
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // Promise(fn) desugars to Promise<T>.run(fn) with T inferred
     let a = Promise((): i64 => {
         return 42

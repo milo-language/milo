@@ -10,7 +10,7 @@
 // @expect: 3
 // Vec.insert(i, v) shifts right (grows as needed); Vec.remove(i) shifts left
 // and returns the removed element.
-fn main(): i32 {
+pub fn main(): i32 {
     var v: Vec<i64> = [1, 2, 3]
     v.insert(1, 99)
     v.insert(0, 7)

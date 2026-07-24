@@ -1,5 +1,5 @@
 // vec slice: non-owning view via v[a..b]; iterate + index the slice, source still owns
-fn main(): i32 {
+pub fn main(): i32 {
     var v: Vec<i32> = Vec.new()
     v.push(10)
     v.push(20)

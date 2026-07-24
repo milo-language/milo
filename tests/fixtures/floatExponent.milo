@@ -1,5 +1,5 @@
 // Scientific-notation float literals: e/E, optional sign.
-fn main(): void {
+pub fn main(): void {
     let big = 1e3
     // @expect: 1000
     print(big as i64)

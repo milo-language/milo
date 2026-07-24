@@ -7,11 +7,11 @@ from "std/arena" import {
     Arena, Handle, arenaNew, arenaAlloc, arenaModifyMut, arenaWith
 }
 
-struct Box {
+pub struct Box {
     items: Vec<string>, n: i64
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var a: Arena<Box> = arenaNew()
     let h = arenaAlloc(a, Box {
         items: Vec.new(), n: 0

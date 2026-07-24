@@ -1,12 +1,12 @@
 // @runtime-error: value out of range
 
-type Altitude = i32(0..50000)
+pub type Altitude = i32(0..50000)
 
-fn getAltitude(): i32 {
+pub fn getAltitude(): i32 {
     return 60000
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let alt: Altitude = getAltitude()
     print(alt)
     return 0

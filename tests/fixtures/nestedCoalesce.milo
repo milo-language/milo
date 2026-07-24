@@ -2,15 +2,15 @@
 // the syntactic none-block; a nested default expr changes the real predecessor
 // and produced invalid LLVM IR ("instruction does not dominate all uses").
 
-fn pick(a: Option<string>, b: Option<string>): string {
+pub fn pick(a: Option<string>, b: Option<string>): string {
     return a ?? (b ?? "fallback")
 }
 
-fn threeDeep(a: Option<i64>, b: Option<i64>, c: Option<i64>): i64 {
+pub fn threeDeep(a: Option<i64>, b: Option<i64>, c: Option<i64>): i64 {
     return a ?? (b ?? (c ?? 42))
 }
 
-fn main(): void {
+pub fn main(): void {
     print(pick(Option.Some("top"), Option.Some("mid")))
     print(pick(Option.None, Option.Some("mid")))
     print(pick(Option.None, Option.None))

@@ -8,7 +8,7 @@ from "src-milo/checker/types.milo" import {
 
 // -- Diagnostics --
 
-struct Diagnostic {
+pub struct Diagnostic {
     severity: string, // "error" or "warning"
     message: string,
     hint: string,
@@ -17,7 +17,7 @@ struct Diagnostic {
 
 // -- Variable info in scope --
 
-struct VarInfo {
+pub struct VarInfo {
     ty: TypeKind,
     mutable: bool,
     moved: bool,
@@ -28,57 +28,57 @@ struct VarInfo {
 
 // -- Function signature --
 
-struct FnSig {
+pub struct FnSig {
     params: Vec<FnParam>,
     ret: TypeKind,
     variadic: bool,
     isExtern: bool,
 }
 
-struct FnParam {
+pub struct FnParam {
     name: string,
     ty: TypeKind,
 }
 
 // -- Struct info (post-resolution) --
 
-struct CkStructField {
+pub struct CkStructField {
     name: string,
     ty: TypeKind,
 }
 
-struct StructInfo {
+pub struct StructInfo {
     fields: Vec<CkStructField>,
     baseName: string,
 }
 
 // -- Enum info (post-resolution) --
 
-struct VariantInfo {
+pub struct VariantInfo {
     tag: i32,
     fields: Vec<TypeKind>,
 }
 
-struct EnumInfo {
+pub struct EnumInfo {
     baseName: string,
     variants: HashMap<string, VariantInfo>,
 }
 
 // -- Trait info --
 
-struct TraitMethodInfo {
+pub struct TraitMethodInfo {
     params: Vec<FnParam>,
     ret: TypeKind,
     hasDefault: bool,
 }
 
-struct TraitInfo {
+pub struct TraitInfo {
     name: string,
     supertraits: Vec<string>,
     methods: HashMap<string, TraitMethodInfo>,
 }
 
-struct ImplInfo {
+pub struct ImplInfo {
     traitName: Option<string>,
     typeName: string,
     methods: HashMap<string, FnSig>,
@@ -86,7 +86,7 @@ struct ImplInfo {
 
 // A monomorphized struct instantiation, recorded so generic impls that
 // register later (phase 2) can replay against it.
-struct StructInst {
+pub struct StructInst {
     base: string,
     mangled: string,
     args: Vec<TypeKind>,
@@ -97,24 +97,24 @@ struct StructInst {
 // Generic declarations parked until a use site provides concrete type args.
 // Live on the Checker (not a separate MonoState) so checkExpr can
 // monomorphize on demand at call/literal sites.
-struct GenericFnInfo {
+pub struct GenericFnInfo {
     typeParams: Vec<string>,
     decl: Function,
 }
 
-struct GenericStructInfo {
+pub struct GenericStructInfo {
     typeParams: Vec<string>,
     decl: StructDecl,
     fields: Vec<CkStructField>,
 }
 
-struct GenericEnumInfo {
+pub struct GenericEnumInfo {
     typeParams: Vec<string>,
     decl: EnumDecl,
     variants: HashMap<string, VariantInfo>,
 }
 
-struct Checker {
+pub struct Checker {
     diagnostics: Vec<Diagnostic>,
     functions: HashMap<string, FnSig>,
     structs: HashMap<string, StructInfo>,
@@ -150,7 +150,7 @@ struct Checker {
     pendingClosureRet: Option<TypeKind>,
 }
 
-fn newChecker(): Checker {
+pub fn newChecker(): Checker {
     return Checker {
         diagnostics: Vec.new(),
         functions: HashMap.new(),
@@ -181,7 +181,7 @@ fn newChecker(): Checker {
 
 // -- Error/warning emission --
 
-fn error(ck: &mut Checker, msg: string, span: Option<Span>) {
+pub fn error(ck: &mut Checker, msg: string, span: Option<Span>) {
     ck.diagnostics.push(Diagnostic {
         severity: "error",
         message: msg,
@@ -191,7 +191,7 @@ fn error(ck: &mut Checker, msg: string, span: Option<Span>) {
     )
 }
 
-fn errorHint(ck: &mut Checker, msg: string, hint: string, span: Option<Span>) {
+pub fn errorHint(ck: &mut Checker, msg: string, hint: string, span: Option<Span>) {
     ck.diagnostics.push(Diagnostic {
         severity: "error",
         message: msg,
@@ -201,7 +201,7 @@ fn errorHint(ck: &mut Checker, msg: string, hint: string, span: Option<Span>) {
     )
 }
 
-fn warn(ck: &mut Checker, msg: string, span: Option<Span>) {
+pub fn warn(ck: &mut Checker, msg: string, span: Option<Span>) {
     ck.diagnostics.push(Diagnostic {
         severity: "warning",
         message: msg,
@@ -213,22 +213,22 @@ fn warn(ck: &mut Checker, msg: string, span: Option<Span>) {
 
 // -- Scope management --
 
-fn pushScope(ck: &mut Checker) {
+pub fn pushScope(ck: &mut Checker) {
     ck.scopes.push(HashMap.new())
 }
 
-fn popScope(ck: &mut Checker) {
+pub fn popScope(ck: &mut Checker) {
     let _ = ck.scopes.pop()
 }
 
-fn declare(ck: &mut Checker, name: string, info: VarInfo) {
+pub fn declare(ck: &mut Checker, name: string, info: VarInfo) {
     let depth = ck.scopes.len - 1
     ck.scopes[depth].insert(name, info)
 }
 
 // References can't be returned anymore — lookup returns a copy of the VarInfo,
 // and mutations go through the setVar* helpers which write the copy back.
-fn lookup(ck: &Checker, name: &string): Option<VarInfo> {
+pub fn lookup(ck: &Checker, name: &string): Option<VarInfo> {
     var i: i64 = ck.scopes.len - 1
     while i >= 0 {
         if ck.scopes[i].contains(name) {
@@ -239,7 +239,7 @@ fn lookup(ck: &Checker, name: &string): Option<VarInfo> {
     return Option.None
 }
 
-fn setVarMoved(ck: &mut Checker, name: &string, moved: bool) {
+pub fn setVarMoved(ck: &mut Checker, name: &string, moved: bool) {
     var i: i64 = ck.scopes.len - 1
     while i >= 0 {
         if ck.scopes[i].contains(name) {
@@ -258,7 +258,7 @@ fn setVarMoved(ck: &mut Checker, name: &string, moved: bool) {
     }
 }
 
-fn setVarRead(ck: &mut Checker, name: &string) {
+pub fn setVarRead(ck: &mut Checker, name: &string) {
     var i: i64 = ck.scopes.len - 1
     while i >= 0 {
         if ck.scopes[i].contains(name) {
@@ -279,7 +279,7 @@ fn setVarRead(ck: &mut Checker, name: &string) {
 
 // -- Has errors check --
 
-fn hasErrors(ck: &Checker): bool {
+pub fn hasErrors(ck: &Checker): bool {
     for i in 0..ck.diagnostics.len {
         if ck.diagnostics[i].severity == "error" {
             return true
@@ -314,7 +314,7 @@ impl Clone for FnSig {
 // annotations like `fn f(): TokKind` come back as TStruct("TokKind") and then
 // fail typeEq against the TEnum the body produces. Rewrite anywhere an enum
 // with that name is registered.
-fn normalizeEnumNames(ck: &Checker, t: &TypeKind): TypeKind {
+pub fn normalizeEnumNames(ck: &Checker, t: &TypeKind): TypeKind {
     match t {
         TypeKind.TStruct(name) => {
             if ck.enums.contains(name) {
@@ -365,7 +365,7 @@ fn normalizeEnumNames(ck: &Checker, t: &TypeKind): TypeKind {
 
 // A branch that ends in break/continue/return never falls through, so its
 // moves must not poison the code after the branch (flow-insensitive walk).
-fn stmtTerminates(s: &Stmt): bool {
+pub fn stmtTerminates(s: &Stmt): bool {
     match s {
         Stmt.BreakStmt(sp) => {
             return true
@@ -382,7 +382,7 @@ fn stmtTerminates(s: &Stmt): bool {
     }
 }
 
-fn snapshotMoves(ck: &Checker): Vec<HashMap<string, bool>> {
+pub fn snapshotMoves(ck: &Checker): Vec<HashMap<string, bool>> {
     var out: Vec<HashMap<string, bool>> = Vec.new()
     for i in 0..ck.scopes.len {
         var m: HashMap<string, bool> = HashMap.new()
@@ -394,7 +394,7 @@ fn snapshotMoves(ck: &Checker): Vec<HashMap<string, bool>> {
     return out
 }
 
-fn restoreMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
+pub fn restoreMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
     var i: i64 = 0
     while i < ck.scopes.len && i < snap.len {
         for name, moved in snap[i] {
@@ -414,7 +414,7 @@ fn restoreMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
 
 // Re-apply a branch's moves on top of the current state (any-path-moved
 // stays moved after the join).
-fn orMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
+pub fn orMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
     var i: i64 = 0
     while i < ck.scopes.len && i < snap.len {
         for name, moved in snap[i] {
@@ -437,7 +437,7 @@ fn orMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
 // Enums/structs whose payloads are all Copy are themselves Copy (mirrors the
 // oracle's isAllCopyEnum/isAllCopyStruct): an Option<Span> never moves.
 // Recursion terminates because recursive types go through Heap (not Copy).
-fn isCopyCk(ck: &Checker, t: &TypeKind): bool {
+pub fn isCopyCk(ck: &Checker, t: &TypeKind): bool {
     if isCopy(t) {
         return true
     }

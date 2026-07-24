@@ -2,7 +2,7 @@
 // @failed: 0
 // Symbolic execution across the branch proves |x| is non-negative on both
 // paths (x<0 → -x > 0 ; x>=0 → x >= 0). Exercises negation + path splitting.
-fn absVal(x: i64): i64
+pub fn absVal(x: i64): i64
 ensures result >= 0
 {
     if x < 0 {
@@ -11,7 +11,7 @@ ensures result >= 0
     return x
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(absVal(-7))
     return 0
 }

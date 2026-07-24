@@ -2,7 +2,7 @@ from "std/url" import {
     urlParse
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let u = urlParse("https://example.com:8080/api/users?page=1#top")!
     print(u.scheme)
     print(u.host)

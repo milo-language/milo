@@ -1,6 +1,6 @@
 // @expect: 55
 
-fn sumTo(n: i64): i64
+pub fn sumTo(n: i64): i64
 requires n >= 0
 ensures result >= 0
 {
@@ -18,7 +18,7 @@ ensures result >= 0
     return total
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(sumTo(10))
     return 0
 }

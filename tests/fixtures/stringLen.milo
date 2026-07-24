@@ -1,6 +1,6 @@
 // @expect: 5
 
-fn main(): i32 {
+pub fn main(): i32 {
     let s = "hello"
     print(s.len)
     return 0

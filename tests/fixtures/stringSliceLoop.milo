@@ -3,7 +3,7 @@
 // @expect: wor
 // @expect: ld
 
-fn main(): i32 {
+pub fn main(): i32 {
     var words: Vec<string> = Vec.new()
     words.push("hello")
     words.push("world")

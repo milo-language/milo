@@ -8,7 +8,7 @@ from "std/term" import {
     terminalSize
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let size = terminalSize()
     print(size.rows)
     print(size.cols)

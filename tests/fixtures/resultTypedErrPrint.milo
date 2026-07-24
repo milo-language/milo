@@ -1,15 +1,15 @@
 // @expect: error: NotFound("config.toml")
 
-enum IoError {
+pub enum IoError {
     NotFound(string),
     PermissionDenied(string),
 }
 
-fn open(path: string): Result<string, IoError> {
+pub fn open(path: string): Result<string, IoError> {
     return Result.Err(IoError.NotFound(path))
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     match open("config.toml") {
         Result.Ok(d) => {
             print(d)

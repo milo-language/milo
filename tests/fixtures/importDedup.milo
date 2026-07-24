@@ -6,7 +6,7 @@ from "lib/math.milo" import {
     add
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(add(3, 4))
     return 0
 }

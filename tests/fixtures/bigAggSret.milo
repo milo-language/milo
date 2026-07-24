@@ -8,12 +8,12 @@
 // @expect: 22
 // @expect: 105
 // @expect: 107
-struct Big {
+pub struct Big {
     buf: [i32; 4096],
     tag: i64,
 }
 
-fn makeBig(seed: i64): Big {
+pub fn makeBig(seed: i64): Big {
     var b = Big {
         buf: [0; 4096], tag: seed
     }
@@ -23,7 +23,7 @@ fn makeBig(seed: i64): Big {
     return b
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = makeBig(5)
     var c = a
     c.buf[1] = 99

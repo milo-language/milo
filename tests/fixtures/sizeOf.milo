@@ -6,13 +6,13 @@
 // @expect: 0
 // @expect: 0
 
-struct Point {
+pub struct Point {
     x: i64,
     y: i64,
     z: i64,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(sizeOf<u8>())
     print(sizeOf<i32>())
     print(sizeOf<i64>())

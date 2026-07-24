@@ -9,19 +9,19 @@
 // Vec.clone(): deep copy — every element is cloned, so the source and the clone
 // own independent heap data and neither aliases the other after a mutation.
 
-struct Person {
+pub struct Person {
     name: string,
     tags: Vec<string>,
 }
 
 // Clone through a `&Vec` param: the borrow is read-only, the result is owned.
-fn dup(v: &Vec<string>): Vec<string> {
+pub fn dup(v: &Vec<string>): Vec<string> {
     var out = v.clone()
     out.push("extra")
     return out
 }
 
-fn main() {
+pub fn main() {
     var v: Vec<string> = ["a", "b"]
     var w = v.clone()
     w.push("c")

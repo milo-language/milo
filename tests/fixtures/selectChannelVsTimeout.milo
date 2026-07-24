@@ -13,7 +13,7 @@ from "std/select" import {
     Select, selectRecv
 }
 
-fn raceOnce(withSend: bool): void {
+pub fn raceOnce(withSend: bool): void {
     let ch = Channel<i64>.new(1)!
     Task.spawn(move(): void => {
         var sel = Select.new()
@@ -41,7 +41,7 @@ fn raceOnce(withSend: bool): void {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     raceOnce(true)
     raceOnce(false)
     schedulerRunToCompletion()

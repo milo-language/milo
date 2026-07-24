@@ -10,7 +10,7 @@ from "std/process" import {
     Child
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var args: Vec<string> = Vec.new()
     match Child.spawn("milo_no_such_binary_xyz", args, true) {
         Result.Ok(child) => {

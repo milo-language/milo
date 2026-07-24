@@ -17,7 +17,7 @@ from "src-milo/hir.milo" import {
 
 // -- Lower a full program --
 
-fn lower(program: &Program, ck: &Checker): HIRModule {
+pub fn lower(program: &Program, ck: &Checker): HIRModule {
     var structs: Vec<HIRStruct> = Vec.new()
     var enums: Vec<HIREnum> = Vec.new()
     var functions: Vec<HIRFunction> = Vec.new()
@@ -85,7 +85,7 @@ fn lower(program: &Program, ck: &Checker): HIRModule {
 
 // -- Lower extern function --
 
-fn lowerExtern(f: &Function, ck: &Checker): HIRFunction {
+pub fn lowerExtern(f: &Function, ck: &Checker): HIRFunction {
     var params: Vec<HIRParam> = Vec.new()
     for i in 0..f.params.len {
         let pType = typeFromAst(f.params[i].ty)
@@ -118,7 +118,7 @@ fn lowerExtern(f: &Function, ck: &Checker): HIRFunction {
 
 // -- Lower function with body --
 
-fn lowerFn(f: &Function, ck: &Checker): HIRFunction {
+pub fn lowerFn(f: &Function, ck: &Checker): HIRFunction {
     var params: Vec<HIRParam> = Vec.new()
 
     // Use checker's resolved signature if available
@@ -170,7 +170,7 @@ fn lowerFn(f: &Function, ck: &Checker): HIRFunction {
 
 // -- Lower statement --
 
-fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
+pub fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
     match stmt {
         Stmt.LetDecl(name, typeAnno, value, span) => {
             let hirVal = lowerExpr(*value, ck)
@@ -388,7 +388,7 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
 
 // -- Lower match arm --
 
-fn lowerMatchArm(arm: &MatchArm, ck: &Checker): HIRMatchArm {
+pub fn lowerMatchArm(arm: &MatchArm, ck: &Checker): HIRMatchArm {
     // Need to figure out enum name from context — use empty for now
     let hirPattern = lowerPatternRaw(arm.pattern, ck)
     var hirBody: Vec<Heap<HIRStmt>> = Vec.new()
@@ -400,7 +400,7 @@ fn lowerMatchArm(arm: &MatchArm, ck: &Checker): HIRMatchArm {
     }
 }
 
-fn lowerPattern(pattern: &Pattern, ck: &Checker, enumName: &string): HIRPattern {
+pub fn lowerPattern(pattern: &Pattern, ck: &Checker, enumName: &string): HIRPattern {
     match pattern {
         Pattern.WildcardPattern(span) => {
             return HIRPattern.WildcardPattern
@@ -450,7 +450,7 @@ fn lowerPattern(pattern: &Pattern, ck: &Checker, enumName: &string): HIRPattern 
     }
 }
 
-fn lowerPatternRaw(pattern: &Pattern, ck: &Checker): HIRPattern {
+pub fn lowerPatternRaw(pattern: &Pattern, ck: &Checker): HIRPattern {
     match pattern {
         Pattern.WildcardPattern(span) => {
             return HIRPattern.WildcardPattern
@@ -494,7 +494,7 @@ fn lowerPatternRaw(pattern: &Pattern, ck: &Checker): HIRPattern {
 
 // -- Lower expression --
 
-fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
+pub fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
     match expr {
         Expr.IntLit(value, span) => {
             return HIRExpr.IntLit(value, tyI32(), cloneSpan(span))
@@ -924,7 +924,7 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
 
 // -- Extract type from HIR expression --
 
-fn hirExprType(expr: &HIRExpr): TypeKind {
+pub fn hirExprType(expr: &HIRExpr): TypeKind {
     match expr {
         HIRExpr.IntLit(v, t, s) => {
             return t.clone()

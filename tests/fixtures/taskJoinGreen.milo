@@ -6,7 +6,7 @@ from "std/runtime" import {
     Task
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let outer = Task.spawn(move(): void => {
         let inner = Task.spawn(move(): void => {
             print("inner")

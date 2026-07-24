@@ -3,7 +3,7 @@ from "lib/mathExt.milo" import {
     cube
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(cube(3))
     return 0
 }

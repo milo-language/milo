@@ -1,6 +1,6 @@
 // \xNN produces raw bytes — \xe2\x94\x80 = UTF-8 for ─ (U+2500)
 
-fn main(): i32 {
+pub fn main(): i32 {
     let tab = "\x09"
     print($"tab:[{tab}]")
 

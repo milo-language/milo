@@ -3,7 +3,7 @@
 // @expect: 1
 // @expect: 128
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a: u8 = 0b10001010 // rotateLeft 1: top bit wraps to bit0
     print(a.rotateLeft(1)) // 0b00010101 = 21
 

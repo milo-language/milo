@@ -1,7 +1,7 @@
 // @expect: found: 7
 // @expect: nothing
 
-fn main(): i32 {
+pub fn main(): i32 {
     let v: i64 = 7
     let a: i64? = Option.Some(v)
     if let Option.Some(val) = a {

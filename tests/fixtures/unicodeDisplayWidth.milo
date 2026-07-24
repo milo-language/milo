@@ -22,7 +22,7 @@ from "std/unicode" import {
     displayWidth, charWidth, truncateToWidth, encodeCodepoint
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // Plain ASCII: one cell each.
     print(displayWidth("hello"))
 

@@ -5,7 +5,7 @@
 // @expect: 1
 // @expect: hello world
 
-fn main() {
+pub fn main() {
     var x = 10
     x += 5
     print(x)

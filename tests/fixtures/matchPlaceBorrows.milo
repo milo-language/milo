@@ -5,16 +5,16 @@
 // keeps ownership and the same place can be matched again. Consuming it used to
 // zero the slot behind the checker's back — the second match then saw tag 0
 // with empty payloads and no diagnostic.
-enum Pat {
+pub enum Pat {
     E(string, Vec<string>),
     W,
 }
 
-struct Arm {
+pub struct Arm {
     pattern: Pat,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var arms: Vec<Arm> = Vec.new()
     var bs: Vec<string> = Vec.new()
     bs.push("v")

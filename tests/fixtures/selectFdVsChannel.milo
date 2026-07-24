@@ -25,7 +25,7 @@ from "std/os" import {
     readFd
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var fds: [u8; 8] = [0; 8]
     var rfd: i32 = 0
     var wfd: i32 = 0

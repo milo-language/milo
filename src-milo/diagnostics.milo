@@ -6,14 +6,19 @@ from "src-milo/checker/state.milo" import {
     Diagnostic
 }
 
-let RESET = "\x1b[0m"
-let BOLD = "\x1b[1m"
-let RED = "\x1b[31m"
-let YELLOW = "\x1b[33m"
-let CYAN = "\x1b[36m"
-let DIM = "\x1b[2m"
+pub let RESET = "\x1b[0m"
 
-fn formatDiagnostic(d: &Diagnostic, source: &string, filePath: &string): string {
+pub let BOLD = "\x1b[1m"
+
+pub let RED = "\x1b[31m"
+
+pub let YELLOW = "\x1b[33m"
+
+pub let CYAN = "\x1b[36m"
+
+pub let DIM = "\x1b[2m"
+
+pub fn formatDiagnostic(d: &Diagnostic, source: &string, filePath: &string): string {
     var lines: Vec<string> = Vec.new()
     var color = RED
     if d.severity == "warning" {
@@ -63,7 +68,7 @@ fn formatDiagnostic(d: &Diagnostic, source: &string, filePath: &string): string 
     return result
 }
 
-fn formatDiagnosticPlain(d: &Diagnostic, filePath: &string): string {
+pub fn formatDiagnosticPlain(d: &Diagnostic, filePath: &string): string {
     match d.span {
         Option.Some(sp) => {
             return d.severity.clone() + "[" + filePath.clone() + ":" + sp.line.toString() + ":" + sp.col.toString() + "]: " + d.message.clone()

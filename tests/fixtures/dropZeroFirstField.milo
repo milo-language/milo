@@ -2,7 +2,7 @@
 // @expect: dropping count=0
 // tests: custom Drop fires even when struct's first field is zero
 
-struct Counter {
+pub struct Counter {
     count: i64,
     data: string,
 }
@@ -13,7 +13,7 @@ impl Drop for Counter {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let c = Counter {
         count: 0, data: "hello"
     }

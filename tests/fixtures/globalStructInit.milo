@@ -2,18 +2,18 @@
 // A struct global's constant field initializers must survive to runtime. These used
 // to be silently zeroed — the compiler rejects NON-const module-scope init precisely
 // because it "would silently become zero", then did exactly that for a const literal.
-struct S {
+pub struct S {
     a: i32,
     b: i64,
     v: Vec<i64>,
     c: i32,
 }
 
-var g: S = S {
+pub var g: S = S {
     a: -1, b: -7, v: Vec.new(), c: 42
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(g.a.toString() + " " + g.b.toString() + " " + g.c.toString())
     return 0
 }

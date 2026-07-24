@@ -1,6 +1,6 @@
 // @expect: 42
 
-fn main(): i32 {
+pub fn main(): i32 {
     let x = Option.Some(42)
     let val = x!
     print(val)

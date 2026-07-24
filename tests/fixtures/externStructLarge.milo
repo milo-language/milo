@@ -1,14 +1,14 @@
 // large struct crosses by value: indirect arg + sret return. The callee mutates its
 // copy; the caller's original stays unchanged (proves a real copy was made).
-extern struct Big {
+pub extern struct Big {
     a: i64,
     b: i64,
     c: i64,
 }
 
-extern fn bump(v: Big): Big
+pub extern fn bump(v: Big): Big
 
-fn main(): i32 {
+pub fn main(): i32 {
     let v = Big {
         a: 1, b: 2, c: 3
     }

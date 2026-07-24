@@ -7,14 +7,14 @@
 //
 // Ok payloads below are built with pushStr, never written as literals: a literal has
 // cap == 0, marking a static buffer that drop glue skips, which would hide the double-free.
-fn heapStr(tail: &string): string {
+pub fn heapStr(tail: &string): string {
     var s = ""
     s.pushStr("val-")
     s.pushStr(tail)
     return s
 }
 
-fn describe(r: Result<i64, i64>): string {
+pub fn describe(r: Result<i64, i64>): string {
     match r {
         Result.Ok(v) => {
             return "ok:" + v.toString()
@@ -25,7 +25,7 @@ fn describe(r: Result<i64, i64>): string {
     }
 }
 
-fn main() {
+pub fn main() {
     // T is i64 (Copy) here, so these receivers are NOT consumed and stay usable.
     let bad: Result<i64, string> = Result.Err("boom")
     // @expect: err:4

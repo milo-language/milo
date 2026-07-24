@@ -1,7 +1,7 @@
 // @expect: true
 // @expect: false
 
-fn main(): i32 {
+pub fn main(): i32 {
     if !false {
         print("true")
     }

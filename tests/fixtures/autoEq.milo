@@ -2,12 +2,12 @@
 // @expect: false
 // @expect: true
 
-struct Vec2 {
+pub struct Vec2 {
     x: i32,
     y: i32,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = Vec2 {
         x: 1, y: 2
     }

@@ -1,14 +1,14 @@
 // @expect: 30
 
-fn add(a: i32, b: i32): i32 {
+pub fn add(a: i32, b: i32): i32 {
     return a + b
 }
 
-fn double(x: i32): i32 {
+pub fn double(x: i32): i32 {
     return x + x
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(double(add(7, 8)))
     return 0
 }

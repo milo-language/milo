@@ -1,7 +1,7 @@
 // @expect: connected: fd=42
 // @expect: closing connection 42
 
-struct Connection {
+pub struct Connection {
     name: string,
     fd: i32,
 }
@@ -12,7 +12,7 @@ impl Drop for Connection {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let c = Connection {
         name: "db", fd: 42
     }

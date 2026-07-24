@@ -6,7 +6,7 @@ from "src-milo/ast.milo" import {
 // TypeKind — the resolved, internal type representation used by the checker.
 // Milo enums can't be recursive without Heap, so complex types use string names
 // and are looked up in the checker's tables.
-enum TypeKind {
+pub enum TypeKind {
     TInt(i32, bool), // (bits, signed)
     TFloat(i32), // (bits)
     TBool,
@@ -26,38 +26,38 @@ enum TypeKind {
 
 // -- Type constructors --
 
-fn tyI32(): TypeKind {
+pub fn tyI32(): TypeKind {
     return TypeKind.TInt(32, true)
 }
 
-fn tyI64(): TypeKind {
+pub fn tyI64(): TypeKind {
     return TypeKind.TInt(64, true)
 }
 
-fn tyU8(): TypeKind {
+pub fn tyU8(): TypeKind {
     return TypeKind.TInt(8, false)
 }
 
-fn tyBool(): TypeKind {
+pub fn tyBool(): TypeKind {
     return TypeKind.TBool
 }
 
-fn tyVoid(): TypeKind {
+pub fn tyVoid(): TypeKind {
     return TypeKind.TVoid
 }
 
-fn tyString(): TypeKind {
+pub fn tyString(): TypeKind {
     return TypeKind.TString
 }
 
-fn tyUnknown(): TypeKind {
+pub fn tyUnknown(): TypeKind {
     return TypeKind.TUnknown
 }
 
 // An unknown ANYWHERE in a type means some upstream inference gave up; treat
 // the whole type as unknown for mismatch purposes (Heap<unknown> vs Heap<Expr>
 // must not error — the top-level tyUnknown() guards miss nested cases).
-fn containsUnknown(t: &TypeKind): bool {
+pub fn containsUnknown(t: &TypeKind): bool {
     match t {
         TypeKind.TUnknown => {
             return true
@@ -88,7 +88,7 @@ fn containsUnknown(t: &TypeKind): bool {
 
 // -- Convert AST MiloType → TypeKind (non-generic base types) --
 
-fn typeFromAst(ty: &MiloType): TypeKind {
+pub fn typeFromAst(ty: &MiloType): TypeKind {
     if ty.isFn {
         var params: Vec<TypeKind> = Vec.new()
         for i in 0..ty.fnParams.len {
@@ -131,7 +131,7 @@ fn typeFromAst(ty: &MiloType): TypeKind {
     return base
 }
 
-fn typeFromName(name: &string): TypeKind {
+pub fn typeFromName(name: &string): TypeKind {
     if name == "i8" {
         return TypeKind.TInt(8, true)
     }
@@ -176,7 +176,7 @@ fn typeFromName(name: &string): TypeKind {
 
 // -- Type equality --
 
-fn typeEq(a: &TypeKind, b: &TypeKind): bool {
+pub fn typeEq(a: &TypeKind, b: &TypeKind): bool {
     match a {
         TypeKind.TInt(bitsA, signedA) => {
             match b {
@@ -341,7 +341,7 @@ fn typeEq(a: &TypeKind, b: &TypeKind): bool {
 
 // -- Type name (for error messages) --
 
-fn typeName(t: &TypeKind): string {
+pub fn typeName(t: &TypeKind): string {
     match t {
         TypeKind.TInt(bits, signed) => {
             let prefix = if signed {
@@ -418,7 +418,7 @@ fn typeName(t: &TypeKind): string {
 
 // -- Type predicates --
 
-fn isNumeric(t: &TypeKind): bool {
+pub fn isNumeric(t: &TypeKind): bool {
     match t {
         TypeKind.TInt(bits, signed) => {
             return true
@@ -432,7 +432,7 @@ fn isNumeric(t: &TypeKind): bool {
     }
 }
 
-fn isInteger(t: &TypeKind): bool {
+pub fn isInteger(t: &TypeKind): bool {
     match t {
         TypeKind.TInt(bits, signed) => {
             return true
@@ -443,7 +443,7 @@ fn isInteger(t: &TypeKind): bool {
     }
 }
 
-fn isFloat(t: &TypeKind): bool {
+pub fn isFloat(t: &TypeKind): bool {
     match t {
         TypeKind.TFloat(bits) => {
             return true
@@ -454,7 +454,7 @@ fn isFloat(t: &TypeKind): bool {
     }
 }
 
-fn isCopy(t: &TypeKind): bool {
+pub fn isCopy(t: &TypeKind): bool {
     match t {
         TypeKind.TInt(bits, signed) => {
             return true
@@ -480,7 +480,7 @@ fn isCopy(t: &TypeKind): bool {
     }
 }
 
-fn needsDrop(t: &TypeKind): bool {
+pub fn needsDrop(t: &TypeKind): bool {
     match t {
         TypeKind.TString => {
             return true
@@ -558,7 +558,7 @@ impl Clone for TypeKind {
     }
 }
 
-fn optI64Eq(a: &Option<i64>, b: &Option<i64>): bool {
+pub fn optI64Eq(a: &Option<i64>, b: &Option<i64>): bool {
     match a {
         Option.Some(x) => {
             match b {

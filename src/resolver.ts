@@ -4,7 +4,7 @@
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { homedir } from "os";
-import type { Program, Span } from "./ast";
+import type { Program, Span, DeclOrigins, DeclOrigin } from "./ast";
 import { ParseError } from "./diagnostics";
 import type { TargetInfo } from "./target";
 import { Lexer } from "./lexer";
@@ -99,6 +99,25 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
 
   const deps = findManifest(sourceDir);
 
+  // Visibility index, filled as each file is parsed — i.e. before the dedup and
+  // last-wins override below discard same-named decls. See DeclOrigins in ast.ts.
+  const declOrigins: DeclOrigins = { values: new Map(), types: new Map() };
+  function note(m: Map<string, DeclOrigin>, name: string, isPub: boolean | undefined, file: string) {
+    let e = m.get(name);
+    if (!e) { e = { files: new Set(), anyPub: false }; m.set(name, e); }
+    e.files.add(file);
+    if (isPub) e.anyPub = true;
+  }
+  function recordDecls(p: Program, file: string) {
+    for (const f of p.functions) note(declOrigins.values, f.name, f.isPub, file);
+    for (const g of p.globals) note(declOrigins.values, g.name, g.isPub, file);
+    for (const s of p.structs) note(declOrigins.types, s.name, s.isPub, file);
+    for (const e of p.enums) note(declOrigins.types, e.name, e.isPub, file);
+    for (const t of p.traits) note(declOrigins.types, t.name, t.isPub, file);
+    for (const i of p.interfaces) note(declOrigins.types, i.name, i.isPub, file);
+    for (const a of p.typeAliases) note(declOrigins.types, a.name, a.isPub, file);
+  }
+
   function resolvePath(dir: string, importPath: string): string {
     const withExt = importPath.endsWith(".milo") ? importPath : importPath + ".milo";
 
@@ -173,6 +192,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         }
       }
       // merge everything — named imports validate but don't restrict (flat compilation)
+      recordDecls(imported, absPath);
       for (const f of imported.functions) f.sourceFile = absPath;
       structs.push(...imported.structs);
       enums.push(...imported.enums);
@@ -191,7 +211,8 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   if (!visited.has(preludePath) && (bundleExists(preludePath) || existsSync(preludePath))) {
     visited.add(preludePath);
     const src = readSource(preludePath);
-    const prelude = new Parser(new Lexer(src).tokenize()).parse();
+    const prelude = new Parser(new Lexer(src).tokenize(), src, preludePath).parse();
+    recordDecls(prelude, preludePath);
     for (const f of prelude.functions) f.sourceFile = preludePath;
     structs.push(...prelude.structs);
     enums.push(...prelude.enums);
@@ -209,6 +230,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   preludeFiles.add(preludePath);
 
   // user code comes after prelude
+  recordDecls(program, entryFile ?? "(entry module)");
   for (const f of program.functions) f.sourceFile = entryFile ?? "(entry module)";
   structs.push(...program.structs);
   enums.push(...program.enums);
@@ -336,5 +358,5 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // the separate arrays above), so its impls are the user's own.
   const userImplKeys = new Set<string>();
   for (const impl of program.impls) for (const m of impl.methods) userImplKeys.add(`${impl.typeName}.${m.name}`);
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), declOrigins, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib };
 }

@@ -3,23 +3,23 @@
 // @expect: popped:20
 // @expect: len:1
 
-struct Stack<T> {
+pub struct Stack<T> {
     items: Vec<T>,
 }
 
-fn stackPush<T>(s: &mut Stack<T>, val: T): void {
+pub fn stackPush<T>(s: &mut Stack<T>, val: T): void {
     s.items.push(val)
 }
 
-fn stackPop<T>(s: &mut Stack<T>): Option<T> {
+pub fn stackPop<T>(s: &mut Stack<T>): Option<T> {
     return s.items.pop()
 }
 
-fn stackLen<T>(s: &Stack<T>): i64 {
+pub fn stackLen<T>(s: &Stack<T>): i64 {
     return s.items.len()
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var s: Stack<i64> = Stack {
         items: Vec.new()
     }

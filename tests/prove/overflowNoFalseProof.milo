@@ -16,18 +16,18 @@
 // This asserts the DEGRADATION, not a proof: if someone widens the solver's arithmetic
 // later, this becomes `failed` (with x = -1) and the annotation should follow. What must
 // never come back is `proven`.
-fn half(n: i64): i64
+pub fn half(n: i64): i64
 requires n >= 0
 {
     return n / 2
 }
 
-fn buggy(x: i64): i64
+pub fn buggy(x: i64): i64
 requires x >= 0 - 4611686018427387904 && x <= 4611686018427387904
 {
     return half(x)
 }
 
-fn main() {
+pub fn main() {
     print(buggy(10))
 }

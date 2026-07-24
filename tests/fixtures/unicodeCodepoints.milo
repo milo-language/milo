@@ -9,7 +9,7 @@ from "std/unicode" import {
     codepoints, codepointCount
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let s = "café"
     let cps = codepoints(s)
 

@@ -9,7 +9,7 @@ from "std/runtime" import {
     Task, schedulerYield, schedulerRunToCompletion
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     Task.spawn(move(): void => {
         print("A1")
         schedulerYield()

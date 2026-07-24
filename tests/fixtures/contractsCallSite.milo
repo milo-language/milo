@@ -6,7 +6,7 @@ from "std/math" import {
     mathSqrt, clampI64, absI64
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let r = mathSqrt(9.0)
     print(r as i64)
     print(clampI64(10, 0, 5))

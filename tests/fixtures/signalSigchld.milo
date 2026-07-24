@@ -23,13 +23,13 @@ from "std/platform" import {
     getpid
 }
 
-var seen: i32 = 0
+pub var seen: i32 = 0
 
-fn onChild(sig: i32): void {
+pub fn onChild(sig: i32): void {
     seen = sig
 }
 
-fn main() {
+pub fn main() {
     unsafe {
         onSignal(sigchld(), onChild as *u8)
     }

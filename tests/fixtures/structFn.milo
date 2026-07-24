@@ -1,15 +1,15 @@
 // @expect: 5
 
-struct Vec2 {
+pub struct Vec2 {
     x: i32,
     y: i32,
 }
 
-fn manhattan(v: &Vec2): i32 {
+pub fn manhattan(v: &Vec2): i32 {
     return v.x + v.y
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let v = Vec2 {
         x: 2, y: 3
     }

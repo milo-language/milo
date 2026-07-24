@@ -1,11 +1,11 @@
 // @expect: 11
 // Struct field initializers coerce a constant-int literal/subexpression to the
 // field's int width (parity with fn args, enum ctors, binary ops).
-struct P {
+pub struct P {
     x: i64, y: i64
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = P {
         x: 5, y: 2 * 3
     }

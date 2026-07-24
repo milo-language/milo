@@ -4,7 +4,7 @@ from "std/json" import {
     jsonObj
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let name: Option<string> = Option.Some("milo")
     let missing: Option<string> = Option.None
     let stars: Option<i64> = Option.Some(42)

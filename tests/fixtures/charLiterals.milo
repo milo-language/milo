@@ -7,7 +7,7 @@
 // @expect: other
 
 // char literals as match-arm patterns (integer-valued u8 subject)
-fn classify(ch: u8): string {
+pub fn classify(ch: u8): string {
     match ch {
         'a' => {
             return "a"
@@ -24,7 +24,7 @@ fn classify(ch: u8): string {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = 'A'
     print(a)
 

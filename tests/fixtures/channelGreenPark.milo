@@ -13,7 +13,7 @@ from "std/sync" import {
     Channel
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let ch = Channel<i64>.new(1)!
 
     Task.spawn(move(): void => {

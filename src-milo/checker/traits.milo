@@ -15,7 +15,7 @@ from "src-milo/checker/state.milo" import {
 
 // -- Register builtin traits (Eq, Hash, Clone, Display, Add/Sub/Mul/Div, Drop) --
 
-fn registerBuiltinTraits(ck: &mut Checker) {
+pub fn registerBuiltinTraits(ck: &mut Checker) {
     let selfType = TypeKind.TStruct("Self")
 
     // Eq
@@ -140,7 +140,7 @@ fn registerBuiltinTraits(ck: &mut Checker) {
 
 // -- Check if type implements trait --
 
-fn typeImplementsTrait(ck: &Checker, typeName: &string, traitName: &string): bool {
+pub fn typeImplementsTrait(ck: &Checker, typeName: &string, traitName: &string): bool {
     if !ck.traitImpls.contains(typeName) {
         return false
     }
@@ -161,7 +161,7 @@ fn typeImplementsTrait(ck: &Checker, typeName: &string, traitName: &string): boo
 
 // -- Resolve method on a type (inherent or trait) --
 
-fn resolveMethod(ck: &Checker, objTypeName: &string, methodName: &string): Option<string> {
+pub fn resolveMethod(ck: &Checker, objTypeName: &string, methodName: &string): Option<string> {
     // Check inherent impls
     if ck.inherentImpls.contains(objTypeName) {
         let implDecl = ck.inherentImpls.get(objTypeName)!
@@ -195,7 +195,7 @@ fn resolveMethod(ck: &Checker, objTypeName: &string, methodName: &string): Optio
 // Mirrors substituteSelfInMiloType in src/checker.ts: method bodies are
 // type-checked from the AST later, so the AST types pushed to
 // monomorphizedFns must carry the concrete type name, not 'Self'.
-fn substSelfMiloType(ty: &MiloType, concrete: &string): MiloType {
+pub fn substSelfMiloType(ty: &MiloType, concrete: &string): MiloType {
     var result = ty.clone()
     if result.name == "Self" {
         result.name = concrete.clone()
@@ -216,7 +216,7 @@ fn substSelfMiloType(ty: &MiloType, concrete: &string): MiloType {
     return result
 }
 
-fn substSelfParams(params: &Vec<Param>, concrete: &string): Vec<Param> {
+pub fn substSelfParams(params: &Vec<Param>, concrete: &string): Vec<Param> {
     var out: Vec<Param> = Vec.new()
     for i in 0..params.len {
         out.push(Param {
@@ -231,7 +231,7 @@ fn substSelfParams(params: &Vec<Param>, concrete: &string): Vec<Param> {
 // For each `impl Trait for Struct` that does NOT override a trait method carrying a
 // default body, materialize `Struct$Trait$method` from the default (Self→Struct):
 // register its sig + a traitImpls entry (so `s.method()` resolves) + a codegen fn.
-fn synthesizeDefaultMethods(ck: &mut Checker, program: &Program) {
+pub fn synthesizeDefaultMethods(ck: &mut Checker, program: &Program) {
     for ii in 0..program.impls.len {
         if program.impls[ii].typeParams.len > 0 {
             continue
@@ -345,7 +345,7 @@ fn synthesizeDefaultMethods(ck: &mut Checker, program: &Program) {
     }
 }
 
-fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
+pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
     match implDecl.traitName {
         Option.Some(marker) => {
             if marker == "Send" || marker == "Sync" {
@@ -543,7 +543,7 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
 
 // -- Process all impls in a program --
 
-fn registerAllImpls(ck: &mut Checker, program: &Program) {
+pub fn registerAllImpls(ck: &mut Checker, program: &Program) {
     for i in 0..program.impls.len {
         registerImpl(ck, program.impls[i])
     }
@@ -551,7 +551,7 @@ fn registerAllImpls(ck: &mut Checker, program: &Program) {
 
 // -- Derive Eq for a struct --
 
-fn deriveEq(s: &StructDecl): Option<ImplDecl> {
+pub fn deriveEq(s: &StructDecl): Option<ImplDecl> {
     // Generate: fn eq(self: &Self, other: &Self): bool { self.f1 == other.f1 && ... }
     var selfParam = Param {
         name: "self", ty: simpleType("Self")
@@ -609,7 +609,7 @@ fn deriveEq(s: &StructDecl): Option<ImplDecl> {
 
 // -- Process @derive attributes --
 
-fn processDerives(ck: &mut Checker, program: &Program) {
+pub fn processDerives(ck: &mut Checker, program: &Program) {
     var i: i64 = 0
     while i < program.structs.len {
         let s = program.structs[i]

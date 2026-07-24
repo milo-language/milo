@@ -7,7 +7,7 @@
 // @expect: drop 1
 // @expect: drop 2
 
-struct Guard {
+pub struct Guard {
     id: i32,
 }
 
@@ -17,7 +17,7 @@ impl Drop for Guard {
     }
 }
 
-fn mightFail(fail: bool): i32 {
+pub fn mightFail(fail: bool): i32 {
     let g1 = Guard {
         id: 1
     }
@@ -32,7 +32,7 @@ fn mightFail(fail: bool): i32 {
     return 0
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print("--- fail path ---")
     mightFail(true)
     print("--- success path ---")

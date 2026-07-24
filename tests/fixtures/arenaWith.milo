@@ -6,11 +6,11 @@ from "std/arena" import {
     Arena, arenaNew, arenaAlloc, arenaWith, arenaModifyMut
 }
 
-struct P {
+pub struct P {
     x: i64, y: i64
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var a: Arena<P> = arenaNew()
     let h = arenaAlloc(a, P {
         x: 10, y: 20

@@ -3,7 +3,7 @@
 // large Vec is simultaneously live used to corrupt the heap (a String realloc
 // clobbered the Vec's buffer, SIGTRAP/SIGSEGV). Fixed by the drop-old-value +
 // in-place string-append codegen work; this locks it in.
-fn main(): i32 {
+pub fn main(): i32 {
     var fb: Vec<i64> = Vec.new()
     var i: i64 = 0
     while i < 57344 {

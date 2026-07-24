@@ -11,7 +11,7 @@ from "std/sync" import {
     AtomicI64
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let slot = AtomicI64.new(0)
 
     Task.spawn(move(): void => {

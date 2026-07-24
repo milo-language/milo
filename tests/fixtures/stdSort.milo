@@ -17,7 +17,7 @@ from "std/sort" import {
     reverseI64, sortI32, sortI64, sortStrings
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var nums: Vec<i64> = Vec.new()
     nums.push(5)
     nums.push(3)

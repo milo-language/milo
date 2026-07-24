@@ -1,10 +1,10 @@
 // basic closure: pass to function, no captures
 
-fn apply(f: (i32) => i32, x: i32): i32 {
+pub fn apply(f: (i32) => i32, x: i32): i32 {
     return f(x)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let result = apply((x: i32) => x * 2, 21)
     print(result)
     return 0

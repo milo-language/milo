@@ -25,8 +25,8 @@ function write(name: string, content: string): string {
 }
 
 test("same-named fns with different bodies in two modules is a compile error", () => {
-  write("dup_a.milo", `fn foo(): string { return "AAA" }\nfn fromA(): string { return foo() }\n`);
-  write("dup_b.milo", `fn foo(): string { return "BBB" }\nfn fromB(): string { return foo() }\n`);
+  write("dup_a.milo", `fn foo(): string { return "AAA" }\npub fn fromA(): string { return foo() }\n`);
+  write("dup_b.milo", `fn foo(): string { return "BBB" }\npub fn fromB(): string { return foo() }\n`);
   const main = write("dup_main.milo", `from "dup_a" import { fromA }
 from "dup_b" import { fromB }
 fn main(): void {
@@ -43,8 +43,10 @@ fn main(): void {
 });
 
 test("same-named fns with identical bodies still merge", () => {
-  write("same_a.milo", `fn helper(): i64 { return 7 }\nfn fromA(): i64 { return helper() }\n`);
-  write("same_b.milo", `fn helper(): i64 { return 7 }\nfn fromB(): i64 { return helper() }\n`);
+  // `helper` stays private on purpose: it is defined identically in both files, so
+  // each file's own reference to it is legal even after the flat namespace merges them.
+  write("same_a.milo", `fn helper(): i64 { return 7 }\npub fn fromA(): i64 { return helper() }\n`);
+  write("same_b.milo", `fn helper(): i64 { return 7 }\npub fn fromB(): i64 { return helper() }\n`);
   const main = write("same_main.milo", `from "same_a" import { fromA }
 from "same_b" import { fromB }
 fn main(): void {
@@ -90,8 +92,8 @@ fn main(): void {
 // error is possible — internal linkage must keep each object's copy at link time
 // (linkonce_odr let the linker discard one).
 test("separately compiled objects keep their own same-named helper bodies", () => {
-  write("obj_helper_a.milo", `fn tag(): i64 { return 111 }\n`);
-  write("obj_helper_b.milo", `fn tag(): i64 { return 222 }\n`);
+  write("obj_helper_a.milo", `pub fn tag(): i64 { return 111 }\n`);
+  write("obj_helper_b.milo", `pub fn tag(): i64 { return 222 }\n`);
   const libA = write("obj_lib_a.milo", `from "obj_helper_a" import { tag }\nfn fromA(): i64 { return tag() }\nfn main(): void {}\n`);
   const libB = write("obj_lib_b.milo", `from "obj_helper_b" import { tag }\nfn fromB(): i64 { return tag() }\nfn main(): void {}\n`);
   const objA = join(DIR, "obj_a.o");
@@ -117,7 +119,7 @@ int main(void) { printf("%lld %lld\\n", fromA(), fromB()); return 0; }
 // carry only line/col (no file), so the renderer pulled the caret from the entry
 // source and printed e.g. "main.milo:105" (a blank line) for an error in an import.
 test("type error in an imported module names the imported file, not the entry", () => {
-  write("err_mod.milo", `fn bad(x: i64): i64 {
+  write("err_mod.milo", `pub fn bad(x: i64): i64 {
     let narrow: i32 = 2
     return x + narrow
 }

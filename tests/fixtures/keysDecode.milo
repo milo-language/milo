@@ -36,7 +36,7 @@ from "std/keys" import {
 
 // Render a key as "<name> <modifiers> <bytes consumed>" so a golden line
 // pins the decoded identity, the modifier bits, and the cursor advance.
-fn show(k: Key): string {
+pub fn show(k: Key): string {
     var name = ""
     match k.code {
         KeyCode.None => {
@@ -119,11 +119,11 @@ fn show(k: Key): string {
     return $"{name} {mods} {k.size}"
 }
 
-fn emit(bytes: &string): void {
+pub fn emit(bytes: &string): void {
     print(show(decodeKey(bytes, 0)))
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // Arrows: CSI A/B/C/D.
     emit("\x1b[A")
     emit("\x1b[B")

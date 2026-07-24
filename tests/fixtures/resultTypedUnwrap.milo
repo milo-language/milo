@@ -1,14 +1,14 @@
 // @expect: got 42
 
-enum IoError {
+pub enum IoError {
     NotFound(string),
 }
 
-fn open(path: string): Result<i32, IoError> {
+pub fn open(path: string): Result<i32, IoError> {
     return Result.Ok(42)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let fd = open("data.txt")!
     print("got ", fd)
     return 0

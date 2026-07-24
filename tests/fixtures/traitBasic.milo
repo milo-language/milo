@@ -1,6 +1,6 @@
 // @expect: 42
 
-struct Dog {
+pub struct Dog {
     age: i32
 }
 
@@ -10,7 +10,7 @@ impl Dog {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let d = Dog {
         age: 42
     }

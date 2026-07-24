@@ -5,7 +5,7 @@ from "std/runtime" import {
     Promise
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // heap-allocated string (cap > 0) — exercises the move-capture ownership transfer
     var msg = "hello"
     msg = msg + " from heap"

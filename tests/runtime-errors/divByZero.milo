@@ -1,10 +1,10 @@
 // @runtime-error: division by zero
 
-fn zero(): i32 {
+pub fn zero(): i32 {
     return 0
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a: i32 = 5
     print(a / zero())
     return 0

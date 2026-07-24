@@ -6,7 +6,7 @@ from "std/mem" import {
     Arena, arenaNew, arenaAlloc, arenaReset, arenaRemaining
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var arena = arenaNew(1024)!
 
     let remaining = arenaRemaining(arena)

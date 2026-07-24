@@ -14,7 +14,7 @@ from "std/strconv" import {
     formatFloat, i64ToBin, i64ToHex, i64ToOct, parseFloat, parseInt, parseIntRadix
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     match parseInt("42") {
         Option.Some(n) => {
             print(n)

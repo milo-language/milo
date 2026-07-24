@@ -12,14 +12,14 @@
 //
 // The callback takes the Ok payload by REF, so nothing is moved out of it — that is why
 // there is no Copy gate on T.
-fn heapStr(tail: &string): string {
+pub fn heapStr(tail: &string): string {
     var s = ""
     s.pushStr("boom-")
     s.pushStr(tail)
     return s
 }
 
-fn describe(r: Result<i64, string>): string {
+pub fn describe(r: Result<i64, string>): string {
     match r {
         Result.Ok(v) => {
             return "ok:" + v.toString()
@@ -30,7 +30,7 @@ fn describe(r: Result<i64, string>): string {
     }
 }
 
-fn main() {
+pub fn main() {
     let ok: Result<i64, string> = Result.Ok(21)
     // @expect: ok:42
     print(describe(ok.map((n) => n * 2)))

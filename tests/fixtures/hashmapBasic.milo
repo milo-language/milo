@@ -3,7 +3,7 @@
 // @expect: has 5: true
 // @expect: has 99: false
 
-fn main(): i32 {
+pub fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap.new()
     m.insert(1, 10)
     m.insert(5, 50)

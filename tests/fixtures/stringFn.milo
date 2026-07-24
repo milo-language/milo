@@ -1,10 +1,10 @@
 // @expect: greeting: hello world!
 
-fn greet(name: string): string {
+pub fn greet(name: string): string {
     return "hello " + name + "!"
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let msg = greet("world")
     print("greeting: ", msg)
     return 0

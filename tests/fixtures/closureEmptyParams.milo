@@ -1,10 +1,10 @@
 // zero-param closure
 
-fn run(f: () => i32): i32 {
+pub fn run(f: () => i32): i32 {
     return f()
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let x: i32 = 42
     let result = run(() => x)
     print(result)

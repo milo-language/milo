@@ -1,11 +1,11 @@
 // @expect: sum: 10
 
-enum Tree {
+pub enum Tree {
     Node(Heap<Tree>, Heap<Tree>),
     Leaf(i32)
 }
 
-fn sum(t: Tree): i32 {
+pub fn sum(t: Tree): i32 {
     match t {
         Tree.Leaf(n) => {
             return n
@@ -17,7 +17,7 @@ fn sum(t: Tree): i32 {
     return 0
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let tree = Tree.Node(Heap(Tree.Node(Heap(Tree.Leaf(1)), Heap(Tree.Leaf(2)))), Heap(Tree.Node(Heap(Tree.Leaf(3)), Heap(Tree.Leaf(4)))))
     print("sum: ", sum(tree))
     return 0

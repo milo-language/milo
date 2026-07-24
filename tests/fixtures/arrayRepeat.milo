@@ -1,7 +1,7 @@
 // @expect: 0 0 0 0
 // @expect: 42 42 42
 
-fn main(): i32 {
+pub fn main(): i32 {
     let zeros: [i32; 4] = [0; 4]
     print(zeros[0], " ", zeros[1], " ", zeros[2], " ", zeros[3])
 

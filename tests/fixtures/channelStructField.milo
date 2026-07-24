@@ -8,11 +8,11 @@ from "std/sync" import {
     Channel
 }
 
-struct Worker {
+pub struct Worker {
     ch: Channel<string>
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let ch = Channel<string>.new(8)!
     let w = Worker {
         ch: ch

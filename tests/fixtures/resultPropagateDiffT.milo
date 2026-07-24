@@ -1,19 +1,19 @@
 // @expect: got 3
 // @expect: failed: empty
 
-fn getText(ok: bool): Result<string> {
+pub fn getText(ok: bool): Result<string> {
     if !ok {
         return Result.Err("empty")
     }
     return Result.Ok("abc")
 }
 
-fn countChars(ok: bool): Result<i32> {
+pub fn countChars(ok: bool): Result<i32> {
     let s = getText(ok)?
     return Result.Ok(s.len as i32)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     match countChars(true) {
         Result.Ok(n) => {
             print("got ", n)

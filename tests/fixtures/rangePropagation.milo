@@ -2,12 +2,15 @@
 // @expect: -50
 // @expect: 5000
 
-type SmallInt = i32(0..100)
-type MediumInt = i32(0..200)
-type WideInt = i32(-100..200)
-type BigInt = i32(0..10000)
+pub type SmallInt = i32(0..100)
 
-fn main(): i32 {
+pub type MediumInt = i32(0..200)
+
+pub type WideInt = i32(-100..200)
+
+pub type BigInt = i32(0..10000)
+
+pub fn main(): i32 {
     let a: SmallInt = 50
     let b: SmallInt = 100
 

@@ -17,7 +17,7 @@
 // index clones), so the counts are pinned here.
 //
 // Each block resets the counter, runs one shape, and prints the count.
-struct Tracked {
+pub struct Tracked {
     id: i64,
 }
 
@@ -27,26 +27,26 @@ impl Drop for Tracked {
     }
 }
 
-var gDrops: i64 = 0
+pub var gDrops: i64 = 0
 
-fn make(id: i64): Tracked {
+pub fn make(id: i64): Tracked {
     return Tracked {
         id: id,
     }
 }
 
-fn makeResult(): Result<Tracked, string> {
+pub fn makeResult(): Result<Tracked, string> {
     return Result.Ok(make(1))
 }
 
 // a plain local dies at function exit
-fn localAtExit(): i64 {
+pub fn localAtExit(): i64 {
     let t = make(1)
     return t.id
 }
 
 // one drop per iteration, not one at the end
-fn loopLocal(iters: i64): i64 {
+pub fn loopLocal(iters: i64): i64 {
     var seen: i64 = 0
     var i: i64 = 0
     while i < iters {
@@ -58,7 +58,7 @@ fn loopLocal(iters: i64): i64 {
 }
 
 // returning from inside the arm still drops the binding it owns
-fn matchEarlyReturn(): i64 {
+pub fn matchEarlyReturn(): i64 {
     match makeResult() {
         Result.Ok(t) => {
             return t.id
@@ -70,7 +70,7 @@ fn matchEarlyReturn(): i64 {
 }
 
 // the arm falls through: the binding dies at arm exit
-fn matchFallThrough(): i64 {
+pub fn matchFallThrough(): i64 {
     var out: i64 = 0
     match makeResult() {
         Result.Ok(t) => {
@@ -84,12 +84,12 @@ fn matchFallThrough(): i64 {
 }
 
 // moved into the callee, which owns it from then on
-fn consume(t: Tracked): i64 {
+pub fn consume(t: Tracked): i64 {
     return t.id
 }
 
 // break leaves the loop body early — the live local must still go
-fn loopBreak(): i64 {
+pub fn loopBreak(): i64 {
     var i: i64 = 0
     while i < 10 {
         let t = make(i)
@@ -102,13 +102,13 @@ fn loopBreak(): i64 {
 }
 
 // overwriting a binding drops the value it held
-fn reassign(): i64 {
+pub fn reassign(): i64 {
     var t = make(1)
     t = make(2)
     return t.id
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     gDrops = 0
     let _a = localAtExit()
     print(gDrops)

@@ -1,15 +1,15 @@
 // @expect: 10
 // @expect: 20
 
-fn first<A, B>(a: A, b: B): A {
+pub fn first<A, B>(a: A, b: B): A {
     return a
 }
 
-fn second<A, B>(a: A, b: B): B {
+pub fn second<A, B>(a: A, b: B): B {
     return b
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let x = first(10, 20)
     let y = second(10, 20)
     print(x)

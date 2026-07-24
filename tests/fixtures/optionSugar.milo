@@ -1,12 +1,12 @@
 // @expect: 42
 // @expect: none
 
-fn maybeDouble(x: i32?): i32? {
+pub fn maybeDouble(x: i32?): i32? {
     let val = x?
     return Option.Some(val * 2)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a: i32? = Option.Some(21)
     let result = maybeDouble(a)
     match result {

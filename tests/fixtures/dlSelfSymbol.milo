@@ -9,7 +9,7 @@ from "std/dl" import {
     dlSelf
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     match dlSelf() {
         Result.Ok(lib) => {
             print("opened self")

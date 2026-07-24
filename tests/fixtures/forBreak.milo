@@ -3,7 +3,7 @@
 // @expect: 2
 // @expect: done
 
-fn main(): i32 {
+pub fn main(): i32 {
     for i in 0..10 {
         if i == 3 {
             break

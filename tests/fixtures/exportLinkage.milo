@@ -4,11 +4,11 @@
 // Asserted properly in tests/napi.test.ts (which can inspect the symbol table);
 // here we only pin that the attribute parses and does not change behavior.
 @export
-fn exportedEntry(a: i32): i32 {
+pub fn exportedEntry(a: i32): i32 {
     return a + 1
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     if exportedEntry(1) == 2 {
         print("exported")
     }

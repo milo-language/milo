@@ -1,15 +1,15 @@
-struct Timer {
+pub struct Timer {
     id: i32,
     active: bool,
     delayMs: i32,
 }
 
-var timers: [Timer; 4] = [Timer {
+pub var timers: [Timer; 4] = [Timer {
     id: 0, active: false, delayMs: 0
 }
 ; 4]
 
-fn main(): i32 {
+pub fn main(): i32 {
     // verify zero-init values
     print(timers[0].id)
     print(timers[0].active)

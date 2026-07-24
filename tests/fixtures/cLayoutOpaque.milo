@@ -20,7 +20,7 @@
 // leading members, so this pins both halves: named fields verified, filler ignored, and
 // the size assert still counts the filler (that is the point of declaring it).
 @cLayout("struct timeval", "sys/time.h")
-extern struct Timeval {
+pub extern struct Timeval {
     tv_sec: i64,
     // Real: suseconds_t (i32) + 4 bytes of tail padding. Declaring the padding keeps
     // sizeOf<Timeval>() honest at 16 without claiming C has a field named `_pad`.
@@ -28,7 +28,7 @@ extern struct Timeval {
     @cOpaque _pad: i32,
 }
 
-fn main() {
+pub fn main() {
     // @expect: true
     print(sizeOf<Timeval>() == 16)
     // @expect: true

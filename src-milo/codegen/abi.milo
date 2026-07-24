@@ -15,19 +15,19 @@ from "src-milo/codegen/types.milo" import {
     Cgen, FieldInfo, alignOf, payloadBytes, stripPercent
 }
 
-struct AbiLeaf {
+pub struct AbiLeaf {
     offset: i64,
     size: i64,
     isFloat: bool,
 }
 
 // One register-sized piece of a coerced struct: an LLVM type loaded from `offset`.
-struct AbiReg {
+pub struct AbiReg {
     ty: string,
     offset: i64,
 }
 
-struct AbiStruct {
+pub struct AbiStruct {
     name: string,
     size: i64,
     align: i64,
@@ -36,7 +36,7 @@ struct AbiStruct {
 
 // kind = "direct" (passed unchanged) | "coerce" (in regs; container = bytes to
 // stage in an alloca) | "indirect" (pass a pointer; byval attr only on SysV).
-struct ArgClass {
+pub struct ArgClass {
     kind: string,
     regs: Vec<AbiReg>,
     container: i64,
@@ -47,7 +47,7 @@ struct ArgClass {
 
 // kind = "direct" | "coerce" (returned in register(s) as retTy) | "sret" (via a
 // caller-provided pointer).
-struct RetClass {
+pub struct RetClass {
     kind: string,
     retTy: string,
     container: i64,
@@ -55,17 +55,17 @@ struct RetClass {
     name: string,
 }
 
-fn ceilDiv(a: i64, b: i64): i64 {
+pub fn ceilDiv(a: i64, b: i64): i64 {
     return (a + b - 1) / b
 }
 
-fn alignUp(off: i64, a: i64): i64 {
+pub fn alignUp(off: i64, a: i64): i64 {
     return ceilDiv(off, a) * a
 }
 
 // Flatten one field's scalar leaves at byte offset `off`. f32/f64 -> float leaf;
 // a nested struct recurses; everything else is one integer-class leaf of its size.
-fn leavesOf(cg: &Cgen, ty: &string, off: i64): Vec<AbiLeaf> {
+pub fn leavesOf(cg: &Cgen, ty: &string, off: i64): Vec<AbiLeaf> {
     var out: Vec<AbiLeaf> = Vec.new()
     if ty == "f32" {
         out.push(AbiLeaf {
@@ -101,7 +101,7 @@ fn leavesOf(cg: &Cgen, ty: &string, off: i64): Vec<AbiLeaf> {
 
 // Flatten a struct's scalar leaves (offset/size/float-ness), in offset order,
 // laying fields out exactly as LLVM does (natural alignment, matching Milo).
-fn abiLeaves(cg: &Cgen, name: &string, base: i64): Vec<AbiLeaf> {
+pub fn abiLeaves(cg: &Cgen, name: &string, base: i64): Vec<AbiLeaf> {
     var out: Vec<AbiLeaf> = Vec.new()
     if !cg.structs.contains(name) {
         return out
@@ -125,7 +125,7 @@ fn abiLeaves(cg: &Cgen, name: &string, base: i64): Vec<AbiLeaf> {
 
 // Byte offset of `fieldName` within struct `name`, laid out as LLVM does (natural
 // alignment). Drives the offsetOf<T>("field") builtin.
-fn structFieldOffset(cg: &Cgen, name: &string, fieldName: &string): i64 {
+pub fn structFieldOffset(cg: &Cgen, name: &string, fieldName: &string): i64 {
     if !cg.structs.contains(name) {
         return 0
     }
@@ -142,7 +142,7 @@ fn structFieldOffset(cg: &Cgen, name: &string, fieldName: &string): i64 {
     return off
 }
 
-fn abiStructOf(cg: &Cgen, name: &string): AbiStruct {
+pub fn abiStructOf(cg: &Cgen, name: &string): AbiStruct {
     return AbiStruct {
         name: name.clone(),
         size: payloadBytes(cg, name),
@@ -153,13 +153,13 @@ fn abiStructOf(cg: &Cgen, name: &string): AbiStruct {
 
 // AAPCS64 HFA: 1-4 leaves, all float, all the same size. Returns the element LLVM
 // type ("float"/"double") and count via a small struct; kind=="" means not an HFA.
-struct Hfa {
+pub struct Hfa {
     kind: string,
     count: i64,
     eltTy: string,
 }
 
-fn hfaOf(s: &AbiStruct): Hfa {
+pub fn hfaOf(s: &AbiStruct): Hfa {
     let n = s.leaves.len
     if n < 1 || n > 4 {
         return Hfa {
@@ -191,7 +191,7 @@ fn hfaOf(s: &AbiStruct): Hfa {
     }
 }
 
-fn hfaCoerceTy(h: &Hfa): string {
+pub fn hfaCoerceTy(h: &Hfa): string {
     if h.count == 1 {
         return h.eltTy.clone()
     }
@@ -200,7 +200,7 @@ fn hfaCoerceTy(h: &Hfa): string {
 
 // SysV: type of one eightbyte [8k, 8k+8). SSE if every leaf in it is float; a lone
 // 4-byte float in an otherwise-empty eightbyte is `float`, else `double`; else i64.
-fn sysvEightbyteTy(s: &AbiStruct, k: i64): string {
+pub fn sysvEightbyteTy(s: &AbiStruct, k: i64): string {
     let lo = k * 8
     let hi = lo + 8
     var count: i64 = 0
@@ -226,7 +226,7 @@ fn sysvEightbyteTy(s: &AbiStruct, k: i64): string {
     return "double"
 }
 
-fn sysvRegs(s: &AbiStruct): Vec<AbiReg> {
+pub fn sysvRegs(s: &AbiStruct): Vec<AbiReg> {
     let n = ceilDiv(s.size, 8)
     var regs: Vec<AbiReg> = Vec.new()
     for k in 0..n {
@@ -238,29 +238,29 @@ fn sysvRegs(s: &AbiStruct): Vec<AbiReg> {
     return regs
 }
 
-fn emptyRegs(): Vec<AbiReg> {
+pub fn emptyRegs(): Vec<AbiReg> {
     return Vec.new()
 }
 
-fn directArg(): ArgClass {
+pub fn directArg(): ArgClass {
     return ArgClass {
         kind: "direct", regs: emptyRegs(), container: 0, byval: false, align: 0, name: ""
     }
 }
 
-fn coerceArg(regs: Vec<AbiReg>, container: i64): ArgClass {
+pub fn coerceArg(regs: Vec<AbiReg>, container: i64): ArgClass {
     return ArgClass {
         kind: "coerce", regs: regs, container: container, byval: false, align: 0, name: ""
     }
 }
 
-fn indirectArg(byval: bool, align: i64, name: &string): ArgClass {
+pub fn indirectArg(byval: bool, align: i64, name: &string): ArgClass {
     return ArgClass {
         kind: "indirect", regs: emptyRegs(), container: 0, byval: byval, align: align, name: name.clone()
     }
 }
 
-fn classifyArg(arch: &string, s: &AbiStruct): ArgClass {
+pub fn classifyArg(arch: &string, s: &AbiStruct): ArgClass {
     if arch == "aarch64" {
         let h = hfaOf(s)
         if h.kind == "hfa" {
@@ -295,7 +295,7 @@ fn classifyArg(arch: &string, s: &AbiStruct): ArgClass {
     return coerceArg(sysvRegs(s), ceilDiv(s.size, 8) * 8)
 }
 
-fn classifyRet(arch: &string, s: &AbiStruct): RetClass {
+pub fn classifyRet(arch: &string, s: &AbiStruct): RetClass {
     if arch == "aarch64" {
         let h = hfaOf(s)
         if h.kind == "hfa" {

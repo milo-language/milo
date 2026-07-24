@@ -2,21 +2,21 @@
 // block must diverge. Covers Option + Result, heap-payload move-out, and the
 // happy path continuing un-indented.
 
-fn find(x: i32): Option<i32> {
+pub fn find(x: i32): Option<i32> {
     if x > 0 {
         return Option.Some(x * 10)
     }
     return Option.None
 }
 
-fn load(ok: bool): Result<string> {
+pub fn load(ok: bool): Result<string> {
     if ok {
         return Result.Ok("payload " + "concat")
     }
     return Result.Err("boom")
 }
 
-fn resolve(x: i32): i32 {
+pub fn resolve(x: i32): i32 {
     let Option.Some(v) = find(x) else {
         return -1
     }
@@ -24,7 +24,7 @@ fn resolve(x: i32): i32 {
     return v
 }
 
-fn describe(ok: bool): string {
+pub fn describe(ok: bool): string {
     let Result.Ok(s) = load(ok) else {
         return "no value"
     }
@@ -35,7 +35,7 @@ fn describe(ok: bool): string {
 // @expect: -1
 // @expect: payload concat
 // @expect: no value
-fn main() {
+pub fn main() {
     print(resolve(5))
     print(resolve(-2))
     print(describe(true))

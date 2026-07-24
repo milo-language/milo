@@ -12,7 +12,7 @@ from "std/pty" import {
     Pty
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     match Pty.open() {
         Result.Ok(pty) => {
             print("pty opened")

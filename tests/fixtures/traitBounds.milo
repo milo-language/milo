@@ -1,10 +1,10 @@
 // @expect: 99
 
-trait HasValue {
+pub trait HasValue {
     fn value(self: &Self): i32
 }
 
-struct Box99 {
+pub struct Box99 {
     x: i32
 }
 
@@ -14,11 +14,11 @@ impl HasValue for Box99 {
     }
 }
 
-fn printValue < T: HasValue > (thing: &T) {
+pub fn printValue < T: HasValue > (thing: &T) {
     print(thing.value())
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let b = Box99 {
         x: 0
     }

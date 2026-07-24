@@ -9,7 +9,7 @@ from "std/json" import {
     jsonParse
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let doc = match jsonParse("{\"users\":[{\"name\":\"alice\",\"age\":30},{\"name\":\"bob\",\"age\":25}]}") {
         Result.Ok(j) => j
         Result.Err(e) => {

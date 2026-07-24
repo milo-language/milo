@@ -1,6 +1,6 @@
 // @expect: hello world
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = "hello "
     let b = "world"
     let c = a + b

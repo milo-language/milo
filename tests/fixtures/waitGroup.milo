@@ -10,7 +10,7 @@ from "std/sync" import {
     WaitGroup
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let wg = WaitGroup.new()
     var i = 0
     while i < 3 {

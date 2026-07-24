@@ -1,7 +1,7 @@
 // IEEE 754: every comparison with NaN is false except !=, which is true.
 // Regression: `!=` was lowered to `fcmp one` (ordered), making both `x == x`
 // and `x != x` false for NaN.
-fn main() {
+pub fn main() {
     var z = 0.0
     let nan = z / z
 
@@ -25,7 +25,7 @@ fn main() {
     print(boolStr(a == b))
 }
 
-fn boolStr(b: bool): string {
+pub fn boolStr(b: bool): string {
     if b {
         return "true"
     }

@@ -16,7 +16,7 @@ from "std/math" import {
     absI64
 }
 
-fn reportVerdict(label: &string, v: &Verdict) {
+pub fn reportVerdict(label: &string, v: &Verdict) {
     match v {
         Verdict.Proven => {
             print(label, "proven")
@@ -39,7 +39,7 @@ fn reportVerdict(label: &string, v: &Verdict) {
     }
 }
 
-fn i64ToString(n: i64): string {
+pub fn i64ToString(n: i64): string {
     if n == 0 {
         return "0"
     }
@@ -56,7 +56,7 @@ fn i64ToString(n: i64): string {
     return digits
 }
 
-fn digitChar(d: i64): string {
+pub fn digitChar(d: i64): string {
     if d == 1 {
         return "1"
     }
@@ -87,7 +87,7 @@ fn digitChar(d: i64): string {
     return "0"
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // 1) transitivity: a<=b, b<=c |- a<=c   (vars a=0 b=1 c=2)
     //    query: (a-b<=0) & (b-c<=0) & !(a-c<=0)
     var t = newProblem(3)

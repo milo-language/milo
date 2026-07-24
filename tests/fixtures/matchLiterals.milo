@@ -7,7 +7,7 @@
 // @expect: yes
 // @expect: no
 
-fn describeInt(n: i32): string {
+pub fn describeInt(n: i32): string {
     match n {
         0 => {
             return "zero"
@@ -27,7 +27,7 @@ fn describeInt(n: i32): string {
     }
 }
 
-fn handleCmd(cmd: string): string {
+pub fn handleCmd(cmd: string): string {
     match cmd {
         "hello" => {
             return "greeting"
@@ -41,7 +41,7 @@ fn handleCmd(cmd: string): string {
     }
 }
 
-fn yesNo(b: bool): string {
+pub fn yesNo(b: bool): string {
     match b {
         true => {
             return "yes"
@@ -52,7 +52,7 @@ fn yesNo(b: bool): string {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(describeInt(1))
     print(describeInt(99))
     print(describeInt(0 - 1))

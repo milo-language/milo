@@ -10,7 +10,7 @@ from "std/io" import {
     splitLines
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let lines = splitLines("hello\nworld\nfoo")
     for line in lines {
         print(line)

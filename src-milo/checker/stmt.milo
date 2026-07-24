@@ -25,7 +25,7 @@ from "src-milo/checker/mono.milo" import {
 
 // -- Statement checker --
 
-fn checkStmt(ck: &mut Checker, stmt: &Stmt, fnRetType: &TypeKind) {
+pub fn checkStmt(ck: &mut Checker, stmt: &Stmt, fnRetType: &TypeKind) {
     match stmt {
         Stmt.LetDecl(name, typeAnno, value, span) => {
             checkLetDecl(ck, name, typeAnno, *value, false, span)
@@ -81,7 +81,7 @@ fn checkStmt(ck: &mut Checker, stmt: &Stmt, fnRetType: &TypeKind) {
 
 // -- Let/Var declarations --
 
-fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, value: &Expr, mutable: bool, span: &Option<Span>) {
+pub fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, value: &Expr, mutable: bool, span: &Option<Span>) {
     // Resolve the annotation first and expose it as the expected type, so a
     // generic call whose type params aren't determined by args can infer from it
     // (`let a: Arena<X> = arenaNew()`).
@@ -124,7 +124,7 @@ fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, va
 
 // -- Assignment --
 
-fn checkAssign(ck: &mut Checker, target: &Expr, value: &Expr, span: &Option<Span>) {
+pub fn checkAssign(ck: &mut Checker, target: &Expr, value: &Expr, span: &Option<Span>) {
     if !isRootMutable(ck, target) {
         error(ck, "cannot assign to immutable variable", cloneSpan(span))
         return
@@ -168,7 +168,7 @@ fn checkAssign(ck: &mut Checker, target: &Expr, value: &Expr, span: &Option<Span
 
 // -- Return --
 
-fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKind, span: &Option<Span>) {
+pub fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKind, span: &Option<Span>) {
     match value {
         Option.Some(expr) => {
             ck.inReturn = true
@@ -205,7 +205,7 @@ fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKin
 
 // -- If statement --
 
-fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, fnRetType: &TypeKind, span: &Option<Span>) {
+pub fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, fnRetType: &TypeKind, span: &Option<Span>) {
     let condType = checkExpr(ck, cond)
     if !typeEq(condType, tyBool()) && !typeEq(condType, tyUnknown()) {
         error(ck, "if condition must be bool, got " + typeName(condType), cloneSpan(span))
@@ -252,7 +252,7 @@ fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: 
 
 // -- While statement --
 
-fn checkWhile(ck: &mut Checker, cond: &Expr, body: &Vec<Heap<Stmt>>, fnRetType: &TypeKind, span: &Option<Span>) {
+pub fn checkWhile(ck: &mut Checker, cond: &Expr, body: &Vec<Heap<Stmt>>, fnRetType: &TypeKind, span: &Option<Span>) {
     let condType = checkExpr(ck, cond)
     if !typeEq(condType, tyBool()) && !typeEq(condType, tyUnknown()) {
         error(ck, "while condition must be bool, got " + typeName(condType), cloneSpan(span))
@@ -269,7 +269,7 @@ fn checkWhile(ck: &mut Checker, cond: &Expr, body: &Vec<Heap<Stmt>>, fnRetType: 
 
 // -- Match statement --
 
-fn checkMatch(ck: &mut Checker, subject: &Expr, arms: &Vec<MatchArm>, fnRetType: &TypeKind) {
+pub fn checkMatch(ck: &mut Checker, subject: &Expr, arms: &Vec<MatchArm>, fnRetType: &TypeKind) {
     let subjType = checkExpr(ck, subject)
 
     // Arms are mutually exclusive: each checks from the pre-state, then the
@@ -296,7 +296,7 @@ fn checkMatch(ck: &mut Checker, subject: &Expr, arms: &Vec<MatchArm>, fnRetType:
     }
 }
 
-fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetType: &TypeKind) {
+pub fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetType: &TypeKind) {
     pushScope(ck)
 
     // Bind pattern variables into scope
@@ -349,7 +349,7 @@ fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetTyp
 
 // -- If-let statement --
 
-fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, fnRetType: &TypeKind) {
+pub fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, fnRetType: &TypeKind) {
     let exprType = checkExpr(ck, expr)
 
     pushScope(ck)
@@ -409,7 +409,7 @@ fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<H
 
 // -- For-in statement --
 
-fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, iterable: &Expr, body: &Vec<Heap<Stmt>>, fnRetType: &TypeKind, span: &Option<Span>) {
+pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, iterable: &Expr, body: &Vec<Heap<Stmt>>, fnRetType: &TypeKind, span: &Option<Span>) {
     // Range expression handled specially
     match iterable {
         Expr.RangeExpr(start, end, rspan) => {
@@ -605,7 +605,7 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
 
 // -- Top-level: check a function body --
 
-fn checkFunction(ck: &mut Checker, func: &Function) {
+pub fn checkFunction(ck: &mut Checker, func: &Function) {
     pushScope(ck)
     let retType = resolveAstType(ck, func.retType)
     ck.currentFnRetType = retType.clone()
@@ -643,7 +643,7 @@ fn checkFunction(ck: &mut Checker, func: &Function) {
 
 // -- Top-level: register declarations and check program --
 
-fn registerFunction(ck: &mut Checker, func: &Function) {
+pub fn registerFunction(ck: &mut Checker, func: &Function) {
     var params: Vec<FnParam> = Vec.new()
     for param in func.params {
         params.push(FnParam {
@@ -661,7 +661,7 @@ fn registerFunction(ck: &mut Checker, func: &Function) {
     ck.functions.insert(func.name.clone(), sig)
 }
 
-fn registerStruct(ck: &mut Checker, decl: &StructDecl) {
+pub fn registerStruct(ck: &mut Checker, decl: &StructDecl) {
     var fields: Vec<CkStructField> = Vec.new()
     for field in decl.fields {
         fields.push(CkStructField {
@@ -677,7 +677,7 @@ fn registerStruct(ck: &mut Checker, decl: &StructDecl) {
     ck.structs.insert(decl.name.clone(), info)
 }
 
-fn registerEnum(ck: &mut Checker, decl: &EnumDecl) {
+pub fn registerEnum(ck: &mut Checker, decl: &EnumDecl) {
     var variants: HashMap<string, VariantInfo> = HashMap.new()
     var i: i64 = 0
     while i < decl.variants.len {
@@ -701,7 +701,7 @@ fn registerEnum(ck: &mut Checker, decl: &EnumDecl) {
 
 // Option<T> and Result<T, E> are compiler builtins with no source declaration;
 // synthesize generic EnumDecls so the normal mono machinery instantiates them.
-fn registerBuiltinGenericEnums(ck: &mut Checker) {
+pub fn registerBuiltinGenericEnums(ck: &mut Checker) {
     var someFields: Vec<MiloType> = Vec.new()
     someFields.push(simpleType("T"))
     var optVariants: Vec<EnumVariant> = Vec.new()
@@ -759,7 +759,7 @@ fn registerBuiltinGenericEnums(ck: &mut Checker) {
 
 // Annotation-side generic instantiation: `Option<i32>` must resolve to the
 // monomorphized enum/struct, not TStruct("Option").
-fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
+pub fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
     // resolve a type alias name to its base (preserving any &/&mut/* wrapper)
     if !ty.isFn && ty.typeArgs.len == 0 && ck.typeAliases.contains(ty.name) {
         let base = ck.typeAliases.get(ty.name)!
@@ -837,7 +837,7 @@ fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
     return normalizeEnumNames(ck, typeFromAst(ty))
 }
 
-fn checkProgram(ck: &mut Checker, program: &Program) {
+pub fn checkProgram(ck: &mut Checker, program: &Program) {
     // Phase 0: register builtin traits and generic types
     registerBuiltinTraits(ck)
     registerBuiltinGenericEnums(ck)

@@ -1,11 +1,11 @@
 // @expect: 42
 // @expect: 99
 
-struct Heap<T> {
+pub struct Heap<T> {
     value: T
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = Heap {
         value: 42
     }

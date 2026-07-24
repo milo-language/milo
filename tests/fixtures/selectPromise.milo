@@ -18,7 +18,7 @@ from "std/time" import {
     sleepMs
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // Foreign OS thread result bridged into a Select.
     let p = Promise<i64>.blocking(move(): i64 => {
         sleepMs(20)

@@ -3,10 +3,11 @@
 // A module-scope const initializer built from arithmetic on literals must be
 // folded at codegen; regression for the silent-zero bug where `let x: f64 =
 // a / b` emitted `global double 0`.
-let A: f64 = 3.0 / 2.0
-let B: i64 = (255 << 8) | 255
+pub let A: f64 = 3.0 / 2.0
 
-fn main(): i32 {
+pub let B: i64 = (255 << 8) | 255
+
+pub fn main(): i32 {
     print($"{A}")
     print($"{B}")
     return 0

@@ -25,7 +25,7 @@ from "src-milo/codegen/strings.milo" import {
 // Two lvalue exprs denote the same storage location (used to detect self-assign
 // and the `place = place + rhs` append pattern). Conservative: only Ident and
 // FieldAccess chains; anything else (index, deref) returns false.
-fn lvalueMatches(a: &Expr, b: &Expr): bool {
+pub fn lvalueMatches(a: &Expr, b: &Expr): bool {
     match a {
         Expr.Ident(an, aspan) => {
             match b {
@@ -58,7 +58,7 @@ fn lvalueMatches(a: &Expr, b: &Expr): bool {
 
 // Resolve an lvalue's declared type WITHOUT emitting IR (so the append-opt can
 // gate on `string` before committing to the fast path).
-fn lvalueTypeStr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>): string {
+pub fn lvalueTypeStr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>): string {
     match e {
         Expr.Ident(name, span) => {
             // a module global isn't in `locs`; findLocal would hit its locs[0]
@@ -80,7 +80,7 @@ fn lvalueTypeStr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>): string {
     }
 }
 
-fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>) {
+pub fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>) {
     // Fast path: `place = place + rhs` for strings → amortized in-place append.
     // The naive store path re-concats (fresh alloc + leaked old buffer) every
     // time, making an accumulator like `cg.body = cg.body + s` O(n^2) in time
@@ -189,7 +189,7 @@ fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, 
 
 // -- While loop --
 
-fn genWhile(cg: &mut Cgen, cond: &Expr, body: &Vec<Heap<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
+pub fn genWhile(cg: &mut Cgen, cond: &Expr, body: &Vec<Heap<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
     let condLbl = nextLabel(cg, "wcond")
     let bodyLbl = nextLabel(cg, "wbody")
     let endLbl = nextLabel(cg, "wend")
@@ -219,7 +219,7 @@ fn genWhile(cg: &mut Cgen, cond: &Expr, body: &Vec<Heap<Stmt>>, locs: &mut Vec<L
 // -- For-in loops (M3a): range, Vec, string bytes --
 
 // Widen an integer Val to i64 so range bounds of any width share one compare.
-fn widenToI64(cg: &mut Cgen, v: &Val): string {
+pub fn widenToI64(cg: &mut Cgen, v: &Val): string {
     let ll = llType(v.ty)
     if ll == "i64" {
         return v.v.clone()
@@ -231,7 +231,7 @@ fn widenToI64(cg: &mut Cgen, v: &Val): string {
 
 // `for key, value in map`: walk the flat entry array; body sees copies bound
 // through hoisted allocas. Emits everything up to (not including) stepLbl.
-fn genForInHashMap(cg: &mut Cgen, varName: &string, varName2: &Option<string>, obj: &Val, body: &Vec<Heap<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string, condLbl: &string, bodyLbl: &string, stepLbl: &string, endLbl: &string, idxAddr: &string) {
+pub fn genForInHashMap(cg: &mut Cgen, varName: &string, varName2: &Option<string>, obj: &Val, body: &Vec<Heap<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string, condLbl: &string, bodyLbl: &string, stepLbl: &string, endLbl: &string, idxAddr: &string) {
     let keyTy = hashMapKeyTy(obj.ty)
     let valTy = hashMapValTy(obj.ty)
     let entryTy = hmEntryTy(keyTy, valTy)
@@ -295,7 +295,7 @@ fn genForInHashMap(cg: &mut Cgen, varName: &string, varName2: &Option<string>, o
     }
 }
 
-fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable: &Expr, body: &Vec<Heap<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
+pub fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable: &Expr, body: &Vec<Heap<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
     let condLbl = nextLabel(cg, "fcond")
     let bodyLbl = nextLabel(cg, "fbody")
     let stepLbl = nextLabel(cg, "fstep")
@@ -566,7 +566,7 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
 
 // -- If statement --
 
-fn genIf(cg: &mut Cgen, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+pub fn genIf(cg: &mut Cgen, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     let cv = genExpr(cg, cond, locs, sigs, "bool")
     let thenLbl = nextLabel(cg, "then")
     let elseLbl = nextLabel(cg, "else")
@@ -609,7 +609,7 @@ fn genIf(cg: &mut Cgen, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Opti
 
 // -- If-let (M3b): a one-pattern match with an else path --
 
-fn genIfLet(cg: &mut Cgen, pattern: &Pattern, subject: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+pub fn genIfLet(cg: &mut Cgen, pattern: &Pattern, subject: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     let subjLv = genLvalue(cg, subject, locs, sigs)
     let rawName = stripPercent(subjLv.ty)
     let structTy = "%" + rawName
@@ -706,7 +706,7 @@ fn genIfLet(cg: &mut Cgen, pattern: &Pattern, subject: &Expr, thenBody: &Vec<Hea
 
 // `match s { "a" => …, _ => … }` on a string subject: a chain of string-eq
 // tests (literals are exclusive so a non-final wildcard is still the default).
-fn genStringMatch(cg: &mut Cgen, subjValV: &string, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+pub fn genStringMatch(cg: &mut Cgen, subjValV: &string, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     let endLbl = nextLabel(cg, "smatch.end")
     var allTerminated = true
     var wildIdx: i64 = -1
@@ -759,7 +759,7 @@ fn genStringMatch(cg: &mut Cgen, subjValV: &string, arms: &Vec<MatchArm>, locs: 
 }
 
 // The integer constant for a literal pattern (char code / int / bool → 0/1).
-fn litIntConst(val: &string, kind: &LiteralKind): string {
+pub fn litIntConst(val: &string, kind: &LiteralKind): string {
     match kind {
         LiteralKind.LitBool => {
             if val == "true" {
@@ -775,7 +775,7 @@ fn litIntConst(val: &string, kind: &LiteralKind): string {
 
 // match on an integer/char/bool subject: compare the value against each literal
 // pattern (a switch would also work, but a compare chain handles any width).
-fn genIntMatch(cg: &mut Cgen, subjV: &string, subjLl: &string, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+pub fn genIntMatch(cg: &mut Cgen, subjV: &string, subjLl: &string, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     let endLbl = nextLabel(cg, "imatch.end")
     var allTerminated = true
     var wildIdx: i64 = -1
@@ -829,7 +829,7 @@ fn genIntMatch(cg: &mut Cgen, subjV: &string, subjLl: &string, arms: &Vec<MatchA
     return allTerminated
 }
 
-fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+pub fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     let subjLv = genLvalue(cg, subject, locs, sigs)
     if llType(subjLv.ty) == "%String" {
         let sv = nextTemp(cg)
@@ -943,7 +943,7 @@ fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<
 // `Ty$Drop$drop(&mut self)` when it leaves scope. Declaration order matches
 // the oracle's observable behavior. skipName: a returned local is moved out
 // of the scope, not dropped.
-fn emitScopeDrops(cg: &mut Cgen, locs: &Vec<Local>, fromLen: i64, skipName: &string) {
+pub fn emitScopeDrops(cg: &mut Cgen, locs: &Vec<Local>, fromLen: i64, skipName: &string) {
     for i in fromLen..locs.len {
         if locs[i].isRef {
             continue
@@ -962,7 +962,7 @@ fn emitScopeDrops(cg: &mut Cgen, locs: &Vec<Local>, fromLen: i64, skipName: &str
 
 // -- Main statement dispatch. Returns true if stmt terminates block. --
 
-fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+pub fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     match s {
         Stmt.LetDecl(name, ty, value, span) => {
             var hintTy = ""
@@ -1120,7 +1120,7 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
 
 // Collect every identifier name referenced in an expression (over-approximate:
 // the caller filters against the enclosing scope to find true captures).
-fn collectIdentsExpr(e: &Expr, out: &mut Vec<string>) {
+pub fn collectIdentsExpr(e: &Expr, out: &mut Vec<string>) {
     match e {
         Expr.Ident(name, span) => {
             out.push(name.clone())
@@ -1204,7 +1204,7 @@ fn collectIdentsExpr(e: &Expr, out: &mut Vec<string>) {
     }
 }
 
-fn collectIdentsStmt(s: &Stmt, out: &mut Vec<string>) {
+pub fn collectIdentsStmt(s: &Stmt, out: &mut Vec<string>) {
     match s {
         Stmt.LetDecl(name, ty, val, span) => {
             collectIdentsExpr(*val, out)
@@ -1291,7 +1291,7 @@ fn collectIdentsStmt(s: &Stmt, out: &mut Vec<string>) {
 // Free variables of a closure body: referenced idents that live in the enclosing
 // scope and aren't the closure's own params. By-reference capture (env holds the
 // address of each), which is sound because these closures don't escape their call.
-fn closureCaptures(params: &Vec<Param>, body: &Vec<Heap<Stmt>>, locs: &Vec<Local>): Vec<Local> {
+pub fn closureCaptures(params: &Vec<Param>, body: &Vec<Heap<Stmt>>, locs: &Vec<Local>): Vec<Local> {
     var idents: Vec<string> = Vec.new()
     for i in 0..body.len {
         collectIdentsStmt(*body[i], idents)
@@ -1327,7 +1327,7 @@ fn closureCaptures(params: &Vec<Param>, body: &Vec<Heap<Stmt>>, locs: &Vec<Local
     return caps
 }
 
-fn closureEnvTy(caps: &Vec<Local>): string {
+pub fn closureEnvTy(caps: &Vec<Local>): string {
     if caps.len == 0 {
         return "{}"
     }
@@ -1343,7 +1343,7 @@ fn closureEnvTy(caps: &Vec<Local>): string {
 
 // A move closure's env holds COPIES of the captured values (by-value), so it can
 // outlive the spawning frame (e.g. run on another thread). By-ref env holds ptrs.
-fn closureMoveEnvTy(caps: &Vec<Local>): string {
+pub fn closureMoveEnvTy(caps: &Vec<Local>): string {
     if caps.len == 0 {
         return "{}"
     }
@@ -1359,7 +1359,7 @@ fn closureMoveEnvTy(caps: &Vec<Local>): string {
 
 // Lift a closure to a top-level `@__closure_N(ptr %__env, <ptr params>)` and return
 // a %Closure { fnptr, env }. Uniform ABI: params AND captures arrive by pointer.
-fn genClosure(cg: &mut Cgen, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>, isMove: bool, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+pub fn genClosure(cg: &mut Cgen, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>, isMove: bool, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let cname = "__closure_" + cg.closureId.toString()
     cg.closureId = cg.closureId + 1
 
@@ -1510,7 +1510,7 @@ fn genClosure(cg: &mut Cgen, params: &Vec<Param>, retType: &Option<MiloType>, bo
 
 // Indirect call of a %Closure-typed local: load { fnptr, env }, pass every arg BY
 // POINTER (uniform ABI). retHint supplies R since "fn" drops the return type.
-fn genClosureCall(cg: &mut Cgen, lc: &Local, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, retHint: &string): Val {
+pub fn genClosureCall(cg: &mut Cgen, lc: &Local, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, retHint: &string): Val {
     let clv = nextTemp(cg)
     emit(cg, "  " + clv + " = load %Closure, ptr " + lc.addr.clone() + "\n")
     let fp = nextTemp(cg)

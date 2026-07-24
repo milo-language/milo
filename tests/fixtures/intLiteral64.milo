@@ -6,7 +6,7 @@
 // @expect: 10
 // @expect: 4611686018427387904
 
-fn main(): i32 {
+pub fn main(): i32 {
     let iMax: i64 = 9223372036854775807
     let uMax: u64 = 18446744073709551615
     let hex: u64 = 0xFF

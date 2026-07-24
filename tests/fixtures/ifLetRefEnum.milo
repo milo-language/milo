@@ -3,11 +3,11 @@
 // into the still-owned subject. Regression for the borrow-detection shared with
 // checkMatchLike.
 
-struct Box {
+pub struct Box {
     v: i32
 }
 
-fn describe(o: &Option<string>): string {
+pub fn describe(o: &Option<string>): string {
     // borrows the String payload; must not move it out of the &Option
     if let Option.Some(s) = o {
         return s.clone()
@@ -15,7 +15,7 @@ fn describe(o: &Option<string>): string {
     return "none"
 }
 
-fn valueOr(o: &Option<Box>): i32 {
+pub fn valueOr(o: &Option<Box>): i32 {
     // let-else on a borrowed enum, payload read through the borrow
     let Option.Some(b) = o else {
         return -1
@@ -23,7 +23,7 @@ fn valueOr(o: &Option<Box>): i32 {
     return b.v
 }
 
-fn main() {
+pub fn main() {
     let a: Option<string> = Option.Some("borrowed heap string")
     // @expect: borrowed heap string
     print(describe(a))

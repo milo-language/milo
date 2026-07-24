@@ -10,7 +10,7 @@ from "std/pty" import {
     Pty
 }
 
-fn main(): void {
+pub fn main(): void {
     match Pty.open() {
         Result.Ok(pty) => {
             print("pty opened")

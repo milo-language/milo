@@ -1,11 +1,11 @@
 // @expect: hello from Dog
 // @expect: hello from Cat
 
-interface Greeter {
+pub interface Greeter {
     fn greet(self: &Self): string
 }
 
-struct Dog {
+pub struct Dog {
 }
 
 impl Dog {
@@ -14,7 +14,7 @@ impl Dog {
     }
 }
 
-struct Cat {
+pub struct Cat {
 }
 
 impl Cat {
@@ -23,11 +23,11 @@ impl Cat {
     }
 }
 
-fn sayHello(g: &Greeter) {
+pub fn sayHello(g: &Greeter) {
     print(g.greet())
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let d = Dog {
     }
     let c = Cat {

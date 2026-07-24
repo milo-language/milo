@@ -1,20 +1,20 @@
 // @expect: double: 42
 // @expect: triple: 30
 
-fn double(x: i32): i32 {
+pub fn double(x: i32): i32 {
     return x * 2
 }
 
-fn triple(x: i32): i32 {
+pub fn triple(x: i32): i32 {
     return x * 3
 }
 
-struct Handler {
+pub struct Handler {
     name: string,
     apply: (i32) => i32,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let h = Handler {
         name: "double", apply: double
     }

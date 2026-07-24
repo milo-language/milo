@@ -1,7 +1,7 @@
 // @expect: 200
 // @expect: overflow
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a: u8 = 100
     let b: u8 = 100
 

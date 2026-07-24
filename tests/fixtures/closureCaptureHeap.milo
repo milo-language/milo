@@ -9,18 +9,18 @@ from "std/arena" import {
     Arena, Handle, arenaNew, arenaAlloc, arenaModifyMut, arenaWith
 }
 
-struct Box {
+pub struct Box {
     items: Vec<string>
 }
 
-fn addOne(a: &mut Arena<Box>, h: Handle<Box>, s: string) {
+pub fn addOne(a: &mut Arena<Box>, h: Handle<Box>, s: string) {
     arenaModifyMut(a, h, (b: &mut Box): void => {
         b.items.push(s)
     }
     )
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var a: Arena<Box> = arenaNew()
     let h = arenaAlloc(a, Box {
         items: Vec.new()

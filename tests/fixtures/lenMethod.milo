@@ -4,15 +4,15 @@
 // @expect: 5
 // @expect: 2
 
-fn getVecLen(v: &mut Vec<i64>): i64 {
+pub fn getVecLen(v: &mut Vec<i64>): i64 {
     return v.len()
 }
 
-fn getStrLen(s: &string): i64 {
+pub fn getStrLen(s: &string): i64 {
     return s.len()
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var v: Vec<i64> = Vec.new()
     v.push(10)
     v.push(20)

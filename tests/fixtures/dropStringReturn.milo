@@ -2,12 +2,12 @@
 // @expect: done
 // tests: returning string transfers ownership, callee doesn't double-free
 
-fn makeGreeting(name: string): string {
+pub fn makeGreeting(name: string): string {
     let result = "hello " + name
     return result
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let msg = makeGreeting("world")
     print(msg)
     print("done")

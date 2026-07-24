@@ -1,23 +1,23 @@
 // HFA structs (all-float, 1-4 members) passed/returned in float registers
-extern struct D2 {
+pub extern struct D2 {
     x: f64,
     y: f64,
 }
 
-extern struct F4 {
+pub extern struct F4 {
     a: f32,
     b: f32,
     c: f32,
     d: f32,
 }
 
-extern fn dot2(p: D2, q: D2): f64
+pub extern fn dot2(p: D2, q: D2): f64
 
-extern fn scale2(p: D2, k: f64): D2
+pub extern fn scale2(p: D2, k: f64): D2
 
-extern fn sum4(v: F4): f32
+pub extern fn sum4(v: F4): f32
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(dot2(D2 {
         x: 1.0, y: 2.0
     }

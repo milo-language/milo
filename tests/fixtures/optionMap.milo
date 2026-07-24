@@ -5,11 +5,11 @@
 // would end up with two owners. map never moves it.
 //
 // Like unwrapOrElse, f must run ONLY on Some — the ordering of "mapped" below pins that.
-fn double(n: &i64): i64 {
+pub fn double(n: &i64): i64 {
     return n * 2
 }
 
-fn main() {
+pub fn main() {
     let some: Option<i64> = Option.Some(21)
     // @expect: 42
     print(some.map((n) => double(n)).unwrapOr(0))

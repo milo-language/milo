@@ -4,7 +4,7 @@ from "lib/math.milo" import {
     add, square
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(add(3, 4))
     print(square(5))
     return 0

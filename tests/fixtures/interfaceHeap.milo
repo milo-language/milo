@@ -1,11 +1,11 @@
 // @expect: 78.5397
 // @expect: 16
 
-interface Shape {
+pub interface Shape {
     fn area(self: &Self): f64
 }
 
-struct Circle {
+pub struct Circle {
     radius: f64
 }
 
@@ -15,7 +15,7 @@ impl Circle {
     }
 }
 
-struct Square {
+pub struct Square {
     side: f64
 }
 
@@ -25,11 +25,11 @@ impl Square {
     }
 }
 
-fn printArea(s: &Shape) {
+pub fn printArea(s: &Shape) {
     print(s.area())
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let c: Heap<Shape> = Heap(Circle {
         radius: 5.0
     }

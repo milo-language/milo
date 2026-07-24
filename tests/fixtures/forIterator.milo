@@ -4,7 +4,7 @@
 // @expect: 3
 // @expect: 4
 
-struct Counter {
+pub struct Counter {
     current: i32,
     max: i32,
 }
@@ -20,7 +20,7 @@ impl Counter {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var c = Counter {
         current: 0, max: 5
     }

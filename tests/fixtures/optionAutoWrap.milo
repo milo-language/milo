@@ -3,7 +3,7 @@
 // @expect: got 100
 // @expect: is null
 
-fn check(val: u16?) {
+pub fn check(val: u16?) {
     match val {
         Option.Some(v) => {
             print("got ", v)
@@ -14,7 +14,7 @@ fn check(val: u16?) {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var x: u16? = null
     check(x)
     x = 42

@@ -7,7 +7,7 @@ from "std/hex" import {
     hexDecode, hexEncode
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let e1 = hexEncode("Hello")
     print(e1)
     print(hexDecode(e1))

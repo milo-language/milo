@@ -17,14 +17,14 @@ from "std/unicode" import {
     isAlpha, isAlphaStr, isDigit, isHexDigit, isNumeric, isPunctuation, isWhitespace, toLowerChar, toUpperChar
 }
 
-fn boolStr(b: bool): string {
+pub fn boolStr(b: bool): string {
     if b {
         return "true"
     }
     return "false"
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(boolStr(isDigit(48)))
     print(boolStr(isDigit(65)))
     print(boolStr(isAlpha(65)))

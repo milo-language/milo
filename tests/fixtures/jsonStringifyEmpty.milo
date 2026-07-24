@@ -1,9 +1,9 @@
 // @expect: {}
 
-struct Empty {
+pub struct Empty {
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let e = Empty {
     }
     let json = jsonStringify(e)

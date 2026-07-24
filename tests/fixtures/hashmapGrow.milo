@@ -3,7 +3,7 @@
 // @expect: has 19: true
 // @expect: has 20: false
 
-fn main(): i32 {
+pub fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap.new()
     var i: i32 = 0
     while i < 20 {

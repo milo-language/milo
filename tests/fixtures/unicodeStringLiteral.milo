@@ -2,7 +2,7 @@
 // @expect: café
 // @expect: 日本語
 
-fn main(): i32 {
+pub fn main(): i32 {
     print("hello → world")
     print("café")
     print("日本語")

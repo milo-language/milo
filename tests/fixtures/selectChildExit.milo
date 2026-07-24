@@ -35,7 +35,7 @@ from "std/time" import {
     sleepMs
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     Task.spawn(move(): void => {
         sleepMs(200)
     }

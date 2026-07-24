@@ -1,6 +1,6 @@
 // @expect: 16 2 8080
 
-struct SockAddrIn {
+pub struct SockAddrIn {
     sinLen: u8,
     sinFamily: u8,
     sinPort: u16,
@@ -9,11 +9,11 @@ struct SockAddrIn {
 }
 
 // simulates passing struct pointer to C — printf reads from the pointer
-fn dump(addr: &SockAddrIn): void {
+pub fn dump(addr: &SockAddrIn): void {
     print(addr.sinLen, " ", addr.sinFamily, " ", addr.sinPort)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var addr = SockAddrIn {
         sinLen: 16,
         sinFamily: 2,

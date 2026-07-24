@@ -1,12 +1,12 @@
 // @runtime-error: ensures clause violated
 
-fn shrink(n: i32): i32
+pub fn shrink(n: i32): i32
 ensures result > 0
 {
     return n - 10
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(shrink(3))
     return 0
 }

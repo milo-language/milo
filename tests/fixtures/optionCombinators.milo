@@ -4,14 +4,14 @@
 // @expect: 10
 // @expect: 99
 
-fn find(x: i64): Option<i64> {
+pub fn find(x: i64): Option<i64> {
     if x > 0 {
         return Option.Some(x * 2)
     }
     return Option.None
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a = find(5)
     let b = find(-1)
     print(a.isSome()) // true

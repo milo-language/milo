@@ -7,12 +7,12 @@ from "std/json" import {
     jsonParse
 }
 
-fn tryParse(s: string): Result<string> {
+pub fn tryParse(s: string): Result<string> {
     let j = jsonParse(s)?
     return Result.Ok(j.str("name")!)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // Valid parse
     let r1 = jsonParse("{\"x\": 1}")
     match r1 {

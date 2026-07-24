@@ -1,10 +1,10 @@
 // @runtime-error: integer overflow
 
-fn negativeOne(): i32 {
+pub fn negativeOne(): i32 {
     return -1
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let minimum: i32 = -2147483648
     print(minimum / negativeOne())
     return 0

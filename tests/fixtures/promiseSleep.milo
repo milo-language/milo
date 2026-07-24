@@ -12,7 +12,7 @@ from "std/runtime" import {
 from "std/time" import {
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var promises: Vec<Promise<i64>> = Vec.new()
 
     var i: i64 = 1

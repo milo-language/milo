@@ -3,19 +3,19 @@
 // @expect: hello
 // @expect: 42
 
-struct Entry {
+pub struct Entry {
     name: string,
     value: i32,
 }
 
-fn makeEntry(): Entry {
+pub fn makeEntry(): Entry {
     var s = "hello"
     return Entry {
         name: s, value: 42
     }
 }
 
-fn main() {
+pub fn main() {
     let entries = [makeEntry(); 3]
     print(entries[0].name)
     print(entries[0].value)

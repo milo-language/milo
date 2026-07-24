@@ -1,16 +1,16 @@
 // @expect: name: double
 // @expect: result: 10
 
-fn double(x: i32): i32 {
+pub fn double(x: i32): i32 {
     return x * 2
 }
 
-struct Op {
+pub struct Op {
     name: string,
     apply: (i32) => i32,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var ops: Vec<Op> = Vec.new()
     ops.push(Op {
         name: "double", apply: double

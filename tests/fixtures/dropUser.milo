@@ -2,7 +2,7 @@
 // @expect: drop 1
 // @expect: drop 2
 
-struct Resource {
+pub struct Resource {
     id: i32,
 }
 
@@ -12,7 +12,7 @@ impl Drop for Resource {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let r1 = Resource {
         id: 1
     }

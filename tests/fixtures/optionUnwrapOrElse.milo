@@ -4,12 +4,12 @@
 // evaluates both arms; reusing that here would call f even when Some, which is exactly
 // what a caller picks unwrapOrElse to avoid. So this fixture asserts the side effect's
 // absence via output ordering: "fallback ran" must appear once, after the 5.
-fn fallback(): i64 {
+pub fn fallback(): i64 {
     print("fallback ran")
     return 42
 }
 
-fn main() {
+pub fn main() {
     let some: Option<i64> = Option.Some(5)
     // @expect: 5
     print(some.unwrapOrElse(() => fallback()))

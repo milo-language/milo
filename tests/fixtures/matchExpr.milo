@@ -5,7 +5,7 @@
 // match in expression position: arms yield values, both bare (`P => v`) and
 // braced (`P => { .. v }`). Reuses statement-match exhaustiveness, binding, and
 // move checking; const-int arms coerce to an int target like if-expression arms.
-fn pick(n: i64): string {
+pub fn pick(n: i64): string {
     return match n {
         0 => "zero",
         1 => "one",
@@ -13,7 +13,7 @@ fn pick(n: i64): string {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let o: Option<i64> = Option.Some(42)
     let v = match o {
         Option.Some(x) => x, Option.None => 0

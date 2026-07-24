@@ -1,6 +1,6 @@
 // Token types for the Milo lexer
 
-enum TokKind {
+pub enum TokKind {
     // literals
     Int,
     Float,
@@ -85,18 +85,18 @@ enum TokKind {
     Eof,
 }
 
-enum TriviaKind {
+pub enum TriviaKind {
     Comment,
     Blank,
 }
 
-struct Trivia {
+pub struct Trivia {
     kind: TriviaKind,
     text: string,
     line: i32,
 }
 
-struct Token {
+pub struct Token {
     kind: TokKind,
     value: string,
     line: i32,
@@ -105,7 +105,7 @@ struct Token {
     trailingTrivia: Vec<Trivia>,
 }
 
-fn keywordKind(s: &string): TokKind {
+pub fn keywordKind(s: &string): TokKind {
     if s == "fn" {
         return TokKind.Fn
     }
@@ -194,7 +194,7 @@ fn keywordKind(s: &string): TokKind {
 }
 
 // Token kind → canonical string (matches TS TokenKind enum values)
-fn tokKindName(k: TokKind): string {
+pub fn tokKindName(k: TokKind): string {
     match k {
         TokKind.Int => {
             return "INT"

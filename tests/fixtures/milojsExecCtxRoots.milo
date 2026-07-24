@@ -23,7 +23,7 @@ from "../../examples/runtimes/milojs/value" import {
     JSValue
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var st = makeInterp(false, 1, 2)
     // creates global scope 0, which collect marks as a root
     bootInterp(st)

@@ -1,6 +1,6 @@
 // `var v = Vec.new()` with no annotation infers its element type from the
 // first push — no turbofish, no `let v: Vec<T> =` needed.
-fn main() {
+pub fn main() {
     var xs = Vec.new()
     xs.push(10)
     xs.push(20)

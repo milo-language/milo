@@ -20,7 +20,7 @@ from "std/unicode" import {
     decodeCodepoint, encodeCodepoint, codepointCount, utf16UnitCount, highSurrogate, lowSurrogate, fromSurrogatePair
 }
 
-fn main() {
+pub fn main() {
     let s = "aé漢🎉"
     var units: i64 = 0
     var u: i64 = 0

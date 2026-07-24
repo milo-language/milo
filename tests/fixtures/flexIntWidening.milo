@@ -5,11 +5,11 @@
 // its width adaptable until first use, so it widens to an i64 context without an
 // `as i64` cast. Widening is locked in at the first read (see the adversarial
 // error fixtures), so it can never retroactively change a committed i32 use.
-fn take(x: i64): i64 {
+pub fn take(x: i64): i64 {
     return x
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let wide = true
     let mask = if wide {
         0xFFFF

@@ -4,7 +4,7 @@
 // @expect: 7
 // @expect: 3
 // @expect: 42
-fn main(): i32 {
+pub fn main(): i32 {
     let x = 7
     match x {
         _ => {

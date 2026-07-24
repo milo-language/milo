@@ -3,7 +3,7 @@
 // @expect: drop: hello
 // tests: var assigned + returned via enum variant drops exactly once
 
-struct Wrapper {
+pub struct Wrapper {
     value: string,
 }
 
@@ -13,14 +13,14 @@ impl Drop for Wrapper {
     }
 }
 
-fn tryMake(): Wrapper {
+pub fn tryMake(): Wrapper {
     var conn = Wrapper {
         value: "hello"
     }
     return conn
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let val = tryMake()
     print("got: ", val.value)
     print("done")

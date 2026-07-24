@@ -3,7 +3,7 @@
 // @expect: 1
 // @expect: overflow
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a: i32 = 100
     let b: i32 = 5
     match a.checkedDiv(b) {

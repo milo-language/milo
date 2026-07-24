@@ -25,7 +25,7 @@ from "src-milo/checker/stmt.milo" import {
 
 // -- Move tracking --
 
-fn tryMove(ck: &mut Checker, expr: &Expr) {
+pub fn tryMove(ck: &mut Checker, expr: &Expr) {
     if ck.inReturn {
         return
     }
@@ -47,7 +47,7 @@ fn tryMove(ck: &mut Checker, expr: &Expr) {
     }
 }
 
-fn isRootMutable(ck: &Checker, expr: &Expr): bool {
+pub fn isRootMutable(ck: &Checker, expr: &Expr): bool {
     match expr {
         Expr.Ident(name, span) => {
             let info = lookup(ck, name)
@@ -125,7 +125,7 @@ fn isRootMutable(ck: &Checker, expr: &Expr): bool {
 
 // -- Deref through references --
 
-fn deref(t: &TypeKind): TypeKind {
+pub fn deref(t: &TypeKind): TypeKind {
     match t {
         // `inner` is &Heap<TypeKind> — a pointer to the Heap slot. `inner.clone()`
         // would clone through the wrong level and reinterpret the pointer bytes as
@@ -141,7 +141,7 @@ fn deref(t: &TypeKind): TypeKind {
 
 // -- Main expression checker --
 
-fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
+pub fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
     match expr {
         Expr.IntLit(val, span) => {
             return tyI64()
@@ -246,7 +246,7 @@ fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
 
 // -- Identifier --
 
-fn checkIdent(ck: &mut Checker, name: &string, span: &Option<Span>): TypeKind {
+pub fn checkIdent(ck: &mut Checker, name: &string, span: &Option<Span>): TypeKind {
     setVarRead(ck, name)
     match lookup(ck, name) {
         Option.Some(v) => {
@@ -278,7 +278,7 @@ fn checkIdent(ck: &mut Checker, name: &string, span: &Option<Span>): TypeKind {
 // no intrinsic width — it takes its type from the context. Mirrors the TS
 // checker's const-subexpression coercion, without which `pos + 1` on an i64 and
 // `b != 0` on a u8 are both type errors.
-fn isConstIntExpr(e: &Expr): bool {
+pub fn isConstIntExpr(e: &Expr): bool {
     match e {
         Expr.IntLit(v, span) => {
             return true
@@ -303,7 +303,7 @@ fn isConstIntExpr(e: &Expr): bool {
 
 // A bare float literal defaults to f64 but coerces into an f32 (or any float)
 // target the same way an int literal coerces between integer widths.
-fn floatLitCoercible(to: &TypeKind, src: &TypeKind, srcExpr: &Expr): bool {
+pub fn floatLitCoercible(to: &TypeKind, src: &TypeKind, srcExpr: &Expr): bool {
     if !isFloat(to) {
         return false
     }
@@ -328,7 +328,7 @@ fn floatLitCoercible(to: &TypeKind, src: &TypeKind, srcExpr: &Expr): bool {
 
 // Whether a value of type `src`, produced by `srcExpr`, may be used where `to`
 // is expected: only when both are integers and `srcExpr` is a const int.
-fn intCoercible(to: &TypeKind, src: &TypeKind, srcExpr: &Expr): bool {
+pub fn intCoercible(to: &TypeKind, src: &TypeKind, srcExpr: &Expr): bool {
     if !isInteger(to) {
         return false
     }
@@ -341,7 +341,7 @@ fn intCoercible(to: &TypeKind, src: &TypeKind, srcExpr: &Expr): bool {
 // A string argument passed where *u8 is expected reads as its data pointer
 // (extern cstr boundary). An int-element array literal takes its element
 // width from the annotation, like scalar const-int coercion.
-fn ptrCoercible(to: &TypeKind, src: &TypeKind): bool {
+pub fn ptrCoercible(to: &TypeKind, src: &TypeKind): bool {
     match to {
         TypeKind.TPtr(inner) => {
             // string data pointer at the cstr boundary
@@ -374,7 +374,7 @@ fn ptrCoercible(to: &TypeKind, src: &TypeKind): bool {
     }
 }
 
-fn arrayIntCoercible(to: &TypeKind, src: &TypeKind): bool {
+pub fn arrayIntCoercible(to: &TypeKind, src: &TypeKind): bool {
     match to {
         TypeKind.TArray(toElem, toSize) => {
             match src {
@@ -397,7 +397,7 @@ fn arrayIntCoercible(to: &TypeKind, src: &TypeKind): bool {
 
 // `let v: Vec<T> = [a, b, c]` — an array literal coerces to a Vec when the
 // declared type is Vec<T> and element types match (incl. int-width coercion).
-fn arrayToVecCoercible(to: &TypeKind, src: &TypeKind): bool {
+pub fn arrayToVecCoercible(to: &TypeKind, src: &TypeKind): bool {
     match to {
         TypeKind.TVec(toElem) => {
             match src {
@@ -416,7 +416,7 @@ fn arrayToVecCoercible(to: &TypeKind, src: &TypeKind): bool {
 }
 
 // operator → overload method name (Add/Sub/Mul/Div traits), or "" if not overloadable
-fn opMethodName(op: &string): string {
+pub fn opMethodName(op: &string): string {
     if op == "+" {
         return "add"
     }
@@ -434,7 +434,7 @@ fn opMethodName(op: &string): string {
 
 // True if a value of type `valType` (a concrete struct, or Heap<Concrete>) coerces
 // to interface `hint` — i.e. hint is an interface and the concrete implements it.
-fn interfaceCoercible(ck: &Checker, hint: &TypeKind, valType: &TypeKind): bool {
+pub fn interfaceCoercible(ck: &Checker, hint: &TypeKind, valType: &TypeKind): bool {
     match hint {
         TypeKind.TStruct(iface) => {
             if !ck.traits.contains(iface) {
@@ -467,7 +467,7 @@ fn interfaceCoercible(ck: &Checker, hint: &TypeKind, valType: &TypeKind): bool {
 
 // True if `sname` (a concrete struct) implements every method of interface `iface`
 // (a registered trait) — the requirement to coerce it to an `&iface` trait object.
-fn structImplementsInterface(ck: &Checker, sname: &string, iface: &string): bool {
+pub fn structImplementsInterface(ck: &Checker, sname: &string, iface: &string): bool {
     if !ck.traits.contains(iface) {
         return false
     }
@@ -484,7 +484,7 @@ fn structImplementsInterface(ck: &Checker, sname: &string, iface: &string): bool
 }
 
 // does struct `sname` define method `method` via an inherent or trait impl?
-fn structHasMethod(ck: &Checker, sname: &string, method: &string): bool {
+pub fn structHasMethod(ck: &Checker, sname: &string, method: &string): bool {
     if method.len == 0 {
         return false
     }
@@ -507,7 +507,7 @@ fn structHasMethod(ck: &Checker, sname: &string, method: &string): bool {
     return false
 }
 
-fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &Option<Span>): TypeKind {
+pub fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &Option<Span>): TypeKind {
     // Logical operators
     if op == "&&" || op == "||" {
         let lt = checkExpr(ck, left)
@@ -603,7 +603,7 @@ fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &O
 
 // -- Unary operators --
 
-fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Span>): TypeKind {
+pub fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Span>): TypeKind {
     let ot = checkExpr(ck, operand)
 
     if op == "*" {
@@ -652,7 +652,7 @@ fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Spa
 
 // -- Function calls --
 
-fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<MiloType>, span: &Option<Span>): TypeKind {
+pub fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<MiloType>, span: &Option<Span>): TypeKind {
     // Static method on an instantiated generic type: Type<Args>.method(...)
     var dotIdx: i64 = -1
     for di in 0..func.len {
@@ -990,7 +990,7 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
 
 // -- Struct literals --
 
-fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>, span: &Option<Span>): TypeKind {
+pub fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>, span: &Option<Span>): TypeKind {
     var structName = name.clone()
     // A bare generic-struct literal (`Arena { ... }` inside arenaNew<T>) isn't a
     // registered struct on its own; if the expected type is a monomorphized
@@ -1101,7 +1101,7 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
 
 // -- Field access --
 
-fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<Span>): TypeKind {
+pub fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<Span>): TypeKind {
     var objType = checkExpr(ck, obj)
     // auto-deref references; and raw pointers (`p.x` on a *Struct), which is an
     // unsafe-gated deref-and-access
@@ -1175,7 +1175,7 @@ fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<
 
 // -- Array literals --
 
-fn checkArrayLit(ck: &mut Checker, elements: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+pub fn checkArrayLit(ck: &mut Checker, elements: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     if elements.len == 0 {
         // an empty `[]` carries no element type — adopt the annotation's Vec/Array
         // type from the enclosing let/assignment (`var xs: Vec<string> = []`).
@@ -1236,7 +1236,7 @@ fn checkArrayLit(ck: &mut Checker, elements: &Vec<Heap<Expr>>, span: &Option<Spa
 
 // -- Index access --
 
-fn checkIndexAccess(ck: &mut Checker, obj: &Expr, index: &Expr, span: &Option<Span>): TypeKind {
+pub fn checkIndexAccess(ck: &mut Checker, obj: &Expr, index: &Expr, span: &Option<Span>): TypeKind {
     var objType = checkExpr(ck, obj)
     match objType.clone() {
         TypeKind.TRef(inner, mutable) => {
@@ -1275,7 +1275,7 @@ fn checkIndexAccess(ck: &mut Checker, obj: &Expr, index: &Expr, span: &Option<Sp
 
 // -- Enum literals --
 
-fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+pub fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     // Vec.new() / HashMap.new() without type annotation
     // `Vec.new()` / `HashMap.new()` carry no element type. checkLetDecl overwrites
     // an unknown value type with the declared annotation, so return unknown quietly
@@ -1362,7 +1362,7 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
 
 // -- Generic instantiation at use sites --
 
-fn typeParamIndex(typeParams: &Vec<string>, name: &string): i64 {
+pub fn typeParamIndex(typeParams: &Vec<string>, name: &string): i64 {
     for i in 0..typeParams.len {
         if typeParams[i] == name {
             return i
@@ -1374,7 +1374,7 @@ fn typeParamIndex(typeParams: &Vec<string>, name: &string): i64 {
 // Single-level inference: a declared type that IS a type parameter (T) takes
 // the argument's type; T one level under &, Heap, or Vec also unifies.
 // Unresolved type-param names parse as TStruct(param).
-fn inferInto(typeParams: &Vec<string>, declTy: &TypeKind, argTy: &TypeKind, inferred: &mut HashMap<string, TypeKind>) {
+pub fn inferInto(typeParams: &Vec<string>, declTy: &TypeKind, argTy: &TypeKind, inferred: &mut HashMap<string, TypeKind>) {
     match declTy {
         TypeKind.TStruct(name) => {
             if typeParamIndex(typeParams, name) >= 0 && !inferred.contains(name) && !typeEq(argTy, tyUnknown()) {
@@ -1419,7 +1419,7 @@ fn inferInto(typeParams: &Vec<string>, declTy: &TypeKind, argTy: &TypeKind, infe
 // typeFromAst drops them) against the concrete argument type. A generic struct
 // `Arena<T>` matched against a monomorphized `Arena_DLNode` recovers T via the
 // structInsts (base/mangled/args) recorded at monomorphization.
-fn inferFromAst(ck: &Checker, typeParams: &Vec<string>, declAst: &MiloType, argTy: &TypeKind, inferred: &mut HashMap<string, TypeKind>) {
+pub fn inferFromAst(ck: &Checker, typeParams: &Vec<string>, declAst: &MiloType, argTy: &TypeKind, inferred: &mut HashMap<string, TypeKind>) {
     // Unwrap a declared ref (&Arena<T>) against a possibly-TRef argument.
     var concrete = argTy.clone()
     if declAst.isRef || declAst.isRefMut || declAst.isPtr {
@@ -1505,7 +1505,7 @@ fn inferFromAst(ck: &Checker, typeParams: &Vec<string>, declAst: &MiloType, argT
     }
 }
 
-fn checkGenericCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+pub fn checkGenericCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     let generic = ck.genericFns.get(func)!
     if args.len != generic.decl.params.len {
         error(ck, "function '" + func.clone() + "' expects " + generic.decl.params.len.toString() + " args, got " + args.len.toString(), cloneSpan(span))
@@ -1565,7 +1565,7 @@ fn checkGenericCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, spa
     return sig.ret.clone()
 }
 
-fn checkGenericEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+pub fn checkGenericEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     let generic = ck.genericEnums.get(enumName)!
     if !generic.variants.contains(variant) {
         error(ck, "enum '" + enumName.clone() + "' has no variant '" + variant.clone() + "'", cloneSpan(span))
@@ -1646,7 +1646,7 @@ fn checkGenericEnumLit(ck: &mut Checker, enumName: &string, variant: &string, ar
 
 // -- Unwrap (!) --
 
-fn unwrapableInner(ck: &Checker, t: &TypeKind): Option<TypeKind> {
+pub fn unwrapableInner(ck: &Checker, t: &TypeKind): Option<TypeKind> {
     // Option<T> is monomorphized as Option_T with Some(T)/None variants
     match t {
         TypeKind.TEnum(name) => {
@@ -1676,7 +1676,7 @@ fn unwrapableInner(ck: &Checker, t: &TypeKind): Option<TypeKind> {
 
 // A bare `T` argument coerces to an `Option<T>` param (auto-wrap in Some), e.g.
 // `serve(port: u16?, …)` called with a plain u16.
-fn optionWrapCoercible(ck: &Checker, paramType: &TypeKind, argType: &TypeKind): bool {
+pub fn optionWrapCoercible(ck: &Checker, paramType: &TypeKind, argType: &TypeKind): bool {
     match paramType {
         TypeKind.TEnum(name) => {
             if !ck.enums.contains(name) {
@@ -1701,7 +1701,7 @@ fn optionWrapCoercible(ck: &Checker, paramType: &TypeKind, argType: &TypeKind): 
 // `let x: T? = <intlit>` / `x = <intlit>` — wrap a bare value into Option<T>, with
 // integer-width coercion of the payload (42:i32 into Option<u16>). Broader than
 // optionWrapCoercible (used at call sites where codegen requires an exact ll match).
-fn optionIntWrapCoercible(ck: &Checker, optType: &TypeKind, valType: &TypeKind): bool {
+pub fn optionIntWrapCoercible(ck: &Checker, optType: &TypeKind, valType: &TypeKind): bool {
     match optType {
         TypeKind.TEnum(name) => {
             if !ck.enums.contains(name) {
@@ -1726,7 +1726,7 @@ fn optionIntWrapCoercible(ck: &Checker, optType: &TypeKind, valType: &TypeKind):
     }
 }
 
-fn checkUnwrap(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKind {
+pub fn checkUnwrap(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKind {
     let operandType = checkExpr(ck, operand)
     let inner = unwrapableInner(ck, operandType)
     match inner {
@@ -1742,7 +1742,7 @@ fn checkUnwrap(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKind 
 
 // -- Propagate (?) --
 
-fn checkPropagate(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKind {
+pub fn checkPropagate(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKind {
     let operandType = checkExpr(ck, operand)
     let inner = unwrapableInner(ck, operandType)
     match inner {
@@ -1766,7 +1766,7 @@ fn checkPropagate(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKi
 
 // -- Default value (??) --
 
-fn checkDefaultValue(ck: &mut Checker, operand: &Expr, default: &Expr, span: &Option<Span>): TypeKind {
+pub fn checkDefaultValue(ck: &mut Checker, operand: &Expr, default: &Expr, span: &Option<Span>): TypeKind {
     let operandType = checkExpr(ck, operand)
     let inner = unwrapableInner(ck, operandType)
     match inner {
@@ -1789,7 +1789,7 @@ fn checkDefaultValue(ck: &mut Checker, operand: &Expr, default: &Expr, span: &Op
 
 // -- Cast expressions --
 
-fn checkCast(ck: &mut Checker, operand: &Expr, targetType: &MiloType, span: &Option<Span>): TypeKind {
+pub fn checkCast(ck: &mut Checker, operand: &Expr, targetType: &MiloType, span: &Option<Span>): TypeKind {
     let fromType = checkExpr(ck, operand)
     let toType = typeFromAst(targetType)
 
@@ -1861,7 +1861,7 @@ fn checkCast(ck: &mut Checker, operand: &Expr, targetType: &MiloType, span: &Opt
 
 // -- Method calls --
 
-fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+pub fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     var objType = checkExpr(ck, obj)
     // auto-deref references
     match objType.clone() {
@@ -1984,7 +1984,7 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
 
 // -- Vec methods --
 
-fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+pub fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     // v.ptr(): *T — the Vec's backing data pointer. Safe to obtain (mirrors cstr).
     if method == "ptr" {
         if args.len != 0 {
@@ -2194,7 +2194,7 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
 
 // -- HashMap methods --
 
-fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKind, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+pub fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKind, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     if method == "insert" {
         if args.len != 2 {
             error(ck, "'insert' expects 2 arguments (key, value)", cloneSpan(span))
@@ -2286,7 +2286,7 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
 
 // -- String methods --
 
-fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+pub fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     if method == "clone" {
         if args.len != 0 {
             error(ck, "'clone' takes no arguments", cloneSpan(span))
@@ -2417,7 +2417,7 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
 
 // -- Struct/trait method calls --
 
-fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+pub fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     // Look up inherent implDecl method
     if ck.inherentImpls.contains(structName) {
         let implDecl = ck.inherentImpls.get(structName)!
@@ -2532,7 +2532,7 @@ fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, arg
 
 // A closure's return type: an annotation wins; otherwise it's inferred from a
 // `return <expr>` in the body (captured via ck.pendingClosureRet while walking).
-fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>): TypeKind {
+pub fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>): TypeKind {
     pushScope(ck)
 
     var paramTypes: Vec<TypeKind> = Vec.new()

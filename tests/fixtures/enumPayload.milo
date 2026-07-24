@@ -1,11 +1,11 @@
 // @expect: 42
 
-enum Option {
+pub enum Option {
     Some(i32),
     None,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let x = Option.Some(42)
     match x {
         Option.Some(val) => {

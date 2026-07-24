@@ -1,13 +1,13 @@
 // @expect: {"name":"Chad","age":30,"score":3.14,"active":true}
 
-struct User {
+pub struct User {
     name: string,
     age: i32,
     score: f64,
     active: bool,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let user = User {
         name: "Chad", age: 30, score: 3.14, active: true
     }

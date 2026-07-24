@@ -15,7 +15,7 @@ from "std/base64" import {
     base64Encode, base64Decode, base64UrlEncode
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print("empty=[", base64Encode(""), "]")
     print("f=", base64Encode("f"))
     print("fo=", base64Encode("fo"))

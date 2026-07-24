@@ -17,14 +17,14 @@ from "std/string" import {
     charIsAlpha, charIsAlphanumeric, charIsDigit, charIsWhitespace, strContains, strEndsWith, strIndexOf, strIndexOfFrom, strRepeat, strReplace, strSplit, strStartsWith, strToLower, strToUpper, strTrim, strTrimEnd, strTrimStart, trim
 }
 
-fn boolStr(b: bool): string {
+pub fn boolStr(b: bool): string {
     if b {
         return "true"
     }
     return "false"
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let s = "hello world"
 
     // contains

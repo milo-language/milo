@@ -10,7 +10,7 @@ from "std/xxhash" import {
     xxh64Hex
 }
 
-fn _hexVal(c: u8): i64 {
+pub fn _hexVal(c: u8): i64 {
     if c >= '0' && c <= '9' {
         return (c - '0') as i64
     }
@@ -20,7 +20,7 @@ fn _hexVal(c: u8): i64 {
     return 0
 }
 
-fn fromHex(h: &string): string {
+pub fn fromHex(h: &string): string {
     var out = ""
     var i: i64 = 0
     while i + 1 < h.len {
@@ -32,7 +32,7 @@ fn fromHex(h: &string): string {
     return out
 }
 
-fn decode(hex: string): string {
+pub fn decode(hex: string): string {
     let bytes = fromHex(hex)
     match zstdDecompress(bytes) {
         Result.Ok(s) => {
@@ -44,7 +44,7 @@ fn decode(hex: string): string {
     }
 }
 
-fn main() {
+pub fn main() {
     // Raw block, content-checksum flag set.
     // @expect: hello world
     print(decode("28b52ffd045859000068656c6c6f20776f726c6468691eb2"))

@@ -4,11 +4,11 @@
 // @expect: 2
 // @expect: 1
 // @expect: done
-struct Msg {
+pub struct Msg {
     payload: string
 }
 
-fn getMsg(n: i64): Result<Msg, string> {
+pub fn getMsg(n: i64): Result<Msg, string> {
     if n <= 0 {
         return Result.Err("done")
     }
@@ -18,7 +18,7 @@ fn getMsg(n: i64): Result<Msg, string> {
     )
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var i: i64 = 3
     while true {
         match getMsg(i) {

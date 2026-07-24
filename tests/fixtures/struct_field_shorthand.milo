@@ -2,11 +2,11 @@
 // @expect: 7
 // @expect: 99
 // Field shorthand `{ x }` desugars to `{ x: x }`; mixes with explicit fields.
-struct Point {
+pub struct Point {
     x: i64, y: i64
 }
 
-fn main() {
+pub fn main() {
     let x: i64 = 3
     let y: i64 = 7
     let p = Point {

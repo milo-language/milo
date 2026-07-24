@@ -8,7 +8,7 @@ from "std/json" import {
     jsonParse
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let j = jsonParse("{\"d\":\"\\u0041\\u0003\\u00e9\"}")!
     let s = j.str("d") ?? ""
     print((s[0] as i64).toString()) // 'A'

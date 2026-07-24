@@ -7,7 +7,7 @@ from "std/random" import {
     randFloat, randRange, shuffleI64
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var i = 0
     while i < 10 {
         let r = randRange(1, 6)

@@ -6,7 +6,7 @@ from "std/hmac" import {
 }
 
 // Checked against `openssl dgst -sha256 -hmac`. Third vector is RFC 4231 test 2.
-fn main(): i32 {
+pub fn main(): i32 {
     print(hmacSha256("key", "The quick brown fox jumps over the lazy dog"))
     print(hmacSha256("", ""))
     print(hmacSha256("Jefe", "what do ya want for nothing?"))

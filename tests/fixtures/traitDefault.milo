@@ -1,19 +1,19 @@
 // @expect: 42
 
-trait Greet {
+pub trait Greet {
     fn greet(self: &Self): i32 {
         return 42
     }
 }
 
-struct Cat {
+pub struct Cat {
     name: i32
 }
 
 impl Greet for Cat {
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let c = Cat {
         name: 1
     }

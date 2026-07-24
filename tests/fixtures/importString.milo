@@ -3,7 +3,7 @@ from "lib/greeting.milo" import {
     greet
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let msg = greet("world")
     print(msg)
     return 0

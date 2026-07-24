@@ -1,6 +1,6 @@
-extern fn puts(s: *u8): i32
+pub extern fn puts(s: *u8): i32
 
-fn main(): i32 {
+pub fn main(): i32 {
     let msg = "hello from cast"
     unsafe {
         let ptr = msg as *u8

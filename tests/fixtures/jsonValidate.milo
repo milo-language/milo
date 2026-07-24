@@ -11,25 +11,25 @@
 // @expect: invalid
 // @expect: invalid
 
-fn isWs(ch: u8): bool {
+pub fn isWs(ch: u8): bool {
     return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
 }
 
-fn isDigit(ch: u8): bool {
+pub fn isDigit(ch: u8): bool {
     return ch >= '0' && ch <= '9'
 }
 
-fn isHex(ch: u8): bool {
+pub fn isHex(ch: u8): bool {
     return isDigit(ch) || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f')
 }
 
-fn skipWs(s: &string, pos: &mut i64) {
+pub fn skipWs(s: &string, pos: &mut i64) {
     while pos < s.len && isWs(s[pos]) {
         pos = pos + 1
     }
 }
 
-fn parseValue(s: &string, pos: &mut i64): bool {
+pub fn parseValue(s: &string, pos: &mut i64): bool {
     skipWs(s, pos)
     if pos >= s.len {
         return false
@@ -59,7 +59,7 @@ fn parseValue(s: &string, pos: &mut i64): bool {
     return false
 }
 
-fn parseString(s: &string, pos: &mut i64): bool {
+pub fn parseString(s: &string, pos: &mut i64): bool {
     if pos >= s.len || s[pos] != '"' {
         return false
     }
@@ -97,7 +97,7 @@ fn parseString(s: &string, pos: &mut i64): bool {
     return false
 }
 
-fn parseNumber(s: &string, pos: &mut i64): bool {
+pub fn parseNumber(s: &string, pos: &mut i64): bool {
     if pos >= s.len {
         return false
     }
@@ -143,7 +143,7 @@ fn parseNumber(s: &string, pos: &mut i64): bool {
     return true
 }
 
-fn parseArray(s: &string, pos: &mut i64): bool {
+pub fn parseArray(s: &string, pos: &mut i64): bool {
     if pos >= s.len || s[pos] != '[' {
         return false
     }
@@ -174,7 +174,7 @@ fn parseArray(s: &string, pos: &mut i64): bool {
     return false
 }
 
-fn parseObject(s: &string, pos: &mut i64): bool {
+pub fn parseObject(s: &string, pos: &mut i64): bool {
     if pos >= s.len || s[pos] != '{' {
         return false
     }
@@ -205,7 +205,7 @@ fn parseObject(s: &string, pos: &mut i64): bool {
     return false
 }
 
-fn parseKv(s: &string, pos: &mut i64): bool {
+pub fn parseKv(s: &string, pos: &mut i64): bool {
     skipWs(s, pos)
     if !parseString(s, pos) {
         return false
@@ -218,7 +218,7 @@ fn parseKv(s: &string, pos: &mut i64): bool {
     return parseValue(s, pos)
 }
 
-fn expectChars(s: &string, pos: &mut i64, expected: &string): bool {
+pub fn expectChars(s: &string, pos: &mut i64, expected: &string): bool {
     var i: i64 = 0
     while i < expected.len {
         if pos >= s.len || s[pos] != expected[i] {
@@ -230,7 +230,7 @@ fn expectChars(s: &string, pos: &mut i64, expected: &string): bool {
     return true
 }
 
-fn validate(json: string): bool {
+pub fn validate(json: string): bool {
     var pos: i64 = 0
     if !parseValue(json, pos) {
         return false
@@ -239,7 +239,7 @@ fn validate(json: string): bool {
     return pos == json.len
 }
 
-fn check(json: string, expected: bool) {
+pub fn check(json: string, expected: bool) {
     let result = validate(json)
     if result == expected {
         if expected {
@@ -253,7 +253,7 @@ fn check(json: string, expected: bool) {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     check("null", true)
     check("42", true)
     check("\"hello\"", true)

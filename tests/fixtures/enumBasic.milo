@@ -1,12 +1,12 @@
 // @expect: 1
 
-enum Color {
+pub enum Color {
     Red,
     Green,
     Blue,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let c = Color.Green
     match c {
         Color.Red => {

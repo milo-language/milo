@@ -3,7 +3,7 @@
 // @expect: 2
 // @expect: 8
 
-fn main(): i32 {
+pub fn main(): i32 {
     let a: u8 = 0b10110101 // five 1 bits
     print(a.countOnes()) // 5
 

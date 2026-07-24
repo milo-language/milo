@@ -1,6 +1,6 @@
 // `from` and `in` are contextual keywords: usable as ordinary identifiers
 // (param names, locals) outside import / for-in position.
-fn pick(from: i64, in: i64): i64 {
+pub fn pick(from: i64, in: i64): i64 {
     var out = 0
     for i in from..in {
         out = out + i
@@ -8,7 +8,7 @@ fn pick(from: i64, in: i64): i64 {
     return out
 }
 
-fn main(): void {
+pub fn main(): void {
     let from = 2
     let in = 5
     // @expect: 9

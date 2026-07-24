@@ -1,7 +1,7 @@
 // @expect: count: 3
 // @expect: total: 6
 
-fn main(): i32 {
+pub fn main(): i32 {
     var m: HashMap<string, i32> = HashMap.new()
     m.insert("a", 1)
     m.insert("b", 2)

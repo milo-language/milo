@@ -3,11 +3,11 @@
 // Vec.filled with a negative count used to store len = -1; the unsigned index
 // bounds check then let every index through, giving an OOB write/read. It must
 // trap on the negative count instead.
-fn negCount(): i64 {
+pub fn negCount(): i64 {
     return -1
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var v: Vec<i32> = Vec.filled(negCount(), 7)
     v[0] = 12345
     print(v[0])

@@ -3,7 +3,7 @@ from "std/json" import {
     jsonObj, jsonArr, jsonParse, JsonVal, jsonSer
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // flat object with escaping
     let doc = jsonObj()
         .str("type", "capabilities")

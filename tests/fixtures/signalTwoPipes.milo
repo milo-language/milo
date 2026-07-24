@@ -23,14 +23,14 @@ from "std/platform" import {
 }
 
 // The pipes are O_NONBLOCK, so this never stalls when empty.
-fn drained(fd: i32): bool {
+pub fn drained(fd: i32): bool {
     unsafe {
         var buf: [u8; 8] = [0; 8]
         return read(fd, buf as *u8, 8) > 0
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let winchFd = installSignalPipe(SIGWINCH)
     let childFd = installSignalPipe(sigchld())
 

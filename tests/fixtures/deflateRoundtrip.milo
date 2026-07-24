@@ -8,7 +8,7 @@ from "std/inflate" import {
 
 // Compress then decompress through both container formats; the payload has enough
 // repetition to exercise LZ77 back-references, not just literals.
-fn main(): i32 {
+pub fn main(): i32 {
     var s = ""
     let base = "The quick brown fox jumps over the lazy dog. "
     for _i in 0..50 {

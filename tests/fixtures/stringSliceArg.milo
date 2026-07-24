@@ -11,7 +11,7 @@ from "std/string" import {
     strTrim, strSplit
 }
 
-fn firstField(text: &string): string {
+pub fn firstField(text: &string): string {
     for line in strSplit(text, "\n") {
         if line.len > 0 {
             return strTrim(line[0..line.len])
@@ -20,7 +20,7 @@ fn firstField(text: &string): string {
     return ""
 }
 
-fn main() {
+pub fn main() {
     let s = "  padded  "
 
     // inline slice as an argument — the miscompiled shape

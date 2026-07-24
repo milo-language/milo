@@ -1,7 +1,7 @@
 // @expect: 5
 // @expect: 120
 
-fn clamp(value: i64, lo: i64, hi: i64): i64
+pub fn clamp(value: i64, lo: i64, hi: i64): i64
 requires lo <= hi
 ensures result >= lo && result <= hi
 {
@@ -14,7 +14,7 @@ ensures result >= lo && result <= hi
     return value
 }
 
-fn factorial(n: i64): i64
+pub fn factorial(n: i64): i64
 requires n >= 0
 ensures result >= 1
 {
@@ -24,7 +24,7 @@ ensures result >= 1
     return n * factorial(n - 1)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     print(clamp(10, 0, 5))
     print(factorial(5))
     return 0

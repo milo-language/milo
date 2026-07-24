@@ -7,7 +7,7 @@ from "std/arena" import {
     Arena, arenaAlloc, arenaFree, arenaGet, arenaModify, arenaNew
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var arena: Arena<i32> = arenaNew()
     let h = arenaAlloc(arena, 10)
 
