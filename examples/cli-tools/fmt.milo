@@ -87,6 +87,34 @@ fn isTopLevel(s: &string): bool {
     s == "trait" || s == "extern"
 }
 
+// Decl keywords that `pub` may prefix. Matched by text (not TokKind): `type` and
+// `interface` lex as plain idents here, so a kind check would miss `pub type`.
+fn pubStartsDeclKw(s: &string): bool {
+    return s == "fn" || s == "struct" || s == "enum" || s == "trait" ||
+    s == "type" || s == "interface" || s == "extern" || s == "let" ||
+    s == "var" || s == "thread_local"
+}
+
+// `pub` is a soft keyword: a visibility marker only when a decl actually follows,
+// an ordinary identifier otherwise (`var pub = 5`). True only in the former case,
+// so the formatter glues `pub` to its decl and never touches `pub` the identifier.
+fn pubLeadsDecl(tokens: &Vec<Token>, i: i64): bool {
+    let t = tokens[i]
+    if t.kind != TokKind.Ident || t.text != "pub" {
+        return false
+    }
+    var j: i64 = i + 1
+    while j < tokens.len {
+        let nk = tokens[j].kind
+        if nk != TokKind.Newline && nk != TokKind.Comment {
+            return (nk == TokKind.Ident || nk == TokKind.Keyword) &&
+            pubStartsDeclKw(tokens[j].text)
+        }
+        j = j + 1
+    }
+    return false
+}
+
 // A keyword that can begin a statement. Used to detect statement boundaries when
 // two statements share a source line with no ';' between them (e.g. a crammed
 // `let v = read() a = v`), so each is reflowed onto its own line. `as`/`in`/`mut`
@@ -920,6 +948,9 @@ fn formatSource(src: string): string {
     // Tracks whether the last emitted real token was `extern`, so a following
     // `fn` can be glued to it as `extern fn` even if the source split them.
     var lastWasExtern: bool = false
+    // Tracks whether the last emitted real token was a `pub` acting as a visibility
+    // modifier (top level), so the following decl keyword glues to it as `pub fn`.
+    var lastWasPub: bool = false
     // True while emitting a line that opened with `@`. The lexer emits `@` as an Ident
     // (unknown-char fallthrough), so inside a struct body `@cOpaque b: i32` reads as
     // three statements sharing a line and the reflow below split it into three — which
@@ -986,6 +1017,12 @@ fn formatSource(src: string): string {
         // deliberate: `type` isn't in isKeyword, and only these three can follow `extern`.
         let hugExtern = lastWasExtern && (tok.text == "fn" || tok.text == "struct" || tok.text == "type")
 
+        // `pub fn` / `pub struct` / … — the decl keyword hugs a preceding `pub` the
+        // same way `fn` hugs `extern`. Without this the top-level blank-line rule
+        // (which keys on the decl keyword) splits `pub` off onto its own line.
+        let hugPub = lastWasPub && (tok.kind == TokKind.Ident || tok.kind == TokKind.Keyword) &&
+        pubStartsDeclKw(tok.text)
+
         // } decreases indent
         if tok.kind == TokKind.RBrace {
             if depth > 0 {
@@ -1013,8 +1050,8 @@ fn formatSource(src: string): string {
         // the blank goes above it (and any doc comment above that); no blank is
         // inserted between the attribute and the decl it prefixes (afterAttr).
         let startsTopLevelItem = (tok.kind == TokKind.Keyword && isTopLevel(tok.text)) ||
-        (isAtToken(tok) && depth == 0)
-        if depth == 0 && startsTopLevelItem && !hugExtern && !attachedDoc && !afterAttr {
+        (isAtToken(tok) && depth == 0) || (depth == 0 && pubLeadsDecl(tokens, i))
+        if depth == 0 && startsTopLevelItem && !hugExtern && !hugPub && !attachedDoc && !afterAttr {
             if out.len > 0 && !out.endsWith("\n\n") {
                 if !atLineStart {
                     out = out + "\n"
@@ -1039,11 +1076,11 @@ fn formatSource(src: string): string {
         // Preserve one blank line between sections (when source had 2+ newlines).
         // Not inside ( ) or [ ] — there the whole group reflows onto one line.
         let atStmtLevel = parenDepth == 0 && bracketDepth == 0
-        if blank && atStmtLevel && !atLineStart && !hugExtern {
+        if blank && atStmtLevel && !atLineStart && !hugExtern && !hugPub {
             out = out + "\n"
             atLineStart = true
         }
-        if blank && atStmtLevel && atLineStart && out.len > 0 && !out.endsWith("\n\n") && !hugExtern {
+        if blank && atStmtLevel && atLineStart && out.len > 0 && !out.endsWith("\n\n") && !hugExtern && !hugPub {
             out = out + "\n"
         }
 
@@ -1095,7 +1132,7 @@ fn formatSource(src: string): string {
         // New source line → new output line. Suppressed inside ( ) and [ ] so a
         // param list / call args / array literal split across source lines reflows
         // onto one line.
-        if tok.line > lastLine && !atLineStart && tok.kind != TokKind.RBrace && !hugExtern && atStmtLevel {
+        if tok.line > lastLine && !atLineStart && tok.kind != TokKind.RBrace && !hugExtern && !hugPub && atStmtLevel {
             out = out + "\n"
             atLineStart = true
         }
@@ -1119,7 +1156,7 @@ fn formatSource(src: string): string {
                 out = out + "    "
             }
             atLineStart = false
-        } else if hugExtern || wantSpaceBefore(tokens, i) {
+        } else if hugExtern || hugPub || wantSpaceBefore(tokens, i) {
             out = out + " "
         }
 
@@ -1127,6 +1164,7 @@ fn formatSource(src: string): string {
         out = out + tok.text
         lastLine = tok.line
         lastWasExtern = tok.kind == TokKind.Keyword && tok.text == "extern"
+        lastWasPub = tok.kind == TokKind.Ident && tok.text == "pub" && depth == 0
         lastWasOwnLineComment = false
         prevKind = tok.kind
         prevWasAt = isAtToken(tok)
