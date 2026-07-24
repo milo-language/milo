@@ -175,8 +175,13 @@ Should packages be able to declare a public surface (only listed names importabl
   "repository": "github.com/foo/milo-http2",
 
   "milo": ">=0.4.0",             // compiler version constraint
-  "lib": "lib.milo",             // what `import "http2"` resolves to (libraries)
-  "main": "src/main.milo",       // binary entry (applications)
+
+  // A package may be a library, a set of binaries, or both. Omit either.
+  "lib": "lib.milo",             // the importable surface — what `import "http2"` resolves to
+  "bin": {                       // installable executables, keyed by the name they install as
+    "http2":       "src/cli.milo",
+    "http2-bench": "src/bench.milo"
+  },
 
   "deps":    { "json-ext": "github.com/bar/json-ext@v0.3.1" },
   "devDeps": { "bench":    "github.com/baz/bench@v0.1.0" },
@@ -245,10 +250,10 @@ The readable path stays because it is debuggable and already wired. `.blobs/` de
 ```
 milo init                    # milo.json in cwd, name inferred from directory
 milo new <name>              # scaffold: dir, main.milo, milo.json, .gitignore
-milo add <pkg>[@ver]         # resolve, fetch, verify, write manifest + lock
+milo add <pkg>[@ver]         # library dep: resolve, fetch, verify, write manifest + lock
 milo add --dev <pkg>
 milo remove <pkg>            # manifest + lock, prune orphans
-milo install                 # sync cache from lock
+milo install                 # sync cache from lock (no package argument — see below)
 milo install --frozen        # CI: fail if lock is stale or missing
 milo update [pkg]            # re-resolve tags, rewrite lock
 milo tree                    # dependency graph
@@ -257,11 +262,76 @@ milo outdated                # newer tags available upstream
 milo vendor                  # copy deps to ./vendor, rewrite deps to local paths
 milo publish                 # verify, tag, push
 milo search <terms>          # GitHub topic search
+
+milo tool install <pkg>      # global executable — see §Global CLI install
+milo tool uninstall <name>
+milo tool list
+milo tool run <pkg> <args>
 ```
 
 `milo run` / `milo build` auto-install missing locked deps (bun/uv behavior) rather than erroring. `--frozen` is the CI escape hatch.
 
 **`milo vendor` matters more here than in most languages.** Airgapped, audited, safety-critical builds — the positioning in `design.md` §Ethos — need every dependency byte in-tree and reviewable, with no network at build time. Rust and Go both bolted this on late. First-class from day one is cheap and on-brand.
+
+### Libraries vs binaries
+
+A package is a library, a set of binaries, or both. The distinction is not organizational — the flat namespace makes it load-bearing.
+
+`resolvePath` merges every declaration of whatever it resolves. If a dependency's *binary* entry were importable, `import "mgrep"` would merge that package's `fn main` into the consumer, colliding with the consumer's own `main` — either a `duplicate-fn` error (`resolver.ts:279`) or a silent last-wins rebind. So:
+
+- **`deps` resolution only ever looks at `lib`.** Binary sources are never merged into a consumer, enforced in `resolvePath`.
+- Adding a dep that has no `lib` is an error at `milo add`, pointing at `milo install --global` instead.
+- A package's own binaries may import its own `lib` — the usual "thin CLI over a library" shape.
+
+Note `"bin"` is a map keyed by installed name, and there is deliberately **no `"main"` field**: npm's `main` means the *library* entry, the opposite of what it would mean here, and that is exactly the kind of false friend that gets wired backwards once and never noticed.
+
+`milo build` in a package with several binaries takes `--bin <name>`, defaulting to the only one when there is exactly one.
+
+### Global CLI install
+
+A Milo binary is a single native executable with no runtime and no dependency tree behind it. pipx needs a venv per tool because Python tools carry an interpreter and a transitive graph; Milo carries neither. So there is nothing to isolate, and the whole design collapses to "build it, put it on PATH."
+
+**Two verbs, not one verb with a flag.** `install --global` is the shape every ecosystem regrets. A flag implies the verb means the same thing with and without it, but `milo install` (sync this project) and `milo install --global X` (put a binary on PATH) are different operations, on different things, in different places, with different failure modes. npm and pip both went that way and both produce a steady stream of "why is this not on my PATH" and "why did this modify my project."
+
+Split them, and give tools their own namespace (uv's shape, and it has held up):
+
+```
+milo add <pkg>              # library dependency → milo.json    (errors if pkg has no "lib")
+milo remove <pkg>
+milo install                # sync THIS project from the lock — takes no package argument
+milo update [pkg]
+
+milo tool install <pkg>     # global executable → bin dir       (errors if pkg has no "bin")
+milo tool uninstall <name>
+milo tool list              # what's installed, versions, origins
+milo tool run <pkg> <args>  # build + run, install nothing (cf. uvx)
+```
+
+The `lib`/`bin` split is what makes this foolproof rather than merely tidy — each wrong path is detectable, and every error names the right command:
+
+- `milo add mgrep` where mgrep ships only binaries → *"mgrep ships no library, so it cannot be a dependency. To install its command: `milo tool install mgrep`"*
+- `milo tool install jsonlib` where jsonlib ships only a lib → *"jsonlib ships no executables. To use it as a dependency: `milo add jsonlib`"*
+- `milo install <pkg>` → refuse, do not guess: *"`milo install` syncs the current project and takes no package. Did you mean `milo add <pkg>` or `milo tool install <pkg>`?"* This is pure npm muscle memory and silently doing either thing would be wrong.
+
+A package that is both a lib and a set of bins works with both verbs, which is the point — `milo add` takes its library, `milo tool install` takes its commands, and neither has to ask which kind of package it is.
+
+**Install location.** `$XDG_BIN_HOME` if set, else `~/.local/bin` — the same directory pipx targets, already on PATH for many users, and never requires `sudo`. Everything else follows XDG when the variable is set, falling back to the existing `~/.milo` layout: cache at `$XDG_CACHE_HOME/milo` else `~/.milo/cache`, receipts at `$XDG_DATA_HOME/milo` else `~/.milo`.
+
+If the bin dir is not on PATH, print the exact line to add and which shell rc file to add it to. Do not edit the user's shell config automatically.
+
+**Building locally also sidesteps macOS quarantine.** A binary downloaded by a browser gets the quarantine attribute and is SIGKILLed (and trashed) on first run; one compiled on the machine never gets it. Prebuilt-binary distribution would have to strip the attribute; building from source avoids the problem entirely.
+
+### Identifying a Milo binary
+
+Fixed-offset magic is not available: bytes 0..n of any executable are the Mach-O/ELF header, defined by the loader. `head -c 60 | grep` cannot work. Two mechanisms, and they serve different jobs:
+
+1. **A receipts file** — `~/.milo/installed.json`, recording each installed binary's name, absolute path, package URL, version, commit, and content hash. This is what `uninstall` and `list` actually read. It is authoritative, needs no binary parsing, and makes "is this file mine?" an exact-match question rather than a heuristic.
+
+2. **Embedded metadata**, as the audit and repair path — a linker section (`__MILO,__pkg` on Mach-O; `.milo.pkg` on ELF) holding `name`, `version`, and source URL. Readable with `otool -s __MILO __pkg` / `readelf -p .milo.pkg`, and greppable with `strings | grep MILO_PKG` without knowing the format. This answers "what is this stray binary and where did it come from?" and lets `milo list --repair` rebuild lost receipts by scanning the bin dir.
+
+The pattern already exists in-tree: release binaries embed their version via `@embedFile(".version")`.
+
+**Uninstall must verify before deleting.** Match the receipt's recorded path *and* content hash before unlinking; on mismatch, refuse and report. A package manager that removes a file it did not install — because a name collided in a shared directory — is a bug with no acceptable severity. Same check on install: refuse to clobber an existing binary the receipts do not claim, and say what is already there.
 
 ### Publishing and discovery without a server
 

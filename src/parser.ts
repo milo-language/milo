@@ -48,6 +48,24 @@ export class Parser {
     this.error(`expected '${kw}', got '${tok.kind}' ('${tok.value}')`, tok);
   }
 
+  // Whether a token can begin a top-level declaration — the lookahead that lets `pub`
+  // stay a soft keyword. Deliberately includes forms `pub` may NOT mark (impl, import):
+  // consuming the `pub` there yields a diagnostic naming the real rule, instead of a
+  // bare "expected declaration" pointing at the `pub` itself.
+  private startsDecl(t: Token): boolean {
+    switch (t.kind) {
+      case TokenKind.Struct: case TokenKind.Enum: case TokenKind.Extern:
+      case TokenKind.Fn: case TokenKind.Trait: case TokenKind.Impl:
+      case TokenKind.Type: case TokenKind.Interface: case TokenKind.Let:
+      case TokenKind.Var: case TokenKind.Unsafe: case TokenKind.Import:
+        return true;
+      case TokenKind.Ident:
+        return t.value === "thread_local" || t.value === "from";
+      default:
+        return false;
+    }
+  }
+
   private match(kind: TokenKind): Token | null {
     if (this.at(kind)) return this.advance();
     return null;
@@ -100,50 +118,74 @@ export class Parser {
         if (!attrs) attrs = [];
         attrs.push(this.parseAttribute());
       }
+      // `pub` is a soft keyword, not reserved: it only marks visibility when a
+      // declaration actually follows, so a variable or fn named `pub` still parses
+      // as an ordinary identifier. Same lookahead trick as `from` below.
+      const pubTok = this.atSoftKw("pub") && this.startsDecl(this.peekN(1)) ? this.advance() : undefined;
       // `from` is an import only when followed by the path string; otherwise it's an
       // ordinary identifier (e.g. a top-level binding), so let it fall through.
       if (this.at(TokenKind.Import) || (this.atSoftKw("from") && this.peekN(1).kind === TokenKind.String)) {
+        if (pubTok) this.error("'pub' cannot mark an import — it applies to declarations, and an import is not re-exported", pubTok);
         imports.push(this.parseImport());
       } else if (this.at(TokenKind.Struct)) {
         const s = this.parseStruct();
         if (attrs) s.attributes = attrs;
+        s.isPub = !!pubTok;
         structs.push(s);
       } else if (this.at(TokenKind.Enum)) {
         const e = this.parseEnum();
         if (attrs) e.attributes = attrs;
+        e.isPub = !!pubTok;
         enums.push(e);
       } else if (this.at(TokenKind.Extern)) {
         const nextTok = this.tokens[this.pos + 1];
         if (nextTok && nextTok.kind === TokenKind.Struct) {
           const s = this.parseExternStruct();
           if (attrs) s.attributes = attrs;
+          s.isPub = !!pubTok;
           structs.push(s);
         } else if (nextTok && nextTok.kind === TokenKind.Type) {
-          structs.push(this.parseExternType());
+          const s = this.parseExternType();
+          s.isPub = !!pubTok;
+          structs.push(s);
         } else {
           const f = this.parseExternFn();
           if (attrs) f.attributes = attrs;
+          f.isPub = !!pubTok;
           functions.push(f);
         }
       } else if (this.at(TokenKind.Fn)) {
         const f = this.parseFn();
         if (attrs) f.attributes = attrs;
+        f.isPub = !!pubTok;
         functions.push(f);
       } else if (this.at(TokenKind.Trait)) {
-        traits.push(this.parseTraitDecl());
+        const t = this.parseTraitDecl();
+        t.isPub = !!pubTok;
+        traits.push(t);
       } else if (this.at(TokenKind.Impl)) {
+        if (pubTok) this.error("'pub' cannot mark an impl block — an impl's visibility follows the type it implements", pubTok);
         impls.push(this.parseImplDecl());
       } else if (this.at(TokenKind.Unsafe) && this.peekN(1).kind === TokenKind.Impl) {
+        if (pubTok) this.error("'pub' cannot mark an impl block — an impl's visibility follows the type it implements", pubTok);
         this.advance();
         impls.push(this.parseImplDecl(true));
       } else if (this.at(TokenKind.Type)) {
-        typeAliases.push(this.parseTypeAlias());
+        const t = this.parseTypeAlias();
+        t.isPub = !!pubTok;
+        typeAliases.push(t);
       } else if (this.at(TokenKind.Interface)) {
-        interfaces.push(this.parseInterfaceDecl());
+        const i = this.parseInterfaceDecl();
+        i.isPub = !!pubTok;
+        interfaces.push(i);
       } else if (this.at(TokenKind.Let) || this.at(TokenKind.Var)) {
-        globals.push(this.parseGlobalDecl());
+        const g = this.parseGlobalDecl();
+        g.isPub = !!pubTok;
+        globals.push(g);
       } else if (this.at(TokenKind.Ident) && this.peek().value === "thread_local") {
-        globals.push(this.parseGlobalDecl());
+        const g = this.parseGlobalDecl();
+        g.isPub = !!pubTok;
+        globals.push(g);
       } else {
         this.error(`expected declaration, got '${this.peek().kind}'`, this.peek());
       }

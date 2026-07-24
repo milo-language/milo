@@ -135,6 +135,7 @@ export interface StructDecl {
   attributes?: Attribute[];
   isExtern?: boolean;
   isOpaque?: boolean;
+  isPub?: boolean;
 }
 
 export interface EnumVariant {
@@ -148,6 +149,7 @@ export interface EnumDecl {
   typeParams: TypeParam[];
   variants: EnumVariant[];
   attributes?: Attribute[];
+  isPub?: boolean;
 }
 
 export interface Contract {
@@ -168,6 +170,9 @@ export interface Function {
   body: Stmt[];
   isExtern: boolean;
   isVariadic: boolean;
+  // `pub` marks a declaration importable from another file. Absent = file-private.
+  // Distinct from `@export`, which forces C external linkage (see checker.ts).
+  isPub?: boolean;
   // Set by the parser to the function-name token — the anchor for fn-level
   // diagnostics (duplicate/shadow definitions). Optional: synthetic Function
   // nodes (e.g. monomorphized generics) may omit it.
@@ -196,6 +201,7 @@ export interface TraitDecl {
   supertraits: string[];
   methods: TraitMethod[];
   span?: Span;
+  isPub?: boolean;
 }
 
 export interface ImplDecl {
@@ -213,6 +219,7 @@ export interface InterfaceDecl {
   name: string;
   methods: TraitMethod[];
   span?: Span;
+  isPub?: boolean;
 }
 
 export interface TypeAlias {
@@ -220,6 +227,7 @@ export interface TypeAlias {
   name: string;
   type: MiloType;
   span?: Span;
+  isPub?: boolean;
 }
 
 export type TopLevel = StructDecl | EnumDecl | Function | ImportDecl | TraitDecl | ImplDecl | TypeAlias | InterfaceDecl;
@@ -232,6 +240,7 @@ export interface GlobalDecl {
   mutable: boolean;
   threadLocal?: boolean;
   span?: Span;
+  isPub?: boolean;
 }
 
 export interface Program {
