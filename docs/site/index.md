@@ -2,8 +2,8 @@
 layout: home
 hero:
   name: Milo
-  text: "works hard to keep your memory safe so you don't have to"
-  tagline: "Safe systems programming language with formal verification built-in"
+  text: "A memory-safe systems language that guides you to correct, readable programs."
+  tagline: "Contracts and formal verification built in — ship correct code with confidence."
   image:
     src: /logo.svg
     alt: Milo
@@ -21,7 +21,7 @@ hero:
 
 <div class="intro">
 
-Milo is a memory-safe systems language that guides you to simple, correct, readable programs. Contracts are built in, enabling formal verification that guarantees correctness across your codebase, no matter how large. People and AI ship with confidence that their code is correct. <a href="/milo/language/">Learn more</a> or see how it <a href="/milo/language/vs-rust">measures up to Rust</a>.
+Milo is a memory-safe systems language that guides you to correct, readable programs. Contracts are built in, enabling formal verification that guarantees correctness across your codebase, no matter how large. People and AI ship with confidence that their code is correct. <a href="/milo/language/">Learn more</a> or see how it <a href="/milo/language/vs-rust">measures up to Rust</a>.
 
 </div>
 

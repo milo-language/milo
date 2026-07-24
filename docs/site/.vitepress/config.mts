@@ -8,7 +8,7 @@ const miloGrammar = JSON.parse(
 
 export default defineConfig({
   title: 'Milo',
-  description: 'Memory-safe systems language — ownership without lifetimes',
+  description: 'A memory-safe systems language that guides you to correct, readable programs',
 
   base: '/milo/',
   appearance: 'dark',
