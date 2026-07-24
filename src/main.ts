@@ -20,6 +20,7 @@ import { proveWithMilo } from "./prove-milo";
 import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, listSafetyLevels } from "./safety";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
 import { estimateLoopCycles, formatCycleEstimate } from "./wcet-cycles";
+import { PKG_COMMANDS, ensureDepsInstalled } from "./pkgcli";
 
 function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig) {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
@@ -1326,6 +1327,19 @@ async function main() {
     console.log("  skill                  print language guide for LLMs");
     console.log("  api <terms>            search std signatures by name/doc (--module std/x to dump one, --markdown to emit reference docs)");
     console.log("  doc <file|dir>         reference markdown from doc-comments (-o <dir> to write one .md per module)");
+    console.log("packages:");
+    console.log("  init | new <name>      create milo.json here / scaffold a new project");
+    console.log("  add [--dev] <pkg>      add a library dependency (milo.json + milo.lock)");
+    console.log("  remove <pkg>           drop a dependency and prune the lock");
+    console.log("  install [--frozen]     sync this project from milo.lock (--frozen: fail if stale)");
+    console.log("  update [pkg]           re-resolve tags and rewrite the lock");
+    console.log("  tree | why <pkg>       dependency graph / who pulls a package in");
+    console.log("  vendor                 copy deps into ./vendor and rewrite to local paths");
+    console.log("  publish                validate, tag, push");
+    console.log("  tool install <pkg>     build and install a global executable (~/.local/bin)");
+    console.log("  tool uninstall <name>  remove an installed executable");
+    console.log("  tool list [--repair]   list installed executables (--repair: rebuild the index)");
+    console.log("  tool run <pkg> [args]  build and run a package's binary without installing");
     console.log("options:");
     console.log("  --release              optimize (-O3)");
     console.log("  --debug                no optimization (-O0)");
@@ -1354,11 +1368,24 @@ async function main() {
   const KNOWN_COMMANDS = new Set([
     "skill", "api", "doc", "lsp", "lex", "fmt", "build-lib", "safety", "verify",
     "wcet", "prove", "test", "run", "build", "emit-ir", "emit-obj", "emit-js",
+    ...PKG_COMMANDS,
   ]);
   if (!KNOWN_COMMANDS.has(cmd) && cmd !== "--help" && cmd !== "-h") {
     console.error(`error: unknown command '${cmd}'`);
     console.error(`run 'milo' with no arguments to see available commands`);
     process.exit(1);
+  }
+
+  // Package-manager verbs. Dispatched before parseArgs because they take package
+  // specs, not source files, and share none of the compiler flag surface.
+  if (PKG_COMMANDS.has(cmd)) {
+    const pkgTarget = getHostTarget();
+    const { runPkgCommand } = await import("./pkgcli");
+    process.exit(await runPkgCommand(cmd, args.slice(1), {
+      build: (src, out, extraLinkFlags) => compileToBinary(src, out, pkgTarget, "-O2", undefined, extraLinkFlags),
+      check: (src) => { parseCheckProgram(readFileSync(src, "utf-8"), pkgTarget, src); },
+      os: pkgTarget.os,
+    }));
   }
 
   if (cmd === "skill") {
@@ -1572,6 +1599,18 @@ async function main() {
   if (heapSize != null && !target.bareMetal) {
     console.error("error: --heap-size applies only to bare-metal targets (e.g. --target=cortex-m3)");
     process.exit(1);
+  }
+
+  // bun/uv behavior: a locked dependency that isn't in the cache is fetched instead
+  // of erroring. No-op (a few existsSync calls) when there is no milo.json or no deps.
+  if (cmd === "run" || cmd === "build") {
+    try {
+      await ensureDepsInstalled(source!);
+    } catch (e) {
+      // A failed fetch / hash mismatch is a user-facing condition, not a crash.
+      console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(1);
+    }
   }
 
   if (cmd === "run") {
