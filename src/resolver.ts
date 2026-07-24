@@ -3,7 +3,7 @@
 
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
-import { homedir } from "os";
+import { cacheRoot } from "./pkg";
 import type { Program, Span, DeclOrigins, DeclOrigin } from "./ast";
 import { ParseError } from "./diagnostics";
 import type { TargetInfo } from "./target";
@@ -15,7 +15,13 @@ import { collectPkgDecls, emptyPkgDecls, manglePackage, type PkgDeclNames } from
 // MILO_ROOT overrides for contexts where import.meta.url doesn't map to the repo
 // (e.g. a `bun build --compile` binary, whose module URLs point into the bundle).
 const STDLIB_DIR = process.env.MILO_ROOT ?? resolve(dirname(new URL(import.meta.url).pathname), "..");
-const CACHE_DIR = resolve(homedir(), ".milo", "cache");
+// Read path for installed packages. Shares cacheRoot() with the installer in
+// src/pkg.ts — it used to hardcode ~/.milo/cache, which silently diverged from the
+// writer whenever XDG_CACHE_HOME was set, leaving installed packages unresolvable.
+// Read per call, not once at module load, so a test can point it elsewhere.
+function cacheDir(): string {
+  return cacheRoot();
+}
 
 // embedded stdlib for compiled binaries (populated by scripts/bundle-stdlib.ts).
 // Loaded ONLY when std/ isn't on disk (a shipped `bun build --compile` binary).
@@ -149,7 +155,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
       if (pkgUrl) {
         const parsed = parsePkgUrl(pkgUrl);
         if (parsed) {
-          const cacheBase = resolve(CACHE_DIR, parsed.host, parsed.path, parsed.version);
+          const cacheBase = resolve(cacheDir(), parsed.host, parsed.path, parsed.version);
           // import "pkg/module" → ~/.milo/cache/host/org/repo/version/module.milo
           const subPath = firstSlash !== -1 ? importPath.slice(firstSlash + 1) : "";
           if (subPath) {

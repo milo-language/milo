@@ -7,13 +7,14 @@
 // maps local-path deps to host "local" with '/' rewritten to '_'. Diverging would
 // silently break import resolution against an already-populated cache.
 //
-// Network fetch (git / giturl / tarball) is deliberately out of scope for this
-// layer — only the local-path fetch is implemented; see TODO(network).
+// Fetching lives here too (git subprocess / tarball download+verify); the CLI verbs
+// that drive it are in src/pkgcli.ts.
 
-import { readFileSync, readdirSync, statSync, cpSync } from "fs";
-import { resolve, join, relative, sep } from "path";
-import { homedir } from "os";
-import { createHash } from "crypto";
+import { readFileSync, writeFileSync, readdirSync, statSync, cpSync, existsSync, mkdirSync, rmSync, renameSync } from "fs";
+import { resolve, join, relative, sep, dirname } from "path";
+import { homedir, tmpdir } from "os";
+import { createHash, randomUUID } from "crypto";
+import { spawnSync } from "child_process";
 
 // ── Manifest ────────────────────────────────────────────────────────────────
 
@@ -253,11 +254,30 @@ function collectFiles(root: string, dir: string, out: string[]): void {
 // ── Cache layout ──────────────────────────────────────────────────────────────
 
 // Root of the extracted-package cache. Honors XDG_CACHE_HOME ($XDG_CACHE_HOME/milo,
-// per docs/plans/package-manager.md §Global CLI install); otherwise ~/.milo/cache,
-// which is exactly what resolver.ts hard-codes.
-function cacheRoot(): string {
+// per docs/plans/package-manager.md §Global CLI install); otherwise ~/.milo/cache.
+// resolver.ts imports THIS function rather than recomputing the path: a divergence
+// between the writer and the reader would leave installed packages unresolvable.
+export function cacheRoot(): string {
   const xdg = process.env.XDG_CACHE_HOME;
   return xdg && xdg.length > 0 ? join(xdg, "milo") : join(homedir(), ".milo", "cache");
+}
+
+// Receipts / derived state: $XDG_DATA_HOME/milo else ~/.milo.
+export function dataRoot(): string {
+  const xdg = process.env.XDG_DATA_HOME;
+  return xdg && xdg.length > 0 ? join(xdg, "milo") : join(homedir(), ".milo");
+}
+
+// Where `milo tool install` puts executables: $XDG_BIN_HOME else ~/.local/bin —
+// the directory pipx targets, never requiring sudo.
+export function binRoot(): string {
+  const xdg = process.env.XDG_BIN_HOME;
+  return xdg && xdg.length > 0 ? xdg : join(homedir(), ".local", "bin");
+}
+
+// Content-addressed download cache, shared across versions.
+export function blobsRoot(): string {
+  return join(cacheRoot(), ".blobs");
 }
 
 // The ~/.milo/cache/<host>/<org>/<repo>/<version>/ directory for a source. The
@@ -282,19 +302,235 @@ function sanitizeSegment(s: string): string {
   return s.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
+// The cache directory a dependency spec resolves to. This is the ONE function the
+// installer and the resolver have to agree on, so it deliberately reproduces
+// resolver.ts:parsePkgUrl's quirks rather than improving on them: the version
+// segment defaults to "main" when the spec carries no ref, and a local path keeps
+// its literal spelling (with '/' → '_') as the key.
+//
+// Because the key is the literal spec string, a local path is resolved relative to
+// the ROOT project — two packages naming "./vendor/x" share one cache entry, which
+// is exactly what `milo vendor` depends on.
+export function cacheDirForSpec(spec: string): string {
+  const source = parseSource(spec);
+  switch (source.kind) {
+    case "local": {
+      // resolver splits at the FIRST '@' for every scheme; mirror it here.
+      const at = spec.indexOf("@");
+      const path = at === -1 ? spec : spec.slice(0, at);
+      const version = at === -1 ? "main" : spec.slice(at + 1);
+      return cachePathFor({ kind: "local", path }, version);
+    }
+    case "git":
+    case "giturl":
+      return cachePathFor(source, source.ref ?? "main");
+    case "tarball":
+      return cachePathFor(source, "main");
+  }
+}
+
+// The lockfile `version` value for a spec: the ref it names, else "main".
+export function specVersion(spec: string): string {
+  const source = parseSource(spec);
+  switch (source.kind) {
+    case "git":
+    case "giturl":
+      return source.ref ?? "main";
+    case "local":
+      return "main";
+    case "tarball":
+      return "main";
+  }
+}
+
+// The lockfile `url` value for a spec: the source without its ref.
+export function specUrl(spec: string): string {
+  const source = parseSource(spec);
+  switch (source.kind) {
+    case "git":
+      return `${source.host}/${source.org}/${source.repo}`;
+    case "giturl":
+      return source.url;
+    case "local":
+      return source.path;
+    case "tarball":
+      return `${source.url}#sha256=${source.sha256}`;
+  }
+}
+
 // ── Fetch ──────────────────────────────────────────────────────────────────────
 
-// Copy a local-path package tree into destDir. The only fetch scheme implemented
-// in the data layer; git/giturl/tarball require the network — see fetchRemote.
-export function fetchLocal(source: { kind: "local"; path: string }, destDir: string): void {
-  const src = resolve(source.path);
+// Copy a local-path package tree into destDir. baseDir is what a relative path is
+// resolved against (the root project dir — see cacheDirForSpec); it defaults to the
+// process cwd so the original single-argument callers are unchanged.
+export function fetchLocal(source: { kind: "local"; path: string }, destDir: string, baseDir?: string): void {
+  const src = baseDir === undefined ? resolve(source.path) : resolve(baseDir, source.path);
+  if (!existsSync(src)) throw new Error(`local dependency not found: ${src}`);
   cpSync(src, destDir, { recursive: true });
 }
 
-// TODO(network): git/giturl/tarball fetch (clone/checkout, download+verify+extract)
-// is out of scope for the data layer and lives with the CLI wiring in a later phase.
-export function fetchRemote(_source: Source, _destDir: string): never {
-  throw new Error("not implemented: network fetch (git/giturl/tarball)");
+export interface FetchResult {
+  // The pin: an exact git commit SHA, or "sha256:<hex>" for a tarball, or "local".
+  commit: string;
+  // The ref that was asked for ("v1.2.0", a SHA, a branch), or "main".
+  version: string;
+}
+
+// Fetch a remote package into destDir (replacing whatever is there) and return the
+// exact revision it landed on. Networked: git subprocess for git/giturl, HTTP for
+// tarballs. The declared #sha256= of a tarball is verified against the bytes that
+// actually arrived — a mismatch is fatal, never a warning.
+export async function fetchRemote(source: Source, destDir: string): Promise<FetchResult> {
+  switch (source.kind) {
+    case "git":
+      return fetchGit(gitCloneUrl(source), source.ref, destDir);
+    case "giturl":
+      // "git+ssh://…" / "git+https://…" — strip the scheme prefix git itself doesn't take.
+      return fetchGit(source.url.replace(/^git\+/, ""), source.ref, destDir);
+    case "tarball":
+      return await fetchTarball(source, destDir);
+    case "local":
+      throw new Error("fetchRemote: local sources are handled by fetchLocal");
+  }
+}
+
+function gitCloneUrl(source: { host: string; org: string; repo: string }): string {
+  // sr.ht serves git from git.sr.ht; the shorthand people write is sr.ht/~user/repo.
+  const host = source.host === "sr.ht" ? "git.sr.ht" : source.host;
+  return `https://${host}/${source.org}/${source.repo}.git`;
+}
+
+function git(args: string[], cwd?: string): { ok: boolean; out: string; err: string } {
+  const r = spawnSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+  if (r.error) throw new Error(`git not available: ${r.error.message}`);
+  return { ok: r.status === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
+}
+
+// Shallow-clone at the ref, then resolve the tag/branch to the commit it actually
+// points at — the tag is what the user typed, the SHA is what gets locked.
+function fetchGit(url: string, ref: string | undefined, destDir: string): FetchResult {
+  const staging = join(tmpdir(), `milo-fetch-${randomUUID().slice(0, 8)}`);
+  try {
+    let cloned = ref === undefined
+      ? git(["clone", "--depth", "1", "--quiet", url, staging])
+      : git(["clone", "--depth", "1", "--quiet", "--branch", ref, url, staging]);
+    if (!cloned.ok && ref !== undefined) {
+      // --branch only accepts a tag or branch name; a raw SHA needs fetch+checkout.
+      rmSync(staging, { recursive: true, force: true });
+      mkdirSync(staging, { recursive: true });
+      const init = git(["init", "--quiet"], staging);
+      if (!init.ok) throw new Error(`git init failed: ${init.err}`);
+      git(["remote", "add", "origin", url], staging);
+      const fetched = git(["fetch", "--depth", "1", "--quiet", "origin", ref], staging);
+      if (!fetched.ok) throw new Error(`cannot fetch ${url} at '${ref}': ${fetched.err || cloned.err}`);
+      const co = git(["checkout", "--quiet", "FETCH_HEAD"], staging);
+      if (!co.ok) throw new Error(`cannot check out '${ref}' from ${url}: ${co.err}`);
+      cloned = { ok: true, out: "", err: "" };
+    }
+    if (!cloned.ok) throw new Error(`cannot clone ${url}: ${cloned.err}`);
+
+    const head = git(["rev-parse", "HEAD"], staging);
+    if (!head.ok || !/^[0-9a-f]{40}$/.test(head.out)) {
+      throw new Error(`cannot resolve commit for ${url}: ${head.err}`);
+    }
+    // The clone metadata is not part of the package and would poison sha256Tree.
+    rmSync(join(staging, ".git"), { recursive: true, force: true });
+    replaceDir(staging, destDir);
+    return { commit: head.out, version: ref ?? "main" };
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+async function fetchTarball(source: { url: string; sha256: string }, destDir: string): Promise<FetchResult> {
+  const blob = join(blobsRoot(), `${source.sha256}.tar.gz`);
+  if (!existsSync(blob)) {
+    const res = await fetch(source.url);
+    if (!res.ok) throw new Error(`cannot download ${source.url}: HTTP ${res.status}`);
+    const bytes = Buffer.from(await res.arrayBuffer());
+    const got = createHash("sha256").update(bytes).digest("hex");
+    if (got !== source.sha256) {
+      throw new Error(`hash mismatch for ${source.url}\n  declared sha256:${source.sha256}\n  actual   sha256:${got}`);
+    }
+    mkdirSync(blobsRoot(), { recursive: true });
+    writeFileSync(blob, bytes);
+  } else {
+    // A cache entry is content-addressed by name only; re-verify so a corrupted or
+    // tampered blob can never be trusted just because it is already on disk.
+    const got = createHash("sha256").update(readFileSync(blob)).digest("hex");
+    if (got !== source.sha256) {
+      rmSync(blob, { force: true });
+      throw new Error(`cached blob for ${source.url} is corrupt (sha256:${got}); removed — retry`);
+    }
+  }
+
+  const staging = join(tmpdir(), `milo-untar-${randomUUID().slice(0, 8)}`);
+  mkdirSync(staging, { recursive: true });
+  try {
+    const r = spawnSync("tar", ["-xzf", blob, "-C", staging], { encoding: "utf-8" });
+    if (r.status !== 0) throw new Error(`cannot extract ${source.url}: ${r.stderr ?? ""}`);
+    // Release tarballs conventionally wrap everything in one directory; unwrap it so
+    // the extracted tree looks the same as a git checkout.
+    const entries = readdirSync(staging);
+    const root = entries.length === 1 && statSync(join(staging, entries[0])).isDirectory()
+      ? join(staging, entries[0])
+      : staging;
+    replaceDir(root, destDir);
+    return { commit: `sha256:${source.sha256}`, version: "main" };
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+// Tags on the remote, newest-version first. `milo update` uses this instead of a
+// registry index: with git-as-registry, listing tags IS the version list.
+export function listRemoteTags(source: Source): string[] {
+  const url =
+    source.kind === "git" ? gitCloneUrl(source)
+    : source.kind === "giturl" ? source.url.replace(/^git\+/, "")
+    : null;
+  if (url === null) return [];
+  const r = git(["ls-remote", "--tags", "--refs", url]);
+  if (!r.ok) throw new Error(`cannot list tags for ${url}: ${r.err}`);
+  const tags: string[] = [];
+  for (const line of r.out.split("\n")) {
+    const m = /refs\/tags\/(.+)$/.exec(line.trim());
+    if (m) tags.push(m[1]);
+  }
+  return tags.sort(compareVersionsDesc);
+}
+
+// Descending semver-ish order over tags. Non-numeric tags sort last (alphabetically),
+// so a `latest`/`nightly` tag can never outrank a real version.
+export function compareVersionsDesc(a: string, b: string): number {
+  const pa = versionParts(a);
+  const pb = versionParts(b);
+  if (pa === null && pb === null) return a < b ? -1 : a > b ? 1 : 0;
+  if (pa === null) return 1;
+  if (pb === null) return -1;
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pb[i] - pa[i];
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function versionParts(tag: string): [number, number, number] | null {
+  const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(tag.trim());
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)];
+}
+
+// Move `from` onto `to`, replacing it. Falls back to a copy because rename(2) fails
+// across filesystems (tmpdir and the cache are often different mounts).
+function replaceDir(from: string, to: string): void {
+  mkdirSync(dirname(to), { recursive: true });
+  rmSync(to, { recursive: true, force: true });
+  try {
+    renameSync(from, to);
+  } catch {
+    cpSync(from, to, { recursive: true });
+    rmSync(from, { recursive: true, force: true });
+  }
 }
 
 // ── JSONC + validation helpers ──────────────────────────────────────────────────
