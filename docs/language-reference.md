@@ -1671,8 +1671,15 @@ That means the dead branch may reference symbols that exist on no other platform
 Windows-only extern, an `@embedFile` of a per-OS asset) without breaking the build:
 
 ```milo
-if @targetOs() == "windows" {
-    startWinsock()          // only linked on Windows; folded out elsewhere
+// Declared everywhere, linked only on Windows. The dead branch is folded out
+// before codegen elsewhere, so the reference never reaches the linker there.
+extern fn startWinsock(): void
+
+fn main(): i32 {
+    if @targetOs() == "windows" {
+        startWinsock()
+    }
+    return 0
 }
 ```
 
