@@ -81,7 +81,8 @@ function declsFrom(dir: string): Decl[] {
     if (!f.endsWith(".milo")) continue;
     if (isForeignPlatform(f)) continue;
     for (const line of readFileSync(join(dir, f), "utf-8").split("\n")) {
-      const m = line.match(/^extern fn ([A-Za-z_0-9]+)\((.*)\):\s*(.+?)\s*$/);
+      // `pub` is optional on a decl (visibility); an extern may be written either way.
+      const m = line.match(/^(?:pub )?extern fn ([A-Za-z_0-9]+)\((.*)\):\s*(.+?)\s*$/);
       if (!m) continue;
       const [, name, params, ret] = m;
       const inner = params!.replace(/,?\s*\.\.\./, "").trim();

@@ -12,11 +12,11 @@ function getExports(filePath: string): string[] {
   const names: string[] = [];
   for (const line of src.split("\n")) {
     let m;
-    if ((m = line.match(/^fn\s+(\w+)\s*[(<]/))) names.push(m[1]);
-    else if ((m = line.match(/^extern\s+fn\s+(\w+)/))) names.push(m[1]);
-    else if ((m = line.match(/^struct\s+(\w+)/))) names.push(m[1]);
-    else if ((m = line.match(/^enum\s+(\w+)/))) names.push(m[1]);
-    else if ((m = line.match(/^trait\s+(\w+)/))) names.push(m[1]);
+    if ((m = line.match(/^(?:pub )?fn\s+(\w+)\s*[(<]/))) names.push(m[1]);
+    else if ((m = line.match(/^(?:pub )?extern\s+fn\s+(\w+)/))) names.push(m[1]);
+    else if ((m = line.match(/^(?:pub )?struct\s+(\w+)/))) names.push(m[1]);
+    else if ((m = line.match(/^(?:pub )?enum\s+(\w+)/))) names.push(m[1]);
+    else if ((m = line.match(/^(?:pub )?trait\s+(\w+)/))) names.push(m[1]);
     else if ((m = line.match(/^let\s+(\w+)\s*:/))) names.push(m[1]);
   }
   return names;
