@@ -34,13 +34,14 @@ from "std/io" import {
 }
 
 // 1 on both darwin and linux (verified), so unlike AF_INET6 it needs no platform split.
-let AF_UNIX: i32 = 1
-let SOCK_STREAM_UNIX: i32 = 1
+pub let AF_UNIX: i32 = 1
+
+pub let SOCK_STREAM_UNIX: i32 = 1
 
 // ── UnixStream ──
 
 // A connected unix-domain socket. Closes its fd on drop.
-struct UnixStream {
+pub struct UnixStream {
     fd: i32,
 }
 
@@ -119,7 +120,7 @@ impl UnixStream {
 
 // A listening unix-domain socket. Closes its fd on drop — but NOT the socket file; call
 // removeSocketFile to clean that up.
-struct UnixListener {
+pub struct UnixListener {
     fd: i32,
 }
 
@@ -176,6 +177,6 @@ impl UnixListener {
 }
 
 // Remove a socket file. Dropping a UnixListener closes its fd but leaves the path behind.
-fn removeSocketFile(path: &string): void {
+pub fn removeSocketFile(path: &string): void {
     unlink(path)
 }

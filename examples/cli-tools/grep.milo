@@ -13,14 +13,14 @@ from "std/path" import {
     pathJoin
 }
 
-fn makeColor(code: &string): string {
+pub fn makeColor(code: &string): string {
     var s: string = ""
     s.push(27 as u8)
     s = s + "[" + code + "m"
     return s
 }
 
-struct GrepOpts {
+pub struct GrepOpts {
     pattern: string,
     searchPattern: string,
     ignoreCase: bool,
@@ -36,7 +36,7 @@ struct GrepOpts {
     reset: string,
 }
 
-fn lineMatches(line: &string, pattern: &string, ignoreCase: bool): bool {
+pub fn lineMatches(line: &string, pattern: &string, ignoreCase: bool): bool {
     if ignoreCase {
         return line.toLower().contains(pattern)
     }
@@ -44,7 +44,7 @@ fn lineMatches(line: &string, pattern: &string, ignoreCase: bool): bool {
 }
 
 // highlight all occurrences of pattern in a line
-fn highlight(line: &string, pattern: &string, ignoreCase: bool, red: &string, reset: &string): string {
+pub fn highlight(line: &string, pattern: &string, ignoreCase: bool, red: &string, reset: &string): string {
     var result: string = ""
     var pos: i64 = 0
     while pos < line.len {
@@ -82,7 +82,7 @@ fn highlight(line: &string, pattern: &string, ignoreCase: bool, red: &string, re
 }
 
 // write the prefix (filename + line number) for a matching line
-fn writePrefix(filePath: &string, lineNum: i64, opts: &GrepOpts): void {
+pub fn writePrefix(filePath: &string, lineNum: i64, opts: &GrepOpts): void {
     if opts.showFilename {
         if !opts.noColor {
             writeStdout(opts.magenta)
@@ -109,7 +109,7 @@ fn writePrefix(filePath: &string, lineNum: i64, opts: &GrepOpts): void {
 }
 
 // print a matching line with optional highlighting
-fn printMatch(line: &string, filePath: &string, lineNum: i64, opts: &GrepOpts): void {
+pub fn printMatch(line: &string, filePath: &string, lineNum: i64, opts: &GrepOpts): void {
     writePrefix(filePath, lineNum, opts)
     if !opts.noColor && !opts.invert {
         let highlighted = highlight(line, opts.pattern, opts.ignoreCase, opts.red, opts.reset)
@@ -121,7 +121,7 @@ fn printMatch(line: &string, filePath: &string, lineNum: i64, opts: &GrepOpts): 
     writeStdout(nl)
 }
 
-fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
+pub fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
     let content = match readFile(filePath) {
         Result.Ok(data) => data
         Result.Err(e) => {
@@ -171,7 +171,7 @@ fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
     return 0
 }
 
-fn grepRecursive(dirPath: &string, opts: &mut GrepOpts): void {
+pub fn grepRecursive(dirPath: &string, opts: &mut GrepOpts): void {
     let entries = readDir(dirPath)
     for i in 0..entries.len {
         let name = entries[i].name.clone()
@@ -188,7 +188,7 @@ fn grepRecursive(dirPath: &string, opts: &mut GrepOpts): void {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("grep", "search for a string pattern in files")
     parser.addPositional("pattern", "string pattern to search for")
     parser.addPositional("file", "file or directory to search")

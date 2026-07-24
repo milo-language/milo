@@ -1,6 +1,6 @@
 // std/url — URL parsing into components
 
-struct Url {
+pub struct Url {
     scheme: string,
     host: string,
     port: i32,
@@ -10,7 +10,7 @@ struct Url {
     raw: string,
 }
 
-fn urlParse(s: string): Result<Url> {
+pub fn urlParse(s: string): Result<Url> {
     var scheme: string = ""
     var host: string = ""
     var port: i32 = 0
@@ -108,7 +108,7 @@ fn urlParse(s: string): Result<Url> {
     )
 }
 
-fn _parsePort(s: &string): i32 {
+pub fn _parsePort(s: &string): i32 {
     var result: i32 = 0
     var i: i64 = 0
     while i < s.len {
@@ -122,7 +122,7 @@ fn _parsePort(s: &string): i32 {
     return result
 }
 
-fn urlQueryGet(u: &Url, key: &string): Option<string> {
+pub fn urlQueryGet(u: &Url, key: &string): Option<string> {
     if u.query.len == 0 {
         return Option.None
     }
@@ -152,7 +152,7 @@ fn urlQueryGet(u: &Url, key: &string): Option<string> {
     return Option.None
 }
 
-fn _strEqUrl(a: &string, b: &string): bool {
+pub fn _strEqUrl(a: &string, b: &string): bool {
     if a.len != b.len {
         return false
     }
@@ -166,7 +166,7 @@ fn _strEqUrl(a: &string, b: &string): bool {
     return true
 }
 
-fn urlString(u: &Url): string {
+pub fn urlString(u: &Url): string {
     var result: string = ""
     if u.scheme.len > 0 {
         result = result + u.scheme + "://"

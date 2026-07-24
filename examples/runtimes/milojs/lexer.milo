@@ -11,118 +11,216 @@ from "./value" import {
     i64ToStr
 }
 
-let T_NUM: i32 = 0
-let T_STR: i32 = 1
-let T_IDENT: i32 = 2
-let T_LET: i32 = 3
-let T_VAR: i32 = 4
-let T_CONST: i32 = 5
-let T_FUNCTION: i32 = 6
-let T_RETURN: i32 = 7
-let T_IF: i32 = 8
-let T_ELSE: i32 = 9
-let T_WHILE: i32 = 10
-let T_TRUE: i32 = 11
-let T_FALSE: i32 = 12
-let T_NULL: i32 = 13
-let T_UNDEFINED: i32 = 14
-let T_PLUS: i32 = 15
-let T_MINUS: i32 = 16
-let T_STAR: i32 = 17
-let T_SLASH: i32 = 18
-let T_PERCENT: i32 = 19
-let T_EQEQ: i32 = 20
-let T_NEQ: i32 = 21
-let T_LT: i32 = 22
-let T_GT: i32 = 23
-let T_LE: i32 = 24
-let T_GE: i32 = 25
-let T_EQ: i32 = 26
-let T_ANDAND: i32 = 27
-let T_OROR: i32 = 28
-let T_NOT: i32 = 29
-let T_LPAREN: i32 = 30
-let T_RPAREN: i32 = 31
-let T_LBRACE: i32 = 32
-let T_RBRACE: i32 = 33
-let T_COMMA: i32 = 34
-let T_SEMI: i32 = 35
-let T_DOT: i32 = 36
-let T_EOF: i32 = 37
-let T_LBRACKET: i32 = 38
-let T_RBRACKET: i32 = 39
-let T_COLON: i32 = 40
-let T_NEW: i32 = 41
-let T_FOR: i32 = 42
-let T_TRY: i32 = 43
-let T_CATCH: i32 = 44
-let T_FINALLY: i32 = 45
-let T_THROW: i32 = 46
-let T_TYPEOF: i32 = 47
-let T_INC: i32 = 48
-let T_DEC: i32 = 49
-let T_PLUSEQ: i32 = 50
-let T_MINUSEQ: i32 = 51
-let T_STAREQ: i32 = 52
-let T_SLASHEQ: i32 = 53
-let T_PERCENTEQ: i32 = 54
-let T_QUESTION: i32 = 55
-let T_INSTANCEOF: i32 = 56
-let T_ARROW: i32 = 57
+pub let T_NUM: i32 = 0
+
+pub let T_STR: i32 = 1
+
+pub let T_IDENT: i32 = 2
+
+pub let T_LET: i32 = 3
+
+pub let T_VAR: i32 = 4
+
+pub let T_CONST: i32 = 5
+
+pub let T_FUNCTION: i32 = 6
+
+pub let T_RETURN: i32 = 7
+
+pub let T_IF: i32 = 8
+
+pub let T_ELSE: i32 = 9
+
+pub let T_WHILE: i32 = 10
+
+pub let T_TRUE: i32 = 11
+
+pub let T_FALSE: i32 = 12
+
+pub let T_NULL: i32 = 13
+
+pub let T_UNDEFINED: i32 = 14
+
+pub let T_PLUS: i32 = 15
+
+pub let T_MINUS: i32 = 16
+
+pub let T_STAR: i32 = 17
+
+pub let T_SLASH: i32 = 18
+
+pub let T_PERCENT: i32 = 19
+
+pub let T_EQEQ: i32 = 20
+
+pub let T_NEQ: i32 = 21
+
+pub let T_LT: i32 = 22
+
+pub let T_GT: i32 = 23
+
+pub let T_LE: i32 = 24
+
+pub let T_GE: i32 = 25
+
+pub let T_EQ: i32 = 26
+
+pub let T_ANDAND: i32 = 27
+
+pub let T_OROR: i32 = 28
+
+pub let T_NOT: i32 = 29
+
+pub let T_LPAREN: i32 = 30
+
+pub let T_RPAREN: i32 = 31
+
+pub let T_LBRACE: i32 = 32
+
+pub let T_RBRACE: i32 = 33
+
+pub let T_COMMA: i32 = 34
+
+pub let T_SEMI: i32 = 35
+
+pub let T_DOT: i32 = 36
+
+pub let T_EOF: i32 = 37
+
+pub let T_LBRACKET: i32 = 38
+
+pub let T_RBRACKET: i32 = 39
+
+pub let T_COLON: i32 = 40
+
+pub let T_NEW: i32 = 41
+
+pub let T_FOR: i32 = 42
+
+pub let T_TRY: i32 = 43
+
+pub let T_CATCH: i32 = 44
+
+pub let T_FINALLY: i32 = 45
+
+pub let T_THROW: i32 = 46
+
+pub let T_TYPEOF: i32 = 47
+
+pub let T_INC: i32 = 48
+
+pub let T_DEC: i32 = 49
+
+pub let T_PLUSEQ: i32 = 50
+
+pub let T_MINUSEQ: i32 = 51
+
+pub let T_STAREQ: i32 = 52
+
+pub let T_SLASHEQ: i32 = 53
+
+pub let T_PERCENTEQ: i32 = 54
+
+pub let T_QUESTION: i32 = 55
+
+pub let T_INSTANCEOF: i32 = 56
+
+pub let T_ARROW: i32 = 57
 // template literals: BEGIN, then CHUNK (literal text) and hole expressions
 // alternating, then END. A CHUNK always precedes each hole and follows the last.
-let T_TEMPLATE_BEGIN: i32 = 58
-let T_TEMPLATE_CHUNK: i32 = 59
-let T_TEMPLATE_END: i32 = 60
-let T_SPREAD: i32 = 61
-let T_NULLISH: i32 = 62
+pub let T_TEMPLATE_BEGIN: i32 = 58
+
+pub let T_TEMPLATE_CHUNK: i32 = 59
+
+pub let T_TEMPLATE_END: i32 = 60
+
+pub let T_SPREAD: i32 = 61
+
+pub let T_NULLISH: i32 = 62
 // regex literal; text is "pattern\nflags" (a raw newline can't appear in a
 // regex literal, so it's a safe separator)
-let T_REGEX: i32 = 63
-let T_IN: i32 = 64
-let T_BREAK: i32 = 65
-let T_CONTINUE: i32 = 66
-let T_OPTCHAIN: i32 = 67
-let T_SHL: i32 = 68
-let T_SHR: i32 = 69
-let T_USHR: i32 = 70
-let T_AMP: i32 = 71
-let T_PIPE: i32 = 72
-let T_CARET: i32 = 73
-let T_TILDE: i32 = 74
-let T_STARSTAR: i32 = 75
-let T_VOID: i32 = 76
-let T_ASYNC: i32 = 77
-let T_AWAIT: i32 = 78
-let T_SHLEQ: i32 = 79
-let T_SHREQ: i32 = 80
-let T_USHREQ: i32 = 81
-let T_AMPEQ: i32 = 82
-let T_PIPEEQ: i32 = 83
-let T_CARETEQ: i32 = 84
-let T_STARSTAREQ: i32 = 85
-let T_CLASS: i32 = 86
-let T_EXTENDS: i32 = 87
-let T_SUPER: i32 = 88
-let T_STRICTEQ: i32 = 93
-let T_STRICTNEQ: i32 = 94
-let T_DELETE: i32 = 95
-let T_YIELD: i32 = 96
-let T_IMPORT: i32 = 97
-let T_EXPORT: i32 = 98
-let T_DO: i32 = 89
-let T_SWITCH: i32 = 90
-let T_CASE: i32 = 91
-let T_DEFAULT: i32 = 92
+pub let T_REGEX: i32 = 63
+
+pub let T_IN: i32 = 64
+
+pub let T_BREAK: i32 = 65
+
+pub let T_CONTINUE: i32 = 66
+
+pub let T_OPTCHAIN: i32 = 67
+
+pub let T_SHL: i32 = 68
+
+pub let T_SHR: i32 = 69
+
+pub let T_USHR: i32 = 70
+
+pub let T_AMP: i32 = 71
+
+pub let T_PIPE: i32 = 72
+
+pub let T_CARET: i32 = 73
+
+pub let T_TILDE: i32 = 74
+
+pub let T_STARSTAR: i32 = 75
+
+pub let T_VOID: i32 = 76
+
+pub let T_ASYNC: i32 = 77
+
+pub let T_AWAIT: i32 = 78
+
+pub let T_SHLEQ: i32 = 79
+
+pub let T_SHREQ: i32 = 80
+
+pub let T_USHREQ: i32 = 81
+
+pub let T_AMPEQ: i32 = 82
+
+pub let T_PIPEEQ: i32 = 83
+
+pub let T_CARETEQ: i32 = 84
+
+pub let T_STARSTAREQ: i32 = 85
+
+pub let T_CLASS: i32 = 86
+
+pub let T_EXTENDS: i32 = 87
+
+pub let T_SUPER: i32 = 88
+
+pub let T_STRICTEQ: i32 = 93
+
+pub let T_STRICTNEQ: i32 = 94
+
+pub let T_DELETE: i32 = 95
+
+pub let T_YIELD: i32 = 96
+
+pub let T_IMPORT: i32 = 97
+
+pub let T_EXPORT: i32 = 98
+
+pub let T_DO: i32 = 89
+
+pub let T_SWITCH: i32 = 90
+
+pub let T_CASE: i32 = 91
+
+pub let T_DEFAULT: i32 = 92
 // logical-assignment operators (&&=, ||=, ??=)
-let T_ANDANDEQ: i32 = 99
-let T_OROREQ: i32 = 100
-let T_NULLISHEQ: i32 = 101
+pub let T_ANDANDEQ: i32 = 99
+
+pub let T_OROREQ: i32 = 100
+
+pub let T_NULLISHEQ: i32 = 101
 // a BigInt literal (123n) — the decimal digits are carried in `.text`, not `.num`,
 // so no precision is lost before the parser turns them into a JSValue.BigInt
-let T_BIGINT: i32 = 102
+pub let T_BIGINT: i32 = 102
 
-struct Token {
+pub struct Token {
     kind: i32,
     num: f64,
     text: string,
@@ -133,12 +231,12 @@ struct Token {
     nlBefore: bool,
 }
 
-fn isSpace(c: u8): bool {
+pub fn isSpace(c: u8): bool {
     return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8
 }
 
 // digit value of a hex/oct/bin char, or -1
-fn hexDigitVal(c: u8): i64 {
+pub fn hexDigitVal(c: u8): i64 {
     if c >= '0' && c <= '9' {
         return (c - '0') as i64
     }
@@ -152,7 +250,7 @@ fn hexDigitVal(c: u8): i64 {
 }
 
 // four hex digits starting at src[at], or -1
-fn hex4At(src: &string, at: i64): i64 {
+pub fn hex4At(src: &string, at: i64): i64 {
     if at + 3 >= src.len() {
         return -1
     }
@@ -174,7 +272,7 @@ fn hex4At(src: &string, at: i64): i64 {
 // escape. Handles \n \t \r \b \f \v \0 \xHH \uHHHH \u{H..H} and surrogate-pair
 // \uD8xx\uDCxx combining; a lone surrogate becomes U+FFFD (engine strings are
 // UTF-8 and cannot hold one). Unrecognized escapes yield the escaped char.
-fn scanEscape(src: &string, i: i64, out: &mut string): i64 {
+pub fn scanEscape(src: &string, i: i64, out: &mut string): i64 {
     let n = src.len()
     let e = src[i + 1]
     if e == 'n' {
@@ -253,15 +351,15 @@ fn scanEscape(src: &string, i: i64, out: &mut string): i64 {
     return i + 2
 }
 
-fn isDigitByte(c: u8): bool {
+pub fn isDigitByte(c: u8): bool {
     return c >= '0' && c <= '9'
 }
 
-fn isIdentStart(c: u8): bool {
+pub fn isIdentStart(c: u8): bool {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$'
 }
 
-fn keywordKind(s: &string): i32 {
+pub fn keywordKind(s: &string): i32 {
     if s == "let" {
         return T_LET
     }
@@ -378,14 +476,14 @@ fn keywordKind(s: &string): i32 {
     return T_IDENT
 }
 
-fn pushTok(toks: &mut Vec<Token>, kind: i32) {
+pub fn pushTok(toks: &mut Vec<Token>, kind: i32) {
     toks.push(Token {
         kind: kind, num: 0.0, text: "", nlBefore: false
     }
     )
 }
 
-struct ChunkResult {
+pub struct ChunkResult {
     pos: i64,
     isHole: bool,
 }
@@ -393,7 +491,7 @@ struct ChunkResult {
 // Scan a template-literal text chunk from `start` (just after ` or after a hole's
 // closing }). Pushes a T_TEMPLATE_CHUNK token. Stops at ` (chunk done, whole
 // template ends) or ${ (a hole follows). isHole distinguishes the two.
-fn scanTmplChunk(src: &string, start: i64, toks: &mut Vec<Token>): ChunkResult {
+pub fn scanTmplChunk(src: &string, start: i64, toks: &mut Vec<Token>): ChunkResult {
     var i = start
     let n = src.len()
     var buf = String.withCapacity(16)
@@ -428,7 +526,7 @@ fn scanTmplChunk(src: &string, start: i64, toks: &mut Vec<Token>): ChunkResult {
 
 // After these tokens a `/` is division; anywhere else it starts a regex literal.
 // (Standard JS lexer heuristic — the grammar is genuinely context-dependent here.)
-fn prevAllowsRegex(toks: &Vec<Token>): bool {
+pub fn prevAllowsRegex(toks: &Vec<Token>): bool {
     if toks.len() == 0 {
         return true
     }
@@ -441,7 +539,7 @@ fn prevAllowsRegex(toks: &Vec<Token>): bool {
 
 // Scan a /pattern/flags literal starting at the opening slash. Returns the new
 // position; pushes a T_REGEX token holding "pattern\nflags".
-fn scanRegexLit(src: &string, start: i64, toks: &mut Vec<Token>): i64 {
+pub fn scanRegexLit(src: &string, start: i64, toks: &mut Vec<Token>): i64 {
     var i = start + 1
     let n = src.len()
     var pat = String.withCapacity(16)
@@ -483,7 +581,7 @@ fn scanRegexLit(src: &string, start: i64, toks: &mut Vec<Token>): i64 {
     return i
 }
 
-fn lex(src: &string): Vec<Token> {
+pub fn lex(src: &string): Vec<Token> {
     var toks: Vec<Token> = Vec.new()
     let n = src.len()
     var i: i64 = 0
@@ -898,7 +996,7 @@ fn lex(src: &string): Vec<Token> {
 // Human-readable name for a token kind, for parse errors. Punctuation tokens
 // carry no text of their own, so without this a diagnostic can only print the
 // raw kind number.
-fn tokenName(kind: i32): string {
+pub fn tokenName(kind: i32): string {
     if kind == T_NUM {
         return "number"
     }

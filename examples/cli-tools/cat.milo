@@ -13,7 +13,7 @@ from "std/color" import {
     red, green, blue, magenta, cyan, gray, bold, dim
 }
 
-fn parseI64(s: string): i64 {
+pub fn parseI64(s: string): i64 {
     var result: i64 = 0
     for i in 0..s.len {
         let d = s[i] as i64 - 48
@@ -24,7 +24,7 @@ fn parseI64(s: string): i64 {
     return result
 }
 
-fn padNum(n: i64, width: i64): string {
+pub fn padNum(n: i64, width: i64): string {
     let s = n.toString()
     var result: string = ""
     for p in 0..width - s.len {
@@ -33,7 +33,7 @@ fn padNum(n: i64, width: i64): string {
     return result + s
 }
 
-fn numDigits(n: i64): i64 {
+pub fn numDigits(n: i64): i64 {
     if n == 0 {
         return 1
     }
@@ -46,7 +46,7 @@ fn numDigits(n: i64): i64 {
     return count
 }
 
-fn detectLang(ext: &string): string {
+pub fn detectLang(ext: &string): string {
     if ext == ".ts" || ext == ".tsx" {
         return "typescript"
     }
@@ -95,7 +95,7 @@ fn detectLang(ext: &string): string {
     return "text"
 }
 
-fn getKeywords(lang: &string): string {
+pub fn getKeywords(lang: &string): string {
     if lang == "typescript" || lang == "javascript" {
         return "const,let,var,function,class,interface,type,import,export,from,return,if,else,while,for,new,this,async,await,try,catch,throw,switch,case,break,continue,true,false,null,undefined,void,of,in,as,enum"
     }
@@ -123,15 +123,15 @@ fn getKeywords(lang: &string): string {
     return ""
 }
 
-fn isAlpha(ch: u8): bool {
+pub fn isAlpha(ch: u8): bool {
     return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || ch == 95
 }
 
-fn isAlnum(ch: u8): bool {
+pub fn isAlnum(ch: u8): bool {
     return isAlpha(ch) || (ch >= 48 && ch <= 57)
 }
 
-fn isKeyword(word: &string, kwList: &Vec<string>): bool {
+pub fn isKeyword(word: &string, kwList: &Vec<string>): bool {
     for kw in kwList {
         if kw == word {
             return true
@@ -141,7 +141,7 @@ fn isKeyword(word: &string, kwList: &Vec<string>): bool {
 }
 
 // comment-start detection for a language
-fn isLineComment(lang: &string, line: &string, pos: i64): bool {
+pub fn isLineComment(lang: &string, line: &string, pos: i64): bool {
     if pos + 1 < line.len && line[pos] == 47 && line[pos + 1] == 47 {
         // "//" for c-like langs
         if lang == "typescript" || lang == "javascript" || lang == "rust" || lang == "go" || lang == "c" || lang == "cpp" || lang == "java" || lang == "milo" {
@@ -160,7 +160,7 @@ fn isLineComment(lang: &string, line: &string, pos: i64): bool {
     return false
 }
 
-fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string {
+pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string {
     if lang == "text" || lang == "json" || lang == "markdown" {
         return line.clone()
     }
@@ -240,7 +240,7 @@ fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string {
     return result
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("cat", "view files with line numbers and syntax highlighting")
     parser.addPositional("file", "file to display")
     parser.addBool("plain", "p", "plain output, no decorations")

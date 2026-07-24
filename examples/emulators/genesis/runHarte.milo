@@ -19,12 +19,12 @@ from "./m68k" import {
 }
 
 // Whitespace-separated decimal integer stream cursor.
-struct Toks {
+pub struct Toks {
     s: string
     pos: i64
 }
 
-fn nextTok(t: &mut Toks): i64 {
+pub fn nextTok(t: &mut Toks): i64 {
     // skip whitespace
     while t.pos < t.s.len {
         let c = t.s[t.pos] as i64
@@ -57,7 +57,7 @@ fn nextTok(t: &mut Toks): i64 {
 
 // Load one state record's registers into the CPU. withPrefetch controls whether
 // two prefetch words follow pc. Returns the ram-pair count still to read.
-fn loadRegs(cpu: &mut M68k, m: &mut Mem, t: &mut Toks, withPrefetch: bool): i64 {
+pub fn loadRegs(cpu: &mut M68k, m: &mut Mem, t: &mut Toks, withPrefetch: bool): i64 {
     var i: i64 = 0
     while i < 8 {
         cpu.d[i] = nextTok(t)
@@ -97,7 +97,7 @@ fn loadRegs(cpu: &mut M68k, m: &mut Mem, t: &mut Toks, withPrefetch: bool): i64 
     return ramN
 }
 
-fn writeWord(m: &mut Mem, addr: i64, w: i64) {
+pub fn writeWord(m: &mut Mem, addr: i64, w: i64) {
     let a = addr & 0xFFFFFF
     m.ram[a] = ((w >> 8) & 0xFF) as u8
     m.ram[(a + 1) & 0xFFFFFF] = (w & 0xFF) as u8
@@ -107,7 +107,7 @@ fn writeWord(m: &mut Mem, addr: i64, w: i64) {
 
 // Compares CPU against the "final" record read from the stream. Returns "" on
 // match or a description of the first mismatch. Consumes the record either way.
-fn checkFinal(cpu: &M68k, m: &Mem, t: &mut Toks): string {
+pub fn checkFinal(cpu: &M68k, m: &Mem, t: &mut Toks): string {
     var fd: [i64; 8] = [0, 0, 0, 0, 0, 0, 0, 0]
     var i: i64 = 0
     while i < 8 {
@@ -172,14 +172,14 @@ fn checkFinal(cpu: &M68k, m: &Mem, t: &mut Toks): string {
     return mismatch
 }
 
-fn resetTouched(m: &mut Mem) {
+pub fn resetTouched(m: &mut Mem) {
     for t in m.touched {
         m.ram[t] = 0
     }
     m.touched = Vec.new()
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
         print("usage: runHarte <op.flat> [maxCases]")
@@ -246,7 +246,7 @@ fn main(): i32 {
 }
 
 // --- tiny formatting helpers ---
-fn itoa(n: i64): string {
+pub fn itoa(n: i64): string {
     if n == 0 {
         return "0"
     }
@@ -268,13 +268,13 @@ fn itoa(n: i64): string {
     return s
 }
 
-fn digitStr(d: i64): string {
+pub fn digitStr(d: i64): string {
     var s = ""
     s.push((48 + d) as u8)
     return s
 }
 
-fn hex8(n: i64): string {
+pub fn hex8(n: i64): string {
     let v = n & 0xFFFFFFFF
     var s = "0x"
     var i: i64 = 28
@@ -286,7 +286,7 @@ fn hex8(n: i64): string {
     return s
 }
 
-fn hexNib(n: i64): string {
+pub fn hexNib(n: i64): string {
     var s = ""
     if n < 10 {
         s.push((48 + n) as u8)
@@ -296,7 +296,7 @@ fn hexNib(n: i64): string {
     return s
 }
 
-fn strToI(s: &string): i64 {
+pub fn strToI(s: &string): i64 {
     var v: i64 = 0
     for ch in s {
         let c = ch as i64

@@ -13,17 +13,24 @@ from "./apu" import {
 }
 
 // --- status flag bit masks (P register) ---
-let FC: u8 = 0x01 // carry
-let FZ: u8 = 0x02 // zero
-let FI: u8 = 0x04 // interrupt disable
-let FD: u8 = 0x08 // decimal (ignored on NES, still settable)
-let FB: u8 = 0x10 // break (only in pushed copies)
-let FU: u8 = 0x20 // unused, always 1
-let FV: u8 = 0x40 // overflow
-let FN: u8 = 0x80 // negative
+pub let FC: u8 = 0x01 // carry
+
+pub let FZ: u8 = 0x02 // zero
+
+pub let FI: u8 = 0x04 // interrupt disable
+
+pub let FD: u8 = 0x08 // decimal (ignored on NES, still settable)
+
+pub let FB: u8 = 0x10 // break (only in pushed copies)
+
+pub let FU: u8 = 0x20 // unused, always 1
+
+pub let FV: u8 = 0x40 // overflow
+
+pub let FN: u8 = 0x80 // negative
 
 // CPU-visible address space. Owns PRG-ROM and the PPU (which owns CHR/VRAM).
-struct Bus {
+pub struct Bus {
     ram: [u8; 2048] // $0000-$07FF, mirrored through $1FFF
     wram: [u8; 8192] // $6000-$7FFF cartridge PRG-RAM (MMC3 scratch, etc.)
     prg: Vec<u8> // mapper-0 PRG, 16K or 32K
@@ -60,7 +67,7 @@ struct Bus {
     nmiArmed: bool // NMI edge detected last instruction, serviced this one (1-instr latency)
 }
 
-fn newBus(cart: Cartridge): Bus {
+pub fn newBus(cart: Cartridge): Bus {
     let n = cart.prg.len
     // 16K carts mirror $C000-$FFFF onto $8000-$BFFF via a 0x3FFF mask.
     let mask: i64 = if n == 16384 {
@@ -94,7 +101,7 @@ fn newBus(cart: Cartridge): Bus {
 // latch, its VRAM address, and the controller shift register respectively — the side
 // effects games rely on. The `& 0x07FF` / `& 0x07` masks are the real hardware's address
 // mirroring, not bounds checks.
-fn busRead(bus: &mut Bus, addr: u16): u8 {
+pub fn busRead(bus: &mut Bus, addr: u16): u8 {
     let a: i64 = addr as i64
     if a < 0x2000 {
         return bus.ram[a & 0x07FF]
@@ -169,7 +176,7 @@ fn busRead(bus: &mut Bus, addr: u16): u8 {
 // One CPU write, decoded like busRead. Not a plain store: $4014 copies 256 bytes into PPU
 // OAM inline (real hardware also stalls the CPU ~513 cycles for it; this emulator does
 // not model that stall, which is why raster effects timed off DMA can drift).
-fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
+pub fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
     let a: i64 = addr as i64
     if a < 0x2000 {
         bus.ram[a & 0x07FF] = val
@@ -254,7 +261,7 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
 // $FFFC comes from *its* bank — the previous code fixed $C000 to the menu, so
 // launching a game bounced straight back to the menu). L=0 is UNROM-like:
 // switchable $8000, $C000 fixed to inner bank 0 (or 7 when S=1).
-fn mapper227Write(bus: &mut Bus, a: i64): void {
+pub fn mapper227Write(bus: &mut Bus, a: i64): void {
     let bank = (a >> 2) & 0x1F
     let l = (a >> 7) & 1
     let s = a & 1 // PRG A14 source: 0 = follows CPU A14 (32K contiguous), 1 = fixed (16K mirror)
@@ -282,7 +289,7 @@ fn mapper227Write(bus: &mut Bus, a: i64): void {
 }
 
 // MMC3 register file: even/odd address within each $2000 block selects the pair.
-fn mmc3Write(bus: &mut Bus, a: i64, val: u8): void {
+pub fn mmc3Write(bus: &mut Bus, a: i64, val: u8): void {
     let even = (a & 1) == 0
     let v = val as i64
     if a < 0xA000 {
@@ -337,7 +344,7 @@ fn mmc3Write(bus: &mut Bus, a: i64, val: u8): void {
     }
 }
 
-struct Cpu {
+pub struct Cpu {
     a: u8 // accumulator — the only register ALU results land in
     x: u8 // index register; also the only one that can index the stack (TXS/TSX)
     y: u8 // index register; no stack access, but the only one for (zp),Y
@@ -350,14 +357,14 @@ struct Cpu {
 }
 
 // nestest's automated entry: PC=$C000, SP=$FD, P=$24 (I+U), 7 cycles already burned.
-fn newCpuNestest(): Cpu {
+pub fn newCpuNestest(): Cpu {
     return Cpu {
         a: 0, x: 0, y: 0, sp: 0xFD, p: 0x24, pc: 0xC000, cyc: 7, extraCycles: 0, unknownSeen: [false; 256]
     }
 }
 
 // Power-on / reset: PC from the reset vector at $FFFC/$FFFD.
-fn newCpuReset(bus: &mut Bus): Cpu {
+pub fn newCpuReset(bus: &mut Bus): Cpu {
     let lo = busRead(bus, 0xFFFC) as i64
     let hi = busRead(bus, 0xFFFD) as i64
     return Cpu {
@@ -366,7 +373,7 @@ fn newCpuReset(bus: &mut Bus): Cpu {
 }
 
 // Non-maskable interrupt (PPU vblank): push PC + P, jump to $FFFA vector.
-fn nmi(cpu: &mut Cpu, bus: &mut Bus): void {
+pub fn nmi(cpu: &mut Cpu, bus: &mut Bus): void {
     push16(cpu, bus, cpu.pc)
     push8(cpu, bus, (cpu.p & (~FB)) | FU)
     setFlag(cpu, FI, true)
@@ -378,7 +385,7 @@ fn nmi(cpu: &mut Cpu, bus: &mut Bus): void {
 
 // Maskable interrupt (MMC3 scanline IRQ): like nmi but gated on the I flag,
 // vectored through $FFFE. The caller checks I; this always takes the interrupt.
-fn irq(cpu: &mut Cpu, bus: &mut Bus): void {
+pub fn irq(cpu: &mut Cpu, bus: &mut Bus): void {
     push16(cpu, bus, cpu.pc)
     push8(cpu, bus, (cpu.p & (~FB)) | FU)
     setFlag(cpu, FI, true)
@@ -396,7 +403,7 @@ fn irq(cpu: &mut Cpu, bus: &mut Bus): void {
 // handler's own $2002 read clears it. Dispatching NMI immediately preempted that
 // poll, so vblank-wait loops with NMI enabled spun forever — the 1200-in-1
 // BOMBERMAN title->play handoff (loop at $C288) is the canonical repro.
-fn serviceInterrupts(cpu: &mut Cpu, bus: &mut Bus): void {
+pub fn serviceInterrupts(cpu: &mut Cpu, bus: &mut Bus): void {
     if bus.nmiArmed {
         bus.nmiArmed = false
         nmi(cpu, bus)
@@ -417,7 +424,7 @@ fn serviceInterrupts(cpu: &mut Cpu, bus: &mut Bus): void {
 // --- MMC3 (mapper 4) ---
 
 // Recompute the eight 1 KiB CHR window offsets from R0-R5 and the CHR mode bit.
-fn mmc3UpdateChr(bus: &mut Bus): void {
+pub fn mmc3UpdateChr(bus: &mut Bus): void {
     let num1k = bus.ppu.chr.len / 0x400
     let mode = (bus.mmcSelect >> 7) & 1
     var w0: i64 = 0
@@ -467,7 +474,7 @@ fn mmc3UpdateChr(bus: &mut Bus): void {
 // fixed-bank math like `n8k - 3` on a ROM with fewer banks than a mapper's
 // fixed region assumes, so a malformed cart can never index past the buffer.
 // `bank` may be any i64; `off` must be an intra-bank byte (0..bankSize).
-fn prgOffset(prg: &Vec<u8>, bankSize: i64, bank: i64, off: i64): i64
+pub fn prgOffset(prg: &Vec<u8>, bankSize: i64, bank: i64, off: i64): i64
 requires bankSize > 0 && bankSize <= prg.len && off >= 0 && off < bankSize
 ensures result >= 0 && result < prg.len
 {
@@ -476,7 +483,7 @@ ensures result >= 0 && result < prg.len
     return b * bankSize + off
 }
 
-fn mmc3PrgOffset(bus: &Bus, a: i64): i64 {
+pub fn mmc3PrgOffset(bus: &Bus, a: i64): i64 {
     let num8k = bus.prg.len / 0x2000
     let last = num8k - 1
     let mode = (bus.mmcSelect >> 6) & 1
@@ -502,7 +509,7 @@ fn mmc3PrgOffset(bus: &Bus, a: i64): i64 {
 }
 
 // Clock the scanline IRQ counter once per rendered scanline (A12 approximation).
-fn mmc3ClockIrq(bus: &mut Bus): void {
+pub fn mmc3ClockIrq(bus: &mut Bus): void {
     if bus.irqCounter == 0 || bus.irqReload {
         bus.irqCounter = bus.irqLatch
         bus.irqReload = false
@@ -518,7 +525,7 @@ fn mmc3ClockIrq(bus: &mut Bus): void {
 // of each visible line while rendering is enabled.
 // Advance the APU by `cycles` CPU cycles, then service any DMC sample-fetch it
 // requested (the DMC reads CPU memory, which only the bus can do).
-fn clockApu(bus: &mut Bus, cycles: i64): void {
+pub fn clockApu(bus: &mut Bus, cycles: i64): void {
     apuStep(bus.apu, cycles)
     if bus.apu.dmc.needsFetch {
         let addr = bus.apu.dmc.curAddr
@@ -527,7 +534,7 @@ fn clockApu(bus: &mut Bus, cycles: i64): void {
     }
 }
 
-fn clockPpu(bus: &mut Bus): void {
+pub fn clockPpu(bus: &mut Bus): void {
     ppuStep(bus.ppu)
     if bus.mapper == 4 && bus.ppu.dot == 260 && bus.ppu.scanline < 240 && (bus.ppu.mask & 0x18) != 0 {
         mmc3ClockIrq(bus)
@@ -535,11 +542,11 @@ fn clockPpu(bus: &mut Bus): void {
 }
 
 // --- flag helpers ---
-fn cpuFlag(cpu: &Cpu, mask: u8): bool {
+pub fn cpuFlag(cpu: &Cpu, mask: u8): bool {
     return (cpu.p & mask) != 0
 }
 
-fn setFlag(cpu: &mut Cpu, mask: u8, on: bool): void {
+pub fn setFlag(cpu: &mut Cpu, mask: u8, on: bool): void {
     if on {
         cpu.p = cpu.p | mask
     } else {
@@ -547,26 +554,26 @@ fn setFlag(cpu: &mut Cpu, mask: u8, on: bool): void {
     }
 }
 
-fn setZN(cpu: &mut Cpu, v: u8): void {
+pub fn setZN(cpu: &mut Cpu, v: u8): void {
     setFlag(cpu, FZ, v == 0)
     setFlag(cpu, FN, (v & 0x80) != 0)
 }
 
 // --- 16-bit / pc helpers (explicit masking NES arithmetic wraps) ---
-fn wrap16(v: i64): u16
+pub fn wrap16(v: i64): u16
 ensures(result as i64) == (v & 0xFFFF)
 {
     return (v & 0xFFFF) as u16
 }
 
-fn read16(bus: &mut Bus, addr: u16): u16 {
+pub fn read16(bus: &mut Bus, addr: u16): u16 {
     let lo: i64 = busRead(bus, addr) as i64
     let hi: i64 = busRead(bus, wrap16((addr as i64) + 1)) as i64
     return wrap16(lo | (hi << 8))
 }
 
 // 6502 indirect-JMP page-wrap bug: high byte reads from ($xxFF & $xx00), not +1 page.
-fn read16Bug(bus: &mut Bus, addr: u16): u16 {
+pub fn read16Bug(bus: &mut Bus, addr: u16): u16 {
     let a: i64 = addr as i64
     let lo: i64 = busRead(bus, addr) as i64
     let hiAddr: i64 = (a & 0xFF00) | ((a + 1) & 0x00FF)
@@ -574,49 +581,49 @@ fn read16Bug(bus: &mut Bus, addr: u16): u16 {
     return wrap16(lo | (hi << 8))
 }
 
-fn fetch8(cpu: &mut Cpu, bus: &mut Bus): u8 {
+pub fn fetch8(cpu: &mut Cpu, bus: &mut Bus): u8 {
     let v = busRead(bus, cpu.pc)
     cpu.pc = wrap16((cpu.pc as i64) + 1)
     return v
 }
 
-fn fetch16(cpu: &mut Cpu, bus: &mut Bus): u16 {
+pub fn fetch16(cpu: &mut Cpu, bus: &mut Bus): u16 {
     let v = read16(bus, cpu.pc)
     cpu.pc = wrap16((cpu.pc as i64) + 2)
     return v
 }
 
 // --- stack ($0100-$01FF) ---
-fn push8(cpu: &mut Cpu, bus: &mut Bus, v: u8): void {
+pub fn push8(cpu: &mut Cpu, bus: &mut Bus, v: u8): void {
     busWrite(bus, wrap16(0x0100 | (cpu.sp as i64)), v)
     cpu.sp = cpu.sp.wrappingSub(1)
 }
 
-fn pop8(cpu: &mut Cpu, bus: &mut Bus): u8 {
+pub fn pop8(cpu: &mut Cpu, bus: &mut Bus): u8 {
     cpu.sp = cpu.sp.wrappingAdd(1)
     return busRead(bus, wrap16(0x0100 | (cpu.sp as i64)))
 }
 
-fn push16(cpu: &mut Cpu, bus: &mut Bus, v: u16): void {
+pub fn push16(cpu: &mut Cpu, bus: &mut Bus, v: u16): void {
     push8(cpu, bus, (v >> 8) as u8) // high byte — genuine u16→u8 narrowing
     push8(cpu, bus, v as u8)
 }
 
-fn pop16(cpu: &mut Cpu, bus: &mut Bus): u16 {
+pub fn pop16(cpu: &mut Cpu, bus: &mut Bus): u16 {
     let lo: i64 = pop8(cpu, bus) as i64
     let hi: i64 = pop8(cpu, bus) as i64
     return wrap16(lo | (hi << 8))
 }
 
 // Did adding an index cross a page boundary? (+1 cycle for read-index modes.)
-fn pageCrossed(base: u16, eff: u16): bool {
+pub fn pageCrossed(base: u16, eff: u16): bool {
     return ((base as i64) & 0xFF00) != ((eff as i64) & 0xFF00)
 }
 
 // --- addressing-mode resolvers: advance PC past operand, return effective addr.
 // Indexed read modes stash a page-cross penalty in cpu.extraCycles only the
 // read opcodes honor it (stores/RMW take fixed cycles).
-fn read16ZP(bus: &mut Bus, z: i64): u16
+pub fn read16ZP(bus: &mut Bus, z: i64): u16
 requires 0 <= z && z <= 255 // zero-page pointer index; callers must pre-mask
 {
     let lo: i64 = busRead(bus, (z & 0xFF) as u16) as i64
@@ -624,29 +631,29 @@ requires 0 <= z && z <= 255 // zero-page pointer index; callers must pre-mask
     return wrap16(lo | (hi << 8))
 }
 
-fn aImm(cpu: &mut Cpu): u16 {
+pub fn aImm(cpu: &mut Cpu): u16 {
     let a = cpu.pc
     cpu.pc = wrap16((cpu.pc as i64) + 1)
     return a
 }
 
-fn aZp(cpu: &mut Cpu, bus: &mut Bus): u16 {
+pub fn aZp(cpu: &mut Cpu, bus: &mut Bus): u16 {
     return fetch8(cpu, bus) as u16
 }
 
-fn aZpX(cpu: &mut Cpu, bus: &mut Bus): u16 {
+pub fn aZpX(cpu: &mut Cpu, bus: &mut Bus): u16 {
     return (((fetch8(cpu, bus) as i64) + (cpu.x as i64)) & 0xFF) as u16
 }
 
-fn aZpY(cpu: &mut Cpu, bus: &mut Bus): u16 {
+pub fn aZpY(cpu: &mut Cpu, bus: &mut Bus): u16 {
     return (((fetch8(cpu, bus) as i64) + (cpu.y as i64)) & 0xFF) as u16
 }
 
-fn aAbs(cpu: &mut Cpu, bus: &mut Bus): u16 {
+pub fn aAbs(cpu: &mut Cpu, bus: &mut Bus): u16 {
     return fetch16(cpu, bus)
 }
 
-fn aAbsX(cpu: &mut Cpu, bus: &mut Bus): u16 {
+pub fn aAbsX(cpu: &mut Cpu, bus: &mut Bus): u16 {
     let base = fetch16(cpu, bus)
     let eff = wrap16((base as i64) + (cpu.x as i64))
     if pageCrossed(base, eff) {
@@ -655,7 +662,7 @@ fn aAbsX(cpu: &mut Cpu, bus: &mut Bus): u16 {
     return eff
 }
 
-fn aAbsY(cpu: &mut Cpu, bus: &mut Bus): u16 {
+pub fn aAbsY(cpu: &mut Cpu, bus: &mut Bus): u16 {
     let base = fetch16(cpu, bus)
     let eff = wrap16((base as i64) + (cpu.y as i64))
     if pageCrossed(base, eff) {
@@ -664,12 +671,12 @@ fn aAbsY(cpu: &mut Cpu, bus: &mut Bus): u16 {
     return eff
 }
 
-fn aIndX(cpu: &mut Cpu, bus: &mut Bus): u16 {
+pub fn aIndX(cpu: &mut Cpu, bus: &mut Bus): u16 {
     let z = ((fetch8(cpu, bus) as i64) + (cpu.x as i64)) & 0xFF
     return read16ZP(bus, z)
 }
 
-fn aIndY(cpu: &mut Cpu, bus: &mut Bus): u16 {
+pub fn aIndY(cpu: &mut Cpu, bus: &mut Bus): u16 {
     let z = fetch8(cpu, bus) as i64
     let base = read16ZP(bus, z)
     let eff = wrap16((base as i64) + (cpu.y as i64))
@@ -680,7 +687,7 @@ fn aIndY(cpu: &mut Cpu, bus: &mut Bus): u16 {
 }
 
 // --- ALU primitives ---
-fn adc(cpu: &mut Cpu, m: u8): void {
+pub fn adc(cpu: &mut Cpu, m: u8): void {
     let a: i64 = cpu.a as i64
     let carry: i64 = if cpuFlag(cpu, FC) {
         1 as i64
@@ -696,37 +703,37 @@ fn adc(cpu: &mut Cpu, m: u8): void {
     setZN(cpu, r)
 }
 
-fn sbc(cpu: &mut Cpu, m: u8): void {
+pub fn sbc(cpu: &mut Cpu, m: u8): void {
     adc(cpu, (m as i64 ^ 0xFF) as u8)
 }
 
-fn compare(cpu: &mut Cpu, reg: u8, m: u8): void {
+pub fn compare(cpu: &mut Cpu, reg: u8, m: u8): void {
     setFlag(cpu, FC, reg >= m)
     setZN(cpu, reg.wrappingSub(m)) // only the low byte feeds Z/N
 }
 
-fn bitTest(cpu: &mut Cpu, m: u8): void {
+pub fn bitTest(cpu: &mut Cpu, m: u8): void {
     setFlag(cpu, FZ, ((cpu.a as i64) & (m as i64)) == 0)
     setFlag(cpu, FN, (m & 0x80) != 0)
     setFlag(cpu, FV, (m & 0x40) != 0)
 }
 
 // shifts/rotates return the result and set C from the shifted-out bit.
-fn aslV(cpu: &mut Cpu, m: u8): u8 {
+pub fn aslV(cpu: &mut Cpu, m: u8): u8 {
     setFlag(cpu, FC, (m & 0x80) != 0)
     let r: u8 = m << 1 // u8 shift truncates the carried-out bit
     setZN(cpu, r)
     return r
 }
 
-fn lsrV(cpu: &mut Cpu, m: u8): u8 {
+pub fn lsrV(cpu: &mut Cpu, m: u8): u8 {
     setFlag(cpu, FC, (m & 0x01) != 0)
     let r: u8 = m >> 1
     setZN(cpu, r)
     return r
 }
 
-fn rolV(cpu: &mut Cpu, m: u8): u8 {
+pub fn rolV(cpu: &mut Cpu, m: u8): u8 {
     let cin: u8 = if cpuFlag(cpu, FC) {
         1
     } else {
@@ -738,7 +745,7 @@ fn rolV(cpu: &mut Cpu, m: u8): u8 {
     return r
 }
 
-fn rorV(cpu: &mut Cpu, m: u8): u8 {
+pub fn rorV(cpu: &mut Cpu, m: u8): u8 {
     let cin: u8 = if cpuFlag(cpu, FC) {
         0x80
     } else {
@@ -751,7 +758,7 @@ fn rorV(cpu: &mut Cpu, m: u8): u8 {
 }
 
 // Conditional branch with taken/page-cross cycle penalties base 2 added by caller.
-fn branch(cpu: &mut Cpu, bus: &mut Bus, cond: bool): void {
+pub fn branch(cpu: &mut Cpu, bus: &mut Bus, cond: bool): void {
     var off: i64 = fetch8(cpu, bus) as i64
     if off >= 128 {
         off = off - 256
@@ -768,13 +775,13 @@ fn branch(cpu: &mut Cpu, bus: &mut Bus, cond: bool): void {
 }
 
 // --- trace formatting (self-contained strconv lacks decimal int->string) ---
-fn appendStr(dst: &mut string, src: &string): void {
+pub fn appendStr(dst: &mut string, src: &string): void {
     for b in src {
         dst.push(b)
     }
 }
 
-fn hex2(v: i64): string {
+pub fn hex2(v: i64): string {
     let d = "0123456789ABCDEF"
     var s = ""
     s.push(d[(v >> 4) & 0xF])
@@ -782,14 +789,14 @@ fn hex2(v: i64): string {
     return s
 }
 
-fn hex4(v: i64): string {
+pub fn hex4(v: i64): string {
     var s = hex2((v >> 8) & 0xFF)
     let lo = hex2(v & 0xFF)
     appendStr(s, lo)
     return s
 }
 
-fn decStr(n: i64): string {
+pub fn decStr(n: i64): string {
     if n == 0 {
         return "0"
     }
@@ -809,7 +816,7 @@ fn decStr(n: i64): string {
 }
 
 // nestest.log comparison columns: "PC A:.. X:.. Y:.. P:.. SP:.. CYC:.."
-fn formatState(cpu: &Cpu): string {
+pub fn formatState(cpu: &Cpu): string {
     var s = hex4(cpu.pc as i64)
     let a = hex2(cpu.a as i64)
     appendStr(s, " A:")
@@ -833,70 +840,70 @@ fn formatState(cpu: &Cpu): string {
 }
 
 // --- unofficial ("illegal") opcode helpers, addr pre-resolved by caller ---
-fn lax(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn lax(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     let v = busRead(bus, addr)
     cpu.a = v
     cpu.x = v
     setZN(cpu, v)
 }
 
-fn sax(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn sax(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     busWrite(bus, addr, cpu.a & cpu.x)
 }
 
-fn dcp(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn dcp(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     let m = busRead(bus, addr).wrappingSub(1)
     busWrite(bus, addr, m)
     compare(cpu, cpu.a, m)
 }
 
-fn isb(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn isb(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     let m = busRead(bus, addr).wrappingAdd(1)
     busWrite(bus, addr, m)
     sbc(cpu, m)
 }
 
-fn slo(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn slo(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     let m = aslV(cpu, busRead(bus, addr))
     busWrite(bus, addr, m)
     cpu.a = cpu.a | m
     setZN(cpu, cpu.a)
 }
 
-fn rla(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn rla(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     let m = rolV(cpu, busRead(bus, addr))
     busWrite(bus, addr, m)
     cpu.a = cpu.a & m
     setZN(cpu, cpu.a)
 }
 
-fn sre(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn sre(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     let m = lsrV(cpu, busRead(bus, addr))
     busWrite(bus, addr, m)
     cpu.a = cpu.a ^ m
     setZN(cpu, cpu.a)
 }
 
-fn rra(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn rra(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     let m = rorV(cpu, busRead(bus, addr))
     busWrite(bus, addr, m)
     adc(cpu, m)
 }
 
 // ANC: A &= imm; carry is copied from the result's bit 7 (as ASL/ROL would).
-fn anc(cpu: &mut Cpu, m: u8): void {
+pub fn anc(cpu: &mut Cpu, m: u8): void {
     cpu.a = cpu.a & m
     setZN(cpu, cpu.a)
     setFlag(cpu, FC, (cpu.a & 0x80) != 0)
 }
 
 // ALR (ASR): A &= imm, then LSR A.
-fn alr(cpu: &mut Cpu, m: u8): void {
+pub fn alr(cpu: &mut Cpu, m: u8): void {
     cpu.a = lsrV(cpu, cpu.a & m)
 }
 
 // ARR: A &= imm, then ROR A — but C/V come from the result, not the shifted bit.
-fn arr(cpu: &mut Cpu, m: u8): void {
+pub fn arr(cpu: &mut Cpu, m: u8): void {
     let cin: u8 = if cpuFlag(cpu, FC) {
         0x80
     } else {
@@ -910,7 +917,7 @@ fn arr(cpu: &mut Cpu, m: u8): void {
 }
 
 // SBX (AXS): X = (A & X) - imm; carry set like CMP, no borrow-in.
-fn sbx(cpu: &mut Cpu, m: u8): void {
+pub fn sbx(cpu: &mut Cpu, m: u8): void {
     let ax: i64 = (cpu.a as i64) & (cpu.x as i64)
     setFlag(cpu, FC, ax >= (m as i64))
     cpu.x = ((ax - (m as i64)) & 0xFF) as u8
@@ -918,7 +925,7 @@ fn sbx(cpu: &mut Cpu, m: u8): void {
 }
 
 // LAS: A = X = SP = (mem & SP).
-fn las(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn las(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     let t = busRead(bus, addr) & cpu.sp
     cpu.a = t
     cpu.x = t
@@ -928,14 +935,14 @@ fn las(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
 
 // LXA: A = X = imm. (The chip's "magic constant" varies; 0xFF is the stable
 // value most emulators/test ROMs assume, reducing this to LDA #imm; TAX.)
-fn lxa(cpu: &mut Cpu, m: u8): void {
+pub fn lxa(cpu: &mut Cpu, m: u8): void {
     cpu.a = m
     cpu.x = m
     setZN(cpu, m)
 }
 
 // ANE (XAA): A = (A | magic) & X & imm. Unstable; 0xEE is the common magic.
-fn ane(cpu: &mut Cpu, m: u8): void {
+pub fn ane(cpu: &mut Cpu, m: u8): void {
     cpu.a = (cpu.a | 0xEE) & cpu.x & m
     setZN(cpu, cpu.a)
 }
@@ -943,23 +950,23 @@ fn ane(cpu: &mut Cpu, m: u8): void {
 // SHA/SHX/SHY/TAS: store reg AND'd with (high byte of target + 1) — the address
 // high byte leaks onto the data bus on these unstable stores. Games only hit
 // these when already derailed, so the simple (non-page-cross-corrupting) form.
-fn hiPlus1(addr: u16): i64 {
+pub fn hiPlus1(addr: u16): i64 {
     return (((addr as i64) >> 8) + 1) & 0xFF
 }
 
-fn sha(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn sha(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     busWrite(bus, addr, (((cpu.a as i64) & (cpu.x as i64) & hiPlus1(addr)) & 0xFF) as u8)
 }
 
-fn shx(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn shx(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     busWrite(bus, addr, (((cpu.x as i64) & hiPlus1(addr)) & 0xFF) as u8)
 }
 
-fn shy(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn shy(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     busWrite(bus, addr, (((cpu.y as i64) & hiPlus1(addr)) & 0xFF) as u8)
 }
 
-fn tas(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+pub fn tas(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     cpu.sp = cpu.a & cpu.x
     busWrite(bus, addr, (((cpu.sp as i64) & hiPlus1(addr)) & 0xFF) as u8)
 }
@@ -967,13 +974,13 @@ fn tas(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
 // JAM/KIL: hardware halts until reset. Rewind PC onto the opcode so it re-executes
 // forever (frozen mainline), but still burn cycles so the caller's PPU catch-up +
 // NMI keep running — the emulator stays responsive instead of hanging.
-fn jam(cpu: &mut Cpu): void {
+pub fn jam(cpu: &mut Cpu): void {
     cpu.pc = wrap16((cpu.pc as i64) - 1)
     cpu.cyc = cpu.cyc + 2
 }
 
 // Execute one instruction, advancing cyc by its total cost.
-fn step(cpu: &mut Cpu, bus: &mut Bus): void {
+pub fn step(cpu: &mut Cpu, bus: &mut Bus): void {
     cpu.extraCycles = 0
     let op = fetch8(cpu, bus)
     match op {

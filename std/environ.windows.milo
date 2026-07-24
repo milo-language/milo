@@ -6,18 +6,18 @@
 // is owned by the caller and must go back through FreeEnvironmentStringsA.
 
 @cSig("windows.h", "LPCH GetEnvironmentStringsA(void)")
-extern fn GetEnvironmentStringsA(): *u8
+pub extern fn GetEnvironmentStringsA(): *u8
 
 @cSig("windows.h", "BOOL FreeEnvironmentStringsA(LPCH)")
-extern fn FreeEnvironmentStringsA(block: *u8): i32
+pub extern fn FreeEnvironmentStringsA(block: *u8): i32
 
-struct EnvEntry {
+pub struct EnvEntry {
     name: string,
     value: string,
 }
 
 // Every variable in the process environment, in the order the OS supplies them.
-fn envVars(): Vec<EnvEntry> {
+pub fn envVars(): Vec<EnvEntry> {
     var out: Vec<EnvEntry> = Vec.new()
     unsafe {
         let block: *u8 = GetEnvironmentStringsA()

@@ -2,112 +2,112 @@
 
 // ── libm bindings ──
 
-extern fn sqrt(x: f64): f64
+pub extern fn sqrt(x: f64): f64
 
-extern fn pow(base: f64, exp: f64): f64
+pub extern fn pow(base: f64, exp: f64): f64
 
-extern fn sin(x: f64): f64
+pub extern fn sin(x: f64): f64
 
-extern fn cos(x: f64): f64
+pub extern fn cos(x: f64): f64
 
-extern fn tan(x: f64): f64
+pub extern fn tan(x: f64): f64
 
-extern fn atan2(y: f64, x: f64): f64
+pub extern fn atan2(y: f64, x: f64): f64
 
-extern fn floor(x: f64): f64
+pub extern fn floor(x: f64): f64
 
-extern fn ceil(x: f64): f64
+pub extern fn ceil(x: f64): f64
 
-extern fn round(x: f64): f64
+pub extern fn round(x: f64): f64
 
-extern fn fabs(x: f64): f64
+pub extern fn fabs(x: f64): f64
 
-extern fn fmod(x: f64, y: f64): f64
+pub extern fn fmod(x: f64, y: f64): f64
 
-extern fn log(x: f64): f64
+pub extern fn log(x: f64): f64
 
-extern fn log2(x: f64): f64
+pub extern fn log2(x: f64): f64
 
-extern fn log10(x: f64): f64
+pub extern fn log10(x: f64): f64
 
-extern fn exp(x: f64): f64
+pub extern fn exp(x: f64): f64
 
 // ── safe wrappers ──
 
-fn mathSqrt(x: f64): f64
+pub fn mathSqrt(x: f64): f64
 requires x >= 0.0
 ensures result >= 0.0
 {
     return sqrt(x)
 }
 
-fn mathPow(base: f64, exponent: f64): f64 {
+pub fn mathPow(base: f64, exponent: f64): f64 {
     return pow(base, exponent)
 }
 
-fn mathSin(x: f64): f64 {
+pub fn mathSin(x: f64): f64 {
     return sin(x)
 }
 
-fn mathCos(x: f64): f64 {
+pub fn mathCos(x: f64): f64 {
     return cos(x)
 }
 
-fn mathTan(x: f64): f64 {
+pub fn mathTan(x: f64): f64 {
     return tan(x)
 }
 
-fn mathAtan2(y: f64, x: f64): f64 {
+pub fn mathAtan2(y: f64, x: f64): f64 {
     return atan2(y, x)
 }
 
-fn mathFloor(x: f64): f64 {
+pub fn mathFloor(x: f64): f64 {
     return floor(x)
 }
 
-fn mathCeil(x: f64): f64 {
+pub fn mathCeil(x: f64): f64 {
     return ceil(x)
 }
 
-fn mathRound(x: f64): f64 {
+pub fn mathRound(x: f64): f64 {
     return round(x)
 }
 
-fn mathAbs(x: f64): f64 {
+pub fn mathAbs(x: f64): f64 {
     return fabs(x)
 }
 
-fn mathMod(x: f64, y: f64): f64
+pub fn mathMod(x: f64, y: f64): f64
 requires y != 0.0
 {
     return fmod(x, y)
 }
 
-fn mathLog(x: f64): f64
+pub fn mathLog(x: f64): f64
 requires x > 0.0
 {
     return log(x)
 }
 
-fn mathLog2(x: f64): f64
+pub fn mathLog2(x: f64): f64
 requires x > 0.0
 {
     return log2(x)
 }
 
-fn mathLog10(x: f64): f64
+pub fn mathLog10(x: f64): f64
 requires x > 0.0
 {
     return log10(x)
 }
 
-fn mathExp(x: f64): f64 {
+pub fn mathExp(x: f64): f64 {
     return exp(x)
 }
 
 // ── integer helpers ──
 
-fn absI64(x: i64): i64
+pub fn absI64(x: i64): i64
 ensures result >= 0
 {
     if x < 0 {
@@ -116,7 +116,7 @@ ensures result >= 0
     return x
 }
 
-fn absI32(x: i32): i32
+pub fn absI32(x: i32): i32
 ensures result >= 0 as i32
 {
     if x < 0 as i32 {
@@ -125,49 +125,49 @@ ensures result >= 0 as i32
     return x
 }
 
-fn minI64(a: i64, b: i64): i64 {
+pub fn minI64(a: i64, b: i64): i64 {
     if a < b {
         return a
     }
     return b
 }
 
-fn maxI64(a: i64, b: i64): i64 {
+pub fn maxI64(a: i64, b: i64): i64 {
     if a > b {
         return a
     }
     return b
 }
 
-fn minI32(a: i32, b: i32): i32 {
+pub fn minI32(a: i32, b: i32): i32 {
     if a < b {
         return a
     }
     return b
 }
 
-fn maxI32(a: i32, b: i32): i32 {
+pub fn maxI32(a: i32, b: i32): i32 {
     if a > b {
         return a
     }
     return b
 }
 
-fn minF64(a: f64, b: f64): f64 {
+pub fn minF64(a: f64, b: f64): f64 {
     if a < b {
         return a
     }
     return b
 }
 
-fn maxF64(a: f64, b: f64): f64 {
+pub fn maxF64(a: f64, b: f64): f64 {
     if a > b {
         return a
     }
     return b
 }
 
-fn clampI64(x: i64, lo: i64, hi: i64): i64
+pub fn clampI64(x: i64, lo: i64, hi: i64): i64
 requires lo <= hi
 ensures result >= lo && result <= hi
 {
@@ -180,7 +180,7 @@ ensures result >= lo && result <= hi
     return x
 }
 
-fn clampF64(x: f64, lo: f64, hi: f64): f64
+pub fn clampF64(x: f64, lo: f64, hi: f64): f64
 requires lo <= hi
 ensures result >= lo && result <= hi
 {
@@ -195,14 +195,14 @@ ensures result >= lo && result <= hi
 
 // ── constants ──
 
-fn mathPi(): f64 {
+pub fn mathPi(): f64 {
     return 3.14159265358979323846
 }
 
-fn mathE(): f64 {
+pub fn mathE(): f64 {
     return 2.71828182845904523536
 }
 
-fn mathInf(): f64 {
+pub fn mathInf(): f64 {
     return 1.0 / 0.0
 }

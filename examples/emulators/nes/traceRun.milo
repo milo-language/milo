@@ -26,7 +26,7 @@ from "./ppu" import {
     renderFrame
 }
 
-fn fbHash(bus: &Bus): i64 {
+pub fn fbHash(bus: &Bus): i64 {
     var h: i64 = 0x1234
     var i: i64 = 0
     while i < 61440 {
@@ -37,7 +37,7 @@ fn fbHash(bus: &Bus): i64 {
 }
 
 // Run one full frame (NMI-driven), holding `buttons` the whole frame.
-fn runFrame(cpu: &mut Cpu, bus: &mut Bus, buttons: u8): void {
+pub fn runFrame(cpu: &mut Cpu, bus: &mut Bus, buttons: u8): void {
     bus.buttons = buttons
     let startFrame = bus.ppu.frame
     while bus.ppu.frame == startFrame {
@@ -54,9 +54,9 @@ fn runFrame(cpu: &mut Cpu, bus: &mut Bus, buttons: u8): void {
     }
 }
 
-let START: u8 = 0x08 // bit3 = Start
+pub let START: u8 = 0x08 // bit3 = Start
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
         print("usage: trace <rom>")

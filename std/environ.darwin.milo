@@ -6,15 +6,15 @@
 // macOS does not export `environ` to a shared library, so the supported route is
 // _NSGetEnviron(), which returns a pointer to it.
 
-extern fn _NSGetEnviron(): ***u8
+pub extern fn _NSGetEnviron(): ***u8
 
-struct EnvEntry {
+pub struct EnvEntry {
     name: string,
     value: string,
 }
 
 // Every variable in the process environment, in the order the OS supplies them.
-fn envVars(): Vec<EnvEntry> {
+pub fn envVars(): Vec<EnvEntry> {
     var out: Vec<EnvEntry> = Vec.new()
     unsafe {
         let envp: **u8 = *_NSGetEnviron()

@@ -13,14 +13,14 @@ from "./cartridge" import {
     Cartridge, parseCartridge
 }
 
-struct NesHandle {
+pub struct NesHandle {
     cpu: Cpu
     bus: Bus
 }
 
 // Build a 16 KiB all-NOP PRG bank with the reset vector pointing at $8000, used as
 // a safe fallback when a ROM fails to parse so the driver never gets a null handle.
-fn fallbackCart(): Cartridge {
+pub fn fallbackCart(): Cartridge {
     var prg: Vec<u8> = []
     var i: i64 = 0
     while i < 16384 {
@@ -49,7 +49,7 @@ fn fallbackCart(): Cartridge {
 
 // Parse `rom` (raw .nes bytes) and boot a fresh system. Never fails: a bad ROM
 // falls back to the NOP cart above so the JS side always gets a usable handle.
-fn createNes(rom: Vec<u8>): NesHandle {
+pub fn createNes(rom: Vec<u8>): NesHandle {
     var cart = fallbackCart()
     match parseCartridge(rom) {
         Result.Ok(c) => {
@@ -68,13 +68,13 @@ fn createNes(rom: Vec<u8>): NesHandle {
 
 // Latch controller-1 state. Bit layout (matches cpu.milo): 0 A, 1 B, 2 Select,
 // 3 Start, 4 Up, 5 Down, 6 Left, 7 Right.
-fn setButtons(h: &mut NesHandle, b: u8): void {
+pub fn setButtons(h: &mut NesHandle, b: u8): void {
     h.bus.buttons = b
 }
 
 // Advance one video frame (CPU + PPU + APU), leaving the RGBA framebuffer in
 // h.bus.ppu.fb for the driver to blit.
-fn stepFrame(h: &mut NesHandle): void {
+pub fn stepFrame(h: &mut NesHandle): void {
     let startFrame = h.bus.ppu.frame
     while h.bus.ppu.frame == startFrame {
         let before = h.cpu.cyc
@@ -92,7 +92,7 @@ fn stepFrame(h: &mut NesHandle): void {
 }
 
 // Single CPU instruction + its PPU/APU catch-up — for backend trace diffing.
-fn stepOne(h: &mut NesHandle): void {
+pub fn stepOne(h: &mut NesHandle): void {
     let before = h.cpu.cyc
     step(h.cpu, h.bus)
     let used = h.cpu.cyc - before
@@ -107,6 +107,6 @@ fn stepOne(h: &mut NesHandle): void {
 
 // emit-js appends `main(); __flush();`; keep it a no-op so importing the module in
 // the browser has no side effects — the driver drives everything.
-fn main(): i32 {
+pub fn main(): i32 {
     return 0
 }

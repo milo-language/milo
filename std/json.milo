@@ -4,7 +4,7 @@
 // ~6 allocations total for any document size.
 
 // kind: 0=null 1=bool 2=number 3=string 4=array 5=object
-struct JsonNode {
+pub struct JsonNode {
     kind: i32,
     boolVal: bool,
     numVal: f64,
@@ -15,7 +15,7 @@ struct JsonNode {
     keyStart: i64,
 }
 
-struct Json {
+pub struct Json {
     source: string,
     nodes: Vec<JsonNode>,
     childIdx: Vec<i64>,
@@ -24,7 +24,7 @@ struct Json {
     root: i64,
 }
 
-fn jsonNull(): Json {
+pub fn jsonNull(): Json {
     var nodes: Vec<JsonNode> = Vec.new()
     nodes.push(JsonNode {
         kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0
@@ -35,7 +35,7 @@ fn jsonNull(): Json {
     }
 }
 
-fn jsonClone(src: &Json): Json {
+pub fn jsonClone(src: &Json): Json {
     var nodes: Vec<JsonNode> = Vec.new()
     for i in 0..src.nodes.len() {
         let n = src.nodes[i]
@@ -61,7 +61,7 @@ fn jsonClone(src: &Json): Json {
 
 // ── Key comparison (byte-by-byte against source, zero allocation) ──
 
-fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool {
+pub fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool {
     if klen != target.len {
         return false
     }
@@ -75,7 +75,7 @@ fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool {
 
 // ── String materialization (allocates only when user requests the value) ──
 
-fn _jsonHexVal(c: u8): i64 {
+pub fn _jsonHexVal(c: u8): i64 {
     if c >= 48 && c <= 57 {
         return (c - 48) as i64
     } // 0-9
@@ -88,7 +88,7 @@ fn _jsonHexVal(c: u8): i64 {
     return 0
 }
 
-fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
+pub fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
     var hasEscape: bool = false
     var i: i64 = 0
     while i < len {
@@ -722,7 +722,7 @@ impl Json {
     }
 }
 
-fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
+pub fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
     let node = doc.nodes[nodeIdx]
     if node.kind == 0 {
         return "null"
@@ -772,7 +772,7 @@ fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
 
 // ── Subtree extraction (for get/at — clones source, remaps indices) ──
 
-fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json {
+pub fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json {
     var nodes: Vec<JsonNode> = Vec.new()
     var childIdx: Vec<i64> = Vec.new()
     var keyOffsets: Vec<i64> = Vec.new()
@@ -818,7 +818,7 @@ fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json {
 
 // ── Parser ──
 
-fn jsonParse(s: string): Result<Json> {
+pub fn jsonParse(s: string): Result<Json> {
     if s.len == 0 {
         return Result.Err("empty input")
     }
@@ -855,7 +855,7 @@ fn jsonParse(s: string): Result<Json> {
 // string-aware preprocessor that emits strict JSON, so everything else inherits jsonParse's
 // exact RFC-8259 validation — JSONC is strictly a superset of comments + trailing commas, not
 // a second, looser parser.
-fn jsonStripJsonc(s: &string): string {
+pub fn jsonStripJsonc(s: &string): string {
     // Pass 1: remove comments outside of string literals (string contents copied verbatim,
     // tracking backslash escapes so a \" inside a string never ends it).
     var nc: string = ""
@@ -934,12 +934,12 @@ fn jsonStripJsonc(s: &string): string {
     return out
 }
 
-fn jsoncParse(s: string): Result<Json> {
+pub fn jsoncParse(s: string): Result<Json> {
     let stripped = jsonStripJsonc(s)
     return jsonParse(stripped)
 }
 
-fn jsonSkipWs(s: &string, pos: &mut i64) {
+pub fn jsonSkipWs(s: &string, pos: &mut i64) {
     while pos < s.len {
         let c = s[pos]
         if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
@@ -952,7 +952,7 @@ fn jsonSkipWs(s: &string, pos: &mut i64) {
 // Push onto the scratch stack reusing already-grown capacity: scratchLen is the logical
 // length, scratch.len() the high-water mark — entries above scratchLen are stale and
 // overwritten in place, so repeated container parses cost zero allocations.
-fn jsonScratchPush(scratch: &mut Vec<i64>, scratchLen: &mut i64, v: i64) {
+pub fn jsonScratchPush(scratch: &mut Vec<i64>, scratchLen: &mut i64, v: i64) {
     if scratchLen < scratch.len() {
         scratch[scratchLen] = v
     } else {
@@ -961,7 +961,7 @@ fn jsonScratchPush(scratch: &mut Vec<i64>, scratchLen: &mut i64, v: i64) {
     scratchLen = scratchLen + 1
 }
 
-fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
+pub fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
     jsonSkipWs(s, pos)
     if pos >= s.len {
         err = true
@@ -1027,7 +1027,7 @@ fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
 // which must be escaped. Valid escapes are " \ / b f n r t and \uXXXX. We validate the escape
 // letter but not the 4 hex digits (no fail case exercises bad \u, and over-checking risks false
 // positives on valid \u sequences).
-fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
+pub fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
     // Local cursor: writing through the &mut i64 every byte defeats LLVM's alias analysis
     // (the store could alias the string header), forcing len/data reloads per char.
     var p: i64 = pos
@@ -1061,7 +1061,7 @@ fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
     pos = p
 }
 
-fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, err: &mut bool): i64 {
+pub fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, err: &mut bool): i64 {
     pos = pos + 1
     let start = pos
     jsonScanString(s, pos, err)
@@ -1077,7 +1077,7 @@ fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, err: &m
     return idx
 }
 
-fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i64, err: &mut bool) {
+pub fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i64, err: &mut bool) {
     pos = pos + 1
     start = pos
     jsonScanString(s, pos, err)
@@ -1087,7 +1087,7 @@ fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i
     }
 }
 
-fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &mut bool): i64 {
+pub fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &mut bool): i64 {
     // Record the source span so rawStr can round-trip the literal verbatim —
     // f64 formatting would mangle large ints ("1572864" → "1.57286e+06").
     let numStart = pos
@@ -1169,7 +1169,7 @@ fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &
 // interleaved while a container is still open. Children park on the scratch stack until
 // the container closes, then commit as one contiguous block — this replaced a pre-counting
 // scan to the matching close bracket that re-read every container body (73% of parse time).
-fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
+pub fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
     pos = pos + 1
     let myIdx = nodes.len()
     nodes.push(JsonNode {
@@ -1216,7 +1216,7 @@ fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
     return myIdx
 }
 
-fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
+pub fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
     pos = pos + 1
     let myIdx = nodes.len()
     nodes.push(JsonNode {
@@ -1291,7 +1291,7 @@ fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childId
     return myIdx
 }
 
-fn jsonEscapeStr(s: &string): string {
+pub fn jsonEscapeStr(s: &string): string {
     var result: string = ""
     var i: i64 = 0
     while i < s.len {
@@ -1331,7 +1331,7 @@ fn jsonEscapeStr(s: &string): string {
 // Serialization — JsonVal value tree + fluent builders.
 // Complements the flat-pool parser above: parse with jsonParse, build with
 // jsonObj()/jsonArr(), serialize with .build() / jsonSer.
-enum JsonVal {
+pub enum JsonVal {
     JNull,
     JBool(bool),
     JInt(i64),
@@ -1345,11 +1345,11 @@ enum JsonVal {
     JRaw(string),
 }
 
-struct JsonMember {
+pub struct JsonMember {
     key: string, val: JsonVal
 }
 
-fn jsonSer(v: &JsonVal): string {
+pub fn jsonSer(v: &JsonVal): string {
     match v {
         JsonVal.JNull => {
             return "null"
@@ -1398,11 +1398,11 @@ fn jsonSer(v: &JsonVal): string {
 
 // Fluent object builder. Methods consume and return self to enable chaining:
 //   jsonObj().str("type", "capabilities").int("seq", 3).build()
-struct JsonObj {
+pub struct JsonObj {
     members: Vec<JsonMember>
 }
 
-fn jsonObj(): JsonObj {
+pub fn jsonObj(): JsonObj {
     return JsonObj {
         members: Vec.new()
     }
@@ -1555,11 +1555,11 @@ impl JsonObj {
 
 // Fluent array builder:
 //   jsonArr().str("a").int(2).obj(jsonObj().bool("ok", true)).build()
-struct JsonArr {
+pub struct JsonArr {
     items: Vec<JsonVal>
 }
 
-fn jsonArr(): JsonArr {
+pub fn jsonArr(): JsonArr {
     return JsonArr {
         items: Vec.new()
     }
@@ -1628,7 +1628,7 @@ impl JsonArr {
 // Emits one event at a time and never materializes the tree — O(depth) memory,
 // for documents too large to hold as a flat pool (cf. Go json.Decoder.Token /
 // Rust StreamDeserializer). jsonPull(src).next() yields tokens until End.
-enum JsonEvent {
+pub enum JsonEvent {
     StartObject,
     EndObject,
     StartArray,
@@ -1642,14 +1642,14 @@ enum JsonEvent {
     Error,
 }
 
-struct JsonToken {
+pub struct JsonToken {
     kind: JsonEvent,
     text: string, // set for Key and Str
     num: f64, // set for Num
     flag: bool, // set for Bool
 }
 
-fn jsonTok(k: JsonEvent): JsonToken {
+pub fn jsonTok(k: JsonEvent): JsonToken {
     return JsonToken {
         kind: k, text: "", num: 0.0, flag: false
     }
@@ -1658,13 +1658,13 @@ fn jsonTok(k: JsonEvent): JsonToken {
 // Container stack entries: 0 = array, 1 = object expecting key, 2 = object
 // expecting value. The colon/comma transitions flip 1<->2 so a string can be
 // classified as Key vs Str without lookahead.
-struct JsonPull {
+pub struct JsonPull {
     src: string,
     pos: i64,
     stack: Vec<i64>,
 }
 
-fn jsonPull(src: string): JsonPull {
+pub fn jsonPull(src: string): JsonPull {
     return JsonPull {
         src: src, pos: 0, stack: Vec.new()
     }
@@ -1672,7 +1672,7 @@ fn jsonPull(src: string): JsonPull {
 
 // Standalone number → f64 (int . frac e exp), advancing pos past the literal.
 // The flat-pool parser's jsonParseNumber is node-coupled, so the scan is inlined.
-fn jsonPullNumber(s: &string, pos: &mut i64): f64 {
+pub fn jsonPullNumber(s: &string, pos: &mut i64): f64 {
     var result: f64 = 0.0
     var negative: bool = false
     if pos < s.len && s[pos] == '-' {

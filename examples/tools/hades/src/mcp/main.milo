@@ -61,32 +61,45 @@ from "../web/jsonaccess" import {
     jsonEsc, bodyI64, bodyStr, frame0Field, frame0Path, scopes0Ref
 }
 
-var mBinPath: string = ""
-var mSrcPath: string = ""
-var mAdapterCmd: string = ""
-var mAdapterKind: string = "" // dialect kind (registry) — selects the DAP adapterID
-var mQ: string = ""
+pub var mBinPath: string = ""
+
+pub var mSrcPath: string = ""
+
+pub var mAdapterCmd: string = ""
+
+pub var mAdapterKind: string = "" // dialect kind (registry) — selects the DAP adapterID
+
+pub var mQ: string = ""
 
 // Co-debug: attach to a live hades-web shared session as a second WS peer.
 // The reader task caches every broadcast; tool calls await conditions by
 // yielding (green scheduler — the reader keeps running underneath).
-var gAttachMode: bool = false
-var gAttFd: i32 = -1
-var gAttPhase: string = "" // idle | running | stopped | exited | dead (set in main)
-var gAttStopped: string = "" // last raw "stopped" broadcast
-var gAttEval: string = "" // last raw "evalResult"
-var gAttChildren: string = "" // last raw "children"
-var gAttThreads: string = "" // last raw "threads" broadcast
-var gAttSrc: string = ""
-var gAttNextId: i64 = 900001 // high id space: avoid colliding with the browser
-var gAttBpLines: Vec<i64> = [] // lines this MCP peer set (for replace semantics)
+pub var gAttachMode: bool = false
+
+pub var gAttFd: i32 = -1
+
+pub var gAttPhase: string = "" // idle | running | stopped | exited | dead (set in main)
+
+pub var gAttStopped: string = "" // last raw "stopped" broadcast
+
+pub var gAttEval: string = "" // last raw "evalResult"
+
+pub var gAttChildren: string = "" // last raw "children"
+
+pub var gAttThreads: string = "" // last raw "threads" broadcast
+
+pub var gAttSrc: string = ""
+
+pub var gAttNextId: i64 = 900001 // high id space: avoid colliding with the browser
+
+pub var gAttBpLines: Vec<i64> = [] // lines this MCP peer set (for replace semantics)
 
 // ── JSON building helpers ──
 
 // Distinct name from web/server.milo's framesJson: milo mangles both to the same
 // linkonce_odr symbol, so a shared name lets the linker discard one body (the
 // web one carries an ipRef field this one lacks — that loss broke disassembly).
-fn mcpFramesJson(raw: &string): string {
+pub fn mcpFramesJson(raw: &string): string {
     var arr = jsonArr()
     match jsonParse(raw.clone()) {
         Result.Ok(doc) => {
@@ -129,7 +142,7 @@ fn mcpFramesJson(raw: &string): string {
     return arr.build()
 }
 
-fn varsJson(raw: &string): string {
+pub fn varsJson(raw: &string): string {
     var out: string = "["
     match jsonParse(raw.clone()) {
         Result.Ok(doc) => {
@@ -163,7 +176,7 @@ fn varsJson(raw: &string): string {
 
 // ── Debug session (turn-based) ──
 
-struct Session {
+pub struct Session {
     cl: DapClient,
     started: bool,
     tid: i64,
@@ -175,7 +188,7 @@ struct Session {
 
 // Send a request and pump until its response, buffering output events and
 // remembering stopped/terminated. Never prints (stdout is MCP protocol).
-fn requestQuiet(s: &mut Session, command: &string, argsJson: &string): Result<DapMsg> {
+pub fn requestQuiet(s: &mut Session, command: &string, argsJson: &string): Result<DapMsg> {
     let want = s.cl.send(command, argsJson)
     if want < 0 {
         return Result.Err("send failed")
@@ -196,7 +209,7 @@ fn requestQuiet(s: &mut Session, command: &string, argsJson: &string): Result<Da
 }
 
 // Pump events until the debuggee stops or terminates.
-fn pumpToStop(s: &mut Session): bool {
+pub fn pumpToStop(s: &mut Session): bool {
     while true {
         match s.cl.recv() {
             Result.Ok(msg) => {
@@ -220,7 +233,7 @@ fn pumpToStop(s: &mut Session): bool {
     return false
 }
 
-fn buildBpArgs(lines: &Vec<i64>): string {
+pub fn buildBpArgs(lines: &Vec<i64>): string {
     var arr: string = "["
     var i: i64 = 0
     while i < lines.len {
@@ -236,7 +249,7 @@ fn buildBpArgs(lines: &Vec<i64>): string {
 }
 
 // Stop snapshot as a JSON string: stack + frame-0 locals + buffered output.
-fn snapshotJson(s: &mut Session): string {
+pub fn snapshotJson(s: &mut Session): string {
     if s.exited {
         let out = "{" + mQ + "exited" + mQ + ":true"
         + "," + mQ + "output" + mQ + ":" + jsonEsc(s.output) + "}"
@@ -287,7 +300,7 @@ fn snapshotJson(s: &mut Session): string {
 // runInTerminal is pinned false in launchExtra: mcp is turn-based and reads the
 // debuggee's stdout via DAP "output" events, not a pty (unlike hades web) — a
 // user key always wins over the dialect default, so this suppresses it.
-fn mcpSpec(): LaunchSpec {
+pub fn mcpSpec(): LaunchSpec {
     return LaunchSpec {
         binPath: mBinPath.clone(), srcPath: mSrcPath.clone(),
         adapterCmd: mAdapterCmd.clone(), adapterKind: mAdapterKind.clone(),
@@ -298,7 +311,7 @@ fn mcpSpec(): LaunchSpec {
 }
 
 // Full launch handshake to the first stop (or exit).
-fn doLaunch(s: &mut Session, bpLines: &Vec<i64>): string {
+pub fn doLaunch(s: &mut Session, bpLines: &Vec<i64>): string {
     // No supportsRunInTerminalRequest here (see mcpSpec).
     let initArgs = "{" + mQ + "adapterID" + mQ + ":" + jsonEsc(adapterIdForKind(mAdapterKind))
     + "," + mQ + "linesStartAt1" + mQ + ":true," + mQ + "columnsStartAt1" + mQ + ":true}"
@@ -343,7 +356,7 @@ fn doLaunch(s: &mut Session, bpLines: &Vec<i64>): string {
 
 // ── Attach mode: drive a live hades-web shared session over WS ──
 
-fn attSend(msg: &string): void {
+pub fn attSend(msg: &string): void {
     // Borrowed client conn: _closed=true so Drop skips teardown; _isClient
     // masks outgoing frames as RFC 6455 requires.
     var conn = WsConn {
@@ -353,7 +366,7 @@ fn attSend(msg: &string): void {
 }
 
 // Reader task: owns the real conn, caches every broadcast into globals.
-fn attReaderLoop(conn: WsConn): void {
+pub fn attReaderLoop(conn: WsConn): void {
     var c = conn
     while true {
         var payload: string = ""
@@ -410,13 +423,13 @@ fn attReaderLoop(conn: WsConn): void {
 
 // Yield until the phase leaves "running" (a step/continue landed) — same
 // no-timeout semantics as launch mode's pumpToStop.
-fn attAwaitStopOrExit(): void {
+pub fn attAwaitStopOrExit(): void {
     while gAttPhase == "running" {
         schedulerYield()
     }
 }
 
-fn attAwaitMsgId(which: &string, id: i64): string {
+pub fn attAwaitMsgId(which: &string, id: i64): string {
     while true {
         var raw: string = ""
         if which == "evalResult" {
@@ -444,7 +457,7 @@ fn attAwaitMsgId(which: &string, id: i64): string {
     return ""
 }
 
-fn attStopField(key: &string): i64 {
+pub fn attStopField(key: &string): i64 {
     match jsonParse(gAttStopped.clone()) {
         Result.Ok(doc) => {
             return doc.i64(key) ?? (-1 as i64)
@@ -455,7 +468,7 @@ fn attStopField(key: &string): i64 {
     }
 }
 
-fn attFrame0Id(): i64 {
+pub fn attFrame0Id(): i64 {
     match jsonParse(gAttStopped.clone()) {
         Result.Ok(doc) => {
             match doc.get("frames") {
@@ -481,7 +494,7 @@ fn attFrame0Id(): i64 {
 }
 
 // Server "stopped" broadcast → MCP snapshot shape (line/frames/locals).
-fn attSnapshot(): string {
+pub fn attSnapshot(): string {
     if gAttPhase == "exited" {
         return "{" + mQ + "exited" + mQ + ":true}"
     }
@@ -536,15 +549,15 @@ fn attSnapshot(): string {
     + "," + mQ + "locals" + mQ + ":" + locals + threads + "}"
 }
 
-fn attSetBp(line: i64): void {
+pub fn attSetBp(line: i64): void {
     attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "setBreakpoint" + mQ + "," + mQ + "path" + mQ + ":" + jsonEsc(gAttSrc) + "," + mQ + "line" + mQ + ":" + line.toString() + "}")
 }
 
-fn attClearBp(line: i64): void {
+pub fn attClearBp(line: i64): void {
     attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "clearBreakpoint" + mQ + "," + mQ + "path" + mQ + ":" + jsonEsc(gAttSrc) + "," + mQ + "line" + mQ + ":" + line.toString() + "}")
 }
 
-fn handleAttachTool(id: i64, name: &string, argsRaw: &string): void {
+pub fn handleAttachTool(id: i64, name: &string, argsRaw: &string): void {
     match jsonParse(argsRaw.clone()) {
         Result.Ok(args) => {
             if name == "debug_state" {
@@ -659,7 +672,7 @@ fn handleAttachTool(id: i64, name: &string, argsRaw: &string): void {
 
 // ── MCP protocol ──
 
-fn readStdinLine(): Result<string> {
+pub fn readStdinLine(): Result<string> {
     var line: string = ""
     var b: [u8; 1] = [0; 1]
     while true {
@@ -684,21 +697,21 @@ fn readStdinLine(): Result<string> {
     return Result.Err("unreachable")
 }
 
-fn writeMsg(msg: &string): void {
+pub fn writeMsg(msg: &string): void {
     print(msg)
     flush()
 }
 
-fn rpcResult(id: i64, resultJson: &string): void {
+pub fn rpcResult(id: i64, resultJson: &string): void {
     writeMsg("{" + mQ + "jsonrpc" + mQ + ":" + mQ + "2.0" + mQ + "," + mQ + "id" + mQ + ":" + id.toString() + "," + mQ + "result" + mQ + ":" + resultJson + "}")
 }
 
-fn rpcError(id: i64, code: i64, message: &string): void {
+pub fn rpcError(id: i64, code: i64, message: &string): void {
     writeMsg("{" + mQ + "jsonrpc" + mQ + ":" + mQ + "2.0" + mQ + "," + mQ + "id" + mQ + ":" + id.toString() + "," + mQ + "error" + mQ + ":{" + mQ + "code" + mQ + ":" + code.toString() + "," + mQ + "message" + mQ + ":" + jsonEsc(message) + "}}")
 }
 
 // Wrap a tool result payload in MCP content form.
-fn toolResult(id: i64, payloadJson: &string, isError: bool): void {
+pub fn toolResult(id: i64, payloadJson: &string, isError: bool): void {
     var err: string = ""
     if isError {
         err = "," + mQ + "isError" + mQ + ":true"
@@ -707,7 +720,7 @@ fn toolResult(id: i64, payloadJson: &string, isError: bool): void {
 }
 
 // One tool descriptor for tools/list.
-fn toolDesc(name: &string, desc: &string, schemaProps: &string, required: &string): string {
+pub fn toolDesc(name: &string, desc: &string, schemaProps: &string, required: &string): string {
     return "{" + mQ + "name" + mQ + ":" + mQ + name + mQ
     + "," + mQ + "description" + mQ + ":" + jsonEsc(desc)
     + "," + mQ + "inputSchema" + mQ + ":{" + mQ + "type" + mQ + ":" + mQ + "object" + mQ
@@ -715,7 +728,7 @@ fn toolDesc(name: &string, desc: &string, schemaProps: &string, required: &strin
     + "," + mQ + "required" + mQ + ":[" + required + "]}}"
 }
 
-fn toolsListJson(): string {
+pub fn toolsListJson(): string {
     let intArr = "{" + mQ + "type" + mQ + ":" + mQ + "array" + mQ + "," + mQ + "items" + mQ + ":{" + mQ + "type" + mQ + ":" + mQ + "integer" + mQ + "}}"
     let str = "{" + mQ + "type" + mQ + ":" + mQ + "string" + mQ + "}"
     let integer = "{" + mQ + "type" + mQ + ":" + mQ + "integer" + mQ + "}"
@@ -732,7 +745,7 @@ fn toolsListJson(): string {
     return "{" + mQ + "tools" + mQ + ":" + tools + "}"
 }
 
-fn jsonI64Arr(doc: &Json, key: &string): Vec<i64> {
+pub fn jsonI64Arr(doc: &Json, key: &string): Vec<i64> {
     var out: Vec<i64> = []
     match doc.get(key) {
         Option.Some(arr) => {
@@ -755,7 +768,7 @@ fn jsonI64Arr(doc: &Json, key: &string): Vec<i64> {
     return out
 }
 
-fn handleToolCall(s: &mut Session, id: i64, name: &string, argsRaw: &string): void {
+pub fn handleToolCall(s: &mut Session, id: i64, name: &string, argsRaw: &string): void {
     match jsonParse(argsRaw.clone()) {
         Result.Ok(args) => {
             if name == "debug_launch" {
@@ -885,7 +898,7 @@ fn handleToolCall(s: &mut Session, id: i64, name: &string, argsRaw: &string): vo
 
 // Subcommand entrypoint: dispatched from src/main.milo as `hades mcp ...`.
 // argv[0] is the display name (skipped by parseFrom); the rest are the mcp flags.
-fn mcpMain(argv: Vec<string>): i32 {
+pub fn mcpMain(argv: Vec<string>): i32 {
     ignoreSignal(SIGPIPE)
     mQ = "\""
 
@@ -993,7 +1006,7 @@ fn mcpMain(argv: Vec<string>): i32 {
     return 0
 }
 
-fn mcpLoop(sess: Session): void {
+pub fn mcpLoop(sess: Session): void {
     var session = sess
     while true {
         var line: string = ""

@@ -14,7 +14,7 @@ from "./ppu" import {
 }
 
 // Emit "LDA #imm ; STA $addr" (5 bytes); return the next offset.
-fn ldaSta(rom: &mut Vec<u8>, o: i64, imm: i64, addr: i64): i64 {
+pub fn ldaSta(rom: &mut Vec<u8>, o: i64, imm: i64, addr: i64): i64 {
     rom[o] = 0xA9 as u8
     rom[o + 1] = (imm & 0xFF) as u8
     rom[o + 2] = 0x8D as u8
@@ -24,7 +24,7 @@ fn ldaSta(rom: &mut Vec<u8>, o: i64, imm: i64, addr: i64): i64 {
 }
 
 // Configure DMA channel 0 and fire it.
-fn dma(rom: &mut Vec<u8>, o: i64, dmap: i64, bbad: i64, src: i64, size: i64): i64 {
+pub fn dma(rom: &mut Vec<u8>, o: i64, dmap: i64, bbad: i64, src: i64, size: i64): i64 {
     var p = o
     p = ldaSta(rom, p, dmap, 0x4300)
     p = ldaSta(rom, p, bbad, 0x4301)
@@ -37,7 +37,7 @@ fn dma(rom: &mut Vec<u8>, o: i64, dmap: i64, bbad: i64, src: i64, size: i64): i6
     return p
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var rom = vecZeros(0x8000)
     var o: i64 = 0
     // CGADD=0 then DMA 32B palette ($8200) -> CGDATA ($2122)

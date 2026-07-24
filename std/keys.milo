@@ -21,7 +21,7 @@ from "std/unicode" import {
 
 // Which key was pressed. `Char` carries a Unicode codepoint rather than a
 // string so decoding never allocates.
-enum KeyCode {
+pub enum KeyCode {
     None,
     Unknown,
     Partial,
@@ -50,7 +50,7 @@ enum KeyCode {
 // `size` is 0 only for `None` (empty input) and `Partial` (incomplete
 // sequence); in both cases the caller must not advance, or it would drop the
 // prefix of a sequence still being received.
-struct Key {
+pub struct Key {
     code: KeyCode,
     ctrl: bool,
     alt: bool,
@@ -58,9 +58,9 @@ struct Key {
     size: i64,
 }
 
-let ESC: i64 = 27
+pub let ESC: i64 = 27
 
-fn plainKey(code: KeyCode, size: i64): Key {
+pub fn plainKey(code: KeyCode, size: i64): Key {
     return Key {
         code: code, ctrl: false, alt: false, shift: false, size: size
     }
@@ -68,7 +68,7 @@ fn plainKey(code: KeyCode, size: i64): Key {
 
 // xterm encodes modifiers as a parameter of 1 + a bitmask, so `ESC [ 1;5 A`
 // is ctrl+Up. Applies to both CSI and SS3 forms.
-fn applyModifier(k: Key, mod: i64): Key {
+pub fn applyModifier(k: Key, mod: i64): Key {
     if mod <= 1 {
         return k
     }
@@ -83,7 +83,7 @@ fn applyModifier(k: Key, mod: i64): Key {
 }
 
 // Map the numeric parameter of a `ESC [ N ~` sequence to its key.
-fn tildeKey(n: i64): KeyCode {
+pub fn tildeKey(n: i64): KeyCode {
     if n == 1 || n == 7 {
         return KeyCode.Home
     }
@@ -117,7 +117,7 @@ fn tildeKey(n: i64): KeyCode {
 }
 
 // Final letter of a CSI/SS3 sequence to its key.
-fn letterKey(b: i64): KeyCode {
+pub fn letterKey(b: i64): KeyCode {
     if b == 65 {
         return KeyCode.Up
     }
@@ -147,7 +147,7 @@ fn letterKey(b: i64): KeyCode {
 // their own identities and are matched before falling through to ctrl+letter,
 // because a user pressing Tab did not press ctrl+I even though the byte is the
 // same.
-fn controlKey(b: i64): Key {
+pub fn controlKey(b: i64): Key {
     if b == 9 {
         return plainKey(KeyCode.Tab, 1)
     }
@@ -176,7 +176,7 @@ fn controlKey(b: i64): Key {
 
 // Decode a CSI sequence: the caller has already matched `ESC [`, and `at`
 // points just past it.
-fn decodeCsi(s: &string, start: i64, at: i64): Key {
+pub fn decodeCsi(s: &string, start: i64, at: i64): Key {
     var i = at
     // Private-mode sequences (`ESC [ ? ...`) are terminal replies, not keys.
     var private = false
@@ -242,7 +242,7 @@ fn decodeCsi(s: &string, start: i64, at: i64): Key {
 // Returns `None` with size 0 on empty input, and `Partial` with size 0 when the
 // bytes end mid-escape-sequence — the caller should keep the tail and retry
 // after reading more.
-fn decodeKey(s: &string, at: i64): Key {
+pub fn decodeKey(s: &string, at: i64): Key {
     if at < 0 || at >= s.len {
         return plainKey(KeyCode.None, 0)
     }
@@ -299,7 +299,7 @@ fn decodeKey(s: &string, at: i64): Key {
 // Treat a buffer known to be complete as a finished key: resolves the lone-ESC
 // ambiguity in favour of the Escape key. Use this after an input read has timed
 // out with no further bytes.
-fn decodeKeyFinal(s: &string, at: i64): Key {
+pub fn decodeKeyFinal(s: &string, at: i64): Key {
     let k = decodeKey(s, at)
     match k.code {
         KeyCode.Partial => {

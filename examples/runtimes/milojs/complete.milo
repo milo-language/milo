@@ -21,7 +21,7 @@ from "./eval" import {
     getMember, NATIVE_DATE, NATIVE_STRING
 }
 
-fn cmplIsIdentByte(b: u8): bool {
+pub fn cmplIsIdentByte(b: u8): bool {
     let c = b as i64
     if c >= 97 && c <= 122 {
         return true
@@ -35,7 +35,7 @@ fn cmplIsIdentByte(b: u8): bool {
     return c == 95 || c == 36 // _ $
 }
 
-fn cmplSlice(s: &string, from: i64, to: i64): string {
+pub fn cmplSlice(s: &string, from: i64, to: i64): string {
     var out = ""
     var i = from
     while i < to {
@@ -45,7 +45,7 @@ fn cmplSlice(s: &string, from: i64, to: i64): string {
     return out
 }
 
-fn cmplStartsWith(s: &string, pre: &string): bool {
+pub fn cmplStartsWith(s: &string, pre: &string): bool {
     if pre.len() > s.len() {
         return false
     }
@@ -59,7 +59,7 @@ fn cmplStartsWith(s: &string, pre: &string): bool {
     return true
 }
 
-fn cmplLess(a: &string, b: &string): bool {
+pub fn cmplLess(a: &string, b: &string): bool {
     var i: i64 = 0
     while i < a.len() && i < b.len() {
         if a[i] != b[i] {
@@ -70,7 +70,7 @@ fn cmplLess(a: &string, b: &string): bool {
     return a.len() < b.len()
 }
 
-fn cmplContains(v: &Vec<string>, s: &string): bool {
+pub fn cmplContains(v: &Vec<string>, s: &string): bool {
     for i in 0..v.len() {
         if v[i] == s {
             return true
@@ -82,20 +82,22 @@ fn cmplContains(v: &Vec<string>, s: &string): bool {
 // Candidate kinds, in display order. Splitting them is the whole point of the
 // listing: with ~90 globals in scope, the two names *you* defined this session are
 // otherwise lost in the middle of the alphabet.
-let CMPL_SESSION: i64 = 0
-let CMPL_BUILTIN: i64 = 1
-let CMPL_KEYWORD: i64 = 2
+pub let CMPL_SESSION: i64 = 0
+
+pub let CMPL_BUILTIN: i64 = 1
+
+pub let CMPL_KEYWORD: i64 = 2
 
 // push if it matches the prefix and isn't already present — property lookup walks
 // a proto chain, so a shadowed key would otherwise appear twice
-fn cmplAdd(out: &mut Vec<string>, kinds: &mut Vec<i64>, name: &string, prefix: &string, kind: i64) {
+pub fn cmplAdd(out: &mut Vec<string>, kinds: &mut Vec<i64>, name: &string, prefix: &string, kind: i64) {
     if cmplStartsWith(name, prefix) && !cmplContains(out, name) {
         out.push(name.clone())
         kinds.push(kind)
     }
 }
 
-fn cmplAddAll(out: &mut Vec<string>, kinds: &mut Vec<i64>, names: &string, prefix: &string, kind: i64) {
+pub fn cmplAddAll(out: &mut Vec<string>, kinds: &mut Vec<i64>, names: &string, prefix: &string, kind: i64) {
     var cur = ""
     for i in 0..names.len() {
         if names[i] == 32 as u8 {
@@ -115,7 +117,7 @@ fn cmplAddAll(out: &mut Vec<string>, kinds: &mut Vec<i64>, names: &string, prefi
 // Sort by (kind, name) so each kind lands in one contiguous run the printer can
 // break into a group. Insertion sort: candidate lists are small and already
 // near-sorted (props come out in definition order).
-fn cmplSort(v: &mut Vec<string>, kinds: &mut Vec<i64>) {
+pub fn cmplSort(v: &mut Vec<string>, kinds: &mut Vec<i64>) {
     var i: i64 = 1
     while i < v.len() {
         var j = i
@@ -135,21 +137,21 @@ fn cmplSort(v: &mut Vec<string>, kinds: &mut Vec<i64>) {
 // Kept in sync by hand with builtins.milo's stringMethod / eval.milo's
 // isArrayMethod — those dispatch on a name rather than holding a table, so
 // there's nothing to enumerate at runtime.
-fn cmplStringMethods(): string {
+pub fn cmplStringMethods(): string {
     return "charAt charCodeAt concat endsWith includes indexOf lastIndexOf length padEnd padStart repeat replace slice split startsWith substring toLowerCase toString toUpperCase trim trimEnd trimStart"
 }
 
-fn cmplArrayMethods(): string {
+pub fn cmplArrayMethods(): string {
     return "concat every fill filter find findIndex flat forEach includes indexOf join lastIndexOf length map pop push reduce reverse shift slice some sort splice unshift"
 }
 
-fn cmplKeywords(): string {
+pub fn cmplKeywords(): string {
     return "async await break case catch class const continue delete do else export false finally for function if import instanceof let new null of return static super switch this throw true try typeof undefined var void while yield"
 }
 
 // Resolve a dotted base like `foo.bar` by reading bindings/properties only.
 // Returns Undefined when any hop is missing or non-object.
-fn cmplResolveBase(st: &Interp, base: &string): JSValue {
+pub fn cmplResolveBase(st: &Interp, base: &string): JSValue {
     var cur = JSValue.Undefined
     var seg = ""
     var first = true
@@ -186,7 +188,7 @@ fn cmplResolveBase(st: &Interp, base: &string): JSValue {
     return cur
 }
 
-fn cmplObjectProps(st: &Interp, o: i64, prefix: &string, out: &mut Vec<string>, kinds: &mut Vec<i64>) {
+pub fn cmplObjectProps(st: &Interp, o: i64, prefix: &string, out: &mut Vec<string>, kinds: &mut Vec<i64>) {
     var cur = o
     while cur >= 0 {
         for i in 0..st.objects[cur].props.len() {
@@ -202,20 +204,20 @@ fn cmplObjectProps(st: &Interp, o: i64, prefix: &string, out: &mut Vec<string>, 
 // `console` and `require` are recognised by name at the call site in eval.milo
 // rather than being scope bindings, so they never show up in a scope walk —
 // completion has to know about them explicitly.
-fn cmplPseudoGlobals(): string {
+pub fn cmplPseudoGlobals(): string {
     return "console require"
 }
 
-fn cmplConsoleMethods(): string {
+pub fn cmplConsoleMethods(): string {
     return "error info log warn"
 }
 
 // Every function value carries these regardless of what it is.
-fn cmplFunctionMethods(): string {
+pub fn cmplFunctionMethods(): string {
     return "apply bind call length name prototype"
 }
 
-fn cmplMembers(st: &Interp, base: &string, prefix: &string, out: &mut Vec<string>, kinds: &mut Vec<i64>) {
+pub fn cmplMembers(st: &Interp, base: &string, prefix: &string, out: &mut Vec<string>, kinds: &mut Vec<i64>) {
     if base == "console" {
         cmplAddAll(out, kinds, cmplConsoleMethods(), prefix, CMPL_BUILTIN)
         return
@@ -253,7 +255,7 @@ fn cmplMembers(st: &Interp, base: &string, prefix: &string, out: &mut Vec<string
 
 // Bindings past `builtinCount` were defined by this session — setupGlobals only
 // ever appends, so the boundary index taken at REPL start stays valid.
-fn cmplGlobals(st: &Interp, prefix: &string, out: &mut Vec<string>, kinds: &mut Vec<i64>, builtinCount: i64) {
+pub fn cmplGlobals(st: &Interp, prefix: &string, out: &mut Vec<string>, kinds: &mut Vec<i64>, builtinCount: i64) {
     for i in 0..st.scopes[0].vars.len() {
         var kind = CMPL_BUILTIN
         if i >= builtinCount {
@@ -268,7 +270,7 @@ fn cmplGlobals(st: &Interp, prefix: &string, out: &mut Vec<string>, kinds: &mut 
 // Fill `out` with sorted candidates for the word ending at the end of `line`, and
 // return the byte offset where that word starts (so the caller knows how much of
 // the line a chosen candidate replaces).
-fn completeAt(st: &Interp, line: &string, out: &mut Vec<string>, kinds: &mut Vec<i64>, builtinCount: i64): i64 {
+pub fn completeAt(st: &Interp, line: &string, out: &mut Vec<string>, kinds: &mut Vec<i64>, builtinCount: i64): i64 {
     var start = line.len()
     while start > 0 && cmplIsIdentByte(line[start - 1]) {
         start = start - 1
@@ -292,7 +294,7 @@ fn completeAt(st: &Interp, line: &string, out: &mut Vec<string>, kinds: &mut Vec
 
 // Longest byte prefix shared by every candidate — what tab expands to when the
 // match isn't unique.
-fn cmplCommonPrefix(cands: &Vec<string>): string {
+pub fn cmplCommonPrefix(cands: &Vec<string>): string {
     if cands.len() == 0 {
         return ""
     }

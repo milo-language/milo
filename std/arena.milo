@@ -20,14 +20,14 @@
 // release that slot. Safe to copy, store in fields, and return (unlike &T). T is
 // phantom (not stored) so a handle can't be used with an arena of another type.
 @derive(Eq)
-struct Handle<T> {
+pub struct Handle<T> {
     arenaId: i64,
     index: i32,
     generation: i32,
 }
 
 // Generational arena backed by Vec<T>.
-struct Arena<T> {
+pub struct Arena<T> {
     id: i64,
     data: Vec<T>,
     gens: Vec<i32>,
@@ -37,10 +37,10 @@ struct Arena<T> {
 
 // Arena creation may happen on Promise.blocking workers, so identity allocation
 // uses the compiler's seq-cst atomic primitive rather than a racy global increment.
-var _nextArenaId: i64 = 1
+pub var _nextArenaId: i64 = 1
 
 // Create a new empty arena.
-fn arenaNew<T>(): Arena<T> {
+pub fn arenaNew<T>(): Arena<T> {
     var id: i64 = 0
     unsafe {
         id = _atomicAddI64((_nextArenaId.addrOf()) as *u8, 1)
@@ -56,7 +56,7 @@ fn arenaNew<T>(): Arena<T> {
 }
 
 // Insert a value and return a handle to it.
-fn arenaAlloc<T>(a: &mut Arena<T>, val: T): Handle<T> {
+pub fn arenaAlloc<T>(a: &mut Arena<T>, val: T): Handle<T> {
     if a.freeList.len > 0 {
         let fi = a.freeList[a.freeList.len - 1]
         a.freeList.pop()!
@@ -80,7 +80,7 @@ fn arenaAlloc<T>(a: &mut Arena<T>, val: T): Handle<T> {
 }
 
 // Check whether a handle is still valid.
-fn arenaValid<T>(a: &Arena<T>, h: Handle<T>): bool {
+pub fn arenaValid<T>(a: &Arena<T>, h: Handle<T>): bool {
     if h.arenaId != a.id {
         return false
     }
@@ -95,7 +95,7 @@ fn arenaValid<T>(a: &Arena<T>, h: Handle<T>): bool {
 }
 
 // Free a slot, bumping its generation so stale handles are detected.
-fn arenaFree<T>(a: &mut Arena<T>, h: Handle<T>): bool {
+pub fn arenaFree<T>(a: &mut Arena<T>, h: Handle<T>): bool {
     if h.arenaId != a.id {
         return false
     }
@@ -118,7 +118,7 @@ fn arenaFree<T>(a: &mut Arena<T>, h: Handle<T>): bool {
 // Get a copy of the value at a handle. Returns None if the handle is stale.
 // Returns by value, not &T, because second-class refs cannot be stored in
 // Option<_>. For large T, prefer arenaModify to avoid the copy churn.
-fn arenaGet<T>(a: &Arena<T>, h: Handle<T>): Option<T> {
+pub fn arenaGet<T>(a: &Arena<T>, h: Handle<T>): Option<T> {
     if h.arenaId != a.id {
         return Option.None
     }
@@ -136,7 +136,7 @@ fn arenaGet<T>(a: &Arena<T>, h: Handle<T>): Option<T> {
 }
 
 // Overwrite the value at a handle. Returns false if the handle is stale.
-fn arenaSet<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool {
+pub fn arenaSet<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool {
     if h.arenaId != a.id {
         return false
     }
@@ -157,7 +157,7 @@ fn arenaSet<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool {
 // In-place update via closure. Avoids the manual get/modify/set dance and
 // is the recommended way to mutate a single field of an arena value.
 // Returns false if the handle is stale (closure not invoked).
-fn arenaModify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
+pub fn arenaModify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
     if h.arenaId != a.id {
         return false
     }
@@ -179,7 +179,7 @@ fn arenaModify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
 // valid only inside the closure, never stored or returned. Returns None (and
 // does not call f) if the handle is stale. This is the zero-copy alternative
 // to arenaGet for large T — read just the field(s) you need inside f.
-fn arenaWith<T, R>(a: &Arena<T>, h: Handle<T>, f: (&T) => R): Option<R> {
+pub fn arenaWith<T, R>(a: &Arena<T>, h: Handle<T>, f: (&T) => R): Option<R> {
     if h.arenaId != a.id {
         return Option.None
     }
@@ -200,7 +200,7 @@ fn arenaWith<T, R>(a: &Arena<T>, h: Handle<T>, f: (&T) => R): Option<R> {
 // rewrite. Mutate fields of the live value directly inside f. Returns false
 // (f not called) if the handle is stale. Preferred over arenaModify when T is
 // large or you only touch a field or two.
-fn arenaModifyMut<T>(a: &mut Arena<T>, h: Handle<T>, f: (&mut T) => void): bool {
+pub fn arenaModifyMut<T>(a: &mut Arena<T>, h: Handle<T>, f: (&mut T) => void): bool {
     if h.arenaId != a.id {
         return false
     }
@@ -219,7 +219,7 @@ fn arenaModifyMut<T>(a: &mut Arena<T>, h: Handle<T>, f: (&mut T) => void): bool 
 }
 
 // Number of live entries.
-fn arenaLen<T>(a: &Arena<T>): i64
+pub fn arenaLen<T>(a: &Arena<T>): i64
 ensures result >= 0
 {
     return a.live

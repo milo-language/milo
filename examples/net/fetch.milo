@@ -3,7 +3,7 @@ from "std/fetch" import {
     fetch
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let resp = fetch("https://httpbin.org/get")
     match resp {
         Result.Ok(r) => {

@@ -7,18 +7,18 @@ from "./m68k" import {
     Mem
 }
 
-fn frameWidth(m: &Mem): i64 {
+pub fn frameWidth(m: &Mem): i64 {
     if (m.vdpRegs[12] & 0x1) != 0 {
         return 320
     }
     return 256
 }
 
-fn frameHeight(_m: &Mem): i64 {
+pub fn frameHeight(_m: &Mem): i64 {
     return 224
 }
 
-fn planeCells(code: i64): i64 {
+pub fn planeCells(code: i64): i64 {
     if code == 0 {
         return 32
     }
@@ -31,19 +31,19 @@ fn planeCells(code: i64): i64 {
 // Genesis 9-bit CRAM entry (----bbb-ggg-rrr-) to 8-bit RGB components. Each
 // channel is a 3-bit field, so the result is one of 8 evenly-spaced levels in
 // [0, 252] — a bound the RGBA packing downstream relies on.
-fn cramR(e: i64): i64
+pub fn cramR(e: i64): i64
 ensures result >= 0 && result <= 252
 {
     return ((e >> 1) & 0x7) * 36
 }
 
-fn cramG(e: i64): i64
+pub fn cramG(e: i64): i64
 ensures result >= 0 && result <= 252
 {
     return ((e >> 5) & 0x7) * 36
 }
 
-fn cramB(e: i64): i64
+pub fn cramB(e: i64): i64
 ensures result >= 0 && result <= 252
 {
     return ((e >> 9) & 0x7) * 36
@@ -52,7 +52,7 @@ ensures result >= 0 && result <= 252
 // Apply a shadow/highlight brightness mode (0 normal, 1 shadow, 2 highlight) to a
 // single 0-252 colour component. Shadow halves it; highlight lifts it into the
 // upper half of the range.
-fn shComp(c: i64, mode: i64): i64
+pub fn shComp(c: i64, mode: i64): i64
 requires c >= 0 && c <= 252
 ensures result >= 0 && result <= 255
 {
@@ -71,19 +71,19 @@ ensures result >= 0 && result <= 255
 
 // Decode a packed framebuffer pixel (index in bits 0-5, brightness mode in bits
 // 6-7) into 8-bit R/G/B via CRAM.
-fn pixelR(m: &Mem, packed: i64): i64 {
+pub fn pixelR(m: &Mem, packed: i64): i64 {
     return shComp(cramR(m.cram[packed & 0x3F]), (packed >> 6) & 0x3)
 }
 
-fn pixelG(m: &Mem, packed: i64): i64 {
+pub fn pixelG(m: &Mem, packed: i64): i64 {
     return shComp(cramG(m.cram[packed & 0x3F]), (packed >> 6) & 0x3)
 }
 
-fn pixelB(m: &Mem, packed: i64): i64 {
+pub fn pixelB(m: &Mem, packed: i64): i64 {
     return shComp(cramB(m.cram[packed & 0x3F]), (packed >> 6) & 0x3)
 }
 
-fn vram8(m: &Mem, addr: i64): i64 {
+pub fn vram8(m: &Mem, addr: i64): i64 {
     let a = addr & 0xFFFF
     if a < m.vram.len {
         return m.vram[a] as i64
@@ -92,7 +92,7 @@ fn vram8(m: &Mem, addr: i64): i64 {
 }
 
 // Wrap a (possibly negative) plane coordinate into [0, span).
-fn wrapCoord(v: i64, span: i64): i64
+pub fn wrapCoord(v: i64, span: i64): i64
 requires span > 0
 ensures result >= 0 && result < span
 {
@@ -105,7 +105,7 @@ ensures result >= 0 && result < span
 
 // Horizontal scroll for plane P (0=A, 1=B) on scanline y, per the HSCROLL table in
 // VRAM (reg13). Modes (reg11 bits 1-0): 00 full-screen, 10 per-8px-cell, 11 per-line.
-fn hscrollFor(m: &Mem, y: i64, planeB: bool): i64 {
+pub fn hscrollFor(m: &Mem, y: i64, planeB: bool): i64 {
     let hbase = (m.vdpRegs[13] & 0x3F) << 10
     let mode = m.vdpRegs[11] & 0x3
     var row: i64 = 0
@@ -125,7 +125,7 @@ fn hscrollFor(m: &Mem, y: i64, planeB: bool): i64 {
 
 // Vertical scroll for plane P from VSRAM. Full-screen mode (reg11 bit2 clear):
 // entry 0=A, 1=B. Per-column mode: one entry per 16px column (2 cells).
-fn vscrollFor(m: &Mem, planeB: bool, colPair: i64): i64 {
+pub fn vscrollFor(m: &Mem, planeB: bool, colPair: i64): i64 {
     var idx: i64 = 0
     if (m.vdpRegs[11] & 0x4) != 0 {
         idx = (colPair * 2) % 40
@@ -138,11 +138,11 @@ fn vscrollFor(m: &Mem, planeB: bool, colPair: i64): i64 {
 
 // A sampled pixel is packed: -1 = transparent, else bit8 = priority, bits5-0 =
 // the 6-bit CRAM index.
-let PRI: i64 = 0x100
+pub let PRI: i64 = 0x100
 
 // Sample one nametable cell at absolute plane pixel (px,py). `cellStride` is the
 // nametable width in cells. Returns the packed value (priority + index) or -1.
-fn sampleNametable(m: &Mem, base: i64, stride: i64, cellX: i64, cellY: i64, fxIn: i64, fyIn: i64): i64 {
+pub fn sampleNametable(m: &Mem, base: i64, stride: i64, cellX: i64, cellY: i64, fxIn: i64, fyIn: i64): i64 {
     let entryAddr = base + (cellY * stride + cellX) * 2
     let entry = (vram8(m, entryAddr) << 8) | vram8(m, entryAddr + 1)
     let tileIdx = entry & 0x7FF
@@ -175,13 +175,13 @@ fn sampleNametable(m: &Mem, base: i64, stride: i64, cellX: i64, cellY: i64, fxIn
 }
 
 // Scrolling background plane sample at absolute plane pixel (px,py).
-fn samplePlane(m: &Mem, base: i64, pw: i64, ph: i64, px: i64, py: i64): i64 {
+pub fn samplePlane(m: &Mem, base: i64, pw: i64, ph: i64, px: i64, py: i64): i64 {
     return sampleNametable(m, base, pw, (px / 8) % pw, (py / 8) % ph, px % 8, py % 8)
 }
 
 // True where the window plane replaces plane A (reg17 horizontal, reg18 vertical
 // boundaries; the window covers the union of the two spans).
-fn inWindow(m: &Mem, x: i64, y: i64): bool {
+pub fn inWindow(m: &Mem, x: i64, y: i64): bool {
     let rv = m.vdpRegs[18]
     let vval = (rv & 0x1F) * 8
     var yin = false
@@ -202,7 +202,7 @@ fn inWindow(m: &Mem, x: i64, y: i64): bool {
 }
 
 // Window plane sample (no scroll). Nametable width is 64 cells for H40, else 32.
-fn sampleWindow(m: &Mem, x: i64, y: i64, width: i64): i64 {
+pub fn sampleWindow(m: &Mem, x: i64, y: i64, width: i64): i64 {
     let stride: i64 = if width == 320 {
         64
     } else {
@@ -217,7 +217,7 @@ fn sampleWindow(m: &Mem, x: i64, y: i64, width: i64): i64 {
 }
 
 // Build the full frame as a Vec<i64> of CRAM indices: planes B then A, sprites on top.
-fn renderIndexed(m: &Mem): Vec<i64> {
+pub fn renderIndexed(m: &Mem): Vec<i64> {
     let width = frameWidth(m)
     let height = frameHeight(m)
     let planeW = planeCells(m.vdpRegs[16] & 0x3)
@@ -334,7 +334,7 @@ fn renderIndexed(m: &Mem): Vec<i64> {
 
 // Walk the sprite attribute table's link list; draw each sprite's cells (tiles are
 // column-major within a sprite). Colour 0 is transparent.
-fn drawSprites(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64) {
+pub fn drawSprites(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64) {
     let satBase = (m.vdpRegs[5] & 0x7F) << 9
     var sprIdx: i64 = 0
     var guard: i64 = 0
@@ -384,7 +384,7 @@ fn drawSprites(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64) {
     }
 }
 
-fn drawSprTile(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64, tile: i64, ox: i64, oy: i64, pal: i64, hflip: bool, vflip: bool, pri: bool) {
+pub fn drawSprTile(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64, tile: i64, ox: i64, oy: i64, pal: i64, hflip: bool, vflip: bool, pri: bool) {
     var py: i64 = 0
     while py < 8 {
         var px: i64 = 0

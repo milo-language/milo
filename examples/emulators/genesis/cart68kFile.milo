@@ -8,7 +8,7 @@ from "./cart68k" import {
     Cart, parseCart
 }
 
-fn loadCart(path: &string): Result<Cart, string> {
+pub fn loadCart(path: &string): Result<Cart, string> {
     var raw = ""
     match readFile(path) {
         Result.Ok(s) => {

@@ -15,35 +15,41 @@ from "std/platform" import {
 // two-record INPUT_RECORD encoding. That keeps readKey below byte-identical in behaviour
 // to the other platforms rather than forking every caller.
 
-let KEY_NONE: i32 = 0
-let KEY_UP: i32 = 1
-let KEY_DOWN: i32 = 2
-let KEY_LEFT: i32 = 3
-let KEY_RIGHT: i32 = 4
-let KEY_QUIT: i32 = 5
-let KEY_SPACE: i32 = 6
+pub let KEY_NONE: i32 = 0
+
+pub let KEY_UP: i32 = 1
+
+pub let KEY_DOWN: i32 = 2
+
+pub let KEY_LEFT: i32 = 3
+
+pub let KEY_RIGHT: i32 = 4
+
+pub let KEY_QUIT: i32 = 5
+
+pub let KEY_SPACE: i32 = 6
 
 // STD_INPUT_HANDLE (-10) / STD_OUTPUT_HANDLE (-11) as passed to GetStdHandle.
-extern fn GetStdHandle(which: i32): i64
+pub extern fn GetStdHandle(which: i32): i64
 
-extern fn GetConsoleMode(handle: i64, mode: *u8): i32
+pub extern fn GetConsoleMode(handle: i64, mode: *u8): i32
 
-extern fn SetConsoleMode(handle: i64, mode: u32): i32
+pub extern fn SetConsoleMode(handle: i64, mode: u32): i32
 
 // CONSOLE_SCREEN_BUFFER_INFO is 22 bytes: COORD size, COORD cursor, WORD attrs, then
 // the SMALL_RECT window (left, top, right, bottom) at offset 10 — the window, not the
 // buffer, is what corresponds to the visible rows/cols that ioctl(TIOCGWINSZ) reports.
-extern fn GetConsoleScreenBufferInfo(handle: i64, info: *u8): i32
+pub extern fn GetConsoleScreenBufferInfo(handle: i64, info: *u8): i32
 
-struct TermState {
+pub struct TermState {
     saved: u32,
 }
 
-fn stdinHandle(): i64 {
+pub fn stdinHandle(): i64 {
     return GetStdHandle(-10)
 }
 
-fn getConsoleModeOf(handle: i64): u32 {
+pub fn getConsoleModeOf(handle: i64): u32 {
     var mode: u32 = 0
     unsafe {
         GetConsoleMode(handle, mode.addrOf() as *u8)
@@ -53,12 +59,12 @@ fn getConsoleModeOf(handle: i64): u32 {
 
 // ENABLE_PROCESSED_INPUT 0x1 | ENABLE_LINE_INPUT 0x2 | ENABLE_ECHO_INPUT 0x4 cleared,
 // ENABLE_VIRTUAL_TERMINAL_INPUT 0x200 set.
-fn rawModeFrom(saved: u32): u32 {
+pub fn rawModeFrom(saved: u32): u32 {
     let cleared = (saved as i64) & 4294967288
     return ((cleared | 512) as u32)
 }
 
-fn enableRawMode(): TermState {
+pub fn enableRawMode(): TermState {
     let h = stdinHandle()
     let saved = getConsoleModeOf(h)
     SetConsoleMode(h, rawModeFrom(saved))
@@ -70,18 +76,18 @@ fn enableRawMode(): TermState {
 // The Windows console has no VMIN/VTIME: ReadFile on a console handle in raw mode
 // already blocks until at least one record is available, which is the blocking
 // behaviour this variant asks for. The two entry points therefore agree here.
-fn enableRawModeBlocking(): TermState {
+pub fn enableRawModeBlocking(): TermState {
     return enableRawMode()
 }
 
-fn restoreTerminal(state: &TermState): void {
+pub fn restoreTerminal(state: &TermState): void {
     SetConsoleMode(stdinHandle(), state.saved)
 }
 
 // read a keypress without blocking; returns KEY_* constant.
 // Identical decoding to the POSIX arms because ENABLE_VIRTUAL_TERMINAL_INPUT makes the
 // console emit the same ANSI sequences.
-fn readKey(): i32 {
+pub fn readKey(): i32 {
     var buf: [u8; 3] = [0; 3]
     let n = read(0, buf, 1)
     if n <= 0 {
@@ -113,14 +119,14 @@ fn readKey(): i32 {
     return KEY_NONE
 }
 
-struct TermSize {
+pub struct TermSize {
     rows: i64,
     cols: i64,
 }
 
 // Queried on stdout, matching the POSIX arms, so it still works with piped input.
 // Falls back to 80x24 when stdout is not a console (redirected, or under a harness).
-fn terminalSize(): TermSize {
+pub fn terminalSize(): TermSize {
     var info: [u16; 11] = [0; 11]
     var ok: i32 = 0
     unsafe {

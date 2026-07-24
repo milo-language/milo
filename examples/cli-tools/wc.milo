@@ -8,7 +8,7 @@ from "std/io" import {
     readFile, readStdin
 }
 
-fn pad(n: i64): string {
+pub fn pad(n: i64): string {
     let s = n.toString()
     var result: string = ""
     for p in 0..8 - s.len {
@@ -17,7 +17,7 @@ fn pad(n: i64): string {
     return result + s
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("wc", "count lines, words, and characters")
     parser.addOptionalPositional("file", "file to count (default: stdin)")
     parser.addBool("lines", "l", "only show line count")

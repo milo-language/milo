@@ -19,7 +19,7 @@ from "std/runtime" import {
     schedulerEnsureInit
 }
 
-fn printHelp(): void {
+pub fn printHelp(): void {
     print("Usage: timeout [OPTION] DURATION COMMAND [ARG]...")
     print("Start COMMAND, and kill it if still running after DURATION.")
     print("")
@@ -41,7 +41,7 @@ fn printHelp(): void {
     print("  127  COMMAND not found")
 }
 
-fn parseDuration(s: &string): i64 {
+pub fn parseDuration(s: &string): i64 {
     var num: i64 = 0
     var i: i64 = 0
     while i < s.len {
@@ -65,7 +65,7 @@ fn parseDuration(s: &string): i64 {
     return num
 }
 
-fn parseSignal(s: &string): i32 {
+pub fn parseSignal(s: &string): i32 {
     if s == "TERM" || s == "SIGTERM" || s == "15" {
         return 15
     }
@@ -110,7 +110,7 @@ fn parseSignal(s: &string): i32 {
     return -1
 }
 
-struct TimeoutOpts {
+pub struct TimeoutOpts {
     signal: i32,
     killAfterMs: i64,
     hasKillAfter: bool,
@@ -121,7 +121,7 @@ struct TimeoutOpts {
 
 // flag parsing in its own function to avoid codegen bug:
 // string clone + break in while loop + fork() in same function = SIGTRAP
-fn parseFlags(argv: &Vec<string>): TimeoutOpts {
+pub fn parseFlags(argv: &Vec<string>): TimeoutOpts {
     var opts = TimeoutOpts {
         signal: 15,
         killAfterMs: 0,
@@ -189,7 +189,7 @@ fn parseFlags(argv: &Vec<string>): TimeoutOpts {
     return opts
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     let opts = parseFlags(argv)
     let cmdStart = opts.cmdStart

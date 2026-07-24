@@ -14,7 +14,7 @@ from "std/arena" import {
     Arena, Handle, arenaNew, arenaAlloc, arenaWith
 }
 
-enum Value {
+pub enum Value {
     Int(i64),
     Bool(bool),
     Str(string),
@@ -23,7 +23,7 @@ enum Value {
 
 // AST node. Child slots are arena handles (Handle<Expr> is just indices, so the
 // recursive enum has finite size). String payloads hold operator/name/literal.
-enum Expr {
+pub enum Expr {
     Num(i64),
     StrLit(string),
     Var(string),
@@ -32,12 +32,12 @@ enum Expr {
     Let(string, Handle<Expr>, Handle<Expr>),
 }
 
-struct Binding {
+pub struct Binding {
     name: string,
     value: Value,
 }
 
-fn intToStr(n: i64): string {
+pub fn intToStr(n: i64): string {
     if n == 0 {
         return "0"
     }
@@ -66,7 +66,7 @@ fn intToStr(n: i64): string {
 }
 
 // Clone a Value behind a borrow — `match &Value` binds Str's payload as &string.
-fn cloneValue(v: &Value): Value {
+pub fn cloneValue(v: &Value): Value {
     match v {
         Value.Int(n) => {
             return Value.Int(n)
@@ -83,7 +83,7 @@ fn cloneValue(v: &Value): Value {
     }
 }
 
-fn valueToString(v: &Value): string {
+pub fn valueToString(v: &Value): string {
     match v {
         Value.Int(n) => {
             return intToStr(n)
@@ -103,7 +103,7 @@ fn valueToString(v: &Value): string {
     }
 }
 
-fn asInt(v: &Value): i64 {
+pub fn asInt(v: &Value): i64 {
     match v {
         Value.Int(n) => {
             return n
@@ -122,7 +122,7 @@ fn asInt(v: &Value): i64 {
 
 // Deep-copy an Expr out of the arena. `match &Expr` binds string payloads as
 // borrows (cloned here) and Copy handle payloads as values (used directly).
-fn cloneExpr(e: &Expr): Expr {
+pub fn cloneExpr(e: &Expr): Expr {
     match e {
         Expr.Num(n) => {
             return Expr.Num(n)
@@ -145,7 +145,7 @@ fn cloneExpr(e: &Expr): Expr {
     }
 }
 
-fn readExpr(arena: &Arena<Expr>, h: Handle<Expr>): Expr {
+pub fn readExpr(arena: &Arena<Expr>, h: Handle<Expr>): Expr {
     let r = arenaWith(arena, h, (e: &Expr): Expr => cloneExpr(e))
     match r {
         Option.Some(x) => {
@@ -157,7 +157,7 @@ fn readExpr(arena: &Arena<Expr>, h: Handle<Expr>): Expr {
     }
 }
 
-fn envLookup(env: &Vec<Binding>, name: &string): Value {
+pub fn envLookup(env: &Vec<Binding>, name: &string): Value {
     var i = env.len() - 1
     while i >= 0 {
         if env[i].name == name {
@@ -168,7 +168,7 @@ fn envLookup(env: &Vec<Binding>, name: &string): Value {
     return Value.Nil
 }
 
-fn evalBin(op: &string, a: &Value, b: &Value): Value {
+pub fn evalBin(op: &string, a: &Value, b: &Value): Value {
     let x = asInt(a)
     let y = asInt(b)
     if op == "+" {
@@ -198,7 +198,7 @@ fn evalBin(op: &string, a: &Value, b: &Value): Value {
     return Value.Nil
 }
 
-fn evalExpr(arena: &Arena<Expr>, h: Handle<Expr>, env: &mut Vec<Binding>): Value {
+pub fn evalExpr(arena: &Arena<Expr>, h: Handle<Expr>, env: &mut Vec<Binding>): Value {
     let node = readExpr(arena, h)
     match node {
         Expr.Num(n) => {
@@ -237,44 +237,61 @@ fn evalExpr(arena: &Arena<Expr>, h: Handle<Expr>, env: &mut Vec<Binding>): Value
 
 // ── Lexer ──
 
-let T_NUM: i32 = 0
-let T_IDENT: i32 = 1
-let T_PLUS: i32 = 2
-let T_MINUS: i32 = 3
-let T_STAR: i32 = 4
-let T_SLASH: i32 = 5
-let T_LT: i32 = 6
-let T_GT: i32 = 7
-let T_EQEQ: i32 = 8
-let T_LPAREN: i32 = 9
-let T_RPAREN: i32 = 10
-let T_LET: i32 = 11
-let T_IN: i32 = 12
-let T_IF: i32 = 13
-let T_THEN: i32 = 14
-let T_ELSE: i32 = 15
-let T_EQ: i32 = 16
-let T_EOF: i32 = 17
+pub let T_NUM: i32 = 0
 
-struct Token {
+pub let T_IDENT: i32 = 1
+
+pub let T_PLUS: i32 = 2
+
+pub let T_MINUS: i32 = 3
+
+pub let T_STAR: i32 = 4
+
+pub let T_SLASH: i32 = 5
+
+pub let T_LT: i32 = 6
+
+pub let T_GT: i32 = 7
+
+pub let T_EQEQ: i32 = 8
+
+pub let T_LPAREN: i32 = 9
+
+pub let T_RPAREN: i32 = 10
+
+pub let T_LET: i32 = 11
+
+pub let T_IN: i32 = 12
+
+pub let T_IF: i32 = 13
+
+pub let T_THEN: i32 = 14
+
+pub let T_ELSE: i32 = 15
+
+pub let T_EQ: i32 = 16
+
+pub let T_EOF: i32 = 17
+
+pub struct Token {
     kind: i32,
     num: i64,
     text: string,
 }
 
-fn isSpace(c: u8): bool {
+pub fn isSpace(c: u8): bool {
     return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8
 }
 
-fn isDigit(c: u8): bool {
+pub fn isDigit(c: u8): bool {
     return c >= '0' && c <= '9'
 }
 
-fn isAlpha(c: u8): bool {
+pub fn isAlpha(c: u8): bool {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
 }
 
-fn keywordKind(s: &string): i32 {
+pub fn keywordKind(s: &string): i32 {
     if s == "let" {
         return T_LET
     }
@@ -293,7 +310,7 @@ fn keywordKind(s: &string): i32 {
     return T_IDENT
 }
 
-fn lex(src: &string): Vec<Token> {
+pub fn lex(src: &string): Vec<Token> {
     var toks: Vec<Token> = Vec.new()
     let n = src.len()
     var i: i64 = 0
@@ -373,19 +390,19 @@ fn lex(src: &string): Vec<Token> {
 
 // ── Parser (recursive descent with precedence) ──
 
-struct PState {
+pub struct PState {
     toks: Vec<Token>,
     pos: i64,
 }
 
-fn peekKind(p: &PState): i32 {
+pub fn peekKind(p: &PState): i32 {
     if p.pos < p.toks.len() {
         return p.toks[p.pos].kind
     }
     return T_EOF
 }
 
-fn opStr(kind: i32): string {
+pub fn opStr(kind: i32): string {
     if kind == T_PLUS {
         return "+"
     }
@@ -407,7 +424,7 @@ fn opStr(kind: i32): string {
     return "=="
 }
 
-fn parsePrimary(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
+pub fn parsePrimary(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     let k = peekKind(p)
     if k == T_NUM {
         let v = p.toks[p.pos].num
@@ -461,7 +478,7 @@ fn parsePrimary(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     return arenaAlloc(arena, Expr.Num(0))
 }
 
-fn parseMul(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
+pub fn parseMul(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     var left = parsePrimary(p, arena)
     var go = true
     while go {
@@ -477,7 +494,7 @@ fn parseMul(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     return left
 }
 
-fn parseAdd(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
+pub fn parseAdd(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     var left = parseMul(p, arena)
     var go = true
     while go {
@@ -493,7 +510,7 @@ fn parseAdd(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     return left
 }
 
-fn parseExpr(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
+pub fn parseExpr(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     var left = parseAdd(p, arena)
     var go = true
     while go {
@@ -509,7 +526,7 @@ fn parseExpr(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     return left
 }
 
-fn run(arena: &mut Arena<Expr>, src: &string): string {
+pub fn run(arena: &mut Arena<Expr>, src: &string): string {
     let toks = lex(src)
     var p = PState {
         toks: toks, pos: 0
@@ -520,7 +537,7 @@ fn run(arena: &mut Arena<Expr>, src: &string): string {
     return valueToString(result)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var arena: Arena<Expr> = arenaNew()
 
     print(run(arena, "let x = 6 in let y = 7 in x * y")) // 42

@@ -26,84 +26,84 @@ from "std/io" import {
 // ── bindings ──
 
 @cSig("windows.h", "BOOL CreatePipe(PHANDLE, PHANDLE, LPSECURITY_ATTRIBUTES, DWORD)")
-extern fn CreatePipe(readPipe: *u8, writePipe: *u8, attrs: *u8, size: u32): i32
+pub extern fn CreatePipe(readPipe: *u8, writePipe: *u8, attrs: *u8, size: u32): i32
 
 // COORD is a by-value {SHORT X, SHORT Y} = 4 bytes, which the Win64 ABI passes in a
 // register exactly like an i32 (verified: passing the packed value returns S_OK). Packed
 // as Y<<16 | X — X is columns, Y is rows. No @cSig here: the guard TU would reject i32
 // against the struct type even though the ABI is identical.
-extern fn CreatePseudoConsole(size: i32, hInput: i64, hOutput: i64, flags: u32, hpc: *u8): i32
+pub extern fn CreatePseudoConsole(size: i32, hInput: i64, hOutput: i64, flags: u32, hpc: *u8): i32
 
-extern fn ResizePseudoConsole(hpc: i64, size: i32): i32
+pub extern fn ResizePseudoConsole(hpc: i64, size: i32): i32
 
-extern fn ClosePseudoConsole(hpc: i64): void
+pub extern fn ClosePseudoConsole(hpc: i64): void
 
 // _open_osfhandle wraps an OS HANDLE as a CRT fd so read()/write() work on it; the flag
 // is _O_BINARY (0x8000) — the CRT must not rewrite newlines in a VT stream.
 @cSig("io.h", "int _open_osfhandle(intptr_t, int)")
-extern fn _open_osfhandle(handle: i64, flags: i32): i32
+pub extern fn _open_osfhandle(handle: i64, flags: i32): i32
 
 @cSig("io.h", "intptr_t _get_osfhandle(int)")
-extern fn _get_osfhandle(fd: i32): i64
+pub extern fn _get_osfhandle(fd: i32): i64
 
 // The proc-thread attribute list carries the HPCON into CreateProcess. Called once with a
 // NULL list to size it, once to fill it. PVOID/SIZE_T/DWORD_PTR params are pointer-width;
 // no @cSig (the guard TU can't match milo's i64 against those C spellings).
-extern fn InitializeProcThreadAttributeList(list: *u8, count: u32, flags: u32, size: *u8): i32
+pub extern fn InitializeProcThreadAttributeList(list: *u8, count: u32, flags: u32, size: *u8): i32
 
-extern fn UpdateProcThreadAttribute(list: *u8, flags: u32, attr: i64, value: i64, size: i64, prev: *u8, ret: *u8): i32
+pub extern fn UpdateProcThreadAttribute(list: *u8, flags: u32, attr: i64, value: i64, size: i64, prev: *u8, ret: *u8): i32
 
-extern fn DeleteProcThreadAttributeList(list: *u8): void
+pub extern fn DeleteProcThreadAttributeList(list: *u8): void
 
 @cSig("windows.h", "BOOL CreateProcessA(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL, DWORD, LPVOID, LPCSTR, LPSTARTUPINFOA, LPPROCESS_INFORMATION)")
-extern fn CreateProcessA(appName: *u8, cmdLine: *u8, procAttr: *u8, threadAttr: *u8, inherit: i32, flags: u32, env: *u8, curDir: *u8, si: *u8, pi: *u8): i32
+pub extern fn CreateProcessA(appName: *u8, cmdLine: *u8, procAttr: *u8, threadAttr: *u8, inherit: i32, flags: u32, env: *u8, curDir: *u8, si: *u8, pi: *u8): i32
 
 @cSig("windows.h", "DWORD WaitForSingleObject(HANDLE, DWORD)")
-extern fn WaitForSingleObject(handle: i64, ms: u32): u32
+pub extern fn WaitForSingleObject(handle: i64, ms: u32): u32
 
 @cSig("windows.h", "BOOL GetExitCodeProcess(HANDLE, LPDWORD)")
-extern fn GetExitCodeProcess(handle: i64, code: *u8): i32
+pub extern fn GetExitCodeProcess(handle: i64, code: *u8): i32
 
 @cSig("windows.h", "BOOL TerminateProcess(HANDLE, UINT)")
-extern fn TerminateProcess(handle: i64, exitCode: u32): i32
+pub extern fn TerminateProcess(handle: i64, exitCode: u32): i32
 
 @cSig("windows.h", "BOOL CloseHandle(HANDLE)")
-extern fn CloseHandle(handle: i64): i32
+pub extern fn CloseHandle(handle: i64): i32
 
 // DWORD GetFileType(HANDLE) — FILE_TYPE_CHAR (2) means a console/terminal.
 @cSig("windows.h", "DWORD GetFileType(HANDLE)")
-extern fn GetFileType(handle: i64): u32
+pub extern fn GetFileType(handle: i64): u32
 
-extern fn malloc(size: i64): *u8
+pub extern fn malloc(size: i64): *u8
 
-extern fn free(ptr: *u8): void
+pub extern fn free(ptr: *u8): void
 
-extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
+pub extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
 
-extern fn memset(dst: *u8, val: i32, n: i64): *u8
+pub extern fn memset(dst: *u8, val: i32, n: i64): *u8
 
 // PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
-fn _attrPseudoconsole(): i64 {
+pub fn _attrPseudoconsole(): i64 {
     return 131094
 }
 
 // EXTENDED_STARTUPINFO_PRESENT.
-fn _extendedStartupinfoPresent(): u32 {
+pub fn _extendedStartupinfoPresent(): u32 {
     return 524288
 }
 
-fn _packCoord(rows: u16, cols: u16): i32 {
+pub fn _packCoord(rows: u16, cols: u16): i32 {
     return ((rows as i32) * 65536) + (cols as i32)
 }
 
-struct WinSize {
+pub struct WinSize {
     rows: u16,
     cols: u16,
     xpixel: u16,
     ypixel: u16,
 }
 
-struct Pty {
+pub struct Pty {
     masterFd: i32, // CRT fd for the pseudoconsole OUTPUT pipe (child -> parent)
     slavePath: string, // always "" on Windows — no pts device path exists
     childPid: i32,
@@ -116,13 +116,13 @@ struct Pty {
 }
 
 // True if fd is attached to a console (the ConPTY analogue of isatty).
-fn fdIsTerminal(fd: i32): bool {
+pub fn fdIsTerminal(fd: i32): bool {
     unsafe {
         return GetFileType(_get_osfhandle(fd)) == 2 as u32
     }
 }
 
-fn isInteractive(): bool {
+pub fn isInteractive(): bool {
     return fdIsTerminal(0)
 }
 
@@ -310,7 +310,7 @@ impl Pty {
     }
 }
 
-fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string> {
+pub fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string> {
     var pty = Pty.open()?
     pty.spawn(program, args)?
     return Result.Ok(pty)
@@ -318,7 +318,7 @@ fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string> {
 
 // Build a CreateProcess command line: `program arg1 arg2 ...`, quoting tokens that
 // contain whitespace. Malloc'd + NUL-terminated; CreateProcessA may write into it.
-fn _buildCmdLine(program: &string, args: &Vec<string>): *u8 {
+pub fn _buildCmdLine(program: &string, args: &Vec<string>): *u8 {
     var line = _quoteArg(program)
     for i in 0..args.len {
         line.push(' ')
@@ -333,7 +333,7 @@ fn _buildCmdLine(program: &string, args: &Vec<string>): *u8 {
     }
 }
 
-fn _quoteArg(arg: &string): string {
+pub fn _quoteArg(arg: &string): string {
     var needsQuote = arg.len == 0
     for i in 0..arg.len {
         let c = arg[i]

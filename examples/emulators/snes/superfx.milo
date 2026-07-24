@@ -13,7 +13,7 @@
 // carry/overflow/sign/zero semantics match bit-for-bit; the packed SFR word is only
 // materialized at the CPU-facing $3030/$3031 register interface.
 
-struct Fx {
+pub struct Fx {
     reg: Vec<i64> // R0-R15, held as 32-bit values (masked at use like Snes9x uint32)
 
     // decomposed status flags (see composeSfr)
@@ -66,12 +66,15 @@ struct Fx {
 }
 
 // --- debug counters (probed by runRom) ---
-var fxDbgStarts: i64 = 0
-var fxDbgSteps: i64 = 0
-var fxDbgStops: i64 = 0
-var fxDbgPlots: i64 = 0
+pub var fxDbgStarts: i64 = 0
 
-fn fxDbgStat(which: i64): i64 {
+pub var fxDbgSteps: i64 = 0
+
+pub var fxDbgStops: i64 = 0
+
+pub var fxDbgPlots: i64 = 0
+
+pub fn fxDbgStat(which: i64): i64 {
     if which == 0 {
         return fxDbgStarts
     }
@@ -85,7 +88,7 @@ fn fxDbgStat(which: i64): i64 {
 }
 
 // Count nonzero bytes in the GSU framebuffer region (for headless data-flow probes).
-fn fxRamNonzero(fx: &Fx): i64 {
+pub fn fxRamNonzero(fx: &Fx): i64 {
     var count: i64 = 0
     var i: i64 = 0
     while i < fx.ram.len {
@@ -97,7 +100,7 @@ fn fxRamNonzero(fx: &Fx): i64 {
     return count
 }
 
-fn cloneBytes(src: &Vec<u8>): Vec<u8> {
+pub fn cloneBytes(src: &Vec<u8>): Vec<u8> {
     var v: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < src.len {
@@ -107,7 +110,7 @@ fn cloneBytes(src: &Vec<u8>): Vec<u8> {
     return v
 }
 
-fn vecZerosFx(n: i64): Vec<u8> {
+pub fn vecZerosFx(n: i64): Vec<u8> {
     var v: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < n {
@@ -120,7 +123,7 @@ fn vecZerosFx(n: i64): Vec<u8> {
 // Construct a GSU over a clone of the cart ROM. nRamBanks=2 → 128KB game-pak RAM
 // (Star Fox uses one bank; Yoshi's Island two). Pipe primed with a NOP (0x01) as on
 // real hardware, so the first executed step restores the fetch-pipeline invariant.
-fn fxNew(romClone: Vec<u8>): Fx {
+pub fn fxNew(romClone: Vec<u8>): Fx {
     let len = romClone.len
     var mask: i64 = 1
     while mask < len {
@@ -155,7 +158,7 @@ fn fxNew(romClone: Vec<u8>): Fx {
 
 // --- sign/zero-extension helpers (i64 backing; explicit so we never depend on the
 // sign of Milo's >> for the arithmetic-shift ops) ---
-fn sex8(v: i64): i64 {
+pub fn sex8(v: i64): i64 {
     let b = v & 0xFF
     if (b & 0x80) != 0 {
         return b - 0x100
@@ -163,7 +166,7 @@ fn sex8(v: i64): i64 {
     return b
 }
 
-fn sex16(v: i64): i64 {
+pub fn sex16(v: i64): i64 {
     let b = v & 0xFFFF
     if (b & 0x8000) != 0 {
         return b - 0x10000
@@ -172,7 +175,7 @@ fn sex16(v: i64): i64 {
 }
 
 // arithmetic shift right by one (floor), matches C's `>>` on a signed value
-fn ashr1(s: i64): i64 {
+pub fn ashr1(s: i64): i64 {
     return (s & (~1)) / 2
 }
 
@@ -181,7 +184,7 @@ fn ashr1(s: i64): i64 {
 // GSU ROM offset for a bank:addr. Banks $00-$3F are LoROM (32KB windows at
 // $8000, but the GSU sees both halves of a 64KB bank as the same 32KB block);
 // banks $40+ are linear 64KB (HiROM-like). Mirrors Snes9x's apvRomBank build.
-fn gsuRomOffset(fx: &Fx, bank: i64, addr: i64): i64 {
+pub fn gsuRomOffset(fx: &Fx, bank: i64, addr: i64): i64 {
     let b = bank & 0x7F
     var off: i64 = 0
     if b >= 0x40 {
@@ -198,7 +201,7 @@ fn gsuRomOffset(fx: &Fx, bank: i64, addr: i64): i64 {
     return off & fx.romMask
 }
 
-fn gsuRomByte(fx: &Fx, bank: i64, addr: i64): i64 {
+pub fn gsuRomByte(fx: &Fx, bank: i64, addr: i64): i64 {
     let o = gsuRomOffset(fx, bank, addr)
     if o < fx.rom.len {
         return fx.rom[o] as i64
@@ -207,7 +210,7 @@ fn gsuRomByte(fx: &Fx, bank: i64, addr: i64): i64 {
 }
 
 // Program fetch: from ROM (PBR is a ROM bank) or game-pak RAM (PBR $70-$73).
-fn prgByte(fx: &Fx, addr: i64): i64 {
+pub fn prgByte(fx: &Fx, addr: i64): i64 {
     let b = fx.pbr & 0x7F
     if b >= 0x70 && b <= 0x73 {
         let idx = (((b & 3) % fx.nRamBanks) << 16) + (addr & 0xFFFF)
@@ -216,28 +219,28 @@ fn prgByte(fx: &Fx, addr: i64): i64 {
     return gsuRomByte(fx, fx.pbr, addr)
 }
 
-fn gsuRamIdx(fx: &Fx, adr: i64): i64 {
+pub fn gsuRamIdx(fx: &Fx, adr: i64): i64 {
     return (((fx.rambr % fx.nRamBanks) << 16) + (adr & 0xFFFF)) & fx.ramMask
 }
 
-fn ramRead(fx: &Fx, adr: i64): i64 {
+pub fn ramRead(fx: &Fx, adr: i64): i64 {
     return fx.ram[gsuRamIdx(fx, adr)] as i64
 }
 
-fn ramWrite(fx: &mut Fx, adr: i64, v: i64): void {
+pub fn ramWrite(fx: &mut Fx, adr: i64, v: i64): void {
     fx.ram[gsuRamIdx(fx, adr)] = (v & 0xFF) as u8
 }
 
 // --- pipeline primitives ---
-fn fetchPipe(fx: &mut Fx): void {
+pub fn fetchPipe(fx: &mut Fx): void {
     fx.pipe = prgByte(fx, fx.reg[15] & 0xFFFF)
 }
 
-fn r15inc(fx: &mut Fx): void {
+pub fn r15inc(fx: &mut Fx): void {
     fx.reg[15] = (fx.reg[15] + 1) & 0xFFFF
 }
 
-fn clrflags(fx: &mut Fx): void {
+pub fn clrflags(fx: &mut Fx): void {
     fx.alt1 = false
     fx.alt2 = false
     fx.bflag = false
@@ -245,24 +248,24 @@ fn clrflags(fx: &mut Fx): void {
     fx.dreg = 0
 }
 
-fn readR14(fx: &mut Fx): void {
+pub fn readR14(fx: &mut Fx): void {
     fx.romBuffer = gsuRomByte(fx, fx.rombr, fx.reg[14] & 0xFFFF)
 }
 
 // Write the destination register (auto-reloads the ROM buffer when R14 is the dest).
-fn setDreg(fx: &mut Fx, v: i64): void {
+pub fn setDreg(fx: &mut Fx, v: i64): void {
     fx.reg[fx.dreg] = v & 0xFFFFFFFF
     if fx.dreg == 14 {
         readR14(fx)
     }
 }
 
-fn sregVal(fx: &Fx): i64 {
+pub fn sregVal(fx: &Fx): i64 {
     return fx.reg[fx.sreg]
 }
 
 // --- screen geometry (fx_readRegisterSpace / fx_computeScreenPointers) ---
-fn fxUpdateScreen(fx: &mut Fx): void {
+pub fn fxUpdateScreen(fx: &mut Fx): void {
     var n: i64 = 0
     if (fx.scmr & 0x04) != 0 {
         n = n | 1
@@ -287,7 +290,7 @@ fn fxUpdateScreen(fx: &mut Fx): void {
     }
 }
 
-fn bytesPerTile(mode: i64): i64 {
+pub fn bytesPerTile(mode: i64): i64 {
     if mode == 0 {
         return 16 // 2bpp
     }
@@ -297,7 +300,7 @@ fn bytesPerTile(mode: i64): i64 {
     return 32 // 4bpp
 }
 
-fn planeCount(mode: i64): i64 {
+pub fn planeCount(mode: i64): i64 {
     if mode == 0 {
         return 2
     }
@@ -310,7 +313,7 @@ fn planeCount(mode: i64): i64 {
 // RAM byte offset of the plane-0 byte for pixel (x,y). Column-major tiles, matching
 // fx_computeScreenPointers: non-OBJ heights are a flat (col*tilesPerCol + row) grid;
 // the 256/OBJ height uses the 16x16 sprite-block arrangement.
-fn plotAddr(fx: &Fx, x: i64, y: i64): i64 {
+pub fn plotAddr(fx: &Fx, x: i64, y: i64): i64 {
     let bpt = bytesPerTile(fx.mode)
     let tr = y >> 3
     let tc = x >> 3
@@ -334,7 +337,7 @@ fn plotAddr(fx: &Fx, x: i64, y: i64): i64 {
 }
 
 // 4c - plot: write COLR at (R1,R2) into the bitplane framebuffer, then R1++.
-fn fxPlot(fx: &mut Fx): void {
+pub fn fxPlot(fx: &mut Fx): void {
     let x = fx.reg[1] & 0xFF
     let y = fx.reg[2] & 0xFF
     r15inc(fx)
@@ -391,7 +394,7 @@ fn fxPlot(fx: &mut Fx): void {
 }
 
 // 4c ALT1 - rpix: read the framebuffer color at (R1,R2) into DREG.
-fn fxRpix(fx: &mut Fx): void {
+pub fn fxRpix(fx: &mut Fx): void {
     let x = fx.reg[1] & 0xFF
     let y = fx.reg[2] & 0xFF
     r15inc(fx)
@@ -420,7 +423,7 @@ fn fxRpix(fx: &mut Fx): void {
 }
 
 // 00 - stop
-fn fxStop(fx: &mut Fx): void {
+pub fn fxStop(fx: &mut Fx): void {
     fx.running = false
     fxDbgStops = fxDbgStops + 1
     if (fx.cfgr & 0x80) == 0 {
@@ -433,7 +436,7 @@ fn fxStop(fx: &mut Fx): void {
 }
 
 // 02 - cache
-fn fxCache(fx: &mut Fx): void {
+pub fn fxCache(fx: &mut Fx): void {
     let c = fx.reg[15] & 0xFFF0
     if fx.cbr != c || !fx.cacheActive {
         fx.cacheActive = true
@@ -444,7 +447,7 @@ fn fxCache(fx: &mut Fx): void {
 }
 
 // Branch helper: read the signed offset operand, advance, and optionally take it.
-fn fxBranch(fx: &mut Fx, take: bool): void {
+pub fn fxBranch(fx: &mut Fx, take: bool): void {
     let v = fx.pipe
     r15inc(fx)
     fetchPipe(fx)
@@ -455,19 +458,19 @@ fn fxBranch(fx: &mut Fx, take: bool): void {
     }
 }
 
-fn testS(fx: &Fx): bool {
+pub fn testS(fx: &Fx): bool {
     return (fx.vSign & 0x8000) != 0
 }
 
-fn testZ(fx: &Fx): bool {
+pub fn testZ(fx: &Fx): bool {
     return (fx.vZero & 0xFFFF) == 0
 }
 
-fn testOV(fx: &Fx): bool {
+pub fn testOV(fx: &Fx): bool {
     return fx.vOverflow >= 0x8000 || fx.vOverflow < -0x8000
 }
 
-fn testCY(fx: &Fx): bool {
+pub fn testCY(fx: &Fx): bool {
     return (fx.vCarry & 1) != 0
 }
 
@@ -475,7 +478,7 @@ fn testCY(fx: &Fx): bool {
 // exactly one opcode. Mirrors FX_STEP: read opcode from pipe, refetch pipe from R15,
 // then run — with operand bytes pulled from the pipe as each op needs them.
 // R15 min/max window over the current run — a tight window means a stuck loop.
-fn fxStepOne(fx: &mut Fx): void {
+pub fn fxStepOne(fx: &mut Fx): void {
     let op = fx.pipe
     fetchPipe(fx)
     var alt: i64 = 0
@@ -1090,7 +1093,7 @@ fn fxStepOne(fx: &mut Fx): void {
 
 // Run up to maxSteps GSU instructions (stops early on STOP). Called in bursts from
 // the system frame loop while the GO flag is set.
-fn fxRun(fx: &mut Fx, maxSteps: i64): i64 {
+pub fn fxRun(fx: &mut Fx, maxSteps: i64): i64 {
     if !fx.running {
         return 0
     }
@@ -1105,7 +1108,7 @@ fn fxRun(fx: &mut Fx, maxSteps: i64): i64 {
 }
 
 // Compose the 16-bit SFR word from the decomposed flags (CPU read of $3030/$3031).
-fn composeSfr(fx: &Fx): i64 {
+pub fn composeSfr(fx: &Fx): i64 {
     var s: i64 = 0
     if (fx.vZero & 0xFFFF) == 0 {
         s = s | 0x02 // Z
@@ -1140,7 +1143,7 @@ fn composeSfr(fx: &Fx): i64 {
 // --- CPU-facing register interface ($3000-$34FF) ---
 
 // Kick the GSU: prime the pipe (NOP) if idle, set GO.
-fn fxStart(fx: &mut Fx): void {
+pub fn fxStart(fx: &mut Fx): void {
     if !fx.running {
         fx.running = true
         fxDbgStarts = fxDbgStarts + 1
@@ -1150,7 +1153,7 @@ fn fxStart(fx: &mut Fx): void {
 // Pure register read (the CPU read path is over &Mem). Reading $3031 clears the IRQ
 // line on hardware; that side effect is applied by the caller (see fxIrqAck usage in
 // cpu.milo) since this path can't take &mut.
-fn fxRegRead(fx: &Fx, addr: i64): i64 {
+pub fn fxRegRead(fx: &Fx, addr: i64): i64 {
     if addr >= 0x3000 && addr <= 0x301F {
         let i = (addr - 0x3000) >> 1
         let byte = addr & 1
@@ -1201,7 +1204,7 @@ fn fxRegRead(fx: &Fx, addr: i64): i64 {
     return 0
 }
 
-fn fxRegWrite(fx: &mut Fx, addr: i64, v: i64): void {
+pub fn fxRegWrite(fx: &mut Fx, addr: i64, v: i64): void {
     let val = v & 0xFF
     if addr >= 0x3000 && addr <= 0x301F {
         let i = (addr - 0x3000) >> 1
@@ -1297,7 +1300,7 @@ fn fxRegWrite(fx: &mut Fx, addr: i64, v: i64): void {
 // Build a GSU whose ROM is the given program (padded to 32KB, mirrored high half so
 // R14/branch reads past $8000 alias the same bytes, matching the oracle), seed the
 // registers + carry, run `steps`, and return R0-R15 (low 16) plus a composed SFR.
-fn fxTestRun(program: &Vec<u8>, seed: &Vec<i64>, carry: i64, steps: i64): Vec<i64> {
+pub fn fxTestRun(program: &Vec<u8>, seed: &Vec<i64>, carry: i64, steps: i64): Vec<i64> {
     var rom: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < 0x8000 {
@@ -1339,7 +1342,7 @@ fn fxTestRun(program: &Vec<u8>, seed: &Vec<i64>, carry: i64, steps: i64): Vec<i6
 
 // Detect a Super FX cartridge from the LoROM internal header. Cart-type byte at
 // $7FD6 in {0x13,0x14,0x15,0x1A} → Super FX. (Header already copier-stripped.)
-fn isSuperFx(rom: &Vec<u8>): bool {
+pub fn isSuperFx(rom: &Vec<u8>): bool {
     if rom.len < 0x8000 {
         return false
     }

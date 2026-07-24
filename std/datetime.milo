@@ -5,11 +5,11 @@ from "std/time" import {
     epochSecs, since
 }
 
-extern fn localtime_r(timep: *u8, result: *u8): *u8
+pub extern fn localtime_r(timep: *u8, result: *u8): *u8
 
-extern fn tzset(): void
+pub extern fn tzset(): void
 
-struct DateTime {
+pub struct DateTime {
     year: i32,
     month: i32,
     day: i32,
@@ -19,7 +19,7 @@ struct DateTime {
     weekday: i32,
 }
 
-fn dateTimeFromEpoch(epochSec: i64): DateTime {
+pub fn dateTimeFromEpoch(epochSec: i64): DateTime {
     // days since 1970-01-01
     var secs = epochSec
     let totalDays = secs / 86400
@@ -64,11 +64,11 @@ fn dateTimeFromEpoch(epochSec: i64): DateTime {
     }
 }
 
-fn dateTimeNow(): DateTime {
+pub fn dateTimeNow(): DateTime {
     return dateTimeFromEpoch(epochSecs())
 }
 
-fn dateTimeFormat(dt: &DateTime): string {
+pub fn dateTimeFormat(dt: &DateTime): string {
     // ISO 8601: 2024-03-15T14:30:00
     var result: string = ""
     result = result + _padI32(dt.year, 4) + "-" + _padI32(dt.month, 2) + "-" + _padI32(dt.day, 2)
@@ -77,15 +77,15 @@ fn dateTimeFormat(dt: &DateTime): string {
     return result
 }
 
-fn dateTimeFormatDate(dt: &DateTime): string {
+pub fn dateTimeFormatDate(dt: &DateTime): string {
     return _padI32(dt.year, 4) + "-" + _padI32(dt.month, 2) + "-" + _padI32(dt.day, 2)
 }
 
-fn dateTimeFormatTime(dt: &DateTime): string {
+pub fn dateTimeFormatTime(dt: &DateTime): string {
     return _padI32(dt.hour, 2) + ":" + _padI32(dt.minute, 2) + ":" + _padI32(dt.second, 2)
 }
 
-fn weekdayName(wd: i32): string {
+pub fn weekdayName(wd: i32): string {
     if wd == 0 {
         return "Sunday"
     }
@@ -110,7 +110,7 @@ fn weekdayName(wd: i32): string {
     return "Unknown"
 }
 
-fn monthName(m: i32): string {
+pub fn monthName(m: i32): string {
     if m == 1 {
         return "January"
     }
@@ -150,7 +150,7 @@ fn monthName(m: i32): string {
     return "Unknown"
 }
 
-fn _padI32(val: i32, width: i32): string {
+pub fn _padI32(val: i32, width: i32): string {
     var s = format(val)
     while s.len < width as i64 {
         s = "0" + s
@@ -161,7 +161,7 @@ fn _padI32(val: i32, width: i32): string {
 // ── local time (host timezone) ──
 
 // Little-endian i32 read out of the struct tm buffer.
-fn _tmI32(buf: &[u8; 128], off: i64): i32 {
+pub fn _tmI32(buf: &[u8; 128], off: i64): i32 {
     var v: i64 = 0
     var i: i64 = 3
     while i >= 0 {
@@ -176,7 +176,7 @@ fn _tmI32(buf: &[u8; 128], off: i64): i32 {
 // (tm_sec, tm_min, tm_hour, tm_mday, tm_mon, tm_year, tm_wday, tm_yday,
 // tm_isdst) on both macOS and glibc — only those leading fields are read, so
 // the trailing platform differences (tm_gmtoff/tm_zone) don't matter.
-fn dateTimeFromEpochLocal(epochSec: i64): DateTime {
+pub fn dateTimeFromEpochLocal(epochSec: i64): DateTime {
     // POSIX doesn't require localtime_r to imply tzset(); call it so TZ
     // changes (and the first call) always take effect.
     tzset()
@@ -197,6 +197,6 @@ fn dateTimeFromEpochLocal(epochSec: i64): DateTime {
     }
 }
 
-fn dateTimeLocalNow(): DateTime {
+pub fn dateTimeLocalNow(): DateTime {
     return dateTimeFromEpochLocal(epochSecs())
 }

@@ -4,7 +4,7 @@
 // Each {} is replaced left-to-right with the corresponding argument.
 
 // Replace the first {} with val.
-fn fmt1(template: &string, a: &string): string {
+pub fn fmt1(template: &string, a: &string): string {
     var result = ""
     var used = false
     var i: i64 = 0
@@ -22,7 +22,7 @@ fn fmt1(template: &string, a: &string): string {
 }
 
 // Replace the first two {} with a and b.
-fn fmt2(template: &string, a: &string, b: &string): string {
+pub fn fmt2(template: &string, a: &string, b: &string): string {
     var result = ""
     var which = 0
     var i: i64 = 0
@@ -45,7 +45,7 @@ fn fmt2(template: &string, a: &string, b: &string): string {
 }
 
 // Replace the first three {} with a, b, and c.
-fn fmt3(template: &string, a: &string, b: &string, c: &string): string {
+pub fn fmt3(template: &string, a: &string, b: &string, c: &string): string {
     var result = ""
     var which = 0
     var i: i64 = 0
@@ -71,7 +71,7 @@ fn fmt3(template: &string, a: &string, b: &string, c: &string): string {
 }
 
 // Replace the first four {} with a, b, c, and d.
-fn fmt4(template: &string, a: &string, b: &string, c: &string, d: &string): string {
+pub fn fmt4(template: &string, a: &string, b: &string, c: &string, d: &string): string {
     var result = ""
     var which = 0
     var i: i64 = 0
@@ -100,7 +100,7 @@ fn fmt4(template: &string, a: &string, b: &string, c: &string, d: &string): stri
 }
 
 // Left-pad a string to a minimum width.
-fn padLeft(s: &string, width: i64, ch: u8): string {
+pub fn padLeft(s: &string, width: i64, ch: u8): string {
     var result = ""
     var padding = width - s.len
     while padding > 0 {
@@ -112,7 +112,7 @@ fn padLeft(s: &string, width: i64, ch: u8): string {
 }
 
 // Right-pad a string to a minimum width.
-fn padRight(s: &string, width: i64, ch: u8): string {
+pub fn padRight(s: &string, width: i64, ch: u8): string {
     var result = s.clone()
     var padding = width - s.len
     while padding > 0 {
@@ -123,13 +123,13 @@ fn padRight(s: &string, width: i64, ch: u8): string {
 }
 
 // Zero-pad an integer to a minimum width.
-fn zeroPad(n: i64, width: i64): string {
+pub fn zeroPad(n: i64, width: i64): string {
     let s = n.toString()
     return padLeft(s, width, 48 as u8)
 }
 
 // Join a Vec<string> with a separator.
-fn join(parts: &Vec<string>, sep: &string): string {
+pub fn join(parts: &Vec<string>, sep: &string): string {
     var result = ""
     for i in 0..parts.len {
         if i > 0 {

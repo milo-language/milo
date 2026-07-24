@@ -11,7 +11,7 @@
 // haystack (0 <= i+j < hayLen) — the safety fact the raw code relies on but
 // never states.
 
-fn searchIndex(hayLen: i64, needleLen: i64, i: i64, j: i64): i64
+pub fn searchIndex(hayLen: i64, needleLen: i64, i: i64, j: i64): i64
 requires needleLen >= 1
 requires i >= 0
 requires i <= hayLen - needleLen
@@ -23,7 +23,7 @@ ensures result < hayLen
     return i + j
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // 10-byte haystack, 3-byte needle: outer i in [0,7], inner j in [0,2].
     print(searchIndex(10, 3, 7, 2))
     return 0

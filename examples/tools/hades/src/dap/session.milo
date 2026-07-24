@@ -29,7 +29,7 @@ from "std/process" import {
 // launchExtra, since it's a meta key stripped from the body). port>0 means
 // transport is TCP: connect to host:port instead of spawning adapterCmd over
 // stdio (the adapter is a server the user runs, e.g. `dlv dap --listen`).
-struct LaunchSpec {
+pub struct LaunchSpec {
     binPath: string,
     srcPath: string,
     adapterCmd: string,
@@ -46,7 +46,7 @@ struct LaunchSpec {
 }
 
 // a resolved adapter: its dialect kind + the spawnable (abs-path) command line.
-struct AdapterSel {
+pub struct AdapterSel {
     kind: string,
     cmd: string,
 }
@@ -56,7 +56,7 @@ struct AdapterSel {
 // it's stripped here too. `launch` is the retired nested-object shape (old UI) —
 // still stripped so stale stored configs don't leak it into a DAP body, but its
 // contents are ignored. `cmd` is the WS envelope field on setConfig.
-fn isMetaKey(k: &string): bool {
+pub fn isMetaKey(k: &string): bool {
     return k == "type" || k == "request" || k == "name"
     || k == "source" || k == "dapPath" || k == "stopAtMain"
     || k == "program" || k == "launch"
@@ -73,7 +73,7 @@ fn isMetaKey(k: &string): bool {
 // Xcode-toolchain locator — its stdout IS the path). `adapterId` tags the DAP
 // initialize + UI output; `supported` false means the type is recognized but a
 // launch is blocked with a clear error (node slot reserved for M10).
-struct Dialect {
+pub struct Dialect {
     kind: string,
     types: Vec<string>,
     probes: Vec<string>,
@@ -83,7 +83,7 @@ struct Dialect {
 
 // build a Dialect, taking `types`/`probes` as `|`-joined strings (inline array
 // literals in struct-literal fields lower to empty Vecs, so split explicitly).
-fn mkDialect(kind: string, types: string, probes: string, adapterId: string, supported: bool): Dialect {
+pub fn mkDialect(kind: string, types: string, probes: string, adapterId: string, supported: bool): Dialect {
     return Dialect {
         kind: kind, types: strSplit(types, "|"),
         probes: pipeSplit(probes), adapterId: adapterId, supported: supported
@@ -91,7 +91,7 @@ fn mkDialect(kind: string, types: string, probes: string, adapterId: string, sup
 }
 
 // like strSplit(s,"|") but "" → empty Vec (node/go have no probes yet).
-fn pipeSplit(s: string): Vec<string> {
+pub fn pipeSplit(s: string): Vec<string> {
     if s.len == 0 {
         return []
     }
@@ -99,7 +99,7 @@ fn pipeSplit(s: string): Vec<string> {
 }
 
 // The registry. Keyed by `type` substring-free — exact type match picks a family.
-fn dialects(): Vec<Dialect> {
+pub fn dialects(): Vec<Dialect> {
     var out: Vec<Dialect> = []
     out.push(mkDialect("lldb", "lldb|cppdbg|lldb-dap", "lldb-dap|xcrun -f lldb-dap", "lldb", true))
     out.push(mkDialect("python", "python|debugpy", "python3 -m debugpy.adapter", "debugpy", true))
@@ -114,7 +114,7 @@ fn dialects(): Vec<Dialect> {
     return out
 }
 
-fn cloneDialect(d: &Dialect): Dialect {
+pub fn cloneDialect(d: &Dialect): Dialect {
     var ty: Vec<string> = []
     for typ in d.types {
         ty.push(typ.clone())
@@ -129,7 +129,7 @@ fn cloneDialect(d: &Dialect): Dialect {
     }
 }
 
-fn dialectByType(t: &string): Option<Dialect> {
+pub fn dialectByType(t: &string): Option<Dialect> {
     let ds = dialects()
     for d in ds {
         for typ in d.types {
@@ -141,7 +141,7 @@ fn dialectByType(t: &string): Option<Dialect> {
     return Option.None
 }
 
-fn dialectByKind(k: &string): Option<Dialect> {
+pub fn dialectByKind(k: &string): Option<Dialect> {
     let ds = dialects()
     for d in ds {
         if d.kind == k {
@@ -152,7 +152,7 @@ fn dialectByKind(k: &string): Option<Dialect> {
 }
 
 // unknown type falls back to lldb (the native debugger) — registry always has it.
-fn dialectFor(t: &string): Dialect {
+pub fn dialectFor(t: &string): Dialect {
     match dialectByType(t) {
         Option.Some(d) => {
             return d
@@ -171,7 +171,7 @@ fn dialectFor(t: &string): Dialect {
 }
 
 // `type` unset → guess the dialect from the program's extension (§3).
-fn inferType(prog: &string): string {
+pub fn inferType(prog: &string): string {
     if strEndsWith(prog, ".py") {
         return "python"
     }
@@ -189,7 +189,7 @@ fn inferType(prog: &string): string {
 
 // ── adapter command resolution ──
 
-fn cmdHead(cmd: &string): string {
+pub fn cmdHead(cmd: &string): string {
     var h: string = ""
     for ch in cmd {
         if ch == ' ' {
@@ -201,7 +201,7 @@ fn cmdHead(cmd: &string): string {
 }
 
 // everything from the first space on (leading space kept, so head+tail rebuilds).
-fn cmdTail(cmd: &string): string {
+pub fn cmdTail(cmd: &string): string {
     var seen = false
     var t: string = ""
     for ch in cmd {
@@ -221,7 +221,7 @@ fn cmdTail(cmd: &string): string {
 // runInTerminal launcher argv from its own argv[0], and a bare name makes that a
 // CWD-relative path that doesn't exist — the pty launcher then exits 127 and the
 // adapter waits on its comm-file forever.
-fn findInPath(cmd: &string): Option<string> {
+pub fn findInPath(cmd: &string): Option<string> {
     var hasSlash = false
     for ch in cmd {
         if ch == '/' {
@@ -254,7 +254,7 @@ fn findInPath(cmd: &string): Option<string> {
 
 // Best-effort PATH resolution: the resolved absolute path, or the command
 // unchanged when it isn't found (an explicit `adapter` is honored as-is).
-fn resolveInPath(cmd: &string): string {
+pub fn resolveInPath(cmd: &string): string {
     match findInPath(cmd) {
         Option.Some(p) => {
             return p
@@ -267,7 +267,7 @@ fn resolveInPath(cmd: &string): string {
 
 // Resolve a probe command to a spawnable adapter command line, or None if the
 // probe's executable isn't installed.
-fn probeAdapterCmd(probe: &string): Option<string> {
+pub fn probeAdapterCmd(probe: &string): Option<string> {
     // macOS Xcode-toolchain locator: `xcrun -f TOOL` prints TOOL's absolute path.
     if strStartsWith(probe, "xcrun -f ") {
         match capture(probe.clone()) {
@@ -293,7 +293,7 @@ fn probeAdapterCmd(probe: &string): Option<string> {
     }
 }
 
-fn resolveDialectAdapter(d: &Dialect): Option<string> {
+pub fn resolveDialectAdapter(d: &Dialect): Option<string> {
     for probe in d.probes {
         match probeAdapterCmd(probe) {
             Option.Some(cmd) => {
@@ -307,7 +307,7 @@ fn resolveDialectAdapter(d: &Dialect): Option<string> {
 }
 
 // actionable failure when no probe resolved — name the adapter + how to get it.
-fn probeErr(d: &Dialect): string {
+pub fn probeErr(d: &Dialect): string {
     if d.kind == "lldb" {
         return "lldb-dap not found — brew install llvm (or install Xcode), or set \"dapPath\" to its path"
     }
@@ -326,7 +326,7 @@ fn probeErr(d: &Dialect): string {
 // Reverse-map an explicit adapter command to a dialect kind — used when a user
 // supplies `adapter` without `type`. Matches the command against each registered
 // adapterId; defaults to lldb.
-fn kindForAdapterCmd(cmd: &string): string {
+pub fn kindForAdapterCmd(cmd: &string): string {
     let ds = dialects()
     for d in ds {
         if d.supported && strContains(cmd, d.adapterId) {
@@ -337,7 +337,7 @@ fn kindForAdapterCmd(cmd: &string): string {
 }
 
 // Resolve an explicit adapter command → abs-path command + detected dialect kind.
-fn resolveAdapterCmd(cmd: &string): AdapterSel {
+pub fn resolveAdapterCmd(cmd: &string): AdapterSel {
     let head = cmdHead(cmd)
     let resolved = resolveInPath(head) + cmdTail(cmd)
     return AdapterSel {
@@ -347,7 +347,7 @@ fn resolveAdapterCmd(cmd: &string): AdapterSel {
 
 // The module token after `-m` in an adapter command (`python3 -m debugpy.adapter`
 // → "debugpy.adapter"), or "" if there's no `-m`.
-fn moduleAfterDashM(cmd: &string): string {
+pub fn moduleAfterDashM(cmd: &string): string {
     let parts = strSplit(cmd, " -m ")
     if parts.len < 2 {
         return ""
@@ -362,7 +362,7 @@ fn moduleAfterDashM(cmd: &string): string {
 // form we can pre-flight it: `<interp> -c "import <module>"` fails iff the module
 // is missing. Return the dialect's actionable probeErr in that case. Non-`-m`
 // adapters (lldb-dap, dlv) are plain executables already confirmed by path resolution.
-fn adapterRunnableErr(kind: &string, cmd: &string): Option<string> {
+pub fn adapterRunnableErr(kind: &string, cmd: &string): Option<string> {
     let mod = moduleAfterDashM(cmd)
     if mod.len == 0 {
         return Option.None
@@ -389,7 +389,7 @@ fn adapterRunnableErr(kind: &string, cmd: &string): Option<string> {
 // Registry-driven (§3): `type` keys the dialect (inferred from `program` when
 // unset); an explicit `adapter` command overrides the probe and is honored
 // verbatim; otherwise probe the dialect and fail fast with an actionable message.
-fn selectAdapter(typ: &string, adapter: &string, prog: &string): Result<AdapterSel> {
+pub fn selectAdapter(typ: &string, adapter: &string, prog: &string): Result<AdapterSel> {
     let typeExplicit = typ.len > 0
     var t = typ.clone()
     if t.len == 0 {
@@ -434,7 +434,7 @@ fn selectAdapter(typ: &string, adapter: &string, prog: &string): Result<AdapterS
 
 // Split an adapter command line on spaces: first token is the executable
 // (already PATH-resolved), the rest are argv.
-fn adapterArgvOf(cmd: &string): Vec<string> {
+pub fn adapterArgvOf(cmd: &string): Vec<string> {
     var parts: Vec<string> = []
     var cur: string = ""
     for ch in cmd {
@@ -459,7 +459,7 @@ fn adapterArgvOf(cmd: &string): Vec<string> {
 // {version, configurations:[...]}, selected by name or first). Returns a
 // LaunchSpec, or an error message. Pure: mutates nothing; the caller commits the
 // spec into its own session state.
-fn cfgHas(cfg: &Json, k: &string): bool {
+pub fn cfgHas(cfg: &Json, k: &string): bool {
     match cfg.get(k) {
         Option.Some(_v) => {
             return true
@@ -470,7 +470,7 @@ fn cfgHas(cfg: &Json, k: &string): bool {
     }
 }
 
-fn resolveConfig(raw: string, selectName: string): Result<LaunchSpec> {
+pub fn resolveConfig(raw: string, selectName: string): Result<LaunchSpec> {
     // JSONC, not strict JSON: launch.json files are commented in the wild (VS
     // Code's own dialect), and the drawer templates ship commented-out options.
     match jsoncParse(raw.clone()) {
@@ -484,7 +484,7 @@ fn resolveConfig(raw: string, selectName: string): Result<LaunchSpec> {
     return Result.Err("config is not valid JSON")
 }
 
-fn resolveConfigDoc(doc: Json, selectName: string): Result<LaunchSpec> {
+pub fn resolveConfigDoc(doc: Json, selectName: string): Result<LaunchSpec> {
     if !doc.isObject() {
         return Result.Err("config must be a JSON object")
     }
@@ -616,7 +616,7 @@ fn resolveConfigDoc(doc: Json, selectName: string): Result<LaunchSpec> {
 
 // Short, generic name for the active debugger — the UI tags its output lines
 // with this so debugger chatter is distinguishable from program output.
-fn adapterIdForKind(kind: &string): string {
+pub fn adapterIdForKind(kind: &string): string {
     match dialectByKind(kind) {
         Option.Some(d) => {
             return d.adapterId
@@ -630,14 +630,14 @@ fn adapterIdForKind(kind: &string): string {
 // The symbol name for "stop at main" via a function breakpoint. Go's entry is
 // the package-qualified `main.main`; C/C++/Rust just `main`. (Python takes the
 // launch stopOnEntry path instead, so it never reaches here.)
-fn mainSymbolFor(kind: &string): string {
+pub fn mainSymbolFor(kind: &string): string {
     if kind == "go" {
         return "main.main"
     }
     return "main"
 }
 
-fn initArgsFor(kind: &string): string {
+pub fn initArgsFor(kind: &string): string {
     // supportsRunInTerminalRequest is what makes the adapter route the debuggee
     // through our pty instead of capturing its stdio itself.
     return jsonObj().str("adapterID", adapterIdForKind(kind))
@@ -650,7 +650,7 @@ fn initArgsFor(kind: &string): string {
         .build()
 }
 
-fn launchExtraDoc(raw: &string): Option<Json> {
+pub fn launchExtraDoc(raw: &string): Option<Json> {
     if raw.len == 0 {
         return Option.None
     }
@@ -663,7 +663,7 @@ fn launchExtraDoc(raw: &string): Option<Json> {
     return Option.None
 }
 
-fn extraHas(doc: &Option<Json>, key: &string): bool {
+pub fn extraHas(doc: &Option<Json>, key: &string): bool {
     if let Option.Some(d) = doc {
         return d.get(key).isSome()
     }
@@ -675,7 +675,7 @@ fn extraHas(doc: &Option<Json>, key: &string): bool {
 // on the spec — it's a meta key, stripped from launchExtra, so it can't be
 // re-derived from the body (the flat-form attach bug: a body-only lookup saw
 // "launch" and silently launched with a pid).
-fn launchRequestOf(spec: &LaunchSpec): string {
+pub fn launchRequestOf(spec: &LaunchSpec): string {
     if spec.request == "attach" {
         return "attach"
     }
@@ -688,7 +688,7 @@ fn launchRequestOf(spec: &LaunchSpec): string {
 // same name. This is what lets argv ("args"), env, cwd and lldb hook commands
 // (initCommands/preRunCommands/stopCommands/...) flow with zero hades code.
 // stopAtMain is the per-run value (may override the spec's config default).
-fn launchArgsFor(spec: &LaunchSpec, stopMain: bool): string {
+pub fn launchArgsFor(spec: &LaunchSpec, stopMain: bool): string {
     let extra = launchExtraDoc(spec.launchExtra)
     var b = jsonObj()
     // attach targets a pid, not a program — never inject binPath into an attach
@@ -749,7 +749,7 @@ fn launchArgsFor(spec: &LaunchSpec, stopMain: bool): string {
 // a stored entry stays portable across machines. lastRunAt > 0 appends the
 // history run stamp. request/host/port are always kept so an attach or TCP
 // session round-trips as the same thing (else it becomes a broken stdio launch).
-fn specConfigJson(spec: &LaunchSpec, includeDapPath: bool, lastRunAt: i64): string {
+pub fn specConfigJson(spec: &LaunchSpec, includeDapPath: bool, lastRunAt: i64): string {
     var b = jsonObj().str("type", spec.adapterKind.clone())
     if spec.name.len > 0 {
         b = b.str("name", spec.name.clone())
@@ -797,14 +797,14 @@ fn specConfigJson(spec: &LaunchSpec, includeDapPath: bool, lastRunAt: i64): stri
     return b.build()
 }
 
-fn histEntryFor(spec: &LaunchSpec, lastRunAt: i64): string {
+pub fn histEntryFor(spec: &LaunchSpec, lastRunAt: i64): string {
     return specConfigJson(spec, false, lastRunAt)
 }
 
 // Dedup identity: (type, program, args). Two entries that launch the same thing
 // collapse to one (newest wins), rather than raw-stringify equality — so an env
 // tweak or a re-stamp doesn't spawn a duplicate row.
-fn histIdentity(item: &string): string {
+pub fn histIdentity(item: &string): string {
     match jsonParse(item.clone()) {
         Result.Ok(d) => {
             let typ = d.str("type") ?? ""
@@ -827,7 +827,7 @@ fn histIdentity(item: &string): string {
 
 // Prepend `entry` to the history JSON array, dropping any existing entry with the
 // same identity, capped at `cap` (newest first). Returns the new array JSON.
-fn histInsert(histJson: &string, item: &string, cap: i64): string {
+pub fn histInsert(histJson: &string, item: &string, cap: i64): string {
     let key = histIdentity(item)
     var arr = jsonArr().raw(item.clone())
     var count: i64 = 1
@@ -861,7 +861,7 @@ fn histInsert(histJson: &string, item: &string, cap: i64): string {
 // Merge legacy client entries (localStorage migration, one-shot) into the history
 // array: each is inserted oldest-first so the newest client entry ends up in
 // front, then the whole thing is de-duped/capped by histInsert.
-fn histMergeMany(histJson: &string, entriesJson: &string, cap: i64): string {
+pub fn histMergeMany(histJson: &string, entriesJson: &string, cap: i64): string {
     var out = histJson.clone()
     match jsonParse(entriesJson.clone()) {
         Result.Ok(d) => {

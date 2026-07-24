@@ -24,7 +24,7 @@ from "protocol" import {
 }
 
 // A decoded DAP message. Unused fields for a given kind stay at their defaults.
-struct DapMsg {
+pub struct DapMsg {
     kind: string, // "response" | "event" | "request"
     seq: i64,
     requestSeq: i64, // responses: the seq of the request this answers
@@ -34,25 +34,25 @@ struct DapMsg {
     raw: string, // full JSON body, for callers that want more
 }
 
-struct DapClient {
+pub struct DapClient {
     child: Child,
     seq: i64,
 }
 
-fn _strOr(opt: Option<string>, fallback: string): string {
+pub fn _strOr(opt: Option<string>, fallback: string): string {
     return opt ?? fallback
 }
 
-fn _i64Or(opt: Option<i64>, fallback: i64): i64 {
+pub fn _i64Or(opt: Option<i64>, fallback: i64): i64 {
     return opt ?? fallback
 }
 
-fn _boolOr(opt: Option<bool>, fallback: bool): bool {
+pub fn _boolOr(opt: Option<bool>, fallback: bool): bool {
     return opt ?? fallback
 }
 
 // Decode a raw JSON frame into a DapMsg.
-fn _decode(raw: string): Result<DapMsg> {
+pub fn _decode(raw: string): Result<DapMsg> {
     let doc = jsonParse(raw.clone())?
     let kindKey: string = "type"
     let kind = _strOr(_getStr(doc, kindKey), "")
@@ -68,21 +68,21 @@ fn _decode(raw: string): Result<DapMsg> {
     return Result.Ok(msg)
 }
 
-fn _getStr(doc: &Json, key: string): Option<string> {
+pub fn _getStr(doc: &Json, key: string): Option<string> {
     let Option.Some(node) = doc.get(key) else {
         return Option.None
     }
     return node.asStr()
 }
 
-fn _getI64(doc: &Json, key: string): Option<i64> {
+pub fn _getI64(doc: &Json, key: string): Option<i64> {
     let Option.Some(node) = doc.get(key) else {
         return Option.None
     }
     return node.asI64()
 }
 
-fn _getBool(doc: &Json, key: string): Option<bool> {
+pub fn _getBool(doc: &Json, key: string): Option<bool> {
     let Option.Some(node) = doc.get(key) else {
         return Option.None
     }

@@ -3,6 +3,8 @@ import { simpleType, declaredType } from "./ast";
 import type { TypeKind } from "./types";
 import { typeFromAst, typeEq, typeName, isNumeric, isCopy, isScalar } from "./types";
 import type { Diagnostic, WarningConfig } from "./diagnostics";
+import { checkVisibility } from "./visibility";
+import { basename } from "path";
 
 export interface VarInfo {
   type: TypeKind;
@@ -1290,6 +1292,19 @@ export class TypeChecker {
       if (this.inferVecElems.has(p.elem as object)) {
         this.error(`cannot infer Vec element type — no 'push' found to infer from; add a type annotation: 'let v: Vec<T> = Vec.new()'`, p.span);
       }
+    }
+
+    // File-level `pub` visibility: a reference to a non-`pub` decl defined in
+    // another file is an error. Run last so it never masks a more basic type error.
+    for (const v of checkVisibility(program)) {
+      const where = v.declFiles.length === 1 ? basename(v.declFiles[0]) : `${v.declFiles.length} files`;
+      this.diagnostics.push({
+        severity: "error",
+        span: v.span,
+        message: `'${v.name}' is private to ${where}`,
+        hint: `mark '${v.name}' as 'pub' where it is defined to use it from another file`,
+        code: "private",
+      });
     }
 
     return {

@@ -196,6 +196,16 @@ function formatMiloType(t: import("./ast").MiloType): string {
   return base;
 }
 
+// ── Visibility markers for declaration hovers ──
+// Declarations are file-private by default; `pub` exports them (importable from
+// other files). `pubPrefix` leads the signature with `pub ` when public; a private
+// decl gets a short note instead. Builtins (Option/Vec/…) have no source-level
+// visibility, so their hover paths don't call these.
+function pubPrefix(isPub?: boolean): string { return isPub ? "pub " : ""; }
+function visibilityNote(isPub?: boolean): string {
+  return isPub ? "" : "\n\n*private — file-local; not importable from other files*";
+}
+
 // Byte width of the scalar primitives, for spelling out `[T; N]` in plain terms.
 const SCALAR_BYTES: Record<string, number> = {
   i8: 1, u8: 1, i16: 2, u16: 2, i32: 4, u32: 4, i64: 8, u64: 8, f32: 4, f64: 8, bool: 1,
@@ -404,8 +414,8 @@ function handleHover(uri: string, line: number, character: number): object | nul
     const f = program.functions.find(fn => fn.name === word && !fn.isExtern);
     if (f) {
       const params = f.params.map(p => `${p.name}: ${formatMiloType(declaredType(p))}`).join(", ");
-      const sig = `fn ${f.name}(${params}): ${formatMiloType(f.retType)}`;
-      let hover = `\`\`\`milo\n${sig}\n\`\`\``;
+      const sig = `${pubPrefix(f.isPub)}fn ${f.name}(${params}): ${formatMiloType(f.retType)}`;
+      let hover = `\`\`\`milo\n${sig}\n\`\`\`${visibilityNote(f.isPub)}`;
       hover = appendDocAndModule(hover, source, parsed, sourceDir, word, "fn");
       return { contents: { kind: "markdown", value: hover } };
     }
@@ -446,7 +456,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
     // Type aliases
     for (const ta of program.typeAliases) {
       if (ta.name === word) {
-        return { contents: { kind: "markdown", value: `\`\`\`milo\ntype ${ta.name} = ${formatMiloType(ta.type)}\n\`\`\`` } };
+        return { contents: { kind: "markdown", value: `\`\`\`milo\n${pubPrefix(ta.isPub)}type ${ta.name} = ${formatMiloType(ta.type)}\n\`\`\`${visibilityNote(ta.isPub)}` } };
       }
     }
 
@@ -455,7 +465,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
       if (s.name === word) {
         const tparams = s.typeParams.length ? `<${s.typeParams.map(t => t.name).join(", ")}>` : "";
         const fields = s.fields.map(f => `    ${f.name}: ${formatMiloType(f.type)},`).join("\n");
-        let hover = `\`\`\`milo\nstruct ${s.name}${tparams} {\n${fields}\n}\n\`\`\``;
+        let hover = `\`\`\`milo\n${pubPrefix(s.isPub)}struct ${s.name}${tparams} {\n${fields}\n}\n\`\`\`${visibilityNote(s.isPub)}`;
         hover = appendDocAndModule(hover, source, parsed, sourceDir, word, "struct");
         return { contents: { kind: "markdown", value: hover } };
       }
@@ -487,7 +497,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
           const params = m.params.map(p => `${p.name}: ${formatMiloType(declaredType(p))}`).join(", ");
           return `    fn ${m.name}(${params}): ${formatMiloType(m.retType)}`;
         }).join("\n");
-        return { contents: { kind: "markdown", value: `\`\`\`milo\ninterface ${iface.name} {\n${methods}\n}\n\`\`\`` } };
+        return { contents: { kind: "markdown", value: `\`\`\`milo\n${pubPrefix(iface.isPub)}interface ${iface.name} {\n${methods}\n}\n\`\`\`${visibilityNote(iface.isPub)}` } };
       }
     }
 
@@ -511,8 +521,8 @@ function handleHover(uri: string, line: number, character: number): object | nul
       let ty = g.type ? formatMiloType(g.type) : null;
       if (!ty) { const tk = exprTypes.get(g.value); if (tk) ty = formatTypeName(tk); }
       const kw = g.mutable ? "var" : "let";
-      const line = `${kw} ${g.name}: ${ty ?? "?"}`;
-      return { contents: { kind: "markdown", value: `\`\`\`milo\n${line}\n\`\`\`${arrayHoverNote(line, "static")}` } };
+      const line = `${pubPrefix(g.isPub)}${kw} ${g.name}: ${ty ?? "?"}`;
+      return { contents: { kind: "markdown", value: `\`\`\`milo\n${line}\n\`\`\`${arrayHoverNote(line, "static")}${visibilityNote(g.isPub)}` } };
     }
     lspDebug(`hover word=${JSON.stringify(word)} → no match (globals=${program.globals.length})`);
   } catch (e) {
@@ -615,7 +625,7 @@ function formatEnumDecl(e: import("./ast").EnumDecl): string {
     if (v.fields.length === 0) return `    ${v.name},`;
     return `    ${v.name}(${v.fields.map(f => f.name).join(", ")}),`;
   }).join("\n");
-  return `\`\`\`milo\nenum ${e.name}${tparams} {\n${variants}\n}\n\`\`\``;
+  return `\`\`\`milo\n${e.isPub ? "pub " : ""}enum ${e.name}${tparams} {\n${variants}\n}\n\`\`\``;
 }
 
 function formatVariantInfo(e: import("./ast").EnumDecl, v: import("./ast").EnumVariant): string {
@@ -843,7 +853,9 @@ function findEnumHover(source: string, program: Program, word: string, line: num
       const decl = formatEnumDecl(e);
       const docs = BUILTIN_DOCS[e.name];
       if (docs) return `${decl}\n\n---\n\n${docs.enum}`;
-      return appendDocAndModule(decl, source, parsed, sourceDir, word, "enum");
+      // Only user enums reach here (Option/Result hit the docs branch above), so a
+      // missing `isPub` genuinely means private, not "builtin".
+      return appendDocAndModule(decl, source, parsed, sourceDir, word, "enum") + visibilityNote(e.isPub);
     }
   }
 
@@ -1203,16 +1215,23 @@ function getModuleExports(modulePath: string, sourceDir: string): { name: string
   if (!absPath) return [];
   const src = readStd(absPath);
   if (src === null) return [];
-  const exports: { name: string; kind: string }[] = [];
+  // A name in another file is only importable/referenceable when it's marked `pub`
+  // (declarations are file-private by default). std isn't fully `pub`-annotated
+  // yet, so a module with NO `pub` at all is treated as legacy and shows
+  // everything, matching pre-visibility behavior — a missing completion is worse
+  // than an extra one. Once a module adopts `pub`, its unmarked names are private
+  // and hidden. These come from imported modules, so they are always other files.
+  const moduleHasPub = /^pub\s+(?:fn|struct|enum|trait|type|interface|let|var|thread_local)\b/m.test(src);
+  const all: { name: string; kind: string; pub: boolean }[] = [];
   for (const line of src.split("\n")) {
     let m;
-    if ((m = line.match(/^fn\s+(\w+)\s*[<(]/)) && !m[1].startsWith("_")) exports.push({ name: m[1], kind: "function" });
-    else if ((m = line.match(/^struct\s+(\w+)/)) && !m[1].startsWith("_")) exports.push({ name: m[1], kind: "struct" });
-    else if ((m = line.match(/^enum\s+(\w+)/)) && !m[1].startsWith("_")) exports.push({ name: m[1], kind: "enum" });
-    else if ((m = line.match(/^trait\s+(\w+)/)) && !m[1].startsWith("_")) exports.push({ name: m[1], kind: "trait" });
-    else if ((m = line.match(/^let\s+(\w+)\s*:/)) && !m[1].startsWith("_")) exports.push({ name: m[1], kind: "variable" });
+    if ((m = line.match(/^(pub\s+)?fn\s+(\w+)\s*[<(]/)) && !m[2].startsWith("_")) all.push({ name: m[2], kind: "function", pub: !!m[1] });
+    else if ((m = line.match(/^(pub\s+)?struct\s+(\w+)/)) && !m[2].startsWith("_")) all.push({ name: m[2], kind: "struct", pub: !!m[1] });
+    else if ((m = line.match(/^(pub\s+)?enum\s+(\w+)/)) && !m[2].startsWith("_")) all.push({ name: m[2], kind: "enum", pub: !!m[1] });
+    else if ((m = line.match(/^(pub\s+)?trait\s+(\w+)/)) && !m[2].startsWith("_")) all.push({ name: m[2], kind: "trait", pub: !!m[1] });
+    else if ((m = line.match(/^(pub\s+)?let\s+(\w+)\s*:/)) && !m[2].startsWith("_")) all.push({ name: m[2], kind: "variable", pub: !!m[1] });
   }
-  return exports;
+  return (moduleHasPub ? all.filter(e => e.pub) : all).map(({ name, kind }) => ({ name, kind }));
 }
 
 function getLocalMiloFiles(sourceDir: string): string[] {

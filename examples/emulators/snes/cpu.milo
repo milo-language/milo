@@ -18,14 +18,21 @@ from "./superfx" import {
 }
 
 // --- P status-register bit masks ---
-let FC: i64 = 0x01 // carry
-let FZ: i64 = 0x02 // zero
-let FI: i64 = 0x04 // irq disable
-let FD: i64 = 0x08 // decimal
-let FX: i64 = 0x10 // index width: 1 = 8-bit X/Y (also B/break in emulation)
-let FM: i64 = 0x20 // accumulator width: 1 = 8-bit A (also unused in emulation)
-let FV: i64 = 0x40 // overflow
-let FN: i64 = 0x80 // negative
+pub let FC: i64 = 0x01 // carry
+
+pub let FZ: i64 = 0x02 // zero
+
+pub let FI: i64 = 0x04 // irq disable
+
+pub let FD: i64 = 0x08 // decimal
+
+pub let FX: i64 = 0x10 // index width: 1 = 8-bit X/Y (also B/break in emulation)
+
+pub let FM: i64 = 0x20 // accumulator width: 1 = 8-bit A (also unused in emulation)
+
+pub let FV: i64 = 0x40 // overflow
+
+pub let FN: i64 = 0x80 // negative
 
 // Manual serial joypad ($4016/$4017). The auto-joypad ($4218/$4219) covers most
 // input, but DKC also reads the pad the old 6502 way: strobe $4016, then shift 16
@@ -33,45 +40,50 @@ let FN: i64 = 0x80 // negative
 // Each read advances a bit cursor — but the CPU read path (memRead/mmioRead) is
 // &Mem, so the cursor can't live in Mem. It lives in these module globals, which
 // stay mutable regardless of the borrow. Latched from m.joy1/joy2 on the strobe.
-var joyLatch1: i64 = 0
-var joyCnt1: i64 = 0
-var joyLatch2: i64 = 0
-var joyCnt2: i64 = 0
+pub var joyLatch1: i64 = 0
+
+pub var joyCnt1: i64 = 0
+
+pub var joyLatch2: i64 = 0
+
+pub var joyCnt2: i64 = 0
 
 // Set by the WAI opcode ($CB): the CPU is idling until the next interrupt. The
 // per-frame active loop breaks as soon as this is set so NMI fires from the game's
 // vblank-wait (where DBR=$80) rather than at an arbitrary instruction count deep
 // inside a heavy routine (DBR=$BB) — the latter derailed DKC's boot and its level
 // loads (the vblank handler saves A/X/Y but not DBR; see stepFrame/nmi).
-var cpuWaiting: bool = false
+pub var cpuWaiting: bool = false
 
 // Set when the CPU reads $3031 (SFR high) — the read clears the GSU IRQ line on
 // hardware, but the read path is over &Mem, so the ack is applied in the step loop.
-var fxIrqAck: bool = false
+pub var fxIrqAck: bool = false
 
 // OPHCT/OPVCT ($213C/$213D) latch a 9-bit counter read out low-byte-then-high via a
 // per-register flip-flop, both reset by reading STAT78 ($213F). Star Fox's boot spins
 // reading OPVCT until it equals a target scanline; without a moving counter it hangs.
 // The read path is &Mem, so the flip-flops live in these globals (joypad pattern).
-var ophctHi: bool = false
-var opvctHi: bool = false
+pub var ophctHi: bool = false
+
+pub var opvctHi: bool = false
 
 // Set by step()'s default arm if an unimplemented opcode is ever executed (should
 // never happen — all 256 are wired). Loud diagnostic so a dropped opcode surfaces
 // immediately instead of silently desyncing PC. badOp = -1 means "none seen".
-var badOp: i64 = -1
-var badOpPc: i64 = 0
+pub var badOp: i64 = -1
+
+pub var badOpPc: i64 = 0
 
 // Harness accessors for the unimplemented-opcode trap (badOp = -1 when none seen).
-fn lastBadOp(): i64 {
+pub fn lastBadOp(): i64 {
     return badOp
 }
 
-fn lastBadOpPc(): i64 {
+pub fn lastBadOpPc(): i64 {
     return badOpPc
 }
 
-struct Cpu {
+pub struct Cpu {
     a: i64 // 16-bit accumulator (low byte = A, high byte = B when M=1)
     x: i64 // 16-bit index
     y: i64 // 16-bit index
@@ -89,7 +101,7 @@ struct Cpu {
 //  - real bus: 128 KiB WRAM ($7E-$7F + low mirror), LoROM/HiROM cartridge, and
 //    an MMIO scratch store ($2000-$5FFF) stubbed for readback until the PPU/DMA
 //    modules land.
-struct Mem {
+pub struct Mem {
     addr: Vec<i64> // test-mode sparse RAM
     val: Vec<i64>
     testMode: bool
@@ -127,13 +139,13 @@ struct Mem {
     fx: Fx // GSU state + game-pak RAM (framebuffer the CPU DMAs to VRAM)
 }
 
-fn newApuSpc(): Spc {
+pub fn newApuSpc(): Spc {
     return Spc {
         a: 0, x: 0, y: 0, sp: 0, pc: 0, psw: 0
     }
 }
 
-fn memNew(): Mem {
+pub fn memNew(): Mem {
     return Mem {
         addr: Vec.new(), val: Vec.new(), testMode: true,
         wram: Vec.new(), rom: Vec.new(), romMask: 0, sram: Vec.new(), sramMask: 0, mapMode: 0, mmio: Vec.new(),
@@ -143,7 +155,7 @@ fn memNew(): Mem {
     }
 }
 
-fn vecZeros(n: i64): Vec<u8> {
+pub fn vecZeros(n: i64): Vec<u8> {
     var v: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < n {
@@ -154,7 +166,7 @@ fn vecZeros(n: i64): Vec<u8> {
 }
 
 // Real-hardware bus over a loaded cartridge. mapMode: 0 LoROM, 1 HiROM.
-fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
+pub fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
     let len = rom.len
     var mask: i64 = 1
     while mask < len {
@@ -208,7 +220,7 @@ fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
 }
 
 // Co-run the SPC700 for n instructions (called from the system step loop).
-fn runApu(m: &mut Mem, n: i64): void {
+pub fn runApu(m: &mut Mem, n: i64): void {
     if m.testMode {
         return
     }
@@ -220,24 +232,24 @@ fn runApu(m: &mut Mem, n: i64): void {
 }
 
 // Peek loaded video memory (tests / future renderer).
-fn busReadCgram(m: &Mem, a: i64): i64 {
+pub fn busReadCgram(m: &Mem, a: i64): i64 {
     return ppuCgram(m.ppu, a)
 }
 
-fn busReadVram(m: &Mem, a: i64): i64 {
+pub fn busReadVram(m: &Mem, a: i64): i64 {
     return ppuVram(m.ppu, a)
 }
 
-fn scratch(m: &Mem, addr: i64): i64 {
+pub fn scratch(m: &Mem, addr: i64): i64 {
     return m.mmio[addr - 0x2000] as i64
 }
 
-fn setScratch(m: &mut Mem, addr: i64, v: i64): void {
+pub fn setScratch(m: &mut Mem, addr: i64, v: i64): void {
     m.mmio[addr - 0x2000] = (v & 0xFF) as u8
 }
 
 // B-bus register offset within a DMA transfer (fullsnes transfer patterns).
-fn dmaPatternOffset(pattern: i64, count: i64): i64 {
+pub fn dmaPatternOffset(pattern: i64, count: i64): i64 {
     if pattern == 0 {
         return 0
     }
@@ -258,7 +270,7 @@ fn dmaPatternOffset(pattern: i64, count: i64): i64 {
 
 // General-purpose DMA: for each enabled channel, transfer DAS bytes between the
 // A-bus (CPU memory bank:addr) and a B-bus PPU register ($2100|BBAD).
-fn runDMA(m: &mut Mem, channels: i64): void {
+pub fn runDMA(m: &mut Mem, channels: i64): void {
     var ch: i64 = 0
     while ch < 8 {
         if ((channels >> ch) & 1) != 0 {
@@ -314,7 +326,7 @@ fn runDMA(m: &mut Mem, channels: i64): void {
 // table pointers correctly but aren't yet consumed by the renderer.
 
 // Bytes transferred per scanline for each DMA/HDMA transfer pattern.
-fn hdmaUnitBytes(pattern: i64): i64 {
+pub fn hdmaUnitBytes(pattern: i64): i64 {
     if pattern == 0 {
         return 1
     }
@@ -325,7 +337,7 @@ fn hdmaUnitBytes(pattern: i64): i64 {
 }
 
 // B-bus register offset (added to BBAD) for the j-th byte of a write-unit.
-fn hdmaByteReg(pattern: i64, j: i64): i64 {
+pub fn hdmaByteReg(pattern: i64, j: i64): i64 {
     if pattern == 1 {
         return j // r, r+1
     }
@@ -347,7 +359,7 @@ fn hdmaByteReg(pattern: i64, j: i64): i64 {
 // Record one HDMA write into the per-line override arrays for the registers the
 // renderer consumes. Uses hold semantics (arrays carry forward line-to-line), so
 // only the plane a COLDATA write selects changes; others keep their prior value.
-fn hdmaApplyReg(m: &mut Mem, line: i64, reg: i64, v: i64): void {
+pub fn hdmaApplyReg(m: &mut Mem, line: i64, reg: i64, v: i64): void {
     if reg == 0x2100 { // INIDISP: brightness (force-blank line renders as bright 0)
         var b = v & 0x0F
         if (v & 0x80) != 0 {
@@ -381,7 +393,7 @@ fn hdmaApplyReg(m: &mut Mem, line: i64, reg: i64, v: i64): void {
     // renderer support pending.
 }
 
-fn hdmaWalkFrame(m: &mut Mem): void {
+pub fn hdmaWalkFrame(m: &mut Mem): void {
     // Baseline honors scalar force-blank: bit7 set → line renders dark unless a
     // $2100-targeting HDMA channel overrides it below.
     let brightScalar = if (m.ppu.inidisp & 0x80) != 0 {
@@ -497,7 +509,7 @@ fn hdmaWalkFrame(m: &mut Mem): void {
 // results, NMI/vblank status, auto-read joypad. Falls back to the scratch store.
 // vblankToggle is driven by the system frame loop, not by reads (accurate
 // RDNMI clear-on-read arrives with PPU timing in M4).
-fn mmioRead(m: &Mem, off: i64): i64 {
+pub fn mmioRead(m: &Mem, off: i64): i64 {
     // H/V counter reads: model a scanline counter off the free-running instruction
     // count so vertical-sync spin loops (Star Fox boot) make progress. The dot/line
     // aren't cycle-accurate — just monotonic-cycling so any target value is reached.
@@ -596,7 +608,7 @@ fn mmioRead(m: &Mem, off: i64): i64 {
 }
 
 // CPU-side MMIO write ($2000-$5FFF). Writing $4203/$4206 latches mul/div results.
-fn mmioWrite(m: &mut Mem, off: i64, val: i64): void {
+pub fn mmioWrite(m: &mut Mem, off: i64, val: i64): void {
     if off >= 0x2100 && off <= 0x213F {
         ppuRegWrite(m.ppu, off - 0x2100, val)
         return // PPU registers
@@ -687,21 +699,21 @@ fn mmioWrite(m: &mut Mem, off: i64, val: i64): void {
 }
 
 // Clear all entries between test cases (reused across a whole file).
-fn memReset(m: &mut Mem): void {
+pub fn memReset(m: &mut Mem): void {
     m.addr = Vec.new()
     m.val = Vec.new()
 }
 
 // LoROM: each bank maps $8000-$FFFF to a 32 KiB ROM page.
 // HiROM: each bank maps its full 64 KiB linearly from bank*0x10000.
-fn romOffset(m: &Mem, bank: i64, off: i64): i64 {
+pub fn romOffset(m: &Mem, bank: i64, off: i64): i64 {
     if m.mapMode == 1 {
         return (((bank & 0x3F) << 16) | off) & m.romMask
     }
     return (((bank & 0x7F) << 15) | (off & 0x7FFF)) & m.romMask
 }
 
-fn romByte(m: &Mem, bank: i64, off: i64): i64 {
+pub fn romByte(m: &Mem, bank: i64, off: i64): i64 {
     let o = romOffset(m, bank, off)
     if o < m.rom.len {
         return m.rom[o] as i64
@@ -712,7 +724,7 @@ fn romByte(m: &Mem, bank: i64, off: i64): i64 {
 // Linear SRAM index for a bank:offset, or -1 if the address isn't SRAM. LoROM
 // maps SRAM into banks $70-$7D (mirror $F0-$FD), offset $0000-$7FFF; HiROM into
 // banks $20-$3F (mirror $A0-$BF), offset $6000-$7FFF.
-fn sramIndex(m: &Mem, bank: i64, off: i64): i64 {
+pub fn sramIndex(m: &Mem, bank: i64, off: i64): i64 {
     let b = bank & 0x7F
     if m.mapMode == 0 {
         if b >= 0x70 && b <= 0x7D && off < 0x8000 {
@@ -727,7 +739,7 @@ fn sramIndex(m: &Mem, bank: i64, off: i64): i64 {
 }
 
 // Serialize SRAM to a byte string for a .srm file.
-fn sramToString(m: &Mem): string {
+pub fn sramToString(m: &Mem): string {
     var s = String.withCapacity(m.sram.len + 16)
     for b in m.sram {
         s.push(b)
@@ -736,7 +748,7 @@ fn sramToString(m: &Mem): string {
 }
 
 // Load a .srm byte string back into SRAM (truncated/padded to SRAM size).
-fn sramFromString(m: &mut Mem, data: &string): void {
+pub fn sramFromString(m: &mut Mem, data: &string): void {
     var i: i64 = 0
     while i < m.sram.len && i < data.len {
         m.sram[i] = data[i]
@@ -744,7 +756,7 @@ fn sramFromString(m: &mut Mem, data: &string): void {
     }
 }
 
-fn memRead(m: &Mem, a: i64): i64 {
+pub fn memRead(m: &Mem, a: i64): i64 {
     if m.testMode {
         var i: i64 = 0
         while i < m.addr.len {
@@ -810,7 +822,7 @@ fn memRead(m: &Mem, a: i64): i64 {
     return romByte(m, bank, off) // banks 40-7D / C0-FF: ROM
 }
 
-fn memWrite(m: &mut Mem, a: i64, v: i64): void {
+pub fn memWrite(m: &mut Mem, a: i64, v: i64): void {
     if m.testMode {
         var i: i64 = 0
         while i < m.addr.len {
@@ -878,7 +890,7 @@ fn memWrite(m: &mut Mem, a: i64, v: i64): void {
 
 // Power-on / reset: enter emulation mode, stack at $01FF, PC from the reset
 // vector at $00:FFFC. P = M|X|I (emulation forces the 8-bit widths).
-fn newCpuReset(m: &Mem): Cpu {
+pub fn newCpuReset(m: &Mem): Cpu {
     let lo = memRead(m, 0xFFFC)
     let hi = memRead(m, 0xFFFD)
     return Cpu {
@@ -889,7 +901,7 @@ fn newCpuReset(m: &Mem): Cpu {
 
 // Non-maskable interrupt (vblank). Pushes the return frame and vectors through
 // $FFEA (native) / $FFFA (emulation). Cleared D + set I like a hardware IRQ.
-fn nmi(cpu: &mut Cpu, m: &mut Mem): void {
+pub fn nmi(cpu: &mut Cpu, m: &mut Mem): void {
     if cpu.e == 0 {
         push8(cpu, m, cpu.pbr)
         push16(cpu, m, cpu.pc)
@@ -910,7 +922,7 @@ fn nmi(cpu: &mut Cpu, m: &mut Mem): void {
 
 // Maskable interrupt (H/V IRQ). Vectors through $FFEE (native) / $FFFE
 // (emulation). Only taken when the I flag is clear.
-fn irq(cpu: &mut Cpu, m: &mut Mem): void {
+pub fn irq(cpu: &mut Cpu, m: &mut Mem): void {
     if cpu.e == 0 {
         push8(cpu, m, cpu.pbr)
         push16(cpu, m, cpu.pc)
@@ -932,7 +944,7 @@ fn irq(cpu: &mut Cpu, m: &mut Mem): void {
 // Fire an H/V IRQ if $4200 enables it (bits 4/5) and the I flag is clear. Our
 // frame has no real scanline counter, so a per-frame V-timed IRQ is raised once
 // at the VTIME-proportional point during active display (below). Sets TIMEUP.
-fn maybeIrq(cpu: &mut Cpu, m: &mut Mem): void {
+pub fn maybeIrq(cpu: &mut Cpu, m: &mut Mem): void {
     if (m.nmitimen & 0x30) == 0 {
         return
     }
@@ -948,9 +960,9 @@ fn maybeIrq(cpu: &mut Cpu, m: &mut Mem): void {
 // Co-run the GSU while the GO flag is set, and route its STOP-time IRQ to the CPU.
 // Called from the frame loop between CPU steps; `fxFrameBudget` caps total GSU work
 // per frame so a runaway GSU loop can't wedge the whole system.
-var fxFrameBudget: i64 = 0
+pub var fxFrameBudget: i64 = 0
 
-fn runFxAndIrq(cpu: &mut Cpu, m: &mut Mem): void {
+pub fn runFxAndIrq(cpu: &mut Cpu, m: &mut Mem): void {
     if !m.fxEnabled {
         return
     }
@@ -974,7 +986,7 @@ fn runFxAndIrq(cpu: &mut Cpu, m: &mut Mem): void {
     }
 }
 
-fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
+pub fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
     fxFrameBudget = 700000 // ≈ Snes9x per-frame GSU throughput at 21.4MHz
     // CPU and SPC must be finely interleaved: the boot handshake (and later
     // in-game audio commands) round-trips through $2140-$2143 many times, and a
@@ -1051,15 +1063,15 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
 }
 
 // --- register-width predicates (emulation forces both to 8-bit) ---
-fn m8(cpu: &Cpu): bool {
+pub fn m8(cpu: &Cpu): bool {
     return cpu.e == 1 || (cpu.p & FM) != 0
 }
 
-fn x8(cpu: &Cpu): bool {
+pub fn x8(cpu: &Cpu): bool {
     return cpu.e == 1 || (cpu.p & FX) != 0
 }
 
-fn setBit(cpu: &mut Cpu, mask: i64, on: bool): void {
+pub fn setBit(cpu: &mut Cpu, mask: i64, on: bool): void {
     if on {
         cpu.p = cpu.p | mask
     } else {
@@ -1067,18 +1079,18 @@ fn setBit(cpu: &mut Cpu, mask: i64, on: bool): void {
     }
 }
 
-fn setNZ8(cpu: &mut Cpu, v: i64): void {
+pub fn setNZ8(cpu: &mut Cpu, v: i64): void {
     setBit(cpu, FZ, (v & 0xFF) == 0)
     setBit(cpu, FN, (v & 0x80) != 0)
 }
 
-fn setNZ16(cpu: &mut Cpu, v: i64): void {
+pub fn setNZ16(cpu: &mut Cpu, v: i64): void {
     setBit(cpu, FZ, (v & 0xFFFF) == 0)
     setBit(cpu, FN, (v & 0x8000) != 0)
 }
 
 // N/Z for a value in the accumulator's current width.
-fn setNZa(cpu: &mut Cpu, v: i64): void {
+pub fn setNZa(cpu: &mut Cpu, v: i64): void {
     if m8(cpu) {
         setNZ8(cpu, v)
     } else {
@@ -1087,7 +1099,7 @@ fn setNZa(cpu: &mut Cpu, v: i64): void {
 }
 
 // N/Z for a value in the index registers' current width.
-fn setNZx(cpu: &mut Cpu, v: i64): void {
+pub fn setNZx(cpu: &mut Cpu, v: i64): void {
     if x8(cpu) {
         setNZ8(cpu, v)
     } else {
@@ -1095,7 +1107,7 @@ fn setNZx(cpu: &mut Cpu, v: i64): void {
     }
 }
 
-fn fetch8(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn fetch8(cpu: &mut Cpu, m: &Mem): i64 {
     let a = (cpu.pbr << 16) | cpu.pc
     let v = memRead(m, a)
     cpu.pc = (cpu.pc + 1) & 0xFFFF // PC wraps within the program bank on fetch
@@ -1103,7 +1115,7 @@ fn fetch8(cpu: &mut Cpu, m: &Mem): i64 {
 }
 
 // XCE aftermath and SEP/REP can force emulation constraints; apply them here.
-fn applyEmulationConstraints(cpu: &mut Cpu): void {
+pub fn applyEmulationConstraints(cpu: &mut Cpu): void {
     if cpu.e == 1 {
         cpu.p = cpu.p | FM | FX // M/X forced 8-bit
         cpu.x = cpu.x & 0xFF // index high bytes cleared
@@ -1113,7 +1125,7 @@ fn applyEmulationConstraints(cpu: &mut Cpu): void {
 }
 
 // --- stack (bank 0; emulation keeps S in page 1) ---
-fn spDec(cpu: &mut Cpu): void {
+pub fn spDec(cpu: &mut Cpu): void {
     if cpu.e == 1 {
         cpu.s = 0x0100 | ((cpu.s - 1) & 0xFF)
     } else {
@@ -1121,7 +1133,7 @@ fn spDec(cpu: &mut Cpu): void {
     }
 }
 
-fn spInc(cpu: &mut Cpu): void {
+pub fn spInc(cpu: &mut Cpu): void {
     if cpu.e == 1 {
         cpu.s = 0x0100 | ((cpu.s + 1) & 0xFF)
     } else {
@@ -1129,29 +1141,29 @@ fn spInc(cpu: &mut Cpu): void {
     }
 }
 
-fn push8(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
+pub fn push8(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
     memWrite(m, cpu.s, v & 0xFF)
     spDec(cpu)
 }
 
-fn pull8(cpu: &mut Cpu, m: &mut Mem): i64 {
+pub fn pull8(cpu: &mut Cpu, m: &mut Mem): i64 {
     spInc(cpu)
     return memRead(m, cpu.s)
 }
 
 // 16-bit push writes high byte first, so the low byte lands at the lower address.
-fn push16(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
+pub fn push16(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
     push8(cpu, m, (v >> 8) & 0xFF)
     push8(cpu, m, v & 0xFF)
 }
 
-fn pull16(cpu: &mut Cpu, m: &mut Mem): i64 {
+pub fn pull16(cpu: &mut Cpu, m: &mut Mem): i64 {
     let lo = pull8(cpu, m)
     let hi = pull8(cpu, m)
     return lo | (hi << 8)
 }
 
-fn fetch16(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn fetch16(cpu: &mut Cpu, m: &Mem): i64 {
     let lo = fetch8(cpu, m)
     let hi = fetch8(cpu, m)
     return lo | (hi << 8)
@@ -1160,34 +1172,34 @@ fn fetch16(cpu: &mut Cpu, m: &Mem): i64 {
 // "New" 65816 stack ops (PEA/PEI/PER/PHD/PLD, and the bank pushes/pulls) use a
 // full 16-bit stack pointer even in emulation — the byte accesses can leave page
 // 1 — and only clamp SH back to 01 once the instruction finishes.
-fn push8f(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
+pub fn push8f(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
     memWrite(m, cpu.s, v & 0xFF)
     cpu.s = (cpu.s - 1) & 0xFFFF
 }
 
-fn pull8f(cpu: &mut Cpu, m: &mut Mem): i64 {
+pub fn pull8f(cpu: &mut Cpu, m: &mut Mem): i64 {
     cpu.s = (cpu.s + 1) & 0xFFFF
     return memRead(m, cpu.s)
 }
 
-fn push16f(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
+pub fn push16f(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
     push8f(cpu, m, (v >> 8) & 0xFF)
     push8f(cpu, m, v & 0xFF)
 }
 
-fn pull16f(cpu: &mut Cpu, m: &mut Mem): i64 {
+pub fn pull16f(cpu: &mut Cpu, m: &mut Mem): i64 {
     let lo = pull8f(cpu, m)
     let hi = pull8f(cpu, m)
     return lo | (hi << 8)
 }
 
-fn clampEmuStack(cpu: &mut Cpu): void {
+pub fn clampEmuStack(cpu: &mut Cpu): void {
     if cpu.e == 1 {
         cpu.s = 0x0100 | (cpu.s & 0xFF)
     }
 }
 
-fn fetch24(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn fetch24(cpu: &mut Cpu, m: &Mem): i64 {
     let lo = fetch8(cpu, m)
     let mid = fetch8(cpu, m)
     let hi = fetch8(cpu, m)
@@ -1197,97 +1209,97 @@ fn fetch24(cpu: &mut Cpu, m: &Mem): i64 {
 // --- effective-address resolvers (advance PC past the operand) ---
 // Direct-page modes live in bank 0 and wrap within it; DBR-relative and long
 // modes are linear 24-bit.
-fn aDp(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn aDp(cpu: &mut Cpu, m: &Mem): i64 {
     return (cpu.d + fetch8(cpu, m)) & 0xFFFF
 }
 
 // Direct-page indexed base. Emulation quirk: when DL (D low byte) is 0 the index
 // wraps within the zero page instead of across bank 0.
-fn dpIndexed(cpu: &Cpu, dp: i64, idx: i64): i64 {
+pub fn dpIndexed(cpu: &Cpu, dp: i64, idx: i64): i64 {
     if cpu.e == 1 && (cpu.d & 0xFF) == 0 {
         return (cpu.d & 0xFF00) | ((dp + idx) & 0xFF)
     }
     return (cpu.d + dp + idx) & 0xFFFF
 }
 
-fn aDpX(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn aDpX(cpu: &mut Cpu, m: &Mem): i64 {
     return dpIndexed(cpu, fetch8(cpu, m), cpu.x)
 }
 
-fn aDpY(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn aDpY(cpu: &mut Cpu, m: &Mem): i64 {
     return dpIndexed(cpu, fetch8(cpu, m), cpu.y)
 }
 
-fn aAbs(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn aAbs(cpu: &mut Cpu, m: &Mem): i64 {
     return (cpu.dbr << 16) | fetch16(cpu, m)
 }
 
-fn aAbsX(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn aAbsX(cpu: &mut Cpu, m: &Mem): i64 {
     return (((cpu.dbr << 16) | fetch16(cpu, m)) + cpu.x) & 0xFFFFFF
 }
 
-fn aAbsY(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn aAbsY(cpu: &mut Cpu, m: &Mem): i64 {
     return (((cpu.dbr << 16) | fetch16(cpu, m)) + cpu.y) & 0xFFFFFF
 }
 
-fn aLong(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn aLong(cpu: &mut Cpu, m: &Mem): i64 {
     return fetch24(cpu, m)
 }
 
-fn aLongX(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn aLongX(cpu: &mut Cpu, m: &Mem): i64 {
     return (fetch24(cpu, m) + cpu.x) & 0xFFFFFF
 }
 
 // Read a 16-/24-bit pointer from bank 0 (direct-page/stack pointer storage),
 // wrapping the increments within bank 0.
-fn readPtr16(m: &Mem, addr: i64): i64 {
+pub fn readPtr16(m: &Mem, addr: i64): i64 {
     let lo = memRead(m, addr & 0xFFFF)
     let hi = memRead(m, (addr + 1) & 0xFFFF)
     return lo | (hi << 8)
 }
 
-fn readPtr24(m: &Mem, addr: i64): i64 {
+pub fn readPtr24(m: &Mem, addr: i64): i64 {
     let lo = memRead(m, addr & 0xFFFF)
     let mid = memRead(m, (addr + 1) & 0xFFFF)
     let hi = memRead(m, (addr + 2) & 0xFFFF)
     return lo | (mid << 8) | (hi << 16)
 }
 
-fn aDpIndX(cpu: &mut Cpu, m: &Mem): i64 { // (dp,X)
+pub fn aDpIndX(cpu: &mut Cpu, m: &Mem): i64 { // (dp,X)
     let ptr = readPtr16(m, dpIndexed(cpu, fetch8(cpu, m), cpu.x))
     return (cpu.dbr << 16) | ptr
 }
 
-fn aDpIndY(cpu: &mut Cpu, m: &Mem): i64 { // (dp),Y
+pub fn aDpIndY(cpu: &mut Cpu, m: &Mem): i64 { // (dp),Y
     let ptr = readPtr16(m, (cpu.d + fetch8(cpu, m)) & 0xFFFF)
     return (((cpu.dbr << 16) | ptr) + cpu.y) & 0xFFFFFF
 }
 
-fn aDpInd(cpu: &mut Cpu, m: &Mem): i64 { // (dp)
+pub fn aDpInd(cpu: &mut Cpu, m: &Mem): i64 { // (dp)
     let ptr = readPtr16(m, (cpu.d + fetch8(cpu, m)) & 0xFFFF)
     return ((cpu.dbr << 16) | ptr) & 0xFFFFFF
 }
 
-fn aDpLong(cpu: &mut Cpu, m: &Mem): i64 { // [dp]
+pub fn aDpLong(cpu: &mut Cpu, m: &Mem): i64 { // [dp]
     return readPtr24(m, (cpu.d + fetch8(cpu, m)) & 0xFFFF)
 }
 
-fn aDpLongY(cpu: &mut Cpu, m: &Mem): i64 { // [dp],Y
+pub fn aDpLongY(cpu: &mut Cpu, m: &Mem): i64 { // [dp],Y
     return (readPtr24(m, (cpu.d + fetch8(cpu, m)) & 0xFFFF) + cpu.y) & 0xFFFFFF
 }
 
-fn aSr(cpu: &mut Cpu, m: &Mem): i64 { // sr,S — bank 0
+pub fn aSr(cpu: &mut Cpu, m: &Mem): i64 { // sr,S — bank 0
     return (cpu.s + fetch8(cpu, m)) & 0xFFFF
 }
 
-fn aSrY(cpu: &mut Cpu, m: &Mem): i64 { // (sr,S),Y
+pub fn aSrY(cpu: &mut Cpu, m: &Mem): i64 { // (sr,S),Y
     let ptr = readPtr16(m, (cpu.s + fetch8(cpu, m)) & 0xFFFF)
     return (((cpu.dbr << 16) | ptr) + cpu.y) & 0xFFFFFF
 }
 
 // Read a 16-bit operand. bank0wrap: dp/stack modes keep the +1 inside bank 0;
 // linear modes (abs/long) advance the full 24-bit address.
-fn read16w(m: &Mem, addr: i64, bank0wrap: bool): i64 {
+pub fn read16w(m: &Mem, addr: i64, bank0wrap: bool): i64 {
     let lo = memRead(m, addr)
     let hiAddr = if bank0wrap {
         (addr & 0xFF0000) | ((addr + 1) & 0xFFFF)
@@ -1298,7 +1310,7 @@ fn read16w(m: &Mem, addr: i64, bank0wrap: bool): i64 {
     return lo | (hi << 8)
 }
 
-fn write16w(m: &mut Mem, addr: i64, v: i64, bank0wrap: bool): void {
+pub fn write16w(m: &mut Mem, addr: i64, v: i64, bank0wrap: bool): void {
     memWrite(m, addr, v & 0xFF)
     let hiAddr = if bank0wrap {
         (addr & 0xFF0000) | ((addr + 1) & 0xFFFF)
@@ -1309,7 +1321,7 @@ fn write16w(m: &mut Mem, addr: i64, v: i64, bank0wrap: bool): void {
 }
 
 // Store accumulator to a resolved address at the current width.
-fn staTo(cpu: &Cpu, m: &mut Mem, addr: i64, bank0wrap: bool): void {
+pub fn staTo(cpu: &Cpu, m: &mut Mem, addr: i64, bank0wrap: bool): void {
     if m8(cpu) {
         memWrite(m, addr, cpu.a & 0xFF)
     } else {
@@ -1318,7 +1330,7 @@ fn staTo(cpu: &Cpu, m: &mut Mem, addr: i64, bank0wrap: bool): void {
 }
 
 // Load accumulator from a resolved address at the current width.
-fn ldaFrom(cpu: &mut Cpu, m: &Mem, addr: i64, bank0wrap: bool): void {
+pub fn ldaFrom(cpu: &mut Cpu, m: &Mem, addr: i64, bank0wrap: bool): void {
     if m8(cpu) {
         let v = memRead(m, addr)
         cpu.a = (cpu.a & 0xFF00) | v
@@ -1331,28 +1343,28 @@ fn ldaFrom(cpu: &mut Cpu, m: &Mem, addr: i64, bank0wrap: bool): void {
 }
 
 // --- generic operand readers + result writers at register width ---
-fn readMval(cpu: &Cpu, m: &Mem, addr: i64, bank0wrap: bool): i64 {
+pub fn readMval(cpu: &Cpu, m: &Mem, addr: i64, bank0wrap: bool): i64 {
     if m8(cpu) {
         return memRead(m, addr)
     }
     return read16w(m, addr, bank0wrap)
 }
 
-fn readXval(cpu: &Cpu, m: &Mem, addr: i64, bank0wrap: bool): i64 {
+pub fn readXval(cpu: &Cpu, m: &Mem, addr: i64, bank0wrap: bool): i64 {
     if x8(cpu) {
         return memRead(m, addr)
     }
     return read16w(m, addr, bank0wrap)
 }
 
-fn immM(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn immM(cpu: &mut Cpu, m: &Mem): i64 {
     if m8(cpu) {
         return fetch8(cpu, m)
     }
     return fetch16(cpu, m)
 }
 
-fn immX(cpu: &mut Cpu, m: &Mem): i64 {
+pub fn immX(cpu: &mut Cpu, m: &Mem): i64 {
     if x8(cpu) {
         return fetch8(cpu, m)
     }
@@ -1360,7 +1372,7 @@ fn immX(cpu: &mut Cpu, m: &Mem): i64 {
 }
 
 // Write a result into A at accumulator width (high byte preserved when 8-bit).
-fn setA(cpu: &mut Cpu, r: i64): void {
+pub fn setA(cpu: &mut Cpu, r: i64): void {
     if m8(cpu) {
         cpu.a = (cpu.a & 0xFF00) | (r & 0xFF)
         setNZ8(cpu, r)
@@ -1370,7 +1382,7 @@ fn setA(cpu: &mut Cpu, r: i64): void {
     }
 }
 
-fn setXreg(cpu: &mut Cpu, r: i64): void {
+pub fn setXreg(cpu: &mut Cpu, r: i64): void {
     if x8(cpu) {
         cpu.x = r & 0xFF
         setNZ8(cpu, r)
@@ -1380,7 +1392,7 @@ fn setXreg(cpu: &mut Cpu, r: i64): void {
     }
 }
 
-fn setYreg(cpu: &mut Cpu, r: i64): void {
+pub fn setYreg(cpu: &mut Cpu, r: i64): void {
     if x8(cpu) {
         cpu.y = r & 0xFF
         setNZ8(cpu, r)
@@ -1391,7 +1403,7 @@ fn setYreg(cpu: &mut Cpu, r: i64): void {
 }
 
 // Compare reg vs value: C if reg>=v, N/Z from the (masked) difference.
-fn compareVals(cpu: &mut Cpu, reg: i64, v: i64, wide: bool): void {
+pub fn compareVals(cpu: &mut Cpu, reg: i64, v: i64, wide: bool): void {
     let mask: i64 = if wide {
         0xFFFF
     } else {
@@ -1411,47 +1423,47 @@ fn compareVals(cpu: &mut Cpu, reg: i64, v: i64, wide: bool): void {
 }
 
 // --- op-from-resolved-address helpers (reuse for every addressing mode) ---
-fn oraFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+pub fn oraFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readMval(cpu, m, addr, wrap)
     setA(cpu, cpu.a | v)
 }
 
-fn andFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+pub fn andFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readMval(cpu, m, addr, wrap)
     setA(cpu, cpu.a & v)
 }
 
-fn eorFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+pub fn eorFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readMval(cpu, m, addr, wrap)
     setA(cpu, cpu.a ^ v)
 }
 
-fn cmpFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+pub fn cmpFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readMval(cpu, m, addr, wrap)
     compareVals(cpu, cpu.a, v,!m8(cpu))
 }
 
-fn cpxFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+pub fn cpxFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readXval(cpu, m, addr, wrap)
     compareVals(cpu, cpu.x, v,!x8(cpu))
 }
 
-fn cpyFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+pub fn cpyFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readXval(cpu, m, addr, wrap)
     compareVals(cpu, cpu.y, v,!x8(cpu))
 }
 
-fn ldxFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+pub fn ldxFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readXval(cpu, m, addr, wrap)
     setXreg(cpu, v)
 }
 
-fn ldyFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+pub fn ldyFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readXval(cpu, m, addr, wrap)
     setYreg(cpu, v)
 }
 
-fn stxTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
+pub fn stxTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
     if x8(cpu) {
         memWrite(m, addr, cpu.x & 0xFF)
     } else {
@@ -1459,7 +1471,7 @@ fn stxTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
     }
 }
 
-fn styTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
+pub fn styTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
     if x8(cpu) {
         memWrite(m, addr, cpu.y & 0xFF)
     } else {
@@ -1467,7 +1479,7 @@ fn styTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
     }
 }
 
-fn stzTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
+pub fn stzTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
     if m8(cpu) {
         memWrite(m, addr, 0)
     } else {
@@ -1479,7 +1491,7 @@ fn stzTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
 // Decimal paths use Bruce Clark's nibble-adjust algorithm; on the 65C816 (unlike
 // NMOS) N/V/Z are valid in decimal too. For SBC the flags come from the binary
 // subtraction while only the stored result is BCD-adjusted.
-fn doADC(cpu: &mut Cpu, v: i64): void {
+pub fn doADC(cpu: &mut Cpu, v: i64): void {
     let wide = !m8(cpu)
     let mask: i64 = if wide {
         0xFFFF
@@ -1553,7 +1565,7 @@ fn doADC(cpu: &mut Cpu, v: i64): void {
     }
 }
 
-fn doSBC(cpu: &mut Cpu, v: i64): void {
+pub fn doSBC(cpu: &mut Cpu, v: i64): void {
     let wide = !m8(cpu)
     let mask: i64 = if wide {
         0xFFFF
@@ -1617,25 +1629,25 @@ fn doSBC(cpu: &mut Cpu, v: i64): void {
     }
 }
 
-fn adcFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+pub fn adcFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readMval(cpu, m, addr, wrap)
     doADC(cpu, v)
 }
 
-fn sbcFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+pub fn sbcFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readMval(cpu, m, addr, wrap)
     doSBC(cpu, v)
 }
 
 // --- RMW value transforms (accumulator width; set C + N/Z) ---
-fn accMask(cpu: &Cpu): i64 {
+pub fn accMask(cpu: &Cpu): i64 {
     if m8(cpu) {
         return 0xFF
     }
     return 0xFFFF
 }
 
-fn aslVal(cpu: &mut Cpu, v: i64): i64 {
+pub fn aslVal(cpu: &mut Cpu, v: i64): i64 {
     let mask = accMask(cpu)
     let signbit: i64 = if m8(cpu) {
         0x80
@@ -1648,7 +1660,7 @@ fn aslVal(cpu: &mut Cpu, v: i64): i64 {
     return r
 }
 
-fn lsrVal(cpu: &mut Cpu, v: i64): i64 {
+pub fn lsrVal(cpu: &mut Cpu, v: i64): i64 {
     let mask = accMask(cpu)
     setBit(cpu, FC, (v & 1) != 0)
     let r = (v & mask) >> 1
@@ -1656,7 +1668,7 @@ fn lsrVal(cpu: &mut Cpu, v: i64): i64 {
     return r
 }
 
-fn rolVal(cpu: &mut Cpu, v: i64): i64 {
+pub fn rolVal(cpu: &mut Cpu, v: i64): i64 {
     let mask = accMask(cpu)
     let signbit: i64 = if m8(cpu) {
         0x80
@@ -1670,7 +1682,7 @@ fn rolVal(cpu: &mut Cpu, v: i64): i64 {
     return r
 }
 
-fn rorVal(cpu: &mut Cpu, v: i64): i64 {
+pub fn rorVal(cpu: &mut Cpu, v: i64): i64 {
     let mask = accMask(cpu)
     let topbit: i64 = if m8(cpu) {
         0x80
@@ -1687,21 +1699,21 @@ fn rorVal(cpu: &mut Cpu, v: i64): i64 {
     return r
 }
 
-fn incVal(cpu: &mut Cpu, v: i64): i64 {
+pub fn incVal(cpu: &mut Cpu, v: i64): i64 {
     let mask = accMask(cpu)
     let r = (v + 1) & mask
     setNZa(cpu, r)
     return r
 }
 
-fn decVal(cpu: &mut Cpu, v: i64): i64 {
+pub fn decVal(cpu: &mut Cpu, v: i64): i64 {
     let mask = accMask(cpu)
     let r = (v - 1) & mask
     setNZa(cpu, r)
     return r
 }
 
-fn writeAccW(cpu: &mut Cpu, r: i64): void {
+pub fn writeAccW(cpu: &mut Cpu, r: i64): void {
     if m8(cpu) {
         cpu.a = (cpu.a & 0xFF00) | (r & 0xFF)
     } else {
@@ -1709,31 +1721,31 @@ fn writeAccW(cpu: &mut Cpu, r: i64): void {
     }
 }
 
-fn accASL(cpu: &mut Cpu): void {
+pub fn accASL(cpu: &mut Cpu): void {
     let v = cpu.a & accMask(cpu)
     let r = aslVal(cpu, v)
     writeAccW(cpu, r)
 }
 
-fn accLSR(cpu: &mut Cpu): void {
+pub fn accLSR(cpu: &mut Cpu): void {
     let v = cpu.a & accMask(cpu)
     let r = lsrVal(cpu, v)
     writeAccW(cpu, r)
 }
 
-fn accROL(cpu: &mut Cpu): void {
+pub fn accROL(cpu: &mut Cpu): void {
     let v = cpu.a & accMask(cpu)
     let r = rolVal(cpu, v)
     writeAccW(cpu, r)
 }
 
-fn accROR(cpu: &mut Cpu): void {
+pub fn accROR(cpu: &mut Cpu): void {
     let v = cpu.a & accMask(cpu)
     let r = rorVal(cpu, v)
     writeAccW(cpu, r)
 }
 
-fn rmwWrite(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool, r: i64): void {
+pub fn rmwWrite(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool, r: i64): void {
     if m8(cpu) {
         memWrite(m, addr, r & 0xFF)
     } else {
@@ -1742,7 +1754,7 @@ fn rmwWrite(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool, r: i64): void {
 }
 
 // Read-modify-write on memory. kind: 0 ASL 1 LSR 2 ROL 3 ROR 4 INC 5 DEC.
-fn rmwMem(cpu: &mut Cpu, m: &mut Mem, addr: i64, wrap: bool, kind: i64): void {
+pub fn rmwMem(cpu: &mut Cpu, m: &mut Mem, addr: i64, wrap: bool, kind: i64): void {
     let v = readMval(cpu, m, addr, wrap)
     var r: i64 = 0
     if kind == 0 {
@@ -1767,14 +1779,14 @@ fn rmwMem(cpu: &mut Cpu, m: &mut Mem, addr: i64, wrap: bool, kind: i64): void {
 }
 
 // TSB/TRB: Z from (A & M); write A|M (set) or M&~A (reset).
-fn tsbMem(cpu: &mut Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
+pub fn tsbMem(cpu: &mut Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
     let v = readMval(cpu, m, addr, wrap)
     let a = cpu.a & accMask(cpu)
     setBit(cpu, FZ, (a & v) == 0)
     rmwWrite(cpu, m, addr, wrap, v | a)
 }
 
-fn trbMem(cpu: &mut Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
+pub fn trbMem(cpu: &mut Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
     let v = readMval(cpu, m, addr, wrap)
     let a = cpu.a & accMask(cpu)
     setBit(cpu, FZ, (a & v) == 0)
@@ -1782,7 +1794,7 @@ fn trbMem(cpu: &mut Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
 }
 
 // BIT: Z from (A & M); N/V from M's top two bits. Immediate form sets only Z.
-fn bitMem(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+pub fn bitMem(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readMval(cpu, m, addr, wrap)
     let signbit: i64 = if m8(cpu) {
         0x80
@@ -1799,13 +1811,13 @@ fn bitMem(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     setBit(cpu, FV, (v & ovbit) != 0)
 }
 
-fn bitImm(cpu: &mut Cpu, v: i64): void {
+pub fn bitImm(cpu: &mut Cpu, v: i64): void {
     setBit(cpu, FZ, ((cpu.a & accMask(cpu)) & v) == 0)
 }
 
 // --- control flow ---
 // Relative 8-bit branch: fetch signed offset, apply if cond (PC already past it).
-fn branchIf(cpu: &mut Cpu, m: &Mem, cond: bool): void {
+pub fn branchIf(cpu: &mut Cpu, m: &Mem, cond: bool): void {
     let off = fetch8(cpu, m)
     let soff: i64 = if off >= 0x80 {
         off - 0x100
@@ -1819,7 +1831,7 @@ fn branchIf(cpu: &mut Cpu, m: &Mem, cond: bool): void {
 
 // BRK/COP: push return frame, vector through the native or emulation vector.
 // BRK/COP have a signature byte, so the return address skips it (PC + 1).
-fn softInterrupt(cpu: &mut Cpu, m: &mut Mem, nativeVec: i64, emuVec: i64): void {
+pub fn softInterrupt(cpu: &mut Cpu, m: &mut Mem, nativeVec: i64, emuVec: i64): void {
     let ret = (cpu.pc + 1) & 0xFFFF
     if cpu.e == 0 {
         push8(cpu, m, cpu.pbr)
@@ -1849,7 +1861,7 @@ fn softInterrupt(cpu: &mut Cpu, m: &mut Mem, nativeVec: i64, emuVec: i64): void 
 // Done atomically per instruction (correct for emulation; the Harte MVN/MVP
 // files instead capture cycle-bounded *partial* state and are excluded — an
 // instruction-stepped core can't reproduce a mid-move snapshot).
-fn blockMove(cpu: &mut Cpu, m: &mut Mem, dir: i64): void {
+pub fn blockMove(cpu: &mut Cpu, m: &mut Mem, dir: i64): void {
     let destbank = fetch8(cpu, m)
     let srcbank = fetch8(cpu, m)
     cpu.dbr = destbank
@@ -1879,7 +1891,7 @@ fn blockMove(cpu: &mut Cpu, m: &mut Mem, dir: i64): void {
 // Execute one instruction. Register/flag/transfer/immediate + stack push/pull
 // batches are wired; other memory-operand opcodes fall through to the no-op
 // default and register as failures against Harte until implemented.
-fn step(cpu: &mut Cpu, m: &mut Mem): void {
+pub fn step(cpu: &mut Cpu, m: &mut Mem): void {
     m.hcounter = m.hcounter + 1 // drives the $4212 HBLANK-flag stub
     let op = fetch8(cpu, m)
     match op {

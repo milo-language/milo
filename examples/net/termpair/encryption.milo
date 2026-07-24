@@ -24,16 +24,16 @@ from "std/base64" import {
 }
 
 // 2^20; matches ROTATION_THRESHOLD in termpair-common.
-fn rotationThreshold(): i64 {
+pub fn rotationThreshold(): i64 {
     return 1048576
 }
 
 // floor(0.1 * 2^20) — the browser-side rotation safety buffer.
-fn rotationBuffer(): i64 {
+pub fn rotationBuffer(): i64 {
     return 104857
 }
 
-fn genKey(): string {
+pub fn genKey(): string {
     var buf: [u8; 16] = [0; 16]
     unsafe {
         randBytes(buf as *u8, 16)
@@ -45,7 +45,7 @@ fn genKey(): string {
     return s
 }
 
-fn ivFromCount(count: i64): string {
+pub fn ivFromCount(count: i64): string {
     var s: string = ""
     var c = count
     for i in 0..8 {
@@ -60,7 +60,7 @@ fn ivFromCount(count: i64): string {
 
 // Encrypt `plaintext` under `key` with the IV derived from `count`.
 // Returns base64( IV ‖ ciphertext ‖ tag ).
-fn encryptWithKey(key: &string, count: i64, plaintext: &string): Result<string, string> {
+pub fn encryptWithKey(key: &string, count: i64, plaintext: &string): Result<string, string> {
     let iv = ivFromCount(count)
     let r = aesGcm128Encrypt(key, iv, plaintext, "")!
     let wire = iv + r.ciphertext + r.tag
@@ -70,7 +70,7 @@ fn encryptWithKey(key: &string, count: i64, plaintext: &string): Result<string, 
 // Decrypt a base64( IV(12) ‖ ciphertext ‖ tag(16) ) wire payload under `key`.
 // The IV is embedded in the payload (low 8 bytes = LE counter), so no counter
 // state is tracked here — mirrors aes_keys.decrypt() on the termpair-rs side.
-fn decryptWithKey(key: &string, wireB64: &string): Result<string, string> {
+pub fn decryptWithKey(key: &string, wireB64: &string): Result<string, string> {
     let wire = base64Decode(wireB64)
     // 12-byte IV + 16-byte GCM tag is the minimum; reject anything shorter.
     if wire.len < 28 {
@@ -95,7 +95,7 @@ fn decryptWithKey(key: &string, wireB64: &string): Result<string, string> {
 // Build the `aes_keys` handshake for a newly connected browser. `encUnix` and
 // `encBrowser` are the bootstrap-wrapped unix/browser keys (already base64).
 // `browserNumber` is 1-based and selects the browser's IV window.
-fn aesKeysMessage(encUnix: &string, encBrowser: &string, browserNumber: i64): string {
+pub fn aesKeysMessage(encUnix: &string, encBrowser: &string, browserNumber: i64): string {
     let n = if browserNumber < 1 {
         1 as i64
     } else {

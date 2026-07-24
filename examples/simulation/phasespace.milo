@@ -28,69 +28,83 @@ from "std/strconv" import {
 }
 
 @link("SDL2")
-extern fn SDL_Init(flags: u32): i32
+pub extern fn SDL_Init(flags: u32): i32
 
-extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
 
-extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+pub extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
 
-extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+pub extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
 
-extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+pub extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
 
-extern fn SDL_RenderClear(ren: *u8): i32
+pub extern fn SDL_RenderClear(ren: *u8): i32
 
-extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+pub extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
 
-extern fn SDL_RenderPresent(ren: *u8): void
+pub extern fn SDL_RenderPresent(ren: *u8): void
 
-extern fn SDL_PollEvent(event: *u8): i32
+pub extern fn SDL_PollEvent(event: *u8): i32
 
-extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+pub extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
 
-extern fn SDL_GetMouseState(x: *i32, y: *i32): u32 // button bitmask, fills x/y
+pub extern fn SDL_GetMouseState(x: *i32, y: *i32): u32 // button bitmask, fills x/y
 
-extern fn SDL_GetTicks(): u32 // ms since SDL_Init (for FPS)
+pub extern fn SDL_GetTicks(): u32 // ms since SDL_Init (for FPS)
 
-extern fn SDL_Delay(ms: u32): void
+pub extern fn SDL_Delay(ms: u32): void
 
-extern fn SDL_DestroyWindow(win: *u8): void
+pub extern fn SDL_DestroyWindow(win: *u8): void
 
-extern fn SDL_Quit(): void
+pub extern fn SDL_Quit(): void
 
-let SDL_INIT_VIDEO: u32 = 0x20
-let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-let SDL_WINDOW_SHOWN: u32 = 0x4
-let SDL_TEXTUREACCESS_STREAMING: i32 = 1
-let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
-let SDL_QUIT: u32 = 0x100
+pub let SDL_INIT_VIDEO: u32 = 0x20
+
+pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
+
+pub let SDL_WINDOW_SHOWN: u32 = 0x4
+
+pub let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+
+pub let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
+
+pub let SDL_QUIT: u32 = 0x100
 
 // phase-space grid: NX cells in x, NV cells in v (square so one grid cell = one pixel)
-let NX: i64 = 192
-let NV: i64 = 192
-let SCALE: i64 = 3
+pub let NX: i64 = 192
 
-let XMIN: f64 = -3.14159265358979
-let XMAX: f64 = 3.14159265358979
-let VMIN: f64 = -6.0
-let VMAX: f64 = 6.0
-let AWELL: f64 = 1.0 // potential amplitude; E(x) = 2*AWELL*sin(2x)
-let QM: f64 = 1.0 // q/m
-let FMAX: f64 = 0.40 // color normalization (Maxwellian peak ≈ 0.399)
-let E_CONST: f64 = 2.718281828459045
+pub let NV: i64 = 192
 
-fn cellX(i: i64, dx: f64): f64 {
+pub let SCALE: i64 = 3
+
+pub let XMIN: f64 = -3.14159265358979
+
+pub let XMAX: f64 = 3.14159265358979
+
+pub let VMIN: f64 = -6.0
+
+pub let VMAX: f64 = 6.0
+
+pub let AWELL: f64 = 1.0 // potential amplitude; E(x) = 2*AWELL*sin(2x)
+
+pub let QM: f64 = 1.0 // q/m
+
+pub let FMAX: f64 = 0.40 // color normalization (Maxwellian peak ≈ 0.399)
+
+pub let E_CONST: f64 = 2.718281828459045
+
+pub fn cellX(i: i64, dx: f64): f64 {
     return XMIN + ((i as f64) + 0.5) * dx
 }
 
-fn cellV(j: i64, dv: f64): f64 {
+pub fn cellV(j: i64, dv: f64): f64 {
     return VMIN + ((j as f64) + 0.5) * dv
 }
 
 // a 1-D scratch line (max grid dimension); aliasing keeps the size in one place
-type Line = [f64; 256]
+pub type Line = [f64; 256]
 
-fn minmod(a: f64, b: f64): f64 {
+pub fn minmod(a: f64, b: f64): f64 {
     if a * b <= 0.0 {
         return 0.0
     }
@@ -103,7 +117,7 @@ fn minmod(a: f64, b: f64): f64 {
 // One 2nd-order MUSCL-minmod upwind sweep of a 1-D line u -> un (length n ≤ 256) at
 // constant speed s. Conservative flux form: un = u - (dt/dx)*(F_{k+1/2} - F_{k-1/2}).
 // periodic wrap (x) or zero-gradient outflow (v, where f≈0 at the boundary).
-fn advect1D(u: &Line, un: &mut Line, n: i64, s: f64, dtdx: f64, periodic: bool) {
+pub fn advect1D(u: &Line, un: &mut Line, n: i64, s: f64, dtdx: f64, periodic: bool) {
     var slope: Line = [0.0; 256]
     var k = 0
     while k < n {
@@ -166,7 +180,7 @@ fn advect1D(u: &Line, un: &mut Line, n: i64, s: f64, dtdx: f64, periodic: bool) 
 }
 
 // x-advection of the whole grid: each velocity row j moves at constant speed v_j.
-fn sweepX(f: &Vec<f64>, fout: &mut Vec<f64>, dt: f64, dx: f64, dv: f64) {
+pub fn sweepX(f: &Vec<f64>, fout: &mut Vec<f64>, dt: f64, dx: f64, dv: f64) {
     var uline: Line = [0.0; 256]
     var un: Line = [0.0; 256]
     var j = 0
@@ -188,7 +202,7 @@ fn sweepX(f: &Vec<f64>, fout: &mut Vec<f64>, dt: f64, dx: f64, dv: f64) {
 }
 
 // v-advection: each x column i moves at constant speed a_i = (q/m)·E(x_i).
-fn sweepV(f: &Vec<f64>, fout: &mut Vec<f64>, evec: &Vec<f64>, dt: f64, dv: f64) {
+pub fn sweepV(f: &Vec<f64>, fout: &mut Vec<f64>, evec: &Vec<f64>, dt: f64, dv: f64) {
     var uline: Line = [0.0; 256]
     var un: Line = [0.0; 256]
     var i = 0
@@ -210,7 +224,7 @@ fn sweepV(f: &Vec<f64>, fout: &mut Vec<f64>, evec: &Vec<f64>, dt: f64, dv: f64) 
 }
 
 // magma colormap (8 anchor stops), t in [0,1] -> packed ABGR
-fn magma(tin: f64): u32 {
+pub fn magma(tin: f64): u32 {
     var t = tin
     if t < 0.0 {
         t = 0.0
@@ -238,7 +252,7 @@ fn magma(tin: f64): u32 {
 
 // draw one character (A-Z, 0-9; lowercase folds to uppercase) as a 3x5 bitmap,
 // scaled up, into the framebuffer. Space / unknown draws nothing.
-fn drawChar(fb: &mut Vec<u32>, x0: i64, y0: i64, ch: u8, scale: i64, col: u32) {
+pub fn drawChar(fb: &mut Vec<u32>, x0: i64, y0: i64, ch: u8, scale: i64, col: u32) {
     // each glyph = 5 rows, each row a 3-bit pattern (bit2 = leftmost column)
     let digits: [i64; 50] = [7, 5, 5, 5, 7, 2, 2, 2, 2, 2, 7, 1, 7, 4, 7, 7, 1, 7, 1, 7, 5, 5, 7, 1, 1, 7, 4, 7, 1, 7, 7, 4, 7, 5, 7, 7, 1, 1, 1, 1, 7, 5, 7, 5, 7, 7, 5, 7, 1, 7,]
     let letters: [i64; 130] = [2, 5, 7, 5, 5, 6, 5, 6, 5, 6, 3, 4, 4, 4, 3, 6, 5, 5, 5, 6, 7, 4, 6, 4, 7, // A B C D E
@@ -295,7 +309,7 @@ fn drawChar(fb: &mut Vec<u32>, x0: i64, y0: i64, ch: u8, scale: i64, col: u32) {
     }
 }
 
-fn drawText(fb: &mut Vec<u32>, x0: i64, y0: i64, s: string, scale: i64, col: u32) {
+pub fn drawText(fb: &mut Vec<u32>, x0: i64, y0: i64, s: string, scale: i64, col: u32) {
     var cx = x0
     var i = 0
     while i < s.len {
@@ -306,7 +320,7 @@ fn drawText(fb: &mut Vec<u32>, x0: i64, y0: i64, s: string, scale: i64, col: u32
 }
 
 // draw a non-negative integer left-to-right at (x0,y0)
-fn drawInt(fb: &mut Vec<u32>, x0: i64, y0: i64, n: i64, scale: i64, col: u32) {
+pub fn drawInt(fb: &mut Vec<u32>, x0: i64, y0: i64, n: i64, scale: i64, col: u32) {
     var v = n
     if v < 0 {
         v = 0
@@ -326,7 +340,7 @@ fn drawInt(fb: &mut Vec<u32>, x0: i64, y0: i64, n: i64, scale: i64, col: u32) {
 }
 
 // total mass ∫∫ f dx dv (the conserved quantity their scheme proves invariant)
-fn massOf(f: &Vec<f64>, dx: f64, dv: f64): f64 {
+pub fn massOf(f: &Vec<f64>, dx: f64, dv: f64): f64 {
     var m = 0.0
     var c = 0
     while c < NX * NV {
@@ -336,7 +350,7 @@ fn massOf(f: &Vec<f64>, dx: f64, dv: f64): f64 {
     return m * dx * dv
 }
 
-fn initF(f: &mut Vec<f64>, dv: f64) {
+pub fn initF(f: &mut Vec<f64>, dv: f64) {
     let norm = 1.0 / mathSqrt(2.0 * 3.14159265358979)
     var j = 0
     while j < NV {
@@ -351,7 +365,7 @@ fn initF(f: &mut Vec<f64>, dv: f64) {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     if SDL_Init(SDL_INIT_VIDEO) != 0 {
         print("SDL_Init failed")
         return 1

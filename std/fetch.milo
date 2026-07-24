@@ -43,14 +43,14 @@ from "std/event" import {
 
 // openssl/ssl.h: SSL_VERIFY_PEER. Makes the handshake fail on an untrusted chain
 // instead of silently accepting it (the client default is SSL_VERIFY_NONE).
-let SSL_VERIFY_PEER: i32 = 1
+pub let SSL_VERIFY_PEER: i32 = 1
 // openssl/x509_vfy.h: X509_V_OK.
-let X509_V_OK: i64 = 0
+pub let X509_V_OK: i64 = 0
 
 // ── TLS Stream ──
 
 // TLS/SSL connection handle. Frees SSL context and closes fd on drop.
-struct TlsStream {
+pub struct TlsStream {
     fd: i32,
     ssl: i64,
     ctx: i64,
@@ -221,7 +221,7 @@ impl TlsStream {
 // ── HTTP Response ──
 
 // HTTP response with status code, headers, and body.
-struct Response {
+pub struct Response {
     status: i32,
     headers: string,
     body: string,
@@ -251,7 +251,7 @@ impl Response {
 
 // ── String helpers ──
 
-fn strEqNocase(a: &string, ai: i64, b: &string, blen: i64): bool {
+pub fn strEqNocase(a: &string, ai: i64, b: &string, blen: i64): bool {
     var i: i64 = 0
     while i < blen {
         var ca: u8 = a[ai + i]
@@ -271,7 +271,7 @@ fn strEqNocase(a: &string, ai: i64, b: &string, blen: i64): bool {
     return true
 }
 
-fn findHeader(headers: &string, name: &string): string {
+pub fn findHeader(headers: &string, name: &string): string {
     // search for "Name: value" in headers (case-insensitive name match)
     var i: i64 = 0
     while i + name.len + 1 < headers.len {
@@ -295,7 +295,7 @@ fn findHeader(headers: &string, name: &string): string {
     return ""
 }
 
-fn startsWith(s: &string, prefix: &string): bool {
+pub fn startsWith(s: &string, prefix: &string): bool {
     if s.len < prefix.len {
         return false
     }
@@ -309,7 +309,7 @@ fn startsWith(s: &string, prefix: &string): bool {
     return true
 }
 
-fn hexDigit(c: u8): i64 {
+pub fn hexDigit(c: u8): i64 {
     if c >= '0' && c <= '9' {
         return (c - '0') as i64
     }
@@ -324,7 +324,7 @@ fn hexDigit(c: u8): i64 {
 
 // ── HTTP parsing ──
 
-fn parseStatus(raw: &string): i32 {
+pub fn parseStatus(raw: &string): i32 {
     if raw.len < 12 {
         return 0
     }
@@ -337,7 +337,7 @@ fn parseStatus(raw: &string): i32 {
     return code
 }
 
-fn parseRawHeaders(raw: &string): string {
+pub fn parseRawHeaders(raw: &string): string {
     var start: i64 = 0
     var i: i64 = 0
     while i + 1 < raw.len {
@@ -354,7 +354,7 @@ fn parseRawHeaders(raw: &string): string {
     return ""
 }
 
-fn parseBody(raw: &string): string {
+pub fn parseBody(raw: &string): string {
     var i: i64 = 0
     while i + 3 < raw.len {
         if raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
@@ -365,7 +365,7 @@ fn parseBody(raw: &string): string {
     return raw.clone()
 }
 
-fn decodeChunked(rawBody: &string): string {
+pub fn decodeChunked(rawBody: &string): string {
     var result: string = ""
     var i: i64 = 0
     while i < rawBody.len {
@@ -401,7 +401,7 @@ fn decodeChunked(rawBody: &string): string {
     return result
 }
 
-fn parseResponse(raw: string): Response {
+pub fn parseResponse(raw: string): Response {
     let status = parseStatus(raw)
     let headers = parseRawHeaders(raw)
     var body = parseBody(raw)
@@ -418,11 +418,11 @@ fn parseResponse(raw: string): Response {
 
 // ── URL parsing ──
 
-fn isHttps(url: &string): bool {
+pub fn isHttps(url: &string): bool {
     return url.len > 8 && url[0] == 'h' && url[4] == 's' && url[5] == ':' && url[6] == '/' && url[7] == '/'
 }
 
-fn schemeOffset(url: &string): i64 {
+pub fn schemeOffset(url: &string): i64 {
     if isHttps(url) {
         return 8
     }
@@ -432,7 +432,7 @@ fn schemeOffset(url: &string): i64 {
     return 0
 }
 
-fn parseHost(url: &string): string {
+pub fn parseHost(url: &string): string {
     let start = schemeOffset(url)
     var end: i64 = start
     while end < url.len && url[end] != '/' && url[end] != ':' {
@@ -441,7 +441,7 @@ fn parseHost(url: &string): string {
     return url.substr(start, end)
 }
 
-fn parsePort(url: &string): u16 {
+pub fn parsePort(url: &string): u16 {
     var i: i64 = schemeOffset(url)
     while i < url.len && url[i] != '/' && url[i] != ':' {
         i = i + 1
@@ -461,7 +461,7 @@ fn parsePort(url: &string): u16 {
     return 80
 }
 
-fn parsePath(url: &string): string {
+pub fn parsePath(url: &string): string {
     var i: i64 = schemeOffset(url)
     while i < url.len && url[i] != '/' {
         i = i + 1
@@ -475,7 +475,7 @@ fn parsePath(url: &string): string {
 // ── FetchOptions ──
 
 // HTTP request configuration: method, headers, and body.
-struct FetchOptions {
+pub struct FetchOptions {
     method: string,
     headers: string,
     body: string,
@@ -483,7 +483,7 @@ struct FetchOptions {
 
 // ── HTTP client ──
 
-fn httpDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
+pub fn httpDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
     let stream = TcpStream.connect(ip, port)?
     var req: string = opts.method.clone() + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
     if opts.headers.len > 0 {
@@ -499,7 +499,7 @@ fn httpDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): 
     return Result.Ok(parseResponse(raw))
 }
 
-fn httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
+pub fn httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
     let stream = TlsStream.connect(ip, port, host)?
     var req: string = opts.method.clone() + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
     if opts.headers.len > 0 {
@@ -515,7 +515,7 @@ fn httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions):
     return Result.Ok(parseResponse(raw))
 }
 
-fn doFetch(url: string, opts: FetchOptions): Result<Response, NetError> {
+pub fn doFetch(url: string, opts: FetchOptions): Result<Response, NetError> {
     let useTls = isHttps(url)
     let host = parseHost(url)
     let port = parsePort(url)
@@ -552,18 +552,18 @@ fn doFetch(url: string, opts: FetchOptions): Result<Response, NetError> {
 
 // ── Public API ──
 
-fn fetch(url: &string): Result<Response, NetError> {
+pub fn fetch(url: &string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "GET", headers: "", body: ""
     }
     return doFetch(url.clone(), opts)
 }
 
-fn fetchWith(url: &string, opts: FetchOptions): Result<Response, NetError> {
+pub fn fetchWith(url: &string, opts: FetchOptions): Result<Response, NetError> {
     return doFetch(url.clone(), opts)
 }
 
-fn fetchPost(url: &string, body: &string): Result<Response, NetError> {
+pub fn fetchPost(url: &string, body: &string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "POST",
         headers: "Content-Type: application/json",
@@ -572,7 +572,7 @@ fn fetchPost(url: &string, body: &string): Result<Response, NetError> {
     return doFetch(url.clone(), opts)
 }
 
-fn fetchPut(url: &string, body: &string): Result<Response, NetError> {
+pub fn fetchPut(url: &string, body: &string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "PUT",
         headers: "Content-Type: application/json",
@@ -581,14 +581,14 @@ fn fetchPut(url: &string, body: &string): Result<Response, NetError> {
     return doFetch(url.clone(), opts)
 }
 
-fn fetchDelete(url: &string): Result<Response, NetError> {
+pub fn fetchDelete(url: &string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "DELETE", headers: "", body: ""
     }
     return doFetch(url.clone(), opts)
 }
 
-fn fetchPatch(url: &string, body: &string): Result<Response, NetError> {
+pub fn fetchPatch(url: &string, body: &string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "PATCH",
         headers: "Content-Type: application/json",

@@ -18,7 +18,7 @@ from "./cartridge" import {
     loadCartridge
 }
 
-fn atoi(s: &string): i64 {
+pub fn atoi(s: &string): i64 {
     var v: i64 = 0
     for ch in s {
         let c = ch as i64
@@ -29,7 +29,7 @@ fn atoi(s: &string): i64 {
     return v
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
         print("usage: runRom <rom.sfc> [frames]")

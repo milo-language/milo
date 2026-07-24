@@ -10,7 +10,7 @@ from "std/math" import {
 }
 
 // Tokenizer
-enum CalcTok {
+pub enum CalcTok {
     Num,
     Plus,
     Minus,
@@ -23,12 +23,12 @@ enum CalcTok {
     End,
 }
 
-struct CalcToken {
+pub struct CalcToken {
     kind: CalcTok,
     val: f64,
 }
 
-fn tokenize(input: &string): Vec<CalcToken> {
+pub fn tokenize(input: &string): Vec<CalcToken> {
     var tokens: Vec<CalcToken> = Vec.new()
     var i: i64 = 0
     while i < input.len {
@@ -130,22 +130,22 @@ fn tokenize(input: &string): Vec<CalcToken> {
 // power    = unary ('**' power)?
 // unary    = '-' unary | primary
 // primary  = NUM | '(' expr ')'
-struct Parser {
+pub struct Parser {
     tokens: Vec<CalcToken>,
     pos: i64,
 }
 
-fn peek(p: &Parser): CalcTok {
+pub fn peek(p: &Parser): CalcTok {
     return p.tokens[p.pos].kind
 }
 
-fn advance(p: &mut Parser): CalcToken {
+pub fn advance(p: &mut Parser): CalcToken {
     let tok = p.tokens[p.pos]
     p.pos = p.pos + 1
     return tok
 }
 
-fn parseExpr(p: &mut Parser): f64 {
+pub fn parseExpr(p: &mut Parser): f64 {
     var left = parseTerm(p)
     while peek(p) == CalcTok.Plus || peek(p) == CalcTok.Minus {
         let op = advance(p)
@@ -159,7 +159,7 @@ fn parseExpr(p: &mut Parser): f64 {
     return left
 }
 
-fn parseTerm(p: &mut Parser): f64 {
+pub fn parseTerm(p: &mut Parser): f64 {
     var left = parsePower(p)
     while peek(p) == CalcTok.Star || peek(p) == CalcTok.Slash || peek(p) == CalcTok.Percent {
         let op = advance(p)
@@ -175,7 +175,7 @@ fn parseTerm(p: &mut Parser): f64 {
     return left
 }
 
-fn parsePower(p: &mut Parser): f64 {
+pub fn parsePower(p: &mut Parser): f64 {
     let base = parseUnary(p)
     if peek(p) == CalcTok.StarStar {
         advance(p)
@@ -185,7 +185,7 @@ fn parsePower(p: &mut Parser): f64 {
     return base
 }
 
-fn parseUnary(p: &mut Parser): f64 {
+pub fn parseUnary(p: &mut Parser): f64 {
     if peek(p) == CalcTok.Minus {
         advance(p)
         return 0.0 - parseUnary(p)
@@ -193,7 +193,7 @@ fn parseUnary(p: &mut Parser): f64 {
     return parsePrimary(p)
 }
 
-fn parsePrimary(p: &mut Parser): f64 {
+pub fn parsePrimary(p: &mut Parser): f64 {
     if peek(p) == CalcTok.Num {
         let tok = advance(p)
         return tok.val
@@ -212,7 +212,7 @@ fn parsePrimary(p: &mut Parser): f64 {
     return 0.0
 }
 
-fn formatResult(n: f64): string {
+pub fn formatResult(n: f64): string {
     // if it's an integer value, print without decimals
     let intVal = n as i64
     if intVal as f64 == n {
@@ -244,7 +244,7 @@ fn formatResult(n: f64): string {
     return result.clone()
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("calc", "evaluate arithmetic expressions")
     parser.addPositional("expression", "expression to evaluate (use quotes)")
     let args = parser.parse()

@@ -28,62 +28,62 @@ from "std/sync" import {
 // ── CRT / Win32 bindings ──
 
 @cSig("stdlib.h", "int system(const char *)")
-extern fn system(cmd: *u8): i32
+pub extern fn system(cmd: *u8): i32
 
 @cSig("io.h", "int _pipe(int *, unsigned int, int)")
-extern fn _pipe(fds: *u8, size: u32, mode: i32): i32
+pub extern fn _pipe(fds: *u8, size: u32, mode: i32): i32
 
 // intptr_t: 8 bytes on Win64, so a CRT fd maps to a full 64-bit OS HANDLE.
 @cSig("io.h", "intptr_t _get_osfhandle(int)")
-extern fn _get_osfhandle(fd: i32): i64
+pub extern fn _get_osfhandle(fd: i32): i64
 
 @cSig("windows.h", "BOOL SetHandleInformation(HANDLE, DWORD, DWORD)")
-extern fn SetHandleInformation(handle: i64, mask: u32, flags: u32): i32
+pub extern fn SetHandleInformation(handle: i64, mask: u32, flags: u32): i32
 
 @cSig("windows.h", "BOOL CreateProcessA(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL, DWORD, LPVOID, LPCSTR, LPSTARTUPINFOA, LPPROCESS_INFORMATION)")
-extern fn CreateProcessA(appName: *u8, cmdLine: *u8, procAttr: *u8, threadAttr: *u8, inherit: i32, flags: u32, env: *u8, curDir: *u8, si: *u8, pi: *u8): i32
+pub extern fn CreateProcessA(appName: *u8, cmdLine: *u8, procAttr: *u8, threadAttr: *u8, inherit: i32, flags: u32, env: *u8, curDir: *u8, si: *u8, pi: *u8): i32
 
 @cSig("windows.h", "DWORD WaitForSingleObject(HANDLE, DWORD)")
-extern fn WaitForSingleObject(handle: i64, ms: u32): u32
+pub extern fn WaitForSingleObject(handle: i64, ms: u32): u32
 
 @cSig("windows.h", "BOOL GetExitCodeProcess(HANDLE, LPDWORD)")
-extern fn GetExitCodeProcess(handle: i64, code: *u8): i32
+pub extern fn GetExitCodeProcess(handle: i64, code: *u8): i32
 
 @cSig("windows.h", "BOOL TerminateProcess(HANDLE, UINT)")
-extern fn TerminateProcess(handle: i64, exitCode: u32): i32
+pub extern fn TerminateProcess(handle: i64, exitCode: u32): i32
 
 @cSig("windows.h", "BOOL CloseHandle(HANDLE)")
-extern fn CloseHandle(handle: i64): i32
+pub extern fn CloseHandle(handle: i64): i32
 
-extern fn malloc(size: i64): *u8
+pub extern fn malloc(size: i64): *u8
 
-extern fn free(ptr: *u8): void
+pub extern fn free(ptr: *u8): void
 
-extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
+pub extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
 
-extern fn memset(dst: *u8, val: i32, n: i64): *u8
+pub extern fn memset(dst: *u8, val: i32, n: i64): *u8
 
 // _O_BINARY (0x8000) so the CRT does not rewrite \n through the pipe, _O_NOINHERIT
 // (0x0080) so neither end is inheritable until we opt the child's end in by hand.
 // 0x8080 = 32896; any other bit makes _pipe trip the CRT invalid-parameter fastfail.
-fn _pipeFlags(): i32 {
+pub fn _pipeFlags(): i32 {
     return 32896
 }
 
 // STARTF_USESTDHANDLES — honour the hStdInput/Output/Error fields we set below.
-fn _startfUseStdHandles(): u32 {
+pub fn _startfUseStdHandles(): u32 {
     return 256
 }
 
 // HANDLE_FLAG_INHERIT.
-fn _handleFlagInherit(): u32 {
+pub fn _handleFlagInherit(): u32 {
     return 1
 }
 
 // ── Simple command execution ──
 
 // Execute a shell command and return its exit code.
-fn run(cmd: &string): Result<i32> {
+pub fn run(cmd: &string): Result<i32> {
     unsafe {
         // system() reads a C string; a milo string is not guaranteed NUL-terminated.
         let buf = _cstrCopy(cmd)
@@ -103,7 +103,7 @@ fn run(cmd: &string): Result<i32> {
 // pid is dwProcessId (a DWORD, fits i32); handle is the process HANDLE that wait/signal
 // operate on. The POSIX arm needs only the pid because waitpid/kill take it directly;
 // Windows needs the HANDLE, so this arm carries an extra field the POSIX struct lacks.
-struct Process {
+pub struct Process {
     pid: i32,
     handle: i64,
 }
@@ -133,7 +133,7 @@ impl Process {
 // Same shape and contract as the POSIX arm: parent writes stdin, reads stdout/stderr;
 // reads are blocking; drain both streams when stderr is not merged. handle is the extra
 // Windows-only field (see Process above).
-struct Child {
+pub struct Child {
     pid: i32,
     handle: i64,
     stdinFd: i32,
@@ -281,7 +281,7 @@ impl Child {
 }
 
 // Block on a process HANDLE and read its exit code. INFINITE = 0xFFFFFFFF.
-fn _waitHandle(handle: i64): Result<i32> {
+pub fn _waitHandle(handle: i64): Result<i32> {
     unsafe {
         WaitForSingleObject(handle, 4294967295 as u32)
         var codeBuf: [u32; 1] = [0]
@@ -295,7 +295,7 @@ fn _waitHandle(handle: i64): Result<i32> {
 // Core CreateProcess wrapper. childIn/Out/Err are child-side CRT fds already marked
 // inheritable, or -1 to leave that stream at the parent's (inherited console). Returns a
 // Process holding dwProcessId and the process HANDLE.
-fn _createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: i32, childErr: i32): Result<Process> {
+pub fn _createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: i32, childErr: i32): Result<Process> {
     unsafe {
         let cmdLine = _buildCmdLine(program, args)
 
@@ -342,7 +342,7 @@ fn _createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: 
     }
 }
 
-fn _makeInheritable(fd: i32): void {
+pub fn _makeInheritable(fd: i32): void {
     unsafe {
         SetHandleInformation(_get_osfhandle(fd), _handleFlagInherit(), _handleFlagInherit())
     }
@@ -351,7 +351,7 @@ fn _makeInheritable(fd: i32): void {
 // Build a single CreateProcess command line: `program arg1 arg2 ...`, each token quoted
 // if it contains whitespace or a quote. Returned buffer is malloc'd + NUL-terminated;
 // CreateProcessA may write into it, so it must be writable (not a string literal).
-fn _buildCmdLine(program: &string, args: &Vec<string>): *u8 {
+pub fn _buildCmdLine(program: &string, args: &Vec<string>): *u8 {
     var line = _quoteArg(program)
     for i in 0..args.len {
         line.push(' ')
@@ -360,7 +360,7 @@ fn _buildCmdLine(program: &string, args: &Vec<string>): *u8 {
     return _cstrCopy(line)
 }
 
-fn _quoteArg(arg: &string): string {
+pub fn _quoteArg(arg: &string): string {
     var needsQuote = arg.len == 0
     for i in 0..arg.len {
         let c = arg[i]
@@ -387,7 +387,7 @@ fn _quoteArg(arg: &string): string {
 }
 
 // Copy a milo string into a fresh malloc'd NUL-terminated C buffer.
-fn _cstrCopy(s: &string): *u8 {
+pub fn _cstrCopy(s: &string): *u8 {
     unsafe {
         let n = s.len
         let buf = malloc(n + 1)
@@ -397,7 +397,7 @@ fn _cstrCopy(s: &string): *u8 {
     }
 }
 
-fn capture(cmd: &string): Result<string> {
+pub fn capture(cmd: &string): Result<string> {
     // Relative temp file in the cwd; cmd.exe honours `> file 2>&1` redirection just as a
     // POSIX shell does, so the capture path is the same modulo the /tmp location.
     let tmpPath: string = "milo_capture.tmp"
@@ -421,7 +421,7 @@ fn capture(cmd: &string): Result<string> {
 // Absolute path of the running executable (mirror of the posix arm in std/process.milo;
 // this file replaces std/process.milo wholesale on Windows, so the surface must match).
 // `_exePathInto` resolves to GetModuleFileNameA in std/platform.windows.
-fn exePath(): Result<string> {
+pub fn exePath(): Result<string> {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
         let n = _exePathInto(buf as *u8, 4095)

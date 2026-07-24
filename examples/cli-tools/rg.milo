@@ -22,7 +22,7 @@ from "std/color" import {
 
 // ── helpers ──
 
-fn shouldSkipDir(name: &string): bool {
+pub fn shouldSkipDir(name: &string): bool {
     if name == ".git" {
         return true
     }
@@ -53,7 +53,7 @@ fn shouldSkipDir(name: &string): bool {
     return false
 }
 
-fn matchesType(path: &string, fileType: &string): bool {
+pub fn matchesType(path: &string, fileType: &string): bool {
     if fileType.len == 0 {
         return true
     }
@@ -64,13 +64,13 @@ fn matchesType(path: &string, fileType: &string): bool {
     return ext == "." + fileType
 }
 
-fn isWordChar(ch: u8): bool {
+pub fn isWordChar(ch: u8): bool {
     return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || (ch >= 48 && ch <= 57) || ch == 95
 }
 
 // ── options ──
 
-struct RgOpts {
+pub struct RgOpts {
     countOnly: bool,
     filesOnly: bool,
     invert: bool,
@@ -89,7 +89,7 @@ struct RgOpts {
 
 // ── match helpers ──
 
-fn filterWordBounds(line: &string, matches: Vec<RegexMatch>): Vec<RegexMatch> {
+pub fn filterWordBounds(line: &string, matches: Vec<RegexMatch>): Vec<RegexMatch> {
     var result: Vec<RegexMatch> = Vec.new()
     for i in 0..matches.len {
         var ok = true
@@ -113,14 +113,14 @@ fn filterWordBounds(line: &string, matches: Vec<RegexMatch>): Vec<RegexMatch> {
     return result
 }
 
-fn getMatches(re: &mut Regex, line: &string, wordBound: bool): Vec<RegexMatch> {
+pub fn getMatches(re: &mut Regex, line: &string, wordBound: bool): Vec<RegexMatch> {
     if wordBound {
         return filterWordBounds(line, regexFindAll(re, line))
     }
     return regexFindAll(re, line)
 }
 
-fn highlightLine(line: &string, matches: &Vec<RegexMatch>, noColor: bool): string {
+pub fn highlightLine(line: &string, matches: &Vec<RegexMatch>, noColor: bool): string {
     if noColor || matches.len == 0 {
         return line.clone()
     }
@@ -142,7 +142,7 @@ fn highlightLine(line: &string, matches: &Vec<RegexMatch>, noColor: bool): strin
 
 // ── output formatting ──
 
-fn formatLine(content: &string, lineNum: i64, isMatch: bool, filePath: &string, multiFile: bool, opts: &RgOpts): string {
+pub fn formatLine(content: &string, lineNum: i64, isMatch: bool, filePath: &string, multiFile: bool, opts: &RgOpts): string {
     var out: string = ""
     if multiFile && opts.noHeading {
         if opts.noColor {
@@ -171,7 +171,7 @@ fn formatLine(content: &string, lineNum: i64, isMatch: bool, filePath: &string, 
 
 // ── file search ──
 
-fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: bool): void {
+pub fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: bool): void {
     if !matchesType(filePath, opts.fileType) {
         return
     }
@@ -270,7 +270,7 @@ fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: b
 
 // ── directory search ──
 
-fn searchDir(dirPath: &string, re: &mut Regex, opts: &mut RgOpts): void {
+pub fn searchDir(dirPath: &string, re: &mut Regex, opts: &mut RgOpts): void {
     let entries = readDir(dirPath)
     for i in 0..entries.len {
         let name = entries[i].name.clone()
@@ -292,7 +292,7 @@ fn searchDir(dirPath: &string, re: &mut Regex, opts: &mut RgOpts): void {
     }
 }
 
-fn searchPath(path: &string, re: &mut Regex, opts: &mut RgOpts): void {
+pub fn searchPath(path: &string, re: &mut Regex, opts: &mut RgOpts): void {
     if isDir(path) {
         searchDir(path, re, opts)
     } else if isFile(path) {
@@ -304,7 +304,7 @@ fn searchPath(path: &string, re: &mut Regex, opts: &mut RgOpts): void {
 
 // ── main ──
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("rg", "ripgrep-lite: regex-powered recursive search")
     parser.addPositional("pattern", "regex pattern to search for")
     parser.addOptionalPositional("path", "file or directory (default: .)")

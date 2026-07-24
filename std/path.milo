@@ -3,7 +3,7 @@
 // Get the file extension including the dot. Returns "" if none.
 
 // File extension including the leading dot (e.g. ".txt"); empty if none.
-fn pathExt(path: &string): string {
+pub fn pathExt(path: &string): string {
     var i: i64 = path.len - 1
     while i >= 0 as i64 {
         if path[i] == 46 {
@@ -20,7 +20,7 @@ fn pathExt(path: &string): string {
 // Get the last component of a path.
 
 // Final component of the path (the file name), directories stripped.
-fn pathBasename(path: &string): string {
+pub fn pathBasename(path: &string): string {
     if path.len == 0 {
         return ""
     }
@@ -45,7 +45,7 @@ fn pathBasename(path: &string): string {
 // Get the directory portion of a path.
 
 // Directory portion of the path (everything before the final component).
-fn pathDirname(path: &string): string {
+pub fn pathDirname(path: &string): string {
     if path.len == 0 {
         return "."
     }
@@ -74,7 +74,7 @@ fn pathDirname(path: &string): string {
 // Join two path components with a separator.
 
 // Join two segments with a single "/" separator (avoids doubling an existing one).
-fn pathJoin(a: &string, b: &string): string {
+pub fn pathJoin(a: &string, b: &string): string {
     if a.len == 0 {
         return b.clone()
     }
@@ -90,7 +90,7 @@ fn pathJoin(a: &string, b: &string): string {
 // Get the filename without extension.
 
 // File name without its extension (basename minus pathExt).
-fn pathStem(path: &string): string {
+pub fn pathStem(path: &string): string {
     let base = pathBasename(path)
     var i: i64 = base.len - 1
     while i > 0 as i64 {

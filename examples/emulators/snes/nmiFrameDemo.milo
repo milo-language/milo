@@ -7,7 +7,7 @@ from "./cpu" import {
     Cpu, Mem, busNew, newCpuReset, stepFrame, memRead, vecZeros
 }
 
-fn dc(n: i64): string {
+pub fn dc(n: i64): string {
     if n == 0 {
         return "0"
     }
@@ -26,7 +26,7 @@ fn dc(n: i64): string {
     return o
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var rom = vecZeros(0x8000)
     // main @ $8000: enable NMI, then loop.
     let main = [0xA9, 0x80, 0x8D, 0x00, 0x42, // LDA #$80 ; STA $4200 (NMITIMEN NMI enable)

@@ -22,56 +22,65 @@ from "std/math" import {
 }
 
 @link("SDL2")
-extern fn SDL_Init(flags: u32): i32
+pub extern fn SDL_Init(flags: u32): i32
 
-extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
 
-extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+pub extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
 
-extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+pub extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
 
-extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+pub extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
 
-extern fn SDL_RenderClear(ren: *u8): i32
+pub extern fn SDL_RenderClear(ren: *u8): i32
 
-extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+pub extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
 
-extern fn SDL_RenderPresent(ren: *u8): void
+pub extern fn SDL_RenderPresent(ren: *u8): void
 
-extern fn SDL_PollEvent(event: *u8): i32
+pub extern fn SDL_PollEvent(event: *u8): i32
 
-extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+pub extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
 
-extern fn SDL_GetMouseState(x: *i32, y: *i32): u32 // returns button bitmask, fills x/y
+pub extern fn SDL_GetMouseState(x: *i32, y: *i32): u32 // returns button bitmask, fills x/y
 
-extern fn SDL_Delay(ms: u32): void
+pub extern fn SDL_Delay(ms: u32): void
 
-extern fn SDL_DestroyWindow(win: *u8): void
+pub extern fn SDL_DestroyWindow(win: *u8): void
 
-extern fn SDL_Quit(): void
+pub extern fn SDL_Quit(): void
 
-let SDL_INIT_VIDEO: u32 = 0x20
-let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-let SDL_WINDOW_SHOWN: u32 = 0x4
-let SDL_TEXTUREACCESS_STREAMING: i32 = 1
-let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
-let SDL_QUIT: u32 = 0x100
+pub let SDL_INIT_VIDEO: u32 = 0x20
+
+pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
+
+pub let SDL_WINDOW_SHOWN: u32 = 0x4
+
+pub let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+
+pub let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
+
+pub let SDL_QUIT: u32 = 0x100
 
 // higher render resolution (480×360, 2× window) + a finer weave = smooth drape
 // instead of chunky quads.
-let W: i64 = 480
-let H: i64 = 360
-let SCALE: i64 = 2
-let COLS: i64 = 65
-let ROWS: i64 = 42
+pub let W: i64 = 480
 
-struct Node {
+pub let H: i64 = 360
+
+pub let SCALE: i64 = 2
+
+pub let COLS: i64 = 65
+
+pub let ROWS: i64 = 42
+
+pub struct Node {
     px: f64, py: f64, // current position
     ppx: f64, ppy: f64, // previous position — velocity is implicit (px - ppx)
     pinned: bool,
 }
 
-struct Con {
+pub struct Con {
     a: i64, b: i64,
     rest: f64,
     stiff: f64, // projection strength: 1 = inextensible, softer for bending
@@ -79,7 +88,7 @@ struct Con {
 }
 
 // ---- antialiased framebuffer primitives (fb is a plain fixed array, all safe) ----
-fn blendPixel(fb: &mut [u32; 172800], idx: i64, col: u32, cov: f64) {
+pub fn blendPixel(fb: &mut [u32; 172800], idx: i64, col: u32, cov: f64) {
     let dst = fb[idx]
     let sr = (col & 0xFF) as f64
     let sg = ((col >> 8) & 0xFF) as f64
@@ -93,14 +102,14 @@ fn blendPixel(fb: &mut [u32; 172800], idx: i64, col: u32, cov: f64) {
     fb[idx] = nr | (ng << 8) | (nb << 16) | (0xFF << 24)
 }
 
-fn plotAA(fb: &mut [u32; 172800], px: i64, py: i64, col: u32, cov: f64) {
+pub fn plotAA(fb: &mut [u32; 172800], px: i64, py: i64, col: u32, cov: f64) {
     if px >= 0 && px < W && py >= 0 && py < H && cov > 0.0 {
         blendPixel(fb, py * W + px, col, cov)
     }
 }
 
 // Wu-style antialiased line
-fn drawLineAA(fb: &mut [u32; 172800], x0f: f64, y0f: f64, x1f: f64, y1f: f64, col: u32) {
+pub fn drawLineAA(fb: &mut [u32; 172800], x0f: f64, y0f: f64, x1f: f64, y1f: f64, col: u32) {
     var x0 = x0f
     var y0 = y0f
     var x1 = x1f
@@ -145,7 +154,7 @@ fn drawLineAA(fb: &mut [u32; 172800], x0f: f64, y0f: f64, x1f: f64, y1f: f64, co
     }
 }
 
-fn fillDot(fb: &mut [u32; 172800], cx: f64, cy: f64, rad: f64, col: u32) {
+pub fn fillDot(fb: &mut [u32; 172800], cx: f64, cy: f64, rad: f64, col: u32) {
     let r = rad
     var y = (cy - r - 1.0) as i64
     let yend = (cy + r + 1.0) as i64
@@ -166,12 +175,12 @@ fn fillDot(fb: &mut [u32; 172800], cx: f64, cy: f64, rad: f64, col: u32) {
     }
 }
 
-fn lerp(a: f64, b: f64, f: f64): f64 {
+pub fn lerp(a: f64, b: f64, f: f64): f64 {
     return a + (b - a) * f
 }
 
 // motion tint: calm teal when still, warm cream where the cloth is moving fast
-fn motionColor(speed: f64): u32 {
+pub fn motionColor(speed: f64): u32 {
     var t = speed * 0.13
     if t > 1.0 {
         t = 1.0
@@ -185,7 +194,7 @@ fn motionColor(speed: f64): u32 {
     return ri | (gi << 8) | (bi << 16) | (0xFF << 24)
 }
 
-fn addCon(nodes: &Vec<Node>, cons: &mut Vec<Con>, a: i64, b: i64, stiff: f64, draw: bool) {
+pub fn addCon(nodes: &Vec<Node>, cons: &mut Vec<Con>, a: i64, b: i64, stiff: f64, draw: bool) {
     let na = nodes[a]
     let nb = nodes[b]
     let dx = nb.px - na.px
@@ -196,7 +205,7 @@ fn addCon(nodes: &Vec<Node>, cons: &mut Vec<Con>, a: i64, b: i64, stiff: f64, dr
     )
 }
 
-fn buildCloth(nodes: &mut Vec<Node>, cons: &mut Vec<Con>) {
+pub fn buildCloth(nodes: &mut Vec<Node>, cons: &mut Vec<Con>) {
     let marginX = 30.0
     let spacing = ((W as f64) - 2.0 * marginX) / ((COLS - 1) as f64)
     let startY = 20.0
@@ -246,7 +255,7 @@ fn buildCloth(nodes: &mut Vec<Node>, cons: &mut Vec<Con>) {
 
 // one Gauss-Seidel sweep: pull every constraint toward its rest length, weighted by
 // stiffness; pinned + the grabbed node are anchors that never move.
-fn solve(nodes: &mut Vec<Node>, cons: &Vec<Con>, grabbed: i64) {
+pub fn solve(nodes: &mut Vec<Node>, cons: &Vec<Con>, grabbed: i64) {
     var i = 0
     while i < cons.len {
         let con = cons[i]
@@ -288,7 +297,7 @@ fn solve(nodes: &mut Vec<Node>, cons: &Vec<Con>, grabbed: i64) {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     if SDL_Init(SDL_INIT_VIDEO) != 0 {
         print("SDL_Init failed")
         return 1

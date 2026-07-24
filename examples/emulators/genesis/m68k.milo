@@ -17,30 +17,36 @@ from "./z80" import {
 }
 
 // --- status register bit masks ---
-let SR_C: i64 = 0x0001
-let SR_V: i64 = 0x0002
-let SR_Z: i64 = 0x0004
-let SR_N: i64 = 0x0008
-let SR_X: i64 = 0x0010
-let SR_S: i64 = 0x2000
-let SR_T: i64 = 0x8000
+pub let SR_C: i64 = 0x0001
+
+pub let SR_V: i64 = 0x0002
+
+pub let SR_Z: i64 = 0x0004
+
+pub let SR_N: i64 = 0x0008
+
+pub let SR_X: i64 = 0x0010
+
+pub let SR_S: i64 = 0x2000
+
+pub let SR_T: i64 = 0x8000
 
 // 24-bit external address space (A1..A23; A0 is internal to the word bus).
-let ADDR_MASK: i64 = 0x00FFFFFF
+pub let ADDR_MASK: i64 = 0x00FFFFFF
 
 // Genesis VRAM is 64 KiB. The VDP address counter is 17 bits (vdpAddr is kept
 // & 0x1FFFF) but its top bit is ignored for VRAM, so every VRAM access wraps
 // here. Keeping the mask in one place stops the data-port path and the
 // fill/copy paths from disagreeing on the bound (which grew a phantom 128 KiB
 // buffer and left the two paths indexing different ranges of the same Vec).
-let VRAM_MASK: i64 = 0xFFFF
+pub let VRAM_MASK: i64 = 0xFFFF
 
 // Flat 16 MB memory with a touched-address log so the Harte harness can reset
 // only the bytes a case dirtied instead of reallocating 16 MB per case.
 // In `genesis` mode the device regions ($A0xxxx I/O, $C0xxxx VDP) dispatch to
 // register/VDP handlers instead of the flat array; ROM ($000000+) and work RAM
 // ($FF0000+) live in the flat array directly (both fit in the 24-bit space).
-struct Mem {
+pub struct Mem {
     ram: Vec<u8>
     touched: Vec<i64>
     genesis: bool
@@ -80,7 +86,7 @@ struct Mem {
     ioRegs: [i64; 16]
 }
 
-fn newMem(): Mem {
+pub fn newMem(): Mem {
     var ram: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < 0x1000000 {
@@ -105,7 +111,7 @@ fn newMem(): Mem {
 // cores aren't cycle-synced, so freezing the Z80 during a 68k bus-request while
 // the 68k spins waiting for a Z80-cleared flag deadlocks. Letting the Z80 keep
 // executing (it shares z80.mem with the 68k window) lets the handshake complete.
-fn z80Running(m: &Mem): bool {
+pub fn z80Running(m: &Mem): bool {
     // The Z80 executes only when it is out of reset AND the 68k does not hold its
     // bus (BUSREQ). While the 68k has the bus — e.g. writing a sound command into
     // Z80 RAM — the Z80 must be paused; running it then lets the sound driver read
@@ -116,7 +122,7 @@ fn z80Running(m: &Mem): bool {
 // 3-button pad read (active low). TH=1 exposes Up/Down/Left/Right/B/C; TH=0
 // exposes Up/Down/A/Start. `p` is the pressed-button bitmask, `th` the current
 // TH multiplex line. Shared by both controller ports ($A10003 / $A10005).
-fn padReadPort(p: i64, th: bool): i64 {
+pub fn padReadPort(p: i64, th: bool): i64 {
     var v: i64 = 0
     if th {
         v = 0x40
@@ -155,7 +161,7 @@ fn padReadPort(p: i64, th: bool): i64 {
     return v
 }
 
-fn memRead8(m: &Mem, addr: i64): i64 {
+pub fn memRead8(m: &Mem, addr: i64): i64 {
     let a = addr & ADDR_MASK
     if m.genesis && isDevice(a) {
         return devRead8(m, a)
@@ -163,7 +169,7 @@ fn memRead8(m: &Mem, addr: i64): i64 {
     return m.ram[a] as i64
 }
 
-fn memWrite8(m: &mut Mem, addr: i64, val: i64) {
+pub fn memWrite8(m: &mut Mem, addr: i64, val: i64) {
     let a = addr & ADDR_MASK
     if m.genesis {
         if a < 0x400000 {
@@ -197,7 +203,7 @@ fn memWrite8(m: &mut Mem, addr: i64, val: i64) {
     m.touched.push(a)
 }
 
-fn memRead16(m: &Mem, addr: i64): i64 {
+pub fn memRead16(m: &Mem, addr: i64): i64 {
     let a = addr & ADDR_MASK
     if m.genesis && isDevice(a) {
         return devRead16(m, a)
@@ -205,7 +211,7 @@ fn memRead16(m: &Mem, addr: i64): i64 {
     return ((m.ram[a] as i64) << 8) | (m.ram[(a + 1) & ADDR_MASK] as i64)
 }
 
-fn memWrite16(m: &mut Mem, addr: i64, val: i64) {
+pub fn memWrite16(m: &mut Mem, addr: i64, val: i64) {
     let a = addr & ADDR_MASK
     if m.genesis {
         if a < 0x400000 {
@@ -221,7 +227,7 @@ fn memWrite16(m: &mut Mem, addr: i64, val: i64) {
 }
 
 // Device address space: $A0xxxx (Z80/I/O/control) and $C0000x (VDP ports).
-fn isDevice(a: i64): bool {
+pub fn isDevice(a: i64): bool {
     return a >= 0xA00000 && a < 0xC00010
 }
 
@@ -230,7 +236,7 @@ fn isDevice(a: i64): bool {
 // 0=PAL. We model an instant FIFO/DMA, so FIFO-empty is always set and FIFO-full/
 // DMA-busy always clear — some games spin on FIFO-empty before bulk VRAM writes.
 // Bits 10/12/13 read as open-bus 1s on real hardware (0x3400).
-fn vdpStatus(m: &Mem): i64 {
+pub fn vdpStatus(m: &Mem): i64 {
     var s: i64 = 0x3400 | 0x0200 // open-bus 1s + FIFO empty
     if m.vdpLine >= 224 {
         s = s | 0x0008 // vblank
@@ -238,7 +244,7 @@ fn vdpStatus(m: &Mem): i64 {
     return s
 }
 
-fn devRead16(m: &Mem, a: i64): i64 {
+pub fn devRead16(m: &Mem, a: i64): i64 {
     if a == 0xC00004 || a == 0xC00006 {
         return vdpStatus(m)
     }
@@ -266,7 +272,7 @@ fn devRead16(m: &Mem, a: i64): i64 {
     return 0
 }
 
-fn devRead8(m: &Mem, a: i64): i64 {
+pub fn devRead8(m: &Mem, a: i64): i64 {
     if a >= 0xA00000 && a <= 0xA0FFFF {
         let za = a & 0xFFFF
         if za < 0x2000 {
@@ -292,7 +298,7 @@ fn devRead8(m: &Mem, a: i64): i64 {
     return w & 0xFF
 }
 
-fn devWrite16(m: &mut Mem, a: i64, val: i64) {
+pub fn devWrite16(m: &mut Mem, a: i64, val: i64) {
     if a >= 0xA00000 && a <= 0xA0FFFF {
         // 68k word write into Z80 space (high byte then low). Sub-dispatch so
         // $A04000-3 hits the YM2612, not RAM.
@@ -342,7 +348,7 @@ fn devWrite16(m: &mut Mem, a: i64, val: i64) {
 
 // VDP control port: a register write (top bits 10) sets vdpRegs[r]; otherwise it
 // is one of the two address-setup words giving the 17-bit address + 6-bit code.
-fn vdpControlWrite(m: &mut Mem, val: i64) {
+pub fn vdpControlWrite(m: &mut Mem, val: i64) {
     if m.vdpPending {
         m.vdpPending = false
         let first = m.vdpFirst
@@ -368,7 +374,7 @@ fn vdpControlWrite(m: &mut Mem, val: i64) {
 // 68000 -> VDP DMA (instant model). Source is a 68k byte address from regs
 // 21/22/23; length in words from regs 19/20; destination + target from the
 // current VDP address/code. Fill (mode 2) and VRAM copy (mode 3) handled too.
-fn vdpDma(m: &mut Mem) {
+pub fn vdpDma(m: &mut Mem) {
     let mode = (m.vdpRegs[23] >> 6) & 0x3
     if mode == 2 {
         // VRAM fill executes immediately on this DMA-trigger control write, using
@@ -418,7 +424,7 @@ fn vdpDma(m: &mut Mem) {
 // hardware bound so fill, copy, and data-port writes all agree on the range,
 // then grows the lazy backing buffer to cover that bounded index. The ensures
 // makes the "index stays inside VRAM" invariant checkable in debug builds.
-fn vramPut(m: &mut Mem, idx: i64, byte: u8): void
+pub fn vramPut(m: &mut Mem, idx: i64, byte: u8): void
 ensures(idx & VRAM_MASK) < m.vram.len
 {
     let i = idx & VRAM_MASK
@@ -430,7 +436,7 @@ ensures(idx & VRAM_MASK) < m.vram.len
 
 // VRAM->VRAM copy DMA (mode 3): copy `len` bytes from the source (regs 21/22) to
 // the current VRAM address, byte-granular.
-fn vdpDmaCopy(m: &mut Mem) {
+pub fn vdpDmaCopy(m: &mut Mem) {
     var src = (m.vdpRegs[22] << 8) | m.vdpRegs[21]
     var len = (m.vdpRegs[20] << 8) | m.vdpRegs[19]
     if len == 0 {
@@ -454,7 +460,7 @@ fn vdpDmaCopy(m: &mut Mem) {
 
 // Execute a latched VRAM fill: write `fillByte` to `fillLen` VRAM bytes from
 // `fillAddr`, stepping by `fillInc`. Uses the arm-time latched params.
-fn doFill(m: &mut Mem, fillByteIn: i64) {
+pub fn doFill(m: &mut Mem, fillByteIn: i64) {
     m.dmaFillPending = false
     let fillByte = (fillByteIn & 0xFF) as u8
     let len = m.fillLen
@@ -469,7 +475,7 @@ fn doFill(m: &mut Mem, fillByteIn: i64) {
     m.vdpAddr = da & 0x1FFFF
 }
 
-fn vdpDataWrite(m: &mut Mem, val: i64) {
+pub fn vdpDataWrite(m: &mut Mem, val: i64) {
     // The data byte (high byte of the word) is what a fill would use; remember it
     // so a fill flushed by a subsequent arm can find its fill value.
     m.lastDataByte = (val >> 8) & 0xFF
@@ -498,16 +504,16 @@ fn vdpDataWrite(m: &mut Mem, val: i64) {
     m.vdpAddr = (a + m.vdpRegs[15]) & 0x1FFFF
 }
 
-fn memRead32(m: &Mem, addr: i64): i64 {
+pub fn memRead32(m: &Mem, addr: i64): i64 {
     return (memRead16(m, addr) << 16) | memRead16(m, addr + 2)
 }
 
-fn memWrite32(m: &mut Mem, addr: i64, val: i64) {
+pub fn memWrite32(m: &mut Mem, addr: i64, val: i64) {
     memWrite16(m, addr, (val >> 16) & 0xFFFF)
     memWrite16(m, addr + 2, val & 0xFFFF)
 }
 
-struct M68k {
+pub struct M68k {
     d: [i64; 8] // data registers D0-D7 (32-bit each)
     a: [i64; 8] // address registers A0-A7; a[7] is the ACTIVE stack pointer
     otherSp: i64 // the inactive stack pointer (USP when supervisor, else SSP)
@@ -528,7 +534,7 @@ struct M68k {
     faultCommit: bool
 }
 
-fn newCpu(): M68k {
+pub fn newCpu(): M68k {
     return M68k {
         d: [0, 0, 0, 0, 0, 0, 0, 0],
         a: [0, 0, 0, 0, 0, 0, 0, 0],
@@ -546,7 +552,7 @@ fn newCpu(): M68k {
 
 // Latch an address error for a word/long access to an odd address. Returns true
 // if the access faults (caller must abort), false if aligned.
-fn checkAlign(cpu: &mut M68k, addr: i64, size: i64, isRead: bool, isFetch: bool): bool {
+pub fn checkAlign(cpu: &mut M68k, addr: i64, size: i64, isRead: bool, isFetch: bool): bool {
     if size != 0 && (addr & 1) != 0 && !cpu.fault {
         cpu.fault = true
         cpu.faultAddr = addr & 0xFFFFFFFF
@@ -558,12 +564,12 @@ fn checkAlign(cpu: &mut M68k, addr: i64, size: i64, isRead: bool, isFetch: bool)
     return cpu.fault
 }
 
-fn isSuper(cpu: &M68k): bool {
+pub fn isSuper(cpu: &M68k): bool {
     return (cpu.sr & SR_S) != 0
 }
 
 // --- width helpers: size is 0=byte, 1=word, 2=long ---
-fn sizeMask(size: i64): i64 {
+pub fn sizeMask(size: i64): i64 {
     if size == 0 {
         return 0xFF
     }
@@ -573,7 +579,7 @@ fn sizeMask(size: i64): i64 {
     return 0xFFFFFFFF
 }
 
-fn sizeMsb(size: i64): i64 {
+pub fn sizeMsb(size: i64): i64 {
     if size == 0 {
         return 0x80
     }
@@ -583,7 +589,7 @@ fn sizeMsb(size: i64): i64 {
     return 0x80000000
 }
 
-fn sizeBytes(size: i64): i64 {
+pub fn sizeBytes(size: i64): i64 {
     if size == 0 {
         return 1
     }
@@ -593,7 +599,7 @@ fn sizeBytes(size: i64): i64 {
     return 4
 }
 
-fn signExtend(val: i64, size: i64): i64 {
+pub fn signExtend(val: i64, size: i64): i64 {
     let m = sizeMask(size)
     let v = val & m
     let msb = sizeMsb(size)
@@ -604,18 +610,18 @@ fn signExtend(val: i64, size: i64): i64 {
 }
 
 // --- register access at a given width (byte/word leave the high bits intact) ---
-fn getD(cpu: &M68k, n: i64, size: i64): i64 {
+pub fn getD(cpu: &M68k, n: i64, size: i64): i64 {
     return cpu.d[n] & sizeMask(size)
 }
 
-fn setD(cpu: &mut M68k, n: i64, size: i64, val: i64) {
+pub fn setD(cpu: &mut M68k, n: i64, size: i64, val: i64) {
     let m = sizeMask(size)
     cpu.d[n] = (cpu.d[n] & ~m) | (val & m)
 }
 
 // Address registers are never partially written: byte/word ops don't target An,
 // and any long/word write to An sign-extends to the full 32 bits.
-fn setA(cpu: &mut M68k, n: i64, size: i64, val: i64) {
+pub fn setA(cpu: &mut M68k, n: i64, size: i64, val: i64) {
     if size == 1 {
         cpu.a[n] = signExtend(val, 1) & 0xFFFFFFFF
     } else {
@@ -624,13 +630,13 @@ fn setA(cpu: &mut M68k, n: i64, size: i64, val: i64) {
 }
 
 // --- instruction / extension-word fetch (pc is the next-word address) ---
-fn fetch16(cpu: &mut M68k, m: &Mem): i64 {
+pub fn fetch16(cpu: &mut M68k, m: &Mem): i64 {
     let w = memRead16(m, cpu.pc)
     cpu.pc = (cpu.pc + 2) & 0xFFFFFFFF
     return w
 }
 
-fn fetch32(cpu: &mut M68k, m: &Mem): i64 {
+pub fn fetch32(cpu: &mut M68k, m: &Mem): i64 {
     let hi = fetch16(cpu, m)
     let lo = fetch16(cpu, m)
     return (hi << 16) | lo
@@ -639,7 +645,7 @@ fn fetch32(cpu: &mut M68k, m: &Mem): i64 {
 // --- effective address ---
 // A resolved EA is one of: a data reg, an addr reg, a memory address, or an
 // immediate. Post-increment / pre-decrement mutate An here (as on real HW).
-enum Ea {
+pub enum Ea {
     DReg(i64)
     AReg(i64)
     MemAddr(i64)
@@ -648,7 +654,7 @@ enum Ea {
 
 // Increment/decrement step for (An)+ / -(An): byte access on A7 still moves the
 // stack pointer by 2 to keep it word-aligned.
-fn incrStep(reg: i64, size: i64): i64 {
+pub fn incrStep(reg: i64, size: i64): i64 {
     let b = sizeBytes(size)
     if reg == 7 && b == 1 {
         return 2
@@ -656,7 +662,7 @@ fn incrStep(reg: i64, size: i64): i64 {
     return b
 }
 
-fn briefIndex(cpu: &M68k, ext: i64): i64 {
+pub fn briefIndex(cpu: &M68k, ext: i64): i64 {
     let ri = (ext >> 12) & 0x7
     let isAddr = (ext & 0x8000) != 0
     var idx = if isAddr {
@@ -671,7 +677,7 @@ fn briefIndex(cpu: &M68k, ext: i64): i64 {
     return signExtend(idx, 2)
 }
 
-fn resolveEa(cpu: &mut M68k, m: &Mem, mode: i64, reg: i64, size: i64): Ea {
+pub fn resolveEa(cpu: &mut M68k, m: &Mem, mode: i64, reg: i64, size: i64): Ea {
     if mode == 0 {
         return Ea.DReg(reg)
     }
@@ -725,7 +731,7 @@ fn resolveEa(cpu: &mut M68k, m: &Mem, mode: i64, reg: i64, size: i64): Ea {
     return Ea.Imm(fetch16(cpu, m) & sizeMask(size))
 }
 
-fn eaLoad(cpu: &mut M68k, m: &Mem, ea: &Ea, size: i64): i64 {
+pub fn eaLoad(cpu: &mut M68k, m: &Mem, ea: &Ea, size: i64): i64 {
     match ea {
         Ea.DReg(n) => {
             return getD(cpu, n, size)
@@ -751,7 +757,7 @@ fn eaLoad(cpu: &mut M68k, m: &Mem, ea: &Ea, size: i64): i64 {
     }
 }
 
-fn eaStore(cpu: &mut M68k, m: &mut Mem, ea: &Ea, size: i64, val: i64) {
+pub fn eaStore(cpu: &mut M68k, m: &mut Mem, ea: &Ea, size: i64, val: i64) {
     match ea {
         Ea.DReg(n) => {
             setD(cpu, n, size, val)
@@ -778,7 +784,7 @@ fn eaStore(cpu: &mut M68k, m: &mut Mem, ea: &Ea, size: i64, val: i64) {
 }
 
 // --- flag helpers ---
-fn setBit(cpu: &mut M68k, bit: i64, on: bool) {
+pub fn setBit(cpu: &mut M68k, bit: i64, on: bool) {
     if on {
         cpu.sr = cpu.sr | bit
     } else {
@@ -786,25 +792,25 @@ fn setBit(cpu: &mut M68k, bit: i64, on: bool) {
     }
 }
 
-fn getBit(cpu: &M68k, bit: i64): bool {
+pub fn getBit(cpu: &M68k, bit: i64): bool {
     return (cpu.sr & bit) != 0
 }
 
 // N and Z from a result; caller sets V/C/X per operation.
-fn setNZ(cpu: &mut M68k, size: i64, res: i64) {
+pub fn setNZ(cpu: &mut M68k, size: i64, res: i64) {
     let r = res & sizeMask(size)
     setBit(cpu, SR_N, (r & sizeMsb(size)) != 0)
     setBit(cpu, SR_Z, r == 0)
 }
 
 // logical / move: N,Z from result, V=C=0, X untouched.
-fn setLogicalFlags(cpu: &mut M68k, size: i64, res: i64) {
+pub fn setLogicalFlags(cpu: &mut M68k, size: i64, res: i64) {
     setNZ(cpu, size, res)
     setBit(cpu, SR_V, false)
     setBit(cpu, SR_C, false)
 }
 
-fn addFlags(cpu: &mut M68k, size: i64, a: i64, b: i64, res: i64, withX: bool) {
+pub fn addFlags(cpu: &mut M68k, size: i64, a: i64, b: i64, res: i64, withX: bool) {
     let mask = sizeMask(size)
     let msb = sizeMsb(size)
     let ua = a & mask
@@ -820,7 +826,7 @@ fn addFlags(cpu: &mut M68k, size: i64, a: i64, b: i64, res: i64, withX: bool) {
     }
 }
 
-fn subFlags(cpu: &mut M68k, size: i64, a: i64, b: i64, res: i64, withX: bool) {
+pub fn subFlags(cpu: &mut M68k, size: i64, a: i64, b: i64, res: i64, withX: bool) {
     // computes a - b
     let mask = sizeMask(size)
     let msb = sizeMsb(size)
@@ -838,7 +844,7 @@ fn subFlags(cpu: &mut M68k, size: i64, a: i64, b: i64, res: i64, withX: bool) {
 }
 
 // --- condition codes (Bcc / Scc / DBcc) ---
-fn testCond(cpu: &M68k, cond: i64): bool {
+pub fn testCond(cpu: &M68k, cond: i64): bool {
     let c = getBit(cpu, SR_C)
     let v = getBit(cpu, SR_V)
     let z = getBit(cpu, SR_Z)
@@ -892,12 +898,12 @@ fn testCond(cpu: &M68k, cond: i64): bool {
 }
 
 // --- stack helpers (push/pop long, active SP = a[7]) ---
-fn pushLong(cpu: &mut M68k, m: &mut Mem, val: i64) {
+pub fn pushLong(cpu: &mut M68k, m: &mut Mem, val: i64) {
     cpu.a[7] = (cpu.a[7] - 4) & 0xFFFFFFFF
     memWrite32(m, cpu.a[7], val)
 }
 
-fn pushWord(cpu: &mut M68k, m: &mut Mem, val: i64) {
+pub fn pushWord(cpu: &mut M68k, m: &mut Mem, val: i64) {
     cpu.a[7] = (cpu.a[7] - 2) & 0xFFFFFFFF
     memWrite16(m, cpu.a[7], val & 0xFFFF)
 }
@@ -907,7 +913,7 @@ fn pushWord(cpu: &mut M68k, m: &mut Mem, val: i64) {
 // to high address. SSW = function-code | (read?0x10) | (data-access?0x08).
 // The pushed PC is the pc reached when the fault was detected (prefetch offset
 // not modelled) — refine against the Harte RAM-frame diff.
-fn raiseAddressError(cpu: &mut M68k, m: &mut Mem, ir: i64) {
+pub fn raiseAddressError(cpu: &mut M68k, m: &mut Mem, ir: i64) {
     let oldSr = cpu.sr
     let wasSuper = (oldSr & SR_S) != 0
     cpu.sr = (cpu.sr | SR_S) & ~SR_T
@@ -949,13 +955,13 @@ fn raiseAddressError(cpu: &mut M68k, m: &mut Mem, ir: i64) {
     cpu.pc = memRead32(m, 3 * 4) & 0xFFFFFFFF
 }
 
-fn popLong(cpu: &mut M68k, m: &Mem): i64 {
+pub fn popLong(cpu: &mut M68k, m: &Mem): i64 {
     let v = memRead32(m, cpu.a[7])
     cpu.a[7] = (cpu.a[7] + 4) & 0xFFFFFFFF
     return v
 }
 
-fn popWord(cpu: &mut M68k, m: &Mem): i64 {
+pub fn popWord(cpu: &mut M68k, m: &Mem): i64 {
     let v = memRead16(m, cpu.a[7])
     cpu.a[7] = (cpu.a[7] + 2) & 0xFFFFFFFF
     return v
@@ -964,7 +970,7 @@ fn popWord(cpu: &mut M68k, m: &Mem): i64 {
 // Privilege check for supervisor-only instructions. In user mode, raises a
 // privilege-violation trap (vector 8) whose pushed PC points at the faulting
 // instruction (opcode start = pc-2, since the opcode word was already fetched).
-fn privViolation(cpu: &mut M68k, m: &mut Mem): bool {
+pub fn privViolation(cpu: &mut M68k, m: &mut Mem): bool {
     if (cpu.sr & SR_S) == 0 {
         cpu.pc = (cpu.pc - 2) & 0xFFFFFFFF
         raiseException(cpu, m, 8)
@@ -975,7 +981,7 @@ fn privViolation(cpu: &mut M68k, m: &mut Mem): bool {
 
 // Write the full status register, swapping the active/inactive stack pointer when
 // the S bit changes (a[7] always holds the currently-selected SP).
-fn setSr(cpu: &mut M68k, newSr: i64) {
+pub fn setSr(cpu: &mut M68k, newSr: i64) {
     let oldS = (cpu.sr & SR_S) != 0
     cpu.sr = newSr & 0xFFFF
     if oldS != ((cpu.sr & SR_S) != 0) {
@@ -989,7 +995,7 @@ fn setSr(cpu: &mut M68k, newSr: i64) {
 // by SR bits 8-10 (level 7 is non-maskable). Pushes the [SR, PC] frame, raises the
 // SR mask to `level`, enters supervisor, wakes from STOP, and vectors via
 // autovector 24+level. Returns true if taken.
-fn deliverInterrupt(cpu: &mut M68k, m: &mut Mem, level: i64): bool {
+pub fn deliverInterrupt(cpu: &mut M68k, m: &mut Mem, level: i64): bool {
     let curMask = (cpu.sr >> 8) & 0x7
     if level != 7 && level <= curMask {
         return false
@@ -1013,7 +1019,7 @@ fn deliverInterrupt(cpu: &mut M68k, m: &mut Mem, level: i64): bool {
 // Group 1/2 exception (TRAP, zero-divide, CHK, TRAPV, privilege, illegal, line-A/F).
 // Short 3-word frame: [SR, PC]. Enters supervisor, clears trace, vectors via the
 // low vector table. pc must already point at the return address.
-fn raiseException(cpu: &mut M68k, m: &mut Mem, vec: i64) {
+pub fn raiseException(cpu: &mut M68k, m: &mut Mem, vec: i64) {
     let oldSr = cpu.sr
     let wasSuper = (oldSr & SR_S) != 0
     cpu.sr = (cpu.sr | SR_S) & ~SR_T
@@ -1029,7 +1035,7 @@ fn raiseException(cpu: &mut M68k, m: &mut Mem, vec: i64) {
 
 // Redirect PC to target; an odd target is an instruction-fetch address error
 // (step() raises it after the instruction). Used by JMP/JSR/Bcc/BSR/RTS/DBcc.
-fn setPc(cpu: &mut M68k, target: i64) {
+pub fn setPc(cpu: &mut M68k, target: i64) {
     let t = target & 0xFFFFFFFF
     cpu.pc = t
     if (t & 1) != 0 && !cpu.fault {
@@ -1043,7 +1049,7 @@ fn setPc(cpu: &mut M68k, target: i64) {
 
 // Execute exactly one instruction. Returns false if the CPU cannot proceed
 // (halted / opcode not yet implemented) so the harness can report it.
-fn step(cpu: &mut M68k, m: &mut Mem): bool {
+pub fn step(cpu: &mut M68k, m: &mut Mem): bool {
     if cpu.halted {
         return false
     }
@@ -1086,7 +1092,7 @@ fn step(cpu: &mut M68k, m: &mut Mem): bool {
     return ran
 }
 
-fn decode(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+pub fn decode(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let top = (op >> 12) & 0xF
 
     if top == 0x1 {
@@ -1144,7 +1150,7 @@ fn decode(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
 
 // Shift/rotate core: shift `val` (width size) by cnt positions, updating N/Z/V/C/X
 // per 68000 rules. sty: 0=arith(ASx) 1=logical(LSx) 2=extend(ROXx) 3=rotate(ROx).
-fn doShift(cpu: &mut M68k, val: i64, size: i64, cnt: i64, sty: i64, left: bool): i64 {
+pub fn doShift(cpu: &mut M68k, val: i64, size: i64, cnt: i64, sty: i64, left: bool): i64 {
     let mask = sizeMask(size)
     let msb = sizeMsb(size)
     var v = val & mask
@@ -1223,7 +1229,7 @@ fn doShift(cpu: &mut M68k, val: i64, size: i64, cnt: i64, sty: i64, left: bool):
 
 // Shift/rotate dispatch (top nibble E): register form (count in opcode or Dn) and
 // memory form (shift a memory word by 1). bits 7-6 == 11 selects the memory form.
-fn execShift(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+pub fn execShift(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let left = (op & 0x0100) != 0
     if (op & 0x00C0) == 0x00C0 {
         // memory form: word, count 1, sty in bits 10-9
@@ -1256,7 +1262,7 @@ fn execShift(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
 
 // Immediate group (top nibble 0): ORI/ANDI/SUBI/ADDI/EORI/CMPI, the ...toCCR/SR
 // forms, and static/dynamic bit ops (BTST/BCHG/BCLR/BSET).
-fn execImmediate(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+pub fn execImmediate(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     // MOVEP — 0000 ddd1 mm00 1aaa: register<->alternate-byte memory. Shares the
     // dynamic-bit-op encoding (bit 8 set) but is disambiguated by mode field 001,
     // which is illegal for bit ops, so it must be intercepted before them.
@@ -1335,7 +1341,7 @@ fn execImmediate(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
 // register and every-other byte of memory (for byte-wide peripherals on a 16-bit
 // bus). High byte first. opmode: 4 w mem->reg, 5 l mem->reg, 6 w reg->mem, 7 l
 // reg->mem. No flags affected.
-fn execMovep(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+pub fn execMovep(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let dreg = (op >> 9) & 0x7
     let areg = op & 0x7
     let opmode = (op >> 6) & 0x7
@@ -1366,7 +1372,7 @@ fn execMovep(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     return true
 }
 
-fn applyLogic(which: i64, a: i64, b: i64): i64 {
+pub fn applyLogic(which: i64, a: i64, b: i64): i64 {
     if which == 0 {
         return a | b // ORI
     }
@@ -1378,7 +1384,7 @@ fn applyLogic(which: i64, a: i64, b: i64): i64 {
 
 // BTST/BCHG/BCLR/BSET — static (immediate bit number) or dynamic (Dn). Bit index
 // is mod 32 for a data register (long), mod 8 for a memory byte.
-fn execBitOp(cpu: &mut M68k, m: &mut Mem, op: i64, isStatic: bool): bool {
+pub fn execBitOp(cpu: &mut M68k, m: &mut Mem, op: i64, isStatic: bool): bool {
     let mode = (op >> 3) & 0x7
     let reg = op & 0x7
     var bitNum: i64 = 0
@@ -1420,7 +1426,7 @@ fn execBitOp(cpu: &mut M68k, m: &mut Mem, op: i64, isStatic: bool): bool {
 }
 
 // MOVE.b/.w/.l — the workhorse. Also MOVEA when the destination mode is An.
-fn execMove(cpu: &mut M68k, m: &mut Mem, op: i64, size: i64): bool {
+pub fn execMove(cpu: &mut M68k, m: &mut Mem, op: i64, size: i64): bool {
     let srcMode = (op >> 3) & 0x7
     let srcReg = op & 0x7
     let dstMode = (op >> 6) & 0x7
@@ -1440,7 +1446,7 @@ fn execMove(cpu: &mut M68k, m: &mut Mem, op: i64, size: i64): bool {
     return true
 }
 
-fn execBranch(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+pub fn execBranch(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let cond = (op >> 8) & 0xF
     let disp8 = op & 0xFF
     let base = cpu.pc // address of the word after the opcode
@@ -1467,7 +1473,7 @@ fn execBranch(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
 }
 
 // ADDQ / SUBQ / Scc / DBcc (top nibble 5)
-fn execAddqSubq(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+pub fn execAddqSubq(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let mode = (op >> 3) & 0x7
     let reg = op & 0x7
     let size = (op >> 6) & 0x3
@@ -1535,7 +1541,7 @@ fn execAddqSubq(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
 // addr reg (1) — encodings that are otherwise illegal for ADD/SUB, so they mean
 // ADDX/SUBX. Z is STICKY: cleared on a non-zero result, left unchanged on zero,
 // so a multi-precision sequence's final Z reflects the whole operand.
-fn execAddSubX(cpu: &mut M68k, m: &mut Mem, op: i64, isAdd: bool, size: i64) {
+pub fn execAddSubX(cpu: &mut M68k, m: &mut Mem, op: i64, isAdd: bool, size: i64) {
     let rx = (op >> 9) & 0x7
     let ry = op & 0x7
     let mem = ((op >> 3) & 0x7) == 1
@@ -1602,7 +1608,7 @@ fn execAddSubX(cpu: &mut M68k, m: &mut Mem, op: i64, isAdd: bool, size: i64) {
 
 // EXG — exchange two 32-bit registers (no flags). opmode 5 = D,D (mode 0) or
 // A,A (mode 1); opmode 6 = D,A (mode 1). Rx = bits 11-9, Ry = bits 2-0.
-fn execExg(cpu: &mut M68k, op: i64, opmode: i64, mode: i64) {
+pub fn execExg(cpu: &mut M68k, op: i64, opmode: i64, mode: i64) {
     let rx = (op >> 9) & 0x7
     let ry = op & 0x7
     if opmode == 5 && mode == 0 {
@@ -1623,7 +1629,7 @@ fn execExg(cpu: &mut M68k, op: i64, opmode: i64, mode: i64) {
 // BCD add/subtract of two bytes with the X flag, replicating real-68000
 // (Musashi) semantics including the "undefined" N/V bits and sticky Z. All
 // intermediate math is kept in 32-bit-unsigned form so borrow wrap matches HW.
-fn bcdAdd(cpu: &mut M68k, srcB: i64, dstB: i64): i64 {
+pub fn bcdAdd(cpu: &mut M68k, srcB: i64, dstB: i64): i64 {
     let x: i64 = if getBit(cpu, SR_X) {
         1
     } else {
@@ -1652,7 +1658,7 @@ fn bcdAdd(cpu: &mut M68k, srcB: i64, dstB: i64): i64 {
     return res8
 }
 
-fn bcdSub(cpu: &mut M68k, srcB: i64, dstB: i64): i64 {
+pub fn bcdSub(cpu: &mut M68k, srcB: i64, dstB: i64): i64 {
     let x: i64 = if getBit(cpu, SR_X) {
         1
     } else {
@@ -1682,7 +1688,7 @@ fn bcdSub(cpu: &mut M68k, srcB: i64, dstB: i64): i64 {
 
 // ABCD/SBCD: register form (Dy,Dx) or memory predecrement form (-(Ay),-(Ax)),
 // selected by bit 3. Byte operands.
-fn execBcdRM(cpu: &mut M68k, m: &mut Mem, op: i64, isSub: bool) {
+pub fn execBcdRM(cpu: &mut M68k, m: &mut Mem, op: i64, isSub: bool) {
     let rx = (op >> 9) & 0x7
     let ry = op & 0x7
     let mem = (op & 0x08) != 0
@@ -1721,7 +1727,7 @@ fn execBcdRM(cpu: &mut M68k, m: &mut Mem, op: i64, isSub: bool) {
     }
 }
 
-fn readSized(m: &Mem, addr: i64, size: i64): i64 {
+pub fn readSized(m: &Mem, addr: i64, size: i64): i64 {
     if size == 0 {
         return memRead8(m, addr)
     }
@@ -1731,7 +1737,7 @@ fn readSized(m: &Mem, addr: i64, size: i64): i64 {
     return memRead32(m, addr)
 }
 
-fn writeSized(m: &mut Mem, addr: i64, size: i64, val: i64) {
+pub fn writeSized(m: &mut Mem, addr: i64, size: i64, val: i64) {
     if size == 0 {
         memWrite8(m, addr, val)
     } else if size == 1 {
@@ -1742,7 +1748,7 @@ fn writeSized(m: &mut Mem, addr: i64, size: i64, val: i64) {
 }
 
 // ADD/ADDA (top D) and SUB/SUBA (top 9); ADDX/SUBX split out to execAddSubX.
-fn execAddSub(cpu: &mut M68k, m: &mut Mem, op: i64, isAdd: bool): bool {
+pub fn execAddSub(cpu: &mut M68k, m: &mut Mem, op: i64, isAdd: bool): bool {
     let dn = (op >> 9) & 0x7
     let opmode = (op >> 6) & 0x7
     let mode = (op >> 3) & 0x7
@@ -1807,7 +1813,7 @@ fn execAddSub(cpu: &mut M68k, m: &mut Mem, op: i64, isAdd: bool): bool {
 }
 
 // CMP / CMPA / EOR / CMPM (top B)
-fn execCmpEor(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+pub fn execCmpEor(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let dn = (op >> 9) & 0x7
     let opmode = (op >> 6) & 0x7
     let mode = (op >> 3) & 0x7
@@ -1858,7 +1864,7 @@ fn execCmpEor(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
 }
 
 // AND / MULU / MULS / ABCD / EXG (top C)
-fn execAnd(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+pub fn execAnd(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let dn = (op >> 9) & 0x7
     let opmode = (op >> 6) & 0x7
     let mode = (op >> 3) & 0x7
@@ -1902,7 +1908,7 @@ fn execAnd(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
 }
 
 // OR / DIVU / DIVS / SBCD (top 8)
-fn execOr(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+pub fn execOr(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let dn = (op >> 9) & 0x7
     let opmode = (op >> 6) & 0x7
     let mode = (op >> 3) & 0x7
@@ -1975,7 +1981,7 @@ fn execOr(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
 
 // Signed integer division truncating toward zero (Milo '/' on i64 already does,
 // but keep an explicit chokepoint in case that ever changes).
-fn quotTrunc(a: i64, b: i64): i64 {
+pub fn quotTrunc(a: i64, b: i64): i64 {
     return a / b
 }
 
@@ -1983,7 +1989,7 @@ fn quotTrunc(a: i64, b: i64): i64 {
 // opcode. Predecrement store walks A7..A0,D7..D0 with decreasing addresses;
 // every other form walks D0..D7,A0..A7 with increasing addresses. Word transfers
 // into registers sign-extend to 32 bits.
-fn execMovem(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+pub fn execMovem(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let toReg = (op & 0x0400) != 0
     let long = (op & 0x0040) != 0
     let sz: i64 = if long {
@@ -2089,7 +2095,7 @@ fn execMovem(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
 }
 
 // Misc group (top 4): LEA, CLR, TST, NEG, NOT, JMP, JSR, RTS, SWAP, EXT, NOP, PEA.
-fn execMisc(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+pub fn execMisc(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     if op == 0x4E71 {
         return true // NOP
     }

@@ -24,15 +24,15 @@ from "std/platform" import {
     write
 }
 
-fn epollEventSize(): i64 {
+pub fn epollEventSize(): i64 {
     return 12
 }
 
-struct EventLoop {
+pub struct EventLoop {
     epfd: i32,
 }
 
-fn eventLoopNew(): Result<EventLoop, string> {
+pub fn eventLoopNew(): Result<EventLoop, string> {
     unsafe {
         let fd = epoll_create1(0)
         if fd < 0 {
@@ -45,7 +45,7 @@ fn eventLoopNew(): Result<EventLoop, string> {
     }
 }
 
-fn setNonblocking(fd: i32): i32 {
+pub fn setNonblocking(fd: i32): i32 {
     unsafe {
         let flags = fcntl(fd, fGetfl())
         if flags < 0 {
@@ -58,7 +58,7 @@ fn setNonblocking(fd: i32): i32 {
 // Clear O_NONBLOCK. fd 0/1/2 share an open file description with the parent
 // shell, so a non-blocking flag left set here leaks out and makes the shell's
 // reads return EAGAIN after we exit. Restore blocking mode before exiting.
-fn clearNonblocking(fd: i32): i32 {
+pub fn clearNonblocking(fd: i32): i32 {
     unsafe {
         let flags = fcntl(fd, fGetfl())
         if flags < 0 {
@@ -68,7 +68,7 @@ fn clearNonblocking(fd: i32): i32 {
     }
 }
 
-fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
+pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
     unsafe {
         var ev: [u8; 12] = [0; 12]
         let pEvents = ev as *u32
@@ -79,7 +79,7 @@ fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
     }
 }
 
-fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
+pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
     unsafe {
         var ev: [u8; 12] = [0; 12]
         let pEvents = ev as *u32
@@ -90,7 +90,7 @@ fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
     }
 }
 
-fn eventDeregister(el: &EventLoop, fd: i32, _forWrite: bool): i32 {
+pub fn eventDeregister(el: &EventLoop, fd: i32, _forWrite: bool): i32 {
     unsafe {
         var ev: [u8; 12] = [0; 12]
         return epoll_ctl(el.epfd, epollCtlDel(), fd, ev as *u8)
@@ -100,7 +100,7 @@ fn eventDeregister(el: &EventLoop, fd: i32, _forWrite: bool): i32 {
 // poll for ready events. readyFds: caller-allocated *i32 array with capacity >= maxEvents.
 // returns count of ready fds, or -1 on error.
 // timeoutMs < 0 means block indefinitely.
-fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i32 {
+pub fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i32 {
     unsafe {
         let bufSize = maxEvents as i64 * epollEventSize()
         let evBuf = malloc(bufSize)
@@ -124,17 +124,17 @@ fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i3
 
 // ── wakeup event (cross-thread poll interruption) ──
 // eventfd registered for read; a write from any thread makes epoll_wait return.
-extern fn eventfd(initval: u32, flags: i32): i32
+pub extern fn eventfd(initval: u32, flags: i32): i32
 
-fn efdNonblock(): i32 {
+pub fn efdNonblock(): i32 {
     return 2048
 }
 
-fn efdCloexec(): i32 {
+pub fn efdCloexec(): i32 {
     return 524288
 }
 
-fn eventLoopInitWakeup(el: &EventLoop): i32 {
+pub fn eventLoopInitWakeup(el: &EventLoop): i32 {
     unsafe {
         let efd = eventfd(0, efdNonblock() | efdCloexec())
         if efd < 0 {
@@ -149,7 +149,7 @@ fn eventLoopInitWakeup(el: &EventLoop): i32 {
 }
 
 // safe from any thread: write(2) on an eventfd is atomic
-fn eventLoopNotify(_el: &EventLoop, wakeupId: i32): i32 {
+pub fn eventLoopNotify(_el: &EventLoop, wakeupId: i32): i32 {
     unsafe {
         var one: u64 = 1
         let n = write(wakeupId, (one.addrOf()) as *u8, 8)
@@ -162,31 +162,31 @@ fn eventLoopNotify(_el: &EventLoop, wakeupId: i32): i32 {
 
 // eventfd is level-triggered under epoll; the counter must be consumed or
 // every subsequent poll reports it ready again
-fn eventLoopDrainWakeup(_el: &EventLoop, wakeupId: i32): void {
+pub fn eventLoopDrainWakeup(_el: &EventLoop, wakeupId: i32): void {
     unsafe {
         var buf: u64 = 0
         read(wakeupId, (buf.addrOf()) as *u8, 8)
     }
 }
 
-fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
+pub fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
     unsafe {
         eventDeregister(el, wakeupId, false)
         close(wakeupId)
     }
 }
 
-fn eventLoopFromFd(fd: i32): EventLoop {
+pub fn eventLoopFromFd(fd: i32): EventLoop {
     return EventLoop {
         epfd: fd
     }
 }
 
-fn eventLoopFd(el: &EventLoop): i32 {
+pub fn eventLoopFd(el: &EventLoop): i32 {
     return el.epfd
 }
 
-fn eventLoopClose(el: &EventLoop): void {
+pub fn eventLoopClose(el: &EventLoop): void {
     unsafe {
         close(el.epfd)
     }

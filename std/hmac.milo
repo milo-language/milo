@@ -12,9 +12,9 @@ from "std/sha1" import {
     sha1Bytes
 }
 
-let BLOCK: i64 = 64
+pub let BLOCK: i64 = 64
 
-fn _hexNibble(v: i64): u8 {
+pub fn _hexNibble(v: i64): u8 {
     if v < 10 {
         return (v + 48) as u8
     }
@@ -22,7 +22,7 @@ fn _hexNibble(v: i64): u8 {
 }
 
 // Normalize the key to exactly BLOCK bytes (RFC 2104 §2).
-fn _blockKey(key: &string): string {
+pub fn _blockKey(key: &string): string {
     var k = ""
     if key.len > BLOCK {
         let h = sha256Bytes(key)
@@ -41,7 +41,7 @@ fn _blockKey(key: &string): string {
 }
 
 // HMAC-SHA256, returning the 32 raw digest bytes.
-fn hmacSha256Bytes(key: &string, msg: &string): string {
+pub fn hmacSha256Bytes(key: &string, msg: &string): string {
     let k = _blockKey(key)
     var inner = ""
     for i in 0..BLOCK {
@@ -63,7 +63,7 @@ fn hmacSha256Bytes(key: &string, msg: &string): string {
 }
 
 // HMAC-SHA256 as a 64-char lowercase hex string.
-fn hmacSha256(key: &string, msg: &string): string {
+pub fn hmacSha256(key: &string, msg: &string): string {
     let digest = hmacSha256Bytes(key, msg)
     var out = ""
     for i in 0..digest.len {
@@ -77,7 +77,7 @@ fn hmacSha256(key: &string, msg: &string): string {
 // HMAC-SHA1 (RFC 2104), returning 20 raw digest bytes. SHA-1's block size is also
 // 64 bytes, so the same key-normalization applies. Needed by HOTP/TOTP (std/totp),
 // which are specified on HMAC-SHA1.
-fn hmacSha1Bytes(key: &string, msg: &string): string {
+pub fn hmacSha1Bytes(key: &string, msg: &string): string {
     var k = ""
     if key.len > BLOCK {
         let h = sha1Bytes(key)

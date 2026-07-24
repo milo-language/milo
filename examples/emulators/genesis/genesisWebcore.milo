@@ -21,9 +21,9 @@ from "./render" import {
 
 // Fixed max frame width (H40); H32 (256px) frames render into the left columns and
 // the right edge stays black — same as the native 320-wide texture.
-let MAXW: i64 = 320
+pub let MAXW: i64 = 320
 
-struct GenHandle {
+pub struct GenHandle {
     cpu: M68k
     m: Mem
     synth: Synth
@@ -31,7 +31,7 @@ struct GenHandle {
     samples: Vec<i16> // interleaved L,R for the frame just stepped; driver drains + clears
 }
 
-fn loadRom(m: &mut Mem, cart: &Cart): void {
+pub fn loadRom(m: &mut Mem, cart: &Cart): void {
     var i: i64 = 0
     while i < cart.rom.len && i < 0x400000 {
         m.ram[i] = cart.rom[i]
@@ -42,7 +42,7 @@ fn loadRom(m: &mut Mem, cart: &Cart): void {
 
 // Parse `rom` and boot the machine. On a bad image, boots an empty cart so the JS
 // side always gets a usable handle (a black screen beats a crash).
-fn createGenesis(rom: Vec<u8>): GenHandle {
+pub fn createGenesis(rom: Vec<u8>): GenHandle {
     var cart = Cart {
         rom: Vec.new(), name: "", romEnd: 0,
     }
@@ -84,13 +84,13 @@ fn createGenesis(rom: Vec<u8>): GenHandle {
 
 // Controller 1. Bits (matches genesis.milo): 0 Up, 1 Down, 2 Left, 3 Right,
 // 4 A, 5 B, 6 C, 7 Start.
-fn setButtons(h: &mut GenHandle, p: i64): void {
+pub fn setButtons(h: &mut GenHandle, p: i64): void {
     h.m.pad1 = p
 }
 
 // Run the 68000 + Z80 for one video frame (262 scanlines), delivering the VBlank
 // interrupt at line 224 when enabled. Mirrors genesis.milo's runFrame.
-fn runFrame(cpu: &mut M68k, m: &mut Mem): void {
+pub fn runFrame(cpu: &mut M68k, m: &mut Mem): void {
     var line: i64 = 0
     var hIntCounter: i64 = m.vdpRegs[10]
     while line < 262 {
@@ -133,7 +133,7 @@ fn runFrame(cpu: &mut M68k, m: &mut Mem): void {
 
 // Advance one frame: run the CPUs, generate this frame's audio (735 stereo
 // samples @44.1kHz), then rasterize the CRAM-index framebuffer into h.rgba.
-fn stepFrame(h: &mut GenHandle): void {
+pub fn stepFrame(h: &mut GenHandle): void {
     runFrame(h.cpu, h.m)
 
     var sa: i64 = 0
@@ -160,12 +160,12 @@ fn stepFrame(h: &mut GenHandle): void {
 }
 
 // Frame height (rows) so the driver can size its canvas; width is always MAXW.
-fn frameH(h: &GenHandle): i64 {
+pub fn frameH(h: &GenHandle): i64 {
     return frameHeight(h.m)
 }
 
 // emit-js appends `main(); __flush();`; no-op so importing in the browser has no
 // side effects — the driver drives everything.
-fn main(): i32 {
+pub fn main(): i32 {
     return 0
 }

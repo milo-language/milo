@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-07-22
+last-verified: 2026-07-23
 -->
 
 # The Milo Language Guide
@@ -1280,6 +1280,37 @@ from "lib/math" import { add, multiply }
 ```
 
 All imports must be explicit — list exactly which symbols you use. No `import *` or bare `import "path"`. The LSP provides autocomplete for both module paths and symbols.
+
+---
+
+## Visibility
+
+Declarations are **file-private by default**. A name is visible only inside the file
+that declares it; `pub` exports it so other files can import or reference it.
+
+```milo
+pub fn parse(s: string): Result<Doc, Error> { ... }   // exported — importable elsewhere
+fn scanToken(s: string, i: i64): Token { ... }        // file-private — this file only
+```
+
+Referencing a non-`pub` declaration from a different file is a compile error. The
+unit of privacy is the file, matching how imports already work.
+
+`pub` applies to top-level declarations: `fn`, `struct`, `enum`, `trait`, `type`,
+`interface`, and globals (`let`, `var`, `thread_local`). A `pub struct` exposes its
+fields — field-level visibility is all-or-nothing per struct.
+
+Two things `pub` does **not** mark:
+
+- **`impl` blocks.** An impl's visibility follows the type it implements — there is
+  no separate spelling for it.
+- **`import`s.** An import binds a name locally; it does not re-export it.
+
+`pub` is distinct from `@export`, which forces external C linkage (see [C FFI](#c-ffi)).
+A `pub fn` is visible to other Milo files; an `@export fn` is visible to the C linker.
+
+`pub` is a **soft keyword**: it is only special immediately before a declaration, so
+it remains usable as an ordinary identifier (`var pub = 5`, `fn pub()`).
 
 ---
 

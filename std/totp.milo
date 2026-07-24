@@ -13,7 +13,7 @@ from "std/hmac" import {
     hmacSha1Bytes
 }
 
-fn _pow10(n: i64): i64 {
+pub fn _pow10(n: i64): i64 {
     var p: i64 = 1
     for _i in 0..n {
         p = p * 10
@@ -22,7 +22,7 @@ fn _pow10(n: i64): i64 {
 }
 
 // Left-pad a non-negative integer to exactly `width` decimal digits.
-fn _zeroPad(value: i64, width: i64): string {
+pub fn _zeroPad(value: i64, width: i64): string {
     var s = ""
     var v = value
     if v == 0 {
@@ -46,7 +46,7 @@ fn _zeroPad(value: i64, width: i64): string {
 }
 
 // HOTP value for a moving counter (RFC 4226 §5.3), `digits` long (6–8 typical).
-fn hotp(secret: &string, counter: i64, digits: i64): string {
+pub fn hotp(secret: &string, counter: i64, digits: i64): string {
     // 8-byte big-endian counter is the HMAC message.
     var msg = ""
     for i in 0..8 {
@@ -63,6 +63,6 @@ fn hotp(secret: &string, counter: i64, digits: i64): string {
 }
 
 // TOTP value for a Unix timestamp (RFC 6238): HOTP over floor(time / step).
-fn totp(secret: &string, unixTime: i64, step: i64, digits: i64): string {
+pub fn totp(secret: &string, unixTime: i64, step: i64, digits: i64): string {
     return hotp(secret, unixTime / step, digits)
 }

@@ -8,7 +8,7 @@ from "./cartridge" import {
     Cartridge, parseCartridge
 }
 
-fn loadCartridge(path: &string): Result<Cartridge, string> {
+pub fn loadCartridge(path: &string): Result<Cartridge, string> {
     var raw = ""
     match readFile(path) {
         Result.Ok(s) => {

@@ -27,21 +27,25 @@ from "std/color" import {
     bold, gray
 }
 
-let PW: i64 = 80
-let PH: i64 = 44
-let NPIX: i64 = 3520 // PW * PH
-let NFISH: i64 = 6
-let NBUB: i64 = 26
+pub let PW: i64 = 80
+
+pub let PH: i64 = 44
+
+pub let NPIX: i64 = 3520 // PW * PH
+
+pub let NFISH: i64 = 6
+
+pub let NBUB: i64 = 26
 
 // ── framebuffer (one packed rgb int per pixel) ──
 
-fn setPx(fb: &mut [i64; 3520], x: i64, y: i64, r: i64, g: i64, b: i64): void {
+pub fn setPx(fb: &mut [i64; 3520], x: i64, y: i64, r: i64, g: i64, b: i64): void {
     if x >= 0 && x < PW && y >= 0 && y < PH {
         fb[y * PW + x] = r * 65536 + g * 256 + b
     }
 }
 
-fn clampU8(x: f64): i64 {
+pub fn clampU8(x: f64): i64 {
     if x < 0.0 {
         return 0
     }
@@ -53,7 +57,7 @@ fn clampU8(x: f64): i64 {
 
 // ── fish sprite (10x5 mask, facing right). '#' body, 'o' eye, '<' tail fin ──
 
-fn fishRow(i: i64): string {
+pub fn fishRow(i: i64): string {
     if i == 0 {
         return "    ####  "
     } else if i == 1 {
@@ -66,7 +70,7 @@ fn fishRow(i: i64): string {
     return "    ####  "
 }
 
-fn drawFish(fb: &mut [i64; 3520], x0: i64, y0: i64, r: i64, g: i64, b: i64, dir: i64): void {
+pub fn drawFish(fb: &mut [i64; 3520], x0: i64, y0: i64, r: i64, g: i64, b: i64, dir: i64): void {
     for dy in 0..5 {
         let dyi = dy as i64
         let row = fishRow(dyi)
@@ -91,19 +95,19 @@ fn drawFish(fb: &mut [i64; 3520], x0: i64, y0: i64, r: i64, g: i64, b: i64, dir:
     }
 }
 
-fn emit(buf: &mut string, s: &string): void {
+pub fn emit(buf: &mut string, s: &string): void {
     for i in 0..s.len {
         buf.push(s[i])
     }
 }
 
-fn set3(out: &mut [i64; 3], a: i64, b: i64, c: i64): void {
+pub fn set3(out: &mut [i64; 3], a: i64, b: i64, c: i64): void {
     out[0] = a
     out[1] = b
     out[2] = c
 }
 
-fn fishColor(i: i64, out: &mut [i64; 3]): void {
+pub fn fishColor(i: i64, out: &mut [i64; 3]): void {
     var k = i
     while k >= 6 {
         k = k - 6
@@ -123,7 +127,7 @@ fn fishColor(i: i64, out: &mut [i64; 3]): void {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let termState = enableRawMode()
     writeStdout(hideCursor() + clearScreen())
 

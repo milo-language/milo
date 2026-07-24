@@ -1,7 +1,7 @@
 // std/csv — CSV parse and write with quoting/escaping
 
 // Parse a CSV string into a Vec of rows, each row a Vec of fields.
-fn csvParse(input: &string): Vec<Vec<string>> {
+pub fn csvParse(input: &string): Vec<Vec<string>> {
     var rows: Vec<Vec<string>> = Vec.new()
     var row: Vec<string> = Vec.new()
     var field = ""
@@ -52,7 +52,7 @@ fn csvParse(input: &string): Vec<Vec<string>> {
 }
 
 // Quote a field if it contains commas, quotes, or newlines.
-fn _csvQuoteField(val: &string): string {
+pub fn _csvQuoteField(val: &string): string {
     var needsQuote = false
     for ch in val {
         if ch == 44 || ch == 34 || ch == 10 || ch == 13 {
@@ -76,7 +76,7 @@ fn _csvQuoteField(val: &string): string {
 }
 
 // Serialize rows to a CSV string.
-fn csvStringify(rows: &Vec<Vec<string>>): string {
+pub fn csvStringify(rows: &Vec<Vec<string>>): string {
     var output = ""
     for ri in 0..rows.len {
         for ci in 0..rows[ri].len {

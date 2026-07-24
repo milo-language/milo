@@ -23,15 +23,15 @@ from "std/platform" import {
     close
 }
 
-fn keventSize(): i64 {
+pub fn keventSize(): i64 {
     return 32
 }
 
-struct EventLoop {
+pub struct EventLoop {
     kqfd: i32,
 }
 
-fn eventLoopNew(): Result<EventLoop, string> {
+pub fn eventLoopNew(): Result<EventLoop, string> {
     let fd = kqueue()
     if fd < 0 {
         return Result.Err("kqueue() failed")
@@ -42,7 +42,7 @@ fn eventLoopNew(): Result<EventLoop, string> {
     )
 }
 
-fn setNonblocking(fd: i32): i32 {
+pub fn setNonblocking(fd: i32): i32 {
     let flags = fcntl(fd, fGetfl())
     if flags < 0 {
         return -1
@@ -53,7 +53,7 @@ fn setNonblocking(fd: i32): i32 {
 // Clear O_NONBLOCK. fd 0/1/2 share an open file description with the parent
 // shell, so a non-blocking flag left set here leaks out and makes the shell's
 // reads return EAGAIN after we exit. Restore blocking mode before exiting.
-fn clearNonblocking(fd: i32): i32 {
+pub fn clearNonblocking(fd: i32): i32 {
     let flags = fcntl(fd, fGetfl())
     if flags < 0 {
         return -1
@@ -61,7 +61,7 @@ fn clearNonblocking(fd: i32): i32 {
     return fcntl(fd, fSetfl(), flags & ~oNonblock())
 }
 
-fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
+pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
     unsafe {
         var ev = Kevent {
             ident: fd as u64,
@@ -75,7 +75,7 @@ fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
     }
 }
 
-fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
+pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
     unsafe {
         var ev = Kevent {
             ident: fd as u64,
@@ -89,7 +89,7 @@ fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
     }
 }
 
-fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
+pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
     unsafe {
         var filter = evfiltRead()
         if forWrite {
@@ -110,7 +110,7 @@ fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
 // poll for ready events. readyFds: caller-allocated *i32 array with capacity >= maxEvents.
 // returns count of ready fds, or -1 on error.
 // timeoutMs < 0 means block indefinitely.
-fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i32 {
+pub fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i32 {
     unsafe {
         let bufSize = maxEvents as i64 * keventSize()
         let evBuf = malloc(bufSize)
@@ -149,11 +149,11 @@ fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i3
 
 // ident chosen far above any real fd so eventPoll consumers can tell a wakeup
 // apart from fd readiness in the same readyFds array
-fn wakeupIdentBase(): i32 {
+pub fn wakeupIdentBase(): i32 {
     return 1073741824
 }
 
-fn eventLoopInitWakeup(el: &EventLoop): i32 {
+pub fn eventLoopInitWakeup(el: &EventLoop): i32 {
     unsafe {
         var ev = Kevent {
             ident: wakeupIdentBase() as u64,
@@ -172,7 +172,7 @@ fn eventLoopInitWakeup(el: &EventLoop): i32 {
 }
 
 // safe from any thread: kevent on a shared kqueue is thread-safe
-fn eventLoopNotify(el: &EventLoop, wakeupId: i32): i32 {
+pub fn eventLoopNotify(el: &EventLoop, wakeupId: i32): i32 {
     unsafe {
         var ev = Kevent {
             ident: wakeupId as u64,
@@ -186,11 +186,11 @@ fn eventLoopNotify(el: &EventLoop, wakeupId: i32): i32 {
     }
 }
 
-fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
+pub fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
     // EV_CLEAR already reset the event; nothing to consume on darwin
 }
 
-fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
+pub fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
     unsafe {
         var ev = Kevent {
             ident: wakeupId as u64,
@@ -204,16 +204,16 @@ fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
     }
 }
 
-fn eventLoopFromFd(fd: i32): EventLoop {
+pub fn eventLoopFromFd(fd: i32): EventLoop {
     return EventLoop {
         kqfd: fd
     }
 }
 
-fn eventLoopFd(el: &EventLoop): i32 {
+pub fn eventLoopFd(el: &EventLoop): i32 {
     return el.kqfd
 }
 
-fn eventLoopClose(el: &EventLoop): void {
+pub fn eventLoopClose(el: &EventLoop): void {
     close(el.kqfd)
 }

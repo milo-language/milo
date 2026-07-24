@@ -60,7 +60,7 @@ from "std/math" import {
     mathMod, mathPow
 }
 
-enum Flow {
+pub enum Flow {
     Normal,
     Ret(JSValue),
     // loop control; these never escape a function boundary. The string is the
@@ -71,7 +71,7 @@ enum Flow {
     Continue(string),
 }
 
-fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
+pub fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
     if op == "+" {
         if isStr(a) || isStr(b) {
             return JSValue.Str(toStr(a) + toStr(b))
@@ -169,7 +169,7 @@ fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
 // Getter for `key` on `o` or anywhere up its prototype chain, else Undefined.
 // Kept separate from getMember because invoking a getter needs the program and a
 // mutable interpreter, which the plain reader does not have.
-fn findGetter(st: &Interp, o: i64, key: &string): JSValue {
+pub fn findGetter(st: &Interp, o: i64, key: &string): JSValue {
     var cur = o
     while cur >= 0 {
         let idx = objOwnIndex(st, cur, key)
@@ -184,7 +184,7 @@ fn findGetter(st: &Interp, o: i64, key: &string): JSValue {
     return JSValue.Undefined
 }
 
-fn findSetter(st: &Interp, o: i64, key: &string): JSValue {
+pub fn findSetter(st: &Interp, o: i64, key: &string): JSValue {
     var cur = o
     while cur >= 0 {
         let idx = objOwnIndex(st, cur, key)
@@ -203,7 +203,7 @@ fn findSetter(st: &Interp, o: i64, key: &string): JSValue {
 // Array.prototype.join / toString, prog-free so string-coercion paths (which have
 // no Prog) can reuse it. Nested arrays join recursively; null/undefined render
 // empty; every other element goes through toStr (plain objects -> [object Object]).
-fn joinArray(st: &mut Interp, o: i64, sep: &string): string {
+pub fn joinArray(st: &mut Interp, o: i64, sep: &string): string {
     var out = ""
     var i: i64 = 0
     let n = arrLen(st, o)
@@ -242,7 +242,7 @@ fn joinArray(st: &mut Interp, o: i64, sep: &string): string {
 // A user-defined [Symbol.toPrimitive](hint) takes precedence over valueOf/
 // toString. Returns Option.Some(primitive) when the method exists, else None so
 // the caller falls through to the ordinary coercion.
-fn trySymToPrimitive(prog: &Prog, h: i64, hint: &string, st: &mut Interp): Option<JSValue> {
+pub fn trySymToPrimitive(prog: &Prog, h: i64, hint: &string, st: &mut Interp): Option<JSValue> {
     let m = getMemberDyn(prog, h, symToPrimitiveKey(), st)
     if isCallableIn(st, m) {
         pushTemp(st, JSValue.Obj(h))
@@ -255,7 +255,7 @@ fn trySymToPrimitive(prog: &Prog, h: i64, hint: &string, st: &mut Interp): Optio
     return Option.None
 }
 
-fn toPrimitiveNumber(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
+pub fn toPrimitiveNumber(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
     let h = objHandle(v)
     if h >= 0 {
         match trySymToPrimitive(prog, h, "number", st) {
@@ -272,7 +272,7 @@ fn toPrimitiveNumber(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
     return toPrimitiveDefault(prog, v, st)
 }
 
-fn toPrimitiveDefault(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
+pub fn toPrimitiveDefault(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
     let h = objHandle(v)
     if h < 0 {
         return cloneValue(v)
@@ -312,7 +312,7 @@ fn toPrimitiveDefault(prog: &Prog, v: &JSValue, st: &mut Interp): JSValue {
     return JSValue.Str("[object Object]")
 }
 
-fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
+pub fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
     if st.objects[o].isProxy {
         let trap = proxyTrap(st, o, "get")
         let target = cloneValue(st.objExtras[st.objects[o].extra].proxyTarget)
@@ -439,7 +439,7 @@ fn getMemberDyn(prog: &Prog, o: i64, key: &string, st: &mut Interp): JSValue {
     return direct
 }
 
-fn isUndefinedValue(v: &JSValue): bool {
+pub fn isUndefinedValue(v: &JSValue): bool {
     match v {
         JSValue.Undefined => {
             return true
@@ -450,7 +450,7 @@ fn isUndefinedValue(v: &JSValue): bool {
     }
 }
 
-fn makeBoundMethod(st: &mut Interp, recv: JSValue, name: string): JSValue {
+pub fn makeBoundMethod(st: &mut Interp, recv: JSValue, name: string): JSValue {
     let bo = newObject(st)
     st.objects[bo].isBound = true
     let ex = ensureExtra(st, bo)
@@ -463,7 +463,7 @@ fn makeBoundMethod(st: &mut Interp, recv: JSValue, name: string): JSValue {
 // `next` and `[Symbol.iterator]` as bound builtin methods. Built this way because
 // a native has no per-instance state and JSValue has nowhere to carry a cursor.
 // kind: 0 values, 1 keys, 2 entries.
-fn makeArrayIterator(st: &mut Interp, arr: i64, kind: i64): JSValue {
+pub fn makeArrayIterator(st: &mut Interp, arr: i64, kind: i64): JSValue {
     let it = newObject(st)
     pushTemp(st, JSValue.Obj(it))
     objSet(st, it, "__ai_arr", JSValue.Obj(arr))
@@ -480,7 +480,7 @@ fn makeArrayIterator(st: &mut Interp, arr: i64, kind: i64): JSValue {
     return JSValue.Obj(it)
 }
 
-fn arrayIterNext(st: &mut Interp, it: i64): JSValue {
+pub fn arrayIterNext(st: &mut Interp, it: i64): JSValue {
     let arrV = getMember(st, it, "__ai_arr")
     let arr = objHandle(arrV)
     let i = toNum(getMember(st, it, "__ai_i")) as i64
@@ -512,7 +512,7 @@ fn arrayIterNext(st: &mut Interp, it: i64): JSValue {
 
 // new <T>Array(n | buffer | array) — allocates its own buffer except when handed
 // an existing ArrayBuffer, which it views in place (mutations are shared).
-fn makeTypedArray(st: &mut Interp, kind: i64, args: &Vec<JSValue>): JSValue {
+pub fn makeTypedArray(st: &mut Interp, kind: i64, args: &Vec<JSValue>): JSValue {
     let w = taWidth(kind)
     var bufH: i64 = -1
     var viewOffset: i64 = 0
@@ -593,7 +593,7 @@ fn makeTypedArray(st: &mut Interp, kind: i64, args: &Vec<JSValue>): JSValue {
     return JSValue.Obj(view)
 }
 
-fn taElem(st: &Interp, view: i64, i: i64): f64 {
+pub fn taElem(st: &Interp, view: i64, i: i64): f64 {
     let buf = st.objExtras[st.objects[view].extra].taBuf
     if buf < 0 || i < 0 || i >= st.objExtras[st.objects[view].extra].taLen {
         return 0.0
@@ -608,7 +608,7 @@ fn taElem(st: &Interp, view: i64, i: i64): f64 {
     return taLoad(st.objExtras[st.objects[buf].extra].bytes, st.objExtras[st.objects[view].extra].taKind, at)
 }
 
-fn taSetElem(st: &mut Interp, view: i64, i: i64, v: f64) {
+pub fn taSetElem(st: &mut Interp, view: i64, i: i64, v: f64) {
     let buf = st.objExtras[st.objects[view].extra].taBuf
     if buf < 0 || i < 0 || i >= st.objExtras[st.objects[view].extra].taLen {
         return
@@ -624,7 +624,7 @@ fn taSetElem(st: &mut Interp, view: i64, i: i64, v: f64) {
 }
 
 // Invoke a builtin method by name against an already-evaluated receiver+args.
-fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSValue>, st: &mut Interp): JSValue {
+pub fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSValue>, st: &mut Interp): JSValue {
     // Object.prototype.toString applied to ANY receiver, ignoring overrides
     if name == "@@objProtoToString" {
         let o = objHandle(recv)
@@ -947,7 +947,7 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
 }
 
 // The tag Object.prototype.toString uses for a heap-object receiver.
-fn objectTag(st: &Interp, o: i64): string {
+pub fn objectTag(st: &Interp, o: i64): string {
     if st.objects[o].isArray {
         return "Array"
     }
@@ -976,7 +976,7 @@ fn objectTag(st: &Interp, o: i64): string {
 }
 
 // The tag Object.prototype.toString uses for a primitive receiver.
-fn objectTypeTag(v: &JSValue): string {
+pub fn objectTypeTag(v: &JSValue): string {
     match v {
         JSValue.Undefined => {
             return "Undefined"
@@ -1010,7 +1010,7 @@ fn objectTypeTag(v: &JSValue): string {
     }
 }
 
-fn setMemberDyn(prog: &Prog, o: i64, key: string, v: JSValue, st: &mut Interp) {
+pub fn setMemberDyn(prog: &Prog, o: i64, key: string, v: JSValue, st: &mut Interp) {
     if st.objects[o].isProxy {
         let trap = proxyTrap(st, o, "set")
         let target = cloneValue(st.objExtras[st.objects[o].extra].proxyTarget)
@@ -1045,7 +1045,7 @@ fn setMemberDyn(prog: &Prog, o: i64, key: string, v: JSValue, st: &mut Interp) {
     setMember(st, o, key, v)
 }
 
-fn getMember(st: &Interp, o: i64, key: &string): JSValue {
+pub fn getMember(st: &Interp, o: i64, key: &string): JSValue {
     // A DataView shares taBuf/taOffset/taLen with typed arrays but is not
     // index-accessible and its byteLength is already in bytes. Handle its props
     // here and skip the typed-array element path below.
@@ -1121,7 +1121,7 @@ fn getMember(st: &Interp, o: i64, key: &string): JSValue {
     return JSValue.Undefined
 }
 
-fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
+pub fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
     // sloppy mode drops writes to a frozen object rather than throwing
     if st.objects[o].frozen {
         return
@@ -1163,7 +1163,7 @@ fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
 
 // One element of a value being destructured: `value[i]`. Arrays/array-likes go
 // through getMember by index; a string yields its i-th character.
-fn destructElement(_prog: &Prog, value: &JSValue, i: i64, st: &mut Interp): JSValue {
+pub fn destructElement(_prog: &Prog, value: &JSValue, i: i64, st: &mut Interp): JSValue {
     let vh = objHandle(value)
     if vh >= 0 {
         return getMember(st, vh, i64ToStr(i))
@@ -1185,7 +1185,7 @@ fn destructElement(_prog: &Prog, value: &JSValue, i: i64, st: &mut Interp): JSVa
 // Assign `value` to a single destructuring target: a nested pattern recurses; a
 // `name = default` element applies the default when value is undefined; otherwise
 // the target is an ordinary lvalue (identifier / member / index).
-fn assignTarget(prog: &Prog, targetIdx: i64, value: JSValue, st: &mut Interp, scope: i64) {
+pub fn assignTarget(prog: &Prog, targetIdx: i64, value: JSValue, st: &mut Interp, scope: i64) {
     match prog.exprs[targetIdx] {
         Expr.ArrLit(_li) => {
             assignPattern(prog, targetIdx, value, st, scope)
@@ -1208,7 +1208,7 @@ fn assignTarget(prog: &Prog, targetIdx: i64, value: JSValue, st: &mut Interp, sc
 
 // Destructure `value` into a pattern (ArrLit / ObjLit) of existing lvalue
 // targets. Handles nesting, holes, `...rest`, and `= default` elements.
-fn assignPattern(prog: &Prog, patIdx: i64, value: JSValue, st: &mut Interp, scope: i64) {
+pub fn assignPattern(prog: &Prog, patIdx: i64, value: JSValue, st: &mut Interp, scope: i64) {
     match prog.exprs[patIdx] {
         Expr.ArrLit(litIdx) => {
             pushTemp(st, cloneValue(value))
@@ -1272,7 +1272,7 @@ fn assignPattern(prog: &Prog, patIdx: i64, value: JSValue, st: &mut Interp, scop
 // Backs ++/-- and compound assignment; the base object of a member target is
 // evaluated here and again by writeLValue (harmless unless the base has side
 // effects, which is rare).
-fn readLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue {
+pub fn readLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue {
     match prog.exprs[targetIdx] {
         Expr.Ident(name) => {
             match scopeTryLookup(st, scope, name) {
@@ -1331,7 +1331,7 @@ fn readLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
     }
 }
 
-fn writeLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64, value: JSValue) {
+pub fn writeLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64, value: JSValue) {
     match prog.exprs[targetIdx] {
         Expr.Ident(name) => {
             scopeAssign(st, scope, name.clone(), value)
@@ -1377,49 +1377,91 @@ fn writeLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64, value: 
 
 // Built-in function/constructor ids. The Error family shares one path; the
 // specific kind is carried in the object's `name` property.
-let NATIVE_ERROR: i64 = 0
-let NATIVE_TYPE_ERROR: i64 = 1
-let NATIVE_RANGE_ERROR: i64 = 2
-let NATIVE_SYNTAX_ERROR: i64 = 3
-let NATIVE_REFERENCE_ERROR: i64 = 4
-let NATIVE_JSON_STRINGIFY: i64 = 5
-let NATIVE_JSON_PARSE: i64 = 6
-let NATIVE_MATH_FLOOR: i64 = 7
-let NATIVE_MATH_CEIL: i64 = 8
-let NATIVE_MATH_ROUND: i64 = 9
-let NATIVE_MATH_TRUNC: i64 = 10
-let NATIVE_MATH_ABS: i64 = 11
-let NATIVE_MATH_SIGN: i64 = 12
-let NATIVE_MATH_LOG2: i64 = 98
-let NATIVE_MATH_LOG10: i64 = 99
-let NATIVE_MATH_EXP: i64 = 89
-let NATIVE_MATH_LOG: i64 = 90
-let NATIVE_MATH_SIN: i64 = 91
-let NATIVE_MATH_COS: i64 = 92
-let NATIVE_MATH_TAN: i64 = 93
-let NATIVE_MATH_ASIN: i64 = 94
-let NATIVE_MATH_ACOS: i64 = 95
-let NATIVE_MATH_ATAN: i64 = 96
-let NATIVE_MATH_ATAN2: i64 = 97
-let NATIVE_MATH_SQRT: i64 = 13
-let NATIVE_MATH_POW: i64 = 14
-let NATIVE_MATH_MIN: i64 = 15
-let NATIVE_MATH_MAX: i64 = 16
-let NATIVE_MATH_RANDOM: i64 = 17
-let NATIVE_REGEXP: i64 = 18
-let NATIVE_OBJECT_DEFINEPROPERTY: i64 = 19
-let NATIVE_OBJECT_KEYS: i64 = 20
-let NATIVE_OBJECT_ASSIGN: i64 = 21
-let NATIVE_NUMBER: i64 = 22
-let NATIVE_STRING: i64 = 23
-let NATIVE_BOOLEAN: i64 = 24
-let NATIVE_READ_FILE_SYNC: i64 = 25
-let NATIVE_FILE_EXISTS: i64 = 26
-let NATIVE_OBJECT_VALUES: i64 = 27
-let NATIVE_OBJECT_ENTRIES: i64 = 28
-let NATIVE_OBJECT_FREEZE: i64 = 29
-let NATIVE_PROMISE_RESOLVE: i64 = 30
-let NATIVE_PROMISE_REJECT: i64 = 31
+pub let NATIVE_ERROR: i64 = 0
+
+pub let NATIVE_TYPE_ERROR: i64 = 1
+
+pub let NATIVE_RANGE_ERROR: i64 = 2
+
+pub let NATIVE_SYNTAX_ERROR: i64 = 3
+
+pub let NATIVE_REFERENCE_ERROR: i64 = 4
+
+pub let NATIVE_JSON_STRINGIFY: i64 = 5
+
+pub let NATIVE_JSON_PARSE: i64 = 6
+
+pub let NATIVE_MATH_FLOOR: i64 = 7
+
+pub let NATIVE_MATH_CEIL: i64 = 8
+
+pub let NATIVE_MATH_ROUND: i64 = 9
+
+pub let NATIVE_MATH_TRUNC: i64 = 10
+
+pub let NATIVE_MATH_ABS: i64 = 11
+
+pub let NATIVE_MATH_SIGN: i64 = 12
+
+pub let NATIVE_MATH_LOG2: i64 = 98
+
+pub let NATIVE_MATH_LOG10: i64 = 99
+
+pub let NATIVE_MATH_EXP: i64 = 89
+
+pub let NATIVE_MATH_LOG: i64 = 90
+
+pub let NATIVE_MATH_SIN: i64 = 91
+
+pub let NATIVE_MATH_COS: i64 = 92
+
+pub let NATIVE_MATH_TAN: i64 = 93
+
+pub let NATIVE_MATH_ASIN: i64 = 94
+
+pub let NATIVE_MATH_ACOS: i64 = 95
+
+pub let NATIVE_MATH_ATAN: i64 = 96
+
+pub let NATIVE_MATH_ATAN2: i64 = 97
+
+pub let NATIVE_MATH_SQRT: i64 = 13
+
+pub let NATIVE_MATH_POW: i64 = 14
+
+pub let NATIVE_MATH_MIN: i64 = 15
+
+pub let NATIVE_MATH_MAX: i64 = 16
+
+pub let NATIVE_MATH_RANDOM: i64 = 17
+
+pub let NATIVE_REGEXP: i64 = 18
+
+pub let NATIVE_OBJECT_DEFINEPROPERTY: i64 = 19
+
+pub let NATIVE_OBJECT_KEYS: i64 = 20
+
+pub let NATIVE_OBJECT_ASSIGN: i64 = 21
+
+pub let NATIVE_NUMBER: i64 = 22
+
+pub let NATIVE_STRING: i64 = 23
+
+pub let NATIVE_BOOLEAN: i64 = 24
+
+pub let NATIVE_READ_FILE_SYNC: i64 = 25
+
+pub let NATIVE_FILE_EXISTS: i64 = 26
+
+pub let NATIVE_OBJECT_VALUES: i64 = 27
+
+pub let NATIVE_OBJECT_ENTRIES: i64 = 28
+
+pub let NATIVE_OBJECT_FREEZE: i64 = 29
+
+pub let NATIVE_PROMISE_RESOLVE: i64 = 30
+
+pub let NATIVE_PROMISE_REJECT: i64 = 31
 // 32/33/34 were Promise.all/allSettled/race. They are self-hosted in the prelude
 // now: the native took a synchronous snapshot of each input's state instead of
 // subscribing to it, and could not adopt a thenable at all (calling user .then
@@ -1428,113 +1470,174 @@ let NATIVE_PROMISE_REJECT: i64 = 31
 // `new Promise(cb)` hands its executor a resolve/reject pair bound to one
 // specific promise. Natives are identified by a bare id, so the promise handle
 // is encoded into the id itself: base + handle*2 + (0 resolve | 1 reject).
-let NATIVE_PROMISE: i64 = 35
-let NATIVE_IS_NAN: i64 = 36
-let NATIVE_IS_FINITE: i64 = 37
-let NATIVE_ARRAY_ISARRAY: i64 = 38
-let NATIVE_OBJECT_CREATE: i64 = 39
-let NATIVE_OBJECT_GETPROTO: i64 = 40
-let NATIVE_OBJECT_SETPROTO: i64 = 41
-let NATIVE_OBJECT_GETOWNPROPDESC: i64 = 42
-let NATIVE_PARSE_INT: i64 = 43
-let NATIVE_PARSE_FLOAT: i64 = 44
-let NATIVE_SYMBOL: i64 = 45
-let NATIVE_OBJECT_DEFINEPROPERTIES: i64 = 46
-let NATIVE_MAP: i64 = 47
-let NATIVE_SET: i64 = 48
-let NATIVE_OBJECT_GETOWNPROPNAMES: i64 = 49
-let NATIVE_ARRAY_FROM: i64 = 50
-let NATIVE_PROCESS_EXIT: i64 = 51
-let NATIVE_NOOP: i64 = 52
-let NATIVE_PROCESS_HRTIME: i64 = 53
-let NATIVE_PROCESS_CWD: i64 = 54
-let NATIVE_STRING_FROMCHARCODE: i64 = 55
-let NATIVE_DATE: i64 = 56
-let NATIVE_DATE_NOW: i64 = 57
+pub let NATIVE_PROMISE: i64 = 35
+
+pub let NATIVE_IS_NAN: i64 = 36
+
+pub let NATIVE_IS_FINITE: i64 = 37
+
+pub let NATIVE_ARRAY_ISARRAY: i64 = 38
+
+pub let NATIVE_OBJECT_CREATE: i64 = 39
+
+pub let NATIVE_OBJECT_GETPROTO: i64 = 40
+
+pub let NATIVE_OBJECT_SETPROTO: i64 = 41
+
+pub let NATIVE_OBJECT_GETOWNPROPDESC: i64 = 42
+
+pub let NATIVE_PARSE_INT: i64 = 43
+
+pub let NATIVE_PARSE_FLOAT: i64 = 44
+
+pub let NATIVE_SYMBOL: i64 = 45
+
+pub let NATIVE_OBJECT_DEFINEPROPERTIES: i64 = 46
+
+pub let NATIVE_MAP: i64 = 47
+
+pub let NATIVE_SET: i64 = 48
+
+pub let NATIVE_OBJECT_GETOWNPROPNAMES: i64 = 49
+
+pub let NATIVE_ARRAY_FROM: i64 = 50
+
+pub let NATIVE_PROCESS_EXIT: i64 = 51
+
+pub let NATIVE_NOOP: i64 = 52
+
+pub let NATIVE_PROCESS_HRTIME: i64 = 53
+
+pub let NATIVE_PROCESS_CWD: i64 = 54
+
+pub let NATIVE_STRING_FROMCHARCODE: i64 = 55
+
+pub let NATIVE_DATE: i64 = 56
+
+pub let NATIVE_DATE_NOW: i64 = 57
 // Date.UTC(year, month[, day, hours, minutes, seconds, ms]) — the fields are
 // interpreted as UTC and out-of-range values roll over (month 12 is January of
 // the next year), which falls out of doing the arithmetic in days and seconds
 // rather than validating each field.
-let NATIVE_DATE_UTC: i64 = 110
+pub let NATIVE_DATE_UTC: i64 = 110
 // The Object constructor itself. Registering the global as a plain object made
 // `typeof Object` report "object" and `new Object()` fail outright — both used
 // constantly, and by three of the QuickJS builtin tests.
-let NATIVE_OBJECT_CTOR: i64 = 111
-let NATIVE_ENCODE_URI_COMPONENT: i64 = 58
-let NATIVE_DECODE_URI_COMPONENT: i64 = 59
-let NATIVE_ENCODE_URI: i64 = 60
-let NATIVE_DECODE_URI: i64 = 61
-let NATIVE_SET_TIMEOUT: i64 = 62
-let NATIVE_SET_INTERVAL: i64 = 63
-let NATIVE_CLEAR_TIMER: i64 = 64
-let NATIVE_SET_IMMEDIATE: i64 = 65
-let NATIVE_QUEUE_MICROTASK: i64 = 66
+pub let NATIVE_OBJECT_CTOR: i64 = 111
+
+pub let NATIVE_ENCODE_URI_COMPONENT: i64 = 58
+
+pub let NATIVE_DECODE_URI_COMPONENT: i64 = 59
+
+pub let NATIVE_ENCODE_URI: i64 = 60
+
+pub let NATIVE_DECODE_URI: i64 = 61
+
+pub let NATIVE_SET_TIMEOUT: i64 = 62
+
+pub let NATIVE_SET_INTERVAL: i64 = 63
+
+pub let NATIVE_CLEAR_TIMER: i64 = 64
+
+pub let NATIVE_SET_IMMEDIATE: i64 = 65
+
+pub let NATIVE_QUEUE_MICROTASK: i64 = 66
 // queueMicrotask has its own native (distinct from process.nextTick, which
 // shares NATIVE_QUEUE_MICROTASK) so it can call the callback with zero
 // arguments per spec while nextTick's behaviour is left untouched.
-let NATIVE_QUEUE_MICROTASK_JS: i64 = 112
-let NATIVE_DATAVIEW: i64 = 113
-let NATIVE_OBJECT_HASOWN: i64 = 114
-let NATIVE_STRING_RAW: i64 = 115
-let NATIVE_STRING_FROMCODEPOINT: i64 = 116
-let NATIVE_DATE_PARSE: i64 = 117
-let NATIVE_MKDIR: i64 = 118
-let NATIVE_READDIR: i64 = 119
-let NATIVE_UNLINK: i64 = 120
-let NATIVE_RMDIR: i64 = 121
-let NATIVE_RENAME: i64 = 122
-let NATIVE_IS_DIR: i64 = 123
-let NATIVE_BIGINT: i64 = 124
-let NATIVE_OBJECT_GETOWNPROPSYMBOLS: i64 = 125
-let NATIVE_OBJECT_GETOWNPROPDESCS: i64 = 126
-let NATIVE_ARRAY_CTOR: i64 = 67
-let NATIVE_TCP_LISTEN: i64 = 68
-let NATIVE_TCP_ACCEPT: i64 = 69
-let NATIVE_TCP_RECV: i64 = 70
-let NATIVE_TCP_SEND: i64 = 71
-let NATIVE_TCP_CLOSE: i64 = 72
-let NATIVE_HTTP_REGISTER: i64 = 73
-let NATIVE_HTTP_UNREGISTER: i64 = 74
-let NATIVE_WRITE_FILE: i64 = 75
-let NATIVE_GC: i64 = 76
-let NATIVE_OBJECT_ISFROZEN: i64 = 77
-let NATIVE_OBJECT_PREVENTEXT: i64 = 100
-let NATIVE_OBJECT_ISEXT: i64 = 101
-let NATIVE_OBJECT_SEAL: i64 = 102
-let NATIVE_OBJECT_ISSEALED: i64 = 103
+pub let NATIVE_QUEUE_MICROTASK_JS: i64 = 112
+
+pub let NATIVE_DATAVIEW: i64 = 113
+
+pub let NATIVE_OBJECT_HASOWN: i64 = 114
+
+pub let NATIVE_STRING_RAW: i64 = 115
+
+pub let NATIVE_STRING_FROMCODEPOINT: i64 = 116
+
+pub let NATIVE_DATE_PARSE: i64 = 117
+
+pub let NATIVE_MKDIR: i64 = 118
+
+pub let NATIVE_READDIR: i64 = 119
+
+pub let NATIVE_UNLINK: i64 = 120
+
+pub let NATIVE_RMDIR: i64 = 121
+
+pub let NATIVE_RENAME: i64 = 122
+
+pub let NATIVE_IS_DIR: i64 = 123
+
+pub let NATIVE_BIGINT: i64 = 124
+
+pub let NATIVE_OBJECT_GETOWNPROPSYMBOLS: i64 = 125
+
+pub let NATIVE_OBJECT_GETOWNPROPDESCS: i64 = 126
+
+pub let NATIVE_ARRAY_CTOR: i64 = 67
+
+pub let NATIVE_TCP_LISTEN: i64 = 68
+
+pub let NATIVE_TCP_ACCEPT: i64 = 69
+
+pub let NATIVE_TCP_RECV: i64 = 70
+
+pub let NATIVE_TCP_SEND: i64 = 71
+
+pub let NATIVE_TCP_CLOSE: i64 = 72
+
+pub let NATIVE_HTTP_REGISTER: i64 = 73
+
+pub let NATIVE_HTTP_UNREGISTER: i64 = 74
+
+pub let NATIVE_WRITE_FILE: i64 = 75
+
+pub let NATIVE_GC: i64 = 76
+
+pub let NATIVE_OBJECT_ISFROZEN: i64 = 77
+
+pub let NATIVE_OBJECT_PREVENTEXT: i64 = 100
+
+pub let NATIVE_OBJECT_ISEXT: i64 = 101
+
+pub let NATIVE_OBJECT_SEAL: i64 = 102
+
+pub let NATIVE_OBJECT_ISSEALED: i64 = 103
 // __byteLength(s): the raw UTF-8 byte count of an engine string. JS `.length`
 // decodes to code points and charCodeAt is lossy on bytes that aren't valid
 // UTF-8, so neither can measure file content read as a string. Content-Length
 // must come from here or binary responses (fonts, images) get truncated.
-let NATIVE_BYTE_LENGTH: i64 = 104
+pub let NATIVE_BYTE_LENGTH: i64 = 104
 // __napiLoad(path): dlopen a .node addon, run napi_register_module_v1, return its
 // exports. This is what require() resolves a .node file to.
-let NATIVE_NAPI_LOAD: i64 = 105
+pub let NATIVE_NAPI_LOAD: i64 = 105
 // console.* as real functions. The identifier fast path above handles the common
 // `console.log(x)` call shape, but code that passes the method around — prisma's
 // runtime does `console.debug || console.log` — needs `console` to be a real
 // object whose properties are callable values.
-let NATIVE_CONSOLE_LOG: i64 = 106
+pub let NATIVE_CONSOLE_LOG: i64 = 106
 // new Proxy(target, handler)
-let NATIVE_PROXY: i64 = 107
+pub let NATIVE_PROXY: i64 = 107
 // Object.is — SameValue: like ===, except NaN equals itself and +0 differs
 // from -0. ts-pattern (bundled into prisma's runtime) matches literals with it.
-let NATIVE_OBJECT_IS: i64 = 108
+pub let NATIVE_OBJECT_IS: i64 = 108
 // __httpFetchAsync(method, url, headersJson, body): runs the request on a worker
 // OS thread and returns a promise the event loop settles with the raw response.
-let NATIVE_HTTP_FETCH_ASYNC: i64 = 109
-let NATIVE_ARRAYBUFFER: i64 = 78
+pub let NATIVE_HTTP_FETCH_ASYNC: i64 = 109
+
+pub let NATIVE_ARRAYBUFFER: i64 = 78
 // the typed-array constructors occupy a contiguous block so the element kind is
 // just (id - NATIVE_TA_BASE); keep in step with the TA_* order in runtime.milo
-let NATIVE_TA_BASE: i64 = 79
+pub let NATIVE_TA_BASE: i64 = 79
 // __httpFetch(method, url, headersJson, body): synchronous outbound HTTP/HTTPS.
 // Above the TA block (79..87). node-fetch is built on this.
-let NATIVE_HTTP_FETCH: i64 = 88
+pub let NATIVE_HTTP_FETCH: i64 = 88
 
 // The `.name` of a native constructor (Object.name === "Object" etc), so
 // `err.constructor.name` and similar resolve. Empty for natives that are not
 // named constructors.
-fn nativeCtorName(id: i64): string {
+pub fn nativeCtorName(id: i64): string {
     if id >= NATIVE_ERROR && id <= NATIVE_REFERENCE_ERROR {
         return nativeErrorName(id)
     }
@@ -1556,7 +1659,7 @@ fn nativeCtorName(id: i64): string {
     return ""
 }
 
-fn nativeErrorName(id: i64): string {
+pub fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
         return "TypeError"
     }
@@ -1572,7 +1675,7 @@ fn nativeErrorName(id: i64): string {
     return "Error"
 }
 
-fn isErrorCtor(id: i64): bool {
+pub fn isErrorCtor(id: i64): bool {
     return id >= NATIVE_ERROR && id <= NATIVE_REFERENCE_ERROR
 }
 
@@ -1583,7 +1686,7 @@ fn isErrorCtor(id: i64): bool {
 // the runtime (the server side blocks on accept too). Returns the raw HTTP
 // response text prefixed with 'O', or 'E' + message on any failure — the JS side
 // (lib/node-fetch.js) strips the sentinel and parses the response.
-fn doHttpFetch(method: &string, url: &string, headersRaw: &string, body: &string): string {
+pub fn doHttpFetch(method: &string, url: &string, headersRaw: &string, body: &string): string {
     // parse scheme://host[:port]/path
     var rest = url.clone()
     var tls = true
@@ -1703,7 +1806,7 @@ fn doHttpFetch(method: &string, url: &string, headersRaw: &string, body: &string
     }
 }
 
-fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
+pub fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     if isErrorCtor(id) {
         let o = newObject(st)
         st.objects[o].isError = true
@@ -3233,7 +3336,7 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
 // prototype chain — a plain `{}` has proto -1 and inherits Object.prototype
 // methods by dispatch — so getPrototypeOf / `__proto__` / `constructor` resolve
 // the right singleton by type here rather than reading a real link.
-fn protoOfHandle(st: &Interp, h: i64): i64 {
+pub fn protoOfHandle(st: &Interp, h: i64): i64 {
     if h < 0 {
         return -1
     }
@@ -3257,7 +3360,7 @@ fn protoOfHandle(st: &Interp, h: i64): i64 {
 // none. Returns Undefined for anything without a well-defined builtin
 // constructor here, so a real (user) constructor resolved through the chain is
 // never overridden — this is only ever consulted as a fallback.
-fn builtinConstructorOf(st: &Interp, o: i64): JSValue {
+pub fn builtinConstructorOf(st: &Interp, o: i64): JSValue {
     if o == st.objectProtoObj {
         return JSValue.Native(NATIVE_OBJECT_CTOR)
     }
@@ -3293,7 +3396,7 @@ fn builtinConstructorOf(st: &Interp, o: i64): JSValue {
     return JSValue.Undefined
 }
 
-fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
+pub fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
     match v {
         JSValue.Obj(o) => {
             return o
@@ -3307,7 +3410,7 @@ fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
     }
 }
 
-fn mathNative(id: i64, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+pub fn mathNative(id: i64, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     if id == NATIVE_MATH_RANDOM {
         let next = mjNextRandom(st.rngState)
         st.rngState = next
@@ -3431,7 +3534,7 @@ fn mathNative(id: i64, args: &Vec<JSValue>, st: &mut Interp): JSValue {
 // an error whose kind matches (Error itself matches any error).
 // Compile a pattern and wrap it as a RegExp object (regexId links to the
 // compiled program; source/flags/lastIndex are ordinary properties).
-fn makeRegex(st: &mut Interp, pattern: string, flags: string): JSValue {
+pub fn makeRegex(st: &mut Interp, pattern: string, flags: string): JSValue {
     let re = regexCompile(pattern.clone(), flags.clone())
     let isGlobal = re.flagG
     st.regexes.push(re)
@@ -3451,7 +3554,7 @@ fn makeRegex(st: &mut Interp, pattern: string, flags: string): JSValue {
 // when omitted, per Object.defineProperty). Shared by defineProperty,
 // defineProperties, and Object.create's second argument — all three previously
 // dropped the attributes for accessors, and the latter two for data props too.
-fn applyDescriptor(st: &mut Interp, o: i64, key: &string, d: i64) {
+pub fn applyDescriptor(st: &mut Interp, o: i64, key: &string, d: i64) {
     let g = getMember(st, d, "get")
     let sfn = getMember(st, d, "set")
     if isCallable(g) || isCallable(sfn) {
@@ -3470,7 +3573,7 @@ fn applyDescriptor(st: &mut Interp, o: i64, key: &string, d: i64) {
 // Build a property-descriptor object { value, writable | get, set }+enumerable+
 // configurable for own property `idx` of `h`. Shared by getOwnPropertyDescriptor
 // and getOwnPropertyDescriptors.
-fn buildPropDescriptor(st: &mut Interp, h: i64, idx: i64): i64 {
+pub fn buildPropDescriptor(st: &mut Interp, h: i64, idx: i64): i64 {
     let isAcc = st.objects[h].props[idx].isAccessor
     let pv = cloneValue(st.objects[h].props[idx].value)
     let pg = cloneValue(st.objects[h].props[idx].getter)
@@ -3490,7 +3593,7 @@ fn buildPropDescriptor(st: &mut Interp, h: i64, idx: i64): i64 {
     return d
 }
 
-fn regexIdOf(st: &Interp, v: &JSValue): i64 {
+pub fn regexIdOf(st: &Interp, v: &JSValue): i64 {
     match v {
         JSValue.Obj(o) => {
             return st.objExtras[st.objects[o].extra].regexId
@@ -3504,7 +3607,7 @@ fn regexIdOf(st: &Interp, v: &JSValue): i64 {
 // [wholeMatch, group1, group2, ...]; a non-participating group is undefined.
 // `rid` is the regex handle (-1 when none), used to attach `.groups` for named
 // captures (?<name>...).
-fn buildMatchArray(st: &mut Interp, s: &string, saves: &Vec<i64>, rid: i64): JSValue {
+pub fn buildMatchArray(st: &mut Interp, s: &string, saves: &Vec<i64>, rid: i64): JSValue {
     let arr = newArray(st)
     pushTemp(st, JSValue.Obj(arr))
     var g: i64 = 0
@@ -3550,7 +3653,7 @@ fn buildMatchArray(st: &mut Interp, s: &string, saves: &Vec<i64>, rid: i64): JSV
     return JSValue.Obj(arr)
 }
 
-fn regexMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSValue {
+pub fn regexMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSValue {
     let rid = st.objExtras[st.objects[o].extra].regexId
     var subject = ""
     if args.len() > 0 {
@@ -3595,7 +3698,7 @@ fn regexMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSV
 // Expand $1..$9, $&, $$, and $<name> in a replacement string against a match's
 // saves. `re` supplies the named-capture map for $<name> (pass a regex with no
 // named groups to disable it).
-fn expandRepl(repl: &string, s: &string, saves: &Vec<i64>, re: &Regex): string {
+pub fn expandRepl(repl: &string, s: &string, saves: &Vec<i64>, re: &Regex): string {
     var out = String.withCapacity(repl.len())
     var i: i64 = 0
     while i < repl.len() {
@@ -3657,7 +3760,7 @@ fn expandRepl(repl: &string, s: &string, saves: &Vec<i64>, re: &Regex): string {
     return out
 }
 
-fn regexReplace(st: &mut Interp, s: &string, rid: i64, repl: &string): JSValue {
+pub fn regexReplace(st: &mut Interp, s: &string, rid: i64, repl: &string): JSValue {
     let global = st.regexes[rid].flagG
     var out = String.withCapacity(s.len())
     var last: i64 = 0
@@ -3690,7 +3793,7 @@ fn regexReplace(st: &mut Interp, s: &string, rid: i64, repl: &string): JSValue {
 // s.replace(re, fn): the callback receives (match, ...groups, offset, string) and
 // its return value is substituted. Without this the function was coerced with
 // toStr and the literal text "function" ended up in the output.
-fn regexReplaceFn(prog: &Prog, st: &mut Interp, s: &string, rid: i64, fn_: &JSValue): JSValue {
+pub fn regexReplaceFn(prog: &Prog, st: &mut Interp, s: &string, rid: i64, fn_: &JSValue): JSValue {
     let global = st.regexes[rid].flagG
     var out = String.withCapacity(s.len())
     var last: i64 = 0
@@ -3739,7 +3842,7 @@ fn regexReplaceFn(prog: &Prog, st: &mut Interp, s: &string, rid: i64, fn_: &JSVa
 
 // s.split(re) — the separator is whatever the pattern matches. A zero-width
 // match advances by one so the split cannot loop forever.
-fn regexSplit(st: &mut Interp, s: &string, rid: i64): JSValue {
+pub fn regexSplit(st: &mut Interp, s: &string, rid: i64): JSValue {
     let arr = newArray(st)
     pushTemp(st, JSValue.Obj(arr))
     var last: i64 = 0
@@ -3769,7 +3872,7 @@ fn regexSplit(st: &mut Interp, s: &string, rid: i64): JSValue {
 // s.match(re): with the g flag, an array of all matched substrings (or null);
 // otherwise the first match array (whole + groups) or null.
 // Encode a single Unicode code point to UTF-8 (milojs's string encoding).
-fn codePointToUtf8(cp: i64): string {
+pub fn codePointToUtf8(cp: i64): string {
     var out = String.withCapacity(4)
     if cp < 128 {
         out.push(cp as u8)
@@ -3789,7 +3892,7 @@ fn codePointToUtf8(cp: i64): string {
     return out
 }
 
-fn regexStrMatch(st: &mut Interp, s: &string, rid: i64): JSValue {
+pub fn regexStrMatch(st: &mut Interp, s: &string, rid: i64): JSValue {
     let global = st.regexes[rid].flagG
     if !global {
         let saves = regexExec(st.regexes[rid], s, 0)
@@ -3831,7 +3934,7 @@ fn regexStrMatch(st: &mut Interp, s: &string, rid: i64): JSValue {
 // groups, .index, .input) — unlike match/g which yields only the match strings.
 // Returned as an array, which is iterable for the usual `[...]` / for-of
 // consumption. Iterates regardless of the /g flag (lenient vs the spec's throw).
-fn regexStrMatchAll(st: &mut Interp, s: &string, rid: i64): JSValue {
+pub fn regexStrMatchAll(st: &mut Interp, s: &string, rid: i64): JSValue {
     let arr = newArray(st)
     pushTemp(st, JSValue.Obj(arr))
     var pos: i64 = 0
@@ -3860,7 +3963,7 @@ fn regexStrMatchAll(st: &mut Interp, s: &string, rid: i64): JSValue {
 // Execute a pre-loaded module in a fresh CommonJS scope and cache its exports.
 // A module already loading (a require cycle) returns its partial exports, which
 // is what Node does.
-fn runModule(prog: &Prog, idx: i64, st: &mut Interp): JSValue {
+pub fn runModule(prog: &Prog, idx: i64, st: &mut Interp): JSValue {
     if st.modState[idx] == 2 {
         return cloneValue(st.modExports[idx])
     }
@@ -3902,7 +4005,7 @@ fn runModule(prog: &Prog, idx: i64, st: &mut Interp): JSValue {
 }
 
 // require(spec) — resolved against the directory of the module doing the calling.
-fn requireModule(prog: &Prog, spec: &string, st: &mut Interp): JSValue {
+pub fn requireModule(prog: &Prog, spec: &string, st: &mut Interp): JSValue {
     var dir = ""
     if st.modDirStack.len() > 0 {
         dir = st.modDirStack[st.modDirStack.len() - 1].clone()
@@ -3957,7 +4060,7 @@ fn requireModule(prog: &Prog, spec: &string, st: &mut Interp): JSValue {
     return runModule(prog, idx, st)
 }
 
-fn instanceOf(st: &Interp, val: &JSValue, ctor: &JSValue): bool {
+pub fn instanceOf(st: &Interp, val: &JSValue, ctor: &JSValue): bool {
     match val {
         JSValue.Obj(o) => {
             match ctor {
@@ -4053,7 +4156,7 @@ fn instanceOf(st: &Interp, val: &JSValue, ctor: &JSValue): bool {
     }
 }
 
-fn setupGlobals(st: &mut Interp) {
+pub fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "Error", JSValue.Native(NATIVE_ERROR))
     scopeDefine(st, 0, "TypeError", JSValue.Native(NATIVE_TYPE_ERROR))
     scopeDefine(st, 0, "RangeError", JSValue.Native(NATIVE_RANGE_ERROR))
@@ -4304,7 +4407,7 @@ fn setupGlobals(st: &mut Interp) {
 }
 
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).
-fn typeofStr(v: &JSValue): string {
+pub fn typeofStr(v: &JSValue): string {
     match v {
         JSValue.Undefined => {
             return "undefined"
@@ -4336,7 +4439,7 @@ fn typeofStr(v: &JSValue): string {
     }
 }
 
-fn isBigIntVal(v: &JSValue): bool {
+pub fn isBigIntVal(v: &JSValue): bool {
     match v {
         JSValue.BigInt(_s) => {
             return true
@@ -4347,7 +4450,7 @@ fn isBigIntVal(v: &JSValue): bool {
     }
 }
 
-fn isStrVal(v: &JSValue): bool {
+pub fn isStrVal(v: &JSValue): bool {
     match v {
         JSValue.Str(_s) => {
             return true
@@ -4359,7 +4462,7 @@ fn isStrVal(v: &JSValue): bool {
 }
 
 // the decimal string of a BigInt, or "" for anything else
-fn bigStrOf(v: &JSValue): string {
+pub fn bigStrOf(v: &JSValue): string {
     match v {
         JSValue.BigInt(s) => {
             return s.clone()
@@ -4374,7 +4477,7 @@ fn bigStrOf(v: &JSValue): string {
 // BOTH to be BigInt (JS throws on a mix); comparison and == coerce across types;
 // === defers to the value-equality rule; bitwise on BigInt is not implemented and
 // throws rather than returning a silently-wrong (double-based) answer.
-fn evalBigIntBin(op: &string, va: JSValue, vb: JSValue, st: &mut Interp): JSValue {
+pub fn evalBigIntBin(op: &string, va: JSValue, vb: JSValue, st: &mut Interp): JSValue {
     let aBig = isBigIntVal(va)
     let bBig = isBigIntVal(vb)
     // `+` with a string operand concatenates (BigInt stringifies without the `n`)
@@ -4497,7 +4600,7 @@ fn evalBigIntBin(op: &string, va: JSValue, vb: JSValue, st: &mut Interp): JSValu
     return JSValue.Undefined
 }
 
-fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
+pub fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
     // an exception is unwinding — stop evaluating, produce a placeholder
     if st.throwing {
         return JSValue.Undefined
@@ -5731,7 +5834,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
 // [Symbol.iterator] by driving its next(). Driving calls back into user code, so
 // this needs the program and a mutable interpreter — which is why it is not the
 // immutable helper it once was.
-fn spreadInto(prog: &Prog, out: &mut Vec<JSValue>, v: &JSValue, st: &mut Interp) {
+pub fn spreadInto(prog: &Prog, out: &mut Vec<JSValue>, v: &JSValue, st: &mut Interp) {
     let h = objHandle(v)
     // typed arrays are iterable by element
     if h >= 0 && st.objExtras[st.objects[h].extra].taBuf >= 0 && !st.objects[h].isDataView {
@@ -5802,7 +5905,7 @@ fn spreadInto(prog: &Prog, out: &mut Vec<JSValue>, v: &JSValue, st: &mut Interp)
     spreadBuiltin(out, v, st)
 }
 
-fn spreadBuiltin(out: &mut Vec<JSValue>, v: &JSValue, st: &Interp) {
+pub fn spreadBuiltin(out: &mut Vec<JSValue>, v: &JSValue, st: &Interp) {
     match v {
         JSValue.Obj(o) => {
             if st.objects[o].isArray {
@@ -5835,7 +5938,7 @@ fn spreadBuiltin(out: &mut Vec<JSValue>, v: &JSValue, st: &Interp) {
 // argument can run user code and therefore collect — so each finished argument is
 // temp-rooted until the whole list is built. Without this, f([1,2], g()) can see
 // the array swept and its slot reused while g() runs.
-fn evalArgs(prog: &Prog, argsIdx: i64, st: &mut Interp, scope: i64): Vec<JSValue> {
+pub fn evalArgs(prog: &Prog, argsIdx: i64, st: &mut Interp, scope: i64): Vec<JSValue> {
     var out: Vec<JSValue> = Vec.new()
     var rooted: i64 = 0
     var j: i64 = 0
@@ -5868,7 +5971,7 @@ fn evalArgs(prog: &Prog, argsIdx: i64, st: &mut Interp, scope: i64): Vec<JSValue
     return out
 }
 
-fn spaces(n: i64): string {
+pub fn spaces(n: i64): string {
     var s = ""
     var i: i64 = 0
     while i < n {
@@ -5883,7 +5986,7 @@ fn spaces(n: i64): string {
 // double-quoted, closing brace at the parent indent. `{}` stays inline. Nesting
 // past depth 2 collapses to `[Object]`. A top-level string prints raw (see
 // inspectTop) — only nested strings are quoted.
-fn inspectInner(st: &Interp, v: &JSValue, depth: i64): string {
+pub fn inspectInner(st: &Interp, v: &JSValue, depth: i64): string {
     match v {
         JSValue.Str(s) => {
             // a symbol is a tagged string internally; console.log shows it as
@@ -5907,7 +6010,7 @@ fn inspectInner(st: &Interp, v: &JSValue, depth: i64): string {
 }
 
 // bun renders short arrays inline: `[ 1, 2, "x" ]`, empty as `[]`.
-fn inspectArr(st: &Interp, o: i64, depth: i64): string {
+pub fn inspectArr(st: &Interp, o: i64, depth: i64): string {
     if depth > 2 {
         return "[Array]"
     }
@@ -5929,11 +6032,11 @@ fn inspectArr(st: &Interp, o: i64, depth: i64): string {
     return out
 }
 
-fn objIsoOrTag(st: &Interp, o: i64): string {
+pub fn objIsoOrTag(st: &Interp, o: i64): string {
     return isoFromMillis(st.objExtras[st.objects[o].extra].dateMs)
 }
 
-fn inspectObj(st: &Interp, o: i64, depth: i64): string {
+pub fn inspectObj(st: &Interp, o: i64, depth: i64): string {
     if st.objects[o].isArray {
         return inspectArr(st, o, depth)
     }
@@ -5988,7 +6091,7 @@ fn inspectObj(st: &Interp, o: i64, depth: i64): string {
     return out
 }
 
-fn inspectTop(st: &Interp, v: &JSValue): string {
+pub fn inspectTop(st: &Interp, v: &JSValue): string {
     match v {
         JSValue.Obj(o) => {
             return inspectObj(st, o, 0)
@@ -6013,7 +6116,7 @@ fn inspectTop(st: &Interp, v: &JSValue): string {
 // Invoke a Milo-level JS function: a fresh scope off the closure's captured env,
 // with `this` and the parameters bound, then run the body. argVals is consumed.
 
-fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
+pub fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
     // R1: an async call runs its body on its own activation and returns at that
     // body's first await. Cleared immediately so a nested async call spawns.
     let alreadyOnActivation = st.suppressAsyncSpawn
@@ -6137,7 +6240,7 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
 // under __super$<Name> so super(...) can find it.
 // Best-effort name for a callee expression, so "is not a function" says which
 // one. Diagnostics only.
-fn describeCallee(prog: &Prog, calleeIdx: i64): string {
+pub fn describeCallee(prog: &Prog, calleeIdx: i64): string {
     match prog.exprs[calleeIdx] {
         Expr.Ident(n) => {
             return n.clone()
@@ -6159,14 +6262,14 @@ fn describeCallee(prog: &Prog, calleeIdx: i64): string {
 
 // A real Error object, so catch blocks see .name/.message and instanceof works.
 // Raise a TypeError and yield undefined, for the proxy traps.
-fn throwTypeErr(st: &mut Interp, msg: string): JSValue {
+pub fn throwTypeErr(st: &mut Interp, msg: string): JSValue {
     st.throwing = true
     st.thrownValue = makeError(st, "TypeError", msg)
     return JSValue.Undefined
 }
 
 // The handler trap `name`, or undefined when the handler does not define it.
-fn proxyTrap(st: &Interp, o: i64, name: &string): JSValue {
+pub fn proxyTrap(st: &Interp, o: i64, name: &string): JSValue {
     let h = objHandle(st.objExtras[st.objects[o].extra].proxyHandler)
     if h < 0 {
         return JSValue.Undefined
@@ -6178,7 +6281,7 @@ fn proxyTrap(st: &Interp, o: i64, name: &string): JSValue {
 // then each key is kept only if its descriptor (getOwnPropertyDescriptor trap,
 // falling back to the target's own descriptor) says enumerable. Missing ownKeys
 // forwards to the target. Feeds for-in and Object.keys.
-fn proxyOwnEnumKeys(prog: &Prog, st: &mut Interp, o: i64): Vec<string> {
+pub fn proxyOwnEnumKeys(prog: &Prog, st: &mut Interp, o: i64): Vec<string> {
     var out: Vec<string> = Vec.new()
     let target = cloneValue(st.objExtras[st.objects[o].extra].proxyTarget)
     let trap = proxyTrap(st, o, "ownKeys")
@@ -6259,7 +6362,7 @@ fn proxyOwnEnumKeys(prog: &Prog, st: &mut Interp, o: i64): Vec<string> {
     return out
 }
 
-fn makeError(st: &mut Interp, kind: string, msg: string): JSValue {
+pub fn makeError(st: &mut Interp, kind: string, msg: string): JSValue {
     let o = newObject(st)
     st.objects[o].isError = true
     objSet(st, o, "name", JSValue.Str(kind.clone()))
@@ -6274,7 +6377,7 @@ fn makeError(st: &mut Interp, kind: string, msg: string): JSValue {
     return JSValue.Obj(o)
 }
 
-fn isSymbolValue(v: &JSValue): bool {
+pub fn isSymbolValue(v: &JSValue): bool {
     match v {
         JSValue.Str(s) => {
             if s.len() < 6 {
@@ -6290,22 +6393,22 @@ fn isSymbolValue(v: &JSValue): bool {
 
 // The well-known @@iterator key. Symbols are interned strings, so this is just a
 // fixed one; counter 0 is reserved because user symbols start at 1.
-fn symIteratorKey(): string {
+pub fn symIteratorKey(): string {
     return "@@sym:Symbol.iterator:0"
 }
 
-fn symToPrimitiveKey(): string {
+pub fn symToPrimitiveKey(): string {
     return "@@sym:Symbol.toPrimitive:0"
 }
 
-fn symToStringTagKey(): string {
+pub fn symToStringTagKey(): string {
     return "@@sym:Symbol.toStringTag:0"
 }
 
 // Symbol test on the raw string. The JSValue-level isSymbolValue cannot be used
 // from inside a `match` arm on that same value: matching moves it, so reading the
 // original binding afterwards sees a zeroed slot and the test silently fails.
-fn isSymbolStr(s: &string): bool {
+pub fn isSymbolStr(s: &string): bool {
     if s.len() < 6 {
         return false
     }
@@ -6315,7 +6418,7 @@ fn isSymbolStr(s: &string): bool {
 // The description inside "@@sym:<desc>:<counter>". The counter is what makes two
 // same-description symbols distinct, so it is stripped from the LAST colon —
 // a description may itself contain colons.
-fn symbolDescription(s: &string): string {
+pub fn symbolDescription(s: &string): string {
     var cut = s.len()
     var i = s.len() - 1
     var found = false
@@ -6337,7 +6440,7 @@ fn symbolDescription(s: &string): string {
 
 // What a symbol shows as: Symbol(desc). Without this the internal representation
 // leaks out of String(sym) and sym.toString().
-fn symbolDisplay(s: &string): string {
+pub fn symbolDisplay(s: &string): string {
     return "Symbol(" + symbolDescription(s) + ")"
 }
 
@@ -6350,7 +6453,7 @@ fn symbolDisplay(s: &string): string {
 // crosses into the interpreter.
 // Settle any fetch whose worker thread has finished. Called from the event loop
 // and from a blocked await, the same way node-api work is serviced.
-fn serviceFetches(st: &mut Interp) {
+pub fn serviceFetches(st: &mut Interp) {
     var i: i64 = 0
     while i < st.fetches.len() {
         var done = false
@@ -6374,11 +6477,11 @@ fn serviceFetches(st: &mut Interp) {
     }
 }
 
-fn hasPendingFetches(st: &Interp): bool {
+pub fn hasPendingFetches(st: &Interp): bool {
     return st.fetches.len() > 0
 }
 
-fn napiServiceTsfn(st: &mut Interp) {
+pub fn napiServiceTsfn(st: &mut Interp) {
     if !napiHasTsfn() {
         return
     }
@@ -6392,7 +6495,7 @@ fn napiServiceTsfn(st: &mut Interp) {
 }
 
 // Apply promise settlements an addon requested while it held control.
-fn napiDrainSettlements(st: &mut Interp) {
+pub fn napiDrainSettlements(st: &mut Interp) {
     var q = napiTakePending()
     var i: i64 = 0
     while i < q.len() {
@@ -6404,7 +6507,7 @@ fn napiDrainSettlements(st: &mut Interp) {
 // Let the caller of this activation continue. Called at the activation's first
 // suspension point, and at completion if it never suspends — an async call
 // returns once its body reaches the first await, not when the body finishes.
-fn releaseCreatorOnce(st: &mut Interp) {
+pub fn releaseCreatorOnce(st: &mut Interp) {
     let me = schedulerCurrent()
     if me as i64 == 0 {
         return
@@ -6426,7 +6529,7 @@ fn releaseCreatorOnce(st: &mut Interp) {
 // An activation reaching any await hands control back to whoever called it and
 // lets the scheduler run them before this body continues. A no-op off an
 // activation: the main task owns the event loop and must not yield here.
-fn yieldAtAwait(st: &mut Interp) {
+pub fn yieldAtAwait(st: &mut Interp) {
     let me = schedulerCurrent()
     if me as i64 == 0 {
         return
@@ -6446,7 +6549,7 @@ fn yieldAtAwait(st: &mut Interp) {
     schedulerYield()
 }
 
-fn endActivation(st: &mut Interp) {
+pub fn endActivation(st: &mut Interp) {
     let me = schedulerCurrent()
     if me as i64 == 0 {
         return
@@ -6473,7 +6576,7 @@ fn endActivation(st: &mut Interp) {
 // The caller parks straight after spawning. Tasks are cooperative and only one
 // runs at a time, so the body cannot start before that park — there is no race
 // between spawning and waiting.
-fn spawnActivation(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp, caller: *u8): JSValue {
+pub fn spawnActivation(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp, caller: *u8): JSValue {
     let p = newPromise(st, 0, JSValue.Undefined)
     var rootedArgs: Vec<JSValue> = Vec.new()
     var ri: i64 = 0
@@ -6556,7 +6659,7 @@ fn spawnActivation(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSVal
 
 // Take back the execution belonging to `task`, wherever it sits in the parked
 // set. Parks and wakes interleave, so position says nothing about ownership.
-fn resumeExecCtx(st: &mut Interp, task: *u8) {
+pub fn resumeExecCtx(st: &mut Interp, task: *u8) {
     var i: i64 = 0
     while i < st.suspendedTask.len() {
         if st.suspendedTask[i] as i64 == task as i64 {
@@ -6581,7 +6684,7 @@ fn resumeExecCtx(st: &mut Interp, task: *u8) {
 // the activation's own ExecCtx (tempRoots/active scopes) stays live in the Interp
 // and rooted (the reverted R1a attempt bypassed that by yielding the task). Only
 // on an activation task; the main event-loop task drains microtasks itself.
-fn awaitYieldMicrotasks(prog: &Prog, st: &mut Interp) {
+pub fn awaitYieldMicrotasks(prog: &Prog, st: &mut Interp) {
     let me = schedulerCurrent()
     if me as i64 == 0 || me as i64 == st.mainTask as i64 {
         return
@@ -6592,7 +6695,7 @@ fn awaitYieldMicrotasks(prog: &Prog, st: &mut Interp) {
     }
 }
 
-fn parkOnPromise(st: &mut Interp, p: i64): bool {
+pub fn parkOnPromise(st: &mut Interp, p: i64): bool {
     let me = schedulerCurrent()
     if me as i64 == 0 || me as i64 == st.mainTask as i64 {
         return false
@@ -6635,7 +6738,7 @@ fn parkOnPromise(st: &mut Interp, p: i64): bool {
 // task is parked forever. Such a task keeps the scheduler's task count > 0, which
 // would block main's final -1 poll and hang the process at exit — Node instead
 // drops an unfinished generator, so the entry point exits directly when this holds.
-fn anyGenParked(st: &Interp): bool {
+pub fn anyGenParked(st: &Interp): bool {
     var i: i64 = 0
     while i < st.genObj.len() {
         if st.genStarted[i] && !st.genDone[i] {
@@ -6652,7 +6755,7 @@ fn anyGenParked(st: &Interp): bool {
 // the wrong (dead) record and write the yielded value into the wrong slot, so
 // the real consumer reads a stale value. Object indices of removed generators
 // are free to be recycled since collect no longer marks them.
-fn removeGen(st: &mut Interp, gi: i64) {
+pub fn removeGen(st: &mut Interp, gi: i64) {
     st.genObj.remove(gi)
     st.genFn.remove(gi)
     st.genTask.remove(gi)
@@ -6669,7 +6772,7 @@ fn removeGen(st: &mut Interp, gi: i64) {
 }
 
 // Index of the gen* record for gen object `o`, or -1.
-fn genIndexOf(st: &Interp, o: i64): i64 {
+pub fn genIndexOf(st: &Interp, o: i64): i64 {
     var i: i64 = 0
     while i < st.genObj.len() {
         if st.genObj[i] == o {
@@ -6682,7 +6785,7 @@ fn genIndexOf(st: &Interp, o: i64): i64 {
 
 // Index of the gen* record whose body task is `task`, or -1 — how `yield`
 // resolves which generator it belongs to.
-fn genIndexOfTask(st: &Interp, task: *u8): i64 {
+pub fn genIndexOfTask(st: &Interp, task: *u8): i64 {
     var i: i64 = 0
     while i < st.genTask.len() {
         if st.genTask[i] as i64 == task as i64 {
@@ -6694,7 +6797,7 @@ fn genIndexOfTask(st: &Interp, task: *u8): i64 {
 }
 
 // Build a `{ value, done }` iterator-result object.
-fn iterResult(st: &mut Interp, value: JSValue, done: bool): JSValue {
+pub fn iterResult(st: &mut Interp, value: JSValue, done: bool): JSValue {
     let r = newObject(st)
     pushTemp(st, JSValue.Obj(r))
     objSet(st, r, "value", value)
@@ -6706,7 +6809,7 @@ fn iterResult(st: &mut Interp, value: JSValue, done: bool): JSValue {
 // Called when a generator body finishes (return or fell off the end). Records the
 // return value (or the thrown error), marks it done, and hands control back to
 // whoever is inside next(). Runs on the generator's own task.
-fn genFinish(st: &mut Interp, gi: i64, r: JSValue) {
+pub fn genFinish(st: &mut Interp, gi: i64, r: JSValue) {
     if st.throwing {
         st.genThrew[gi] = true
         st.genErr[gi] = cloneValue(st.thrownValue)
@@ -6723,7 +6826,7 @@ fn genFinish(st: &mut Interp, gi: i64, r: JSValue) {
 
 // Create a generator object for a `function*` call. Does NOT run the body — that
 // starts on the first next(). Registers the gen* record and returns the object.
-fn makeGenerator(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
+pub fn makeGenerator(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
     let g = newObject(st)
     st.objects[g].isGenerator = true
     var rootedArgs: Vec<JSValue> = Vec.new()
@@ -6752,7 +6855,7 @@ fn makeGenerator(fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue
 // call. Parks the caller and runs the body until its next `yield`, `return`, or
 // throw, then returns `{ value, done }`. If the body threw, the error is
 // re-raised at this next() site.
-fn genNext(o: i64, args: Vec<JSValue>, st: &mut Interp): JSValue {
+pub fn genNext(o: i64, args: Vec<JSValue>, st: &mut Interp): JSValue {
     let gi = genIndexOf(st, o)
     if gi < 0 {
         // No record: a completed generator whose record was reclaimed (calling
@@ -6850,7 +6953,7 @@ fn genNext(o: i64, args: Vec<JSValue>, st: &mut Interp): JSValue {
 // The `yield e` expression, evaluated on a generator's body task. `handed` is the
 // already-evaluated operand. Hands it out, parks the body, and on resume returns
 // the value the next() caller passed in.
-fn genYield(handed: JSValue, st: &mut Interp): JSValue {
+pub fn genYield(handed: JSValue, st: &mut Interp): JSValue {
     let me = schedulerCurrent()
     let gi = genIndexOfTask(st, me)
     if gi < 0 {
@@ -6877,7 +6980,7 @@ fn genYield(handed: JSValue, st: &mut Interp): JSValue {
 }
 
 // Wake every activation waiting on `p`, in the order they began awaiting (R3).
-fn wakeAwaiters(st: &mut Interp, p: i64) {
+pub fn wakeAwaiters(st: &mut Interp, p: i64) {
     var i: i64 = 0
     while i < st.awaitPromise.len() {
         if st.awaitPromise[i] == p {
@@ -6891,7 +6994,7 @@ fn wakeAwaiters(st: &mut Interp, p: i64) {
     }
 }
 
-fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
+pub fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
     if p < 0 || !isPromise(st, p) {
         return
     }
@@ -6940,7 +7043,7 @@ fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
 // so drop it from the unhandled-rejection set reported at loop end. (Without this,
 // `try { await Promise.reject(e) } catch {}` still printed a spurious unhandled
 // rejection — GC-masked, since a collected promise slot was skipped at reporting.)
-fn markRejectHandled(st: &mut Interp, p: i64) {
+pub fn markRejectHandled(st: &mut Interp, p: i64) {
     var kept: Vec<i64> = Vec.new()
     var ki: i64 = 0
     while ki < st.unhandledRejects.len() {
@@ -6953,7 +7056,7 @@ fn markRejectHandled(st: &mut Interp, p: i64) {
 }
 
 // Make `derived` follow `source`: settle now if it already has, else register.
-fn adoptPromise(st: &mut Interp, derived: i64, source: i64) {
+pub fn adoptPromise(st: &mut Interp, derived: i64, source: i64) {
     let state = st.objects[source].promiseState
     if state == 2 {
         // the derived promise now observes the source's rejection
@@ -6977,7 +7080,7 @@ fn adoptPromise(st: &mut Interp, derived: i64, source: i64) {
     settlePromise(st, derived, state, cloneValue(st.objExtras[st.objects[source].extra].promiseValue))
 }
 
-fn describeThrownValue(st: &Interp, v: &JSValue): string {
+pub fn describeThrownValue(st: &Interp, v: &JSValue): string {
     let h = objHandle(v)
     if h >= 0 && st.objects[h].isError {
         return toStr(objGet(st, h, "name")) + ": " + toStr(objGet(st, h, "message"))
@@ -6987,7 +7090,7 @@ fn describeThrownValue(st: &Interp, v: &JSValue): string {
 
 // Node reports (and by default dies on) rejections nothing handles; silently
 // dropping them turned a thrown await-deadline error into an invisible hang.
-fn reportUnhandledRejections(st: &mut Interp) {
+pub fn reportUnhandledRejections(st: &mut Interp) {
     var i: i64 = 0
     while i < st.unhandledRejects.len() {
         let p = st.unhandledRejects[i]
@@ -7005,7 +7108,7 @@ fn reportUnhandledRejections(st: &mut Interp) {
 // `await` run exactly the microtasks pending at the await point — matching node,
 // which queues the await continuation as a microtask, so microtasks queued
 // before it run first and ones they queue run after.
-fn drainMicrotasks(prog: &Prog, st: &mut Interp, limit: i64) {
+pub fn drainMicrotasks(prog: &Prog, st: &mut Interp, limit: i64) {
     var guard: i64 = 0
     while st.microtasks.len() > 0 && guard < limit {
         let task = cloneValue(st.microtasks[0].cb)
@@ -7087,7 +7190,7 @@ fn drainMicrotasks(prog: &Prog, st: &mut Interp, limit: i64) {
 }
 
 // Index of the earliest active timer, or -1 when none remain.
-fn earliestTimer(st: &Interp): i64 {
+pub fn earliestTimer(st: &Interp): i64 {
     var best: i64 = -1
     var i: i64 = 0
     while i < st.timers.len() {
@@ -7103,7 +7206,7 @@ fn earliestTimer(st: &Interp): i64 {
 
 // Run one due timer, sleeping until it is due. Returns false when there is
 // nothing left to run.
-fn runOneTimer(prog: &Prog, st: &mut Interp): bool {
+pub fn runOneTimer(prog: &Prog, st: &mut Interp): bool {
     let idx = earliestTimer(st)
     if idx < 0 {
         return false
@@ -7138,7 +7241,7 @@ fn runOneTimer(prog: &Prog, st: &mut Interp): bool {
 // nothing is left to run — which for a server with an interval never happens.
 // Give any runnable activation the CPU. Returns true if one was there to run,
 // so the event loop prefers a live continuation over sleeping on a timer.
-fn schedulerYieldedToActivation(st: &mut Interp): bool {
+pub fn schedulerYieldedToActivation(st: &mut Interp): bool {
     var ready = false
     var i: i64 = 0
     while i < st.actTask.len() {
@@ -7153,7 +7256,7 @@ fn schedulerYieldedToActivation(st: &mut Interp): bool {
     return ready
 }
 
-fn isParkedOnPromise(st: &Interp, t: *u8): bool {
+pub fn isParkedOnPromise(st: &Interp, t: *u8): bool {
     var i: i64 = 0
     while i < st.awaitTask.len() {
         if st.awaitTask[i] as i64 == t as i64 {
@@ -7164,7 +7267,7 @@ fn isParkedOnPromise(st: &Interp, t: *u8): bool {
     return false
 }
 
-fn runEventLoop(prog: &Prog, st: &mut Interp) {
+pub fn runEventLoop(prog: &Prog, st: &mut Interp) {
     var going = true
     while going {
         // Deliver anything an addon's worker threads queued. Runs before
@@ -7216,7 +7319,7 @@ fn runEventLoop(prog: &Prog, st: &mut Interp) {
 }
 
 // Run a timer only if it is already due; never sleeps.
-fn runDueTimer(prog: &Prog, st: &mut Interp): bool {
+pub fn runDueTimer(prog: &Prog, st: &mut Interp): bool {
     let idx = earliestTimer(st)
     if idx < 0 {
         return false
@@ -7230,7 +7333,7 @@ fn runDueTimer(prog: &Prog, st: &mut Interp): bool {
 // Ask each registered http server to accept and handle one connection. Returns
 // true only when a connection was actually handled, so the event loop can tell
 // a served request apart from an idle listener.
-fn serveHttpOnce(prog: &Prog, st: &mut Interp): bool {
+pub fn serveHttpOnce(prog: &Prog, st: &mut Interp): bool {
     if st.httpServers.len() == 0 {
         return false
     }
@@ -7274,7 +7377,7 @@ fn serveHttpOnce(prog: &Prog, st: &mut Interp): bool {
 }
 
 // Call a method on an object with already-evaluated arguments.
-fn callMemberValue(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSValue>, st: &mut Interp): JSValue {
+pub fn callMemberValue(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSValue>, st: &mut Interp): JSValue {
     let o = objHandle(recv)
     if o < 0 {
         return JSValue.Undefined
@@ -7284,7 +7387,7 @@ fn callMemberValue(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSValue
 }
 
 // Drop cancelled timers so the list cannot grow without bound in a long run.
-fn compactTimers(st: &mut Interp) {
+pub fn compactTimers(st: &mut Interp) {
     var anyDead = false
     var i: i64 = 0
     while i < st.timers.len() {
@@ -7320,7 +7423,7 @@ fn compactTimers(st: &mut Interp) {
 // become holes (undefined) rather than shifting, as in JS. Always returns true
 // here; the non-configurable cases the spec reports false for do not arise.
 // `delete proxy[key]`: the deleteProperty trap, else delete on the target.
-fn proxyDelete(prog: &Prog, o: i64, key: string, st: &mut Interp): JSValue {
+pub fn proxyDelete(prog: &Prog, o: i64, key: string, st: &mut Interp): JSValue {
     let trap = proxyTrap(st, o, "deleteProperty")
     if isCallableIn(st, trap) {
         var dargs: Vec<JSValue> = Vec.new()
@@ -7335,7 +7438,7 @@ fn proxyDelete(prog: &Prog, o: i64, key: string, st: &mut Interp): JSValue {
     return JSValue.Bool(true)
 }
 
-fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue {
+pub fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue {
     match prog.exprs[targetIdx] {
         Expr.Member(objIdx, name) => {
             let ov = evalExpr(prog, objIdx, st, scope)
@@ -7379,7 +7482,7 @@ fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
 }
 
 // new Array(n) preallocates n holes; new Array(a, b, ...) is a literal list.
-fn makeArrayFromCtor(st: &mut Interp, argVals: &Vec<JSValue>): JSValue {
+pub fn makeArrayFromCtor(st: &mut Interp, argVals: &Vec<JSValue>): JSValue {
     let arr = newArray(st)
     if argVals.len() == 1 {
         match cloneValue(argVals[0]) {
@@ -7406,7 +7509,7 @@ fn makeArrayFromCtor(st: &mut Interp, argVals: &Vec<JSValue>): JSValue {
 // The object that holds a value's properties: itself for an object, the statics
 // bag for a function, the native bag for a builtin. Functions are property
 // carriers in JS, and express builds its app by copying descriptors onto one.
-fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
+pub fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
     let o = objHandle(v)
     if o >= 0 {
         return o
@@ -7424,7 +7527,7 @@ fn propertyBagOf(st: &mut Interp, v: &JSValue): i64 {
 
 // The module currently executing, for error messages. Empty at top level.
 
-fn hasNodeAddonExt(p: &string): bool {
+pub fn hasNodeAddonExt(p: &string): bool {
     let n = p.len()
     if n < 6 {
         return false
@@ -7435,7 +7538,7 @@ fn hasNodeAddonExt(p: &string): bool {
 // dlopen is not idempotent for addon state: a second registration would hand back
 // a fresh exports object and re-run module init, so loaded addons are cached by
 // path exactly like JS modules are.
-fn findNapiAddon(st: &Interp, path: &string): Option<JSValue> {
+pub fn findNapiAddon(st: &Interp, path: &string): Option<JSValue> {
     var i: i64 = 0
     while i < st.napiAddonPaths.len() {
         if st.napiAddonPaths[i] == path {
@@ -7446,7 +7549,7 @@ fn findNapiAddon(st: &Interp, path: &string): Option<JSValue> {
     return Option.None
 }
 
-fn isUndefinedValue(v: &JSValue): bool {
+pub fn isUndefinedValue(v: &JSValue): bool {
     match v {
         JSValue.Undefined => {
             return true
@@ -7459,7 +7562,7 @@ fn isUndefinedValue(v: &JSValue): bool {
 
 // SameValue: strict equality with the two exceptions the spec carves out —
 // NaN is equal to itself, and +0 is not equal to -0.
-fn sameValue(a: &JSValue, b: &JSValue): bool {
+pub fn sameValue(a: &JSValue, b: &JSValue): bool {
     match a {
         JSValue.Number(x) => {
             match b {
@@ -7486,7 +7589,7 @@ fn sameValue(a: &JSValue, b: &JSValue): bool {
 }
 
 // A single JS identifier and nothing else — what the limited eval accepts.
-fn isIdentifierText(s: &string): bool {
+pub fn isIdentifierText(s: &string): bool {
     if s.len() == 0 {
         return false
     }
@@ -7503,14 +7606,14 @@ fn isIdentifierText(s: &string): bool {
     return true
 }
 
-fn currentModule(st: &Interp): string {
+pub fn currentModule(st: &Interp): string {
     if st.modPathStack.len() == 0 {
         return ""
     }
     return " (in " + st.modPathStack[st.modPathStack.len() - 1].clone() + ")"
 }
 
-fn isBoundThisSet(st: &Interp, o: i64): bool {
+pub fn isBoundThisSet(st: &Interp, o: i64): bool {
     match st.objExtras[st.objects[o].extra].boundThis {
         JSValue.Undefined => {
             return false
@@ -7527,30 +7630,30 @@ fn isBoundThisSet(st: &Interp, o: i64): bool {
 // and method extraction (`Array.prototype.slice.call(args)`). These predicates say
 // whether a receiver answers to a name, so the member paths can hand back a bound
 // method instead of undefined.
-fn isPrimitiveMethodName(n: &string): bool {
+pub fn isPrimitiveMethodName(n: &string): bool {
     return n == "toString" || n == "valueOf" || n == "toFixed" || n == "toPrecision" || n == "toExponential" || n == "toLocaleString"
 }
 
-fn isStringMethodName(n: &string): bool {
+pub fn isStringMethodName(n: &string): bool {
     return n == "charAt" || n == "charCodeAt" || n == "codePointAt" || n == "at" || n == "indexOf" || n == "lastIndexOf" || n == "includes" || n == "startsWith" || n == "endsWith" || n == "slice" || n == "substring" || n == "substr" || n == "split" || n == "replace" || n == "replaceAll" || n == "toUpperCase" || n == "toLowerCase" || n == "trim" || n == "trimStart" || n == "trimEnd" || n == "trimLeft" || n == "trimRight" || n == "padStart" || n == "padEnd" || n == "repeat" || n == "concat" || n == "localeCompare" || n == "normalize" || n == "match" || n == "matchAll" || n == "search" || n == "toString" || n == "valueOf"
 }
 
-fn isMapSetMethodName(n: &string): bool {
+pub fn isMapSetMethodName(n: &string): bool {
     return n == "get" || n == "set" || n == "add" || n == "has" || n == "delete" || n == "clear" || n == "forEach" || n == "keys" || n == "values" || n == "entries" || n == "isSupersetOf" || n == "isSubsetOf" || n == "isDisjointFrom" || n == "union" || n == "intersection" || n == "difference"
 }
 
-fn isRegexMethodName(n: &string): bool {
+pub fn isRegexMethodName(n: &string): bool {
     return n == "test" || n == "exec" || n == "toString"
 }
 
-fn isTypedArrayMethodName(n: &string): bool {
+pub fn isTypedArrayMethodName(n: &string): bool {
     return n == "fill" || n == "set" || n == "subarray" || n == "slice" || n == "at" || n == "indexOf" || n == "includes" || n == "join" || n == "toString" || n == "forEach" || n == "map" || n == "filter" || n == "reduce" || n == "reduceRight" || n == "find" || n == "findIndex" || n == "findLast" || n == "findLastIndex" || n == "some" || n == "every" || n == "reverse" || n == "sort" || n == "with"
 }
 
 // Typed-array methods. Views share their buffer, so subarray returns a new view
 // over the SAME bytes while slice copies — getting that backwards is the classic
 // typed-array bug.
-fn typedArrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+pub fn typedArrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     let n = st.objExtras[st.objects[o].extra].taLen
     let kind = st.objExtras[st.objects[o].extra].taKind
     let w = taWidth(kind)
@@ -7918,14 +8021,14 @@ fn typedArrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st:
     return JSValue.Undefined
 }
 
-fn isDataViewMethodName(n: &string): bool {
+pub fn isDataViewMethodName(n: &string): bool {
     return n == "getInt8" || n == "getUint8" || n == "getInt16" || n == "getUint16" || n == "getInt32" || n == "getUint32" || n == "getFloat32" || n == "getFloat64" || n == "setInt8" || n == "setUint8" || n == "setInt16" || n == "setUint16" || n == "setInt32" || n == "setUint32" || n == "setFloat32" || n == "setFloat64"
 }
 
 // DataView get/set. Default endianness is BIG-endian (the littleEndian arg
 // defaults false), unlike typed arrays which store host/little-endian. taLen is
 // the view's byte length here; taBuf/taOffset locate it in the backing buffer.
-fn dataViewMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+pub fn dataViewMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     var width: i64 = 1
     var isFloat = false
     var signed = false
@@ -8015,7 +8118,7 @@ fn dataViewMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): 
     return JSValue.Number(bits as f64)
 }
 
-fn dateProtoMethodNames(): Vec<string> {
+pub fn dateProtoMethodNames(): Vec<string> {
     var out: Vec<string> = Vec.new()
     out.push("getTime")
     out.push("valueOf")
@@ -8040,7 +8143,7 @@ fn dateProtoMethodNames(): Vec<string> {
     return out
 }
 
-fn strProtoMethodNames(): Vec<string> {
+pub fn strProtoMethodNames(): Vec<string> {
     var out: Vec<string> = Vec.new()
     out.push("replace")
     out.push("split")
@@ -8074,7 +8177,7 @@ fn strProtoMethodNames(): Vec<string> {
 // a default or a rest parameter. milojs does not record defaults per-param, so
 // this counts declared params minus a trailing rest — enough for express, which
 // only checks length === 4 to detect error-handler middleware.
-fn funcArity(prog: &Prog, fIdx: i64): i64 {
+pub fn funcArity(prog: &Prog, fIdx: i64): i64 {
     var n = prog.funcs[fIdx].params.len()
     if prog.funcs[fIdx].restFrom >= 0 {
         n = prog.funcs[fIdx].restFrom
@@ -8082,14 +8185,14 @@ fn funcArity(prog: &Prog, fIdx: i64): i64 {
     return n
 }
 
-fn isSuperName(name: &string): bool {
+pub fn isSuperName(name: &string): bool {
     if name.len() < 8 {
         return false
     }
     return name[0] == '_' && name[1] == '_' && name[2] == 's' && name[3] == 'u' && name[4] == 'p' && name[5] == 'e' && name[6] == 'r' && name[7] == '$'
 }
 
-fn instantiateClass(prog: &Prog, classIdx: i64, st: &mut Interp, scope: i64): JSValue {
+pub fn instantiateClass(prog: &Prog, classIdx: i64, st: &mut Interp, scope: i64): JSValue {
     var ctorFn = prog.classes[classIdx].ctorFn
     if ctorFn < 0 {
         // no declared constructor — reuse an empty one so the class is callable
@@ -8163,7 +8266,7 @@ fn instantiateClass(prog: &Prog, classIdx: i64, st: &mut Interp, scope: i64): JS
     return classVal
 }
 
-fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
+pub fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
     match fnVal {
         JSValue.Func(fIdx, envIdx) => {
             return callFunction(prog, fIdx, envIdx, args, thisVal, st)
@@ -8235,7 +8338,7 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
 }
 
 // The (element, index, array) triple JS array-iteration callbacks receive.
-fn makeCbArgs(st: &Interp, o: i64, i: i64): Vec<JSValue> {
+pub fn makeCbArgs(st: &Interp, o: i64, i: i64): Vec<JSValue> {
     var v: Vec<JSValue> = Vec.new()
     v.push(arrGet(st, o, i))
     v.push(JSValue.Number(i as f64))
@@ -8245,7 +8348,7 @@ fn makeCbArgs(st: &Interp, o: i64, i: i64): Vec<JSValue> {
 
 // Map and Set share one entry list; a Set just stores true as every value.
 // Call a method by name on a user object (set-like argument plumbing).
-fn callObjMethod(prog: &Prog, st: &mut Interp, recv: &JSValue, name: &string, args: Vec<JSValue>): JSValue {
+pub fn callObjMethod(prog: &Prog, st: &mut Interp, recv: &JSValue, name: &string, args: Vec<JSValue>): JSValue {
     let h = objHandle(recv)
     if h < 0 {
         return JSValue.Undefined
@@ -8262,7 +8365,7 @@ fn callObjMethod(prog: &Prog, st: &mut Interp, recv: &JSValue, name: &string, ar
 // The set-methods proposal takes "set-like" objects: {size, has, keys}. `size` is
 // validated first and its diagnostics must name `.size`, which the suite checks.
 // Returns the size, or -1.0 after throwing.
-fn setLikeSize(_prog: &Prog, st: &mut Interp, other: &JSValue): f64 {
+pub fn setLikeSize(_prog: &Prog, st: &mut Interp, other: &JSValue): f64 {
     let h = objHandle(other)
     if h < 0 {
         st.throwing = true
@@ -8289,7 +8392,7 @@ fn setLikeSize(_prog: &Prog, st: &mut Interp, other: &JSValue): f64 {
 }
 
 // other.keys() — the iterator a set-like exposes.
-fn setLikeKeys(prog: &Prog, st: &mut Interp, other: &JSValue): JSValue {
+pub fn setLikeKeys(prog: &Prog, st: &mut Interp, other: &JSValue): JSValue {
     let h = objHandle(other)
     if h >= 0 && (st.objects[h].isSet || st.objects[h].isMap) {
         var noArgs: Vec<JSValue> = Vec.new()
@@ -8300,7 +8403,7 @@ fn setLikeKeys(prog: &Prog, st: &mut Interp, other: &JSValue): JSValue {
 }
 
 // One step of an iterator: returns done via the out-param slot.
-fn iterStep(prog: &Prog, st: &mut Interp, iter: &JSValue, done: &mut bool): JSValue {
+pub fn iterStep(prog: &Prog, st: &mut Interp, iter: &JSValue, done: &mut bool): JSValue {
     var noArgs: Vec<JSValue> = Vec.new()
     let step = callObjMethod(prog, st, iter, "next", noArgs)
     let sh = objHandle(step)
@@ -8317,7 +8420,7 @@ fn iterStep(prog: &Prog, st: &mut Interp, iter: &JSValue, done: &mut bool): JSVa
 
 // Closing an iterator early is observable (the suite counts return() calls), so
 // every early exit from a set method has to do it.
-fn iterClose(prog: &Prog, st: &mut Interp, iter: &JSValue) {
+pub fn iterClose(prog: &Prog, st: &mut Interp, iter: &JSValue) {
     let h = objHandle(iter)
     if h < 0 {
         return
@@ -8329,13 +8432,13 @@ fn iterClose(prog: &Prog, st: &mut Interp, iter: &JSValue) {
     }
 }
 
-fn setHasValue(st: &Interp, o: i64, v: &JSValue): bool {
+pub fn setHasValue(st: &Interp, o: i64, v: &JSValue): bool {
     return mapFind(st, o, v) >= 0
 }
 
 // `other.has(v)` where other may be a real Set (whose `has` is native dispatch,
 // not a property) or a user set-like (where it is a property).
-fn setLikeHas(prog: &Prog, st: &mut Interp, other: &JSValue, v: &JSValue): bool {
+pub fn setLikeHas(prog: &Prog, st: &mut Interp, other: &JSValue, v: &JSValue): bool {
     let h = objHandle(other)
     if h >= 0 && (st.objects[h].isSet || st.objects[h].isMap) {
         return mapFind(st, h, v) >= 0
@@ -8345,7 +8448,7 @@ fn setLikeHas(prog: &Prog, st: &mut Interp, other: &JSValue, v: &JSValue): bool 
     return truthy(callObjMethod(prog, st, other, "has", hargs))
 }
 
-fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+pub fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     let isSet = st.objects[o].isSet
     if name == "get" {
         var key = JSValue.Undefined
@@ -8616,7 +8719,7 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
 
 // Date instance methods. Everything derives from the stored epoch milliseconds.
 // ISO-8601 in UTC, the format Date.prototype.toISOString produces.
-fn isoFromMillis(ms: f64): string {
+pub fn isoFromMillis(ms: f64): string {
     if ms != ms {
         return "Invalid Date"
     }
@@ -8629,7 +8732,7 @@ fn isoFromMillis(ms: f64): string {
     return i64ToStr(dt.year as i64) + "-" + pad2(dt.month as i64) + "-" + pad2(dt.day as i64) + "T" + pad2(dt.hour as i64) + ":" + pad2(dt.minute as i64) + ":" + pad2(dt.second as i64) + "." + pad3(frac) + "Z"
 }
 
-fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSValue {
+pub fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSValue {
     let ms = st.objExtras[st.objects[o].extra].dateMs
     if name == "getTime" || name == "valueOf" {
         return JSValue.Number(ms)
@@ -8775,7 +8878,7 @@ fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSVa
     return JSValue.Undefined
 }
 
-fn isArrayMethod(name: &string): bool {
+pub fn isArrayMethod(name: &string): bool {
     return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "toString" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop" || name == "find" || name == "findIndex" || name == "some" || name == "every" || name == "shift" || name == "unshift" || name == "splice" || name == "sort" || name == "lastIndexOf" || name == "flat" || name == "fill" || name == "at" || name == "findLast" || name == "findLastIndex" || name == "copyWithin" || name == "reduceRight" || name == "flatMap" || name == "values" || name == "keys" || name == "entries" || name == "with" || name == "toReversed" || name == "toSorted" || name == "toSpliced"
 }
 
@@ -8787,7 +8890,7 @@ fn isArrayMethod(name: &string): bool {
 // the rejection-skips-onFulfilled rule match.
 // .then/.catch/.finally. Handlers never run synchronously: they are queued as
 // microtasks, so ordering matches JS instead of the old settle-in-place model.
-fn promiseMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+pub fn promiseMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     var onFul = JSValue.Undefined
     var onRej = JSValue.Undefined
     var isFinally = false
@@ -8843,7 +8946,7 @@ fn promiseMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): J
     return JSValue.Obj(derived)
 }
 
-fn isCallable(v: &JSValue): bool {
+pub fn isCallable(v: &JSValue): bool {
     match v {
         JSValue.Func(_f, _e) => {
             return true
@@ -8860,7 +8963,7 @@ fn isCallable(v: &JSValue): bool {
 // isCallable, but also true for bound-method objects (Function.prototype.bind
 // results and the builtin bound methods). They are ordinary JSObjs, so the
 // JSValue-only test above cannot see them — typeof already reports "function".
-fn isCallableIn(st: &Interp, v: &JSValue): bool {
+pub fn isCallableIn(st: &Interp, v: &JSValue): bool {
     if isCallable(v) {
         return true
     }
@@ -8876,7 +8979,7 @@ fn isCallableIn(st: &Interp, v: &JSValue): bool {
     return false
 }
 
-fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+pub fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     let n = arrLen(st, o)
     // the mutating methods write through arrPush/elems directly, bypassing
     // setMember's frozen check, so a frozen array has to be caught here too
@@ -9591,7 +9694,7 @@ fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut
 }
 
 // Flatten `arr` into `out` up to `depth` levels of nested arrays.
-fn flattenInto(st: &mut Interp, out: i64, arr: i64, depth: i64) {
+pub fn flattenInto(st: &mut Interp, out: i64, arr: i64, depth: i64) {
     var i: i64 = 0
     while i < arrLen(st, arr) {
         let v = arrGet(st, arr, i)
@@ -9614,7 +9717,7 @@ fn flattenInto(st: &mut Interp, out: i64, arr: i64, depth: i64) {
 // fraction digits with trailing zeros stripped — (1000000).toLocaleString() is
 // "1,000,000" and (1234.5678) is "1,234.568". Only the default locale; no
 // currency/percent options.
-fn numToLocale(n: f64): string {
+pub fn numToLocale(n: f64): string {
     if !(n == n) {
         return "NaN"
     }
@@ -9670,7 +9773,7 @@ fn numToLocale(n: f64): string {
     return out
 }
 
-fn primitiveMethod(name: &string, recv: &JSValue, args: &Vec<JSValue>): JSValue {
+pub fn primitiveMethod(name: &string, recv: &JSValue, args: &Vec<JSValue>): JSValue {
     if name == "valueOf" {
         return cloneValue(recv)
     }
@@ -9734,7 +9837,7 @@ fn primitiveMethod(name: &string, recv: &JSValue, args: &Vec<JSValue>): JSValue 
     return JSValue.Str(toStr(recv))
 }
 
-fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
+pub fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
     // Methods every primitive answers to. JS boxes the receiver for these; here
     // they are answered directly, which covers the cases real code uses.
     if name == "toString" || name == "valueOf" || name == "toFixed" || name == "toPrecision" || name == "toExponential" || name == "toLocaleString" {
@@ -10063,7 +10166,7 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
 // Reading a property of null/undefined is a TypeError, not undefined. Returning
 // undefined instead turns a typo into a value that fails much later, somewhere
 // unrelated.
-fn throwNullMember(st: &mut Interp, name: &string, base: &string): JSValue {
+pub fn throwNullMember(st: &mut Interp, name: &string, base: &string): JSValue {
     // No currentModule() suffix here: this message is spec-defined text that real
     // code (and the conformance suite) compares against, so decorating it would
     // corrupt e.message.
@@ -10072,7 +10175,7 @@ fn throwNullMember(st: &mut Interp, name: &string, base: &string): JSValue {
     return JSValue.Undefined
 }
 
-fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
+pub fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
     // builtin: console.log(...)
     match prog.exprs[calleeIdx] {
         Expr.Ident(fname) => {
@@ -10294,7 +10397,7 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
 // pending return value are rooted across the finally block (which can allocate
 // and collect). finally overrides: its own throw or return wins; otherwise the
 // try/catch's pending throw or return is restored.
-fn execTry(prog: &Prog, tryB: i64, param: &string, catchB: i64, finallyB: i64, st: &mut Interp, scope: i64): Flow {
+pub fn execTry(prog: &Prog, tryB: i64, param: &string, catchB: i64, finallyB: i64, st: &mut Interp, scope: i64): Flow {
     let tryScope = newScope(st, scope)
     pushActive(st, tryScope)
     var flow = execBlock(prog, tryB, st, tryScope)
@@ -10364,7 +10467,7 @@ fn execTry(prog: &Prog, tryB: i64, param: &string, catchB: i64, finallyB: i64, s
     return Flow.Normal
 }
 
-fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
+pub fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
     if st.throwing {
         return Flow.Normal
     }
@@ -10993,7 +11096,7 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
 // before it runs. JS hoists both to the function scope through arbitrary
 // nesting, so this walks into blocks, loops, if/else, switch and try — unlike
 // let/const, which stay in the block they are written in.
-fn hoistBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64) {
+pub fn hoistBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64) {
     var i: i64 = 0
     let n = prog.blocks[blockIdx].len()
     while i < n {
@@ -11002,7 +11105,7 @@ fn hoistBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64) {
     }
 }
 
-fn hoistStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64) {
+pub fn hoistStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64) {
     if idx < 0 {
         return
     }
@@ -11069,7 +11172,7 @@ fn hoistStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64) {
     }
 }
 
-fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
+pub fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
     let n = prog.blocks[blockIdx].len()
     var j: i64 = 0
     while j < n {

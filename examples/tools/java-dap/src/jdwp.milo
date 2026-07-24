@@ -30,11 +30,11 @@ from "std/runtime" import {
 // ---------------------------------------------------------------------------
 // Packet writer: builds the variable-length body; header is prepended on send.
 
-struct PacketWriter {
+pub struct PacketWriter {
     buf: string,
 }
 
-fn newWriter(): PacketWriter {
+pub fn newWriter(): PacketWriter {
     return PacketWriter {
         buf: String.withCapacity(64)
     }
@@ -81,12 +81,12 @@ impl PacketWriter {
 // ---------------------------------------------------------------------------
 // Packet reader: cursor over a received body.
 
-struct PacketReader {
+pub struct PacketReader {
     buf: string,
     pos: i64,
 }
 
-fn newReader(buf: string): PacketReader {
+pub fn newReader(buf: string): PacketReader {
     return PacketReader {
         buf: buf, pos: 0
     }
@@ -148,7 +148,7 @@ impl PacketReader {
 // ---------------------------------------------------------------------------
 // Wire structs.
 
-struct IdSizes {
+pub struct IdSizes {
     fieldId: i64,
     methodId: i64,
     objectId: i64,
@@ -156,7 +156,7 @@ struct IdSizes {
     frameId: i64,
 }
 
-fn defaultSizes(): IdSizes {
+pub fn defaultSizes(): IdSizes {
     return IdSizes {
         fieldId: 8, methodId: 8, objectId: 8, referenceTypeId: 8, frameId: 8
     }
@@ -166,7 +166,7 @@ fn defaultSizes(): IdSizes {
 // cmdSet/cmd are 0; for commands (events) it's the reverse. Synthetic packets
 // (injected into eventCh by non-JDWP sources) use negative cmdSet:
 //   -1 socket EOF · -2 child stdout chunk · -3 child stderr chunk · -4 child exit
-struct Packet {
+pub struct Packet {
     id: i64,
     isReply: bool,
     errorCode: i64,
@@ -175,13 +175,13 @@ struct Packet {
     body: string,
 }
 
-fn synthPacket(cmdSet: i64, code: i64, body: string): Packet {
+pub fn synthPacket(cmdSet: i64, code: i64, body: string): Packet {
     return Packet {
         id: 0, isReply: false, errorCode: code, cmdSet: cmdSet, cmd: 0, body: body
     }
 }
 
-struct VmVersion {
+pub struct VmVersion {
     description: string,
     jdwpMajor: i64,
     jdwpMinor: i64,
@@ -189,39 +189,39 @@ struct VmVersion {
     vmName: string,
 }
 
-struct Location {
+pub struct Location {
     typeTag: i64,
     classId: i64,
     methodId: i64,
     index: i64,
 }
 
-fn zeroLocation(): Location {
+pub fn zeroLocation(): Location {
     return Location {
         typeTag: 0, classId: 0, methodId: 0, index: 0
     }
 }
 
-struct MethodInfo {
+pub struct MethodInfo {
     methodId: i64,
     name: string,
     signature: string,
     modBits: i64,
 }
 
-struct FieldInfo {
+pub struct FieldInfo {
     fieldId: i64,
     name: string,
     signature: string,
     modBits: i64,
 }
 
-struct LineEntry {
+pub struct LineEntry {
     codeIndex: i64,
     line: i64,
 }
 
-struct VarSlot {
+pub struct VarSlot {
     codeIndex: i64,
     name: string,
     signature: string,
@@ -229,25 +229,25 @@ struct VarSlot {
     slot: i64,
 }
 
-struct FrameEntry {
+pub struct FrameEntry {
     frameId: i64,
     loc: Location,
 }
 
 // A JDWP value: tag byte + payload. `num` holds the raw bits for primitives
 // and the objectID for reference tags ('L','s','t','g','l','c','[').
-struct JValue {
+pub struct JValue {
     tag: i64,
     num: i64,
 }
 
-fn isObjectTag(tag: i64): bool {
+pub fn isObjectTag(tag: i64): bool {
     return tag == 76 || tag == 115 || tag == 116 || tag == 103
     || tag == 108 || tag == 99 || tag == 91
 }
 
 // Payload width for a value tag, in bytes (objects use the objectId width).
-fn tagWidth(tag: i64, sizes: &IdSizes): i64 {
+pub fn tagWidth(tag: i64, sizes: &IdSizes): i64 {
     if isObjectTag(tag) {
         return sizes.objectId
     }
@@ -267,7 +267,7 @@ fn tagWidth(tag: i64, sizes: &IdSizes): i64 {
 }
 
 // One event out of a Composite packet, flattened across kinds.
-struct JdwpEvent {
+pub struct JdwpEvent {
     kind: i64,
     requestId: i64,
     thread: i64,
@@ -281,7 +281,7 @@ struct JdwpEvent {
 // ---------------------------------------------------------------------------
 // Reading packets off a socket FdReader (used by boot and the reader task).
 
-fn readPacketFrom(reader: &FdReader): Result<Packet> {
+pub fn readPacketFrom(reader: &FdReader): Result<Packet> {
     var head = newReader(reader.readExact(11)?)
     let length = head.u32()
     let id = head.u32()
@@ -313,7 +313,7 @@ fn readPacketFrom(reader: &FdReader): Result<Packet> {
 // ---------------------------------------------------------------------------
 // Client.
 
-struct JdwpIo {
+pub struct JdwpIo {
     fd: i32,
     nextId: i64,
     sizes: IdSizes,
@@ -323,7 +323,7 @@ struct JdwpIo {
 // Connect + handshake + IDSizes synchronously, then hand the socket's read
 // side to a green reader task that routes replies → replyCh, events → eventCh.
 // Events seen during boot are forwarded to eventCh, not dropped.
-fn jdwpAttach(host: &string, port: u16, eventCh: Channel<Packet>): Result<JdwpIo> {
+pub fn jdwpAttach(host: &string, port: u16, eventCh: Channel<Packet>): Result<JdwpIo> {
     var ip: u32 = 0
     match resolve(host) {
         Result.Ok(v) => {
@@ -421,7 +421,7 @@ fn jdwpAttach(host: &string, port: u16, eventCh: Channel<Packet>): Result<JdwpIo
     )
 }
 
-fn writeAllFd(fd: i32, data: &string): Result<i64> {
+pub fn writeAllFd(fd: i32, data: &string): Result<i64> {
     unsafe {
         let n = write(fd, data, data.len)
         if n < data.len as i64 {

@@ -17,12 +17,12 @@ from "./cpu" import {
 }
 
 // Whitespace-separated decimal integer stream cursor.
-struct Toks {
+pub struct Toks {
     s: string
     pos: i64
 }
 
-fn nextTok(t: &mut Toks): i64 {
+pub fn nextTok(t: &mut Toks): i64 {
     while t.pos < t.s.len {
         let c = t.s[t.pos] as i64
         if c == 32 || c == 10 || c == 13 || c == 9 {
@@ -46,7 +46,7 @@ fn nextTok(t: &mut Toks): i64 {
 
 // Read one state record's 10 registers into cpu, then ramN (addr,val) pairs
 // into memory. Field order matches harteConv.ts emitState.
-fn loadRegs(cpu: &mut Cpu, m: &mut Mem, t: &mut Toks): void {
+pub fn loadRegs(cpu: &mut Cpu, m: &mut Mem, t: &mut Toks): void {
     cpu.a = nextTok(t)
     cpu.x = nextTok(t)
     cpu.y = nextTok(t)
@@ -72,7 +72,7 @@ fn loadRegs(cpu: &mut Cpu, m: &mut Mem, t: &mut Toks): void {
 
 // Compare cpu/memory against the "final" record; consume it either way.
 // Returns "" on match or a description of the first mismatch.
-fn checkFinal(cpu: &Cpu, m: &Mem, t: &mut Toks): string {
+pub fn checkFinal(cpu: &Cpu, m: &Mem, t: &mut Toks): string {
     let fa = nextTok(t)
     let fx = nextTok(t)
     let fy = nextTok(t)
@@ -130,7 +130,7 @@ fn checkFinal(cpu: &Cpu, m: &Mem, t: &mut Toks): string {
     return mismatch
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
         print("usage: runHarte <op.flat> [maxCases]")
@@ -194,7 +194,7 @@ fn main(): i32 {
 }
 
 // --- tiny formatting helpers ---
-fn itoa(n: i64): string {
+pub fn itoa(n: i64): string {
     if n == 0 {
         return "0"
     }
@@ -207,13 +207,13 @@ fn itoa(n: i64): string {
     return s
 }
 
-fn digitStr(d: i64): string {
+pub fn digitStr(d: i64): string {
     var s = ""
     s.push((48 + d) as u8)
     return s
 }
 
-fn hex(n: i64): string {
+pub fn hex(n: i64): string {
     let v = n & 0xFFFFFFFF
     var s = "0x"
     var i: i64 = 28
@@ -231,7 +231,7 @@ fn hex(n: i64): string {
     return s
 }
 
-fn hexNib(n: i64): string {
+pub fn hexNib(n: i64): string {
     var s = ""
     if n < 10 {
         s.push((48 + n) as u8)
@@ -241,7 +241,7 @@ fn hexNib(n: i64): string {
     return s
 }
 
-fn strToI(s: &string): i64 {
+pub fn strToI(s: &string): i64 {
     var v: i64 = 0
     for ch in s {
         let c = ch as i64

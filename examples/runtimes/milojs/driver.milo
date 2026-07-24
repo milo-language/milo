@@ -26,7 +26,7 @@ from "./eval" import {
 // see MILOJS_GC_THRESHOLD.
 // An Error object stringifies as [object Object], which says nothing about what
 // went wrong. Report name and message when the thrown value is an error.
-fn describeThrown(st: &Interp, v: &JSValue): string {
+pub fn describeThrown(st: &Interp, v: &JSValue): string {
     let h = objHandle(v)
     if h >= 0 {
         // a real Error, or any error-shaped object (a thrown custom error like
@@ -49,7 +49,7 @@ fn describeThrown(st: &Interp, v: &JSValue): string {
     return toStr(v)
 }
 
-fn makeInterp(gcStats: bool, gcThreshold: i64, gcGrowth: i64): Interp {
+pub fn makeInterp(gcStats: bool, gcThreshold: i64, gcGrowth: i64): Interp {
     return Interp {
         scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
         objects: Vec.new(), objFreeList: Vec.new(), objExtras: Vec.new(), objExtraFree: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
@@ -62,7 +62,7 @@ fn makeInterp(gcStats: bool, gcThreshold: i64, gcGrowth: i64): Interp {
 }
 
 // scope 0 = global (never collected — always a GC root), then install builtins
-fn bootInterp(st: &mut Interp) {
+pub fn bootInterp(st: &mut Interp) {
     // objExtras[0] = the shared read-only default: every object starts with
     // extra==0, so reads of a rare field are valid before any private slot is
     // allocated. ensureExtra never returns 0, so this slot is never mutated.
@@ -73,7 +73,7 @@ fn bootInterp(st: &mut Interp) {
 
 // Lex, parse, and execute a source string in the given interpreter's globals.
 // Returns 0 on success, 1 if an uncaught exception escaped.
-fn runSource(src: &string, st: &mut Interp): i32 {
+pub fn runSource(src: &string, st: &mut Interp): i32 {
     let toks = lex(src)
     var prog = Prog {
         exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()

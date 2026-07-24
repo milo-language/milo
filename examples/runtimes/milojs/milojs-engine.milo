@@ -47,7 +47,7 @@ from "./eval" import {
 // stream. The parser desugars ESM imports to require() calls, but module
 // discovery runs on tokens *before* parsing — so modules.milo's require scan
 // cannot see them and this finds them instead.
-fn scanImports(toks: &Vec<Token>): Vec<string> {
+pub fn scanImports(toks: &Vec<Token>): Vec<string> {
     var out: Vec<string> = Vec.new()
     var i: i64 = 0
     while i < toks.len() {
@@ -80,7 +80,7 @@ fn scanImports(toks: &Vec<Token>): Vec<string> {
 
 // Register the entry module and everything it imports, transitively.
 // preloadGraph already follows require() edges; this walks the ESM ones.
-fn preloadWithImports(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
+pub fn preloadWithImports(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
     let entryIdx = preloadGraph(entryPath.clone(), prog, st)
     var queue: Vec<string> = Vec.new()
     queue.push(entryPath)
@@ -119,7 +119,7 @@ fn preloadWithImports(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 
     return entryIdx
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("milojs-engine", "the milojs JavaScript engine — runs a raw .js file")
     parser.addPositional("file", "the .js file to run")
     let parsed = parser.parse()

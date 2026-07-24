@@ -5,17 +5,17 @@
 // Header layout (relative to base): 0x00 title[21], 0x15 map byte,
 //   0x1C-0x1D checksum complement, 0x1E-0x1F checksum (comp+chk == 0xFFFF).
 
-struct Cart {
+pub struct Cart {
     rom: Vec<u8>
     map: i64 // 0 = LoROM, 1 = HiROM
 }
 
-fn u16At(data: &Vec<u8>, i: i64): i64 {
+pub fn u16At(data: &Vec<u8>, i: i64): i64 {
     return (data[i] as i64) | ((data[i + 1] as i64) << 8)
 }
 
 // Higher score = more likely the real header location.
-fn scoreHeader(data: &Vec<u8>, base: i64, wantHi: bool): i64 {
+pub fn scoreHeader(data: &Vec<u8>, base: i64, wantHi: bool): i64 {
     if base + 0x20 > data.len {
         return -1
     }
@@ -41,7 +41,7 @@ fn scoreHeader(data: &Vec<u8>, base: i64, wantHi: bool): i64 {
 
 // Parse a raw ROM image (already in bytes): strip the optional copier header and
 // detect the memory map. Feed cart.rom + cart.map to busNew() in cpu.milo.
-fn parseCart(raw: Vec<u8>): Result<Cart, string> {
+pub fn parseCart(raw: Vec<u8>): Result<Cart, string> {
     // Strip a 512-byte SMC copier header if the size isn't a clean 32 KiB multiple.
     var start: i64 = 0
     if (raw.len % 0x8000) == 512 {

@@ -43,7 +43,7 @@ from "std/pty" import {
 }
 
 // TIOCGWINSZ on darwin; fall back to 80x40 if the ioctl gives nothing.
-fn termSize(out: &mut [i64; 2]): void {
+pub fn termSize(out: &mut [i64; 2]): void {
     var ws = WinSize {
         rows: 0 as u16, cols: 0 as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
@@ -62,7 +62,7 @@ fn termSize(out: &mut [i64; 2]): void {
     out[1] = cols
 }
 
-fn emit(buf: &mut string, s: &string): void {
+pub fn emit(buf: &mut string, s: &string): void {
     for i in 0..s.len {
         buf.push(s[i])
     }
@@ -70,7 +70,7 @@ fn emit(buf: &mut string, s: &string): void {
 
 // Sum of a few travelling sine waves + a centered radial ripple, mapped to an
 // RGB rainbow via three phase-shifted sines (120° apart). out is r,g,b in 0–255.
-fn plasmaRGB(px: f64, py: f64, cx: f64, cy: f64, t: f64, out: &mut [i64; 3]): void {
+pub fn plasmaRGB(px: f64, py: f64, cx: f64, cy: f64, t: f64, out: &mut [i64; 3]): void {
     var v = mathSin(px * 0.055 + t)
     v = v + mathSin(py * 0.085 + t * 0.7)
     v = v + mathSin((px + py) * 0.045 + t * 1.3)
@@ -88,7 +88,7 @@ fn plasmaRGB(px: f64, py: f64, cx: f64, cy: f64, t: f64, out: &mut [i64; 3]): vo
 }
 
 // Draw one full plasma frame (rows 2..) into buf. Returns the frame's byte size.
-fn drawPlasma(buf: &mut string, cols: i64, pRows: i64, cx: f64, cy: f64, t: f64, top: &mut [i64; 3], bot: &mut [i64; 3]): i64 {
+pub fn drawPlasma(buf: &mut string, cols: i64, pRows: i64, cx: f64, cy: f64, t: f64, top: &mut [i64; 3], bot: &mut [i64; 3]): i64 {
     for r in 0..pRows {
         emit(buf, cursorTo(r + 2, 1))
         let yTop = (r * 2) as f64
@@ -106,7 +106,7 @@ fn drawPlasma(buf: &mut string, cols: i64, pRows: i64, cx: f64, cy: f64, t: f64,
     return buf.len as i64
 }
 
-fn hud(buf: &mut string, cols: i64, rows: i64, fps: f64, frameMs: f64, mbps: f64, tail: &string): void {
+pub fn hud(buf: &mut string, cols: i64, rows: i64, fps: f64, frameMs: f64, mbps: f64, tail: &string): void {
     emit(buf, cursorTo(1, 1))
     emit(buf, bold(" milo plasma "))
     emit(buf, gray($" {cols}x{rows}  "))
@@ -117,7 +117,7 @@ fn hud(buf: &mut string, cols: i64, rows: i64, fps: f64, frameMs: f64, mbps: f64
 
 // Headless benchmark: render uncapped for ~2s with no input, report the rate.
 // Deterministic 80x40 so the number is comparable run to run.
-fn runBench(): void {
+pub fn runBench(): void {
     let cols: i64 = 80
     let rows: i64 = 40
     let pRows = rows - 1
@@ -147,7 +147,7 @@ fn runBench(): void {
     eprint($"plasma bench: {cols}x{rows}  {frames} frames in {formatFloat(secs, 2)}s  =  {formatFloat(fps, 0)} fps  {formatFloat(mbps, 1)} MB/s\n")
 }
 
-fn runInteractive(): void {
+pub fn runInteractive(): void {
     let termState = enableRawMode()
     writeStdout(hideCursor() + clearScreen())
 
@@ -204,7 +204,7 @@ fn runInteractive(): void {
     print("milo plasma — https://milo-language.github.io/milo/")
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     if hasFlag("bench") {
         runBench()
     } else {

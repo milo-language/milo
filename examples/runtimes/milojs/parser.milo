@@ -13,7 +13,7 @@ from "./value" import {
     i64ToStr, numToStr
 }
 
-struct PState {
+pub struct PState {
     toks: Vec<Token>,
     pos: i64,
     // source path, so a parse error names the module it came from
@@ -33,20 +33,20 @@ struct PState {
     quiet: bool,
 }
 
-fn peekKind(p: &PState): i32 {
+pub fn peekKind(p: &PState): i32 {
     if p.pos < p.toks.len() {
         return p.toks[p.pos].kind
     }
     return T_EOF
 }
 
-fn advance(p: &mut PState) {
+pub fn advance(p: &mut PState) {
     p.pos = p.pos + 1
 }
 
 // Can the current token serve as a property name? Identifiers and any keyword
 // (obj.catch / obj.default / obj.function are all legal JS), but not literals.
-fn isPropName(p: &PState): bool {
+pub fn isPropName(p: &PState): bool {
     if p.pos >= p.toks.len() {
         return false
     }
@@ -58,7 +58,7 @@ fn isPropName(p: &PState): bool {
 }
 
 // Human-readable text for a token, for diagnostics.
-fn tokenDesc(p: &PState, i: i64): string {
+pub fn tokenDesc(p: &PState, i: i64): string {
     if i < 0 || i >= p.toks.len() {
         return "end of input"
     }
@@ -73,7 +73,7 @@ fn tokenDesc(p: &PState, i: i64): string {
 // A wide window matters more than a line number: the files this fails on are
 // minified into a few enormous lines, so "line 3" locates nothing. Twelve tokens
 // either side is usually enough to grep the construct out of the bundle.
-fn tokenContext(p: &PState): string {
+pub fn tokenContext(p: &PState): string {
     var out = ""
     var i = p.pos - 12
     while i <= p.pos + 12 {
@@ -92,7 +92,7 @@ fn tokenContext(p: &PState): string {
 // Consume `kind` if present; parser is forgiving (bad input still terminates).
 // Only the first mismatch of a parse is reported: with no error recovery, every
 // later `expect` is reacting to the same original mistake.
-fn expect(p: &mut PState, kind: i32) {
+pub fn expect(p: &mut PState, kind: i32) {
     if peekKind(p) == kind {
         advance(p)
         return
@@ -113,7 +113,7 @@ fn expect(p: &mut PState, kind: i32) {
 // explicit `;`, the `}` closing the enclosing block, end of input, or a line
 // break before the next token (automatic semicolon insertion). Anything else
 // means the statement ran into a token that does not belong to it.
-fn atStatementEnd(p: &PState): bool {
+pub fn atStatementEnd(p: &PState): bool {
     let k = peekKind(p)
     if k == T_SEMI || k == T_RBRACE || k == T_EOF {
         return true
@@ -125,7 +125,7 @@ fn atStatementEnd(p: &PState): bool {
 }
 
 // Report a token that has no business continuing the current statement.
-fn expectStatementEnd(p: &mut PState) {
+pub fn expectStatementEnd(p: &mut PState) {
     if atStatementEnd(p) {
         return
     }
@@ -140,7 +140,7 @@ fn expectStatementEnd(p: &mut PState) {
 
 // A template literal desugars to string concatenation, starting from a string
 // chunk so the whole chain coerces to string: `a${x}b` → "a" + x + "b".
-fn parseTemplate(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseTemplate(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_TEMPLATE_BEGIN)
     var result = -1
     if peekKind(p) == T_TEMPLATE_CHUNK {
@@ -169,7 +169,7 @@ fn parseTemplate(p: &mut PState, prog: &mut Prog): i64 {
 // `tag`a${x}b`` calls tag(["a","b"], x). The strings array is built as an array
 // literal and the hole expressions become the remaining arguments; there is no
 // separate .raw, which nothing in the target reads.
-fn parseTaggedTemplate(p: &mut PState, prog: &mut Prog, tagExpr: i64): i64 {
+pub fn parseTaggedTemplate(p: &mut PState, prog: &mut Prog, tagExpr: i64): i64 {
     expect(p, T_TEMPLATE_BEGIN)
     var chunks: Vec<i64> = Vec.new()
     var holes: Vec<i64> = Vec.new()
@@ -207,7 +207,7 @@ fn parseTaggedTemplate(p: &mut PState, prog: &mut Prog, tagExpr: i64): i64 {
 }
 
 // One call-argument or array element, possibly a `...spread`.
-fn parseArg(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseArg(p: &mut PState, prog: &mut Prog): i64 {
     if peekKind(p) == T_SPREAD {
         advance(p)
         let e = parseExpr(p, prog)
@@ -219,7 +219,7 @@ fn parseArg(p: &mut PState, prog: &mut Prog): i64 {
 // Build an arrow function from its parameter list; the caller has consumed `=>`.
 // Body is a block `{ }` or a single expression (implicit return). isArrow=true so
 // it doesn't bind its own `this`.
-fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool, prelude: Vec<DeclItem>, mkRestFrom: i64): i64 {
+pub fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool, prelude: Vec<DeclItem>, mkRestFrom: i64): i64 {
     var body = -1
     if peekKind(p) == T_LBRACE {
         body = parseBraceBlock(p, prog)
@@ -246,7 +246,7 @@ fn makeArrow(p: &mut PState, prog: &mut Prog, params: Vec<string>, isAsync: bool
 // Try to read `( id, id, ... ) =>` starting at a '('. On success, consumes
 // through `=>` and returns true with params in `out`. On failure, restores the
 // position so the caller can parse a normal parenthesized expression.
-fn looksLikeArrow(p: &PState): bool {
+pub fn looksLikeArrow(p: &PState): bool {
     // token-only scan to the matching ')' — a real parse would allocate AST
     // nodes that a rollback couldn't reclaim
     var i = p.pos + 1
@@ -269,7 +269,7 @@ fn looksLikeArrow(p: &PState): bool {
 }
 
 // Consume `( params ) =>`, which looksLikeArrow has already confirmed.
-fn parseArrowHead(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude: &mut Vec<DeclItem>): i64 {
+pub fn parseArrowHead(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude: &mut Vec<DeclItem>): i64 {
     var rest: i64 = -1
     expect(p, T_LPAREN)
     while peekKind(p) != T_RPAREN && peekKind(p) != T_EOF {
@@ -287,7 +287,7 @@ fn parseArrowHead(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, pre
 
 // `x = <default>` in a pattern: JS only substitutes on undefined. This compares
 // loosely, so an explicit null also takes the default — a small deviation.
-fn withDefault(prog: &mut Prog, valExpr: i64, dflt: i64): i64 {
+pub fn withDefault(prog: &mut Prog, valExpr: i64, dflt: i64): i64 {
     let undef = addExpr(prog, Expr.UndefLit)
     let cond = addExpr(prog, Expr.Bin("==", valExpr, undef))
     return addExpr(prog, Expr.Cond(cond, dflt, valExpr))
@@ -296,7 +296,7 @@ fn withDefault(prog: &mut Prog, valExpr: i64, dflt: i64): i64 {
 // Destructuring is desugared at parse time into a flat list of declarators that
 // read out of `srcName`. Nested patterns bind an intermediate temp and recurse;
 // the temp name is keyed on token position so it can't collide.
-fn patternDecls(p: &mut PState, prog: &mut Prog, srcName: string, out: &mut Vec<DeclItem>) {
+pub fn patternDecls(p: &mut PState, prog: &mut Prog, srcName: string, out: &mut Vec<DeclItem>) {
     if peekKind(p) == T_LBRACE {
         advance(p)
         // keys bound so far, so a trailing `...rest` can exclude them
@@ -432,7 +432,7 @@ fn patternDecls(p: &mut PState, prog: &mut Prog, srcName: string, out: &mut Vec<
 
 // Parse one parameter. A destructuring pattern becomes a synthetic parameter
 // name plus declarators that unpack it at the top of the body.
-fn parseParam(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude: &mut Vec<DeclItem>): bool {
+pub fn parseParam(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude: &mut Vec<DeclItem>): bool {
     if peekKind(p) == T_LBRACE || peekKind(p) == T_LBRACKET {
         let tmp = "__a" + i64ToStr(p.pos)
         params.push(tmp.clone())
@@ -488,7 +488,7 @@ fn parseParam(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude
 
 // `a = 1, b = 2` in a for-init or for-update. parseExpr deliberately stops at a
 // comma (declarator lists need that), so sequences are stitched up here.
-fn parseCommaSeq(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseCommaSeq(p: &mut PState, prog: &mut Prog): i64 {
     var e = parseExpr(p, prog)
     while peekKind(p) == T_COMMA {
         advance(p)
@@ -498,20 +498,20 @@ fn parseCommaSeq(p: &mut PState, prog: &mut Prog): i64 {
     return e
 }
 
-fn isPatternStart(p: &PState): bool {
+pub fn isPatternStart(p: &PState): bool {
     let k = peekKind(p)
     return k == T_LBRACE || k == T_LBRACKET
 }
 
 // Wrap desugared declarators into one statement.
-fn declsToStmt(prog: &mut Prog, items: Vec<DeclItem>): i64 {
+pub fn declsToStmt(prog: &mut Prog, items: Vec<DeclItem>): i64 {
     prog.declLists.push(items)
     return addStmt(prog, Stmt.MultiDecl(prog.declLists.len() - 1))
 }
 
 // Put a statement at the front of an already-parsed block (used to unpack
 // destructured parameters and for-of bindings before the body runs).
-fn prependStmt(prog: &mut Prog, blockIdx: i64, stmtIdx: i64) {
+pub fn prependStmt(prog: &mut Prog, blockIdx: i64, stmtIdx: i64) {
     var merged: Vec<i64> = Vec.new()
     merged.push(stmtIdx)
     var i: i64 = 0
@@ -522,7 +522,7 @@ fn prependStmt(prog: &mut Prog, blockIdx: i64, stmtIdx: i64) {
     prog.blocks[blockIdx] = merged
 }
 
-fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
     let k = peekKind(p)
     if k == T_NUM {
         let v = p.toks[p.pos].num
@@ -685,7 +685,7 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
 
 // new Ctor(args) — the constructor may be a member chain (new a.b.C()). The arg
 // list is parsed here; a following postfix chain (new C().x) is left to the caller.
-fn parseNew(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseNew(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_NEW)
     var callee = parsePrimary(p, prog)
     while peekKind(p) == T_DOT {
@@ -715,7 +715,7 @@ fn parseNew(p: &mut PState, prog: &mut Prog): i64 {
 }
 
 // [ expr, expr, ... ] — element expressions, trailing comma tolerated
-fn parseArrayLiteral(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseArrayLiteral(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_LBRACKET)
     var elems: Vec<i64> = Vec.new()
     while peekKind(p) != T_RBRACKET && peekKind(p) != T_EOF {
@@ -738,7 +738,7 @@ fn parseArrayLiteral(p: &mut PState, prog: &mut Prog): i64 {
 }
 
 // { key: expr, key: expr, ... } — keys are identifiers or string literals
-fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_LBRACE)
     var props: Vec<PropInit> = Vec.new()
     while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
@@ -856,7 +856,7 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
     return addExpr(prog, Expr.ObjLit(idx))
 }
 
-fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
     var e = parsePrimary(p, prog)
     var go = true
     var sawOpt = false
@@ -946,7 +946,7 @@ fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
     return e
 }
 
-fn parseUnary(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseUnary(p: &mut PState, prog: &mut Prog): i64 {
     let k = peekKind(p)
     if k == T_MINUS {
         advance(p)
@@ -1001,7 +1001,7 @@ fn parseUnary(p: &mut PState, prog: &mut Prog): i64 {
     return parsePostfix(p, prog)
 }
 
-fn parseMul(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseMul(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseUnary(p, prog)
     var go = true
     while go {
@@ -1027,7 +1027,7 @@ fn parseMul(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
-fn parseAdd(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseAdd(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseMul(p, prog)
     var go = true
     while go {
@@ -1047,7 +1047,7 @@ fn parseAdd(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
-fn parseShift(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseShift(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseAdd(p, prog)
     var go = true
     while go {
@@ -1069,7 +1069,7 @@ fn parseShift(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
-fn parseRel(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseRel(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseShift(p, prog)
     var go = true
     while go {
@@ -1101,7 +1101,7 @@ fn parseRel(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
-fn parseEq(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseEq(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseRel(p, prog)
     var go = true
     while go {
@@ -1125,7 +1125,7 @@ fn parseEq(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
-fn parseBitAnd(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseBitAnd(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseEq(p, prog)
     while peekKind(p) == T_AMP {
         advance(p)
@@ -1135,7 +1135,7 @@ fn parseBitAnd(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
-fn parseBitXor(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseBitXor(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseBitAnd(p, prog)
     while peekKind(p) == T_CARET {
         advance(p)
@@ -1145,7 +1145,7 @@ fn parseBitXor(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
-fn parseBitOr(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseBitOr(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseBitXor(p, prog)
     while peekKind(p) == T_PIPE {
         advance(p)
@@ -1155,7 +1155,7 @@ fn parseBitOr(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
-fn parseAnd(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseAnd(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseBitOr(p, prog)
     while peekKind(p) == T_ANDAND {
         advance(p)
@@ -1165,7 +1165,7 @@ fn parseAnd(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
-fn parseOr(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseOr(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseAnd(p, prog)
     var going = true
     while going {
@@ -1185,7 +1185,7 @@ fn parseOr(p: &mut PState, prog: &mut Prog): i64 {
 }
 
 // c ? a : b — sits between the logical operators and assignment
-fn parseTernary(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseTernary(p: &mut PState, prog: &mut Prog): i64 {
     let cond = parseOr(p, prog)
     if peekKind(p) == T_QUESTION {
         advance(p)
@@ -1197,7 +1197,7 @@ fn parseTernary(p: &mut PState, prog: &mut Prog): i64 {
     return cond
 }
 
-fn compoundOp(k: i32): string {
+pub fn compoundOp(k: i32): string {
     if k == T_PLUSEQ {
         return "+"
     }
@@ -1234,7 +1234,7 @@ fn compoundOp(k: i32): string {
     return "%"
 }
 
-fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
     // `yield` binds looser than everything but the comma operator, so it belongs
     // here rather than with the unary operators: `yield a + b` yields the sum.
     // Parsed but not executable — calling a generator throws first (eval.milo),
@@ -1311,7 +1311,7 @@ fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
 // binding name is known statically, so set it on the anonymous FuncDef at parse
 // time — no per-instance runtime name slot needed. Only anonymous functions are
 // affected; a named function expression keeps its own name.
-fn inferFuncName(prog: &mut Prog, initIdx: i64, name: &string) {
+pub fn inferFuncName(prog: &mut Prog, initIdx: i64, name: &string) {
     if initIdx < 0 || name.len() == 0 {
         return
     }
@@ -1326,7 +1326,7 @@ fn inferFuncName(prog: &mut Prog, initIdx: i64, name: &string) {
     }
 }
 
-fn parseFunction(p: &mut PState, prog: &mut Prog, isAsync: bool): i64 {
+pub fn parseFunction(p: &mut PState, prog: &mut Prog, isAsync: bool): i64 {
     expect(p, T_FUNCTION)
     // generator star: parsed so the surrounding module loads. Generators need
     // suspension, which the engine cannot do, so calling one throws.
@@ -1366,7 +1366,7 @@ fn parseFunction(p: &mut PState, prog: &mut Prog, isAsync: bool): i64 {
 }
 
 // { stmt* } — returns index into prog.blocks
-fn parseBraceBlock(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseBraceBlock(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_LBRACE)
     var list: Vec<i64> = Vec.new()
     while peekKind(p) != T_RBRACE && peekKind(p) != T_EOF {
@@ -1377,7 +1377,7 @@ fn parseBraceBlock(p: &mut PState, prog: &mut Prog): i64 {
     return prog.blocks.len() - 1
 }
 
-fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
     let k = peekKind(p)
     if k == T_SEMI {
         advance(p)
@@ -1747,7 +1747,7 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
 
 // class Name [extends Base] { [static] [async] name(params) { body } ... }
 // Class fields and getters are not supported; a getter parses as a method.
-fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
     expect(p, T_CLASS)
     var name = ""
     if peekKind(p) == T_IDENT {
@@ -1924,7 +1924,7 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
 }
 
 // require("<spec>") as an expression.
-fn requireCall(prog: &mut Prog, spec: string): i64 {
+pub fn requireCall(prog: &mut Prog, spec: string): i64 {
     let callee = addExpr(prog, Expr.Ident("require"))
     var args: Vec<i64> = Vec.new()
     args.push(addExpr(prog, Expr.StrLit(spec)))
@@ -1942,7 +1942,7 @@ fn requireCall(prog: &mut Prog, spec: string): i64 {
 // One MultiDecl covers every form, which keeps this a single statement and so
 // avoids threading extra statements out of parseStmt. Default imports are not
 // used by the QuickJS suite and are not supported.
-fn parseImport(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseImport(p: &mut PState, prog: &mut Prog): i64 {
     advance(p)
     var items: Vec<DeclItem> = Vec.new()
     // unique per import so two imports in one file can't collide
@@ -2039,7 +2039,7 @@ fn parseImport(p: &mut PState, prog: &mut Prog): i64 {
 // Destructuring lowers to a hidden temp plus one declarator per bound name
 // (`__d12`, `__a3`, `__f7`). Those temps are declarators like any other, so
 // `export const { a, b } = obj` would otherwise export them alongside a and b.
-fn isSyntheticTemp(name: &string): bool {
+pub fn isSyntheticTemp(name: &string): bool {
     if name.len() < 3 || name[0] != '_' || name[1] != '_' {
         return false
     }
@@ -2058,7 +2058,7 @@ fn isSyntheticTemp(name: &string): bool {
 
 // `exports.name = local` as a statement — the desugaring target for every
 // `export` form.
-fn exportAssign(prog: &mut Prog, name: string, local: string): i64 {
+pub fn exportAssign(prog: &mut Prog, name: string, local: string): i64 {
     let obj = addExpr(prog, Expr.Ident("exports"))
     let key = addExpr(prog, Expr.StrLit(name))
     let val = addExpr(prog, Expr.Ident(local))
@@ -2069,7 +2069,7 @@ fn exportAssign(prog: &mut Prog, name: string, local: string): i64 {
 // in parseStmt: the declaration is parsed normally and the matching
 // `exports.x = x` statements are appended to the same statement list. Bindings
 // are therefore snapshots, not ESM live bindings — see docs/milojs-quickjs-plan.md.
-fn parseExport(p: &mut PState, prog: &mut Prog, list: &mut Vec<i64>) {
+pub fn parseExport(p: &mut PState, prog: &mut Prog, list: &mut Vec<i64>) {
     advance(p)
     let k = peekKind(p)
 
@@ -2143,7 +2143,7 @@ fn parseExport(p: &mut PState, prog: &mut Prog, list: &mut Vec<i64>) {
     }
 }
 
-fn parseProgram(p: &mut PState, prog: &mut Prog): i64 {
+pub fn parseProgram(p: &mut PState, prog: &mut Prog): i64 {
     var list: Vec<i64> = Vec.new()
     while peekKind(p) != T_EOF {
         if peekKind(p) == T_EXPORT {

@@ -10,11 +10,11 @@ from "std/os" import {
     exit, fork, system, waitpid
 }
 
-fn substitute(template: &string, line: &string): string {
+pub fn substitute(template: &string, line: &string): string {
     return template.replace("{}", line)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("parallel", "run commands in parallel across input lines")
     parser.addI64("jobs", "j", "number of parallel jobs", 4)
     parser.addBool("dry-run", "n", "print commands without executing")

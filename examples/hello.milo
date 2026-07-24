@@ -1,5 +1,5 @@
 // @run:
-fn main(): i32 {
+pub fn main(): i32 {
     print("Hello, Milo!")
     return 0
 }

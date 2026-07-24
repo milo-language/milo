@@ -10,7 +10,7 @@ from "std/platform" import {
 
 // ── helpers ──
 
-fn _readI64FromBuf(buf: &[u8; 16], off: i64): i64 {
+pub fn _readI64FromBuf(buf: &[u8; 16], off: i64): i64 {
     var val: i64 = 0
     var i: i64 = 0
     while i < 8 {
@@ -22,13 +22,13 @@ fn _readI64FromBuf(buf: &[u8; 16], off: i64): i64 {
 
 // ── Instant — a point in time ──
 
-struct Instant {
+pub struct Instant {
     sec: i64,
     usec: i64,
 }
 
 // Capture the current wall-clock time.
-fn now(): Instant {
+pub fn now(): Instant {
     var tv: [u8; 16] = [0; 16]
     gettimeofday(tv, 0 as *u8)
     let sec = _readI64FromBuf(tv, 0)
@@ -39,25 +39,25 @@ fn now(): Instant {
 }
 
 // Milliseconds since Unix epoch.
-fn epochMillis(): i64 {
+pub fn epochMillis(): i64 {
     let t = now()
     return t.sec * 1000 + t.usec / 1000
 }
 
 // Seconds since Unix epoch.
-fn epochSecs(): i64 {
+pub fn epochSecs(): i64 {
     let t = now()
     return t.sec
 }
 
 // ── Duration — elapsed time between two Instants ──
 
-struct Duration {
+pub struct Duration {
     totalUsec: i64,
 }
 
 // Elapsed time between two instants.
-fn elapsed(start: Instant, end: Instant): Duration {
+pub fn elapsed(start: Instant, end: Instant): Duration {
     let usec = (end.sec - start.sec) * 1000000 + (end.usec - start.usec)
     return Duration {
         totalUsec: usec
@@ -65,20 +65,20 @@ fn elapsed(start: Instant, end: Instant): Duration {
 }
 
 // Elapsed time since an instant.
-fn since(start: Instant): Duration {
+pub fn since(start: Instant): Duration {
     return elapsed(start, now())
 }
 
 // Duration accessors.
-fn durationSecs(d: &Duration): i64 {
+pub fn durationSecs(d: &Duration): i64 {
     return d.totalUsec / 1000000
 }
 
-fn durationMillis(d: &Duration): i64 {
+pub fn durationMillis(d: &Duration): i64 {
     return d.totalUsec / 1000
 }
 
-fn durationMicros(d: &Duration): i64 {
+pub fn durationMicros(d: &Duration): i64 {
     return d.totalUsec
 }
 
@@ -86,7 +86,7 @@ fn durationMicros(d: &Duration): i64 {
 
 // Sleep for the given number of milliseconds.
 // Inside a green thread, yields cooperatively so other tasks keep running.
-fn sleepMs(ms: i64): void {
+pub fn sleepMs(ms: i64): void {
     if schedulerCurrent() as i64 != 0 {
         let deadline = epochMillis() + ms
         while epochMillis() < deadline {
@@ -98,6 +98,6 @@ fn sleepMs(ms: i64): void {
 }
 
 // Sleep for the given number of seconds.
-fn sleepSecs(secs: i64): void {
+pub fn sleepSecs(secs: i64): void {
     sleepMs(secs * 1000)
 }

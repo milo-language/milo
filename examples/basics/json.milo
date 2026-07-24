@@ -4,13 +4,13 @@ from "std/json" import {
     jsonParse
 }
 
-struct User {
+pub struct User {
     name: string,
     age: i64,
     active: bool,
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // 1. Stringify a struct → JSON string
     let alice = User {
         name: "Alice", age: 30, active: true

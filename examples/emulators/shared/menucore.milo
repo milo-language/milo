@@ -16,14 +16,14 @@ from "./font" import {
 
 // A menu row: a system header (kind 0), a selectable ROM (kind 1), or a
 // non-selectable note like "(no roms)" (kind 2).
-struct Row {
+pub struct Row {
     kind: i64,
     label: string,
     sys: string,
     path: string,
 }
 
-fn joinPath(dir: &string, name: &string): string {
+pub fn joinPath(dir: &string, name: &string): string {
     var full: string = ""
     var k: i64 = 0
     while k < dir.len {
@@ -40,7 +40,7 @@ fn joinPath(dir: &string, name: &string): string {
 }
 
 // Lexicographic string less-than (byte order) — for sorting ROM names.
-fn strLess(a: &string, b: &string): bool {
+pub fn strLess(a: &string, b: &string): bool {
     var i: i64 = 0
     while i < a.len && i < b.len {
         if a[i] != b[i] {
@@ -52,7 +52,7 @@ fn strLess(a: &string, b: &string): bool {
 }
 
 // Human-readable label: drop the extension, uppercase, underscores -> spaces.
-fn prettify(name: &string): string {
+pub fn prettify(name: &string): string {
     var end = name.len
     var i = name.len - 1
     while i >= 0 {
@@ -81,7 +81,7 @@ fn prettify(name: &string): string {
 // Extract a 21-byte SNES header title at `off`, trimmed of trailing spaces, plus
 // a printable-character score so the caller can pick LoROM vs HiROM (whichever
 // header is real). Returns (score, title).
-fn snesTitleAt(data: &string, off: i64): i64 {
+pub fn snesTitleAt(data: &string, off: i64): i64 {
     if off + 21 > data.len {
         return -1
     }
@@ -97,7 +97,7 @@ fn snesTitleAt(data: &string, off: i64): i64 {
     return score
 }
 
-fn snesTitleStr(data: &string, off: i64): string {
+pub fn snesTitleStr(data: &string, off: i64): string {
     var s: string = ""
     var end: i64 = 21
     // Trim trailing spaces/nulls.
@@ -123,7 +123,7 @@ fn snesTitleStr(data: &string, off: i64): string {
 
 // Count printable ASCII bytes in a `len`-byte window — used to tell a real
 // Genesis header title from garbage (e.g. an interleaved/SMD dump).
-fn printScore(data: &string, off: i64, len: i64): i64 {
+pub fn printScore(data: &string, off: i64, len: i64): i64 {
     if off + len > data.len {
         return -1
     }
@@ -141,7 +141,7 @@ fn printScore(data: &string, off: i64, len: i64): i64 {
 
 // Read a 48-byte Genesis header title, collapsing runs of spaces and trimming.
 // Genesis titles are space-padded to a fixed width ("SONIC THE       HEDGEHOG").
-fn genesisTitleStr(data: &string, off: i64): string {
+pub fn genesisTitleStr(data: &string, off: i64): string {
     var s: string = ""
     var pendingSpace = false
     var started = false
@@ -171,7 +171,7 @@ fn genesisTitleStr(data: &string, off: i64): string {
 // Human-readable label. For SNES, read the game name from the cartridge header
 // (LoROM $7FC0 / HiROM $FFC0, whichever scores as real ASCII) so "smw.smc" shows
 // as "SUPER MARIO WORLD". Falls back to the prettified filename on any failure.
-fn romTitle(path: &string, name: &string, sys: &string): string {
+pub fn romTitle(path: &string, name: &string, sys: &string): string {
     if sys == "genesis" {
         match readFile(path) {
             Result.Ok(data) => {
@@ -229,7 +229,7 @@ fn romTitle(path: &string, name: &string, sys: &string): string {
     return prettify(name)
 }
 
-fn hasRomExt(name: &string, sys: &string): bool {
+pub fn hasRomExt(name: &string, sys: &string): bool {
     if sys == "nes" {
         return strEndsWith(name, ".nes") || strEndsWith(name, ".NES")
     }
@@ -247,7 +247,7 @@ fn hasRomExt(name: &string, sys: &string): bool {
 }
 
 // Append the header + ROM rows for one system, sorted by name.
-fn addSystem(rows: &mut Vec<Row>, sel: &mut Vec<i64>, title: string, sys: string): void {
+pub fn addSystem(rows: &mut Vec<Row>, sel: &mut Vec<i64>, title: string, sys: string): void {
     rows.push(Row {
         kind: 0, label: title, sys: sys.clone(), path: ""
     }
@@ -290,17 +290,18 @@ fn addSystem(rows: &mut Vec<Row>, sel: &mut Vec<i64>, title: string, sys: string
     }
 }
 
-fn buildRows(rows: &mut Vec<Row>, sel: &mut Vec<i64>): void {
+pub fn buildRows(rows: &mut Vec<Row>, sel: &mut Vec<i64>): void {
     addSystem(rows, sel, "NES", "nes")
     addSystem(rows, sel, "GENESIS", "genesis")
     addSystem(rows, sel, "SNES", "snes")
 }
 
 // Row layout constants (framebuffer pixels).
-let LIST_TOP: i64 = 58
-let ROW_H: i64 = 22
+pub let LIST_TOP: i64 = 58
 
-fn render(fb: &mut [u32; 230400], rows: &Vec<Row>, selRow: i64, scrollTop: i64, visN: i64, font: &string, glyphs: &[string; 49]): void {
+pub let ROW_H: i64 = 22
+
+pub fn render(fb: &mut [u32; 230400], rows: &Vec<Row>, selRow: i64, scrollTop: i64, visN: i64, font: &string, glyphs: &[string; 49]): void {
     let bg = rgb(16, 18, 30)
     let gold = rgb(248, 206, 92)
     let romCol = rgb(206, 212, 226)

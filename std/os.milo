@@ -29,55 +29,55 @@ from "std/runtime" import {
 // (exit 141) the first time a client disconnects mid-response. Every runtime
 // that serves connections ignores it and handles the EPIPE from write instead.
 @cSig("signal.h", "void (*signal(int, void (*)(int)))(int)")
-extern fn signal(sig: i32, handler: *u8): *u8
+pub extern fn signal(sig: i32, handler: *u8): *u8
 
 @cSig("sys/stat.h", "int fstat(int, struct stat *)")
-extern fn fstat(fd: i32, buf: *u8): i32
+pub extern fn fstat(fd: i32, buf: *u8): i32
 
 @cSig("sys/stat.h", "int stat(const char *, struct stat *)")
-extern fn stat(path: *u8, buf: *u8): i32
+pub extern fn stat(path: *u8, buf: *u8): i32
 
 @cSig("stdio.h", "int puts(const char *)")
-extern fn puts(s: *u8): i32
+pub extern fn puts(s: *u8): i32
 
 @cSig("stdio.h", "int printf(const char *, ...)")
-extern fn printf(fmt: *u8,...): i32
+pub extern fn printf(fmt: *u8,...): i32
 
 // ── Memory ──
 
 @cSig("stdlib.h", "void *malloc(size_t)")
-extern fn malloc(size: i64): *u8
+pub extern fn malloc(size: i64): *u8
 
 @cSig("stdlib.h", "void *realloc(void *, size_t)")
-extern fn realloc(ptr: *u8, size: i64): *u8
+pub extern fn realloc(ptr: *u8, size: i64): *u8
 
 @cSig("stdlib.h", "void free(void *)")
-extern fn free(ptr: *u8): void
+pub extern fn free(ptr: *u8): void
 
 @cSig("string.h", "void *memcpy(void *, const void *, size_t)")
-extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
+pub extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
 
 @cSig("string.h", "void *memset(void *, int, size_t)")
-extern fn memset(dst: *u8, c: i32, n: i64): *u8
+pub extern fn memset(dst: *u8, c: i32, n: i64): *u8
 
 @cSig("string.h", "void *memmove(void *, const void *, size_t)")
-extern fn memmove(dst: *u8, src: *u8, n: i64): *u8
+pub extern fn memmove(dst: *u8, src: *u8, n: i64): *u8
 
 // ── Error ──
 
 @cSig("string.h", "char *strerror(int)")
-extern fn strerror(errnum: i32): *u8
+pub extern fn strerror(errnum: i32): *u8
 
 // ── Strings ──
 
 @cSig("string.h", "size_t strlen(const char *)")
-extern fn strlen(s: *u8): u64
+pub extern fn strlen(s: *u8): u64
 
-extern fn strcmp(a: *u8, b: *u8): i32
+pub extern fn strcmp(a: *u8, b: *u8): i32
 
-extern fn strncmp(a: *u8, b: *u8, n: i64): i32
+pub extern fn strncmp(a: *u8, b: *u8, n: i64): i32
 
-extern fn snprintf(buf: *u8, size: i64, fmt: *u8,...): i32
+pub extern fn snprintf(buf: *u8, size: i64, fmt: *u8,...): i32
 
 // ── Network ──
 
@@ -85,37 +85,37 @@ extern fn snprintf(buf: *u8, size: i64, fmt: *u8,...): i32
 // here takes its low 32 bits, valid because MS documents SOCKET values fit in 32 bits. It
 // also requires WSAStartup to have run — std/net does that via ensureNetInit(), and a raw
 // std/os socket() caller must call ensureNetInit() (a no-op on POSIX) itself first.
-extern fn socket(domain: i32, sockType: i32, protocol: i32): i32
+pub extern fn socket(domain: i32, sockType: i32, protocol: i32): i32
 
 // The socket syscalls take `struct sockaddr *` and read the family from its first bytes,
 // so ONE extern must serve every family — Milo can't declare bind twice (the resolver
 // merges every decl of an imported file, so a second one at another type just loses).
 // Raw here, typed at the wrappers below: the unsafe seam stays inside std/os and callers
 // never hand-write an addrlen, which is where a wrong-length bug would come from.
-extern fn bind(sockfd: i32, addr: *SockAddr, addrlen: u32): i32
+pub extern fn bind(sockfd: i32, addr: *SockAddr, addrlen: u32): i32
 
-extern fn listen(sockfd: i32, backlog: i32): i32
+pub extern fn listen(sockfd: i32, backlog: i32): i32
 
 // accept lets the KERNEL choose the peer's family, so the out-param must be sized for any
 // of them. This took a 16-byte sockaddr_in with addrlen=16, which silently truncates an
 // IPv6 peer (28 bytes) — a live bug independent of AF_UNIX.
-extern fn accept(sockfd: i32, addr: &mut SockAddrStorage, addrlen: &mut u32): i32
+pub extern fn accept(sockfd: i32, addr: &mut SockAddrStorage, addrlen: &mut u32): i32
 
-extern fn connect(sockfd: i32, addr: *SockAddr, addrlen: u32): i32
+pub extern fn connect(sockfd: i32, addr: *SockAddr, addrlen: u32): i32
 
-extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
+pub extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
 
-extern fn getsockopt(fd: i32, level: i32, opt: i32, val: &mut i32, len: &mut u32): i32
+pub extern fn getsockopt(fd: i32, level: i32, opt: i32, val: &mut i32, len: &mut u32): i32
 
-extern fn htons(hostshort: u16): u16
+pub extern fn htons(hostshort: u16): u16
 
-extern fn ntohs(netshort: u16): u16
+pub extern fn ntohs(netshort: u16): u16
 
 // Same shape as accept: the kernel writes back whatever family the socket is, so the
 // buffer must be storage-sized, not sockaddr_in-sized.
-extern fn getsockname(fd: i32, addr: &mut SockAddrStorage, addrlen: &mut u32): i32
+pub extern fn getsockname(fd: i32, addr: &mut SockAddrStorage, addrlen: &mut u32): i32
 
-extern fn inet_pton(af: i32, src: *u8, dst: *u8): i32
+pub extern fn inet_pton(af: i32, src: *u8, dst: *u8): i32
 
 // ── typed sockaddr wrappers ──
 // One per family. Each owns its own addrlen, so no caller can pass the wrong one.
@@ -123,7 +123,7 @@ extern fn inet_pton(af: i32, src: *u8, dst: *u8): i32
 // The bound port, whatever family the socket is. getsockname writes into storage-sized
 // space because the kernel picks the family; sin_port and sin6_port BOTH sit at offset 2
 // (same invariant as sun_path), so one read serves v4 and v6. Returns -1 on failure.
-fn getSockPort(fd: i32): i32 {
+pub fn getSockPort(fd: i32): i32 {
     unsafe {
         var st = makeZeroedSockaddrStorage()
         var len: u32 = sockAddrStorageLen()
@@ -135,37 +135,37 @@ fn getSockPort(fd: i32): i32 {
     }
 }
 
-fn bindIn(fd: i32, addr: &SockAddrIn): i32 {
+pub fn bindIn(fd: i32, addr: &SockAddrIn): i32 {
     unsafe {
         return bind(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
     }
 }
 
-fn bindIn6(fd: i32, addr: &SockAddrIn6): i32 {
+pub fn bindIn6(fd: i32, addr: &SockAddrIn6): i32 {
     unsafe {
         return bind(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
     }
 }
 
-fn bindUn(fd: i32, addr: &SockAddrUn): i32 {
+pub fn bindUn(fd: i32, addr: &SockAddrUn): i32 {
     unsafe {
         return bind(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
     }
 }
 
-fn connectIn(fd: i32, addr: &SockAddrIn): i32 {
+pub fn connectIn(fd: i32, addr: &SockAddrIn): i32 {
     unsafe {
         return connect(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
     }
 }
 
-fn connectIn6(fd: i32, addr: &SockAddrIn6): i32 {
+pub fn connectIn6(fd: i32, addr: &SockAddrIn6): i32 {
     unsafe {
         return connect(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
     }
 }
 
-fn connectUn(fd: i32, addr: &SockAddrUn): i32 {
+pub fn connectUn(fd: i32, addr: &SockAddrUn): i32 {
     unsafe {
         return connect(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
     }
@@ -173,145 +173,145 @@ fn connectUn(fd: i32, addr: &SockAddrUn): i32 {
 
 // ── TLS (OpenSSL) ──
 
-extern fn TLS_client_method(): *u8
+pub extern fn TLS_client_method(): *u8
 
-extern fn SSL_CTX_new(method: *u8): *u8
+pub extern fn SSL_CTX_new(method: *u8): *u8
 
-extern fn SSL_CTX_free(ctx: *u8): void
+pub extern fn SSL_CTX_free(ctx: *u8): void
 
-extern fn SSL_CTX_set_default_verify_paths(ctx: *u8): i32
+pub extern fn SSL_CTX_set_default_verify_paths(ctx: *u8): i32
 
 // Loading the trust store (above) is NOT verification — an OpenSSL client defaults to
 // SSL_VERIFY_NONE, so the handshake completes against any certificate, self-signed
 // included. SSL_VERIFY_PEER (mode 1) is what makes SSL_connect fail on an untrusted
 // chain. Pass a null callback to keep OpenSSL's own verdict.
-extern fn SSL_CTX_set_verify(ctx: *u8, mode: i32, callback: *u8): void
+pub extern fn SSL_CTX_set_verify(ctx: *u8, mode: i32, callback: *u8): void
 
 // Binds the peer certificate to an expected hostname. SNI (SSL_ctrl 55) only tells the
 // server which cert to send — it checks nothing on the way back — so without this a
 // valid certificate for ANY host satisfies the handshake. OpenSSL 1.1.0+.
-extern fn SSL_set1_host(ssl: *u8, hostname: *u8): i32
+pub extern fn SSL_set1_host(ssl: *u8, hostname: *u8): i32
 
 // X509_V_OK == 0. Belt-and-braces after a handshake: with SSL_VERIFY_PEER set this
 // cannot report failure (SSL_connect would already have failed), but it is the check
 // that makes the guarantee explicit rather than implied by a mode constant.
-extern fn SSL_get_verify_result(ssl: *u8): i64
+pub extern fn SSL_get_verify_result(ssl: *u8): i64
 
-extern fn SSL_new(ctx: *u8): *u8
+pub extern fn SSL_new(ctx: *u8): *u8
 
-extern fn SSL_set_fd(ssl: *u8, fd: i32): i32
+pub extern fn SSL_set_fd(ssl: *u8, fd: i32): i32
 
-extern fn SSL_connect(ssl: *u8): i32
+pub extern fn SSL_connect(ssl: *u8): i32
 
-extern fn SSL_read(ssl: *u8, buf: *u8, num: i32): i32
+pub extern fn SSL_read(ssl: *u8, buf: *u8, num: i32): i32
 
-extern fn SSL_write(ssl: *u8, buf: *u8, num: i32): i32
+pub extern fn SSL_write(ssl: *u8, buf: *u8, num: i32): i32
 
-extern fn SSL_free(ssl: *u8): void
+pub extern fn SSL_free(ssl: *u8): void
 
-extern fn SSL_ctrl(ssl: *u8, cmd: i32, larg: i64, parg: *u8): i64
+pub extern fn SSL_ctrl(ssl: *u8, cmd: i32, larg: i64, parg: *u8): i64
 
-extern fn SSL_get_error(ssl: *u8, ret: i32): i32
+pub extern fn SSL_get_error(ssl: *u8, ret: i32): i32
 
 // ── DNS ──
 
-extern fn getaddrinfo(node: *u8, service: *u8, hints: *u8, res: *u8): i32
+pub extern fn getaddrinfo(node: *u8, service: *u8, hints: *u8, res: *u8): i32
 
-extern fn freeaddrinfo(res: *u8): void
+pub extern fn freeaddrinfo(res: *u8): void
 
 // ── Filesystem ──
 
-extern fn lstat(path: *u8, buf: *u8): i32
+pub extern fn lstat(path: *u8, buf: *u8): i32
 
-extern fn link(existing: *u8, new_path: *u8): i32
+pub extern fn link(existing: *u8, new_path: *u8): i32
 
-extern fn unlink(path: *u8): i32
+pub extern fn unlink(path: *u8): i32
 
-extern fn symlink(target: *u8, path: *u8): i32
+pub extern fn symlink(target: *u8, path: *u8): i32
 
-extern fn readlink(path: *u8, buf: *u8, bufsize: i64): i64
+pub extern fn readlink(path: *u8, buf: *u8, bufsize: i64): i64
 
-extern fn realpath(path: *u8, resolved: *u8): *u8
+pub extern fn realpath(path: *u8, resolved: *u8): *u8
 
-extern fn rename(old_path: *u8, new_path: *u8): i32
+pub extern fn rename(old_path: *u8, new_path: *u8): i32
 
-extern fn mkdir(path: *u8, mode: u32): i32
+pub extern fn mkdir(path: *u8, mode: u32): i32
 
-extern fn rmdir(path: *u8): i32
+pub extern fn rmdir(path: *u8): i32
 
-extern fn chmod(path: *u8, mode: u32): i32
+pub extern fn chmod(path: *u8, mode: u32): i32
 
-extern fn fchmod(fd: i32, mode: u32): i32
+pub extern fn fchmod(fd: i32, mode: u32): i32
 
-extern fn chown(path: *u8, uid: u32, gid: u32): i32
+pub extern fn chown(path: *u8, uid: u32, gid: u32): i32
 
-extern fn fchown(fd: i32, uid: u32, gid: u32): i32
+pub extern fn fchown(fd: i32, uid: u32, gid: u32): i32
 
-extern fn lchown(path: *u8, uid: u32, gid: u32): i32
+pub extern fn lchown(path: *u8, uid: u32, gid: u32): i32
 
-extern fn truncate(path: *u8, length: i64): i32
+pub extern fn truncate(path: *u8, length: i64): i32
 
-extern fn ftruncate(fd: i32, length: i64): i32
+pub extern fn ftruncate(fd: i32, length: i64): i32
 
-extern fn fsync(fd: i32): i32
+pub extern fn fsync(fd: i32): i32
 
-extern fn fdatasync(fd: i32): i32
+pub extern fn fdatasync(fd: i32): i32
 
-extern fn mkdtemp(template: *u8): *u8
+pub extern fn mkdtemp(template: *u8): *u8
 
-extern fn getcwd(buf: *u8, size: i64): *u8
+pub extern fn getcwd(buf: *u8, size: i64): *u8
 
-extern fn chdir(path: *u8): i32
+pub extern fn chdir(path: *u8): i32
 
 // ── Directory ──
 
-extern fn opendir(path: *u8): *u8
+pub extern fn opendir(path: *u8): *u8
 
-extern fn closedir(dir: *u8): i32
+pub extern fn closedir(dir: *u8): i32
 
-extern fn readdir(dir: *u8): *u8
+pub extern fn readdir(dir: *u8): *u8
 
 // ── Terminal ──
 
-extern fn tcgetattr(fd: i32, termios: *u8): i32
+pub extern fn tcgetattr(fd: i32, termios: *u8): i32
 
-extern fn tcsetattr(fd: i32, actions: i32, termios: *u8): i32
+pub extern fn tcsetattr(fd: i32, actions: i32, termios: *u8): i32
 
-extern fn ioctl(fd: i32, request: i64,...): i32
+pub extern fn ioctl(fd: i32, request: i64,...): i32
 
-extern fn isatty(fd: i32): i32
+pub extern fn isatty(fd: i32): i32
 
 // ── PTY ──
 
-extern fn posix_openpt(flags: i32): i32
+pub extern fn posix_openpt(flags: i32): i32
 
-extern fn grantpt(fd: i32): i32
+pub extern fn grantpt(fd: i32): i32
 
-extern fn unlockpt(fd: i32): i32
+pub extern fn unlockpt(fd: i32): i32
 
-extern fn ptsname(fd: i32): *u8
+pub extern fn ptsname(fd: i32): *u8
 
 // ── Process ──
 
-extern fn exit(status: i32): void
+pub extern fn exit(status: i32): void
 
-extern fn getenv(name: *u8): *u8
+pub extern fn getenv(name: *u8): *u8
 
-extern fn system(cmd: *u8): i32
+pub extern fn system(cmd: *u8): i32
 
-extern fn fork(): i32
+pub extern fn fork(): i32
 
-extern fn execl(path: *u8, arg0: *u8,...): i32
+pub extern fn execl(path: *u8, arg0: *u8,...): i32
 
-extern fn waitpid(pid: i32, status: *u8, options: i32): i32
+pub extern fn waitpid(pid: i32, status: *u8, options: i32): i32
 
-extern fn dup2(oldfd: i32, newfd: i32): i32
+pub extern fn dup2(oldfd: i32, newfd: i32): i32
 
-extern fn kill(pid: i32, sig: i32): i32
+pub extern fn kill(pid: i32, sig: i32): i32
 
-extern fn setsid(): i32
+pub extern fn setsid(): i32
 
-extern fn execvp(file: *u8, argv: *u8): i32
+pub extern fn execvp(file: *u8, argv: *u8): i32
 
 // ── green-aware fd IO ──
 // Safe wrappers over the raw syscalls above. Called from a green task they
@@ -320,7 +320,7 @@ extern fn execvp(file: *u8, argv: *u8): i32
 // IO in std should go through these instead of per-call-site EAGAIN loops.
 
 // One read(2). Returns bytes read, 0 at EOF, <0 on error.
-fn readFd(fd: i32, buf: *u8, len: i64): i64 {
+pub fn readFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
         // A green task depends on this succeeding: without O_NONBLOCK the read below
@@ -346,7 +346,7 @@ fn readFd(fd: i32, buf: *u8, len: i64): i64 {
 }
 
 // Write all len bytes (loops over partial writes). Returns len or <0 on error.
-fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
+pub fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
         // Same deadlock risk as readFd above.
@@ -377,7 +377,7 @@ fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
 // Windows a SOCKET is NOT a CRT fd — the CRT _read/_write behind read/write fast-fail on one,
 // so socket data must go through recv/send. Socket code (std/net, raw-socket programs) must
 // use these, not readFd/writeFd, which stay bound to the CRT fd path for stdout/stdin/pipes.
-fn recvFd(fd: i32, buf: *u8, len: i64): i64 {
+pub fn recvFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
         if setNonblocking(fd) != 0 {
@@ -396,7 +396,7 @@ fn recvFd(fd: i32, buf: *u8, len: i64): i64 {
     return -1 as i64
 }
 
-fn sendFd(fd: i32, buf: *u8, len: i64): i64 {
+pub fn sendFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
         if setNonblocking(fd) != 0 {
@@ -424,7 +424,7 @@ fn sendFd(fd: i32, buf: *u8, len: i64): i64 {
 // Accept one connection; returns the client fd (<0 on error). In a green task
 // the client fd is left nonblocking so later readFd/writeFd calls skip a
 // redundant fcntl round-trip.
-fn acceptFd(fd: i32): i32 {
+pub fn acceptFd(fd: i32): i32 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
         setNonblocking(fd)
@@ -451,7 +451,7 @@ fn acceptFd(fd: i32): i32 {
 // pending. For event loops that multiplex accept with other work and must not
 // park on the listener — a blocking accept stops every other event source
 // until the next connection arrives (milojs's cold-fetch hang).
-fn acceptFdNb(fd: i32): i32 {
+pub fn acceptFdNb(fd: i32): i32 {
     setNonblocking(fd)
     var clientAddr = makeZeroedSockaddrStorage()
     var addrlen: u32 = sockAddrStorageLen()
@@ -466,7 +466,7 @@ fn acceptFdNb(fd: i32): i32 {
 // then check SO_ERROR. Returns 0 on success, <0 on failure.
 // Green-aware connect. Takes the raw seam so it serves every family; the per-family
 // entry points below (connectFdIn/connectFdIn6/connectFdUn) are what callers use.
-fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
+pub fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
     if schedulerCurrent() as i64 == 0 {
         return connect(fd, addr, addrlen)
     }
@@ -494,19 +494,19 @@ fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
     return 0
 }
 
-fn connectFdIn(fd: i32, addr: &SockAddrIn): i32 {
+pub fn connectFdIn(fd: i32, addr: &SockAddrIn): i32 {
     unsafe {
         return connectFd(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
     }
 }
 
-fn connectFdIn6(fd: i32, addr: &SockAddrIn6): i32 {
+pub fn connectFdIn6(fd: i32, addr: &SockAddrIn6): i32 {
     unsafe {
         return connectFd(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
     }
 }
 
-fn connectFdUn(fd: i32, addr: &SockAddrUn): i32 {
+pub fn connectFdUn(fd: i32, addr: &SockAddrUn): i32 {
     unsafe {
         return connectFd(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
     }
@@ -516,16 +516,16 @@ fn connectFdUn(fd: i32, addr: &SockAddrUn): i32 {
 // SSL_* on a nonblocking fd reports WANT_READ/WANT_WRITE; these park the
 // green task until the fd is ready and retry. On a plain OS thread (blocking
 // fd) the WANT codes never occur and these reduce to one SSL call.
-fn _sslWantRead(): i32 {
+pub fn _sslWantRead(): i32 {
     return 2
 }
 
-fn _sslWantWrite(): i32 {
+pub fn _sslWantWrite(): i32 {
     return 3
 }
 
 // Drive SSL_connect to completion. Returns 1 on success (SSL_connect result otherwise).
-fn sslConnectFd(ssl: *u8, fd: i32): i32 {
+pub fn sslConnectFd(ssl: *u8, fd: i32): i32 {
     while true {
         let r = SSL_connect(ssl)
         if r == 1 {
@@ -549,7 +549,7 @@ fn sslConnectFd(ssl: *u8, fd: i32): i32 {
 }
 
 // One SSL_read. Returns bytes read (>0), or <=0 on close/error.
-fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
+pub fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     while true {
         let n = SSL_read(ssl, buf, len)
         if n > 0 {
@@ -573,7 +573,7 @@ fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
 }
 
 // One SSL_write (OpenSSL default writes all-or-WANT; no partial handling needed).
-fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
+pub fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     while true {
         let n = SSL_write(ssl, buf, len)
         if n > 0 {

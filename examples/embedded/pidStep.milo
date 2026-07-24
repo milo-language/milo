@@ -12,9 +12,9 @@
 //   milo run     examples/embedded/pidStep.milo --target=cortex-m3
 
 // Q16.16: integer value n represents the real number n / 65536.
-let FP_SHIFT: i32 = 16
+pub let FP_SHIFT: i32 = 16
 
-fn fpMul(a: i32, b: i32): i32
+pub fn fpMul(a: i32, b: i32): i32
 requires a >= -2147483648 && b >= -2147483648
 ensures result == result
 {
@@ -23,7 +23,7 @@ ensures result == result
     return (wide >> 16) as i32
 }
 
-fn clampI32(v: i32, lo: i32, hi: i32): i32
+pub fn clampI32(v: i32, lo: i32, hi: i32): i32
 requires lo <= hi
 ensures result >= lo && result <= hi
 {
@@ -39,7 +39,7 @@ ensures result >= lo && result <= hi
 // One PID step. All gains and signals are Q16.16. integral is the running sum
 // carried between ticks; here we exercise a fixed number of ticks in a bounded
 // loop so the kernel is fully WCET-bounded.
-fn pidStep(setpoint: i32, measured: i32, kp: i32, ki: i32, kd: i32, integral: i32, prevError: i32, outLo: i32, outHi: i32): i32
+pub fn pidStep(setpoint: i32, measured: i32, kp: i32, ki: i32, kd: i32, integral: i32, prevError: i32, outLo: i32, outHi: i32): i32
 requires outLo <= outHi
 {
     let error: i32 = setpoint - measured
@@ -57,7 +57,7 @@ requires outLo <= outHi
 // Drive the controller toward a setpoint for a bounded number of ticks and
 // return the final actuator command. The loop bound (200) is what WCET analysis
 // reads as the iteration count.
-fn settle(setpoint: i32, kp: i32, ki: i32, kd: i32, outLo: i32, outHi: i32): i32
+pub fn settle(setpoint: i32, kp: i32, ki: i32, kd: i32, outLo: i32, outHi: i32): i32
 requires outLo <= outHi
 ensures result >= outLo && result <= outHi
 {
@@ -85,7 +85,7 @@ ensures result >= outLo && result <= outHi
     return clampI32(cmd, outLo, outHi)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let one: i32 = 65536 // 1.0 in Q16.16
     let setpoint: i32 = 100 * one
     let kp: i32 = one / 2 // 0.5

@@ -40,38 +40,38 @@ from "std/random" import {
 
 // ── Frame opcodes ──
 
-fn WS_CONTINUATION(): u8 {
+pub fn WS_CONTINUATION(): u8 {
     return 0
 }
 
-fn WS_TEXT(): u8 {
+pub fn WS_TEXT(): u8 {
     return 1
 }
 
-fn WS_BINARY(): u8 {
+pub fn WS_BINARY(): u8 {
     return 2
 }
 
-fn WS_CLOSE(): u8 {
+pub fn WS_CLOSE(): u8 {
     return 8
 }
 
-fn WS_PING(): u8 {
+pub fn WS_PING(): u8 {
     return 9
 }
 
-fn WS_PONG(): u8 {
+pub fn WS_PONG(): u8 {
     return 10
 }
 
 // ── Types ──
 
-struct WsMessage {
+pub struct WsMessage {
     opcode: u8,
     payload: string,
 }
 
-struct WsConn {
+pub struct WsConn {
     fd: i32,
     // TLS handle (0 = plain TCP). When set, all frame IO routes through SSL_read/SSL_write.
     ssl: i64,
@@ -105,29 +105,29 @@ impl Drop for WsConn {
 // ── WebSocket handshake ──
 
 // RFC 6455 magic GUID
-fn _wsMagic(): string {
+pub fn _wsMagic(): string {
     return "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 }
 
-fn _computeAcceptKey(clientKey: &string): string {
+pub fn _computeAcceptKey(clientKey: &string): string {
     let combined = clientKey.clone() + _wsMagic()
     let hash = sha1Bytes(combined)
     return base64Encode(hash)
 }
 
 // Check if raw HTTP request bytes contain a WebSocket upgrade request.
-fn isWsUpgrade(raw: &string): bool {
+pub fn isWsUpgrade(raw: &string): bool {
     return _headerContains(raw, "Upgrade", "websocket")
 }
 
 // Extract Sec-WebSocket-Key from raw HTTP request.
-fn extractWsKey(raw: &string): string {
+pub fn extractWsKey(raw: &string): string {
     return _findHeaderValue(raw, "Sec-WebSocket-Key")
 }
 
 // Accept a WebSocket upgrade on an already-accepted TCP fd.
 // Pass the raw HTTP request bytes so the handshake can be completed.
-fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
+pub fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
     if !isWsUpgrade(rawRequest) {
         return Result.Err("not a WebSocket upgrade request")
     }
@@ -160,7 +160,7 @@ fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
 
 // Read up to `len` bytes from a plain fd or TLS handle. Yields to the green
 // scheduler on would-block. Returns bytes read (>0), 0 on clean close, <0 on error.
-fn _readSome(fd: i32, ssl: i64, buf: *u8, len: i64): i64 {
+pub fn _readSome(fd: i32, ssl: i64, buf: *u8, len: i64): i64 {
     unsafe {
         if ssl != 0 {
             let n = sslReadFd(ssl as *u8, fd, buf, len as i32)
@@ -174,7 +174,7 @@ fn _readSome(fd: i32, ssl: i64, buf: *u8, len: i64): i64 {
     return -1 as i64
 }
 
-fn _readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
+pub fn _readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
     var got: i64 = 0
     unsafe {
         while got < needed {
@@ -419,7 +419,7 @@ impl WsConn {
 
 // Connect to a WebSocket server. Performs TCP connect + HTTP upgrade handshake.
 // Returns a WsConn on successful 101 response.
-fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
+pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
 
@@ -487,7 +487,7 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
 // handshake (blocking — call before setting fds nonblocking), then the HTTP
 // upgrade handshake over the encrypted channel. `hostname` is used for SNI,
 // certificate validation, and the Host header.
-fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<WsConn, string> {
+pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<WsConn, string> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
 
@@ -596,14 +596,14 @@ fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<Ws
 
 // ── Header parsing helpers ──
 
-fn _toLower(ch: u8): u8 {
+pub fn _toLower(ch: u8): u8 {
     if ch >= 'A' && ch <= 'Z' {
         return ch + 32
     }
     return ch
 }
 
-fn _findHeaderValue(raw: &string, name: &string): string {
+pub fn _findHeaderValue(raw: &string, name: &string): string {
     var i: i64 = 0
     while i < raw.len {
         // find start of line
@@ -636,7 +636,7 @@ fn _findHeaderValue(raw: &string, name: &string): string {
     return ""
 }
 
-fn _headerContains(raw: &string, name: &string, value: &string): bool {
+pub fn _headerContains(raw: &string, name: &string, value: &string): bool {
     let hdr = _findHeaderValue(raw, name)
     if hdr.len == 0 {
         return false

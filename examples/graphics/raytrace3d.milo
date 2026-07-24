@@ -17,106 +17,115 @@ from "std/math" import {
 }
 
 @link("SDL2")
-extern fn SDL_Init(flags: u32): i32
+pub extern fn SDL_Init(flags: u32): i32
 
-extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
 
-extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+pub extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
 
-extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+pub extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
 
-extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+pub extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
 
-extern fn SDL_RenderClear(ren: *u8): i32
+pub extern fn SDL_RenderClear(ren: *u8): i32
 
-extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+pub extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
 
-extern fn SDL_RenderPresent(ren: *u8): void
+pub extern fn SDL_RenderPresent(ren: *u8): void
 
-extern fn SDL_PollEvent(event: *u8): i32
+pub extern fn SDL_PollEvent(event: *u8): i32
 
-extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+pub extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
 
-extern fn SDL_Delay(ms: u32): void
+pub extern fn SDL_Delay(ms: u32): void
 
-extern fn SDL_DestroyWindow(win: *u8): void
+pub extern fn SDL_DestroyWindow(win: *u8): void
 
-extern fn SDL_Quit(): void
+pub extern fn SDL_Quit(): void
 
-let SDL_INIT_VIDEO: u32 = 0x20
-let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-let SDL_WINDOW_SHOWN: u32 = 0x4
-let SDL_TEXTUREACCESS_STREAMING: i32 = 1
-let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
-let SDL_QUIT: u32 = 0x100
+pub let SDL_INIT_VIDEO: u32 = 0x20
 
-let W: i64 = 240
-let H: i64 = 180
-let SCALE: i64 = 3
-let MAXDEPTH: i64 = 2 // reflection bounces
+pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
+
+pub let SDL_WINDOW_SHOWN: u32 = 0x4
+
+pub let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+
+pub let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
+
+pub let SDL_QUIT: u32 = 0x100
+
+pub let W: i64 = 240
+
+pub let H: i64 = 180
+
+pub let SCALE: i64 = 3
+
+pub let MAXDEPTH: i64 = 2 // reflection bounces
 
 // box half-extents (floor is y = 0)
-let BX: f64 = 3.2
-let BZ: f64 = 2.6
+pub let BX: f64 = 3.2
 
-struct Vec3 {
+pub let BZ: f64 = 2.6
+
+pub struct Vec3 {
     x: f64, y: f64, z: f64
 }
 
-fn v3(x: f64, y: f64, z: f64): Vec3 {
+pub fn v3(x: f64, y: f64, z: f64): Vec3 {
     return Vec3 {
         x: x, y: y, z: z
     }
 }
 
-fn vadd(a: Vec3, b: Vec3): Vec3 {
+pub fn vadd(a: Vec3, b: Vec3): Vec3 {
     return Vec3 {
         x: a.x + b.x, y: a.y + b.y, z: a.z + b.z
     }
 }
 
-fn vsub(a: Vec3, b: Vec3): Vec3 {
+pub fn vsub(a: Vec3, b: Vec3): Vec3 {
     return Vec3 {
         x: a.x - b.x, y: a.y - b.y, z: a.z - b.z
     }
 }
 
-fn vscale(a: Vec3, s: f64): Vec3 {
+pub fn vscale(a: Vec3, s: f64): Vec3 {
     return Vec3 {
         x: a.x * s, y: a.y * s, z: a.z * s
     }
 }
 
-fn vmul(a: Vec3, b: Vec3): Vec3 {
+pub fn vmul(a: Vec3, b: Vec3): Vec3 {
     return Vec3 {
         x: a.x * b.x, y: a.y * b.y, z: a.z * b.z
     }
 }
 
-fn vdot(a: Vec3, b: Vec3): f64 {
+pub fn vdot(a: Vec3, b: Vec3): f64 {
     return a.x * b.x + a.y * b.y + a.z * b.z
 }
 
-fn vlen(a: Vec3): f64 {
+pub fn vlen(a: Vec3): f64 {
     return mathSqrt(vdot(a, a))
 }
 
-fn vnorm(a: Vec3): Vec3 {
+pub fn vnorm(a: Vec3): Vec3 {
     let l = vlen(a)
     return vscale(a, 1.0 / l)
 }
 
-fn vcross(a: Vec3, b: Vec3): Vec3 {
+pub fn vcross(a: Vec3, b: Vec3): Vec3 {
     return Vec3 {
         x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x
     }
 }
 
-fn vreflect(d: Vec3, n: Vec3): Vec3 {
+pub fn vreflect(d: Vec3, n: Vec3): Vec3 {
     return vsub(d, vscale(n, 2.0 * vdot(d, n)))
 }
 
-struct Ball {
+pub struct Ball {
     pos: Vec3,
     vel: Vec3,
     r: f64,
@@ -127,7 +136,7 @@ struct Ball {
 
 // Milo palette: warm chocolate / caramel / tan / cream (the brown-dog theme), plus a
 // couple of high-reflectivity spheres that mirror the warm scene back.
-fn buildScene(scene: &mut Vec<Ball>) {
+pub fn buildScene(scene: &mut Vec<Ball>) {
     scene.push(Ball {
         pos: v3(-1.6, 0.7, 0.2), vel: v3(1.2, 0.0, 0.4), r: 0.7, albedo: v3(0.93, 0.86, 0.74), refl: 0.82, invMass: 1.0 / 0.49
     }
@@ -154,16 +163,16 @@ fn buildScene(scene: &mut Vec<Ball>) {
     ) // espresso
 }
 
-let lightPos: Vec3 = Vec3 {
+pub let lightPos: Vec3 = Vec3 {
     x: 5.0, y: 8.0, z: 3.0
 }
 
-struct SphereHit {
+pub struct SphereHit {
     t: f64, idx: i64
 }
 
 // nearest sphere along the ray; idx = -1 on miss
-fn hitSpheres(scene: &Vec<Ball>, ro: Vec3, rd: Vec3): SphereHit {
+pub fn hitSpheres(scene: &Vec<Ball>, ro: Vec3, rd: Vec3): SphereHit {
     var best = 1000000.0
     var idx: i64 = -1
     var i = 0
@@ -192,7 +201,7 @@ fn hitSpheres(scene: &Vec<Ball>, ro: Vec3, rd: Vec3): SphereHit {
 }
 
 // is the point in shadow from the light? (spheres occlude; the floor doesn't self-shadow)
-fn inShadow(scene: &Vec<Ball>, p: Vec3): bool {
+pub fn inShadow(scene: &Vec<Ball>, p: Vec3): bool {
     let toL = vsub(lightPos, p)
     let dist = vlen(toL)
     let dir = vscale(toL, 1.0 / dist)
@@ -217,7 +226,7 @@ fn inShadow(scene: &Vec<Ball>, p: Vec3): bool {
 }
 
 // diffuse + Blinn-Phong specular + ambient, with a hard shadow test
-fn shade(scene: &Vec<Ball>, p: Vec3, n: Vec3, base: Vec3, viewDir: Vec3): Vec3 {
+pub fn shade(scene: &Vec<Ball>, p: Vec3, n: Vec3, base: Vec3, viewDir: Vec3): Vec3 {
     let ambient = vscale(base, 0.18)
     if inShadow(scene, p) {
         return ambient
@@ -239,13 +248,13 @@ fn shade(scene: &Vec<Ball>, p: Vec3, n: Vec3, base: Vec3, viewDir: Vec3): Vec3 {
 }
 
 // warm studio gradient (the Milo brown theme): cream near the horizon → soft cocoa up top
-fn skyColor(rd: Vec3): Vec3 {
+pub fn skyColor(rd: Vec3): Vec3 {
     let a = 0.5 * (rd.y + 1.0)
     return vadd(vscale(v3(0.55, 0.46, 0.36), 1.0 - a), vscale(v3(0.16, 0.12, 0.10), a))
 }
 
 // recursive Whitted trace: nearest of {spheres, floor plane y=0}, shade + one mirror bounce
-fn trace(scene: &Vec<Ball>, ro: Vec3, rd: Vec3, depth: i64): Vec3 {
+pub fn trace(scene: &Vec<Ball>, ro: Vec3, rd: Vec3, depth: i64): Vec3 {
     // floor plane y = 0 (only front-facing, i.e. ray going down)
     var tPlane = -1.0
     if rd.y < -0.0001 {
@@ -302,7 +311,7 @@ fn trace(scene: &Vec<Ball>, ro: Vec3, rd: Vec3, depth: i64): Vec3 {
 }
 
 // ---- 3D rigid-body physics: gravity, box+floor bounce, sphere-sphere impulses ----
-fn stepPhysics(scene: &mut Vec<Ball>, sdt: f64, gravity: f64, restitution: f64, airDamp: f64) {
+pub fn stepPhysics(scene: &mut Vec<Ball>, sdt: f64, gravity: f64, restitution: f64, airDamp: f64) {
     var i = 0
     while i < scene.len {
         var b = scene[i]
@@ -368,7 +377,7 @@ fn stepPhysics(scene: &mut Vec<Ball>, sdt: f64, gravity: f64, restitution: f64, 
     }
 }
 
-fn clamp01(x: f64): f64 {
+pub fn clamp01(x: f64): f64 {
     if x < 0.0 {
         return 0.0
     }
@@ -378,7 +387,7 @@ fn clamp01(x: f64): f64 {
     return x
 }
 
-fn packColor(c: Vec3): u32 {
+pub fn packColor(c: Vec3): u32 {
     // gamma 2.0 + clamp
     let ri = (mathSqrt(clamp01(c.x)) * 255.0) as u32
     let gi = (mathSqrt(clamp01(c.y)) * 255.0) as u32
@@ -386,7 +395,7 @@ fn packColor(c: Vec3): u32 {
     return ri | (gi << 8) | (bi << 16) | (0xFF << 24)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     if SDL_Init(SDL_INIT_VIDEO) != 0 {
         print("SDL_Init failed")
         return 1

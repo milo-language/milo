@@ -37,7 +37,7 @@ from "./shared/menucore" import {
 
 // Open the first attached game controller, or null if none. Re-run on hotplug
 // events so pads can be plugged/unplugged at any time.
-fn openFirstPad(): *u8 {
+pub fn openFirstPad(): *u8 {
     unsafe {
         var ji: i32 = 0
         while ji < SDL_NumJoysticks() {
@@ -50,7 +50,7 @@ fn openFirstPad(): *u8 {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var fullscreen = false
     for a in args() {
         if a == "--fullscreen" {

@@ -11,7 +11,7 @@ from "std/strconv" import {
 
 // ── Algorithms ──
 
-fn fibonacci(n: i64): i64 {
+pub fn fibonacci(n: i64): i64 {
     if n <= 1 {
         return n
     }
@@ -27,7 +27,7 @@ fn fibonacci(n: i64): i64 {
     return b
 }
 
-fn isPrime(n: i64): bool {
+pub fn isPrime(n: i64): bool {
     if n < 2 {
         return false
     }
@@ -47,7 +47,7 @@ fn isPrime(n: i64): bool {
     return true
 }
 
-fn collatzSteps(start: i64): i64 {
+pub fn collatzSteps(start: i64): i64 {
     var x: i64 = start
     var steps: i64 = 0
     while x != 1 && steps < 500 {
@@ -61,7 +61,7 @@ fn collatzSteps(start: i64): i64 {
     return steps
 }
 
-fn fizzbuzzText(n: i64): string {
+pub fn fizzbuzzText(n: i64): string {
     var result: string = ""
     var i: i64 = 1
     while i <= n {
@@ -84,22 +84,22 @@ fn fizzbuzzText(n: i64): string {
 
 // ── Route handlers ──
 
-fn homeHandler(ctx: &mut Context): Response {
+pub fn homeHandler(ctx: &mut Context): Response {
     return ctx.html(@embedFile("index.html"))
 }
 
-fn helloHandler(ctx: &mut Context): Response {
+pub fn helloHandler(ctx: &mut Context): Response {
     return ctx.text("Hello from Milo!")
 }
 
-fn jsonHandler(ctx: &mut Context): Response {
+pub fn jsonHandler(ctx: &mut Context): Response {
     return ctx.json({
         language: "milo", backend: "llvm", memorySafe: true
     }
     )
 }
 
-fn fibHandler(ctx: &mut Context): Response {
+pub fn fibHandler(ctx: &mut Context): Response {
     let n = parseInt(ctx.param("n"))!
     return ctx.json({
         n: n, result: fibonacci(n)
@@ -107,7 +107,7 @@ fn fibHandler(ctx: &mut Context): Response {
     )
 }
 
-fn primeHandler(ctx: &mut Context): Response {
+pub fn primeHandler(ctx: &mut Context): Response {
     let n = parseInt(ctx.param("n"))!
     return ctx.json({
         n: n, isPrime: isPrime(n)
@@ -115,7 +115,7 @@ fn primeHandler(ctx: &mut Context): Response {
     )
 }
 
-fn collatzHandler(ctx: &mut Context): Response {
+pub fn collatzHandler(ctx: &mut Context): Response {
     let n = parseInt(ctx.param("n"))!
     return ctx.json({
         start: n, steps: collatzSteps(n)
@@ -123,12 +123,12 @@ fn collatzHandler(ctx: &mut Context): Response {
     )
 }
 
-fn fizzbuzzHandler(ctx: &mut Context): Response {
+pub fn fizzbuzzHandler(ctx: &mut Context): Response {
     let n = parseInt(ctx.param("n"))!
     return ctx.text(fizzbuzzText(n))
 }
 
-fn searchHandler(ctx: &mut Context): Response {
+pub fn searchHandler(ctx: &mut Context): Response {
     let q = ctx.query("q")
     if q.len == 0 {
         ctx.setStatus(400)
@@ -143,14 +143,14 @@ fn searchHandler(ctx: &mut Context): Response {
     )
 }
 
-fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Response {
+pub fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Response {
     print(ctx.req.method + " " + ctx.req.path)
     return next(ctx)
 }
 
 // ── Main ──
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("webserver", "Router-based HTTP server")
     parser.addI64("port", "p", "Port to listen on", 8080)
     let args = parser.parse()

@@ -19,7 +19,7 @@ from "./shared/menucore" import {
     Row, buildRows, render, LIST_TOP, ROW_H
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var rows: Vec<Row> = []
     var sel: Vec<i64> = []
     buildRows(rows, sel)

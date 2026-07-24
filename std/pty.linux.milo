@@ -31,26 +31,26 @@ from "std/io" import {
     fdChannel
 }
 
-fn tiocgwinsz(): i64 {
+pub fn tiocgwinsz(): i64 {
     return 21523
 }
 
-fn tiocswinsz(): i64 {
+pub fn tiocswinsz(): i64 {
     return 21524
 }
 
-fn tiocsctty(): i64 {
+pub fn tiocsctty(): i64 {
     return 21518
 }
 
-struct WinSize {
+pub struct WinSize {
     rows: u16,
     cols: u16,
     xpixel: u16,
     ypixel: u16,
 }
 
-struct Pty {
+pub struct Pty {
     masterFd: i32,
     slavePath: string,
     childPid: i32,
@@ -59,14 +59,14 @@ struct Pty {
 }
 
 // Returns true if fd is connected to a terminal.
-fn fdIsTerminal(fd: i32): bool {
+pub fn fdIsTerminal(fd: i32): bool {
     unsafe {
         return isatty(fd) == 1
     }
 }
 
 // Returns true if stdin is a terminal (process is interactive).
-fn isInteractive(): bool {
+pub fn isInteractive(): bool {
     return fdIsTerminal(0)
 }
 
@@ -260,13 +260,13 @@ impl Pty {
 }
 
 // Convenience: open + spawn in one call
-fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string> {
+pub fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string> {
     var pty = Pty.open()?
     pty.spawn(program, args)?
     return Result.Ok(pty)
 }
 
-fn _freeArgv(argv: *u8, argc: i64): void {
+pub fn _freeArgv(argv: *u8, argc: i64): void {
     unsafe {
         for i in 0..(argc - 1) {
             var p: *u8 = 0 as *u8

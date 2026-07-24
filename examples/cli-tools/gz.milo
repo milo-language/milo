@@ -21,7 +21,7 @@ from "std/inflate" import {
     gzipDecompress
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("gz", "gzip compress/decompress a stream")
     parser.addBool("decompress", "d", "decompress instead of compress")
     let args = parser.parse()

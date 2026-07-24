@@ -42,7 +42,7 @@ from "std/math" import {
 
 // ── terminal size ──
 
-fn termCols(): i64 {
+pub fn termCols(): i64 {
     var ws = WinSize {
         rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
@@ -52,7 +52,7 @@ fn termCols(): i64 {
     return ws.cols as i64
 }
 
-fn termRows(): i64 {
+pub fn termRows(): i64 {
     var ws = WinSize {
         rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
@@ -64,36 +64,36 @@ fn termRows(): i64 {
 
 // ── buffer helpers ──
 
-fn emit(buf: &mut string, s: &string): void {
+pub fn emit(buf: &mut string, s: &string): void {
     for i in 0..s.len {
         buf.push(s[i])
     }
 }
 
-fn cursor(buf: &mut string, row: i64, col: i64): void {
+pub fn cursor(buf: &mut string, row: i64, col: i64): void {
     emit(buf, $"\x1b[{row};{col}H")
 }
 
-fn clr(buf: &mut string): void {
+pub fn clr(buf: &mut string): void {
     emit(buf, "\x1b[K")
 }
 
-fn spaces(buf: &mut string, n: i64): void {
+pub fn spaces(buf: &mut string, n: i64): void {
     for i in 0..n {
         buf.push(32 as u8)
     }
 }
 
 // ANSI using i64 to avoid interpolation issues
-fn fg256(code: i64): string {
+pub fn fg256(code: i64): string {
     return $"\x1b[38;5;{code}m"
 }
 
-fn bg256(code: i64): string {
+pub fn bg256(code: i64): string {
     return $"\x1b[48;5;{code}m"
 }
 
-fn drawBar(buf: &mut string, filled: i64, total: i64, color: &string): void {
+pub fn drawBar(buf: &mut string, filled: i64, total: i64, color: &string): void {
     emit(buf, "[")
     for i in 0..total {
         if i < filled {
@@ -109,7 +109,7 @@ fn drawBar(buf: &mut string, filled: i64, total: i64, color: &string): void {
 
 // ── format helpers ──
 
-fn formatBytes(bytes: i64): string {
+pub fn formatBytes(bytes: i64): string {
     if bytes >= 1073741824 {
         return formatFloat(bytes as f64 / 1073741824.0, 1) + " GB"
     }
@@ -119,7 +119,7 @@ fn formatBytes(bytes: i64): string {
     return formatFloat(bytes as f64 / 1024.0, 0) + " KB"
 }
 
-fn formatUptime(secs: i64): string {
+pub fn formatUptime(secs: i64): string {
     let days = secs / 86400
     let hours = (secs % 86400) / 3600
     let mins = (secs % 3600) / 60
@@ -134,7 +134,7 @@ fn formatUptime(secs: i64): string {
 
 // ── process list ──
 
-struct ProcInfo {
+pub struct ProcInfo {
     pid: string,
     user: string,
     cpu: string,
@@ -143,7 +143,7 @@ struct ProcInfo {
     command: string,
 }
 
-fn fetchProcesses(maxProcs: i64): Vec<ProcInfo> {
+pub fn fetchProcesses(maxProcs: i64): Vec<ProcInfo> {
     var procs: Vec<ProcInfo> = Vec.new()
     // </dev/null prevents child shell from touching terminal raw mode
     let cmd = $"ps -eo pid,user,%cpu,%mem,time,comm -r 2>/dev/null </dev/null | head -{maxProcs + 1}"
@@ -181,7 +181,7 @@ fn fetchProcesses(maxProcs: i64): Vec<ProcInfo> {
 
 // ── rendering ──
 
-fn renderHeader(buf: &mut string, cols: i64): void {
+pub fn renderHeader(buf: &mut string, cols: i64): void {
     let host = hostname()
     let model = cpuModel()
     cursor(buf, 1, 1)
@@ -198,7 +198,7 @@ fn renderHeader(buf: &mut string, cols: i64): void {
     emit(buf, "\x1b[0m")
 }
 
-fn renderCpuBar(buf: &mut string, row: i64, cols: i64): void {
+pub fn renderCpuBar(buf: &mut string, row: i64, cols: i64): void {
     let load = loadAvg()
     let nCpus = cpuCount()
     let pct = clampF64(load[0] / nCpus as f64 * 100.0, 0.0, 100.0)
@@ -232,7 +232,7 @@ fn renderCpuBar(buf: &mut string, row: i64, cols: i64): void {
     emit(buf, "  |  " + nCpus.toString() + " cores\x1b[0m")
 }
 
-fn renderMemBar(buf: &mut string, row: i64, cols: i64): void {
+pub fn renderMemBar(buf: &mut string, row: i64, cols: i64): void {
     let total = totalMem()
     let free = freeMem()
     let used = total - free
@@ -262,7 +262,7 @@ fn renderMemBar(buf: &mut string, row: i64, cols: i64): void {
     emit(buf, "\x1b[90m         " + formatBytes(used) + " / " + formatBytes(total) + "\x1b[0m")
 }
 
-fn renderProcessHeader(buf: &mut string, row: i64, cols: i64): void {
+pub fn renderProcessHeader(buf: &mut string, row: i64, cols: i64): void {
     cursor(buf, row, 1)
     emit(buf, "\x1b[7;1;36m") // inverse + bold + cyan
     let header = padRight("  PID", 8, 32) +
@@ -278,7 +278,7 @@ fn renderProcessHeader(buf: &mut string, row: i64, cols: i64): void {
     emit(buf, "\x1b[0m")
 }
 
-fn renderProcess(buf: &mut string, row: i64, cols: i64, proc: &ProcInfo, highlighted: bool): void {
+pub fn renderProcess(buf: &mut string, row: i64, cols: i64, proc: &ProcInfo, highlighted: bool): void {
     cursor(buf, row, 1)
     clr(buf)
 
@@ -324,7 +324,7 @@ fn renderProcess(buf: &mut string, row: i64, cols: i64, proc: &ProcInfo, highlig
     emit(buf, "\x1b[0m")
 }
 
-fn renderStatusBar(buf: &mut string, row: i64, cols: i64, numProcs: i64): void {
+pub fn renderStatusBar(buf: &mut string, row: i64, cols: i64, numProcs: i64): void {
     cursor(buf, row, 1)
     let up = formatUptime(uptime())
     emit(buf, "\x1b[7m") // inverse
@@ -338,7 +338,7 @@ fn renderStatusBar(buf: &mut string, row: i64, cols: i64, numProcs: i64): void {
 
 // ── main ──
 
-fn main(): i32 {
+pub fn main(): i32 {
     let termState = enableRawMode()
     writeStdout("\x1b[?25l\x1b[2J")
 

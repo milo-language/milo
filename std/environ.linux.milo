@@ -10,13 +10,13 @@ from "std/io" import {
     readFile
 }
 
-struct EnvEntry {
+pub struct EnvEntry {
     name: string,
     value: string,
 }
 
 // Every variable in the process environment, in the order the OS supplies them.
-fn envVars(): Vec<EnvEntry> {
+pub fn envVars(): Vec<EnvEntry> {
     var out: Vec<EnvEntry> = Vec.new()
     match readFile("/proc/self/environ") {
         Result.Ok(blob) => {

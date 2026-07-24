@@ -12,7 +12,7 @@ from "std/fs" import {
     writeFile
 }
 
-fn statusText(code: i32): string {
+pub fn statusText(code: i32): string {
     if code == 200 {
         return "OK"
     }
@@ -58,7 +58,7 @@ fn statusText(code: i32): string {
     return ""
 }
 
-fn looksLikeJson(s: &string): bool {
+pub fn looksLikeJson(s: &string): bool {
     for ch in s {
         if ch != ' ' && ch != '\n' && ch != '\r' && ch != '\t' {
             return ch == '{' || ch == '['
@@ -68,7 +68,7 @@ fn looksLikeJson(s: &string): bool {
 }
 
 // indent-only JSON pretty printer (no colors)
-fn prettyJson(input: &string): string {
+pub fn prettyJson(input: &string): string {
     var result: string = ""
     var pos: i64 = 0
     var indent: i64 = 0
@@ -154,7 +154,7 @@ fn prettyJson(input: &string): string {
     return result
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("http", "simple HTTP client")
     parser.addPositional("url", "URL to fetch")
     parser.addString("output", "o", "save response body to file", "")

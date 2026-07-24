@@ -11,20 +11,20 @@ from "std/inflate" import {
     zlibDecompress
 }
 
-struct PngImage {
+pub struct PngImage {
     width: i64,
     height: i64,
     channels: i64, // 3 (RGB) or 4 (RGBA)
     pixels: string, // row-major, channels bytes per pixel, top-down
 }
 
-fn _be32(src: &string, p: i64): i64 {
+pub fn _be32(src: &string, p: i64): i64 {
     return ((src[p] as i64) << 24) | ((src[p + 1] as i64) << 16) | ((src[p + 2] as i64) << 8) | (src[p + 3] as i64)
 }
 
 // Paeth predictor (RFC 2083 §6.6): pick whichever of a/b/c the initial estimate
 // a+b-c is closest to.
-fn _paeth(a: i64, b: i64, c: i64): i64 {
+pub fn _paeth(a: i64, b: i64, c: i64): i64 {
     let p = a + b - c
     var pa = p - a
     if pa < 0 {
@@ -47,7 +47,7 @@ fn _paeth(a: i64, b: i64, c: i64): i64 {
     return c
 }
 
-fn decodePng(src: &string): Result<PngImage, string> {
+pub fn decodePng(src: &string): Result<PngImage, string> {
     if src.len < 8 {
         return Result.Err("png: too short")
     }

@@ -9,7 +9,7 @@ from "./cartcore" import {
     Cart, parseCart
 }
 
-fn loadCartridge(path: &string): Result<Cart, string> {
+pub fn loadCartridge(path: &string): Result<Cart, string> {
     var raw = ""
     match readFile(path) {
         Result.Ok(s) => {

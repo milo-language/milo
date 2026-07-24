@@ -56,7 +56,7 @@ from "jdwp" import {
 // ---------------------------------------------------------------------------
 // DAP output writer. seq is adapter-global; every frame is one write().
 
-struct DapOut {
+pub struct DapOut {
     seq: i64,
 }
 
@@ -98,7 +98,7 @@ impl DapOut {
 // Per-source-file breakpoint record. classId == 0 means the class isn't
 // loaded yet: a CLASS_PREPARE request (prepReqId) is armed and lines resolve
 // when the event fires.
-struct BpFile {
+pub struct BpFile {
     srcPath: string,
     className: string,
     signature: string,
@@ -110,14 +110,14 @@ struct BpFile {
 }
 
 // Methods of a loaded class, cached (stackTrace hits this per frame).
-struct ClassCache {
+pub struct ClassCache {
     classId: i64,
     signature: string,
     methods: Vec<MethodInfo>,
 }
 
 // One frame of the last stop, addressable by DAP frame id.
-struct CachedFrame {
+pub struct CachedFrame {
     dapId: i64,
     threadId: i64, // jdwp
     frameId: i64, // jdwp
@@ -128,12 +128,12 @@ struct CachedFrame {
 
 // variablesReference registry entry. kind: 1 locals (a = frames index),
 // 2 object fields (a = objectId), 3 array elements (a = objectId).
-struct VarRef {
+pub struct VarRef {
     kind: i64,
     a: i64,
 }
 
-struct Sess {
+pub struct Sess {
     io: JdwpIo,
     out: DapOut,
     eventCh: Channel<Packet>,
@@ -155,7 +155,7 @@ struct Sess {
 // ---------------------------------------------------------------------------
 // Entry point.
 
-fn dapServe(): i64 {
+pub fn dapServe(): i64 {
     var out = DapOut {
         seq: 0
     }
@@ -247,7 +247,7 @@ fn dapServe(): i64 {
     return 0
 }
 
-fn capabilitiesJson(): string {
+pub fn capabilitiesJson(): string {
     return jsonObj()
         .bool("supportsConfigurationDoneRequest", true)
         .bool("supportsTerminateRequest", true)
@@ -261,7 +261,7 @@ fn capabilitiesJson(): string {
 }
 
 // string-array launch key → Vec<string> (missing/invalid → empty).
-fn strArray(args: &Json, key: &string): Vec<string> {
+pub fn strArray(args: &Json, key: &string): Vec<string> {
     var out: Vec<string> = []
     match args.get(key) {
         Option.Some(arr) => {
@@ -298,7 +298,7 @@ fn strArray(args: &Json, key: &string): Vec<string> {
 // launch: spawn `java -agentlib:jdwp=...,server=y,suspend=y,address=PORT` and
 // attach to it; child stdout/stderr/exit flow into eventCh as synthetic
 // packets. attach: connect to a JDWP agent the user started.
-fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result<JdwpIo> {
+pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result<JdwpIo> {
     if !isLaunch {
         let host = args.str("hostName") ?? (args.str("host") ?? "localhost")
         let port = args.i64("port") ?? (0 as i64)
@@ -432,7 +432,7 @@ fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result<Jdw
     return Result.Err("JVM spawned but JDWP agent never listened on port " + port.toString())
 }
 
-fn findJava(explicit: string): string {
+pub fn findJava(explicit: string): string {
     if explicit.len > 0 {
         return explicit
     }
@@ -453,7 +453,7 @@ fn findJava(explicit: string): string {
     return "java"
 }
 
-fn joinPaths(v: Vec<string>): string {
+pub fn joinPaths(v: Vec<string>): string {
     var out: string = ""
     var first = true
     for p in v {
@@ -466,7 +466,7 @@ fn joinPaths(v: Vec<string>): string {
     return out
 }
 
-fn dirOf(path: &string): string {
+pub fn dirOf(path: &string): string {
     var lastSlash: i64 = -1
     var i: i64 = 0
     while i < path.len {
@@ -481,7 +481,7 @@ fn dirOf(path: &string): string {
     return path.substr(0, lastSlash)
 }
 
-fn baseNameNoExt(path: &string): string {
+pub fn baseNameNoExt(path: &string): string {
     var start: i64 = 0
     var i: i64 = 0
     while i < path.len {
@@ -499,7 +499,7 @@ fn baseNameNoExt(path: &string): string {
 
 // Derive the fully-qualified class name of a .java file: `package` decl (if
 // any) + filename stem. Good for top-level public classes — the normal case.
-fn classNameForSource(path: &string): string {
+pub fn classNameForSource(path: &string): string {
     let stem = baseNameNoExt(path)
     var pkg: string = ""
     match readFile(path) {
@@ -534,7 +534,7 @@ fn classNameForSource(path: &string): string {
 }
 
 // dotted class name → JNI signature: com.example.Main → Lcom/example/Main;
-fn jniSignature(className: &string): string {
+pub fn jniSignature(className: &string): string {
     var out: string = "L"
     for ch in className {
         if ch == '.' {
@@ -548,7 +548,7 @@ fn jniSignature(className: &string): string {
 }
 
 // JNI signature → dotted class name (arrays/primitives → best effort).
-fn prettyTypeName(sig: &string): string {
+pub fn prettyTypeName(sig: &string): string {
     if sig.len == 0 {
         return "?"
     }
@@ -600,7 +600,7 @@ fn prettyTypeName(sig: &string): string {
 }
 
 // Last dotted segment: com.example.Main → Main
-fn simpleName(dotted: &string): string {
+pub fn simpleName(dotted: &string): string {
     var start: i64 = 0
     var i: i64 = 0
     while i < dotted.len {
@@ -614,7 +614,7 @@ fn simpleName(dotted: &string): string {
 
 // IEEE-754 bit pattern → f64, decoded manually (no bit-cast in safe Milo).
 // expBits/manBits: 11/52 for double, 8/23 for float.
-fn floatFromBits(bits: i64, expBits: i64, manBits: i64): string {
+pub fn floatFromBits(bits: i64, expBits: i64, manBits: i64): string {
     let sign = (bits >> (expBits + manBits)) & 1
     let expMax = (1 << expBits) - 1
     let exp = (bits >> manBits) & expMax
@@ -665,7 +665,7 @@ fn floatFromBits(bits: i64, expBits: i64, manBits: i64): string {
 }
 
 // Sign-extend an unsigned value of `bits` width.
-fn signExtend(v: i64, bits: i64): i64 {
+pub fn signExtend(v: i64, bits: i64): i64 {
     let signBit = 1 << (bits - 1)
     if (v & signBit) != 0 {
         return v - (1 << bits)

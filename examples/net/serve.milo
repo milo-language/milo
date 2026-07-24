@@ -15,7 +15,7 @@ from "std/path" import {
     pathJoin
 }
 
-fn getMime(path: &string): string {
+pub fn getMime(path: &string): string {
     if path.endsWith(".html") || path.endsWith(".htm") {
         return "text/html"
     }
@@ -64,7 +64,7 @@ fn getMime(path: &string): string {
     return "application/octet-stream"
 }
 
-fn formatSize(size: i64): string {
+pub fn formatSize(size: i64): string {
     if size < 1024 {
         return size.toString() + "B"
     }
@@ -76,7 +76,7 @@ fn formatSize(size: i64): string {
     return (size / mb).toString() + "M"
 }
 
-fn dirListing(dirPath: &string, urlPath: &string): string {
+pub fn dirListing(dirPath: &string, urlPath: &string): string {
     let entries = readDir(dirPath)
     var html: string = "<!DOCTYPE html><html><head><title>Index of " + urlPath + "</title>"
     html = html + "<style>body{font-family:monospace;margin:2em}a{text-decoration:none;color:#0366d6}"
@@ -107,7 +107,7 @@ fn dirListing(dirPath: &string, urlPath: &string): string {
     return html
 }
 
-fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
+pub fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
     var reqPath: string = req.path.clone()
     if reqPath == "/" {
         reqPath = ""
@@ -158,7 +158,7 @@ fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("serve", "static file server")
     parser.addOptionalPositional("dir", "directory to serve (default: .)")
     parser.addI64("port", "p", "port to listen on", 8080)

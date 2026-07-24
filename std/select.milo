@@ -54,17 +54,17 @@ from "std/runtime" import {
     kindSelRecv, kindSelSend, kindSelRead, kindSelWrite, kindSelTimer
 }
 
-fn _maxArms(): i64 {
+pub fn _maxArms(): i64 {
     return 16
 }
 
 // channel arms stash the ChannelInner ptr in the node's otherwise-unused
 // deadline slot so cleanup can unlink without a parallel array
-fn _nodeChan(): i64 {
+pub fn _nodeChan(): i64 {
     return nodeDeadline()
 }
 
-struct Select {
+pub struct Select {
     _state: *u8, // SelectState (runtime)
     _nodes: *u8, // array of _maxArms nodes, nodeSize() bytes each
     _count: i64,
@@ -213,7 +213,7 @@ impl Select {
     }
 }
 
-fn _readPtr(node: *u8, off: i64): *u8 {
+pub fn _readPtr(node: *u8, off: i64): *u8 {
     unsafe {
         var v: *u8 = 0 as *u8
         let src = (node as i64 + off) as *i64
@@ -223,10 +223,10 @@ fn _readPtr(node: *u8, off: i64): *u8 {
 }
 
 // Channel arms — free functions so they can be generic over the element type.
-fn selectRecv<T>(sel: &mut Select, ch: &Channel<T>): void {
+pub fn selectRecv<T>(sel: &mut Select, ch: &Channel<T>): void {
     sel.armChan(kindSelRecv(), ch.rawPtr())
 }
 
-fn selectSend<T>(sel: &mut Select, ch: &Channel<T>): void {
+pub fn selectSend<T>(sel: &mut Select, ch: &Channel<T>): void {
     sel.armChan(kindSelSend(), ch.rawPtr())
 }

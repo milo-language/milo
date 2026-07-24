@@ -4,20 +4,20 @@ from "std/arena" import {
     Arena, Handle, arenaAlloc, arenaGet, arenaModify, arenaNew
 }
 
-struct DLNode {
+pub struct DLNode {
     value: i64,
     prev: Option<Handle<DLNode>>,
     next: Option<Handle<DLNode>>,
 }
 
-struct DLList {
+pub struct DLList {
     arena: Arena<DLNode>,
     head: Option<Handle<DLNode>>,
     tail: Option<Handle<DLNode>>,
     len: i64,
 }
 
-fn newList(): DLList {
+pub fn newList(): DLList {
     return DLList {
         arena: arenaNew(),
         head: Option.None,
@@ -26,7 +26,7 @@ fn newList(): DLList {
     }
 }
 
-fn pushBack(list: &mut DLList, value: i64) {
+pub fn pushBack(list: &mut DLList, value: i64) {
     let node = DLNode {
         value: value,
         prev: list.tail,
@@ -52,7 +52,7 @@ fn pushBack(list: &mut DLList, value: i64) {
     list.len = list.len + 1
 }
 
-fn pushFront(list: &mut DLList, value: i64) {
+pub fn pushFront(list: &mut DLList, value: i64) {
     let node = DLNode {
         value: value,
         prev: Option.None,
@@ -78,7 +78,7 @@ fn pushFront(list: &mut DLList, value: i64) {
     list.len = list.len + 1
 }
 
-fn printForward(list: &DLList) {
+pub fn printForward(list: &DLList) {
     var cur = list.head
     var result: string = ""
 
@@ -107,7 +107,7 @@ fn printForward(list: &DLList) {
     print(result)
 }
 
-fn printBackward(list: &DLList) {
+pub fn printBackward(list: &DLList) {
     var cur = list.tail
     var result: string = ""
 
@@ -136,7 +136,7 @@ fn printBackward(list: &DLList) {
     print(result)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var list = newList()
 
     pushBack(list, 10)

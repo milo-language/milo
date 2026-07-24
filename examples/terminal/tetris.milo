@@ -37,44 +37,53 @@ from "std/color" import {
     gray, cyan, bold, red, yellow
 }
 
-let W: i64 = 10
-let H: i64 = 20
+pub let W: i64 = 10
+
+pub let H: i64 = 20
 
 // the well, row-major, W*H cells
-type Board = [i32; 200]
+pub type Board = [i32; 200]
 
 // tetromino kinds
-let KIND_I: i64 = 0
-let KIND_O: i64 = 1
-let KIND_T: i64 = 2
-let KIND_S: i64 = 3
-let KIND_Z: i64 = 4
-let KIND_J: i64 = 5
-let KIND_L: i64 = 6
-let NUM_KINDS: i64 = 7
+pub let KIND_I: i64 = 0
+
+pub let KIND_O: i64 = 1
+
+pub let KIND_T: i64 = 2
+
+pub let KIND_S: i64 = 3
+
+pub let KIND_Z: i64 = 4
+
+pub let KIND_J: i64 = 5
+
+pub let KIND_L: i64 = 6
+
+pub let NUM_KINDS: i64 = 7
 
 // column a fresh piece spawns at (top of the well)
-let SPAWN_X: i64 = 3
+pub let SPAWN_X: i64 = 3
 
 // Select arm indices — the two events the game task parks on. Order matches the
 // arm order in the loop: onRead(0) is armed first, onTimeout second.
-let ARM_KEY: i64 = 0
-let ARM_TICK: i64 = 1
+pub let ARM_KEY: i64 = 0
+
+pub let ARM_TICK: i64 = 1
 
 // ── buffer helpers (single writeStdout per frame → no flicker) ──
 
-fn emit(buf: &mut string, s: &string): void {
+pub fn emit(buf: &mut string, s: &string): void {
     for i in 0..s.len {
         buf.push(s[i])
     }
 }
 
-fn cursor(buf: &mut string, row: i64, col: i64): void {
+pub fn cursor(buf: &mut string, row: i64, col: i64): void {
     emit(buf, cursorTo(row, col))
 }
 
 // a solid 2-wide cell in the piece's color
-fn blockStr(code: i64): string {
+pub fn blockStr(code: i64): string {
     return fg256(code) + "██" + ansiReset()
 }
 
@@ -83,7 +92,7 @@ fn blockStr(code: i64): string {
 // Each piece is 4 cells in an NxN box; rotation is (x,y) -> (N-1-y, x) applied
 // `rot` times, which is exact on the integer grid for every piece (O maps onto
 // itself). N is 4 for I, 2 for O, 3 for the rest.
-fn pieceN(kind: i64): i64 {
+pub fn pieceN(kind: i64): i64 {
     if kind == KIND_I {
         return 4
     }
@@ -94,7 +103,7 @@ fn pieceN(kind: i64): i64 {
 }
 
 // distinct rotation states: O looks the same in all 4, so it has just 1
-fn pieceRots(kind: i64): i64 {
+pub fn pieceRots(kind: i64): i64 {
     if kind == KIND_O {
         return 1
     }
@@ -102,7 +111,7 @@ fn pieceRots(kind: i64): i64 {
 }
 
 // xterm-256 color per piece (classic Tetris palette)
-fn pieceColor(kind: i64): i64 {
+pub fn pieceColor(kind: i64): i64 {
     if kind == KIND_I {
         return 51
     }
@@ -124,7 +133,7 @@ fn pieceColor(kind: i64): i64 {
     return 208
 }
 
-fn setCells(out: &mut [i64; 8], a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64): void {
+pub fn setCells(out: &mut [i64; 8], a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64): void {
     out[0] = a
     out[1] = b
     out[2] = c
@@ -136,7 +145,7 @@ fn setCells(out: &mut [i64; 8], a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, 
 }
 
 // spawn-state cells (x,y pairs) within the piece's NxN box
-fn spawnCells(kind: i64, out: &mut [i64; 8]): void {
+pub fn spawnCells(kind: i64, out: &mut [i64; 8]): void {
     if kind == KIND_I {
         setCells(out, 0, 1, 1, 1, 2, 1, 3, 1)
     } else if kind == KIND_O {
@@ -154,7 +163,7 @@ fn spawnCells(kind: i64, out: &mut [i64; 8]): void {
     }
 }
 
-fn pieceCells(kind: i64, rot: i64, out: &mut [i64; 8]): void {
+pub fn pieceCells(kind: i64, rot: i64, out: &mut [i64; 8]): void {
     spawnCells(kind, out)
     let n = pieceN(kind)
     var r: i64 = 0
@@ -170,7 +179,7 @@ fn pieceCells(kind: i64, rot: i64, out: &mut [i64; 8]): void {
 }
 
 // true if piece at (px,py) is off-board or overlaps a settled cell
-fn collides(board: &Board, kind: i64, rot: i64, px: i64, py: i64): bool {
+pub fn collides(board: &Board, kind: i64, rot: i64, px: i64, py: i64): bool {
     var cells: [i64; 8] = [0; 8]
     pieceCells(kind, rot, cells)
     for i in 0..4 {
@@ -186,7 +195,7 @@ fn collides(board: &Board, kind: i64, rot: i64, px: i64, py: i64): bool {
     return false
 }
 
-fn lockPiece(board: &mut Board, kind: i64, rot: i64, px: i64, py: i64): void {
+pub fn lockPiece(board: &mut Board, kind: i64, rot: i64, px: i64, py: i64): void {
     var cells: [i64; 8] = [0; 8]
     pieceCells(kind, rot, cells)
     let color = pieceColor(kind)
@@ -200,7 +209,7 @@ fn lockPiece(board: &mut Board, kind: i64, rot: i64, px: i64, py: i64): void {
 }
 
 // compact full rows downward; return count cleared
-fn clearLines(board: &mut Board): i64 {
+pub fn clearLines(board: &mut Board): i64 {
     var write: i64 = H - 1
     var read: i64 = H - 1
     var cleared: i64 = 0
@@ -233,7 +242,7 @@ fn clearLines(board: &mut Board): i64 {
     return cleared
 }
 
-fn scoreFor(n: i64): i64 {
+pub fn scoreFor(n: i64): i64 {
     if n == 1 {
         return 100
     }
@@ -250,7 +259,7 @@ fn scoreFor(n: i64): i64 {
 }
 
 // gravity interval shrinks as lines pile up
-fn dropInterval(lines: i64): i64 {
+pub fn dropInterval(lines: i64): i64 {
     var ms = 600 - (lines / 10) * 70
     if ms < 120 {
         ms = 120
@@ -260,7 +269,7 @@ fn dropInterval(lines: i64): i64 {
 
 // ── rendering ──
 
-fn renderNext(buf: &mut string, kind: i64, row: i64, col: i64): void {
+pub fn renderNext(buf: &mut string, kind: i64, row: i64, col: i64): void {
     var cells: [i64; 8] = [0; 8]
     pieceCells(kind, 0, cells)
     for ry in 0..2 {
@@ -281,7 +290,7 @@ fn renderNext(buf: &mut string, kind: i64, row: i64, col: i64): void {
     }
 }
 
-fn render(buf: &mut string, board: &Board, kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
+pub fn render(buf: &mut string, board: &Board, kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
     var cells: [i64; 8] = [0; 8]
     pieceCells(kind, rot, cells)
     var pcx: [i64; 4] = [0; 4]
@@ -368,14 +377,14 @@ fn render(buf: &mut string, board: &Board, kind: i64, rot: i64, px: i64, py: i64
     emit(buf, bold(yellow("★ github.com/milo-language/milo")))
 }
 
-fn drawFrame(board: &Board, kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
+pub fn drawFrame(board: &Board, kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
     var buf = ""
     render(buf, board, kind, rot, px, py, score, lines, nextKind)
     writeStdout(buf)
 }
 
 // keep GAME OVER on screen until the player presses q (still event-driven)
-fn waitForQuit(): void {
+pub fn waitForQuit(): void {
     var done = false
     while !done {
         var sel = Select.new()
@@ -392,7 +401,7 @@ fn waitForQuit(): void {
     }
 }
 
-fn runGame(): void {
+pub fn runGame(): void {
     var board: Board = [0; 200]
     var kind = randInt(NUM_KINDS)
     var nextKind = randInt(NUM_KINDS)
@@ -509,7 +518,7 @@ fn runGame(): void {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let termState = enableRawMode()
     writeStdout(hideCursor() + clearScreen())
 

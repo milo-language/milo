@@ -6,20 +6,20 @@
 // implementation is what those wire formats need. Same constant-time / fixed-round
 // (80 rounds) shape as std/sha256.
 
-let MASK32: i64 = 0xffffffff
+pub let MASK32: i64 = 0xffffffff
 
-fn _rotl(x: i64, n: i64): i64 {
+pub fn _rotl(x: i64, n: i64): i64 {
     return ((x << n) | (x >> (32 - n))) & MASK32
 }
 
-fn _hexNibble(v: i64): u8 {
+pub fn _hexNibble(v: i64): u8 {
     if v < 10 {
         return (v + 48) as u8
     }
     return (v - 10 + 97) as u8
 }
 
-fn _padSha1(input: &string): string {
+pub fn _padSha1(input: &string): string {
     var m = ""
     for i in 0..input.len {
         m.push(input[i])
@@ -36,7 +36,7 @@ fn _padSha1(input: &string): string {
 }
 
 // SHA-1 digest as 20 raw bytes.
-fn sha1Bytes(input: &string): string {
+pub fn sha1Bytes(input: &string): string {
     let m = _padSha1(input)
     var h0: i64 = 0x67452301
     var h1: i64 = 0xefcdab89
@@ -108,7 +108,7 @@ fn sha1Bytes(input: &string): string {
 }
 
 // SHA-1 as a 40-char lowercase hex string.
-fn sha1(input: &string): string {
+pub fn sha1(input: &string): string {
     let digest = sha1Bytes(input)
     var out = ""
     for i in 0..digest.len {

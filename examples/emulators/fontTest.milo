@@ -13,7 +13,7 @@ from "./shared/font" import {
     MENU_N, rgb, clear, drawText, drawTextCentered, fontChars, fontGlyphs
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var fb: [u32; 230400] = [0; 230400]
     let bg = rgb(18, 20, 34)
     let white = rgb(235, 238, 245)

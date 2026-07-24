@@ -27,7 +27,7 @@ from "./runtime" import {
 }
 
 // Directory portion of a path ("" when there is no separator).
-fn dirOf(path: &string): string {
+pub fn dirOf(path: &string): string {
     var cut: i64 = -1
     var i: i64 = 0
     while i < path.len() {
@@ -49,7 +49,7 @@ fn dirOf(path: &string): string {
 }
 
 // Collapse a path containing "." and ".." segments.
-fn normalizePath(path: &string): string {
+pub fn normalizePath(path: &string): string {
     var parts: Vec<string> = Vec.new()
     var cur = String.withCapacity(16)
     var i: i64 = 0
@@ -92,7 +92,7 @@ fn normalizePath(path: &string): string {
 
 // A CommonJS source file: .js or .cjs. Packages that ship both ESM and CJS name
 // the CommonJS entry .cjs, and their package.json "main" points at it.
-fn endsWithJs(p: &string): bool {
+pub fn endsWithJs(p: &string): bool {
     let n = p.len()
     if n >= 4 && p[n - 4] == '.' && p[n - 3] == 'c' && p[n - 2] == 'j' && p[n - 1] == 's' {
         return true
@@ -106,7 +106,7 @@ fn endsWithJs(p: &string): bool {
 // Node builtin modules, written in JS and embedded at compile time so the
 // runtime is a single self-contained binary. Registered under "builtin:<name>".
 // Strip a "node:" prefix if present.
-fn stripNodePrefix(spec: &string): string {
+pub fn stripNodePrefix(spec: &string): string {
     if spec.len() > 5 && spec[0] == 'n' && spec[1] == 'o' && spec[2] == 'd' && spec[3] == 'e' && spec[4] == ':' {
         var out = String.withCapacity(spec.len() - 5)
         var i: i64 = 5
@@ -119,7 +119,7 @@ fn stripNodePrefix(spec: &string): string {
     return spec.clone()
 }
 
-fn builtinSource(name: &string): string {
+pub fn builtinSource(name: &string): string {
     if name == "path" {
         return @embedFile("lib/path.js")
     }
@@ -209,7 +209,7 @@ fn builtinSource(name: &string): string {
     return ""
 }
 
-fn hasJsonExt(path: &string): bool {
+pub fn hasJsonExt(path: &string): bool {
     let n = path.len()
     if n < 5 {
         return false
@@ -219,7 +219,7 @@ fn hasJsonExt(path: &string): bool {
 
 // Each missing module is reported once; a package required from twenty places
 // otherwise produces twenty identical lines and buries the real failure.
-fn reportUnresolved(st: &mut Interp, spec: &string) {
+pub fn reportUnresolved(st: &mut Interp, spec: &string) {
     var i: i64 = 0
     while i < st.reportedMissing.len() {
         if st.reportedMissing[i] == spec {
@@ -231,11 +231,11 @@ fn reportUnresolved(st: &mut Interp, spec: &string) {
     eprint("milojs: cannot resolve '" + spec + "' — no such package, and node builtin modules are not implemented yet")
 }
 
-fn isBuiltinPath(path: &string): bool {
+pub fn isBuiltinPath(path: &string): bool {
     return path.len() > 8 && path[0] == 'b' && path[1] == 'u' && path[2] == 'i' && path[3] == 'l' && path[4] == 't' && path[5] == 'i' && path[6] == 'n' && path[7] == ':'
 }
 
-fn builtinNameOf(path: &string): string {
+pub fn builtinNameOf(path: &string): string {
     var out = String.withCapacity(path.len())
     var i: i64 = 8
     while i < path.len() {
@@ -245,7 +245,7 @@ fn builtinNameOf(path: &string): string {
     return out
 }
 
-fn fileExists(p: &string): bool {
+pub fn fileExists(p: &string): bool {
     match readFile(p.clone()) {
         Result.Ok(_s) => {
             return true
@@ -258,7 +258,7 @@ fn fileExists(p: &string): bool {
 
 // Pull the "main" field out of a package.json without a full JSON parse (this
 // runs during pre-load, before any interpreter state exists).
-fn scanPkgMain(txt: &string): string {
+pub fn scanPkgMain(txt: &string): string {
     let key = "\"main\""
     let at = jsIndexOf(txt, key, 0)
     if at < 0 {
@@ -283,7 +283,7 @@ fn scanPkgMain(txt: &string): string {
 
 // Node's file/directory resolution: exact file, then +.js, then the directory's
 // package.json "main", then index.js.
-fn resolveAsFileOrDir(base: &string): string {
+pub fn resolveAsFileOrDir(base: &string): string {
     if endsWithJs(base) && fileExists(base) {
         return base.clone()
     }
@@ -333,7 +333,7 @@ fn resolveAsFileOrDir(base: &string): string {
 }
 
 // A bare specifier (an npm package): walk up from `dir` looking in node_modules.
-fn resolveBare(dir: &string, spec: &string): string {
+pub fn resolveBare(dir: &string, spec: &string): string {
     var cur = dir.clone()
     var going = true
     while going {
@@ -361,7 +361,7 @@ fn resolveBare(dir: &string, spec: &string): string {
 
 // Resolve a require specifier against the requiring module's directory.
 // Relative specifiers resolve as files/directories; bare names walk node_modules.
-fn resolveSpec(dir: &string, spec: &string): string {
+pub fn resolveSpec(dir: &string, spec: &string): string {
     if spec.len() == 0 {
         return ""
     }
@@ -400,7 +400,7 @@ fn resolveSpec(dir: &string, spec: &string): string {
 }
 
 // Find every `require("literal")` in a token stream.
-fn scanRequires(toks: &Vec<Token>): Vec<string> {
+pub fn scanRequires(toks: &Vec<Token>): Vec<string> {
     var out: Vec<string> = Vec.new()
     var i: i64 = 0
     while i + 2 < toks.len() {
@@ -412,7 +412,7 @@ fn scanRequires(toks: &Vec<Token>): Vec<string> {
     return out
 }
 
-fn findModule(st: &Interp, path: &string): i64 {
+pub fn findModule(st: &Interp, path: &string): i64 {
     var i: i64 = 0
     while i < st.modPaths.len() {
         if st.modPaths[i] == path {
@@ -426,7 +426,7 @@ fn findModule(st: &Interp, path: &string): i64 {
 // Parse `path` (and everything it requires, transitively) into `prog`, filling
 // the interpreter's module registry. Returns the entry module's registry index,
 // or -1 if the entry could not be read.
-fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
+pub fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
     var queue: Vec<string> = Vec.new()
     queue.push(entryPath.clone())
     var head: i64 = 0

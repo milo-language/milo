@@ -15,12 +15,12 @@ from "./spc" import {
     Spc, SpcMem, spcMemNew, spcMemReset, spcRead, spcWrite, spcStep
 }
 
-struct Toks {
+pub struct Toks {
     s: string
     pos: i64
 }
 
-fn nextTok(t: &mut Toks): i64 {
+pub fn nextTok(t: &mut Toks): i64 {
     while t.pos < t.s.len {
         let c = t.s[t.pos] as i64
         if c == 32 || c == 10 || c == 13 || c == 9 {
@@ -42,7 +42,7 @@ fn nextTok(t: &mut Toks): i64 {
     return v
 }
 
-fn loadRegs(spc: &mut Spc, m: &mut SpcMem, t: &mut Toks): void {
+pub fn loadRegs(spc: &mut Spc, m: &mut SpcMem, t: &mut Toks): void {
     spc.a = nextTok(t)
     spc.x = nextTok(t)
     spc.y = nextTok(t)
@@ -59,7 +59,7 @@ fn loadRegs(spc: &mut Spc, m: &mut SpcMem, t: &mut Toks): void {
     }
 }
 
-fn checkFinal(spc: &Spc, m: &SpcMem, t: &mut Toks): string {
+pub fn checkFinal(spc: &Spc, m: &SpcMem, t: &mut Toks): string {
     let fa = nextTok(t)
     let fx = nextTok(t)
     let fy = nextTok(t)
@@ -98,7 +98,7 @@ fn checkFinal(spc: &Spc, m: &SpcMem, t: &mut Toks): string {
     return mismatch
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
         print("usage: runHarteSpc <op.flat> [maxCases]")
@@ -161,7 +161,7 @@ fn main(): i32 {
     return 1
 }
 
-fn itoa(n: i64): string {
+pub fn itoa(n: i64): string {
     if n == 0 {
         return "0"
     }
@@ -174,13 +174,13 @@ fn itoa(n: i64): string {
     return s
 }
 
-fn digitStr(d: i64): string {
+pub fn digitStr(d: i64): string {
     var s = ""
     s.push((48 + d) as u8)
     return s
 }
 
-fn hex(n: i64): string {
+pub fn hex(n: i64): string {
     let v = n & 0xFFFFFFFF
     var s = "0x"
     var i: i64 = 28
@@ -198,7 +198,7 @@ fn hex(n: i64): string {
     return s
 }
 
-fn hexNib(n: i64): string {
+pub fn hexNib(n: i64): string {
     var s = ""
     if n < 10 {
         s.push((48 + n) as u8)
@@ -208,7 +208,7 @@ fn hexNib(n: i64): string {
     return s
 }
 
-fn strToI(s: &string): i64 {
+pub fn strToI(s: &string): i64 {
     var v: i64 = 0
     for ch in s {
         let c = ch as i64

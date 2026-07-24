@@ -1,69 +1,69 @@
 // std/color — ANSI terminal colors and styles
 
-fn red(s: &string): string {
+pub fn red(s: &string): string {
     return "\x1b[31m" + s + "\x1b[0m"
 }
 
-fn green(s: &string): string {
+pub fn green(s: &string): string {
     return "\x1b[32m" + s + "\x1b[0m"
 }
 
-fn yellow(s: &string): string {
+pub fn yellow(s: &string): string {
     return "\x1b[33m" + s + "\x1b[0m"
 }
 
-fn blue(s: &string): string {
+pub fn blue(s: &string): string {
     return "\x1b[34m" + s + "\x1b[0m"
 }
 
-fn magenta(s: &string): string {
+pub fn magenta(s: &string): string {
     return "\x1b[35m" + s + "\x1b[0m"
 }
 
-fn cyan(s: &string): string {
+pub fn cyan(s: &string): string {
     return "\x1b[36m" + s + "\x1b[0m"
 }
 
-fn white(s: &string): string {
+pub fn white(s: &string): string {
     return "\x1b[37m" + s + "\x1b[0m"
 }
 
-fn gray(s: &string): string {
+pub fn gray(s: &string): string {
     return "\x1b[90m" + s + "\x1b[0m"
 }
 
-fn bold(s: &string): string {
+pub fn bold(s: &string): string {
     return "\x1b[1m" + s + "\x1b[0m"
 }
 
-fn dim(s: &string): string {
+pub fn dim(s: &string): string {
     return "\x1b[2m" + s + "\x1b[0m"
 }
 
-fn italic(s: &string): string {
+pub fn italic(s: &string): string {
     return "\x1b[3m" + s + "\x1b[0m"
 }
 
-fn underline(s: &string): string {
+pub fn underline(s: &string): string {
     return "\x1b[4m" + s + "\x1b[0m"
 }
 
-fn strikethrough(s: &string): string {
+pub fn strikethrough(s: &string): string {
     return "\x1b[9m" + s + "\x1b[0m"
 }
 
-fn bgRed(s: &string): string {
+pub fn bgRed(s: &string): string {
     return "\x1b[41m" + s + "\x1b[0m"
 }
 
-fn bgGreen(s: &string): string {
+pub fn bgGreen(s: &string): string {
     return "\x1b[42m" + s + "\x1b[0m"
 }
 
-fn bgYellow(s: &string): string {
+pub fn bgYellow(s: &string): string {
     return "\x1b[43m" + s + "\x1b[0m"
 }
 
-fn bgBlue(s: &string): string {
+pub fn bgBlue(s: &string): string {
     return "\x1b[44m" + s + "\x1b[0m"
 }

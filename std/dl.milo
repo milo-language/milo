@@ -30,15 +30,15 @@ from "std/platform" import {
 // darwin and linux. RTLD_GLOBAL is deliberately not exposed — it differs between
 // the two platforms (0x8 vs 0x100), and promoting a library's symbols into the
 // global namespace is rarely what a caller wants.
-let RTLD_NOW: i32 = 2
+pub let RTLD_NOW: i32 = 2
 
-struct Lib {
+pub struct Lib {
     handle: *u8,
 }
 
 // The most recent loader error, or a generic message when the loader has none.
 // dlerror() also CLEARS the error, so this must be read exactly once per failure.
-fn dlLastError(): string {
+pub fn dlLastError(): string {
     unsafe {
         let e = dlerror()
         match CStr.wrap(e) {
@@ -54,7 +54,7 @@ fn dlLastError(): string {
 
 // Load a shared library. `path` may be a filename resolved via the loader search
 // path, or an explicit path.
-fn dlOpen(path: &string): Result<Lib, string> {
+pub fn dlOpen(path: &string): Result<Lib, string> {
     unsafe {
         let h = dlopen(path as *u8, RTLD_NOW)
         if (h as i64) == 0 {
@@ -70,7 +70,7 @@ fn dlOpen(path: &string): Result<Lib, string> {
 // A handle to the running program itself, for looking up symbols the executable
 // exports. Requires linking with `-Wl,-export_dynamic`, same as letting a loaded
 // library resolve against the host.
-fn dlSelf(): Result<Lib, string> {
+pub fn dlSelf(): Result<Lib, string> {
     unsafe {
         let h = dlopen(0 as *u8, RTLD_NOW)
         if (h as i64) == 0 {

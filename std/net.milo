@@ -40,7 +40,7 @@ from "std/io" import {
 
 // ── NetError ──
 
-enum NetError {
+pub enum NetError {
     DnsFailure(string),
     ConnectionFailed(string),
     TlsError(string),
@@ -51,7 +51,7 @@ enum NetError {
 // ── TcpStream ──
 
 // TCP connection handle. Automatically closes the fd when dropped.
-struct TcpStream {
+pub struct TcpStream {
     fd: i32,
 }
 
@@ -74,7 +74,7 @@ impl Drop for TcpStream {
 // Parse an IPv6 literal ("::1", "2001:db8::1") into its 16 raw bytes.
 // None if the text isn't a valid v6 address — inet_pton is strict, and a v4 literal like
 // "127.0.0.1" is NOT auto-mapped, so it returns None here rather than a v4-mapped address.
-fn ip6(text: &string): Option<[u8; 16]> {
+pub fn ip6(text: &string): Option<[u8; 16]> {
     unsafe {
         var out: [u8; 16] = [0; 16]
         var cbuf: [u8; 64] = [0; 64]
@@ -93,7 +93,7 @@ fn ip6(text: &string): Option<[u8; 16]> {
     }
 }
 
-fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
+pub fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
     let a32 = a as u32
     let b32 = b as u32
     let c32 = c as u32
@@ -219,7 +219,7 @@ impl TcpStream {
 
 // Listening TCP socket. Accepts inbound connections; closes the fd on drop.
 // Server counterpart to TcpStream.connect — no raw syscalls required in user code.
-struct TcpListener {
+pub struct TcpListener {
     fd: i32,
 }
 
@@ -237,9 +237,9 @@ impl Drop for TcpListener {
 // status 141 and nothing logged. Every runtime that serves connections ignores
 // it and deals with the EPIPE that write() returns instead. Called when a
 // listener or a stream is created, so any program doing socket IO is covered.
-var gSigpipeIgnored: bool = false
+pub var gSigpipeIgnored: bool = false
 
-fn ignoreSigpipe(): void {
+pub fn ignoreSigpipe(): void {
     if gSigpipeIgnored {
         return
     }
@@ -340,7 +340,7 @@ impl TcpListener {
 
 // ── DNS ──
 
-fn resolve(hostname: &string): Result<u32, NetError> {
+pub fn resolve(hostname: &string): Result<u32, NetError> {
     var hints: [u8; 48] = [0; 48]
     unsafe {
         let hintsFamily = (hints as *i32)

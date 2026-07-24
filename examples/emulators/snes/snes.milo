@@ -37,7 +37,7 @@ from "std/datetime" import {
 
 // Dump the current 256x224 framebuffer (0xRRGGBB per pixel) as a binary PPM next to
 // a save-state, so a state can be eyeballed without loading it in the debugger.
-fn dumpPpm(fb: &Vec<i64>, path: &string): void {
+pub fn dumpPpm(fb: &Vec<i64>, path: &string): void {
     var out = String.withCapacity(200000)
     let hdr = "P6\n256 224\n255\n"
     var i: i64 = 0
@@ -60,7 +60,7 @@ fn dumpPpm(fb: &Vec<i64>, path: &string): void {
 
 // Synthesize one frame of audio (535 stereo samples @ ~32 kHz) from the S-DSP and
 // queue it to SDL as interleaved S16LSB L,R.
-fn queueAudio(m: &mut Mem, dev: u32): void {
+pub fn queueAudio(m: &mut Mem, dev: u32): void {
     var samp: Vec<i64> = Vec.new()
     var i: i64 = 0
     while i < 535 * 2 {
@@ -85,90 +85,114 @@ fn queueAudio(m: &mut Mem, dev: u32): void {
 }
 
 @link("SDL2")
-extern fn SDL_Init(flags: u32): i32
+pub extern fn SDL_Init(flags: u32): i32
 
-extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
 
-extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+pub extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
 
-extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+pub extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
 
-extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+pub extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
 
-extern fn SDL_RenderClear(ren: *u8): i32
+pub extern fn SDL_RenderClear(ren: *u8): i32
 
-extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+pub extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
 
 // Maps the fixed 256x224 render onto whatever size the window is resized to,
 // preserving aspect (letterbox) — lets the OS maximize/resize the window.
-extern fn SDL_RenderSetLogicalSize(ren: *u8, w: i32, h: i32): i32
+pub extern fn SDL_RenderSetLogicalSize(ren: *u8, w: i32, h: i32): i32
 
-extern fn SDL_RenderPresent(ren: *u8): void
+pub extern fn SDL_RenderPresent(ren: *u8): void
 
-extern fn SDL_PollEvent(event: *u8): i32
+pub extern fn SDL_PollEvent(event: *u8): i32
 
-extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+pub extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
 
-extern fn SDL_NumJoysticks(): i32
+pub extern fn SDL_NumJoysticks(): i32
 
-extern fn SDL_IsGameController(index: i32): i32
+pub extern fn SDL_IsGameController(index: i32): i32
 
-extern fn SDL_GameControllerOpen(index: i32): *u8
+pub extern fn SDL_GameControllerOpen(index: i32): *u8
 
-extern fn SDL_GameControllerGetButton(gc: *u8, button: i32): u8
+pub extern fn SDL_GameControllerGetButton(gc: *u8, button: i32): u8
 
-extern fn SDL_GameControllerClose(gc: *u8): void
+pub extern fn SDL_GameControllerClose(gc: *u8): void
 
-extern fn SDL_Delay(ms: u32): void
+pub extern fn SDL_Delay(ms: u32): void
 
-extern fn SDL_GetTicks(): u32
+pub extern fn SDL_GetTicks(): u32
 
-extern fn SDL_OpenAudioDevice(device: *u8, iscapture: i32, desired: *u8, obtained: *u8, allowed: i32): u32
+pub extern fn SDL_OpenAudioDevice(device: *u8, iscapture: i32, desired: *u8, obtained: *u8, allowed: i32): u32
 
-extern fn SDL_QueueAudio(dev: u32, data: *u8, len: u32): i32
+pub extern fn SDL_QueueAudio(dev: u32, data: *u8, len: u32): i32
 
-extern fn SDL_PauseAudioDevice(dev: u32, pause_on: i32): void
+pub extern fn SDL_PauseAudioDevice(dev: u32, pause_on: i32): void
 
-extern fn SDL_GetQueuedAudioSize(dev: u32): u32
+pub extern fn SDL_GetQueuedAudioSize(dev: u32): u32
 
-extern fn SDL_Quit(): void
+pub extern fn SDL_Quit(): void
 
-let SDL_INIT_VIDEO: u32 = 0x20
-let SDL_INIT_AUDIO: u32 = 0x10
-let SDL_INIT_GAMECONTROLLER: u32 = 0x2000
+pub let SDL_INIT_VIDEO: u32 = 0x20
+
+pub let SDL_INIT_AUDIO: u32 = 0x10
+
+pub let SDL_INIT_GAMECONTROLLER: u32 = 0x2000
 // SDL_GameControllerButton ids.
-let PAD_A: i32 = 0
-let PAD_B: i32 = 1
-let PAD_X: i32 = 2
-let PAD_Y: i32 = 3
-let PAD_BACK: i32 = 4
-let PAD_START: i32 = 6
-let PAD_LSHOULDER: i32 = 9
-let PAD_RSHOULDER: i32 = 10
-let PAD_DPAD_UP: i32 = 11
-let PAD_DPAD_DOWN: i32 = 12
-let PAD_DPAD_LEFT: i32 = 13
-let PAD_DPAD_RIGHT: i32 = 14
+pub let PAD_A: i32 = 0
+
+pub let PAD_B: i32 = 1
+
+pub let PAD_X: i32 = 2
+
+pub let PAD_Y: i32 = 3
+
+pub let PAD_BACK: i32 = 4
+
+pub let PAD_START: i32 = 6
+
+pub let PAD_LSHOULDER: i32 = 9
+
+pub let PAD_RSHOULDER: i32 = 10
+
+pub let PAD_DPAD_UP: i32 = 11
+
+pub let PAD_DPAD_DOWN: i32 = 12
+
+pub let PAD_DPAD_LEFT: i32 = 13
+
+pub let PAD_DPAD_RIGHT: i32 = 14
 // Controller hotplug events.
-let SDL_CONTROLLERDEVICEADDED: u32 = 0x653
-let SDL_CONTROLLERDEVICEREMOVED: u32 = 0x654
+pub let SDL_CONTROLLERDEVICEADDED: u32 = 0x653
+
+pub let SDL_CONTROLLERDEVICEREMOVED: u32 = 0x654
 // Window events (SDL_WINDOWEVENT); the sub-event id is byte 12 of the event.
-let SDL_WINDOWEVENT: u32 = 0x200
-let SDL_WINDOWEVENT_MINIMIZED: u8 = 7
-let SDL_WINDOWEVENT_RESTORED: u8 = 9
-let SDL_WINDOWEVENT_FOCUS_GAINED: u8 = 12
-let SDL_WINDOWEVENT_FOCUS_LOST: u8 = 13
-let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-let SDL_WINDOW_SHOWN: u32 = 0x4
-let SDL_WINDOW_RESIZABLE: u32 = 0x20 // lets the OS maximize/resize the window
-let SDL_TEXTUREACCESS_STREAMING: i32 = 1
-let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
-let SDL_QUIT: u32 = 0x100
+pub let SDL_WINDOWEVENT: u32 = 0x200
+
+pub let SDL_WINDOWEVENT_MINIMIZED: u8 = 7
+
+pub let SDL_WINDOWEVENT_RESTORED: u8 = 9
+
+pub let SDL_WINDOWEVENT_FOCUS_GAINED: u8 = 12
+
+pub let SDL_WINDOWEVENT_FOCUS_LOST: u8 = 13
+
+pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
+
+pub let SDL_WINDOW_SHOWN: u32 = 0x4
+
+pub let SDL_WINDOW_RESIZABLE: u32 = 0x20 // lets the OS maximize/resize the window
+
+pub let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+
+pub let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
+
+pub let SDL_QUIT: u32 = 0x100
 
 // Game name from the cartridge header (LoROM $7FC0 / HiROM $FFC0, 21 bytes,
 // space-padded). loadCartridge already strips any 512-byte SMC header. Returns
 // "" if the region isn't a plausible ASCII title.
-fn snesRomTitle(rom: &Vec<u8>, mapMode: i64): string {
+pub fn snesRomTitle(rom: &Vec<u8>, mapMode: i64): string {
     var base: i64 = 0
     if rom.len % 1024 == 512 {
         base = 512 // a copier's 512-byte SMC header survived (loadCartridge usually strips it)
@@ -205,7 +229,7 @@ fn snesRomTitle(rom: &Vec<u8>, mapMode: i64): string {
 }
 
 // Read a keyboard scancode's state from SDL's key array.
-fn key(ks: *u8, sc: i64): i64 {
+pub fn key(ks: *u8, sc: i64): i64 {
     unsafe {
         let base = ks as i64
         let ptr = (base + sc) as *u8
@@ -216,7 +240,7 @@ fn key(ks: *u8, sc: i64): i64 {
 // Open the n-th attached game controller (0 = player 1, 1 = player 2), or null.
 // Re-run on hotplug so pads can be plugged/unplugged at any time; slot order
 // follows SDL's joystick enumeration.
-fn openPadN(n: i64): *u8 {
+pub fn openPadN(n: i64): *u8 {
     unsafe {
         var found: i64 = 0
         var ji: i32 = 0
@@ -233,7 +257,7 @@ fn openPadN(n: i64): *u8 {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("snes", "Milo SNES emulator (SDL2) — plays .sfc / .smc ROMs.")
     parser.addPositional("rom", "path to a .sfc or .smc ROM")
     let pargs = parser.parse() // auto-handles --help / -h; errors out when rom is missing

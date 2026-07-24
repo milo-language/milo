@@ -30,7 +30,7 @@ from "std/term" import {
 
 // ── PID controller ──
 
-struct Pid {
+pub struct Pid {
     kp: f64,
     ki: f64,
     kd: f64,
@@ -40,7 +40,7 @@ struct Pid {
     outMax: f64,
 }
 
-fn pidNew(kp: f64, ki: f64, kd: f64, outMin: f64, outMax: f64): Pid
+pub fn pidNew(kp: f64, ki: f64, kd: f64, outMin: f64, outMax: f64): Pid
 requires kp >= 0.0
 requires ki >= 0.0
 requires kd >= 0.0
@@ -57,7 +57,7 @@ requires outMin < outMax
     }
 }
 
-fn pidUpdate(pid: &mut Pid, error: f64, dt: f64): f64
+pub fn pidUpdate(pid: &mut Pid, error: f64, dt: f64): f64
 requires dt > 0.0
 ensures result >= pid.outMin && result <= pid.outMax
 {
@@ -70,12 +70,12 @@ ensures result >= pid.outMin && result <= pid.outMax
 
 // ── 1D altitude physics ──
 
-struct AltState {
+pub struct AltState {
     altitude: f64,
     velocity: f64,
 }
 
-fn physicsTick(state: &mut AltState, thrust: f64, dt: f64): void
+pub fn physicsTick(state: &mut AltState, thrust: f64, dt: f64): void
 requires dt > 0.0
 requires thrust >= 0.0 && thrust <= 1.0
 {
@@ -99,14 +99,14 @@ requires thrust >= 0.0 && thrust <= 1.0
 
 // ── TUI rendering ──
 // pure ASCII + ANSI background colors only — no box-drawing or unicode
-fn cl(s: &string): void
+pub fn cl(s: &string): void
 requires s.len >= 0
 {
     writeStdout(s)
     writeStdout("\x1b[K\n")
 }
 
-fn renderFrame(alt: f64, vel: f64, target: f64, thrust: f64, tick: i64): void
+pub fn renderFrame(alt: f64, vel: f64, target: f64, thrust: f64, tick: i64): void
 requires tick >= 0
 {
     writeStdout("\x1b[H")
@@ -192,7 +192,7 @@ requires tick >= 0
 
 // ── Main: interactive simulation loop ──
 
-fn main(): i32 {
+pub fn main(): i32 {
     var state = AltState {
         altitude: 0.0,
         velocity: 0.0,

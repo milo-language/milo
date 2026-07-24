@@ -25,12 +25,12 @@ from "std/platform" import {
 
 // ── Public types ──
 
-struct Param {
+pub struct Param {
     name: string,
     value: string,
 }
 
-struct Request {
+pub struct Request {
     method: string,
     path: string,
     queryParams: Vec<Param>,
@@ -39,7 +39,7 @@ struct Request {
 }
 
 // Request context passed to route handlers.
-struct Context {
+pub struct Context {
     req: Request,
     params: Vec<Param>,
     statusCode: i32,
@@ -141,7 +141,7 @@ impl Context {
     }
 }
 
-enum Response {
+pub enum Response {
     Text(string),
     Html(string),
     Json(string),
@@ -149,21 +149,21 @@ enum Response {
     Status(i32, string, string),
 }
 
-struct HandledResponse {
+pub struct HandledResponse {
     response: Response,
     headers: Vec<Param>,
 }
 
 // ── Internal helpers ──
 
-fn toLower(ch: u8): u8 {
+pub fn toLower(ch: u8): u8 {
     if ch >= 'A' && ch <= 'Z' {
         return ch + 32
     }
     return ch
 }
 
-fn eqIgnoreCase(a: &string, b: &string): bool {
+pub fn eqIgnoreCase(a: &string, b: &string): bool {
     if a.len != b.len {
         return false
     }
@@ -175,7 +175,7 @@ fn eqIgnoreCase(a: &string, b: &string): bool {
     return true
 }
 
-fn bufToStr(buf: &[u8; 8192], start: i64, end: i64): string {
+pub fn bufToStr(buf: &[u8; 8192], start: i64, end: i64): string {
     var s: string = ""
     var i: i64 = start
     while i < end {
@@ -185,7 +185,7 @@ fn bufToStr(buf: &[u8; 8192], start: i64, end: i64): string {
     return s
 }
 
-fn parseRequest(buf: &[u8; 8192], n: i64): Request {
+pub fn parseRequest(buf: &[u8; 8192], n: i64): Request {
     var i: i64 = 0
 
     // parse method
@@ -290,7 +290,7 @@ fn parseRequest(buf: &[u8; 8192], n: i64): Request {
     }
 }
 
-fn parseContentLength(s: &string): i64 {
+pub fn parseContentLength(s: &string): i64 {
     var result: i64 = 0
     for ch in s {
         let d = ch as i64 - 48
@@ -302,7 +302,7 @@ fn parseContentLength(s: &string): i64 {
 }
 
 // Value of a single hex digit, or -1 if the byte isn't one.
-fn hexNibble(ch: u8): i32 {
+pub fn hexNibble(ch: u8): i32 {
     if ch >= '0' && ch <= '9' {
         return (ch - '0') as i32
     }
@@ -318,7 +318,7 @@ fn hexNibble(ch: u8): i32 {
 // Percent-decode a query component. '+' means space (form-urlencoded) and %XX
 // is a raw byte. A malformed escape is passed through literally rather than
 // dropped, so a stray '%' in user input can't truncate the value.
-fn urlDecode(s: &string): string {
+pub fn urlDecode(s: &string): string {
     var out: string = ""
     var i = 0
     while i < s.len {
@@ -344,7 +344,7 @@ fn urlDecode(s: &string): string {
     return out
 }
 
-fn parseQueryString(qs: &string): Vec<Param> {
+pub fn parseQueryString(qs: &string): Vec<Param> {
     var params: Vec<Param> = []
     if qs.len == 0 {
         return params
@@ -380,7 +380,7 @@ fn parseQueryString(qs: &string): Vec<Param> {
     return params
 }
 
-fn parseCookieValue(cookieHeader: string, name: &string): string {
+pub fn parseCookieValue(cookieHeader: string, name: &string): string {
     if cookieHeader.len == 0 {
         return ""
     }
@@ -410,7 +410,7 @@ fn parseCookieValue(cookieHeader: string, name: &string): string {
     return ""
 }
 
-fn bufToStrFromString(s: &string, start: i64, end: i64): string {
+pub fn bufToStrFromString(s: &string, start: i64, end: i64): string {
     var result: string = ""
     var idx: i64 = start
     while idx < end {
@@ -420,7 +420,7 @@ fn bufToStrFromString(s: &string, start: i64, end: i64): string {
     return result
 }
 
-fn statusText(status: i32): string {
+pub fn statusText(status: i32): string {
     if status == 200 {
         return "200 OK"
     }
@@ -457,7 +457,7 @@ fn statusText(status: i32): string {
     return "200 OK"
 }
 
-fn sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders: &Vec<Param>): void {
+pub fn sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders: &Vec<Param>): void {
     var resp: string = "HTTP/1.1 " + statusText(status)
     resp = resp + "\r\nContent-Type: " + contentType
     resp = resp + "\r\nContent-Length: " + body.len.toString()
@@ -471,7 +471,7 @@ fn sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders
     write(fd, resp, resp.len)
 }
 
-fn sendResponse(fd: i32, response: Response, headers: &Vec<Param>): void {
+pub fn sendResponse(fd: i32, response: Response, headers: &Vec<Param>): void {
     match response {
         Response.Text(body) => {
             sendRaw(fd, 200, "text/plain; charset=utf-8", body, headers)
@@ -493,7 +493,7 @@ fn sendResponse(fd: i32, response: Response, headers: &Vec<Param>): void {
 
 // ── Socket with automatic cleanup ──
 
-struct Socket {
+pub struct Socket {
     fd: i32,
 }
 
@@ -508,7 +508,7 @@ impl Drop for Socket {
 
 // ── Public API ──
 
-fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
+pub fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
     let BACKLOG: i32 = 1024
@@ -570,14 +570,14 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
 
 // ── Router ──
 
-struct Route {
+pub struct Route {
     method: string,
     pattern: string,
     paramNames: Vec<string>,
     handler: (&mut Context) => Response,
 }
 
-struct Router {
+pub struct Router {
     routes: Vec<Route>,
     middleware: Vec < (&mut Context, (&mut Context) => Response) => Response >,
 }
@@ -672,7 +672,7 @@ impl Router {
 }
 
 // Start an HTTP server using a Router (headers from Context are sent on the wire).
-fn serveRouter(port: u16?, router: &Router): Result<void> {
+pub fn serveRouter(port: u16?, router: &Router): Result<void> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
     let BACKLOG: i32 = 1024
@@ -730,7 +730,7 @@ fn serveRouter(port: u16?, router: &Router): Result<void> {
 
 // ── Path matching ──
 
-fn extractParamNames(pattern: &string): Vec<string> {
+pub fn extractParamNames(pattern: &string): Vec<string> {
     var names: Vec<string> = []
     var i: i64 = 0
     while i < pattern.len {
@@ -754,7 +754,7 @@ fn extractParamNames(pattern: &string): Vec<string> {
     return names
 }
 
-fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option<Vec<Param>> {
+pub fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option<Vec<Param>> {
     let patSegs = splitPath(pattern)
     let pathSegs = splitPath(path)
 
@@ -798,7 +798,7 @@ fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option
     return Option.Some(params)
 }
 
-fn splitPath(path: &string): Vec<string> {
+pub fn splitPath(path: &string): Vec<string> {
     var segs: Vec<string> = []
     var current: string = ""
     for ch in path {

@@ -1,13 +1,13 @@
 // std/hex — hex encode/decode for strings
 
-fn _hexChar(val: u8): u8 {
+pub fn _hexChar(val: u8): u8 {
     if val < 10 {
         return val + 48
     }
     return val - 10 + 97
 }
 
-fn _hexVal(ch: u8): u8 {
+pub fn _hexVal(ch: u8): u8 {
     if ch >= 48 && ch <= 57 {
         return ch - 48
     }
@@ -21,7 +21,7 @@ fn _hexVal(ch: u8): u8 {
 }
 
 // Encode a string as hex (each byte becomes two hex chars).
-fn hexEncode(input: &string): string {
+pub fn hexEncode(input: &string): string {
     var result = ""
     for b in input {
         result.push(_hexChar(b >> 4))
@@ -31,7 +31,7 @@ fn hexEncode(input: &string): string {
 }
 
 // Decode a hex string back to bytes.
-fn hexDecode(input: &string): string {
+pub fn hexDecode(input: &string): string {
     var result = ""
     var i: i64 = 0
     while i + 1 < input.len {

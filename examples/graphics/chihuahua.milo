@@ -30,12 +30,13 @@ from "std/pty" import {
     WinSize
 }
 
-let SPR_W: i64 = 18
-let SPR_ROWS: i64 = 18 // pixel rows (even → SPR_ROWS/2 terminal rows tall)
+pub let SPR_W: i64 = 18
+
+pub let SPR_ROWS: i64 = 18 // pixel rows (even → SPR_ROWS/2 terminal rows tall)
 
 // Pixel-art bitmap. Legend: space/'.'=transparent  d=dark-brown  b=brown-shadow
 // t=tan  l=light-tan  w=cream  W=white-highlight  k=eye/nose  g=eye-glint  p=pink
-fn spriteRow(i: i64): string {
+pub fn spriteRow(i: i64): string {
     if i == 0 {
         return "  dd          dd  "
     } else if i == 1 {
@@ -74,7 +75,7 @@ fn spriteRow(i: i64): string {
     return "     bbtttbb      "
 }
 
-fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
+pub fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
     out[0] = r
     out[1] = g
     out[2] = b
@@ -82,7 +83,7 @@ fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
 }
 
 // Map a palette char to an RGB color; out[3]=0 marks a transparent pixel.
-fn charRGB(ch: u8, out: &mut [i64; 4]): void {
+pub fn charRGB(ch: u8, out: &mut [i64; 4]): void {
     let c = ch as i64
     if c == 100 {
         setC(out, 96, 60, 38) // d  dark brown (ear/outline)
@@ -107,20 +108,20 @@ fn charRGB(ch: u8, out: &mut [i64; 4]): void {
     }
 }
 
-fn charAt(row: &string, c: i64): u8 {
+pub fn charAt(row: &string, c: i64): u8 {
     if c < row.len {
         return row[c]
     }
     return 32 as u8
 }
 
-fn emit(buf: &mut string, s: &string): void {
+pub fn emit(buf: &mut string, s: &string): void {
     for i in 0..s.len {
         buf.push(s[i])
     }
 }
 
-fn termSize(out: &mut [i64; 2]): void {
+pub fn termSize(out: &mut [i64; 2]): void {
     var ws = WinSize {
         rows: 0 as u16, cols: 0 as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
@@ -142,7 +143,7 @@ fn termSize(out: &mut [i64; 2]): void {
 // Render the sprite at terminal position (row0, col0) into buf. Two pixel rows
 // per terminal row via half-blocks: ▀ (fg=top,bg=bottom), or ▄/▀ with a default
 // bg when only one half is opaque.
-fn drawSprite(buf: &mut string, row0: i64, col0: i64): void {
+pub fn drawSprite(buf: &mut string, row0: i64, col0: i64): void {
     let hc = SPR_ROWS / 2
     var tcol: [i64; 4] = [0; 4]
     var bcol: [i64; 4] = [0; 4]
@@ -175,7 +176,7 @@ fn drawSprite(buf: &mut string, row0: i64, col0: i64): void {
     }
 }
 
-fn eraseRect(buf: &mut string, row0: i64, col0: i64, w: i64, h: i64): void {
+pub fn eraseRect(buf: &mut string, row0: i64, col0: i64, w: i64, h: i64): void {
     emit(buf, ansiReset())
     for r in 0..h {
         emit(buf, cursorTo(row0 + r, col0))
@@ -185,7 +186,7 @@ fn eraseRect(buf: &mut string, row0: i64, col0: i64, w: i64, h: i64): void {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let termState = enableRawMode()
     writeStdout(hideCursor() + clearScreen())
 

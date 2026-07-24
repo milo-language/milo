@@ -105,81 +105,116 @@ from "../dap/session" import {
     mainSymbolFor, histEntryFor, histInsert, histMergeMany, specConfigJson,
 }
 
-extern fn usleep(usec: u32): i32
+pub extern fn usleep(usec: u32): i32
 
 // NOTE: module-scope string initializers are NYI in Milo and silently produce
 // "" — every one of these is assigned in main() before any request is served.
-var binPath: string = ""
-var srcPath: string = ""
-var adapterCmd: string = "" // full command line, first token resolved via PATH
-var adapterKind: string = "" // dialect kind (lldb|python|node|go) — selects launch/init dialect, see Dialect registry
-var stopAtMain: bool = false // per-run (set from the run cmd): break at main / first user line
-var excFiltersJson: string = "" // JSON array of selected exception filter ids ("" = none)
-var launchExtra: string = "" // JSON object merged verbatim into the launch/attach request
+pub var binPath: string = ""
+
+pub var srcPath: string = ""
+
+pub var adapterCmd: string = "" // full command line, first token resolved via PATH
+
+pub var adapterKind: string = "" // dialect kind (lldb|python|node|go) — selects launch/init dialect, see Dialect registry
+
+pub var stopAtMain: bool = false // per-run (set from the run cmd): break at main / first user line
+
+pub var excFiltersJson: string = "" // JSON array of selected exception filter ids ("" = none)
+
+pub var launchExtra: string = "" // JSON object merged verbatim into the launch/attach request
 // config = a VS Code launch-configuration object. Meta keys
 // (type/request/name/source/dapPath/stopAtMain/program/port/host) are extracted
 // into globals; every other key lowers verbatim into launchExtra (the DAP body).
-var gConfigStopAtMain: bool = false // stopAtMain persisted from config (run cmd can override)
-var gRequest: string = "" // "launch" (default, incl. "") | "attach" — selects the DAP command
-var gConfigName: string = "" // optional launch-config "name" label — shown in history
-var gDapPathRaw: string = "" // user's explicit "dapPath" verbatim ("" = probed) — config echo only
-var gDapHost: string = "" // TCP transport host (gDapPort>0); "" = stdio spawn
-var gDapPort: i64 = 0 // TCP transport port; 0 = spawn adapterCmd over stdio
+pub var gConfigStopAtMain: bool = false // stopAtMain persisted from config (run cmd can override)
+
+pub var gRequest: string = "" // "launch" (default, incl. "") | "attach" — selects the DAP command
+
+pub var gConfigName: string = "" // optional launch-config "name" label — shown in history
+
+pub var gDapPathRaw: string = "" // user's explicit "dapPath" verbatim ("" = probed) — config echo only
+
+pub var gDapHost: string = "" // TCP transport host (gDapPort>0); "" = stdio spawn
+
+pub var gDapPort: i64 = 0 // TCP transport port; 0 = spawn adapterCmd over stdio
 // A force-run's config, applied after the old session's teardown completes
 // (D's terminated cleanup consumes it; "" = rerun the current config).
-var gPendingConfig: string = ""
-var gPendingStopAtMain: bool = false // the force-run's per-run stopAtMain
-var gHistory: string = "" // config history JSON array, newest first, cap 10 — persisted to XDG state (init "[]" in main)
-var gRestored: bool = false // booted idle and staged history[0] (banner hint)
+pub var gPendingConfig: string = ""
+
+pub var gPendingStopAtMain: bool = false // the force-run's per-run stopAtMain
+
+pub var gHistory: string = "" // config history JSON array, newest first, cap 10 — persisted to XDG state (init "[]" in main)
+
+pub var gRestored: bool = false // booted idle and staged history[0] (banner hint)
 // Set when a forced run must kill+rerun (a new config can't ride a live
 // adapter). D's terminated cleanup honors it by re-spawning once the old
 // debuggee is gone.
-var gPendingRun: bool = false
+pub var gPendingRun: bool = false
 
 // Shared session: ONE debug session per server process, any number of WS
 // peers (browser tabs + MCP co-debugger) all seeing identical broadcast state.
 // Green runtime = one OS thread, cooperative scheduling — plain globals are
 // race-free at yield-point granularity (same argument as the config globals).
 // All assigned in main() before any request is served (module init NYI).
-var gStarted: bool = false
-var gDapIn: i32 = -1
-var gPtyFd: i32 = -1
-var gOddSeq: i64 = -1 // +2 per R send → 1, 3, 5, … (D's DapClient uses even)
-var gStdinBuf: string = "" // keystrokes typed before the pty exists
+pub var gStarted: bool = false
+
+pub var gDapIn: i32 = -1
+
+pub var gPtyFd: i32 = -1
+
+pub var gOddSeq: i64 = -1 // +2 per R send → 1, 3, 5, … (D's DapClient uses even)
+
+pub var gStdinBuf: string = "" // keystrokes typed before the pty exists
 // Recent adapter stderr, captured off the DAP stream (see startArgs). Surfaced
 // only when the adapter dies before the handshake completes — otherwise silence.
 // Bounded to the first chunk that matters (a startup traceback); reset each run.
-var gAdapterStderr: string = ""
-var gCapsMsg: string = "" // last capabilities push — replayed to late joiners
-var gStopMsg: string = "" // last stopped push while still stopped — replayed
-var gThreadsMsg: string = "" // last threads push while stopped — replayed
-var gRegionsMsg: string = "" // last memory-region push while stopped — replayed (region colors)
+pub var gAdapterStderr: string = ""
+
+pub var gCapsMsg: string = "" // last capabilities push — replayed to late joiners
+
+pub var gStopMsg: string = "" // last stopped push while still stopped — replayed
+
+pub var gThreadsMsg: string = "" // last threads push while stopped — replayed
+
+pub var gRegionsMsg: string = "" // last memory-region push while stopped — replayed (region colors)
 // recent terminal output (debugger console + program stdout/stderr),
 // replayed to a joining tab so startup chatter and history survive reload /
 // late join. Bounded — a non-pty adapter routes ALL program output here.
-var gOutputLog: Vec<OutLine> = []
-let OUTLOG_MAX: i64 = 400
-var gNextClient: i64 = 1
-var gBps: Vec<Bp> = [] // shared breakpoint set (was per-connection before the shared session)
-var gSessionId: string = "" // uuid in hello — a reloaded tab detects same-vs-new session
-var gPeers: i64 = 0 // attached WS peers (browser tabs + MCP co-debuggers)
-var gLastDetachMs: i64 = 0 // epochMillis when the last peer left — idle-ttl clock
-var gIdleTtlSecs: i64 = 0 // --idle-ttl; 0 = never reap
-var gTickWr: i32 = -1 // reaper pipe write end (ticker OS thread → green task)
-var gTickUsecs: i64 = 0
-var webroot: string = "" // UI bundle dir served from disk (--webroot)
-var Q: string = ""
+pub var gOutputLog: Vec<OutLine> = []
+
+pub let OUTLOG_MAX: i64 = 400
+
+pub var gNextClient: i64 = 1
+
+pub var gBps: Vec<Bp> = [] // shared breakpoint set (was per-connection before the shared session)
+
+pub var gSessionId: string = "" // uuid in hello — a reloaded tab detects same-vs-new session
+
+pub var gPeers: i64 = 0 // attached WS peers (browser tabs + MCP co-debuggers)
+
+pub var gLastDetachMs: i64 = 0 // epochMillis when the last peer left — idle-ttl clock
+
+pub var gIdleTtlSecs: i64 = 0 // --idle-ttl; 0 = never reap
+
+pub var gTickWr: i32 = -1 // reaper pipe write end (ticker OS thread → green task)
+
+pub var gTickUsecs: i64 = 0
+
+pub var webroot: string = "" // UI bundle dir served from disk (--webroot)
+
+pub var Q: string = ""
 // lifecycle log. 0 = --quiet (banner only), 1 = normal, 2 = --verbose
 // (adds per-stop lines). Runtime events go to stdout — a server should read
 // like a server; stderr stays for errors.
-var gLogLevel: i64 = 0
-var gRunStartMs: i64 = 0 // epochMillis at adapter spawn — run duration
-var gLastExit: i64 = -1 // debuggee exitCode from the "exited" event; -1 = unknown
+pub var gLogLevel: i64 = 0
+
+pub var gRunStartMs: i64 = 0 // epochMillis at adapter spawn — run duration
+
+pub var gLastExit: i64 = -1 // debuggee exitCode from the "exited" event; -1 = unknown
 
 // A browser-set breakpoint. Keyed by (path, line); empty
 // condition/hitCondition/logMessage mean a plain breakpoint — the keys are
 // omitted from the DAP request.
-struct Bp {
+pub struct Bp {
     path: string,
     line: i64,
     condition: string,
@@ -191,12 +226,12 @@ struct Bp {
 }
 
 // one buffered terminal line for late-join replay.
-struct OutLine {
+pub struct OutLine {
     text: string,
     category: string,
 }
 
-fn cloneBp(b: &Bp): Bp {
+pub fn cloneBp(b: &Bp): Bp {
     return Bp {
         path: b.path.clone(),
         line: b.line,
@@ -207,7 +242,7 @@ fn cloneBp(b: &Bp): Bp {
     }
 }
 
-fn bpPaths(bps: &Vec<Bp>, fallback: &string): Vec<string> {
+pub fn bpPaths(bps: &Vec<Bp>, fallback: &string): Vec<string> {
     var out: Vec<string> = []
     for bp in bps {
         var seen = false
@@ -229,7 +264,7 @@ fn bpPaths(bps: &Vec<Bp>, fallback: &string): Vec<string> {
 }
 
 // A request R sent whose response D must route back to the browser.
-struct Pending {
+pub struct Pending {
     seq: i64,
     kind: string, // initialize | eval | expand | bpLive | (D-internal: launch, sbInit, st, sc, vars)
     id: i64, // browser correlation id for eval/expand
@@ -238,7 +273,7 @@ struct Pending {
 
 // ── JSON helpers ──
 
-fn firstThreadId(raw: &string): i64 {
+pub fn firstThreadId(raw: &string): i64 {
     if let Result.Ok(doc) = jsonParse(raw.clone()) {
         if let Option.Some(b) = doc.get("body") {
             if let Option.Some(ts) = b.get("threads") {
@@ -253,7 +288,7 @@ fn firstThreadId(raw: &string): i64 {
 
 // stackTrace body → [{"id":..,"name":..,"line":..,"path":..}] for the UI.
 // path may be "" (no debug info / synthetic frame) — the UI skips navigation.
-fn framesJson(raw: &string): string {
+pub fn framesJson(raw: &string): string {
     var arr = jsonArr()
     if let Result.Ok(doc) = jsonParse(raw.clone()) {
         if let Option.Some(body) = doc.get("body") {
@@ -283,7 +318,7 @@ fn framesJson(raw: &string): string {
 //   [0x0000000100000000-0x0000000100004000) r-x __TEXT
 // The client bins each region into a type (stack/heap/code/const/data) — it
 // needs sp for the stack case, which only it has.
-fn regionsJson(txt: &string): string {
+pub fn regionsJson(txt: &string): string {
     var arr = jsonArr()
     let lines = strSplit(txt.clone(), "\n")
     var li: i64 = 0
@@ -314,7 +349,7 @@ fn regionsJson(txt: &string): string {
     return arr.build()
 }
 
-fn localsJson(raw: &string): string {
+pub fn localsJson(raw: &string): string {
     var arr = jsonArr()
     if let Result.Ok(doc) = jsonParse(raw.clone()) {
         if let Option.Some(body) = doc.get("body") {
@@ -333,7 +368,7 @@ fn localsJson(raw: &string): string {
 }
 
 // disassemble body → [{"addr":..,"text":..,"sym":..}] for the asm pane.
-fn disasmJson(raw: &string): string {
+pub fn disasmJson(raw: &string): string {
     var arr = jsonArr()
     if let Result.Ok(doc) = jsonParse(raw.clone()) {
         if let Option.Some(body) = doc.get("body") {
@@ -349,7 +384,7 @@ fn disasmJson(raw: &string): string {
 }
 
 // completions body → [{"label":..,"text":..}] (text falls back to label).
-fn completionsJson(raw: &string): string {
+pub fn completionsJson(raw: &string): string {
     var arr = jsonArr()
     if let Result.Ok(doc) = jsonParse(raw.clone()) {
         if let Option.Some(body) = doc.get("body") {
@@ -370,7 +405,7 @@ fn completionsJson(raw: &string): string {
 }
 
 // threads body → [{"id":..,"name":..}] for the threads panel.
-fn threadsJson(raw: &string): string {
+pub fn threadsJson(raw: &string): string {
     var arr = jsonArr()
     if let Result.Ok(doc) = jsonParse(raw.clone()) {
         if let Option.Some(body) = doc.get("body") {
@@ -388,7 +423,7 @@ fn threadsJson(raw: &string): string {
 // The register scope's variablesReference, or 0 if the adapter exposes none.
 // lldb-dap tags it presentationHint "registers"; debugpy has no such scope, so
 // a 0 here is what gates the UI's Registers panel (no register-cap flag in DAP).
-fn registersScopeRef(raw: &string): i64 {
+pub fn registersScopeRef(raw: &string): i64 {
     if let Result.Ok(doc) = jsonParse(raw.clone()) {
         if let Option.Some(body) = doc.get("body") {
             let n = body.childLen("scopes")
@@ -408,21 +443,21 @@ fn registersScopeRef(raw: &string): i64 {
 
 // ── Inbound browser command fields ──
 
-fn jStr(raw: &string, key: &string): string {
+pub fn jStr(raw: &string, key: &string): string {
     if let Result.Ok(doc) = jsonParse(raw.clone()) {
         return doc.str(key) ?? ""
     }
     return ""
 }
 
-fn jBool(raw: &string, key: &string, fallback: bool): bool {
+pub fn jBool(raw: &string, key: &string, fallback: bool): bool {
     if let Result.Ok(doc) = jsonParse(raw.clone()) {
         return doc.bool(key) ?? fallback
     }
     return fallback
 }
 
-fn jI64(raw: &string, key: &string, fallback: i64): i64 {
+pub fn jI64(raw: &string, key: &string, fallback: i64): i64 {
     if let Result.Ok(doc) = jsonParse(raw.clone()) {
         return doc.i64(key) ?? fallback
     }
@@ -430,7 +465,7 @@ fn jI64(raw: &string, key: &string, fallback: i64): i64 {
 }
 
 // `key`'s value as raw JSON if it's an object, else "" (run's inline config).
-fn jObjRaw(raw: &string, key: &string): string {
+pub fn jObjRaw(raw: &string, key: &string): string {
     if let Result.Ok(doc) = jsonParse(raw.clone()) {
         if let Option.Some(v) = doc.get(key) {
             if v.isObject() {
@@ -445,7 +480,7 @@ fn jObjRaw(raw: &string, key: &string): string {
 
 // One line per session event: `HH:MM:SS <event> <details>`. Event column
 // padded so details align.
-fn logEvent(event: &string, details: &string): void {
+pub fn logEvent(event: &string, details: &string): void {
     if gLogLevel < 1 {
         return
     }
@@ -454,7 +489,7 @@ fn logEvent(event: &string, details: &string): void {
     flush()
 }
 
-fn peerCountStr(): string {
+pub fn peerCountStr(): string {
     if gPeers == 1 {
         return "(1 peer)"
     }
@@ -465,7 +500,7 @@ fn peerCountStr(): string {
 
 // Enqueue and poke the writer awake via the self-pipe. trySend so a stuffed
 // channel can never block (and stall) the scheduler; drops are loud.
-fn wsPush(ch: &Channel<string>, wakeWr: i32, msg: string): void {
+pub fn wsPush(ch: &Channel<string>, wakeWr: i32, msg: string): void {
     if ch.trySend(msg) {
         var one: [u8; 1] = [110; 1]
         unsafe {
@@ -477,7 +512,7 @@ fn wsPush(ch: &Channel<string>, wakeWr: i32, msg: string): void {
 }
 
 // W: sole socket writer. Parks on the wake pipe, drains the channel.
-fn wsWriterLoop(fd: i32, ch: Channel<string>, wakeRd: i32): void {
+pub fn wsWriterLoop(fd: i32, ch: Channel<string>, wakeRd: i32): void {
     // Borrowed copy of the conn: _closed=true so Drop skips teardown (R owns
     // the real one). sendText itself doesn't consult _closed.
     var conn = WsConn {
@@ -513,14 +548,14 @@ fn wsWriterLoop(fd: i32, ch: Channel<string>, wakeRd: i32): void {
 // register/unregister through regCh (alive=false unregisters by id); both the
 // bus and regCh share busWake. Dead peers just fill a bounded channel until
 // their unregister lands — trySend keeps that harmless.
-struct Sink {
+pub struct Sink {
     id: i64,
     ch: Channel<string>,
     wakeWr: i32,
     alive: bool,
 }
 
-fn broadcastLoop(bus: Channel<string>, busWakeRd: i32, regCh: Channel<Sink>): void {
+pub fn broadcastLoop(bus: Channel<string>, busWakeRd: i32, regCh: Channel<Sink>): void {
     var sinks: Vec<Sink> = []
     var buf: [u8; 64] = [0; 64]
     while true {
@@ -579,7 +614,7 @@ fn broadcastLoop(bus: Channel<string>, busWakeRd: i32, regCh: Channel<Sink>): vo
 
 // P: pty master → browser terminal. fdChannel owns the read/EAGAIN pump; we just
 // wrap each chunk and forward.
-fn ptyPumpLoop(master: i32, ch: Channel<string>, wakeWr: i32): void {
+pub fn ptyPumpLoop(master: i32, ch: Channel<string>, wakeWr: i32): void {
     for chunk in fdChannel(master) {
         wsPush(ch, wakeWr, jsonObj().str("type", "ptyData").str("data", chunk).build())
     }
@@ -589,7 +624,7 @@ fn ptyPumpLoop(master: i32, ch: Channel<string>, wakeWr: i32): void {
 // stash the head of it for the pre-handshake death diagnostic. Cap at 8 KB —
 // a Python traceback / lldb-dap gripe fits; a chatty adapter can't grow it
 // unbounded. Also echoed to the server log so it's visible there too.
-fn adapterStderrPump(errFd: i32): void {
+pub fn adapterStderrPump(errFd: i32): void {
     for chunk in fdChannel(errFd) {
         eprint("[adapter] " + chunk)
         if gAdapterStderr.len < 8192 {
@@ -600,7 +635,7 @@ fn adapterStderrPump(errFd: i32): void {
 
 // ── Simple outbound messages ──
 
-fn helloMsg(): string {
+pub fn helloMsg(): string {
     // `config` is THE canonical launch-config object (what the editor shows and
     // resolveConfig accepts back verbatim); program/adapterCmd ride alongside as
     // display conveniences (toolbar span, ⓘ adapter line).
@@ -624,7 +659,7 @@ fn helloMsg(): string {
 }
 
 // full bp state for a late-joining peer (acks are optimistic client-side).
-fn bpSyncMsg(b: &Bp): string {
+pub fn bpSyncMsg(b: &Bp): string {
     return jsonObj().str("type", "bpSync")
         .str("path", b.path.clone()).int("line", b.line)
         .str("condition", b.condition.clone())
@@ -634,11 +669,11 @@ fn bpSyncMsg(b: &Bp): string {
         .build()
 }
 
-fn configErrMsg(err: &string): string {
+pub fn configErrMsg(err: &string): string {
     return jsonObj().str("type", "configError").str("error", err.clone()).build()
 }
 
-fn sourceMsg(path: &string): string {
+pub fn sourceMsg(path: &string): string {
     var content: string = ""
     match readFile(path) {
         Result.Ok(text) => {
@@ -658,15 +693,15 @@ fn sourceMsg(path: &string): string {
         .build()
 }
 
-fn terminatedMsg(): string {
+pub fn terminatedMsg(): string {
     return jsonObj().str("type", "terminated").build()
 }
 
-fn bpAckMsg(line: i64, set: bool): string {
+pub fn bpAckMsg(line: i64, set: bool): string {
     return jsonObj().str("type", "breakpoint").int("line", line).bool("set", set).build()
 }
 
-fn outputMsg(raw: &string): string {
+pub fn outputMsg(raw: &string): string {
     // DAP category ("stdout"/"stderr"/"console"/"important"/…) lets the merged
     // terminal color program output apart from debugger chatter.
     return jsonObj().str("type", "output")
@@ -677,14 +712,14 @@ fn outputMsg(raw: &string): string {
 
 // ── DAP request framing for R (odd seqs; D's DapClient uses even) ──
 
-fn sendReqFd(fd: i32, seq: i64, command: &string, argsJson: &string): void {
+pub fn sendReqFd(fd: i32, seq: i64, command: &string, argsJson: &string): void {
     let payload = jsonObj().int("seq", seq).str("type", "request")
         .str("command", command.clone()).raw("arguments", argsJson.clone()).build()
     let _w = writeFrameFd(fd, payload)
 }
 
 // setBreakpoints args for one file (breakpoints are per-source in DAP).
-fn buildBpArgsForPath(bps: &Vec<Bp>, path: &string): string {
+pub fn buildBpArgsForPath(bps: &Vec<Bp>, path: &string): string {
     var arr = jsonArr()
     for bp in bps {
         if bp.path == path && bp.enabled {
@@ -709,7 +744,7 @@ fn buildBpArgsForPath(bps: &Vec<Bp>, path: &string): string {
 
 // Session-init bundle: [{"args": <setBreakpoints-json>}] — one entry per file
 // with bps. D replays these during the initialized event (kind sbInit each).
-fn buildAllBpArgs(bps: &Vec<Bp>): string {
+pub fn buildAllBpArgs(bps: &Vec<Bp>): string {
     var arr = jsonArr()
     let paths = bpPaths(bps, srcPath)
     for path in paths {
@@ -719,7 +754,7 @@ fn buildAllBpArgs(bps: &Vec<Bp>): string {
 }
 
 // setExceptionBreakpoints args from the selected filter ids.
-fn excArgs(): string {
+pub fn excArgs(): string {
     var filters: string = "[]"
     if excFiltersJson.len > 0 {
         filters = excFiltersJson.clone()
@@ -730,20 +765,20 @@ fn excArgs(): string {
 // Session config + adapter dialect + launch/init bodies live in ../dap/session
 // (shared with standalone mcp). These wrappers bind the shared, value-based fns
 // to this driver's session globals.
-fn adapterId(): string {
+pub fn adapterId(): string {
     return adapterIdForKind(adapterKind)
 }
 
-fn initArgs(): string {
+pub fn initArgs(): string {
     return initArgsFor(adapterKind)
 }
 
-fn launchRequest(): string {
+pub fn launchRequest(): string {
     return launchRequestOf(curSpec())
 }
 
 // snapshot the session globals as the value the shared launch builders consume.
-fn curSpec(): LaunchSpec {
+pub fn curSpec(): LaunchSpec {
     return LaunchSpec {
         binPath: binPath.clone(), srcPath: srcPath.clone(),
         adapterCmd: adapterCmd.clone(), adapterKind: adapterKind.clone(),
@@ -758,7 +793,7 @@ fn curSpec(): LaunchSpec {
 // globals, and reset per-session state. Returns "" on success or a user-facing
 // error. Caller broadcasts hello/source. Running sessions stage instead (see
 // setConfig handler); this must only run single-threaded on the green runtime.
-fn applyConfig(raw: string, selectName: string): string {
+pub fn applyConfig(raw: string, selectName: string): string {
     match resolveConfig(raw, selectName) {
         Result.Ok(spec) => {
             binPath = spec.binPath.clone()
@@ -786,7 +821,7 @@ fn applyConfig(raw: string, selectName: string): string {
 // when the config lacks them, so `--launch '{"args":[...]}' --program /x` still
 // composes. A {version, configurations:[...]} wrapper is a self-contained
 // launch.json file and passes through untouched.
-fn mergeCliDefaults(text: string, prog: &string, src: &string): string {
+pub fn mergeCliDefaults(text: string, prog: &string, src: &string): string {
     match jsoncParse(text.clone()) {
         Result.Ok(d) => {
             if !d.isObject() {
@@ -835,7 +870,7 @@ fn mergeCliDefaults(text: string, prog: &string, src: &string): string {
 // the broadcast), which kills the old client-local dupe (drawer + hello both
 // saved). $XDG_STATE_HOME/hades/history.json, default ~/.local/state/hades.
 
-fn histDir(): string {
+pub fn histDir(): string {
     if let Option.Some(x) = getEnv("XDG_STATE_HOME") {
         if x.len > 0 {
             return x + "/hades"
@@ -844,12 +879,12 @@ fn histDir(): string {
     return getEnvOr("HOME", "") + "/.local/state/hades"
 }
 
-fn histFilePath(): string {
+pub fn histFilePath(): string {
     return histDir() + "/history.json"
 }
 
 // mkdir -p: create each ancestor in turn, ignoring already-exists errors (0755).
-fn ensureDir(path: &string): void {
+pub fn ensureDir(path: &string): void {
     var cur: string = ""
     for ch in path {
         if ch == '/' {
@@ -867,7 +902,7 @@ fn ensureDir(path: &string): void {
 }
 
 // Read history at boot. Missing/corrupt file → empty (never fatal).
-fn loadHistory(): void {
+pub fn loadHistory(): void {
     let p = histFilePath()
     if !pathExists(p) {
         gHistory = "[]"
@@ -883,25 +918,25 @@ fn loadHistory(): void {
     }
 }
 
-fn persistHistory(): void {
+pub fn persistHistory(): void {
     ensureDir(histDir())
     let _r = writeFile(histFilePath(), gHistory)
 }
 
 // Append the current session config to history on a launch (dedup + cap 10),
 // persist, and return the broadcast so the caller can push it to all peers.
-fn appendHistory(): string {
+pub fn appendHistory(): string {
     gHistory = histInsert(gHistory, histEntryFor(curSpec(), epochMillis()), 10 as i64)
     persistHistory()
     return historyChangedMsg()
 }
 
-fn historyChangedMsg(): string {
+pub fn historyChangedMsg(): string {
     return jsonObj().str("type", "historyChanged").raw("history", gHistory.clone()).build()
 }
 
 // history[0] as a re-appliable config object, or None if history is empty.
-fn firstHistoryConfig(): Option<string> {
+pub fn firstHistoryConfig(): Option<string> {
     if let Result.Ok(d) = jsonParse(gHistory.clone()) {
         if d.isArray() && d.len() > 0 {
             if let Option.Some(el) = d.at(0 as i64) {
@@ -914,17 +949,17 @@ fn firstHistoryConfig(): Option<string> {
 
 // launch/init bodies + adapter argv come from the shared session module; these
 // bind them to this driver's globals (stopAtMain is the per-run override).
-fn launchArgs(): string {
+pub fn launchArgs(): string {
     return launchArgsFor(curSpec(), stopAtMain)
 }
 
-fn adapterArgv(): Vec<string> {
+pub fn adapterArgv(): Vec<string> {
     return adapterArgvOf(adapterCmd)
 }
 
 // ── D: the DAP-reader task ──
 
-fn removePending(pend: &Vec<Pending>, idx: i64): Vec<Pending> {
+pub fn removePending(pend: &Vec<Pending>, idx: i64): Vec<Pending> {
     var keep: Vec<Pending> = []
     var i: i64 = 0
     while i < pend.len {
@@ -943,7 +978,7 @@ fn removePending(pend: &Vec<Pending>, idx: i64): Vec<Pending> {
 // runInTerminal reverse request → spawn debuggee in a std/pty, reply with the
 // pid, start the pump. env vars are honored by exec'ing through /usr/bin/env
 // (lldb-dap's launcher handshake rides on env vars, so dropping them breaks it).
-fn handleRunInTerminal(cl: &mut DapClient, raw: &string, reqSeq: i64, ch: Channel<string>, wakeWr: i32): i32 {
+pub fn handleRunInTerminal(cl: &mut DapClient, raw: &string, reqSeq: i64, ch: Channel<string>, wakeWr: i32): i32 {
     var argv: Vec<string> = []
     var envs: Vec<string> = []
     match jsonParse(raw.clone()) {
@@ -1046,7 +1081,7 @@ fn handleRunInTerminal(cl: &mut DapClient, raw: &string, reqSeq: i64, ch: Channe
     return -1
 }
 
-fn dapReaderLoop(client: DapClient, ch: Channel<string>, wakeWr: i32, pendCh: Channel<Pending>): void {
+pub fn dapReaderLoop(client: DapClient, ch: Channel<string>, wakeWr: i32, pendCh: Channel<Pending>): void {
     var cl = client
     var pend: Vec<Pending> = []
     var tid: i64 = -1 as i64
@@ -1493,7 +1528,7 @@ fn dapReaderLoop(client: DapClient, ch: Channel<string>, wakeWr: i32, pendCh: Ch
 // Shared by the run command (R) and restart-with-staged auto-rerun (D). Assumes
 // binPath set and !gStarted. Broadcasts terminated and returns false if the
 // adapter fails to spawn. bus/busWakeWr are the broadcast channel + wake fd.
-fn startRun(bus: Channel<string>, busWakeWr: i32, pendCh: Channel<Pending>): bool {
+pub fn startRun(bus: Channel<string>, busWakeWr: i32, pendCh: Channel<Pending>): bool {
     gStarted = true
     // Transport: TCP connects to a running adapter (gDapPort>0); stdio spawns
     // the resolved adapter command. Both yield a DapClient whose child.stdinFd
@@ -1563,7 +1598,7 @@ fn startRun(bus: Channel<string>, busWakeWr: i32, pendCh: Channel<Pending>): boo
 
 // ── R: the WS-reader task (entry point per debug WebSocket) ──
 
-fn handleDebugWs(ws: WsConn, peerKind: string, bus: Channel<string>, busWakeWr: i32, pendCh: Channel<Pending>, regCh: Channel<Sink>): void {
+pub fn handleDebugWs(ws: WsConn, peerKind: string, bus: Channel<string>, busWakeWr: i32, pendCh: Channel<Pending>, regCh: Channel<Sink>): void {
     var conn = ws
 
     let ch = Channel<string>.new(256)!
@@ -2031,7 +2066,7 @@ fn handleDebugWs(ws: WsConn, peerKind: string, bus: Channel<string>, busWakeWr: 
 // time-based wakeups need an external poke. Raw usleep + pipe write only — no
 // runtime calls here (the scheduler pointer is a plain global, not
 // thread-local, so std sleep/yield on a foreign thread would corrupt it).
-fn tickerMain(): i64 {
+pub fn tickerMain(): i64 {
     while true {
         unsafe {
             let _s = usleep((gTickUsecs & 0xffffffff) as u32)
@@ -2045,7 +2080,7 @@ fn tickerMain(): i64 {
 // Green task: parks on the tick pipe; a session with no peers for the TTL is
 // ended via the same disconnect(terminateDebuggee) path as the kill command —
 // D's terminated/EOF handling resets session state for a later fresh run.
-fn reaperLoop(tickRd: i32, pendCh: Channel<Pending>): void {
+pub fn reaperLoop(tickRd: i32, pendCh: Channel<Pending>): void {
     var buf: [u8; 8] = [0; 8]
     while true {
         var n: i64 = 0
@@ -2074,7 +2109,7 @@ fn reaperLoop(tickRd: i32, pendCh: Channel<Pending>): void {
 
 // ── HTTP plumbing ──
 
-fn sendHttp(fd: i32, status: i32, contentType: &string, body: &string): void {
+pub fn sendHttp(fd: i32, status: i32, contentType: &string, body: &string): void {
     var statusText: string = "200 OK"
     if status == 404 {
         statusText = "404 Not Found"
@@ -2108,7 +2143,7 @@ fn sendHttp(fd: i32, status: i32, contentType: &string, body: &string): void {
 // UI assets are served from disk (--webroot) rather than embedFile: the Monaco
 // bundle is ~4.5MB and embedFile's byte-array emission dominates compile time
 // (papercut #7). Bonus: UI iteration is build.sh + refresh, no server rebuild.
-fn mimeFor(path: &string): string {
+pub fn mimeFor(path: &string): string {
     var ext: string = ""
     var i: i64 = path.len - 1
     while i >= 0 && path[i] != '/' {
@@ -2145,7 +2180,7 @@ fn mimeFor(path: &string): string {
     return "application/octet-stream"
 }
 
-fn lowerByte(c: u8): u8 {
+pub fn lowerByte(c: u8): u8 {
     if c >= 'A' && c <= 'Z' {
         return c + 32
     }
@@ -2153,7 +2188,7 @@ fn lowerByte(c: u8): u8 {
 }
 
 // Value of an HTTP header (name must be lowercase); "" if absent.
-fn headerVal(raw: &string, name: &string): string {
+pub fn headerVal(raw: &string, name: &string): string {
     var i: i64 = 0
     while i < raw.len {
         var j: i64 = 0
@@ -2184,7 +2219,7 @@ fn headerVal(raw: &string, name: &string): string {
     return ""
 }
 
-fn replaceAll(s: &string, needle: &string, repl: &string): string {
+pub fn replaceAll(s: &string, needle: &string, repl: &string): string {
     var out: string = ""
     var i: i64 = 0
     while i < s.len {
@@ -2210,7 +2245,7 @@ fn replaceAll(s: &string, needle: &string, repl: &string): string {
     return out
 }
 
-fn serveStatic(fd: i32, reqPath: &string, origin: &string): void {
+pub fn serveStatic(fd: i32, reqPath: &string, origin: &string): void {
     var p = reqPath.clone()
     var qi: i64 = 0
     while qi < p.len {
@@ -2249,11 +2284,11 @@ fn serveStatic(fd: i32, reqPath: &string, origin: &string): void {
     }
 }
 
-struct RequestLine {
+pub struct RequestLine {
     method: string, path: string
 }
 
-fn parseRequestLine(raw: &string): RequestLine {
+pub fn parseRequestLine(raw: &string): RequestLine {
     var i: i64 = 0
     while i < raw.len && raw[i] != ' ' {
         i = i + 1
@@ -2272,7 +2307,7 @@ fn parseRequestLine(raw: &string): RequestLine {
     }
 }
 
-fn handleConnection(fd: i32, bus: Channel<string>, busWakeWr: i32, pendCh: Channel<Pending>, regCh: Channel<Sink>): void {
+pub fn handleConnection(fd: i32, bus: Channel<string>, busWakeWr: i32, pendCh: Channel<Pending>, regCh: Channel<Sink>): void {
     var buf: [u8; 8192] = [0; 8192]
     unsafe {
         schedulerWaitRead(fd)
@@ -2339,7 +2374,7 @@ fn handleConnection(fd: i32, bus: Channel<string>, busWakeWr: i32, pendCh: Chann
     }
 }
 
-fn acceptLoop(listener: TcpListener, bus: Channel<string>, busWakeWr: i32, pendCh: Channel<Pending>, regCh: Channel<Sink>): void {
+pub fn acceptLoop(listener: TcpListener, bus: Channel<string>, busWakeWr: i32, pendCh: Channel<Pending>, regCh: Channel<Sink>): void {
     var l = listener
     while true {
         match l.accept() {
@@ -2362,7 +2397,7 @@ fn acceptLoop(listener: TcpListener, bus: Channel<string>, busWakeWr: i32, pendC
 // a headless box (no xdg-open/open, or HADES_NO_OPEN set) just skips silently.
 // The whole thing is backgrounded inside the shell so sh returns instantly and
 // wait() reaps it without stalling startup; the real opener reparents to init.
-fn openBrowser(url: &string): void {
+pub fn openBrowser(url: &string): void {
     if getEnvOr("HADES_NO_OPEN", "").len > 0 {
         return
     }
@@ -2379,7 +2414,7 @@ fn openBrowser(url: &string): void {
 // at its cwd-relative default, walk up from the cwd looking for it, so `hades web` runs
 // from any directory in the repo (or the hades subdir) instead of only its own root.
 // Milo has no self-exe-path API, so this is a cwd walk, not a binary-relative one.
-fn findWebroot(): Option<string> {
+pub fn findWebroot(): Option<string> {
     var dir = match currentDir() {
         Result.Ok(d) => {
             d
@@ -2409,7 +2444,7 @@ fn findWebroot(): Option<string> {
 
 // Subcommand entrypoint: dispatched from src/main.milo as `hades web ...`.
 // argv[0] is the display name (skipped by parseFrom); the rest are the web flags.
-fn webMain(argv: Vec<string>): i32 {
+pub fn webMain(argv: Vec<string>): i32 {
     ignoreSignal(SIGPIPE)
     Q = "\""
     var parser = newParser("hades web", "web UI for any DAP debugger. Serves a shared session: any number of browser tabs plus AI co-debug peers (hades mcp --attach host:port) see and drive the same debuggee.")

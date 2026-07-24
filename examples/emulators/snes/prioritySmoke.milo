@@ -9,7 +9,7 @@ from "./ppu" import {
     Ppu, newPpu, ppuRegWrite, renderFrame
 }
 
-fn hex6(v: i64): string {
+pub fn hex6(v: i64): string {
     let d = "0123456789ABCDEF"
     var s = ""
     var i: i64 = 20
@@ -20,13 +20,13 @@ fn hex6(v: i64): string {
     return s
 }
 
-fn vword(p: &mut Ppu, w: i64): void {
+pub fn vword(p: &mut Ppu, w: i64): void {
     ppuRegWrite(p, 0x18, w & 0xFF)
     ppuRegWrite(p, 0x19, (w >> 8) & 0xFF)
 }
 
 // Write a solid 4bpp tile (color index 1) at VRAM word `addr`.
-fn solidTile(p: &mut Ppu, addr: i64): void {
+pub fn solidTile(p: &mut Ppu, addr: i64): void {
     ppuRegWrite(p, 0x16, addr & 0xFF)
     ppuRegWrite(p, 0x17, (addr >> 8) & 0xFF)
     var r: i64 = 0
@@ -41,13 +41,13 @@ fn solidTile(p: &mut Ppu, addr: i64): void {
     }
 }
 
-fn setColor(p: &mut Ppu, idx: i64, bgr555: i64): void {
+pub fn setColor(p: &mut Ppu, idx: i64, bgr555: i64): void {
     ppuRegWrite(p, 0x21, idx)
     ppuRegWrite(p, 0x22, bgr555 & 0xFF)
     ppuRegWrite(p, 0x22, (bgr555 >> 8) & 0xFF)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var p = newPpu()
     ppuRegWrite(p, 0x00, 0x0F) // full brightness
     ppuRegWrite(p, 0x05, 0x01) // BGMODE = 1 (BG3-priority bit off)

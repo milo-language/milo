@@ -10,19 +10,19 @@ from "./ppu" import {
     Ppu, newPpu, ppuRegWrite, renderFrame
 }
 
-fn vword(p: &mut Ppu, w: i64): void {
+pub fn vword(p: &mut Ppu, w: i64): void {
     ppuRegWrite(p, 0x18, w & 0xFF)
     ppuRegWrite(p, 0x19, (w >> 8) & 0xFF)
 }
 
 // Write BGR555 color `w` into CGRAM slot `idx`.
-fn setColor(p: &mut Ppu, idx: i64, w: i64): void {
+pub fn setColor(p: &mut Ppu, idx: i64, w: i64): void {
     ppuRegWrite(p, 0x21, idx)
     ppuRegWrite(p, 0x22, w & 0xFF)
     ppuRegWrite(p, 0x22, (w >> 8) & 0xFF)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var p = newPpu()
     ppuRegWrite(p, 0x00, 0x0F) // brightness 15
     ppuRegWrite(p, 0x05, 0x01) // Mode 1

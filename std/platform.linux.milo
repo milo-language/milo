@@ -10,10 +10,10 @@ from "std/os" import {
 // `struct sockaddr *` and read the family out of the first bytes, so one extern must serve
 // sockaddr_in / sockaddr_in6 / sockaddr_un. A nominal opaque type rather than a bare *u8:
 // same zero cost, but a typo can't pass just any pointer.
-extern type SockAddr
+pub extern type SockAddr
 
 @cLayout("struct sockaddr_in", "netinet/in.h")
-extern struct SockAddrIn {
+pub extern struct SockAddrIn {
     sin_family: u16,
     sin_port: u16,
     sin_addr: u32,
@@ -22,7 +22,7 @@ extern struct SockAddrIn {
 
 // IPv6. Same 28 bytes as darwin, but no sin6_len and family is u16.
 @cLayout("struct sockaddr_in6", "netinet/in.h")
-extern struct SockAddrIn6 {
+pub extern struct SockAddrIn6 {
     sin6_family: u16,
     sin6_port: u16,
     sin6_flowinfo: u32,
@@ -33,7 +33,7 @@ extern struct SockAddrIn6 {
 // Unix domain. 110 here vs 106 on darwin (no sun_len, u16 family, 108-byte path) — but
 // sun_path lands at offset 2 on both.
 @cLayout("struct sockaddr_un", "sys/un.h")
-extern struct SockAddrUn {
+pub extern struct SockAddrUn {
     sun_family: u16,
     sun_path: [u8; 108],
 }
@@ -42,14 +42,14 @@ extern struct SockAddrUn {
 // the family, so they must write into this, never a 16-byte sockaddr_in: a v6 peer needs
 // 28 bytes and would otherwise be truncated.
 @cLayout("struct sockaddr_storage", "sys/socket.h")
-extern struct SockAddrStorage {
+pub extern struct SockAddrStorage {
     ss_family: u16,
     __ss_padding: [u8; 118],
     __ss_align: u64,
 }
 
 // 128 bytes of zeroes; the kernel fills in whichever family the peer used.
-fn makeZeroedSockaddrStorage(): SockAddrStorage {
+pub fn makeZeroedSockaddrStorage(): SockAddrStorage {
     unsafe {
         return zeroed<SockAddrStorage>()
     }
@@ -57,13 +57,13 @@ fn makeZeroedSockaddrStorage(): SockAddrStorage {
 
 // AF_INET6 is 10 here — one of the few socket constants that actually differs across the
 // two platforms (AF_INET and AF_UNIX are both the same on each).
-fn afInet6(): i32 {
+pub fn afInet6(): i32 {
     return 10
 }
 
 // IPv6 address. `addr` is the 16 raw bytes in network order; `scopeId` is the interface
 // index for a link-local address (fe80::/10), 0 otherwise.
-fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6 {
+pub fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6 {
     var a = SockAddrIn6 {
         sin6_family: 10 as u16,
         sin6_port: htons(port),
@@ -79,11 +79,11 @@ fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6 {
     return a
 }
 
-fn sockAddrInLen(): u32 {
+pub fn sockAddrInLen(): u32 {
     return 16
 }
 
-fn sockAddrIn6Len(): u32 {
+pub fn sockAddrIn6Len(): u32 {
     return 28
 }
 
@@ -91,7 +91,7 @@ fn sockAddrIn6Len(): u32 {
 // AF_UNIX address for `path`. Truncates at sockAddrUnMaxPath so the kernel always sees a
 // NUL-terminated path; callers should reject longer paths rather than connect to a
 // silently shortened one (UnixListener/UnixStream do).
-fn makeSockaddrUn(path: &string): SockAddrUn {
+pub fn makeSockaddrUn(path: &string): SockAddrUn {
     var a = SockAddrUn {
         sun_family: 1 as u16,
         sun_path: [0; 108],
@@ -104,20 +104,20 @@ fn makeSockaddrUn(path: &string): SockAddrUn {
     return a
 }
 
-fn sockAddrUnLen(): u32 {
+pub fn sockAddrUnLen(): u32 {
     return 110
 }
 
 // Longest path that still leaves room for the NUL the kernel expects.
-fn sockAddrUnMaxPath(): i64 {
+pub fn sockAddrUnMaxPath(): i64 {
     return 107
 }
 
-fn sockAddrStorageLen(): u32 {
+pub fn sockAddrStorageLen(): u32 {
     return 128
 }
 
-fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
+pub fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
     unsafe {
         return SockAddrIn {
             sin_family: 2 as u16,
@@ -128,63 +128,63 @@ fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
     }
 }
 
-fn makeZeroedSockaddr(): SockAddrIn {
+pub fn makeZeroedSockaddr(): SockAddrIn {
     return SockAddrIn {
         sin_family: 0 as u16, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
     }
 }
 
-fn solSocket(): i32 {
+pub fn solSocket(): i32 {
     return 1
 }
 
-fn soReuseaddr(): i32 {
+pub fn soReuseaddr(): i32 {
     return 2
 }
 
-fn mapPrivateAnon(): i32 {
+pub fn mapPrivateAnon(): i32 {
     return 34
 }
 
-fn oWriteCreateTrunc(): i32 {
+pub fn oWriteCreateTrunc(): i32 {
     return 577
 }
 
-fn oWriteCreateAppend(): i32 {
+pub fn oWriteCreateAppend(): i32 {
     return 1089
 }
 
 // offset of aiAddr field in struct addrinfo (swapped with aiCanonname vs macOS)
-fn addrinfoAddrOffset(): i64 {
+pub fn addrinfoAddrOffset(): i64 {
     return 24
 }
 
 // struct stat layout (Linux x8664)
-fn statModeOffset(): i64 {
+pub fn statModeOffset(): i64 {
     return 24
 }
 
-fn statSizeOffset(): i64 {
+pub fn statSizeOffset(): i64 {
     return 48
 }
 
-fn statBufSize(): i64 {
+pub fn statBufSize(): i64 {
     return 144
 }
 
 // struct dirent layout
-fn direntTypeOffset(): i64 {
+pub fn direntTypeOffset(): i64 {
     return 18
 }
 
-fn direntNameOffset(): i64 {
+pub fn direntNameOffset(): i64 {
     return 19
 }
 
 // errno access — glibc uses __errno_location() to get errno pointer
-extern fn __errno_location(): *u8
+pub extern fn __errno_location(): *u8
 
-fn getErrno(): i32 {
+pub fn getErrno(): i32 {
     unsafe {
         return _loadI32(__errno_location())
     }
@@ -192,48 +192,48 @@ fn getErrno(): i32 {
 
 // ── epoll ──
 
-extern fn epoll_create1(flags: i32): i32
+pub extern fn epoll_create1(flags: i32): i32
 
-extern fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *u8): i32
+pub extern fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *u8): i32
 
-extern fn epoll_wait(epfd: i32, events: *u8, maxevents: i32, timeout: i32): i32
+pub extern fn epoll_wait(epfd: i32, events: *u8, maxevents: i32, timeout: i32): i32
 
 // epoll_event: 12 bytes (packed: u32 events + epoll_data_t as i64)
-struct EpollEvent {
+pub struct EpollEvent {
     events: u32,
     dataFd: i32,
     dataPad: i32,
 }
 
-fn epollCtlAdd(): i32 {
+pub fn epollCtlAdd(): i32 {
     return 1
 }
 
-fn epollCtlDel(): i32 {
+pub fn epollCtlDel(): i32 {
     return 2
 }
 
-fn epollCtlMod(): i32 {
+pub fn epollCtlMod(): i32 {
     return 3
 }
 
-fn epollIn(): u32 {
+pub fn epollIn(): u32 {
     return 1
 }
 
-fn epollOut(): u32 {
+pub fn epollOut(): u32 {
     return 4
 }
 
-fn epollErr(): u32 {
+pub fn epollErr(): u32 {
     return 8
 }
 
-fn epollHup(): u32 {
+pub fn epollHup(): u32 {
     return 16
 }
 
-fn epollOneshot(): u32 {
+pub fn epollOneshot(): u32 {
     return 1073741824
 }
 
@@ -241,106 +241,106 @@ fn epollOneshot(): u32 {
 
 // 17 here, 20 on darwin (verified against asm-generic/signal.h and sys/signal.h
 // respectively). The only signal std/signal needs that isn't same-numbered on both.
-fn sigchldNum(): i32 {
+pub fn sigchldNum(): i32 {
     return 17
 }
 
 // ── fcntl / non-blocking ──
 
-extern fn fcntl(fd: i32, cmd: i32,...): i32
+pub extern fn fcntl(fd: i32, cmd: i32,...): i32
 
-fn fGetfl(): i32 {
+pub fn fGetfl(): i32 {
     return 3
 }
 
-fn fSetfl(): i32 {
+pub fn fSetfl(): i32 {
     return 4
 }
 
-fn oNonblock(): i32 {
+pub fn oNonblock(): i32 {
     return 2048
 }
 
-fn eagain(): i32 {
+pub fn eagain(): i32 {
     return 11
 }
 
-fn einprogress(): i32 {
+pub fn einprogress(): i32 {
     return 115
 }
 
-fn soError(): i32 {
+pub fn soError(): i32 {
     return 4
 }
 
 // Winsock has no POSIX counterpart: sockets are ready to use with no init, and their
 // errors go through errno like everything else. These fold to that so std/net's socket
 // paths read the same on every platform (see platform.windows for the real work).
-fn ensureNetInit(): void {
+pub fn ensureNetInit(): void {
 }
 
-fn netErrno(): i32 {
+pub fn netErrno(): i32 {
     return getErrno()
 }
 
-fn netEagain(): i32 {
+pub fn netEagain(): i32 {
     return eagain()
 }
 
-fn netEinprogress(): i32 {
+pub fn netEinprogress(): i32 {
     return einprogress()
 }
 
 // A POSIX socket IS an fd, so closing it is just close(); Windows needs a distinct
 // closesocket(), which is why this name exists on all arms.
-fn closeSocket(fd: i32): i32 {
+pub fn closeSocket(fd: i32): i32 {
     return close(fd)
 }
 
 // ── ucontext (stackful coroutines) ──
 
-extern fn getcontext(ucp: *u8): i32
+pub extern fn getcontext(ucp: *u8): i32
 
-extern fn makecontext(ucp: *u8, func: *u8, argc: i32,...): void
+pub extern fn makecontext(ucp: *u8, func: *u8, argc: i32,...): void
 
-extern fn swapcontext(oucp: *u8, ucp: *u8): i32
+pub extern fn swapcontext(oucp: *u8, ucp: *u8): i32
 
 // sizeof(ucontext_t) on linux x86_64
-fn uctxSize(): i64 {
+pub fn uctxSize(): i64 {
     return 968
 }
 
-fn uctxStackPtrOffset(): i64 {
+pub fn uctxStackPtrOffset(): i64 {
     return 16
 }
 
-fn uctxStackSizeOffset(): i64 {
+pub fn uctxStackSizeOffset(): i64 {
     return 32
 }
 
-fn uctxLinkOffset(): i64 {
+pub fn uctxLinkOffset(): i64 {
     return 8
 }
 
 // ── mmap constants ──
 
-fn protRead(): i32 {
+pub fn protRead(): i32 {
     return 1
 }
 
-fn protWrite(): i32 {
+pub fn protWrite(): i32 {
     return 2
 }
 
-fn protNone(): i32 {
+pub fn protNone(): i32 {
     return 0
 }
 
-fn mapPrivate(): i32 {
+pub fn mapPrivate(): i32 {
     return 2
 }
 
-fn mapAnon(): i32 {
+pub fn mapAnon(): i32 {
     return 32
 }
 
@@ -348,7 +348,7 @@ fn mapAnon(): i32 {
 
 // Linux keeps the running binary's path in /proc/self/exe. readlink does not
 // NUL-terminate, so the caller's buffer must be zeroed or terminated at n.
-fn _exePathInto(buf: *u8, bufsize: i64): i64 {
+pub fn _exePathInto(buf: *u8, bufsize: i64): i64 {
     unsafe {
         let n = readlink("/proc/self/exe", buf, bufsize)
         if n <= 0 {
@@ -363,64 +363,64 @@ fn _exePathInto(buf: *u8, bufsize: i64): i64 {
 // arm implements these same names over SRWLOCK/CONDITION_VARIABLE instead of declaring
 // externs that no library provides.
 
-extern fn pthread_create(thread: *u8, attr: *u8, start: *u8, arg: *u8): i32
+pub extern fn pthread_create(thread: *u8, attr: *u8, start: *u8, arg: *u8): i32
 
-extern fn pthread_join(thread: i64, retval: *u8): i32
+pub extern fn pthread_join(thread: i64, retval: *u8): i32
 
-extern fn pthread_detach(thread: i64): i32
+pub extern fn pthread_detach(thread: i64): i32
 
-extern fn pthread_mutex_init(mutex: *u8, attr: *u8): i32
+pub extern fn pthread_mutex_init(mutex: *u8, attr: *u8): i32
 
-extern fn pthread_mutex_lock(mutex: *u8): i32
+pub extern fn pthread_mutex_lock(mutex: *u8): i32
 
-extern fn pthread_mutex_unlock(mutex: *u8): i32
+pub extern fn pthread_mutex_unlock(mutex: *u8): i32
 
-extern fn pthread_mutex_destroy(mutex: *u8): i32
+pub extern fn pthread_mutex_destroy(mutex: *u8): i32
 
-extern fn pthread_cond_init(cond: *u8, attr: *u8): i32
+pub extern fn pthread_cond_init(cond: *u8, attr: *u8): i32
 
-extern fn pthread_cond_wait(cond: *u8, mutex: *u8): i32
+pub extern fn pthread_cond_wait(cond: *u8, mutex: *u8): i32
 
-extern fn pthread_cond_signal(cond: *u8): i32
+pub extern fn pthread_cond_signal(cond: *u8): i32
 
-extern fn pthread_cond_broadcast(cond: *u8): i32
+pub extern fn pthread_cond_broadcast(cond: *u8): i32
 
-extern fn pthread_cond_destroy(cond: *u8): i32
+pub extern fn pthread_cond_destroy(cond: *u8): i32
 
-extern fn pthread_rwlock_init(rwlock: *u8, attr: *u8): i32
+pub extern fn pthread_rwlock_init(rwlock: *u8, attr: *u8): i32
 
-extern fn pthread_rwlock_rdlock(rwlock: *u8): i32
+pub extern fn pthread_rwlock_rdlock(rwlock: *u8): i32
 
-extern fn pthread_rwlock_wrlock(rwlock: *u8): i32
+pub extern fn pthread_rwlock_wrlock(rwlock: *u8): i32
 
-extern fn pthread_rwlock_unlock(rwlock: *u8): i32
+pub extern fn pthread_rwlock_unlock(rwlock: *u8): i32
 
-extern fn pthread_rwlock_destroy(rwlock: *u8): i32
+pub extern fn pthread_rwlock_destroy(rwlock: *u8): i32
 
 // ── mmap family ──
 // In the platform split rather than std/os: Windows has no mmap, and its arm implements
 // these names over VirtualAlloc/VirtualFree/VirtualProtect instead.
 
 @cSig("sys/mman.h", "void *mmap(void *, size_t, int, int, int, off_t)")
-extern fn mmap(addr: *u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): *u8
+pub extern fn mmap(addr: *u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): *u8
 
 @cSig("sys/mman.h", "int munmap(void *, size_t)")
-extern fn munmap(addr: *u8, len: i64): i32
+pub extern fn munmap(addr: *u8, len: i64): i32
 
 @cSig("sys/mman.h", "int mprotect(void *, size_t, int)")
-extern fn mprotect(addr: *u8, len: i64, prot: i32): i32
+pub extern fn mprotect(addr: *u8, len: i64, prot: i32): i32
 
 // ── time ──
 // Split out of std/time because Windows has neither: its arm builds a timeval from
 // GetSystemTimeAsFileTime and sleeps with Sleep().
 
-extern fn gettimeofday(tv: *u8, tz: *u8): i32
+pub extern fn gettimeofday(tv: *u8, tz: *u8): i32
 
-extern fn usleep(usec: u32): i32
+pub extern fn usleep(usec: u32): i32
 
 // pipe(2). Split out because the UCRT spells it _pipe and takes two extra arguments.
 
-extern fn pipe(fds: *u8): i32
+pub extern fn pipe(fds: *u8): i32
 
 // ── fd I/O ──
 //
@@ -432,52 +432,52 @@ extern fn pipe(fds: *u8): i32
 // positive i64.
 
 @cSig("unistd.h", "ssize_t read(int, void *, size_t)")
-extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
+pub extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
 
 @cSig("unistd.h", "ssize_t write(int, const void *, size_t)")
-extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
+pub extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
 
 // Socket data IO seam. On POSIX read()/write() work on socket fds, so these alias them; the
 // Windows arm routes to recv()/send() because a SOCKET there is not a CRT fd (calling the
 // CRT _read/_write on one fast-fails). Named so std/os's green helpers stay single-source.
-fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64 {
+pub fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64 {
     return read(fd, buf, nbyte)
 }
 
-fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
+pub fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
     return write(fd, buf, nbyte)
 }
 
 @cSig("fcntl.h", "int open(const char *, int, ...)")
-extern fn open(path: *u8, flags: i32,...): i32
+pub extern fn open(path: *u8, flags: i32,...): i32
 
 @cSig("unistd.h", "int close(int)")
-extern fn close(fd: i32): i32
+pub extern fn close(fd: i32): i32
 
 @cSig("unistd.h", "off_t lseek(int, off_t, int)")
-extern fn lseek(fd: i32, offset: i64, whence: i32): i64
+pub extern fn lseek(fd: i32, offset: i64, whence: i32): i64
 
 @cSig("unistd.h", "int access(const char *, int)")
-extern fn access(path: *u8, mode: i32): i32
+pub extern fn access(path: *u8, mode: i32): i32
 
 @cSig("unistd.h", "pid_t getpid(void)")
-extern fn getpid(): i32
+pub extern fn getpid(): i32
 
 // The bit-bucket device path. POSIX spells it /dev/null; Windows spells it NUL.
-fn devNullPath(): string {
+pub fn devNullPath(): string {
     return "/dev/null"
 }
 
 // ── dynamic loading ──
 
 @cSig("dlfcn.h", "void *dlopen(const char *, int)")
-extern fn dlopen(_path: *u8, _flags: i32): *u8
+pub extern fn dlopen(_path: *u8, _flags: i32): *u8
 
 @cSig("dlfcn.h", "void *dlsym(void *, const char *)")
-extern fn dlsym(_handle: *u8, _symbol: *u8): *u8
+pub extern fn dlsym(_handle: *u8, _symbol: *u8): *u8
 
 @cSig("dlfcn.h", "int dlclose(void *)")
-extern fn dlclose(_handle: *u8): i32
+pub extern fn dlclose(_handle: *u8): i32
 
 @cSig("dlfcn.h", "char *dlerror(void)")
-extern fn dlerror(): *u8
+pub extern fn dlerror(): *u8

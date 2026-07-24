@@ -55,7 +55,7 @@ from "./protocol" import {
 
 // ── Session state ──
 
-struct Session {
+pub struct Session {
     terminalId: string,
     command: string,
     startTime: string,
@@ -69,18 +69,21 @@ struct Session {
 }
 
 // parallel arrays — global Vec<struct-with-Channel<T>> has codegen issues
-var sessions: Vec<Session> = []
-var toTermChans: Vec<Channel<string>> = []
-var bcastChans: Vec<Channel<string>> = []
-var nextId: i64 = 1
+pub var sessions: Vec<Session> = []
 
-fn generateId(): string {
+pub var toTermChans: Vec<Channel<string>> = []
+
+pub var bcastChans: Vec<Channel<string>> = []
+
+pub var nextId: i64 = 1
+
+pub fn generateId(): string {
     let id = nextId
     nextId = nextId + 1
     return "t" + id.toString()
 }
 
-fn findSession(terminalId: &string): i64 {
+pub fn findSession(terminalId: &string): i64 {
     for i in 0..sessions.len {
         if sessions[i].terminalId == terminalId {
             return i
@@ -91,7 +94,7 @@ fn findSession(terminalId: &string): i64 {
 
 // ── HTTP helpers ──
 
-fn sendHttp(fd: i32, status: i32, contentType: &string, body: &string): void {
+pub fn sendHttp(fd: i32, status: i32, contentType: &string, body: &string): void {
     var statusText: string = "200 OK"
     if status == 404 {
         statusText = "404 Not Found"
@@ -109,11 +112,11 @@ fn sendHttp(fd: i32, status: i32, contentType: &string, body: &string): void {
     write(fd, resp, resp.len)
 }
 
-struct RequestLine {
+pub struct RequestLine {
     method: string, path: string, query: string
 }
 
-fn parseRequestLine(raw: &string): RequestLine {
+pub fn parseRequestLine(raw: &string): RequestLine {
     var i: i64 = 0
     while i < raw.len && raw[i] != ' ' {
         i = i + 1
@@ -150,14 +153,14 @@ fn parseRequestLine(raw: &string): RequestLine {
 // True if `path` is exactly `suffix` or ends with it (e.g. "/app.js" matches
 // both "/app.js" and "/s/app.js"). index.html references assets relatively, so
 // when the page is served at /s/<id> the browser requests /s/app.js etc.
-fn pathEndsWith(path: &string, suffix: &string): bool {
+pub fn pathEndsWith(path: &string, suffix: &string): bool {
     if path.len < suffix.len {
         return false
     }
     return path.substr(path.len - suffix.len, path.len) == suffix
 }
 
-fn queryParam(qs: &string, name: &string): string {
+pub fn queryParam(qs: &string, name: &string): string {
     var i: i64 = 0
     while i < qs.len {
         let ks = i
@@ -186,15 +189,19 @@ fn queryParam(qs: &string, name: &string): string {
 
 // ── Embedded static files (initialized in main — global string init is NYI) ──
 
-var indexHtml: string = ""
-var appJs: string = ""
-var styleCss: string = ""
-var xtermJs: string = ""
-var xtermCss: string = ""
+pub var indexHtml: string = ""
+
+pub var appJs: string = ""
+
+pub var styleCss: string = ""
+
+pub var xtermJs: string = ""
+
+pub var xtermCss: string = ""
 
 // ── Handle terminal WebSocket ──
 
-fn handleTerminalWs(ws: WsConn): void {
+pub fn handleTerminalWs(ws: WsConn): void {
     var conn = ws
 
     // read init message
@@ -325,7 +332,7 @@ fn handleTerminalWs(ws: WsConn): void {
 
 // ── Handle browser WebSocket ──
 
-fn handleBrowserWs(ws: WsConn, terminalId: string): void {
+pub fn handleBrowserWs(ws: WsConn, terminalId: string): void {
     var conn = ws
     let idx = findSession(terminalId)
     if idx < 0 {
@@ -427,7 +434,7 @@ fn handleBrowserWs(ws: WsConn, terminalId: string): void {
 
 // ── API handlers ──
 
-fn handleGetSessions(): string {
+pub fn handleGetSessions(): string {
     var result: string = "["
     var first: bool = true
     for i in 0..sessions.len {
@@ -443,7 +450,7 @@ fn handleGetSessions(): string {
     return result
 }
 
-fn handleGetTerminal(terminalId: &string): string {
+pub fn handleGetTerminal(terminalId: &string): string {
     let idx = findSession(terminalId)
     if idx < 0 {
         return ""
@@ -454,7 +461,7 @@ fn handleGetTerminal(terminalId: &string): string {
 // ── Main ──
 
 // Accept loop — blocks on kqueue until a connection is ready
-fn acceptLoop(rawFd: i32): void {
+pub fn acceptLoop(rawFd: i32): void {
     setNonblocking(rawFd)
 
     while true {
@@ -478,7 +485,7 @@ fn acceptLoop(rawFd: i32): void {
 }
 
 // Handle a single connection in its own green thread
-fn handleConnection(clientFd: i32): void {
+pub fn handleConnection(clientFd: i32): void {
     var buf: [u8; 8192] = [0; 8192]
     unsafe {
         schedulerWaitRead(clientFd)
@@ -562,7 +569,7 @@ fn handleConnection(clientFd: i32): void {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     // A viewer/terminal disconnecting mid-write must not kill the server with SIGPIPE;
     // writes to the dead socket return an error the relay loop already handles.
     ignoreSignal(SIGPIPE)

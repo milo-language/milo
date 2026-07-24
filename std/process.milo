@@ -34,7 +34,7 @@ from "std/platform" import {
 
 // Execute a shell command and return its exit code.
 // Example: let code = run("ls -la")!
-fn run(cmd: &string): Result<i32> {
+pub fn run(cmd: &string): Result<i32> {
     let status = system(cmd)
     if status < 0 {
         return Result.Err("system() failed")
@@ -47,7 +47,7 @@ fn run(cmd: &string): Result<i32> {
 // ── Process with lifecycle management ──
 
 // Handle to a spawned child process.
-struct Process {
+pub struct Process {
     pid: i32,
 }
 
@@ -95,7 +95,7 @@ impl Process {
 // Reads are blocking. When mergeStderr is false the caller MUST drain both
 // stdout and stderr or the child can deadlock filling an unread pipe; DAP puts
 // protocol on stdout and logs on stderr, so mergeStderr=true is the safe default.
-struct Child {
+pub struct Child {
     pid: i32,
     stdinFd: i32, // parent → child stdin
     stdoutFd: i32, // child stdout → parent
@@ -267,7 +267,7 @@ impl Child {
 // Build a NULL-terminated argv: argv[0]=program, argv[1..n]=args, argv[n+1]=NULL.
 // Each string is copied into its own NUL-terminated C buffer so it stays valid
 // across fork/exec. Caller frees with _freeArgv(argv, args.len + 2).
-fn _buildArgv(program: &string, args: &Vec<string>): *u8 {
+pub fn _buildArgv(program: &string, args: &Vec<string>): *u8 {
     unsafe {
         let argc = args.len + 2
         let argv = malloc(argc * 8)
@@ -293,7 +293,7 @@ fn _buildArgv(program: &string, args: &Vec<string>): *u8 {
     }
 }
 
-fn _freeArgv(argv: *u8, argc: i64): void {
+pub fn _freeArgv(argv: *u8, argc: i64): void {
     unsafe {
         for i in 0..(argc - 1) {
             var p: *u8 = 0 as *u8
@@ -306,7 +306,7 @@ fn _freeArgv(argv: *u8, argc: i64): void {
     }
 }
 
-fn capture(cmd: &string): Result<string> {
+pub fn capture(cmd: &string): Result<string> {
     let tmpPath: string = "/tmp/.milo_capture"
     let fullCmd = cmd + " > " + tmpPath + " 2>&1"
     let code = run(fullCmd)!
@@ -329,7 +329,7 @@ fn capture(cmd: &string): Result<string> {
 // Absolute path of the running executable, so a shipped binary can locate assets
 // next to itself instead of relative to whatever cwd the caller happened to be in.
 // Prefer @embedFile() for assets small enough to inline; this is for the rest.
-fn exePath(): Result<string> {
+pub fn exePath(): Result<string> {
     // One under the buffer size: readlink does not NUL-terminate, so a full-length
     // result needs a spare byte to terminate rather than truncating a real path.
     var buf: [u8; 4096] = [0; 4096]

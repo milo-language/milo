@@ -8,7 +8,7 @@
 // FFI-free so it compiles through the JS backend (emit-js). The fs loader lives in
 // cart68kFile.milo; parseCart below takes raw bytes from either source.
 
-struct Cart {
+pub struct Cart {
     rom: Vec<u8> // full ROM image, byte-addressable at $000000
     name: string // domestic game name ($000120, 48 bytes, space-padded)
     romEnd: i64 // last ROM address from header ($0001A4)
@@ -16,7 +16,7 @@ struct Cart {
 
 // Parse a flat Genesis ROM image from raw bytes. FFI-free so both the fs loader
 // and the browser driver share it.
-fn parseCart(raw: &Vec<u8>): Result<Cart, string> {
+pub fn parseCart(raw: &Vec<u8>): Result<Cart, string> {
     if raw.len < 0x200 {
         return Result.Err("file too small to be a Genesis ROM")
     }
@@ -76,7 +76,7 @@ fn parseCart(raw: &Vec<u8>): Result<Cart, string> {
     )
 }
 
-fn charFromByte(b: u8): string {
+pub fn charFromByte(b: u8): string {
     var s = ""
     s.push(b)
     return s

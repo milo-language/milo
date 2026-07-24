@@ -7,14 +7,14 @@ from "std/random" import {
     randBytes
 }
 
-fn _hexChar(n: u8): u8 {
+pub fn _hexChar(n: u8): u8 {
     if n < 10 {
         return '0' + n
     }
     return 'a' + (n - 10 as u8)
 }
 
-fn _byteToHex(b: u8): string {
+pub fn _byteToHex(b: u8): string {
     var s = ""
     s.push(_hexChar(b >> 4))
     s.push(_hexChar(b & 15 as u8))
@@ -22,7 +22,7 @@ fn _byteToHex(b: u8): string {
 }
 
 // Generate a random UUID v4 string (e.g. "550e8400-e29b-41d4-a716-446655440000").
-fn uuidV4(): string {
+pub fn uuidV4(): string {
     var buf: [u8; 16] = [0 as u8; 16]
     unsafe {
         randBytes(buf as *u8, 16)

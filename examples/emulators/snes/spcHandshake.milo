@@ -6,7 +6,7 @@ from "./spc" import {
     Spc, SpcMem, spcMemReal, spcReset, spcStep, apuReadPort
 }
 
-fn hex2(v: i64): string {
+pub fn hex2(v: i64): string {
     let d = "0123456789ABCDEF"
     var s = ""
     s.push(d[(v >> 4) & 0xF])
@@ -14,7 +14,7 @@ fn hex2(v: i64): string {
     return s
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var m = spcMemReal()
     var spc = Spc {
         a: 0, x: 0, y: 0, sp: 0, pc: 0, psw: 0

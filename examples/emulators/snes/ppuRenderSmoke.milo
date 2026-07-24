@@ -6,7 +6,7 @@ from "./ppu" import {
     Ppu, newPpu, ppuRegWrite, renderFrame
 }
 
-fn hex6(v: i64): string {
+pub fn hex6(v: i64): string {
     let d = "0123456789ABCDEF"
     var s = ""
     var i: i64 = 20
@@ -17,12 +17,12 @@ fn hex6(v: i64): string {
     return s
 }
 
-fn vword(p: &mut Ppu, w: i64): void {
+pub fn vword(p: &mut Ppu, w: i64): void {
     ppuRegWrite(p, 0x18, w & 0xFF) // VMDATAL
     ppuRegWrite(p, 0x19, (w >> 8) & 0xFF) // VMDATAH (increments vmaddr)
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var p = newPpu()
     ppuRegWrite(p, 0x00, 0x0F) // INIDISP: full brightness, no force-blank
     ppuRegWrite(p, 0x01, 0x03) // OBSEL: OBJ char base -> empty VRAM (no sprites)

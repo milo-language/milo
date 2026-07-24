@@ -49,62 +49,62 @@ from "std/cstr" import {
 
 // ── JavaScriptCore C API (public embedding surface — all opaque refs are `*u8`) ──
 
-extern fn JSGlobalContextCreate(globalObjectClass: *u8): *u8
+pub extern fn JSGlobalContextCreate(globalObjectClass: *u8): *u8
 
-extern fn JSGlobalContextRelease(ctx: *u8): void
+pub extern fn JSGlobalContextRelease(ctx: *u8): void
 
-extern fn JSContextGetGlobalObject(ctx: *u8): *u8
+pub extern fn JSContextGetGlobalObject(ctx: *u8): *u8
 
-extern fn JSEvaluateScript(ctx: *u8, script: *u8, thisObject: *u8, sourceURL: *u8, startingLineNumber: i32, exception: *u8): *u8
+pub extern fn JSEvaluateScript(ctx: *u8, script: *u8, thisObject: *u8, sourceURL: *u8, startingLineNumber: i32, exception: *u8): *u8
 
-extern fn JSStringCreateWithUTF8CString(s: *u8): *u8
+pub extern fn JSStringCreateWithUTF8CString(s: *u8): *u8
 
-extern fn JSStringRelease(s: *u8): void
+pub extern fn JSStringRelease(s: *u8): void
 
-extern fn JSStringGetMaximumUTF8CStringSize(s: *u8): i64
+pub extern fn JSStringGetMaximumUTF8CStringSize(s: *u8): i64
 
-extern fn JSStringGetUTF8CString(s: *u8, buffer: *u8, bufferSize: i64): i64
+pub extern fn JSStringGetUTF8CString(s: *u8, buffer: *u8, bufferSize: i64): i64
 
-extern fn JSValueToStringCopy(ctx: *u8, value: *u8, exception: *u8): *u8
+pub extern fn JSValueToStringCopy(ctx: *u8, value: *u8, exception: *u8): *u8
 
-extern fn JSValueMakeUndefined(ctx: *u8): *u8
+pub extern fn JSValueMakeUndefined(ctx: *u8): *u8
 
-extern fn JSValueIsUndefined(ctx: *u8, value: *u8): bool
+pub extern fn JSValueIsUndefined(ctx: *u8, value: *u8): bool
 
-extern fn JSValueMakeString(ctx: *u8, s: *u8): *u8
+pub extern fn JSValueMakeString(ctx: *u8, s: *u8): *u8
 
-extern fn JSValueMakeBoolean(ctx: *u8, boolean: bool): *u8
+pub extern fn JSValueMakeBoolean(ctx: *u8, boolean: bool): *u8
 
-extern fn JSValueMakeNumber(ctx: *u8, number: f64): *u8
+pub extern fn JSValueMakeNumber(ctx: *u8, number: f64): *u8
 
-extern fn JSObjectMakeFunctionWithCallback(ctx: *u8, name: *u8, callAsFunction: *u8): *u8
+pub extern fn JSObjectMakeFunctionWithCallback(ctx: *u8, name: *u8, callAsFunction: *u8): *u8
 
-extern fn JSObjectMake(ctx: *u8, jsClass: *u8, data: *u8): *u8
+pub extern fn JSObjectMake(ctx: *u8, jsClass: *u8, data: *u8): *u8
 
-extern fn JSObjectSetProperty(ctx: *u8, object: *u8, propertyName: *u8, value: *u8, attributes: u32, exception: *u8): void
+pub extern fn JSObjectSetProperty(ctx: *u8, object: *u8, propertyName: *u8, value: *u8, attributes: u32, exception: *u8): void
 
-extern fn JSObjectCallAsFunction(ctx: *u8, object: *u8, thisObject: *u8, argumentCount: i64, arguments: *u8, exception: *u8): *u8
+pub extern fn JSObjectCallAsFunction(ctx: *u8, object: *u8, thisObject: *u8, argumentCount: i64, arguments: *u8, exception: *u8): *u8
 
-extern fn JSValueToNumber(ctx: *u8, value: *u8, exception: *u8): f64
+pub extern fn JSValueToNumber(ctx: *u8, value: *u8, exception: *u8): f64
 
-extern fn JSValueToBoolean(ctx: *u8, value: *u8): bool
+pub extern fn JSValueToBoolean(ctx: *u8, value: *u8): bool
 
 // Sleep until the next due timer (the accept loop's timer pump — see pumpTimers).
-extern fn usleep(usec: u32): i32
+pub extern fn usleep(usec: u32): i32
 
 // Flush buffered stdout so a piped (non-TTY) server's logs appear promptly. NULL flushes all.
-extern fn fflush(stream: *u8): i32
+pub extern fn fflush(stream: *u8): i32
 
-extern fn JSValueProtect(ctx: *u8, value: *u8): void
+pub extern fn JSValueProtect(ctx: *u8, value: *u8): void
 
-extern fn JSObjectGetProperty(ctx: *u8, object: *u8, propertyName: *u8, exception: *u8): *u8
+pub extern fn JSObjectGetProperty(ctx: *u8, object: *u8, propertyName: *u8, exception: *u8): *u8
 
 // libc getenv — backs process.env so node code reading JWT_SECRET/PORT/etc. sees the
 // real environment the minibun process was launched with (minibun has no dotenv).
-extern fn getenv(name: *u8): *u8
+pub extern fn getenv(name: *u8): *u8
 
 // Read a pointer out of a C array of pointers (the callback's `arguments[]`).
-fn loadPtr(p: *u8): *u8 {
+pub fn loadPtr(p: *u8): *u8 {
     unsafe {
         var out: *u8 = 0 as *u8
         memcpy((out.addrOf()) as *u8, p, 8)
@@ -114,7 +114,7 @@ fn loadPtr(p: *u8): *u8 {
 
 // A JSValue -> owned Milo string, via JSC's own toString. Reused everywhere a JS value
 // must cross into Milo (console args, native fn args, exception text).
-fn jsToString(ctx: *u8, val: *u8): string {
+pub fn jsToString(ctx: *u8, val: *u8): string {
     unsafe {
         let jstr = JSValueToStringCopy(ctx, val, 0 as *u8)
         let cap = JSStringGetMaximumUTF8CStringSize(jstr)
@@ -128,7 +128,7 @@ fn jsToString(ctx: *u8, val: *u8): string {
 }
 
 // A Milo string -> JS string value.
-fn jsString(ctx: *u8, s: string): *u8 {
+pub fn jsString(ctx: *u8, s: string): *u8 {
     unsafe {
         let jstr = JSStringCreateWithUTF8CString(s)
         let v = JSValueMakeString(ctx, jstr)
@@ -138,7 +138,7 @@ fn jsString(ctx: *u8, s: string): *u8 {
 }
 
 // Call a 1-arg JS function; returns its result, or null on a thrown exception.
-fn callJs1(ctx: *u8, func: *u8, arg: *u8): *u8 {
+pub fn callJs1(ctx: *u8, func: *u8, arg: *u8): *u8 {
     unsafe {
         let argArr = malloc(8)
         var a = arg
@@ -154,7 +154,7 @@ fn callJs1(ctx: *u8, func: *u8, arg: *u8): *u8 {
 }
 
 // Call a 0-arg JS function; returns its result, or null on a thrown exception.
-fn callJs0(ctx: *u8, func: *u8): *u8 {
+pub fn callJs0(ctx: *u8, func: *u8): *u8 {
     unsafe {
         var exc: *u8 = 0 as *u8
         let r = JSObjectCallAsFunction(ctx, func, 0 as *u8, 0, 0 as *u8, (exc.addrOf()) as *u8)
@@ -166,7 +166,7 @@ fn callJs0(ctx: *u8, func: *u8): *u8 {
 }
 
 // Read property `name` off a JS object.
-fn getProp(ctx: *u8, obj: *u8, name: string): *u8 {
+pub fn getProp(ctx: *u8, obj: *u8, name: string): *u8 {
     unsafe {
         let n = JSStringCreateWithUTF8CString(name)
         let v = JSObjectGetProperty(ctx, obj, n, 0 as *u8)
@@ -176,7 +176,7 @@ fn getProp(ctx: *u8, obj: *u8, name: string): *u8 {
 }
 
 // Look up a global by name (a JS function/value on globalThis).
-fn lookupGlobal(ctx: *u8, name: string): *u8 {
+pub fn lookupGlobal(ctx: *u8, name: string): *u8 {
     unsafe {
         return getProp(ctx, JSContextGetGlobalObject(ctx), name)
     }
@@ -186,7 +186,7 @@ fn lookupGlobal(ctx: *u8, name: string): *u8 {
 //    pthread trampoline) ──
 
 // console.log(...args) — space-joins and prints one line.
-fn consoleLog(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+pub fn consoleLog(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
     unsafe {
         var line = ""
         var i: i64 = 0
@@ -207,7 +207,7 @@ fn consoleLog(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, argumen
 }
 
 // __getenv(name) -> string | undefined. Backs process.env (see moduleBootstrap).
-fn nativeGetenv(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+pub fn nativeGetenv(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
     unsafe {
         if argCount < 1 {
             return JSValueMakeUndefined(ctx)
@@ -222,7 +222,7 @@ fn nativeGetenv(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, argum
 }
 
 // __readFileSync(path) -> string | undefined. The module loader's file access.
-fn nativeReadFileSync(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+pub fn nativeReadFileSync(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
     unsafe {
         if argCount < 1 {
             return JSValueMakeUndefined(ctx)
@@ -242,7 +242,7 @@ fn nativeReadFileSync(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64,
 
 // __fileExists(path) -> bool. Backed by isFile so it is false for directories, which is
 // what the resolver wants (directories are probed via /index.js and /package.json).
-fn nativeFileExists(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+pub fn nativeFileExists(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
     unsafe {
         if argCount < 1 {
             return JSValueMakeBoolean(ctx, false)
@@ -254,7 +254,7 @@ fn nativeFileExists(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, a
 
 // __isDir(path) -> bool. Lets fs.stat report isDirectory correctly, which express.static/
 // send need to decide between an index-file lookup and streaming a path as a file.
-fn nativeIsDir(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+pub fn nativeIsDir(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
     unsafe {
         if argCount < 1 {
             return JSValueMakeBoolean(ctx, false)
@@ -265,7 +265,7 @@ fn nativeIsDir(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, argume
 
 // __fileSize(path) -> number (bytes, or -1 if absent). Feeds fs.stat().size so send can set
 // Content-Length; a 0 size (the old stub) made static responses empty.
-fn nativeFileSize(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+pub fn nativeFileSize(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
     unsafe {
         if argCount < 1 {
             return JSValueMakeNumber(ctx, -1.0)
@@ -274,7 +274,7 @@ fn nativeFileSize(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arg
     }
 }
 
-fn netErrString(e: &NetError): string {
+pub fn netErrString(e: &NetError): string {
     match e {
         NetError.DnsFailure(m) => {
             return "dns: " + m.clone()
@@ -295,7 +295,7 @@ fn netErrString(e: &NetError): string {
 }
 
 // Set one property on a JS object from Milo.
-fn setObjProp(ctx: *u8, obj: *u8, name: string, val: *u8): void {
+pub fn setObjProp(ctx: *u8, obj: *u8, name: string, val: *u8): void {
     unsafe {
         let n = JSStringCreateWithUTF8CString(name)
         JSObjectSetProperty(ctx, obj, n, val, 0 as u32, 0 as *u8)
@@ -306,7 +306,7 @@ fn setObjProp(ctx: *u8, obj: *u8, name: string, val: *u8): void {
 // __fetch(url, method, headers, body) -> { status, headers, body } | { status:0, error }.
 // Blocking: does the whole HTTPS request synchronously via std/net (which links the system
 // OpenSSL). The JS `fetch` shim wraps this in a Promise + Response — see moduleBootstrap.
-fn nativeFetch(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+pub fn nativeFetch(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
     unsafe {
         let obj = JSObjectMake(ctx, 0 as *u8, 0 as *u8)
         if argCount < 1 {
@@ -356,7 +356,7 @@ fn nativeFetch(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, argume
 // finished. This makes `await new Promise(r => setTimeout(r, ms))` inside a handler resolve.
 // Most responses finish synchronously (via microtasks) — the first __resDone check is true and
 // this returns immediately with zero overhead.
-fn pumpTimers(ctx: *u8, resObj: *u8, nextDelayFn: *u8, runFn: *u8, resDoneFn: *u8): void {
+pub fn pumpTimers(ctx: *u8, resObj: *u8, nextDelayFn: *u8, runFn: *u8, resDoneFn: *u8): void {
     var guard: i64 = 0
     while guard < 200000 {
         let doneVal = callJs1(ctx, resDoneFn, resObj)
@@ -391,7 +391,7 @@ fn pumpTimers(ctx: *u8, resObj: *u8, nextDelayFn: *u8, runFn: *u8, resDoneFn: *u
 // Standalone (non-server) timer drain: run pending timers to completion so a plain script's
 // setTimeout/setInterval fire after the entry finishes. Bounded so an unbounded setInterval
 // can't wedge the process forever.
-fn drainTimers(ctx: *u8): void {
+pub fn drainTimers(ctx: *u8): void {
     let nextDelayFn = lookupGlobal(ctx, "__timersNextDelay")
     let runFn = lookupGlobal(ctx, "__timersRun")
     if JSValueIsUndefined(ctx, nextDelayFn) || JSValueIsUndefined(ctx, runFn) {
@@ -415,7 +415,7 @@ fn drainTimers(ctx: *u8): void {
     }
 }
 
-fn serveMain(ctx: *u8, port: u16, handler: *u8, getRaw: *u8): void {
+pub fn serveMain(ctx: *u8, port: u16, handler: *u8, getRaw: *u8): void {
     let lr = TcpListener.bind(port)
     match lr {
         Result.Err(_e) => {
@@ -462,7 +462,7 @@ fn serveMain(ctx: *u8, port: u16, handler: *u8, getRaw: *u8): void {
 }
 
 // Bind a native callback as a global function `name`.
-fn setGlobalFn(ctx: *u8, global: *u8, name: string, cb: *u8): void {
+pub fn setGlobalFn(ctx: *u8, global: *u8, name: string, cb: *u8): void {
     unsafe {
         let n = JSStringCreateWithUTF8CString(name)
         let f = JSObjectMakeFunctionWithCallback(ctx, n, cb)
@@ -472,7 +472,7 @@ fn setGlobalFn(ctx: *u8, global: *u8, name: string, cb: *u8): void {
 }
 
 // Install `console.log` (nested under a `console` object) on the global.
-fn installConsole(ctx: *u8, global: *u8): void {
+pub fn installConsole(ctx: *u8, global: *u8): void {
     unsafe {
         let fnName = JSStringCreateWithUTF8CString("log")
         let logFn = JSObjectMakeFunctionWithCallback(ctx, fnName, consoleLog as *u8)
@@ -492,14 +492,14 @@ fn installConsole(ctx: *u8, global: *u8): void {
 // resolve() probes .js/.json/index.js/package.json#main and walks node_modules for bare
 // specifiers. Source is minibun-runtime.js (a real, lintable/formattable .js file), inlined
 // at compile time via embedFile so the runtime is still a single self-contained binary.
-fn moduleBootstrap(): string {
+pub fn moduleBootstrap(): string {
     // The Node/Web runtime host (module loader, builtins, process/global scaffolding)
     // lives in a real .js file for debuggability; embedFile inlines it at compile time.
     return @embedFile("minibun-runtime.js")
 }
 
 // Evaluate `code`; on an uncaught exception print it and return 1.
-fn evalScript(ctx: *u8, code: string, sourceName: string): i32 {
+pub fn evalScript(ctx: *u8, code: string, sourceName: string): i32 {
     unsafe {
         let script = JSStringCreateWithUTF8CString(code)
         let url = JSStringCreateWithUTF8CString(sourceName)
@@ -515,7 +515,7 @@ fn evalScript(ctx: *u8, code: string, sourceName: string): i32 {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
         print("usage: minibun <file.js>")

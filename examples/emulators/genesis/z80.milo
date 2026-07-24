@@ -8,16 +8,23 @@
 // Prefixes (CB/ED/DD/FD), 16-bit ops, block ops, I/O, and interrupts follow.
 
 // --- flag bit masks ---
-let FC: i64 = 0x01
-let FN: i64 = 0x02
-let FPV: i64 = 0x04
-let FX: i64 = 0x08
-let FH: i64 = 0x10
-let FY: i64 = 0x20
-let FZ: i64 = 0x40
-let FS: i64 = 0x80
+pub let FC: i64 = 0x01
 
-struct Z80 {
+pub let FN: i64 = 0x02
+
+pub let FPV: i64 = 0x04
+
+pub let FX: i64 = 0x08
+
+pub let FH: i64 = 0x10
+
+pub let FY: i64 = 0x20
+
+pub let FZ: i64 = 0x40
+
+pub let FS: i64 = 0x80
+
+pub struct Z80 {
     a: i64
     b: i64
     c: i64
@@ -69,7 +76,7 @@ struct Z80 {
     timerBRun: bool
 }
 
-fn newZ80(): Z80 {
+pub fn newZ80(): Z80 {
     var mem: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < 0x10000 {
@@ -90,7 +97,7 @@ fn newZ80(): Z80 {
 // Advance the YM2612 timers by `us` emulated-microseconds, setting the overflow
 // flags in the status byte when a period elapses. Enable bits (reg $27 bit2/bit3)
 // gate whether an overflow actually latches into the status byte.
-fn ymTimerTick(cpu: &mut Z80, us: i64) {
+pub fn ymTimerTick(cpu: &mut Z80, us: i64) {
     if cpu.timerARun {
         cpu.timerACnt = cpu.timerACnt + us
         let na = ((cpu.ym[0x24] & 0xFF) << 2) | (cpu.ym[0x25] & 0x3)
@@ -115,7 +122,7 @@ fn ymTimerTick(cpu: &mut Z80, us: i64) {
     }
 }
 
-fn rd(cpu: &Z80, addr: i64): i64 {
+pub fn rd(cpu: &Z80, addr: i64): i64 {
     let a = addr & 0xFFFF
     if cpu.gen {
         if a < 0x4000 {
@@ -137,7 +144,7 @@ fn rd(cpu: &Z80, addr: i64): i64 {
     return cpu.mem[a] as i64
 }
 
-fn wr(cpu: &mut Z80, addr: i64, val: i64) {
+pub fn wr(cpu: &mut Z80, addr: i64, val: i64) {
     let a = addr & 0xFFFF
     if cpu.gen {
         z80DevWrite(cpu, a, val & 0xFF)
@@ -148,7 +155,7 @@ fn wr(cpu: &mut Z80, addr: i64, val: i64) {
 
 // Z80-side Genesis memory map: 8 KB RAM ($0000-$1FFF, mirrored to $3FFF),
 // YM2612 ($4000-$4003), bank register ($6000), PSG ($7F11).
-fn z80DevWrite(cpu: &mut Z80, a: i64, val: i64) {
+pub fn z80DevWrite(cpu: &mut Z80, a: i64, val: i64) {
     if a < 0x4000 {
         cpu.mem[a & 0x1FFF] = val as u8
         return
@@ -210,7 +217,7 @@ fn z80DevWrite(cpu: &mut Z80, a: i64, val: i64) {
 }
 
 // SN76489 PSG register write (latch/data protocol).
-fn psgWrite(cpu: &mut Z80, val: i64) {
+pub fn psgWrite(cpu: &mut Z80, val: i64) {
     if (val & 0x80) != 0 {
         // latch byte %1cctdddd
         let reg = (val >> 4) & 0x7
@@ -228,44 +235,44 @@ fn psgWrite(cpu: &mut Z80, val: i64) {
 }
 
 // Opcode/operand fetch. Only opcode fetches bump R; use zfetch8 for operands.
-fn fetchOp(cpu: &mut Z80): i64 {
+pub fn fetchOp(cpu: &mut Z80): i64 {
     let op = rd(cpu, cpu.pc)
     cpu.pc = (cpu.pc + 1) & 0xFFFF
     cpu.r = (cpu.r & 0x80) | ((cpu.r + 1) & 0x7F)
     return op
 }
 
-fn zfetch8(cpu: &mut Z80): i64 {
+pub fn zfetch8(cpu: &mut Z80): i64 {
     let v = rd(cpu, cpu.pc)
     cpu.pc = (cpu.pc + 1) & 0xFFFF
     return v
 }
 
-fn zfetch16(cpu: &mut Z80): i64 {
+pub fn zfetch16(cpu: &mut Z80): i64 {
     let lo = zfetch8(cpu)
     let hi = zfetch8(cpu)
     return (hi << 8) | lo
 }
 
 // --- 16-bit register pair accessors ---
-fn getHL(cpu: &Z80): i64 {
+pub fn getHL(cpu: &Z80): i64 {
     return (cpu.h << 8) | cpu.l
 }
 
-fn setHL(cpu: &mut Z80, v: i64) {
+pub fn setHL(cpu: &mut Z80, v: i64) {
     cpu.h = (v >> 8) & 0xFF
     cpu.l = v & 0xFF
 }
 
-fn getBC(cpu: &Z80): i64 {
+pub fn getBC(cpu: &Z80): i64 {
     return (cpu.b << 8) | cpu.c
 }
 
-fn getDE(cpu: &Z80): i64 {
+pub fn getDE(cpu: &Z80): i64 {
     return (cpu.d << 8) | cpu.e
 }
 
-fn setFlag(cpu: &mut Z80, bit: i64, on: bool) {
+pub fn setFlag(cpu: &mut Z80, bit: i64, on: bool) {
     if on {
         cpu.f = cpu.f | bit
     } else {
@@ -273,7 +280,7 @@ fn setFlag(cpu: &mut Z80, bit: i64, on: bool) {
     }
 }
 
-fn parityEven(v: i64): bool {
+pub fn parityEven(v: i64): bool {
     var x = v & 0xFF
     var count: i64 = 0
     var i: i64 = 0
@@ -288,7 +295,7 @@ fn parityEven(v: i64): bool {
 }
 
 // Set S,Z,Y,X from an 8-bit result (caller sets H,P/V,N,C).
-fn setSZYX(cpu: &mut Z80, r: i64) {
+pub fn setSZYX(cpu: &mut Z80, r: i64) {
     let v = r & 0xFF
     setFlag(cpu, FS, (v & 0x80) != 0)
     setFlag(cpu, FZ, v == 0)
@@ -297,7 +304,7 @@ fn setSZYX(cpu: &mut Z80, r: i64) {
 }
 
 // --- register-index access (Z80 encoding 0..7 = B,C,D,E,H,L,(HL),A) ---
-fn getReg(cpu: &mut Z80, idx: i64): i64 {
+pub fn getReg(cpu: &mut Z80, idx: i64): i64 {
     if idx == 0 {
         return cpu.b
     }
@@ -322,7 +329,7 @@ fn getReg(cpu: &mut Z80, idx: i64): i64 {
     return cpu.a
 }
 
-fn setReg(cpu: &mut Z80, idx: i64, val: i64) {
+pub fn setReg(cpu: &mut Z80, idx: i64, val: i64) {
     let v = val & 0xFF
     if idx == 0 {
         cpu.b = v
@@ -344,7 +351,7 @@ fn setReg(cpu: &mut Z80, idx: i64, val: i64) {
 }
 
 // --- ALU on the accumulator ---
-fn aluAdd(cpu: &mut Z80, val: i64, carry: i64) {
+pub fn aluAdd(cpu: &mut Z80, val: i64, carry: i64) {
     let a = cpu.a
     let r = a + val + carry
     let res = r & 0xFF
@@ -356,7 +363,7 @@ fn aluAdd(cpu: &mut Z80, val: i64, carry: i64) {
     cpu.a = res
 }
 
-fn aluSub(cpu: &mut Z80, val: i64, carry: i64, store: bool) {
+pub fn aluSub(cpu: &mut Z80, val: i64, carry: i64, store: bool) {
     let a = cpu.a
     let r = a - val - carry
     let res = r & 0xFF
@@ -378,7 +385,7 @@ fn aluSub(cpu: &mut Z80, val: i64, carry: i64, store: bool) {
     }
 }
 
-fn aluAnd(cpu: &mut Z80, val: i64) {
+pub fn aluAnd(cpu: &mut Z80, val: i64) {
     let res = cpu.a & val & 0xFF
     setSZYX(cpu, res)
     setFlag(cpu, FH, true)
@@ -388,7 +395,7 @@ fn aluAnd(cpu: &mut Z80, val: i64) {
     cpu.a = res
 }
 
-fn aluXor(cpu: &mut Z80, val: i64) {
+pub fn aluXor(cpu: &mut Z80, val: i64) {
     let res = (cpu.a ^ val) & 0xFF
     setSZYX(cpu, res)
     setFlag(cpu, FH, false)
@@ -398,7 +405,7 @@ fn aluXor(cpu: &mut Z80, val: i64) {
     cpu.a = res
 }
 
-fn aluOr(cpu: &mut Z80, val: i64) {
+pub fn aluOr(cpu: &mut Z80, val: i64) {
     let res = (cpu.a | val) & 0xFF
     setSZYX(cpu, res)
     setFlag(cpu, FH, false)
@@ -408,7 +415,7 @@ fn aluOr(cpu: &mut Z80, val: i64) {
     cpu.a = res
 }
 
-fn doAlu(cpu: &mut Z80, op: i64, val: i64) {
+pub fn doAlu(cpu: &mut Z80, op: i64, val: i64) {
     let cf = cpu.f & FC
     if op == 0 {
         aluAdd(cpu, val, 0)
@@ -429,7 +436,7 @@ fn doAlu(cpu: &mut Z80, op: i64, val: i64) {
     }
 }
 
-fn incReg(cpu: &mut Z80, idx: i64) {
+pub fn incReg(cpu: &mut Z80, idx: i64) {
     let v = getReg(cpu, idx)
     let res = (v + 1) & 0xFF
     setSZYX(cpu, res)
@@ -439,7 +446,7 @@ fn incReg(cpu: &mut Z80, idx: i64) {
     setReg(cpu, idx, res)
 }
 
-fn decReg(cpu: &mut Z80, idx: i64) {
+pub fn decReg(cpu: &mut Z80, idx: i64) {
     let v = getReg(cpu, idx)
     let res = (v - 1) & 0xFF
     setSZYX(cpu, res)
@@ -449,27 +456,27 @@ fn decReg(cpu: &mut Z80, idx: i64) {
     setReg(cpu, idx, res)
 }
 
-fn getAF(cpu: &Z80): i64 {
+pub fn getAF(cpu: &Z80): i64 {
     return (cpu.a << 8) | cpu.f
 }
 
-fn setAF(cpu: &mut Z80, v: i64) {
+pub fn setAF(cpu: &mut Z80, v: i64) {
     cpu.a = (v >> 8) & 0xFF
     cpu.f = v & 0xFF
 }
 
-fn setBC(cpu: &mut Z80, v: i64) {
+pub fn setBC(cpu: &mut Z80, v: i64) {
     cpu.b = (v >> 8) & 0xFF
     cpu.c = v & 0xFF
 }
 
-fn setDE(cpu: &mut Z80, v: i64) {
+pub fn setDE(cpu: &mut Z80, v: i64) {
     cpu.d = (v >> 8) & 0xFF
     cpu.e = v & 0xFF
 }
 
 // rp table (p: 0 BC, 1 DE, 2 HL, 3 SP)
-fn getRP(cpu: &Z80, p: i64): i64 {
+pub fn getRP(cpu: &Z80, p: i64): i64 {
     if p == 0 {
         return getBC(cpu)
     }
@@ -482,7 +489,7 @@ fn getRP(cpu: &Z80, p: i64): i64 {
     return cpu.sp
 }
 
-fn setRP(cpu: &mut Z80, p: i64, v: i64) {
+pub fn setRP(cpu: &mut Z80, p: i64, v: i64) {
     if p == 0 {
         setBC(cpu, v)
     } else if p == 1 {
@@ -495,14 +502,14 @@ fn setRP(cpu: &mut Z80, p: i64, v: i64) {
 }
 
 // rp2 table (p: 0 BC, 1 DE, 2 HL, 3 AF)
-fn getRP2(cpu: &Z80, p: i64): i64 {
+pub fn getRP2(cpu: &Z80, p: i64): i64 {
     if p == 3 {
         return getAF(cpu)
     }
     return getRP(cpu, p)
 }
 
-fn setRP2(cpu: &mut Z80, p: i64, v: i64) {
+pub fn setRP2(cpu: &mut Z80, p: i64, v: i64) {
     if p == 3 {
         setAF(cpu, v)
     } else {
@@ -513,7 +520,7 @@ fn setRP2(cpu: &mut Z80, p: i64, v: i64) {
 // Deliver the Z80 maskable interrupt (its INT line is tied to the VDP VBlank on
 // the Genesis). Fires once per frame if interrupts are enabled. IM 1 (the usual
 // mode) vectors to $0038; IM 2 uses the I-register vector table.
-fn z80Interrupt(cpu: &mut Z80): bool {
+pub fn z80Interrupt(cpu: &mut Z80): bool {
     if !cpu.iff1 {
         return false
     }
@@ -530,14 +537,14 @@ fn z80Interrupt(cpu: &mut Z80): bool {
     return true
 }
 
-fn push16(cpu: &mut Z80, v: i64) {
+pub fn push16(cpu: &mut Z80, v: i64) {
     cpu.sp = (cpu.sp - 1) & 0xFFFF
     wr(cpu, cpu.sp, (v >> 8) & 0xFF)
     cpu.sp = (cpu.sp - 1) & 0xFFFF
     wr(cpu, cpu.sp, v & 0xFF)
 }
 
-fn pop16(cpu: &mut Z80): i64 {
+pub fn pop16(cpu: &mut Z80): i64 {
     let lo = rd(cpu, cpu.sp)
     cpu.sp = (cpu.sp + 1) & 0xFFFF
     let hi = rd(cpu, cpu.sp)
@@ -546,7 +553,7 @@ fn pop16(cpu: &mut Z80): i64 {
 }
 
 // Condition codes (y 0-7): NZ,Z,NC,C,PO,PE,P,M.
-fn testCC(cpu: &Z80, y: i64): bool {
+pub fn testCC(cpu: &Z80, y: i64): bool {
     if y == 0 {
         return (cpu.f & FZ) == 0
     }
@@ -573,7 +580,7 @@ fn testCC(cpu: &Z80, y: i64): bool {
 
 // ADD HL, rr: H from bit-11 carry, C from bit-15, N=0; X/Y from result high byte;
 // S/Z/P-V unaffected.
-fn add16(cpu: &mut Z80, a: i64, b: i64): i64 {
+pub fn add16(cpu: &mut Z80, a: i64, b: i64): i64 {
     let r = a + b
     let res = r & 0xFFFF
     setFlag(cpu, FH, ((a & 0xFFF) + (b & 0xFFF)) > 0xFFF)
@@ -586,7 +593,7 @@ fn add16(cpu: &mut Z80, a: i64, b: i64): i64 {
 
 // Accumulator rotates (RLCA/RRCA/RLA/RRA): C from the rotated bit, H=N=0,
 // X/Y from the result; S/Z/P-V unaffected.
-fn rotAcc(cpu: &mut Z80, kind: i64) {
+pub fn rotAcc(cpu: &mut Z80, kind: i64) {
     let a = cpu.a
     var res: i64 = 0
     var carry = false
@@ -637,7 +644,7 @@ fn rotAcc(cpu: &mut Z80, kind: i64) {
     setFlag(cpu, FX, (res & 0x08) != 0)
 }
 
-fn doDaa(cpu: &mut Z80) {
+pub fn doDaa(cpu: &mut Z80) {
     var a = cpu.a
     var adjust: i64 = 0
     let n = (cpu.f & FN) != 0
@@ -662,7 +669,7 @@ fn doDaa(cpu: &mut Z80) {
 }
 
 // Execute one instruction. Returns false on an opcode not yet implemented.
-fn stepZ80(cpu: &mut Z80): bool {
+pub fn stepZ80(cpu: &mut Z80): bool {
     ymTimerTick(cpu, 1) // ~1 emulated-us per step (see struct note); paces sound drivers
     // While halted the Z80 idles on the HALT instruction, executing nothing until
     // an interrupt clears the flag (z80Interrupt). Without this it fetched and ran
@@ -707,7 +714,7 @@ fn stepZ80(cpu: &mut Z80): bool {
     return execX3(cpu, op, y, z, p, q)
 }
 
-fn execX0(cpu: &mut Z80, _op: i64, y: i64, z: i64, p: i64, q: i64): bool {
+pub fn execX0(cpu: &mut Z80, _op: i64, y: i64, z: i64, p: i64, q: i64): bool {
     if z == 0 {
         if y == 0 {
             return true // NOP
@@ -800,7 +807,7 @@ fn execX0(cpu: &mut Z80, _op: i64, y: i64, z: i64, p: i64, q: i64): bool {
 }
 
 // z==2 in x==0: indirect accumulator / HL loads.
-fn execIndirect(cpu: &mut Z80, p: i64, q: i64): bool {
+pub fn execIndirect(cpu: &mut Z80, p: i64, q: i64): bool {
     if q == 0 {
         if p == 0 {
             wr(cpu, getBC(cpu), cpu.a) // LD (BC), A
@@ -829,7 +836,7 @@ fn execIndirect(cpu: &mut Z80, p: i64, q: i64): bool {
     return true
 }
 
-fn execX3(cpu: &mut Z80, _op: i64, y: i64, z: i64, p: i64, q: i64): bool {
+pub fn execX3(cpu: &mut Z80, _op: i64, y: i64, z: i64, p: i64, q: i64): bool {
     if z == 0 {
         // RET cc
         if testCC(cpu, y) {
@@ -934,7 +941,7 @@ fn execX3(cpu: &mut Z80, _op: i64, y: i64, z: i64, p: i64, q: i64): bool {
     return true
 }
 
-fn signExt8(v: i64): i64 {
+pub fn signExt8(v: i64): i64 {
     if (v & 0x80) != 0 {
         return v - 256
     }
@@ -942,7 +949,7 @@ fn signExt8(v: i64): i64 {
 }
 
 // INC/DEC on an arbitrary 8-bit value with flag effects, returning the result.
-fn incVal(cpu: &mut Z80, v: i64): i64 {
+pub fn incVal(cpu: &mut Z80, v: i64): i64 {
     let res = (v + 1) & 0xFF
     setSZYX(cpu, res)
     setFlag(cpu, FH, (v & 0xF) == 0xF)
@@ -951,7 +958,7 @@ fn incVal(cpu: &mut Z80, v: i64): i64 {
     return res
 }
 
-fn decVal(cpu: &mut Z80, v: i64): i64 {
+pub fn decVal(cpu: &mut Z80, v: i64): i64 {
     let res = (v - 1) & 0xFF
     setSZYX(cpu, res)
     setFlag(cpu, FH, (v & 0xF) == 0)
@@ -963,7 +970,7 @@ fn decVal(cpu: &mut Z80, v: i64): i64 {
 // DD/FD prefix: IX/IY variants. Handles (index+d) memory ops, the 16-bit index
 // ops, and DDCB/FDCB. The undocumented IXh/IXl split-register ops are not needed
 // by the Genesis sound driver and are left unimplemented.
-fn execIndex(cpu: &mut Z80, isIY: bool): bool {
+pub fn execIndex(cpu: &mut Z80, isIY: bool): bool {
     var base = if isIY {
         cpu.iy
     } else {
@@ -1077,7 +1084,7 @@ fn execIndex(cpu: &mut Z80, isIY: bool): bool {
     return false
 }
 
-fn storeIndex(cpu: &mut Z80, isIY: bool, v: i64): bool {
+pub fn storeIndex(cpu: &mut Z80, isIY: bool, v: i64): bool {
     if isIY {
         cpu.iy = v & 0xFFFF
     } else {
@@ -1088,7 +1095,7 @@ fn storeIndex(cpu: &mut Z80, isIY: bool, v: i64): bool {
 
 // DDCB/FDCB: rotate/shift/bit/res/set on (index+d). Non-BIT ops also copy the
 // result into register z (undocumented) unless z selects (HL)/memory.
-fn execDDCB(cpu: &mut Z80, addr: i64): bool {
+pub fn execDDCB(cpu: &mut Z80, addr: i64): bool {
     let op = zfetch8(cpu) // final byte does not bump R
     let x = (op >> 6) & 0x3
     let y = (op >> 3) & 0x7
@@ -1123,7 +1130,7 @@ fn execDDCB(cpu: &mut Z80, addr: i64): bool {
 }
 
 // CB prefix: rotates/shifts (x=0), BIT (x=1), RES (x=2), SET (x=3) on reg z.
-fn execCB(cpu: &mut Z80): bool {
+pub fn execCB(cpu: &mut Z80): bool {
     let op = fetchOp(cpu) // the CB byte already bumped R; the operand op bumps again
     let x = (op >> 6) & 0x3
     let y = (op >> 3) & 0x7
@@ -1164,7 +1171,7 @@ fn execCB(cpu: &mut Z80): bool {
 
 // 16-bit ADC/SBC HL,rp. S/Z from bit15, H from bit12, PV overflow, N, C, Y/X from
 // the result high byte.
-fn adcHL(cpu: &mut Z80, rp: i64) {
+pub fn adcHL(cpu: &mut Z80, rp: i64) {
     let hl = getHL(cpu)
     let c = cpu.f & FC
     let r = hl + rp + c
@@ -1180,7 +1187,7 @@ fn adcHL(cpu: &mut Z80, rp: i64) {
     setHL(cpu, res)
 }
 
-fn sbcHL(cpu: &mut Z80, rp: i64) {
+pub fn sbcHL(cpu: &mut Z80, rp: i64) {
     let hl = getHL(cpu)
     let c = cpu.f & FC
     let r = hl - rp - c
@@ -1197,7 +1204,7 @@ fn sbcHL(cpu: &mut Z80, rp: i64) {
 }
 
 // One LDI/LDD block transfer step (dir +1 or -1).
-fn blockLd(cpu: &mut Z80, dir: i64) {
+pub fn blockLd(cpu: &mut Z80, dir: i64) {
     let v = rd(cpu, getHL(cpu))
     wr(cpu, getDE(cpu), v)
     setDE(cpu, (getDE(cpu) + dir) & 0xFFFF)
@@ -1212,7 +1219,7 @@ fn blockLd(cpu: &mut Z80, dir: i64) {
 }
 
 // One CPI/CPD block compare step.
-fn blockCp(cpu: &mut Z80, dir: i64) {
+pub fn blockCp(cpu: &mut Z80, dir: i64) {
     let v = rd(cpu, getHL(cpu))
     let r = (cpu.a - v) & 0xFF
     let hcarry = ((cpu.a & 0xF) - (v & 0xF)) < 0
@@ -1234,7 +1241,7 @@ fn blockCp(cpu: &mut Z80, dir: i64) {
 
 // ED prefix. IN/OUT (and block I/O) are deferred — Genesis maps the YM2612 into
 // memory, not Z80 ports, so the sound driver does not use them.
-fn execED(cpu: &mut Z80): bool {
+pub fn execED(cpu: &mut Z80): bool {
     let op = fetchOp(cpu)
     let x = (op >> 6) & 0x3
     let y = (op >> 3) & 0x7
@@ -1366,7 +1373,7 @@ fn execED(cpu: &mut Z80): bool {
 }
 
 // One shift/rotate (CB x=0): sets S,Z,Y,X,P,H=0,N=0,C. Returns the result.
-fn shiftOp(cpu: &mut Z80, kind: i64, v: i64): i64 {
+pub fn shiftOp(cpu: &mut Z80, kind: i64, v: i64): i64 {
     let oldC = (cpu.f & FC) != 0
     var res: i64 = 0
     var carry = false

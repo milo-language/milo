@@ -21,24 +21,32 @@ from "std/math" import {
     mathFloor
 }
 
-struct Binding {
+pub struct Binding {
     name: string,
     value: JSValue,
 }
 
 // Typed-array element kinds. The order is arbitrary but fixed: taKind is stored
 // on the view object.
-let TA_U8: i64 = 0
-let TA_I8: i64 = 1
-let TA_U16: i64 = 2
-let TA_I16: i64 = 3
-let TA_U32: i64 = 4
-let TA_I32: i64 = 5
-let TA_F32: i64 = 6
-let TA_F64: i64 = 7
-let TA_U8C: i64 = 8
+pub let TA_U8: i64 = 0
 
-fn taWidth(kind: i64): i64 {
+pub let TA_I8: i64 = 1
+
+pub let TA_U16: i64 = 2
+
+pub let TA_I16: i64 = 3
+
+pub let TA_U32: i64 = 4
+
+pub let TA_I32: i64 = 5
+
+pub let TA_F32: i64 = 6
+
+pub let TA_F64: i64 = 7
+
+pub let TA_U8C: i64 = 8
+
+pub fn taWidth(kind: i64): i64 {
     if kind == TA_U8 || kind == TA_I8 || kind == TA_U8C {
         return 1
     }
@@ -51,7 +59,7 @@ fn taWidth(kind: i64): i64 {
     return 4
 }
 
-fn taName(kind: i64): string {
+pub fn taName(kind: i64): string {
     if kind == TA_U8 {
         return "Uint8Array"
     }
@@ -83,7 +91,7 @@ fn taName(kind: i64): string {
 // language has no bitcast, so this reads/writes the stack slot through a raw
 // pointer (unsafe, like std's other pointer work). Little-endian host assumed —
 // the same assumption the integer paths below already make.
-fn f64ToBits(x: f64): i64 {
+pub fn f64ToBits(x: f64): i64 {
     var xv = x
     var bits: i64 = 0
     var i: i64 = 0
@@ -98,7 +106,7 @@ fn f64ToBits(x: f64): i64 {
     return bits
 }
 
-fn bitsToF64(bits: i64): f64 {
+pub fn bitsToF64(bits: i64): f64 {
     var y: f64 = 0.0
     var i: i64 = 0
     while i < 8 {
@@ -112,7 +120,7 @@ fn bitsToF64(bits: i64): f64 {
 }
 
 // f64 -> 32-bit float, then its 4 IEEE-754 bits. `as f32` does the rounding.
-fn f32ToBits(x: f64): i64 {
+pub fn f32ToBits(x: f64): i64 {
     var f = x as f32
     var bits: i64 = 0
     var i: i64 = 0
@@ -127,7 +135,7 @@ fn f32ToBits(x: f64): i64 {
     return bits
 }
 
-fn bitsToF32(bits: i64): f64 {
+pub fn bitsToF32(bits: i64): f64 {
     var f: f32 = 0.0
     var i: i64 = 0
     while i < 4 {
@@ -141,7 +149,7 @@ fn bitsToF32(bits: i64): f64 {
 }
 
 // Read one element out of a buffer's bytes, little-endian.
-fn taLoad(bytes: &Vec<u8>, kind: i64, at: i64): f64 {
+pub fn taLoad(bytes: &Vec<u8>, kind: i64, at: i64): f64 {
     if kind == TA_U8 || kind == TA_U8C {
         return bytes[at] as f64
     }
@@ -185,7 +193,7 @@ fn taLoad(bytes: &Vec<u8>, kind: i64, at: i64): f64 {
 }
 
 // Store one element, applying the kind's wrapping (or clamping) rules.
-fn taStore(bytes: &mut Vec<u8>, kind: i64, at: i64, v: f64) {
+pub fn taStore(bytes: &mut Vec<u8>, kind: i64, at: i64, v: f64) {
     var n: i64 = 0
     // Float kinds store the raw IEEE-754 bits (via f32/f64 rounding), including
     // NaN/Inf — so they bypass the integer coercion below entirely.
@@ -240,9 +248,9 @@ fn taStore(bytes: &mut Vec<u8>, kind: i64, at: i64, v: f64) {
 
 // A freed scope slot is marked by parent == GC_FREE so the sweep skips it and
 // newScope can reuse it. Real parents are >= 0 (global) or -1 (global's parent).
-let GC_FREE: i64 = -2
+pub let GC_FREE: i64 = -2
 
-struct Scope {
+pub struct Scope {
     parent: i64,
     vars: Vec<Binding>,
     mark: bool,
@@ -260,7 +268,7 @@ struct Scope {
 // reclaimed slot the sweep skips and newObject can reuse. When `isArray`, `elems`
 // holds the integer-indexed elements (JS arrays are objects, so a JSObj can carry
 // both — string props and dense elements).
-struct Prop {
+pub struct Prop {
     key: string,
     value: JSValue,
     // accessor property (Object.defineProperty with get/set): `value` is unused
@@ -282,7 +290,7 @@ struct Prop {
 // blocking connect/TLS/read and hands the raw response back over the channel;
 // the event loop settles `promise` with it. This is what keeps one slow upstream
 // from stalling every other request.
-struct PendingFetch {
+pub struct PendingFetch {
     promise: i64,
     chan: Channel<string>,
 }
@@ -296,7 +304,7 @@ struct PendingFetch {
 // Switches happen only at park points, so saving on park and restoring on resume
 // is enough — nothing observes these fields mid-statement from another
 // activation.
-struct ExecCtx {
+pub struct ExecCtx {
     throwing: bool,
     thrownValue: JSValue,
     callDepth: i64,
@@ -315,7 +323,7 @@ struct ExecCtx {
 
 // Lift the running execution out of the Interp, leaving it clean for whoever
 // runs next. The caller owns the returned context until it restores it.
-fn saveExecCtx(st: &mut Interp): ExecCtx {
+pub fn saveExecCtx(st: &mut Interp): ExecCtx {
     // Copied element by element rather than moved out of the borrow: taking the
     // Vec fields directly leaves the context pointing at buffers that the reset
     // below then frees.
@@ -368,7 +376,7 @@ fn saveExecCtx(st: &mut Interp): ExecCtx {
 
 // Put a saved execution back. Whatever was running is discarded, so the caller
 // must have saved it first.
-fn restoreExecCtx(st: &mut Interp, ctx: ExecCtx) {
+pub fn restoreExecCtx(st: &mut Interp, ctx: ExecCtx) {
     st.throwing = ctx.throwing
     st.thrownValue = ctx.thrownValue
     st.callDepth = ctx.callDepth
@@ -380,7 +388,7 @@ fn restoreExecCtx(st: &mut Interp, ctx: ExecCtx) {
     st.modPathStack = ctx.modPathStack
 }
 
-struct Timer {
+pub struct Timer {
     id: i64,
     dueMs: f64,
     intervalMs: f64,
@@ -391,7 +399,7 @@ struct Timer {
 
 // A queued microtask: call cb with one argument. Promise reactions and
 // process.nextTick both land here.
-struct Microtask {
+pub struct Microtask {
     cb: JSValue,
     arg: JSValue,
     // promise to settle with cb's result, or -1 for a plain call
@@ -410,7 +418,7 @@ struct Microtask {
 
 // A .then registration on a not-yet-settled promise: which handlers to run and
 // which promise to settle with their result.
-struct Reaction {
+pub struct Reaction {
     onFulfilled: JSValue,
     onRejected: JSValue,
     derived: i64,
@@ -426,7 +434,7 @@ struct Reaction {
 // moves here, allocated lazily on first write. Index 0 is a shared read-only
 // default so reads never need an -1 guard; ensureExtra() hands out a private
 // slot on first write and the sweep returns it to objExtraFree.
-struct JSObjExtra {
+pub struct JSObjExtra {
     // Function.prototype.bind payload (isBound stays inline in JSObj)
     boundTarget: JSValue,
     boundThis: JSValue,
@@ -461,7 +469,7 @@ struct JSObjExtra {
     napiWrap: i64,
 }
 
-fn defaultExtra(): JSObjExtra {
+pub fn defaultExtra(): JSObjExtra {
     return JSObjExtra {
         boundTarget: JSValue.Undefined,
         boundThis: JSValue.Undefined,
@@ -486,7 +494,7 @@ fn defaultExtra(): JSObjExtra {
     }
 }
 
-struct JSObj {
+pub struct JSObj {
     props: Vec<Prop>,
     elems: Vec<JSValue>,
     // indices in elems that are HOLES (delete arr[i], length-grow padding,
@@ -561,7 +569,7 @@ struct JSObj {
     free: bool,
 }
 
-struct Interp {
+pub struct Interp {
     scopes: Vec<Scope>,
     // reusable dead-scope slots (indices stay stable — closures hold them by index)
     freeList: Vec<i64>,
@@ -762,7 +770,7 @@ struct Interp {
 //
 // Module-scope runtime initialization is not supported, so this is a zero literal
 // that main() overwrites with makeInterp().
-var gInterp: Interp = Interp {
+pub var gInterp: Interp = Interp {
     scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
     objects: Vec.new(), objFreeList: Vec.new(), objExtras: Vec.new(), objExtraFree: Vec.new(), funcProtos: Vec.new(), funcStatics: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
     modPaths: Vec.new(), modBlocks: Vec.new(), modExports: Vec.new(), modState: Vec.new(), modDirStack: Vec.new(), modPathStack: Vec.new(),
@@ -772,7 +780,7 @@ var gInterp: Interp = Interp {
     allocSinceGc: 0, promiseCtorObj: -1, stringCtorProps: -1, nativeProps: Vec.new(), dateCtorProps: -1, iterProtoObj: -1, arrayCtorObj: -1, objectProtoObj: -1, arrayProtoObj: -1, symbolCounter: 0, timers: Vec.new(), microtasks: Vec.new(), nextTimerId: 1, callDepth: 0, mainTask: 0 as *u8, awaitPromise: Vec.new(), awaitTask: Vec.new(), suspended: Vec.new(), genObj: Vec.new(), genFn: Vec.new(), genTask: Vec.new(), genEnv: Vec.new(), genArgs: Vec.new(), genThis: Vec.new(), genYielded: Vec.new(), genSent: Vec.new(), genDone: Vec.new(), genThrew: Vec.new(), genErr: Vec.new(), genCaller: Vec.new(), genStarted: Vec.new(), suspendedTask: Vec.new(), actTask: Vec.new(), actCreator: Vec.new(), actNotified: Vec.new(), actEnv: Vec.new(), actArgs: Vec.new(), actThis: Vec.new(), actPromise: Vec.new(), suppressAsyncSpawn: false, suppressGenSpawn: false, fetches: Vec.new(), napiAddonPaths: Vec.new(), napiAddonExports: Vec.new(), newTarget: JSValue.Undefined, reportedMissing: Vec.new(), httpServers: Vec.new(), unhandledRejects: Vec.new(), awaitBudgetMs: 30000.0, listeners: Vec.new(), conns: Vec.new(), connOpen: Vec.new(), gcThreshold: 1024, gcMinThreshold: 1024, gcGrowthFactor: 2, gcRuns: 0, gcStats: false
 }
 
-fn allocObj(st: &mut Interp, isArray: bool): i64 {
+pub fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
         props: Vec.new(), elems: Vec.new(), holes: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, frozen: false, noExtend: false, sealed: false, isGlobal: false, isArrayBuffer: false, abDetached: false, isDataView: false, promiseState: -1, isBound: false, isEnv: false, isFunctionLike: false, isDate: false, isMap: false, isSet: false, isProxy: false, isGenerator: false, extra: 0, mark: false, free: false
@@ -791,7 +799,7 @@ fn allocObj(st: &mut Interp, isArray: bool): i64 {
 // Give object `o` a PRIVATE JSObjExtra slot (allocating or reusing one) and
 // return its index, so a rare field can be written. Idempotent: an object that
 // already owns a slot keeps it. Never returns 0 (the shared default).
-fn ensureExtra(st: &mut Interp, o: i64): i64 {
+pub fn ensureExtra(st: &mut Interp, o: i64): i64 {
     let cur = st.objects[o].extra
     if cur != 0 {
         return cur
@@ -812,7 +820,7 @@ fn ensureExtra(st: &mut Interp, o: i64): i64 {
 // Return an object's private extra slot to the free list (called by the sweep).
 // A no-op for the shared default (0). Clearing the payload here rather than at
 // reuse keeps freed slots from pinning JSValues the collector already released.
-fn releaseExtra(st: &mut Interp, o: i64) {
+pub fn releaseExtra(st: &mut Interp, o: i64) {
     let ex = st.objects[o].extra
     if ex != 0 {
         st.objExtras[ex] = defaultExtra()
@@ -821,17 +829,17 @@ fn releaseExtra(st: &mut Interp, o: i64) {
     }
 }
 
-fn newObject(st: &mut Interp): i64 {
+pub fn newObject(st: &mut Interp): i64 {
     return allocObj(st, false)
 }
 
-fn newArray(st: &mut Interp): i64 {
+pub fn newArray(st: &mut Interp): i64 {
     return allocObj(st, true)
 }
 
 // Promises settle synchronously — there is no event loop, so `new Promise(cb)`
 // whose cb resolves later never settles and awaiting it yields undefined.
-fn newPromise(st: &mut Interp, state: i64, value: JSValue): i64 {
+pub fn newPromise(st: &mut Interp, state: i64, value: JSValue): i64 {
     let o = allocObj(st, false)
     st.objects[o].promiseState = state
     // a promise always owns a private extra: its value + reactions live there,
@@ -847,15 +855,15 @@ fn newPromise(st: &mut Interp, state: i64, value: JSValue): i64 {
     return o
 }
 
-fn isPromise(st: &Interp, o: i64): bool {
+pub fn isPromise(st: &Interp, o: i64): bool {
     return st.objects[o].promiseState >= 0
 }
 
-fn isPromiseCtor(st: &Interp, o: i64): bool {
+pub fn isPromiseCtor(st: &Interp, o: i64): bool {
     return st.promiseCtorObj >= 0 && o == st.promiseCtorObj
 }
 
-fn objGet(st: &Interp, obj: i64, key: &string): JSValue {
+pub fn objGet(st: &Interp, obj: i64, key: &string): JSValue {
     var i: i64 = 0
     let n = st.objects[obj].props.len()
     while i < n {
@@ -867,7 +875,7 @@ fn objGet(st: &Interp, obj: i64, key: &string): JSValue {
     return JSValue.Undefined
 }
 
-fn objSet(st: &mut Interp, obj: i64, key: string, value: JSValue) {
+pub fn objSet(st: &mut Interp, obj: i64, key: string, value: JSValue) {
     // private fields (#name, the only keys milojs stores with a leading '#') are
     // non-enumerable: they must not appear in JSON.stringify, Object.keys, for-in
     // or spread. Setting it here covers every enumeration site at once.
@@ -894,7 +902,7 @@ fn objSet(st: &mut Interp, obj: i64, key: string, value: JSValue) {
 // Map/Set key identity is SameValueZero, not strict equality: the one difference
 // that matters is NaN, which is its own key here even though NaN !== NaN. Without
 // this a NaN key can be stored but never looked up again.
-fn sameValueZero(a: &JSValue, b: &JSValue): bool {
+pub fn sameValueZero(a: &JSValue, b: &JSValue): bool {
     match a {
         JSValue.Number(x) => {
             match b {
@@ -915,7 +923,7 @@ fn sameValueZero(a: &JSValue, b: &JSValue): bool {
     return jsStrictEquals(a, b)
 }
 
-fn mapFind(st: &Interp, o: i64, key: &JSValue): i64 {
+pub fn mapFind(st: &Interp, o: i64, key: &JSValue): i64 {
     var i: i64 = 0
     while i < st.objExtras[st.objects[o].extra].mapKeys.len() {
         if sameValueZero(st.objExtras[st.objects[o].extra].mapKeys[i], key) {
@@ -926,7 +934,7 @@ fn mapFind(st: &Interp, o: i64, key: &JSValue): i64 {
     return -1
 }
 
-fn mapPut(st: &mut Interp, o: i64, key: JSValue, value: JSValue) {
+pub fn mapPut(st: &mut Interp, o: i64, key: JSValue, value: JSValue) {
     let at = mapFind(st, o, key)
     if at >= 0 {
         st.objExtras[st.objects[o].extra].mapVals[at] = value
@@ -937,7 +945,7 @@ fn mapPut(st: &mut Interp, o: i64, key: JSValue, value: JSValue) {
 }
 
 // Define (or replace) an accessor property.
-fn objDefineAccessor(st: &mut Interp, obj: i64, key: string, getter: JSValue, setter: JSValue) {
+pub fn objDefineAccessor(st: &mut Interp, obj: i64, key: string, getter: JSValue, setter: JSValue) {
     var i: i64 = 0
     let n = st.objects[obj].props.len()
     while i < n {
@@ -959,7 +967,7 @@ fn objDefineAccessor(st: &mut Interp, obj: i64, key: string, getter: JSValue, se
 // shifting the remaining elements, matching JS.
 // Writing array.length truncates or extends with holes; JS treats it as a real
 // operation, and `arr.length = 0` is the standard way to clear an array.
-fn arrIsHole(st: &Interp, obj: i64, idx: i64): bool {
+pub fn arrIsHole(st: &Interp, obj: i64, idx: i64): bool {
     var i: i64 = 0
     let n = st.objects[obj].holes.len()
     while i < n {
@@ -971,13 +979,13 @@ fn arrIsHole(st: &Interp, obj: i64, idx: i64): bool {
     return false
 }
 
-fn arrMarkHole(st: &mut Interp, obj: i64, idx: i64) {
+pub fn arrMarkHole(st: &mut Interp, obj: i64, idx: i64) {
     if !arrIsHole(st, obj, idx) {
         st.objects[obj].holes.push(idx)
     }
 }
 
-fn arrClearHole(st: &mut Interp, obj: i64, idx: i64) {
+pub fn arrClearHole(st: &mut Interp, obj: i64, idx: i64) {
     if st.objects[obj].holes.len() == 0 {
         return
     }
@@ -992,7 +1000,7 @@ fn arrClearHole(st: &mut Interp, obj: i64, idx: i64) {
     st.objects[obj].holes = kept
 }
 
-fn setArrayLength(st: &mut Interp, obj: i64, n: i64) {
+pub fn setArrayLength(st: &mut Interp, obj: i64, n: i64) {
     var target = n
     if target < 0 {
         target = 0
@@ -1022,7 +1030,7 @@ fn setArrayLength(st: &mut Interp, obj: i64, n: i64) {
 // Delete an own property. Returns whether the delete "succeeded" in JS terms:
 // true if the key was removed or was absent, false if it is a non-configurable
 // own property (which stays). `delete` evaluates to this bool.
-fn objDeleteKey(st: &mut Interp, obj: i64, key: &string): bool {
+pub fn objDeleteKey(st: &mut Interp, obj: i64, key: &string): bool {
     if st.objects[obj].isArray {
         let ai = asArrayIndex(key)
         if ai >= 0 && ai < st.objects[obj].elems.len() {
@@ -1054,7 +1062,7 @@ fn objDeleteKey(st: &mut Interp, obj: i64, key: &string): bool {
 }
 
 // Index of `key` on `obj` itself (not its prototype chain), or -1.
-fn objOwnIndex(st: &Interp, obj: i64, key: &string): i64 {
+pub fn objOwnIndex(st: &Interp, obj: i64, key: &string): i64 {
     var i: i64 = 0
     let n = st.objects[obj].props.len()
     while i < n {
@@ -1073,7 +1081,7 @@ fn objOwnIndex(st: &Interp, obj: i64, key: &string): i64 {
 // undefined. Gated on the non-enumerable `__isBuf` marker the Buffer constructor
 // stamps (buffer.js) — NOT the mere shape — so a user object that happens to
 // have `{ bytes, length }` is never mis-indexed as a buffer.
-fn bufferBytesHandle(st: &Interp, o: i64): i64 {
+pub fn bufferBytesHandle(st: &Interp, o: i64): i64 {
     if objOwnIndex(st, o, "__isBuf") < 0 {
         return -1
     }
@@ -1096,7 +1104,7 @@ fn bufferBytesHandle(st: &Interp, o: i64): i64 {
 // A key names an array element only if it is a canonical non-negative integer
 // ("0", "1", ...); returns that index, or -1 for any other key (which addresses a
 // string property instead, per JS).
-fn asArrayIndex(key: &string): i64 {
+pub fn asArrayIndex(key: &string): i64 {
     let n = key.len()
     if n == 0 {
         return -1
@@ -1138,11 +1146,11 @@ fn asArrayIndex(key: &string): i64 {
 // A property key is a symbol iff it carries the "@@sym:" sentinel prefix that
 // symbol values stringify to (see makeSymbol in eval.milo). Kept here so
 // runtime.milo stays free of an eval.milo import cycle.
-fn isSymbolKey(s: &string): bool {
+pub fn isSymbolKey(s: &string): bool {
     return s.len() >= 6 && s[0] == '@' && s[1] == '@' && s[2] == 's' && s[3] == 'y' && s[4] == 'm' && s[5] == ':'
 }
 
-fn enumOrder(st: &Interp, o: i64): Vec<i64> {
+pub fn enumOrder(st: &Interp, o: i64): Vec<i64> {
     let np = st.objects[o].props.len()
     var ints: Vec<i64> = Vec.new()
     var strs: Vec<i64> = Vec.new()
@@ -1186,7 +1194,7 @@ fn enumOrder(st: &Interp, o: i64): Vec<i64> {
     return out
 }
 
-fn arrGet(st: &Interp, obj: i64, idx: i64): JSValue {
+pub fn arrGet(st: &Interp, obj: i64, idx: i64): JSValue {
     if idx < 0 || idx >= st.objects[obj].elems.len() {
         return JSValue.Undefined
     }
@@ -1194,7 +1202,7 @@ fn arrGet(st: &Interp, obj: i64, idx: i64): JSValue {
 }
 
 // Assigning past the end grows the array with holes (undefined), matching JS.
-fn arrSet(st: &mut Interp, obj: i64, idx: i64, value: JSValue) {
+pub fn arrSet(st: &mut Interp, obj: i64, idx: i64, value: JSValue) {
     if idx < 0 {
         return
     }
@@ -1211,7 +1219,7 @@ fn arrSet(st: &mut Interp, obj: i64, idx: i64, value: JSValue) {
     }
 }
 
-fn objHas(st: &Interp, o: i64, key: &string): bool {
+pub fn objHas(st: &Interp, o: i64, key: &string): bool {
     var i: i64 = 0
     let n = st.objects[o].props.len()
     while i < n {
@@ -1225,7 +1233,7 @@ fn objHas(st: &Interp, o: i64, key: &string): bool {
 
 // objHas over the prototype chain, so a synthesised fallback method never
 // shadows one a prototype actually defines.
-fn objHasInChain(st: &Interp, o: i64, key: &string): bool {
+pub fn objHasInChain(st: &Interp, o: i64, key: &string): bool {
     var cur = o
     while cur >= 0 {
         if objHas(st, cur, key) {
@@ -1241,7 +1249,7 @@ fn objHasInChain(st: &Interp, o: i64, key: &string): bool {
 // Property bag for a function's own (static) properties. Separate from
 // funcProtos, which holds what instances inherit.
 // Lazily created property bag for a native constructor.
-fn getNativeProps(st: &mut Interp, nativeId: i64): i64 {
+pub fn getNativeProps(st: &mut Interp, nativeId: i64): i64 {
     while st.nativeProps.len() <= nativeId {
         st.nativeProps.push(-1)
     }
@@ -1252,7 +1260,7 @@ fn getNativeProps(st: &mut Interp, nativeId: i64): i64 {
     return st.nativeProps[nativeId]
 }
 
-fn getFuncStatics(st: &mut Interp, fnIdx: i64, envIdx: i64): i64 {
+pub fn getFuncStatics(st: &mut Interp, fnIdx: i64, envIdx: i64): i64 {
     // no valid closure env (e.g. a synthesized value): fall back to the global
     // fnIdx-keyed slot — collisions there are the pre-existing, rarer behavior
     if envIdx < 0 || envIdx >= st.scopes.len() {
@@ -1279,7 +1287,7 @@ fn getFuncStatics(st: &mut Interp, fnIdx: i64, envIdx: i64): i64 {
     return o
 }
 
-fn getFuncProto(st: &mut Interp, fnIdx: i64): i64 {
+pub fn getFuncProto(st: &mut Interp, fnIdx: i64): i64 {
     while st.funcProtos.len() <= fnIdx {
         st.funcProtos.push(-1)
     }
@@ -1293,7 +1301,7 @@ fn getFuncProto(st: &mut Interp, fnIdx: i64): i64 {
 // `Foo.prototype.constructor` — non-enumerable, so it stays out of for-in and
 // Object.keys on every instance that inherits it. Needs the constructor's
 // closure env, which getFuncProto doesn't have, so callers pass it in.
-fn linkProtoConstructor(st: &mut Interp, proto: i64, fnIdx: i64, envIdx: i64) {
+pub fn linkProtoConstructor(st: &mut Interp, proto: i64, fnIdx: i64, envIdx: i64) {
     var i: i64 = 0
     while i < st.objects[proto].props.len() {
         if st.objects[proto].props[i].key == "constructor" {
@@ -1307,15 +1315,15 @@ fn linkProtoConstructor(st: &mut Interp, proto: i64, fnIdx: i64, envIdx: i64) {
     )
 }
 
-fn arrLen(st: &Interp, obj: i64): i64 {
+pub fn arrLen(st: &Interp, obj: i64): i64 {
     return st.objects[obj].elems.len()
 }
 
-fn arrPush(st: &mut Interp, obj: i64, value: JSValue) {
+pub fn arrPush(st: &mut Interp, obj: i64, value: JSValue) {
     st.objects[obj].elems.push(value)
 }
 
-fn newScope(st: &mut Interp, parent: i64): i64 {
+pub fn newScope(st: &mut Interp, parent: i64): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let sc = Scope {
         parent: parent, vars: Vec.new(), mark: false,
@@ -1332,19 +1340,19 @@ fn newScope(st: &mut Interp, parent: i64): i64 {
 
 // Roots pushed/popped around every call and block body. Popping makes a
 // completed frame collectable at the next GC safepoint.
-fn pushActive(st: &mut Interp, scope: i64) {
+pub fn pushActive(st: &mut Interp, scope: i64) {
     st.active.push(scope)
 }
 
-fn popActive(st: &mut Interp) {
+pub fn popActive(st: &mut Interp) {
     let _ = st.active.pop()
 }
 
-fn pushTemp(st: &mut Interp, v: JSValue) {
+pub fn pushTemp(st: &mut Interp, v: JSValue) {
     st.tempRoots.push(v)
 }
 
-fn popTemp(st: &mut Interp) {
+pub fn popTemp(st: &mut Interp) {
     let _ = st.tempRoots.pop()
 }
 
@@ -1355,9 +1363,9 @@ fn popTemp(st: &mut Interp) {
 // resolve/reject functions encode their promise handle in the native id, so a
 // stored resolver has to keep that promise alive — otherwise the promise is
 // swept while its resolver is still reachable from a closure or timer.
-let NATIVE_RESOLVER_BASE: i64 = 1000000
+pub let NATIVE_RESOLVER_BASE: i64 = 1000000
 
-fn markValue(st: &mut Interp, v: &JSValue) {
+pub fn markValue(st: &mut Interp, v: &JSValue) {
     match v {
         JSValue.Func(_f, envIdx) => {
             markScope(st, envIdx)
@@ -1382,13 +1390,13 @@ fn markValue(st: &mut Interp, v: &JSValue) {
 // Mark an object live, then everything its property values reach.
 // The heap slot a value keeps alive, as bare indices (-1 = none). Returned by
 // value so the caller's borrow of the arena element ends before it recurses.
-struct MarkTarget {
+pub struct MarkTarget {
     obj: i64,
     scope: i64,
 }
 
 // Mirrors markValue's cases exactly, but yields handles instead of a value.
-fn markTargetOf(v: &JSValue): MarkTarget {
+pub fn markTargetOf(v: &JSValue): MarkTarget {
     match v {
         JSValue.Func(_f, envIdx) => {
             return MarkTarget {
@@ -1422,13 +1430,13 @@ fn markTargetOf(v: &JSValue): MarkTarget {
 }
 
 // Mark whatever the value at an already-borrowed slot references.
-fn markVia(st: &mut Interp, t: MarkTarget) {
+pub fn markVia(st: &mut Interp, t: MarkTarget) {
     markObject(st, t.obj)
     markScope(st, t.scope)
 }
 
 // Append a value's reference targets to pending work lists.
-fn pushMarkTargets(v: &JSValue, objs: &mut Vec<i64>, scopes: &mut Vec<i64>) {
+pub fn pushMarkTargets(v: &JSValue, objs: &mut Vec<i64>, scopes: &mut Vec<i64>) {
     let t = markTargetOf(v)
     if t.obj >= 0 {
         objs.push(t.obj)
@@ -1444,7 +1452,7 @@ fn pushMarkTargets(v: &JSValue, objs: &mut Vec<i64>, scopes: &mut Vec<i64>) {
 // into a Vec<JSValue>, so each collection deep-copied the whole live heap
 // (strings included). That made marking, not tracing, the dominant cost of a
 // GC — 43% of matmul.
-fn markObject(st: &mut Interp, i: i64) {
+pub fn markObject(st: &mut Interp, i: i64) {
     if i < 0 {
         return
     }
@@ -1535,7 +1543,7 @@ fn markObject(st: &mut Interp, i: i64) {
 
 // Mark a scope live, then everything it can reach: its lexical parent and every
 // value bound in it (closures → their env, objects → their heap slot).
-fn markScope(st: &mut Interp, i: i64) {
+pub fn markScope(st: &mut Interp, i: i64) {
     if i < 0 {
         return
     }
@@ -1576,7 +1584,7 @@ fn markScope(st: &mut Interp, i: i64) {
 // Mark-sweep over both arenas. SAFE ONLY at execBlock statement boundaries: there
 // every live value is stored in a scope binding (a root) and no closure/object is
 // in-flight on the native stack mid-expression, so nothing reachable is missed.
-fn collect(st: &mut Interp) {
+pub fn collect(st: &mut Interp) {
     var i: i64 = 0
     while i < st.scopes.len() {
         st.scopes[i].mark = false
@@ -1811,13 +1819,13 @@ fn collect(st: &mut Interp) {
 
 // Run a collection if enough allocations happened since the last one. Called
 // only from execBlock between statements (the GC safepoint).
-fn maybeGc(st: &mut Interp) {
+pub fn maybeGc(st: &mut Interp) {
     if st.allocSinceGc >= st.gcThreshold {
         collect(st)
     }
 }
 
-fn scopeDefine(st: &mut Interp, scope: i64, name: string, value: JSValue) {
+pub fn scopeDefine(st: &mut Interp, scope: i64, name: string, value: JSValue) {
     // redeclaration in the same scope overwrites (sloppy JS)
     var i = st.scopes[scope].vars.len() - 1
     while i >= 0 {
@@ -1835,7 +1843,7 @@ fn scopeDefine(st: &mut Interp, scope: i64, name: string, value: JSValue) {
     )
 }
 
-fn scopeLookup(st: &Interp, scope: i64, name: &string): JSValue {
+pub fn scopeLookup(st: &Interp, scope: i64, name: &string): JSValue {
     var s = scope
     while s >= 0 {
         var i = st.scopes[s].vars.len() - 1
@@ -1852,7 +1860,7 @@ fn scopeLookup(st: &Interp, scope: i64, name: &string): JSValue {
 
 // Lookup and existence check in one chain walk — the identifier-read hot path
 // previously walked the whole chain twice (scopeHas, then scopeLookup).
-fn scopeTryLookup(st: &Interp, scope: i64, name: &string): Option<JSValue> {
+pub fn scopeTryLookup(st: &Interp, scope: i64, name: &string): Option<JSValue> {
     var s = scope
     while s >= 0 {
         var i = st.scopes[s].vars.len() - 1
@@ -1870,7 +1878,7 @@ fn scopeTryLookup(st: &Interp, scope: i64, name: &string): Option<JSValue> {
 // Is `name` bound anywhere on the scope chain? Distinguishes an undeclared
 // identifier from one declared and holding undefined — the two are otherwise
 // indistinguishable, which silently turns typos into undefined.
-fn scopeHas(st: &Interp, scope: i64, name: &string): bool {
+pub fn scopeHas(st: &Interp, scope: i64, name: &string): bool {
     var s = scope
     while s >= 0 {
         var i = st.scopes[s].vars.len() - 1
@@ -1887,7 +1895,7 @@ fn scopeHas(st: &Interp, scope: i64, name: &string): bool {
 
 // Is `name` bound in this scope itself (not a parent)? Hoisting must not
 // clobber a binding of the same name from an enclosing scope.
-fn scopeHasOwn(st: &Interp, scope: i64, name: &string): bool {
+pub fn scopeHasOwn(st: &Interp, scope: i64, name: &string): bool {
     var i = st.scopes[scope].vars.len() - 1
     while i >= 0 {
         if st.scopes[scope].vars[i].name == name {
@@ -1899,7 +1907,7 @@ fn scopeHasOwn(st: &Interp, scope: i64, name: &string): bool {
 }
 
 // Assignment walks the chain; if unbound, creates a global (sloppy JS).
-fn scopeAssign(st: &mut Interp, scope: i64, name: string, value: JSValue) {
+pub fn scopeAssign(st: &mut Interp, scope: i64, name: string, value: JSValue) {
     var s = scope
     while s >= 0 {
         var i = st.scopes[s].vars.len() - 1

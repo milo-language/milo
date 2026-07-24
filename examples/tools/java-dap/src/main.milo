@@ -23,7 +23,7 @@ from "dap" import {
     dapServe
 }
 
-fn main(): void {
+pub fn main(): void {
     let VERSION = "0.1.0"
     var p = newParser("java-dap", "DAP debug adapter for the JVM (speaks JDWP to the java process)\n\n" + "default mode: DAP server on stdio (spawn me from a DAP client)\n\n" + "smoke test against a live JDWP agent:\n" + "  java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005 Main &\n" + "  java-dap --attach localhost:5005 --smoke")
     p.addString("attach", "a", "host:port of a listening JDWP agent (with --smoke)", "")
@@ -85,7 +85,7 @@ fn main(): void {
     schedulerRunToCompletion()
 }
 
-fn smoke(host: &string, port: u16): Result<i64> {
+pub fn smoke(host: &string, port: u16): Result<i64> {
     let eventCh = Channel<Packet>.new(64)!
     var io = jdwpAttach(host, port, eventCh)?
 
@@ -104,7 +104,7 @@ fn smoke(host: &string, port: u16): Result<i64> {
     return Result.Ok(0)
 }
 
-fn _lastIndexOf(s: &string, ch: u8): i64 {
+pub fn _lastIndexOf(s: &string, ch: u8): i64 {
     var i = s.len - 1
     while i >= 0 {
         if s[i] == ch {
@@ -115,7 +115,7 @@ fn _lastIndexOf(s: &string, ch: u8): i64 {
     return -1
 }
 
-fn _slice(s: &string, start: i64, end: i64): string {
+pub fn _slice(s: &string, start: i64, end: i64): string {
     var out = String.withCapacity(end - start)
     var i = start
     while i < end {
@@ -125,7 +125,7 @@ fn _slice(s: &string, start: i64, end: i64): string {
     return out
 }
 
-fn _parsePort(s: &string, start: i64): i64 {
+pub fn _parsePort(s: &string, start: i64): i64 {
     var v: i64 = 0
     var i = start
     if i >= s.len {

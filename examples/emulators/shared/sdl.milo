@@ -5,76 +5,100 @@
 // would mean refactoring three working programs, so this file serves `menu` only.
 
 @link("SDL2")
-extern fn SDL_Init(flags: u32): i32
+pub extern fn SDL_Init(flags: u32): i32
 
-extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
 
-extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+pub extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
 
-extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+pub extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
 
-extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+pub extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
 
-extern fn SDL_RenderClear(ren: *u8): i32
+pub extern fn SDL_RenderClear(ren: *u8): i32
 
-extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+pub extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
 
-extern fn SDL_RenderPresent(ren: *u8): void
+pub extern fn SDL_RenderPresent(ren: *u8): void
 
-extern fn SDL_PollEvent(event: *u8): i32
+pub extern fn SDL_PollEvent(event: *u8): i32
 
-extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+pub extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
 
-extern fn SDL_Delay(ms: u32): void
+pub extern fn SDL_Delay(ms: u32): void
 
-extern fn SDL_DestroyWindow(win: *u8): void
+pub extern fn SDL_DestroyWindow(win: *u8): void
 
-extern fn SDL_Quit(): void
+pub extern fn SDL_Quit(): void
 
-extern fn SDL_SetWindowFullscreen(win: *u8, flags: u32): i32
+pub extern fn SDL_SetWindowFullscreen(win: *u8, flags: u32): i32
 
 // Game controller (SDL2 GameController API — maps most Bluetooth pads via SDL's
 // built-in mapping DB; extra mappings loadable from a gamecontrollerdb.txt).
-extern fn SDL_NumJoysticks(): i32
+pub extern fn SDL_NumJoysticks(): i32
 
-extern fn SDL_IsGameController(index: i32): i32
+pub extern fn SDL_IsGameController(index: i32): i32
 
-extern fn SDL_GameControllerOpen(index: i32): *u8
+pub extern fn SDL_GameControllerOpen(index: i32): *u8
 
-extern fn SDL_GameControllerGetButton(gc: *u8, button: i32): u8
+pub extern fn SDL_GameControllerGetButton(gc: *u8, button: i32): u8
 
-extern fn SDL_GameControllerClose(gc: *u8): void
+pub extern fn SDL_GameControllerClose(gc: *u8): void
 
-let SDL_INIT_VIDEO: u32 = 0x20
-let SDL_INIT_GAMECONTROLLER: u32 = 0x2000
-let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-let SDL_WINDOW_SHOWN: u32 = 0x4
-let SDL_WINDOW_FULLSCREEN_DESKTOP: u32 = 0x1001
-let SDL_TEXTUREACCESS_STREAMING: i32 = 1
-let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
-let SDL_QUIT: u32 = 0x100
+pub let SDL_INIT_VIDEO: u32 = 0x20
+
+pub let SDL_INIT_GAMECONTROLLER: u32 = 0x2000
+
+pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
+
+pub let SDL_WINDOW_SHOWN: u32 = 0x4
+
+pub let SDL_WINDOW_FULLSCREEN_DESKTOP: u32 = 0x1001
+
+pub let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+
+pub let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
+
+pub let SDL_QUIT: u32 = 0x100
 // Controller hotplug events (SDL_CONTROLLERDEVICEADDED / _REMOVED).
-let SDL_CONTROLLERDEVICEADDED: u32 = 0x653
-let SDL_CONTROLLERDEVICEREMOVED: u32 = 0x654
+pub let SDL_CONTROLLERDEVICEADDED: u32 = 0x653
+
+pub let SDL_CONTROLLERDEVICEREMOVED: u32 = 0x654
 
 // SDL_GameControllerButton enum values.
-let PAD_A: i32 = 0
-let PAD_B: i32 = 1
-let PAD_X: i32 = 2
-let PAD_Y: i32 = 3
-let PAD_BACK: i32 = 4
-let PAD_START: i32 = 6
-let PAD_DPAD_UP: i32 = 11
-let PAD_DPAD_DOWN: i32 = 12
-let PAD_DPAD_LEFT: i32 = 13
-let PAD_DPAD_RIGHT: i32 = 14
+pub let PAD_A: i32 = 0
+
+pub let PAD_B: i32 = 1
+
+pub let PAD_X: i32 = 2
+
+pub let PAD_Y: i32 = 3
+
+pub let PAD_BACK: i32 = 4
+
+pub let PAD_START: i32 = 6
+
+pub let PAD_DPAD_UP: i32 = 11
+
+pub let PAD_DPAD_DOWN: i32 = 12
+
+pub let PAD_DPAD_LEFT: i32 = 13
+
+pub let PAD_DPAD_RIGHT: i32 = 14
 
 // SDL keyboard scancodes used by the menu.
-let SC_UP: i64 = 82
-let SC_DOWN: i64 = 81
-let SC_LEFT: i64 = 80
-let SC_RIGHT: i64 = 79
-let SC_RETURN: i64 = 40
-let SC_ESCAPE: i64 = 41
-let SC_Z: i64 = 29
-let SC_X: i64 = 27
+pub let SC_UP: i64 = 82
+
+pub let SC_DOWN: i64 = 81
+
+pub let SC_LEFT: i64 = 80
+
+pub let SC_RIGHT: i64 = 79
+
+pub let SC_RETURN: i64 = 40
+
+pub let SC_ESCAPE: i64 = 41
+
+pub let SC_Z: i64 = 29
+
+pub let SC_X: i64 = 27

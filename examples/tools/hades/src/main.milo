@@ -34,14 +34,14 @@ from "mcp/main" import {
 // argparse has flags + positionals but no git-style subcommands, so the command
 // roster + examples live in the description; `command` is a trailing positional
 // whose remaining tokens are forwarded verbatim to the chosen subcommand.
-fn topParser(): ArgParser {
+pub fn topParser(): ArgParser {
     var p = newParser("hades", "web + AI interface for any DAP debugger\n\n" + "commands:\n" + "  web     browser debugger UI + shared co-debug session server\n" + "  mcp     MCP debug server (standalone, or --attach to join a web session)\n\n" + "run 'hades <command> --help' for that command's options\n\n" + "quick start (the 90% invocation — path to a binary implies `web`):\n" + "  hades /tmp/a.out --those --args\n" + "or boot idle and configure the target in the browser:\n" + "  hades web --port 8080\n" + "co-debug (human in the browser + AI on the same session):\n" + "  claude mcp add hades-live -- $PWD/hades mcp --attach localhost:8080")
     p.addOptionalPositional("command", "web | mcp")
     p.enableTrailingArgs() // stop parsing at the command; forward the rest as-is
     return p
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = topParser()
     let top = parser.parseFrom(args()) // auto-handles a leading --help
     let pos = top.positional

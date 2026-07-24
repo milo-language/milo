@@ -26,7 +26,7 @@ from "std/unicode" import {
 
 // A minimal error object (same shape makeError in eval.milo builds — that one
 // can't be imported here without a cycle).
-fn throwRange(st: &mut Interp, msg: string): JSValue {
+pub fn throwRange(st: &mut Interp, msg: string): JSValue {
     let o = newObject(st)
     st.objects[o].isError = true
     objSet(st, o, "name", JSValue.Str("RangeError"))
@@ -36,14 +36,14 @@ fn throwRange(st: &mut Interp, msg: string): JSValue {
     return JSValue.Undefined
 }
 
-fn isWs(c: u8): bool {
+pub fn isWs(c: u8): bool {
     return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8
 }
 
 // Normalize a possibly-negative slice index to [0, len], JS-style. The postcondition is the
 // safety contract every caller relies on: the returned index is always in bounds for a
 // buffer of `len`, so `s[clampIndex(..)]` up to (not including) `len` can never read OOB.
-fn clampIndex(idx: i64, len: i64): i64
+pub fn clampIndex(idx: i64, len: i64): i64
 requires len >= 0
 ensures result >= 0 && result <= len
 {
@@ -60,7 +60,7 @@ ensures result >= 0 && result <= len
     return i
 }
 
-fn strSlice(s: &string, start: i64, end: i64): string {
+pub fn strSlice(s: &string, start: i64, end: i64): string {
     let len = s.len()
     let a = clampIndex(start, len)
     let b = clampIndex(end, len)
@@ -77,7 +77,7 @@ fn strSlice(s: &string, start: i64, end: i64): string {
 }
 
 // First index of `sub` in `s` at or after `start`, or -1. (`from` is a reserved keyword.)
-fn jsIndexOf(s: &string, sub: &string, start: i64): i64 {
+pub fn jsIndexOf(s: &string, sub: &string, start: i64): i64 {
     let n = s.len()
     let m = sub.len()
     if m == 0 {
@@ -119,11 +119,11 @@ fn jsIndexOf(s: &string, sub: &string, start: i64): i64 {
     return -1
 }
 
-fn jsContains(s: &string, sub: &string): bool {
+pub fn jsContains(s: &string, sub: &string): bool {
     return jsIndexOf(s, sub, 0) >= 0
 }
 
-fn jsStartsWith(s: &string, sub: &string): bool {
+pub fn jsStartsWith(s: &string, sub: &string): bool {
     let m = sub.len()
     if m > s.len() {
         return false
@@ -141,7 +141,7 @@ fn jsStartsWith(s: &string, sub: &string): bool {
     return true
 }
 
-fn jsEndsWith(s: &string, sub: &string): bool {
+pub fn jsEndsWith(s: &string, sub: &string): bool {
     let n = s.len()
     let m = sub.len()
     if m > n {
@@ -165,7 +165,7 @@ fn jsEndsWith(s: &string, sub: &string): bool {
 // letters (À-Þ / à-þ, the accented characters French/Spanish/Portuguese/German
 // use), with the ÷/× math-symbol holes skipped and ÿ→Ÿ's irregular target. Wider
 // scripts (Latin Extended, Greek, Cyrillic) are not mapped — a documented limit.
-fn upperCp(cp: i32): i32 {
+pub fn upperCp(cp: i32): i32 {
     let v = cp as i64
     if v >= 97 && v <= 122 {
         return (v - 32) as i32
@@ -179,7 +179,7 @@ fn upperCp(cp: i32): i32 {
     return cp
 }
 
-fn lowerCp(cp: i32): i32 {
+pub fn lowerCp(cp: i32): i32 {
     let v = cp as i64
     if v >= 65 && v <= 90 {
         return (v + 32) as i32
@@ -190,7 +190,7 @@ fn lowerCp(cp: i32): i32 {
     return cp
 }
 
-fn strUpper(s: &string): string {
+pub fn strUpper(s: &string): string {
     var out = String.withCapacity(s.len())
     var i: i64 = 0
     while i < s.len() {
@@ -201,7 +201,7 @@ fn strUpper(s: &string): string {
     return out
 }
 
-fn strLower(s: &string): string {
+pub fn strLower(s: &string): string {
     var out = String.withCapacity(s.len())
     var i: i64 = 0
     while i < s.len() {
@@ -212,7 +212,7 @@ fn strLower(s: &string): string {
     return out
 }
 
-fn jsTrim(s: &string): string {
+pub fn jsTrim(s: &string): string {
     let n = s.len()
     var a: i64 = 0
     while a < n && isWs(s[a]) {
@@ -225,7 +225,7 @@ fn jsTrim(s: &string): string {
     return strSlice(s, a, b)
 }
 
-fn jsRepeat(s: &string, count: i64): string {
+pub fn jsRepeat(s: &string, count: i64): string {
     var out = String.withCapacity(0)
     var k: i64 = 0
     while k < count {
@@ -239,7 +239,7 @@ fn jsRepeat(s: &string, count: i64): string {
     return out
 }
 
-fn jsCharAt(s: &string, idx: i64): string {
+pub fn jsCharAt(s: &string, idx: i64): string {
     var out = String.withCapacity(1)
     if idx >= 0 && idx < s.len() {
         out.push(s[idx])
@@ -247,14 +247,14 @@ fn jsCharAt(s: &string, idx: i64): string {
     return out
 }
 
-fn argNum(args: &Vec<JSValue>, i: i64, dflt: i64): i64 {
+pub fn argNum(args: &Vec<JSValue>, i: i64, dflt: i64): i64 {
     if i < args.len() {
         return toNum(args[i]) as i64
     }
     return dflt
 }
 
-fn argStr(args: &Vec<JSValue>, i: i64): string {
+pub fn argStr(args: &Vec<JSValue>, i: i64): string {
     if i < args.len() {
         return toStr(args[i])
     }
@@ -267,7 +267,7 @@ fn argStr(args: &Vec<JSValue>, i: i64): string {
 // UTF-8, that means walking by decoded codepoint width, NOT by byte, or a
 // multibyte char (é = 2 bytes, 😀 = 4) is chopped into invalid pieces that
 // render as U+FFFD. Shared so every iteration site behaves identically.
-fn strCodePoints(s: &string): Vec<string> {
+pub fn strCodePoints(s: &string): Vec<string> {
     var out: Vec<string> = Vec.new()
     var b: i64 = 0
     while b < s.len() {
@@ -278,7 +278,7 @@ fn strCodePoints(s: &string): Vec<string> {
     return out
 }
 
-fn jsSplit(s: &string, args: &Vec<JSValue>, st: &mut Interp): i64 {
+pub fn jsSplit(s: &string, args: &Vec<JSValue>, st: &mut Interp): i64 {
     let arr = newArray(st)
     // second arg caps the result length; undefined means no limit
     var limit: i64 = -1
@@ -335,12 +335,12 @@ fn jsSplit(s: &string, args: &Vec<JSValue>, st: &mut Interp): i64 {
 
 // Dispatch a String method by name. Callback-taking methods don't exist on
 // strings, so this needs nothing from eval — only heap access for split.
-fn isJsSpace(c: u8): bool {
+pub fn isJsSpace(c: u8): bool {
     return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8 || c == 12 as u8 || c == 11 as u8
 }
 
 // Does `needle` occur in `s` starting exactly at `at`?
-fn jsSubstringAt(s: &string, needle: &string, at: i64): bool {
+pub fn jsSubstringAt(s: &string, needle: &string, at: i64): bool {
     if at + needle.len() > s.len() {
         return false
     }
@@ -358,7 +358,7 @@ fn jsSubstringAt(s: &string, needle: &string, at: i64): bool {
 // codepoint and UTF-8 encoding the result. String.fromCharCode used to push each
 // unit as a raw BYTE, so fromCharCode(0x4E2D) truncated to '-' and anything above
 // U+00FF was destroyed.
-fn stringFromUtf16Units(units: &Vec<i64>): string {
+pub fn stringFromUtf16Units(units: &Vec<i64>): string {
     var out = String.withCapacity(units.len())
     var i: i64 = 0
     while i < units.len() {
@@ -388,12 +388,12 @@ fn stringFromUtf16Units(units: &Vec<i64>): string {
 
 // Byte offset of the UTF-16 unit at `idx`, plus whether it is the LOW half of a
 // surrogate pair. Returns -1 when idx is past the end.
-struct Utf16Pos {
+pub struct Utf16Pos {
     byteAt: i64,
     isLowHalf: bool,
 }
 
-fn utf16Locate(s: &string, idx: i64): Utf16Pos {
+pub fn utf16Locate(s: &string, idx: i64): Utf16Pos {
     if idx < 0 {
         return Utf16Pos {
             byteAt: -1, isLowHalf: false
@@ -419,7 +419,7 @@ fn utf16Locate(s: &string, idx: i64): Utf16Pos {
 
 // Total length in UTF-16 code units — what JS reports as .length.
 // Counts from `from`, whose prefix is known to be `from` ASCII units.
-fn utf16LengthFrom(s: &string, from: i64): i64 {
+pub fn utf16LengthFrom(s: &string, from: i64): i64 {
     var unit: i64 = from
     var b: i64 = from
     while b < s.len() {
@@ -435,7 +435,7 @@ fn utf16LengthFrom(s: &string, from: i64): i64 {
 // common case — the UTF-16 length equals the byte length, and proving that is a
 // tight byte scan instead of a decode per character. Falls back to the general
 // path from the first non-ASCII byte, so no work is repeated.
-fn utf16Length(s: &string): i64 {
+pub fn utf16Length(s: &string): i64 {
     var b: i64 = 0
     while b < s.len() {
         if s[b] >= 128 as u8 {
@@ -448,7 +448,7 @@ fn utf16Length(s: &string): i64 {
 
 // The UTF-16 code unit at `idx`, or -1 when out of range. A supplementary
 // codepoint yields its high surrogate at the first index and its low at the next.
-fn utf16UnitAt(s: &string, idx: i64): i64 {
+pub fn utf16UnitAt(s: &string, idx: i64): i64 {
     let pos = utf16Locate(s, idx)
     if pos.byteAt < 0 {
         return -1
@@ -465,7 +465,7 @@ fn utf16UnitAt(s: &string, idx: i64): i64 {
 
 // The full codepoint at `idx` — like utf16UnitAt, except that landing on a high
 // surrogate returns the whole codepoint rather than the half.
-fn utf16CodePointAt(s: &string, idx: i64): i64 {
+pub fn utf16CodePointAt(s: &string, idx: i64): i64 {
     let pos = utf16Locate(s, idx)
     if pos.byteAt < 0 {
         return -1
@@ -479,7 +479,7 @@ fn utf16CodePointAt(s: &string, idx: i64): i64 {
 
 // UTF-16 index -> byte offset. Past the end returns s.len(), so callers can use
 // it directly as a slice bound.
-fn utf16ToByte(s: &string, idx: i64): i64 {
+pub fn utf16ToByte(s: &string, idx: i64): i64 {
     if idx <= 0 {
         return 0
     }
@@ -497,7 +497,7 @@ fn utf16ToByte(s: &string, idx: i64): i64 {
 }
 
 // byte offset -> UTF-16 index (the inverse, for indexOf-style results).
-fn byteToUtf16(s: &string, at: i64): i64 {
+pub fn byteToUtf16(s: &string, at: i64): i64 {
     if at <= 0 {
         return 0
     }
@@ -512,7 +512,7 @@ fn byteToUtf16(s: &string, at: i64): i64 {
 }
 
 // Slice by UTF-16 indices, JS-style (negative counts from the end, bounds clamp).
-fn utf16Slice(s: &string, start: i64, end: i64): string {
+pub fn utf16Slice(s: &string, start: i64, end: i64): string {
     let n = utf16Length(s)
     var a = start
     var b = end
@@ -534,7 +534,7 @@ fn utf16Slice(s: &string, start: i64, end: i64): string {
     return strSlice(s, utf16ToByte(s, a), utf16ToByte(s, b))
 }
 
-fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+pub fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
     if name == "toUpperCase" {
         return JSValue.Str(strUpper(s))
     }
@@ -791,13 +791,13 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
 // hardware/libc version (sqrt must be IEEE correctly-rounded, which is a CPU
 // instruction, and pow is hard to get last-bit-accurate by hand).
 
-let TWO53: f64 = 9007199254740992.0
+pub let TWO53: f64 = 9007199254740992.0
 
-fn mjIsNan(x: f64): bool {
+pub fn mjIsNan(x: f64): bool {
     return !(x == x)
 }
 
-fn mjFloor(x: f64): f64 {
+pub fn mjFloor(x: f64): f64 {
     if mjIsNan(x) || !isFiniteF(x) {
         return x
     }
@@ -812,11 +812,11 @@ fn mjFloor(x: f64): f64 {
     return t
 }
 
-fn mjCeil(x: f64): f64 {
+pub fn mjCeil(x: f64): f64 {
     return 0.0 - mjFloor(0.0 - x)
 }
 
-fn mjTrunc(x: f64): f64 {
+pub fn mjTrunc(x: f64): f64 {
     if mjIsNan(x) || !isFiniteF(x) {
         return x
     }
@@ -826,7 +826,7 @@ fn mjTrunc(x: f64): f64 {
     return (x as i64) as f64
 }
 
-fn mjRound(x: f64): f64 {
+pub fn mjRound(x: f64): f64 {
     if mjIsNan(x) || !isFiniteF(x) {
         return x
     }
@@ -834,14 +834,14 @@ fn mjRound(x: f64): f64 {
     return mjFloor(x + 0.5)
 }
 
-fn mjAbs(x: f64): f64 {
+pub fn mjAbs(x: f64): f64 {
     if x < 0.0 {
         return 0.0 - x
     }
     return x
 }
 
-fn mjSign(x: f64): f64 {
+pub fn mjSign(x: f64): f64 {
     if mjIsNan(x) {
         return x
     }
@@ -856,7 +856,7 @@ fn mjSign(x: f64): f64 {
 
 // xorshift64 — a pure-Milo PRNG for Math.random(). Deterministic seed (a real
 // runtime would seed from entropy); good enough for [0,1) values, not crypto.
-fn mjNextRandom(state: i64): i64 {
+pub fn mjNextRandom(state: i64): i64 {
     var x = state
     x = x ^ (x << 13)
     x = x ^ (x >> 7)
@@ -866,20 +866,20 @@ fn mjNextRandom(state: i64): i64 {
 
 // ── JSON ── (mj-prefixed to avoid colliding with std/json in the flat namespace)
 
-fn hexNibble(v: i64): u8 {
+pub fn hexNibble(v: i64): u8 {
     if v < 10 {
         return ('0' as i64 + v) as u8
     }
     return ('a' as i64 + (v - 10)) as u8
 }
 
-fn mjJsonEscape(s: &string): string {
+pub fn mjJsonEscape(s: &string): string {
     var out = String.withCapacity(s.len() + 2)
     mjPushJsonEscaped(out, s)
     return out
 }
 
-fn mjPushJsonEscaped(out: &mut string, s: &string) {
+pub fn mjPushJsonEscaped(out: &mut string, s: &string) {
     out.push(34 as u8)
     var i: i64 = 0
     while i < s.len() {
@@ -922,7 +922,7 @@ fn mjPushJsonEscaped(out: &mut string, s: &string) {
     out.push(34 as u8)
 }
 
-fn mjJsonOmitted(v: &JSValue): bool {
+pub fn mjJsonOmitted(v: &JSValue): bool {
     match v {
         JSValue.Undefined => {
             return true
@@ -941,7 +941,7 @@ fn mjJsonOmitted(v: &JSValue): bool {
 
 // Compact JSON text for a value (no indentation). undefined/function become
 // "null" in arrays; object props holding them are omitted. NaN/Infinity → null.
-fn mjStringifyVal(v: &JSValue, st: &Interp): string {
+pub fn mjStringifyVal(v: &JSValue, st: &Interp): string {
     var out = String.withCapacity(64)
     mjPushStringified(out, v, st)
     return out
@@ -951,7 +951,7 @@ fn mjStringifyVal(v: &JSValue, st: &Interp): string {
 // Returning strings made the top-level accumulator `out = out + piece` copy the
 // whole prefix once per element — quadratic, and it allocated ~35x the output
 // size in short-lived intermediates that the allocator never returned to the OS.
-fn mjPushStringified(out: &mut string, v: &JSValue, st: &Interp) {
+pub fn mjPushStringified(out: &mut string, v: &JSValue, st: &Interp) {
     match v {
         JSValue.Null => {
             out.pushStr("null")
@@ -1028,18 +1028,18 @@ fn mjPushStringified(out: &mut string, v: &JSValue, st: &Interp) {
 
 // ── JSON parser (recursive descent over a byte cursor) ──
 
-struct JCur {
+pub struct JCur {
     pos: i64,
 }
 
-fn mjSkipWs(s: &string, c: &mut JCur) {
+pub fn mjSkipWs(s: &string, c: &mut JCur) {
     while c.pos < s.len() && isWs(s[c.pos]) {
         c.pos = c.pos + 1
     }
 }
 
 // Four hex digits at `at`, or -1 if they are not all hex.
-fn jsonHex4(s: &string, at: i64): i64 {
+pub fn jsonHex4(s: &string, at: i64): i64 {
     var v: i64 = 0
     var k: i64 = 0
     while k < 4 {
@@ -1056,7 +1056,7 @@ fn jsonHex4(s: &string, at: i64): i64 {
     return v
 }
 
-fn mjParseString(s: &string, c: &mut JCur): string {
+pub fn mjParseString(s: &string, c: &mut JCur): string {
     c.pos = c.pos + 1
     var out = String.withCapacity(16)
     while c.pos < s.len() && s[c.pos] != 34 as u8 {
@@ -1114,7 +1114,7 @@ fn mjParseString(s: &string, c: &mut JCur): string {
     return out
 }
 
-fn mjParseNumber(s: &string, c: &mut JCur): JSValue {
+pub fn mjParseNumber(s: &string, c: &mut JCur): JSValue {
     let start = c.pos
     var going = true
     while going {
@@ -1140,7 +1140,7 @@ fn mjParseNumber(s: &string, c: &mut JCur): JSValue {
     }
 }
 
-fn mjParseArray(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
+pub fn mjParseArray(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
     c.pos = c.pos + 1
     let arr = newArray(st)
     pushTemp(st, JSValue.Obj(arr))
@@ -1168,7 +1168,7 @@ fn mjParseArray(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
     return JSValue.Obj(arr)
 }
 
-fn mjParseObject(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
+pub fn mjParseObject(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
     c.pos = c.pos + 1
     let obj = newObject(st)
     pushTemp(st, JSValue.Obj(obj))
@@ -1205,7 +1205,7 @@ fn mjParseObject(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
     return JSValue.Obj(obj)
 }
 
-fn mjParseVal(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
+pub fn mjParseVal(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
     mjSkipWs(s, c)
     if c.pos >= s.len() {
         return JSValue.Undefined
@@ -1235,7 +1235,7 @@ fn mjParseVal(s: &string, c: &mut JCur, st: &mut Interp): JSValue {
     return mjParseNumber(s, c)
 }
 
-fn mjJsonParse(s: &string, st: &mut Interp): JSValue {
+pub fn mjJsonParse(s: &string, st: &mut Interp): JSValue {
     var c = JCur {
         pos: 0
     }

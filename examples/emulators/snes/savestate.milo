@@ -8,18 +8,18 @@ from "./cpu" import {
 }
 
 // ---- writers (little-endian) ----
-fn putB(s: &mut string, v: i64): void {
+pub fn putB(s: &mut string, v: i64): void {
     s.push((v & 0xFF) as u8)
 }
 
-fn putW(s: &mut string, v: i64): void {
+pub fn putW(s: &mut string, v: i64): void {
     s.push((v & 0xFF) as u8)
     s.push(((v >> 8) & 0xFF) as u8)
     s.push(((v >> 16) & 0xFF) as u8)
     s.push(((v >> 24) & 0xFF) as u8)
 }
 
-fn putBool(s: &mut string, b: bool): void {
+pub fn putBool(s: &mut string, b: bool): void {
     if b {
         s.push(1 as u8)
     } else {
@@ -27,7 +27,7 @@ fn putBool(s: &mut string, b: bool): void {
     }
 }
 
-fn putBytes(s: &mut string, v: &Vec<u8>): void {
+pub fn putBytes(s: &mut string, v: &Vec<u8>): void {
     putW(s, v.len)
     var i: i64 = 0
     while i < v.len {
@@ -36,7 +36,7 @@ fn putBytes(s: &mut string, v: &Vec<u8>): void {
     }
 }
 
-fn putWords(s: &mut string, v: &Vec<i64>): void {
+pub fn putWords(s: &mut string, v: &Vec<i64>): void {
     putW(s, v.len)
     var i: i64 = 0
     while i < v.len {
@@ -46,28 +46,28 @@ fn putWords(s: &mut string, v: &Vec<i64>): void {
 }
 
 // ---- reader with a cursor ----
-struct Rd {
+pub struct Rd {
     pos: i64
 }
 
-fn getB(data: &string, r: &mut Rd): i64 {
+pub fn getB(data: &string, r: &mut Rd): i64 {
     let v = data[r.pos] as i64
     r.pos = r.pos + 1
     return v
 }
 
-fn getW(data: &string, r: &mut Rd): i64 {
+pub fn getW(data: &string, r: &mut Rd): i64 {
     let v = (data[r.pos] as i64) | ((data[r.pos + 1] as i64) << 8) | ((data[r.pos + 2] as i64) << 16) | ((data[r.pos + 3] as i64) << 24)
     r.pos = r.pos + 4
     return v
 }
 
-fn getBool(data: &string, r: &mut Rd): bool {
+pub fn getBool(data: &string, r: &mut Rd): bool {
     return getB(data, r) != 0
 }
 
 // Read length-prefixed bytes back into an existing (correctly sized) Vec<u8>.
-fn getBytes(data: &string, r: &mut Rd, dst: &mut Vec<u8>): void {
+pub fn getBytes(data: &string, r: &mut Rd, dst: &mut Vec<u8>): void {
     let n = getW(data, r)
     var i: i64 = 0
     while i < n {
@@ -79,7 +79,7 @@ fn getBytes(data: &string, r: &mut Rd, dst: &mut Vec<u8>): void {
     }
 }
 
-fn getWords(data: &string, r: &mut Rd, dst: &mut Vec<i64>): void {
+pub fn getWords(data: &string, r: &mut Rd, dst: &mut Vec<i64>): void {
     let n = getW(data, r)
     var i: i64 = 0
     while i < n {
@@ -92,9 +92,9 @@ fn getWords(data: &string, r: &mut Rd, dst: &mut Vec<i64>): void {
 }
 
 // Magic header so a stale/foreign file is rejected rather than corrupting state.
-let SAVE_MAGIC: i64 = 0x314D5353 // "SSM1"
+pub let SAVE_MAGIC: i64 = 0x314D5353 // "SSM1"
 
-fn saveState(cpu: &Cpu, m: &Mem): string {
+pub fn saveState(cpu: &Cpu, m: &Mem): string {
     var s = String.withCapacity(400000)
     putW(s, SAVE_MAGIC)
     // CPU
@@ -224,7 +224,7 @@ fn saveState(cpu: &Cpu, m: &Mem): string {
 
 // Restore in the exact order saveState wrote. Returns false if the magic is
 // wrong (foreign/corrupt file) so the caller can keep running as-is.
-fn loadState(cpu: &mut Cpu, m: &mut Mem, data: &string): bool {
+pub fn loadState(cpu: &mut Cpu, m: &mut Mem, data: &string): bool {
     if data.len < 4 {
         return false
     }

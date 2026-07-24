@@ -8,9 +8,9 @@ from "std/io" import {
     writeStdout
 }
 
-let MAX_HIST_ROWS: i64 = 1000 // scrollback cap (rows); trimmed to this when exceeded
+pub let MAX_HIST_ROWS: i64 = 1000 // scrollback cap (rows); trimmed to this when exceeded
 
-struct Term {
+pub struct Term {
     cols: i64,
     rows: i64,
     chars: Vec<u8>,
@@ -28,7 +28,7 @@ struct Term {
     priv: bool, // CSI '?' private-marker seen
 }
 
-fn newTerm(rows: i64, cols: i64): Term {
+pub fn newTerm(rows: i64, cols: i64): Term {
     var chars: Vec<u8> = Vec.new()
     var attrs: Vec<i32> = Vec.new()
     let n = rows * cols
@@ -393,7 +393,7 @@ impl Term {
     }
 }
 
-fn sgrFor(attr: i32): string {
+pub fn sgrFor(attr: i32): string {
     var s = "\x1b[0m"
     if (attr & 1) != 0 {
         s = s + "\x1b[1m"
@@ -409,7 +409,7 @@ fn sgrFor(attr: i32): string {
 
 // Draw a pane's grid into the real terminal at (topRow=4, startCol). One string
 // per row keeps it flicker-light; SGR is re-emitted only when the pen changes.
-fn renderTerm(term: &Term, startCol: i64): void {
+pub fn renderTerm(term: &Term, startCol: i64): void {
     var r: i64 = 0
     while r < term.rows {
         var line = $"\x1b[{4 + r};{startCol}H\x1b[0m"
@@ -433,7 +433,7 @@ fn renderTerm(term: &Term, startCol: i64): void {
 
 // Render the grid to a string (same as renderTerm but returned) so it can be
 // sent over a socket instead of painting stdout directly.
-fn renderTermString(term: &Term, startRow: i64, startCol: i64): string {
+pub fn renderTermString(term: &Term, startRow: i64, startCol: i64): string {
     var out = ""
     var r: i64 = 0
     while r < term.rows {
@@ -458,7 +458,7 @@ fn renderTermString(term: &Term, startRow: i64, startCol: i64): string {
 
 // Full-screen repaint: clear, paint the grid at top-left, park the cursor where
 // the emulator's cursor is. This is what a client gets the instant it (re)attaches.
-fn fullRepaint(term: &Term): string {
+pub fn fullRepaint(term: &Term): string {
     var out = "\x1b[2J\x1b[H"
     out = out + renderTermString(term, 1, 1)
     out = out + $"\x1b[{term.cr + 1};{term.cc + 1}H"

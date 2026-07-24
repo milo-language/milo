@@ -20,7 +20,7 @@ from "./value" import {
 }
 
 // ── node tree ──
-enum ReNode {
+pub enum ReNode {
     Char(u8),
     Any,
     ClassRef(i64),
@@ -47,19 +47,19 @@ enum ReNode {
 
 // A character class: parallel range bounds [lo[i], hi[i]] plus a negation flag.
 // Shorthands (\d etc) are expanded into ranges at parse time.
-struct ReClass {
+pub struct ReClass {
     negated: bool,
     lo: Vec<u8>,
     hi: Vec<u8>,
 }
 
-struct ReInst {
+pub struct ReInst {
     op: i32,
     a: i64,
     b: i64,
 }
 
-struct Regex {
+pub struct Regex {
     prog: Vec<ReInst>,
     classes: Vec<ReClass>,
     nGroups: i64,
@@ -77,31 +77,42 @@ struct Regex {
     groupNums: Vec<i64>,
 }
 
-let RE_CHAR: i32 = 0
-let RE_ANY: i32 = 1
-let RE_CLASS: i32 = 2
-let RE_MATCH: i32 = 3
-let RE_JMP: i32 = 4
-let RE_SPLIT: i32 = 5
-let RE_SAVE: i32 = 6
-let RE_BOL: i32 = 7
-let RE_EOL: i32 = 8
-let RE_WORDB: i32 = 9
-let RE_NWORDB: i32 = 10
+pub let RE_CHAR: i32 = 0
+
+pub let RE_ANY: i32 = 1
+
+pub let RE_CLASS: i32 = 2
+
+pub let RE_MATCH: i32 = 3
+
+pub let RE_JMP: i32 = 4
+
+pub let RE_SPLIT: i32 = 5
+
+pub let RE_SAVE: i32 = 6
+
+pub let RE_BOL: i32 = 7
+
+pub let RE_EOL: i32 = 8
+
+pub let RE_WORDB: i32 = 9
+
+pub let RE_NWORDB: i32 = 10
 // zero-width assertion: a = pc of the inner sub-program, b = 1 when negated.
 // The inner program is compiled inline after a jump so normal flow skips it.
-let RE_LOOK: i32 = 11
+pub let RE_LOOK: i32 = 11
 // terminator of a lookahead sub-program — succeeds without consuming
-let RE_LOOKEND: i32 = 12
+pub let RE_LOOKEND: i32 = 12
 // backreference: a = group number
-let RE_BACKREF: i32 = 13
+pub let RE_BACKREF: i32 = 13
 // lookbehind: a = pc of the inner sub-program, b = 1 when negated. The inner
 // program is run from each earlier start position and must finish exactly here;
 // RE_LOOKBEND checks that, reading the required end from the scratch save slot.
-let RE_LOOKBEHIND: i32 = 14
-let RE_LOOKBEND: i32 = 15
+pub let RE_LOOKBEHIND: i32 = 14
 
-struct ReParse {
+pub let RE_LOOKBEND: i32 = 15
+
+pub struct ReParse {
     pat: Vec<u8>,
     pos: i64,
     nodes: Vec<ReNode>,
@@ -112,25 +123,25 @@ struct ReParse {
     groupNums: Vec<i64>,
 }
 
-fn reAddNode(p: &mut ReParse, n: ReNode): i64 {
+pub fn reAddNode(p: &mut ReParse, n: ReNode): i64 {
     p.nodes.push(n)
     return p.nodes.len() - 1
 }
 
-fn reIsDigit(c: u8): bool {
+pub fn reIsDigit(c: u8): bool {
     return c >= '0' && c <= '9'
 }
 
-fn reIsWord(c: u8): bool {
+pub fn reIsWord(c: u8): bool {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
 }
 
-fn reIsSpace(c: u8): bool {
+pub fn reIsSpace(c: u8): bool {
     return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8 || c == 12 as u8 || c == 11 as u8
 }
 
 // Add a shorthand's ranges into a class's lo/hi arrays. `kind`: 'd','w','s'.
-fn reAddShorthand(cls: &mut ReClass, kind: u8) {
+pub fn reAddShorthand(cls: &mut ReClass, kind: u8) {
     if kind == 'd' {
         cls.lo.push('0')
         cls.hi.push('9')
@@ -152,7 +163,7 @@ fn reAddShorthand(cls: &mut ReClass, kind: u8) {
 }
 
 // Build a single-shorthand class node (\d \w \s and negations \D \W \S).
-fn reShorthandClass(p: &mut ReParse, kind: u8, negated: bool): i64 {
+pub fn reShorthandClass(p: &mut ReParse, kind: u8, negated: bool): i64 {
     var cls = ReClass {
         negated: negated, lo: Vec.new(), hi: Vec.new()
     }
@@ -162,7 +173,7 @@ fn reShorthandClass(p: &mut ReParse, kind: u8, negated: bool): i64 {
     return reAddNode(p, ReNode.ClassRef(ci))
 }
 
-fn reEscapedChar(e: u8): u8 {
+pub fn reEscapedChar(e: u8): u8 {
     if e == 'n' {
         return 10 as u8
     }
@@ -185,7 +196,7 @@ fn reEscapedChar(e: u8): u8 {
 }
 
 // Parse a bracketed [ ... ] class starting just after '['.
-fn reParseClass(p: &mut ReParse): i64 {
+pub fn reParseClass(p: &mut ReParse): i64 {
     var negated = false
     if p.pos < p.pat.len() && p.pat[p.pos] == '^' {
         negated = true
@@ -234,7 +245,7 @@ fn reParseClass(p: &mut ReParse): i64 {
     return reAddNode(p, ReNode.ClassRef(ci))
 }
 
-fn reParseAtom(p: &mut ReParse): i64 {
+pub fn reParseAtom(p: &mut ReParse): i64 {
     let c = p.pat[p.pos]
     if c == '(' {
         p.pos = p.pos + 1
@@ -355,7 +366,7 @@ fn reParseAtom(p: &mut ReParse): i64 {
 }
 
 // Parse a quantifier suffix on `atom`, if any.
-fn reParseRepeat(p: &mut ReParse, atom: i64): i64 {
+pub fn reParseRepeat(p: &mut ReParse, atom: i64): i64 {
     if p.pos >= p.pat.len() {
         return atom
     }
@@ -415,7 +426,7 @@ fn reParseRepeat(p: &mut ReParse, atom: i64): i64 {
     return atom
 }
 
-fn reParseConcat(p: &mut ReParse): i64 {
+pub fn reParseConcat(p: &mut ReParse): i64 {
     var items: Vec<i64> = Vec.new()
     var going = true
     while going {
@@ -439,7 +450,7 @@ fn reParseConcat(p: &mut ReParse): i64 {
     return reAddNode(p, ReNode.Concat(p.lists.len() - 1))
 }
 
-fn reParseAlt(p: &mut ReParse): i64 {
+pub fn reParseAlt(p: &mut ReParse): i64 {
     var branches: Vec<i64> = Vec.new()
     branches.push(reParseConcat(p))
     while p.pos < p.pat.len() && p.pat[p.pos] == '|' {
@@ -455,7 +466,7 @@ fn reParseAlt(p: &mut ReParse): i64 {
 
 // ── compile node tree → instruction program ──
 
-fn reEmit(prog: &mut Vec<ReInst>, op: i32, a: i64, b: i64): i64 {
+pub fn reEmit(prog: &mut Vec<ReInst>, op: i32, a: i64, b: i64): i64 {
     prog.push(ReInst {
         op: op, a: a, b: b
     }
@@ -463,7 +474,7 @@ fn reEmit(prog: &mut Vec<ReInst>, op: i32, a: i64, b: i64): i64 {
     return prog.len() - 1
 }
 
-fn reCompileNode(p: &ReParse, idx: i64, prog: &mut Vec<ReInst>) {
+pub fn reCompileNode(p: &ReParse, idx: i64, prog: &mut Vec<ReInst>) {
     let node = reCloneNode(p.nodes[idx])
     match node {
         ReNode.Char(c) => {
@@ -642,7 +653,7 @@ fn reCompileNode(p: &ReParse, idx: i64, prog: &mut Vec<ReInst>) {
     }
 }
 
-fn reCloneNode(n: &ReNode): ReNode {
+pub fn reCloneNode(n: &ReNode): ReNode {
     match n {
         ReNode.Char(c) => {
             return ReNode.Char(c)
@@ -701,7 +712,7 @@ fn reCloneNode(n: &ReNode): ReNode {
     }
 }
 
-fn regexCompile(source: string, flags: string): Regex {
+pub fn regexCompile(source: string, flags: string): Regex {
     var patBytes: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < source.len() {
@@ -742,14 +753,14 @@ fn regexCompile(source: string, flags: string): Regex {
 
 // ── backtracking VM ──
 
-fn reLowerByte(c: u8): u8 {
+pub fn reLowerByte(c: u8): u8 {
     if c >= 'A' && c <= 'Z' {
         return c + 32
     }
     return c
 }
 
-fn reCharEq(a: u8, b: u8, fold: bool): bool {
+pub fn reCharEq(a: u8, b: u8, fold: bool): bool {
     if a == b {
         return true
     }
@@ -759,7 +770,7 @@ fn reCharEq(a: u8, b: u8, fold: bool): bool {
     return false
 }
 
-fn reClassMatch(cls: &ReClass, c: u8, fold: bool): bool {
+pub fn reClassMatch(cls: &ReClass, c: u8, fold: bool): bool {
     var matched = false
     var i: i64 = 0
     while i < cls.lo.len() {
@@ -782,7 +793,7 @@ fn reClassMatch(cls: &ReClass, c: u8, fold: bool): bool {
     return matched
 }
 
-fn reIsWordAt(s: &string, i: i64): bool {
+pub fn reIsWordAt(s: &string, i: i64): bool {
     if i < 0 || i >= s.len() {
         return false
     }
@@ -792,7 +803,7 @@ fn reIsWordAt(s: &string, i: i64): bool {
 // Recursive backtracking. SAVE restores its slot on failure, so SPLIT needs no
 // snapshot. Returns true if the program matches starting at instruction `pc`,
 // input position `sp`.
-fn reRun(re: &Regex, pc: i64, s: &string, sp: i64, saves: &mut Vec<i64>): bool {
+pub fn reRun(re: &Regex, pc: i64, s: &string, sp: i64, saves: &mut Vec<i64>): bool {
     let inst = re.prog[pc]
     let op = inst.op
     if op == RE_MATCH {
@@ -964,7 +975,7 @@ fn reRun(re: &Regex, pc: i64, s: &string, sp: i64, saves: &mut Vec<i64>): bool {
 
 // Try to match anywhere at or after `startPos`. Returns a saves vector; saves[0] < 0
 // (and length 0) means no match. On success, saves has 2*(nGroups+1) entries.
-fn regexExec(re: &Regex, s: &string, startPos: i64): Vec<i64> {
+pub fn regexExec(re: &Regex, s: &string, startPos: i64): Vec<i64> {
     var start = startPos
     // one scratch slot past the captures, used by lookbehind to carry its target
     let slots = 2 * (re.nGroups + 1) + 1

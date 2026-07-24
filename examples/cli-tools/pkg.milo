@@ -24,7 +24,7 @@ from "std/string" import {
     strIndexOf, strReplace, strStartsWith, trim
 }
 
-fn getHome(): string {
+pub fn getHome(): string {
     let h = getEnv("HOME")
     match h {
         Option.Some(v) => {
@@ -37,20 +37,20 @@ fn getHome(): string {
     }
 }
 
-fn getCacheDir(): string {
+pub fn getCacheDir(): string {
     let home = getHome()
     return home + "/.milo/cache"
 }
 
 // parse "github.com/user/repo@v1.0" → host, org/repo, version
-struct PkgRef {
+pub struct PkgRef {
     host: string,
     path: string,
     version: string,
     url: string,
 }
 
-fn parsePkgUrl(raw: &string): PkgRef {
+pub fn parsePkgUrl(raw: &string): PkgRef {
     var version: string = "main"
     var fullPath: string = raw.clone()
     let atIdx = strIndexOf(raw, "@")
@@ -79,7 +79,7 @@ fn parsePkgUrl(raw: &string): PkgRef {
     }
 }
 
-fn cachePath(pkg: &PkgRef): string {
+pub fn cachePath(pkg: &PkgRef): string {
     let base = getCacheDir()
     if pkg.host == "local" {
         // local paths: hash the path to avoid nested slashes
@@ -91,7 +91,7 @@ fn cachePath(pkg: &PkgRef): string {
 
 // ── Commands ──
 
-fn cmdInit(): i32 {
+pub fn cmdInit(): i32 {
     if pathExists("milo.json") {
         print("milo.json already exists")
         return 1
@@ -110,7 +110,7 @@ fn cmdInit(): i32 {
     }
 }
 
-fn cmdAdd(pkgAlias: &string, pkgUrl: &string): i32 {
+pub fn cmdAdd(pkgAlias: &string, pkgUrl: &string): i32 {
     if !pathExists("milo.json") {
         print("error: no milo.json found (run `milo-pkg init` first)")
         return 1
@@ -200,7 +200,7 @@ fn cmdAdd(pkgAlias: &string, pkgUrl: &string): i32 {
     }
 }
 
-fn installPkg(name: &string, url: &string): i32 {
+pub fn installPkg(name: &string, url: &string): i32 {
     let pkg = parsePkgUrl(url)
     var dest: string = cachePath(pkg)
 
@@ -234,7 +234,7 @@ fn installPkg(name: &string, url: &string): i32 {
     return 0
 }
 
-fn appendLock(name: &string, url: &string, sha: &string): void {
+pub fn appendLock(name: &string, url: &string, sha: &string): void {
     // simple append-based lockfile
     var line: string = name + " " + url + " " + sha + "\n"
     if pathExists("milo.lock") {
@@ -245,7 +245,7 @@ fn appendLock(name: &string, url: &string, sha: &string): void {
     let _ = writeFile("milo.lock", line)
 }
 
-fn cmdInstall(): i32 {
+pub fn cmdInstall(): i32 {
     if !pathExists("milo.json") {
         print("error: no milo.json found (run `milo-pkg init` first)")
         return 1
@@ -300,7 +300,7 @@ fn cmdInstall(): i32 {
     }
 }
 
-fn cmdNew(name: &string): i32 {
+pub fn cmdNew(name: &string): i32 {
     if pathExists(name) {
         print($"error: directory '{name}' already exists")
         return 1
@@ -341,7 +341,7 @@ fn cmdNew(name: &string): i32 {
     return 0
 }
 
-fn printUsage(): void {
+pub fn printUsage(): void {
     print("milo-pkg — package manager for Milo")
     print("")
     print("usage:")
@@ -354,7 +354,7 @@ fn printUsage(): void {
     print("cache: ~/.milo/cache/<host>/<org>/<repo>/<version>/")
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
         printUsage()

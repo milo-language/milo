@@ -6,42 +6,48 @@
 //   milo build examples/emulators/nes/sdlSmoke.milo -o /tmp/sdlSmoke
 
 @link("SDL2")
-extern fn SDL_Init(flags: u32): i32
+pub extern fn SDL_Init(flags: u32): i32
 
-extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
 
-extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+pub extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
 
-extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+pub extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
 
-extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+pub extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
 
-extern fn SDL_RenderClear(ren: *u8): i32
+pub extern fn SDL_RenderClear(ren: *u8): i32
 
-extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+pub extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
 
-extern fn SDL_RenderPresent(ren: *u8): void
+pub extern fn SDL_RenderPresent(ren: *u8): void
 
-extern fn SDL_PollEvent(event: *u8): i32
+pub extern fn SDL_PollEvent(event: *u8): i32
 
-extern fn SDL_Delay(ms: u32): void
+pub extern fn SDL_Delay(ms: u32): void
 
-extern fn SDL_DestroyWindow(win: *u8): void
+pub extern fn SDL_DestroyWindow(win: *u8): void
 
-extern fn SDL_Quit(): void
+pub extern fn SDL_Quit(): void
 
 // SDL constants (from SDL_video.h / SDL_pixels.h / SDL_events.h)
-let SDL_INIT_VIDEO: u32 = 0x20
-let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-let SDL_WINDOW_SHOWN: u32 = 0x4
-let SDL_TEXTUREACCESS_STREAMING: i32 = 1
-let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004 // byte order R,G,B,A in memory (verified vs SDL_pixels.h)
-let SDL_QUIT: u32 = 0x100
+pub let SDL_INIT_VIDEO: u32 = 0x20
 
-let W: i32 = 256
-let H: i32 = 240
+pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
 
-fn main(): i32 {
+pub let SDL_WINDOW_SHOWN: u32 = 0x4
+
+pub let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+
+pub let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004 // byte order R,G,B,A in memory (verified vs SDL_pixels.h)
+
+pub let SDL_QUIT: u32 = 0x100
+
+pub let W: i32 = 256
+
+pub let H: i32 = 240
+
+pub fn main(): i32 {
     if SDL_Init(SDL_INIT_VIDEO) != 0 {
         print("SDL_Init failed")
         return 1

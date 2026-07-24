@@ -11,12 +11,12 @@ from "std/arena" import {
     Arena, Handle, arenaNew, arenaAlloc, arenaWith, arenaModifyMut
 }
 
-struct Attr {
+pub struct Attr {
     name: string,
     value: string,
 }
 
-enum NodeKind {
+pub enum NodeKind {
     Document,
     Element,
     Text,
@@ -27,7 +27,7 @@ enum NodeKind {
 // One DOM node. `name` is the element local-name (empty otherwise); `text`
 // holds Text/Comment data. parent/children are Handles into the same arena —
 // Handle<Node> stores only indices, so this type is not infinitely sized.
-struct Node {
+pub struct Node {
     kind: NodeKind,
     name: string,
     text: string,
@@ -36,12 +36,12 @@ struct Node {
     children: Vec<Handle<Node>>,
 }
 
-struct Dom {
+pub struct Dom {
     arena: Arena<Node>,
     document: Handle<Node>,
 }
 
-fn emptyNode(kind: NodeKind, name: string, text: string): Node {
+pub fn emptyNode(kind: NodeKind, name: string, text: string): Node {
     return Node {
         kind: kind,
         name: name,
@@ -52,7 +52,7 @@ fn emptyNode(kind: NodeKind, name: string, text: string): Node {
     }
 }
 
-fn domNew(): Dom {
+pub fn domNew(): Dom {
     var arena: Arena<Node> = arenaNew()
     let doc = arenaAlloc(arena, emptyNode(NodeKind.Document, "", ""))
     return Dom {
@@ -63,7 +63,7 @@ fn domNew(): Dom {
 // ── Field readers: borrow the node, copy out only the one small field we
 // need (enum / handle / int / one string). No whole-node copy ever. ──
 
-fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
+pub fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
     let r = arenaWith(dom.arena, h, (n: &Node): NodeKind => n.kind)
     match r {
         Option.Some(k) => {
@@ -76,7 +76,7 @@ fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
     }
 }
 
-fn nodeName(dom: &Dom, h: Handle<Node>): string {
+pub fn nodeName(dom: &Dom, h: Handle<Node>): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.name.clone())
     match r {
         Option.Some(s) => {
@@ -88,7 +88,7 @@ fn nodeName(dom: &Dom, h: Handle<Node>): string {
     }
 }
 
-fn nodeText(dom: &Dom, h: Handle<Node>): string {
+pub fn nodeText(dom: &Dom, h: Handle<Node>): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.text.clone())
     match r {
         Option.Some(s) => {
@@ -100,7 +100,7 @@ fn nodeText(dom: &Dom, h: Handle<Node>): string {
     }
 }
 
-fn nodeParent(dom: &Dom, h: Handle<Node>): Option<Handle<Node>> {
+pub fn nodeParent(dom: &Dom, h: Handle<Node>): Option<Handle<Node>> {
     let r = arenaWith(dom.arena, h, (n: &Node): Option<Handle<Node>> => n.parent)
     match r {
         Option.Some(p) => {
@@ -112,7 +112,7 @@ fn nodeParent(dom: &Dom, h: Handle<Node>): Option<Handle<Node>> {
     }
 }
 
-fn childCount(dom: &Dom, h: Handle<Node>): i64 {
+pub fn childCount(dom: &Dom, h: Handle<Node>): i64 {
     let r = arenaWith(dom.arena, h, (n: &Node): i64 => n.children.len())
     match r {
         Option.Some(c) => {
@@ -124,7 +124,7 @@ fn childCount(dom: &Dom, h: Handle<Node>): i64 {
     }
 }
 
-fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
+pub fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
     let r = arenaWith(dom.arena, h, (n: &Node): Handle<Node> => n.children[i])
     match r {
         Option.Some(c) => {
@@ -139,26 +139,26 @@ fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
 
 // ── The TreeSink-style operations (refs only in params, never stored) ──
 
-fn createElement(dom: &mut Dom, name: string): Handle<Node> {
+pub fn createElement(dom: &mut Dom, name: string): Handle<Node> {
     return arenaAlloc(dom.arena, emptyNode(NodeKind.Element, name, ""))
 }
 
-fn createText(dom: &mut Dom, text: string): Handle<Node> {
+pub fn createText(dom: &mut Dom, text: string): Handle<Node> {
     return arenaAlloc(dom.arena, emptyNode(NodeKind.Text, "", text))
 }
 
-fn createComment(dom: &mut Dom, text: string): Handle<Node> {
+pub fn createComment(dom: &mut Dom, text: string): Handle<Node> {
     return arenaAlloc(dom.arena, emptyNode(NodeKind.Comment, "", text))
 }
 
-fn setParent(dom: &mut Dom, child: Handle<Node>, parent: Option<Handle<Node>>) {
+pub fn setParent(dom: &mut Dom, child: Handle<Node>, parent: Option<Handle<Node>>) {
     arenaModifyMut(dom.arena, child, (c: &mut Node): void => {
         c.parent = parent
     }
     )
 }
 
-fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
+pub fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
     arenaModifyMut(dom.arena, parent, (n: &mut Node): void => {
         n.children.push(child)
     }
@@ -168,7 +168,7 @@ fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
 
 // html5ever coalesces adjacent text: appending text after a Text sibling
 // extends that node instead of creating a new one.
-fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
+pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
     let c = childCount(dom, parent)
     if c > 0 {
         let last = childAt(dom, parent, c - 1)
@@ -192,11 +192,11 @@ fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
     append(dom, parent, tn)
 }
 
-fn sameNode(a: Handle<Node>, b: Handle<Node>): bool {
+pub fn sameNode(a: Handle<Node>, b: Handle<Node>): bool {
     return a == b
 }
 
-fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
+pub fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
     match nodeParent(dom, child) {
         Option.Some(p) => {
             arenaModifyMut(dom.arena, p, (n: &mut Node): void => {
@@ -220,7 +220,7 @@ fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
     }
 }
 
-fn appendBeforeSibling(dom: &mut Dom, sibling: Handle<Node>, newNode: Handle<Node>) {
+pub fn appendBeforeSibling(dom: &mut Dom, sibling: Handle<Node>, newNode: Handle<Node>) {
     match nodeParent(dom, sibling) {
         Option.Some(p) => {
             arenaModifyMut(dom.arena, p, (n: &mut Node): void => {
@@ -244,7 +244,7 @@ fn appendBeforeSibling(dom: &mut Dom, sibling: Handle<Node>, newNode: Handle<Nod
     }
 }
 
-fn reparentChildren(dom: &mut Dom, oldParent: Handle<Node>, newParent: Handle<Node>) {
+pub fn reparentChildren(dom: &mut Dom, oldParent: Handle<Node>, newParent: Handle<Node>) {
     let c = childCount(dom, oldParent)
     var kids: Vec<Handle<Node>> = Vec.new()
     for i in 0..c {
@@ -261,7 +261,7 @@ fn reparentChildren(dom: &mut Dom, oldParent: Handle<Node>, newParent: Handle<No
 
 // ── Serialize: walk the tree by borrow-read — no node is ever copied. ──
 
-fn serialize(dom: &Dom, h: Handle<Node>): string {
+pub fn serialize(dom: &Dom, h: Handle<Node>): string {
     match nodeKind(dom, h) {
         NodeKind.Text => {
             return nodeText(dom, h)
@@ -292,7 +292,7 @@ fn serialize(dom: &Dom, h: Handle<Node>): string {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var dom = domNew()
     let root = dom.document
 

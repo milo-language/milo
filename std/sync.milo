@@ -22,7 +22,7 @@ from "std/runtime" import {
 //   let val = ch.recv()!
 //   p.await()!
 //   ch.destroy()
-struct ChannelInner {
+pub struct ChannelInner {
     mtx: *u8,
     condNotEmpty: *u8,
     condNotFull: *u8,
@@ -41,7 +41,7 @@ struct ChannelInner {
 // Waiter nodes use the unified 48-byte runtime layout (see std/runtime): plain
 // channel waiters are kind 0 with the task ptr at nodeA; Select arms (kind 1/2)
 // carry a SelectState ptr + arm index and take the claim path when woken.
-fn _nodeLoadPtr(node: *u8, off: i64): *u8 {
+pub fn _nodeLoadPtr(node: *u8, off: i64): *u8 {
     unsafe {
         var v: *u8 = 0 as *u8
         memcpy((v.addrOf()) as *u8, (node as i64 + off) as *u8, 8)
@@ -49,13 +49,13 @@ fn _nodeLoadPtr(node: *u8, off: i64): *u8 {
     }
 }
 
-fn _nodeStorePtr(node: *u8, off: i64, v: *u8): void {
+pub fn _nodeStorePtr(node: *u8, off: i64, v: *u8): void {
     unsafe {
         memcpy((node as i64 + off) as *u8, (v.addrOf()) as *u8, 8)
     }
 }
 
-fn _nodeLoadI64(node: *u8, off: i64): i64 {
+pub fn _nodeLoadI64(node: *u8, off: i64): i64 {
     unsafe {
         var v: i64 = 0
         memcpy((v.addrOf()) as *u8, (node as i64 + off) as *u8, 8)
@@ -63,7 +63,7 @@ fn _nodeLoadI64(node: *u8, off: i64): i64 {
     }
 }
 
-fn _nodeStoreI64(node: *u8, off: i64, v: i64): void {
+pub fn _nodeStoreI64(node: *u8, off: i64, v: i64): void {
     unsafe {
         memcpy((node as i64 + off) as *u8, (v.addrOf()) as *u8, 8)
     }
@@ -73,7 +73,7 @@ fn _nodeStoreI64(node: *u8, off: i64, v: i64): void {
 // channel mutex. A plain waiter's task is unparked; a Select arm claims the
 // select. Returns the new head. The node must not be touched after this — the
 // woken task's frame (plain) or the Select (arm) owns it.
-fn _wakeOne(head: *u8): *u8 {
+pub fn _wakeOne(head: *u8): *u8 {
     if head as i64 == 0 {
         return 0 as *u8
     }
@@ -87,7 +87,7 @@ fn _wakeOne(head: *u8): *u8 {
 }
 
 // Unlink `node` from a wait list if present. Caller holds the channel mutex.
-fn _unlinkNode(head: *u8, node: *u8): *u8 {
+pub fn _unlinkNode(head: *u8, node: *u8): *u8 {
     if head as i64 == 0 {
         return 0 as *u8
     }
@@ -112,7 +112,7 @@ fn _unlinkNode(head: *u8, node: *u8): *u8 {
 // with mtx re-acquired. The waiter node lives on this frame's stack — safe
 // because the frame stays alive while parked and the waker pops the node
 // (under mtx) before unparking, so it never dangles.
-fn _chParkRecv(inner: *ChannelInner): void {
+pub fn _chParkRecv(inner: *ChannelInner): void {
     unsafe {
         var w: [u8; 48] = [0; 48]
         let wp = w as *u8
@@ -126,7 +126,7 @@ fn _chParkRecv(inner: *ChannelInner): void {
     }
 }
 
-fn _chParkSend(inner: *ChannelInner): void {
+pub fn _chParkSend(inner: *ChannelInner): void {
     unsafe {
         var w: [u8; 48] = [0; 48]
         let wp = w as *u8
@@ -140,13 +140,13 @@ fn _chParkSend(inner: *ChannelInner): void {
     }
 }
 
-fn _chWakeOneRecv(inner: *ChannelInner): void {
+pub fn _chWakeOneRecv(inner: *ChannelInner): void {
     unsafe {
         (*inner).recvWaitHead = _wakeOne((*inner).recvWaitHead)
     }
 }
 
-fn _chWakeOneSend(inner: *ChannelInner): void {
+pub fn _chWakeOneSend(inner: *ChannelInner): void {
     unsafe {
         (*inner).sendWaitHead = _wakeOne((*inner).sendWaitHead)
     }
@@ -157,7 +157,7 @@ fn _chWakeOneSend(inner: *ChannelInner): void {
 // Arm a Select recv on this channel. Returns true if recv would proceed right
 // now (buffer non-empty or closed) — the caller claims immediately and does not
 // link. Otherwise links `node` (kind sel-recv) and returns false.
-fn channelArmRecv(ptr: *u8, node: *u8): bool {
+pub fn channelArmRecv(ptr: *u8, node: *u8): bool {
     unsafe {
         let inner = ptr as *ChannelInner
         pthread_mutex_lock((*inner).mtx)
@@ -174,7 +174,7 @@ fn channelArmRecv(ptr: *u8, node: *u8): bool {
 
 // Arm a Select send. Ready if the buffer has room or the channel is closed
 // (a send on a closed channel returns Err rather than blocking).
-fn channelArmSend(ptr: *u8, node: *u8): bool {
+pub fn channelArmSend(ptr: *u8, node: *u8): bool {
     unsafe {
         let inner = ptr as *ChannelInner
         pthread_mutex_lock((*inner).mtx)
@@ -189,7 +189,7 @@ fn channelArmSend(ptr: *u8, node: *u8): bool {
     }
 }
 
-fn channelUnarmRecv(ptr: *u8, node: *u8): void {
+pub fn channelUnarmRecv(ptr: *u8, node: *u8): void {
     unsafe {
         let inner = ptr as *ChannelInner
         pthread_mutex_lock((*inner).mtx)
@@ -198,7 +198,7 @@ fn channelUnarmRecv(ptr: *u8, node: *u8): void {
     }
 }
 
-fn channelUnarmSend(ptr: *u8, node: *u8): void {
+pub fn channelUnarmSend(ptr: *u8, node: *u8): void {
     unsafe {
         let inner = ptr as *ChannelInner
         pthread_mutex_lock((*inner).mtx)
@@ -207,7 +207,7 @@ fn channelUnarmSend(ptr: *u8, node: *u8): void {
     }
 }
 
-struct Channel<T> {
+pub struct Channel<T> {
     _ptr: *u8,
 }
 
@@ -485,7 +485,7 @@ impl Channel<T> {
 
 // ── AtomicI64 ──
 
-struct AtomicI64 {
+pub struct AtomicI64 {
     _ptr: *u8,
 }
 
@@ -537,7 +537,7 @@ impl AtomicI64 {
 
 // ── AtomicBool ──
 
-struct AtomicBool {
+pub struct AtomicBool {
     _ptr: *u8,
 }
 
@@ -592,7 +592,7 @@ impl AtomicBool {
 //   wg.wait()
 
 // heap layout (32 bytes): 0 mtx, 8 cond, 16 count (i64), 24 greenWaitHead (*u8)
-struct WaitGroup {
+pub struct WaitGroup {
     _p: *u8,
 }
 

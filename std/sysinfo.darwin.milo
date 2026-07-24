@@ -1,50 +1,50 @@
 // std/sysinfo — high-level system information (macOS)
 
 @cSig("unistd.h", "int gethostname(char *, size_t)")
-extern fn gethostname(name: *u8, len: i64): i32
+pub extern fn gethostname(name: *u8, len: i64): i32
 
 @cSig("unistd.h", "char *getcwd(char *, size_t)")
-extern fn getcwd(buf: *u8, size: i64): *u8
+pub extern fn getcwd(buf: *u8, size: i64): *u8
 
 @cSig("unistd.h", "int chdir(const char *)")
-extern fn chdir(path: *u8): i32
+pub extern fn chdir(path: *u8): i32
 
 @cSig("unistd.h", "pid_t getpid(void)")
-extern fn getpid(): i32
+pub extern fn getpid(): i32
 
 @cSig("unistd.h", "pid_t getppid(void)")
-extern fn getppid(): i32
+pub extern fn getppid(): i32
 
 @cSig("unistd.h", "uid_t getuid(void)")
-extern fn getuid(): u32
+pub extern fn getuid(): u32
 
 @cSig("unistd.h", "gid_t getgid(void)")
-extern fn getgid(): u32
+pub extern fn getgid(): u32
 
 @cSig("unistd.h", "uid_t geteuid(void)")
-extern fn geteuid(): u32
+pub extern fn geteuid(): u32
 
 @cSig("unistd.h", "gid_t getegid(void)")
-extern fn getegid(): u32
+pub extern fn getegid(): u32
 
 @cSig("unistd.h", "long sysconf(int)")
-extern fn sysconf(name: i32): i64
+pub extern fn sysconf(name: i32): i64
 
 @cSig("stdlib.h", "int getloadavg(double [], int)")
-extern fn getloadavg(loadavg: *f64, nelem: i32): i32
+pub extern fn getloadavg(loadavg: *f64, nelem: i32): i32
 
-extern fn sysctlbyname(name: *u8, oldp: *u8, oldlenp: *i64, newp: *u8, newlen: i64): i32
+pub extern fn sysctlbyname(name: *u8, oldp: *u8, oldlenp: *i64, newp: *u8, newlen: i64): i32
 
-extern fn sysctl(name: *i32, namelen: u32, oldp: *u8, oldlenp: *i64, newp: *u8, newlen: i64): i32
+pub extern fn sysctl(name: *i32, namelen: u32, oldp: *u8, oldlenp: *i64, newp: *u8, newlen: i64): i32
 
-extern fn gettimeofday(tv: *u8, tz: *u8): i32
+pub extern fn gettimeofday(tv: *u8, tz: *u8): i32
 
 // Mach
-extern fn mach_host_self(): u32
+pub extern fn mach_host_self(): u32
 
-extern fn host_statistics64(host: u32, flavor: i32, info: *u8, count: *u32): i32
+pub extern fn host_statistics64(host: u32, flavor: i32, info: *u8, count: *u32): i32
 
-fn hostname(): string {
+pub fn hostname(): string {
     var buf: [u8; 256] = [0; 256]
     gethostname(buf, 256)
     unsafe {
@@ -52,7 +52,7 @@ fn hostname(): string {
     }
 }
 
-fn cwd(): string {
+pub fn cwd(): string {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
         getcwd(buf, 4096)
@@ -60,31 +60,31 @@ fn cwd(): string {
     }
 }
 
-fn pid(): i32 {
+pub fn pid(): i32 {
     return getpid()
 }
 
-fn ppid(): i32 {
+pub fn ppid(): i32 {
     return getppid()
 }
 
-fn uid(): u32 {
+pub fn uid(): u32 {
     return getuid()
 }
 
-fn gid(): u32 {
+pub fn gid(): u32 {
     return getgid()
 }
 
-fn euid(): u32 {
+pub fn euid(): u32 {
     return geteuid()
 }
 
-fn egid(): u32 {
+pub fn egid(): u32 {
     return getegid()
 }
 
-fn cpuCount(): i64 {
+pub fn cpuCount(): i64 {
     let n = sysconf(58)
     if n < 1 {
         return 1
@@ -92,7 +92,7 @@ fn cpuCount(): i64 {
     return n
 }
 
-fn cpuModel(): string {
+pub fn cpuModel(): string {
     var buf: [u8; 256] = [0; 256]
     var len: [i64; 1] = [256]
     unsafe {
@@ -101,7 +101,7 @@ fn cpuModel(): string {
     }
 }
 
-fn totalMem(): i64 {
+pub fn totalMem(): i64 {
     var mem: [i64; 1] = [0]
     var len: [i64; 1] = [8]
     unsafe {
@@ -110,7 +110,7 @@ fn totalMem(): i64 {
     return mem[0]
 }
 
-fn freeMem(): i64 {
+pub fn freeMem(): i64 {
     // HOST_VM_INFO64 = 4, count = 38
     // Include inactive + purgeable pages as available (matches Activity Monitor)
     var stats: [u8; 512] = [0; 512]
@@ -127,7 +127,7 @@ fn freeMem(): i64 {
     return 0
 }
 
-fn uptime(): i64 {
+pub fn uptime(): i64 {
     // sysctl CTL_KERN=1, KERN_BOOTTIME=21
     var mib: [i32; 2] = [1, 21]
     var boottime: [i64; 2] = [0, 0]
@@ -147,13 +147,13 @@ fn uptime(): i64 {
     }
 }
 
-fn loadAvg(): [f64; 3] {
+pub fn loadAvg(): [f64; 3] {
     var avg: [f64; 3] = [0.0; 3]
     getloadavg(avg, 3)
     return avg
 }
 
-fn osRelease(): string {
+pub fn osRelease(): string {
     var buf: [u8; 256] = [0; 256]
     var len: [i64; 1] = [256]
     unsafe {
@@ -162,6 +162,6 @@ fn osRelease(): string {
     }
 }
 
-fn setCwd(path: string): bool {
+pub fn setCwd(path: string): bool {
     return chdir(path) == 0
 }

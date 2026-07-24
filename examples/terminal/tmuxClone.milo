@@ -57,7 +57,7 @@ from "std/platform" import {
     read
 }
 
-let PREFIX: u8 = 2 // Ctrl-B
+pub let PREFIX: u8 = 2 // Ctrl-B
 
 // ─────────────────────────── themes ───────────────────────────
 //
@@ -65,10 +65,11 @@ let PREFIX: u8 = 2 // Ctrl-B
 // The choice is picked on the splash (Tab) and persisted to ~/.tmuxclone-theme.
 // 0 = warm (Milo), 1 = dark, 2 = light.
 
-var gTheme: i64 = 0
-let THEME_COUNT: i64 = 3
+pub var gTheme: i64 = 0
 
-fn themeName(t: i64): string {
+pub let THEME_COUNT: i64 = 3
+
+pub fn themeName(t: i64): string {
     if t == 1 {
         return "dark"
     }
@@ -79,7 +80,7 @@ fn themeName(t: i64): string {
 }
 
 // border line color
-fn themeBorder(t: i64): string {
+pub fn themeBorder(t: i64): string {
     if t == 1 {
         return "\x1b[38;2;90;96;110m"
     } // dark: slate
@@ -90,7 +91,7 @@ fn themeBorder(t: i64): string {
 }
 
 // focused-title highlight (reverse + accent fg → accent bg, dark text)
-fn themeFocus(t: i64): string {
+pub fn themeFocus(t: i64): string {
     if t == 1 {
         return "\x1b[7;38;2;120;150;210m"
     } // dark: blue
@@ -101,7 +102,7 @@ fn themeFocus(t: i64): string {
 }
 
 // chord badge (accent bg, dark bold text)
-fn themeChord(t: i64): string {
+pub fn themeChord(t: i64): string {
     if t == 1 {
         return "\x1b[48;2;120;150;210;38;2;16;18;24;1m"
     }
@@ -111,11 +112,11 @@ fn themeChord(t: i64): string {
     return "\x1b[48;2;226;150;162;38;2;34;28;24;1m"
 }
 
-fn themePath(): string {
+pub fn themePath(): string {
     return getEnvOr("HOME", "/tmp") + "/.tmuxclone-theme"
 }
 
-fn loadTheme(): void {
+pub fn loadTheme(): void {
     match readFile(themePath()) {
         Result.Ok(s) => {
             var t: i64 = 0
@@ -131,7 +132,7 @@ fn loadTheme(): void {
     }
 }
 
-fn saveTheme(): void {
+pub fn saveTheme(): void {
     let _ = writeFile(themePath(), themeName(gTheme))
 }
 
@@ -142,7 +143,7 @@ fn saveTheme(): void {
 // half-block trick (▀/▄): two vertically-stacked pixels per character cell, so
 // it stays crisp and square in a terminal.
 
-fn spriteRow(r: i64): string {
+pub fn spriteRow(r: i64): string {
     if r == 0 {
         return "  dd          dd  "
     }
@@ -198,7 +199,7 @@ fn spriteRow(r: i64): string {
 }
 
 // pixel char → RGB into out[0..2], out[3] = 1 opaque / 0 transparent.
-fn pixelRGB(ch: u8, out: &mut [i64; 4]): void {
+pub fn pixelRGB(ch: u8, out: &mut [i64; 4]): void {
     out[3] = 1
     if ch == 100 {
         out[0] = 96
@@ -251,14 +252,14 @@ fn pixelRGB(ch: u8, out: &mut [i64; 4]): void {
     out[3] = 0
 }
 
-fn spriteCharAt(row: &string, c: i64): u8 {
+pub fn spriteCharAt(row: &string, c: i64): u8 {
     if c < row.len {
         return row[c]
     }
     return 32
 }
 
-fn centeredCol(width: i64, cols: i64): i64 {
+pub fn centeredCol(width: i64, cols: i64): i64 {
     var c = (cols - width) / 2 + 1
     if c < 1 {
         c = 1
@@ -267,7 +268,7 @@ fn centeredCol(width: i64, cols: i64): i64 {
 }
 
 // Theme chooser row: each name in its own accent, the selected one boxed.
-fn drawThemeSwatches(row: i64, cols: i64): void {
+pub fn drawThemeSwatches(row: i64, cols: i64): void {
     let label = "theme  "
     var vis = label.len
     var t: i64 = 0
@@ -295,7 +296,7 @@ fn drawThemeSwatches(row: i64, cols: i64): void {
 // wordmark + tagline + theme chooser, then hold until a keypress (Tab cycles the
 // theme; any other key or a ~8s timeout starts). Stray buffered input is drained
 // first so the splash isn't dismissed the instant it appears.
-fn splash(cols: i64, rows: i64): void {
+pub fn splash(cols: i64, rows: i64): void {
     writeStdout("\x1b[2J\x1b[H\x1b[?25l")
     let artCol = centeredCol(18, cols) // 18 px wide, 1 col each
     let hc = 9 // 18 pixel rows / 2 per cell
@@ -379,13 +380,13 @@ fn splash(cols: i64, rows: i64): void {
 
 // ─────────────────────────── rendering ───────────────────────────
 
-fn moveTo(row: i64, col: i64): void {
+pub fn moveTo(row: i64, col: i64): void {
     writeStdout($"\x1b[{row};{col}H")
 }
 
 // SGR escape for a packed attr (bold + fg index)
 
-fn termSize(): WinSize {
+pub fn termSize(): WinSize {
     var ws = WinSize {
         rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
@@ -397,7 +398,7 @@ fn termSize(): WinSize {
 }
 
 // basename of a path, e.g. "/bin/zsh" → "zsh"
-fn baseName(path: &string): string {
+pub fn baseName(path: &string): string {
     let i = path.lastIndexOf("/")
     if i < 0 {
         return path.clone()
@@ -405,7 +406,7 @@ fn baseName(path: &string): string {
     return path.substr(i + 1, path.len)
 }
 
-fn drawBorder(focus: i64, half: i64, paneRows: i64, name: &string): void {
+pub fn drawBorder(focus: i64, half: i64, paneRows: i64, name: &string): void {
     writeStdout("\x1b[2J\x1b[H\x1b[?25l")
     let bc = themeBorder(gTheme)
     let fc = themeFocus(gTheme)
@@ -497,7 +498,7 @@ fn drawBorder(focus: i64, half: i64, paneRows: i64, name: &string): void {
 // The status bar. In normal mode it's a quiet hint; the moment Ctrl-B is pressed
 // it flips to a bright "chord" menu showing exactly which key does what — so you
 // never have to remember (or release Ctrl and guess) like in real tmux.
-fn drawFooter(prefixArmed: bool, paneRows: i64): void {
+pub fn drawFooter(prefixArmed: bool, paneRows: i64): void {
     moveTo(5 + paneRows, 1)
     writeStdout("\x1b[2K") // clear the whole status line first
     if prefixArmed {
@@ -513,7 +514,7 @@ fn drawFooter(prefixArmed: bool, paneRows: i64): void {
 
 // Non-blocking read of a PTY master, fed into the pane's emulator. Returns true
 // if new bytes arrived (fd is O_NONBLOCK, so this never blocks).
-fn drainInto(pty: &Pty, term: &mut Term): bool {
+pub fn drainInto(pty: &Pty, term: &mut Term): bool {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
         let n = pty.read(buf as *u8, 4095)
@@ -525,13 +526,13 @@ fn drainInto(pty: &Pty, term: &mut Term): bool {
     return false
 }
 
-fn shellArgs(): Vec<string> {
+pub fn shellArgs(): Vec<string> {
     var args: Vec<string> = Vec.new()
     args.push("-i") // interactive: prompts + line editing + job control
     return args
 }
 
-fn main(): void {
+pub fn main(): void {
     if !isInteractive() {
         print("error: tmuxclone needs a terminal")
         return

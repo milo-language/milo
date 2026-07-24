@@ -10,7 +10,7 @@ from "std/platform" import {
 //   let db = t.table("database")!
 //   let host = db.str("host")!
 
-struct Toml {
+pub struct Toml {
     raw: string,
     start: i64,
     end: i64,
@@ -38,7 +38,7 @@ impl Toml {
     }
 }
 
-fn tomlParse(s: string): Result<Toml> {
+pub fn tomlParse(s: string): Result<Toml> {
     if s.len == 0 {
         return Result.Err("empty input")
     }
@@ -51,7 +51,7 @@ fn tomlParse(s: string): Result<Toml> {
 
 // ── Internal helpers ──
 
-fn _tomlSkipWs(s: &string, pos: i64, end: i64): i64 {
+pub fn _tomlSkipWs(s: &string, pos: i64, end: i64): i64 {
     var i = pos
     while i < end {
         let c = s[i]
@@ -68,7 +68,7 @@ fn _tomlSkipWs(s: &string, pos: i64, end: i64): i64 {
     return i
 }
 
-fn _tomlSkipLine(s: &string, pos: i64, end: i64): i64 {
+pub fn _tomlSkipLine(s: &string, pos: i64, end: i64): i64 {
     var i = pos
     while i < end && s[i] != '\n' {
         i = i + 1
@@ -79,7 +79,7 @@ fn _tomlSkipLine(s: &string, pos: i64, end: i64): i64 {
     return i
 }
 
-fn _tomlKeyMatches(s: &string, pos: i64, end: i64, key: &string): bool {
+pub fn _tomlKeyMatches(s: &string, pos: i64, end: i64, key: &string): bool {
     var i = pos
     var j: i64 = 0
     // bare key
@@ -98,7 +98,7 @@ fn _tomlKeyMatches(s: &string, pos: i64, end: i64, key: &string): bool {
     return after < end && s[after] == '='
 }
 
-fn _tomlReadValue(s: &string, pos: i64, end: i64): i64 {
+pub fn _tomlReadValue(s: &string, pos: i64, end: i64): i64 {
     // return end position of the value
     var i = pos
     if i >= end {
@@ -165,7 +165,7 @@ fn _tomlReadValue(s: &string, pos: i64, end: i64): i64 {
     return i
 }
 
-fn _tomlFindKey(s: &string, start: i64, end: i64, key: &string): Option<Toml> {
+pub fn _tomlFindKey(s: &string, start: i64, end: i64, key: &string): Option<Toml> {
     var i = start
     while i < end {
         i = _tomlSkipWs(s, i, end)
@@ -200,7 +200,7 @@ fn _tomlFindKey(s: &string, start: i64, end: i64, key: &string): Option<Toml> {
     return Option.None
 }
 
-fn tomlGetStr(s: &string, start: i64, end: i64, key: &string): Option<string> {
+pub fn tomlGetStr(s: &string, start: i64, end: i64, key: &string): Option<string> {
     let v = _tomlFindKey(s, start, end, key)
     if let Option.Some(t) = v {
         if t.start < t.end && (t.raw[t.start] == '"' || t.raw[t.start] == '\'') {
@@ -242,7 +242,7 @@ fn tomlGetStr(s: &string, start: i64, end: i64, key: &string): Option<string> {
     return Option.None
 }
 
-fn tomlGetI64(s: &string, start: i64, end: i64, key: &string): Option<i64> {
+pub fn tomlGetI64(s: &string, start: i64, end: i64, key: &string): Option<i64> {
     let v = _tomlFindKey(s, start, end, key)
     if let Option.Some(t) = v {
         var result: i64 = 0
@@ -267,7 +267,7 @@ fn tomlGetI64(s: &string, start: i64, end: i64, key: &string): Option<i64> {
     return Option.None
 }
 
-fn tomlGetF64(s: &string, start: i64, end: i64, key: &string): Option<f64> {
+pub fn tomlGetF64(s: &string, start: i64, end: i64, key: &string): Option<f64> {
     let v = _tomlFindKey(s, start, end, key)
     if let Option.Some(t) = v {
         var result: f64 = 0.0
@@ -301,7 +301,7 @@ fn tomlGetF64(s: &string, start: i64, end: i64, key: &string): Option<f64> {
     return Option.None
 }
 
-fn tomlGetBool(s: &string, start: i64, end: i64, key: &string): Option<bool> {
+pub fn tomlGetBool(s: &string, start: i64, end: i64, key: &string): Option<bool> {
     let v = _tomlFindKey(s, start, end, key)
     if let Option.Some(t) = v {
         if t.end - t.start == 4 && t.raw[t.start] == 't' {
@@ -314,7 +314,7 @@ fn tomlGetBool(s: &string, start: i64, end: i64, key: &string): Option<bool> {
     return Option.None
 }
 
-fn tomlGetTable(s: &string, start: i64, end: i64, key: &string): Option<Toml> {
+pub fn tomlGetTable(s: &string, start: i64, end: i64, key: &string): Option<Toml> {
     // search for [key] header
     var i = start
     while i < end {
@@ -368,7 +368,7 @@ fn tomlGetTable(s: &string, start: i64, end: i64, key: &string): Option<Toml> {
     return Option.None
 }
 
-fn _strEq(a: &string, b: &string): bool {
+pub fn _strEq(a: &string, b: &string): bool {
     if a.len != b.len {
         return false
     }

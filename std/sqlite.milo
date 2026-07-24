@@ -12,58 +12,58 @@
 //   dbFinalize(stmt)
 //   dbClose(db)
 
-extern fn sqlite3_open(filename: *u8, db: *u8): i32
+pub extern fn sqlite3_open(filename: *u8, db: *u8): i32
 
-extern fn sqlite3_close(db: *u8): i32
+pub extern fn sqlite3_close(db: *u8): i32
 
-extern fn sqlite3_exec(db: *u8, sql: *u8, callback: *u8, arg: *u8, errmsg: *u8): i32
+pub extern fn sqlite3_exec(db: *u8, sql: *u8, callback: *u8, arg: *u8, errmsg: *u8): i32
 
-extern fn sqlite3_prepare_v2(db: *u8, sql: *u8, nByte: i32, stmt: *u8, tail: *u8): i32
+pub extern fn sqlite3_prepare_v2(db: *u8, sql: *u8, nByte: i32, stmt: *u8, tail: *u8): i32
 
-extern fn sqlite3_step(stmt: *u8): i32
+pub extern fn sqlite3_step(stmt: *u8): i32
 
-extern fn sqlite3_finalize(stmt: *u8): i32
+pub extern fn sqlite3_finalize(stmt: *u8): i32
 
-extern fn sqlite3_column_int(stmt: *u8, col: i32): i32
+pub extern fn sqlite3_column_int(stmt: *u8, col: i32): i32
 
-extern fn sqlite3_column_int64(stmt: *u8, col: i32): i64
+pub extern fn sqlite3_column_int64(stmt: *u8, col: i32): i64
 
-extern fn sqlite3_column_double(stmt: *u8, col: i32): f64
+pub extern fn sqlite3_column_double(stmt: *u8, col: i32): f64
 
-extern fn sqlite3_column_text(stmt: *u8, col: i32): *u8
+pub extern fn sqlite3_column_text(stmt: *u8, col: i32): *u8
 
-extern fn sqlite3_column_count(stmt: *u8): i32
+pub extern fn sqlite3_column_count(stmt: *u8): i32
 
-extern fn sqlite3_column_type(stmt: *u8, col: i32): i32
+pub extern fn sqlite3_column_type(stmt: *u8, col: i32): i32
 
-extern fn sqlite3_bind_int(stmt: *u8, idx: i32, val: i32): i32
+pub extern fn sqlite3_bind_int(stmt: *u8, idx: i32, val: i32): i32
 
-extern fn sqlite3_bind_int64(stmt: *u8, idx: i32, val: i64): i32
+pub extern fn sqlite3_bind_int64(stmt: *u8, idx: i32, val: i64): i32
 
-extern fn sqlite3_bind_double(stmt: *u8, idx: i32, val: f64): i32
+pub extern fn sqlite3_bind_double(stmt: *u8, idx: i32, val: f64): i32
 
-extern fn sqlite3_bind_text(stmt: *u8, idx: i32, text: *u8, n: i32, destructor: *u8): i32
+pub extern fn sqlite3_bind_text(stmt: *u8, idx: i32, text: *u8, n: i32, destructor: *u8): i32
 
-extern fn sqlite3_bind_null(stmt: *u8, idx: i32): i32
+pub extern fn sqlite3_bind_null(stmt: *u8, idx: i32): i32
 
-extern fn sqlite3_reset(stmt: *u8): i32
+pub extern fn sqlite3_reset(stmt: *u8): i32
 
-extern fn sqlite3_errmsg(db: *u8): *u8
+pub extern fn sqlite3_errmsg(db: *u8): *u8
 
-extern fn sqlite3_changes(db: *u8): i32
+pub extern fn sqlite3_changes(db: *u8): i32
 
-extern fn sqlite3_last_insert_rowid(db: *u8): i64
+pub extern fn sqlite3_last_insert_rowid(db: *u8): i64
 
-struct Database {
+pub struct Database {
     _handle: *u8,
 }
 
-struct Statement {
+pub struct Statement {
     _handle: *u8,
     _db: *u8,
 }
 
-fn dbOpen(path: string): Result<Database> {
+pub fn dbOpen(path: string): Result<Database> {
     unsafe {
         var handle: *u8 = 0 as *u8
         let rc = sqlite3_open(path, (handle.addrOf()) as *u8)
@@ -80,11 +80,11 @@ fn dbOpen(path: string): Result<Database> {
     }
 }
 
-fn dbClose(db: &Database): void {
+pub fn dbClose(db: &Database): void {
     sqlite3_close(db._handle)
 }
 
-fn dbExec(db: &Database, sql: string): Result<i32> {
+pub fn dbExec(db: &Database, sql: string): Result<i32> {
     unsafe {
         let rc = sqlite3_exec(db._handle, sql, 0 as *u8, 0 as *u8, 0 as *u8)
         if rc != 0 {
@@ -95,7 +95,7 @@ fn dbExec(db: &Database, sql: string): Result<i32> {
     }
 }
 
-fn dbQuery(db: &Database, sql: string): Result<Statement> {
+pub fn dbQuery(db: &Database, sql: string): Result<Statement> {
     unsafe {
         var handle: *u8 = 0 as *u8
         let rc = sqlite3_prepare_v2(db._handle, sql, 0 - 1, (handle.addrOf()) as *u8, 0 as *u8)
@@ -110,23 +110,23 @@ fn dbQuery(db: &Database, sql: string): Result<Statement> {
     }
 }
 
-fn dbStep(stmt: &Statement): bool {
+pub fn dbStep(stmt: &Statement): bool {
     return sqlite3_step(stmt._handle) == 100
 }
 
-fn dbColumnInt(stmt: &Statement, col: i32): i32 {
+pub fn dbColumnInt(stmt: &Statement, col: i32): i32 {
     return sqlite3_column_int(stmt._handle, col)
 }
 
-fn dbColumnInt64(stmt: &Statement, col: i32): i64 {
+pub fn dbColumnInt64(stmt: &Statement, col: i32): i64 {
     return sqlite3_column_int64(stmt._handle, col)
 }
 
-fn dbColumnFloat(stmt: &Statement, col: i32): f64 {
+pub fn dbColumnFloat(stmt: &Statement, col: i32): f64 {
     return sqlite3_column_double(stmt._handle, col)
 }
 
-fn dbColumnText(stmt: &Statement, col: i32): string {
+pub fn dbColumnText(stmt: &Statement, col: i32): string {
     unsafe {
         let ptr = sqlite3_column_text(stmt._handle, col)
         if ptr == 0 as *u8 {
@@ -136,19 +136,19 @@ fn dbColumnText(stmt: &Statement, col: i32): string {
     }
 }
 
-fn dbColumnCount(stmt: &Statement): i32 {
+pub fn dbColumnCount(stmt: &Statement): i32 {
     return sqlite3_column_count(stmt._handle)
 }
 
-fn dbColumnIsNull(stmt: &Statement, col: i32): bool {
+pub fn dbColumnIsNull(stmt: &Statement, col: i32): bool {
     return sqlite3_column_type(stmt._handle, col) == 5
 }
 
-fn dbFinalize(stmt: &Statement): void {
+pub fn dbFinalize(stmt: &Statement): void {
     sqlite3_finalize(stmt._handle)
 }
 
-fn dbBindInt(stmt: &Statement, idx: i32, val: i32): Result<i32> {
+pub fn dbBindInt(stmt: &Statement, idx: i32, val: i32): Result<i32> {
     let rc = sqlite3_bind_int(stmt._handle, idx, val)
     if rc != 0 {
         return Result.Err("bind_int failed")
@@ -156,7 +156,7 @@ fn dbBindInt(stmt: &Statement, idx: i32, val: i32): Result<i32> {
     return Result.Ok(0)
 }
 
-fn dbBindInt64(stmt: &Statement, idx: i32, val: i64): Result<i32> {
+pub fn dbBindInt64(stmt: &Statement, idx: i32, val: i64): Result<i32> {
     let rc = sqlite3_bind_int64(stmt._handle, idx, val)
     if rc != 0 {
         return Result.Err("bind_int64 failed")
@@ -164,7 +164,7 @@ fn dbBindInt64(stmt: &Statement, idx: i32, val: i64): Result<i32> {
     return Result.Ok(0)
 }
 
-fn dbBindText(stmt: &Statement, idx: i32, val: string): Result<i32> {
+pub fn dbBindText(stmt: &Statement, idx: i32, val: string): Result<i32> {
     unsafe {
         let rc = sqlite3_bind_text(stmt._handle, idx, val, 0 - 1, (0 - 1) as *u8)
         if rc != 0 {
@@ -174,7 +174,7 @@ fn dbBindText(stmt: &Statement, idx: i32, val: string): Result<i32> {
     }
 }
 
-fn dbBindNull(stmt: &Statement, idx: i32): Result<i32> {
+pub fn dbBindNull(stmt: &Statement, idx: i32): Result<i32> {
     let rc = sqlite3_bind_null(stmt._handle, idx)
     if rc != 0 {
         return Result.Err("bind_null failed")
@@ -182,10 +182,10 @@ fn dbBindNull(stmt: &Statement, idx: i32): Result<i32> {
     return Result.Ok(0)
 }
 
-fn dbReset(stmt: &Statement): void {
+pub fn dbReset(stmt: &Statement): void {
     sqlite3_reset(stmt._handle)
 }
 
-fn dbLastInsertId(db: &Database): i64 {
+pub fn dbLastInsertId(db: &Database): i64 {
     return sqlite3_last_insert_rowid(db._handle)
 }

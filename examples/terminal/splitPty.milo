@@ -29,7 +29,7 @@ from "std/os" import {
 }
 
 // query host terminal size via ioctl on stdout
-fn termSize(): WinSize {
+pub fn termSize(): WinSize {
     var ws = WinSize {
         rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
@@ -40,11 +40,11 @@ fn termSize(): WinSize {
     return ws
 }
 
-fn moveTo(row: i64, col: i64): void {
+pub fn moveTo(row: i64, col: i64): void {
     writeStdout($"\x1b[{row};{col}H")
 }
 
-fn drawBorder(leftTitle: &string, rightTitle: &string, half: i64, paneRows: i64): void {
+pub fn drawBorder(leftTitle: &string, rightTitle: &string, half: i64, paneRows: i64): void {
     writeStdout("\x1b[2J\x1b[H\x1b[?25l")
 
     // top
@@ -121,7 +121,7 @@ fn drawBorder(leftTitle: &string, rightTitle: &string, half: i64, paneRows: i64)
     writeStdout("\x1b[7m q: quit \x1b[0m \x1b[90msplit-pty \xe2\x80\x94 powered by milo\x1b[0m")
 }
 
-fn clearPane(startCol: i64, half: i64, paneRows: i64): void {
+pub fn clearPane(startCol: i64, half: i64, paneRows: i64): void {
     for row in 0..paneRows {
         moveTo(4 + row as i64, startCol)
         for i in 0..(half - 1) {
@@ -130,7 +130,7 @@ fn clearPane(startCol: i64, half: i64, paneRows: i64): void {
     }
 }
 
-fn renderPane(text: &string, startCol: i64, half: i64, paneRows: i64): void {
+pub fn renderPane(text: &string, startCol: i64, half: i64, paneRows: i64): void {
     clearPane(startCol, half, paneRows)
     let maxCol = half - 1
 
@@ -185,7 +185,7 @@ fn renderPane(text: &string, startCol: i64, half: i64, paneRows: i64): void {
 }
 
 // Returns true if new data was read
-fn drainPty(pty: &Pty, output: &mut string): bool {
+pub fn drainPty(pty: &Pty, output: &mut string): bool {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
         let n = pty.read(buf as *u8, 4095)
@@ -199,7 +199,7 @@ fn drainPty(pty: &Pty, output: &mut string): bool {
     return false
 }
 
-fn main(): void {
+pub fn main(): void {
     if !isInteractive() {
         print("error: splitpty needs a terminal")
         return

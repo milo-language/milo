@@ -13,23 +13,23 @@ from "std/checksum" import {
     crc32
 }
 
-struct ZipEntry {
+pub struct ZipEntry {
     name: string,
     data: string, // decompressed contents
 }
 
-fn _le16(src: &string, p: i64): i64 {
+pub fn _le16(src: &string, p: i64): i64 {
     return (src[p] as i64) | ((src[p + 1] as i64) << 8)
 }
 
-fn _le32(src: &string, p: i64): i64 {
+pub fn _le32(src: &string, p: i64): i64 {
     return (src[p] as i64) | ((src[p + 1] as i64) << 8) | ((src[p + 2] as i64) << 16) | ((src[p + 3] as i64) << 24)
 }
 
 // Locate the End Of Central Directory record by scanning back for its signature
 // (0x06054b50). The trailing comment is variable-length, so we search rather than
 // index from the end.
-fn _findEocd(src: &string): i64 {
+pub fn _findEocd(src: &string): i64 {
     if src.len < 22 {
         return -1
     }
@@ -44,7 +44,7 @@ fn _findEocd(src: &string): i64 {
 }
 
 // Read every entry, decompressing and CRC-checking each.
-fn zipRead(src: &string): Result<Vec<ZipEntry>, string> {
+pub fn zipRead(src: &string): Result<Vec<ZipEntry>, string> {
     let eocd = _findEocd(src)
     if eocd < 0 {
         return Result.Err("zip: no end-of-central-directory record")

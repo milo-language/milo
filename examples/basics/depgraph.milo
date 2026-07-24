@@ -5,25 +5,25 @@ from "std/arena" import {
     Arena, Handle, arenaAlloc, arenaGet, arenaModify, arenaNew
 }
 
-struct Node {
+pub struct Node {
     name: string,
     deps: Vec<Handle<Node>>,
     dependents: Vec<Handle<Node>>,
 }
 
-struct DepGraph {
+pub struct DepGraph {
     arena: Arena<Node>,
     nodes: Vec<Handle<Node>>,
 }
 
-fn newGraph(): DepGraph {
+pub fn newGraph(): DepGraph {
     return DepGraph {
         arena: arenaNew(),
         nodes: Vec.new(),
     }
 }
 
-fn addNode(g: &mut DepGraph, name: string): Handle<Node> {
+pub fn addNode(g: &mut DepGraph, name: string): Handle<Node> {
     let h = arenaAlloc(g.arena, Node {
         name: name,
         deps: Vec.new(),
@@ -34,7 +34,7 @@ fn addNode(g: &mut DepGraph, name: string): Handle<Node> {
     return h
 }
 
-fn addEdge(g: &mut DepGraph, src: Handle<Node>, dst: Handle<Node>) {
+pub fn addEdge(g: &mut DepGraph, src: Handle<Node>, dst: Handle<Node>) {
     arenaModify(g.arena, src, (n: Node) => {
         var updated = n
         updated.deps.push(dst)
@@ -49,7 +49,7 @@ fn addEdge(g: &mut DepGraph, src: Handle<Node>, dst: Handle<Node>) {
     )
 }
 
-fn nodeName(g: &DepGraph, h: Handle<Node>): string {
+pub fn nodeName(g: &DepGraph, h: Handle<Node>): string {
     match arenaGet(g.arena, h) {
         Option.Some(n) => {
             return n.name
@@ -61,7 +61,7 @@ fn nodeName(g: &DepGraph, h: Handle<Node>): string {
 }
 
 // Kahn's algorithm
-fn topoSort(g: &DepGraph): Vec<string> {
+pub fn topoSort(g: &DepGraph): Vec<string> {
     var order: Vec<string> = Vec.new()
     let n = g.nodes.len
 
@@ -115,7 +115,7 @@ fn topoSort(g: &DepGraph): Vec<string> {
     return order
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var g = newGraph()
 
     let libc = addNode(g, "libc")

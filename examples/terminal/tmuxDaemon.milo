@@ -63,18 +63,20 @@ from "std/platform" import {
     close
 }
 
-let PORT: u16 = 7373
-let PREFIX: u8 = 2 // Ctrl-B
+pub let PORT: u16 = 7373
 
-let TIOCSWINSZ: i64 = 2148037735 // 0x80087467 (macOS)
-let RESIZE_MARK: u8 = 30 // 0x1e RS — brackets a "rows;cols" size message
+pub let PREFIX: u8 = 2 // Ctrl-B
 
-fn setNonblock(fd: i32): void {
+pub let TIOCSWINSZ: i64 = 2148037735 // 0x80087467 (macOS)
+
+pub let RESIZE_MARK: u8 = 30 // 0x1e RS — brackets a "rows;cols" size message
+
+pub fn setNonblock(fd: i32): void {
     fcntl(fd, fSetfl(), fcntl(fd, fGetfl()) | oNonblock())
 }
 
 // Parse "rows;cols" from a resize control message (digits + one ';').
-fn parseSize(s: &string, out: &mut [i64; 2]): void {
+pub fn parseSize(s: &string, out: &mut [i64; 2]): void {
     out[0] = 0
     out[1] = 0
     var seenSemi = false
@@ -96,7 +98,7 @@ fn parseSize(s: &string, out: &mut [i64; 2]): void {
 }
 
 // Push the PTY's window size (sends SIGWINCH to the shell so it repaints).
-fn setPtySize(masterFd: i32, rows: i64, cols: i64): void {
+pub fn setPtySize(masterFd: i32, rows: i64, cols: i64): void {
     var ws = WinSize {
         rows: rows as u16, cols: cols as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
@@ -106,12 +108,12 @@ fn setPtySize(masterFd: i32, rows: i64, cols: i64): void {
 }
 
 // Column where pane position `pos` starts (each pane paneW wide + separator col).
-fn paneStartCol(pos: i64, paneW: i64): i64 {
+pub fn paneStartCol(pos: i64, paneW: i64): i64 {
     return pos * (paneW + 1) + 1
 }
 
 // Fill `out` with the global indices of panes belonging to `win`; return count.
-fn activePaneIdxs(paneWin: &Vec<i64>, win: i64, out: &mut [i64; 16]): i64 {
+pub fn activePaneIdxs(paneWin: &Vec<i64>, win: i64, out: &mut [i64; 16]): i64 {
     var cnt: i64 = 0
     var i: i64 = 0
     while i < paneWin.len {
@@ -126,7 +128,7 @@ fn activePaneIdxs(paneWin: &Vec<i64>, win: i64, out: &mut [i64; 16]): i64 {
     return cnt
 }
 
-fn winPaneCount(paneWin: &Vec<i64>, win: i64): i64 {
+pub fn winPaneCount(paneWin: &Vec<i64>, win: i64): i64 {
     var c: i64 = 0
     var i: i64 = 0
     while i < paneWin.len {
@@ -139,7 +141,7 @@ fn winPaneCount(paneWin: &Vec<i64>, win: i64): i64 {
 }
 
 // Re-tile the ACTIVE window: split its width across its panes, resize each.
-fn reTile(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, activeWin: i64, cols: i64, gridRows: i64): void {
+pub fn reTile(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, activeWin: i64, cols: i64, gridRows: i64): void {
     var idxs: [i64; 16] = [0; 16]
     let m = activePaneIdxs(paneWin, activeWin, idxs)
     if m == 0 {
@@ -157,7 +159,7 @@ fn reTile(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, activeWin:
 
 // Re-tile every window (used on a client resize so off-screen windows are
 // correctly sized when you switch to them, and their content is preserved).
-fn reTileAll(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, winCount: i64, cols: i64, gridRows: i64): void {
+pub fn reTileAll(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, winCount: i64, cols: i64, gridRows: i64): void {
     var w: i64 = 0
     while w < winCount {
         reTile(ptys, terms, paneWin, w, cols, gridRows)
@@ -166,7 +168,7 @@ fn reTileAll(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, winCoun
 }
 
 // Composite the active window's panes + a status bar with WINDOW tabs.
-fn renderCompositeN(terms: &Vec<Term>, paneWin: &Vec<i64>, activeWin: i64, winCount: i64, focus: i64, copyMode: bool, copyOffset: i64): string {
+pub fn renderCompositeN(terms: &Vec<Term>, paneWin: &Vec<i64>, activeWin: i64, winCount: i64, focus: i64, copyMode: bool, copyOffset: i64): string {
     var idxs: [i64; 16] = [0; 16]
     let m = activePaneIdxs(paneWin, activeWin, idxs)
     if m == 0 {
@@ -232,7 +234,7 @@ fn renderCompositeN(terms: &Vec<Term>, paneWin: &Vec<i64>, activeWin: i64, winCo
     return out
 }
 
-fn shellArgs(): Vec<string> {
+pub fn shellArgs(): Vec<string> {
     var a: Vec<string> = Vec.new()
     a.push("-i")
     return a
@@ -240,7 +242,7 @@ fn shellArgs(): Vec<string> {
 
 // ── server: N windows, each N tiled shells; composite the active window ──
 
-fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
+pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
     var gridRows = rows - 1
     let sa = shellArgs()
     var ptys: Vec<Pty> = Vec.new()
@@ -582,7 +584,7 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
     }
 }
 
-fn runServe(): void {
+pub fn runServe(): void {
     match TcpListener.bind(PORT) {
         Result.Ok(listener) => {
             setNonblock(listener.fd)
@@ -599,11 +601,11 @@ fn runServe(): void {
 
 // ── client: relay this terminal to the daemon, detach on Ctrl-B d ──
 
-let TIOCGWINSZ: i64 = 1074295912 // 0x40087468 (macOS)
+pub let TIOCGWINSZ: i64 = 1074295912 // 0x40087468 (macOS)
 
 // Tell the daemon our terminal size as a \x1e-bracketed "rows;cols" message,
 // so it can size the PTY + grid to match this client.
-fn sendSize(sockFd: i32): void {
+pub fn sendSize(sockFd: i32): void {
     var ws = WinSize {
         rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
@@ -616,7 +618,7 @@ fn sendSize(sockFd: i32): void {
     }
 }
 
-fn attachLoop(sockFd: i32, winchFd: i32): void {
+pub fn attachLoop(sockFd: i32, winchFd: i32): void {
     var buf: [u8; 4096] = [0; 4096]
     var one: [u8; 1] = [0; 1]
     var prefixArmed = false
@@ -684,7 +686,7 @@ fn attachLoop(sockFd: i32, winchFd: i32): void {
     }
 }
 
-fn runAttach(): void {
+pub fn runAttach(): void {
     if !isInteractive() {
         print("tmuxd: attach needs a terminal")
         return
@@ -717,7 +719,7 @@ fn runAttach(): void {
     }
 }
 
-fn main(): void {
+pub fn main(): void {
     let argv = args()
     var mode = "attach"
     if argv.len >= 2 {

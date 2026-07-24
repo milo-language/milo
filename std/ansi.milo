@@ -6,32 +6,32 @@
 // emit; build a frame in one buffer and write it once to avoid flicker.
 
 // Move the cursor to a 1-based (row, col).
-fn cursorTo(row: i64, col: i64): string {
+pub fn cursorTo(row: i64, col: i64): string {
     return $"\x1b[{row};{col}H"
 }
 
 // Cursor to home (row 1, col 1).
-fn cursorHome(): string {
+pub fn cursorHome(): string {
     return "\x1b[H"
 }
 
 // xterm-256 foreground select-graphic-rendition for a palette index (0–255).
-fn fg256(code: i64): string {
+pub fn fg256(code: i64): string {
     return $"\x1b[38;5;{code}m"
 }
 
 // xterm-256 background SGR.
-fn bg256(code: i64): string {
+pub fn bg256(code: i64): string {
     return $"\x1b[48;5;{code}m"
 }
 
 // Truecolor (24-bit) foreground / background — smooth gradients on terminals
 // that support it (most modern ones). r/g/b are 0–255.
-fn fg24(r: i64, g: i64, b: i64): string {
+pub fn fg24(r: i64, g: i64, b: i64): string {
     return $"\x1b[38;2;{r};{g};{b}m"
 }
 
-fn bg24(r: i64, g: i64, b: i64): string {
+pub fn bg24(r: i64, g: i64, b: i64): string {
     return $"\x1b[48;2;{r};{g};{b}m"
 }
 
@@ -40,7 +40,7 @@ fn bg24(r: i64, g: i64, b: i64): string {
 // fg24/bg24 return a freshly-allocated string; in a per-cell loop that
 // allocation dominates. These append the same bytes straight into a caller's
 // buffer with zero allocation — the fast path behind full-screen animation.
-fn _ansiPushU8(buf: &mut string, n: i64): void {
+pub fn _ansiPushU8(buf: &mut string, n: i64): void {
     if n >= 100 {
         let h = n / 100
         let rem = n - h * 100
@@ -57,13 +57,13 @@ fn _ansiPushU8(buf: &mut string, n: i64): void {
     }
 }
 
-fn _ansiPushRaw(buf: &mut string, s: &string): void {
+pub fn _ansiPushRaw(buf: &mut string, s: &string): void {
     for i in 0..s.len {
         buf.push(s[i])
     }
 }
 
-fn _ansiPush24(buf: &mut string, lead: &string, r: i64, g: i64, b: i64): void {
+pub fn _ansiPush24(buf: &mut string, lead: &string, r: i64, g: i64, b: i64): void {
     _ansiPushRaw(buf, lead)
     _ansiPushU8(buf, r)
     buf.push(59 as u8) // ';'
@@ -74,94 +74,94 @@ fn _ansiPush24(buf: &mut string, lead: &string, r: i64, g: i64, b: i64): void {
 }
 
 // Append a 24-bit foreground / background SGR directly into buf (no allocation).
-fn pushFg24(buf: &mut string, r: i64, g: i64, b: i64): void {
+pub fn pushFg24(buf: &mut string, r: i64, g: i64, b: i64): void {
     _ansiPush24(buf, "\x1b[38;2;", r, g, b)
 }
 
-fn pushBg24(buf: &mut string, r: i64, g: i64, b: i64): void {
+pub fn pushBg24(buf: &mut string, r: i64, g: i64, b: i64): void {
     _ansiPush24(buf, "\x1b[48;2;", r, g, b)
 }
 
 // Reset all attributes to the terminal default.
-fn ansiReset(): string {
+pub fn ansiReset(): string {
     return "\x1b[0m"
 }
 
 // Erase the entire screen.
-fn clearScreen(): string {
+pub fn clearScreen(): string {
     return "\x1b[2J"
 }
 
 // Erase from the cursor to the end of the line.
-fn clearLine(): string {
+pub fn clearLine(): string {
     return "\x1b[K"
 }
 
 // Hide / show the cursor — hide while drawing a full-screen UI, show on exit.
-fn hideCursor(): string {
+pub fn hideCursor(): string {
     return "\x1b[?25l"
 }
 
-fn showCursor(): string {
+pub fn showCursor(): string {
     return "\x1b[?25h"
 }
 
 // Alternate screen buffer: a full-screen app switches to it on start and back
 // on exit, so the user's scrollback and prompt are restored untouched rather
 // than overwritten by the app's output.
-fn enterAltScreen(): string {
+pub fn enterAltScreen(): string {
     return "\x1b[?1049h"
 }
 
-fn exitAltScreen(): string {
+pub fn exitAltScreen(): string {
     return "\x1b[?1049l"
 }
 
 // Cursor position save/restore, for writing outside the live region (a log
 // line, a status write) and returning without recomputing coordinates.
-fn saveCursor(): string {
+pub fn saveCursor(): string {
     return "\x1b7"
 }
 
-fn restoreCursor(): string {
+pub fn restoreCursor(): string {
     return "\x1b8"
 }
 
 // Relative cursor motion. A frame renderer moving between nearby cells emits
 // far fewer bytes with these than by re-addressing absolutely via cursorTo.
-fn cursorUp(n: i64): string {
+pub fn cursorUp(n: i64): string {
     return $"\x1b[{n}A"
 }
 
-fn cursorDown(n: i64): string {
+pub fn cursorDown(n: i64): string {
     return $"\x1b[{n}B"
 }
 
-fn cursorRight(n: i64): string {
+pub fn cursorRight(n: i64): string {
     return $"\x1b[{n}C"
 }
 
-fn cursorLeft(n: i64): string {
+pub fn cursorLeft(n: i64): string {
     return $"\x1b[{n}D"
 }
 
 // Move to column `col` on the current row (1-based).
-fn cursorColumn(col: i64): string {
+pub fn cursorColumn(col: i64): string {
     return $"\x1b[{col}G"
 }
 
 // Erase from the cursor to the end of the screen — used to clear a shrinking
 // live region without repainting rows that are already correct.
-fn clearToEnd(): string {
+pub fn clearToEnd(): string {
     return "\x1b[0J"
 }
 
 // Bracketed paste: with this on, pasted text arrives wrapped in
 // ESC[200~ / ESC[201~ so it is never mistaken for typed key chords.
-fn enableBracketedPaste(): string {
+pub fn enableBracketedPaste(): string {
     return "\x1b[?2004h"
 }
 
-fn disableBracketedPaste(): string {
+pub fn disableBracketedPaste(): string {
     return "\x1b[?2004l"
 }

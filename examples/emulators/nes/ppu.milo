@@ -10,7 +10,7 @@ from "./cartridge" import {
     Cartridge
 }
 
-struct Ppu {
+pub struct Ppu {
     chr: Vec<u8> // pattern tables ($0000-$1FFF)
     chrBankOffset: [i64; 8] // byte offset into chr for each 1 KiB window (mapper CHR banking)
     vram: [u8; 2048] // 2 physical nametables ($2000-$2FFF, mirrored)
@@ -55,7 +55,7 @@ struct Ppu {
     fb: [u32; 61440] // 256x240 ARGB/ABGR framebuffer (R,G,B,A byte order)
 }
 
-fn newPpu(chr: Vec<u8>, mirrorVertical: bool): Ppu {
+pub fn newPpu(chr: Vec<u8>, mirrorVertical: bool): Ppu {
     // CHR-RAM carts report 0 CHR banks; give them 8 KiB of zeroed RAM.
     var c = chr
     if c.len == 0 {
@@ -82,7 +82,7 @@ fn newPpu(chr: Vec<u8>, mirrorVertical: bool): Ppu {
 // --- MMC2 (mapper 9) CHR banking ---
 // Recompute the 1 KiB CHR windows from the two 4 KiB bank selects (each chosen by
 // its latch). Windows 0-3 cover $0000-$0FFF, windows 4-7 cover $1000-$1FFF.
-fn mmc2UpdateChr(ppu: &mut Ppu): void {
+pub fn mmc2UpdateChr(ppu: &mut Ppu): void {
     let n4k = ppu.chr.len / 4096
     let b0 = if ppu.mmc2Latch0 == 0 {
         ppu.mmc2ChrFD0
@@ -105,13 +105,13 @@ fn mmc2UpdateChr(ppu: &mut Ppu): void {
     }
 }
 
-fn mmc2InitMapper(ppu: &mut Ppu): void {
+pub fn mmc2InitMapper(ppu: &mut Ppu): void {
     ppu.mmc2 = true
     mmc2UpdateChr(ppu)
 }
 
 // CPU-side CHR bank register write: which = 0:FD0 1:FE0 2:FD1 3:FE1.
-fn mmc2SetChr(ppu: &mut Ppu, which: i64, bank: i64): void {
+pub fn mmc2SetChr(ppu: &mut Ppu, which: i64, bank: i64): void {
     if which == 0 {
         ppu.mmc2ChrFD0 = bank
     } else if which == 1 {
@@ -126,7 +126,7 @@ fn mmc2SetChr(ppu: &mut Ppu, which: i64, bank: i64): void {
 
 // Flip a latch when the PPU reads the high plane of tile $FD/$FE ($xFD8-$xFDF /
 // $xFE8-$xFEF). The new bank affects subsequent fetches; recompute on change.
-fn mmc2Latch(ppu: &mut Ppu, a: i64): void {
+pub fn mmc2Latch(ppu: &mut Ppu, a: i64): void {
     var changed = false
     if a >= 0x0FD8 && a <= 0x0FDF {
         if ppu.mmc2Latch0 != 0 {
@@ -161,7 +161,7 @@ fn mmc2Latch(ppu: &mut Ppu, a: i64): void {
 // unused fetches re-arm the FD background bank on every HUD/crowd line (the
 // visible window itself has no trigger tiles there). Without this the HUD
 // renders from the FE bank left over by the ring-floor rows: garbled tiles.
-fn mmc2ExtraBgFetches(ppu: &mut Ppu, scrollX: i64, scrollY: i64): void {
+pub fn mmc2ExtraBgFetches(ppu: &mut Ppu, scrollX: i64, scrollY: i64): void {
     let bgTable: i64 = if (ppu.ctrl & 0x10) != 0 {
         0x1000
     } else {
@@ -189,7 +189,7 @@ fn mmc2ExtraBgFetches(ppu: &mut Ppu, scrollX: i64, scrollY: i64): void {
 }
 
 // --- nametable mirroring: map a $2000-$2FFF address into the 2 KiB VRAM ---
-fn mirrorNT(ppu: &Ppu, addr: i64): i64 {
+pub fn mirrorNT(ppu: &Ppu, addr: i64): i64 {
     let a = addr & 0x0FFF // offset within nametable region
     let table = a / 0x0400 // which of the 4 logical nametables (0-3)
     let off = a & 0x03FF
@@ -205,11 +205,11 @@ fn mirrorNT(ppu: &Ppu, addr: i64): i64 {
 }
 
 // Map a $0000-$1FFF pattern address through the 1 KiB CHR bank windows.
-fn chrPhys(ppu: &Ppu, a: i64): i64 {
+pub fn chrPhys(ppu: &Ppu, a: i64): i64 {
     return (ppu.chrBankOffset[a / 0x400] + (a & 0x3FF)) % ppu.chr.len
 }
 
-fn ppuMemRead(ppu: &Ppu, addr: u16): u8 {
+pub fn ppuMemRead(ppu: &Ppu, addr: u16): u8 {
     let a = (addr as i64) & 0x3FFF
     if a < 0x2000 {
         return ppu.chr[chrPhys(ppu, a)]
@@ -234,7 +234,7 @@ fn ppuMemRead(ppu: &Ppu, addr: u16): u8 {
     return ppu.palette[p]
 }
 
-fn ppuMemWrite(ppu: &mut Ppu, addr: u16, val: u8): void {
+pub fn ppuMemWrite(ppu: &mut Ppu, addr: u16, val: u8): void {
     let a = (addr as i64) & 0x3FFF
     if a < 0x2000 {
         ppu.chr[chrPhys(ppu, a)] = val // CHR-RAM (no-op effect for CHR-ROM carts)
@@ -261,7 +261,7 @@ fn ppuMemWrite(ppu: &mut Ppu, addr: u16, val: u8): void {
 }
 
 // --- CPU-facing register interface ($2000-$2007, mirrored every 8) ---
-fn ppuRegRead(ppu: &mut Ppu, reg: i64): u8 {
+pub fn ppuRegRead(ppu: &mut Ppu, reg: i64): u8 {
     if reg == 2 {
         // PPUSTATUS: top 3 bits + stale buffer; reading clears vblank and w latch
         let r = (ppu.status & 0xE0) | (ppu.readBuffer & 0x1F)
@@ -291,7 +291,7 @@ fn ppuRegRead(ppu: &mut Ppu, reg: i64): u8 {
     return 0
 }
 
-fn ppuRegWrite(ppu: &mut Ppu, reg: i64, val: u8): void {
+pub fn ppuRegWrite(ppu: &mut Ppu, reg: i64, val: u8): void {
     if reg == 0 {
         ppu.ctrl = val
         // t: nametable select bits 10-11
@@ -349,7 +349,7 @@ fn ppuRegWrite(ppu: &mut Ppu, reg: i64, val: u8): void {
 
 // Advance the loopy v register vertically at the end of a scanline (fine Y rolls
 // into coarse Y; coarse Y wraps at 29, flipping the vertical nametable).
-fn incrementY(ppu: &mut Ppu): void {
+pub fn incrementY(ppu: &mut Ppu): void {
     var v = ppu.v as i64
     if (v & 0x7000) != 0x7000 {
         v = v + 0x1000 // increment fine Y
@@ -372,7 +372,7 @@ fn incrementY(ppu: &mut Ppu): void {
 // Advance one PPU dot. Renders the just-fetched visible scanline near the end of
 // its fetch window using the *live* scroll (X from t, Y from v) and CHR banks, so
 // mid-frame IRQ splits (scroll changes + CHR bank swaps) land on the right rows.
-fn ppuStep(ppu: &mut Ppu): void {
+pub fn ppuStep(ppu: &mut Ppu): void {
     ppu.dot = ppu.dot + 1
     if ppu.dot > 340 {
         ppu.dot = 0
@@ -416,10 +416,10 @@ fn ppuStep(ppu: &mut Ppu): void {
 }
 
 // --- NES master palette (0xRRGGBB), 2C02 canonical set ---
-let NESPAL: [u32; 64] = [0x545454, 0x001E74, 0x081090, 0x300088, 0x440064, 0x5C0030, 0x540400, 0x3C1800, 0x202A00, 0x083A00, 0x004000, 0x003C00, 0x00323C, 0x000000, 0x000000, 0x000000, 0x989698, 0x084CC4, 0x3032EC, 0x5C1EE4, 0x8814B0, 0xA01464, 0x982220, 0x783C00, 0x545A00, 0x287200, 0x087C00, 0x007628, 0x006678, 0x000000, 0x000000, 0x000000, 0xECEEEC, 0x4C9AEC, 0x787CEC, 0xB062EC, 0xE454EC, 0xEC58B4, 0xEC6A64, 0xD48820, 0xA0AA00, 0x74C400, 0x4CD020, 0x38CC6C, 0x38B4CC, 0x3C3C3C, 0x000000, 0x000000, 0xECEEEC, 0xA8CCEC, 0xBCBCEC, 0xD4B2EC, 0xECAEEC, 0xECAED4, 0xECB4B0, 0xE4C490, 0xCCD278, 0xB4DE78, 0xA8E290, 0x98E2B4, 0xA0D6E4, 0xA0A2A0, 0x000000, 0x000000,]
+pub let NESPAL: [u32; 64] = [0x545454, 0x001E74, 0x081090, 0x300088, 0x440064, 0x5C0030, 0x540400, 0x3C1800, 0x202A00, 0x083A00, 0x004000, 0x003C00, 0x00323C, 0x000000, 0x000000, 0x000000, 0x989698, 0x084CC4, 0x3032EC, 0x5C1EE4, 0x8814B0, 0xA01464, 0x982220, 0x783C00, 0x545A00, 0x287200, 0x087C00, 0x007628, 0x006678, 0x000000, 0x000000, 0x000000, 0xECEEEC, 0x4C9AEC, 0x787CEC, 0xB062EC, 0xE454EC, 0xEC58B4, 0xEC6A64, 0xD48820, 0xA0AA00, 0x74C400, 0x4CD020, 0x38CC6C, 0x38B4CC, 0x3C3C3C, 0x000000, 0x000000, 0xECEEEC, 0xA8CCEC, 0xBCBCEC, 0xD4B2EC, 0xECAEEC, 0xECAED4, 0xECB4B0, 0xE4C490, 0xCCD278, 0xB4DE78, 0xA8E290, 0x98E2B4, 0xA0D6E4, 0xA0A2A0, 0x000000, 0x000000,]
 
 // Convert a 6-bit NES color index to a framebuffer u32 (R,G,B,A byte order).
-fn nesColor(idx: i64): u32
+pub fn nesColor(idx: i64): u32
 ensures(result & 0xFF000000) == 0xFF000000 // every emitted pixel is fully opaque
 {
     let c = NESPAL[idx & 0x3F] as i64
@@ -432,7 +432,7 @@ ensures(result & 0xFF000000) == 0xFF000000 // every emitted pixel is fully opaqu
 // Render one scanline: background (live scroll from t/v) then the sprites that
 // intersect this line, with priority + sprite-0 hit resolved against the line's
 // per-pixel background opacity.
-fn renderScanline(ppu: &mut Ppu, sl: i64): void {
+pub fn renderScanline(ppu: &mut Ppu, sl: i64): void {
     var bgOpaque: [u8; 256] = [0; 256]
     let universal = ppuMemRead(ppu, 0x3F00) as i64
     if (ppu.mask & 0x08) != 0 {
@@ -507,7 +507,7 @@ fn renderScanline(ppu: &mut Ppu, sl: i64): void {
 // Draw the sprites covering scanline sl. Back-to-front so lower OAM index wins;
 // "behind background" sprites hide under opaque bg; sprite-0 opaque-on-opaque
 // overlap raises the sprite-0 hit flag.
-fn renderSpriteLine(ppu: &mut Ppu, sl: i64, bgOpaque: [u8; 256]): void {
+pub fn renderSpriteLine(ppu: &mut Ppu, sl: i64, bgOpaque: [u8; 256]): void {
     if (ppu.mask & 0x10) == 0 {
         return
     }
@@ -595,5 +595,5 @@ fn renderSpriteLine(ppu: &mut Ppu, sl: i64, bgOpaque: [u8; 256]): void {
 
 // Background + sprites now render per-scanline inside ppuStep; the frame is
 // already in fb by vblank, so this is a no-op kept for the frontend call site.
-fn renderFrame(_ppu: &mut Ppu): void {
+pub fn renderFrame(_ppu: &mut Ppu): void {
 }

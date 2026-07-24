@@ -46,7 +46,7 @@ from "./savestate" import {
     loadState
 }
 
-fn atoi(s: &string): i64 {
+pub fn atoi(s: &string): i64 {
     var v: i64 = 0
     for ch in s {
         let c = ch as i64
@@ -57,7 +57,7 @@ fn atoi(s: &string): i64 {
     return v
 }
 
-fn hex2(v: i64): string {
+pub fn hex2(v: i64): string {
     let d = "0123456789ABCDEF"
     var s = ""
     s.push(d[((v >> 4) & 0xF) as i64])
@@ -65,13 +65,13 @@ fn hex2(v: i64): string {
     return s
 }
 
-fn hex4(v: i64): string {
+pub fn hex4(v: i64): string {
     return hex2((v >> 8) & 0xFF) + hex2(v & 0xFF)
 }
 
 // Auto-joypad bit for a button name (0 = unknown). Matches snes.milo's layout:
 // B Y Sel St Up Dn Lt Rt A X L R from bit15 down.
-fn buttonBit(name: &string): i64 {
+pub fn buttonBit(name: &string): i64 {
     if name == "b" {
         return 0x8000
     }
@@ -111,7 +111,7 @@ fn buttonBit(name: &string): i64 {
     return 0
 }
 
-fn writePpm(fb: &Vec<i64>, path: &string): void {
+pub fn writePpm(fb: &Vec<i64>, path: &string): void {
     var out = String.withCapacity(200000)
     let hdr = "P6\n256 224\n255\n"
     var i: i64 = 0
@@ -137,7 +137,7 @@ fn writePpm(fb: &Vec<i64>, path: &string): void {
     }
 }
 
-fn layerNames(bits: i64): string {
+pub fn layerNames(bits: i64): string {
     var s = ""
     if (bits & 0x01) != 0 {
         s = s + " BG1"
@@ -162,7 +162,7 @@ fn layerNames(bits: i64): string {
 
 // Print the full PPU + MMIO picture with the "why is my screen wrong" bits
 // called out explicitly. This is the first thing to read on any visual bug.
-fn dumpRegs(m: &Mem, frame: i64): void {
+pub fn dumpRegs(m: &Mem, frame: i64): void {
     print("== regs @ frame " + frame.toString() + " ==")
     let bright = m.ppu.inidisp & 0x0F
     let fblank = (m.ppu.inidisp & 0x80) != 0
@@ -252,7 +252,7 @@ fn dumpRegs(m: &Mem, frame: i64): void {
 // forceBright: override INIDISP to full brightness (clears force-blank) before
 // rendering — reveals whether the VRAM/layers are actually populated when the
 // game is holding the screen black (fade stall vs genuinely-empty graphics).
-fn renderTo(m: &mut Mem, fb: &mut Vec<i64>, path: &string, forceBright: bool): void {
+pub fn renderTo(m: &mut Mem, fb: &mut Vec<i64>, path: &string, forceBright: bool): void {
     if forceBright {
         m.ppu.inidisp = 0x0F
         m.ppu.hdmaOn = false // ignore per-line HDMA brightness overrides too
@@ -269,7 +269,7 @@ fn renderTo(m: &mut Mem, fb: &mut Vec<i64>, path: &string, forceBright: bool): v
 // Dump on-screen OAM sprites (X/Y in range) with decoded size/tile/pal/prio, so a
 // missing or misplaced sprite is obvious. OBSEL bits 5-7 pick the size PAIR; the
 // per-sprite high-table bit selects small vs large within it.
-fn dumpOam(m: &Mem): void {
+pub fn dumpOam(m: &Mem): void {
     let sizeSel = (m.ppu.obsel >> 5) & 0x07
     print("OAM (OBSEL=$" + hex2(m.ppu.obsel) + " sizeSel=" + sizeSel.toString() + "):")
     var shown: i64 = 0
@@ -314,7 +314,7 @@ fn dumpOam(m: &Mem): void {
 // Dump a few low-WRAM bytes ($00xxxx mirror = m.wram[off]). Useful to check
 // whether per-frame game variables (frame counters, player position, scroll) are
 // advancing when the screen looks frozen.
-fn peekWram(m: &Mem, addrs: &Vec<i64>): void {
+pub fn peekWram(m: &Mem, addrs: &Vec<i64>): void {
     var s = "wram:"
     for a in addrs {
         s = s + " $" + hex2(a & 0xFF) + "=" + hex2(m.wram[a & 0x1FFFF] as i64)
@@ -325,7 +325,7 @@ fn peekWram(m: &Mem, addrs: &Vec<i64>): void {
 // Single-step N instructions from the current state and report the most-visited
 // PCs. A tiny hot set spanning a few bytes = the CPU is spinning in a wait loop
 // (fade/handshake stall); a broad spread = it's executing normally.
-fn probeLoop(cpu: &mut Cpu, m: &mut Mem, n: i64): void {
+pub fn probeLoop(cpu: &mut Cpu, m: &mut Mem, n: i64): void {
     var pcs: Vec<i64> = Vec.new()
     var cnts: Vec<i64> = Vec.new()
     var k: i64 = 0
@@ -371,7 +371,7 @@ fn probeLoop(cpu: &mut Cpu, m: &mut Mem, n: i64): void {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
         print("usage: dbg <rom.sfc> [--frames N] [--state f] [--press btn@a-b] [--shot f] [--layers] [--out prefix]")

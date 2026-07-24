@@ -17,16 +17,16 @@ from "std/base64" import {
 // Fixed compact header for HS256; matches the {"alg":"HS256","typ":"JWT"} that
 // mainstream libraries emit, so signatures line up byte-for-byte. A function rather
 // than a module-scope `let` because Milo disallows runtime global initializers.
-fn _hs256Header(): string {
+pub fn _hs256Header(): string {
     return "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
 }
 
-fn _signingInput(payload: &string): string {
+pub fn _signingInput(payload: &string): string {
     return base64UrlEncode(_hs256Header()) + "." + base64UrlEncode(payload)
 }
 
 // Sign a JSON payload string with HS256, returning a compact JWS.
-fn jwtSignHS256(payload: &string, secret: &string): string {
+pub fn jwtSignHS256(payload: &string, secret: &string): string {
     let si = _signingInput(payload)
     let sig = base64UrlEncode(hmacSha256Bytes(secret, si))
     return si + "." + sig
@@ -34,7 +34,7 @@ fn jwtSignHS256(payload: &string, secret: &string): string {
 
 // Byte-for-byte string equality that does not short-circuit on the first mismatch,
 // so verification does not leak where a forged signature diverges.
-fn _constEq(a: &string, b: &string): bool {
+pub fn _constEq(a: &string, b: &string): bool {
     if a.len != b.len {
         return false
     }
@@ -47,7 +47,7 @@ fn _constEq(a: &string, b: &string): bool {
 
 // Verify a compact HS256 JWS against the secret. Returns true iff the token has the
 // exact header.payload.signature shape and the signature matches.
-fn jwtVerifyHS256(token: &string, secret: &string): bool {
+pub fn jwtVerifyHS256(token: &string, secret: &string): bool {
     // Locate the two dots; reject anything that isn't exactly three segments.
     var firstDot: i64 = -1
     var lastDot: i64 = -1

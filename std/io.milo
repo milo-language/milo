@@ -27,7 +27,7 @@ from "std/event" import {
 
 // ── IoError ──
 
-enum IoError {
+pub enum IoError {
     NotFound(string),
     PermissionDenied(string),
     IsDirectory(string),
@@ -36,7 +36,7 @@ enum IoError {
 }
 
 // map errno to IoError variant with path context
-fn _ioError(path: &string): IoError {
+pub fn _ioError(path: &string): IoError {
     unsafe {
         let e = getErrno()
         if e == 2 {
@@ -57,7 +57,7 @@ fn _ioError(path: &string): IoError {
 }
 
 // Write a string to stdout without appending a newline.
-fn writeStdout(s: &string): void {
+pub fn writeStdout(s: &string): void {
     writeFd(1, s, s.len)
 }
 
@@ -73,7 +73,7 @@ fn writeStdout(s: &string): void {
 // TcpStream / Child) alive and open for as long as you consume the channel —
 // closing or dropping it out from under the pump strands the pump (parks
 // forever), and for a TLS source would read freed SSL state.
-fn fdChannel(fd: i32): Channel<string> {
+pub fn fdChannel(fd: i32): Channel<string> {
     let ch = Channel<string>.new(256)!
     setNonblocking(fd)
     Task.spawn(move(): void => {
@@ -107,7 +107,7 @@ fn fdChannel(fd: i32): Channel<string> {
 // NOTE: this puts fd 0 into O_NONBLOCK and does not restore it, so afterward the
 // blocking readLine/readStdin on the same tty may return early. Pick one style
 // per stdin session; don't mix streaming and blocking reads of the same fd.
-fn stdinChannel(): Channel<string> {
+pub fn stdinChannel(): Channel<string> {
     return fdChannel(0)
 }
 
@@ -125,7 +125,7 @@ fn stdinChannel(): Channel<string> {
 //
 // The reader borrows the fd; it does not own or close it. Keep the owning
 // source (File / Pty / Child / socket) alive for the reader's lifetime.
-enum FdReader {
+pub enum FdReader {
     Green(i32),
     Blocking(i32),
 }
@@ -134,7 +134,7 @@ enum FdReader {
 // non-blocking iff we will park on it so the two never drift apart. Free fn (not
 // an FdReader method) because milo resolves `FdReader.attach` as a variant, not
 // a static method.
-fn fdReaderAttach(fd: i32): FdReader {
+pub fn fdReaderAttach(fd: i32): FdReader {
     if schedulerCurrent() as i64 != 0 {
         setNonblocking(fd)
         return FdReader.Green(fd)
@@ -224,7 +224,7 @@ impl FdReader {
 // ── File ──
 
 // Owned file handle. Automatically closes the fd when dropped.
-struct File {
+pub struct File {
     fd: i32,
 }
 
@@ -324,25 +324,25 @@ impl File {
 
 // Read an entire file into a string. Returns an IoError (NotFound, permission,
 // etc.) rather than throwing; propagate with `?` or match on it.
-fn readFile(path: &string): Result<string, IoError> {
+pub fn readFile(path: &string): Result<string, IoError> {
     let f = File.openRead(path)?
     return f.readAll()
 }
 
 // Write a string to stdout without a trailing newline.
-fn writeStr(s: &string): void {
+pub fn writeStr(s: &string): void {
     writeFd(1, s, s.len)
 }
 
 // Write a single byte to stdout.
-fn putChar(ch: u8): void {
+pub fn putChar(ch: u8): void {
     var _pcBuf: [u8; 1] = [0; 1]
     _pcBuf[0] = ch
     writeFd(1, _pcBuf, 1)
 }
 
 // Split a string into lines on newline boundaries.
-fn splitLines(content: &string): Vec<string> {
+pub fn splitLines(content: &string): Vec<string> {
     var result: Vec<string> = Vec.new()
     var cur = ""
     for byte in content {
@@ -362,13 +362,13 @@ fn splitLines(content: &string): Vec<string> {
 }
 
 // Read a file and return its contents as a Vec of lines.
-fn readLines(path: &string): Result<Vec<string>, IoError> {
+pub fn readLines(path: &string): Result<Vec<string>, IoError> {
     let content = readFile(path)?
     return Result.Ok(splitLines(content))
 }
 
 // Read a single line from a file descriptor (reads byte-by-byte until newline or EOF).
-fn _readLineFd(fd: i32): Option<string> {
+pub fn _readLineFd(fd: i32): Option<string> {
     var _rlBuf: [u8; 1] = [0; 1]
     var _rlResult = ""
     var _rlGot = false
@@ -392,13 +392,13 @@ fn _readLineFd(fd: i32): Option<string> {
 }
 
 // Read a single line from stdin. Returns None at EOF.
-fn readLine(): Option<string> {
+pub fn readLine(): Option<string> {
     return _readLineFd(0)
 }
 
 // Read all of stdin into a string (blocks to EOF). Prefer `stdinChannel()` for
 // streaming/incremental consumption.
-fn readStdin(): string {
+pub fn readStdin(): string {
     var result: string = ""
     var buf: [u8; 4096] = [0; 4096]
     while true {

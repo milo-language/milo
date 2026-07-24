@@ -6,21 +6,21 @@ from "std/json" import {
 
 // ── JSON message builder ──
 
-fn jsonMsg(event: &string, payload: &string): string {
+pub fn jsonMsg(event: &string, payload: &string): string {
     return "{\"event\":\"" + event + "\",\"payload\":" + payload + "}"
 }
 
-fn jsonMsgStr(event: &string, payload: &string): string {
+pub fn jsonMsgStr(event: &string, payload: &string): string {
     return "{\"event\":\"" + event + "\",\"payload\":\"" + payload + "\"}"
 }
 
-fn jsonMsgI64(event: &string, payload: i64): string {
+pub fn jsonMsgI64(event: &string, payload: i64): string {
     return "{\"event\":\"" + event + "\",\"payload\":" + payload.toString() + "}"
 }
 
 // ── init message from terminal → server ──
 
-fn makeInitMessage(rows: i64, cols: i64, command: &string, startTime: &string, isPublic: bool, allowControl: bool): string {
+pub fn makeInitMessage(rows: i64, cols: i64, command: &string, startTime: &string, isPublic: bool, allowControl: bool): string {
     var msg: string = "{"
     msg = msg + "\"rows\":" + rows.toString()
     msg = msg + ",\"cols\":" + cols.toString()
@@ -44,7 +44,7 @@ fn makeInitMessage(rows: i64, cols: i64, command: &string, startTime: &string, i
 
 // ── terminal info (GET /terminal/:id response) ──
 
-fn makeTerminalInfo(terminalId: &string, rows: i64, cols: i64, command: &string, startTime: &string, isPublic: bool, displayName: &string, allowControl: bool): string {
+pub fn makeTerminalInfo(terminalId: &string, rows: i64, cols: i64, command: &string, startTime: &string, isPublic: bool, displayName: &string, allowControl: bool): string {
     var j: string = "{"
     j = j + "\"terminal_id\":\"" + terminalId + "\""
     j = j + ",\"cols\":" + cols.toString()
@@ -71,7 +71,7 @@ fn makeTerminalInfo(terminalId: &string, rows: i64, cols: i64, command: &string,
 
 // ── public sessions list (GET /api/sessions response) ──
 
-fn makePublicSession(terminalId: &string, displayName: &string, command: &string, rows: i64, cols: i64, startTime: &string, viewerCount: i64): string {
+pub fn makePublicSession(terminalId: &string, displayName: &string, command: &string, rows: i64, cols: i64, startTime: &string, viewerCount: i64): string {
     var j: string = "{"
     j = j + "\"terminal_id\":\"" + terminalId + "\""
     j = j + ",\"display_name\":\"" + displayName + "\""
@@ -87,48 +87,48 @@ fn makePublicSession(terminalId: &string, displayName: &string, command: &string
 
 // ── resize payload ──
 
-fn makeResizeMsg(rows: i64, cols: i64): string {
+pub fn makeResizeMsg(rows: i64, cols: i64): string {
     return jsonMsg("resize", "{\"rows\":" + rows.toString() + ",\"cols\":" + cols.toString() + "}")
 }
 
 // ── start_broadcast response ──
 
-fn makeStartBroadcast(terminalId: &string): string {
+pub fn makeStartBroadcast(terminalId: &string): string {
     return jsonMsg("start_broadcast", "{\"terminal_id\":\"" + terminalId + "\"}")
 }
 
 // ── new_output — wraps base64-encoded pty output ──
 
-fn makeNewOutput(b64Data: &string): string {
+pub fn makeNewOutput(b64Data: &string): string {
     return jsonMsgStr("new_output", b64Data)
 }
 
 // ── num_clients ──
 
-fn makeNumClients(n: i64): string {
+pub fn makeNumClients(n: i64): string {
     return jsonMsgI64("num_clients", n)
 }
 
 // ── parse helpers ──
 
-fn parseEvent(raw: &string): string {
+pub fn parseEvent(raw: &string): string {
     let j = jsonParse(raw.clone())!
     return j.str("event") ?? ""
 }
 
 // Read a top-level string field (decrypted command payload is {"data":..,"salt":..}).
-fn parseField(raw: &string, field: &string): string {
+pub fn parseField(raw: &string, field: &string): string {
     let j = jsonParse(raw.clone())!
     return j.str(field) ?? ""
 }
 
-fn parsePayloadStr(raw: &string, field: &string): string {
+pub fn parsePayloadStr(raw: &string, field: &string): string {
     let j = jsonParse(raw.clone())!
     let payload = j.get("payload")!
     return payload.str(field) ?? ""
 }
 
-fn parsePayloadI64(raw: &string, field: &string): i64 {
+pub fn parsePayloadI64(raw: &string, field: &string): i64 {
     let j = jsonParse(raw.clone())!
     let payload = j.get("payload")!
     return payload.i64(field) ?? 0

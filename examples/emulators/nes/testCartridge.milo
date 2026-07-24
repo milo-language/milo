@@ -7,7 +7,7 @@ from "./cartridgeFile" import {
     loadCartridge
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let path = "roms/nes-test-roms/other/nestest.nes"
     match loadCartridge(path) {
         Result.Ok(cart) => {

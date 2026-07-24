@@ -9,20 +9,26 @@ from "std/platform" import {
     read
 }
 
-let KEY_NONE: i32 = 0
-let KEY_UP: i32 = 1
-let KEY_DOWN: i32 = 2
-let KEY_LEFT: i32 = 3
-let KEY_RIGHT: i32 = 4
-let KEY_QUIT: i32 = 5
-let KEY_SPACE: i32 = 6
+pub let KEY_NONE: i32 = 0
+
+pub let KEY_UP: i32 = 1
+
+pub let KEY_DOWN: i32 = 2
+
+pub let KEY_LEFT: i32 = 3
+
+pub let KEY_RIGHT: i32 = 4
+
+pub let KEY_QUIT: i32 = 5
+
+pub let KEY_SPACE: i32 = 6
 
 // Linux x86_64: termios is 60 bytes, padded to 64
-struct TermState {
+pub struct TermState {
     saved: [u8; 64],
 }
 
-fn enableRawMode(): TermState {
+pub fn enableRawMode(): TermState {
     var state = TermState {
         saved: [0; 64],
     }
@@ -64,7 +70,7 @@ fn enableRawMode(): TermState {
 // Like enableRawMode but VMIN=1: read(0,…) blocks until one byte arrives instead
 // of returning immediately. For an input-driven loop (a line editor) this waits on
 // the keyboard without busy-spinning, which VMIN=0 would force.
-fn enableRawModeBlocking(): TermState {
+pub fn enableRawModeBlocking(): TermState {
     var state = TermState {
         saved: [0; 64],
     }
@@ -95,14 +101,14 @@ fn enableRawModeBlocking(): TermState {
     return state
 }
 
-fn restoreTerminal(state: &TermState): void {
+pub fn restoreTerminal(state: &TermState): void {
     unsafe {
         tcsetattr(0, 0, state.saved as *u8)
     }
 }
 
 // read a keypress without blocking; returns KEY_* constant
-fn readKey(): i32 {
+pub fn readKey(): i32 {
     var buf: [u8; 3] = [0; 3]
     unsafe {
         let n = read(0, buf, 1)
@@ -148,12 +154,12 @@ fn readKey(): i32 {
 //
 // Falls back to 80x24 when the fd is not a terminal (piped, redirected, or run
 // under a harness) so callers always get a usable frame size.
-struct TermSize {
+pub struct TermSize {
     rows: i64,
     cols: i64,
 }
 
-fn terminalSize(): TermSize {
+pub fn terminalSize(): TermSize {
     // struct winsize is four u16s: rows, cols, xpixel, ypixel.
     var ws: [u16; 4] = [0; 4]
     unsafe {

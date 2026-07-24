@@ -193,7 +193,7 @@ export class Parser {
     // Injected only when a `for .. in ..codePoints()` desugar actually fired.
     // Putting it in the prelude instead would cost every program the parse and
     // check of std/unicode (~10ms on a trivial build) to serve a rare construct.
-    if (this.codePointLoopCounter > 0 && !imports.some(i => i.path === "std/unicode" && i.names === null)) {
+    if (this.codePointLoopCounter > 0 && !imports.some(i => i.path === "std/unicode")) {
       imports.push({ kind: "ImportDecl", path: "std/unicode", names: ["CodePoint", "decodeCodepoint"] });
     }
     return { structs, enums, functions, imports, traits, impls, typeAliases, interfaces, globals };
@@ -207,12 +207,22 @@ export class Parser {
       // from "path" import { a, b, c }
       this.expect(TokenKind.LBrace);
       const names: string[] = [];
+      const aliases: (string | undefined)[] = [];
+      let anyAlias = false;
       while (!this.at(TokenKind.RBrace)) {
         names.push(this.expect(TokenKind.Ident).value);
+        // `import { foo as bar }` — bind the exported `foo` under local name `bar`.
+        // `as` is already a soft keyword (cast); reuse it here in import position.
+        if (this.match(TokenKind.As)) {
+          aliases.push(this.expect(TokenKind.Ident).value);
+          anyAlias = true;
+        } else {
+          aliases.push(undefined);
+        }
         this.match(TokenKind.Comma);
       }
       this.expect(TokenKind.RBrace);
-      return { kind: "ImportDecl", path: pathTok.value, names, span: { line: tok.line, col: tok.col, file: this.filePath } };
+      return { kind: "ImportDecl", path: pathTok.value, names, aliases: anyAlias ? aliases : undefined, span: { line: tok.line, col: tok.col, file: this.filePath } };
     }
     // bare import "path" → error with hint
     if (this.at(TokenKind.Import)) {
@@ -346,7 +356,8 @@ export class Parser {
 
   private parseEnum(): EnumDecl {
     this.expect(TokenKind.Enum);
-    const name = this.expect(TokenKind.Ident).value;
+    const nameTok = this.expect(TokenKind.Ident);
+    const name = nameTok.value;
     const typeParams = this.parseTypeParams();
     this.expect(TokenKind.LBrace);
     const variants: EnumVariant[] = [];
@@ -364,7 +375,7 @@ export class Parser {
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
-    return { kind: "EnumDecl", name, typeParams, variants };
+    return { kind: "EnumDecl", name, typeParams, variants, span: { line: nameTok.line, col: nameTok.col, file: this.filePath } };
   }
 
   // ── Functions ──

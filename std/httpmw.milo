@@ -19,7 +19,7 @@ from "std/deflate" import {
 
 // Token from an `Authorization: Bearer <token>` header; "" if absent or wrong
 // scheme. Scheme match is case-insensitive (RFC 7235 §2.1), the token is not.
-fn bearerToken(ctx: &Context): string {
+pub fn bearerToken(ctx: &Context): string {
     let auth = ctx.header("Authorization")
     let prefixLen: i64 = 7 // "Bearer "
     if auth.len <= prefixLen {
@@ -41,7 +41,7 @@ fn bearerToken(ctx: &Context): string {
 
 // True iff the request carries a bearer token with a valid HS256 signature for
 // `secret`. Signature check is constant-time (see std/jwt); does not decode claims.
-fn verifyBearer(ctx: &Context, secret: &string): bool {
+pub fn verifyBearer(ctx: &Context, secret: &string): bool {
     let token = bearerToken(ctx)
     if token.len == 0 {
         return false
@@ -65,12 +65,12 @@ fn verifyBearer(ctx: &Context, secret: &string): bool {
 
 // Below this, gzip framing (18 bytes of gzip header+trailer) outweighs any saving,
 // so small bodies are sent as-is.
-let GZIP_MIN: i64 = 256
+pub let GZIP_MIN: i64 = 256
 
 // Substring test for "gzip" in an Accept-Encoding value. Deliberately loose: it does
 // not parse q-values, so `gzip;q=0` would still match — acceptable, since a client
 // that lists gzip at all can decode it.
-fn acceptsGzip(headerVal: &string): bool {
+pub fn acceptsGzip(headerVal: &string): bool {
     if headerVal.len < 4 {
         return false
     }
@@ -85,7 +85,7 @@ fn acceptsGzip(headerVal: &string): bool {
 // Middleware: gzip the response body when the client sent `Accept-Encoding: gzip`
 // and the body clears GZIP_MIN. Sets `Content-Encoding: gzip`; Content-Length is
 // recomputed from the (compressed) body downstream, so no manual length bookkeeping.
-fn gzip(ctx: &mut Context, next: (&mut Context) => Response): Response {
+pub fn gzip(ctx: &mut Context, next: (&mut Context) => Response): Response {
     let resp = next(ctx)
     if !acceptsGzip(ctx.header("Accept-Encoding")) {
         return resp

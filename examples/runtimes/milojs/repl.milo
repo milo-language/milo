@@ -49,7 +49,7 @@ from "./complete" import {
     completeAt, cmplCommonPrefix, cmplSlice, cmplIsIdentByte, CMPL_SESSION, CMPL_KEYWORD
 }
 
-enum LineResult {
+pub enum LineResult {
     Line(string),
     Eof,
     // Ctrl-C while a multi-line block was being collected: throw the block away
@@ -57,13 +57,14 @@ enum LineResult {
     Cancel,
 }
 
-let SPR_W: i64 = 18
-let SPR_ROWS: i64 = 18 // pixel rows (even → SPR_ROWS/2 terminal rows tall)
+pub let SPR_W: i64 = 18
+
+pub let SPR_ROWS: i64 = 18 // pixel rows (even → SPR_ROWS/2 terminal rows tall)
 
 // Milo the chihuahua, the mascot — same pixel-art bitmap as examples/graphics/chihuahua.milo.
 // Legend: space=transparent d=dark-brown b=brown-shadow t=tan l=light-tan
 // w=cream W=white-highlight k=eye/nose g=eye-glint p=pink
-fn spriteRow(i: i64): string {
+pub fn spriteRow(i: i64): string {
     if i == 0 {
         return "  dd          dd  "
     } else if i == 1 {
@@ -102,7 +103,7 @@ fn spriteRow(i: i64): string {
     return "     bbtttbb      "
 }
 
-fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
+pub fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
     out[0] = r
     out[1] = g
     out[2] = b
@@ -110,7 +111,7 @@ fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
 }
 
 // Map a palette char to an RGB color; out[3]=0 marks a transparent pixel.
-fn charRGB(ch: u8, out: &mut [i64; 4]): void {
+pub fn charRGB(ch: u8, out: &mut [i64; 4]): void {
     let c = ch as i64
     if c == 100 {
         setC(out, 96, 60, 38) // d  dark brown (ear/outline)
@@ -137,14 +138,14 @@ fn charRGB(ch: u8, out: &mut [i64; 4]): void {
 
 // name-prefixed: builtins.milo already defines a charAt, and Milo merges all
 // modules into one namespace
-fn sprCharAt(row: &string, c: i64): u8 {
+pub fn sprCharAt(row: &string, c: i64): u8 {
     if c < row.len {
         return row[c]
     }
     return 32 as u8
 }
 
-fn emit(buf: &mut string, s: &string): void {
+pub fn emit(buf: &mut string, s: &string): void {
     for i in 0..s.len {
         buf.push(s[i])
     }
@@ -152,7 +153,7 @@ fn emit(buf: &mut string, s: &string): void {
 
 // The wordmark printed to the right of the dog, one entry per sprite row so the
 // two line up. Sprite is 9 rows tall, wordmark 6 — offset by 1 to sit centered.
-fn wordmarkRow(tr: i64): string {
+pub fn wordmarkRow(tr: i64): string {
     // gradient runs light-tan → dark-brown, pulled from the sprite's own palette
     if tr == 1 {
         return fg24(240, 226, 206) + "███╗   ███╗██╗██╗      ██████╗      ██╗███████╗"
@@ -174,7 +175,7 @@ fn wordmarkRow(tr: i64): string {
 // stacked pixels via ▀ (fg=top half, bg=bottom half), so the 18-row sprite fits in
 // 9 rows. Built as ONE string and written with a single raw write(2): print()
 // buffers through libc stdout, so mixing the two would reorder the output.
-fn banner(): void {
+pub fn banner(): void {
     var buf = ""
     var tcol: [i64; 4] = [0; 4]
     var bcol: [i64; 4] = [0; 4]
@@ -221,9 +222,9 @@ fn banner(): void {
     writeStdout(buf)
 }
 
-let HISTORY_MAX: i64 = 1000
+pub let HISTORY_MAX: i64 = 1000
 
-fn historyPath(): string {
+pub fn historyPath(): string {
     match getEnv("HOME") {
         Option.Some(h) => {
             return h + "/.milojs_history"
@@ -236,7 +237,7 @@ fn historyPath(): string {
 
 // One entry per line. A multi-line block would break that, so its newlines are
 // escaped on the way out and restored on the way in.
-fn escapeEntry(s: &string): string {
+pub fn escapeEntry(s: &string): string {
     var out = ""
     for i in 0..s.len() {
         if s[i] == 10 as u8 {
@@ -252,7 +253,7 @@ fn escapeEntry(s: &string): string {
     return out
 }
 
-fn unescapeEntry(s: &string): string {
+pub fn unescapeEntry(s: &string): string {
     var out = ""
     var i: i64 = 0
     while i < s.len() {
@@ -274,7 +275,7 @@ fn unescapeEntry(s: &string): string {
     return out
 }
 
-fn loadHistory(history: &mut Vec<string>) {
+pub fn loadHistory(history: &mut Vec<string>) {
     let path = historyPath()
     if path.len() == 0 {
         return
@@ -304,7 +305,7 @@ fn loadHistory(history: &mut Vec<string>) {
 
 // Whole-file rewrite on exit, keeping only the newest HISTORY_MAX entries. Two
 // REPLs exiting at once means last-writer-wins; node has the same behaviour.
-fn saveHistory(history: &Vec<string>) {
+pub fn saveHistory(history: &Vec<string>) {
     let path = historyPath()
     if path.len() == 0 {
         return
@@ -330,7 +331,7 @@ fn saveHistory(history: &Vec<string>) {
 // The line editor is one line, so a recalled multi-line block has its newlines
 // flattened to spaces. JS only depends on newlines through semicolon insertion,
 // and a block that already parsed keeps parsing on one line.
-fn flattenEntry(s: &string): string {
+pub fn flattenEntry(s: &string): string {
     var out = ""
     for i in 0..s.len() {
         if s[i] == 10 as u8 {
@@ -342,7 +343,7 @@ fn flattenEntry(s: &string): string {
     return out
 }
 
-fn isUndefined(v: &JSValue): bool {
+pub fn isUndefined(v: &JSValue): bool {
     match v {
         JSValue.Undefined => {
             return true
@@ -358,7 +359,7 @@ fn isUndefined(v: &JSValue): bool {
 // Finally walk the cursor back from end-of-line to `cur`. Moving relatively (not
 // to an absolute column) keeps this correct without having to know how wide the
 // prompt renders — it is full of escape bytes that occupy no columns.
-fn redraw(prompt: &string, line: &string, cur: i64): void {
+pub fn redraw(prompt: &string, line: &string, cur: i64): void {
     var s = "\r" + prompt + line + clearLine()
     let back = line.len() - cur
     if back > 0 {
@@ -367,7 +368,7 @@ fn redraw(prompt: &string, line: &string, cur: i64): void {
     writeStdout(s)
 }
 
-fn strInsert(s: &string, at: i64, b: u8): string {
+pub fn strInsert(s: &string, at: i64, b: u8): string {
     var out = ""
     for i in 0..at {
         out.push(s[i])
@@ -382,7 +383,7 @@ fn strInsert(s: &string, at: i64, b: u8): string {
 }
 
 // The half-open span [from, to) removed.
-fn strCut(s: &string, from: i64, to: i64): string {
+pub fn strCut(s: &string, from: i64, to: i64): string {
     var out = ""
     for i in 0..from {
         out.push(s[i])
@@ -395,21 +396,21 @@ fn strCut(s: &string, from: i64, to: i64): string {
     return out
 }
 
-fn isSpaceByte(b: u8): bool {
+pub fn isSpaceByte(b: u8): bool {
     return b == 32 as u8 || b == 9 as u8
 }
 
 // Word motion, readline-style: skip any run of separators, then the word itself.
 // `bigWord` uses whitespace as the only separator (what Ctrl-W kills in a shell);
 // otherwise anything non-alphanumeric separates, so `foo.bar` is two words.
-fn wordSep(b: u8, bigWord: bool): bool {
+pub fn wordSep(b: u8, bigWord: bool): bool {
     if bigWord {
         return isSpaceByte(b)
     }
     return !cmplIsIdentByte(b)
 }
 
-fn wordLeft(line: &string, cur: i64, bigWord: bool): i64 {
+pub fn wordLeft(line: &string, cur: i64, bigWord: bool): i64 {
     var i = cur
     while i > 0 && wordSep(line[i - 1], bigWord) {
         i = i - 1
@@ -420,7 +421,7 @@ fn wordLeft(line: &string, cur: i64, bigWord: bool): i64 {
     return i
 }
 
-fn wordRight(line: &string, cur: i64, bigWord: bool): i64 {
+pub fn wordRight(line: &string, cur: i64, bigWord: bool): i64 {
     var i = cur
     while i < line.len() && wordSep(line[i], bigWord) {
         i = i + 1
@@ -432,19 +433,29 @@ fn wordRight(line: &string, cur: i64, bigWord: bool): i64 {
 }
 
 // Keys that arrive as multi-byte escape sequences, normalised to one id.
-let K_NONE: i64 = 0
-let K_UP: i64 = 1
-let K_DOWN: i64 = 2
-let K_LEFT: i64 = 3
-let K_RIGHT: i64 = 4
-let K_HOME: i64 = 5
-let K_END: i64 = 6
-let K_DELETE: i64 = 7
-let K_WORD_LEFT: i64 = 8
-let K_WORD_RIGHT: i64 = 9
-let K_DELETE_WORD: i64 = 10
+pub let K_NONE: i64 = 0
 
-fn csiFinal(c: u8, num: i64): i64 {
+pub let K_UP: i64 = 1
+
+pub let K_DOWN: i64 = 2
+
+pub let K_LEFT: i64 = 3
+
+pub let K_RIGHT: i64 = 4
+
+pub let K_HOME: i64 = 5
+
+pub let K_END: i64 = 6
+
+pub let K_DELETE: i64 = 7
+
+pub let K_WORD_LEFT: i64 = 8
+
+pub let K_WORD_RIGHT: i64 = 9
+
+pub let K_DELETE_WORD: i64 = 10
+
+pub fn csiFinal(c: u8, num: i64): i64 {
     if c == 65 as u8 {
         return K_UP
     }
@@ -481,7 +492,7 @@ fn csiFinal(c: u8, num: i64): i64 {
 // Decode the rest of an escape sequence, ESC already consumed. Handles the CSI
 // forms (`ESC [ … final`, including the `ESC [ 1 ; 5 C` modifier form terminals
 // send for Ctrl-arrow) and the Alt-<letter> forms readline binds to word motion.
-fn readEscapeKey(): i64 {
+pub fn readEscapeKey(): i64 {
     var buf: [u8; 4] = [0; 4]
     if readFd(0, buf, 1) <= 0 {
         return K_NONE
@@ -536,9 +547,9 @@ fn readEscapeKey(): i64 {
     return K_NONE
 }
 
-let CMPL_MAX_SHOWN: i64 = 120
+pub let CMPL_MAX_SHOWN: i64 = 120
 
-fn padTo(s: &string, w: i64): string {
+pub fn padTo(s: &string, w: i64): string {
     var out = s.clone()
     var i = s.len()
     while i < w {
@@ -551,7 +562,7 @@ fn padTo(s: &string, w: i64): string {
 // Colour by kind, so a glance separates what this session defined from the ~90
 // builtins it's buried among. Padding is applied to the bare name first — escape
 // bytes count toward .len() but occupy no columns.
-fn paintCandidate(name: &string, kind: i64, w: i64): string {
+pub fn paintCandidate(name: &string, kind: i64, w: i64): string {
     let cell = padTo(name, w + 2)
     if kind == CMPL_SESSION {
         return fg24(226, 192, 150) + cell + ansiReset()
@@ -565,7 +576,7 @@ fn paintCandidate(name: &string, kind: i64, w: i64): string {
 // Candidate list in fixed-width columns across an assumed 80-col terminal, with a
 // blank line between kinds (node groups its listing the same way, one group per
 // object in the prototype chain).
-fn formatCandidates(cands: &Vec<string>, kinds: &Vec<i64>): string {
+pub fn formatCandidates(cands: &Vec<string>, kinds: &Vec<i64>): string {
     var w: i64 = 0
     for i in 0..cands.len() {
         if cands[i].len() > w {
@@ -613,7 +624,7 @@ fn formatCandidates(cands: &Vec<string>, kinds: &Vec<i64>): string {
 // Raw-mode line editor. Owns the prompt so it can repaint on history recall.
 // Raw mode clears ISIG, so Ctrl-C arrives as byte 3 rather than a signal — the
 // double-tap-to-exit is handled here, no signal handler needed.
-fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp, builtinCount: i64, inBlock: bool): LineResult {
+pub fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp, builtinCount: i64, inBlock: bool): LineResult {
     let ts = enableRawModeBlocking()
     var line = ""
     // history.len() == "editing a fresh line", below that indexes older entries
@@ -856,7 +867,7 @@ fn readLineEdited(prompt: &string, history: &Vec<string>, st: &Interp, builtinCo
 
 // Run one already-parsed top block: execute every statement, and if the last one
 // is a bare expression, return its value for echoing.
-fn runLine(prog: &Prog, top: i64, st: &mut Interp): JSValue {
+pub fn runLine(prog: &Prog, top: i64, st: &mut Interp): JSValue {
     var result = JSValue.Undefined
     let n = prog.blocks[top].len()
     var i: i64 = 0
@@ -884,7 +895,7 @@ fn runLine(prog: &Prog, top: i64, st: &mut Interp): JSValue {
 }
 
 // The read-eval-print loop. `st` must already have globals + Node globals installed.
-fn repl(st: &mut Interp): i32 {
+pub fn repl(st: &mut Interp): i32 {
     banner()
 
     // one growing Prog: func indices stay valid across lines (see file header)

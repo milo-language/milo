@@ -5,7 +5,7 @@ from "std/os" import {
     strlen, strncmp
 }
 
-struct CStr {
+pub struct CStr {
     _ptr: *u8,
     _len: i64,
 }

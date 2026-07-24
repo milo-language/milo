@@ -13,10 +13,11 @@ from "./cartcore" import {
     Cart, parseCart
 }
 
-let SNES_W: i64 = 256
-let SNES_H: i64 = 224
+pub let SNES_W: i64 = 256
 
-struct SnesHandle {
+pub let SNES_H: i64 = 224
+
+pub struct SnesHandle {
     cpu: Cpu
     m: Mem
     fb: Vec<i64> // renderFrame target: 0xRRGGBB per pixel, SNES_W * SNES_H
@@ -25,7 +26,7 @@ struct SnesHandle {
 
 // Parse `rom` and boot the machine. On a bad image, boots a tiny stub cart so the
 // JS side always gets a usable handle (a black screen beats a crash).
-fn createSnes(rom: Vec<u8>): SnesHandle {
+pub fn createSnes(rom: Vec<u8>): SnesHandle {
     var data: Vec<u8> = Vec.new()
     var mapMode: i64 = 0
     match parseCart(rom) {
@@ -61,19 +62,19 @@ fn createSnes(rom: Vec<u8>): SnesHandle {
 // Auto-read joypad 1 word. Bits (matches snes.milo): 0x8000 B, 0x4000 Y,
 // 0x2000 Select, 0x1000 Start, 0x0800 Up, 0x0400 Down, 0x0200 Left, 0x0100 Right,
 // 0x0080 A, 0x0040 X, 0x0020 L, 0x0010 R.
-fn setButtons(h: &mut SnesHandle, j: i64): void {
+pub fn setButtons(h: &mut SnesHandle, j: i64): void {
     h.m.joy1 = j
 }
 
 // Second controller (auto-read joypad 2, $421A/$421B). Same bit layout.
-fn setButtons2(h: &mut SnesHandle, j: i64): void {
+pub fn setButtons2(h: &mut SnesHandle, j: i64): void {
     h.m.joy2 = j
 }
 
 // Advance one video frame, then rasterize the PPU's 0xRRGGBB framebuffer into the
 // RGBA buffer the driver uploads to its canvas. (Named `advanceFrame` because the
 // core's per-frame step is also `stepFrame`; Milo has no import aliasing.)
-fn advanceFrame(h: &mut SnesHandle): void {
+pub fn advanceFrame(h: &mut SnesHandle): void {
     stepFrame(h.cpu, h.m)
     renderFrame(h.m.ppu, h.fb)
     var i: i64 = 0
@@ -88,16 +89,16 @@ fn advanceFrame(h: &mut SnesHandle): void {
     }
 }
 
-fn frameW(h: &SnesHandle): i64 {
+pub fn frameW(h: &SnesHandle): i64 {
     return SNES_W
 }
 
-fn frameH(h: &SnesHandle): i64 {
+pub fn frameH(h: &SnesHandle): i64 {
     return SNES_H
 }
 
 // emit-js appends `main(); __flush();`; no-op so importing in the browser has no
 // side effects — the driver drives everything.
-fn main(): i32 {
+pub fn main(): i32 {
     return 0
 }

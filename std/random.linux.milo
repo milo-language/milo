@@ -1,9 +1,9 @@
 // std/random — random number generation (Linux/getentropy)
 
-extern fn getentropy(_buf: *u8, _len: i64): i32
+pub extern fn getentropy(_buf: *u8, _len: i64): i32
 
 // Random u32 in [0, 2^32).
-fn randU32(): u32 {
+pub fn randU32(): u32 {
     var val: u32 = 0
     unsafe {
         getentropy((val.addrOf()) as *u8, 4)
@@ -12,7 +12,7 @@ fn randU32(): u32 {
 }
 
 // Random i64 in [0, max). Panics if max <= 0.
-fn randInt(max: i64): i64 {
+pub fn randInt(max: i64): i64 {
     if max <= 0 {
         eprint("randInt: max must be > 0")
     }
@@ -21,7 +21,7 @@ fn randInt(max: i64): i64 {
 }
 
 // Random i64 in [min, max]. Panics if min > max.
-fn randRange(min: i64, max: i64): i64 {
+pub fn randRange(min: i64, max: i64): i64 {
     if min > max {
         eprint("randRange: min must be <= max")
     }
@@ -30,23 +30,23 @@ fn randRange(min: i64, max: i64): i64 {
 }
 
 // Random f64 in [0.0, 1.0).
-fn randFloat(): f64 {
+pub fn randFloat(): f64 {
     let r = randU32()
     return r as f64 / 4294967296.0
 }
 
 // Random f64 in [min, max).
-fn randFloatRange(min: f64, max: f64): f64 {
+pub fn randFloatRange(min: f64, max: f64): f64 {
     return min + randFloat() * (max - min)
 }
 
 // Random bool (coin flip).
-fn randBool(): bool {
+pub fn randBool(): bool {
     return randInt(2) == 0
 }
 
 // Shuffle a Vec<i64> in place using Fisher-Yates. Pass v.len() as n.
-fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
+pub fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
     var i = n - 1
     while i > 0 {
         let j = randRange(0, i)
@@ -58,7 +58,7 @@ fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
 }
 
 // Fill a buffer with random bytes.
-fn randBytes(buf: *u8, n: i64): void {
+pub fn randBytes(buf: *u8, n: i64): void {
     unsafe {
         // getentropy limited to 256 bytes per call
         var offset: i64 = 0

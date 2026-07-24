@@ -1,59 +1,59 @@
 // std/unicode — character classification, case conversion, and UTF-8 decoding
 
 // Classify ASCII bytes.
-fn isAscii(ch: u8): bool {
+pub fn isAscii(ch: u8): bool {
     return ch < 128
 }
 
-fn isDigit(ch: u8): bool {
+pub fn isDigit(ch: u8): bool {
     return ch >= 48 && ch <= 57
 }
 
-fn isLower(ch: u8): bool {
+pub fn isLower(ch: u8): bool {
     return ch >= 97 && ch <= 122
 }
 
-fn isUpper(ch: u8): bool {
+pub fn isUpper(ch: u8): bool {
     return ch >= 65 && ch <= 90
 }
 
-fn isAlpha(ch: u8): bool {
+pub fn isAlpha(ch: u8): bool {
     return isLower(ch) || isUpper(ch)
 }
 
-fn isAlphanumeric(ch: u8): bool {
+pub fn isAlphanumeric(ch: u8): bool {
     return isAlpha(ch) || isDigit(ch)
 }
 
-fn isWhitespace(ch: u8): bool {
+pub fn isWhitespace(ch: u8): bool {
     return ch == 32 || ch == 9 || ch == 10 || ch == 13 || ch == 12
 }
 
-fn isPunctuation(ch: u8): bool {
+pub fn isPunctuation(ch: u8): bool {
     return (ch >= 33 && ch <= 47) || (ch >= 58 && ch <= 64) || (ch >= 91 && ch <= 96) || (ch >= 123 && ch <= 126)
 }
 
-fn isHexDigit(ch: u8): bool {
+pub fn isHexDigit(ch: u8): bool {
     return isDigit(ch) || (ch >= 97 && ch <= 102) || (ch >= 65 && ch <= 70)
 }
 
-fn isPrintable(ch: u8): bool {
+pub fn isPrintable(ch: u8): bool {
     return ch >= 32 && ch < 127
 }
 
-fn isControl(ch: u8): bool {
+pub fn isControl(ch: u8): bool {
     return ch < 32 || ch == 127
 }
 
 // Case conversion for ASCII bytes.
-fn toLowerChar(ch: u8): u8 {
+pub fn toLowerChar(ch: u8): u8 {
     if isUpper(ch) {
         return ch + 32
     }
     return ch
 }
 
-fn toUpperChar(ch: u8): u8 {
+pub fn toUpperChar(ch: u8): u8 {
     if isLower(ch) {
         return ch - 32
     }
@@ -61,7 +61,7 @@ fn toUpperChar(ch: u8): u8 {
 }
 
 // Check if an entire string is numeric (all digits).
-fn isNumeric(s: &string): bool {
+pub fn isNumeric(s: &string): bool {
     if s.len == 0 {
         return false
     }
@@ -76,7 +76,7 @@ fn isNumeric(s: &string): bool {
 }
 
 // Check if an entire string is alphabetic.
-fn isAlphaStr(s: &string): bool {
+pub fn isAlphaStr(s: &string): bool {
     if s.len == 0 {
         return false
     }
@@ -91,11 +91,11 @@ fn isAlphaStr(s: &string): bool {
 }
 
 // U+FFFD REPLACEMENT CHARACTER — substituted for any malformed sequence.
-let REPLACEMENT_CHAR: i32 = 65533
+pub let REPLACEMENT_CHAR: i32 = 65533
 
 // One decoded codepoint plus the number of bytes it occupied, so a caller can
 // advance without re-inspecting the lead byte.
-struct CodePoint {
+pub struct CodePoint {
     value: i32,
     size: i64,
 }
@@ -109,7 +109,7 @@ struct CodePoint {
 // yield U+FFFD with size 1, so a scan advances and terminates on any input.
 // Overlong forms and surrogate-range values are rejected the same way, which is
 // what keeps decode/encode round-trips honest.
-fn decodeCodepoint(s: &string, at: i64): CodePoint {
+pub fn decodeCodepoint(s: &string, at: i64): CodePoint {
     if at < 0 || at >= s.len {
         return CodePoint {
             value: REPLACEMENT_CHAR, size: 1
@@ -183,14 +183,14 @@ fn decodeCodepoint(s: &string, at: i64): CodePoint {
 }
 
 // Byte offset of the next codepoint boundary at or after `at`.
-fn nextCodepointBoundary(s: &string, at: i64): i64 {
+pub fn nextCodepointBoundary(s: &string, at: i64): i64 {
     let cp = decodeCodepoint(s, at)
     return at + cp.size
 }
 
 // Append `cp` to `out` as UTF-8. Invalid codepoints encode as U+FFFD rather
 // than emitting bytes that would not decode back.
-fn encodeCodepoint(out: &mut string, cp: i32): void {
+pub fn encodeCodepoint(out: &mut string, cp: i32): void {
     var c = cp
     if c < 0 || c > 1114111 || (c >= 55296 && c <= 57343) {
         c = REPLACEMENT_CHAR
@@ -214,7 +214,7 @@ fn encodeCodepoint(out: &mut string, cp: i32): void {
 
 // Decode UTF-8 string into Unicode codepoints. Allocates; prefer
 // decodeCodepoint in a scan loop.
-fn codepoints(s: &string): Vec<i32> {
+pub fn codepoints(s: &string): Vec<i32> {
     var result: Vec<i32> = Vec.new()
     var i: i64 = 0
     while i < s.len {
@@ -226,7 +226,7 @@ fn codepoints(s: &string): Vec<i32> {
 }
 
 // Number of Unicode codepoints in a string (not bytes).
-fn codepointCount(s: &string): i64 {
+pub fn codepointCount(s: &string): i64 {
     var count: i64 = 0
     var i: i64 = 0
     while i < s.len {
@@ -240,27 +240,27 @@ fn codepointCount(s: &string): i64 {
 // UTF-16 code units, encoded as a surrogate pair — so a byte- or
 // codepoint-oriented count is not a UTF-16 index. Needed by anything crossing a
 // UTF-16 boundary (Windows wide-char APIs, JVM strings).
-fn isSupplementary(cp: i32): bool {
+pub fn isSupplementary(cp: i32): bool {
     return cp > 65535
 }
 
-fn utf16UnitCount(cp: i32): i64 {
+pub fn utf16UnitCount(cp: i32): i64 {
     if isSupplementary(cp) {
         return 2
     }
     return 1
 }
 
-fn highSurrogate(cp: i32): i32 {
+pub fn highSurrogate(cp: i32): i32 {
     return 55296 + ((cp - 65536) >> 10)
 }
 
-fn lowSurrogate(cp: i32): i32 {
+pub fn lowSurrogate(cp: i32): i32 {
     return 56320 + ((cp - 65536) & 1023)
 }
 
 // Combine a surrogate pair back into a single codepoint.
-fn fromSurrogatePair(high: i32, low: i32): i32 {
+pub fn fromSurrogatePair(high: i32, low: i32): i32 {
     return 65536 + ((high - 55296) << 10) + (low - 56320)
 }
 
@@ -280,12 +280,14 @@ fn fromSurrogatePair(high: i32, low: i32): i32 {
 // this is deliberately the version that fits in a reviewable file.
 // ---------------------------------------------------------------------------
 
-let ZERO_WIDTH_JOINER: i32 = 8205
-let VARIATION_SELECTOR_16: i32 = 65039
-let VARIATION_SELECTOR_15: i32 = 65038
+pub let ZERO_WIDTH_JOINER: i32 = 8205
+
+pub let VARIATION_SELECTOR_16: i32 = 65039
+
+pub let VARIATION_SELECTOR_15: i32 = 65038
 
 // Marks that attach to a preceding base character and advance no column.
-fn isCombining(cp: i32): bool {
+pub fn isCombining(cp: i32): bool {
     // Generic combining blocks: diacriticals, extended, supplement, symbols,
     // and the half marks used for vertical CJK forms.
     if (cp >= 768 && cp <= 879) || (cp >= 6832 && cp <= 6911) {
@@ -327,7 +329,7 @@ fn isCombining(cp: i32): bool {
 }
 
 // Format/invisible characters: joiners, bidi controls, variation selectors, BOM.
-fn isZeroWidthFormat(cp: i32): bool {
+pub fn isZeroWidthFormat(cp: i32): bool {
     if cp >= 8203 && cp <= 8207 {
         return true
     }
@@ -351,17 +353,17 @@ fn isZeroWidthFormat(cp: i32): bool {
 }
 
 // Regional indicator symbols — two in a row form one flag glyph.
-fn isRegionalIndicator(cp: i32): bool {
+pub fn isRegionalIndicator(cp: i32): bool {
     return cp >= 127462 && cp <= 127487
 }
 
 // Emoji skin-tone modifiers, absorbed by the emoji they follow.
-fn isSkinToneModifier(cp: i32): bool {
+pub fn isSkinToneModifier(cp: i32): bool {
     return cp >= 127995 && cp <= 127999
 }
 
 // East Asian Wide/Fullwidth plus the emoji blocks that render double-width.
-fn isWide(cp: i32): bool {
+pub fn isWide(cp: i32): bool {
     // Hangul Jamo initial consonants.
     if cp >= 4352 && cp <= 4447 {
         return true
@@ -423,7 +425,7 @@ fn isWide(cp: i32): bool {
 // Control characters report 0 because they advance no column when printed —
 // callers that need to reject them should filter before measuring, not rely on
 // a negative sentinel.
-fn charWidth(cp: i32): i64 {
+pub fn charWidth(cp: i32): i64 {
     if cp >= 32 && cp < 127 {
         return 1
     }
@@ -446,7 +448,7 @@ fn charWidth(cp: i32): i64 {
 // actually paints: ZWJ emoji sequences (family, professions) count once, a
 // flag's two regional indicators count once, skin tones and variation
 // selectors fold into the emoji they modify.
-fn displayWidth(s: &string): i64 {
+pub fn displayWidth(s: &string): i64 {
     var total: i64 = 0
     var i: i64 = 0
     // Width contributed by the current cluster head, so a following variation
@@ -513,7 +515,7 @@ fn displayWidth(s: &string): i64 {
 // Byte offset just past the longest prefix of `s` that fits in `maxCols`
 // columns. Never splits a codepoint, and never leaves half of a double-width
 // glyph — a wide character that would straddle the limit is excluded entirely.
-fn truncateToWidth(s: &string, maxCols: i64): i64 {
+pub fn truncateToWidth(s: &string, maxCols: i64): i64 {
     var used: i64 = 0
     var i: i64 = 0
     while i < s.len {

@@ -10,12 +10,12 @@ from "std/path" import {
     pathJoin
 }
 
-struct Counts {
+pub struct Counts {
     dirs: i64,
     files: i64,
 }
 
-fn printTree(dirPath: &string, prefix: &string, depth: i64, maxLevel: i64, counts: &mut Counts): void {
+pub fn printTree(dirPath: &string, prefix: &string, depth: i64, maxLevel: i64, counts: &mut Counts): void {
     if maxLevel > 0 as i64 && depth >= maxLevel {
         return
     }
@@ -50,7 +50,7 @@ fn printTree(dirPath: &string, prefix: &string, depth: i64, maxLevel: i64, count
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("tree", "display directory tree")
     parser.addOptionalPositional("dir", "directory to display (default: .)")
     parser.addI64("level", "L", "max display depth", 0)

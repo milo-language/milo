@@ -11,6 +11,40 @@ last-verified: 2026-07-23
 Source-level breaks, newest first. Milo is pre-1.0 and does not promise
 compatibility, but every break belongs here with the migration spelled out.
 
+## Private by default, `pub` to export (2026-07-23)
+
+**What changed.** Top-level declarations are now **file-private by default**.
+Previously every declaration was visible everywhere; now a name is visible only
+inside the file that declares it unless it is marked `pub`. Referencing a
+non-`pub` declaration from a different file is a compile error. `pub` applies to
+`fn`, `struct`, `enum`, `trait`, `type`, `interface`, and globals (`let`, `var`,
+`thread_local`).
+
+This is a prerequisite for packages: without a private/public boundary, every
+internal helper is somebody's dependency and no library can change anything
+without breaking consumers.
+
+**Migration.** Mechanical — mark the public surface of each multi-file project
+`pub`. A name used only within its own file needs nothing. A name referenced from
+another file gets a `pub` prefix on its declaration:
+
+```milo
+fn parse(s: string): Doc { ... }        // before
+pub fn parse(s: string): Doc { ... }    // after — if another file imports it
+```
+
+Single-file programs are unaffected: nothing crosses a file boundary, so nothing
+needs `pub`. Examples and tests are leaves (nothing imports them) and need no
+annotation.
+
+**Why there is no compatibility shim.** The break is the point — the old behavior
+(everything public) is exactly what the new default removes. There is no setting
+that restores it without defeating the feature.
+
+**Failure mode if you miss one.** A compile error naming the private declaration
+and the file it lives in, at the cross-file reference site. Nothing silently
+resolves to a different symbol.
+
 ## `std/os` → `std/platform` (Windows port)
 
 **What moved.** The syscall-shaped bindings that need a per-OS implementation

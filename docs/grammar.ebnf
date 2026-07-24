@@ -8,7 +8,15 @@ function_decl
 
 extern_fn   = "extern" "fn" IDENT "(" [ param_list ] ")" [ "->" type ] ;
 
-fn_def      = "fn" IDENT [ type_params ] "(" [ param_list ] ")" [ "->" type ] { contract } block ;
+fn_def      = [ "pub" ] "fn" IDENT [ type_params ] "(" [ param_list ] ")" [ "->" type ] { contract } block ;
+
+(* Visibility: a top-level declaration is file-private unless prefixed with "pub",
+   which exports it (importable/referenceable from other files). The optional
+   [ "pub" ] shown on fn_def applies identically to every top-level declaration form
+   — struct, enum, trait, type alias, interface, and globals (let/var/thread_local).
+   It does NOT prefix an impl block (visibility follows the implemented type) or an
+   import. "pub" is a soft keyword: special only immediately before a declaration, so
+   it stays usable as an ordinary IDENT elsewhere. *)
 
 contract    = ( "requires" | "ensures" | "invariant" ) expr ;
 

@@ -22,45 +22,51 @@ from "std/math" import {
 }
 
 @link("SDL2")
-extern fn SDL_Init(flags: u32): i32
+pub extern fn SDL_Init(flags: u32): i32
 
-extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
 
-extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+pub extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
 
-extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+pub extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
 
-extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+pub extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
 
-extern fn SDL_RenderClear(ren: *u8): i32
+pub extern fn SDL_RenderClear(ren: *u8): i32
 
-extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+pub extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
 
-extern fn SDL_RenderPresent(ren: *u8): void
+pub extern fn SDL_RenderPresent(ren: *u8): void
 
-extern fn SDL_PollEvent(event: *u8): i32
+pub extern fn SDL_PollEvent(event: *u8): i32
 
-extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+pub extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
 
-extern fn SDL_GetMouseState(x: *i32, y: *i32): u32 // returns button bitmask, fills x/y
+pub extern fn SDL_GetMouseState(x: *i32, y: *i32): u32 // returns button bitmask, fills x/y
 
-extern fn SDL_Delay(ms: u32): void
+pub extern fn SDL_Delay(ms: u32): void
 
-extern fn SDL_DestroyWindow(win: *u8): void
+pub extern fn SDL_DestroyWindow(win: *u8): void
 
-extern fn SDL_Quit(): void
+pub extern fn SDL_Quit(): void
 
-let SDL_INIT_VIDEO: u32 = 0x20
-let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-let SDL_WINDOW_SHOWN: u32 = 0x4
-let SDL_TEXTUREACCESS_STREAMING: i32 = 1
-let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
-let SDL_QUIT: u32 = 0x100
+pub let SDL_INIT_VIDEO: u32 = 0x20
 
-let W: i32 = 320
-let H: i32 = 240
+pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
 
-struct Ball {
+pub let SDL_WINDOW_SHOWN: u32 = 0x4
+
+pub let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+
+pub let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
+
+pub let SDL_QUIT: u32 = 0x100
+
+pub let W: i32 = 320
+
+pub let H: i32 = 240
+
+pub struct Ball {
     px: f64, py: f64,
     vx: f64, vy: f64,
     r: f64,
@@ -69,7 +75,7 @@ struct Ball {
 }
 
 // xorshift for spawn variety
-fn nextU64(s: &mut u64): u64 {
+pub fn nextU64(s: &mut u64): u64 {
     // &mut scalar params auto-deref in Milo: read `s` directly, write via `s = ...`
     var x = s
     x = x ^ (x << 13)
@@ -79,12 +85,12 @@ fn nextU64(s: &mut u64): u64 {
     return x
 }
 
-fn randF(s: &mut u64): f64 {
+pub fn randF(s: &mut u64): f64 {
     let r = nextU64(s) >> 11
     return (r as f64) * (1.0 / 9007199254740992.0)
 }
 
-fn spawnBall(balls: &mut Vec<Ball>, s: &mut u64, x: f64, y: f64) {
+pub fn spawnBall(balls: &mut Vec<Ball>, s: &mut u64, x: f64, y: f64) {
     let rad = 5.0 + randF(s) * 9.0
     let mass = rad * rad // area-proportional
     balls.push(Ball {
@@ -100,7 +106,7 @@ fn spawnBall(balls: &mut Vec<Ball>, s: &mut u64, x: f64, y: f64) {
     )
 }
 
-fn resetScene(balls: &mut Vec<Ball>, s: &mut u64) {
+pub fn resetScene(balls: &mut Vec<Ball>, s: &mut u64) {
     var m = 0
     while m < 40 {
         // seed is borrowed &mut once per call, so compute coords in separate
@@ -115,7 +121,7 @@ fn resetScene(balls: &mut Vec<Ball>, s: &mut u64) {
 // alpha-blend `col` over the existing pixel by `cov` in [0,1]. Blending against
 // whatever is already in the buffer (not a fixed background) means overlapping
 // balls antialias against each other, not just the backdrop.
-fn blendPixel(fb: &mut [u32; 76800], idx: i32, col: u32, cov: f64) {
+pub fn blendPixel(fb: &mut [u32; 76800], idx: i32, col: u32, cov: f64) {
     let dst = fb[idx]
     let sr = (col & 0xFF) as f64
     let sg = ((col >> 8) & 0xFF) as f64
@@ -131,7 +137,7 @@ fn blendPixel(fb: &mut [u32; 76800], idx: i32, col: u32, cov: f64) {
 
 // draw a filled circle with a 1px antialiased edge: coverage falls smoothly from
 // 1 inside to 0 one pixel past the radius, so the rim is soft instead of stair-stepped.
-fn fillCircle(fb: &mut [u32; 76800], cx: f64, cy: f64, rad: f64, col: u32) {
+pub fn fillCircle(fb: &mut [u32; 76800], cx: f64, cy: f64, rad: f64, col: u32) {
     let r = rad
     var y = (cy - r - 1.0) as i32
     let yend = (cy + r + 1.0) as i32
@@ -161,7 +167,7 @@ fn fillCircle(fb: &mut [u32; 76800], cx: f64, cy: f64, rad: f64, col: u32) {
 }
 
 // advance the whole simulation one substep: integrate, hit walls, resolve pairs
-fn stepSim(balls: &mut Vec<Ball>, gx: f64, gy: f64, sdt: f64, restitution: f64) {
+pub fn stepSim(balls: &mut Vec<Ball>, gx: f64, gy: f64, sdt: f64, restitution: f64) {
     // integrate velocities/positions (semi-implicit Euler)
     var i = 0
     while i < balls.len {
@@ -244,7 +250,7 @@ fn stepSim(balls: &mut Vec<Ball>, gx: f64, gy: f64, sdt: f64, restitution: f64) 
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     if SDL_Init(SDL_INIT_VIDEO) != 0 { // scalar extern call — safe outside unsafe
         print("SDL_Init failed")
         return 1

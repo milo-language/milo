@@ -21,7 +21,7 @@ from "./ppu" import {
     renderFrame
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 4 {
         print("usage: shot <rom> <frames> <out.rgb>")
@@ -40,7 +40,7 @@ fn main(): i32 {
     return 0
 }
 
-fn strToInt(s: string): i64 {
+pub fn strToInt(s: string): i64 {
     var n: i64 = 0
     for ch in s {
         let c = ch as i64
@@ -51,7 +51,7 @@ fn strToInt(s: string): i64 {
     return n
 }
 
-fn run(cart: Cartridge, frames: i64, out: string): i32 {
+pub fn run(cart: Cartridge, frames: i64, out: string): i32 {
     var bus = newBus(cart)
     var cpu = newCpuReset(bus)
     var f: i64 = 0

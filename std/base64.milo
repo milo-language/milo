@@ -1,6 +1,6 @@
 // std/base64 — base64 encode/decode
 
-fn _b64EncodeChar(val: u8): u8 {
+pub fn _b64EncodeChar(val: u8): u8 {
     if val < 26 {
         return val + 65
     }
@@ -16,7 +16,7 @@ fn _b64EncodeChar(val: u8): u8 {
     return 47
 }
 
-fn _b64DecodeChar(ch: u8): u8 {
+pub fn _b64DecodeChar(ch: u8): u8 {
     if ch >= 65 && ch <= 90 {
         return ch - 65
     }
@@ -36,7 +36,7 @@ fn _b64DecodeChar(ch: u8): u8 {
 }
 
 // Encode a string to base64.
-fn base64Encode(input: &string): string {
+pub fn base64Encode(input: &string): string {
     var result = ""
     var i: i64 = 0
     while i + 2 < input.len {
@@ -70,7 +70,7 @@ fn base64Encode(input: &string): string {
 
 // URL-safe base64, no padding (RFC 4648 §5): '+' → '-', '/' → '_', drop '='.
 // Used for embedding binary data in URL fragments.
-fn base64UrlEncode(input: &string): string {
+pub fn base64UrlEncode(input: &string): string {
     let std = base64Encode(input)
     var result = ""
     for i in 0..std.len {
@@ -87,7 +87,7 @@ fn base64UrlEncode(input: &string): string {
 }
 
 // Decode a base64 string.
-fn base64Decode(input: &string): string {
+pub fn base64Decode(input: &string): string {
     var result = ""
     var i: i64 = 0
     while i + 3 < input.len {

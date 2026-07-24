@@ -9,22 +9,24 @@
 // as seven concatenated 5-char row literals so each is verifiable by eye; A-Z
 // are copied verbatim from the proven examples/emulators/nes/splash.milo font.
 
-let MENU_W: i64 = 640
-let MENU_H: i64 = 360
-let MENU_N: i64 = 230400 // MENU_W * MENU_H
+pub let MENU_W: i64 = 640
 
-fn rgb(r: i64, g: i64, b: i64): u32 {
+pub let MENU_H: i64 = 360
+
+pub let MENU_N: i64 = 230400 // MENU_W * MENU_H
+
+pub fn rgb(r: i64, g: i64, b: i64): u32 {
     return (r | (g << 8) | (b << 16) | 0xFF000000) as u32
 }
 
-fn putPixel(fb: &mut [u32; 230400], x: i64, y: i64, c: u32): void {
+pub fn putPixel(fb: &mut [u32; 230400], x: i64, y: i64, c: u32): void {
     if x < 0 || x >= MENU_W || y < 0 || y >= MENU_H {
         return
     }
     fb[y * MENU_W + x] = c
 }
 
-fn clear(fb: &mut [u32; 230400], c: u32): void {
+pub fn clear(fb: &mut [u32; 230400], c: u32): void {
     var i: i64 = 0
     while i < MENU_N {
         fb[i] = c
@@ -33,7 +35,7 @@ fn clear(fb: &mut [u32; 230400], c: u32): void {
 }
 
 // Solid rectangle, clipped to the framebuffer.
-fn fillRect(fb: &mut [u32; 230400], x: i64, y: i64, w: i64, h: i64, c: u32): void {
+pub fn fillRect(fb: &mut [u32; 230400], x: i64, y: i64, w: i64, h: i64, c: u32): void {
     var yy: i64 = 0
     while yy < h {
         var xx: i64 = 0
@@ -45,11 +47,11 @@ fn fillRect(fb: &mut [u32; 230400], x: i64, y: i64, w: i64, h: i64, c: u32): voi
     }
 }
 
-fn fontChars(): string {
+pub fn fontChars(): string {
     return "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_.:!()[]/,'"
 }
 
-fn fontGlyphs(): [string; 49] {
+pub fn fontGlyphs(): [string; 49] {
     return ["..#.." + ".#.#." + "#...#" + "#...#" + "#####" + "#...#" + "#...#", // A
     "####.#...##...#####.#...##...#####.", // B
     ".###.#...##....#....#....#...#.###.", // C
@@ -124,7 +126,7 @@ fn fontGlyphs(): [string; 49] {
     "..#.." + "..#.." + "....." + "....." + "....." + "....." + ".....",]
 }
 
-fn glyphIndex(font: &string, ch: u8): i64 {
+pub fn glyphIndex(font: &string, ch: u8): i64 {
     var i: i64 = 0
     while i < font.len {
         if font[i] == ch {
@@ -136,7 +138,7 @@ fn glyphIndex(font: &string, ch: u8): i64 {
 }
 
 // Draw one glyph's on-pixels as scale x scale blocks at top-left (x,y).
-fn drawChar(fb: &mut [u32; 230400], ch: u8, x: i64, y: i64, scale: i64, c: u32, font: &string, glyphs: &[string; 49]): void {
+pub fn drawChar(fb: &mut [u32; 230400], ch: u8, x: i64, y: i64, scale: i64, c: u32, font: &string, glyphs: &[string; 49]): void {
     let idx = glyphIndex(font, ch)
     if idx < 0 {
         return
@@ -157,14 +159,14 @@ fn drawChar(fb: &mut [u32; 230400], ch: u8, x: i64, y: i64, scale: i64, c: u32, 
 }
 
 // Pixel width of a string at a given scale (5px glyph + 1px gap per char).
-fn textWidth(s: &string, scale: i64): i64 {
+pub fn textWidth(s: &string, scale: i64): i64 {
     if s.len == 0 {
         return 0
     }
     return (s.len * 6 - 1) * scale
 }
 
-fn drawText(fb: &mut [u32; 230400], s: &string, x: i64, y: i64, scale: i64, c: u32, font: &string, glyphs: &[string; 49]): void {
+pub fn drawText(fb: &mut [u32; 230400], s: &string, x: i64, y: i64, scale: i64, c: u32, font: &string, glyphs: &[string; 49]): void {
     var i: i64 = 0
     var cx = x
     while i < s.len {
@@ -174,7 +176,7 @@ fn drawText(fb: &mut [u32; 230400], s: &string, x: i64, y: i64, scale: i64, c: u
     }
 }
 
-fn drawTextCentered(fb: &mut [u32; 230400], s: &string, y: i64, scale: i64, c: u32, font: &string, glyphs: &[string; 49]): void {
+pub fn drawTextCentered(fb: &mut [u32; 230400], s: &string, y: i64, scale: i64, c: u32, font: &string, glyphs: &[string; 49]): void {
     let x = (MENU_W - textWidth(s, scale)) / 2
     drawText(fb, s, x, y, scale, c, font, glyphs)
 }

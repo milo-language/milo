@@ -7,7 +7,7 @@ from "./cpu" import {
     Cpu, Mem, busNew, newCpuReset, step, runApu, memRead, vecZeros
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var rom = vecZeros(0x8000)
     // $8000: poll $2140 until it reads $AA, then store $42 to WRAM $0000.
     let prog = [0xAD, 0x40, 0x21, // LDA $2140

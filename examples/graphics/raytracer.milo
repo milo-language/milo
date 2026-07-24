@@ -17,103 +17,112 @@ from "std/math" import {
 
 // ---- SDL2 FFI (mirrors examples/emulators/nes/sdlSmoke.milo) --------------------
 @link("SDL2")
-extern fn SDL_Init(flags: u32): i32
+pub extern fn SDL_Init(flags: u32): i32
 
-extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
 
-extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+pub extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
 
-extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+pub extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
 
-extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+pub extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
 
-extern fn SDL_RenderClear(ren: *u8): i32
+pub extern fn SDL_RenderClear(ren: *u8): i32
 
-extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+pub extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
 
-extern fn SDL_RenderPresent(ren: *u8): void
+pub extern fn SDL_RenderPresent(ren: *u8): void
 
-extern fn SDL_PollEvent(event: *u8): i32
+pub extern fn SDL_PollEvent(event: *u8): i32
 
-extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+pub extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
 
-extern fn SDL_Delay(ms: u32): void
+pub extern fn SDL_Delay(ms: u32): void
 
-extern fn SDL_DestroyWindow(win: *u8): void
+pub extern fn SDL_DestroyWindow(win: *u8): void
 
-extern fn SDL_Quit(): void
+pub extern fn SDL_Quit(): void
 
-let SDL_INIT_VIDEO: u32 = 0x20
-let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-let SDL_WINDOW_SHOWN: u32 = 0x4
-let SDL_TEXTUREACCESS_STREAMING: i32 = 1
-let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004 // R,G,B,A byte order in memory
-let SDL_QUIT: u32 = 0x100
+pub let SDL_INIT_VIDEO: u32 = 0x20
+
+pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
+
+pub let SDL_WINDOW_SHOWN: u32 = 0x4
+
+pub let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+
+pub let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004 // R,G,B,A byte order in memory
+
+pub let SDL_QUIT: u32 = 0x100
 
 // i64 throughout (Milo's default int) so loop counters / array indices agree;
 // cast to i32 only at the SDL FFI boundary.
-let W: i64 = 240
-let H: i64 = 180
-let MAXDEPTH: i64 = 6
+pub let W: i64 = 240
+
+pub let H: i64 = 180
+
+pub let MAXDEPTH: i64 = 6
 
 // ---- vec3 (a struct of three f64 is Copy, so pass/return by value) ----------
-struct Vec3 {
+pub struct Vec3 {
     x: f64, y: f64, z: f64
 }
 
-fn v3(x: f64, y: f64, z: f64): Vec3 {
+pub fn v3(x: f64, y: f64, z: f64): Vec3 {
     return Vec3 {
         x: x, y: y, z: z
     }
 }
 
-fn vadd(a: Vec3, b: Vec3): Vec3 {
+pub fn vadd(a: Vec3, b: Vec3): Vec3 {
     return Vec3 {
         x: a.x + b.x, y: a.y + b.y, z: a.z + b.z
     }
 }
 
-fn vsub(a: Vec3, b: Vec3): Vec3 {
+pub fn vsub(a: Vec3, b: Vec3): Vec3 {
     return Vec3 {
         x: a.x - b.x, y: a.y - b.y, z: a.z - b.z
     }
 }
 
-fn vscale(a: Vec3, s: f64): Vec3 {
+pub fn vscale(a: Vec3, s: f64): Vec3 {
     return Vec3 {
         x: a.x * s, y: a.y * s, z: a.z * s
     }
 }
 
-fn vmul(a: Vec3, b: Vec3): Vec3 {
+pub fn vmul(a: Vec3, b: Vec3): Vec3 {
     return Vec3 {
         x: a.x * b.x, y: a.y * b.y, z: a.z * b.z
     }
 }
 
-fn vdot(a: Vec3, b: Vec3): f64 {
+pub fn vdot(a: Vec3, b: Vec3): f64 {
     return a.x * b.x + a.y * b.y + a.z * b.z
 }
 
-fn vlen(a: Vec3): f64 {
+pub fn vlen(a: Vec3): f64 {
     return mathSqrt(vdot(a, a))
 }
 
-fn vnorm(a: Vec3): Vec3 {
+pub fn vnorm(a: Vec3): Vec3 {
     let l = vlen(a)
     return vscale(a, 1.0 / l)
 }
 
-fn vreflect(d: Vec3, n: Vec3): Vec3 {
+pub fn vreflect(d: Vec3, n: Vec3): Vec3 {
     return vsub(d, vscale(n, 2.0 * vdot(d, n)))
 }
 
 // ---- material tags ----------------------------------------------------------
-let MATT_DIFFUSE: i32 = 0
-let MATT_METAL: i32 = 1
-let MATT_LIGHT: i32 = 2
+pub let MATT_DIFFUSE: i32 = 0
 
-struct Sphere {
+pub let MATT_METAL: i32 = 1
+
+pub let MATT_LIGHT: i32 = 2
+
+pub struct Sphere {
     center: Vec3,
     radius: f64,
     albedo: Vec3,
@@ -121,7 +130,7 @@ struct Sphere {
     fuzz: f64, // metal roughness
 }
 
-struct Hit {
+pub struct Hit {
     hit: bool,
     t: f64,
     point: Vec3,
@@ -130,7 +139,7 @@ struct Hit {
 }
 
 // ---- xorshift RNG: fast, deterministic, threaded through &mut ----------------
-fn nextU64(s: &mut u64): u64 {
+pub fn nextU64(s: &mut u64): u64 {
     // &mut scalar params auto-deref in Milo: read `s` directly, write via `s = ...`
     var x = s
     x = x ^ (x << 13)
@@ -141,13 +150,13 @@ fn nextU64(s: &mut u64): u64 {
 }
 
 // uniform f64 in [0, 1)
-fn randF(s: &mut u64): f64 {
+pub fn randF(s: &mut u64): f64 {
     let r = nextU64(s) >> 11 // top 53 bits
     return (r as f64) * (1.0 / 9007199254740992.0)
 }
 
 // a random vector inside the unit sphere (rejection sampling)
-fn randInUnitSphere(s: &mut u64): Vec3 {
+pub fn randInUnitSphere(s: &mut u64): Vec3 {
     var p = v3(0.0, 0.0, 0.0)
     var tries = 0
     while tries < 32 {
@@ -161,7 +170,7 @@ fn randInUnitSphere(s: &mut u64): Vec3 {
 }
 
 // ---- ray-sphere intersection: nearest positive root -------------------------
-fn hitSphere(sp: Sphere, ro: Vec3, rd: Vec3, tmin: f64, tmax: f64): f64 {
+pub fn hitSphere(sp: Sphere, ro: Vec3, rd: Vec3, tmin: f64, tmax: f64): f64 {
     let oc = vsub(ro, sp.center)
     let a = vdot(rd, rd)
     let halfB = vdot(oc, rd)
@@ -181,7 +190,7 @@ fn hitSphere(sp: Sphere, ro: Vec3, rd: Vec3, tmin: f64, tmax: f64): f64 {
     return t
 }
 
-fn traceScene(scene: &Vec<Sphere>, ro: Vec3, rd: Vec3): Hit {
+pub fn traceScene(scene: &Vec<Sphere>, ro: Vec3, rd: Vec3): Hit {
     var best = Hit {
         hit: false, t: 0.0, point: v3(0.0, 0.0, 0.0), normal: v3(0.0, 0.0, 0.0), matIdx: -1
     }
@@ -204,7 +213,7 @@ fn traceScene(scene: &Vec<Sphere>, ro: Vec3, rd: Vec3): Hit {
 }
 
 // sky: soft blue-white vertical gradient acting as an area light from above
-fn skyColor(rd: Vec3): Vec3 {
+pub fn skyColor(rd: Vec3): Vec3 {
     let unit = vnorm(rd)
     let a = 0.5 * (unit.y + 1.0)
     let white = v3(1.0, 1.0, 1.0)
@@ -213,7 +222,7 @@ fn skyColor(rd: Vec3): Vec3 {
 }
 
 // iterative path integral: throughput * emission summed over bounces
-fn radiance(scene: &Vec<Sphere>, ro0: Vec3, rd0: Vec3, s: &mut u64): Vec3 {
+pub fn radiance(scene: &Vec<Sphere>, ro0: Vec3, rd0: Vec3, s: &mut u64): Vec3 {
     var color = v3(0.0, 0.0, 0.0)
     var through = v3(1.0, 1.0, 1.0)
     var ro = ro0
@@ -248,7 +257,7 @@ fn radiance(scene: &Vec<Sphere>, ro0: Vec3, rd0: Vec3, s: &mut u64): Vec3 {
     return color // exceeded depth -> black (absorbed)
 }
 
-fn buildScene(): Vec<Sphere> {
+pub fn buildScene(): Vec<Sphere> {
     var scene: Vec<Sphere> = Vec.new()
     // ground
     scene.push(Sphere {
@@ -283,7 +292,7 @@ fn buildScene(): Vec<Sphere> {
     return scene
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     if SDL_Init(SDL_INIT_VIDEO) != 0 {
         print("SDL_Init failed")
         return 1
@@ -436,7 +445,7 @@ fn main(): i32 {
     return 0
 }
 
-fn clamp01(x: f64): f64 {
+pub fn clamp01(x: f64): f64 {
     if x < 0.0 {
         return 0.0
     }
@@ -446,7 +455,7 @@ fn clamp01(x: f64): f64 {
     return x
 }
 
-fn vcross(a: Vec3, b: Vec3): Vec3 {
+pub fn vcross(a: Vec3, b: Vec3): Vec3 {
     return Vec3 {
         x: a.y * b.z - a.z * b.y,
         y: a.z * b.x - a.x * b.z,

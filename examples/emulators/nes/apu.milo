@@ -6,28 +6,28 @@
 
 // NTSC CPU clock / audio sample rate: how many CPU cycles per output sample
 // (1789773 / 44100).
-let CYCLES_PER_SAMPLE: f64 = 40.58442176870748
+pub let CYCLES_PER_SAMPLE: f64 = 40.58442176870748
 
 // Length-counter load values, indexed by the 5-bit field in $4003/$400B/$400F.
-let LENGTH_TABLE: [i64; 32] = [10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30]
+pub let LENGTH_TABLE: [i64; 32] = [10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30]
 
 // Noise timer periods (NTSC), indexed by the low nibble of $400E.
-let NOISE_PERIOD: [i64; 16] = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068]
+pub let NOISE_PERIOD: [i64; 16] = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068]
 
 // Triangle 32-step sequence (15..0, 0..15).
-let TRIANGLE_SEQ: [i64; 32] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+pub let TRIANGLE_SEQ: [i64; 32] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
 // DMC timer periods (NTSC), in CPU cycles, indexed by the low nibble of $4010.
-let DMC_RATE: [i64; 16] = [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54]
+pub let DMC_RATE: [i64; 16] = [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54]
 
 // Four duty waveforms x 8 steps, flattened: index = duty*8 + dutyPos.
-let DUTY_TABLE: [i64; 32] = [0, 1, 0, 0, 0, 0, 0, 0, // 12.5%
+pub let DUTY_TABLE: [i64; 32] = [0, 1, 0, 0, 0, 0, 0, 0, // 12.5%
 0, 1, 1, 0, 0, 0, 0, 0, // 25%
 0, 1, 1, 1, 1, 0, 0, 0, // 50%
 1, 0, 0, 1, 1, 1, 1, 1 // 25% negated
 ]
 
-struct Pulse {
+pub struct Pulse {
     enabled: bool
     duty: i64
     dutyPos: i64
@@ -49,7 +49,7 @@ struct Pulse {
     isPulse2: bool // pulse1 uses ones'-complement (extra -1) on negate; pulse2 two's
 }
 
-struct Triangle {
+pub struct Triangle {
     enabled: bool
     control: bool // $4008 bit7: length-halt + holds linear-reload flag
     length: i64
@@ -61,7 +61,7 @@ struct Triangle {
     seqPos: i64
 }
 
-struct Noise {
+pub struct Noise {
     enabled: bool
     lengthHalt: bool
     constant: bool
@@ -79,7 +79,7 @@ struct Noise {
 // Delta Modulation Channel: plays 1-bit-delta samples read from CPU memory.
 // Memory fetches are deferred (needsFetch) and serviced by the bus, which has the
 // read path; everything else clocks here.
-struct Dmc {
+pub struct Dmc {
     enabled: bool
     irqEnabled: bool
     loopFlag: bool
@@ -99,7 +99,7 @@ struct Dmc {
     irqFlag: bool
 }
 
-fn newDmc(): Dmc {
+pub fn newDmc(): Dmc {
     return Dmc {
         enabled: false, irqEnabled: false, loopFlag: false, rate: DMC_RATE[0], timer: DMC_RATE[0],
         output: 0, sampleAddr: 0xC000, sampleLen: 1, curAddr: 0xC000, bytesRemaining: 0,
@@ -108,7 +108,7 @@ fn newDmc(): Dmc {
     }
 }
 
-struct Apu {
+pub struct Apu {
     pulse1: Pulse
     pulse2: Pulse
     triangle: Triangle
@@ -127,7 +127,7 @@ struct Apu {
     hpPrevOut: f64
 }
 
-fn newPulse(isPulse2: bool): Pulse {
+pub fn newPulse(isPulse2: bool): Pulse {
     return Pulse {
         enabled: false, duty: 0, dutyPos: 0, lengthHalt: false, constant: false, volume: 0,
         timerPeriod: 0, timerVal: 0, length: 0,
@@ -137,14 +137,14 @@ fn newPulse(isPulse2: bool): Pulse {
     }
 }
 
-fn newTriangle(): Triangle {
+pub fn newTriangle(): Triangle {
     return Triangle {
         enabled: false, control: false, length: 0, linearReload: 0, linearCounter: 0,
         linearReloadFlag: false, timerPeriod: 0, timerVal: 0, seqPos: 0
     }
 }
 
-fn newNoise(): Noise {
+pub fn newNoise(): Noise {
     return Noise {
         enabled: false, lengthHalt: false, constant: false, volume: 0, length: 0,
         envStart: false, envDivider: 0, envDecay: 0, mode: false,
@@ -152,7 +152,7 @@ fn newNoise(): Noise {
     }
 }
 
-fn newApu(): Apu {
+pub fn newApu(): Apu {
     // Precompute the two nonlinear mixer lookup tables (nesdev formulas).
     var pt: [f64; 31] = [0.0; 31]
     var i: i64 = 1
@@ -177,7 +177,7 @@ fn newApu(): Apu {
 }
 
 // ---- register writes ($4000-$4017, reg = addr - 0x4000) ----
-fn apuWrite(apu: &mut Apu, reg: i64, val: u8): void {
+pub fn apuWrite(apu: &mut Apu, reg: i64, val: u8): void {
     let v = val as i64
     if reg <= 0x03 {
         writePulse(apu.pulse1, reg, v)
@@ -196,7 +196,7 @@ fn apuWrite(apu: &mut Apu, reg: i64, val: u8): void {
     }
 }
 
-fn writePulse(p: &mut Pulse, idx: i64, v: i64): void {
+pub fn writePulse(p: &mut Pulse, idx: i64, v: i64): void {
     if idx == 0 {
         p.duty = (v >> 6) & 3
         p.lengthHalt = (v & 0x20) != 0
@@ -220,7 +220,7 @@ fn writePulse(p: &mut Pulse, idx: i64, v: i64): void {
     }
 }
 
-fn writeTriangle(t: &mut Triangle, idx: i64, v: i64): void {
+pub fn writeTriangle(t: &mut Triangle, idx: i64, v: i64): void {
     if idx == 0 {
         t.control = (v & 0x80) != 0
         t.linearReload = v & 0x7F
@@ -235,7 +235,7 @@ fn writeTriangle(t: &mut Triangle, idx: i64, v: i64): void {
     }
 }
 
-fn writeNoise(n: &mut Noise, idx: i64, v: i64): void {
+pub fn writeNoise(n: &mut Noise, idx: i64, v: i64): void {
     if idx == 0 {
         n.lengthHalt = (v & 0x20) != 0
         n.constant = (v & 0x10) != 0
@@ -251,7 +251,7 @@ fn writeNoise(n: &mut Noise, idx: i64, v: i64): void {
     }
 }
 
-fn writeDmc(d: &mut Dmc, idx: i64, v: i64): void {
+pub fn writeDmc(d: &mut Dmc, idx: i64, v: i64): void {
     if idx == 0 {
         d.irqEnabled = (v & 0x80) != 0
         d.loopFlag = (v & 0x40) != 0
@@ -269,7 +269,7 @@ fn writeDmc(d: &mut Dmc, idx: i64, v: i64): void {
 }
 
 // $4015: channel enables. Clearing a bit forces that length counter to 0.
-fn writeStatus(apu: &mut Apu, v: i64): void {
+pub fn writeStatus(apu: &mut Apu, v: i64): void {
     apu.pulse1.enabled = (v & 0x01) != 0
     if !apu.pulse1.enabled {
         apu.pulse1.length = 0
@@ -301,7 +301,7 @@ fn writeStatus(apu: &mut Apu, v: i64): void {
 }
 
 // $4017: frame-counter mode + IRQ inhibit.
-fn writeFrameCounter(apu: &mut Apu, v: i64): void {
+pub fn writeFrameCounter(apu: &mut Apu, v: i64): void {
     apu.frameMode = (v >> 7) & 1
     apu.frameInhibit = (v & 0x40) != 0
     if apu.frameInhibit {
@@ -316,7 +316,7 @@ fn writeFrameCounter(apu: &mut Apu, v: i64): void {
 }
 
 // $4015 read: channel-active + frame-IRQ status; reading clears the frame IRQ.
-fn apuReadStatus(apu: &mut Apu): u8 {
+pub fn apuReadStatus(apu: &mut Apu): u8 {
     var r: i64 = 0
     if apu.pulse1.length > 0 {
         r = r | 0x01
@@ -344,7 +344,7 @@ fn apuReadStatus(apu: &mut Apu): u8 {
 }
 
 // ---- clocking ----
-fn apuStep(apu: &mut Apu, cycles: i64): void {
+pub fn apuStep(apu: &mut Apu, cycles: i64): void {
     var c: i64 = 0
     while c < cycles {
         clockTriangleTimer(apu.triangle) // triangle timer runs at the CPU rate
@@ -369,7 +369,7 @@ fn apuStep(apu: &mut Apu, cycles: i64): void {
 
 // Frame sequencer thresholds in CPU cycles (NTSC). Quarter-frame clocks the
 // envelopes + triangle linear counter; half-frame also clocks length + sweep.
-fn stepFrameCounter(apu: &mut Apu): void {
+pub fn stepFrameCounter(apu: &mut Apu): void {
     apu.frameCycle = apu.frameCycle + 1
     let fc = apu.frameCycle
     if apu.frameMode == 0 {
@@ -406,14 +406,14 @@ fn stepFrameCounter(apu: &mut Apu): void {
     }
 }
 
-fn quarterFrame(apu: &mut Apu): void {
+pub fn quarterFrame(apu: &mut Apu): void {
     clockPulseEnvelope(apu.pulse1)
     clockPulseEnvelope(apu.pulse2)
     clockNoiseEnvelope(apu.noise)
     clockTriangleLinear(apu.triangle)
 }
 
-fn halfFrame(apu: &mut Apu): void {
+pub fn halfFrame(apu: &mut Apu): void {
     clockPulseLength(apu.pulse1)
     clockPulseLength(apu.pulse2)
     clockPulseSweep(apu.pulse1)
@@ -426,7 +426,7 @@ fn halfFrame(apu: &mut Apu): void {
     }
 }
 
-fn clockPulseTimer(p: &mut Pulse): void {
+pub fn clockPulseTimer(p: &mut Pulse): void {
     if p.timerVal == 0 {
         p.timerVal = p.timerPeriod
         p.dutyPos = (p.dutyPos + 1) & 7
@@ -437,7 +437,7 @@ fn clockPulseTimer(p: &mut Pulse): void {
 
 // DMC: advance the output timer; on underflow, shift out one delta bit and, when
 // a byte is exhausted, pull the next from the sample buffer (refilled by the bus).
-fn clockDmc(d: &mut Dmc): void {
+pub fn clockDmc(d: &mut Dmc): void {
     d.timer = d.timer - 1
     if d.timer > 0 {
         return
@@ -472,7 +472,7 @@ fn clockDmc(d: &mut Dmc): void {
 }
 
 // Supply a byte fetched from CPU memory (called by the bus after a needsFetch).
-fn dmcFill(d: &mut Dmc, byte: i64): void {
+pub fn dmcFill(d: &mut Dmc, byte: i64): void {
     d.bufferByte = byte
     d.bufferEmpty = false
     d.needsFetch = false
@@ -491,7 +491,7 @@ fn dmcFill(d: &mut Dmc, byte: i64): void {
     }
 }
 
-fn clockTriangleTimer(t: &mut Triangle): void {
+pub fn clockTriangleTimer(t: &mut Triangle): void {
     if t.timerVal == 0 {
         t.timerVal = t.timerPeriod
         // sequencer only advances while both gates are open
@@ -503,7 +503,7 @@ fn clockTriangleTimer(t: &mut Triangle): void {
     }
 }
 
-fn clockNoiseTimer(n: &mut Noise): void {
+pub fn clockNoiseTimer(n: &mut Noise): void {
     if n.timerVal == 0 {
         n.timerVal = n.timerPeriod
         let bit0 = n.shift & 1
@@ -519,7 +519,7 @@ fn clockNoiseTimer(n: &mut Noise): void {
     }
 }
 
-fn clockPulseEnvelope(p: &mut Pulse): void {
+pub fn clockPulseEnvelope(p: &mut Pulse): void {
     if p.envStart {
         p.envStart = false
         p.envDecay = 15
@@ -536,7 +536,7 @@ fn clockPulseEnvelope(p: &mut Pulse): void {
     }
 }
 
-fn clockNoiseEnvelope(n: &mut Noise): void {
+pub fn clockNoiseEnvelope(n: &mut Noise): void {
     if n.envStart {
         n.envStart = false
         n.envDecay = 15
@@ -553,13 +553,13 @@ fn clockNoiseEnvelope(n: &mut Noise): void {
     }
 }
 
-fn clockPulseLength(p: &mut Pulse): void {
+pub fn clockPulseLength(p: &mut Pulse): void {
     if !p.lengthHalt && p.length > 0 {
         p.length = p.length - 1
     }
 }
 
-fn clockTriangleLinear(t: &mut Triangle): void {
+pub fn clockTriangleLinear(t: &mut Triangle): void {
     if t.linearReloadFlag {
         t.linearCounter = t.linearReload
     } else if t.linearCounter > 0 {
@@ -570,7 +570,7 @@ fn clockTriangleLinear(t: &mut Triangle): void {
     }
 }
 
-fn clockPulseSweep(p: &mut Pulse): void {
+pub fn clockPulseSweep(p: &mut Pulse): void {
     if p.sweepReload {
         p.sweepDivider = p.sweepPeriod
         p.sweepReload = false
@@ -596,11 +596,11 @@ fn clockPulseSweep(p: &mut Pulse): void {
 }
 
 // ---- outputs + mixing ----
-fn pulseMuted(p: &Pulse): bool {
+pub fn pulseMuted(p: &Pulse): bool {
     return p.timerPeriod < 8 || p.timerPeriod > 0x7FF
 }
 
-fn pulseOutput(p: &Pulse): i64 {
+pub fn pulseOutput(p: &Pulse): i64 {
     if !p.enabled || p.length == 0 || pulseMuted(p) {
         return 0
     }
@@ -613,11 +613,11 @@ fn pulseOutput(p: &Pulse): i64 {
     return p.envDecay
 }
 
-fn triangleOutput(t: &Triangle): i64 {
+pub fn triangleOutput(t: &Triangle): i64 {
     return TRIANGLE_SEQ[t.seqPos]
 }
 
-fn noiseOutput(n: &Noise): i64 {
+pub fn noiseOutput(n: &Noise): i64 {
     if !n.enabled || n.length == 0 || (n.shift & 1) == 1 {
         return 0
     }
@@ -627,7 +627,7 @@ fn noiseOutput(n: &Noise): i64 {
     return n.envDecay
 }
 
-fn emitSample(apu: &mut Apu): void {
+pub fn emitSample(apu: &mut Apu): void {
     let p1 = pulseOutput(apu.pulse1)
     let p2 = pulseOutput(apu.pulse2)
     let tri = triangleOutput(apu.triangle)

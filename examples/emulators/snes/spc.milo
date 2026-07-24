@@ -6,16 +6,23 @@
 // the direct page ($00xx vs $01xx). YA is the 16-bit {Y:A} pair for MUL/DIV/16-bit.
 
 // PSW status bits
-let PC_: i64 = 0x01 // carry
-let PZ: i64 = 0x02 // zero
-let PI: i64 = 0x04 // interrupt enable
-let PH: i64 = 0x08 // half-carry
-let PB: i64 = 0x10 // break
-let PP: i64 = 0x20 // direct-page selector (0 = $00xx, 1 = $01xx)
-let PV: i64 = 0x40 // overflow
-let PN: i64 = 0x80 // negative
+pub let PC_: i64 = 0x01 // carry
 
-struct Spc {
+pub let PZ: i64 = 0x02 // zero
+
+pub let PI: i64 = 0x04 // interrupt enable
+
+pub let PH: i64 = 0x08 // half-carry
+
+pub let PB: i64 = 0x10 // break
+
+pub let PP: i64 = 0x20 // direct-page selector (0 = $00xx, 1 = $01xx)
+
+pub let PV: i64 = 0x40 // overflow
+
+pub let PN: i64 = 0x80 // negative
+
+pub struct Spc {
     a: i64
     x: i64
     y: i64
@@ -28,7 +35,7 @@ struct Spc {
 // RAM + the 64-byte IPL boot ROM at $FFC0-$FFFF (when enabled) + the four
 // CPU<->APU port latches at $F4-$F7. inPort = what the main CPU wrote (SPC
 // reads it); outPort = what the SPC wrote (main CPU reads it at $2140-$2143).
-struct SpcMem {
+pub struct SpcMem {
     addr: Vec<i64> // test-mode sparse RAM
     val: Vec<i64>
     testMode: bool
@@ -64,7 +71,7 @@ struct SpcMem {
     vKonPrev: i64 // last KON ($4C) value, to detect key-on edges
 }
 
-fn spcMemNew(): SpcMem {
+pub fn spcMemNew(): SpcMem {
     return SpcMem {
         addr: Vec.new(), val: Vec.new(), testMode: true,
         ram: Vec.new(), ipl: Vec.new(), iplEnabled: false,
@@ -78,7 +85,7 @@ fn spcMemNew(): SpcMem {
     }
 }
 
-fn spcZeros(n: i64): Vec<u8> {
+pub fn spcZeros(n: i64): Vec<u8> {
     var v: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < n {
@@ -90,7 +97,7 @@ fn spcZeros(n: i64): Vec<u8> {
 
 // Canonical SNES SPC700 IPL boot ROM ($FFC0-$FFFF): posts $AA/$BB to ports 0/1
 // then runs the upload handshake. Reset vector ($FFFE) = $FFC0.
-fn iplRom(): Vec<u8> {
+pub fn iplRom(): Vec<u8> {
     let b = [0xCD, 0xEF, 0xBD, 0xE8, 0x00, 0xC6, 0x1D, 0xD0, 0xFC, 0x8F, 0xAA, 0xF4, 0x8F, 0xBB, 0xF5, 0x78, 0xCC, 0xF4, 0xD0, 0xFB, 0x2F, 0x19, 0xEB, 0xF4, 0xD0, 0xFC, 0x7E, 0xF4, 0xD0, 0x0B, 0xE4, 0xF5, 0xCB, 0xF4, 0xD7, 0x00, 0xFC, 0xD0, 0xF3, 0xAB, 0x01, 0x10, 0xEF, 0x7E, 0xF4, 0x10, 0xEB, 0xBA, 0xF6, 0xDA, 0x00, 0xBA, 0xF4, 0xC4, 0xF4, 0xDD, 0x5D, 0xD0, 0xDB, 0x1F, 0x00, 0x00, 0xC0, 0xFF]
     var v: Vec<u8> = Vec.new()
     var i: i64 = 0
@@ -101,7 +108,7 @@ fn iplRom(): Vec<u8> {
     return v
 }
 
-fn spcZerosI64(n: i64): Vec<i64> {
+pub fn spcZerosI64(n: i64): Vec<i64> {
     var v: Vec<i64> = Vec.new()
     var i: i64 = 0
     while i < n {
@@ -111,7 +118,7 @@ fn spcZerosI64(n: i64): Vec<i64> {
     return v
 }
 
-fn spcMemReal(): SpcMem {
+pub fn spcMemReal(): SpcMem {
     return SpcMem {
         addr: Vec.new(), val: Vec.new(), testMode: false,
         ram: spcZeros(0x10000), ipl: iplRom(), iplEnabled: true,
@@ -130,7 +137,7 @@ fn spcMemReal(): SpcMem {
 // each voice's pitch, scaled by a (simplified) envelope + per-voice + master
 // volume. Skips gaussian interpolation and echo for now (dry but audible).
 
-fn s8(v: i64): i64 {
+pub fn s8(v: i64): i64 {
     let x = v & 0xFF
     if x >= 0x80 {
         return x - 0x100
@@ -138,7 +145,7 @@ fn s8(v: i64): i64 {
     return x
 }
 
-fn dspClamp16(v: i64): i64 {
+pub fn dspClamp16(v: i64): i64 {
     if v > 32767 {
         return 32767
     }
@@ -150,7 +157,7 @@ fn dspClamp16(v: i64): i64 {
 
 // Decode the 9-byte BRR block at m.vBrrPtr[v] into vBuf[v*16..+16], carrying the
 // two-sample filter history. Returns the block header byte (bit0 end, bit1 loop).
-fn dspDecodeBlock(m: &mut SpcMem, v: i64): i64 {
+pub fn dspDecodeBlock(m: &mut SpcMem, v: i64): i64 {
     let base = m.vBrrPtr[v] & 0xFFFF
     let hdr = m.ram[base] as i64
     let range = (hdr >> 4) & 0x0F
@@ -194,19 +201,19 @@ fn dspDecodeBlock(m: &mut SpcMem, v: i64): i64 {
 }
 
 // Sample directory entry for source SRCN: 4 bytes at (DIR<<8)+SRCN*4 = start(2)+loop(2).
-fn dspSampleStart(m: &SpcMem, srcn: i64): i64 {
+pub fn dspSampleStart(m: &SpcMem, srcn: i64): i64 {
     let dir = (m.dsp[0x5D] as i64) << 8
     let e = (dir + srcn * 4) & 0xFFFF
     return (m.ram[e] as i64) | ((m.ram[(e + 1) & 0xFFFF] as i64) << 8)
 }
 
-fn dspSampleLoop(m: &SpcMem, srcn: i64): i64 {
+pub fn dspSampleLoop(m: &SpcMem, srcn: i64): i64 {
     let dir = (m.dsp[0x5D] as i64) << 8
     let e = (dir + srcn * 4 + 2) & 0xFFFF
     return (m.ram[e] as i64) | ((m.ram[(e + 1) & 0xFFFF] as i64) << 8)
 }
 
-fn dspKeyOn(m: &mut SpcMem, v: i64): void {
+pub fn dspKeyOn(m: &mut SpcMem, v: i64): void {
     let srcn = m.dsp[v * 16 + 4] as i64
     m.vBrrPtr[v] = dspSampleStart(m, srcn)
     m.vInterp[v] = 0
@@ -218,7 +225,7 @@ fn dspKeyOn(m: &mut SpcMem, v: i64): void {
 }
 
 // Generate `n` stereo samples (interleaved L,R) into `out` (cleared+filled).
-fn dspGenerate(m: &mut SpcMem, out: &mut Vec<i64>, n: i64): void {
+pub fn dspGenerate(m: &mut SpcMem, out: &mut Vec<i64>, n: i64): void {
     // Global mute / reset (FLG bit6).
     let muted = (m.dsp[0x6C] as i64 & 0x40) != 0
     let konNow = m.dsp[0x4C] as i64
@@ -298,12 +305,12 @@ fn dspGenerate(m: &mut SpcMem, out: &mut Vec<i64>, n: i64): void {
     }
 }
 
-fn spcMemReset(m: &mut SpcMem): void {
+pub fn spcMemReset(m: &mut SpcMem): void {
     m.addr = Vec.new()
     m.val = Vec.new()
 }
 
-fn spcRead(m: &mut SpcMem, a: i64): i64 {
+pub fn spcRead(m: &mut SpcMem, a: i64): i64 {
     if m.testMode {
         var i: i64 = 0
         while i < m.addr.len {
@@ -340,7 +347,7 @@ fn spcRead(m: &mut SpcMem, a: i64): i64 {
 // Advance the timers by `cyc` SPC cycles. Prescale: T0/T1 tick every 128
 // cycles, T2 every 16; each prescale tick counts toward the target, and hitting
 // it bumps the 4-bit out counter.
-fn spcTimersTick(m: &mut SpcMem, cyc: i64): void {
+pub fn spcTimersTick(m: &mut SpcMem, cyc: i64): void {
     var t: i64 = 0
     while t < 3 {
         if (m.tEnable & (1 << t)) != 0 {
@@ -368,7 +375,7 @@ fn spcTimersTick(m: &mut SpcMem, cyc: i64): void {
     }
 }
 
-fn spcWrite(m: &mut SpcMem, a: i64, v: i64): void {
+pub fn spcWrite(m: &mut SpcMem, a: i64, v: i64): void {
     if m.testMode {
         let addr = a & 0xFFFF
         var i: i64 = 0
@@ -438,22 +445,22 @@ fn spcWrite(m: &mut SpcMem, a: i64, v: i64): void {
 }
 
 // Main-CPU side of the APU ports ($2140-$2143 <-> $F4-$F7).
-fn apuReadPort(m: &SpcMem, i: i64): i64 {
+pub fn apuReadPort(m: &SpcMem, i: i64): i64 {
     return m.outPort[i & 3]
 }
 
-fn apuWritePort(m: &mut SpcMem, i: i64, v: i64): void {
+pub fn apuWritePort(m: &mut SpcMem, i: i64, v: i64): void {
     m.inPort[i & 3] = v & 0xFF
 }
 
 // Reset the SPC into the IPL: PC from the reset vector at $FFFE.
-fn spcReset(spc: &mut Spc, m: &mut SpcMem): void {
+pub fn spcReset(spc: &mut Spc, m: &mut SpcMem): void {
     spc.pc = spcRead16(m, 0xFFFE)
     spc.sp = 0xEF
     spc.psw = 0x02
 }
 
-fn spcSetBit(spc: &mut Spc, mask: i64, on: bool): void {
+pub fn spcSetBit(spc: &mut Spc, mask: i64, on: bool): void {
     if on {
         spc.psw = spc.psw | mask
     } else {
@@ -461,49 +468,49 @@ fn spcSetBit(spc: &mut Spc, mask: i64, on: bool): void {
     }
 }
 
-fn spcNZ(spc: &mut Spc, v: i64): void {
+pub fn spcNZ(spc: &mut Spc, v: i64): void {
     spcSetBit(spc, PZ, (v & 0xFF) == 0)
     spcSetBit(spc, PN, (v & 0x80) != 0)
 }
 
-fn spcFetch(spc: &mut Spc, m: &mut SpcMem): i64 {
+pub fn spcFetch(spc: &mut Spc, m: &mut SpcMem): i64 {
     let v = spcRead(m, spc.pc)
     spc.pc = (spc.pc + 1) & 0xFFFF
     return v
 }
 
 // Direct-page effective address for a dp operand byte (P flag picks the page).
-fn dpAddr(spc: &Spc, dp: i64): i64 {
+pub fn dpAddr(spc: &Spc, dp: i64): i64 {
     if (spc.psw & PP) != 0 {
         return 0x100 | (dp & 0xFF)
     }
     return dp & 0xFF
 }
 
-fn spcFetch16(spc: &mut Spc, m: &mut SpcMem): i64 {
+pub fn spcFetch16(spc: &mut Spc, m: &mut SpcMem): i64 {
     let lo = spcFetch(spc, m)
     let hi = spcFetch(spc, m)
     return lo | (hi << 8)
 }
 
 // --- ALU on A (8-bit; set flags per SPC700 semantics) ---
-fn spcOr(spc: &mut Spc, v: i64): void {
+pub fn spcOr(spc: &mut Spc, v: i64): void {
     spc.a = spc.a | v
     spcNZ(spc, spc.a)
 }
 
-fn spcAnd(spc: &mut Spc, v: i64): void {
+pub fn spcAnd(spc: &mut Spc, v: i64): void {
     spc.a = spc.a & v
     spcNZ(spc, spc.a)
 }
 
-fn spcEor(spc: &mut Spc, v: i64): void {
+pub fn spcEor(spc: &mut Spc, v: i64): void {
     spc.a = spc.a ^ v
     spcNZ(spc, spc.a)
 }
 
 // CMP reg,v: C if reg>=v; N/Z from the difference. No register change.
-fn spcCmp(spc: &mut Spc, reg: i64, v: i64): void {
+pub fn spcCmp(spc: &mut Spc, reg: i64, v: i64): void {
     let d = (reg - v) & 0xFF
     spcSetBit(spc, PC_, (reg & 0xFF) >= (v & 0xFF))
     spcSetBit(spc, PZ, d == 0)
@@ -511,7 +518,7 @@ fn spcCmp(spc: &mut Spc, reg: i64, v: i64): void {
 }
 
 // ADC/SBC on arbitrary operands (used by A-form and memory-dest forms).
-fn aluAdcVal(spc: &mut Spc, a: i64, v: i64): i64 {
+pub fn aluAdcVal(spc: &mut Spc, a: i64, v: i64): i64 {
     let av = a & 0xFF
     let vv = v & 0xFF
     let c = spc.psw & PC_
@@ -524,62 +531,62 @@ fn aluAdcVal(spc: &mut Spc, a: i64, v: i64): i64 {
     return rr
 }
 
-fn aluSbcVal(spc: &mut Spc, a: i64, v: i64): i64 {
+pub fn aluSbcVal(spc: &mut Spc, a: i64, v: i64): i64 {
     return aluAdcVal(spc, a, (v ^ 0xFF) & 0xFF) // SBC = ADC with one's-complement
 }
 
-fn spcAdc(spc: &mut Spc, v: i64): void {
+pub fn spcAdc(spc: &mut Spc, v: i64): void {
     spc.a = aluAdcVal(spc, spc.a, v)
 }
 
-fn spcSbc(spc: &mut Spc, v: i64): void {
+pub fn spcSbc(spc: &mut Spc, v: i64): void {
     spc.a = aluSbcVal(spc, spc.a, v)
 }
 
-fn readDp(spc: &mut Spc, m: &mut SpcMem): i64 {
+pub fn readDp(spc: &mut Spc, m: &mut SpcMem): i64 {
     return spcRead(m, dpAddr(spc, spcFetch(spc, m)))
 }
 
-fn readAbs(spc: &mut Spc, m: &mut SpcMem): i64 {
+pub fn readAbs(spc: &mut Spc, m: &mut SpcMem): i64 {
     return spcRead(m, spcFetch16(spc, m))
 }
 
-fn readAbsX(spc: &mut Spc, m: &mut SpcMem): i64 {
+pub fn readAbsX(spc: &mut Spc, m: &mut SpcMem): i64 {
     return spcRead(m, (spcFetch16(spc, m) + spc.x) & 0xFFFF)
 }
 
-fn readAbsY(spc: &mut Spc, m: &mut SpcMem): i64 {
+pub fn readAbsY(spc: &mut Spc, m: &mut SpcMem): i64 {
     return spcRead(m, (spcFetch16(spc, m) + spc.y) & 0xFFFF)
 }
 
 // Stack lives in page 1 ($0100-$01FF), grows downward.
-fn spcPush(spc: &mut Spc, m: &mut SpcMem, v: i64): void {
+pub fn spcPush(spc: &mut Spc, m: &mut SpcMem, v: i64): void {
     spcWrite(m, 0x100 | (spc.sp & 0xFF), v)
     spc.sp = (spc.sp - 1) & 0xFF
 }
 
-fn spcPull(spc: &mut Spc, m: &mut SpcMem): i64 {
+pub fn spcPull(spc: &mut Spc, m: &mut SpcMem): i64 {
     spc.sp = (spc.sp + 1) & 0xFF
     return spcRead(m, 0x100 | (spc.sp & 0xFF))
 }
 
-fn spcPush16(spc: &mut Spc, m: &mut SpcMem, v: i64): void {
+pub fn spcPush16(spc: &mut Spc, m: &mut SpcMem, v: i64): void {
     spcPush(spc, m, (v >> 8) & 0xFF)
     spcPush(spc, m, v & 0xFF)
 }
 
-fn spcPull16(spc: &mut Spc, m: &mut SpcMem): i64 {
+pub fn spcPull16(spc: &mut Spc, m: &mut SpcMem): i64 {
     let lo = spcPull(spc, m)
     let hi = spcPull(spc, m)
     return lo | (hi << 8)
 }
 
-fn spcRead16(m: &mut SpcMem, addr: i64): i64 {
+pub fn spcRead16(m: &mut SpcMem, addr: i64): i64 {
     return spcRead(m, addr) | (spcRead(m, (addr + 1) & 0xFFFF) << 8)
 }
 
 // DAA/DAS: decimal-adjust A after add/subtract using current C/H.
-fn spcDaa(spc: &mut Spc): void {
+pub fn spcDaa(spc: &mut Spc): void {
     let oldA = spc.a & 0xFF
     var carry = (spc.psw & PC_) != 0
     var a = oldA
@@ -595,7 +602,7 @@ fn spcDaa(spc: &mut Spc): void {
     spcNZ(spc, spc.a)
 }
 
-fn spcDas(spc: &mut Spc): void {
+pub fn spcDas(spc: &mut Spc): void {
     let oldA = spc.a & 0xFF
     var carry = (spc.psw & PC_) != 0
     var a = oldA
@@ -612,7 +619,7 @@ fn spcDas(spc: &mut Spc): void {
 }
 
 // DIV YA / X → A quotient, Y remainder. Models the SPC700's quirky overflow path.
-fn spcDiv(spc: &mut Spc): void {
+pub fn spcDiv(spc: &mut Spc): void {
     let ya = ((spc.y << 8) | spc.a) & 0xFFFF
     let x = spc.x & 0xFF
     spcSetBit(spc, PH, (x & 0x0F) <= (spc.y & 0x0F))
@@ -630,7 +637,7 @@ fn spcDiv(spc: &mut Spc): void {
 }
 
 // BBS/BBC dp.bit,rel — branch if a direct-page bit matches wantSet.
-fn bbTest(spc: &mut Spc, m: &mut SpcMem, bit: i64, wantSet: bool): void {
+pub fn bbTest(spc: &mut Spc, m: &mut SpcMem, bit: i64, wantSet: bool): void {
     let v = spcRead(m, dpAddr(spc, spcFetch(spc, m)))
     let off = spcFetch(spc, m)
     let soff: i64 = if off >= 0x80 {
@@ -645,7 +652,7 @@ fn bbTest(spc: &mut Spc, m: &mut SpcMem, bit: i64, wantSet: bool): void {
 }
 
 // Relative branch: signed 8-bit offset applied if cond (PC already past it).
-fn spcBranch(spc: &mut Spc, m: &mut SpcMem, cond: bool): void {
+pub fn spcBranch(spc: &mut Spc, m: &mut SpcMem, cond: bool): void {
     let off = spcFetch(spc, m)
     let soff: i64 = if off >= 0x80 {
         off - 0x100
@@ -658,21 +665,21 @@ fn spcBranch(spc: &mut Spc, m: &mut SpcMem, cond: bool): void {
 }
 
 // --- shifts/rotates (8-bit; set C + N/Z) ---
-fn spcAsl(spc: &mut Spc, v: i64): i64 {
+pub fn spcAsl(spc: &mut Spc, v: i64): i64 {
     spcSetBit(spc, PC_, (v & 0x80) != 0)
     let r = (v << 1) & 0xFF
     spcNZ(spc, r)
     return r
 }
 
-fn spcLsr(spc: &mut Spc, v: i64): i64 {
+pub fn spcLsr(spc: &mut Spc, v: i64): i64 {
     spcSetBit(spc, PC_, (v & 1) != 0)
     let r = (v & 0xFF) >> 1
     spcNZ(spc, r)
     return r
 }
 
-fn spcRol(spc: &mut Spc, v: i64): i64 {
+pub fn spcRol(spc: &mut Spc, v: i64): i64 {
     let oldC = spc.psw & PC_
     spcSetBit(spc, PC_, (v & 0x80) != 0)
     let r = ((v << 1) | oldC) & 0xFF
@@ -680,7 +687,7 @@ fn spcRol(spc: &mut Spc, v: i64): i64 {
     return r
 }
 
-fn spcRor(spc: &mut Spc, v: i64): i64 {
+pub fn spcRor(spc: &mut Spc, v: i64): i64 {
     let oldC = spc.psw & PC_
     spcSetBit(spc, PC_, (v & 1) != 0)
     var r = (v & 0xFF) >> 1
@@ -691,47 +698,47 @@ fn spcRor(spc: &mut Spc, v: i64): i64 {
     return r
 }
 
-fn spcNZ16(spc: &mut Spc, w: i64): void {
+pub fn spcNZ16(spc: &mut Spc, w: i64): void {
     spcSetBit(spc, PZ, (w & 0xFFFF) == 0)
     spcSetBit(spc, PN, (w & 0x8000) != 0)
 }
 
 // 16-bit direct-page word (second byte wraps within the page).
-fn readDpWord(spc: &Spc, m: &mut SpcMem, d: i64): i64 {
+pub fn readDpWord(spc: &Spc, m: &mut SpcMem, d: i64): i64 {
     let lo = spcRead(m, dpAddr(spc, d))
     let hi = spcRead(m, dpAddr(spc, (d + 1) & 0xFF))
     return lo | (hi << 8)
 }
 
-fn writeDpWord(spc: &Spc, m: &mut SpcMem, d: i64, w: i64): void {
+pub fn writeDpWord(spc: &Spc, m: &mut SpcMem, d: i64, w: i64): void {
     spcWrite(m, dpAddr(spc, d), w & 0xFF)
     spcWrite(m, dpAddr(spc, (d + 1) & 0xFF), (w >> 8) & 0xFF)
 }
 
 // dp indexed by X (byte, wraps within the direct page).
-fn readDpX(spc: &mut Spc, m: &mut SpcMem): i64 {
+pub fn readDpX(spc: &mut Spc, m: &mut SpcMem): i64 {
     return spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF))
 }
 
 // (X): direct page at register X. [dp+X]: 16-bit pointer at dp+X. [dp]+Y:
 // 16-bit pointer at dp, then +Y.
-fn readIndX(spc: &Spc, m: &mut SpcMem): i64 {
+pub fn readIndX(spc: &Spc, m: &mut SpcMem): i64 {
     return spcRead(m, dpAddr(spc, spc.x))
 }
 
-fn readIndDpX(spc: &mut Spc, m: &mut SpcMem): i64 {
+pub fn readIndDpX(spc: &mut Spc, m: &mut SpcMem): i64 {
     let d = (spcFetch(spc, m) + spc.x) & 0xFF
     return spcRead(m, readDpWord(spc, m, d))
 }
 
-fn readIndDpY(spc: &mut Spc, m: &mut SpcMem): i64 {
+pub fn readIndDpY(spc: &mut Spc, m: &mut SpcMem): i64 {
     let d = spcFetch(spc, m)
     let ptr = readDpWord(spc, m, d)
     return spcRead(m, (ptr + spc.y) & 0xFFFF)
 }
 
 // SET1/CLR1 dp.bit — set or clear one bit of a direct-page byte (no flags).
-fn setBitMem(spc: &mut Spc, m: &mut SpcMem, bit: i64, set: bool): void {
+pub fn setBitMem(spc: &mut Spc, m: &mut SpcMem, bit: i64, set: bool): void {
     let ad = dpAddr(spc, spcFetch(spc, m))
     var v = spcRead(m, ad)
     if set {
@@ -743,7 +750,7 @@ fn setBitMem(spc: &mut Spc, m: &mut SpcMem, bit: i64, set: bool): void {
 }
 
 // --- 16-bit YA arithmetic (word from dp) ---
-fn spcAddw(spc: &mut Spc, w: i64): void {
+pub fn spcAddw(spc: &mut Spc, w: i64): void {
     let ya = ((spc.y << 8) | spc.a) & 0xFFFF
     let r = ya + w
     spcSetBit(spc, PC_, r > 0xFFFF)
@@ -754,7 +761,7 @@ fn spcAddw(spc: &mut Spc, w: i64): void {
     spcNZ16(spc, r)
 }
 
-fn spcSubw(spc: &mut Spc, w: i64): void {
+pub fn spcSubw(spc: &mut Spc, w: i64): void {
     let ya = ((spc.y << 8) | spc.a) & 0xFFFF
     let comp = (~w) & 0xFFFF
     let r = ya + comp + 1
@@ -766,7 +773,7 @@ fn spcSubw(spc: &mut Spc, w: i64): void {
     spcNZ16(spc, r)
 }
 
-fn spcCmpw(spc: &mut Spc, w: i64): void {
+pub fn spcCmpw(spc: &mut Spc, w: i64): void {
     let ya = ((spc.y << 8) | spc.a) & 0xFFFF
     spcSetBit(spc, PC_, ya >= (w & 0xFFFF))
     spcNZ16(spc, (ya - w) & 0xFFFF)
@@ -774,7 +781,7 @@ fn spcCmpw(spc: &mut Spc, w: i64): void {
 
 // Execute one instruction. Batches: flag ops, MOVs, INC/DEC, and A-form ALU
 // (OR/AND/EOR/CMP/ADC/SBC) over immediate/dp/abs.
-fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
+pub fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
     // Advance timers by a nominal per-instruction cycle count. Exact cycle
     // accounting isn't modeled yet; ~16 keeps the 8kHz/64kHz rates in the right
     // ballpark so sound-driver timing loops progress.

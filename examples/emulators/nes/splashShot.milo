@@ -10,7 +10,7 @@ from "./splash" import {
     renderSplash
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
         print("usage: splashShot <out.rgb>")

@@ -3,7 +3,7 @@
 // BG/OBJ control) that DMA and CPU writes push graphics data through. Actual
 // scanline rendering (Mode 1 backgrounds + sprites) lands next. Ref: fullsnes.
 
-struct Ppu {
+pub struct Ppu {
     vram: Vec<u8> // 64 KiB (32K 16-bit words)
     cgram: Vec<u8> // 512 bytes = 256 BGR555 colors
     oam: Vec<u8> // real OAM is 544B (512 + 32 high); over-allocated to 0x400 so the
@@ -90,7 +90,7 @@ struct Ppu {
     lineWH1: Vec<i64>
 }
 
-fn ppuZeros(n: i64): Vec<u8> {
+pub fn ppuZeros(n: i64): Vec<u8> {
     var v: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < n {
@@ -100,7 +100,7 @@ fn ppuZeros(n: i64): Vec<u8> {
     return v
 }
 
-fn ppuZerosI64(n: i64): Vec<i64> {
+pub fn ppuZerosI64(n: i64): Vec<i64> {
     var v: Vec<i64> = Vec.new()
     var i: i64 = 0
     while i < n {
@@ -110,7 +110,7 @@ fn ppuZerosI64(n: i64): Vec<i64> {
     return v
 }
 
-fn newPpu(): Ppu {
+pub fn newPpu(): Ppu {
     return Ppu {
         vram: ppuZeros(0x10000), cgram: ppuZeros(0x200), oam: ppuZeros(0x400),
         inidisp: 0, obsel: 0, oamaddr: 0, oamLatch: 0, oamHi: false,
@@ -128,7 +128,7 @@ fn newPpu(): Ppu {
 }
 
 // VRAM address increment after a data-port access (VMAIN bits 0-1: 1/32/128).
-fn vramStep(p: &Ppu): i64 {
+pub fn vramStep(p: &Ppu): i64 {
     let s = p.vmain & 0x03
     if s == 0 {
         return 1
@@ -146,11 +146,11 @@ fn vramStep(p: &Ppu): i64 {
 // and sprite writes spill into the 32-byte high table, corrupting the X-high/size
 // bits — which flings a metasprite's tiles off-screen (DKC's DK vanished). Global
 // (not a struct field) so it stays out of the save-state format.
-var oamReload: i64 = 0
+pub var oamReload: i64 = 0
 
 // Reload OAMADDR at vblank start (called from stepFrame). No-op under force-blank,
 // matching hardware (OAM address isn't reloaded while the screen is forced blank).
-fn ppuVblankOamReload(p: &mut Ppu): void {
+pub fn ppuVblankOamReload(p: &mut Ppu): void {
     if (p.inidisp & 0x80) == 0 {
         p.oamaddr = oamReload
         p.oamHi = false
@@ -158,7 +158,7 @@ fn ppuVblankOamReload(p: &mut Ppu): void {
 }
 
 // Register write for $2100-$213F (reg = low byte of the address).
-fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
+pub fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
     let v = val & 0xFF
     if reg == 0x00 {
         p.inidisp = v
@@ -391,7 +391,7 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
 }
 
 // Register read for $2134-$213F (readable PPU registers). Data ports auto-inc.
-fn ppuRegRead(p: &mut Ppu, reg: i64): i64 {
+pub fn ppuRegRead(p: &mut Ppu, reg: i64): i64 {
     if reg == 0x38 { // OAMDATAREAD
         let a = (p.oamaddr * 2) & 0x3FF
         let r = p.oam[a] as i64
@@ -416,7 +416,7 @@ fn ppuRegRead(p: &mut Ppu, reg: i64): i64 {
 }
 
 // Pure register read (no auto-increment) for the CPU's &Mem read path.
-fn ppuRegReadPure(p: &Ppu, reg: i64): i64 {
+pub fn ppuRegReadPure(p: &Ppu, reg: i64): i64 {
     if reg == 0x38 {
         return p.oam[(p.oamaddr * 2) & 0x3FF] as i64
     }
@@ -433,7 +433,7 @@ fn ppuRegReadPure(p: &Ppu, reg: i64): i64 {
 }
 
 // Sign-extend a 16-bit / 13-bit two's-complement value (Mode 7 fixed-point regs).
-fn m7Ext16(v: i64): i64 {
+pub fn m7Ext16(v: i64): i64 {
     let x = v & 0xFFFF
     return if x >= 0x8000 {
         x - 0x10000
@@ -442,7 +442,7 @@ fn m7Ext16(v: i64): i64 {
     }
 }
 
-fn m7Ext13(v: i64): i64 {
+pub fn m7Ext13(v: i64): i64 {
     let x = v & 0x1FFF
     return if x >= 0x1000 {
         x - 0x2000
@@ -451,13 +451,13 @@ fn m7Ext13(v: i64): i64 {
     }
 }
 
-fn vramWord(p: &Ppu, waddr: i64): i64 {
+pub fn vramWord(p: &Ppu, waddr: i64): i64 {
     let b = (waddr * 2) & 0xFFFF
     return (p.vram[b] as i64) | ((p.vram[(b + 1) & 0xFFFF] as i64) << 8)
 }
 
 // 4bpp planar tile pixel (0-15). charBase/tileNum in words; px/py 0-7.
-fn tile4bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
+pub fn tile4bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
     let tb = ((charBase + tileNum * 16) * 2) & 0xFFFF // 16 words = 32 bytes/tile
     let r0 = (tb + py * 2) & 0xFFFF
     let p0 = p.vram[r0] as i64
@@ -469,7 +469,7 @@ fn tile4bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
 }
 
 // 8bpp planar tile pixel (0-255). 32 words = 64 bytes/tile; 8 planes in 4 pairs.
-fn tile8bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
+pub fn tile8bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
     let tb = ((charBase + tileNum * 32) * 2) & 0xFFFF
     let r0 = (tb + py * 2) & 0xFFFF
     let bit = 7 - px
@@ -488,7 +488,7 @@ fn tile8bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
 // CGRAM BGR555 color -> 0xRRGGBB, scaled by master brightness (0-15).
 // Effective brightness for scanline y: the HDMA per-line override if HDMA drove
 // INIDISP this frame, else the scalar register. Keeps non-HDMA output identical.
-fn lineBrightAt(p: &Ppu, y: i64, deflt: i64): i64 {
+pub fn lineBrightAt(p: &Ppu, y: i64, deflt: i64): i64 {
     if p.hdmaOn {
         return p.lineBright[y]
     }
@@ -501,7 +501,7 @@ fn lineBrightAt(p: &Ppu, y: i64, deflt: i64): i64 {
 // layer's screen-disable bit is set AND a window is enabled for it — so layers
 // without windows are unaffected. Window 1 bounds are per-scanline (HDMA); window
 // 2 is scalar. SMW's overworld uses an inverted window 1 + TMW to clip the map.
-fn windowMasked(p: &Ppu, layerIdx: i64, screenDisable: i64, x: i64, y: i64): bool {
+pub fn windowMasked(p: &Ppu, layerIdx: i64, screenDisable: i64, x: i64, y: i64): bool {
     if (screenDisable & (1 << layerIdx)) == 0 {
         return false
     }
@@ -555,7 +555,7 @@ fn windowMasked(p: &Ppu, layerIdx: i64, screenDisable: i64, x: i64, y: i64): boo
     return in2
 }
 
-fn cgToRgb(p: &Ppu, idx: i64, bright: i64): i64 {
+pub fn cgToRgb(p: &Ppu, idx: i64, bright: i64): i64 {
     let a = (idx * 2) & 0x1FF
     let w = (p.cgram[a] as i64) | ((p.cgram[(a + 1) & 0x1FF] as i64) << 8)
     var r = (w & 0x1F) << 3
@@ -573,7 +573,7 @@ fn cgToRgb(p: &Ppu, idx: i64, bright: i64): i64 {
 // wantPrio: -1 = all sprites; 0-3 = only sprites with that OAM priority (attr
 // bits 4-5). The compositor draws each priority level at the right depth between
 // BG layers so e.g. a retracted piranha (low OBJ priority) hides behind a pipe.
-fn renderSprites(p: &Ppu, fb: &mut Vec<i64>, bright: i64, wantPrio: i64): void {
+pub fn renderSprites(p: &Ppu, fb: &mut Vec<i64>, bright: i64, wantPrio: i64): void {
     let objBase = (p.obsel & 0x07) << 13 // name base (words)
     var s: i64 = 127
     while s >= 0 {
@@ -637,7 +637,7 @@ fn renderSprites(p: &Ppu, fb: &mut Vec<i64>, bright: i64, wantPrio: i64): void {
 }
 
 // 2bpp planar tile pixel (0-3). 8 words = 16 bytes/tile.
-fn tile2bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
+pub fn tile2bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
     let tb = ((charBase + tileNum * 8) * 2) & 0xFFFF
     let r0 = (tb + py * 2) & 0xFFFF
     let p0 = p.vram[r0] as i64
@@ -648,7 +648,7 @@ fn tile2bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
 
 // Tilemap word for a tile coord, honoring the screen-size layout ($400-word
 // screens tiled 1x1 / 2x1 / 1x2 / 2x2 by the size bits).
-fn bgEntryAddr(tmBase: i64, sc: i64, tileX: i64, tileY: i64): i64 {
+pub fn bgEntryAddr(tmBase: i64, sc: i64, tileX: i64, tileY: i64): i64 {
     let nh: i64 = if (sc & 1) != 0 {
         2
     } else {
@@ -674,7 +674,7 @@ fn bgEntryAddr(tmBase: i64, sc: i64, tileX: i64, tileY: i64): i64 {
 // wantPrio: -1 = draw all tiles; 0/1 = only tiles whose priority bit (tilemap
 // entry bit 13) matches — lets the compositor interleave BG priority levels with
 // sprite priority levels (SNES per-tile priority).
-fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, hofs: i64, vofs: i64, bpp: i64, palBase: i64, layerIdx: i64, screenDisable: i64, wantPrio: i64, cgMain: bool): void {
+pub fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, hofs: i64, vofs: i64, bpp: i64, palBase: i64, layerIdx: i64, screenDisable: i64, wantPrio: i64, cgMain: bool): void {
     // Color-math mode for this layer on the main screen: nonzero => blend this
     // layer's pixels over the sub-screen already in fb instead of overwriting.
     let cgMode: i64 = if cgMain && (p.cgadsub & (1 << layerIdx)) != 0 {
@@ -803,7 +803,7 @@ fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, 
 // matrix. VRAM is byte-interleaved — even byte = tilemap entry, odd byte = tile
 // graphics. Plane coord = (M * (screen + scroll - center)) >> 8 + center. Screen
 // -over modes 0/1 wrap the 1024px plane; 2/3 (transparent / tile0 fill) TODO.
-fn renderMode7(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
+pub fn renderMode7(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
     let ox = p.m7hofs - p.m7x
     let oy = p.m7vofs - p.m7y
     var sy: i64 = 0
@@ -833,7 +833,7 @@ fn renderMode7(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
 
 // Render the mode's BG layers whose bit is set in `enable` (a $212C/$212D mask),
 // back-to-front, compositing onto fb by transparency.
-fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64, screenDisable: i64, cgMain: bool): void {
+pub fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64, screenDisable: i64, cgMain: bool): void {
     let ch1 = (p.bg12nba & 0x0F) << 12
     let ch2 = ((p.bg12nba >> 4) & 0x0F) << 12
     let ch3 = (p.bg34nba & 0x0F) << 12
@@ -884,7 +884,7 @@ fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64, screenD
 }
 
 // Clamp a 5-bit color component to 0-31.
-fn clamp5(v: i64): i64 {
+pub fn clamp5(v: i64): i64 {
     if v < 0 {
         return 0
     }
@@ -894,7 +894,7 @@ fn clamp5(v: i64): i64 {
     return v
 }
 
-fn clamp8(v: i64): i64 {
+pub fn clamp8(v: i64): i64 {
     if v < 0 {
         return 0
     }
@@ -910,7 +910,7 @@ fn clamp8(v: i64): i64 {
 // halved. Approximate: uses the drawn sub-screen (or backdrop) already in fb as the
 // second operand, which is what DKC's Rareware logo needs — the logo lives on the
 // sub-screen and CGADSUB adds it into the (dark) main-screen BG2.
-fn blendRgb(sub: i64, main: i64, cgMode: i64): i64 {
+pub fn blendRgb(sub: i64, main: i64, cgMode: i64): i64 {
     let sr = (sub >> 16) & 0xFF
     let sg = (sub >> 8) & 0xFF
     let sb = sub & 0xFF
@@ -936,7 +936,7 @@ fn blendRgb(sub: i64, main: i64, cgMode: i64): i64 {
 // Backdrop color (CGRAM index 0) with color math ($2131 bit5) applied: add or
 // subtract the fixed COLDATA color, optionally halved. This is how SMW fills a
 // level's sky — the raw backdrop is black and the fixed color paints it.
-fn backdropColor(p: &Ppu, bright: i64): i64 {
+pub fn backdropColor(p: &Ppu, bright: i64): i64 {
     let w = (p.cgram[0] as i64) | ((p.cgram[1] as i64) << 8)
     var r = w & 0x1F
     var g = (w >> 5) & 0x1F
@@ -959,7 +959,7 @@ fn backdropColor(p: &Ppu, bright: i64): i64 {
 
 // Backdrop for scanline y using the HDMA per-line brightness + fixed color. Same
 // add-only color-math policy as backdropColor. Used when hdmaOn (gradient skies).
-fn backdropColorLine(p: &Ppu, y: i64, deflt: i64): i64 {
+pub fn backdropColorLine(p: &Ppu, y: i64, deflt: i64): i64 {
     let bright = lineBrightAt(p, y, deflt)
     let w = (p.cgram[0] as i64) | ((p.cgram[1] as i64) << 8)
     var r = w & 0x1F
@@ -982,7 +982,7 @@ fn backdropColorLine(p: &Ppu, y: i64, deflt: i64): i64 {
 // hardware table — so a high-priority BG tile (a pipe) sits in front of a
 // low-priority sprite (a retracted piranha), and the BG3 HUD stays on top when
 // the BG3-priority bit ($2105 bit3) is set. Painter's order: later calls draw over.
-fn renderMode1Main(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
+pub fn renderMode1Main(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
     let ch1 = (p.bg12nba & 0x0F) << 12
     let ch2 = ((p.bg12nba >> 4) & 0x0F) << 12
     let ch3 = (p.bg34nba & 0x0F) << 12
@@ -1039,7 +1039,7 @@ fn renderMode1Main(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
 // base and the main-screen ($212C TM) layers on top — an approximation of color
 // math (no per-pixel add/half blending on layers yet, but the backdrop gets it
 // via backdropColor). Surfaces sub-screen backgrounds (SMW overworld map) too.
-fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
+pub fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
     let bright = p.inidisp & 0x0F
     // Scalar force-blank only blanks the whole frame when HDMA isn't rewriting
     // INIDISP mid-frame: Star Fox letterboxes by holding $2100=$80 in the register
@@ -1090,10 +1090,10 @@ fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
 }
 
 // Direct byte accessors (used by DMA / tests to peek loaded graphics memory).
-fn ppuVram(p: &Ppu, a: i64): i64 {
+pub fn ppuVram(p: &Ppu, a: i64): i64 {
     return p.vram[a & 0xFFFF] as i64
 }
 
-fn ppuCgram(p: &Ppu, a: i64): i64 {
+pub fn ppuCgram(p: &Ppu, a: i64): i64 {
     return p.cgram[a & 0x1FF] as i64
 }

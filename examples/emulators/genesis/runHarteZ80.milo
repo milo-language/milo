@@ -14,12 +14,12 @@ from "./z80" import {
     Z80, newZ80, stepZ80
 }
 
-struct Toks {
+pub struct Toks {
     s: string
     pos: i64
 }
 
-fn nextTok(t: &mut Toks): i64 {
+pub fn nextTok(t: &mut Toks): i64 {
     while t.pos < t.s.len {
         let c = t.s[t.pos] as i64
         if c == 32 || c == 10 || c == 13 || c == 9 {
@@ -43,7 +43,7 @@ fn nextTok(t: &mut Toks): i64 {
 
 // Load a state record into the CPU (regs then ram). Returns nothing; leaves the
 // stream positioned after the ram list.
-fn loadState(cpu: &mut Z80, t: &mut Toks) {
+pub fn loadState(cpu: &mut Z80, t: &mut Toks) {
     cpu.a = nextTok(t)
     cpu.b = nextTok(t)
     cpu.c = nextTok(t)
@@ -77,7 +77,7 @@ fn loadState(cpu: &mut Z80, t: &mut Toks) {
 }
 
 // Compare CPU against the final record; returns "" on match or first mismatch.
-fn checkFinal(cpu: &Z80, t: &mut Toks): string {
+pub fn checkFinal(cpu: &Z80, t: &mut Toks): string {
     let fa = nextTok(t)
     let fb = nextTok(t)
     let fc = nextTok(t)
@@ -146,7 +146,7 @@ fn checkFinal(cpu: &Z80, t: &mut Toks): string {
     return mm
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
         print("usage: runHarteZ80 <flat>")
@@ -200,7 +200,7 @@ fn main(): i32 {
     return 1
 }
 
-fn itoa(n: i64): string {
+pub fn itoa(n: i64): string {
     if n == 0 {
         return "0"
     }
@@ -215,7 +215,7 @@ fn itoa(n: i64): string {
     return s
 }
 
-fn hx(n: i64): string {
+pub fn hx(n: i64): string {
     var s = "0x"
     var started = false
     var i: i64 = 12

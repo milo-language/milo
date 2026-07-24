@@ -13,7 +13,7 @@ from "./value" import {
 
 // ── canonicalization + sign ──
 
-fn bigNormalizeDec(s: &string): string {
+pub fn bigNormalizeDec(s: &string): string {
     if s.len() == 0 {
         return "0"
     }
@@ -44,13 +44,13 @@ fn bigNormalizeDec(s: &string): string {
     return digits
 }
 
-fn bnIsNeg(s: &string): bool {
+pub fn bnIsNeg(s: &string): bool {
     return s.len() > 0 && s[0] == '-'
 }
 
 // true if s is a plain base-10 integer: optional +/- then one or more digits.
 // (BigInt("123") is exact; BigInt("0xff")/"1.5"/"" are not decimal integers.)
-fn isDecimalIntStr(s: &string): bool {
+pub fn isDecimalIntStr(s: &string): bool {
     if s.len() == 0 {
         return false
     }
@@ -71,14 +71,14 @@ fn isDecimalIntStr(s: &string): bool {
 }
 
 // the magnitude (unsigned digits) of a canonical BigInt
-fn bnMag(s: &string): string {
+pub fn bnMag(s: &string): string {
     if bnIsNeg(s) {
         return bnStrFrom(s, 1)
     }
     return s.clone()
 }
 
-fn bnStrFrom(s: &string, from: i64): string {
+pub fn bnStrFrom(s: &string, from: i64): string {
     var out = String.withCapacity(s.len())
     var i = from
     while i < s.len() {
@@ -88,7 +88,7 @@ fn bnStrFrom(s: &string, from: i64): string {
     return out
 }
 
-fn bnReverse(v: &Vec<u8>): string {
+pub fn bnReverse(v: &Vec<u8>): string {
     var out = String.withCapacity(v.len())
     var k = v.len() - 1
     while k >= 0 {
@@ -101,7 +101,7 @@ fn bnReverse(v: &Vec<u8>): string {
 // ── magnitude arithmetic (operands have no sign, no leading zeros) ──
 
 // -1 / 0 / 1 for a < / == / > b
-fn bnCmpMag(a: &string, b: &string): i64 {
+pub fn bnCmpMag(a: &string, b: &string): i64 {
     if a.len() != b.len() {
         if a.len() < b.len() {
             return -1
@@ -121,7 +121,7 @@ fn bnCmpMag(a: &string, b: &string): i64 {
     return 0
 }
 
-fn bnAddMag(a: &string, b: &string): string {
+pub fn bnAddMag(a: &string, b: &string): string {
     var res: Vec<u8> = Vec.new()
     var i = a.len() - 1
     var j = b.len() - 1
@@ -143,7 +143,7 @@ fn bnAddMag(a: &string, b: &string): string {
 }
 
 // a - b, requires a >= b (magnitudes)
-fn bnSubMag(a: &string, b: &string): string {
+pub fn bnSubMag(a: &string, b: &string): string {
     var res: Vec<u8> = Vec.new()
     var i = a.len() - 1
     var j = b.len() - 1
@@ -166,7 +166,7 @@ fn bnSubMag(a: &string, b: &string): string {
     return bigNormalizeDec(bnReverse(res))
 }
 
-fn bnMulMag(a: &string, b: &string): string {
+pub fn bnMulMag(a: &string, b: &string): string {
     if a == "0" || b == "0" {
         return "0"
     }
@@ -210,13 +210,13 @@ fn bnMulMag(a: &string, b: &string): string {
     return bigNormalizeDec(bnReverse(res))
 }
 
-struct BnDivResult {
+pub struct BnDivResult {
     q: string,
     r: string,
 }
 
 // long division of magnitudes: a / b, b != "0". quotient + remainder, both >= 0.
-fn bnDivModMag(a: &string, b: &string): BnDivResult {
+pub fn bnDivModMag(a: &string, b: &string): BnDivResult {
     if bnCmpMag(a, b) < 0 {
         return BnDivResult {
             q: "0", r: a.clone()
@@ -257,7 +257,7 @@ fn bnDivModMag(a: &string, b: &string): BnDivResult {
 
 // ── signed operations on canonical BigInt strings ──
 
-fn bnNeg(s: &string): string {
+pub fn bnNeg(s: &string): string {
     if s == "0" {
         return "0"
     }
@@ -268,7 +268,7 @@ fn bnNeg(s: &string): string {
 }
 
 // -1 / 0 / 1
-fn bnCmp(a: &string, b: &string): i64 {
+pub fn bnCmp(a: &string, b: &string): i64 {
     let na = bnIsNeg(a)
     let nb = bnIsNeg(b)
     if na && !nb {
@@ -284,7 +284,7 @@ fn bnCmp(a: &string, b: &string): i64 {
     return c
 }
 
-fn bnAdd(a: &string, b: &string): string {
+pub fn bnAdd(a: &string, b: &string): string {
     let na = bnIsNeg(a)
     let nb = bnIsNeg(b)
     let ma = bnMag(a)
@@ -316,11 +316,11 @@ fn bnAdd(a: &string, b: &string): string {
     return diff
 }
 
-fn bnSub(a: &string, b: &string): string {
+pub fn bnSub(a: &string, b: &string): string {
     return bnAdd(a, bnNeg(b))
 }
 
-fn bnMul(a: &string, b: &string): string {
+pub fn bnMul(a: &string, b: &string): string {
     let mag = bnMulMag(bnMag(a), bnMag(b))
     if mag == "0" {
         return "0"
@@ -332,7 +332,7 @@ fn bnMul(a: &string, b: &string): string {
 }
 
 // BigInt division truncates toward zero; remainder takes the DIVIDEND's sign.
-fn bnDiv(a: &string, b: &string): string {
+pub fn bnDiv(a: &string, b: &string): string {
     let res = bnDivModMag(bnMag(a), bnMag(b))
     if res.q == "0" {
         return "0"
@@ -343,7 +343,7 @@ fn bnDiv(a: &string, b: &string): string {
     return res.q
 }
 
-fn bnMod(a: &string, b: &string): string {
+pub fn bnMod(a: &string, b: &string): string {
     let res = bnDivModMag(bnMag(a), bnMag(b))
     if res.r == "0" {
         return "0"
@@ -355,7 +355,7 @@ fn bnMod(a: &string, b: &string): string {
 }
 
 // a ** e, e >= 0 (the caller rejects a negative exponent). Square-and-multiply.
-fn bnPow(a: &string, e: &string): string {
+pub fn bnPow(a: &string, e: &string): string {
     if e == "0" {
         return "1"
     }
@@ -379,7 +379,7 @@ fn bnPow(a: &string, e: &string): string {
 // canonical decimal BigInt → base-`radix` string (2..36), lowercase digits.
 // Repeated division of the magnitude by the radix; the remainder each step is
 // the next low-order digit. Arbitrary precision — no f64 round-trip.
-fn bnToRadix(s: &string, radix: i64): string {
+pub fn bnToRadix(s: &string, radix: i64): string {
     if radix == 10 {
         return s.clone()
     }
@@ -412,7 +412,7 @@ fn bnToRadix(s: &string, radix: i64): string {
 
 // parse a base-`radix` magnitude string (no sign) into a canonical decimal
 // BigInt. Used for hex/oct/bin BigInt literals and BigInt("0x..").
-fn bnFromRadix(s: &string, radix: i64): string {
+pub fn bnFromRadix(s: &string, radix: i64): string {
     let rstr = i64ToStr(radix)
     var acc = "0"
     var i: i64 = 0
@@ -438,7 +438,7 @@ fn bnFromRadix(s: &string, radix: i64): string {
 
 // Number(str) truncated to a BigInt decimal string. Only used by BigInt(number):
 // the caller has already checked the value is a finite integer.
-fn bnFromF64(n: f64): string {
+pub fn bnFromF64(n: f64): string {
     return bigNormalizeDec(numToStr(n))
 }
 
@@ -450,14 +450,14 @@ fn bnFromF64(n: f64): string {
 
 // width-bit two's-complement magnitude of a (unsigned string). Non-negative → a;
 // negative → 2^width − |a|, which has the sign bit set.
-fn bnTwosComp(a: &string, width: i64): string {
+pub fn bnTwosComp(a: &string, width: i64): string {
     if !bnIsNeg(a) {
         return bnMag(a)
     }
     return bnSub(bnPow("2", i64ToStr(width)), bnMag(a))
 }
 
-fn bnBitLen(mag: &string): i64 {
+pub fn bnBitLen(mag: &string): i64 {
     if mag == "0" {
         return 0
     }
@@ -466,14 +466,14 @@ fn bnBitLen(mag: &string): i64 {
 
 // a << n and a >> n, n given as a canonical BigInt string. `<<` is a*2^n;
 // `>>` is arithmetic floor-division by 2^n (matches JS for the values here).
-fn bnShl(a: &string, n: &string): string {
+pub fn bnShl(a: &string, n: &string): string {
     if bnIsNeg(n) {
         return bnShr(a, bnNeg(n))
     }
     return bnMul(a, bnPow("2", n))
 }
 
-fn bnShr(a: &string, n: &string): string {
+pub fn bnShr(a: &string, n: &string): string {
     if bnIsNeg(n) {
         return bnShl(a, bnNeg(n))
     }
@@ -491,7 +491,7 @@ fn bnShr(a: &string, n: &string): string {
 }
 
 // pad a magnitude's binary form on the left to `width` bits
-fn bnBinPad(mag: &string, width: i64): string {
+pub fn bnBinPad(mag: &string, width: i64): string {
     let bits = bnToRadix(mag, 2)
     if bits.len() >= width {
         return bits
@@ -508,7 +508,7 @@ fn bnBinPad(mag: &string, width: i64): string {
 // &, |, ^ over signed BigInts via fixed-width two's complement. width covers both
 // magnitudes plus one sign bit; each operand is mapped into that field, the op runs
 // bit-for-bit, then a set top bit is read back as negative (value − 2^width).
-fn bnBitwise(op: u8, a: &string, b: &string): string {
+pub fn bnBitwise(op: u8, a: &string, b: &string): string {
     let wa = bnBitLen(bnMag(a))
     let wb = bnBitLen(bnMag(b))
     var width = wa

@@ -7,7 +7,7 @@ from "std/io" import {
     readFile
 }
 
-fn byteToHex(b: u8): string {
+pub fn byteToHex(b: u8): string {
     let hex = "0123456789abcdef"
     var result: string = ""
     let hi = (b / 16) as i64
@@ -17,7 +17,7 @@ fn byteToHex(b: u8): string {
     return result
 }
 
-fn offsetToHex(n: i64): string {
+pub fn offsetToHex(n: i64): string {
     let hex = "0123456789abcdef"
     var result: string = ""
     var val: i64 = n
@@ -30,11 +30,11 @@ fn offsetToHex(n: i64): string {
     return result
 }
 
-fn isPrintable(b: u8): bool {
+pub fn isPrintable(b: u8): bool {
     return b >= 32 && b < 127
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     var parser = newParser("hex", "hex dump viewer")
     parser.addPositional("file", "file to dump")
     parser.addI64("length", "n", "number of bytes to display", 0)

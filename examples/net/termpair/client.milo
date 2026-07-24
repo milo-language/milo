@@ -69,12 +69,12 @@ from "./encryption" import {
 
 // ── Terminal size query ──
 
-struct TermSize {
+pub struct TermSize {
     rows: i64,
     cols: i64,
 }
 
-fn termSize(): TermSize {
+pub fn termSize(): TermSize {
     var ws = WinSize {
         rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
@@ -87,20 +87,20 @@ fn termSize(): TermSize {
     }
 }
 
-fn stdinIsTty(): bool {
+pub fn stdinIsTty(): bool {
     return isatty(0) != 0
 }
 
 // ── Simple ISO timestamp ──
 
-fn pad2(n: i64): string {
+pub fn pad2(n: i64): string {
     if n < 10 {
         return "0" + n.toString()
     }
     return n.toString()
 }
 
-fn isoTimestamp(): string {
+pub fn isoTimestamp(): string {
     let secs = epochSecs()
     // approximate — good enough for display
     let secsInDay: i64 = 86400
@@ -144,13 +144,13 @@ fn isoTimestamp(): string {
 }
 
 // Build the plaintext new_output JSON: {"pty_output":"<base64 raw bytes>"}.
-fn ptyOutputJson(raw: &string): string {
+pub fn ptyOutputJson(raw: &string): string {
     return "{\"pty_output\":\"" + base64Encode(raw) + "\"}"
 }
 
 // ── Main ──
 
-fn main(): i32 {
+pub fn main(): i32 {
     // Don't die with SIGPIPE if the server/PTY closes mid-write; the I/O loops
     // already handle the resulting error and shut down cleanly.
     ignoreSignal(SIGPIPE)

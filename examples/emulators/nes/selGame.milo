@@ -22,12 +22,15 @@ from "./ppu" import {
     renderFrame
 }
 
-let SELECT: u8 = 0x04
-let START: u8 = 0x08
-let UP: u8 = 0x10
-let DOWN: u8 = 0x20
+pub let SELECT: u8 = 0x04
 
-fn strToInt(s: string): i64 {
+pub let START: u8 = 0x08
+
+pub let UP: u8 = 0x10
+
+pub let DOWN: u8 = 0x20
+
+pub fn strToInt(s: string): i64 {
     var n: i64 = 0
     var neg = false
     for ch in s {
@@ -44,7 +47,7 @@ fn strToInt(s: string): i64 {
     return n
 }
 
-fn runFrame(cpu: &mut Cpu, bus: &mut Bus, buttons: u8): void {
+pub fn runFrame(cpu: &mut Cpu, bus: &mut Bus, buttons: u8): void {
     bus.buttons = buttons
     let startFrame = bus.ppu.frame
     while bus.ppu.frame == startFrame {
@@ -61,7 +64,7 @@ fn runFrame(cpu: &mut Cpu, bus: &mut Bus, buttons: u8): void {
     }
 }
 
-fn hold(cpu: &mut Cpu, bus: &mut Bus, btn: u8, n: i64): void {
+pub fn hold(cpu: &mut Cpu, bus: &mut Bus, btn: u8, n: i64): void {
     var f: i64 = 0
     while f < n {
         runFrame(cpu, bus, btn)
@@ -69,7 +72,7 @@ fn hold(cpu: &mut Cpu, bus: &mut Bus, btn: u8, n: i64): void {
     }
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     let argv = args()
     if argv.len < 5 {
         print("usage: sel <rom> <selPresses> <framesAfter> <out.rgb>")

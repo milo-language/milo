@@ -146,6 +146,7 @@ export interface EnumVariant {
 export interface EnumDecl {
   kind: "EnumDecl";
   name: string;
+  span?: Span; // decl site — identifies the enum's file (for visibility)
   typeParams: TypeParam[];
   variants: EnumVariant[];
   attributes?: Attribute[];
@@ -182,7 +183,10 @@ export interface Function {
 export interface ImportDecl {
   kind: "ImportDecl";
   path: string;
-  names: string[] | null; // null = glob import (import "path"), array = named (from "path" import { a, b })
+  names: string[]; // exported names named in `from "path" import { a, b }` (glob imports don't exist — bare `import "path"` is a parse error)
+  // Parallel to `names`: the local binding name for `x as y` (aliases[i] set only when renamed).
+  // Used by per-package binding to rebind an imported symbol under a different local name.
+  aliases?: (string | undefined)[];
   span?: Span;
 }
 

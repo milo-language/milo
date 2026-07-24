@@ -32,11 +32,13 @@ from "std/args" import {
     hasFlag
 }
 
-let PW: i64 = 80 // pixel-grid width
-let PH: i64 = 44 // pixel-grid height (even → PH/2 terminal rows)
-let NPIX: i64 = 3520 // PW * PH
+pub let PW: i64 = 80 // pixel-grid width
 
-fn clampU8(x: f64): i64 {
+pub let PH: i64 = 44 // pixel-grid height (even → PH/2 terminal rows)
+
+pub let NPIX: i64 = 3520 // PW * PH
+
+pub fn clampU8(x: f64): i64 {
     if x < 0.0 {
         return 0
     }
@@ -47,7 +49,7 @@ fn clampU8(x: f64): i64 {
 }
 
 // luminance (0..~1.41) → fiery gold ramp: dark red → orange → gold → white
-fn lumColor(l: f64, out: &mut [i64; 3]): void {
+pub fn lumColor(l: f64, out: &mut [i64; 3]): void {
     var n = l / 1.41
     if n < 0.0 {
         n = 0.0
@@ -61,7 +63,7 @@ fn lumColor(l: f64, out: &mut [i64; 3]): void {
 }
 
 // Sweep the torus and fill zbuf (nearest depth) + lum (surface brightness).
-fn computeFrame(zbuf: &mut [f64; 3520], lum: &mut [f64; 3520], a: f64, b: f64): void {
+pub fn computeFrame(zbuf: &mut [f64; 3520], lum: &mut [f64; 3520], a: f64, b: f64): void {
     for i in 0..NPIX {
         zbuf[i] = 0.0
         lum[i] = -1.0
@@ -110,14 +112,14 @@ fn computeFrame(zbuf: &mut [f64; 3520], lum: &mut [f64; 3520], a: f64, b: f64): 
     }
 }
 
-fn emit(buf: &mut string, s: &string): void {
+pub fn emit(buf: &mut string, s: &string): void {
     for i in 0..s.len {
         buf.push(s[i])
     }
 }
 
 // Draw the pixel grid with half-blocks into buf.
-fn renderColor(buf: &mut string, lum: &[f64; 3520]): void {
+pub fn renderColor(buf: &mut string, lum: &[f64; 3520]): void {
     let hc = PH / 2
     var top: [i64; 3] = [0; 3]
     var bot: [i64; 3] = [0; 3]
@@ -153,7 +155,7 @@ fn renderColor(buf: &mut string, lum: &[f64; 3520]): void {
 }
 
 // One static luminance frame as ASCII — for eyeballing the shape.
-fn printAscii(): void {
+pub fn printAscii(): void {
     var zbuf: [f64; 3520] = [0.0; 3520]
     var lum: [f64; 3520] = [0.0; 3520]
     computeFrame(zbuf, lum, 1.0, 0.5)
@@ -177,7 +179,7 @@ fn printAscii(): void {
     writeStdout(out)
 }
 
-fn runInteractive(): void {
+pub fn runInteractive(): void {
     let termState = enableRawMode()
     writeStdout(hideCursor() + clearScreen())
 
@@ -226,7 +228,7 @@ fn runInteractive(): void {
     print("milo donut — https://milo-language.github.io/milo/")
 }
 
-fn main(): i32 {
+pub fn main(): i32 {
     if hasFlag("ascii") {
         printAscii()
     } else {
