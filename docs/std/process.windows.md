@@ -98,6 +98,16 @@ fn Child.writeStdinStr(self: &Child, s: &string): i64
 
 _Undocumented._
 
+### `exePath`
+
+```milo
+fn exePath(): Result<string>
+```
+
+Absolute path of the running executable (mirror of the posix arm in std/process.milo;
+this file replaces std/process.milo wholesale on Windows, so the surface must match).
+`_exePathInto` resolves to GetModuleFileNameA in std/platform.windows.
+
 ### `Process.signal`
 
 ```milo
