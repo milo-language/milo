@@ -1021,7 +1021,13 @@ export async function ensureDepsInstalled(sourcePath: string): Promise<void> {
 
   const lock = readLock(project.dir);
   if (lock === null || lockStaleReason(project, lock) !== null) {
-    console.error(`installing dependencies for ${project.manifest.name}...`);
+    // Only announce when something will actually be fetched. A lock that is merely
+    // absent while every dep is already cached is a silent no-op — a build should
+    // not print progress for work it isn't doing.
+    const needFetch = Object.values(deps).some(spec => {
+      try { return !existsSync(cacheDirForSpec(spec)); } catch { return true; }
+    });
+    if (needFetch) console.error(`installing dependencies for ${project.manifest.name}...`);
     writeLock(project.dir, await resolveGraph(project, lock, { includeDev: true, refresh: new Set() }));
     return;
   }

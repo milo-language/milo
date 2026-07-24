@@ -79,7 +79,10 @@ fn main(): void {
 test("a dependency and the consumer may define the same names; each call reaches its own body", () => {
   const main = write("main.milo", CONSUMER);
   const r = milo(["run", main]);
-  expect(r.err).toBe("");
+  // No diagnostics. Not `toBe("")` — stderr legitimately carries progress lines
+  // (dependency install), and asserting it is empty couples this test to unrelated
+  // CLI chatter.
+  expect(r.err).not.toContain("error");
   expect(r.code).toBe(0);
   expect(r.out.trim().split("\n")).toEqual([
     "consumer:<x>",     // consumer's parse called the consumer's helper
@@ -98,7 +101,10 @@ fn main(): void {
 }
 `);
   const r = milo(["run", main]);
-  expect(r.err).toBe("");
+  // No diagnostics. Not `toBe("")` — stderr legitimately carries progress lines
+  // (dependency install), and asserting it is empty couples this test to unrelated
+  // CLI chatter.
+  expect(r.err).not.toContain("error");
   expect(r.code).toBe(0);
   expect(r.out.trim()).toBe("colliding:[aliased]");
 });
@@ -123,7 +129,10 @@ test("a package with no deps is untouched — mangling is inert without a manife
 fn main(): void { print(parse("z")) }
 `);
   const r = milo(["run", main]);
-  expect(r.err).toBe("");
+  // No diagnostics. Not `toBe("")` — stderr legitimately carries progress lines
+  // (dependency install), and asserting it is empty couples this test to unrelated
+  // CLI chatter.
+  expect(r.err).not.toContain("error");
   expect(r.code).toBe(0);
   expect(r.out.trim()).toBe("plain:z");
 });
