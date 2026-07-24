@@ -12,17 +12,17 @@ Real programs written in Milo. Every one is a single `.milo` file. Clone the rep
 
 ## What do you want to build today?
 
-Pick what you have in mind. Each row jumps to real, runnable examples further down this page, and to the docs that teach the language features they lean on. New to Milo? Start with the [Language Tour](/milo/tour) and the [Playground](/milo/playground) — no install needed.
+Pick what you have in mind. Each row jumps to real, runnable examples further down this page, and to the docs that teach the language features they lean on. New to Milo? Start with the [Language Tour](/tour) and the [Playground](/playground) — no install needed.
 
 | I want to build… | See it working | Learn the pieces |
 |---|---|---|
-| **A game or console emulator** | [Emulators](#emulators-desktop-and-browser), [graphics demos](#terminal-graphics-apps) | [Ownership](/milo/language/ownership), [Concurrency](/milo/language/concurrency), [FFI (SDL)](/milo/language/ffi) |
-| **A web server or API** | [Servers & network apps](#servers-network-apps) | [Error handling](/milo/language/error-handling), [Concurrency](/milo/language/concurrency), [Get started](/milo/getting-started/quickstart) |
-| **A command-line tool** | [CLI tools](#cli-tools) | [Quickstart](/milo/getting-started/quickstart), [Strings](/milo/language/strings), [Collections](/milo/language/collections) |
-| **A terminal app (TUI)** | [Terminal & graphics apps](#terminal-graphics-apps) | [Concurrency: green tasks & Select](/milo/language/concurrency) |
-| **A debugger or dev tool** | [Debugger: hades, java-dap](#debugger) | [FFI](/milo/language/ffi), [Modules](/milo/language/modules) |
-| **A language or interpreter** | [Data & interpreters](#data-interpreters), [the compiler itself](#the-language-feeding-itself) | [Enums & pattern matching](/milo/language/enums), [Ownership](/milo/language/ownership) |
-| **Low-level / embedded** | [flightController](#terminal-graphics-apps) | [Safety](/milo/language/safety), [FFI](/milo/language/ffi) |
+| **A game or console emulator** | [Emulators](#emulators-desktop-and-browser), [graphics demos](#terminal-graphics-apps) | [Ownership](/language/ownership), [Concurrency](/language/concurrency), [FFI (SDL)](/language/ffi) |
+| **A web server or API** | [Servers & network apps](#servers-network-apps) | [Error handling](/language/error-handling), [Concurrency](/language/concurrency), [Get started](/getting-started/quickstart) |
+| **A command-line tool** | [CLI tools](#cli-tools) | [Quickstart](/getting-started/quickstart), [Strings](/language/strings), [Collections](/language/collections) |
+| **A terminal app (TUI)** | [Terminal & graphics apps](#terminal-graphics-apps) | [Concurrency: green tasks & Select](/language/concurrency) |
+| **A debugger or dev tool** | [Debugger: hades, java-dap](#debugger) | [FFI](/language/ffi), [Modules](/language/modules) |
+| **A language or interpreter** | [Data & interpreters](#data-interpreters), [the compiler itself](#the-language-feeding-itself) | [Enums & pattern matching](/language/enums), [Ownership](/language/ownership) |
+| **Low-level / embedded** | [flightController](#terminal-graphics-apps) | [Safety](/language/safety), [FFI](/language/ffi) |
 
 ## Emulators: desktop and browser
 
