@@ -2,7 +2,7 @@
 from "std/argparse" import {
     newParser
 }
-from "std/net" import {
+from "std/fetch" import {
     fetch
 }
 from "std/io" import {

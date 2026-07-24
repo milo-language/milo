@@ -39,7 +39,10 @@ from "std/sync" import {
     Channel
 }
 from "std/net" import {
-    TcpListener, TcpStream, TlsStream
+    TcpListener, TcpStream
+}
+from "std/fetch" import {
+    TlsStream
 }
 from "std/time" import {
     epochMillis, sleepMs

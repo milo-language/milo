@@ -44,7 +44,8 @@ beforeAll(() => {
   sh("openssl", ["x509", "-req", "-in", "srv.csr", "-CA", "ca.pem", "-CAkey", "ca.key",
     "-CAcreateserial", "-out", "srv.pem", "-days", "1", "-extfile", "san.cnf"]);
 
-  writeFileSync(join(dir, "probe.milo"), `from "std/net" import { TlsStream, NetError, ip4 }
+  writeFileSync(join(dir, "probe.milo"), `from "std/net" import { NetError, ip4 }
+from "std/fetch" import { TlsStream }
 
 fn main() {
     let host = "__HOST__"

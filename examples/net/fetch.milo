@@ -1,5 +1,5 @@
 // Fetch data from an HTTP API and parse the JSON response
-from "std/net" import {
+from "std/fetch" import {
     fetch
 }
 

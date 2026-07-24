@@ -94,7 +94,7 @@ fn main() {
 ```
 
 ```milo
-from "std/net" import { fetch }
+from "std/fetch" import { fetch }
 from "std/runtime" import { Promise }
 
 fn main() {

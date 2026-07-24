@@ -1,6 +1,9 @@
 // @skip-os: win32
-// std/net on Windows needs Winsock init (WSAStartup) + WSAGetLastError; the
-// TLS paths also need an OpenSSL built for the target sysroot.
+// Links for Windows now (std/net carries no OpenSSL after the std/fetch split), and
+// the successful green socket path runs clean under Wine (greenThreadEcho) — but Wine
+// crashes emulating FD_CONNECT for a *refused* non-blocking connect (exit 9, no output),
+// which is the exact case this fixture tests. Real Windows reports a refused connect via
+// FD_CONNECT/SO_ERROR; test-windows is the authority, so unskip once it confirms there.
 
 // @expect: connect failed
 // @expect: after

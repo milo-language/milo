@@ -1,9 +1,12 @@
 # std/net
 
-TCP, TLS, DNS resolution, and HTTP client.
+TCP and DNS resolution. The TLS socket (`TlsStream`) and the HTTP client
+(`fetch`, `Response`, `FetchOptions`) live in `std/fetch` — kept out of `std/net`
+so a plain-TCP program links without OpenSSL.
 
 ```milo
-from "std/net" import { fetch, resolve, TcpStream, TlsStream, Response, NetError }
+from "std/net" import { resolve, TcpStream, TcpListener, NetError }
+from "std/fetch" import { fetch, TlsStream, Response }
 ```
 
 ## Types

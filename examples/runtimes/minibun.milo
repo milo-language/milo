@@ -35,7 +35,10 @@ from "std/string" import {
     strStartsWith
 }
 from "std/net" import {
-    TcpListener, fetchWith, FetchOptions, NetError, Response
+    TcpListener, NetError
+}
+from "std/fetch" import {
+    fetchWith, FetchOptions, Response
 }
 from "std/args" import {
     args

@@ -103,7 +103,7 @@ Fetch multiple URLs concurrently and collect all responses:
 
 ```milo
 from "std/runtime" import { Promise }
-from "std/net" import { fetch }
+from "std/fetch" import { fetch }
 
 fn fetchBody(url: string): string {
     let resp = fetch(url)!

@@ -1,6 +1,8 @@
 // @skip-os: win32
-// std/net on Windows needs Winsock init (WSAStartup) + WSAGetLastError; the
-// TLS paths also need an OpenSSL built for the target sysroot.
+// Links for Windows now (std/net carries no OpenSSL after the std/fetch split), and
+// the green socket path works — but Wine can't create an AF_INET6 socket at all
+// (socket(23,...) → -1), so the ::1 round-trip is unverifiable under Wine. Real
+// Windows in CI (test-windows) is the authority; unskip once that's confirmed there.
 
 // IPv6 in std/net — a real ::1 round-trip.
 //

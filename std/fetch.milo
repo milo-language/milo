@@ -1,0 +1,598 @@
+// std/fetch — TLS client + HTTP client (fetch). Split out of std/net so a plain-TCP
+// program never links OpenSSL: net.milo's TcpStream/TcpListener carry no SSL symbols,
+// and only importing from here pulls SSL_*/TLS_client_method. This is what lets a
+// bare TCP program cross-link for Windows, where the xwin sysroot ships no OpenSSL.
+
+from "std/net" import {
+    TcpStream, NetError, resolve
+}
+from "std/os" import {
+    SSL_CTX_free,
+    SSL_CTX_new,
+    SSL_CTX_set_default_verify_paths,
+    SSL_CTX_set_verify,
+    SSL_ctrl,
+    SSL_free,
+    SSL_get_verify_result,
+    SSL_new,
+    SSL_set1_host,
+    SSL_set_fd,
+    TLS_client_method,
+    socket,
+    sslConnectFd,
+    sslReadFd,
+    sslWriteFd
+}
+from "std/platform" import {
+    makeSockaddr, close, ensureNetInit
+}
+from "std/json" import {
+    Json, jsonParse
+}
+from "std/sync" import {
+    Channel
+}
+from "std/runtime" import {
+    Task
+}
+from "std/event" import {
+    setNonblocking
+}
+
+// ── TLS verification constants ──
+
+// openssl/ssl.h: SSL_VERIFY_PEER. Makes the handshake fail on an untrusted chain
+// instead of silently accepting it (the client default is SSL_VERIFY_NONE).
+let SSL_VERIFY_PEER: i32 = 1
+// openssl/x509_vfy.h: X509_V_OK.
+let X509_V_OK: i64 = 0
+
+// ── TLS Stream ──
+
+// TLS/SSL connection handle. Frees SSL context and closes fd on drop.
+struct TlsStream {
+    fd: i32,
+    ssl: i64,
+    ctx: i64,
+}
+
+impl Drop for TlsStream {
+    fn drop(self: &mut Self): void {
+        unsafe {
+            if self.ssl != 0 {
+                SSL_free(self.ssl as *u8)
+            }
+            if self.ctx != 0 {
+                SSL_CTX_free(self.ctx as *u8)
+            }
+            // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
+            if self.fd > 0 {
+                close(self.fd)
+            }
+        }
+    }
+}
+
+impl TlsStream {
+    fn connect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetError> {
+        let AF_INET: i32 = 2
+        let SOCK_STREAM: i32 = 1
+
+        ensureNetInit()
+        unsafe {
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("socket() failed"))
+            }
+
+            var addr = makeSockaddr(port, ip)
+
+            if connectFdIn(fd, addr) < 0 {
+                close(fd)
+                return Result.Err(NetError.ConnectionFailed("connect() failed"))
+            }
+
+            let method = TLS_client_method()
+            let ctx = SSL_CTX_new(method)
+            let ctxAddr = ctx as i64
+            if ctxAddr == 0 {
+                close(fd)
+                return Result.Err(NetError.TlsError("SSL_CTX_new failed"))
+            }
+            SSL_CTX_set_default_verify_paths(ctx)
+            // Without SSL_VERIFY_PEER this client accepted ANY certificate — a
+            // self-signed cert that `openssl s_client` rejects handshook fine, so a
+            // MITM was undetectable. Loading the trust store above looks like
+            // verification but does not enable it.
+            SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, 0 as *u8)
+
+            let ssl = SSL_new(ctx)
+            let sslAddr = ssl as i64
+            if sslAddr == 0 {
+                SSL_CTX_free(ctx)
+                close(fd)
+                return Result.Err(NetError.TlsError("SSL_new failed"))
+            }
+
+            // SNI: tells the server which cert to send. It verifies nothing.
+            SSL_ctrl(ssl, 55, 0, hostname)
+            // This is the check SNI is often mistaken for: without it, a cert valid for
+            // any other host would satisfy the handshake.
+            SSL_set1_host(ssl, hostname)
+            SSL_set_fd(ssl, fd)
+
+            // fd is nonblocking when connecting from a green task; sslConnectFd
+            // parks on WANT_READ/WANT_WRITE until the handshake completes
+            let r = sslConnectFd(ssl, fd)
+            if r != 1 {
+                SSL_free(ssl)
+                SSL_CTX_free(ctx)
+                close(fd)
+                return Result.Err(NetError.TlsError("SSL handshake failed"))
+            }
+            // Not redundant with SSL_VERIFY_PEER, despite appearances: with the
+            // set_verify line removed, this alone still rejects an untrusted chain
+            // (verified by deleting each in turn). Two independent mechanisms, so
+            // losing either one in a refactor cannot silently reopen the hole.
+            if SSL_get_verify_result(ssl) != X509_V_OK {
+                SSL_free(ssl)
+                SSL_CTX_free(ctx)
+                close(fd)
+                return Result.Err(NetError.TlsError("certificate verification failed"))
+            }
+
+            return Result.Ok(TlsStream {
+                fd: fd, ssl: sslAddr, ctx: ctxAddr
+            }
+            )
+        }
+    }
+
+    fn send(self: &Self, data: &string): Result<i64, NetError> {
+        unsafe {
+            let n = sslWriteFd(self.ssl as *u8, self.fd, data, data.len as i32)
+            if n < 0 {
+                return Result.Err(NetError.SendFailed("SSL_write failed"))
+            }
+            return Result.Ok(n as i64)
+        }
+    }
+
+    // Read everything until the peer closes, as one string (blocks to EOF).
+    // Prefer `incoming()` for streaming/incremental consumption.
+    fn recv(self: &Self): Result<string, NetError> {
+        var result: string = ""
+        var buf: [u8; 4096] = [0; 4096]
+        while true {
+            unsafe {
+                let n = sslReadFd(self.ssl as *u8, self.fd, buf as *u8, 4096)
+                if n <= 0 {
+                    break
+                }
+                for i in 0..n as i64 {
+                    result.push(buf[i])
+                }
+            }
+        }
+        return Result.Ok(result)
+    }
+
+    // Stream decrypted inbound bytes as an iterable channel, pumped on a green
+    // task — the uniform async-read API, TLS variant. Uses the SSL-aware read
+    // (parks on WANT_READ) rather than the raw-fd fdChannel. `for chunk in
+    // tls.incoming()`; the channel closes at EOF / on SSL error.
+    // LIFETIME: keep this TlsStream alive while consuming — the detached pump
+    // reads through its SSL handle; dropping it frees that state under the pump.
+    fn incoming(self: &Self): Channel<string> {
+        let ch = Channel<string>.new(256)!
+        let ssl = self.ssl
+        let fd = self.fd
+        // The fd MUST be nonblocking or sslReadFd blocks the OS thread and the
+        // WANT_READ park path is dead code — one read would freeze the whole
+        // scheduler. connect() sets this when called from a green task, but not
+        // if it ran outside one, so enforce it here.
+        setNonblocking(fd)
+        Task.spawn(move(): void => {
+            var buf: [u8; 4096] = [0; 4096]
+            while true {
+                var n: i32 = 0
+                unsafe {
+                    n = sslReadFd(ssl as *u8, fd, buf as *u8, 4096)
+                }
+                if n <= 0 {
+                    break
+                }
+                var data: string = ""
+                for i in 0..n as i64 {
+                    data.push(buf[i])
+                }
+                // if-let, not .isErr(): keep std in milo-self's subset (no isErr builtin)
+                if let Result.Err(_) = ch.send(data) {
+                    break
+                }
+            }
+            ch.close()
+        }
+        )
+        return ch
+    }
+}
+
+// ── HTTP Response ──
+
+// HTTP response with status code, headers, and body.
+struct Response {
+    status: i32,
+    headers: string,
+    body: string,
+}
+
+impl Response {
+    // Return the response body as a string.
+    fn text(self: &Self): string {
+        return self.body.clone()
+    }
+
+    // Parse the response body as JSON.
+    fn json(self: &Self): Json {
+        return jsonParse(self.body.clone())!
+    }
+
+    // Return true if the status code is 2xx (success).
+    fn ok(self: &Self): bool {
+        return self.status >= 200 && self.status < 300
+    }
+
+    // Look up a response header by name (case-insensitive).
+    fn header(self: &Self, name: &string): string {
+        return findHeader(self.headers, name)
+    }
+}
+
+// ── String helpers ──
+
+fn strEqNocase(a: &string, ai: i64, b: &string, blen: i64): bool {
+    var i: i64 = 0
+    while i < blen {
+        var ca: u8 = a[ai + i]
+        var cb: u8 = b[i]
+        // lowercase ASCII
+        if ca >= 'A' && ca <= 'Z' {
+            ca = ca + 32
+        }
+        if cb >= 'A' && cb <= 'Z' {
+            cb = cb + 32
+        }
+        if ca != cb {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn findHeader(headers: &string, name: &string): string {
+    // search for "Name: value" in headers (case-insensitive name match)
+    var i: i64 = 0
+    while i + name.len + 1 < headers.len {
+        // check if we're at line start (i==0 or preceded by \n)
+        if i == 0 || headers[i - 1] == '\n' {
+            if strEqNocase(headers, i, name, name.len) && headers[i + name.len] == ':' {
+                var start: i64 = i + name.len + 1
+                // skip spaces after colon
+                while start < headers.len && headers[start] == ' ' {
+                    start = start + 1
+                }
+                var end: i64 = start
+                while end < headers.len && headers[end] != '\r' && headers[end] != '\n' {
+                    end = end + 1
+                }
+                return headers.substr(start, end)
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn startsWith(s: &string, prefix: &string): bool {
+    if s.len < prefix.len {
+        return false
+    }
+    var i: i64 = 0
+    while i < prefix.len {
+        if s[i] != prefix[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn hexDigit(c: u8): i64 {
+    if c >= '0' && c <= '9' {
+        return (c - '0') as i64
+    }
+    if c >= 'a' && c <= 'f' {
+        return (c - 'a') as i64 + 10
+    }
+    if c >= 'A' && c <= 'F' {
+        return (c - 'A') as i64 + 10
+    }
+    return -1 as i64
+}
+
+// ── HTTP parsing ──
+
+fn parseStatus(raw: &string): i32 {
+    if raw.len < 12 {
+        return 0
+    }
+    var code: i32 = 0
+    var i: i64 = 9
+    while i < raw.len && raw[i] >= '0' && raw[i] <= '9' {
+        code = code * 10 + (raw[i] as i32 - 48)
+        i = i + 1
+    }
+    return code
+}
+
+fn parseRawHeaders(raw: &string): string {
+    var start: i64 = 0
+    var i: i64 = 0
+    while i + 1 < raw.len {
+        if raw[i] == '\r' && raw[i + 1] == '\n' {
+            if start == 0 {
+                start = i + 2
+            }
+            if i + 3 < raw.len && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
+                return raw.substr(start, i)
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn parseBody(raw: &string): string {
+    var i: i64 = 0
+    while i + 3 < raw.len {
+        if raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
+            return raw.substr(i + 4, raw.len)
+        }
+        i = i + 1
+    }
+    return raw.clone()
+}
+
+fn decodeChunked(rawBody: &string): string {
+    var result: string = ""
+    var i: i64 = 0
+    while i < rawBody.len {
+        // parse hex chunk size
+        var chunkSize: i64 = 0
+        while i < rawBody.len {
+            let d = hexDigit(rawBody[i])
+            if d < 0 {
+                break
+            }
+            chunkSize = chunkSize * 16 + d
+            i = i + 1
+        }
+        // skip \r\n after size
+        if i + 1 < rawBody.len && rawBody[i] == '\r' {
+            i = i + 2
+        }
+        if chunkSize == 0 {
+            break
+        }
+        // copy chunk data
+        var j: i64 = 0
+        while j < chunkSize && i < rawBody.len {
+            result.push(rawBody[i])
+            i = i + 1
+            j = j + 1
+        }
+        // skip trailing \r\n
+        if i + 1 < rawBody.len && rawBody[i] == '\r' {
+            i = i + 2
+        }
+    }
+    return result
+}
+
+fn parseResponse(raw: string): Response {
+    let status = parseStatus(raw)
+    let headers = parseRawHeaders(raw)
+    var body = parseBody(raw)
+    // handle chunked transfer encoding
+    let te = findHeader(headers, "Transfer-Encoding")
+    let chunked: string = "chunked"
+    if startsWith(te, chunked) {
+        body = decodeChunked(body)
+    }
+    return Response {
+        status: status, headers: headers, body: body
+    }
+}
+
+// ── URL parsing ──
+
+fn isHttps(url: &string): bool {
+    return url.len > 8 && url[0] == 'h' && url[4] == 's' && url[5] == ':' && url[6] == '/' && url[7] == '/'
+}
+
+fn schemeOffset(url: &string): i64 {
+    if isHttps(url) {
+        return 8
+    }
+    if url.len > 7 && url[0] == 'h' && url[4] == ':' && url[5] == '/' && url[6] == '/' {
+        return 7
+    }
+    return 0
+}
+
+fn parseHost(url: &string): string {
+    let start = schemeOffset(url)
+    var end: i64 = start
+    while end < url.len && url[end] != '/' && url[end] != ':' {
+        end = end + 1
+    }
+    return url.substr(start, end)
+}
+
+fn parsePort(url: &string): u16 {
+    var i: i64 = schemeOffset(url)
+    while i < url.len && url[i] != '/' && url[i] != ':' {
+        i = i + 1
+    }
+    if i < url.len && url[i] == ':' {
+        i = i + 1
+        var port: i32 = 0
+        while i < url.len && url[i] >= '0' && url[i] <= '9' {
+            port = port * 10 + (url[i] as i32 - 48)
+            i = i + 1
+        }
+        return port as u16
+    }
+    if isHttps(url) {
+        return 443
+    }
+    return 80
+}
+
+fn parsePath(url: &string): string {
+    var i: i64 = schemeOffset(url)
+    while i < url.len && url[i] != '/' {
+        i = i + 1
+    }
+    if i >= url.len {
+        return "/"
+    }
+    return url.substr(i, url.len)
+}
+
+// ── FetchOptions ──
+
+// HTTP request configuration: method, headers, and body.
+struct FetchOptions {
+    method: string,
+    headers: string,
+    body: string,
+}
+
+// ── HTTP client ──
+
+fn httpDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
+    let stream = TcpStream.connect(ip, port)?
+    var req: string = opts.method.clone() + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
+    if opts.headers.len > 0 {
+        req = req + opts.headers.clone() + "\r\n"
+    }
+    if opts.body.len > 0 {
+        req = req + "Content-Length: " + opts.body.len.toString() + "\r\n\r\n" + opts.body.clone()
+    } else {
+        req = req + "\r\n"
+    }
+    stream.send(req)?
+    let raw = stream.recv()?
+    return Result.Ok(parseResponse(raw))
+}
+
+fn httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
+    let stream = TlsStream.connect(ip, port, host)?
+    var req: string = opts.method.clone() + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
+    if opts.headers.len > 0 {
+        req = req + opts.headers.clone() + "\r\n"
+    }
+    if opts.body.len > 0 {
+        req = req + "Content-Length: " + opts.body.len.toString() + "\r\n\r\n" + opts.body.clone()
+    } else {
+        req = req + "\r\n"
+    }
+    stream.send(req)?
+    let raw = stream.recv()?
+    return Result.Ok(parseResponse(raw))
+}
+
+fn doFetch(url: string, opts: FetchOptions): Result<Response, NetError> {
+    let useTls = isHttps(url)
+    let host = parseHost(url)
+    let port = parsePort(url)
+    let path = parsePath(url)
+    let ip = resolve(host)?
+
+    var resp: Result<Response, NetError> = Result.Err(NetError.Other(""))
+    if useTls {
+        resp = httpsDo(ip, port, host.clone(), path, opts)
+    } else {
+        resp = httpDo(ip, port, host, path, opts)
+    }
+
+    let r = resp?
+
+    // follow redirects (301, 302, 307, 308)
+    if r.status == 301 || r.status == 302 || r.status == 307 || r.status == 308 {
+        let loc = r.header("Location")
+        if loc.len > 0 {
+            var redirOpts = FetchOptions {
+                method: opts.method.clone(),
+                headers: opts.headers.clone(),
+                body: opts.body.clone(),
+            }
+            if r.status == 301 || r.status == 302 {
+                redirOpts.method = "GET"
+                redirOpts.body = ""
+            }
+            return doFetch(loc, redirOpts)
+        }
+    }
+    return Result.Ok(r)
+}
+
+// ── Public API ──
+
+fn fetch(url: &string): Result<Response, NetError> {
+    var opts = FetchOptions {
+        method: "GET", headers: "", body: ""
+    }
+    return doFetch(url.clone(), opts)
+}
+
+fn fetchWith(url: &string, opts: FetchOptions): Result<Response, NetError> {
+    return doFetch(url.clone(), opts)
+}
+
+fn fetchPost(url: &string, body: &string): Result<Response, NetError> {
+    var opts = FetchOptions {
+        method: "POST",
+        headers: "Content-Type: application/json",
+        body: body.clone(),
+    }
+    return doFetch(url.clone(), opts)
+}
+
+fn fetchPut(url: &string, body: &string): Result<Response, NetError> {
+    var opts = FetchOptions {
+        method: "PUT",
+        headers: "Content-Type: application/json",
+        body: body.clone(),
+    }
+    return doFetch(url.clone(), opts)
+}
+
+fn fetchDelete(url: &string): Result<Response, NetError> {
+    var opts = FetchOptions {
+        method: "DELETE", headers: "", body: ""
+    }
+    return doFetch(url.clone(), opts)
+}
+
+fn fetchPatch(url: &string, body: &string): Result<Response, NetError> {
+    var opts = FetchOptions {
+        method: "PATCH",
+        headers: "Content-Type: application/json",
+        body: body.clone(),
+    }
+    return doFetch(url.clone(), opts)
+}

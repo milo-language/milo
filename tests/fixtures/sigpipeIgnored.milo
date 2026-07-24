@@ -1,6 +1,7 @@
 // @skip-os: win32
-// std/net on Windows needs Winsock init (WSAStartup) + WSAGetLastError; the
-// TLS paths also need an OpenSSL built for the target sysroot.
+// Windows has no SIGPIPE: a write to a broken pipe returns an error rather than
+// raising a signal, so there is nothing for ignoreSigpipe() to guard against. The
+// mechanism this fixture exercises does not exist on Windows.
 
 // @expect: write to closed pipe returned -1
 // @expect: process survived

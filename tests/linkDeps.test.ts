@@ -44,7 +44,8 @@ fn main(): i32 {
 }
 `;
 
-const TLS = `from "std/net" import { TlsStream, resolve }
+const TLS = `from "std/net" import { resolve }
+from "std/fetch" import { TlsStream }
 fn main(): i32 {
     let ip = resolve("example.com")!
     let s = TlsStream.connect(ip, 443, "example.com")!
@@ -75,6 +76,60 @@ test("a program that does use TLS still links OpenSSL", () => {
     try { unlinkSync(bin); } catch {}
   }
 });
+
+// The Windows counterpart of the OpenSSL dead-strip tests, but a HARD link check,
+// not a load-command inspection: the xwin sysroot ships no OpenSSL, so if a plain-TCP
+// program still referenced any SSL_* symbol it would fail to link entirely (undefined
+// symbol), not merely bake a stray load command. This is exactly why TlsStream + the
+// fetch client moved from std/net to std/fetch. lld-link + MILO_WINDOWS_SDK required.
+const WIN_SDK = process.env.MILO_WINDOWS_SDK;
+function hasLldLink(): boolean {
+  try { execSync("command -v lld-link", { stdio: "pipe" }); return true; } catch { return false; }
+}
+function buildWin(name: string, src: string): { ok: boolean; log: string } {
+  const out = join(tmpdir(), `milo_winlink_${name}_${process.pid}.exe`);
+  const file = join(tmpdir(), `milo_winlink_${name}_${process.pid}.milo`);
+  writeFileSync(file, src);
+  try {
+    const log = execSync(`bun run ${COMPILER} build ${file} --target=windows-x64 -o ${out}`,
+      { encoding: "utf-8", stdio: "pipe" });
+    return { ok: true, log };
+  } catch (e: any) {
+    return { ok: false, log: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+  } finally {
+    try { unlinkSync(file); } catch {}
+    try { unlinkSync(out); } catch {}
+  }
+}
+
+const WIN_PLAIN = `from "std/net" import { TcpStream, TcpListener, resolve, ip4 }
+fn main(): i32 {
+    print(ip4(127, 0, 0, 1).toString())
+    return 0
+}
+`;
+
+test.skipIf(!WIN_SDK || !hasLldLink())(
+  "a plain-TCP program links for Windows without OpenSSL (std/net carries no SSL)",
+  () => {
+    const r = buildWin("plain", WIN_PLAIN);
+    // A regression (TLS coupled back into std/net) surfaces here as undefined SSL_* symbols.
+    expect(r.log).not.toContain("undefined symbol: SSL");
+    expect(r.ok).toBe(true);
+  },
+);
+
+test.skipIf(!WIN_SDK || !hasLldLink())(
+  "a TLS program still fails to link for Windows on OpenSSL symbols (xwin ships none)",
+  () => {
+    // The complementary guard: proves the plain-program success above is real dead-code
+    // separation, not the linker silently satisfying SSL_* from somewhere.
+    const r = buildWin("tls", TLS);
+    expect(r.ok).toBe(false);
+    expect(r.log).toContain("undefined symbol: ");
+    expect(r.log).toMatch(/SSL_|TLS_client_method/);
+  },
+);
 
 test.skipIf(!isDarwin || !existsSync("/opt/homebrew/opt/openssl@3/lib/libssl.a"))(
   "--static-deps produces a binary with no OpenSSL load command",

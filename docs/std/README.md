@@ -25,6 +25,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/event.darwin](./event.darwin.md)
 - [std/event.linux](./event.linux.md)
 - [std/event.windows](./event.windows.md)
+- [std/fetch](./fetch.md)
 - [std/fmt](./fmt.md)
 - [std/fs](./fs.md)
 - [std/hex](./hex.md)
