@@ -281,6 +281,8 @@ export class TypeChecker {
   private _userFnNames?: Set<string>;
   private entryFile?: string;
   private _userImplKeys?: Set<string>;
+  // Manifest dep names whose symbols carry a `<pkg>$` prefix (see fnIsUserCode).
+  private _packageNames?: Set<string>;
   // true while checking a function from the user's own file (not imported code);
   // gates lints that would otherwise flood every compile with stdlib noise
   private currentFnIsUser = true;
@@ -366,6 +368,15 @@ export class TypeChecker {
   private fnIsUserCode(name: string): boolean {
     if (!this._userFnNames) return true;
     if (this._userFnNames.has(name)) return true;
+    // Per-package mangling (src/mangle.ts) prefixes a dependency's symbols with
+    // `<pkg>$`, so `http2$foo` and `http2$Box_i64$get` reach here. The `$` split
+    // below assumes the first segment is a type-or-fn name, so a package prefix
+    // makes both lookups miss — and mis-classifying dependency code as user code
+    // (or vice versa) would point `unused-unsafe` at the wrong files entirely.
+    // Only dep files are ever mangled, so a known package prefix settles it: not
+    // user code. Empty when the program has no deps, i.e. a no-op by default.
+    const firstSep = name.indexOf("$");
+    if (firstSep > 0 && this._packageNames?.has(name.slice(0, firstSep))) return false;
     const parts = name.split("$");
     if (parts.length > 1) {
       if (this._userFnNames.has(parts[0])) return true;
@@ -981,6 +992,7 @@ export class TypeChecker {
         `the standard library defines '${s.name}' in '${s.stdlibFile}'. The signatures match, so this compiles — but Milo's flat namespace makes this definition win everywhere, including the library's own internal calls to '${s.name}', which now run this body. Rename it, or pass --allow=shadows-stdlib-override if the override is deliberate`);
     }
     this._userImplKeys = program.userImplKeys;
+    this._packageNames = program.packageNames;
     // register built-in functions
     const ptrU8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
     const i32t: TypeKind = { tag: "int", bits: 32, signed: true };

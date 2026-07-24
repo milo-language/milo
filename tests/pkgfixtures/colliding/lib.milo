@@ -1,0 +1,36 @@
+// Fixture package for tests/mangle.test.ts. Every name here is also defined by
+// the consumer, with a different body — the point is that both survive.
+
+from "./internal" import {
+    helper, Shape
+}
+
+pub struct Doc {
+    text: string,
+}
+
+pub fn parse(s: string): Doc {
+    return Doc {
+        text: format("colliding:", helper(s))
+    }
+}
+
+pub fn describe(d: &Doc): string {
+    return d.text
+}
+
+// Exercises the type-reference rewrite in enum literals and match patterns.
+pub fn area(sh: Shape): i64 {
+    match sh {
+        Shape.Dot => {
+            return 0
+        }
+        Shape.Line(n) => {
+            return n
+        }
+    }
+}
+
+pub fn makeLine(n: i64): Shape {
+    return Shape.Line(n)
+}

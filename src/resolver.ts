@@ -9,6 +9,7 @@ import { ParseError } from "./diagnostics";
 import type { TargetInfo } from "./target";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
+import { collectPkgDecls, emptyPkgDecls, manglePackage, type PkgDeclNames } from "./mangle";
 
 // repo root: walk up from src/ to find the directory containing std/.
 // MILO_ROOT overrides for contexts where import.meta.url doesn't map to the repo
@@ -118,7 +119,26 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     for (const a of p.typeAliases) note(declOrigins.types, a.name, a.isPub, file);
   }
 
-  function resolvePath(dir: string, importPath: string): string {
+  // A parsed file plus the package it belongs to. Files are collected here and
+  // merged only after the whole graph is known, because per-package mangling
+  // needs every file of a package in hand before it can rewrite any of them: an
+  // intra-package reference may name a decl that lives in a sibling file.
+  interface Unit {
+    prog: Program;
+    file: string;
+    pkg: string;
+    // Imports of a mangled package, recorded even when the target file was
+    // already visited — the binding belongs to the importing file, not the
+    // import graph.
+    targets: { names: string[]; aliases?: (string | undefined)[]; pkg: string }[];
+  }
+  const units: Unit[] = [];
+
+  // `pkg` is the importing file's package id. A file resolved out of a manifest
+  // `deps` entry belongs to that dep; anything the dep then resolves against its
+  // own directory (`./x`, `../y`, or a bare sibling module) stays inside it; std
+  // and the prelude are always "" and are never mangled.
+  function resolvePath(dir: string, importPath: string, pkg: string): { path: string; pkg: string } {
     const withExt = importPath.endsWith(".milo") ? importPath : importPath + ".milo";
 
     // check if import starts with a known package name from milo.json
@@ -134,35 +154,39 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
           const subPath = firstSlash !== -1 ? importPath.slice(firstSlash + 1) : "";
           if (subPath) {
             const pkgPath = resolve(cacheBase, subPath + ".milo");
-            if (existsSync(pkgPath)) return pkgPath;
+            if (existsSync(pkgPath)) return { path: pkgPath, pkg: pkgName };
             const platformPath = resolve(cacheBase, `${subPath}.${target.os}.milo`);
-            if (existsSync(platformPath)) return platformPath;
+            if (existsSync(platformPath)) return { path: platformPath, pkg: pkgName };
           } else {
             // import "pkg" → look for pkg/lib.milo or pkg/pkg.milo
             const libPath = resolve(cacheBase, "lib.milo");
-            if (existsSync(libPath)) return libPath;
+            if (existsSync(libPath)) return { path: libPath, pkg: pkgName };
             const namedPath = resolve(cacheBase, `${pkgName}.milo`);
-            if (existsSync(namedPath)) return namedPath;
+            if (existsSync(namedPath)) return { path: namedPath, pkg: pkgName };
           }
         }
       }
     }
 
-    let absPath = resolve(dir, withExt);
+    const absPath = resolve(dir, withExt);
     if (!existsSync(absPath)) {
       // for stdlib paths, try platform-specific file first (e.g. platform.darwin.milo)
       const base = withExt.replace(/\.milo$/, "");
       const platformPath = resolve(STDLIB_DIR, `${base}.${target.os}.milo`);
-      if (bundleExists(platformPath) || existsSync(platformPath)) return platformPath;
+      if (bundleExists(platformPath) || existsSync(platformPath)) return { path: platformPath, pkg: "" };
       const stdPath = resolve(STDLIB_DIR, withExt);
-      if (bundleExists(stdPath) || existsSync(stdPath)) absPath = stdPath;
+      if (bundleExists(stdPath) || existsSync(stdPath)) return { path: stdPath, pkg: "" };
     }
-    return absPath;
+    return { path: absPath, pkg };
   }
 
-  function processImports(prog: Program, dir: string) {
+  function processImports(prog: Program, dir: string, pkg: string, unit: Unit) {
     for (const imp of prog.imports) {
-      const absPath = resolvePath(dir, imp.path);
+      const resolved = resolvePath(dir, imp.path, pkg);
+      const absPath = resolved.path;
+      if (resolved.pkg !== "" && imp.names) {
+        unit.targets.push({ names: imp.names, aliases: imp.aliases, pkg: resolved.pkg });
+      }
       if (visited.has(absPath)) continue;
       visited.add(absPath);
 
@@ -192,17 +216,10 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         }
       }
       // merge everything — named imports validate but don't restrict (flat compilation)
-      recordDecls(imported, absPath);
       for (const f of imported.functions) f.sourceFile = absPath;
-      structs.push(...imported.structs);
-      enums.push(...imported.enums);
-      functions.push(...imported.functions);
-      traits.push(...imported.traits);
-      impls.push(...imported.impls);
-      typeAliases.push(...imported.typeAliases);
-      interfaces.push(...imported.interfaces);
-      globals.push(...imported.globals);
-      processImports(imported, dirname(absPath));
+      const child: Unit = { prog: imported, file: absPath, pkg: resolved.pkg, targets: [] };
+      units.push(child);
+      processImports(imported, dirname(absPath), resolved.pkg, child);
     }
   }
 
@@ -212,17 +229,10 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     visited.add(preludePath);
     const src = readSource(preludePath);
     const prelude = new Parser(new Lexer(src).tokenize(), src, preludePath).parse();
-    recordDecls(prelude, preludePath);
     for (const f of prelude.functions) f.sourceFile = preludePath;
-    structs.push(...prelude.structs);
-    enums.push(...prelude.enums);
-    functions.push(...prelude.functions);
-    traits.push(...prelude.traits);
-    impls.push(...prelude.impls);
-    typeAliases.push(...prelude.typeAliases);
-    interfaces.push(...prelude.interfaces);
-    globals.push(...prelude.globals);
-    processImports(prelude, dirname(preludePath));
+    const preludeUnit: Unit = { prog: prelude, file: preludePath, pkg: "", targets: [] };
+    units.push(preludeUnit);
+    processImports(prelude, dirname(preludePath), "", preludeUnit);
   }
   // everything visited so far came in through the prelude (it's processed first);
   // user redefinition of these names is the documented last-wins override path
@@ -230,18 +240,85 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   preludeFiles.add(preludePath);
 
   // user code comes after prelude
-  recordDecls(program, entryFile ?? "(entry module)");
   for (const f of program.functions) f.sourceFile = entryFile ?? "(entry module)";
-  structs.push(...program.structs);
-  enums.push(...program.enums);
-  functions.push(...program.functions);
-  traits.push(...program.traits);
-  impls.push(...program.impls);
-  typeAliases.push(...program.typeAliases);
-  interfaces.push(...program.interfaces);
-  globals.push(...program.globals);
+  const entryUnit: Unit = { prog: program, file: entryFile ?? "(entry module)", pkg: "", targets: [] };
+  units.push(entryUnit);
 
-  processImports(program, sourceDir);
+  processImports(program, sourceDir, "", entryUnit);
+
+  // Imported names the entry file never mentions. Computed here because this is the last
+  // point the entry's own AST exists apart from the merged one — and, since mangling
+  // rewrites references in place, the last point its names are still as written.
+  //
+  // Deliberately over-broad about what counts as a use: it collects every string anywhere
+  // in the entry AST, so a name that only appears in a type annotation, an enum variant,
+  // or even a string literal reads as used. That direction is the safe one — this lint can
+  // miss a genuinely unused import, but it will not tell you to delete one you need.
+  const usedStrings = new Set<string>();
+  const collectStrings = (node: any, seen = new Set<any>()) => {
+    if (!node || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    for (const [k, v] of Object.entries(node)) {
+      if (k === "kind") continue;
+      if (typeof v === "string") usedStrings.add(v);
+      else if (Array.isArray(v)) v.forEach(x => collectStrings(x, seen));
+      else if (v && typeof v === "object") collectStrings(v, seen);
+    }
+  };
+  for (const key of ["structs", "enums", "functions", "traits", "impls", "typeAliases", "interfaces", "globals"]) {
+    for (const decl of (program as any)[key] ?? []) collectStrings(decl);
+  }
+  const unusedImports: { name: string; path: string; span?: Span }[] = [];
+  for (const imp of program.imports) {
+    for (let i = 0; i < imp.names.length; i++) {
+      // `import { a as b }` binds `b`; the entry file never writes `a`.
+      const local = imp.aliases?.[i] ?? imp.names[i];
+      if (!usedStrings.has(local)) unusedImports.push({ name: imp.names[i], path: imp.path, span: imp.span });
+    }
+  }
+
+  // ── per-package mangling (docs/plans/package-manager.md §P0) ──
+  // Index every package's top-level names first: an intra-package reference is
+  // rewritten only when the name is declared *somewhere* in that package, and a
+  // cross-package import binds only names the target package actually mangled
+  // (an `extern`/`@export` fn keeps its written name).
+  const pkgDecls = new Map<string, PkgDeclNames>();
+  for (const u of units) {
+    if (u.pkg === "") continue;
+    let d = pkgDecls.get(u.pkg);
+    if (!d) { d = emptyPkgDecls(); pkgDecls.set(u.pkg, d); }
+    collectPkgDecls(u.prog, d);
+  }
+  const packageNames = new Set(pkgDecls.keys());
+
+  if (packageNames.size > 0) {
+    for (const u of units) {
+      const bindings = new Map<string, string>();
+      for (const t of u.targets) {
+        const d = pkgDecls.get(t.pkg);
+        if (!d) continue;
+        for (let i = 0; i < t.names.length; i++) {
+          const n = t.names[i];
+          if (!d.values.has(n) && !d.types.has(n)) continue;
+          bindings.set(t.aliases?.[i] ?? n, `${t.pkg}$${n}`);
+        }
+      }
+      manglePackage(u.prog, u.pkg, pkgDecls.get(u.pkg) ?? emptyPkgDecls(), bindings);
+    }
+  }
+
+  // merge, in the traversal order the units were collected in
+  for (const u of units) {
+    recordDecls(u.prog, u.file);
+    structs.push(...u.prog.structs);
+    enums.push(...u.prog.enums);
+    functions.push(...u.prog.functions);
+    traits.push(...u.prog.traits);
+    impls.push(...u.prog.impls);
+    typeAliases.push(...u.prog.typeAliases);
+    interfaces.push(...u.prog.interfaces);
+    globals.push(...u.prog.globals);
+  }
 
   // Same-name top-level fns collapse in the flat namespace: dedup (below) keeps
   // the last body, and every call site — including the *other* module's own
@@ -324,39 +401,10 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     return result;
   }
 
-  // Imported names the entry file never mentions. Computed here because this is the last
-  // point the entry's own AST exists apart from the merged one.
-  //
-  // Deliberately over-broad about what counts as a use: it collects every string anywhere
-  // in the entry AST, so a name that only appears in a type annotation, an enum variant,
-  // or even a string literal reads as used. That direction is the safe one — this lint can
-  // miss a genuinely unused import, but it will not tell you to delete one you need.
-  const usedStrings = new Set<string>();
-  const collectStrings = (node: any, seen = new Set<any>()) => {
-    if (!node || typeof node !== "object" || seen.has(node)) return;
-    seen.add(node);
-    for (const [k, v] of Object.entries(node)) {
-      if (k === "kind") continue;
-      if (typeof v === "string") usedStrings.add(v);
-      else if (Array.isArray(v)) v.forEach(x => collectStrings(x, seen));
-      else if (v && typeof v === "object") collectStrings(v, seen);
-    }
-  };
-  for (const key of ["structs", "enums", "functions", "traits", "impls", "typeAliases", "interfaces", "globals"]) {
-    for (const decl of (program as any)[key] ?? []) collectStrings(decl);
-  }
-  const unusedImports: { name: string; path: string; span?: Span }[] = [];
-  for (const imp of program.imports) {
-    if (!imp.names) continue;   // glob import: nothing named to be unused
-    for (const n of imp.names) {
-      if (!usedStrings.has(n)) unusedImports.push({ name: n, path: imp.path, span: imp.span });
-    }
-  }
-
   const userFnNames = new Set(program.functions.map(f => f.name));
   // `program` here is still the user's pre-merge AST (imports were pushed into
   // the separate arrays above), so its impls are the user's own.
   const userImplKeys = new Set<string>();
   for (const impl of program.impls) for (const m of impl.methods) userImplKeys.add(`${impl.typeName}.${m.name}`);
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), declOrigins, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), declOrigins, packageNames, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib };
 }

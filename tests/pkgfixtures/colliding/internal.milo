@@ -1,0 +1,13 @@
+// Package-private-ish helper, in a second file, so the mangling test covers an
+// intra-package reference that crosses a file boundary. The consumer defines its
+// own `helper` with a different body: without per-package mangling the two
+// collapse into one symbol and `duplicate-fn` fires.
+
+pub fn helper(s: string): string {
+    return format("[", s, "]")
+}
+
+pub enum Shape {
+    Dot,
+    Line(i64),
+}

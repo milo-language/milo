@@ -270,6 +270,10 @@ export interface Program {
   interfaces: InterfaceDecl[];
   globals: GlobalDecl[];
   declOrigins?: DeclOrigins; // set by the resolver; absent for a bare Parser program
+  // Manifest `deps` names whose files were actually loaded, i.e. the set of `$`
+  // prefixes per-package mangling put on symbols (see src/mangle.ts). Empty/absent
+  // when the program has no package dependencies.
+  packageNames?: Set<string>;
   userFnNames?: Set<string>;
   userImplKeys?: Set<string>;   // `${typeName}.${method}` for user-defined impl methods
   entryFile?: string;           // the file being compiled; imports carry their own span.file

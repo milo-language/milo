@@ -1,0 +1,7 @@
+{
+  "name": "colliding",
+  "version": "0.1.0",
+  "description": "test fixture: every exported name deliberately collides with a name the consumer also defines",
+  "license": "MIT",
+  "lib": "lib.milo"
+}
