@@ -323,15 +323,25 @@ If the bin dir is not on PATH, print the exact line to add and which shell rc fi
 
 ### Identifying a Milo binary
 
-Fixed-offset magic is not available: bytes 0..n of any executable are the Mach-O/ELF header, defined by the loader. `head -c 60 | grep` cannot work. Two mechanisms, and they serve different jobs:
+Fixed-offset magic is not available: bytes 0..n of any executable are the platform header (Mach-O / ELF / PE), defined by the loader. `head -c 60 | grep` cannot work.
 
-1. **A receipts file** — `~/.milo/installed.json`, recording each installed binary's name, absolute path, package URL, version, commit, and content hash. This is what `uninstall` and `list` actually read. It is authoritative, needs no binary parsing, and makes "is this file mine?" an exact-match question rather than a heuristic.
+**The metadata lives in the binary, not beside it.** A sibling `installed.json` is mutable side-state: delete it, move the binary, install something out-of-band, and it lies. Embedding is stateless — the truth travels inside the file and cannot desync from it, and short of rewriting the binary you cannot separate the two.
 
-2. **Embedded metadata**, as the audit and repair path — a linker section (`__MILO,__pkg` on Mach-O; `.milo.pkg` on ELF) holding `name`, `version`, and source URL. Readable with `otool -s __MILO __pkg` / `readelf -p .milo.pkg`, and greppable with `strings | grep MILO_PKG` without knowing the format. This answers "what is this stray binary and where did it come from?" and lets `milo list --repair` rebuild lost receipts by scanning the bin dir.
+**Embedded section — authoritative.** A linker section carrying a small JSON payload: `name`, `version`, source URL, commit SHA. The section is named per platform, but the payload is identical and is prefixed with a fixed ASCII tag `MILO_PKG\0` so it greps the same everywhere:
 
-The pattern already exists in-tree: release binaries embed their version via `@embedFile(".version")`.
+| Platform | Section | Read with |
+|---|---|---|
+| Mach-O (darwin) | `__MILO,__pkg` | `otool -s __MILO __pkg` |
+| ELF (linux) | `.milo.pkg` | `readelf -p .milo.pkg` |
+| PE/COFF (windows) | `.milopkg` | `dumpbin /SECTION:.milopkg /RAWDATA` |
 
-**Uninstall must verify before deleting.** Match the receipt's recorded path *and* content hash before unlinking; on mismatch, refuse and report. A package manager that removes a file it did not install — because a name collided in a shared directory — is a bug with no acceptable severity. Same check on install: refuse to clobber an existing binary the receipts do not claim, and say what is already there.
+Platform-independent check, no tooling needed: `strings <bin> | grep MILO_PKG`. Windows is not an afterthought here — the section is emitted for all three targets at build time, and `milo cross` builds already produce PE via lld-link, so the same emission path covers it.
+
+`@embedFile(".version")` already embeds a version string in release binaries today, so the mechanism is proven; this generalizes it to a structured section written on every `milo tool install`.
+
+**Receipts — a derived cache, never the source of truth.** `$XDG_DATA_HOME/milo/installed.json` (else `~/.milo/installed.json`) is an index for fast `milo tool list` without stat-ing and parsing every binary. It is always reconstructible: `milo tool list --repair` scans the bin dir, reads each embedded section, and rewrites the cache. Losing it costs nothing. Because it is only a cache, the code path must treat the embedded section as ground truth on any disagreement — the cache never wins.
+
+**Uninstall reads the binary, then deletes.** Confirm the file carries a `MILO_PKG` section whose recorded name matches before unlinking — never trust the cache or the filename alone. A package manager that removes a file it did not install, because a name collided in a shared directory, is a bug with no acceptable severity. On install, refuse to clobber an existing file at the target path unless it carries a `MILO_PKG` section naming the same package, and report what is already there.
 
 ### Publishing and discovery without a server
 
