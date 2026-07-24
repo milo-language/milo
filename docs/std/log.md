@@ -5,7 +5,7 @@
 ### `logDebug`
 
 ```milo
-fn logDebug(msg: string): void
+pub fn logDebug(msg: string): void
 ```
 
 _Undocumented._
@@ -13,7 +13,7 @@ _Undocumented._
 ### `logError`
 
 ```milo
-fn logError(msg: string): void
+pub fn logError(msg: string): void
 ```
 
 _Undocumented._
@@ -21,7 +21,7 @@ _Undocumented._
 ### `logInfo`
 
 ```milo
-fn logInfo(msg: string): void
+pub fn logInfo(msg: string): void
 ```
 
 _Undocumented._
@@ -29,7 +29,7 @@ _Undocumented._
 ### `logWarn`
 
 ```milo
-fn logWarn(msg: string): void
+pub fn logWarn(msg: string): void
 ```
 
 _Undocumented._

@@ -5,7 +5,7 @@
 ### `clearNonblocking`
 
 ```milo
-fn clearNonblocking(fd: i32): i32
+pub fn clearNonblocking(fd: i32): i32
 ```
 
 Restore blocking mode; same socket-only caveat as setNonblocking.
@@ -13,7 +13,7 @@ Restore blocking mode; same socket-only caveat as setNonblocking.
 ### `eventDeregister`
 
 ```milo
-fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32
+pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32
 ```
 
 _Undocumented._
@@ -21,7 +21,7 @@ _Undocumented._
 ### `eventLoopClose`
 
 ```milo
-fn eventLoopClose(el: &EventLoop): void
+pub fn eventLoopClose(el: &EventLoop): void
 ```
 
 _Undocumented._
@@ -29,7 +29,7 @@ _Undocumented._
 ### `eventLoopCloseWakeup`
 
 ```milo
-fn eventLoopCloseWakeup(el: &EventLoop, _wakeupId: i32): void
+pub fn eventLoopCloseWakeup(el: &EventLoop, _wakeupId: i32): void
 ```
 
 _Undocumented._
@@ -37,7 +37,7 @@ _Undocumented._
 ### `eventLoopDrainWakeup`
 
 ```milo
-fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void
+pub fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void
 ```
 
 _Undocumented._
@@ -45,7 +45,7 @@ _Undocumented._
 ### `eventLoopFd`
 
 ```milo
-fn eventLoopFd(el: &EventLoop): i32
+pub fn eventLoopFd(el: &EventLoop): i32
 ```
 
 _Undocumented._
@@ -53,7 +53,7 @@ _Undocumented._
 ### `eventLoopFromFd`
 
 ```milo
-fn eventLoopFromFd(slot: i32): EventLoop
+pub fn eventLoopFromFd(slot: i32): EventLoop
 ```
 
 _Undocumented._
@@ -61,7 +61,7 @@ _Undocumented._
 ### `eventLoopInitWakeup`
 
 ```milo
-fn eventLoopInitWakeup(el: &EventLoop): i32
+pub fn eventLoopInitWakeup(el: &EventLoop): i32
 ```
 
 Auto-reset Event, initially non-signaled. Auto-reset means a single wait consumes the
@@ -71,7 +71,7 @@ wakeup, which is exactly right — a wakeup only means "re-check runnable state"
 ### `eventLoopNew`
 
 ```milo
-fn eventLoopNew(): Result<EventLoop, string>
+pub fn eventLoopNew(): Result<EventLoop, string>
 ```
 
 _Undocumented._
@@ -79,7 +79,7 @@ _Undocumented._
 ### `eventLoopNotify`
 
 ```milo
-fn eventLoopNotify(el: &EventLoop, _wakeupId: i32): i32
+pub fn eventLoopNotify(el: &EventLoop, _wakeupId: i32): i32
 ```
 
 safe from any thread: SetEvent is thread-safe, and the slot's wakeup handle was written at
@@ -88,7 +88,7 @@ init before this loop was reachable cross-thread.
 ### `eventPoll`
 
 ```milo
-fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32): i32
+pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32): i32
 ```
 
 poll the loop once. Waits up to timeoutMs (negative = block indefinitely) on the wakeup
@@ -98,7 +98,7 @@ fired) plus every socket with a pending network event, as a flat fd list.
 ### `eventRegisterRead`
 
 ```milo
-fn eventRegisterRead(el: &EventLoop, fd: i32): i32
+pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32
 ```
 
 _Undocumented._
@@ -106,7 +106,7 @@ _Undocumented._
 ### `eventRegisterWrite`
 
 ```milo
-fn eventRegisterWrite(el: &EventLoop, fd: i32): i32
+pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32
 ```
 
 _Undocumented._
@@ -114,7 +114,7 @@ _Undocumented._
 ### `fionbio`
 
 ```milo
-fn fionbio(): i32
+pub fn fionbio(): i32
 ```
 
 FIONBIO = 0x8004667E as a signed 32-bit value.
@@ -122,7 +122,7 @@ FIONBIO = 0x8004667E as a signed 32-bit value.
 ### `maskRead`
 
 ```milo
-fn maskRead(): i32
+pub fn maskRead(): i32
 ```
 
 _Undocumented._
@@ -130,7 +130,7 @@ _Undocumented._
 ### `maskToNet`
 
 ```milo
-fn maskToNet(mask: i32): i32
+pub fn maskToNet(mask: i32): i32
 ```
 
 _Undocumented._
@@ -138,7 +138,7 @@ _Undocumented._
 ### `maskWrite`
 
 ```milo
-fn maskWrite(): i32
+pub fn maskWrite(): i32
 ```
 
 _Undocumented._
@@ -146,7 +146,7 @@ _Undocumented._
 ### `setNonblocking`
 
 ```milo
-fn setNonblocking(fd: i32): i32
+pub fn setNonblocking(fd: i32): i32
 ```
 
 _Undocumented._
@@ -154,7 +154,7 @@ _Undocumented._
 ### `wakeupIdentBase`
 
 ```milo
-fn wakeupIdentBase(): i32
+pub fn wakeupIdentBase(): i32
 ```
 
 ident chosen far above any real fd so eventPoll consumers can tell a wakeup apart from fd
@@ -163,7 +163,7 @@ readiness in the same readyFds array (matches the darwin/linux convention).
 ### `winLoopTableCap`
 
 ```milo
-fn winLoopTableCap(): i32
+pub fn winLoopTableCap(): i32
 ```
 
 16 concurrent scheduler loops is far beyond any real program.
@@ -171,7 +171,7 @@ fn winLoopTableCap(): i32
 ### `wlCap`
 
 ```milo
-fn wlCap(): i64
+pub fn wlCap(): i64
 ```
 
 _Undocumented._
@@ -179,7 +179,7 @@ _Undocumented._
 ### `wlGet`
 
 ```milo
-fn wlGet(b: *u8, idx: i64): i64
+pub fn wlGet(b: *u8, idx: i64): i64
 ```
 
 _Undocumented._
@@ -187,7 +187,7 @@ _Undocumented._
 ### `wlMaskIdx`
 
 ```milo
-fn wlMaskIdx(i: i64): i64
+pub fn wlMaskIdx(i: i64): i64
 ```
 
 _Undocumented._
@@ -195,7 +195,7 @@ _Undocumented._
 ### `wlSet`
 
 ```milo
-fn wlSet(b: *u8, idx: i64, v: i64): void
+pub fn wlSet(b: *u8, idx: i64, v: i64): void
 ```
 
 _Undocumented._
@@ -203,7 +203,7 @@ _Undocumented._
 ### `wlSize`
 
 ```milo
-fn wlSize(): i64
+pub fn wlSize(): i64
 ```
 
 _Undocumented._
@@ -211,7 +211,7 @@ _Undocumented._
 ### `wlSockIdx`
 
 ```milo
-fn wlSockIdx(i: i64): i64
+pub fn wlSockIdx(i: i64): i64
 ```
 
 _Undocumented._
@@ -219,7 +219,7 @@ _Undocumented._
 ### `wlWevtIdx`
 
 ```milo
-fn wlWevtIdx(i: i64): i64
+pub fn wlWevtIdx(i: i64): i64
 ```
 
 _Undocumented._

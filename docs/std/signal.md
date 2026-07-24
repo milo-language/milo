@@ -5,7 +5,7 @@
 ### `drainSignalFd`
 
 ```milo
-fn drainSignalFd(fd: i32): void
+pub fn drainSignalFd(fd: i32): void
 ```
 
 Drain pending bytes from a signal self-pipe (call after its fd wakes a Select).
@@ -13,7 +13,7 @@ Drain pending bytes from a signal self-pipe (call after its fd wakes a Select).
 ### `ignoreSignal`
 
 ```milo
-fn ignoreSignal(sig: i32): void
+pub fn ignoreSignal(sig: i32): void
 ```
 
 Ignore a signal.
@@ -21,7 +21,7 @@ Ignore a signal.
 ### `installSignalPipe`
 
 ```milo
-fn installSignalPipe(sig: i32): i32
+pub fn installSignalPipe(sig: i32): i32
 ```
 
 Install a self-pipe for `sig` and return its read fd (or -1 on failure). The
@@ -33,7 +33,7 @@ Re-installing the same signal replaces its pipe.
 ### `onSignal`
 
 ```milo
-fn onSignal(sig: i32, handler: *u8): void
+pub fn onSignal(sig: i32, handler: *u8): void
 ```
 
 Register a handler for a signal. The handler receives the signal number.
@@ -49,7 +49,7 @@ handler, _sigPipeHandler, ignores its argument.
 ### `resetSignal`
 
 ```milo
-fn resetSignal(sig: i32): void
+pub fn resetSignal(sig: i32): void
 ```
 
 Reset a signal to default behavior.
@@ -57,7 +57,7 @@ Reset a signal to default behavior.
 ### `sigchld`
 
 ```milo
-fn sigchld(): i32
+pub fn sigchld(): i32
 ```
 
 Child stopped or exited. A fn, not a `let` like its siblings above, for two reasons that

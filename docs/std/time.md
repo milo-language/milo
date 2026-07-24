@@ -5,7 +5,7 @@
 ### `durationMicros`
 
 ```milo
-fn durationMicros(d: &Duration): i64
+pub fn durationMicros(d: &Duration): i64
 ```
 
 _Undocumented._
@@ -13,7 +13,7 @@ _Undocumented._
 ### `durationMillis`
 
 ```milo
-fn durationMillis(d: &Duration): i64
+pub fn durationMillis(d: &Duration): i64
 ```
 
 _Undocumented._
@@ -21,7 +21,7 @@ _Undocumented._
 ### `durationSecs`
 
 ```milo
-fn durationSecs(d: &Duration): i64
+pub fn durationSecs(d: &Duration): i64
 ```
 
 Duration accessors.
@@ -29,7 +29,7 @@ Duration accessors.
 ### `elapsed`
 
 ```milo
-fn elapsed(start: Instant, end: Instant): Duration
+pub fn elapsed(start: Instant, end: Instant): Duration
 ```
 
 Elapsed time between two instants.
@@ -37,7 +37,7 @@ Elapsed time between two instants.
 ### `epochMillis`
 
 ```milo
-fn epochMillis(): i64
+pub fn epochMillis(): i64
 ```
 
 Milliseconds since Unix epoch.
@@ -45,7 +45,7 @@ Milliseconds since Unix epoch.
 ### `epochSecs`
 
 ```milo
-fn epochSecs(): i64
+pub fn epochSecs(): i64
 ```
 
 Seconds since Unix epoch.
@@ -53,7 +53,7 @@ Seconds since Unix epoch.
 ### `now`
 
 ```milo
-fn now(): Instant
+pub fn now(): Instant
 ```
 
 Capture the current wall-clock time.
@@ -61,7 +61,7 @@ Capture the current wall-clock time.
 ### `since`
 
 ```milo
-fn since(start: Instant): Duration
+pub fn since(start: Instant): Duration
 ```
 
 Elapsed time since an instant.
@@ -69,7 +69,7 @@ Elapsed time since an instant.
 ### `sleepMs`
 
 ```milo
-fn sleepMs(ms: i64): void
+pub fn sleepMs(ms: i64): void
 ```
 
 Sleep for the given number of milliseconds.
@@ -78,7 +78,7 @@ Inside a green thread, yields cooperatively so other tasks keep running.
 ### `sleepSecs`
 
 ```milo
-fn sleepSecs(secs: i64): void
+pub fn sleepSecs(secs: i64): void
 ```
 
 Sleep for the given number of seconds.

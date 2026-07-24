@@ -318,7 +318,7 @@ _Undocumented._
 ### `jsonArr`
 
 ```milo
-fn jsonArr(): JsonArr
+pub fn jsonArr(): JsonArr
 ```
 
 _Undocumented._
@@ -406,7 +406,7 @@ _Undocumented._
 ### `jsonClone`
 
 ```milo
-fn jsonClone(src: &Json): Json
+pub fn jsonClone(src: &Json): Json
 ```
 
 _Undocumented._
@@ -414,7 +414,7 @@ _Undocumented._
 ### `jsoncParse`
 
 ```milo
-fn jsoncParse(s: string): Result<Json>
+pub fn jsoncParse(s: string): Result<Json>
 ```
 
 _Undocumented._
@@ -422,7 +422,7 @@ _Undocumented._
 ### `jsonEscapeStr`
 
 ```milo
-fn jsonEscapeStr(s: &string): string
+pub fn jsonEscapeStr(s: &string): string
 ```
 
 _Undocumented._
@@ -430,7 +430,7 @@ _Undocumented._
 ### `jsonExtractSubtree`
 
 ```milo
-fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json
+pub fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json
 ```
 
 _Undocumented._
@@ -438,7 +438,7 @@ _Undocumented._
 ### `jsonKeyEq`
 
 ```milo
-fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool
+pub fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool
 ```
 
 _Undocumented._
@@ -446,7 +446,7 @@ _Undocumented._
 ### `jsonMaterializeStr`
 
 ```milo
-fn jsonMaterializeStr(source: &string, start: i64, len: i64): string
+pub fn jsonMaterializeStr(source: &string, start: i64, len: i64): string
 ```
 
 _Undocumented._
@@ -454,7 +454,7 @@ _Undocumented._
 ### `jsonNodeRawStr`
 
 ```milo
-fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string
+pub fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string
 ```
 
 _Undocumented._
@@ -462,7 +462,7 @@ _Undocumented._
 ### `jsonNull`
 
 ```milo
-fn jsonNull(): Json
+pub fn jsonNull(): Json
 ```
 
 _Undocumented._
@@ -470,7 +470,7 @@ _Undocumented._
 ### `jsonObj`
 
 ```milo
-fn jsonObj(): JsonObj
+pub fn jsonObj(): JsonObj
 ```
 
 _Undocumented._
@@ -592,7 +592,7 @@ _Undocumented._
 ### `jsonParse`
 
 ```milo
-fn jsonParse(s: string): Result<Json>
+pub fn jsonParse(s: string): Result<Json>
 ```
 
 _Undocumented._
@@ -600,7 +600,7 @@ _Undocumented._
 ### `jsonParseArray`
 
 ```milo
-fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64
+pub fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64
 ```
 
 Container children must be contiguous in childIdx, but grandchildren are discovered
@@ -611,7 +611,7 @@ scan to the matching close bracket that re-read every container body (73% of par
 ### `jsonParseNumber`
 
 ```milo
-fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &mut bool): i64
+pub fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &mut bool): i64
 ```
 
 _Undocumented._
@@ -619,7 +619,7 @@ _Undocumented._
 ### `jsonParseObject`
 
 ```milo
-fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64
+pub fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64
 ```
 
 _Undocumented._
@@ -627,7 +627,7 @@ _Undocumented._
 ### `jsonParseString`
 
 ```milo
-fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, err: &mut bool): i64
+pub fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, err: &mut bool): i64
 ```
 
 _Undocumented._
@@ -635,7 +635,7 @@ _Undocumented._
 ### `jsonParseValue`
 
 ```milo
-fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64
+pub fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64
 ```
 
 _Undocumented._
@@ -643,7 +643,7 @@ _Undocumented._
 ### `jsonPull`
 
 ```milo
-fn jsonPull(src: string): JsonPull
+pub fn jsonPull(src: string): JsonPull
 ```
 
 _Undocumented._
@@ -659,7 +659,7 @@ _Undocumented._
 ### `jsonPullNumber`
 
 ```milo
-fn jsonPullNumber(s: &string, pos: &mut i64): f64
+pub fn jsonPullNumber(s: &string, pos: &mut i64): f64
 ```
 
 Standalone number → f64 (int . frac e exp), advancing pos past the literal.
@@ -668,7 +668,7 @@ The flat-pool parser's jsonParseNumber is node-coupled, so the scan is inlined.
 ### `jsonScanString`
 
 ```milo
-fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool)
+pub fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool)
 ```
 
 RFC 8259 §7: a string char is any Unicode scalar except '"', '\' and the C0 controls (< 0x20),
@@ -679,7 +679,7 @@ positives on valid \u sequences).
 ### `jsonScanStringRange`
 
 ```milo
-fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i64, err: &mut bool)
+pub fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i64, err: &mut bool)
 ```
 
 _Undocumented._
@@ -687,7 +687,7 @@ _Undocumented._
 ### `jsonScratchPush`
 
 ```milo
-fn jsonScratchPush(scratch: &mut Vec<i64>, scratchLen: &mut i64, v: i64)
+pub fn jsonScratchPush(scratch: &mut Vec<i64>, scratchLen: &mut i64, v: i64)
 ```
 
 Push onto the scratch stack reusing already-grown capacity: scratchLen is the logical
@@ -697,7 +697,7 @@ overwritten in place, so repeated container parses cost zero allocations.
 ### `jsonSer`
 
 ```milo
-fn jsonSer(v: &JsonVal): string
+pub fn jsonSer(v: &JsonVal): string
 ```
 
 _Undocumented._
@@ -705,7 +705,7 @@ _Undocumented._
 ### `jsonSkipWs`
 
 ```milo
-fn jsonSkipWs(s: &string, pos: &mut i64)
+pub fn jsonSkipWs(s: &string, pos: &mut i64)
 ```
 
 _Undocumented._
@@ -713,7 +713,7 @@ _Undocumented._
 ### `jsonStripJsonc`
 
 ```milo
-fn jsonStripJsonc(s: &string): string
+pub fn jsonStripJsonc(s: &string): string
 ```
 
 JSONC (Microsoft/VS Code flavor): JSON plus // and /* */ comments and trailing commas.
@@ -725,7 +725,7 @@ a second, looser parser.
 ### `jsonTok`
 
 ```milo
-fn jsonTok(k: JsonEvent): JsonToken
+pub fn jsonTok(k: JsonEvent): JsonToken
 ```
 
 _Undocumented._

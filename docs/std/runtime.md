@@ -5,7 +5,7 @@
 ### `defaultStackSize`
 
 ```milo
-fn defaultStackSize(): i64
+pub fn defaultStackSize(): i64
 ```
 
 _Undocumented._
@@ -13,7 +13,7 @@ _Undocumented._
 ### `guardPageSize`
 
 ```milo
-fn guardPageSize(): i64
+pub fn guardPageSize(): i64
 ```
 
 _Undocumented._
@@ -21,7 +21,7 @@ _Undocumented._
 ### `kindPlain`
 
 ```milo
-fn kindPlain(): i64
+pub fn kindPlain(): i64
 ```
 
 _Undocumented._
@@ -29,7 +29,7 @@ _Undocumented._
 ### `kindSelRead`
 
 ```milo
-fn kindSelRead(): i64
+pub fn kindSelRead(): i64
 ```
 
 _Undocumented._
@@ -37,7 +37,7 @@ _Undocumented._
 ### `kindSelRecv`
 
 ```milo
-fn kindSelRecv(): i64
+pub fn kindSelRecv(): i64
 ```
 
 _Undocumented._
@@ -45,7 +45,7 @@ _Undocumented._
 ### `kindSelSend`
 
 ```milo
-fn kindSelSend(): i64
+pub fn kindSelSend(): i64
 ```
 
 _Undocumented._
@@ -53,7 +53,7 @@ _Undocumented._
 ### `kindSelTimer`
 
 ```milo
-fn kindSelTimer(): i64
+pub fn kindSelTimer(): i64
 ```
 
 _Undocumented._
@@ -61,7 +61,7 @@ _Undocumented._
 ### `kindSelWrite`
 
 ```milo
-fn kindSelWrite(): i64
+pub fn kindSelWrite(): i64
 ```
 
 _Undocumented._
@@ -69,7 +69,7 @@ _Undocumented._
 ### `nodeA`
 
 ```milo
-fn nodeA(): i64
+pub fn nodeA(): i64
 ```
 
 _Undocumented._
@@ -77,7 +77,7 @@ _Undocumented._
 ### `nodeArm`
 
 ```milo
-fn nodeArm(): i64
+pub fn nodeArm(): i64
 ```
 
 _Undocumented._
@@ -85,7 +85,7 @@ _Undocumented._
 ### `nodeDeadline`
 
 ```milo
-fn nodeDeadline(): i64
+pub fn nodeDeadline(): i64
 ```
 
 _Undocumented._
@@ -93,7 +93,7 @@ _Undocumented._
 ### `nodeFd`
 
 ```milo
-fn nodeFd(): i64
+pub fn nodeFd(): i64
 ```
 
 _Undocumented._
@@ -101,7 +101,7 @@ _Undocumented._
 ### `nodeKind`
 
 ```milo
-fn nodeKind(): i64
+pub fn nodeKind(): i64
 ```
 
 One layout serves every waiter: a plain parked task on a channel list, and
@@ -112,7 +112,7 @@ holds kind 3/4/5.
 ### `nodeNext`
 
 ```milo
-fn nodeNext(): i64
+pub fn nodeNext(): i64
 ```
 
 _Undocumented._
@@ -120,7 +120,7 @@ _Undocumented._
 ### `nodeSize`
 
 ```milo
-fn nodeSize(): i64
+pub fn nodeSize(): i64
 ```
 
 _Undocumented._
@@ -176,7 +176,7 @@ _Undocumented._
 ### `promiseAll`
 
 ```milo
-fn promiseAll<T>(promises: Vec<Promise<T>>): Promise<Vec<T>>
+pub fn promiseAll<T>(promises: Vec<Promise<T>>): Promise<Vec<T>>
 ```
 
 standalone generic functions to avoid recursive struct monomorphization
@@ -184,7 +184,7 @@ standalone generic functions to avoid recursive struct monomorphization
 ### `promiseRace`
 
 ```milo
-fn promiseRace<T>(promises: Vec<Promise<T>>): Promise<T>
+pub fn promiseRace<T>(promises: Vec<Promise<T>>): Promise<T>
 ```
 
 _Undocumented._
@@ -192,7 +192,7 @@ _Undocumented._
 ### `schedStructSize`
 
 ```milo
-fn schedStructSize(): i64
+pub fn schedStructSize(): i64
 ```
 
 _Undocumented._
@@ -200,7 +200,7 @@ _Undocumented._
 ### `schedulerCurrent`
 
 ```milo
-fn schedulerCurrent(): *u8
+pub fn schedulerCurrent(): *u8
 ```
 
 _Undocumented._
@@ -208,7 +208,7 @@ _Undocumented._
 ### `schedulerEnsureInit`
 
 ```milo
-fn schedulerEnsureInit(): void
+pub fn schedulerEnsureInit(): void
 ```
 
 _Undocumented._
@@ -216,7 +216,7 @@ _Undocumented._
 ### `schedulerExists`
 
 ```milo
-fn schedulerExists(): bool
+pub fn schedulerExists(): bool
 ```
 
 True once a green scheduler has been created on this thread. Lets a main-
@@ -226,7 +226,7 @@ context waiter (schedulerCurrent()==0) tell "drive the scheduler" apart from
 ### `schedulerPark`
 
 ```milo
-fn schedulerPark(): void
+pub fn schedulerPark(): void
 ```
 
 Suspend the current task and switch to the scheduler. The task lands on no
@@ -238,7 +238,7 @@ safe at any time because they are applied only in scheduler context.
 ### `schedulerRunToCompletion`
 
 ```milo
-fn schedulerRunToCompletion(): void
+pub fn schedulerRunToCompletion(): void
 ```
 
 Drive the scheduler until every spawned task has finished, then tear it down.
@@ -250,7 +250,7 @@ block main until they all return without a WaitGroup).
 ### `schedulerUnpark`
 
 ```milo
-fn schedulerUnpark(task: *u8): void
+pub fn schedulerUnpark(task: *u8): void
 ```
 
 Make a parked task runnable. Safe from any thread: on the task's own
@@ -261,7 +261,7 @@ wakeup event is signaled so a blocked poll returns promptly.
 ### `schedulerWaitRead`
 
 ```milo
-fn schedulerWaitRead(fd: i32): void
+pub fn schedulerWaitRead(fd: i32): void
 ```
 
 _Undocumented._
@@ -269,7 +269,7 @@ _Undocumented._
 ### `schedulerWaitWrite`
 
 ```milo
-fn schedulerWaitWrite(fd: i32): void
+pub fn schedulerWaitWrite(fd: i32): void
 ```
 
 _Undocumented._
@@ -277,7 +277,7 @@ _Undocumented._
 ### `schedulerYield`
 
 ```milo
-fn schedulerYield(): void
+pub fn schedulerYield(): void
 ```
 
 _Undocumented._
@@ -285,7 +285,7 @@ _Undocumented._
 ### `sCtx`
 
 ```milo
-fn sCtx(): i64
+pub fn sCtx(): i64
 ```
 
 scheduler field offsets
@@ -293,7 +293,7 @@ scheduler field offsets
 ### `sCurrent`
 
 ```milo
-fn sCurrent(): i64
+pub fn sCurrent(): i64
 ```
 
 _Undocumented._
@@ -301,7 +301,7 @@ _Undocumented._
 ### `selectStateSize`
 
 ```milo
-fn selectStateSize(): i64
+pub fn selectStateSize(): i64
 ```
 
 _Undocumented._
@@ -309,7 +309,7 @@ _Undocumented._
 ### `sElFd`
 
 ```milo
-fn sElFd(): i64
+pub fn sElFd(): i64
 ```
 
 _Undocumented._
@@ -317,7 +317,7 @@ _Undocumented._
 ### `sNumTasks`
 
 ```milo
-fn sNumTasks(): i64
+pub fn sNumTasks(): i64
 ```
 
 _Undocumented._
@@ -325,7 +325,7 @@ _Undocumented._
 ### `sRunHead`
 
 ```milo
-fn sRunHead(): i64
+pub fn sRunHead(): i64
 ```
 
 _Undocumented._
@@ -333,7 +333,7 @@ _Undocumented._
 ### `sRunTail`
 
 ```milo
-fn sRunTail(): i64
+pub fn sRunTail(): i64
 ```
 
 _Undocumented._
@@ -341,7 +341,7 @@ _Undocumented._
 ### `ssClaimed`
 
 ```milo
-fn ssClaimed(): i64
+pub fn ssClaimed(): i64
 ```
 
 _Undocumented._
@@ -349,7 +349,7 @@ _Undocumented._
 ### `ssCond`
 
 ```milo
-fn ssCond(): i64
+pub fn ssCond(): i64
 ```
 
 Signalled by _selectTryClaim. Only the no-scheduler main context waits on it: a green
@@ -361,7 +361,7 @@ this the wait had nothing to block on and returned -1 immediately.
 ### `sSelFdHead`
 
 ```milo
-fn sSelFdHead(): i64
+pub fn sSelFdHead(): i64
 ```
 
 select fd/timer waiter list (scheduler thread only)
@@ -369,7 +369,7 @@ select fd/timer waiter list (scheduler thread only)
 ### `ssMtx`
 
 ```milo
-fn ssMtx(): i64
+pub fn ssMtx(): i64
 ```
 
 Shared by all arms of one Select. `claimed` records the winning arm (-1 until
@@ -380,7 +380,7 @@ claim that lands before the task commits to parking never queues a stale wake.
 ### `ssParked`
 
 ```milo
-fn ssParked(): i64
+pub fn ssParked(): i64
 ```
 
 _Undocumented._
@@ -388,7 +388,7 @@ _Undocumented._
 ### `ssTask`
 
 ```milo
-fn ssTask(): i64
+pub fn ssTask(): i64
 ```
 
 _Undocumented._
@@ -396,7 +396,7 @@ _Undocumented._
 ### `sWaitHead`
 
 ```milo
-fn sWaitHead(): i64
+pub fn sWaitHead(): i64
 ```
 
 waiting list head (tasks blocked on I/O)
@@ -404,7 +404,7 @@ waiting list head (tasks blocked on I/O)
 ### `sWakeupId`
 
 ```milo
-fn sWakeupId(): i64
+pub fn sWakeupId(): i64
 ```
 
 _Undocumented._
@@ -412,7 +412,7 @@ _Undocumented._
 ### `sXferHead`
 
 ```milo
-fn sXferHead(): i64
+pub fn sXferHead(): i64
 ```
 
 _Undocumented._
@@ -420,7 +420,7 @@ _Undocumented._
 ### `sXferMutex`
 
 ```milo
-fn sXferMutex(): i64
+pub fn sXferMutex(): i64
 ```
 
 cross-thread unpark transfer list (mutex-guarded; drained after each poll)
@@ -464,7 +464,7 @@ space rather than resident memory.
 ### `taskDone`
 
 ```milo
-fn taskDone(): i32
+pub fn taskDone(): i32
 ```
 
 _Undocumented._
@@ -472,7 +472,7 @@ _Undocumented._
 ### `taskReady`
 
 ```milo
-fn taskReady(): i32
+pub fn taskReady(): i32
 ```
 
 _Undocumented._
@@ -480,7 +480,7 @@ _Undocumented._
 ### `taskRunning`
 
 ```milo
-fn taskRunning(): i32
+pub fn taskRunning(): i32
 ```
 
 _Undocumented._
@@ -488,7 +488,7 @@ _Undocumented._
 ### `taskStructSize`
 
 ```milo
-fn taskStructSize(): i64
+pub fn taskStructSize(): i64
 ```
 
 _Undocumented._
@@ -496,7 +496,7 @@ _Undocumented._
 ### `taskWaitingIo`
 
 ```milo
-fn taskWaitingIo(): i32
+pub fn taskWaitingIo(): i32
 ```
 
 _Undocumented._
@@ -504,7 +504,7 @@ _Undocumented._
 ### `taskWaitingPark`
 
 ```milo
-fn taskWaitingPark(): i32
+pub fn taskWaitingPark(): i32
 ```
 
 parked: off every scheduler list; whoever holds the task pointer (e.g. a
@@ -513,7 +513,7 @@ channel waiter entry) is responsible for a future schedulerUnpark
 ### `tClosureEnv`
 
 ```milo
-fn tClosureEnv(): i64
+pub fn tClosureEnv(): i64
 ```
 
 _Undocumented._
@@ -521,7 +521,7 @@ _Undocumented._
 ### `tClosureFn`
 
 ```milo
-fn tClosureFn(): i64
+pub fn tClosureFn(): i64
 ```
 
 _Undocumented._
@@ -529,7 +529,7 @@ _Undocumented._
 ### `tCtx`
 
 ```milo
-fn tCtx(): i64
+pub fn tCtx(): i64
 ```
 
 task field offsets
@@ -537,7 +537,7 @@ task field offsets
 ### `tJoinCell`
 
 ```milo
-fn tJoinCell(): i64
+pub fn tJoinCell(): i64
 ```
 
 _Undocumented._
@@ -545,7 +545,7 @@ _Undocumented._
 ### `tJoiner`
 
 ```milo
-fn tJoiner(): i64
+pub fn tJoiner(): i64
 ```
 
 _Undocumented._
@@ -553,7 +553,7 @@ _Undocumented._
 ### `tNext`
 
 ```milo
-fn tNext(): i64
+pub fn tNext(): i64
 ```
 
 _Undocumented._
@@ -561,7 +561,7 @@ _Undocumented._
 ### `tSched`
 
 ```milo
-fn tSched(): i64
+pub fn tSched(): i64
 ```
 
 _Undocumented._
@@ -569,7 +569,7 @@ _Undocumented._
 ### `tStack`
 
 ```milo
-fn tStack(): i64
+pub fn tStack(): i64
 ```
 
 _Undocumented._
@@ -577,7 +577,7 @@ _Undocumented._
 ### `tStackSize`
 
 ```milo
-fn tStackSize(): i64
+pub fn tStackSize(): i64
 ```
 
 _Undocumented._
@@ -585,7 +585,7 @@ _Undocumented._
 ### `tState`
 
 ```milo
-fn tState(): i64
+pub fn tState(): i64
 ```
 
 _Undocumented._
@@ -593,7 +593,7 @@ _Undocumented._
 ### `tWaitFd`
 
 ```milo
-fn tWaitFd(): i64
+pub fn tWaitFd(): i64
 ```
 
 _Undocumented._
@@ -601,7 +601,7 @@ _Undocumented._
 ### `tWaitWrite`
 
 ```milo
-fn tWaitWrite(): i64
+pub fn tWaitWrite(): i64
 ```
 
 _Undocumented._

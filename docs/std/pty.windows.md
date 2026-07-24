@@ -5,7 +5,7 @@
 ### `fdIsTerminal`
 
 ```milo
-fn fdIsTerminal(fd: i32): bool
+pub fn fdIsTerminal(fd: i32): bool
 ```
 
 True if fd is attached to a console (the ConPTY analogue of isatty).
@@ -13,7 +13,7 @@ True if fd is attached to a console (the ConPTY analogue of isatty).
 ### `isInteractive`
 
 ```milo
-fn isInteractive(): bool
+pub fn isInteractive(): bool
 ```
 
 _Undocumented._
@@ -21,7 +21,7 @@ _Undocumented._
 ### `openAndSpawn`
 
 ```milo
-fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string>
+pub fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string>
 ```
 
 _Undocumented._

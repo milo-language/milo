@@ -5,7 +5,7 @@
 ### `bufToStr`
 
 ```milo
-fn bufToStr(buf: &[u8; 8192], start: i64, end: i64): string
+pub fn bufToStr(buf: &[u8; 8192], start: i64, end: i64): string
 ```
 
 _Undocumented._
@@ -13,7 +13,7 @@ _Undocumented._
 ### `bufToStrFromString`
 
 ```milo
-fn bufToStrFromString(s: &string, start: i64, end: i64): string
+pub fn bufToStrFromString(s: &string, start: i64, end: i64): string
 ```
 
 _Undocumented._
@@ -133,7 +133,7 @@ _Undocumented._
 ### `eqIgnoreCase`
 
 ```milo
-fn eqIgnoreCase(a: &string, b: &string): bool
+pub fn eqIgnoreCase(a: &string, b: &string): bool
 ```
 
 _Undocumented._
@@ -141,7 +141,7 @@ _Undocumented._
 ### `extractParamNames`
 
 ```milo
-fn extractParamNames(pattern: &string): Vec<string>
+pub fn extractParamNames(pattern: &string): Vec<string>
 ```
 
 _Undocumented._
@@ -149,7 +149,7 @@ _Undocumented._
 ### `hexNibble`
 
 ```milo
-fn hexNibble(ch: u8): i32
+pub fn hexNibble(ch: u8): i32
 ```
 
 Value of a single hex digit, or -1 if the byte isn't one.
@@ -157,7 +157,7 @@ Value of a single hex digit, or -1 if the byte isn't one.
 ### `matchRoute`
 
 ```milo
-fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option<Vec<Param>>
+pub fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option<Vec<Param>>
 ```
 
 _Undocumented._
@@ -165,7 +165,7 @@ _Undocumented._
 ### `parseContentLength`
 
 ```milo
-fn parseContentLength(s: &string): i64
+pub fn parseContentLength(s: &string): i64
 ```
 
 _Undocumented._
@@ -173,7 +173,7 @@ _Undocumented._
 ### `parseCookieValue`
 
 ```milo
-fn parseCookieValue(cookieHeader: string, name: &string): string
+pub fn parseCookieValue(cookieHeader: string, name: &string): string
 ```
 
 _Undocumented._
@@ -181,7 +181,7 @@ _Undocumented._
 ### `parseQueryString`
 
 ```milo
-fn parseQueryString(qs: &string): Vec<Param>
+pub fn parseQueryString(qs: &string): Vec<Param>
 ```
 
 _Undocumented._
@@ -189,7 +189,7 @@ _Undocumented._
 ### `parseRequest`
 
 ```milo
-fn parseRequest(buf: &[u8; 8192], n: i64): Request
+pub fn parseRequest(buf: &[u8; 8192], n: i64): Request
 ```
 
 _Undocumented._
@@ -269,7 +269,7 @@ _Undocumented._
 ### `sendRaw`
 
 ```milo
-fn sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders: &Vec<Param>): void
+pub fn sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders: &Vec<Param>): void
 ```
 
 _Undocumented._
@@ -277,7 +277,7 @@ _Undocumented._
 ### `sendResponse`
 
 ```milo
-fn sendResponse(fd: i32, response: Response, headers: &Vec<Param>): void
+pub fn sendResponse(fd: i32, response: Response, headers: &Vec<Param>): void
 ```
 
 _Undocumented._
@@ -285,7 +285,7 @@ _Undocumented._
 ### `serve`
 
 ```milo
-fn serve(port: u16?, handler: (&Request) => Response): Result<void>
+pub fn serve(port: u16?, handler: (&Request) => Response): Result<void>
 ```
 
 _Undocumented._
@@ -293,7 +293,7 @@ _Undocumented._
 ### `serveRouter`
 
 ```milo
-fn serveRouter(port: u16?, router: &Router): Result<void>
+pub fn serveRouter(port: u16?, router: &Router): Result<void>
 ```
 
 Start an HTTP server using a Router (headers from Context are sent on the wire).
@@ -301,7 +301,7 @@ Start an HTTP server using a Router (headers from Context are sent on the wire).
 ### `splitPath`
 
 ```milo
-fn splitPath(path: &string): Vec<string>
+pub fn splitPath(path: &string): Vec<string>
 ```
 
 _Undocumented._
@@ -309,7 +309,7 @@ _Undocumented._
 ### `statusText`
 
 ```milo
-fn statusText(status: i32): string
+pub fn statusText(status: i32): string
 ```
 
 _Undocumented._
@@ -317,7 +317,7 @@ _Undocumented._
 ### `toLower`
 
 ```milo
-fn toLower(ch: u8): u8
+pub fn toLower(ch: u8): u8
 ```
 
 _Undocumented._
@@ -325,7 +325,7 @@ _Undocumented._
 ### `urlDecode`
 
 ```milo
-fn urlDecode(s: &string): string
+pub fn urlDecode(s: &string): string
 ```
 
 Percent-decode a query component. '+' means space (form-urlencoded) and %XX

@@ -5,7 +5,7 @@
 ### `appendFile`
 
 ```milo
-fn appendFile(path: &string, data: &string): Result<i64, IoError>
+pub fn appendFile(path: &string, data: &string): Result<i64, IoError>
 ```
 
 Append a string to a file, creating it if absent (writes go to the end).
@@ -13,7 +13,7 @@ Append a string to a file, creating it if absent (writes go to the end).
 ### `changeDir`
 
 ```milo
-fn changeDir(path: &string): Result<bool, IoError>
+pub fn changeDir(path: &string): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -21,7 +21,7 @@ _Undocumented._
 ### `currentDir`
 
 ```milo
-fn currentDir(): Result<string, IoError>
+pub fn currentDir(): Result<string, IoError>
 ```
 
 _Undocumented._
@@ -29,7 +29,7 @@ _Undocumented._
 ### `dataSyncFd`
 
 ```milo
-fn dataSyncFd(fd: i32): Result<bool, IoError>
+pub fn dataSyncFd(fd: i32): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -37,7 +37,7 @@ _Undocumented._
 ### `devNull`
 
 ```milo
-fn devNull(): string
+pub fn devNull(): string
 ```
 
 Path of the OS bit-bucket device — /dev/null on POSIX, NUL on Windows. Use this
@@ -46,7 +46,7 @@ instead of hard-coding "/dev/null", which does not exist on Windows.
 ### `fileInfo`
 
 ```milo
-fn fileInfo(path: &string): FileInfo
+pub fn fileInfo(path: &string): FileInfo
 ```
 
 Get file metadata. Returns FileInfo with exists=false if path doesn't exist.
@@ -54,7 +54,7 @@ Get file metadata. Returns FileInfo with exists=false if path doesn't exist.
 ### `fileSizePath`
 
 ```milo
-fn fileSizePath(path: &string): i64
+pub fn fileSizePath(path: &string): i64
 ```
 
 Get file size in bytes. Returns -1 if file doesn't exist.
@@ -62,7 +62,7 @@ Get file size in bytes. Returns -1 if file doesn't exist.
 ### `hardLink`
 
 ```milo
-fn hardLink(existing: &string, newPath: &string): Result<bool, IoError>
+pub fn hardLink(existing: &string, newPath: &string): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -70,7 +70,7 @@ _Undocumented._
 ### `isDir`
 
 ```milo
-fn isDir(path: &string): bool
+pub fn isDir(path: &string): bool
 ```
 
 Check if a path is a directory.
@@ -78,7 +78,7 @@ Check if a path is a directory.
 ### `isFile`
 
 ```milo
-fn isFile(path: &string): bool
+pub fn isFile(path: &string): bool
 ```
 
 Check if a path is a regular file. Defined as "exists and is not a directory"
@@ -90,7 +90,7 @@ distinction the callers actually need is exact.
 ### `isSymlink`
 
 ```milo
-fn isSymlink(path: &string): bool
+pub fn isSymlink(path: &string): bool
 ```
 
 _Undocumented._
@@ -98,7 +98,7 @@ _Undocumented._
 ### `lstatInfo`
 
 ```milo
-fn lstatInfo(path: &string): FileInfo
+pub fn lstatInfo(path: &string): FileInfo
 ```
 
 _Undocumented._
@@ -106,7 +106,7 @@ _Undocumented._
 ### `makeDir`
 
 ```milo
-fn makeDir(path: &string, mode: i32): Result<bool, IoError>
+pub fn makeDir(path: &string, mode: i32): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -114,7 +114,7 @@ _Undocumented._
 ### `makeTempDir`
 
 ```milo
-fn makeTempDir(prefix: &string): Result<string, IoError>
+pub fn makeTempDir(prefix: &string): Result<string, IoError>
 ```
 
 _Undocumented._
@@ -122,7 +122,7 @@ _Undocumented._
 ### `pathExists`
 
 ```milo
-fn pathExists(path: &string): bool
+pub fn pathExists(path: &string): bool
 ```
 
 Check if a path exists.
@@ -130,7 +130,7 @@ Check if a path exists.
 ### `readDir`
 
 ```milo
-fn readDir(path: &string): Vec<DirEntry>
+pub fn readDir(path: &string): Vec<DirEntry>
 ```
 
 List directory contents. Returns empty vec on error.
@@ -138,7 +138,7 @@ List directory contents. Returns empty vec on error.
 ### `readLink`
 
 ```milo
-fn readLink(path: &string): Result<string, IoError>
+pub fn readLink(path: &string): Result<string, IoError>
 ```
 
 _Undocumented._
@@ -146,7 +146,7 @@ _Undocumented._
 ### `realPath`
 
 ```milo
-fn realPath(path: &string): Result<string, IoError>
+pub fn realPath(path: &string): Result<string, IoError>
 ```
 
 _Undocumented._
@@ -154,7 +154,7 @@ _Undocumented._
 ### `removeDir`
 
 ```milo
-fn removeDir(path: &string): Result<bool, IoError>
+pub fn removeDir(path: &string): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -162,7 +162,7 @@ _Undocumented._
 ### `removeFile`
 
 ```milo
-fn removeFile(path: &string): Result<bool, IoError>
+pub fn removeFile(path: &string): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -170,7 +170,7 @@ _Undocumented._
 ### `renameFile`
 
 ```milo
-fn renameFile(oldPath: &string, newPath: &string): Result<bool, IoError>
+pub fn renameFile(oldPath: &string, newPath: &string): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -178,7 +178,7 @@ _Undocumented._
 ### `setFdMode`
 
 ```milo
-fn setFdMode(fd: i32, mode: i32): Result<bool, IoError>
+pub fn setFdMode(fd: i32, mode: i32): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -186,7 +186,7 @@ _Undocumented._
 ### `setFdOwner`
 
 ```milo
-fn setFdOwner(fd: i32, uid: u32, gid: u32): Result<bool, IoError>
+pub fn setFdOwner(fd: i32, uid: u32, gid: u32): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -194,7 +194,7 @@ _Undocumented._
 ### `setLinkOwner`
 
 ```milo
-fn setLinkOwner(path: &string, uid: u32, gid: u32): Result<bool, IoError>
+pub fn setLinkOwner(path: &string, uid: u32, gid: u32): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -202,7 +202,7 @@ _Undocumented._
 ### `setMode`
 
 ```milo
-fn setMode(path: &string, mode: i32): Result<bool, IoError>
+pub fn setMode(path: &string, mode: i32): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -210,7 +210,7 @@ _Undocumented._
 ### `setOwner`
 
 ```milo
-fn setOwner(path: &string, uid: u32, gid: u32): Result<bool, IoError>
+pub fn setOwner(path: &string, uid: u32, gid: u32): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -218,7 +218,7 @@ _Undocumented._
 ### `softLink`
 
 ```milo
-fn softLink(target: &string, path: &string): Result<bool, IoError>
+pub fn softLink(target: &string, path: &string): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -226,7 +226,7 @@ _Undocumented._
 ### `syncFd`
 
 ```milo
-fn syncFd(fd: i32): Result<bool, IoError>
+pub fn syncFd(fd: i32): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -234,7 +234,7 @@ _Undocumented._
 ### `truncateFd`
 
 ```milo
-fn truncateFd(fd: i32, length: i64): Result<bool, IoError>
+pub fn truncateFd(fd: i32, length: i64): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -242,7 +242,7 @@ _Undocumented._
 ### `truncateFile`
 
 ```milo
-fn truncateFile(path: &string, length: i64): Result<bool, IoError>
+pub fn truncateFile(path: &string, length: i64): Result<bool, IoError>
 ```
 
 _Undocumented._
@@ -250,7 +250,7 @@ _Undocumented._
 ### `writeFile`
 
 ```milo
-fn writeFile(path: &string, data: &string): Result<i64, IoError>
+pub fn writeFile(path: &string, data: &string): Result<i64, IoError>
 ```
 
 Write a string to a file, creating or truncating it.

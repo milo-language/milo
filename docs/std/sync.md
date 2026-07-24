@@ -183,7 +183,7 @@ _Undocumented._
 ### `channelArmRecv`
 
 ```milo
-fn channelArmRecv(ptr: *u8, node: *u8): bool
+pub fn channelArmRecv(ptr: *u8, node: *u8): bool
 ```
 
 Arm a Select recv on this channel. Returns true if recv would proceed right
@@ -193,7 +193,7 @@ link. Otherwise links `node` (kind sel-recv) and returns false.
 ### `channelArmSend`
 
 ```milo
-fn channelArmSend(ptr: *u8, node: *u8): bool
+pub fn channelArmSend(ptr: *u8, node: *u8): bool
 ```
 
 Arm a Select send. Ready if the buffer has room or the channel is closed
@@ -202,7 +202,7 @@ Arm a Select send. Ready if the buffer has room or the channel is closed
 ### `channelUnarmRecv`
 
 ```milo
-fn channelUnarmRecv(ptr: *u8, node: *u8): void
+pub fn channelUnarmRecv(ptr: *u8, node: *u8): void
 ```
 
 _Undocumented._
@@ -210,7 +210,7 @@ _Undocumented._
 ### `channelUnarmSend`
 
 ```milo
-fn channelUnarmSend(ptr: *u8, node: *u8): void
+pub fn channelUnarmSend(ptr: *u8, node: *u8): void
 ```
 
 _Undocumented._

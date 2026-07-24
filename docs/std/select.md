@@ -62,7 +62,7 @@ winning arm index.
 ### `selectRecv`
 
 ```milo
-fn selectRecv<T>(sel: &mut Select, ch: &Channel<T>): void
+pub fn selectRecv<T>(sel: &mut Select, ch: &Channel<T>): void
 ```
 
 Channel arms — free functions so they can be generic over the element type.
@@ -70,7 +70,7 @@ Channel arms — free functions so they can be generic over the element type.
 ### `selectSend`
 
 ```milo
-fn selectSend<T>(sel: &mut Select, ch: &Channel<T>): void
+pub fn selectSend<T>(sel: &mut Select, ch: &Channel<T>): void
 ```
 
 _Undocumented._

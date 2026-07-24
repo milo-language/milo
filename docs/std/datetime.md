@@ -5,7 +5,7 @@
 ### `dateTimeFormat`
 
 ```milo
-fn dateTimeFormat(dt: &DateTime): string
+pub fn dateTimeFormat(dt: &DateTime): string
 ```
 
 _Undocumented._
@@ -13,7 +13,7 @@ _Undocumented._
 ### `dateTimeFormatDate`
 
 ```milo
-fn dateTimeFormatDate(dt: &DateTime): string
+pub fn dateTimeFormatDate(dt: &DateTime): string
 ```
 
 _Undocumented._
@@ -21,7 +21,7 @@ _Undocumented._
 ### `dateTimeFormatTime`
 
 ```milo
-fn dateTimeFormatTime(dt: &DateTime): string
+pub fn dateTimeFormatTime(dt: &DateTime): string
 ```
 
 _Undocumented._
@@ -29,7 +29,7 @@ _Undocumented._
 ### `dateTimeFromEpoch`
 
 ```milo
-fn dateTimeFromEpoch(epochSec: i64): DateTime
+pub fn dateTimeFromEpoch(epochSec: i64): DateTime
 ```
 
 _Undocumented._
@@ -37,7 +37,7 @@ _Undocumented._
 ### `dateTimeFromEpochLocal`
 
 ```milo
-fn dateTimeFromEpochLocal(epochSec: i64): DateTime
+pub fn dateTimeFromEpochLocal(epochSec: i64): DateTime
 ```
 
 Same components as dateTimeFromEpoch but in the host timezone (TZ env /
@@ -49,7 +49,7 @@ the trailing platform differences (tm_gmtoff/tm_zone) don't matter.
 ### `dateTimeLocalNow`
 
 ```milo
-fn dateTimeLocalNow(): DateTime
+pub fn dateTimeLocalNow(): DateTime
 ```
 
 _Undocumented._
@@ -57,7 +57,7 @@ _Undocumented._
 ### `dateTimeNow`
 
 ```milo
-fn dateTimeNow(): DateTime
+pub fn dateTimeNow(): DateTime
 ```
 
 _Undocumented._
@@ -65,7 +65,7 @@ _Undocumented._
 ### `monthName`
 
 ```milo
-fn monthName(m: i32): string
+pub fn monthName(m: i32): string
 ```
 
 _Undocumented._
@@ -73,7 +73,7 @@ _Undocumented._
 ### `weekdayName`
 
 ```milo
-fn weekdayName(wd: i32): string
+pub fn weekdayName(wd: i32): string
 ```
 
 _Undocumented._

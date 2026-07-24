@@ -5,7 +5,7 @@
 ### `sha1`
 
 ```milo
-fn sha1(input: &string): string
+pub fn sha1(input: &string): string
 ```
 
 SHA-1 as a 40-char lowercase hex string.
@@ -13,7 +13,7 @@ SHA-1 as a 40-char lowercase hex string.
 ### `sha1Bytes`
 
 ```milo
-fn sha1Bytes(input: &string): string
+pub fn sha1Bytes(input: &string): string
 ```
 
 SHA-1 digest as 20 raw bytes.

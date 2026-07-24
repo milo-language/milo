@@ -13,7 +13,7 @@ _Undocumented._
 ### `fdChannel`
 
 ```milo
-fn fdChannel(fd: i32): Channel<string>
+pub fn fdChannel(fd: i32): Channel<string>
 ```
 
 Stream a file descriptor's bytes on a background green task, returned as a
@@ -46,7 +46,7 @@ Read exactly n bytes into a string. Err if the stream ends first.
 ### `fdReaderAttach`
 
 ```milo
-fn fdReaderAttach(fd: i32): FdReader
+pub fn fdReaderAttach(fd: i32): FdReader
 ```
 
 Capture the read strategy from the current runtime context, flipping the fd
@@ -105,7 +105,7 @@ _Undocumented._
 ### `putChar`
 
 ```milo
-fn putChar(ch: u8): void
+pub fn putChar(ch: u8): void
 ```
 
 Write a single byte to stdout.
@@ -113,7 +113,7 @@ Write a single byte to stdout.
 ### `readFile`
 
 ```milo
-fn readFile(path: &string): Result<string, IoError>
+pub fn readFile(path: &string): Result<string, IoError>
 ```
 
 Read an entire file into a string. Returns an IoError (NotFound, permission,
@@ -122,7 +122,7 @@ etc.) rather than throwing; propagate with `?` or match on it.
 ### `readLine`
 
 ```milo
-fn readLine(): Option<string>
+pub fn readLine(): Option<string>
 ```
 
 Read a single line from stdin. Returns None at EOF.
@@ -130,7 +130,7 @@ Read a single line from stdin. Returns None at EOF.
 ### `readLines`
 
 ```milo
-fn readLines(path: &string): Result<Vec<string>, IoError>
+pub fn readLines(path: &string): Result<Vec<string>, IoError>
 ```
 
 Read a file and return its contents as a Vec of lines.
@@ -138,7 +138,7 @@ Read a file and return its contents as a Vec of lines.
 ### `readStdin`
 
 ```milo
-fn readStdin(): string
+pub fn readStdin(): string
 ```
 
 Read all of stdin into a string (blocks to EOF). Prefer `stdinChannel()` for
@@ -147,7 +147,7 @@ streaming/incremental consumption.
 ### `splitLines`
 
 ```milo
-fn splitLines(content: &string): Vec<string>
+pub fn splitLines(content: &string): Vec<string>
 ```
 
 Split a string into lines on newline boundaries.
@@ -155,7 +155,7 @@ Split a string into lines on newline boundaries.
 ### `stdinChannel`
 
 ```milo
-fn stdinChannel(): Channel<string>
+pub fn stdinChannel(): Channel<string>
 ```
 
 Stream stdin as an iterable channel of chunks — the async counterpart to the
@@ -167,7 +167,7 @@ per stdin session; don't mix streaming and blocking reads of the same fd.
 ### `writeStdout`
 
 ```milo
-fn writeStdout(s: &string): void
+pub fn writeStdout(s: &string): void
 ```
 
 Write a string to stdout without appending a newline.
@@ -175,7 +175,7 @@ Write a string to stdout without appending a newline.
 ### `writeStr`
 
 ```milo
-fn writeStr(s: &string): void
+pub fn writeStr(s: &string): void
 ```
 
 Write a string to stdout without a trailing newline.

@@ -69,7 +69,7 @@ _Undocumented._
 ### `poolAlloc`
 
 ```milo
-fn poolAlloc(p: &mut Pool): Result<i64>
+pub fn poolAlloc(p: &mut Pool): Result<i64>
 ```
 
 Allocate one block. O(1). Returns Err when pool is exhausted.
@@ -77,7 +77,7 @@ Allocate one block. O(1). Returns Err when pool is exhausted.
 ### `poolAvailable`
 
 ```milo
-fn poolAvailable(p: &Pool): i64
+pub fn poolAvailable(p: &Pool): i64
 ```
 
 Number of blocks available.
@@ -85,7 +85,7 @@ Number of blocks available.
 ### `poolEmpty`
 
 ```milo
-fn poolEmpty(p: &Pool): bool
+pub fn poolEmpty(p: &Pool): bool
 ```
 
 Check if pool has no live allocations.
@@ -93,7 +93,7 @@ Check if pool has no live allocations.
 ### `poolFree`
 
 ```milo
-fn poolFree(p: &mut Pool, block: i64): void
+pub fn poolFree(p: &mut Pool, block: i64): void
 ```
 
 Free one block back to pool. O(1).
@@ -102,7 +102,7 @@ Caller must pass a pointer previously returned by poolAlloc.
 ### `poolFull`
 
 ```milo
-fn poolFull(p: &Pool): bool
+pub fn poolFull(p: &Pool): bool
 ```
 
 Check if pool is fully exhausted.
@@ -110,7 +110,7 @@ Check if pool is fully exhausted.
 ### `poolLive`
 
 ```milo
-fn poolLive(p: &Pool): i64
+pub fn poolLive(p: &Pool): i64
 ```
 
 Number of blocks currently in use.
@@ -118,7 +118,7 @@ Number of blocks currently in use.
 ### `poolNew`
 
 ```milo
-fn poolNew(size: i64, count: i64): Result<Pool>
+pub fn poolNew(size: i64, count: i64): Result<Pool>
 ```
 
 Create a pool of `count` blocks, each `size` bytes (minimum 8 for free-list pointer).
@@ -127,7 +127,7 @@ Single malloc at init — no further heap allocation.
 ### `poolReset`
 
 ```milo
-fn poolReset(p: &mut Pool): void
+pub fn poolReset(p: &mut Pool): void
 ```
 
 Reset pool to initial state — all blocks free.

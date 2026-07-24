@@ -5,7 +5,7 @@
 ### `cpuCount`
 
 ```milo
-fn cpuCount(): i64
+pub fn cpuCount(): i64
 ```
 
 _Undocumented._
@@ -13,7 +13,7 @@ _Undocumented._
 ### `cpuModel`
 
 ```milo
-fn cpuModel(): string
+pub fn cpuModel(): string
 ```
 
 _Undocumented._
@@ -21,7 +21,7 @@ _Undocumented._
 ### `cwd`
 
 ```milo
-fn cwd(): string
+pub fn cwd(): string
 ```
 
 _Undocumented._
@@ -29,7 +29,7 @@ _Undocumented._
 ### `egid`
 
 ```milo
-fn egid(): u32
+pub fn egid(): u32
 ```
 
 _Undocumented._
@@ -37,7 +37,7 @@ _Undocumented._
 ### `euid`
 
 ```milo
-fn euid(): u32
+pub fn euid(): u32
 ```
 
 _Undocumented._
@@ -45,7 +45,7 @@ _Undocumented._
 ### `freeMem`
 
 ```milo
-fn freeMem(): i64
+pub fn freeMem(): i64
 ```
 
 _Undocumented._
@@ -53,7 +53,7 @@ _Undocumented._
 ### `gid`
 
 ```milo
-fn gid(): u32
+pub fn gid(): u32
 ```
 
 _Undocumented._
@@ -61,7 +61,7 @@ _Undocumented._
 ### `hostname`
 
 ```milo
-fn hostname(): string
+pub fn hostname(): string
 ```
 
 _Undocumented._
@@ -69,7 +69,7 @@ _Undocumented._
 ### `loadAvg`
 
 ```milo
-fn loadAvg(): [f64; 3]
+pub fn loadAvg(): [f64; 3]
 ```
 
 _Undocumented._
@@ -77,7 +77,7 @@ _Undocumented._
 ### `osRelease`
 
 ```milo
-fn osRelease(): string
+pub fn osRelease(): string
 ```
 
 _Undocumented._
@@ -85,7 +85,7 @@ _Undocumented._
 ### `pid`
 
 ```milo
-fn pid(): i32
+pub fn pid(): i32
 ```
 
 _Undocumented._
@@ -93,7 +93,7 @@ _Undocumented._
 ### `ppid`
 
 ```milo
-fn ppid(): i32
+pub fn ppid(): i32
 ```
 
 _Undocumented._
@@ -101,7 +101,7 @@ _Undocumented._
 ### `setCwd`
 
 ```milo
-fn setCwd(path: string): bool
+pub fn setCwd(path: string): bool
 ```
 
 _Undocumented._
@@ -109,7 +109,7 @@ _Undocumented._
 ### `totalMem`
 
 ```milo
-fn totalMem(): i64
+pub fn totalMem(): i64
 ```
 
 _Undocumented._
@@ -117,7 +117,7 @@ _Undocumented._
 ### `uid`
 
 ```milo
-fn uid(): u32
+pub fn uid(): u32
 ```
 
 _Undocumented._
@@ -125,7 +125,7 @@ _Undocumented._
 ### `uptime`
 
 ```milo
-fn uptime(): i64
+pub fn uptime(): i64
 ```
 
 _Undocumented._

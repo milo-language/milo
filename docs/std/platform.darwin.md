@@ -5,7 +5,7 @@
 ### `addrinfoAddrOffset`
 
 ```milo
-fn addrinfoAddrOffset(): i64
+pub fn addrinfoAddrOffset(): i64
 ```
 
 offset of aiAddr field in struct addrinfo
@@ -13,7 +13,7 @@ offset of aiAddr field in struct addrinfo
 ### `afInet6`
 
 ```milo
-fn afInet6(): i32
+pub fn afInet6(): i32
 ```
 
 AF_INET6 is 30 here — one of the few socket constants that actually differs across the
@@ -22,7 +22,7 @@ two platforms (AF_INET and AF_UNIX are both the same on each).
 ### `closeSocket`
 
 ```milo
-fn closeSocket(fd: i32): i32
+pub fn closeSocket(fd: i32): i32
 ```
 
 A POSIX socket IS an fd, so closing it is just close(); Windows needs a distinct
@@ -31,7 +31,7 @@ closesocket(), which is why this name exists on all arms.
 ### `devNullPath`
 
 ```milo
-fn devNullPath(): string
+pub fn devNullPath(): string
 ```
 
 The bit-bucket device path. POSIX spells it /dev/null; Windows spells it NUL.
@@ -39,7 +39,7 @@ The bit-bucket device path. POSIX spells it /dev/null; Windows spells it NUL.
 ### `direntNameOffset`
 
 ```milo
-fn direntNameOffset(): i64
+pub fn direntNameOffset(): i64
 ```
 
 _Undocumented._
@@ -47,7 +47,7 @@ _Undocumented._
 ### `direntTypeOffset`
 
 ```milo
-fn direntTypeOffset(): i64
+pub fn direntTypeOffset(): i64
 ```
 
 struct dirent layout
@@ -55,7 +55,7 @@ struct dirent layout
 ### `eagain`
 
 ```milo
-fn eagain(): i32
+pub fn eagain(): i32
 ```
 
 _Undocumented._
@@ -63,7 +63,7 @@ _Undocumented._
 ### `einprogress`
 
 ```milo
-fn einprogress(): i32
+pub fn einprogress(): i32
 ```
 
 _Undocumented._
@@ -71,7 +71,7 @@ _Undocumented._
 ### `ensureNetInit`
 
 ```milo
-fn ensureNetInit(): void
+pub fn ensureNetInit(): void
 ```
 
 Winsock has no POSIX counterpart: sockets are ready to use with no init, and their
@@ -81,7 +81,7 @@ paths read the same on every platform (see platform.windows for the real work).
 ### `evAdd`
 
 ```milo
-fn evAdd(): u16
+pub fn evAdd(): u16
 ```
 
 _Undocumented._
@@ -89,7 +89,7 @@ _Undocumented._
 ### `evClear`
 
 ```milo
-fn evClear(): u16
+pub fn evClear(): u16
 ```
 
 _Undocumented._
@@ -97,7 +97,7 @@ _Undocumented._
 ### `evDelete`
 
 ```milo
-fn evDelete(): u16
+pub fn evDelete(): u16
 ```
 
 _Undocumented._
@@ -105,7 +105,7 @@ _Undocumented._
 ### `evEnable`
 
 ```milo
-fn evEnable(): u16
+pub fn evEnable(): u16
 ```
 
 _Undocumented._
@@ -113,7 +113,7 @@ _Undocumented._
 ### `evfiltRead`
 
 ```milo
-fn evfiltRead(): i16
+pub fn evfiltRead(): i16
 ```
 
 _Undocumented._
@@ -121,7 +121,7 @@ _Undocumented._
 ### `evfiltUser`
 
 ```milo
-fn evfiltUser(): i16
+pub fn evfiltUser(): i16
 ```
 
 _Undocumented._
@@ -129,7 +129,7 @@ _Undocumented._
 ### `evfiltWrite`
 
 ```milo
-fn evfiltWrite(): i16
+pub fn evfiltWrite(): i16
 ```
 
 _Undocumented._
@@ -137,7 +137,7 @@ _Undocumented._
 ### `evOneshot`
 
 ```milo
-fn evOneshot(): u16
+pub fn evOneshot(): u16
 ```
 
 _Undocumented._
@@ -145,7 +145,7 @@ _Undocumented._
 ### `fGetfl`
 
 ```milo
-fn fGetfl(): i32
+pub fn fGetfl(): i32
 ```
 
 _Undocumented._
@@ -153,7 +153,7 @@ _Undocumented._
 ### `fSetfl`
 
 ```milo
-fn fSetfl(): i32
+pub fn fSetfl(): i32
 ```
 
 _Undocumented._
@@ -161,7 +161,7 @@ _Undocumented._
 ### `getErrno`
 
 ```milo
-fn getErrno(): i32
+pub fn getErrno(): i32
 ```
 
 _Undocumented._
@@ -169,7 +169,7 @@ _Undocumented._
 ### `makeSockaddr`
 
 ```milo
-fn makeSockaddr(port: u16, addr: u32): SockAddrIn
+pub fn makeSockaddr(port: u16, addr: u32): SockAddrIn
 ```
 
 _Undocumented._
@@ -177,7 +177,7 @@ _Undocumented._
 ### `makeSockaddr6`
 
 ```milo
-fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6
+pub fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6
 ```
 
 IPv6 address. `addr` is the 16 raw bytes in network order; `scopeId` is the interface
@@ -186,7 +186,7 @@ index for a link-local address (fe80::/10), 0 otherwise.
 ### `makeSockaddrUn`
 
 ```milo
-fn makeSockaddrUn(path: &string): SockAddrUn
+pub fn makeSockaddrUn(path: &string): SockAddrUn
 ```
 
 Whole-struct length; bind/connect want it for AF_UNIX.
@@ -197,7 +197,7 @@ silently shortened one (UnixListener/UnixStream do).
 ### `makeZeroedSockaddr`
 
 ```milo
-fn makeZeroedSockaddr(): SockAddrIn
+pub fn makeZeroedSockaddr(): SockAddrIn
 ```
 
 _Undocumented._
@@ -205,7 +205,7 @@ _Undocumented._
 ### `makeZeroedSockaddrStorage`
 
 ```milo
-fn makeZeroedSockaddrStorage(): SockAddrStorage
+pub fn makeZeroedSockaddrStorage(): SockAddrStorage
 ```
 
 128 bytes of zeroes; the kernel fills in whichever family the peer used.
@@ -213,7 +213,7 @@ fn makeZeroedSockaddrStorage(): SockAddrStorage
 ### `mapAnon`
 
 ```milo
-fn mapAnon(): i32
+pub fn mapAnon(): i32
 ```
 
 _Undocumented._
@@ -221,7 +221,7 @@ _Undocumented._
 ### `mapPrivate`
 
 ```milo
-fn mapPrivate(): i32
+pub fn mapPrivate(): i32
 ```
 
 _Undocumented._
@@ -229,7 +229,7 @@ _Undocumented._
 ### `mapPrivateAnon`
 
 ```milo
-fn mapPrivateAnon(): i32
+pub fn mapPrivateAnon(): i32
 ```
 
 _Undocumented._
@@ -237,7 +237,7 @@ _Undocumented._
 ### `netEagain`
 
 ```milo
-fn netEagain(): i32
+pub fn netEagain(): i32
 ```
 
 _Undocumented._
@@ -245,7 +245,7 @@ _Undocumented._
 ### `netEinprogress`
 
 ```milo
-fn netEinprogress(): i32
+pub fn netEinprogress(): i32
 ```
 
 _Undocumented._
@@ -253,7 +253,7 @@ _Undocumented._
 ### `netErrno`
 
 ```milo
-fn netErrno(): i32
+pub fn netErrno(): i32
 ```
 
 _Undocumented._
@@ -261,7 +261,7 @@ _Undocumented._
 ### `noteTrigger`
 
 ```milo
-fn noteTrigger(): u32
+pub fn noteTrigger(): u32
 ```
 
 _Undocumented._
@@ -269,7 +269,7 @@ _Undocumented._
 ### `oNonblock`
 
 ```milo
-fn oNonblock(): i32
+pub fn oNonblock(): i32
 ```
 
 _Undocumented._
@@ -277,7 +277,7 @@ _Undocumented._
 ### `oWriteCreateAppend`
 
 ```milo
-fn oWriteCreateAppend(): i32
+pub fn oWriteCreateAppend(): i32
 ```
 
 _Undocumented._
@@ -285,7 +285,7 @@ _Undocumented._
 ### `oWriteCreateTrunc`
 
 ```milo
-fn oWriteCreateTrunc(): i32
+pub fn oWriteCreateTrunc(): i32
 ```
 
 _Undocumented._
@@ -293,7 +293,7 @@ _Undocumented._
 ### `protNone`
 
 ```milo
-fn protNone(): i32
+pub fn protNone(): i32
 ```
 
 _Undocumented._
@@ -301,7 +301,7 @@ _Undocumented._
 ### `protRead`
 
 ```milo
-fn protRead(): i32
+pub fn protRead(): i32
 ```
 
 _Undocumented._
@@ -309,7 +309,7 @@ _Undocumented._
 ### `protWrite`
 
 ```milo
-fn protWrite(): i32
+pub fn protWrite(): i32
 ```
 
 _Undocumented._
@@ -317,7 +317,7 @@ _Undocumented._
 ### `sigchldNum`
 
 ```milo
-fn sigchldNum(): i32
+pub fn sigchldNum(): i32
 ```
 
 SIGCHLD is 20 here and 17 on linux (verified against sys/signal.h and
@@ -328,7 +328,7 @@ both platforms.
 ### `sockAddrIn6Len`
 
 ```milo
-fn sockAddrIn6Len(): u32
+pub fn sockAddrIn6Len(): u32
 ```
 
 _Undocumented._
@@ -336,7 +336,7 @@ _Undocumented._
 ### `sockAddrInLen`
 
 ```milo
-fn sockAddrInLen(): u32
+pub fn sockAddrInLen(): u32
 ```
 
 _Undocumented._
@@ -344,7 +344,7 @@ _Undocumented._
 ### `sockAddrStorageLen`
 
 ```milo
-fn sockAddrStorageLen(): u32
+pub fn sockAddrStorageLen(): u32
 ```
 
 _Undocumented._
@@ -352,7 +352,7 @@ _Undocumented._
 ### `sockAddrUnLen`
 
 ```milo
-fn sockAddrUnLen(): u32
+pub fn sockAddrUnLen(): u32
 ```
 
 _Undocumented._
@@ -360,7 +360,7 @@ _Undocumented._
 ### `sockAddrUnMaxPath`
 
 ```milo
-fn sockAddrUnMaxPath(): i64
+pub fn sockAddrUnMaxPath(): i64
 ```
 
 Longest path that still leaves room for the NUL the kernel expects.
@@ -368,7 +368,7 @@ Longest path that still leaves room for the NUL the kernel expects.
 ### `sockRead`
 
 ```milo
-fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64
+pub fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64
 ```
 
 Socket data IO seam. On POSIX read()/write() work on socket fds, so these alias them; the
@@ -378,7 +378,7 @@ CRT _read/_write on one fast-fails). Named so std/os's green helpers stay single
 ### `sockWrite`
 
 ```milo
-fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64
+pub fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64
 ```
 
 _Undocumented._
@@ -386,7 +386,7 @@ _Undocumented._
 ### `soError`
 
 ```milo
-fn soError(): i32
+pub fn soError(): i32
 ```
 
 _Undocumented._
@@ -394,7 +394,7 @@ _Undocumented._
 ### `solSocket`
 
 ```milo
-fn solSocket(): i32
+pub fn solSocket(): i32
 ```
 
 _Undocumented._
@@ -402,7 +402,7 @@ _Undocumented._
 ### `soReuseaddr`
 
 ```milo
-fn soReuseaddr(): i32
+pub fn soReuseaddr(): i32
 ```
 
 _Undocumented._
@@ -410,7 +410,7 @@ _Undocumented._
 ### `statBufSize`
 
 ```milo
-fn statBufSize(): i64
+pub fn statBufSize(): i64
 ```
 
 _Undocumented._
@@ -418,7 +418,7 @@ _Undocumented._
 ### `statModeOffset`
 
 ```milo
-fn statModeOffset(): i64
+pub fn statModeOffset(): i64
 ```
 
 struct stat layout (macOS aarch64/x8664)
@@ -426,7 +426,7 @@ struct stat layout (macOS aarch64/x8664)
 ### `statSizeOffset`
 
 ```milo
-fn statSizeOffset(): i64
+pub fn statSizeOffset(): i64
 ```
 
 _Undocumented._
@@ -434,7 +434,7 @@ _Undocumented._
 ### `uctxLinkOffset`
 
 ```milo
-fn uctxLinkOffset(): i64
+pub fn uctxLinkOffset(): i64
 ```
 
 _Undocumented._
@@ -442,7 +442,7 @@ _Undocumented._
 ### `uctxSize`
 
 ```milo
-fn uctxSize(): i64
+pub fn uctxSize(): i64
 ```
 
 _Undocumented._
@@ -450,7 +450,7 @@ _Undocumented._
 ### `uctxStackPtrOffset`
 
 ```milo
-fn uctxStackPtrOffset(): i64
+pub fn uctxStackPtrOffset(): i64
 ```
 
 _Undocumented._
@@ -458,7 +458,7 @@ _Undocumented._
 ### `uctxStackSizeOffset`
 
 ```milo
-fn uctxStackSizeOffset(): i64
+pub fn uctxStackSizeOffset(): i64
 ```
 
 _Undocumented._

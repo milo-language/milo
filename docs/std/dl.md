@@ -5,7 +5,7 @@
 ### `dlLastError`
 
 ```milo
-fn dlLastError(): string
+pub fn dlLastError(): string
 ```
 
 The most recent loader error, or a generic message when the loader has none.
@@ -14,7 +14,7 @@ dlerror() also CLEARS the error, so this must be read exactly once per failure.
 ### `dlOpen`
 
 ```milo
-fn dlOpen(path: &string): Result<Lib, string>
+pub fn dlOpen(path: &string): Result<Lib, string>
 ```
 
 Load a shared library. `path` may be a filename resolved via the loader search
@@ -23,7 +23,7 @@ path, or an explicit path.
 ### `dlSelf`
 
 ```milo
-fn dlSelf(): Result<Lib, string>
+pub fn dlSelf(): Result<Lib, string>
 ```
 
 A handle to the running program itself, for looking up symbols the executable

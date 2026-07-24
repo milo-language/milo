@@ -5,7 +5,7 @@
 ### `fdIsTerminal`
 
 ```milo
-fn fdIsTerminal(fd: i32): bool
+pub fn fdIsTerminal(fd: i32): bool
 ```
 
 Returns true if fd is connected to a terminal.
@@ -13,7 +13,7 @@ Returns true if fd is connected to a terminal.
 ### `isInteractive`
 
 ```milo
-fn isInteractive(): bool
+pub fn isInteractive(): bool
 ```
 
 Returns true if stdin is a terminal (process is interactive).
@@ -21,7 +21,7 @@ Returns true if stdin is a terminal (process is interactive).
 ### `openAndSpawn`
 
 ```milo
-fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string>
+pub fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string>
 ```
 
 Convenience: open + spawn in one call
@@ -124,7 +124,7 @@ _Undocumented._
 ### `tiocgwinsz`
 
 ```milo
-fn tiocgwinsz(): i64
+pub fn tiocgwinsz(): i64
 ```
 
 _Undocumented._
@@ -132,7 +132,7 @@ _Undocumented._
 ### `tiocsctty`
 
 ```milo
-fn tiocsctty(): i64
+pub fn tiocsctty(): i64
 ```
 
 _Undocumented._
@@ -140,7 +140,7 @@ _Undocumented._
 ### `tiocswinsz`
 
 ```milo
-fn tiocswinsz(): i64
+pub fn tiocswinsz(): i64
 ```
 
 _Undocumented._

@@ -5,7 +5,7 @@
 ### `zstdCompress`
 
 ```milo
-fn zstdCompress(src: &string): string
+pub fn zstdCompress(src: &string): string
 ```
 
 Compress `src` to a real zstd frame: greedy LZ77 + FSE-coded sequences (Predefined or
@@ -17,7 +17,7 @@ appended XXH64 content checksum — decodable by `zstdDecompress` above and refe
 ### `zstdCompressRaw`
 
 ```milo
-fn zstdCompressRaw(src: &string): string
+pub fn zstdCompressRaw(src: &string): string
 ```
 
 Encode `src` as a zstd frame of Raw blocks (RFC 8878). No entropy stage — this is
@@ -28,7 +28,7 @@ the content size, and an XXH64 content checksum is appended.
 ### `zstdDecompress`
 
 ```milo
-fn zstdDecompress(src: &string): Result<string, string>
+pub fn zstdDecompress(src: &string): Result<string, string>
 ```
 
 Decompress a single zstd frame. Multi-frame concatenation is not handled — one

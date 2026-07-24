@@ -21,7 +21,7 @@ _Undocumented._
 ### `removeSocketFile`
 
 ```milo
-fn removeSocketFile(path: &string): void
+pub fn removeSocketFile(path: &string): void
 ```
 
 Remove a socket file. Dropping a UnixListener closes its fd but leaves the path behind.

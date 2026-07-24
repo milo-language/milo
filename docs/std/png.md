@@ -5,7 +5,7 @@
 ### `decodePng`
 
 ```milo
-fn decodePng(src: &string): Result<PngImage, string>
+pub fn decodePng(src: &string): Result<PngImage, string>
 ```
 
 _Undocumented._

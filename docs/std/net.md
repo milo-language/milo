@@ -21,7 +21,7 @@ _Undocumented._
 ### `ignoreSigpipe`
 
 ```milo
-fn ignoreSigpipe(): void
+pub fn ignoreSigpipe(): void
 ```
 
 _Undocumented._
@@ -29,7 +29,7 @@ _Undocumented._
 ### `ip4`
 
 ```milo
-fn ip4(a: u8, b: u8, c: u8, d: u8): u32
+pub fn ip4(a: u8, b: u8, c: u8, d: u8): u32
 ```
 
 _Undocumented._
@@ -37,7 +37,7 @@ _Undocumented._
 ### `ip6`
 
 ```milo
-fn ip6(text: &string): Option<[u8; 16]>
+pub fn ip6(text: &string): Option<[u8; 16]>
 ```
 
 Construct an IPv4 address from four octets.
@@ -49,7 +49,7 @@ None if the text isn't a valid v6 address — inet_pton is strict, and a v4 lite
 ### `resolve`
 
 ```milo
-fn resolve(hostname: &string): Result<u32, NetError>
+pub fn resolve(hostname: &string): Result<u32, NetError>
 ```
 
 _Undocumented._

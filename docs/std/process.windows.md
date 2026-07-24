@@ -5,7 +5,7 @@
 ### `capture`
 
 ```milo
-fn capture(cmd: &string): Result<string>
+pub fn capture(cmd: &string): Result<string>
 ```
 
 _Undocumented._
@@ -101,7 +101,7 @@ _Undocumented._
 ### `exePath`
 
 ```milo
-fn exePath(): Result<string>
+pub fn exePath(): Result<string>
 ```
 
 Absolute path of the running executable (mirror of the posix arm in std/process.milo;
@@ -135,7 +135,7 @@ _Undocumented._
 ### `run`
 
 ```milo
-fn run(cmd: &string): Result<i32>
+pub fn run(cmd: &string): Result<i32>
 ```
 
 Execute a shell command and return its exit code.

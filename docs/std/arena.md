@@ -61,7 +61,7 @@ _Undocumented._
 ### `arenaAlloc`
 
 ```milo
-fn arenaAlloc<T>(a: &mut Arena<T>, val: T): Handle<T>
+pub fn arenaAlloc<T>(a: &mut Arena<T>, val: T): Handle<T>
 ```
 
 Insert a value and return a handle to it.
@@ -69,7 +69,7 @@ Insert a value and return a handle to it.
 ### `arenaFree`
 
 ```milo
-fn arenaFree<T>(a: &mut Arena<T>, h: Handle<T>): bool
+pub fn arenaFree<T>(a: &mut Arena<T>, h: Handle<T>): bool
 ```
 
 Free a slot, bumping its generation so stale handles are detected.
@@ -77,7 +77,7 @@ Free a slot, bumping its generation so stale handles are detected.
 ### `arenaGet`
 
 ```milo
-fn arenaGet<T>(a: &Arena<T>, h: Handle<T>): Option<T>
+pub fn arenaGet<T>(a: &Arena<T>, h: Handle<T>): Option<T>
 ```
 
 Get a copy of the value at a handle. Returns None if the handle is stale.
@@ -87,7 +87,7 @@ Option<_>. For large T, prefer arenaModify to avoid the copy churn.
 ### `arenaLen`
 
 ```milo
-fn arenaLen<T>(a: &Arena<T>): i64
+pub fn arenaLen<T>(a: &Arena<T>): i64
 ```
 
 Number of live entries.
@@ -95,7 +95,7 @@ Number of live entries.
 ### `arenaModify`
 
 ```milo
-fn arenaModify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool
+pub fn arenaModify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool
 ```
 
 In-place update via closure. Avoids the manual get/modify/set dance and
@@ -105,7 +105,7 @@ Returns false if the handle is stale (closure not invoked).
 ### `arenaModifyMut`
 
 ```milo
-fn arenaModifyMut<T>(a: &mut Arena<T>, h: Handle<T>, f: (&mut T) => void): bool
+pub fn arenaModifyMut<T>(a: &mut Arena<T>, h: Handle<T>, f: (&mut T) => void): bool
 ```
 
 In-place mutate via &mut borrow — no copy in, no copy out, no full-struct
@@ -116,7 +116,7 @@ large or you only touch a field or two.
 ### `arenaNew`
 
 ```milo
-fn arenaNew<T>(): Arena<T>
+pub fn arenaNew<T>(): Arena<T>
 ```
 
 Create a new empty arena.
@@ -124,7 +124,7 @@ Create a new empty arena.
 ### `arenaSet`
 
 ```milo
-fn arenaSet<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool
+pub fn arenaSet<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool
 ```
 
 Overwrite the value at a handle. Returns false if the handle is stale.
@@ -132,7 +132,7 @@ Overwrite the value at a handle. Returns false if the handle is stale.
 ### `arenaValid`
 
 ```milo
-fn arenaValid<T>(a: &Arena<T>, h: Handle<T>): bool
+pub fn arenaValid<T>(a: &Arena<T>, h: Handle<T>): bool
 ```
 
 Check whether a handle is still valid.
@@ -140,7 +140,7 @@ Check whether a handle is still valid.
 ### `arenaWith`
 
 ```milo
-fn arenaWith<T, R>(a: &Arena<T>, h: Handle<T>, f: (&T) => R): Option<R>
+pub fn arenaWith<T, R>(a: &Arena<T>, h: Handle<T>, f: (&T) => R): Option<R>
 ```
 
 Read via borrow — no copy. The &T flows into `f` as a second-class ref:

@@ -5,7 +5,7 @@
 ### `charWidth`
 
 ```milo
-fn charWidth(cp: i32): i64
+pub fn charWidth(cp: i32): i64
 ```
 
 Terminal cells occupied by a single codepoint: 0, 1, or 2.
@@ -17,7 +17,7 @@ a negative sentinel.
 ### `codepointCount`
 
 ```milo
-fn codepointCount(s: &string): i64
+pub fn codepointCount(s: &string): i64
 ```
 
 Number of Unicode codepoints in a string (not bytes).
@@ -25,7 +25,7 @@ Number of Unicode codepoints in a string (not bytes).
 ### `codepoints`
 
 ```milo
-fn codepoints(s: &string): Vec<i32>
+pub fn codepoints(s: &string): Vec<i32>
 ```
 
 Decode UTF-8 string into Unicode codepoints. Allocates; prefer
@@ -34,7 +34,7 @@ decodeCodepoint in a scan loop.
 ### `decodeCodepoint`
 
 ```milo
-fn decodeCodepoint(s: &string, at: i64): CodePoint
+pub fn decodeCodepoint(s: &string, at: i64): CodePoint
 ```
 
 Decode the UTF-8 codepoint starting at byte offset `at`, without allocating.
@@ -50,7 +50,7 @@ what keeps decode/encode round-trips honest.
 ### `displayWidth`
 
 ```milo
-fn displayWidth(s: &string): i64
+pub fn displayWidth(s: &string): i64
 ```
 
 Columns a string occupies in a terminal.
@@ -64,7 +64,7 @@ selectors fold into the emoji they modify.
 ### `encodeCodepoint`
 
 ```milo
-fn encodeCodepoint(out: &mut string, cp: i32): void
+pub fn encodeCodepoint(out: &mut string, cp: i32): void
 ```
 
 Append `cp` to `out` as UTF-8. Invalid codepoints encode as U+FFFD rather
@@ -73,7 +73,7 @@ than emitting bytes that would not decode back.
 ### `fromSurrogatePair`
 
 ```milo
-fn fromSurrogatePair(high: i32, low: i32): i32
+pub fn fromSurrogatePair(high: i32, low: i32): i32
 ```
 
 Combine a surrogate pair back into a single codepoint.
@@ -81,7 +81,7 @@ Combine a surrogate pair back into a single codepoint.
 ### `highSurrogate`
 
 ```milo
-fn highSurrogate(cp: i32): i32
+pub fn highSurrogate(cp: i32): i32
 ```
 
 _Undocumented._
@@ -89,7 +89,7 @@ _Undocumented._
 ### `isAlpha`
 
 ```milo
-fn isAlpha(ch: u8): bool
+pub fn isAlpha(ch: u8): bool
 ```
 
 _Undocumented._
@@ -97,7 +97,7 @@ _Undocumented._
 ### `isAlphanumeric`
 
 ```milo
-fn isAlphanumeric(ch: u8): bool
+pub fn isAlphanumeric(ch: u8): bool
 ```
 
 _Undocumented._
@@ -105,7 +105,7 @@ _Undocumented._
 ### `isAlphaStr`
 
 ```milo
-fn isAlphaStr(s: &string): bool
+pub fn isAlphaStr(s: &string): bool
 ```
 
 Check if an entire string is alphabetic.
@@ -113,7 +113,7 @@ Check if an entire string is alphabetic.
 ### `isAscii`
 
 ```milo
-fn isAscii(ch: u8): bool
+pub fn isAscii(ch: u8): bool
 ```
 
 Classify ASCII bytes.
@@ -121,7 +121,7 @@ Classify ASCII bytes.
 ### `isCombining`
 
 ```milo
-fn isCombining(cp: i32): bool
+pub fn isCombining(cp: i32): bool
 ```
 
 Marks that attach to a preceding base character and advance no column.
@@ -129,7 +129,7 @@ Marks that attach to a preceding base character and advance no column.
 ### `isControl`
 
 ```milo
-fn isControl(ch: u8): bool
+pub fn isControl(ch: u8): bool
 ```
 
 _Undocumented._
@@ -137,7 +137,7 @@ _Undocumented._
 ### `isDigit`
 
 ```milo
-fn isDigit(ch: u8): bool
+pub fn isDigit(ch: u8): bool
 ```
 
 _Undocumented._
@@ -145,7 +145,7 @@ _Undocumented._
 ### `isHexDigit`
 
 ```milo
-fn isHexDigit(ch: u8): bool
+pub fn isHexDigit(ch: u8): bool
 ```
 
 _Undocumented._
@@ -153,7 +153,7 @@ _Undocumented._
 ### `isLower`
 
 ```milo
-fn isLower(ch: u8): bool
+pub fn isLower(ch: u8): bool
 ```
 
 _Undocumented._
@@ -161,7 +161,7 @@ _Undocumented._
 ### `isNumeric`
 
 ```milo
-fn isNumeric(s: &string): bool
+pub fn isNumeric(s: &string): bool
 ```
 
 Check if an entire string is numeric (all digits).
@@ -169,7 +169,7 @@ Check if an entire string is numeric (all digits).
 ### `isPrintable`
 
 ```milo
-fn isPrintable(ch: u8): bool
+pub fn isPrintable(ch: u8): bool
 ```
 
 _Undocumented._
@@ -177,7 +177,7 @@ _Undocumented._
 ### `isPunctuation`
 
 ```milo
-fn isPunctuation(ch: u8): bool
+pub fn isPunctuation(ch: u8): bool
 ```
 
 _Undocumented._
@@ -185,7 +185,7 @@ _Undocumented._
 ### `isRegionalIndicator`
 
 ```milo
-fn isRegionalIndicator(cp: i32): bool
+pub fn isRegionalIndicator(cp: i32): bool
 ```
 
 Regional indicator symbols — two in a row form one flag glyph.
@@ -193,7 +193,7 @@ Regional indicator symbols — two in a row form one flag glyph.
 ### `isSkinToneModifier`
 
 ```milo
-fn isSkinToneModifier(cp: i32): bool
+pub fn isSkinToneModifier(cp: i32): bool
 ```
 
 Emoji skin-tone modifiers, absorbed by the emoji they follow.
@@ -201,7 +201,7 @@ Emoji skin-tone modifiers, absorbed by the emoji they follow.
 ### `isSupplementary`
 
 ```milo
-fn isSupplementary(cp: i32): bool
+pub fn isSupplementary(cp: i32): bool
 ```
 
 UTF-16 conversion. A codepoint above the BMP is a single codepoint but TWO
@@ -212,7 +212,7 @@ UTF-16 boundary (Windows wide-char APIs, JVM strings).
 ### `isUpper`
 
 ```milo
-fn isUpper(ch: u8): bool
+pub fn isUpper(ch: u8): bool
 ```
 
 _Undocumented._
@@ -220,7 +220,7 @@ _Undocumented._
 ### `isWhitespace`
 
 ```milo
-fn isWhitespace(ch: u8): bool
+pub fn isWhitespace(ch: u8): bool
 ```
 
 _Undocumented._
@@ -228,7 +228,7 @@ _Undocumented._
 ### `isWide`
 
 ```milo
-fn isWide(cp: i32): bool
+pub fn isWide(cp: i32): bool
 ```
 
 East Asian Wide/Fullwidth plus the emoji blocks that render double-width.
@@ -236,7 +236,7 @@ East Asian Wide/Fullwidth plus the emoji blocks that render double-width.
 ### `isZeroWidthFormat`
 
 ```milo
-fn isZeroWidthFormat(cp: i32): bool
+pub fn isZeroWidthFormat(cp: i32): bool
 ```
 
 Format/invisible characters: joiners, bidi controls, variation selectors, BOM.
@@ -244,7 +244,7 @@ Format/invisible characters: joiners, bidi controls, variation selectors, BOM.
 ### `lowSurrogate`
 
 ```milo
-fn lowSurrogate(cp: i32): i32
+pub fn lowSurrogate(cp: i32): i32
 ```
 
 _Undocumented._
@@ -252,7 +252,7 @@ _Undocumented._
 ### `nextCodepointBoundary`
 
 ```milo
-fn nextCodepointBoundary(s: &string, at: i64): i64
+pub fn nextCodepointBoundary(s: &string, at: i64): i64
 ```
 
 Byte offset of the next codepoint boundary at or after `at`.
@@ -260,7 +260,7 @@ Byte offset of the next codepoint boundary at or after `at`.
 ### `toLowerChar`
 
 ```milo
-fn toLowerChar(ch: u8): u8
+pub fn toLowerChar(ch: u8): u8
 ```
 
 Case conversion for ASCII bytes.
@@ -268,7 +268,7 @@ Case conversion for ASCII bytes.
 ### `toUpperChar`
 
 ```milo
-fn toUpperChar(ch: u8): u8
+pub fn toUpperChar(ch: u8): u8
 ```
 
 _Undocumented._
@@ -276,7 +276,7 @@ _Undocumented._
 ### `truncateToWidth`
 
 ```milo
-fn truncateToWidth(s: &string, maxCols: i64): i64
+pub fn truncateToWidth(s: &string, maxCols: i64): i64
 ```
 
 Byte offset just past the longest prefix of `s` that fits in `maxCols`
@@ -286,7 +286,7 @@ glyph — a wide character that would straddle the limit is excluded entirely.
 ### `utf16UnitCount`
 
 ```milo
-fn utf16UnitCount(cp: i32): i64
+pub fn utf16UnitCount(cp: i32): i64
 ```
 
 _Undocumented._

@@ -5,7 +5,7 @@
 ### `clearNonblocking`
 
 ```milo
-fn clearNonblocking(fd: i32): i32
+pub fn clearNonblocking(fd: i32): i32
 ```
 
 Clear O_NONBLOCK. fd 0/1/2 share an open file description with the parent
@@ -15,7 +15,7 @@ reads return EAGAIN after we exit. Restore blocking mode before exiting.
 ### `efdCloexec`
 
 ```milo
-fn efdCloexec(): i32
+pub fn efdCloexec(): i32
 ```
 
 _Undocumented._
@@ -23,7 +23,7 @@ _Undocumented._
 ### `efdNonblock`
 
 ```milo
-fn efdNonblock(): i32
+pub fn efdNonblock(): i32
 ```
 
 _Undocumented._
@@ -31,7 +31,7 @@ _Undocumented._
 ### `epollEventSize`
 
 ```milo
-fn epollEventSize(): i64
+pub fn epollEventSize(): i64
 ```
 
 _Undocumented._
@@ -39,7 +39,7 @@ _Undocumented._
 ### `eventDeregister`
 
 ```milo
-fn eventDeregister(el: &EventLoop, fd: i32, _forWrite: bool): i32
+pub fn eventDeregister(el: &EventLoop, fd: i32, _forWrite: bool): i32
 ```
 
 _Undocumented._
@@ -47,7 +47,7 @@ _Undocumented._
 ### `eventLoopClose`
 
 ```milo
-fn eventLoopClose(el: &EventLoop): void
+pub fn eventLoopClose(el: &EventLoop): void
 ```
 
 _Undocumented._
@@ -55,7 +55,7 @@ _Undocumented._
 ### `eventLoopCloseWakeup`
 
 ```milo
-fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void
+pub fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void
 ```
 
 _Undocumented._
@@ -63,7 +63,7 @@ _Undocumented._
 ### `eventLoopDrainWakeup`
 
 ```milo
-fn eventLoopDrainWakeup(_el: &EventLoop, wakeupId: i32): void
+pub fn eventLoopDrainWakeup(_el: &EventLoop, wakeupId: i32): void
 ```
 
 eventfd is level-triggered under epoll; the counter must be consumed or
@@ -72,7 +72,7 @@ every subsequent poll reports it ready again
 ### `eventLoopFd`
 
 ```milo
-fn eventLoopFd(el: &EventLoop): i32
+pub fn eventLoopFd(el: &EventLoop): i32
 ```
 
 _Undocumented._
@@ -80,7 +80,7 @@ _Undocumented._
 ### `eventLoopFromFd`
 
 ```milo
-fn eventLoopFromFd(fd: i32): EventLoop
+pub fn eventLoopFromFd(fd: i32): EventLoop
 ```
 
 _Undocumented._
@@ -88,7 +88,7 @@ _Undocumented._
 ### `eventLoopInitWakeup`
 
 ```milo
-fn eventLoopInitWakeup(el: &EventLoop): i32
+pub fn eventLoopInitWakeup(el: &EventLoop): i32
 ```
 
 _Undocumented._
@@ -96,7 +96,7 @@ _Undocumented._
 ### `eventLoopNew`
 
 ```milo
-fn eventLoopNew(): Result<EventLoop, string>
+pub fn eventLoopNew(): Result<EventLoop, string>
 ```
 
 _Undocumented._
@@ -104,7 +104,7 @@ _Undocumented._
 ### `eventLoopNotify`
 
 ```milo
-fn eventLoopNotify(_el: &EventLoop, wakeupId: i32): i32
+pub fn eventLoopNotify(_el: &EventLoop, wakeupId: i32): i32
 ```
 
 safe from any thread: write(2) on an eventfd is atomic
@@ -112,7 +112,7 @@ safe from any thread: write(2) on an eventfd is atomic
 ### `eventPoll`
 
 ```milo
-fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i32
+pub fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i32
 ```
 
 poll for ready events. readyFds: caller-allocated *i32 array with capacity >= maxEvents.
@@ -122,7 +122,7 @@ timeoutMs < 0 means block indefinitely.
 ### `eventRegisterRead`
 
 ```milo
-fn eventRegisterRead(el: &EventLoop, fd: i32): i32
+pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32
 ```
 
 _Undocumented._
@@ -130,7 +130,7 @@ _Undocumented._
 ### `eventRegisterWrite`
 
 ```milo
-fn eventRegisterWrite(el: &EventLoop, fd: i32): i32
+pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32
 ```
 
 _Undocumented._
@@ -138,7 +138,7 @@ _Undocumented._
 ### `setNonblocking`
 
 ```milo
-fn setNonblocking(fd: i32): i32
+pub fn setNonblocking(fd: i32): i32
 ```
 
 _Undocumented._

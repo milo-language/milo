@@ -5,7 +5,7 @@
 ### `addAtom`
 
 ```milo
-fn addAtom(p: &mut SmtProblem, row: Vec<i64>, konst: i64, strict: bool): i64
+pub fn addAtom(p: &mut SmtProblem, row: Vec<i64>, konst: i64, strict: bool): i64
 ```
 
 Register an atom  row·x + konst <op> 0 ; returns its atom index.
@@ -13,7 +13,7 @@ Register an atom  row·x + konst <op> 0 ; returns its atom index.
 ### `cloneRow`
 
 ```milo
-fn cloneRow(row: &Vec<i64>): Vec<i64>
+pub fn cloneRow(row: &Vec<i64>): Vec<i64>
 ```
 
 _Undocumented._
@@ -21,7 +21,7 @@ _Undocumented._
 ### `combine`
 
 ```milo
-fn combine(p: &Constraint, n: &Constraint, k: i64): Option<Constraint>
+pub fn combine(p: &Constraint, n: &Constraint, k: i64): Option<Constraint>
 ```
 
 Combine upper row p (coeff +a on x_k) with lower row n (coeff -b): b*p + a*n.
@@ -30,7 +30,7 @@ None when the arithmetic overflows — see combineTerm.
 ### `combineTerm`
 
 ```milo
-fn combineTerm(b: i64, pj: i64, a: i64, nj: i64): Option<i64>
+pub fn combineTerm(b: i64, pj: i64, a: i64, nj: i64): Option<i64>
 ```
 
 b*p[j] + a*n[j], or None if any step overflows i64.
@@ -44,7 +44,7 @@ overflow must reach the caller as "cannot decide" and never as a verdict.
 ### `decide`
 
 ```milo
-fn decide(p: &SmtProblem, root: i64): Verdict
+pub fn decide(p: &SmtProblem, root: i64): Verdict
 ```
 
 _Undocumented._
@@ -52,7 +52,7 @@ _Undocumented._
 ### `eliminateVar`
 
 ```milo
-fn eliminateVar(cs: &Vec<Constraint>, k: i64): Option<Vec<Constraint>>
+pub fn eliminateVar(cs: &Vec<Constraint>, k: i64): Option<Vec<Constraint>>
 ```
 
 None when any combine overflows — the caller must not read that as infeasible.
@@ -60,7 +60,7 @@ None when any combine overflows — the caller must not read that as infeasible.
 ### `evalNode`
 
 ```milo
-fn evalNode(p: &SmtProblem, node: i64, mask: i64): bool
+pub fn evalNode(p: &SmtProblem, node: i64, mask: i64): bool
 ```
 
 _Undocumented._
@@ -68,7 +68,7 @@ _Undocumented._
 ### `feasibleRational`
 
 ```milo
-fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64): Option<bool>
+pub fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64): Option<bool>
 ```
 
 Feasible over the rationals? Eliminate every variable; a surviving constant
@@ -79,7 +79,7 @@ None = the elimination overflowed, so feasibility is undecided here. Returning `
 ### `findWitness`
 
 ```milo
-fn findWitness(cs: &Vec<Constraint>, nvars: i64, bound: i64, maxIters: i64): Vec<i64>
+pub fn findWitness(cs: &Vec<Constraint>, nvars: i64, bound: i64, maxIters: i64): Vec<i64>
 ```
 
 Odometer search for a concrete integer witness, each coordinate ranging over
@@ -89,7 +89,7 @@ maxIters so a high-dimensional box can't blow up. Empty result = none found.
 ### `gcd2`
 
 ```milo
-fn gcd2(a: i64, b: i64): i64
+pub fn gcd2(a: i64, b: i64): i64
 ```
 
 _Undocumented._
@@ -97,7 +97,7 @@ _Undocumented._
 ### `inducedConstraints`
 
 ```milo
-fn inducedConstraints(p: &SmtProblem, mask: i64): Vec<Constraint>
+pub fn inducedConstraints(p: &SmtProblem, mask: i64): Vec<Constraint>
 ```
 
 Build the conjunction induced by a truth assignment: atom i as-is when its
@@ -106,7 +106,7 @@ bit is set, negated otherwise.
 ### `nAnd`
 
 ```milo
-fn nAnd(p: &mut SmtProblem, kids: Vec<i64>): i64
+pub fn nAnd(p: &mut SmtProblem, kids: Vec<i64>): i64
 ```
 
 _Undocumented._
@@ -114,7 +114,7 @@ _Undocumented._
 ### `nAtom`
 
 ```milo
-fn nAtom(p: &mut SmtProblem, atomIdx: i64): i64
+pub fn nAtom(p: &mut SmtProblem, atomIdx: i64): i64
 ```
 
 _Undocumented._
@@ -122,7 +122,7 @@ _Undocumented._
 ### `newProblem`
 
 ```milo
-fn newProblem(nvars: i64): SmtProblem
+pub fn newProblem(nvars: i64): SmtProblem
 ```
 
 _Undocumented._
@@ -130,7 +130,7 @@ _Undocumented._
 ### `nNot`
 
 ```milo
-fn nNot(p: &mut SmtProblem, kid: i64): i64
+pub fn nNot(p: &mut SmtProblem, kid: i64): i64
 ```
 
 _Undocumented._
@@ -138,7 +138,7 @@ _Undocumented._
 ### `nOr`
 
 ```milo
-fn nOr(p: &mut SmtProblem, kids: Vec<i64>): i64
+pub fn nOr(p: &mut SmtProblem, kids: Vec<i64>): i64
 ```
 
 _Undocumented._
@@ -146,7 +146,7 @@ _Undocumented._
 ### `reduceConstraint`
 
 ```milo
-fn reduceConstraint(c: &Constraint): Constraint
+pub fn reduceConstraint(c: &Constraint): Constraint
 ```
 
 Divide a row by the gcd of its entries — bounds Fourier–Motzkin coefficient
@@ -155,7 +155,7 @@ growth so i64 doesn't overflow on the small systems contracts produce.
 ### `satisfiesAll`
 
 ```milo
-fn satisfiesAll(cs: &Vec<Constraint>, x: &Vec<i64>): bool
+pub fn satisfiesAll(cs: &Vec<Constraint>, x: &Vec<i64>): bool
 ```
 
 _Undocumented._
@@ -163,7 +163,7 @@ _Undocumented._
 ### `verdictName`
 
 ```milo
-fn verdictName(v: &Verdict): string
+pub fn verdictName(v: &Verdict): string
 ```
 
 Decide SAT of the formula rooted at `root`. In a proof obligation the root is
@@ -176,7 +176,7 @@ Decide SAT of the formula rooted at `root`. In a proof obligation the root is
 ### `witnessBound`
 
 ```milo
-fn witnessBound(nvars: i64): i64
+pub fn witnessBound(nvars: i64): i64
 ```
 
 Per-variable box radius so the total search (2b+1)^nvars stays near a few
@@ -185,7 +185,7 @@ million points — wide in low dimensions, tight in high ones.
 ### `zigzag`
 
 ```milo
-fn zigzag(step: i64): i64
+pub fn zigzag(step: i64): i64
 ```
 
 Map an odometer step 0,1,2,3,4,... to values 0,-1,1,-2,2,... so the search

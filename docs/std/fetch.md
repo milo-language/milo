@@ -5,7 +5,7 @@
 ### `decodeChunked`
 
 ```milo
-fn decodeChunked(rawBody: &string): string
+pub fn decodeChunked(rawBody: &string): string
 ```
 
 _Undocumented._
@@ -13,7 +13,7 @@ _Undocumented._
 ### `doFetch`
 
 ```milo
-fn doFetch(url: string, opts: FetchOptions): Result<Response, NetError>
+pub fn doFetch(url: string, opts: FetchOptions): Result<Response, NetError>
 ```
 
 _Undocumented._
@@ -29,7 +29,7 @@ _Undocumented._
 ### `fetch`
 
 ```milo
-fn fetch(url: &string): Result<Response, NetError>
+pub fn fetch(url: &string): Result<Response, NetError>
 ```
 
 _Undocumented._
@@ -37,7 +37,7 @@ _Undocumented._
 ### `fetchDelete`
 
 ```milo
-fn fetchDelete(url: &string): Result<Response, NetError>
+pub fn fetchDelete(url: &string): Result<Response, NetError>
 ```
 
 _Undocumented._
@@ -45,7 +45,7 @@ _Undocumented._
 ### `fetchPatch`
 
 ```milo
-fn fetchPatch(url: &string, body: &string): Result<Response, NetError>
+pub fn fetchPatch(url: &string, body: &string): Result<Response, NetError>
 ```
 
 _Undocumented._
@@ -53,7 +53,7 @@ _Undocumented._
 ### `fetchPost`
 
 ```milo
-fn fetchPost(url: &string, body: &string): Result<Response, NetError>
+pub fn fetchPost(url: &string, body: &string): Result<Response, NetError>
 ```
 
 _Undocumented._
@@ -61,7 +61,7 @@ _Undocumented._
 ### `fetchPut`
 
 ```milo
-fn fetchPut(url: &string, body: &string): Result<Response, NetError>
+pub fn fetchPut(url: &string, body: &string): Result<Response, NetError>
 ```
 
 _Undocumented._
@@ -69,7 +69,7 @@ _Undocumented._
 ### `fetchWith`
 
 ```milo
-fn fetchWith(url: &string, opts: FetchOptions): Result<Response, NetError>
+pub fn fetchWith(url: &string, opts: FetchOptions): Result<Response, NetError>
 ```
 
 _Undocumented._
@@ -77,7 +77,7 @@ _Undocumented._
 ### `findHeader`
 
 ```milo
-fn findHeader(headers: &string, name: &string): string
+pub fn findHeader(headers: &string, name: &string): string
 ```
 
 _Undocumented._
@@ -85,7 +85,7 @@ _Undocumented._
 ### `hexDigit`
 
 ```milo
-fn hexDigit(c: u8): i64
+pub fn hexDigit(c: u8): i64
 ```
 
 _Undocumented._
@@ -93,7 +93,7 @@ _Undocumented._
 ### `httpDo`
 
 ```milo
-fn httpDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError>
+pub fn httpDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError>
 ```
 
 _Undocumented._
@@ -101,7 +101,7 @@ _Undocumented._
 ### `httpsDo`
 
 ```milo
-fn httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError>
+pub fn httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError>
 ```
 
 _Undocumented._
@@ -109,7 +109,7 @@ _Undocumented._
 ### `isHttps`
 
 ```milo
-fn isHttps(url: &string): bool
+pub fn isHttps(url: &string): bool
 ```
 
 _Undocumented._
@@ -117,7 +117,7 @@ _Undocumented._
 ### `parseBody`
 
 ```milo
-fn parseBody(raw: &string): string
+pub fn parseBody(raw: &string): string
 ```
 
 _Undocumented._
@@ -125,7 +125,7 @@ _Undocumented._
 ### `parseHost`
 
 ```milo
-fn parseHost(url: &string): string
+pub fn parseHost(url: &string): string
 ```
 
 _Undocumented._
@@ -133,7 +133,7 @@ _Undocumented._
 ### `parsePath`
 
 ```milo
-fn parsePath(url: &string): string
+pub fn parsePath(url: &string): string
 ```
 
 _Undocumented._
@@ -141,7 +141,7 @@ _Undocumented._
 ### `parsePort`
 
 ```milo
-fn parsePort(url: &string): u16
+pub fn parsePort(url: &string): u16
 ```
 
 _Undocumented._
@@ -149,7 +149,7 @@ _Undocumented._
 ### `parseRawHeaders`
 
 ```milo
-fn parseRawHeaders(raw: &string): string
+pub fn parseRawHeaders(raw: &string): string
 ```
 
 _Undocumented._
@@ -157,7 +157,7 @@ _Undocumented._
 ### `parseResponse`
 
 ```milo
-fn parseResponse(raw: string): Response
+pub fn parseResponse(raw: string): Response
 ```
 
 _Undocumented._
@@ -165,7 +165,7 @@ _Undocumented._
 ### `parseStatus`
 
 ```milo
-fn parseStatus(raw: &string): i32
+pub fn parseStatus(raw: &string): i32
 ```
 
 _Undocumented._
@@ -205,7 +205,7 @@ Return the response body as a string.
 ### `schemeOffset`
 
 ```milo
-fn schemeOffset(url: &string): i64
+pub fn schemeOffset(url: &string): i64
 ```
 
 _Undocumented._
@@ -213,7 +213,7 @@ _Undocumented._
 ### `startsWith`
 
 ```milo
-fn startsWith(s: &string, prefix: &string): bool
+pub fn startsWith(s: &string, prefix: &string): bool
 ```
 
 _Undocumented._
@@ -221,7 +221,7 @@ _Undocumented._
 ### `strEqNocase`
 
 ```milo
-fn strEqNocase(a: &string, ai: i64, b: &string, blen: i64): bool
+pub fn strEqNocase(a: &string, ai: i64, b: &string, blen: i64): bool
 ```
 
 _Undocumented._

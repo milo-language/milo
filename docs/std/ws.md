@@ -13,7 +13,7 @@ _Undocumented._
 ### `extractWsKey`
 
 ```milo
-fn extractWsKey(raw: &string): string
+pub fn extractWsKey(raw: &string): string
 ```
 
 Extract Sec-WebSocket-Key from raw HTTP request.
@@ -21,7 +21,7 @@ Extract Sec-WebSocket-Key from raw HTTP request.
 ### `isWsUpgrade`
 
 ```milo
-fn isWsUpgrade(raw: &string): bool
+pub fn isWsUpgrade(raw: &string): bool
 ```
 
 Check if raw HTTP request bytes contain a WebSocket upgrade request.
@@ -29,7 +29,7 @@ Check if raw HTTP request bytes contain a WebSocket upgrade request.
 ### `WS_BINARY`
 
 ```milo
-fn WS_BINARY(): u8
+pub fn WS_BINARY(): u8
 ```
 
 _Undocumented._
@@ -37,7 +37,7 @@ _Undocumented._
 ### `WS_CLOSE`
 
 ```milo
-fn WS_CLOSE(): u8
+pub fn WS_CLOSE(): u8
 ```
 
 _Undocumented._
@@ -45,7 +45,7 @@ _Undocumented._
 ### `WS_CONTINUATION`
 
 ```milo
-fn WS_CONTINUATION(): u8
+pub fn WS_CONTINUATION(): u8
 ```
 
 _Undocumented._
@@ -53,7 +53,7 @@ _Undocumented._
 ### `WS_PING`
 
 ```milo
-fn WS_PING(): u8
+pub fn WS_PING(): u8
 ```
 
 _Undocumented._
@@ -61,7 +61,7 @@ _Undocumented._
 ### `WS_PONG`
 
 ```milo
-fn WS_PONG(): u8
+pub fn WS_PONG(): u8
 ```
 
 _Undocumented._
@@ -69,7 +69,7 @@ _Undocumented._
 ### `WS_TEXT`
 
 ```milo
-fn WS_TEXT(): u8
+pub fn WS_TEXT(): u8
 ```
 
 _Undocumented._
@@ -77,7 +77,7 @@ _Undocumented._
 ### `wsAccept`
 
 ```milo
-fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string>
+pub fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string>
 ```
 
 Accept a WebSocket upgrade on an already-accepted TCP fd.
@@ -126,7 +126,7 @@ Send a text message.
 ### `wsConnect`
 
 ```milo
-fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string>
+pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string>
 ```
 
 Connect to a WebSocket server. Performs TCP connect + HTTP upgrade handshake.
@@ -135,7 +135,7 @@ Returns a WsConn on successful 101 response.
 ### `wsConnectTls`
 
 ```milo
-fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<WsConn, string>
+pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<WsConn, string>
 ```
 
 Connect to a WebSocket server over TLS (wss://). Performs TCP connect, TLS

@@ -5,7 +5,7 @@
 ### `regexFind`
 
 ```milo
-fn regexFind(re: &Regex, input: &string): Option<RegexMatch>
+pub fn regexFind(re: &Regex, input: &string): Option<RegexMatch>
 ```
 
 Find the first match in a string. Returns None if no match.
@@ -13,7 +13,7 @@ Find the first match in a string. Returns None if no match.
 ### `regexFindAll`
 
 ```milo
-fn regexFindAll(re: &Regex, input: &string): Vec<RegexMatch>
+pub fn regexFindAll(re: &Regex, input: &string): Vec<RegexMatch>
 ```
 
 Find all non-overlapping matches in a string.
@@ -21,7 +21,7 @@ Find all non-overlapping matches in a string.
 ### `regexMatch`
 
 ```milo
-fn regexMatch(re: &Regex, input: &string): bool
+pub fn regexMatch(re: &Regex, input: &string): bool
 ```
 
 Test if a string matches the pattern.
@@ -29,7 +29,7 @@ Test if a string matches the pattern.
 ### `regexNew`
 
 ```milo
-fn regexNew(pattern: string): Option<Regex>
+pub fn regexNew(pattern: string): Option<Regex>
 ```
 
 Compile a POSIX extended regular expression. Returns None on invalid pattern.
@@ -37,7 +37,7 @@ Compile a POSIX extended regular expression. Returns None on invalid pattern.
 ### `regexNewFlags`
 
 ```milo
-fn regexNewFlags(pattern: string, cflags: i32): Option<Regex>
+pub fn regexNewFlags(pattern: string, cflags: i32): Option<Regex>
 ```
 
 Compile a POSIX extended regex with explicit cflags. REG_EXTENDED=1, REG_ICASE=2.

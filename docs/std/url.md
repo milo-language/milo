@@ -5,7 +5,7 @@
 ### `urlParse`
 
 ```milo
-fn urlParse(s: string): Result<Url>
+pub fn urlParse(s: string): Result<Url>
 ```
 
 _Undocumented._
@@ -13,7 +13,7 @@ _Undocumented._
 ### `urlQueryGet`
 
 ```milo
-fn urlQueryGet(u: &Url, key: &string): Option<string>
+pub fn urlQueryGet(u: &Url, key: &string): Option<string>
 ```
 
 _Undocumented._
@@ -21,7 +21,7 @@ _Undocumented._
 ### `urlString`
 
 ```milo
-fn urlString(u: &Url): string
+pub fn urlString(u: &Url): string
 ```
 
 _Undocumented._

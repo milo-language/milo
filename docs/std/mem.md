@@ -5,7 +5,7 @@
 ### `arenaAlloc`
 
 ```milo
-fn arenaAlloc(a: &mut Arena, size: i64): Result<i64>
+pub fn arenaAlloc(a: &mut Arena, size: i64): Result<i64>
 ```
 
 Allocate size bytes from the arena (8-byte aligned).
@@ -14,7 +14,7 @@ Returns Err if the arena doesn't have enough space.
 ### `arenaNew`
 
 ```milo
-fn arenaNew(capacity: i64): Result<Arena>
+pub fn arenaNew(capacity: i64): Result<Arena>
 ```
 
 Create a new arena with the given capacity in bytes.
@@ -22,7 +22,7 @@ Create a new arena with the given capacity in bytes.
 ### `arenaRemaining`
 
 ```milo
-fn arenaRemaining(a: &Arena): i64
+pub fn arenaRemaining(a: &Arena): i64
 ```
 
 _Undocumented._
@@ -30,7 +30,7 @@ _Undocumented._
 ### `arenaReset`
 
 ```milo
-fn arenaReset(a: &mut Arena): void
+pub fn arenaReset(a: &mut Arena): void
 ```
 
 Reset the arena, making all previously allocated memory available for reuse.
@@ -54,7 +54,7 @@ _Undocumented._
 ### `mmapAnon`
 
 ```milo
-fn mmapAnon(size: i64): Result<MappedMemory>
+pub fn mmapAnon(size: i64): Result<MappedMemory>
 ```
 
 Allocate an anonymous (non-file-backed) memory-mapped region.
@@ -62,7 +62,7 @@ Allocate an anonymous (non-file-backed) memory-mapped region.
 ### `mmapFile`
 
 ```milo
-fn mmapFile(fFd: i32, size: i64): Result<MappedMemory>
+pub fn mmapFile(fFd: i32, size: i64): Result<MappedMemory>
 ```
 
 Memory-map a file descriptor for reading.

@@ -98,7 +98,7 @@ Like Python's parse_args(args=[...]).
 ### `newParser`
 
 ```milo
-fn newParser(name: string, description: string): ArgParser
+pub fn newParser(name: string, description: string): ArgParser
 ```
 
 Create a new argument parser with a program name and description.
