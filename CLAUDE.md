@@ -99,7 +99,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 
 ## Layout
 
-- `std/` — Milo-language standard library (`.milo` files: io, fs, net, http, json, argparse, arena, …). Auto-discovered via `from "std/<name>" import { ... }` (or `import *`); bare `import "std/<name>"` is no longer accepted.
+- `std/` — Milo-language standard library (`.milo` files: io, fs, net, http, json, argparse, arena, …). Auto-discovered via `from "std/<name>" import { ... }` (optionally `import { x as y }`); there is no glob-import form, and bare `import "std/<name>"` is not accepted.
 - `examples/` — runnable Milo programs, grouped by domain (`basics/`, `cli-tools/`, `graphics/`, `simulation/`, `terminal/`, `net/`, `emulators/`, `embedded/`, `runtimes/`, `tools/`); see `examples/README.md`. Treat as integration smoke tests for stdlib changes.
 - `docs/language-reference.md`, `docs/grammar.ebnf`, `docs/design.md`, `docs/roadmap.md` — authoritative refs. Check `roadmap.md` before proposing new language features.
 - `editors/vscode/` — LSP client; server entry is `src/lsp.ts` invoked via `bun run src/main.ts lsp`.

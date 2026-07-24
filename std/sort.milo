@@ -2,17 +2,17 @@
 
 // Sort Vec<i64> in ascending order.
 pub fn sortI64(v: &mut Vec<i64>): void {
-    _qsortI64(v, 0, v.len - 1)
+    qsortI64(v, 0, v.len - 1)
 }
 
 // Sort Vec<i32> in ascending order.
 pub fn sortI32(v: &mut Vec<i32>): void {
-    _qsortI32(v, 0 as i32, (v.len - 1) as i32)
+    qsortI32(v, 0 as i32, (v.len - 1) as i32)
 }
 
 // Sort Vec<string> in lexicographic order.
 pub fn sortStrings(v: &mut Vec<string>): void {
-    _isortStrings(v, 0, v.len - 1)
+    isortStrings(v, 0, v.len - 1)
 }
 
 // Reverse a Vec<i64> in place.
@@ -30,7 +30,7 @@ pub fn reverseI64(v: &mut Vec<i64>): void {
 
 // ── quicksort i64 ──
 
-pub fn _qsortI64(v: &mut Vec<i64>, lo: i64, hi: i64): void
+fn qsortI64(v: &mut Vec<i64>, lo: i64, hi: i64): void
 requires lo >= 0
 {
     if lo >= hi {
@@ -51,13 +51,13 @@ requires lo >= 0
     let tmp = v[i]
     v[i] = v[hi]
     v[hi] = tmp
-    _qsortI64(v, lo, i - 1)
-    _qsortI64(v, i + 1, hi)
+    qsortI64(v, lo, i - 1)
+    qsortI64(v, i + 1, hi)
 }
 
 // ── quicksort i32 ──
 
-pub fn _qsortI32(v: &mut Vec<i32>, lo: i32, hi: i32): void
+fn qsortI32(v: &mut Vec<i32>, lo: i32, hi: i32): void
 requires lo >= 0 as i32
 {
     if lo >= hi {
@@ -78,8 +78,8 @@ requires lo >= 0 as i32
     let tmp = v[i]
     v[i] = v[hi]
     v[hi] = tmp
-    _qsortI32(v, lo, i - 1 as i32)
-    _qsortI32(v, i + 1 as i32, hi)
+    qsortI32(v, lo, i - 1 as i32)
+    qsortI32(v, i + 1 as i32, hi)
 }
 
 // Sort Vec<string> + parallel Vec<i64> by values descending, then keys ascending (for top-N).
@@ -94,7 +94,7 @@ pub fn sortStringsByFreq(keys: &mut Vec<string>, vals: &mut Vec<i64>): void {
         let vv = vals[i]
         var j = i - 1
         while j >= 0 {
-            if vals[j] > vv || (vals[j] == vv && _strLessThan(keys[j], kk)) {
+            if vals[j] > vv || (vals[j] == vv && strLessThan(keys[j], kk)) {
                 break
             }
             keys[j + 1] = keys[j].clone()
@@ -109,11 +109,11 @@ pub fn sortStringsByFreq(keys: &mut Vec<string>, vals: &mut Vec<i64>): void {
 
 // ── insertion sort for strings (stable, good for small n) ──
 
-pub fn _strLessThan(a: &string, b: &string): bool {
+fn strLessThan(a: &string, b: &string): bool {
     return a < b
 }
 
-pub fn _isortStrings(v: &mut Vec<string>, lo: i64, hi: i64): void {
+fn isortStrings(v: &mut Vec<string>, lo: i64, hi: i64): void {
     if lo >= hi {
         return
     }
@@ -122,7 +122,7 @@ pub fn _isortStrings(v: &mut Vec<string>, lo: i64, hi: i64): void {
         let key = v[i].clone()
         var j = i - 1
         while j >= lo {
-            if _strLessThan(key, v[j]) {
+            if strLessThan(key, v[j]) {
                 v[j + 1] = v[j].clone()
                 j = j - 1
             } else {

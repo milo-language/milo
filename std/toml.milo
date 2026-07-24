@@ -51,7 +51,7 @@ pub fn tomlParse(s: string): Result<Toml> {
 
 // ── Internal helpers ──
 
-pub fn _tomlSkipWs(s: &string, pos: i64, end: i64): i64 {
+fn tomlSkipWs(s: &string, pos: i64, end: i64): i64 {
     var i = pos
     while i < end {
         let c = s[i]
@@ -68,7 +68,7 @@ pub fn _tomlSkipWs(s: &string, pos: i64, end: i64): i64 {
     return i
 }
 
-pub fn _tomlSkipLine(s: &string, pos: i64, end: i64): i64 {
+fn tomlSkipLine(s: &string, pos: i64, end: i64): i64 {
     var i = pos
     while i < end && s[i] != '\n' {
         i = i + 1
@@ -79,7 +79,7 @@ pub fn _tomlSkipLine(s: &string, pos: i64, end: i64): i64 {
     return i
 }
 
-pub fn _tomlKeyMatches(s: &string, pos: i64, end: i64, key: &string): bool {
+fn tomlKeyMatches(s: &string, pos: i64, end: i64, key: &string): bool {
     var i = pos
     var j: i64 = 0
     // bare key
@@ -94,11 +94,11 @@ pub fn _tomlKeyMatches(s: &string, pos: i64, end: i64, key: &string): bool {
         return false
     }
     // next non-ws char must be '='
-    let after = _tomlSkipWs(s, i, end)
+    let after = tomlSkipWs(s, i, end)
     return after < end && s[after] == '='
 }
 
-pub fn _tomlReadValue(s: &string, pos: i64, end: i64): i64 {
+fn tomlReadValue(s: &string, pos: i64, end: i64): i64 {
     // return end position of the value
     var i = pos
     if i >= end {
@@ -165,10 +165,10 @@ pub fn _tomlReadValue(s: &string, pos: i64, end: i64): i64 {
     return i
 }
 
-pub fn _tomlFindKey(s: &string, start: i64, end: i64, key: &string): Option<Toml> {
+fn tomlFindKey(s: &string, start: i64, end: i64, key: &string): Option<Toml> {
     var i = start
     while i < end {
-        i = _tomlSkipWs(s, i, end)
+        i = tomlSkipWs(s, i, end)
         if i >= end {
             break
         }
@@ -180,28 +180,28 @@ pub fn _tomlFindKey(s: &string, start: i64, end: i64, key: &string): Option<Toml
         if s[i] == '[' {
             break
         }
-        if _tomlKeyMatches(s, i, end, key) {
+        if tomlKeyMatches(s, i, end, key) {
             // skip key and =
             var j = i
             while j < end && s[j] != '=' {
                 j = j + 1
             }
             j = j + 1
-            j = _tomlSkipWs(s, j, end)
+            j = tomlSkipWs(s, j, end)
             let valStart = j
-            let valEnd = _tomlReadValue(s, j, end)
+            let valEnd = tomlReadValue(s, j, end)
             return Option.Some(Toml {
                 raw: s.clone(), start: valStart, end: valEnd
             }
             )
         }
-        i = _tomlSkipLine(s, i, end)
+        i = tomlSkipLine(s, i, end)
     }
     return Option.None
 }
 
 pub fn tomlGetStr(s: &string, start: i64, end: i64, key: &string): Option<string> {
-    let v = _tomlFindKey(s, start, end, key)
+    let v = tomlFindKey(s, start, end, key)
     if let Option.Some(t) = v {
         if t.start < t.end && (t.raw[t.start] == '"' || t.raw[t.start] == '\'') {
             let quote = t.raw[t.start]
@@ -243,7 +243,7 @@ pub fn tomlGetStr(s: &string, start: i64, end: i64, key: &string): Option<string
 }
 
 pub fn tomlGetI64(s: &string, start: i64, end: i64, key: &string): Option<i64> {
-    let v = _tomlFindKey(s, start, end, key)
+    let v = tomlFindKey(s, start, end, key)
     if let Option.Some(t) = v {
         var result: i64 = 0
         var negative: bool = false
@@ -268,7 +268,7 @@ pub fn tomlGetI64(s: &string, start: i64, end: i64, key: &string): Option<i64> {
 }
 
 pub fn tomlGetF64(s: &string, start: i64, end: i64, key: &string): Option<f64> {
-    let v = _tomlFindKey(s, start, end, key)
+    let v = tomlFindKey(s, start, end, key)
     if let Option.Some(t) = v {
         var result: f64 = 0.0
         var negative: bool = false
@@ -302,7 +302,7 @@ pub fn tomlGetF64(s: &string, start: i64, end: i64, key: &string): Option<f64> {
 }
 
 pub fn tomlGetBool(s: &string, start: i64, end: i64, key: &string): Option<bool> {
-    let v = _tomlFindKey(s, start, end, key)
+    let v = tomlFindKey(s, start, end, key)
     if let Option.Some(t) = v {
         if t.end - t.start == 4 && t.raw[t.start] == 't' {
             return Option.Some(true)
@@ -318,7 +318,7 @@ pub fn tomlGetTable(s: &string, start: i64, end: i64, key: &string): Option<Toml
     // search for [key] header
     var i = start
     while i < end {
-        i = _tomlSkipWs(s, i, end)
+        i = tomlSkipWs(s, i, end)
         if i >= end {
             break
         }
@@ -333,13 +333,13 @@ pub fn tomlGetTable(s: &string, start: i64, end: i64, key: &string): Option<Toml
                 hdrEnd = hdrEnd + 1
             }
             let hdrName = s[hdrStart..hdrEnd]
-            if _strEq(hdrName, key) {
+            if strEq(hdrName, key) {
                 // table body: from next line until next [header] or EOF
-                let bodyStart = _tomlSkipLine(s, hdrEnd + 1, end)
+                let bodyStart = tomlSkipLine(s, hdrEnd + 1, end)
                 var bodyEnd = bodyStart
                 var j = bodyStart
                 while j < end {
-                    j = _tomlSkipWs(s, j, end)
+                    j = tomlSkipWs(s, j, end)
                     if j >= end {
                         break
                     }
@@ -351,7 +351,7 @@ pub fn tomlGetTable(s: &string, start: i64, end: i64, key: &string): Option<Toml
                         bodyEnd = j
                         break
                     }
-                    j = _tomlSkipLine(s, j, end)
+                    j = tomlSkipLine(s, j, end)
                     bodyEnd = j
                 }
                 if j >= end {
@@ -363,12 +363,12 @@ pub fn tomlGetTable(s: &string, start: i64, end: i64, key: &string): Option<Toml
                 )
             }
         }
-        i = _tomlSkipLine(s, i, end)
+        i = tomlSkipLine(s, i, end)
     }
     return Option.None
 }
 
-pub fn _strEq(a: &string, b: &string): bool {
+fn strEq(a: &string, b: &string): bool {
     if a.len != b.len {
         return false
     }

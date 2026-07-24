@@ -38,7 +38,7 @@ pub struct Huff {
     symbol: Vec<i64>,
 }
 
-pub fn _zeros(n: i64): Vec<i64>
+fn zeros(n: i64): Vec<i64>
 requires n >= 0
 ensures result.len == n
 {
@@ -56,7 +56,7 @@ ensures result.len == n
 // invariants over struct fields aren't yet modelled. The linear precondition below
 // is what the prover discharges at every call site, pinning `need` to the range the
 // mask/shift math is valid for.
-pub fn _bits(st: &mut InfState, src: &string, need: i64): i64
+fn bits(st: &mut InfState, src: &string, need: i64): i64
 requires need >= 0
 requires need <= 32
 {
@@ -83,7 +83,7 @@ requires h.count.len >= 16
     var first: i64 = 0
     var index: i64 = 0
     for len in 1..16 {
-        code = code | _bits(st, src, 1)
+        code = code | bits(st, src, 1)
         if st.err {
             return -20
         }
@@ -102,7 +102,7 @@ requires h.count.len >= 16
 // Build a canonical Huffman table from code lengths length[off .. off+n].
 // Returns 0 for a complete code, >0 for an incomplete (under-subscribed) code,
 // <0 if over-subscribed (invalid).
-pub fn _construct(h: &mut Huff, length: &Vec<i64>, off: i64, n: i64): i64
+fn construct(h: &mut Huff, length: &Vec<i64>, off: i64, n: i64): i64
 requires off >= 0
 requires n >= 0
 requires off + n <= length.len
@@ -127,7 +127,7 @@ requires h.symbol.len >= n
             return left
         }
     }
-    var offs = _zeros(16)
+    var offs = zeros(16)
     for len in 1..15 {
         offs[len + 1] = offs[len] + h.count[len]
     }
@@ -142,28 +142,28 @@ requires h.symbol.len >= n
 }
 
 // Length base + extra-bit tables for length symbols 257..285.
-pub fn _lenBase(): [i64; 29] {
+pub fn lenBase(): [i64; 29] {
     return [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
 }
 
-pub fn _lenExtra(): [i64; 29] {
+pub fn lenExtra(): [i64; 29] {
     return [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
 }
 
-pub fn _distBase(): [i64; 30] {
+pub fn distBase(): [i64; 30] {
     return [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
 }
 
-pub fn _distExtra(): [i64; 30] {
+pub fn distExtra(): [i64; 30] {
     return [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
 }
 
 // Decode length/literal + distance codes for one compressed block.
-pub fn _codes(st: &mut InfState, src: &string, lencode: &Huff, distcode: &Huff): i64 {
-    let lenBase = _lenBase()
-    let lenExtra = _lenExtra()
-    let distBase = _distBase()
-    let distExtra = _distExtra()
+fn codes(st: &mut InfState, src: &string, lencode: &Huff, distcode: &Huff): i64 {
+    let lenBase = lenBase()
+    let lenExtra = lenExtra()
+    let distBase = distBase()
+    let distExtra = distExtra()
     var symbol: i64 = 0
     while true {
         symbol = _decode(st, src, lencode)
@@ -179,7 +179,7 @@ pub fn _codes(st: &mut InfState, src: &string, lencode: &Huff, distcode: &Huff):
             if symbol >= 29 {
                 return -10
             }
-            let len = lenBase[symbol] + _bits(st, src, lenExtra[symbol])
+            let len = lenBase[symbol] + bits(st, src, lenExtra[symbol])
             let dsym = _decode(st, src, distcode)
             if dsym < 0 {
                 return dsym
@@ -187,7 +187,7 @@ pub fn _codes(st: &mut InfState, src: &string, lencode: &Huff, distcode: &Huff):
             if dsym >= 30 {
                 return -10
             }
-            let dist = distBase[dsym] + _bits(st, src, distExtra[dsym])
+            let dist = distBase[dsym] + bits(st, src, distExtra[dsym])
             if st.err {
                 return -20
             }
@@ -207,7 +207,7 @@ pub fn _codes(st: &mut InfState, src: &string, lencode: &Huff, distcode: &Huff):
 }
 
 // A stored (uncompressed) block: byte-align, LEN, ~LEN, then LEN raw bytes.
-pub fn _stored(st: &mut InfState, src: &string): i64
+fn stored(st: &mut InfState, src: &string): i64
 ensures result <= 0
 {
     st.bitbuf = 0
@@ -232,8 +232,8 @@ ensures result <= 0
 }
 
 // Fixed Huffman block (RFC 1951 §3.2.6): lengths are defined by the spec.
-pub fn _fixed(st: &mut InfState, src: &string): i64 {
-    var lengths = _zeros(FIXLCODES)
+fn fixed(st: &mut InfState, src: &string): i64 {
+    var lengths = zeros(FIXLCODES)
     for sym in 0..144 {
         lengths[sym] = 8
     }
@@ -247,47 +247,47 @@ pub fn _fixed(st: &mut InfState, src: &string): i64 {
         lengths[sym] = 8
     }
     var lencode = Huff {
-        count: _zeros(16), symbol: _zeros(FIXLCODES)
+        count: zeros(16), symbol: zeros(FIXLCODES)
     }
-    _construct(lencode, lengths, 0, FIXLCODES)
-    var distLengths = _zeros(MAXDCODES)
+    construct(lencode, lengths, 0, FIXLCODES)
+    var distLengths = zeros(MAXDCODES)
     for sym in 0..MAXDCODES {
         distLengths[sym] = 5
     }
     var distcode = Huff {
-        count: _zeros(16), symbol: _zeros(MAXDCODES)
+        count: zeros(16), symbol: zeros(MAXDCODES)
     }
-    _construct(distcode, distLengths, 0, MAXDCODES)
-    return _codes(st, src, lencode, distcode)
+    construct(distcode, distLengths, 0, MAXDCODES)
+    return codes(st, src, lencode, distcode)
 }
 
 // Order in which code-length-code lengths appear (RFC 1951 §3.2.7).
-pub fn _clcOrder(): [i64; 19] {
+fn clcOrder(): [i64; 19] {
     return [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
 }
 
 // Dynamic Huffman block: read the two code tables from the stream, then decode.
-pub fn _dynamic(st: &mut InfState, src: &string): i64 {
-    let nlen = _bits(st, src, 5) + 257
-    let ndist = _bits(st, src, 5) + 1
-    let ncode = _bits(st, src, 4) + 4
+fn dynamic(st: &mut InfState, src: &string): i64 {
+    let nlen = bits(st, src, 5) + 257
+    let ndist = bits(st, src, 5) + 1
+    let ncode = bits(st, src, 4) + 4
     if st.err {
         return -20
     }
     if nlen > MAXLCODES || ndist > MAXDCODES {
         return -3
     }
-    let order = _clcOrder()
+    let order = clcOrder()
     // Code-length code: 19 symbols, laid out in `order`.
-    var lengths = _zeros(MAXLCODES + MAXDCODES)
-    var clcLen = _zeros(19)
+    var lengths = zeros(MAXLCODES + MAXDCODES)
+    var clcLen = zeros(19)
     for i in 0..ncode {
-        clcLen[order[i]] = _bits(st, src, 3)
+        clcLen[order[i]] = bits(st, src, 3)
     }
     var lencode = Huff {
-        count: _zeros(16), symbol: _zeros(19)
+        count: zeros(16), symbol: zeros(19)
     }
-    let e0 = _construct(lencode, clcLen, 0, 19)
+    let e0 = construct(lencode, clcLen, 0, 19)
     if e0 != 0 {
         return -4
     }
@@ -309,11 +309,11 @@ pub fn _dynamic(st: &mut InfState, src: &string): i64 {
                     return -5
                 }
                 val = lengths[index - 1]
-                rep = 3 + _bits(st, src, 2)
+                rep = 3 + bits(st, src, 2)
             } else if sym == 17 {
-                rep = 3 + _bits(st, src, 3)
+                rep = 3 + bits(st, src, 3)
             } else {
-                rep = 11 + _bits(st, src, 7)
+                rep = 11 + bits(st, src, 7)
             }
             if index + rep > nlen + ndist {
                 return -6
@@ -331,21 +331,21 @@ pub fn _dynamic(st: &mut InfState, src: &string): i64 {
         return -9
     }
     var litcode = Huff {
-        count: _zeros(16), symbol: _zeros(MAXLCODES)
+        count: zeros(16), symbol: zeros(MAXLCODES)
     }
-    let e1 = _construct(litcode, lengths, 0, nlen)
+    let e1 = construct(litcode, lengths, 0, nlen)
     // Incomplete literal code is only legal in the degenerate single-symbol case.
     if e1 != 0 && (e1 < 0 || nlen != litcode.count[0] + litcode.count[1]) {
         return -7
     }
     var distcode = Huff {
-        count: _zeros(16), symbol: _zeros(MAXDCODES)
+        count: zeros(16), symbol: zeros(MAXDCODES)
     }
-    let e2 = _construct(distcode, lengths, nlen, ndist)
+    let e2 = construct(distcode, lengths, nlen, ndist)
     if e2 != 0 && (e2 < 0 || ndist != distcode.count[0] + distcode.count[1]) {
         return -8
     }
-    return _codes(st, src, litcode, distcode)
+    return codes(st, src, litcode, distcode)
 }
 
 // Inflate a raw DEFLATE stream (no gzip/zlib wrapper).
@@ -355,18 +355,18 @@ pub fn inflate(src: &string): Result<string, string> {
     }
     var last: i64 = 0
     while last == 0 {
-        last = _bits(st, src, 1)
-        let btype = _bits(st, src, 2)
+        last = bits(st, src, 1)
+        let btype = bits(st, src, 2)
         if st.err {
             return Result.Err("inflate: unexpected end of input")
         }
         var e: i64 = 0
         if btype == 0 {
-            e = _stored(st, src)
+            e = stored(st, src)
         } else if btype == 1 {
-            e = _fixed(st, src)
+            e = fixed(st, src)
         } else if btype == 2 {
-            e = _dynamic(st, src)
+            e = dynamic(st, src)
         } else {
             return Result.Err("inflate: invalid block type 3")
         }
@@ -378,7 +378,7 @@ pub fn inflate(src: &string): Result<string, string> {
 }
 
 // Little-endian 32-bit read at offset `p`, as a value in [0, 2^32).
-pub fn _le32(src: &string, p: i64): i64 {
+pub fn le32(src: &string, p: i64): i64 {
     return (src[p] as i64) | ((src[p + 1] as i64) << 8) | ((src[p + 2] as i64) << 16) | ((src[p + 3] as i64) << 24)
 }
 
@@ -430,8 +430,8 @@ pub fn gzipDecompress(src: &string): Result<string, string> {
         body.push(src[i])
     }
     let out = inflate(body)?
-    let wantCrc = _le32(src, src.len - 8)
-    let wantSize = _le32(src, src.len - 4)
+    let wantCrc = le32(src, src.len - 8)
+    let wantSize = le32(src, src.len - 4)
     if crc32(out) != wantCrc {
         return Result.Err("gzip: CRC-32 mismatch")
     }
@@ -465,7 +465,7 @@ pub fn zlibDecompress(src: &string): Result<string, string> {
         body.push(src[i])
     }
     let out = inflate(body)?
-    let wantAdler = _le32BE(src, src.len - 4)
+    let wantAdler = le32BE(src, src.len - 4)
     if adler32(out) != wantAdler {
         return Result.Err("zlib: Adler-32 mismatch")
     }
@@ -473,6 +473,6 @@ pub fn zlibDecompress(src: &string): Result<string, string> {
 }
 
 // zlib's Adler trailer is big-endian, unlike gzip's little-endian fields.
-pub fn _le32BE(src: &string, p: i64): i64 {
+fn le32BE(src: &string, p: i64): i64 {
     return ((src[p] as i64) << 24) | ((src[p + 1] as i64) << 16) | ((src[p + 2] as i64) << 8) | (src[p + 3] as i64)
 }

@@ -35,7 +35,7 @@ pub fn regexNew(pattern: string): Option<Regex> {
 }
 
 // read i32 from byte buffer at given offset
-pub fn _readMatchI32(buf: &[u8; 80], off: i64): i32 {
+fn readMatchI32(buf: &[u8; 80], off: i64): i32 {
     var val: i32 = 0
     var k: i64 = 0
     while k < 4 {
@@ -68,8 +68,8 @@ pub fn regexFind(re: &Regex, input: &string): Option<RegexMatch> {
             return Option.None
         }
     }
-    let so = _readMatchI32(pmatch, 0) as i64
-    let eo = _readMatchI32(pmatch, 4) as i64
+    let so = readMatchI32(pmatch, 0) as i64
+    let eo = readMatchI32(pmatch, 4) as i64
     return Option.Some(RegexMatch {
         start: so, end: eo
     }
@@ -89,8 +89,8 @@ pub fn regexFindAll(re: &Regex, input: &string): Vec<RegexMatch> {
                 break
             }
         }
-        let so = _readMatchI32(pmatch, 0) as i64
-        let eo = _readMatchI32(pmatch, 4) as i64
+        let so = readMatchI32(pmatch, 0) as i64
+        let eo = readMatchI32(pmatch, 4) as i64
         matches.push(RegexMatch {
             start: offset + so, end: offset + eo
         }

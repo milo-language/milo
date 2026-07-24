@@ -4,23 +4,23 @@ from "std/time" import {
     epochSecs
 }
 
-pub fn _logMsg(tag: string, msg: string): void {
+fn logMsg(tag: string, msg: string): void {
     let ts = epochSecs()
     eprint($"{tag} {ts.toString()} {msg}")
 }
 
 pub fn logDebug(msg: string): void {
-    _logMsg("[DEBUG]", msg)
+    logMsg("[DEBUG]", msg)
 }
 
 pub fn logInfo(msg: string): void {
-    _logMsg("[INFO] ", msg)
+    logMsg("[INFO] ", msg)
 }
 
 pub fn logWarn(msg: string): void {
-    _logMsg("[WARN] ", msg)
+    logMsg("[WARN] ", msg)
 }
 
 pub fn logError(msg: string): void {
-    _logMsg("[ERROR]", msg)
+    logMsg("[ERROR]", msg)
 }

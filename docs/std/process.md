@@ -2,6 +2,16 @@
 
 ## std/process
 
+### `buildArgv`
+
+```milo
+fn buildArgv(program: &string, args: &Vec<string>): *u8
+```
+
+Build a NULL-terminated argv: argv[0]=program, argv[1..n]=args, argv[n+1]=NULL.
+Each string is copied into its own NUL-terminated C buffer so it stays valid
+across fork/exec. Caller frees with _freeArgv(argv, args.len + 2).
+
 ### `capture`
 
 ```milo
@@ -110,6 +120,14 @@ pub fn exePath(): Result<string>
 Absolute path of the running executable, so a shipped binary can locate assets
 next to itself instead of relative to whatever cwd the caller happened to be in.
 Prefer @embedFile() for assets small enough to inline; this is for the rest.
+
+### `freeArgv`
+
+```milo
+pub fn freeArgv(argv: *u8, argc: i64): void
+```
+
+_Undocumented._
 
 ### `Process.signal`
 

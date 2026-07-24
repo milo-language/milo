@@ -32,7 +32,7 @@ pub extern fn EVP_DecryptFinal_ex(_ctx: *u8, _out: *u8, _outl: *i32): i32
 
 pub extern fn EVP_CIPHER_CTX_ctrl(_ctx: *u8, _type: i32, _arg: i32, _ptr: *u8): i32
 
-pub fn _bytesToHex(buf: &[u8; 32], n: i64): string {
+pub fn bytesToHex(buf: &[u8; 32], n: i64): string {
     var result = ""
     for i in 0..n {
         let b = buf[i]
@@ -58,7 +58,7 @@ pub fn sha256(input: &string): string {
     unsafe {
         SHA256(input, input.len as u64, hash)
     }
-    return _bytesToHex(hash, 32)
+    return bytesToHex(hash, 32)
 }
 
 // Compute MD5 hash of a string. Returns 32-char lowercase hex string.
@@ -67,7 +67,7 @@ pub fn md5(input: &string): string {
     unsafe {
         MD5(input, input.len as u64, hash)
     }
-    return _bytesToHex(hash, 16)
+    return bytesToHex(hash, 16)
 }
 
 // Compute SHA-1 hash. Returns 40-char lowercase hex string.
@@ -76,7 +76,7 @@ pub fn sha1(input: &string): string {
     unsafe {
         SHA1(input, input.len as u64, hash)
     }
-    return _bytesToHex(hash, 20)
+    return bytesToHex(hash, 20)
 }
 
 // Raw 20-byte SHA-1 digest as a string (for WebSocket handshake, HMAC, etc.)
@@ -100,11 +100,11 @@ pub struct AesGcmResult {
 }
 
 // EVP_CTRL_GCM_SET_TAG = 0x11, EVP_CTRL_GCM_GET_TAG = 0x10
-pub fn _evpCtrlGcmGetTag(): i32 {
+fn evpCtrlGcmGetTag(): i32 {
     return 16
 }
 
-pub fn _evpCtrlGcmSetTag(): i32 {
+fn evpCtrlGcmSetTag(): i32 {
     return 17
 }
 
@@ -162,7 +162,7 @@ requires iv.len == 12
         }
 
         var tag: [u8; 16] = [0; 16]
-        if EVP_CIPHER_CTX_ctrl(ctx, _evpCtrlGcmGetTag(), 16, tag) != 1 {
+        if EVP_CIPHER_CTX_ctrl(ctx, evpCtrlGcmGetTag(), 16, tag) != 1 {
             if plaintext.len > 0 {
                 free(ctBuf)
             }
@@ -234,7 +234,7 @@ requires tag.len == 16
         }
 
         // set expected tag before final
-        if EVP_CIPHER_CTX_ctrl(ctx, _evpCtrlGcmSetTag(), 16, tag as *u8) != 1 {
+        if EVP_CIPHER_CTX_ctrl(ctx, evpCtrlGcmSetTag(), 16, tag as *u8) != 1 {
             if ciphertext.len > 0 {
                 free(ptBuf)
             }
@@ -324,7 +324,7 @@ requires iv.len == 12
         }
 
         var tag: [u8; 16] = [0; 16]
-        if EVP_CIPHER_CTX_ctrl(ctx, _evpCtrlGcmGetTag(), 16, tag) != 1 {
+        if EVP_CIPHER_CTX_ctrl(ctx, evpCtrlGcmGetTag(), 16, tag) != 1 {
             if plaintext.len > 0 {
                 free(ctBuf)
             }
@@ -395,7 +395,7 @@ requires tag.len == 16
             }
         }
 
-        if EVP_CIPHER_CTX_ctrl(ctx, _evpCtrlGcmSetTag(), 16, tag as *u8) != 1 {
+        if EVP_CIPHER_CTX_ctrl(ctx, evpCtrlGcmSetTag(), 16, tag as *u8) != 1 {
             if ciphertext.len > 0 {
                 free(ptBuf)
             }

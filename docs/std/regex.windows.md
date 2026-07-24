@@ -41,3 +41,11 @@ pub fn regexNewFlags(_pattern: string, _cflags: i32): Option<Regex>
 ```
 
 _Undocumented._
+
+### `unsupported`
+
+```milo
+fn unsupported(): void
+```
+
+_Undocumented._

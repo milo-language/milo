@@ -41,7 +41,7 @@ pub extern fn ClosePseudoConsole(hpc: i64): void
 // _open_osfhandle wraps an OS HANDLE as a CRT fd so read()/write() work on it; the flag
 // is _O_BINARY (0x8000) — the CRT must not rewrite newlines in a VT stream.
 @cSig("io.h", "int _open_osfhandle(intptr_t, int)")
-pub extern fn _open_osfhandle(handle: i64, flags: i32): i32
+extern fn _open_osfhandle(handle: i64, flags: i32): i32
 
 @cSig("io.h", "intptr_t _get_osfhandle(int)")
 pub extern fn _get_osfhandle(fd: i32): i64
@@ -83,16 +83,16 @@ pub extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
 pub extern fn memset(dst: *u8, val: i32, n: i64): *u8
 
 // PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
-pub fn _attrPseudoconsole(): i64 {
+fn attrPseudoconsole(): i64 {
     return 131094
 }
 
 // EXTENDED_STARTUPINFO_PRESENT.
-pub fn _extendedStartupinfoPresent(): u32 {
+fn extendedStartupinfoPresent(): u32 {
     return 524288
 }
 
-pub fn _packCoord(rows: u16, cols: u16): i32 {
+fn packCoord(rows: u16, cols: u16): i32 {
     return ((rows as i32) * 65536) + (cols as i32)
 }
 
@@ -148,7 +148,7 @@ impl Pty {
             let outWrite = outPipe[1]
 
             var hpc: [i64; 1] = [0]
-            let hr = CreatePseudoConsole(_packCoord(24 as u16, 80 as u16), inRead, outWrite, 0 as u32, hpc as *u8)
+            let hr = CreatePseudoConsole(packCoord(24 as u16, 80 as u16), inRead, outWrite, 0 as u32, hpc as *u8)
             // The pseudoconsole duplicated the ends it needs; release ours.
             CloseHandle(inRead)
             CloseHandle(outWrite)
@@ -181,7 +181,7 @@ impl Pty {
     self.masterFd >= 0
     {
         unsafe {
-            let cmdLine = _buildCmdLine(program, args)
+            let cmdLine = buildCmdLine(program, args)
 
             // Size, allocate, and initialise the attribute list, then load the HPCON.
             var sizeBuf: [i64; 1] = [0]
@@ -192,7 +192,7 @@ impl Pty {
                 free(cmdLine)
                 return Result.Err("InitializeProcThreadAttributeList failed")
             }
-            if UpdateProcThreadAttribute(attrList, 0 as u32, _attrPseudoconsole(), self._hpcon, 8, 0 as *u8, 0 as *u8) == 0 {
+            if UpdateProcThreadAttribute(attrList, 0 as u32, attrPseudoconsole(), self._hpcon, 8, 0 as *u8, 0 as *u8) == 0 {
                 DeleteProcThreadAttributeList(attrList)
                 free(attrList)
                 free(cmdLine)
@@ -207,7 +207,7 @@ impl Pty {
             (six as *i64) [13] = attrList as i64
 
             var pi: [u8; 24] = [0; 24]
-            let ok = CreateProcessA(0 as *u8, cmdLine, 0 as *u8, 0 as *u8, 0, _extendedStartupinfoPresent(), 0 as *u8, 0 as *u8, six as *u8, pi as *u8)
+            let ok = CreateProcessA(0 as *u8, cmdLine, 0 as *u8, 0 as *u8, 0, extendedStartupinfoPresent(), 0 as *u8, 0 as *u8, six as *u8, pi as *u8)
             free(cmdLine)
             if ok == 0 {
                 DeleteProcThreadAttributeList(attrList)
@@ -249,7 +249,7 @@ impl Pty {
         self._rows = rows
         self._cols = cols
         unsafe {
-            return ResizePseudoConsole(self._hpcon, _packCoord(rows, cols))
+            return ResizePseudoConsole(self._hpcon, packCoord(rows, cols))
         }
     }
 
@@ -318,11 +318,11 @@ pub fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string> {
 
 // Build a CreateProcess command line: `program arg1 arg2 ...`, quoting tokens that
 // contain whitespace. Malloc'd + NUL-terminated; CreateProcessA may write into it.
-pub fn _buildCmdLine(program: &string, args: &Vec<string>): *u8 {
-    var line = _quoteArg(program)
+pub fn buildCmdLine(program: &string, args: &Vec<string>): *u8 {
+    var line = quoteArg(program)
     for i in 0..args.len {
         line.push(' ')
-        line.pushStr(_quoteArg(args[i]))
+        line.pushStr(quoteArg(args[i]))
     }
     unsafe {
         let n = line.len
@@ -333,7 +333,7 @@ pub fn _buildCmdLine(program: &string, args: &Vec<string>): *u8 {
     }
 }
 
-pub fn _quoteArg(arg: &string): string {
+pub fn quoteArg(arg: &string): string {
     var needsQuote = arg.len == 0
     for i in 0..arg.len {
         let c = arg[i]

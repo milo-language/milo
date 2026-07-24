@@ -18,24 +18,24 @@ pub struct ZipEntry {
     data: string, // decompressed contents
 }
 
-pub fn _le16(src: &string, p: i64): i64 {
+fn le16(src: &string, p: i64): i64 {
     return (src[p] as i64) | ((src[p + 1] as i64) << 8)
 }
 
-pub fn _le32(src: &string, p: i64): i64 {
+pub fn le32(src: &string, p: i64): i64 {
     return (src[p] as i64) | ((src[p + 1] as i64) << 8) | ((src[p + 2] as i64) << 16) | ((src[p + 3] as i64) << 24)
 }
 
 // Locate the End Of Central Directory record by scanning back for its signature
 // (0x06054b50). The trailing comment is variable-length, so we search rather than
 // index from the end.
-pub fn _findEocd(src: &string): i64 {
+fn findEocd(src: &string): i64 {
     if src.len < 22 {
         return -1
     }
     var p = src.len - 22
     while p >= 0 {
-        if _le32(src, p) == 0x06054b50 {
+        if le32(src, p) == 0x06054b50 {
             return p
         }
         p = p - 1
@@ -45,26 +45,26 @@ pub fn _findEocd(src: &string): i64 {
 
 // Read every entry, decompressing and CRC-checking each.
 pub fn zipRead(src: &string): Result<Vec<ZipEntry>, string> {
-    let eocd = _findEocd(src)
+    let eocd = findEocd(src)
     if eocd < 0 {
         return Result.Err("zip: no end-of-central-directory record")
     }
-    let count = _le16(src, eocd + 10)
-    var cd = _le32(src, eocd + 16) // central directory offset
+    let count = le16(src, eocd + 10)
+    var cd = le32(src, eocd + 16) // central directory offset
 
     var entries = Vec.new()
     for _e in 0..count {
-        if _le32(src, cd) != 0x02014b50 {
+        if le32(src, cd) != 0x02014b50 {
             return Result.Err("zip: bad central directory header")
         }
-        let method = _le16(src, cd + 10)
-        let wantCrc = _le32(src, cd + 16)
-        let compSize = _le32(src, cd + 20)
-        let uncompSize = _le32(src, cd + 24)
-        let nameLen = _le16(src, cd + 28)
-        let extraLen = _le16(src, cd + 30)
-        let commentLen = _le16(src, cd + 32)
-        let localOff = _le32(src, cd + 42)
+        let method = le16(src, cd + 10)
+        let wantCrc = le32(src, cd + 16)
+        let compSize = le32(src, cd + 20)
+        let uncompSize = le32(src, cd + 24)
+        let nameLen = le16(src, cd + 28)
+        let extraLen = le16(src, cd + 30)
+        let commentLen = le16(src, cd + 32)
+        let localOff = le32(src, cd + 42)
 
         var name = ""
         for i in 0..nameLen {
@@ -73,11 +73,11 @@ pub fn zipRead(src: &string): Result<Vec<ZipEntry>, string> {
 
         // Local header: 30 fixed bytes + its own name/extra fields (lengths may
         // differ from the central copy, so read them from the local header).
-        if _le32(src, localOff) != 0x04034b50 {
+        if le32(src, localOff) != 0x04034b50 {
             return Result.Err("zip: bad local file header")
         }
-        let lNameLen = _le16(src, localOff + 26)
-        let lExtraLen = _le16(src, localOff + 28)
+        let lNameLen = le16(src, localOff + 26)
+        let lExtraLen = le16(src, localOff + 28)
         let dataOff = localOff + 30 + lNameLen + lExtraLen
 
         var comp = ""

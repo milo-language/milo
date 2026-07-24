@@ -2,6 +2,22 @@
 
 ## std/sha1
 
+### `padSha1`
+
+```milo
+fn padSha1(input: &string): string
+```
+
+_Undocumented._
+
+### `rotl`
+
+```milo
+pub fn rotl(x: i64, n: i64): i64
+```
+
+_Undocumented._
+
 ### `sha1`
 
 ```milo

@@ -297,7 +297,7 @@ impl ArgParser {
                                 exit(1)
                             }
                             i = i + 1
-                            if self.flags[fi2].isI64 && !_argparseIsNumeric(argv[i]) {
+                            if self.flags[fi2].isI64 && !argparseIsNumeric(argv[i]) {
                                 print($"error: --{self.flags[fi2].longName}: expected integer, got '{argv[i]}'\n\n{self.helpText()}")
                                 exit(1)
                             }
@@ -367,7 +367,7 @@ impl ArgParser {
 
 // ── integer parsing helper ──
 
-pub fn _argparseParseI64(s: &string): i64 {
+fn argparseParseI64(s: &string): i64 {
     var result: i64 = 0
     var neg: bool = false
     var i: i64 = 0
@@ -386,7 +386,7 @@ pub fn _argparseParseI64(s: &string): i64 {
     return result
 }
 
-pub fn _argparseIsNumeric(s: &string): bool {
+fn argparseIsNumeric(s: &string): bool {
     var i: i64 = 0
     if s.len == 0 {
         return false
@@ -426,11 +426,11 @@ impl ParsedArgs {
         while i < self.entries.len {
             if self.entries[i].name == name {
                 let val = self.entries[i].value.clone()
-                if !_argparseIsNumeric(val) {
+                if !argparseIsNumeric(val) {
                     print($"error: --{name}: expected integer, got '{val}'")
                     exit(1)
                 }
-                return _argparseParseI64(val)
+                return argparseParseI64(val)
             }
             i = i + 1
         }

@@ -2,6 +2,14 @@
 
 ## std/regex.linux
 
+### `readMatchI32`
+
+```milo
+fn readMatchI32(buf: &[u8; 80], off: i64): i32
+```
+
+read i32 from byte buffer at given offset
+
 ### `regexFind`
 
 ```milo

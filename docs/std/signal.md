@@ -67,3 +67,13 @@ split; and module-scope runtime initialization is rejected, so `let SIGCHLD = ..
 cannot work at all — the checker catches that rather than letting it become 0.
 This is what a child-exit Select arm needs: arm it through installSignalPipe and a
 reaped child becomes just another readable fd.
+
+### `sigPipeHandler`
+
+```milo
+fn sigPipeHandler(sig: i32): void
+```
+
+The handler is shared across signals, so it learns which pipe to write from its
+argument — the only input a C signal handler gets. Bounds-checked because a signal
+number outside the table would otherwise index off the end inside a handler.

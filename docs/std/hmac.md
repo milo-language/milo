@@ -2,6 +2,14 @@
 
 ## std/hmac
 
+### `blockKey`
+
+```milo
+fn blockKey(key: &string): string
+```
+
+Normalize the key to exactly BLOCK bytes (RFC 2104 §2).
+
 ### `hmacSha1Bytes`
 
 ```milo

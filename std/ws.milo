@@ -105,24 +105,24 @@ impl Drop for WsConn {
 // ── WebSocket handshake ──
 
 // RFC 6455 magic GUID
-pub fn _wsMagic(): string {
+fn wsMagic(): string {
     return "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 }
 
-pub fn _computeAcceptKey(clientKey: &string): string {
-    let combined = clientKey.clone() + _wsMagic()
+pub fn computeAcceptKey(clientKey: &string): string {
+    let combined = clientKey.clone() + wsMagic()
     let hash = sha1Bytes(combined)
     return base64Encode(hash)
 }
 
 // Check if raw HTTP request bytes contain a WebSocket upgrade request.
 pub fn isWsUpgrade(raw: &string): bool {
-    return _headerContains(raw, "Upgrade", "websocket")
+    return headerContains(raw, "Upgrade", "websocket")
 }
 
 // Extract Sec-WebSocket-Key from raw HTTP request.
 pub fn extractWsKey(raw: &string): string {
-    return _findHeaderValue(raw, "Sec-WebSocket-Key")
+    return findHeaderValue(raw, "Sec-WebSocket-Key")
 }
 
 // Accept a WebSocket upgrade on an already-accepted TCP fd.
@@ -137,7 +137,7 @@ pub fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
         return Result.Err("missing Sec-WebSocket-Key")
     }
 
-    let acceptKey = _computeAcceptKey(clientKey)
+    let acceptKey = computeAcceptKey(clientKey)
 
     var resp: string = "HTTP/1.1 101 Switching Protocols\r\n"
     resp = resp + "Upgrade: websocket\r\n"
@@ -160,7 +160,7 @@ pub fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
 
 // Read up to `len` bytes from a plain fd or TLS handle. Yields to the green
 // scheduler on would-block. Returns bytes read (>0), 0 on clean close, <0 on error.
-pub fn _readSome(fd: i32, ssl: i64, buf: *u8, len: i64): i64 {
+fn readSome(fd: i32, ssl: i64, buf: *u8, len: i64): i64 {
     unsafe {
         if ssl != 0 {
             let n = sslReadFd(ssl as *u8, fd, buf, len as i32)
@@ -174,11 +174,11 @@ pub fn _readSome(fd: i32, ssl: i64, buf: *u8, len: i64): i64 {
     return -1 as i64
 }
 
-pub fn _readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
+fn readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
     var got: i64 = 0
     unsafe {
         while got < needed {
-            let n = _readSome(fd, ssl, (buf as i64 + got) as *u8, needed - got)
+            let n = readSome(fd, ssl, (buf as i64 + got) as *u8, needed - got)
             if n <= 0 {
                 return false
             }
@@ -196,7 +196,7 @@ impl WsConn {
 
         while true {
             var header: [u8; 2] = [0; 2]
-            if !_readExact(self.fd, self.ssl, header, 2) {
+            if !readExact(self.fd, self.ssl, header, 2) {
                 return Result.Err("connection closed")
             }
 
@@ -207,7 +207,7 @@ impl WsConn {
 
             if payloadLen == 126 {
                 var extLen: [u8; 2] = [0; 2]
-                if !_readExact(self.fd, self.ssl, extLen, 2) {
+                if !readExact(self.fd, self.ssl, extLen, 2) {
                     return Result.Err("connection closed reading length")
                 }
                 let hi = extLen[0] as i64
@@ -215,7 +215,7 @@ impl WsConn {
                 payloadLen = (hi << 8) | lo
             } else if payloadLen == 127 {
                 var extLen: [u8; 8] = [0; 8]
-                if !_readExact(self.fd, self.ssl, extLen, 8) {
+                if !readExact(self.fd, self.ssl, extLen, 8) {
                     return Result.Err("connection closed reading length")
                 }
                 payloadLen = 0
@@ -226,7 +226,7 @@ impl WsConn {
 
             var maskKey: [u8; 4] = [0; 4]
             if masked {
-                if !_readExact(self.fd, self.ssl, maskKey, 4) {
+                if !readExact(self.fd, self.ssl, maskKey, 4) {
                     return Result.Err("connection closed reading mask")
                 }
             }
@@ -236,7 +236,7 @@ impl WsConn {
             if payloadLen > 0 {
                 unsafe {
                     let buf = malloc(payloadLen)
-                    if !_readExact(self.fd, self.ssl, buf, payloadLen) {
+                    if !readExact(self.fd, self.ssl, buf, payloadLen) {
                         free(buf)
                         return Result.Err("connection closed reading payload")
                     }
@@ -470,8 +470,8 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     }
 
     // validate Sec-WebSocket-Accept
-    let expectedAccept = _computeAcceptKey(clientKey)
-    let actualAccept = _findHeaderValue(resp, "Sec-WebSocket-Accept")
+    let expectedAccept = computeAcceptKey(clientKey)
+    let actualAccept = findHeaderValue(resp, "Sec-WebSocket-Accept")
     if actualAccept != expectedAccept {
         close(fd)
         return Result.Err("invalid Sec-WebSocket-Accept")
@@ -578,8 +578,8 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
             return Result.Err("server did not accept upgrade: " + resp.substr(0, 40))
         }
 
-        let expectedAccept = _computeAcceptKey(clientKey)
-        let actualAccept = _findHeaderValue(resp, "Sec-WebSocket-Accept")
+        let expectedAccept = computeAcceptKey(clientKey)
+        let actualAccept = findHeaderValue(resp, "Sec-WebSocket-Accept")
         if actualAccept != expectedAccept {
             SSL_free(ssl)
             SSL_CTX_free(ctx)
@@ -596,14 +596,14 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
 
 // ── Header parsing helpers ──
 
-pub fn _toLower(ch: u8): u8 {
+fn _toLower(ch: u8): u8 {
     if ch >= 'A' && ch <= 'Z' {
         return ch + 32
     }
     return ch
 }
 
-pub fn _findHeaderValue(raw: &string, name: &string): string {
+fn findHeaderValue(raw: &string, name: &string): string {
     var i: i64 = 0
     while i < raw.len {
         // find start of line
@@ -636,8 +636,8 @@ pub fn _findHeaderValue(raw: &string, name: &string): string {
     return ""
 }
 
-pub fn _headerContains(raw: &string, name: &string, value: &string): bool {
-    let hdr = _findHeaderValue(raw, name)
+fn headerContains(raw: &string, name: &string, value: &string): bool {
+    let hdr = findHeaderValue(raw, name)
     if hdr.len == 0 {
         return false
     }

@@ -33,7 +33,7 @@ from "std/sync" import {
     AtomicBool
 }
 from "std/runtime" import {
-    Task, schedulerYield, schedulerWaitRead, _schedulerTick
+    Task, schedulerYield, schedulerWaitRead, schedulerTick
 }
 from "std/event" import {
     setNonblocking, clearNonblocking
@@ -527,7 +527,7 @@ pub fn main(): i32 {
 
     // drive scheduler from main thread until a task signals done
     while !done.load() {
-        _schedulerTick()
+        schedulerTick()
     }
 
     // clear O_NONBLOCK we set on stdin — fd 0 is shared with the parent shell,

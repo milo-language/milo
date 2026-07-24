@@ -142,6 +142,15 @@ pub fn epollOut(): u32
 
 _Undocumented._
 
+### `exePathInto`
+
+```milo
+pub fn exePathInto(buf: *u8, bufsize: i64): i64
+```
+
+Linux keeps the running binary's path in /proc/self/exe. readlink does not
+NUL-terminate, so the caller's buffer must be zeroed or terminated at n.
+
 ### `fGetfl`
 
 ```milo

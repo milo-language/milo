@@ -2,6 +2,14 @@
 
 ## std/uuid
 
+### `hexChar`
+
+```milo
+pub fn hexChar(n: u8): u8
+```
+
+_Undocumented._
+
 ### `uuidV4`
 
 ```milo

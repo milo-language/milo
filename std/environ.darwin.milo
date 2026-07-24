@@ -6,7 +6,7 @@
 // macOS does not export `environ` to a shared library, so the supported route is
 // _NSGetEnviron(), which returns a pointer to it.
 
-pub extern fn _NSGetEnviron(): ***u8
+extern fn _NSGetEnviron(): ***u8
 
 pub struct EnvEntry {
     name: string,

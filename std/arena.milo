@@ -37,13 +37,13 @@ pub struct Arena<T> {
 
 // Arena creation may happen on Promise.blocking workers, so identity allocation
 // uses the compiler's seq-cst atomic primitive rather than a racy global increment.
-pub var _nextArenaId: i64 = 1
+var nextArenaId: i64 = 1
 
 // Create a new empty arena.
 pub fn arenaNew<T>(): Arena<T> {
     var id: i64 = 0
     unsafe {
-        id = _atomicAddI64((_nextArenaId.addrOf()) as *u8, 1)
+        id = _atomicAddI64((nextArenaId.addrOf()) as *u8, 1)
     }
     var a: Arena<T> = Arena {
         id: id,

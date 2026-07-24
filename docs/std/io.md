@@ -102,6 +102,14 @@ fn File.writeAll(self: &File, data: &string): Result<i64, IoError>
 
 _Undocumented._
 
+### `ioError`
+
+```milo
+pub fn ioError(path: &string): IoError
+```
+
+map errno to IoError variant with path context
+
 ### `putChar`
 
 ```milo
@@ -126,6 +134,14 @@ pub fn readLine(): Option<string>
 ```
 
 Read a single line from stdin. Returns None at EOF.
+
+### `readLineFd`
+
+```milo
+fn readLineFd(fd: i32): Option<string>
+```
+
+Read a single line from a file descriptor (reads byte-by-byte until newline or EOF).
 
 ### `readLines`
 

@@ -2,6 +2,22 @@
 
 ## std/base32
 
+### `b32Char`
+
+```milo
+fn b32Char(v: i64): u8
+```
+
+_Undocumented._
+
+### `b32Val`
+
+```milo
+fn b32Val(c: u8): i64
+```
+
+Decode a Base32 char to its 5-bit value, or -1 if it isn't a symbol.
+
 ### `base32Decode`
 
 ```milo

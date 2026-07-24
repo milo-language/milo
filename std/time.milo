@@ -10,7 +10,7 @@ from "std/platform" import {
 
 // ── helpers ──
 
-pub fn _readI64FromBuf(buf: &[u8; 16], off: i64): i64 {
+fn readI64FromBuf(buf: &[u8; 16], off: i64): i64 {
     var val: i64 = 0
     var i: i64 = 0
     while i < 8 {
@@ -31,8 +31,8 @@ pub struct Instant {
 pub fn now(): Instant {
     var tv: [u8; 16] = [0; 16]
     gettimeofday(tv, 0 as *u8)
-    let sec = _readI64FromBuf(tv, 0)
-    let usec = _readI64FromBuf(tv, 8)
+    let sec = readI64FromBuf(tv, 0)
+    let usec = readI64FromBuf(tv, 8)
     return Instant {
         sec: sec, usec: usec
     }

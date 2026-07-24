@@ -2,6 +2,14 @@
 
 ## std/hex
 
+### `hexChar`
+
+```milo
+pub fn hexChar(val: u8): u8
+```
+
+_Undocumented._
+
 ### `hexDecode`
 
 ```milo

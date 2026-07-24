@@ -21,32 +21,32 @@ pub struct RegexMatch {
     end: i64,
 }
 
-pub fn _unsupported(): void {
+fn unsupported(): void {
     eprint("milo: std/regex is not implemented on windows (no POSIX regex; pure-Milo engine pending) — see docs/roadmap.md")
     exit(1)
 }
 
 pub fn regexNewFlags(_pattern: string, _cflags: i32): Option<Regex> {
-    _unsupported()
+    unsupported()
     return Option.None
 }
 
 pub fn regexNew(_pattern: string): Option<Regex> {
-    _unsupported()
+    unsupported()
     return Option.None
 }
 
 pub fn regexMatch(_re: &Regex, _input: &string): bool {
-    _unsupported()
+    unsupported()
     return false
 }
 
 pub fn regexFind(_re: &Regex, _input: &string): Option<RegexMatch> {
-    _unsupported()
+    unsupported()
     return Option.None
 }
 
 pub fn regexFindAll(_re: &Regex, _input: &string): Vec<RegexMatch> {
-    _unsupported()
+    unsupported()
     return Vec.new()
 }

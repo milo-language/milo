@@ -15,7 +15,7 @@ pub extern fn CCCryptorGCMOneshotEncrypt(_alg: i32, _key: *u8, _keyLen: i64, _iv
 
 pub extern fn CCCryptorGCMOneshotDecrypt(_alg: i32, _key: *u8, _keyLen: i64, _iv: *u8, _ivLen: i64, _aad: *u8, _aadLen: i64, _cipherIn: *u8, _cipherInLen: i64, _plainOut: *u8, _tagIn: *u8, _tagLen: i64): i32
 
-pub fn _bytesToHex(buf: &[u8; 32], n: i64): string {
+pub fn bytesToHex(buf: &[u8; 32], n: i64): string {
     var result = ""
     for i in 0..n {
         let b = buf[i]
@@ -41,7 +41,7 @@ pub fn sha256(input: &string): string {
     unsafe {
         CC_SHA256(input, input.len as u32, hash)
     }
-    return _bytesToHex(hash, 32)
+    return bytesToHex(hash, 32)
 }
 
 // Compute MD5 hash of a string. Returns 32-char lowercase hex string.
@@ -50,7 +50,7 @@ pub fn md5(input: &string): string {
     unsafe {
         CC_MD5(input, input.len as u32, hash)
     }
-    return _bytesToHex(hash, 16)
+    return bytesToHex(hash, 16)
 }
 
 // Compute SHA-1 hash. Returns 40-char lowercase hex string.
@@ -59,7 +59,7 @@ pub fn sha1(input: &string): string {
     unsafe {
         CC_SHA1(input, input.len as u32, hash)
     }
-    return _bytesToHex(hash, 20)
+    return bytesToHex(hash, 20)
 }
 
 // Raw 20-byte SHA-1 digest as a string (for WebSocket handshake, HMAC, etc.)

@@ -133,7 +133,7 @@ impl Pty {
 
             let pid = fork()
             if pid < 0 {
-                _freeArgv(argv, argc)
+                freeArgv(argv, argc)
                 return Result.Err("fork failed")
             }
 
@@ -162,7 +162,7 @@ impl Pty {
                 exit(127)
             }
 
-            _freeArgv(argv, argc)
+            freeArgv(argv, argc)
             self.childPid = pid
             return Result.Ok(pid)
         }
@@ -266,7 +266,7 @@ pub fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string> {
     return Result.Ok(pty)
 }
 
-pub fn _freeArgv(argv: *u8, argc: i64): void {
+pub fn freeArgv(argv: *u8, argc: i64): void {
     unsafe {
         for i in 0..(argc - 1) {
             var p: *u8 = 0 as *u8

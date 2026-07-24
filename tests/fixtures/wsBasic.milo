@@ -8,13 +8,13 @@
 // @expect: WS_TEXT: 1
 
 from "std/ws" import {
-    isWsUpgrade, extractWsKey, WS_TEXT, _computeAcceptKey
+    isWsUpgrade, extractWsKey, WS_TEXT, computeAcceptKey
 }
 
 pub fn main(): i32 {
     // RFC 6455 Section 4.2.2 example: known accept key for this test vector
     let testKey = "dGhlIHNhbXBsZSBub25jZQ=="
-    let acceptKey = _computeAcceptKey(testKey)
+    let acceptKey = computeAcceptKey(testKey)
     print($"accept: {acceptKey}")
 
     let wsReq = "GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"

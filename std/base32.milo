@@ -6,7 +6,7 @@
 // skips padding/whitespace, so a secret copied from an authenticator app just works.
 // Output/input are byte strings, matching std/base64.
 
-pub fn _b32Char(v: i64): u8 {
+fn b32Char(v: i64): u8 {
     if v < 26 {
         return (v + 65) as u8 // 'A'..'Z'
     }
@@ -23,12 +23,12 @@ pub fn base32Encode(input: &string): string {
         bits = bits + 8
         while bits >= 5 {
             bits = bits - 5
-            out.push(_b32Char((buffer >> bits) & 0x1f))
+            out.push(b32Char((buffer >> bits) & 0x1f))
         }
     }
     // Flush the remaining <5 bits, left-aligned in a final 5-bit group.
     if bits > 0 {
-        out.push(_b32Char((buffer << (5 - bits)) & 0x1f))
+        out.push(b32Char((buffer << (5 - bits)) & 0x1f))
     }
     // Pad to a multiple of 8 characters.
     while out.len % 8 != 0 {
@@ -38,7 +38,7 @@ pub fn base32Encode(input: &string): string {
 }
 
 // Decode a Base32 char to its 5-bit value, or -1 if it isn't a symbol.
-pub fn _b32Val(c: u8): i64 {
+fn b32Val(c: u8): i64 {
     if c >= 'A' && c <= 'Z' {
         return (c - 65) as i64
     }
@@ -58,7 +58,7 @@ pub fn base32Decode(input: &string): string {
     var buffer: i64 = 0
     var bits: i64 = 0
     for i in 0..input.len {
-        let v = _b32Val(input[i])
+        let v = b32Val(input[i])
         if v < 0 {
             continue
         }

@@ -86,15 +86,15 @@ pub fn resetSignal(sig: i32): void {
 // until `timeout` started arming SIGCHLD while `splitPty` arms SIGWINCH.
 //
 // 64 covers Linux's RT signals; darwin tops out at 32. Index 0 is unused (no signal 0).
-pub var _sigPipeW: [i32; 64] = [-1; 64]
+var sigPipeW: [i32; 64] = [-1; 64]
 
 // The handler is shared across signals, so it learns which pipe to write from its
 // argument — the only input a C signal handler gets. Bounds-checked because a signal
 // number outside the table would otherwise index off the end inside a handler.
-pub fn _sigPipeHandler(sig: i32): void {
+fn sigPipeHandler(sig: i32): void {
     unsafe {
         if sig > 0 && sig < 64 {
-            let w = _sigPipeW[sig as i64]
+            let w = sigPipeW[sig as i64]
             if w >= 0 {
                 var b: [u8; 1] = [1]
                 write(w, b as *u8, 1) // async-signal-safe; nonblocking
@@ -123,8 +123,8 @@ pub fn installSignalPipe(sig: i32): i32 {
         // must not stall the loop when the pipe is empty
         fcntl(r, fSetfl(), fcntl(r, fGetfl()) | oNonblock())
         fcntl(w, fSetfl(), fcntl(w, fGetfl()) | oNonblock())
-        _sigPipeW[sig as i64] = w
-        signal(sig, _sigPipeHandler as *u8)
+        sigPipeW[sig as i64] = w
+        signal(sig, sigPipeHandler as *u8)
         return r
     }
 }

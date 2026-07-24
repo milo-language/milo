@@ -18,13 +18,13 @@ pub struct PngImage {
     pixels: string, // row-major, channels bytes per pixel, top-down
 }
 
-pub fn _be32(src: &string, p: i64): i64 {
+fn be32(src: &string, p: i64): i64 {
     return ((src[p] as i64) << 24) | ((src[p + 1] as i64) << 16) | ((src[p + 2] as i64) << 8) | (src[p + 3] as i64)
 }
 
 // Paeth predictor (RFC 2083 §6.6): pick whichever of a/b/c the initial estimate
 // a+b-c is closest to.
-pub fn _paeth(a: i64, b: i64, c: i64): i64 {
+fn paeth(a: i64, b: i64, c: i64): i64 {
     let p = a + b - c
     var pa = p - a
     if pa < 0 {
@@ -64,7 +64,7 @@ pub fn decodePng(src: &string): Result<PngImage, string> {
     var pos: i64 = 8
     var sawIhdr = false
     while pos + 8 <= src.len {
-        let clen = _be32(src, pos)
+        let clen = be32(src, pos)
         let t0 = src[pos + 4]
         let t1 = src[pos + 5]
         let t2 = src[pos + 6]
@@ -72,8 +72,8 @@ pub fn decodePng(src: &string): Result<PngImage, string> {
         let dataStart = pos + 8
 
         if t0 == 'I' && t1 == 'H' && t2 == 'D' && t3 == 'R' {
-            width = _be32(src, dataStart)
-            height = _be32(src, dataStart + 4)
+            width = be32(src, dataStart)
+            height = be32(src, dataStart + 4)
             let bitDepth = src[dataStart + 8] as i64
             let colorType = src[dataStart + 9] as i64
             let interlace = src[dataStart + 12] as i64
@@ -143,7 +143,7 @@ pub fn decodePng(src: &string): Result<PngImage, string> {
             } else if filter == 3 {
                 recon = f + ((a + b) / 2)
             } else if filter == 4 {
-                recon = f + _paeth(a, b, c)
+                recon = f + paeth(a, b, c)
             }
             out.push((recon & 0xff) as u8)
         }

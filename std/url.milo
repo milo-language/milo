@@ -142,7 +142,7 @@ pub fn urlQueryGet(u: &Url, key: &string): Option<string> {
             }
             val = u.query[vStart..i].clone()
         }
-        if _strEqUrl(k, key) {
+        if strEqUrl(k, key) {
             return Option.Some(val)
         }
         if i < u.query.len && u.query[i] == '&' {
@@ -152,7 +152,7 @@ pub fn urlQueryGet(u: &Url, key: &string): Option<string> {
     return Option.None
 }
 
-pub fn _strEqUrl(a: &string, b: &string): bool {
+fn strEqUrl(a: &string, b: &string): bool {
     if a.len != b.len {
         return false
     }

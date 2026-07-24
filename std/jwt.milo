@@ -17,24 +17,24 @@ from "std/base64" import {
 // Fixed compact header for HS256; matches the {"alg":"HS256","typ":"JWT"} that
 // mainstream libraries emit, so signatures line up byte-for-byte. A function rather
 // than a module-scope `let` because Milo disallows runtime global initializers.
-pub fn _hs256Header(): string {
+fn hs256Header(): string {
     return "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
 }
 
-pub fn _signingInput(payload: &string): string {
-    return base64UrlEncode(_hs256Header()) + "." + base64UrlEncode(payload)
+fn signingInput(payload: &string): string {
+    return base64UrlEncode(hs256Header()) + "." + base64UrlEncode(payload)
 }
 
 // Sign a JSON payload string with HS256, returning a compact JWS.
 pub fn jwtSignHS256(payload: &string, secret: &string): string {
-    let si = _signingInput(payload)
+    let si = signingInput(payload)
     let sig = base64UrlEncode(hmacSha256Bytes(secret, si))
     return si + "." + sig
 }
 
 // Byte-for-byte string equality that does not short-circuit on the first mismatch,
 // so verification does not leak where a forged signature diverges.
-pub fn _constEq(a: &string, b: &string): bool {
+fn constEq(a: &string, b: &string): bool {
     if a.len != b.len {
         return false
     }
@@ -73,5 +73,5 @@ pub fn jwtVerifyHS256(token: &string, secret: &string): bool {
         sig.push(token[i])
     }
     let expected = base64UrlEncode(hmacSha256Bytes(secret, signingInput))
-    return _constEq(sig, expected)
+    return constEq(sig, expected)
 }

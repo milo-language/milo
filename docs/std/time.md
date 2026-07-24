@@ -58,6 +58,14 @@ pub fn now(): Instant
 
 Capture the current wall-clock time.
 
+### `readI64FromBuf`
+
+```milo
+fn readI64FromBuf(buf: &[u8; 16], off: i64): i64
+```
+
+_Undocumented._
+
 ### `since`
 
 ```milo

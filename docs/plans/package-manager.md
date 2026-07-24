@@ -8,7 +8,11 @@ last-verified: 2026-07-23
 
 # Package manager
 
-Status: design, not started. Decisions below are locked unless marked open.
+Status: **P-1, P0 and P1 shipped** (2026-07-23). `pub` visibility is enforced, per-package
+mangling is in the resolver, and the manager verbs (`init`/`new`/`add`/`remove`/`install`/
+`update`/`tree`/`why`/`vendor`/`publish` + `tool install`/`uninstall`/`list`/`run`) are in
+the `milo` binary. P2 (`search`, `outdated`, `audit`, signing) is not started. Decisions
+below are locked unless marked open.
 
 ## Decisions
 

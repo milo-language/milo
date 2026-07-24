@@ -47,20 +47,20 @@ from "std/time" import {
 }
 from "std/runtime" import {
     schedulerExists,
-    _selectStateNew, _selectStateFree, _selectWaitState, _selectTryClaim,
-    _selectRegisterFd, _selectUnregisterFd,
-    _rtWriteI64, _rtWritePtr, _rtReadI64,
+    selectStateNew, selectStateFree, selectWaitState, selectTryClaim,
+    selectRegisterFd, selectUnregisterFd,
+    rtWriteI64, rtWritePtr, rtReadI64,
     nodeKind, nodeA, nodeArm, nodeFd, nodeDeadline, nodeSize,
     kindSelRecv, kindSelSend, kindSelRead, kindSelWrite, kindSelTimer
 }
 
-pub fn _maxArms(): i64 {
+fn maxArms(): i64 {
     return 16
 }
 
 // channel arms stash the ChannelInner ptr in the node's otherwise-unused
 // deadline slot so cleanup can unlink without a parallel array
-pub fn _nodeChan(): i64 {
+fn nodeChan(): i64 {
     return nodeDeadline()
 }
 
@@ -73,9 +73,9 @@ pub struct Select {
 impl Select {
     fn new(): Select {
         unsafe {
-            let state = _selectStateNew()
-            let nodes = malloc(nodeSize() * _maxArms())
-            memset(nodes, 0, nodeSize() * _maxArms())
+            let state = selectStateNew()
+            let nodes = malloc(nodeSize() * maxArms())
+            memset(nodes, 0, nodeSize() * maxArms())
             return Select {
                 _state: state, _nodes: nodes, _count: 0
             }
@@ -89,50 +89,50 @@ impl Select {
     }
 
     fn armChan(self: &mut Self, kind: i64, ptr: *u8): void {
-        if self._count >= _maxArms() {
+        if self._count >= maxArms() {
             return
         }
         let node = self._node(self._count)
-        _rtWriteI64(node, nodeKind(), kind)
-        _rtWritePtr(node, nodeA(), self._state)
-        _rtWriteI64(node, nodeArm(), self._count)
-        _rtWritePtr(node, _nodeChan(), ptr)
+        rtWriteI64(node, nodeKind(), kind)
+        rtWritePtr(node, nodeA(), self._state)
+        rtWriteI64(node, nodeArm(), self._count)
+        rtWritePtr(node, nodeChan(), ptr)
         self._count = self._count + 1
     }
 
     fn onRead(self: &mut Self, fd: i32): void {
-        if self._count >= _maxArms() {
+        if self._count >= maxArms() {
             return
         }
         let node = self._node(self._count)
-        _rtWriteI64(node, nodeKind(), kindSelRead())
-        _rtWritePtr(node, nodeA(), self._state)
-        _rtWriteI64(node, nodeArm(), self._count)
-        _rtWriteI64(node, nodeFd(), fd as i64)
+        rtWriteI64(node, nodeKind(), kindSelRead())
+        rtWritePtr(node, nodeA(), self._state)
+        rtWriteI64(node, nodeArm(), self._count)
+        rtWriteI64(node, nodeFd(), fd as i64)
         self._count = self._count + 1
     }
 
     fn onWrite(self: &mut Self, fd: i32): void {
-        if self._count >= _maxArms() {
+        if self._count >= maxArms() {
             return
         }
         let node = self._node(self._count)
-        _rtWriteI64(node, nodeKind(), kindSelWrite())
-        _rtWritePtr(node, nodeA(), self._state)
-        _rtWriteI64(node, nodeArm(), self._count)
-        _rtWriteI64(node, nodeFd(), fd as i64)
+        rtWriteI64(node, nodeKind(), kindSelWrite())
+        rtWritePtr(node, nodeA(), self._state)
+        rtWriteI64(node, nodeArm(), self._count)
+        rtWriteI64(node, nodeFd(), fd as i64)
         self._count = self._count + 1
     }
 
     fn onTimeout(self: &mut Self, ms: i64): void {
-        if self._count >= _maxArms() {
+        if self._count >= maxArms() {
             return
         }
         let node = self._node(self._count)
-        _rtWriteI64(node, nodeKind(), kindSelTimer())
-        _rtWritePtr(node, nodeA(), self._state)
-        _rtWriteI64(node, nodeArm(), self._count)
-        _rtWriteI64(node, nodeDeadline(), epochMillis() + ms)
+        rtWriteI64(node, nodeKind(), kindSelTimer())
+        rtWritePtr(node, nodeA(), self._state)
+        rtWriteI64(node, nodeArm(), self._count)
+        rtWriteI64(node, nodeDeadline(), epochMillis() + ms)
         self._count = self._count + 1
     }
 
@@ -142,18 +142,18 @@ impl Select {
         var i: i64 = 0
         while i < self._count {
             let node = self._node(i)
-            let kind = _rtReadI64(node, nodeKind())
+            let kind = rtReadI64(node, nodeKind())
             var ready = false
             if kind == kindSelRecv() {
-                ready = channelArmRecv(_readPtr(node, _nodeChan()), node)
+                ready = channelArmRecv(readPtr(node, nodeChan()), node)
             } else if kind == kindSelSend() {
-                ready = channelArmSend(_readPtr(node, _nodeChan()), node)
+                ready = channelArmSend(readPtr(node, nodeChan()), node)
             } else {
                 // fd/timer readiness is observed by the scheduler poll loop
-                _selectRegisterFd(node)
+                selectRegisterFd(node)
             }
             if ready {
-                _selectTryClaim(self._state, i)
+                selectTryClaim(self._state, i)
                 i = i + 1
                 break
             }
@@ -170,7 +170,7 @@ impl Select {
             return -1
         }
 
-        let winner = _selectWaitState(self._state)
+        let winner = selectWaitState(self._state)
         self._teardown()
         return winner
     }
@@ -180,7 +180,7 @@ impl Select {
     fn _hasChannelArm(self: &Self): bool {
         var i: i64 = 0
         while i < self._count {
-            let kind = _rtReadI64(self._node(i), nodeKind())
+            let kind = rtReadI64(self._node(i), nodeKind())
             if kind == kindSelRecv() || kind == kindSelSend() {
                 return true
             }
@@ -195,25 +195,25 @@ impl Select {
         var i: i64 = 0
         while i < self._count {
             let node = self._node(i)
-            let kind = _rtReadI64(node, nodeKind())
+            let kind = rtReadI64(node, nodeKind())
             if kind == kindSelRecv() {
-                channelUnarmRecv(_readPtr(node, _nodeChan()), node)
+                channelUnarmRecv(readPtr(node, nodeChan()), node)
             } else if kind == kindSelSend() {
-                channelUnarmSend(_readPtr(node, _nodeChan()), node)
+                channelUnarmSend(readPtr(node, nodeChan()), node)
             } else {
-                _selectUnregisterFd(node)
+                selectUnregisterFd(node)
             }
             i = i + 1
         }
     }
 
     fn destroy(self: &Self): void {
-        _selectStateFree(self._state)
+        selectStateFree(self._state)
         free(self._nodes)
     }
 }
 
-pub fn _readPtr(node: *u8, off: i64): *u8 {
+fn readPtr(node: *u8, off: i64): *u8 {
     unsafe {
         var v: *u8 = 0 as *u8
         let src = (node as i64 + off) as *i64

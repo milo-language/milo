@@ -8,7 +8,7 @@
 
 pub let MASK32: i64 = 0xffffffff
 
-pub fn _rotl(x: i64, n: i64): i64 {
+pub fn rotl(x: i64, n: i64): i64 {
     return ((x << n) | (x >> (32 - n))) & MASK32
 }
 
@@ -19,7 +19,7 @@ pub fn _hexNibble(v: i64): u8 {
     return (v - 10 + 97) as u8
 }
 
-pub fn _padSha1(input: &string): string {
+fn padSha1(input: &string): string {
     var m = ""
     for i in 0..input.len {
         m.push(input[i])
@@ -37,7 +37,7 @@ pub fn _padSha1(input: &string): string {
 
 // SHA-1 digest as 20 raw bytes.
 pub fn sha1Bytes(input: &string): string {
-    let m = _padSha1(input)
+    let m = padSha1(input)
     var h0: i64 = 0x67452301
     var h1: i64 = 0xefcdab89
     var h2: i64 = 0x98badcfe
@@ -57,7 +57,7 @@ pub fn sha1Bytes(input: &string): string {
             w[t] = (((m[o] as i64) << 24) | ((m[o + 1] as i64) << 16) | ((m[o + 2] as i64) << 8) | (m[o + 3] as i64)) & MASK32
         }
         for t in 16..80 {
-            w[t] = _rotl((w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16]) & MASK32, 1)
+            w[t] = rotl((w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16]) & MASK32, 1)
         }
 
         var a = h0
@@ -82,10 +82,10 @@ pub fn sha1Bytes(input: &string): string {
                 f = b ^ c ^ d
                 k = 0xca62c1d6
             }
-            let temp = (_rotl(a, 5) + (f & MASK32) + e + k + w[t]) & MASK32
+            let temp = (rotl(a, 5) + (f & MASK32) + e + k + w[t]) & MASK32
             e = d
             d = c
-            c = _rotl(b, 30)
+            c = rotl(b, 30)
             b = a
             a = temp
         }

@@ -7,7 +7,7 @@ from "std/os" import {
     free, malloc, memcpy, memset
 }
 from "std/runtime" import {
-    schedulerCurrent, schedulerExists, schedulerPark, schedulerUnpark, _schedulerBlockMain, _schedulerPollMain, _selectTryClaim, nodeKind, nodeNext, nodeA, nodeArm, kindPlain
+    schedulerCurrent, schedulerExists, schedulerPark, schedulerUnpark, schedulerBlockMain, schedulerPollMain, selectTryClaim, nodeKind, nodeNext, nodeA, nodeArm, kindPlain
 }
 
 // ── Channel<T> ──
@@ -41,7 +41,7 @@ pub struct ChannelInner {
 // Waiter nodes use the unified 48-byte runtime layout (see std/runtime): plain
 // channel waiters are kind 0 with the task ptr at nodeA; Select arms (kind 1/2)
 // carry a SelectState ptr + arm index and take the claim path when woken.
-pub fn _nodeLoadPtr(node: *u8, off: i64): *u8 {
+fn nodeLoadPtr(node: *u8, off: i64): *u8 {
     unsafe {
         var v: *u8 = 0 as *u8
         memcpy((v.addrOf()) as *u8, (node as i64 + off) as *u8, 8)
@@ -49,13 +49,13 @@ pub fn _nodeLoadPtr(node: *u8, off: i64): *u8 {
     }
 }
 
-pub fn _nodeStorePtr(node: *u8, off: i64, v: *u8): void {
+fn nodeStorePtr(node: *u8, off: i64, v: *u8): void {
     unsafe {
         memcpy((node as i64 + off) as *u8, (v.addrOf()) as *u8, 8)
     }
 }
 
-pub fn _nodeLoadI64(node: *u8, off: i64): i64 {
+fn nodeLoadI64(node: *u8, off: i64): i64 {
     unsafe {
         var v: i64 = 0
         memcpy((v.addrOf()) as *u8, (node as i64 + off) as *u8, 8)
@@ -63,7 +63,7 @@ pub fn _nodeLoadI64(node: *u8, off: i64): i64 {
     }
 }
 
-pub fn _nodeStoreI64(node: *u8, off: i64, v: i64): void {
+fn nodeStoreI64(node: *u8, off: i64, v: i64): void {
     unsafe {
         memcpy((node as i64 + off) as *u8, (v.addrOf()) as *u8, 8)
     }
@@ -73,33 +73,33 @@ pub fn _nodeStoreI64(node: *u8, off: i64, v: i64): void {
 // channel mutex. A plain waiter's task is unparked; a Select arm claims the
 // select. Returns the new head. The node must not be touched after this — the
 // woken task's frame (plain) or the Select (arm) owns it.
-pub fn _wakeOne(head: *u8): *u8 {
+fn wakeOne(head: *u8): *u8 {
     if head as i64 == 0 {
         return 0 as *u8
     }
-    let next = _nodeLoadPtr(head, nodeNext())
-    if _nodeLoadI64(head, nodeKind()) == kindPlain() {
-        schedulerUnpark(_nodeLoadPtr(head, nodeA()))
+    let next = nodeLoadPtr(head, nodeNext())
+    if nodeLoadI64(head, nodeKind()) == kindPlain() {
+        schedulerUnpark(nodeLoadPtr(head, nodeA()))
     } else {
-        _selectTryClaim(_nodeLoadPtr(head, nodeA()), _nodeLoadI64(head, nodeArm()))
+        selectTryClaim(nodeLoadPtr(head, nodeA()), nodeLoadI64(head, nodeArm()))
     }
     return next
 }
 
 // Unlink `node` from a wait list if present. Caller holds the channel mutex.
-pub fn _unlinkNode(head: *u8, node: *u8): *u8 {
+fn unlinkNode(head: *u8, node: *u8): *u8 {
     if head as i64 == 0 {
         return 0 as *u8
     }
     if head as i64 == node as i64 {
-        return _nodeLoadPtr(head, nodeNext())
+        return nodeLoadPtr(head, nodeNext())
     }
     var prev = head
-    var cur = _nodeLoadPtr(head, nodeNext())
+    var cur = nodeLoadPtr(head, nodeNext())
     while cur as i64 != 0 {
-        let next = _nodeLoadPtr(cur, nodeNext())
+        let next = nodeLoadPtr(cur, nodeNext())
         if cur as i64 == node as i64 {
-            _nodeStorePtr(prev, nodeNext(), next)
+            nodeStorePtr(prev, nodeNext(), next)
             return head
         }
         prev = cur
@@ -112,13 +112,13 @@ pub fn _unlinkNode(head: *u8, node: *u8): *u8 {
 // with mtx re-acquired. The waiter node lives on this frame's stack — safe
 // because the frame stays alive while parked and the waker pops the node
 // (under mtx) before unparking, so it never dangles.
-pub fn _chParkRecv(inner: *ChannelInner): void {
+fn chParkRecv(inner: *ChannelInner): void {
     unsafe {
         var w: [u8; 48] = [0; 48]
         let wp = w as *u8
-        _nodeStoreI64(wp, nodeKind(), kindPlain())
-        _nodeStorePtr(wp, nodeA(), schedulerCurrent())
-        _nodeStorePtr(wp, nodeNext(), (*inner).recvWaitHead)
+        nodeStoreI64(wp, nodeKind(), kindPlain())
+        nodeStorePtr(wp, nodeA(), schedulerCurrent())
+        nodeStorePtr(wp, nodeNext(), (*inner).recvWaitHead)
         (*inner).recvWaitHead = wp
         pthread_mutex_unlock((*inner).mtx)
         schedulerPark()
@@ -126,13 +126,13 @@ pub fn _chParkRecv(inner: *ChannelInner): void {
     }
 }
 
-pub fn _chParkSend(inner: *ChannelInner): void {
+fn chParkSend(inner: *ChannelInner): void {
     unsafe {
         var w: [u8; 48] = [0; 48]
         let wp = w as *u8
-        _nodeStoreI64(wp, nodeKind(), kindPlain())
-        _nodeStorePtr(wp, nodeA(), schedulerCurrent())
-        _nodeStorePtr(wp, nodeNext(), (*inner).sendWaitHead)
+        nodeStoreI64(wp, nodeKind(), kindPlain())
+        nodeStorePtr(wp, nodeA(), schedulerCurrent())
+        nodeStorePtr(wp, nodeNext(), (*inner).sendWaitHead)
         (*inner).sendWaitHead = wp
         pthread_mutex_unlock((*inner).mtx)
         schedulerPark()
@@ -140,15 +140,15 @@ pub fn _chParkSend(inner: *ChannelInner): void {
     }
 }
 
-pub fn _chWakeOneRecv(inner: *ChannelInner): void {
+fn chWakeOneRecv(inner: *ChannelInner): void {
     unsafe {
-        (*inner).recvWaitHead = _wakeOne((*inner).recvWaitHead)
+        (*inner).recvWaitHead = wakeOne((*inner).recvWaitHead)
     }
 }
 
-pub fn _chWakeOneSend(inner: *ChannelInner): void {
+fn chWakeOneSend(inner: *ChannelInner): void {
     unsafe {
-        (*inner).sendWaitHead = _wakeOne((*inner).sendWaitHead)
+        (*inner).sendWaitHead = wakeOne((*inner).sendWaitHead)
     }
 }
 
@@ -165,7 +165,7 @@ pub fn channelArmRecv(ptr: *u8, node: *u8): bool {
             pthread_mutex_unlock((*inner).mtx)
             return true
         }
-        _nodeStorePtr(node, nodeNext(), (*inner).recvWaitHead)
+        nodeStorePtr(node, nodeNext(), (*inner).recvWaitHead)
         (*inner).recvWaitHead = node
         pthread_mutex_unlock((*inner).mtx)
         return false
@@ -182,7 +182,7 @@ pub fn channelArmSend(ptr: *u8, node: *u8): bool {
             pthread_mutex_unlock((*inner).mtx)
             return true
         }
-        _nodeStorePtr(node, nodeNext(), (*inner).sendWaitHead)
+        nodeStorePtr(node, nodeNext(), (*inner).sendWaitHead)
         (*inner).sendWaitHead = node
         pthread_mutex_unlock((*inner).mtx)
         return false
@@ -193,7 +193,7 @@ pub fn channelUnarmRecv(ptr: *u8, node: *u8): void {
     unsafe {
         let inner = ptr as *ChannelInner
         pthread_mutex_lock((*inner).mtx)
-        (*inner).recvWaitHead = _unlinkNode((*inner).recvWaitHead, node)
+        (*inner).recvWaitHead = unlinkNode((*inner).recvWaitHead, node)
         pthread_mutex_unlock((*inner).mtx)
     }
 }
@@ -202,7 +202,7 @@ pub fn channelUnarmSend(ptr: *u8, node: *u8): void {
     unsafe {
         let inner = ptr as *ChannelInner
         pthread_mutex_lock((*inner).mtx)
-        (*inner).sendWaitHead = _unlinkNode((*inner).sendWaitHead, node)
+        (*inner).sendWaitHead = unlinkNode((*inner).sendWaitHead, node)
         pthread_mutex_unlock((*inner).mtx)
     }
 }
@@ -296,10 +296,10 @@ impl Channel<T> {
                 // the receiver may itself be a green task); on a plain OS
                 // thread, block on the cond as before.
                 if schedulerCurrent() as i64 != 0 {
-                    _chParkSend(inner)
+                    chParkSend(inner)
                 } else if schedulerExists() {
                     pthread_mutex_unlock(mtx)
-                    _schedulerPollMain()
+                    schedulerPollMain()
                     pthread_mutex_lock(mtx)
                 } else {
                     pthread_cond_wait((*inner).condNotFull, mtx)
@@ -318,7 +318,7 @@ impl Channel<T> {
             (*inner).tail = (tail + 1) % cap
             (*inner).len = curLen + 1
             // a green receiver and a pthread receiver may both be waiting
-            _chWakeOneRecv(inner)
+            chWakeOneRecv(inner)
             pthread_cond_signal((*inner).condNotEmpty)
             pthread_mutex_unlock(mtx)
             return Result.Ok(0)
@@ -345,10 +345,10 @@ impl Channel<T> {
                 // cond wait blocked the only thread that could run the sender.
                 // plain OS thread: block on the cond, woken by a foreign send.
                 if schedulerCurrent() as i64 != 0 {
-                    _chParkRecv(inner)
+                    chParkRecv(inner)
                 } else if schedulerExists() {
                     pthread_mutex_unlock(mtx)
-                    _schedulerPollMain()
+                    schedulerPollMain()
                     pthread_mutex_lock(mtx)
                 } else {
                     pthread_cond_wait((*inner).condNotEmpty, mtx)
@@ -360,7 +360,7 @@ impl Channel<T> {
             memcpy((val.addrOf()) as *u8, slotPtr, sizeOf<T>())
             (*inner).head = (head + 1) % cap
             (*inner).len = curLen - 1
-            _chWakeOneSend(inner)
+            chWakeOneSend(inner)
             pthread_cond_signal((*inner).condNotFull)
             pthread_mutex_unlock(mtx)
             return Result.Ok(val)
@@ -386,7 +386,7 @@ impl Channel<T> {
             memset((v.addrOf()) as *u8, 0, sizeOf<T>())
             (*inner).tail = (tail + 1) % cap
             (*inner).len = curLen + 1
-            _chWakeOneRecv(inner)
+            chWakeOneRecv(inner)
             pthread_cond_signal((*inner).condNotEmpty)
             pthread_mutex_unlock(mtx)
             return true
@@ -411,7 +411,7 @@ impl Channel<T> {
             memcpy((val.addrOf()) as *u8, slotPtr, sizeOf<T>())
             (*inner).head = (head + 1) % cap
             (*inner).len = curLen - 1
-            _chWakeOneSend(inner)
+            chWakeOneSend(inner)
             pthread_cond_signal((*inner).condNotFull)
             pthread_mutex_unlock(mtx)
             return Option.Some(val)
@@ -443,10 +443,10 @@ impl Channel<T> {
             (*inner).closed = 1
             // every parked green task must observe closed and error out
             while (*inner).recvWaitHead as i64 != 0 {
-                _chWakeOneRecv(inner)
+                chWakeOneRecv(inner)
             }
             while (*inner).sendWaitHead as i64 != 0 {
-                _chWakeOneSend(inner)
+                chWakeOneSend(inner)
             }
             pthread_cond_broadcast((*inner).condNotEmpty)
             pthread_cond_broadcast((*inner).condNotFull)
@@ -615,8 +615,8 @@ impl WaitGroup {
             pthread_mutex_init(mtx, 0 as *u8)
             let cond = malloc(64)
             pthread_cond_init(cond, 0 as *u8)
-            _nodeStorePtr(p, 0, mtx)
-            _nodeStorePtr(p, 8, cond)
+            nodeStorePtr(p, 0, mtx)
+            nodeStorePtr(p, 8, cond)
             return WaitGroup {
                 _p: p
             }
@@ -625,26 +625,26 @@ impl WaitGroup {
 
     fn add(self: &Self, n: i64): void {
         let p = self._p
-        let mtx = _nodeLoadPtr(p, 0)
+        let mtx = nodeLoadPtr(p, 0)
         pthread_mutex_lock(mtx)
-        _nodeStoreI64(p, 16, _nodeLoadI64(p, 16) + n)
+        nodeStoreI64(p, 16, nodeLoadI64(p, 16) + n)
         pthread_mutex_unlock(mtx)
     }
 
     fn done(self: &Self): void {
         let p = self._p
-        let mtx = _nodeLoadPtr(p, 0)
+        let mtx = nodeLoadPtr(p, 0)
         pthread_mutex_lock(mtx)
-        let c = _nodeLoadI64(p, 16) - 1
-        _nodeStoreI64(p, 16, c)
+        let c = nodeLoadI64(p, 16) - 1
+        nodeStoreI64(p, 16, c)
         if c <= 0 {
             // wake every parked green waiter, then broadcast to pthreads
-            var h = _nodeLoadPtr(p, 24)
+            var h = nodeLoadPtr(p, 24)
             while h as i64 != 0 {
-                h = _wakeOne(h)
+                h = wakeOne(h)
             }
-            _nodeStorePtr(p, 24, 0 as *u8)
-            pthread_cond_broadcast(_nodeLoadPtr(p, 8))
+            nodeStorePtr(p, 24, 0 as *u8)
+            pthread_cond_broadcast(nodeLoadPtr(p, 8))
         }
         pthread_mutex_unlock(mtx)
     }
@@ -652,17 +652,17 @@ impl WaitGroup {
     fn wait(self: &Self): void {
         unsafe {
             let p = self._p
-            let mtx = _nodeLoadPtr(p, 0)
+            let mtx = nodeLoadPtr(p, 0)
             let cur = schedulerCurrent()
             if cur as i64 != 0 {
                 pthread_mutex_lock(mtx)
-                while _nodeLoadI64(p, 16) > 0 {
+                while nodeLoadI64(p, 16) > 0 {
                     var w: [u8; 48] = [0; 48]
                     let wp = w as *u8
-                    _nodeStoreI64(wp, nodeKind(), kindPlain())
-                    _nodeStorePtr(wp, nodeA(), cur)
-                    _nodeStorePtr(wp, nodeNext(), _nodeLoadPtr(p, 24))
-                    _nodeStorePtr(p, 24, wp)
+                    nodeStoreI64(wp, nodeKind(), kindPlain())
+                    nodeStorePtr(wp, nodeA(), cur)
+                    nodeStorePtr(wp, nodeNext(), nodeLoadPtr(p, 24))
+                    nodeStorePtr(p, 24, wp)
                     pthread_mutex_unlock(mtx)
                     schedulerPark()
                     pthread_mutex_lock(mtx)
@@ -673,17 +673,17 @@ impl WaitGroup {
                 // the wakeup fd) until a worker's done() drops the count to zero
                 while true {
                     pthread_mutex_lock(mtx)
-                    let c = _nodeLoadI64(p, 16)
+                    let c = nodeLoadI64(p, 16)
                     pthread_mutex_unlock(mtx)
                     if c <= 0 {
                         return
                     }
-                    _schedulerBlockMain()
+                    schedulerBlockMain()
                 }
             } else {
                 pthread_mutex_lock(mtx)
-                while _nodeLoadI64(p, 16) > 0 {
-                    pthread_cond_wait(_nodeLoadPtr(p, 8), mtx)
+                while nodeLoadI64(p, 16) > 0 {
+                    pthread_cond_wait(nodeLoadPtr(p, 8), mtx)
                 }
                 pthread_mutex_unlock(mtx)
             }
@@ -692,10 +692,10 @@ impl WaitGroup {
 
     fn destroy(self: Self): void {
         let p = self._p
-        pthread_mutex_destroy(_nodeLoadPtr(p, 0))
-        free(_nodeLoadPtr(p, 0))
-        pthread_cond_destroy(_nodeLoadPtr(p, 8))
-        free(_nodeLoadPtr(p, 8))
+        pthread_mutex_destroy(nodeLoadPtr(p, 0))
+        free(nodeLoadPtr(p, 0))
+        pthread_cond_destroy(nodeLoadPtr(p, 8))
+        free(nodeLoadPtr(p, 8))
         free(p)
     }
 }

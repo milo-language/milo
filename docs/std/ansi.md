@@ -2,6 +2,33 @@
 
 ## std/ansi
 
+### `ansiPush24`
+
+```milo
+fn ansiPush24(buf: &mut string, lead: &string, r: i64, g: i64, b: i64): void
+```
+
+_Undocumented._
+
+### `ansiPushRaw`
+
+```milo
+fn ansiPushRaw(buf: &mut string, s: &string): void
+```
+
+_Undocumented._
+
+### `ansiPushU8`
+
+```milo
+fn ansiPushU8(buf: &mut string, n: i64): void
+```
+
+
+fg24/bg24 return a freshly-allocated string; in a per-cell loop that
+allocation dominates. These append the same bytes straight into a caller's
+buffer with zero allocation — the fast path behind full-screen animation.
+
 ### `ansiReset`
 
 ```milo

@@ -2,6 +2,31 @@
 
 ## std/select
 
+### `maxArms`
+
+```milo
+fn maxArms(): i64
+```
+
+_Undocumented._
+
+### `nodeChan`
+
+```milo
+fn nodeChan(): i64
+```
+
+channel arms stash the ChannelInner ptr in the node's otherwise-unused
+deadline slot so cleanup can unlink without a parallel array
+
+### `readPtr`
+
+```milo
+fn readPtr(node: *u8, off: i64): *u8
+```
+
+_Undocumented._
+
 ### `Select.armChan`
 
 ```milo

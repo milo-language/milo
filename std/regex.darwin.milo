@@ -31,7 +31,7 @@ pub fn regexNew(pattern: string): Option<Regex> {
     return regexNewFlags(pattern, 1)
 }
 
-pub fn _readMatchI64(buf: &[u8; 160], off: i32): i64 {
+fn readMatchI64(buf: &[u8; 160], off: i32): i64 {
     var val: i64 = 0
     for k in 0..8 {
         val = val | ((buf[off as i64 + k] as i64) << (k * 8))
@@ -57,8 +57,8 @@ pub fn regexFind(re: &Regex, input: &string): Option<RegexMatch> {
     if rc != 0 {
         return Option.None
     }
-    let so = _readMatchI64(pmatch, 0)
-    let eo = _readMatchI64(pmatch, 8)
+    let so = readMatchI64(pmatch, 0)
+    let eo = readMatchI64(pmatch, 8)
     return Option.Some(RegexMatch {
         start: so, end: eo
     }
@@ -76,8 +76,8 @@ pub fn regexFindAll(re: &Regex, input: &string): Vec<RegexMatch> {
         if rc != 0 {
             break
         }
-        let so = _readMatchI64(pmatch, 0)
-        let eo = _readMatchI64(pmatch, 8)
+        let so = readMatchI64(pmatch, 0)
+        let eo = readMatchI64(pmatch, 8)
         matches.push(RegexMatch {
             start: offset + so, end: offset + eo
         }

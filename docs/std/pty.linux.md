@@ -10,6 +10,14 @@ pub fn fdIsTerminal(fd: i32): bool
 
 Returns true if fd is connected to a terminal.
 
+### `freeArgv`
+
+```milo
+pub fn freeArgv(argv: *u8, argc: i64): void
+```
+
+_Undocumented._
+
 ### `isInteractive`
 
 ```milo

@@ -16,7 +16,7 @@
 // key; NULL/0 for a plain hash. Returns 0 (STATUS_SUCCESS) on success.
 pub extern fn BCryptHash(alg: i64, secret: *u8, secretLen: u32, input: *u8, inputLen: u32, output: *u8, outputLen: u32): i32
 
-pub fn _bcryptHash(algHandle: i64, input: &string, outLen: i64): string {
+fn bcryptHash(algHandle: i64, input: &string, outLen: i64): string {
     var digest: [u8; 32] = [0; 32]
     unsafe {
         BCryptHash(algHandle, 0 as *u8, 0 as u32, input as *u8, input.len as u32, digest as *u8, outLen as u32)
@@ -28,7 +28,7 @@ pub fn _bcryptHash(algHandle: i64, input: &string, outLen: i64): string {
     return raw
 }
 
-pub fn _bytesToHex(raw: &string, n: i64): string {
+pub fn bytesToHex(raw: &string, n: i64): string {
     var result = ""
     for i in 0..n {
         let b = raw[i]
@@ -50,25 +50,25 @@ pub fn _bytesToHex(raw: &string, n: i64): string {
 
 // Compute SHA-256 hash of a string. Returns 64-char lowercase hex string.
 pub fn sha256(input: &string): string {
-    let raw = _bcryptHash(65, input, 32)
-    return _bytesToHex(raw, 32)
+    let raw = bcryptHash(65, input, 32)
+    return bytesToHex(raw, 32)
 }
 
 // Compute MD5 hash of a string. Returns 32-char lowercase hex string.
 pub fn md5(input: &string): string {
-    let raw = _bcryptHash(33, input, 16)
-    return _bytesToHex(raw, 16)
+    let raw = bcryptHash(33, input, 16)
+    return bytesToHex(raw, 16)
 }
 
 // Compute SHA-1 hash. Returns 40-char lowercase hex string.
 pub fn sha1(input: &string): string {
-    let raw = _bcryptHash(49, input, 20)
-    return _bytesToHex(raw, 20)
+    let raw = bcryptHash(49, input, 20)
+    return bytesToHex(raw, 20)
 }
 
 // Raw 20-byte SHA-1 digest as a string (for WebSocket handshake, HMAC, etc.)
 pub fn sha1Bytes(input: &string): string {
-    return _bcryptHash(49, input, 20)
+    return bcryptHash(49, input, 20)
 }
 
 // ── AES-256-GCM ──
@@ -80,7 +80,7 @@ pub struct AesGcmResult {
 
 // CNG AES-GCM (BCryptEncrypt + BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO) is not wired up yet;
 // fail loudly rather than return a plausible-looking ciphertext. Tracked in docs/roadmap.md.
-pub fn _aesUnsupported(): Result<AesGcmResult, string> {
+fn aesUnsupported(): Result<AesGcmResult, string> {
     return Result.Err("std/crypto AES-GCM is not implemented on windows yet (CNG BCryptEncrypt path pending) — see docs/roadmap.md")
 }
 
@@ -88,7 +88,7 @@ pub fn aesGcmEncrypt(_key: &string, _iv: &string, _plaintext: &string, _aad: &st
 requires _key.len == 32
 requires _iv.len == 12
 {
-    return _aesUnsupported()
+    return aesUnsupported()
 }
 
 pub fn aesGcmDecrypt(_key: &string, _iv: &string, _ciphertext: &string, _tag: &string, _aad: &string): Result<string, string>
@@ -103,7 +103,7 @@ pub fn aesGcm128Encrypt(_key: &string, _iv: &string, _plaintext: &string, _aad: 
 requires _key.len == 16
 requires _iv.len == 12
 {
-    return _aesUnsupported()
+    return aesUnsupported()
 }
 
 pub fn aesGcm128Decrypt(_key: &string, _iv: &string, _ciphertext: &string, _tag: &string, _aad: &string): Result<string, string>

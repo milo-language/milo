@@ -90,7 +90,7 @@ pub fn egid(): u32 {
 
 // The first whitespace-delimited field of `text`, or "" — /proc files are
 // space-separated, so this covers /proc/uptime and /proc/meminfo's "N kB" alike.
-pub fn _firstField(text: &string): string {
+fn _firstField(text: &string): string {
     let parts = strSplitWhitespace(text)
     if parts.len() == 0 {
         return ""
@@ -100,7 +100,7 @@ pub fn _firstField(text: &string): string {
 
 // Value after the first ':' on the first line whose text starts with `key`, trimmed.
 // Both /proc/cpuinfo ("model name\t: X") and /proc/meminfo ("MemTotal:  N kB") use it.
-pub fn _procField(path: string, key: &string): string {
+fn procField(path: string, key: &string): string {
     let Result.Ok(text) = readFile(path) else {
         return ""
     }
@@ -128,11 +128,11 @@ pub fn cpuCount(): i64 {
 pub fn cpuModel(): string {
     // x86 exposes "model name"; arm64 has no such field, so fall back to what it does
     // expose rather than returning "" and making callers special-case the arch.
-    let name = _procField("/proc/cpuinfo", "model name")
+    let name = procField("/proc/cpuinfo", "model name")
     if name.len() > 0 {
         return name
     }
-    let implementer = _procField("/proc/cpuinfo", "CPU implementer")
+    let implementer = procField("/proc/cpuinfo", "CPU implementer")
     if implementer.len() > 0 {
         return $"ARM (implementer {implementer})"
     }
@@ -140,8 +140,8 @@ pub fn cpuModel(): string {
 }
 
 // "MemTotal:  16311236 kB" -> bytes. /proc/meminfo is kB-suffixed throughout.
-pub fn _meminfoBytes(key: &string): i64 {
-    let field = _procField("/proc/meminfo", key)
+fn meminfoBytes(key: &string): i64 {
+    let field = procField("/proc/meminfo", key)
     if field.len() == 0 {
         return 0
     }
@@ -149,18 +149,18 @@ pub fn _meminfoBytes(key: &string): i64 {
 }
 
 pub fn totalMem(): i64 {
-    return _meminfoBytes("MemTotal")
+    return meminfoBytes("MemTotal")
 }
 
 pub fn freeMem(): i64 {
     // MemAvailable is the kernel's own estimate of what a new workload can claim —
     // the closest analogue to what the darwin path computes from Mach page stats.
     // It predates no kernel we support (3.14+), but fall back to MemFree if absent.
-    let avail = _meminfoBytes("MemAvailable")
+    let avail = meminfoBytes("MemAvailable")
     if avail > 0 {
         return avail
     }
-    return _meminfoBytes("MemFree")
+    return meminfoBytes("MemFree")
 }
 
 pub fn uptime(): i64 {

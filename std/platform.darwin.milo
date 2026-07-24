@@ -192,7 +192,7 @@ pub fn direntNameOffset(): i64 {
 }
 
 // errno access — macOS uses __error() to get errno pointer
-pub extern fn __error(): *u8
+extern fn __error(): *u8
 
 pub fn getErrno(): i32 {
     unsafe {
@@ -369,7 +369,7 @@ pub fn mapAnon(): i32 {
 pub extern fn proc_pidpath(pid: i32, buf: *u8, bufsize: u32): i32
 
 // Absolute path of the running executable into `buf`. Returns bytes written, or -1.
-pub fn _exePathInto(buf: *u8, bufsize: i64): i64 {
+pub fn exePathInto(buf: *u8, bufsize: i64): i64 {
     unsafe {
         let n = proc_pidpath(getpid(), buf, bufsize as u32)
         if n <= 0 {

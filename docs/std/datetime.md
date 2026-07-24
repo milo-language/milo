@@ -70,6 +70,22 @@ pub fn monthName(m: i32): string
 
 _Undocumented._
 
+### `padI32`
+
+```milo
+fn padI32(val: i32, width: i32): string
+```
+
+_Undocumented._
+
+### `tmI32`
+
+```milo
+fn tmI32(buf: &[u8; 128], off: i64): i32
+```
+
+Little-endian i32 read out of the struct tm buffer.
+
 ### `weekdayName`
 
 ```milo

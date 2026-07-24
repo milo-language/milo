@@ -2,6 +2,22 @@
 
 ## std/argparse
 
+### `argparseIsNumeric`
+
+```milo
+fn argparseIsNumeric(s: &string): bool
+```
+
+_Undocumented._
+
+### `argparseParseI64`
+
+```milo
+fn argparseParseI64(s: &string): i64
+```
+
+_Undocumented._
+
 ### `ArgParser.addBool`
 
 ```milo

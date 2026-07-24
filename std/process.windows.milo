@@ -16,7 +16,7 @@ from "std/platform" import {
     close,
     read,
     write,
-    _exePathInto
+    exePathInto
 }
 from "std/io" import {
     readFile, fdChannel
@@ -66,17 +66,17 @@ pub extern fn memset(dst: *u8, val: i32, n: i64): *u8
 // _O_BINARY (0x8000) so the CRT does not rewrite \n through the pipe, _O_NOINHERIT
 // (0x0080) so neither end is inheritable until we opt the child's end in by hand.
 // 0x8080 = 32896; any other bit makes _pipe trip the CRT invalid-parameter fastfail.
-pub fn _pipeFlags(): i32 {
+fn pipeFlags(): i32 {
     return 32896
 }
 
 // STARTF_USESTDHANDLES — honour the hStdInput/Output/Error fields we set below.
-pub fn _startfUseStdHandles(): u32 {
+fn startfUseStdHandles(): u32 {
     return 256
 }
 
 // HANDLE_FLAG_INHERIT.
-pub fn _handleFlagInherit(): u32 {
+fn handleFlagInherit(): u32 {
     return 1
 }
 
@@ -86,7 +86,7 @@ pub fn _handleFlagInherit(): u32 {
 pub fn run(cmd: &string): Result<i32> {
     unsafe {
         // system() reads a C string; a milo string is not guaranteed NUL-terminated.
-        let buf = _cstrCopy(cmd)
+        let buf = cstrCopy(cmd)
         let status = system(buf)
         free(buf)
         if status < 0 {
@@ -111,11 +111,11 @@ pub struct Process {
 impl Process {
     fn spawn(path: &string): Result<Process> {
         var args: Vec<string> = Vec.new()
-        return _createProcess(path, args, -1, -1, -1)
+        return createProcess(path, args, -1, -1, -1)
     }
 
     fn wait(self: &Self): Result<i32> {
-        return _waitHandle(self.handle)
+        return waitHandle(self.handle)
     }
 
     fn signal(self: &Self, _sig: i32): Result<i32> {
@@ -147,16 +147,16 @@ impl Child {
             var inP: [i32; 2] = [0; 2]
             var outP: [i32; 2] = [0; 2]
             var errP: [i32; 2] = [-1; 2]
-            if _pipe(inP as *u8, 4096 as u32, _pipeFlags()) != 0 {
+            if _pipe(inP as *u8, 4096 as u32, pipeFlags()) != 0 {
                 return Result.Err("pipe(stdin) failed")
             }
-            if _pipe(outP as *u8, 4096 as u32, _pipeFlags()) != 0 {
+            if _pipe(outP as *u8, 4096 as u32, pipeFlags()) != 0 {
                 close(inP[0])
                 close(inP[1])
                 return Result.Err("pipe(stdout) failed")
             }
             if !mergeStderr {
-                if _pipe(errP as *u8, 4096 as u32, _pipeFlags()) != 0 {
+                if _pipe(errP as *u8, 4096 as u32, pipeFlags()) != 0 {
                     close(inP[0])
                     close(inP[1])
                     close(outP[0])
@@ -168,18 +168,18 @@ impl Child {
             // The child reads inP[0] and writes outP[1]/errP[1]; make exactly those
             // inheritable. The parent's ends stay non-inheritable (from _O_NOINHERIT),
             // so the child cannot keep the read end of its own stdout open.
-            _makeInheritable(inP[0])
-            _makeInheritable(outP[1])
+            makeInheritable(inP[0])
+            makeInheritable(outP[1])
             let childErr = if mergeStderr {
                 outP[1]
             } else {
                 errP[1]
             }
             if !mergeStderr {
-                _makeInheritable(errP[1])
+                makeInheritable(errP[1])
             }
 
-            let res = _createProcess(program, args, inP[0], outP[1], childErr)
+            let res = createProcess(program, args, inP[0], outP[1], childErr)
 
             // Parent no longer needs the child-side ends regardless of outcome.
             close(inP[0])
@@ -253,7 +253,7 @@ impl Child {
     }
 
     fn wait(self: &Self): Result<i32> {
-        return _waitHandle(self.handle)
+        return waitHandle(self.handle)
     }
 
     fn signal(self: &Self, _sig: i32): Result<i32> {
@@ -281,7 +281,7 @@ impl Child {
 }
 
 // Block on a process HANDLE and read its exit code. INFINITE = 0xFFFFFFFF.
-pub fn _waitHandle(handle: i64): Result<i32> {
+fn waitHandle(handle: i64): Result<i32> {
     unsafe {
         WaitForSingleObject(handle, 4294967295 as u32)
         var codeBuf: [u32; 1] = [0]
@@ -295,9 +295,9 @@ pub fn _waitHandle(handle: i64): Result<i32> {
 // Core CreateProcess wrapper. childIn/Out/Err are child-side CRT fds already marked
 // inheritable, or -1 to leave that stream at the parent's (inherited console). Returns a
 // Process holding dwProcessId and the process HANDLE.
-pub fn _createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: i32, childErr: i32): Result<Process> {
+fn createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: i32, childErr: i32): Result<Process> {
     unsafe {
-        let cmdLine = _buildCmdLine(program, args)
+        let cmdLine = buildCmdLine(program, args)
 
         // STARTUPINFOA is 104 bytes on x64: cb at 0, dwFlags at 60, hStdInput/Output/Error
         // at 80/88/96. Zero it, then fill only what we use.
@@ -317,7 +317,7 @@ pub fn _createProcess(program: &string, args: &Vec<string>, childIn: i32, childO
             useHandles = true
         }
         if useHandles {
-            (si as *u32) [15] = _startfUseStdHandles()
+            (si as *u32) [15] = startfUseStdHandles()
         }
 
         // PROCESS_INFORMATION: hProcess at 0, dwProcessId at 16. 24 bytes.
@@ -342,25 +342,25 @@ pub fn _createProcess(program: &string, args: &Vec<string>, childIn: i32, childO
     }
 }
 
-pub fn _makeInheritable(fd: i32): void {
+fn makeInheritable(fd: i32): void {
     unsafe {
-        SetHandleInformation(_get_osfhandle(fd), _handleFlagInherit(), _handleFlagInherit())
+        SetHandleInformation(_get_osfhandle(fd), handleFlagInherit(), handleFlagInherit())
     }
 }
 
 // Build a single CreateProcess command line: `program arg1 arg2 ...`, each token quoted
 // if it contains whitespace or a quote. Returned buffer is malloc'd + NUL-terminated;
 // CreateProcessA may write into it, so it must be writable (not a string literal).
-pub fn _buildCmdLine(program: &string, args: &Vec<string>): *u8 {
-    var line = _quoteArg(program)
+pub fn buildCmdLine(program: &string, args: &Vec<string>): *u8 {
+    var line = quoteArg(program)
     for i in 0..args.len {
         line.push(' ')
-        line.pushStr(_quoteArg(args[i]))
+        line.pushStr(quoteArg(args[i]))
     }
-    return _cstrCopy(line)
+    return cstrCopy(line)
 }
 
-pub fn _quoteArg(arg: &string): string {
+pub fn quoteArg(arg: &string): string {
     var needsQuote = arg.len == 0
     for i in 0..arg.len {
         let c = arg[i]
@@ -387,7 +387,7 @@ pub fn _quoteArg(arg: &string): string {
 }
 
 // Copy a milo string into a fresh malloc'd NUL-terminated C buffer.
-pub fn _cstrCopy(s: &string): *u8 {
+fn cstrCopy(s: &string): *u8 {
     unsafe {
         let n = s.len
         let buf = malloc(n + 1)
@@ -424,7 +424,7 @@ pub fn capture(cmd: &string): Result<string> {
 pub fn exePath(): Result<string> {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
-        let n = _exePathInto(buf as *u8, 4095)
+        let n = exePathInto(buf as *u8, 4095)
         if n < 0 {
             return Result.Err("could not determine executable path")
         }

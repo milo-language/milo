@@ -435,6 +435,14 @@ pub fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json
 
 _Undocumented._
 
+### `jsonHexVal`
+
+```milo
+fn jsonHexVal(c: u8): i64
+```
+
+_Undocumented._
+
 ### `jsonKeyEq`
 
 ```milo

@@ -182,7 +182,7 @@ pub fn direntNameOffset(): i64 {
 }
 
 // errno access — glibc uses __errno_location() to get errno pointer
-pub extern fn __errno_location(): *u8
+extern fn __errno_location(): *u8
 
 pub fn getErrno(): i32 {
     unsafe {
@@ -348,7 +348,7 @@ pub fn mapAnon(): i32 {
 
 // Linux keeps the running binary's path in /proc/self/exe. readlink does not
 // NUL-terminate, so the caller's buffer must be zeroed or terminated at n.
-pub fn _exePathInto(buf: *u8, bufsize: i64): i64 {
+pub fn exePathInto(buf: *u8, bufsize: i64): i64 {
     unsafe {
         let n = readlink("/proc/self/exe", buf, bufsize)
         if n <= 0 {

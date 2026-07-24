@@ -1519,7 +1519,7 @@ pub fn dapReaderLoop(client: DapClient, ch: Channel<string>, wakeWr: i32, pendCh
             wsPush(ch, wakeWr, configErrMsg(err))
         } else if binPath.len > 0 || gRequest == "attach" {
             stopAtMain = gPendingStopAtMain
-            let _ok = startRun(ch, wakeWr, pendCh)
+            let ok = startRun(ch, wakeWr, pendCh)
         }
     }
 }
@@ -1749,7 +1749,7 @@ pub fn handleDebugWs(ws: WsConn, peerKind: string, bus: Channel<string>, busWake
                     wsPush(bus, busWakeWr, configErrMsg("no program configured — set a debug target (⚙) before running"))
                 } else {
                     stopAtMain = jBool(payload, "stopAtMain", gConfigStopAtMain)
-                    let _ok = startRun(bus, busWakeWr, pendCh)
+                    let ok = startRun(bus, busWakeWr, pendCh)
                 }
             }
         } else if c == "continue" || c == "stepOver" || c == "stepIn" || c == "stepOut" || c == "pause" {

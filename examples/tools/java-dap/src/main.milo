@@ -60,7 +60,7 @@ pub fn main(): void {
         print("java-dap: bad --attach value, expected host:port")
         exit(2)
     }
-    let host = _slice(target, 0, colon)
+    let host = slice(target, 0, colon)
     let port = _parsePort(target, colon + 1)
     if port <= 0 {
         print("java-dap: bad port in --attach value")
@@ -115,7 +115,7 @@ pub fn _lastIndexOf(s: &string, ch: u8): i64 {
     return -1
 }
 
-pub fn _slice(s: &string, start: i64, end: i64): string {
+pub fn slice(s: &string, start: i64, end: i64): string {
     var out = String.withCapacity(end - start)
     var i = start
     while i < end {

@@ -2,6 +2,14 @@
 
 ## std/regex.darwin
 
+### `readMatchI64`
+
+```milo
+fn readMatchI64(buf: &[u8; 160], off: i32): i64
+```
+
+_Undocumented._
+
 ### `regexFind`
 
 ```milo

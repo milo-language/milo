@@ -7,17 +7,17 @@ from "std/random" import {
     randBytes
 }
 
-pub fn _hexChar(n: u8): u8 {
+pub fn hexChar(n: u8): u8 {
     if n < 10 {
         return '0' + n
     }
     return 'a' + (n - 10 as u8)
 }
 
-pub fn _byteToHex(b: u8): string {
+fn _byteToHex(b: u8): string {
     var s = ""
-    s.push(_hexChar(b >> 4))
-    s.push(_hexChar(b & 15 as u8))
+    s.push(hexChar(b >> 4))
+    s.push(hexChar(b & 15 as u8))
     return s
 }
 

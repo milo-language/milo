@@ -516,11 +516,11 @@ pub fn connectFdUn(fd: i32, addr: &SockAddrUn): i32 {
 // SSL_* on a nonblocking fd reports WANT_READ/WANT_WRITE; these park the
 // green task until the fd is ready and retry. On a plain OS thread (blocking
 // fd) the WANT codes never occur and these reduce to one SSL call.
-pub fn _sslWantRead(): i32 {
+fn sslWantRead(): i32 {
     return 2
 }
 
-pub fn _sslWantWrite(): i32 {
+fn sslWantWrite(): i32 {
     return 3
 }
 
@@ -535,11 +535,11 @@ pub fn sslConnectFd(ssl: *u8, fd: i32): i32 {
             return r
         }
         let e = SSL_get_error(ssl, r)
-        if e == _sslWantRead() {
+        if e == sslWantRead() {
             schedulerWaitRead(fd)
             continue
         }
-        if e == _sslWantWrite() {
+        if e == sslWantWrite() {
             schedulerWaitWrite(fd)
             continue
         }
@@ -559,11 +559,11 @@ pub fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
             return n
         }
         let e = SSL_get_error(ssl, n)
-        if e == _sslWantRead() {
+        if e == sslWantRead() {
             schedulerWaitRead(fd)
             continue
         }
-        if e == _sslWantWrite() {
+        if e == sslWantWrite() {
             schedulerWaitWrite(fd)
             continue
         }
@@ -583,11 +583,11 @@ pub fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
             return n
         }
         let e = SSL_get_error(ssl, n)
-        if e == _sslWantRead() {
+        if e == sslWantRead() {
             schedulerWaitRead(fd)
             continue
         }
-        if e == _sslWantWrite() {
+        if e == sslWantWrite() {
             schedulerWaitWrite(fd)
             continue
         }

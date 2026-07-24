@@ -2,6 +2,14 @@
 
 ## std/url
 
+### `strEqUrl`
+
+```milo
+fn strEqUrl(a: &string, b: &string): bool
+```
+
+_Undocumented._
+
 ### `urlParse`
 
 ```milo

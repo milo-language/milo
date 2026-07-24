@@ -2,6 +2,14 @@
 
 ## std/ws
 
+### `computeAcceptKey`
+
+```milo
+pub fn computeAcceptKey(clientKey: &string): string
+```
+
+_Undocumented._
+
 ### `Drop.drop`
 
 ```milo
@@ -18,6 +26,22 @@ pub fn extractWsKey(raw: &string): string
 
 Extract Sec-WebSocket-Key from raw HTTP request.
 
+### `findHeaderValue`
+
+```milo
+fn findHeaderValue(raw: &string, name: &string): string
+```
+
+_Undocumented._
+
+### `headerContains`
+
+```milo
+fn headerContains(raw: &string, name: &string, value: &string): bool
+```
+
+_Undocumented._
+
 ### `isWsUpgrade`
 
 ```milo
@@ -25,6 +49,23 @@ pub fn isWsUpgrade(raw: &string): bool
 ```
 
 Check if raw HTTP request bytes contain a WebSocket upgrade request.
+
+### `readExact`
+
+```milo
+fn readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool
+```
+
+_Undocumented._
+
+### `readSome`
+
+```milo
+fn readSome(fd: i32, ssl: i64, buf: *u8, len: i64): i64
+```
+
+Read up to `len` bytes from a plain fd or TLS handle. Yields to the green
+scheduler on would-block. Returns bytes read (>0), 0 on clean close, <0 on error.
 
 ### `WS_BINARY`
 
@@ -142,3 +183,11 @@ Connect to a WebSocket server over TLS (wss://). Performs TCP connect, TLS
 handshake (blocking — call before setting fds nonblocking), then the HTTP
 upgrade handshake over the encrypted channel. `hostname` is used for SNI,
 certificate validation, and the Host header.
+
+### `wsMagic`
+
+```milo
+fn wsMagic(): string
+```
+
+RFC 6455 magic GUID

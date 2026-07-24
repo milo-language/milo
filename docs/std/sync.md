@@ -215,6 +215,83 @@ pub fn channelUnarmSend(ptr: *u8, node: *u8): void
 
 _Undocumented._
 
+### `chParkRecv`
+
+```milo
+fn chParkRecv(inner: *ChannelInner): void
+```
+
+Park the current green task as a receive waiter. Caller holds mtx; returns
+with mtx re-acquired. The waiter node lives on this frame's stack — safe
+because the frame stays alive while parked and the waker pops the node
+(under mtx) before unparking, so it never dangles.
+
+### `chParkSend`
+
+```milo
+fn chParkSend(inner: *ChannelInner): void
+```
+
+_Undocumented._
+
+### `chWakeOneRecv`
+
+```milo
+fn chWakeOneRecv(inner: *ChannelInner): void
+```
+
+_Undocumented._
+
+### `chWakeOneSend`
+
+```milo
+fn chWakeOneSend(inner: *ChannelInner): void
+```
+
+_Undocumented._
+
+### `nodeLoadI64`
+
+```milo
+fn nodeLoadI64(node: *u8, off: i64): i64
+```
+
+_Undocumented._
+
+### `nodeLoadPtr`
+
+```milo
+fn nodeLoadPtr(node: *u8, off: i64): *u8
+```
+
+Waiter nodes use the unified 48-byte runtime layout (see std/runtime): plain
+channel waiters are kind 0 with the task ptr at nodeA; Select arms (kind 1/2)
+carry a SelectState ptr + arm index and take the claim path when woken.
+
+### `nodeStoreI64`
+
+```milo
+fn nodeStoreI64(node: *u8, off: i64, v: i64): void
+```
+
+_Undocumented._
+
+### `nodeStorePtr`
+
+```milo
+fn nodeStorePtr(node: *u8, off: i64, v: *u8): void
+```
+
+_Undocumented._
+
+### `unlinkNode`
+
+```milo
+fn unlinkNode(head: *u8, node: *u8): *u8
+```
+
+Unlink `node` from a wait list if present. Caller holds the channel mutex.
+
 ### `WaitGroup.add`
 
 ```milo
@@ -254,3 +331,14 @@ fn WaitGroup.wait(self: &WaitGroup): void
 ```
 
 _Undocumented._
+
+### `wakeOne`
+
+```milo
+fn wakeOne(head: *u8): *u8
+```
+
+Pop one waiter off `head` (a channel wait list) and wake it. Caller holds the
+channel mutex. A plain waiter's task is unparked; a Select arm claims the
+select. Returns the new head. The node must not be touched after this — the
+woken task's frame (plain) or the Select (arm) owns it.

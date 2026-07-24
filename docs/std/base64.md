@@ -2,6 +2,22 @@
 
 ## std/base64
 
+### `b64DecodeChar`
+
+```milo
+fn b64DecodeChar(ch: u8): u8
+```
+
+_Undocumented._
+
+### `b64EncodeChar`
+
+```milo
+fn b64EncodeChar(val: u8): u8
+```
+
+_Undocumented._
+
 ### `base64Decode`
 
 ```milo

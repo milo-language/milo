@@ -2,6 +2,31 @@
 
 ## std/pty.windows
 
+### `attrPseudoconsole`
+
+```milo
+fn attrPseudoconsole(): i64
+```
+
+PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
+
+### `buildCmdLine`
+
+```milo
+pub fn buildCmdLine(program: &string, args: &Vec<string>): *u8
+```
+
+Build a CreateProcess command line: `program arg1 arg2 ...`, quoting tokens that
+contain whitespace. Malloc'd + NUL-terminated; CreateProcessA may write into it.
+
+### `extendedStartupinfoPresent`
+
+```milo
+fn extendedStartupinfoPresent(): u32
+```
+
+EXTENDED_STARTUPINFO_PRESENT.
+
 ### `fdIsTerminal`
 
 ```milo
@@ -22,6 +47,14 @@ _Undocumented._
 
 ```milo
 pub fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string>
+```
+
+_Undocumented._
+
+### `packCoord`
+
+```milo
+fn packCoord(rows: u16, cols: u16): i32
 ```
 
 _Undocumented._
@@ -110,6 +143,14 @@ _Undocumented._
 
 ```milo
 fn Pty.writeStr(self: &Pty, s: &string): i64
+```
+
+_Undocumented._
+
+### `quoteArg`
+
+```milo
+pub fn quoteArg(arg: &string): string
 ```
 
 _Undocumented._

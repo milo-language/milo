@@ -13,7 +13,7 @@ from "std/hmac" import {
     hmacSha1Bytes
 }
 
-pub fn _pow10(n: i64): i64 {
+fn pow10(n: i64): i64 {
     var p: i64 = 1
     for _i in 0..n {
         p = p * 10
@@ -22,7 +22,7 @@ pub fn _pow10(n: i64): i64 {
 }
 
 // Left-pad a non-negative integer to exactly `width` decimal digits.
-pub fn _zeroPad(value: i64, width: i64): string {
+fn _zeroPad(value: i64, width: i64): string {
     var s = ""
     var v = value
     if v == 0 {
@@ -59,7 +59,7 @@ pub fn hotp(secret: &string, counter: i64, digits: i64): string {
     | (((h[offset + 1] as i64) & 0xff) << 16)
     | (((h[offset + 2] as i64) & 0xff) << 8)
     | ((h[offset + 3] as i64) & 0xff)
-    return _zeroPad(bin % _pow10(digits), digits)
+    return _zeroPad(bin % pow10(digits), digits)
 }
 
 // TOTP value for a Unix timestamp (RFC 6238): HOTP over floor(time / step).

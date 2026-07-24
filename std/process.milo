@@ -27,7 +27,7 @@ from "std/sync" import {
     Channel
 }
 from "std/platform" import {
-    _exePathInto
+    exePathInto
 }
 
 // ── Simple command execution ──
@@ -126,7 +126,7 @@ impl Child {
                 }
             }
 
-            let argv = _buildArgv(program, args)
+            let argv = buildArgv(program, args)
 
             let pid = fork()
             if pid < 0 {
@@ -138,7 +138,7 @@ impl Child {
                     close(errP[0])
                     close(errP[1])
                 }
-                _freeArgv(argv, args.len + 2)
+                freeArgv(argv, args.len + 2)
                 return Result.Err("fork() failed")
             }
 
@@ -174,7 +174,7 @@ impl Child {
                 close(errP[1])
                 errRead = errP[0]
             }
-            _freeArgv(argv, args.len + 2)
+            freeArgv(argv, args.len + 2)
             return Result.Ok(Child {
                 pid: pid,
                 stdinFd: inP[1],
@@ -267,7 +267,7 @@ impl Child {
 // Build a NULL-terminated argv: argv[0]=program, argv[1..n]=args, argv[n+1]=NULL.
 // Each string is copied into its own NUL-terminated C buffer so it stays valid
 // across fork/exec. Caller frees with _freeArgv(argv, args.len + 2).
-pub fn _buildArgv(program: &string, args: &Vec<string>): *u8 {
+fn buildArgv(program: &string, args: &Vec<string>): *u8 {
     unsafe {
         let argc = args.len + 2
         let argv = malloc(argc * 8)
@@ -293,7 +293,7 @@ pub fn _buildArgv(program: &string, args: &Vec<string>): *u8 {
     }
 }
 
-pub fn _freeArgv(argv: *u8, argc: i64): void {
+pub fn freeArgv(argv: *u8, argc: i64): void {
     unsafe {
         for i in 0..(argc - 1) {
             var p: *u8 = 0 as *u8
@@ -334,7 +334,7 @@ pub fn exePath(): Result<string> {
     // result needs a spare byte to terminate rather than truncating a real path.
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
-        let n = _exePathInto(buf as *u8, 4095)
+        let n = exePathInto(buf as *u8, 4095)
         if n < 0 {
             return Result.Err("could not determine executable path")
         }

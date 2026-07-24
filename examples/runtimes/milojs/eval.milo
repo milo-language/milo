@@ -33,7 +33,7 @@ from "std/env" import {
     getEnv
 }
 from "std/runtime" import {
-    _spawnOsThreadDetached, schedulerCurrent, schedulerPark, schedulerUnpark, schedulerYield, Task
+    spawnOsThreadDetached, schedulerCurrent, schedulerPark, schedulerUnpark, schedulerYield, Task
 }
 from "std/sync" import {
     Channel
@@ -2417,7 +2417,7 @@ pub fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                 // the OS main thread and never parks, so schedulerYield is a no-op
                 // and a green task would never be scheduled. The worker touches
                 // nothing but its own arguments and the channel.
-                _spawnOsThreadDetached(move(): void => {
+                spawnOsThreadDetached(move(): void => {
                     let r = doHttpFetch(method, url, headersRaw, body)
                     let _s = chForTask.send(r)
                 }

@@ -34,6 +34,14 @@ pub fn aesGcmEncrypt(key: &string, iv: &string, plaintext: &string, aad: &string
 
 Encrypt with AES-256-GCM. Key must be 32 bytes, IV should be 12 bytes.
 
+### `bytesToHex`
+
+```milo
+pub fn bytesToHex(buf: &[u8; 32], n: i64): string
+```
+
+_Undocumented._
+
 ### `md5`
 
 ```milo

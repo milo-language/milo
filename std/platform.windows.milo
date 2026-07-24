@@ -170,7 +170,7 @@ pub fn statBufSize(): i64 {
 // ── errno ──
 
 // The UCRT's errno is `*_errno()`, the analogue of darwin's __error().
-pub extern fn _errno(): *u8
+extern fn _errno(): *u8
 
 pub fn getErrno(): i32 {
     unsafe {
@@ -212,10 +212,10 @@ pub extern fn WSAStartup(version: u16, data: *u8): i32
 @cSig("winsock2.h", "int WSAGetLastError(void)")
 pub extern fn WSAGetLastError(): i32
 
-pub var _wsaInited: bool = false
+var wsaInited: bool = false
 
 pub fn ensureNetInit(): void {
-    if _wsaInited {
+    if wsaInited {
         return
     }
     // 0x0202 = Winsock 2.2. WSADATA is ~400 bytes; 512 is a safe receive buffer we never
@@ -224,7 +224,7 @@ pub fn ensureNetInit(): void {
     unsafe {
         WSAStartup(514 as u16, data as *u8)
     }
-    _wsaInited = true
+    wsaInited = true
 }
 
 pub fn netErrno(): i32 {
@@ -270,13 +270,13 @@ pub extern fn send(s: i64, buf: *u8, len: i32, flags: i32): i32
 
 pub fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64 {
     unsafe {
-        return recv(fd as i64, buf, _clampCount(nbyte) as i32, 0) as i64
+        return recv(fd as i64, buf, clampCount(nbyte) as i32, 0) as i64
     }
 }
 
 pub fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
     unsafe {
-        return send(fd as i64, buf, _clampCount(nbyte) as i32, 0) as i64
+        return send(fd as i64, buf, clampCount(nbyte) as i32, 0) as i64
     }
 }
 
@@ -337,15 +337,15 @@ pub extern fn IsThreadAFiber(): i32
 // declared as an extern. Tracking the handle ourselves is the workaround — sound because
 // every switch in the runtime goes through swapcontext below, which is the only thing
 // that can change which fiber is running.
-pub var _currentFiber: i64 = 0
+var currentFiber: i64 = 0
 
 pub fn getcontext(ucp: *u8): i32 {
     if IsThreadAFiber() == 0 {
-        _currentFiber = ConvertThreadToFiber(0 as *u8)
+        currentFiber = ConvertThreadToFiber(0 as *u8)
     }
     unsafe {
         let slot = ucp as *i64
-        slot[0] = _currentFiber
+        slot[0] = currentFiber
     }
     return 0
 }
@@ -362,13 +362,13 @@ pub fn swapcontext(oucp: *u8, ucp: *u8): i32 {
     unsafe {
         let from = oucp as *i64
         let to = ucp as *i64
-        from [0] = _currentFiber
+        from [0] = currentFiber
         let target = to[0]
-        _currentFiber = target
+        currentFiber = target
         SwitchToFiber(target)
         // Reached again only when something switches back to us, at which point the
         // running fiber is ours again — the global still names whoever we switched to.
-        _currentFiber = from [0]
+        currentFiber = from [0]
     }
     return 0
 }
@@ -661,10 +661,10 @@ pub fn pipe(fds: *u8): i32 {
 // `_`-prefixed symbols at their true widths and widen here, once.
 
 @cSig("io.h", "int _read(int, void *, unsigned int)")
-pub extern fn _read(fd: i32, buf: *u8, count: u32): i32
+extern fn _read(fd: i32, buf: *u8, count: u32): i32
 
 @cSig("io.h", "int _write(int, const void *, unsigned int)")
-pub extern fn _write(fd: i32, buf: *u8, count: u32): i32
+extern fn _write(fd: i32, buf: *u8, count: u32): i32
 
 // `open` is the one fd call whose return is `int` on every platform (only the
 // byte-count/offset calls diverge), and it is variadic, so a wrapper fn can't forward
@@ -674,20 +674,20 @@ pub extern fn _write(fd: i32, buf: *u8, count: u32): i32
 pub extern fn open(path: *u8, flags: i32,...): i32
 
 @cSig("io.h", "int _close(int)")
-pub extern fn _close(fd: i32): i32
+extern fn _close(fd: i32): i32
 
 // _lseek is 32-bit (`long`, 4 bytes under LLP64); _lseeki64 is the one that can
 // address a file past 2 GB, which is what POSIX lseek's off_t means here.
 @cSig("io.h", "__int64 _lseeki64(int, __int64, int)")
-pub extern fn _lseeki64(fd: i32, offset: i64, origin: i32): i64
+extern fn _lseeki64(fd: i32, offset: i64, origin: i32): i64
 
 @cSig("io.h", "int _access(const char *, int)")
-pub extern fn _access(path: *u8, mode: i32): i32
+extern fn _access(path: *u8, mode: i32): i32
 
 // A count that doesn't fit in the CRT's 32-bit parameter is clamped, not truncated:
 // a short read/write is a contract every caller already handles, whereas truncation
 // would silently transfer the low 32 bits of the requested length.
-pub fn _clampCount(nbyte: i64): u32 {
+fn clampCount(nbyte: i64): u32 {
     if nbyte > 2147483647 {
         return 2147483647 as u32
     }
@@ -698,11 +698,11 @@ pub fn _clampCount(nbyte: i64): u32 {
 }
 
 pub fn read(fd: i32, buf: *u8, nbyte: i64): i64 {
-    return _read(fd, buf, _clampCount(nbyte)) as i64
+    return _read(fd, buf, clampCount(nbyte)) as i64
 }
 
 pub fn write(fd: i32, buf: *u8, nbyte: i64): i64 {
-    return _write(fd, buf, _clampCount(nbyte)) as i64
+    return _write(fd, buf, clampCount(nbyte)) as i64
 }
 
 pub fn close(fd: i32): i32 {
@@ -720,7 +720,7 @@ pub fn access(path: *u8, mode: i32): i32 {
 // <process.h>, not <unistd.h>; the oldnames shim exports `getpid` too, but binding the
 // real symbol keeps the declaration checkable against the header it actually comes from.
 @cSig("process.h", "int _getpid(void)")
-pub extern fn _getpid(): i32
+extern fn _getpid(): i32
 
 pub fn getpid(): i32 {
     return _getpid()
@@ -796,7 +796,7 @@ pub fn dlerror(): *u8 {
 @cSig("libloaderapi.h", "DWORD GetModuleFileNameA(HMODULE, LPSTR, DWORD)")
 pub extern fn GetModuleFileNameA(module: *u8, buf: *u8, size: u32): u32
 
-pub fn _exePathInto(buf: *u8, bufsize: i64): i64 {
+pub fn exePathInto(buf: *u8, bufsize: i64): i64 {
     unsafe {
         let n = GetModuleFileNameA(0 as *u8, buf, bufsize as u32)
         if n == 0 {

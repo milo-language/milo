@@ -1,6 +1,6 @@
 // std/hex — hex encode/decode for strings
 
-pub fn _hexChar(val: u8): u8 {
+pub fn hexChar(val: u8): u8 {
     if val < 10 {
         return val + 48
     }
@@ -24,8 +24,8 @@ pub fn _hexVal(ch: u8): u8 {
 pub fn hexEncode(input: &string): string {
     var result = ""
     for b in input {
-        result.push(_hexChar(b >> 4))
-        result.push(_hexChar(b & 15))
+        result.push(hexChar(b >> 4))
+        result.push(hexChar(b & 15))
     }
     return result
 }

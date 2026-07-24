@@ -142,6 +142,14 @@ pub fn evOneshot(): u16
 
 _Undocumented._
 
+### `exePathInto`
+
+```milo
+pub fn exePathInto(buf: *u8, bufsize: i64): i64
+```
+
+Absolute path of the running executable into `buf`. Returns bytes written, or -1.
+
 ### `fGetfl`
 
 ```milo

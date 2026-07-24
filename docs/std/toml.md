@@ -2,6 +2,14 @@
 
 ## std/toml
 
+### `strEq`
+
+```milo
+fn strEq(a: &string, b: &string): bool
+```
+
+_Undocumented._
+
 ### `Toml.bool`
 
 ```milo
@@ -38,6 +46,14 @@ _Undocumented._
 
 ```milo
 fn Toml.table(self: &Toml, key: &string): Option<Toml>
+```
+
+_Undocumented._
+
+### `tomlFindKey`
+
+```milo
+fn tomlFindKey(s: &string, start: i64, end: i64, key: &string): Option<Toml>
 ```
 
 _Undocumented._
@@ -82,10 +98,42 @@ pub fn tomlGetTable(s: &string, start: i64, end: i64, key: &string): Option<Toml
 
 _Undocumented._
 
+### `tomlKeyMatches`
+
+```milo
+fn tomlKeyMatches(s: &string, pos: i64, end: i64, key: &string): bool
+```
+
+_Undocumented._
+
 ### `tomlParse`
 
 ```milo
 pub fn tomlParse(s: string): Result<Toml>
+```
+
+_Undocumented._
+
+### `tomlReadValue`
+
+```milo
+fn tomlReadValue(s: &string, pos: i64, end: i64): i64
+```
+
+_Undocumented._
+
+### `tomlSkipLine`
+
+```milo
+fn tomlSkipLine(s: &string, pos: i64, end: i64): i64
+```
+
+_Undocumented._
+
+### `tomlSkipWs`
+
+```milo
+fn tomlSkipWs(s: &string, pos: i64, end: i64): i64
 ```
 
 _Undocumented._

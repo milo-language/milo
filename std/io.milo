@@ -36,7 +36,7 @@ pub enum IoError {
 }
 
 // map errno to IoError variant with path context
-pub fn _ioError(path: &string): IoError {
+pub fn ioError(path: &string): IoError {
     unsafe {
         let e = getErrno()
         if e == 2 {
@@ -243,7 +243,7 @@ impl File {
     fn openRead(path: &string): Result<File, IoError> {
         let fd = open(path, 0)
         if fd < 0 {
-            return Result.Err(_ioError(path))
+            return Result.Err(ioError(path))
         }
         return Result.Ok(File {
             fd: fd
@@ -254,7 +254,7 @@ impl File {
     fn openWrite(path: &string): Result<File, IoError> {
         let fd = open(path, oWriteCreateTrunc(), 420)
         if fd < 0 {
-            return Result.Err(_ioError(path))
+            return Result.Err(ioError(path))
         }
         return Result.Ok(File {
             fd: fd
@@ -265,7 +265,7 @@ impl File {
     fn openAppend(path: &string): Result<File, IoError> {
         let fd = open(path, oWriteCreateAppend(), 420)
         if fd < 0 {
-            return Result.Err(_ioError(path))
+            return Result.Err(ioError(path))
         }
         return Result.Ok(File {
             fd: fd
@@ -368,7 +368,7 @@ pub fn readLines(path: &string): Result<Vec<string>, IoError> {
 }
 
 // Read a single line from a file descriptor (reads byte-by-byte until newline or EOF).
-pub fn _readLineFd(fd: i32): Option<string> {
+fn readLineFd(fd: i32): Option<string> {
     var _rlBuf: [u8; 1] = [0; 1]
     var _rlResult = ""
     var _rlGot = false
@@ -393,7 +393,7 @@ pub fn _readLineFd(fd: i32): Option<string> {
 
 // Read a single line from stdin. Returns None at EOF.
 pub fn readLine(): Option<string> {
-    return _readLineFd(0)
+    return readLineFd(0)
 }
 
 // Read all of stdin into a string (blocks to EOF). Prefer `stdinChannel()` for

@@ -160,6 +160,24 @@ pub fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32
 
 One SSL_read. Returns bytes read (>0), or <=0 on close/error.
 
+### `sslWantRead`
+
+```milo
+fn sslWantRead(): i32
+```
+
+SSL_* on a nonblocking fd reports WANT_READ/WANT_WRITE; these park the
+green task until the fd is ready and retry. On a plain OS thread (blocking
+fd) the WANT codes never occur and these reduce to one SSL call.
+
+### `sslWantWrite`
+
+```milo
+fn sslWantWrite(): i32
+```
+
+_Undocumented._
+
 ### `sslWriteFd`
 
 ```milo

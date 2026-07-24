@@ -26,6 +26,16 @@ pub fn afInet6(): i32
 
 23 here, against 30 on darwin and 10 on linux — no two of the three agree.
 
+### `clampCount`
+
+```milo
+fn clampCount(nbyte: i64): u32
+```
+
+A count that doesn't fit in the CRT's 32-bit parameter is clamped, not truncated:
+a short read/write is a contract every caller already handles, whereas truncation
+would silently transfer the low 32 bits of the requested length.
+
 ### `close`
 
 ```milo
@@ -122,6 +132,14 @@ _Undocumented._
 
 ```milo
 pub fn ensureNetInit(): void
+```
+
+_Undocumented._
+
+### `exePathInto`
+
+```milo
+pub fn exePathInto(buf: *u8, bufsize: i64): i64
 ```
 
 _Undocumented._

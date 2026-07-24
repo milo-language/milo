@@ -75,7 +75,7 @@ pub fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool {
 
 // ── String materialization (allocates only when user requests the value) ──
 
-pub fn _jsonHexVal(c: u8): i64 {
+fn jsonHexVal(c: u8): i64 {
     if c >= 48 && c <= 57 {
         return (c - 48) as i64
     } // 0-9
@@ -140,10 +140,10 @@ pub fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
             else if esc == 'u' && i + 4 < len {
                 // \uXXXX → codepoint → UTF-8 bytes (BMP only; surrogate pairs
                 // emit per-half, which round-trips fine for terminal control input).
-                let cp = (_jsonHexVal(source[start + i + 1]) << 12)
-                | (_jsonHexVal(source[start + i + 2]) << 8)
-                | (_jsonHexVal(source[start + i + 3]) << 4)
-                | _jsonHexVal(source[start + i + 4])
+                let cp = (jsonHexVal(source[start + i + 1]) << 12)
+                | (jsonHexVal(source[start + i + 2]) << 8)
+                | (jsonHexVal(source[start + i + 3]) << 4)
+                | jsonHexVal(source[start + i + 4])
                 i = i + 4
                 if cp < 0x80 {
                     result.push(cp as u8)

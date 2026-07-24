@@ -30,7 +30,7 @@ from "std/os" import {
     unlink
 }
 from "std/io" import {
-    File, IoError, _ioError
+    File, IoError, ioError
 }
 from "std/platform" import {
     direntNameOffset,
@@ -187,58 +187,58 @@ pub fn appendFile(path: &string, data: &string): Result<i64, IoError> {
 
 // ── Safe wrappers around POSIX fs operations ──
 // Return Result<bool, IoError> for operations with no meaningful return value.
-pub fn _ok(): Result<bool, IoError> {
+pub fn ok(): Result<bool, IoError> {
     return Result.Ok(true)
 }
 
-pub fn _errPath(path: &string): Result<bool, IoError> {
-    return Result.Err(_ioError(path))
+fn errPath(path: &string): Result<bool, IoError> {
+    return Result.Err(ioError(path))
 }
 
-pub fn _errFd(msg: &string): Result<bool, IoError> {
+fn errFd(msg: &string): Result<bool, IoError> {
     return Result.Err(IoError.Other(msg.clone()))
 }
 
 pub fn removeFile(path: &string): Result<bool, IoError> {
     if unlink(path) != 0 {
-        return _errPath(path)
+        return errPath(path)
     }
-    return _ok()
+    return ok()
 }
 
 pub fn makeDir(path: &string, mode: i32): Result<bool, IoError> {
     if mkdir(path, mode as u32) != 0 {
-        return _errPath(path)
+        return errPath(path)
     }
-    return _ok()
+    return ok()
 }
 
 pub fn removeDir(path: &string): Result<bool, IoError> {
     if rmdir(path) != 0 {
-        return _errPath(path)
+        return errPath(path)
     }
-    return _ok()
+    return ok()
 }
 
 pub fn renameFile(oldPath: &string, newPath: &string): Result<bool, IoError> {
     if rename(oldPath, newPath) != 0 {
-        return _errPath(oldPath)
+        return errPath(oldPath)
     }
-    return _ok()
+    return ok()
 }
 
 pub fn hardLink(existing: &string, newPath: &string): Result<bool, IoError> {
     if link(existing, newPath) != 0 {
-        return _errPath(existing)
+        return errPath(existing)
     }
-    return _ok()
+    return ok()
 }
 
 pub fn softLink(target: &string, path: &string): Result<bool, IoError> {
     if symlink(target, path) != 0 {
-        return _errPath(path)
+        return errPath(path)
     }
-    return _ok()
+    return ok()
 }
 
 pub fn readLink(path: &string): Result<string, IoError> {
@@ -246,7 +246,7 @@ pub fn readLink(path: &string): Result<string, IoError> {
     unsafe {
         let n = readlink(path, buf as *u8, 4096)
         if n < 0 {
-            return Result.Err(_ioError(path))
+            return Result.Err(ioError(path))
         }
         buf[n] = 0
         return Result.Ok(_cstrToString(buf as *u8))
@@ -258,7 +258,7 @@ pub fn realPath(path: &string): Result<string, IoError> {
     unsafe {
         let r = realpath(path, buf as *u8)
         if r as i64 == 0 as i64 {
-            return Result.Err(_ioError(path))
+            return Result.Err(ioError(path))
         }
         return Result.Ok(_cstrToString(buf as *u8))
     }
@@ -266,65 +266,65 @@ pub fn realPath(path: &string): Result<string, IoError> {
 
 pub fn setMode(path: &string, mode: i32): Result<bool, IoError> {
     if chmod(path, mode as u32) != 0 {
-        return _errPath(path)
+        return errPath(path)
     }
-    return _ok()
+    return ok()
 }
 
 pub fn setFdMode(fd: i32, mode: i32): Result<bool, IoError> {
     if fchmod(fd, mode as u32) != 0 {
-        return _errFd("fchmod failed")
+        return errFd("fchmod failed")
     }
-    return _ok()
+    return ok()
 }
 
 pub fn setOwner(path: &string, uid: u32, gid: u32): Result<bool, IoError> {
     if chown(path, uid, gid) != 0 {
-        return _errPath(path)
+        return errPath(path)
     }
-    return _ok()
+    return ok()
 }
 
 pub fn setFdOwner(fd: i32, uid: u32, gid: u32): Result<bool, IoError> {
     if fchown(fd, uid, gid) != 0 {
-        return _errFd("fchown failed")
+        return errFd("fchown failed")
     }
-    return _ok()
+    return ok()
 }
 
 pub fn setLinkOwner(path: &string, uid: u32, gid: u32): Result<bool, IoError> {
     if lchown(path, uid, gid) != 0 {
-        return _errPath(path)
+        return errPath(path)
     }
-    return _ok()
+    return ok()
 }
 
 pub fn truncateFile(path: &string, length: i64): Result<bool, IoError> {
     if truncate(path, length) != 0 {
-        return _errPath(path)
+        return errPath(path)
     }
-    return _ok()
+    return ok()
 }
 
 pub fn truncateFd(fd: i32, length: i64): Result<bool, IoError> {
     if ftruncate(fd, length) != 0 {
-        return _errFd("ftruncate failed")
+        return errFd("ftruncate failed")
     }
-    return _ok()
+    return ok()
 }
 
 pub fn syncFd(fd: i32): Result<bool, IoError> {
     if fsync(fd) != 0 {
-        return _errFd("fsync failed")
+        return errFd("fsync failed")
     }
-    return _ok()
+    return ok()
 }
 
 pub fn dataSyncFd(fd: i32): Result<bool, IoError> {
     if fdatasync(fd) != 0 {
-        return _errFd("fdatasync failed")
+        return errFd("fdatasync failed")
     }
-    return _ok()
+    return ok()
 }
 
 pub fn makeTempDir(prefix: &string): Result<string, IoError> {
@@ -338,7 +338,7 @@ pub fn makeTempDir(prefix: &string): Result<string, IoError> {
         buf[tmpl.len] = 0
         let r = mkdtemp(buf as *u8)
         if r as i64 == 0 as i64 {
-            return Result.Err(_ioError(prefix))
+            return Result.Err(ioError(prefix))
         }
         return Result.Ok(_cstrToString(r))
     }
@@ -357,9 +357,9 @@ pub fn currentDir(): Result<string, IoError> {
 
 pub fn changeDir(path: &string): Result<bool, IoError> {
     if chdir(path) != 0 {
-        return _errPath(path)
+        return errPath(path)
     }
-    return _ok()
+    return ok()
 }
 
 pub fn lstatInfo(path: &string): FileInfo {

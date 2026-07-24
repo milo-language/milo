@@ -269,33 +269,33 @@ pub fn selectStateSize(): i64 {
 
 // ── helpers to read/write i64, i32, ptr at offset ──
 
-pub fn _rtReadI64(base: *u8, off: i64): i64 {
+pub fn rtReadI64(base: *u8, off: i64): i64 {
     unsafe {
         let addr = (base as i64 + off) as *i64
         return *addr
     }
 }
 
-pub fn _rtWriteI64(base: *u8, off: i64, val: i64): void {
+pub fn rtWriteI64(base: *u8, off: i64, val: i64): void {
     unsafe {
         memcpy((base as i64 + off) as *u8, (val.addrOf()) as *u8, 8)
     }
 }
 
-pub fn _rtReadI32(base: *u8, off: i64): i32 {
+fn rtReadI32(base: *u8, off: i64): i32 {
     unsafe {
         let addr = (base as i64 + off) as *i32
         return *addr
     }
 }
 
-pub fn _rtWriteI32(base: *u8, off: i64, val: i32): void {
+fn rtWriteI32(base: *u8, off: i64, val: i32): void {
     unsafe {
         memcpy((base as i64 + off) as *u8, (val.addrOf()) as *u8, 4)
     }
 }
 
-pub fn _rtReadPtr(base: *u8, off: i64): *u8 {
+fn rtReadPtr(base: *u8, off: i64): *u8 {
     unsafe {
         let addr = (base as i64 + off) as *i64
         let val = *addr
@@ -303,7 +303,7 @@ pub fn _rtReadPtr(base: *u8, off: i64): *u8 {
     }
 }
 
-pub fn _rtWritePtr(base: *u8, off: i64, val: *u8): void {
+pub fn rtWritePtr(base: *u8, off: i64, val: *u8): void {
     unsafe {
         memcpy((base as i64 + off) as *u8, (val.addrOf()) as *u8, 8)
     }
@@ -317,17 +317,17 @@ pub struct Task {
 
 // ── scheduler access ──
 
-pub fn _getSched(): *u8 {
+fn getSched(): *u8 {
     return _schedulerGet()
 }
 
-pub fn _setSched(s: *u8): void {
+fn setSched(s: *u8): void {
     _schedulerSet(s)
 }
 
 pub fn schedulerEnsureInit(): void {
     unsafe {
-        if _getSched() as i64 != 0 {
+        if getSched() as i64 != 0 {
             return
         }
 
@@ -337,31 +337,31 @@ pub fn schedulerEnsureInit(): void {
         let ctx = malloc(uctxSize())
         memset(ctx, 0, uctxSize())
         getcontext(ctx)
-        _rtWritePtr(sched, sCtx(), ctx)
+        rtWritePtr(sched, sCtx(), ctx)
 
         let el = eventLoopNew()!
-        _rtWriteI32(sched, sElFd(), eventLoopFd(el))
-        _rtWriteI32(sched, sWakeupId(), eventLoopInitWakeup(el))
+        rtWriteI32(sched, sElFd(), eventLoopFd(el))
+        rtWriteI32(sched, sWakeupId(), eventLoopInitWakeup(el))
 
         let xmtx = malloc(64)
         pthread_mutex_init(xmtx, 0 as *u8)
-        _rtWritePtr(sched, sXferMutex(), xmtx)
+        rtWritePtr(sched, sXferMutex(), xmtx)
 
-        _setSched(sched)
+        setSched(sched)
     }
 }
 
 // ── task entry trampoline ──
 
-pub fn _taskEntry(): void {
-    let sched = _getSched()
-    let task = _rtReadPtr(sched, sCurrent())
-    let fnPtr = _rtReadPtr(task, tClosureFn())
-    let envPtr = _rtReadPtr(task, tClosureEnv())
+fn taskEntry(): void {
+    let sched = getSched()
+    let task = rtReadPtr(sched, sCurrent())
+    let fnPtr = rtReadPtr(task, tClosureFn())
+    let envPtr = rtReadPtr(task, tClosureEnv())
     _callClosureVoid(fnPtr, envPtr)
 
-    _rtWriteI32(task, tState(), taskDone())
-    swapcontext(_rtReadPtr(task, tCtx()), _rtReadPtr(sched, sCtx()))
+    rtWriteI32(task, tState(), taskDone())
+    swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
 }
 
 // ── public API ──
@@ -385,7 +385,7 @@ impl Task {
     fn spawnWithStack(f: () => void, stackBytes: i64): Task {
         unsafe {
             schedulerEnsureInit()
-            let sched = _getSched()
+            let sched = getSched()
 
             var fnPtr: *u8 = 0 as *u8
             var envPtr: *u8 = 0 as *u8
@@ -394,37 +394,37 @@ impl Task {
 
             let task = malloc(taskStructSize())
             memset(task, 0, taskStructSize())
-            _rtWriteI32(task, tWaitFd(), -1)
-            _rtWritePtr(task, tClosureFn(), fnPtr)
-            _rtWritePtr(task, tClosureEnv(), envPtr)
-            _rtWritePtr(task, tSched(), sched)
+            rtWriteI32(task, tWaitFd(), -1)
+            rtWritePtr(task, tClosureFn(), fnPtr)
+            rtWritePtr(task, tClosureEnv(), envPtr)
+            rtWritePtr(task, tSched(), sched)
 
             let total = guardPageSize() + stackBytes
             let stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0 as i64)
-            _rtWritePtr(task, tStack(), stackMem)
-            _rtWriteI64(task, tStackSize(), total)
+            rtWritePtr(task, tStack(), stackMem)
+            rtWriteI64(task, tStackSize(), total)
 
             let ctx = malloc(uctxSize())
             memset(ctx, 0, uctxSize())
             getcontext(ctx)
 
             let usable = (stackMem as i64 + guardPageSize()) as *u8
-            _rtWritePtr(ctx, uctxStackPtrOffset(), usable)
-            _rtWriteI64(ctx, uctxStackSizeOffset(), stackBytes)
+            rtWritePtr(ctx, uctxStackPtrOffset(), usable)
+            rtWriteI64(ctx, uctxStackSizeOffset(), stackBytes)
 
-            let schedCtx = _rtReadPtr(sched, sCtx())
-            _rtWritePtr(ctx, uctxLinkOffset(), schedCtx)
+            let schedCtx = rtReadPtr(sched, sCtx())
+            rtWritePtr(ctx, uctxLinkOffset(), schedCtx)
 
-            makecontext(ctx, _taskEntry as *u8, 0)
+            makecontext(ctx, taskEntry as *u8, 0)
 
             mprotect(stackMem, guardPageSize(), protNone())
 
-            _rtWritePtr(task, tCtx(), ctx)
+            rtWritePtr(task, tCtx(), ctx)
 
-            _enqueueRun(sched, task)
+            enqueueRun(sched, task)
 
-            let n = _rtReadI64(sched, sNumTasks()) + 1
-            _rtWriteI64(sched, sNumTasks(), n)
+            let n = rtReadI64(sched, sNumTasks()) + 1
+            rtWriteI64(sched, sNumTasks(), n)
 
             return Task {
                 _ptr: task
@@ -444,14 +444,14 @@ impl Task {
             }
             let cur = schedulerCurrent()
             if cur as i64 != 0 {
-                _rtWritePtr(task, tJoiner(), cur)
+                rtWritePtr(task, tJoiner(), cur)
                 schedulerPark()
             } else {
                 let cell = malloc(8)
-                _rtWriteI64(cell, 0, 0)
-                _rtWritePtr(task, tJoinCell(), cell)
-                while _rtReadI64(cell, 0) == 0 {
-                    _schedulerBlockMain()
+                rtWriteI64(cell, 0, 0)
+                rtWritePtr(task, tJoinCell(), cell)
+                while rtReadI64(cell, 0) == 0 {
+                    schedulerBlockMain()
                 }
                 free(cell)
             }
@@ -468,7 +468,7 @@ impl Task {
 // awaiter park and be woken from this foreign thread.
 
 // pthread entry: unpacks { fnPtr, envPtr }, runs the void closure, frees both.
-pub fn _osThreadTrampoline(arg: *u8): *u8 {
+fn osThreadTrampoline(arg: *u8): *u8 {
     unsafe {
         var fnPtr: *u8 = 0 as *u8
         var envPtr: *u8 = 0 as *u8
@@ -485,12 +485,12 @@ pub fn _osThreadTrampoline(arg: *u8): *u8 {
 // thread exit with no join — nothing outlives the worker (the plan's no-leak
 // requirement). If main returns first, Go exit semantics abandon it, symmetric
 // with an abandoned green task.
-pub fn _spawnOsThreadDetached(f: () => void): void {
+pub fn spawnOsThreadDetached(f: () => void): void {
     unsafe {
         let packed = malloc(16)
         memcpy(packed, (f.addrOf()) as *u8, 16)
         var tid: i64 = 0
-        let r = pthread_create((tid.addrOf()) as *u8, 0 as *u8, _osThreadTrampoline as *u8, packed)
+        let r = pthread_create((tid.addrOf()) as *u8, 0 as *u8, osThreadTrampoline as *u8, packed)
         if r == 0 {
             pthread_detach(tid)
         } else {
@@ -564,7 +564,7 @@ impl Promise<T> {
     // pushing several Promise.blocking handles into Promise.all.
     fn blocking(f: () => T): Promise<T> {
         let ch = Channel<T>.new(1)!
-        _spawnOsThreadDetached(move(): void => {
+        spawnOsThreadDetached(move(): void => {
             let result: T = f()
             ch.send(result)!
         }
@@ -602,7 +602,7 @@ impl Promise<T> {
                     return Result.Ok(val)
                 }
                 Option.None => {
-                    _schedulerBlockMain()
+                    schedulerBlockMain()
                 }
             }
         }
@@ -652,7 +652,7 @@ pub fn promiseRace<T>(promises: Vec<Promise<T>>): Promise<T> {
             if schedulerCurrent() as i64 != 0 {
                 schedulerYield()
             } else {
-                _schedulerTick()
+                schedulerTick()
             }
         }
     }
@@ -661,79 +661,79 @@ pub fn promiseRace<T>(promises: Vec<Promise<T>>): Promise<T> {
 }
 
 pub fn schedulerYield(): void {
-    let sched = _getSched()
+    let sched = getSched()
     if sched as i64 == 0 {
         return
     }
-    let task = _rtReadPtr(sched, sCurrent())
+    let task = rtReadPtr(sched, sCurrent())
     if task as i64 == 0 {
         return
     }
-    _rtWriteI32(task, tState(), taskReady())
-    swapcontext(_rtReadPtr(task, tCtx()), _rtReadPtr(sched, sCtx()))
+    rtWriteI32(task, tState(), taskReady())
+    swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
 }
 
 pub fn schedulerWaitRead(fd: i32): void {
-    let sched = _getSched()
+    let sched = getSched()
     if sched as i64 == 0 {
         return
     }
-    let task = _rtReadPtr(sched, sCurrent())
+    let task = rtReadPtr(sched, sCurrent())
     if task as i64 == 0 {
         return
     }
 
-    _rtWriteI32(task, tState(), taskWaitingIo())
-    _rtWriteI32(task, tWaitFd(), fd)
+    rtWriteI32(task, tState(), taskWaitingIo())
+    rtWriteI32(task, tWaitFd(), fd)
 
     // register with event loop
-    var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
+    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
     eventRegisterRead(el, fd)
 
     // move task to waiting list
-    _enqueueWait(sched, task)
+    enqueueWait(sched, task)
 
-    swapcontext(_rtReadPtr(task, tCtx()), _rtReadPtr(sched, sCtx()))
+    swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
 }
 
 pub fn schedulerWaitWrite(fd: i32): void {
-    let sched = _getSched()
+    let sched = getSched()
     if sched as i64 == 0 {
         return
     }
-    let task = _rtReadPtr(sched, sCurrent())
+    let task = rtReadPtr(sched, sCurrent())
     if task as i64 == 0 {
         return
     }
 
-    _rtWriteI32(task, tState(), taskWaitingIo())
-    _rtWriteI32(task, tWaitFd(), fd)
+    rtWriteI32(task, tState(), taskWaitingIo())
+    rtWriteI32(task, tWaitFd(), fd)
     // mark as write-wait so deregister uses correct filter
     var one: u8 = 1
     unsafe {
         memcpy((task as i64 + tWaitWrite()) as *u8, (one.addrOf()) as *u8, 1)
     }
 
-    var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
+    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
     eventRegisterWrite(el, fd)
-    _enqueueWait(sched, task)
+    enqueueWait(sched, task)
 
-    swapcontext(_rtReadPtr(task, tCtx()), _rtReadPtr(sched, sCtx()))
+    swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
 }
 
 pub fn schedulerCurrent(): *u8 {
-    let sched = _getSched()
+    let sched = getSched()
     if sched as i64 == 0 {
         return 0 as *u8
     }
-    return _rtReadPtr(sched, sCurrent())
+    return rtReadPtr(sched, sCurrent())
 }
 
 // True once a green scheduler has been created on this thread. Lets a main-
 // context waiter (schedulerCurrent()==0) tell "drive the scheduler" apart from
 // "pure pthread, block on a cond".
 pub fn schedulerExists(): bool {
-    return _getSched() as i64 != 0
+    return getSched() as i64 != 0
 }
 
 // ── park / unpark ──
@@ -744,16 +744,16 @@ pub fn schedulerExists(): bool {
 // Unpark must not precede park on the same thread — cross-thread unparks are
 // safe at any time because they are applied only in scheduler context.
 pub fn schedulerPark(): void {
-    let sched = _getSched()
+    let sched = getSched()
     if sched as i64 == 0 {
         return
     }
-    let task = _rtReadPtr(sched, sCurrent())
+    let task = rtReadPtr(sched, sCurrent())
     if task as i64 == 0 {
         return
     }
-    _rtWriteI32(task, tState(), taskWaitingPark())
-    swapcontext(_rtReadPtr(task, tCtx()), _rtReadPtr(sched, sCtx()))
+    rtWriteI32(task, tState(), taskWaitingPark())
+    swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
 }
 
 // Make a parked task runnable. Safe from any thread: on the task's own
@@ -764,35 +764,35 @@ pub fn schedulerUnpark(task: *u8): void {
     if task as i64 == 0 {
         return
     }
-    let home = _rtReadPtr(task, tSched())
+    let home = rtReadPtr(task, tSched())
     if home as i64 == 0 {
         return
     }
-    if home as i64 == _getSched() as i64 {
-        _rtWriteI32(task, tState(), taskReady())
-        _enqueueRun(home, task)
+    if home as i64 == getSched() as i64 {
+        rtWriteI32(task, tState(), taskReady())
+        enqueueRun(home, task)
     } else {
-        let mtx = _rtReadPtr(home, sXferMutex())
+        let mtx = rtReadPtr(home, sXferMutex())
         pthread_mutex_lock(mtx)
-        _rtWritePtr(task, tNext(), _rtReadPtr(home, sXferHead()))
-        _rtWritePtr(home, sXferHead(), task)
+        rtWritePtr(task, tNext(), rtReadPtr(home, sXferHead()))
+        rtWritePtr(home, sXferHead(), task)
         pthread_mutex_unlock(mtx)
-        var el = eventLoopFromFd(_rtReadI32(home, sElFd()))
-        eventLoopNotify(el, _rtReadI32(home, sWakeupId()))
+        var el = eventLoopFromFd(rtReadI32(home, sElFd()))
+        eventLoopNotify(el, rtReadI32(home, sWakeupId()))
     }
 }
 
 // move cross-thread unparked tasks onto the run queue (scheduler thread only)
-pub fn _drainXfer(sched: *u8): void {
-    let mtx = _rtReadPtr(sched, sXferMutex())
+fn drainXfer(sched: *u8): void {
+    let mtx = rtReadPtr(sched, sXferMutex())
     pthread_mutex_lock(mtx)
-    var cur = _rtReadPtr(sched, sXferHead())
-    _rtWritePtr(sched, sXferHead(), 0 as *u8)
+    var cur = rtReadPtr(sched, sXferHead())
+    rtWritePtr(sched, sXferHead(), 0 as *u8)
     pthread_mutex_unlock(mtx)
     while cur as i64 != 0 {
-        let next = _rtReadPtr(cur, tNext())
-        _rtWriteI32(cur, tState(), taskReady())
-        _enqueueRun(sched, cur)
+        let next = rtReadPtr(cur, tNext())
+        rtWriteI32(cur, tState(), taskReady())
+        enqueueRun(sched, cur)
         cur = next
     }
 }
@@ -801,25 +801,25 @@ pub fn _drainXfer(sched: *u8): void {
 
 // Allocate a SelectState (mutex-guarded claim record). Caller frees via
 // _selectStateFree once the select and all its arms are torn down.
-pub fn _selectStateNew(): *u8 {
+pub fn selectStateNew(): *u8 {
     unsafe {
         let st = malloc(selectStateSize())
         memset(st, 0, selectStateSize())
         let m = malloc(64)
         pthread_mutex_init(m, 0 as *u8)
-        _rtWritePtr(st, ssMtx(), m)
+        rtWritePtr(st, ssMtx(), m)
         let c = malloc(48)
         pthread_cond_init(c, 0 as *u8)
-        _rtWritePtr(st, ssCond(), c)
-        _rtWriteI64(st, ssClaimed(), -1)
-        _rtWritePtr(st, ssTask(), schedulerCurrent())
+        rtWritePtr(st, ssCond(), c)
+        rtWriteI64(st, ssClaimed(), -1)
+        rtWritePtr(st, ssTask(), schedulerCurrent())
         return st
     }
 }
 
-pub fn _selectStateFree(st: *u8): void {
-    let m = _rtReadPtr(st, ssMtx())
-    let c = _rtReadPtr(st, ssCond())
+pub fn selectStateFree(st: *u8): void {
+    let m = rtReadPtr(st, ssMtx())
+    let c = rtReadPtr(st, ssCond())
     pthread_cond_destroy(c)
     free(c)
     pthread_mutex_destroy(m)
@@ -830,17 +830,17 @@ pub fn _selectStateFree(st: *u8): void {
 // Claim the select for `arm` if nothing has won yet, and wake the owning task
 // only if it has already committed to parking. Safe from any thread (a foreign
 // pthread firing a channel takes this path); unpark itself is thread-safe.
-pub fn _selectTryClaim(st: *u8, arm: i64): void {
-    let m = _rtReadPtr(st, ssMtx())
+pub fn selectTryClaim(st: *u8, arm: i64): void {
+    let m = rtReadPtr(st, ssMtx())
     pthread_mutex_lock(m)
-    if _rtReadI64(st, ssClaimed()) == -1 {
-        _rtWriteI64(st, ssClaimed(), arm)
-        if _rtReadI64(st, ssParked()) == 1 {
-            schedulerUnpark(_rtReadPtr(st, ssTask()))
+    if rtReadI64(st, ssClaimed()) == -1 {
+        rtWriteI64(st, ssClaimed(), arm)
+        if rtReadI64(st, ssParked()) == 1 {
+            schedulerUnpark(rtReadPtr(st, ssTask()))
         }
         // Wakes a no-scheduler main context blocked in _selectWaitState. Signalled under
         // the lock so it cannot be missed between the claim and the wait.
-        pthread_cond_signal(_rtReadPtr(st, ssCond()))
+        pthread_cond_signal(rtReadPtr(st, ssCond()))
     }
     pthread_mutex_unlock(m)
 }
@@ -858,21 +858,21 @@ pub fn _selectTryClaim(st: *u8, arm: i64): void {
 // Main context takes the same shape channels already use (`_schedulerPollMain` in
 // std/sync): nobody else drives the scheduler, so poll it a bounded tick and re-check the
 // claim. Parking there, or driving the poll from inside the lock, is what hangs.
-pub fn _selectWaitState(st: *u8): i64 {
-    let m = _rtReadPtr(st, ssMtx())
+pub fn selectWaitState(st: *u8): i64 {
+    let m = rtReadPtr(st, ssMtx())
     while true {
         pthread_mutex_lock(m)
-        let already = _rtReadI64(st, ssClaimed())
+        let already = rtReadI64(st, ssClaimed())
         if already >= 0 {
             pthread_mutex_unlock(m)
             return already
         }
         if schedulerCurrent() as i64 != 0 {
-            _rtWriteI64(st, ssParked(), 1)
-            _rtWritePtr(st, ssTask(), schedulerCurrent())
+            rtWriteI64(st, ssParked(), 1)
+            rtWritePtr(st, ssTask(), schedulerCurrent())
             pthread_mutex_unlock(m)
             schedulerPark()
-            return _rtReadI64(st, ssClaimed())
+            return rtReadI64(st, ssClaimed())
         }
         // Main context. Leave ssParked at 0: there is no task to unpark, and claiming
         // would try to unpark a null one.
@@ -883,12 +883,12 @@ pub fn _selectWaitState(st: *u8): i64 {
             // same ladder channels use. Note fd and timer arms cannot fire here at all:
             // they need the event loop, and Select.wait refuses that combination up front
             // rather than blocking on a wake that can never come.
-            pthread_cond_wait(_rtReadPtr(st, ssCond()), m)
+            pthread_cond_wait(rtReadPtr(st, ssCond()), m)
             pthread_mutex_unlock(m)
             continue
         }
         pthread_mutex_unlock(m)
-        _schedulerPollMainSelect()
+        schedulerPollMainSelect()
     }
     return -1
 }
@@ -896,15 +896,15 @@ pub fn _selectWaitState(st: *u8): i64 {
 // Link an fd/read-or-write or timer node into the scheduler's select list and,
 // for fd arms, register the fd with the event loop. Scheduler thread only
 // (arms are always set up from the task that owns the Select).
-pub fn _selectRegisterFd(node: *u8): void {
-    let sched = _getSched()
+pub fn selectRegisterFd(node: *u8): void {
+    let sched = getSched()
     if sched as i64 == 0 {
         return
     }
-    let kind = _rtReadI64(node, nodeKind())
+    let kind = rtReadI64(node, nodeKind())
     if kind == kindSelRead() || kind == kindSelWrite() {
-        var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
-        let fd = _rtReadI32(node, nodeFd())
+        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+        let fd = rtReadI32(node, nodeFd())
         if kind == kindSelWrite() {
             eventRegisterWrite(el, fd)
         } 
@@ -912,32 +912,32 @@ pub fn _selectRegisterFd(node: *u8): void {
             eventRegisterRead(el, fd)
         }
     }
-    _rtWritePtr(node, nodeNext(), _rtReadPtr(sched, sSelFdHead()))
-    _rtWritePtr(sched, sSelFdHead(), node)
+    rtWritePtr(node, nodeNext(), rtReadPtr(sched, sSelFdHead()))
+    rtWritePtr(sched, sSelFdHead(), node)
 }
 
 // Unlink a node from the select list and deregister its fd. Idempotent: a node
 // that already fell off the list (never happens today, but cheap to guard) is
 // skipped.
-pub fn _selectUnregisterFd(node: *u8): void {
-    let sched = _getSched()
+pub fn selectUnregisterFd(node: *u8): void {
+    let sched = getSched()
     if sched as i64 == 0 {
         return
     }
     var prev: *u8 = 0 as *u8
-    var cur = _rtReadPtr(sched, sSelFdHead())
+    var cur = rtReadPtr(sched, sSelFdHead())
     while cur as i64 != 0 {
-        let next = _rtReadPtr(cur, nodeNext())
+        let next = rtReadPtr(cur, nodeNext())
         if cur as i64 == node as i64 {
             if prev as i64 == 0 {
-                _rtWritePtr(sched, sSelFdHead(), next)
+                rtWritePtr(sched, sSelFdHead(), next)
             } else {
-                _rtWritePtr(prev, nodeNext(), next)
+                rtWritePtr(prev, nodeNext(), next)
             }
-            let kind = _rtReadI64(node, nodeKind())
+            let kind = rtReadI64(node, nodeKind())
             if kind == kindSelRead() || kind == kindSelWrite() {
-                var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
-                eventDeregister(el, _rtReadI32(node, nodeFd()), kind == kindSelWrite())
+                var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+                eventDeregister(el, rtReadI32(node, nodeFd()), kind == kindSelWrite())
             }
             return
         }
@@ -948,7 +948,7 @@ pub fn _selectUnregisterFd(node: *u8): void {
 
 // Smallest timer deadline remaining (ms), clamped to `cap`. Lets the poll block
 // only until the next select timeout instead of the default tick interval.
-pub fn _selMinTimeout(sched: *u8, cap: i32): i32 {
+fn selMinTimeout(sched: *u8, cap: i32): i32 {
     // Track whether any bound exists rather than seeding an i64-max sentinel
     // (large i64 literals don't round-trip cleanly through the lexer). cap>=0
     // is itself a bound; a timer arm shrinks it. cap<0 ("block forever") with
@@ -956,10 +956,10 @@ pub fn _selMinTimeout(sched: *u8, cap: i32): i32 {
     var haveBound = cap >= 0
     var best: i64 = cap as i64
     let nowMs = epochMillis()
-    var cur = _rtReadPtr(sched, sSelFdHead())
+    var cur = rtReadPtr(sched, sSelFdHead())
     while cur as i64 != 0 {
-        if _rtReadI64(cur, nodeKind()) == kindSelTimer() {
-            var rem = _rtReadI64(cur, nodeDeadline()) - nowMs
+        if rtReadI64(cur, nodeKind()) == kindSelTimer() {
+            var rem = rtReadI64(cur, nodeDeadline()) - nowMs
             if rem < 0 {
                 rem = 0
             }
@@ -968,7 +968,7 @@ pub fn _selMinTimeout(sched: *u8, cap: i32): i32 {
                 haveBound = true
             }
         }
-        cur = _rtReadPtr(cur, nodeNext())
+        cur = rtReadPtr(cur, nodeNext())
     }
     if !haveBound {
         return -1
@@ -977,18 +977,18 @@ pub fn _selMinTimeout(sched: *u8, cap: i32): i32 {
 }
 
 // Claim select fd arms whose fd fired this poll.
-pub fn _wakeSelectFds(sched: *u8, readyFds: *i32, count: i32): void {
+fn wakeSelectFds(sched: *u8, readyFds: *i32, count: i32): void {
     unsafe {
-        var cur = _rtReadPtr(sched, sSelFdHead())
+        var cur = rtReadPtr(sched, sSelFdHead())
         while cur as i64 != 0 {
-            let next = _rtReadPtr(cur, nodeNext())
-            let kind = _rtReadI64(cur, nodeKind())
+            let next = rtReadPtr(cur, nodeNext())
+            let kind = rtReadI64(cur, nodeKind())
             if kind == kindSelRead() || kind == kindSelWrite() {
-                let fd = _rtReadI32(cur, nodeFd())
+                let fd = rtReadI32(cur, nodeFd())
                 var i: i32 = 0
                 while i < count {
                     if readyFds[i as i64] == fd {
-                        _selectTryClaim(_rtReadPtr(cur, nodeA()), _rtReadI64(cur, nodeArm()))
+                        selectTryClaim(rtReadPtr(cur, nodeA()), rtReadI64(cur, nodeArm()))
                     }
                     i = i + 1
                 }
@@ -999,14 +999,14 @@ pub fn _wakeSelectFds(sched: *u8, readyFds: *i32, count: i32): void {
 }
 
 // Claim select timer arms whose deadline has passed.
-pub fn _wakeSelectTimers(sched: *u8): void {
+fn wakeSelectTimers(sched: *u8): void {
     let nowMs = epochMillis()
-    var cur = _rtReadPtr(sched, sSelFdHead())
+    var cur = rtReadPtr(sched, sSelFdHead())
     while cur as i64 != 0 {
-        let next = _rtReadPtr(cur, nodeNext())
-        if _rtReadI64(cur, nodeKind()) == kindSelTimer() {
-            if nowMs >= _rtReadI64(cur, nodeDeadline()) {
-                _selectTryClaim(_rtReadPtr(cur, nodeA()), _rtReadI64(cur, nodeArm()))
+        let next = rtReadPtr(cur, nodeNext())
+        if rtReadI64(cur, nodeKind()) == kindSelTimer() {
+            if nowMs >= rtReadI64(cur, nodeDeadline()) {
+                selectTryClaim(rtReadPtr(cur, nodeA()), rtReadI64(cur, nodeArm()))
             }
         }
         cur = next
@@ -1015,14 +1015,14 @@ pub fn _wakeSelectTimers(sched: *u8): void {
 
 // poll the event loop once and make everything runnable that became ready:
 // io-waiting tasks whose fd fired, and cross-thread unparks via the wakeup event
-pub fn _pollAndWake(sched: *u8, timeoutMs: i32): void {
+fn pollAndWake(sched: *u8, timeoutMs: i32): void {
     unsafe {
-        var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
+        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
         var readyBuf: [u8; 256] = [0; 256]
-        let effTimeout = _selMinTimeout(sched, timeoutMs)
+        let effTimeout = selMinTimeout(sched, timeoutMs)
         let n = eventPoll(el, readyBuf as *i32, 64, effTimeout)
         if n > 0 {
-            let wakeupId = _rtReadI32(sched, sWakeupId())
+            let wakeupId = rtReadI32(sched, sWakeupId())
             let fds = readyBuf as *i32
             var i: i32 = 0
             while i < n {
@@ -1031,58 +1031,58 @@ pub fn _pollAndWake(sched: *u8, timeoutMs: i32): void {
                 }
                 i = i + 1
             }
-            _wakeReadyTasks(sched, fds, n)
-            _wakeSelectFds(sched, fds, n)
+            wakeReadyTasks(sched, fds, n)
+            wakeSelectFds(sched, fds, n)
         }
-        _wakeSelectTimers(sched)
-        _drainXfer(sched)
+        wakeSelectTimers(sched)
+        drainXfer(sched)
     }
 }
 
 // ── internal queue ops ──
 
-pub fn _enqueueRun(sched: *u8, task: *u8): void {
-    _rtWritePtr(task, tNext(), 0 as *u8)
-    let head = _rtReadPtr(sched, sRunHead())
+fn enqueueRun(sched: *u8, task: *u8): void {
+    rtWritePtr(task, tNext(), 0 as *u8)
+    let head = rtReadPtr(sched, sRunHead())
     if head as i64 == 0 {
-        _rtWritePtr(sched, sRunHead(), task)
-        _rtWritePtr(sched, sRunTail(), task)
+        rtWritePtr(sched, sRunHead(), task)
+        rtWritePtr(sched, sRunTail(), task)
     } else {
-        let tail = _rtReadPtr(sched, sRunTail())
-        _rtWritePtr(tail, tNext(), task)
-        _rtWritePtr(sched, sRunTail(), task)
+        let tail = rtReadPtr(sched, sRunTail())
+        rtWritePtr(tail, tNext(), task)
+        rtWritePtr(sched, sRunTail(), task)
     }
 }
 
-pub fn _dequeueRun(sched: *u8): *u8 {
-    let head = _rtReadPtr(sched, sRunHead())
+fn dequeueRun(sched: *u8): *u8 {
+    let head = rtReadPtr(sched, sRunHead())
     if head as i64 == 0 {
         return 0 as *u8
     }
-    let next = _rtReadPtr(head, tNext())
-    _rtWritePtr(sched, sRunHead(), next)
+    let next = rtReadPtr(head, tNext())
+    rtWritePtr(sched, sRunHead(), next)
     if next as i64 == 0 {
-        _rtWritePtr(sched, sRunTail(), 0 as *u8)
+        rtWritePtr(sched, sRunTail(), 0 as *u8)
     }
-    _rtWritePtr(head, tNext(), 0 as *u8)
+    rtWritePtr(head, tNext(), 0 as *u8)
     return head
 }
 
-pub fn _enqueueWait(sched: *u8, task: *u8): void {
-    let head = _rtReadPtr(sched, sWaitHead())
-    _rtWritePtr(task, tNext(), head)
-    _rtWritePtr(sched, sWaitHead(), task)
+fn enqueueWait(sched: *u8, task: *u8): void {
+    let head = rtReadPtr(sched, sWaitHead())
+    rtWritePtr(task, tNext(), head)
+    rtWritePtr(sched, sWaitHead(), task)
 }
 
 // wake waiting tasks whose fd is in the ready set
-pub fn _wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
+fn wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
     unsafe {
         var prev: *u8 = 0 as *u8
-        var cur = _rtReadPtr(sched, sWaitHead())
+        var cur = rtReadPtr(sched, sWaitHead())
 
         while cur as i64 != 0 {
-            let next = _rtReadPtr(cur, tNext())
-            let waitFd = _rtReadI32(cur, tWaitFd())
+            let next = rtReadPtr(cur, tNext())
+            let waitFd = rtReadI32(cur, tWaitFd())
 
             var woken = false
             var i: i32 = 0
@@ -1095,7 +1095,7 @@ pub fn _wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
 
             if woken {
                 // deregister from event loop using correct filter
-                var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
+                var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
                 var isWrite: u8 = 0
                 memcpy((isWrite.addrOf()) as *u8, (cur as i64 + tWaitWrite()) as *u8, 1)
                 eventDeregister(el, waitFd, isWrite != 0)
@@ -1105,15 +1105,15 @@ pub fn _wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
 
                 // remove from waiting list
                 if prev as i64 == 0 {
-                    _rtWritePtr(sched, sWaitHead(), next)
+                    rtWritePtr(sched, sWaitHead(), next)
                 } else {
-                    _rtWritePtr(prev, tNext(), next)
+                    rtWritePtr(prev, tNext(), next)
                 }
 
                 // move to run queue
-                _rtWriteI32(cur, tState(), taskReady())
-                _rtWriteI32(cur, tWaitFd(), -1)
-                _enqueueRun(sched, cur)
+                rtWriteI32(cur, tState(), taskReady())
+                rtWriteI32(cur, tWaitFd(), -1)
+                enqueueRun(sched, cur)
             } else {
                 prev = cur
             }
@@ -1126,15 +1126,15 @@ pub fn _wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
 // Free a completed task and wake anyone joining it. Reads the join fields
 // before freeing the struct (they point outside it). numTasks is decremented
 // here so the reap is accounted regardless of drain vs tick vs block caller.
-pub fn _reapTask(sched: *u8, task: *u8): void {
-    let joiner = _rtReadPtr(task, tJoiner())
-    let cell = _rtReadPtr(task, tJoinCell())
-    munmap(_rtReadPtr(task, tStack()), _rtReadI64(task, tStackSize()))
-    free(_rtReadPtr(task, tCtx()))
+fn reapTask(sched: *u8, task: *u8): void {
+    let joiner = rtReadPtr(task, tJoiner())
+    let cell = rtReadPtr(task, tJoinCell())
+    munmap(rtReadPtr(task, tStack()), rtReadI64(task, tStackSize()))
+    free(rtReadPtr(task, tCtx()))
     free(task)
-    _rtWriteI64(sched, sNumTasks(), _rtReadI64(sched, sNumTasks()) - 1)
+    rtWriteI64(sched, sNumTasks(), rtReadI64(sched, sNumTasks()) - 1)
     if cell as i64 != 0 {
-        _rtWriteI64(cell, 0, 1)
+        rtWriteI64(cell, 0, 1)
     }
     if joiner as i64 != 0 {
         schedulerUnpark(joiner)
@@ -1144,60 +1144,60 @@ pub fn _reapTask(sched: *u8, task: *u8): void {
 // Run one batch of ready tasks, then poll events once with `timeoutMs`
 // (-1 blocks until an fd/wakeup/timer fires — used by the main-context
 // blocking driver; 100 is the cooperative tick used by legacy spin loops).
-pub fn _schedulerRunOnce(timeoutMs: i32): void {
-    let sched = _getSched()
+fn schedulerRunOnce(timeoutMs: i32): void {
+    let sched = getSched()
     if sched as i64 == 0 {
         return
     }
-    if _rtReadI64(sched, sNumTasks()) == 0 {
+    if rtReadI64(sched, sNumTasks()) == 0 {
         return
     }
 
     var batch: i64 = 0
-    var task = _dequeueRun(sched)
+    var task = dequeueRun(sched)
     while task as i64 != 0 {
         if batch >= 32 {
-            _enqueueRun(sched, task)
+            enqueueRun(sched, task)
             break
         }
-        _rtWriteI32(task, tState(), taskRunning())
-        _rtWritePtr(sched, sCurrent(), task)
+        rtWriteI32(task, tState(), taskRunning())
+        rtWritePtr(sched, sCurrent(), task)
 
-        swapcontext(_rtReadPtr(sched, sCtx()), _rtReadPtr(task, tCtx()))
+        swapcontext(rtReadPtr(sched, sCtx()), rtReadPtr(task, tCtx()))
 
-        let state = _rtReadI32(task, tState())
+        let state = rtReadI32(task, tState())
         if state == taskDone() {
-            _reapTask(sched, task)
+            reapTask(sched, task)
         } else if state == taskReady() {
-            _enqueueRun(sched, task)
+            enqueueRun(sched, task)
         }
 
         batch = batch + 1
-        task = _dequeueRun(sched)
+        task = dequeueRun(sched)
     }
 
-    _rtWritePtr(sched, sCurrent(), 0 as *u8)
+    rtWritePtr(sched, sCurrent(), 0 as *u8)
 
     // poll event loop; when the run queue still has work, don't block — a
     // -1 timeout would stall ready tasks behind idle fds.
-    if _rtReadI64(sched, sNumTasks()) > 0 {
+    if rtReadI64(sched, sNumTasks()) > 0 {
         var t = timeoutMs
-        if _rtReadPtr(sched, sRunHead()) as i64 != 0 {
+        if rtReadPtr(sched, sRunHead()) as i64 != 0 {
             t = 0
         }
-        _pollAndWake(sched, t)
+        pollAndWake(sched, t)
     }
 }
 
-pub fn _schedulerTick(): void {
-    _schedulerRunOnce(100)
+pub fn schedulerTick(): void {
+    schedulerRunOnce(100)
 }
 
 // Main-context blocking driver: advance the scheduler, blocking the poll until
 // a real event arrives instead of the 100ms cooperative spin. Callers loop on
 // their own completion condition (Promise result, join cell, WaitGroup count).
-pub fn _schedulerBlockMain(): void {
-    _schedulerRunOnce(-1)
+pub fn schedulerBlockMain(): void {
+    schedulerRunOnce(-1)
 }
 
 // Main-context driver for blockers whose wake condition is NOT an fd event the
@@ -1207,8 +1207,8 @@ pub fn _schedulerBlockMain(): void {
 // timeout keeps the scheduler advancing while letting the caller re-check its
 // own condition (the channel buffer) between ticks — forward progress with at
 // most a few ms of latency and no busy-spin.
-pub fn _schedulerPollMain(): void {
-    _schedulerRunOnce(4)
+pub fn schedulerPollMain(): void {
+    schedulerRunOnce(4)
 }
 
 // Select's main-context wait needs a different poll from a channel's.
@@ -1224,16 +1224,16 @@ pub fn _schedulerPollMain(): void {
 // Poll the event loop directly when there is nothing runnable. _pollAndWake is safe with
 // zero tasks and _selMinTimeout already bounds the sleep by the nearest arm deadline, so
 // this blocks rather than busy-spins.
-pub fn _schedulerPollMainSelect(): void {
-    let sched = _getSched()
+fn schedulerPollMainSelect(): void {
+    let sched = getSched()
     if sched as i64 == 0 {
         return
     }
-    if _rtReadI64(sched, sNumTasks()) > 0 {
-        _schedulerRunOnce(4)
+    if rtReadI64(sched, sNumTasks()) > 0 {
+        schedulerRunOnce(4)
         return
     }
-    _pollAndWake(sched, 4)
+    pollAndWake(sched, 4)
 }
 
 // Drive the scheduler until every spawned task has finished, then tear it down.
@@ -1242,23 +1242,23 @@ pub fn _schedulerPollMainSelect(): void {
 // want the old drain-to-quiescence behavior (e.g. spawn a fleet of workers and
 // block main until they all return without a WaitGroup).
 pub fn schedulerRunToCompletion(): void {
-    let sched = _getSched()
+    let sched = getSched()
     if sched as i64 == 0 {
         return
     }
 
-    while _rtReadI64(sched, sNumTasks()) > 0 {
-        _schedulerBlockMain()
+    while rtReadI64(sched, sNumTasks()) > 0 {
+        schedulerBlockMain()
     }
 
     // cleanup
-    free(_rtReadPtr(sched, sCtx()))
-    var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
-    eventLoopCloseWakeup(el, _rtReadI32(sched, sWakeupId()))
+    free(rtReadPtr(sched, sCtx()))
+    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+    eventLoopCloseWakeup(el, rtReadI32(sched, sWakeupId()))
     eventLoopClose(el)
-    let xmtx = _rtReadPtr(sched, sXferMutex())
+    let xmtx = rtReadPtr(sched, sXferMutex())
     pthread_mutex_destroy(xmtx)
     free(xmtx)
     free(sched)
-    _setSched(0 as *u8)
+    setSched(0 as *u8)
 }

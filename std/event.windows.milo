@@ -84,22 +84,22 @@ pub fn winLoopTableCap(): i32 {
     return 16
 }
 
-pub var _winLoopTable: i64 = 0
+var winLoopTable: i64 = 0
 
-pub fn _winLoopTableInit(): void {
+fn winLoopTableInit(): void {
     unsafe {
-        if _winLoopTable == 0 {
+        if winLoopTable == 0 {
             let bytes = winLoopTableCap() as i64 * 8
             let t = malloc(bytes)
             memset(t, 0, bytes)
-            _winLoopTable = t as i64
+            winLoopTable = t as i64
         }
     }
 }
 
-pub fn _winLoopAt(slot: i32): *u8 {
+fn winLoopAt(slot: i32): *u8 {
     unsafe {
-        let tbl = _winLoopTable as *i64
+        let tbl = winLoopTable as *i64
         return tbl[slot as i64] as *u8
     }
 }
@@ -192,9 +192,9 @@ pub struct EventLoop {
 }
 
 pub fn eventLoopNew(): Result<EventLoop, string> {
-    _winLoopTableInit()
+    winLoopTableInit()
     unsafe {
-        let tbl = _winLoopTable as *i64
+        let tbl = winLoopTable as *i64
         var slot: i32 = 0
         while slot < winLoopTableCap() {
             if tbl[slot as i64] == 0 {
@@ -219,7 +219,7 @@ pub fn eventLoopNew(): Result<EventLoop, string> {
 // signal and there is nothing to drain; multiple notifies before a wait coalesce into one
 // wakeup, which is exactly right — a wakeup only means "re-check runnable state".
 pub fn eventLoopInitWakeup(el: &EventLoop): i32 {
-    let st = _winLoopAt(el.slot)
+    let st = winLoopAt(el.slot)
     unsafe {
         wlSet(st, 0, CreateEventA(0 as *u8, 0, 0, 0 as *u8))
     }
@@ -235,7 +235,7 @@ pub fn wakeupIdentBase(): i32 {
 // safe from any thread: SetEvent is thread-safe, and the slot's wakeup handle was written at
 // init before this loop was reachable cross-thread.
 pub fn eventLoopNotify(el: &EventLoop, _wakeupId: i32): i32 {
-    let st = _winLoopAt(el.slot)
+    let st = winLoopAt(el.slot)
     unsafe {
         SetEvent(wlGet(st, 0))
     }
@@ -247,7 +247,7 @@ pub fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
 }
 
 pub fn eventLoopCloseWakeup(el: &EventLoop, _wakeupId: i32): void {
-    let st = _winLoopAt(el.slot)
+    let st = winLoopAt(el.slot)
     unsafe {
         let h = wlGet(st, 0)
         if h != 0 {
@@ -260,7 +260,7 @@ pub fn eventLoopCloseWakeup(el: &EventLoop, _wakeupId: i32): void {
 // ── socket fd readiness ──
 
 // Find fd in the interest set, or -1.
-pub fn _wlFind(st: *u8, fd: i32): i64 {
+fn wlFind(st: *u8, fd: i32): i64 {
     let n = wlGet(st, 1)
     var i: i64 = 0
     while i < n {
@@ -274,8 +274,8 @@ pub fn _wlFind(st: *u8, fd: i32): i64 {
 
 // Add the given interest bit to fd, creating its WSAEVENT on first registration, and (re)arm
 // WSAEventSelect with the combined mask.
-pub fn _wlRegister(st: *u8, fd: i32, bit: i32): i32 {
-    var idx = _wlFind(st, fd)
+fn wlRegister(st: *u8, fd: i32, bit: i32): i32 {
+    var idx = wlFind(st, fd)
     if idx < 0 {
         let n = wlGet(st, 1)
         if n >= wlCap() {
@@ -308,16 +308,16 @@ pub fn _wlRegister(st: *u8, fd: i32, bit: i32): i32 {
 }
 
 pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
-    return _wlRegister(_winLoopAt(el.slot), fd, maskRead())
+    return wlRegister(winLoopAt(el.slot), fd, maskRead())
 }
 
 pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
-    return _wlRegister(_winLoopAt(el.slot), fd, maskWrite())
+    return wlRegister(winLoopAt(el.slot), fd, maskWrite())
 }
 
 pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
-    let st = _winLoopAt(el.slot)
-    let idx = _wlFind(st, fd)
+    let st = winLoopAt(el.slot)
+    let idx = wlFind(st, fd)
     if idx < 0 {
         return 0
     }
@@ -354,7 +354,7 @@ pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
 // Event and every registered socket's WSAEVENT together. On wake, reports the wakeup (if it
 // fired) plus every socket with a pending network event, as a flat fd list.
 pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32): i32 {
-    let st = _winLoopAt(el.slot)
+    let st = winLoopAt(el.slot)
     unsafe {
         let n = wlGet(st, 1)
 
@@ -415,7 +415,7 @@ pub fn eventLoopFd(el: &EventLoop): i32 {
 }
 
 pub fn eventLoopClose(el: &EventLoop): void {
-    let st = _winLoopAt(el.slot)
+    let st = winLoopAt(el.slot)
     unsafe {
         if st as i64 != 0 {
             let h = wlGet(st, 0)
@@ -430,7 +430,7 @@ pub fn eventLoopClose(el: &EventLoop): void {
                 i = i + 1
             }
             free(st)
-            let tbl = _winLoopTable as *i64
+            let tbl = winLoopTable as *i64
             tbl[el.slot as i64] = 0
         }
     }

@@ -4,48 +4,48 @@ from "std/os" import {
     exit
 }
 
-pub fn _testFail(): void {
+fn testFail(): void {
     exit(1)
 }
 
 pub fn assert(cond: bool): void {
     if !cond {
         eprint("  assertion failed")
-        _testFail()
+        testFail()
     }
 }
 
 pub fn assertMsg(cond: bool, msg: string): void {
     if !cond {
         eprint($"  assertion failed: {msg}")
-        _testFail()
+        testFail()
     }
 }
 
 pub fn assertEqual(got: i32, expected: i32): void {
     if got != expected {
         eprint($"  assertEqual failed: got {got}, expected {expected}")
-        _testFail()
+        testFail()
     }
 }
 
 pub fn assertEqual64(got: i64, expected: i64): void {
     if got != expected {
         eprint($"  assertEqual64 failed: got {got}, expected {expected}")
-        _testFail()
+        testFail()
     }
 }
 
 pub fn assertStrEqual(got: &string, expected: &string): void {
     if got != expected {
         eprint("  assertStrEqual failed")
-        _testFail()
+        testFail()
     }
 }
 
 pub fn assertBool(got: bool, expected: bool): void {
     if got != expected {
         eprint("  assertBool failed")
-        _testFail()
+        testFail()
     }
 }

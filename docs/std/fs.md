@@ -43,6 +43,22 @@ pub fn devNull(): string
 Path of the OS bit-bucket device — /dev/null on POSIX, NUL on Windows. Use this
 instead of hard-coding "/dev/null", which does not exist on Windows.
 
+### `errFd`
+
+```milo
+fn errFd(msg: &string): Result<bool, IoError>
+```
+
+_Undocumented._
+
+### `errPath`
+
+```milo
+fn errPath(path: &string): Result<bool, IoError>
+```
+
+_Undocumented._
+
 ### `fileInfo`
 
 ```milo
@@ -118,6 +134,14 @@ pub fn makeTempDir(prefix: &string): Result<string, IoError>
 ```
 
 _Undocumented._
+
+### `ok`
+
+```milo
+pub fn ok(): Result<bool, IoError>
+```
+
+Return Result<bool, IoError> for operations with no meaningful return value.
 
 ### `pathExists`
 

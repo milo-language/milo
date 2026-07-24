@@ -23,7 +23,7 @@ from "std/xxhash" import {
 }
 
 // Read a little-endian unsigned integer of `n` bytes (n in 1..8) at `pos`.
-pub fn _leN(src: &string, pos: i64, n: i64): i64 {
+fn leN(src: &string, pos: i64, n: i64): i64 {
     var v: i64 = 0
     for i in 0..n {
         v = v | ((src[pos + i] as i64) << (8 * i))
@@ -31,7 +31,7 @@ pub fn _leN(src: &string, pos: i64, n: i64): i64 {
     return v
 }
 
-pub fn _zeroVec(n: i64): Vec<i64> {
+fn zeroVec(n: i64): Vec<i64> {
     var v: Vec<i64> = Vec.new()
     for _i in 0..n {
         v.push(0)
@@ -41,7 +41,7 @@ pub fn _zeroVec(n: i64): Vec<i64> {
 
 // Index of the highest set bit of n (n > 0), else -1. Loop-shift form avoids the
 // 1<<63 overflow trap a bit-probe would hit.
-pub fn _highestSetBit(n: i64): i64 {
+fn highestSetBit(n: i64): i64 {
     var b: i64 = -1
     var v = n
     while v > 0 {
@@ -58,7 +58,7 @@ pub struct Rev {
 }
 
 // Forward little-endian bit read of `numBits` bits at bit-offset `offset`.
-pub fn _readBitsLE(src: &string, numBits: i64, offset: i64): i64 {
+fn readBitsLE(src: &string, numBits: i64, offset: i64): i64 {
     if numBits == 0 {
         return 0
     }
@@ -83,7 +83,7 @@ pub fn _readBitsLE(src: &string, numBits: i64, offset: i64): i64 {
 
 // Pull `bits` bits from the current position, moving backward. Bits that fall before
 // the start of the stream are filled with zeros (RFC-mandated padding behaviour).
-pub fn _streamRead(src: &string, bits: i64, r: &mut Rev): i64 {
+fn streamRead(src: &string, bits: i64, r: &mut Rev): i64 {
     r.off = r.off - bits
     var actualOff = r.off
     var actualBits = bits
@@ -91,7 +91,7 @@ pub fn _streamRead(src: &string, bits: i64, r: &mut Rev): i64 {
         actualBits = actualBits + r.off
         actualOff = 0
     }
-    var res = _readBitsLE(src, actualBits, actualOff)
+    var res = readBitsLE(src, actualBits, actualOff)
     if r.off < 0 {
         let sh = 0 - r.off
         if sh >= 64 {
@@ -114,13 +114,13 @@ pub struct FseTable {
 
 // Build an FSE decoding table from a normalized distribution (RFC 8878 §4.1.1).
 // `dist[s] == -1` marks a "less than 1" probability symbol given a single high cell.
-pub fn _fseBuild(dist: &Vec<i64>, accuracyLog: i64): FseTable {
+fn fseBuild(dist: &Vec<i64>, accuracyLog: i64): FseTable {
     let size = 1 << accuracyLog
-    var symbols = _zeroVec(size)
-    var numBits = _zeroVec(size)
-    var newStateBase = _zeroVec(size)
+    var symbols = zeroVec(size)
+    var numBits = zeroVec(size)
+    var newStateBase = zeroVec(size)
     let numSymbs = dist.len
-    var stateDesc = _zeroVec(numSymbs)
+    var stateDesc = zeroVec(numSymbs)
     var highThreshold = size
     for s in 0..numSymbs {
         if dist[s] == -1 {
@@ -149,7 +149,7 @@ pub fn _fseBuild(dist: &Vec<i64>, accuracyLog: i64): FseTable {
         let symbol = symbols[i]
         let nextDesc = stateDesc[symbol]
         stateDesc[symbol] = nextDesc + 1
-        let nb = accuracyLog - _highestSetBit(nextDesc)
+        let nb = accuracyLog - highestSetBit(nextDesc)
         numBits[i] = nb
         newStateBase[i] = (nextDesc << nb) - size
     }
@@ -159,11 +159,11 @@ pub fn _fseBuild(dist: &Vec<i64>, accuracyLog: i64): FseTable {
 }
 
 // Single-symbol (RLE) table: every state decodes `symb`, consuming no bits.
-pub fn _fseBuildRle(symb: i64): FseTable {
+fn fseBuildRle(symb: i64): FseTable {
     var symbols: Vec<i64> = Vec.new()
     symbols.push(symb)
-    var numBits = _zeroVec(1)
-    var newStateBase = _zeroVec(1)
+    var numBits = zeroVec(1)
+    var newStateBase = zeroVec(1)
     return FseTable {
         symbols: symbols, numBits: numBits, newStateBase: newStateBase, accuracyLog: 0
     }
@@ -178,22 +178,22 @@ pub struct FseHdr {
 
 // Decode an FSE distribution table from the forward bitstream at byte `base`
 // (RFC 8878 §4.1.1). Reads probabilities LSB-first, then byte-aligns.
-pub fn _fseDecodeHeader(src: &string, base: i64, maxAccuracy: i64): FseHdr {
+fn fseDecodeHeader(src: &string, base: i64, maxAccuracy: i64): FseHdr {
     var off = base * 8
-    let accuracyLog = 5 + _readBitsLE(src, 4, off)
+    let accuracyLog = 5 + readBitsLE(src, 4, off)
     off = off + 4
     var freqs: Vec<i64> = Vec.new()
     if accuracyLog > maxAccuracy {
         return FseHdr {
-            table: _fseBuildRle(0), bytesUsed: 0, ok: false
+            table: fseBuildRle(0), bytesUsed: 0, ok: false
         }
     }
     var remaining = 1 << accuracyLog
     while remaining > 0 && freqs.len < 256 {
         // Bits needed to represent values 0..remaining+1 (a low-value shortcut saves
         // one bit for the smaller half of the range).
-        let bits = _highestSetBit(remaining + 1) + 1
-        var val = _readBitsLE(src, bits, off)
+        let bits = highestSetBit(remaining + 1) + 1
+        var val = readBitsLE(src, bits, off)
         off = off + bits
         let lowerMask = (1 << (bits - 1)) - 1
         let threshold = (1 << bits) - 1 - (remaining + 1)
@@ -212,7 +212,7 @@ pub fn _fseDecodeHeader(src: &string, base: i64, maxAccuracy: i64): FseHdr {
         freqs.push(proba)
         // A zero probability is followed by 2-bit run-length flags of further zeros.
         if proba == 0 {
-            var repeat = _readBitsLE(src, 2, off)
+            var repeat = readBitsLE(src, 2, off)
             off = off + 2
             var done = false
             while !done {
@@ -222,7 +222,7 @@ pub fn _fseDecodeHeader(src: &string, base: i64, maxAccuracy: i64): FseHdr {
                     }
                 }
                 if repeat == 3 {
-                    repeat = _readBitsLE(src, 2, off)
+                    repeat = readBitsLE(src, 2, off)
                     off = off + 2
                 } else {
                     done = true
@@ -234,58 +234,58 @@ pub fn _fseDecodeHeader(src: &string, base: i64, maxAccuracy: i64): FseHdr {
     let bytesUsed = (bitsUsed + 7) / 8
     if remaining != 0 {
         return FseHdr {
-            table: _fseBuildRle(0), bytesUsed: 0, ok: false
+            table: fseBuildRle(0), bytesUsed: 0, ok: false
         }
     }
     return FseHdr {
-        table: _fseBuild(freqs, accuracyLog), bytesUsed: bytesUsed, ok: true
+        table: fseBuild(freqs, accuracyLog), bytesUsed: bytesUsed, ok: true
     }
 }
 
-pub fn _fseInitState(t: &FseTable, src: &string, r: &mut Rev): i64 {
-    return _streamRead(src, t.accuracyLog, r)
+fn fseInitState(t: &FseTable, src: &string, r: &mut Rev): i64 {
+    return streamRead(src, t.accuracyLog, r)
 }
 
-pub fn _fseUpdate(t: &FseTable, state: i64, src: &string, r: &mut Rev): i64 {
+fn fseUpdate(t: &FseTable, state: i64, src: &string, r: &mut Rev): i64 {
     let bits = t.numBits[state]
-    let rest = _streamRead(src, bits, r)
+    let rest = streamRead(src, bits, r)
     return t.newStateBase[state] + rest
 }
 
 // Predefined distributions (RFC 8878 §3.1.1.3.2.2.1) — used when a sequence's
 // compression mode is Predefined. Accuracy logs: LL 6, OF 5, ML 6.
-pub fn _llDefaultDist(): Vec<i64> {
+fn llDefaultDist(): Vec<i64> {
     var d: Vec<i64> = [4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 1, 1, 1, 1, 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1]
     return d
 }
 
-pub fn _ofDefaultDist(): Vec<i64> {
+fn ofDefaultDist(): Vec<i64> {
     var d: Vec<i64> = [1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1]
     return d
 }
 
-pub fn _mlDefaultDist(): Vec<i64> {
+fn mlDefaultDist(): Vec<i64> {
     var d: Vec<i64> = [1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1]
     return d
 }
 
 // Baselines + extra-bit counts for literal-length and match-length codes.
-pub fn _llBaselines(): Vec<i64> {
+fn llBaselines(): Vec<i64> {
     var d: Vec<i64> = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 28, 32, 40, 48, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
     return d
 }
 
-pub fn _llExtraBits(): Vec<i64> {
+fn llExtraBits(): Vec<i64> {
     var d: Vec<i64> = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     return d
 }
 
-pub fn _mlBaselines(): Vec<i64> {
+fn mlBaselines(): Vec<i64> {
     var d: Vec<i64> = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37, 39, 41, 43, 47, 51, 59, 67, 83, 99, 131, 259, 515, 1027, 2051, 4099, 8195, 16387, 32771, 65539]
     return d
 }
 
-pub fn _mlExtraBits(): Vec<i64> {
+fn mlExtraBits(): Vec<i64> {
     var d: Vec<i64> = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     return d
 }
@@ -301,7 +301,7 @@ pub struct Seq {
 
 // Resolve the raw offset value against the three repeat offsets (RFC 8878 §3.1.1.5),
 // mutating the history. Returns the actual back-distance.
-pub fn _computeOffset(rawOffset: i64, litLen: i64, hist: &mut Vec<i64>): i64 {
+fn computeOffset(rawOffset: i64, litLen: i64, hist: &mut Vec<i64>): i64 {
     var offset: i64 = 0
     if rawOffset <= 3 {
         var idx = rawOffset - 1
@@ -340,9 +340,9 @@ pub struct HufTable {
 }
 
 // Build a Huffman decode table from per-symbol bit lengths (RFC 8878 §4.2.1).
-pub fn _hufBuildFromBits(bits: &Vec<i64>, numSymbs: i64): HufTable {
+fn hufBuildFromBits(bits: &Vec<i64>, numSymbs: i64): HufTable {
     var maxBits: i64 = 0
-    var rankCount = _zeroVec(17)
+    var rankCount = zeroVec(17)
     for i in 0..numSymbs {
         let b = bits[i]
         if b > maxBits {
@@ -351,9 +351,9 @@ pub fn _hufBuildFromBits(bits: &Vec<i64>, numSymbs: i64): HufTable {
         rankCount[b] = rankCount[b] + 1
     }
     let tableSize = 1 << maxBits
-    var symbols = _zeroVec(tableSize)
-    var numBits = _zeroVec(tableSize)
-    var rankIdx = _zeroVec(17)
+    var symbols = zeroVec(tableSize)
+    var numBits = zeroVec(tableSize)
+    var rankIdx = zeroVec(17)
     rankIdx[maxBits] = 0
     var i = maxBits
     while i >= 1 {
@@ -380,17 +380,17 @@ pub fn _hufBuildFromBits(bits: &Vec<i64>, numSymbs: i64): HufTable {
 
 // Build a Huffman table from transmitted weights; the final symbol's weight is
 // inferred so the implied code lengths complete a full tree (RFC 8878 §4.2.1.1).
-pub fn _hufBuildFromWeights(weights: &Vec<i64>, numSymbs: i64): HufTable {
+fn hufBuildFromWeights(weights: &Vec<i64>, numSymbs: i64): HufTable {
     var weightSum: i64 = 0
     for i in 0..numSymbs {
         if weights[i] > 0 {
             weightSum = weightSum + (1 << (weights[i] - 1))
         }
     }
-    let maxBits = _highestSetBit(weightSum) + 1
+    let maxBits = highestSetBit(weightSum) + 1
     let leftOver = (1 << maxBits) - weightSum
-    let lastWeight = _highestSetBit(leftOver) + 1
-    var bits = _zeroVec(numSymbs + 1)
+    let lastWeight = highestSetBit(leftOver) + 1
+    var bits = zeroVec(numSymbs + 1)
     for i in 0..numSymbs {
         if weights[i] > 0 {
             bits[i] = maxBits + 1 - weights[i]
@@ -399,26 +399,26 @@ pub fn _hufBuildFromWeights(weights: &Vec<i64>, numSymbs: i64): HufTable {
         }
     }
     bits[numSymbs] = maxBits + 1 - lastWeight
-    return _hufBuildFromBits(bits, numSymbs + 1)
+    return hufBuildFromBits(bits, numSymbs + 1)
 }
 
 // Decode one Huffman-coded stream (read backward) to bytes.
-pub fn _hufDecode1Stream(t: &HufTable, stream: &string): string {
+fn hufDecode1Stream(t: &HufTable, stream: &string): string {
     var out = ""
     if stream.len == 0 {
         return out
     }
     let lastByte = stream[stream.len - 1] as i64
-    let padding = 8 - _highestSetBit(lastByte)
+    let padding = 8 - highestSetBit(lastByte)
     var r = Rev {
         off: stream.len * 8 - padding
     }
-    var state = _streamRead(stream, t.maxBits, r)
+    var state = streamRead(stream, t.maxBits, r)
     let mask = (1 << t.maxBits) - 1
     while r.off > 0 - t.maxBits {
         let symb = t.symbols[state]
         let bits = t.numBits[state]
-        let rest = _streamRead(stream, bits, r)
+        let rest = streamRead(stream, bits, r)
         state = ((state << bits) + rest) & mask
         out.push(symb as u8)
     }
@@ -426,28 +426,28 @@ pub fn _hufDecode1Stream(t: &HufTable, stream: &string): string {
 }
 
 // FSE decode with two interleaved states (used only for Huffman weights).
-pub fn _fseDecompressInterleaved2(t: &FseTable, stream: &string): Vec<i64> {
+fn fseDecompressInterleaved2(t: &FseTable, stream: &string): Vec<i64> {
     var out: Vec<i64> = Vec.new()
     if stream.len == 0 {
         return out
     }
     let lastByte = stream[stream.len - 1] as i64
-    let padding = 8 - _highestSetBit(lastByte)
+    let padding = 8 - highestSetBit(lastByte)
     var r = Rev {
         off: stream.len * 8 - padding
     }
-    var s1 = _fseInitState(t, stream, r)
-    var s2 = _fseInitState(t, stream, r)
+    var s1 = fseInitState(t, stream, r)
+    var s2 = fseInitState(t, stream, r)
     var done = false
     while !done {
         out.push(t.symbols[s1])
-        s1 = _fseUpdate(t, s1, stream, r)
+        s1 = fseUpdate(t, s1, stream, r)
         if r.off < 0 {
             out.push(t.symbols[s2])
             done = true
         } else {
             out.push(t.symbols[s2])
-            s2 = _fseUpdate(t, s2, stream, r)
+            s2 = fseUpdate(t, s2, stream, r)
             if r.off < 0 {
                 out.push(t.symbols[s1])
                 done = true
@@ -458,7 +458,7 @@ pub fn _fseDecompressInterleaved2(t: &FseTable, stream: &string): Vec<i64> {
 }
 
 // Extract src[from .. to) into an owned string.
-pub fn _slice(src: &string, from: i64, to: i64): string {
+pub fn slice(src: &string, from: i64, to: i64): string {
     var s = ""
     for i in from..to {
         s.push(src[i])
@@ -472,7 +472,7 @@ pub struct HufTableResult {
 }
 
 // Decode the Huffman table description at the start of the literals payload.
-pub fn _decodeHufTable(hufData: &string): HufTableResult {
+fn decodeHufTable(hufData: &string): HufTableResult {
     let header = hufData[0] as i64
     var weights: Vec<i64> = Vec.new()
     var numSymbs: i64 = 0
@@ -494,31 +494,31 @@ pub fn _decodeHufTable(hufData: &string): HufTableResult {
         // FSE-compressed weights: `header` bytes hold a forward distribution header
         // followed by a backward interleaved-2 weight bitstream (max accuracy 7).
         let fseLen = header
-        let fseStream = _slice(hufData, 1, 1 + fseLen)
-        let hdr = _fseDecodeHeader(fseStream, 0, 7)
-        let weightBits = _slice(fseStream, hdr.bytesUsed, fseLen)
-        weights = _fseDecompressInterleaved2(hdr.table, weightBits)
+        let fseStream = slice(hufData, 1, 1 + fseLen)
+        let hdr = fseDecodeHeader(fseStream, 0, 7)
+        let weightBits = slice(fseStream, hdr.bytesUsed, fseLen)
+        weights = fseDecompressInterleaved2(hdr.table, weightBits)
         numSymbs = weights.len
         bytesUsed = 1 + fseLen
     }
     return HufTableResult {
-        table: _hufBuildFromWeights(weights, numSymbs), bytesUsed: bytesUsed
+        table: hufBuildFromWeights(weights, numSymbs), bytesUsed: bytesUsed
     }
 }
 
-pub fn _cloneFse(t: &FseTable): FseTable {
+fn cloneFse(t: &FseTable): FseTable {
     return FseTable {
         symbols: t.symbols.clone(), numBits: t.numBits.clone(), newStateBase: t.newStateBase.clone(), accuracyLog: t.accuracyLog
     }
 }
 
-pub fn _cloneHuf(t: &HufTable): HufTable {
+fn cloneHuf(t: &HufTable): HufTable {
     return HufTable {
         symbols: t.symbols.clone(), numBits: t.numBits.clone(), maxBits: t.maxBits
     }
 }
 
-pub fn _dummyHuf(): HufTable {
+fn dummyHuf(): HufTable {
     var s: Vec<i64> = [0]
     var n: Vec<i64> = [0]
     return HufTable {
@@ -544,7 +544,7 @@ pub struct ZDec {
 // Decode a single Compressed_Block (RFC 8878 §3.1.1.2) into `out`. Handles Raw/RLE and
 // Huffman (own-tree + Treeless) literals, and Predefined/RLE/FSE/Repeat sequence tables,
 // persisting reusable tables into `st` for later blocks in the frame.
-pub fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mut string, st: &mut ZDec): i64 {
+fn decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mut string, st: &mut ZDec): i64 {
     let blockEnd = blockStart + blockSize
     var pos = blockStart
     // ── Literals section header ──
@@ -595,47 +595,47 @@ pub fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out:
             regBits = 18
             compBits = 18
         }
-        let regenSize = _readBitsLE(src, regBits, boff)
+        let regenSize = readBitsLE(src, regBits, boff)
         boff = boff + regBits
-        let compSize = _readBitsLE(src, compBits, boff)
+        let compSize = readBitsLE(src, compBits, boff)
         boff = boff + compBits
         let headerBytes = (boff - pos * 8) / 8
         let hufStart = pos + headerBytes
         if hufStart + compSize > blockEnd {
             return 0 - 105
         }
-        let hufData = _slice(src, hufStart, hufStart + compSize)
-        var tbl = _dummyHuf()
+        let hufData = slice(src, hufStart, hufStart + compSize)
+        var tbl = dummyHuf()
         var streamsData = ""
         if litType == 2 {
-            let ht = _decodeHufTable(hufData)
-            tbl = _cloneHuf(ht.table)
+            let ht = decodeHufTable(hufData)
+            tbl = cloneHuf(ht.table)
             st.huf = ht.table // persist for a later Treeless block
             st.hasHuf = true
-            streamsData = _slice(hufData, ht.bytesUsed, hufData.len)
+            streamsData = slice(hufData, ht.bytesUsed, hufData.len)
         } else {
-            tbl = _cloneHuf(st.huf)
+            tbl = cloneHuf(st.huf)
             streamsData = hufData
         }
         if numStreams == 1 {
-            literals = _hufDecode1Stream(tbl, streamsData)
+            literals = hufDecode1Stream(tbl, streamsData)
         } else {
             // 4 streams preceded by a 6-byte jump table (three u16-LE stream sizes).
-            let c1 = _leN(streamsData, 0, 2)
-            let c2 = _leN(streamsData, 2, 2)
-            let c3 = _leN(streamsData, 4, 2)
+            let c1 = leN(streamsData, 0, 2)
+            let c2 = leN(streamsData, 2, 2)
+            let c3 = leN(streamsData, 4, 2)
             var sp: i64 = 6
-            let s1 = _slice(streamsData, sp, sp + c1)
+            let s1 = slice(streamsData, sp, sp + c1)
             sp = sp + c1
-            let s2 = _slice(streamsData, sp, sp + c2)
+            let s2 = slice(streamsData, sp, sp + c2)
             sp = sp + c2
-            let s3 = _slice(streamsData, sp, sp + c3)
+            let s3 = slice(streamsData, sp, sp + c3)
             sp = sp + c3
-            let s4 = _slice(streamsData, sp, streamsData.len)
-            let d1 = _hufDecode1Stream(tbl, s1)
-            let d2 = _hufDecode1Stream(tbl, s2)
-            let d3 = _hufDecode1Stream(tbl, s3)
-            let d4 = _hufDecode1Stream(tbl, s4)
+            let s4 = slice(streamsData, sp, streamsData.len)
+            let d1 = hufDecode1Stream(tbl, s1)
+            let d2 = hufDecode1Stream(tbl, s2)
+            let d3 = hufDecode1Stream(tbl, s3)
+            let d4 = hufDecode1Stream(tbl, s4)
             for i in 0..d1.len {
                 literals.push(d1[i])
             }
@@ -687,16 +687,16 @@ pub fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out:
     let mlMode = (modes >> 2) & 3
     // Build the three FSE tables. Predefined and RLE are supported; FSE-compressed (2)
     // and Repeat (3) need the forward distribution reader / prior table — next slice.
-    var llTable = _fseBuildRle(0)
-    var ofTable = _fseBuildRle(0)
-    var mlTable = _fseBuildRle(0)
+    var llTable = fseBuildRle(0)
+    var ofTable = fseBuildRle(0)
+    var mlTable = fseBuildRle(0)
     if llMode == 0 {
-        llTable = _fseBuild(_llDefaultDist(), 6)
+        llTable = fseBuild(llDefaultDist(), 6)
     } else if llMode == 1 {
-        llTable = _fseBuildRle(src[pos] as i64)
+        llTable = fseBuildRle(src[pos] as i64)
         pos = pos + 1
     } else if llMode == 2 {
-        let h = _fseDecodeHeader(src, pos, 9)
+        let h = fseDecodeHeader(src, pos, 9)
         if !h.ok {
             return 0 - 102
         }
@@ -706,19 +706,19 @@ pub fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out:
         if !st.hasLL {
             return 0 - 101 // Repeat mode with no prior table
         }
-        llTable = _cloneFse(st.ll)
+        llTable = cloneFse(st.ll)
     }
     if llMode != 3 {
-        st.ll = _cloneFse(llTable)
+        st.ll = cloneFse(llTable)
         st.hasLL = true
     }
     if ofMode == 0 {
-        ofTable = _fseBuild(_ofDefaultDist(), 5)
+        ofTable = fseBuild(ofDefaultDist(), 5)
     } else if ofMode == 1 {
-        ofTable = _fseBuildRle(src[pos] as i64)
+        ofTable = fseBuildRle(src[pos] as i64)
         pos = pos + 1
     } else if ofMode == 2 {
-        let h = _fseDecodeHeader(src, pos, 8)
+        let h = fseDecodeHeader(src, pos, 8)
         if !h.ok {
             return 0 - 102
         }
@@ -728,19 +728,19 @@ pub fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out:
         if !st.hasOF {
             return 0 - 101
         }
-        ofTable = _cloneFse(st.of)
+        ofTable = cloneFse(st.of)
     }
     if ofMode != 3 {
-        st.of = _cloneFse(ofTable)
+        st.of = cloneFse(ofTable)
         st.hasOF = true
     }
     if mlMode == 0 {
-        mlTable = _fseBuild(_mlDefaultDist(), 6)
+        mlTable = fseBuild(mlDefaultDist(), 6)
     } else if mlMode == 1 {
-        mlTable = _fseBuildRle(src[pos] as i64)
+        mlTable = fseBuildRle(src[pos] as i64)
         pos = pos + 1
     } else if mlMode == 2 {
-        let h = _fseDecodeHeader(src, pos, 9)
+        let h = fseDecodeHeader(src, pos, 9)
         if !h.ok {
             return 0 - 102
         }
@@ -750,10 +750,10 @@ pub fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out:
         if !st.hasML {
             return 0 - 101
         }
-        mlTable = _cloneFse(st.ml)
+        mlTable = cloneFse(st.ml)
     }
     if mlMode != 3 {
-        st.ml = _cloneFse(mlTable)
+        st.ml = cloneFse(mlTable)
         st.hasML = true
     }
     // The remainder of the block is the interleaved FSE bitstream, read backward.
@@ -768,18 +768,18 @@ pub fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out:
     if lastByte == 0 {
         return 0 - 102 // a zero final byte has no padding-marker bit
     }
-    let padding = 8 - _highestSetBit(lastByte)
+    let padding = 8 - highestSetBit(lastByte)
     var r = Rev {
         off: seqStream.len * 8 - padding
     }
-    var llState = _fseInitState(llTable, seqStream, r)
-    var ofState = _fseInitState(ofTable, seqStream, r)
-    var mlState = _fseInitState(mlTable, seqStream, r)
+    var llState = fseInitState(llTable, seqStream, r)
+    var ofState = fseInitState(ofTable, seqStream, r)
+    var mlState = fseInitState(mlTable, seqStream, r)
 
-    let llBase = _llBaselines()
-    let llEB = _llExtraBits()
-    let mlBase = _mlBaselines()
-    let mlEB = _mlExtraBits()
+    let llBase = llBaselines()
+    let llEB = llExtraBits()
+    let mlBase = mlBaselines()
+    let mlEB = mlExtraBits()
 
     // Decode sequences into a list, then execute them against the literals buffer.
     var seqs: Vec<Seq> = Vec.new()
@@ -788,17 +788,17 @@ pub fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out:
         let llCode = llTable.symbols[llState]
         let mlCode = mlTable.symbols[mlState]
         // Order of raw-bit reads: offset, then match length, then literal length.
-        let rawOffset = (1 << ofCode) + _streamRead(seqStream, ofCode, r)
-        let matchLen = mlBase[mlCode] + _streamRead(seqStream, mlEB[mlCode], r)
-        let litLen = llBase[llCode] + _streamRead(seqStream, llEB[llCode], r)
+        let rawOffset = (1 << ofCode) + streamRead(seqStream, ofCode, r)
+        let matchLen = mlBase[mlCode] + streamRead(seqStream, mlEB[mlCode], r)
+        let litLen = llBase[llCode] + streamRead(seqStream, llEB[llCode], r)
         seqs.push(Seq {
             litLen: litLen, matchLen: matchLen, offset: rawOffset
         }
         )
         if i != numSeq - 1 {
-            llState = _fseUpdate(llTable, llState, seqStream, r)
-            mlState = _fseUpdate(mlTable, mlState, seqStream, r)
-            ofState = _fseUpdate(ofTable, ofState, seqStream, r)
+            llState = fseUpdate(llTable, llState, seqStream, r)
+            mlState = fseUpdate(mlTable, mlState, seqStream, r)
+            ofState = fseUpdate(ofTable, ofState, seqStream, r)
         }
     }
     // ── Execute sequences: literals run, then LZ77 match copy ──
@@ -809,7 +809,7 @@ pub fn _decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out:
             out.push(literals[litPos])
             litPos = litPos + 1
         }
-        let dist = _computeOffset(sq.offset, sq.litLen, st.hist)
+        let dist = computeOffset(sq.offset, sq.litLen, st.hist)
         if dist > out.len {
             return 0 - 103
         }
@@ -837,13 +837,13 @@ pub struct ZstdHeader {
 pub let ZSTD_MAGIC: i64 = 0xFD2FB528
 
 // Parse the frame header. Returns headerLen < 0 on malformed input.
-pub fn _parseHeader(src: &string): ZstdHeader {
+fn parseHeader(src: &string): ZstdHeader {
     if src.len < 5 {
         return ZstdHeader {
             headerLen: -1, hasChecksum: false
         }
     }
-    if _leN(src, 0, 4) != ZSTD_MAGIC {
+    if leN(src, 0, 4) != ZSTD_MAGIC {
         return ZstdHeader {
             headerLen: -1, hasChecksum: false
         }
@@ -896,7 +896,7 @@ pub fn _parseHeader(src: &string): ZstdHeader {
 // Decompress a single zstd frame. Multi-frame concatenation is not handled — one
 // frame per call, like `zstd`'s default single-frame output.
 pub fn zstdDecompress(src: &string): Result<string, string> {
-    let hdr = _parseHeader(src)
+    let hdr = parseHeader(src)
     if hdr.headerLen < 0 {
         return Result.Err("zstd: bad frame header")
     }
@@ -905,13 +905,13 @@ pub fn zstdDecompress(src: &string): Result<string, string> {
     // Per-frame decoder state (repeat-offset history + reusable entropy tables).
     var st = ZDec {
         hist: [1, 4, 8],
-        huf: _dummyHuf(),
+        huf: dummyHuf(),
         hasHuf: false,
-        ll: _fseBuildRle(0),
+        ll: fseBuildRle(0),
         hasLL: false,
-        of: _fseBuildRle(0),
+        of: fseBuildRle(0),
         hasOF: false,
-        ml: _fseBuildRle(0),
+        ml: fseBuildRle(0),
         hasML: false,
     }
     var lastBlock = false
@@ -919,7 +919,7 @@ pub fn zstdDecompress(src: &string): Result<string, string> {
         if pos + 3 > src.len {
             return Result.Err("zstd: truncated block header")
         }
-        let bh = _leN(src, pos, 3)
+        let bh = leN(src, pos, 3)
         pos = pos + 3
         lastBlock = (bh & 1) == 1
         let blockType = (bh >> 1) & 3
@@ -947,7 +947,7 @@ pub fn zstdDecompress(src: &string): Result<string, string> {
             if pos + blockSize > src.len {
                 return Result.Err("zstd: truncated compressed block")
             }
-            let e = _decompressCompressed(src, pos, blockSize, out, st)
+            let e = decompressCompressed(src, pos, blockSize, out, st)
             if e < 0 {
                 return Result.Err("zstd: corrupt compressed block")
             }
@@ -961,7 +961,7 @@ pub fn zstdDecompress(src: &string): Result<string, string> {
         if pos + 4 > src.len {
             return Result.Err("zstd: truncated checksum")
         }
-        let want = _leN(src, pos, 4)
+        let want = leN(src, pos, 4)
         let got = (xxh64(out, 0) & 0xffffffff) as i64
         if got != want {
             return Result.Err("zstd: content checksum mismatch")
@@ -973,7 +973,7 @@ pub fn zstdDecompress(src: &string): Result<string, string> {
 
 // ── Encoding ──
 
-pub fn _enc32LE(out: &mut string, v: i64) {
+fn enc32LE(out: &mut string, v: i64) {
     out.push((v & 0xff) as u8)
     out.push(((v >> 8) & 0xff) as u8)
     out.push(((v >> 16) & 0xff) as u8)
@@ -981,7 +981,7 @@ pub fn _enc32LE(out: &mut string, v: i64) {
 }
 
 // Emit a Raw block header (3 bytes LE): last-block flag, type 0, block size.
-pub fn _encRawBlockHeader(out: &mut string, size: i64, last: bool) {
+fn encRawBlockHeader(out: &mut string, size: i64, last: bool) {
     var bh = size << 3 // type 0 (Raw) in bits 1..2
     if last {
         bh = bh | 1
@@ -1005,9 +1005,9 @@ pub fn zstdCompressRaw(src: &string): string {
     // Frame_Header_Descriptor: Single_Segment (0x20) + Content_Checksum (0x04) +
     // Frame_Content_Size flag 2 → a 4-byte content size (0xc0 = flag 2 in bits 6..7).
     out.push(0xa4 as u8)
-    _enc32LE(out, src.len)
+    enc32LE(out, src.len)
     if src.len == 0 {
-        _encRawBlockHeader(out, 0, true)
+        encRawBlockHeader(out, 0, true)
     }
     var pos: i64 = 0
     while pos < src.len {
@@ -1017,13 +1017,13 @@ pub fn zstdCompressRaw(src: &string): string {
             bsize = maxBlock
         }
         let last = pos + bsize >= src.len
-        _encRawBlockHeader(out, bsize, last)
+        encRawBlockHeader(out, bsize, last)
         for i in 0..bsize {
             out.push(src[pos + i])
         }
         pos = pos + bsize
     }
-    _enc32LE(out, (xxh64(src, 0) & 0xffffffff) as i64)
+    enc32LE(out, (xxh64(src, 0) & 0xffffffff) as i64)
     return out
 }
 
@@ -1046,7 +1046,7 @@ pub struct BitCS {
     nb: i64,
 }
 
-pub fn _bcAdd(b: &mut BitCS, value: i64, n: i64) {
+fn bcAdd(b: &mut BitCS, value: i64, n: i64) {
     if n == 0 {
         return
     }
@@ -1062,8 +1062,8 @@ pub fn _bcAdd(b: &mut BitCS, value: i64, n: i64) {
 
 // Append the '1' padding marker (so the last non-zero byte's top set bit locates the
 // stream end) and byte-align.
-pub fn _bcClose(b: &mut BitCS) {
-    _bcAdd(b, 1, 1)
+fn bcClose(b: &mut BitCS) {
+    bcAdd(b, 1, 1)
     if b.nb > 0 {
         b.bytes.push((b.acc & 0xff) as u8)
         b.acc = 0
@@ -1072,7 +1072,7 @@ pub fn _bcClose(b: &mut BitCS) {
 }
 
 // Byte-align a forward bitstream (the FSE distribution header) with no padding marker.
-pub fn _bcAlign(b: &mut BitCS) {
+fn bcAlign(b: &mut BitCS) {
     if b.nb > 0 {
         b.bytes.push((b.acc & 0xff) as u8)
         b.acc = 0
@@ -1094,13 +1094,13 @@ pub struct FseCTable {
 // `_fseBuild`. `dist[s] == -1` is a "less than one" symbol (a single high cell), same
 // convention as the decoder. Symbol spread is byte-identical to `_fseBuild` so encoder and
 // decoder agree on which state emits which symbol.
-pub fn _fseBuildCTable(dist: Vec<i64>, accuracyLog: i64): FseCTable {
+fn fseBuildCTable(dist: Vec<i64>, accuracyLog: i64): FseCTable {
     let size = 1 << accuracyLog
     let mask = size - 1
     let numSymbs = dist.len
-    var tableSymbol = _zeroVec(size)
+    var tableSymbol = zeroVec(size)
     var highThreshold = size - 1
-    var cumul = _zeroVec(numSymbs + 1)
+    var cumul = zeroVec(numSymbs + 1)
     var u = 1
     while u < numSymbs + 1 {
         if dist[u - 1] == -1 {
@@ -1128,7 +1128,7 @@ pub fn _fseBuildCTable(dist: Vec<i64>, accuracyLog: i64): FseCTable {
         }
     }
     // stateTable: for each spread position u (in symbol order via cumul), store size+u.
-    var stateTable = _zeroVec(size)
+    var stateTable = zeroVec(size)
     var cuml = cumul.clone()
     for i in 0..size {
         let s = tableSymbol[i]
@@ -1137,8 +1137,8 @@ pub fn _fseBuildCTable(dist: Vec<i64>, accuracyLog: i64): FseCTable {
     }
     // Symbol transform table (zstd FSE_buildCTable): deltaNbBits packs the bit count in the
     // high 16 bits so `(value + deltaNbBits) >> 16` yields nbBitsOut per state.
-    var deltaNbBits = _zeroVec(numSymbs)
-    var deltaFindState = _zeroVec(numSymbs)
+    var deltaNbBits = zeroVec(numSymbs)
+    var deltaFindState = zeroVec(numSymbs)
     var total: i64 = 0
     for s in 0..numSymbs {
         let d = dist[s]
@@ -1149,7 +1149,7 @@ pub fn _fseBuildCTable(dist: Vec<i64>, accuracyLog: i64): FseCTable {
             deltaFindState[s] = total - 1
             total = total + 1
         } else {
-            let maxBitsOut = accuracyLog - _highestSetBit(d - 1)
+            let maxBitsOut = accuracyLog - highestSetBit(d - 1)
             let minStatePlus = d << maxBitsOut
             deltaNbBits[s] = (maxBitsOut << 16) - minStatePlus
             deltaFindState[s] = total - d
@@ -1163,7 +1163,7 @@ pub fn _fseBuildCTable(dist: Vec<i64>, accuracyLog: i64): FseCTable {
 
 // Initial encoder state for the first-encoded symbol (the last sequence, since encoding
 // runs backward). No bits are written; this state is flushed at the end.
-pub fn _fseInitCState2(ct: &FseCTable, symbol: i64): i64 {
+fn fseInitCState2(ct: &FseCTable, symbol: i64): i64 {
     let dnb = ct.deltaNbBits[symbol]
     let nbBitsOut = (dnb + (1 << 15)) >> 16
     var value = (nbBitsOut << 16) - dnb
@@ -1172,9 +1172,9 @@ pub fn _fseInitCState2(ct: &FseCTable, symbol: i64): i64 {
 }
 
 // Encode one symbol: write the low nbBitsOut bits of the current state, then transition.
-pub fn _fseEncodeSymbol(b: &mut BitCS, ct: &FseCTable, value: i64, symbol: i64): i64 {
+fn fseEncodeSymbol(b: &mut BitCS, ct: &FseCTable, value: i64, symbol: i64): i64 {
     let nbBitsOut = (value + ct.deltaNbBits[symbol]) >> 16
-    _bcAdd(b, value, nbBitsOut)
+    bcAdd(b, value, nbBitsOut)
     return ct.stateTable[(value >> nbBitsOut) + ct.deltaFindState[symbol]]
 }
 
@@ -1183,9 +1183,9 @@ pub fn _fseEncodeSymbol(b: &mut BitCS, ct: &FseCTable, value: i64, symbol: i64):
 // smaller than the table, so min-1 always fits). The remainder lands on the most frequent
 // symbol; a steal loop keeps the total exact even if min-1 rounding overshoots. Need not
 // match zstd's optimal normalization — the decoder reads whatever header we write.
-pub fn _fseNormalizeCount(counts: &Vec<i64>, total: i64, maxSymbol: i64, tableLog: i64): Vec<i64> {
+fn fseNormalizeCount(counts: &Vec<i64>, total: i64, maxSymbol: i64, tableLog: i64): Vec<i64> {
     let size = 1 << tableLog
-    var dist = _zeroVec(maxSymbol + 1)
+    var dist = zeroVec(maxSymbol + 1)
     var allocated: i64 = 0
     var largest: i64 = 0
     var largestCount: i64 = -1
@@ -1224,11 +1224,11 @@ pub fn _fseNormalizeCount(counts: &Vec<i64>, total: i64, maxSymbol: i64, tableLo
 // `_fseDecodeHeader`. Probabilities are coded LSB-first with the low-value shortcut (a
 // value in the lower part of the range costs one fewer bit) and 2-bit zero-run flags; the
 // header is byte-aligned at the end. Follows zstd's FSE_writeNCount arithmetic.
-pub fn _fseWriteNCount(dist: &Vec<i64>, tableLog: i64, maxSymbol: i64): string {
+fn fseWriteNCount(dist: &Vec<i64>, tableLog: i64, maxSymbol: i64): string {
     var b = BitCS {
         bytes: "", acc: 0, nb: 0
     }
-    _bcAdd(b, tableLog - 5, 4)
+    bcAdd(b, tableLog - 5, 4)
     let tableSize = 1 << tableLog
     var remaining = tableSize + 1 // +1 for the "extra accuracy" bit the format carries
     var threshold = tableSize
@@ -1244,10 +1244,10 @@ pub fn _fseWriteNCount(dist: &Vec<i64>, tableLog: i64, maxSymbol: i64): string {
             var run = s - start
             // Each 2-bit group encodes up to 3 further zeros; a value of 3 means "continue".
             while run >= 3 {
-                _bcAdd(b, 3, 2)
+                bcAdd(b, 3, 2)
                 run = run - 3
             }
-            _bcAdd(b, run, 2)
+            bcAdd(b, run, 2)
             previousIs0 = false
             if s > maxSymbol {
                 break
@@ -1268,7 +1268,7 @@ pub fn _fseWriteNCount(dist: &Vec<i64>, tableLog: i64, maxSymbol: i64): string {
         if c < max {
             nb = nbBits - 1
         }
-        _bcAdd(b, c, nb)
+        bcAdd(b, c, nb)
         previousIs0 = count == 0
         while remaining < threshold {
             nbBits = nbBits - 1
@@ -1276,18 +1276,18 @@ pub fn _fseWriteNCount(dist: &Vec<i64>, tableLog: i64, maxSymbol: i64): string {
         }
         s = s + 1
     }
-    _bcAlign(b)
+    bcAlign(b)
     return b.bytes
 }
 
 // Literal-length code table (values 0..63; larger use highbit+19). RFC 8878 §3.1.1.3.2.1.1.
-pub fn _llCodeTable(): Vec<i64> {
+fn llCodeTable(): Vec<i64> {
     var d: Vec<i64> = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 16, 17, 17, 18, 18, 19, 19, 20, 20, 20, 20, 21, 21, 21, 21, 22, 22, 22, 22, 22, 22, 22, 22, 23, 23, 23, 23, 23, 23, 23, 23, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24]
     return d
 }
 
 // Match-length code table, indexed by (matchLen - 3); larger use highbit+36.
-pub fn _mlCodeTable(): Vec<i64> {
+fn mlCodeTable(): Vec<i64> {
     var d: Vec<i64> = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 32, 33, 33, 34, 34, 35, 35, 36, 36, 36, 36, 37, 37, 37, 37, 38, 38, 38, 38, 38, 38, 38, 38, 39, 39, 39, 39, 39, 39, 39, 39, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42]
     return d
 }
@@ -1307,7 +1307,7 @@ pub struct LzResult {
 // Greedy hash-chain LZ77 over a single block. Matches stay within the block (offset ≤
 // current position), min match 3. A modest chain cap keeps it near-linear; ratio, not
 // optimality, is the milestone-1 goal.
-pub fn _lz77(block: &string): LzResult {
+fn lz77(block: &string): LzResult {
     let n = block.len
     var seqs: Vec<Seq3> = Vec.new()
     var literals = ""
@@ -1322,8 +1322,8 @@ pub fn _lz77(block: &string): LzResult {
     let hashLog = 15
     let hashSize = 1 << hashLog
     let hashMask = hashSize - 1
-    var head = _zeroVec(hashSize) // stores pos+1; 0 = empty
-    var chain = _zeroVec(n) // chain[pos] = prev pos+1 with same hash
+    var head = zeroVec(hashSize) // stores pos+1; 0 = empty
+    var chain = zeroVec(n) // chain[pos] = prev pos+1 with same hash
     let minMatch = 3
     let maxChain = 128
     var litStart: i64 = 0
@@ -1398,7 +1398,7 @@ pub struct SeqCodes {
 // over a full offset+3 code. The exact inverse of the decoder's `_computeOffset`; advancing
 // `rep` through the same call keeps encoder and decoder repeat histories in lockstep by
 // construction. Cheapest match wins.
-pub fn _encodeOffsetBase(offset: i64, litLen: i64, rep: &mut Vec<i64>): i64 {
+fn encodeOffsetBase(offset: i64, litLen: i64, rep: &mut Vec<i64>): i64 {
     var offBase: i64 = 0
     if litLen == 0 {
         // litLen 0 shifts the repeat slots (decoder adds 1 to the index): 1→rep1, 2→rep2,
@@ -1423,37 +1423,37 @@ pub fn _encodeOffsetBase(offset: i64, litLen: i64, rep: &mut Vec<i64>): i64 {
             offBase = offset + 3
         }
     }
-    _computeOffset(offBase, litLen, rep) // advance rep exactly as the decoder will
+    computeOffset(offBase, litLen, rep) // advance rep exactly as the decoder will
     return offBase
 }
 
-pub fn _computeCodes(seqs: &Vec<Seq3>): SeqCodes {
+fn computeCodes(seqs: &Vec<Seq3>): SeqCodes {
     let nb = seqs.len
-    let llCodeTbl = _llCodeTable()
-    let mlCodeTbl = _mlCodeTable()
-    var ll = _zeroVec(nb)
-    var of = _zeroVec(nb)
-    var ml = _zeroVec(nb)
-    var llVal = _zeroVec(nb)
-    var mlVal = _zeroVec(nb)
-    var ofVal = _zeroVec(nb)
+    let llCodeTbl = llCodeTable()
+    let mlCodeTbl = mlCodeTable()
+    var ll = zeroVec(nb)
+    var of = zeroVec(nb)
+    var ml = zeroVec(nb)
+    var llVal = zeroVec(nb)
+    var mlVal = zeroVec(nb)
+    var ofVal = zeroVec(nb)
     var rep: Vec<i64> = [1, 4, 8] // repeat-offset history, decoder's initial state
     for i in 0..nb {
         let s = seqs[i]
         let litLen = s.litLen
         let mlBase = s.matchLen - 3
-        let offBase = _encodeOffsetBase(s.offset, litLen, rep)
+        let offBase = encodeOffsetBase(s.offset, litLen, rep)
         if litLen > 63 {
-            ll[i] = _highestSetBit(litLen) + 19
+            ll[i] = highestSetBit(litLen) + 19
         } else {
             ll[i] = llCodeTbl[litLen]
         }
         if mlBase > 127 {
-            ml[i] = _highestSetBit(mlBase) + 36
+            ml[i] = highestSetBit(mlBase) + 36
         } else {
             ml[i] = mlCodeTbl[mlBase]
         }
-        of[i] = _highestSetBit(offBase)
+        of[i] = highestSetBit(offBase)
         llVal[i] = litLen
         mlVal[i] = mlBase
         ofVal[i] = offBase
@@ -1466,36 +1466,36 @@ pub fn _computeCodes(seqs: &Vec<Seq3>): SeqCodes {
 // Encode the sequence section's interleaved FSE bitstream. Write order mirrors zstd's
 // `ZSTD_encodeSequences` so the decoder's backward reader inverts it exactly. The three
 // CTables may be Predefined- or custom-built; the bitstream shape is identical either way.
-pub fn _encSeqBitstream(c: &SeqCodes, llCT: &FseCTable, ofCT: &FseCTable, mlCT: &FseCTable): string {
+fn encSeqBitstream(c: &SeqCodes, llCT: &FseCTable, ofCT: &FseCTable, mlCT: &FseCTable): string {
     let nb = c.ll.len
-    let llEB = _llExtraBits()
-    let mlEB = _mlExtraBits()
+    let llEB = llExtraBits()
+    let mlEB = mlExtraBits()
     var b = BitCS {
         bytes: "", acc: 0, nb: 0
     }
     let last = nb - 1
     // Initial states from the last sequence (encoded first, decoded last).
-    var mlState = _fseInitCState2(mlCT, c.ml[last])
-    var ofState = _fseInitCState2(ofCT, c.of[last])
-    var llState = _fseInitCState2(llCT, c.ll[last])
-    _bcAdd(b, c.llVal[last], llEB[c.ll[last]])
-    _bcAdd(b, c.mlVal[last], mlEB[c.ml[last]])
-    _bcAdd(b, c.ofVal[last], c.of[last])
+    var mlState = fseInitCState2(mlCT, c.ml[last])
+    var ofState = fseInitCState2(ofCT, c.of[last])
+    var llState = fseInitCState2(llCT, c.ll[last])
+    bcAdd(b, c.llVal[last], llEB[c.ll[last]])
+    bcAdd(b, c.mlVal[last], mlEB[c.ml[last]])
+    bcAdd(b, c.ofVal[last], c.of[last])
     var n = nb - 2
     while n >= 0 {
-        ofState = _fseEncodeSymbol(b, ofCT, ofState, c.of[n])
-        mlState = _fseEncodeSymbol(b, mlCT, mlState, c.ml[n])
-        llState = _fseEncodeSymbol(b, llCT, llState, c.ll[n])
-        _bcAdd(b, c.llVal[n], llEB[c.ll[n]])
-        _bcAdd(b, c.mlVal[n], mlEB[c.ml[n]])
-        _bcAdd(b, c.ofVal[n], c.of[n])
+        ofState = fseEncodeSymbol(b, ofCT, ofState, c.of[n])
+        mlState = fseEncodeSymbol(b, mlCT, mlState, c.ml[n])
+        llState = fseEncodeSymbol(b, llCT, llState, c.ll[n])
+        bcAdd(b, c.llVal[n], llEB[c.ll[n]])
+        bcAdd(b, c.mlVal[n], mlEB[c.ml[n]])
+        bcAdd(b, c.ofVal[n], c.of[n])
         n = n - 1
     }
     // Flush final states (ML, OF, LL) — reverse of the decoder's init read order.
-    _bcAdd(b, mlState, mlCT.accuracyLog)
-    _bcAdd(b, ofState, ofCT.accuracyLog)
-    _bcAdd(b, llState, llCT.accuracyLog)
-    _bcClose(b)
+    bcAdd(b, mlState, mlCT.accuracyLog)
+    bcAdd(b, ofState, ofCT.accuracyLog)
+    bcAdd(b, llState, llCT.accuracyLog)
+    bcClose(b)
     return b.bytes
 }
 
@@ -1509,9 +1509,9 @@ pub struct StreamPlan {
 // Pick Predefined vs a custom FSE table for one code stream and build the encode table.
 // Custom tables cost a header, so we only take them once there are enough sequences to
 // amortize it and the stream actually has ≥2 distinct symbols.
-pub fn _planStream(codes: &Vec<i64>, predefDist: Vec<i64>, predefLog: i64, maxAcc: i64): StreamPlan {
+fn planStream(codes: &Vec<i64>, predefDist: Vec<i64>, predefLog: i64, maxAcc: i64): StreamPlan {
     let nb = codes.len
-    var counts = _zeroVec(64)
+    var counts = zeroVec(64)
     for i in 0..nb {
         counts[codes[i]] = counts[codes[i]] + 1
     }
@@ -1524,7 +1524,7 @@ pub fn _planStream(codes: &Vec<i64>, predefDist: Vec<i64>, predefLog: i64, maxAc
         }
     }
     if distinct >= 2 && nb >= 32 {
-        var tableLog = _highestSetBit(nb) + 1
+        var tableLog = highestSetBit(nb) + 1
         if tableLog > maxAcc {
             tableLog = maxAcc
         }
@@ -1534,15 +1534,15 @@ pub fn _planStream(codes: &Vec<i64>, predefDist: Vec<i64>, predefLog: i64, maxAc
         while (1 << tableLog) <= maxSym {
             tableLog = tableLog + 1
         }
-        let dist = _fseNormalizeCount(counts, nb, maxSym, tableLog)
-        let ct = _fseBuildCTable(dist.clone(), tableLog)
-        let header = _fseWriteNCount(dist, tableLog, maxSym)
+        let dist = fseNormalizeCount(counts, nb, maxSym, tableLog)
+        let ct = fseBuildCTable(dist.clone(), tableLog)
+        let header = fseWriteNCount(dist, tableLog, maxSym)
         return StreamPlan {
             mode: 2, ct: ct, header: header
         }
     }
     return StreamPlan {
-        mode: 0, ct: _fseBuildCTable(predefDist, predefLog), header: ""
+        mode: 0, ct: fseBuildCTable(predefDist, predefLog), header: ""
     }
 }
 
@@ -1556,7 +1556,7 @@ pub fn _planStream(codes: &Vec<i64>, predefDist: Vec<i64>, predefLog: i64, maxAc
 // fall back rather than length-limit (a later slice). No expansion: the caller keeps the
 // smaller of the Huffman and Raw sections.
 
-pub fn _emitLE(out: &mut string, value: i64, nbytes: i64) {
+fn emitLE(out: &mut string, value: i64, nbytes: i64) {
     var v = value
     for _i in 0..nbytes {
         out.push((v & 0xff) as u8)
@@ -1566,12 +1566,12 @@ pub fn _emitLE(out: &mut string, value: i64, nbytes: i64) {
 
 // Plain Huffman code lengths from a symbol histogram (0 = symbol absent). Repeated
 // merge-two-smallest over ≤129 symbols, then each leaf's length is its depth to the root.
-pub fn _hufCodeLengths(freq: &Vec<i64>, maxSymbol: i64): Vec<i64> {
+fn hufCodeLengths(freq: &Vec<i64>, maxSymbol: i64): Vec<i64> {
     let n = maxSymbol + 1
     let cap = 2 * n
-    var nodeFreq = _zeroVec(cap)
-    var parent = _zeroVec(cap) // parent index + 1; 0 = none yet (leaves and root)
-    var active = _zeroVec(cap)
+    var nodeFreq = zeroVec(cap)
+    var parent = zeroVec(cap) // parent index + 1; 0 = none yet (leaves and root)
+    var active = zeroVec(cap)
     for s in 0..n {
         if freq[s] > 0 {
             nodeFreq[s] = freq[s]
@@ -1605,7 +1605,7 @@ pub fn _hufCodeLengths(freq: &Vec<i64>, maxSymbol: i64): Vec<i64> {
             next = next + 1
         }
     }
-    var codeLen = _zeroVec(n)
+    var codeLen = zeroVec(n)
     for s in 0..n {
         if freq[s] > 0 {
             var d: i64 = 0
@@ -1623,21 +1623,21 @@ pub fn _hufCodeLengths(freq: &Vec<i64>, maxSymbol: i64): Vec<i64> {
 // Assign canonical Huffman codes from code lengths, byte-identical to the decoder's
 // `_hufBuildFromBits` table layout (longest codes at the low table indices, symbol order
 // within a length). Returns each symbol's `codeLen`-bit code, MSB-first.
-pub fn _hufBuildCodes(codeLen: &Vec<i64>, numSymbs: i64, maxBits: i64): Vec<i64> {
-    var rankCount = _zeroVec(maxBits + 2)
+fn hufBuildCodes(codeLen: &Vec<i64>, numSymbs: i64, maxBits: i64): Vec<i64> {
+    var rankCount = zeroVec(maxBits + 2)
     for s in 0..numSymbs {
         let b = codeLen[s]
         if b > 0 {
             rankCount[b] = rankCount[b] + 1
         }
     }
-    var rankIdx = _zeroVec(maxBits + 2)
+    var rankIdx = zeroVec(maxBits + 2)
     var i = maxBits
     while i >= 1 {
         rankIdx[i - 1] = rankIdx[i] + rankCount[i] * (1 << (maxBits - i))
         i = i - 1
     }
-    var codes = _zeroVec(numSymbs)
+    var codes = zeroVec(numSymbs)
     for s in 0..numSymbs {
         let b = codeLen[s]
         if b > 0 {
@@ -1652,28 +1652,28 @@ pub fn _hufBuildCodes(codeLen: &Vec<i64>, numSymbs: i64, maxBits: i64): Vec<i64>
 // Huffman-code `literals[from..to)` into one backward bitstream (the inverse of
 // `_hufDecode1Stream`): symbols written last-first, each code appended MSB-aligned, then a
 // '1' padding marker + byte-align. The decoder's window reader recovers them in order.
-pub fn _hufEncode1Stream(literals: &string, from: i64, to: i64, hufCode: &Vec<i64>, hufLen: &Vec<i64>): string {
+fn hufEncode1Stream(literals: &string, from: i64, to: i64, hufCode: &Vec<i64>, hufLen: &Vec<i64>): string {
     var b = BitCS {
         bytes: "", acc: 0, nb: 0
     }
     var i = to - 1
     while i >= from {
         let s = literals[i] as i64
-        _bcAdd(b, hufCode[s], hufLen[s])
+        bcAdd(b, hufCode[s], hufLen[s])
         i = i - 1
     }
-    _bcClose(b)
+    bcClose(b)
     return b.bytes
 }
 
 // Build a full Huffman literals section, or "" if Huffman isn't viable (tiny input, alphabet
 // past symbol 128, tree deeper than 11 bits, or the size field can't hold the result).
-pub fn _hufLiteralsSection(literals: &string): string {
+fn hufLiteralsSection(literals: &string): string {
     let regen = literals.len
     if regen < 8 {
         return ""
     }
-    var freq = _zeroVec(256)
+    var freq = zeroVec(256)
     var maxSymbol: i64 = 0
     var distinct: i64 = 0
     for i in 0..regen {
@@ -1689,7 +1689,7 @@ pub fn _hufLiteralsSection(literals: &string): string {
     if distinct < 2 || maxSymbol > 128 {
         return ""
     }
-    let codeLen = _hufCodeLengths(freq, maxSymbol)
+    let codeLen = hufCodeLengths(freq, maxSymbol)
     var maxBits: i64 = 0
     for s in 0..(maxSymbol + 1) {
         if codeLen[s] > maxBits {
@@ -1700,7 +1700,7 @@ pub fn _hufLiteralsSection(literals: &string): string {
         return ""
     }
     let numSymbs = maxSymbol + 1
-    let hufCode = _hufBuildCodes(codeLen, numSymbs, maxBits)
+    let hufCode = hufBuildCodes(codeLen, numSymbs, maxBits)
     // Direct weight description: transmit weights for symbols 0..maxSymbol-1 (4 bits each,
     // high nibble first); the decoder infers symbol maxSymbol so the tree stays complete.
     var weightsDesc = ""
@@ -1723,7 +1723,7 @@ pub fn _hufLiteralsSection(literals: &string): string {
     var streamsData = ""
     var sizeFormat: i64 = 0
     if regen <= 1023 {
-        streamsData = _hufEncode1Stream(literals, 0, regen, hufCode, codeLen)
+        streamsData = hufEncode1Stream(literals, 0, regen, hufCode, codeLen)
     } else {
         if regen <= 16383 {
             sizeFormat = 2
@@ -1731,13 +1731,13 @@ pub fn _hufLiteralsSection(literals: &string): string {
             sizeFormat = 3
         }
         let seg = regen / 4
-        let s1 = _hufEncode1Stream(literals, 0, seg, hufCode, codeLen)
-        let s2 = _hufEncode1Stream(literals, seg, 2 * seg, hufCode, codeLen)
-        let s3 = _hufEncode1Stream(literals, 2 * seg, 3 * seg, hufCode, codeLen)
-        let s4 = _hufEncode1Stream(literals, 3 * seg, regen, hufCode, codeLen)
-        _emitLE(streamsData, s1.len, 2)
-        _emitLE(streamsData, s2.len, 2)
-        _emitLE(streamsData, s3.len, 2)
+        let s1 = hufEncode1Stream(literals, 0, seg, hufCode, codeLen)
+        let s2 = hufEncode1Stream(literals, seg, 2 * seg, hufCode, codeLen)
+        let s3 = hufEncode1Stream(literals, 2 * seg, 3 * seg, hufCode, codeLen)
+        let s4 = hufEncode1Stream(literals, 3 * seg, regen, hufCode, codeLen)
+        emitLE(streamsData, s1.len, 2)
+        emitLE(streamsData, s2.len, 2)
+        emitLE(streamsData, s3.len, 2)
         for i in 0..s1.len {
             streamsData.push(s1[i])
         }
@@ -1781,7 +1781,7 @@ pub fn _hufLiteralsSection(literals: &string): string {
         headerBytes = 5
     }
     var section = ""
-    _emitLE(section, headerVal, headerBytes)
+    emitLE(section, headerVal, headerBytes)
     for i in 0..hufData.len {
         section.push(hufData[i])
     }
@@ -1789,9 +1789,9 @@ pub fn _hufLiteralsSection(literals: &string): string {
 }
 
 // Raw literals section (header + bytes), the never-expands fallback.
-pub fn _rawLiteralsSection(literals: &string): string {
+fn rawLiteralsSection(literals: &string): string {
     var out = ""
-    _encRawLiteralsHeader(out, literals.len)
+    encRawLiteralsHeader(out, literals.len)
     for i in 0..literals.len {
         out.push(literals[i])
     }
@@ -1799,9 +1799,9 @@ pub fn _rawLiteralsSection(literals: &string): string {
 }
 
 // Encode the literals section, choosing Huffman when it shrinks below Raw.
-pub fn _encodeLiterals(literals: &string): string {
-    let raw = _rawLiteralsSection(literals)
-    let huf = _hufLiteralsSection(literals)
+fn encodeLiterals(literals: &string): string {
+    let raw = rawLiteralsSection(literals)
+    let huf = hufLiteralsSection(literals)
     if huf.len > 0 && huf.len < raw.len {
         return huf
     }
@@ -1809,7 +1809,7 @@ pub fn _encodeLiterals(literals: &string): string {
 }
 
 // Raw literals section header (RFC 8878 §3.1.1.3.1.1): 1/2/3-byte forms by size.
-pub fn _encRawLiteralsHeader(out: &mut string, size: i64) {
+fn encRawLiteralsHeader(out: &mut string, size: i64) {
     if size < 32 {
         out.push(((size << 3)) as u8) // litType 0, 1-byte, 5-bit size
     } else if size < 4096 {
@@ -1823,7 +1823,7 @@ pub fn _encRawLiteralsHeader(out: &mut string, size: i64) {
 }
 
 // Number_of_Sequences varint (RFC 8878 §3.1.1.3.2.1).
-pub fn _encSeqCount(out: &mut string, n: i64) {
+fn encSeqCount(out: &mut string, n: i64) {
     if n < 128 {
         out.push(n as u8)
     } else if n < 0x7F00 {
@@ -1837,7 +1837,7 @@ pub fn _encSeqCount(out: &mut string, n: i64) {
 }
 
 // 3-byte block header (LE): last-block flag, block type, block size.
-pub fn _encBlockHeader(out: &mut string, size: i64, blockType: i64, last: bool) {
+fn encBlockHeader(out: &mut string, size: i64, blockType: i64, last: bool) {
     var bh = (size << 3) | (blockType << 1)
     if last {
         bh = bh | 1
@@ -1855,24 +1855,24 @@ pub struct BlockResult {
 // Compress one block into a Compressed_Block body: Raw literals + FSE-coded sequences,
 // each of the three code streams using a Predefined or custom (mode-2) FSE table, whichever
 // the plan picks. `ok == false` when the block yields no sequences — the caller emits Raw.
-pub fn _compressBlock(block: &string): BlockResult {
-    let lz = _lz77(block)
+fn compressBlock(block: &string): BlockResult {
+    let lz = lz77(block)
     if lz.seqs.len == 0 {
         return BlockResult {
             ok: false, data: ""
         }
     }
-    let codes = _computeCodes(lz.seqs)
-    let llPlan = _planStream(codes.ll, _llDefaultDist(), 6, 9)
-    let ofPlan = _planStream(codes.of, _ofDefaultDist(), 5, 8)
-    let mlPlan = _planStream(codes.ml, _mlDefaultDist(), 6, 9)
+    let codes = computeCodes(lz.seqs)
+    let llPlan = planStream(codes.ll, llDefaultDist(), 6, 9)
+    let ofPlan = planStream(codes.of, ofDefaultDist(), 5, 8)
+    let mlPlan = planStream(codes.ml, mlDefaultDist(), 6, 9)
 
     var out = ""
-    let litSection = _encodeLiterals(lz.literals)
+    let litSection = encodeLiterals(lz.literals)
     for i in 0..litSection.len {
         out.push(litSection[i])
     }
-    _encSeqCount(out, lz.seqs.len)
+    encSeqCount(out, lz.seqs.len)
     // Sequence-compression modes byte: LL in bits 7:6, OF in 5:4, ML in 3:2.
     out.push(((llPlan.mode << 6) | (ofPlan.mode << 4) | (mlPlan.mode << 2)) as u8)
     // FSE distribution headers, in the order the decoder reads them: LL, OF, ML.
@@ -1885,7 +1885,7 @@ pub fn _compressBlock(block: &string): BlockResult {
     for i in 0..mlPlan.header.len {
         out.push(mlPlan.header[i])
     }
-    let stream = _encSeqBitstream(codes, llPlan.ct, ofPlan.ct, mlPlan.ct)
+    let stream = encSeqBitstream(codes, llPlan.ct, ofPlan.ct, mlPlan.ct)
     for i in 0..stream.len {
         out.push(stream[i])
     }
@@ -1906,10 +1906,10 @@ pub fn zstdCompress(src: &string): string {
     out.push(0x2f as u8)
     out.push(0xfd as u8)
     out.push(0xa4 as u8)
-    _enc32LE(out, src.len)
+    enc32LE(out, src.len)
     if src.len == 0 {
-        _encRawBlockHeader(out, 0, true)
-        _enc32LE(out, (xxh64(src, 0) & 0xffffffff) as i64)
+        encRawBlockHeader(out, 0, true)
+        enc32LE(out, (xxh64(src, 0) & 0xffffffff) as i64)
         return out
     }
     let maxBlock: i64 = 131072
@@ -1921,21 +1921,21 @@ pub fn zstdCompress(src: &string): string {
             bsize = maxBlock
         }
         let last = pos + bsize >= src.len
-        let block = _slice(src, pos, pos + bsize)
-        let comp = _compressBlock(block)
+        let block = slice(src, pos, pos + bsize)
+        let comp = compressBlock(block)
         if comp.ok && comp.data.len < bsize {
-            _encBlockHeader(out, comp.data.len, 2, last)
+            encBlockHeader(out, comp.data.len, 2, last)
             for i in 0..comp.data.len {
                 out.push(comp.data[i])
             }
         } else {
-            _encRawBlockHeader(out, bsize, last)
+            encRawBlockHeader(out, bsize, last)
             for i in 0..bsize {
                 out.push(block[i])
             }
         }
         pos = pos + bsize
     }
-    _enc32LE(out, (xxh64(src, 0) & 0xffffffff) as i64)
+    enc32LE(out, (xxh64(src, 0) & 0xffffffff) as i64)
     return out
 }

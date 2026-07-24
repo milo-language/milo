@@ -29,7 +29,7 @@ pub struct BitW {
     out: string,
 }
 
-pub fn _putBit(w: &mut BitW, bit: i64) {
+fn putBit(w: &mut BitW, bit: i64) {
     w.acc = w.acc | ((bit & 1) << w.nbits)
     w.nbits = w.nbits + 1
     if w.nbits == 8 {
@@ -40,21 +40,21 @@ pub fn _putBit(w: &mut BitW, bit: i64) {
 }
 
 // LSB-first: bit 0 of val first. Used for the block header and extra bits.
-pub fn _putBits(w: &mut BitW, val: i64, n: i64) {
+fn putBits(w: &mut BitW, val: i64, n: i64) {
     for k in 0..n {
-        _putBit(w, (val >> k) & 1)
+        putBit(w, (val >> k) & 1)
     }
 }
 
 // MSB-first: bit (n-1) of code first. Used for Huffman codes (RFC 1951 §3.1.1).
-pub fn _putCode(w: &mut BitW, code: i64, n: i64) {
+fn putCode(w: &mut BitW, code: i64, n: i64) {
     for k in 0..n {
-        _putBit(w, (code >> (n - 1 - k)) & 1)
+        putBit(w, (code >> (n - 1 - k)) & 1)
     }
 }
 
 // Pad the final partial byte with zero bits and flush it.
-pub fn _flush(w: &mut BitW) {
+fn flush(w: &mut BitW) {
     if w.nbits > 0 {
         w.out.push((w.acc & 0xff) as u8)
         w.acc = 0
@@ -63,38 +63,38 @@ pub fn _flush(w: &mut BitW) {
 }
 
 // Emit a literal/length symbol (0..287) with the fixed-Huffman code table.
-pub fn _emitSym(w: &mut BitW, s: i64) {
+fn emitSym(w: &mut BitW, s: i64) {
     if s < 144 {
-        _putCode(w, 48 + s, 8) // 00110000..10111111
+        putCode(w, 48 + s, 8) // 00110000..10111111
     } else if s < 256 {
-        _putCode(w, 400 + (s - 144), 9) // 110010000..111111111
+        putCode(w, 400 + (s - 144), 9) // 110010000..111111111
     } else if s < 280 {
-        _putCode(w, s - 256, 7) // 0000000..0010111
+        putCode(w, s - 256, 7) // 0000000..0010111
     } else {
-        _putCode(w, 192 + (s - 280), 8) // 11000000..11000111
+        putCode(w, 192 + (s - 280), 8) // 11000000..11000111
     }
 }
 
-pub fn _lenBase(): [i64; 29] {
+pub fn lenBase(): [i64; 29] {
     return [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
 }
 
-pub fn _lenExtra(): [i64; 29] {
+pub fn lenExtra(): [i64; 29] {
     return [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
 }
 
-pub fn _distBase(): [i64; 30] {
+pub fn distBase(): [i64; 30] {
     return [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
 }
 
-pub fn _distExtra(): [i64; 30] {
+pub fn distExtra(): [i64; 30] {
     return [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
 }
 
 // Emit a back-reference: length symbol (257..285) + extra, then distance code + extra.
-pub fn _emitMatch(w: &mut BitW, len: i64, dist: i64) {
-    let lenBase = _lenBase()
-    let lenExtra = _lenExtra()
+fn emitMatch(w: &mut BitW, len: i64, dist: i64) {
+    let lenBase = lenBase()
+    let lenExtra = lenExtra()
     // Largest length index whose base does not exceed len.
     var li: i64 = 28
     for i in 0..29 {
@@ -103,11 +103,11 @@ pub fn _emitMatch(w: &mut BitW, len: i64, dist: i64) {
             break
         }
     }
-    _emitSym(w, 257 + li)
-    _putBits(w, len - lenBase[li], lenExtra[li])
+    emitSym(w, 257 + li)
+    putBits(w, len - lenBase[li], lenExtra[li])
 
-    let distBase = _distBase()
-    let distExtra = _distExtra()
+    let distBase = distBase()
+    let distExtra = distExtra()
     var di: i64 = 29
     for i in 0..30 {
         if distBase[i] > dist {
@@ -115,17 +115,17 @@ pub fn _emitMatch(w: &mut BitW, len: i64, dist: i64) {
             break
         }
     }
-    _putCode(w, di, 5) // fixed distance codes are 5 bits, MSB-first
-    _putBits(w, dist - distBase[di], distExtra[di])
+    putCode(w, di, 5) // fixed distance codes are 5 bits, MSB-first
+    putBits(w, dist - distBase[di], distExtra[di])
 }
 
 // Hash of the 3 bytes at position p (p+2 must be in range).
-pub fn _hash3(src: &string, p: i64): i64 {
+fn hash3(src: &string, p: i64): i64 {
     return (((src[p] as i64) << 10) ^ ((src[p + 1] as i64) << 5) ^ (src[p + 2] as i64)) & (HASHSIZE - 1)
 }
 
 // Length of the byte run shared by positions a and b (a < b), capped at maxLen.
-pub fn _matchLen(src: &string, a: i64, b: i64, maxLen: i64): i64 {
+fn matchLen(src: &string, a: i64, b: i64, maxLen: i64): i64 {
     var n: i64 = 0
     while n < maxLen && src[a + n] == src[b + n] {
         n = n + 1
@@ -138,8 +138,8 @@ pub fn deflate(src: &string): string {
     var w = BitW {
         acc: 0, nbits: 0, out: ""
     }
-    _putBits(w, 1, 1) // BFINAL = 1
-    _putBits(w, 1, 2) // BTYPE  = 01 (fixed Huffman)
+    putBits(w, 1, 1) // BFINAL = 1
+    putBits(w, 1, 2) // BTYPE  = 01 (fixed Huffman)
 
     let n = src.len
     var head = Vec.new() // hash -> most recent position, -1 if none
@@ -156,7 +156,7 @@ pub fn deflate(src: &string): string {
         var bestLen: i64 = 0
         var bestDist: i64 = 0
         if pos + MINMATCH <= n {
-            let h = _hash3(src, pos)
+            let h = hash3(src, pos)
             var cand = head[h]
             let maxLen = if n - pos < MAXMATCH {
                 n - pos
@@ -165,7 +165,7 @@ pub fn deflate(src: &string): string {
             }
             var chain: i64 = 0
             while cand >= 0 && chain < MAXCHAIN && pos - cand <= WINDOW {
-                let ml = _matchLen(src, cand, pos, maxLen)
+                let ml = matchLen(src, cand, pos, maxLen)
                 if ml > bestLen {
                     bestLen = ml
                     bestDist = pos - cand
@@ -180,35 +180,35 @@ pub fn deflate(src: &string): string {
             head[h] = pos
         }
         if bestLen >= MINMATCH {
-            _emitMatch(w, bestLen, bestDist)
+            emitMatch(w, bestLen, bestDist)
             // Register the positions we're skipping so later matches can find them.
             for k in 1..bestLen {
                 let p = pos + k
                 if p + MINMATCH <= n {
-                    let hh = _hash3(src, p)
+                    let hh = hash3(src, p)
                     prev[p] = head[hh]
                     head[hh] = p
                 }
             }
             pos = pos + bestLen
         } else {
-            _emitSym(w, src[pos] as i64)
+            emitSym(w, src[pos] as i64)
             pos = pos + 1
         }
     }
-    _emitSym(w, 256) // end of block
-    _flush(w)
+    emitSym(w, 256) // end of block
+    flush(w)
     return w.out
 }
 
-pub fn _push32LE(out: &mut string, v: i64) {
+fn push32LE(out: &mut string, v: i64) {
     out.push((v & 0xff) as u8)
     out.push(((v >> 8) & 0xff) as u8)
     out.push(((v >> 16) & 0xff) as u8)
     out.push(((v >> 24) & 0xff) as u8)
 }
 
-pub fn _push32BE(out: &mut string, v: i64) {
+fn push32BE(out: &mut string, v: i64) {
     out.push(((v >> 24) & 0xff) as u8)
     out.push(((v >> 16) & 0xff) as u8)
     out.push(((v >> 8) & 0xff) as u8)
@@ -223,15 +223,15 @@ pub fn gzipCompress(src: &string): string {
     out.push(0x8b as u8)
     out.push(8 as u8) // CM = deflate
     out.push(0 as u8) // FLG = none
-    _push32LE(out, 0) // MTIME = 0 (unknown)
+    push32LE(out, 0) // MTIME = 0 (unknown)
     out.push(0 as u8) // XFL
     out.push(255 as u8) // OS = unknown
     let body = deflate(src)
     for i in 0..body.len {
         out.push(body[i])
     }
-    _push32LE(out, crc32(src))
-    _push32LE(out, src.len & 0xffffffff)
+    push32LE(out, crc32(src))
+    push32LE(out, src.len & 0xffffffff)
     return out
 }
 
@@ -244,6 +244,6 @@ pub fn zlibCompress(src: &string): string {
     for i in 0..body.len {
         out.push(body[i])
     }
-    _push32BE(out, adler32(src))
+    push32BE(out, adler32(src))
     return out
 }

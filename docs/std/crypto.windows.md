@@ -34,6 +34,31 @@ pub fn aesGcmEncrypt(_key: &string, _iv: &string, _plaintext: &string, _aad: &st
 
 _Undocumented._
 
+### `aesUnsupported`
+
+```milo
+fn aesUnsupported(): Result<AesGcmResult, string>
+```
+
+CNG AES-GCM (BCryptEncrypt + BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO) is not wired up yet;
+fail loudly rather than return a plausible-looking ciphertext. Tracked in docs/roadmap.md.
+
+### `bcryptHash`
+
+```milo
+fn bcryptHash(algHandle: i64, input: &string, outLen: i64): string
+```
+
+_Undocumented._
+
+### `bytesToHex`
+
+```milo
+pub fn bytesToHex(raw: &string, n: i64): string
+```
+
+_Undocumented._
+
 ### `md5`
 
 ```milo
