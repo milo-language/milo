@@ -46,7 +46,7 @@ Memory: mem
 - **LSP server**: diagnostics, hover, go-to-definition, completions, code lens
 - **VS Code extension**: syntax highlighting + LSP client
 - **Formatter** (`milo-fmt`): context-sensitive formatting, LSP integration (written in Milo)
-- **Package manager** (`milo-pkg`): init, new, add, install, git-based cache with lockfile (written in Milo)
+- **Package manager** (`milo add`/`install`/`publish`): git-based cache with lockfile, GitHub repos as the registry — see [plans/package-manager.md](plans/package-manager.md). Folded into the `milo` CLI, not a separate binary
 - **Test framework**: `@expect:`/`@error:` annotations, `milo test` runner
 - **Example apps**: web servers (7), CLI tools (jq, grep, rg, cat, wc, tree, calc, hex, timeout, fmt)
 - **GitHub Actions CI**: build + test on push/PR, release pipeline
