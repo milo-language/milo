@@ -195,6 +195,46 @@ far from the `match` that caused it.
 binds a non-Copy payload by value, or explicitly via a borrow-match form. Even
 just allowing `match` on a `&T` subject would remove the helper-fn tax.
 
+**AMENDED (2026-08-03) — rule unchanged, silence fixed.** The fix below was reviewed as
+drifting toward Rust's match-ergonomics problem: a match flips between consuming and
+borrowing based on a property of the arms, so the pile of special cases grows and each
+one is individually reasonable. Two removals were tried and both were wrong, which is
+the useful part of the record:
+
+- **Delete the rule outright.** Breaks `src-milo/lower.milo:535` — a bare
+  `match resultType { TypeKind.TString => {} _ => {} }` that binds nothing at all.
+  Consuming a subject on a match with zero bindings is indefensible.
+- **Replace it with a syntactic test** (*does any pattern bind a name?*). Breaks
+  `milojs/src/complete.milo:171` — `match cur { JSValue.Obj(o) => ... }`, where `o`
+  names an `i64` handle. A Copy payload binding is a snapshot; naming it cannot take
+  ownership of anything, and this one sits in a loop, so it fails hard.
+
+Both halves of the original test are therefore load-bearing on real code, and the
+semantics are right: a match consumes only when an arm could actually take a payload
+out — a **named binding of a non-Copy payload**.
+
+The real defect was that the rule decided **silently**. Which half applied depended on
+payload `Copy`-ness, which is not written anywhere near the match, and the consequence
+surfaced at the subject's *next* use as a bare `use of moved variable`. Correct, but
+unexplained — and an unexplained hazard is the thing principle #1 exists to prevent.
+So `checkMatchLike` now records *why* it consumed (`ownedInspectBlockedBy`) and the
+move error says so:
+
+> hint: arm 'S' binds 's', a non-Copy 'string' it could move out, so the match consumed
+> 'v'. Bind '_' instead if the arm does not need it, or match on a '&' parameter.
+
+Fixtures: `tests/fixtures/matchOwnedTagRead.milo` (the three shapes that borrow — `_`
+payloads, bare variants, a named Copy payload), `tests/errors/matchOwnedNamedBinding.milo`
+(the shape that moves, asserting the hint text). Still not mirrored in
+`enumSubjectBorrow` (`if-let`/`let-else`), which takes no arms.
+
+**Standing caveat.** This keeps a rule whose input is the arm set, and the review's
+structural point survives: the next special case here should be a *spelling* (an
+explicit borrow-match form), not another inference. The diagnostic is what makes the
+current inference honest, not a licence to add more.
+
+<details><summary>Original 2026-07-18 fix, kept for the record</summary>
+
 **RESOLVED (2026-07-18) — the implicit-borrow option, conservatively.** Matching an
 owned enum *local* now borrows instead of moving **when no arm binds a non-Copy
 payload to a named binding** — i.e. every non-Copy payload is a `_` (or the payload is
@@ -205,7 +245,8 @@ payloads never consumes. Mechanically this reuses the existing place-match machi
 for the owned-Ident case, so non-Copy `_` payloads bind as `&T` and the subject isn't
 `tryMove`d (`src/checker.ts`); codegen reads the local in place with no zeroing, so the
 owned local's normal scope-end drop still fires exactly once (verified leak/double-free
-clean over 100k heap-payload iterations). Fixture `tests/fixtures/matchOwnedInspect.milo`.
+clean over 100k heap-payload iterations). Fixture `tests/fixtures/matchOwnedInspect.milo`
+(renamed to `matchOwnedTagRead.milo` by the amendment above).
 
 **What is NOT covered (deliberately):** a *named* non-Copy binding — `V.S(s)` where you
 then only read `s` — still consumes, because a named binding is allowed to move the
@@ -216,6 +257,8 @@ match-ergonomics (bind `s` as `&string` when it isn't moved out) is the larger,
 potentially-breaking change left for later; so is allowing `match &v` / a `*V` subject.
 The `objHandle`/`funcHandle` helpers in `value.milo` can now be inlined where their
 payloads are Copy or ignored.
+
+</details>
 
 ## 6. No float exponent literals (`1.0e18`) — and the diagnostic depends on position
 

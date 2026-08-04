@@ -1,0 +1,83 @@
+// A `match` on an owned enum local consumes it only when an arm could take a payload
+// OUT — a named binding of a non-Copy payload. Everything else just reads the subject,
+// so it is borrowed and stays usable afterward. Three shapes that read:
+//   - `_` payload bindings (name nothing)
+//   - bare variants / a wildcard arm (bind nothing at all)
+//   - a NAMED binding of a Copy payload (`n` is a snapshot; nothing escapes)
+// The moving case, and the diagnostic that explains it, live in
+// tests/errors/matchOwnedNamedBinding.milo.
+pub enum V {
+    A, S(string), N(i64)
+}
+
+pub fn main(): void {
+    let v = V.S("hi")
+    // @expect: 1
+    match v {
+        V.A => {
+            print(0)
+        }
+        V.S(_) => {
+            print(1)
+        }
+        V.N(_) => {
+            print(2)
+        }
+    }
+    // v still owned here — inspect again
+    // @expect: 1
+    match v {
+        V.A => {
+            print(0)
+        }
+        V.S(_) => {
+            print(1)
+        }
+        V.N(_) => {
+            print(2)
+        }
+    }
+    // bare variant + wildcard arm: nothing is bound anywhere
+    let n = V.N(42)
+    // @expect: 3
+    match n {
+        V.A => {
+            print(0)
+        }
+        _ => {
+            print(3)
+        }
+    }
+    // named binding of a Copy payload — `n` is a snapshot, so this reads too
+    // @expect: 42
+    match n {
+        V.N(x) => {
+            print(x)
+        }
+        _ => {
+            print(0)
+        }
+    }
+    // @expect: 42
+    match n {
+        V.N(x) => {
+            print(x)
+        }
+        _ => {
+            print(0)
+        }
+    }
+    // heap payload path: borrow-inspect then normal scope-end drop (no double free)
+    // @expect: 7
+    match v {
+        V.S(_) => {
+            print(7)
+        }
+        V.A => {
+            print(0)
+        }
+        V.N(_) => {
+            print(0)
+        }
+    }
+}

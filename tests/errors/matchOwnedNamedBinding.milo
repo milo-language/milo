@@ -1,0 +1,28 @@
+// @error: arm 'S' binds 's', a non-Copy 'string'
+
+// A match on an owned local consumes it only when an arm could actually take a payload
+// out — a NAMED binding of a non-Copy payload. `V.S(s)` is that case. `V.N(n)` is not
+// (i64 is Copy, so `n` is a snapshot), and neither is `_`; both of those borrow and
+// leave the subject usable (tests/fixtures/matchOwnedTagRead.milo).
+//
+// What is being tested here is the DIAGNOSTIC, not the rule. Payload Copy-ness is not
+// written anywhere near the match, so a bare "use of moved variable" two statements
+// later gives the reader nothing to act on. The error must name the arm and binding
+// that caused it, and say that `_` avoids it.
+pub enum V {
+    A, S(string), N(i64)
+}
+
+pub fn main(): void {
+    let v = V.S("hi")
+    match v {
+        V.A => { print(0) }
+        V.S(s) => { print(s) }
+        V.N(n) => { print(n) }
+    }
+    match v {
+        V.A => { print(0) }
+        V.S(_) => { print(1) }
+        V.N(_) => { print(2) }
+    }
+}

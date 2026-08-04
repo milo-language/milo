@@ -367,6 +367,12 @@ export class TypeChecker {
   // Only drives the wording of the use-after-move error, which is otherwise
   // misleading here (the transfer point is the pattern, not an earlier stmt).
   private movedByPattern = new Set<object>();
+  // Why a `match` on an owned enum local consumed it rather than borrowing: the first
+  // named non-Copy payload binding found. Only drives the wording of the use-after-move
+  // error — without it the reader sees "use of moved variable" at a line whose
+  // connection to the match, and to the `_` that would have avoided it, is invisible
+  // (payload Copy-ness is not written anywhere near the match).
+  private ownedInspectBlockedBy = new Map<object, { variant: string; binding: string; type: TypeKind; subject: string }>();
   private autoWrappedOption = new Map<Expr, string>();
   private arrayToVecCoercions = new Set<Expr>();
   private closureCaptures = new Map<Expr, CaptureInfo[]>();
@@ -5825,6 +5831,17 @@ export class TypeChecker {
           sp,
           `the pattern moved '${expr.name}''s payload out, so reading '${expr.name}' here would see a zeroed value. Use the pattern's binding instead, or compute what you need from '${expr.name}' before the match.`,
         );
+      } else if (this.ownedInspectBlockedBy.has(info)) {
+        // The transfer point is a `match` that would have borrowed, except that one arm
+        // named a payload it could have moved out. Name that arm: the reader cannot see
+        // from the match which payloads are Copy, so "it moved" is not a usable fact on
+        // its own, and `_` is the one-character fix.
+        const b = this.ownedInspectBlockedBy.get(info)!;
+        this.error(
+          `use of moved variable '${expr.name}'`,
+          sp,
+          `arm '${b.variant}' binds '${b.binding}', a non-Copy '${typeName(b.type)}' it could move out, so the match consumed '${b.subject}'. Bind '_' instead if the arm does not need it, or match on a '&' parameter.`,
+        );
       } else {
         // A `@noCopy` handle is deliberately not clonable — duplicating one is how you
         // get the double-free it exists to prevent — so the usual hint would name a fix
@@ -8539,25 +8556,46 @@ export class TypeChecker {
     const subjIsPlace = !subjIsRef && subjType.tag === "enum" &&
       (subject.kind === "FieldAccess" || subject.kind === "IndexAccess" ||
        (subject.kind === "UnaryOp" && subject.op === "*"));
-    // Matching an OWNED enum local to inspect its shape shouldn't consume it when no
-    // arm actually moves a non-Copy payload out — i.e. every non-Copy payload is
-    // ignored (`_`). Then the match only reads, so borrow it (like the place case)
-    // instead of moving, and it stays usable afterward. This is purely additive: it
-    // never changes a binding's type (there are no named non-Copy bindings in this
-    // case — Copy bindings stay by-value either way), so a match that legitimately
-    // destructures owned data still consumes exactly as before.
+    // Matching an OWNED enum local only consumes it if an arm can actually take a
+    // payload out — i.e. some pattern binds a non-Copy payload to a NAME. Otherwise
+    // (every payload is `_`, or is Copy and therefore snapshot-bound) the match just
+    // reads, so borrow it like the place case and leave the local usable afterward.
+    // Both halves of that test are load-bearing on real code: `lower.milo`'s bare
+    // `match resultType { TypeKind.TString => {} _ => {} }` binds nothing, and milojs's
+    // `match cur { JSValue.Obj(o) => ... }` names a Copy i64 handle — a name that cannot
+    // take ownership of anything. Dropping either half breaks them.
+    //
+    // The hazard is not this rule, it is that the rule used to decide SILENTLY: which
+    // half applied depended on the Copy-ness of payload types, which is not visible
+    // where the match is written, and the consequence surfaced at the subject's *next*
+    // use as a bare "use of moved variable". So when the answer is "consumes", record
+    // WHY (`ownedInspectBlockedBy`) and let the move diagnostic explain itself.
     let subjIsOwnedInspect = false;
     if (!subjIsRef && !subjIsPlace && subjType.tag === "enum" && subject.kind === "Ident") {
       const einfo = this.enums.get(subjType.name);
+      // The first named non-Copy payload, if any: it is what decides "consumes", and it
+      // is what the move diagnostic quotes back.
+      let blocker: { variant: string; binding: string; type: TypeKind } | undefined;
       if (einfo) {
-        subjIsOwnedInspect = arms.every(arm => {
-          if (arm.pattern.kind !== "EnumPattern") return true;
-          const v = einfo.variants.get(arm.pattern.variant);
-          if (!v) return true;
-          return arm.pattern.bindings.every((b, i) =>
-            b === "_" || i >= v.fields.length ||
-            isCopy(v.fields[i], (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n)));
-        });
+        outer: for (const arm of arms) {
+          const pat = arm.pattern;
+          if (pat.kind !== "EnumPattern") continue;
+          const v = einfo.variants.get(pat.variant);
+          if (!v) continue;
+          for (let i = 0; i < pat.bindings.length && i < v.fields.length; i++) {
+            const b = pat.bindings[i]!;
+            if (b === "_") continue;
+            if (isCopy(v.fields[i], (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) continue;
+            blocker = { variant: pat.variant, binding: b, type: v.fields[i]! };
+            break outer;
+          }
+        }
+        subjIsOwnedInspect = !blocker;
+      }
+      const info = this.lookup(subject.name);
+      if (info) {
+        if (blocker) this.ownedInspectBlockedBy.set(info, { ...blocker, subject: subject.name });
+        else this.ownedInspectBlockedBy.delete(info);
       }
     }
     const subjBorrows = subjIsRef || subjIsPlace || subjIsOwnedInspect;
