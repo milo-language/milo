@@ -314,6 +314,11 @@ pub fn adviceScriptHandler(ctx: &mut Context): Response {
     return Response.Status(200, "application/javascript; charset=utf-8", @embedFile("public/advice.js"))
 }
 
+pub fn insightScriptHandler(ctx: &mut Context): Response {
+    ctx.setHeader("Cache-Control", "no-store")
+    return Response.Status(200, "application/javascript; charset=utf-8", @embedFile("public/insight.js"))
+}
+
 pub fn skyScriptHandler(ctx: &mut Context): Response {
     ctx.setHeader("Cache-Control", "no-store")
     return Response.Status(200, "application/javascript; charset=utf-8", @embedFile("public/sky.js"))
@@ -389,6 +394,7 @@ pub fn main(): i32 {
     r.get("/radar.js", radarScriptHandler)
     r.get("/sky.js", skyScriptHandler)
     r.get("/advice.js", adviceScriptHandler)
+    r.get("/insight.js", insightScriptHandler)
     r.get("/satellite.min.js", satLibHandler)
     r.get("/api/cities", citiesHandler)
     r.get("/manifest.webmanifest", manifestHandler)

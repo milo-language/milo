@@ -1041,6 +1041,22 @@ function mToFt(m) {
   return Math.round(m * 3.28084);
 }
 
+// The frequentist reading of a forecast percentage, worded off the number on
+// the tile: a canned "a 40% chance means..." next to a tile reading 20% makes
+// the reader do the substitution, and rounding "5%" to "0 days in 10" makes it
+// nonsense.
+function popMeaning(p) {
+  if (p <= 0) return "0% means no measurable rain is expected here.";
+  if (p < 10) {
+    return p + "% means about 1 day in " + Math.round(100 / p) +
+      " like this one sees measurable rain here, not that it rains " + p +
+      "% of the day.";
+  }
+  return p + "% means " + Math.round(p / 10) +
+    " days in 10 like this one see measurable rain here, not that it rains " + p +
+    "% of the day.";
+}
+
 function fmtNum(n) {
   return Math.round(n).toLocaleString("en-US");
 }
@@ -1626,6 +1642,8 @@ function render(city, forecast, hourlyData, grid, timeZone) {
 
   adviceCtx = {
     hrs: hrs,
+    // the daily periods are what the week-ahead lede reasons over
+    periods: periods,
     grid: grid,
     hi: hi,
     lo: lo,
@@ -1639,11 +1657,17 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     "</div>" +
     '<div class="hero-temp" id="heroTemp">' + heroTempStr + "°</div>" +
     '<div class="hero-condition">' + esc(now.shortForecast) + "</div>" +
+    // The week in a sentence, above the numbers rather than below them: the
+    // reader's first question is "what is this week doing", and the stat row
+    // answers a question they have not asked yet.
+    insightHtml(adviceCtx) +
     '<div class="hero-stats">' + stats + "</div>" +
-    '<div class="hero-detail">' + esc(now.detailedForecast) + "</div>" +
-    // Directly under the paragraph that describes the day, because this is the
-    // answer to the question that paragraph leaves open.
-    '<div id="adviceSlot">' + adviceHtml(adviceCtx) + "</div>";
+    // Then what to do about the next few hours, and only then the forecast
+    // office's paragraph, which is thorough and reads like a telex.
+    '<div id="adviceSlot">' + adviceHtml(adviceCtx) + "</div>" +
+    '<div class="hero-detail">' +
+    '<div class="hero-detail-label">The forecast office’s own words</div>' +
+    esc(now.detailedForecast) + "</div>";
 
   // Hourly strip
   var hourly = '<div class="hourly-scroll">';
@@ -1762,10 +1786,41 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     );
   }
 
+  // The bare percentage is the most misread number on the page: it is neither
+  // "how much" nor "how long", and without a window it is not actionable. The
+  // sub-line names the window when there is one, and the popover says what the
+  // number actually means.
+  var popPeak6 = gridPeak(grid, "probabilityOfPrecipitation", 6);
+  var popPeak24 = gridPeak(grid, "probabilityOfPrecipitation", 24);
+  var qpfMm = gridSum(grid, "quantitativePrecipitation", 24);
+  var qpfIn = qpfMm !== null ? qpfMm / 25.4 : null;
+  var wetRun = adviceWetRun(adviceHours(hrs, 24), 30);
   tiles += tile(
     "Precipitation",
     (precip || 0) + '<span class="tile-unit">%</span>',
-    "Chance today"
+    wetRun
+      ? "Likeliest " + fmtHour(wetRun.from.startTime, timeZone) + "–" +
+        fmtHour(new Date(Date.parse(wetRun.to.startTime) + 3600000).toISOString(), timeZone)
+      // weather.gov's own name for the period the percentage belongs to: at 8 PM
+      // "Chance today" is describing a day that is over.
+      : "Chance " + (/^(Today|Tonight|This |Overnight|Late)/.test(now.name)
+          ? now.name.toLowerCase()
+          : "today"),
+    "",
+    // The hero's percentage is the *period*'s (weather.gov's "Tonight", "This
+    // Afternoon"), not this hour's, so it is labelled with the period's name.
+    detailRow(esc(now.name), (precip || 0) + "%") +
+      (popPeak6 !== null ? detailRow("Peak chance (next 6 h)", Math.round(popPeak6) + "%") : "") +
+      (popPeak24 !== null ? detailRow("Peak chance (next 24 h)", Math.round(popPeak24) + "%") : "") +
+      (qpfIn !== null
+        ? detailRow(
+            "Total expected (next 24 h)",
+            qpfIn < 0.01 ? "none" : qpfIn.toFixed(2) + " in",
+          )
+        : "") +
+      '<div class="detail-note">' + popMeaning(precip || 0) +
+      " It says nothing about how hard: the total above is the amount to plan " +
+      "for.</div>"
   );
 
   // Thunder and snow are conditional by design: a 0% thunder tile every day of
@@ -1806,15 +1861,45 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     tiles += tile(
       "Visibility",
       visMi + '<span class="tile-unit"> mi</span>',
-      visMi >= 10 ? "Clear view" : visMi >= 5 ? "Moderate" : "Low visibility"
+      visMi >= 10 ? "Clear view" : visMi >= 5 ? "Moderate" : "Low visibility",
+      "",
+      detailRow("Visibility", visMi + " mi") +
+        detailRow(
+          "On the road",
+          visMi >= 10 ? "no restriction" : visMi >= 3 ? "haze, low beams help"
+            : visMi >= 1 ? "fog, low beams and more spacing" : "dense fog, slow down",
+        ) +
+        '<div class="detail-note">Ten miles is weather.gov&rsquo;s ceiling, not the ' +
+        "actual limit of the view, so a clear day in the mountains reads the same " +
+        "10 as a clear day at sea level.</div>"
     );
   }
 
   if (feelsLike !== null) {
+    // Which term moved it is the whole content of this tile: 95° at a 75° dew
+    // point and 95° in the desert are the same air temperature and different days.
+    var flF = cToF(feelsLike);
+    var flGap = flF - Math.round(parseFloat(currentTemp));
+    var flCause =
+      Math.abs(flGap) < 2
+        ? "The air is dry and calm enough that it feels about like it reads."
+        : flGap > 0
+          ? "Humidity is the difference: sweat evaporates slower at a " +
+            (dewpoint !== null ? cToF(dewpoint) + "° dew point" : "high dew point") +
+            ", so the body sheds heat slower than the thermometer suggests."
+          : "Wind is the difference: moving air strips the warm layer off your " +
+            "skin, so " + now.windSpeed + " makes " + currentTemp + "° feel like " +
+            flF + "°.";
     tiles += tile(
       "Feels Like",
-      cToF(feelsLike) + "°",
-      "Actual " + currentTemp + "°"
+      flF + "°",
+      "Actual " + currentTemp + "°",
+      "",
+      detailRow("Feels like", flF + "°") +
+        detailRow("Air temperature", currentTemp + "°") +
+        (dewpoint !== null ? detailRow("Dew point", cToF(dewpoint) + "°F") : "") +
+        detailRow("Wind", esc(now.windSpeed)) +
+        '<div class="detail-note">' + flCause + "</div>"
     );
   }
 
@@ -1901,7 +1986,13 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   var range = allHi - allLo || 1;
   var dHtml =
     '<div class="wx-divider"><div class="wx-section-title">' +
-    days.length + "-Day Forecast</div><div class=\"daily-list\">";
+    days.length + "-Day Forecast</div>" +
+    // The bars share one scale across the week, which is what makes them
+    // comparable and also what makes them unreadable until somebody says so.
+    '<div class="wx-section-note">Each bar spans that day&rsquo;s low to high on one ' +
+    "scale for the whole week (" + allLo + "° to " + allHi + "°). Tap a day for the " +
+    "full written forecast.</div>" +
+    "<div class=\"daily-list\">";
   for (var j = 0; j < days.length; j++) {
     var d = days[j];
     var barLeft = ((d.lo - allLo) / range) * 100;
@@ -1951,9 +2042,16 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     shareBtnHtml +
     favBtnHtml +
     hero +
-    '<div class="wx-divider"><div class="wx-section-title">Next 24 hours</div>' + hourly + "</div>" +
+    '<div class="wx-divider"><div class="wx-section-title">Next 24 hours</div>' +
+    '<div class="wx-section-note">Tap an hour for its wind, humidity and dew point.</div>' +
+    hourly + "</div>" +
     dHtml +
-    '<div class="wx-divider"><div class="tiles">' + tiles + "</div></div>" +
+    // The tile grid had no heading at all, so it read as a pile of numbers rather
+    // than as a section with a question behind each square.
+    '<div class="wx-divider"><div class="wx-section-title">Conditions in detail</div>' +
+    '<div class="wx-section-note">Tap any tile marked + for the numbers behind it and ' +
+    "what they mean.</div>" +
+    '<div class="tiles">' + tiles + "</div></div>" +
     '<div id="radarSlot">' + radarHtml() + "</div>" +
     "</div></div>";
 

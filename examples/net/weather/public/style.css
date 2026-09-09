@@ -726,6 +726,18 @@ svg.sug-icon {
   opacity: 0.96;
 }
 
+/* The lede. Larger than the paragraph it replaced as the first prose on the
+   card, because it is the one line most visits read and then leave. */
+.hero-insight {
+  margin: 0.7rem auto 0;
+  max-width: 32rem;
+  font-size: 1.0625rem;
+  line-height: 1.45;
+  font-weight: 500;
+  text-align: center;
+  text-wrap: pretty;
+}
+
 .hero-stats {
   display: flex;
   flex-wrap: wrap;
@@ -753,8 +765,18 @@ svg.sug-icon {
   font-variant-numeric: tabular-nums;
 }
 
+/* Demoted below the lede and the advice strip: it is the most complete text on
+   the card and the least readable, so it reads as a citation now. */
+.hero-detail-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  opacity: 0.72;
+  margin-bottom: 0.2rem;
+}
+
 .hero-detail {
-  margin-top: 0.75rem;
+  margin-top: 0.9rem;
   font-size: 0.8125rem;
   line-height: 1.5;
   opacity: 0.94;
@@ -1060,6 +1082,32 @@ svg.sug-icon {
 .hourly-item[data-pop],
 .daily-row[data-pop] {
   cursor: pointer;
+}
+
+/* Nothing on a tile said it had more behind it, so the popovers went unfound on
+   touch, where there is no hover to discover them with. A corner glyph is the
+   cheapest thing that reads as "there is more here" without adding a control. */
+.tile.tappable {
+  position: relative;
+}
+
+.tile.tappable::after {
+  content: "+";
+  position: absolute;
+  top: 0.3rem;
+  right: 0.45rem;
+  font-size: 0.8125rem;
+  line-height: 1;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* A caption under a section title, saying how to read the thing below it. */
+.wx-section-note {
+  font-size: 0.75rem;
+  line-height: 1.45;
+  opacity: 0.78;
+  margin: -0.25rem 0 0.55rem;
 }
 
 .hourly-item[data-pop]:focus-visible,
