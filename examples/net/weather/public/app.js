@@ -1301,6 +1301,29 @@ function fmtCountdown(ms) {
 }
 
 var sunTimer = null;
+var tempTimer = null;
+
+// The hero temperature is interpolated between hourly forecasts, so it is a
+// continuous quantity: re-read it once a minute so 73.5 drifts to 73.2 without
+// a reload, and the strip's "Now" cell moves with it.
+function startTempDrift(hrs) {
+  if (tempTimer) clearInterval(tempTimer);
+  if (!hrs || !hrs.length) return;
+  tempTimer = setInterval(function () {
+    var hero = document.getElementById("heroTemp");
+    if (!hero) {
+      clearInterval(tempTimer);
+      tempTimer = null;
+      return;
+    }
+    var t = fmtTemp(tempAt(hrs, Date.now())) + "°";
+    if (hero.textContent !== t) {
+      hero.textContent = t;
+      var cell = document.getElementById("nowTemp");
+      if (cell) cell.textContent = t;
+    }
+  }, 60000);
+}
 
 // Ticks the countdown in place. Rebinds on every render; when the target time
 // passes, re-renders the tile against the following event rather than sitting
@@ -1352,6 +1375,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   var nowHourIdx = hrs.length > 0 ? hourlyIndexAt(hrs, nowMs) : 0;
   var currentTemp =
     hrs.length > 0 ? fmtTemp(tempAt(hrs, nowMs)) : String(now.temperature);
+  startTempDrift(hrs);
 
   var feelsLike = getGridVal(grid, "apparentTemperature");
   var humidity = getGridVal(grid, "relativeHumidity");
@@ -1389,7 +1413,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     '<div class="hero-city">' +
     esc(city) +
     "</div>" +
-    '<div class="hero-temp">' + currentTemp + "°</div>" +
+    '<div class="hero-temp" id="heroTemp">' + currentTemp + "°</div>" +
     '<div class="hero-condition">' + esc(now.shortForecast) + "</div>" +
     '<div class="hero-stats">' + stats + "</div>" +
     '<div class="hero-detail">' + esc(now.detailedForecast) + "</div>";
@@ -1425,7 +1449,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
       ' data-pop-sub="' + esc(fmtHour(h.startTime, timeZone) + " · " + h.shortForecast) + '">' +
       '<div class="hourly-time">' + hLabel + "</div>" +
       '<div class="hourly-icon">' + icon(h.shortForecast, h.isDaytime) + "</div>" +
-      '<div class="hourly-temp">' + hTemp + "°</div>" +
+      '<div class="hourly-temp"' + (i === 0 ? ' id="nowTemp"' : "") + ">" + hTemp + "°</div>" +
       '<template class="tile-detail">' + hDetail + "</template>" +
       "</div>";
   }

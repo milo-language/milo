@@ -315,8 +315,47 @@ function issDayLabel(ms, now, timeZone) {
   if (a.day === b.day && a.month === b.month) return a.minutes < 12 * 60 ? "This morning" : "Tonight";
   var tmr = tzParts(new Date(now.getTime() + 86400000), timeZone);
   var wd = WEEKDAYS[new Date(ms).getDay()];
-  if (a.day === tmr.day && a.month === tmr.month) return a.minutes < 12 * 60 ? "Tomorrow AM" : "Tomorrow";
+  if (a.day === tmr.day && a.month === tmr.month) return "Tomorrow";
   return wd;
+}
+
+// Value text for the next pass: the clock time until it is close, then a
+// ticking countdown, then "Overhead now" while it is up.
+function issValueText(p, nowMs, timeZone) {
+  var left = p.start - nowMs;
+  if (nowMs >= p.start && nowMs <= p.end) return "Overhead now";
+  if (left > 0 && left < 90 * 60000) return "in " + fmtCountdown(left);
+  return issDayLabel(p.start, new Date(nowMs), timeZone) + " " + fmtTimeInTz(new Date(p.start), timeZone);
+}
+
+var issTimer = null;
+
+// Ticks the value in place, same shape as the sunrise countdown. Once a pass
+// has set, the tile re-renders against the next one instead of freezing.
+function startIssCountdown(passes, timeZone) {
+  if (issTimer) clearInterval(issTimer);
+  if (!passes.length) return;
+  issTimer = setInterval(function () {
+    var el = document.getElementById("issValue");
+    if (!el) {
+      clearInterval(issTimer);
+      issTimer = null;
+      return;
+    }
+    var nowMs = Date.now();
+    if (nowMs > passes[0].end) {
+      clearInterval(issTimer);
+      issTimer = null;
+      var rest = passes.slice(1);
+      issHtml = issTileHtml(rest, new Date(nowMs), timeZone);
+      var slot = document.getElementById("issTile");
+      if (slot) slot.innerHTML = issHtml;
+      startIssCountdown(rest, timeZone);
+      return;
+    }
+    var t = issValueText(passes[0], nowMs, timeZone);
+    if (el.textContent !== t) el.textContent = t;
+  }, 1000);
 }
 
 function issTileHtml(passes, now, timeZone) {
@@ -357,8 +396,8 @@ function issTileHtml(passes, now, timeZone) {
   }
   return tile(
     "ISS",
-    issDayLabel(p.start, now, timeZone) + " " + fmtTimeInTz(new Date(p.start), timeZone),
-    mins + " min · up to " + Math.round(p.maxEl) + "° · " +
+    '<span id="issValue">' + issValueText(p, now.getTime(), timeZone) + "</span>",
+    fmtTimeInTz(new Date(p.start), timeZone) + " · " + mins + " min · up to " + Math.round(p.maxEl) + "° · " +
       compass16(p.startAz) + " → " + compass16(p.endAz),
     "",
     rows + note,
@@ -379,6 +418,7 @@ function loadIss(lat, lon, timeZone) {
       issHtml = issTileHtml(passes, now, timeZone);
       var el = slot();
       if (el) el.innerHTML = issHtml;
+      startIssCountdown(passes, timeZone);
     })
     .catch(function () {
       if (seq !== issSeq) return;
