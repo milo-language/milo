@@ -228,9 +228,70 @@ pub fn citiesHandler(ctx: &mut Context): Response {
 // revalidation, and revalidation needs an ETag or Last-Modified — which this
 // server doesn't send. Chrome then reuses its cached copy and a deploy stays
 // invisible. Costs a ~50KB refetch per visit; the service worker covers offline.
+// Public origin+prefix, e.g. "https://chadsmith.dev/weather/". Only used to
+// make og:image absolute, which the spec requires and crawlers enforce. It
+// cannot be derived from the request: nginx proxies with a trailing slash, so
+// the app never sees the /weather/ prefix, and it forwards no Host either.
+// Empty means "omit og:image" rather than "guess and emit a broken one".
+pub var publicUrl: string = ""
+
+// The label is user-controlled text going into an HTML attribute, so quotes and
+// angle brackets have to die before anything else happens to it. Ampersand
+// first, or it would re-escape the escapes.
+pub fn htmlAttrEscape(s: &string): string {
+    var out = s.replace("&", "&amp;")
+    out = out.replace("<", "&lt;")
+    out = out.replace(">", "&gt;")
+    out = out.replace("\"", "&quot;")
+    out = out.replace("'", "&#39;")
+    return out
+}
+
+// The place name a shared link is pointing at, or "" for the bare app. No
+// length cap: escaping is what makes the value safe in an attribute, and every
+// unfurler truncates a long title itself. Capping here would have to count code
+// points, and a byte-offset cut lands inside a multibyte character.
+pub fn shareLabel(ctx: &Context): string {
+    let raw = (ctx.query("q") ?? "").trim()
+    if raw.len == 0 {
+        return ""
+    }
+    // Predates &ll= and still in bookmarks; it names no place to a recipient.
+    if raw.toLower() == "current location" {
+        return ""
+    }
+    return raw
+}
+
+// no-store, not no-cache, on every embedded text asset: no-cache only promises
+// revalidation, and revalidation needs an ETag or Last-Modified — which this
+// server doesn't send. Chrome then reuses its cached copy and a deploy stays
+// invisible. Costs a ~50KB refetch per visit; the service worker covers offline.
 pub fn indexHandler(ctx: &mut Context): Response {
     ctx.setHeader("Cache-Control", "no-store")
-    return ctx.html(@embedFile("public/index.html"))
+    let label = shareLabel(ctx)
+
+    var pageTitle = "Weather by Milo"
+    var ogTitle = "Weather"
+    var ogDesc = "Current conditions, hourly and 7-day forecast for any US city."
+    if label.len > 0 {
+        let safe = htmlAttrEscape(label)
+        pageTitle = safe.clone() + " Weather"
+        ogTitle = safe.clone()
+        ogDesc = "Current conditions, hourly and 7-day forecast for " + safe + "."
+    }
+
+    var ogImage = ""
+    if publicUrl.len > 0 {
+        ogImage = "<meta property=\"og:image\" content=\"" + publicUrl
+        + "icons/icon-512.png\" />"
+    }
+
+    var page = @embedFile("public/index.html").replace("__PAGE_TITLE__", pageTitle)
+    page = page.replace("__OG_TITLE__", ogTitle)
+    page = page.replace("__OG_DESC__", ogDesc)
+    page = page.replace("__OG_IMAGE__", ogImage)
+    return ctx.html(page)
 }
 
 pub fn styleHandler(ctx: &mut Context): Response {
@@ -301,8 +362,15 @@ pub fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Respo
 pub fn main(): i32 {
     var parser = ArgParser.new("weather", "Weather app powered by weather.gov")
     parser.addI64("port", "p", "port to listen on", 3000)
+    parser.addString("public-url", "u", "public origin and path prefix, for og:image", "")
     let args = parser.parse()
     let port = args.getU16("port")
+    publicUrl = args.getString("public-url") ?? ""
+    // og:image must be absolute, so a prefix without its trailing slash would
+    // concatenate into a 404 that no unfurler reports back.
+    if publicUrl.len > 0 && !publicUrl.endsWith("/") {
+        publicUrl = publicUrl + "/"
+    }
 
     loadCities()
     print($"Weather App (Milo) — {cities.len} US places indexed")

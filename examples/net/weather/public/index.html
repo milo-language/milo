@@ -4,7 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f2f2f2" />
-    <title>Weather by Milo</title>
+    <title>__PAGE_TITLE__</title>
+    <!-- A link unfurler (iMessage, Slack, a search crawler) does not run the
+         page's JS, so the place a shared link points at has to be in the bytes
+         the server sends or every link previews as the bare app. indexHandler
+         substitutes these four tokens per request from ?q=; nothing else in the
+         app rewrites HTML, which is why they are spelled loudly enough to spot
+         in a diff. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Weather" />
+    <meta property="og:title" content="__OG_TITLE__" />
+    <meta property="og:description" content="__OG_DESC__" />
+    <meta name="description" content="__OG_DESC__" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="__OG_TITLE__" />
+    <meta name="twitter:description" content="__OG_DESC__" />
+    __OG_IMAGE__
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <link rel="icon" href="icons/icon-192.png" />
