@@ -722,6 +722,7 @@ function fetchWeather(lat, lon, city, saveLoc) {
       // After render: the tile writes into a slot render creates, and the
       // location's zone is only known once /points has answered.
       loadIss(lat, lon, locationTz);
+      loadClimate(lat, lon, locationTz);
     })
     .catch(function () {
       searchBtn.disabled = false;
@@ -788,15 +789,24 @@ function geocodeAndFetch(query) {
     });
 }
 
+// Linear between the bracketing grid values, like the hero temperature: the
+// grid is a step function too, and "feels like 75 / actual 73.1" was mostly
+// the top-of-hour grid value against the interpolated hero.
 function getGridVal(grid, field) {
   if (!grid || !grid.properties || !grid.properties[field]) return null;
   var v = grid.properties[field].values;
   if (!v || v.length === 0) return null;
-  var now = new Date();
+  var now = Date.now();
   for (var i = 0; i < v.length; i++) {
-    var parts = v[i].validTime.split("/");
-    var start = new Date(parts[0]);
-    if (start > now) return i > 0 ? v[i - 1].value : v[0].value;
+    var start = Date.parse(v[i].validTime.split("/")[0]);
+    if (start > now) {
+      if (i === 0) return v[0].value;
+      var prev = v[i - 1];
+      var ps = Date.parse(prev.validTime.split("/")[0]);
+      if (prev.value == null || v[i].value == null || !(start > ps)) return prev.value;
+      var f = (now - ps) / (start - ps);
+      return prev.value + (v[i].value - prev.value) * f;
+    }
   }
   return v[v.length - 1].value;
 }
@@ -1304,8 +1314,9 @@ var sunTimer = null;
 var tempTimer = null;
 
 // The hero temperature is interpolated between hourly forecasts, so it is a
-// continuous quantity: re-read it once a minute so 73.5 drifts to 73.2 without
-// a reload, and the strip's "Now" cell moves with it.
+// continuous quantity. The hero shows hundredths and re-reads every second so
+// the drift is visible while the page is open (3°/h moves the last digit every
+// 12 s); the strip's "Now" cell follows at one decimal.
 function startTempDrift(hrs) {
   if (tempTimer) clearInterval(tempTimer);
   if (!hrs || !hrs.length) return;
@@ -1316,13 +1327,14 @@ function startTempDrift(hrs) {
       tempTimer = null;
       return;
     }
-    var t = fmtTemp(tempAt(hrs, Date.now())) + "°";
-    if (hero.textContent !== t) {
-      hero.textContent = t;
+    var t = tempAt(hrs, Date.now());
+    var s2 = t.toFixed(2) + "°";
+    if (hero.textContent !== s2) {
+      hero.textContent = s2;
       var cell = document.getElementById("nowTemp");
-      if (cell) cell.textContent = t;
+      if (cell) cell.textContent = fmtTemp(t) + "°";
     }
-  }, 60000);
+  }, 1000);
 }
 
 // Ticks the countdown in place. Rebinds on every render; when the target time
@@ -1375,7 +1387,10 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   var nowHourIdx = hrs.length > 0 ? hourlyIndexAt(hrs, nowMs) : 0;
   var currentTemp =
     hrs.length > 0 ? fmtTemp(tempAt(hrs, nowMs)) : String(now.temperature);
+  var heroTempStr =
+    hrs.length > 0 ? tempAt(hrs, nowMs).toFixed(2) : String(now.temperature);
   startTempDrift(hrs);
+  heroHiLo = { hi: hi, lo: lo };
 
   var feelsLike = getGridVal(grid, "apparentTemperature");
   var humidity = getGridVal(grid, "relativeHumidity");
@@ -1397,6 +1412,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
       '<div class="stat"><div class="stat-label">Precip</div>' +
       '<div class="stat-value">' + precip + "%</div></div>";
   }
+  stats += climateStatHtml();
 
   // The save control is pinned to the card's top corner rather than trailing the
   // city name — inline, it split the centered title line and read as part of it.
@@ -1413,7 +1429,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     '<div class="hero-city">' +
     esc(city) +
     "</div>" +
-    '<div class="hero-temp" id="heroTemp">' + currentTemp + "°</div>" +
+    '<div class="hero-temp" id="heroTemp">' + heroTempStr + "°</div>" +
     '<div class="hero-condition">' + esc(now.shortForecast) + "</div>" +
     '<div class="hero-stats">' + stats + "</div>" +
     '<div class="hero-detail">' + esc(now.detailedForecast) + "</div>";
@@ -1515,6 +1531,8 @@ function render(city, forecast, hourlyData, grid, timeZone) {
 
   // UV / air quality / pressure fill in here once Open-Meteo answers
   tiles += '<div id="extraTiles" class="tile-slot">' + extrasHtml() + "</div>";
+  // Normals come from a separate archive request; the tile fills in on its own
+  tiles += '<div id="climateTile" class="tile-slot">' + (climateHtml !== null ? climateHtml : skeletonTile()) + "</div>";
   // ISS passes need a TLE fetch plus satellite.js, so the tile fills in on its own
   tiles += '<div id="issTile" class="tile-slot">' + (issHtml !== null ? issHtml : skeletonTile()) + "</div>";
 

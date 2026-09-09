@@ -59,6 +59,8 @@ function tomorrowTile(e) {
   var dSun = sunH(1) != null && sunH(0) != null ? sunH(1) - sunH(0) : 0;
   if (Math.abs(dSun) >= 2)
     clauses.push(dSun > 0 ? "sunnier" : "cloudier");
+  var vsn = vsNormalPhrase(d.tmax[1], climateDay(new Date(Date.now() + 86400000), extrasTz).idx);
+  if (vsn) clauses.push(vsn);
   var sentence = "Tomorrow: " + clauses.join(", ") + ".";
 
   var detail =
@@ -425,5 +427,190 @@ function loadIss(lat, lon, timeZone) {
       issHtml = "";
       var el = slot();
       if (el) el.innerHTML = "";
+    });
+}
+
+// ── Climate normals and records ──
+// Open-Meteo's ERA5 archive, 1940 to a week ago, one ~160 KB request per
+// location. Only the per-date summary is kept (localStorage, 30 days): normals
+// are the 1991-2020 mean smoothed over a +-7 day window, records are the exact
+// month-day across every year. ERA5 is a reanalysis grid, not the airport
+// thermometer, so a "record" here means in this dataset.
+
+var climateSeq = 0;
+var climateHtml = null;
+var climateData = null;
+// The hero's high/low for the current render, so the vs-normal stat can be
+// added to it once the archive answers.
+var heroHiLo = null;
+
+// 366 month-day slots; day-of-year index from a leap year so Feb 29 has a slot.
+var MD_INDEX = (function () {
+  var m = {};
+  for (var d = 0; d < 366; d++) {
+    var dt = new Date(Date.UTC(2000, 0, 1 + d));
+    m[dt.toISOString().slice(5, 10)] = d;
+  }
+  return m;
+})();
+
+function summarizeClimate(daily) {
+  var t = daily.time, hi = daily.temperature_2m_max, lo = daily.temperature_2m_min;
+  var sumHi = [], sumLo = [], cnt = [], recHi = [], recLo = [];
+  for (var k = 0; k < 366; k++) {
+    sumHi.push(0); sumLo.push(0); cnt.push(0); recHi.push(null); recLo.push(null);
+  }
+  var recent = {};
+  var cutoff = Date.now() - 400 * 86400000;
+  for (var i = 0; i < t.length; i++) {
+    if (hi[i] == null || lo[i] == null) continue;
+    var idx = MD_INDEX[t[i].slice(5, 10)];
+    var y = parseInt(t[i].slice(0, 4), 10);
+    if (y >= 1991 && y <= 2020) {
+      sumHi[idx] += hi[i]; sumLo[idx] += lo[i]; cnt[idx]++;
+    }
+    if (recHi[idx] === null || hi[i] > recHi[idx][0]) recHi[idx] = [hi[i], y];
+    if (recLo[idx] === null || lo[i] < recLo[idx][0]) recLo[idx] = [lo[i], y];
+    if (Date.parse(t[i]) > cutoff) recent[t[i]] = [hi[i], lo[i]];
+  }
+  var normHi = [], normLo = [];
+  for (var d = 0; d < 366; d++) {
+    var sh = 0, sl = 0, c = 0;
+    for (var w = -7; w <= 7; w++) {
+      var j = (d + w + 366) % 366;
+      sh += sumHi[j]; sl += sumLo[j]; c += cnt[j];
+    }
+    normHi.push(c ? sh / c : null);
+    normLo.push(c ? sl / c : null);
+  }
+  return {
+    normHi: normHi, normLo: normLo, recHi: recHi, recLo: recLo, recent: recent,
+    firstYear: t.length ? parseInt(t[0].slice(0, 4), 10) : null,
+  };
+}
+
+function fetchClimate(lat, lon) {
+  var key = "clim:" + (+lat).toFixed(2) + "," + (+lon).toFixed(2);
+  try {
+    var c = JSON.parse(localStorage.getItem(key) || "null");
+    if (c && c.ts && Date.now() - c.ts < 30 * 86400000 && c.normHi) return Promise.resolve(c);
+  } catch (err) {}
+  // The archive trails real time by about five days; asking past that is an error.
+  var endIso = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  var url =
+    "https://archive-api.open-meteo.com/v1/archive?latitude=" + lat + "&longitude=" + lon +
+    "&start_date=1940-01-01&end_date=" + endIso +
+    "&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto";
+  return fetch(url)
+    .then(function (r) {
+      if (!r.ok) throw new Error("archive");
+      return r.json();
+    })
+    .then(function (j) {
+      var out = summarizeClimate(j.daily);
+      out.ts = Date.now();
+      try {
+        localStorage.setItem(key, JSON.stringify(out));
+      } catch (err) {}
+      return out;
+    });
+}
+
+// Month-day slot and calendar strings for a date at the location.
+function climateDay(date, timeZone) {
+  var p = tzParts(date, timeZone);
+  var md = (p.month < 10 ? "0" : "") + p.month + "-" + (p.day < 10 ? "0" : "") + p.day;
+  return {
+    idx: MD_INDEX[md],
+    md: md,
+    lastYear: p.year - 1 + "-" + md,
+    label: MONTHS_SHORT[p.month - 1] + " " + p.day,
+  };
+}
+
+var MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function signedDeg(d) {
+  var r = Math.round(d);
+  return (r > 0 ? "+" : r < 0 ? "−" : "") + Math.abs(r) + "°";
+}
+
+// "12° above normal" / "3° below normal" / "about normal", for sentences.
+function vsNormalPhrase(hi, idx) {
+  var c = climateData;
+  if (!c || idx == null || c.normHi[idx] == null) return "";
+  var d = Math.round(hi - c.normHi[idx]);
+  if (Math.abs(d) <= 2) return "about normal";
+  return Math.abs(d) + "° " + (d > 0 ? "above" : "below") + " normal";
+}
+
+function climateStatHtml() {
+  var c = climateData;
+  if (!c || !heroHiLo) return "";
+  var day = climateDay(new Date(), extrasTz);
+  if (day.idx == null || c.normHi[day.idx] == null) return "";
+  var d = heroHiLo.hi - c.normHi[day.idx];
+  return (
+    '<div class="stat" id="normalStat"><div class="stat-label">Vs Normal</div>' +
+    '<div class="stat-value">' + (Math.abs(Math.round(d)) <= 2 ? "Normal" : signedDeg(d)) + "</div></div>"
+  );
+}
+
+function climateTileHtml(c, now, timeZone) {
+  if (!heroHiLo) return "";
+  var day = climateDay(now, timeZone);
+  if (day.idx == null || c.normHi[day.idx] == null) return "";
+  var nh = c.normHi[day.idx], nl = c.normLo[day.idx];
+  var d = heroHiLo.hi - nh;
+  var rh = c.recHi[day.idx], rl = c.recLo[day.idx];
+  var ly = c.recent[day.lastYear];
+  var note = "";
+  if (rh && heroHiLo.hi >= rh[0]) {
+    note = "Today's forecast high of " + heroHiLo.hi + "° would be the warmest " + day.label +
+      " in this dataset since " + c.firstYear + ". ";
+  } else if (rl && heroHiLo.lo <= rl[0]) {
+    note = "Tonight's forecast low of " + heroHiLo.lo + "° would be the coldest " + day.label +
+      " in this dataset since " + c.firstYear + ". ";
+  }
+  var detail =
+    detailRow("Forecast today", heroHiLo.hi + "° / " + heroHiLo.lo + "°") +
+    detailRow("Normal (1991–2020)", Math.round(nh) + "° / " + Math.round(nl) + "°") +
+    (ly ? detailRow(day.label + " last year", Math.round(ly[0]) + "° / " + Math.round(ly[1]) + "°") : "") +
+    (rh ? detailRow("Record high", Math.round(rh[0]) + "° (" + rh[1] + ")") : "") +
+    (rl ? detailRow("Record low", Math.round(rl[0]) + "° (" + rl[1] + ")") : "") +
+    '<div class="detail-note">' + note +
+    "Normals and records are from the ERA5 reanalysis grid (Open-Meteo, " + c.firstYear +
+    " onward), not the nearest airport thermometer, so a record here means in that dataset.</div>";
+  return tile(
+    "Vs Normal",
+    Math.abs(Math.round(d)) <= 2 ? "Normal" : signedDeg(d),
+    "Normal " + Math.round(nh) + "° / " + Math.round(nl) + "°" +
+      (ly ? " · last year " + Math.round(ly[0]) + "°" : ""),
+    "",
+    detail,
+  );
+}
+
+function loadClimate(lat, lon, timeZone) {
+  var seq = ++climateSeq;
+  climateHtml = null;
+  climateData = null;
+  fetchClimate(lat, lon)
+    .then(function (c) {
+      if (seq !== climateSeq) return;
+      climateData = c;
+      climateHtml = climateTileHtml(c, new Date(), timeZone);
+      var slot = document.getElementById("climateTile");
+      if (slot) slot.innerHTML = climateHtml;
+      var stats = document.querySelector(".hero-stats");
+      if (stats && !document.getElementById("normalStat")) stats.innerHTML += climateStatHtml();
+      // the Tomorrow sentence can now say "above normal"
+      renderExtras();
+    })
+    .catch(function () {
+      if (seq !== climateSeq) return;
+      climateHtml = "";
+      var slot = document.getElementById("climateTile");
+      if (slot) slot.innerHTML = "";
     });
 }
