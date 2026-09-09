@@ -162,6 +162,38 @@ body {
   line-height: 1.35;
 }
 
+/* The UV curve is draggable, so the browser must not claim the gesture for
+   panning first: touch-action none on the hit target only, which keeps the
+   popover itself scrollable. */
+.uv-scrubber {
+  position: relative;
+  cursor: crosshair;
+}
+
+.uv-hit {
+  touch-action: none;
+}
+
+.uv-readout {
+  height: 1.15rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+/* Reserved rather than toggled with display, so the curve does not jump a line
+   the first time a finger lands on it. */
+.uv-readout.on {
+  opacity: 1;
+}
+
+.uv-scrub-line {
+  stroke-opacity: 0.5;
+  stroke-dasharray: 2 2;
+}
+
 /* ── Search widget ── */
 
 .search-bar {

@@ -559,7 +559,122 @@ function uvCurveSvg(hourly, timeZone, nowTime) {
       '<text x="' + ((l / 4) * W + 2) + '" y="' + (H + 11) +
       '" font-size="8" fill="currentColor" fill-opacity="0.6">' + labels[l] + "</text>";
   }
-  return svg + "</svg>";
+
+  // Scrub furniture, hidden until a finger or cursor is actually on the curve.
+  // The hit rect spans the whole plot so the gesture does not require landing on
+  // a 2px line, and it is last so nothing above it swallows the pointer.
+  svg +=
+    '<g class="uv-scrub" opacity="0">' +
+    '<line class="uv-scrub-line" y1="0" y2="' + H + '" stroke="currentColor"/>' +
+    '<circle class="uv-scrub-dot" r="4.5" fill="currentColor"/>' +
+    "</g>" +
+    '<rect class="uv-hit" x="0" y="0" width="' + W + '" height="' + (H + 14) +
+    '" fill="transparent"/>';
+
+  return (
+    '<div class="uv-scrubber" data-uv-w="' + W + '" data-uv-h="' + H +
+    '" data-uv-max="' + maxUv + '">' +
+    '<div class="uv-readout" aria-live="off"></div>' +
+    svg + "</svg></div>"
+  );
+}
+
+// Wires the curve emitted above once it is in the document. The values are read
+// back off the rendered path rather than threaded through the template, which
+// keeps the SVG a pure string and this a pure DOM concern.
+function initUvScrub(root, hourly, timeZone) {
+  var box = root.querySelector(".uv-scrubber");
+  if (!box || !hourly || hourly.length < 2) return;
+  var svg = box.querySelector("svg");
+  var hit = box.querySelector(".uv-hit");
+  var group = box.querySelector(".uv-scrub");
+  var line = box.querySelector(".uv-scrub-line");
+  var dot = box.querySelector(".uv-scrub-dot");
+  var out = box.querySelector(".uv-readout");
+  if (!svg || !hit || !group || !out) return;
+
+  var W = +box.getAttribute("data-uv-w");
+  var H = +box.getAttribute("data-uv-h");
+  var maxUv = +box.getAttribute("data-uv-max");
+
+  function at(clientX) {
+    // getBoundingClientRect, not the viewBox: the SVG is scaled to whatever
+    // width the popover gives it, so client pixels and user units differ.
+    var r = svg.getBoundingClientRect();
+    var frac = r.width ? (clientX - r.left) / r.width : 0;
+    frac = Math.max(0, Math.min(1, frac));
+    var pos = frac * (hourly.length - 1);
+    var i = Math.min(hourly.length - 2, Math.floor(pos));
+    var f = pos - i;
+    var uv = hourly[i].uv + (hourly[i + 1].uv - hourly[i].uv) * f;
+    // The value is interpolated but the label is a real hour, so it names the
+    // nearer of the two rather than the left one: at the far right edge the
+    // floor is the second-to-last hour, which read an hour early all the way.
+    var li = Math.min(hourly.length - 1, Math.round(pos));
+    return { frac: frac, uv: uv, time: hourly[li].time };
+  }
+
+  function draw(clientX) {
+    var p = at(clientX);
+    var x = (p.frac * W).toFixed(1);
+    line.setAttribute("x1", x);
+    line.setAttribute("x2", x);
+    dot.setAttribute("cx", x);
+    dot.setAttribute("cy", (H - (p.uv / maxUv) * H).toFixed(1));
+    group.setAttribute("opacity", "1");
+    var shown = Math.round(p.uv);
+    out.textContent =
+      fmtLocalHour(p.time) + " \u00b7 UV " + shown + " " + uvLabel(shown);
+    out.classList.add("on");
+  }
+
+  function clear() {
+    group.setAttribute("opacity", "0");
+    out.classList.remove("on");
+    out.textContent = "";
+  }
+
+  // Tracked here rather than read back from hasPointerCapture: capture is a
+  // request the browser can refuse, and when it does the drag has to keep
+  // working anyway.
+  var dragging = false;
+
+  hit.addEventListener("pointerdown", function (ev) {
+    dragging = true;
+    // Capture keeps the readout tracking a thumb that slides off the chart, and
+    // keeps the popover's own click-to-close from seeing the release.
+    try {
+      hit.setPointerCapture(ev.pointerId);
+    } catch (err) {}
+    ev.preventDefault();
+    ev.stopPropagation();
+    draw(ev.clientX);
+  });
+  hit.addEventListener("pointermove", function (ev) {
+    // A mouse merely passing over previews; anything else has to be a drag.
+    if (dragging || ev.pointerType === "mouse") draw(ev.clientX);
+  });
+  hit.addEventListener("pointerup", function (ev) {
+    dragging = false;
+    ev.stopPropagation();
+    try {
+      hit.releasePointerCapture(ev.pointerId);
+    } catch (err) {}
+    // A touch leaves nothing on screen to point at, so the marker goes with the
+    // finger; a mouse still has a cursor, so it keeps tracking on hover.
+    if (ev.pointerType !== "mouse") clear();
+  });
+  hit.addEventListener("pointercancel", function () {
+    dragging = false;
+    clear();
+  });
+  hit.addEventListener("pointerleave", function (ev) {
+    if (ev.pointerType === "mouse" && !dragging) clear();
+  });
+  // The tile behind the curve opens this popover; a scrub must not re-trigger it.
+  hit.addEventListener("click", function (ev) {
+    ev.stopPropagation();
+  });
 }
 
 // Semicircular dial over the range sea-level pressure actually spans (29–31 inHg)
@@ -955,6 +1070,10 @@ function openPopover(el) {
     if (!e.target.closest(".wx-pop") || e.target.closest(".wx-pop-close")) closePopover();
   });
   document.body.appendChild(popEl);
+  // Only the UV popover has a curve; initUvScrub no-ops for every other tile.
+  if (extrasData && extrasData.uvHourly) {
+    initUvScrub(popEl, extrasData.uvHourly, extrasTz);
+  }
 }
 
 document.addEventListener("keydown", function (e) {

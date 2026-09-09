@@ -92,6 +92,43 @@ function adviceWetRun(hrs, floor) {
   return run;
 }
 
+// The stretch worth naming: "sunscreen between 11AM and 4PM" is something to
+// act on, where a bare peak ("UV 8 at 1PM") leaves the reader to guess how wide
+// the risk is. 6 is the World Health Organization's "high" band, which is also
+// where the burn times get short enough to matter.
+var UV_BURN_LEVEL = 6;
+
+// The first run at or above the level that has not already finished. A run that
+// started before now is reported from now rather than from its own start: at
+// 1 PM, "between 11AM and 4PM" is half advice about the past.
+function adviceBurnRun(uvHourly) {
+  var now = Date.now();
+  var run = null;
+  for (var i = 0; i < uvHourly.length; i++) {
+    var t = Date.parse(uvHourly[i].time);
+    var uv = uvHourly[i].uv;
+    if (isNaN(t) || uv == null) continue;
+    // Hourly stamps, so a run whose last hour is 15:00 runs through 16:00.
+    var hourEnd = t + 3600000;
+    if (uv >= UV_BURN_LEVEL) {
+      if (hourEnd <= now) {
+        run = null;
+        continue;
+      }
+      if (!run) run = { start: t, end: hourEnd, peak: uv };
+      else {
+        run.end = hourEnd;
+        if (uv > run.peak) run.peak = uv;
+      }
+    } else if (run) {
+      break;
+    }
+  }
+  if (!run) return null;
+  run.started = run.start <= now;
+  return run;
+}
+
 // Bands, not a burn time computed per person: the real number turns on skin
 // type and it is not something this page knows, so a precise-looking "18
 // minutes" would be the least true thing in the strip. "Less than" is the
@@ -235,25 +272,22 @@ function adviceItems(ctx) {
   // ── UV ──
   // Only the hours still ahead: a UV 9 that peaked at noon is not advice at 6 PM.
   if (e && e.uvHourly) {
-    var now = Date.now();
-    var peakUv = null;
-    for (var u = 0; u < e.uvHourly.length; u++) {
-      var t = Date.parse(e.uvHourly[u].time);
-      if (isNaN(t) || t < now - 1800000) continue;
-      if (e.uvHourly[u].uv == null) continue;
-      if (!peakUv || e.uvHourly[u].uv > peakUv.uv) peakUv = { uv: e.uvHourly[u].uv, t: t };
-    }
-    if (peakUv && peakUv.uv >= 6) {
+    var burn = adviceBurnRun(e.uvHourly);
+    if (burn) {
       // Band off the number being shown, or the line says "UV 8" and then reads
       // out the sentence for a 7.
-      var uvShown = Math.round(peakUv.uv);
+      var uvShown = Math.round(burn.peak);
       out.push({
         rank: 2,
         icon: "🧴",
-        text:
-          "Sunscreen and a hat are a good idea today: UV hits " + uvShown +
-          " around " + adviceHour(peakUv.t, tz) +
-          ", and you can start getting a sunburn " + adviceBurnClause(uvShown) + ".",
+        text: burn.started
+          ? "Sunscreen and a hat are a good idea. The UV stays " + UV_BURN_LEVEL +
+            " or higher until " + adviceHour(burn.end, tz) +
+            ", and you can start getting a sunburn " + adviceBurnClause(uvShown) + "."
+          : "Sunscreen and a hat are a good idea today. Between " +
+            adviceHour(burn.start, tz) + " and " + adviceHour(burn.end, tz) +
+            " the UV is " + UV_BURN_LEVEL + " or higher, and you can start getting a " +
+            "sunburn " + adviceBurnClause(uvShown) + ".",
       });
     }
   }
