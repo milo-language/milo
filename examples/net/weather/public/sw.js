@@ -2,7 +2,7 @@
 //
 // Bump CACHE whenever a shell asset changes — the binary embeds these files at
 // build time, so a deploy with a stale cache name would keep serving the old UI.
-var CACHE = "weather-v19";
+var CACHE = "weather-v20";
 
 // Relative to the SW's scope, so this works under nginx's /weather/ subpath.
 var SHELL = [
@@ -95,19 +95,25 @@ self.addEventListener("fetch", function (e) {
   // cache:"no-store" so this bypasses the HTTP cache. Without it a previously
   // stored max-age response keeps satisfying the SW's own fetch, and
   // "network-first" quietly serves a stale shell until that entry expires.
+  //
+  // Every page load now carries the place in the query string, so the document
+  // is stored and looked up under its path alone. Keyed on the full URL the
+  // offline fallback would miss on every link but the exact one last visited,
+  // and the cache would grow an entry per city.
+  var shellKey = req.mode === "navigate" ? url.origin + url.pathname : req;
   e.respondWith(
     fetch(req, { cache: "no-store" })
       .then(function (res) {
         if (res && res.status === 200) {
           var copy = res.clone();
           caches.open(CACHE).then(function (c) {
-            c.put(req, copy);
+            c.put(shellKey, copy);
           });
         }
         return res;
       })
       .catch(function () {
-        return caches.match(req);
+        return caches.match(shellKey);
       }),
   );
 });

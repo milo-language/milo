@@ -10,6 +10,11 @@ var defaultCity = "San Francisco";
 var currentLat = defaultLat;
 var currentLon = defaultLon;
 var currentCityLabel = "";
+// Set by anything the user did to change place (search, suggestion, saved chip,
+// locate) so that navigation lands a new history entry. A re-render from a
+// countdown tick must not, hence the flag rather than pushing from the actions
+// themselves. Consumed by updateUrl on the next render.
+var navPush = false;
 // NWS radar site covering the current point, e.g. "KMUX" for the Bay Area.
 // Comes from /points, so it is only known once that call lands.
 var radarStation = "";
@@ -730,7 +735,8 @@ function fetchWeather(lat, lon, city, saveLoc) {
     });
 }
 
-function geocodeAndFetch(query) {
+function geocodeAndFetch(query, push) {
+  navPush = push !== false;
   errorEl.textContent = "";
   heroEl.innerHTML =
     '<div class="loading">Looking up ' + esc(query) + "\u2026</div>";
@@ -749,7 +755,6 @@ function geocodeAndFetch(query) {
         if (!rows || !rows.length) throw new Error("no local match");
         var top = rows[0];
         var label = top.state ? top.name + ", " + top.state : top.name;
-        history.replaceState(null, "", "?q=" + encodeURIComponent(query));
         fetchWeather(String(top.lat), String(top.lon), label, true);
       })
       .catch(function () {
@@ -780,7 +785,6 @@ function geocodeAndFetch(query) {
       var state = ad.state || "";
       var stateAbbr = stateAbbrs[state] || state;
       var label = stateAbbr ? cityName + ", " + stateAbbr : cityName;
-      history.replaceState(null, "", "?q=" + encodeURIComponent(query));
       fetchWeather(r.lat, r.lon, label, true);
     })
     .catch(function () {
@@ -1416,6 +1420,13 @@ function render(city, forecast, hourlyData, grid, timeZone) {
 
   // The save control is pinned to the card's top corner rather than trailing the
   // city name — inline, it split the centered title line and read as part of it.
+  var shareBtnHtml =
+    '<button class="share-btn" id="shareBtn" type="button" ' +
+    'title="Copy a link to this place" aria-label="Share this place">' +
+    shareSvg() +
+    '<span class="share-text">Share</span>' +
+    "</button>";
+
   var favBtnHtml =
     '<button class="fav-btn' + (isFavorite(city) ? " on" : "") + '" id="favBtn" ' +
     'data-city="' + esc(city) + '" ' +
@@ -1737,6 +1748,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     '<div class="wisp wisp-3"></div><div class="wisp wisp-4"></div>' +
     "</div>" +
     '<div class="wx-body">' +
+    shareBtnHtml +
     favBtnHtml +
     hero +
     '<div class="wx-divider"><div class="wx-section-title">Next 24 hours</div>' + hourly + "</div>" +
@@ -1752,6 +1764,34 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   } else if (sunTimer) {
     clearInterval(sunTimer);
     sunTimer = null;
+  }
+
+  // The address bar and the tab name follow the card, so a link copied at any
+  // moment names the place on screen. navPush is consumed here: only the render
+  // that follows a user's navigation gets a history entry.
+  updateUrl(city, currentLat, currentLon, navPush);
+  navPush = false;
+  document.title = city + " Weather \u00b7 Weather by Milo";
+
+  var shareBtn = document.getElementById("shareBtn");
+  if (shareBtn) {
+    shareBtn.addEventListener("click", function () {
+      var url = shareUrl();
+      var title = city + " weather";
+      // The native sheet is the right thing on a phone, where the link's next
+      // stop is another app. Desktop Chrome also has navigator.share, but there
+      // it opens an OS panel to reach the same clipboard the button could have
+      // written to directly, so a coarse pointer gates it. A dismissed sheet
+      // rejects with AbortError, which is not a failure to report.
+      var touch = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+      if (navigator.share && touch) {
+        navigator.share({ title: title, text: title, url: url }).catch(function () {});
+        return;
+      }
+      copyText(url).then(function (ok) {
+        flashShare(shareBtn, ok ? "Copied" : "Copy failed");
+      });
+    });
   }
 
   // wired after innerHTML so the button exists; lat/lon come from the globals
@@ -1927,7 +1967,7 @@ function renderSaved() {
       for (var k = 0; k < items.length; k++) {
         if (items[k].p.label !== label) continue;
         zipInput.value = "";
-        history.replaceState(null, "", "?q=" + encodeURIComponent(label));
+        navPush = true;
         fetchWeather(items[k].p.lat, items[k].p.lon, label, true);
         return;
       }
@@ -1985,6 +2025,112 @@ function toggleFavorite(label, lat, lon) {
   return true;
 }
 
+// ── Shareable URLs ──
+// The address bar is the share affordance: whatever place is on screen is in
+// it, so copying the URL is the whole feature. The label alone is not enough to
+// put there, because resolving it back through the place index can land on a
+// different town of the same name, so the coordinates ride along and are what a
+// shared link actually loads; the label is only there to keep the link readable
+// and to fill the search box before the fetch lands.
+function placeQuery(label, lat, lon) {
+  var q = "?q=" + encodeURIComponent(label || "");
+  var ll = parseLatLon(lat + "," + lon);
+  if (ll) q += "&ll=" + encodeURIComponent(ll[0] + "," + ll[1]);
+  return q;
+}
+
+// 4 decimals is ~11 m, finer than any forecast grid and short enough that the
+// URL still reads as a place rather than a survey marker.
+function parseLatLon(s) {
+  if (!s) return null;
+  var parts = String(s).split(",");
+  if (parts.length !== 2) return null;
+  var la = parseFloat(parts[0]);
+  var lo = parseFloat(parts[1]);
+  if (isNaN(la) || isNaN(lo)) return null;
+  if (la < -90 || la > 90 || lo < -180 || lo > 180) return null;
+  return [String(parseFloat(la.toFixed(4))), String(parseFloat(lo.toFixed(4)))];
+}
+
+function shareUrl() {
+  return (
+    window.location.origin +
+    window.location.pathname +
+    placeQuery(currentCityLabel, currentLat, currentLon)
+  );
+}
+
+// Called once per render. The same-URL guard is what keeps the minute-by-minute
+// re-renders (temperature drift, sunrise countdown) from stacking dozens of
+// identical entries behind the back button.
+function updateUrl(label, lat, lon, push) {
+  var q = placeQuery(label, lat, lon);
+  if (q === window.location.search) return;
+  var st = { label: label, lat: lat, lon: lon };
+  if (push) history.pushState(st, "", q);
+  else history.replaceState(st, "", q);
+}
+
+function shareSvg() {
+  return (
+    '<svg viewBox="0 0 24 24" aria-hidden="true" class="share-ico">' +
+    '<circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/>' +
+    '<circle cx="18" cy="19" r="2.6"/>' +
+    '<path fill="none" d="M8.3 10.8 L15.7 6.4 M8.3 13.2 L15.7 17.6"/></svg>'
+  );
+}
+
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(
+      function () {
+        return true;
+      },
+      function () {
+        return legacyCopy(text);
+      },
+    );
+  }
+  return Promise.resolve(legacyCopy(text));
+}
+
+// clipboard.writeText needs a secure context and a permission that can be
+// refused; on plain http or an older browser execCommand is the only path left.
+function legacyCopy(text) {
+  try {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+var shareFlashTimer = null;
+
+// The confirmation has to be the button itself: a copy that says nothing reads
+// as a dead control, and there is no toast layer in this app to borrow.
+function flashShare(btn, msg) {
+  var label = btn.querySelector(".share-text");
+  if (!label) return;
+  if (shareFlashTimer) clearTimeout(shareFlashTimer);
+  label.textContent = msg;
+  btn.classList.add("copied");
+  shareFlashTimer = setTimeout(function () {
+    label.textContent = "Share";
+    btn.classList.remove("copied");
+    shareFlashTimer = null;
+  }, 1600);
+}
+
 function starSvg(filled) {
   return (
     '<svg viewBox="0 0 24 24" aria-hidden="true" class="star' +
@@ -2036,7 +2182,7 @@ function pickSuggestion(item) {
   zipInput.value = item.label;
   zipInput.blur();
   closeSuggestions();
-  history.replaceState(null, "", "?q=" + encodeURIComponent(item.label));
+  navPush = true;
   fetchWeather(item.lat, item.lon, item.label, true);
 }
 
@@ -2337,8 +2483,8 @@ locateBtn.addEventListener("click", function () {
       done();
       var lat = pos.coords.latitude.toFixed(4);
       var lon = pos.coords.longitude.toFixed(4);
-      history.replaceState(null, "", "?q=current+location");
       zipInput.value = "";
+      navPush = true;
       fetchWeather(lat, lon, null, true);
     },
     function (err) {
@@ -2385,16 +2531,42 @@ function autoLocateIfPermitted() {
 
 renderSaved();
 
-var params = new URLSearchParams(window.location.search);
-var urlQuery = params.get("q") || params.get("zip");
-if (urlQuery && urlQuery.replace(/\+/g, " ").trim().toLowerCase() === "current location") {
-  autoLocateIfPermitted();
-} else if (urlQuery) {
-  zipInput.value = urlQuery;
-  geocodeAndFetch(urlQuery);
-} else {
+// Opening whatever ?q=/&ll= names. A shared link carries coordinates, so it
+// loads the exact point that was on the sender's screen with no geocoder round
+// trip; a hand-typed or older ?q= still falls back to resolving the text.
+function openFromUrl(push) {
+  var params = new URLSearchParams(window.location.search);
+  var urlQuery = params.get("q") || params.get("zip") || "";
+  var ll = parseLatLon(params.get("ll"));
+  if (ll) {
+    zipInput.value = "";
+    navPush = !!push;
+    fetchWeather(ll[0], ll[1], urlQuery || null, false);
+    return;
+  }
+  // ?q=current+location predates &ll= and is still in people's bookmarks.
+  if (urlQuery.replace(/\+/g, " ").trim().toLowerCase() === "current location") {
+    autoLocateIfPermitted();
+    return;
+  }
+  if (urlQuery) {
+    zipInput.value = urlQuery;
+    geocodeAndFetch(urlQuery, push);
+    return;
+  }
   loadLastOrDefault();
 }
+
+// Back and forward move between places rather than out of the app, which is
+// what a URL that names the place implies.
+window.addEventListener("popstate", function () {
+  closeSuggestions();
+  openFromUrl(false);
+});
+
+// push=false on entry: the first view is the entry the user arrived on, not a
+// step forward from it.
+openFromUrl(false);
 
 // Installed/home-screen support. Registration failure is non-fatal — the app
 // works fine as a normal page, so never surface it to the user.
