@@ -108,6 +108,38 @@ function adviceAqiBand(aqi) {
   return "moderate";
 }
 
+// The calendar date whose normal high matches today's forecast, for the "closer
+// to a normal July day" clause. Only claimed when the match is tight and the
+// date is a season away: in San Diego every day of the year has nearly the same
+// normal high, so the nearest match there is noise dressed as insight.
+function adviceSeasonEcho(hiF, todayIdx) {
+  var c = climateData;
+  if (!c || !c.normHi) return "";
+  var best = null;
+  var warmest = null;
+  var coldest = null;
+  for (var d = 0; d < 366; d++) {
+    var n = c.normHi[d];
+    if (n == null) continue;
+    if (warmest === null || n > warmest) warmest = n;
+    if (coldest === null || n < coldest) coldest = n;
+    var diff = Math.abs(n - hiF);
+    if (!best || diff < best.diff) best = { d: d, diff: diff };
+  }
+  if (warmest !== null && hiF > warmest + 1.5) {
+    return " Hotter than any normal day of the year here.";
+  }
+  if (coldest !== null && hiF < coldest - 1.5) {
+    return " Colder than any normal day of the year here.";
+  }
+  if (!best || best.diff > 1.5) return "";
+  var away = Math.abs(best.d - todayIdx);
+  if (away > 183) away = 366 - away;
+  if (away < 30) return "";
+  var dt = new Date(Date.UTC(2000, 0, 1 + best.d));
+  return " Closer to a normal " + MONTHS_SHORT[dt.getUTCMonth()] + " day here.";
+}
+
 // ctx: { hrs, grid, hi, lo, extras, tz }
 function adviceItems(ctx) {
   var out = [];
@@ -245,6 +277,30 @@ function adviceItems(ctx) {
           nowT + "° now, " + lowAhead + "° by " +
           adviceHour(Date.parse(lowHour.startTime), tz) + ". Take a layer.",
       });
+    }
+  }
+
+  // ── Hotter or colder than normal ──
+  // The hero already carries a "+13°" stat, so this line has to add what that
+  // number means rather than restate it, and only fires at a departure big
+  // enough to change what someone wears. climateData is the ERA5 archive
+  // summary from sky.js and lands after the first render; the strip re-renders
+  // when it does.
+  if (typeof climateData !== "undefined" && climateData && ctx.hi != null) {
+    var cday = climateDay(new Date(), tz);
+    var norm = cday && cday.idx != null ? climateData.normHi[cday.idx] : null;
+    if (norm != null) {
+      var dep = ctx.hi - norm;
+      if (Math.abs(dep) >= 8) {
+        out.push({
+          rank: Math.abs(dep) >= 18 ? 2 : 1,
+          icon: "🌡️",
+          text:
+            ctx.hi + "° today, " + Math.abs(Math.round(dep)) + "° " +
+            (dep > 0 ? "above" : "below") + " the normal " + Math.round(norm) +
+            "° for " + cday.label + "." + adviceSeasonEcho(ctx.hi, cday.idx),
+        });
+      }
     }
   }
 
