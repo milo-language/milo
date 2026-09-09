@@ -15,6 +15,11 @@ var currentCityLabel = "";
 // countdown tick must not, hence the flag rather than pushing from the actions
 // themselves. Consumed by updateUrl on the next render.
 var navPush = false;
+// Whether the coordinates on screen are a point the place index cannot give
+// back from the label alone. False for anything the user picked by name, true
+// for a geolocation fix or a ZIP centroid. Decides whether a shared link has to
+// carry "&ll=".
+var placeExact = false;
 // NWS radar site covering the current point, e.g. "KMUX" for the Bay Area.
 // Comes from /points, so it is only known once that call lands.
 var radarStation = "";
@@ -678,9 +683,10 @@ function showError(msg) {
   errorEl.innerHTML = '<div class="error-msg">' + msg + "</div>";
 }
 
-function fetchWeather(lat, lon, city, saveLoc) {
+function fetchWeather(lat, lon, city, saveLoc, exact) {
   currentLat = lat;
   currentLon = lon;
+  placeExact = !!exact;
   // Cleared up front: leaving the last place's station set would caption the
   // new city with a radar site a few hundred miles away.
   radarStation = "";
@@ -785,7 +791,8 @@ function geocodeAndFetch(query, push) {
       var state = ad.state || "";
       var stateAbbr = stateAbbrs[state] || state;
       var label = stateAbbr ? cityName + ", " + stateAbbr : cityName;
-      fetchWeather(r.lat, r.lon, label, true);
+      // A ZIP centroid is not the city centroid the index would hand back.
+      fetchWeather(r.lat, r.lon, label, true, true);
     })
     .catch(function () {
       searchBtn.disabled = false;
@@ -2033,14 +2040,31 @@ function toggleFavorite(label, lat, lon) {
 // shared link actually loads; the label is only there to keep the link readable
 // and to fill the search box before the fetch lands.
 function placeQuery(label, lat, lon) {
-  var q = "?q=" + encodeURIComponent(label || "");
+  var q = "?q=" + encodeParam(label || "");
+  // A place the user picked by name resolves back to the same point through the
+  // index on open, so the coordinates would be nothing but noise in the link.
+  // They are only written when nothing else can recover the point: a geolocation
+  // fix, or a ZIP whose centroid is not the city's, or a link that already
+  // carried them. An unnamed point has to carry them whatever its provenance.
+  if (!placeExact && label) return q;
   var ll = parseLatLon(lat + "," + lon);
-  if (ll) q += "&ll=" + encodeURIComponent(ll[0] + "," + ll[1]);
+  if (ll) q += "&ll=" + ll[0] + "," + ll[1];
   return q;
 }
 
-// 4 decimals is ~11 m, finer than any forecast grid and short enough that the
-// URL still reads as a place rather than a survey marker.
+// encodeURIComponent escapes the space and the comma in "Rohnert Park, CA" to
+// %20 and %2C, which is half the length of a shared link and the ugly half.
+// Both are legal literals in a query string (RFC 3986 sub-delims), and "+"
+// decodes back to a space in URLSearchParams, so only the characters that would
+// actually change the parse stay escaped. Older %-encoded links still work:
+// this only changes what we write.
+function encodeParam(v) {
+  return encodeURIComponent(v).replace(/%20/g, "+").replace(/%2C/g, ",");
+}
+
+// 3 decimals is ~110 m. The forecast grid is 2.5 km, so nothing downstream can
+// tell the difference, and it keeps the coordinates from reading as a survey
+// marker in the middle of a link someone is about to send.
 function parseLatLon(s) {
   if (!s) return null;
   var parts = String(s).split(",");
@@ -2049,7 +2073,7 @@ function parseLatLon(s) {
   var lo = parseFloat(parts[1]);
   if (isNaN(la) || isNaN(lo)) return null;
   if (la < -90 || la > 90 || lo < -180 || lo > 180) return null;
-  return [String(parseFloat(la.toFixed(4))), String(parseFloat(lo.toFixed(4)))];
+  return [String(parseFloat(la.toFixed(3))), String(parseFloat(lo.toFixed(3)))];
 }
 
 function shareUrl() {
@@ -2485,7 +2509,7 @@ locateBtn.addEventListener("click", function () {
       var lon = pos.coords.longitude.toFixed(4);
       zipInput.value = "";
       navPush = true;
-      fetchWeather(lat, lon, null, true);
+      fetchWeather(lat, lon, null, true, true);
     },
     function (err) {
       done();
@@ -2541,7 +2565,7 @@ function openFromUrl(push) {
   if (ll) {
     zipInput.value = "";
     navPush = !!push;
-    fetchWeather(ll[0], ll[1], urlQuery || null, false);
+    fetchWeather(ll[0], ll[1], urlQuery || null, false, true);
     return;
   }
   // ?q=current+location predates &ll= and is still in people's bookmarks.
