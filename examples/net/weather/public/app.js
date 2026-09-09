@@ -2592,6 +2592,91 @@ window.addEventListener("popstate", function () {
 // step forward from it.
 openFromUrl(false);
 
+// ── Install to home screen ──
+
+var installBtn = document.getElementById("installBtn");
+var installTip = document.getElementById("installTip");
+// Chrome fires beforeinstallprompt once per page load and the event is the only
+// handle on the install dialog, so it is kept rather than asked for on click.
+var deferredInstall = null;
+
+function isStandalone() {
+  var mm = window.matchMedia && window.matchMedia("(display-mode: standalone)");
+  // navigator.standalone is the iOS-only equivalent; it has no media query.
+  return (mm && mm.matches) || navigator.standalone === true;
+}
+
+// iPadOS 13+ reports itself as a Mac, and a touch-capable "MacIntel" is the only
+// thing separating it from a desktop. Chrome and Firefox on iOS cannot add to
+// the home screen at all — the item lives in Safari's share sheet — so pointing
+// their users at it would be telling them to look for something that is not
+// there.
+function isIosSafari() {
+  var ua = navigator.userAgent;
+  var ios =
+    /iPad|iPhone|iPod/.test(ua) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  return ios && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+}
+
+function hideInstall() {
+  if (installBtn) installBtn.hidden = true;
+  if (installTip) installTip.hidden = true;
+}
+
+function showInstallTip(msg) {
+  if (!installTip) return;
+  installTip.textContent = msg;
+  installTip.hidden = false;
+}
+
+if (installBtn && !isStandalone()) {
+  window.addEventListener("beforeinstallprompt", function (e) {
+    // Without preventDefault Chrome shows its own mini-infobar as well, so the
+    // page would be offering the same thing twice.
+    e.preventDefault();
+    deferredInstall = e;
+    installBtn.hidden = false;
+  });
+
+  window.addEventListener("appinstalled", function () {
+    deferredInstall = null;
+    hideInstall();
+  });
+
+  // Safari never fires beforeinstallprompt and has no API to raise the sheet,
+  // so the button can only say where the menu item is.
+  if (isIosSafari()) installBtn.hidden = false;
+
+  installBtn.addEventListener("click", function () {
+    if (deferredInstall) {
+      var e = deferredInstall;
+      // The event is single-use: a second prompt() on it throws.
+      deferredInstall = null;
+      e.prompt();
+      e.userChoice
+        .then(function (choice) {
+          // Dismissing is not declining forever — Chrome will offer the event
+          // again on a later visit — so the button only goes away on accept.
+          if (choice && choice.outcome === "accepted") hideInstall();
+        })
+        .catch(function () {});
+      return;
+    }
+    if (installTip && !installTip.hidden) {
+      installTip.hidden = true;
+      return;
+    }
+    showInstallTip("Tap the Share button, then \u201cAdd to Home Screen\u201d.");
+  });
+
+  document.addEventListener("click", function (e) {
+    if (!installTip || installTip.hidden) return;
+    if (e.target === installBtn || installBtn.contains(e.target)) return;
+    installTip.hidden = true;
+  });
+}
+
 // Installed/home-screen support. Registration failure is non-fatal — the app
 // works fine as a normal page, so never surface it to the user.
 if ("serviceWorker" in navigator) {

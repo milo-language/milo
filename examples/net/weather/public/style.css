@@ -72,6 +72,62 @@ body {
   line-height: 1;
 }
 
+/* Sits beside the brand. On a narrow screen the search bar already wraps to its
+   own line, so this shares line one rather than stealing width from it. */
+.install-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.7rem 0.3rem 0.55rem;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--content);
+  background: transparent;
+  border: 1px solid var(--base-300);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+
+.install-btn:hover {
+  background: var(--base-300);
+}
+
+/* the hidden attribute loses to display:inline-flex without this */
+.install-btn[hidden],
+.install-tip[hidden] {
+  display: none;
+}
+
+.install-ico {
+  width: 0.9rem;
+  height: 0.9rem;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* full-width so it drops below the brand row rather than squeezing it */
+.install-tip {
+  flex: 1 1 100%;
+  order: 3;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  color: var(--content);
+  background: var(--base-300);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.7rem;
+}
+
 /* ── Search widget ── */
 
 .search-bar {
