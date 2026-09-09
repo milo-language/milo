@@ -92,13 +92,14 @@ function adviceWetRun(hrs, floor) {
   return run;
 }
 
-// UV bands, not a burn-time in minutes: the real number depends on skin, and a
-// made-up "18 minutes" would be the most precise-looking thing on the page and
-// the least true.
-function adviceUvClause(uv) {
-  if (uv >= 11) return "enough to burn in a few minutes";
-  if (uv >= 8) return "enough to burn inside twenty minutes";
-  return "enough to burn inside half an hour";
+// Bands, not a burn time computed per person: the real number turns on skin
+// type and it is not something this page knows, so a precise-looking "18
+// minutes" would be the least true thing in the strip. "Less than" is the
+// honest shape of the claim.
+function adviceBurnClause(uv) {
+  if (uv >= 11) return "in just a few minutes";
+  if (uv >= 8) return "in less than 20 minutes";
+  return "in less than 30 minutes";
 }
 
 function adviceAqiBand(aqi) {
@@ -250,8 +251,9 @@ function adviceItems(ctx) {
         rank: 2,
         icon: "🧴",
         text:
-          "UV " + uvShown + " around " + adviceHour(peakUv.t, tz) + ", " +
-          adviceUvClause(uvShown) + ". Sunscreen and a hat.",
+          "Sunscreen and a hat are a good idea today: UV hits " + uvShown +
+          " around " + adviceHour(peakUv.t, tz) +
+          ", and you can start getting a sunburn " + adviceBurnClause(uvShown) + ".",
       });
     }
   }
