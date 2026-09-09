@@ -505,6 +505,10 @@ function detailRow(k, v) {
 
 // Today's UV bell curve: gradient fill under a dashed outline, threshold
 // gridlines, and a marker at the location's current hour.
+// Idle text for the scrub readout. Without it the line sits blank and nothing
+// says the chart answers questions, which is the whole point of the gesture.
+var UV_SCRUB_HINT = "Drag across the chart to read any hour";
+
 function uvCurveSvg(hourly, timeZone, nowTime) {
   var W = 280;
   var H = 90;
@@ -574,7 +578,7 @@ function uvCurveSvg(hourly, timeZone, nowTime) {
   return (
     '<div class="uv-scrubber" data-uv-w="' + W + '" data-uv-h="' + H +
     '" data-uv-max="' + maxUv + '">' +
-    '<div class="uv-readout" aria-live="off"></div>' +
+    '<div class="uv-readout" aria-live="off">' + UV_SCRUB_HINT + "</div>" +
     svg + "</svg></div>"
   );
 }
@@ -631,7 +635,7 @@ function initUvScrub(root, hourly, timeZone) {
   function clear() {
     group.setAttribute("opacity", "0");
     out.classList.remove("on");
-    out.textContent = "";
+    out.textContent = UV_SCRUB_HINT;
   }
 
   // Tracked here rather than read back from hasPointerCapture: capture is a

@@ -174,17 +174,18 @@ body {
   touch-action: none;
 }
 
+/* Height is reserved, not toggled with display, so the curve does not jump a
+   line the first time a finger lands on it. Idle it carries the hint at half
+   strength; scrubbing swaps in the value at full. */
 .uv-readout {
   height: 1.15rem;
   font-size: 0.8125rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  opacity: 0;
+  opacity: 0.55;
   transition: opacity 0.12s;
 }
 
-/* Reserved rather than toggled with display, so the curve does not jump a line
-   the first time a finger lands on it. */
 .uv-readout.on {
   opacity: 1;
 }
