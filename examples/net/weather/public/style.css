@@ -128,6 +128,40 @@ body {
   padding: 0.5rem 0.7rem;
 }
 
+/* The advice strip. Sits inside the weather-tinted card, so it borrows the
+   card's own contrast rather than introducing a panel colour of its own. */
+.advice {
+  list-style: none;
+  margin: 0.85rem auto 0;
+  padding: 0.7rem 0.9rem;
+  max-width: 34rem;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius-tile);
+  display: grid;
+  gap: 0.45rem;
+}
+
+.on-light .advice {
+  background: rgba(31, 41, 55, 0.07);
+  border-color: rgba(31, 41, 55, 0.12);
+}
+
+.advice-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+
+.advice-icon {
+  flex: 0 0 auto;
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
 /* ── Search widget ── */
 
 .search-bar {

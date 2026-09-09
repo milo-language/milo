@@ -1099,6 +1099,20 @@ function extrasHtml() {
 function renderExtras() {
   var slot = document.getElementById("extraTiles");
   if (slot) slot.innerHTML = extrasHtml();
+  // The UV and air-quality rules need this fetch; the rest of the strip is
+  // already on screen, so it re-renders rather than waiting for it.
+  renderAdvice();
+}
+
+// What render() knew, kept so the strip can be rebuilt when the extras land
+// without re-running the whole card.
+var adviceCtx = null;
+
+function renderAdvice() {
+  var slot = document.getElementById("adviceSlot");
+  if (!slot || !adviceCtx) return;
+  adviceCtx.extras = extrasData;
+  slot.innerHTML = adviceHtml(adviceCtx);
 }
 
 // ── Radar ──
@@ -1443,6 +1457,15 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     '<span class="fav-text">' + (isFavorite(city) ? "Saved" : "Save") + "</span>" +
     "</button>";
 
+  adviceCtx = {
+    hrs: hrs,
+    grid: grid,
+    hi: hi,
+    lo: lo,
+    extras: extrasData,
+    tz: timeZone,
+  };
+
   var hero =
     '<div class="hero-city">' +
     esc(city) +
@@ -1450,7 +1473,10 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     '<div class="hero-temp" id="heroTemp">' + heroTempStr + "°</div>" +
     '<div class="hero-condition">' + esc(now.shortForecast) + "</div>" +
     '<div class="hero-stats">' + stats + "</div>" +
-    '<div class="hero-detail">' + esc(now.detailedForecast) + "</div>";
+    '<div class="hero-detail">' + esc(now.detailedForecast) + "</div>" +
+    // Directly under the paragraph that describes the day, because this is the
+    // answer to the question that paragraph leaves open.
+    '<div id="adviceSlot">' + adviceHtml(adviceCtx) + "</div>";
 
   // Hourly strip
   var hourly = '<div class="hourly-scroll">';
