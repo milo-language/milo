@@ -277,17 +277,17 @@ function adviceItems(ctx) {
       // Band off the number being shown, or the line says "UV 8" and then reads
       // out the sentence for a 7.
       var uvShown = Math.round(burn.peak);
+      // The window and the peak, nothing else: the earlier phrasing spent two
+      // clauses explaining the UV scale before it got to the thing to do.
       out.push({
         rank: 2,
         icon: "🧴",
         text: burn.started
-          ? "Sunscreen and a hat are a good idea. The UV stays " + UV_BURN_LEVEL +
-            " or higher until " + adviceHour(burn.end, tz) +
-            ", and you can start getting a sunburn " + adviceBurnClause(uvShown) + "."
-          : "Sunscreen and a hat are a good idea today. Between " +
-            adviceHour(burn.start, tz) + " and " + adviceHour(burn.end, tz) +
-            " the UV is " + UV_BURN_LEVEL + " or higher, and you can start getting a " +
-            "sunburn " + adviceBurnClause(uvShown) + ".",
+          ? "Sunscreen recommended until " + adviceHour(burn.end, tz) +
+            ". UV peaks at " + uvShown + ", burning skin " + adviceBurnClause(uvShown) + "."
+          : "Sunscreen recommended " + adviceHour(burn.start, tz) + " to " +
+            adviceHour(burn.end, tz) + ". UV peaks at " + uvShown + ", burning skin " +
+            adviceBurnClause(uvShown) + ".",
       });
     }
   }

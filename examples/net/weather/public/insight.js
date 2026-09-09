@@ -9,7 +9,9 @@
 // Same rule as the advice strip: every sentence names the number and the day
 // that earned it. "Cooling over the next 3 days" alone is horoscope; "84° today
 // down to 68° Friday" is a forecast. And a sentence that would be true of any
-// week ("some clouds around") does not get written at all.
+// week ("some clouds around") does not get written at all. A percentage always
+// names what it is the chance of, and no sentence uses a forecaster's word for
+// something ("washout", "unsettled") that a reader would have to look up.
 //
 // Pure functions over the NWS periods the page already fetched.
 
@@ -169,11 +171,18 @@ function insightPrecip(days, tz) {
 
   if (firstWet < 0) {
     if (damp >= 0) {
+      var dampName = insightDayName(days[damp].start, tz);
+      var dampPct = Math.max(days[damp].pop, days[damp].nightPop);
       return {
         rank: 1,
+        // Naming the same day twice ("...through Tuesday. Tuesday comes
+        // closest...") is what a template does; a person names it once.
         text:
-          "No washout in the forecast, though " + insightDayName(days[damp].start, tz) +
-          " carries a " + Math.max(days[damp].pop, days[damp].nightPop) + "% chance.",
+          dampName === endName
+            ? "Little rain in the forecast: the best chance is " + dampPct + "% " +
+              dampName + "."
+            : "No rain likely through " + endName + ". The best chance is " + dampPct +
+              "% " + dampName + ".",
       };
     }
     return { rank: 1, text: "No rain in the forecast through " + endName + "." };
@@ -185,8 +194,8 @@ function insightPrecip(days, tz) {
       rank: 2,
       text:
         "Wet week: rain likely on " + wetCount + " of the next " + days.length +
-        " days, heaviest odds " + insightDayName(days[firstWet].start, tz) + " at " +
-        Math.max(days[firstWet].pop, days[firstWet].nightPop) + "%.",
+        " days, and likeliest " + insightDayName(days[firstWet].start, tz) + ", at a " +
+        Math.max(days[firstWet].pop, days[firstWet].nightPop) + "% chance.",
     };
   }
 
@@ -197,15 +206,15 @@ function insightPrecip(days, tz) {
       text:
         clears < days.length
           ? "Rain today, then dry from " + insightDayName(days[clears].start, tz) + " on."
-          : "Rain today at " + Math.max(days[0].pop, days[0].nightPop) + "%.",
+          : "A " + Math.max(days[0].pop, days[0].nightPop) + "% chance of rain today.",
     };
   }
 
   return {
     rank: 2,
     text:
-      "Dry until " + insightDayName(days[firstWet].start, tz) + ", when rain moves in at " +
-      Math.max(days[firstWet].pop, days[firstWet].nightPop) + "%.",
+      "Dry until " + insightDayName(days[firstWet].start, tz) + ", which has a " +
+      Math.max(days[firstWet].pop, days[firstWet].nightPop) + "% chance of rain.",
   };
 }
 
