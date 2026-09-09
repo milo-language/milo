@@ -642,42 +642,86 @@ function initUvScrub(root, hourly, timeZone) {
   // request the browser can refuse, and when it does the drag has to keep
   // working anyway.
   var dragging = false;
+  var scrubbed = false;
 
-  hit.addEventListener("pointerdown", function (ev) {
-    dragging = true;
-    // Capture keeps the readout tracking a thumb that slides off the chart, and
-    // keeps the popover's own click-to-close from seeing the release.
+  function onDocMove(ev) {
+    if (!dragging) return;
+    // Keeps the browser from turning the tail of the gesture into a selection.
+    ev.preventDefault();
+    draw(ev.clientX);
+  }
+
+  function endDrag(ev) {
+    if (!dragging) return;
+    dragging = false;
+    document.removeEventListener("pointermove", onDocMove, true);
+    document.removeEventListener("pointerup", endDrag, true);
+    document.removeEventListener("pointercancel", endDrag, true);
     try {
-      hit.setPointerCapture(ev.pointerId);
+      box.releasePointerCapture(ev.pointerId);
+    } catch (err) {}
+    // A touch leaves nothing on screen to point at, so the marker goes with the
+    // finger; a mouse still has a cursor, so it keeps tracking on hover.
+    if (!ev || ev.pointerType !== "mouse") clear();
+  }
+
+  // Listeners go on the wrapping div, not the SVG rect: touch-action is only
+  // honoured on elements that generate a box, and an SVG child is not one, so a
+  // rect that declares touch-action:none still loses the gesture to the
+  // browser's panning and arrives here as a pointercancel that wipes the
+  // marker mid-drag.
+  box.addEventListener("pointerdown", function (ev) {
+    dragging = true;
+    scrubbed = false;
+    try {
+      box.setPointerCapture(ev.pointerId);
     } catch (err) {}
     ev.preventDefault();
     ev.stopPropagation();
     draw(ev.clientX);
+    // Capture can still be refused or dropped part way through, and the pointer
+    // can leave the chart entirely; the document is the only listener that is
+    // guaranteed to see the rest of the gesture.
+    document.addEventListener("pointermove", onDocMove, true);
+    document.addEventListener("pointerup", endDrag, true);
+    document.addEventListener("pointercancel", endDrag, true);
   });
-  hit.addEventListener("pointermove", function (ev) {
-    // A mouse merely passing over previews; anything else has to be a drag.
-    if (dragging || ev.pointerType === "mouse") draw(ev.clientX);
+
+  box.addEventListener("pointermove", function (ev) {
+    if (dragging) {
+      scrubbed = true;
+      return; // the document listener is already drawing this one
+    }
+    // A mouse merely passing over previews the hour under it.
+    if (ev.pointerType === "mouse") draw(ev.clientX);
   });
-  hit.addEventListener("pointerup", function (ev) {
-    dragging = false;
-    ev.stopPropagation();
-    try {
-      hit.releasePointerCapture(ev.pointerId);
-    } catch (err) {}
-    // A touch leaves nothing on screen to point at, so the marker goes with the
-    // finger; a mouse still has a cursor, so it keeps tracking on hover.
-    if (ev.pointerType !== "mouse") clear();
-  });
-  hit.addEventListener("pointercancel", function () {
-    dragging = false;
-    clear();
-  });
-  hit.addEventListener("pointerleave", function (ev) {
+
+  box.addEventListener("pointerleave", function (ev) {
     if (ev.pointerType === "mouse" && !dragging) clear();
   });
-  // The tile behind the curve opens this popover; a scrub must not re-trigger it.
-  hit.addEventListener("click", function (ev) {
+
+  // Two clicks have to be swallowed here. The tile behind the curve is what
+  // opened this popover, and the overlay closes itself on any click that lands
+  // outside the card — which is exactly where a drag that runs off the chart
+  // ends. Capture phase, so it runs before the overlay's own handler.
+  document.addEventListener(
+    "click",
+    function (ev) {
+      if (!scrubbed) return;
+      scrubbed = false;
+      ev.stopPropagation();
+      ev.preventDefault();
+    },
+    true,
+  );
+  box.addEventListener("click", function (ev) {
     ev.stopPropagation();
+  });
+
+  // Chrome will otherwise start a native image drag from the SVG, which cancels
+  // the pointer stream.
+  box.addEventListener("dragstart", function (ev) {
+    ev.preventDefault();
   });
 }
 

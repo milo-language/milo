@@ -165,13 +165,22 @@ body {
 /* The UV curve is draggable, so the browser must not claim the gesture for
    panning first: touch-action none on the hit target only, which keeps the
    popover itself scrollable. */
+/* touch-action and user-select have to sit on the wrapping div: they are only
+   honoured on elements that generate a box, and an SVG child element is not
+   one. Declared on the hit rect they were silently ignored, the browser kept
+   the drag as a pan, and the gesture arrived as a pointercancel that wiped the
+   marker. The div is the same size as the chart, so nothing else is affected. */
 .uv-scrubber {
   position: relative;
   cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.uv-hit {
+.uv-scrubber svg {
   touch-action: none;
+  display: block;
 }
 
 /* Height is reserved, not toggled with display, so the curve does not jump a
