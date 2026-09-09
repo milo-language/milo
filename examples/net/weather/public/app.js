@@ -100,6 +100,46 @@ function cToF(c) {
   return Math.round((c * 9) / 5 + 32);
 }
 
+// The NWS hourly feed is a step function: every period carries one flat value
+// stamped at its startTime. Reading period[0] straight off it printed the top of
+// the hour as "now", so late in an hour the hero lagged reality by nearly a full
+// hour of the day's swing. These walk to the period that actually brackets the
+// clock (a cached or late-issued feed can start hours in the past) and blend it
+// into the next one.
+function hourlyIndexAt(hrs, atMs) {
+  for (var i = 0; i < hrs.length; i++) {
+    var s = Date.parse(hrs[i].startTime);
+    var e = hrs[i].endTime ? Date.parse(hrs[i].endTime) : s + 3600000;
+    if (atMs >= s && atMs < e) return i;
+  }
+  return atMs < Date.parse(hrs[0].startTime) ? 0 : hrs.length - 1;
+}
+
+// Temperature at atMs, linear between the bracketing hours: 8:30 pm between a
+// 75 deg 8 pm and a 72 deg 9 pm is 73.5.
+function tempAt(hrs, atMs) {
+  if (!hrs || hrs.length === 0) return null;
+  var i = hourlyIndexAt(hrs, atMs);
+  var cur = hrs[i];
+  var next = i + 1 < hrs.length ? hrs[i + 1] : null;
+  // Blending across a unit change would invent a 20-degree error out of nothing;
+  // the feed is uniform in practice, so fall back to the hour's own value.
+  if (!next || next.temperatureUnit !== cur.temperatureUnit) return cur.temperature;
+  var s = Date.parse(cur.startTime);
+  var e = Date.parse(next.startTime);
+  if (!(e > s)) return cur.temperature;
+  var f = (atMs - s) / (e - s);
+  if (f < 0) f = 0;
+  if (f > 1) f = 1;
+  return cur.temperature + (next.temperature - cur.temperature) * f;
+}
+
+// One decimal, with a bare ".0" dropped: 73.5, but 73 rather than 73.0.
+function fmtTemp(t) {
+  var r = Math.round(t * 10) / 10;
+  return r % 1 === 0 ? r.toFixed(0) : r.toFixed(1);
+}
+
 function fmtHour(iso, timeZone) {
   var d = new Date(iso);
   var h;
@@ -1405,7 +1445,10 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   }
 
   var hrs = hourlyData.properties.periods;
-  var currentTemp = hrs.length > 0 ? hrs[0].temperature : now.temperature;
+  var nowMs = Date.now();
+  var nowHourIdx = hrs.length > 0 ? hourlyIndexAt(hrs, nowMs) : 0;
+  var currentTemp =
+    hrs.length > 0 ? fmtTemp(tempAt(hrs, nowMs)) : String(now.temperature);
 
   var feelsLike = getGridVal(grid, "apparentTemperature");
   var humidity = getGridVal(grid, "relativeHumidity");
@@ -1450,13 +1493,16 @@ function render(city, forecast, hourlyData, grid, timeZone) {
 
   // Hourly strip
   var hourly = '<div class="hourly-scroll">';
-  var hCount = Math.min(hrs.length, 24);
+  var hCount = Math.min(hrs.length - nowHourIdx, 24);
   for (var i = 0; i < hCount; i++) {
-    var h = hrs[i];
+    var h = hrs[nowHourIdx + i];
     var hLabel = i === 0 ? "Now" : fmtHour(h.startTime, timeZone);
+    // The cell labelled "Now" has to agree with the hero above it, so it carries
+    // the interpolated value; every later cell is that hour's own forecast.
+    var hTemp = i === 0 ? currentTemp : String(h.temperature);
     var hPop = h.probabilityOfPrecipitation ? h.probabilityOfPrecipitation.value : null;
     var hDetail =
-      detailRow("Temperature", h.temperature + "°" + h.temperatureUnit) +
+      detailRow("Temperature", hTemp + "°" + h.temperatureUnit) +
       detailRow("Conditions", esc(h.shortForecast)) +
       (hPop !== null ? detailRow("Chance of precipitation", hPop + "%") : "") +
       (h.relativeHumidity && h.relativeHumidity.value !== null
@@ -1472,11 +1518,11 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     hourly +=
       '<div class="hourly-item" data-pop tabindex="0" role="button"' +
       ' data-pop-label="' + esc(fmtDayLabel(h.startTime, timeZone)) + '"' +
-      ' data-pop-value="' + h.temperature + '°"' +
+      ' data-pop-value="' + hTemp + '°"' +
       ' data-pop-sub="' + esc(fmtHour(h.startTime, timeZone) + " · " + h.shortForecast) + '">' +
       '<div class="hourly-time">' + hLabel + "</div>" +
       '<div class="hourly-icon">' + icon(h.shortForecast, h.isDaytime) + "</div>" +
-      '<div class="hourly-temp">' + h.temperature + "°</div>" +
+      '<div class="hourly-temp">' + hTemp + "°</div>" +
       '<template class="tile-detail">' + hDetail + "</template>" +
       "</div>";
   }
@@ -1811,8 +1857,8 @@ var savedWxCache = {};
 // The *hourly* forecast, not the daily one: daily period[0] is whichever half
 // of the day you happen to be in, so it reads as today's high in the afternoon
 // and tonight's low after dark, and nothing on the chip says which. The hourly
-// period[0] is the current hour everywhere, matching the hero's own
-// currentTemp, so every chip means the same thing at every hour.
+// feed is interpolated the same way the hero is, so every chip means the same
+// thing at every hour and agrees with the number the hero shows.
 function fetchSavedWx(fav) {
   if (savedWxCache[fav.label]) return Promise.resolve(savedWxCache[fav.label]);
   return fetch("https://api.weather.gov/points/" + fav.lat + "," + fav.lon)
@@ -1829,7 +1875,9 @@ function fetchSavedWx(fav) {
     .then(function (fc) {
       var ps = fc.properties.periods;
       if (!ps || !ps.length) throw new Error("empty");
-      var wx = { temp: ps[0].temperature, cond: ps[0].shortForecast };
+      var atMs = Date.now();
+      var idx = hourlyIndexAt(ps, atMs);
+      var wx = { temp: fmtTemp(tempAt(ps, atMs)), cond: ps[idx].shortForecast };
       savedWxCache[fav.label] = wx;
       return wx;
     })
