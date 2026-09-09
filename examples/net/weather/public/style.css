@@ -749,14 +749,6 @@ svg.sug-icon {
   display: block;
 }
 
-.wind-compass {
-  width: 100%;
-  max-width: 6rem;
-  height: auto;
-  margin: 0.25rem auto 0;
-  display: block;
-}
-
 /* ── Scale bars, skeletons and the extras slot ── */
 
 /* the extras tiles arrive as one block but must sit in the grid as individual

@@ -338,129 +338,6 @@ function dirToDeg(dir) {
   return dirs[dir] !== undefined ? dirs[dir] : 0;
 }
 
-function windCompassSvg(dir, speed) {
-  var deg = dirToDeg(dir);
-  var cx = 60;
-  var cy = 60;
-  var r = 35;
-  var svg = '<svg viewBox="0 0 120 120" class="wind-compass">';
-  svg +=
-    '<circle cx="' +
-    cx +
-    '" cy="' +
-    cy +
-    '" r="' +
-    r +
-    '" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="1.5"/>';
-  svg +=
-    '<circle cx="' +
-    cx +
-    '" cy="' +
-    cy +
-    '" r="18" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>';
-  for (var ti = 0; ti < 360; ti += 6) {
-    var tRad = ((ti - 90) * Math.PI) / 180;
-    var isC = ti % 90 === 0;
-    var isM = ti % 30 === 0;
-    var inner = isC ? r - 7 : isM ? r - 4 : r - 2;
-    svg +=
-      '<line x1="' +
-      (cx + inner * Math.cos(tRad)).toFixed(1) +
-      '" y1="' +
-      (cy + inner * Math.sin(tRad)).toFixed(1) +
-      '" x2="' +
-      (cx + r * Math.cos(tRad)).toFixed(1) +
-      '" y2="' +
-      (cy + r * Math.sin(tRad)).toFixed(1) +
-      '" stroke="' +
-      (isC ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.2)") +
-      '" stroke-width="' +
-      (isC ? "1.5" : "0.8") +
-      '"/>';
-  }
-  svg +=
-    '<text x="' +
-    cx +
-    '" y="' +
-    (cy - r - 5) +
-    '" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">N</text>';
-  svg +=
-    '<text x="' +
-    (cx + r + 8) +
-    '" y="' +
-    (cy + 4) +
-    '" text-anchor="middle" fill="rgba(255,255,255,0.5)" font-size="10" font-weight="600">E</text>';
-  svg +=
-    '<text x="' +
-    cx +
-    '" y="' +
-    (cy + r + 12) +
-    '" text-anchor="middle" fill="rgba(255,255,255,0.5)" font-size="10" font-weight="600">S</text>';
-  svg +=
-    '<text x="' +
-    (cx - r - 8) +
-    '" y="' +
-    (cy + 4) +
-    '" text-anchor="middle" fill="rgba(255,255,255,0.5)" font-size="10" font-weight="600">W</text>';
-  // weather.gov gives ranges ("0 to 5 mph"); parseInt returns a falsy 0 there,
-  // so pull every number out and render them compactly inside the dial
-  var spdNums = String(speed).match(/\d+/g);
-  var spdNum = spdNums ? spdNums.join("–") : speed;
-  svg +=
-    '<text x="' +
-    cx +
-    '" y="' +
-    (cy - 1) +
-    '" text-anchor="middle" fill="#fff" font-size="18" font-weight="300">' +
-    spdNum +
-    "</text>";
-  svg +=
-    '<text x="' +
-    cx +
-    '" y="' +
-    (cy + 10) +
-    '" text-anchor="middle" fill="rgba(255,255,255,0.4)" font-size="8">mph</text>';
-  var aRad = ((deg - 90) * Math.PI) / 180;
-  var tipX = cx + (r - 2) * Math.cos(aRad);
-  var tipY = cy + (r - 2) * Math.sin(aRad);
-  var hLen = 9;
-  var hAng = 0.3;
-  svg +=
-    '<polygon points="' +
-    tipX.toFixed(1) +
-    "," +
-    tipY.toFixed(1) +
-    " " +
-    (tipX - hLen * Math.cos(aRad - hAng)).toFixed(1) +
-    "," +
-    (tipY - hLen * Math.sin(aRad - hAng)).toFixed(1) +
-    " " +
-    (tipX - hLen * Math.cos(aRad + hAng)).toFixed(1) +
-    "," +
-    (tipY - hLen * Math.sin(aRad + hAng)).toFixed(1) +
-    '" fill="#fff"/>';
-  var tailR = 16;
-  var tailX = cx - tailR * Math.cos(aRad);
-  var tailY = cy - tailR * Math.sin(aRad);
-  svg +=
-    '<line x1="' +
-    cx +
-    '" y1="' +
-    cy +
-    '" x2="' +
-    tailX.toFixed(1) +
-    '" y2="' +
-    tailY.toFixed(1) +
-    '" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" stroke-linecap="round"/>';
-  svg +=
-    '<circle cx="' +
-    tailX.toFixed(1) +
-    '" cy="' +
-    tailY.toFixed(1) +
-    '" r="3.5" fill="rgba(255,255,255,0.6)"/>';
-  svg += "</svg>";
-  return svg;
-}
 
 // ── UV, air quality and pressure (Open-Meteo) ──
 // weather.gov publishes neither a UV index nor air quality, so those tiles come
@@ -522,9 +399,11 @@ function jsonOrNull(url) {
 function fetchExtras(lat, lon) {
   var fc =
     "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon +
-    "&current=uv_index,pressure_msl,surface_pressure&daily=uv_index_max" +
-    "&hourly=uv_index,pressure_msl" +
-    "&timezone=auto&forecast_days=1";
+    "&current=uv_index,pressure_msl,surface_pressure" +
+    "&daily=uv_index_max,temperature_2m_max,temperature_2m_min,precipitation_probability_max," +
+    "wind_speed_10m_max,sunshine_duration,weather_code" +
+    "&hourly=uv_index,pressure_msl,cloud_cover" +
+    "&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto&forecast_days=3";
   var air =
     "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + lat +
     "&longitude=" + lon + "&current=us_aqi,pm2_5";
@@ -541,6 +420,8 @@ function fetchExtras(lat, lon) {
       pressureTrend: null,
       aqi: null,
       pm25: null,
+      daily: null,
+      cloudHourly: null,
     };
     if (f && f.current) {
       out.uv = f.current.uv_index != null ? f.current.uv_index : null;
@@ -552,14 +433,32 @@ function fetchExtras(lat, lon) {
         f.current.surface_pressure != null ? f.current.surface_pressure : null;
     }
     if (f && f.daily && f.daily.uv_index_max) out.uvMax = f.daily.uv_index_max[0];
+    if (f && f.daily && f.daily.temperature_2m_max) {
+      out.daily = {
+        time: f.daily.time,
+        tmax: f.daily.temperature_2m_max,
+        tmin: f.daily.temperature_2m_min,
+        pop: f.daily.precipitation_probability_max || [],
+        windMax: f.daily.wind_speed_10m_max || [],
+        sunshine: f.daily.sunshine_duration || [],
+        code: f.daily.weather_code || [],
+      };
+    }
     if (f && f.hourly && f.hourly.time) {
-      var t = f.hourly.time;
-      var uv = f.hourly.uv_index;
+      if (f.hourly.cloud_cover) {
+        out.cloudHourly = [];
+        for (var ci = 0; ci < f.hourly.time.length; ci++)
+          out.cloudHourly.push({ time: f.hourly.time[ci], cc: f.hourly.cloud_cover[ci] });
+      }
+      // The UV curve and pressure trend index hourly[] as today's 00:00-23:00;
+      // the request now spans three days for the sky tiles, so trim to today.
+      var t = f.hourly.time.slice(0, 24);
+      var uv = f.hourly.uv_index ? f.hourly.uv_index.slice(0, 24) : null;
       if (uv && uv.length === t.length) {
         out.uvHourly = [];
         for (var i = 0; i < t.length; i++) out.uvHourly.push({ time: t[i], uv: uv[i] });
       }
-      var sp = f.hourly.pressure_msl;
+      var sp = f.hourly.pressure_msl ? f.hourly.pressure_msl.slice(0, 24) : null;
       if (sp && out.pressureHpa !== null) {
         // hourly[] is today 00:00–23:00 in the location's own time; the model's
         // value 3 h back is the trend baseline. Before 03:00 there's no baseline
@@ -820,6 +719,9 @@ function fetchWeather(lat, lon, city, saveLoc) {
     .then(function (results) {
       searchBtn.disabled = false;
       render(city, results[0], results[1], results[2], locationTz);
+      // After render: the tile writes into a slot render creates, and the
+      // location's zone is only known once /points has answered.
+      loadIss(lat, lon, locationTz);
     })
     .catch(function () {
       searchBtn.disabled = false;
@@ -1084,7 +986,7 @@ function extrasHtml() {
   if (!e) return skeletonTile() + skeletonTile() + skeletonTile();
 
   var now = new Date();
-  var html = "";
+  var html = tomorrowTile(e);
 
   if (e.uv !== null) {
     var uvNow = Math.round(e.uv);
@@ -1169,6 +1071,7 @@ function extrasHtml() {
     );
   }
 
+  html += stargazingTile(e, parseFloat(currentLat), parseFloat(currentLon), now, extrasTz);
   return html;
 }
 
@@ -1572,9 +1475,8 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     "Wind",
     esc(now.windSpeed),
     windSub,
-    windCompassSvg(now.windDirection, now.windSpeed),
-    windCompassSvg(now.windDirection, now.windSpeed) +
-      detailRow("Speed", esc(now.windSpeed)) +
+    "",
+    detailRow("Speed", esc(now.windSpeed)) +
       (gustMph !== null ? detailRow("Peak gust (next 12 h)", gustMph + " mph") : "") +
       (now.windDirection
         ? detailRow(
@@ -1583,12 +1485,14 @@ function render(city, forecast, hourlyData, grid, timeZone) {
               " (" + Math.round(dirToDeg(now.windDirection)) + "°)",
           )
         : "") +
-      '<div class="detail-note">The arrow flies with the wind — weather.gov reports' +
-      " the direction it blows <em>from</em>.</div>"
+      '<div class="detail-note">weather.gov reports the direction the wind blows' +
+      " <em>from</em>.</div>"
   );
 
   // UV / air quality / pressure fill in here once Open-Meteo answers
   tiles += '<div id="extraTiles" class="tile-slot">' + extrasHtml() + "</div>";
+  // ISS passes need a TLE fetch plus satellite.js, so the tile fills in on its own
+  tiles += '<div id="issTile" class="tile-slot">' + (issHtml !== null ? issHtml : skeletonTile()) + "</div>";
 
   if (humidity !== null) {
     tiles += tile(
