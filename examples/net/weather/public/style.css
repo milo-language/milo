@@ -1397,6 +1397,36 @@ svg.sug-icon {
   display: none;
 }
 
+/* The container's column gap applies to every child, so an empty error div
+   still costs a full gap between the chips and the card. */
+#error:empty {
+  display: none;
+}
+
+/* Phone widths: chips are too wide to pair up, so a wrapping row became one
+   chip per line and nine places pushed the card a full screen down. One
+   swipeable row instead, bled to the viewport edge so the cut-off chip is the
+   scroll hint. */
+@media (max-width: 640px) {
+  .places.has-places {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 0.35rem;
+    margin: 0 -1rem;
+    padding: 0 1rem 0.25rem;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .places::-webkit-scrollbar {
+    display: none;
+  }
+  .place-chip {
+    flex-shrink: 0;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.8125rem;
+  }
+}
+
 .places-head {
   display: none;
   font-size: 0.75rem;
