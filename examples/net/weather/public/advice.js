@@ -281,25 +281,40 @@ function adviceItems(ctx) {
   }
 
   // ── Hotter or colder than normal ──
-  // The hero already carries a "+13°" stat, so this line has to add what that
-  // number means rather than restate it, and only fires at a departure big
-  // enough to change what someone wears. climateData is the ERA5 archive
-  // summary from sky.js and lands after the first render; the strip re-renders
-  // when it does.
-  if (typeof climateData !== "undefined" && climateData && ctx.hi != null) {
-    var cday = climateDay(new Date(), tz);
-    var norm = cday && cday.idx != null ? climateData.normHi[cday.idx] : null;
-    if (norm != null) {
-      var dep = ctx.hi - norm;
-      if (Math.abs(dep) >= 8) {
-        out.push({
-          rank: Math.abs(dep) >= 18 ? 2 : 1,
-          icon: "🌡️",
-          text:
-            ctx.hi + "° today, " + Math.abs(Math.round(dep)) + "° " +
-            (dep > 0 ? "above" : "below") + " the normal " + Math.round(norm) +
-            "° for " + cday.label + "." + adviceSeasonEcho(ctx.hi, cday.idx),
-        });
+  // Against the warmest hour still ahead, not today's high: at 8 PM the day's
+  // high is a fact about a day that is over, and the number worth having is
+  // tomorrow's. The normal is read for the date that peak actually falls on, so
+  // the comparison never straddles two dates.
+  //
+  // The hero carries a "+16°" stat already, so the line earns its place by
+  // saying what that number means rather than restating it. climateData is the
+  // ERA5 summary from sky.js and lands after the first render; renderExtras
+  // rebuilds the strip when it does.
+  if (typeof climateData !== "undefined" && climateData) {
+    var ahead = adviceHours(ctx.hrs, 24);
+    var peak = null;
+    for (var k = 0; k < ahead.length; k++) {
+      if (!peak || ahead[k].temperature > peak.temperature) peak = ahead[k];
+    }
+    if (peak) {
+      var peakAt = new Date(Date.parse(peak.startTime));
+      var cday = climateDay(peakAt, tz);
+      var today = climateDay(new Date(), tz);
+      var norm = cday && cday.idx != null ? climateData.normHi[cday.idx] : null;
+      if (norm != null) {
+        var dep = peak.temperature - norm;
+        if (Math.abs(dep) >= 8) {
+          var when = cday.md === today.md ? "today" : "tomorrow";
+          out.push({
+            rank: Math.abs(dep) >= 18 ? 2 : 1,
+            icon: "🌡️",
+            text:
+              peak.temperature + "° " + when + ", " + Math.abs(Math.round(dep)) + "° " +
+              (dep > 0 ? "above" : "below") + " the normal " + Math.round(norm) +
+              "° for " + cday.label + "." +
+              adviceSeasonEcho(peak.temperature, cday.idx),
+          });
+        }
       }
     }
   }
@@ -307,15 +322,17 @@ function adviceItems(ctx) {
   return out;
 }
 
-// The empty case is not "no data" — it is a day with nothing to plan around,
-// which is worth saying once rather than leaving a blank strip that reads as a
-// failed fetch. Only claimed when the hours can actually back it up.
+// The empty case is not "no data" — it is a stretch with nothing to plan
+// around, which is worth saying once rather than leaving a blank strip that
+// reads as a failed fetch. Looks 24 hours ahead rather than at the calendar day,
+// so at 9 PM it finds tomorrow's daylight instead of finding nothing and going
+// silent for the whole evening.
 function adviceCalmLine(ctx) {
-  var hrs = adviceHours(ctx.hrs, 12);
+  var hrs = adviceHours(ctx.hrs, 24);
   if (hrs.length < 4) return null;
 
-  // Longest run, not the last one: a two-hour window late in the day would
-  // otherwise beat a whole pleasant afternoon.
+  // Longest run, not the last one: a two-hour window late tomorrow would
+  // otherwise beat a whole pleasant afternoon today.
   var run = null;
   var best = null;
   for (var i = 0; i < hrs.length; i++) {
@@ -336,23 +353,30 @@ function adviceCalmLine(ctx) {
   }
   if (!best || best.n < 3) return null;
 
+  var startMs = Date.parse(best.from.startTime);
+  var tomorrow = climateDay(new Date(startMs), ctx.tz).md !== climateDay(new Date(), ctx.tz).md;
+  var range = best.lo + "\u2013" + best.hi + "°";
+
   // A "window" that spans the whole daylight forecast is not a window, and
   // naming its endpoints reads as a constraint that isn't there.
   if (best.n >= 8) {
     return {
       rank: 0,
       icon: "✅",
-      text: "Nothing to plan around: dry all day, " + best.lo + "\u2013" + best.hi + "°.",
+      text: tomorrow
+        ? "Nothing to plan around tomorrow: dry all day, " + range + "."
+        : "Nothing to plan around: dry from here on, " + range + ".",
     };
   }
+  var window =
+    adviceHour(startMs, ctx.tz) + " to " +
+    adviceHour(Date.parse(best.to.startTime) + 3600000, ctx.tz);
   return {
     rank: 0,
     icon: "✅",
-    text:
-      "Nothing to plan around. Easiest stretch is " +
-      adviceHour(Date.parse(best.from.startTime), ctx.tz) + " to " +
-      adviceHour(Date.parse(best.to.startTime) + 3600000, ctx.tz) + ", " +
-      best.lo + "\u2013" + best.hi + "°.",
+    text: tomorrow
+      ? "Nothing to plan around. Tomorrow's easiest stretch is " + window + ", " + range + "."
+      : "Nothing to plan around. Easiest stretch is " + window + ", " + range + ".",
   };
 }
 
