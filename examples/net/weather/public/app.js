@@ -317,8 +317,7 @@ function conditionClass(forecast, isDaytime) {
     return "rain";
   }
   if (f.indexOf("snow") !== -1 || f.indexOf("sleet") !== -1 || f.indexOf("ice") !== -1) {
-    // pale gradient; white text would wash out
-    return "snow on-light";
+    return "snow";
   }
   if (f.indexOf("cloud") !== -1 || f.indexOf("overcast") !== -1 || f.indexOf("fog") !== -1) {
     return "cloudy";

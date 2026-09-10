@@ -1,6 +1,66 @@
-/* Design tokens mirror the tahoeroads (chadsmith.dev) widget system: a light
-   neutral shell with one weather-tinted gradient card as the centerpiece. */
+/* Design tokens. Two grounds: a light neutral shell (nav, footer, list card)
+   and the sky, which is the weather card's own gradient. On the sky there is
+   one ink (white) and a scrim ladder of alpha over the sky; the `--sky-*`
+   triple is what the condition classes swap. Colour literals belong here and
+   in the theme blocks below, so a theme can move them all at once. */
 :root {
+  /* type */
+  --fs-label: 12px;
+  --fs-caption: 13px;
+  --fs-secondary: 15px;
+  --fs-body: 16px;
+  --fs-title: 20px;
+  --fs-section: 24px;
+  --fs-screen: 28px;
+  --fs-hero: clamp(84px, 24vw, 112px);
+
+  /* space: 4px grid */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 44px;
+  --sp-8: 64px;
+
+  /* radius */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+  --r-full: 999px;
+
+  /* control sizes */
+  --tap-primary: 44px;
+  --tap-secondary: 34px;
+
+  /* ink on the sky — white at three strengths, nothing else */
+  --text: #ffffff;
+  --text-2: rgba(255, 255, 255, 0.78);
+  --text-muted: rgba(255, 255, 255, 0.7);
+
+  /* sky (the ground): default is clear day */
+  --sky-top: #1e5fb4;
+  --sky-mid: #2a6cc8;
+  --sky-bot: #3579bd;
+  --accent: #fbbf24;
+
+  /* scrim ladder (day): ink over the sky. Anything below full-opacity white,
+     or below 16px, has to sit on one of these. */
+  --panel: rgba(8, 24, 58, 0.28);
+  --panel-hi: rgba(8, 24, 58, 0.4);
+  --sheet: rgba(8, 24, 58, 0.92);
+  --hairline: rgba(255, 255, 255, 0.16);
+  --edge: rgba(255, 255, 255, 0.55);
+
+  /* alert severity: carried by the icon tile and a left rule, never the row */
+  --sev-high: #dc2626;
+  --sev-high-ink: #ffffff;
+  --sev-mid: #fbbf24;
+  --sev-mid-ink: #2b1403;
+
+  /* chrome: the light neutral shell above and below the sky */
   --base-100: #ffffff;
   --base-200: #f2f2f2;
   --base-300: #e5e6e6;
@@ -9,10 +69,59 @@
      2.0:1, which is unreadable for anyone with low vision */
   --primary: #1f7a3d;
   --primary-hover: #19632f;
+
+  /* chrome ink ladder: the same steps the shell used to spell out as
+     as a translucent literal in 21 places. Derived from --content so retinting the
+     shell is one edit. --ink-muted is 65% because 60% drops captions on white
+     to 4.07:1, under AA. */
+  --ink-strong: color-mix(in srgb, var(--content) 85%, transparent);
+  --ink-2: color-mix(in srgb, var(--content) 75%, transparent);
+  --ink-muted: color-mix(in srgb, var(--content) 65%, transparent);
+  --ink-faint: color-mix(in srgb, var(--content) 45%, transparent);
+  --ink-edge: color-mix(in srgb, var(--content) 18%, transparent);
+  --ink-wash: color-mix(in srgb, var(--content) 10%, transparent);
+  --ink-line: color-mix(in srgb, var(--content) 6%, transparent);
+
   --radius-box: 1rem;
   --radius-tile: 0.75rem;
   --radius-btn: 0.5rem;
+  /* retired from the weather card (no drop shadow on the sky); it stays for
+     the search sheet, which floats over everything */
   --shadow-card: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+/* Condition themes. Only the sky triple moves by day; night also flips the
+   scrim ladder from ink-over-sky to white-over-sky, because a navy panel on a
+   navy sky has no edge. */
+.night {
+  --sky-top: #0b1026;
+  --sky-mid: #141c3a;
+  --sky-bot: #1c2b4d;
+  --accent: #dbe4ff;
+  --panel: rgba(255, 255, 255, 0.08);
+  --panel-hi: rgba(255, 255, 255, 0.14);
+  --sheet: rgba(11, 16, 38, 0.94);
+  --hairline: rgba(255, 255, 255, 0.12);
+}
+
+.cloudy {
+  --sky-top: #465a68;
+  --sky-mid: #54697a;
+  --sky-bot: #61737f;
+}
+
+.rain {
+  --sky-top: #2c5364;
+  --sky-mid: #203a43;
+  --sky-bot: #0f2027;
+}
+
+/* was a pale gradient needing a whole dark-ink inverse branch; darkened until
+   white clears 4.5:1 on it (5.16), which is what retired that branch */
+.snow {
+  --sky-top: #3f5e80;
+  --sky-mid: #48678a;
+  --sky-bot: #52708f;
 }
 
 * {
@@ -136,16 +245,11 @@ body {
   padding: 0.7rem 0.9rem;
   max-width: 34rem;
   text-align: left;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: var(--panel);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-tile);
   display: grid;
   gap: 0.45rem;
-}
-
-.on-light .advice {
-  background: rgba(31, 41, 55, 0.07);
-  border-color: rgba(31, 41, 55, 0.12);
 }
 
 .advice-row {
@@ -236,7 +340,7 @@ body {
 }
 
 .search-bar input::placeholder {
-  color: rgba(31, 41, 55, 0.45);
+  color: var(--ink-faint);
 }
 
 .search-bar input:focus {
@@ -275,7 +379,7 @@ body {
   padding: 0.5rem;
   line-height: 1;
   font-family: inherit;
-  color: rgba(31, 41, 55, 0.7);
+  color: var(--ink-2);
   background: var(--base-100);
   border: 1px solid var(--base-300);
   border-radius: var(--radius-btn);
@@ -336,7 +440,7 @@ body {
   gap: 0.75rem;
   padding: 0.5rem 0.85rem;
   cursor: pointer;
-  border-top: 1px solid rgba(31, 41, 55, 0.06);
+  border-top: 1px solid var(--ink-line);
   transition: background-color 0.15s;
 }
 
@@ -387,7 +491,7 @@ svg.sug-icon {
 
 .sug-region {
   font-size: 0.75rem;
-  color: rgba(31, 41, 55, 0.6);
+  color: var(--ink-muted);
 }
 
 /* ── Page shell ── */
@@ -416,54 +520,33 @@ svg.sug-icon {
 .loading {
   padding: 3rem 1rem;
   text-align: center;
-  color: rgba(31, 41, 55, 0.5);
+  color: var(--ink-muted);
   font-size: 0.875rem;
 }
 
 /* ── Gradient weather card ──
-   Condition class picks the backdrop; `.on-light` flips text to dark for the
-   pale snow/cloud gradients, which white text can't survive. */
+   The condition class swaps the --sky-* triple (theme blocks at the top); the
+   card itself has one gradient. Every stop clears 4.5:1 for white, so the card
+   never flips its ink. No drop shadow: on the sky, elevation is scrim depth. */
 
 .wx-card {
   position: relative;
   overflow: hidden;
   border-radius: var(--radius-box);
   padding: 1.25rem;
-  box-shadow: var(--shadow-card);
-  color: #fff;
+  color: var(--text);
   text-shadow: 0 1px 4px rgba(0, 40, 100, 0.45);
-  /* Deep enough at the bottom that white body text still clears 4.5:1 — the
-     old #4d9fe0 end stop only reached 2.9:1, and the card's lower half is
-     where the smallest text lives. */
-  background: linear-gradient(180deg, #1e5fb4 0%, #2a6cc8 45%, #3579bd 100%);
+  background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 45%, var(--sky-bot) 100%);
 }
 
-.wx-card.night {
-  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
-}
-
-/* darker than a real overcast sky, but white text on the old #8a9caa end stop
-   sat at 3.4:1 — the card has to stay readable before it has to be literal */
-.wx-card.cloudy {
-  background: linear-gradient(180deg, #465a68 0%, #54697a 40%, #61737f 100%);
-}
-
+.wx-card.night,
 .wx-card.rain {
-  background: linear-gradient(180deg, #2c5364 0%, #203a43 50%, #0f2027 100%);
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 
-.wx-card.snow {
-  background: linear-gradient(180deg, #7ba7d7 0%, #9fc5e8 50%, #c0dde3 100%);
-}
-
-.wx-card.on-light {
-  color: var(--content);
-  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.5);
-}
-
-/* Sun disc glow plus its halo ring, clear-day only. */
+/* Sun disc glow plus its halo ring, clear-day only. Pushed off the top-right
+   corner and dimmed to .70 peak: at the old 95% at 78% 0% white text under the
+   glow was 1.07:1. Nothing in the layout comes within 120px of this origin. */
 .wx-card.clear-day::before {
   content: "";
   position: absolute;
@@ -471,16 +554,16 @@ svg.sug-icon {
   pointer-events: none;
   background:
     radial-gradient(
-      circle 210px at 78% 0%,
-      rgba(255, 255, 255, 0.95) 0%,
-      rgba(255, 255, 255, 0.5) 15%,
-      rgba(255, 255, 255, 0.18) 42%,
+      circle 180px at 92% -60px,
+      rgba(255, 255, 255, 0.7) 0%,
+      rgba(255, 255, 255, 0.37) 15%,
+      rgba(255, 255, 255, 0.13) 42%,
       transparent 100%
     ),
     radial-gradient(
-      circle 320px at 78% 0%,
+      circle 320px at 92% -60px,
       transparent 74%,
-      rgba(255, 255, 255, 0.08) 84%,
+      rgba(255, 255, 255, 0.06) 84%,
       transparent 96%
     );
 }
@@ -502,10 +585,16 @@ svg.sug-icon {
   z-index: 2;
 }
 
-/* Drifting cloud wisps — blurred ellipses on staggered long loops. */
+/* Drifting cloud wisps — blurred ellipses on staggered long loops. Confined
+   to the hero band, where the only text is large: a wisp under a panel puts
+   78% white at 3.99:1, which fails, and 16% is the cap at which white over the
+   lightest day stop still clears 3:1 for large text. */
 .wispy-clouds {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--hero-band, 330px);
   overflow: hidden;
   pointer-events: none;
   z-index: 1;
@@ -521,7 +610,7 @@ svg.sug-icon {
 
 .wisp-1 {
   top: 6%;
-  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.22), transparent 70%);
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.16), transparent 70%);
   transform: skewX(-12deg);
   opacity: 0.7;
   animation-duration: 48s;
@@ -601,8 +690,8 @@ svg.sug-icon {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: inherit;
-  background: rgba(255, 255, 255, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: var(--panel);
+  border: 1px solid var(--hairline);
   border-radius: 999px;
   cursor: pointer;
   text-shadow: none;
@@ -612,17 +701,12 @@ svg.sug-icon {
 }
 
 .fav-btn:hover {
-  background: rgba(255, 255, 255, 0.32);
+  background: var(--panel-hi);
 }
 
 .fav-btn.on {
   border-color: rgba(251, 191, 36, 0.8);
   background: rgba(251, 191, 36, 0.22);
-}
-
-.on-light .fav-btn {
-  background: rgba(31, 41, 55, 0.1);
-  border-color: rgba(31, 41, 55, 0.2);
 }
 
 .fav-btn .star {
@@ -648,8 +732,8 @@ svg.sug-icon {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: inherit;
-  background: rgba(255, 255, 255, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: var(--panel);
+  border: 1px solid var(--hairline);
   border-radius: 999px;
   cursor: pointer;
   text-shadow: none;
@@ -659,22 +743,12 @@ svg.sug-icon {
 }
 
 .share-btn:hover {
-  background: rgba(255, 255, 255, 0.32);
+  background: var(--panel-hi);
 }
 
 .share-btn.copied {
   border-color: rgba(52, 211, 153, 0.8);
   background: rgba(52, 211, 153, 0.24);
-}
-
-.on-light .share-btn {
-  background: rgba(31, 41, 55, 0.1);
-  border-color: rgba(31, 41, 55, 0.2);
-}
-
-.on-light .share-btn.copied {
-  background: rgba(16, 185, 129, 0.18);
-  border-color: rgba(16, 185, 129, 0.5);
 }
 
 .share-ico {
@@ -787,11 +861,7 @@ svg.sug-icon {
 .wx-divider {
   margin-top: 1rem;
   padding-top: 0.75rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.on-light .wx-divider {
-  border-top-color: rgba(31, 41, 55, 0.18);
+  border-top: 1px solid var(--hairline);
 }
 
 .wx-section-title {
@@ -818,7 +888,7 @@ svg.sug-icon {
 }
 
 .hourly-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--hairline);
   border-radius: 2px;
 }
 
@@ -834,11 +904,7 @@ svg.sug-icon {
 }
 
 .hourly-item:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.on-light .hourly-item:hover {
-  background: rgba(31, 41, 55, 0.1);
+  background: var(--panel-hi);
 }
 
 .hourly-time {
@@ -884,15 +950,10 @@ svg.sug-icon {
   flex-direction: column;
   row-gap: 0.375rem;
   border-radius: var(--radius-tile);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid var(--hairline);
+  background: var(--panel);
   padding: 0.75rem;
   text-align: left;
-}
-
-.on-light .tile {
-  border-color: rgba(31, 41, 55, 0.1);
-  background: rgba(255, 255, 255, 0.25);
 }
 
 .tile-label {
@@ -946,8 +1007,8 @@ svg.sug-icon {
   padding: 0.6rem 0.8rem;
   border-radius: 10px;
   background: rgba(15, 23, 42, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--hairline);
+  color: var(--text-2);
   text-shadow: none;
   font-size: 0.72rem;
   line-height: 1.5;
@@ -1125,7 +1186,7 @@ svg.sug-icon {
 }
 
 .tile.tappable:hover {
-  background: rgba(0, 0, 0, 0.24);
+  background: var(--panel-hi);
 }
 
 .tile.tappable:focus-visible {
@@ -1194,14 +1255,14 @@ svg.sug-icon {
   font-family: inherit;
   line-height: 1;
   color: inherit;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--panel);
   border: none;
   border-radius: 999px;
   cursor: pointer;
 }
 
 .wx-pop-close:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--panel-hi);
 }
 
 @keyframes pop-fade {
@@ -1230,7 +1291,7 @@ svg.sug-icon {
   gap: 0.75rem;
   padding: 0.4rem 0;
   font-size: 0.875rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  border-top: 1px solid var(--hairline);
 }
 
 .detail-row:first-child {
@@ -1301,9 +1362,9 @@ svg.sug-icon {
 }
 
 .sev-low {
-  background: rgba(31, 41, 55, 0.05);
-  border-color: rgba(31, 41, 55, 0.18);
-  color: rgba(31, 41, 55, 0.85);
+  background: var(--ink-wash);
+  border-color: var(--ink-edge);
+  color: var(--ink-strong);
 }
 
 .alert-icon {
@@ -1364,28 +1425,6 @@ svg.sug-icon {
   }
 }
 
-/* pale conditions run dark-on-light, so every white-on-dark affordance above
-   needs its inverse or it vanishes */
-.on-light .sk-line {
-  background: rgba(31, 41, 55, 0.18);
-}
-
-.on-light .tile.tappable:hover {
-  background: rgba(255, 255, 255, 0.4);
-}
-
-.on-light .detail-row {
-  border-top-color: rgba(31, 41, 55, 0.14);
-}
-
-.on-light .wx-pop-close {
-  background: rgba(31, 41, 55, 0.12);
-}
-
-.on-light .wx-pop-close:hover {
-  background: rgba(31, 41, 55, 0.2);
-}
-
 /* ── Neutral list card (7-day forecast) ── */
 
 .card {
@@ -1401,7 +1440,7 @@ svg.sug-icon {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.025em;
-  color: rgba(31, 41, 55, 0.7);
+  color: var(--ink-2);
   border-bottom: 1px solid var(--base-300);
   background: rgba(242, 242, 242, 0.4);
 }
@@ -1411,7 +1450,7 @@ svg.sug-icon {
   align-items: center;
   gap: 0.75rem;
   padding: 0.625rem 1rem;
-  border-top: 1px solid rgba(31, 41, 55, 0.06);
+  border-top: 1px solid var(--ink-line);
   transition: background-color 0.15s;
 }
 
@@ -1444,7 +1483,7 @@ svg.sug-icon {
 }
 
 .daily-low {
-  color: rgba(31, 41, 55, 0.5);
+  color: var(--ink-muted);
 }
 
 .daily-high {
@@ -1457,7 +1496,7 @@ svg.sug-icon {
   height: 0.375rem;
   border-radius: 999px;
   overflow: hidden;
-  background: rgba(31, 41, 55, 0.1);
+  background: var(--ink-wash);
 }
 
 .daily-bar {
@@ -1469,41 +1508,25 @@ svg.sug-icon {
 
 /* The 7-day list sits inside the gradient card (between the hourly strip and
    the detail tiles), so the neutral list colors above have to be re-tinted for
-   white-on-gradient — and again for the pale `.on-light` conditions. */
+   white-on-gradient. */
 
 .wx-card .daily-row {
   padding: 0.5rem 0;
-  border-top-color: rgba(255, 255, 255, 0.14);
+  border-top-color: var(--hairline);
 }
 
 .wx-card .daily-row:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--panel);
 }
 
 .wx-card .daily-low {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text-2);
 }
 
 /* dark track, not a translucent white one: the bar has to be the light thing
    on the card, or its cool end disappears into the gradient */
 .wx-card .daily-bar-wrap {
-  background: rgba(0, 0, 0, 0.22);
-}
-
-.wx-card.on-light .daily-row {
-  border-top-color: rgba(31, 41, 55, 0.12);
-}
-
-.wx-card.on-light .daily-row:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
-.wx-card.on-light .daily-low {
-  color: rgba(31, 41, 55, 0.55);
-}
-
-.wx-card.on-light .daily-bar-wrap {
-  background: rgba(31, 41, 55, 0.14);
+  background: var(--panel-hi);
 }
 
 /* ── Footer ── */
@@ -1534,12 +1557,12 @@ svg.sug-icon {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: rgba(31, 41, 55, 0.65);
+  color: var(--ink-muted);
 }
 
 .footer-link {
   font-size: 0.9375rem;
-  color: rgba(31, 41, 55, 0.85);
+  color: var(--ink-strong);
   text-decoration: none;
   transition: color 0.15s;
 }
@@ -1560,11 +1583,11 @@ svg.sug-icon {
 .footer-credits {
   font-size: 0.9375rem;
   line-height: 1.6;
-  color: rgba(31, 41, 55, 0.6);
+  color: var(--ink-muted);
 }
 
 .footer-credits a {
-  color: rgba(31, 41, 55, 0.85);
+  color: var(--ink-strong);
   text-decoration: none;
 }
 
@@ -1578,7 +1601,7 @@ svg.sug-icon {
   text-align: center;
   font-size: 0.8125rem;
   font-weight: 500;
-  color: rgba(31, 41, 55, 0.75);
+  color: var(--ink-2);
 }
 
 /* ── Narrow screens ── */
@@ -1677,7 +1700,7 @@ svg.sug-icon {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: rgba(31, 41, 55, 0.6);
+  color: var(--ink-muted);
 }
 
 .place-chip {
@@ -1715,7 +1738,7 @@ svg.sug-icon {
 
 .place-temp {
   font-variant-numeric: tabular-nums;
-  color: rgba(31, 41, 55, 0.7);
+  color: var(--ink-2);
   flex-shrink: 0;
 }
 
@@ -1747,11 +1770,11 @@ svg.place-icon {
   border-radius: 999px;
   font-size: 0.95rem;
   line-height: 1;
-  color: rgba(31, 41, 55, 0.45);
+  color: var(--ink-faint);
 }
 
 .place-remove:hover {
-  background: rgba(31, 41, 55, 0.12);
+  background: var(--ink-wash);
   color: var(--content);
 }
 
@@ -1832,19 +1855,13 @@ svg.place-icon {
   gap: 0.375rem;
   padding: 0.25rem 0.5rem;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--panel);
   color: inherit;
   font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   line-height: 1;
   text-shadow: none;
-}
-
-/* The hero gradient has a light variant, and a white-on-white badge would
-   vanish on it. */
-.on-light .wxr-badge {
-  background: rgba(31, 41, 55, 0.1);
 }
 
 .wxr-live {
@@ -1868,14 +1885,8 @@ svg.place-icon {
   overflow: hidden;
   background: #080b12;
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 0 0 1px var(--hairline),
     0 14px 28px -12px rgba(0, 0, 0, 0.6);
-}
-
-.on-light .wxr-stage {
-  box-shadow:
-    0 0 0 1px rgba(31, 41, 55, 0.2),
-    0 14px 28px -12px rgba(0, 0, 0, 0.35);
 }
 
 .wxr-canvas {
@@ -1998,19 +2009,11 @@ svg.place-icon {
   font-size: 0.75rem;
   line-height: 1;
   color: inherit;
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.on-light .wxr-play {
-  background: rgba(31, 41, 55, 0.1);
+  background: var(--panel);
 }
 
 .wxr-play:hover {
-  background: rgba(255, 255, 255, 0.26);
-}
-
-.on-light .wxr-play:hover {
-  background: rgba(31, 41, 55, 0.18);
+  background: var(--panel-hi);
 }
 
 .wxr-scrub {
