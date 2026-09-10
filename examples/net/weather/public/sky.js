@@ -230,7 +230,7 @@ function fetchIssTle() {
     var c = JSON.parse(localStorage.getItem(ISS_TLE_KEY) || "null");
     if (c && c.ts && Date.now() - c.ts < ISS_TLE_TTL && c.l1 && c.l2) return Promise.resolve(c);
   } catch (err) {}
-  return fetch("https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE")
+  return fetch(up("celestrak", "/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE"))
     .then(function (r) {
       if (!r.ok) throw new Error("tle");
       return r.text();

@@ -300,6 +300,9 @@ pub fn upstreamBase(host: &string): string {
     if host == "noaa" {
         return "https://mapservices.weather.noaa.gov"
     }
+    if host == "celestrak" {
+        return "https://celestrak.org"
+    }
     return ""
 }
 
