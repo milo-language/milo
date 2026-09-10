@@ -199,7 +199,7 @@ function adviceItems(ctx) {
     for (var f = 0; f < hrs.length; f++) coldest = Math.min(coldest, hrs[f].temperature);
     out.push({
       rank: 3,
-      icon: "❄️",
+      symbol: "snow",
       text:
         "Freezing by " + adviceHour(Date.parse(freeze.startTime), tz) + ", down to " +
         coldest + "°. Cover anything tender, and the windshield will need scraping.",
@@ -213,7 +213,7 @@ function adviceItems(ctx) {
   if (feels && cToF(feels.v) >= 95) {
     out.push({
       rank: 3,
-      icon: "🥵",
+      symbol: "thermometer",
       text:
         "Feels like " + cToF(feels.v) + "° around " + adviceHour(feels.start, tz) +
         ". Water, and move anything outdoors to the morning.",
@@ -224,7 +224,7 @@ function adviceItems(ctx) {
   if (e && e.aqi != null && e.aqi >= 101) {
     out.push({
       rank: e.aqi >= 151 ? 3 : 2,
-      icon: "😷",
+      symbol: "haze",
       text:
         "AQI " + Math.round(e.aqi) + ", " + adviceAqiBand(e.aqi) +
         ". Keep the hard workout indoors and the windows shut.",
@@ -238,7 +238,7 @@ function adviceItems(ctx) {
     var to = adviceHour(Date.parse(wet.to.startTime) + 3600000, tz);
     out.push({
       rank: 2,
-      icon: "☂️",
+      symbol: "showers",
       text:
         "Rain " + from + " to " + to + ", " + wet.peak +
         "% at its worst. Take the umbrella.",
@@ -252,7 +252,7 @@ function adviceItems(ctx) {
   if (gustMph !== null && gustMph >= 25) {
     out.push({
       rank: 2,
-      icon: "💨",
+      symbol: "wind",
       text:
         "Gusts to " + gustMph + " mph around " + adviceHour(gust.start, tz) +
         ". Bring in anything light enough to travel.",
@@ -264,7 +264,7 @@ function adviceItems(ctx) {
   if (vis && vis.v < 1609) {
     out.push({
       rank: 2,
-      icon: "🌫️",
+      symbol: "fog",
       text: "Visibility under a mile. Low beams, and leave more room than feels necessary.",
     });
   }
@@ -281,7 +281,7 @@ function adviceItems(ctx) {
       // clauses explaining the UV scale before it got to the thing to do.
       out.push({
         rank: 2,
-        icon: "🧴",
+        symbol: "uv",
         text: burn.started
           ? "Sunscreen recommended until " + adviceHour(burn.end, tz) +
             ". UV peaks at " + uvShown + ", burning skin " + adviceBurnClause(uvShown) + "."
@@ -308,7 +308,7 @@ function adviceItems(ctx) {
     if (nowT >= 62 && lowAhead <= 52) {
       out.push({
         rank: 1,
-        icon: "🧥",
+        symbol: "thermometer",
         text:
           nowT + "° now, " + lowAhead + "° by " +
           adviceHour(Date.parse(lowHour.startTime), tz) + ". Take a layer.",
@@ -343,7 +343,7 @@ function adviceItems(ctx) {
           var when = cday.md === today.md ? "today" : "tomorrow";
           out.push({
             rank: Math.abs(dep) >= 18 ? 2 : 1,
-            icon: "🌡️",
+            symbol: "thermometer",
             text:
               peak.temperature + "° " + when + ", " + Math.abs(Math.round(dep)) + "° " +
               (dep > 0 ? "above" : "below") + " the normal " + Math.round(norm) +
@@ -398,7 +398,7 @@ function adviceCalmLine(ctx) {
   if (best.n >= 8) {
     return {
       rank: 0,
-      icon: "✅",
+      symbol: "insight",
       text: tomorrow
         ? "Nothing to plan around tomorrow: dry all day, " + range + "."
         : "Nothing to plan around: dry from here on, " + range + ".",
@@ -409,7 +409,7 @@ function adviceCalmLine(ctx) {
     adviceHour(Date.parse(best.to.startTime) + 3600000, ctx.tz);
   return {
     rank: 0,
-    icon: "✅",
+    symbol: "insight",
     text: tomorrow
       ? "Nothing to plan around. Tomorrow's easiest stretch is " + window + ", " + range + "."
       : "Nothing to plan around. Easiest stretch is " + window + ", " + range + ".",
@@ -429,9 +429,12 @@ function adviceHtml(ctx) {
   });
   var html = '<ul class="advice">';
   for (var i = 0; i < items.length && i < ADVICE_MAX; i++) {
+    // A 34px --panel-hi tile holding a 20px sprite glyph, the same tile the
+    // metrics and alert rows use (design-system.md section 7).
     html +=
       '<li class="advice-row"><span class="advice-icon" aria-hidden="true">' +
-      items[i].icon + "</span><span>" + esc(items[i].text) + "</span></li>";
+      '<svg class="ico"><use href="#' + items[i].symbol + '"></use></svg>' +
+      "</span><span>" + esc(items[i].text) + "</span></li>";
   }
   return html + "</ul>";
 }

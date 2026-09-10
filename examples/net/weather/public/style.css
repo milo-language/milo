@@ -176,9 +176,38 @@ body {
   white-space: nowrap;
 }
 
+/* The one icon idiom. Every glyph on the page is a <use> into the sprite that
+   index.html inlines: 24px grid, no fill, 2px round strokes, coloured by
+   currentColor. Size is always explicit — an SVG has no font-size to grow
+   with, which is what the old emoji rules relied on. */
+.ico {
+  display: block;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* A 34px tile holding a 20px glyph: the container the advice rows, metric
+   tiles and alert rows share. */
+.ico-tile {
+  flex: 0 0 auto;
+  width: var(--tap-secondary);
+  height: var(--tap-secondary);
+  border-radius: var(--r-sm);
+  background: var(--panel-hi);
+  border: 1px solid var(--hairline);
+  display: grid;
+  place-items: center;
+}
+
 .brand-mark {
-  font-size: 1.35rem;
-  line-height: 1;
+  width: 1.35rem;
+  height: 1.35rem;
 }
 
 /* Sits beside the brand. On a narrow screen the search bar already wraps to its
@@ -217,12 +246,6 @@ body {
 .install-ico {
   width: 0.9rem;
   height: 0.9rem;
-  display: block;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 /* full-width so it drops below the brand row rather than squeezing it */
@@ -254,7 +277,7 @@ body {
 
 .advice-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.55rem;
   font-size: 0.9375rem;
   line-height: 1.4;
@@ -262,8 +285,13 @@ body {
 
 .advice-icon {
   flex: 0 0 auto;
-  font-size: 1rem;
-  line-height: 1.35;
+  width: var(--tap-secondary);
+  height: var(--tap-secondary);
+  border-radius: var(--r-sm);
+  background: var(--panel-hi);
+  border: 1px solid var(--hairline);
+  display: grid;
+  place-items: center;
 }
 
 /* The UV curve is draggable, so the browser must not claim the gesture for
@@ -389,14 +417,9 @@ body {
     color 0.15s;
 }
 
-.locate-btn svg {
+.locate-btn .ico {
   width: 1.05rem;
   height: 1.05rem;
-  display: block;
-  fill: currentColor;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linejoin: round;
 }
 
 .locate-btn:hover:not(:disabled) {
@@ -471,11 +494,8 @@ body {
 svg.sug-icon {
   width: 0.85rem;
   height: 0.85rem;
+  display: inline-block;
   vertical-align: -1px;
-  fill: currentColor;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linejoin: round;
 }
 
 .sug-city {
@@ -754,27 +774,17 @@ svg.sug-icon {
 .share-ico {
   width: 0.9rem;
   height: 0.9rem;
-  display: block;
-  fill: currentColor;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linecap: round;
 }
 
 .star {
   width: 1.25rem;
   height: 1.25rem;
-  display: block;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linejoin: round;
 }
 
-/* filled = saved; the amber reads as "starred" against every card gradient */
+/* filled = saved. The star-filled symbol paints itself with currentColor, so
+   the accent token is the only thing this rule has to say. */
 .star.filled {
-  fill: #fbbf24;
-  stroke: #fbbf24;
+  color: var(--accent);
 }
 
 .suggestion-item.fav .star {
@@ -800,9 +810,15 @@ svg.sug-icon {
   letter-spacing: -0.01em;
 }
 
+/* The one chromatic glyph on the page (design-system.md section 6.3). */
 .hero-cond-glyph {
-  font-size: 28px;
-  line-height: 1;
+  display: inline-flex;
+  color: var(--accent);
+}
+
+.hero-cond-glyph .ico {
+  width: 28px;
+  height: 28px;
 }
 
 /* The live number. `contain: layout` is what keeps the 4Hz timer from ever
@@ -886,6 +902,11 @@ svg.sug-icon {
   font-size: var(--fs-secondary);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.hero-trend .ico {
+  width: 20px;
+  height: 20px;
 }
 
 .hero-trend.flat {
@@ -1046,8 +1067,19 @@ svg.sug-icon {
 }
 
 .hourly-icon {
-  font-size: 1.25rem;
+  display: flex;
+  justify-content: center;
   line-height: 1;
+}
+
+.hourly-icon .ico {
+  width: 20px;
+  height: 20px;
+}
+
+.hourly-icon .ico.accent,
+.daily-icon .ico.accent {
+  color: var(--accent);
 }
 
 .hourly-temp {
@@ -1601,8 +1633,13 @@ svg.sug-icon {
 
 .daily-icon {
   width: 1.75rem;
-  font-size: 1.125rem;
-  text-align: center;
+  display: flex;
+  justify-content: center;
+}
+
+.daily-icon .ico {
+  width: 20px;
+  height: 20px;
 }
 
 .daily-low,

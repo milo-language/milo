@@ -30,17 +30,240 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <!-- The icon sprite is inlined rather than fetched: `<use href="icons.svg#id">`
+         (an external reference) is not supported by Chrome or Safari, so a
+         separate file would need a fetch-and-inject shim on the critical path.
+         One copy in the document costs ~6KB and every glyph resolves synchronously.
+         Source of truth: design-system.md section 7. -->
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+      <!--
+        Weather icon language. One idiom for every glyph, the same one PopChat uses:
+        24px grid, fill="none" stroke="currentColor" stroke-width="2", round caps
+        and joins. Coordinates stay inside 1..23 so a round cap never clips.
+
+        Usage: inline this file once in <body>, then
+          <svg class="ico" width="20" height="20"><use href="#rain"/></svg>
+
+        Composition rules (so the set stays consistent when extended):
+        - Every cloud is the same shape at one of two sizes. "Big" fills the grid
+          (open at the bottom when precipitation falls from it). "Small" is the
+          big cloud scaled 0.72 and pushed to the lower right so a sun or moon can
+          sit in the upper left without the strokes touching (minimum gap 0.5px
+          between outer edges at stroke 2).
+        - Precipitation is 3 marks in a row at x = 8, 12, 16. Rain: long vertical
+          lines. Showers: short slanted lines. Snow: dots. Sleet: alternating.
+        - Sun rays are 8 segments 1.5 long, 1 clear of the disc. Partial suns show
+          the 5 rays that face away from the cloud.
+        - Only clear-day, clear-night, partly-*, and star-filled are ever tinted
+          with the accent token; everything else is white.
+      -->
+
+      <!-- ===================== weather conditions ===================== -->
+
+      <symbol id="clear-day" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </symbol>
+
+      <symbol id="clear-night" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+      </symbol>
+
+      <symbol id="partly-cloudy-day" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- sun upper-left, five rays facing away from the cloud -->
+        <circle cx="6.5" cy="6.5" r="2.75"/>
+        <path d="M6.5 1.5v1M1.5 6.5h1M3 3l.7.7M10 3l-.7.7M3 10l.7-.7"/>
+        <!-- small cloud, closed base -->
+        <path d="M17 13.2h-.9A5.8 5.8 0 1 0 10.5 20.4h6.5a3.6 3.6 0 0 0 0-7.2z"/>
+      </symbol>
+
+      <symbol id="partly-cloudy-night" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- small moon upper-left -->
+        <path d="M9.3 5.9A3.8 3.8 0 1 1 5.2 1.8a2.9 2.9 0 0 0 4.1 4.1z"/>
+        <path d="M17 13.2h-.9A5.8 5.8 0 1 0 10.5 20.4h6.5a3.6 3.6 0 0 0 0-7.2z"/>
+      </symbol>
+
+      <symbol id="cloudy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
+      </symbol>
+
+      <symbol id="overcast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- a second cloud's top edge behind the first -->
+        <path d="M10.6 7.6a4.8 4.8 0 0 1 8.3-1.4 3 3 0 0 1 2.4 4.9"/>
+        <path d="M16.8 12.5h-1.07A6.8 6.8 0 1 0 9.15 21h7.65a4.25 4.25 0 0 0 0-8.5z"/>
+      </symbol>
+
+      <symbol id="rain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 16.6A5 5 0 0 0 18 7h-1.3A8 8 0 1 0 4 15.3"/>
+        <path d="M8 13v8M12 15v8M16 13v8"/>
+      </symbol>
+
+      <symbol id="showers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 16.6A5 5 0 0 0 18 7h-1.3A8 8 0 1 0 4 15.3"/>
+        <path d="M9 15l-1.5 3.5M13 15l-1.5 3.5M17 15l-1.5 3.5"/>
+      </symbol>
+
+      <symbol id="thunderstorm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 16.6A5 5 0 0 0 18 7h-1.3A8 8 0 1 0 4 15.3"/>
+        <path d="M13 11l-3 6h5l-3 6"/>
+      </symbol>
+
+      <symbol id="snow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 16.6A5 5 0 0 0 18 7h-1.3A8 8 0 1 0 4 15.3"/>
+        <!-- zero-length segments: round caps make them dots -->
+        <path d="M8 16h.01M8 20h.01M12 18h.01M12 22h.01M16 16h.01M16 20h.01"/>
+      </symbol>
+
+      <symbol id="sleet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 16.6A5 5 0 0 0 18 7h-1.3A8 8 0 1 0 4 15.3"/>
+        <path d="M8 13v3M8 20h.01M12 15v3M12 22h.01M16 13v3M16 20h.01"/>
+      </symbol>
+
+      <symbol id="fog" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 12.6A4.5 4.5 0 0 0 17.5 5h-1.2A7 7 0 1 0 4.2 12"/>
+        <path d="M5 16h14M7 20h10"/>
+      </symbol>
+
+      <symbol id="haze" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- sun over a layer: upper rays only -->
+        <circle cx="12" cy="9" r="3.5"/>
+        <path d="M12 2v1.5M4.9 5.9l1.1 1.1M19.1 5.9L18 7M2.5 9H4M20 9h1.5"/>
+        <path d="M4 16h16M7 20h10"/>
+      </symbol>
+
+      <symbol id="wind" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2M9.6 4.6A2 2 0 1 1 11 8H2M12.6 19.4A2 2 0 1 0 14 16H2"/>
+      </symbol>
+
+      <!-- ===================== UI ===================== -->
+
+      <symbol id="search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="7"/>
+        <path d="M21 21l-4.3-4.3"/>
+      </symbol>
+
+      <symbol id="locate" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 11l19-9-9 19-2-8z"/>
+      </symbol>
+
+      <symbol id="star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2.5l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18.3l-6.2 3.3L7 14.7 2 9.8l6.9-1z"/>
+      </symbol>
+
+      <symbol id="star-filled" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2.5l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18.3l-6.2 3.3L7 14.7 2 9.8l6.9-1z"/>
+      </symbol>
+
+      <symbol id="share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+        <path d="M16 6l-4-4-4 4M12 2v13"/>
+      </symbol>
+
+      <symbol id="close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 6L6 18M6 6l12 12"/>
+      </symbol>
+
+      <symbol id="clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M12 7v5l3 2"/>
+      </symbol>
+
+      <symbol id="alert-triangle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>
+        <path d="M12 9v4M12 17h.01"/>
+      </symbol>
+
+      <symbol id="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- points right; rotate 90deg for "down" -->
+        <path d="M9 6l6 6-6 6"/>
+      </symbol>
+
+      <symbol id="insight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- four-point spark for the one-sentence lede -->
+        <path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/>
+        <path d="M19 3v3M17.5 4.5h3"/>
+      </symbol>
+
+      <!-- Trend: one silhouette (a line and a head), only the slope differs. -->
+      <symbol id="trend-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 17l6-6 4 4 8-8"/>
+        <path d="M15 7h6v6"/>
+      </symbol>
+
+      <symbol id="trend-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 7l6 6 4-4 8 8"/>
+        <path d="M15 17h6v-6"/>
+      </symbol>
+
+      <symbol id="trend-flat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12h18"/>
+        <path d="M16 7l5 5-5 5"/>
+      </symbol>
+
+      <!-- ===================== metrics ===================== -->
+
+      <symbol id="uv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- same sun as clear-day: the metric and the condition share the mark -->
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </symbol>
+
+      <symbol id="thermometer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 14.8V3.5a2.5 2.5 0 0 0-5 0v11.3a4.5 4.5 0 1 0 5 0z"/>
+      </symbol>
+
+      <symbol id="droplet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2.7l5.7 5.7a8 8 0 1 1-11.3 0z"/>
+      </symbol>
+
+      <symbol id="gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4.5 16.5a8.5 8.5 0 1 1 15 0"/>
+        <path d="M12 12.5l3.5-4.5M12 12.5h.01"/>
+      </symbol>
+
+      <symbol id="eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1.5 12s4-8 10.5-8 10.5 8 10.5 8-4 8-10.5 8S1.5 12 1.5 12z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </symbol>
+
+      <symbol id="wind-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- points up (north). Rotate the <svg> by the heading the wind blows TOWARD. -->
+        <path d="M12 3l6 17-6-4-6 4z"/>
+      </symbol>
+
+      <symbol id="sunrise" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 18a5 5 0 0 0-10 0"/>
+        <path d="M12 2v7M8 6l4-4 4 4"/>
+        <path d="M4.2 10.2l1.4 1.4M18.4 11.6l1.4-1.4M2 18h2M20 18h2"/>
+        <path d="M3 22h18"/>
+      </symbol>
+
+      <symbol id="sunset" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 18a5 5 0 0 0-10 0"/>
+        <path d="M12 9V2M16 5l-4 4-4-4"/>
+        <path d="M4.2 10.2l1.4 1.4M18.4 11.6l1.4-1.4M2 18h2M20 18h2"/>
+        <path d="M3 22h18"/>
+      </symbol>
+
+      <symbol id="moon-phase" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- disc plus terminator; swap the inner rx to draw other phases -->
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M12 3a4.5 9 0 0 0 0 18"/>
+      </symbol>
+    </svg>
     <nav class="nav">
       <div class="nav-row">
         <a class="brand" href="./">
-          <span class="brand-mark">&#x26C5;</span>
+          <svg class="ico brand-mark" aria-hidden="true"><use href="#clear-day"></use></svg>
           <span>Weather</span>
         </a>
         <!-- Hidden until app.js knows the browser can actually install: Chrome
              hands over a beforeinstallprompt event, iOS Safari can only be told
              where its own menu item is, and everything else can do neither. -->
         <button class="install-btn" id="installBtn" type="button" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true" class="install-ico">
+          <!-- No "download" glyph in the sprite (it is not weather), so this one
+               stays inline; it now carries .ico, the one stroke idiom. -->
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="ico install-ico">
             <path d="M12 3 L12 15 M7.5 10.5 L12 15 L16.5 10.5" />
             <path d="M4.5 16.5 L4.5 20 L19.5 20 L19.5 16.5" />
           </svg>
@@ -49,9 +272,7 @@
         <div class="install-tip" id="installTip" role="status" hidden></div>
         <div class="search-bar">
           <button class="locate-btn" id="locate" title="Use my location" aria-label="Use my location">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M21 3 L3 10.5 L10.5 13.5 L13.5 21 Z" />
-            </svg>
+            <svg class="ico" aria-hidden="true"><use href="#locate"></use></svg>
           </button>
           <div class="search-wrap">
             <input

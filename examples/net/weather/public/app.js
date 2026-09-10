@@ -24,50 +24,74 @@ var placeExact = false;
 // Comes from /points, so it is only known once that call lands.
 var radarStation = "";
 
-var icons = {
-  Sunny: "\u2600\uFE0F",
-  Clear: "\u2600\uFE0F",
-  "Mostly Sunny": "\uD83C\uDF24\uFE0F",
-  "Mostly Clear": "\uD83C\uDF19",
-  "Partly Sunny": "\u26C5",
-  "Partly Cloudy": "\u26C5",
-  "Mostly Cloudy": "\uD83C\uDF25\uFE0F",
-  Cloudy: "\u2601\uFE0F",
-  "Slight Chance Rain Showers": "\uD83C\uDF26\uFE0F",
-  "Chance Rain Showers": "\uD83C\uDF26\uFE0F",
-  "Rain Showers Likely": "\uD83C\uDF27\uFE0F",
-  Rain: "\uD83C\uDF27\uFE0F",
-  "Light Rain": "\uD83C\uDF27\uFE0F",
-  "Heavy Rain": "\uD83C\uDF27\uFE0F",
-  Showers: "\uD83C\uDF27\uFE0F",
-  Thunderstorms: "\u26C8\uFE0F",
-  Snow: "\uD83C\uDF28\uFE0F",
-  "Light Snow": "\uD83C\uDF28\uFE0F",
-  "Heavy Snow": "\uD83C\uDF28\uFE0F",
-  Fog: "\uD83C\uDF2B\uFE0F",
-  Windy: "\uD83D\uDCA8",
+// NWS `shortForecast` phrase -> [day symbol, night symbol] in the icon sprite
+// inlined at the top of index.html (design-system.md section 7). Only the
+// clear/partly pairs differ by daylight: a cloud or a raindrop is the same
+// shape at midnight, and drawing a moon behind rain says nothing useful.
+var iconSymbols = {
+  Sunny: ["clear-day", "clear-night"],
+  Clear: ["clear-day", "clear-night"],
+  "Mostly Sunny": ["partly-cloudy-day", "partly-cloudy-night"],
+  "Mostly Clear": ["partly-cloudy-day", "partly-cloudy-night"],
+  "Partly Sunny": ["partly-cloudy-day", "partly-cloudy-night"],
+  "Partly Cloudy": ["partly-cloudy-day", "partly-cloudy-night"],
+  "Mostly Cloudy": ["cloudy", "cloudy"],
+  Cloudy: ["overcast", "overcast"],
+  Overcast: ["overcast", "overcast"],
+  Drizzle: ["showers", "showers"],
+  "Rain Showers": ["showers", "showers"],
+  Showers: ["showers", "showers"],
+  Rain: ["rain", "rain"],
+  Thunderstorm: ["thunderstorm", "thunderstorm"],
+  Snow: ["snow", "snow"],
+  // longer than "Showers", so snow showers stay snow rather than raindrops
+  "Snow Showers": ["snow", "snow"],
+  Flurries: ["snow", "snow"],
+  Sleet: ["sleet", "sleet"],
+  "Freezing Rain": ["sleet", "sleet"],
+  "Freezing Drizzle": ["sleet", "sleet"],
+  "Wintry Mix": ["sleet", "sleet"],
+  Ice: ["sleet", "sleet"],
+  Fog: ["fog", "fog"],
+  Haze: ["haze", "haze"],
+  Smoke: ["haze", "haze"],
+  Windy: ["wind", "wind"],
+  Breezy: ["wind", "wind"],
 };
 
 // longest key first so "Mostly Sunny" doesn't match plain "Sunny"
-var iconKeys = Object.keys(icons).sort(function (a, b) {
+var iconKeys = Object.keys(iconSymbols).sort(function (a, b) {
   return b.length - a.length;
 });
 
-// "Clear" and "Sunny" share one entry in `icons`, and at night the sun is the
-// wrong half of it — swap in the lunar equivalent after the label match.
-var nightIcons = {
-  "\u2600\uFE0F": "\uD83C\uDF19",
-  "\uD83C\uDF24\uFE0F": "\uD83C\uDF19",
-  "\u26C5": "\u2601\uFE0F",
-};
-
-function icon(forecast, daytime) {
+function iconSymbol(forecast, daytime) {
   for (var ki = 0; ki < iconKeys.length; ki++) {
     if (forecast.indexOf(iconKeys[ki]) === -1) continue;
-    var g = icons[iconKeys[ki]];
-    return !daytime && nightIcons[g] ? nightIcons[g] : g;
+    return iconSymbols[iconKeys[ki]][daytime ? 0 : 1];
   }
-  return daytime ? "\u2600\uFE0F" : "\uD83C\uDF19";
+  // An unmapped phrase is still weather, so draw the least committal sky
+  // rather than an empty box.
+  return daytime ? "cloudy" : "partly-cloudy-night";
+}
+
+// The condition accent (amber by day, pale blue at night) is reserved for a
+// sky that is actually clear; every other glyph is plain white currentColor.
+function iconAccent(sym) {
+  return sym.indexOf("clear-") === 0 || sym.indexOf("partly-") === 0;
+}
+
+// One <use> into the inline sprite. Size comes from CSS at the call site
+// (.hourly-icon .ico and friends); an SVG has no font-size to grow with.
+function iconSvg(sym, cls) {
+  return (
+    '<svg class="ico' + (cls ? " " + cls : "") + '" aria-hidden="true">' +
+    '<use href="#' + sym + '"></use></svg>'
+  );
+}
+
+function icon(forecast, daytime) {
+  var sym = iconSymbol(forecast, daytime);
+  return iconSvg(sym, iconAccent(sym) ? "accent" : "");
 }
 
 var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -162,16 +186,16 @@ function tempRate(hrs, atMs) {
 // would notice over a visit, so the pill says so rather than printing "0.1°/h".
 function trendFor(rate) {
   if (rate >= 0.3) {
-    return { arrow: "↑", text: "Rising " + rate.toFixed(1) + "°/h", cls: "" };
+    return { sym: "trend-up", text: "Rising " + rate.toFixed(1) + "°/h", cls: "" };
   }
   if (rate <= -0.3) {
     return {
-      arrow: "↓",
+      sym: "trend-down",
       text: "Falling " + Math.abs(rate).toFixed(1) + "°/h",
       cls: "",
     };
   }
-  return { arrow: "→", text: "Steady", cls: " flat" };
+  return { sym: "trend-flat", text: "Steady", cls: " flat" };
 }
 
 // What the polite live region says, once the rounded integer has moved. "1.2
@@ -1643,8 +1667,12 @@ function startTempDrift(hrs) {
     if (trendEl) {
       var cls = "hero-trend" + tr.cls;
       if (trendEl.className !== cls) trendEl.className = cls;
-      var arrowEl = trendEl.querySelector(".t-arrow");
-      if (arrowEl && arrowEl.textContent !== tr.arrow) arrowEl.textContent = tr.arrow;
+      // The arrow is a <use> into the sprite now, so the swap is an href
+      // rewrite; guarded because this runs four times a second.
+      var arrowEl = trendEl.querySelector(".t-arrow use");
+      if (arrowEl && arrowEl.getAttribute("href") !== "#" + tr.sym) {
+        arrowEl.setAttribute("href", "#" + tr.sym);
+      }
       var rateEl = trendEl.querySelector(".t-rate");
       if (rateEl && rateEl.textContent !== tr.text) rateEl.textContent = tr.text;
     }
@@ -1823,7 +1851,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     // The sentence the drifting digits were trying to say, for the readers who
     // never look at them.
     '<div><span class="hero-trend' + heroTrend.cls + '" id="heroTrend" aria-live="off">' +
-    '<span class="t-arrow" aria-hidden="true">' + heroTrend.arrow + "</span>" +
+    iconSvg(heroTrend.sym, "t-arrow") +
     '<span class="t-rate">' + heroTrend.text + "</span></span></div>" +
     '<span class="sr-only" id="heroTempSr" aria-live="polite" aria-atomic="true">' +
     Math.round(parseFloat(heroTempStr)) + " degrees, " + trendSentence(heroTrend) +
@@ -2347,12 +2375,7 @@ function fetchSavedWx(fav) {
 }
 
 function clockSvg() {
-  return (
-    '<svg class="place-icon" viewBox="0 0 24 24" aria-hidden="true">' +
-    '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>' +
-    '<path d="M12 7 V12 L15.5 14" fill="none" stroke="currentColor" stroke-width="2" ' +
-    'stroke-linecap="round"/></svg>'
-  );
+  return iconSvg("clock", "place-icon");
 }
 
 function placeChipHtml(p, wx, isFav) {
@@ -2563,12 +2586,7 @@ function updateUrl(label, lat, lon, push) {
 }
 
 function shareSvg() {
-  return (
-    '<svg viewBox="0 0 24 24" aria-hidden="true" class="share-ico">' +
-    '<circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/>' +
-    '<circle cx="18" cy="19" r="2.6"/>' +
-    '<path fill="none" d="M8.3 10.8 L15.7 6.4 M8.3 13.2 L15.7 17.6"/></svg>'
-  );
+  return iconSvg("share", "share-ico");
 }
 
 function copyText(text) {
@@ -2623,12 +2641,10 @@ function flashShare(btn, msg) {
 }
 
 function starSvg(filled) {
-  return (
-    '<svg viewBox="0 0 24 24" aria-hidden="true" class="star' +
-    (filled ? " filled" : "") +
-    '"><path d="M12 2.6 L15 9.2 L22 10 L16.9 14.8 L18.3 21.7 L12 18.3 ' +
-    'L5.7 21.7 L7.1 14.8 L2 10 L9 9.2 Z"/></svg>'
-  );
+  // Two symbols rather than one glyph plus a fill override: the filled star
+  // carries fill="currentColor" inside the sprite, so .star.filled only has to
+  // set the colour.
+  return iconSvg(filled ? "star-filled" : "star", filled ? "star filled" : "star");
 }
 
 function saveRecent(label, lat, lon) {
@@ -2735,13 +2751,11 @@ function renderSuggestions(items, query) {
     div.setAttribute("role", "option");
     var icon = "";
     if (item.kind === "locate") {
-      icon =
-        '<svg class="sug-icon" viewBox="0 0 24 24" aria-hidden="true">' +
-        '<path d="M21 3 L3 10.5 L10.5 13.5 L13.5 21 Z" /></svg>';
+      icon = iconSvg("locate", "sug-icon");
     } else if (item.kind === "fav") {
       icon = starSvg(true);
     } else if (item.kind === "recent") {
-      icon = '<span class="sug-icon">\uD83D\uDD52</span>';
+      icon = iconSvg("clock", "sug-icon");
     }
     div.innerHTML =
       '<span class="sug-city">' +
