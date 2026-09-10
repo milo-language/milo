@@ -785,19 +785,150 @@ svg.sug-icon {
   vertical-align: -2px;
 }
 
-.hero-temp {
-  font-size: 3.75rem;
-  font-weight: 300;
-  letter-spacing: -0.05em;
-  line-height: 1.05;
+.hero-band {
+  padding-top: var(--sp-5);
   text-align: center;
-  margin-top: 0.25rem;
 }
 
 .hero-condition {
-  font-size: 1rem;
-  text-align: center;
-  opacity: 0.96;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.hero-cond-glyph {
+  font-size: 28px;
+  line-height: 1;
+}
+
+/* The live number. `contain: layout` is what keeps the 4Hz timer from ever
+   reaching the siblings: the fraction's text changes paint inside this box and
+   nothing outside it is re-laid out. */
+.hero-temp {
+  display: inline-block;
+  margin-top: var(--sp-1);
+  font-size: var(--fs-hero);
+  font-weight: 200;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum";
+  contain: layout;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Reserved boxes, so a digit swap moves no glyph. 2ch holds two digits; a
+   third (100°+) or a minus widens it, which happens at hour scale, and the
+   hero is centred so the widening is symmetric. */
+.t-int {
+  display: inline-block;
+  min-width: 2ch;
+  text-align: right;
+}
+
+/* 3.4ch = a period's ~0.4ch plus three digits. Weight 400 at 0.32em has about
+   the same absolute stroke as weight 200 at 112px, so the fraction reads as
+   the same stroke, smaller and dimmer, not as a second typeface. */
+.t-frac {
+  display: inline-block;
+  min-width: 3.4ch;
+  text-align: left;
+  font-size: 0.32em;
+  font-weight: 400;
+  letter-spacing: 0;
+  opacity: 0.78;
+  vertical-align: baseline;
+}
+
+/* Live, the degree is part of the small run so "72.360°" is one unit; paused,
+   the fraction box is gone and it closes up against the integer as a raised
+   half-size glyph. */
+.t-deg {
+  display: inline-block;
+  font-size: 0.32em;
+  font-weight: 400;
+  opacity: 0.78;
+  vertical-align: baseline;
+  margin-left: 0.02em;
+}
+
+.hero-temp[data-live="off"] .t-frac {
+  display: none;
+}
+
+.hero-temp[data-live="off"] .t-deg {
+  font-size: 0.5em;
+  font-weight: 200;
+  opacity: 1;
+  line-height: 1;
+  vertical-align: top;
+  margin-left: 0.04em;
+}
+
+/* 15/600 is under the large-text threshold, so the pill gives it a --panel to
+   sit on rather than the raw sky. */
+.hero-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--sp-2);
+  height: var(--tap-secondary);
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-full);
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-trend.flat {
+  color: var(--text-2);
+}
+
+.hero-feels {
+  margin-top: var(--sp-3);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+}
+
+.hero-hl {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* The other half of the WCAG 2.2.2 stop mechanism (the tap is the first):
+   the thousandths go and startTempDrift drops to a minute, so the integer and
+   the pill still track the hour without the 4Hz churn. */
+@media (prefers-reduced-motion: reduce) {
+  .t-frac {
+    display: none;
+  }
+  .t-deg {
+    font-size: 0.5em;
+    font-weight: 200;
+    opacity: 1;
+    line-height: 1;
+    vertical-align: top;
+    margin-left: 0.04em;
+  }
 }
 
 /* The lede. Larger than the paragraph it replaced as the first prose on the
@@ -1614,9 +1745,6 @@ svg.sug-icon {
     flex: 1 1 100%;
     max-width: none;
     margin-left: 0;
-  }
-  .hero-temp {
-    font-size: 3rem;
   }
   .hero-stats {
     gap: 0.5rem 1.25rem;

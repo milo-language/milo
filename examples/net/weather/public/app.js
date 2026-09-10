@@ -144,6 +144,43 @@ function tempAt(hrs, atMs) {
   return cur.temperature + (next.temperature - cur.temperature) * f;
 }
 
+// The derivative of the same interpolation, in degrees per hour. It is exact
+// rather than smoothed: the bracketing pair is a straight line, so the slope is
+// constant across the hour and only steps at the top of it.
+function tempRate(hrs, atMs) {
+  if (!hrs || hrs.length === 0) return 0;
+  var i = hourlyIndexAt(hrs, atMs);
+  var cur = hrs[i];
+  var next = i + 1 < hrs.length ? hrs[i + 1] : null;
+  if (!next || next.temperatureUnit !== cur.temperatureUnit) return 0;
+  var h = (Date.parse(next.startTime) - Date.parse(cur.startTime)) / 3600000;
+  if (!(h > 0)) return 0;
+  return (next.temperature - cur.temperature) / h;
+}
+
+// Below a third of a degree an hour the number is not going anywhere a person
+// would notice over a visit, so the pill says so rather than printing "0.1°/h".
+function trendFor(rate) {
+  if (rate >= 0.3) {
+    return { arrow: "↑", text: "Rising " + rate.toFixed(1) + "°/h", cls: "" };
+  }
+  if (rate <= -0.3) {
+    return {
+      arrow: "↓",
+      text: "Falling " + Math.abs(rate).toFixed(1) + "°/h",
+      cls: "",
+    };
+  }
+  return { arrow: "→", text: "Steady", cls: " flat" };
+}
+
+// What the polite live region says, once the rounded integer has moved. "1.2
+// degrees per hour" rather than "1.2°/h", which screen readers spell out.
+function trendSentence(tr) {
+  if (tr.cls) return "steady";
+  return tr.text.toLowerCase().replace("°/h", " degrees per hour");
+}
+
 // One decimal, with a bare ".0" dropped: 73.5, but 73 rather than 73.0.
 function fmtTemp(t) {
   var r = Math.round(t * 10) / 10;
@@ -1562,7 +1599,20 @@ var tempTimer = null;
 function startTempDrift(hrs) {
   if (tempTimer) clearInterval(tempTimer);
   if (!hrs || !hrs.length) return;
-  tempTimer = setInterval(function () {
+  // 4Hz digit churn is auto-updating content under WCAG 2.2.2. The OS setting
+  // is one of its two stop mechanisms (tapping the number is the other): the
+  // thousandths are hidden by CSS and the timer drops to a minute, so the
+  // integer and the trend pill still track the hour.
+  var reduced =
+    window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Seeded from what render() just wrote, so the region does not announce a
+  // value the reader has only just been given, once per render.
+  var lastSrInt = Math.round(tempAt(hrs, Date.now()));
+  var lastSrAt = Date.now();
+  var tick = function () {
+    // render() rebuilds the whole card as one innerHTML string and re-runs on
+    // the sun countdown, so every node this holds is replaced out from under
+    // it. Re-resolve each tick, and let the render that replaced them re-arm.
     var hero = document.getElementById("heroTemp");
     if (!hero) {
       clearInterval(tempTimer);
@@ -1570,13 +1620,80 @@ function startTempDrift(hrs) {
       return;
     }
     var t = tempAt(hrs, Date.now());
-    var s2 = t.toFixed(3) + "°";
-    if (hero.textContent !== s2) {
-      hero.textContent = s2;
-      var cell = document.getElementById("nowTemp");
-      if (cell) cell.textContent = fmtTemp(t) + "°";
+    if (t === null) return;
+    var fixed = t.toFixed(3);
+    var dot = fixed.indexOf(".");
+    var intPart = fixed.slice(0, dot);
+    var fracPart = fixed.slice(dot);
+
+    // Write only the node whose text changed. The integer is untouched at 4Hz,
+    // so it never repaints and the fraction never flashes as a whole.
+    var intEl = hero.querySelector(".t-int");
+    if (intEl && intEl.textContent !== intPart) intEl.textContent = intPart;
+    var fracEl = hero.querySelector(".t-frac");
+    if (fracEl && fracEl.textContent !== fracPart) fracEl.textContent = fracPart;
+    var cell = document.getElementById("nowTemp");
+    if (cell) {
+      var one = fmtTemp(t) + "°";
+      if (cell.textContent !== one) cell.textContent = one;
     }
-  }, 250);
+
+    var tr = trendFor(tempRate(hrs, Date.now()));
+    var trendEl = document.getElementById("heroTrend");
+    if (trendEl) {
+      var cls = "hero-trend" + tr.cls;
+      if (trendEl.className !== cls) trendEl.className = cls;
+      var arrowEl = trendEl.querySelector(".t-arrow");
+      if (arrowEl && arrowEl.textContent !== tr.arrow) arrowEl.textContent = tr.arrow;
+      var rateEl = trendEl.querySelector(".t-rate");
+      if (rateEl && rateEl.textContent !== tr.text) rateEl.textContent = tr.text;
+    }
+
+    // The number an AT user gets moves only when the rounded integer does, and
+    // at most twice a minute, so it is a few announcements an hour rather than
+    // a stream of digits.
+    var sr = document.getElementById("heroTempSr");
+    var r = Math.round(t);
+    if (sr && r !== lastSrInt && Date.now() - lastSrAt >= 30000) {
+      lastSrInt = r;
+      lastSrAt = Date.now();
+      sr.textContent = r + " degrees, " + trendSentence(tr);
+    }
+  };
+  tempTimer = setInterval(tick, reduced ? 60000 : 250);
+}
+
+// Tapping the number is the pause control for people without the OS setting,
+// and it is the gesture that already opens popovers on the tiles. Delegated
+// once, because render() replaces the node it would otherwise be bound to.
+var liveTempBound = false;
+function bindLiveTempToggle() {
+  if (liveTempBound) return;
+  liveTempBound = true;
+  document.addEventListener("click", function (e) {
+    var n = e.target;
+    while (n && n !== document) {
+      if (n.classList && n.classList.contains("hero-temp")) {
+        var on = n.getAttribute("data-live") !== "off";
+        n.setAttribute("data-live", on ? "off" : "on");
+        try {
+          localStorage.setItem("weatherLiveTemp", on ? "off" : "on");
+        } catch (err) {
+          /* private mode; the toggle still works for this session */
+        }
+        return;
+      }
+      n = n.parentNode;
+    }
+  });
+}
+
+function liveTempPref() {
+  try {
+    return localStorage.getItem("weatherLiveTemp") === "off" ? "off" : "on";
+  } catch (err) {
+    return "on";
+  }
 }
 
 // Ticks the countdown in place. Rebinds on every render; when the target time
@@ -1630,8 +1747,12 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   var currentTemp =
     hrs.length > 0 ? fmtTemp(tempAt(hrs, nowMs)) : String(now.temperature);
   var heroTempStr =
-    hrs.length > 0 ? tempAt(hrs, nowMs).toFixed(3) : String(now.temperature);
+    hrs.length > 0 ? tempAt(hrs, nowMs).toFixed(3) : String(now.temperature) + ".000";
+  var heroTempInt = heroTempStr.slice(0, heroTempStr.indexOf("."));
+  var heroTempFrac = heroTempStr.slice(heroTempStr.indexOf("."));
+  var heroTrend = trendFor(hrs.length > 0 ? tempRate(hrs, nowMs) : 0);
   startTempDrift(hrs);
+  bindLiveTempToggle();
   heroHiLo = { hi: hi, lo: lo };
 
   var feelsLike = getGridVal(grid, "apparentTemperature");
@@ -1640,15 +1761,10 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   var visibility = getGridVal(grid, "visibility");
   var precip = now.probabilityOfPrecipitation ? now.probabilityOfPrecipitation.value : null;
 
-  // Hero
-  var stats =
-    '<div class="stat"><div class="stat-label">High / Low</div>' +
-    '<div class="stat-value">' + hi + "° / " + lo + "°</div></div>";
-  if (feelsLike !== null) {
-    stats +=
-      '<div class="stat"><div class="stat-label">Feels Like</div>' +
-      '<div class="stat-value">' + cToF(feelsLike) + "°</div></div>";
-  }
+  // Hero. High/Low and Feels like are hero lines now; what is left in the stat
+  // row is Precip and Vs normal. The container stays in the DOM either way:
+  // sky.js appends #normalStat into it when the climate fetch lands.
+  var stats = "";
   if (precip !== null) {
     stats +=
       '<div class="stat"><div class="stat-label">Precip</div>' +
@@ -1689,8 +1805,34 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     '<div class="hero-city">' +
     esc(city) +
     "</div>" +
-    '<div class="hero-temp" id="heroTemp">' + heroTempStr + "°</div>" +
-    '<div class="hero-condition">' + esc(now.shortForecast) + "</div>" +
+    // One centred band: condition, number, trend, then the two plain lines.
+    '<div class="hero-band">' +
+    // The condition names the sky before the number quantifies it, so the
+    // reader gets the word at a glance and the digits only if they want them.
+    '<div class="hero-condition">' +
+    '<span class="hero-cond-glyph" aria-hidden="true">' +
+    icon(now.shortForecast, now.isDaytime) + "</span>" +
+    "<span>" + esc(now.shortForecast) + "</span></div>" +
+    // aria-hidden because a node rewritten four times a second is not
+    // something to announce; #heroTempSr below is what an AT user hears.
+    '<div class="hero-temp" id="heroTemp" aria-hidden="true" data-live="' +
+    liveTempPref() + '" title="Tap to pause the live digits">' +
+    '<span class="t-int">' + heroTempInt + "</span>" +
+    '<span class="t-frac">' + heroTempFrac + "</span>" +
+    '<span class="t-deg">°</span></div>' +
+    // The sentence the drifting digits were trying to say, for the readers who
+    // never look at them.
+    '<div><span class="hero-trend' + heroTrend.cls + '" id="heroTrend" aria-live="off">' +
+    '<span class="t-arrow" aria-hidden="true">' + heroTrend.arrow + "</span>" +
+    '<span class="t-rate">' + heroTrend.text + "</span></span></div>" +
+    '<span class="sr-only" id="heroTempSr" aria-live="polite" aria-atomic="true">' +
+    Math.round(parseFloat(heroTempStr)) + " degrees, " + trendSentence(heroTrend) +
+    "</span>" +
+    (feelsLike !== null
+      ? '<div class="hero-feels">Feels like ' + cToF(feelsLike) + "°</div>"
+      : "") +
+    '<div class="hero-hl">H ' + hi + "° · L " + lo + "°</div>" +
+    "</div>" +
     // The week in a sentence, above the numbers rather than below them: the
     // reader's first question is "what is this week doing", and the stat row
     // answers a question they have not asked yet.
