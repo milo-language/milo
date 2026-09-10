@@ -550,22 +550,22 @@ function climateStatHtml() {
   var day = climateDay(new Date(), extrasTz);
   if (day.idx == null || c.normHi[day.idx] == null) return "";
   var d = heroHiLo.hi - c.normHi[day.idx];
+  var value = Math.abs(Math.round(d)) <= 2 ? "Normal" : signedDeg(d);
   // A metric tile in the metrics row, not a column in the old four-stat block.
   return metricTile(
     "thermometer",
-    Math.abs(Math.round(d)) <= 2 ? "Normal" : signedDeg(d),
+    value,
     "",
     "Vs normal",
-    "normalStat"
+    "normalStat",
+    detailLede(normalLede(d, heroHiLo.hi, day.label)) + climateRowsHtml(c, day),
+    value
   );
 }
 
-function climateTileHtml(c, now, timeZone) {
-  if (!heroHiLo) return "";
-  var day = climateDay(now, timeZone);
-  if (day.idx == null || c.normHi[day.idx] == null) return "";
+// The rows shared by the vs-normal chip's popover and the Vs Normal tile.
+function climateRowsHtml(c, day) {
   var nh = c.normHi[day.idx], nl = c.normLo[day.idx];
-  var d = heroHiLo.hi - nh;
   var rh = c.recHi[day.idx], rl = c.recLo[day.idx];
   var ly = c.recent[day.lastYear];
   var note = "";
@@ -576,7 +576,7 @@ function climateTileHtml(c, now, timeZone) {
     note = "Tonight's forecast low of " + heroHiLo.lo + "° would be the coldest " + day.label +
       " in this dataset since " + c.firstYear + ". ";
   }
-  var detail =
+  return (
     detailRow("Forecast today", heroHiLo.hi + "° / " + heroHiLo.lo + "°") +
     detailRow("Normal (1991–2020)", Math.round(nh) + "° / " + Math.round(nl) + "°") +
     (ly ? detailRow(day.label + " last year", Math.round(ly[0]) + "° / " + Math.round(ly[1]) + "°") : "") +
@@ -584,7 +584,18 @@ function climateTileHtml(c, now, timeZone) {
     (rl ? detailRow("Record low", Math.round(rl[0]) + "° (" + rl[1] + ")") : "") +
     '<div class="detail-note">' + note +
     "Normals and records are from the ERA5 reanalysis grid (Open-Meteo, " + c.firstYear +
-    " onward), not the nearest airport thermometer, so a record here means in that dataset.</div>";
+    " onward), not the nearest airport thermometer, so a record here means in that dataset.</div>"
+  );
+}
+
+function climateTileHtml(c, now, timeZone) {
+  if (!heroHiLo) return "";
+  var day = climateDay(now, timeZone);
+  if (day.idx == null || c.normHi[day.idx] == null) return "";
+  var nh = c.normHi[day.idx], nl = c.normLo[day.idx];
+  var d = heroHiLo.hi - nh;
+  var ly = c.recent[day.lastYear];
+  var detail = detailLede(normalLede(d, heroHiLo.hi, day.label)) + climateRowsHtml(c, day);
   return tile(
     "Vs Normal",
     Math.abs(Math.round(d)) <= 2 ? "Normal" : signedDeg(d),

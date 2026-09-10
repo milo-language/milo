@@ -1390,14 +1390,125 @@ function extrasHtml() {
 // when the UV or climate fetch lands without re-running the whole card.
 var metricsCtx = null;
 
-function metricTile(sym, value, small, label, id) {
+// `detail` opts the chip into the same popover the tiles below use. The chip's
+// own label/value are 12px uppercase and a bare number, which make a poor
+// popover heading, so the heading is passed in data-pop-* instead of scraped.
+function metricTile(sym, value, small, label, id, detail, popValue, popSub) {
   return (
-    '<div class="metric"' + (id ? ' id="' + id + '"' : "") + ">" +
+    '<div class="metric' + (detail ? " tappable" : "") + '"' +
+    (id ? ' id="' + id + '"' : "") +
+    (detail
+      ? ' data-pop tabindex="0" role="button"' +
+        ' data-pop-label="' + esc(label) + '"' +
+        ' data-pop-value="' + esc(popValue || String(value).replace(/<[^>]*>/g, "")) + '"' +
+        ' data-pop-sub="' + esc(popSub || "") + '"'
+      : "") +
+    ">" +
     '<span class="ico-tile" aria-hidden="true">' + iconSvg(sym) + "</span>" +
     '<div class="metric-v">' + value +
     (small ? " <small>" + small + "</small>" : "") + "</div>" +
-    '<div class="metric-l">' + label + "</div></div>"
+    '<div class="metric-l">' + label + "</div>" +
+    (detail ? '<template class="tile-detail">' + detail + "</template>" : "") +
+    "</div>"
   );
+}
+
+// ── Human insights ──
+// Every metric popover opens with one sentence you can act on ("sunscreen from
+// 12 PM to 4 PM"), not a restatement of the number that was already on the
+// chip. The rows under it are the supporting numbers for whoever wants them.
+
+function detailLede(text) {
+  return '<div class="detail-lede">' + text + "</div>";
+}
+
+// The stretch of today still ahead at UV 3+ (the WHO "moderate" band, where
+// protection starts mattering). Clipped to now: at 3 PM, "from 11 AM" is
+// advice about the past.
+function uvWindowAhead(uvHourly) {
+  var now = Date.now();
+  var from = null, to = null, peak = 0, peakAt = null;
+  for (var i = 0; i < uvHourly.length; i++) {
+    var t = Date.parse(uvHourly[i].time);
+    var uv = uvHourly[i].uv;
+    if (isNaN(t) || uv == null || uv < 3) continue;
+    var end = t + 3600000;
+    if (end <= now) continue;
+    if (from === null) from = Math.max(t, now);
+    to = end;
+    if (uv > peak) { peak = uv; peakAt = t; }
+  }
+  return from === null ? null : { from: from, to: to, peak: peak, peakAt: peakAt };
+}
+
+function uvLede(e, tz) {
+  if (!e || e.uv == null) return "";
+  var w = e.uvHourly && e.uvHourly.length ? uvWindowAhead(e.uvHourly) : null;
+  if (!w) {
+    return e.uv >= 3
+      ? "Cover up now; the sun drops below burning strength within the hour."
+      : "No sun protection needed for the rest of today.";
+  }
+  var started = w.from <= Date.now() + 60000;
+  var lede = started
+    ? "Sunscreen now through " + adviceHour(w.to, tz) + "."
+    : "Sunscreen from " + adviceHour(w.from, tz) + " to " + adviceHour(w.to, tz) + ".";
+  if (w.peak >= UV_BURN_LEVEL) {
+    lede += " Unprotected skin burns " + adviceBurnClause(w.peak) +
+      " around " + adviceHour(w.peakAt, tz) + ".";
+  } else {
+    lede += " A hat and sunglasses are enough at this strength.";
+  }
+  return lede;
+}
+
+// Beaufort, told as what it does to you rather than what it measures.
+function windLede(mph, gustMph) {
+  var s;
+  if (mph < 4) s = "Air is still. Smoke rises straight up, and anything you set down stays put.";
+  else if (mph < 8) s = "Barely a breeze. You feel it on your face and nothing else moves.";
+  else if (mph < 13) s = "Light breeze. Flags stir; pleasant to walk or ride in.";
+  else if (mph < 19) s = "Breezy. Loose paper, hats and patio umbrellas start moving on their own.";
+  else if (mph < 25) s = "Windy. Umbrellas invert, and riding into it is real work.";
+  else if (mph < 32) s = "Strong wind. Leaning into it to walk; bring in anything light outdoors.";
+  else s = "Damaging wind. Stay clear of trees and power lines, and expect debris.";
+  if (gustMph != null && mph > 0 && gustMph >= mph + 10) {
+    s += " Gusts reach " + gustMph + " mph, so plan for the gust, not the average.";
+  }
+  return s;
+}
+
+// The chip says "0%", which answers "is it raining" but not "do I take a
+// coat" — the run over the next 12 hours is the part worth acting on.
+function rainLede(hrs, popNow, tz) {
+  var run = hrs && hrs.length ? adviceWetRun(adviceHours(hrs, 12), 30) : null;
+  if (run) {
+    var from = adviceHour(Date.parse(run.from.startTime), tz);
+    var to = adviceHour(Date.parse(run.to.startTime) + 3600000, tz);
+    return "Take rain gear: " + run.peak + "% chance between " + from + " and " + to + ".";
+  }
+  if (popNow >= 30) return "Spotty chance right now; an umbrella is worth having.";
+  if (popNow > 0) return "Leave the umbrella. A " + popNow + "% chance is a dry day in practice.";
+  return "Leave the umbrella. Nothing wet in the next 12 hours.";
+}
+
+// What "+14°" means for how you dress, since the number alone is only
+// meaningful to someone who already knows the normal.
+function normalLede(d, hi, dayLabel) {
+  var a = Math.abs(Math.round(d));
+  if (a <= 2) return "A textbook " + dayLabel + " here. Dress the way this time of year usually asks.";
+  var dir = d > 0 ? "warmer" : "colder";
+  var s = a + "° " + dir + " than a typical " + dayLabel + " here, topping out near " + hi + "°. ";
+  if (d > 0) {
+    s += a >= 15
+      ? "Far enough off that shade, water and a lighter layer than the calendar suggests all matter."
+      : "Dress a season lighter than the date would suggest.";
+  } else {
+    s += a >= 15
+      ? "Far enough off that a real coat, not a jacket, is the right call."
+      : "Dress a season heavier than the date would suggest.";
+  }
+  return s;
 }
 
 function metricsHtml() {
@@ -1405,21 +1516,65 @@ function metricsHtml() {
   if (!c) return "";
   var html = "";
   if (extrasData && extrasData.uv != null) {
-    html += metricTile("uv", String(Math.round(extrasData.uv)), uvLabel(extrasData.uv), "UV");
+    var e = extrasData;
+    var uvNow = Math.round(e.uv);
+    var uvDetail = detailLede(uvLede(e, c.tz));
+    if (e.uvHourly && e.uvHourly.length > 1) uvDetail += uvCurveSvg(e.uvHourly, extrasTz, new Date());
+    uvDetail +=
+      detailRow("Right now", uvNow + " " + uvLabel(e.uv)) +
+      (e.uvMax != null ? detailRow("Peak today", Math.round(e.uvMax) + " " + uvLabel(e.uvMax)) : "") +
+      '<div class="detail-note">' + uvAdvice(e.uvMax != null ? e.uvMax : e.uv) +
+      " UV climbs about 10% per 3,000 ft of elevation, and snow or water reflects" +
+      " most of it back at you.</div>";
+    html += metricTile(
+      "uv", String(uvNow), uvLabel(e.uv), "UV", null,
+      uvDetail, uvNow + " " + uvLabel(e.uv)
+    );
   }
   if (c.windSpeed) {
     // windSpeed is "8 mph" or "5 to 10 mph". A range gets its top of band: the
     // tile is the one number to plan around, and the tile grid below still
     // carries the full range and the gusts.
     var mph = String(c.windSpeed).match(/\d+/g);
+    var mphNum = mph ? parseInt(mph[mph.length - 1], 10) : 0;
+    var windDetail =
+      detailLede(windLede(mphNum, c.gustMph)) +
+      detailRow("Speed", esc(c.windSpeed)) +
+      (c.gustMph != null ? detailRow("Peak gust (next 12 h)", c.gustMph + " mph") : "") +
+      (c.windDir
+        ? detailRow(
+            "Direction",
+            "From the " + esc(c.windDir) + " (" + Math.round(dirToDeg(c.windDir)) + "°)"
+          )
+        : "") +
+      '<div class="detail-note">weather.gov reports the direction the wind blows' +
+      " <em>from</em>.</div>";
     html += metricTile(
       "wind",
       mph ? mph[mph.length - 1] : esc(c.windSpeed),
       esc(c.windDir || "mph"),
-      "Wind"
+      "Wind", null,
+      windDetail, esc(c.windSpeed)
     );
   }
-  if (c.precip !== null) html += metricTile("droplet", c.precip + "%", "", "Rain");
+  if (c.precip !== null) {
+    var wet = c.hrs && c.hrs.length ? adviceWetRun(adviceHours(c.hrs, 12), 30) : null;
+    var rainDetail =
+      detailLede(rainLede(c.hrs, c.precip, c.tz)) +
+      scaleBarHtml(c.precip, "linear-gradient(90deg,var(--panel-hi),#38bdf8,#2563eb)") +
+      detailRow("Chance this hour", c.precip + "%") +
+      (wet
+        ? detailRow(
+            "Wettest stretch",
+            adviceHour(Date.parse(wet.from.startTime), c.tz) + " – " +
+              adviceHour(Date.parse(wet.to.startTime) + 3600000, c.tz)
+          )
+        : detailRow("Next 12 hours", "Nothing above 30%")) +
+      '<div class="detail-note">A chance of precipitation is the odds that' +
+      " measurable rain falls somewhere in the forecast area during that hour," +
+      " not how much or how long.</div>";
+    html += metricTile("droplet", c.precip + "%", "", "Rain", null, rainDetail, c.precip + "%");
+  }
   html += climateStatHtml();
   return html;
 }
@@ -1862,10 +2017,17 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   // Four numbers in one row, not four columns of words. UV comes from the
   // extras fetch, which lands after this render, so the row rebuilds itself in
   // renderMetrics(); sky.js appends #normalStat into it when climate lands.
+  // hrs/tz/gust ride along because the chips are tappable: the popovers answer
+  // "do I take a coat" and "how hard does it gust", which the four numbers
+  // themselves cannot.
+  var metricGustKmh = gridPeak(grid, "windGust", 12);
   metricsCtx = {
     precip: precip,
     windSpeed: now.windSpeed,
     windDir: now.windDirection,
+    gustMph: metricGustKmh !== null ? kmhToMph(metricGustKmh) : null,
+    hrs: hrs,
+    tz: timeZone,
   };
 
   // A left-aligned bar, not a centred uppercase title with two corner pills:
@@ -1909,6 +2071,9 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     '<span class="hero-cond-glyph" aria-hidden="true">' +
     icon(now.shortForecast, now.isDaytime) + "</span>" +
     "<span>" + esc(now.shortForecast) + "</span></div>" +
+    // The trend rides beside the number rather than under it: it qualifies the
+    // digits, and stacking it pushed the high/low a whole line further down.
+    '<div class="hero-temp-row">' +
     // aria-hidden because a node rewritten four times a second is not
     // something to announce; #heroTempSr below is what an AT user hears.
     '<div class="hero-temp" id="heroTemp" aria-hidden="true" data-live="' +
@@ -1918,16 +2083,23 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     '<span class="t-deg">°</span></div>' +
     // The sentence the drifting digits were trying to say, for the readers who
     // never look at them.
-    '<div><span class="hero-trend' + heroTrend.cls + '" id="heroTrend" aria-live="off">' +
+    '<span class="hero-trend' + heroTrend.cls + '" id="heroTrend" aria-live="off">' +
     iconSvg(heroTrend.sym, "t-arrow") +
-    '<span class="t-rate">' + heroTrend.text + "</span></span></div>" +
+    '<span class="t-rate">' + heroTrend.text + "</span></span>" +
+    "</div>" +
     '<span class="sr-only" id="heroTempSr" aria-live="polite" aria-atomic="true">' +
     Math.round(parseFloat(heroTempStr)) + " degrees, " + trendSentence(heroTrend) +
     "</span>" +
+    // The high/low is the number people plan the day around, so it outranks
+    // "feels like" rather than trailing it in the same size.
+    '<div class="hero-hl">' +
+    '<span class="hl-part"><span class="hl-k">H</span>' + hi + "°</span>" +
+    '<span class="hl-dot" aria-hidden="true">·</span>' +
+    '<span class="hl-part hl-lo"><span class="hl-k">L</span>' + lo + "°</span>" +
+    "</div>" +
     (feelsLike !== null
       ? '<div class="hero-feels">Feels like ' + cToF(feelsLike) + "°</div>"
       : "") +
-    '<div class="hero-hl">H ' + hi + "° · L " + lo + "°</div>" +
     "</div>" +
     // The caveat sits under the answer, not above it: the temperature is what
     // the visit came for, the advisory is the qualifier on it.

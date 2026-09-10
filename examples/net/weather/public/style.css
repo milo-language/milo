@@ -875,13 +875,23 @@ body.sheet-open {
   margin-left: 0.04em;
 }
 
+/* The number and its trend on one line. Centred as a cluster, which is what
+   the eye reads as centred — the integer was already off-centre anyway, since
+   .t-frac reserves 3.4ch to its right and nothing balances it on the left. */
+.hero-temp-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
 /* 15/600 is under the large-text threshold, so the pill gives it a --panel to
    sit on rather than the raw sky. */
 .hero-trend {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: var(--sp-2);
   height: var(--tap-secondary);
   padding: 0 var(--sp-3);
   border-radius: var(--r-full);
@@ -901,17 +911,50 @@ body.sheet-open {
   color: var(--text-2);
 }
 
-.hero-feels {
+/* The day's range is what people actually plan around, so it reads at title
+   size with the H/L reduced to quiet keys, and "feels like" drops to a
+   caption under it rather than competing at the same weight. */
+.hero-hl {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--sp-2);
   margin-top: var(--sp-3);
-  font-size: var(--fs-body);
-  line-height: 1.5;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
 }
 
-.hero-hl {
+.hl-part {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.hl-k {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+}
+
+.hl-lo {
+  color: var(--text-2);
+}
+
+.hl-dot {
   font-size: var(--fs-body);
-  font-weight: 600;
+  color: var(--text-2);
+  opacity: 0.6;
+}
+
+.hero-feels {
+  margin-top: 2px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
   line-height: 1.5;
-  font-variant-numeric: tabular-nums;
 }
 
 .sr-only {
@@ -1064,6 +1107,33 @@ body.sheet-open {
   border: 1px solid var(--hairline);
   border-radius: var(--r-md);
   text-shadow: none;
+}
+
+/* Same affordance the tiles use: a corner + and a pointer, so the chips read
+   as openable on touch, where there is no hover to discover them with. */
+.metric.tappable {
+  position: relative;
+  cursor: pointer;
+}
+
+.metric.tappable::after {
+  content: "+";
+  position: absolute;
+  top: 0.3rem;
+  right: 0.45rem;
+  font-size: 0.8125rem;
+  line-height: 1;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.metric.tappable:hover {
+  background: var(--panel-hi);
+}
+
+.metric.tappable:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.8);
+  outline-offset: 2px;
 }
 
 .metric-v {
@@ -1555,6 +1625,16 @@ body.sheet-open {
   font-size: 0.75rem;
   line-height: 1.5;
   opacity: 0.85;
+}
+
+/* The one sentence you can act on, above the rows that only restate the
+   number you already tapped. It leads the popover, so it gets body size and
+   full contrast where everything under it is caption-sized and dimmed. */
+.detail-lede {
+  margin-bottom: var(--sp-3);
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  line-height: 1.45;
 }
 
 /* ── Active NWS alerts ──
