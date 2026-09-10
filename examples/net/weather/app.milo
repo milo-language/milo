@@ -2,7 +2,7 @@
 // Assets and the US place-name index are compiled in with embedFile, so the
 // deploy artifact is one file with no adjacent data directory to keep in sync.
 from "std/http" import {
-    Context, Response, Router, serveRouter
+    Context, Response, Router, serveRouterConcurrent
 }
 from "std/argparse" import {
     ArgParser
@@ -17,7 +17,7 @@ from "std/fetch" import {
     FetchOptions, fetchWith, findHeader
 }
 from "std/time" import {
-    epochMillis
+    epochMillis, sleepMs
 }
 from "std/strconv" import {
     parseInt
@@ -252,6 +252,9 @@ pub fn citiesHandler(ctx: &mut Context): Response {
 pub struct CacheEntry {
     key: string,
     body: string,
+    // Radar frames come back as PNG, so the proxy cannot assume JSON: the
+    // upstream's own Content-Type is what goes back to the browser.
+    contentType: string,
     status: i32,
     expiresMs: i64,
 }
@@ -260,10 +263,11 @@ pub struct CacheEntry {
 // empty literal; entries accumulate as requests arrive.
 pub var apiCache: Vec<CacheEntry> = []
 
-// Bounds the process at a few MB of forecast JSON. Past this an expired entry
-// is recycled before a new one is appended; if every entry is still live the
-// oldest expiry loses, since it is the one closest to being refetched anyway.
-pub let MAX_CACHE_ENTRIES = 256
+// A byte budget rather than an entry count: entries are not the same size at
+// all. A gridpoint feed is ~240KB and a radar frame ~100KB, so 256 entries is
+// somewhere between 3MB and 50MB depending on what a day's traffic asked for.
+// Evicting on bytes is the only version of this that bounds the process.
+pub let MAX_CACHE_BYTES: i64 = 67108864
 
 // Fallback when the upstream sends no max-age. Ten minutes is short enough
 // that a missing header cannot pin stale weather for an hour.
@@ -292,6 +296,9 @@ pub fn upstreamBase(host: &string): string {
     }
     if host == "omarchive" {
         return "https://archive-api.open-meteo.com"
+    }
+    if host == "noaa" {
+        return "https://mapservices.weather.noaa.gov"
     }
     return ""
 }
@@ -367,31 +374,115 @@ pub fn cacheFind(key: &string): i64 {
     return -1
 }
 
-pub fn cacheStore(key: &string, body: string, status: i32, expiresMs: i64): void {
+// A fresh entry copied out in one step. Returning an index would hand the caller
+// something that stops being valid the moment they yield, which is exactly what
+// every caller here does next.
+pub struct CacheHit {
+    body: string,
+    contentType: string,
+    status: i32,
+    left: i64,
+}
+
+pub fn freshHit(key: &string): Option<CacheHit> {
+    let at = cacheFind(key)
+    if at < 0 {
+        return Option.None
+    }
+    let left = (apiCache[at].expiresMs - epochMillis()) / 1000
+    if left <= 0 {
+        return Option.None
+    }
+    return Option.Some(CacheHit {
+        body: apiCache[at].body.clone(),
+        contentType: apiCache[at].contentType.clone(),
+        status: apiCache[at].status,
+        left: left,
+    }
+    )
+}
+
+pub fn cacheStore(key: &string, body: string, contentType: string, status: i32, expiresMs: i64): void {
     let at = cacheFind(key)
     if at >= 0 {
         apiCache[at].body = body
+        apiCache[at].contentType = contentType
         apiCache[at].status = status
         apiCache[at].expiresMs = expiresMs
+        evictToBudget()
         return
     }
-    if apiCache.len >= MAX_CACHE_ENTRIES {
+    apiCache.push(CacheEntry {
+        key: key.clone(),
+        body: body,
+        contentType: contentType,
+        status: status,
+        expiresMs: expiresMs,
+    }
+    )
+    evictToBudget()
+}
+
+pub fn cacheBytes(): i64 {
+    var total: i64 = 0
+    for i in 0..apiCache.len {
+        total = total + apiCache[i].body.len
+    }
+    return total
+}
+
+// Soonest expiry loses: it is the entry closest to being refetched anyway, so
+// dropping it costs the least. Expired entries therefore go first on their own,
+// without a separate pass for them.
+fn evictToBudget(): void {
+    while cacheBytes() > MAX_CACHE_BYTES && apiCache.len > 1 {
         var victim: i64 = 0
         for i in 0..apiCache.len {
             if apiCache[i].expiresMs < apiCache[victim].expiresMs {
                 victim = i
             }
         }
-        apiCache[victim].key = key.clone()
-        apiCache[victim].body = body
-        apiCache[victim].status = status
-        apiCache[victim].expiresMs = expiresMs
-        return
+        let last = apiCache.len - 1
+        apiCache[victim].key = apiCache[last].key.clone()
+        apiCache[victim].body = apiCache[last].body.clone()
+        apiCache[victim].contentType = apiCache[last].contentType.clone()
+        apiCache[victim].status = apiCache[last].status
+        apiCache[victim].expiresMs = apiCache[last].expiresMs
+        let _ = apiCache.pop()
     }
-    apiCache.push(CacheEntry {
-        key: key.clone(), body: body, status: status, expiresMs: expiresMs
+}
+
+// Keys with an upstream fetch in flight.
+//
+// Handlers are green tasks, and fetchWith yields at every socket wait, so a cold
+// key asked for by ten viewers at once would otherwise send ten identical
+// upstream requests — the exact behaviour the cache exists to prevent, just
+// compressed into one round trip instead of spread over an hour. A radar
+// animation is thirteen cold keys at once, so this is the common case, not the
+// corner one.
+pub var inFlight: Vec<string> = []
+
+fn inFlightHas(key: &string): bool {
+    for i in 0..inFlight.len {
+        if inFlight[i] == key {
+            return true
+        }
     }
-    )
+    return false
+}
+
+fn inFlightAdd(key: &string): void {
+    inFlight.push(key.clone())
+}
+
+fn inFlightDrop(key: &string): void {
+    for i in 0..inFlight.len {
+        if inFlight[i] == key {
+            inFlight[i] = inFlight[inFlight.len - 1].clone()
+            let _ = inFlight.pop()
+            return
+        }
+    }
 }
 
 // GET /api/up?h=<host key>&q=<path>
@@ -408,54 +499,79 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
     }
 
     let key = hostKey.clone() + path.clone()
-    let nowMs = epochMillis()
-    let at = cacheFind(key)
-    if at >= 0 && apiCache[at].expiresMs > nowMs {
-        let left = (apiCache[at].expiresMs - nowMs) / 1000
-        ctx.setHeader("Cache-Control", "public, max-age=" + left.toString())
+    if let Option.Some(hit) = freshHit(key) {
+        ctx.setHeader("Cache-Control", "public, max-age=" + hit.left.toString())
         ctx.setHeader("X-Cache", "hit")
-        ctx.setStatus(apiCache[at].status)
-        return ctx.json(apiCache[at].body.clone())
+        return Response.Status(hit.status, hit.contentType.clone(), hit.body.clone())
     }
 
-    // Blocking, and the accept loop is single-threaded: a slow upstream stalls
-    // every other client for the duration. The cache is what makes that
-    // survivable — this runs once per feed per TTL, not once per request.
+    // Someone else is already asking upstream for this. Wait for their answer
+    // rather than sending a second identical request.
+    if inFlightHas(key) {
+        var waited: i64 = 0
+        while inFlightHas(key) && waited < 30000 {
+            sleepMs(25)
+            waited = waited + 25
+        }
+        if let Option.Some(hit) = freshHit(key) {
+            ctx.setHeader("Cache-Control", "public, max-age=" + hit.left.toString())
+            ctx.setHeader("X-Cache", "coalesced")
+            return Response.Status(hit.status, hit.contentType.clone(), hit.body.clone())
+        }
+        // The leader failed or timed out; fall through and try it ourselves.
+    }
+
+    inFlightAdd(key)
+    var body = ""
+    var contentType = ""
+    var status: i32 = 0
+    var upstreamStatus: i32 = 0
+    var ttl = DEFAULT_TTL_SECS
+    // Blocking-shaped, but this is a green task: the scheduler runs every other
+    // connection while this one waits on the socket.
     var opts = FetchOptions {
         method: "GET",
-        headers: "User-Agent: " + contactUa.clone() + "\r\nAccept: application/geo+json,application/json",
+        headers: "User-Agent: " + contactUa.clone() + "\r\nAccept: application/geo+json,application/json,image/png,*/*",
         body: "",
     }
-    let url = base + path.clone()
-    match fetchWith(url, opts) {
+    match fetchWith(base + path.clone(), opts) {
         Result.Ok(resp) => {
+            upstreamStatus = resp.status
             if resp.status >= 200 && resp.status < 300 {
-                let ttl = upstreamTtlSecs(resp.headers)
-                cacheStore(key, resp.body.clone(), resp.status, nowMs + ttl * 1000)
-                ctx.setHeader("Cache-Control", "public, max-age=" + ttl.toString())
-                ctx.setHeader("X-Cache", "miss")
-                return ctx.json(resp.body.clone())
+                body = resp.body.clone()
+                contentType = findHeader(resp.headers, "Content-Type") ?? "application/json"
+                ttl = upstreamTtlSecs(resp.headers)
+                status = resp.status
             }
-            // An upstream error must not evict good data: a 500 from weather.gov
-            // is a worse answer than a forecast half an hour old.
-            if at >= 0 {
-                ctx.setHeader("Cache-Control", "public, max-age=60")
-                ctx.setHeader("X-Cache", "stale")
-                return ctx.json(apiCache[at].body.clone())
-            }
-            ctx.setStatus(502)
-            return ctx.json("{\"error\":\"upstream " + resp.status.toString() + "\"}")
         }
         Result.Err(_) => {
-            if at >= 0 {
-                ctx.setHeader("Cache-Control", "public, max-age=60")
-                ctx.setHeader("X-Cache", "stale")
-                return ctx.json(apiCache[at].body.clone())
-            }
-            ctx.setStatus(502)
-            return ctx.json("{\"error\":\"upstream unreachable\"}")
         }
     }
+    // Before any return below: a key left marked in-flight would make every
+    // later request for it wait out the full 30s timeout.
+    inFlightDrop(key)
+
+    if status > 0 {
+        cacheStore(key, body.clone(), contentType.clone(), status, epochMillis() + ttl * 1000)
+        ctx.setHeader("Cache-Control", "public, max-age=" + ttl.toString())
+        ctx.setHeader("X-Cache", "miss")
+        return Response.Status(status, contentType, body)
+    }
+
+    // Re-looked-up by key, never by an index captured before the fetch: other
+    // tasks ran during that round trip and the cache Vec may have been evicted
+    // and compacted underneath us.
+    let at = cacheFind(key)
+    if at >= 0 {
+        ctx.setHeader("Cache-Control", "public, max-age=60")
+        ctx.setHeader("X-Cache", "stale")
+        return Response.Status(apiCache[at].status, apiCache[at].contentType.clone(), apiCache[at].body.clone())
+    }
+    ctx.setStatus(502)
+    if upstreamStatus > 0 {
+        return ctx.json("{\"error\":\"upstream " + upstreamStatus.toString() + "\"}")
+    }
+    return ctx.json("{\"error\":\"upstream unreachable\"}")
 }
 
 // no-store, not no-cache, on every embedded text asset: no-cache only promises
@@ -646,7 +762,10 @@ pub fn main(): i32 {
     r.get("/icons/apple-touch-icon.png", appleIconHandler)
     r.get("/healthz", healthHandler)
 
-    if let Result.Err(msg) = serveRouter(port, r) {
+    // Concurrent, not serveRouter: /api/up talks to the network inside the
+    // handler, and on the serial loop one slow upstream stalled every other
+    // client for the whole round trip.
+    if let Result.Err(msg) = serveRouterConcurrent(port, r) {
         print($"error: {msg}")
         return 1
     }

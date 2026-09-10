@@ -20,12 +20,14 @@
 (function () {
   "use strict";
 
+  // Paths, not URLs: every one of these goes through this server's /api/up, so
+  // the ~13 frames an animation loads are fetched once for all viewers rather
+  // than once per viewer. up() lives in app.js, which loads after this file —
+  // safe only because nothing here runs at parse time.
   var SERVICE =
-    "https://mapservices.weather.noaa.gov/eventdriven/rest/services/radar/" +
-    "radar_base_reflectivity_time/ImageServer";
+    "/eventdriven/rest/services/radar/radar_base_reflectivity_time/ImageServer";
   var REFMAP =
-    "https://mapservices.weather.noaa.gov/static/rest/services/nws_reference_maps/" +
-    "nws_reference_map/MapServer";
+    "/static/rest/services/nws_reference_maps/nws_reference_map/MapServer";
 
   // NWS's own reflectivity ramp, in ascending order, recovered from the service
   // rather than from documentation: exported nearest-neighbour, MRMS resolves to
@@ -556,7 +558,7 @@
     if (!this.frames.length) this.setStatus("Acquiring…");
     this.lastRefresh = Date.now();
 
-    loadImage(REFMAP + "/export?" + geoCommon + "&layers=show:2,3&dpi=170")
+    loadImage(up("noaa", REFMAP + "/export?" + geoCommon + "&layers=show:2,3&dpi=170"))
       .then(function (img) {
         if (self.destroyed || seq !== self.seq) return;
         var gl = self.gl;
@@ -568,7 +570,7 @@
     // The time window moves, so the frame times come from the service rather
     // than from the clock here: asking for a slice outside timeExtent returns a
     // blank image, which would animate as a gap.
-    fetch(SERVICE + "?f=json")
+    fetch(up("noaa", SERVICE + "?f=json"))
       .then(function (r) { return r.json(); })
       .then(function (meta) {
         if (self.destroyed || seq !== self.seq) throw new Error("stale");
@@ -581,9 +583,9 @@
         for (var i = 0; i < FRAMES; i++) {
           (function (i) {
             var t = Math.round(end - step * (FRAMES - 1 - i));
-            var url = SERVICE + "/exportImage?" + common +
+            var url = up("noaa", SERVICE + "/exportImage?" + common +
               "&interpolation=RSP_NearestNeighbor" +
-              "&time=" + Math.round(t - step) + "," + t;
+              "&time=" + Math.round(t - step) + "," + t);
             jobs.push(
               loadImage(url).then(function (img) {
                 if (self.destroyed || seq !== self.seq) return null;

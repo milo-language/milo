@@ -10,6 +10,12 @@ from "std/os" import {
     socket,
     getSockPort
 }
+from "std/runtime" import {
+    Task, schedulerRunToCompletion, schedulerWaitRead, schedulerWaitWrite
+}
+from "std/event" import {
+    setNonblocking
+}
 from "std/platform" import {
     SockAddrIn,
     makeSockaddr,
@@ -729,6 +735,100 @@ pub fn serveRouter(port: u16?, router: &Router): Result<Unit> {
         }
         close(clientFd)
     }
+    return Result.Err("server exited")
+}
+
+// The router the concurrent server is handing connections to. A spawned task
+// cannot borrow a caller's stack, and module scope only permits a
+// compile-time-constant initializer, so the router rides in a Vec that starts
+// empty and holds exactly one element from the first serve call onward.
+var activeRouter: Vec<Router> = []
+
+// A response can be a few hundred KB (a gridpoint feed, a radar frame), and a
+// green task's socket is non-blocking: one write() is not a promise to have
+// written all of it. serveRouter's single write is safe only because its socket
+// blocks; here a short write would truncate the body with no error anywhere.
+fn writeAll(fd: i32, buf: string): void {
+    var sent: i64 = 0
+    while sent < buf.len {
+        // The whole buffer on the first pass, so the common case is one write
+        // and no copy; only a short write pays for the remainder.
+        var chunk = buf.clone()
+        if sent > 0 {
+            chunk = buf.slice(sent, buf.len).clone()
+        }
+        let n = write(fd, chunk, chunk.len)
+        if n > 0 {
+            sent = sent + n
+            continue
+        }
+        // Non-blocking socket: EAGAIN is "not yet", not an error. Park until the
+        // kernel says there is room, or a 240KB body would be silently truncated
+        // at whatever the socket buffer happened to hold.
+        if n < 0 {
+            schedulerWaitWrite(fd)
+            continue
+        }
+        return
+    }
+}
+
+fn handleConn(clientFd: i32): void {
+    var buf: [u8; 8192] = [0; 8192]
+    // Park until the request is actually there. A blocking read here would stop
+    // the scheduler thread, which is the entire thing this loop exists to avoid.
+    schedulerWaitRead(clientFd)
+    let n = read(clientFd, buf, 8192)
+    if n > 0 && activeRouter.len > 0 {
+        let req = parseRequest(buf, n)
+        let handled = activeRouter[0].handle(req)
+        let wire = renderResponse(handled.response, handled.headers)
+        writeAll(clientFd, wire)
+    }
+    close(clientFd)
+}
+
+// Like serveRouter, but each connection is handled in its own green task.
+//
+// serveRouter answers one connection at a time, which is fine while every
+// handler is pure computation over embedded data. It stops being fine the
+// moment a handler talks to the network: one slow upstream then stalls every
+// other client for the whole round trip. Handlers that fetch need this loop.
+//
+// Never returns: the scheduler drives the accept task and the handlers it
+// spawns, exactly as a green-threaded server's main is supposed to.
+pub fn serveRouterConcurrent(port: u16?, router: Router): Result<Unit> {
+    let sock = openListener(port)?
+    if activeRouter.len == 0 {
+        activeRouter.push(router)
+    }
+    let listenFd = sock.fd
+    // accept() has no green-aware wrapper: on a blocking listener it parks the
+    // OS thread and no other task ever runs. Non-blocking plus an explicit
+    // kqueue/epoll wait is what makes the accept loop a cooperating task.
+    setNonblocking(listenFd)
+    Task.spawn(move(): void => {
+        while true {
+            schedulerWaitRead(listenFd)
+            // Drain: one readiness notification can cover several pending
+            // connections, and leaving them queued would stall until the next.
+            while true {
+                var clientAddr = makeZeroedSockaddrStorage()
+                var addrlen: u32 = sockAddrStorageLen()
+                let clientFd = accept(listenFd, clientAddr, addrlen)
+                if clientFd < 0 {
+                    break
+                }
+                setNonblocking(clientFd)
+                Task.spawn(move(): void => {
+                    handleConn(clientFd)
+                }
+                )
+            }
+        }
+    }
+    )
+    schedulerRunToCompletion()
     return Result.Err("server exited")
 }
 

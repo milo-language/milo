@@ -226,6 +226,22 @@ pub fn serveRouter(port: u16?, router: &Router): Result<Unit>
 
 Start an HTTP server using a Router (headers from Context are sent on the wire).
 
+### `serveRouterConcurrent`
+
+```milo
+pub fn serveRouterConcurrent(port: u16?, router: Router): Result<Unit>
+```
+
+Like serveRouter, but each connection is handled in its own green task.
+
+serveRouter answers one connection at a time, which is fine while every
+handler is pure computation over embedded data. It stops being fine the
+moment a handler talks to the network: one slow upstream then stalls every
+other client for the whole round trip. Handlers that fetch need this loop.
+
+Never returns: the scheduler drives the accept task and the handlers it
+spawns, exactly as a green-threaded server's main is supposed to.
+
 ### `statusText`
 
 ```milo
