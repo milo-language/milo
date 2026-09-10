@@ -260,8 +260,22 @@ function insightSentences(ctx) {
   return texts;
 }
 
+// One sentence, in a panel row with the spark tile. Two sentences of prose
+// under the temperature is a paragraph, and a paragraph is what the reader
+// skips; the second sentence goes to the 7-day eyebrow, where it is about the
+// list it sits over.
 function insightHtml(ctx) {
   var texts = insightSentences(ctx);
   if (!texts.length) return "";
-  return '<p class="hero-insight">' + esc(texts.join(" ")) + "</p>";
+  return (
+    '<div class="panel row insight-row">' +
+    '<span class="ico-tile" aria-hidden="true">' + iconSvg("insight") + "</span>" +
+    '<span class="grow row-text">' + esc(texts[0]) + "</span></div>"
+  );
+}
+
+// The precipitation or freeze sentence, for the 7-day section's eyebrow.
+function insightSub(ctx) {
+  var texts = insightSentences(ctx);
+  return texts.length > 1 ? texts[1] : "";
 }

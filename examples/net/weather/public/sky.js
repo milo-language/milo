@@ -550,9 +550,13 @@ function climateStatHtml() {
   var day = climateDay(new Date(), extrasTz);
   if (day.idx == null || c.normHi[day.idx] == null) return "";
   var d = heroHiLo.hi - c.normHi[day.idx];
-  return (
-    '<div class="stat" id="normalStat"><div class="stat-label">Vs Normal</div>' +
-    '<div class="stat-value">' + (Math.abs(Math.round(d)) <= 2 ? "Normal" : signedDeg(d)) + "</div></div>"
+  // A metric tile in the metrics row, not a column in the old four-stat block.
+  return metricTile(
+    "thermometer",
+    Math.abs(Math.round(d)) <= 2 ? "Normal" : signedDeg(d),
+    "",
+    "Vs normal",
+    "normalStat"
   );
 }
 
@@ -602,8 +606,12 @@ function loadClimate(lat, lon, timeZone) {
       climateHtml = climateTileHtml(c, new Date(), timeZone);
       var slot = document.getElementById("climateTile");
       if (slot) slot.innerHTML = climateHtml;
-      var stats = document.querySelector(".hero-stats");
-      if (stats && !document.getElementById("normalStat")) stats.innerHTML += climateStatHtml();
+      // The four-stat row this used to append into is gone; the climate stat is
+      // the fourth metric tile now.
+      var metrics = document.getElementById("metricsRow");
+      if (metrics && !document.getElementById("normalStat")) {
+        metrics.innerHTML += climateStatHtml();
+      }
       // the Tomorrow sentence can now say "above normal"
       renderExtras();
     })

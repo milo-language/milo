@@ -1,8 +1,16 @@
 var heroEl = document.getElementById("hero");
 var placesEl = document.getElementById("places");
 var zipInput = document.getElementById("zip");
-var searchBtn = document.getElementById("search");
 var errorEl = document.getElementById("error");
+var sheetEl = document.getElementById("placeSheet");
+var sheetScrimEl = document.getElementById("sheetScrim");
+
+// The green Search button used to carry the in-flight state as its own disabled
+// attribute. With the button gone, the input a second query would come from is
+// what holds it.
+function setSearchBusy(on) {
+  if (zipInput) zipInput.disabled = !!on;
+}
 
 var defaultLat = "37.7849";
 var defaultLon = "-122.4094";
@@ -934,7 +942,7 @@ function fetchWeather(lat, lon, city, saveLoc, exact) {
   heroEl.innerHTML =
     '<div class="loading">Loading' + (city ? " " + esc(city) : "") + "\u2026</div>";
   errorEl.textContent = "";
-  searchBtn.disabled = true;
+  setSearchBusy(true);
 
   var gridUrl = "";
   var locationTz = "";
@@ -969,7 +977,7 @@ function fetchWeather(lat, lon, city, saveLoc, exact) {
       ]);
     })
     .then(function (results) {
-      searchBtn.disabled = false;
+      setSearchBusy(false);
       render(city, results[0], results[1], results[2], locationTz);
       // After render: the tile writes into a slot render creates, and the
       // location's zone is only known once /points has answered.
@@ -977,7 +985,7 @@ function fetchWeather(lat, lon, city, saveLoc, exact) {
       loadClimate(lat, lon, locationTz);
     })
     .catch(function () {
-      searchBtn.disabled = false;
+      setSearchBusy(false);
       showError("Could not load weather data");
     });
 }
@@ -1003,7 +1011,7 @@ function geocodeAndFetch(query, push) {
   errorEl.textContent = "";
   heroEl.innerHTML =
     '<div class="loading">Looking up ' + esc(query) + "\u2026</div>";
-  searchBtn.disabled = true;
+  setSearchBusy(true);
 
   var isZip = /^\d{5}$/.test(query.trim());
 
@@ -1021,7 +1029,7 @@ function geocodeAndFetch(query, push) {
         fetchWeather(String(top.lat), String(top.lon), label, true);
       })
       .catch(function () {
-        searchBtn.disabled = false;
+        setSearchBusy(false);
         showError('Could not find "' + esc(query) + '". Try a city name or US ZIP code.');
       });
     return;
@@ -1052,7 +1060,7 @@ function geocodeAndFetch(query, push) {
       fetchWeather(r.lat, r.lon, label, true, true);
     })
     .catch(function () {
-      searchBtn.disabled = false;
+      setSearchBusy(false);
       showError('Could not find "' + esc(query) + '". Try a city name or US ZIP code.');
     });
 }
@@ -1373,11 +1381,61 @@ function extrasHtml() {
   return html;
 }
 
+// ── Metric tiles ──
+// The four-column stat row (11px label over a number, four times) was the
+// densest thing on the screen. These are the same four facts as tiles: a 34px
+// icon tile, a 17/600 value and a 12px label.
+
+// What render() knew about the current period, kept so the row can be rebuilt
+// when the UV or climate fetch lands without re-running the whole card.
+var metricsCtx = null;
+
+function metricTile(sym, value, small, label, id) {
+  return (
+    '<div class="metric"' + (id ? ' id="' + id + '"' : "") + ">" +
+    '<span class="ico-tile" aria-hidden="true">' + iconSvg(sym) + "</span>" +
+    '<div class="metric-v">' + value +
+    (small ? " <small>" + small + "</small>" : "") + "</div>" +
+    '<div class="metric-l">' + label + "</div></div>"
+  );
+}
+
+function metricsHtml() {
+  var c = metricsCtx;
+  if (!c) return "";
+  var html = "";
+  if (extrasData && extrasData.uv != null) {
+    html += metricTile("uv", String(Math.round(extrasData.uv)), uvLabel(extrasData.uv), "UV");
+  }
+  if (c.windSpeed) {
+    // windSpeed is "8 mph" or "5 to 10 mph". A range gets its top of band: the
+    // tile is the one number to plan around, and the tile grid below still
+    // carries the full range and the gusts.
+    var mph = String(c.windSpeed).match(/\d+/g);
+    html += metricTile(
+      "wind",
+      mph ? mph[mph.length - 1] : esc(c.windSpeed),
+      esc(c.windDir || "mph"),
+      "Wind"
+    );
+  }
+  if (c.precip !== null) html += metricTile("droplet", c.precip + "%", "", "Rain");
+  html += climateStatHtml();
+  return html;
+}
+
+function renderMetrics() {
+  var slot = document.getElementById("metricsRow");
+  if (slot) slot.innerHTML = metricsHtml();
+}
+
 function renderExtras() {
   var slot = document.getElementById("extraTiles");
   if (slot) slot.innerHTML = extrasHtml();
-  // The UV and air-quality rules need this fetch; the rest of the strip is
-  // already on screen, so it re-renders rather than waiting for it.
+  // The UV metric and the UV and air-quality advice rules all need this fetch;
+  // the rest of the card is already on screen, so they re-render rather than
+  // holding it back.
+  renderMetrics();
   renderAdvice();
 }
 
@@ -1398,7 +1456,7 @@ function renderAdvice() {
 // and the two things the panel cannot discover for itself: the point being
 // forecast, and the station serving it.
 function radarHtml() {
-  return '<div class="wx-divider"><div id="radarPanel"></div></div>';
+  return '<div class="section"><div id="radarPanel"></div></div>';
 }
 
 function renderRadar() {
@@ -1478,8 +1536,12 @@ function alertsHtml() {
     return (ra === undefined ? 4 : ra) - (rb === undefined ? 4 : rb);
   });
 
+  // Two rows, then a count. A stack of four advisories under the temperature is
+  // the information overload this screen is trying to lose; the rest are one tap
+  // away inside the row that carries the count.
+  var shown = Math.min(sorted.length, 2);
   var html = "";
-  for (var i = 0; i < Math.min(sorted.length, 4); i++) {
+  for (var i = 0; i < shown; i++) {
     var p = sorted[i].properties;
     var when = alertWhen(p);
     var detail =
@@ -1498,16 +1560,24 @@ function alertsHtml() {
         ? '<div class="alert-text alert-instruction">' +
           esc(unwrapNwsText(p.instruction)) + "</div>"
         : "");
+    var extra = sorted.length - shown;
+    // The severity is the tile colour and the left rule, never the row's own
+    // background: a red slab under the temperature competes with it for the eye.
     html +=
       '<div class="' + alertClass(p.severity) + '" data-pop data-pop-wide tabindex="0" role="button" ' +
       'data-pop-label="Weather alert" ' +
       'data-pop-value="' + esc(p.event || "Alert") + '" ' +
       'data-pop-sub="' + esc(when) + '">' +
-      '<svg class="alert-icon" viewBox="0 0 24 24" aria-hidden="true">' +
-      '<path d="M12 3 L22 20 L2 20 Z"/><path d="M12 9 L12 14"/><path d="M12 17 L12 17.5"/></svg>' +
+      '<span class="ico-tile alert-tile" aria-hidden="true">' +
+      iconSvg("alert-triangle") + "</span>" +
+      '<span class="alert-body">' +
       '<span class="alert-event">' + esc(p.event || "Alert") + "</span>" +
       (when ? '<span class="alert-when">' + esc(when) + "</span>" : "") +
-      '<span class="alert-more">Details</span>' +
+      "</span>" +
+      (i === shown - 1 && extra > 0
+        ? '<span class="alert-more">+' + extra + " more</span>"
+        : "") +
+      iconSvg("chevron", "row-chev") +
       '<template class="tile-detail">' + detail + "</template>" +
       "</div>";
   }
@@ -1789,34 +1859,34 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   var visibility = getGridVal(grid, "visibility");
   var precip = now.probabilityOfPrecipitation ? now.probabilityOfPrecipitation.value : null;
 
-  // Hero. High/Low and Feels like are hero lines now; what is left in the stat
-  // row is Precip and Vs normal. The container stays in the DOM either way:
-  // sky.js appends #normalStat into it when the climate fetch lands.
-  var stats = "";
-  if (precip !== null) {
-    stats +=
-      '<div class="stat"><div class="stat-label">Precip</div>' +
-      '<div class="stat-value">' + precip + "%</div></div>";
-  }
-  stats += climateStatHtml();
+  // Four numbers in one row, not four columns of words. UV comes from the
+  // extras fetch, which lands after this render, so the row rebuilds itself in
+  // renderMetrics(); sky.js appends #normalStat into it when climate lands.
+  metricsCtx = {
+    precip: precip,
+    windSpeed: now.windSpeed,
+    windDir: now.windDirection,
+  };
 
-  // The save control is pinned to the card's top corner rather than trailing the
-  // city name — inline, it split the centered title line and read as part of it.
-  var shareBtnHtml =
-    '<button class="share-btn" id="shareBtn" type="button" ' +
-    'title="Copy a link to this place" aria-label="Share this place">' +
-    shareSvg() +
-    '<span class="share-text">Share</span>' +
-    "</button>";
-
-  var favBtnHtml =
-    '<button class="fav-btn' + (isFavorite(city) ? " on" : "") + '" id="favBtn" ' +
-    'data-city="' + esc(city) + '" ' +
+  // A left-aligned bar, not a centred uppercase title with two corner pills:
+  // the city is a label for the answer below it, and the only control the first
+  // screen needs is the star. Search and share live in the place sheet.
+  var topBar =
+    '<div class="top-bar">' +
+    '<div class="top-place">' +
+    '<div class="top-city">' + esc(city) + "</div>" +
+    '<div class="top-updated">Updated ' + esc(fmtTimeInTz(new Date(), timeZone)) + "</div>" +
+    "</div>" +
+    '<button class="top-btn" id="placeBtn" type="button" ' +
+    'title="Search or choose a place" aria-label="Search or choose a place">' +
+    iconSvg("search") + "</button>" +
+    '<button class="top-btn fav-btn' + (isFavorite(city) ? " on" : "") + '" id="favBtn" ' +
+    'type="button" data-city="' + esc(city) + '" ' +
     'title="' + (isFavorite(city) ? "Remove from favorites" : "Save to favorites") + '" ' +
     'aria-pressed="' + (isFavorite(city) ? "true" : "false") + '">' +
     starSvg(isFavorite(city)) +
-    '<span class="fav-text">' + (isFavorite(city) ? "Saved" : "Save") + "</span>" +
-    "</button>";
+    "</button>" +
+    "</div>";
 
   adviceCtx = {
     hrs: hrs,
@@ -1830,9 +1900,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   };
 
   var hero =
-    '<div class="hero-city">' +
-    esc(city) +
-    "</div>" +
+    topBar +
     // One centred band: condition, number, trend, then the two plain lines.
     '<div class="hero-band">' +
     // The condition names the sky before the number quantifies it, so the
@@ -1861,17 +1929,16 @@ function render(city, forecast, hourlyData, grid, timeZone) {
       : "") +
     '<div class="hero-hl">H ' + hi + "° · L " + lo + "°</div>" +
     "</div>" +
-    // The week in a sentence, above the numbers rather than below them: the
-    // reader's first question is "what is this week doing", and the stat row
-    // answers a question they have not asked yet.
-    insightHtml(adviceCtx) +
-    '<div class="hero-stats">' + stats + "</div>" +
-    // Then what to do about the next few hours, and only then the forecast
-    // office's paragraph, which is thorough and reads like a telex.
-    '<div id="adviceSlot">' + adviceHtml(adviceCtx) + "</div>" +
-    '<div class="hero-detail">' +
-    '<div class="hero-detail-label">The forecast office’s own words</div>' +
-    esc(now.detailedForecast) + "</div>";
+    // The caveat sits under the answer, not above it: the temperature is what
+    // the visit came for, the advisory is the qualifier on it.
+    '<div id="alertSlot" class="section alerts">' + alertsHtml() + "</div>" +
+    // The week in one sentence. The second sentence (precipitation or a freeze)
+    // becomes the 7-day section's eyebrow sub, where it is about that list.
+    '<div id="insightSlot" class="section tight">' + insightHtml(adviceCtx) + "</div>" +
+    '<div class="section tight"><div class="metrics" id="metricsRow">' +
+    metricsHtml() + "</div></div>";
+  // The forecast office's paragraph is not rendered here at all: the identical
+  // detailedForecast is already inside the Today row's popover below.
 
   // Hourly strip
   var hourly = '<div class="hourly-scroll">';
@@ -1898,7 +1965,8 @@ function render(city, forecast, hourlyData, grid, timeZone) {
         esc(h.windSpeed) + (h.windDirection ? " from the " + esc(h.windDirection) : ""),
       );
     hourly +=
-      '<div class="hourly-item" data-pop tabindex="0" role="button"' +
+      '<div class="hourly-item' + (i === 0 ? " now" : "") +
+      '" data-pop tabindex="0" role="button"' +
       ' data-pop-label="' + esc(fmtDayLabel(h.startTime, timeZone)) + '"' +
       ' data-pop-value="' + hTemp + '°"' +
       ' data-pop-sub="' + esc(fmtHour(h.startTime, timeZone) + " · " + h.shortForecast) + '">' +
@@ -2188,15 +2256,16 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   }
 
   var range = allHi - allLo || 1;
+  // The caption explaining the shared scale is gone: the low and the high flank
+  // every bar, which is the explanation. The eyebrow's sub carries the week's
+  // second insight sentence instead, which is about this list.
+  var dSub = insightSub(adviceCtx);
   var dHtml =
-    '<div class="wx-divider"><div class="wx-section-title">' +
-    days.length + "-Day Forecast</div>" +
-    // The bars share one scale across the week, which is what makes them
-    // comparable and also what makes them unreadable until somebody says so.
-    '<div class="wx-section-note">Each bar spans that day&rsquo;s low to high on one ' +
-    "scale for the whole week (" + allLo + "° to " + allHi + "°). Tap a day for the " +
-    "full written forecast.</div>" +
-    "<div class=\"daily-list\">";
+    '<div class="section"><div class="eyebrow"><span>' +
+    days.length + " days</span>" +
+    (dSub ? '<span class="sub">' + esc(dSub) + "</span>" : "") +
+    "</div>" +
+    '<div class="panel daily-list">';
   for (var j = 0; j < days.length; j++) {
     var d = days[j];
     var barLeft = ((d.lo - allLo) / range) * 100;
@@ -2230,31 +2299,30 @@ function render(city, forecast, hourlyData, grid, timeZone) {
       '<div class="daily-bar-wrap"><div class="daily-bar" style="left:' + barLeft +
       "%;width:" + barWidth + '%"></div></div>' +
       '<div class="daily-high">' + d.hi + "°</div>" +
+      iconSvg("chevron", "row-chev") +
       '<template class="tile-detail">' + dDetail + "</template>" +
       "</div>";
   }
   dHtml += "</div></div>";
 
   heroEl.innerHTML =
-    '<div id="alertSlot" class="alerts">' + alertsHtml() + "</div>" +
     '<div class="wx-card ' + conditionClass(now.shortForecast, now.isDaytime) + '">' +
     '<div class="wispy-clouds">' +
     '<div class="wisp wisp-1"></div><div class="wisp wisp-2"></div>' +
     '<div class="wisp wisp-3"></div><div class="wisp wisp-4"></div>' +
     "</div>" +
     '<div class="wx-body">' +
-    shareBtnHtml +
-    favBtnHtml +
     hero +
-    '<div class="wx-divider"><div class="wx-section-title">Next 24 hours</div>' +
-    '<div class="wx-section-note">Tap an hour for its wind, humidity and dew point.</div>' +
+    // Sections are separated by a 24px gap and nothing else: the hairline
+    // dividers and the three "tap this for that" captions are gone, replaced by
+    // the chevron on every tappable row and the + on every tappable tile.
+    '<div class="section"><div class="eyebrow"><span>Next 24 hours</span></div>' +
     hourly + "</div>" +
     dHtml +
-    // The tile grid had no heading at all, so it read as a pile of numbers rather
-    // than as a section with a question behind each square.
-    '<div class="wx-divider"><div class="wx-section-title">Conditions in detail</div>' +
-    '<div class="wx-section-note">Tap any tile marked + for the numbers behind it and ' +
-    "what they mean.</div>" +
+    // Advice is demoted below the week: it is a footnote to the forecast, not
+    // the thing the forecast is wrapped around.
+    '<div id="adviceSlot" class="section">' + adviceHtml(adviceCtx) + "</div>" +
+    '<div class="section"><div class="eyebrow"><span>Conditions in detail</span></div>' +
     '<div class="tiles">' + tiles + "</div></div>" +
     '<div id="radarSlot">' + radarHtml() + "</div>" +
     "</div></div>";
@@ -2275,35 +2343,13 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   navPush = false;
   document.title = city + " Weather \u00b7 Weather by Milo";
 
-  var shareBtn = document.getElementById("shareBtn");
-  if (shareBtn) {
-    shareBtn.addEventListener("click", function () {
-      var url = shareUrl();
-      var title = city + " weather";
-      // The native sheet is the right thing on a phone, where the link's next
-      // stop is another app. Desktop Chrome also has navigator.share, but there
-      // it opens an OS panel to reach the same clipboard the button could have
-      // written to directly, so a coarse pointer gates it. A dismissed sheet
-      // rejects with AbortError, which is not a failure to report.
-      var touch = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
-      if (navigator.share && touch) {
-        navigator.share({ title: title, text: title, url: url }).catch(function () {});
-        return;
-      }
-      copyText(url).then(function (ok) {
-        flashShare(shareBtn, ok ? "Copied" : "Copy failed");
-      });
-    });
-  }
-
   // wired after innerHTML so the button exists; lat/lon come from the globals
   // the fetch set, which are what a restored favorite needs to re-query
   var favBtn = document.getElementById("favBtn");
   if (favBtn) {
     favBtn.addEventListener("click", function () {
       var on = toggleFavorite(city, currentLat, currentLon);
-      favBtn.innerHTML = starSvg(on) +
-        '<span class="fav-text">' + (on ? "Saved" : "Save") + "</span>";
+      favBtn.innerHTML = starSvg(on);
       favBtn.classList.toggle("on", on);
       favBtn.setAttribute("aria-pressed", on ? "true" : "false");
       favBtn.title = on ? "Remove from favorites" : "Save to favorites";
@@ -2311,8 +2357,38 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     });
   }
 
+  var placeBtn = document.getElementById("placeBtn");
+  if (placeBtn) placeBtn.addEventListener("click", openSheet);
+
   renderSaved();
   renderRadar();
+}
+
+// ── The place sheet ──
+// Everything you need before you know the weather (search, favorites, recents,
+// locate, share) and nothing you need after. It opens from the top bar's search
+// tile, which is why the first screen can spend its top 80px on the answer.
+
+function openSheet() {
+  if (!sheetEl) return;
+  sheetEl.hidden = false;
+  sheetScrimEl.hidden = false;
+  document.body.classList.add("sheet-open");
+  zipInput.value = "";
+  // focus() on a phone raises the keyboard over the list the sheet just opened
+  // to show, so only a fine pointer gets the cursor placed for it.
+  var fine = window.matchMedia && window.matchMedia("(pointer: fine)").matches;
+  if (fine) zipInput.focus();
+  showDefaultSuggestions();
+}
+
+function closeSheet() {
+  if (!sheetEl || sheetEl.hidden) return;
+  closeSuggestions();
+  zipInput.blur();
+  sheetEl.hidden = true;
+  sheetScrimEl.hidden = true;
+  document.body.classList.remove("sheet-open");
 }
 
 // ── Search / typeahead ──
@@ -2365,7 +2441,10 @@ function fetchSavedWx(fav) {
       if (!ps || !ps.length) throw new Error("empty");
       var atMs = Date.now();
       var idx = hourlyIndexAt(ps, atMs);
-      var wx = { temp: fmtTemp(tempAt(ps, atMs)), cond: ps[idx].shortForecast };
+      // Integers here, not fmtTemp's one decimal: a chip is a label, not an
+      // instrument, and the extra digit widens every chip in the rail. fmtTemp
+      // stays as it is — the hourly "Now" cell is the instrument.
+      var wx = { temp: String(Math.round(tempAt(ps, atMs))), cond: ps[idx].shortForecast };
       savedWxCache[fav.label] = wx;
       return wx;
     })
@@ -2486,8 +2565,7 @@ function syncFavButton() {
   if (!btn) return;
   var label = btn.getAttribute("data-city") || "";
   var on = isFavorite(label);
-  btn.innerHTML = starSvg(on) +
-    '<span class="fav-text">' + (on ? "Saved" : "Save") + "</span>";
+  btn.innerHTML = starSvg(on);
   btn.classList.toggle("on", on);
   btn.setAttribute("aria-pressed", on ? "true" : "false");
 }
@@ -2634,7 +2712,7 @@ function flashShare(btn, msg) {
   label.textContent = msg;
   btn.classList.add("copied");
   shareFlashTimer = setTimeout(function () {
-    label.textContent = "Share";
+    label.textContent = "Share this place";
     btn.classList.remove("copied");
     shareFlashTimer = null;
   }, 1600);
@@ -2688,7 +2766,7 @@ function pickSuggestion(item) {
   }
   zipInput.value = item.label;
   zipInput.blur();
-  closeSuggestions();
+  closeSheet();
   navPush = true;
   fetchWeather(item.lat, item.lon, item.label, true);
 }
@@ -2740,9 +2818,11 @@ function markMatch(label, query) {
 
 function renderSuggestions(items, query) {
   sugEl.innerHTML = "";
-  // "Use my location" is pinned to every list, so it stays reachable without
-  // having to clear whatever you've already typed.
-  sugItems = [{ kind: "locate", label: "Use my location", sub: "" }].concat(items || []);
+  // "Use my location" used to be a synthetic first row here. It is now a real
+  // pinned row in the sheet, above the list, so it stays reachable without
+  // having to clear whatever you've already typed — and without being the row
+  // Enter would land on.
+  sugItems = (items || []).slice();
   sugIndex = -1;
   sugItems.forEach(function (item, i) {
     var div = document.createElement("div");
@@ -2776,8 +2856,8 @@ function renderSuggestions(items, query) {
     });
     sugEl.appendChild(div);
   });
-  sugEl.classList.add("active");
-  zipInput.setAttribute("aria-expanded", "true");
+  sugEl.classList.toggle("active", sugItems.length > 0);
+  zipInput.setAttribute("aria-expanded", sugItems.length > 0 ? "true" : "false");
 }
 
 // abbreviation -> full state name, for the muted right-hand column
@@ -2912,7 +2992,7 @@ function doSearch() {
       return;
     }
   }
-  closeSuggestions();
+  closeSheet();
   if (z) geocodeAndFetch(z);
 }
 
@@ -2963,11 +3043,46 @@ zipInput.addEventListener("keydown", function (e) {
   }
 });
 
-document.addEventListener("click", function (e) {
-  if (!e.target.closest(".search-wrap")) closeSuggestions();
+// The click-outside listener that used to close the typeahead is gone with the
+// dropdown it closed: the list is inside a modal sheet whose scrim covers the
+// page, so the only click that can land outside it is the one on the scrim, and
+// that closes the whole sheet. Left in place it fired on the click that opened
+// the sheet — the top bar's tile is outside .search-wrap — and emptied the list
+// showDefaultSuggestions had just filled.
+
+// The green filled Search button is gone: enterkeyhint="search" is on the input
+// and the typeahead commits on Enter or a tap, so the button only ever repeated
+// a gesture the keyboard already offers.
+
+var sheetCloseBtn = document.getElementById("sheetClose");
+if (sheetCloseBtn) sheetCloseBtn.addEventListener("click", closeSheet);
+if (sheetScrimEl) sheetScrimEl.addEventListener("click", closeSheet);
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && sheetEl && !sheetEl.hidden) closeSheet();
 });
 
-searchBtn.addEventListener("click", doSearch);
+// Bound once, not per render: the button lives in the sheet now, which survives
+// every re-render, so re-binding it would stack a listener per sun countdown.
+var shareBtn = document.getElementById("shareBtn");
+if (shareBtn) {
+  shareBtn.addEventListener("click", function () {
+    var url = shareUrl();
+    var title = currentCityLabel + " weather";
+    // The native sheet is the right thing on a phone, where the link's next
+    // stop is another app. Desktop Chrome also has navigator.share, but there
+    // it opens an OS panel to reach the same clipboard the button could have
+    // written to directly, so a coarse pointer gates it. A dismissed sheet
+    // rejects with AbortError, which is not a failure to report.
+    var touch = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    if (navigator.share && touch) {
+      navigator.share({ title: title, text: title, url: url }).catch(function () {});
+      return;
+    }
+    copyText(url).then(function (ok) {
+      flashShare(shareBtn, ok ? "Copied" : "Copy failed");
+    });
+  });
+}
 
 // Geolocation
 locateBtn.addEventListener("click", function () {
@@ -2975,7 +3090,7 @@ locateBtn.addEventListener("click", function () {
     showError("Geolocation not supported in this browser.");
     return;
   }
-  closeSuggestions();
+  closeSheet();
   locateBtn.disabled = true;
   locateBtn.classList.add("locating");
   heroEl.innerHTML = '<div class="loading">Getting location...</div>';

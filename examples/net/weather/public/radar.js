@@ -344,7 +344,7 @@
     this.el.innerHTML =
       '<div class="wxr">' +
         '<div class="wxr-head">' +
-          '<div class="wx-section-title">Radar</div>' +
+          '<div class="eyebrow"><span>Radar</span></div>' +
           '<div class="wxr-badge"><span class="wxr-live"></span>MRMS' + st + "</div>" +
         "</div>" +
         '<div class="wxr-stage">' +
@@ -433,7 +433,7 @@
     var st = encodeURIComponent(this.station);
     this.el.innerHTML =
       '<div class="wxr">' +
-        '<div class="wxr-head"><div class="wx-section-title">Radar</div>' +
+        '<div class="wxr-head"><div class="eyebrow"><span>Radar</span></div>' +
         '<div class="wxr-badge"><span class="wxr-live"></span>NWS ' + esc(this.station) +
         "</div></div>" +
         '<div class="radar-frame"><img class="radar-img" alt="National Weather Service ' +

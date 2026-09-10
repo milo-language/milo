@@ -270,26 +270,6 @@
           <span class="install-text">Install</span>
         </button>
         <div class="install-tip" id="installTip" role="status" hidden></div>
-        <div class="search-bar">
-          <button class="locate-btn" id="locate" title="Use my location" aria-label="Use my location">
-            <svg class="ico" aria-hidden="true"><use href="#locate"></use></svg>
-          </button>
-          <div class="search-wrap">
-            <input
-              type="text"
-              id="zip"
-              placeholder="City or ZIP code"
-              autocomplete="off"
-              enterkeyhint="search"
-              role="combobox"
-              aria-autocomplete="list"
-              aria-expanded="false"
-              aria-controls="suggestions"
-            />
-            <div class="suggestions" id="suggestions" role="listbox"></div>
-          </div>
-          <button id="search">Search</button>
-        </div>
       </div>
     </nav>
 
@@ -298,6 +278,50 @@
       <div id="error"></div>
       <div id="hero"></div>
     </main>
+
+    <!-- Search, saved places and the once-a-month actions live one tap away.
+         The first screen answers "what is it doing outside"; the controls that
+         got you there cost 80px above that answer, so a 44px tile in the card's
+         top bar opens this sheet instead. The typeahead commits on Enter or a
+         tap, which is why there is no Search button. -->
+    <div class="sheet-scrim" id="sheetScrim" hidden></div>
+    <div class="sheet" id="placeSheet" role="dialog" aria-modal="true" aria-label="Places" hidden>
+      <div class="sheet-head">
+        <div class="sheet-title">Places</div>
+        <button class="sheet-close" id="sheetClose" type="button" aria-label="Close">
+          <svg class="ico" aria-hidden="true"><use href="#close"></use></svg>
+        </button>
+      </div>
+      <div class="search-bar">
+        <div class="search-wrap">
+          <input
+            type="text"
+            id="zip"
+            placeholder="City or ZIP code"
+            autocomplete="off"
+            enterkeyhint="search"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded="false"
+            aria-controls="suggestions"
+          />
+        </div>
+      </div>
+      <!-- Pinned above the list, not synthesised as its first row: it stays
+           reachable whatever you have typed, and it is never the row Enter
+           lands on. -->
+      <button class="sheet-row" id="locate" type="button" aria-label="Use my location">
+        <span class="ico-tile"><svg class="ico" aria-hidden="true"><use href="#locate"></use></svg></span>
+        <span>Use my location</span>
+      </button>
+      <!-- Favorites and recents when the input is empty, typeahead results when
+           it is not — showDefaultSuggestions and renderSuggestions both fill this. -->
+      <div class="suggestions" id="suggestions" role="listbox"></div>
+      <button class="sheet-row" id="shareBtn" type="button" aria-label="Share this place">
+        <span class="ico-tile"><svg class="ico" aria-hidden="true"><use href="#share"></use></svg></span>
+        <span class="share-text">Share this place</span>
+      </button>
+    </div>
 
     <footer class="footer">
       <div class="footer-inner">

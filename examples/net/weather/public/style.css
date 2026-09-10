@@ -260,39 +260,9 @@ body {
   padding: 0.5rem 0.7rem;
 }
 
-/* The advice strip. Sits inside the weather-tinted card, so it borrows the
-   card's own contrast rather than introducing a panel colour of its own. */
-.advice {
-  list-style: none;
-  margin: 0.85rem auto 0;
-  padding: 0.7rem 0.9rem;
-  max-width: 34rem;
-  text-align: left;
-  background: var(--panel);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-tile);
-  display: grid;
-  gap: 0.45rem;
-}
-
-.advice-row {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  font-size: 0.9375rem;
-  line-height: 1.4;
-}
-
-.advice-icon {
-  flex: 0 0 auto;
-  width: var(--tap-secondary);
-  height: var(--tap-secondary);
-  border-radius: var(--r-sm);
-  background: var(--panel-hi);
-  border: 1px solid var(--hairline);
-  display: grid;
-  place-items: center;
-}
+/* The advice strip, demoted below the 7-day list: one line per item, clipped,
+   with the whole sentence in the popover. Its rows are .row, so all that is
+   left here is the clip above and the mobile cap below. */
 
 /* The UV curve is draggable, so the browser must not claim the gesture for
    panning first: touch-action none on the hit target only, which keeps the
@@ -336,98 +306,123 @@ body {
   stroke-dasharray: 2 2;
 }
 
-/* ── Search widget ── */
+/* ── The place sheet ──
+   Search, favorites, recents, locate and share, all one tap from the top bar's
+   search tile. Off the first screen entirely: the chip rail and the search bar
+   together cost 80px above the answer, and neither is what the visit came for.
+   The sheet is the one place --primary still appears, as a focus ring. */
 
-.search-bar {
+.sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+.sheet {
+  position: fixed;
+  z-index: 51;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 85vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-4) calc(var(--sp-4) + env(safe-area-inset-bottom));
+  color: var(--text);
+  background: var(--sheet);
+  backdrop-filter: blur(16px);
+  border-top-left-radius: var(--r-xl);
+  border-top-right-radius: var(--r-xl);
+  border-top: 1px solid var(--hairline);
+  box-shadow: var(--shadow-card);
+}
+
+/* the hidden attribute loses to display:flex without this */
+.sheet[hidden],
+.sheet-scrim[hidden] {
+  display: none;
+}
+
+/* the page behind a modal sheet must not scroll under it */
+body.sheet-open {
+  overflow: hidden;
+}
+
+@media (min-width: 640px) {
+  .sheet {
+    left: 50%;
+    bottom: auto;
+    top: 10vh;
+    transform: translateX(-50%);
+    width: min(28rem, calc(100vw - 2rem));
+    border-radius: var(--r-xl);
+    border: 1px solid var(--hairline);
+  }
+}
+
+.sheet-head {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  flex: 1 1 18rem;
-  max-width: 30rem;
-  margin-left: auto;
+  justify-content: space-between;
+  gap: var(--sp-3);
 }
 
-.search-wrap {
-  position: relative;
-  flex: 1;
+.sheet-title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-.search-bar input {
-  width: 100%;
-  padding: 0.5rem 0.85rem;
-  font-size: 0.875rem;
+.sheet-close {
+  width: var(--tap-primary);
+  height: var(--tap-primary);
+  margin-right: calc(var(--sp-2) * -1);
+  display: grid;
+  place-items: center;
   font-family: inherit;
-  color: var(--content);
-  background: var(--base-100);
-  border: 1px solid var(--base-300);
-  border-radius: var(--radius-btn);
-  outline: none;
-  transition:
-    border-color 0.15s,
-    box-shadow 0.15s;
-}
-
-.search-bar input::placeholder {
-  color: var(--ink-faint);
-}
-
-.search-bar input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(31, 122, 61, 0.22);
-}
-
-.search-bar button {
-  padding: 0.5rem 0.9rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  font-family: inherit;
-  color: #fff;
-  background: var(--primary);
+  color: var(--text);
+  background: transparent;
   border: none;
-  border-radius: var(--radius-btn);
+  border-radius: var(--r-full);
   cursor: pointer;
-  white-space: nowrap;
+}
+
+.sheet-close:hover {
+  background: var(--panel-hi);
+}
+
+.sheet-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  min-height: var(--tap-primary);
+  padding: var(--sp-2) var(--sp-3);
+  font-family: inherit;
+  font-size: var(--fs-secondary);
+  text-align: left;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  cursor: pointer;
   transition: background-color 0.15s;
 }
 
-.search-bar button:hover:not(:disabled) {
-  background: var(--primary-hover);
+.sheet-row:hover {
+  background: var(--panel-hi);
 }
 
-.search-bar button:disabled,
-.locate-btn:disabled {
+.sheet-row:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.locate-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.5rem;
-  line-height: 1;
-  font-family: inherit;
-  color: var(--ink-2);
-  background: var(--base-100);
-  border: 1px solid var(--base-300);
-  border-radius: var(--radius-btn);
-  cursor: pointer;
-  transition:
-    background-color 0.15s,
-    color 0.15s;
-}
-
-.locate-btn .ico {
-  width: 1.05rem;
-  height: 1.05rem;
-}
-
-.locate-btn:hover:not(:disabled) {
-  background: var(--base-200);
-  color: var(--primary);
-}
-
-.locate-btn.locating {
+.sheet-row.locating {
   animation: locate-pulse 1s ease-in-out infinite;
 }
 
@@ -437,19 +432,56 @@ body {
   }
 }
 
+/* the copy confirmation is the only thing the row says while it is showing */
+.sheet-row.copied {
+  border-color: var(--edge);
+}
+
+.search-bar {
+  display: flex;
+}
+
+.search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.search-bar input {
+  width: 100%;
+  height: var(--tap-primary);
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-body);
+  font-family: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.search-bar input::placeholder {
+  color: var(--text-muted);
+}
+
+.search-bar input:focus {
+  border-color: var(--edge);
+  box-shadow: 0 0 0 3px rgba(31, 122, 61, 0.35);
+}
+
+/* Inside the sheet the typeahead is a list, not a dropdown: there is nothing
+   underneath it to overlay, and a floating panel over a floating panel reads
+   as two surfaces for one job. */
 .suggestions {
   display: none;
-  position: absolute;
-  top: calc(100% + 0.25rem);
-  left: 0;
-  right: 0;
-  z-index: 40;
-  background: var(--base-100);
-  border: 1px solid var(--base-300);
-  border-radius: var(--radius-btn);
-  box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.18);
-  max-height: 20rem;
+  max-height: 40vh;
   overflow-y: auto;
+  border-radius: var(--r-md);
+  border: 1px solid var(--hairline);
+  background: var(--panel);
 }
 
 .suggestions.active {
@@ -460,10 +492,11 @@ body {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.5rem 0.85rem;
+  gap: var(--sp-3);
+  min-height: var(--tap-primary);
+  padding: var(--sp-2) var(--sp-3);
   cursor: pointer;
-  border-top: 1px solid var(--ink-line);
+  border-top: 1px solid var(--hairline);
   transition: background-color 0.15s;
 }
 
@@ -473,34 +506,16 @@ body {
 
 .suggestion-item:hover,
 .suggestion-item.active {
-  background: rgba(242, 242, 242, 0.9);
-}
-
-/* pinned action row, so it reads as distinct from the place results below it */
-.suggestion-item.locate {
-  border-top: none;
-  border-bottom: 1px solid var(--base-300);
-  color: var(--primary);
-}
-
-.suggestion-item.locate .sug-city {
-  font-weight: 600;
-}
-
-.sug-icon {
-  margin-right: 0.4rem;
-}
-
-svg.sug-icon {
-  width: 0.85rem;
-  height: 0.85rem;
-  display: inline-block;
-  vertical-align: -1px;
+  background: var(--panel-hi);
 }
 
 .sug-city {
-  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-secondary);
   font-weight: 500;
+  min-width: 0;
 }
 
 /* the matched run of a typeahead result — weight alone, no colour, so the row
@@ -510,8 +525,20 @@ svg.sug-icon {
 }
 
 .sug-region {
-  font-size: 0.75rem;
-  color: var(--ink-muted);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.sug-icon,
+.suggestion-item .star {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.suggestion-item .star.filled {
+  color: var(--accent);
 }
 
 /* ── Page shell ── */
@@ -679,120 +706,81 @@ svg.sug-icon {
   }
 }
 
-/* ── Hero block ── */
+/* ── Top bar ──
+   Left-aligned: the city is a label for the answer under it, not a title over a
+   poster. Two 44px tiles on the right, both --panel pills so nothing bare sits
+   under the sun glow. */
 
-.hero-city {
-  font-size: 0.875rem;
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 56px;
+}
+
+.top-place {
+  flex: 1;
+  min-width: 0;
+}
+
+.top-city {
+  font-size: var(--fs-title);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.025em;
-  opacity: 0.92;
-  text-align: center;
-  /* keeps a long centered name clear of the corner save pill */
-  padding: 0 5.5rem;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* a bare outline star read as decoration — it's the only control that saves a
-   place, so it gets a filled pill and a word. Pinned to the card corner: inline
-   after the city name it broke up the title line. */
-.fav-btn {
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 3;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.25rem 0.6rem 0.25rem 0.5rem;
+.top-updated {
+  font-size: var(--fs-caption);
+  line-height: 1.3;
+  color: var(--text-2);
+}
+
+.top-btn {
+  flex: 0 0 auto;
+  width: var(--tap-primary);
+  height: var(--tap-primary);
+  display: grid;
+  place-items: center;
   font-family: inherit;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: inherit;
+  color: var(--text);
   background: var(--panel);
   border: 1px solid var(--hairline);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   cursor: pointer;
   text-shadow: none;
   transition:
     background-color 0.15s,
-    border-color 0.15s;
+    color 0.15s;
 }
 
-.fav-btn:hover {
+.top-btn:hover {
   background: var(--panel-hi);
 }
 
+.top-btn .ico {
+  width: 22px;
+  height: 22px;
+}
+
+/* filled = saved; the star-filled symbol paints itself with currentColor, so
+   the accent token is the only thing this rule has to say */
 .fav-btn.on {
-  border-color: rgba(251, 191, 36, 0.8);
-  background: rgba(251, 191, 36, 0.22);
-}
-
-.fav-btn .star {
-  width: 0.9rem;
-  height: 0.9rem;
-}
-
-/* Mirrors .fav-btn into the opposite corner: the hero title already reserves a
-   symmetric 5.5rem gutter, so the left corner was the one free spot that did
-   not push the centered name around. */
-.share-btn {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 3;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.25rem 0.6rem 0.25rem 0.5rem;
-  font-family: inherit;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: inherit;
-  background: var(--panel);
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
-  cursor: pointer;
-  text-shadow: none;
-  transition:
-    background-color 0.15s,
-    border-color 0.15s;
-}
-
-.share-btn:hover {
-  background: var(--panel-hi);
-}
-
-.share-btn.copied {
-  border-color: rgba(52, 211, 153, 0.8);
-  background: rgba(52, 211, 153, 0.24);
-}
-
-.share-ico {
-  width: 0.9rem;
-  height: 0.9rem;
+  color: var(--accent);
 }
 
 .star {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 22px;
+  height: 22px;
 }
 
 /* filled = saved. The star-filled symbol paints itself with currentColor, so
    the accent token is the only thing this rule has to say. */
 .star.filled {
   color: var(--accent);
-}
-
-.suggestion-item.fav .star {
-  width: 0.85rem;
-  height: 0.85rem;
-  margin-right: 0.4rem;
-  display: inline-block;
-  vertical-align: -2px;
 }
 
 .hero-band {
@@ -952,107 +940,205 @@ svg.sug-icon {
   }
 }
 
-/* The lede. Larger than the paragraph it replaced as the first prose on the
-   card, because it is the one line most visits read and then leave. */
-.hero-insight {
-  margin: 0.7rem auto 0;
-  max-width: 32rem;
-  font-size: 1.0625rem;
-  line-height: 1.45;
-  font-weight: 500;
-  text-align: center;
-  text-wrap: pretty;
+/* ── Sections, panels and rows ──
+   The vertical rhythm of the whole card: a 24px gap between sections and
+   nothing else. The hairline dividers and the three "tap this for that"
+   captions that used to separate them are gone; the chevron on a tappable row
+   and the + on a tappable tile say the same thing where the tap happens. */
+
+.section {
+  margin-top: var(--sp-5);
 }
 
-.hero-stats {
+/* the alert, insight and metrics rows read as one block under the hero, so
+   they sit 12px apart rather than 24 */
+.section + .section.tight,
+.section.tight + .section.tight {
+  margin-top: var(--sp-3);
+}
+
+/* an empty slot must not leave its 24px gap behind */
+.section:empty,
+.alerts:empty {
+  display: none;
+}
+
+/* Was .wx-section-title: 14px uppercase, which competed with the row text it
+   labelled. 12px is a label, not a heading. */
+.eyebrow {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem 2rem;
-  margin-top: 0.75rem;
-}
-
-.stat {
-  text-align: center;
-}
-
-.stat-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.025em;
-  opacity: 0.88;
-}
-
-.stat-value {
-  font-size: 0.875rem;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-label);
   font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: none;
+}
+
+.eyebrow .sub {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--fs-caption);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: right;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  /* the card's shadow is for text on the raw sky; inside a scrim it smears */
+  text-shadow: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 52px;
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.row + .row {
+  border-top: 1px solid var(--hairline);
+}
+
+.row .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-text {
+  display: block;
+  font-size: var(--fs-secondary);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* the affordance that replaced the word "Details" and the three captions */
+.row-chev {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: var(--text-2);
+}
+
+/* ── The lede ──
+   One sentence, weight 400, at most two lines. The second sentence is the
+   7-day eyebrow's sub. */
+
+.insight-row .row-text {
+  white-space: normal;
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Metric tiles ──
+   Four numbers in one row: UV, wind, rain, and today against the normal. */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 96px;
+  padding: var(--sp-3) var(--sp-2) var(--sp-2);
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  text-shadow: none;
+}
+
+.metric-v {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.2;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
-/* Demoted below the lede and the advice strip: it is the most complete text on
-   the card and the least readable, so it reads as a citation now. */
-.hero-detail-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.025em;
-  opacity: 0.72;
-  margin-bottom: 0.2rem;
+.metric-v small {
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  color: var(--text-2);
 }
 
-.hero-detail {
-  margin-top: 0.9rem;
-  font-size: 0.8125rem;
-  line-height: 1.5;
-  opacity: 0.94;
+.metric-l {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
   text-align: center;
 }
 
-/* Section divider inside the gradient card — the core visual rhythm. */
-.wx-divider {
-  margin-top: 1rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--hairline);
+/* Four tiles in 358px leaves 67px inside each one, which "VS NORMAL" does not
+   fit at 12px. The label is the first thing to give, not the number. */
+.metric-l {
+  white-space: nowrap;
 }
 
-.wx-section-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.025em;
-  opacity: 0.92;
-  margin-bottom: 0.5rem;
+@media (max-width: 480px) {
+  .metric-l {
+    font-size: 11px;
+    letter-spacing: 0.02em;
+  }
 }
 
-/* ── Hourly strip ── */
+/* ── Hourly strip ──
+   56px --panel tiles bled to the card's edge, so the cut-off seventh cell is
+   the scroll hint the caption used to be. The "Now" cell is --panel-hi and
+   keeps its one decimal: it is the same live quantity as the hero. */
 
 .hourly-scroll {
   display: flex;
+  gap: var(--sp-2);
   overflow-x: auto;
-  gap: 0.25rem;
-  padding-bottom: 0.5rem;
-  scrollbar-width: thin;
+  margin: 0 -1.25rem;
+  padding: 0 1.25rem var(--sp-1);
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
 .hourly-scroll::-webkit-scrollbar {
-  height: 4px;
-}
-
-.hourly-scroll::-webkit-scrollbar-thumb {
-  background: var(--hairline);
-  border-radius: 2px;
+  display: none;
 }
 
 .hourly-item {
+  flex: none;
+  width: 56px;
+  min-height: 92px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.375rem;
-  min-width: 3.5rem;
-  padding: 0.5rem 0.375rem;
-  border-radius: var(--radius-btn);
+  justify-content: space-between;
+  padding: var(--sp-2) 0;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  text-shadow: none;
   transition: background-color 0.15s;
+}
+
+.hourly-item.now {
+  background: var(--panel-hi);
 }
 
 .hourly-item:hover {
@@ -1060,10 +1146,10 @@ svg.sug-icon {
 }
 
 .hourly-time {
-  font-size: 11px;
+  font-size: var(--fs-label);
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.025em;
-  opacity: 0.88;
+  letter-spacing: 0.06em;
 }
 
 .hourly-icon {
@@ -1083,7 +1169,7 @@ svg.sug-icon {
 }
 
 .hourly-temp {
-  font-size: 0.875rem;
+  font-size: var(--fs-secondary);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -1112,11 +1198,12 @@ svg.sug-icon {
   display: flex;
   flex-direction: column;
   row-gap: 0.375rem;
-  border-radius: var(--radius-tile);
+  border-radius: var(--r-md);
   border: 1px solid var(--hairline);
   background: var(--panel);
   padding: 0.75rem;
   text-align: left;
+  text-shadow: none;
 }
 
 .tile-label {
@@ -1326,14 +1413,6 @@ svg.sug-icon {
   pointer-events: none;
 }
 
-/* A caption under a section title, saying how to read the thing below it. */
-.wx-section-note {
-  font-size: 0.75rem;
-  line-height: 1.45;
-  opacity: 0.78;
-  margin: -0.25rem 0 0.55rem;
-}
-
 .hourly-item[data-pop]:focus-visible,
 .daily-row[data-pop]:focus-visible {
   outline: 2px solid rgba(255, 255, 255, 0.8);
@@ -1479,84 +1558,88 @@ svg.sug-icon {
 }
 
 /* ── Active NWS alerts ──
-   Above the card, on the page background rather than the gradient: a warning
-   has to survive whatever the condition class is doing behind it. */
-
-.alerts:empty {
-  display: none;
-}
+   Directly under the hero, inside the card: the temperature is the answer and
+   the advisory is the caveat on it. Severity is carried by the 34px icon tile
+   and a 3px left rule, never by the row's own background — a red slab here
+   competes with the number above it, and teaches people to ignore both. */
 
 .alerts {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  gap: var(--sp-2);
 }
 
 .alert-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 0.35rem 0.5rem;
-  padding: 0.6rem 0.85rem;
-  border-radius: var(--radius-tile);
-  border: 1px solid;
-  font-size: 0.875rem;
+  gap: var(--sp-3);
+  min-height: 52px;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--hairline);
+  border-radius: var(--r-lg);
+  font-size: var(--fs-secondary);
   cursor: pointer;
-  transition: filter 0.15s;
+  text-shadow: none;
+  transition: background-color 0.15s;
 }
 
 .alert-row:hover {
-  filter: brightness(0.97);
+  background: var(--panel-hi);
 }
 
 /* Extreme/Severe only. Giving an Air Quality Alert the same red as a Tornado
    Warning teaches people to ignore both. */
 .sev-high {
-  background: rgba(185, 28, 28, 0.1);
-  border-color: rgba(185, 28, 28, 0.45);
-  color: #991b1b;
+  border-left-color: var(--sev-high);
+}
+
+.sev-high .alert-tile {
+  background: var(--sev-high);
+  border-color: transparent;
+  color: var(--sev-high-ink);
 }
 
 .sev-mid {
-  background: rgba(217, 119, 6, 0.1);
-  border-color: rgba(217, 119, 6, 0.4);
-  color: #92400e;
+  border-left-color: var(--sev-mid);
 }
 
-.sev-low {
-  background: var(--ink-wash);
-  border-color: var(--ink-edge);
-  color: var(--ink-strong);
+.sev-mid .alert-tile {
+  background: var(--sev-mid);
+  border-color: transparent;
+  color: var(--sev-mid-ink);
 }
 
-.alert-icon {
-  width: 1.1rem;
-  height: 1.1rem;
-  flex: 0 0 auto;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linejoin: round;
-  stroke-linecap: round;
+.alert-body {
+  flex: 1;
+  min-width: 0;
 }
 
 .alert-event {
-  font-weight: 700;
+  display: block;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .alert-when {
-  opacity: 0.8;
-  font-size: 0.8125rem;
+  display: block;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+/* Two rows is the cap; the rest are counted here and reachable through the
+   popover on the row this sits in. */
 .alert-more {
-  margin-left: auto;
-  font-size: 0.75rem;
+  flex: 0 0 auto;
+  font-size: var(--fs-caption);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  opacity: 0.75;
+  color: var(--text-2);
   white-space: nowrap;
 }
 
@@ -1581,39 +1664,24 @@ svg.sug-icon {
   opacity: 1;
 }
 
-@media (max-width: 640px) {
-  /* the whole row is tappable; the word is only there as a desktop affordance */
-  .alert-more {
-    display: none;
-  }
-}
+/* ── The 7-day list ──
+   One panel, 44px rows. The neutral light "card" it used to be, plus the
+   .wx-card overrides that re-tinted every one of its rules for white-on-sky,
+   are both gone: with one ink there is one set of rules. Both stacked panels
+   clip their rows so a hover does not square off the panel's corners. */
 
-/* ── Neutral list card (7-day forecast) ── */
-
-.card {
-  border-radius: var(--radius-tile);
-  border: 1px solid var(--base-300);
-  background: var(--base-100);
+.daily-list,
+.advice {
   overflow: hidden;
-}
-
-.card-head {
-  padding: 0.75rem 1rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.025em;
-  color: var(--ink-2);
-  border-bottom: 1px solid var(--base-300);
-  background: rgba(242, 242, 242, 0.4);
 }
 
 .daily-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.625rem 1rem;
-  border-top: 1px solid var(--ink-line);
+  gap: var(--sp-3);
+  height: 44px;
+  padding: 0 var(--sp-3);
+  border-top: 1px solid var(--hairline);
   transition: background-color 0.15s;
 }
 
@@ -1622,17 +1690,17 @@ svg.sug-icon {
 }
 
 .daily-row:hover {
-  background: rgba(242, 242, 242, 0.6);
+  background: var(--panel-hi);
 }
 
 .daily-name {
-  width: 2.75rem;
-  font-size: 0.875rem;
-  font-weight: 500;
+  width: 40px;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
 }
 
 .daily-icon {
-  width: 1.75rem;
+  width: 20px;
   display: flex;
   justify-content: center;
 }
@@ -1644,14 +1712,14 @@ svg.sug-icon {
 
 .daily-low,
 .daily-high {
-  width: 2.25rem;
-  font-size: 0.875rem;
+  width: 32px;
+  font-size: var(--fs-secondary);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
 .daily-low {
-  color: var(--ink-muted);
+  color: var(--text-2);
 }
 
 .daily-high {
@@ -1661,40 +1729,21 @@ svg.sug-icon {
 .daily-bar-wrap {
   position: relative;
   flex: 1;
-  height: 0.375rem;
-  border-radius: 999px;
+  height: 6px;
+  border-radius: var(--r-full);
   overflow: hidden;
-  background: var(--ink-wash);
+  background: var(--panel-hi);
 }
 
+/* One ink here too. The old #7dd3fc -> #fde047 -> #fb923c gradient implied a
+   temperature scale it was not on (the bar spans one day's low to high on the
+   week's scale, not a cold-to-hot ramp), and it was the only other colour on
+   the page competing with the condition glyph. */
 .daily-bar {
   position: absolute;
   height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #7dd3fc, #fde047, #fb923c);
-}
-
-/* The 7-day list sits inside the gradient card (between the hourly strip and
-   the detail tiles), so the neutral list colors above have to be re-tinted for
-   white-on-gradient. */
-
-.wx-card .daily-row {
-  padding: 0.5rem 0;
-  border-top-color: var(--hairline);
-}
-
-.wx-card .daily-row:hover {
-  background: var(--panel);
-}
-
-.wx-card .daily-low {
-  color: var(--text-2);
-}
-
-/* dark track, not a translucent white one: the bar has to be the light thing
-   on the card, or its cool end disappears into the gradient */
-.wx-card .daily-bar-wrap {
-  background: var(--panel-hi);
+  border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.75);
 }
 
 /* ── Footer ── */
@@ -1778,31 +1827,10 @@ svg.sug-icon {
   .nav-row {
     gap: 0.5rem;
   }
-  .search-bar {
-    flex: 1 1 100%;
-    max-width: none;
-    margin-left: 0;
-  }
-  .hero-stats {
-    gap: 0.5rem 1.25rem;
-  }
-  /* narrow cards can't spare 5.5rem of gutter for a worded pill — the star
-     alone still reads as the save control once it's the only corner element */
-  .fav-btn .fav-text,
-  .share-btn .share-text {
+  /* Only two advice lines above the tile grid on a phone; ADVICE_MAX is still
+     3, and the third is there the moment there is room for it. */
+  .advice .advice-row:nth-child(n + 3) {
     display: none;
-  }
-  /* the copy confirmation is the only thing the button says, so it comes back
-     for the second and a half it is showing */
-  .share-btn.copied .share-text {
-    display: inline;
-  }
-  .fav-btn,
-  .share-btn {
-    padding: 0.3rem 0.4rem;
-  }
-  .hero-city {
-    padding: 0 2.25rem;
   }
   .daily-name {
     width: 2.5rem;
@@ -1816,47 +1844,22 @@ svg.sug-icon {
 }
 
 /* ── Your places (favorites + recents) ──
-   A wrapping chip row above the card on narrow screens; a sticky rail beside
-   it once the viewport is wide enough that a single column wastes the space. */
+   Below 1100px the rail is gone: the same favorites and recents are the default
+   rows of the search sheet (showDefaultSuggestions), and 60-80px of chips above
+   the answer, each one carrying a spurious decimal, is what the sheet is for.
+   The sticky rail returns once the viewport is wide enough that a single column
+   wastes the space. */
 
 .places {
-  display: flex;
+  display: none;
   flex-wrap: wrap;
   gap: 0.4rem;
-}
-
-.places:not(.has-places) {
-  display: none;
 }
 
 /* The container's column gap applies to every child, so an empty error div
    still costs a full gap between the chips and the card. */
 #error:empty {
   display: none;
-}
-
-/* Phone widths: chips are too wide to pair up, so a wrapping row became one
-   chip per line and nine places pushed the card a full screen down. One
-   swipeable row instead, bled to the viewport edge so the cut-off chip is the
-   scroll hint. */
-@media (max-width: 640px) {
-  .places.has-places {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    gap: 0.35rem;
-    margin: 0 -1rem;
-    padding: 0 1rem 0.25rem;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-  }
-  .places::-webkit-scrollbar {
-    display: none;
-  }
-  .place-chip {
-    flex-shrink: 0;
-    padding: 0.3rem 0.6rem;
-    font-size: 0.8125rem;
-  }
 }
 
 .places-head {
@@ -1953,6 +1956,7 @@ svg.place-icon {
   }
   /* the rail spans both rows so the card keeps the full right column */
   .places.has-places {
+    display: flex;
     grid-column: 1;
     grid-row: 1 / span 2;
     position: sticky;
@@ -2010,7 +2014,8 @@ svg.place-icon {
   gap: 0.5rem;
 }
 
-.wxr-head .wx-section-title {
+.wxr-head .eyebrow {
+  flex: 1;
   margin-bottom: 0;
 }
 

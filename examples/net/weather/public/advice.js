@@ -427,14 +427,28 @@ function adviceHtml(ctx) {
   items.sort(function (a, b) {
     return b.rank - a.rank;
   });
-  var html = '<ul class="advice">';
+  var html = '<div class="eyebrow"><span>Today</span></div><div class="panel advice">';
   for (var i = 0; i < items.length && i < ADVICE_MAX; i++) {
+    // One line per item. The sentence is clipped with an ellipsis and the whole
+    // of it opens in the popover every other tappable row on the card uses; a
+    // three-line paragraph here is what pushed the forecast off the screen.
+    var t = items[i].text;
+    var dot = t.indexOf(". ");
+    var head = dot === -1 ? t : t.slice(0, dot + 1);
+    var rest = dot === -1 ? "" : t.slice(dot + 2);
     // A 34px --panel-hi tile holding a 20px sprite glyph, the same tile the
     // metrics and alert rows use (design-system.md section 7).
     html +=
-      '<li class="advice-row"><span class="advice-icon" aria-hidden="true">' +
+      '<div class="advice-row row" data-pop tabindex="0" role="button"' +
+      ' data-pop-label="Today"' +
+      ' data-pop-value="' + esc(head) + '">' +
+      '<span class="ico-tile" aria-hidden="true">' +
       '<svg class="ico"><use href="#' + items[i].symbol + '"></use></svg>' +
-      "</span><span>" + esc(items[i].text) + "</span></li>";
+      '</span><span class="grow row-text">' + esc(t) + "</span>" +
+      '<svg class="ico row-chev" aria-hidden="true"><use href="#chevron"></use></svg>' +
+      '<template class="tile-detail">' +
+      (rest ? '<div class="detail-note">' + esc(rest) + "</div>" : "") +
+      "</template></div>";
   }
-  return html + "</ul>";
+  return html + "</div>";
 }
