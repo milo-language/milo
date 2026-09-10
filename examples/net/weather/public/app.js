@@ -394,6 +394,23 @@ function aqiMeaning(cat) {
   return "Health warnings of emergency conditions.";
 }
 
+// Every upstream read goes through this server's /api/up, never straight to the
+// provider. The server holds one cache for everyone, keyed on the feed and
+// expiring on the provider's own max-age, so N open tabs cost the provider what
+// one tab costs — which is what makes refreshing on focus affordable at all.
+// radar.js and sky.js call this too. They are loaded before app.js, which is
+// only safe because every call site is inside a function that runs after load.
+function up(host, path) {
+  return "api/up?h=" + host + "&q=" + encodeURIComponent(path);
+}
+
+// weather.gov hands back absolute URLs inside its own JSON (points.forecast and
+// friends), so those arrive as links to the origin we are deliberately not
+// calling. Strip the authority and the path is what the proxy wants.
+function nws(url) {
+  return up("nws", String(url).replace(/^https?:\/\/api\.weather\.gov/, ""));
+}
+
 function jsonOrNull(url) {
   return fetch(url)
     .then(function (r) {
@@ -408,15 +425,15 @@ function jsonOrNull(url) {
 // so each resolves to null on its own rather than rejecting the pair.
 function fetchExtras(lat, lon) {
   var fc =
-    "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon +
+    up("om", "/v1/forecast?latitude=" + lat + "&longitude=" + lon +
     "&current=uv_index,pressure_msl,surface_pressure" +
     "&daily=uv_index_max,temperature_2m_max,temperature_2m_min,precipitation_probability_max," +
     "wind_speed_10m_max,sunshine_duration,weather_code" +
     "&hourly=uv_index,pressure_msl,cloud_cover" +
-    "&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto&forecast_days=3";
+    "&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto&forecast_days=3");
   var air =
-    "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + lat +
-    "&longitude=" + lon + "&current=us_aqi,pm2_5";
+    up("aq", "/v1/air-quality?latitude=" + lat +
+    "&longitude=" + lon + "&current=us_aqi,pm2_5");
 
   return Promise.all([jsonOrNull(fc), jsonOrNull(air)]).then(function (r) {
     var f = r[0];
@@ -847,6 +864,7 @@ function showError(msg) {
 }
 
 function fetchWeather(lat, lon, city, saveLoc, exact) {
+  lastWxFetchMs = Date.now();
   currentLat = lat;
   currentLon = lon;
   placeExact = !!exact;
@@ -863,7 +881,7 @@ function fetchWeather(lat, lon, city, saveLoc, exact) {
   loadExtras(lat, lon);
   loadAlerts(lat, lon);
 
-  fetch("https://api.weather.gov/points/" + lat + "," + lon)
+  fetch(up("nws", "/points/" + lat + "," + lon))
     .then(function (res) {
       if (!res.ok) throw new Error("Location not found");
       return res.json();
@@ -877,12 +895,12 @@ function fetchWeather(lat, lon, city, saveLoc, exact) {
         city = rl.city + ", " + rl.state;
       }
       if (saveLoc) saveRecent(city, lat, lon);
-      gridUrl = "https://api.weather.gov/gridpoints/" + p.gridId + "/" + p.gridX + "," + p.gridY;
+      gridUrl = up("nws", "/gridpoints/" + p.gridId + "/" + p.gridX + "," + p.gridY);
       return Promise.all([
-        fetch(p.forecast).then(function (r) {
+        fetch(nws(p.forecast)).then(function (r) {
           return r.json();
         }),
-        fetch(p.forecast + "/hourly").then(function (r) {
+        fetch(nws(p.forecast + "/hourly")).then(function (r) {
           return r.json();
         }),
         fetch(gridUrl).then(function (r) {
@@ -903,6 +921,22 @@ function fetchWeather(lat, lon, city, saveLoc, exact) {
       showError("Could not load weather data");
     });
 }
+
+// The page used to fetch once and then sit there: a tab left open overnight kept
+// showing the forecast it loaded with while the hero drifted along that frozen
+// curve, which looks live and is not. Re-reading when the tab comes back fixes
+// it, and costs the provider nothing — /api/up answers from its own cache until
+// the provider's max-age is up.
+var lastWxFetchMs = 0;
+
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState !== "visible") return;
+  if (!currentLat || !currentLon) return;
+  // An app-switch flurry should not re-render the page once per switch; the
+  // server cache would absorb it, but the DOM work is real.
+  if (Date.now() - lastWxFetchMs < 60000) return;
+  fetchWeather(currentLat, currentLon, currentCityLabel, false, placeExact);
+});
 
 function geocodeAndFetch(query, push) {
   navPush = push !== false;
@@ -1334,7 +1368,7 @@ var ALERT_SEVERITY_RANK = { Extreme: 0, Severe: 1, Moderate: 2, Minor: 3, Unknow
 function loadAlerts(lat, lon) {
   var seq = ++alertsSeq;
   alertsData = null;
-  jsonOrNull("https://api.weather.gov/alerts/active?point=" + lat + "," + lon).then(function (d) {
+  jsonOrNull(up("nws", "/alerts/active?point=" + lat + "," + lon)).then(function (d) {
     if (seq !== alertsSeq) return;
     alertsData = d && d.features ? d.features : [];
     renderAlerts();
@@ -1522,9 +1556,10 @@ var sunTimer = null;
 var tempTimer = null;
 
 // The hero temperature is interpolated between hourly forecasts, so it is a
-// continuous quantity. The hero shows hundredths and re-reads every second so
-// the drift is visible while the page is open (3°/h moves the last digit every
-// 12 s); the strip's "Now" cell follows at one decimal.
+// continuous quantity. The hero shows thousandths and re-reads four times a
+// second so the drift is visible while the page is open (3°/h moves the last
+// digit every 1.2 s); the strip's "Now" cell follows at one decimal, because a
+// row of eight-character temperatures would not fit and nobody is watching it.
 function startTempDrift(hrs) {
   if (tempTimer) clearInterval(tempTimer);
   if (!hrs || !hrs.length) return;
@@ -1536,13 +1571,13 @@ function startTempDrift(hrs) {
       return;
     }
     var t = tempAt(hrs, Date.now());
-    var s2 = t.toFixed(2) + "°";
+    var s2 = t.toFixed(3) + "°";
     if (hero.textContent !== s2) {
       hero.textContent = s2;
       var cell = document.getElementById("nowTemp");
       if (cell) cell.textContent = fmtTemp(t) + "°";
     }
-  }, 1000);
+  }, 250);
 }
 
 // Ticks the countdown in place. Rebinds on every render; when the target time
@@ -1596,7 +1631,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   var currentTemp =
     hrs.length > 0 ? fmtTemp(tempAt(hrs, nowMs)) : String(now.temperature);
   var heroTempStr =
-    hrs.length > 0 ? tempAt(hrs, nowMs).toFixed(2) : String(now.temperature);
+    hrs.length > 0 ? tempAt(hrs, nowMs).toFixed(3) : String(now.temperature);
   startTempDrift(hrs);
   heroHiLo = { hi: hi, lo: lo };
 
@@ -2145,13 +2180,13 @@ var savedWxCache = {};
 // thing at every hour and agrees with the number the hero shows.
 function fetchSavedWx(fav) {
   if (savedWxCache[fav.label]) return Promise.resolve(savedWxCache[fav.label]);
-  return fetch("https://api.weather.gov/points/" + fav.lat + "," + fav.lon)
+  return fetch(up("nws", "/points/" + fav.lat + "," + fav.lon))
     .then(function (r) {
       if (!r.ok) throw new Error("points");
       return r.json();
     })
     .then(function (pts) {
-      return fetch(pts.properties.forecast + "/hourly").then(function (r) {
+      return fetch(nws(pts.properties.forecast + "/hourly")).then(function (r) {
         if (!r.ok) throw new Error("hourly");
         return r.json();
       });

@@ -498,9 +498,9 @@ function fetchClimate(lat, lon) {
   // The archive trails real time by about five days; asking past that is an error.
   var endIso = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   var url =
-    "https://archive-api.open-meteo.com/v1/archive?latitude=" + lat + "&longitude=" + lon +
+    up("omarchive", "/v1/archive?latitude=" + lat + "&longitude=" + lon +
     "&start_date=1940-01-01&end_date=" + endIso +
-    "&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto";
+    "&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto");
   return fetch(url)
     .then(function (r) {
       if (!r.ok) throw new Error("archive");

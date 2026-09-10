@@ -13,6 +13,15 @@ from "std/string" import {
 from "std/json" import {
     Json, jsonEscapeStr
 }
+from "std/fetch" import {
+    FetchOptions, fetchWith, findHeader
+}
+from "std/time" import {
+    epochMillis
+}
+from "std/strconv" import {
+    parseInt
+}
 
 pub struct City {
     name: string,
@@ -224,6 +233,231 @@ pub fn citiesHandler(ctx: &mut Context): Response {
     return ctx.json(body)
 }
 
+// ── Upstream proxy ──
+//
+// Every forecast read the browser makes goes through this server instead of
+// straight to weather.gov. Two reasons, and the second is the one that matters:
+//
+//   1. One cache serves every visitor. A direct-from-browser app asks the
+//      provider once per tab per load; this asks once per feed per TTL no
+//      matter how many people are watching.
+//   2. It makes refreshing affordable. The page can re-read on focus without
+//      that turning into traffic upstream, because a warm entry never leaves
+//      this process.
+//
+// The TTL is the provider's own max-age, not a number we picked. weather.gov
+// says 3570s; honouring that verbatim is the whole politeness story, and it
+// also means we are never serving data staler than they intended.
+
+pub struct CacheEntry {
+    key: string,
+    body: string,
+    status: i32,
+    expiresMs: i64,
+}
+
+// Module scope permits only a compile-time-constant initializer, hence the
+// empty literal; entries accumulate as requests arrive.
+pub var apiCache: Vec<CacheEntry> = []
+
+// Bounds the process at a few MB of forecast JSON. Past this an expired entry
+// is recycled before a new one is appended; if every entry is still live the
+// oldest expiry loses, since it is the one closest to being refetched anyway.
+pub let MAX_CACHE_ENTRIES = 256
+
+// Fallback when the upstream sends no max-age. Ten minutes is short enough
+// that a missing header cannot pin stale weather for an hour.
+pub let DEFAULT_TTL_SECS: i64 = 600
+
+pub let MIN_TTL_SECS: i64 = 60
+
+pub let MAX_TTL_SECS: i64 = 3600
+
+// weather.gov blocks anonymous clients and asks for a contact address in the
+// User-Agent, so this is a hard requirement of talking to them, not a courtesy.
+pub var contactUa: string = "milo-weather (https://github.com/milo-language/milo)"
+
+// The only hosts this server will talk to. A short key rather than a URL in the
+// query string: the client cannot name a host that is not on this list, so the
+// proxy can never be pointed at an internal address.
+pub fn upstreamBase(host: &string): string {
+    if host == "nws" {
+        return "https://api.weather.gov"
+    }
+    if host == "om" {
+        return "https://api.open-meteo.com"
+    }
+    if host == "aq" {
+        return "https://air-quality-api.open-meteo.com"
+    }
+    if host == "omarchive" {
+        return "https://archive-api.open-meteo.com"
+    }
+    return ""
+}
+
+// The path is concatenated onto a fixed base, so the job here is to make sure it
+// cannot escape that base. A leading "//" would turn the result into a new
+// authority ("https:" + "//evil.host/x"), and "@" would smuggle one past a
+// host-looking prefix. Everything outside the allowed set is rejected rather
+// than escaped: no legitimate forecast path needs it.
+pub fn isSafeUpstreamPath(p: &string): bool {
+    if p.len == 0 || p.len > 512 {
+        return false
+    }
+    if p[0] != '/' {
+        return false
+    }
+    if p.startsWith("//") || p.contains("..") || p.contains("@") || p.contains("\\") {
+        return false
+    }
+    for ch in p {
+        let ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+        || (ch >= '0' && ch <= '9') || ch == '/' || ch == '.' || ch == '_'
+        || ch == '-' || ch == ',' || ch == '~' || ch == ':' || ch == '%'
+        || ch == '?' || ch == '&' || ch == '=' || ch == '+'
+        if !ok {
+            return false
+        }
+    }
+    return true
+}
+
+// Seconds from the upstream's Cache-Control, clamped. Clamping low stops a
+// max-age=0 from making every page load a live request; clamping high stops a
+// year-long max-age from pinning a forecast until the process restarts.
+pub fn upstreamTtlSecs(headers: &string): i64 {
+    let cc = findHeader(headers, "Cache-Control") ?? ""
+    var ttl = DEFAULT_TTL_SECS
+    // Split rather than scan: the tail after the first "max-age=" starts with
+    // the digits we want, and anything else in the header ("public, s-maxage=…")
+    // stops the digit run on its own.
+    let parts = cc.split("max-age=")
+    if parts.len > 1 {
+        var digits = ""
+        for ch in parts[1] {
+            if ch < '0' || ch > '9' {
+                break
+            }
+            digits.push(ch)
+        }
+        if digits.len > 0 {
+            if let Option.Some(n) = parseInt(digits) {
+                ttl = n
+            }
+        }
+    }
+    if ttl < MIN_TTL_SECS {
+        return MIN_TTL_SECS
+    }
+    if ttl > MAX_TTL_SECS {
+        return MAX_TTL_SECS
+    }
+    return ttl
+}
+
+// Index of `key` in the cache regardless of freshness. A stale hit is still
+// useful: it is what gets served when the upstream is down.
+pub fn cacheFind(key: &string): i64 {
+    for i in 0..apiCache.len {
+        if apiCache[i].key == key {
+            return i
+        }
+    }
+    return -1
+}
+
+pub fn cacheStore(key: &string, body: string, status: i32, expiresMs: i64): void {
+    let at = cacheFind(key)
+    if at >= 0 {
+        apiCache[at].body = body
+        apiCache[at].status = status
+        apiCache[at].expiresMs = expiresMs
+        return
+    }
+    if apiCache.len >= MAX_CACHE_ENTRIES {
+        var victim: i64 = 0
+        for i in 0..apiCache.len {
+            if apiCache[i].expiresMs < apiCache[victim].expiresMs {
+                victim = i
+            }
+        }
+        apiCache[victim].key = key.clone()
+        apiCache[victim].body = body
+        apiCache[victim].status = status
+        apiCache[victim].expiresMs = expiresMs
+        return
+    }
+    apiCache.push(CacheEntry {
+        key: key.clone(), body: body, status: status, expiresMs: expiresMs
+    }
+    )
+}
+
+// GET /api/up?h=<host key>&q=<path>
+//
+// `q` arrives percent-encoded and is decoded by the query parser, so the
+// handler validates the decoded form — the only form that reaches the socket.
+pub fn upstreamHandler(ctx: &mut Context): Response {
+    let hostKey = ctx.query("h") ?? ""
+    let path = ctx.query("q") ?? ""
+    let base = upstreamBase(hostKey)
+    if base.len == 0 || !isSafeUpstreamPath(path) {
+        ctx.setStatus(400)
+        return ctx.json("{\"error\":\"bad upstream request\"}")
+    }
+
+    let key = hostKey.clone() + path.clone()
+    let nowMs = epochMillis()
+    let at = cacheFind(key)
+    if at >= 0 && apiCache[at].expiresMs > nowMs {
+        let left = (apiCache[at].expiresMs - nowMs) / 1000
+        ctx.setHeader("Cache-Control", "public, max-age=" + left.toString())
+        ctx.setHeader("X-Cache", "hit")
+        ctx.setStatus(apiCache[at].status)
+        return ctx.json(apiCache[at].body.clone())
+    }
+
+    // Blocking, and the accept loop is single-threaded: a slow upstream stalls
+    // every other client for the duration. The cache is what makes that
+    // survivable — this runs once per feed per TTL, not once per request.
+    var opts = FetchOptions {
+        method: "GET",
+        headers: "User-Agent: " + contactUa.clone() + "\r\nAccept: application/geo+json,application/json",
+        body: "",
+    }
+    let url = base + path.clone()
+    match fetchWith(url, opts) {
+        Result.Ok(resp) => {
+            if resp.status >= 200 && resp.status < 300 {
+                let ttl = upstreamTtlSecs(resp.headers)
+                cacheStore(key, resp.body.clone(), resp.status, nowMs + ttl * 1000)
+                ctx.setHeader("Cache-Control", "public, max-age=" + ttl.toString())
+                ctx.setHeader("X-Cache", "miss")
+                return ctx.json(resp.body.clone())
+            }
+            // An upstream error must not evict good data: a 500 from weather.gov
+            // is a worse answer than a forecast half an hour old.
+            if at >= 0 {
+                ctx.setHeader("Cache-Control", "public, max-age=60")
+                ctx.setHeader("X-Cache", "stale")
+                return ctx.json(apiCache[at].body.clone())
+            }
+            ctx.setStatus(502)
+            return ctx.json("{\"error\":\"upstream " + resp.status.toString() + "\"}")
+        }
+        Result.Err(_) => {
+            if at >= 0 {
+                ctx.setHeader("Cache-Control", "public, max-age=60")
+                ctx.setHeader("X-Cache", "stale")
+                return ctx.json(apiCache[at].body.clone())
+            }
+            ctx.setStatus(502)
+            return ctx.json("{\"error\":\"upstream unreachable\"}")
+        }
+    }
+}
+
 // no-store, not no-cache, on every embedded text asset: no-cache only promises
 // revalidation, and revalidation needs an ETag or Last-Modified — which this
 // server doesn't send. Chrome then reuses its cached copy and a deploy stays
@@ -373,9 +607,16 @@ pub fn main(): i32 {
     var parser = ArgParser.new("weather", "Weather app powered by weather.gov")
     parser.addI64("port", "p", "port to listen on", 3000)
     parser.addString("public-url", "u", "public origin and path prefix, for og:image", "")
+    // weather.gov rejects anonymous clients, so the operator has to be
+    // reachable; the default names the project rather than a person.
+    parser.addString("contact", "c", "contact string for the upstream User-Agent", "")
     let args = parser.parse()
     let port = args.getU16("port")
     publicUrl = args.getString("public-url") ?? ""
+    let contact = args.getString("contact") ?? ""
+    if contact.len > 0 {
+        contactUa = "milo-weather (" + contact + ")"
+    }
     // og:image must be absolute, so a prefix without its trailing slash would
     // concatenate into a 404 that no unfurler reports back.
     if publicUrl.len > 0 && !publicUrl.endsWith("/") {
@@ -397,6 +638,7 @@ pub fn main(): i32 {
     r.get("/insight.js", insightScriptHandler)
     r.get("/satellite.min.js", satLibHandler)
     r.get("/api/cities", citiesHandler)
+    r.get("/api/up", upstreamHandler)
     r.get("/manifest.webmanifest", manifestHandler)
     r.get("/sw.js", swHandler)
     r.get("/icons/icon-192.png", icon192Handler)

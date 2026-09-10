@@ -2,7 +2,7 @@
 //
 // Bump CACHE whenever a shell asset changes — the binary embeds these files at
 // build time, so a deploy with a stale cache name would keep serving the old UI.
-var CACHE = "weather-v31";
+var CACHE = "weather-v32";
 
 // Relative to the SW's scope, so this works under nginx's /weather/ subpath.
 var SHELL = [
@@ -69,6 +69,11 @@ self.addEventListener("fetch", function (e) {
     return;
   }
   if (url.origin !== self.location.origin) return;
+
+  // The upstream proxy carries the provider's own max-age. Handing it to the
+  // shell branch below would refetch it with cache:"no-store" on every load and
+  // throw that away, so it goes straight to the browser's HTTP cache instead.
+  if (url.pathname.indexOf("/api/up") !== -1) return;
 
   // City lookups: network first, cache as a fallback so the search box still
   // works offline for anything already typed once.

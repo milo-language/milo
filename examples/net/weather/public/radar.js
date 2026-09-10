@@ -528,7 +528,7 @@
   Radar.prototype.loadStation = function () {
     if (!this.station) return;
     var self = this;
-    fetch("https://api.weather.gov/radar/stations/" + encodeURIComponent(this.station))
+    fetch(up("nws", "/radar/stations/" + encodeURIComponent(this.station)))
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         var c = d && d.geometry && d.geometry.coordinates;
