@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: planning
+purpose: work plan for closing backlog #31, uniform .clone() over enums, Option/Result and arrays, plus the explicit-derive ordering bug
+key-files: src/checker.ts (processDerives, deriveClone, canAutoClone, monomorphizeEnum), tests/fixtures/cloneDerive*.milo, tests/errors/cloneDerive*.milo
+update-when: a work package ships, is re-scoped, or its gate changes
+last-verified: 2026-09-20 (WP1 shipped, 48f1e14c)
+-->
+
 # Derive Clone: close #31
 
 Status 2026-09-20: `Clone` IS derivable and auto-derived for plain structs since
