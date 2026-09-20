@@ -1,0 +1,14 @@
+// @error: 'get' would copy 'Res' out of the HashMap: it carries Drop
+// `m.get(k)` hands back a copy of the value, the map keeps its own, and both run Drop.
+// `for k, v in m` borrows; `remove` takes the map's copy out for real.
+var gone: i64 = 0
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self): void { gone = gone + 1 } }
+
+pub fn main(): i32 {
+    var m: HashMap<i64, Res> = HashMap.new()
+    m.insert(1, Res { id: 1 })
+    let got = m.get(1)
+    print(got.isSome().toString())
+    return 0
+}

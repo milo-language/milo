@@ -953,42 +953,98 @@ export class TypeChecker {
   // `Vec<i64>` costs nothing, `Vec<Mark>` costs an allocation per heap field, per row,
   // per iteration. `for m in v` binds by reference and clones nothing, so the cheap
   // spelling already exists — it is just undiscoverable at the moment it matters.
-  // A struct whose duplication has a MEANING beyond copying bytes: a Drop impl that
-  // releases something, `@noCopy` on a handle, or a raw pointer field without `@copy`.
-  // Returns which, for the diagnostic.
-  private resourceKind(ty: TypeKind): string | null {
-    if (ty.tag !== "struct") return null;
-    if (this.dropImpls.has(ty.name)) return "Drop";
-    const info = this.structs.get(ty.name);
-    if (info?.noCopy) return "@noCopy";
-    if (info?.pointerField) return `a raw pointer field ('${info.pointerField}') and is not @copy`;
-    return null;
+  // A value whose duplication has a MEANING beyond copying bytes: a struct with a Drop
+  // impl that releases something, `@noCopy` on a handle, or a raw pointer field without
+  // `@copy`, anywhere inside the type.
+  // The index path's deep clone (codegen emitDeepCloneFromPtr) is structural: it copies
+  // strings and Vecs buffer by buffer but never consults a Drop impl, so a resource
+  // nested in an `Option<Fd>` or a `Vec<Fd>` element is duplicated just as surely as a
+  // bare `Fd`. Returns which mechanism and the type that carries it, for the diagnostic.
+  private resourceKind(ty: TypeKind, seen: Set<string> = new Set()): { kind: string; via: TypeKind } | null {
+    switch (ty.tag) {
+      case "struct": {
+        if (this.dropImpls.has(ty.name)) return { kind: "Drop", via: ty };
+        const info = this.structs.get(ty.name);
+        if (!info) return null;
+        if (info.noCopy) return { kind: "@noCopy", via: ty };
+        if (info.pointerField) return { kind: `a raw pointer field ('${info.pointerField}') and is not @copy`, via: ty };
+        // Recursive types (`Heap<Node>` fields) terminate on the visited set.
+        if (seen.has(ty.name)) return null;
+        seen.add(ty.name);
+        for (const f of info.fields) {
+          const r = this.resourceKind(f.type, seen);
+          if (r) return r;
+        }
+        return null;
+      }
+      case "enum": {
+        if (this.dropImpls.has(ty.name)) return { kind: "Drop", via: ty };
+        if (seen.has(ty.name)) return null;
+        seen.add(ty.name);
+        const info = this.enums.get(ty.name);
+        if (!info) return null;
+        for (const v of info.variants.values()) {
+          for (const f of v.fields) {
+            const r = this.resourceKind(f, seen);
+            if (r) return r;
+          }
+        }
+        return null;
+      }
+      case "vec": case "array": return this.resourceKind(ty.element, seen);
+      case "heap": return this.resourceKind(ty.inner, seen);
+      case "hashmap": return this.resourceKind(ty.key, seen) ?? this.resourceKind(ty.value, seen);
+      default: return null;
+    }
+  }
+
+  // Taking a Drop or @noCopy element out of a container by INDEX is an error, not a
+  // lint. The index path copies memberwise and consults neither mechanism, so both ways
+  // of saying "this handle has exactly one owner" were bypassed by one spelling:
+  // `let a = v[0]` on a `Vec<Fd>` closed the same descriptor twice, and on a `@noCopy`
+  // handle released it twice. The field spelling of the same operation already errors.
+  //
+  // Lives in tryMoveLeaf, the one place every by-value consumption reaches, because the
+  // rule used to fire only from the `let` initializer: `Option.Some(v[0])`, `peek(v[0])`,
+  // `return v[0]`, `s.f = v[0]` and a struct-literal field were all accepted and each
+  // ran the element's Drop once more (docs/plans/soundness-sweep-2026-09.md H5). An
+  // element of a container is a place; reading it by value is a move-out, and for a
+  // resource type that is an error wherever it appears.
+  private errorIfResourceIndexRead(expr: Extract<Expr, { kind: "IndexAccess" }>, ty: TypeKind): boolean {
+    const res = this.resourceKind(ty);
+    if (!res) return false;
+    const via = typeEq(res.via, ty) ? "" : ` (through '${this.show(res.via)}')`;
+    const spelled = this.describeExpr(expr);
+    const container = this.describeExpr(expr.object);
+    this.error(
+      `cannot take '${this.show(ty)}' out of a container by index: it carries ${res.kind}${via}`,
+      expr.span,
+      `indexing copies the element memberwise, so the copy and the container's own ` +
+      `element would each release it. Clone it explicitly ('${spelled}.clone()'), borrow it ` +
+      `('for x in ${container}', a field read '${spelled}.n', or a '&' parameter), or ` +
+      `'swap'/'remove' it out so the container gives up its owner.`,
+    );
+    return true;
+  }
+
+  // The builtin spellings of the same read: `v.get(i)`/`first`/`last`, `m.get(k)`,
+  // `keys()`/`values()` and a container `clone()` all hand out a structural copy of an
+  // element, through the same codegen path `v[i]` takes, and so duplicate a resource the
+  // same way. `what` is the method, `container` the receiver's type for the message.
+  private errorIfResourceCopyOut(elem: TypeKind, what: string, container: string, sp: Span | undefined, borrowForm: string): boolean {
+    const res = this.resourceKind(elem);
+    if (!res) return false;
+    const via = typeEq(res.via, elem) ? "" : ` (through '${this.show(res.via)}')`;
+    this.error(`'${what}' would copy '${this.show(elem)}' out of the ${container}: it carries ${res.kind}${via}`, sp,
+      `the copy is structural and never runs a Drop, so the copy and the element still in the ${container} ` +
+      `would each release it. ${borrowForm}, or clone the element where its own Clone impl runs.`);
+    return true;
   }
 
   private lintIndexClone(value: Expr, ty: TypeKind, span?: Span) {
-    // Taking a Drop or @noCopy element out of a container by INDEX is an error, not a
-    // lint, and the check sits above the allow-gate because `--allow=index-clone`
-    // silences a cost, not a double release.
-    //
-    // The index path copies memberwise and consults neither mechanism, so both ways of
-    // saying "this handle has exactly one owner" were bypassed by one spelling:
-    // `let a = v[0]` on a `Vec<Fd>` closed the same descriptor twice, and on a
-    // `@noCopy` handle released it twice, each with only a warning. The field spelling
-    // of the same operation already errors. This makes the two agree.
-    if (value.kind === "IndexAccess" && ty.tag !== "ref") {
-      const res = this.resourceKind(ty);
-      if (res) {
-        this.error(
-          `cannot take '${this.show(ty)}' out of a container by index: it carries ${res}`,
-          span,
-          `indexing copies the element memberwise, so the copy and the container's own ` +
-          `element would each release it. Borrow it instead ('for x in <container>', or ` +
-          `read one field: 'v[i].n'), or take it out for real with 'v.remove(i)' or ` +
-          `'v.pop()' so the container gives up its owner.`,
-        );
-        return;
-      }
-    }
+    // A resource element is rejected by tryMoveLeaf, which every caller of this lint
+    // reaches next; the cost warning below would only pile onto that error.
+    if (value.kind === "IndexAccess" && ty.tag !== "ref" && this.resourceKind(ty)) return;
     // The cost warning below is advisory, and a warning inside std/ or a dependency is
     // not actionable by the person reading it (dapweb builds warned on std/argparse's
     // own argv loop). Same scoping as unused-unsafe; the Drop/@noCopy error above
@@ -1557,6 +1613,39 @@ export class TypeChecker {
     return new Set(attr.args.length > 0 ? attr.args : typeParams);
   }
 
+  // `@copyOut`: the routine hands a `T` out of a container by copy, which duplicates a
+  // resource (see errorIfResourceIndexRead). Rather than reject the whole instantiation
+  // the way `@copyOnly` does, only the copying method goes missing: `Arena<Fd>` keeps
+  // `alloc`/`read`/`modifyMut` and loses `get`, and calling `get` names the reason.
+  //
+  // Decided at instantiation, because a method call resolved in a user body before any
+  // deferred flush would already have bound the symbol codegen emits. Drop impls are
+  // pre-registered before the first monomorphization for exactly this reason; the
+  // by-index rule inside the instantiated body is the fail-closed backstop for a
+  // resource this early answer cannot see (a struct declared later that nests one).
+  private copyOutUnavailable = new Map<string, { kind: string; via: TypeKind; arg: TypeKind }>();
+  private copyOutBlocker(attrs: Attribute[] | undefined, typeArgs: TypeKind[]) {
+    if (!attrs?.some(a => a.name === "copyOut")) return null;
+    for (const arg of typeArgs) {
+      const res = this.resourceKind(arg);
+      if (res) return { ...res, arg };
+    }
+    return null;
+  }
+  private copyOutMethodUnavailable(m: Function, mangled: string, typeArgs: TypeKind[]): boolean {
+    const blocker = this.copyOutBlocker(m.attributes, typeArgs);
+    if (!blocker) return false;
+    this.copyOutUnavailable.set(`${mangled}.${m.name}`, blocker);
+    return true;
+  }
+  private copyOutReason(what: string, b: { kind: string; via: TypeKind; arg: TypeKind }): string {
+    const via = typeEq(b.via, b.arg) ? "" : ` (through '${this.show(b.via)}')`;
+    return `${what} copies its element out, and '${this.show(b.arg)}' carries ${b.kind}${via}`;
+  }
+  private static readonly COPY_OUT_HINT =
+    `a copy of a resource is released once per copy; use the borrowing form of this API ` +
+    `(a callback taking '&T' or '&mut T'), or clone the element where its own Clone impl runs`;
+
   // A generic body is only ever checked as an INSTANCE, so `self.base[i]` on a `*T` is
   // seen as `*i64` or `*string` and judged per instantiation; the one instantiation that
   // is unsound is the one no fixture wrote. This scans the TEMPLATE instead: inside a
@@ -1769,8 +1858,11 @@ export class TypeChecker {
           traitName: gi.traitName,
           typeName: mangled,
           typeParams: [],
-          methods: gi.methods.map(m => ({
+          methods: gi.methods.filter(m => !this.copyOutMethodUnavailable(m, mangled, typeArgs)).map(m => ({
             ...m,
+            // `@copyOut` has been decided for this instance; the concrete impl has no
+            // type parameters left for it to constrain, and registerImpl says so.
+            ...(m.attributes && { attributes: m.attributes.filter(a => a.name !== "copyOut") }),
             body: this.substituteBody(m.body, generic.typeParams, typeArgs, baseName, mangled),
             params: m.params.map(p => ({
               name: p.name,
@@ -1912,6 +2004,17 @@ export class TypeChecker {
 
     // Register the concrete sig so recursive calls and the rest of checking works
     this.functions.set(mangled, { params, ret, variadic: false });
+
+    // `@copyOut` with a resource argument: the call is the error, at the caller's span.
+    // The signature above stays registered so the call types through without a cascade;
+    // the body is never checked, because its by-index read would only repeat this at a
+    // line inside the generic's own file.
+    const blocker = this.copyOutBlocker(generic.decl.attributes, typeArgs);
+    if (blocker) {
+      this.error(`'${baseName}<${typeArgs.map(a => this.show(a)).join(", ")}>' is not allowed: ${this.copyOutReason(`'${baseName}'`, blocker)}`, sp,
+        TypeChecker.COPY_OUT_HINT);
+      return mangled;
+    }
 
     // Create concrete AST node for codegen
     const concreteDecl: Function = {
@@ -2618,6 +2721,15 @@ export class TypeChecker {
         this.genericImpls.set(impl.typeName, existing);
       }
     }
+    // Drop-ness has to be known before the FIRST monomorphization, which a struct field
+    // (`struct S { pool: Arena<Res> }`) triggers below: a `@copyOut` method is kept or
+    // dropped from that instantiation by asking resourceKind(Res) right then, and an
+    // answer from an empty dropImpls would keep `Arena<Res>.get`. The later registration
+    // (before derive synthesis) validates; this one only pre-fills the same Set.
+    const declaredTypeNames = new Set([...program.structs.map(s => s.name), ...program.enums.map(e => e.name)]);
+    for (const impl of program.impls) {
+      if (impl.traitName === "Drop" && declaredTypeNames.has(impl.typeName)) this.dropImpls.add(impl.typeName);
+    }
 
     for (const s of program.structs) {
       if (s.typeParams.length === 0) {
@@ -2897,6 +3009,16 @@ export class TypeChecker {
             }
           }
           else if (attr.name === "copyOnly") this.validateCopyOnly(fn.name, attr, fn.typeParams.map(t => t.name), undefined);
+          // Bare only: it constrains every type parameter, since the copy is of whatever
+          // the container holds and a routine copying out one parameter and not another
+          // has not come up. On a concrete fn it would be a claim about nothing.
+          else if (attr.name === "copyOut") {
+            if (attr.args.length > 0) this.error(`'@copyOut' takes no arguments`, undefined, `write '@copyOut fn ${fn.name}<...>(...)'`);
+            if (fn.typeParams.length === 0) {
+              this.error(`'@copyOut' on '${fn.name}': it has no type parameters to constrain`, undefined,
+                `'@copyOut' withholds a generic from a type argument that carries Drop or @noCopy; a concrete fn has none, so drop the attribute`);
+            }
+          }
           // @thread marks a fn that hands a closure param to a real OS thread. It is the
           // single source of truth for where a data race can enter a program — see
           // checkThreadBoundary, which reads this rather than hardcoding entry points.
@@ -5341,6 +5463,10 @@ export class TypeChecker {
         } else if (attr.args.length > 0) {
           this.error(`'@${attr.name}' takes no arguments`, m.span ?? impl.span,
             `write '@${attr.name}' on the line above 'fn ${m.name}'`);
+        } else if (attr.name === "copyOut" && !(impl.typeParams && impl.typeParams.length > 0 && !impl.traitName)) {
+          this.error(`'@copyOut' on '${typeName}.${m.name}': only a method of a generic inherent impl can be withheld per instantiation`, m.span ?? impl.span,
+            impl.traitName ? `a trait impl's method set is fixed by the trait; move the copying method to 'impl ${typeName} { ... }'`
+              : `'${typeName}' has no type parameters, so there is no instantiation to withhold it from`);
         }
       }
     }
@@ -7340,6 +7466,9 @@ export class TypeChecker {
     if (expr.kind === "IndexAccess") {
       const elemType = this.exprTypes.get(expr);
       if (elemType && !isCopy(elemType, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+        // The "clone" that stands in for the move duplicates a resource; reject before
+        // recording anything (see errorIfResourceIndexRead).
+        if (elemType.tag !== "ref" && this.errorIfResourceIndexRead(expr, elemType)) return;
         let objectIsRef = false;
         // ident-ok: asks whether the receiver BINDING was declared `&T`, same reason as tryMoveLeaf above
         if (expr.object.kind === "Ident") {
@@ -9471,6 +9600,10 @@ export class TypeChecker {
         this.error(`array element ${i}: expected ${this.show(elemType)}, got ${this.show(t)}`, expr.elements[i].span);
       }
     }
+    // The literal owns its elements exactly as the hinted (`let a: [T; n] = [...]`) path
+    // already records; without this, `[s]` left `s` usable after it was handed over, and
+    // `[v[0]]` copied a Drop element out of `v` unchecked.
+    for (const el of expr.elements) this.tryMove(el);
     return this.setType(expr, { tag: "array", element: elemType, size: expr.elements.length });
   }
 
@@ -10699,6 +10832,8 @@ export class TypeChecker {
             `the concrete type is erased and the itable carries no clone slot — build a new Vec from the concrete values instead`);
         } else if (el.tag === "fn") {
           this.error(`cannot clone Vec<${this.show(el)}>: closures cannot be cloned`, sp);
+        } else {
+          this.errorIfResourceCopyOut(el, "clone", "Vec", sp, `Build the copy element by element ('for x in v { out.push(x.clone()) }')`);
         }
         return this.setType(expr, objType);
       }
@@ -10714,6 +10849,7 @@ export class TypeChecker {
           const idxType = this.checkExpr(expr.args[0]);
           if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'get' index must be an integer, got ${this.show(idxType)}`, sp); }
         }
+        this.errorIfResourceCopyOut(objType.element, expr.method, "Vec", sp, `Borrow it ('v[i].field', 'for x in v'), or take it out for real with 'remove'/'pop'`);
         return this.setType(expr, this.resolveOptionForValue(objType.element, sp));
       }
       // Same comparable-element gate `sort` uses. Milo has no ordering trait, so
@@ -10832,6 +10968,7 @@ export class TypeChecker {
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
           this.error(`get key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
+        this.errorIfResourceCopyOut(objType.value, "get", "HashMap", sp, `Borrow it with 'for k, v in m', or take it out for real with 'remove'`);
         const optionType = this.resolveOptionForValue(objType.value, sp);
         return this.setType(expr, optionType);
       }
@@ -10845,6 +10982,7 @@ export class TypeChecker {
         if (!typeEq(objType.value, valType) && valType.tag !== "unknown") {
           this.error(`getOrDefault default: expected ${this.show(objType.value)}, got ${this.show(valType)}`, sp);
         }
+        this.errorIfResourceCopyOut(objType.value, "getOrDefault", "HashMap", sp, `Borrow it with 'for k, v in m', or take it out for real with 'remove'`);
         return this.setType(expr, objType.value);
       }
       if (expr.method === "contains") {
@@ -10889,6 +11027,8 @@ export class TypeChecker {
               `the concrete type is erased and the itable carries no clone slot`);
           } else if (t.tag === "fn") {
             this.error(`cannot clone a HashMap with ${what} type ${this.show(t)}: closures cannot be cloned`, sp);
+          } else {
+            this.errorIfResourceCopyOut(t, "clone", "HashMap", sp, `Build the copy entry by entry ('for k, v in m { out.insert(k.clone(), v.clone()) }')`);
           }
         }
         return this.setType(expr, objType);
@@ -10904,6 +11044,7 @@ export class TypeChecker {
             `iterate with 'for k, v in map' instead — it borrows rather than copies`);
           return this.setType(expr, { tag: "unknown" });
         }
+        this.errorIfResourceCopyOut(el, expr.method, "HashMap", sp, `Iterate with 'for k, v in m' instead, which borrows`);
         return this.setType(expr, { tag: "vec", element: el });
       }
       {
@@ -11244,6 +11385,12 @@ export class TypeChecker {
       return this.setType(expr, objType);
     }
 
+    const skipped = objType.tag === "struct" ? this.copyOutUnavailable.get(`${objType.name}.${expr.method}`) : undefined;
+    if (skipped) {
+      this.error(`'${expr.method}' is not available on '${this.show(objType)}': ${this.copyOutReason(`'${expr.method}'`, skipped)}`, sp,
+        TypeChecker.COPY_OUT_HINT);
+      return this.setType(expr, { tag: "unknown" });
+    }
     this.error(`type '${this.show(objType)}' has no method '${expr.method}'`, sp,
       memberHint(expr.method, this.methodCandidates(objType)));
     return this.setType(expr, { tag: "unknown" });

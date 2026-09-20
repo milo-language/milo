@@ -1,0 +1,17 @@
+// @error: 'get' is not available on 'Arena<Res>': 'get' copies its element out, and 'Res' carries Drop
+// `Arena.get` is `@copyOut`: it hands back a structural copy of the element, which for a
+// Drop type is a second owner. The method is absent from this instantiation while
+// `alloc`, `read`, `modifyMut` and `free` stay (tests/fixtures/arenaDropElements.milo).
+from "std/arena" import { Arena, Handle }
+
+var gone: i64 = 0
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self): void { gone = gone + 1 } }
+
+pub fn main(): i32 {
+    var a: Arena<Res> = Arena<Res>.new()
+    let h = a.alloc(Res { id: 1 })
+    let got = a.get(h)
+    print(got.isSome().toString())
+    return 0
+}

@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
-key-files: std/platform.*.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo
+key-files: std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo
 update-when: a public stdlib name moves, is renamed, or changes signature
 last-verified: 2026-09-19
 -->
@@ -52,6 +52,34 @@ A struct that is move-tracked this way also gets no automatic `clone()` and refu
 integer fd, a GL name). `--deny=unowned-pointer-copy` lists every `@copy` struct in a
 build. No shim was possible: Copy-ness is a property of the declaration, and the
 whole point is that the old default was the unsound one.
+
+## Copying accessors are absent for an element that carries Drop or @noCopy (2026-09-19)
+
+Reading an element out of a container **by value** is a structural copy that never runs
+a Drop, so for a resource type it was a second owner released twice (soundness sweep
+H5: `Option.Some(v[0])` on a `Vec<Res>` ran `Res`'s destructor three times). The rule
+that already rejected `let x = v[0]` for such an element now applies at every by-value
+consumption, and the accessors built on that copy are withheld for such a `T`:
+
+| API | for a `T` carrying Drop or `@noCopy` | use instead |
+|---|---|---|
+| `Arena.get` / `arenaGet`, `Arena.modify` / `arenaModify` | absent (`@copyOut`); the call is the error, naming the reason | `read` / `arenaRead` / `arenaWith` to borrow, `modifyMut` to mutate in place, `set` to overwrite |
+| `FrozenArena.get` / `frozenGet`, `GrowOnlyArena.get` | absent | `read` / `frozenRead` |
+| builtin `Vec.clone`, `Vec.get`/`first`/`last` | rejected | `for x in v`, `v[i].field`, `remove`/`pop`; clone element by element where `T`'s own `Clone` impl runs |
+| builtin `HashMap.clone`, `keys`, `values`, `get`, `getOrDefault` | rejected | `for k, v in m`, `remove`; clone entry by entry |
+| `HashSet.clone`, `HashSet.toVec` | unchanged surface; now run `T.clone()` per element instead of the builtin structural copy | |
+
+Every one of the arena's borrowing forms, `alloc`, `free`, `valid`, `handles`,
+`freeze` and `sealGrowth` still exist on `Arena<Res>`; only the two copying methods are
+missing. `Arena.get` returning a copy of a Drop `T` was never sound, which is why this
+is a removal for that `T` rather than a rename. A `T` with no resource inside it
+(scalars, `string`, plain structs, `Vec`, enums of those) is untouched.
+
+The attribute that expresses this, `@copyOut`, is public: a user generic that copies a
+`T` out of a container marks the method or fn, and that method is withheld from an
+instantiation whose `T` carries a resource while the rest of the type stays usable
+(`tests/fixtures/copyOutUserGeneric.milo`). See `@copyOut` in
+[language-reference.md](language-reference.md).
 
 ## `std/shard`'s manual divide/weld path is private; the closed forms are infallible (2026-09-19)
 

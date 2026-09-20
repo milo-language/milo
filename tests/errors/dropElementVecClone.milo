@@ -1,0 +1,16 @@
+// @error: 'clone' would copy 'Res' out of the Vec: it carries Drop
+// The builtin container clone is structural: it never runs the element's own Clone
+// impl, so a Vec<Res> cloned this way released each resource once per copy.
+var made: i64 = 0
+var gone: i64 = 0
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self): void { gone = gone + 1 } }
+impl Clone for Res { fn clone(self: &Self): Self { made = made + 1; return Res { id: self.id } } }
+
+pub fn main(): i32 {
+    var v: Vec<Res> = Vec.new()
+    v.push(Res { id: 1 })
+    let w = v.clone()
+    print(w.len.toString())
+    return 0
+}

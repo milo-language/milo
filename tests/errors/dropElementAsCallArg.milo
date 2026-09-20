@@ -1,0 +1,15 @@
+// @error: cannot take 'Res' out of a container by index: it carries Drop
+// A by-value parameter consumes its argument. Fed `v[0]` it received a memberwise copy
+// of a Drop element, and both the parameter and the Vec slot ran Drop.
+var gone: i64 = 0
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self): void { gone = gone + 1 } }
+fn peek(r: Res): i64 { return r.id }
+
+pub fn main(): i32 {
+    var v: Vec<Res> = Vec.new()
+    v.push(Res { id: 1 })
+    let n = peek(v[0])
+    print(n.toString())
+    return 0
+}

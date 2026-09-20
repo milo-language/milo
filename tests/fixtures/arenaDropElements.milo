@@ -1,0 +1,56 @@
+// @expect: read 7 mod 8 valid false
+// @expect: made 2 gone 2
+// An Arena<T> whose T carries Drop keeps every borrowing method: `get`/`modify` are
+// `@copyOut` and absent (tests/errors/copyOutArenaGet.milo), but alloc, read, modifyMut,
+// free, valid and the arena's own drop still work, and each resource is dropped once.
+from "std/arena" import {
+    Arena, Handle
+}
+
+var made: i64 = 0
+var gone: i64 = 0
+
+struct Res {
+    id: i64
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        gone = gone + 1
+    }
+}
+
+fn mk(id: i64): Res {
+    made = made + 1
+    return Res {
+        id: id
+    }
+}
+
+fn inner(): void {
+    var a: Arena<Res> = Arena<Res>.new()
+    let h = a.alloc(mk(7))
+    let h2 = a.alloc(mk(9))
+    var seen: i64 = 0
+    a.read(h, (r: &Res) => {
+        seen = r.id
+    }
+    )
+    a.modifyMut(h, (r: &mut Res) => {
+        r.id = r.id + 1
+    }
+    )
+    var after: i64 = 0
+    a.read(h, (r: &Res) => {
+        after = r.id
+    }
+    )
+    a.free(h2)
+    print("read " + seen.toString() + " mod " + after.toString() + " valid " + a.valid(h2).toString())
+}
+
+pub fn main(): i32 {
+    inner()
+    print("made " + made.toString() + " gone " + gone.toString())
+    return 0
+}
