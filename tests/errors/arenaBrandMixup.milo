@@ -1,0 +1,36 @@
+// Two arenas of the same payload type hand out the same Handle<Node>, so a handle
+// from graph A type-checks against graph B and only the runtime id check says no.
+// Branding each arena with its own wrapper pair makes the mixup a compile error.
+// The `_` fields keep the brand unstrippable from any other file (private fields).
+// @error: 'get' argument 1: expected HandleB, got HandleA
+from "std/arena" import { Arena, Handle }
+
+struct Node {
+    name: string,
+}
+
+struct GraphA { _a: Arena<Node> }
+@derive(Eq)
+struct HandleA { _h: Handle<Node> }
+impl GraphA {
+    fn new(): GraphA { return GraphA { _a: Arena<Node>.new() } }
+    fn alloc(self: &mut Self, n: Node): HandleA { return HandleA { _h: self._a.alloc(n) } }
+    fn get(self: &Self, h: HandleA): Option<Node> { return self._a.get(h._h) }
+}
+
+struct GraphB { _b: Arena<Node> }
+@derive(Eq)
+struct HandleB { _h: Handle<Node> }
+impl GraphB {
+    fn new(): GraphB { return GraphB { _b: Arena<Node>.new() } }
+    fn alloc(self: &mut Self, n: Node): HandleB { return HandleB { _h: self._b.alloc(n) } }
+    fn get(self: &Self, h: HandleB): Option<Node> { return self._b.get(h._h) }
+}
+
+fn main(): i32 {
+    var a = GraphA.new()
+    var b = GraphB.new()
+    let h = a.alloc(Node { name: "x" })
+    let _m = b.get(h)
+    return 0
+}

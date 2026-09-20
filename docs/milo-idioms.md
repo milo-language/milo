@@ -256,7 +256,15 @@ line instead of nine, and they are machine-checked. A witness is checked only by
 of keeping the constructor honest.
 
 **A phantom brand separates two things with the same representation.** `struct Id<Tag> { raw: i64 }`
-gives each pool or key space its own type, and a cross-pool call stops compiling.
+gives each pool or key space its own type, and a cross-pool call stops compiling. Brand an
+arena the same way when a program holds two of the same payload type: `Arena<Node>` hands
+both the same `Handle<Node>`, so a handle from graph A type-checks against graph B and only
+the runtime id check says no. Wrap each in its own pair, `struct GraphA { _a: Arena<Node> }`
+with `struct HandleA { _h: Handle<Node> }`, and the mixup is a compile error
+(`tests/errors/arenaBrandMixup.milo`). The `_` fields are file-private, so nothing outside
+the declaring file can strip the brand. There is no std wrapper for this on purpose: every
+real program already wraps its arena in a domain struct, and no program in the corpus holds
+two arenas of one type (measured 2026-09-20).
 
 **Typestate is already here.** Move checking is a substructural type system: a consumed `File`
 cannot be used again, and a builder method taking `self` by value makes the previous state

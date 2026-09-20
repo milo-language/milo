@@ -102,24 +102,18 @@ Design (decided 2026-09-20, replaces the `@private` attribute proposal):
   parity baseline unchanged, `sh scripts/selfhost.sh` + guarded selfhost
   tests (std changed).
 
-### WP4. `TaggedArena<T, Tag>`: arena identity in the type
-Files: new `std/tagged_arena.milo` (or a section of `std/arena.milo`),
-`docs/std/` page, `docs/ownership-patterns.md`, tests.
-
-- Wrapper over `Arena<T>` with a phantom `Tag` type parameter, following the
-  existing brand idiom (`Id<UserTag>`, backlog #33). `TaggedHandle<T, Tag>`
-  is `Copy` and holds a `Handle<T>`. Every arena op is re-exported with the
-  tagged signature; a handle from `TaggedArena<Node, GraphA>` does not type
-  against `TaggedArena<Node, GraphB>`. Runtime `arenaId` check stays as the
-  second layer.
-- Private helpers must be module-prefixed (`_taggedArena*`), backlog #11.
-- Name the inner arena and inner handle fields with a `_` prefix so WP3
-  makes them file-private and the brand cannot be stripped by reaching into
-  the wrapper. No TODO needed; the convention is already the rule.
-- Done: `tests/errors/taggedArenaMixup.milo` (handle from A into B is a
-  compile error), `tests/fixtures/taggedArenaGraph.milo` (two graphs, cyclic
-  edges, free + stale handle returns `None`). `bun test`, parity baseline
-  unchanged.
+### WP4. `TaggedArena<T, Tag>`: DROPPED to an idiom (decided 2026-09-20)
+Built on `refs-wp4`, then evaluated before merge. Corpus: 35 arena-using programs
+across the org, 29 with one arena, zero real programs with two arenas of one
+payload type (the four that exist are `std/arena`'s own fixtures exercising the
+runtime id check). Prior art: slotmap, generational-arena, id-arena, Bevy all
+rely on the runtime check; none brand per instance. One recorded incident ever,
+the 2026-07-22 library gap that `arenaId` closed. Cost was 229 std lines, a
+permanent emit-js baseline entry, and the `with` method had to be dropped because
+milo-self cannot build a method-level generic in std. Shipped instead: the
+paragraph in `docs/milo-idioms.md` (phantom brand) showing the two-struct wrapper,
+and `tests/errors/arenaBrandMixup.milo` pinning the compile error. Review row
+closed by idiom.
 
 ### WP5. `lend` on a free function: DROPPED (decided 2026-09-20)
 No keyword exists today; a method returning a view of `self` uses a plain
@@ -252,8 +246,7 @@ Rebase each on the previous before its gate run.
 **Tail:** none. WP5 dropped.
 
 If running one agent at a time (default per the orchestrator rules), order is
-WP2, WP3, WP4, WP1 (reordered 2026-09-20: WP3 is the soundness win, so it
-follows WP2 directly; WP4 after it gets private fields without a TODO).
+WP2, WP3, WP1 (WP4 dropped to an idiom, see its section).
 Then WP8 (std follow-ups), WP7 (census script), WP9 (emulators, other repo). WP1 sits third so its matrix rows can cite WP2 and
 WP4 by their shipped names.
 
