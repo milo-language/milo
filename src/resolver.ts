@@ -38,10 +38,15 @@ try {
 // reaches diagnostics and DWARF: `gfx$tone` still tells a reader where `tone` lives, where
 // a hash would not. Two files can share a basename in different directories, so a
 // collision gets a numeric suffix — the id only has to be unique within one build.
-function uniqueModuleId(file: string, used: Set<string>): string {
+function uniqueModuleId(file: string, used: Set<string>, os?: string): string {
   // Split on BOTH separators: a Windows path would otherwise yield the whole drive path
   // as the "basename", which still mangles uniquely but reads as noise in a diagnostic.
-  const base = file.split(/[\\/]/).pop()!.replace(/\.milo$/, "").replace(/[^A-Za-z0-9_]/g, "_");
+  // A platform arm (`platform.darwin.milo`) takes the base module's id: only one arm is
+  // ever loaded, and every arm must produce the same symbols so a program's IR does not
+  // depend on the host it was compiled on.
+  let stem = file.split(/[\\/]/).pop()!.replace(/\.milo$/, "");
+  if (os && stem.endsWith(`.${os}`)) stem = stem.slice(0, -(os.length + 1));
+  const base = stem.replace(/[^A-Za-z0-9_]/g, "_");
   let id = base === "" ? "mod" : base;
   for (let n = 2; used.has(id); n++) id = `${base}_${n}`;
   used.add(id);
@@ -225,7 +230,10 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     // Imports of a mangled package, recorded even when the target file was
     // already visited — the binding belongs to the importing file, not the
     // import graph.
-    targets: { names: string[]; aliases?: (string | undefined)[]; pkg: string }[];
+    // `file` is the resolved path of a pkg="" target, which is what lets the per-module
+    // pass bind an import of a name that pass renamed (a private std helper, imported by
+    // mistake, still has to resolve so the visibility check can say it is private).
+    targets: { names: string[]; aliases?: (string | undefined)[]; pkg: string; file?: string }[];
   }
   const units: Unit[] = [];
   // One `targets` check per package, not per import — a package's manifest can't change
@@ -346,10 +354,11 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
       const absPath = resolved.path;
       if (resolved.pkg !== "" && imp.names) {
         unit.targets.push({ names: imp.names, aliases: imp.aliases, pkg: resolved.pkg });
-      } else if (resolved.pkg === "" && imp.aliases?.some((a, i) => a !== undefined && a !== imp.names[i])) {
-        // A flat-namespace import (std/user code, never mangled) carrying an `as`
-        // alias still needs a binding: the local alias names nothing on its own.
-        unit.targets.push({ names: imp.names, aliases: imp.aliases, pkg: "" });
+      } else if (resolved.pkg === "" && imp.names) {
+        // A flat-namespace import carrying an `as` alias needs a binding in the package
+        // pass (the local alias names nothing on its own), and every named import is
+        // consulted by the per-module pass below.
+        unit.targets.push({ names: imp.names, aliases: imp.aliases, pkg: "", file: absPath });
       }
       if (visited.has(absPath)) continue;
       visited.add(absPath);
@@ -502,6 +511,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         // local `M` to the real, unmangled declared name so `M.clampI64(..)`
         // resolves. Works for values and types alike (manglePackage's binding map
         // is consulted by both resolveValue and resolveType).
+        if (!t.aliases) continue;
         for (let i = 0; i < t.names.length; i++) {
           const a = t.aliases?.[i];
           if (a !== undefined && a !== t.names[i]) bindings.set(a, t.names[i]);
@@ -579,8 +589,26 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     }
   }
 
-  const displayNames: DisplayNames = new Map();
+  // Plan first, rename second: an importer's bindings depend on what its targets renamed,
+  // and units are not in dependency order.
+  const modulePlan = new Map<string, { id: string; priv: PkgDeclNames }>();
   const usedModuleIds = new Set<string>();
+
+  // ── stage 4: std private helpers per module ──
+  // Every private name in every std module, not only the contested ones: two std modules
+  // used to be unimportable together whenever both had a private `rotl`, and the manual
+  // workaround was a `_xxRotl`/`_sha1Rotl` naming convention. `pub` std names stay flat
+  // on purpose: `milo api`, `milo doc` and docs/breaking-changes.md index std by its flat
+  // pub surface. std is planned first so its ids are the plain module names; a user
+  // module that shares a basename with a std module gets the `_2` suffix, which no one sees.
+  for (const u of units) {
+    if (u.pkg !== "" || !u.file.startsWith(stdModuleRoot)) continue;
+    const priv = emptyPkgDecls();
+    collectModulePrivateDecls(u.prog, priv, true);
+    if (priv.values.size === 0 && priv.types.size === 0) continue;
+    modulePlan.set(u.file, { id: uniqueModuleId(u.file, usedModuleIds, target.os), priv });
+  }
+
   for (const u of userUnits) {
     const priv = emptyPkgDecls();
     collectModulePrivateDecls(u.prog, priv);
@@ -592,14 +620,38 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
       for (const n of [...priv.types]) if (stdNames.has(n)) priv.types.delete(n);
     }
     if (priv.values.size === 0 && priv.types.size === 0) continue;
-    const id = uniqueModuleId(u.file, usedModuleIds);
-    // Record what each rename hides BEFORE it happens: the mangled name is a symbol, and
-    // every surface a human reads renders it back through `display()` (src/mangle.ts).
-    // `sourceName` carries the same fact on the decl itself, for the paths that hold one.
-    for (const n of priv.values) displayNames.set(`${id}$${n}`, n);
-    for (const n of priv.types) displayNames.set(`${id}$${n}`, n);
-    for (const f of u.prog.functions) if (priv.values.has(f.name)) f.sourceName ??= f.name;
-    manglePackage(u.prog, id, priv, new Map(), true);
+    modulePlan.set(u.file, { id: uniqueModuleId(u.file, usedModuleIds, target.os), priv });
+  }
+
+  const displayNames: DisplayNames = new Map();
+  for (const u of units) {
+    if (u.pkg !== "") continue;
+    const own = modulePlan.get(u.file);
+    // An import of a name the target module renamed. A private name has no legitimate
+    // importers, so this binding exists for the ERROR path: the reference still resolves
+    // to the (now module-scoped) decl, and the checker's visibility pass reports it as
+    // private to its file instead of an unrelated "undefined function".
+    const bindings = new Map<string, string>();
+    for (const t of u.targets) {
+      const tp = t.pkg === "" && t.file !== undefined ? modulePlan.get(t.file) : undefined;
+      if (!tp) continue;
+      for (let i = 0; i < t.names.length; i++) {
+        const n = t.names[i];
+        if (!tp.priv.values.has(n) && !tp.priv.types.has(n)) continue;
+        // The package pass above has already rewritten an `as` alias to the declared name.
+        bindings.set(n, `${tp.id}$${n}`);
+      }
+    }
+    if (!own && bindings.size === 0) continue;
+    if (own) {
+      // Record what each rename hides BEFORE it happens: the mangled name is a symbol, and
+      // every surface a human reads renders it back through `display()` (src/mangle.ts).
+      // `sourceName` carries the same fact on the decl itself, for the paths that hold one.
+      for (const n of own.priv.values) displayNames.set(`${own.id}$${n}`, n);
+      for (const n of own.priv.types) displayNames.set(`${own.id}$${n}`, n);
+      for (const f of u.prog.functions) if (own.priv.values.has(f.name)) f.sourceName ??= f.name;
+    }
+    manglePackage(u.prog, own?.id ?? "", own?.priv ?? emptyPkgDecls(), bindings, true);
   }
 
   // Every type/global declaration paired with the file that declared it. Unlike

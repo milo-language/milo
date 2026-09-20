@@ -8,7 +8,7 @@
 
 let MASK32: i64 = 0xffffffff
 
-fn _sha1Rotl(x: i64, n: i64): i64 {
+fn rotl(x: i64, n: i64): i64 {
     return ((x << n) | (x >> (32 - n))) & MASK32
 }
 
@@ -57,7 +57,7 @@ fn sha1Bytes(input: &string): string {
             w[t] = (((m[o] as i64) << 24) | ((m[o + 1] as i64) << 16) | ((m[o + 2] as i64) << 8) | (m[o + 3] as i64)) & MASK32
         }
         for t in 16..80 {
-            w[t] = _sha1Rotl((w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16]) & MASK32, 1)
+            w[t] = rotl((w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16]) & MASK32, 1)
         }
 
         var a = h0
@@ -82,10 +82,10 @@ fn sha1Bytes(input: &string): string {
                 f = b ^ c ^ d
                 k = 0xca62c1d6
             }
-            let temp = (_sha1Rotl(a, 5) + (f & MASK32) + e + k + w[t]) & MASK32
+            let temp = (rotl(a, 5) + (f & MASK32) + e + k + w[t]) & MASK32
             e = d
             d = c
-            c = _sha1Rotl(b, 30)
+            c = rotl(b, 30)
             b = a
             a = temp
         }

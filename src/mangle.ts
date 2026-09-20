@@ -55,6 +55,22 @@ function hasCAttr(attrs: { name: string }[] | undefined): boolean {
   return !!attrs?.some((a) => a.name === "cName" || a.name === "cLayout");
 }
 
+// std/string's private helpers that the COMPILER calls by name: lowering rewrites
+// `s.contains(x)` to a call of `strContains` (src/lower.ts strMethodMap), codegen emits
+// `strIndexOf`/`strIndexOfFrom`/`strLastIndexOf` for the indexOf family and `vecJoin`
+// for `Vec<string>.join`, and the JS backend switches on `strToLower`/`strToUpper`.
+// They are private so nothing outside std can name them, but their symbol is part of
+// the compiler's ABI with std, so the per-module pass leaves it flat. Drift here is
+// loud, not silent: a renamed helper is an undefined function in every program that
+// calls a string method, which the fixture suite hits in the first file.
+export const COMPILER_KNOWN_STD_HELPERS: ReadonlySet<string> = new Set([
+  "strContains", "strIndexOf", "strIndexOfFrom", "strLastIndexOf", "strStartsWith",
+  "strEndsWith", "strToLower", "strToUpper", "strTrim", "strTrimStart", "strTrimEnd",
+  "strSplit", "strRepeat", "strPadStart", "strPadEnd", "strReplace", "strReplaceFirst",
+  "strSplitWords", "strSplitWhitespace", "strIsEmpty", "strCharAt", "strReverse",
+  "strParseInt", "strParseF64", "vecJoin",
+]);
+
 // One file's FILE-PRIVATE top-level names — the only ones stage 1 renames.
 //
 // A `pub` name is part of a module's surface, and two modules exporting the same name is
@@ -62,8 +78,12 @@ function hasCAttr(attrs: { name: string }[] | undefined): boolean {
 // diagnostic and means no import binding anywhere has to be rewritten. A private name is
 // invisible outside its own file by construction, so renaming it cannot change the
 // meaning of any program that compiles today — which is the entire argument for the pass.
-export function collectModulePrivateDecls(prog: Program, out: PkgDeclNames): void {
-  for (const f of prog.functions) if (!f.isPub && isModuleManglableFn(f)) out.values.add(f.name);
+export function collectModulePrivateDecls(prog: Program, out: PkgDeclNames, isStd = false): void {
+  for (const f of prog.functions) {
+    if (f.isPub || !isModuleManglableFn(f)) continue;
+    if (isStd && COMPILER_KNOWN_STD_HELPERS.has(f.name)) continue;
+    out.values.add(f.name);
+  }
   for (const g of prog.globals) if (!g.isPub) out.values.add(g.name);
   for (const s of prog.structs) if (!s.isPub && !s.isExtern && !hasCAttr(s.attributes)) out.types.add(s.name);
   for (const e of prog.enums) if (!e.isPub && !hasCAttr(e.attributes)) out.types.add(e.name);
@@ -449,19 +469,22 @@ function escapeRegex(s: string): string {
  * Render `text`, a bare symbol or a whole diagnostic message, with every mangled name
  * replaced by the name the programmer wrote.
  *
- * Substring matching with no word boundary is deliberate. `$` cannot occur in a Milo
- * identifier, so every `$` in a compiler-facing name is a separator this compiler put
- * there, and every context a mangled name is embedded in wants the same substitution:
- * `gfx$User$greet` (an impl method), `gfx$Pair_i64` (a monomorphized instance) and
- * `Vec_gfx$User` (a container instantiated on one) all read correctly once the registered
- * part is swapped. Longest key first, so `mygfx$tone` never loses to `gfx$tone`.
+ * Substring matching, anchored only at the start of the key and only against a letter
+ * or digit: `$` cannot occur in a Milo identifier, so every `$` in a compiler-facing name
+ * is a separator this compiler put there, and every context a mangled name is embedded
+ * in wants the same substitution. `gfx$User$greet` (an impl method), `gfx$Pair_i64` (a
+ * monomorphized instance), `Vec_gfx$User` (a container instantiated on one) and
+ * `Radio$io$Trait$m` (a trait from module `io`) all read correctly once the registered
+ * part is swapped. The lookbehind is what keeps std's short module ids honest: without
+ * it the key `io$x` would match inside a user's own `Radio$x`. Longest key first, so
+ * `mygfx$tone` never loses to `gfx$tone`.
  */
 export function display(map: DisplayNames | undefined, text: string): string {
   if (!map || map.size === 0) return text;
   let re = displayRegexes.get(map);
   if (!re) {
     const keys = [...map.keys()].sort((a, b) => b.length - a.length).map(escapeRegex);
-    re = new RegExp(keys.join("|"), "g");
+    re = new RegExp(`(?<![A-Za-z0-9])(?:${keys.join("|")})`, "g");
     displayRegexes.set(map, re);
   }
   return text.replace(re, (m) => map.get(m) ?? m);

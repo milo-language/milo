@@ -71,7 +71,6 @@
   "cryptoShaCoexist.milo": "noEmit",
   "dateTime.milo": "noEmit",
   "dateTimeLocal.milo": "noEmit",
-  "deflateRoundtrip.milo": "mismatch",
   "derefStore.milo": "noEmit",
   "deriveJsonErrors.milo": "noEmit",
   "deriveJsonFixedArray.milo": "noEmit",

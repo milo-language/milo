@@ -13,7 +13,7 @@ from "std/hex" import {
 }
 
 // Compute SHA-256 hash of a string. Returns 64-char lowercase hex string.
-fn cryptoSha256(input: &string): string {
+fn sha256(input: &string): string {
     let raw = sha256Raw(input)
     return Hex.encode(raw)
 }
@@ -25,13 +25,13 @@ fn md5(input: &string): string {
 }
 
 // Compute SHA-1 hash. Returns 40-char lowercase hex string.
-fn cryptoSha1(input: &string): string {
+fn sha1(input: &string): string {
     let raw = sha1Raw(input)
     return Hex.encode(raw)
 }
 
 // Raw 20-byte SHA-1 digest as a string (for WebSocket handshake, HMAC, etc.)
-fn cryptoSha1Bytes(input: &string): string {
+fn sha1Bytes(input: &string): string {
     return sha1Raw(input)
 }
 
@@ -143,13 +143,13 @@ pub struct Crypto {
 
 impl Crypto {
     fn sha256(input: &string): string {
-        return cryptoSha256(input)
+        return sha256(input)
     }
     fn sha1(input: &string): string {
-        return cryptoSha1(input)
+        return sha1(input)
     }
     fn sha1Bytes(input: &string): string {
-        return cryptoSha1Bytes(input)
+        return sha1Bytes(input)
     }
     fn md5(input: &string): string {
         return md5(input)

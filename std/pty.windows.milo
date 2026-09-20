@@ -190,7 +190,7 @@ impl Pty {
     self.masterFd >= 0
     {
         unsafe {
-            let cmdLine = _ptyBuildCmdLine(program, args)
+            let cmdLine = buildCmdLine(program, args)
 
             // Size, allocate, and initialise the attribute list, then load the HPCON.
             var sizeBuf: [i64; 1] = [0]
@@ -319,11 +319,11 @@ pub fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string> {
 
 // Build a CreateProcess command line: `program arg1 arg2 ...`, quoting tokens that
 // contain whitespace. Malloc'd + NUL-terminated; CreateProcessA may write into it.
-fn _ptyBuildCmdLine(program: &string, args: &Vec<string>): *u8 {
-    var line = _ptyQuoteArg(program)
+fn buildCmdLine(program: &string, args: &Vec<string>): *u8 {
+    var line = quoteArg(program)
     for i in 0..args.len {
         line.push(' ')
-        line.pushStr(_ptyQuoteArg(args[i]))
+        line.pushStr(quoteArg(args[i]))
     }
     unsafe {
         let n = line.len
@@ -334,7 +334,7 @@ fn _ptyBuildCmdLine(program: &string, args: &Vec<string>): *u8 {
     }
 }
 
-fn _ptyQuoteArg(arg: &string): string {
+fn quoteArg(arg: &string): string {
     var needsQuote = arg.len == 0
     for i in 0..arg.len {
         let c = arg[i]
