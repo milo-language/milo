@@ -447,7 +447,7 @@ pub fn closeThing(p: *Thing): i32 {
 | `@embedFile(path)` | Embed file contents as string at compile time (see [Compile-Time File Embedding](#compile-time-file-embedding)) |
 | `@targetOs()` | Compile-time OS string (`"darwin"`/`"linux"`/`"windows"`); folds `if` branches (see [Compile-Time Target OS](#compile-time-target-os)) |
 
-`replace` and `swap` are the sound way to move a value out of a place you only hold mutably — the move checker forbids a bare `x = someNewValue` from yielding the old `x`, and `x.clone(); x = ...` is a move disguised as a copy. They take the place *bare* (`replace(x, v)`, not `replace(&x, v)`), since [borrows are implicit](#references-second-class).
+`replace` and `swap` are the sound way to move a value out of a place you only hold mutably — the move checker forbids a bare `x = someNewValue` from yielding the old `x`, and `x.clone(); x = ...` is a move disguised as a copy. They take the place as a `&mut` argument (`replace(&mut x, v)`), see [references](#references-second-class).
 
 ```milo
 var anchor: string = "hello"
@@ -2151,7 +2151,7 @@ fn double(x: &mut i32) {
 }
 
 var n: i32 = 21
-double(n)          // n is now 42
+double(&mut n)     // n is now 42; the '&mut' marks the one argument the call can change
 
 // Ref locals — zero-copy slices
 fn process(content: &string): void {
@@ -2162,7 +2162,7 @@ fn process(content: &string): void {
 
 Two things to be aware of:
 
-- **Borrowing is implicit at call sites.** `double(n)` mut-borrows `n` and `consume(s)` moves `s`, but the calls look identical — the function signature, not the call site, tells you which happens. The compiler still rejects any use-after-move, so mistakes are compile errors, not bugs.
+- **Shared borrows are implicit at call sites; mutable ones are spelled.** `length(s)` borrows `s` and `consume(s)` moves `s`, and the calls look identical — the function signature, not the call site, tells you which happens. The compiler still rejects any use-after-move, so mistakes are compile errors, not bugs. A mutation is the one effect a reader cannot recover from the call site, so an argument bound to a `&mut T` parameter is written `&mut x` (`&mut a.b`, `&mut v[i..j]`); it is a marker, not an expression, and `let r = &mut x` is an error. A method receiver stays implicit: `v.push(1)`, never `(&mut v).push(1)`. `&x` for a shared borrow is not an expression either. During the migration the bare form `double(n)` still compiles and the `implicit-mut-borrow` warning is off by default; `--deny=implicit-mut-borrow` enforces the marker and `bun scripts/explicit-mut.ts <file>` rewrites a file.
 - **Assignment through `&mut` has no deref sigil.** Inside `double`, `x = x * 2` writes through the reference to the caller's variable. (Reassigning a `&string` slice *local*, by contrast, just rebinds the view — see [Strings](#strings).)
 
 **What you can't do:**

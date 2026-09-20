@@ -75,7 +75,8 @@ has no home.
 - `let` = immutable (SSA register), `var` = mutable (alloca)
 - Move semantics: single owner, use-after-move = compile error
 - Second-class references: `&T`/`&mut T` only in function params, never stored/returned
-- **Borrows are implicit — there is no `&x` expression.** A `&T`/`&mut T` param is fed the value *bare* at the call site (`foo(x)`, not `foo(&x)`); the compiler auto-borrows. `&x` as an expression is a hard error (`checker.ts` UnaryOp `&`). A raw pointer comes from `v.ptr()` / `x.addrOf()` (unsafe), never `&`.
+- **Shared borrows are implicit — there is no `&x` expression.** A `&T` param is fed the value *bare* at the call site (`foo(x)`, not `foo(&x)`); the compiler auto-borrows. `&x` as an expression is a hard error (`checker.ts` UnaryOp `&`). A raw pointer comes from `v.ptr()` / `x.addrOf()` (unsafe), never `&`.
+- **A `&mut T` argument is spelled `foo(&mut x)`** (non-receiver arguments only; `v.push(1)` stays implicit). The marker is stripped by the checker before the argument is checked (`takeExplicitMutArgs`), so borrow rules and codegen never see it. Migration in progress: the bare form warns as `implicit-mut-borrow` (off by default until std is migrated); `bun scripts/explicit-mut.ts <file>` rewrites a file; `bun scripts/count-implicit-mut.ts` counts what is left. See `docs/plans/local-reasoning-2026-09.md`.
 - User-defined generics: `fn foo<T>`, `struct Pair<A,B>`, `enum Maybe<T>` — monomorphization with type inference
 - No GC, no RC, no pointers in safe code
 - Arenas for cyclic data via `std/arena` (`Arena<T>` + generational `Handle<T>`)
@@ -85,7 +86,7 @@ has no home.
 
 - **Self-host never gates a `src/` change.** Blocking work in `src/` on self-host parity is a tar pit and is what got `src-milo/` parked for months. A new language/stdlib feature lands in `src/` + `bun test tests/run.test.ts`; `src-milo/` may lag it, and that is fine.
 
-  It DOES gate a `src-milo/` change. `.github/workflows/selfhost.yml` runs the fixpoint, the soundness ratchet and the HIR ratchet on any commit touching `src-milo/`, `std/`, or the selfhost scripts, and sweeps all <!-- stat:fixtures -->703<!-- /stat --> fixtures nightly — scoped by path precisely so a `src/`-only commit never triggers it. So when you change `src-milo/`, run the gates before pushing:
+  It DOES gate a `src-milo/` change. `.github/workflows/selfhost.yml` runs the fixpoint, the soundness ratchet and the HIR ratchet on any commit touching `src-milo/`, `std/`, or the selfhost scripts, and sweeps all <!-- stat:fixtures -->705<!-- /stat --> fixtures nightly — scoped by path precisely so a `src/`-only commit never triggers it. So when you change `src-milo/`, run the gates before pushing:
   `sh scripts/selfhost.sh`, `sh scripts/selfhost-fixpoint.sh`, `bun scripts/selfhost-rejects.ts --check`, `bun scripts/selfhost-sweep.ts --check` (the sweep is ~48 min — run it once, at the end). The fixpoint is the real one.
 
   (The memory-guard rules below still stand — they're OS-safety, not self-host.)

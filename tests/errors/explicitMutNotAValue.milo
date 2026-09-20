@@ -1,0 +1,7 @@
+// `&mut x` is a call-argument marker, not an expression: a borrow cannot be bound or stored.
+// @error: '&mut' marks an argument to a '&mut' parameter; it is not a value
+fn main(): i32 {
+    var x: i64 = 1
+    let r = &mut x
+    return r as i32
+}

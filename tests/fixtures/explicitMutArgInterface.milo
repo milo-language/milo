@@ -1,0 +1,31 @@
+// `b.bumpBy(&mut n)` through an interface: the explicit `&mut` on an interface-method
+// argument. TS-only for now: milo-self segfaults on a `&mut i64` argument passed through
+// an interface method with or without the marker (pre-existing, unrelated to `&mut`).
+// @expect: 20
+interface Bumper {
+    fn bumpBy(self: &Self, n: &mut i64): void
+}
+
+struct P {
+    n: i64
+}
+
+impl P {
+    fn bumpBy(self: &Self, n: &mut i64): void {
+        n = n + self.n
+    }
+}
+
+fn viaBumper(b: &Bumper, n: &mut i64): void {
+    b.bumpBy(&mut n)
+}
+
+fn main(): i32 {
+    let p = P {
+        n: 3
+    }
+    var m: i64 = 17
+    viaBumper(p, &mut m)
+    print(m)
+    return 0
+}

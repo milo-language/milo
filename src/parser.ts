@@ -1419,6 +1419,14 @@ export class Parser {
   }
 
   private parseUnary(): Expr {
+    // `&mut x` is the explicit mutable-borrow marker on a call argument. Parsed anywhere
+    // an expression can start; the checker decides whether the position is allowed.
+    if (this.peek().kind === TokenKind.Amp && this.peekN(1).kind === TokenKind.Mut) {
+      const tok = this.advance();
+      this.advance();
+      const operand = this.parseUnary();
+      return { kind: "UnaryOp", op: "&mut", operand, span: this.span(tok) };
+    }
     if (this.peek().kind === TokenKind.Minus || this.peek().kind === TokenKind.Bang || this.peek().kind === TokenKind.Star || this.peek().kind === TokenKind.Tilde || this.peek().kind === TokenKind.Amp) {
       const tok = this.advance();
       const operand = this.parseUnary();

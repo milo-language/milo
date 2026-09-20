@@ -41,6 +41,35 @@ sites are not countable by grep; step A1 counts them with the checker.
   one-off using `check --json`) that reports every non-receiver argument bound to a
   `&mut` param, per file. Run over std, examples, src-milo, fixtures, and the 12
   siblings. Record the number here before anything else.
+- **A1 measurement (2026-09-20).** `bun scripts/count-implicit-mut.ts` (drives
+  `milo check --count-implicit-mut` over every file as its own entry, deduplicated by
+  file:line:col, attributed by path). Bare arguments bound to a `&mut` parameter:
+
+  | root | sites |
+  |---|---|
+  | std | 272 |
+  | examples | 3535 |
+  | src-milo | 6470 |
+  | tests/fixtures | 242 |
+  | sibling/milojs | 4702 |
+  | sibling/emulators | 4338 |
+  | sibling/milo-gl | 55 |
+  | sibling/markdown | 51 |
+  | sibling/dapweb | 30 |
+  | sibling/redis | 17 |
+  | sibling/toml | 11 |
+  | sibling/yaml | 9 |
+  | sibling/postgres | 4 |
+  | sibling/aws, milo-json-rpc, milo-sdl | 0 |
+  | package cache (milo-gl v0.2.0 via milo-sdl) | 28 |
+  | **total** | **19764** |
+
+  15 entries did not resolve standalone and are not counted: the linux/windows arms of
+  `std/platform` and `std/event` on a darwin host, `dapweb/src/{sessions,start,api/main}`
+  (import `usleep`/`getpid` from `std/os`, not exported), `milo-json-rpc/tests/*`
+  (package layout), `milojs/src/engine/methods.milo`, `postgres/*` (`hexEncode` defined
+  twice). Every site was routed through the call-site helper: zero fell to the
+  `setAutoBorrowChecked` cross-check.
 - **A2. Parser + checker accept `&mut expr` in argument position** (`src/parser.ts`
   UnaryOp path; `src/checker.ts` line ~7995 currently rejects `&x` with "borrows are
   implicit"). `&mut x` where the param is not `&mut` is an error naming the param

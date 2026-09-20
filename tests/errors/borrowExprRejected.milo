@@ -1,0 +1,7 @@
+// `&x` is not an expression: shared borrows are implicit at the call site.
+// @error: '&x' is not an expression: shared borrows are implicit (pass 'x' bare). Only a '&mut' argument is spelled out: 'f(&mut x)'
+fn total(v: &Vec<i64>): i64 { return v.len() }
+fn main(): i32 {
+    let v: Vec<i64> = [1, 2]
+    return total(&v) as i32
+}

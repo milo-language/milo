@@ -53,6 +53,9 @@ const cases: Record<string, string> = {
   // A C function-pointer field: the fn-type arrow and a `*T` parameter inside a struct
   // body, which no other case puts there.
   externFnPtrField: `extern struct Ops {\n    read: (*u8, i32) => i32,\n    close: () => void,\n}\n`,
+  // `&mut x` on a call argument (explicit mutable borrow): the `&` must hug `mut` after
+  // `(` and after `, `, while a binary `&` keeps its spaces.
+  explicitMutArg: `fn main(): i32 {\n    var x: i64 = 1\n    var v: Vec<i64> = []\n    g(&mut x, 2, &mut v)\n    let y = x & 3\n    return y\n}\n`,
 };
 
 for (const [name, src] of Object.entries(cases)) {

@@ -1341,10 +1341,16 @@ pub fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &ExprNode, span: &Op
         }
         return ot
     }
+    if op == "&mut" {
+        // Only reached outside a call argument: the parser drops the marker there.
+        error(ck, "'&mut' marks an argument to a '&mut' parameter; it is not a value", cloneSpan(span))
+        return ot
+    }
     if op == "&" {
         // `&` is a borrow marker that appears only in a TYPE (`&T`), never an
-        // expression. Raw pointers come from `v.ptr()` / `x.addrOf()`.
-        error(ck, "'&x' is not an expression — borrows are implicit (pass 'x' bare). For a raw pointer use 'v.ptr()' (a collection's data) or 'x.addrOf()' (any value, in an unsafe block).", cloneSpan(span))
+        // expression. Shared borrows are implicit; only `&mut` is spelled at a call
+        // site. Raw pointers come from `v.ptr()` / `x.addrOf()`.
+        error(ck, "'&x' is not an expression: shared borrows are implicit (pass 'x' bare). Only a '&mut' argument is spelled out: 'f(&mut x)'. For a raw pointer use 'v.ptr()' or 'x.addrOf()'.", cloneSpan(span))
         return TypeKind.TPtr(Heap(ot))
     }
     return tyUnknown()

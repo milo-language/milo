@@ -667,6 +667,10 @@ class LowerCtx {
         return { kind: "BinOp", op: expr.op, left: this.lowerExpr(expr.left), right: this.lowerExpr(expr.right), type, span: expr.span };
       }
       case "UnaryOp":
+        // `&mut x` on a call argument is a marker, not an operation: the checker strips
+        // it before checking the argument, so this is only reached by a path that lowers
+        // unchecked AST. Transparent either way.
+        if (expr.op === "&mut") return this.lowerExpr(expr.operand);
         if (expr.op === "*") {
           const operandType = this.c.exprTypes.get(expr.operand);
           if (operandType?.tag === "ptr") return { kind: "PtrDeref", operand: this.lowerExpr(expr.operand), type, span: expr.span };

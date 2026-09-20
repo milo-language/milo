@@ -1,0 +1,9 @@
+// `&mut` is spelled only where the parameter is `&mut T`; a shared borrow stays implicit.
+// @error: '&mut' on an argument to a '&P' parameter of 'show'; only a '&mut' parameter takes '&mut'
+struct P { n: i64 }
+fn show(p: &P): i64 { return p.n }
+fn main(): i32 {
+    var p = P { n: 1 }
+    let a = show(&mut p)
+    return a as i32
+}

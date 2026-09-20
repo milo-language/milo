@@ -14,7 +14,7 @@ import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
 import { checkPurity, checkEscapingClosures, checkThreadBoundary, checkGlobalBorrowInvalidation, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, closest, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
-import { expandDeriveTemplate, dumpTokens, DeriveTemplateError } from "./derive-template";
+import { expandDeriveTemplate, dumpTokens, DeriveTemplateError, formatMiloType } from "./derive-template";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import { basename, relative, resolve as resolvePath, sep } from "path";
@@ -333,8 +333,12 @@ export interface EnumInfo {
   reprType?: string; // set for `enum Kind: i32 { ... }` — the tag IS the integer value
 }
 
+// A bare argument bound to a `&mut` parameter (see `milo check --count-implicit-mut`).
+export interface ImplicitMutSite { span?: Span; callee: string; param: string }
+
 export interface CheckResult {
   diagnostics: Diagnostic[];
+  implicitMutSites: ImplicitMutSite[];
   exprTypes: Map<Expr, TypeKind>;
   patternBindingTypes: Map<import("./ast").Pattern, TypeKind[]>;
   // The reference each nullable-extern-reference unwrap (`let g = p else { … }`) binds.
@@ -530,6 +534,16 @@ export class TypeChecker {
   private patternBindingTypes = new Map<import("./ast").Pattern, TypeKind[]>();
   private nullRefUnwraps = new Map<import("./ast").LetElseStmt, { inner: TypeKind; mutable: boolean }>();
   private autoBorrowed = new Map<Expr, { mutable: boolean }>();
+  // Arguments the program spelled `&mut x`. The wrapper is gone by the time the argument
+  // is checked (takeExplicitMutArgs strips it), so this set is the only record that the
+  // marker was written; a bare argument bound to `&mut T` is what implicit-mut-borrow
+  // reports.
+  private explicitMutArgs = new Set<Expr>();
+  // Every bare non-receiver argument bound to a `&mut` parameter, one entry per source
+  // position (a generic body is checked once per instantiation). `milo check
+  // --count-implicit-mut` prints these; the plan's migration gate is this list reaching 0.
+  private implicitMutSites: ImplicitMutSite[] = [];
+  private implicitMutSeen = new Set<string>();
   private matchSubjectRef = new Set<Expr>();
   private rewrittenCalls = new Map<Expr, string>();
   private rewrittenEnums = new Map<Expr, string>();
@@ -665,6 +679,10 @@ export class TypeChecker {
     // every one of them, and the fix ("just delete it") would break the build — so the
     // projects that don't do that opt in.
     if (!config.denied.has("unused-import") && !config.expected?.has("unused-import")) config.allowed.add("unused-import");
+    // implicit-mut-borrow is OFF until the corpus writes `f(&mut x)` everywhere (track A
+    // of docs/plans/local-reasoning-2026-09.md); `--deny=implicit-mut-borrow` is how the
+    // fixer and the migration gate ask for it before the default flips.
+    if (!config.denied.has("implicit-mut-borrow") && !config.expected?.has("implicit-mut-borrow")) config.allowed.add("implicit-mut-borrow");
     // large-stack-array is OFF unless asked for. Big fixed-size locals are a real
     // stack-overflow footgun, but plenty are intentional (main-thread framebuffers
     // that work fine), so warning by default would nag every graphics program. The
@@ -2604,6 +2622,7 @@ export class TypeChecker {
       patternBindingTypes: this.patternBindingTypes,
       nullRefUnwraps: this.nullRefUnwraps,
       autoBorrowed: this.autoBorrowed,
+      implicitMutSites: this.implicitMutSites,
       matchSubjectRef: this.matchSubjectRef,
       rewrittenCalls: this.rewrittenCalls,
       rewrittenEnums: this.rewrittenEnums,
@@ -4887,6 +4906,7 @@ export class TypeChecker {
     if (expr.args.length !== sig.params.length - 1) {
       this.error(`'${expr.method}' expects ${sig.params.length - 1} argument(s), got ${expr.args.length}`, sp);
     }
+    this.takeExplicitMutArgs(expr.args, expr.method, i => this.sigParamAt(sig.params[i + 1]));
     for (let i = 0; i < expr.args.length; i++) {
       const expected = sig.params[i + 1];
       if (!expected) break;
@@ -7434,9 +7454,59 @@ export class TypeChecker {
     }
   }
 
+  // Explicit `&mut` on call arguments (docs/plans/local-reasoning-2026-09.md, track A).
+  // Runs on the raw argument list before any argument is type-checked. Where the
+  // parameter is `&mut T` the `&mut` wrapper is stripped in place, so every later pass
+  // (freeze and exclusivity checks, lowering, codegen) sees the argument it always did
+  // and the marker changes nothing downstream. Anywhere else the wrapper is an error.
+  // `paramAt(i)` is the parameter the argument binds to; undefined when the arity is
+  // already wrong (that error is reported by the caller, so the wrapper is dropped
+  // silently rather than adding a second one). Runs before the arity check would
+  // return, so a misplaced `&mut` is diagnosed alongside it.
+  private takeExplicitMutArgs(
+    args: Expr[], callee: string,
+    paramAt: (i: number) => { name: string; mut: boolean; show: () => string } | undefined,
+  ) {
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      const param = paramAt(i);
+      if (arg.kind === "UnaryOp" && arg.op === "&mut") {
+        args[i] = arg.operand;
+        this.explicitMutArgs.add(arg.operand);
+        if (param && !param.mut) {
+          this.error(`'&mut' on an argument to a '${param.show()}' parameter of '${callee}'; only a '&mut' parameter takes '&mut'`, arg.span);
+        }
+        continue;
+      }
+      if (param?.mut && !this.explicitMutArgs.has(arg)) this.noteImplicitMut(arg, callee, param.name);
+    }
+  }
+
+  private sigParamAt(p: { name: string; type: TypeKind } | undefined) {
+    return p ? { name: p.name, mut: p.type.tag === "ref" && p.type.mutable, show: () => this.show(p.type) } : undefined;
+  }
+  private typeParamAt(t: TypeKind | undefined, i: number) {
+    return t ? { name: `#${i + 1}`, mut: t.tag === "ref" && t.mutable, show: () => this.show(t) } : undefined;
+  }
+
+  private noteImplicitMut(arg: Expr, callee: string, param: string) {
+    const at = arg.span;
+    const key = at ? `${at.file ?? ""}:${at.line}:${at.col}` : `${callee}:${param}:${this.implicitMutSites.length}`;
+    if (this.implicitMutSeen.has(key)) return;
+    this.implicitMutSeen.add(key);
+    this.implicitMutSites.push({ span: at, callee, param });
+    const text = this.describeExpr(arg);
+    this.warn("implicit-mut-borrow",
+      `argument '${text}' is passed to a '&mut' parameter without '&mut'`, at,
+      `write '${callee}(... &mut ${text} ...)'; run 'bun scripts/explicit-mut.ts <file>' to rewrite the file`);
+  }
+
   // Auto-borrow a call argument; passing a frozen var by mutable ref is the same
   // hazard as calling a mutating method on it (the callee may realloc/free it).
   private setAutoBorrowChecked(arg: Expr, mutable: boolean, sp?: Span) {
+    // Cross-check for takeExplicitMutArgs: a `&mut` binding no call site routed through
+    // it (a builtin, say) still gets counted, under a callee the count marks unknown.
+    if (mutable && !this.explicitMutArgs.has(arg)) this.noteImplicitMut(arg, "?", "?");
     if (mutable) {
       // Only for a value being *turned into* a borrow. An argument that is already
       // a reference — a slice like `v[0..2]` — is not competing with the freeze, it
@@ -7481,8 +7551,12 @@ export class TypeChecker {
 
   private describeExpr(expr: Expr): string {
     if (expr.kind === "Ident") return expr.name;
+    if (expr.kind === "IntLit") return expr.value.toString();
+    if (expr.kind === "UnaryOp" && expr.op === "*") return `*${this.describeExpr(expr.operand)}`;
     if (expr.kind === "FieldAccess") return `${this.describeExpr(expr.object)}.${expr.field}`;
     if (expr.kind === "IndexAccess") return `${this.describeExpr(expr.object)}[...]`;
+    // `v[a..b]` parses as a `slice` call.
+    if (expr.kind === "MethodCall") return expr.method === "slice" ? `${this.describeExpr(expr.object)}[..]` : `${this.describeExpr(expr.object)}.${expr.method}(...)`;
     return "<expr>";
   }
 
@@ -7988,11 +8062,19 @@ export class TypeChecker {
       if (ot.tag !== "int" && ot.tag !== "unknown") this.error(`unary '~' requires integer type, got ${this.show(ot)}`, sp);
       return this.setType(expr, ot);
     }
+    if (expr.op === "&mut") {
+      // Reached only when takeExplicitMutArgs did not strip it, i.e. the marker is not
+      // a call argument at all (a `let`, an operand, a return value, a receiver).
+      this.error(`'&mut' marks an argument to a '&mut' parameter; it is not a value`, sp,
+        `'&mut' is written only on a call argument: 'f(&mut x)'. A method receiver borrows implicitly: 'v.push(1)'`);
+      return this.setType(expr, ot);
+    }
     if (expr.op === "&") {
       // `&` is a borrow marker that appears only in a TYPE (`&T` = a borrowed
-      // param). It is not an expression operator. Borrows are implicit (pass
-      // the value bare); a raw pointer comes from `v.ptr()` / `x.addrOf()`.
-      this.error(`'&x' is not an expression — borrows are implicit (pass 'x' bare). For a raw pointer use 'v.ptr()' (a collection's data) or 'x.addrOf()' (any value, in an unsafe block).`, sp);
+      // param). It is not an expression operator. Shared borrows are implicit (pass
+      // the value bare); only `&mut` is spelled at a call site, and a raw pointer
+      // comes from `v.ptr()` / `x.addrOf()`.
+      this.error(`'&x' is not an expression: shared borrows are implicit (pass 'x' bare). Only a '&mut' argument is spelled out: 'f(&mut x)'. For a raw pointer use 'v.ptr()' or 'x.addrOf()'.`, sp);
       return this.setType(expr, { tag: "ptr", inner: ot });
     }
     return this.setType(expr, { tag: "unknown" });
@@ -8265,6 +8347,11 @@ export class TypeChecker {
     // Generic function — infer type params from args, monomorphize
     const genericFn = this.genericFns.get(expr.func);
     if (genericFn) {
+      // The concrete signature does not exist yet; `&mut`-ness is in the declaration.
+      this.takeExplicitMutArgs(expr.args, expr.func, i => {
+        const p = genericFn.decl.params[i];
+        return p ? { name: p.name, mut: declaredType(p).isRefMut, show: () => formatMiloType(declaredType(p)) } : undefined;
+      });
       const argTypes: TypeKind[] = [];
       for (const arg of expr.args) argTypes.push(this.checkExpr(arg));
 
@@ -8452,6 +8539,7 @@ export class TypeChecker {
         if (expr.args.length !== fnType.params.length) {
           this.error(`closure expects ${fnType.params.length} args, got ${expr.args.length}`, sp);
         }
+        this.takeExplicitMutArgs(expr.args, expr.func, i => this.typeParamAt(fnType.params[i], i));
         for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
           const paramType = fnType.params[i];
           const hint = paramType.tag === "ref" ? paramType.inner : paramType;
@@ -8554,6 +8642,7 @@ export class TypeChecker {
     } else if (expr.args.length !== sig.params.length) {
       this.error(`function '${expr.func}' expects ${sig.params.length} args, got ${expr.args.length}`, sp);
     }
+    this.takeExplicitMutArgs(expr.args, expr.func, i => this.sigParamAt(sig.params[i]));
     for (let i = 0; i < Math.min(expr.args.length, sig.params.length); i++) {
       const paramType = sig.params[i].type;
       const hint = paramType.tag === "ref" ? paramType.inner : paramType;
@@ -8929,6 +9018,7 @@ export class TypeChecker {
     if (expr.args.length !== expectedParams.length) {
       this.error(`'${expr.enumName}.${expr.variant}' expects ${expectedParams.length} args, got ${expr.args.length}`, sp);
     }
+    this.takeExplicitMutArgs(expr.args, `${expr.enumName}.${expr.variant}`, i => this.sigParamAt(expectedParams[i]));
     for (let i = 0; i < Math.min(expr.args.length, expectedParams.length); i++) {
       const paramType = expectedParams[i].type;
       const hint = paramType.tag === "ref" ? paramType.inner : paramType;
@@ -9362,6 +9452,13 @@ export class TypeChecker {
 
   private checkMethodCallExpr(expr: ExprOf<"MethodCall">): TypeKind {
     const sp = expr.span;
+    if (expr.object.kind === "UnaryOp" && expr.object.op === "&mut") {
+      // Receivers borrow implicitly (decision 1 in docs/plans/local-reasoning-2026-09.md).
+      // Stripped so the call is still checked as written and one error is reported.
+      const inner = this.describeExpr(expr.object.operand);
+      this.error(`'&mut' is implicit on a method receiver; write '${inner}.${expr.method}(${expr.args.map(a => this.describeExpr(a)).join(", ")})'`, expr.object.span);
+      expr.object = expr.object.operand;
+    }
     const rawObjType = this.checkExpr(expr.object);
     // auto-deref `&T` for method dispatch (mutating methods still need !isRootMutable to allow)
     const objTypeRaw = rawObjType.tag === "ref" ? rawObjType.inner : rawObjType;
@@ -10509,6 +10606,7 @@ export class TypeChecker {
           if (expr.args.length !== ifaceMethod.params.length - 1) {
             this.error(`'${expr.method}' expects ${ifaceMethod.params.length - 1} argument(s), got ${expr.args.length}`, sp);
           }
+          this.takeExplicitMutArgs(expr.args, expr.method, i => this.sigParamAt(ifaceMethod.params[i + 1]));
           for (let i = 0; i < expr.args.length; i++) {
             const expected = ifaceMethod.params[i + 1];
             if (!expected) break;
@@ -10572,6 +10670,7 @@ export class TypeChecker {
       if (expr.args.length !== sig.params.length - 1) {
         this.error(`'${expr.method}' expects ${sig.params.length - 1} argument(s), got ${expr.args.length}`, sp);
       }
+      this.takeExplicitMutArgs(expr.args, expr.method, i => this.sigParamAt(sig.params[i + 1]));
       for (let i = 0; i < expr.args.length; i++) {
         const expected = sig.params[i + 1];
         if (!expected) break;
@@ -10634,6 +10733,7 @@ export class TypeChecker {
           if (expr.args.length !== fnType.params.length) {
             this.error(`'${expr.method}' expects ${fnType.params.length} argument(s), got ${expr.args.length}`, sp);
           }
+          this.takeExplicitMutArgs(expr.args, expr.method, i => this.typeParamAt(fnType.params[i], i));
           for (let i = 0; i < expr.args.length; i++) {
             const expected = fnType.params[i];
             if (!expected) break;
