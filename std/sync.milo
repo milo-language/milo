@@ -14,6 +14,8 @@ from "std/runtime" import {
 // Bounded FIFO channel for safe message passing between threads.
 // Channel is a reference-counted handle — `.clone()` to share it with another owner
 // (a task/worker); the queue frees itself when the last owner drops. No manual destroy.
+// Payloads still queued when the last owner drops are destroyed (their `Drop` runs,
+// once each); payloads already received belong to the receiver and are untouched.
 //
 //   let ch = Channel<i64>.new(16)!
 //   let chW = ch.clone()
@@ -38,14 +40,15 @@ pub struct ChannelInner {
     // stack: [0..8) task ptr, [8..16) next ptr. pthread waiters use the conds.
     recvWaitHead: *u8,
     sendWaitHead: *u8,
-    // inlined Arc-style refcount; the non-generic ChannelHandle owns it so a generic
-    // `impl Drop for Channel<T>` (unsupported: generic trait impls have no body yet)
-    // is not needed — Channel<T> drops transitively through its ChannelHandle field.
+    // inlined Arc-style refcount. `Channel<T>.drop` takes the last-owner decrement
+    // itself (it must destroy queued payloads, which needs T) and then zeroes its
+    // ChannelHandle so the handle's own Drop below is a no-op.
     refcount: i64,
 }
 
-// Non-generic reference-counted owner of a ChannelInner. Channel<T> holds one of these
-// and inherits its Drop, so the refcount/free logic lives here once, free of T.
+// Non-generic reference-counted owner of a ChannelInner. Channel<T> holds one of these;
+// the handle's Drop is the fallback for a handle that was never wrapped, and the
+// refcount/free logic lives here once, free of T.
 pub struct ChannelHandle {
     _ptr: *u8,
 }
@@ -86,16 +89,24 @@ impl Drop for ChannelHandle {
             let inner = self._ptr as *ChannelInner
             let old = _atomicSubI64(((*inner).refcount).addrOf() as *u8, 1)
             if old == 1 {
-                pthread_mutex_destroy((*inner).mtx)
-                pthread_cond_destroy((*inner).condNotEmpty)
-                pthread_cond_destroy((*inner).condNotFull)
-                free((*inner).mtx)
-                free((*inner).condNotEmpty)
-                free((*inner).condNotFull)
-                free((*inner).buf)
-                free(self._ptr)
+                channelFreeInner(inner)
             }
         }
+    }
+}
+
+// Release everything a ChannelInner owns except the queued payloads, which only the
+// generic `Channel<T>.drop` can destroy. Caller holds the last reference.
+fn channelFreeInner(inner: *ChannelInner): void {
+    unsafe {
+        pthread_mutex_destroy((*inner).mtx)
+        pthread_cond_destroy((*inner).condNotEmpty)
+        pthread_cond_destroy((*inner).condNotFull)
+        free((*inner).mtx)
+        free((*inner).condNotEmpty)
+        free((*inner).condNotFull)
+        free((*inner).buf)
+        free(inner as *u8)
     }
 }
 
@@ -503,7 +514,9 @@ impl Channel<T> {
     }
 
     // Share this channel with another owner (a spawned producer/consumer). Each clone
-    // must be dropped exactly once; the queue is torn down when the last owner drops.
+    // must be dropped exactly once; the queue is torn down when the last owner drops,
+    // and any payload still queued at that point is destroyed (its `Drop` runs once).
+    // Values already received are the receiver's and are not touched.
     // send/recv take &Self, so a handle only needs cloning when moved into a task while
     // the parent still uses it.
     fn clone(self: &Self): Channel<T> {
@@ -546,6 +559,42 @@ impl Channel<T> {
         }
     }
 
+}
+
+impl Drop for Channel<T> {
+    fn drop(self: &mut Self): void {
+        // Zeroed == already moved out (see ChannelHandle.drop); nothing to release.
+        if self.h._ptr as i64 == 0 {
+            return
+        }
+        unsafe {
+            let inner = self.h._ptr as *ChannelInner
+            // The decrement has to happen here, not in the handle's Drop: only the
+            // thread that observes the count reach zero may touch the buffer, and
+            // only this generic impl knows T's drop glue. Zeroing the handle afterwards
+            // turns its own Drop into the no-op path.
+            let old = _atomicSubI64(((*inner).refcount).addrOf() as *u8, 1)
+            if old == 1 {
+                let cap = (*inner).capacity
+                var idx: i64 = (*inner).head
+                var remaining: i64 = (*inner).len
+                while remaining > 0 {
+                    // Move the slot's bytes into a local so scope exit runs T's Drop;
+                    // the same take-then-drop idiom as seal.milo's Shared.drop.
+                    var v: T = zeroed<T>()
+                    let slotPtr = ((*inner).buf as i64 + idx * sizeOf<T>()) as *u8
+                    memcpy((v.addrOf()) as *u8, slotPtr, sizeOf<T>())
+                    idx = (idx + 1) % cap
+                    remaining = remaining - 1
+                }
+                (*inner).len = 0
+                (*inner).head = 0
+                (*inner).tail = 0
+                channelFreeInner(inner)
+            }
+            self.h._ptr = 0 as *u8
+        }
+    }
 }
 
 // ── Atomics ──

@@ -1,0 +1,77 @@
+// Payloads still queued when the last Channel owner drops are destroyed, once each.
+// Before this, ChannelHandle's Drop freed the ring buffer without running T's drop
+// glue on the slots between head and tail, so every undelivered Drop value leaked
+// (soundness sweep H6). The received value belongs to the receiver and drops on its
+// own scope exit, so it must be counted exactly once, not again by the channel.
+
+from "std/sync" import {
+    Channel
+}
+
+// @expect: recv 1
+// @expect: after recv: made 3 gone 1
+// @expect: wraparound: made 4 gone 4
+// @expect: peer dropped: made 2 gone 0
+// @expect: clone first: made 4 gone 4
+
+var made: i64 = 0
+var gone: i64 = 0
+
+struct Res {
+    id: i64,
+    tag: string,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        gone = gone + 1
+    }
+}
+
+fn mk(n: i64): Res {
+    made = made + 1
+    return Res {
+        id: n, tag: "r".repeat(8 + n)
+    }
+}
+
+fn report(label: string): void {
+    print(label + ": made " + made.toString() + " gone " + gone.toString())
+}
+
+fn main(): i32 {
+    if true {
+        // Capacity 3 with head advanced by one recv exercises the ring wraparound:
+        // after the fourth send the tail has come back to slot 0.
+        let ch = Channel<Res>.new(3)!
+        ch.send(mk(1))!
+        ch.send(mk(2))!
+        ch.send(mk(3))!
+        if true {
+            let got = ch.recv()!
+            print("recv " + got.id.toString())
+        }
+        report("after recv")
+        ch.send(mk(4))!
+        // 2, 3, 4 are still queued when ch drops here; 1 was already destroyed above
+    }
+    report("wraparound")
+
+    // A clone dropping first must not destroy anything; only the last owner does.
+    made = 0
+    gone = 0
+    if true {
+        let ch = Channel<Res>.new(4)!
+        let peer = ch.clone()
+        peer.trySend(mk(1))
+        peer.trySend(mk(2))
+        if true {
+            let _dropsFirst = peer
+        }
+        report("peer dropped")
+        ch.trySend(mk(3))
+        ch.trySend(mk(4))
+    }
+    report("clone first")
+    return 0
+}
