@@ -1,0 +1,32 @@
+// An explicit @derive(Clone) whose field is a plain struct that only the auto
+// pass makes clonable. Explicit derives used to be validated before the auto
+// fixpoint ran, so this failed with "field 'p' of type 'P' has no clone".
+struct P {
+    a: string
+}
+
+@derive(Clone)
+struct Q {
+    p: P, n: i32
+}
+
+struct R {
+    q: Q
+}
+
+fn main() {
+    let q = Q {
+        p: P {
+            a: "a"
+        }
+        , n: 1
+    }
+    let r = R {
+        q: q.clone()
+    }
+    let s = r.clone()
+    print(s.q.p.a)
+    print(s.q.n)
+}
+// @expect: a
+// @expect: 1

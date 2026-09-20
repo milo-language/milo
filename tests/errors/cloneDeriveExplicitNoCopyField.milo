@@ -1,0 +1,11 @@
+// An explicit derive still reports the field that blocks it after the auto
+// fixpoint has run: a @noCopy struct is never auto-clonable.
+@noCopy
+struct H { id: u32 }
+@derive(Clone)
+struct Q { h: H }
+fn main() {
+  let q = Q { h: H { id: 1 } }
+  let _r = q.clone()
+}
+// @error: cannot derive Clone for 'Q': field 'h' of type 'H' has no clone

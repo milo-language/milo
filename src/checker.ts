@@ -3441,6 +3441,10 @@ export class TypeChecker {
             if (program.impls.some(i => i.traitName === "Drop" && i.typeName === s.name)) {
               this.error(`cannot derive Clone for '${s.name}': it implements Drop, so each clone would release the resource again on drop`, s.span);
             }
+            // Synthesized after the fixpoint below, not here: an explicit derive whose
+            // field is a plain struct that only the AUTO pass makes clonable would be
+            // validated before that struct is, and fail with "has no clone".
+            continue;
           }
           const impl = this.synthesizeDeriveImpl(s, traitName);
           if (impl) result.push(impl);
@@ -3473,7 +3477,9 @@ export class TypeChecker {
       // Auto-derive Clone by the same fixpoint, so `.clone()` exists on every plain
       // struct without ceremony — the explicit spelling the index-clone lint asks for
       // has to actually be available. Fixpoint, because struct A { b: B } is clonable
-      // only once B is.
+      // only once B is. Explicit `@derive(Clone)` structs are candidates here too;
+      // the ones the fixpoint cannot close are validated afterwards so the error
+      // names what blocked them.
       //
       // Two exclusions Eq does not need: a Drop type (cloning an fd closes it twice —
       // the TcpStream bug, as a method) and `@noCopy` (the attribute exists precisely
@@ -3482,7 +3488,6 @@ export class TypeChecker {
       for (const s of program.structs) {
         if (s.typeParams.length > 0) continue;
         if (s.isOpaque) continue;
-        if (explicitClone.has(s.name)) continue;
         if (cloneDerived.has(s.name)) continue;
         if (program.impls.some(i => i.traitName === "Clone" && i.typeName === s.name)) continue;
         if (program.impls.some(i => i.traitName === "Drop" && i.typeName === s.name)) continue;
@@ -3498,6 +3503,11 @@ export class TypeChecker {
           if (impl) { result.push(impl); cloneDerived.add(s.name); changed = true; }
         }
       }
+    }
+    for (const s of program.structs) {
+      if (!explicitClone.has(s.name) || cloneDerived.has(s.name)) continue;
+      const impl = this.deriveClone(s, false, cloneDerived);
+      if (impl) result.push(impl);
     }
     return result;
   }
@@ -3525,7 +3535,7 @@ export class TypeChecker {
     return false;
   }
 
-  private deriveClone(s: import("./ast").StructDecl, skipValidation = false): import("./ast").ImplDecl {
+  private deriveClone(s: import("./ast").StructDecl, skipValidation = false, pending?: Set<string>): import("./ast").ImplDecl {
     if (!skipValidation) {
       if (this.dropImpls.has(s.name) || s.attributes?.some(a => a.name === "noCopy")) {
         this.error(`cannot derive Clone for '${s.name}': it is a resource type (Drop or @noCopy), and duplicating it would release the resource twice`, s.span);
@@ -3537,7 +3547,7 @@ export class TypeChecker {
       }
       for (const f of s.fields) {
         const ft = this.resolve(f.type);
-        if (!this.canAutoClone(ft)) {
+        if (!this.canAutoClone(ft, pending)) {
           this.error(`cannot derive Clone for '${s.name}': field '${f.name}' of type '${this.show(ft)}' has no clone`, s.span);
         }
       }
