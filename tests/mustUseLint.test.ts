@@ -105,3 +105,22 @@ fn main(): i32 {
   expect(r.out).toContain("unused result of '@mustUse' function 'Arena<i32>.valid'");
   expect(r.out).toContain("unused result of '@mustUse' function 'arenaFree'");
 });
+
+// The checker drops an allowed warning before it is recorded, so without this the profile
+// would report pass on exactly the code it exists to reject.
+test("a safety profile that requires used results ignores --allow=unused-result", () => {
+  const f = join(WORK, "allowbypass.milo");
+  writeFileSync(f, `from "std/arena" import { Arena, Handle }
+fn main(): i32 {
+  var a = Arena<i64>.new()
+  let h = a.alloc(7)
+  a.get(h)
+  return 0
+}`);
+  const run = (level: string) => spawnSync("bun", [join(ROOT, "src", "main.ts"), "safety", `--safety=${level}`, "--allow=unused-result", f], { encoding: "utf8" });
+  const strict = run("do178c-a");
+  expect(strict.status).toBe(1);
+  expect(strict.stdout + strict.stderr).toContain("[do178c-a] unused Option value");
+  const lax = run("iso26262-a");
+  expect(lax.stdout + lax.stderr).not.toContain("unused Option value");
+});

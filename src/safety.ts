@@ -251,6 +251,12 @@ export function parseSafetyLevel(s: string): SafetyLevel | null {
 // `unusedResults`: the checker's `unused-result` warnings for this program, which only a
 // typed pass can find. Callers that have not run the checker pass nothing and the rule is
 // simply not applied.
+// Whether `level` escalates a discarded result to an error; the CLI uses it to keep the
+// checker from suppressing those findings before they get here.
+export function requiresUsedResults(level: SafetyLevel): boolean {
+  return !!PROFILES[level].requireUsedResults;
+}
+
 export function checkSafetyCompliance(program: Program, level: SafetyLevel, unusedResults: { message: string; span?: Span }[] = []): SafetyViolation[] {
   const constraints = PROFILES[level];
   const violations: SafetyViolation[] = [];

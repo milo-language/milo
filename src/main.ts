@@ -22,7 +22,7 @@ import { formatDiagnostic, ParseError, RESET, BOLD, GREEN, DIM, type WarningConf
 import { type TargetInfo, getHostTarget, resolveTarget, listTargets, UnsupportedHostError } from "./target";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport, proveJson } from "./verify";
 import { proveWithMilo } from "./prove-milo";
-import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, safetyJson, listSafetyLevels } from "./safety";
+import { parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels } from "./safety";
 import { versionString } from "./version";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
 import { estimateLoopCycles, formatCycleEstimate } from "./wcet-cycles";
@@ -2285,6 +2285,13 @@ async function main() {
     }
     const src = readFileSync(source!, "utf-8");
     const diagnostics: Diagnostic[] = [];
+    // A profile that requires used results must see every finding: an `--allow` or a
+    // project-level allow would otherwise suppress the warning inside the checker and the
+    // profile would report pass on the code it exists to reject.
+    if (requiresUsedResults(level)) {
+      warningConfig.allowed.delete("unused-result");
+      warningConfig.expected?.delete("unused-result");
+    }
     const program = parseCheckProgram(src, target, source!, warningConfig, diagnostics);
     const unusedResults = diagnostics.filter(d => d.code === "unused-result");
     const violations = checkSafetyCompliance(program, level, unusedResults);
