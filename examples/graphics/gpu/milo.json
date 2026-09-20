@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "description": "GPU examples — OpenGL comes from the gl package, not the stdlib",
   "deps": {
-    "gl": "github.com/milo-language/milo-gl@v0.2.0"
+    "gl": "github.com/milo-language/milo-gl@v0.2.1"
   }
 }

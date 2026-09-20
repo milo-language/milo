@@ -3,9 +3,9 @@
   "packages": {
     "gl": {
       "url": "github.com/milo-language/milo-gl",
-      "version": "v0.2.0",
-      "commit": "bf214905493a411a174bdacba7bec069df253118",
-      "hash": "sha256:c35a99b2bfcdaa343b9c626404045b4be5e19e5f6dab5b0bbfd0f9103ca664e4",
+      "version": "v0.2.1",
+      "commit": "4e524f0a32243f59cf58cd1bda2123eda7186868",
+      "hash": "sha256:8872946f1ab7f94334111060bb07c509958226fd80d5e59cf0d1132997696cd2",
       "deps": []
     },
     "sdl": {

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "APSIS — orbital mechanics rendered on the GPU via the gl package",
   "deps": {
-    "gl": "github.com/milo-language/milo-gl@v0.2.0",
+    "gl": "github.com/milo-language/milo-gl@v0.2.1",
     "sdl": "github.com/milo-language/milo-sdl@v0.3.1"
   }
 }
