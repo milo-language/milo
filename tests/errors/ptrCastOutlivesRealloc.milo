@@ -1,0 +1,16 @@
+// @error: 'v' may reallocate here while 'base' still points into its buffer (from 'v.ptr()' on line 10)
+// A cast forwards provenance: `as i64` is still an address into v's buffer.
+from "std/os" import {
+    strlen
+}
+
+pub fn main(): i32 {
+    var v: Vec<u8> = Vec.new()
+    v.push(0)
+    let base = v.ptr() as i64
+    v.push(1)
+    unsafe {
+        print(strlen(base as *u8))
+    }
+    return 0
+}

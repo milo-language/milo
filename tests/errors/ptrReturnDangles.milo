@@ -1,0 +1,12 @@
+// @error: cannot return 'v.ptr()': 'v' is freed when this function returns, so the pointer would dangle
+fn data(): *u8 {
+    var v: Vec<u8> = Vec.new()
+    v.push(0)
+    return v.ptr()
+}
+
+pub fn main(): i32 {
+    let p = data()
+    print(p as i64 != 0)
+    return 0
+}

@@ -1,0 +1,17 @@
+// @error: 'v' goes out of scope before 'p', which would still point into its buffer (from 'v.ptr()' on line 13)
+from "std/os" import {
+    strlen
+}
+
+pub fn main(): i32 {
+    var seed: Vec<u8> = Vec.new()
+    seed.push(0)
+    var p: *u8 = seed.ptr()
+    if true {
+        var v: Vec<u8> = Vec.new()
+        v.push(0)
+        p = v.ptr()
+    }
+    print(strlen(p))
+    return 0
+}

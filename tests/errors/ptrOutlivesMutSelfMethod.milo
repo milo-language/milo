@@ -1,0 +1,30 @@
+// @error: 'b' may reallocate here while 'p' still points into its buffer (from 'b.bytes.ptr()' on line 26)
+from "std/os" import {
+    strlen
+}
+
+struct Buf {
+    bytes: Vec<u8>
+}
+
+impl Buf {
+    fn grow(self: &mut Buf) {
+        var i = 0
+        while i < 100000 {
+            self.bytes.push(66)
+            i = i + 1
+        }
+    }
+}
+
+pub fn main(): i32 {
+    var b = Buf {
+        bytes: Vec.new()
+    }
+    b.bytes.push(65)
+    b.bytes.push(0)
+    let p = b.bytes.ptr()
+    b.grow()
+    print(strlen(p))
+    return 0
+}

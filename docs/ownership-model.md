@@ -3,7 +3,7 @@ system: ownership-model
 purpose: why Milo has no lifetimes — second-class references as guardrails, and how that compares to Rust
 key-files: src/checker.ts, docs/language-reference.md, docs/design.md
 update-when: reference semantics change (second-class rule, borrow/exclusivity checks, slices/arenas)
-last-verified: 2026-08-30 (nullable extern reference added as a parameter-position spelling)
+last-verified: 2026-09-19 (raw pointers from ptr()/cstr()/h.ptr() bound to a name are element views of their source)
 -->
 
 # Ownership & references — why there are no lifetimes
@@ -119,6 +119,28 @@ The patterns that make Rust reach for `<'a>`, `Box`, `Rc<RefCell>`, or `unsafe`,
 | **Type that STORES a borrow** (`Parser<'a> { src: &'a str }`) | `struct Parser<'a> { src: &'a str }` | **no direct equivalent** — own the `string` (clone once) or hold an index into a buffer you own | *the real gap* |
 
 The directly unrepresentable row is the last: a struct field that is a *borrow* of data owned elsewhere. Milo's answer is to own the data or refer to it by index — memory-safe via bounds checks, at the cost of the compile-time view↔buffer tie Rust's `&'a` gives you. Production Rust also often chooses arenas to avoid lifetime propagation, but Rust retains other valid designs (`Rc`, borrowing APIs, and ecosystem arena crates) that Milo deliberately omits.
+
+## Raw pointers: `ptr()` and `cstr()` are element views
+
+Safe code has no pointers, but the FFI edge needs one: `v.ptr()`, `s.cstr()` and `h.ptr()`
+return a `*T` into a `Vec`, `string` or `Heap` without `unsafe`. That is only sound if the
+buffer is still there when the pointer is used, and "the source is alive" is not enough:
+a `push` can reallocate and free the old buffer while the source is very much alive.
+
+So a `*T` from one of these calls that is **bound to a name** is treated as a view of its
+source, under the same freeze a slice binding gets. While the binding is in scope the source
+may not reallocate (`push`, `pop`, `clear`, any `&mut self` method, a `&mut` argument), be
+reassigned, or be written through (`v[i] = x`). Reading it is fine. A cast forwards the
+view (`let base = s.cstr() as i64`), and returning a pointer into a local that dies with
+the function is rejected. An inline argument (`strlen(v.ptr())`) binds nothing and needs
+nothing. Moving the source is allowed: the move copies the header, not the buffer, and
+the FFI give leg is exactly `let p = v.ptr(); forget(v)` (or `store.push(v)`); the view
+follows a move into a local binding.
+
+This closes the raw-pointer analogue of the slice rule, which is the one place a safe-code
+`*T` could observe a freed buffer. What it does not do is track copies of the pointer
+value: once `p` is stored in a struct field or passed to C, the buffer's lifetime is the
+owner's obligation, as it is in every language with raw pointers.
 
 ## When each model wins
 

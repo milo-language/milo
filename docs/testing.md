@@ -70,7 +70,7 @@ while the driver can still run them by explicit path.
 - `tests/fixtures/*.milo` — **compiled + executed.** stdout must match the `// @expect: <line>` annotations, one per expected output line.
 - `tests/errors/*.milo` — **must fail type-check.** Error output must contain the `// @error: <substring>` annotation.
 
-Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->688<!-- /stat --> fixtures, <!-- stat:error-fixtures -->331<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->29<!-- /stat --> runtime-error cases.)
+Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->689<!-- /stat --> fixtures, <!-- stat:error-fixtures -->340<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->29<!-- /stat --> runtime-error cases.)
 
 **One caveat to "that's it", and it costs a red CI run every time it is forgotten.** A new fixture
 also enters the JS backend's conformance corpus, and that gate does NOT run locally by default, so

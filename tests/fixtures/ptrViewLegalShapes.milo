@@ -1,0 +1,46 @@
+// A `*T` from `v.ptr()` / `s.cstr()` is an element view only while it is BOUND. These are
+// the shapes the rule leaves alone: inline argument, pointer taken after the last mutation,
+// pointer scoped to an inner block that ends before the mutation, a read of the source, and
+// a move of the source (the buffer stays put; see tests/errors/ptrOutlivesMovedSource.milo).
+from "std/os" import {
+    strlen
+}
+
+fn firstByte(p: *u8): i64 {
+    unsafe {
+        return p[0] as i64
+    }
+}
+
+pub fn main(): i32 {
+    var v: Vec<u8> = Vec.new()
+    v.push(65)
+    // inline: nothing outlives the statement
+    print(firstByte(v.ptr()))
+    v.push(66)
+    // inner block: `p` dies before the push below
+    if true {
+        let p = v.ptr()
+        print(firstByte(p), " ", v.len)
+    }
+    v.push(67)
+    // after the last mutation: reads of the source are fine
+    let q = v.ptr()
+    print(firstByte(q), " ", v.len, " ", v[2] as i64)
+    // move: the buffer does not move with the header, so `q` stays valid
+    let w = v
+    print(firstByte(q), " ", w.len)
+
+    var s = "hi".clone()
+    s.push(33 as u8)
+    let base = s.cstr() as i64
+    unsafe {
+        print(strlen(base as *u8))
+    }
+    return 0
+}
+// @expect: 65
+// @expect: 65 2
+// @expect: 65 3 67
+// @expect: 65 3
+// @expect: 3
