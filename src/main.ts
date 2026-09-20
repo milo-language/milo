@@ -176,13 +176,16 @@ function compile(source: string, target: TargetInfo, filePath?: string, warningC
 // diagnostics instead of leaking a JS stack trace. Analysis subcommands (verify/
 // wcet/prove/safety) that stop short of codegen share this so a syntax error is
 // reported the same way `build` reports it, not as an uncaught exception.
-function parseCheckProgram(src: string, target: TargetInfo, filePath: string, warningConfig?: WarningConfig) {
+// `diagnosticsOut`, when given, receives the checker's diagnostics; the safety command
+// reads its `unused-result` findings from there, since src/safety.ts has no types.
+function parseCheckProgram(src: string, target: TargetInfo, filePath: string, warningConfig?: WarningConfig, diagnosticsOut?: Diagnostic[]) {
   const sourceDir = dirname(resolve(filePath));
   try {
     const tokens = new Lexer(src).tokenize();
     let program = new Parser(tokens, src, filePath).parse();
     program = resolveImports(program, sourceDir, target, filePath);
-    new TypeChecker(warningConfig).check(program);
+    const result = new TypeChecker(warningConfig).check(program);
+    diagnosticsOut?.push(...result.diagnostics);
     return program;
   } catch (e: any) {
     if (e instanceof ParseError) {
@@ -2281,8 +2284,10 @@ async function main() {
       process.exit(1);
     }
     const src = readFileSync(source!, "utf-8");
-    const program = parseCheckProgram(src, target, source!, warningConfig);
-    const violations = checkSafetyCompliance(program, level);
+    const diagnostics: Diagnostic[] = [];
+    const program = parseCheckProgram(src, target, source!, warningConfig, diagnostics);
+    const unusedResults = diagnostics.filter(d => d.code === "unused-result");
+    const violations = checkSafetyCompliance(program, level, unusedResults);
     if (rest.includes("--json")) writeStdout(safetyJson(violations, level, source!));
     else console.log(formatSafetyReport(violations, level));
     if (violations.some(v => v.severity === "error")) process.exit(1);

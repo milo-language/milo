@@ -33,12 +33,17 @@ interface SafetyConstraints {
   noRecursiveTypes: boolean;          // no recursive struct/enum definitions
   requireFullMatchCoverage: boolean;
   noForeignCalls?: boolean;           // no calls to extern/FFI functions (unverified external code)
+  // A discarded Option, Result or `@mustUse` result is an error, not a warning. This file
+  // walks the untyped AST and cannot see a call's return type, so the checker's
+  // `unused-result` findings are handed in by the caller (see checkSafetyCompliance).
+  requireUsedResults?: boolean;
 }
 
 const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   // DO-178C — avionics
   "do178c-a": {
     noRecursion: true,
+    requireUsedResults: true,
     requireBoundedLoops: true,
     noDynamicAllocation: true,
     requireContracts: true,
@@ -52,6 +57,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "do178c-b": {
     noRecursion: true,
+    requireUsedResults: true,
     requireBoundedLoops: true,
     noDynamicAllocation: true,
     requireContracts: true,
@@ -65,6 +71,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "do178c-c": {
     noRecursion: true,
+    requireUsedResults: true,
     requireBoundedLoops: false,
     noDynamicAllocation: false,
     requireContracts: false,
@@ -130,6 +137,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   // NASA software classification
   "nasa-a": {
     noRecursion: true,
+    requireUsedResults: true,
     requireBoundedLoops: true,
     noDynamicAllocation: true,
     requireContracts: true,
@@ -143,6 +151,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "nasa-b": {
     noRecursion: true,
+    requireUsedResults: true,
     requireBoundedLoops: true,
     noDynamicAllocation: false,
     requireContracts: true,
@@ -239,9 +248,18 @@ export function parseSafetyLevel(s: string): SafetyLevel | null {
   return null;
 }
 
-export function checkSafetyCompliance(program: Program, level: SafetyLevel): SafetyViolation[] {
+// `unusedResults`: the checker's `unused-result` warnings for this program, which only a
+// typed pass can find. Callers that have not run the checker pass nothing and the rule is
+// simply not applied.
+export function checkSafetyCompliance(program: Program, level: SafetyLevel, unusedResults: { message: string; span?: Span }[] = []): SafetyViolation[] {
   const constraints = PROFILES[level];
   const violations: SafetyViolation[] = [];
+
+  if (constraints.requireUsedResults) {
+    for (const u of unusedResults) {
+      violations.push({ rule: "unused-result", message: `[${level}] ${u.message}`, span: u.span, severity: "error" });
+    }
+  }
 
   const userFns = program.userFnNames;
   const userImplKeys = program.userImplKeys;
