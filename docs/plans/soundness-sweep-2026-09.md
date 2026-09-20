@@ -22,6 +22,7 @@ directory when every file in it has become a fixture, an error test, or a fuzzer
 | H4 | `hole4-vec-ptr-outlives-realloc.milo` | ASan heap-use-after-free, no `unsafe`, no thread, no generic | `v.ptr()` / `s.cstr()` return `*T` in safe code with no provenance; `push` reallocates; a scalar-returning extern reads the stale pointer. Found 2026-09-19 by independent review. |
 | H5 | (found by WP5b, 2026-09-19) `Option.Some(v[0])` / `f(v[0])` on a `Vec<Res>` where `Res: Drop` | made 1, gone 3: the element is copied out and every copy runs Drop | the "cannot take a Drop element out of a container by index" rule fires only at `let`; an IndexAccess consumed by value anywhere else (call arg, enum payload, struct field, return, assignment) is an implicit bitwise copy. Pure-checker hole. |
 | H6 | (found by WP5b) `Channel<Res>` with undelivered payloads | made N, gone 0 | `std/sync.milo:95` `impl Drop for ChannelHandle` frees `buf` without dropping the payloads still queued. Leak class. `promiseRace` losers are the same. |
+| H7 | (found by WP9) `impl Add for Res { fn add(self: Res, other: Res) }` when the trait declares `&Self` | `v[0] + v[1]` printed `8703489800`, gone 5 | impl method signatures are not checked against the trait's; the operator passes operands by reference, the by-value body reads garbage and runs extra drops |
 | P1 | `prover-push-ensures-false-counterexample.milo` | `push1` postcondition **failed**, counterexample `v_len__mut1 = 0` | builtin `Vec.push` has no contract; havoc reports as a counterexample instead of `unknown`. |
 | P2 | `prover-push-reports-failed-not-unknown.milo` | `main` precondition **failed**, counterexample `len = -1` | same; a length symbol has no `>= 0` assumption after havoc. |
 
@@ -310,6 +311,19 @@ an empty `from "std/os" import { }` still brings every `std/os` name into scope;
 Done when: the five reduced programs are error tests, `fuzz:tasks --filter=h4 --n=60`
 and `--filter=h3-ptr-park` report zero red, `fuzz-ownership.ts` runs again, and
 `examples/ffi/giflib` type-checks (modulo its pre-existing `isNull` errors).
+
+---
+
+## Lane C3: trait conformance (found by WP9)
+
+### WP14: an impl's method signature must match the trait's (closes H7)
+
+Check every `impl Trait for T` method against the trait declaration: receiver mode
+(`self`, `&self`, `&mut self`), parameter count, each parameter's type and reference
+mode with `Self` substituted, return type. Mismatch is an error naming both signatures:
+`'add' in 'impl Add for Res' takes 'other: Res' by value; the trait 'Add' declares
+'other: &Self'`. Applies to user traits and the operator traits alike. Sweep std,
+examples, fixtures for impls that mismatch today; each is a true positive to fix.
 
 ---
 
