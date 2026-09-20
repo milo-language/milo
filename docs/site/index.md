@@ -128,6 +128,28 @@ fn main() {
 
 **Measured, not claimed.** We have written over 250k lines of Milo across the compiler (self-hosted), a JS engine, three emulator cores, a debugger and a dozen packages. Nearly every `unsafe` block in them is the C boundary, and not one exists because the ownership model rejected a program ([the numbers](/language/vs-rust)).
 
+### Mutation is scoped, not banned
+
+Functional languages get safety by making everything immutable. Milo takes a different path: you mutate freely, but only through `&mut` parameters, and a `&mut` borrow cannot outlive the call that receives it. That one rule gives you the same "nothing else can change this" guarantee without the allocation and copying that immutability forces on hot loops.
+
+```milo
+fn zero_negatives(values: &mut Vec<i64>) {
+    for i in 0..values.len() {
+        if values[i] < 0 {
+            values[i] = 0       // in-place, no copy, no allocation
+        }
+    }
+}
+
+fn main() {
+    var v = Vec.from([3, -1, 4, -5, 9])
+    zero_negatives(&mut v)      // v is mutated here and nowhere else
+    print(v)                    // [3, 0, 4, 0, 9]
+}
+```
+
+When you read `main`, you know `v` can only change inside `zero_negatives` because that is the only call that borrows it mutably. No other pointer to `v` exists. That is local reasoning: the call site tells you the full blast radius of a mutation, and the compiler enforces it.
+
 </div>
 
 <div class="showcase">
