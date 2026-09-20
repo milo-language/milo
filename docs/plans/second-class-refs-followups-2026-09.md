@@ -181,15 +181,28 @@ Work:
 - Done: `bun scripts/corpus-census.ts --check` green; the doc section cites
   the numbers above; `bun test tests/docs.test.ts` green.
 
-### WP8. Backlog entries from the census (added 2026-09-20)
-File: `docs/backlog.md`. Two Tier 1 entries, each citing the census count:
-- derive `Clone` for enums (redis `RedisValue.clone` hand-written, src-milo
-  `ast.milo:342` "no auto-derive for Clone; deep clones are hand-written").
-- method-level generics (std `timer.milo:180`, `select.milo:22`,
-  `arena.milo:302` all say "cannot be a method: Milo has no method-level
-  generics"; `arenaWith` is the user-facing casualty).
-Check both are not already filed before adding. Done: entries present, doc
-lint green.
+### WP8. Census follow-ups in std (revised 2026-09-20 after checking backlog)
+Both candidate backlog entries already exist or are shipped:
+- derive `Clone`: backlog Tier 1 #31 (filed 2026-08-17). Add the census
+  evidence to that entry (redis `RedisValue.clone` hand-written, src-milo
+  `ast.milo:342` "no auto-derive for Clone; deep clones are hand-written",
+  58 clones/kLOC in src-milo), do not file a duplicate.
+- method-level generics: SHIPPED 2026-08-17 (backlog #22). Verified
+  2026-09-20: `impl Box2<T> { fn with<R>(self: &Self, f: (&T) => R): R }`
+  infers `R` at the call site, on a generic struct. So three std comments
+  are stale and one API is missing:
+  - `std/arena.milo:302` ("arenaWith ... cannot be a method: a method's own
+    type parameter is never inferred") and the `get` doc at ~680 that repeats
+    it: add `Arena.with<R>(self: &Self, h: Handle<T>, f: (&T) => R): Option<R>`
+    delegating to `arenaWith`, fix both comments, mention it in the WP1 matrix
+    row.
+  - `std/timer.milo:180` and `std/select.milo:22` ("Milo has no method-level
+    generics"): convert to methods if the surrounding API wants it, otherwise
+    fix the comment to state the real reason.
+  Files: `std/arena.milo`, `std/timer.milo`, `std/select.milo`,
+  `docs/backlog.md`, `tests/fixtures/arenaWithMethod.milo`. Runs after WP3
+  merges (std sweep overlap). Done: fixture green, `sh scripts/selfhost.sh`
+  green, `docs/std/arena.md` regenerated (`bun scripts/gen-std-docs.ts`).
 
 ### WP9. Stale workaround in emulators (added 2026-09-20)
 Repo: `~/git/milo-language/emulators`, file `snes/superfx.milo:8`: "ROM is
@@ -241,7 +254,7 @@ Rebase each on the previous before its gate run.
 If running one agent at a time (default per the orchestrator rules), order is
 WP2, WP3, WP4, WP1 (reordered 2026-09-20: WP3 is the soundness win, so it
 follows WP2 directly; WP4 after it gets private fields without a TODO).
-Then WP8 (backlog, minutes), WP7 (census script), WP9 (emulators, other repo). WP1 sits third so its matrix rows can cite WP2 and
+Then WP8 (std follow-ups), WP7 (census script), WP9 (emulators, other repo). WP1 sits third so its matrix rows can cite WP2 and
 WP4 by their shipped names.
 
 Every package: own worktree, small green commits, gates listed under its
