@@ -134,7 +134,9 @@ for (const f of fileList()) {
 
   // R6: system docs must carry a greppable doc-meta header (docs/doc-standards.md). Warn — retrofit is gradual.
   if (isDoc(f) || isRouterMd(f)) {
-    if (!/<!--\s*doc-meta/.test(text.slice(0, 400))) {
+    // VitePress pages must open with YAML frontmatter, so the header follows it there.
+    const afterFrontmatter = text.startsWith("---\n") ? text.indexOf("\n---\n", 4) + 5 : 0;
+    if (!/<!--\s*doc-meta/.test(text.slice(afterFrontmatter, afterFrontmatter + 400))) {
       warns.push({ file: f, line: 1, msg: "missing <!-- doc-meta --> header (see docs/doc-standards.md)", fixable: false });
     }
   }

@@ -15,6 +15,13 @@ hero:
       text: GitHub
       link: https://github.com/milo-language/milo
 ---
+<!-- doc-meta
+system: site-landing
+purpose: the milo-language.github.io home page: pitch, code carousel, what it is and is not, showcase
+key-files: docs/site/.vitepress/config.mts, docs/site/.vitepress/theme
+update-when: the pitch changes, a showcase project is added or retired, or the carousel snippets change
+last-verified: 2026-09-20
+-->
 
 <div class="install-line">
 
