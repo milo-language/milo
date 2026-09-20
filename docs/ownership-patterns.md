@@ -3,7 +3,7 @@ system: ownership-patterns
 purpose: the catalogue of data-structure patterns that buy safety properties without lifetimes, and the test that picks between them
 key-files: std/arena.milo, std/seal.milo, std/shard.milo, docs/residue-vs-rust.md, src/checker.ts
 update-when: a new pattern is found, a pattern gains or loses a compiler diagnostic, or a seam moves between the closed and open lists
-last-verified: 2026-08-22
+last-verified: 2026-09-19
 -->
 
 # Ownership patterns
@@ -119,6 +119,12 @@ it is released. `@noCopy` turns the ordinary move rule into the enforcement mech
 `Shard<T>` is a pointer and three integers. With `@noCopy`, handing the same window to
 two workers is `error: use of moved variable` — a data race rejected at compile time
 with no concurrency analysis, by the same rule that stops you using a string twice.
+
+`@copyOnly` is its dual, and `Shard<T>` carries both: `get` reads an element through the
+raw pointer, a bitwise copy that is a second owner for any heap-owning `T`, so
+`Shard<string>` is refused at the instantiation rather than freeing one block twice at
+runtime. The two attributes together say "this handle moves, and what it hands out
+copies", which is the whole ownership story of a window.
 
 ## What the compiler tells you
 

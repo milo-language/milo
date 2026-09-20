@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-19 (@parks cross-task freeze rule; raw pointers from ptr()/cstr() are element views; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-19 (@parks cross-task freeze rule; ptr()/cstr() element views; @copyOnly and the raw type-param read rule; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -1901,6 +1901,44 @@ to still be current, and a `Drop` firing during teardown or on a thread with no 
 undefined behaviour rather than a leak. `@noCopy` is move-tracked with **no destructor** —
 forgetting to release is still a leak, but releasing twice, or using after release, is a
 compile error.
+
+### `@copyOnly` — generics that may only hold Copy types
+
+The dual of `@noCopy`. A generic that moves elements through a raw pointer, such as
+`std/shard`'s `Shard<T>` reading `self.base[i]`, performs a bitwise copy of `T`. For a
+Copy `T` that is the value; for a `string` it is a second owner of the same heap block,
+freed twice. There is no `T: Copy` bound grammar. `@copyOnly` on the generic struct or
+generic fn says every instantiation must use Copy type arguments, and a violation is
+reported where the type was written or inferred, naming the type you wrote and not the
+monomorphized instance:
+
+```milo error
+@copyOnly
+struct Cells<T> {
+    first: T,
+    len: i64,
+}
+
+let c: Cells<Vec<i64>> = Cells { first: Vec.new(), len: 0 }
+// error: 'Cells<Vec<i64>>' is not allowed: 'Cells' is @copyOnly and 'Vec<i64>' is not a Copy type (it owns heap memory)
+```
+
+Copy is structural: scalars, `bool`, raw pointers, payload-free enums, and structs and
+enums whose fields are all Copy. `Drop` and `@noCopy` types are never Copy. Bare,
+`@copyOnly` constrains every type parameter; `@copyOnly(T)` names the ones it applies
+to, for a generic such as `parallelMapWith<T, S>` whose per-worker state `S` never
+crosses the raw pointer and may own a `Vec`. It is rejected on a declaration with no
+type parameters. The standard library writes it on `Shard`, `Shards`, `parallelMap` and
+`parallelMapWith`, which is why `shatter` of a `Vec<string>` does not compile.
+
+The attribute cannot be forgotten by omission. A generic body is only ever checked as
+an instance, and the unsound instance is the one nobody wrote, so the compiler scans
+the generic *template*: inside a generic fn or a generic struct's method that is not
+`@copyOnly`, reading an element by value through a raw pointer declared `*T` (`p[i]`,
+`self.base[i]`) is an error, `reading 'T' by value through a raw pointer copies it
+bitwise; 'T' may own memory`. Writes (`self.base[i] = v`), borrows (`self.base[i].len`)
+and `memcpy`/`memset`/`zeroed` moves are untouched; `std/sync`'s `Channel<T>` moves
+values through its ring buffer that way and stays clean.
 
 ### Move in Branches
 

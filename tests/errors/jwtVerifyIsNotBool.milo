@@ -1,4 +1,4 @@
-// @error: if condition must be bool, got Result_JwtClaims_JwtError
+// @error: if condition must be bool, got Result<JwtClaims, JwtError>
 from "std/jwt" import {
     Jwt
 }

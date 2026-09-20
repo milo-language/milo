@@ -33,6 +33,30 @@
 // from this shatter and cover it exactly, and fails deterministically otherwise.
 // Keep the owner alive until weld: that is the one obligation this module asks of
 // you, and it is the residue that stays honest in docs/residue-vs-rust.md.
+//
+// Element types are Copy only (`@copyOnly` on Shard, Shards, parallelMap and
+// parallelMapWith). `Shard.get` reads `self.base[i]` through the raw pointer, a bitwise
+// copy, and `set` overwrites the slot without dropping what was there. For an i64 or a
+// struct of scalars those are the operations they look like; for a string they are a
+// second owner and a leak, and `Shard<string>` freed one block twice before the
+// attribute existed. Every other `unsafe` block inside a generic in std/ was audited
+// against the same question, "does it duplicate a T through a raw pointer?", 2026-09-19:
+//
+//   std/sync.milo    Channel<T>.send/trySend memcpy the value in and memset the source
+//                    to zero; recv/tryRecv memcpy out and advance head. A move each
+//                    way, one owner at every point. Sound as written.
+//   std/runtime.milo Promise<T>.await returns zeroed<T>() on an unreachable tail. No T
+//                    is read through a pointer.
+//   std/arena.milo   arenaNew/arenaClear touch an i64 id counter atomically. T untouched.
+//   std/seal.milo    sharedWith<R> dereferences the refcount box and BORROWS the inner
+//                    Sealed; R passes through by move. Nothing duplicated.
+//   std/foreign.milo withRaw/withRawMut hand out a slice VIEW (a borrow) of the caller's
+//                    memory; adopt/adoptSlice transfer the whole buffer into one Heap or
+//                    Vec. Callers opt in with `unsafe` (@unsafe fns). Nothing duplicated.
+//
+// So this module is the only one that needs the attribute today. A new generic that
+// reads a `*T` element by value must either carry `@copyOnly` or clone out and drop the
+// old value explicitly.
 
 from "std/os" import {
     free, malloc
@@ -49,7 +73,14 @@ from "std/sync" import {
 // @noCopy is doing real work here: a struct of a pointer and three integers would
 // otherwise be Copy, and a Copy window could be handed to two workers at once,
 // which is exactly the race the design claims to make unrepresentable.
+//
+// @copyOnly is its dual, and closes the other half: `get` reads `self.base[i]` through
+// a raw pointer, which is a bitwise copy of the element. For a Copy `T` that is the
+// value; for a `string` it is a second owner of the same heap block, freed once by the
+// caller and once more when the buffer is welded back and dropped. A `Shard<string>`
+// is therefore rejected at the instantiation, where the element type is written.
 @noCopy
+@copyOnly
 pub struct Shard<T> {
     base: *T,
     len: i64,
@@ -180,6 +211,7 @@ fn weldVerdict(count: i64, shatterId: i64, ids: &Vec<i64>, indices: &Vec<i64>): 
 }
 
 // Owns the buffer while it is divided. Hold this until weld.
+@copyOnly
 pub struct Shards<T> {
     buf: Vec<T>,
     count: i64,
@@ -370,6 +402,7 @@ impl Shards<T> {
 // copy: a capturing closure would be moved into the first task and gone for the rest.
 // Everything the work depends on therefore travels in the window itself, which is
 // also what keeps the workers from sharing anything.
+@copyOnly
 pub fn parallelMap<T>(v: Vec<T>, workers: i64, f: (Shard<T>) => Shard<T>): Result<Vec<T>, WeldRejected<T>> {
     var owner = shatter(v, workers)
     var windows = owner.windows()
@@ -411,6 +444,7 @@ pub struct Mapped<T, S> {
 // Which worker processes which window is scheduling, so state a caller reads back
 // must not encode the assignment: per-worker tallies merge into totals that are
 // deterministic even though each worker's share is not.
+@copyOnly(T)
 pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<T>, &mut S) => Shard<T>): Result<Mapped<T, S>, WeldRejected<T>> {
     // `v` was moved in at the call, so refusing here with a message alone would
     // take the caller's buffer down with the refusal. Shatter it into an owner

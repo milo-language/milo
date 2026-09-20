@@ -105,7 +105,12 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
   }
 }
 
-export function typeName(t: TypeKind): string {
+// `demangle` maps a monomorphized struct/enum name (`Pair_i64_string`) back to what the
+// user wrote (`Pair<i64, string>`). Only the checker knows that mapping, so it is passed
+// in; without it the name is the identity used for lookups and mangling, and callers
+// that build a KEY from a type must not pass one.
+export function typeName(t: TypeKind, demangle?: (name: string) => string): string {
+  const tn = (x: TypeKind) => typeName(x, demangle);
   switch (t.tag) {
     case "int": {
       const base = `${t.signed ? "i" : "u"}${t.bits}`;
@@ -115,16 +120,16 @@ export function typeName(t: TypeKind): string {
     case "bool": return "bool";
     case "void": return "void";
     case "string": return "string";
-    case "ptr": return `*${typeName(t.inner)}`;
-    case "heap": return `Heap<${typeName(t.inner)}>`;
-    case "vec": return `Vec<${typeName(t.element)}>`;
-    case "hashmap": return `HashMap<${typeName(t.key)}, ${typeName(t.value)}>`;
-    case "ref": return `&${t.mutable ? "mut " : ""}${typeName(t.inner)}`;
-    case "struct": return t.name;
-    case "enum": return t.name;
-    case "array": return t.size !== null ? `[${typeName(t.element)}; ${t.size}]` : `[${typeName(t.element)}]`;
-    case "fn": return `${t.owning ? "move " : ""}(${t.params.map(typeName).join(", ")}) => ${typeName(t.ret)}`;
-    case "cfn": return `extern (${t.params.map(typeName).join(", ")}) => ${typeName(t.ret)}`;
+    case "ptr": return `*${tn(t.inner)}`;
+    case "heap": return `Heap<${tn(t.inner)}>`;
+    case "vec": return `Vec<${tn(t.element)}>`;
+    case "hashmap": return `HashMap<${tn(t.key)}, ${tn(t.value)}>`;
+    case "ref": return `&${t.mutable ? "mut " : ""}${tn(t.inner)}`;
+    case "struct": return demangle ? demangle(t.name) : t.name;
+    case "enum": return demangle ? demangle(t.name) : t.name;
+    case "array": return t.size !== null ? `[${tn(t.element)}; ${t.size}]` : `[${tn(t.element)}]`;
+    case "fn": return `${t.owning ? "move " : ""}(${t.params.map(tn).join(", ")}) => ${tn(t.ret)}`;
+    case "cfn": return `extern (${t.params.map(tn).join(", ")}) => ${tn(t.ret)}`;
     case "interface": return t.name;
     case "unknown": return "<unknown>";
   }

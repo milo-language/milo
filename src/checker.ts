@@ -2,6 +2,7 @@
 // the CheckResult that lowering reads. Semantic errors are caught HERE, before codegen:
 // if codegen can reach an invalid state, this file missed it.
 import { attributesFor } from "./attributes";
+import { walkExprs } from "./safety";
 import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl, MatchArm, Attribute, GlobalDecl } from "./ast";
 import { simpleType, declaredType, floatNamespaceConst } from "./ast";
 import type { TypeKind } from "./types";
@@ -291,6 +292,7 @@ export interface CValue {
 
 export interface EnumInfo {
   baseName?: string;
+  typeArgs?: TypeKind[];
   variants: Map<string, { tag: number; fields: TypeKind[] }>;
   reprType?: string; // set for `enum Kind: i32 { ... }` — the tag IS the integer value
 }
@@ -550,6 +552,16 @@ export class TypeChecker {
   // legal case, so the verdict waits until the impl tables are complete.
   private _pendingStructBounds: { struct: string; mangled: string; param: string; concrete: TypeKind; bound: string }[] = [];
   private _boundFailedStructs = new Set<string>();
+  // `@copyOnly` on a generic struct: each instantiation's type args must be Copy. Deferred
+  // for the same reason as the trait bounds above, and one more: a struct is monomorphized
+  // while other structs are still being registered, and `isAllCopyStruct` on a name that
+  // is not registered yet answers false, which would reject `Shard<Point>` for a `Point`
+  // declared further down the file.
+  private _pendingCopyOnly: { generic: string; mangled: string; concrete: TypeKind; span?: Span }[] = [];
+  // One report per offending type, not per instantiation: `shatter(strings, 4)` reaches
+  // `Shards<string>`, whose fields and methods then reach `Shard<string>` and
+  // `WeldRejected<string>`, and only the first of those sits on a line the user wrote.
+  private copyOnlyReported = new Set<string>();
   private resolvedMethods = new Map<Expr, string>();
   private heapMethodReceivers = new Set<Expr>();
   private iteratorForIns = new Map<Stmt, { nextMethod: string; elemType: TypeKind; optionEnumName: string }>();
@@ -651,7 +663,7 @@ export class TypeChecker {
     const raw = (this.structs.get(t.name)?.fields ?? []).filter(f => f.type.tag === "ptr");
     if (raw.length === 0) return;
     this.warn("adopt-raw-fields",
-      `'${fnName}<${typeName(t)}>': dropping the adopted value frees the ${typeName(t)} itself and not what its raw pointer field(s) address`,
+      `'${fnName}<${this.show(t)}>': dropping the adopted value frees the ${this.show(t)} itself and not what its raw pointer field(s) address`,
       sp,
       `${raw.map(f => `'${t.name}.${f.name}'`).join(", ")} ${raw.length === 1
         ? "is a raw pointer: it owns nothing and has no drop glue, so free what it addresses before the adopted value drops"
@@ -901,7 +913,7 @@ export class TypeChecker {
     if (bytes === null || bytes <= threshold) return;
     const kib = bytes / 1024;
     const human = kib >= 1024 ? `${(kib / 1024).toFixed(1)} MiB` : `${Math.round(kib)} KiB`;
-    const elemName = ty.tag === "array" ? typeName(ty.element) : "T";
+    const elemName = ty.tag === "array" ? this.show(ty.element) : "T";
     this.warn(
       "large-stack-array",
       `'${name}' is a ${human} stack allocation`,
@@ -939,7 +951,7 @@ export class TypeChecker {
       const res = this.resourceKind(ty);
       if (res) {
         this.error(
-          `cannot take '${typeName(ty)}' out of a container by index: it carries ${res}`,
+          `cannot take '${this.show(ty)}' out of a container by index: it carries ${res}`,
           span,
           `indexing copies the element memberwise, so the copy and the container's own ` +
           `element would each release it. Borrow it instead ('for x in <container>', or ` +
@@ -970,7 +982,7 @@ export class TypeChecker {
     if (ty.tag === "ref") return;
     this.warn(
       "index-clone",
-      `this deep-copies the ${typeName(ty)} out of the container`,
+      `this deep-copies the ${this.show(ty)} out of the container`,
       span,
       `indexing clones so the container stays intact; 'for x in <container>' binds by reference and copies nothing, and a field read ('v[i].n') materialises no element`,
     );
@@ -1068,7 +1080,7 @@ export class TypeChecker {
     const litVal = this.constIntValue(valueExpr);
     if (litVal !== null) {
       if (litVal < BigInt(target.min) || litVal > BigInt(target.max)) {
-        this.error(`value ${litVal} is out of range for ${typeName(target)} (${target.min}..${target.max})`, sp);
+        this.error(`value ${litVal} is out of range for ${this.show(target)} (${target.min}..${target.max})`, sp);
       }
     } else if (valType.tag === "int" && valType.min !== undefined && valType.max !== undefined &&
                valType.min >= target.min && valType.max <= target.max) {
@@ -1188,13 +1200,13 @@ export class TypeChecker {
     if (cType.tag === "unknown") return;
     if (c.kind === "decreases") {
       if (cType.tag !== "int") {
-        this.error(`decreases clause must be an integer measure, got ${typeName(cType)}`, c.span,
+        this.error(`decreases clause must be an integer measure, got ${this.show(cType)}`, c.span,
           `it is the quantity that must strictly fall on every recursive call or iteration`);
       }
       return;
     }
     if (cType.tag !== "bool") {
-      this.error(`${c.kind} clause must be bool, got ${typeName(cType)}`, c.span);
+      this.error(`${c.kind} clause must be bool, got ${this.show(cType)}`, c.span);
     }
   }
 
@@ -1256,10 +1268,13 @@ export class TypeChecker {
     }
   }
 
-  private resolve(ty: MiloType): TypeKind {
+  // `sp` is where the type was WRITTEN or implied (a `let` annotation, a call whose
+  // signature mentions it); a MiloType carries no span of its own, so an instantiation
+  // that a generic rejects (`@copyOnly`, `void`) has no other way to point at the user.
+  private resolve(ty: MiloType, sp?: Span): TypeKind {
     if (ty.isFn && ty.fnParams && ty.fnRet) {
       const tag = ty.isCFn ? "cfn" as const : "fn" as const;
-      const fnTy = { tag, params: ty.fnParams.map(p => this.resolve(p)), ret: this.resolve(ty.fnRet) };
+      const fnTy = { tag, params: ty.fnParams.map(p => this.resolve(p, sp)), ret: this.resolve(ty.fnRet, sp) };
       // `move (T) => R` — carry the ownership through. This is a SECOND place fn types are
       // built (typeFromAst is the other); a declared parameter comes through here, so
       // losing the flag here meant a `move` parameter typed as non-owning: it was not Copy
@@ -1335,7 +1350,7 @@ export class TypeChecker {
     }
     const typeArgs = ty.typeArgs ?? [];
     if (typeArgs.length > 0) {
-      const resolvedArgs = typeArgs.map(a => this.resolve(a));
+      const resolvedArgs = typeArgs.map(a => this.resolve(a, sp));
       // A user generic bails out: `Promise<void>` would otherwise instantiate Channel,
       // Result and Option with the same void and report the one mistake four times.
       // A builtin container has no such body, so it keeps its resolved type rather than
@@ -1374,7 +1389,7 @@ export class TypeChecker {
             this.error(`'${ty.name}' expects ${ge.typeParams.length} type args, got ${args.length}`);
             return { tag: "unknown" };
           }
-          result = { tag: "enum", name: this.monomorphizeEnum(ty.name, args) };
+          result = { tag: "enum", name: this.monomorphizeEnum(ty.name, args, sp) };
         } else {
           const gs = this.genericStructs.get(ty.name);
           if (gs) {
@@ -1382,7 +1397,7 @@ export class TypeChecker {
               this.error(`'${ty.name}' expects ${gs.typeParams.length} type args, got ${resolvedArgs.length}`);
               return { tag: "unknown" };
             }
-            result = { tag: "struct", name: this.monomorphizeStruct(ty.name, resolvedArgs) };
+            result = { tag: "struct", name: this.monomorphizeStruct(ty.name, resolvedArgs, sp) };
           } else {
             this.error(`'${ty.name}' is not a generic type`);
             return { tag: "unknown" };
@@ -1474,7 +1489,7 @@ export class TypeChecker {
         fields: vInfo.fields.map(f => this.substituteTypeKind(f, typeMap)),
       });
     }
-    this.enums.set(mangled, { baseName, variants });
+    this.enums.set(mangled, { baseName, typeArgs, variants });
 
     const decl: import("./ast").EnumDecl = {
       kind: "EnumDecl",
@@ -1492,12 +1507,125 @@ export class TypeChecker {
   // Rule on every generic-struct bound recorded so far. Callable only once the impl
   // tables are complete — see `_pendingStructBounds`.
   private flushStructBounds() {
-    while (this._pendingStructBounds.length > 0) {
+    while (this._pendingStructBounds.length > 0 || this._pendingCopyOnly.length > 0) {
       for (const b of this._pendingStructBounds.splice(0)) {
         if (this.typeImplementsTrait(typeName(b.concrete), b.bound)) continue;
-        this.error(`type '${typeName(b.concrete)}' does not implement trait '${b.bound}', required by '${b.struct}<${b.param}: ${b.bound}>'`);
+        this.error(`type '${this.show(b.concrete)}' does not implement trait '${b.bound}', required by '${b.struct}<${b.param}: ${b.bound}>'`);
         this._boundFailedStructs.add(b.mangled);
       }
+      for (const c of this._pendingCopyOnly.splice(0)) {
+        if (this.rejectNonCopyTypeArg(c.generic, c.mangled, c.concrete, c.span)) this._boundFailedStructs.add(c.mangled);
+      }
+    }
+  }
+
+  // Which of a generic's type parameters `@copyOnly` constrains: all of them when bare,
+  // only the named ones with arguments (`@copyOnly(T)` on `parallelMapWith<T, S>`, whose
+  // per-worker state S never crosses the raw pointer and may own a Vec). Empty when the
+  // declaration carries no `@copyOnly`.
+  private copyOnlyParams(attrs: Attribute[] | undefined, typeParams: string[]): Set<string> {
+    const attr = attrs?.find(a => a.name === "copyOnly");
+    if (!attr) return new Set();
+    return new Set(attr.args.length > 0 ? attr.args : typeParams);
+  }
+
+  // A generic body is only ever checked as an INSTANCE, so `self.base[i]` on a `*T` is
+  // seen as `*i64` or `*string` and judged per instantiation; the one instantiation that
+  // is unsound is the one no fixture wrote. This scans the TEMPLATE instead: inside a
+  // generic fn or a generic struct's method that is not `@copyOnly`, reading an element
+  // by value through a raw pointer whose pointee is a type parameter is refused, because
+  // nothing at that site proves T is Copy and a bitwise copy of a heap-owning T is a
+  // second owner. Narrow on purpose: only `name[i]` / `self.field[i]` where the pointer
+  // is DECLARED `*T` (a param, an explicitly typed local, or a field), only as an rvalue
+  // that is not itself indexed into further (`p[i].len` borrows), never a write, and
+  // never a memcpy/memset/zeroed move, which is how std/sync's Channel<T> stays clean.
+  private checkRawTypeParamReads(): void {
+    const ptrToParam = (t: MiloType | null | undefined, typeParams: string[]): string | null =>
+      t && t.isPtr && (t.ptrDepth ?? 1) === 1 && !t.isArray && !t.isRef && !t.isRefMut
+        && !t.isFn && !t.typeArgs?.length && typeParams.includes(t.name) ? t.name : null;
+
+    const scan = (fn: Function, typeParams: string[], selfFields: Map<string, string>, owner: string, constrained: Set<string>) => {
+      if (fn.isExtern || !fn.body) return;
+      // Only the UNconstrained parameters can be read unsoundly; the rest are Copy.
+      typeParams = typeParams.filter(tp => !constrained.has(tp));
+      selfFields = new Map([...selfFields].filter(([, tp]) => !constrained.has(tp)));
+      const locals = new Map<string, string>();
+      for (const p of fn.params) {
+        const tp = ptrToParam(declaredType(p), typeParams);
+        if (tp) locals.set(p.name, tp);
+      }
+      const writes = new Set<Expr>();
+      const borrowed = new Set<Expr>();
+      walkExprs(fn.body, e => {
+        if (e.kind === "FieldAccess" || e.kind === "MethodCall") borrowed.add(e.object);
+      }, st => {
+        if (st.kind === "Assign") writes.add(st.target);
+        if ((st.kind === "LetDecl" || st.kind === "VarDecl") && st.type) {
+          const tp = ptrToParam(st.type, typeParams);
+          if (tp) locals.set(st.name, tp);
+        }
+      });
+      walkExprs(fn.body, e => {
+        if (e.kind !== "IndexAccess" || writes.has(e) || borrowed.has(e)) return;
+        const o = e.object;
+        const tp = o.kind === "Ident" ? locals.get(o.name)
+          : o.kind === "FieldAccess" && o.object.kind === "Ident" && o.object.name === "self" ? selfFields.get(o.field)
+          : undefined;
+        if (!tp) return;
+        this.error(`reading '${tp}' by value through a raw pointer copies it bitwise; '${tp}' may own memory`, e.span ?? fn.span,
+          `mark '${owner}' @copyOnly so only Copy types can instantiate '${tp}', or clone the element and drop the old one explicitly`);
+      });
+    };
+
+    for (const [name, g] of this.genericFns) {
+      scan(g.decl, g.typeParams, new Map(), name, this.copyOnlyParams(g.decl.attributes, g.typeParams));
+    }
+    for (const [baseName, impls] of this.genericImpls) {
+      const gs = this.genericStructs.get(baseName);
+      if (!gs) continue;
+      const selfFields = new Map<string, string>();
+      for (const f of gs.decl.fields) {
+        const tp = ptrToParam(f.type, gs.typeParams);
+        if (tp) selfFields.set(f.name, tp);
+      }
+      const structConstrained = this.copyOnlyParams(gs.decl.attributes, gs.typeParams);
+      for (const { impl } of impls) {
+        for (const m of impl.methods) {
+          const own = m.typeParams.map(t => t.name);
+          const constrained = new Set([...structConstrained, ...this.copyOnlyParams(m.attributes, own)]);
+          scan(m, [...gs.typeParams, ...own], selfFields, baseName, constrained);
+        }
+      }
+    }
+  }
+
+  // The `@copyOnly` verdict for one type argument. Returns whether it was rejected.
+  private rejectNonCopyTypeArg(generic: string, mangled: string, concrete: TypeKind, span?: Span): boolean {
+    if (concrete.tag === "unknown") return false;
+    if (isCopy(concrete, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) return false;
+    const key = this.mangleTypeName(concrete);
+    if (this.copyOnlyReported.has(key)) return true;
+    this.copyOnlyReported.add(key);
+    const shownArg = this.show(concrete);
+    const instance = this.structs.has(mangled) ? this.demangle(mangled) : `${generic}<${shownArg}>`;
+    this.error(`'${instance}' is not allowed: '${generic}' is @copyOnly and '${shownArg}' is not a Copy type (${this.whyNotCopy(concrete)})`, span,
+      `'${generic}' moves elements through a raw pointer, so a second owner of a '${shownArg}' would free it twice. Use a Copy element type, keep the elements in an Arena and hand out its Copy handles, or index the Vec directly`);
+    return true;
+  }
+
+  // One clause on why a type is move-tracked, for the `@copyOnly` diagnostic.
+  private whyNotCopy(t: TypeKind): string {
+    switch (t.tag) {
+      case "string": case "vec": case "hashmap": case "heap": return "it owns heap memory";
+      case "struct": {
+        if (this.dropImpls.has(t.name)) return "it implements Drop";
+        if (this.structs.get(t.name)?.noCopy) return "it is @noCopy";
+        return "a field of it owns heap memory";
+      }
+      case "enum": return "a variant of it owns heap memory";
+      case "fn": return t.owning ? "it is a move closure" : "it is a closure";
+      case "ref": return "it is a reference";
+      default: return "it is move-tracked";
     }
   }
 
@@ -1528,13 +1656,19 @@ export class TypeChecker {
   }
 
   // `Pair_i64_string` back to `Pair<i64, string>`, for a diagnostic about a
-  // monomorphized struct: the mangled name is an implementation detail and nobody
-  // wrote it, so nobody should have to read it.
-  private displayStructName(mangled: string): string {
-    const info = this.structs.get(mangled);
+  // monomorphized struct or enum: the mangled name is an implementation detail and
+  // nobody wrote it, so nobody should have to read it. Every diagnostic formats types
+  // through `show`, which threads this into `typeName`; `typeName` alone stays the
+  // identity for lookups and mangling.
+  private demangle(mangled: string): string {
+    const info = this.structs.get(mangled) ?? this.enums.get(mangled);
     if (!info || info.baseName === undefined) return mangled;
-    const args = (info.typeArgs ?? []).map(a => typeName(a)).join(", ");
+    const args = (info.typeArgs ?? []).map(a => this.show(a)).join(", ");
     return args.length === 0 ? info.baseName : `${info.baseName}<${args}>`;
+  }
+
+  private show(t: TypeKind): string {
+    return typeName(t, n => this.demangle(n));
   }
 
   private monomorphizeStruct(baseName: string, typeArgs: TypeKind[], sp?: Span): string {
@@ -1550,6 +1684,9 @@ export class TypeChecker {
       const tp = generic.decl.typeParams[i];
       for (const bound of tp.bounds) {
         this._pendingStructBounds.push({ struct: baseName, mangled, param: tp.name, concrete: typeArgs[i], bound });
+      }
+      if (this.copyOnlyParams(generic.decl.attributes, generic.typeParams).has(tp.name)) {
+        this._pendingCopyOnly.push({ generic: baseName, mangled, concrete: typeArgs[i], span: sp });
       }
     }
 
@@ -1721,17 +1858,20 @@ export class TypeChecker {
       const concreteType = typeArgs[i];
       for (const bound of tp.bounds) {
         if (!this.typeImplementsTrait(typeName(concreteType), bound)) {
-          this.error(`type '${typeName(concreteType)}' does not implement trait '${bound}'`);
+          this.error(`type '${this.show(concreteType)}' does not implement trait '${bound}'`);
         }
+      }
+      if (this.copyOnlyParams(generic.decl.attributes, generic.typeParams).has(tp.name)) {
+        this.rejectNonCopyTypeArg(baseName, mangled, concreteType, sp);
       }
     }
 
     // Build concrete param types — substitute type params first, then resolve
     const params = generic.decl.params.map(p => ({
-      type: this.resolve(this.substituteMiloType(declaredType(p), generic.typeParams, typeArgs)),
+      type: this.resolve(this.substituteMiloType(declaredType(p), generic.typeParams, typeArgs), sp),
       name: p.name,
     }));
-    const ret = this.resolve(this.substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs));
+    const ret = this.resolve(this.substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs), sp);
 
     // Register the concrete sig so recursive calls and the rest of checking works
     this.functions.set(mangled, { params, ret, variadic: false });
@@ -1797,7 +1937,7 @@ export class TypeChecker {
       for (let i = 0; i < (tpl.decl.typeParams ?? []).length; i++) {
         for (const bound of tpl.decl.typeParams![i]!.bounds) {
           if (!this.typeImplementsTrait(typeName(typeArgs[i]!), bound)) {
-            this.error(`type '${typeName(typeArgs[i]!)}' does not implement trait '${bound}'`);
+            this.error(`type '${this.show(typeArgs[i]!)}' does not implement trait '${bound}'`);
           }
         }
       }
@@ -2463,7 +2603,7 @@ export class TypeChecker {
       if (!info) continue;
       for (const f of info.fields) {
         if (!this.isValidExternStructField(f.type)) {
-          this.error(`extern struct '${s.name}' field '${f.name}': type '${typeName(f.type)}' is not C-representable`, undefined,
+          this.error(`extern struct '${s.name}' field '${f.name}': type '${this.show(f.type)}' is not C-representable`, undefined,
             `extern-struct fields must be scalars, pointers, C function pointers ('(A, B) => R'), nested extern structs, or fixed arrays of those`);
         }
       }
@@ -2505,6 +2645,7 @@ export class TypeChecker {
             this.error(`'@noCopy' on '${s.name}' takes no arguments`, s.span,
               `write '@noCopy' on its own line above the struct`);
           }
+          if (attr.name === "copyOnly") this.validateCopyOnly(s.name, attr, s.typeParams.map(t => t.name), s.span);
         }
       }
     }
@@ -2691,6 +2832,7 @@ export class TypeChecker {
               this.error(`'@pure' takes no arguments`, undefined, `write '@pure fn ${fn.name}(...)'`);
             }
           }
+          else if (attr.name === "copyOnly") this.validateCopyOnly(fn.name, attr, fn.typeParams.map(t => t.name), undefined);
           // @thread marks a fn that hands a closure param to a real OS thread. It is the
           // single source of truth for where a data race can enter a program — see
           // checkThreadBoundary, which reads this rather than hardcoding entry points.
@@ -2738,7 +2880,7 @@ export class TypeChecker {
       if (fn.name === "main" && !fn.isExtern) {
         const okMain = ret.tag === "void" || (ret.tag === "int" && ret.bits === 32 && ret.signed);
         if (!okMain) {
-          this.error(`'main' must return i32 or void, got ${typeName(ret)}`, fn.span, `the entry point lowers to C 'int main'`);
+          this.error(`'main' must return i32 or void, got ${this.show(ret)}`, fn.span, `the entry point lowers to C 'int main'`);
         }
       }
       // extern signatures must be C-representable — catch ABI-broken decls here rather
@@ -2810,7 +2952,7 @@ export class TypeChecker {
       const valType = this.checkExprWithHint(g.value, hint);
       const finalType = hint ?? valType;
       if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
-        this.error(`global '${g.name}': type mismatch: expected ${typeName(hint)}, got ${typeName(valType)}`, g.span);
+        this.error(`global '${g.name}': type mismatch: expected ${this.show(hint)}, got ${this.show(valType)}`, g.span);
       }
       globalTypes.set(g.name, finalType);
       // Non-constant initializers used to be rejected when the module had no main(),
@@ -2846,6 +2988,7 @@ export class TypeChecker {
       if (!fn.isExtern && fn.typeParams.length === 0) this.recover(() => this.checkFunction(fn));
     }
 
+    this.checkRawTypeParamReads();
     this.flushStructBounds();
 
     // type-check impl method bodies after all registrations
@@ -2886,7 +3029,7 @@ export class TypeChecker {
       const info = must(this.structs, mangled, "structs");
       if (info.baseName === undefined) continue;
       if (!this.embedsSelf(mangled, new Set())) continue;
-      const shown = this.displayStructName(mangled);
+      const shown = this.demangle(mangled);
       this.error(`struct '${shown}' is recursive by value and has infinite size`, undefined,
         `a struct cannot contain itself by value: put the recursive field behind an indirection (e.g. 'Heap<${shown}>' or 'Vec<${shown}>')`);
     }
@@ -3076,7 +3219,7 @@ export class TypeChecker {
       for (const f of s.fields) {
         const ft = this.resolve(f.type);
         if (!this.canAutoClone(ft)) {
-          this.error(`cannot derive Clone for '${s.name}': field '${f.name}' of type '${typeName(ft)}' has no clone`, s.span);
+          this.error(`cannot derive Clone for '${s.name}': field '${f.name}' of type '${this.show(ft)}' has no clone`, s.span);
         }
       }
     }
@@ -3296,7 +3439,7 @@ export class TypeChecker {
         }
         const zero = this.jsonZeroFor(t.element);
         if (zero === null) {
-          return { err: `'[${typeName(t.element)}; ${t.size}]' has no JSON form: a fixed array must be built before it is filled, and '${typeName(t.element)}' has no zero value to build it with. Use 'Vec<${typeName(t.element)}>'` };
+          return { err: `'[${this.show(t.element)}; ${t.size}]' has no JSON form: a fixed array must be built before it is filled, and '${this.show(t.element)}' has no zero value to build it with. Use 'Vec<${this.show(t.element)}>'` };
         }
         return { k: "array", ty: this.jsonTypeSpelling(t), elem: p, size: t.size, zero };
       }
@@ -3305,14 +3448,14 @@ export class TypeChecker {
         // lossless encoding — stringifying the key would round-trip `1` and `"1"` to the
         // same place — so say that rather than inventing one.
         if (t.key.tag !== "string") {
-          return { err: `HashMap key '${typeName(t.key)}' has no JSON form — a JSON object's keys are strings, so only HashMap<string, V> encodes` };
+          return { err: `HashMap key '${this.show(t.key)}' has no JSON form — a JSON object's keys are strings, so only HashMap<string, V> encodes` };
         }
         const p = this.jsonPlanFor(t.value);
         if ("err" in p) return p;
         return { k: "map", ty: this.jsonTypeSpelling(t), value: p };
       }
       default:
-        return { err: `type '${typeName(t)}' has no JSON form` };
+        return { err: `type '${this.show(t)}' has no JSON form` };
     }
   }
 
@@ -3676,7 +3819,7 @@ export class TypeChecker {
       return;
     }
     if (type.tag !== "int") {
-      this.error(`@cValue on '${g.name}': only an integer constant can be checked against a C macro, got ${typeName(type)}`, g.span,
+      this.error(`@cValue on '${g.name}': only an integer constant can be checked against a C macro, got ${this.show(type)}`, g.span,
         `the guard compares the two with '==' in C, which needs an integer on both sides`);
       return;
     }
@@ -4312,7 +4455,7 @@ export class TypeChecker {
         for (const cap of this.closureCaptures.get(arg) ?? []) {
           if (this.isSend(cap.type)) continue;
           this.error(
-            `cannot send '${cap.name}' of type '${typeName(cap.type)}' across threads — type does not implement Send`,
+            `cannot send '${cap.name}' of type '${this.show(cap.type)}' across threads — type does not implement Send`,
             arg.span, this.whyNotSend(cap.type));
         }
         scan(arg, entry);
@@ -4734,6 +4877,23 @@ export class TypeChecker {
     }
   }
 
+  // `@copyOnly` constrains type parameters, so on a declaration without any it would be
+  // a claim about nothing; say so rather than accept an annotation that does no work.
+  private validateCopyOnly(declName: string, attr: Attribute, typeParams: string[], span?: Span): void {
+    attr.args.forEach((arg, i) => {
+      if (attr.argKinds?.[i] !== "ident" || !typeParams.includes(arg)) {
+        this.error(`'@copyOnly(${arg})' on '${declName}': '${arg}' is not one of its type parameters`, span,
+          typeParams.length > 0
+            ? `it declares ${typeParams.map(t => `'${t}'`).join(", ")}; write '@copyOnly' bare to constrain all of them`
+            : `write '@copyOnly' on a generic declaration`);
+      }
+    });
+    if (typeParams.length === 0) {
+      this.error(`'@copyOnly' on '${declName}': it has no type parameters to constrain`, span,
+        `'@copyOnly' restricts what a generic's type parameters may be instantiated with; a concrete type has none, so drop the attribute`);
+    }
+  }
+
   private validateAttributes(declName: string, attrs: Attribute[] | undefined, target: "struct" | "enum"): void {
     if (!attrs) return;
     const known = TypeChecker.KNOWN_ATTRS.map(a => `@${a}`).join(", ");
@@ -4977,7 +5137,7 @@ export class TypeChecker {
     if (value.kind === "Ident" && this.functions.has(value.name) && this.lookup(value.name) === null) {
       const thin: TypeKind = { tag: "cfn", params: valType.params, ret: valType.ret };
       if (typeEq(expected, thin)) return true;
-      this.error(`${where}: '${value.name}' has signature ${typeName(thin)}, expected ${typeName(expected)}`, sp);
+      this.error(`${where}: '${value.name}' has signature ${this.show(thin)}, expected ${this.show(expected)}`, sp);
       return true;
     }
     this.error(`${where}: only a top-level 'fn' can be stored in a C function-pointer field`, sp,
@@ -5013,7 +5173,7 @@ export class TypeChecker {
       case "void": return role === "return type" ? null : { msg: `extern function parameter cannot be void` };
       case "array":
         return ty.size !== null && this.isValidExternStructField(ty.element)
-          ? null : { msg: `${role} '${typeName(ty)}' has no stable C representation` };
+          ? null : { msg: `${role} '${this.show(ty)}' has no stable C representation` };
       case "struct": {
         const info = this.structs.get(ty.name);
         if (!info) return { msg: `unknown type '${ty.name}' in extern ${role}` };
@@ -5036,7 +5196,7 @@ export class TypeChecker {
               hint: `by-value structs in callbacks aren't supported — return a pointer` }
           : null;
       default:
-        return { msg: `${role} '${typeName(ty)}' is not valid in an extern function signature` };
+        return { msg: `${role} '${this.show(ty)}' is not valid in an extern function signature` };
     }
   }
 
@@ -5290,7 +5450,7 @@ export class TypeChecker {
       const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
       const argType = this.checkExprWithHint(expr.args[i]!, bare);
       if (!typeEq(bare, argType) && argType.tag !== "unknown") {
-        this.error(`'${expr.method}' argument ${i + 1}: expected ${typeName(bare)}, got ${typeName(argType)}`, expr.args[i]!.span);
+        this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i]!.span);
       }
       if (expected.type.tag === "ref") this.setAutoBorrowChecked(expr.args[i]!, expected.type.mutable, sp);
       else this.tryMove(expr.args[i]!);
@@ -5488,16 +5648,16 @@ export class TypeChecker {
   }
 
   private whyNotSend(ty: TypeKind): string {
-    if (ty.tag === "ptr") return `raw pointer '${typeName(ty)}' is not Send`;
+    if (ty.tag === "ptr") return `raw pointer '${this.show(ty)}' is not Send`;
     if (ty.tag === "struct") {
       const info = this.structs.get(ty.name);
       if (info) {
         for (const f of info.fields) {
-          if (!this.isSend(f.type)) return `field '${f.name}' of type '${typeName(f.type)}' is not Send — a manual override requires 'unsafe impl Send for ${ty.name} {}' and an audited invariant`;
+          if (!this.isSend(f.type)) return `field '${f.name}' of type '${this.show(f.type)}' is not Send — a manual override requires 'unsafe impl Send for ${ty.name} {}' and an audited invariant`;
         }
       }
     }
-    return `type '${typeName(ty)}' is not Send`;
+    return `type '${this.show(ty)}' is not Send`;
   }
 
   // Sync = safe to share via &T across threads
@@ -5635,7 +5795,7 @@ export class TypeChecker {
       } else {
         const sepType = this.checkExpr(call.args[0]);
         if (sepType.tag !== "string" && sepType.tag !== "unknown") {
-          this.error(`'splitView': expected string, got ${typeName(sepType)}`, sp);
+          this.error(`'splitView': expected string, got ${this.show(sepType)}`, sp);
         }
       }
     } else if (call.args.length !== 0) {
@@ -5725,7 +5885,7 @@ export class TypeChecker {
     this.refReturnReported.add(fn);
     this.error(`function '${fn.name}': cannot return a reference`, fn.span,
       this.isViewReturn(ret)
-        ? `only a method can return a '${typeName(ret)}' view, and only of its own receiver's storage — take the slice at the call site ('v[a..b]') or return an owned value`
+        ? `only a method can return a '${this.show(ret)}' view, and only of its own receiver's storage — take the slice at the call site ('v[a..b]') or return an owned value`
         : `references are second-class — return an owned value instead`);
   }
 
@@ -5793,7 +5953,7 @@ export class TypeChecker {
         if (isCopy(info.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) continue;
         if (!info.moved) {
           this.warn("unused-move",
-            `parameter '${p.name}' is never moved — consider taking '&${typeName(info.type)}' instead`,
+            `parameter '${p.name}' is never moved — consider taking '&${this.show(info.type)}' instead`,
             fn.span,
             `passing by reference avoids requiring callers to give up ownership`
           );
@@ -5831,7 +5991,7 @@ export class TypeChecker {
     const sp = stmt.span;
     switch (stmt.kind) {
       case "LetDecl": {
-        const hint = stmt.type ? this.resolve(stmt.type) : null;
+        const hint = stmt.type ? this.resolve(stmt.type, stmt.span) : null;
         // refs in locals OK (second-class — can't escape function via return/struct/collection)
         if (hint && this.nestedRef(hint)) {
           this.error(`'${stmt.name}': references cannot be stored in a collection`, sp, `references are second-class — store owned values instead`);
@@ -5848,7 +6008,7 @@ export class TypeChecker {
           } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
             this.arrayToVecCoercions.add(stmt.value);
           } else if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, hint)) {
-            this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp, this.optionUnwrapHint(hint, valType));
+            this.error(`type mismatch: '${stmt.name}' declared as ${this.show(hint)} but got ${this.show(valType)}`, sp, this.optionUnwrapHint(hint, valType));
           }
         }
         // range checking for ranged integer types
@@ -5889,7 +6049,7 @@ export class TypeChecker {
         break;
       }
       case "VarDecl": {
-        const hint = stmt.type ? this.resolve(stmt.type) : null;
+        const hint = stmt.type ? this.resolve(stmt.type, stmt.span) : null;
         if (hint && this.nestedRef(hint)) {
           this.error(`'${stmt.name}': references cannot be stored in a collection`, sp, `references are second-class — store owned values instead`);
         }
@@ -5905,14 +6065,14 @@ export class TypeChecker {
           } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
             this.arrayToVecCoercions.add(stmt.value);
           } else if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, hint)) {
-            this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp, this.optionUnwrapHint(hint, valType));
+            this.error(`type mismatch: '${stmt.name}' declared as ${this.show(hint)} but got ${this.show(valType)}`, sp, this.optionUnwrapHint(hint, valType));
           }
         }
         if (hint?.tag === "int" && hint.min !== undefined && hint.max !== undefined) {
           const litVal = this.constIntValue(stmt.value);
           if (litVal !== null) {
             if (litVal < hint.min || litVal > hint.max) {
-              this.error(`value ${litVal} is out of range for ${typeName(hint)} (${hint.min}..${hint.max})`, sp);
+              this.error(`value ${litVal} is out of range for ${this.show(hint)} (${hint.min}..${hint.max})`, sp);
             }
           } else if (valType.tag === "int" && valType.min !== undefined && valType.max !== undefined &&
                      valType.min >= hint.min && valType.max <= hint.max) {
@@ -6027,14 +6187,14 @@ export class TypeChecker {
         const valType = this.checkExprWithHint(stmt.value, targetInfo.type);
         if (targetInfo.type.tag === "cfn" && valType.tag !== "unknown"
             && !this.checkCFnStore(stmt.value, targetInfo.type, valType, `cannot assign to '${this.describeExpr(stmt.target)}'`, sp)) {
-          this.error(`type mismatch: cannot assign ${typeName(valType)} to ${typeName(targetInfo.type)}`, sp);
+          this.error(`type mismatch: cannot assign ${this.show(valType)} to ${this.show(targetInfo.type)}`, sp);
         } else if (targetInfo.type.tag !== "cfn" && !typeEq(targetInfo.type, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(targetInfo.type);
           const isStringToPtr = valType.tag === "string" && targetInfo.type.tag === "ptr" && targetInfo.type.inner.tag === "int" && targetInfo.type.inner.bits === 8;
           if (optInner && typeEq(optInner, valType) && targetInfo.type.tag === "enum") {
             this.autoWrappedOption.set(stmt.value, targetInfo.type.name);
           } else if (!isStringToPtr) {
-            this.error(`type mismatch: cannot assign ${typeName(valType)} to ${typeName(targetInfo.type)}`, sp);
+            this.error(`type mismatch: cannot assign ${this.show(valType)} to ${this.show(targetInfo.type)}`, sp);
           }
         }
         for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed && !frozenBeforeRhs.has(vi)) this.unfreeze(vi);
@@ -6057,7 +6217,7 @@ export class TypeChecker {
       }
       case "Return": {
         if (!stmt.value) {
-          if (fnRetType.tag !== "void") this.error(`return without value in function returning ${typeName(fnRetType)}`, sp);
+          if (fnRetType.tag !== "void") this.error(`return without value in function returning ${this.show(fnRetType)}`, sp);
         } else {
           const prev = this.inReturnInLoop;
           if (this.loopDepth > 0) this.inReturnInLoop = true;
@@ -6068,7 +6228,7 @@ export class TypeChecker {
             // (`return Heap(Circle{})` where the fn returns Heap<Shape>), as
             // let-bindings and call args already do.
             if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, fnRetType)) {
-              this.error(`return type mismatch: expected ${typeName(fnRetType)}, got ${typeName(valType)}`, sp);
+              this.error(`return type mismatch: expected ${this.show(fnRetType)}, got ${this.show(valType)}`, sp);
             }
           }
           if (fnRetType.tag === "int") this.enforceRangeInto(stmt.value, valType, fnRetType, sp);
@@ -6090,7 +6250,7 @@ export class TypeChecker {
       case "IfStmt": {
         const condType = this.checkExpr(stmt.cond);
         if (condType.tag !== "bool" && condType.tag !== "unknown") {
-          this.error(`if condition must be bool, got ${typeName(condType)}`, sp);
+          this.error(`if condition must be bool, got ${this.show(condType)}`, sp);
         }
         const preMoves = this.snapshotMoveState();
         this.pushScope();
@@ -6120,7 +6280,7 @@ export class TypeChecker {
       case "WhileStmt": {
         const condType = this.checkExpr(stmt.cond);
         if (condType.tag !== "bool" && condType.tag !== "unknown") {
-          this.error(`while condition must be bool, got ${typeName(condType)}`, sp);
+          this.error(`while condition must be bool, got ${this.show(condType)}`, sp);
         }
         for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
         const preMoves = this.snapshotMoveState();
@@ -6139,10 +6299,10 @@ export class TypeChecker {
           const startType = this.checkExpr(stmt.iterable.start);
           const endType = this.checkExpr(stmt.iterable.end);
           if (startType.tag !== "int" && startType.tag !== "unknown") {
-            this.error(`for range start must be an integer, got ${typeName(startType)}`, sp);
+            this.error(`for range start must be an integer, got ${this.show(startType)}`, sp);
           }
           if (endType.tag !== "int" && endType.tag !== "unknown") {
-            this.error(`for range end must be an integer, got ${typeName(endType)}`, sp);
+            this.error(`for range end must be an integer, got ${this.show(endType)}`, sp);
           }
           if (stmt.varName2) {
             this.error("range for loop takes one binding, not two", sp);
@@ -6287,7 +6447,7 @@ export class TypeChecker {
               this.loopDepth--;
               this.popScope();
             } else if (!resolved) {
-              this.error(`cannot iterate over type '${typeName(iterType)}': no 'next' method found`, sp);
+              this.error(`cannot iterate over type '${this.show(iterType)}': no 'next' method found`, sp);
             } else {
               const retType = resolved.sig.ret;
               let elemType: TypeKind | null = null;
@@ -6303,7 +6463,7 @@ export class TypeChecker {
                 }
               }
               if (!elemType) {
-                this.error(`iterator 'next' method must return Option<T>, got ${typeName(retType)}`, sp);
+                this.error(`iterator 'next' method must return Option<T>, got ${this.show(retType)}`, sp);
               } else {
                 // require iterable to be mutable (next takes &mut Self)
                 // Asks the PLACE whether its root is mutable, so an iterator held in a
@@ -6334,7 +6494,7 @@ export class TypeChecker {
               }
             }
           } else if (iterType.tag !== "unknown") {
-            this.error(`cannot iterate over type '${typeName(iterType)}'`, sp);
+            this.error(`cannot iterate over type '${this.show(iterType)}'`, sp);
           }
           // Released once, for whichever arm above ran. Paired with the single
           // freezeIterable before the dispatch — see that function for why the pairing
@@ -6377,7 +6537,7 @@ export class TypeChecker {
         const { subjType, subjBorrows } = this.enumSubjectBorrow(stmt.subject, rawSubjType, [stmt.pattern]);
         this.bindElidedPattern(stmt.pattern, subjType);
         if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
-          this.error(`if let subject must be an enum, got ${typeName(subjType)}`, sp);
+          this.error(`if let subject must be an enum, got ${this.show(subjType)}`, sp);
           break;
         }
         if (subjType.tag === "enum" && stmt.pattern.kind === "EnumPattern") {
@@ -6440,7 +6600,7 @@ export class TypeChecker {
         const { subjType, subjBorrows } = this.enumSubjectBorrow(stmt.value, rawSubjType, [stmt.pattern]);
         this.bindElidedPattern(stmt.pattern, subjType);
         if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
-          this.error(`let-else value must be an enum (Option/Result/…), got ${typeName(subjType)}`, sp);
+          this.error(`let-else value must be an enum (Option/Result/…), got ${this.show(subjType)}`, sp);
           break;
         }
         // The else block runs only when the pattern doesn't match, so it must
@@ -6520,7 +6680,7 @@ export class TypeChecker {
   private optionUnwrapHint(expected: TypeKind, actual: TypeKind): string | undefined {
     const inner = this.optionInnerType(actual);
     if (!inner || !typeEq(inner, expected)) return undefined;
-    return `${typeName(actual)} is Option<${typeName(inner)}> — unwrap it with 'match', `
+    return `${this.show(actual)} is Option<${this.show(inner)}> — unwrap it with 'match', `
       + `'let Option.Some(x) = ... else { ... }', or '.unwrapOr(<default>)'`;
   }
 
@@ -6542,7 +6702,7 @@ export class TypeChecker {
       if (value.args.length !== 1) this.error(`'Vec.withCapacity' expects 1 argument (capacity), got ${value.args.length}`, value.span);
       else {
         const c = this.checkExpr(value.args[0]);
-        if (c.tag !== "int" && c.tag !== "unknown") this.error(`'Vec.withCapacity': capacity must be an integer, got ${typeName(c)}`, value.span);
+        if (c.tag !== "int" && c.tag !== "unknown") this.error(`'Vec.withCapacity': capacity must be an integer, got ${this.show(c)}`, value.span);
       }
     } else {
       return null;
@@ -7204,7 +7364,7 @@ export class TypeChecker {
         const mutable = throughPtr ? true : this.isRootMutable(expr.object);
         return { type: field.type, mutable };
       }
-      this.fatal(`cannot access field on non-struct type ${typeName(objType)}`, sp);
+      this.fatal(`cannot access field on non-struct type ${this.show(objType)}`, sp);
     }
     if (expr.kind === "IndexAccess") {
       const objType = this.checkExpr(expr.object);
@@ -7223,7 +7383,7 @@ export class TypeChecker {
         this.setType(expr, objType.inner);
         return { type: objType.inner, mutable: true };
       }
-      this.fatal(`cannot index non-array type ${typeName(objType)}`, sp);
+      this.fatal(`cannot index non-array type ${this.show(objType)}`, sp);
     }
     if (expr.kind === "UnaryOp" && expr.op === "*") {
       const ot = this.checkExpr(expr.operand);
@@ -7235,7 +7395,7 @@ export class TypeChecker {
         this.setType(expr, ot.inner);
         return { type: ot.inner, mutable: true };
       }
-      this.fatal(`cannot dereference type '${typeName(ot)}' for assignment`, sp);
+      this.fatal(`cannot dereference type '${this.show(ot)}' for assignment`, sp);
     }
     // `STORE.field = x` where STORE is a capitalized *variable* (typically a
     // module-level `var`) parses as an EnumLit — the parser can't know STORE
@@ -7848,7 +8008,7 @@ export class TypeChecker {
       if (expr.args.length !== 1) { this.error(`'Vec.withCapacity' expects 1 argument (capacity), got ${expr.args.length}`, expr.span); }
       else {
         const c = this.checkExpr(expr.args[0]);
-        if (c.tag !== "int" && c.tag !== "unknown") this.error(`'Vec.withCapacity': capacity must be an integer, got ${typeName(c)}`, expr.span);
+        if (c.tag !== "int" && c.tag !== "unknown") this.error(`'Vec.withCapacity': capacity must be an integer, got ${this.show(c)}`, expr.span);
       }
       this.exprTypes.set(expr, hint);
       return hint;
@@ -7857,18 +8017,18 @@ export class TypeChecker {
       if (expr.args.length !== 2) { this.error(`'Vec.filled' expects 2 arguments (count, value), got ${expr.args.length}`, expr.span); }
       else {
         const c = this.checkExpr(expr.args[0]);
-        if (c.tag !== "int" && c.tag !== "unknown") this.error(`'Vec.filled': count must be an integer, got ${typeName(c)}`, expr.span);
+        if (c.tag !== "int" && c.tag !== "unknown") this.error(`'Vec.filled': count must be an integer, got ${this.show(c)}`, expr.span);
         // Same discard as the array literals: the fill value was hint-checked and the
         // answer dropped, so `Vec<i64> = Vec.filled(3, "a")` reached clang as `%String`
         // where an `i64` was expected.
         const fillType = this.checkExprWithHint(expr.args[1], hint.element);
         if (!this.elementFits(fillType, hint.element, expr.args[1])) {
-          this.error(`'Vec.filled' value has type ${typeName(fillType)}, but the Vec is declared ${typeName(hint)}`, expr.args[1].span);
+          this.error(`'Vec.filled' value has type ${this.show(fillType)}, but the Vec is declared ${this.show(hint)}`, expr.args[1].span);
         }
         // The value is copied into every slot, so it must be Copy — otherwise
         // N slots would alias one heap buffer and free it N times.
         if (!isCopy(hint.element, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
-          this.error(`'Vec.filled' requires a Copy element type (got ${typeName(hint.element)}) — the fill value is duplicated into every slot; build a non-Copy Vec with a push loop`, expr.span);
+          this.error(`'Vec.filled' requires a Copy element type (got ${this.show(hint.element)}) — the fill value is duplicated into every slot; build a non-Copy Vec with a push loop`, expr.span);
         }
       }
       this.exprTypes.set(expr, hint);
@@ -7883,7 +8043,7 @@ export class TypeChecker {
       if (expr.args.length !== 1) { this.error(`'HashMap.withCapacity' expects 1 argument (capacity), got ${expr.args.length}`, expr.span); }
       else {
         const c = this.checkExpr(expr.args[0]);
-        if (c.tag !== "int" && c.tag !== "unknown") this.error(`'HashMap.withCapacity': capacity must be an integer, got ${typeName(c)}`, expr.span);
+        if (c.tag !== "int" && c.tag !== "unknown") this.error(`'HashMap.withCapacity': capacity must be an integer, got ${this.show(c)}`, expr.span);
       }
       this.exprTypes.set(expr, hint);
       return hint;
@@ -7892,7 +8052,7 @@ export class TypeChecker {
       for (const elem of expr.elements) {
         const et = this.checkExprWithHint(elem, hint.element);
         if (!this.elementFits(et, hint.element, elem)) {
-          this.error(`array element has type ${typeName(et)}, but the array is declared ${typeName(hint)}`, elem.span);
+          this.error(`array element has type ${this.show(et)}, but the array is declared ${this.show(hint)}`, elem.span);
         }
       }
       const result: TypeKind = { tag: "array", element: hint.element, size: expr.elements.length };
@@ -7903,7 +8063,7 @@ export class TypeChecker {
       for (const elem of expr.elements) {
         const et = this.checkExprWithHint(elem, hint.element);
         if (!this.elementFits(et, hint.element, elem)) {
-          this.error(`Vec element has type ${typeName(et)}, but the Vec is declared ${typeName(hint)}`, elem.span);
+          this.error(`Vec element has type ${this.show(et)}, but the Vec is declared ${this.show(hint)}`, elem.span);
         }
         this.tryMove(elem);
       }
@@ -7912,7 +8072,7 @@ export class TypeChecker {
     if (hint && expr.kind === "ArrayRepeat" && hint.tag === "array") {
       const rt = this.checkExprWithHint(expr.value, hint.element);
       if (!this.elementFits(rt, hint.element, expr.value)) {
-        this.error(`repeated element has type ${typeName(rt)}, but the array is declared ${typeName(hint)}`, expr.value.span);
+        this.error(`repeated element has type ${this.show(rt)}, but the array is declared ${this.show(hint)}`, expr.value.span);
       }
       const result: TypeKind = { tag: "array", element: hint.element, size: expr.count };
       return this.setType(expr, result);
@@ -7934,7 +8094,7 @@ export class TypeChecker {
             argType = variant.fields[i];
           }
           if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
-            this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`, sp);
+            this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${this.show(variant.fields[i])}, got ${this.show(argType)}`, sp);
           }
           this.tryMove(expr.args[i]);
         }
@@ -7958,7 +8118,7 @@ export class TypeChecker {
             valType = fieldDef.type;
           }
           if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown" && !this.tryInterfaceCoercion(f.value, valType, fieldDef.type)) {
-            this.error(`field '${f.name}' of '${expr.name}': expected ${typeName(fieldDef.type)}, got ${typeName(valType)}`, sp);
+            this.error(`field '${f.name}' of '${expr.name}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
           }
           this.tryMove(f.value);
         }
@@ -8094,7 +8254,7 @@ export class TypeChecker {
       // Marked read even though the use is rejected: the name WAS mentioned, and leaving
       // it unread stacks a bogus "unused variable" warning on top of every one of these.
       info.read = true;
-      const ref = `&${info.nullableRef.mutable ? "mut " : ""}${typeName(info.nullableRef.inner)}`;
+      const ref = `&${info.nullableRef.mutable ? "mut " : ""}${this.show(info.nullableRef.inner)}`;
       this.error(`'${expr.name}' is a nullable extern reference and must be unwrapped before use`, sp,
         `write 'let x = ${expr.name} else { … }' — the else block runs when C passed null and must diverge; 'x' is then an ordinary '${ref}'`);
       return this.setType(expr, { tag: "unknown" });
@@ -8135,7 +8295,7 @@ export class TypeChecker {
             : noCopy
             // A type from a package is stored as `gl$Texture2D`; the hint tells the
             // reader what to type, and what they type is the bare name they imported.
-            ? `'${expr.name}' is a @noCopy handle, so transferring it ended its life here — copying one would let the same resource be released twice. Borrow it (pass it to a '&${typeName(t).split("$").pop()}' parameter) instead of transferring, or reorder so the transfer is last.`
+            ? `'${expr.name}' is a @noCopy handle, so transferring it ended its life here — copying one would let the same resource be released twice. Borrow it (pass it to a '&${this.show(t).split("$").pop()}' parameter) instead of transferring, or reorder so the transfer is last.`
             : `ownership of '${expr.name}' was transferred earlier and it can no longer be used here. To keep it alive, clone it at the point of transfer: '${expr.name}.clone()'.`,
         );
       }
@@ -8149,8 +8309,8 @@ export class TypeChecker {
     if (expr.op === "&&" || expr.op === "||") {
       const lt = this.checkExpr(expr.left);
       const rt = this.checkExpr(expr.right);
-      if (lt.tag !== "bool" && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires bool, got ${typeName(lt)}`, sp);
-      if (rt.tag !== "bool" && rt.tag !== "unknown") this.error(`operator '${expr.op}' requires bool, got ${typeName(rt)}`, sp);
+      if (lt.tag !== "bool" && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires bool, got ${this.show(lt)}`, sp);
+      if (rt.tag !== "bool" && rt.tag !== "unknown") this.error(`operator '${expr.op}' requires bool, got ${this.show(rt)}`, sp);
       return this.setType(expr, { tag: "bool" });
     }
     let lt = this.checkExpr(expr.left);
@@ -8219,8 +8379,8 @@ export class TypeChecker {
           return this.setType(expr, lt);
         }
       }
-      if (!isNumeric(lt) && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires numeric type, got ${typeName(lt)}`, sp);
-      if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${typeName(lt)} vs ${typeName(rt)}`, sp);
+      if (!isNumeric(lt) && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires numeric type, got ${this.show(lt)}`, sp);
+      if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${this.show(lt)} vs ${this.show(rt)}`, sp);
       if (lt.tag === "int" && expr.left.kind === "IntLit" && expr.right.kind === "IntLit") {
         this.checkConstOverflow(expr.left.value, expr.right.value, expr.op, lt, sp);
       }
@@ -8232,12 +8392,12 @@ export class TypeChecker {
       return this.setType(expr, lt);
     }
     if (bitOps.includes(expr.op)) {
-      if (lt.tag !== "int" && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires integer type, got ${typeName(lt)}`, sp);
-      if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${typeName(lt)} vs ${typeName(rt)}`, sp);
+      if (lt.tag !== "int" && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires integer type, got ${this.show(lt)}`, sp);
+      if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${this.show(lt)} vs ${this.show(rt)}`, sp);
       return this.setType(expr, lt);
     }
     if (cmpOps.includes(expr.op)) {
-      if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${typeName(lt)} vs ${typeName(rt)}`, sp);
+      if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${this.show(lt)} vs ${this.show(rt)}`, sp);
       if (expr.op === "==" || expr.op === "!=") {
         if (lt.tag === "enum") {
           const info = this.enums.get(lt.name);
@@ -8257,14 +8417,14 @@ export class TypeChecker {
             this.autoBorrowed.set(expr.left, { mutable: false });
             this.autoBorrowed.set(expr.right, { mutable: false });
           } else {
-            this.error(`cannot use '${expr.op}' on ${typeName(lt)}`, sp, `implement Eq trait or compare individual fields`);
+            this.error(`cannot use '${expr.op}' on ${this.show(lt)}`, sp, `implement Eq trait or compare individual fields`);
           }
         } else if (lt.tag === "vec" || lt.tag === "hashmap" || lt.tag === "heap" || lt.tag === "array") {
-          this.error(`cannot use '${expr.op}' on ${typeName(lt)}`, sp, `compare individual fields or implement an eq method`);
+          this.error(`cannot use '${expr.op}' on ${this.show(lt)}`, sp, `compare individual fields or implement an eq method`);
         }
       } else {
         // ordering ops: numeric or string
-        if (!isNumeric(lt) && lt.tag !== "string" && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires numeric or string type, got ${typeName(lt)}`, sp);
+        if (!isNumeric(lt) && lt.tag !== "string" && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires numeric or string type, got ${this.show(lt)}`, sp);
       }
       return this.setType(expr, { tag: "bool" });
     }
@@ -8282,11 +8442,11 @@ export class TypeChecker {
         this.requireUnsafe(`pointer dereference requires 'unsafe' block`, sp);
         return this.setType(expr, ot.inner);
       }
-      if (ot.tag !== "unknown") this.error(`cannot dereference type '${typeName(ot)}' (expected &T, *T or Heap<T>)`, sp);
+      if (ot.tag !== "unknown") this.error(`cannot dereference type '${this.show(ot)}' (expected &T, *T or Heap<T>)`, sp);
       return this.setType(expr, { tag: "unknown" });
     }
     if (expr.op === "-") {
-      if (!isNumeric(ot) && ot.tag !== "unknown") this.error(`unary '-' requires numeric type, got ${typeName(ot)}`, sp);
+      if (!isNumeric(ot) && ot.tag !== "unknown") this.error(`unary '-' requires numeric type, got ${this.show(ot)}`, sp);
       if (ot.tag === "int" && expr.operand.kind === "IntLit") {
         const result = -expr.operand.value;
         const { bits, signed } = ot;
@@ -8299,11 +8459,11 @@ export class TypeChecker {
       return this.setType(expr, ot);
     }
     if (expr.op === "!") {
-      if (ot.tag !== "bool" && ot.tag !== "unknown") this.error(`unary '!' requires bool, got ${typeName(ot)}`, sp);
+      if (ot.tag !== "bool" && ot.tag !== "unknown") this.error(`unary '!' requires bool, got ${this.show(ot)}`, sp);
       return this.setType(expr, { tag: "bool" });
     }
     if (expr.op === "~") {
-      if (ot.tag !== "int" && ot.tag !== "unknown") this.error(`unary '~' requires integer type, got ${typeName(ot)}`, sp);
+      if (ot.tag !== "int" && ot.tag !== "unknown") this.error(`unary '~' requires integer type, got ${this.show(ot)}`, sp);
       return this.setType(expr, ot);
     }
     if (expr.op === "&") {
@@ -8350,7 +8510,7 @@ export class TypeChecker {
       // the pre-state is restricted to what fits in a register — which is also the only
       // fragment the SMT translator models.
       if (inner.tag !== "int" && inner.tag !== "float" && inner.tag !== "bool" && inner.tag !== "unknown") {
-        this.error(`old() takes a scalar (integer, float, or bool), got ${typeName(inner)}`, sp,
+        this.error(`old() takes a scalar (integer, float, or bool), got ${this.show(inner)}`, sp,
           `snapshot a scalar projection instead, e.g. old(v.len)`);
       }
       return this.setType(expr, inner);
@@ -8398,7 +8558,7 @@ export class TypeChecker {
       const t = this.checkExpr(expr.args[0]);
       if (isCopy(t, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
         this.warn("useless-forget", `'forget' on a Copy value does nothing`, sp,
-          `${typeName(t)} owns no resource, so there is no drop to suppress`);
+          `${this.show(t)} owns no resource, so there is no drop to suppress`);
       }
       this.tryMove(expr.args[0]);
       return this.setType(expr, { tag: "void" });
@@ -8418,7 +8578,7 @@ export class TypeChecker {
       if (t.tag === "cfn") {
         this.strandedCFnReads.delete(expr.args[0]);
       } else if (t.tag !== "unknown") {
-        this.error(`'isNull' takes a C function-pointer field, got ${typeName(t)}`, sp,
+        this.error(`'isNull' takes a C function-pointer field, got ${this.show(t)}`, sp,
           `a raw pointer is tested with 'p as i64 == 0'`);
       }
       return this.setType(expr, { tag: "bool" });
@@ -8451,11 +8611,11 @@ export class TypeChecker {
       const pt = this.checkExpr(expr.args[0]);
       const lt = this.checkExpr(expr.args[1]);
       if (pt.tag !== "ptr" && pt.tag !== "unknown") {
-        this.error(`'${expr.func}': expected a raw pointer, got ${typeName(pt)}`, expr.args[0].span);
+        this.error(`'${expr.func}': expected a raw pointer, got ${this.show(pt)}`, expr.args[0].span);
         return this.setType(expr, { tag: "unknown" });
       }
       if (lt.tag !== "int" && lt.tag !== "unknown") {
-        this.error(`'${expr.func}': expected an integer length, got ${typeName(lt)}`, expr.args[1].span);
+        this.error(`'${expr.func}': expected an integer length, got ${this.show(lt)}`, expr.args[1].span);
       }
       this.requireUnsafe(`'${expr.func}' can only be used in unsafe blocks`, sp);
       const element: TypeKind = pt.tag === "ptr" ? pt.inner : { tag: "unknown" };
@@ -8483,11 +8643,11 @@ export class TypeChecker {
       if (wantsLen) {
         const lt = this.checkExpr(expr.args[1]);
         if (lt.tag !== "int" && lt.tag !== "unknown") {
-          this.error(`'${expr.func}': expected an integer length, got ${typeName(lt)}`, expr.args[1].span);
+          this.error(`'${expr.func}': expected an integer length, got ${this.show(lt)}`, expr.args[1].span);
         }
       }
       if (pt.tag !== "ptr" && pt.tag !== "unknown") {
-        this.error(`'${expr.func}': expected a raw pointer, got ${typeName(pt)}`, expr.args[0].span);
+        this.error(`'${expr.func}': expected a raw pointer, got ${this.show(pt)}`, expr.args[0].span);
         return this.setType(expr, { tag: "unknown" });
       }
       this.requireUnsafe(`'${expr.func}' can only be used in unsafe blocks`, sp);
@@ -8510,7 +8670,7 @@ export class TypeChecker {
       // so it is NOT invalidated here (only the by-value argument is consumed).
       const vt = this.checkExprWithHint(expr.args[1], place.type);
       if (vt.tag !== "unknown" && place.type.tag !== "unknown" && !typeEq(vt, place.type)) {
-        this.error(`replace: value type ${typeName(vt)} does not match place type ${typeName(place.type)}`, expr.args[1].span);
+        this.error(`replace: value type ${this.show(vt)} does not match place type ${this.show(place.type)}`, expr.args[1].span);
       }
       this.tryMove(expr.args[1]);
       return this.setType(expr, place.type);
@@ -8522,7 +8682,7 @@ export class TypeChecker {
       if (!a.mutable) this.error(`cannot swap through an immutable place`, expr.args[0].span, `declare it with 'var'`);
       if (!b.mutable) this.error(`cannot swap through an immutable place`, expr.args[1].span, `declare it with 'var'`);
       if (a.type.tag !== "unknown" && b.type.tag !== "unknown" && !typeEq(a.type, b.type)) {
-        this.error(`swap: operands have different types ${typeName(a.type)} and ${typeName(b.type)}`, sp);
+        this.error(`swap: operands have different types ${this.show(a.type)} and ${this.show(b.type)}`, sp);
       }
       return this.setType(expr, { tag: "void" });
     }
@@ -8563,7 +8723,7 @@ export class TypeChecker {
       if (expr.args.length !== 1) { this.error(`jsonStringify() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
       const argType = this.checkExpr(expr.args[0]);
       if (argType.tag !== "struct" && argType.tag !== "string" && argType.tag !== "bool" && argType.tag !== "int" && argType.tag !== "float") {
-        this.error(`jsonStringify: unsupported type '${typeName(argType)}'`, sp);
+        this.error(`jsonStringify: unsupported type '${this.show(argType)}'`, sp);
       }
       // codegen only serializes scalar fields — anything else silently
       // produced invalid JSON before this guard existed
@@ -8571,7 +8731,7 @@ export class TypeChecker {
         const si = this.structs.get(argType.name);
         for (const f of si?.fields ?? []) {
           if (f.type.tag !== "string" && f.type.tag !== "bool" && f.type.tag !== "int" && f.type.tag !== "float") {
-            this.error(`jsonStringify: field '${f.name}' has unsupported type '${typeName(f.type)}'`, sp,
+            this.error(`jsonStringify: field '${f.name}' has unsupported type '${this.show(f.type)}'`, sp,
               `only string, bool, integer, and float fields are supported — for nested or dynamic JSON use the std/json builders (jsonObj/jsonArr)`);
           }
         }
@@ -8779,10 +8939,10 @@ export class TypeChecker {
             }
             this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
             if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
-              this.error(`closure argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+              this.error(`closure argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span);
             }
           } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
-            this.error(`closure argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+            this.error(`closure argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span);
           }
         }
         for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
@@ -8840,12 +9000,12 @@ export class TypeChecker {
       }
       const condType = this.checkExpr(expr.args[0]);
       if (condType.tag !== "bool" && condType.tag !== "unknown") {
-        this.error(`assert() condition must be bool, got ${typeName(condType)}`, sp);
+        this.error(`assert() condition must be bool, got ${this.show(condType)}`, sp);
       }
       if (expr.args.length === 2) {
         const msgType = this.checkExpr(expr.args[1]);
         if (msgType.tag !== "string" && msgType.tag !== "unknown") {
-          this.error(`assert() message must be a string, got ${typeName(msgType)}`, sp);
+          this.error(`assert() message must be a string, got ${this.show(msgType)}`, sp);
         }
       }
       return this.setType(expr, { tag: "void" });
@@ -8862,7 +9022,7 @@ export class TypeChecker {
         return this.setType(expr, { tag: "unknown" });
       }
       if (!typeEq(aType, bType) && bType.tag !== "unknown" && aType.tag !== "unknown") {
-        this.error(`${expr.func}() arguments must be the same type, got ${typeName(aType)} and ${typeName(bType)}`, sp);
+        this.error(`${expr.func}() arguments must be the same type, got ${this.show(aType)} and ${this.show(bType)}`, sp);
       }
       return this.setType(expr, aType.tag !== "unknown" ? aType : bType);
     }
@@ -8907,7 +9067,7 @@ export class TypeChecker {
         }
         if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
           if (!this.tryInterfaceCoercion(expr.args[i], argType, paramType)) {
-            this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span, this.optionUnwrapHint(paramType, argType));
+            this.error(`argument ${i + 1} of '${expr.func}': expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span, this.optionUnwrapHint(paramType, argType));
           }
         }
       } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
@@ -8926,7 +9086,7 @@ export class TypeChecker {
           // resolved
         } else if (!isStringToPtr && !isArrayToPtr) {
           if (!this.tryInterfaceCoercion(expr.args[i], argType, paramType)) {
-            this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span, this.optionUnwrapHint(paramType, argType));
+            this.error(`argument ${i + 1} of '${expr.func}': expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span, this.optionUnwrapHint(paramType, argType));
           }
         }
       }
@@ -8988,7 +9148,7 @@ export class TypeChecker {
       if (!argsSafe) {
         // teach the rule, not just the verdict — it's otherwise learned by trial-and-error
         const why = !retSafe
-          ? `it returns ${typeName(sig.ret)} (non-scalar)`
+          ? `it returns ${this.show(sig.ret)} (non-scalar)`
           : `an argument doesn't auto-coerce`;
         this.requireUnsafe(`calling extern function '${expr.func}' requires an unsafe block`, sp,
           `extern calls are safe only when every arg is scalar, &T, fn, string/array→*T, or a by-value extern struct, AND the return is scalar/void/extern-struct — here ${why}`);
@@ -9045,7 +9205,7 @@ export class TypeChecker {
         if (!fieldDef) continue;
         const valType = must(this.exprTypes, f.value, "expr types");
         if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown") {
-          this.error(`field '${f.name}' of '${expr.name}': expected ${typeName(fieldDef.type)}, got ${typeName(valType)}`, sp);
+          this.error(`field '${f.name}' of '${expr.name}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
         }
         // Record the move of the field value out of its source. Without this a non-Copy
         // value (Vec/String/…) moved into a *generic* struct field was never marked moved,
@@ -9073,10 +9233,10 @@ export class TypeChecker {
       const cfnField = fieldDef.type.tag === "cfn" ? fieldDef.type : null;
       if (cfnField) {
         if (valType.tag !== "unknown" && !this.checkCFnStore(f.value, cfnField, valType, `field '${f.name}' of '${expr.name}'`, sp)) {
-          this.error(`field '${f.name}' of '${expr.name}': expected ${typeName(fieldDef.type)}, got ${typeName(valType)}`, sp);
+          this.error(`field '${f.name}' of '${expr.name}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
         }
       } else if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown" && !this.tryInterfaceCoercion(f.value, valType, fieldDef.type)) {
-        this.error(`field '${f.name}' of '${expr.name}': expected ${typeName(fieldDef.type)}, got ${typeName(valType)}`, sp);
+        this.error(`field '${f.name}' of '${expr.name}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
       }
       this.tryMove(f.value);
     }
@@ -9144,7 +9304,7 @@ export class TypeChecker {
     if (objType.tag === "hashmap" && expr.field === "len") {
       return this.setType(expr, { tag: "int", bits: 64, signed: true });
     }
-    this.error(`cannot access field '${expr.field}' on type ${typeName(objType)}`, sp,
+    this.error(`cannot access field '${expr.field}' on type ${this.show(objType)}`, sp,
       memberHint(expr.field, this.fieldCandidates(objType)));
     return this.setType(expr, { tag: "unknown" });
   }
@@ -9159,7 +9319,7 @@ export class TypeChecker {
     for (let i = 1; i < expr.elements.length; i++) {
       const t = this.checkExpr(expr.elements[i]);
       if (!typeEq(elemType, t) && t.tag !== "unknown") {
-        this.error(`array element ${i}: expected ${typeName(elemType)}, got ${typeName(t)}`, expr.elements[i].span);
+        this.error(`array element ${i}: expected ${this.show(elemType)}, got ${this.show(t)}`, expr.elements[i].span);
       }
     }
     return this.setType(expr, { tag: "array", element: elemType, size: expr.elements.length });
@@ -9178,7 +9338,7 @@ export class TypeChecker {
     const objType = rawObjType.tag === "ref" ? rawObjType.inner : rawObjType;
     const idxType = this.checkExpr(expr.index);
     if (idxType.tag !== "int" && idxType.tag !== "unknown") {
-      this.error(`array index must be integer, got ${typeName(idxType)}`, sp);
+      this.error(`array index must be integer, got ${this.show(idxType)}`, sp);
     }
     if (objType.tag === "array") return this.setType(expr, objType.element);
     if (objType.tag === "vec") return this.setType(expr, objType.element);
@@ -9187,7 +9347,7 @@ export class TypeChecker {
       this.requireUnsafe(`pointer indexing requires 'unsafe' block`, sp);
       return this.setType(expr, objType.inner);
     }
-    this.error(`cannot index type ${typeName(objType)}`, sp);
+    this.error(`cannot index type ${this.show(objType)}`, sp);
     return this.setType(expr, { tag: "unknown" });
   }
 
@@ -9215,11 +9375,11 @@ export class TypeChecker {
         if (!(argType.tag === "ref" && typeEq(paramType.inner, argType.inner))) {
           this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
           if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
-            this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+            this.error(`'${expr.variant}' argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span);
           }
         }
       } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
-        this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+        this.error(`'${expr.variant}' argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span);
       }
       if (expr.args[i].kind === "Closure" && paramType.tag === "fn" && !(expr.args[i] as any).isMove) {
         const caps = this.closureCaptures.get(expr.args[i]);
@@ -9274,14 +9434,14 @@ export class TypeChecker {
       if (expr.variant === "tryFrom" && reprInfo?.reprType) {
         if (expr.args.length !== 1) { this.error(`'${expr.enumName}.tryFrom' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
         const argType = this.checkExpr(expr.args[0]);
-        if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'${expr.enumName}.tryFrom': expected an integer, got ${typeName(argType)}`, sp);
+        if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'${expr.enumName}.tryFrom': expected an integer, got ${this.show(argType)}`, sp);
         return this.setType(expr, this.resolveOptionForValue({ tag: "enum", name: expr.enumName }, sp));
       }
     }
     if (expr.enumName === "String" && expr.variant === "withCapacity") {
       if (expr.args.length !== 1) { this.error(`'String.withCapacity' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
       const argType = this.checkExpr(expr.args[0]);
-      if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'String.withCapacity': expected integer, got ${typeName(argType)}`, sp);
+      if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'String.withCapacity': expected integer, got ${this.show(argType)}`, sp);
       return this.setType(expr, { tag: "string" });
     }
     if (expr.enumName === "Vec" && expr.variant === "new") {
@@ -9321,7 +9481,7 @@ export class TypeChecker {
             typeMap.set(field.name, argType);
           }
         } else if (!typeEq(field, argType) && argType.tag !== "unknown") {
-          this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${typeName(field)}, got ${typeName(argType)}`, expr.args[i].span);
+          this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${this.show(field)}, got ${this.show(argType)}`, expr.args[i].span);
         }
         this.tryMove(expr.args[i]);
       }
@@ -9405,7 +9565,7 @@ export class TypeChecker {
               for (const cap of captures) {
                 if (!this.isSend(cap.type)) {
                   this.error(
-                    `cannot send '${cap.name}' of type '${typeName(cap.type)}' across threads — type does not implement Send`,
+                    `cannot send '${cap.name}' of type '${this.show(cap.type)}' across threads — type does not implement Send`,
                     expr.args[0].span,
                     this.whyNotSend(cap.type),
                   );
@@ -9433,7 +9593,7 @@ export class TypeChecker {
         argType = variant.fields[i];
       }
       if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
-        this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`, expr.args[i].span);
+        this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${this.show(variant.fields[i])}, got ${this.show(argType)}`, expr.args[i].span);
       }
       this.tryMove(expr.args[i]);
     }
@@ -9445,7 +9605,7 @@ export class TypeChecker {
     const operandType = this.checkExpr(expr.operand);
     const inner = this.unwrapableInner(operandType);
     if (!inner) {
-      this.error(`'!' requires Option or Result type, got ${typeName(operandType)}`, sp);
+      this.error(`'!' requires Option or Result type, got ${this.show(operandType)}`, sp);
       return this.setType(expr, { tag: "unknown" });
     }
     // `!` moves the payload out and codegen zeros the source slot; mark the
@@ -9460,7 +9620,7 @@ export class TypeChecker {
     const operandType = this.checkExpr(expr.operand);
     const inner = this.unwrapableInner(operandType);
     if (!inner) {
-      this.error(`'?' requires Option or Result type, got ${typeName(operandType)}`, sp);
+      this.error(`'?' requires Option or Result type, got ${this.show(operandType)}`, sp);
       return this.setType(expr, { tag: "unknown" });
     }
     // `?` consumes the operand (Err returns it, Ok extracts the payload and
@@ -9469,14 +9629,14 @@ export class TypeChecker {
     this.tryMove(expr.operand);
     const retInner = this.unwrapableInner(this.currentFnRetType);
     if (!retInner) {
-      this.error(`'?' requires function to return Option or Result, but returns ${typeName(this.currentFnRetType)}`, sp);
+      this.error(`'?' requires function to return Option or Result, but returns ${this.show(this.currentFnRetType)}`, sp);
       return this.setType(expr, inner);
     }
     // Option ? in Option fn, or Result ? in Result fn — match error side only
     const operandIsOption = this.isOptionLike(operandType);
     const retIsOption = this.isOptionLike(this.currentFnRetType);
     if (operandIsOption !== retIsOption) {
-      this.error(`'?' on ${operandIsOption ? "Option" : "Result"} requires function to return ${operandIsOption ? "Option" : "Result"}, but returns ${typeName(this.currentFnRetType)}`, sp);
+      this.error(`'?' on ${operandIsOption ? "Option" : "Result"} requires function to return ${operandIsOption ? "Option" : "Result"}, but returns ${this.show(this.currentFnRetType)}`, sp);
     } else if (!operandIsOption) {
       // both Result-like: Err types must match, or From conversion must exist
       const operandErr = this.unwrapableErr(operandType);
@@ -9486,7 +9646,7 @@ export class TypeChecker {
         if (conversion) {
           this.propagateConversions.set(expr, conversion);
         } else {
-          this.error(`'?' error type mismatch: '${typeName(operandErr)}' cannot convert to '${typeName(retErr)}' (no wrapping variant found)`, sp);
+          this.error(`'?' error type mismatch: '${this.show(operandErr)}' cannot convert to '${this.show(retErr)}' (no wrapping variant found)`, sp);
         }
       }
     }
@@ -9498,12 +9658,12 @@ export class TypeChecker {
     const operandType = this.checkExpr(expr.operand);
     const inner = this.unwrapableInner(operandType);
     if (!inner) {
-      this.error(`'??' requires Option or Result type, got ${typeName(operandType)}`, sp);
+      this.error(`'??' requires Option or Result type, got ${this.show(operandType)}`, sp);
       return this.setType(expr, { tag: "unknown" });
     }
     const defaultType = this.checkExprWithHint(expr.default, inner);
     if (!typeEq(inner, defaultType) && defaultType.tag !== "unknown") {
-      this.error(`'??' default type mismatch: expected ${typeName(inner)}, got ${typeName(defaultType)}`, sp);
+      this.error(`'??' default type mismatch: expected ${this.show(inner)}, got ${this.show(defaultType)}`, sp);
     }
     // `??` consumes BOTH operands wherever it is evaluated: codegen moves the payload
     // out of the Option and moves the default in, whichever branch runs. `moveTargets`
@@ -9528,16 +9688,16 @@ export class TypeChecker {
     // variant has a discriminant. Only to an integer type: `Kind.tryFrom` is the reverse.
     const fromReprEnum = fromType.tag === "enum" && !!this.enums.get(fromType.name)?.reprType;
     if (fromReprEnum && toType.tag !== "int") {
-      this.error(`enum '${fromType.name}' casts only to an integer type, not ${typeName(toType)}`, sp);
+      this.error(`enum '${fromType.name}' casts only to an integer type, not ${this.show(toType)}`, sp);
     }
     const fromOk = isNumeric(fromType) || fromType.tag === "bool" || fromType.tag === "ptr" || fromType.tag === "array" || fromType.tag === "fn" || fromType.tag === "cfn" || fromType.tag === "string" || fromType.tag === "unknown" || fromReprEnum;
     // ptr -> cfn is how a dlsym result becomes callable; cfn -> ptr passes one back out
     const toOk = isNumeric(toType) || toType.tag === "ptr" || toType.tag === "cfn";
     if (!fromOk) {
-      this.error(`cannot cast from ${typeName(fromType)}`, sp);
+      this.error(`cannot cast from ${this.show(fromType)}`, sp);
     }
     if (!toOk) {
-      this.error(`cannot cast to ${typeName(toType)}`, sp);
+      this.error(`cannot cast to ${this.show(toType)}`, sp);
     }
     const isNullPtrConst = toType.tag === "ptr" && expr.operand.kind === "IntLit" && expr.operand.value === 0n;
     if (toType.tag === "ptr" && !isNullPtrConst) {
@@ -9695,7 +9855,7 @@ export class TypeChecker {
       if (objType.inner.tag === "interface") {
         // A `Heap<dyn I>` is {box, vtable}; there is no single pointer that is the value,
         // and free-ing the box alone would strand the dispatch half of it.
-        this.error(`'ptr' is not available on Heap<${typeName(objType.inner)}>`, sp,
+        this.error(`'ptr' is not available on Heap<${this.show(objType.inner)}>`, sp,
           `an interface box carries a vtable alongside the allocation, so no single raw pointer represents it`);
         return this.setType(expr, { tag: "unknown" });
       }
@@ -9714,13 +9874,13 @@ export class TypeChecker {
         if (inner && !isCopy(inner)) {
           // select-based lowering copies the payload; for owned types that would
           // alias the heap buffer (double-free). Move-out needs match.
-          this.error(`'unwrapOr' on a non-Copy Option<${typeName(inner)}> — use 'match' to move the value out`, sp);
+          this.error(`'unwrapOr' on a non-Copy Option<${this.show(inner)}> — use 'match' to move the value out`, sp);
           return this.setType(expr, inner);
         }
         if (inner) {
           const at = this.checkExprWithHint(expr.args[0], inner);
           if (!typeEq(inner, at) && at.tag !== "unknown") {
-            this.error(`'unwrapOr': default must be ${typeName(inner)}, got ${typeName(at)}`, sp);
+            this.error(`'unwrapOr': default must be ${this.show(inner)}, got ${this.show(at)}`, sp);
           }
           return this.setType(expr, inner);
         }
@@ -9760,7 +9920,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'unwrapOrElse' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const inner = this.unwrapableInner(objType);
         if (inner && !isCopy(inner)) {
-          this.error(`'unwrapOrElse' on a non-Copy Option<${typeName(inner)}> — use 'match' to move the value out`, sp);
+          this.error(`'unwrapOrElse' on a non-Copy Option<${this.show(inner)}> — use 'match' to move the value out`, sp);
           return this.setType(expr, inner);
         }
         if (inner) {
@@ -9775,7 +9935,7 @@ export class TypeChecker {
             this.error(`'unwrapOrElse': callback takes no arguments`, sp);
           }
           if (!typeEq(inner, cbType.ret) && cbType.ret.tag !== "unknown") {
-            this.error(`'unwrapOrElse': callback must return ${typeName(inner)}, got ${typeName(cbType.ret)}`, sp);
+            this.error(`'unwrapOrElse': callback must return ${this.show(inner)}, got ${this.show(cbType.ret)}`, sp);
           }
           return this.setType(expr, inner);
         }
@@ -9798,7 +9958,7 @@ export class TypeChecker {
         }
         const ret = cbType.ret;
         if (ret.tag !== "enum" || this.enums.get(ret.name)?.baseName !== "Option") {
-          this.error(`'andThen': callback must return an Option, got ${typeName(ret)}`, sp);
+          this.error(`'andThen': callback must return an Option, got ${this.show(ret)}`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         return this.setType(expr, ret);
@@ -9826,7 +9986,7 @@ export class TypeChecker {
           const cbInner = ret.tag === "enum" && this.enums.get(ret.name)?.baseName === "Option"
             ? this.unwrapableInner(ret) : null;
           if (!cbInner || !typeEq(cbInner, inner)) {
-            this.error(`'orElse': callback must return Option<${typeName(inner)}>, got ${typeName(ret)}`, sp);
+            this.error(`'orElse': callback must return Option<${this.show(inner)}>, got ${this.show(ret)}`, sp);
           }
         }
         this.consumeForwardedPayload(expr.object, inner);
@@ -9843,13 +10003,13 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'unwrapOr' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const inner = this.unwrapableInner(objType);
         if (inner && !isCopy(inner)) {
-          this.error(`'unwrapOr' on a non-Copy Result<${typeName(inner)}> — use 'match' to move the value out`, sp);
+          this.error(`'unwrapOr' on a non-Copy Result<${this.show(inner)}> — use 'match' to move the value out`, sp);
           return this.setType(expr, inner);
         }
         if (inner) {
           const at = this.checkExprWithHint(expr.args[0], inner);
           if (!typeEq(inner, at) && at.tag !== "unknown") {
-            this.error(`'unwrapOr': default must be ${typeName(inner)}, got ${typeName(at)}`, sp);
+            this.error(`'unwrapOr': default must be ${this.show(inner)}, got ${this.show(at)}`, sp);
           }
           return this.setType(expr, inner);
         }
@@ -9919,12 +10079,12 @@ export class TypeChecker {
         }
         const ret = cbType.ret;
         if (ret.tag !== "enum" || this.enums.get(ret.name)?.baseName !== "Result") {
-          this.error(`'andThen': callback must return a Result, got ${typeName(ret)}`, sp);
+          this.error(`'andThen': callback must return a Result, got ${this.show(ret)}`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         const cbErr = this.unwrapableErr(ret);
         if (cbErr && !typeEq(cbErr, errT)) {
-          this.error(`'andThen': callback's error type must be ${typeName(errT)}, got ${typeName(cbErr)}`, sp);
+          this.error(`'andThen': callback's error type must be ${this.show(errT)}, got ${this.show(cbErr)}`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         // Like map, the Err payload is forwarded into the result untouched.
@@ -9940,7 +10100,7 @@ export class TypeChecker {
         const inner = this.unwrapableInner(objType);
         const errT = this.unwrapableErr(objType);
         if (inner && !isCopy(inner)) {
-          this.error(`'unwrapOrElse' on a non-Copy Result<${typeName(inner)}> — use 'match' to move the value out`, sp);
+          this.error(`'unwrapOrElse' on a non-Copy Result<${this.show(inner)}> — use 'match' to move the value out`, sp);
           return this.setType(expr, inner);
         }
         if (inner && errT) {
@@ -9955,7 +10115,7 @@ export class TypeChecker {
             this.error(`'unwrapOrElse': callback takes 1 argument, the error`, sp);
           }
           if (!typeEq(inner, cbType.ret) && cbType.ret.tag !== "unknown") {
-            this.error(`'unwrapOrElse': callback must return ${typeName(inner)}, got ${typeName(cbType.ret)}`, sp);
+            this.error(`'unwrapOrElse': callback must return ${this.show(inner)}, got ${this.show(cbType.ret)}`, sp);
           }
           return this.setType(expr, inner);
         }
@@ -9978,12 +10138,12 @@ export class TypeChecker {
         }
         const ret = cbType.ret;
         if (ret.tag !== "enum" || this.enums.get(ret.name)?.baseName !== "Result") {
-          this.error(`'orElse': callback must return a Result, got ${typeName(ret)}`, sp);
+          this.error(`'orElse': callback must return a Result, got ${this.show(ret)}`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         const cbOk = this.unwrapableInner(ret);
         if (cbOk && !typeEq(cbOk, inner)) {
-          this.error(`'orElse': callback's ok type must be ${typeName(inner)}, got ${typeName(cbOk)}`, sp);
+          this.error(`'orElse': callback's ok type must be ${this.show(inner)}, got ${this.show(cbOk)}`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         this.consumeForwardedPayload(expr.object, inner);
@@ -10001,7 +10161,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const argType = this.checkExprWithHint(expr.args[0], objType);
         if (!typeEq(objType, argType) && argType.tag !== "unknown") {
-          this.error(`'${expr.method}': expected ${typeName(objType)}, got ${typeName(argType)}`, sp);
+          this.error(`'${expr.method}': expected ${this.show(objType)}, got ${this.show(argType)}`, sp);
         }
         return this.setType(expr, objType);
       }
@@ -10009,7 +10169,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const argType = this.checkExprWithHint(expr.args[0], objType);
         if (!typeEq(objType, argType) && argType.tag !== "unknown") {
-          this.error(`'${expr.method}': expected ${typeName(objType)}, got ${typeName(argType)}`, sp);
+          this.error(`'${expr.method}': expected ${this.show(objType)}, got ${this.show(argType)}`, sp);
         }
         return this.setType(expr, this.resolveOptionForValue(objType, sp));
       }
@@ -10035,7 +10195,7 @@ export class TypeChecker {
         else {
           const at = this.checkExprWithHint(expr.args[0], objType);
           if (!typeEq(objType, at) && at.tag !== "unknown") {
-            this.error(`'${expr.method}': shift amount must be ${typeName(objType)}, got ${typeName(at)}`, sp);
+            this.error(`'${expr.method}': shift amount must be ${this.show(objType)}, got ${this.show(at)}`, sp);
           }
         }
         return this.setType(expr, objType);
@@ -10060,8 +10220,8 @@ export class TypeChecker {
       if (expr.args.length !== 2) { this.error(`'slice' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, refSlice); }
       const startType = this.checkExpr(expr.args[0]);
       const endType = this.checkExpr(expr.args[1]);
-      if (startType.tag !== "int" && startType.tag !== "unknown") this.error(`slice start: expected integer, got ${typeName(startType)}`, sp);
-      if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`slice end: expected integer, got ${typeName(endType)}`, sp);
+      if (startType.tag !== "int" && startType.tag !== "unknown") this.error(`slice start: expected integer, got ${this.show(startType)}`, sp);
+      if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`slice end: expected integer, got ${this.show(endType)}`, sp);
       // A view of a TEMPORARY has nothing to freeze: `mk()[0..2]` points into a Vec that
       // no binding owns. `freezeViewSource` already rejects the method spelling of this
       // (`mk().view()`), and its comment is the reason to reject the slice one too: that
@@ -10108,7 +10268,7 @@ export class TypeChecker {
         }
         if (!typeEq(objType.element, argType) && argType.tag !== "unknown") {
           if (!this.tryInterfaceCoercion(expr.args[0], argType, objType.element)) {
-            this.error(`push: expected ${typeName(objType.element)}, got ${typeName(argType)}`, sp);
+            this.error(`push: expected ${this.show(objType.element)}, got ${this.show(argType)}`, sp);
           }
         }
         this.tryMove(expr.args[0]);
@@ -10123,7 +10283,7 @@ export class TypeChecker {
         if (want === 1 && expr.args.length === 1) {
           const nType = this.checkExpr(expr.args[0]);
           if (nType.tag !== "int" && nType.tag !== "unknown") {
-            this.error(`'truncate': expected an integer length, got ${typeName(nType)}`, sp);
+            this.error(`'truncate': expected an integer length, got ${this.show(nType)}`, sp);
           }
         }
         if (!this.isRootMutable(expr.object)) {
@@ -10217,7 +10377,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'join' expects 1 argument (separator)`, sp); return this.setType(expr, { tag: "unknown" }); }
         if (objType.element.tag !== "string") { this.error(`'join' is only available on Vec<string>`, sp); return this.setType(expr, { tag: "unknown" }); }
         const sepType = this.checkExpr(expr.args[0]);
-        if (sepType.tag !== "string" && sepType.tag !== "unknown") { this.error(`'join' separator must be a string, got ${typeName(sepType)}`, sp); }
+        if (sepType.tag !== "string" && sepType.tag !== "unknown") { this.error(`'join' separator must be a string, got ${this.show(sepType)}`, sp); }
         return this.setType(expr, { tag: "string" });
       }
       if (expr.method === "isEmpty") {
@@ -10265,14 +10425,14 @@ export class TypeChecker {
         // read each element as a string pointer and folded garbage.
         this.checkCallbackSig(cbType, cbHint, expr.method, sp);
         if (!typeEq(cbType.ret, accType) && cbType.ret.tag !== "unknown" && accType.tag !== "unknown") {
-          this.error(`'${expr.method}' callback must return ${typeName(accType)} to match the initial value, got ${typeName(cbType.ret)}`, sp);
+          this.error(`'${expr.method}' callback must return ${this.show(accType)} to match the initial value, got ${this.show(cbType.ret)}`, sp);
         }
         return this.setType(expr, accType);
       }
       if (expr.method === "sum") {
         if (expr.args.length !== 0) { this.error(`'sum' takes no arguments`, sp); }
         if (objType.element.tag !== "int" && objType.element.tag !== "float") {
-          this.error(`'sum' requires a Vec of integers or floats, got Vec<${typeName(objType.element)}>`, sp);
+          this.error(`'sum' requires a Vec of integers or floats, got Vec<${this.show(objType.element)}>`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         return this.setType(expr, objType.element);
@@ -10281,7 +10441,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'contains' expects 1 argument`, sp); return this.setType(expr, { tag: "bool" }); }
         const argType = this.checkExprWithHint(expr.args[0], objType.element);
         if (!typeEq(objType.element, argType) && argType.tag !== "unknown") {
-          this.error(`'contains': expected ${typeName(objType.element)}, got ${typeName(argType)}`, sp);
+          this.error(`'contains': expected ${this.show(objType.element)}, got ${this.show(argType)}`, sp);
         }
         return this.setType(expr, { tag: "bool" });
       }
@@ -10299,8 +10459,8 @@ export class TypeChecker {
         }
         const aType = this.checkExpr(expr.args[0]);
         const bType = this.checkExpr(expr.args[1]);
-        if (aType.tag !== "int" && aType.tag !== "unknown") { this.error(`'swap' index must be an integer, got ${typeName(aType)}`, sp); }
-        if (bType.tag !== "int" && bType.tag !== "unknown") { this.error(`'swap' index must be an integer, got ${typeName(bType)}`, sp); }
+        if (aType.tag !== "int" && aType.tag !== "unknown") { this.error(`'swap' index must be an integer, got ${this.show(aType)}`, sp); }
+        if (bType.tag !== "int" && bType.tag !== "unknown") { this.error(`'swap' index must be an integer, got ${this.show(bType)}`, sp); }
         return this.setType(expr, { tag: "void" });
       }
       if (expr.method === "insert") {
@@ -10309,10 +10469,10 @@ export class TypeChecker {
           this.error(`cannot insert into immutable Vec`, sp, `declare with 'var' to make it mutable`);
         }
         const idxType = this.checkExpr(expr.args[0]);
-        if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'insert' index must be an integer, got ${typeName(idxType)}`, sp); }
+        if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'insert' index must be an integer, got ${this.show(idxType)}`, sp); }
         const valType = this.checkExprWithHint(expr.args[1], objType.element);
         if (!typeEq(objType.element, valType) && valType.tag !== "unknown") {
-          this.error(`'insert' value: expected ${typeName(objType.element)}, got ${typeName(valType)}`, sp);
+          this.error(`'insert' value: expected ${this.show(objType.element)}, got ${this.show(valType)}`, sp);
         }
         this.tryMove(expr.args[1]);
         return this.setType(expr, { tag: "void" });
@@ -10323,7 +10483,7 @@ export class TypeChecker {
           this.error(`cannot remove from immutable Vec`, sp, `declare with 'var' to make it mutable`);
         }
         const idxType = this.checkExpr(expr.args[0]);
-        if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'remove' index must be an integer, got ${typeName(idxType)}`, sp); }
+        if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'remove' index must be an integer, got ${this.show(idxType)}`, sp); }
         return this.setType(expr, objType.element);
       }
       if (expr.method === "sort") {
@@ -10369,7 +10529,7 @@ export class TypeChecker {
         if (cbType.tag !== "fn") { this.error(`'sortByKey' argument must be a function`, sp); return this.setType(expr, { tag: "void" }); }
         const keyType = cbType.ret;
         if (keyType.tag !== "int" && keyType.tag !== "float" && keyType.tag !== "string" && keyType.tag !== "bool") {
-          this.error(`'sortByKey' key must be a comparable type (int, float, string, bool), got ${typeName(keyType)}`, sp);
+          this.error(`'sortByKey' key must be a comparable type (int, float, string, bool), got ${this.show(keyType)}`, sp);
         }
         return this.setType(expr, { tag: "void" });
       }
@@ -10383,10 +10543,10 @@ export class TypeChecker {
         // captured environment has no copy path — neither can be duplicated.
         const el = objType.element;
         if (el.tag === "interface") {
-          this.error(`cannot clone Vec<${typeName(el)}>: an interface value has no clone`, sp,
+          this.error(`cannot clone Vec<${this.show(el)}>: an interface value has no clone`, sp,
             `the concrete type is erased and the itable carries no clone slot — build a new Vec from the concrete values instead`);
         } else if (el.tag === "fn") {
-          this.error(`cannot clone Vec<${typeName(el)}>: closures cannot be cloned`, sp);
+          this.error(`cannot clone Vec<${this.show(el)}>: closures cannot be cloned`, sp);
         }
         return this.setType(expr, objType);
       }
@@ -10400,7 +10560,7 @@ export class TypeChecker {
         }
         if (want === 1 && expr.args.length === 1) {
           const idxType = this.checkExpr(expr.args[0]);
-          if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'get' index must be an integer, got ${typeName(idxType)}`, sp); }
+          if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'get' index must be an integer, got ${this.show(idxType)}`, sp); }
         }
         return this.setType(expr, this.resolveOptionForValue(objType.element, sp));
       }
@@ -10411,8 +10571,8 @@ export class TypeChecker {
         if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
         const el = objType.element;
         if (el.tag !== "int" && el.tag !== "float" && el.tag !== "string" && el.tag !== "bool") {
-          this.error(`'${expr.method}' requires a Vec of a comparable type (int, float, string, bool), got Vec<${typeName(el)}>`, sp,
-            `there is no ordering on ${typeName(el)} — use 'fold' with your own comparison, or 'sortByKey' then 'first'`);
+          this.error(`'${expr.method}' requires a Vec of a comparable type (int, float, string, bool), got Vec<${this.show(el)}>`, sp,
+            `there is no ordering on ${this.show(el)} — use 'fold' with your own comparison, or 'sortByKey' then 'first'`);
           return this.setType(expr, { tag: "unknown" });
         }
         return this.setType(expr, this.resolveOptionForValue(el, sp));
@@ -10422,13 +10582,13 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'indexOf' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const el = objType.element;
         if (el.tag !== "int" && el.tag !== "float" && el.tag !== "string" && el.tag !== "bool") {
-          this.error(`'indexOf' requires a Vec of a comparable type (int, float, string, bool), got Vec<${typeName(el)}>`, sp,
+          this.error(`'indexOf' requires a Vec of a comparable type (int, float, string, bool), got Vec<${this.show(el)}>`, sp,
             `use 'position' with a predicate instead`);
           return this.setType(expr, { tag: "unknown" });
         }
         const argType = this.checkExprWithHint(expr.args[0], el);
         if (!typeEq(el, argType) && argType.tag !== "unknown") {
-          this.error(`'indexOf': expected ${typeName(el)}, got ${typeName(argType)}`, sp);
+          this.error(`'indexOf': expected ${this.show(el)}, got ${this.show(argType)}`, sp);
         }
         return this.setType(expr, this.resolveOptionForValue({ tag: "int", bits: 64, signed: true }, sp));
       }
@@ -10454,7 +10614,7 @@ export class TypeChecker {
         if (otherType.tag === "ref") {
           this.error(`'extend' takes ownership of the other Vec`, sp, `clone it if you still need it: 'v.extend(other.clone())'`);
         } else if (!typeEq(objType, otherType) && otherType.tag !== "unknown") {
-          this.error(`'extend': expected ${typeName(objType)}, got ${typeName(otherType)}`, sp);
+          this.error(`'extend': expected ${this.show(objType)}, got ${this.show(otherType)}`, sp);
         }
         this.tryMove(expr.args[0]);
         return this.setType(expr, { tag: "void" });
@@ -10485,7 +10645,7 @@ export class TypeChecker {
           this.error(`cannot reserve on an immutable Vec`, sp, `declare with 'var' to make it mutable`);
         }
         const nType = this.checkExpr(expr.args[0]);
-        if (nType.tag !== "int" && nType.tag !== "unknown") { this.error(`'reserve': expected an integer, got ${typeName(nType)}`, sp); }
+        if (nType.tag !== "int" && nType.tag !== "unknown") { this.error(`'reserve': expected an integer, got ${this.show(nType)}`, sp); }
         return this.setType(expr, { tag: "void" });
       }
       {
@@ -10503,11 +10663,11 @@ export class TypeChecker {
         }
         const keyType = this.checkExprWithHint(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
-          this.error(`insert key: expected ${typeName(objType.key)}, got ${typeName(keyType)}`, sp);
+          this.error(`insert key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
         const valType = this.checkExprWithHint(expr.args[1], objType.value);
         if (!typeEq(objType.value, valType) && valType.tag !== "unknown") {
-          this.error(`insert value: expected ${typeName(objType.value)}, got ${typeName(valType)}`, sp);
+          this.error(`insert value: expected ${this.show(objType.value)}, got ${this.show(valType)}`, sp);
         }
         this.tryMove(expr.args[0]);
         this.tryMove(expr.args[1]);
@@ -10517,7 +10677,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'get' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
         const keyType = this.checkExprWithHint(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
-          this.error(`get key: expected ${typeName(objType.key)}, got ${typeName(keyType)}`, sp);
+          this.error(`get key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
         const optionType = this.resolveOptionForValue(objType.value, sp);
         return this.setType(expr, optionType);
@@ -10526,11 +10686,11 @@ export class TypeChecker {
         if (expr.args.length !== 2) { this.error(`'getOrDefault' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
         const keyType = this.checkExprWithHint(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
-          this.error(`getOrDefault key: expected ${typeName(objType.key)}, got ${typeName(keyType)}`, sp);
+          this.error(`getOrDefault key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
         const valType = this.checkExprWithHint(expr.args[1], objType.value);
         if (!typeEq(objType.value, valType) && valType.tag !== "unknown") {
-          this.error(`getOrDefault default: expected ${typeName(objType.value)}, got ${typeName(valType)}`, sp);
+          this.error(`getOrDefault default: expected ${this.show(objType.value)}, got ${this.show(valType)}`, sp);
         }
         return this.setType(expr, objType.value);
       }
@@ -10538,7 +10698,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'contains' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
         const keyType = this.checkExprWithHint(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
-          this.error(`contains key: expected ${typeName(objType.key)}, got ${typeName(keyType)}`, sp);
+          this.error(`contains key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
         return this.setType(expr, { tag: "bool" });
       }
@@ -10549,7 +10709,7 @@ export class TypeChecker {
         }
         const keyType = this.checkExprWithHint(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
-          this.error(`remove key: expected ${typeName(objType.key)}, got ${typeName(keyType)}`, sp);
+          this.error(`remove key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
         return this.setType(expr, { tag: "void" });
       }
@@ -10572,10 +10732,10 @@ export class TypeChecker {
         if (expr.args.length !== 0) { this.error(`'clone' takes no arguments`, sp); }
         for (const [what, t] of [["key", objType.key], ["value", objType.value]] as const) {
           if (t.tag === "interface") {
-            this.error(`cannot clone a HashMap with ${what} type ${typeName(t)}: an interface value has no clone`, sp,
+            this.error(`cannot clone a HashMap with ${what} type ${this.show(t)}: an interface value has no clone`, sp,
               `the concrete type is erased and the itable carries no clone slot`);
           } else if (t.tag === "fn") {
-            this.error(`cannot clone a HashMap with ${what} type ${typeName(t)}: closures cannot be cloned`, sp);
+            this.error(`cannot clone a HashMap with ${what} type ${this.show(t)}: closures cannot be cloned`, sp);
           }
         }
         return this.setType(expr, objType);
@@ -10587,7 +10747,7 @@ export class TypeChecker {
         if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
         const el = expr.method === "keys" ? objType.key : objType.value;
         if (el.tag === "interface" || el.tag === "fn") {
-          this.error(`'${expr.method}' cannot copy ${typeName(el)} out of the map`, sp,
+          this.error(`'${expr.method}' cannot copy ${this.show(el)} out of the map`, sp,
             `iterate with 'for k, v in map' instead — it borrows rather than copies`);
           return this.setType(expr, { tag: "unknown" });
         }
@@ -10612,7 +10772,7 @@ export class TypeChecker {
         const u8t: TypeKind = { tag: "int", bits: 8, signed: false };
         const argType = this.checkExprWithHint(expr.args[0], u8t);
         if (!typeEq(u8t, argType) && argType.tag !== "unknown") {
-          this.error(`string.push: expected u8, got ${typeName(argType)}`, sp);
+          this.error(`string.push: expected u8, got ${this.show(argType)}`, sp);
         }
         return this.setType(expr, { tag: "void" });
       }
@@ -10624,7 +10784,7 @@ export class TypeChecker {
         const argType = this.checkExpr(expr.args[0]);
         const argInner = this.deref(argType);
         if (argInner.tag !== "string" && argInner.tag !== "unknown") {
-          this.error(`string.pushStr: expected string, got ${typeName(argType)}`, sp);
+          this.error(`string.pushStr: expected string, got ${this.show(argType)}`, sp);
         }
         this.setAutoBorrowChecked(expr.args[0], false);
         return this.setType(expr, { tag: "void" });
@@ -10633,8 +10793,8 @@ export class TypeChecker {
         if (expr.args.length !== 2) { this.error(`'substr' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
         const startType = this.checkExpr(expr.args[0]);
         const endType = this.checkExpr(expr.args[1]);
-        if (startType.tag !== "int" && startType.tag !== "unknown") this.error(`substr start: expected integer, got ${typeName(startType)}`, sp);
-        if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`substr end: expected integer, got ${typeName(endType)}`, sp);
+        if (startType.tag !== "int" && startType.tag !== "unknown") this.error(`substr start: expected integer, got ${this.show(startType)}`, sp);
+        if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`substr end: expected integer, got ${this.show(endType)}`, sp);
         return this.setType(expr, { tag: "string" });
       }
       if (expr.method === "slice") {
@@ -10642,8 +10802,8 @@ export class TypeChecker {
         if (expr.args.length !== 2) { this.error(`'slice' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, refStr); }
         const startType = this.checkExpr(expr.args[0]);
         const endType = this.checkExpr(expr.args[1]);
-        if (startType.tag !== "int" && startType.tag !== "unknown") this.error(`slice start: expected integer, got ${typeName(startType)}`, sp);
-        if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`slice end: expected integer, got ${typeName(endType)}`, sp);
+        if (startType.tag !== "int" && startType.tag !== "unknown") this.error(`slice start: expected integer, got ${this.show(startType)}`, sp);
+        if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`slice end: expected integer, got ${this.show(endType)}`, sp);
         // Same temporary hazard as the slice-of-Vec case above, same reasoning.
         if (!this.isPlaceExpr(expr.object)) {
           this.error(`cannot take a view of a temporary`, sp,
@@ -10668,14 +10828,14 @@ export class TypeChecker {
       if (expr.method === "contains" || expr.method === "startsWith" || expr.method === "endsWith") {
         if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "bool" }); }
         const argType = this.checkExpr(expr.args[0]);
-        if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'${expr.method}': expected string, got ${typeName(argType)}`, sp);
+        if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'${expr.method}': expected string, got ${this.show(argType)}`, sp);
         return this.setType(expr, { tag: "bool" });
       }
       if (expr.method === "indexOf" || expr.method === "lastIndexOf") {
         const optionI64: TypeKind = { tag: "enum", name: this.monomorphizeEnum("Option", [{ tag: "int", bits: 64, signed: true }]) };
         if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, optionI64); }
         const argType = this.checkExpr(expr.args[0]);
-        if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'${expr.method}': expected string, got ${typeName(argType)}`, sp);
+        if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'${expr.method}': expected string, got ${this.show(argType)}`, sp);
         return this.setType(expr, optionI64);
       }
       // like indexOf but starts the search at byte offset `from`
@@ -10683,15 +10843,15 @@ export class TypeChecker {
         const optionI64: TypeKind = { tag: "enum", name: this.monomorphizeEnum("Option", [{ tag: "int", bits: 64, signed: true }]) };
         if (expr.args.length !== 2) { this.error(`'indexOfFrom' expects 2 arguments (needle, from), got ${expr.args.length}`, sp); return this.setType(expr, optionI64); }
         const nType = this.checkExpr(expr.args[0]);
-        if (nType.tag !== "string" && nType.tag !== "unknown") this.error(`'indexOfFrom' arg 1: expected string, got ${typeName(nType)}`, sp);
+        if (nType.tag !== "string" && nType.tag !== "unknown") this.error(`'indexOfFrom' arg 1: expected string, got ${this.show(nType)}`, sp);
         const fromType = this.checkExpr(expr.args[1]);
-        if (fromType.tag !== "int" && fromType.tag !== "unknown") this.error(`'indexOfFrom' arg 2: expected integer, got ${typeName(fromType)}`, sp);
+        if (fromType.tag !== "int" && fromType.tag !== "unknown") this.error(`'indexOfFrom' arg 2: expected integer, got ${this.show(fromType)}`, sp);
         return this.setType(expr, optionI64);
       }
       if (expr.method === "split") {
         if (expr.args.length !== 1) { this.error(`'split' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "vec", element: { tag: "string" } }); }
         const argType = this.checkExpr(expr.args[0]);
-        if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'split': expected string, got ${typeName(argType)}`, sp);
+        if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'split': expected string, got ${this.show(argType)}`, sp);
         return this.setType(expr, { tag: "vec", element: { tag: "string" } });
       }
       if (expr.method === "isEmpty") {
@@ -10718,7 +10878,7 @@ export class TypeChecker {
       if (expr.method === "charAt") {
         if (expr.args.length !== 1) { this.error(`'charAt' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
         const argType = this.checkExpr(expr.args[0]);
-        if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'charAt': expected integer, got ${typeName(argType)}`, sp);
+        if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'charAt': expected integer, got ${this.show(argType)}`, sp);
         return this.setType(expr, { tag: "string" });
       }
       if (expr.method === "parseInt") {
@@ -10729,22 +10889,22 @@ export class TypeChecker {
         if (expr.args.length !== 2) { this.error(`'replace' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
         const a1 = this.checkExpr(expr.args[0]);
         const a2 = this.checkExpr(expr.args[1]);
-        if (a1.tag !== "string" && a1.tag !== "unknown") this.error(`'replace' arg 1: expected string, got ${typeName(a1)}`, sp);
-        if (a2.tag !== "string" && a2.tag !== "unknown") this.error(`'replace' arg 2: expected string, got ${typeName(a2)}`, sp);
+        if (a1.tag !== "string" && a1.tag !== "unknown") this.error(`'replace' arg 1: expected string, got ${this.show(a1)}`, sp);
+        if (a2.tag !== "string" && a2.tag !== "unknown") this.error(`'replace' arg 2: expected string, got ${this.show(a2)}`, sp);
         return this.setType(expr, { tag: "string" });
       }
       if (expr.method === "repeat") {
         if (expr.args.length !== 1) { this.error(`'repeat' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
         const argType = this.checkExpr(expr.args[0]);
-        if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'repeat': expected integer, got ${typeName(argType)}`, sp);
+        if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'repeat': expected integer, got ${this.show(argType)}`, sp);
         return this.setType(expr, { tag: "string" });
       }
       if (expr.method === "padStart" || expr.method === "padEnd") {
         if (expr.args.length !== 2) { this.error(`'${expr.method}' expects 2 arguments (targetLen, padStr), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
         const lenType = this.checkExpr(expr.args[0]);
         const padType = this.checkExpr(expr.args[1]);
-        if (lenType.tag !== "int" && lenType.tag !== "unknown") this.error(`'${expr.method}' arg 1: expected integer, got ${typeName(lenType)}`, sp);
-        if (padType.tag !== "string" && padType.tag !== "unknown") this.error(`'${expr.method}' arg 2: expected string, got ${typeName(padType)}`, sp);
+        if (lenType.tag !== "int" && lenType.tag !== "unknown") this.error(`'${expr.method}' arg 1: expected integer, got ${this.show(lenType)}`, sp);
+        if (padType.tag !== "string" && padType.tag !== "unknown") this.error(`'${expr.method}' arg 2: expected string, got ${this.show(padType)}`, sp);
         return this.setType(expr, { tag: "string" });
       }
       if (expr.method === "len") {
@@ -10782,7 +10942,7 @@ export class TypeChecker {
             const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
             const argType = this.checkExprWithHint(expr.args[i], bare);
             if (!typeEq(bare, argType) && argType.tag !== "unknown") {
-              this.error(`'${expr.method}' argument ${i + 1}: expected ${typeName(bare)}, got ${typeName(argType)}`, expr.args[i].span);
+              this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i].span);
             }
             if (expected.type.tag === "ref") {
               this.setAutoBorrowChecked(expr.args[i], expected.type.mutable, sp);
@@ -10859,14 +11019,14 @@ export class TypeChecker {
               const si = this.structs.get(argType.name);
               for (const f of si?.fields ?? []) {
                 if (f.type.tag !== "string" && f.type.tag !== "bool" && f.type.tag !== "int" && f.type.tag !== "float") {
-                  this.error(`'json': '${argType.name}.${f.name}' has type ${typeName(f.type)}, which the built-in stringifier cannot serialize`,
+                  this.error(`'json': '${argType.name}.${f.name}' has type ${this.show(f.type)}, which the built-in stringifier cannot serialize`,
                     expr.args[i].span, `add '@derive(Json)' to '${argType.name}' — the derived codec handles nested structs, Vec and Option`);
                 }
               }
             }
             this.autoJsonStringify.set(expr.args[i], argType);
           } else {
-            this.error(`'${expr.method}' argument ${i + 1}: expected ${typeName(bare)}, got ${typeName(argType)}`, expr.args[i].span);
+            this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i].span);
           }
         }
         if (expected.type.tag === "ref") {
@@ -10907,7 +11067,7 @@ export class TypeChecker {
             const bare = expected.tag === "ref" ? expected.inner : expected;
             const argType = this.checkExprWithHint(expr.args[i], bare);
             if (!typeEq(bare, argType) && argType.tag !== "unknown") {
-              this.error(`'${expr.method}' argument ${i + 1}: expected ${typeName(bare)}, got ${typeName(argType)}`, expr.args[i].span);
+              this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i].span);
             }
             if (expected.tag === "ref") {
               this.setAutoBorrowChecked(expr.args[i], expected.mutable, sp);
@@ -10931,7 +11091,7 @@ export class TypeChecker {
       return this.setType(expr, objType);
     }
 
-    this.error(`type '${typeName(objType)}' has no method '${expr.method}'`, sp,
+    this.error(`type '${this.show(objType)}' has no method '${expr.method}'`, sp,
       memberHint(expr.method, this.methodCandidates(objType)));
     return this.setType(expr, { tag: "unknown" });
   }
@@ -10942,7 +11102,7 @@ export class TypeChecker {
     this.bindElidedPattern(expr.pattern, opType.tag === "ref" ? opType.inner : opType);
     if (expr.pattern.kind === "EnumPattern") {
       if (opType.tag !== "enum" && opType.tag !== "unknown") {
-        this.error(`'is' pattern requires an enum type, got ${typeName(opType)}`, sp);
+        this.error(`'is' pattern requires an enum type, got ${this.show(opType)}`, sp);
       }
     }
     return this.setType(expr, { tag: "bool" });
@@ -10952,7 +11112,7 @@ export class TypeChecker {
     const sp = expr.span;
     const condType = this.checkExpr(expr.cond);
     if (condType.tag !== "bool" && condType.tag !== "unknown") {
-      this.error(`if condition must be bool, got ${typeName(condType)}`, sp);
+      this.error(`if condition must be bool, got ${this.show(condType)}`, sp);
     }
     const fnRetType = this.currentFnRetType;
     const preMoves = this.snapshotMoveState();
@@ -10999,7 +11159,7 @@ export class TypeChecker {
     }
 
     if (finalThen.tag !== "unknown" && finalElse.tag !== "unknown" && !typeEq(finalThen, finalElse)) {
-      this.error(`if-else branches have mismatched types: '${typeName(finalThen)}' vs '${typeName(finalElse)}'`, sp);
+      this.error(`if-else branches have mismatched types: '${this.show(finalThen)}' vs '${this.show(finalElse)}'`, sp);
     }
     return this.setType(expr, finalThen.tag !== "unknown" ? finalThen : finalElse);
   }
@@ -11036,7 +11196,7 @@ export class TypeChecker {
       if (t.tag === "unknown" || t.tag === "void") continue;
       if (result.tag === "unknown") { result = t; continue; }
       if (!typeEq(result, t)) {
-        this.error(`match arms have mismatched types: '${typeName(result)}' vs '${typeName(t)}'`, sp);
+        this.error(`match arms have mismatched types: '${this.show(result)}' vs '${this.show(t)}'`, sp);
       }
     }
     if (result.tag === "unknown" && finalTypes.some(t => t.tag === "void")) result = { tag: "void" };
@@ -11087,7 +11247,7 @@ export class TypeChecker {
     // borrow is released when the first binding's scope pops, so unwrapping once per arm of
     // an `if` is fine. A shared `?&T` has nothing to exclude, so it is not restricted.
     if (info.nullableRef.mutable && info.borrowed) {
-      this.error(`'${(stmt.value as { name: string }).name}' is already unwrapped here — a second '&mut ${typeName(info.nullableRef.inner)}' to the same object would alias the first`, sp,
+      this.error(`'${(stmt.value as { name: string }).name}' is already unwrapped here — a second '&mut ${this.show(info.nullableRef.inner)}' to the same object would alias the first`, sp,
         `use the binding you already have, or let the first one's scope end before unwrapping again`);
       return;
     }
@@ -11213,13 +11373,13 @@ export class TypeChecker {
       if (expected.tag === "ref" && typeEq(got, expected.inner)) {
         if (isCopy(got, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) continue;
         this.error(
-          `'${method}' callback parameter ${i + 1} takes ${typeName(got)} by value, but ${method} passes ${typeName(expected)}`,
+          `'${method}' callback parameter ${i + 1} takes ${this.show(got)} by value, but ${method} passes ${this.show(expected)}`,
           sp,
-          `${typeName(got)} owns heap, so taking it by value would move it out of the container being iterated. Declare the parameter as '${typeName(expected)}'.`,
+          `${this.show(got)} owns heap, so taking it by value would move it out of the container being iterated. Declare the parameter as '${this.show(expected)}'.`,
         );
         return;
       }
-      this.error(`'${method}' callback parameter ${i + 1} is declared ${typeName(got)}, but ${method} passes ${typeName(expected)}`, sp);
+      this.error(`'${method}' callback parameter ${i + 1} is declared ${this.show(got)}, but ${method} passes ${this.show(expected)}`, sp);
       return;
     }
     // The RETURN type too. Only the parameters were checked, so a comparator declared
@@ -11231,7 +11391,7 @@ export class TypeChecker {
     // the callback returns), so it is not a mismatch.
     if (want.ret.tag !== "unknown" && actual.ret.tag !== "unknown" && !typeEq(actual.ret, want.ret)) {
       this.error(
-        `'${method}' callback returns ${typeName(actual.ret)}, but ${method} expects ${typeName(want.ret)}`,
+        `'${method}' callback returns ${this.show(actual.ret)}, but ${method} expects ${this.show(want.ret)}`,
         sp,
       );
     }
@@ -11381,7 +11541,7 @@ export class TypeChecker {
     const isEnum = subjType.tag === "enum";
     const isLiteralType = subjType.tag === "int" || subjType.tag === "float" || subjType.tag === "string" || subjType.tag === "bool";
     if (!isEnum && !isLiteralType && subjType.tag !== "unknown") {
-      this.error(`match subject must be an enum, integer, float, string, or bool, got ${typeName(subjType)}`, sp);
+      this.error(`match subject must be an enum, integer, float, string, or bool, got ${this.show(subjType)}`, sp);
       return armTypes;
     }
     if (isLiteralType) {
@@ -11404,7 +11564,7 @@ export class TypeChecker {
             this.error(`expected bool literal in match arm`, ps);
           }
         } else if (arm.pattern.kind === "EnumPattern") {
-          this.error(`cannot use enum pattern when matching on ${typeName(subjType)}`, arm.pattern.span);
+          this.error(`cannot use enum pattern when matching on ${this.show(subjType)}`, arm.pattern.span);
         }
         this.restoreMoveState(preMoves);
         this.pushScope();
@@ -11433,7 +11593,7 @@ export class TypeChecker {
           this.nonExhaustiveMatches.add(arms);
         }
       } else if (!hasWildcard) {
-        this.error(`match on ${typeName(subjType)} requires a wildcard '_' arm`, sp);
+        this.error(`match on ${this.show(subjType)} requires a wildcard '_' arm`, sp);
         this.nonExhaustiveMatches.add(arms);
       }
     } else if (isEnum && subjType.tag === "enum") {
@@ -11666,7 +11826,7 @@ export class TypeChecker {
   private validateHashableKey(t: TypeKind, span?: Span) {
     if (this.isHashable(t)) return;
     if (t.tag !== "unknown") {
-      this.error(`type '${typeName(t)}' is not hashable — keys must be integer, bool, string, or a struct of hashable fields`, span);
+      this.error(`type '${this.show(t)}' is not hashable — keys must be integer, bool, string, or a struct of hashable fields`, span);
     }
   }
 
@@ -11739,7 +11899,7 @@ export class TypeChecker {
       return { targetEnumName: targetErr.name, wrapVariant: matches[0].name, wrapTag: matches[0].tag };
     }
     if (matches.length > 1) {
-      this.error(`ambiguous From conversion: '${typeName(sourceErr)}' matches multiple variants in '${typeName(targetErr)}': ${matches.map(m => m.name).join(", ")}`);
+      this.error(`ambiguous From conversion: '${this.show(sourceErr)}' matches multiple variants in '${this.show(targetErr)}': ${matches.map(m => m.name).join(", ")}`);
     }
     return null;
   }

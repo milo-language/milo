@@ -1,0 +1,48 @@
+// @expect: 3
+// @expect: 9
+// The raw-pointer template rule (see tests/errors/rawTypeParamReadNotCopyOnly.milo)
+// refuses an rvalue READ of `self.base[i]` on a `*T`. These two shapes are not that:
+// `self.base[i].n` borrows the element to read one field, and `self.base[i] = val` is
+// a write. A generic without `@copyOnly` may keep both, so this pins that the rule does
+// not fire on them.
+struct Cell {
+    n: i64,
+}
+
+struct Window<T> {
+    base: *T,
+    len: i64,
+}
+
+impl Window<T> {
+    fn set(self: &mut Self, i: i64, val: T): void {
+        unsafe {
+            self.base[i] = val
+        }
+    }
+
+    // A generic body is checked per instantiation, so `.n` resolves once T is Cell.
+    fn firstN(self: &Self): i64 {
+        unsafe {
+            return self.base[0].n
+        }
+    }
+}
+
+pub fn main(): i32 {
+    var v: Vec<Cell> = Vec.new()
+    v.push(Cell {
+        n: 3
+    }
+    )
+    var w: Window<Cell> = Window {
+        base: v.ptr(), len: v.len
+    }
+    print(w.firstN())
+    w.set(0, Cell {
+        n: 9
+    }
+    )
+    print(w.firstN())
+    return 0
+}

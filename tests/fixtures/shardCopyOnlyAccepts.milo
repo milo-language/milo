@@ -1,0 +1,72 @@
+// @expect: i64 6
+// @expect: f64 1.5
+// @expect: point 4 6
+// `@copyOnly` refuses `Shard<string>`; this is the other side of that rule. A scalar,
+// a float, and a struct of scalars declared AFTER the fn that instantiates the window
+// over it are all Copy, so every instantiation here is accepted, and the struct case
+// pins that the verdict waits until the struct is registered rather than answering
+// "unknown type, not Copy" for a declaration further down the file.
+from "std/shard" import {
+    Shard, parallelMap
+}
+
+fn doubleInts(w: Shard<i64>): Shard<i64> {
+    var s = w
+    var i: i64 = 0
+    while i < s.len() {
+        s.set(i, s.get(i) * 2)
+        i = i + 1
+    }
+    return s
+}
+
+fn halveFloats(w: Shard<f64>): Shard<f64> {
+    var s = w
+    var i: i64 = 0
+    while i < s.len() {
+        s.set(i, s.get(i) / 2.0)
+        i = i + 1
+    }
+    return s
+}
+
+fn shiftPoints(w: Shard<Point>): Shard<Point> {
+    var s = w
+    var i: i64 = 0
+    while i < s.len() {
+        let p = s.get(i)
+        s.set(i, Point {
+            x: p.x + 1, y: p.y + 1
+        }
+        )
+        i = i + 1
+    }
+    return s
+}
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+pub fn main(): i32 {
+    var ints: Vec<i64> = Vec.new()
+    ints.push(1)
+    ints.push(2)
+    let doubled = parallelMap(ints, 2, doubleInts)!
+    print("i64 " + (doubled[0] + doubled[1]).toString())
+
+    var floats: Vec<f64> = Vec.new()
+    floats.push(3.0)
+    let halved = parallelMap(floats, 1, halveFloats)!
+    print("f64 " + halved[0].toString())
+
+    var pts: Vec<Point> = Vec.new()
+    pts.push(Point {
+        x: 3, y: 5
+    }
+    )
+    let shifted = parallelMap(pts, 1, shiftPoints)!
+    print("point " + shifted[0].x.toString() + " " + shifted[0].y.toString())
+    return 0
+}
