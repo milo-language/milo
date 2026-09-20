@@ -31,6 +31,17 @@ const DMAIN_SRC = `from "./helper" import {\n    getData\n}\n\nfn main() {\n    
 writeFileSync(DMAIN, DMAIN_SRC);
 const DMAIN_URI = pathToFileURL(DMAIN).href;
 
+// A third workspace where the OPEN file's own private `tone` collides with an imported
+// module's, so the per-module pass renames it (docs/plans/module-namespaces.md). The LSP
+// looks a decl up by the identifier under the cursor, so a mangled `coll_main$tone` would
+// not merely print wrong: hover and go-to-definition would find nothing at all.
+const CROOT = mkdtempSync(join(tmpdir(), "milo-lsp-coll-"));
+writeFileSync(join(CROOT, "helper.milo"), `fn tone(x: i64): i64 {\n    return x * 100\n}\n\npub fn fromHelper(): i64 {\n    return tone(10)\n}\n`);
+const CMAIN = join(CROOT, "main.milo");
+const CMAIN_SRC = `from "./helper" import { fromHelper }\n\nfn tone(x: i64): i64 {\n    return x + 1\n}\n\nfn main() {\n    print(tone(1) + fromHelper())\n}\n`;
+writeFileSync(CMAIN, CMAIN_SRC);
+const CMAIN_URI = pathToFileURL(CMAIN).href;
+
 let proc: Subprocess<"pipe", "pipe", "inherit">;
 let buf = new Uint8Array(0);
 const pending = new Map<number, (v: any) => void>();
@@ -84,12 +95,14 @@ beforeAll(async () => {
   // Open ONLY main.milo — helper.milo stays on disk, never opened.
   await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri: MAIN_URI, languageId: "milo", version: 1, text: `fn main() {\n    let y = helper(41)\n}\n` } } });
   await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri: DMAIN_URI, languageId: "milo", version: 1, text: DMAIN_SRC } } });
+  await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri: CMAIN_URI, languageId: "milo", version: 1, text: CMAIN_SRC } } });
 });
 
 afterAll(() => {
   proc?.kill();
   rmSync(ROOT, { recursive: true, force: true });
   rmSync(DROOT, { recursive: true, force: true });
+  rmSync(CROOT, { recursive: true, force: true });
 });
 
 test("references finds occurrences in an unopened on-disk file", async () => {
@@ -135,4 +148,20 @@ test("a warning from an imported file is not squiggled on the importer", async (
   expect(imported.message).toContain(`${DHELPER}:9:12`);
   expect(imported.message).toContain("compile-time builtin");
   expect(imported.range.start.line).toBe(0);
+});
+
+// `tone` on line 8 is the call site of this file's own private `tone`, which collides with
+// the imported module's and is therefore renamed before the checker ever sees it.
+test("hover on a collided private fn shows the name as written", async () => {
+  const h = await req(20, "textDocument/hover", { textDocument: { uri: CMAIN_URI }, position: { line: 7, character: 11 } });
+  const value: string = h?.contents?.value ?? "";
+  expect(value).toContain("fn tone(x: i64): i64");
+  expect(value).not.toContain("$");
+});
+
+test("go-to-definition on a collided private fn lands on its declaration", async () => {
+  const d = await req(21, "textDocument/definition", { textDocument: { uri: CMAIN_URI }, position: { line: 7, character: 11 } });
+  const hit = Array.isArray(d) ? d[0] : d;
+  expect(hit?.uri).toBe(CMAIN_URI);
+  expect(hit?.range?.start?.line).toBe(2);
 });

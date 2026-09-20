@@ -85,8 +85,16 @@ Use this table before naming an API:
 
 - Use a free function when there is no meaningful receiver or returned nominal
   type.
-- A domain prefix is useful when the unqualified name would be generic or
-  collision-prone: `parseCsv`, `getEnv`, `pathJoin`.
+- A domain prefix is useful when a `pub` name would be generic or
+  collision-prone: `parseCsv`, `getEnv`, `pathJoin`. Only `pub` names share the
+  flat std namespace.
+- A private helper needs no prefix. Every non-`pub` top-level name is scoped to
+  its module by the compiler (`src/mangle.ts`, per-module namespaces), so
+  `std/sha1` and `std/xxhash` may both define `fn rotl`, and a reader of either
+  file sees the plain name everywhere (diagnostics, `print`, DWARF, the LSP).
+  The `_xxRotl`/`_sha1Rotl` convention that predates this is gone; do not
+  reintroduce it. The one exception is std/string's `str*` helpers, which the
+  compiler calls by name (`COMPILER_KNOWN_STD_HELPERS` in `src/mangle.ts`).
 - Keep one spelling. Aliases are temporary migration tools with an explicit
   removal point, not a permanent convenience layer.
 

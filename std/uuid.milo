@@ -24,7 +24,7 @@ fn _byteToHex(b: u8, out: &mut string): void {
 
 // Hex digit value, or -1 when `ch` is not a hex digit. std/hex has the same helper
 // but keeps it private, so this is a local copy rather than an import.
-fn _uuidHexValue(ch: u8): i32 {
+fn hexNibble(ch: u8): i32 {
     if ch >= '0' && ch <= '9' {
         return (ch - '0') as i32
     }
@@ -138,8 +138,8 @@ impl Uuid {
                 }
                 i = i + 1
             } else {
-                let hi = _uuidHexValue(s[i])
-                let lo = _uuidHexValue(s[i + 1])
+                let hi = hexNibble(s[i])
+                let lo = hexNibble(s[i + 1])
                 if hi < 0 || lo < 0 {
                     return Option.None
                 }

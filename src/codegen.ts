@@ -10,6 +10,7 @@ import { classifyArg, classifyRet, AbiError, type ArgClass, type RetClass, type 
 import { resolve, dirname, basename, relative, isAbsolute } from "path";
 import { STDLIB_DIR } from "./stdlibBundle";
 import { must } from "./must";
+import { display } from "./mangle";
 
 // Every HIRExpr kind that is NOT an owned temporary: it yields a scalar, a void, a
 // borrowed view, or a place someone else already owns, so discarding its result frees
@@ -227,6 +228,9 @@ export class Codegen {
   private hoistedLens: Map<string, { len: string; decl?: LocalInfo }>[] = [];
   private globalVars = new Map<string, { type: string; typeKind: TypeKind }>();
   private userFnNames = new Set<string>();
+  // Mangled symbol -> as-written name (src/mangle.ts). Codegen emits two things a human
+  // reads: the `Name { .. }` text behind `print`/`$"…"`, and DWARF names.
+  private displayNames?: Map<string, string>;
   // Droppable locals are identified by their slot ADDRESS. A function can hold
   // several locals with the same name in different scopes, so re-resolving a
   // name through the current scope picks an unrelated slot.
@@ -446,6 +450,13 @@ export class Codegen {
   }
 
   private diEsc(s: string): string { return s.replace(/\\/g, "\\5C").replace(/"/g, "\\22"); }
+  // A DWARF display name: what a debugger shows. The per-module pass renames a private
+  // name, and that rename is a symbol concern only; a `frame variable` or a breakpoint
+  // listing must still read `tone`, not `gfx$tone`. No `linkageName` is emitted on
+  // purpose: lldb DISPLAYS the linkage name in every backtrace frame when it is present,
+  // which is exactly the surface this keeps clean. The DIE is matched to code by
+  // DW_AT_low_pc, not by name, and the mangled symbol is still in the symbol table.
+  private diName(s: string): string { return this.diEsc(display(this.displayNames, s)); }
 
   private diFile(path: string): number {
     const key = path || "<unknown>";
@@ -486,7 +497,7 @@ export class Codegen {
     const subT = this.diSubroutineType();
     const line = fn.line ?? 0;
     const id = this.metaCounter++;
-    this.diNodes.push(`!${id} = distinct !DISubprogram(name: "${this.diEsc(fn.name)}", scope: !${fileId}, file: !${fileId}, line: ${line}, type: !${subT}, scopeLine: ${line}, spFlags: DISPFlagDefinition, unit: !${cu})`);
+    this.diNodes.push(`!${id} = distinct !DISubprogram(name: "${this.diName(fn.name)}", scope: !${fileId}, file: !${fileId}, line: ${line}, type: !${subT}, scopeLine: ${line}, spFlags: DISPFlagDefinition, unit: !${cu})`);
     this.diSubprograms.set(fn.name, id);
     this.diSubprogramLine.set(id, line);
     return id;
@@ -566,7 +577,7 @@ export class Codegen {
     const tuple = this.metaCounter++;
     this.diNodes.push(`!${tuple} = !{${memberIds.map(m => "!" + m).join(", ")}}`);
     const totBits = this.structPayloadSize(fieldLlvm) * 8;
-    this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "${this.diEsc(name)}", size: ${totBits}, elements: !${tuple})`);
+    this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "${this.diName(name)}", size: ${totBits}, elements: !${tuple})`);
     return id;
   }
 
@@ -583,7 +594,7 @@ export class Codegen {
     const tuple = this.metaCounter++;
     this.diNodes.push(`!${tuple} = !{${enumerators.map(e => "!" + e).join(", ")}}`);
     const id = this.metaCounter++;
-    this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_enumeration_type, name: "${this.diEsc(name)}", size: 32, baseType: !${base}, elements: !${tuple})`);
+    this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_enumeration_type, name: "${this.diName(name)}", size: 32, baseType: !${base}, elements: !${tuple})`);
     return id;
   }
 
@@ -627,7 +638,7 @@ export class Codegen {
     const utuple = this.metaCounter++;
     this.diNodes.push(`!${utuple} = !{${unionMembers.map(m => "!" + m).join(", ")}}`);
     const unionId = this.metaCounter++;
-    this.diNodes.push(`!${unionId} = distinct !DICompositeType(tag: DW_TAG_union_type, name: "${this.diEsc(layout.name)}$payload", size: ${payloadBits}, elements: !${utuple})`);
+    this.diNodes.push(`!${unionId} = distinct !DICompositeType(tag: DW_TAG_union_type, name: "${this.diName(layout.name)}$payload", size: ${payloadBits}, elements: !${utuple})`);
 
     const tagMember = this.metaCounter++;
     this.diNodes.push(`!${tagMember} = !DIDerivedType(tag: DW_TAG_member, name: "tag", baseType: !${tagId}, size: 32, offset: 0)`);
@@ -636,7 +647,7 @@ export class Codegen {
     this.diNodes.push(`!${payloadMember} = !DIDerivedType(tag: DW_TAG_member, name: "payload", baseType: !${unionId}, size: ${payloadBits}, offset: 64)`);
     const tuple = this.metaCounter++;
     this.diNodes.push(`!${tuple} = !{!${tagMember}, !${payloadMember}}`);
-    this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "${this.diEsc(layout.name)}", size: ${64 + payloadBits}, elements: !${tuple})`);
+    this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "${this.diName(layout.name)}", size: ${64 + payloadBits}, elements: !${tuple})`);
     return id;
   }
 
@@ -1695,6 +1706,7 @@ export class Codegen {
     const externs = module.functions.filter(f => f.isExtern);
     const functions = module.functions.filter(f => !f.isExtern);
     if (module.userFnNames) this.userFnNames = module.userFnNames;
+    this.displayNames = module.displayNames;
 
     // sret-lower internal fns returning big aggregates (after userFnNames is
     // known — exported fns keep their C-visible signature)
@@ -11406,7 +11418,8 @@ export class Codegen {
     const stagePtr = this.nextTemp();
     lines.push(`  ${stagePtr} = alloca %${structName}`);
     lines.push(`  store %${structName} ${structVal}, ptr ${stagePtr}`);
-    const formatParts: string[] = [`${structName} { `];
+    // The written name, never the mangled symbol: this string is program OUTPUT.
+    const formatParts: string[] = [`${display(this.displayNames, structName)} { `];
     const snprintfArgs: { val: string; type: string }[] = [];
     const tempBufs: string[] = [];
     for (let i = 0; i < layout.fields.length; i++) {
@@ -11438,7 +11451,7 @@ export class Codegen {
     const layout = this.enumLayouts.get(enumName);
     if (!layout) {
       // generic monomorphization may not have registered yet — fall back to "<enum>"
-      const fb = this.addString(`<${enumName}>`);
+      const fb = this.addString(`<${display(this.displayNames, enumName)}>`);
       // alloc a buf with a copy of the literal so caller can free uniformly
       this.needsStrlen = true;
       this.needsMemcpy = true;
@@ -11511,7 +11524,7 @@ export class Codegen {
     }
 
     lines.push(`${defaultLabel}:`);
-    const unkFmt = this.addString(`<${enumName}.?>`);
+    const unkFmt = this.addString(`<${display(this.displayNames, enumName)}.?>`);
     this.needsStrlen = true;
     this.needsMemcpy = true;
     const unkLen = this.nextTemp();

@@ -14,7 +14,24 @@ import { ParseError, type Diagnostic } from "./diagnostics";
 import { projectLints } from "./pkg";
 import type { Program, Function, Stmt, Expr, Span } from "./ast";
 import { declaredType } from "./ast";
-import { typeName as formatTypeName } from "./types";
+import { typeName as rawTypeName } from "./types";
+import { display, restoreDisplayNames } from "./mangle";
+
+// Every name the LSP renders is read by a person, so it renders the name they wrote.
+// `restoreDisplayNames` handles the decls (a mangled `gfx$tone` would otherwise never
+// match the `tone` under the cursor); this handles inferred types, which come from the
+// checker as `TypeKind`s still carrying the mangled struct/enum name.
+let lspDisplayNames: Map<string, string> | undefined;
+function formatTypeName(t: import("./types").TypeKind): string {
+  return display(lspDisplayNames, rawTypeName(t));
+}
+// Resolved program, checked, then shown. Call sites that render anything out of `program`
+// go through this so the two steps cannot drift apart.
+function unmangleForDisplay(program: Program): Program {
+  lspDisplayNames = program.displayNames;
+  restoreDisplayNames(program);
+  return program;
+}
 import { getHostTarget } from "./target";
 import { dirname, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -330,6 +347,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
     const program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
     let checkResult: CheckResult | null = null;
     try { checkResult = new TypeChecker().check(program); } catch {}
+    unmangleForDisplay(program);
     const exprTypes = checkResult?.exprTypes ?? new Map();
     const word = getWordAt(source, line, character);
     lspDebug(`hover ${line}:${character} word=${JSON.stringify(word)}`);
@@ -997,7 +1015,7 @@ function handleDefinition(uri: string, line: number, character: number): object 
     const tokens = new Lexer(source).tokenize();
     const parsed = new Parser(tokens).parse();
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
-    const program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
+    const program = unmangleForDisplay(resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri));
 
     // Find function definition — local first, then imported files.
     // Extern fns are declarations, but the `extern fn NAME(...)` line IS the
@@ -1846,7 +1864,7 @@ function handleSignatureHelp(uri: string, line: number, character: number): obje
   try {
     const parsed = new Parser(new Lexer(source).tokenize()).parse();
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
-    const program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
+    const program = unmangleForDisplay(resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri));
     const mk = (label: string, params: string[]) => ({
       signatures: [{ label, parameters: params.map(p => ({ label: p })) }],
       activeSignature: 0, activeParameter: Math.min(active, Math.max(0, params.length - 1)),
@@ -1999,6 +2017,7 @@ function handleInlayHint(uri: string, range: any): object[] {
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
     program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
     try { exprTypes = new TypeChecker().check(program).exprTypes ?? new Map(); } catch {}
+    unmangleForDisplay(program);
   } catch { return []; }
 
   const startLine = range?.start?.line ?? 0;

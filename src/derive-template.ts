@@ -55,7 +55,11 @@ export class DeriveTemplateError extends Error {
   constructor(message: string, readonly hint?: string) { super(message); }
 }
 
-interface FieldCtx { name: string; type: string; index: number }
+// `type` is the type in CODE position and `typeShown` the same type as a human reads it.
+// They differ only when the per-module pass renamed the type (src/mangle.ts): generated
+// code has to name the symbol, and a `@typeStr` baked into program output has to name
+// what the programmer wrote.
+interface FieldCtx { name: string; type: string; typeShown: string; index: number }
 
 // Every hole the template language has. Kept as one list so the "unknown hole" diagnostic
 // can name the alternatives — a template author has no other reference.
@@ -70,10 +74,12 @@ function tok(kind: TokenKind, value: string, at: Token): Token {
 // that make a template readable, and both live inside a single String/FString token, so
 // they cannot be reached by the token walk. Longest-name-first so `@nameStr` is not eaten
 // as `@name` followed by a stray `Str`.
-function substInString(s: string, ctx: FieldCtx | null, self: string, count: number): string {
+function substInString(s: string, ctx: FieldCtx | null, selfShown: string, count: number): string {
   return s.replace(/@@|@(SelfStr|Self|nameStr|typeStr|name|type|index|count)\b/g, (whole, hole?: string) => {
     if (whole === "@@") return "@";  // the escape, so a template can emit a literal '@'
-    if (hole === "Self" || hole === "SelfStr") return self;
+    // Inside a string literal EVERY hole is display text (a string is program output,
+    // never a symbol reference), so `@Self` and `@SelfStr` mean the same thing here.
+    if (hole === "Self" || hole === "SelfStr") return selfShown;
     if (hole === "count") return String(count);
     // NOT left alone: leaving it would compile, print the hole's own spelling, and report
     // nothing — the exact failure the token walk rejects one line away. A template that
@@ -84,14 +90,14 @@ function substInString(s: string, ctx: FieldCtx | null, self: string, count: num
         `wrap it in '@fields { … }' so there is a field for it to name, or write '@@${hole}' for the literal text`);
     }
     if (hole === "name" || hole === "nameStr") return ctx.name;
-    if (hole === "type" || hole === "typeStr") return ctx.type;
+    if (hole === "type" || hole === "typeStr") return ctx.typeShown;
     if (hole === "index") return String(ctx.index);
     return whole;
   });
 }
 
 function lexType(spelling: string, at: Token): Token[] {
-  const out = new Lexer(spelling).tokenize().filter(t => t.kind !== TokenKind.Eof);
+  const out = new Lexer(spelling, true).tokenize().filter(t => t.kind !== TokenKind.Eof);
   // Re-stamp the position so a diagnostic inside generated code points at the template,
   // not at column 3 of a one-line string the user never saw.
   return out.map(t => ({ ...t, line: at.line, col: at.col }));
@@ -99,13 +105,13 @@ function lexType(spelling: string, at: Token): Token[] {
 
 // Substitute one pass over `body`. `ctx` is null outside a `@fields` block, which is what
 // makes `@name` at the top level an error rather than a silent empty string.
-function subst(body: Token[], ctx: FieldCtx | null, self: string, fields: FieldCtx[], depth: number): Token[] {
+function subst(body: Token[], ctx: FieldCtx | null, self: string, selfShown: string, fields: FieldCtx[], depth: number): Token[] {
   const out: Token[] = [];
   for (let i = 0; i < body.length; i++) {
     const t = body[i]!;
     if (t.kind === TokenKind.String || t.kind === TokenKind.FString) {
-      const value = substInString(t.value, ctx, self, fields.length);
-      const raw = t.raw === undefined ? undefined : substInString(t.raw, ctx, self, fields.length);
+      const value = substInString(t.value, ctx, selfShown, fields.length);
+      const raw = t.raw === undefined ? undefined : substInString(t.raw, ctx, selfShown, fields.length);
       out.push({ ...t, value, ...(raw !== undefined && { raw }) });
       continue;
     }
@@ -139,7 +145,7 @@ function subst(body: Token[], ctx: FieldCtx | null, self: string, fields: FieldC
         j++;
       }
       if (brace > 0) throw new DeriveTemplateError(`unterminated '@fields' block — no matching '}'`);
-      for (const f of fields) out.push(...subst(inner, f, self, fields, depth + 1));
+      for (const f of fields) out.push(...subst(inner, f, self, selfShown, fields, depth + 1));
       i = j; // the closing brace
       continue;
     }
@@ -150,7 +156,7 @@ function subst(body: Token[], ctx: FieldCtx | null, self: string, fields: FieldC
       continue;
     }
     if (hole === "Self") { out.push(tok(TokenKind.Ident, self, t)); i++; continue; }
-    if (hole === "SelfStr") { out.push(tok(TokenKind.String, self, t)); i++; continue; }
+    if (hole === "SelfStr") { out.push(tok(TokenKind.String, selfShown, t)); i++; continue; }
     if (hole === "count") { out.push(tok(TokenKind.Int, String(fields.length), t)); i++; continue; }
     if (!ctx) {
       throw new DeriveTemplateError(
@@ -160,7 +166,7 @@ function subst(body: Token[], ctx: FieldCtx | null, self: string, fields: FieldC
     if (hole === "name") out.push(tok(TokenKind.Ident, ctx.name, t));
     else if (hole === "nameStr") out.push(tok(TokenKind.String, ctx.name, t));
     else if (hole === "type") out.push(...lexType(ctx.type, t));
-    else if (hole === "typeStr") out.push(tok(TokenKind.String, ctx.type, t));
+    else if (hole === "typeStr") out.push(tok(TokenKind.String, ctx.typeShown, t));
     else if (hole === "index") out.push(tok(TokenKind.Int, String(ctx.index), t));
     i++;
   }
@@ -171,10 +177,16 @@ function subst(body: Token[], ctx: FieldCtx | null, self: string, fields: FieldC
 // Throws `DeriveTemplateError` for a template that cannot expand; a parse failure of the
 // EXPANDED tokens throws whatever the parser throws, which is what carries the real
 // diagnostic (`MILO_DUMP_DERIVES=1` prints the expansion so it can be read).
-export function expandDeriveTemplate(tpl: DeriveTemplate, s: StructDecl, span?: Span): ImplDecl {
-  const fields: FieldCtx[] = s.fields.map((f, index) => ({ name: f.name, type: formatMiloType(f.type), index }));
+// `shown` maps a symbol to the name the programmer wrote, for the `@…Str` holes only:
+// those end up as string literals in the running program, so a mangled name in one is
+// program OUTPUT, not a symbol. Identity when nothing was renamed.
+export function expandDeriveTemplate(tpl: DeriveTemplate, s: StructDecl, span?: Span, shown: (n: string) => string = (n) => n): ImplDecl {
+  const fields: FieldCtx[] = s.fields.map((f, index) => {
+    const type = formatMiloType(f.type);
+    return { name: f.name, type, typeShown: shown(type), index };
+  });
   const at: Token = { kind: TokenKind.Ident, value: s.name, line: span?.line ?? 1, col: span?.col ?? 1 };
-  const inner = subst(tpl.body, null, s.name, fields, 0);
+  const inner = subst(tpl.body, null, s.name, shown(s.name), fields, 0);
   const tokens: Token[] = [
     tok(TokenKind.Impl, "impl", at), tok(TokenKind.Ident, tpl.name, at),
     tok(TokenKind.For, "for", at), tok(TokenKind.Ident, s.name, at),

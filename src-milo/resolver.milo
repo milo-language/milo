@@ -26,7 +26,8 @@ from "src-milo/parser.milo" import {
 }
 from "src-milo/ast.milo" import {
     Program, StructDecl, EnumDecl, Function, ImportDecl, TraitDecl, ImplDecl,
-    GlobalDecl, cloneGlobal, renameFunction, renameGlobal, Diagnostic, cloneDiagnostic
+    GlobalDecl, cloneGlobal, renameFunction, renameGlobal, Diagnostic, cloneDiagnostic,
+    Attribute, Pattern, Stmt
 }
 
 pub struct ResolverState {
@@ -586,6 +587,213 @@ pub fn applyAliasesGlobal(g: GlobalDecl, pairs: &AliasPairs): GlobalDecl {
     return out
 }
 
+// ── std private helpers per module (src/resolver.ts stage 4, milo0 half) ──
+//
+// The oracle scopes every non-`pub` name of a std module to that module, so two std
+// modules may both define `fn rotl`. milo0's merge is flat and last-wins, which would
+// silently run one module's `rotl` for both, so it has to scope them the same way or the
+// self-built compiler miscompiles std. Values only (fns and globals): the rename walker
+// (ast.milo renameFunction/renameGlobal) substitutes Ident and Call positions, which is
+// what a private value is referenced by. Private TYPES are not scoped here; no two std
+// modules that can be loaded together define the same private type today, and the
+// oracle's std-wide import gate (tests/modules.test.ts) is what keeps it that way.
+//
+// The walker is scope-free, so a private value whose name is also bound as a local or a
+// parameter somewhere in the file is left flat (`let lenBase = lenBase()` in std/deflate
+// would otherwise index a function). The oracle handles that case properly; here the
+// flat fallback is exactly what milo0 did before, and identical helpers still merge.
+
+// `Some(<module>)` for a file under `<stdlibDir>/std/`, with a platform arm's suffix
+// stripped so `platform.darwin.milo` and `platform.linux.milo` yield the same symbols.
+fn stdModuleId(rs: &ResolverState, absPath: &string): Option<string> {
+    let stdRoot = normalizePath(Path.join(rs.stdlibDir, "std")) + "/"
+    if !absPath.startsWith(stdRoot) {
+        return Option.None
+    }
+    var base = Path.basename(absPath)
+    if base.endsWith(".milo") {
+        base = base.substr(0, base.len - 5)
+    }
+    let armSuffix = "." + rs.targetOs
+    if base.endsWith(armSuffix) {
+        base = base.substr(0, base.len - armSuffix.len)
+    }
+    return Option.Some(base)
+}
+
+fn hasName(names: &Vec<string>, n: &string): bool {
+    for i in 0..names.len {
+        if names[i] == n {
+            return true
+        }
+    }
+    return false
+}
+
+fn hasAttr(attrs: &Vec<Attribute>, name: &string): bool {
+    for i in 0..attrs.len {
+        if attrs[i].name == name {
+            return true
+        }
+    }
+    return false
+}
+
+// std/string's helpers that lowering and codegen call by name (src/mangle.ts
+// COMPILER_KNOWN_STD_HELPERS). Their symbol is the compiler's ABI with std, so it stays flat.
+fn isCompilerKnownHelper(n: &string): bool {
+    return n == "strContains" || n == "strIndexOf" || n == "strIndexOfFrom" || n == "strLastIndexOf"
+    || n == "strStartsWith" || n == "strEndsWith" || n == "strToLower" || n == "strToUpper"
+    || n == "strTrim" || n == "strTrimStart" || n == "strTrimEnd" || n == "strSplit"
+    || n == "strRepeat" || n == "strPadStart" || n == "strPadEnd" || n == "strReplace"
+    || n == "strReplaceFirst" || n == "strSplitWords" || n == "strSplitWhitespace"
+    || n == "strIsEmpty" || n == "strCharAt" || n == "strReverse" || n == "strParseInt"
+    || n == "strParseF64" || n == "vecJoin"
+}
+
+// Every name a statement list binds: let/var, for-in variables, and enum-pattern
+// payloads in `match`/`if let`. Closure parameters are not collected (they live inside
+// expressions the statement walk does not enter); a closure parameter that shadows a
+// private free fn of the same file does not occur in std.
+fn collectBoundNames(stmts: &Vec<Heap<Stmt>>, out: &mut Vec<string>) {
+    for i in 0..stmts.len {
+        match *stmts[i] {
+            Stmt.LetDecl(name, typeAnno, value, span) => {
+                out.push(name.clone())
+            }
+            Stmt.VarDecl(name, typeAnno, value, span) => {
+                out.push(name.clone())
+            }
+            Stmt.IfStmt(cond, thenBody, elseBody, span) => {
+                collectBoundNames(thenBody, out)
+                match elseBody {
+                    Option.Some(eb) => {
+                        collectBoundNames(eb, out)
+                    }
+                    Option.None => {
+                    }
+                }
+            }
+            Stmt.WhileStmt(cond, body, span) => {
+                collectBoundNames(body, out)
+            }
+            Stmt.MatchStmt(subject, arms, span) => {
+                for ai in 0..arms.len {
+                    collectPatternNames(arms[ai].pattern, out)
+                    collectBoundNames(arms[ai].body, out)
+                }
+            }
+            Stmt.IfLetStmt(pat, value, thenBody, elseBody, span) => {
+                collectPatternNames(*pat, out)
+                collectBoundNames(thenBody, out)
+                match elseBody {
+                    Option.Some(eb) => {
+                        collectBoundNames(eb, out)
+                    }
+                    Option.None => {
+                    }
+                }
+            }
+            Stmt.UnsafeBlock(body, span) => {
+                collectBoundNames(body, out)
+            }
+            Stmt.ForInStmt(name, indexName, iter, body, span) => {
+                out.push(name.clone())
+                match indexName {
+                    Option.Some(n) => {
+                        out.push(n.clone())
+                    }
+                    Option.None => {
+                    }
+                }
+                collectBoundNames(body, out)
+            }
+            _ => {
+            }
+        }
+    }
+}
+
+fn collectPatternNames(pat: &Pattern, out: &mut Vec<string>) {
+    match pat {
+        Pattern.EnumPattern(enumName, variant, bindings, span) => {
+            for i in 0..bindings.len {
+                out.push(bindings[i].clone())
+            }
+        }
+        _ => {
+        }
+    }
+}
+
+// Rename one private value everywhere in this file: its declaration, and every Ident
+// and Call that names it in a fn body, an impl method body, or a global initializer.
+fn renamePrivateValue(prog: &mut Program, from: &string, to: &string) {
+    for i in 0..prog.functions.len {
+        var f = renameFunction(prog.functions[i], from, to)
+        if f.name == from {
+            f.name = to.clone()
+        }
+        prog.functions[i] = f
+    }
+    for ii in 0..prog.impls.len {
+        for mi in 0..prog.impls[ii].methods.len {
+            prog.impls[ii].methods[mi] = renameFunction(prog.impls[ii].methods[mi], from, to)
+        }
+    }
+    for gi in 0..prog.globals.len {
+        var g = renameGlobal(prog.globals[gi], from, to)
+        if g.name == from {
+            g.name = to.clone()
+        }
+        prog.globals[gi] = g
+    }
+}
+
+pub fn scopeStdPrivates(prog: &mut Program, moduleId: &string) {
+    var bound: Vec<string> = Vec.new()
+    for i in 0..prog.functions.len {
+        for pi in 0..prog.functions[i].params.len {
+            bound.push(prog.functions[i].params[pi].name.clone())
+        }
+        collectBoundNames(prog.functions[i].body, bound)
+    }
+    for ii in 0..prog.impls.len {
+        for mi in 0..prog.impls[ii].methods.len {
+            for pi in 0..prog.impls[ii].methods[mi].params.len {
+                bound.push(prog.impls[ii].methods[mi].params[pi].name.clone())
+            }
+            collectBoundNames(prog.impls[ii].methods[mi].body, bound)
+        }
+    }
+
+    var privates: Vec<string> = Vec.new()
+    for i in 0..prog.functions.len {
+        let n = prog.functions[i].name.clone()
+        if prog.functions[i].isExtern || n == "main" || hasName(prog.pubNames, n) {
+            continue
+        }
+        if hasAttr(prog.functions[i].attributes, "externalLinkage") || hasAttr(prog.functions[i].attributes, "cName") {
+            continue
+        }
+        if isCompilerKnownHelper(n) || hasName(bound, n) || hasName(privates, n) {
+            continue
+        }
+        privates.push(n)
+    }
+    for gi in 0..prog.globals.len {
+        let n = prog.globals[gi].name.clone()
+        if hasName(prog.pubNames, n) || hasName(bound, n) || hasName(privates, n) {
+            continue
+        }
+        privates.push(n)
+    }
+    for pi in 0..privates.len {
+        let to = moduleId.clone() + "$" + privates[pi].clone()
+        renamePrivateValue(prog, privates[pi], to)
+    }
+}
+
 // Recursively process imports from a parsed program.
 // Parse+merge one already-resolved file path, then recurse into ITS imports.
 // No-ops if already visited. Shared by the real import loop and the
@@ -595,7 +803,14 @@ pub fn mergeImportedFile(rs: &mut ResolverState, absPath: string) {
         return
     }
     rs.visited.insert(absPath.clone(), true)
-    let imported = parseFile(absPath)
+    var imported = parseFile(absPath)
+    match stdModuleId(rs, absPath) {
+        Option.Some(id) => {
+            scopeStdPrivates(imported, id)
+        }
+        Option.None => {
+        }
+    }
     for di in 0..imported.parseDiagnostics.len {
         rs.parseDiagnostics.push(cloneDiagnostic(imported.parseDiagnostics[di]))
     }
@@ -845,6 +1060,7 @@ pub fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, ta
         globals: dedupGlobals(rs.globals),
         typeAliases: rs.typeAliases,
         linkLibs: rs.linkLibs,
+        pubNames: Vec.new(),
         parseDiagnostics: mergeParseDiagnostics(program.parseDiagnostics, rs.parseDiagnostics),
     }
 }

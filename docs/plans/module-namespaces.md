@@ -3,7 +3,7 @@ system: module-namespace-plan
 purpose: implementation plan for per-module name scoping, replacing the flat one-namespace merge
 key-files: src/mangle.ts, src/resolver.ts, src/checker.ts, docs/breaking-changes.md
 update-when: the mangling granularity, the std carve-out, or the staging changes
-last-verified: 2026-07-31
+last-verified: 2026-09-20
 -->
 
 # Per-module namespaces — implementation plan
@@ -84,11 +84,37 @@ What ships:
 Two tests in `tests/modules.test.ts` asserted the old rule for PRIVATE fns and globals and
 now assert it for `pub` ones, which is the behaviour that survived.
 
-**Still open after stage 1:** a colliding private name reaches diagnostics, `print` output
-and DWARF in its mangled form. Fixing that means a display name carried alongside the
-symbol (or a demangle step fed by the module-id set the resolver already builds), and it is
-the prerequisite for ever widening the pass beyond collisions. LSP go-to-definition on a
-collided private name is also untested — the suite has no colliding modules in it.
+**Stage 3 (display names) and stage 4 (std) SHIPPED 2026-09-20.** A mangled name is a
+symbol and nothing else: the resolver records every rename in `Program.displayNames`
+(mangled to as-written), `display()` in `src/mangle.ts` renders any text through it, and
+every human-facing surface goes through that one function: the checker rewrites each
+diagnostic's message and hint on the way out of `check()`, codegen renders the `Name { .. }`
+text behind `print` and every DWARF `name` (no `linkageName`: lldb would show it in every
+frame), `@derive` templates get the written name in their `@…Str` holes, the LSP restores
+the written names after checking (`restoreDisplayNames`), and the verify/prove/safety
+reports are substituted on the way to stdout. WCET flow facts keep the symbols on purpose
+(OTAWA matches them against the linked ELF). Two consequences for compiler-generated
+source: the lexer accepts `$` in identifiers only when lexing a derived codec
+(`new Lexer(src, true)`), and the parser's "spelled like a type" test looks at the segment
+after the last `$`, since `gfx$User { … }` is still a struct literal.
+
+The gate that cannot be gamed is `MILO_MANGLE_ALL=1`: it renames EVERY private name in
+every user module, and the fixture suite must not notice. Before display names it turned
+59 error fixtures red; after, 0, and a 40-fixture sample of print/derive/interface output
+is byte-identical. A private user name that also names a std decl is never renamed under
+that switch, so the `shadows-stdlib` diagnostics keep firing.
+
+std: every non-`pub` top-level name in a std module is `<module>$<name>` (a platform arm
+takes its base module's id, so all arms produce the same symbols). `pub` std names stay
+flat: `milo api`, `milo doc` and docs/breaking-changes.md index the flat pub surface. The
+one carve-out is `COMPILER_KNOWN_STD_HELPERS` (std/string's `str*` family and `vecJoin`),
+which lowering and codegen call by name. The `_xxRotl`/`_sha1Rotl` naming convention from
+backlog #11 is reverted, `tests/modules.test.ts` imports every std module in one program
+(seen to fail with the pass disabled), and one real bug fell out: deflate's private
+`fn flush` used to resolve to the JS backend's builtin `flush`.
+
+Still open: user modules rename only names that collide. `MILO_MANGLE_ALL` proves the wide
+form is safe; it stays a switch until something needs stable per-module symbols.
 
 **Stage 1 (original proposal) — mangle user modules only.** Leave `std/` and the prelude at `pkg=""` and
 unmangled. This bounds the blast radius to user code and keeps the stdlib's flat surface

@@ -134,7 +134,7 @@ const SMT_BUILTINS = new Set([
 // open at this point — a callee's `ensures result.len == 16` rebases to a fresh
 // `genKey__ret0_len` that gets declared alongside the others.
 function symbolsResolve(smt: string, ctx: CallModel, extra?: string): boolean {
-  for (const m of smt.matchAll(/[A-Za-z_][A-Za-z0-9_.]*/g)) {
+  for (const m of smt.matchAll(/[A-Za-z_][A-Za-z0-9_.$]*/g)) {
     const sym = m[0];
     if (SMT_BUILTINS.has(sym)) continue;
     if (ctx.scope.has(sym)) continue;
@@ -281,7 +281,7 @@ function markUnconstrainedHavocs(conditions: VerificationCondition[], from: numb
     for (const line of conditions[i]!.smtlib.split("\n")) {
       const t = line.trim();
       if (t.startsWith("(declare-") || t.startsWith(";") || HAVOC_TYPING_FACTS.has(t)) continue;
-      for (const m of t.matchAll(/[A-Za-z_][A-Za-z0-9_.]*/g)) {
+      for (const m of t.matchAll(/[A-Za-z_][A-Za-z0-9_.$]*/g)) {
         const free = UNCONSTRAINED_HAVOCS.get(m[0]);
         if (free) touched.add(`'${free.place}' after ${free.why}`);
       }
@@ -1323,7 +1323,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
 
   // The program has now stated something about every havoc symbol these terms mention.
   function constrainedBy(terms: string[]): void {
-    for (const t of terms) for (const m of t.matchAll(/[A-Za-z_][A-Za-z0-9_.]*/g)) UNCONSTRAINED_HAVOCS.delete(m[0]);
+    for (const t of terms) for (const m of t.matchAll(/[A-Za-z_][A-Za-z0-9_.$]*/g)) UNCONSTRAINED_HAVOCS.delete(m[0]);
   }
 
   // Replace one place, and every flattened field hanging off it (since `&mut c` may write
@@ -1385,7 +1385,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
       // Equating to a free symbol says nothing and would only spread its taint to every VC
       // (the fact is in the declaration block); leave the fresh one free instead.
       if (!fresh || !isPlainSymbol(fresh) || (CALL_MODEL && !symbolsResolve(preLen, CALL_MODEL))) continue;
-      if ([...preLen.matchAll(/[A-Za-z_][A-Za-z0-9_.]*/g)].some(m => UNCONSTRAINED_HAVOCS.has(m[0]))) continue;
+      if ([...preLen.matchAll(/[A-Za-z_][A-Za-z0-9_.$]*/g)].some(m => UNCONSTRAINED_HAVOCS.has(m[0]))) continue;
       ctx.havocDecls.push(`(assert (= ${fresh} ${preLen}))`);
       UNCONSTRAINED_HAVOCS.delete(fresh);
     }
@@ -1513,7 +1513,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
       // A builtin's contract is the runtime's, not something this run has to establish, so
       // it is not reported as an assumption the way a user callee's is.
       if (!builtinContracts().has(mc.callee.name)) ctx.assumed.add(mc.callee.name);
-      for (const m of conclusion.matchAll(/[A-Za-z_][A-Za-z0-9_.]*/g)) {
+      for (const m of conclusion.matchAll(/[A-Za-z_][A-Za-z0-9_.$]*/g)) {
         if (minted.has(m[0]) || minted.has(DERIVED_FROM.get(m[0]) ?? "")) UNCONSTRAINED_HAVOCS.delete(m[0]);
       }
     }
@@ -1884,10 +1884,12 @@ function collectFieldRefsFromBody(stmts: Stmt[], refs: Set<string>): void {
 
 // Is this lowered term a bare symbol a field can be hung off (`v__mut0` → `v__mut0_len`),
 // as opposed to an expression or a marker? `.` is admitted because a call-model symbol
-// carries the callee's qualified name (`Vec.new__ret0`) and SMT-LIB allows it in a simple
-// symbol; this must agree with the symbol syntax symbolsResolve scans for.
+// carries the callee's qualified name (`Vec.new__ret0`), and `$` because a module-scoped
+// private name (`inflate$FIXLCODES`, src/mangle.ts) reaches the SMT text as-is; SMT-LIB
+// allows both in a simple symbol. This must agree with the symbol syntax symbolsResolve
+// scans for, or a mangled constant splits into two symbols and never resolves.
 function isPlainSymbol(term: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_.]*$/.test(term);
+  return /^[A-Za-z_][A-Za-z0-9_.$]*$/.test(term);
 }
 
 function flattenFieldAccess(expr: Expr): string | null {

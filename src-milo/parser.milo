@@ -1976,6 +1976,7 @@ pub fn parse(p: &mut Parser): Program {
     var globals: Vec<GlobalDecl> = Vec.new()
     var typeAliases: Vec<TypeAlias> = Vec.new()
     var linkLibs: Vec<string> = Vec.new()
+    var pubNames: Vec<string> = Vec.new()
 
     while !at(p, TokKind.Eof) {
         // Collect attributes. `@!name` is a MODULE-level directive, not a declaration
@@ -2016,8 +2017,10 @@ pub fn parse(p: &mut Parser): Program {
         // the loop and silently dropped any attrs (e.g. `@derive(Eq)`) already
         // collected above — attrs are local to one iteration and only get attached
         // to a decl parsed in that same iteration.
+        var isPub = false
         if at(p, TokKind.Ident) && peek(p).value == "pub" {
             advance(p)
+            isPub = true
         }
 
         if at(p, TokKind.Import) || atFromKeyword(p) {
@@ -2072,6 +2075,9 @@ pub fn parse(p: &mut Parser): Program {
                     )
                 }
             }
+            if isPub {
+                pubNames.push(fnDecl.name.clone())
+            }
             functions.push(fnDecl)
         } else if at(p, TokKind.Trait) {
             traits.push(parseTraitDecl(p))
@@ -2081,7 +2087,11 @@ pub fn parse(p: &mut Parser): Program {
             advance(p)
             impls.push(parseImplDecl(p, true))
         } else if at(p, TokKind.Let) || at(p, TokKind.Var) {
-            globals.push(parseGlobal(p))
+            let g = parseGlobal(p)
+            if isPub {
+                pubNames.push(g.name.clone())
+            }
+            globals.push(g)
         } else if at(p, TokKind.Ident) && peek(p).value == "type" {
             // `type Name = <type>` — a type alias (incl. ranged `i32(min..max)`).
             advance(p)
@@ -2151,6 +2161,7 @@ pub fn parse(p: &mut Parser): Program {
         globals: globals,
         typeAliases: typeAliases,
         linkLibs: linkLibs,
+        pubNames: pubNames,
         parseDiagnostics: cloneDiagnostics(p.diagnostics),
     }
 }

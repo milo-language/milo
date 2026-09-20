@@ -246,6 +246,10 @@ export interface HIRModule {
   dropImpls: Set<string>;
   itables: { concreteType: string; ifaceName: string; methods: string[] }[];
   userFnNames?: Set<string>;
+  // Mangled symbol -> as-written name for the per-module renaming pass (src/mangle.ts).
+  // Codegen needs it because two of its outputs are read by humans, not the linker: the
+  // `Name { .. }` text `print` emits for a struct, and the DWARF `name` a debugger shows.
+  displayNames?: Map<string, string>;
   // opaque extern struct names (dropped from `structs` since they have no body) — kept
   // so the C header generator can emit forward `typedef struct X X;` declarations
   opaqueTypes?: string[];
