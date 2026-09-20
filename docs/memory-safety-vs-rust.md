@@ -3,7 +3,7 @@ system: memory-safety-vs-rust
 purpose: adversarial retained probes of Milo's safe-language behavior compared with Rust, the findings that broke the claim, and what the compiler does not check
 key-files: src/checker.ts, src/codegen.ts, std/arena.milo, std/shard.milo, std/seal.milo, scripts/fuzz-generic-drop.ts, scripts/fuzz-tasks.ts, docs/ownership-model.md
 update-when: a safety check is added/moved between compile-time and runtime, a new threat class is probed, a fuzzer finds a hole, or one of the three unchecked gaps closes
-last-verified: 2026-09-20 (findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section)
+last-verified: 2026-09-20 (findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section; matrix rows for closure borrows, arena reads, wrong-arena handles, `@mustUse` and private fields)
 -->
 
 # Memory safety: Milo vs Rust, battle-tested
@@ -43,11 +43,16 @@ classes are held", never as "safe Milo has no UB left."
 | Owner dropped while a worker on another OS thread holds a window into it | compile (scoped threads) | n/a → **compile** | the divide/run/reassemble cycle is one call; the pieces are private to `std/shard` (finding #4) |
 | `impl` method disagrees with its trait's signature | compile | **compile** | `'add' in 'impl Add for Res' takes 'self: Res' by value; the trait 'Add' declares 'self: &Self'` (finding #9) |
 | Aliasing `&mut` + `&` to one place | compile | **compile** | exclusivity check at call site, including an inline `v.ptr()` beside a `&mut v` |
+| Closure capturing a borrow (a `&T` parameter or a local view) | compile (the closure's lifetime is bounded by the borrow's) | **compile** | `error: cannot capture 'mid' in a closure`, hint: a closure stores its captures and can outlive the storage this points into |
+| Zero-copy read of an arena slot while the arena is mutated | compile (`&'a T` out of the arena borrows the whole arena) | **compile** | no `&T` ever leaves the arena: `arenaWith(a, h, (x: &T) => R)` and `arenaRead` scope the borrow to the closure, and `a` is frozen for the call, so no interior alias exists to invalidate |
+| Forged struct internals (a brand, a sealed value, an arena wrapper built by hand) | compile (private fields) | **compile** | `_`-prefixed fields are file-private: `error: field '_x' of 'S' is private to 'file.milo'` |
+| Discarded fallible result | compile (`#[must_use]` warning) | **compile** | `unused-result` warning on every discarded `Option`/`Result` and on a `@mustUse` function (`warning: unused result of '@mustUse' function 'g'`); an error under the DO-178C and NASA profiles |
 | Use-before-init | compile | **compile** | declaration requires an initializer (parse) |
 | Null deref | compile (no null; `Option`) | **compile** | no null type; `Option<T>` must be matched |
 | Out-of-bounds read (array) | runtime panic | **runtime** | `milo: array index out of bounds: 5/3` |
 | Out-of-bounds index (`Vec`) | runtime panic | **runtime** | `milo: array index out of bounds: 7/1` |
 | Use-after-free, cyclic (arena handle) | n/a (`&'a` rejected) → runtime | **runtime** | generational `Handle`: stale handle → `get` returns `None` |
+| Handle presented to the wrong arena | runtime (`slotmap` / `generational-arena`: `None` or panic) | **runtime** | every `Handle` carries its `arenaId`; a mismatch is `None` from `arenaGet`/`arenaWith` and `false` from `arenaFree`/`arenaSet`. Roles that must never mix get a compile-time brand instead: the phantom-brand idiom in [milo-idioms.md](milo-idioms.md), pinned by `tests/errors/arenaBrandMixup.milo` (`expected HandleB, got HandleA`) |
 | Undelivered channel payloads leak on drop | runtime (Rust's `Drop` for the channel runs them) | **runtime** | `ChannelHandle`'s drop runs `T`'s glue on every queued slot (finding #8; a leak, not UB) |
 | Divide-by-zero | runtime panic | **runtime (all modes)** | `milo: division by zero` |
 | `INT_MIN / -1` | runtime panic | **runtime (all modes)** | same guard as div-by-zero |
