@@ -278,6 +278,13 @@ counterexample.
 - `docs/memory-safety-vs-rust.md`: add H1, H2, H3 as findings #3-#5 with the commit
   that closed each, and note that the probe set now runs in CI (WP5a).
 - `docs/backlog.md`: file whatever WP4 leaves behind.
+- Retire the word "residue" (owner, 2026-09-19). Fold `docs/residue-vs-rust.md` into
+  `docs/memory-safety-vs-rust.md` as a section titled with what it is ("what the compiler
+  does not check, and what happens instead"), leave a one-line redirect stub or fix every
+  inbound link, and replace the term in `std/shard.milo`, `std/seal.milo`, `std/json.milo`,
+  `docs/ownership-patterns.md`, `docs/foreign-memory.md`, `docs/backlog.md`,
+  `docs/plans/tier2-3-plan.md`, `src/stdlib-bundle.ts` with a plain description of the
+  specific thing each site means. Site dist files regenerate.
 
 ---
 
