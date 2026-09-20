@@ -1353,7 +1353,31 @@ pub fn parseMultiplicative(p: &mut Parser): Heap<ExprNode> {
     return left
 }
 
+// A call argument: `&mut x` is the explicit mutable-borrow marker and is dropped here,
+// so the checker, lowering and codegen see the argument exactly as the bare form. The
+// TS checker also diagnoses `&mut` on a parameter that is not `&mut T`; milo-self
+// accepts it silently (the TS compiler is the oracle for error programs). The operand
+// is a unary expression, as in src/parser.ts, so `&mut x + 1` is a parse error rather
+// than a borrow of a sum.
+pub fn parseArg(p: &mut Parser): Heap<ExprNode> {
+    if at(p, TokKind.Amp) && peekN(p, 1).kind == TokKind.Mut {
+        advance(p)
+        advance(p)
+        return parseUnary(p)
+    }
+    return parseExpr(p)
+}
+
 pub fn parseUnary(p: &mut Parser): Heap<ExprNode> {
+    // `&mut` outside an argument position: kept as its own operator so the checker can
+    // say what it is instead of tripping over the `mut` keyword.
+    if at(p, TokKind.Amp) && peekN(p, 1).kind == TokKind.Mut {
+        let tok = advance(p)
+        advance(p)
+        let operand = parseUnary(p)
+        let s = span(p, tok)
+        return mkExpr(Expr.UnaryOp("&mut", operand), s)
+    }
     if peek(p).kind == TokKind.Minus || peek(p).kind == TokKind.Bang ||
     peek(p).kind == TokKind.Star || peek(p).kind == TokKind.Tilde ||
     peek(p).kind == TokKind.Amp {
@@ -1383,7 +1407,7 @@ pub fn parsePostfix(p: &mut Parser): Heap<ExprNode> {
                 advance(p)
                 var args: Vec<Heap<ExprNode>> = Vec.new()
                 while !at(p, TokKind.RParen) && !at(p, TokKind.Eof) {
-                    args.push(parseExpr(p))
+                    args.push(parseArg(p))
                     matchTok(p, TokKind.Comma)
                 }
                 expect(p, TokKind.RParen)
@@ -1649,7 +1673,7 @@ pub fn parsePrimary(p: &mut Parser): Heap<ExprNode> {
             var args: Vec<Heap<ExprNode>> = Vec.new()
             if matchTok(p, TokKind.LParen) {
                 while !at(p, TokKind.RParen) && !at(p, TokKind.Eof) {
-                    args.push(parseExpr(p))
+                    args.push(parseArg(p))
                     matchTok(p, TokKind.Comma)
                 }
                 expect(p, TokKind.RParen)
@@ -1688,7 +1712,7 @@ pub fn parsePrimary(p: &mut Parser): Heap<ExprNode> {
                 if at(p, TokKind.Eof) {
                     break
                 }
-                args.push(parseExpr(p))
+                args.push(parseArg(p))
                 matchTok(p, TokKind.Comma)
             }
             expect(p, TokKind.RParen)
@@ -1801,7 +1825,7 @@ pub fn parseCall(p: &mut Parser, name: string, s: Option<Span>): Heap<ExprNode> 
         if at(p, TokKind.Eof) {
             break
         }
-        args.push(parseExpr(p))
+        args.push(parseArg(p))
         matchTok(p, TokKind.Comma)
     }
     expect(p, TokKind.RParen)
