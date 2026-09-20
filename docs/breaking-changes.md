@@ -17,6 +17,21 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 [the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
 marker is added here each time a version is cut.
 
+## `selectRecv` / `selectSend` are `Select.onRecv` / `Select.onSend` (2026-09-20)
+
+The channel arms of `std/select` were free functions because a method could not
+carry its own type parameter. It can now, so they join `onRead`, `onWrite` and
+`onTimeout` as methods; the free functions are removed rather than kept as
+aliases so there is one spelling.
+
+| was | now |
+|---|---|
+| `selectRecv(&mut sel, ch)` | `sel.onRecv(ch)` |
+| `selectSend(&mut sel, ch)` | `sel.onSend(ch)` |
+| `from "std/select" import { Select, selectRecv }` | `from "std/select" import { Select }` |
+
+`Arena.with(h, f)` also landed as the method form of `arenaWith`, which stays.
+
 ## A `&mut` argument is written `&mut x` at the call (2026-09-20)
 
 **A non-receiver argument bound to a `&mut T` parameter must be spelled `&mut x`**
