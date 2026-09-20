@@ -622,6 +622,19 @@ Ranked by how often real programs hit them.
 
 ---
 
+### Open decision: `string` as the byte buffer (filed 2026-09-19)
+
+`std/png`, `std/fs`, `std/deflate`, `std/net` and friends take and return arbitrary
+bytes as `string` (`encodePng(pixels: &string, ...) -> Result<string, string>`,
+`writeFile(path, data: string)`); `examples/graphics/mandelbrotParallel.milo:102-109`
+builds a pixel buffer by `string.push(u8)`. Works mechanically, but the type then says
+nothing about which functions expect text, and `cstr()` on pixel bytes truncates at the
+first zero. Two consistent endpoints: (a) document `string` as bytes-not-text and mark
+`cstr()`/`print` as text-only hazards; (b) a `Bytes`/`Vec<u8>` surface for png, fs, net,
+deflate, inflate, checksum, base64, hex, with `string` reserved for text. (b) is a
+breaking sweep across ~10 modules. Decide before the next stdlib breaking-change batch;
+do not fix one example in isolation.
+
 ## Method
 
 - Module surface: `bun run src/main.ts api --module std/<m>` over every module (67 total,
