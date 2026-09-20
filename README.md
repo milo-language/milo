@@ -4,11 +4,11 @@
 
 **Learn more at [milo-language.github.io/milo](https://milo-language.github.io/milo/)** — docs, language tour, playground, and demos you can play in the browser.
 
-**The one rule.** `&T` and `&mut T` exist only as parameter types. A reference cannot be returned, stored, or captured past its call. Every value is on the stack or explicitly heap-allocated (`Vec`, `Heap<T>`, `string`), with one owner and no hidden indirection. Everything below follows from that.
+References are second-class: `&T` and `&mut T` exist only as function parameters. You can't return one, store one in a struct, or capture one past the call. Every value lives on the stack or in an explicit heap allocation (`Vec`, `Heap<T>`, `string`), with one owner and no hidden indirection.
 
 **What you get:**  no lifetime annotations, local reasoning, single ownership settled inside one function, concurrency without `Send`/`Sync`, no GC, contracts with a prover.
 
-**What you lose:**  you cannot return or store a view. Use an index, an owned copy, or an arena handle instead. Where Rust hands out a borrow, Milo sometimes asks for a `clone()`.
+**What you give up:**  you can't return or store a view. Use an index, an owned copy, or an arena handle instead. Where Rust hands out a borrow, Milo sometimes asks for a `clone()`.
 
 ---
 
