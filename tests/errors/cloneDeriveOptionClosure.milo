@@ -1,0 +1,23 @@
+// Option<closure> is a legal type with no clone(): an owning closure's environment has
+// no duplicate, so the instance gets no conditional Clone. A struct holding one is
+// silently non-clonable (Plain below compiles); asking for the derive names the field.
+// @error: cannot derive Clone for 'Q': field 'f' of type 'Option<move (i32) => i32>' has no clone
+struct Plain {
+    f: Option<move (i32) => i32>,
+}
+
+@derive(Clone)
+struct Q {
+    f: Option<move (i32) => i32>,
+}
+
+fn main() {
+    let n: i32 = 2
+    let p = Plain { f: Option.Some(move (x: i32) => x + n) }
+    let q = Q { f: Option.None }
+    let _c = q.clone()
+    match p.f {
+        Option.Some(_g) => { print("some") }
+        Option.None => { print("none") }
+    }
+}

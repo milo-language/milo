@@ -1,0 +1,96 @@
+// An Option instance first spelled inside a body appears after the derive fixpoint
+// ran, so it gets its conditional clone() at monomorphization time. No signature or
+// field names Option<P> or Option<Option<P>>: both instances are born in main.
+// Nested Option<Option<P>> derives inner first, then outer over the inner impl.
+struct P {
+    name: string, n: i32
+}
+
+fn showP(p: &P) {
+    print(p.name)
+    print(p.n)
+}
+
+fn main() {
+    let o: Option<P> = Option.Some(P {
+        name: "late", n: 3
+    }
+    )
+    let q = o.clone()
+    match q {
+        Option.Some(p) => {
+            showP(p)
+        }
+        Option.None => {
+            print("none")
+        }
+    }
+    match o {
+        Option.Some(p) => {
+            print(p.n)
+        }
+        Option.None => {
+            print("none")
+        }
+    }
+
+    let nested: Option<Option<P>> = Option.Some(Option.Some(P {
+        name: "deep", n: 4
+    }
+    ))
+    let nested2 = nested.clone()
+    match nested2 {
+        Option.Some(inner) => {
+            match inner {
+                Option.Some(p) => {
+                    showP(p)
+                }
+                Option.None => {
+                    print("inner none")
+                }
+            }
+        }
+        Option.None => {
+            print("outer none")
+        }
+    }
+    match nested {
+        Option.Some(inner) => {
+            match inner {
+                Option.Some(p) => {
+                    print(p.name)
+                }
+                Option.None => {
+                    print("inner none")
+                }
+            }
+        }
+        Option.None => {
+            print("outer none")
+        }
+    }
+    let outer: Option<Option<P>> = Option.Some(Option.None)
+    let outer2 = outer.clone()
+    match outer2 {
+        Option.Some(inner) => {
+            match inner {
+                Option.Some(p) => {
+                    showP(p)
+                }
+                Option.None => {
+                    print("inner none")
+                }
+            }
+        }
+        Option.None => {
+            print("outer none")
+        }
+    }
+}
+// @expect: late
+// @expect: 3
+// @expect: 3
+// @expect: deep
+// @expect: 4
+// @expect: deep
+// @expect: inner none

@@ -1,0 +1,109 @@
+// Option/Result instances get clone() conditionally, like a Rust derive's `T: Clone`
+// bound: whenever every payload can be cloned. A struct holding one is then clonable
+// by the same fixpoint, and a Copy instance (Option<i32>) keeps the identity clone.
+struct P {
+    name: string, n: i32
+}
+
+struct Holder {
+    o: Option<P>,
+    r: Result<P, string>,
+    k: Option<i32>,
+}
+
+fn showP(p: &P) {
+    print(p.name)
+    print(p.n)
+}
+
+fn showHolder(h: &Holder) {
+    match h.o {
+        Option.Some(p) => {
+            showP(p)
+        }
+        Option.None => {
+            print("none")
+        }
+    }
+    match h.r {
+        Result.Ok(p) => {
+            showP(p)
+        }
+        Result.Err(e) => {
+            print(e)
+        }
+    }
+    match h.k {
+        Option.Some(n) => {
+            print(n)
+        }
+        Option.None => {
+            print("no k")
+        }
+    }
+}
+
+fn main() {
+    let o: Option<string> = Option.Some("o")
+    let p = o.clone()
+    match p {
+        Option.Some(s) => {
+            print(s)
+        }
+        Option.None => {
+            print("none")
+        }
+    }
+
+    let h = Holder {
+        o: Option.Some(P {
+            name: "alpha", n: 1
+        }
+        ),
+        r: Result.Err("bad"),
+        k: Option.Some(7),
+    }
+    let h2 = h.clone()
+    showHolder(h2)
+
+    let h3 = Holder {
+        o: Option.None,
+        r: Result.Ok(P {
+            name: "beta", n: 2
+        }
+        ),
+        k: Option.None,
+    }
+    let h4 = h3.clone()
+    showHolder(h4)
+
+    var v: Vec<Option<string>> = Vec.new()
+    v.push(Option.Some("x"))
+    v.push(Option.None)
+    v.push(Option.Some("z"))
+    let w = v.clone()
+    for item in w {
+        match item {
+            Option.Some(s) => {
+                print(s)
+            }
+            Option.None => {
+                print("-")
+            }
+        }
+    }
+    print(v.len())
+}
+// @expect: o
+// @expect: alpha
+// @expect: 1
+// @expect: bad
+// @expect: 7
+// @expect: none
+// @expect: beta
+// @expect: 2
+// @expect: no k
+// @expect: x
+// @expect: -
+// @expect: z
+// @expect: 3

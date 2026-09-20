@@ -332,6 +332,9 @@ export interface EnumInfo {
   typeArgs?: TypeKind[];
   variants: Map<string, { tag: number; fields: TypeKind[] }>;
   reprType?: string; // set for `enum Kind: i32 { ... }` — the tag IS the integer value
+  // The synthetic declaration of a monomorphized instance (`Option_string`), so a derive
+  // can be synthesized for it at either of the two times an instance can appear.
+  decl?: import("./ast").EnumDecl;
 }
 
 export interface CheckResult {
@@ -1654,8 +1657,6 @@ export class TypeChecker {
         fields: vInfo.fields.map(f => this.substituteTypeKind(f, typeMap)),
       });
     }
-    this.enums.set(mangled, { baseName, typeArgs, variants });
-
     const decl: import("./ast").EnumDecl = {
       kind: "EnumDecl",
       name: mangled,
@@ -1665,8 +1666,36 @@ export class TypeChecker {
         fields: v.fields.map(f => this.substituteMiloType(f, generic.typeParams, typeArgs)),
       })),
     };
+    this.enums.set(mangled, { baseName, typeArgs, variants, decl });
     this.monomorphizedDecls.push(decl);
+    // An instance that appears after the derive pass (`let o: Option<P>` inside a body)
+    // missed the fixpoint, so it gets its conditional Clone here; one that appears
+    // before it is a fixpoint candidate, where a payload still pending can be honoured.
+    if (this._derivesProcessed && TypeChecker.CONDITIONAL_CLONE_BASES.has(baseName)) {
+      this.deriveCloneForBuiltinInstance(mangled);
+    }
     return mangled;
+  }
+
+  // The generic enums whose instances get Clone the way a Rust derive's `T: Clone` bound
+  // does: only when every payload can be cloned, silently not otherwise, so that an
+  // `Option<closure>` stays a legal type that merely has no clone().
+  private static readonly CONDITIONAL_CLONE_BASES = new Set(["Option", "Result"]);
+  private _derivesProcessed = false;
+  // The names the Clone fixpoint closed over. Kept past processDerives because an
+  // instance monomorphized between the fixpoint and the registration of its impls
+  // (an `Option<P>` in a user impl's signature) must still see P as clonable.
+  private cloneDerived = new Set<string>();
+
+  private deriveCloneForBuiltinInstance(mangled: string): void {
+    if (this.typeImplementsTrait(mangled, "Clone")) return;
+    const info = this.enums.get(mangled);
+    if (!info?.decl) return;
+    // A Copy instance (`Option<i32>`) already has `.clone()` as the identity.
+    if (this.isCopyType({ tag: "enum", name: mangled })) return;
+    if (this.enumCloneBlocker(mangled, this.cloneDerived)) return;
+    const impl = this.deriveCloneEnum(info.decl, true);
+    if (impl) this.registerImpl(impl, { structs: [], enums: [], functions: [], imports: [], traits: [], impls: [], typeAliases: [], interfaces: [], globals: [], deriveTemplates: [] }, this._pendingImplFns);
   }
 
   // Rule on every generic-struct bound recorded so far. Callable only once the impl
@@ -3505,7 +3534,8 @@ export class TypeChecker {
     // Two exclusions Eq does not need: a Drop type (cloning an fd closes it twice,
     // the TcpStream bug, as a method) and `@noCopy` (the attribute exists precisely
     // to stop copies of a resource handle; a clone() would be the same hazard with
-    // an explicit spelling). Generic enums are left to monomorphization (Option/Result included).
+    // an explicit spelling). A user's generic enum is left to monomorphization; Option and
+    // Result instances join below (CONDITIONAL_CLONE_BASES).
     const cloneDerived = new Set<string>();
     for (const s of program.structs) {
       if (s.typeParams.length > 0) continue;
@@ -3521,6 +3551,16 @@ export class TypeChecker {
       if (e.attributes?.some(a => a.name === "noCopy")) continue;
       cloneDerived.add(e.name);
     }
+    // Option/Result instances that already exist (a field or signature spelled them)
+    // join the fixpoint, so `struct Q { o: Option<Q2> }` closes together with Q2. A Copy
+    // instance is skipped: `.clone()` on it is already the identity.
+    const builtinInstances: import("./ast").EnumDecl[] = [];
+    for (const [name, info] of this.enums) {
+      if (!info.decl || !info.baseName || !TypeChecker.CONDITIONAL_CLONE_BASES.has(info.baseName)) continue;
+      if (this.isCopyType({ tag: "enum", name })) continue;
+      builtinInstances.push(info.decl);
+      cloneDerived.add(name);
+    }
     let shrunk = true;
     while (shrunk) {
       shrunk = false;
@@ -3530,8 +3570,8 @@ export class TypeChecker {
         cloneDerived.delete(s.name);
         shrunk = true;
       }
-      for (const e of program.enums) {
-        if (!cloneDerived.has(e.name) || !this.enumCloneBlocker(e, cloneDerived)) continue;
+      for (const e of [...program.enums, ...builtinInstances]) {
+        if (!cloneDerived.has(e.name) || !this.enumCloneBlocker(e.name, cloneDerived)) continue;
         cloneDerived.delete(e.name);
         shrunk = true;
       }
@@ -3539,11 +3579,13 @@ export class TypeChecker {
     for (const s of program.structs) {
       if (cloneDerived.has(s.name)) result.push(this.deriveClone(s, true));
     }
-    for (const e of program.enums) {
+    for (const e of [...program.enums, ...builtinInstances]) {
       if (!cloneDerived.has(e.name)) continue;
       const impl = this.deriveCloneEnum(e, true);
       if (impl) result.push(impl);
     }
+    this.cloneDerived = cloneDerived;
+    this._derivesProcessed = true;
     for (const s of program.structs) {
       if (!explicitClone.has(s.name) || cloneDerived.has(s.name)) continue;
       const impl = this.deriveClone(s, false, cloneDerived);
@@ -3564,8 +3606,8 @@ export class TypeChecker {
   // reason canAutoClone gives for Vec<closure>; a raw pointer payload would make the
   // clone a second owner of the pointee, the same hazard the struct path's pointerField
   // check refuses. An empty enum has nothing to match on.
-  private enumCloneBlocker(e: import("./ast").EnumDecl, pending?: Set<string>): { variant: string; index: number; type: TypeKind; why: string } | null {
-    const info = this.enums.get(e.name);
+  private enumCloneBlocker(name: string, pending?: Set<string>): { variant: string; index: number; type: TypeKind; why: string } | null {
+    const info = this.enums.get(name);
     if (!info || info.variants.size === 0) return { variant: "", index: -1, type: { tag: "void" }, why: "it has no variants" };
     for (const [vname, v] of info.variants) {
       for (let i = 0; i < v.fields.length; i++) {
@@ -3587,7 +3629,7 @@ export class TypeChecker {
       if (this.dropImpls.has(e.name) || e.attributes?.some(a => a.name === "noCopy")) {
         this.error(`cannot derive Clone for '${e.name}': it is a resource type (Drop or @noCopy), and duplicating it would release the resource twice`, e.span);
       }
-      const blocker = this.enumCloneBlocker(e, pending);
+      const blocker = this.enumCloneBlocker(e.name, pending);
       if (blocker) {
         if (blocker.index < 0) this.error(`cannot derive Clone for '${e.name}': ${blocker.why}`, e.span);
         else this.error(`cannot derive Clone for '${e.name}': variant '${blocker.variant}' payload ${blocker.index} of type '${this.show(blocker.type)}': ${blocker.why}`, e.span);
@@ -3647,7 +3689,13 @@ export class TypeChecker {
     if (t.tag === "vec") return t.element.tag !== "fn" && this.canAutoClone(t.element, pending);
     if (t.tag === "hashmap") return t.value.tag !== "fn" && this.canAutoClone(t.key, pending) && this.canAutoClone(t.value, pending);
     if (t.tag === "struct" || t.tag === "enum") {
-      return this.typeImplementsTrait(t.name, "Clone") || this.handWrittenClone.has(t.name) || !!pending?.has(t.name);
+      if (this.typeImplementsTrait(t.name, "Clone") || this.handWrittenClone.has(t.name) || !!pending?.has(t.name)) return true;
+      // An Option/Result instance is judged by its payloads, the way a container is: its
+      // own impl is conditional on them and may not exist yet when a field asks.
+      if (t.tag === "enum") {
+        const base = this.enums.get(t.name)?.baseName;
+        if (base && TypeChecker.CONDITIONAL_CLONE_BASES.has(base)) return this.enumCloneBlocker(t.name, pending) === null;
+      }
     }
     return false;
   }
