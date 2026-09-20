@@ -57,6 +57,9 @@ jobs:
         # the warning is the gate, not the exit code.
         run: |
           cd docs/site
+          # pipefail: without it a failed vitepress build exits 0 through tee and the
+          # failure surfaces one step later as "dist: No such file or directory".
+          set -o pipefail
           bun run build 2>&1 | tee /tmp/vitepress-build.log
           if grep -q "not loaded, falling back" /tmp/vitepress-build.log; then
             echo "::error::a code fence language is not registered with Shiki; blocks rendered as plain text"

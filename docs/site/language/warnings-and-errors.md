@@ -70,9 +70,9 @@ struct Bad {
 A non-receiver argument bound to a `&mut` parameter is written `&mut x`, so the call
 shows which values it can change. The bare form is the error `implicit-mut-borrow`.
 It sits in the warning table so `--allow=implicit-mut-borrow` (or a `milo.json`
-`lints.allow` entry) can silence it for a tree mid-migration; `bun scripts/explicit-mut.ts
-<file>` rewrites a file from the checker's resolved signatures. Method receivers are
-exempt (`v.push(1)` stays as it is).
+`lints.allow` entry) can silence it for a tree mid-migration;
+`bun scripts/explicit-mut.ts <file>` rewrites a file from the checker's resolved
+signatures. Method receivers are exempt (`v.push(1)` stays as it is).
 
 ```milo
 fn bump(p: &mut Point, by: i64): void { p.x = p.x + by }
