@@ -924,10 +924,14 @@ function collectLenBearing(fn: Function): Set<string> {
     for (const [f, ft] of STRUCT_FIELD_TYPES.get(t.name) ?? []) consider(`${path}_${f}`, ft, depth + 1);
   };
   // An unannotated local reveals its type through its initialiser. Only the shapes whose
-  // type is certain: a builtin constructor, a literal, or a struct literal.
+  // type is certain: a builtin constructor, a literal, a struct literal, or a call to a
+  // program function (its declared return type). The last is what `var lengths =
+  // zeros(n)` needs: without it `lengths` is not a Vec here, `lengths[i] = x` has no table
+  // entry, and its loop havoc forgets `len` no matter what the entry says.
   const fromInit = (value: Expr | undefined): MiloType | null => {
     if (!value) return null;
     const e = value as any;
+    if (e.kind === "Call" && typeof e.func === "string" && FN_TABLE.has(e.func)) return FN_TABLE.get(e.func)!.retType ?? null;
     if (e.kind === "StringLit") return { name: "string", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
     if (e.kind === "ArrayLit" || e.kind === "ArrayRepeat") return { name: "array", isPtr: false, isRef: false, isRefMut: false, isArray: true, arraySize: null };
     const isVecCtor = (e.kind === "Call" && typeof e.func === "string" && builtinConstructors().has(e.func))
@@ -1001,6 +1005,17 @@ function mentionsAnyIdent(expr: Expr, names: Set<string>): boolean {
 
 function isOldCall(expr: any): boolean {
   return expr && expr.kind === "Call" && expr.func === "old" && Array.isArray(expr.args) && expr.args.length === 1;
+}
+
+// Is this `ensures` clause exactly `<self>.len == old(<self>.len)` (either order)? The
+// shape every len-preserving entry of BUILTIN_CONTRACTS_SRC has, and the one a user `&mut`
+// callee states when it fills a buffer in place. Syntactic on purpose: anything weaker is
+// a claim the solver has to make, not this predicate.
+function isLenFrameClause(expr: any, self: string): boolean {
+  if (!expr || expr.kind !== "BinOp" || expr.op !== "==") return false;
+  const isSelfLen = (e: any) => e?.kind === "FieldAccess" && e.field === "len" && e.object?.kind === "Ident" && e.object.name === self;
+  const isOldSelfLen = (e: any) => isOldCall(e) && isSelfLen(e.args[0]);
+  return (isSelfLen(expr.left) && isOldSelfLen(expr.right)) || (isOldSelfLen(expr.left) && isSelfLen(expr.right));
 }
 
 // A struct invariant is written over bare field names (`chr.len > 0`). Binding each field
@@ -1336,6 +1351,14 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
   // assigned OR passed to a `&mut` parameter OR used as a method receiver; the walker
   // proved `ensures v.len == old(v.len)` for a loop that pushed `n` times when only
   // assignments counted.
+  //
+  // A place whose every write in the body keeps its length (each one a table entry or a
+  // callee carrying `len == old(len)`) keeps its `len` symbol across the loop: the contents
+  // are havoced, the fresh `len` is asserted equal to the pre-loop one. Without this the
+  // four `for sym in .. { lengths[sym] = 8 }` loops in std/inflate's `fixed` wiped
+  // `lengths.len` and every `construct(lencode, lengths, ..)` precondition went unknown,
+  // though the table already states `[]=` never resizes. One len-changing write (`push`,
+  // an uncontracted callee, a reassignment) and the place is fully unknown as before.
   function havoc(block: Stmt[], localEnv: Map<string, string>, loop: Stmt): Map<string, string> {
     const assigned = new Set<string>();
     collectAssignedVars(block, assigned);
@@ -1345,7 +1368,93 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
     const out = new Map(localEnv);
     const line = (loop as any).span?.line;
     const why = `the loop${line ? ` at line ${line}` : ""} (no invariant names it)`;
-    for (const name of new Set([...assigned, ...mods.keys()])) havocPlace(name, out, "loop", why);
+    const mutated = new Set([...assigned, ...mods.keys()]);
+    const lenKept = lenKeptPlaces(block, mutated);
+    for (const name of mutated) {
+      const receiver = lenKept.get(name);
+      // Lowered in the PRE-loop env, before the place moves: this is what `name.len` read
+      // just before the loop, whatever symbol (`zeros__ret0_len`, a param, an earlier
+      // havoc) it resolves to.
+      const preLen = receiver ? exprToSmtWithEnv({ kind: "FieldAccess", object: receiver, field: "len", span: (receiver as any).span } as Expr, localEnv) : null;
+      // The len symbol has to exist to be minted; a place nothing has read `.len` of yet
+      // has no FIELD_REF for it and havocPlace would skip it.
+      if (receiver) FIELD_REFS?.add(`${name}_len`);
+      havocPlace(name, out, "loop", why);
+      if (preLen === null || /UNSUPPORTED/.test(preLen)) continue;
+      const fresh = out.get(`${name}_len`);
+      // Equating to a free symbol says nothing and would only spread its taint to every VC
+      // (the fact is in the declaration block); leave the fresh one free instead.
+      if (!fresh || !isPlainSymbol(fresh) || (CALL_MODEL && !symbolsResolve(preLen, CALL_MODEL))) continue;
+      if ([...preLen.matchAll(/[A-Za-z_][A-Za-z0-9_.]*/g)].some(m => UNCONSTRAINED_HAVOCS.has(m[0]))) continue;
+      ctx.havocDecls.push(`(assert (= ${fresh} ${preLen}))`);
+      UNCONSTRAINED_HAVOCS.delete(fresh);
+    }
+    return out;
+  }
+
+  // The mutated places whose every write inside `block` is one the contract in force says
+  // keeps `len`: a builtin from the table with `self.len == old(self.len)`, or a user
+  // `&mut` callee whose `ensures` carries the same clause for that parameter (only when the
+  // argument is the bare place, so the clause is about this exact symbol). Mapped to one
+  // receiver expression for the place, which is what the pre-loop `len` is lowered from.
+  //
+  // Mirrors the node kinds collectAssignedVars / collectMutations / collectIndexAssign-
+  // Mutation record, and errs the other way at every doubt (`broken`): a write to the place
+  // this cannot classify, or to any prefix of it (`h = ..` rewrites `h.count` too), or to
+  // its own `len`, keeps the place fully havoced. A place none of the three collectors
+  // recorded is filtered out by `mutated`, so a write this walk sees and they do not cannot
+  // produce a frame fact for nothing.
+  function lenKeptPlaces(block: Stmt[], mutated: Set<string>): Map<string, Expr> {
+    const receivers = new Map<string, Expr>();
+    const broken = new Set<string>();
+    const keepsLen = (callee: Function, self: string) =>
+      callee.contracts.some(c => c.kind === "ensures" && isLenFrameClause(c.expr, self));
+    const placeOf = (e: Expr): string | null => flattenFieldAccess(e) ?? mutationBase(e);
+    const breakArg = (e: any) => { const p = placeOf(e); if (p !== null) broken.add(p); };
+    walkNodes(block, n => {
+      if (n.kind === "Assign") {
+        if (n.target?.kind === "IndexAccess") {
+          const place = placeOf(n.target.object);
+          const callee = builtinContractFor(INDEX_SET, n.target.object);
+          if (place === null) return;
+          if (callee && keepsLen(callee, "self")) receivers.set(place, n.target.object);
+          else broken.add(place);
+        } else breakArg(n.target);
+      }
+      if (n.kind === "MethodCall") {
+        if (PURE_METHOD_NAMES.has(n.method)) return;
+        const callee = builtinContractFor(n.method, n.object);
+        if (callee?.attributes?.some((a: any) => a.name === "pure")) return;
+        const place = placeOf(n.object);
+        if (place === null) return;
+        if (callee && keepsLen(callee, "self")) receivers.set(place, n.object);
+        else broken.add(place);
+      }
+      if (n.kind === "Call" && typeof n.func === "string" && Array.isArray(n.args)) {
+        if (PURE_FN_NAMES.has(n.func)) return;
+        const callee = FN_TABLE.get(n.func);
+        if (!callee || callee.params.length !== n.args.length) { for (const a of n.args) breakArg(a); return; }
+        // A callee's `ensures` holds only under its `requires` (emitFrameFacts asserts the
+        // implication); the loop frame fact is asserted bare, so only a callee with nothing
+        // to guard qualifies. One with a `requires` keeps the full havoc.
+        const guarded = callee.contracts.some(c => c.kind === "requires");
+        callee.params.forEach((p, i) => {
+          if (!p.type?.isRefMut && !p.type?.isPtr) return;
+          const arg = n.args[i];
+          if (arg?.kind === "Ident" && !guarded && keepsLen(callee, p.name)) receivers.set(arg.name, arg);
+          else breakArg(arg);
+        });
+      }
+    });
+    const out = new Map<string, Expr>();
+    for (const [place, receiver] of receivers) {
+      if (!mutated.has(place) || broken.has(place) || !LEN_BEARING.has(place)) continue;
+      if (mutated.has(`${place}_len`) || broken.has(`${place}_len`)) continue;
+      const parts = place.split("_");
+      const prefixes = parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("_"));
+      if (prefixes.some(p => mutated.has(p) || broken.has(p))) continue;
+      out.set(place, receiver);
+    }
     return out;
   }
 
