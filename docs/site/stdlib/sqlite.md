@@ -194,7 +194,7 @@ fn main(): i32 {
     while dbStep(stmt) {
         let name = dbColumnText(stmt, 0)
         let age = dbColumnInt(stmt, 1)
-        print(name + " is " + intToString(age))
+        print(name + " is " + age.toString())
     }
 
     dbFinalize(stmt)

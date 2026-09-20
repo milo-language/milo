@@ -1,17 +1,6 @@
 # Closures
 
-If you've used arrow functions in JavaScript, lambdas in Python, or anonymous functions in Go, closures will feel familiar. A closure is a function without a name that can capture variables from the surrounding scope.
-
-Milo has two kinds of closures:
-
-- **Regular closures** capture variables by reference. They are *non-escaping* — you can pass them around or store them in local variables, but you cannot return them from a function or store them in a struct. This guarantees that captured references are always valid.
-- **Move closures** take ownership of their captured variables. Because they own everything they close over, they *can* be returned, stored, and sent to other threads.
-
-Let's start with regular closures.
-
-## Expression closures
-
-The simplest closure is a one-liner. The syntax is `(params) => expression` — the return value is the expression itself, no `return` needed.
+Closures are anonymous functions that capture variables from the surrounding scope. The syntax is `(params) => expression`:
 
 ```milo
 fn apply(f: (i32) => i32, x: i32): i32 {
@@ -21,9 +10,14 @@ fn apply(f: (i32) => i32, x: i32): i32 {
 let result = apply((x: i32) => x * 2, 21)   // 42
 ```
 
+Milo has two kinds:
+
+- **Regular closures** capture by reference. Non-escaping: you can pass them around, but not return them from a function or store them in a struct. Captured references are always valid.
+- **Move closures** take ownership of captured variables. Because they own everything, they *can* be returned, stored, and sent to other threads.
+
 ## Block closures
 
-When you need more than one line, use a block body with curly braces. You must `return` explicitly.
+More than one line needs a block body. `return` is explicit:
 
 ```milo
 fn apply(f: (i32) => i32, x: i32): i32 {
@@ -36,18 +30,30 @@ let result = apply((x: i32): i32 => {
 }, 20)   // 41
 ```
 
-## Stored in variables
+## Variables and callbacks
 
-Closures can be stored in local variables and called later — just like any other value.
+Closures can be stored in local variables:
 
 ```milo
 let inc = (x: i32) => x + 1
 print(inc(5))   // 6
 ```
 
-## Capturing variables
+Any function that accepts a `(...) => ...` parameter can take a closure:
 
-Closures can read and write variables from the enclosing scope. Regular closures capture by reference, so mutations inside the closure are visible outside.
+```milo
+fn doTwice(f: () => void) {
+    f()
+    f()
+}
+
+doTwice(() => print("hello"))
+// prints "hello" twice
+```
+
+## Capturing and mutation
+
+Regular closures capture by reference, so mutations are visible outside:
 
 ```milo
 fn callIt(f: () => void) {
@@ -62,7 +68,7 @@ print(count)   // 2
 
 ## Type inference
 
-When the compiler can figure out parameter types from context (for example, from `Vec.map` or `Vec.filter`), you can omit them.
+Parameter types are inferred when context makes them unambiguous:
 
 ```milo
 var v: Vec<i32> = Vec.new()
@@ -74,9 +80,7 @@ let doubled = v.map((x) => x * 2)       // x inferred as i32
 let big = v.filter((x) => x > 1)         // x inferred as &i32
 ```
 
-## Practical usage: map, filter, callbacks
-
-Closures are most useful with collections. Passing a closure to `.map()` or `.filter()` lets you transform or select data in a single expression.
+Collections and closures compose:
 
 ```milo
 var nums: Vec<i32> = Vec.new()
@@ -85,30 +89,13 @@ nums.push(2)
 nums.push(3)
 nums.push(4)
 
-// double every element
 let doubled = nums.map((n) => n * 2)
-
-// keep only even numbers, then square them
 let evenSquares = nums.filter((n) => n % 2 == 0).map((n) => n * n)
-```
-
-Closures also work well as callbacks. Any function that accepts a `(...) => ...` parameter can take a closure.
-
-```milo
-fn doTwice(f: () => void) {
-    f()
-    f()
-}
-
-doTwice(() => print("hello"))
-// prints "hello" twice
 ```
 
 ## Move closures
 
-Regular closures borrow from their environment, which means they cannot outlive the scope they were created in. When you need a closure that *owns* its data -- to return it from a function, store it in a data structure, or send it to another thread -- prefix it with `move`.
-
-A move closure transfers ownership of every captured variable into the closure. The original variables are no longer available after the move.
+Regular closures borrow from their environment, so they cannot outlive their creating scope. Prefix with `move` to take ownership instead:
 
 ```milo
 fn makeAdder(n: i32): (i32) => i32 {
@@ -125,11 +112,11 @@ fn main(): i32 {
 }
 ```
 
-Here, `makeAdder` returns a closure. The `move` keyword tells the compiler to take ownership of `n` rather than borrowing it. Without `move`, this would be a compile error because `n` would be a dangling reference once `makeAdder` returns.
+Without `move`, this would be a compile error: `n` would be a dangling reference once `makeAdder` returns.
 
-### Sending closures to tasks
+### Concurrency
 
-Move closures are essential for concurrency. Because they own their data, there is no risk of dangling references across tasks or threads.
+Move closures are required for spawning tasks and threads, since the closure must own its data:
 
 ```milo
 from "std/runtime" import { Task }
@@ -140,20 +127,19 @@ let t = Task.spawn(move (): void => {
 t.join()
 ```
 
-A `Promise.blocking` closure runs on a real OS thread, so its captures must additionally be `Send` — the compiler enforces this. See [Concurrency](/features/concurrency).
+`Promise.blocking` runs on a real OS thread, so captures must also be `Send`. See [Concurrency](/features/concurrency).
 
 ### When to use `move`
 
 | Situation | Use |
 |-----------|-----|
-| Passing a closure as a callback in the same scope | Regular closure |
-| Calling `.map()`, `.filter()` on a collection | Regular closure |
+| Callback in the same scope, `.map()`, `.filter()` | Regular closure |
 | Returning a closure from a function | `move` closure |
-| Spawning a thread or task | `move` closure |
-| Storing a closure to call later in a different scope | `move` closure |
+| Spawning a task or thread | `move` closure |
+| Storing a closure for later in a different scope | `move` closure |
 
-## Limitations of regular closures
+## Non-escaping restriction
 
-Regular (non-`move`) closures are non-escaping: they cannot be returned from functions or stored in structs. This is by design -- it keeps the ownership model simple and guarantees that captured references are always valid. If you need a closure that escapes, reach for `move`.
+Regular closures cannot be returned from functions or stored in structs. This keeps the ownership model simple and guarantees captured references are valid. When you need a closure that escapes, use `move`.
 
 Next: [Modules](./modules)

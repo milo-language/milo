@@ -1,10 +1,10 @@
 # Enums & Pattern Matching
 
-An enum says "this value is one of these things." Each variant can carry different data, and the compiler ensures you handle every possibility. If you've used `switch` statements, enums plus `match` add one thing they lack: the compiler won't let you forget a case.
+Each enum variant can carry different data, and the compiler checks that you handle every one. Miss a case and it won't compile.
 
 ## Defining enums
 
-List your variants inside `enum`. A variant can carry data (like `Circle` holds a radius) or stand alone (like `Point`).
+Variants can carry data (`Circle` holds a radius) or stand alone (`Point`).
 
 ```milo
 enum Shape {
@@ -54,8 +54,6 @@ match s {
 
 ## Generic enums
 
-Enums can be generic, letting the variant data vary by type parameter.
-
 ```milo skip
 // Illustrative only: Option and Result are builtins, so this exact source is
 // rejected with "'Option' is a builtin enum and cannot be redeclared".
@@ -70,12 +68,9 @@ enum Result<T, E> {
 }
 ```
 
-## Built-in enums: Option and Result
+## Option and Result
 
-`Option` and `Result` are built into the language. They replace two patterns that cause bugs in other languages:
-
-- **Option** replaces null. Instead of a value that might be null (and crash at runtime if you forget to check), `Option<T>` makes the "might be absent" case explicit. The compiler forces you to handle `None` before you can use the inner value.
-- **Result** replaces exceptions. Instead of throwing errors that callers might forget to catch, functions return `Result<T, E>`. The success value (`Ok`) and the error (`Err`) are both right there in the type, and the compiler ensures you deal with both.
+`Option<T>` replaces null: `Option.Some(value)` or `Option.None`, and you must check which before using it. `Result<T, E>` replaces exceptions: `Result.Ok(value)` or `Result.Err(error)`, and the compiler won't let you ignore a failure. Both are built-in enums.
 
 ## if let
 

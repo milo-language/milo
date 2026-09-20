@@ -83,4 +83,24 @@ while i < 10 {
 }
 ```
 
+
+## For loops
+
+Iterate over ranges with `for .. in`:
+
+```milo
+for i in 0..10 {
+    print(i)
+}
+```
+
+Or iterate over collections:
+
+```milo
+let names = Vec.of("Alice", "Bob", "Charlie")
+for name in names {
+    print(name)
+}
+```
+
 Next: [Functions](./functions)

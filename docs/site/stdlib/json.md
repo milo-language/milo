@@ -186,25 +186,25 @@ fn main(): i32 {
     let data = Json.parse("{\"name\": \"milo\", \"version\": 1, \"tags\": [\"fast\", \"safe\"]}")!
 
     match data.str("name") {
-        Some(name) => writeStdout(name),
-        None => writeStdout("unknown"),
+        Option.Some(name) => writeStdout(name),
+        Option.None => writeStdout("unknown"),
     }
 
     let tags = data.get("tags")
     match tags {
-        Some(arr) => {
+        Option.Some(arr) => {
             let first = arr.at(0)
             match first {
-                Some(tag) => {
+                Option.Some(tag) => {
                     match tag.asStr() {
-                        Some(s) => writeStdout(s),
-                        None => {},
+                        Option.Some(s) => writeStdout(s),
+                        Option.None => {},
                     }
                 },
-                None => {},
+                Option.None => {},
             }
         },
-        None => {},
+        Option.None => {},
     }
 
     return 0

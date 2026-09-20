@@ -64,3 +64,42 @@ let json = jsonStringify(user)
 ```
 
 Next: [Enums & Matching](./enums)
+
+## Visibility
+
+Fields and methods are private by default. Mark them `pub` to export from a module:
+
+```milo
+struct Config {
+    pub host: string,
+    pub port: i32,
+    secret: string,       // private, only visible in this module
+}
+```
+
+## Drop
+
+Implement `Drop` to run cleanup when a value goes out of scope:
+
+```milo
+struct Handle {
+    id: i32,
+}
+
+impl Drop for Handle {
+    fn drop(self: &mut Self): void {
+        print("closing handle ", self.id)
+    }
+}
+```
+
+## Annotations
+
+`@noCopy` prevents implicit copies. `@derive(Eq)` auto-generates `==` and `!=`. See [Annotations & Builtins](/features/annotations) for the full list.
+
+```milo
+@noCopy
+struct UniqueToken {
+    id: i64,
+}
+```

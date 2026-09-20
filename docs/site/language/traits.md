@@ -99,6 +99,7 @@ print(sum.x)   // 8
 - Associated types
 - `where` clauses
 
-These are on the roadmap.
+
+For runtime polymorphism (heterogeneous collections, virtual dispatch), use [interfaces](/language/#interfaces) instead. These items are on the roadmap.
 
 Next: [Closures](./closures)

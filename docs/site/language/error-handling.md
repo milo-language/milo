@@ -1,10 +1,10 @@
 # Error Handling
 
-Milo has no exceptions and no null. Errors are values — the type system makes you handle them explicitly. If a function can fail, its return type says so, and the compiler ensures you deal with it.
+Milo has no exceptions and no null. If a function can fail, its return type says so, and the compiler won't let you ignore it.
 
 ## Result basics
 
-Functions that can fail return `Result<T>`. This is an enum with two variants: `Result.Ok(value)` on success, `Result.Err(message)` on failure. You can never accidentally ignore an error.
+Fallible functions return `Result<T, E>`: either `Result.Ok(value)` or `Result.Err(error)`.
 
 ```milo
 from "std/fs" import { readFile }
@@ -19,81 +19,50 @@ fn readNumber(path: &string): Result<i64, IoError> {
 }
 ```
 
-## The `?` operator — propagate errors
+Three operators handle a `Result` at the call site: `?` propagates, `!` unwraps or panics, `??` falls back to a default. The rest of this page shows each one, then `match` for full control.
 
-The `?` operator says "if this failed, return the error to my caller." It only works inside functions that themselves return `Result`. This is the most common way to handle errors — let them bubble up to the right level.
+## `?` — propagate
+
+On error, `?` returns it to the caller immediately. Only works inside functions that themselves return `Result`.
 
 ```milo
 from "std/fs" import { readFile }
 
 fn loadConfig(path: &string): Result<string, IoError> {
-    let text = readFile(path)?     // error? return it to our caller
+    let text = readFile(path)?     // on error, returns it
     return Result.Ok(text)
 }
 ```
 
-## The `!` operator — unwrap or panic
+## `!` — unwrap or panic
 
-The `!` operator says "I'm sure this will succeed — crash if it doesn't." Use it in top-level code, quick scripts, or when you've already validated the input. In production code, prefer `?` or `??`.
+Crashes on error. Appropriate for top-level code, scripts, or when you've already validated the input.
 
 ```milo
-from "std/fs" import { readFile }
-from "std/strconv" import { parseInt }
-
-fn readNumber(path: &string): Result<i64, IoError> {
-    let text = readFile(path)?
-    match parseInt(text.trim()) {
-        Option.Some(n) => { return Result.Ok(n) }
-        Option.None => { return Result.Err(IoError.Other("not a number")) }
-    }
-}
-
 fn main(): i32 {
-    let n = readNumber("count.txt")!   // panic if file missing
+    let n = readNumber("count.txt")!   // panic if file missing or not a number
     print(n)
     return 0
 }
 ```
 
-## The `??` operator — provide a default
+## `??` — default on error
 
-The `??` operator says "if this failed, use this value instead." The error is silently discarded. Good for cases where a sensible fallback exists.
+Discards the error and substitutes a value.
 
 ```milo
-from "std/fs" import { readFile }
-from "std/strconv" import { parseInt }
-
-fn readNumber(path: &string): Result<i64, IoError> {
-    let text = readFile(path)?
-    match parseInt(text.trim()) {
-        Option.Some(n) => { return Result.Ok(n) }
-        Option.None => { return Result.Err(IoError.Other("not a number")) }
-    }
-}
-
 fn main(): i32 {
-    let n = readNumber("count.txt") ?? 0   // missing file? just use 0
+    let n = readNumber("count.txt") ?? 0   // missing file? use 0
     print(n)
     return 0
 }
 ```
 
-## Matching on results
+## `match` — full control
 
-When you need to handle success and failure differently, use `match`. This gives you full control — you can inspect the error, log it, recover, or take different paths.
+When you need different behavior for success and failure:
 
 ```milo
-from "std/fs" import { readFile }
-from "std/strconv" import { parseInt }
-
-fn readNumber(path: &string): Result<i64, IoError> {
-    let text = readFile(path)?
-    match parseInt(text.trim()) {
-        Option.Some(n) => { return Result.Ok(n) }
-        Option.None => { return Result.Err(IoError.Other("not a number")) }
-    }
-}
-
 fn run(): Result<i32, IoError> {
     let n = readNumber("count.txt")?
     return Result.Ok(n as i32)
@@ -110,9 +79,9 @@ fn main(): i32 {
 }
 ```
 
-## Typed errors with `Result<T, E>`
+## Typed errors
 
-The default `Result<T>` carries a string error message. When you need to branch on the *cause* of a failure — not just whether it failed — define a custom error enum and use `Result<T, E>`.
+The default `Result<T>` carries a string message. When you need to branch on the *cause* of failure, define an error enum:
 
 ```milo skip
 // Sketch: `...` stands in for the body. std/io already defines IoError with these
@@ -125,7 +94,7 @@ enum IoError {
 fn readFile(path: string): Result<string, IoError> { ... }
 ```
 
-Now callers can match on specific failure modes. Patterns do not nest, so bind the error and match it in a second step:
+Callers match on specific failure modes. Patterns do not nest, so bind the error and match it in a second step:
 
 ```milo
 from "std/fs" import { readFile }
@@ -152,20 +121,7 @@ match readFile("config.toml") {
 
 ## Auto-conversion with `?`
 
-When your function's error enum has a variant that wraps another error type, `?` auto-converts for you. No conversion boilerplate needed.
-
-```milo
-enum ParseError {
-    BadNumber(string),
-}
-
-enum AppError {
-    Io(IoError),         // wraps IoError
-    Parse(ParseError),   // wraps ParseError
-}
-```
-
-The compiler sees that `AppError` has an `Io(IoError)` variant, so `?` on a `Result<_, IoError>` automatically wraps the error into `AppError.Io(e)`:
+When your error enum wraps another error type, `?` converts automatically:
 
 ```milo
 from "std/fs" import { readFile }
@@ -175,8 +131,8 @@ enum ParseError {
 }
 
 enum AppError {
-    Io(IoError),
-    Parse(ParseError),
+    Io(IoError),         // wraps IoError
+    Parse(ParseError),   // wraps ParseError
 }
 
 fn parseNum(text: string): Result<i32, ParseError> {

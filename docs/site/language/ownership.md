@@ -4,7 +4,7 @@ In most languages, memory bugs hide until production. In Milo, the compiler catc
 
 The idea is simple: **every value has one owner.** When you hand a value to someone else, you don't have it anymore. That's it. The compiler enforces this rule, and from it you get memory safety, no dangling pointers, and no data races — all at zero runtime cost.
 
-Two mechanisms make this work: moves (transferring ownership) and borrows (temporary, read-only access). Let's start with moves.
+Two mechanisms make this work: moves (transferring ownership) and borrows (temporary, read-only access).
 
 ## Moves
 

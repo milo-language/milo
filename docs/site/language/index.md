@@ -578,7 +578,7 @@ This example uses `Promise.blocking` for the producer, which runs it on a real s
 
 ## Modules and Packages
 
-Every import is explicit — you list exactly which symbols you're using. No wildcard imports, no ambiguity about where something comes from. This keeps code readable and makes it easy for both people and tools to understand dependencies at a glance.
+Every import is explicit. No wildcard imports, no ambiguity about where something comes from.
 
 ```milo skip
 // `lib/utils` is a module in the reader's own project — this shows the import FORM.
