@@ -268,6 +268,51 @@ still between head and tail before `free(buf)`. `promiseRace` losers follow. Gat
 
 ---
 
+## Lane B3: raw-pointer provenance, round 2 (found by WP5c)
+
+### WP11: pointer views join the one view list (closes five WP5c reds)
+
+WP8 tracked `ptr()` bindings in the freeze machinery; WP1 tracked for-in and slice
+bindings in the global walk. Two lists, same concept, five gaps between them. One rule:
+**a `*T` produced by `ptr()`/`cstr()` is an element view of its source for as long as
+any holder of it is live, and every check that asks "is a view of X live" asks one
+list.** The reduced programs (all zero `unsafe`, all ASan red at `1a52b6f0`):
+
+1. `let p = g.ptr(); writer()` where `writer` pushes to global `g` (h4-global-callee-push).
+   The writes summary already knows `writer` writes `g`; the global walk must see the
+   pointer holder as a view. Same fix closes 5.
+2. `growRead(v.ptr(), v)` with `v: &mut Vec<u8>` (h4-inline-alias). An inline `ptr()`
+   argument is a shared borrow of `v` for the call; call-site exclusivity must reject it
+   against a `&mut v` argument in the same call.
+3. `let p = v.ptr(); take(v); strlen(p)` (h4-ptr-then-move). WP8 allowed moves for the
+   FFI give leg. Narrow it: after the source is moved, the holder is dead; using it is
+   `'p' used after its source 'v' was moved`. Sole exception: the move target is
+   `forget` (the explicit "I own this now" spelling). The six giflib `store.push(v);
+   return p` sites either restructure or wrap the use in `unsafe` with a comment saying
+   `store` outlives the pointer; report which.
+4. `ps.push(v.ptr())` into `Vec<*u8>` (h4-ptr-in-vec). A `*T` flowing anywhere other
+   than directly into an extern call is a holder: a container it is pushed into, a
+   struct it is stored in (WP8 did this one), a user fn's by-value `*T` param (holder
+   for the call). Freeze the source while the holder lives. Remaining gap, documented
+   not fixed: a callee that stashes its `*T` param in a global.
+5. `Task.spawn(move() => { let p = g.ptr(); schedulerYield(); strlen(p) })`
+   (h3-ptr-park). Falls out of 1 once the `@parks` walk reads the same view list.
+
+Also in this package, because the gate is broken: `scripts/fuzz-ownership.ts`'s ASan
+self-check probe is now rejected by WP8 even inside `unsafe`, so the script exits 2 at
+startup. Replace the probe with the `strlen` heap-buffer-overflow probe `fuzz-tasks.ts`
+uses (or share it).
+
+Side findings from the reducer, fix if under ~30 lines each else backlog with repro:
+an empty `from "std/os" import { }` still brings every `std/os` name into scope;
+`pub fn main(): i32` with no `return` compiles.
+
+Done when: the five reduced programs are error tests, `fuzz:tasks --filter=h4 --n=60`
+and `--filter=h3-ptr-park` report zero red, `fuzz-ownership.ts` runs again, and
+`examples/ffi/giflib` type-checks (modulo its pre-existing `isNull` errors).
+
+---
+
 ## Lane D: prover
 
 ### WP6: builtin container model and honest verdicts (closes P1, P2)
