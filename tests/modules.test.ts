@@ -4,7 +4,7 @@
 // separately-compiled objects keep their own copies at link time (internal linkage).
 import { test, expect } from "bun:test";
 import { execSync, spawnSync } from "child_process";
-import { writeFileSync, mkdtempSync, mkdirSync, rmSync, existsSync } from "fs";
+import { writeFileSync, readFileSync, readdirSync, mkdtempSync, mkdirSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -340,18 +340,35 @@ fn main(): void {
 // tests: each module is fine alone. One program importing the whole hazard set catches
 // every such collision in a single compile, so this is the regression lock for the
 // module-prefixed helper names (_xxRotl, _sha1Rotl, _uuidHexValue, _httpHexValue, ...).
-test("the std modules with historically colliding private helpers import together", () => {
-  const imports = [
-    ["std/hex", "Hex"], ["std/http", "Param"], ["std/hmac", "Hmac"],
-    ["std/sha1", "Sha1"], ["std/sha256", "Sha256"], ["std/uuid", "Uuid"],
-    ["std/xxhash", "Xxhash"], ["std/process", "Process"], ["std/pty", "tiocgwinsz"],
-    ["std/crypto", "Crypto"], ["std/base64", "Base64"], ["std/json", "JsonNode"],
-  ];
-  const src = imports.map(([m, n]) => `from "${m}" import { ${n} }`).join("\n");
-  const main = write("std_flat_namespace.milo", `${src}\nfn main() { print("ok") }\n`);
-  const r = milo(`emit-ir ${main} -o /dev/null`);
+// Every std module in one program. Stage 4 of per-module namespaces scopes every private
+// std name to its module, so no two std modules can collide on a private helper any more;
+// this is the gate that says so for ALL of them, not the historical hazard set. Enumerated
+// from std/ so a new module joins the gate by existing. Platform arms collapse to their
+// base module (the resolver picks the host's arm); the prelude is imported implicitly.
+// Type-check only: the point is the merge, and linking every std module would also need
+// every native library std can bind (sqlite, tls, dl).
+test("every std module imports together in one program", () => {
+  const stdDir = join(import.meta.dir, "..", "std");
+  const modules = readdirSync(stdDir)
+    .filter(f => f.endsWith(".milo") && !/\.(darwin|linux|windows|wasm)\.milo$/.test(f) && f !== "prelude.milo")
+    .map(f => f.replace(/\.milo$/, ""))
+    .sort();
+  expect(modules.length).toBeGreaterThan(60);
+  const imports: string[] = [];
+  for (const m of modules) {
+    // The first `pub` declaration is the import; a module with none has no surface to
+    // import and is listed so the gate cannot silently stop covering it.
+    const src = readFileSync(join(stdDir, `${m}.milo`), "utf-8");
+    const pub = src.match(/^pub (?:fn|struct|enum|trait|interface|type|var|let) ([A-Za-z_][A-Za-z0-9_]*)/m);
+    expect(`${m}: ${pub?.[1] ?? "NO PUB DECL"}`).not.toContain("NO PUB DECL");
+    imports.push(`from "std/${m}" import { ${pub![1]} }`);
+  }
+  const main = write("std_all_modules.milo", `${imports.join("\n")}\nfn main() { print("ok") }\n`);
+  const r = milo(`check ${main}`);
+  // Only these two are collisions; a warning (unused import) is expected and fine.
   expect(r.err).not.toContain("defined in two modules");
-  expect(r.code).toBe(0);
+  expect(r.err).not.toContain("is defined as a");
+  expect(`${r.code} ${r.err.split("\n").filter(l => l.includes("error")).join(" | ")}`).toBe("0 ");
 });
 
 // Per-module namespaces, stage 1 (docs/plans/module-namespaces.md). A private helper is
