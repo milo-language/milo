@@ -99,8 +99,8 @@ Three traps in the paths above:
 
 ### Marketing copy lives in five places
 
-The tagline is **"A memory-safe systems language that guides you to correct, readable
-programs."** Changing it means changing all four places that carry it. Note the last entry is
+The tagline is **"A memory-safe systems language with second-class references: no
+lifetimes, no GC, one owner per value."** Changing it means changing all four places that carry it. Note the last entry is
 GitHub metadata, not a file, so grep will never find it:
 
 1. `README.md` (this repo)

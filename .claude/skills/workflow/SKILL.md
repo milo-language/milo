@@ -15,7 +15,7 @@ Load and follow `AGENT_WORKFLOW.md` (repo root) for this task. It is the canonic
    - **Plan** → write it in the worksheet, terse, end with open questions. Gate: `scripts/agent_review.sh plan`.
    - **Implement** → match `CONVENTIONS.md`; camelCase milo; feature = checker+lower+codegen+formatter+LSP; write targeted tests as you go.
    - **Run (mandatory)** → compile+run real fixtures/examples; `bun test`; `/verify`. Never claim done unrun.
-   - **Review** → `scripts/agent_review.sh implementation` (different model, personas) + `/code-review`, then the **ethos review**: argue the change is wrong against "a memory-safe systems language that guides you to correct, readable programs" — what spelling slips past it, what the user sees when they get it wrong, where it fails open. Record the strongest objection and your answer. See AGENT_WORKFLOW.md §5.
+   - **Review** → `scripts/agent_review.sh implementation` (different model, personas) + `/code-review`, then the **ethos review**: argue the change is wrong against "memory-safe, second-class references, guides you, correct, readable" — what spelling slips past it, what the user sees when they get it wrong, where it fails open. Record the strongest objection and your answer. See AGENT_WORKFLOW.md §5.
    - **Wrap-up** → full `bun test` + benchmarks; update stale docs (bump `last-verified`); commit worksheet + feedback with the code; tag `git tag ws/<slug>`.
 
 ## The one rule

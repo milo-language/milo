@@ -315,7 +315,7 @@ const rootSidebar = [
 
 export default defineConfig({
   title: 'Milo',
-  description: 'A memory-safe systems language that guides you to correct, readable programs',
+  description: 'A memory-safe systems language with second-class references: no lifetimes, no GC, one owner per value',
 
   base: '/milo/',
   appearance: 'dark',

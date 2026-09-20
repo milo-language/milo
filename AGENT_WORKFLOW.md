@@ -53,8 +53,9 @@ If it failed, say so with the output. Skipped a step? Say that. No hedging when 
 
 #### Ethos review — argue the change is wrong
 
-Milo is **a memory-safe systems language that guides you to correct, readable
-programs.** A change can pass every test and still work against that sentence.
+Milo is **a memory-safe systems language with second-class references**, and it
+exists to guide you to correct, readable programs. A change can pass every test
+and still work against those five words.
 So before wrap-up, take the change's side away from yourself and make the case
 *against* it, out loud, on each clause. Answer with evidence from the diff, not
 intent — "I meant it to" is not an answer.
@@ -66,6 +67,10 @@ intent — "I meant it to" is not an answer.
   a check that matched one shape while the same operation spelled another way
   walked past it. A rule that cannot be stated as a property of the program —
   only as a list of cases — is the smell.
+- **second-class references** — does this give a reference a place to hide? A
+  return, a field, a capture, a global held across a park, a builtin that hands
+  back a view: name the spelling and show the checker still ends the borrow at
+  the call.
 - **guides you** — when a user gets this wrong, what do they see? A diagnostic
   naming the cause and a fix is guidance. An LLVM verifier error, a silent
   fallback to a plausible-looking value, garbage output, or a crash with no
