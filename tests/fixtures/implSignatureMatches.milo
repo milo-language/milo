@@ -1,0 +1,82 @@
+// @expect: 7
+// @expect: made 3 gone 3
+// @expect: 3
+// @expect: 0
+
+// The by-reference form of H7's operator impl: `+` borrows both operands, the body
+// reads real fields, and every Res is dropped exactly once.
+var made: i64 = 0
+var gone: i64 = 0
+
+struct Res {
+    n: i64
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        gone = gone + 1
+    }
+}
+
+fn mk(n: i64): Res {
+    made = made + 1
+    return Res {
+        n: n
+    }
+}
+
+impl Add for Res {
+    fn add(self: &Self, other: &Self): Self {
+        return mk(self.n + other.n)
+    }
+}
+
+// A generic impl is checked per instantiation with Self substituted, and a container
+// blanket impl's Self is the container itself.
+trait Merge {
+    fn merge(self: &Self, other: &Self): i64
+}
+
+struct Box<T> {
+    v: T
+}
+
+impl Merge for Box<T> {
+    fn merge(self: &Self, other: &Self): i64 {
+        return self.v + other.v
+    }
+}
+
+impl Merge for Vec<T> {
+    fn merge(self: &Self, other: &Self): i64 {
+        return self.len + other.len
+    }
+}
+
+fn report(): void {
+    print("made " + made.toString() + " gone " + gone.toString())
+}
+
+fn sum(): void {
+    var v: Vec<Res> = Vec.new()
+    v.push(mk(3))
+    v.push(mk(4))
+    let r = v[0] + v[1]
+    print(r.n)
+}
+
+fn main(): i32 {
+    sum()
+    report()
+    let a = Box {
+        v: 1
+    }
+    let b = Box {
+        v: 2
+    }
+    print(a.merge(b))
+    let xs: Vec<i64> = Vec.new()
+    let ys: Vec<i64> = Vec.new()
+    print(xs.merge(ys))
+    return 0
+}

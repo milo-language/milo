@@ -1,0 +1,17 @@
+// @error: 'scale' in 'impl Scale for Pt' takes 3 parameter(s); the trait 'Scale' declares 2
+
+trait Scale {
+    fn scale(self: &Self, k: i64): i64
+}
+
+struct Pt { x: i64 }
+
+impl Scale for Pt {
+    fn scale(self: &Self, k: i64, extra: i64): i64 { return self.x * k + extra }
+}
+
+fn main(): i32 {
+    let p = Pt { x: 2 }
+    print(p.scale(3, 1))
+    return 0
+}

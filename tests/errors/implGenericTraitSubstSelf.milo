@@ -1,0 +1,20 @@
+// @error: 'merge' in 'impl Merge for Box<i64>' takes 'other: &Box<string>'; the trait 'Merge' declares 'other: &Self'
+
+// `Self` on the trait side is the instantiated type: the generic impl over `Box<T>` is
+// checked once per instantiation, and `Box<string>` is not `Self` when Self is `Box<i64>`.
+trait Merge {
+    fn merge(self: &Self, other: &Self): i64
+}
+
+struct Box<T> { v: T }
+
+impl Merge for Box<T> {
+    fn merge(self: &Self, other: &Box<string>): i64 { return other.v.len }
+}
+
+fn main(): i32 {
+    let a = Box { v: 1 }
+    let b = Box { v: "hi" }
+    print(a.merge(b))
+    return 0
+}

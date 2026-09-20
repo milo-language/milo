@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-19 (@parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-20 (impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -2173,6 +2173,13 @@ impl Eq for Point {
     }
 }
 ```
+
+Each method in an `impl` must match the trait's declaration exactly once `Self` is the
+implementing type: receiver mode (`&Self` vs `&mut Self`), parameter count, every
+parameter's type and reference mode, and the return type. A method is only ever called
+through the trait's signature (`a + b` borrows both operands because `Add.add` says
+`&Self`), so `fn add(self: Res, other: Res)` is rejected rather than run with the wrong
+calling convention.
 
 ### Default Methods
 

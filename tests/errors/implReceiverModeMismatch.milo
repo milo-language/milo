@@ -1,0 +1,17 @@
+// @error: 'bump' in 'impl Counter for Tally' takes 'self: &Tally' by shared reference; the trait 'Counter' declares 'self: &mut Self'
+
+trait Counter {
+    fn bump(self: &mut Self): void
+}
+
+struct Tally { n: i64 }
+
+impl Counter for Tally {
+    fn bump(self: &Self): void { print(self.n) }
+}
+
+fn main(): i32 {
+    var t = Tally { n: 0 }
+    t.bump()
+    return 0
+}

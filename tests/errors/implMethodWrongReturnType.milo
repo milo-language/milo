@@ -1,0 +1,21 @@
+// @error: 'area' in 'impl Shape for Sq' returns 'i64'; the trait 'Shape' declares 'f64'
+
+trait Shape {
+    fn area(self: &Self): f64
+}
+
+struct Sq { side: i64 }
+
+impl Shape for Sq {
+    fn area(self: &Self): i64 { return self.side * self.side }
+}
+
+fn total<T: Shape>(s: &T): f64 {
+    return s.area()
+}
+
+fn main(): i32 {
+    let s = Sq { side: 3 }
+    print(total(s))
+    return 0
+}

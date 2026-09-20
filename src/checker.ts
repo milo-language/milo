@@ -3,7 +3,7 @@
 // if codegen can reach an invalid state, this file missed it.
 import { attributesFor } from "./attributes";
 import { walkExprs } from "./safety";
-import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl, MatchArm, Attribute, GlobalDecl } from "./ast";
+import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl, TraitMethod, MatchArm, Attribute, GlobalDecl } from "./ast";
 import { simpleType, declaredType, floatNamespaceConst } from "./ast";
 import type { TypeKind } from "./types";
 import { typeFromAst, typeEq, typeName, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
@@ -398,6 +398,11 @@ interface TraitMethodInfo {
   params: { name: string; type: TypeKind }[];
   ret: TypeKind;
   hasDefault: boolean;
+  // The declaration as written, kept so an impl can be checked against it with `Self`
+  // substituted BEFORE resolution: `Option<Self>` resolves to a monomorphized name that
+  // no TypeKind-level substitution can reach. Absent for the built-in traits, whose
+  // signatures mention `Self` only bare or behind one `&`.
+  decl?: TraitMethod;
 }
 
 interface TraitInfo {
@@ -554,6 +559,8 @@ export class TypeChecker {
   private traitImpls = new Map<string, ImplInfo[]>();
   private inherentImpls = new Map<string, ImplInfo>();
   private genericImpls = new Map<string, { impl: import("./ast").ImplDecl; program: Program }[]>();
+  // Mangled container-impl name (`Vec_i64`) -> the container type it stands for; see selfTypeOf.
+  private containerSelfType = new Map<string, MiloType>();
   // Methods carrying their OWN type parameters (`fn map<R>(…)`), keyed `Type$method`.
   //
   // These cannot be registered as a concrete signature the way every other method is: `R`
@@ -2929,7 +2936,7 @@ export class TypeChecker {
       for (const m of t.methods) {
         const params = m.params.map(p => ({ name: p.name, type: this.resolve(declaredType(p)) }));
         const ret = this.resolve(m.retType);
-        methods.set(m.name, { params, ret, hasDefault: m.body !== null });
+        methods.set(m.name, { params, ret, hasDefault: m.body !== null, decl: m });
       }
       this.traits.set(t.name, { name: t.name, supertraits: t.supertraits, methods });
     }
@@ -3909,10 +3916,75 @@ export class TypeChecker {
     }
   }
 
-  private substituteSelfInMiloType(ty: MiloType, concreteName: string): MiloType {
-    if (ty.name === "Self") return { ...ty, name: concreteName };
-    if (ty.typeArgs) return { ...ty, typeArgs: ty.typeArgs.map(a => this.substituteSelfInMiloType(a, concreteName)) };
+  // An impl method is only ever called through the TRAIT's signature: `a + b` passes both
+  // operands by reference because `Add.add` says `&Self`, `Drop.drop` is handed `&mut Self`,
+  // a `<T: Trait>` call site borrows exactly what the trait declares. So an impl that spells
+  // a parameter differently is not a looser contract, it is a body reading the wrong bytes:
+  // `add(self: Res, other: Res)` read a pointer as a struct and then dropped it (H7).
+  // Compare receiver mode, arity, every parameter's type and reference mode, and the
+  // return type, with `Self` substituted for the implementing type on the trait side.
+  private checkImplMethodSignature(
+    impl: import("./ast").ImplDecl, m: Function, trait: TraitInfo, traitMethod: TraitMethodInfo,
+    implParams: { name: string; type: TypeKind }[], implRet: TypeKind,
+  ): void {
+    // A method with its own type parameters is a template on both sides; there is no
+    // concrete signature to compare until it is instantiated.
+    if (m.typeParams && m.typeParams.length > 0) return;
+    const typeName = impl.typeName;
+    const where = `'${m.name}' in 'impl ${impl.traitName} for ${this.demangle(typeName)}'`;
+    const sp = m.span ?? impl.span;
+    const selfMilo = this.selfTypeOf(typeName);
+    const substSelf = (t: MiloType) => this.substituteSelfInMiloType(t, selfMilo.name, selfMilo.typeArgs);
+    const expected = traitMethod.decl
+      ? {
+          params: traitMethod.decl.params.map(p => ({ name: p.name, type: this.resolve(substSelf(declaredType(p))) })),
+          ret: this.resolve(substSelf(traitMethod.decl.retType)),
+        }
+      : (() => {
+          const selfTy = this.resolve(selfMilo);
+          const subst = (t: TypeKind): TypeKind =>
+            t.tag === "struct" && t.name === "Self" ? selfTy
+            : t.tag === "ref" ? { ...t, inner: subst(t.inner) }
+            : t;
+          return { params: traitMethod.params.map(p => ({ name: p.name, type: subst(p.type) })), ret: subst(traitMethod.ret) };
+        })();
+    // The signature as the trait spells it, which is also what the impl should write.
+    const declared = `fn ${m.name}(${traitMethod.params.map(p => `${p.name}: ${this.show(p.type)}`).join(", ")}): ${this.show(traitMethod.ret)}`;
+    const hint = `the trait's signature is '${declared}'; write it that way in the impl`;
+    if (implParams.length !== expected.params.length) {
+      this.error(`${where} takes ${implParams.length} parameter(s); the trait '${trait.name}' declares ${expected.params.length}`, sp, hint);
+      return;
+    }
+    for (let i = 0; i < implParams.length; i++) {
+      const got = implParams[i]!.type;
+      const want = expected.params[i]!.type;
+      if (typeEq(got, want)) continue;
+      const mode =
+        got.tag !== "ref" && want.tag === "ref" ? " by value"
+        : got.tag === "ref" && want.tag !== "ref" ? " by reference"
+        : got.tag === "ref" && want.tag === "ref" && got.mutable !== want.mutable ? (got.mutable ? " by mutable reference" : " by shared reference")
+        : "";
+      const traitParam = traitMethod.params[i]!;
+      this.error(`${where} takes '${implParams[i]!.name}: ${this.show(got)}'${mode}; the trait '${trait.name}' declares '${traitParam.name}: ${this.show(traitParam.type)}'`, sp, hint);
+      return;
+    }
+    if (!typeEq(implRet, expected.ret)) {
+      this.error(`${where} returns '${this.show(implRet)}'; the trait '${trait.name}' declares '${this.show(traitMethod.ret)}'`, sp, hint);
+    }
+  }
+
+  private substituteSelfInMiloType(ty: MiloType, concreteName: string, typeArgs?: MiloType[]): MiloType {
+    if (ty.name === "Self") return { ...ty, name: concreteName, ...(typeArgs && { typeArgs }) };
+    if (ty.typeArgs) return { ...ty, typeArgs: ty.typeArgs.map(a => this.substituteSelfInMiloType(a, concreteName, typeArgs)) };
     return ty;
+  }
+
+  // What `Self` spells inside `impl Trait for <typeName>`. A blanket impl over a builtin
+  // container is registered under a mangled name (`Vec_i64`) that resolves to nothing;
+  // its real type is the container instantiation recorded by instantiateContainerImpl.
+  private selfTypeOf(typeName: string): MiloType {
+    return this.containerSelfType.get(typeName)
+      ?? { name: typeName, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
   }
 
   private isExternStructType(ty: TypeKind): boolean {
@@ -5567,6 +5639,7 @@ export class TypeChecker {
         };
         const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
         const ret = this.resolve(concreteFn.retType);
+        this.checkImplMethodSignature(impl, m, trait, traitMethod, params, ret);
         this.functions.set(mangled, { params, ret, variadic: false });
         methods.set(m.name, { params, ret, variadic: false });
         this.monomorphizedFns.push(concreteFn);
@@ -5712,8 +5785,11 @@ export class TypeChecker {
       // container shape at all (`impl T for HashMap<K>` on a two-parameter map), and
       // substituting anyway would bind the wrong positions silently.
       if (names.length !== args.length) continue;
-      // The receiver keeps its real container type: `self: &Self` on a `Vec<T>` impl must
-      // stay a Vec, not become the mangled struct name, or the body cannot index it.
+      // `Self` keeps its real container type: `self: &Self` on a `Vec<T>` impl must stay
+      // a Vec, not become the mangled struct name, or the body cannot index it. Every
+      // position gets the same treatment, so `other: &Self` is the Vec too.
+      const selfMilo: MiloType = { name: container, typeArgs: argsMilo, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+      this.containerSelfType.set(concreteName, selfMilo);
       const concreteImpl: import("./ast").ImplDecl = {
         kind: "ImplDecl",
         traitName: gi.traitName,
@@ -5725,9 +5801,9 @@ export class TypeChecker {
             name: p.name,
             type: p.name === "self"
               ? { name: container, typeArgs: argsMilo, isPtr: false, isRef: true, isRefMut: false, isArray: false, arraySize: null }
-              : this.substituteMiloType(declaredType(p), names, args),
+              : this.substituteSelfInMiloType(this.substituteMiloType(declaredType(p), names, args), container, argsMilo),
           })),
-          retType: this.substituteMiloType(m.retType, names, args),
+          retType: this.substituteSelfInMiloType(this.substituteMiloType(m.retType, names, args), container, argsMilo),
           body: this.substituteBody(m.body, names, args),
         })),
         span: gi.span,

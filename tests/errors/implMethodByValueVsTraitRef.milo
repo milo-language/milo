@@ -1,0 +1,30 @@
+// @error: 'add' in 'impl Add for Res' takes 'self: Res' by value; the trait 'Add' declares 'self: &Self'
+
+// H7: `a + b` hands both operands to `add` by reference because that is what the
+// trait declares. A by-value impl read a pointer as a struct and then dropped it.
+var made: i64 = 0
+var gone: i64 = 0
+
+struct Res { n: i64 }
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void { gone = gone + 1 }
+}
+
+fn mk(n: i64): Res {
+    made = made + 1
+    return Res { n: n }
+}
+
+impl Add for Res {
+    fn add(self: Res, other: Res): Res { return mk(self.n + other.n) }
+}
+
+fn main(): i32 {
+    var v: Vec<Res> = Vec.new()
+    v.push(mk(3))
+    v.push(mk(4))
+    let r = v[0] + v[1]
+    print(r.n)
+    return 0
+}
