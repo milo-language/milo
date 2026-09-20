@@ -1379,6 +1379,64 @@ pub fn isLocalCallableFn(ck: &Checker, name: &string): bool {
     }
 }
 
+// The explicit-`&mut` rule (docs/plans/local-reasoning-2026-09.md, track A): an argument
+// bound to a `&mut T` parameter is written `&mut x`, and `&mut` is written nowhere else.
+// The parser dropped the marker from the tree and recorded the node (ast.milo
+// isExplicitMut), so this is the one place the spelling is judged. Receivers never reach
+// here: every method loop starts at params[1]. Texts match src/checker.ts, which is what
+// tests/errors pins.
+pub fn checkExplicitMut(ck: &mut Checker, arg: &ExprNode, callee: &string, paramType: &TypeKind) {
+    var mutable = false
+    match paramType {
+        TypeKind.TRef(inner, m) => {
+            mutable = m
+        }
+        _ => {
+        }
+    }
+    let written = isExplicitMut(arg.id)
+    if mutable && !written {
+        let text = describeArg(arg)
+        errorHint(&mut ck, "argument '" + text.clone() + "' is passed to a '&mut' parameter without '&mut'", "write '" + callee.clone() + "(... &mut " + text.clone() + " ...)'; run 'bun scripts/explicit-mut.ts <file>' to rewrite the file", cloneSpan(arg.span))
+    }
+    if !mutable && written {
+        error(&mut ck, "'&mut' on an argument to a '" + typeName(paramType) + "' parameter of '" + callee.clone() + "'; only a '&mut' parameter takes '&mut'", cloneSpan(arg.span))
+    }
+}
+
+// The argument as the diagnostic names it; mirrors describeExpr in src/checker.ts.
+pub fn describeArg(e: &ExprNode): string {
+    match e.kind {
+        Expr.Ident(name) => {
+            return name.clone()
+        }
+        Expr.IntLit(val) => {
+            return val.toString()
+        }
+        Expr.UnaryOp(op, operand) => {
+            if op == "*" {
+                return "*" + describeArg(*operand)
+            }
+            return "<expr>"
+        }
+        Expr.FieldAccess(obj, field) => {
+            return describeArg(*obj) + "." + field.clone()
+        }
+        Expr.IndexAccess(obj, idx) => {
+            return describeArg(*obj) + "[...]"
+        }
+        Expr.MethodCall(obj, method, margs) => {
+            if method == "slice" {
+                return describeArg(*obj) + "[..]"
+            }
+            return describeArg(*obj) + "." + method.clone() + "(...)"
+        }
+        _ => {
+            return "<expr>"
+        }
+    }
+}
+
 pub fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<ExprNode>>, typeArgs: &Vec<MiloType>, span: &Option<Span>): TypeKind {
     // Static method on an instantiated generic type: Type<Args>.method(...)
     var dotIdx: i64 = -1
@@ -1589,6 +1647,7 @@ pub fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<ExprNode>>, ty
                         var i: i64 = 0
                         while i < args.len && i < params.len {
                             let argType = checkExpr(&mut ck, *args[i])
+                            checkExplicitMut(&mut ck, *args[i], func, params[i])
                             // a &T param auto-borrows a T argument, like a normal call
                             var pMatch = typeEq(params[i], argType) || typeEq(argType, tyUnknown())
                             if !pMatch {
@@ -1863,6 +1922,7 @@ pub fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<ExprNode>>, ty
         ck.expectedType = Option.Some(hint)
         let argType = checkExpr(&mut ck, *args[i])
         ck.expectedType = Option.None
+        checkExplicitMut(&mut ck, *args[i], func, paramType)
         match paramType {
             TypeKind.TRef(inner, mutable) => {
                 // interface coercion: a concrete struct implementing interface `inner`
@@ -2819,6 +2879,7 @@ pub fn checkGenericCall(ck: &mut Checker, func: &string, args: &Vec<Heap<ExprNod
     var inferred: HashMap<string, TypeKind> = HashMap.new()
     for i in 0..args.len {
         let argType = checkExpr(&mut ck, *args[i])
+        checkExplicitMut(&mut ck, *args[i], func, declParams[i])
         inferInto(generic.typeParams, declParams[i], argType, &mut inferred)
         // Also try AST-driven inference, which recovers T from user-generic args
         // (`&Arena<T>`) that typeFromAst flattened for inferInto.
@@ -3623,6 +3684,26 @@ fn isSliceCombinator(m: &string): bool {
 }
 
 pub fn checkMethodCall(ck: &mut Checker, obj: &ExprNode, method: &string, args: &Vec<Heap<ExprNode>>, span: &Option<Span>): TypeKind {
+    // Receivers borrow implicitly (decision 1 in docs/plans/local-reasoning-2026-09.md):
+    // `(&mut v).push(1)` reports once and is then checked as `v.push(1)`, as src/checker.ts
+    // does by stripping the marker in place.
+    match obj.kind {
+        Expr.UnaryOp(op, operand) => {
+            if op == "&mut" {
+                var shown = ""
+                for i in 0..args.len {
+                    if i > 0 {
+                        shown = shown + ", "
+                    }
+                    shown = shown + describeArg(*args[i])
+                }
+                error(&mut ck, "'&mut' is implicit on a method receiver; write '" + describeArg(*operand) + "." + method.clone() + "(" + shown + ")'", cloneSpan(obj.span))
+                return checkMethodCall(&mut ck, *operand, method, args, span)
+            }
+        }
+        _ => {
+        }
+    }
     var objType = checkExpr(&mut ck, obj)
     // auto-deref references
     match objType.clone() {
@@ -4911,6 +4992,7 @@ pub fn checkStructMethod(ck: &mut Checker, obj: &ExprNode, structName: &string, 
             while i < args.len && (i + 1) < sig.params.len {
                 let argType = checkExpr(&mut ck, *args[i])
                 let paramType = sig.params[i + 1].ty
+                checkExplicitMut(&mut ck, *args[i], method, paramType)
                 // display name computed BEFORE the match: the TRef arm moves the
                 // inner Heap out, leaving `paramType` zeroed (same hazard as the
                 // free-function path above)

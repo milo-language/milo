@@ -163,6 +163,34 @@ pub fn freshExprId(): u32 {
     return nextExprId
 }
 
+// Which argument nodes were written `&mut x`. The parser drops the marker from the tree
+// (so lowering and codegen see the bare form the ABI wants) and records the node here;
+// the checker reads it to enforce the explicit-`&mut` rule. Indexed by expression id, so
+// every path that gives a node a new id (Clone, renameExpr, substExpr) has to carry the
+// mark across with copyExplicitMut, or an argument inside an instantiated generic body
+// would be reported as bare.
+var explicitMutIds: Vec<bool> = Vec.new()
+
+pub fn markExplicitMut(id: u32) {
+    while explicitMutIds.len <= (id as i64) {
+        explicitMutIds.push(false)
+    }
+    explicitMutIds[id as i64] = true
+}
+
+pub fn isExplicitMut(id: u32): bool {
+    if (id as i64) >= explicitMutIds.len {
+        return false
+    }
+    return explicitMutIds[id as i64]
+}
+
+pub fn copyExplicitMut(from: u32, to: u32) {
+    if isExplicitMut(from) {
+        markExplicitMut(to)
+    }
+}
+
 // An expression, its identity, and where it came from. `kind` holds the syntax;
 // nothing else may carry a span, or the two can disagree about the same node.
 pub struct ExprNode {
@@ -572,8 +600,10 @@ impl Clone for ExprNode {
         // (monomorphization instantiating a generic body, renameExpr, derive-generated
         // code) wants a fresh subtree, never an alias. There is no caller that wants the
         // id preserved, so this is the safe direction to fail in.
+        let id = freshExprId()
+        copyExplicitMut(self.id, id)
         return ExprNode {
-            id: freshExprId(), kind: self.kind.clone(), span: cloneSpan(self.span)
+            id: id, kind: self.kind.clone(), span: cloneSpan(self.span)
         }
     }
 }
@@ -767,7 +797,9 @@ impl Clone for Stmt {
 pub fn renameExprs(v: &Vec<Heap<ExprNode>>, from: &string, to: &string): Vec<Heap<ExprNode>> {
     var out: Vec<Heap<ExprNode>> = Vec.new()
     for i in 0..v.len {
-        out.push((renameExpr(*v[i], from, to)))
+        let n = renameExpr(*v[i], from, to)
+        copyExplicitMut((*v[i]).id, (*n).id)
+        out.push(n)
     }
     return out
 }

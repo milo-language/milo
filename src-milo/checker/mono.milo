@@ -281,7 +281,9 @@ pub fn substOptType(t: &Option<MiloType>, tps: &Vec<string>, tas: &Vec<TypeKind>
 pub fn substExprs(v: &Vec<Heap<ExprNode>>, tps: &Vec<string>, tas: &Vec<TypeKind>): Vec<Heap<ExprNode>> {
     var out: Vec<Heap<ExprNode>> = Vec.new()
     for i in 0..v.len {
-        out.push(substExpr(*v[i], tps, tas))
+        let n = substExpr(*v[i], tps, tas)
+        copyExplicitMut((*v[i]).id, (*n).id)
+        out.push(n)
     }
     return out
 }

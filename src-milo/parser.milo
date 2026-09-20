@@ -1353,17 +1353,19 @@ pub fn parseMultiplicative(p: &mut Parser): Heap<ExprNode> {
     return left
 }
 
-// A call argument: `&mut x` is the explicit mutable-borrow marker and is dropped here,
-// so the checker, lowering and codegen see the argument exactly as the bare form. The
-// TS checker also diagnoses `&mut` on a parameter that is not `&mut T`; milo-self
-// accepts it silently (the TS compiler is the oracle for error programs). The operand
-// is a unary expression, as in src/parser.ts, so `&mut x + 1` is a parse error rather
-// than a borrow of a sum.
+// A call argument: `&mut x` is the explicit mutable-borrow marker. It is dropped from
+// the tree here, so lowering and codegen see the argument exactly as the bare form, and
+// the node is recorded in ast.milo's explicit-mut registry for the checker, which
+// rejects a bare argument to a `&mut` parameter and a `&mut` on any other parameter
+// (checkExplicitMut). The operand is a unary expression, as in src/parser.ts, so
+// `&mut x + 1` is a parse error rather than a borrow of a sum.
 pub fn parseArg(p: &mut Parser): Heap<ExprNode> {
     if at(p, TokKind.Amp) && peekN(p, 1).kind == TokKind.Mut {
         advance(&mut p)
         advance(&mut p)
-        return parseUnary(&mut p)
+        let node = parseUnary(&mut p)
+        markExplicitMut((*node).id)
+        return node
     }
     return parseExpr(&mut p)
 }
