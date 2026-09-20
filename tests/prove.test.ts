@@ -2,6 +2,13 @@
 // → prove-milo.ts linearization → std/smt native solver → verdict counts. Each
 // fixture in tests/prove/ annotates the expected proven/failed/unknown tallies;
 // the driver runs the default (std/smt) engine and asserts the report matches.
+//
+// A fixture that also carries `// @expect:` lines is built with `--debug` and RUN, and its
+// stdout must match line for line. `--debug` turns every contract into a runtime assert,
+// so the same clauses the prover reasoned about are checked against real execution: a
+// `proven` clause the machine violates, or a runtime-true clause the prover refutes, both
+// fail here. That is the oracle for facts the prover ASSUMES about the runtime rather than
+// proves: the builtin container contracts in verify.ts, above all.
 import { test, expect, describe, beforeAll } from "bun:test";
 import { readdirSync, readFileSync, mkdtempSync } from "fs";
 import { execSync } from "child_process";
@@ -51,6 +58,16 @@ describe("prove (std/smt engine)", () => {
       if (eProven !== null) expect(proven).toBe(eProven);
       if (eFailed !== null) expect(failed).toBe(eFailed);
       if (eUnknown !== null) expect(unknown).toBe(eUnknown);
+
+      const expected = [...src.matchAll(/\/\/\s*@expect:\s?(.*)$/gm)].map(x => x[1]!.trimEnd());
+      if (expected.length === 0) return;
+      const bin = join(TOOL_DIR, file.replace(".milo", ""));
+      const build = await guardedRun(MILOC, ["build", join(PROVE_DIR, file), "--debug", "-o", bin], { env: CHILD_ENV, virtualMemMb: 8192 });
+      if (build.code !== 0) throw new Error(`build failed for ${file}:\n${build.stderr}`);
+      const ran = await guardedRun(bin, [], { env: CHILD_ENV });
+      // A violated contract aborts, and an abort is exactly the disagreement this exists to catch.
+      expect(`${file}: exit ${ran.code}\n${ran.stderr}`).toBe(`${file}: exit 0\n`);
+      expect(ran.stdout.trimEnd().split("\n")).toEqual(expected);
     }, 120000);
   }
 });

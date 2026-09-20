@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, statSync, renameSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { VerifyResult, ProveResult, SolverResult } from "./verify";
-import { untranslatable, untranslatableDetail } from "./verify";
+import { untranslatable, untranslatableDetail, unreproducibleCounterexample } from "./verify";
 import { must } from "./must";
 
 // ---- S-expression parser ----
@@ -387,11 +387,12 @@ export function proveWithMilo(result: VerifyResult): ProveResult {
         const vc = result.conditions[p.index];
         const v = verdicts.get(k);
         if (v?.verdict === "proven") results[p.index] = { vc, status: "proven" };
-        // A counterexample that leans on an invented call value is not reproducible — the
-        // solver chose a return the callee may never produce. Report what is actually
-        // known instead of a refutation nobody can act on (see `opaqueCalls`).
-        else if (v?.verdict === "violated" && vc.opaqueCalls?.length) {
-          results[p.index] = { vc, status: "unknown", detail: `the value of ${vc.opaqueCalls.map(n => `'${n}'`).join(", ")} is unconstrained — it is @pure but declares no 'ensures', so any counterexample here is not reproducible` };
+        // A counterexample that leans on a value nothing constrains (an invented call
+        // result, a contract-less havoc) is not reproducible: the solver chose a state the
+        // program may never reach. Report what is actually known instead of a refutation
+        // nobody can act on (see `opaqueCalls` / `unconstrainedHavocs`).
+        else if (v?.verdict === "violated" && unreproducibleCounterexample(vc)) {
+          results[p.index] = { vc, status: "unknown", detail: unreproducibleCounterexample(vc)! };
         }
         else if (v?.verdict === "violated") results[p.index] = { vc, status: "failed", detail: counterexampleDetail(p.vars, v.witness) };
         else if (v?.verdict === "unknown") results[p.index] = { vc, status: "unknown", detail: "no integer witness (rational-only)" };

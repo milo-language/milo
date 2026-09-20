@@ -1,0 +1,54 @@
+// @proven: 4
+// @failed: 2
+// @unknown: 0
+// Builtin container methods carry a contract (BUILTIN_CONTRACTS in verify.ts), so a
+// postcondition about `len` across a `push` is decided, not guessed. Before the table, the
+// call havoced `v` and `push1` was REFUTED with `v_len__mut1 = 0`, a counterexample for a
+// state no Vec can reach after a push, reported as `failed` instead of `unknown`.
+//
+// `bad` and `plusTwo` are the other half: with the contract in hand, a wrong postcondition
+// is refuted with a REAL counterexample (two pushes add 2, one push adds 1), which is what
+// distinguishes a model from a havoc.
+//
+// Count: push1's and callsPush1's postconditions, push1's `requires x > 0` at the call in
+// callsPush1 and at the call in main. bad and plusTwo are the two refutations. No
+// `@expect` lines on purpose: the refuted contracts abort a `--debug` run, which is the
+// point of them.
+fn push1(v: &mut Vec<i64>, x: i64): void
+requires x > 0
+ensures v.len == old(v.len) + 1
+{
+    v.push(x)
+}
+
+fn bad(v: &mut Vec<i64>): void
+ensures v.len == old(v.len) + 1
+{
+    v.push(1)
+    v.push(2)
+}
+
+fn plusTwo(v: &mut Vec<i64>): void
+ensures v.len == old(v.len) + 2
+{
+    v.push(1)
+}
+
+fn callsPush1(v: &mut Vec<i64>): void
+ensures v.len == old(v.len) + 1
+{
+    push1(v, 3)
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    push1(v, 3)
+    print(v.len)
+    bad(v)
+    print(v.len)
+    plusTwo(v)
+    print(v.len)
+    callsPush1(v)
+    print(v.len)
+    return 0
+}

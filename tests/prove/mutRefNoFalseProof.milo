@@ -1,6 +1,6 @@
 // @proven: 0
-// @failed: 1
-// @unknown: 0
+// @failed: 0
+// @unknown: 1
 // Soundness: a mutation the symbolic walker cannot see must make the value UNKNOWN,
 // never leave it at its stale pre-call value.
 //
@@ -11,8 +11,11 @@
 //
 // Now every name reaching a `&mut`/`*mut` parameter (and every method-call receiver, since
 // resolving `&mut self` needs checker tables this pass doesn't have) is havoced at the
-// call, so `result == 0` is refuted as it should be. The expected verdict here is FAILED,
-// not proven: a counterexample is the correct answer.
+// call. `bump` has no contract, so the post-call `x` is a free variable and the verdict is
+// UNKNOWN: not proven (the false proof this pins), and not `failed` either, because a
+// model over a free variable is not a counterexample anyone can reproduce (see
+// `unconstrainedHavocs` in verify.ts). Give bump an `ensures` and the same clause is
+// refuted with a real one: tests/prove/builtinPushFrame.milo.
 fn bump(n: &mut i64): void {
     n = n + 100
 }

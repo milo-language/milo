@@ -1,0 +1,233 @@
+// @proven: 26
+// @failed: 0
+// @unknown: 0
+// One function per entry of the builtin contract table (BUILTIN_CONTRACTS_SRC in
+// src/verify.ts), each stating as its own `ensures` exactly what the table assumes. The
+// prover proves each from the table; the `@expect` lines make the driver also BUILD this
+// file with `--debug` and run it, which checks the same clauses against the real runtime.
+// A table entry that lies is caught from both sides: the runtime trips the clause the
+// entry copies, or the prover refutes a clause the runtime honours.
+//
+// The count is the 20 postconditions plus the 6 `requires` obligations the drivers owe.
+// The drivers are deliberately short: the native solver enumerates atoms and gives up past
+// 20 of them, and every `len` frame fact in a driver costs two.
+//
+// @expect: 0
+// @expect: 0
+// @expect: 0
+// @expect: 1
+// @expect: 1
+// @expect: 2
+// @expect: 1
+// @expect: 0
+// @expect: 8
+fn ctorEmpty(): i64
+ensures result == 0
+{
+    let v: Vec<i64> = Vec.new()
+    return v.len
+}
+
+fn ctorCapacity(): i64
+ensures result == 0
+{
+    let v: Vec<i64> = Vec.withCapacity(8)
+    return v.len
+}
+
+fn pushOne(v: &mut Vec<i64>, x: i64): void
+ensures v.len == old(v.len) + 1
+{
+    v.push(x)
+}
+
+fn popOne(v: &mut Vec<i64>): void
+ensures old(v.len) == 0 || v.len == old(v.len) - 1
+ensures old(v.len) > 0 || v.len == 0
+{
+    let _x = v.pop()
+}
+
+fn popEmptyStaysEmpty(v: &mut Vec<i64>): void
+requires v.len == 0
+ensures v.len == 0
+{
+    let _x = v.pop()
+}
+
+fn clearAll(v: &mut Vec<i64>): void
+ensures v.len == 0
+{
+    v.clear()
+}
+
+fn insertAt(v: &mut Vec<i64>, x: i64): void
+ensures v.len == old(v.len) + 1
+{
+    v.insert(0, x)
+}
+
+fn removeAt(v: &mut Vec<i64>): void
+requires v.len > 0
+ensures v.len == old(v.len) - 1
+{
+    v.remove(0)
+}
+
+fn truncateBelow(v: &mut Vec<i64>): void
+requires v.len >= 2
+ensures v.len == 1
+{
+    v.truncate(1)
+}
+
+fn truncateAbove(v: &mut Vec<i64>): void
+requires v.len <= 1000
+ensures v.len == old(v.len)
+{
+    v.truncate(1000)
+}
+
+fn extendBy(v: &mut Vec<i64>, w: Vec<i64>): void
+ensures v.len == old(v.len) + old(w.len)
+{
+    v.extend(w)
+}
+
+fn setFirst(v: &mut Vec<i64>, x: i64): void
+requires v.len > 0
+ensures v.len == old(v.len)
+{
+    v[0] = x
+}
+
+fn lengthKept(v: &mut Vec<i64>): void
+requires v.len >= 2
+ensures v.len == old(v.len)
+{
+    v.reverse()
+    v.swap(0, 1)
+    v.sort()
+    v.reserve(64)
+    v.sortBy((x: i64, y: i64): i32 => if x > y {
+        1
+    } else {
+        -1
+    }
+    )
+}
+
+fn retainSome(v: &mut Vec<i64>): void
+ensures v.len <= old(v.len)
+{
+    v.retain((x: i64): bool => x % 2 == 0)
+}
+
+fn readOnly(v: &mut Vec<i64>): i64
+ensures v.len == old(v.len)
+{
+    let n = v.len()
+    let _e = v.isEmpty()
+    let _c = v.contains(1)
+    let _f = v.first()
+    let _s = v.sum()
+    return n
+}
+
+fn strPush(s: &mut string): void
+ensures s.len == old(s.len) + 1
+{
+    s.push(65)
+}
+
+fn strPushStr(s: &mut string, t: string): void
+ensures s.len == old(s.len) + t.len
+{
+    s.pushStr(t)
+}
+
+fn strReadOnly(s: &mut string): void
+ensures s.len == old(s.len)
+{
+    let _u = s.toUpper()
+    let _r = s.reverse()
+    let _t = s.trim()
+}
+
+fn needsEmpty(v: &mut Vec<i64>): void
+requires v.len == 0
+{
+}
+
+fn drivePop(): void {
+    var v: Vec<i64> = Vec.new()
+    pushOne(v, 1)
+    popOne(v)
+    needsEmpty(v)
+    print(v.len)
+}
+
+fn driveEmptyPop(): void {
+    var v: Vec<i64> = Vec.new()
+    popEmptyStaysEmpty(v)
+    print(v.len)
+}
+
+fn driveRemove(): void {
+    var v: Vec<i64> = Vec.new()
+    pushOne(v, 1)
+    insertAt(v, 9)
+    removeAt(v)
+    print(v.len)
+}
+
+fn driveTruncate(): void {
+    var v: Vec<i64> = Vec.new()
+    pushOne(v, 1)
+    pushOne(v, 2)
+    truncateAbove(v)
+    truncateBelow(v)
+    print(v.len)
+}
+
+fn driveKeep(): void {
+    var v: Vec<i64> = Vec.new()
+    pushOne(v, 1)
+    pushOne(v, 2)
+    lengthKept(v)
+    setFirst(v, 7)
+    print(v.len)
+}
+
+fn driveGrow(): void {
+    var v: Vec<i64> = Vec.new()
+    var w: Vec<i64> = Vec.new()
+    pushOne(w, 4)
+    pushOne(w, 5)
+    extendBy(v, w)
+    let _n = readOnly(v)
+    retainSome(v)
+    print(v.len)
+    clearAll(v)
+    print(v.len)
+}
+
+fn driveStr(): void {
+    var s: string = "abc"
+    strPush(s)
+    strPushStr(s, "wxyz")
+    strReadOnly(s)
+    print(s.len)
+}
+
+pub fn main(): i32 {
+    print(ctorEmpty() + ctorCapacity())
+    drivePop()
+    driveEmptyPop()
+    driveRemove()
+    driveTruncate()
+    driveKeep()
+    driveGrow()
+    driveStr()
+    return 0
+}

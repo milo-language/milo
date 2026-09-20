@@ -1,0 +1,57 @@
+// @proven: 1
+// @failed: 0
+// @unknown: 3
+// A havoc with no contract behind it yields `unknown`, never `failed`. The walker forgets
+// `v` at `frob(v)` because frob has no `ensures` (and at `v.ptr()` because a raw pointer is
+// outside the builtin table); the fresh symbol standing for the post-call `v.len` is a free
+// variable, and a model over a free variable is not a counterexample: `throughFrob`'s
+// clause is true (frob does nothing) and used to be reported as refuted with `len = 0`.
+//
+// `obligationAfterFrob` is the same hole seen from a call site: `needsEmpty`'s `requires`
+// reads the length through the havoced `v`, a symbol invented after the havoc rather than
+// minted by it, and it must be recognised as just as free.
+//
+// `throughPush` is the control: the same clause across a call the table DOES describe is
+// decided (proven), so the downgrade is specific to the contract-less call.
+//
+// @expect: 1
+fn frob(_v: &mut Vec<i64>): void
+{
+}
+
+fn throughFrob(v: &mut Vec<i64>): void
+ensures v.len == old(v.len)
+{
+    frob(v)
+}
+
+fn throughPtr(v: &mut Vec<i64>): void
+ensures v.len == old(v.len)
+{
+    let _p = v.ptr()
+}
+
+fn needsEmpty(v: &mut Vec<i64>): void
+requires v.len == 0
+{
+}
+
+fn obligationAfterFrob(v: &mut Vec<i64>): void {
+    frob(v)
+    needsEmpty(v)
+}
+
+fn throughPush(v: &mut Vec<i64>): void
+ensures v.len == old(v.len) + 1
+{
+    v.push(1)
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    throughFrob(v)
+    throughPtr(v)
+    throughPush(v)
+    print(v.len)
+    return 0
+}

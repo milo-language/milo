@@ -54,9 +54,12 @@ test("`/` and `%` model Milo's truncation, not SMT-LIB's Euclidean division", ()
 test("statements nested in expressions are reachable by the walkers", () => {
   const out = proveZ3(join(import.meta.dir, "prove", "stmtInExprNoFalseProof.milo"))
     .replace(/\x1b\[[0-9;]*m/g, "");
-  expect(out).toMatch(/proven:\s*0\s+failed:\s*3\s+unknown:\s*0\s+errors:\s*0/);
+  // Unknown, not refuted: no invariant names `x`, so the havoced value is a free variable
+  // and the prover declines to call a model over it a counterexample. The claim is that
+  // none of the three is PROVEN.
+  expect(out).toMatch(/proven:\s*0\s+failed:\s*0\s+unknown:\s*3\s+errors:\s*0/);
   for (const fn of ["viaIfExpr", "viaMatchExpr", "viaClosure"]) {
-    expect(out).toMatch(new RegExp(`✗\\s*\\[postcondition\\]\\s*${fn}`));
+    expect(out).toMatch(new RegExp(`\\?\\s*\\[postcondition\\]\\s*${fn}: unknown`));
   }
 });
 

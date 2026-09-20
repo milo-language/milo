@@ -3,7 +3,7 @@ system: verification
 purpose: the path from sealed safety to SMT-discharged contracts, and what each stage buys
 key-files: src/checker.ts, std/smt.milo, src/verify.ts
 update-when: a verification stage ships, a discharge strategy changes, or the solver story moves
-last-verified: 2026-08-23
+last-verified: 2026-09-19
 -->
 
 # Verification Roadmap: From Sealed Safety to Provable Properties
@@ -174,6 +174,10 @@ Refinement discharge is undecidable in general; SMT solvers (Z3) are the proven 
   being lowered against entry symbols to being lowered per exit path, and call sites needed a
   frame assumption relating the post-call havoc symbols back to the pre-call ones. That last
   piece is what makes it useful to a CALLER rather than only provable at the definition.
+  Builtin `Vec`/`string` methods get the same frame from a contract table written in Milo
+  (`BUILTIN_CONTRACTS_SRC`, `src/verify.ts`), and a havoc that NO contract, guard or invariant
+  describes can no longer be reported as `failed`: the verdict is `unknown`, naming the free
+  value. See roadmap.md §Contracts & Proving for the table and the rule.
 - ~~**Termination:** ... need a termination checker?~~ **Resolved: yes, and it was not
   optional.** A self-recursive call is modelled by assuming the function's own `ensures`;
   without a measure that is induction over a possibly-non-terminating recursion, which proves

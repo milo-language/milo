@@ -1,0 +1,37 @@
+// @proven: 5
+// @failed: 0
+// @unknown: 0
+// `v[i] = x` is a mutation of `v` the walker used to not see at all (it only counted
+// assignments to a name or a field), and a `push` before a call used to leave the
+// post-push length a free variable. Both now go through the builtin contract table: the
+// index assignment keeps `len`, the push adds one, and `main`'s call-site obligation for
+// `viaCall` (`v.len > 0` after `Vec.new()` + one push) is proven rather than "refuted"
+// with `len = -1`, a length no Vec can have.
+//
+// @expect: 1
+fn noop(v: &mut Vec<i64>): void
+ensures v.len == old(v.len)
+{
+}
+
+fn setFirst(v: &mut Vec<i64>): void
+requires v.len > 0
+ensures v.len == old(v.len)
+{
+    v[0] = 5
+}
+
+fn viaCall(v: &mut Vec<i64>): void
+requires v.len > 0
+ensures v.len == old(v.len)
+{
+    setFirst(v)
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    viaCall(v)
+    print(v.len)
+    return 0
+}

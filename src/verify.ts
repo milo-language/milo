@@ -2,6 +2,8 @@
 // and symbolically executes function bodies to prove postconditions.
 import type { Program, Function, Contract, Expr, Stmt, MiloType } from "./ast";
 import { must } from "./must";
+import { Lexer } from "./lexer";
+import { Parser } from "./parser";
 
 export interface VerificationCondition {
   fn: string;
@@ -34,6 +36,28 @@ export interface VerificationCondition {
   // never be REFUTED; the verdict degrades to `unknown`, which is what the model actually
   // knows. Same rule the pre-`@pure` code enforced by refusing to model the call at all.
   opaqueCalls?: string[];
+  // Mutations this VC's formula depends on that NOTHING in the program describes: a `&mut`
+  // argument or method receiver havoced at a call whose callee has no `ensures` (or a
+  // builtin outside BUILTIN_CONTRACTS), or a variable a loop writes that no invariant or
+  // guard mentions. Each entry reads `'<name>' after <what>`. The havoc is what keeps the
+  // walker sound, but the fresh symbol it mints is a free variable, and a model over a free
+  // variable is not a counterexample: `v.len == old(v.len) + 1` after `v.push(x)` was
+  // "refuted" with `v_len__mut1 = 0` before push had a contract. Same rule as opaqueCalls:
+  // PROVEN is still meaningful, REFUTED degrades to `unknown`.
+  unconstrainedHavocs?: string[];
+}
+
+// The reason a sat verdict on `vc` cannot be reported as `failed`, or null when the model
+// ranges only over symbols the program constrains. Shared by both solver back ends so the
+// two cannot drift on which verdicts are honest.
+export function unreproducibleCounterexample(vc: VerificationCondition): string | null {
+  if (vc.opaqueCalls?.length) {
+    return `the value of ${vc.opaqueCalls.map(n => `'${n}'`).join(", ")} is unconstrained — it is @pure but declares no 'ensures', so any counterexample here is not reproducible`;
+  }
+  if (vc.unconstrainedHavocs?.length) {
+    return `the value of ${vc.unconstrainedHavocs.join(", ")} is unconstrained, so any counterexample here is not reproducible`;
+  }
+  return null;
 }
 
 export interface VerifyResult {
@@ -168,6 +192,7 @@ function modelCall(site: object, name: string, args: Expr[], env?: Map<string, s
 
   const retName = `${name}__ret${ctx.n++}`;
   const retType = callee.retType?.name ?? "i64";
+  if (isLenBearingType(callee.retType)) LEN_BEARING.add(retName);
   const subst = env ? new Map(fieldBindings(callee.params, args, env)) : new Map<string, string>();
   callee.params.forEach((p, i) => subst.set(p.name, argSmt[i]!));
   subst.set("result", retName);
@@ -217,7 +242,9 @@ function modelCall(site: object, name: string, args: Expr[], env?: Map<string, s
   const range = intRangeAssumption(retName, retType);
   if (range) ctx.assumes.push(range);
   ctx.assumes.push(`(assert ${antecedent ? `(=> ${antecedent} ${conclusion})` : conclusion})`);
-  ctx.assumed.add(name);    // this VC now leans on `name`'s postcondition being true
+  // This VC now leans on `name`'s postcondition being true. A builtin's is the runtime's
+  // to keep, not something this run could establish, so it is not reported as conditional.
+  if (!builtinConstructors().has(name)) ctx.assumed.add(name);
   ctx.scope.add(retName);   // a later call may take this one's result as an argument
   const perSite = ctx.bySite.get(site) ?? new Map<string, string>();
   perSite.set(siteKey, retName);
@@ -240,6 +267,26 @@ function fillCallModel(conditions: VerificationCondition[], from: number) {
       : conditions[i]!.smtlib.replace(`${CALL_MODEL_SLOT}\n`, "");
     if (assumed.length) conditions[i]!.assumes = assumed;
     if (opaque.length) conditions[i]!.opaqueCalls = opaque;
+  }
+}
+
+// Which contract-less havoc symbols each VC's formula actually depends on. Only the
+// assertions count: a declaration, or the typing fact minted next to it, names the symbol
+// without the obligation resting on it. A VC that mentions none can still be refuted with a
+// real counterexample; one that does can only be proven or left unknown.
+function markUnconstrainedHavocs(conditions: VerificationCondition[], from: number) {
+  if (UNCONSTRAINED_HAVOCS.size === 0) return;
+  for (let i = from; i < conditions.length; i++) {
+    const touched = new Set<string>();
+    for (const line of conditions[i]!.smtlib.split("\n")) {
+      const t = line.trim();
+      if (t.startsWith("(declare-") || t.startsWith(";") || HAVOC_TYPING_FACTS.has(t)) continue;
+      for (const m of t.matchAll(/[A-Za-z_][A-Za-z0-9_.]*/g)) {
+        const free = UNCONSTRAINED_HAVOCS.get(m[0]);
+        if (free) touched.add(`'${free.place}' after ${free.why}`);
+      }
+    }
+    if (touched.size) conditions[i]!.unconstrainedHavocs = [...touched];
   }
 }
 
@@ -698,6 +745,238 @@ function mutatesNothing(f: Function): boolean {
     && !f.params.some(p => (p.type as any)?.isRefMut || (p.type as any)?.isPtr);
 }
 
+// Contracts for the builtin Vec/string methods, written in Milo exactly as each method
+// would carry them if it were ordinary library code. `self` is the receiver. These are the
+// ONLY facts the prover knows about a builtin container: a method absent from this table
+// still havocs its receiver, and a verdict resting on that havoc is `unknown` (see
+// `unconstrainedHavocs`). One table, consumed by the same frame machinery as a user `&mut`
+// callee (collectMutatingCalls / emitFrameFacts), so a builtin's effect on `len` is stated
+// in one place and there is no per-method arm in the walker to forget.
+//
+// Every clause here is ASSUMED, so each one is a soundness claim about the runtime and a
+// wrong line is a false proof. `tests/prove/builtinContainerContracts.milo` executes each
+// against the real runtime under `--debug`, which checks the same clauses dynamically.
+//
+// Deliberately absent: element contents (`v[i]` has no model), `pop`'s Option result (no
+// Option model), and anything whose length effect depends on contents (`dedup`, `retain`'s
+// exact count). `pop` on an empty Vec is a no-op returning null, hence the two-clause
+// form rather than a `requires`: the clause must be total or the post-`pop` length is a
+// free variable whenever the guard is false.
+//
+// Index assignment `v[i] = x` is syntax, not a method; the walker routes it here under the
+// name `[]=` so its frame (`len` unchanged) lives in the same table. Out-of-range `insert`
+// / `remove` / `[]=` trap, so on every path that reaches a postcondition the clause holds
+// and no `requires` is needed as an antecedent.
+//
+// `@pure` marks a method that leaves its receiver untouched, so the receiver is not havoced
+// at all. The list is every read-only Vec/string member: a name here on a string receiver
+// (`s.reverse()` returns a new string) or a Vec one (`v.reverse()` is in place, length
+// kept) must be right for BOTH, since the table is keyed by bare name. `ptr`/`addrOf` are
+// deliberately absent: what happens through a raw pointer is not this model's to promise.
+const BUILTIN_READ_ONLY = [
+  "len", "isEmpty", "capacity", "get", "first", "last", "slice", "contains", "indexOf",
+  "position", "join", "map", "filter", "fold", "reduce", "each", "enumerate", "find", "any",
+  "all", "sum", "min", "max", "clone",
+  "startsWith", "endsWith", "indexOfFrom", "lastIndexOf", "charAt", "substr", "toLower",
+  "toUpper", "trim", "trimStart", "trimEnd", "repeat", "padStart", "padEnd", "replace",
+  "replaceFirst", "split", "splitWords", "splitWhitespace", "lines", "splitView",
+  "codePoints", "parseInt", "parseF64", "cstr",
+];
+const BUILTIN_CONTRACTS_SRC = `
+${BUILTIN_READ_ONLY.map(n => `@pure fn ${n}(self: &Vec<i64>): i64 {}`).join("\n")}
+fn push(self: &mut Vec<i64>, x: i64): void
+ensures self.len == old(self.len) + 1
+{}
+fn pop(self: &mut Vec<i64>): void
+ensures old(self.len) == 0 || self.len == old(self.len) - 1
+ensures old(self.len) > 0 || self.len == 0
+{}
+fn clear(self: &mut Vec<i64>): void
+ensures self.len == 0
+{}
+fn insert(self: &mut Vec<i64>, i: i64, x: i64): void
+ensures self.len == old(self.len) + 1
+{}
+fn remove(self: &mut Vec<i64>, i: i64): void
+ensures self.len == old(self.len) - 1
+{}
+fn truncate(self: &mut Vec<i64>, n: i64): void
+ensures n < 0 || n >= old(self.len) || self.len == n
+ensures n < old(self.len) || self.len == old(self.len)
+{}
+fn extend(self: &mut Vec<i64>, other: Vec<i64>): void
+ensures self.len == old(self.len) + old(other.len)
+{}
+fn pushStr(self: &mut string, s: string): void
+ensures self.len == old(self.len) + s.len
+{}
+fn retain(self: &mut Vec<i64>, keep: i64): void
+ensures self.len <= old(self.len)
+{}
+fn reverse(self: &mut Vec<i64>): void
+ensures self.len == old(self.len)
+{}
+fn swap(self: &mut Vec<i64>, i: i64, j: i64): void
+ensures self.len == old(self.len)
+{}
+fn sort(self: &mut Vec<i64>): void
+ensures self.len == old(self.len)
+{}
+fn sortBy(self: &mut Vec<i64>, cmp: i64): void
+ensures self.len == old(self.len)
+{}
+fn sortByKey(self: &mut Vec<i64>, key: i64): void
+ensures self.len == old(self.len)
+{}
+fn reserve(self: &mut Vec<i64>, n: i64): void
+ensures self.len == old(self.len)
+{}
+fn indexSet(self: &mut Vec<i64>, i: i64, x: i64): void
+ensures self.len == old(self.len)
+{}
+`;
+
+// The table as docs/roadmap.md quotes it; tests/builtinContractsDoc.test.ts holds the doc to
+// this text so the two cannot drift.
+export function builtinContractsDoc(): string {
+  const mutating = BUILTIN_CONTRACTS_SRC.split("\n").filter(l => !l.startsWith("@pure")).join("\n").trim();
+  return [
+    "```milo",
+    BUILTIN_CONSTRUCTORS_SRC.trim(),
+    mutating.replace(/^fn indexSet\(/m, "fn [i]=("),
+    "```",
+    "",
+    `Read-only, so the receiver is not havoced at all: \`${BUILTIN_READ_ONLY.join("`, `")}\`.`,
+  ].join("\n");
+}
+
+// Constructors, modelled as calls with an `ensures` on `result` (modelCall picks them up
+// through ensuresByFn under their `Type.method` key, like any impl method).
+const BUILTIN_CONSTRUCTORS_SRC = `
+fn Vec.new(): Vec<i64>
+ensures result.len == 0
+{}
+fn Vec.withCapacity(n: i64): Vec<i64>
+ensures result.len == 0
+{}
+`;
+
+// The method spelled `[]=` in the walker is `indexSet` in the source above, because a
+// function cannot be named `[]=` in Milo.
+const INDEX_SET = "[]=";
+
+let BUILTIN_CONTRACTS: Map<string, Function> | null = null;
+let BUILTIN_CONSTRUCTORS: Map<string, Function> | null = null;
+
+function parseBuiltinContracts(src: string, rename: (n: string) => string): Map<string, Function> {
+  const program = new Parser(new Lexer(src).tokenize(), src, "<builtin-contracts>").parse();
+  const out = new Map<string, Function>();
+  for (const fn of program.functions) out.set(rename(fn.name), { ...fn, name: rename(fn.name) });
+  return out;
+}
+
+function builtinContracts(): Map<string, Function> {
+  if (!BUILTIN_CONTRACTS) BUILTIN_CONTRACTS = parseBuiltinContracts(BUILTIN_CONTRACTS_SRC, n => n === "indexSet" ? INDEX_SET : n);
+  return BUILTIN_CONTRACTS;
+}
+
+// `fn Vec.new()` is not parseable Milo, so the constructors are parsed under plain names and
+// re-keyed to the `Type.method` spelling rewriteStaticCalls produces.
+function builtinConstructors(): Map<string, Function> {
+  if (!BUILTIN_CONSTRUCTORS) {
+    BUILTIN_CONSTRUCTORS = parseBuiltinContracts(BUILTIN_CONSTRUCTORS_SRC.replace(/fn Vec\./g, "fn Vec__"), n => n.replace(/^Vec__/, "Vec."));
+  }
+  return BUILTIN_CONSTRUCTORS;
+}
+
+// The contract in force for a method call, or null when the walker has to treat the call as
+// an unknown mutation. Gated on the RECEIVER: a `MethodCall` carries no type here, and a
+// user struct is free to have its own `push`, so the table applies only when the receiver
+// is a name this function knows to be a Vec/string/array (LEN_BEARING).
+function builtinContractFor(method: string, receiver: Expr): Function | null {
+  const path = flattenFieldAccess(receiver);
+  if (path === null || !LEN_BEARING.has(path)) return null;
+  return builtinContracts().get(method) ?? null;
+}
+
+// Every place expression in the function under analysis whose value carries a `len`:
+// params and locals declared (or initialised) as Vec/string/array, the Vec/string fields
+// hanging off a struct-typed one, and the results of calls returning one. Flattened paths
+// (`h_count`), the same spelling FIELD_REFS uses. What it gates: `x.len >= 0` (a user struct
+// may have a plain `len: i64` field that legitimately goes negative, so the fact is asserted
+// only for bases that actually carry a length) and the builtin contract table above.
+// Scoped per function, like FIELD_REFS; modelCall adds a callee's result symbol to it.
+let LEN_BEARING = new Set<string>();
+let STRUCT_FIELD_TYPES = new Map<string, Map<string, MiloType>>();
+
+function isLenBearingType(t: MiloType | null | undefined): boolean {
+  return !!t && (t.name === "string" || t.name === "Vec" || t.isArray);
+}
+
+function collectLenBearing(fn: Function): Set<string> {
+  const out = new Set<string>();
+  const consider = (path: string, t: MiloType | null | undefined, depth = 0) => {
+    if (!t) return;
+    if (isLenBearingType(t)) { out.add(path); return; }
+    // A struct's Vec fields are len-bearing places too; bounded because a recursive type
+    // would otherwise never terminate here.
+    if (depth >= 4) return;
+    for (const [f, ft] of STRUCT_FIELD_TYPES.get(t.name) ?? []) consider(`${path}_${f}`, ft, depth + 1);
+  };
+  // An unannotated local reveals its type through its initialiser. Only the shapes whose
+  // type is certain: a builtin constructor, a literal, or a struct literal.
+  const fromInit = (value: Expr | undefined): MiloType | null => {
+    if (!value) return null;
+    const e = value as any;
+    if (e.kind === "StringLit") return { name: "string", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    if (e.kind === "ArrayLit" || e.kind === "ArrayRepeat") return { name: "array", isPtr: false, isRef: false, isRefMut: false, isArray: true, arraySize: null };
+    const isVecCtor = (e.kind === "Call" && typeof e.func === "string" && builtinConstructors().has(e.func))
+      || (e.kind === "EnumLit" && e.enumName === "Vec");
+    if (isVecCtor) return { name: "Vec", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    if (e.kind === "StructLit" && typeof e.name === "string") return { name: e.name, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    return null;
+  };
+  for (const p of fn.params) consider(p.name, p.type);
+  consider("result", fn.retType);
+  walkNodes(fn.body, n => {
+    if (n.kind === "LetDecl" || n.kind === "VarDecl") consider(n.name, n.type ?? fromInit(n.value));
+  });
+  return out;
+}
+
+// Is `sym` the length of a len-bearing place? Both havoc spellings count: `v_len__mut1`
+// (the len ref was known when `v` was havoced) and `v__mut0_len` (it was invented afterwards
+// by rebasing through the havoced base). Stripping the havoc tags recovers the place.
+function lenSymbolBase(sym: string): string | null {
+  const place = sym.replace(/__(mut|loop|iter)\d+/g, "");
+  return place.endsWith("_len") ? place.slice(0, -"_len".length) : null;
+}
+
+function isLenSymbol(sym: string): boolean {
+  const base = lenSymbolBase(sym);
+  return base !== null && LEN_BEARING.has(base);
+}
+
+// Fresh symbols minted by a havoc that nothing has since described, each mapped to the place
+// it stands for and what forgot it (`v_len`, `'frob(…)' (no contract)`). A frame clause,
+// guard or invariant removes a symbol the moment it mentions it; whatever is left when the
+// VCs are assembled becomes `unconstrainedHavocs`. A field symbol rebased THROUGH a havoced
+// base (`v__mut0_len`, invented when `v.len` is read after `v` became `v__mut0`) is as free
+// as the base and is entered here on invention, keyed back to the base by DERIVED_FROM so a
+// frame clause about the base's call can claim it. Scoped per function.
+let UNCONSTRAINED_HAVOCS = new Map<string, { place: string; why: string }>();
+let DERIVED_FROM = new Map<string, string>();
+// Typing facts (`>= 0`, integer ranges) emitted alongside a havoc declaration. They name the
+// symbol without constraining it in any way the program stated, so the dependency scan for
+// `unconstrainedHavocs` has to skip them or every VC would be tainted by its own declarations.
+let HAVOC_TYPING_FACTS = new Set<string>();
+
+// The FIELD_REFS hanging off a place, excluding symbols another havoc of the same place
+// minted (`v__mut0_len` starts with `v_` but is not a field of `v`).
+function fieldRefsUnder(place: string): string[] {
+  return [...(FIELD_REFS ?? [])].filter(f => f.startsWith(`${place}_`) && !/^__(mut|loop|iter)\d+/.test(f.slice(place.length)));
+}
+
 // `invariant` clauses per struct name, and the field list to instantiate them over. Set
 // once per run: an invariant is a property of the TYPE, so it is in force at every use.
 let STRUCT_INVARIANTS = new Map<string, Contract[]>();
@@ -834,18 +1113,37 @@ function ownExprs(stmt: any): Expr[] {
 }
 
 function collectMutatingCalls(node: any, out: MutatingCall[]): void {
-  walkNodes(node, n => {
-    if (n.kind !== "Call" || typeof n.func !== "string" || !Array.isArray(n.args)) return;
-    const callee = FN_TABLE.get(n.func);
-    if (!callee || !callee.contracts.some(c => c.kind === "ensures") || callee.params.length !== n.args.length) return;
+  const record = (callee: Function, args: Expr[]) => {
+    if (!callee.contracts.some(c => c.kind === "ensures") || callee.params.length !== args.length) return;
     const mutTargets = new Map<string, string>();
     callee.params.forEach((p, i) => {
       if (!p.type?.isRefMut && !p.type?.isPtr) return;
-      const base = mutationBase(n.args[i]);
+      const base = mutationBase(args[i]);
       if (base !== null && MUTABLE_NAMES.has(base)) mutTargets.set(p.name, base);
     });
-    if (mutTargets.size > 0) out.push({ callee, args: n.args, mutTargets });
+    if (mutTargets.size > 0) out.push({ callee, args, mutTargets });
+  };
+  walkNodes(node, n => {
+    if (n.kind === "Call" && typeof n.func === "string" && Array.isArray(n.args)) {
+      const callee = FN_TABLE.get(n.func);
+      if (callee) record(callee, n.args);
+    }
+    // A builtin container method is a mutating call whose contract comes from the table
+    // instead of the program; the receiver is its `self` argument.
+    if (n.kind === "MethodCall" && Array.isArray(n.args)) {
+      const callee = builtinContractFor(n.method, n.object);
+      if (callee) record(callee, [n.object, ...n.args]);
+    }
   });
+}
+
+// `v[i] = x` as the table sees it: a call to `[]=` on the indexed place. Null when the
+// receiver is not a place the table covers, in which case the assignment is an unknown
+// mutation of that place (havoc, no contract) rather than nothing at all.
+function indexAssignAsCall(target: Expr, value: Expr): { callee: Function; args: Expr[] } | null {
+  if (target.kind !== "IndexAccess") return null;
+  const callee = builtinContractFor(INDEX_SET, target.object);
+  return callee ? { callee, args: [target.object, target.index, value] } : null;
 }
 
 // A struct argument is not one symbol on the caller side — each field it carries has its
@@ -856,12 +1154,13 @@ function collectMutatingCalls(node: any, out: MutatingCall[]): void {
 function fieldBindings(params: { name: string; type?: any }[], args: Expr[], env: Map<string, string>): Map<string, string> {
   const out = new Map<string, string>();
   for (let i = 0; i < params.length && i < args.length; i++) {
-    const base = mutationBase(args[i]);
-    if (base === null) continue;
-    for (const f of FIELD_REFS ?? []) {
-      if (!f.startsWith(`${base}_`)) continue;
+    // The argument's own flattened place: passing `a.data` binds the parameter's fields to
+    // `a_data_*`, not to `a_*` (which would pair `self.len` with `a_data`'s sibling).
+    const place = flattenFieldAccess(args[i]!);
+    if (place === null) continue;
+    for (const f of fieldRefsUnder(place)) {
       const bound = env.get(f);
-      if (bound && /^[A-Za-z_][A-Za-z0-9_]*$/.test(bound)) out.set(`${params[i]!.name}${f.slice(base.length)}`, bound);
+      if (bound && isPlainSymbol(bound)) out.set(`${params[i]!.name}${f.slice(place.length)}`, bound);
     }
   }
   return out;
@@ -886,8 +1185,14 @@ function mutationBase(e: any): string | null {
 // A method call havocs its receiver unconditionally: resolving which `impl` a method comes
 // from (and whether it takes `&mut self`) needs the checker's tables, which are not
 // available here. Over-havocking costs precision; under-havocking costs correctness.
-function collectMutations(node: any, out: Set<string>): void {
+function collectMutations(node: any, out: Map<string, string>): void {
   const target = (e: any): string | null => {
+    // `v.len` on a Vec/string is a scalar copy, not a place: `print(v.len)` cannot write
+    // through it, and havocing `v` for it made every later fact about `v` unknown.
+    if (e?.kind === "FieldAccess" && e.field === "len") {
+      const place = flattenFieldAccess(e.object);
+      if (place !== null && LEN_BEARING.has(place)) return null;
+    }
     const n = base(e);
     return n !== null && MUTABLE_NAMES.has(n) ? n : null;
   };
@@ -916,23 +1221,35 @@ function collectMutations(node: any, out: Set<string>): void {
         callee.params.forEach((p, i) => {
           if (!p.type?.isRefMut && !p.type?.isPtr) return;
           const name = target(n.args[i]);
-          if (name) out.add(name);
+          if (name) out.set(name, exprSource(n));
         });
       } else {
         // Unknown callee (function pointer, closure, unresolved): assume the worst.
-        for (const a of n.args) { const name = target(a); if (name) out.add(name); }
+        for (const a of n.args) { const name = target(a); if (name) out.set(name, exprSource(n)); }
       }
     }
-    if (n.kind === "MethodCall" && !PURE_METHOD_NAMES.has(n.method)) {
+    if (n.kind === "MethodCall" && !PURE_METHOD_NAMES.has(n.method) && !builtinContractFor(n.method, n.object)?.attributes?.some(a => a.name === "pure")) {
       // Havoc the FIELD PATH the method was called on, not the whole receiver: `a.data.push(v)`
       // cannot touch `a.live`, and wiping every field of `a` made a type invariant about a
       // sibling field unprovable for every function that pushes to a vec — which is most of
       // them. The root itself still goes, since the aggregate value did change.
       const path = fieldPath(n.object);
-      if (path !== null) out.add(path);
-      else { const name = target(n.object); if (name) out.add(name); }
+      if (path !== null) out.set(path, exprSource(n));
+      else { const name = target(n.object); if (name) out.set(name, exprSource(n)); }
     }
   });
+}
+
+// What an index assignment mutates: the indexed place, under the same field-path rule as a
+// method receiver. Elements have no model, so before this the walker treated `v[i] = x` as
+// touching nothing; the table now states the frame (`len` unchanged) for a Vec, and a
+// receiver the table does not cover is an unknown mutation like any other.
+function collectIndexAssignMutation(target: Expr, out: Map<string, string>): void {
+  if (target.kind !== "IndexAccess") return;
+  const path = flattenFieldAccess(target.object);
+  const root = mutationBase(target.object);
+  if (root === null || !MUTABLE_NAMES.has(root)) return;
+  out.set(path ?? root, `${exprSource(target)} = ...`);
 }
 
 // The declared type of an unannotated local, as far as its initializer reveals it. Only
@@ -962,48 +1279,74 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
   const loops: LoopObligation[] = [];
   const varTypes = new Map(types ?? []);
 
-  // Replace every variable the block assigns with a fresh constant of the same type. This
-  // is the only sound way past a loop without unrolling it: whatever the loop did, the
-  // value afterwards is *some* value, constrained only by an invariant if one was written.
-  function havoc(block: Stmt[], localEnv: Map<string, string>): Map<string, string> {
-    const mods = new Set<string>();
-    collectAssignedVars(block, mods);
-    const out = new Map(localEnv);
-    for (const name of mods) {
-      const fresh = `${name.replace(/[^A-Za-z0-9_]/g, "_")}__loop${ctx.havocSeq++}`;
-      // No annotation and no float literal to learn from means Int, matching how the rest
-      // of this file treats an unknown type. A float local would be modelled as an integer
-      // here, which is why floatish() also looks at the initializer.
-      const typeName = varTypes.get(name) ?? "i64";
-      ctx.havocDecls.push(declareConst(fresh, typeName));
-      const range = intRangeAssumption(fresh, typeName);
-      if (range) ctx.havocDecls.push(range);
-      CALL_MODEL?.scope.add(fresh);
-      out.set(name, fresh);
+  // One fresh constant standing for `target` after something the walker cannot see through
+  // (a loop, a call). This is the ONLY place a havoc symbol is minted, so the facts every
+  // one must carry are stated here and nothing can forget them: the integer range of its
+  // type, and `>= 0` for the length of a len-bearing place (the len after `v.push(x)` is as
+  // much a length as the one before it, and without this a `len == -1` "counterexample"
+  // was reported for a state no Vec can be in).
+  function mintHavoc(target: string, tag: "mut" | "loop", why: string): string {
+    const fresh = `${target.replace(/[^A-Za-z0-9_]/g, "_")}__${tag}${ctx.havocSeq++}`;
+    // No annotation and no float literal to learn from means Int, matching how the rest
+    // of this file treats an unknown type. A float local would be modelled as an integer
+    // here, which is why floatish() also looks at the initializer.
+    const typeName = varTypes.get(target) ?? "i64";
+    ctx.havocDecls.push(declareConst(fresh, typeName));
+    const facts = [intRangeAssumption(fresh, typeName), isLenSymbol(fresh) ? `(assert (>= ${fresh} 0))` : null];
+    for (const fact of facts) {
+      if (!fact) continue;
+      ctx.havocDecls.push(fact);
+      HAVOC_TYPING_FACTS.add(fact);
     }
-    return out;
+    CALL_MODEL?.scope.add(fresh);
+    // Every havoc starts out described by nothing. A call's frame clause, a loop's guard or
+    // an invariant then claims the symbols it mentions (constrainedBy); what is never
+    // claimed is a free variable the verdict must not rest on.
+    UNCONSTRAINED_HAVOCS.set(fresh, { place: target, why });
+    return fresh;
   }
 
+  // The program has now stated something about every havoc symbol these terms mention.
+  function constrainedBy(terms: string[]): void {
+    for (const t of terms) for (const m of t.matchAll(/[A-Za-z_][A-Za-z0-9_.]*/g)) UNCONSTRAINED_HAVOCS.delete(m[0]);
+  }
 
-  // Replace one name — and every flattened field hanging off it, since `&mut c` may write
-  // any of `c.x`, `c.y` — with fresh unknowns.
-  function havocName(name: string, localEnv: Map<string, string>): void {
-    // `name` may be a field path (`a_data`), in which case only that field and what hangs
-    // off it moves. The ROOT symbol is deliberately left alone: a field read resolves by
-    // longest bound prefix, so havocing `a` would shadow every sibling — `a.live` would
-    // rebase onto `a__mut2_live` and a type invariant about it becomes unprovable for any
-    // function that merely pushes to a vec field. Leaving `a` stale costs nothing, since a
-    // struct-as-scalar symbol carries no information this encoding can use.
-    const targets = [name, ...[...(FIELD_REFS ?? [])].filter(f => f.startsWith(`${name}_`))];
-    for (const target of targets) {
-      const fresh = `${target.replace(/[^A-Za-z0-9_]/g, "_")}__mut${ctx.havocSeq++}`;
-      const typeName = varTypes.get(target) ?? (target === name ? "i64" : "i64");
-      ctx.havocDecls.push(declareConst(fresh, typeName));
-      const range = intRangeAssumption(fresh, typeName);
-      if (range) ctx.havocDecls.push(range);
-      CALL_MODEL?.scope.add(fresh);
+  // Replace one place, and every flattened field hanging off it (since `&mut c` may write
+  // any of `c.x`, `c.y`), with fresh unknowns.
+  //
+  // `name` may be a field path (`a_data`), in which case only that field and what hangs
+  // off it moves. The ROOT symbol is deliberately left alone: a field read resolves by
+  // longest bound prefix, so havocing `a` would shadow every sibling: `a.live` would
+  // rebase onto `a__mut2_live` and a type invariant about it becomes unprovable for any
+  // function that merely pushes to a vec field. Leaving `a` stale costs nothing, since a
+  // struct-as-scalar symbol carries no information this encoding can use.
+  function havocPlace(name: string, localEnv: Map<string, string>, tag: "mut" | "loop", why: string): string[] {
+    const minted: string[] = [];
+    for (const target of [name, ...fieldRefsUnder(name)]) {
+      const fresh = mintHavoc(target, tag, why);
       localEnv.set(target, fresh);
+      minted.push(fresh);
     }
+    return minted;
+  }
+
+  // Replace every place the block can write with a fresh constant. This is the only sound
+  // way past a loop without unrolling it: whatever the loop did, the value afterwards is
+  // *some* value, constrained only by an invariant if one was written. "Can write" means
+  // assigned OR passed to a `&mut` parameter OR used as a method receiver; the walker
+  // proved `ensures v.len == old(v.len)` for a loop that pushed `n` times when only
+  // assignments counted.
+  function havoc(block: Stmt[], localEnv: Map<string, string>, loop: Stmt): Map<string, string> {
+    const assigned = new Set<string>();
+    collectAssignedVars(block, assigned);
+    const mods = new Map<string, string>();
+    collectMutations(block, mods);
+    walkNodes(block, n => { if (n.kind === "Assign") collectIndexAssignMutation(n.target, mods); });
+    const out = new Map(localEnv);
+    const line = (loop as any).span?.line;
+    const why = `the loop${line ? ` at line ${line}` : ""} (no invariant names it)`;
+    for (const name of new Set([...assigned, ...mods.keys()])) havocPlace(name, out, "loop", why);
+    return out;
   }
 
   // Relate a mutating call's post-call symbols back to its pre-call ones, using the callee's
@@ -1016,7 +1359,11 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
   // reading) and once against the pre-call ones (what `old(...)` inside it means). Asserted
   // as an implication from the callee's `requires`, never bare — the bare form would let an
   // obligation discharge itself, exactly as in modelCall.
-  function emitFrameFacts(mutCalls: MutatingCall[], preEnv: Map<string, string>, postEnv: Map<string, string>): void {
+  //
+  // `minted` is the set of symbols this statement's havoc created: a clause that mentions
+  // one describes it, so it leaves UNCONSTRAINED_HAVOCS. Only THOSE: the clause also names
+  // the pre-call symbols, and an earlier havoc's symbol is not described by being read.
+  function emitFrameFacts(mutCalls: MutatingCall[], preEnv: Map<string, string>, postEnv: Map<string, string>, minted: Set<string>): void {
     const ctx = CALL_MODEL;
     if (!ctx) return;
     for (const mc of mutCalls) {
@@ -1054,7 +1401,12 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
       const antecedent = guards.length === 0 ? null
         : guards.length === 1 ? guards[0]! : `(and ${guards.join(" ")})`;
       ctx.assumes.push(`(assert ${antecedent ? `(=> ${antecedent} ${conclusion})` : conclusion})`);
-      ctx.assumed.add(mc.callee.name);
+      // A builtin's contract is the runtime's, not something this run has to establish, so
+      // it is not reported as an assumption the way a user callee's is.
+      if (!builtinContracts().has(mc.callee.name)) ctx.assumed.add(mc.callee.name);
+      for (const m of conclusion.matchAll(/[A-Za-z_][A-Za-z0-9_.]*/g)) {
+        if (minted.has(m[0]) || minted.has(DERIVED_FROM.get(m[0]) ?? "")) UNCONSTRAINED_HAVOCS.delete(m[0]);
+      }
     }
   }
 
@@ -1079,16 +1431,22 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
 
       // What this statement's own expressions mutate out from under the walker. Nested
       // bodies are excluded — walkCapture reaches those statements itself.
-      const mutated = new Set<string>();
+      const mutated = new Map<string, string>();
       for (const e of own) collectMutations(e, mutated);
       const mutCalls: MutatingCall[] = [];
       for (const e of own) collectMutatingCalls(e, mutCalls);
+      if (stmt.kind === "Assign") {
+        collectIndexAssignMutation(stmt.target, mutated);
+        const asCall = indexAssignAsCall(stmt.target, stmt.value);
+        if (asCall) mutCalls.push({ ...asCall, mutTargets: new Map([["self", mutationBase((stmt.target as any).object) ?? ""]]) });
+      }
       // Applied AFTER the statement's own env update, so the call's arguments are still
       // lowered in the pre-call state while everything downstream sees the unknown.
       const applyMutations = () => {
         const preEnv = mutCalls.length > 0 ? new Map(localEnv) : null;
-        for (const name of mutated) havocName(name, localEnv);
-        if (preEnv) emitFrameFacts(mutCalls, preEnv, localEnv);
+        const minted = new Set<string>();
+        for (const [name, why] of mutated) for (const sym of havocPlace(name, localEnv, "mut", `'${why}' (no contract)`)) minted.add(sym);
+        if (preEnv) emitFrameFacts(mutCalls, preEnv, localEnv, minted);
       };
 
       if (stmt.kind === "LetDecl" || stmt.kind === "VarDecl") {
@@ -1167,12 +1525,13 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
       if (stmt.kind === "WhileStmt") {
         // Establishment is checked against the state that reaches the loop, so it has to be
         // recorded before the havoc wipes it.
-        const havocEnv = havoc(stmt.body, localEnv);
+        const havocEnv = havoc(stmt.body, localEnv, stmt);
         const guard = exprToSmtWithEnv(stmt.cond, havocEnv);
         const assumed = (stmt.invariants ?? [])
           .filter(inv => inv.kind === "invariant")
           .map(inv => exprToSmtWithEnv(inv.expr, havocEnv))
           .filter(s => !/UNSUPPORTED/.test(s));
+        constrainedBy([guard, ...assumed]);
         const bodyRun = collectPaths(stmt.body, havocEnv, varTypes, ctx);
         structLits.push(...bodyRun.structLits);
         asserts.push(...bodyRun.asserts);
@@ -1218,7 +1577,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
         // preservation obligation.
         const invariants = (stmt.invariants ?? []).filter(c => c.kind === "invariant");
         const variants = (stmt.invariants ?? []).filter(c => c.kind === "decreases");
-        const havocEnv = havoc(stmt.body, localEnv);
+        const havocEnv = havoc(stmt.body, localEnv, stmt);
         const entryEnv = new Map(localEnv);
         const nextPatch = new Map<string, string>();
         // The membership predicate for the current index. Used exactly as a while loop's
@@ -1261,7 +1620,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
         } else if (stmt.varName2 && stmt.iterable.kind === "Ident") {
           // `for i, x in v` — the index is in range even though the element is opaque.
           const base = exprToSmtWithEnv(stmt.iterable, localEnv);
-          if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(base)) {
+          if (isPlainSymbol(base)) {
             const lenSym = `${base}_len`;
             FIELD_REFS?.add(lenSym);
             const i0 = must(havocEnv, idxName, "havoc env");
@@ -1281,6 +1640,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
         const assumed = invariants
           .map(inv => exprToSmtWithEnv(inv.expr, havocEnv))
           .filter(s => !/UNSUPPORTED/.test(s));
+        constrainedBy([guard, ...assumed]);
         const bodyRun = collectPaths(stmt.body, havocEnv, varTypes, ctx);
         structLits.push(...bodyRun.structLits);
         asserts.push(...bodyRun.asserts);
@@ -1348,18 +1708,10 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
 // plain `len: i64` field that legitimately goes negative, and asserting a false fact about
 // it would be a false PROOF, not a missed one. Only bases whose declared type actually
 // carries a length qualify, so an unknown-typed base gets nothing.
-function lengthNonNeg(refs: Set<string>, fn: Function): string[] {
-  const lenBearing = new Set<string>();
-  const consider = (name: string, t: MiloType | null | undefined) => {
-    if (t && (t.name === "string" || t.name === "Vec" || t.isArray)) lenBearing.add(name);
-  };
-  for (const p of fn.params) consider(p.name, p.type);
-  walkNodes(fn.body, n => {
-    if ((n.kind === "LetDecl" || n.kind === "VarDecl") && n.type) consider(n.name, n.type);
-  });
-  return [...refs]
-    .filter(r => r.endsWith("_len") && lenBearing.has(r.slice(0, -"_len".length)))
-    .map(r => `(assert (>= ${r} 0))`);
+// Havoc symbols get theirs at minting (mintHavoc); this covers the symbols the declaration
+// block is built from, including the ones lowering invented by rebasing.
+function lengthNonNeg(refs: Set<string>): string[] {
+  return [...refs].filter(isLenSymbol).map(r => `(assert (>= ${r} 0))`);
 }
 
 // `if c { a } else { b }` as a VALUE, which is `ite` in SMT. Both arms must be a single
@@ -1421,6 +1773,14 @@ function collectFieldRefsFromBody(stmts: Stmt[], refs: Set<string>): void {
   }
 }
 
+// Is this lowered term a bare symbol a field can be hung off (`v__mut0` → `v__mut0_len`),
+// as opposed to an expression or a marker? `.` is admitted because a call-model symbol
+// carries the callee's qualified name (`Vec.new__ret0`) and SMT-LIB allows it in a simple
+// symbol; this must agree with the symbol syntax symbolsResolve scans for.
+function isPlainSymbol(term: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_.]*$/.test(term);
+}
+
 function flattenFieldAccess(expr: Expr): string | null {
   if (expr.kind === "Ident") return expr.name;
   if (expr.kind === "FieldAccess") {
@@ -1458,9 +1818,18 @@ function rebaseFieldAccess(expr: Expr, env: Map<string, string>): { kind: "rebas
   for (let take = fields.length; take >= 0; take--) {
     const key = [node.name, ...fields.slice(0, take)].join("_");
     const bound = env.get(key);
-    if (bound === undefined || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(bound)) continue;
+    if (bound === undefined || !isPlainSymbol(bound)) continue;
     const name = [bound, ...fields.slice(take)].join("_");
+    // The reconstructed place may itself be bound (a havoc moved `v_len` while `v` still
+    // maps to `v`): the binding is the current value, the reconstruction is the stale one.
+    const current = env.get(name);
+    if (current && isPlainSymbol(current)) return { kind: "rebased", name: current };
     FIELD_REFS?.add(name);   // the query has to declare what this substitution invented
+    const base = UNCONSTRAINED_HAVOCS.get(bound);
+    if (base && !UNCONSTRAINED_HAVOCS.has(name) && !DERIVED_FROM.has(name)) {
+      UNCONSTRAINED_HAVOCS.set(name, { place: [base.place, ...fields.slice(take)].join("_"), why: base.why });
+      DERIVED_FROM.set(name, bound);
+    }
     return { kind: "rebased", name };
   }
   return { kind: "no" };
@@ -1619,7 +1988,9 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
 
   // Rewrite `Type.method(..)` EnumLits to Calls across every body and contract, excluding
   // any key that is actually an enum variant (a real construction must not be rewritten).
-  const implKeys = new Set(implMethods.map(m => m.name));
+  // The builtin constructors join the impl methods so `Vec.new()` is rewritten to a Call
+  // and modelled through its `ensures result.len == 0` like any contracted callee.
+  const implKeys = new Set([...implMethods.map(m => m.name), ...builtinConstructors().keys()]);
   const enumVariantKeys = new Set<string>();
   for (const en of program.enums ?? []) for (const v of en.variants) enumVariantKeys.add(`${en.name}.${v.name}`);
   for (const k of enumVariantKeys) implKeys.delete(k);
@@ -1643,8 +2014,10 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
   FLOAT_FIELDS = collectFloatFields(program);
   STRUCT_INVARIANTS = new Map();
   STRUCT_FIELDS = new Map();
+  STRUCT_FIELD_TYPES = new Map();
   for (const st of program.structs ?? []) {
     STRUCT_FIELDS.set(st.name, (st.fields as any[]).map(f => f.name));
+    STRUCT_FIELD_TYPES.set(st.name, new Map((st.fields as any[]).map(f => [f.name, f.type])));
     const invs = (st.invariants ?? []).filter(c => c.kind === "invariant");
     if (invs.length > 0) STRUCT_INVARIANTS.set(st.name, invs);
   }
@@ -1656,6 +2029,9 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
   for (const fn of allFns) {
     if (fn.contracts.some(c => c.kind === "requires")) requiresByFn.set(fn.name, fn);
     if (fn.contracts.some(c => c.kind === "ensures")) ensuresByFn.set(fn.name, fn);
+  }
+  for (const [name, fn] of builtinConstructors()) {
+    if (!FN_TABLE.has(name)) { FN_TABLE.set(name, fn); ensuresByFn.set(name, fn); }
   }
 
   for (const fn of allFns) {
@@ -1700,6 +2076,10 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
     // substitution, so the set stays open until the declaration block is assembled.
     FIELD_REFS = fieldRefs;
     MUTABLE_NAMES = collectMutableNames(fn);
+    LEN_BEARING = collectLenBearing(fn);
+    UNCONSTRAINED_HAVOCS = new Map();
+    DERIVED_FROM = new Map();
+    HAVOC_TYPING_FACTS = new Set();
     // Must be set before any contract or body expression is lowered — that is when call
     // modelling runs and needs to know which symbols this function's query declares.
     CALL_MODEL.scope = new Set([...fn.params.map(p => p.name), ...fieldRefs, "result"]);
@@ -1778,7 +2158,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
       if (sort === "Real") REAL_SYMS.add(f);
       return `(declare-const ${f} ${sort})`;
     }).join("\n");
-    const lenFacts = lengthNonNeg(fieldRefs, fn).join("\n");
+    const lenFacts = lengthNonNeg(fieldRefs).join("\n");
     FIELD_REFS = null;
 
     let allDecls = fieldDecls ? `${paramDecls}\n${fieldDecls}` : paramDecls;
@@ -2157,6 +2537,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
     }
 
     fillCallModel(conditions, vcStart);
+    markUnconstrainedHavocs(conditions, vcStart);
     if (assumedInvariants.size > 0) {
       for (let i = vcStart; i < conditions.length; i++) {
         // The type's own obligations are not conditional on themselves.
@@ -2473,11 +2854,13 @@ export function proveWithZ3(result: VerifyResult): ProveResult {
       // negation is unsat → contract always holds
       results.push({ vc, status: "proven" });
     } else if (output === "sat") {
-      // negation is sat → contract can be violated. Unless the model invented a call's
-      // value: then the witness may be a return the callee never produces, and `unknown`
-      // is the honest verdict (see `opaqueCalls`). Mirrors the std/smt path.
-      if (vc.opaqueCalls?.length) {
-        results.push({ vc, status: "unknown", detail: `the value of ${vc.opaqueCalls.map(n => `'${n}'`).join(", ")} is unconstrained — it is @pure but declares no 'ensures', so any counterexample here is not reproducible` });
+      // negation is sat → contract can be violated. Unless the model ranges over a value
+      // nothing constrains (an invented call result, a contract-less havoc): then the
+      // witness may be a state the program never reaches, and `unknown` is the honest
+      // verdict. Mirrors the std/smt path.
+      const why = unreproducibleCounterexample(vc);
+      if (why) {
+        results.push({ vc, status: "unknown", detail: why });
       } else {
         results.push({ vc, status: "failed", detail: "counterexample exists" });
       }

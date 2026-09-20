@@ -1,4 +1,5 @@
-// @failed: 3
+// @proven: 0
+// @unknown: 3
 // Statements nest inside EXPRESSIONS in this language: the arms of an if-expr and a
 // match-expr, and a closure body, are all `Stmt[]`. A walker that descends only the
 // statement fields of a statement therefore never sees them.
@@ -10,8 +11,10 @@
 // this fixture stays honest only while the walker is total — reachability, not a list of
 // the three spellings someone happened to think of.
 //
-// The `@proven`/`@unknown` tallies are deliberately unannotated: the refutations are the
-// claim here, and pinning the rest would couple this fixture to solver precision.
+// The claim is `proven: 0`. The three come back UNKNOWN rather than refuted because the
+// loop has no invariant naming `x`, so the havoced `x` is a free variable and a model over
+// it is not a counterexample anyone can reproduce (see `unconstrainedHavocs` in verify.ts);
+// what matters here is that the walker SAW the write and forgot the pre-loop value.
 
 // Assignment inside an if-expression arm.
 pub fn viaIfExpr(): i64
