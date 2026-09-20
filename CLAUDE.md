@@ -75,7 +75,8 @@ has no home.
 - `let` = immutable (SSA register), `var` = mutable (alloca)
 - Move semantics: single owner, use-after-move = compile error
 - Second-class references: `&T`/`&mut T` only in function params, never stored/returned
-- **Borrows are implicit — there is no `&x` expression.** A `&T`/`&mut T` param is fed the value *bare* at the call site (`foo(x)`, not `foo(&x)`); the compiler auto-borrows. `&x` as an expression is a hard error (`checker.ts` UnaryOp `&`). A raw pointer comes from `v.ptr()` / `x.addrOf()` (unsafe), never `&`.
+- **Shared borrows are implicit — there is no `&x` expression.** A `&T` param is fed the value *bare* at the call site (`foo(x)`, not `foo(&x)`); the compiler auto-borrows. `&x` as an expression is a hard error (`checker.ts` UnaryOp `&`). A raw pointer comes from `v.ptr()` / `x.addrOf()` (unsafe), never `&`.
+- **A `&mut T` argument is spelled `foo(&mut x)`** (non-receiver arguments only; `v.push(1)` stays implicit). The marker is stripped by the checker before the argument is checked (`takeExplicitMutArgs`), so borrow rules and codegen never see it. Migration in progress: the bare form warns as `implicit-mut-borrow` (off by default until std is migrated); `bun scripts/explicit-mut.ts <file>` rewrites a file; `bun scripts/count-implicit-mut.ts` counts what is left. See `docs/plans/local-reasoning-2026-09.md`.
 - User-defined generics: `fn foo<T>`, `struct Pair<A,B>`, `enum Maybe<T>` — monomorphization with type inference
 - No GC, no RC, no pointers in safe code
 - Arenas for cyclic data via `std/arena` (`Arena<T>` + generational `Handle<T>`)

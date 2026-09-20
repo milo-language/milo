@@ -133,7 +133,10 @@ comparison  = shift { ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) shift }
 shift       = additive { ( "<" "<" | ">" ">" ) additive } ;  (* lexed adjacent, never spaced *)
 additive    = multiplicative { ( "+" | "-" ) multiplicative } ;
 multiplicative = unary { ( "*" | "/" | "%" ) unary } ;
-unary       = ( "-" | "!" | "*" | "~" | "&" ) unary | postfix ;
+unary       = ( "-" | "!" | "*" | "~" | "&" | "&" "mut" ) unary | postfix ;
+              (* "&mut" unary is the explicit mutable-borrow marker on a call argument;
+                 it parses anywhere and the checker rejects it elsewhere. Bare "&" is a
+                 type-only marker and is rejected as an expression. *)
 postfix     = primary { "." IDENT [ "(" [ arg_list ] ")" ]  (* field access / method call *)
                       | "[" expr [ ".." expr ] "]"          (* index, or slice *)
                       | "!"                                  (* unwrap Option/Result *)

@@ -105,7 +105,7 @@ fn jsonEscapeStr(s: &string): string { ... }
 jsonEscapeStr(self.members[i].key)    // no clone, no '&'
 ```
 
-`&x` is not an expression in Milo — borrows are implicit. Writing it is an error.
+`&x` is not an expression in Milo — shared borrows are implicit. Writing it is an error. Only a mutable borrow is spelled, and only on a call argument: `bump(&mut x)`; the marker tells the reader which argument the call can change and nothing else.
 
 A sweep of all ~200 `.clone()` calls in milojs found exactly **one** that auto-borrow made redundant. The rest are structural, and there are only two reasons for them:
 
