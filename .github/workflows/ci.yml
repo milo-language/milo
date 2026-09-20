@@ -80,6 +80,15 @@ jobs:
       - name: AddressSanitizer sweep
         run: bun run test:asan
 
+      # The two soundness fuzzers (docs/plans/soundness-sweep-2026-09.md, WP5b/WP5c).
+      # Small counts here so the job stays under a few minutes; the generator shapes are
+      # the language's threat model, so a new rule gets a shape and this step is what
+      # keeps asking. Reduction is off: a red here is triaged locally with --keep.
+      - name: Soundness fuzzers
+        run: |
+          bun run fuzz:tasks --n=100 --seed=${{ github.run_number }} --reduce-probes=0
+          bun run fuzz:generic-drop --seed=${{ github.run_number }}
+
   # Nothing has ever executed std/*.linux.milo — epoll, eventfd, the glibc paths — because
   # the suite above runs on macOS only. This job is the first thing that does.
   #

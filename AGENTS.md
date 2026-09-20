@@ -28,6 +28,8 @@ Every doc in this repo starts with a 7-line `<!-- doc-meta ... -->` block. To fi
 | Do a lifetime-shaped thing (linked list, graph, tree, recursive type, zero-copy) | [docs/ownership-model.md](docs/ownership-model.md) §Rust→Milo — slices, `Heap<T>`, `std/arena` all exist; check here before assuming a gap |
 | Know what memory-safety Milo catches (compile vs runtime) vs Rust | [docs/memory-safety-vs-rust.md](docs/memory-safety-vs-rust.md) — battle-test matrix, 13 probes; finding #2 (move-out-of-borrow UAF) closed 2026-07-31 — the sweep is scoped, not a no-UB proof |
 | Write or run tests, or find what's covered | [docs/testing.md](docs/testing.md) |
+| Changing `src/verify.ts` or `src/prove-milo.ts` | ALWAYS run `bun test tests/verify-contracts.test.ts` before merging, whatever else is skipped: it is the only gate that notices a lost proof (WP6 lost four in `std/inflate.milo` and three merges went by) |
+| Changing `src/checker.ts` rules | ALWAYS run `bun run scripts/run-examples.ts` before merging: a false positive on a real program is a rule not finished |
 | Hunt for compiler crashes / hangs on hostile input | `bun scripts/fuzz-frontend.ts` — token-mutation fuzzer over the fixture corpus, ddmin-reduced findings; `bun scripts/prove-soundness-fuzz.ts` for false proofs out of `milo prove`; `bun run fuzz:tasks` for unsafe-free programs the checker accepts that ASan then rejects (globals across parks, Shards windows past their owner, `ptr()` past a realloc) |
 | Run the compiler / prove a change works | [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md) §Run, `bun run scripts/run-examples.ts`, `/verify`, `/run` |
 | Get my work reviewed by a different model | [docs/agent-review.md](docs/agent-review.md) → `scripts/agent_review.sh` |
