@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, unlinkSync, existsSync, mkdtempSync, rmSync,
 import { execSync, spawnSync } from "child_process";
 import { tmpdir, devNull, homedir } from "os";
 import { join } from "path";
-import { parseExpected, parseExpectedError, parseExpectedRuntimeError } from "./annotations";
+import { parseExpected, parseExpectedError, parseExpectedRuntimeError, parseKnownRed } from "./annotations";
 import { guardedRun, type RunResult } from "../scripts/guard";
 
 const FIXTURES_DIR = join(import.meta.dir, "fixtures");
@@ -174,6 +174,26 @@ function packageUnresolvable(dir: string, file: string): boolean {
     return /not found in the local package cache|cannot open module/.test(out);
   } catch { return true; }
 }
+// tests/known-red.txt lists fixtures that reproduce an OPEN soundness hole (the
+// tests/holes-2026-09 reproducers promoted by docs/plans/soundness-sweep-2026-09.md).
+// Each is registered as a skip that names its reason, so the count stays visible in
+// every run, and a summary line says how many were skipped. The list is what keeps
+// `bun test` green while the fix is in flight; scripts/asan-sweep.ts skips nothing on its
+// account (it only labels the line), so the hole still shows red where it belongs. A stale entry (a name that is no
+// longer a fixture) throws: the entry must be deleted in the same change that closes
+// the hole, or the driver would go on excusing a file that no longer needs it.
+const KNOWN_RED_FILE = join(import.meta.dir, "known-red.txt");
+function knownRed(): Map<string, string> {
+  if (!existsSync(KNOWN_RED_FILE)) return new Map();
+  const out = parseKnownRed(readFileSync(KNOWN_RED_FILE, "utf-8"));
+  for (const name of out.keys()) {
+    if (!existsSync(join(FIXTURES_DIR, name))) {
+      throw new Error(`tests/known-red.txt names '${name}', which is not in tests/fixtures/: delete the entry`);
+    }
+  }
+  return out;
+}
+
 function lane(dir: string, describeName: string): string[] {
   let entries: string[] = [];
   try { entries = readdirSync(dir); } catch { return []; }
@@ -197,6 +217,16 @@ describe("fixtures (compile + run)", () => {
   for (const [file, pkg] of blocked) {
     test.skip(`${file.replace(".milo", "")} — needs the '${pkg}' package, which is not installed`, () => {}); // reason is the test name itself, and the fixture carries the debt note
   }
+  const red = knownRed();
+  let skippedRed = 0;
+  for (const [file, reason] of red) {
+    const i = files.indexOf(file);
+    if (i < 0) continue; // filtered out by -t or @skip-os; not this run's concern
+    files.splice(i, 1);
+    skippedRed++;
+    test.skip(`${file.replace(".milo", "")}: known-red, ${reason}`, () => {}); // reason is the test name itself; tests/known-red.txt carries the closing WP
+  }
+  console.log(`known-red: ${skippedRed} fixtures skipped (tests/known-red.txt)`);
   const builds = new Map<string, RunResult>();
 
   beforeAll(async () => {

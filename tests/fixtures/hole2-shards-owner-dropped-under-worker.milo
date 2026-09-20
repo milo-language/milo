@@ -1,0 +1,47 @@
+// @expect: 2
+// @expect: 9
+// H2 from docs/plans/soundness-sweep-2026-09.md. `leak` drops the `Shards` owner while a
+// worker still holds a window, so the worker writes 2.0 into a freed buffer; `junk`
+// reuses that buffer and prints 2 where 9 was stored. The @expect lines are the
+// correct values (the worker's own window reads back 2, the unrelated Vec keeps 9).
+// The real fix (WP3, `@linear` on `Shards<T>`) rejects this program at compile time
+// and this file then moves to tests/errors/. Until then it sits in tests/known-red.txt:
+// the fixture lane skips it, the ASan sweep still runs it.
+from "std/shard" import {
+    Shard, Shards, shatter
+}
+from "std/runtime" import {
+    Promise
+}
+from "std/time" import {
+    sleepMs
+}
+
+fn leak(): Promise<Shard<f64>> {
+    var data: Vec<f64> = Vec.filled(1000000, 1.0)
+    var owner = shatter(data, 1)
+    var ws = owner.windows()
+    let w = ws.pop()!
+    let p = Promise<Shard<f64>>.blocking(move(): Shard<f64> => {
+        var s = w
+        sleepMs(50)
+        var j: i64 = 0
+        while j < s.len() {
+            s.set(j, 2.0)
+            j = j + 1
+        }
+        return s
+    }
+    )
+    return p
+    // owner dropped here: buffer freed while the worker writes
+}
+
+pub fn main(): i32 {
+    let p = leak()
+    var junk: Vec<f64> = Vec.filled(1000000, 9.0)
+    let s = p.await()!
+    print(s.get(0))
+    print(junk[0])
+    return 0
+}

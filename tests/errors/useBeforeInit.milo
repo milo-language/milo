@@ -1,0 +1,9 @@
+// @error: expected '='
+// Use-before-init probe from docs/memory-safety-vs-rust.md: a declaration without an
+// initializer does not parse, so there is no uninitialized binding for a later read to
+// observe. Rust rejects the read; Milo rejects the declaration.
+pub fn main(): i32 {
+    let x: i32
+    x = 1
+    return x
+}

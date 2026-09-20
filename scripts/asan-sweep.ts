@@ -20,6 +20,7 @@ import { readdirSync, readFileSync, mkdtempSync, rmSync, existsSync, statSync } 
 import { execFileSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
+import { parseKnownRed } from "../tests/annotations";
 
 const ROOT = join(import.meta.dir, "..");
 const FIXTURES = join(ROOT, "tests", "fixtures");
@@ -67,6 +68,16 @@ function exampleEntries(): Entry[] {
   return out;
 }
 
+// tests/known-red.txt names fixtures that reproduce an OPEN soundness hole. The test
+// driver skips their @expect comparison; this sweep does not skip anything, it only labels
+// the line so an expected red reads differently from a regression. Exit status is still 1:
+// a listed hole is meant to keep this gate red until the work package that closes it lands.
+const KNOWN_RED = join(ROOT, "tests", "known-red.txt");
+const knownRed = new Map(
+  [...(existsSync(KNOWN_RED) ? parseKnownRed(readFileSync(KNOWN_RED, "utf8")) : new Map<string, string>())]
+    .map(([name, why]) => [name.replace(/\.milo$/, ""), why] as const),
+);
+
 const entries = [...(wantFixtures ? fixtureEntries() : []), ...(wantExamples ? exampleEntries() : [])]
   .filter(e => !filter || e.name.includes(filter));
 
@@ -109,7 +120,10 @@ try {
   rmSync(dir, { recursive: true, force: true });
 }
 
-for (const e of errors) console.log(`ASAN  ${e.name}: ${e.detail}`);
+for (const e of errors) {
+  const why = knownRed.get(e.name);
+  console.log(`ASAN  ${e.name}: ${e.detail}${why ? `\n      known-red: ${why}` : ""}`);
+}
 if (unbuildable.length) console.log(`\ncould not build under -fsanitize=address: ${unbuildable.join(", ")}`);
 const corpus = wantExamples && wantFixtures ? "fixtures + examples" : wantExamples ? "examples" : "fixtures";
 console.log(`\n${ran} ${corpus} ran under AddressSanitizer, ${buildFailed} could not build, ${errors.length} reported an error`);

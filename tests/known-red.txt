@@ -1,0 +1,9 @@
+# Fixtures that reproduce an open soundness hole and are expected to FAIL today.
+# tests/run.test.ts skips the @expect comparison for each entry (reported as a skip
+# naming the reason); scripts/asan-sweep.ts still builds and runs them, which is where
+# their red shows. One filename per line; text after `#` is the reason and the work
+# package in docs/plans/soundness-sweep-2026-09.md that closes it. Delete the entry
+# when that package lands: a listed fixture that passes is an error in the driver.
+hole1-shard-string-double-free.milo            # H1: Shard.get bitwise-copies a Drop T (prints, then double-frees at exit: red only under ASan); closes with WP2 (@copyOnly), becomes tests/errors/
+hole2-shards-owner-dropped-under-worker.milo   # H2: Shards owner dropped while a worker holds a window; closes with WP3 (@linear), becomes tests/errors/
+hole3-global-forin-across-yield.milo           # H3: for-in freeze on a mutable global is not cross-task; closes with WP1 (@parks), becomes tests/errors/
