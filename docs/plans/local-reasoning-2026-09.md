@@ -121,10 +121,10 @@ no stored references, no `Send`/`Sync`; the price is that a view cannot be
 returned or kept, and you copy or use an arena handle instead. Not a scripting
 language: it compiles through LLVM to a static binary.
 
-**Measured, not claimed.** 290k lines of Milo across the compiler (self-hosted), a
-JS engine, three emulator cores, and a debugger: 91% of `unsafe` blocks are the C
-boundary, and none exist because the ownership model rejected a program
-([the census](/language/vs-rust)).
+**Measured, not claimed.** Over 250k lines of Milo exist across the compiler
+(self-hosted), a JS engine, three emulator cores, a debugger and a dozen packages.
+Nearly every `unsafe` block in them is the C boundary, and not one exists because the
+ownership model rejected a program ([the census](/language/vs-rust)).
 
 Done: both pages carry the three paragraphs, `bun test tests/docs.test.ts` and
 `docLinks.test.ts` green, `docs/site` builds.
@@ -137,13 +137,12 @@ diagnostics. Shared files are `src/checker.ts` (different regions) and
 `src-milo/`; merge A5 before B3's selfhost step. A is the bigger migration and the
 bigger visible change; if only one can run, A.
 
-## Unresolved questions
+## Decisions (2026-09-20)
 
-1. A: `&mut` required for receivers too? Proposed no (Rust precedent, 60% of the
-   `&mut` params in std are `self`). Decide before A2.
-2. A: should `&x` become legal as an optional, no-op annotation for readers who want
-   it, or stay an error? Proposed: stay an error; one spelling per construct.
-3. B2: rename the `_xx`/`_sha1` prefixed helpers back, or leave them? Proposed:
-   rename back, the prefix was the workaround.
-4. C: the "measured" paragraph cites numbers that age. Keep it and let WP7's census
-   script refresh them, or drop the numbers from the landing page?
+1. Receivers stay implicit: `v.push(1)` unchanged; `&mut` only on non-receiver
+   arguments.
+2. `&x` stays an error. One spelling per construct.
+3. B2 renames the `_xx`/`_sha1` prefixed helpers back once the compiler scopes them.
+4. Landing page keeps the claim in words plus rough numbers ("over 250k lines",
+   "zero unsafe blocks exist because the ownership model rejected a program"); no
+   percentages or exact counts that age.
