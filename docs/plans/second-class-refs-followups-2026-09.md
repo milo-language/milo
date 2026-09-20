@@ -127,7 +127,11 @@ method on a wrapper type, or return offsets and slice in the caller.
 Reopen only when a real program hits the copy tax. Fold that paragraph
 into WP1.
 
-### WP7. Corpus census as a maintenance sweep (added 2026-09-20)
+### WP7. Corpus census as a maintenance sweep (added 2026-09-20; SHIPPED 2026-09-20)
+Shipped as `scripts/corpus-census.ts` + `scripts/corpus-census.baseline.json`; the
+script classifies `exit`/`close` as FFI, so its split is 620/37 where the hand count
+below said 594/62. Both recorded in the doc section.
+
 Files: new `scripts/corpus-census.ts`, `docs/memory-safety-vs-rust.md` (new
 section "What the corpus says"), `AGENTS.md` router row.
 
@@ -175,7 +179,11 @@ Work:
 - Done: `bun scripts/corpus-census.ts --check` green; the doc section cites
   the numbers above; `bun test tests/docs.test.ts` green.
 
-### WP8. Census follow-ups in std (revised 2026-09-20 after checking backlog)
+### WP8. Census follow-ups in std (revised 2026-09-20; SHIPPED 2026-09-20, `7fd24906`)
+`Arena.with<R>` added; `selectRecv`/`selectSend` became `Select.onRecv`/`onSend`
+(free fns removed, 7 callers swept); `recvTimeout` stays free with the real reason
+(Channel lives in std/sync, an extension impl here would be import-order visible).
+
 Both candidate backlog entries already exist or are shipped:
 - derive `Clone`: backlog Tier 1 #31 (filed 2026-08-17). Add the census
   evidence to that entry (redis `RedisValue.clone` hand-written, src-milo
@@ -198,7 +206,10 @@ Both candidate backlog entries already exist or are shipped:
   merges (std sweep overlap). Done: fixture green, `sh scripts/selfhost.sh`
   green, `docs/std/arena.md` regenerated (`bun scripts/gen-std-docs.ts`).
 
-### WP9. Stale workaround in emulators (added 2026-09-20)
+### WP9. Stale workaround in emulators (added 2026-09-20; SHIPPED 2026-09-20, emulators `fe12009`)
+ROM clone removed, `fxRun(&mut m.fx, m.rom, burst)`; Star Fox frame hash identical
+at 300 and 1200 frames before/after, verify-contracts 4/4, web core still emits.
+
 Repo: `~/git/milo-language/emulators`, file `snes/superfx.milo:8`: "ROM is
 cloned in (read-only) ... sidesteps the second-class-ref rule against
 borrowing two &mut Mem fields at once". Disjoint field borrows compile today

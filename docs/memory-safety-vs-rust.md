@@ -3,7 +3,7 @@ system: memory-safety-vs-rust
 purpose: adversarial retained probes of Milo's safe-language behavior compared with Rust, the findings that broke the claim, and what the compiler does not check
 key-files: src/checker.ts, src/codegen.ts, std/arena.milo, std/shard.milo, std/seal.milo, scripts/fuzz-generic-drop.ts, scripts/fuzz-tasks.ts, docs/ownership-model.md
 update-when: a safety check is added/moved between compile-time and runtime, a new threat class is probed, a fuzzer finds a hole, or one of the three unchecked gaps closes
-last-verified: 2026-09-20 (findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section; matrix rows for closure borrows, arena reads, wrong-arena handles, `@mustUse` and private fields)
+last-verified: 2026-09-20 (corpus census section and its gate; findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section; matrix rows for closure borrows, arena reads, wrong-arena handles, `@mustUse` and private fields)
 -->
 
 # Memory safety: Milo vs Rust, battle-tested
@@ -450,6 +450,44 @@ Note "kernels" is *not* on this list. Freestanding/no-runtime is shipped, and a 
 ### The pitch, stated correctly
 
 Not "Rust minus annotations." It is: **the pool / handle / message-passing style that expert Rust code converges on anyway, made primary, with the machinery that mostly served the other style deleted.** The three gaps above are what that machinery was for. We removed it on purpose, and we say what it cost.
+
+## What the corpus says (census of 2026-09-20)
+
+The bet above is falsifiable: if the ownership model were rejecting programs,
+the escape hatch would show up as `unsafe` blocks that exist for no FFI reason.
+`bun scripts/corpus-census.ts` measures that over every `.milo` file in the org
+(~292k lines: this repo's std, examples, src-milo and fixtures, plus milojs,
+emulators, dapweb, aws, postgres, redis, toml, yaml, markdown, json-rpc, gl and
+sdl; worktrees and node_modules excluded). `--check` is the gate: the number of
+non-FFI `unsafe` blocks per root may shrink and never grow against
+`scripts/corpus-census.baseline.json`.
+
+- **657 `unsafe` blocks; 620 (94%) contain an extern call or a pointer cast.**
+  Of the 37 that do not, 19 are std internals (`std/foreign`, `std/shard`,
+  platform files) and 18 are outside std: fixtures pinning pointer rules (12),
+  the giflib example's buffer handoff (4), milojs (2). Zero blocks exist because
+  the ownership model rejected the program. The hand count from the session
+  that wrote this section was 656 blocks, 594 (91%) FFI: it did not classify
+  `exit(1)` and fd `close()` as extern calls, the script does.
+- **`.clone()` per kLOC**: src-milo 58, redis 41, dapweb 37, aws 25, milojs
+  12.5, std 5, examples 3.8, emulators 0.6. The receivers are strings (`name`,
+  `ty`, `key`) and owned-copy accessors; the tax is string clones, not
+  pointers, and it points at backlog Tier 1 #31 (derive `Clone`).
+- **Friction comments** (a comment naming a Milo limit; the script's regex is a
+  superset, read the list with `--comments`): 22 outside std name a limit. 10
+  are second-class refs, all restructured to owned values, a pool or an index,
+  none to `unsafe`. 12 are missing features: derive `Clone` for enums,
+  method-level generics (shipped 2026-08-17; the std comments claiming
+  otherwise were stale until WP8), default field values, an `Ord` trait, import
+  aliasing, extern variables, bitcast.
+- **Attributes user code uses** outside std/fixtures/src-milo: `cValue`,
+  `cSig`, `externalLinkage`, `link`, `wrapping`, `derive`, `cLayout`, `noCopy`.
+  Every soundness-sweep attribute (`copyOnly`, `copyOut`, `thread`, `parks`,
+  `synchronized`, `pure`, `iter`, `cOpaque`) is std-only: the sweep cost user
+  code nothing.
+
+Re-run the census after any std change that adds `unsafe`, and after a checker
+rule lands that could push a program toward it.
 
 ## How to extend this battle-test
 

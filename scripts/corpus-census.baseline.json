@@ -1,0 +1,19 @@
+{
+  "(outside std)": 18,
+  "std": 19,
+  "examples": 4,
+  "src-milo": 0,
+  "fixtures": 12,
+  "aws": 0,
+  "dapweb": 0,
+  "emulators": 0,
+  "markdown": 0,
+  "milo-gl": 0,
+  "milo-json-rpc": 0,
+  "milo-sdl": 0,
+  "milojs": 2,
+  "postgres": 0,
+  "redis": 0,
+  "toml": 0,
+  "yaml": 0
+}

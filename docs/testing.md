@@ -3,7 +3,7 @@ system: testing
 purpose: how to write/run tests, what to avoid, and an index of every test file and what it covers
 key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh
 update-when: a test file or out-of-band harness is added/removed/repurposed, or the fixture protocol changes
-last-verified: 2026-09-19 (known-red list added for the soundness-sweep reproducers)
+last-verified: 2026-09-20 (corpus census gate listed; 09-19: known-red list added for the soundness-sweep reproducers)
 -->
 
 # Testing
@@ -149,5 +149,6 @@ Not `bun test` — they need a toolchain CI supplies but a checkout may not, so 
 |---|---|---|
 | `tools/wasm/float-diff.sh` | wasm64 float formatting/parsing (`tools/wasm/runtime.c`'s dtoa + strtod) against the host libc, byte for byte — ~53k lines across a C-level probe (`float-selftest.c`: `%f`/`%e`/`%g` at fifteen precisions, `strtod` endptr/ties/subnormals) and a compiler-level one (`float-diff.milo`) | node + a clang with a wasm64 backend |
 | `scripts/windows-sweep.ts` | every fixture cross-compiled to windows-x64 and run under Wine | `MILO_WINDOWS_SDK`, wine |
+| `scripts/corpus-census.ts --check` | non-FFI `unsafe` blocks per root across the org's `.milo` corpus, shrink-only against `scripts/corpus-census.baseline.json`; a new one means the ownership model pushed a program out, and it owes a comment saying why | the sibling checkouts under `~/git/milo-language` (absent ones are named, not measured) |
 
-Both are differential: the native build is the oracle, so "it compiled" is never the pass condition. Before trusting a green run, break the thing under test on purpose and confirm the harness goes red.
+The first two are differential: the native build is the oracle, so "it compiled" is never the pass condition. Before trusting a green run, break the thing under test on purpose and confirm the harness goes red.

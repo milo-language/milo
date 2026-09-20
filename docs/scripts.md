@@ -41,6 +41,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/check-api-docs.ts` | Checks the signature listings on the docs-site stdlib pages against the real std API. |
 | `scripts/check-breaking.ts` | Detects source-level breaks in the public std surface since the last release tag, and requires each one to be written up in docs/breaking-changes.md. |
 | `scripts/check-packages.sh` | Run the sibling Milo packages' OWN test suites against this checkout's compiler. |
+| `scripts/corpus-census.ts` | Census of every .milo file in the org: what the ownership model costs real programs. |
 | `scripts/count-implicit-mut.ts` | Counts every bare non-receiver argument bound to a `&mut` parameter across the corpus: std, examples, src-milo, tests/fixtures, and the sibling repos under ~/git/milo-language. |
 | `scripts/dup-scan.ts` | Duplicate-code scanner: finds maximal runs of identical normalized lines shared by two or more places, within or across files. |
 | `scripts/ecosystem-check.ts` | Compile every published milo-language package against THIS checkout. |
