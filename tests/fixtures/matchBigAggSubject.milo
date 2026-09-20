@@ -68,10 +68,10 @@ fn main(): void {
         }
         )
     }
-    drain(h)
+    drain(&mut h)
     // The place was emptied, so the second drain sees None rather than the
     // moved-out value a plain read would have left behind.
-    drain(h)
+    drain(&mut h)
 }
 
 // @expect: drained 39

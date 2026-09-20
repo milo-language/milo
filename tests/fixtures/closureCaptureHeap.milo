@@ -14,7 +14,7 @@ pub struct Box {
 }
 
 pub fn addOne(a: &mut Arena<Box>, h: Handle<Box>, s: string) {
-    let _ = arenaModifyMut(a, h, (b: &mut Box): void => {
+    let _ = arenaModifyMut(&mut a, h, (b: &mut Box): void => {
         b.items.push(s)
     }
     )
@@ -22,7 +22,7 @@ pub fn addOne(a: &mut Arena<Box>, h: Handle<Box>, s: string) {
 
 pub fn main(): i32 {
     var a: Arena<Box> = arenaNew()
-    let h = arenaAlloc(a, Box {
+    let h = arenaAlloc(&mut a, Box {
         items: Vec.new()
     }
     )
@@ -30,8 +30,8 @@ pub fn main(): i32 {
     var built = String.withCapacity(8)
     built.push('h')
     built.push('i')
-    addOne(a, h, built)
-    addOne(a, h, "yo" + "")
+    addOne(&mut a, h, built)
+    addOne(&mut a, h, "yo" + "")
 
     let n = arenaWith(a, h, (b: &Box): i64 => b.items.len())
     match n {

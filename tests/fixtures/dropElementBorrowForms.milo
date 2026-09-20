@@ -47,7 +47,7 @@ fn inner(): void {
     let a = v[0].id // field read
     let b = v[0].get() // &self method
     let c = viaRef(v[0]) // auto-borrow into a &Res parameter
-    let d = viaMutRef(v[0]) // auto-borrow into a &mut Res parameter
+    let d = viaMutRef(&mut v[0]) // auto-borrow into a &mut Res parameter
     var e: i64 = 0
     for r in v {
         e = e + r.id

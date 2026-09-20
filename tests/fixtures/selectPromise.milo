@@ -26,7 +26,7 @@ pub fn main(): i32 {
     }
     )
     var sel = Select.new()
-    selectRecv(sel, p.channel()) // arm 0 — the worker thread fires this
+    selectRecv(&mut sel, p.channel()) // arm 0 — the worker thread fires this
     // arm 1 is INERT here and is not a safety net: Promise.blocking spawns a real pthread,
     // so no scheduler exists, and timer arms need the event loop to fire. If the worker
     // hung, this select would hang despite the timeout. Armed only to prove a dead timer
@@ -46,7 +46,7 @@ pub fn main(): i32 {
     }
     )
     var sel2 = Select.new()
-    selectRecv(sel2, g.channel())
+    selectRecv(&mut sel2, g.channel())
     sel2.onTimeout(5000) // live here — Promise.run means a scheduler exists
     // @expect: green arm 0
     print("green arm ", sel2.wait())

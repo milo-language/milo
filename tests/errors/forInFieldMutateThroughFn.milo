@@ -13,7 +13,7 @@ fn main() {
     var b = Bag { items: Vec.new() }
     b.items.push("alpha")
     for it in b.items {
-        grow(b)
+        grow(&mut b)
         print(it)
     }
 }

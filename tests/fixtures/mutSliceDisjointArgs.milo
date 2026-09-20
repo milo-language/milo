@@ -8,7 +8,7 @@ fn fill(a: &mut [i64], b: &mut [i64]): void {
 
 pub fn main(): i32 {
     var v: Vec<i64> = [1, 2, 3, 4]
-    fill(v[0..2], v[2..4])
+    fill(&mut v[0..2], &mut v[2..4])
     // @expect: 10
     print(v[0])
     // @expect: 20

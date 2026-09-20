@@ -14,7 +14,7 @@ pub fn main(): i32 {
     var v = [1, 2, 3]
     let i = 0
     let j = 1
-    swap2(v[i], v[j])
+    swap2(&mut v[i], &mut v[j])
     print(v[0])
     print(v[1])
     return 0

@@ -89,10 +89,10 @@ pub fn main() {
     // inline guard: passes a valid request, 401s an invalid one
     var g1 = mkCtx(authHeader("Bearer " + token))
     // @expect: 200
-    print(guardStatus(g1, secret))
+    print(guardStatus(&mut g1, secret))
     var g2 = mkCtx(authHeader("Bearer nope"))
     // @expect: 401
-    print(guardStatus(g2, secret))
+    print(guardStatus(&mut g2, secret))
 
     // gzip middleware: compresses a large body, round-trips, sets Content-Encoding
     var big = ""
@@ -106,7 +106,7 @@ pub fn main() {
     }
     )
     let body = big.clone()
-    let resp = gzip(ctxG, (c: &mut Context) => {
+    let resp = gzip(&mut ctxG, (c: &mut Context) => {
         return Response.Text(body.clone())
     }
     )
@@ -139,7 +139,7 @@ pub fn main() {
 
     // gzip middleware: leaves body untouched when client did not offer gzip
     var ctxP = mkCtx([])
-    let plain = gzip(ctxP, (c: &mut Context) => {
+    let plain = gzip(&mut ctxP, (c: &mut Context) => {
         return Response.Text("hello")
     }
     )

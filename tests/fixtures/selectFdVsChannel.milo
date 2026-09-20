@@ -39,7 +39,7 @@ pub fn main(): i32 {
 
     Task.spawn(move(): void => {
         var sel = Select.new()
-        selectRecv(sel, ch)
+        selectRecv(&mut sel, ch)
         sel.onRead(rfd)
         sel.onTimeout(2000)
         match sel.wait() {

@@ -75,7 +75,7 @@ pub fn withRawMut<T, R>(p: *T, len: i64, f: (&mut [T]) => R): Option<R> {
         if p as i64 == 0 {
             return Option.None
         }
-        return Option.Some(f(rawSliceMut(p, len)))
+        return Option.Some(f(&mut rawSliceMut(p, len)))
     }
 }
 

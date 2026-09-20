@@ -40,7 +40,7 @@ pub fn main(): i32 {
     v.push(3)
     v.push(4)
     v.push(5)
-    Random.shuffleI64(v, v.len)
+    Random.shuffleI64(&mut v, v.len)
     print(v.len.toString())
     print("done")
     return 0

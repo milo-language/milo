@@ -23,12 +23,12 @@ pub fn main(): i32 {
     var s: Stack<i64> = Stack {
         items: Vec.new()
     }
-    stackPush(s, 10)
-    stackPush(s, 20)
-    stackPush(s, 30)
+    stackPush(&mut s, 10)
+    stackPush(&mut s, 20)
+    stackPush(&mut s, 30)
     print("len:", stackLen(s))
 
-    match stackPop(s) {
+    match stackPop(&mut s) {
         Option.Some(val) => {
             print("popped:", val)
         }
@@ -37,7 +37,7 @@ pub fn main(): i32 {
         }
     }
 
-    match stackPop(s) {
+    match stackPop(&mut s) {
         Option.Some(val) => {
             print("popped:", val)
         }

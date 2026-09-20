@@ -9,7 +9,7 @@ from "std/arena" import {
 
 pub fn main(): i32 {
     var arena: Arena<i32> = arenaNew()
-    let h = arenaAlloc(arena, 10)
+    let h = arenaAlloc(&mut arena, 10)
 
     match arenaGet(arena, h) {
         Option.Some(v) => {
@@ -21,7 +21,7 @@ pub fn main(): i32 {
     }
 
     // in-place increment via closure
-    let _ = arenaModify(arena, h, (v: i32) => v + 1)
+    let _ = arenaModify(&mut arena, h, (v: i32) => v + 1)
     match arenaGet(arena, h) {
         Option.Some(v) => {
             print(v)
@@ -32,8 +32,8 @@ pub fn main(): i32 {
     }
 
     // chain modifications
-    let _ = arenaModify(arena, h, (v: i32) => v * 2)
-    let _ = arenaModify(arena, h, (v: i32) => v - 1)
+    let _ = arenaModify(&mut arena, h, (v: i32) => v * 2)
+    let _ = arenaModify(&mut arena, h, (v: i32) => v - 1)
     match arenaGet(arena, h) {
         Option.Some(v) => {
             print(v)
@@ -44,8 +44,8 @@ pub fn main(): i32 {
     }
 
     // stale handle — modify returns false, value unchanged
-    let _ = arenaFree(arena, h)
-    let ok = arenaModify(arena, h, (v: i32) => v + 100)
+    let _ = arenaFree(&mut arena, h)
+    let ok = arenaModify(&mut arena, h, (v: i32) => v + 100)
     if ok {
         print("true")
     } else {
@@ -53,7 +53,7 @@ pub fn main(): i32 {
     }
 
     // re-alloc reuses slot but with bumped gen; old handle still stale
-    let h2 = arenaAlloc(arena, 21)
+    let h2 = arenaAlloc(&mut arena, 21)
     match arenaGet(arena, h2) {
         Option.Some(v) => {
             print(v)

@@ -28,7 +28,7 @@ fn bump(n: &mut Node): void {
 
 pub fn main(): i32 {
     var a = Node.Leaf(1)
-    bump(a)
+    bump(&mut a)
     match a {
         Node.Leaf(v) => {
             print(v.toString())
@@ -38,7 +38,7 @@ pub fn main(): i32 {
         }
     }
     var b = Node.Pair("heap-payload", 41)
-    bump(b)
+    bump(&mut b)
     match b {
         Node.Leaf(v) => {
             print("leaf")

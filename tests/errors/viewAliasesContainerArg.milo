@@ -13,5 +13,5 @@ fn grow(v: &mut Vec<i64>, s: &[i64]): void {
 
 fn main() {
   var v: Vec<i64> = [11, 22, 33]
-  grow(v, v[0..2])  // @error: is borrowed mutably and shared in the same call
+  grow(&mut v, v[0..2])  // @error: is borrowed mutably and shared in the same call
 }

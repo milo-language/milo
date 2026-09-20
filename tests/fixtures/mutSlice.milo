@@ -19,7 +19,7 @@ fn main() {
     v.push(2)
     v.push(3)
 
-    double(v)
+    double(&mut v)
     // @expect: 2
     print(v[0])
     // @expect: 4
@@ -27,7 +27,7 @@ fn main() {
     // @expect: 6
     print(v[2])
 
-    setAt(v, 1, 40)
+    setAt(&mut v, 1, 40)
     // @expect: 40
     print(v[1])
 }

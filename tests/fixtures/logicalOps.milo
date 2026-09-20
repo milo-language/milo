@@ -22,7 +22,7 @@ pub fn main(): i32 {
 
     // short-circuit: sideEffect should not be called
     var called: bool = false
-    if c && setFlag(called) {
+    if c && setFlag(&mut called) {
         print("should not print")
     }
     if !called {

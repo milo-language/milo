@@ -36,7 +36,7 @@ pub fn main() {
     while i < s.len {
         let cp = decodeCodepoint(s, i)
         print($"at {i} value={cp.value} size={cp.size}")
-        encodeCodepoint(out, cp.value)
+        encodeCodepoint(&mut out, cp.value)
         i = i + cp.size
     }
     print($"roundtrip ok={out == s}")

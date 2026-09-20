@@ -35,7 +35,7 @@ pub fn main(): i32 {
         v.push(i)
     }
     var s = Rng.new(3)
-    s.shuffleI64(v, 6)
+    s.shuffleI64(&mut v, 6)
     var out = ""
     for i in 0..6 {
         out = out + v[i].toString()

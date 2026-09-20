@@ -59,7 +59,7 @@ fn cursor(): void {
 fn pump(): void {
     var src = BytesReader.new("hello world")
     var dst = BytesWriter.new()
-    let n = copyStream(src, dst)!
+    let n = copyStream(&mut src, &mut dst)!
     print("copied " + n.toString())
     print("sink: " + dst.take())
 }
@@ -67,7 +67,7 @@ fn pump(): void {
 // BufReader is a Reader, so it stacks under a generic bound.
 fn nested(): void {
     var r = BufReader<BytesReader>.withCapacity(BytesReader.new("abcdefghijklmnopqrstuvwxyz"), 7)
-    print("nested " + countBytes(r)!.toString())
+    print("nested " + countBytes(&mut r)!.toString())
 }
 
 fn buffered(): void {
@@ -80,7 +80,7 @@ fn buffered(): void {
     // The sink is inside the BufWriter now, so read it back through the trait.
     var probe = BytesWriter.new()
     var reread = BytesReader.new("abcde")
-    copyStream(reread, probe)!
+    copyStream(&mut reread, &mut probe)!
     print("flushed: " + probe.take())
 }
 

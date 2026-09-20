@@ -23,18 +23,18 @@ pub fn main(): i32 {
     var w: Wrapper<i64> = Wrapper {
         val: 0
     }
-    setVal(w, 99)
+    setVal(&mut w, 99)
     print(getVal(w))
 
     var w2: Wrapper<i64> = Wrapper {
         val: 0
     }
-    print(setAndGet(42, w2))
+    print(setAndGet(42, &mut w2))
 
     var w3: Wrapper<string> = Wrapper {
         val: ""
     }
-    setVal(w3, "hello")
+    setVal(&mut w3, "hello")
     print(getVal(w3))
     return 0
 }

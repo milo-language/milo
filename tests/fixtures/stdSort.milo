@@ -24,7 +24,7 @@ pub fn main(): i32 {
     nums.push(8)
     nums.push(1)
     nums.push(4)
-    sortI64(nums)
+    sortI64(&mut nums)
     for n in nums {
         print(n)
     }
@@ -33,7 +33,7 @@ pub fn main(): i32 {
     small.push(9)
     small.push(2)
     small.push(7)
-    sortI32(small)
+    sortI32(&mut small)
     for s in small {
         print(s)
     }
@@ -42,7 +42,7 @@ pub fn main(): i32 {
     words.push("cherry")
     words.push("apple")
     words.push("banana")
-    sortStrings(words)
+    sortStrings(&mut words)
     for w in words {
         print(w)
     }
@@ -51,7 +51,7 @@ pub fn main(): i32 {
     rev.push(1)
     rev.push(2)
     rev.push(3)
-    reverseI64(rev)
+    reverseI64(&mut rev)
     for r in rev {
         print(r)
     }

@@ -11,5 +11,5 @@ fn grow(v: &mut Vec<i64>, s: &mut [i64]): void {
 
 fn main() {
   var v: Vec<i64> = [1, 2, 3]
-  grow(v, v[0..2])  // @error: is borrowed mutably twice in the same call
+  grow(&mut v, &mut v[0..2])  // @error: is borrowed mutably twice in the same call
 }

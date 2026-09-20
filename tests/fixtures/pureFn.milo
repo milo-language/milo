@@ -74,7 +74,7 @@ pub fn main() {
     var w: Vec<i64> = Vec.new()
     w.push(5)
     w.push(10)
-    scaleAll(w, 2)
+    scaleAll(&mut w, 2)
     print(w[0] + w[1])
 
     print(twiceOf(7))

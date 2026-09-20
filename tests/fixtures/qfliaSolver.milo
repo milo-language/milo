@@ -91,49 +91,49 @@ pub fn main(): i32 {
     // 1) transitivity: a<=b, b<=c |- a<=c   (vars a=0 b=1 c=2)
     //    query: (a-b<=0) & (b-c<=0) & !(a-c<=0)
     var t = newProblem(3)
-    let tA = nAtom(t, addAtom(t, [1, -1, 0], 0, false))
-    let tB = nAtom(t, addAtom(t, [0, 1, -1], 0, false))
-    let tGoal = addAtom(t, [1, 0, -1], 0, false)
+    let tA = nAtom(&mut t, addAtom(&mut t, [1, -1, 0], 0, false))
+    let tB = nAtom(&mut t, addAtom(&mut t, [0, 1, -1], 0, false))
+    let tGoal = addAtom(&mut t, [1, 0, -1], 0, false)
     var tKids: Vec<i64> = []
     tKids.push(tA)
     tKids.push(tB)
-    tKids.push(nNot(t, nAtom(t, tGoal)))
-    reportVerdict("transitivity: ", decide(t, nAnd(t, tKids)))
+    tKids.push(nNot(&mut t, nAtom(&mut t, tGoal)))
+    reportVerdict("transitivity: ", decide(t, nAnd(&mut t, tKids)))
 
     // 2) clamp pass-through: lo<=hi, lo<=value, value<=hi |- lo<=value & value<=hi
     //    (vars lo=0 hi=1 value=2)
     var c = newProblem(3)
-    let cLoHi = nAtom(c, addAtom(c, [1, -1, 0], 0, false))
-    let aLoV = addAtom(c, [1, 0, -1], 0, false)
-    let aVHi = addAtom(c, [0, -1, 1], 0, false)
+    let cLoHi = nAtom(&mut c, addAtom(&mut c, [1, -1, 0], 0, false))
+    let aLoV = addAtom(&mut c, [1, 0, -1], 0, false)
+    let aVHi = addAtom(&mut c, [0, -1, 1], 0, false)
     var negGoal: Vec<i64> = []
-    negGoal.push(nNot(c, nAtom(c, aLoV)))
-    negGoal.push(nNot(c, nAtom(c, aVHi)))
+    negGoal.push(nNot(&mut c, nAtom(&mut c, aLoV)))
+    negGoal.push(nNot(&mut c, nAtom(&mut c, aVHi)))
     var cKids: Vec<i64> = []
     cKids.push(cLoHi)
-    cKids.push(nAtom(c, aLoV))
-    cKids.push(nAtom(c, aVHi))
-    cKids.push(nOr(c, negGoal))
-    reportVerdict("clamp: ", decide(c, nAnd(c, cKids)))
+    cKids.push(nAtom(&mut c, aLoV))
+    cKids.push(nAtom(&mut c, aVHi))
+    cKids.push(nOr(&mut c, negGoal))
+    reportVerdict("clamp: ", decide(c, nAnd(&mut c, cKids)))
 
     // 3) case-split: (x<=-1 | x>=1) |- x != 0    (var x=0)
     //    query: (x+1<=0 | 1-x<=0) & (x<=0) & (-x<=0)   [x==0 as x<=0 & x>=0]
     var s = newProblem(1)
     var branch: Vec<i64> = []
-    branch.push(nAtom(s, addAtom(s, [1], 1, false)))
-    branch.push(nAtom(s, addAtom(s, [-1], 1, false)))
+    branch.push(nAtom(&mut s, addAtom(&mut s, [1], 1, false)))
+    branch.push(nAtom(&mut s, addAtom(&mut s, [-1], 1, false)))
     var sKids: Vec<i64> = []
-    sKids.push(nOr(s, branch))
-    sKids.push(nAtom(s, addAtom(s, [1], 0, false)))
-    sKids.push(nAtom(s, addAtom(s, [-1], 0, false)))
-    reportVerdict("case-split: ", decide(s, nAnd(s, sKids)))
+    sKids.push(nOr(&mut s, branch))
+    sKids.push(nAtom(&mut s, addAtom(&mut s, [1], 0, false)))
+    sKids.push(nAtom(&mut s, addAtom(&mut s, [-1], 0, false)))
+    reportVerdict("case-split: ", decide(s, nAnd(&mut s, sKids)))
 
     // 4) violable: x>=0 |- x>=5   (var x=0)  -> counterexample x=0
     var b = newProblem(1)
     var bKids: Vec<i64> = []
-    bKids.push(nAtom(b, addAtom(b, [-1], 0, false)))
-    bKids.push(nNot(b, nAtom(b, addAtom(b, [-1], 5, false))))
-    reportVerdict("bound: ", decide(b, nAnd(b, bKids)))
+    bKids.push(nAtom(&mut b, addAtom(&mut b, [-1], 0, false)))
+    bKids.push(nNot(&mut b, nAtom(&mut b, addAtom(&mut b, [-1], 5, false))))
+    reportVerdict("bound: ", decide(b, nAnd(&mut b, bKids)))
 
     // 5) x<y |- x+1<=y : holds over the integers but not the rationals (y = x + 0.5).
     //    This used to come back `unknown` — Fourier-Motzkin decides feasibility over the
@@ -143,9 +143,9 @@ pub fn main(): i32 {
     //    the elimination refutes it with no notion of integrality of its own. (vars x=0 y=1)
     var g = newProblem(2)
     var gKids: Vec<i64> = []
-    gKids.push(nAtom(g, addAtom(g, [1, -1], 0, true)))
-    gKids.push(nNot(g, nAtom(g, addAtom(g, [1, -1], 1, false))))
-    reportVerdict("strict-int-gap: ", decide(g, nAnd(g, gKids)))
+    gKids.push(nAtom(&mut g, addAtom(&mut g, [1, -1], 0, true)))
+    gKids.push(nNot(&mut g, nAtom(&mut g, addAtom(&mut g, [1, -1], 1, false))))
+    reportVerdict("strict-int-gap: ", decide(g, nAnd(&mut g, gKids)))
 
     return 0
 }

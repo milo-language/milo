@@ -400,7 +400,7 @@ pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<
                 if j.isErr() {
                     break
                 }
-                oc.send(f(j!, s))!
+                oc.send(f(j!, &mut s))!
             }
             return s
         }

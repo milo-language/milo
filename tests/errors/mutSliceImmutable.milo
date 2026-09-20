@@ -4,5 +4,5 @@ fn setFirst(xs: &mut [i64]): void { xs[0] = 99 }
 
 fn main() {
   let v: Vec<i64> = Vec.new()
-  setFirst(v)  // @error: cannot pass immutable
+  setFirst(&mut v)  // @error: cannot pass immutable
 }

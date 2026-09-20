@@ -67,7 +67,7 @@ pub fn main(): i32 {
     takesField(H.n)
     print("field " + log.toString())
 
-    takesWhole(G)
+    takesWhole(&mut G)
     print("whole 3")
     return 0
 }

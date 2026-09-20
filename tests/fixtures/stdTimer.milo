@@ -99,7 +99,7 @@ pub fn main(): i32 {
     var tk2 = Ticker.every(Duration.millis(15))
     let tickChannel = tk2.channel()
     var sel = Select.new()
-    selectRecv(sel, tickChannel)
+    selectRecv(&mut sel, tickChannel)
     sel.onTimeout(5000)
     print("select arm ", sel.wait())
     sel.destroy()

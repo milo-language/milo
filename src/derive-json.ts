@@ -108,7 +108,7 @@ function emitSer(p: JsonPlan, val: string, g: Gen, d: number): string {
       // its own diff, and a test that cannot assert on its output. JSON objects are
       // unordered, so sorting costs nothing semantically and buys reproducibility.
       g.push(d, `var ${ks}: Vec<string> = ${val}.keys()`);
-      g.push(d, `sortStrings(${ks})`);
+      g.push(d, `sortStrings(&mut ${ks})`);
       g.push(d, `var ${i}: i64 = 0`);
       g.push(d, `for ${k} in ${ks} {`);
       g.push(d + 1, `if ${i} > 0 {`);

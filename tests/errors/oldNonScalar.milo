@@ -7,5 +7,5 @@ ensures v.len == old(v).len
 
 fn main() {
     var xs = vecNew<i64>()
-    print(f(xs))
+    print(f(&mut xs))
 }

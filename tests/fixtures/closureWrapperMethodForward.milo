@@ -13,7 +13,7 @@ enum Obj {
 }
 
 fn viaFreeFn(a: &mut Arena<Obj>, i: i64, f: (Obj) => Obj): bool {
-    return arenaModify(a, a.handles() [i], f)
+    return arenaModify(&mut a, a.handles() [i], f)
 }
 
 fn viaMethod(a: &mut Arena<Obj>, i: i64, f: (Obj) => Obj): bool {
@@ -28,7 +28,7 @@ fn main() {
     let _h = a.alloc(Obj.List(xs))
 
     var seen: i64 = 0
-    let r1 = viaFreeFn(a, 0, (o: Obj): Obj => {
+    let r1 = viaFreeFn(&mut a, 0, (o: Obj): Obj => {
         match o {
             List(v) => {
                 var ys = v
@@ -43,7 +43,7 @@ fn main() {
     print("free fn " + r1.toString() + " " + seen.toString())
 
     var touched: i64 = 0
-    let r2 = viaMethod(a, 0, (o: Obj): Obj => {
+    let r2 = viaMethod(&mut a, 0, (o: Obj): Obj => {
         match o {
             List(v) => {
                 var ys = v

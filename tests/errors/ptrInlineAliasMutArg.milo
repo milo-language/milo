@@ -13,6 +13,6 @@ fn growRead(p: *u8, v: &mut Vec<u8>): u64 {
 
 pub fn main(): i32 {
     var v: Vec<u8> = [65, 0]
-    print(growRead(v.ptr(), v))
+    print(growRead(v.ptr(), &mut v))
     return 0
 }

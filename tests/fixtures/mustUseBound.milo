@@ -14,7 +14,7 @@ fn main(): i32 {
     let h = a.alloc(7)
     let alive = arenaValid(a, h)
     print($"alive: {alive}")
-    let ok = arenaFree(a, h)
+    let ok = arenaFree(&mut a, h)
     print($"freed: {ok}")
     let again = a.free(h)
     print($"freed again: {again}")

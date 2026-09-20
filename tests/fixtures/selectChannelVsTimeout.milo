@@ -18,7 +18,7 @@ pub fn raceOnce(withSend: bool): void {
     let chSend = ch.clone()
     Task.spawn(move(): void => {
         var sel = Select.new()
-        selectRecv(sel, ch)
+        selectRecv(&mut sel, ch)
         sel.onTimeout(60)
         match sel.wait() {
             0 => {

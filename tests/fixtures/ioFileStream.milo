@@ -65,7 +65,7 @@ fn seeking(path: &string): void {
 fn copying(path: &string): void {
     var src = File.openRead(path)!
     var sink = BytesWriter.new()
-    let n = copyStream(src, sink)!
+    let n = copyStream(&mut src, &mut sink)!
     print("copied " + n.toString())
     sink.take()
 }

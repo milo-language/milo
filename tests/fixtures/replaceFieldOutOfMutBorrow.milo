@@ -19,7 +19,7 @@ fn main() {
         text: "hello",
     }
     // @expect: hello
-    print(take(doc))
+    print(take(&mut doc))
     // the field is left holding the replacement, not freed memory
     // @expect: []
     print($"[{doc.text}]")

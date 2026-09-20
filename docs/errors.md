@@ -1870,7 +1870,7 @@ fn growRead(p: *u8, v: &mut Vec<u8>): u64 {
 
 pub fn main(): i32 {
     var v: Vec<u8> = [65, 0]
-    print(growRead(v.ptr(), v))
+    print(growRead(v.ptr(), &mut v))
     return 0
 }
 ```
@@ -2417,7 +2417,7 @@ fn grow(a: &mut Vec<i64>, b: &i64) {
 
 fn main(): i32 {
     var v: Vec<i64> = [7]
-    grow(v, v[0])
+    grow(&mut v, v[0])
     return 0
 }
 // @error: borrowed mutably and shared in the same call
@@ -2438,7 +2438,7 @@ fn bad(elem: &mut i32, v: &mut Vec<i32>): i32 {
 fn main(): i32 {
     var v: Vec<i32> = Vec.new()
     v.push(111)
-    return bad(v[0], v)
+    return bad(&mut v[0], &mut v)
 }
 ```
 
@@ -3435,7 +3435,7 @@ fn main() {
     var b = Bag { items: Vec.new() }
     b.items.push("alpha")
     for it in b.items {
-        grow(b)
+        grow(&mut b)
         print(it)
     }
 }
@@ -3454,7 +3454,7 @@ fn main(): i32 {
     var items: Vec<i64> = Vec.new()
     items.push(1)
     for x in items {
-        grow(items)
+        grow(&mut items)
     }
     return 0
 }
@@ -3562,7 +3562,7 @@ fn setFirst(xs: &mut [i64]): void { xs[0] = 99 }
 
 fn main() {
   let v: Vec<i64> = Vec.new()
-  setFirst(v)  // @error: cannot pass immutable
+  setFirst(&mut v)  // @error: cannot pass immutable
 }
 ```
 
@@ -3579,7 +3579,7 @@ fn bump(a: &mut i64): void {
 
 fn main(): i32 {
     let x: i64 = 5
-    bump(x)
+    bump(&mut x)
     return x as i32
 }
 ```
@@ -5151,7 +5151,7 @@ fn grow(v: &mut Vec<i64>, s: &[i64]): void {
 
 fn main() {
   var v: Vec<i64> = [11, 22, 33]
-  grow(v, v[0..2])  // @error: is borrowed mutably and shared in the same call
+  grow(&mut v, v[0..2])  // @error: is borrowed mutably and shared in the same call
 }
 ```
 
@@ -5173,7 +5173,7 @@ fn grow(v: &mut Vec<i64>, s: &mut [i64]): void {
 
 fn main() {
   var v: Vec<i64> = [1, 2, 3]
-  grow(v, v[0..2])  // @error: is borrowed mutably twice in the same call
+  grow(&mut v, &mut v[0..2])  // @error: is borrowed mutably twice in the same call
 }
 ```
 
@@ -5198,7 +5198,7 @@ fn bump(n: &mut Node): void {
 
 fn main() {
     var n = Node.Leaf(1)
-    bump(n)
+    bump(&mut n)
 }
 ```
 
@@ -5897,7 +5897,7 @@ ensures v.len == old(v).len
 
 fn main() {
     var xs = vecNew<i64>()
-    print(f(xs))
+    print(f(&mut xs))
 }
 ```
 
@@ -6541,7 +6541,7 @@ fn f(a: &mut [i32], b: &mut [i32]): void {
 }
 fn main(): i32 {
     var v: Vec<i32> = [1, 2, 3, 4]
-    f(v[0..2], v[1..3])
+    f(&mut v[0..2], &mut v[1..3])
     return 0
 }
 // @error: the ranges 0..2 and 1..3 overlap

@@ -12,7 +12,7 @@ pub struct P {
 
 pub fn main(): i32 {
     var a: Arena<P> = arenaNew()
-    let h = arenaAlloc(a, P {
+    let h = arenaAlloc(&mut a, P {
         x: 10, y: 20
     }
     )
@@ -27,7 +27,7 @@ pub fn main(): i32 {
         }
     }
 
-    let _ = arenaModifyMut(a, h, (p: &mut P): void => {
+    let _ = arenaModifyMut(&mut a, h, (p: &mut P): void => {
         p.x = p.x + 5
     }
     )

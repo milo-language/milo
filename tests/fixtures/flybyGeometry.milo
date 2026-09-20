@@ -105,45 +105,45 @@ fn tinyCity(): string {
     for i in 0..8 {
         out.push(MAGIC[i])
     }
-    putI32(out, VERSION)
-    putI32(out, 4)
+    putI32(&mut out, VERSION)
+    putI32(&mut out, 4)
     out.push(84 as u8) // T
     out.push(111 as u8) // o
     out.push(119 as u8) // w
     out.push(110 as u8) // n
-    putI32(out, 377897000) // origin lat, 1e-7 degrees
-    putI32(out, 0 - 1224000000) // origin lon
-    putCm(out, 500.0) // reach
-    putI32(out, 1) // demN
-    putCm(out, 30.0) // demStep
-    putCm(out, 0.0 - 500.0) // demX0
-    putCm(out, 0.0 - 500.0) // demZ0
-    putCm(out, 12.0) // the one terrain post
-    putI32(out, 1) // coverN
-    putCm(out, 20.0)
-    putCm(out, 0.0 - 500.0)
-    putCm(out, 0.0 - 500.0)
+    putI32(&mut out, 377897000) // origin lat, 1e-7 degrees
+    putI32(&mut out, 0 - 1224000000) // origin lon
+    putCm(&mut out, 500.0) // reach
+    putI32(&mut out, 1) // demN
+    putCm(&mut out, 30.0) // demStep
+    putCm(&mut out, 0.0 - 500.0) // demX0
+    putCm(&mut out, 0.0 - 500.0) // demZ0
+    putCm(&mut out, 12.0) // the one terrain post
+    putI32(&mut out, 1) // coverN
+    putCm(&mut out, 20.0)
+    putCm(&mut out, 0.0 - 500.0)
+    putCm(&mut out, 0.0 - 500.0)
     out.push(0 as u8) // one cover cell: urban
-    putI32(out, 1) // one building
-    putCm(out, 24.0) // its height
-    putI32(out, 3) // three points
-    putCm(out, 0.0)
-    putCm(out, 0.0)
-    putCm(out, 10.0)
-    putCm(out, 0.0)
-    putCm(out, 0.0)
-    putCm(out, 10.0)
+    putI32(&mut out, 1) // one building
+    putCm(&mut out, 24.0) // its height
+    putI32(&mut out, 3) // three points
+    putCm(&mut out, 0.0)
+    putCm(&mut out, 0.0)
+    putCm(&mut out, 10.0)
+    putCm(&mut out, 0.0)
+    putCm(&mut out, 0.0)
+    putCm(&mut out, 10.0)
     // one bridge: a two-point deck, so the truncation sweep below covers the
     // version-2 section too
-    putI32(out, 1)
-    putCm(out, 6.0) // half-width
-    putI32(out, 1) // suspension
-    putI32(out, 0xC0552A) // International Orange
-    putI32(out, 2) // two points
-    putCm(out, 0.0)
-    putCm(out, 0.0)
-    putCm(out, 0.0)
-    putCm(out, 120.0)
+    putI32(&mut out, 1)
+    putCm(&mut out, 6.0) // half-width
+    putI32(&mut out, 1) // suspension
+    putI32(&mut out, 0xC0552A) // International Orange
+    putI32(&mut out, 2) // two points
+    putCm(&mut out, 0.0)
+    putCm(&mut out, 0.0)
+    putCm(&mut out, 0.0)
+    putCm(&mut out, 120.0)
     return out
 }
 
@@ -206,15 +206,15 @@ pub fn main(): i32 {
     for i in 0..8 {
         lying.push(MAGIC[i])
     }
-    putI32(lying, VERSION)
-    putI32(lying, 0)
-    putI32(lying, 0)
-    putI32(lying, 0)
-    putCm(lying, 500.0)
-    putI32(lying, 30000) // 900 million terrain posts, in 40 bytes
-    putCm(lying, 30.0)
-    putCm(lying, 0.0)
-    putCm(lying, 0.0)
+    putI32(&mut lying, VERSION)
+    putI32(&mut lying, 0)
+    putI32(&mut lying, 0)
+    putI32(&mut lying, 0)
+    putCm(&mut lying, 500.0)
+    putI32(&mut lying, 30000) // 900 million terrain posts, in 40 bytes
+    putCm(&mut lying, 30.0)
+    putCm(&mut lying, 0.0)
+    putCm(&mut lying, 0.0)
     match cityParse(lying) {
         Result.Ok(_) => {
             print("huge grid FAILED")

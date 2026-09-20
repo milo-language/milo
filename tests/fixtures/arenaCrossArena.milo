@@ -8,8 +8,8 @@ from "std/arena" import {
 pub fn main(): i32 {
     var first: Arena<string> = arenaNew()
     var second: Arena<string> = arenaNew()
-    let firstHandle: Handle<string> = arenaAlloc(first, "alice")
-    let _secondHandle: Handle<string> = arenaAlloc(second, "carol")
+    let firstHandle: Handle<string> = arenaAlloc(&mut first, "alice")
+    let _secondHandle: Handle<string> = arenaAlloc(&mut second, "carol")
     match arenaGet(second, firstHandle) {
         Option.Some(value) => {
             print(value)

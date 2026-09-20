@@ -356,7 +356,7 @@ pub fn arenaModifyMut<T>(a: &mut Arena<T>, h: Handle<T>, f: (&mut T) => void): b
     if a.gens[idx] <= 0 || a.gens[idx] != h.generation {
         return false
     }
-    f(a.data[idx])
+    f(&mut a.data[idx])
     return true
 }
 
@@ -516,7 +516,7 @@ impl GrowOnlyArena<T> {
         assert(h.arenaId == self.id, "grow-only arena: handle was minted by a different arena")
         let idx = h.index as i64
         assert(idx >= 0 && idx < self.data.len, "grow-only arena: handle index out of range")
-        f(self.data[idx])
+        f(&mut self.data[idx])
     }
 
     // Borrow rather than copy. Prefer this when T owns heap storage.
@@ -672,7 +672,7 @@ impl Arena<T> {
     // Move `val` into a free slot and return a Handle<T> naming it. Reuses a
     // slot from the free list when one exists, otherwise grows the arena.
     fn alloc(self: &mut Self, val: T): Handle<T> {
-        return arenaAlloc(self, val)
+        return arenaAlloc(&mut self, val)
     }
 
     // A COPY of the value at `h`, or None if `h` is stale.
@@ -703,7 +703,7 @@ impl Arena<T> {
     // Replace the value at `h`. False (and no write) if `h` is stale.
     @mustUse
     fn set(self: &mut Self, h: Handle<T>, val: T): bool {
-        return arenaSet(self, h, val)
+        return arenaSet(&mut self, h, val)
     }
 
     // Update the slot by mapping its value through `f`. False (and `f` not
@@ -713,7 +713,7 @@ impl Arena<T> {
     @mustUse
     @copyOut
     fn modify(self: &mut Self, h: Handle<T>, f: (T) => T): bool {
-        return arenaModify(self, h, f)
+        return arenaModify(&mut self, h, f)
     }
 
     // Mutate the live value in place through `&mut T`. No copy in, no copy out.
@@ -730,7 +730,7 @@ impl Arena<T> {
 
     @mustUse
     fn modifyMut(self: &mut Self, h: Handle<T>, f: (&mut T) => void): bool {
-        return arenaModifyMut(self, h, f)
+        return arenaModifyMut(&mut self, h, f)
     }
 
     // Logically delete the slot: drop the value, bump the slot's generation so
@@ -740,14 +740,14 @@ impl Arena<T> {
     // freed value; a cyclic graph still needs a sweep you write.
     @mustUse
     fn free(self: &mut Self, h: Handle<T>): bool {
-        return arenaFree(self, h)
+        return arenaFree(&mut self, h)
     }
 
     // Drop every value and release the backing storage. The arena takes a fresh
     // identity, so every handle ever issued before this point is now stale.
     // The only operation that returns memory to the allocator.
     fn clear(self: &mut Self) {
-        arenaClear(self)
+        arenaClear(&mut self)
     }
 
     // Whether `h` still names a live value in THIS arena — identity and

@@ -22,5 +22,5 @@ fn bump(n: &mut Node): void {
 
 fn main() {
     var n = Node.Leaf(1)
-    bump(n)
+    bump(&mut n)
 }

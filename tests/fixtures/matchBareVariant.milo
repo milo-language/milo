@@ -41,10 +41,10 @@ fn main(): i32 {
 
     var v: Vec<i64> = Vec.new()
     // @expect: -1
-    print(first(v))
+    print(first(&mut v))
     v.push(9)
     // @expect: 9
-    print(first(v))
+    print(first(&mut v))
 
     // qualified form still works, and mixing is fine
     let s = Shape.Line(2)

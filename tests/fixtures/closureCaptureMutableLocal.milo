@@ -13,7 +13,7 @@ pub struct Box {
 
 pub fn main(): i32 {
     var a: Arena<Box> = arenaNew()
-    let h = arenaAlloc(a, Box {
+    let h = arenaAlloc(&mut a, Box {
         items: Vec.new(), n: 0
     }
     )
@@ -22,7 +22,7 @@ pub fn main(): i32 {
     var built = String.withCapacity(8)
     built.push('h')
     built.push('i')
-    let _ = arenaModifyMut(a, h, (b: &mut Box): void => {
+    let _ = arenaModifyMut(&mut a, h, (b: &mut Box): void => {
         b.items.push(built)
     }
     )
@@ -38,7 +38,7 @@ pub fn main(): i32 {
 
     // mutate-in-place of a captured local, read after
     var total = 0
-    let _ = arenaModifyMut(a, h, (b: &mut Box): void => {
+    let _ = arenaModifyMut(&mut a, h, (b: &mut Box): void => {
         b.n = 1
         total = total + 10
     }

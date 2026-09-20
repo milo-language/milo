@@ -9,6 +9,6 @@ fn bump(a: &mut i64): void {
 
 fn main(): i32 {
     let x: i64 = 5
-    bump(x)
+    bump(&mut x)
     return x as i32
 }

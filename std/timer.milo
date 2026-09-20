@@ -185,7 +185,7 @@ pub fn recvTimeout<T>(ch: &Channel<T>, d: &Duration): Option<T> {
     }
     ensureTimersLive()
     var sel = Select.new()
-    selectRecv(sel, ch)
+    selectRecv(&mut sel, ch)
     sel.onTimeout(timeoutMs(d))
     let winner = sel.wait()
     sel.destroy()

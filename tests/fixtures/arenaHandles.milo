@@ -50,17 +50,17 @@ pub fn main(): i32 {
     var arena = Arena<i64>.new()
     print(arenaHandles(arena).len)
 
-    let first = arenaAlloc(arena, 10)
-    let stale = arenaAlloc(arena, 20)
-    let third = arenaAlloc(arena, 30)
-    let _ = arenaFree(arena, stale)
+    let first = arenaAlloc(&mut arena, 10)
+    let stale = arenaAlloc(&mut arena, 20)
+    let third = arenaAlloc(&mut arena, 30)
+    let _ = arenaFree(&mut arena, stale)
 
     let snapshot = arenaHandles(arena)
     print(snapshot.len)
     print(sumHandles(arena, snapshot))
     print(arena.valid(stale))
 
-    let replacement = arenaAlloc(arena, 40)
+    let replacement = arenaAlloc(&mut arena, 40)
     print(snapshot.len)
     print(sumHandles(arena, snapshot))
 
@@ -70,7 +70,7 @@ pub fn main(): i32 {
 
     // A snapshot is stable, but its handles are not roots: freeing a returned
     // handle makes that entry stale, and later allocations never join it.
-    let _ = arenaFree(arena, first)
+    let _ = arenaFree(&mut arena, first)
     print(current.len)
     match arenaGet(arena, first) {
         Option.Some(_value) => {
@@ -81,7 +81,7 @@ pub fn main(): i32 {
         }
     }
     print(sumHandles(arena, current))
-    let later = arenaAlloc(arena, 50)
+    let later = arenaAlloc(&mut arena, 50)
     print(current.len)
     print(sumHandles(arena, current))
 
@@ -96,22 +96,22 @@ pub fn main(): i32 {
     }
 
     for handle in current {
-        let _ = arenaFree(arena, handle)
+        let _ = arenaFree(&mut arena, handle)
     }
-    let _ = arenaFree(arena, later)
+    let _ = arenaFree(&mut arena, later)
     print(arena.len())
 
     // Force the otherwise impractical generation-exhaustion boundary. Public
     // struct fields make this a fixture-only way to verify retirement behavior.
     var retirement = Arena<i64>.new()
-    let initial = arenaAlloc(retirement, 1)
+    let initial = arenaAlloc(&mut retirement, 1)
     retirement.gens[initial.index as i64] = 2147483647
     let exhausted: Handle<i64> = Handle {
         arenaId: retirement.id,
         index: initial.index,
         generation: 2147483647,
     }
-    print(arenaFree(retirement, exhausted))
+    print(arenaFree(&mut retirement, exhausted))
     match arenaGet(retirement, exhausted) {
         Option.Some(_value) => {
             print(-1)
@@ -121,10 +121,10 @@ pub fn main(): i32 {
         }
     }
     print(retirement.handles().len)
-    let fresh = arenaAlloc(retirement, 2)
+    let fresh = arenaAlloc(&mut retirement, 2)
     print(fresh.index != exhausted.index)
     print(retirement.len())
-    let _ = arenaFree(retirement, fresh)
+    let _ = arenaFree(&mut retirement, fresh)
     print(retirement.len())
 
     // A forged handle carrying the free slot's internal negative generation is

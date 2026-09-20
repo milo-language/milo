@@ -37,7 +37,7 @@ pub fn main(): i32 {
     // Built by codepoint because Milo string escapes are byte-oriented (\x),
     // with no \u{...} form.
     var accented = "cafe"
-    encodeCodepoint(accented, 769)
+    encodeCodepoint(&mut accented, 769)
     print(displayWidth(accented))
 
     // A single emoji is two cells.
@@ -54,8 +54,8 @@ pub fn main(): i32 {
 
     // VS16 promotes a text-presentation symbol (1 cell) to emoji width (2).
     var heart = ""
-    encodeCodepoint(heart, 10084)
-    encodeCodepoint(heart, 65039)
+    encodeCodepoint(&mut heart, 10084)
+    encodeCodepoint(&mut heart, 65039)
     print(displayWidth(heart))
 
     // Fullwidth forms are wide.

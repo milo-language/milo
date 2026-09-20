@@ -25,16 +25,16 @@ pub fn skipWs(s: &string, pos: &mut i64) {
 }
 
 pub fn parseValue(s: &string, pos: &mut i64): Heap<JsonValue> {
-    skipWs(s, pos)
+    skipWs(s, &mut pos)
     if pos >= s.len {
         return Heap(JsonValue.Null)
     }
     let ch = s[pos]
     if ch == '"' {
-        return parseString(s, pos)
+        return parseString(s, &mut pos)
     }
     if ch == '{' {
-        return parseObject(s, pos)
+        return parseObject(s, &mut pos)
     }
     if ch == 't' {
         pos = pos + 4
@@ -49,7 +49,7 @@ pub fn parseValue(s: &string, pos: &mut i64): Heap<JsonValue> {
         return Heap(JsonValue.Null)
     }
     if isDigit(ch) || ch == '-' {
-        return parseNumber(s, pos)
+        return parseNumber(s, &mut pos)
     }
     return Heap(JsonValue.Null)
 }
@@ -72,7 +72,7 @@ pub fn parseNumber(s: &string, pos: &mut i64): Heap<JsonValue> {
 }
 
 pub fn parseString(s: &string, pos: &mut i64): Heap<JsonValue> {
-    let value = parseStringRaw(s, pos)
+    let value = parseStringRaw(s, &mut pos)
     return Heap(JsonValue.Str(value))
 }
 
@@ -93,24 +93,24 @@ pub fn parseStringRaw(s: &string, pos: &mut i64): string {
 pub fn parseObject(s: &string, pos: &mut i64): Heap<JsonValue> {
     pos = pos + 1
     var entries: HashMap<string, Heap<JsonValue>> = HashMap.new()
-    skipWs(s, pos)
+    skipWs(s, &mut pos)
     if pos < s.len && s[pos] != '}' {
-        skipWs(s, pos)
-        let k1 = parseStringRaw(s, pos)
-        skipWs(s, pos)
+        skipWs(s, &mut pos)
+        let k1 = parseStringRaw(s, &mut pos)
+        skipWs(s, &mut pos)
         pos = pos + 1
-        let v1 = parseValue(s, pos)
+        let v1 = parseValue(s, &mut pos)
         entries.insert(k1, v1)
-        skipWs(s, pos)
+        skipWs(s, &mut pos)
         while pos < s.len && s[pos] == ',' {
             pos = pos + 1
-            skipWs(s, pos)
-            let k = parseStringRaw(s, pos)
-            skipWs(s, pos)
+            skipWs(s, &mut pos)
+            let k = parseStringRaw(s, &mut pos)
+            skipWs(s, &mut pos)
             pos = pos + 1
-            let v = parseValue(s, pos)
+            let v = parseValue(s, &mut pos)
             entries.insert(k, v)
-            skipWs(s, pos)
+            skipWs(s, &mut pos)
         }
     }
     pos = pos + 1
@@ -120,7 +120,7 @@ pub fn parseObject(s: &string, pos: &mut i64): Heap<JsonValue> {
 pub fn main(): i32 {
     let input: string = "{\"name\": \"milo\", \"version\": 1, \"active\": true}"
     var pos: i64 = 0
-    let result = parseValue(input, pos)
+    let result = parseValue(input, &mut pos)
     match *result {
         JsonValue.Object(obj) => {
             let r1 = obj.get("name")

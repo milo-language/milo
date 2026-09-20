@@ -10,7 +10,7 @@ pub fn readIt(x: &i32): i32 {
 
 pub fn main(): i32 {
     var n: i32 = 21
-    doubleIt(n)
+    doubleIt(&mut n)
     print(readIt(n))
     return 0
 }
