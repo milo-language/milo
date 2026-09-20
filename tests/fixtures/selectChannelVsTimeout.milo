@@ -10,7 +10,7 @@ from "std/sync" import {
     Channel
 }
 from "std/select" import {
-    Select, selectRecv
+    Select
 }
 
 pub fn raceOnce(withSend: bool): void {
@@ -18,7 +18,7 @@ pub fn raceOnce(withSend: bool): void {
     let chSend = ch.clone()
     Task.spawn(move(): void => {
         var sel = Select.new()
-        selectRecv(&mut sel, ch)
+        sel.onRecv(ch)
         sel.onTimeout(60)
         match sel.wait() {
             0 => {

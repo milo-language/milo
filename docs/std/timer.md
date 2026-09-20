@@ -11,8 +11,9 @@ pub fn recvTimeout<T>(ch: &Channel<T>, d: &Duration): Option<T>
 Receive from `ch`, giving up after `d`. None means the timeout won or the
 channel closed empty.
 
-A free function, not a method: Milo has no method-level generics, which is the
-same reason `selectRecv` is one.
+A free function, not a method: Channel lives in std/sync, and an
+`impl Channel<T>` here would be visible only to programs that already import
+something from std/timer. A free function names its dependency.
 
 ### `Ticker.channel`
 

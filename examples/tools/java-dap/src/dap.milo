@@ -27,7 +27,7 @@ from "std/runtime" import {
     Task
 }
 from "std/select" import {
-    Select, selectRecv
+    Select
 }
 from "std/json" import {
     Json
@@ -221,7 +221,7 @@ pub fn dapServe(): i64 {
     while true {
         var sel = Select.new()
         sel.onRead(0) // arm 0: DAP request
-        selectRecv(&mut sel, sess.eventCh) // arm 1: JDWP/synthetic event
+        sel.onRecv(sess.eventCh) // arm 1: JDWP/synthetic event
         let arm = sel.wait()
         sel.destroy()
         if arm == 0 {

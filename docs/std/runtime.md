@@ -172,7 +172,7 @@ fn Promise.channel(self: &Promise): Channel<T>
 
 The result channel, so a Promise can be armed in a Select:
 
-  selectRecv(sel, p.channel())      // arm 0
+  sel.onRecv(p.channel())           // arm 0
   sel.onTimeout(1000)               // arm 1
   match sel.wait() { 0 => { let v = p.await()! } 1 => { ... } }
 

@@ -3,12 +3,12 @@
 // Everything here is a thin layer over machinery that already exists: a green
 // task (std/runtime), a Channel (std/sync), and a Select timer arm (std/select).
 // A Timer or Ticker is a task that sleeps and sends, so it composes with
-// `selectRecv` exactly like any other channel:
+// `Select.onRecv` exactly like any other channel:
 //
 //   var tk = Ticker.every(Duration.millis(100))
 //   var sel = Select.new()
-//   selectRecv(sel, tk.channel())
-//   selectRecv(sel, work)
+//   sel.onRecv(tk.channel())
+//   sel.onRecv(work)
 //   match sel.wait() { ... }
 //   tk.stop()
 //
@@ -30,7 +30,7 @@ from "std/sync" import {
 }
 
 from "std/select" import {
-    Select, selectRecv
+    Select
 }
 
 // ── Timer — fires once ──
@@ -177,15 +177,16 @@ impl Drop for Ticker {
 // Receive from `ch`, giving up after `d`. None means the timeout won or the
 // channel closed empty.
 //
-// A free function, not a method: Milo has no method-level generics, which is the
-// same reason `selectRecv` is one.
+// A free function, not a method: Channel lives in std/sync, and an
+// `impl Channel<T>` here would be visible only to programs that already import
+// something from std/timer. A free function names its dependency.
 pub fn recvTimeout<T>(ch: &Channel<T>, d: &Duration): Option<T> {
     if let Option.Some(v) = ch.tryRecv() {
         return Option.Some(v)
     }
     ensureTimersLive()
     var sel = Select.new()
-    selectRecv(&mut sel, ch)
+    sel.onRecv(ch)
     sel.onTimeout(timeoutMs(d))
     let winner = sel.wait()
     sel.destroy()

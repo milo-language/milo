@@ -8,7 +8,7 @@
 // and the fetch.
 //
 //   var sel = Select.new()
-//   selectRecv(sel, ch)   // arm 0  (free fn: channel arms are generic over T)
+//   sel.onRecv(ch)        // arm 0
 //   sel.onRead(fd)        // arm 1
 //   sel.onTimeout(5000)   // arm 2
 //   match sel.wait() {
@@ -18,8 +18,8 @@
 //   }
 //   sel.destroy()
 //
-// Channel arms are free functions (selectRecv/selectSend) rather than methods
-// because Milo has no method-level generics; fd/timeout arms are methods.
+// Channel arms (`onRecv`/`onSend`) are generic over the channel's element type;
+// the method carries its own type parameter, inferred from the argument.
 //
 // LIMITATION — timer and fd arms need a scheduler; channel arms don't.
 // fd/timer readiness is observed by the scheduler's poll loop, so with no scheduler
@@ -29,7 +29,7 @@
 //
 // The trap is `onTimeout` as a safety net. It looks like protection and isn't:
 //
-//   selectRecv(sel, p.channel())   // Promise.blocking — real pthread, no scheduler
+//   sel.onRecv(p.channel())        // Promise.blocking — real pthread, no scheduler
 //   sel.onTimeout(1000)            // INERT: if the worker hangs, so does this select
 //
 // A select with ONLY inert arms would block on a wake that can never come, so wait()
@@ -99,6 +99,16 @@ impl Select {
         rtWriteI64(node, nodeArm(), self._count)
         rtWritePtr(node, nodeChan(), ptr)
         self._count = self._count + 1
+    }
+
+    // Arm on a value becoming receivable from `ch`.
+    fn onRecv<T>(self: &mut Self, ch: &Channel<T>): void {
+        self.armChan(kindSelRecv(), ch.rawPtr())
+    }
+
+    // Arm on `ch` having room for a send.
+    fn onSend<T>(self: &mut Self, ch: &Channel<T>): void {
+        self.armChan(kindSelSend(), ch.rawPtr())
     }
 
     fn onRead(self: &mut Self, fd: i32): void {
@@ -221,13 +231,4 @@ fn readPtr(node: *u8, off: i64): *u8 {
         v = (*src) as *u8
         return v
     }
-}
-
-// Channel arms — free functions so they can be generic over the element type.
-pub fn selectRecv<T>(sel: &mut Select, ch: &Channel<T>): void {
-    sel.armChan(kindSelRecv(), ch.rawPtr())
-}
-
-pub fn selectSend<T>(sel: &mut Select, ch: &Channel<T>): void {
-    sel.armChan(kindSelSend(), ch.rawPtr())
 }

@@ -52,12 +52,11 @@
 //     a.read(h, (n: &Node) => { edges = n.edges.len })
 //     a.modifyMut(h, (n: &mut Node) => { n.mark = true })
 //
-// That read/write pair is the ergonomic path and it has method forms. The nicer
-// `let len = arenaWith(a, h, (n: &Node): i64 => n.edges.len)` is a free function
-// only: its result is a type parameter of the METHOD rather than of Arena, and a
-// method's own type parameter is never inferred at the call site. Worth knowing
-// which is which, because the read path is what decides whether a real program
-// uses generational handles at all or falls back to a bare index into a Vec.
+// That read/write pair is the ergonomic path. When the read produces a value,
+// `let len = a.with(h, (n: &Node): i64 => n.edges.len)` returns it as an
+// Option<i64> instead of routing it through a captured var. The read path is
+// what decides whether a real program uses generational handles at all or
+// falls back to a bare index into a Vec, so both spellings are here.
 //
 // T is one fixed type per arena. Heterogeneous data — an interpreter heap of
 // strings, closures and tables — wants ONE Arena<Obj> over an `enum Obj`, not
@@ -300,14 +299,9 @@ pub fn arenaWith<T, R>(a: &Arena<T>, h: Handle<T>, f: (&T) => R): Option<R> {
     return Option.Some(f(a.data[idx]))
 }
 
-// Read via borrow with a VOID callback — the same zero-copy read as arenaWith,
-// in the one shape that also has a method form (`a.read(h, f)`).
-//
-// arenaWith is the more natural spelling and cannot be a method: its result type
-// is a type parameter of the METHOD rather than of Arena, and a method's own type
-// parameter is never inferred at the call site — `a.with(h, f)` reports
-// "type 'Arena_Node' has no method 'with'". This one returns bool, so it has no
-// such parameter. Take the value out through a captured `var`:
+// Read via borrow with a VOID callback — the same zero-copy read as arenaWith
+// (`a.with(h, f)`), for a read that has nothing to return, or one whose result
+// is easier to take out through a captured `var`:
 //
 //     var name = ""
 //     a.read(h, (v: &Node) => { name = v.name.clone() })
@@ -661,7 +655,6 @@ pub fn frozenLen<T>(a: &FrozenArena<T>): i64 {
 //
 // These are the forms you will actually write, so each carries its own doc: the
 // free function it delegates to is the same code, not a different behaviour.
-// The one gap is arenaWith, which has no method form here — see its note below.
 impl Arena<T> {
     // A new empty arena with a fresh identity. Spell the type argument
     // (`Arena<Node>.new()`); a bare `Arena.new()` cannot infer T.
@@ -682,16 +675,12 @@ impl Arena<T> {
     // node with one Vec field, against ~0 for the borrowing paths. Reach for it
     // only when T is plain scalars or you genuinely want an owned copy.
     //
-    // To read without copying, use `read`, which lends `&T` to a closure and
-    // takes the answer out through a captured var:
+    // To read without copying, use `with`, which lends `&T` to a closure and
+    // returns what the closure returns, or `read` when there is nothing to
+    // return:
     //
-    //     var edges = 0
-    //     a.read(h, (v: &Node) => { edges = v.edges.len })
-    //
-    // The more natural `let n = arenaWith(a, h, (v: &Node): i64 => v.edges.len)`
-    // exists as a free function only: its result is a type parameter of the
-    // METHOD rather than of Arena, and a method's own type parameter is never
-    // inferred at the call site.
+    //     let edges = a.with(h, (v: &Node): i64 => v.edges.len) ?? 0
+    //     a.read(h, (v: &Node) => { total = total + v.edges.len })
     //
     // Absent on an arena whose T carries Drop or @noCopy: the copy would be a
     // second owner of the resource. `read` and `modifyMut` remain.
@@ -726,6 +715,15 @@ impl Arena<T> {
     @mustUse
     fn read(self: &Self, h: Handle<T>, f: (&T) => void): bool {
         return arenaRead(self, h, f)
+    }
+
+    // Read the value at `h` by BORROW and return what `f` computes from it. None
+    // (and `f` not called) if `h` is stale. The same zero-copy read as `read`,
+    // for the common case where the read produces a value.
+    //
+    //     let edges = a.with(h, (v: &Node): i64 => v.edges.len) ?? 0
+    fn with<R>(self: &Self, h: Handle<T>, f: (&T) => R): Option<R> {
+        return arenaWith(self, h, f)
     }
 
     @mustUse

@@ -59,16 +59,12 @@ heap that copy is an ALLOCATION, not a few words — 20ms per 200k reads of a
 node with one Vec field, against ~0 for the borrowing paths. Reach for it
 only when T is plain scalars or you genuinely want an owned copy.
 
-To read without copying, use `read`, which lends `&T` to a closure and
-takes the answer out through a captured var:
+To read without copying, use `with`, which lends `&T` to a closure and
+returns what the closure returns, or `read` when there is nothing to
+return:
 
-    var edges = 0
-    a.read(h, (v: &Node) => { edges = v.edges.len })
-
-The more natural `let n = arenaWith(a, h, (v: &Node): i64 => v.edges.len)`
-exists as a free function only: its result is a type parameter of the
-METHOD rather than of Arena, and a method's own type parameter is never
-inferred at the call site.
+    let edges = a.with(h, (v: &Node): i64 => v.edges.len) ?? 0
+    a.read(h, (v: &Node) => { total = total + v.edges.len })
 
 Absent on an arena whose T carries Drop or @noCopy: the copy would be a
 second owner of the resource. `read` and `modifyMut` remain.
@@ -159,6 +155,18 @@ fn Arena.valid(self: &Arena, h: Handle<T>): bool
 
 Whether `h` still names a live value in THIS arena — identity and
 generation both checked. A handle from another arena reads as invalid.
+
+### `Arena.with`
+
+```milo
+fn Arena.with<R>(self: &Arena, h: Handle<T>, f: (&T) => R): Option<R>
+```
+
+Read the value at `h` by BORROW and return what `f` computes from it. None
+(and `f` not called) if `h` is stale. The same zero-copy read as `read`,
+for the common case where the read produces a value.
+
+    let edges = a.with(h, (v: &Node): i64 => v.edges.len) ?? 0
 
 ### `arenaAlloc`
 
@@ -278,14 +286,9 @@ Create a new empty arena.
 pub fn arenaRead<T>(a: &Arena<T>, h: Handle<T>, f: (&T) => void): bool
 ```
 
-Read via borrow with a VOID callback — the same zero-copy read as arenaWith,
-in the one shape that also has a method form (`a.read(h, f)`).
-
-arenaWith is the more natural spelling and cannot be a method: its result type
-is a type parameter of the METHOD rather than of Arena, and a method's own type
-parameter is never inferred at the call site — `a.with(h, f)` reports
-"type 'Arena_Node' has no method 'with'". This one returns bool, so it has no
-such parameter. Take the value out through a captured `var`:
+Read via borrow with a VOID callback — the same zero-copy read as arenaWith
+(`a.with(h, f)`), for a read that has nothing to return, or one whose result
+is easier to take out through a captured `var`:
 
     var name = ""
     a.read(h, (v: &Node) => { name = v.name.clone() })

@@ -34,6 +34,22 @@ fn Select.onRead(self: &mut Select, fd: i32): void
 
 _Undocumented._
 
+### `Select.onRecv`
+
+```milo
+fn Select.onRecv<T>(self: &mut Select, ch: &Channel<T>): void
+```
+
+Arm on a value becoming receivable from `ch`.
+
+### `Select.onSend`
+
+```milo
+fn Select.onSend<T>(self: &mut Select, ch: &Channel<T>): void
+```
+
+Arm on `ch` having room for a send.
+
 ### `Select.onTimeout`
 
 ```milo
@@ -58,19 +74,3 @@ fn Select.wait(self: &mut Select): i64
 
 Arm every source, park until one fires, tear down the rest, return the
 winning arm index.
-
-### `selectRecv`
-
-```milo
-pub fn selectRecv<T>(sel: &mut Select, ch: &Channel<T>): void
-```
-
-Channel arms — free functions so they can be generic over the element type.
-
-### `selectSend`
-
-```milo
-pub fn selectSend<T>(sel: &mut Select, ch: &Channel<T>): void
-```
-
-_Undocumented._

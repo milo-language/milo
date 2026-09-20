@@ -18,7 +18,7 @@ from "std/sync" import {
     Channel
 }
 from "std/select" import {
-    Select, selectRecv
+    Select
 }
 from "std/os" import {
     writeFd,
@@ -39,7 +39,7 @@ pub fn main(): i32 {
 
     Task.spawn(move(): void => {
         var sel = Select.new()
-        selectRecv(&mut sel, ch)
+        sel.onRecv(ch)
         sel.onRead(rfd)
         sel.onTimeout(2000)
         match sel.wait() {

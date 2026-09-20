@@ -1,0 +1,30 @@
+// Arena.with<R> is a method whose result type is inferred from the closure at
+// the call site: method-level generics on a generic struct.
+from "std/arena" import {
+    Arena, Handle
+}
+
+struct Node {
+    name: string, edges: Vec<i64>
+}
+
+fn main(): void {
+    var a = Arena<Node>.new()
+    var e: Vec<i64> = Vec.new()
+    e.push(1)
+    e.push(2)
+    let h = a.alloc(Node {
+        name: "root", edges: e
+    }
+    )
+    let edges = a.with(h, (n: &Node): i64 => n.edges.len) ?? -1
+    print(edges)
+    let name = a.with(h, (n: &Node): string => n.name.clone()) ?? "stale"
+    print(name)
+    let _ = a.free(h)
+    let after = a.with(h, (n: &Node): i64 => n.edges.len) ?? -1
+    print(after)
+}
+// @expect: 2
+// @expect: root
+// @expect: -1
