@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: site-ownership
+purpose: the site's introduction to moves, clones, borrows and views; the reader's first contact with second-class references
+key-files: src/checker.ts, docs/language-reference.md
+update-when: the reference rules change (where a reference may live, what freezes an owner, what a method may return)
+last-verified: 2026-09-20
+-->
+
 # Ownership
 
 In most languages, memory bugs hide until production. In Milo, the compiler catches them before your code runs — no garbage collector slowing things down, no manual `free()` to forget.
