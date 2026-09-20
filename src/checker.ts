@@ -251,6 +251,14 @@ export interface FnSig {
   // carried for impl methods so call-site precondition checking (constant-arg
   // `requires`) works on `Type.method(...)` calls too, not just free functions.
   contracts?: import("./ast").Contract[];
+  // `@mustUse`: a discarded call is the `unused-result` warning. See the ExprStmt rule.
+  mustUse?: boolean;
+}
+
+// The `mustUse` field of an FnSig, from the declaration's attributes. Spread into every
+// registration so a method and a monomorphized generic carry it like a plain fn.
+function mustUseOf(decl: { attributes?: { name: string }[] } | undefined): { mustUse?: boolean } {
+  return decl?.attributes?.some(a => a.name === "mustUse") ? { mustUse: true } : {};
 }
 
 interface StructInfo {
@@ -1112,6 +1120,20 @@ export class TypeChecker {
   // (a deref, a pointer cast); this one exists because a function can be built
   // entirely out of individually checkable operations and still be unsound to call
   // with the wrong arguments, which is exactly the shape of a foreign-memory view.
+  // The display name of a call's callee when it is `@mustUse`, else null. A generic fn is
+  // looked up on its template; a method on the mangled name checkExpr resolved it to.
+  private mustUseCallee(e: Expr): string | null {
+    if (e.kind === "Call") {
+      if (this.functions.get(e.func)?.mustUse || mustUseOf(this.genericFns.get(e.func)?.decl).mustUse) return e.func;
+      return null;
+    }
+    if (e.kind === "MethodCall") {
+      const mangled = this.resolvedMethods.get(e);
+      if (mangled && this.functions.get(mangled)?.mustUse) return mangled.replace(/\$/g, ".");
+    }
+    return null;
+  }
+
   private requireUnsafeCall(decl: { attributes?: { name: string }[] } | undefined, name: string, span?: Span) {
     if (!decl?.attributes?.some(a => a.name === "unsafe")) return;
     this.requireUnsafe(`calling '${name}' requires an unsafe block`, span,
@@ -2004,7 +2026,7 @@ export class TypeChecker {
     const ret = this.resolve(this.substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs), sp);
 
     // Register the concrete sig so recursive calls and the rest of checking works
-    this.functions.set(mangled, { params, ret, variadic: false });
+    this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(generic.decl) });
 
     // `@copyOut` with a resource argument: the call is the error, at the caller's span.
     // The signature above stays registered so the call types through without a cascade;
@@ -2095,7 +2117,7 @@ export class TypeChecker {
       };
       const params = concrete.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
       const ret = this.resolve(concrete.retType);
-      this.functions.set(mangled, { params, ret, variadic: false });
+      this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(tpl.decl) });
       this.monomorphizedFns.push(concrete);
       this.checkFunction(concrete);
       return mangled;
@@ -3043,6 +3065,13 @@ export class TypeChecker {
           // @unsafe moves the proof obligation to the caller: the body may be entirely
           // checkable and the function still unsound to call with the wrong arguments.
           // Nothing is verified here (that is the point), so the only check is the shape.
+          // @mustUse: a discarded call is the unused-result warning (see the ExprStmt rule).
+          // Legal on an extern: a C routine returning an error code is the main use.
+          else if (attr.name === "mustUse") {
+            if (attr.args.length > 0) {
+              this.error(`'@mustUse' takes no arguments`, undefined, `write '@mustUse fn ${fn.name}(...)'`);
+            }
+          }
           else if (attr.name === "unsafe") {
             if (attr.args.length > 0) {
               this.error(`'@unsafe' takes no arguments`, undefined, `write '@unsafe fn ${fn.name}(...)'`);
@@ -3085,7 +3114,7 @@ export class TypeChecker {
         if (retErr) this.error(`extern function '${fn.name}' return type: ${retErr.msg}`, undefined, retErr.hint);
       }
       // fn return types allowed — move closures heap-allocate and are safe to escape
-      this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic, isExtern: fn.isExtern });
+      this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic, isExtern: fn.isExtern, ...mustUseOf(fn) });
       // The call site needs the declaration for contracts and for `@unsafe`; recording it
       // only for contracts meant an `@unsafe fn` with no `requires` clause was declared
       // unsafe and called freely.
@@ -4729,8 +4758,8 @@ export class TypeChecker {
         const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
         const ret = this.resolve(concreteFn.retType);
         this.checkImplMethodSignature(impl, m, trait, traitMethod, params, ret);
-        this.functions.set(mangled, { params, ret, variadic: false });
-        methods.set(m.name, { params, ret, variadic: false });
+        this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(m) });
+        methods.set(m.name, { params, ret, variadic: false, ...mustUseOf(m) });
         this.monomorphizedFns.push(concreteFn);
         implFnsToCheck.push(concreteFn);
       }
@@ -4778,8 +4807,8 @@ export class TypeChecker {
           };
           const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
           const ret = this.resolve(concreteFn.retType);
-          this.functions.set(mangled, { params, ret, variadic: false });
-          existing.methods.set(m.name, { params, ret, variadic: false, contracts: m.contracts });
+          this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(m) });
+          existing.methods.set(m.name, { params, ret, variadic: false, contracts: m.contracts, ...mustUseOf(m) });
           this.monomorphizedFns.push(concreteFn);
           implFnsToCheck.push(concreteFn);
         }
@@ -4802,8 +4831,8 @@ export class TypeChecker {
           }
           const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
           const ret = this.resolve(concreteFn.retType);
-          this.functions.set(mangled, { params, ret, variadic: false });
-          methods.set(m.name, { params, ret, variadic: false, contracts: m.contracts });
+          this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(m) });
+          methods.set(m.name, { params, ret, variadic: false, contracts: m.contracts, ...mustUseOf(m) });
           this.monomorphizedFns.push(concreteFn);
           implFnsToCheck.push(concreteFn);
         }
@@ -5922,12 +5951,25 @@ export class TypeChecker {
         for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBefore.add(vi);
         const exprType = this.checkExpr(stmt.expr);
         for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed && !frozenBefore.has(vi)) this.unfreeze(vi);
+        let warned = false;
         if (exprType.tag === "enum") {
           const enumInfo = this.enums.get(exprType.name);
           const base = enumInfo?.baseName;
           if (base === "Result" || base === "Option") {
+            warned = true;
             this.warn("unused-result",
               `unused ${base} value — this may contain an error that should be handled`,
+              sp, `use 'let _ = ...' to discard explicitly`);
+          }
+        }
+        // `@mustUse` callee: same warning, for a result whose type does not say it
+        // encodes failure. Skipped when the Option/Result branch already fired so one
+        // statement never reports twice.
+        if (!warned) {
+          const callee = this.mustUseCallee(stmt.expr);
+          if (callee) {
+            this.warn("unused-result",
+              `unused result of '@mustUse' function '${callee}'`,
               sp, `use 'let _ = ...' to discard explicitly`);
           }
         }
