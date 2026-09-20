@@ -3,7 +3,7 @@ system: planning
 purpose: work plan for closing backlog #31, uniform .clone() over enums, Option/Result and arrays, plus the explicit-derive ordering bug
 key-files: src/checker.ts (processDerives, deriveClone, canAutoClone, monomorphizeEnum), tests/fixtures/cloneDerive*.milo, tests/errors/cloneDerive*.milo
 update-when: a work package ships, is re-scoped, or its gate changes
-last-verified: 2026-09-20 (WP1 shipped, 48f1e14c)
+last-verified: 2026-09-20 (WP1 48f1e14c, WP2 7a3344b4, WP3 4f88bae6, WP5 docs+backlog shipped; WP4 arrays deferred, zero census hits)
 -->
 
 # Derive Clone: close #31

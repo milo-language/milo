@@ -2311,10 +2311,24 @@ fields are copied, heap fields cloned. `Json` synthesizes `toJson` / `fromJson` 
 `@derive(Eq, Clone, Json)`.
 
 `Eq` and `Clone` are also derived **automatically** for every non-generic struct whose
-fields support them, so both work with no annotation on plain data. `Clone` skips resource
-types: a struct with a `Drop` impl or `@noCopy` never receives an automatic `clone()`,
-since each copy would release the resource again, and an explicit `@derive(Clone)` on one
-is an error naming the reason.
+fields support them, so both work with no annotation on plain data. `Clone` covers enums
+too, with or without payloads (`@derive(Clone)` is accepted on an enum; `Eq` and `Json`
+are not), and `Option<T>` / `Result<T, E>` clone whenever their payloads do, the way a
+Rust `T: Clone` bound reads. Recursion through a container closes (`enum Tree { Leaf(i32),
+Node(Vec<Tree>) }` has a `clone()`), and a hand-written `impl Clone` on a field or payload
+type is what the synthesized `clone()` calls.
+
+What `Clone` refuses, and why:
+
+- a `Drop` impl or `@noCopy`: each copy would release the resource again. No automatic
+  `clone()`; an explicit `@derive(Clone)` is an error naming the reason.
+- a raw pointer field or payload (unless the type is `@copy`): the clone would be a second
+  owner of what the pointer addresses.
+- a closure field or payload, directly or inside `Vec`/`HashMap`/`Option`: an owning
+  closure's environment cannot be duplicated. The type stays legal, it merely has no
+  `clone()`, and so does any struct that holds it (`std/http` `Route` is one).
+- a sized array of non-Copy elements: no array `clone()` exists yet.
+- a generic struct or enum without an explicit `@derive(Clone)`: see below.
 
 ### Writing your own derive
 
@@ -2364,8 +2378,10 @@ a macro system. Nesting `@fields` inside `@fields` is an error, a template may n
 built-in derive's name (`Eq`, `Clone`, `Json`), and a derive is private to its file unless marked
 `pub`.
 
-Generic structs are not supported: `@derive` skips a struct with type parameters, built-in
-or user-defined.
+Generic structs are not auto-derived: `@derive` skips a struct with type parameters
+unless the derive is explicit, in which case the built-in `Eq`/`Clone` are propagated to
+every instantiation (and error there when a type argument cannot satisfy them). User
+templates never apply to generic structs.
 
 #### How this differs from Rust's `#[derive]`
 
