@@ -1,0 +1,75 @@
+// @expect: peek 1 1 1 1 1
+// @expect: made 1 gone 1
+// The by-index resource rule rejects reading a Drop element out of a container BY VALUE
+// (tests/errors/dropElement*.milo). Every borrow spelling stays legal and none of them
+// materialises a second owner: one resource is made and dropped exactly once.
+var made: i64 = 0
+var gone: i64 = 0
+
+struct Res {
+    id: i64
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        gone = gone + 1
+    }
+}
+
+impl Res {
+    fn get(self: &Res): i64 {
+        return self.id
+    }
+    fn bump(self: &mut Res): void {
+        self.id = self.id + 0
+    }
+}
+
+fn mk(id: i64): Res {
+    made = made + 1
+    return Res {
+        id: id
+    }
+}
+
+fn viaRef(r: &Res): i64 {
+    return r.id
+}
+
+fn viaMutRef(r: &mut Res): i64 {
+    r.bump()
+    return r.id
+}
+
+fn inner(): void {
+    var v: Vec<Res> = Vec.new()
+    v.push(mk(1))
+    let a = v[0].id // field read
+    let b = v[0].get() // &self method
+    let c = viaRef(v[0]) // auto-borrow into a &Res parameter
+    let d = viaMutRef(v[0]) // auto-borrow into a &mut Res parameter
+    var e: i64 = 0
+    for r in v {
+        e = e + r.id
+    } // for binds by reference
+    print("peek " + a.toString() + " " + b.toString() + " " + c.toString() + " " + d.toString() + " " + e.toString())
+    // Matching an element of Vec<Option<Res>> borrows the payload rather than copying it.
+    var w: Vec<Option<Res>> = Vec.new()
+    w.push(Option.Some(v.remove(0))) // remove moves the element out: still one owner
+    match w[0] {
+        Some(r) => {
+            if r.id != 1 {
+                print("bad")
+            }
+        }
+        None => {
+            print("bad")
+        }
+    }
+}
+
+pub fn main(): i32 {
+    inner()
+    print("made " + made.toString() + " gone " + gone.toString())
+    return 0
+}

@@ -1,0 +1,16 @@
+// @error: cannot take 'Res' out of a container by index: it carries Drop
+// An assignment's right-hand side is consumed by value: `s.r = v[0]` copied the Drop
+// element into the field and left the original in the Vec.
+var gone: i64 = 0
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self): void { gone = gone + 1 } }
+struct Holder { r: Res }
+
+pub fn main(): i32 {
+    var v: Vec<Res> = Vec.new()
+    v.push(Res { id: 1 })
+    var h = Holder { r: Res { id: 0 } }
+    h.r = v[0]
+    print(h.r.id.toString())
+    return 0
+}

@@ -3,7 +3,7 @@ system: ownership-model
 purpose: why Milo has no lifetimes — second-class references as guardrails, and how that compares to Rust
 key-files: src/checker.ts, docs/language-reference.md, docs/design.md
 update-when: reference semantics change (second-class rule, borrow/exclusivity checks, slices/arenas)
-last-verified: 2026-09-19 (raw pointers from ptr()/cstr()/h.ptr() bound to a name are element views of their source)
+last-verified: 2026-09-19 (an element read by value is a move-out, rejected for a resource type at every site; raw pointers from ptr()/cstr()/h.ptr() bound to a name are element views of their source)
 -->
 
 # Ownership & references — why there are no lifetimes
@@ -119,6 +119,43 @@ The patterns that make Rust reach for `<'a>`, `Box`, `Rc<RefCell>`, or `unsafe`,
 | **Type that STORES a borrow** (`Parser<'a> { src: &'a str }`) | `struct Parser<'a> { src: &'a str }` | **no direct equivalent** — own the `string` (clone once) or hold an index into a buffer you own | *the real gap* |
 
 The directly unrepresentable row is the last: a struct field that is a *borrow* of data owned elsewhere. Milo's answer is to own the data or refer to it by index — memory-safe via bounds checks, at the cost of the compile-time view↔buffer tie Rust's `&'a` gives you. Production Rust also often chooses arenas to avoid lifetime propagation, but Rust retains other valid designs (`Rc`, borrowing APIs, and ecosystem arena crates) that Milo deliberately omits.
+
+## Elements are places: reading one by value is a move-out
+
+`v[i]`, `a.data[h.index]`, an entry of a `HashMap`: an element of a container is a
+**place**, owned by the container. A field is a place too, and moving a field out of a
+borrowed or `Drop`-carrying struct is an error. An index is a runtime value, so the
+checker cannot track which element left; the language's answer is that reading an
+element by value **copies** it (a deep, structural clone: `let m = v[i]` on a
+`Vec<Mark>` allocates), and the container keeps its own.
+
+That copy is only a copy when copying means something. For a type that carries a
+`Drop` impl or `@noCopy`, anywhere inside it (`Fd`, `Option<Fd>`, `Vec<Fd>`), the
+structural clone never runs the destructor and hands out a second owner, so the same
+resource is released once per copy. So the rule is:
+
+> **An element of a container is a place; reading it by value is a move-out, and for a
+> resource type that is an error wherever it appears.**
+
+"Wherever" is literal: a `let`, a call argument to a by-value parameter, an enum
+payload (`Option.Some(v[0])`), a struct-literal field, a `return`, an assignment
+right-hand side, an array literal, and the builtin reads that copy an element for you
+(`v.get(i)`, `v.first()`, `v.clone()`, `m.get(k)`, `m.keys()`, `m.clone()`). Until
+2026-09-19 the rule fired only at a `let`, and `Option.Some(v[0])` on a `Vec<Res>` ran
+`Res`'s destructor three times. The check now sits in the one checker routine every
+by-value consumption passes through (`tryMoveLeaf`), so a new spelling cannot miss it.
+
+What stays legal is every borrow: `v[i].field`, `v[i].method()` on a `&self` method,
+`g(v[i])` where `g` takes `&T` or `&mut T`, `for x in v`, `match v[i] { ... }`. To take
+the element out for real, make the container give up its owner: `v.remove(i)`,
+`v.pop()`, `replace(v[i], other)`, `swap(v[i], v[j])`. To get a copy that is a real
+copy, call the type's own `Clone` impl explicitly, `v[i].clone()`, where that impl runs.
+
+A generic container written in Milo inherits the same rule per instantiation. Because
+`Arena<Fd>` still wants `alloc`, `read` and `free`, a copying method is marked
+`@copyOut` and is withheld from an instantiation whose `T` carries a resource rather
+than sinking the whole type; see `@copyOut` in
+[language-reference.md](language-reference.md).
 
 ## Raw pointers: `ptr()` and `cstr()` are element views
 

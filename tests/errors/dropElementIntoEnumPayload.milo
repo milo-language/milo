@@ -1,0 +1,15 @@
+// @error: cannot take 'Res' out of a container by index: it carries Drop
+// The by-index rule used to fire only at a `let` initializer. Wrapping the element in
+// an enum payload copied it memberwise and ran Drop once for the payload and once for
+// the element still in the Vec (made 1, gone 3 with the call form below it).
+var gone: i64 = 0
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self): void { gone = gone + 1 } }
+
+pub fn main(): i32 {
+    var v: Vec<Res> = Vec.new()
+    v.push(Res { id: 1 })
+    let o = Option.Some(v[0])
+    print(o.isSome().toString())
+    return 0
+}

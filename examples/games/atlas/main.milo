@@ -175,8 +175,10 @@ fn ensureLoaded(gl: &mut GlContext, app: &mut App, i: i64) {
     if app.loaded[i] {
         return
     }
-    app.tex[i].free(gl)
-    app.tex[i] = loadMap(gl, i)
+    // Swap the placeholder out and free it: `app.tex[i].free(gl)` would read the
+    // @noCopy handle out of the Vec by copy, which the checker rejects.
+    let stale = replace(app.tex[i], loadMap(gl, i))
+    stale.free(gl)
     app.loaded[i] = true
 }
 
@@ -1123,10 +1125,10 @@ pub fn main(): i32 {
     skySh.free(gl)
     ui.free(gl)
     post.free(gl)
-    var k = 0
-    while k < app.tex.len {
-        app.tex[k].free(gl)
-        k = k + 1
+    // Drain rather than index: each texture is a @noCopy handle, and popping hands
+    // over the Vec's own copy instead of duplicating it.
+    while app.tex.len > 0 {
+        app.tex.pop()!.free(gl)
     }
     gl.free()
     SDL_GL_DeleteContext(host.ctx)

@@ -1,0 +1,16 @@
+// @error: 'arenaGet<Res>' is not allowed: 'arenaGet' copies its element out, and 'Res' carries Drop
+// The free-function spelling of the same accessor is rejected at the call, on the
+// caller's line, rather than inside std/arena where the copy actually happens.
+from "std/arena" import { Arena, Handle, arenaGet }
+
+var gone: i64 = 0
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self): void { gone = gone + 1 } }
+
+pub fn main(): i32 {
+    var a: Arena<Res> = Arena<Res>.new()
+    let h = a.alloc(Res { id: 1 })
+    let got = arenaGet(a, h)
+    print(got.isSome().toString())
+    return 0
+}

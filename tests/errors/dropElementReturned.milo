@@ -1,0 +1,18 @@
+// @error: cannot take 'Res' out of a container by index: it carries Drop
+// `return v[0]` hands the caller a memberwise copy of a Drop element while the Vec
+// keeps the original; std/arena's `Arena.get` was exactly this shape.
+var gone: i64 = 0
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self): void { gone = gone + 1 } }
+
+fn first(v: &Vec<Res>): Res {
+    return v[0]
+}
+
+pub fn main(): i32 {
+    var v: Vec<Res> = Vec.new()
+    v.push(Res { id: 1 })
+    let r = first(v)
+    print(r.id.toString())
+    return 0
+}

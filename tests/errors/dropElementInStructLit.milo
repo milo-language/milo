@@ -1,0 +1,15 @@
+// @error: cannot take 'Res' out of a container by index: it carries Drop
+// A struct-literal field takes its initializer by value: `Holder { r: v[0] }` made a
+// second owner of the Drop element.
+var gone: i64 = 0
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self): void { gone = gone + 1 } }
+struct Holder { r: Res }
+
+pub fn main(): i32 {
+    var v: Vec<Res> = Vec.new()
+    v.push(Res { id: 1 })
+    let h = Holder { r: v[0] }
+    print(h.r.id.toString())
+    return 0
+}

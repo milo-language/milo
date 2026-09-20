@@ -1,0 +1,65 @@
+// @expect: first a
+// @expect: kept 2
+// @expect: made 1 gone 1
+// `@copyOut` on a user generic: `Pool<string>.first` copies (a string clone is a real
+// copy), while `Pool<Res>` for a Drop type simply lacks `first` and keeps everything
+// else, so a resource pool is still usable through its borrowing methods.
+var made: i64 = 0
+var gone: i64 = 0
+
+struct Res {
+    id: i64
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        gone = gone + 1
+    }
+}
+
+fn mk(id: i64): Res {
+    made = made + 1
+    return Res {
+        id: id
+    }
+}
+
+struct Pool<T> {
+    items: Vec<T>
+}
+
+impl Pool<T> {
+    fn new(): Pool<T> {
+        return Pool {
+            items: Vec.new()
+        }
+    }
+    fn add(self: &mut Self, x: T): void {
+        self.items.push(x)
+    }
+    fn len(self: &Self): i64 {
+        return self.items.len
+    }
+    // Hands the element out by copy, so absent when T carries Drop or @noCopy.
+    @copyOut
+    fn first(self: &Self): T {
+        let copied: Option<T> = Option.Some(self.items[0])
+        return copied!
+    }
+}
+
+fn inner(): void {
+    var names: Pool<string> = Pool<string>.new()
+    names.add("a")
+    names.add("b")
+    print("first " + names.first())
+    var res: Pool<Res> = Pool<Res>.new()
+    res.add(mk(1))
+    print("kept " + names.len().toString())
+}
+
+pub fn main(): i32 {
+    inner()
+    print("made " + made.toString() + " gone " + gone.toString())
+    return 0
+}

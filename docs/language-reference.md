@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-19 (@parks cross-task freeze rule; ptr()/cstr() element views; @copyOnly and the raw type-param read rule; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-19 (by-value element reads of a resource type rejected at every site, @copyOut; @parks cross-task freeze rule; ptr()/cstr() element views; @copyOnly and the raw type-param read rule; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -1416,7 +1416,11 @@ rather than failing.
 ### Reading elements
 
 `v[i]` panics out of range. The total reads return `Option<T>` instead, cloning the
-element out — a reference into the buffer could not survive the next `push`.
+element out — a reference into the buffer could not survive the next `push`. That clone
+is structural, so for an element carrying `Drop` or `@noCopy` it would be a second owner:
+`get`/`first`/`last`, like `v[i]` consumed by value and `clone()`, are rejected on such a
+Vec (see [`@copyOut`](#copyout-generics-that-copy-an-element-out)); borrow with
+`for x in v` or `v[i].field`, or take the element out for real with `remove`/`pop`.
 
 ```milo
 let v: Vec<i64> = [3, 1, 4]
@@ -1854,8 +1858,23 @@ fn main() {
 }
 ```
 
-An index is a runtime value, so `v[i]` is not tracked this way — see
-[docs/backlog.md](backlog.md) on the container-dependent answer.
+An index is a runtime value, so `v[i]` is not tracked as a partial move. Reading an
+element by value instead **copies** it (see [Reading elements](#reading-elements)), and
+for a type that carries `Drop` or `@noCopy` that copy is refused wherever it appears: a
+`let`, a call argument, an enum payload, a struct-literal field, a `return`, an
+assignment, an array literal. Borrow forms (`v[i].field`, `v[i].method()`, a `&T`
+parameter, `for x in v`, `match v[i]`) stay legal:
+
+```milo error
+struct Fd { fd: i32 }
+impl Drop for Fd { fn drop(self: &mut Self) { print("close") } }
+
+fn main() {
+    var v: Vec<Fd> = Vec.new()
+    v.push(Fd { fd: 3 })
+    let o = Option.Some(v[0])   // error: cannot take 'Fd' out of a container by index: it carries Drop
+}
+```
 
 ### `@noCopy` — move-tracked handles
 
@@ -1939,6 +1958,39 @@ the generic *template*: inside a generic fn or a generic struct's method that is
 bitwise; 'T' may own memory`. Writes (`self.base[i] = v`), borrows (`self.base[i].len`)
 and `memcpy`/`memset`/`zeroed` moves are untouched; `std/sync`'s `Channel<T>` moves
 values through its ring buffer that way and stays clean.
+
+### `@copyOut`: generics that copy an element out
+
+The container-side sibling of `@copyOnly`, for a generic whose element lives in a
+`Vec`/array rather than behind a raw pointer. `Option.Some(self.data[i])` is a deep
+clone: correct for a `string` or a plain struct, and a second owner for a `T` carrying
+`Drop` or `@noCopy`, because the clone is structural and never runs a `Drop`. Such a
+`T` needs the container's *other* methods just as much (`Arena<Fd>` still wants
+`alloc`, `read`, `free`), so refusing the whole instantiation the way `@copyOnly`
+does would be wrong. `@copyOut` on the copying method withholds only that method
+from an instantiation whose type argument carries a resource, and calling it says why;
+on a generic fn the call is the error, on the caller's line:
+
+```milo error
+from "std/arena" import { Arena, Handle }
+
+struct Fd { fd: i32 }
+impl Drop for Fd { fn drop(self: &mut Self) { print("close") } }
+
+fn main() {
+    var a: Arena<Fd> = Arena<Fd>.new()
+    let h = a.alloc(Fd { fd: 3 })
+    let copy = a.get(h)    // error: 'get' is not available on 'Arena<Fd>': 'get' copies its element out, and 'Fd' carries Drop
+}
+```
+
+Bare only, on a method of a generic inherent impl or on a generic fn; it constrains
+every type parameter. The standard library writes it on `Arena.get`/`modify`,
+`arenaGet`/`arenaModify`, `FrozenArena.get`/`frozenGet` and `GrowOnlyArena.get`. The
+same predicate rejects the builtin copying reads on a `Vec` or `HashMap` of such an
+element (`clone`, `get`/`first`/`last`, `keys`/`values`/`getOrDefault`), and reading
+`v[i]` by value anywhere (see [Ownership and Move Semantics](#ownership-and-move-semantics)). "Carries" is
+transitive: a `Vec<Option<Fd>>` element is as much a resource as an `Fd`.
 
 ### Move in Branches
 

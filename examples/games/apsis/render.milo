@@ -113,8 +113,10 @@ pub fn ensureLoaded(gl: &mut GlContext, r: &mut Renderer, id: i64) {
     if r.loaded[id] {
         return
     }
-    r.tex[id].free(gl)
-    r.tex[id] = loadMap(gl, id)
+    // Swap the placeholder out and free it: `r.tex[id].free(gl)` would read the
+    // @noCopy handle out of the Vec by copy, which the checker rejects.
+    let stale = replace(r.tex[id], loadMap(gl, id))
+    stale.free(gl)
     r.loaded[id] = true
 }
 
@@ -128,10 +130,11 @@ impl Renderer {
         self.atmoSh.free(gl)
         self.ringSh.free(gl)
         self.skySh.free(gl)
-        var i = 0
-        while i < self.tex.len {
-            self.tex[i].free(gl)
-            i = i + 1
+        // Drain rather than index: each texture is a @noCopy handle, and popping
+        // hands over the Vec's own copy instead of duplicating it.
+        var tex = self.tex
+        while tex.len > 0 {
+            tex.pop()!.free(gl)
         }
     }
 }

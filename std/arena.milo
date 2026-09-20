@@ -42,7 +42,11 @@
 // heap ALLOCATION for any T that owns heap — 20ms per 200k reads of a node with
 // one Vec field, against ~0 for the borrowing forms. Unless T is plain scalars,
 // use the borrowing pair, which hands a second-class ref to a closure and takes
-// the answer out through a captured var:
+// the answer out through a captured var. For a T that carries Drop or @noCopy the
+// copy is not merely slow, it is a second owner of the resource, so those two are
+// `@copyOut`: absent on such an arena (calling them says why), while every
+// borrowing form below stays available. The same goes for FrozenArena.get and
+// GrowOnlyArena.get, and the free-function spellings.
 //
 //     var edges = 0
 //     a.read(h, (n: &Node) => { edges = n.edges.len })
@@ -209,7 +213,9 @@ ensures a.live <= old(a.live)
 
 // Get a copy of the value at a handle. Returns None if the handle is stale.
 // Returns by value, not &T, because second-class refs cannot be stored in
-// Option<_>. For large T, prefer arenaModify to avoid the copy churn.
+// Option<_>. For large T, prefer arenaModify to avoid the copy churn. A T that
+// carries Drop or @noCopy has no sound copy: this is rejected for it, use arenaRead.
+@copyOut
 pub fn arenaGet<T>(a: &Arena<T>, h: Handle<T>): Option<T> {
     if h.arenaId != a.id {
         return Option.None
@@ -248,7 +254,9 @@ pub fn arenaSet<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool {
 
 // In-place update via closure. Avoids the manual get/modify/set dance and
 // is the recommended way to mutate a single field of an arena value.
-// Returns false if the handle is stale (closure not invoked).
+// Returns false if the handle is stale (closure not invoked). The closure takes
+// the value by copy, so a T carrying Drop or @noCopy is rejected: use arenaModifyMut.
+@copyOut
 pub fn arenaModify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
     if h.arenaId != a.id {
         return false
@@ -472,7 +480,9 @@ impl GrowOnlyArena<T> {
 
     // The value at `h`, with no Option to unwrap. Infallible for any handle this
     // arena or the one it was sealed from minted: no slot is ever recycled, so a
-    // handle cannot come to name something else.
+    // handle cannot come to name something else. A copy, so absent for a T that
+    // carries Drop or @noCopy (see the module comment); `read` is the borrowing form.
+    @copyOut
     fn get(self: &Self, h: Handle<T>): T {
         assert(h.arenaId == self.id, "grow-only arena: handle was minted by a different arena")
         let idx = h.index as i64
@@ -606,6 +616,9 @@ pub fn frozenHolds<T>(a: &FrozenArena<T>, h: Handle<T>): bool {
 // storage, has nothing to do with staleness and must not be allowed to read
 // unrelated memory. Both abort with a named message rather than return a
 // plausible-looking value.
+//
+// A copy, so rejected for a T that carries Drop or @noCopy; `frozenRead` borrows.
+@copyOut
 pub fn frozenGet<T>(a: &FrozenArena<T>, h: Handle<T>): T {
     assert(h.arenaId == a.id, "frozen arena: handle was minted by a different arena")
     let idx = h.index as i64
@@ -671,6 +684,10 @@ impl Arena<T> {
     // exists as a free function only: its result is a type parameter of the
     // METHOD rather than of Arena, and a method's own type parameter is never
     // inferred at the call site.
+    //
+    // Absent on an arena whose T carries Drop or @noCopy: the copy would be a
+    // second owner of the resource. `read` and `modifyMut` remain.
+    @copyOut
     fn get(self: &Self, h: Handle<T>): Option<T> {
         return arenaGet(self, h)
     }
@@ -682,7 +699,9 @@ impl Arena<T> {
 
     // Update the slot by mapping its value through `f`. False (and `f` not
     // called) if `h` is stale. Moves T out and back, so prefer modifyMut when T
-    // is large or you touch only a field or two.
+    // is large or you touch only a field or two. Absent when T carries Drop or
+    // @noCopy, for the same reason as `get`.
+    @copyOut
     fn modify(self: &mut Self, h: Handle<T>, f: (T) => T): bool {
         return arenaModify(self, h, f)
     }
@@ -756,6 +775,8 @@ impl Arena<T> {
 impl FrozenArena<T> {
     // The value at `h`, with no Option to unwrap. Aborts only on a handle from
     // another arena or an out-of-range index, neither of which is staleness.
+    // Absent when T carries Drop or @noCopy; `read` is the borrowing form.
+    @copyOut
     fn get(self: &Self, h: Handle<T>): T {
         return frozenGet(self, h)
     }
