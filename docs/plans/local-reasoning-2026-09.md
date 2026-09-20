@@ -77,6 +77,11 @@ repo ships no back-compat.
 
 ## Track B: finish per-module namespaces
 
+**SHIPPED 2026-09-20** (B1, B2, B3): see [module-namespaces.md](module-namespaces.md)
+"Stage 3 and stage 4". Numbers: `MILO_MANGLE_ALL=1` took the error lane from 59 red to
+0; IR grows by names only (rg +0.16%, same define count) except where byte-identical
+helpers stop merging (gz +1.1%, four extra defines from deflate/inflate).
+
 - **B1. Display names.** Branch `display-names` (`0254df73`, 2026-08-18, 365 commits
   behind main, 16 files, +494) made a mangled name a symbol only: diagnostics, `print`,
   DWARF, LSP, reports all render the written name. Rebase is unlikely to apply; use the
