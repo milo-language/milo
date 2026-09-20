@@ -9,16 +9,12 @@
 // tsc reports phantom errors for them.
 //
 // tsconfig turns on noUnusedLocals/noUnusedParameters, so this gate also rejects dead
-// locals and imports. src/checker.ts is carved out of THAT check only (TS6133/TS6196)
-// while WP4/WP9/WP11 edit it concurrently; the carve-out goes with the WP13 follow-up in
-// docs/plans/design-pass-2026-09.md.
+// locals and imports, in src/checker.ts like everywhere else.
 import { test, expect } from "bun:test";
 import { execSync } from "child_process";
 import { join } from "path";
 
 const ROOT = join(import.meta.dir, "..");
-
-const UNUSED_CODES = /error TS61(33|96):/;
 
 test("src/, scripts/, tests/ typecheck clean", () => {
   let output = "";
@@ -30,8 +26,7 @@ test("src/, scripts/, tests/ typecheck clean", () => {
     output = (e.stdout?.toString() ?? "") + (e.stderr?.toString() ?? "");
   }
   const errors = output.split("\n")
-    .filter(l => /^(src|scripts|tests)\/.*error TS/.test(l))
-    .filter(l => !(l.startsWith("src/checker.ts(") && UNUSED_CODES.test(l)));
+    .filter(l => /^(src|scripts|tests)\/.*error TS/.test(l));
   if (errors.length > 0) {
     throw new Error(
       `${errors.length} TypeScript error(s):\n${errors.slice(0, 20).join("\n")}` +

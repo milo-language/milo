@@ -17,6 +17,15 @@ export interface BuiltinMember {
   name: string;
   sig: string;
   note?: string;
+  // The receiver keeps the argument after the call returns. checkEscapingClosures and
+  // retainsParam read this: a closure handed to such a method has escaped into the
+  // collection, and `map`/`each`/`sortBy` (called and dropped within the call) must not
+  // be confused with it. Derived here so the two checker sites cannot drift apart.
+  retainsArg?: true;
+  // The call may reallocate the receiver's buffer. safety.ts's no-dynamic-allocation
+  // rule reads this; the value-only judgment lives beside `retainsArg` so a new growing
+  // builtin is classified once, in its own row.
+  grows?: true;
 }
 
 export type BuiltinReceiver =
@@ -60,8 +69,8 @@ export const BUILTIN_MEMBERS: Record<BuiltinReceiver, BuiltinMember[]> = {
     { name: "codePoints", sig: "(): i32 code points", note: "for-in only — a parser desugar, not a value you can bind" },
     { name: "parseInt", sig: "(): Option<i64>" },
     { name: "parseF64", sig: "(): Option<f64>" },
-    { name: "push", sig: "(c: u8)" },
-    { name: "pushStr", sig: "(s: &string)" },
+    { name: "push", sig: "(c: u8)", grows: true },
+    { name: "pushStr", sig: "(s: &string)", grows: true },
     { name: "cstr", sig: "(): *u8", note: "NUL-terminated view; the string must outlive the pointer" },
     { name: "clone", sig: "(): string" },
   ],
@@ -70,18 +79,18 @@ export const BUILTIN_MEMBERS: Record<BuiltinReceiver, BuiltinMember[]> = {
     { name: "len", sig: ": i64" },
     { name: "isEmpty", sig: "(): bool" },
     { name: "capacity", sig: "(): i64" },
-    { name: "reserve", sig: "(extra: i64)" },
-    { name: "push", sig: "(value: T)" },
+    { name: "reserve", sig: "(extra: i64)", grows: true },
+    { name: "push", sig: "(value: T)", retainsArg: true, grows: true },
     { name: "pop", sig: "(): Option<T>" },
     { name: "get", sig: "(index: i64): Option<T>" },
     { name: "first", sig: "(): Option<T>" },
     { name: "last", sig: "(): Option<T>" },
-    { name: "insert", sig: "(index: i64, value: T)" },
+    { name: "insert", sig: "(index: i64, value: T)", retainsArg: true, grows: true },
     { name: "remove", sig: "(index: i64): T" },
     { name: "swap", sig: "(a: i64, b: i64)" },
     { name: "truncate", sig: "(len: i64)" },
     { name: "clear", sig: "()" },
-    { name: "extend", sig: "(other: Vec<T>)", note: "moves other in" },
+    { name: "extend", sig: "(other: Vec<T>)", note: "moves other in", retainsArg: true, grows: true },
     { name: "retain", sig: "(pred)", note: "in-place filter" },
     { name: "reverse", sig: "()" },
     { name: "sort", sig: "()" },
@@ -117,7 +126,7 @@ export const BUILTIN_MEMBERS: Record<BuiltinReceiver, BuiltinMember[]> = {
   hashmap: [
     { name: "len", sig: ": i64" },
     { name: "isEmpty", sig: "(): bool" },
-    { name: "insert", sig: "(key: K, value: V)" },
+    { name: "insert", sig: "(key: K, value: V)", retainsArg: true, grows: true },
     { name: "get", sig: "(key: K): Option<V>" },
     { name: "getOrDefault", sig: "(key: K, fallback: V): V" },
     { name: "contains", sig: "(key: K): bool" },
@@ -194,6 +203,18 @@ export function memberNames(receiver: BuiltinReceiver): string[] {
   return [...BUILTIN_MEMBERS[receiver], ...(receiver === "any" ? [] : BUILTIN_MEMBERS.any)]
     .map(m => m.name);
 }
+
+// Method names carrying a flag, across every receiver. Name-level because the consumers
+// (retainsParam, checkEscapingClosures, safety.ts) match a MethodCall by name before the
+// receiver is known to be a builtin at all; a user method of the same name is treated the
+// same way, which is the fail-closed direction for both flags.
+function namesWith(flag: "retainsArg" | "grows"): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const members of Object.values(BUILTIN_MEMBERS)) for (const m of members) if (m[flag]) out.add(m.name);
+  return out;
+}
+export const RETAINING_MEMBERS: ReadonlySet<string> = namesWith("retainsArg");
+export const GROWING_MEMBERS: ReadonlySet<string> = namesWith("grows");
 
 // The one-line detail an editor shows next to the name.
 export function memberDetail(m: BuiltinMember): string {

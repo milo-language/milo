@@ -3,13 +3,14 @@
 // if codegen can reach an invalid state, this file missed it.
 import { attributesFor } from "./attributes";
 import { walkExprs } from "./safety";
-import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl, TraitMethod, MatchArm, Attribute, GlobalDecl } from "./ast";
+import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitMethod, MatchArm, Attribute, GlobalDecl } from "./ast";
 import { simpleType, declaredType, floatNamespaceConst } from "./ast";
 import type { TypeKind } from "./types";
 import { typeFromAst, typeEq, typeName, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
 import type { Diagnostic, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
+import { RETAINING_MEMBERS } from "./builtin-members";
 import { memberHint, closest, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError } from "./derive-template";
@@ -91,14 +92,14 @@ export function isForeignModule(file: string | undefined): boolean {
 // `v.ptr()` / `s.cstr()` / `h.ptr()`: it survives an index write like a view does, and
 // unlike either it does not forbid a MOVE of its source; the move ends the holder
 // instead, except through `forget` (see `tryMoveLeaf`).
-export type BorrowKind = "view" | "iteration" | "pointer";
+type BorrowKind = "view" | "iteration" | "pointer";
 
 // The binding that holds a pointer borrow, so the diagnostic can name both ends:
 // `'v' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on
 // line N)`. `null` in `VarInfo.borrowHolders` for every non-pointer borrow.
-export interface PointerHolder { name: string; info: VarInfo; root: string; call: string; line: number }
+interface PointerHolder { name: string; info: VarInfo; root: string; call: string; line: number }
 
-export type PlaceStep =
+type PlaceStep =
   | { tag: "field"; name: string }
   | { tag: "index" }
   | { tag: "deref" }
@@ -153,7 +154,7 @@ interface MoveSnapshot {
   places: string[];
 }
 
-export interface VarInfo {
+interface VarInfo {
   type: TypeKind;
   mutable: boolean;
   moved: boolean;
@@ -234,7 +235,7 @@ const MUTATING_COLLECTION_METHODS = new Set([
   "clear", "truncate", "extend", "retain", "reserve",
 ]);
 
-export interface CaptureInfo {
+interface CaptureInfo {
   name: string;
   type: TypeKind;
   mutable: boolean;
@@ -259,7 +260,7 @@ export interface FnSig {
   contracts?: import("./ast").Contract[];
 }
 
-export interface StructInfo {
+interface StructInfo {
   // `iterDelegate`: `@iter` on the field — `for x in wrapper` iterates this field
   // instead of looking for a `next` method. Lets a newtype keep the container's
   // iteration without leaking the field or paying for a snapshot.
@@ -290,13 +291,13 @@ export function rawPointerField(fields: { name: string; type: TypeKind }[]): str
 }
 
 // A verified claim about a C type's layout, from `@cLayout(cType, header)`.
-export interface CLayout {
+interface CLayout {
   cType: string;
   header: string;
 }
 
 // A verified claim about an extern fn's C signature, from `@cSig(header, sig)`.
-export interface CSig {
+interface CSig {
   header: string;
   sig: string;
 }
@@ -305,7 +306,7 @@ export interface CSig {
 // this constant claims to mirror. `@cSig` and `@cLayout` verify functions and structs;
 // a bare constant has no such anchor, so a wrong scancode or pixel format is a runtime
 // bug (a dead key, a garbled frame) with no link error and no diagnostic.
-export interface CValue {
+interface CValue {
   cName: string;
   header: string;
 }
@@ -440,6 +441,22 @@ class CheckAbort extends Error {
 // Narrow an Expr union member by its `kind`, so an extracted arm keeps exactly the
 // type the switch gave it without importing every node interface.
 type ExprOf<K extends Expr["kind"]> = Extract<Expr, { kind: K }>;
+
+// What a whole-program pass may ask of the finished program. Built once by
+// `TypeChecker.programView` after every body is checked; see that method for why.
+interface ProgramView {
+  // Every function with a body the passes can walk, by mangled name: free fns plus the
+  // monomorphized instances (impl methods, generic instantiations).
+  fns: Map<string, Function>;
+  // The mangled callee a Call / EnumLit / MethodCall resolved to, or the bare name for a
+  // Call nothing rewrote. Undefined for enum construction and for calls through values.
+  calleeOf(e: Expr): string | undefined;
+  // The binding a place expression roots at (`G`, `G.f`, `G[i]`, `G!.f` all give `G`),
+  // or undefined for a non-expression or a place with no single named root.
+  rootOf(e: unknown): string | undefined;
+  // A mangled name as the user wrote it, for diagnostics.
+  pretty(name: string): string;
+}
 
 export class TypeChecker {
   private warningConfig: WarningConfig;
@@ -1068,7 +1085,7 @@ export class TypeChecker {
     }
     if (value.kind !== "IndexAccess") return;
     // Copy elements are a register move, not an allocation — nothing to warn about.
-    if (isCopy(ty, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) return;
+    if (this.isCopyType(ty)) return;
     // A ref binding (`let r: &T = ...`) borrows rather than clones.
     if (ty.tag === "ref") return;
     this.warn(
@@ -1726,7 +1743,7 @@ export class TypeChecker {
   // The `@copyOnly` verdict for one type argument. Returns whether it was rejected.
   private rejectNonCopyTypeArg(generic: string, mangled: string, concrete: TypeKind, span?: Span): boolean {
     if (concrete.tag === "unknown") return false;
-    if (isCopy(concrete, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) return false;
+    if (this.isCopyType(concrete)) return false;
     const key = this.mangleTypeName(concrete);
     if (this.copyOnlyReported.has(key)) return true;
     this.copyOnlyReported.add(key);
@@ -2136,7 +2153,7 @@ export class TypeChecker {
     // rebuild it on the way in.
     return JSON.parse(
       JSON.stringify(stmts, (_k, v) => typeof v === "bigint" ? { __bigint: v.toString() } : v),
-      (key, value) => {
+      (_key, value) => {
       if (value && typeof value === "object" && "__bigint" in value) return BigInt(value.__bigint);
       if (value && typeof value === "object" && "name" in value && !("kind" in value) && typeof value.name === "string") {
         const idx = typeParams.indexOf(value.name);
@@ -3227,21 +3244,27 @@ export class TypeChecker {
         `a struct cannot contain itself by value: put the recursive field behind an indirection (e.g. 'Heap<${shown}>' or 'Vec<${shown}>')`);
     }
 
+    // The whole-program passes below all read the finished program through one view:
+    // the call-resolution maps are complete, every monomorphized instance exists, and
+    // `closureCaptures` / the auto-`move` promotions have settled. Built once here so no
+    // pass carries its own copy of "which function does this call reach".
+    const view = this.programView(program);
+
     // `@pure` needs the finished call-resolution maps and the full set of
     // monomorphized instances, so it runs after everything else has been checked.
-    this.checkPurity(program);
+    this.checkPurity(program, view);
 
     // Also needs the finished maps: `closureCaptures` is filled as each closure body is
     // checked, and the auto-`move` promotions have all settled by now.
-    this.checkEscapingClosures(program);
+    this.checkEscapingClosures(program, view);
 
     // Same reason: the `@thread` entry points, their call sites, and the closure captures
     // are all resolved by now.
-    this.checkThreadBoundary(program);
+    this.checkThreadBoundary(program, view);
 
     // Needs the finished call-resolution maps too: the global-write summary is a fixpoint
     // over the call graph, so every callee has to be resolvable before it runs.
-    this.checkGlobalBorrowInvalidation(program);
+    this.checkGlobalBorrowInvalidation(program, view);
     this.lintArenaNeverFrees(program);
 
     // An expectation that never fired means the code it excused was fixed and the
@@ -3389,7 +3412,7 @@ export class TypeChecker {
   // not in traitImpls yet (registration happens after synthesis), and without them the
   // fixpoint can never close over `struct A { b: B }`.
   private canAutoClone(t: TypeKind, pending?: Set<string>): boolean {
-    if (isCopy(t, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) return true;
+    if (this.isCopyType(t)) return true;
     if (t.tag === "string") return true;
     // A container clones only what its contents can: Vec<closure> has no clone (an owning
     // closure's environment cannot be duplicated), and letting it through synthesized a
@@ -3427,7 +3450,7 @@ export class TypeChecker {
     const fields = s.fields.map(f => {
       const ft = this.resolve(f.type);
       const access: Expr = { kind: "FieldAccess" as const, object: { kind: "Ident" as const, name: "self" }, field: f.name };
-      const value: Expr = isCopy(ft, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))
+      const value: Expr = this.isCopyType(ft)
         ? access
         : { kind: "MethodCall" as const, object: access, method: "clone", args: [] };
       return { name: f.name, value };
@@ -3828,7 +3851,6 @@ export class TypeChecker {
   private registerBuiltinTraits() {
     const selfRef: TypeKind = { tag: "ref", inner: { tag: "struct", name: "Self" }, mutable: false };
     const bool_t: TypeKind = { tag: "bool" };
-    const i32_t: TypeKind = { tag: "int", bits: 32, signed: true };
     const u64_t: TypeKind = { tag: "int", bits: 64, signed: false };
     const string_t: TypeKind = { tag: "string" };
 
@@ -4173,8 +4195,8 @@ export class TypeChecker {
       if (n.kind === "MethodCall" && Array.isArray(n.args)) {
         const args = n.args as Expr[];
         walk(n.object);
-        // The three builtins that store a fn value, mirroring the call-site check.
-        const storesIt = ["push", "insert", "set"].includes(n.method as string);
+        // The builtins that store a fn value, the same set the call-site check reads.
+        const storesIt = RETAINING_MEMBERS.has(n.method as string);
         const recv = this.exprTypes.get(n.object as Expr);
         const base = recv?.tag === "ref" ? recv.inner : recv;
         const owner = base && (base.tag === "struct" || base.tag === "enum") ? base.name : null;
@@ -4186,7 +4208,7 @@ export class TypeChecker {
             // +1: the mangled method carries `self` as its first parameter.
             if (mangled && fns.has(mangled) && this.retainsParam(fns, mangled, i + 1, seen)) { retained = true; return; }
             // An unresolved receiver is waved through on the same reasoning the call
-            // site uses: no builtin other than the three above retains a fn value.
+            // site uses: no builtin outside the `retainsArg` rows retains a fn value.
           } else walk(a);
         }
         return;
@@ -4222,10 +4244,42 @@ export class TypeChecker {
   // an aggregate escapes, so we assume it does. `move` is the escape hatch — it works
   // even for a `var` capture, at the cost of dropping the write-back — and it is what
   // every diagnostic here names.
-  private checkEscapingClosures(program: Program): void {
-    const seen = new Set<string>();
+  // The finished program as the whole-program passes (purity, escaping closures, thread
+  // boundary, global borrow invalidation) see it. Each pass used to rebuild these four
+  // things inline, and the copies drifted: `rootOf` was the hand-rolled two-step walk
+  // that `rootNameOf` exists to replace, and purity's callee lookup had a different
+  // fallback chain from the other three (design pass 2026-09, F2).
+  private programView(program: Program): ProgramView {
+    // monomorphizedFns holds impl methods (mangled `Type$method`, `Type$Trait$method`)
+    // and generic instances; program.functions holds free fns.
     const fns = new Map<string, Function>();
     for (const f of [...program.functions, ...this.monomorphizedFns]) fns.set(f.name, f);
+    // `Type$method` reads as `Type.method`; a monomorphized `foo_i64` reads as `foo`.
+    const asWritten = new Map<string, string>();
+    for (const f of this.monomorphizedFns) if (f.sourceName) asWritten.set(f.name, f.sourceName);
+    return {
+      fns,
+      // The three maps are keyed by disjoint node kinds (rewrittenCalls: Call and the
+      // Promise.all/race EnumLit; staticCalls: EnumLit; resolvedMethods: MethodCall), so
+      // the order is a union, not a priority.
+      calleeOf: (e) =>
+        this.rewrittenCalls.get(e) ?? this.staticCalls.get(e) ?? this.resolvedMethods.get(e) ??
+        (e.kind === "Call" ? e.func : undefined),
+      // Takes `unknown` because the passes walk raw AST nodes; anything that is not an
+      // expression has no root. Total over the expression grammar via the place walker,
+      // where the old inline loops knew only FieldAccess and IndexAccess: `G!.x = v` and
+      // `G.slice(a, b)[i]` (a view into G) now root at `G` too, the fail-closed direction.
+      rootOf: (e) => {
+        if (!e || typeof e !== "object" || typeof (e as { kind?: unknown }).kind !== "string") return undefined;
+        return this.rootNameOf(e as Expr) ?? undefined;
+      },
+      pretty: (n) => asWritten.get(n) ?? n.replace(/\$/g, "."),
+    };
+  }
+
+  private checkEscapingClosures(program: Program, view: ProgramView): void {
+    const seen = new Set<string>();
+    const { fns } = view;
     const globals = new Set(program.globals.map(g => g.name));
     // Approximate scoping on purpose: one flat map per body, so a closure bound by
     // `let f = …` is still recognized when `f` is stored later. Shadowing can only make
@@ -4342,10 +4396,10 @@ export class TypeChecker {
         case "MethodCall": {
           // The collection-storing methods. A closure passed to `map`/`each`/`sortBy` is
           // called and dropped within the call, so those stay legal — that is the common
-          // case and rejecting it would gut the combinators. No builtin other than these
-          // three retains a fn value, which is what makes the unresolved case below safe
-          // to wave through; a builtin that starts retaining one must be added here.
-          if (["push", "insert", "set"].includes(n.method as string)) {
+          // case and rejecting it would gut the combinators. No builtin outside the
+          // `retainsArg` rows retains a fn value, which is what makes the unresolved case
+          // below safe to wave through; a builtin that starts retaining one gets the flag.
+          if (RETAINING_MEMBERS.has(n.method as string)) {
             for (const a of n.args as Expr[]) check(a, bound, cannotStore, "the collection holding it");
             break;
           }
@@ -4380,14 +4434,13 @@ export class TypeChecker {
     }
   }
 
-  private checkPurity(program: Program): void {
+  private checkPurity(program: Program, view: ProgramView): void {
     const pureNames = new Set<string>();
     const bodies: Function[] = [];
-    // monomorphizedFns holds impl methods (mangled `Type$method`, `Type$Trait$method`)
-    // and generic instances; program.functions holds free fns. A generic declaration is
-    // registered as pure but not walked — its instances are what call sites resolved to,
-    // and they are the copies whose expressions carry resolution data.
-    for (const f of [...program.functions, ...this.monomorphizedFns]) {
+    // A generic declaration is registered as pure but not walked — its instances are what
+    // call sites resolved to, and they are the copies whose expressions carry resolution
+    // data.
+    for (const f of view.fns.values()) {
       if (!f.attributes?.some(a => a.name === "pure")) continue;
       pureNames.add(f.name);
       if (!f.isExtern && f.typeParams.length === 0) bodies.push(f);
@@ -4398,10 +4451,7 @@ export class TypeChecker {
     // Every instance of a pure generic walks the same source span, so the same violation
     // would be reported once per instantiation.
     const seen = new Set<string>();
-    // `Type$method` reads as `Type.method`; a monomorphized `foo_i64` reads as `foo`.
-    const asWritten = new Map<string, string>();
-    for (const f of this.monomorphizedFns) if (f.sourceName) asWritten.set(f.name, f.sourceName);
-    const pretty = (n: string) => asWritten.get(n) ?? n.replace(/\$/g, ".");
+    const { pretty } = view;
 
     for (const fn of bodies) {
       const who = fn.sourceName ?? pretty(fn.name);
@@ -4412,10 +4462,7 @@ export class TypeChecker {
         this.error(msg, span, hint);
       };
 
-      const callTarget = (e: Expr, fallback: string): string =>
-        this.rewrittenCalls.get(e) ?? this.staticCalls.get(e) ?? fallback;
-
-      const checkCall = (e: Expr, target: string, span: Span | undefined) => {
+      const checkCall = (target: string, span: Span | undefined) => {
         if (pureNames.has(target) || TypeChecker.PURE_BUILTINS.has(target)) return;
         const sig = this.functions.get(target);
         if (!sig) {
@@ -4453,15 +4500,15 @@ export class TypeChecker {
               fail(`'${who}' is @pure but calls the function value '${e.func}'`, e.span,
                 `purity is not part of a fn type, so the compiler cannot see what this call does — call a named @pure fn instead`);
             } else {
-              checkCall(e, callTarget(e, e.func), e.span);
+              checkCall(view.calleeOf(e) ?? e.func, e.span);
             }
             e.args.forEach(a => ex(a, bound));
             break;
           case "EnumLit": {
             // Static method calls (`Math.sqrt(x)`) parse as EnumLit and are resolved into
             // staticCalls; without an entry this is ordinary enum construction.
-            const target = this.staticCalls.get(e);
-            if (target) checkCall(e, target, e.span);
+            const target = view.calleeOf(e);
+            if (target) checkCall(target, e.span);
             e.args.forEach(a => ex(a, bound));
             break;
           }
@@ -4474,8 +4521,8 @@ export class TypeChecker {
               fail(`'${who}' is @pure but calls the fn-typed field '${e.method}'`, e.span,
                 `purity is not part of a fn type, so the compiler cannot see what this call does`);
             } else {
-              const target = this.resolvedMethods.get(e);
-              if (target) checkCall(e, target, e.span);
+              const target = view.calleeOf(e);
+              if (target) checkCall(target, e.span);
             }
             ex(e.object, bound);
             e.args.forEach(a => ex(a, bound));
@@ -4576,9 +4623,8 @@ export class TypeChecker {
   // both — never got an arm, so the *same* fixture that errors on `Promise.blocking`
   // compiled clean and shipped a pointer into a dead frame to another thread. A list the
   // declarations own cannot drift from the declarations.
-  private checkThreadBoundary(program: Program): void {
-    const fns = new Map<string, Function>();
-    for (const f of [...program.functions, ...this.monomorphizedFns]) fns.set(f.name, f);
+  private checkThreadBoundary(program: Program, view: ProgramView): void {
+    const { fns, rootOf, calleeOf: target } = view;
     const isEntry = (target: string | undefined) =>
       !!target && !!fns.get(target)?.attributes?.some(a => a.name === "thread");
     if (![...fns.values()].some(f => f.attributes?.some(a => a.name === "thread"))) return;
@@ -4602,24 +4648,11 @@ export class TypeChecker {
       !!target && !!fns.get(target)?.attributes?.some(a => a.name === "synchronized");
 
     const reported = new Set<string>();
-    const target = (e: Expr): string | undefined =>
-      this.rewrittenCalls.get(e) ?? this.staticCalls.get(e) ?? this.resolvedMethods.get(e) ??
-      (e.kind === "Call" && typeof e.func === "string" ? e.func : undefined);
 
     // Reports every unsynchronized global reachable from `closure`, following static calls
     // so a touch three helpers deep still names the thread it escaped to. Approximate
     // scoping on purpose, same as checkEscapingClosures: one flat bound-name set per body,
     // which can only make this miss a shadowed global, never invent one.
-    // Root of a place expression: `G`, `G.field`, `G[i]` all root at `G`.
-    const rootOf = (e: unknown): string | undefined => {
-      let cur = e as Record<string, unknown> & { kind?: string };
-      while (cur && typeof cur === "object") {
-        if (cur.kind === "Ident") return typeof cur.name === "string" ? cur.name : undefined;
-        if (cur.kind === "FieldAccess" || cur.kind === "IndexAccess") { cur = cur.object as typeof cur; continue; }
-        return undefined;
-      }
-      return undefined;
-    };
 
     // Two phases over one reachable set, because reads and writes are not equally guilty.
     // A *write* reached without crossing a critical section races on its own. A *read*
@@ -4758,19 +4791,8 @@ export class TypeChecker {
   // `parks` rides the same call graph: a fn may park the current green task if it carries
   // `@parks` or calls one that may. Stops at the declared boundary, so the scheduler's
   // internals are never modelled here.
-  private globalWriteSummary(fns: Map<string, Function>, mutableGlobals: Set<string>): { writes: Map<string, Set<string>>; parks: Set<string> } {
-    const rootOf = (e: unknown): string | undefined => {
-      let cur = e as Record<string, unknown> & { kind?: string };
-      while (cur && typeof cur === "object") {
-        if (cur.kind === "Ident") return typeof cur.name === "string" ? cur.name : undefined;
-        if (cur.kind === "FieldAccess" || cur.kind === "IndexAccess") { cur = cur.object as typeof cur; continue; }
-        return undefined;
-      }
-      return undefined;
-    };
-    const target = (e: Expr): string | undefined =>
-      this.rewrittenCalls.get(e) ?? this.staticCalls.get(e) ?? this.resolvedMethods.get(e) ??
-      (e.kind === "Call" && typeof e.func === "string" ? e.func : undefined);
+  private globalWriteSummary(view: ProgramView, mutableGlobals: Set<string>): { writes: Map<string, Set<string>>; parks: Set<string> } {
+    const { fns, rootOf, calleeOf: target } = view;
 
     const writes = new Map<string, Set<string>>();
     const callees = new Map<string, Set<string>>();
@@ -4895,27 +4917,12 @@ export class TypeChecker {
   // freed memory before this. Element views are the for-in binding, a slice binding, and
   // a `&`/`&[T]` argument into the global; a `&mut` to the global's header itself is not
   // one (the header outlives a realloc, the buffer does not) and stays legal.
-  private checkGlobalBorrowInvalidation(program: Program): void {
+  private checkGlobalBorrowInvalidation(program: Program, view: ProgramView): void {
     const mutableGlobals = new Set<string>();
     for (const g of program.globals) if (g.mutable) mutableGlobals.add(g.name);
     if (mutableGlobals.size === 0) return;
-    const fns = new Map<string, Function>();
-    for (const f of [...program.functions, ...this.monomorphizedFns]) fns.set(f.name, f);
-    const { writes, parks } = this.globalWriteSummary(fns, mutableGlobals);
-
-    const rootOf = (e: unknown): string | undefined => {
-      let cur = e as Record<string, unknown> & { kind?: string };
-      while (cur && typeof cur === "object") {
-        if (cur.kind === "Ident") return typeof cur.name === "string" ? cur.name : undefined;
-        if (cur.kind === "FieldAccess" || cur.kind === "IndexAccess") { cur = cur.object as typeof cur; continue; }
-        return undefined;
-      }
-      return undefined;
-    };
-    const target = (e: Expr): string | undefined =>
-      this.rewrittenCalls.get(e) ?? this.staticCalls.get(e) ?? this.resolvedMethods.get(e) ??
-      (e.kind === "Call" && typeof e.func === "string" ? e.func : undefined);
-    const pretty = (n: string) => n.replace(/\$/g, ".");
+    const { fns, rootOf, calleeOf: target, pretty } = view;
+    const { writes, parks } = this.globalWriteSummary(view, mutableGlobals);
     const reported = new Set<string>();
     const report = (msg: string, span: Span | undefined, hint: string) => {
       const key = `${span?.line ?? 0}:${span?.col ?? 0}:${msg}`;
@@ -6252,7 +6259,7 @@ export class TypeChecker {
         const info = this.lookup(p.name);
         if (!info) continue;
         if (info.type.tag === "ref") continue;
-        if (isCopy(info.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) continue;
+        if (this.isCopyType(info.type)) continue;
         if (!info.moved) {
           this.warn("unused-move",
             `parameter '${p.name}' is never moved — consider taking '&${this.show(info.type)}' instead`,
@@ -7199,7 +7206,7 @@ export class TypeChecker {
     if (!info) { this.allCopyEnumCache.set(name, false); return false; }
     this.allCopyEnumCache.set(name, false);
     const result = [...info.variants.values()].every(v =>
-      v.fields.every(f => isCopy(f, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n)))
+      v.fields.every(f => this.isCopyType(f))
     );
     this.allCopyEnumCache.set(name, result);
     return result;
@@ -7237,7 +7244,7 @@ export class TypeChecker {
     // guard against cycles
     this.allCopyCache.set(name, false);
     const result = info.fields.every(f =>
-      isCopy(f.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))
+      this.isCopyType(f.type)
     );
     this.allCopyCache.set(name, result);
     return result;
@@ -7369,7 +7376,7 @@ export class TypeChecker {
     if (!variant) return false;
     const n = Math.min(pattern.bindings.length, variant.fields.length);
     for (let i = 0; i < n; i++) {
-      if (!isCopy(variant.fields[i], (x) => this.isAllCopyEnum(x), (x) => this.isAllCopyStruct(x))) return true;
+      if (!this.isCopyType(variant.fields[i])) return true;
     }
     return false;
   }
@@ -7380,7 +7387,7 @@ export class TypeChecker {
   // staying non-consuming there keeps the common `Result<i64, i64>` case ergonomic
   // (same Copy gate as unwrapOr).
   private consumeForwardedPayload(receiver: Expr, forwarded: TypeKind) {
-    if (isCopy(forwarded, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) return;
+    if (this.isCopyType(forwarded)) return;
     this.tryMove(receiver);
   }
 
@@ -7463,12 +7470,12 @@ export class TypeChecker {
       // shallow-copy the pointee — e.g. a String's heap buffer — aliasing it
       // with the real owner and double-freeing on drop. Reject; clone to own.
       if (info && info.type.tag === "ref" &&
-          !isCopy(info.type.inner, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+          !this.isCopyType(info.type.inner)) {
         this.error(`cannot move the borrowed value out of '${expr.name}'`, expr.span,
           `'${expr.name}' is a reference — call .clone() to take an owned copy`);
         return;
       }
-      if (info && !isCopy(info.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+      if (info && !this.isCopyType(info.type)) {
         // A pointer borrow does not forbid the move (the header moves, the buffer stays),
         // but the new owner may free that buffer at any time the checker cannot see, so
         // every holder of the pointer is dead from here: `let p = v.ptr(); take(v);
@@ -7527,7 +7534,7 @@ export class TypeChecker {
       const caps = this.closureCaptures.get(expr);
       if (caps) {
         for (const cap of caps) {
-          if (isCopy(cap.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) continue;
+          if (this.isCopyType(cap.type)) continue;
           const info = this.lookup(cap.name);
           if (info) {
             info.moved = true;
@@ -7541,7 +7548,7 @@ export class TypeChecker {
     // But don't move out of borrowed Vecs — mark as borrowed instead.
     if (expr.kind === "IndexAccess") {
       const elemType = this.exprTypes.get(expr);
-      if (elemType && !isCopy(elemType, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+      if (elemType && !this.isCopyType(elemType)) {
         // The "clone" that stands in for the move duplicates a resource; reject before
         // recording anything (see errorIfResourceIndexRead).
         if (elemType.tag !== "ref" && this.errorIfResourceIndexRead(expr, elemType)) return;
@@ -7573,7 +7580,7 @@ export class TypeChecker {
     // `sortByKey`'s key extractor is the sole exemption; see the note below.
     if (expr.kind === "FieldAccess") {
       const fieldType = this.exprTypes.get(expr);
-      if (fieldType && !isCopy(fieldType, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+      if (fieldType && !this.isCopyType(fieldType)) {
         const base = this.borrowBasePath(expr);
         if (base === null) {
           const dropTy = this.dropTypeInPath(expr);
@@ -8066,7 +8073,7 @@ export class TypeChecker {
   // which is the whole point: a new way to SPELL the iterable inherits the rule instead
   // of escaping it. The recorded path is what keeps this from over-rejecting — mutating
   // a different field of the same struct does not collide with the borrow.
-  private freezeIterable(iterable: Expr): import("./checker").VarInfo | null {
+  private freezeIterable(iterable: Expr): VarInfo | null {
     return this.freezeRootOf(iterable, "iteration");
   }
 
@@ -8093,7 +8100,7 @@ export class TypeChecker {
     return this.accessPath(e)?.root ?? null;
   }
 
-  private freezeRootOf(place: Expr, kind: BorrowKind = "view"): import("./checker").VarInfo | null {
+  private freezeRootOf(place: Expr, kind: BorrowKind = "view"): VarInfo | null {
     const ap = this.accessPath(place);
     if (!ap) return null;
     const info = this.lookup(ap.root);
@@ -8369,7 +8376,7 @@ export class TypeChecker {
         }
         // The value is copied into every slot, so it must be Copy — otherwise
         // N slots would alias one heap buffer and free it N times.
-        if (!isCopy(hint.element, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+        if (!this.isCopyType(hint.element)) {
           this.error(`'Vec.filled' requires a Copy element type (got ${this.show(hint.element)}) — the fill value is duplicated into every slot; build a non-Copy Vec with a push loop`, expr.span);
         }
       }
@@ -8909,7 +8916,7 @@ export class TypeChecker {
         return this.setType(expr, { tag: "void" });
       }
       const t = this.checkExpr(expr.args[0]);
-      if (isCopy(t, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+      if (this.isCopyType(t)) {
         this.warn("useless-forget", `'forget' on a Copy value does nothing`, sp,
           `${this.show(t)} owns no resource, so there is no drop to suppress`);
       }
@@ -9757,7 +9764,6 @@ export class TypeChecker {
       if (genericFn && expr.args.length === 1) {
         const argType = this.checkExpr(expr.args[0]);
         const typeMap = new Map<string, TypeKind>();
-        const literalInferred = new Set<string>();
         for (let i = 0; i < Math.min(1, genericFn.decl.params.length); i++) {
           const paramTy = declaredType(genericFn.decl.params[i]);
           if (paramTy.typeArgs) {
@@ -9886,7 +9892,7 @@ export class TypeChecker {
         const sig = inherent.methods.get(expr.variant);
         if (sig) {
           const mangledMethod = `${mangled}$${expr.variant}`;
-          const paramOffset = this.checkStaticCallArgs(sig, expr, sp);
+          this.checkStaticCallArgs(sig, expr, sp);
           this.staticCalls.set(expr, mangledMethod);
           // Send enforcement for thread-crossing closures lives in checkThreadBoundary,
           // driven by `@thread` on the declaration — see the comment there for what the
@@ -9894,7 +9900,7 @@ export class TypeChecker {
           return this.setType(expr, sig.ret);
         }
       }
-      const asMethod2 = this.staticCallOnVariable(expr, sp);
+      const asMethod2 = this.staticCallOnVariable(expr);
       if (asMethod2) return asMethod2;
       this.error(`'${expr.enumName}<...>' has no static method '${expr.variant}'`, sp);
       return this.setType(expr, { tag: "unknown" });
@@ -9934,7 +9940,7 @@ export class TypeChecker {
           return this.setType(expr, sig.ret);
         }
       }
-      const asMethod = this.staticCallOnVariable(expr, sp);
+      const asMethod = this.staticCallOnVariable(expr);
       if (asMethod) return asMethod;
       this.errorUnknownStatic(expr.enumName, expr.variant, sp);
       return this.setType(expr, { tag: "unknown" });
@@ -10229,7 +10235,7 @@ export class TypeChecker {
       if (expr.method === "unwrapOr") {
         if (expr.args.length !== 1) { this.error(`'unwrapOr' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const inner = this.unwrapableInner(objType);
-        if (inner && !isCopy(inner)) {
+        if (inner && !this.isCopyType(inner)) {
           // select-based lowering copies the payload; for owned types that would
           // alias the heap buffer (double-free). Move-out needs match.
           this.error(`'unwrapOr' on a non-Copy Option<${this.show(inner)}> — use 'match' to move the value out`, sp);
@@ -10277,7 +10283,7 @@ export class TypeChecker {
       if (expr.method === "unwrapOrElse") {
         if (expr.args.length !== 1) { this.error(`'unwrapOrElse' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const inner = this.unwrapableInner(objType);
-        if (inner && !isCopy(inner)) {
+        if (inner && !this.isCopyType(inner)) {
           this.error(`'unwrapOrElse' on a non-Copy Option<${this.show(inner)}> — use 'match' to move the value out`, sp);
           return this.setType(expr, inner);
         }
@@ -10360,7 +10366,7 @@ export class TypeChecker {
       if (expr.method === "unwrapOr") {
         if (expr.args.length !== 1) { this.error(`'unwrapOr' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const inner = this.unwrapableInner(objType);
-        if (inner && !isCopy(inner)) {
+        if (inner && !this.isCopyType(inner)) {
           this.error(`'unwrapOr' on a non-Copy Result<${this.show(inner)}> — use 'match' to move the value out`, sp);
           return this.setType(expr, inner);
         }
@@ -10457,7 +10463,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'unwrapOrElse' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const inner = this.unwrapableInner(objType);
         const errT = this.unwrapableErr(objType);
-        if (inner && !isCopy(inner)) {
+        if (inner && !this.isCopyType(inner)) {
           this.error(`'unwrapOrElse' on a non-Copy Result<${this.show(inner)}> — use 'match' to move the value out`, sp);
           return this.setType(expr, inner);
         }
@@ -11457,7 +11463,7 @@ export class TypeChecker {
     // has to compile for T = i64 as well as T = string, and the move-out-of-
     // a-borrow rule leaves clone as the only way to spell it.
     if (expr.method === "clone" && expr.args.length === 0 &&
-        isCopy(objType, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+        this.isCopyType(objType)) {
       return this.setType(expr, objType);
     }
 
@@ -11596,7 +11602,7 @@ export class TypeChecker {
       if (!v) return true;
       return pattern.bindings.every((b, i) =>
         b === "_" || i >= v.fields.length ||
-        isCopy(v.fields[i], (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n)));
+        this.isCopyType(v.fields[i]));
     });
   }
 
@@ -11747,7 +11753,7 @@ export class TypeChecker {
       // caller still owns. `v.each((s: string) => print(s))` type-checked, and printed
       // raw process memory.
       if (expected.tag === "ref" && typeEq(got, expected.inner)) {
-        if (isCopy(got, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) continue;
+        if (this.isCopyType(got)) continue;
         this.error(
           `'${method}' callback parameter ${i + 1} takes ${this.show(got)} by value, but ${method} passes ${this.show(expected)}`,
           sp,
@@ -11773,10 +11779,18 @@ export class TypeChecker {
     }
   }
 
+  // The ONE Copy judgment for the checker. Every "may this be read by value" question
+  // goes through here so a struct/enum is Copy at every site or at none: `unwrapOr` once
+  // called `isCopy` without the struct/enum callbacks and rejected a `Pt {x, y}` that
+  // `let e = d` had just copied (design pass 2026-09, F1).
+  private isCopyType(t: TypeKind): boolean {
+    return isCopy(t, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n));
+  }
+
   private isCopyBind(bt: TypeKind, subjectIsPlace: boolean): boolean {
     if (!subjectIsPlace) return false;
     if (bt.tag === "ref") return false;
-    return isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n));
+    return this.isCopyType(bt);
   }
 
   private isPlaceExpr(e: Expr): boolean {
@@ -11784,7 +11798,7 @@ export class TypeChecker {
   }
 
   private payloadBindType(bt: TypeKind, subjBorrows: boolean): TypeKind {
-    if (subjBorrows && !isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+    if (subjBorrows && !this.isCopyType(bt)) {
       return { tag: "ref", inner: bt, mutable: false };
     }
     return bt;
@@ -11808,7 +11822,7 @@ export class TypeChecker {
   // untouched, and the subject has to be an owned Option — a `&Option` or a place
   // subject binds the payload as a borrow, where `??` would not be the same program.
   // `??` is short-circuit like the match, so a default with side effects stays correct.
-  private lintManualOptionDefault(subject: Expr, arms: MatchArm[], subjType: TypeKind, sp: Span | undefined): void {
+  private lintManualOptionDefault(arms: MatchArm[], subjType: TypeKind, sp: Span | undefined): void {
     if (arms.length !== 2) return;
     if (subjType.tag !== "enum" || this.optionInnerType(subjType) === null) return;
     const armFor = (v: string) => arms.find(a => a.pattern.kind === "EnumPattern" && a.pattern.variant === v);
@@ -11872,7 +11886,7 @@ export class TypeChecker {
     // Same scoping as unused-unsafe and index-clone.
     if (this.currentFnIsUser) {
       if (rawSubjType.tag !== "ref" && subject.kind !== "FieldAccess" && subject.kind !== "IndexAccess") {
-        this.lintManualOptionDefault(subject, arms, rawSubjType, sp);
+        this.lintManualOptionDefault(arms, rawSubjType, sp);
       }
       if (isStmt) this.lintSingleVariantMatch(subject, arms, rawSubjType, sp);
     }
@@ -12014,7 +12028,7 @@ export class TypeChecker {
               // Ref- or place-match: a non-Copy payload binds as a borrow
               // (`&T`) — a view into the still-owned subject, so it can't be
               // moved out or dropped. Copy payloads bind by value.
-              if (subjBorrows && !isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+              if (subjBorrows && !this.isCopyType(bt)) {
                 bt = { tag: "ref", inner: bt, mutable: false };
               }
               bindTypes.push(bt);
@@ -12103,7 +12117,7 @@ export class TypeChecker {
   //
   // Called only from the two "no such static" error paths, so anything that
   // resolves as a static call today keeps resolving that way.
-  private staticCallOnVariable(expr: any, sp?: Span): TypeKind | null {
+  private staticCallOnVariable(expr: any): TypeKind | null {
     if (!this.rewriteStaticToMember(expr)) return null;
     return this.checkExpr(expr as Expr);
   }

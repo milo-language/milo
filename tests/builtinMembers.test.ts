@@ -23,7 +23,7 @@ import { join } from "path";
 import { Lexer } from "../src/lexer";
 import { Parser } from "../src/parser";
 import { TypeChecker } from "../src/checker";
-import { BUILTIN_MEMBERS, type BuiltinReceiver, type BuiltinMember } from "../src/builtin-members";
+import { BUILTIN_MEMBERS, RETAINING_MEMBERS, GROWING_MEMBERS, type BuiltinReceiver, type BuiltinMember } from "../src/builtin-members";
 
 function errorsOf(src: string): string[] {
   let prog;
@@ -130,6 +130,23 @@ test("no member is listed twice for one receiver", () => {
   for (const recv of RECEIVERS) {
     const names = BUILTIN_MEMBERS[recv].map(m => m.name);
     expect(names.length).toBe(new Set(names).size);
+  }
+});
+
+// The `retainsArg` / `grows` flags replaced three literal name lists (checker.ts
+// retainsParam and checkEscapingClosures both held `["push","insert","set"]`; safety.ts
+// held `["push","append","insert","extend"]`). Pinned here as the exact derived sets so
+// a flag dropped from a row, or a new growing builtin added without one, is visible.
+// `set` and `append` were in the old literals and are in neither set: no builtin
+// receiver dispatches either name, so they matched nothing but a user method that
+// happened to share the name. `pushStr` and `reserve` were missing from the old growth
+// list and do reallocate.
+test("the retains/grows flags derive exactly the sets the old literal lists meant", () => {
+  expect([...RETAINING_MEMBERS].sort()).toEqual(["extend", "insert", "push"]);
+  expect([...GROWING_MEMBERS].sort()).toEqual(["extend", "insert", "push", "pushStr", "reserve"]);
+  // A flagged row is a real member: a name flagged on no row would be a phantom again.
+  for (const name of [...RETAINING_MEMBERS, ...GROWING_MEMBERS]) {
+    expect(RECEIVERS.some(r => BUILTIN_MEMBERS[r].some(m => m.name === name))).toBe(true);
   }
 });
 

@@ -3,7 +3,7 @@ system: planning
 purpose: ranked findings from the 2026-09-19 system-design review (dup unifier, dead code, abstraction police, split seam, useless tests) and which became work
 key-files: src/checker.ts, src/types.ts, src/builtin-members.ts, std/crypto.milo, std/cryptosys.*.milo, scripts/check-api-docs.ts, tests/apiDocsSite.test.ts
 update-when: a finding ships or is declined
-last-verified: 2026-09-19 (review at 61c80c6e)
+last-verified: 2026-09-20 (F1-F3 and the checker unused-locals follow-up shipped in WP12)
 -->
 
 # Design pass, September 2026
@@ -13,9 +13,9 @@ judgment ("may this element be read by value") made at one site and not another.
 
 | id | lens | location | finding | fix | status |
 |---|---|---|---|---|---|
-| F1 | dup | `checker.ts` `unwrapOr`/`unwrapOrElse` (4 sites) vs 22 `isCopy(` sites | bare `isCopy(inner)` without struct/enum callbacks: an all-scalar struct is Copy at `let e = d`, "non-Copy" at `a.unwrapOr(d)` | one `isCopyType()` chokepoint; make `types.ts:isCopy` callbacks required | WP12 |
-| F2 | dup | `checker.ts` thread/global/purity/closure passes | `rootOf` x3, `callTarget` x4 (purity's lacks the `resolvedMethods` fallback), `fns` x4, `pretty` x2 rebuilt per pass; `rootNameOf` is the declared chokepoint | one `ProgramView` built in `checkProgram`; purity fixture for the late-resolved method | WP12 |
-| F3 | dup | `checker.ts:3913,4084`, `safety.ts:336` | "builtin retains its argument" as three literal lists | `retainsArg`/`grows` flags on `BUILTIN_MEMBERS` | WP12 |
+| F1 | dup | `checker.ts` `unwrapOr`/`unwrapOrElse` (4 sites) vs 22 `isCopy(` sites | bare `isCopy(inner)` without struct/enum callbacks: an all-scalar struct is Copy at `let e = d`, "non-Copy" at `a.unwrapOr(d)` | one `isCopyType()` chokepoint; make `types.ts:isCopy` callbacks required | shipped (WP12): `tests/fixtures/unwrapOrCopyStruct.milo`; codegen already loaded the payload as a first-class aggregate |
+| F2 | dup | `checker.ts` thread/global/purity/closure passes | `rootOf` x3, `callTarget` x4 (purity's lacks the `resolvedMethods` fallback), `fns` x4, `pretty` x2 rebuilt per pass; `rootNameOf` is the declared chokepoint | one `ProgramView` built in `checkProgram`; purity fixture for the late-resolved method | shipped (WP12): `ProgramView { fns, calleeOf, rootOf, pretty }`; `rootOf` is `rootNameOf`. Purity's `callTarget` was only used for `Call` nodes and its `MethodCall` arm read `resolvedMethods` directly, so the "missing fallback" was textual, not a reachable miss; no fixture |
+| F3 | dup | `checker.ts:3913,4084`, `safety.ts:336` | "builtin retains its argument" as three literal lists | `retainsArg`/`grows` flags on `BUILTIN_MEMBERS` | shipped (WP12): `RETAINING_MEMBERS` / `GROWING_MEMBERS`; `set` and `append` in the old literals named no builtin, `pushStr`/`reserve` were missing from the growth list |
 | F4 | dup (std) | `std/crypto.{darwin,linux,windows}.milo` | facade (`AesGcmResult`, `impl Crypto`, `aesGcm*` wrappers, `bytesToHex`) triplicated, darwin/linux byte-identical | shared `std/crypto.milo`, arms keep externs + `*Raw` | WP13 |
 | F5 | split | `checker.ts` | cheapest seam: thread/global passes, 5 methods, 793 lines, 12 fields + 7 methods, 4 inbound | `checker-program-passes.ts` behind a narrow interface | after WP12 |
 | F6 | dead | `tsc --noUnusedLocals --noUnusedParameters` | 65 unused locals/imports (codegen 21, checker 8, lower 8, lsp 5, visibility 7, scripts 7, tests 4) | fix and make it a gate | WP13 |
@@ -25,11 +25,9 @@ judgment ("may this element be read by value") made at one site and not another.
 | F10 | test | `tests/apiDocsSite.test.ts` | passes on 0 compared signatures; floor only in the CLI half | assert `comparedCount >= FLOOR` | WP13 |
 | F11 | dead (API) | 55 `pub fn` in std, zero callers in-repo and across 13 sibling repos | public API, not dead | feed `docs/stdlib-audit-2026-08.md` | note |
 
-TODO (WP13 follow-up, after WP4/WP9/WP11 merge): fix the 8 `noUnusedLocals` diagnostics
-in `src/checker.ts` (`TraitDecl` import, `key`, `i32_t`, `e`, `literalInferred`,
-`paramOffset`, `subject`, `sp`) and the 9 in-file-only `export`s there (`BorrowKind`,
-`PointerHolder`, `PlaceStep`, `VarInfo`, `CaptureInfo`, `StructInfo`, `CLayout`, `CSig`,
-`CValue`), then delete the `src/checker.ts` carve-out in `tests/typecheck.test.ts`.
+The WP13 follow-up (8 `noUnusedLocals` diagnostics and 9 in-file-only `export`s in
+`src/checker.ts`, plus the carve-out in `tests/typecheck.test.ts`) shipped with WP12; the
+typecheck gate now covers `src/checker.ts` like every other file.
 
 Nothing found: dead warnings (`src/warnings.ts`), dead attributes, marker-less fixtures,
 tautological asserts in `tests/*.test.ts`.

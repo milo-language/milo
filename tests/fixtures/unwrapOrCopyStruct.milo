@@ -1,0 +1,87 @@
+// F1 (design pass 2026-09): one Copy judgment. An all-scalar struct and a payload-free
+// enum are Copy at `let e = d` and must be Copy at `unwrapOr`/`unwrapOrElse` too. The
+// four unwrap sites used to call `isCopy` WITHOUT the struct/enum callbacks, so the
+// same `Pt` that copied freely at a binding was rejected as "non-Copy Option<Pt>".
+//
+// The lowering loads the payload as a first-class aggregate and `select`s/`phi`s it,
+// which LLVM accepts for any sized type, so the gate only ever needed to say what the
+// rest of the checker already said.
+struct Pt {
+    x: i64,
+    y: i64,
+}
+
+enum Color {
+    Red,
+    Green,
+}
+
+pub fn colorName(c: Color): string {
+    match c {
+        Color.Red => {
+            return "red"
+        }
+        Color.Green => {
+            return "green"
+        }
+    }
+}
+
+pub fn main() {
+    let d = Pt {
+        x: 7, y: 9
+    }
+    let e = d
+    // @expect: 7 9
+    print(e.x.toString() + " " + e.y.toString())
+
+    let some: Option<Pt> = Option.Some(Pt {
+        x: 1, y: 2
+    }
+    )
+    let none: Option<Pt> = Option.None
+    let a = some.unwrapOr(d)
+    let b = none.unwrapOr(d)
+    // @expect: 1 2
+    print(a.x.toString() + " " + a.y.toString())
+    // @expect: 7 9
+    print(b.x.toString() + " " + b.y.toString())
+    // d is still usable: unwrapOr copied it
+    // @expect: 7
+    print(d.x)
+
+    let c = none.unwrapOrElse(() => Pt {
+        x: 3, y: 4
+    }
+    )
+    // @expect: 3 4
+    print(c.x.toString() + " " + c.y.toString())
+
+    let ok: Result<Pt, string> = Result.Ok(Pt {
+        x: 5, y: 6
+    }
+    )
+    let bad: Result<Pt, string> = Result.Err("boom")
+    let f = ok.unwrapOr(d)
+    let g = bad.unwrapOr(d)
+    // @expect: 5 6
+    print(f.x.toString() + " " + f.y.toString())
+    // @expect: 7 9
+    print(g.x.toString() + " " + g.y.toString())
+    let h = bad.unwrapOrElse((err) => Pt {
+        x: err.len, y: 0
+    }
+    )
+    // @expect: 4 0
+    print(h.x.toString() + " " + h.y.toString())
+
+    let sc: Option<Color> = Option.Some(Color.Green)
+    let nc: Option<Color> = Option.None
+    // @expect: green
+    print(colorName(sc.unwrapOr(Color.Red)))
+    // @expect: red
+    print(colorName(nc.unwrapOr(Color.Red)))
+    let rc: Result<Color, i64> = Result.Err(1)
+    // @expect: green
+    print(colorName(rc.unwrapOrElse((code) => Color.Green)))
+}
