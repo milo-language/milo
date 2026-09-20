@@ -133,6 +133,75 @@ method on a wrapper type, or return offsets and slice in the caller.
 Reopen only when a real program hits the copy tax. Fold that paragraph
 into WP1.
 
+### WP7. Corpus census as a maintenance sweep (added 2026-09-20)
+Files: new `scripts/corpus-census.ts`, `docs/memory-safety-vs-rust.md` (new
+section "What the corpus says"), `AGENTS.md` router row.
+
+Source: the 2026-09-20 census over every `.milo` file in the org (~290k lines:
+milo std/examples/src-milo/fixtures, milojs, emulators, dapweb, aws, postgres,
+redis, toml, yaml, markdown, json-rpc, gl, sdl; worktrees and node_modules
+excluded). Findings to record verbatim, they are the falsifier for the
+second-class-reference bet:
+- 656 `unsafe` blocks; 594 (91%) contain an extern call or pointer cast (FFI).
+  Of the 62 non-FFI, 35 are outside std: `exit(1)` in src-milo (12), fd/pty
+  ownership in dapweb (8), giflib buffer handoff (4), raw read/napi in milojs
+  (4), GL buffers (3), SDL host pointers (2). Zero blocks exist because the
+  ownership model rejected the program.
+- `.clone()` per kLOC: src-milo 58, redis 41, dapweb 37, aws 25, milojs 12.5,
+  std 5, examples 3.8, emulators 0.6. Receivers are strings (`name`, `ty`,
+  `key`); the tax is string clones and owned-copy accessors, not pointers.
+- 22 friction comments outside std name a Milo limit: 10 are second-class refs
+  (all restructured to owned/pool/index, none to unsafe); 12 are missing
+  features: derive Clone for enums, method-level generics (4 in std alone),
+  default field values, Ord trait, import aliasing, extern variables, bitcast.
+- Attributes user code actually uses outside std/fixtures/src-milo: `cValue`,
+  `embedFile`, `cSig`, `externalLinkage`, `sym`, `link`, `wrapping`, `derive`,
+  `cLayout`, `noCopy`. Every soundness-sweep attribute (`copyOnly`, `copyOut`,
+  `thread`, `parks`, `synchronized`, `pure`, `iter`, `cOpaque`) is std-only.
+
+Work:
+- Port the census (python in the session scratchpad; the metrics above) to
+  `bun scripts/corpus-census.ts [--json]`. Roots: `std`, `examples`,
+  `src-milo`, `tests/fixtures` here, plus every sibling under
+  `~/git/milo-language/` that exists (missing checkouts skip, like
+  `check-packages.sh`). Per root: kloc, fns, unsafe blocks split
+  ffi/rawptr/other with the preceding comment for each non-FFI block,
+  clone/kLOC, substr/kLOC, `arenaGet` vs borrowing-read count, `.ptr()`,
+  `.addrOf()`, `Heap<`, attribute histogram, friction comments (the regex from
+  the session: workaround / can't|cannot return|store|borrow|hold / no
+  lifetimes / second-class / Milo has no|does not|can't). Print the table;
+  `--json` dumps everything.
+- Gate that cannot be gamed: `--check` compares `unsafe_nonffi` per root and
+  the count of non-FFI unsafe blocks outside std against a committed baseline
+  `scripts/corpus-census.baseline.json`; may shrink, never grow. Refresh with
+  `MILO_CENSUS_UPDATE=1`.
+- Record the findings in `docs/memory-safety-vs-rust.md` as a dated section
+  and add the script to the AGENTS.md router and the maintenance sweep list in
+  `docs/testing.md` (or wherever the fuzzers are listed).
+- Done: `bun scripts/corpus-census.ts --check` green; the doc section cites
+  the numbers above; `bun test tests/docs.test.ts` green.
+
+### WP8. Backlog entries from the census (added 2026-09-20)
+File: `docs/backlog.md`. Two Tier 1 entries, each citing the census count:
+- derive `Clone` for enums (redis `RedisValue.clone` hand-written, src-milo
+  `ast.milo:342` "no auto-derive for Clone; deep clones are hand-written").
+- method-level generics (std `timer.milo:180`, `select.milo:22`,
+  `arena.milo:302` all say "cannot be a method: Milo has no method-level
+  generics"; `arenaWith` is the user-facing casualty).
+Check both are not already filed before adding. Done: entries present, doc
+lint green.
+
+### WP9. Stale workaround in emulators (added 2026-09-20)
+Repo: `~/git/milo-language/emulators`, file `snes/superfx.milo:8`: "ROM is
+cloned in (read-only) ... sidesteps the second-class-ref rule against
+borrowing two &mut Mem fields at once". Disjoint field borrows compile today
+(verified 2026-09-20: `step(m.rom, m.ram)` and `both(m.rom, m.ram)` with two
+`&mut` params both type-check). Remove the ROM clone and borrow the field;
+run the emulators' own test suite and the SNES test ROMs it names. If the
+clone turns out to exist for another reason (emit-js core isolation is the
+other candidate the comment names), fix the comment instead and say so.
+Done: suite green, comment true.
+
 ### WP6 (deferred). Safety-profile lint: no bare integer index into a pool
 Wait for backlog E6 (collection-declared key type). Not scheduled.
 
@@ -170,7 +239,9 @@ Rebase each on the previous before its gate run.
 **Tail:** none. WP5 dropped.
 
 If running one agent at a time (default per the orchestrator rules), order is
-WP2, WP4, WP1, WP3. WP1 sits third so its matrix rows can cite WP2 and
+WP2, WP3, WP4, WP1 (reordered 2026-09-20: WP3 is the soundness win, so it
+follows WP2 directly; WP4 after it gets private fields without a TODO).
+Then WP8 (backlog, minutes), WP7 (census script), WP9 (emulators, other repo). WP1 sits third so its matrix rows can cite WP2 and
 WP4 by their shipped names.
 
 Every package: own worktree, small green commits, gates listed under its
