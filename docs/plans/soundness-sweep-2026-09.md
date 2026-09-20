@@ -20,6 +20,8 @@ directory when every file in it has become a fixture, an error test, or a fuzzer
 | H2 | `hole2-shards-owner-dropped-under-worker.milo` | worker writes 2.0 into a freed buffer; a fresh `Vec` reusing it prints 2 not 9 | `Shards` is implicitly droppable while windows are outstanding. Docs call it "the residue". |
 | H3 | `hole3-global-forin-across-yield.milo` | prints `1, 4, 0` from a freed buffer | for-in freeze on a mutable global is interprocedural but not cross-task: body yields, another task pushes, buffer reallocates. |
 | H4 | `hole4-vec-ptr-outlives-realloc.milo` | ASan heap-use-after-free, no `unsafe`, no thread, no generic | `v.ptr()` / `s.cstr()` return `*T` in safe code with no provenance; `push` reallocates; a scalar-returning extern reads the stale pointer. Found 2026-09-19 by independent review. |
+| H5 | (found by WP5b, 2026-09-19) `Option.Some(v[0])` / `f(v[0])` on a `Vec<Res>` where `Res: Drop` | made 1, gone 3: the element is copied out and every copy runs Drop | the "cannot take a Drop element out of a container by index" rule fires only at `let`; an IndexAccess consumed by value anywhere else (call arg, enum payload, struct field, return, assignment) is an implicit bitwise copy. Pure-checker hole. |
+| H6 | (found by WP5b) `Channel<Res>` with undelivered payloads | made N, gone 0 | `std/sync.milo:95` `impl Drop for ChannelHandle` frees `buf` without dropping the payloads still queued. Leak class. `promiseRace` losers are the same. |
 | P1 | `prover-push-ensures-false-counterexample.milo` | `push1` postcondition **failed**, counterexample `v_len__mut1 = 0` | builtin `Vec.push` has no contract; havoc reports as a counterexample instead of `unknown`. |
 | P2 | `prover-push-reports-failed-not-unknown.milo` | `main` precondition **failed**, counterexample `len = -1` | same; a length symbol has no `>= 0` assumption after havoc. |
 
@@ -239,6 +241,30 @@ rejected: 49 edits that label the hazard and prevent nothing.
 
 Done when: `hole4` is an error test, all 15 bound sites compile or are fixed, and
 WP5c's generator includes the `ptr()`-then-mutate shape.
+
+---
+
+## Lane C2: pure-checker copy-out (found by WP5b)
+
+### WP9: an IndexAccess consumed by value is a move-out, everywhere (closes H5)
+
+The rule already exists for `let x = v[i]` (checker.ts ~919, `resourceKind`). Move it to
+the one place every by-value consumption of an expression passes through (call
+arguments, enum payloads, struct-literal fields, `return`, assignment RHS, closure
+captures, match scrutinee if it copies, binary operands if a struct can reach one), so
+`Option.Some(v[0])` and `f(v[0])` get the same error as the `let`. Same message. Borrow
+forms stay legal: `v[0].field`, `v[0].method()`, `g(v[0])` where `g` takes `&Res`.
+Gate: WP5b's `fuzz:generic-drop` findings for `Arena.get/modify`, `arenaGet`,
+`frozenGet`, `FrozenArena.get`, `GrowOnlyArena.get`, `HashSet.toVec/clone` go from
+red to either green (std rewritten to clone explicitly or return a borrow) or to
+"rejected inside std", and a `tests/errors` case for each spelling. Expect std to need
+edits: those seven sites are copying Drop elements today.
+
+### WP10: Channel drop destroys undelivered payloads (closes H6)
+
+`std/sync.milo` `impl Drop for ChannelHandle`: run `T`'s drop glue on every element
+still between head and tail before `free(buf)`. `promiseRace` losers follow. Gate:
+`fuzz:generic-drop --filter=Channel` and `--filter=promiseRace` balanced.
 
 ---
 
