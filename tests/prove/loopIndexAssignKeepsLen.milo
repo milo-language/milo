@@ -1,0 +1,84 @@
+// @proven: 9
+// @failed: 0
+// @unknown: 2
+// A loop that only index-assigns into a Vec keeps its `len` symbol across the havoc: every
+// write in the body is a `[]=`, whose table entry says `len == old(len)`, so the fresh
+// post-loop length is asserted equal to the pre-loop one and `needsFour`'s precondition
+// is proven (both the local and the `&mut` parameter forms), as is `fillParam`'s own
+// `len == old(len)`. The same precondition after a loop that pushes is `unknown`, not
+// proven: one len-changing write in the body and the place is as unconstrained as before.
+// The `@expect` run checks the runtime agrees.
+//
+// @expect: 8
+// @expect: 9
+// @expect: 9
+fn zeros(n: i64): Vec<i64>
+requires n >= 0
+ensures result.len == n
+{
+    var v: Vec<i64> = Vec.new()
+    for i in 0..n {
+        v.push(0)
+    }
+    return v
+}
+
+fn needsFour(v: &Vec<i64>): i64
+requires v.len >= 4
+{
+    return v[3]
+}
+
+fn fillLocal(): i64 {
+    var lengths = zeros(8)
+    for i in 0..8 {
+        lengths[i] = 8
+    }
+    return needsFour(lengths)
+}
+
+fn fillParam(v: &mut Vec<i64>): void
+requires v.len >= 4
+ensures v.len == old(v.len)
+{
+    for i in 0..v.len {
+        v[i] = 9
+    }
+}
+
+// A user callee counts too, when its `ensures` carries the same clause and it has no
+// `requires` (the loop frame fact is asserted bare, so there is nothing to guard it with).
+fn setFirst(v: &mut Vec<i64>): void
+ensures v.len == old(v.len)
+{
+    if v.len > 0 {
+        v[0] = 1
+    }
+}
+
+fn fillViaCallee(v: &mut Vec<i64>): i64
+requires v.len >= 4
+{
+    for i in 0..3 {
+        setFirst(v)
+    }
+    return needsFour(v)
+}
+
+fn growThenRead(): i64 {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..8 {
+        v.push(i)
+    }
+    return needsFour(v)
+}
+
+pub fn main(): i32 {
+    var v = zeros(8)
+    print(fillLocal())
+    fillParam(v)
+    print(needsFour(v))
+    print(fillViaCallee(v))
+    growThenRead()
+    return 0
+}

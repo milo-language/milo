@@ -211,6 +211,11 @@ function stepLen(len: Len, need: { n: number }, op: string, k: number): Len {
     case "remove": case "set":
       if (len.kind === "const") return { kind: "const", c: op === "set" ? len.c : len.c - 1 };
       atLeast(1); return op === "set" ? len : { kind: "affine", d: len.d - 1 };
+    case "setloop":
+      // `for i in 0..k { v[i] = b }`: k index assignments, each keeping `len`. Modelled,
+      // because a loop whose every write is len-preserving keeps its `len` symbol.
+      if (len.kind === "const") return len;
+      atLeast(k); return len;
     case "clear": return { kind: "const", c: 0 };
     case "truncate":
       if (len.kind === "const") return { kind: "const", c: Math.min(len.c, k) };
@@ -240,15 +245,18 @@ function generateContainer(): ContainerCase {
       len = which === "frob" ? len : (len.kind === "affine" ? { kind: "affine", d: len.d + loopK } : { kind: "const", c: len.c + loopK });
       continue;
     }
-    const op = pick(["push", "push", "pop", "clear", "set", "insert", "remove", "truncate"]);
+    const op = pick(["push", "push", "pop", "clear", "set", "insert", "remove", "truncate", "setloop"]);
     // `set`/`remove` on a constant empty Vec would trap; pick something else.
     if (len.kind === "const" && len.c === 0 && (op === "set" || op === "remove")) { i--; continue; }
-    const k = int(0, 2);
+    const k = op === "setloop" ? int(1, 3) : int(0, 2);
+    // The loop indexes 0..k, so a pinned length below k would trap.
+    if (op === "setloop" && len.kind === "const" && len.c < k) { i--; continue; }
     len = stepLen(len, need, op, k);
     const code = {
       push: "    v.push(a)\n", pop: `    let _p${i} = v.pop()\n`, clear: "    v.clear()\n",
       set: "    v[0] = b\n", insert: "    v.insert(0, a)\n", remove: "    v.remove(0)\n",
       truncate: `    v.truncate(${k})\n`,
+      setloop: `    for i in 0..${k} {\n        v[i] = b\n    }\n`,
     }[op]!;
     ops.push({ code, modelled: true });
   }
