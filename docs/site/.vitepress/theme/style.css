@@ -66,6 +66,7 @@
 .VPHero .name,
 .vp-doc h1,
 .showcase-head h2,
+.whatis h2,
 .cta-section h3 {
   font-family: var(--milo-display);
   font-weight: 400;
@@ -184,6 +185,16 @@
   margin: 0 auto 2rem;
   padding: 0 24px;
   border-top: 1px solid var(--vp-c-divider);
+}
+
+.whatis {
+  max-width: 720px;
+  margin: 0 auto 3rem;
+  padding: 0 24px;
+}
+.whatis h2 {
+  text-align: center;
+  margin-bottom: 1.5rem;
 }
 
 .showcase {
