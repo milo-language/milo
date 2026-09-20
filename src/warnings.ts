@@ -20,6 +20,10 @@ export const WARNINGS: WarningInfo[] = [
   { name: "external-linkage-not-pub" },
   { name: "borrow-that-clones" },
   { name: "index-clone" },
+  // A bare argument bound to a `&mut` parameter. Off until std and the corpus are
+  // migrated to `f(&mut x)` (docs/plans/local-reasoning-2026-09.md, track A); the
+  // flip to on-by-default is step A7.
+  { name: "implicit-mut-borrow", offByDefault: true },
   { name: "large-stack-array", offByDefault: true },
   { name: "manual-option-default" },
   { name: "adopt-raw-fields" },

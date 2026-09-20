@@ -119,6 +119,32 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
 // Elm-style terminal output — or import the TypeScript, which only in-repo code can do.
 const CHECK_JSON_SCHEMA = 1;
 
+// `milo check --count-implicit-mut <file>`: every bare non-receiver argument bound to a
+// `&mut` parameter, in the entry file and everything it imports (std included), one line
+// each as `file:line:col<TAB>callee<TAB>param`, then `total N`. Hidden: it is the gate
+// for the explicit-`&mut` migration (docs/plans/local-reasoning-2026-09.md, A1/A6), and
+// scripts/count-implicit-mut.ts drives it over whole roots.
+function countImplicitMutArgs(filePath: string, target: TargetInfo): void {
+  const diags: Diagnostic[] = [];
+  const src = readFileSync(filePath, "utf-8");
+  const sourceDir = dirname(resolve(filePath));
+  let sites: import("./checker").ImplicitMutSite[] = [];
+  try {
+    let program = new Parser(new Lexer(src).tokenize(), src, filePath).parse();
+    program = resolveImports(program, sourceDir, target, filePath);
+    const result = new TypeChecker(undefined).check(program);
+    diags.push(...result.diagnostics);
+    sites = result.implicitMutSites;
+  } catch (e: any) {
+    console.error(e instanceof ParseError ? formatDiagnostic(e.diagnostic, src, filePath) : e.message);
+    process.exit(2);
+  }
+  const lines = sites.map(s => `${s.span?.file ?? filePath}:${s.span?.line ?? 0}:${s.span?.col ?? 0}\t${s.callee}\t${s.param}`).sort();
+  for (const l of lines) console.log(l);
+  console.log(`total ${lines.length}`);
+  if (diags.some(d => d.severity === "error")) { console.error(`${filePath}: has type errors; the count is partial`); process.exit(1); }
+}
+
 function runCheck(source: string, filePath: string, target: TargetInfo, warningConfig: WarningConfig | undefined, json: boolean): void {
   const sourceDir = dirname(resolve(filePath));
   let diagnostics: Diagnostic[] = [];
@@ -1497,7 +1523,7 @@ function parseHeapSize(s: string): number | null {
   return n * mult;
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean | null; contractChecks: boolean | null; staticDeps: boolean; emitAll: boolean; emitSpans: boolean; stripPanicLocations: boolean } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean | null; contractChecks: boolean | null; staticDeps: boolean; emitAll: boolean; emitSpans: boolean; countImplicitMut: boolean; stripPanicLocations: boolean } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
@@ -1522,6 +1548,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   // unrecognized `--flag` would otherwise be swallowed as the source-file positional below.
   let emitAll = false;
   let emitSpans = false;
+  let countImplicitMut = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
     else if (args[i] === "--release") { optFlag = "-O3"; }
@@ -1551,6 +1578,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--emit-header") { emitHeader = true; }
     else if (args[i] === "--all") { emitAll = true; }        // emit-ast/emit-hir: include imported modules
     else if (args[i] === "--spans") { emitSpans = true; }    // emit-ast/emit-hir: keep source spans in the dump
+    else if (args[i] === "--count-implicit-mut") { countImplicitMut = true; }  // check: list bare `&mut` args (hidden; track A gate)
     else if (args[i] === "-O" && i + 1 < args.length) { optFlag = `-O${args[++i]}`; }
     else if (/^-O[0-3sz]$/.test(args[i])) { optFlag = args[i]; }
     else if (args[i] === "--deny-all") { denied.add("*"); }
@@ -1601,7 +1629,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     for (const n of project.denied) if (!allowed.has(n) && !expected.has(n)) denied.add(n);
     for (const n of project.allowed) if (!denied.has(n)) allowed.add(n);
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed, expected, maxStackArrayBytes }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed, expected, maxStackArrayBytes }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, countImplicitMut, stripPanicLocations };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -2143,7 +2171,7 @@ async function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, countImplicitMut, stripPanicLocations } = parseArgs(args.slice(1));
   let target = getHostTarget();
   if (targetName) {
     const resolved = resolveTarget(targetName);
@@ -2325,7 +2353,8 @@ async function main() {
     const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug, heapSize, overflowChecks, staticDeps, contractChecks, stripPanicLocations);
     reportCompiled(source!, bin, Date.now() - t0);
   } else if (cmd === "check") {
-    runCheck(readFileSync(source!, "utf-8"), source!, target, warningConfig, args.includes("--json"));
+    if (countImplicitMut) countImplicitMutArgs(source!, target);
+    else runCheck(readFileSync(source!, "utf-8"), source!, target, warningConfig, args.includes("--json"));
   } else if (cmd === "emit-ast") {
     emitAst(source!, output, target, emitAll, emitSpans);
   } else if (cmd === "emit-hir") {
