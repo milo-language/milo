@@ -4,5 +4,4 @@
 # their red shows. One filename per line; text after `#` is the reason and the work
 # package in docs/plans/soundness-sweep-2026-09.md that closes it. Delete the entry
 # when that package lands: a listed fixture that passes is an error in the driver.
-hole1-shard-string-double-free.milo            # H1: Shard.get bitwise-copies a Drop T (prints, then double-frees at exit: red only under ASan); closes with WP2 (@copyOnly), becomes tests/errors/
 hole2-shards-owner-dropped-under-worker.milo   # H2: Shards owner dropped while a worker holds a window; closes with WP3 (@linear), becomes tests/errors/
