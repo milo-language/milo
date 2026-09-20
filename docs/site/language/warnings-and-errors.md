@@ -65,6 +65,26 @@ struct Bad {
   hint: references are second-class — use an owned type instead
 ```
 
+### Missing `&mut` on a call argument
+
+A non-receiver argument bound to a `&mut` parameter is written `&mut x`, so the call
+shows which values it can change. The bare form is the error `implicit-mut-borrow`.
+It sits in the warning table so `--allow=implicit-mut-borrow` (or a `milo.json`
+`lints.allow` entry) can silence it for a tree mid-migration; `bun scripts/explicit-mut.ts
+<file>` rewrites a file from the checker's resolved signatures. Method receivers are
+exempt (`v.push(1)` stays as it is).
+
+```milo
+fn bump(p: &mut Point, by: i64): void { p.x = p.x + by }
+
+bump(p, 2)          // error: argument 'p' is passed to a '&mut' parameter without '&mut'
+bump(&mut p, 2)     // correct: the mutation is visible at the call site
+```
+
+```
+  hint: write 'bump(... &mut p ...)'; run 'bun scripts/explicit-mut.ts <file>' to rewrite the file
+```
+
 ### Returning references
 
 ```milo
@@ -150,17 +170,6 @@ A fixed-size local array is a stack allocation of its full size, up front — a 
 ```milo
 var fb: [u32; 172800] = [0; 172800]   // warning: 'fb' is a 675 KiB stack allocation
                                        //   hint: use Vec<u32> for a heap buffer
-```
-
-### implicit-mut-borrow
-
-A non-receiver argument bound to a `&mut` parameter without `&mut` written at the call. Off by default while the standard library and the corpus are migrated; opt in with `--deny=implicit-mut-borrow`, and `bun scripts/explicit-mut.ts <file>` rewrites a file from the checker's resolved signatures. Method receivers are exempt (`v.push(1)` stays as it is).
-
-```milo
-fn bump(p: &mut Point, by: i64): void { p.x = p.x + by }
-
-bump(p, 2)          // warning: argument 'p' is passed to a '&mut' parameter without '&mut'
-bump(&mut p, 2)     // correct — the mutation is visible at the call site
 ```
 
 ## Configuring warnings

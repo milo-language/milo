@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-20 (impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-20 (explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -674,7 +674,7 @@ fn reader(): void {
 Iterate by index (`while i < g.len { let x = g[i]; ... }` copies the element out before
 the park), snapshot first (`for x in g.clone()`), or move the global into a value the
 task owns. A `&mut` to the global's *header* is not an element view and stays legal:
-`grow(g)` with `fn grow(v: &mut Vec<i64>)` is fine, because the header survives a
+`grow(&mut g)` with `fn grow(v: &mut Vec<i64>)` is fine, because the header survives a
 realloc and only the buffer does not. A `&[T]` parameter is a view into the buffer, so
 `total(g)` with `fn total(xs: &[i64])` is held to the rule even though `g` is passed
 bare.
@@ -2162,7 +2162,7 @@ fn process(content: &string): void {
 
 Two things to be aware of:
 
-- **Shared borrows are implicit at call sites; mutable ones are spelled.** `length(s)` borrows `s` and `consume(s)` moves `s`, and the calls look identical — the function signature, not the call site, tells you which happens. The compiler still rejects any use-after-move, so mistakes are compile errors, not bugs. A mutation is the one effect a reader cannot recover from the call site, so an argument bound to a `&mut T` parameter is written `&mut x` (`&mut a.b`, `&mut v[i..j]`); it is a marker, not an expression, and `let r = &mut x` is an error. A method receiver stays implicit: `v.push(1)`, never `(&mut v).push(1)`. `&x` for a shared borrow is not an expression either. During the migration the bare form `double(n)` still compiles and the `implicit-mut-borrow` warning is off by default; `--deny=implicit-mut-borrow` enforces the marker and `bun scripts/explicit-mut.ts <file>` rewrites a file.
+- **Shared borrows are implicit at call sites; mutable ones are spelled.** `length(s)` borrows `s` and `consume(s)` moves `s`, and the calls look identical — the function signature, not the call site, tells you which happens. The compiler still rejects any use-after-move, so mistakes are compile errors, not bugs. A mutation is the one effect a reader cannot recover from the call site, so an argument bound to a `&mut T` parameter is written `&mut x` (`&mut a.b`, `&mut v[i..j]`); it is a marker, not an expression, and `let r = &mut x` is an error. A method receiver stays implicit: `v.push(1)`, never `(&mut v).push(1)`. `&x` for a shared borrow is not an expression either. The bare form `double(n)` is an error (`implicit-mut-borrow`, an error by default; `--allow=implicit-mut-borrow` silences it for a tree mid-migration), and `bun scripts/explicit-mut.ts <file>` rewrites a file from the checker's resolved signatures.
 - **Assignment through `&mut` has no deref sigil.** Inside `double`, `x = x * 2` writes through the reference to the caller's variable. (Reassigning a `&string` slice *local*, by contrast, just rebinds the view — see [Strings](#strings).)
 
 **What you can't do:**

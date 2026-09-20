@@ -2,8 +2,8 @@
 system: site-ownership
 purpose: the site's introduction to moves, clones, borrows and views; the reader's first contact with second-class references
 key-files: src/checker.ts, docs/language-reference.md
-update-when: the reference rules change (where a reference may live, what freezes an owner, what a method may return)
-last-verified: 2026-09-20
+update-when: the reference rules change (where a reference may live, what freezes an owner, what a method may return, how a call spells a mutable borrow)
+last-verified: 2026-09-20 (explicit &mut on call arguments)
 -->
 
 # Ownership
@@ -93,7 +93,8 @@ This one restriction means you never write lifetime annotations. If you've seen 
 
 ## Mutable references
 
-`&mut T` lets a function mutate the caller's value:
+`&mut T` lets a function mutate the caller's value, and the call says so: an argument
+bound to a `&mut` parameter is written `&mut n`.
 
 ```milo
 fn double(x: &mut i32) {
@@ -101,12 +102,18 @@ fn double(x: &mut i32) {
 }
 
 var n: i32 = 21
-double(&mut n)          // n is now 42
+double(&mut n)          // n is now 42; the &mut is the one thing this call can change
 ```
+
+Reading `double(&mut n)` tells you `n` may be different afterwards without opening
+`double`. A bare `double(n)` is a compile error, and `bun scripts/explicit-mut.ts <file>`
+rewrites an older file. The marker goes on the argument, not the receiver: `v.push(1)` stays
+as it is, because a method call already names the value it works on.
 
 ## Auto-borrow
 
-Milo auto-borrows at call sites. You write `greet(u)` not `greet(&u)`:
+Shared borrows stay implicit. You write `greet(u)` not `greet(&u)`: a read cannot change
+anything you care about, so there is nothing to mark.
 
 ```milo
 fn greet(user: &User): string {

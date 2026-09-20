@@ -2,8 +2,8 @@
 system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
 key-files: std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo
-update-when: a public stdlib name moves, is renamed, or changes signature
-last-verified: 2026-09-19
+update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
+last-verified: 2026-09-20
 -->
 
 # Breaking changes
@@ -16,6 +16,28 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 `"milo": "^0.1.0"` in its `milo.json` (see
 [the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
 marker is added here each time a version is cut.
+
+## A `&mut` argument is written `&mut x` at the call (2026-09-20)
+
+**A non-receiver argument bound to a `&mut T` parameter must be spelled `&mut x`**
+(`&mut a.b`, `&mut v[i..j]`). The bare form `bump(p)` is the error
+`implicit-mut-borrow`; the hint prints the fixed call. Method receivers are unchanged
+(`v.push(1)`), shared borrows stay implicit (`length(s)`), and `&x` is still not an
+expression.
+
+Migration: `bun scripts/explicit-mut.ts <file.milo>...` rewrites every site in the named
+files from the checker's resolved signatures (never a regex); `--closure` also rewrites
+the modules a file imports, for a package whose `src/` only resolves from its entry.
+Idempotent. `--allow=implicit-mut-borrow` (or `"lints": { "allow": [...] }` in
+`milo.json`) turns the error into silence for a tree mid-migration.
+
+Why: the soundness argument against the marker still holds (a second-class borrow cannot
+escape or alias), but reading is the other half. `f(x)` mutated `x` or did not depending
+on a signature the reader was not looking at; the 2026-09-20 census of 290k lines found
+that the one place local reasoning broke. Now the call names the values it can change.
+No compatibility flag: the corpus was rewritten in one pass with the fixer (19,764 sites
+across std, examples, the self-hosted compiler and nine packages), and the fixer is the
+migration. Rationale and rollout: `plans/local-reasoning-2026-09.md`, track A.
 
 ## A struct with a raw pointer field is move-tracked unless it is `@copy` (2026-09-19)
 

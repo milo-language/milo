@@ -3,7 +3,7 @@ system: ownership-model
 purpose: why Milo has no lifetimes — second-class references as guardrails, and how that compares to Rust
 key-files: src/checker.ts, docs/language-reference.md, docs/design.md
 update-when: reference semantics change (second-class rule, borrow/exclusivity checks, slices/arenas)
-last-verified: 2026-09-19 (an element read by value is a move-out, rejected for a resource type at every site; ptr()/cstr() element views, one view list; pointer-holding structs move-only)
+last-verified: 2026-09-20 (explicit &mut on call arguments; an element read by value is a move-out, rejected for a resource type at every site; ptr()/cstr() element views, one view list; pointer-holding structs move-only)
 -->
 
 # Ownership & references — why there are no lifetimes
@@ -23,6 +23,13 @@ fn step(cpu: &mut Cpu, bus: &mut Bus): void { ... }   // fine — params
 struct Holder { r: &i64 }                              // error: refs can't be stored
 fn danger(): &i64 { ... }                              // error: refs can't be returned
 ```
+
+At the call the two kinds of borrow read differently: a shared borrow is implicit
+(`length(s)`, never `length(&s)`), a mutable one is spelled (`step(&mut cpu, &mut bus)`).
+The signature is what makes the borrow sound; the marker is what lets a reader see, from
+the call alone, which arguments can be different afterwards. A method receiver stays bare
+(`v.push(1)`) because the call already names it. A bare `step(cpu, bus)` is an error
+(`implicit-mut-borrow`), and `bun scripts/explicit-mut.ts <file>` rewrites a file.
 
 A C boundary gets one extra **spelling** for the same thing, not an extra kind: `?&mut T`
 on a parameter of an `extern` / `@externalLinkage` fn is a reference C is allowed to pass
@@ -146,9 +153,9 @@ right-hand side, an array literal, and the builtin reads that copy an element fo
 by-value consumption passes through (`tryMoveLeaf`), so a new spelling cannot miss it.
 
 What stays legal is every borrow: `v[i].field`, `v[i].method()` on a `&self` method,
-`g(v[i])` where `g` takes `&T` or `&mut T`, `for x in v`, `match v[i] { ... }`. To take
-the element out for real, make the container give up its owner: `v.remove(i)`,
-`v.pop()`, `replace(v[i], other)`, `swap(v[i], v[j])`. To get a copy that is a real
+`g(v[i])` where `g` takes `&T` (or `g(&mut v[i])` where it takes `&mut T`), `for x in v`,
+`match v[i] { ... }`. To take the element out for real, make the container give up its
+owner: `v.remove(i)`, `v.pop()`, `replace(&mut v[i], other)`, `swap(&mut v[i], &mut v[j])`. To get a copy that is a real
 copy, call the type's own `Clone` impl explicitly, `v[i].clone()`, where that impl runs.
 
 A generic container written in Milo inherits the same rule per instantiation. Because
