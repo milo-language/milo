@@ -126,7 +126,6 @@
   "hmacSha2Vectors.milo": "noEmit",
   "hole1-shard-string-double-free.milo": "noEmit",
   "hole2-shards-owner-dropped-under-worker.milo": "noEmit",
-  "hole3-global-forin-across-yield.milo": "noEmit",
   "httpAbsentVsEmpty.milo": "noEmit",
   "httpFetchCoexist.milo": "noEmit",
   "httpMiddleware.milo": "noEmit",
