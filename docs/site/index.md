@@ -3,7 +3,7 @@ layout: home
 hero:
   name: Milo
   text: "A memory-safe systems language that guides you to correct, readable programs."
-  tagline: "Contracts and formal verification are built into the language to help you ship correct code with confidence."
+  tagline: "Memory safe with no lifetime annotations to write, and ergonomic enough to reach for every day. Contracts and formal verification are built in, so the code you ship is correct with confidence."
   image:
     src: /logo.svg
     alt: Milo
@@ -28,8 +28,9 @@ curl -fsSL https://milo-language.github.io/milo/install.sh | sh
 
 - [**Run Milo in your browser**](/playground)
 - [**Learn the basics**](/tour)
-- [**Contracts and formal verification**](/language/safety)
+- [**Why there are no lifetimes**](/language/why-no-lifetimes)
 - [**Compare to Rust's safety profile**](/language/vs-rust)
+- [**Contracts and formal verification**](/language/safety)
 - [**Browse the standard library**](/stdlib/)
 - [**Read the language reference**](/language/)
 
@@ -43,7 +44,7 @@ curl -fsSL https://milo-language.github.io/milo/install.sh | sh
     'requires and ensures are part of the language. The prover checks that clamp keeps its promise for every input, not just the ones you tested.',
     'Plain data with methods. No inheritance, no header files, no surprises.',
     'Hand a value to someone else and you no longer have it. The compiler catches the mistake at compile time, not at 3am.',
-    'Two requests in flight at once. Green tasks, not OS threads, so thousands are cheap. Each task owns its data, so there is no mutex and no data race to get wrong.',
+    'Two requests in flight at once. Green tasks, not OS threads, so thousands are cheap. Each task owns its data, so there is no mutex. Holding a view into a shared global across an await is a compile error, and OS threads start only at the two doors the compiler checks.',
   ]"
 >
 

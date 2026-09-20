@@ -106,8 +106,9 @@ worker then wrote into freed memory (H2 in
 `--sanitize`). The move checker cannot see it because nothing is moved twice; the
 `weld` check could only notice the miss after the fact, and a program that never
 welds never reaches it. No caller in-tree needed the pieces apart, so the pieces
-are no longer offered. The residue paragraph in `docs/residue-vs-rust.md` §2 is
-withdrawn: there is no "keep the owner alive" obligation left to document.
+are no longer offered. The "keep the owner alive until weld" obligation that
+`docs/memory-safety-vs-rust.md` used to document under in-place parallelism is
+withdrawn: with the manual path private there is no such obligation left to meet.
 
 ## `std/json` cursors are branded with their document (2026-08-28)
 
@@ -118,7 +119,7 @@ against a `Json` other than the one that produced it aborts with
 `json: cursor belongs to a different document` instead of silently reading a
 wrong-but-in-bounds node of the other document. This is the runtime brand
 `seal.Span` already carries as `_bufferId`, applied to the other zero-copy
-handle in std (see docs/residue-vs-rust.md).
+handle in std (see docs/memory-safety-vs-rust.md, §What the compiler does not check).
 
 No signature changed and `-1` still means "nothing here" everywhere, so code
 that navigates a document it parsed itself (every caller found in-tree and in

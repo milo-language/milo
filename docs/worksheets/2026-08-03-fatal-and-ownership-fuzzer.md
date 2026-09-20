@@ -4,7 +4,7 @@
 - **Started:** 2026-08-03
 - **Status:** done
 - **Related:** `docs/worksheets/2026-08-03-fail-closed-places.md` (the two items left
-  behind by it), backlog Tier 1 residue, `scripts/prove-soundness-fuzz.ts`
+  behind by it), backlog Tier 1 what-is-left section, `scripts/prove-soundness-fuzz.ts`
 
 ## Goal
 

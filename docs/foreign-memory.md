@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: foreign-memory
 purpose: how Milo reaches memory it did not allocate, and why that needs constructors rather than new reference kinds
-key-files: std/foreign.milo, src/checker.ts, src/codegen.ts, src/headergen.ts, examples/ffi/giflib/, docs/ownership-model.md, docs/residue-vs-rust.md
+key-files: std/foreign.milo, src/checker.ts, src/codegen.ts, src/headergen.ts, examples/ffi/giflib/, docs/ownership-model.md, docs/memory-safety-vs-rust.md
 update-when: a foreign-memory primitive is added/changed, the nullable-extern-ref spelling changes, or the giflib differential gate moves
 last-verified: 2026-09-19 (all four features built and gated; fn-pointer fields close row F, Heap.ptr() closes row J)
 -->
@@ -556,8 +556,9 @@ decode surface.** All five are in `gif.milo`; the 776-line decoder never names m
 ## See also
 
 - [ownership-model](ownership-model.md) — the one rule, and why no lifetimes
-- [residue-vs-rust](residue-vs-rust.md) — the three residues; this doc is the fourth thing that
-  looked like a residue and was not
+- [memory-safety-vs-rust](memory-safety-vs-rust.md) §What the compiler does not check: the
+  three gaps Rust's stored references cover and Milo does not; this doc is the fourth thing that
+  looked like such a gap and was not
 - [rewrite-findings-html5ever](rewrite-findings-html5ever.md) — the five probes and the
   `arenaWith` shape this reuses
 - [memory-safety-vs-rust](memory-safety-vs-rust.md) — the threat matrix a giflib probe would add

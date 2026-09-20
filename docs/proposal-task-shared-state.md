@@ -3,13 +3,13 @@ system: proposal-task-shared-state
 purpose: language options for sharing long-lived state across green tasks without lifetimes, and why milojs needs global singletons today
 key-files: std/runtime.milo, src/checker.ts (milojs itself lives in https://github.com/milo-language/milojs)
 update-when: any of these options is adopted, rejected, or the second-class reference rule changes
-last-verified: 2026-09-19 (Option 1 shipped as @parks + the cross-task freeze rule)
+last-verified: 2026-09-20 (Option 1 shipped as @parks + the cross-task freeze rule, 742bf8fd; status line corrected)
 -->
 
 # Proposal: sharing long-lived state across green tasks
 
-Status: proposal, nothing implemented. Written from a concrete case rather than
-in the abstract.
+Status: Option 1 shipped 2026-09-19 (`@parks`, commit `742bf8fd`); Options 2 and 3
+remain proposals. Written from a concrete case rather than in the abstract.
 
 ## The case
 

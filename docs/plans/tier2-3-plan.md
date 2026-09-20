@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: plan
 purpose: sequenced attack plan for Tier 2 (core language) and Tier 3 (stdlib doctrine), plus the profile/contracts play
-key-files: src/checker.ts, src/lower.ts, src/codegen.ts, docs/verification-roadmap.md, docs/residue-vs-rust.md
+key-files: src/checker.ts, src/lower.ts, src/codegen.ts, docs/verification-roadmap.md, docs/memory-safety-vs-rust.md
 update-when: a tier item ships (collapse to a one-liner), or a sequencing decision changes
 last-verified: 2026-07-29
 -->
@@ -12,7 +12,7 @@ A plan, not a backlog. ROI-ranked working items live in [backlog.md](../backlog.
 
 ## The axiom this all rests on
 
-Values are closed: nothing aliases in, nothing escapes out. Every item below is a dividend of that. Order the work by what hardens the axiom into a usable substrate — later items get cheaper once earlier ones seal heap facts into constants. See [residue-vs-rust](../residue-vs-rust.md) for what the axiom costs, and [ownership-model](../ownership-model.md) for the mechanism.
+Values are closed: nothing aliases in, nothing escapes out. Every item below is a dividend of that. Order the work by what hardens the axiom into a usable substrate — later items get cheaper once earlier ones seal heap facts into constants. See [memory-safety-vs-rust](../memory-safety-vs-rust.md) (§What the compiler does not check) for what the axiom costs, and [ownership-model](../ownership-model.md) for the mechanism.
 
 ## Linchpin — resolved
 
@@ -29,7 +29,7 @@ All shipped to main: unary minus, `f64.NAN/INF/NEG_INF` + `isNan/isInf/isFinite`
 ## Sequence
 
 ```
-residue-vs-rust doc  →  Drop  →  interior iteration (by-value)  →  views  →  newtypes
+what-Rust-wins doc  →  Drop  →  interior iteration (by-value)  →  views  →  newtypes
    [DONE]                              →  SlotMap/handles  →  profile + contracts
 ```
 
