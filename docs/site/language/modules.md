@@ -40,16 +40,16 @@ Imports are paths relative to the project root. A file at `lib/auth.milo` is imp
 
 ## Visibility
 
-Symbols are private by default. Mark a function, struct, or field `pub` to make it visible to other modules:
+Declarations are private by default. Mark a function or struct `pub` to make it visible to other modules. A `pub struct` exposes its fields, except those whose name starts with `_`: they are private to the file that declares the struct, no keyword needed.
 
 ```milo
 pub struct User {
-    pub name: string,
-    age: i32,           // private, visible only in this file
+    name: string,
+    _age: i32,          // private: visible only in this file
 }
 
 pub fn createUser(name: string): User {
-    return User { name: name, age: 0 }
+    return User { name: name, _age: 0 }
 }
 ```
 

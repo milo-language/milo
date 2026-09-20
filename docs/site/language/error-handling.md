@@ -39,9 +39,11 @@ fn loadConfig(path: &string): Result<string, IoError> {
 Crashes on error. Appropriate for top-level code, scripts, or when you've already validated the input.
 
 ```milo
+from "std/fs" import { readFile }
+
 fn main(): i32 {
-    let n = readNumber("count.txt")!   // panic if file missing or not a number
-    print(n)
+    let text = readFile("count.txt")!   // panic if the file is missing
+    print(text)
     return 0
 }
 ```
@@ -51,9 +53,11 @@ fn main(): i32 {
 Discards the error and substitutes a value.
 
 ```milo
+from "std/fs" import { readFile }
+
 fn main(): i32 {
-    let n = readNumber("count.txt") ?? 0   // missing file? use 0
-    print(n)
+    let text = readFile("count.txt") ?? "0"   // missing file? use "0"
+    print(text)
     return 0
 }
 ```
@@ -63,16 +67,22 @@ fn main(): i32 {
 When you need different behavior for success and failure:
 
 ```milo
-fn run(): Result<i32, IoError> {
-    let n = readNumber("count.txt")?
-    return Result.Ok(n as i32)
+from "std/fs" import { readFile }
+from "std/strconv" import { parseInt }
+
+fn readNumber(path: &string): Result<i64, IoError> {
+    let text = readFile(path)?
+    match parseInt(text.trim()) {
+        Option.Some(n) => { return Result.Ok(n) }
+        Option.None => { return Result.Err(IoError.Other("not a number")) }
+    }
 }
 
 fn main(): i32 {
-    match run() {
-        Result.Ok(code)  => { return code }
-        Result.Err(msg)  => {
-            print("error: ", msg)
+    match readNumber("count.txt") {
+        Result.Ok(n)  => { return n as i32 }
+        Result.Err(e) => {
+            print("error: ", e)
             return 1
         }
     }

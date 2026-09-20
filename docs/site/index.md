@@ -133,18 +133,18 @@ fn main() {
 Functional languages get safety by making everything immutable. Milo takes a different path: you mutate freely, but only through `&mut` parameters, and a `&mut` borrow cannot outlive the call that receives it. That one rule gives you the same "nothing else can change this" guarantee without the allocation and copying that immutability forces on hot loops.
 
 ```milo
-fn zero_negatives(values: &mut Vec<i64>) {
-    for i in 0..values.len() {
+fn zeroNegatives(values: &mut Vec<i64>): void {
+    for i in 0..values.len {
         if values[i] < 0 {
             values[i] = 0       // in-place, no copy, no allocation
         }
     }
 }
 
-fn main() {
-    var v = Vec.from([3, -1, 4, -5, 9])
-    zero_negatives(&mut v)      // v is mutated here and nowhere else
-    print(v)                    // [3, 0, 4, 0, 9]
+fn main(): void {
+    var v: Vec<i64> = [3, -1, 4, -5, 9]
+    zeroNegatives(&mut v)      // v is mutated here and nowhere else
+    print(v)                   // [3, 0, 4, 0, 9]
 }
 ```
 
