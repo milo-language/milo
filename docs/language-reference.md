@@ -1607,6 +1607,22 @@ would: while the view is alive, `r` cannot be pushed to, reassigned, moved, or d
 A view also cannot be captured by a closure, stored in a struct, or put in a collection.
 Free functions cannot return references at all.
 
+That includes a view of a parameter: `fn first(s: &string): &string` is rejected at the
+signature, `error: function 'first': cannot return a reference`, because there is no
+receiver for the call site to freeze. Two spellings work. Put the data behind a type that
+owns it and make the accessor a method, as `Ring.items` above does. Or return an offset and
+let the caller take the slice, which keeps the function free and the view local:
+
+```milo
+fn keyEnd(line: &string): i64 {
+    return line.indexOf("=") ?? line.len
+}
+
+let line = "timeout=30"
+let key = line[0..keyEnd(line)]   // the view is taken here, where line is frozen
+print(key)                        // timeout
+```
+
 `&mut [T]` works as a *parameter* view: a `var` Vec coerces to it, writes land in the
 backing store, and the source is frozen for the borrow's life. Two `&mut` views into the
 same storage at one call site are rejected when the overlap is decidable:
