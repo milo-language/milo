@@ -307,6 +307,22 @@ fn main() {
 }
 `;
 
+// Inlay hints after the explicit-`&mut` rule: `bump(&mut p)` carries its own marker, so
+// the only hint left is the `&mut self` receiver of `v.push(1)`, which stays implicit.
+const INLAY_URI = "file:///tmp/milo-lsp-inlay.milo";
+const INLAY_SRC = `struct P { n: i64 }
+impl P {
+    fn inc(self: &mut Self, by: i64): void { self.n = self.n + by }
+}
+fn bump(p: &mut P): void { p.n = p.n + 1 }
+fn main(): i32 {
+    var p = P { n: 1 }
+    bump(&mut p)
+    p.inc(2)
+    return p.n as i32
+}
+`;
+
 let proc: Subprocess<"pipe", "pipe", "inherit">;
 let buf = new Uint8Array(0);
 const pending = new Map<number, (v: any) => void>();
@@ -360,7 +376,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC], [PARKS_URI, PARKS_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC], [PARKS_URI, PARKS_SRC], [INLAY_URI, INLAY_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -728,4 +744,12 @@ test("hover on an extern declaration shows its signature and the unsafe rule", a
   expect(ptrRet?.contents?.value).toContain("every call needs an `unsafe` block");
   // Not `pub` — the hover says so rather than staying silent about visibility.
   expect(ptrRet?.contents?.value).toContain("private");
+});
+
+test("inlay hints: a &mut self receiver gets a hint, an argument written &mut x does not", async () => {
+  const hints = await req(90, "textDocument/inlayHint", {
+    textDocument: { uri: INLAY_URI }, range: { start: { line: 0, character: 0 }, end: { line: 20, character: 0 } },
+  });
+  const at = hints.map((h: any) => `${h.position.line}:${h.position.character}:${h.label}`);
+  expect(at).toEqual(["8:4:&mut"]); // `p` of `p.inc(2)`; nothing on line 7's `bump(&mut p)`
 });

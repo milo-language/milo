@@ -685,10 +685,11 @@ export class TypeChecker {
     // every one of them, and the fix ("just delete it") would break the build — so the
     // projects that don't do that opt in.
     if (!config.denied.has("unused-import") && !config.expected?.has("unused-import")) config.allowed.add("unused-import");
-    // implicit-mut-borrow is OFF until the corpus writes `f(&mut x)` everywhere (track A
-    // of docs/plans/local-reasoning-2026-09.md); `--deny=implicit-mut-borrow` is how the
-    // fixer and the migration gate ask for it before the default flips.
-    if (!config.denied.has("implicit-mut-borrow") && !config.expected?.has("implicit-mut-borrow")) config.allowed.add("implicit-mut-borrow");
+    // implicit-mut-borrow is an ERROR by default: `f(&mut x)` is the language rule (track A
+    // of docs/plans/local-reasoning-2026-09.md, flipped 2026-09-20). It stays in the
+    // warning table so `--allow=implicit-mut-borrow` can silence it for a tree that is
+    // mid-migration and so a project's milo.json lints reach it like any other rule.
+    if (!config.allowed.has("implicit-mut-borrow") && !config.expected?.has("implicit-mut-borrow")) config.denied.add("implicit-mut-borrow");
     // large-stack-array is OFF unless asked for. Big fixed-size locals are a real
     // stack-overflow footgun, but plenty are intentional (main-thread framebuffers
     // that work fine), so warning by default would nag every graphics program. The
@@ -7512,9 +7513,14 @@ export class TypeChecker {
     this.implicitMutSeen.add(key);
     this.implicitMutSites.push({ span: at, callee, param });
     const text = this.describeExpr(arg);
+    // A dependency's symbols reach here as `<pkg>$name` (src/mangle.ts); the hint has
+    // to print the call as the package's own source spells it, or it names a symbol
+    // nobody can write.
+    const sep = callee.indexOf("$");
+    const shown = sep > 0 && this._packageNames?.has(callee.slice(0, sep)) ? callee.slice(sep + 1) : callee;
     this.warn("implicit-mut-borrow",
       `argument '${text}' is passed to a '&mut' parameter without '&mut'`, at,
-      `write '${callee}(... &mut ${text} ...)'; run 'bun scripts/explicit-mut.ts <file>' to rewrite the file`);
+      `write '${shown}(... &mut ${text} ...)'; run 'bun scripts/explicit-mut.ts <file>' to rewrite the file`);
   }
 
   // Auto-borrow a call argument; passing a frozen var by mutable ref is the same

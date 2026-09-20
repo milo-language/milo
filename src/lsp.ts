@@ -1886,12 +1886,12 @@ function handleSignatureHelp(uri: string, line: number, character: number): obje
   return null;
 }
 
-// ── Inlay hints: elided &mut at callsites ──
-// Milo omits `&mut` at the callsite (second-class refs — see docs/design.md); the
-// reader-side visibility is delegated here. For every call argument bound to a
-// `&mut T` param — and for a `&mut self` receiver — we render a `&mut` hint at the
-// argument's start position, so mutation intent is visible without baking a marker
-// into the syntax.
+// ── Inlay hints: the elided &mut on a method receiver ──
+// A non-receiver argument to a `&mut T` parameter is written `&mut x` in the source
+// (the explicit-`&mut` rule, docs/plans/local-reasoning-2026-09.md track A), so the
+// reader already sees it and a bare one is a diagnostic, not a hint. Receivers stay
+// implicit (`v.push(1)`), so a `&mut self` method still gets a `&mut` hint at the
+// receiver's start position: that is the one mutation the syntax does not show.
 
 type TK = import("./types").TypeKind;
 
@@ -2023,10 +2023,8 @@ function handleInlayHint(uri: string, range: any): object[] {
   const startLine = range?.start?.line ?? 0;
   const endLine = range?.end?.line ?? Number.MAX_SAFE_INTEGER;
 
-  // free functions by name; impl methods grouped by name (ambiguity resolved via
-  // the receiver's inferred type where possible).
-  const fnByName = new Map<string, Function>();
-  for (const fn of program.functions) if (!fn.isExtern) fnByName.set(fn.name, fn);
+  // impl methods grouped by name (ambiguity resolved via the receiver's inferred type
+  // where possible).
   const methodsByName = new Map<string, { typeName: string; fn: Function }[]>();
   for (const impl of program.impls) {
     for (const m of impl.methods) {
@@ -2049,13 +2047,7 @@ function handleInlayHint(uri: string, range: any): object[] {
   };
 
   const process = (e: Expr) => {
-    if (e.kind === "Call") {
-      const fn = fnByName.get(e.func);
-      if (!fn) return;
-      e.args.forEach((arg, i) => {
-        if (fn.params[i]?.type?.isRefMut) pushHint(arg.span);
-      });
-    } else if (e.kind === "MethodCall") {
+    if (e.kind === "MethodCall") {
       const cands = methodsByName.get(e.method);
       if (!cands || cands.length === 0) return;
       // Disambiguate overloaded method names by the receiver's inferred type;
@@ -2074,16 +2066,7 @@ function handleInlayHint(uri: string, range: any): object[] {
       }
       if (!chosen) return;
       const params = chosen.params;
-      if (params[0]?.name === "self") {
-        if (params[0].type?.isRefMut) pushHint(e.object.span);
-        e.args.forEach((arg, i) => {
-          if (params[i + 1]?.type?.isRefMut) pushHint(arg.span);
-        });
-      } else {
-        e.args.forEach((arg, i) => {
-          if (params[i]?.type?.isRefMut) pushHint(arg.span);
-        });
-      }
+      if (params[0]?.name === "self" && params[0].type?.isRefMut) pushHint(e.object.span);
     }
   };
 

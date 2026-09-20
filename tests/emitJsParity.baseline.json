@@ -98,6 +98,7 @@
   "envSetRemove.milo": "noEmit",
   "eventLoop.milo": "noEmit",
   "exePath.milo": "noEmit",
+  "explicitMutArg.milo": "noEmit",
   "externFnPtrField.milo": "noEmit",
   "externFnPtrFieldCLayout.milo": "noEmit",
   "externMutBuf.milo": "crash",

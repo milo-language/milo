@@ -53,7 +53,7 @@ export function langInfo() {
     primitiveTypes: [...PRIMITIVE_TYPE_NAMES].sort(),
     symbols,
     builtinMembers,
-    warnings: WARNINGS.map(w => ({ name: w.name, offByDefault: !!w.offByDefault })),
+    warnings: WARNINGS.map(w => ({ name: w.name, offByDefault: !!w.offByDefault, errorByDefault: !!w.errorByDefault })),
     // The attribute vocabulary. Absent until 2026-08-22, which is how `@thread` and
     // `@synchronized` — both safety-critical — shipped invisible to every tool outside
     // this repo, and to the language's own author.
@@ -80,7 +80,7 @@ export function runLangInfo(args: string[]): number {
     `primitive types ${info.primitiveTypes.join(" ")}\n` +
     `symbols         ${Object.values(info.symbols).join(" ")}\n` +
     `builtin methods ${receivers.join(", ")}\n` +
-    `warnings        ${info.warnings.map(w => w.name + (w.offByDefault ? "*" : "")).join(" ")}   (* off by default)\n` +
+    `warnings        ${info.warnings.map(w => w.name + (w.offByDefault ? "*" : w.errorByDefault ? "!" : "")).join(" ")}   (* off by default, ! error by default)\n` +
     `\nfor tooling: milo lang --json\n`,
   );
   return 0;

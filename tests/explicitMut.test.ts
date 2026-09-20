@@ -1,8 +1,8 @@
 // Explicit `&mut` on call arguments (docs/plans/local-reasoning-2026-09.md, track A):
-// the `implicit-mut-borrow` warning, the misplacement errors, and the fixer that
-// rewrites a file from the checker's resolved signatures. tests/errors pins the error
-// texts on whole programs; this file covers the warning levels and the script, which
-// only a CLI run can exercise.
+// the `implicit-mut-borrow` rule (an error by default since A7; `--allow` silences it),
+// the misplacement errors, and the fixer that rewrites a file from the checker's
+// resolved signatures. tests/errors pins the error texts on whole programs; this file
+// covers the flag levels and the script, which only a CLI run can exercise.
 import { test, expect, afterAll } from "bun:test";
 import { spawnSync } from "child_process";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "fs";
@@ -41,14 +41,14 @@ const explicit = bare
   .replace("fill(v[0..1], 3)", "fill(&mut v[0..1], 3)")
   .replace("fill(v, 4)", "fill(&mut v, 4)");
 
-test("implicit-mut-borrow is allowed by default: a bare argument is silent", () => {
-  const r = check(write(bare));
+test("--allow=implicit-mut-borrow silences the rule: a bare argument checks", () => {
+  const r = check(write(bare), "--allow=implicit-mut-borrow");
   expect(r.code).toBe(0);
   expect(r.out).not.toContain(WARN);
 });
 
-test("--deny=implicit-mut-borrow makes a bare argument an error, with the rewrite hint", () => {
-  const r = check(write(bare), "--deny=implicit-mut-borrow");
+test("a bare argument to a &mut parameter is an error by default, with the rewrite hint", () => {
+  const r = check(write(bare));
   expect(r.code).toBe(1);
   expect(r.out).toContain("argument 'p' is passed to a '&mut' parameter without '&mut'");
   expect(r.out).toContain("write 'bump(... &mut p ...)'; run 'bun scripts/explicit-mut.ts <file>' to rewrite the file");
@@ -57,8 +57,8 @@ test("--deny=implicit-mut-borrow makes a bare argument an error, with the rewrit
   expect((r.out.match(new RegExp(WARN, "g")) ?? []).length).toBe(3);
 });
 
-test("with &mut written the denied warning is silent and the program checks", () => {
-  const r = check(write(explicit), "--deny=implicit-mut-borrow");
+test("with &mut written the program checks", () => {
+  const r = check(write(explicit));
   expect(r.code).toBe(0);
   expect(r.out).not.toContain(WARN);
 });
@@ -112,7 +112,7 @@ fn main(): i32 {
   twice(inc, &mut k)
   return k as i32
 }
-`), "--deny=implicit-mut-borrow");
+`));
   expect(r.out).not.toContain(WARN);
   expect(r.code).toBe(0);
 });
@@ -139,5 +139,11 @@ test("scripts/explicit-mut.ts rewrites a file to the explicit form and is idempo
   expect(second.status).toBe(0);
   expect(second.stdout).toContain(`${f}: 0 argument(s) rewritten`);
   expect(readFileSync(f, "utf8")).toBe(explicit);
-  expect(check(f, "--deny=implicit-mut-borrow").code).toBe(0);
+  expect(check(f).code).toBe(0);
+});
+
+test("milo lang --json reports implicit-mut-borrow as error-by-default", () => {
+  const r = spawnSync("bun", [join(ROOT, "src", "main.ts"), "lang", "--json"], { encoding: "utf8" });
+  const w = JSON.parse(r.stdout).warnings.find((x: any) => x.name === "implicit-mut-borrow");
+  expect(w).toEqual({ name: "implicit-mut-borrow", offByDefault: false, errorByDefault: true });
 });

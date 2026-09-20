@@ -3,7 +3,7 @@ system: tooling-api
 purpose: the compiler's machine-readable surfaces — what tooling reads instead of importing TypeScript
 key-files: src/api-search.ts, src/lang-info.ts, src/warnings.ts, src/main.ts (runCheck), tests/apiJson.test.ts, tests/langInfo.test.ts
 update-when: a JSON payload gains or loses a field, or a new machine-readable command lands
-last-verified: 2026-09-19
+last-verified: 2026-09-20 (warnings gain errorByDefault)
 -->
 
 # Machine-readable compiler API
@@ -89,7 +89,7 @@ must know), `keywordDocs` (keyword → markdown help: the form in a fenced `milo
 then what it means — the same text the bundled LSP shows on hover, so an editor plugin
 need not rewrite it from the guide), `primitiveTypes`, `symbols` (operator token name →
 spelling), `builtinMembers` (receiver → the methods the checker dispatches by hand, with
-signatures and caveats), and `warnings` (name + `offByDefault`, i.e. what `--deny=` accepts).
+signatures and caveats), and `warnings` (name + `offByDefault` + `errorByDefault`, i.e. what `--deny=` and `--allow=` accept).
 
 ### `milo check <file> --json` (schema 1)
 

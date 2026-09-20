@@ -1,0 +1,10 @@
+// A non-receiver argument bound to a `&mut` parameter is written `&mut x`; the bare form
+// is an error whose hint prints the fixed call and names the fixer.
+// @error: argument 'p' is passed to a '&mut' parameter without '&mut'
+struct P { n: i64 }
+fn bump(p: &mut P, by: i64): void { p.n = p.n + by }
+fn main(): i32 {
+    var p = P { n: 1 }
+    bump(p, 2)
+    return p.n as i32
+}
