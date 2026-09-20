@@ -19,9 +19,9 @@ name: Self-host
 
 on:
   push:
-    paths: ['src-milo/**', 'std/**', 'scripts/selfhost*', 'scripts/guard.ts', '.github/workflows/selfhost.yml']
+    paths: ['src-milo/**', 'scripts/selfhost*', 'scripts/guard.ts', '.github/workflows/selfhost.yml']
   pull_request:
-    paths: ['src-milo/**', 'std/**', 'scripts/selfhost*', 'scripts/guard.ts', '.github/workflows/selfhost.yml']
+    paths: ['src-milo/**', 'scripts/selfhost*', 'scripts/guard.ts', '.github/workflows/selfhost.yml']
   # On demand. The path filter above deliberately excludes `src/` — self-host must never
   # GATE a src/ change (CLAUDE.md; chasing parity is what parked src-milo for months) — but
   # codegen can still break the bootstrap, and then nothing says so until an unrelated
