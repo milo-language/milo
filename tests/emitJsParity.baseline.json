@@ -207,6 +207,7 @@
   "ptrDepth.milo": "noEmit",
   "ptrFieldAccess.milo": "crash",
   "ptrForgetStillLegal.milo": "noEmit",
+  "ptrParamLengthIntoGlobal.milo": "noEmit",
   "ptrViewLegalShapes.milo": "noEmit",
   "pty.milo": "noEmit",
   "ptyLifecycle.milo": "noEmit",
