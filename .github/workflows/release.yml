@@ -150,16 +150,22 @@ jobs:
       # "released Jul 22" and linking a July commit while handing out that morning's
       # binaries. Delete the release and retarget the tag so the page and the bytes
       # agree; the download URLs are unchanged (only the download counts reset).
+      # The tag moves through git, not the refs REST API: on 2026-09-20 that API began
+      # answering a forced tag update with 403 for the Actions token (and 404 for an
+      # admin PAT) while `git push -f` with the same token still worked. The delete
+      # went through before the move failed, so the rolling release vanished and every
+      # `releases/download/latest/...` consumer (install.sh, the packages' CI) broke.
+      - uses: actions/checkout@v4
+        if: needs.meta.outputs.version == ''
+        with:
+          path: src-checkout
       - name: Retarget the rolling release
         if: needs.meta.outputs.version == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          git -C src-checkout push -f origin "$GITHUB_SHA:refs/tags/latest"
           gh release delete latest --repo "$GITHUB_REPOSITORY" --yes || true
-          gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/latest" \
-              -f sha="$GITHUB_SHA" -F force=true \
-            || gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
-                 -f ref=refs/tags/latest -f sha="$GITHUB_SHA"
 
       - name: Rolling release
         if: needs.meta.outputs.version == ''
