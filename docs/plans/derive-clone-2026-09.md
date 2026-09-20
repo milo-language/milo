@@ -45,16 +45,34 @@ EnumDecl overload; `Eq`/`Json` on enums stay as they are). Lock: fixtures for
 payload enum, recursive enum, struct-of-enum; error tests for Drop enum and
 closure payload.
 
-WP3 G3. `monomorphizeEnum`: propagate `@derive` from the generic decl the way
-`monomorphizeStruct` does at checker.ts:1967. Then `Option`/`Result` in std get
-`@derive(Clone)` (find their decls; if they are checker builtins with no decl,
-synthesize the impl at monomorphization when the type args are clonable). Lock:
-`Option<string>.clone()`, `Option<P>` field, `Result<P, string>`.
+WP3 G3. `Option`/`Result` are checker builtins (`registerBuiltinOption`, no
+source decl, no attributes), so "propagate from the decl" has nothing to read.
+Design, resolved 2026-09-20: a monomorphized generic enum whose base is
+`Option`/`Result` (later: any generic enum or struct carrying `@derive(Clone)`)
+gets Clone CONDITIONALLY, the way Rust's derive adds a `T: Clone` bound: only
+when every payload type `canAutoClone`s, silently skipped otherwise (an
+`Option<closure>` must stay legal, it just has no clone). Two entry points,
+because instances appear at two times: (a) instances that already exist when
+`processDerives` runs join the struct/enum fixpoint (iterate `this.enums`
+whose `baseName` qualifies, concrete variant field types, `pending` honoured);
+(b) instances monomorphized later (inside a body, `let o: Option<P>`) derive at
+`monomorphizeEnum` time, mirroring the struct propagation at checker.ts:1967,
+when every referenced type is already registered. A user's explicit
+`@derive(Clone)` on their own generic enum keeps the struct rule: propagate per
+instantiation and ERROR when a payload cannot clone. `canAutoClone` for an
+enum instance of a qualifying base: all payload types clonable (structural,
+so the fixpoint closes over `struct Q { o: Option<Q2> }` before the impl
+exists). Lock: `Option<string>.clone()`, `Option<P>` field, `Result<P,
+string>` field, `Option<closure>` field makes the struct non-clonable with
+the explicit-derive error naming the field, and `Option<i32>` stays Copy.
 
-WP4 G4. `canAutoClone` `array` arm: element clonable and not `fn`. Synthesized
-field value: `self.a.clone()` if arrays have a builtin clone, else an array
-literal of per-element clones for sized N (check `indexAccessClones` in
-codegen; reuse). Lock: fixture with `[string; 2]` and `[P; 3]`.
+WP4 G4. Arrays have NO builtin `.clone()` (checked: the array method site
+knows `len`/`slice` only). Options: add a sized-array `.clone()` builtin
+(checker method + codegen element loop, reusing whatever `indexAccessClones`
+emits per element), or expand to an array literal of N per-element clones in
+the synthesized body (no codegen work; AST grows with N, unacceptable for
+`[string; 1024]`). Builtin is the honest one. Decide after WP3 lands; G4 has
+zero census hits, so skipping is defensible.
 
 WP5 Docs + backlog. `docs/language-reference.md` derive section: what Clone
 covers, what it refuses and why. Backlog #31: strike, cite cbf680e7 + this
@@ -82,8 +100,6 @@ when a user impl exists. File separately if it matters after this lands.
 
 ## Unresolved
 
-1. Should `Option`/`Result` auto-derive for any clonable `T`, or require the
-   std decl to carry `@derive(Clone)`? Plan assumes propagate-from-decl (WP3),
-   with a synthesize-at-monomorph fallback only if they have no decl.
+1. Resolved: conditional derive for `Option`/`Result` (WP3 above).
 2. WP4 arrays: skip if the compiler has no array clone builtin and the literal
    form needs codegen work; G4 has no census hits.
