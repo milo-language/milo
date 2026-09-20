@@ -331,6 +331,11 @@ pub struct Program {
     // the program that imports it. Without this the driver had no way to learn
     // about SDL2 at all and every SDL example died at link with undefined symbols.
     linkLibs: Vec<string>,
+    // Names of the top-level `fn`/`let`/`var` decls written `pub`, in this ONE file.
+    // milo0 has no visibility check (that is oracle-only), so this is the only trace
+    // of `pub` it keeps; the resolver reads it to scope a std module's PRIVATE values
+    // to that module (`<module>$<name>`), mirroring src/resolver.ts stage 4.
+    pubNames: Vec<string>,
     // Parse errors accumulated while producing this Program, in source order. The
     // resolver concatenates the lists of every file it merges, so a broken import is
     // as fatal as a broken entry file. Non-empty means the AST is a guess: the driver
