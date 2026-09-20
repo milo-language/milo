@@ -104,16 +104,23 @@ function embeddedAssetsOf(entry: string): string[] {
   return [...assets];
 }
 
+// flight/main.milo compiles in ~50s on a dev machine: at 60s the kill looked like a
+// compile failure with an empty detail line, which is the worst kind of red.
+const MILO_TIMEOUT_MS = 180_000;
+
 function milo(args: string[], input?: string) {
-  return spawnSync("bun", ["run", "src/main.ts", ...args], {
+  const r = spawnSync("bun", ["run", "src/main.ts", ...args], {
     encoding: "utf8",
     input,
-    timeout: 60_000,
+    timeout: MILO_TIMEOUT_MS,
     // An empty XDG_CACHE_HOME is how a runner sees packages: `cacheRoot()` in src/pkg.ts
     // reads it, so pointing it at a fresh dir makes every `gl`/`sdl` import unresolvable
     // exactly as it is on CI, without disturbing the real cache.
     env: bareCache ? { ...process.env, XDG_CACHE_HOME: bareCache } : process.env,
   });
+  // A timeout kill leaves stderr empty; name it so the failure line says what happened.
+  if (r.signal) r.stderr = `${r.stderr ?? ""}\nkilled by ${r.signal} after ${MILO_TIMEOUT_MS / 1000}s`.trim();
+  return r;
 }
 
 const examples = walk(root).sort();
