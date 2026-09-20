@@ -74,8 +74,11 @@ jobs:
       # the fast check on push, move the slow sweep to the nightly schedule. It finds
       # nothing today — the whole value is catching a future regression, which argues for
       # running it often rather than rarely.
+      # `bun run test:asan` is the same command developers run locally (package.json), so
+      # the two cannot drift. It does NOT consult tests/known-red.txt: a fixture the test
+      # driver excuses is still built and run here, which is where an open hole shows red.
       - name: AddressSanitizer sweep
-        run: bun run scripts/asan-sweep.ts --all
+        run: bun run test:asan
 
   # Nothing has ever executed std/*.linux.milo — epoll, eventfd, the glibc paths — because
   # the suite above runs on macOS only. This job is the first thing that does.

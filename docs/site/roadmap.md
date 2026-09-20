@@ -86,7 +86,7 @@ macOS and Linux are fully supported on both aarch64 and x86_64. Windows is a par
 - **Formatter**: `milo fmt`, written in Milo
 - **Package manager**: `milo add`/`install`/`publish` plus `milo tool install`, with a lockfile, a git-based cache, and GitHub repositories as the registry — built into the one `milo` binary. [Published packages](/packages) cover PostgreSQL, Redis, markdown, TOML, YAML, JSON-RPC, OpenGL and SDL.
 - **Docs from source**: `milo doc` generates reference markdown from doc-comments; `milo api` searches the standard library
-- **Test framework**: `@expect:`/`@error:` annotations and a `milo test` runner over <!-- stat:fixtures -->689<!-- /stat --> fixtures, plus <!-- stat:error-fixtures -->336<!-- /stat --> that must fail to compile and <!-- stat:prove-fixtures -->33<!-- /stat --> that must be proved
+- **Test framework**: `@expect:`/`@error:` annotations and a `milo test` runner over <!-- stat:fixtures -->692<!-- /stat --> fixtures, plus <!-- stat:error-fixtures -->337<!-- /stat --> that must fail to compile and <!-- stat:prove-fixtures -->33<!-- /stat --> that must be proved
 - **Debugging**: `-g` emits DWARF that composes with any optimization level
 - **CI**: build and test on macOS, Linux, and Windows, plus a release pipeline with static linking
 - **Playground**: the compiler's JavaScript backend running in the browser

@@ -1,0 +1,15 @@
+// @runtime-error: array index out of bounds: 7/1
+// Vec-index probe from docs/memory-safety-vs-rust.md, in its plain shape (the other
+// Vec bounds fixtures pin a shadowing bug and swap). The index comes through a call so
+// no constant folding or range proof can decide it at compile time.
+
+pub fn seven(): i64 {
+    return 7
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    v.push(10)
+    print(v[seven()])
+    return 0
+}

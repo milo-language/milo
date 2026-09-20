@@ -30,13 +30,14 @@
 // name. That limit is stated in the document itself rather than left for a reader to
 // discover — a spec that overclaims its own coverage is worse than one that admits the
 // boundary.
-import { readFileSync, writeFileSync, readdirSync } from "fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
-import { parseExpected, parseExpectedError, parseExpectedRuntimeError } from "../tests/annotations";
+import { parseExpected, parseExpectedError, parseExpectedRuntimeError, parseKnownRed } from "../tests/annotations";
 
 const ROOT = join(import.meta.dir, "..");
 const ERRORS_DIR = join(ROOT, "tests", "errors");
 const FIXTURES_DIR = join(ROOT, "tests", "fixtures");
+const KNOWN_RED_FILE = join(ROOT, "tests", "known-red.txt");
 const OUT = join(ROOT, "docs", "spec.md");
 
 export interface Requirement {
@@ -96,7 +97,11 @@ export function requirements(): Requirement[] {
     });
   }
 
+  // A known-red fixture reproduces a hole the language must eventually reject, so it
+  // states no "shall accept" requirement. Its absence is deliberate, not a coverage gap.
+  const knownRed = existsSync(KNOWN_RED_FILE) ? parseKnownRed(readFileSync(KNOWN_RED_FILE, "utf-8")) : new Map();
   for (const file of readdirSync(FIXTURES_DIR).filter(f => f.endsWith(".milo")).sort()) {
+    if (knownRed.has(file)) continue;
     const source = readFileSync(join(FIXTURES_DIR, file), "utf-8");
     const expected = parseExpected(source);
     const runtimeError = parseExpectedRuntimeError(source);

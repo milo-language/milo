@@ -33,3 +33,21 @@ export function parseExpectedRuntimeError(source: string): string | null {
   const line = source.split("\n").map(l => l.trim()).find(l => l.startsWith("// @runtime-error:"));
   return line ? line.replace("// @runtime-error:", "").trim() : null;
 }
+
+// tests/known-red.txt: fixtures that reproduce an OPEN soundness hole and are expected to
+// fail today (docs/plans/soundness-sweep-2026-09.md). One filename per line, text after
+// `#` is the reason. Keys are filenames with the `.milo` extension. Three readers share
+// this parser so they cannot disagree about what is listed: tests/run.test.ts skips the
+// @expect comparison, scripts/gen-spec.ts leaves the program out of the spec (a listed
+// program is one the language must eventually REJECT, so "shall accept" would be a false
+// requirement), and scripts/asan-sweep.ts labels the entry but still runs it.
+export function parseKnownRed(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const raw of text.split("\n")) {
+    const hash = raw.indexOf("#");
+    const name = (hash >= 0 ? raw.slice(0, hash) : raw).trim();
+    if (!name) continue;
+    out.set(name, hash >= 0 ? raw.slice(hash + 1).trim() : "no reason given");
+  }
+  return out;
+}

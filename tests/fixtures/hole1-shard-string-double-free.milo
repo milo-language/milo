@@ -1,0 +1,25 @@
+// @expect: 100
+// H1 from docs/plans/soundness-sweep-2026-09.md. `Shard.get` bitwise-copies a Drop `T`
+// out of the window (`unsafe { self.base[i] }`), so `a` and `v[0]` share one string
+// buffer and the program double-frees at exit. The @expect is what value semantics
+// would print; the real fix (WP2, `@copyOnly` on `Shard<T>`) rejects this program at
+// compile time, and this file then moves to tests/errors/. Until then it sits in
+// tests/known-red.txt: the fixture lane skips it, the ASan sweep still runs it.
+from "std/shard" import {
+    Shard, Shards, shatter
+}
+
+pub fn main(): i32 {
+    var data: Vec<string> = Vec.new()
+    data.push("y".repeat(100))
+    var owner = shatter(data, 1)
+    var ws = owner.windows()
+    let w = ws.pop()!
+    var a = w.get(0)
+    a = a + "tail"
+    var back: Vec<Shard<string>> = Vec.new()
+    back.push(w)
+    let v = owner.weld(back)!
+    print(v[0].len)
+    return 0
+}
