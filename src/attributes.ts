@@ -141,6 +141,16 @@ export const ATTRIBUTES: AttrInfo[] = [
       "individually checkable and so no other rule would ever ask the CALLER to opt in.",
   },
   {
+    name: "mustUse",
+    targets: ["fn", "method", "extern"],
+    doc:
+      "Discarding this routine's result is the `unused-result` warning, as it already is " +
+      "for an Option or Result. For a `bool` or an integer that encodes failure " +
+      "(`arenaFree` returns false on a stale handle; an extern returns a C error code), " +
+      "where nothing in the type says the value must be looked at. `let _ = f()` discards " +
+      "on purpose. The DO-178C and NASA safety profiles make the warning an error.",
+  },
+  {
     name: "externalLinkage",
     targets: ["fn"],
     doc: "Give this function external C linkage so a dlopen'd library can resolve it.",

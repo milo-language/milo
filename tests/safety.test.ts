@@ -254,3 +254,41 @@ fn main(): i32 { return 0 }`;
     .map(v => v.message.match(/function '(\w+)'/)![1]);
   for (const fn of ["viaIfElse", "viaLetElse", "viaUnsafe"]) expect(flagged).toContain(fn);
 });
+
+// ── requireUsedResults ──
+// The safety walker has no types, so the checker's `unused-result` findings are handed in;
+// these pin which profiles turn them into errors. The finding itself is pinned in
+// tests/mustUseLint.test.ts.
+
+const DISCARDED = [{ message: "unused result of '@mustUse' function 'f'", span: { line: 3, col: 3 } }];
+const TRIVIAL = `fn main(): i32 requires true ensures result == 0 { return 0 }`;
+
+for (const level of ["do178c-a", "do178c-b", "do178c-c", "nasa-a", "nasa-b"] as const) {
+  test(`requireUsedResults: a discarded result is an error at ${level}`, () => {
+    const prog = new Parser(new Lexer(TRIVIAL).tokenize(), TRIVIAL).parse();
+    const vs = checkSafetyCompliance(prog, level, DISCARDED).filter(v => v.rule === "unused-result");
+    expect(vs).toHaveLength(1);
+    expect(vs[0].severity).toBe("error");
+    expect(vs[0].message).toBe(`[${level}] unused result of '@mustUse' function 'f'`);
+    expect(vs[0].span).toEqual({ line: 3, col: 3 });
+  });
+}
+
+for (const level of ["iso26262-a", "iso26262-d", "iec61508-4"] as const) {
+  test(`requireUsedResults: a discarded result stays a warning at ${level}`, () => {
+    const prog = new Parser(new Lexer(TRIVIAL).tokenize(), TRIVIAL).parse();
+    expect(rules(TRIVIAL, level)).not.toContain("unused-result");
+    expect(checkSafetyCompliance(prog, level, DISCARDED).filter(v => v.rule === "unused-result")).toHaveLength(0);
+  });
+}
+
+// The checker's own Option finding (a discarded `a.get(h)`), not a `@mustUse` one, is
+// escalated the same way: the rule keys on the warning, not on the attribute.
+test("requireUsedResults: a discarded Option escalates to an error at do178c-a", () => {
+  const prog = new Parser(new Lexer(TRIVIAL).tokenize(), TRIVIAL).parse();
+  const finding = [{ message: "unused Option value — this may contain an error that should be handled", span: { line: 5, col: 3 } }];
+  const vs = checkSafetyCompliance(prog, "do178c-a", finding).filter(v => v.rule === "unused-result");
+  expect(vs).toHaveLength(1);
+  expect(vs[0].severity).toBe("error");
+  expect(vs[0].message).toBe("[do178c-a] unused Option value — this may contain an error that should be handled");
+});

@@ -50,7 +50,7 @@ pub fn main(): i32 {
     var churn: Arena<i64> = Arena<i64>.new()
     let c1 = churn.alloc(7)
     let c2 = churn.alloc(8)
-    churn.free(c2)
+    let _ = churn.free(c2)
     match churn.freeze() {
         Result.Ok(_f) => {
             print("WRONG: froze an arena that freed")

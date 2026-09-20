@@ -361,6 +361,7 @@ Each profile is a combination of constraints, tuned to the standard's requiremen
 | Complexity limit | Cyclomatic complexity cap per function | IEC 61508 SIL 4 (max 15) |
 | No unsafe blocks | `unsafe { }` banned entirely | All profiles |
 | Full match coverage | All `match` arms required (enforced by the type checker's exhaustiveness pass) | Most profiles |
+| Used results | A discarded `Option`, `Result` or `@mustUse` result (the `unused-result` warning) is an error | DO-178C A–C, NASA A–B |
 
 Example output when violations are found:
 

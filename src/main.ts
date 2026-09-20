@@ -22,7 +22,7 @@ import { formatDiagnostic, ParseError, RESET, BOLD, GREEN, DIM, type WarningConf
 import { type TargetInfo, getHostTarget, resolveTarget, listTargets, UnsupportedHostError } from "./target";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport, proveJson } from "./verify";
 import { proveWithMilo } from "./prove-milo";
-import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, safetyJson, listSafetyLevels } from "./safety";
+import { parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels } from "./safety";
 import { versionString } from "./version";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
 import { estimateLoopCycles, formatCycleEstimate } from "./wcet-cycles";
@@ -176,13 +176,16 @@ function compile(source: string, target: TargetInfo, filePath?: string, warningC
 // diagnostics instead of leaking a JS stack trace. Analysis subcommands (verify/
 // wcet/prove/safety) that stop short of codegen share this so a syntax error is
 // reported the same way `build` reports it, not as an uncaught exception.
-function parseCheckProgram(src: string, target: TargetInfo, filePath: string, warningConfig?: WarningConfig) {
+// `diagnosticsOut`, when given, receives the checker's diagnostics; the safety command
+// reads its `unused-result` findings from there, since src/safety.ts has no types.
+function parseCheckProgram(src: string, target: TargetInfo, filePath: string, warningConfig?: WarningConfig, diagnosticsOut?: Diagnostic[]) {
   const sourceDir = dirname(resolve(filePath));
   try {
     const tokens = new Lexer(src).tokenize();
     let program = new Parser(tokens, src, filePath).parse();
     program = resolveImports(program, sourceDir, target, filePath);
-    new TypeChecker(warningConfig).check(program);
+    const result = new TypeChecker(warningConfig).check(program);
+    diagnosticsOut?.push(...result.diagnostics);
     return program;
   } catch (e: any) {
     if (e instanceof ParseError) {
@@ -2281,8 +2284,17 @@ async function main() {
       process.exit(1);
     }
     const src = readFileSync(source!, "utf-8");
-    const program = parseCheckProgram(src, target, source!, warningConfig);
-    const violations = checkSafetyCompliance(program, level);
+    const diagnostics: Diagnostic[] = [];
+    // A profile that requires used results must see every finding: an `--allow` or a
+    // project-level allow would otherwise suppress the warning inside the checker and the
+    // profile would report pass on the code it exists to reject.
+    if (requiresUsedResults(level)) {
+      warningConfig.allowed.delete("unused-result");
+      warningConfig.expected?.delete("unused-result");
+    }
+    const program = parseCheckProgram(src, target, source!, warningConfig, diagnostics);
+    const unusedResults = diagnostics.filter(d => d.code === "unused-result");
+    const violations = checkSafetyCompliance(program, level, unusedResults);
     if (rest.includes("--json")) writeStdout(safetyJson(violations, level, source!));
     else console.log(formatSafetyReport(violations, level));
     if (violations.some(v => v.severity === "error")) process.exit(1);

@@ -21,7 +21,7 @@ pub fn main(): i32 {
     }
 
     // in-place increment via closure
-    arenaModify(arena, h, (v: i32) => v + 1)
+    let _ = arenaModify(arena, h, (v: i32) => v + 1)
     match arenaGet(arena, h) {
         Option.Some(v) => {
             print(v)
@@ -32,8 +32,8 @@ pub fn main(): i32 {
     }
 
     // chain modifications
-    arenaModify(arena, h, (v: i32) => v * 2)
-    arenaModify(arena, h, (v: i32) => v - 1)
+    let _ = arenaModify(arena, h, (v: i32) => v * 2)
+    let _ = arenaModify(arena, h, (v: i32) => v - 1)
     match arenaGet(arena, h) {
         Option.Some(v) => {
             print(v)
@@ -44,7 +44,7 @@ pub fn main(): i32 {
     }
 
     // stale handle — modify returns false, value unchanged
-    arenaFree(arena, h)
+    let _ = arenaFree(arena, h)
     let ok = arenaModify(arena, h, (v: i32) => v + 100)
     if ok {
         print("true")

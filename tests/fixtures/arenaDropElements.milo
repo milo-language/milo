@@ -32,20 +32,20 @@ fn inner(): void {
     let h = a.alloc(mk(7))
     let h2 = a.alloc(mk(9))
     var seen: i64 = 0
-    a.read(h, (r: &Res) => {
+    let _ = a.read(h, (r: &Res) => {
         seen = r.id
     }
     )
-    a.modifyMut(h, (r: &mut Res) => {
+    let _ = a.modifyMut(h, (r: &mut Res) => {
         r.id = r.id + 1
     }
     )
     var after: i64 = 0
-    a.read(h, (r: &Res) => {
+    let _ = a.read(h, (r: &Res) => {
         after = r.id
     }
     )
-    a.free(h2)
+    let _ = a.free(h2)
     print("read " + seen.toString() + " mod " + after.toString() + " valid " + a.valid(h2).toString())
 }
 

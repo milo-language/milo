@@ -237,6 +237,7 @@ impl Sealed {
 
     // Whether `sp` fits here. Branch on this for a span you did not measure
     // yourself; `text` aborts instead.
+    @mustUse
     fn holds(self: &Self, sp: Span): bool {
         return sealedHolds(self, sp)
     }
@@ -252,6 +253,7 @@ impl Sealed {
     }
 
     // Compare `sp` to a string without materialising it.
+    @mustUse
     fn eq(self: &Self, sp: Span, other: &string): bool {
         return sealedEq(self, sp, other)
     }

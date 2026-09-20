@@ -18,7 +18,7 @@ pub fn main(): i32 {
     print(names.get(b)!)
 
     // free + stale handle
-    names.free(a)
+    let _ = names.free(a)
     match names.get(a) {
         Option.Some(n) => {
             print(n)
@@ -29,7 +29,7 @@ pub fn main(): i32 {
     }
 
     // set
-    names.set(b, "updated")
+    let _ = names.set(b, "updated")
     print(names.get(b)!)
 
     // handle equality via @derive(Eq)

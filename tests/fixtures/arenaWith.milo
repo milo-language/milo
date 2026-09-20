@@ -27,7 +27,7 @@ pub fn main(): i32 {
         }
     }
 
-    arenaModifyMut(a, h, (p: &mut P): void => {
+    let _ = arenaModifyMut(a, h, (p: &mut P): void => {
         p.x = p.x + 5
     }
     )

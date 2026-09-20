@@ -36,7 +36,7 @@ pub fn pushBack(list: &mut DLList, value: i64) {
 
     match list.tail {
         Option.Some(tailH) => {
-            arenaModify(list.arena, tailH, (n: DLNode) => {
+            let _ = arenaModify(list.arena, tailH, (n: DLNode) => {
                 var updated = n
                 updated.next = Option.Some(h)
                 return updated
@@ -62,7 +62,7 @@ pub fn pushFront(list: &mut DLList, value: i64) {
 
     match list.head {
         Option.Some(headH) => {
-            arenaModify(list.arena, headH, (n: DLNode) => {
+            let _ = arenaModify(list.arena, headH, (n: DLNode) => {
                 var updated = n
                 updated.prev = Option.Some(h)
                 return updated

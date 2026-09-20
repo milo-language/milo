@@ -1,0 +1,32 @@
+// `@mustUse` results that are bound or branched on are silent: the fixture lane
+// compiles with warnings visible, so any `unused-result` here would show in stderr.
+from "std/arena" import {
+    Arena, arenaFree, arenaValid
+}
+
+@mustUse
+fn tryStep(n: i32): bool {
+    return n > 0
+}
+
+fn main(): i32 {
+    var a = Arena<i32>.new()
+    let h = a.alloc(7)
+    let alive = arenaValid(a, h)
+    print($"alive: {alive}")
+    let ok = arenaFree(a, h)
+    print($"freed: {ok}")
+    let again = a.free(h)
+    print($"freed again: {again}")
+    let _ = tryStep(1)
+    if tryStep(0) {
+        print("stepped")
+    } else {
+        print("did not step")
+    }
+    return 0
+}
+// @expect: alive: true
+// @expect: freed: true
+// @expect: freed again: false
+// @expect: did not step

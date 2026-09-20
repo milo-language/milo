@@ -53,7 +53,7 @@ pub fn main(): i32 {
     let first = arenaAlloc(arena, 10)
     let stale = arenaAlloc(arena, 20)
     let third = arenaAlloc(arena, 30)
-    arenaFree(arena, stale)
+    let _ = arenaFree(arena, stale)
 
     let snapshot = arenaHandles(arena)
     print(snapshot.len)
@@ -70,7 +70,7 @@ pub fn main(): i32 {
 
     // A snapshot is stable, but its handles are not roots: freeing a returned
     // handle makes that entry stale, and later allocations never join it.
-    arenaFree(arena, first)
+    let _ = arenaFree(arena, first)
     print(current.len)
     match arenaGet(arena, first) {
         Option.Some(_value) => {
@@ -96,9 +96,9 @@ pub fn main(): i32 {
     }
 
     for handle in current {
-        arenaFree(arena, handle)
+        let _ = arenaFree(arena, handle)
     }
-    arenaFree(arena, later)
+    let _ = arenaFree(arena, later)
     print(arena.len())
 
     // Force the otherwise impractical generation-exhaustion boundary. Public
@@ -124,14 +124,14 @@ pub fn main(): i32 {
     let fresh = arenaAlloc(retirement, 2)
     print(fresh.index != exhausted.index)
     print(retirement.len())
-    arenaFree(retirement, fresh)
+    let _ = arenaFree(retirement, fresh)
     print(retirement.len())
 
     // A forged handle carrying the free slot's internal negative generation is
     // still rejected by every accessor, and none of its callbacks may execute.
     var freed = Arena<i64>.new()
     let onceLive = freed.alloc(7)
-    freed.free(onceLive)
+    let _ = freed.free(onceLive)
     let forged: Handle<i64> = Handle {
         arenaId: freed.id,
         index: onceLive.index,

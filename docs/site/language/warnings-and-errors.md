@@ -91,10 +91,11 @@ let x = compute()     // warning: unused variable 'x'
 
 ### unused-result
 
-Ignoring a `Result` or `Option` is almost always a bug — it may contain an error you should handle.
+Ignoring a `Result` or `Option` is almost always a bug — it may contain an error you should handle. A function declared `@mustUse` (a `bool` or error code that encodes failure, such as `std/arena`'s `arenaFree`) gets the same warning.
 
 ```milo
 fs.readFile("data.txt")   // warning: unused Result value — this may contain an error
+arenaFree(a, h)           // warning: unused result of '@mustUse' function 'arenaFree'
 ```
 
 ```
@@ -169,7 +170,7 @@ milo build app.milo --deny-all
 | Warning code | Default | What it catches |
 |---|---|---|
 | `unused-variable` | warn | Declared but never read |
-| `unused-result` | warn | `Result` or `Option` value silently discarded |
+| `unused-result` | warn | `Result`, `Option` or `@mustUse` result silently discarded |
 | `bare-embedfile` | warn | `embedFile(...)` written without its `@` sigil |
 | `unused-move` | allow | Owned param never moved — could be a borrow instead |
 | `large-stack-array` | allow | Local fixed array over `--max-stack-array` (default 512 KiB) — stack-overflow risk |
