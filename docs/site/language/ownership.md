@@ -57,19 +57,28 @@ print(b)           // also valid
 
 ## Borrowing — look but don't keep
 
-Sometimes a function just needs to *read* a value without taking it. That's a borrow: `&T`. The key restriction — references can **only** appear as function parameters. They cannot be returned, stored in structs, or assigned to variables.
+Sometimes a function just needs to *read* a value without taking it. That's a borrow: `&T`. A reference lives in exactly two places: a function parameter, or a local view such as `let mid = v[1..3]` or `let key = line[0..4]`. A view freezes its owner for the life of the binding. What a reference can never do is outlive the scope that made it: it cannot be stored in a struct or a collection, captured by a closure, or returned. The one exception: a method may return a view of `self`.
 
-```milo
-// OK — borrow for the duration of the call
+```milo skip
+// OK: borrow for the duration of the call
 fn length(s: &string): i64 {
     return s.len
 }
 
-// COMPILE ERROR — can't return a reference
+// COMPILE ERROR: a free function can't return a reference
 fn bad(): &string { ... }
 
-// COMPILE ERROR — can't store a reference
+// COMPILE ERROR: can't store a reference
 struct Bad { ref: &string }
+```
+
+A local view costs no copy, and the owner is frozen until the view is gone:
+
+```milo error
+var v: Vec<i64> = [10, 20, 30]
+let mid = v[1..3]      // a view into v, nothing copied
+v.push(40)             // error: cannot call 'push' on 'v' because it is borrowed
+print(mid.len)
 ```
 
 This one restriction means you never write lifetime annotations. If you've seen Rust's `<'a>` on structs, impls, and everything they touch — that doesn't exist in Milo. You own the data instead. The restriction *is* the borrow checker, and it's simple enough to fit in one sentence.
