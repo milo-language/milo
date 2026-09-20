@@ -21,7 +21,7 @@ pub fn main(): i32 {
         }
     }
 
-    arenaFree(arena, h1)
+    let _ = arenaFree(arena, h1)
 
     match arenaGet(arena, h1) {
         Option.Some(v) => {

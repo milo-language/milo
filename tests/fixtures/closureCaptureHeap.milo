@@ -14,7 +14,7 @@ pub struct Box {
 }
 
 pub fn addOne(a: &mut Arena<Box>, h: Handle<Box>, s: string) {
-    arenaModifyMut(a, h, (b: &mut Box): void => {
+    let _ = arenaModifyMut(a, h, (b: &mut Box): void => {
         b.items.push(s)
     }
     )

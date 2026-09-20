@@ -1,0 +1,10 @@
+// @error: unknown attribute '@mustUse' on 'S'
+@mustUse
+struct S {
+    n: i32
+}
+
+fn main(): i32 {
+    let s = S { n: 1 }
+    return s.n
+}

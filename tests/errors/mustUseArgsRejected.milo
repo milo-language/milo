@@ -1,0 +1,10 @@
+// @error: '@mustUse' takes no arguments
+@mustUse(x)
+fn f(): bool {
+    return true
+}
+
+fn main(): i32 {
+    let _ = f()
+    return 0
+}

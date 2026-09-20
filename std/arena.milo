@@ -166,6 +166,7 @@ ensures a.live == old(a.live) + 1
 }
 
 // Check whether a handle is still valid.
+@mustUse
 pub fn arenaValid<T>(a: &Arena<T>, h: Handle<T>): bool {
     if h.arenaId != a.id {
         return false
@@ -182,6 +183,7 @@ pub fn arenaValid<T>(a: &Arena<T>, h: Handle<T>): bool {
 
 // Free a slot, bumping its generation so stale handles are detected. A slot at
 // maximum generation is retired rather than wrapped back onto an old handle.
+@mustUse
 pub fn arenaFree<T>(a: &mut Arena<T>, h: Handle<T>): bool
 ensures a.live <= old(a.live)
 {
@@ -234,6 +236,7 @@ pub fn arenaGet<T>(a: &Arena<T>, h: Handle<T>): Option<T> {
 }
 
 // Overwrite the value at a handle. Returns false if the handle is stale.
+@mustUse
 pub fn arenaSet<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool {
     if h.arenaId != a.id {
         return false
@@ -256,6 +259,7 @@ pub fn arenaSet<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool {
 // is the recommended way to mutate a single field of an arena value.
 // Returns false if the handle is stale (closure not invoked). The closure takes
 // the value by copy, so a T carrying Drop or @noCopy is rejected: use arenaModifyMut.
+@mustUse
 @copyOut
 pub fn arenaModify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
     if h.arenaId != a.id {
@@ -314,6 +318,7 @@ pub fn arenaWith<T, R>(a: &Arena<T>, h: Handle<T>, f: (&T) => R): Option<R> {
 // the borrowing paths. That gap is why real programs reach for a bare index into
 // a Vec instead of a Handle, so the ergonomic read path is the one that decides
 // whether generational safety gets used at all.
+@mustUse
 pub fn arenaRead<T>(a: &Arena<T>, h: Handle<T>, f: (&T) => void): bool {
     if h.arenaId != a.id {
         return false
@@ -336,6 +341,7 @@ pub fn arenaRead<T>(a: &Arena<T>, h: Handle<T>, f: (&T) => void): bool {
 // rewrite. Mutate fields of the live value directly inside f. Returns false
 // (f not called) if the handle is stale. Preferred over arenaModify when T is
 // large or you only touch a field or two.
+@mustUse
 pub fn arenaModifyMut<T>(a: &mut Arena<T>, h: Handle<T>, f: (&mut T) => void): bool {
     if h.arenaId != a.id {
         return false
@@ -522,6 +528,7 @@ impl GrowOnlyArena<T> {
     }
 
     // Whether `h` names a slot here. Branch on this for a handle that might be foreign.
+    @mustUse
     fn holds(self: &Self, h: Handle<T>): bool {
         if h.arenaId != self.id {
             return false
@@ -601,6 +608,7 @@ pub fn arenaFreeze<T>(a: Arena<T>): Result<FrozenArena<T>, FreezeRejected<T>> {
 // Whether `h` names a slot in THIS frozen arena. False for a handle minted by a
 // different arena. Use it when a foreign handle is a possibility you want to
 // branch on rather than abort over.
+@mustUse
 pub fn frozenHolds<T>(a: &FrozenArena<T>, h: Handle<T>): bool {
     if h.arenaId != a.id {
         return false
@@ -693,6 +701,7 @@ impl Arena<T> {
     }
 
     // Replace the value at `h`. False (and no write) if `h` is stale.
+    @mustUse
     fn set(self: &mut Self, h: Handle<T>, val: T): bool {
         return arenaSet(self, h, val)
     }
@@ -701,6 +710,7 @@ impl Arena<T> {
     // called) if `h` is stale. Moves T out and back, so prefer modifyMut when T
     // is large or you touch only a field or two. Absent when T carries Drop or
     // @noCopy, for the same reason as `get`.
+    @mustUse
     @copyOut
     fn modify(self: &mut Self, h: Handle<T>, f: (T) => T): bool {
         return arenaModify(self, h, f)
@@ -713,10 +723,12 @@ impl Arena<T> {
     // that owns heap (a string, a Vec, a nested struct): `get` clones the whole
     // value out of the slot on every call. False (and `f` not called) if `h` is
     // stale. Take the result out through a captured `var`.
+    @mustUse
     fn read(self: &Self, h: Handle<T>, f: (&T) => void): bool {
         return arenaRead(self, h, f)
     }
 
+    @mustUse
     fn modifyMut(self: &mut Self, h: Handle<T>, f: (&mut T) => void): bool {
         return arenaModifyMut(self, h, f)
     }
@@ -726,6 +738,7 @@ impl Arena<T> {
     // False if `h` was already stale — so a double free is a no-op, not a fault.
     // Does NOT shrink the arena, and does not chase handles held INSIDE the
     // freed value; a cyclic graph still needs a sweep you write.
+    @mustUse
     fn free(self: &mut Self, h: Handle<T>): bool {
         return arenaFree(self, h)
     }
@@ -739,6 +752,7 @@ impl Arena<T> {
 
     // Whether `h` still names a live value in THIS arena — identity and
     // generation both checked. A handle from another arena reads as invalid.
+    @mustUse
     fn valid(self: &Self, h: Handle<T>): bool {
         return arenaValid(self, h)
     }
@@ -789,6 +803,7 @@ impl FrozenArena<T> {
 
     // Whether `h` names a slot here. Branch on this instead of `get` when a
     // foreign handle is a case you expect rather than a bug.
+    @mustUse
     fn holds(self: &Self, h: Handle<T>): bool {
         return frozenHolds(self, h)
     }

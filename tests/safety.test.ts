@@ -281,3 +281,14 @@ for (const level of ["iso26262-a", "iso26262-d", "iec61508-4"] as const) {
     expect(checkSafetyCompliance(prog, level, DISCARDED).filter(v => v.rule === "unused-result")).toHaveLength(0);
   });
 }
+
+// The checker's own Option finding (a discarded `a.get(h)`), not a `@mustUse` one, is
+// escalated the same way: the rule keys on the warning, not on the attribute.
+test("requireUsedResults: a discarded Option escalates to an error at do178c-a", () => {
+  const prog = new Parser(new Lexer(TRIVIAL).tokenize(), TRIVIAL).parse();
+  const finding = [{ message: "unused Option value — this may contain an error that should be handled", span: { line: 5, col: 3 } }];
+  const vs = checkSafetyCompliance(prog, "do178c-a", finding).filter(v => v.rule === "unused-result");
+  expect(vs).toHaveLength(1);
+  expect(vs[0].severity).toBe("error");
+  expect(vs[0].message).toBe("[do178c-a] unused Option value — this may contain an error that should be handled");
+});

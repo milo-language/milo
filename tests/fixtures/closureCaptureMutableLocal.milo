@@ -22,7 +22,7 @@ pub fn main(): i32 {
     var built = String.withCapacity(8)
     built.push('h')
     built.push('i')
-    arenaModifyMut(a, h, (b: &mut Box): void => {
+    let _ = arenaModifyMut(a, h, (b: &mut Box): void => {
         b.items.push(built)
     }
     )
@@ -38,7 +38,7 @@ pub fn main(): i32 {
 
     // mutate-in-place of a captured local, read after
     var total = 0
-    arenaModifyMut(a, h, (b: &mut Box): void => {
+    let _ = arenaModifyMut(a, h, (b: &mut Box): void => {
         b.n = 1
         total = total + 10
     }

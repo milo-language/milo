@@ -1129,7 +1129,11 @@ export class TypeChecker {
     }
     if (e.kind === "MethodCall") {
       const mangled = this.resolvedMethods.get(e);
-      if (mangled && this.functions.get(mangled)?.mustUse) return mangled.replace(/\$/g, ".");
+      if (mangled && this.functions.get(mangled)?.mustUse) {
+        // Named as the reader wrote it (`Arena<i32>.valid`), not by the mangled instance.
+        const objType = this.exprTypes.get(e.object);
+        return `${objType ? this.show(objType) : mangled.split("$")[0]}.${e.method}`;
+      }
     }
     return null;
   }

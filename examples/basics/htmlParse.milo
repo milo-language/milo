@@ -171,18 +171,18 @@ pub fn createComment(dom: &mut Dom, text: string): Handle<Node> {
 }
 
 pub fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
-    arenaModifyMut(dom.arena, parent, (n: &mut Node): void => {
+    let _ = arenaModifyMut(dom.arena, parent, (n: &mut Node): void => {
         n.children.push(child)
     }
     )
-    arenaModifyMut(dom.arena, child, (c: &mut Node): void => {
+    let _ = arenaModifyMut(dom.arena, child, (c: &mut Node): void => {
         c.parent = Option.Some(parent)
     }
     )
 }
 
 pub fn addAttr(dom: &mut Dom, h: Handle<Node>, name: string, value: string) {
-    arenaModifyMut(dom.arena, h, (n: &mut Node): void => {
+    let _ = arenaModifyMut(dom.arena, h, (n: &mut Node): void => {
         n.attrs.push(Attr {
             name: name, value: value
         }
@@ -198,7 +198,7 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
         match nodeKind(dom, last) {
             NodeKind.Text => {
                 let extra = t.clone()
-                arenaModifyMut(dom.arena, last, (n: &mut Node): void => {
+                let _ = arenaModifyMut(dom.arena, last, (n: &mut Node): void => {
                     for i in 0..extra.len() {
                         n.text.push(extra[i])
                     }

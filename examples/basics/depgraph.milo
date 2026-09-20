@@ -35,13 +35,13 @@ pub fn addNode(g: &mut DepGraph, name: string): Handle<Node> {
 }
 
 pub fn addEdge(g: &mut DepGraph, src: Handle<Node>, dst: Handle<Node>) {
-    arenaModify(g.arena, src, (n: Node) => {
+    let _ = arenaModify(g.arena, src, (n: Node) => {
         var updated = n
         updated.deps.push(dst)
         return updated
     }
     )
-    arenaModify(g.arena, dst, (n: Node) => {
+    let _ = arenaModify(g.arena, dst, (n: Node) => {
         var updated = n
         updated.dependents.push(src)
         return updated

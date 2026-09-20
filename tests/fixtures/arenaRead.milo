@@ -43,7 +43,7 @@ fn main() {
     print(out)
 
     // A stale handle does not call the closure, so `out` keeps its old value.
-    ar.free(h)
+    let _ = ar.free(h)
     print(ar.read(h, (v: &Node) => {
         out = 999
     }
