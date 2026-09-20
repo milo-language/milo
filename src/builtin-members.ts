@@ -216,6 +216,17 @@ function namesWith(flag: "retainsArg" | "grows"): ReadonlySet<string> {
 export const RETAINING_MEMBERS: ReadonlySet<string> = namesWith("retainsArg");
 export const GROWING_MEMBERS: ReadonlySet<string> = namesWith("grows");
 
+// Builtins that may realloc, free, or shift collection memory — illegal on a
+// receiver with a live borrow (slice or active for-in). Read-only and in-place
+// element ops are intentionally absent. A literal list rather than a flag because the
+// checker reads it on any receiver type (vec, hashmap, string) before the receiver's
+// member table is consulted; it lives here so checker.ts and the whole-program passes
+// share one copy without importing each other.
+export const MUTATING_COLLECTION_METHODS: ReadonlySet<string> = new Set([
+  "push", "pushStr", "pop", "insert", "remove", "reverse", "swap", "sort", "sortBy", "sortByKey",
+  "clear", "truncate", "extend", "retain", "reserve",
+]);
+
 // The one-line detail an editor shows next to the name.
 export function memberDetail(m: BuiltinMember): string {
   return m.note ? `${m.sig} — ${m.note}` : m.sig;

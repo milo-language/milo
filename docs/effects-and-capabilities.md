@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: effects-and-capabilities
 purpose: what a Milo signature does and does not promise; @pure's rules, and why capabilities and effect rows were rejected
-key-files: src/checker.ts (checkPurity), std/math.milo, docs/design.md
+key-files: src/checker-program-passes.ts (checkPurity), std/math.milo, docs/design.md
 update-when: @pure's rules change, or the capability/effect-row rejection is revisited
 last-verified: 2026-07-30
 -->
@@ -44,7 +44,7 @@ fn sumSquares(v: &Vec<i64>): i64 {
 }
 ```
 
-The rule, as the checker enforces it (`checkPurity` in `src/checker.ts`): a `@pure`
+The rule, as the checker enforces it (`checkPurity` in `src/checker-program-passes.ts`): a `@pure`
 function may read and write its parameters and its own locals, and nothing else. In
 particular it may not
 
