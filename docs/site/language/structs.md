@@ -104,15 +104,7 @@ Next: [Enums & Matching](./enums)
 
 ## Visibility
 
-Fields and methods are private by default. Mark them `pub` to export from a module:
-
-```milo
-struct Config {
-    pub host: string,
-    pub port: i32,
-    secret: string,       // private, only visible in this module
-}
-```
+A struct is file-private unless declared `pub struct`. There is no per-field `pub`: every field of a visible struct is visible, except fields named with a leading `_`, which only the declaring file may touch (see [Private fields](#private-fields) above).
 
 ## Drop
 
