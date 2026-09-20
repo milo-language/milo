@@ -66,7 +66,8 @@ The last row is *not* memory safety — it's functional correctness. It's here b
 The probes behind the matrix are ordinary tests: `tests/errors/` for every `compile` row,
 `tests/runtime-errors/` for every trap, `tests/fixtures/` for the programs that must keep
 working (the index-loop rewrite of finding #5, `channelDropsUndelivered`, `implSignatureMatches`),
-and `tests/prove/` for finding #10. The `bun test` step of `.github/workflows/ci.yml` runs all
+`tests/prove/` for finding #10, and `tests/mustUseLint.test.ts` plus `tests/safety.test.ts` for
+the discarded-result row, which is a warning outside the safety profiles. The `bun test` step of `.github/workflows/ci.yml` runs all
 of them. Three later steps in the same job are what the sweep added:
 
 - **AddressSanitizer sweep** (`bun run test:asan`): every fixture built with `--sanitize` and
