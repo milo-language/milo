@@ -1,0 +1,18 @@
+// An inline `v.ptr()` argument is a shared borrow of `v` for the call, so it cannot sit
+// beside a `&mut v` argument: the callee pushes through the reference and then reads the
+// stale pointer. Same rule as `grow(v, v[0])`, one more way of spelling the shared side.
+// @error: 'v' is borrowed mutably and shared in the same call
+from "std/os" import {
+    strlen
+}
+
+fn growRead(p: *u8, v: &mut Vec<u8>): u64 {
+    v.push(66)
+    return strlen(p)
+}
+
+pub fn main(): i32 {
+    var v: Vec<u8> = [65, 0]
+    print(growRead(v.ptr(), v))
+    return 0
+}

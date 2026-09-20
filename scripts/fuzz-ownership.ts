@@ -828,24 +828,22 @@ function runProgram(file: string): Run & { asan: string | null } {
 // harness would then print "no findings" for the exact class it added ASan to see. That
 // is not hypothetical -- `--sanitize` shipped in precisely that state (see
 // tests/sanitize.test.ts). Prove the oracle can fail before trusting it to pass.
+//
+// The probe is the one fuzz-tasks.ts uses: `strlen` over a buffer with no NUL, an inline
+// `ptr()` with no mutation, so it stays legal under the pointer-view rule. The old probe
+// (`let p = v.ptr()` then a push) is now rejected by the checker, `unsafe` or not, and
+// this script exited 2 at startup for as long as it carried it.
 function assertAsanWorks(): void {
   const probe = join(dir, "__asan_selfcheck.milo");
-  writeFileSync(probe, `fn main() {
-    var v: Vec<i32> = Vec.new()
-    v.push(1)
-    var x: i32 = 0
-    unsafe {
-        let p = v.ptr()
-        var i: i32 = 0
-        while i < 1000 { v.push(i); i = i + 1 }
-        x = *p
-    }
-    print(x)
+  writeFileSync(probe, `from "std/os" import { strlen }
+fn main() {
+    var v: Vec<u8> = Vec.filled(8, 65)
+    print(strlen(v.ptr()))
 }
 `);
   const r = runProgram(probe);
-  if (r.asan !== "heap-use-after-free") {
-    console.error("ASan self-check FAILED: a deliberate use-after-free read was not reported.");
+  if (r.asan !== "heap-buffer-overflow") {
+    console.error("ASan self-check FAILED: a deliberate out-of-bounds read was not reported.");
     console.error(`  got: ${r.asan ?? "no AddressSanitizer output"}`);
     console.error("  The sanitizer is linked but not instrumenting, or clang is missing.");
     console.error("  Refusing to run: results would read as clean for the class ASan is here to catch.");

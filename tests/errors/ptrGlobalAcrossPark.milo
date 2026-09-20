@@ -1,0 +1,19 @@
+// The pointer spelling of the slice-across-park rule: `p` points into the global's buffer
+// and stays live to the end of its block, so a park after it lets another task push to the
+// global and free that buffer before this task resumes.
+// @error: 'schedulerYield' can park this task while 'p' still points into 'g's buffer (from 'g.ptr()' on line 15)
+from "std/os" import {
+    strlen
+}
+from "std/runtime" import {
+    schedulerYield
+}
+var g: Vec<u8> = []
+
+pub fn main(): i32 {
+    g.push(0)
+    let p = g.ptr()
+    schedulerYield()
+    print(strlen(p))
+    return 0
+}
