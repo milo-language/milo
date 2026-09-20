@@ -79,7 +79,7 @@ pub fn cgNeedsDrop(cg: &Cgen, tyRaw: &string): bool {
 
 // Zero the slot at `addr` (typed `ty`), so a subsequent drop of it is a no-op.
 pub fn zeroStore(cg: &mut Cgen, addr: &string, ty: &string) {
-    emit(cg, "  store " + llType(resolveTyStr(cg, ty)) + " zeroinitializer, ptr " + addr.clone() + "\n")
+    emit(&mut cg, "  store " + llType(resolveTyStr(cg, ty)) + " zeroinitializer, ptr " + addr.clone() + "\n")
 }
 
 // Emit code that drops the value stored at `addr` (a pointer to a value of type
@@ -92,103 +92,103 @@ pub fn emitDropValue(cg: &mut Cgen, addr: &string, tyRaw: &string) {
     if addrWasMoved(cg, addr) {
         return
     }
-    ensureFree(cg)
+    ensureFree(&mut cg)
     let ty = resolveTyStr(cg, tyRaw)
     if ty == "string" {
-        let old = nextTemp(cg)
-        emit(cg, "  " + old + " = load %String, ptr " + addr.clone() + "\n")
-        let cap = nextTemp(cg)
-        emit(cg, "  " + cap + " = extractvalue %String " + old + ", 2\n")
-        let owned = nextTemp(cg)
-        emit(cg, "  " + owned + " = icmp ugt i64 " + cap + ", 0\n")
-        let d = nextLabel(cg, "drop")
-        let s = nextLabel(cg, "dropskip")
-        emit(cg, "  br i1 " + owned + ", label %" + d + ", label %" + s + "\n")
-        emitLabel(cg, d)
-        let p = nextTemp(cg)
-        emit(cg, "  " + p + " = extractvalue %String " + old + ", 0\n")
-        emit(cg, "  call void @free(ptr " + p + ")\n")
-        emit(cg, "  br label %" + s + "\n")
-        emitLabel(cg, s)
+        let old = nextTemp(&mut cg)
+        emit(&mut cg, "  " + old + " = load %String, ptr " + addr.clone() + "\n")
+        let cap = nextTemp(&mut cg)
+        emit(&mut cg, "  " + cap + " = extractvalue %String " + old + ", 2\n")
+        let owned = nextTemp(&mut cg)
+        emit(&mut cg, "  " + owned + " = icmp ugt i64 " + cap + ", 0\n")
+        let d = nextLabel(&mut cg, "drop")
+        let s = nextLabel(&mut cg, "dropskip")
+        emit(&mut cg, "  br i1 " + owned + ", label %" + d + ", label %" + s + "\n")
+        emitLabel(&mut cg, d)
+        let p = nextTemp(&mut cg)
+        emit(&mut cg, "  " + p + " = extractvalue %String " + old + ", 0\n")
+        emit(&mut cg, "  call void @free(ptr " + p + ")\n")
+        emit(&mut cg, "  br label %" + s + "\n")
+        emitLabel(&mut cg, s)
         return
     }
     if isVecTy(ty) {
         let elem = unwrapVec(ty)
-        let vv = nextTemp(cg)
-        emit(cg, "  " + vv + " = load %Vec, ptr " + addr.clone() + "\n")
-        let data = nextTemp(cg)
-        emit(cg, "  " + data + " = extractvalue %Vec " + vv + ", 0\n")
-        let isnull = nextTemp(cg)
-        emit(cg, "  " + isnull + " = icmp eq ptr " + data + ", null\n")
-        let d = nextLabel(cg, "vdrop")
-        let s = nextLabel(cg, "vskip")
-        emit(cg, "  br i1 " + isnull + ", label %" + s + ", label %" + d + "\n")
-        emitLabel(cg, d)
+        let vv = nextTemp(&mut cg)
+        emit(&mut cg, "  " + vv + " = load %Vec, ptr " + addr.clone() + "\n")
+        let data = nextTemp(&mut cg)
+        emit(&mut cg, "  " + data + " = extractvalue %Vec " + vv + ", 0\n")
+        let isnull = nextTemp(&mut cg)
+        emit(&mut cg, "  " + isnull + " = icmp eq ptr " + data + ", null\n")
+        let d = nextLabel(&mut cg, "vdrop")
+        let s = nextLabel(&mut cg, "vskip")
+        emit(&mut cg, "  br i1 " + isnull + ", label %" + s + ", label %" + d + "\n")
+        emitLabel(&mut cg, d)
         if cgNeedsDrop(cg, elem) {
-            let len = nextTemp(cg)
-            emit(cg, "  " + len + " = extractvalue %Vec " + vv + ", 1\n")
+            let len = nextTemp(&mut cg)
+            emit(&mut cg, "  " + len + " = extractvalue %Vec " + vv + ", 1\n")
             let elemLl = llType(resolveTyStr(cg, elem))
-            let ia = nextTemp(cg)
-            emit(cg, "  " + ia + " = alloca i64\n")
-            emit(cg, "  store i64 0, ptr " + ia + "\n")
-            let cond = nextLabel(cg, "vdc")
-            let body = nextLabel(cg, "vdb")
-            let end = nextLabel(cg, "vde")
-            emit(cg, "  br label %" + cond + "\n")
-            emitLabel(cg, cond)
-            let iv = nextTemp(cg)
-            emit(cg, "  " + iv + " = load i64, ptr " + ia + "\n")
-            let cmp = nextTemp(cg)
-            emit(cg, "  " + cmp + " = icmp ult i64 " + iv + ", " + len + "\n")
-            emit(cg, "  br i1 " + cmp + ", label %" + body + ", label %" + end + "\n")
-            emitLabel(cg, body)
-            let ep = nextTemp(cg)
-            emit(cg, "  " + ep + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + iv + "\n")
-            emitDropValue(cg, ep, elem)
-            let ni = nextTemp(cg)
-            emit(cg, "  " + ni + " = add i64 " + iv + ", 1\n")
-            emit(cg, "  store i64 " + ni + ", ptr " + ia + "\n")
-            emit(cg, "  br label %" + cond + "\n")
-            emitLabel(cg, end)
+            let ia = nextTemp(&mut cg)
+            emit(&mut cg, "  " + ia + " = alloca i64\n")
+            emit(&mut cg, "  store i64 0, ptr " + ia + "\n")
+            let cond = nextLabel(&mut cg, "vdc")
+            let body = nextLabel(&mut cg, "vdb")
+            let end = nextLabel(&mut cg, "vde")
+            emit(&mut cg, "  br label %" + cond + "\n")
+            emitLabel(&mut cg, cond)
+            let iv = nextTemp(&mut cg)
+            emit(&mut cg, "  " + iv + " = load i64, ptr " + ia + "\n")
+            let cmp = nextTemp(&mut cg)
+            emit(&mut cg, "  " + cmp + " = icmp ult i64 " + iv + ", " + len + "\n")
+            emit(&mut cg, "  br i1 " + cmp + ", label %" + body + ", label %" + end + "\n")
+            emitLabel(&mut cg, body)
+            let ep = nextTemp(&mut cg)
+            emit(&mut cg, "  " + ep + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + iv + "\n")
+            emitDropValue(&mut cg, ep, elem)
+            let ni = nextTemp(&mut cg)
+            emit(&mut cg, "  " + ni + " = add i64 " + iv + ", 1\n")
+            emit(&mut cg, "  store i64 " + ni + ", ptr " + ia + "\n")
+            emit(&mut cg, "  br label %" + cond + "\n")
+            emitLabel(&mut cg, end)
         }
-        emit(cg, "  call void @free(ptr " + data + ")\n")
-        emit(cg, "  br label %" + s + "\n")
-        emitLabel(cg, s)
+        emit(&mut cg, "  call void @free(ptr " + data + ")\n")
+        emit(&mut cg, "  br label %" + s + "\n")
+        emitLabel(&mut cg, s)
         return
     }
     let inner = unwrapHeap(ty)
     if inner.len > 0 {
-        let hp = nextTemp(cg)
-        emit(cg, "  " + hp + " = load ptr, ptr " + addr.clone() + "\n")
-        let isnull = nextTemp(cg)
-        emit(cg, "  " + isnull + " = icmp eq ptr " + hp + ", null\n")
-        let d = nextLabel(cg, "hdrop")
-        let s = nextLabel(cg, "hskip")
-        emit(cg, "  br i1 " + isnull + ", label %" + s + ", label %" + d + "\n")
-        emitLabel(cg, d)
+        let hp = nextTemp(&mut cg)
+        emit(&mut cg, "  " + hp + " = load ptr, ptr " + addr.clone() + "\n")
+        let isnull = nextTemp(&mut cg)
+        emit(&mut cg, "  " + isnull + " = icmp eq ptr " + hp + ", null\n")
+        let d = nextLabel(&mut cg, "hdrop")
+        let s = nextLabel(&mut cg, "hskip")
+        emit(&mut cg, "  br i1 " + isnull + ", label %" + s + ", label %" + d + "\n")
+        emitLabel(&mut cg, d)
         if cgNeedsDrop(cg, inner) {
-            emitDropValue(cg, hp, inner)
+            emitDropValue(&mut cg, hp, inner)
         }
-        emit(cg, "  call void @free(ptr " + hp + ")\n")
-        emit(cg, "  br label %" + s + "\n")
-        emitLabel(cg, s)
+        emit(&mut cg, "  call void @free(ptr " + hp + ")\n")
+        emit(&mut cg, "  br label %" + s + "\n")
+        emitLabel(&mut cg, s)
         return
     }
     let raw = stripPercent(ty)
     // A user `impl Drop` owns its own teardown — call it and stop (matches the
     // pre-existing emitScopeDrops behavior; do not also auto-drop its fields).
     if cg.fnRets.contains(raw + "$Drop$drop") {
-        emit(cg, "  call void @" + raw + "$Drop$drop(ptr " + addr.clone() + ")\n")
+        emit(&mut cg, "  call void @" + raw + "$Drop$drop(ptr " + addr.clone() + ")\n")
         return
     }
     if cg.structs.contains(raw) {
-        ensureStructDropHelper(cg, raw)
-        emit(cg, "  call void @milo.drop.struct." + raw + "(ptr " + addr.clone() + ")\n")
+        ensureStructDropHelper(&mut cg, raw)
+        emit(&mut cg, "  call void @milo.drop.struct." + raw + "(ptr " + addr.clone() + ")\n")
         return
     }
     if cg.enums.contains(raw) {
-        ensureEnumDropHelper(cg, raw)
-        emit(cg, "  call void @milo.drop.enum." + raw + "(ptr " + addr.clone() + ")\n")
+        ensureEnumDropHelper(&mut cg, raw)
+        emit(&mut cg, "  call void @milo.drop.enum." + raw + "(ptr " + addr.clone() + ")\n")
         return
     }
 }
@@ -228,16 +228,16 @@ pub fn ensureStructDropHelper(cg: &mut Cgen, name: &string) {
     cg.body = ""
     cg.temp = 0
     cg.label = 0
-    emit(cg, "entry.bb:\n")
+    emit(&mut cg, "entry.bb:\n")
     let fields = cg.structs.get(name)!
     for i in 0..fields.len {
         if cgNeedsDrop(cg, fields[i].ty) {
-            let fp = nextTemp(cg)
-            emit(cg, "  " + fp + " = getelementptr %" + name.clone() + ", ptr %self, i32 0, i32 " + i.toString() + "\n")
-            emitDropValue(cg, fp, fields[i].ty)
+            let fp = nextTemp(&mut cg)
+            emit(&mut cg, "  " + fp + " = getelementptr %" + name.clone() + ", ptr %self, i32 0, i32 " + i.toString() + "\n")
+            emitDropValue(&mut cg, fp, fields[i].ty)
         }
     }
-    emit(cg, "  ret void\n")
+    emit(&mut cg, "  ret void\n")
     let helperIR = "define void @" + hn + "(ptr %self) {\n" + cg.body.clone() + "}\n\n"
     cg.body = savedBody
     cg.curBlock = savedBlock
@@ -274,12 +274,12 @@ pub fn ensureEnumDropHelper(cg: &mut Cgen, name: &string) {
     cg.body = ""
     cg.temp = 0
     cg.label = 0
-    emit(cg, "entry.bb:\n")
-    let tp = nextTemp(cg)
-    emit(cg, "  " + tp + " = getelementptr %" + name.clone() + ", ptr %self, i32 0, i32 0\n")
-    let tag = nextTemp(cg)
-    emit(cg, "  " + tag + " = load i32, ptr " + tp + "\n")
-    let done = nextLabel(cg, "edone")
+    emit(&mut cg, "entry.bb:\n")
+    let tp = nextTemp(&mut cg)
+    emit(&mut cg, "  " + tp + " = getelementptr %" + name.clone() + ", ptr %self, i32 0, i32 0\n")
+    let tag = nextTemp(&mut cg)
+    emit(&mut cg, "  " + tag + " = load i32, ptr " + tp + "\n")
+    let done = nextLabel(&mut cg, "edone")
 
     var caseLines = ""
     var dropIdx: Vec<i64> = Vec.new()
@@ -294,34 +294,34 @@ pub fn ensureEnumDropHelper(cg: &mut Cgen, name: &string) {
             }
         }
         if anyDrop {
-            let lbl = nextLabel(cg, "edrop")
+            let lbl = nextLabel(&mut cg, "edrop")
             caseLines = caseLines + "    i32 " + info.variants[vi].tag.toString() + ", label %" + lbl + "\n"
             dropIdx.push(vi)
             dropLbls.push(lbl)
         }
     }
     if dropIdx.len > 0 {
-        emit(cg, "  switch i32 " + tag + ", label %" + done + " [\n" + caseLines + "  ]\n")
+        emit(&mut cg, "  switch i32 " + tag + ", label %" + done + " [\n" + caseLines + "  ]\n")
         for k in 0..dropIdx.len {
             let vi = dropIdx[k]
-            emit(cg, dropLbls[k].clone() + ":\n")
+            emit(&mut cg, dropLbls[k].clone() + ":\n")
             let payloadTypes = lookupVariantPayload(cg, name, info.variants[vi].name)
-            let pay = nextTemp(cg)
-            emit(cg, "  " + pay + " = getelementptr %" + name.clone() + ", ptr %self, i32 0, i32 1\n")
+            let pay = nextTemp(&mut cg)
+            emit(&mut cg, "  " + pay + " = getelementptr %" + name.clone() + ", ptr %self, i32 0, i32 1\n")
             let vstructTy = variantStructTyDrop(payloadTypes)
             for pi in 0..payloadTypes.len {
                 if cgNeedsDrop(cg, payloadTypes[pi]) {
-                    let fp = nextTemp(cg)
-                    emit(cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + pay + ", i32 0, i32 " + pi.toString() + "\n")
-                    emitDropValue(cg, fp, payloadTypes[pi])
+                    let fp = nextTemp(&mut cg)
+                    emit(&mut cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + pay + ", i32 0, i32 " + pi.toString() + "\n")
+                    emitDropValue(&mut cg, fp, payloadTypes[pi])
                 }
             }
-            emit(cg, "  br label %" + done + "\n")
+            emit(&mut cg, "  br label %" + done + "\n")
         }
     } else {
-        emit(cg, "  br label %" + done + "\n")
+        emit(&mut cg, "  br label %" + done + "\n")
     }
-    emit(cg, done + ":\n  ret void\n")
+    emit(&mut cg, done + ":\n  ret void\n")
     let helperIR = "define void @" + hn + "(ptr %self) {\n" + cg.body.clone() + "}\n\n"
     cg.body = savedBody
     cg.curBlock = savedBlock

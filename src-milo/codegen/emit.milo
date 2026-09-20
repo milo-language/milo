@@ -846,7 +846,7 @@ pub fn genFn(cg: &mut Cgen, f: &HFunction, sigs: &Vec<CgFnSig>) {
         if cg.abiExterns.contains(f.name) {
             declRet = externLoweredRet(cg, f)
         }
-        emitG(cg, "declare " + declRet + " @" + f.name + "(" + ps + ")\n")
+        emitG(&mut cg, "declare " + declRet + " @" + f.name + "(" + ps + ")\n")
         return
     }
 
@@ -897,17 +897,17 @@ pub fn genFn(cg: &mut Cgen, f: &HFunction, sigs: &Vec<CgFnSig>) {
     hdr = hdr + ") {\n"
     cg.fnBuf = ""
     cg.inFn = true
-    emit(cg, hdr)
+    emit(&mut cg, hdr)
     // "entry.bb", not "entry": a PARAMETER named `entry` (std/fs's directory walker has
     // one) becomes `%entry`, which collides with a block label spelled `entry` and LLVM
     // refuses the module. Same class as the `%.t` temp prefix — a generated name must be
     // one the source language cannot produce.
-    emit(cg, "entry.bb:\n")
+    emit(&mut cg, "entry.bb:\n")
     if isMain {
-        emit(cg, "  store i32 %_milo_argc, ptr @_milo_argc_global\n")
-        emit(cg, "  store ptr %_milo_argv, ptr @_milo_argv_global\n")
+        emit(&mut cg, "  store i32 %_milo_argc, ptr @_milo_argc_global\n")
+        emit(&mut cg, "  store ptr %_milo_argv, ptr @_milo_argv_global\n")
         if cg.needsGlobalInit {
-            emit(cg, "  call void @_milo_init_globals()\n")
+            emit(&mut cg, "  call void @_milo_init_globals()\n")
         }
     }
 
@@ -927,8 +927,8 @@ pub fn genFn(cg: &mut Cgen, f: &HFunction, sigs: &Vec<CgFnSig>) {
         } else {
             let llt = llType(pTyStr)
             let addr = "%" + f.params[pj].name + "_addr"
-            emit(cg, "  " + addr + " = alloca " + llt + "\n")
-            emit(cg, "  store " + llt + " %" + f.params[pj].name + ", ptr " + addr + "\n")
+            emit(&mut cg, "  " + addr + " = alloca " + llt + "\n")
+            emit(&mut cg, "  store " + llt + " %" + f.params[pj].name + ", ptr " + addr + "\n")
             locs.push(Local {
                 name: f.params[pj].name.clone(), ty: pTyStr, addr: addr, isRef: false, isArr: pIsArr, range: rangeOfTyK(f.params[pj].ty)
             }
@@ -946,19 +946,19 @@ pub fn genFn(cg: &mut Cgen, f: &HFunction, sigs: &Vec<CgFnSig>) {
     cg.vecPushHints = pushHints
     var terminated = false
     for si in 0..f.body.len {
-        if genStmt(cg, *f.body[si], locs, sigs, retTyStr) {
+        if genStmt(&mut cg, *f.body[si], &mut locs, sigs, retTyStr) {
             terminated = true
         }
     }
     if !terminated {
-        emitScopeDrops(cg, locs, 0, "")
+        emitScopeDrops(&mut cg, locs, 0, "")
         if retLl == "void" {
-            emit(cg, "  ret void\n")
+            emit(&mut cg, "  ret void\n")
         } else {
-            emit(cg, "  ret " + retLl + " 0\n")
+            emit(&mut cg, "  ret " + retLl + " 0\n")
         }
     }
-    emit(cg, "}\n\n")
+    emit(&mut cg, "}\n\n")
     cg.inFn = false
     // One append of one function's text. `body = body + x` hits the in-place append
     // peephole (amortized realloc), so the accumulated module is never re-copied.
@@ -1032,8 +1032,8 @@ fn emitGlobalStatic(cg: &mut Cgen, gname: &string, surfaceTy: &string, value: &E
                 }
                 dataC = dataC + "]"
                 let n = elems.len.toString()
-                emitG(cg, "@" + gname.clone() + "_data = global [" + n + " x " + elemLl + "] " + dataC + "\n")
-                emitG(cg, "@" + gname.clone() + " = global %Vec { ptr @" + gname.clone() + "_data, i64 " + n + ", i64 " + n + " }\n")
+                emitG(&mut cg, "@" + gname.clone() + "_data = global [" + n + " x " + elemLl + "] " + dataC + "\n")
+                emitG(&mut cg, "@" + gname.clone() + " = global %Vec { ptr @" + gname.clone() + "_data, i64 " + n + ", i64 " + n + " }\n")
                 arrayHandled = true
             }
         }
@@ -1049,7 +1049,7 @@ fn emitGlobalStatic(cg: &mut Cgen, gname: &string, surfaceTy: &string, value: &E
         let sfields = cg.structs.get(sname)!
         match constStructBody(cg, value, sfields) {
             Option.Some(body) => {
-                emitG(cg, "@" + gname.clone() + " = global " + gllTy + " " + body + "\n")
+                emitG(&mut cg, "@" + gname.clone() + " = global " + gllTy + " " + body + "\n")
                 return false
             }
             Option.None => {
@@ -1072,7 +1072,7 @@ fn emitGlobalStatic(cg: &mut Cgen, gname: &string, surfaceTy: &string, value: &E
         // `pub let TAIL: string = "tail"` stayed the empty string forever.
         needsInit = true
     }
-    emitG(cg, "@" + gname.clone() + " = global " + gllTy + " " + gval + "\n")
+    emitG(&mut cg, "@" + gname.clone() + " = global " + gllTy + " " + gval + "\n")
     return needsInit
 }
 
@@ -1089,11 +1089,11 @@ pub fn genProgram(m: HIRModule, sourceDir: string): string {
 
     // Runtime-support globals: argc/argv (read by _miloArgCount/_miloArgAt) and
     // the current green scheduler (read/written by _schedulerGet/_schedulerSet).
-    emitG(cg, "@_milo_argc_global = internal global i32 0\n")
-    emitG(cg, "@_milo_argv_global = internal global ptr null\n")
-    emitG(cg, "@_milo_scheduler = internal thread_local global ptr null\n")
+    emitG(&mut cg, "@_milo_argc_global = internal global i32 0\n")
+    emitG(&mut cg, "@_milo_argv_global = internal global ptr null\n")
+    emitG(&mut cg, "@_milo_scheduler = internal thread_local global ptr null\n")
     // closure/fn value = { fn pointer, environment pointer }
-    emitG(cg, "%Closure = type { ptr, ptr }\n")
+    emitG(&mut cg, "%Closure = type { ptr, ptr }\n")
 
     // Register type aliases FIRST — the astTypeStr(...)/resolveTyStr(...) calls that
     // remain (trait method return types) need the alias table already populated to
@@ -1108,9 +1108,9 @@ pub fn genProgram(m: HIRModule, sourceDir: string): string {
     // is UNSIZED until %HashMap is declared, and lazy declaration put %HashMap 2000
     // lines below the drop helper that geps %Checker ("base element of getelementptr
     // must be sized"). Three unused type lines is a cheap price for order-independence.
-    ensureStringTy(cg)
-    ensureVecTy(cg)
-    ensureHashMapTy(cg)
+    ensureStringTy(&mut cg)
+    ensureVecTy(&mut cg)
+    ensureHashMapTy(&mut cg)
 
     // Register global var types NOW (functions reference them); the `@name = global`
     // lines are EMITTED LATER, after struct/enum type decls, so a struct-typed global
@@ -1229,9 +1229,9 @@ pub fn genProgram(m: HIRModule, sourceDir: string): string {
         }
         )
         if slots > 0 {
-            emitG(cg, "%" + ename + " = type { i32, [" + slots.toString() + " x i64] }\n")
+            emitG(&mut cg, "%" + ename + " = type { i32, [" + slots.toString() + " x i64] }\n")
         } else {
-            emitG(cg, "%" + ename + " = type { i32 }\n")
+            emitG(&mut cg, "%" + ename + " = type { i32 }\n")
         }
     }
 
@@ -1250,14 +1250,14 @@ pub fn genProgram(m: HIRModule, sourceDir: string): string {
             llStruct = llStruct + llType(sfields[fi].ty)
         }
         llStruct = llStruct + " }"
-        emitG(cg, "%" + sname + " = type " + llStruct + "\n")
+        emitG(&mut cg, "%" + sname + " = type " + llStruct + "\n")
     }
 
     // Interfaces (traits used as types) are trait objects — a fat pointer
     // `%Iface = type { ptr data, ptr itable }`. The name/slots were registered early
     // (before struct fields, so Heap<Iface> fields collapse); emit the type decl now.
     for ti in 0..mod.astTraits.len {
-        emitG(cg, "%" + mod.astTraits[ti].name.clone() + " = type { ptr, ptr }\n")
+        emitG(&mut cg, "%" + mod.astTraits[ti].name.clone() + " = type { ptr, ptr }\n")
     }
 
     // Module-level global initializers — emitted here so struct/enum/%Vec/%String
@@ -1269,7 +1269,7 @@ pub fn genProgram(m: HIRModule, sourceDir: string): string {
         let gname = mod.globals[gi].name.clone()
         match (*mod.globals[gi].value).kind {
             HExpr.Unlowered(av) => {
-                if emitGlobalStatic(cg, gname, surfaceTy, *av) {
+                if emitGlobalStatic(&mut cg, gname, surfaceTy, *av) {
                     dynIdx.push(gi)
                 }
             }
@@ -1305,7 +1305,7 @@ pub fn genProgram(m: HIRModule, sourceDir: string): string {
                 var refs: Vec<string> = Vec.new()
                 match (*mod.globals[gi].value).kind {
                     HExpr.Unlowered(av) => {
-                        collectIdentsExpr(cg, *av, refs)
+                        collectIdentsExpr(cg, *av, &mut refs)
                     }
                     _ => {
                     }
@@ -1337,22 +1337,22 @@ pub fn genProgram(m: HIRModule, sourceDir: string): string {
                 }
             }
         }
-        emit(cg, "define void @_milo_init_globals() {\n")
-        emit(cg, "entry.bb:\n")
+        emit(&mut cg, "define void @_milo_init_globals() {\n")
+        emit(&mut cg, "entry.bb:\n")
         var initLocs: Vec<Local> = Vec.new()
         for oi in 0..ordered.len {
             let gi = ordered[oi]
             let surfaceTy = tyStr(cg, mod.globals[gi].ty, "global '" + mod.globals[gi].name.clone() + "'")
-            let v = genHExpr(cg, *mod.globals[gi].value, initLocs, sigs, surfaceTy.clone())
-            emit(cg, "  store " + llType(surfaceTy) + " " + v.v + ", ptr @" + mod.globals[gi].name.clone() + "\n")
+            let v = genHExpr(&mut cg, *mod.globals[gi].value, initLocs, sigs, surfaceTy.clone())
+            emit(&mut cg, "  store " + llType(surfaceTy) + " " + v.v + ", ptr @" + mod.globals[gi].name.clone() + "\n")
         }
-        emit(cg, "  ret void\n")
-        emit(cg, "}\n\n")
+        emit(&mut cg, "  ret void\n")
+        emit(&mut cg, "}\n\n")
     }
 
     // Emit all functions
     for j in 0..mod.functions.len {
-        genFn(cg, mod.functions[j], sigs)
+        genFn(&mut cg, mod.functions[j], sigs)
     }
 
     return cg.globals + "\n" + cg.body

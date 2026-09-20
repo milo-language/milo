@@ -286,7 +286,7 @@ pub fn synthesizeDefaultMethods(ck: &mut Checker, program: &Program) {
                         }
                         var params: Vec<FnParam> = Vec.new()
                         for pi in 0..tm.params.len {
-                            var pType = resolveAstType(ck, tm.params[pi].ty)
+                            var pType = resolveAstType(&mut ck, tm.params[pi].ty)
                             match pType.clone() {
                                 TypeKind.TRef(inner, mutable) => {
                                     match *inner {
@@ -312,7 +312,7 @@ pub fn synthesizeDefaultMethods(ck: &mut Checker, program: &Program) {
                             }
                             )
                         }
-                        var retType = resolveAstType(ck, tm.retType)
+                        var retType = resolveAstType(&mut ck, tm.retType)
                         match retType.clone() {
                             TypeKind.TStruct(nm) => {
                                 if nm == "Self" {
@@ -365,9 +365,9 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
         Option.Some(marker) => {
             if marker == "Send" || marker == "Sync" {
                 if !implDecl.isUnsafe {
-                    error(ck, "manual '" + marker.clone() + "' implementation for '" + implDecl.typeName.clone() + "' must be unsafe", cloneSpan(implDecl.span))
+                    error(&mut ck, "manual '" + marker.clone() + "' implementation for '" + implDecl.typeName.clone() + "' must be unsafe", cloneSpan(implDecl.span))
                 } else if implDecl.methods.len > 0 {
-                    error(ck, "unsafe impl '" + marker.clone() + "' is a marker and cannot define methods", cloneSpan(implDecl.span))
+                    error(&mut ck, "unsafe impl '" + marker.clone() + "' is a marker and cannot define methods", cloneSpan(implDecl.span))
                 }
                 // Send/Sync capture enforcement is still owned by the TS checker;
                 // milo-self retains the marker so imported stdlib syntax is valid.
@@ -378,14 +378,14 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
         }
     }
     if implDecl.isUnsafe {
-        error(ck, "unsafe impl is only supported for the Send and Sync marker traits", cloneSpan(implDecl.span))
+        error(&mut ck, "unsafe impl is only supported for the Send and Sync marker traits", cloneSpan(implDecl.span))
         return
     }
     // generic impls park until their type monomorphizes (see mono.milo);
     // types that already monomorphized replay immediately
     if implDecl.typeParams.len > 0 {
         ck.genericImpls.push(implDecl.clone())
-        replayImplForInsts(ck, implDecl)
+        replayImplForInsts(&mut ck, implDecl)
         return
     }
     let tn = implDecl.typeName.clone()
@@ -394,7 +394,7 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
         Option.Some(traitName) => {
             // Trait implDecl
             if !ck.traits.contains(traitName) {
-                error(ck, "unknown trait '" + traitName.clone() + "'", cloneSpan(implDecl.span))
+                error(&mut ck, "unknown trait '" + traitName.clone() + "'", cloneSpan(implDecl.span))
                 return
             }
 
@@ -411,7 +411,7 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                 // Register function signature
                 var params: Vec<FnParam> = Vec.new()
                 for pi in 0..m.params.len {
-                    var pType = resolveAstType(ck, m.params[pi].ty)
+                    var pType = resolveAstType(&mut ck, m.params[pi].ty)
                     // Substitute Self with concrete type
                     match pType.clone() {
                         TypeKind.TRef(inner, mutable) => {
@@ -438,7 +438,7 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     }
                     )
                 }
-                var retType = resolveAstType(ck, m.retType)
+                var retType = resolveAstType(&mut ck, m.retType)
                 match retType.clone() {
                     TypeKind.TStruct(name) => {
                         if name == "Self" {
@@ -493,7 +493,7 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
 
                 var params: Vec<FnParam> = Vec.new()
                 for pi in 0..m.params.len {
-                    var pType = resolveAstType(ck, m.params[pi].ty)
+                    var pType = resolveAstType(&mut ck, m.params[pi].ty)
                     match pType.clone() {
                         TypeKind.TRef(inner, mutable) => {
                             match *inner {
@@ -519,7 +519,7 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     }
                     )
                 }
-                var retType = resolveAstType(ck, m.retType)
+                var retType = resolveAstType(&mut ck, m.retType)
                 match retType.clone() {
                     TypeKind.TStruct(name) => {
                         if name == "Self" {
@@ -562,7 +562,7 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
 
 pub fn registerAllImpls(ck: &mut Checker, program: &Program) {
     for i in 0..program.impls.len {
-        registerImpl(ck, program.impls[i])
+        registerImpl(&mut ck, program.impls[i])
     }
 }
 
@@ -658,17 +658,17 @@ pub fn processDerives(ck: &mut Checker, program: &Program) {
                         let implDecl = deriveEq(s)
                         match implDecl {
                             Option.Some(decl) => {
-                                registerImpl(ck, decl)
+                                registerImpl(&mut ck, decl)
                             }
                             Option.None => {
                             }
                         }
                     }
                     if s.attributes[j].args[k] == "Json" {
-                        let implDecl = deriveJson(ck, s)
+                        let implDecl = deriveJson(&mut ck, s)
                         match implDecl {
                             Option.Some(decl) => {
-                                registerImpl(ck, decl)
+                                registerImpl(&mut ck, decl)
                             }
                             Option.None => {
                             }

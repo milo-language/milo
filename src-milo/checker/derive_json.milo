@@ -152,50 +152,50 @@ pub fn jemitSer(p: &JsonPlan, val: &string, g: &mut JGen, d: i64): string {
         }
         JsonPlan.PUnitEnum(specH) => {
             let spec = *specH
-            let s = jgenTmp(g, "s")
-            jgenPush(g, d, "var " + s.clone() + ": string = \"\"")
-            jgenPush(g, d, "match " + val.clone() + " {")
+            let s = jgenTmp(&mut g, "s")
+            jgenPush(&mut g, d, "var " + s.clone() + ": string = \"\"")
+            jgenPush(&mut g, d, "match " + val.clone() + " {")
             for i in 0..spec.variants.len {
-                jgenPush(g, d + 1, spec.name.clone() + "." + spec.variants[i].clone() + " => {")
+                jgenPush(&mut g, d + 1, spec.name.clone() + "." + spec.variants[i].clone() + " => {")
                 // jlit() escapes for MILO SOURCE; the wire value itself must ALSO be a
                 // JSON string (quoted), so wrap in quotes BEFORE jlit-escaping — two
                 // layers, or the generated code assigns the bare variant name with no
                 // surrounding quotes and emits invalid JSON (`"role":Admin`).
-                jgenPush(g, d + 2, s.clone() + " = " + jlit("\"" + spec.variants[i] + "\""))
-                jgenPush(g, d + 1, "}")
+                jgenPush(&mut g, d + 2, s.clone() + " = " + jlit("\"" + spec.variants[i] + "\""))
+                jgenPush(&mut g, d + 1, "}")
             }
-            jgenPush(g, d, "}")
+            jgenPush(&mut g, d, "}")
             return s
         }
         JsonPlan.PVec(ty, elemH) => {
-            let s = jgenTmp(g, "s")
-            let ii = jgenTmp(g, "i")
-            let e = jgenTmp(g, "e")
-            jgenPush(g, d, "var " + s.clone() + ": string = \"[\"")
-            jgenPush(g, d, "var " + ii.clone() + ": i64 = 0")
-            jgenPush(g, d, "for " + e.clone() + " in " + val.clone() + " {")
-            jgenPush(g, d + 1, "if " + ii.clone() + " > 0 {")
-            jgenPush(g, d + 2, s.clone() + " = " + s.clone() + " + \",\"")
-            jgenPush(g, d + 1, "}")
-            let inner = jemitSer(*elemH, e, g, d + 1)
-            jgenPush(g, d + 1, s.clone() + " = " + s.clone() + " + " + inner)
-            jgenPush(g, d + 1, ii.clone() + " = " + ii.clone() + " + 1")
-            jgenPush(g, d, "}")
-            jgenPush(g, d, s.clone() + " = " + s.clone() + " + \"]\"")
+            let s = jgenTmp(&mut g, "s")
+            let ii = jgenTmp(&mut g, "i")
+            let e = jgenTmp(&mut g, "e")
+            jgenPush(&mut g, d, "var " + s.clone() + ": string = \"[\"")
+            jgenPush(&mut g, d, "var " + ii.clone() + ": i64 = 0")
+            jgenPush(&mut g, d, "for " + e.clone() + " in " + val.clone() + " {")
+            jgenPush(&mut g, d + 1, "if " + ii.clone() + " > 0 {")
+            jgenPush(&mut g, d + 2, s.clone() + " = " + s.clone() + " + \",\"")
+            jgenPush(&mut g, d + 1, "}")
+            let inner = jemitSer(*elemH, e, &mut g, d + 1)
+            jgenPush(&mut g, d + 1, s.clone() + " = " + s.clone() + " + " + inner)
+            jgenPush(&mut g, d + 1, ii.clone() + " = " + ii.clone() + " + 1")
+            jgenPush(&mut g, d, "}")
+            jgenPush(&mut g, d, s.clone() + " = " + s.clone() + " + \"]\"")
             return s
         }
         JsonPlan.POption(ty, innerH) => {
-            let s = jgenTmp(g, "s")
-            let x = jgenTmp(g, "x")
-            jgenPush(g, d, "var " + s.clone() + ": string = \"null\"")
-            jgenPush(g, d, "match " + val.clone() + " {")
-            jgenPush(g, d + 1, "Option.Some(" + x.clone() + ") => {")
-            let inner = jemitSer(*innerH, x, g, d + 2)
-            jgenPush(g, d + 2, s.clone() + " = " + inner)
-            jgenPush(g, d + 1, "}")
-            jgenPush(g, d + 1, "Option.None => {")
-            jgenPush(g, d + 1, "}")
-            jgenPush(g, d, "}")
+            let s = jgenTmp(&mut g, "s")
+            let x = jgenTmp(&mut g, "x")
+            jgenPush(&mut g, d, "var " + s.clone() + ": string = \"null\"")
+            jgenPush(&mut g, d, "match " + val.clone() + " {")
+            jgenPush(&mut g, d + 1, "Option.Some(" + x.clone() + ") => {")
+            let inner = jemitSer(*innerH, x, &mut g, d + 2)
+            jgenPush(&mut g, d + 2, s.clone() + " = " + inner)
+            jgenPush(&mut g, d + 1, "}")
+            jgenPush(&mut g, d + 1, "Option.None => {")
+            jgenPush(&mut g, d + 1, "}")
+            jgenPush(&mut g, d, "}")
             return s
         }
     }
@@ -208,28 +208,28 @@ pub fn jmismatch(path: &string, expected: &string, node: &string): string {
 }
 
 pub fn jemitScalarDe(accessor: &string, expected: &string, node: &string, path: &string, g: &mut JGen, d: i64): string {
-    let t = jgenTmp(g, "v")
-    jgenPush(g, d, "let Option.Some(" + t.clone() + ") = doc." + accessor.clone() + "(" + node.clone() + ") else {")
-    jgenPush(g, d + 1, "return " + jmismatch(path, expected, node))
-    jgenPush(g, d, "}")
+    let t = jgenTmp(&mut g, "v")
+    jgenPush(&mut g, d, "let Option.Some(" + t.clone() + ") = doc." + accessor.clone() + "(" + node.clone() + ") else {")
+    jgenPush(&mut g, d + 1, "return " + jmismatch(path, expected, node))
+    jgenPush(&mut g, d, "}")
     return t
 }
 
 pub fn jemitDe(p: &JsonPlan, node: &string, path: &string, g: &mut JGen, d: i64): string {
     match p {
         JsonPlan.PString => {
-            return jemitScalarDe("curStr", "string", node, path, g, d)
+            return jemitScalarDe("curStr", "string", node, path, &mut g, d)
         }
         JsonPlan.PBool => {
-            return jemitScalarDe("curBool", "bool", node, path, g, d)
+            return jemitScalarDe("curBool", "bool", node, path, &mut g, d)
         }
         JsonPlan.PFloat(ty) => {
-            let raw = jemitScalarDe("curFloat", "number", node, path, g, d)
+            let raw = jemitScalarDe("curFloat", "number", node, path, &mut g, d)
             if ty == "f64" {
                 return raw
             }
-            let t = jgenTmp(g, "v")
-            jgenPush(g, d, "let " + t.clone() + " = " + raw + " as " + ty.clone())
+            let t = jgenTmp(&mut g, "v")
+            jgenPush(&mut g, d, "let " + t.clone() + " = " + raw + " as " + ty.clone())
             return t
         }
         JsonPlan.PInt(specH) => {
@@ -238,15 +238,15 @@ pub fn jemitDe(p: &JsonPlan, node: &string, path: &string, g: &mut JGen, d: i64)
             if spec.unsigned64 {
                 accessor = "curUint"
             }
-            let raw = jemitScalarDe(accessor, "integer", node, path, g, d)
+            let raw = jemitScalarDe(accessor, "integer", node, path, &mut g, d)
             if !spec.hasRange {
                 return raw
             }
-            jgenPush(g, d, "if " + raw.clone() + " < " + spec.lo.clone() + " || " + raw.clone() + " > " + spec.hi.clone() + " {")
-            jgenPush(g, d + 1, "return Result.Err(JsonError.Mismatch(JsonMismatch { path: " + path.clone() + ", expected: " + jlit(spec.ty) + ", actual: \"out-of-range number\" }))")
-            jgenPush(g, d, "}")
-            let t = jgenTmp(g, "v")
-            jgenPush(g, d, "let " + t.clone() + " = " + raw + " as " + spec.ty.clone())
+            jgenPush(&mut g, d, "if " + raw.clone() + " < " + spec.lo.clone() + " || " + raw.clone() + " > " + spec.hi.clone() + " {")
+            jgenPush(&mut g, d + 1, "return Result.Err(JsonError.Mismatch(JsonMismatch { path: " + path.clone() + ", expected: " + jlit(spec.ty) + ", actual: \"out-of-range number\" }))")
+            jgenPush(&mut g, d, "}")
+            let t = jgenTmp(&mut g, "v")
+            jgenPush(&mut g, d, "let " + t.clone() + " = " + raw + " as " + spec.ty.clone())
             return t
         }
         JsonPlan.PStruct(name) => {
@@ -256,38 +256,38 @@ pub fn jemitDe(p: &JsonPlan, node: &string, path: &string, g: &mut JGen, d: i64)
             // derive/trait task report). Statement-form match, guarded so the
             // checker sees the branch that consumes `mr` as always-diverging, then
             // `!`-unwrap: works around it without touching the parser.
-            let mr = jgenTmp(g, "mr")
-            let er = jgenTmp(g, "er")
-            let ok = jgenTmp(g, "ok")
-            let t = jgenTmp(g, "v")
-            jgenPush(g, d, "let " + mr.clone() + " = " + name.clone() + ".fromJsonNode(doc, " + node.clone() + ")")
-            jgenPush(g, d, "if " + mr.clone() + ".isErr() {")
-            jgenPush(g, d + 1, "match " + mr.clone() + " {")
-            jgenPush(g, d + 2, "Result.Err(" + er.clone() + ") => {")
-            jgenPush(g, d + 3, "return Result.Err(" + er.clone() + ".under(" + path.clone() + "))")
-            jgenPush(g, d + 2, "}")
-            jgenPush(g, d + 2, "Result.Ok(" + ok.clone() + ") => {")
-            jgenPush(g, d + 3, "return Result.Err(JsonError.Syntax(\"unreachable\"))")
-            jgenPush(g, d + 2, "}")
-            jgenPush(g, d + 1, "}")
-            jgenPush(g, d, "}")
-            jgenPush(g, d, "let " + t.clone() + " = " + mr.clone() + "!")
+            let mr = jgenTmp(&mut g, "mr")
+            let er = jgenTmp(&mut g, "er")
+            let ok = jgenTmp(&mut g, "ok")
+            let t = jgenTmp(&mut g, "v")
+            jgenPush(&mut g, d, "let " + mr.clone() + " = " + name.clone() + ".fromJsonNode(doc, " + node.clone() + ")")
+            jgenPush(&mut g, d, "if " + mr.clone() + ".isErr() {")
+            jgenPush(&mut g, d + 1, "match " + mr.clone() + " {")
+            jgenPush(&mut g, d + 2, "Result.Err(" + er.clone() + ") => {")
+            jgenPush(&mut g, d + 3, "return Result.Err(" + er.clone() + ".under(" + path.clone() + "))")
+            jgenPush(&mut g, d + 2, "}")
+            jgenPush(&mut g, d + 2, "Result.Ok(" + ok.clone() + ") => {")
+            jgenPush(&mut g, d + 3, "return Result.Err(JsonError.Syntax(\"unreachable\"))")
+            jgenPush(&mut g, d + 2, "}")
+            jgenPush(&mut g, d + 1, "}")
+            jgenPush(&mut g, d, "}")
+            jgenPush(&mut g, d, "let " + t.clone() + " = " + mr.clone() + "!")
             return t
         }
         JsonPlan.PUnitEnum(specH) => {
             let spec = *specH
-            let s = jemitScalarDe("curStr", "string", node, path, g, d)
-            let t = jgenTmp(g, "v")
-            let ok = jgenTmp(g, "ok")
-            jgenPush(g, d, "var " + t.clone() + ": " + spec.name.clone() + " = " + spec.name.clone() + "." + spec.variants[0].clone())
-            jgenPush(g, d, "var " + ok.clone() + ": bool = false")
+            let s = jemitScalarDe("curStr", "string", node, path, &mut g, d)
+            let t = jgenTmp(&mut g, "v")
+            let ok = jgenTmp(&mut g, "ok")
+            jgenPush(&mut g, d, "var " + t.clone() + ": " + spec.name.clone() + " = " + spec.name.clone() + "." + spec.variants[0].clone())
+            jgenPush(&mut g, d, "var " + ok.clone() + ": bool = false")
             for i in 0..spec.variants.len {
-                jgenPush(g, d, "if " + s.clone() + " == " + jlit(spec.variants[i]) + " {")
-                jgenPush(g, d + 1, t.clone() + " = " + spec.name.clone() + "." + spec.variants[i].clone())
-                jgenPush(g, d + 1, ok.clone() + " = true")
-                jgenPush(g, d, "}")
+                jgenPush(&mut g, d, "if " + s.clone() + " == " + jlit(spec.variants[i]) + " {")
+                jgenPush(&mut g, d + 1, t.clone() + " = " + spec.name.clone() + "." + spec.variants[i].clone())
+                jgenPush(&mut g, d + 1, ok.clone() + " = true")
+                jgenPush(&mut g, d, "}")
             }
-            jgenPush(g, d, "if !" + ok.clone() + " {")
+            jgenPush(&mut g, d, "if !" + ok.clone() + " {")
             var oneOf = ""
             for i in 0..spec.variants.len {
                 if i > 0 {
@@ -295,35 +295,35 @@ pub fn jemitDe(p: &JsonPlan, node: &string, path: &string, g: &mut JGen, d: i64)
                 }
                 oneOf = oneOf + "\"" + spec.variants[i].clone() + "\""
             }
-            jgenPush(g, d + 1, "return Result.Err(JsonError.Mismatch(JsonMismatch { path: " + path.clone() + ", expected: " + jlit("one of " + oneOf) + ", actual: \"\\\"\" + " + s.clone() + " + \"\\\"\" }))")
-            jgenPush(g, d, "}")
+            jgenPush(&mut g, d + 1, "return Result.Err(JsonError.Mismatch(JsonMismatch { path: " + path.clone() + ", expected: " + jlit("one of " + oneOf) + ", actual: \"\\\"\" + " + s.clone() + " + \"\\\"\" }))")
+            jgenPush(&mut g, d, "}")
             return t
         }
         JsonPlan.PVec(ty, elemH) => {
-            let t = jgenTmp(g, "v")
-            let ii = jgenTmp(g, "i")
-            let c = jgenTmp(g, "c")
-            jgenPush(g, d, "if doc.curKind(" + node.clone() + ") != 4 {")
-            jgenPush(g, d + 1, "return " + jmismatch(path, "array", node))
-            jgenPush(g, d, "}")
-            jgenPush(g, d, "var " + t.clone() + ": " + ty.clone() + " = Vec.new()")
-            jgenPush(g, d, "var " + ii.clone() + ": i64 = 0")
-            jgenPush(g, d, "while " + ii.clone() + " < doc.curLen(" + node.clone() + ") {")
-            jgenPush(g, d + 1, "let " + c.clone() + " = doc.curChild(" + node.clone() + ", " + ii.clone() + ")")
+            let t = jgenTmp(&mut g, "v")
+            let ii = jgenTmp(&mut g, "i")
+            let c = jgenTmp(&mut g, "c")
+            jgenPush(&mut g, d, "if doc.curKind(" + node.clone() + ") != 4 {")
+            jgenPush(&mut g, d + 1, "return " + jmismatch(path, "array", node))
+            jgenPush(&mut g, d, "}")
+            jgenPush(&mut g, d, "var " + t.clone() + ": " + ty.clone() + " = Vec.new()")
+            jgenPush(&mut g, d, "var " + ii.clone() + ": i64 = 0")
+            jgenPush(&mut g, d, "while " + ii.clone() + " < doc.curLen(" + node.clone() + ") {")
+            jgenPush(&mut g, d + 1, "let " + c.clone() + " = doc.curChild(" + node.clone() + ", " + ii.clone() + ")")
             let elemPath = path.clone() + " + \"[\" + " + ii.clone() + ".toString() + \"]\""
-            let inner = jemitDe(*elemH, c, elemPath, g, d + 1)
-            jgenPush(g, d + 1, t.clone() + ".push(" + inner + ")")
-            jgenPush(g, d + 1, ii.clone() + " = " + ii.clone() + " + 1")
-            jgenPush(g, d, "}")
+            let inner = jemitDe(*elemH, c, elemPath, &mut g, d + 1)
+            jgenPush(&mut g, d + 1, t.clone() + ".push(" + inner + ")")
+            jgenPush(&mut g, d + 1, ii.clone() + " = " + ii.clone() + " + 1")
+            jgenPush(&mut g, d, "}")
             return t
         }
         JsonPlan.POption(ty, innerH) => {
-            let t = jgenTmp(g, "v")
-            jgenPush(g, d, "var " + t.clone() + ": " + ty.clone() + " = Option.None")
-            jgenPush(g, d, "if " + node.clone() + " >= 0 && doc.curKind(" + node.clone() + ") != 0 {")
-            let inner = jemitDe(*innerH, node, path, g, d + 1)
-            jgenPush(g, d + 1, t.clone() + " = Option.Some(" + inner + ")")
-            jgenPush(g, d, "}")
+            let t = jgenTmp(&mut g, "v")
+            jgenPush(&mut g, d, "var " + t.clone() + ": " + ty.clone() + " = Option.None")
+            jgenPush(&mut g, d, "if " + node.clone() + " >= 0 && doc.curKind(" + node.clone() + ") != 0 {")
+            let inner = jemitDe(*innerH, node, path, &mut g, d + 1)
+            jgenPush(&mut g, d + 1, t.clone() + " = Option.Some(" + inner + ")")
+            jgenPush(&mut g, d, "}")
             return t
         }
     }
@@ -471,7 +471,7 @@ pub fn jsonPlanFor(ck: &mut Checker, t: &TypeKind, structName: &string, fieldNam
         }
         TypeKind.TStruct(name) => {
             if !jsonHasCodec(ck, name) {
-                error(ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': struct '" + name.clone() + "' has no JSON codec — add @derive(Json) to it", Option.None)
+                error(&mut ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': struct '" + name.clone() + "' has no JSON codec — add @derive(Json) to it", Option.None)
                 return Option.None
             }
             return Option.Some(JsonPlan.PStruct(name.clone()))
@@ -479,10 +479,10 @@ pub fn jsonPlanFor(ck: &mut Checker, t: &TypeKind, structName: &string, fieldNam
         TypeKind.TEnum(name) => {
             match jsonOptionInner(ck, name) {
                 Option.Some(inner) => {
-                    match jsonPlanFor(ck, inner, structName, fieldName) {
+                    match jsonPlanFor(&mut ck, inner, structName, fieldName) {
                         Option.Some(p) => {
                             if isOptionPlan(p) {
-                                error(ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': Option<Option<T>> has no distinct JSON encoding — 'Some(None)' and an absent field are both null", Option.None)
+                                error(&mut ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': Option<Option<T>> has no distinct JSON encoding — 'Some(None)' and an absent field are both null", Option.None)
                                 return Option.None
                             }
                             let spelling = "Option<" + jsonTypeSpelling(ck, inner) + ">"
@@ -497,14 +497,14 @@ pub fn jsonPlanFor(ck: &mut Checker, t: &TypeKind, structName: &string, fieldNam
                 }
             }
             if !ck.enums.contains(name) {
-                error(ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': unknown enum '" + name.clone() + "'", Option.None)
+                error(&mut ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': unknown enum '" + name.clone() + "'", Option.None)
                 return Option.None
             }
             let info = ck.enums.get(name)!
             match jsonUnitVariants(info) {
                 Result.Ok(variants) => {
                     if variants.len == 0 {
-                        error(ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': enum '" + name.clone() + "' has no variants", Option.None)
+                        error(&mut ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': enum '" + name.clone() + "' has no variants", Option.None)
                         return Option.None
                     }
                     return Option.Some(JsonPlan.PUnitEnum(Heap(PUnitEnumSpec {
@@ -513,13 +513,13 @@ pub fn jsonPlanFor(ck: &mut Checker, t: &TypeKind, structName: &string, fieldNam
                     )))
                 }
                 Result.Err(msg) => {
-                    error(ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': enum '" + name.clone() + "' " + msg, Option.None)
+                    error(&mut ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': enum '" + name.clone() + "' " + msg, Option.None)
                     return Option.None
                 }
             }
         }
         TypeKind.TVec(elem) => {
-            match jsonPlanFor(ck, *elem, structName, fieldName) {
+            match jsonPlanFor(&mut ck, *elem, structName, fieldName) {
                 Option.Some(p) => {
                     let spelling = "Vec<" + jsonTypeSpelling(ck, *elem) + ">"
                     return Option.Some(JsonPlan.PVec(spelling, Heap(p)))
@@ -530,7 +530,7 @@ pub fn jsonPlanFor(ck: &mut Checker, t: &TypeKind, structName: &string, fieldNam
             }
         }
         _ => {
-            error(ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': type '" + typeName(t) + "' has no JSON form", Option.None)
+            error(&mut ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': type '" + typeName(t) + "' has no JSON form", Option.None)
             return Option.None
         }
     }
@@ -546,13 +546,13 @@ fn jsonDeriveSource(structName: &string, fields: &Vec<JsonFieldPlan>): string {
     var gSer = jgenNew("        ")
     for i in 0..fields.len {
         let f = fields[i]
-        let expr = jemitSer(f.plan, "self." + f.field.clone(), gSer, 0)
+        let expr = jemitSer(f.plan, "self." + f.field.clone(), &mut gSer, 0)
         var prefix = ","
         if i == 0 {
             prefix = ""
         }
         let keyLit = jlit(prefix + "\"" + f.key.clone() + "\":")
-        jgenPush(gSer, 0, "out = out + " + keyLit + " + " + expr)
+        jgenPush(&mut gSer, 0, "out = out + " + keyLit + " + " + expr)
     }
     out.push("    fn toJson(self: &Self): string {")
     out.push("        var out: string = \"{\"")
@@ -568,15 +568,15 @@ fn jsonDeriveSource(structName: &string, fields: &Vec<JsonFieldPlan>): string {
     var gDe = jgenNew("        ")
     for i in 0..fields.len {
         let f = fields[i]
-        let node = jgenTmp(gDe, "n")
-        jgenPush(gDe, 0, "let " + node.clone() + " = doc.curField(cur, " + jlit(f.key) + ")")
+        let node = jgenTmp(&mut gDe, "n")
+        jgenPush(&mut gDe, 0, "let " + node.clone() + " = doc.curField(cur, " + jlit(f.key) + ")")
         // f.plan is read again below (jemitDe) — must not move it out here.
         if !isOptionPlan(f.plan) {
-            jgenPush(gDe, 0, "if " + node.clone() + " < 0 {")
-            jgenPush(gDe, 1, "return Result.Err(JsonError.Missing(" + jlit(f.key) + "))")
-            jgenPush(gDe, 0, "}")
+            jgenPush(&mut gDe, 0, "if " + node.clone() + " < 0 {")
+            jgenPush(&mut gDe, 1, "return Result.Err(JsonError.Missing(" + jlit(f.key) + "))")
+            jgenPush(&mut gDe, 0, "}")
         }
-        let de = jemitDe(f.plan, node, jlit(f.key), gDe, 0)
+        let de = jemitDe(f.plan, node, jlit(f.key), &mut gDe, 0)
         vals.push(f.field.clone() + ": " + de)
     }
     out.push("    fn fromJsonNode(doc: &Json, cur: i64): Result<" + structName.clone() + ", JsonError> {")
@@ -622,7 +622,7 @@ fn jsonDeriveSource(structName: &string, fields: &Vec<JsonFieldPlan>): string {
 
 pub fn deriveJson(ck: &mut Checker, s: &StructDecl): Option<ImplDecl> {
     if !ck.structs.contains(s.name) {
-        error(ck, "cannot derive Json for '" + s.name.clone() + "': unknown struct", Option.None)
+        error(&mut ck, "cannot derive Json for '" + s.name.clone() + "': unknown struct", Option.None)
         return Option.None
     }
     let sinfo = ck.structs.get(s.name)!
@@ -631,26 +631,26 @@ pub fn deriveJson(ck: &mut Checker, s: &StructDecl): Option<ImplDecl> {
     for i in 0..s.fields.len {
         let fname = s.fields[i].name.clone()
         let fty = sinfo.fields[i].ty.clone()
-        match jsonPlanFor(ck, fty, s.name, fname) {
+        match jsonPlanFor(&mut ck, fty, s.name, fname) {
             Option.Some(plan) => {
                 var key = fname.clone()
                 for ai in 0..s.fields[i].attributes.len {
                     if s.fields[i].attributes[ai].name == "json" {
                         let attr = s.fields[i].attributes[ai]
                         if attr.args.len != 1 {
-                            error(ck, "@json on '" + s.name.clone() + "." + fname.clone() + "': expects one string, e.g. @json(\"user_id\")", Option.None)
+                            error(&mut ck, "@json on '" + s.name.clone() + "." + fname.clone() + "': expects one string, e.g. @json(\"user_id\")", Option.None)
                             return Option.None
                         }
                         key = attr.args[0].clone()
                         if key.len == 0 {
-                            error(ck, "@json on '" + s.name.clone() + "." + fname.clone() + "': the name must be non-empty", Option.None)
+                            error(&mut ck, "@json on '" + s.name.clone() + "." + fname.clone() + "': the name must be non-empty", Option.None)
                             return Option.None
                         }
                     }
                 }
                 for si in 0..seenKeys.len {
                     if seenKeys[si] == key {
-                        error(ck, "cannot derive Json for '" + s.name.clone() + "': two fields map to the JSON name '" + key.clone() + "'", Option.None)
+                        error(&mut ck, "cannot derive Json for '" + s.name.clone() + "': two fields map to the JSON name '" + key.clone() + "'", Option.None)
                         return Option.None
                     }
                 }
@@ -671,7 +671,7 @@ pub fn deriveJson(ck: &mut Checker, s: &StructDecl): Option<ImplDecl> {
     reservedNames.push("fromJsonNode")
     for ri in 0..reservedNames.len {
         if resolveMethodExists(ck, s.name, reservedNames[ri]) {
-            error(ck, "cannot derive Json for '" + s.name.clone() + "': it already defines '" + reservedNames[ri].clone() + "'", Option.None)
+            error(&mut ck, "cannot derive Json for '" + s.name.clone() + "': it already defines '" + reservedNames[ri].clone() + "'", Option.None)
             return Option.None
         }
     }
@@ -684,7 +684,7 @@ pub fn deriveJson(ck: &mut Checker, s: &StructDecl): Option<ImplDecl> {
     // Parse just the impl block, not a full top-level parse() — cheaper, and
     // avoids building a whole Program (structs/enums/functions/imports/
     // globals, all empty here) that would just be dropped unused right after.
-    let implDecl = parseImplDecl(p, false)
+    let implDecl = parseImplDecl(&mut p, false)
     return Option.Some(implDecl)
 }
 

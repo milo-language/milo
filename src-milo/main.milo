@@ -443,7 +443,7 @@ pub fn compile(path: string): Compiled {
 
     // Parse
     var parser = newParser(tokens, path.clone())
-    let program = parse(parser)
+    let program = parse(&mut parser)
 
     // Resolve imports
     let target = getHostTarget()
@@ -458,7 +458,7 @@ pub fn compile(path: string): Compiled {
 
     // Type check
     var checker = newChecker()
-    checkProgram(checker, resolved)
+    checkProgram(&mut checker, resolved)
     if hasErrors(checker) {
         for i in 0..checker.diagnostics.len {
             let d = checker.diagnostics[i]
@@ -487,7 +487,7 @@ pub fn compile(path: string): Compiled {
     // program is lowered. lowerProgram CONSUMES the AST — after this line the only syntax
     // left anywhere is what rides inside HExpr.Unlowered.
     var finalProg = resolved
-    mergeMonomorphized(checker, finalProg)
+    mergeMonomorphized(&mut checker, &mut finalProg)
     let hir = lowerProgram(finalProg, checker)
     let libs = hir.linkLibs.clone()
     return Compiled {
@@ -843,7 +843,7 @@ pub fn main() {
         }
         let tokens = tokenize(src)
         var parser = newParser(tokens, docPath.clone())
-        let program = parse(parser)
+        let program = parse(&mut parser)
         let target = getHostTarget()
         let sourceDir = Path.dirname(docPath.clone())
         let stdlibDir = findStdlibRoot(sourceDir.clone())
@@ -859,7 +859,7 @@ pub fn main() {
         }
         if resolved.parseDiagnostics.len == 0 {
             var checker = newChecker()
-            checkProgram(checker, resolved)
+            checkProgram(&mut checker, resolved)
             for i in 0..checker.diagnostics.len {
                 let d = checker.diagnostics[i]
                 arr = arr.obj(diagnosticToJsonObj(d, docPath))
@@ -923,7 +923,7 @@ pub fn main() {
         }
         let tokens = tokenize(src)
         var parser = newParser(tokens, source.clone())
-        let program = parse(parser)
+        let program = parse(&mut parser)
         let target = getHostTarget()
         let sourceDir = Path.dirname(source.clone())
         let stdlibDir = findStdlibRoot(sourceDir)
@@ -933,7 +933,7 @@ pub fn main() {
             exit(1)
         }
         var checker = newChecker()
-        checkProgram(checker, resolved)
+        checkProgram(&mut checker, resolved)
         if hasErrors(checker) {
             for i in 0..checker.diagnostics.len {
                 let d = checker.diagnostics[i]
@@ -975,7 +975,7 @@ pub fn main() {
         }
         let tokens = tokenize(src)
         var parser = newParser(tokens, source.clone())
-        let program = parse(parser)
+        let program = parse(&mut parser)
         let target = getHostTarget()
         let sourceDir = Path.dirname(source.clone())
         let stdlibDir = findStdlibRoot(sourceDir)
@@ -985,7 +985,7 @@ pub fn main() {
             exit(1)
         }
         var checker = newChecker()
-        checkProgram(checker, resolved)
+        checkProgram(&mut checker, resolved)
         if hasErrors(checker) {
             for i in 0..checker.diagnostics.len {
                 let d = checker.diagnostics[i]
@@ -1004,7 +1004,7 @@ pub fn main() {
             exit(1)
         }
         var finalProg = resolved
-        mergeMonomorphized(checker, finalProg)
+        mergeMonomorphized(&mut checker, &mut finalProg)
         let hir = lowerProgram(finalProg, checker)
         print("structs " + hir.structs.len.toString())
         print("enums " + hir.enums.len.toString())

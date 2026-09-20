@@ -92,7 +92,7 @@ pub fn readLeadingTrivia(lex: &mut Lexer): Vec<Trivia> {
         let ch = peekChar(lex)
         if ch == 10 {
             newlines = newlines + 1
-            advanceChar(lex)
+            advanceChar(&mut lex)
             if newlines >= 2 && !emittedBlank {
                 trivia.push(Trivia {
                     kind: TriviaKind.Blank, text: "", line: lex.line
@@ -101,12 +101,12 @@ pub fn readLeadingTrivia(lex: &mut Lexer): Vec<Trivia> {
                 emittedBlank = true
             }
         } else if ch == 32 || ch == 9 || ch == 13 {
-            advanceChar(lex)
+            advanceChar(&mut lex)
         } else if ch == 47 && peekCharAt(lex, 1) == 47 {
             let commentLine = lex.line
             var text: string = ""
             while lex.pos < lex.src.len && peekChar(lex) != 10 {
-                text.push(advanceChar(lex))
+                text.push(advanceChar(&mut lex))
             }
             trivia.push(Trivia {
                 kind: TriviaKind.Comment, text: text, line: commentLine
@@ -125,7 +125,7 @@ pub fn readTrailingTrivia(lex: &mut Lexer): Vec<Trivia> {
     while lex.pos < lex.src.len {
         let ch = peekChar(lex)
         if ch == 32 || ch == 9 || ch == 13 {
-            advanceChar(lex)
+            advanceChar(&mut lex)
         } else {
             break
         }
@@ -134,7 +134,7 @@ pub fn readTrailingTrivia(lex: &mut Lexer): Vec<Trivia> {
         let commentLine = lex.line
         var text: string = ""
         while lex.pos < lex.src.len && peekChar(lex) != 10 {
-            text.push(advanceChar(lex))
+            text.push(advanceChar(&mut lex))
         }
         var result: Vec<Trivia> = Vec.new()
         result.push(Trivia {
@@ -150,8 +150,8 @@ pub fn readTrailingTrivia(lex: &mut Lexer): Vec<Trivia> {
 // -- literal lexing --
 
 pub fn lexHexEscape(lex: &mut Lexer): u8 {
-    let h1 = advanceChar(lex)
-    let h2 = advanceChar(lex)
+    let h1 = advanceChar(&mut lex)
+    let h2 = advanceChar(&mut lex)
     return (hexVal(h1) * 16 + hexVal(h2)) as u8
 }
 
@@ -159,17 +159,17 @@ pub fn lexHexEscape(lex: &mut Lexer): u8 {
 // which names one raw byte and bypasses UTF-8 entirely. Returns the scalar so the
 // char-literal caller can reject the ones that need more than a byte.
 pub fn lexUnicodeEscape(lex: &mut Lexer, line: i32, col: i32): i32 {
-    if advanceChar(lex) != 123 {
+    if advanceChar(&mut lex) != 123 {
         lexError("expected '{' after \\u", line, col)
     }
     var hex: string = ""
     while lex.pos < lex.src.len && peekChar(lex) != 125 {
-        hex.push(advanceChar(lex))
+        hex.push(advanceChar(&mut lex))
     }
     if lex.pos >= lex.src.len {
         lexError("unterminated \\u{...} escape", line, col)
     }
-    advanceChar(lex)
+    advanceChar(&mut lex)
     if hex.len == 0 || hex.len > 6 {
         lexError("invalid \\u{" + hex.clone() + "}: expected 1-6 hex digits", line, col)
     }
@@ -250,19 +250,19 @@ pub fn resolveEscape(c: u8): u8 {
 }
 
 pub fn lexString(lex: &mut Lexer, line: i32, col: i32): Token {
-    advanceChar(lex)
+    advanceChar(&mut lex)
     var value: string = ""
     while peekChar(lex) != 34 {
         if lex.pos >= lex.src.len {
             lexError("unterminated string", line, col)
         }
-        let ch = advanceChar(lex)
+        let ch = advanceChar(&mut lex)
         if ch == 92 {
-            let esc = advanceChar(lex)
+            let esc = advanceChar(&mut lex)
             if esc == 120 {
-                value.push(lexHexEscape(lex))
+                value.push(lexHexEscape(&mut lex))
             } else if esc == 117 {
-                pushUtf8(value, lexUnicodeEscape(lex, line, col))
+                pushUtf8(&mut value, lexUnicodeEscape(&mut lex, line, col))
             } else if isKnownEscape(esc, false) {
                 value.push(resolveEscape(esc))
             } else {
@@ -272,7 +272,7 @@ pub fn lexString(lex: &mut Lexer, line: i32, col: i32): Token {
             value.push(ch)
         }
     }
-    advanceChar(lex)
+    advanceChar(&mut lex)
     var lt: Vec<Trivia> = Vec.new()
     var tt: Vec<Trivia> = Vec.new()
     return Token {
@@ -281,14 +281,14 @@ pub fn lexString(lex: &mut Lexer, line: i32, col: i32): Token {
 }
 
 pub fn lexChar(lex: &mut Lexer, line: i32, col: i32): Token {
-    advanceChar(lex)
+    advanceChar(&mut lex)
     if lex.pos >= lex.src.len {
         lexError("unterminated char literal", line, col)
     }
     var value: i32 = 0
     if peekChar(lex) == 92 {
-        advanceChar(lex)
-        let esc = advanceChar(lex)
+        advanceChar(&mut lex)
+        let esc = advanceChar(&mut lex)
         if esc == 110 {
             value = 10
         } 
@@ -308,11 +308,11 @@ pub fn lexChar(lex: &mut Lexer, line: i32, col: i32): Token {
             value = 0
         } 
         else if esc == 120 {
-            value = lexHexEscape(lex) as i32
+            value = lexHexEscape(&mut lex) as i32
         } 
         else if esc == 117 {
             // A char is one byte, so only the Latin-1 range has a single-byte form.
-            value = lexUnicodeEscape(lex, line, col)
+            value = lexUnicodeEscape(&mut lex, line, col)
             if value > 0xFF {
                 lexError("\\u{...} does not fit in a char (one byte); use a string", line, col)
             }
@@ -321,12 +321,12 @@ pub fn lexChar(lex: &mut Lexer, line: i32, col: i32): Token {
             lexError("unknown escape sequence '" + escapeName(esc) + "'", line, col)
         }
     } else {
-        value = advanceChar(lex) as i32
+        value = advanceChar(&mut lex) as i32
     }
     if peekChar(lex) != 39 {
         lexError("unterminated char literal", line, col)
     }
-    advanceChar(lex)
+    advanceChar(&mut lex)
     var lt: Vec<Trivia> = Vec.new()
     var tt: Vec<Trivia> = Vec.new()
     return Token {
@@ -335,20 +335,20 @@ pub fn lexChar(lex: &mut Lexer, line: i32, col: i32): Token {
 }
 
 pub fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
-    advanceChar(lex)
-    advanceChar(lex)
+    advanceChar(&mut lex)
+    advanceChar(&mut lex)
     var value: string = ""
     var braceDepth: i32 = 0
     while true {
         if lex.pos >= lex.src.len {
             lexError("unterminated string", line, col)
         }
-        let ch = advanceChar(lex)
+        let ch = advanceChar(&mut lex)
         if braceDepth == 0 {
             if ch == 92 {
-                let esc = advanceChar(lex)
+                let esc = advanceChar(&mut lex)
                 if esc == 120 {
-                    value.push(lexHexEscape(lex))
+                    value.push(lexHexEscape(&mut lex))
                 } else if esc == 110 {
                     value.push(10 as u8)
                 } 
@@ -394,7 +394,7 @@ pub fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
                 else if esc == 117 {
                     // A `\u{7b}` must land on the same sentinel `\{` does, or it
                     // reopens the interpolation hole the sentinels exist to close.
-                    let cp = lexUnicodeEscape(lex, line, col)
+                    let cp = lexUnicodeEscape(&mut lex, line, col)
                     if cp == 0x7B {
                         value.push(0xEF as u8)
                         value.push(0x9D as u8)
@@ -404,7 +404,7 @@ pub fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
                         value.push(0x9D as u8)
                         value.push(0xBD as u8)
                     } else {
-                        pushUtf8(value, cp)
+                        pushUtf8(&mut value, cp)
                     }
                 } 
                 else {
@@ -464,11 +464,11 @@ pub fn lexNumber(lex: &mut Lexer, line: i32, col: i32): Token {
     var tt: Vec<Trivia> = Vec.new()
     // hex
     if peekChar(lex) == 48 && (peekCharAt(lex, 1) == 120 || peekCharAt(lex, 1) == 88) {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         var raw: string = ""
         while lex.pos < lex.src.len && (isHexDigit(peekChar(lex)) || peekChar(lex) == 95) {
-            let c = advanceChar(lex)
+            let c = advanceChar(&mut lex)
             if c != 95 {
                 raw.push(c)
             }
@@ -482,11 +482,11 @@ pub fn lexNumber(lex: &mut Lexer, line: i32, col: i32): Token {
     }
     // binary
     if peekChar(lex) == 48 && (peekCharAt(lex, 1) == 98 || peekCharAt(lex, 1) == 66) {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         var raw: string = ""
         while lex.pos < lex.src.len && (peekChar(lex) == 48 || peekChar(lex) == 49 || peekChar(lex) == 95) {
-            let c = advanceChar(lex)
+            let c = advanceChar(&mut lex)
             if c != 95 {
                 raw.push(c)
             }
@@ -501,16 +501,16 @@ pub fn lexNumber(lex: &mut Lexer, line: i32, col: i32): Token {
     // decimal
     var value: string = ""
     while lex.pos < lex.src.len && (isDigit(peekChar(lex)) || peekChar(lex) == 95) {
-        let c = advanceChar(lex)
+        let c = advanceChar(&mut lex)
         if c != 95 {
             value.push(c)
         }
     }
     // float: digit(s) then '.' then digit
     if peekChar(lex) == 46 && isDigit(peekCharAt(lex, 1)) {
-        value.push(advanceChar(lex))
+        value.push(advanceChar(&mut lex))
         while lex.pos < lex.src.len && (isDigit(peekChar(lex)) || peekChar(lex) == 95) {
-            let c = advanceChar(lex)
+            let c = advanceChar(&mut lex)
             if c != 95 {
                 value.push(c)
             }
@@ -519,12 +519,12 @@ pub fn lexNumber(lex: &mut Lexer, line: i32, col: i32): Token {
         if peekChar(lex) == 101 || peekChar(lex) == 69 {
             let sgn = peekCharAt(lex, 1)
             if isDigit(sgn) || ((sgn == 43 || sgn == 45) && isDigit(peekCharAt(lex, 2))) {
-                value.push(advanceChar(lex))
+                value.push(advanceChar(&mut lex))
                 if peekChar(lex) == 43 || peekChar(lex) == 45 {
-                    value.push(advanceChar(lex))
+                    value.push(advanceChar(&mut lex))
                 }
                 while lex.pos < lex.src.len && isDigit(peekChar(lex)) {
-                    value.push(advanceChar(lex))
+                    value.push(advanceChar(&mut lex))
                 }
             }
         }
@@ -538,12 +538,12 @@ pub fn lexNumber(lex: &mut Lexer, line: i32, col: i32): Token {
         let signCh = peekCharAt(lex, 1)
         let afterSign = peekCharAt(lex, 2)
         if isDigit(signCh) || ((signCh == 43 || signCh == 45) && isDigit(afterSign)) {
-            value.push(advanceChar(lex))
+            value.push(advanceChar(&mut lex))
             if peekChar(lex) == 43 || peekChar(lex) == 45 {
-                value.push(advanceChar(lex))
+                value.push(advanceChar(&mut lex))
             }
             while lex.pos < lex.src.len && isDigit(peekChar(lex)) {
-                value.push(advanceChar(lex))
+                value.push(advanceChar(&mut lex))
             }
             return Token {
                 kind: TokKind.Float, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt
@@ -558,7 +558,7 @@ pub fn lexNumber(lex: &mut Lexer, line: i32, col: i32): Token {
 pub fn lexIdent(lex: &mut Lexer, line: i32, col: i32): Token {
     var value: string = ""
     while lex.pos < lex.src.len && isAlnum(peekChar(lex)) {
-        value.push(advanceChar(lex))
+        value.push(advanceChar(&mut lex))
     }
     let kind = keywordKind(value)
     var lt: Vec<Trivia> = Vec.new()
@@ -589,23 +589,23 @@ pub fn nextToken(lex: &mut Lexer): Token {
 
     // f-string
     if ch == 36 && peekCharAt(lex, 1) == 34 {
-        return lexFString(lex, line, col)
+        return lexFString(&mut lex, line, col)
     }
     // string
     if ch == 34 {
-        return lexString(lex, line, col)
+        return lexString(&mut lex, line, col)
     }
     // char
     if ch == 39 {
-        return lexChar(lex, line, col)
+        return lexChar(&mut lex, line, col)
     }
     // number
     if isDigit(ch) {
-        return lexNumber(lex, line, col)
+        return lexNumber(&mut lex, line, col)
     }
     // ident/keyword
     if isAlpha(ch) {
-        return lexIdent(lex, line, col)
+        return lexIdent(&mut lex, line, col)
     }
 
     let next = peekCharAt(lex, 1)
@@ -613,121 +613,121 @@ pub fn nextToken(lex: &mut Lexer): Token {
 
     // three-char: ...
     if ch == 46 && next == 46 && next2 == 46 {
-        advanceChar(lex)
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.DotDotDot, "...", line, col)
     }
     // two-char: ..
     if ch == 46 && next == 46 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.DotDot, "..", line, col)
     }
     // ->
     if ch == 45 && next == 62 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.Arrow, "->", line, col)
     }
     // ==
     if ch == 61 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.EqEq, "==", line, col)
     }
     // =>
     if ch == 61 && next == 62 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.FatArrow, "=>", line, col)
     }
     // ::
     if ch == 58 && next == 58 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.ColonColon, "::", line, col)
     }
     // !=
     if ch == 33 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.Neq, "!=", line, col)
     }
     // <=
     if ch == 60 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.LtEq, "<=", line, col)
     }
     // >=
     if ch == 62 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.GtEq, ">=", line, col)
     }
     // ??
     if ch == 63 && next == 63 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.QuestionQuestion, "??", line, col)
     }
     // compound assignment: += -= *= /= %= &= |= ^= (must precede single-char ops)
     if ch == 43 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.PlusEq, "+=", line, col)
     }
     if ch == 45 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.MinusEq, "-=", line, col)
     }
     if ch == 42 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.StarEq, "*=", line, col)
     }
     if ch == 47 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.SlashEq, "/=", line, col)
     }
     if ch == 37 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.PercentEq, "%=", line, col)
     }
     if ch == 38 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.AmpEq, "&=", line, col)
     }
     if ch == 124 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.PipeEq, "|=", line, col)
     }
     if ch == 94 && next == 61 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.CaretEq, "^=", line, col)
     }
     // &&
     if ch == 38 && next == 38 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.AmpAmp, "&&", line, col)
     }
     // ||
     if ch == 124 && next == 124 {
-        advanceChar(lex)
-        advanceChar(lex)
+        advanceChar(&mut lex)
+        advanceChar(&mut lex)
         return makeToken(TokKind.PipePipe, "||", line, col)
     }
 
     // single-char operators
-    advanceChar(lex)
+    advanceChar(&mut lex)
     if ch == 40 {
         return makeToken(TokKind.LParen, "(", line, col)
     }
@@ -813,9 +813,9 @@ pub fn nextToken(lex: &mut Lexer): Token {
 pub fn tokenize(src: string): Vec<Token> {
     var lex = newLexer(src)
     var tokens: Vec<Token> = Vec.new()
-    var pendingLeading = readLeadingTrivia(lex)
+    var pendingLeading = readLeadingTrivia(&mut lex)
     while true {
-        var tok = nextToken(lex)
+        var tok = nextToken(&mut lex)
         tok.leadingTrivia = pendingLeading
         if tok.kind
         is
@@ -823,8 +823,8 @@ pub fn tokenize(src: string): Vec<Token> {
             tokens.push(tok)
             break
         }
-        tok.trailingTrivia = readTrailingTrivia(lex)
-        pendingLeading = readLeadingTrivia(lex)
+        tok.trailingTrivia = readTrailingTrivia(&mut lex)
+        pendingLeading = readLeadingTrivia(&mut lex)
         tokens.push(tok)
     }
     return tokens

@@ -132,7 +132,7 @@ fn reserveBlocks(cx: &mut LowerCtx, ownerId: u32, count: i64): i64 {
 // kinds one at a time. The ONE construction site of the bridge (scripts/hir-ratchet.ts
 // censuses them, monotone to zero).
 fn lowerExpr(e: Heap<ExprNode>, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCtx): Heap<HExprNode> {
-    let hoisted = hoistNode(e, fnRetType, ck, cx)
+    let hoisted = hoistNode(e, fnRetType, ck, &mut cx)
     let sp = cloneSpan((*hoisted).span)
     return mkUnlowered(hoisted, sp)
 }
@@ -145,7 +145,7 @@ fn hoistNode(e: Heap<ExprNode>, fnRetType: &TypeKind, ck: &Checker, cx: &mut Low
     var n = *e
     let id = n.id
     let k = replace(n.kind, Expr.IntLit(0))
-    n.kind = hoistKind(k, id, fnRetType, ck, cx)
+    n.kind = hoistKind(k, id, fnRetType, ck, &mut cx)
     return Heap(n)
 }
 
@@ -157,7 +157,7 @@ fn hoistNodes(v: Vec<Heap<ExprNode>>, fnRetType: &TypeKind, ck: &Checker, cx: &m
     }
     var out: Vec<Heap<ExprNode>> = Vec.new()
     while rev.len > 0 {
-        out.push(hoistNode(rev.pop()!, fnRetType, ck, cx))
+        out.push(hoistNode(rev.pop()!, fnRetType, ck, &mut cx))
     }
     return out
 }
@@ -175,7 +175,7 @@ fn hoistFields(v: Vec<StructLitField>, fnRetType: &TypeKind, ck: &Checker, cx: &
             id: 0, kind: Expr.IntLit(0), span: Option.None
         }
         ))
-        f.value = hoistNode(value, fnRetType, ck, cx)
+        f.value = hoistNode(value, fnRetType, ck, &mut cx)
         out.push(f)
     }
     return out
@@ -187,17 +187,17 @@ fn hoistFields(v: Vec<StructLitField>, fnRetType: &TypeKind, ck: &Checker, cx: &
 fn hoistKind(k: Expr, ownerId: u32, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCtx): Expr {
     match k {
         Expr.Closure(params, retType, body, isMove) => {
-            let base = reserveBlocks(cx, ownerId, 1)
-            let b = lowerBlock(body, fnRetType, ck, cx)
+            let base = reserveBlocks(&mut cx, ownerId, 1)
+            let b = lowerBlock(body, fnRetType, ck, &mut cx)
             cx.blocks[base].stmts = b
             return Expr.Closure(params, retType, Vec.new(), isMove)
         }
         Expr.IfExpr(cond, thenBody, elseBody) => {
-            let c = hoistNode(cond, fnRetType, ck, cx)
-            let base = reserveBlocks(cx, ownerId, 2)
-            let t = lowerBlock(thenBody, fnRetType, ck, cx)
+            let c = hoistNode(cond, fnRetType, ck, &mut cx)
+            let base = reserveBlocks(&mut cx, ownerId, 2)
+            let t = lowerBlock(thenBody, fnRetType, ck, &mut cx)
             cx.blocks[base].stmts = t
-            let e = lowerBlock(elseBody, fnRetType, ck, cx)
+            let e = lowerBlock(elseBody, fnRetType, ck, &mut cx)
             cx.blocks[base + 1].stmts = e
             return Expr.IfExpr(c, Vec.new(), Vec.new())
         }
@@ -206,40 +206,40 @@ fn hoistKind(k: Expr, ownerId: u32, fnRetType: &TypeKind, ck: &Checker, cx: &mut
         // here and not in the backend.
         Expr.MatchExpr(subject, arms) => {
             let subj0 = subjectEnum(ck, *subject)
-            let subj = hoistNode(subject, fnRetType, ck, cx)
-            let base = reserveBlocks(cx, ownerId, 1)
-            let lowered = lowerArms(arms, subj0, fnRetType, ck, cx)
+            let subj = hoistNode(subject, fnRetType, ck, &mut cx)
+            let base = reserveBlocks(&mut cx, ownerId, 1)
+            let lowered = lowerArms(arms, subj0, fnRetType, ck, &mut cx)
             cx.blocks[base].arms = lowered
             return Expr.MatchExpr(subj, Vec.new())
         }
         Expr.BinOp(op, left, right) => {
-            let l = hoistNode(left, fnRetType, ck, cx)
-            return Expr.BinOp(op, l, hoistNode(right, fnRetType, ck, cx))
+            let l = hoistNode(left, fnRetType, ck, &mut cx)
+            return Expr.BinOp(op, l, hoistNode(right, fnRetType, ck, &mut cx))
         }
         Expr.UnaryOp(op, operand) => {
-            return Expr.UnaryOp(op, hoistNode(operand, fnRetType, ck, cx))
+            return Expr.UnaryOp(op, hoistNode(operand, fnRetType, ck, &mut cx))
         }
         Expr.Call(func, args, typeArgs) => {
-            return Expr.Call(func, hoistNodes(args, fnRetType, ck, cx), typeArgs)
+            return Expr.Call(func, hoistNodes(args, fnRetType, ck, &mut cx), typeArgs)
         }
         Expr.StructLit(name, fields) => {
-            return Expr.StructLit(name, hoistFields(fields, fnRetType, ck, cx))
+            return Expr.StructLit(name, hoistFields(fields, fnRetType, ck, &mut cx))
         }
         Expr.JsonObject(fields) => {
-            return Expr.JsonObject(hoistFields(fields, fnRetType, ck, cx))
+            return Expr.JsonObject(hoistFields(fields, fnRetType, ck, &mut cx))
         }
         Expr.FieldAccess(obj, field) => {
-            return Expr.FieldAccess(hoistNode(obj, fnRetType, ck, cx), field)
+            return Expr.FieldAccess(hoistNode(obj, fnRetType, ck, &mut cx), field)
         }
         Expr.ArrayLit(elems) => {
-            return Expr.ArrayLit(hoistNodes(elems, fnRetType, ck, cx))
+            return Expr.ArrayLit(hoistNodes(elems, fnRetType, ck, &mut cx))
         }
         Expr.ArrayRepeat(value, count) => {
-            return Expr.ArrayRepeat(hoistNode(value, fnRetType, ck, cx), count)
+            return Expr.ArrayRepeat(hoistNode(value, fnRetType, ck, &mut cx), count)
         }
         Expr.IndexAccess(obj, index) => {
-            let o = hoistNode(obj, fnRetType, ck, cx)
-            return Expr.IndexAccess(o, hoistNode(index, fnRetType, ck, cx))
+            let o = hoistNode(obj, fnRetType, ck, &mut cx)
+            return Expr.IndexAccess(o, hoistNode(index, fnRetType, ck, &mut cx))
         }
         Expr.EnumLit(enumName, variant, args) => {
             // `Type.method(...)` on a GENERIC type parses as an enum literal, and the
@@ -278,31 +278,31 @@ fn hoistKind(k: Expr, ownerId: u32, fnRetType: &TypeKind, ck: &Checker, cx: &mut
                 Option.None => {
                 }
             }
-            return Expr.EnumLit(name, variant, hoistNodes(args, fnRetType, ck, cx))
+            return Expr.EnumLit(name, variant, hoistNodes(args, fnRetType, ck, &mut cx))
         }
         Expr.Unwrap(operand) => {
-            return Expr.Unwrap(hoistNode(operand, fnRetType, ck, cx))
+            return Expr.Unwrap(hoistNode(operand, fnRetType, ck, &mut cx))
         }
         Expr.Propagate(operand) => {
-            return Expr.Propagate(hoistNode(operand, fnRetType, ck, cx))
+            return Expr.Propagate(hoistNode(operand, fnRetType, ck, &mut cx))
         }
         Expr.DefaultValue(operand, fallback) => {
-            let o = hoistNode(operand, fnRetType, ck, cx)
-            return Expr.DefaultValue(o, hoistNode(fallback, fnRetType, ck, cx))
+            let o = hoistNode(operand, fnRetType, ck, &mut cx)
+            return Expr.DefaultValue(o, hoistNode(fallback, fnRetType, ck, &mut cx))
         }
         Expr.CastExpr(operand, targetType) => {
-            return Expr.CastExpr(hoistNode(operand, fnRetType, ck, cx), targetType)
+            return Expr.CastExpr(hoistNode(operand, fnRetType, ck, &mut cx), targetType)
         }
         Expr.MethodCall(obj, method, args) => {
-            let o = hoistNode(obj, fnRetType, ck, cx)
-            return Expr.MethodCall(o, method, hoistNodes(args, fnRetType, ck, cx))
+            let o = hoistNode(obj, fnRetType, ck, &mut cx)
+            return Expr.MethodCall(o, method, hoistNodes(args, fnRetType, ck, &mut cx))
         }
         Expr.RangeExpr(start, end) => {
-            let s = hoistNode(start, fnRetType, ck, cx)
-            return Expr.RangeExpr(s, hoistNode(end, fnRetType, ck, cx))
+            let s = hoistNode(start, fnRetType, ck, &mut cx)
+            return Expr.RangeExpr(s, hoistNode(end, fnRetType, ck, &mut cx))
         }
         Expr.IsExpr(subject, pattern) => {
-            return Expr.IsExpr(hoistNode(subject, fnRetType, ck, cx), pattern)
+            return Expr.IsExpr(hoistNode(subject, fnRetType, ck, &mut cx), pattern)
         }
         // Leaves: no child node, so nothing to visit. Spelled out rather than folded
         // into a wildcard, for the reason above.
@@ -337,7 +337,7 @@ fn lowerBlock(body: Vec<Heap<Stmt>>, fnRetType: &TypeKind, ck: &Checker, cx: &mu
     }
     var out: Vec<Heap<HStmt>> = Vec.new()
     while rev.len > 0 {
-        out.push(lowerStmt(rev.pop()!, fnRetType, ck, cx))
+        out.push(lowerStmt(rev.pop()!, fnRetType, ck, &mut cx))
     }
     return out
 }
@@ -345,7 +345,7 @@ fn lowerBlock(body: Vec<Heap<Stmt>>, fnRetType: &TypeKind, ck: &Checker, cx: &mu
 fn lowerOptBlock(body: Option<Vec<Heap<Stmt>>>, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCtx): Option<Vec<Heap<HStmt>>> {
     match body {
         Option.Some(b) => {
-            return Option.Some(lowerBlock(b, fnRetType, ck, cx))
+            return Option.Some(lowerBlock(b, fnRetType, ck, &mut cx))
         }
         Option.None => {
             return Option.None
@@ -365,7 +365,7 @@ fn lowerArms(arms: Vec<MatchArm>, subj: &HSubject, fnRetType: &TypeKind, ck: &Ch
         let pat = lowerPattern(arm.pattern, subj.enumName, ck)
         let body = replace(arm.body, Vec.new())
         out.push(HMatchArm {
-            pattern: pat, body: lowerBlock(body, fnRetType, ck, cx)
+            pattern: pat, body: lowerBlock(body, fnRetType, ck, &mut cx)
         }
         )
     }
@@ -419,15 +419,15 @@ fn lowerStmt(s: Heap<Stmt>, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCt
             // Read the id BEFORE the node moves into lowerExpr — afterwards there is
             // nothing left to key the side table by.
             let ty = exprTypeOf(ck, *value)
-            return Heap(HStmt.Let(name, ty, lowerExpr(value, fnRetType, ck, cx), false))
+            return Heap(HStmt.Let(name, ty, lowerExpr(value, fnRetType, ck, &mut cx), false))
         }
         Stmt.VarDecl(name, typeAnno, value, span) => {
             let ty = exprTypeOf(ck, *value)
-            return Heap(HStmt.Let(name, ty, lowerExpr(value, fnRetType, ck, cx), true))
+            return Heap(HStmt.Let(name, ty, lowerExpr(value, fnRetType, ck, &mut cx), true))
         }
         Stmt.Assign(target, value, span) => {
-            let t = lowerExpr(target, fnRetType, ck, cx)
-            let v = lowerExpr(value, fnRetType, ck, cx)
+            let t = lowerExpr(target, fnRetType, ck, &mut cx)
+            let v = lowerExpr(value, fnRetType, ck, &mut cx)
             // `isInit` is false for every source-level assignment: it marks a first write
             // into a slot that still holds zeroinitializer, which only the generated
             // module-global initializer produces, and this pass emits no such statement.
@@ -436,7 +436,7 @@ fn lowerStmt(s: Heap<Stmt>, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCt
         Stmt.Return(value, span) => {
             match value {
                 Option.Some(e) => {
-                    return Heap(HStmt.Return(Option.Some(lowerExpr(e, fnRetType, ck, cx)), fnRetType.clone()))
+                    return Heap(HStmt.Return(Option.Some(lowerExpr(e, fnRetType, ck, &mut cx)), fnRetType.clone()))
                 }
                 Option.None => {
                     return Heap(HStmt.Return(Option.None, fnRetType.clone()))
@@ -444,15 +444,15 @@ fn lowerStmt(s: Heap<Stmt>, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCt
             }
         }
         Stmt.IfStmt(cond, thenBody, elseBody, span) => {
-            let c = lowerExpr(cond, fnRetType, ck, cx)
-            let t = lowerBlock(thenBody, fnRetType, ck, cx)
-            return Heap(HStmt.If(c, t, lowerOptBlock(elseBody, fnRetType, ck, cx)))
+            let c = lowerExpr(cond, fnRetType, ck, &mut cx)
+            let t = lowerBlock(thenBody, fnRetType, ck, &mut cx)
+            return Heap(HStmt.If(c, t, lowerOptBlock(elseBody, fnRetType, ck, &mut cx)))
         }
         Stmt.WhileStmt(cond, body, span) => {
-            let c = lowerExpr(cond, fnRetType, ck, cx)
+            let c = lowerExpr(cond, fnRetType, ck, &mut cx)
             // src-milo's AST carries no loop contracts — the parser has no `invariant`
             // clause — so there is nothing to attach.
-            return Heap(HStmt.While(c, lowerBlock(body, fnRetType, ck, cx), Vec.new()))
+            return Heap(HStmt.While(c, lowerBlock(body, fnRetType, ck, &mut cx), Vec.new()))
         }
         Stmt.BreakStmt(span) => {
             return Heap(HStmt.Break)
@@ -461,12 +461,12 @@ fn lowerStmt(s: Heap<Stmt>, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCt
             return Heap(HStmt.Continue)
         }
         Stmt.ExprStmt(expr, span) => {
-            return Heap(HStmt.ExprStmt(lowerExpr(expr, fnRetType, ck, cx)))
+            return Heap(HStmt.ExprStmt(lowerExpr(expr, fnRetType, ck, &mut cx)))
         }
         Stmt.MatchStmt(subject, arms, span) => {
             let subj = subjectEnum(ck, *subject)
-            let sv = lowerExpr(subject, fnRetType, ck, cx)
-            let hArms = lowerArms(arms, subj, fnRetType, ck, cx)
+            let sv = lowerExpr(subject, fnRetType, ck, &mut cx)
+            let hArms = lowerArms(arms, subj, fnRetType, ck, &mut cx)
             return Heap(HStmt.Match(sv, hArms, subj.enumName.clone(), subj.isRef))
         }
         Stmt.IfLetStmt(pattern, subject, thenBody, elseBody, span) => {
@@ -474,16 +474,16 @@ fn lowerStmt(s: Heap<Stmt>, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCt
             // empty when there is none. Mirrors the oracle, which has no if-let in HIR.
             let subj = subjectEnum(ck, *subject)
             let pat = lowerPattern(*pattern, subj.enumName, ck)
-            let sv = lowerExpr(subject, fnRetType, ck, cx)
+            let sv = lowerExpr(subject, fnRetType, ck, &mut cx)
             var hArms: Vec<HMatchArm> = Vec.new()
             hArms.push(HMatchArm {
-                pattern: pat, body: lowerBlock(thenBody, fnRetType, ck, cx)
+                pattern: pat, body: lowerBlock(thenBody, fnRetType, ck, &mut cx)
             }
             )
             var elseHir: Vec<Heap<HStmt>> = Vec.new()
             match elseBody {
                 Option.Some(b) => {
-                    elseHir = lowerBlock(b, fnRetType, ck, cx)
+                    elseHir = lowerBlock(b, fnRetType, ck, &mut cx)
                 }
                 Option.None => {
                 }
@@ -495,10 +495,10 @@ fn lowerStmt(s: Heap<Stmt>, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCt
             return Heap(HStmt.Match(sv, hArms, subj.enumName.clone(), subj.isRef))
         }
         Stmt.UnsafeBlock(body, span) => {
-            return Heap(HStmt.UnsafeBlock(lowerBlock(body, fnRetType, ck, cx)))
+            return Heap(HStmt.UnsafeBlock(lowerBlock(body, fnRetType, ck, &mut cx)))
         }
         Stmt.ForInStmt(varName, varName2, iterable, body, span) => {
-            return lowerForIn(varName, varName2, iterable, body, span, fnRetType, ck, cx)
+            return lowerForIn(varName, varName2, iterable, body, span, fnRetType, ck, &mut cx)
         }
     }
 }
@@ -519,17 +519,17 @@ fn lowerForIn(varName: string, varName2: Option<string>, iterable: Heap<ExprNode
         // `return`: an arm that ends in anything else has its moves joined into the state
         // after the match, and `iterable` is still needed there by the value shapes.
         ForInKind.FRange => {
-            return lowerForRange(varName, iterable, body, info, fnRetType, ck, cx)
+            return lowerForRange(varName, iterable, body, info, fnRetType, ck, &mut cx)
         }
         ForInKind.FStrView => {
-            return lowerForStrView(varName, varName2, iterable, body, info, fnRetType, ck, cx)
+            return lowerForStrView(varName, varName2, iterable, body, info, fnRetType, ck, &mut cx)
         }
         _ => {
         }
     }
 
     // Everything below walks the iterable as a value, so it lowers whole.
-    var iterExpr = lowerExpr(iterable, fnRetType, ck, cx)
+    var iterExpr = lowerExpr(iterable, fnRetType, ck, &mut cx)
     if info.delegateField.len > 0 {
         // `@iter` on a field: the loop walks THAT field, so from here down this is an
         // ordinary container loop and nothing downstream needs to know a newtype was
@@ -539,22 +539,22 @@ fn lowerForIn(varName: string, varName2: Option<string>, iterable: Heap<ExprNode
 
     match info.kind {
         ForInKind.FVec => {
-            return Heap(HStmt.ForEach(varName, varName2, info.varTy.clone(), cloneOptTy(info.varTy2), iterExpr, HIterKind.IterVec, lowerBlock(body, fnRetType, ck, cx), Vec.new()))
+            return Heap(HStmt.ForEach(varName, varName2, info.varTy.clone(), cloneOptTy(info.varTy2), iterExpr, HIterKind.IterVec, lowerBlock(body, fnRetType, ck, &mut cx), Vec.new()))
         }
         ForInKind.FString => {
-            return Heap(HStmt.ForEach(varName, varName2, info.varTy.clone(), cloneOptTy(info.varTy2), iterExpr, HIterKind.IterString, lowerBlock(body, fnRetType, ck, cx), Vec.new()))
+            return Heap(HStmt.ForEach(varName, varName2, info.varTy.clone(), cloneOptTy(info.varTy2), iterExpr, HIterKind.IterString, lowerBlock(body, fnRetType, ck, &mut cx), Vec.new()))
         }
         ForInKind.FHashMap => {
-            return Heap(HStmt.ForEach(varName, varName2, info.varTy.clone(), cloneOptTy(info.varTy2), iterExpr, HIterKind.IterHashMap, lowerBlock(body, fnRetType, ck, cx), Vec.new()))
+            return Heap(HStmt.ForEach(varName, varName2, info.varTy.clone(), cloneOptTy(info.varTy2), iterExpr, HIterKind.IterHashMap, lowerBlock(body, fnRetType, ck, &mut cx), Vec.new()))
         }
         ForInKind.FArray => {
-            return Heap(HStmt.ForEach(varName, varName2, info.varTy.clone(), cloneOptTy(info.varTy2), iterExpr, HIterKind.IterArray, lowerBlock(body, fnRetType, ck, cx), Vec.new()))
+            return Heap(HStmt.ForEach(varName, varName2, info.varTy.clone(), cloneOptTy(info.varTy2), iterExpr, HIterKind.IterArray, lowerBlock(body, fnRetType, ck, &mut cx), Vec.new()))
         }
         ForInKind.FIterator => {
-            return Heap(HStmt.ForIterator(varName, info.varTy.clone(), iterExpr, info.nextMethod.clone(), info.resultEnum.clone(), lowerBlock(body, fnRetType, ck, cx), Vec.new(), info.okVariant.clone()))
+            return Heap(HStmt.ForIterator(varName, info.varTy.clone(), iterExpr, info.nextMethod.clone(), info.resultEnum.clone(), lowerBlock(body, fnRetType, ck, &mut cx), Vec.new(), info.okVariant.clone()))
         }
         ForInKind.FChannel => {
-            return Heap(HStmt.ForIterator(varName, info.varTy.clone(), iterExpr, info.nextMethod.clone(), info.resultEnum.clone(), lowerBlock(body, fnRetType, ck, cx), Vec.new(), info.okVariant.clone()))
+            return Heap(HStmt.ForIterator(varName, info.varTy.clone(), iterExpr, info.nextMethod.clone(), info.resultEnum.clone(), lowerBlock(body, fnRetType, ck, &mut cx), Vec.new(), info.okVariant.clone()))
         }
         _ => {
             lowerAbort("'for " + varName.clone() + "': range and string-view shapes are handled above and cannot reach here")
@@ -568,9 +568,9 @@ fn lowerForIn(varName: string, varName2: Option<string>, iterable: Heap<ExprNode
 fn lowerForRange(varName: string, iterable: Heap<ExprNode>, body: Vec<Heap<Stmt>>, info: &ForInInfo, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCtx): Heap<HStmt> {
     match takeExprKind(iterable) {
         Expr.RangeExpr(start, end) => {
-            let s = lowerExpr(start, fnRetType, ck, cx)
-            let e = lowerExpr(end, fnRetType, ck, cx)
-            return Heap(HStmt.ForRange(varName, info.varTy.clone(), s, e, lowerBlock(body, fnRetType, ck, cx), Vec.new()))
+            let s = lowerExpr(start, fnRetType, ck, &mut cx)
+            let e = lowerExpr(end, fnRetType, ck, &mut cx)
+            return Heap(HStmt.ForRange(varName, info.varTy.clone(), s, e, lowerBlock(body, fnRetType, ck, &mut cx), Vec.new()))
         }
         _ => {
             lowerAbort("'for " + varName.clone() + "': recorded as a range loop over a non-range iterable")
@@ -585,7 +585,7 @@ fn lowerForRange(varName: string, iterable: Heap<ExprNode>, body: Vec<Heap<Stmt>
 fn lowerForStrView(varName: string, varName2: Option<string>, iterable: Heap<ExprNode>, body: Vec<Heap<Stmt>>, info: &ForInInfo, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCtx): Heap<HStmt> {
     match takeExprKind(iterable) {
         Expr.MethodCall(recv, method, args) => {
-            let src = lowerExpr(recv, fnRetType, ck, cx)
+            let src = lowerExpr(recv, fnRetType, ck, &mut cx)
             var sep: Option<Heap<HExprNode>> = Option.None
             var rest = args
             if rest.len > 0 {
@@ -593,13 +593,13 @@ fn lowerForStrView(varName: string, varName2: Option<string>, iterable: Heap<Exp
                 while rest.len > 0 {
                     rev.push(rest.pop()!)
                 }
-                sep = Option.Some(lowerExpr(rev.pop()!, fnRetType, ck, cx))
+                sep = Option.Some(lowerExpr(rev.pop()!, fnRetType, ck, &mut cx))
             }
             var mode = HStrViewMode.ViewLines
             if info.mode == "splitView" {
                 mode = HStrViewMode.ViewSplit
             }
-            return Heap(HStmt.ForStrView(varName, varName2, info.varTy.clone(), src, sep, mode, lowerBlock(body, fnRetType, ck, cx), Vec.new()))
+            return Heap(HStmt.ForStrView(varName, varName2, info.varTy.clone(), src, sep, mode, lowerBlock(body, fnRetType, ck, &mut cx), Vec.new()))
         }
         _ => {
             lowerAbort("'for " + varName.clone() + "': recorded as a string-view loop over a non-method-call iterable")
@@ -767,7 +767,7 @@ fn lowerFn(f: Function, ck: &Checker, cx: &mut LowerCtx): HFunction {
         name: name,
         params: params,
         retType: retType.clone(),
-        body: lowerBlock(body, retType, ck, cx),
+        body: lowerBlock(body, retType, ck, &mut cx),
         contracts: Vec.new(),
         oldSnapshots: Vec.new(),
         isExtern: false,
@@ -900,7 +900,7 @@ pub fn lowerProgram(prog: Program, ck: &Checker): HIRModule {
             genericFns.push(f)
             continue
         }
-        functions.push(lowerFn(f, ck, cx))
+        functions.push(lowerFn(f, ck, &mut cx))
     }
 
     var globals: Vec<HGlobal> = Vec.new()
@@ -939,7 +939,7 @@ pub fn lowerProgram(prog: Program, ck: &Checker): HIRModule {
             // A global initializer sits in no function, so there is no return type for a
             // `return` inside a closure it builds to answer to; the closure's own header
             // is what codegen reads there.
-            value: lowerExpr(value, TypeKind.TVoid, ck, cx),
+            value: lowerExpr(value, TypeKind.TVoid, ck, &mut cx),
             mutable: g.mutable,
             // src-milo has no `threadLocal` global form.
             threadLocal: false,
@@ -955,7 +955,7 @@ pub fn lowerProgram(prog: Program, ck: &Checker): HIRModule {
     for dname, dhas in ck.dropImpls {
         dropImpls.push(dname.clone())
     }
-    sortStrings(dropImpls)
+    sortStrings(&mut dropImpls)
 
     // Libraries a module declared with @link that reached the Program through the
     // resolver's union, on top of the ones read off the fn attributes above.

@@ -83,7 +83,7 @@ pub fn lvalueTypeStr(cg: &mut Cgen, e: &ExprNode, locs: &Vec<Local>): string {
             return findLocal(locs, name).ty.clone()
         }
         Expr.FieldAccess(object, field) => {
-            let ot = lvalueTypeStr(cg, *object, locs)
+            let ot = lvalueTypeStr(&mut cg, *object, locs)
             let rawName = stripPercent(ot)
             let idx = lookupFieldIndex(cg, rawName, field)
             return lookupFieldType(cg, rawName, idx)
@@ -99,7 +99,7 @@ pub fn genAssign(cg: &mut Cgen, target: &HExprNode, value: &HExprNode, locs: &mu
         HExpr.Unlowered(t) => {
             match value.kind {
                 HExpr.Unlowered(v) => {
-                    genAssignAst(cg, *t, *v, locs, sigs, target.span)
+                    genAssignAst(&mut cg, *t, *v, &mut locs, sigs, target.span)
                 }
                 _ => {
                     hexprAbort(value, "assignment value")
@@ -120,10 +120,10 @@ fn genAssignAst(cg: &mut Cgen, target: &ExprNode, value: &ExprNode, locs: &mut V
     match value.kind {
         Expr.BinOp(op, left, right) => {
             if op == "+" && lvalueMatches(target, *left) && !lvalueMatches(target, *right) {
-                if llType(lvalueTypeStr(cg, target, locs)) == "%String" {
-                    let bv = genExpr(cg, *right, locs, sigs, "%String")
-                    let lv = genLvalue(cg, target, locs, sigs)
-                    genStringAppendInPlace(cg, lv.v, bv.v)
+                if llType(lvalueTypeStr(&mut cg, target, locs)) == "%String" {
+                    let bv = genExpr(&mut cg, *right, locs, sigs, "%String")
+                    let lv = genLvalue(&mut cg, target, locs, sigs)
+                    genStringAppendInPlace(&mut cg, lv.v, bv.v)
                     return
                 }
             }
@@ -139,26 +139,26 @@ fn genAssignAst(cg: &mut Cgen, target: &ExprNode, value: &ExprNode, locs: &mut V
                 // eval + move RHS, THEN drop the old value (order matters: the RHS
                 // may read the slot), THEN overwrite. Zeroed-on-move slots drop to
                 // no-ops, so a moved-out or reassigned global never double-frees.
-                let v0 = genOwnedArg(cg, value, gty.clone(), locs, sigs)
-                let v = genOptionWrapIfNeeded(cg, v0, gty)
+                let v0 = genOwnedArg(&mut cg, value, gty.clone(), locs, sigs)
+                let v = genOptionWrapIfNeeded(&mut cg, v0, gty)
                 if cgNeedsDrop(cg, gty) && !lvalueMatches(target, value) {
-                    emitDropValue(cg, "@" + name.clone(), gty)
+                    emitDropValue(&mut cg, "@" + name.clone(), gty)
                 }
-                emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr @" + name.clone() + "\n")
+                emit(&mut cg, "  store " + llType(v.ty) + " " + v.v + ", ptr @" + name.clone() + "\n")
             } else {
                 let local = findLocal(locs, name)
                 let lty = local.ty.clone()
-                let v0 = genOwnedArg(cg, value, lty.clone(), locs, sigs)
-                let v = genOptionWrapIfNeeded(cg, v0, lty)
-                emitRangeCheck(cg, v, local.range, stmtSpan)
+                let v0 = genOwnedArg(&mut cg, value, lty.clone(), locs, sigs)
+                let v = genOptionWrapIfNeeded(&mut cg, v0, lty)
+                emitRangeCheck(&mut cg, v, local.range, stmtSpan)
                 if !local.isRef && cgNeedsDrop(cg, lty) && !lvalueMatches(target, value) {
-                    emitDropValue(cg, local.addr, lty)
+                    emitDropValue(&mut cg, local.addr, lty)
                 }
-                emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + local.addr + "\n")
+                emit(&mut cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + local.addr + "\n")
             }
         }
         Expr.FieldAccess(object, field) => {
-            let lv = genLvalue(cg, *object, locs, sigs)
+            let lv = genLvalue(&mut cg, *object, locs, sigs)
             // `p.x = …` through a raw pointer: load the pointer to reach the struct,
             // gep the pointee field; otherwise gep the struct lvalue directly.
             var structAddr = lv.v.clone()
@@ -166,15 +166,15 @@ fn genAssignAst(cg: &mut Cgen, target: &ExprNode, value: &ExprNode, locs: &mut V
             if lv.ty.len > 0 && lv.ty[0] == 42 {
                 let pointee = lv.ty[1..lv.ty.len].clone()
                 rawName = stripPercent(resolveTyStr(cg, pointee))
-                let sa = nextTemp(cg)
-                emit(cg, "  " + sa + " = load ptr, ptr " + lv.v + "\n")
+                let sa = nextTemp(&mut cg)
+                emit(&mut cg, "  " + sa + " = load ptr, ptr " + lv.v + "\n")
                 structAddr = sa
             }
             let idx = lookupFieldIndex(cg, rawName, field)
             let fty = lookupFieldType(cg, rawName, idx)
             let structTy = "%" + rawName
-            let fp = nextTemp(cg)
-            emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + structAddr + ", i32 0, i32 " + idx.toString() + "\n")
+            let fp = nextTemp(&mut cg)
+            emit(&mut cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + structAddr + ", i32 0, i32 " + idx.toString() + "\n")
             // field takes ownership of the RHS → move it (zero the source place).
             // The old field value is not dropped yet (slice 2) — a leak, not a UAF.
             // Hint with the SURFACE field type ("Vec<f64>"), not its LLVM spelling
@@ -182,10 +182,10 @@ fn genAssignAst(cg: &mut Cgen, target: &ExprNode, value: &ExprNode, locs: &mut V
             // 0.0)` needs the real element type to reach genVecFilled's fill-value
             // hint, or it silently fell back to Vec<i64> and stored a float literal
             // into an i64 slot ("store i64 0.0" — invalid IR).
-            let v = genOwnedArg(cg, value, fty.clone(), locs, sigs)
+            let v = genOwnedArg(&mut cg, value, fty.clone(), locs, sigs)
             let frange = lookupFieldRange(cg, rawName, idx)
-            emitRangeCheck(cg, v, frange, stmtSpan)
-            emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + fp + "\n")
+            emitRangeCheck(&mut cg, v, frange, stmtSpan)
+            emit(&mut cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + fp + "\n")
         }
         // A capitalized *variable* followed by `.field = value` parses identically
         // to a static enum-literal (mirrors genLvalue's own EnumLit case and the
@@ -222,48 +222,48 @@ fn genAssignAst(cg: &mut Cgen, target: &ExprNode, value: &ExprNode, locs: &mut V
                 if lvTy.len > 0 && lvTy[0] == 42 {
                     let pointee = lvTy[1..lvTy.len].clone()
                     rawName = stripPercent(resolveTyStr(cg, pointee))
-                    let sa = nextTemp(cg)
-                    emit(cg, "  " + sa + " = load ptr, ptr " + lvV + "\n")
+                    let sa = nextTemp(&mut cg)
+                    emit(&mut cg, "  " + sa + " = load ptr, ptr " + lvV + "\n")
                     structAddr = sa
                 }
                 let idx = lookupFieldIndex(cg, rawName, variant)
                 let fty = lookupFieldType(cg, rawName, idx)
                 let structTy = "%" + rawName
-                let fp = nextTemp(cg)
-                emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + structAddr + ", i32 0, i32 " + idx.toString() + "\n")
-                let v = genOwnedArg(cg, value, fty.clone(), locs, sigs)
-                emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + fp + "\n")
+                let fp = nextTemp(&mut cg)
+                emit(&mut cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + structAddr + ", i32 0, i32 " + idx.toString() + "\n")
+                let v = genOwnedArg(&mut cg, value, fty.clone(), locs, sigs)
+                emit(&mut cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + fp + "\n")
             }
         }
         Expr.IndexAccess(obj, idx) => {
             // M3e: v[i] = x for Vec receivers (fixed arrays still pending)
-            let lv = genLvalue(cg, *obj, locs, sigs)
+            let lv = genLvalue(&mut cg, *obj, locs, sigs)
             if isVecTy(lv.ty) {
                 let elemTy = unwrapVec(lv.ty)
                 let elemLl = llType(elemTy)
-                let dPtr = nextTemp(cg)
-                emit(cg, "  " + dPtr + " = getelementptr %Vec, ptr " + lv.v + ", i32 0, i32 0\n")
-                let d = nextTemp(cg)
-                emit(cg, "  " + d + " = load ptr, ptr " + dPtr + "\n")
-                let iv = genExpr(cg, *idx, locs, sigs, "i64")
-                let i64v = widenToI64(cg, iv)
-                let slot = nextTemp(cg)
-                emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + i64v + "\n")
-                let v = genOwnedArg(cg, value, elemTy, locs, sigs)
-                emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + slot + "\n")
+                let dPtr = nextTemp(&mut cg)
+                emit(&mut cg, "  " + dPtr + " = getelementptr %Vec, ptr " + lv.v + ", i32 0, i32 0\n")
+                let d = nextTemp(&mut cg)
+                emit(&mut cg, "  " + d + " = load ptr, ptr " + dPtr + "\n")
+                let iv = genExpr(&mut cg, *idx, locs, sigs, "i64")
+                let i64v = widenToI64(&mut cg, iv)
+                let slot = nextTemp(&mut cg)
+                emit(&mut cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + i64v + "\n")
+                let v = genOwnedArg(&mut cg, value, elemTy, locs, sigs)
+                emit(&mut cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + slot + "\n")
             } else if lv.ty.len > 0 && lv.ty[0] == 42 {
                 // Raw pointer `*T` (unsafe): lv.v is the alloca holding the
                 // pointer, so load the pointer value before indexing.
                 let elemTy = lv.ty[1..lv.ty.len].clone()
                 let elemLl = llType(elemTy)
-                let base = nextTemp(cg)
-                emit(cg, "  " + base + " = load ptr, ptr " + lv.v + "\n")
-                let iv = genExpr(cg, *idx, locs, sigs, "i64")
-                let i64v = widenToI64(cg, iv)
-                let slot = nextTemp(cg)
-                emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + base + ", i64 " + i64v + "\n")
-                let v = genExpr(cg, value, locs, sigs, elemTy)
-                emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + slot + "\n")
+                let base = nextTemp(&mut cg)
+                emit(&mut cg, "  " + base + " = load ptr, ptr " + lv.v + "\n")
+                let iv = genExpr(&mut cg, *idx, locs, sigs, "i64")
+                let i64v = widenToI64(&mut cg, iv)
+                let slot = nextTemp(&mut cg)
+                emit(&mut cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + base + ", i64 " + i64v + "\n")
+                let v = genExpr(&mut cg, value, locs, sigs, elemTy)
+                emit(&mut cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + slot + "\n")
             } else if isInlineArrTy(lv.ty) {
                 // Inline struct-field array: lv.v is already the field's
                 // address (genLvalue GEP'd into the enclosing struct) — index
@@ -271,12 +271,12 @@ fn genAssignAst(cg: &mut Cgen, target: &ExprNode, value: &ExprNode, locs: &mut V
                 let elemTy = inlineArrElem(lv.ty)
                 let elemLl = llType(elemTy)
                 let arrLl = llType(lv.ty)
-                let iv = genExpr(cg, *idx, locs, sigs, "i64")
-                let i64v = widenToI64(cg, iv)
-                let slot = nextTemp(cg)
-                emit(cg, "  " + slot + " = getelementptr " + arrLl + ", ptr " + lv.v + ", i32 0, i64 " + i64v + "\n")
-                let v = genOwnedArg(cg, value, elemTy, locs, sigs)
-                emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + slot + "\n")
+                let iv = genExpr(&mut cg, *idx, locs, sigs, "i64")
+                let i64v = widenToI64(&mut cg, iv)
+                let slot = nextTemp(&mut cg)
+                emit(&mut cg, "  " + slot + " = getelementptr " + arrLl + ", ptr " + lv.v + ", i32 0, i64 " + i64v + "\n")
+                let v = genOwnedArg(&mut cg, value, elemTy, locs, sigs)
+                emit(&mut cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + slot + "\n")
             } else {
                 eprint("codegen: cannot index-assign type " + lv.ty.clone())
                 exit(1)
@@ -292,9 +292,9 @@ fn genAssignAst(cg: &mut Cgen, target: &ExprNode, value: &ExprNode, locs: &mut V
                 eprint("codegen: cannot assign through unary '" + op.clone() + "'")
                 exit(1)
             }
-            let lv = genLvalue(cg, target, locs, sigs)
-            let v = genOwnedArg(cg, value, lv.ty.clone(), locs, sigs)
-            emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + lv.v + "\n")
+            let lv = genLvalue(&mut cg, target, locs, sigs)
+            let v = genOwnedArg(&mut cg, value, lv.ty.clone(), locs, sigs)
+            emit(&mut cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + lv.v + "\n")
         }
         // Fail loudly. A place the checker accepted but codegen cannot lower is a
         // missing arm, not a no-op — silently dropping the store is the worst
@@ -309,39 +309,39 @@ fn genAssignAst(cg: &mut Cgen, target: &ExprNode, value: &ExprNode, locs: &mut V
 // -- While loop --
 
 pub fn genWhile(cg: &mut Cgen, cond: &HExprNode, body: &Vec<Heap<HStmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
-    let condLbl = nextLabel(cg, "wcond")
-    let bodyLbl = nextLabel(cg, "wbody")
-    let endLbl = nextLabel(cg, "wend")
+    let condLbl = nextLabel(&mut cg, "wcond")
+    let bodyLbl = nextLabel(&mut cg, "wbody")
+    let endLbl = nextLabel(&mut cg, "wend")
     let savedBreak = cg.curBreakLbl.clone()
     let savedCont = cg.curContLbl.clone()
     let savedLoopScopeLen = cg.curLoopScopeLen
     cg.curBreakLbl = endLbl.clone()
     cg.curContLbl = condLbl.clone()
-    emit(cg, "  br label %" + condLbl + "\n")
-    emit(cg, condLbl + ":\n")
-    let cv = genHExpr(cg, cond, locs, sigs, "bool")
-    emit(cg, "  br i1 " + cv.v + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
-    emit(cg, bodyLbl + ":\n")
+    emit(&mut cg, "  br label %" + condLbl + "\n")
+    emit(&mut cg, condLbl + ":\n")
+    let cv = genHExpr(&mut cg, cond, locs, sigs, "bool")
+    emit(&mut cg, "  br i1 " + cv.v + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
+    emit(&mut cg, bodyLbl + ":\n")
     var bodyTerm = false
     // Same block scope as an if-branch, and doubly important in a loop: without it a
     // value declared in the body accumulates one un-dropped alloca per iteration.
     let bodyPreLen = locs.len
     cg.curLoopScopeLen = bodyPreLen
     for bi in 0..body.len {
-        if genStmt(cg, *body[bi], locs, sigs, retTy) {
+        if genStmt(&mut cg, *body[bi], &mut locs, sigs, retTy) {
             bodyTerm = true
         }
     }
     if !bodyTerm {
-        emitScopeDrops(cg, locs, bodyPreLen, "")
+        emitScopeDrops(&mut cg, locs, bodyPreLen, "")
     }
     while locs.len > bodyPreLen {
         let _ = locs.pop()
     }
     if !bodyTerm {
-        emit(cg, "  br label %" + condLbl + "\n")
+        emit(&mut cg, "  br label %" + condLbl + "\n")
     }
-    emit(cg, endLbl + ":\n")
+    emit(&mut cg, endLbl + ":\n")
     cg.curBreakLbl = savedBreak
     cg.curContLbl = savedCont
     cg.curLoopScopeLen = savedLoopScopeLen
@@ -355,8 +355,8 @@ pub fn widenToI64(cg: &mut Cgen, v: &Val): string {
     if ll == "i64" {
         return v.v.clone()
     }
-    let w = nextTemp(cg)
-    emit(cg, "  " + w + " = sext " + ll + " " + v.v + " to i64\n")
+    let w = nextTemp(&mut cg)
+    emit(&mut cg, "  " + w + " = sext " + ll + " " + v.v + " to i64\n")
     return w
 }
 
@@ -382,10 +382,10 @@ struct ForLbls {
 
 fn enterForLoop(cg: &mut Cgen): ForLbls {
     let l = ForLbls {
-        cond: nextLabel(cg, "fcond"),
-        body: nextLabel(cg, "fbody"),
-        step: nextLabel(cg, "fstep"),
-        end: nextLabel(cg, "fend"),
+        cond: nextLabel(&mut cg, "fcond"),
+        body: nextLabel(&mut cg, "fbody"),
+        step: nextLabel(&mut cg, "fstep"),
+        end: nextLabel(&mut cg, "fend"),
         savedBreak: cg.curBreakLbl.clone(),
         savedCont: cg.curContLbl.clone(),
         savedScopeLen: cg.curLoopScopeLen,
@@ -413,7 +413,7 @@ fn exitForLoop(cg: &mut Cgen, l: &ForLbls) {
 fn genLoopBody(cg: &mut Cgen, body: &Vec<Heap<HStmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string, locsPreLen: i64, stepLbl: &string) {
     var term = false
     for bi in 0..body.len {
-        if genStmt(cg, *body[bi], locs, sigs, retTy) {
+        if genStmt(&mut cg, *body[bi], &mut locs, sigs, retTy) {
             term = true
         }
     }
@@ -421,39 +421,39 @@ fn genLoopBody(cg: &mut Cgen, body: &Vec<Heap<HStmt>>, locs: &mut Vec<Local>, si
         let _ = locs.pop()
     }
     if !term {
-        emit(cg, "  br label %" + stepLbl.clone() + "\n")
+        emit(&mut cg, "  br label %" + stepLbl.clone() + "\n")
     }
 }
 
 // The step block of an index-counted loop: ++idx, then re-test.
 fn emitIndexStep(cg: &mut Cgen, idxAddr: &string, stepLbl: &string, condLbl: &string) {
-    emitLabel(cg, stepLbl)
-    let cur = nextTemp(cg)
-    emit(cg, "  " + cur + " = load i64, ptr " + idxAddr.clone() + "\n")
-    let inc = nextTemp(cg)
-    emit(cg, "  " + inc + " = add i64 " + cur + ", 1\n")
-    emit(cg, "  store i64 " + inc + ", ptr " + idxAddr.clone() + "\n")
-    emit(cg, "  br label %" + condLbl.clone() + "\n")
+    emitLabel(&mut cg, stepLbl)
+    let cur = nextTemp(&mut cg)
+    emit(&mut cg, "  " + cur + " = load i64, ptr " + idxAddr.clone() + "\n")
+    let inc = nextTemp(&mut cg)
+    emit(&mut cg, "  " + inc + " = add i64 " + cur + ", 1\n")
+    emit(&mut cg, "  store i64 " + inc + ", ptr " + idxAddr.clone() + "\n")
+    emit(&mut cg, "  br label %" + condLbl.clone() + "\n")
 }
 
 // `for i in a..b`
 pub fn genForRange(cg: &mut Cgen, varName: &string, startE: &HExprNode, endE: &HExprNode, body: &Vec<Heap<HStmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
-    let l = enterForLoop(cg)
-    let idxAddr = nextTemp(cg)
-    emit(cg, "  " + idxAddr + " = alloca i64\n")
-    let sv = genHExpr(cg, startE, locs, sigs, "i64")
-    let ev = genHExpr(cg, endE, locs, sigs, "i64")
-    let s64 = widenToI64(cg, sv)
-    let e64 = widenToI64(cg, ev)
-    emit(cg, "  store i64 " + s64 + ", ptr " + idxAddr + "\n")
-    emit(cg, "  br label %" + l.cond + "\n")
-    emitLabel(cg, l.cond)
-    let cur = nextTemp(cg)
-    emit(cg, "  " + cur + " = load i64, ptr " + idxAddr + "\n")
-    let lt = nextTemp(cg)
-    emit(cg, "  " + lt + " = icmp slt i64 " + cur + ", " + e64 + "\n")
-    emit(cg, "  br i1 " + lt + ", label %" + l.body + ", label %" + l.end + "\n")
-    emitLabel(cg, l.body)
+    let l = enterForLoop(&mut cg)
+    let idxAddr = nextTemp(&mut cg)
+    emit(&mut cg, "  " + idxAddr + " = alloca i64\n")
+    let sv = genHExpr(&mut cg, startE, locs, sigs, "i64")
+    let ev = genHExpr(&mut cg, endE, locs, sigs, "i64")
+    let s64 = widenToI64(&mut cg, sv)
+    let e64 = widenToI64(&mut cg, ev)
+    emit(&mut cg, "  store i64 " + s64 + ", ptr " + idxAddr + "\n")
+    emit(&mut cg, "  br label %" + l.cond + "\n")
+    emitLabel(&mut cg, l.cond)
+    let cur = nextTemp(&mut cg)
+    emit(&mut cg, "  " + cur + " = load i64, ptr " + idxAddr + "\n")
+    let lt = nextTemp(&mut cg)
+    emit(&mut cg, "  " + lt + " = icmp slt i64 " + cur + ", " + e64 + "\n")
+    emit(&mut cg, "  br i1 " + lt + ", label %" + l.body + ", label %" + l.end + "\n")
+    emitLabel(&mut cg, l.body)
     let locsPreLen = locs.len
     // The counter's own slot IS the binding, so it is i64 whatever width the checker gave
     // the loop variable — the bound compare and the increment are both i64.
@@ -461,11 +461,11 @@ pub fn genForRange(cg: &mut Cgen, varName: &string, startE: &HExprNode, endE: &H
         name: varName.clone(), ty: "i64", addr: idxAddr.clone(), isRef: false, isArr: false, range: noRange()
     }
     )
-    markLoopBindingView(cg, idxAddr)
-    genLoopBody(cg, body, locs, sigs, retTy, locsPreLen, l.step)
-    emitIndexStep(cg, idxAddr, l.step, l.cond)
-    emitLabel(cg, l.end)
-    exitForLoop(cg, l)
+    markLoopBindingView(&mut cg, idxAddr)
+    genLoopBody(&mut cg, body, &mut locs, sigs, retTy, locsPreLen, l.step)
+    emitIndexStep(&mut cg, idxAddr, l.step, l.cond)
+    emitLabel(&mut cg, l.end)
+    exitForLoop(&mut cg, l)
 }
 
 // `for x in <container>` / `for i, x in <container>`. Which container is NOT re-derived
@@ -473,21 +473,21 @@ pub fn genForRange(cg: &mut Cgen, varName: &string, startE: &HExprNode, endE: &H
 // declared. An `@iter` newtype has already been redirected to its delegate field, so
 // nothing below knows a wrapper struct was ever involved.
 pub fn genForEach(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable: &HExprNode, kind: &HIterKind, body: &Vec<Heap<HStmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
-    let l = enterForLoop(cg)
-    let idxAddr = nextTemp(cg)
-    emit(cg, "  " + idxAddr + " = alloca i64\n")
-    let obj = genHExpr(cg, iterable, locs, sigs, "")
+    let l = enterForLoop(&mut cg)
+    let idxAddr = nextTemp(&mut cg)
+    emit(&mut cg, "  " + idxAddr + " = alloca i64\n")
+    let obj = genHExpr(&mut cg, iterable, locs, sigs, "")
     match kind {
         HIterKind.IterHashMap => {
-            genForInHashMap(cg, varName, varName2, obj, body, locs, sigs, retTy, l, idxAddr)
+            genForInHashMap(&mut cg, varName, varName2, obj, body, &mut locs, sigs, retTy, l, idxAddr)
         }
         _ => {
-            genForInIndexed(cg, varName, varName2, obj, kind, body, locs, sigs, retTy, l, idxAddr)
+            genForInIndexed(&mut cg, varName, varName2, obj, kind, body, &mut locs, sigs, retTy, l, idxAddr)
         }
     }
-    emitIndexStep(cg, idxAddr, l.step, l.cond)
-    emitLabel(cg, l.end)
-    exitForLoop(cg, l)
+    emitIndexStep(&mut cg, idxAddr, l.step, l.cond)
+    emitLabel(&mut cg, l.end)
+    exitForLoop(&mut cg, l)
 }
 
 // `for key, value in map`: walk the flat entry array; body sees copies bound through
@@ -503,53 +503,53 @@ fn genForInHashMap(cg: &mut Cgen, varName: &string, varName2: &Option<string>, o
     let entryTy = hmEntryTy(keyTy, valTy)
     let keyLl = llType(keyTy)
     let valLl = llType(valTy)
-    let data = nextTemp(cg)
-    emit(cg, "  " + data + " = extractvalue %HashMap " + obj.v + ", 0\n")
-    let count = nextTemp(cg)
-    emit(cg, "  " + count + " = extractvalue %HashMap " + obj.v + ", 1\n")
-    let keyAddr = nextTemp(cg)
-    emit(cg, "  " + keyAddr + " = alloca " + keyLl + "\n")
-    let valAddr = nextTemp(cg)
-    emit(cg, "  " + valAddr + " = alloca " + valLl + "\n")
-    emit(cg, "  store i64 0, ptr " + idxAddr.clone() + "\n")
-    emit(cg, "  br label %" + l.cond.clone() + "\n")
-    emitLabel(cg, l.cond)
-    let cur = nextTemp(cg)
-    emit(cg, "  " + cur + " = load i64, ptr " + idxAddr.clone() + "\n")
-    let lt = nextTemp(cg)
-    emit(cg, "  " + lt + " = icmp slt i64 " + cur + ", " + count + "\n")
-    emit(cg, "  br i1 " + lt + ", label %" + l.body.clone() + ", label %" + l.end.clone() + "\n")
-    emitLabel(cg, l.body)
-    let slot = nextTemp(cg)
-    emit(cg, "  " + slot + " = getelementptr " + entryTy + ", ptr " + data + ", i64 " + cur + "\n")
-    let kp = nextTemp(cg)
-    emit(cg, "  " + kp + " = getelementptr " + entryTy + ", ptr " + slot + ", i32 0, i32 0\n")
-    let k = nextTemp(cg)
-    emit(cg, "  " + k + " = load " + keyLl + ", ptr " + kp + "\n")
-    emit(cg, "  store " + keyLl + " " + k + ", ptr " + keyAddr + "\n")
-    let vp = nextTemp(cg)
-    emit(cg, "  " + vp + " = getelementptr " + entryTy + ", ptr " + slot + ", i32 0, i32 1\n")
-    let v = nextTemp(cg)
-    emit(cg, "  " + v + " = load " + valLl + ", ptr " + vp + "\n")
-    emit(cg, "  store " + valLl + " " + v + ", ptr " + valAddr + "\n")
+    let data = nextTemp(&mut cg)
+    emit(&mut cg, "  " + data + " = extractvalue %HashMap " + obj.v + ", 0\n")
+    let count = nextTemp(&mut cg)
+    emit(&mut cg, "  " + count + " = extractvalue %HashMap " + obj.v + ", 1\n")
+    let keyAddr = nextTemp(&mut cg)
+    emit(&mut cg, "  " + keyAddr + " = alloca " + keyLl + "\n")
+    let valAddr = nextTemp(&mut cg)
+    emit(&mut cg, "  " + valAddr + " = alloca " + valLl + "\n")
+    emit(&mut cg, "  store i64 0, ptr " + idxAddr.clone() + "\n")
+    emit(&mut cg, "  br label %" + l.cond.clone() + "\n")
+    emitLabel(&mut cg, l.cond)
+    let cur = nextTemp(&mut cg)
+    emit(&mut cg, "  " + cur + " = load i64, ptr " + idxAddr.clone() + "\n")
+    let lt = nextTemp(&mut cg)
+    emit(&mut cg, "  " + lt + " = icmp slt i64 " + cur + ", " + count + "\n")
+    emit(&mut cg, "  br i1 " + lt + ", label %" + l.body.clone() + ", label %" + l.end.clone() + "\n")
+    emitLabel(&mut cg, l.body)
+    let slot = nextTemp(&mut cg)
+    emit(&mut cg, "  " + slot + " = getelementptr " + entryTy + ", ptr " + data + ", i64 " + cur + "\n")
+    let kp = nextTemp(&mut cg)
+    emit(&mut cg, "  " + kp + " = getelementptr " + entryTy + ", ptr " + slot + ", i32 0, i32 0\n")
+    let k = nextTemp(&mut cg)
+    emit(&mut cg, "  " + k + " = load " + keyLl + ", ptr " + kp + "\n")
+    emit(&mut cg, "  store " + keyLl + " " + k + ", ptr " + keyAddr + "\n")
+    let vp = nextTemp(&mut cg)
+    emit(&mut cg, "  " + vp + " = getelementptr " + entryTy + ", ptr " + slot + ", i32 0, i32 1\n")
+    let v = nextTemp(&mut cg)
+    emit(&mut cg, "  " + v + " = load " + valLl + ", ptr " + vp + "\n")
+    emit(&mut cg, "  store " + valLl + " " + v + ", ptr " + valAddr + "\n")
     let locsPreLen = locs.len
     locs.push(Local {
         name: varName.clone(), ty: keyTy.clone(), addr: keyAddr.clone(), isRef: false, isArr: false, range: noRange()
     }
     )
-    markLoopBindingView(cg, keyAddr)
+    markLoopBindingView(&mut cg, keyAddr)
     match varName2 {
         Option.Some(valName) => {
             locs.push(Local {
                 name: valName.clone(), ty: valTy.clone(), addr: valAddr.clone(), isRef: false, isArr: false, range: noRange()
             }
             )
-            markLoopBindingView(cg, valAddr)
+            markLoopBindingView(&mut cg, valAddr)
         }
         Option.None => {
         }
     }
-    genLoopBody(cg, body, locs, sigs, retTy, locsPreLen, l.step)
+    genLoopBody(&mut cg, body, &mut locs, sigs, retTy, locsPreLen, l.step)
 }
 
 // Vec, fixed array, or string bytes: copy the 3-word header and walk by index.
@@ -568,27 +568,27 @@ fn genForInIndexed(cg: &mut Cgen, varName: &string, varName2: &Option<string>, o
         }
     }
     let elemLl = llType(elemTy)
-    let data = nextTemp(cg)
-    emit(cg, "  " + data + " = extractvalue " + container + " " + obj.v + ", 0\n")
-    let count = nextTemp(cg)
-    emit(cg, "  " + count + " = extractvalue " + container + " " + obj.v + ", 1\n")
+    let data = nextTemp(&mut cg)
+    emit(&mut cg, "  " + data + " = extractvalue " + container + " " + obj.v + ", 0\n")
+    let count = nextTemp(&mut cg)
+    emit(&mut cg, "  " + count + " = extractvalue " + container + " " + obj.v + ", 1\n")
     // element slot, hoisted out of the loop so the body can rebind it
-    let elemAddr = nextTemp(cg)
-    emit(cg, "  " + elemAddr + " = alloca " + elemLl + "\n")
-    emit(cg, "  store i64 0, ptr " + idxAddr.clone() + "\n")
-    emit(cg, "  br label %" + l.cond.clone() + "\n")
-    emitLabel(cg, l.cond)
-    let cur = nextTemp(cg)
-    emit(cg, "  " + cur + " = load i64, ptr " + idxAddr.clone() + "\n")
-    let lt = nextTemp(cg)
-    emit(cg, "  " + lt + " = icmp slt i64 " + cur + ", " + count + "\n")
-    emit(cg, "  br i1 " + lt + ", label %" + l.body.clone() + ", label %" + l.end.clone() + "\n")
-    emitLabel(cg, l.body)
-    let slot = nextTemp(cg)
-    emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + cur + "\n")
-    let elem = nextTemp(cg)
-    emit(cg, "  " + elem + " = load " + elemLl + ", ptr " + slot + "\n")
-    emit(cg, "  store " + elemLl + " " + elem + ", ptr " + elemAddr + "\n")
+    let elemAddr = nextTemp(&mut cg)
+    emit(&mut cg, "  " + elemAddr + " = alloca " + elemLl + "\n")
+    emit(&mut cg, "  store i64 0, ptr " + idxAddr.clone() + "\n")
+    emit(&mut cg, "  br label %" + l.cond.clone() + "\n")
+    emitLabel(&mut cg, l.cond)
+    let cur = nextTemp(&mut cg)
+    emit(&mut cg, "  " + cur + " = load i64, ptr " + idxAddr.clone() + "\n")
+    let lt = nextTemp(&mut cg)
+    emit(&mut cg, "  " + lt + " = icmp slt i64 " + cur + ", " + count + "\n")
+    emit(&mut cg, "  br i1 " + lt + ", label %" + l.body.clone() + ", label %" + l.end.clone() + "\n")
+    emitLabel(&mut cg, l.body)
+    let slot = nextTemp(&mut cg)
+    emit(&mut cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + cur + "\n")
+    let elem = nextTemp(&mut cg)
+    emit(&mut cg, "  " + elem + " = load " + elemLl + ", ptr " + slot + "\n")
+    emit(&mut cg, "  store " + elemLl + " " + elem + ", ptr " + elemAddr + "\n")
     let locsPreLen = locs.len
     // two-var form is `for index, value in vec` (index first), matching the checker's
     // binding order; single-var binds the element.
@@ -598,22 +598,22 @@ fn genForInIndexed(cg: &mut Cgen, varName: &string, varName2: &Option<string>, o
                 name: varName.clone(), ty: "i64", addr: idxAddr.clone(), isRef: false, isArr: false, range: noRange()
             }
             )
-            markLoopBindingView(cg, idxAddr)
+            markLoopBindingView(&mut cg, idxAddr)
             locs.push(Local {
                 name: valName.clone(), ty: elemTy.clone(), addr: elemAddr.clone(), isRef: false, isArr: false, range: noRange()
             }
             )
-            markLoopBindingView(cg, elemAddr)
+            markLoopBindingView(&mut cg, elemAddr)
         }
         Option.None => {
             locs.push(Local {
                 name: varName.clone(), ty: elemTy.clone(), addr: elemAddr.clone(), isRef: false, isArr: false, range: noRange()
             }
             )
-            markLoopBindingView(cg, elemAddr)
+            markLoopBindingView(&mut cg, elemAddr)
         }
     }
-    genLoopBody(cg, body, locs, sigs, retTy, locsPreLen, l.step)
+    genLoopBody(&mut cg, body, &mut locs, sigs, retTy, locsPreLen, l.step)
 }
 
 // `for x in <iterator>` and `for x in <channel>`. One loop for both: a channel's recv()
@@ -621,8 +621,8 @@ fn genForInIndexed(cg: &mut Cgen, varName: &string, varName2: &Option<string>, o
 // variant name — recorded by the checker, not sniffed off a type string here — is the
 // only difference between them.
 pub fn genForIterator(cg: &mut Cgen, varName: &string, iterable: &HExprNode, nextMethod: &string, resultEnum: &string, okVariant: &string, body: &Vec<Heap<HStmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
-    let l = enterForLoop(cg)
-    let obj = genHExpr(cg, iterable, locs, sigs, "")
+    let l = enterForLoop(&mut cg)
+    let obj = genHExpr(&mut cg, iterable, locs, sigs, "")
     let objLl = llType(obj.ty)
     let resTy = stripPercent(resolveTyStr(cg, resultEnum.clone()))
     let resLl = "%" + resTy.clone()
@@ -632,44 +632,44 @@ pub fn genForIterator(cg: &mut Cgen, varName: &string, iterable: &HExprNode, nex
     let payTypes = lookupVariantPayload(cg, resTy, okVariant)
     let elemTy = payTypes[0].clone()
     let elemLl = llType(elemTy)
-    let itSlot = nextTemp(cg)
-    emit(cg, "  " + itSlot + " = alloca " + objLl + "\n")
-    emit(cg, "  store " + objLl + " " + obj.v + ", ptr " + itSlot + "\n")
-    let valAddr = nextTemp(cg)
-    emit(cg, "  " + valAddr + " = alloca " + elemLl + "\n")
-    emit(cg, "  br label %" + l.cond + "\n")
-    emitLabel(cg, l.cond)
-    let r = nextTemp(cg)
-    emit(cg, "  " + r + " = call " + resLl + " @" + nextMethod.clone() + "(ptr " + itSlot + ")\n")
-    let rslot = nextTemp(cg)
-    emit(cg, "  " + rslot + " = alloca " + resLl + "\n")
-    emit(cg, "  store " + resLl + " " + r + ", ptr " + rslot + "\n")
-    let tagP = nextTemp(cg)
-    emit(cg, "  " + tagP + " = getelementptr " + resLl + ", ptr " + rslot + ", i32 0, i32 0\n")
-    let tag = nextTemp(cg)
-    emit(cg, "  " + tag + " = load i32, ptr " + tagP + "\n")
-    let isOk = nextTemp(cg)
-    emit(cg, "  " + isOk + " = icmp eq i32 " + tag + ", " + okTag.toString() + "\n")
-    emit(cg, "  br i1 " + isOk + ", label %" + l.body + ", label %" + l.end + "\n")
-    emitLabel(cg, l.body)
-    let payP = nextTemp(cg)
-    emit(cg, "  " + payP + " = getelementptr " + resLl + ", ptr " + rslot + ", i32 0, i32 1\n")
-    let fp = nextTemp(cg)
-    emit(cg, "  " + fp + " = getelementptr { " + elemLl + " }, ptr " + payP + ", i32 0, i32 0\n")
-    let pv = nextTemp(cg)
-    emit(cg, "  " + pv + " = load " + elemLl + ", ptr " + fp + "\n")
-    emit(cg, "  store " + elemLl + " " + pv + ", ptr " + valAddr + "\n")
+    let itSlot = nextTemp(&mut cg)
+    emit(&mut cg, "  " + itSlot + " = alloca " + objLl + "\n")
+    emit(&mut cg, "  store " + objLl + " " + obj.v + ", ptr " + itSlot + "\n")
+    let valAddr = nextTemp(&mut cg)
+    emit(&mut cg, "  " + valAddr + " = alloca " + elemLl + "\n")
+    emit(&mut cg, "  br label %" + l.cond + "\n")
+    emitLabel(&mut cg, l.cond)
+    let r = nextTemp(&mut cg)
+    emit(&mut cg, "  " + r + " = call " + resLl + " @" + nextMethod.clone() + "(ptr " + itSlot + ")\n")
+    let rslot = nextTemp(&mut cg)
+    emit(&mut cg, "  " + rslot + " = alloca " + resLl + "\n")
+    emit(&mut cg, "  store " + resLl + " " + r + ", ptr " + rslot + "\n")
+    let tagP = nextTemp(&mut cg)
+    emit(&mut cg, "  " + tagP + " = getelementptr " + resLl + ", ptr " + rslot + ", i32 0, i32 0\n")
+    let tag = nextTemp(&mut cg)
+    emit(&mut cg, "  " + tag + " = load i32, ptr " + tagP + "\n")
+    let isOk = nextTemp(&mut cg)
+    emit(&mut cg, "  " + isOk + " = icmp eq i32 " + tag + ", " + okTag.toString() + "\n")
+    emit(&mut cg, "  br i1 " + isOk + ", label %" + l.body + ", label %" + l.end + "\n")
+    emitLabel(&mut cg, l.body)
+    let payP = nextTemp(&mut cg)
+    emit(&mut cg, "  " + payP + " = getelementptr " + resLl + ", ptr " + rslot + ", i32 0, i32 1\n")
+    let fp = nextTemp(&mut cg)
+    emit(&mut cg, "  " + fp + " = getelementptr { " + elemLl + " }, ptr " + payP + ", i32 0, i32 0\n")
+    let pv = nextTemp(&mut cg)
+    emit(&mut cg, "  " + pv + " = load " + elemLl + ", ptr " + fp + "\n")
+    emit(&mut cg, "  store " + elemLl + " " + pv + ", ptr " + valAddr + "\n")
     let locsPreLen = locs.len
     locs.push(Local {
         name: varName.clone(), ty: elemTy.clone(), addr: valAddr.clone(), isRef: false, isArr: false, range: noRange()
     }
     )
-    markLoopBindingView(cg, valAddr)
-    genLoopBody(cg, body, locs, sigs, retTy, locsPreLen, l.step)
-    emitLabel(cg, l.step)
-    emit(cg, "  br label %" + l.cond + "\n")
-    emitLabel(cg, l.end)
-    exitForLoop(cg, l)
+    markLoopBindingView(&mut cg, valAddr)
+    genLoopBody(&mut cg, body, &mut locs, sigs, retTy, locsPreLen, l.step)
+    emitLabel(&mut cg, l.step)
+    emit(&mut cg, "  br label %" + l.cond + "\n")
+    emitLabel(&mut cg, l.end)
+    exitForLoop(&mut cg, l)
 }
 
 // `for line in text.lines()` / `for f in text.splitView(sep)`. Each iteration stores
@@ -681,8 +681,8 @@ pub fn genForIterator(cg: &mut Cgen, varName: &string, iterable: &HExprNode, nex
 // A full self-contained loop, like the iterator drain above, because its step is "jump
 // to the next found separator", not a plain index +1.
 pub fn genForStrView(cg: &mut Cgen, varName: &string, varName2: &Option<string>, src: &HExprNode, sep: &Option<Heap<HExprNode>>, mode: &HStrViewMode, body: &Vec<Heap<HStmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
-    ensureStringTy(cg)
-    let l = enterForLoop(cg)
+    ensureStringTy(&mut cg)
+    let l = enterForLoop(&mut cg)
     var isSplit = false
     match mode {
         HStrViewMode.ViewSplit => {
@@ -692,125 +692,125 @@ pub fn genForStrView(cg: &mut Cgen, varName: &string, varName2: &Option<string>,
         }
     }
 
-    let srcVal = genHExpr(cg, src, locs, sigs, "")
-    let dataP = nextTemp(cg)
-    emit(cg, "  " + dataP + " = extractvalue %String " + srcVal.v + ", 0\n")
-    let lenV = nextTemp(cg)
-    emit(cg, "  " + lenV + " = extractvalue %String " + srcVal.v + ", 1\n")
+    let srcVal = genHExpr(&mut cg, src, locs, sigs, "")
+    let dataP = nextTemp(&mut cg)
+    emit(&mut cg, "  " + dataP + " = extractvalue %String " + srcVal.v + ", 0\n")
+    let lenV = nextTemp(&mut cg)
+    emit(&mut cg, "  " + lenV + " = extractvalue %String " + srcVal.v + ", 1\n")
 
     // the separator: an explicit argument for splitView, a literal newline for lines
     var sepPtr = ""
     var sepLen = "1"
     match sep {
         Option.Some(sepExpr) => {
-            let sepVal = genHExpr(cg, *sepExpr, locs, sigs, "")
-            let sp = nextTemp(cg)
-            emit(cg, "  " + sp + " = extractvalue %String " + sepVal.v + ", 0\n")
+            let sepVal = genHExpr(&mut cg, *sepExpr, locs, sigs, "")
+            let sp = nextTemp(&mut cg)
+            emit(&mut cg, "  " + sp + " = extractvalue %String " + sepVal.v + ", 0\n")
             sepPtr = sp
-            let sl = nextTemp(cg)
-            emit(cg, "  " + sl + " = extractvalue %String " + sepVal.v + ", 1\n")
+            let sl = nextTemp(&mut cg)
+            emit(&mut cg, "  " + sl + " = extractvalue %String " + sepVal.v + ", 1\n")
             sepLen = sl
         }
         Option.None => {
-            let nlLabel = emitStringLit(cg, "\n")
-            let sp = nextTemp(cg)
-            emit(cg, "  " + sp + " = getelementptr [2 x i8], ptr " + nlLabel + ", i32 0, i32 0\n")
+            let nlLabel = emitStringLit(&mut cg, "\n")
+            let sp = nextTemp(&mut cg)
+            emit(&mut cg, "  " + sp + " = getelementptr [2 x i8], ptr " + nlLabel + ", i32 0, i32 0\n")
             sepPtr = sp
             sepLen = "1"
         }
     }
-    ensureStrFind(cg)
+    ensureStrFind(&mut cg)
 
-    let posAddr = nextTemp(cg)
-    emit(cg, "  " + posAddr + " = alloca i64\n")
-    emit(cg, "  store i64 0, ptr " + posAddr + "\n")
-    let nextAddr = nextTemp(cg)
-    emit(cg, "  " + nextAddr + " = alloca i64\n")
-    let viewAddr = nextTemp(cg)
-    emit(cg, "  " + viewAddr + " = alloca %String\n")
+    let posAddr = nextTemp(&mut cg)
+    emit(&mut cg, "  " + posAddr + " = alloca i64\n")
+    emit(&mut cg, "  store i64 0, ptr " + posAddr + "\n")
+    let nextAddr = nextTemp(&mut cg)
+    emit(&mut cg, "  " + nextAddr + " = alloca i64\n")
+    let viewAddr = nextTemp(&mut cg)
+    emit(&mut cg, "  " + viewAddr + " = alloca %String\n")
 
     // enumerate form: `for i, line in text.lines()` binds the piece to the second name
     var idxAddr = ""
     match varName2 {
         Option.Some(viewName) => {
-            let ia = nextTemp(cg)
-            emit(cg, "  " + ia + " = alloca i64\n")
-            emit(cg, "  store i64 0, ptr " + ia + "\n")
+            let ia = nextTemp(&mut cg)
+            emit(&mut cg, "  " + ia + " = alloca i64\n")
+            emit(&mut cg, "  store i64 0, ptr " + ia + "\n")
             idxAddr = ia
         }
         Option.None => {
         }
     }
 
-    emit(cg, "  br label %" + l.cond + "\n")
-    emitLabel(cg, l.cond)
-    let pos = nextTemp(cg)
-    emit(cg, "  " + pos + " = load i64, ptr " + posAddr + "\n")
+    emit(&mut cg, "  br label %" + l.cond + "\n")
+    emitLabel(&mut cg, l.cond)
+    let pos = nextTemp(&mut cg)
+    emit(&mut cg, "  " + pos + " = load i64, ptr " + posAddr + "\n")
     var more = ""
     if !isSplit {
         // a trailing newline ends the last line, it does not start an empty one
-        let m = nextTemp(cg)
-        emit(cg, "  " + m + " = icmp slt i64 " + pos + ", " + lenV + "\n")
+        let m = nextTemp(&mut cg)
+        emit(&mut cg, "  " + m + " = icmp slt i64 " + pos + ", " + lenV + "\n")
         more = m
     } else {
         // `pos == len` still yields the piece after a trailing separator ("a," -> "a", "")
-        let inRange = nextTemp(cg)
-        emit(cg, "  " + inRange + " = icmp sle i64 " + pos + ", " + lenV + "\n")
+        let inRange = nextTemp(&mut cg)
+        emit(&mut cg, "  " + inRange + " = icmp sle i64 " + pos + ", " + lenV + "\n")
         // an empty separator splits into single bytes, which run out one step earlier
-        let sepEmpty = nextTemp(cg)
-        emit(cg, "  " + sepEmpty + " = icmp eq i64 " + sepLen + ", 0\n")
-        let emptyDone = nextTemp(cg)
-        emit(cg, "  " + emptyDone + " = icmp sge i64 " + pos + ", " + lenV + "\n")
-        let notEmptyDone = nextTemp(cg)
-        emit(cg, "  " + notEmptyDone + " = xor i1 " + emptyDone + ", true\n")
-        let okEmpty = nextTemp(cg)
-        emit(cg, "  " + okEmpty + " = select i1 " + sepEmpty + ", i1 " + notEmptyDone + ", i1 true\n")
-        let m = nextTemp(cg)
-        emit(cg, "  " + m + " = and i1 " + inRange + ", " + okEmpty + "\n")
+        let sepEmpty = nextTemp(&mut cg)
+        emit(&mut cg, "  " + sepEmpty + " = icmp eq i64 " + sepLen + ", 0\n")
+        let emptyDone = nextTemp(&mut cg)
+        emit(&mut cg, "  " + emptyDone + " = icmp sge i64 " + pos + ", " + lenV + "\n")
+        let notEmptyDone = nextTemp(&mut cg)
+        emit(&mut cg, "  " + notEmptyDone + " = xor i1 " + emptyDone + ", true\n")
+        let okEmpty = nextTemp(&mut cg)
+        emit(&mut cg, "  " + okEmpty + " = select i1 " + sepEmpty + ", i1 " + notEmptyDone + ", i1 true\n")
+        let m = nextTemp(&mut cg)
+        emit(&mut cg, "  " + m + " = and i1 " + inRange + ", " + okEmpty + "\n")
         more = m
     }
-    emit(cg, "  br i1 " + more + ", label %" + l.body + ", label %" + l.end + "\n")
+    emit(&mut cg, "  br i1 " + more + ", label %" + l.body + ", label %" + l.end + "\n")
 
-    emitLabel(cg, l.body)
-    let found = nextTemp(cg)
-    emit(cg, "  " + found + " = call i64 @milo.strfind(ptr " + dataP + ", i64 " + lenV + ", ptr " + sepPtr + ", i64 " + sepLen + ", i64 " + pos + ")\n")
+    emitLabel(&mut cg, l.body)
+    let found = nextTemp(&mut cg)
+    emit(&mut cg, "  " + found + " = call i64 @milo.strfind(ptr " + dataP + ", i64 " + lenV + ", ptr " + sepPtr + ", i64 " + sepLen + ", i64 " + pos + ")\n")
     var sepIdx = found.clone()
     if isSplit {
         // an empty needle matches at `pos` and would never advance; treat the next byte
         // boundary as the separator instead, which is what strSplit("") yields
-        let sepEmpty2 = nextTemp(cg)
-        emit(cg, "  " + sepEmpty2 + " = icmp eq i64 " + sepLen + ", 0\n")
-        let posPlus1 = nextTemp(cg)
-        emit(cg, "  " + posPlus1 + " = add i64 " + pos + ", 1\n")
-        let chosen = nextTemp(cg)
-        emit(cg, "  " + chosen + " = select i1 " + sepEmpty2 + ", i64 " + posPlus1 + ", i64 " + found + "\n")
+        let sepEmpty2 = nextTemp(&mut cg)
+        emit(&mut cg, "  " + sepEmpty2 + " = icmp eq i64 " + sepLen + ", 0\n")
+        let posPlus1 = nextTemp(&mut cg)
+        emit(&mut cg, "  " + posPlus1 + " = add i64 " + pos + ", 1\n")
+        let chosen = nextTemp(&mut cg)
+        emit(&mut cg, "  " + chosen + " = select i1 " + sepEmpty2 + ", i64 " + posPlus1 + ", i64 " + found + "\n")
         sepIdx = chosen
     }
-    let hasSep = nextTemp(cg)
-    emit(cg, "  " + hasSep + " = icmp sge i64 " + sepIdx + ", 0\n")
-    let pieceEnd = nextTemp(cg)
-    emit(cg, "  " + pieceEnd + " = select i1 " + hasSep + ", i64 " + sepIdx + ", i64 " + lenV + "\n")
+    let hasSep = nextTemp(&mut cg)
+    emit(&mut cg, "  " + hasSep + " = icmp sge i64 " + sepIdx + ", 0\n")
+    let pieceEnd = nextTemp(&mut cg)
+    emit(&mut cg, "  " + pieceEnd + " = select i1 " + hasSep + ", i64 " + sepIdx + ", i64 " + lenV + "\n")
 
     var viewEnd = pieceEnd.clone()
     if !isSplit {
         // CRLF: the '\r' belongs to the line ending, not to the line
-        let nonEmpty = nextTemp(cg)
-        emit(cg, "  " + nonEmpty + " = icmp sgt i64 " + pieceEnd + ", " + pos + "\n")
-        let prevIdx = nextTemp(cg)
-        emit(cg, "  " + prevIdx + " = sub i64 " + pieceEnd + ", 1\n")
+        let nonEmpty = nextTemp(&mut cg)
+        emit(&mut cg, "  " + nonEmpty + " = icmp sgt i64 " + pieceEnd + ", " + pos + "\n")
+        let prevIdx = nextTemp(&mut cg)
+        emit(&mut cg, "  " + prevIdx + " = sub i64 " + pieceEnd + ", 1\n")
         // clamped so the load stays inside the buffer when the line is empty
-        let probeIdx = nextTemp(cg)
-        emit(cg, "  " + probeIdx + " = select i1 " + nonEmpty + ", i64 " + prevIdx + ", i64 " + pos + "\n")
-        let probePtr = nextTemp(cg)
-        emit(cg, "  " + probePtr + " = getelementptr i8, ptr " + dataP + ", i64 " + probeIdx + "\n")
-        let probe = nextTemp(cg)
-        emit(cg, "  " + probe + " = load i8, ptr " + probePtr + "\n")
-        let isCR = nextTemp(cg)
-        emit(cg, "  " + isCR + " = icmp eq i8 " + probe + ", 13\n")
-        let strip = nextTemp(cg)
-        emit(cg, "  " + strip + " = and i1 " + nonEmpty + ", " + isCR + "\n")
-        let stripped = nextTemp(cg)
-        emit(cg, "  " + stripped + " = select i1 " + strip + ", i64 " + prevIdx + ", i64 " + pieceEnd + "\n")
+        let probeIdx = nextTemp(&mut cg)
+        emit(&mut cg, "  " + probeIdx + " = select i1 " + nonEmpty + ", i64 " + prevIdx + ", i64 " + pos + "\n")
+        let probePtr = nextTemp(&mut cg)
+        emit(&mut cg, "  " + probePtr + " = getelementptr i8, ptr " + dataP + ", i64 " + probeIdx + "\n")
+        let probe = nextTemp(&mut cg)
+        emit(&mut cg, "  " + probe + " = load i8, ptr " + probePtr + "\n")
+        let isCR = nextTemp(&mut cg)
+        emit(&mut cg, "  " + isCR + " = icmp eq i8 " + probe + ", 13\n")
+        let strip = nextTemp(&mut cg)
+        emit(&mut cg, "  " + strip + " = and i1 " + nonEmpty + ", " + isCR + "\n")
+        let stripped = nextTemp(&mut cg)
+        emit(&mut cg, "  " + stripped + " = select i1 " + strip + ", i64 " + prevIdx + ", i64 " + pieceEnd + "\n")
         viewEnd = stripped
     }
 
@@ -824,37 +824,37 @@ pub fn genForStrView(cg: &mut Cgen, varName: &string, varName2: &Option<string>,
     // and for-in doesn't scope-drop its locals yet (a separate, pre-existing gap —
     // see enterForLoop) — so this leaks per iteration either way. cap=0 at least keeps
     // it from ever being double-freed if that gap is closed later.
-    ensureMalloc(cg)
-    ensureMemcpy(cg)
-    let viewLen = nextTemp(cg)
-    emit(cg, "  " + viewLen + " = sub i64 " + viewEnd + ", " + pos + "\n")
-    let sz = nextTemp(cg)
-    emit(cg, "  " + sz + " = add i64 " + viewLen + ", 1\n")
-    let buf = nextTemp(cg)
-    emit(cg, "  " + buf + " = call ptr @malloc(i64 " + sz + ")\n")
-    let srcP = nextTemp(cg)
-    emit(cg, "  " + srcP + " = getelementptr i8, ptr " + dataP + ", i64 " + pos + "\n")
-    emit(cg, "  call ptr @memcpy(ptr " + buf + ", ptr " + srcP + ", i64 " + viewLen + ")\n")
-    let np = nextTemp(cg)
-    emit(cg, "  " + np + " = getelementptr i8, ptr " + buf + ", i64 " + viewLen + "\n")
-    emit(cg, "  store i8 0, ptr " + np + "\n")
-    let v0 = nextTemp(cg)
-    emit(cg, "  " + v0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
-    let v1 = nextTemp(cg)
-    emit(cg, "  " + v1 + " = insertvalue %String " + v0 + ", i64 " + viewLen + ", 1\n")
-    let v2 = nextTemp(cg)
-    emit(cg, "  " + v2 + " = insertvalue %String " + v1 + ", i64 0, 2\n")
-    emit(cg, "  store %String " + v2 + ", ptr " + viewAddr + "\n")
+    ensureMalloc(&mut cg)
+    ensureMemcpy(&mut cg)
+    let viewLen = nextTemp(&mut cg)
+    emit(&mut cg, "  " + viewLen + " = sub i64 " + viewEnd + ", " + pos + "\n")
+    let sz = nextTemp(&mut cg)
+    emit(&mut cg, "  " + sz + " = add i64 " + viewLen + ", 1\n")
+    let buf = nextTemp(&mut cg)
+    emit(&mut cg, "  " + buf + " = call ptr @malloc(i64 " + sz + ")\n")
+    let srcP = nextTemp(&mut cg)
+    emit(&mut cg, "  " + srcP + " = getelementptr i8, ptr " + dataP + ", i64 " + pos + "\n")
+    emit(&mut cg, "  call ptr @memcpy(ptr " + buf + ", ptr " + srcP + ", i64 " + viewLen + ")\n")
+    let np = nextTemp(&mut cg)
+    emit(&mut cg, "  " + np + " = getelementptr i8, ptr " + buf + ", i64 " + viewLen + "\n")
+    emit(&mut cg, "  store i8 0, ptr " + np + "\n")
+    let v0 = nextTemp(&mut cg)
+    emit(&mut cg, "  " + v0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
+    let v1 = nextTemp(&mut cg)
+    emit(&mut cg, "  " + v1 + " = insertvalue %String " + v0 + ", i64 " + viewLen + ", 1\n")
+    let v2 = nextTemp(&mut cg)
+    emit(&mut cg, "  " + v2 + " = insertvalue %String " + v1 + ", i64 0, 2\n")
+    emit(&mut cg, "  store %String " + v2 + ", ptr " + viewAddr + "\n")
 
     // Computed here, where the search result is live, and read back in the increment
     // block — which `continue` can also reach, from blocks that do not see these values.
-    let afterSep = nextTemp(cg)
-    emit(cg, "  " + afterSep + " = add i64 " + pieceEnd + ", " + sepLen + "\n")
-    let past = nextTemp(cg)
-    emit(cg, "  " + past + " = add i64 " + lenV + ", 1\n")
-    let nextPos = nextTemp(cg)
-    emit(cg, "  " + nextPos + " = select i1 " + hasSep + ", i64 " + afterSep + ", i64 " + past + "\n")
-    emit(cg, "  store i64 " + nextPos + ", ptr " + nextAddr + "\n")
+    let afterSep = nextTemp(&mut cg)
+    emit(&mut cg, "  " + afterSep + " = add i64 " + pieceEnd + ", " + sepLen + "\n")
+    let past = nextTemp(&mut cg)
+    emit(&mut cg, "  " + past + " = add i64 " + lenV + ", 1\n")
+    let nextPos = nextTemp(&mut cg)
+    emit(&mut cg, "  " + nextPos + " = select i1 " + hasSep + ", i64 " + afterSep + ", i64 " + past + "\n")
+    emit(&mut cg, "  store i64 " + nextPos + ", ptr " + nextAddr + "\n")
 
     let locsPreLen = locs.len
     match varName2 {
@@ -863,39 +863,39 @@ pub fn genForStrView(cg: &mut Cgen, varName: &string, varName2: &Option<string>,
                 name: varName.clone(), ty: "i64", addr: idxAddr.clone(), isRef: false, isArr: false, range: noRange()
             }
             )
-            markLoopBindingView(cg, idxAddr)
+            markLoopBindingView(&mut cg, idxAddr)
             locs.push(Local {
                 name: viewName.clone(), ty: "string", addr: viewAddr.clone(), isRef: false, isArr: false, range: noRange()
             }
             )
-            markLoopBindingView(cg, viewAddr)
+            markLoopBindingView(&mut cg, viewAddr)
         }
         Option.None => {
             locs.push(Local {
                 name: varName.clone(), ty: "string", addr: viewAddr.clone(), isRef: false, isArr: false, range: noRange()
             }
             )
-            markLoopBindingView(cg, viewAddr)
+            markLoopBindingView(&mut cg, viewAddr)
         }
     }
 
-    genLoopBody(cg, body, locs, sigs, retTy, locsPreLen, l.step)
+    genLoopBody(&mut cg, body, &mut locs, sigs, retTy, locsPreLen, l.step)
 
-    emitLabel(cg, l.step)
-    let advanced = nextTemp(cg)
-    emit(cg, "  " + advanced + " = load i64, ptr " + nextAddr + "\n")
-    emit(cg, "  store i64 " + advanced + ", ptr " + posAddr + "\n")
+    emitLabel(&mut cg, l.step)
+    let advanced = nextTemp(&mut cg)
+    emit(&mut cg, "  " + advanced + " = load i64, ptr " + nextAddr + "\n")
+    emit(&mut cg, "  store i64 " + advanced + ", ptr " + posAddr + "\n")
     if idxAddr != "" {
-        let curIdx = nextTemp(cg)
-        emit(cg, "  " + curIdx + " = load i64, ptr " + idxAddr + "\n")
-        let nextIdx = nextTemp(cg)
-        emit(cg, "  " + nextIdx + " = add i64 " + curIdx + ", 1\n")
-        emit(cg, "  store i64 " + nextIdx + ", ptr " + idxAddr + "\n")
+        let curIdx = nextTemp(&mut cg)
+        emit(&mut cg, "  " + curIdx + " = load i64, ptr " + idxAddr + "\n")
+        let nextIdx = nextTemp(&mut cg)
+        emit(&mut cg, "  " + nextIdx + " = add i64 " + curIdx + ", 1\n")
+        emit(&mut cg, "  store i64 " + nextIdx + ", ptr " + idxAddr + "\n")
     }
-    emit(cg, "  br label %" + l.cond + "\n")
+    emit(&mut cg, "  br label %" + l.cond + "\n")
 
-    emitLabel(cg, l.end)
-    exitForLoop(cg, l)
+    emitLabel(&mut cg, l.end)
+    exitForLoop(&mut cg, l)
 }
 
 // -- If statement --
@@ -921,7 +921,7 @@ pub fn genIf(cg: &mut Cgen, cond: &HExprNode, thenBody: &Vec<Heap<HStmt>>, elseB
             let foldPreLen = locs.len
             if taken {
                 for ti in 0..thenBody.len {
-                    if genStmt(cg, *thenBody[ti], locs, sigs, retTy) {
+                    if genStmt(&mut cg, *thenBody[ti], &mut locs, sigs, retTy) {
                         foldTerm = true
                     }
                 }
@@ -929,7 +929,7 @@ pub fn genIf(cg: &mut Cgen, cond: &HExprNode, thenBody: &Vec<Heap<HStmt>>, elseB
                 match elseBody {
                     Option.Some(stmts) => {
                         for ei in 0..stmts.len {
-                            if genStmt(cg, *stmts[ei], locs, sigs, retTy) {
+                            if genStmt(&mut cg, *stmts[ei], &mut locs, sigs, retTy) {
                                 foldTerm = true
                             }
                         }
@@ -939,7 +939,7 @@ pub fn genIf(cg: &mut Cgen, cond: &HExprNode, thenBody: &Vec<Heap<HStmt>>, elseB
                 }
             }
             if !foldTerm {
-                emitScopeDrops(cg, locs, foldPreLen, "")
+                emitScopeDrops(&mut cg, locs, foldPreLen, "")
             }
             while locs.len > foldPreLen {
                 let _ = locs.pop()
@@ -949,36 +949,36 @@ pub fn genIf(cg: &mut Cgen, cond: &HExprNode, thenBody: &Vec<Heap<HStmt>>, elseB
         Option.None => {
         }
     }
-    let cv = genHExpr(cg, cond, locs, sigs, "bool")
-    let thenLbl = nextLabel(cg, "then")
-    let elseLbl = nextLabel(cg, "else")
-    let endLbl = nextLabel(cg, "endif")
-    emit(cg, "  br i1 " + cv.v + ", label %" + thenLbl + ", label %" + elseLbl + "\n")
-    emit(cg, thenLbl + ":\n")
+    let cv = genHExpr(&mut cg, cond, locs, sigs, "bool")
+    let thenLbl = nextLabel(&mut cg, "then")
+    let elseLbl = nextLabel(&mut cg, "else")
+    let endLbl = nextLabel(&mut cg, "endif")
+    emit(&mut cg, "  br i1 " + cv.v + ", label %" + thenLbl + ", label %" + elseLbl + "\n")
+    emit(&mut cg, thenLbl + ":\n")
     var thenTerm = false
     // Block scope: a value declared inside the branch dies at the branch's end, not at
     // the function epilogue. Dropping it at the epilogue was also invalid IR — its alloca
     // lives in a conditional block, which does not dominate the epilogue.
     let thenPreLen = locs.len
     for ti in 0..thenBody.len {
-        if genStmt(cg, *thenBody[ti], locs, sigs, retTy) {
+        if genStmt(&mut cg, *thenBody[ti], &mut locs, sigs, retTy) {
             thenTerm = true
         }
     }
     if !thenTerm {
-        emitScopeDrops(cg, locs, thenPreLen, "")
-        emit(cg, "  br label %" + endLbl + "\n")
+        emitScopeDrops(&mut cg, locs, thenPreLen, "")
+        emit(&mut cg, "  br label %" + endLbl + "\n")
     }
     while locs.len > thenPreLen {
         let _ = locs.pop()
     }
-    emit(cg, elseLbl + ":\n")
+    emit(&mut cg, elseLbl + ":\n")
     var elseTerm = false
     let elsePreLen = locs.len
     match elseBody {
         Option.Some(stmts) => {
             for ei in 0..stmts.len {
-                if genStmt(cg, *stmts[ei], locs, sigs, retTy) {
+                if genStmt(&mut cg, *stmts[ei], &mut locs, sigs, retTy) {
                     elseTerm = true
                 }
             }
@@ -987,15 +987,15 @@ pub fn genIf(cg: &mut Cgen, cond: &HExprNode, thenBody: &Vec<Heap<HStmt>>, elseB
         }
     }
     if !elseTerm {
-        emitScopeDrops(cg, locs, elsePreLen, "")
-        emit(cg, "  br label %" + endLbl + "\n")
+        emitScopeDrops(&mut cg, locs, elsePreLen, "")
+        emit(&mut cg, "  br label %" + endLbl + "\n")
     }
     while locs.len > elsePreLen {
         let _ = locs.pop()
     }
-    emit(cg, endLbl + ":\n")
+    emit(&mut cg, endLbl + ":\n")
     if thenTerm && elseTerm {
-        emit(cg, "  unreachable\n")
+        emit(&mut cg, "  unreachable\n")
     }
     return thenTerm && elseTerm
 }
@@ -1042,8 +1042,8 @@ fn bindArmPayloads(cg: &mut Cgen, payPtr: &string, payloadTypes: &Vec<string>, b
     for bi in 0..bindings.len {
         let pty = payloadTypes[bi].clone()
         let ftyLl = llType(pty)
-        let fp = nextTemp(cg)
-        emit(cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + payPtr.clone() + ", i32 0, i32 " + bi.toString() + "\n")
+        let fp = nextTemp(&mut cg)
+        emit(&mut cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + payPtr.clone() + ", i32 0, i32 " + bi.toString() + "\n")
         let droppable = cgNeedsDrop(cg, pty)
         if subjBorrows && droppable {
             locs.push(Local {
@@ -1051,13 +1051,13 @@ fn bindArmPayloads(cg: &mut Cgen, payPtr: &string, payloadTypes: &Vec<string>, b
             }
             )
         } else {
-            let loaded = nextTemp(cg)
-            emit(cg, "  " + loaded + " = load " + ftyLl + ", ptr " + fp + "\n")
-            let bindAddr = nextTemp(cg)
-            emit(cg, "  " + bindAddr + " = alloca " + ftyLl + "\n")
-            emit(cg, "  store " + ftyLl + " " + loaded + ", ptr " + bindAddr + "\n")
+            let loaded = nextTemp(&mut cg)
+            emit(&mut cg, "  " + loaded + " = load " + ftyLl + ", ptr " + fp + "\n")
+            let bindAddr = nextTemp(&mut cg)
+            emit(&mut cg, "  " + bindAddr + " = alloca " + ftyLl + "\n")
+            emit(&mut cg, "  store " + ftyLl + " " + loaded + ", ptr " + bindAddr + "\n")
             if droppable {
-                zeroStore(cg, fp, pty)
+                zeroStore(&mut cg, fp, pty)
             }
             locs.push(Local {
                 name: bindings[bi].name.clone(), ty: pty.clone(), addr: bindAddr, isRef: false, isArr: false, range: noRange()
@@ -1093,17 +1093,17 @@ pub fn genArmBody(cg: &mut Cgen, body: &Vec<Heap<HStmt>>, locs: &mut Vec<Local>,
         if wantValue && isLast {
             match *body[i] {
                 HStmt.ExprStmt(e) => {
-                    val = genHExpr(cg, *e, locs, sigs, hintTy.clone())
+                    val = genHExpr(&mut cg, *e, locs, sigs, hintTy.clone())
                     produced = true
                 }
                 _ => {
-                    if genStmt(cg, *body[i], locs, sigs, retTy) {
+                    if genStmt(&mut cg, *body[i], &mut locs, sigs, retTy) {
                         terminated = true
                     }
                 }
             }
         } else {
-            if genStmt(cg, *body[i], locs, sigs, retTy) {
+            if genStmt(&mut cg, *body[i], &mut locs, sigs, retTy) {
                 terminated = true
             }
         }
@@ -1124,7 +1124,7 @@ pub fn genArmBody(cg: &mut Cgen, body: &Vec<Heap<HStmt>>, locs: &mut Vec<Local>,
 // `match s { "a" => …, _ => … }` on a string subject: a chain of string-eq
 // tests (literals are exclusive so a non-final wildcard is still the default).
 pub fn genStringMatch(cg: &mut Cgen, subjValV: &string, arms: &Vec<HMatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string, wantValue: bool, hintTy: string): MatchGen {
-    let endLbl = nextLabel(cg, "smatch.end")
+    let endLbl = nextLabel(&mut cg, "smatch.end")
     var allTerminated = true
     var wildIdx: i64 = -1
     var phiVals: Vec<string> = Vec.new()
@@ -1133,13 +1133,13 @@ pub fn genStringMatch(cg: &mut Cgen, subjValV: &string, arms: &Vec<HMatchArm>, l
     for ai in 0..arms.len {
         match arms[ai].pattern {
             HPattern.HLiteralPattern(val, kind) => {
-                let litV = genStringLit(cg, val.clone())
-                let eq = genStringEq(cg, subjValV.clone(), litV.v, true)
-                let armLbl = nextLabel(cg, "smatch.arm")
-                let nextLbl = nextLabel(cg, "smatch.next")
-                emit(cg, "  br i1 " + eq.v + ", label %" + armLbl + ", label %" + nextLbl + "\n")
-                emitLabel(cg, armLbl)
-                let res = genArmBody(cg, arms[ai].body, locs, sigs, retTy, wantValue, resultTy.clone())
+                let litV = genStringLit(&mut cg, val.clone())
+                let eq = genStringEq(&mut cg, subjValV.clone(), litV.v, true)
+                let armLbl = nextLabel(&mut cg, "smatch.arm")
+                let nextLbl = nextLabel(&mut cg, "smatch.next")
+                emit(&mut cg, "  br i1 " + eq.v + ", label %" + armLbl + ", label %" + nextLbl + "\n")
+                emitLabel(&mut cg, armLbl)
+                let res = genArmBody(&mut cg, arms[ai].body, &mut locs, sigs, retTy, wantValue, resultTy.clone())
                 if !res.terminated {
                     if wantValue {
                         if resultTy.len == 0 {
@@ -1148,10 +1148,10 @@ pub fn genStringMatch(cg: &mut Cgen, subjValV: &string, arms: &Vec<HMatchArm>, l
                         phiVals.push(res.val.v.clone())
                         phiPreds.push(cg.curBlock.clone())
                     }
-                    emit(cg, "  br label %" + endLbl + "\n")
+                    emit(&mut cg, "  br label %" + endLbl + "\n")
                     allTerminated = false
                 }
-                emitLabel(cg, nextLbl)
+                emitLabel(&mut cg, nextLbl)
             }
             _ => {
                 wildIdx = ai
@@ -1159,7 +1159,7 @@ pub fn genStringMatch(cg: &mut Cgen, subjValV: &string, arms: &Vec<HMatchArm>, l
         }
     }
     if wildIdx >= 0 {
-        let res = genArmBody(cg, arms[wildIdx].body, locs, sigs, retTy, wantValue, resultTy.clone())
+        let res = genArmBody(&mut cg, arms[wildIdx].body, &mut locs, sigs, retTy, wantValue, resultTy.clone())
         if !res.terminated {
             if wantValue {
                 if resultTy.len == 0 {
@@ -1168,23 +1168,23 @@ pub fn genStringMatch(cg: &mut Cgen, subjValV: &string, arms: &Vec<HMatchArm>, l
                 phiVals.push(res.val.v.clone())
                 phiPreds.push(cg.curBlock.clone())
             }
-            emit(cg, "  br label %" + endLbl + "\n")
+            emit(&mut cg, "  br label %" + endLbl + "\n")
             allTerminated = false
         }
     } else {
         // exhaustive per the checker → no-match is unreachable (see genIntMatch)
-        emit(cg, "  unreachable\n")
+        emit(&mut cg, "  unreachable\n")
     }
-    emitLabel(cg, endLbl)
+    emitLabel(&mut cg, endLbl)
     if allTerminated {
-        emit(cg, "  unreachable\n")
+        emit(&mut cg, "  unreachable\n")
         return MatchGen {
             terminated: true, val: Val {
                 v: "0", ty: "void"
             }
         }
     }
-    return finishMatchPhi(cg, wantValue, phiVals, phiPreds, resultTy)
+    return finishMatchPhi(&mut cg, wantValue, phiVals, phiPreds, resultTy)
 }
 
 // Shared phi emission for the value-producing forms of genStringMatch/genIntMatch/
@@ -1198,7 +1198,7 @@ pub fn finishMatchPhi(cg: &mut Cgen, wantValue: bool, phiVals: &Vec<string>, phi
             }
         }
     }
-    let r = nextTemp(cg)
+    let r = nextTemp(&mut cg)
     let ll = llType(resultTy)
     var parts = ""
     var pi: i64 = 0
@@ -1209,7 +1209,7 @@ pub fn finishMatchPhi(cg: &mut Cgen, wantValue: bool, phiVals: &Vec<string>, phi
         }
         pi = pi + 1
     }
-    emit(cg, "  " + r + " = phi " + ll + " " + parts + "\n")
+    emit(&mut cg, "  " + r + " = phi " + ll + " " + parts + "\n")
     return MatchGen {
         terminated: false, val: Val {
             v: r, ty: resultTy.clone()
@@ -1235,7 +1235,7 @@ pub fn litIntConst(val: &string, kind: &LiteralKind): string {
 // match on an integer/char/bool subject: compare the value against each literal
 // pattern (a switch would also work, but a compare chain handles any width).
 pub fn genIntMatch(cg: &mut Cgen, subjV: &string, subjLl: &string, arms: &Vec<HMatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string, wantValue: bool, hintTy: string): MatchGen {
-    let endLbl = nextLabel(cg, "imatch.end")
+    let endLbl = nextLabel(&mut cg, "imatch.end")
     var allTerminated = true
     var wildIdx: i64 = -1
     var phiVals: Vec<string> = Vec.new()
@@ -1244,13 +1244,13 @@ pub fn genIntMatch(cg: &mut Cgen, subjV: &string, subjLl: &string, arms: &Vec<HM
     for ai in 0..arms.len {
         match arms[ai].pattern {
             HPattern.HLiteralPattern(val, kind) => {
-                let eq = nextTemp(cg)
-                emit(cg, "  " + eq + " = icmp eq " + subjLl.clone() + " " + subjV.clone() + ", " + litIntConst(val, kind) + "\n")
-                let armLbl = nextLabel(cg, "imatch.arm")
-                let nextLbl = nextLabel(cg, "imatch.next")
-                emit(cg, "  br i1 " + eq + ", label %" + armLbl + ", label %" + nextLbl + "\n")
-                emitLabel(cg, armLbl)
-                let res = genArmBody(cg, arms[ai].body, locs, sigs, retTy, wantValue, resultTy.clone())
+                let eq = nextTemp(&mut cg)
+                emit(&mut cg, "  " + eq + " = icmp eq " + subjLl.clone() + " " + subjV.clone() + ", " + litIntConst(val, kind) + "\n")
+                let armLbl = nextLabel(&mut cg, "imatch.arm")
+                let nextLbl = nextLabel(&mut cg, "imatch.next")
+                emit(&mut cg, "  br i1 " + eq + ", label %" + armLbl + ", label %" + nextLbl + "\n")
+                emitLabel(&mut cg, armLbl)
+                let res = genArmBody(&mut cg, arms[ai].body, &mut locs, sigs, retTy, wantValue, resultTy.clone())
                 if !res.terminated {
                     if wantValue {
                         if resultTy.len == 0 {
@@ -1259,10 +1259,10 @@ pub fn genIntMatch(cg: &mut Cgen, subjV: &string, subjLl: &string, arms: &Vec<HM
                         phiVals.push(res.val.v.clone())
                         phiPreds.push(cg.curBlock.clone())
                     }
-                    emit(cg, "  br label %" + endLbl + "\n")
+                    emit(&mut cg, "  br label %" + endLbl + "\n")
                     allTerminated = false
                 }
-                emitLabel(cg, nextLbl)
+                emitLabel(&mut cg, nextLbl)
             }
             _ => {
                 wildIdx = ai
@@ -1270,7 +1270,7 @@ pub fn genIntMatch(cg: &mut Cgen, subjV: &string, subjLl: &string, arms: &Vec<HM
         }
     }
     if wildIdx >= 0 {
-        let res = genArmBody(cg, arms[wildIdx].body, locs, sigs, retTy, wantValue, resultTy.clone())
+        let res = genArmBody(&mut cg, arms[wildIdx].body, &mut locs, sigs, retTy, wantValue, resultTy.clone())
         if !res.terminated {
             if wantValue {
                 if resultTy.len == 0 {
@@ -1279,25 +1279,25 @@ pub fn genIntMatch(cg: &mut Cgen, subjV: &string, subjLl: &string, arms: &Vec<HM
                 phiVals.push(res.val.v.clone())
                 phiPreds.push(cg.curBlock.clone())
             }
-            emit(cg, "  br label %" + endLbl + "\n")
+            emit(&mut cg, "  br label %" + endLbl + "\n")
             allTerminated = false
         }
     } else {
         // no wildcard: the checker proved the match exhaustive (e.g. bool true/false),
         // so the fall-off-the-end path is unreachable — don't force a fallthrough that
         // would hit the function's default `ret <T> 0` (invalid for aggregate returns).
-        emit(cg, "  unreachable\n")
+        emit(&mut cg, "  unreachable\n")
     }
-    emitLabel(cg, endLbl)
+    emitLabel(&mut cg, endLbl)
     if allTerminated {
-        emit(cg, "  unreachable\n")
+        emit(&mut cg, "  unreachable\n")
         return MatchGen {
             terminated: true, val: Val {
                 v: "0", ty: "void"
             }
         }
     }
-    return finishMatchPhi(cg, wantValue, phiVals, phiPreds, resultTy)
+    return finishMatchPhi(&mut cg, wantValue, phiVals, phiPreds, resultTy)
 }
 
 // The name a block YIELDS, when its value is just a binding (`Result.Ok(j) => j`).
@@ -1357,7 +1357,7 @@ pub fn genMatchAst(cg: &mut Cgen, subject: &ExprNode, arms: &Vec<HMatchArm>, loc
     // the oracle's matchSubjectRef set, so HStmt.Match's own isRef flag is weaker (it only
     // reports a subject whose recorded type was still a `&T`) and is deliberately not used.
     let subjBorrows = matchSubjectBorrows(subject, locs)
-    let subjLv = genLvalue(cg, subject, locs, sigs)
+    let subjLv = genLvalue(&mut cg, subject, locs, sigs)
     // An arm that MOVES a droppable payload out of an owned subject leaves that subject
     // dead. Zeroing the payload slot (bindArmPayloads) is not enough on its own: it makes
     // the subject's drop glue free a null pointer, which is a harmless no-op and is why
@@ -1373,31 +1373,31 @@ pub fn genMatchAst(cg: &mut Cgen, subject: &ExprNode, arms: &Vec<HMatchArm>, loc
         cg.movedLocalAddrs.push(subjLv.v.clone())
     }
     if llType(subjLv.ty) == "%String" {
-        let sv = nextTemp(cg)
-        emit(cg, "  " + sv + " = load %String, ptr " + subjLv.v + "\n")
-        return genStringMatch(cg, sv, arms, locs, sigs, retTy, wantValue, hintTy)
+        let sv = nextTemp(&mut cg)
+        emit(&mut cg, "  " + sv + " = load %String, ptr " + subjLv.v + "\n")
+        return genStringMatch(&mut cg, sv, arms, &mut locs, sigs, retTy, wantValue, hintTy)
     }
     // integer/char/bool subject → compare against literal patterns
     let subjLl0 = llType(subjLv.ty)
     if subjLl0.len > 0 && subjLl0[0] == 105 {
-        let iv = nextTemp(cg)
-        emit(cg, "  " + iv + " = load " + subjLl0 + ", ptr " + subjLv.v + "\n")
-        return genIntMatch(cg, iv, subjLl0, arms, locs, sigs, retTy, wantValue, hintTy)
+        let iv = nextTemp(&mut cg)
+        emit(&mut cg, "  " + iv + " = load " + subjLl0 + ", ptr " + subjLv.v + "\n")
+        return genIntMatch(&mut cg, iv, subjLl0, arms, &mut locs, sigs, retTy, wantValue, hintTy)
     }
     let rawName = stripPercent(subjLv.ty)
     let structTy = "%" + rawName
-    let tagPtr = nextTemp(cg)
-    emit(cg, "  " + tagPtr + " = getelementptr " + structTy + ", ptr " + subjLv.v + ", i32 0, i32 0\n")
-    let tag = nextTemp(cg)
-    emit(cg, "  " + tag + " = load i32, ptr " + tagPtr + "\n")
-    let endLbl = nextLabel(cg, "match.end")
+    let tagPtr = nextTemp(&mut cg)
+    emit(&mut cg, "  " + tagPtr + " = getelementptr " + structTy + ", ptr " + subjLv.v + ", i32 0, i32 0\n")
+    let tag = nextTemp(&mut cg)
+    emit(&mut cg, "  " + tag + " = load i32, ptr " + tagPtr + "\n")
+    let endLbl = nextLabel(&mut cg, "match.end")
     var switchCases = ""
     var armLabels: Vec<string> = Vec.new()
     // A wildcard/binding arm (`_ => …`) is the switch DEFAULT, not a numbered case
     // — numbering it collides with a real variant tag (duplicate switch case).
     var wildcardLbl = ""
     for i in 0..arms.len {
-        let armLbl = nextLabel(cg, "match.arm")
+        let armLbl = nextLabel(&mut cg, "match.arm")
         match arms[i].pattern {
             HPattern.HEnumPattern(variant, bindings, tg0) => {
                 // Keyed by the subject's (mangled) enum name. The pattern's own recorded
@@ -1414,19 +1414,19 @@ pub fn genMatchAst(cg: &mut Cgen, subject: &ExprNode, arms: &Vec<HMatchArm>, loc
         }
         armLabels.push(armLbl)
     }
-    var defaultLbl = nextLabel(cg, "match.default")
+    var defaultLbl = nextLabel(&mut cg, "match.default")
     var emitUnreachableDefault = true
     if wildcardLbl.len > 0 {
         defaultLbl = wildcardLbl.clone()
         emitUnreachableDefault = false
     }
-    emit(cg, "  switch i32 " + tag + ", label %" + defaultLbl + " [" + switchCases + "]\n")
+    emit(&mut cg, "  switch i32 " + tag + ", label %" + defaultLbl + " [" + switchCases + "]\n")
     var allTerminated = true
     var phiVals: Vec<string> = Vec.new()
     var phiPreds: Vec<string> = Vec.new()
     var resultTy = hintTy.clone()
     for ai in 0..arms.len {
-        emitLabel(cg, armLabels[ai])
+        emitLabel(&mut cg, armLabels[ai])
         let locsPreLen = locs.len
         // Extract payload bindings
         match arms[ai].pattern {
@@ -1434,16 +1434,16 @@ pub fn genMatchAst(cg: &mut Cgen, subject: &ExprNode, arms: &Vec<HMatchArm>, loc
                 if bindings.len > 0 {
                     let payloadTypes = lookupVariantPayload(cg, rawName, variant)
                     if payloadTypes.len > 0 {
-                        let payPtr = nextTemp(cg)
-                        emit(cg, "  " + payPtr + " = getelementptr " + structTy + ", ptr " + subjLv.v + ", i32 0, i32 1\n")
-                        bindArmPayloads(cg, payPtr, payloadTypes, bindings, subjBorrows, locs)
+                        let payPtr = nextTemp(&mut cg)
+                        emit(&mut cg, "  " + payPtr + " = getelementptr " + structTy + ", ptr " + subjLv.v + ", i32 0, i32 1\n")
+                        bindArmPayloads(&mut cg, payPtr, payloadTypes, bindings, subjBorrows, &mut locs)
                     }
                 }
             }
             _ => {
             }
         }
-        let res = genArmBody(cg, arms[ai].body, locs, sigs, retTy, wantValue, resultTy.clone())
+        let res = genArmBody(&mut cg, arms[ai].body, &mut locs, sigs, retTy, wantValue, resultTy.clone())
         // A payload binding (`Result.Ok(t) => { … }`) is ARM-SCOPED: it dies at the arm's
         // end like any other block. locsPreLen is captured BEFORE the bindings are pushed,
         // which is why the drop belongs here and not inside genArmBody. A terminated arm
@@ -1454,7 +1454,7 @@ pub fn genMatchAst(cg: &mut Cgen, subject: &ExprNode, arms: &Vec<HMatchArm>, loc
             if wantValue {
                 armSkip = trailingIdentName(arms[ai].body)
             }
-            emitScopeDrops(cg, locs, locsPreLen, armSkip)
+            emitScopeDrops(&mut cg, locs, locsPreLen, armSkip)
         }
         // Pop bindings
         while locs.len > locsPreLen {
@@ -1468,26 +1468,26 @@ pub fn genMatchAst(cg: &mut Cgen, subject: &ExprNode, arms: &Vec<HMatchArm>, loc
                 phiVals.push(res.val.v.clone())
                 phiPreds.push(cg.curBlock.clone())
             }
-            emit(cg, "  br label %" + endLbl + "\n")
+            emit(&mut cg, "  br label %" + endLbl + "\n")
             allTerminated = false
         }
     }
     // Only emit a synthetic unreachable default when there was no wildcard arm
     // (a wildcard arm already serves as the default and emits its own body).
     if emitUnreachableDefault {
-        emitLabel(cg, defaultLbl)
-        emit(cg, "  unreachable\n")
+        emitLabel(&mut cg, defaultLbl)
+        emit(&mut cg, "  unreachable\n")
     }
-    emitLabel(cg, endLbl)
+    emitLabel(&mut cg, endLbl)
     if allTerminated && arms.len > 0 {
-        emit(cg, "  unreachable\n")
+        emit(&mut cg, "  unreachable\n")
         return MatchGen {
             terminated: true, val: Val {
                 v: "0", ty: "void"
             }
         }
     }
-    return finishMatchPhi(cg, wantValue, phiVals, phiPreds, resultTy)
+    return finishMatchPhi(&mut cg, wantValue, phiVals, phiPreds, resultTy)
 }
 
 // Scope teardown: every owned local leaving this scope is dropped — builtin heap
@@ -1518,8 +1518,8 @@ pub fn emitScopeDrops(cg: &mut Cgen, locs: &Vec<Local>, fromLen: i64, skipName: 
             continue
         }
         if cgNeedsDrop(cg, locs[i].ty) {
-            emitDropValue(cg, locs[i].addr, locs[i].ty)
-            zeroStore(cg, locs[i].addr, locs[i].ty)
+            emitDropValue(&mut cg, locs[i].addr, locs[i].ty)
+            zeroStore(&mut cg, locs[i].addr, locs[i].ty)
         }
     }
 }
@@ -1533,36 +1533,36 @@ pub fn genIfExprValue(cg: &mut Cgen, cond: &ExprNode, thenBody: &Vec<Heap<HStmt>
         Option.Some(taken) => {
             let foldRetTy = cg.curRetTy.clone()
             if taken {
-                return genArmBody(cg, thenBody, locs, sigs, foldRetTy, true, hintTy.clone()).val
+                return genArmBody(&mut cg, thenBody, &mut locs, sigs, foldRetTy, true, hintTy.clone()).val
             }
-            return genArmBody(cg, elseBody, locs, sigs, foldRetTy, true, hintTy.clone()).val
+            return genArmBody(&mut cg, elseBody, &mut locs, sigs, foldRetTy, true, hintTy.clone()).val
         }
         Option.None => {
         }
     }
-    let cv = genExpr(cg, cond, locs, sigs, "bool")
-    let thenLbl = nextLabel(cg, "ifx.then")
-    let elseLbl = nextLabel(cg, "ifx.else")
-    let endLbl = nextLabel(cg, "ifx.end")
+    let cv = genExpr(&mut cg, cond, locs, sigs, "bool")
+    let thenLbl = nextLabel(&mut cg, "ifx.then")
+    let elseLbl = nextLabel(&mut cg, "ifx.else")
+    let endLbl = nextLabel(&mut cg, "ifx.end")
     let armRetTy = cg.curRetTy.clone()
-    emit(cg, "  br i1 " + cv.v + ", label %" + thenLbl + ", label %" + elseLbl + "\n")
-    emitLabel(cg, thenLbl)
-    let a = genArmBody(cg, thenBody, locs, sigs, armRetTy, true, hintTy.clone())
+    emit(&mut cg, "  br i1 " + cv.v + ", label %" + thenLbl + ", label %" + elseLbl + "\n")
+    emitLabel(&mut cg, thenLbl)
+    let a = genArmBody(&mut cg, thenBody, &mut locs, sigs, armRetTy, true, hintTy.clone())
     // the phi predecessor is wherever control actually is now — a nested if-expr
     // (`else if …`) ends in its OWN block, not thenLbl/elseLbl.
     let thenPred = cg.curBlock.clone()
     if !a.terminated {
-        emit(cg, "  br label %" + endLbl + "\n")
+        emit(&mut cg, "  br label %" + endLbl + "\n")
     }
-    emitLabel(cg, elseLbl)
-    let b = genArmBody(cg, elseBody, locs, sigs, armRetTy, true, a.val.ty.clone())
+    emitLabel(&mut cg, elseLbl)
+    let b = genArmBody(&mut cg, elseBody, &mut locs, sigs, armRetTy, true, a.val.ty.clone())
     let elsePred = cg.curBlock.clone()
     if !b.terminated {
-        emit(cg, "  br label %" + endLbl + "\n")
+        emit(&mut cg, "  br label %" + endLbl + "\n")
     }
-    emitLabel(cg, endLbl)
+    emitLabel(&mut cg, endLbl)
     if a.terminated && b.terminated {
-        emit(cg, "  unreachable\n")
+        emit(&mut cg, "  unreachable\n")
         return Val {
             v: "0", ty: "i64"
         }
@@ -1573,14 +1573,14 @@ pub fn genIfExprValue(cg: &mut Cgen, cond: &ExprNode, thenBody: &Vec<Heap<HStmt>
     if a.terminated {
         resTy = b.val.ty.clone()
     }
-    let r = nextTemp(cg)
+    let r = nextTemp(&mut cg)
     let ll = llType(resTy)
     if a.terminated {
-        emit(cg, "  " + r + " = phi " + ll + " [" + b.val.v + ", %" + elsePred + "]\n")
+        emit(&mut cg, "  " + r + " = phi " + ll + " [" + b.val.v + ", %" + elsePred + "]\n")
     } else if b.terminated {
-        emit(cg, "  " + r + " = phi " + ll + " [" + a.val.v + ", %" + thenPred + "]\n")
+        emit(&mut cg, "  " + r + " = phi " + ll + " [" + a.val.v + ", %" + thenPred + "]\n")
     } else {
-        emit(cg, "  " + r + " = phi " + ll + " [" + a.val.v + ", %" + thenPred + "], [" + b.val.v + ", %" + elsePred + "]\n")
+        emit(&mut cg, "  " + r + " = phi " + ll + " [" + a.val.v + ", %" + thenPred + "], [" + b.val.v + ", %" + elsePred + "]\n")
     }
     return Val {
         v: r, ty: resTy
@@ -1677,72 +1677,72 @@ fn dropDiscardedTemp(cg: &mut Cgen, n: &HExprNode, v: &Val) {
     // llType, not the raw Val type: a struct-typed Val carries the bare name here and
     // LLVM needs the '%'. Emitting `alloca Res` fails to parse.
     let llTy = llType(v.ty)
-    let addr = nextTemp(cg) + ".tmpdrop"
-    emit(cg, "  " + addr + " = alloca " + llTy.clone() + "\n")
-    emit(cg, "  store " + llTy.clone() + " " + v.v.clone() + ", ptr " + addr + "\n")
-    emitDropValue(cg, addr, v.ty)
+    let addr = nextTemp(&mut cg) + ".tmpdrop"
+    emit(&mut cg, "  " + addr + " = alloca " + llTy.clone() + "\n")
+    emit(&mut cg, "  store " + llTy.clone() + " " + v.v.clone() + ", ptr " + addr + "\n")
+    emitDropValue(&mut cg, addr, v.ty)
 }
 
 pub fn genStmt(cg: &mut Cgen, s: &HStmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     match s {
         HStmt.Let(name, ty, value, mutable) => {
-            genLetBinding(cg, name, ty, *value, (*value).span, locs, sigs)
+            genLetBinding(&mut cg, name, ty, *value, (*value).span, &mut locs, sigs)
             return false
         }
         HStmt.Assign(target, value, isInit) => {
-            genAssign(cg, *target, *value, locs, sigs)
+            genAssign(&mut cg, *target, *value, &mut locs, sigs)
             return false
         }
         HStmt.Return(value, retType) => {
             match value {
                 Option.Some(hv) => {
-                    genReturnValue(cg, *hv, (*hv).span, locs, sigs, retTy)
+                    genReturnValue(&mut cg, *hv, (*hv).span, &mut locs, sigs, retTy)
                 }
                 Option.None => {
-                    emitScopeDrops(cg, locs, 0, "")
+                    emitScopeDrops(&mut cg, locs, 0, "")
                     let fnRetLl = llType(retTy)
                     if fnRetLl == "void" {
-                        emit(cg, "  ret void\n")
+                        emit(&mut cg, "  ret void\n")
                     } else {
                         // bare `return` in a non-void fn (main is forced to i32)
-                        emit(cg, "  ret " + fnRetLl + " 0\n")
+                        emit(&mut cg, "  ret " + fnRetLl + " 0\n")
                     }
                 }
             }
             return true
         }
         HStmt.ExprStmt(e) => {
-            let dv = genHExpr(cg, *e, locs, sigs, "")
-            dropDiscardedTemp(cg, *e, dv)
+            let dv = genHExpr(&mut cg, *e, locs, sigs, "")
+            dropDiscardedTemp(&mut cg, *e, dv)
             return false
         }
         HStmt.If(cond, thenBody, elseBody) => {
-            return genIf(cg, *cond, thenBody, elseBody, locs, sigs, retTy)
+            return genIf(&mut cg, *cond, thenBody, elseBody, &mut locs, sigs, retTy)
         }
         HStmt.While(cond, body, invariants) => {
-            genWhile(cg, *cond, body, locs, sigs, retTy)
+            genWhile(&mut cg, *cond, body, &mut locs, sigs, retTy)
             return false
         }
         HStmt.ForRange(varName, varTy, startE, endE, body, invariants) => {
-            genForRange(cg, varName, *startE, *endE, body, locs, sigs, retTy)
+            genForRange(&mut cg, varName, *startE, *endE, body, &mut locs, sigs, retTy)
             return false
         }
         HStmt.ForEach(varName, varName2, varTy, varTy2, iterable, kind, body, invariants) => {
-            genForEach(cg, varName, varName2, *iterable, kind, body, locs, sigs, retTy)
+            genForEach(&mut cg, varName, varName2, *iterable, kind, body, &mut locs, sigs, retTy)
             return false
         }
         HStmt.ForIterator(varName, varTy, iterable, nextMethod, resultEnum, body, invariants, okVariant) => {
-            genForIterator(cg, varName, *iterable, nextMethod, resultEnum, okVariant, body, locs, sigs, retTy)
+            genForIterator(&mut cg, varName, *iterable, nextMethod, resultEnum, okVariant, body, &mut locs, sigs, retTy)
             return false
         }
         HStmt.ForStrView(varName, varName2, varTy, src, sep, mode, body, invariants) => {
-            genForStrView(cg, varName, varName2, *src, sep, mode, body, locs, sigs, retTy)
+            genForStrView(&mut cg, varName, varName2, *src, sep, mode, body, &mut locs, sigs, retTy)
             return false
         }
         HStmt.Match(subject, arms, enumName, isRef) => {
             match (*subject).kind {
                 HExpr.Unlowered(sx) => {
-                    return genMatchAst(cg, *sx, arms, locs, sigs, retTy, false, "").terminated
+                    return genMatchAst(&mut cg, *sx, arms, &mut locs, sigs, retTy, false, "").terminated
                 }
                 _ => {
                     hexprAbort(*subject, "match subject")
@@ -1756,11 +1756,11 @@ pub fn genStmt(cg: &mut Cgen, s: &HStmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnS
                 // same locals a normal iteration-end would drop (loopBreak in
                 // dropAccounting: the live `t` at the break point was leaking).
                 if cg.curLoopScopeLen >= 0 {
-                    emitScopeDrops(cg, locs, cg.curLoopScopeLen, "")
+                    emitScopeDrops(&mut cg, locs, cg.curLoopScopeLen, "")
                 }
-                emit(cg, "  br label %" + cg.curBreakLbl + "\n")
-                let after = nextLabel(cg, "afterBreak")
-                emit(cg, after + ":\n")
+                emit(&mut cg, "  br label %" + cg.curBreakLbl + "\n")
+                let after = nextLabel(&mut cg, "afterBreak")
+                emit(&mut cg, after + ":\n")
             }
             return false
         }
@@ -1769,18 +1769,18 @@ pub fn genStmt(cg: &mut Cgen, s: &HStmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnS
                 // Same as break above: ending this iteration early still drops
                 // whatever it declared, same as reaching the bottom would.
                 if cg.curLoopScopeLen >= 0 {
-                    emitScopeDrops(cg, locs, cg.curLoopScopeLen, "")
+                    emitScopeDrops(&mut cg, locs, cg.curLoopScopeLen, "")
                 }
-                emit(cg, "  br label %" + cg.curContLbl + "\n")
-                let after = nextLabel(cg, "afterCont")
-                emit(cg, after + ":\n")
+                emit(&mut cg, "  br label %" + cg.curContLbl + "\n")
+                let after = nextLabel(&mut cg, "afterCont")
+                emit(&mut cg, after + ":\n")
             }
             return false
         }
         HStmt.UnsafeBlock(body) => {
             var term = false
             for i in 0..body.len {
-                if genStmt(cg, *body[i], locs, sigs, retTy) {
+                if genStmt(&mut cg, *body[i], &mut locs, sigs, retTy) {
                     term = true
                 }
             }
@@ -1833,10 +1833,10 @@ fn genLetBinding(cg: &mut Cgen, name: &string, ty: &TypeKind, value: &HExprNode,
         HExpr.Unlowered(av) => {
             match forceMoveIfEscaping(cg, name, *av) {
                 Option.Some(forced) => {
-                    v0 = genOwnedArg(cg, *forced, hintTy.clone(), locs, sigs)
+                    v0 = genOwnedArg(&mut cg, *forced, hintTy.clone(), locs, sigs)
                 }
                 Option.None => {
-                    v0 = genOwnedArg(cg, *av, hintTy.clone(), locs, sigs)
+                    v0 = genOwnedArg(&mut cg, *av, hintTy.clone(), locs, sigs)
                 }
             }
         }
@@ -1847,16 +1847,16 @@ fn genLetBinding(cg: &mut Cgen, name: &string, ty: &TypeKind, value: &HExprNode,
             // genOwnedArg before it may be lowered, not this shortcut.
             // Empty hint on purpose: a lowered node carries the type the checker gave it,
             // so consulting a hint here would be the very re-derivation being removed.
-            v0 = genHExpr(cg, value, locs, sigs, "")
+            v0 = genHExpr(&mut cg, value, locs, sigs, "")
         }
     }
-    let v1 = genOptionWrapIfNeeded(cg, v0, hintTy.clone())
-    let v = genInterfaceCoerceIfNeeded(cg, v1, hintTy)
-    emitRangeCheck(cg, v, lrange, span)
+    let v1 = genOptionWrapIfNeeded(&mut cg, v0, hintTy.clone())
+    let v = genInterfaceCoerceIfNeeded(&mut cg, v1, hintTy)
+    emitRangeCheck(&mut cg, v, lrange, span)
     let vtyLl = llType(v.ty)
-    let addr = nextTemp(cg)
-    emit(cg, "  " + addr + " = alloca " + vtyLl + "\n")
-    emit(cg, "  store " + vtyLl + " " + v.v + ", ptr " + addr + "\n")
+    let addr = nextTemp(&mut cg)
+    emit(&mut cg, "  " + addr + " = alloca " + vtyLl + "\n")
+    emit(&mut cg, "  store " + vtyLl + " " + v.v + ", ptr " + addr + "\n")
     locs.push(Local {
         name: name.clone(), ty: v.ty.clone(), addr: addr, isRef: false, isArr: isArrAnno, range: lrange.clone()
     }
@@ -1897,10 +1897,10 @@ fn genReturnValue(cg: &mut Cgen, hexpr: &HExprNode, span: &Option<Span>, locs: &
         HExpr.Unlowered(e) => {
             match forcedMoveClosure(*e) {
                 Option.Some(forced) => {
-                    v00 = genOwnedArg(cg, *forced, retTy.clone(), locs, sigs)
+                    v00 = genOwnedArg(&mut cg, *forced, retTy.clone(), locs, sigs)
                 }
                 Option.None => {
-                    v00 = genOwnedArg(cg, *e, retTy.clone(), locs, sigs)
+                    v00 = genOwnedArg(&mut cg, *e, retTy.clone(), locs, sigs)
                 }
             }
         }
@@ -1909,29 +1909,29 @@ fn genReturnValue(cg: &mut Cgen, hexpr: &HExprNode, span: &Option<Span>, locs: &
             // arm. forcedMoveClosure reads the written form, and a lowered closure literal
             // will carry its own capture mode when that kind is migrated.
             // Empty hint, same reason as genLetBinding: the node knows its own type.
-            v00 = genHExpr(cg, hexpr, locs, sigs, "")
+            v00 = genHExpr(&mut cg, hexpr, locs, sigs, "")
         }
     }
-    let v = genInterfaceCoerceIfNeeded(cg, v00, retTy)
+    let v = genInterfaceCoerceIfNeeded(&mut cg, v00, retTy)
     let retRange = cg.curRetRange.clone()
-    emitRangeCheck(cg, v, retRange, span)
-    emitScopeDrops(cg, locs, 0, skipName)
+    emitRangeCheck(&mut cg, v, retRange, span)
+    emitScopeDrops(&mut cg, locs, 0, skipName)
     // unannotated closure body: the return type IS the value's type; record it
     // (genClosure reads it for the define header) and emit the ret with no coercion.
     if retTy == "__closureinfer__" {
         let vll = llType(v.ty)
         cg.closureRetTy = v.ty.clone()
-        emit(cg, "  ret " + vll + " " + v.v + "\n")
+        emit(&mut cg, "  ret " + vll + " " + v.v + "\n")
         return
     }
     let fnRetLl = llType(retTy)
     let valLl = llType(v.ty)
     if valLl == fnRetLl {
-        emit(cg, "  ret " + valLl + " " + v.v + "\n")
+        emit(&mut cg, "  ret " + valLl + " " + v.v + "\n")
     } else {
-        let cast = nextTemp(cg)
-        emit(cg, "  " + cast + " = trunc " + valLl + " " + v.v + " to " + fnRetLl + "\n")
-        emit(cg, "  ret " + fnRetLl + " " + cast + "\n")
+        let cast = nextTemp(&mut cg)
+        emit(&mut cg, "  " + cast + " = trunc " + valLl + " " + v.v + " to " + fnRetLl + "\n")
+        emit(&mut cg, "  ret " + fnRetLl + " " + cast + "\n")
     }
 }
 
@@ -1942,7 +1942,7 @@ fn collectIdentsBlocks(cg: &Cgen, id: u32, count: i64, out: &mut Vec<string>) {
     let base = blockBase(cg, id, "expression")
     for b in 0..count {
         for j in 0..cg.stmtBlocks[base + b].stmts.len {
-            collectIdentsStmt(cg, *cg.stmtBlocks[base + b].stmts[j], out)
+            collectIdentsStmt(cg, *cg.stmtBlocks[base + b].stmts[j], &mut out)
         }
     }
 }
@@ -1955,21 +1955,21 @@ pub fn collectIdentsExpr(cg: &Cgen, e: &ExprNode, out: &mut Vec<string>) {
             out.push(name.clone())
         }
         Expr.BinOp(op, l, r) => {
-            collectIdentsExpr(cg, *l, out)
-            collectIdentsExpr(cg, *r, out)
+            collectIdentsExpr(cg, *l, &mut out)
+            collectIdentsExpr(cg, *r, &mut out)
         }
         Expr.UnaryOp(op, x) => {
-            collectIdentsExpr(cg, *x, out)
+            collectIdentsExpr(cg, *x, &mut out)
         }
         Expr.Call(name, args, targs) => {
             out.push(name.clone())
             for i in 0..args.len {
-                collectIdentsExpr(cg, *args[i], out)
+                collectIdentsExpr(cg, *args[i], &mut out)
             }
         }
         Expr.StructLit(name, fields) => {
             for i in 0..fields.len {
-                collectIdentsExpr(cg, *fields[i].value, out)
+                collectIdentsExpr(cg, *fields[i].value, &mut out)
             }
         }
         // Same shape as StructLit — its field values are arbitrary expressions, so a
@@ -1977,70 +1977,70 @@ pub fn collectIdentsExpr(cg: &Cgen, e: &ExprNode, out: &mut Vec<string>) {
         // nothing and read a garbage frame slot.
         Expr.JsonObject(fields) => {
             for i in 0..fields.len {
-                collectIdentsExpr(cg, *fields[i].value, out)
+                collectIdentsExpr(cg, *fields[i].value, &mut out)
             }
         }
         Expr.FieldAccess(obj, field) => {
-            collectIdentsExpr(cg, *obj, out)
+            collectIdentsExpr(cg, *obj, &mut out)
         }
         Expr.ArrayLit(elems) => {
             for i in 0..elems.len {
-                collectIdentsExpr(cg, *elems[i], out)
+                collectIdentsExpr(cg, *elems[i], &mut out)
             }
         }
         Expr.ArrayRepeat(x, n) => {
-            collectIdentsExpr(cg, *x, out)
+            collectIdentsExpr(cg, *x, &mut out)
         }
         Expr.IndexAccess(obj, idx) => {
-            collectIdentsExpr(cg, *obj, out)
-            collectIdentsExpr(cg, *idx, out)
+            collectIdentsExpr(cg, *obj, &mut out)
+            collectIdentsExpr(cg, *idx, &mut out)
         }
         Expr.EnumLit(en, va, args) => {
             for i in 0..args.len {
-                collectIdentsExpr(cg, *args[i], out)
+                collectIdentsExpr(cg, *args[i], &mut out)
             }
         }
         Expr.Unwrap(x) => {
-            collectIdentsExpr(cg, *x, out)
+            collectIdentsExpr(cg, *x, &mut out)
         }
         Expr.Propagate(x) => {
-            collectIdentsExpr(cg, *x, out)
+            collectIdentsExpr(cg, *x, &mut out)
         }
         Expr.DefaultValue(x, d) => {
-            collectIdentsExpr(cg, *x, out)
-            collectIdentsExpr(cg, *d, out)
+            collectIdentsExpr(cg, *x, &mut out)
+            collectIdentsExpr(cg, *d, &mut out)
         }
         Expr.CastExpr(x, ty) => {
-            collectIdentsExpr(cg, *x, out)
+            collectIdentsExpr(cg, *x, &mut out)
         }
         Expr.MethodCall(obj, m, args) => {
-            collectIdentsExpr(cg, *obj, out)
+            collectIdentsExpr(cg, *obj, &mut out)
             for i in 0..args.len {
-                collectIdentsExpr(cg, *args[i], out)
+                collectIdentsExpr(cg, *args[i], &mut out)
             }
         }
         // The three body-carrying shapes were emptied at lowering, so the walk follows
         // the node's id into the block arena instead of its (now empty) AST body.
         Expr.Closure(params, rt, body, isMove) => {
-            collectIdentsBlocks(cg, e.id, 1, out)
+            collectIdentsBlocks(cg, e.id, 1, &mut out)
         }
         Expr.RangeExpr(a, b) => {
-            collectIdentsExpr(cg, *a, out)
-            collectIdentsExpr(cg, *b, out)
+            collectIdentsExpr(cg, *a, &mut out)
+            collectIdentsExpr(cg, *b, &mut out)
         }
         Expr.IsExpr(x, pat) => {
-            collectIdentsExpr(cg, *x, out)
+            collectIdentsExpr(cg, *x, &mut out)
         }
         Expr.IfExpr(c, thenBody, elseBody) => {
-            collectIdentsExpr(cg, *c, out)
-            collectIdentsBlocks(cg, e.id, 2, out)
+            collectIdentsExpr(cg, *c, &mut out)
+            collectIdentsBlocks(cg, e.id, 2, &mut out)
         }
         Expr.MatchExpr(subject, arms) => {
-            collectIdentsExpr(cg, *subject, out)
+            collectIdentsExpr(cg, *subject, &mut out)
             let base = blockBase(cg, e.id, "match-expression")
             for ai in 0..cg.stmtBlocks[base].arms.len {
                 for j in 0..cg.stmtBlocks[base].arms[ai].body.len {
-                    collectIdentsStmt(cg, *cg.stmtBlocks[base].arms[ai].body[j], out)
+                    collectIdentsStmt(cg, *cg.stmtBlocks[base].arms[ai].body[j], &mut out)
                 }
             }
         }
@@ -2064,30 +2064,30 @@ pub fn collectIdentsExpr(cg: &Cgen, e: &ExprNode, out: &mut Vec<string>) {
 pub fn collectIdentsStmt(cg: &Cgen, s: &HStmt, out: &mut Vec<string>) {
     match s {
         HStmt.Let(name, ty, value, mutable) => {
-            collectIdentsHExpr(cg, *value, out)
+            collectIdentsHExpr(cg, *value, &mut out)
         }
         HStmt.Assign(target, value, isInit) => {
-            collectIdentsHExpr(cg, *target, out)
-            collectIdentsHExpr(cg, *value, out)
+            collectIdentsHExpr(cg, *target, &mut out)
+            collectIdentsHExpr(cg, *value, &mut out)
         }
         HStmt.Return(value, retType) => {
             match value {
                 Option.Some(e) => {
-                    collectIdentsHExpr(cg, *e, out)
+                    collectIdentsHExpr(cg, *e, &mut out)
                 }
                 Option.None => {
                 }
             }
         }
         HStmt.If(cond, thenB, elseB) => {
-            collectIdentsHExpr(cg, *cond, out)
+            collectIdentsHExpr(cg, *cond, &mut out)
             for i in 0..thenB.len {
-                collectIdentsStmt(cg, *thenB[i], out)
+                collectIdentsStmt(cg, *thenB[i], &mut out)
             }
             match elseB {
                 Option.Some(eb) => {
                     for i in 0..eb.len {
-                        collectIdentsStmt(cg, *eb[i], out)
+                        collectIdentsStmt(cg, *eb[i], &mut out)
                     }
                 }
                 Option.None => {
@@ -2095,57 +2095,57 @@ pub fn collectIdentsStmt(cg: &Cgen, s: &HStmt, out: &mut Vec<string>) {
             }
         }
         HStmt.While(cond, body, invariants) => {
-            collectIdentsHExpr(cg, *cond, out)
+            collectIdentsHExpr(cg, *cond, &mut out)
             for i in 0..body.len {
-                collectIdentsStmt(cg, *body[i], out)
+                collectIdentsStmt(cg, *body[i], &mut out)
             }
         }
         HStmt.ExprStmt(e) => {
-            collectIdentsHExpr(cg, *e, out)
+            collectIdentsHExpr(cg, *e, &mut out)
         }
         HStmt.Match(subj, arms, enumName, isRef) => {
-            collectIdentsHExpr(cg, *subj, out)
+            collectIdentsHExpr(cg, *subj, &mut out)
             for i in 0..arms.len {
                 for j in 0..arms[i].body.len {
-                    collectIdentsStmt(cg, *arms[i].body[j], out)
+                    collectIdentsStmt(cg, *arms[i].body[j], &mut out)
                 }
             }
         }
         HStmt.UnsafeBlock(body) => {
             for i in 0..body.len {
-                collectIdentsStmt(cg, *body[i], out)
+                collectIdentsStmt(cg, *body[i], &mut out)
             }
         }
         HStmt.ForRange(varName, varTy, startE, endE, body, invariants) => {
-            collectIdentsHExpr(cg, *startE, out)
-            collectIdentsHExpr(cg, *endE, out)
+            collectIdentsHExpr(cg, *startE, &mut out)
+            collectIdentsHExpr(cg, *endE, &mut out)
             for i in 0..body.len {
-                collectIdentsStmt(cg, *body[i], out)
+                collectIdentsStmt(cg, *body[i], &mut out)
             }
         }
         HStmt.ForEach(varName, varName2, varTy, varTy2, iterable, kind, body, invariants) => {
-            collectIdentsHExpr(cg, *iterable, out)
+            collectIdentsHExpr(cg, *iterable, &mut out)
             for i in 0..body.len {
-                collectIdentsStmt(cg, *body[i], out)
+                collectIdentsStmt(cg, *body[i], &mut out)
             }
         }
         HStmt.ForIterator(varName, varTy, iterable, nextMethod, resultEnum, body, invariants, okVariant) => {
-            collectIdentsHExpr(cg, *iterable, out)
+            collectIdentsHExpr(cg, *iterable, &mut out)
             for i in 0..body.len {
-                collectIdentsStmt(cg, *body[i], out)
+                collectIdentsStmt(cg, *body[i], &mut out)
             }
         }
         HStmt.ForStrView(varName, varName2, varTy, src, sep, mode, body, invariants) => {
-            collectIdentsHExpr(cg, *src, out)
+            collectIdentsHExpr(cg, *src, &mut out)
             match sep {
                 Option.Some(sx) => {
-                    collectIdentsHExpr(cg, *sx, out)
+                    collectIdentsHExpr(cg, *sx, &mut out)
                 }
                 Option.None => {
                 }
             }
             for i in 0..body.len {
-                collectIdentsStmt(cg, *body[i], out)
+                collectIdentsStmt(cg, *body[i], &mut out)
             }
         }
         // No idents to collect — exhaustive on purpose, same reason as
@@ -2162,10 +2162,10 @@ pub fn collectIdentsStmt(cg: &Cgen, s: &HStmt, out: &mut Vec<string>) {
 fn collectIdentsHExpr(cg: &Cgen, n: &HExprNode, out: &mut Vec<string>) {
     match n.kind {
         HExpr.Unlowered(e) => {
-            collectIdentsExpr(cg, *e, out)
+            collectIdentsExpr(cg, *e, &mut out)
         }
         HExpr.FieldAccess(obj, field, isRefRead) => {
-            collectIdentsHExpr(cg, *obj, out)
+            collectIdentsHExpr(cg, *obj, &mut out)
         }
         _ => {
             hexprAbort(n, "expression in a capture pre-scan")
@@ -2179,7 +2179,7 @@ fn collectIdentsHExpr(cg: &Cgen, n: &HExprNode, out: &mut Vec<string>) {
 pub fn closureCaptures(cg: &Cgen, params: &Vec<Param>, body: &Vec<Heap<HStmt>>, locs: &Vec<Local>): Vec<Local> {
     var idents: Vec<string> = Vec.new()
     for i in 0..body.len {
-        collectIdentsStmt(cg, *body[i], idents)
+        collectIdentsStmt(cg, *body[i], &mut idents)
     }
     var caps: Vec<Local> = Vec.new()
     var seen: Vec<string> = Vec.new()
@@ -2275,37 +2275,37 @@ pub fn collectReturnEscapedIdentsInto(body: &Vec<Heap<HStmt>>, out: &mut Vec<str
                 }
             }
             HStmt.If(cond, thenBody, elseBody) => {
-                collectReturnEscapedIdentsInto(thenBody, out)
+                collectReturnEscapedIdentsInto(thenBody, &mut out)
                 match elseBody {
                     Option.Some(eb) => {
-                        collectReturnEscapedIdentsInto(eb, out)
+                        collectReturnEscapedIdentsInto(eb, &mut out)
                     }
                     Option.None => {
                     }
                 }
             }
             HStmt.While(cond, wbody, invariants) => {
-                collectReturnEscapedIdentsInto(wbody, out)
+                collectReturnEscapedIdentsInto(wbody, &mut out)
             }
             HStmt.Match(subject, arms, enumName, isRef) => {
                 for ai in 0..arms.len {
-                    collectReturnEscapedIdentsInto(arms[ai].body, out)
+                    collectReturnEscapedIdentsInto(arms[ai].body, &mut out)
                 }
             }
             HStmt.UnsafeBlock(ubody) => {
-                collectReturnEscapedIdentsInto(ubody, out)
+                collectReturnEscapedIdentsInto(ubody, &mut out)
             }
             HStmt.ForRange(varName, varTy, startE, endE, fbody, invariants) => {
-                collectReturnEscapedIdentsInto(fbody, out)
+                collectReturnEscapedIdentsInto(fbody, &mut out)
             }
             HStmt.ForEach(varName, varName2, varTy, varTy2, iterable, kind, fbody, invariants) => {
-                collectReturnEscapedIdentsInto(fbody, out)
+                collectReturnEscapedIdentsInto(fbody, &mut out)
             }
             HStmt.ForIterator(varName, varTy, iterable, nextMethod, resultEnum, fbody, invariants, okVariant) => {
-                collectReturnEscapedIdentsInto(fbody, out)
+                collectReturnEscapedIdentsInto(fbody, &mut out)
             }
             HStmt.ForStrView(varName, varName2, varTy, src, sep, mode, fbody, invariants) => {
-                collectReturnEscapedIdentsInto(fbody, out)
+                collectReturnEscapedIdentsInto(fbody, &mut out)
             }
             _ => {
             }
@@ -2315,7 +2315,7 @@ pub fn collectReturnEscapedIdentsInto(body: &Vec<Heap<HStmt>>, out: &mut Vec<str
 
 pub fn returnEscapedIdents(body: &Vec<Heap<HStmt>>): Vec<string> {
     var out: Vec<string> = Vec.new()
-    collectReturnEscapedIdentsInto(body, out)
+    collectReturnEscapedIdentsInto(body, &mut out)
     return out
 }
 
@@ -2399,37 +2399,37 @@ pub fn collectVecPushHintsInto(body: &Vec<Heap<HStmt>>, out: &mut HashMap<string
                 }
             }
             HStmt.If(cond, thenBody, elseBody) => {
-                collectVecPushHintsInto(thenBody, out)
+                collectVecPushHintsInto(thenBody, &mut out)
                 match elseBody {
                     Option.Some(eb) => {
-                        collectVecPushHintsInto(eb, out)
+                        collectVecPushHintsInto(eb, &mut out)
                     }
                     Option.None => {
                     }
                 }
             }
             HStmt.While(cond, wbody, invariants) => {
-                collectVecPushHintsInto(wbody, out)
+                collectVecPushHintsInto(wbody, &mut out)
             }
             HStmt.Match(subject, arms, enumName, isRef) => {
                 for ai in 0..arms.len {
-                    collectVecPushHintsInto(arms[ai].body, out)
+                    collectVecPushHintsInto(arms[ai].body, &mut out)
                 }
             }
             HStmt.UnsafeBlock(ubody) => {
-                collectVecPushHintsInto(ubody, out)
+                collectVecPushHintsInto(ubody, &mut out)
             }
             HStmt.ForRange(varName, varTy, startE, endE, fbody, invariants) => {
-                collectVecPushHintsInto(fbody, out)
+                collectVecPushHintsInto(fbody, &mut out)
             }
             HStmt.ForEach(varName, varName2, varTy, varTy2, iterable, kind, fbody, invariants) => {
-                collectVecPushHintsInto(fbody, out)
+                collectVecPushHintsInto(fbody, &mut out)
             }
             HStmt.ForIterator(varName, varTy, iterable, nextMethod, resultEnum, fbody, invariants, okVariant) => {
-                collectVecPushHintsInto(fbody, out)
+                collectVecPushHintsInto(fbody, &mut out)
             }
             HStmt.ForStrView(varName, varName2, varTy, src, sep, mode, fbody, invariants) => {
-                collectVecPushHintsInto(fbody, out)
+                collectVecPushHintsInto(fbody, &mut out)
             }
             _ => {
             }
@@ -2439,7 +2439,7 @@ pub fn collectVecPushHintsInto(body: &Vec<Heap<HStmt>>, out: &mut HashMap<string
 
 pub fn inferVecPushHints(body: &Vec<Heap<HStmt>>): HashMap<string, string> {
     var out: HashMap<string, string> = HashMap.new()
-    collectVecPushHintsInto(body, out)
+    collectVecPushHintsInto(body, &mut out)
     return out
 }
 
@@ -2487,92 +2487,92 @@ fn collectMovedOutIdentsExpr(cg: &Cgen, e: &ExprNode, out: &mut Vec<string>) {
     match e.kind {
         Expr.Call(name, args, targs) => {
             for i in 0..args.len {
-                pushIfBareIdent(*args[i], out)
-                collectMovedOutIdentsExpr(cg, *args[i], out)
+                pushIfBareIdent(*args[i], &mut out)
+                collectMovedOutIdentsExpr(cg, *args[i], &mut out)
             }
         }
         Expr.MethodCall(obj, m, args) => {
-            collectMovedOutIdentsExpr(cg, *obj, out)
+            collectMovedOutIdentsExpr(cg, *obj, &mut out)
             for i in 0..args.len {
-                pushIfBareIdent(*args[i], out)
-                collectMovedOutIdentsExpr(cg, *args[i], out)
+                pushIfBareIdent(*args[i], &mut out)
+                collectMovedOutIdentsExpr(cg, *args[i], &mut out)
             }
         }
         Expr.StructLit(name, fields) => {
             for i in 0..fields.len {
-                pushIfBareIdent(*fields[i].value, out)
-                collectMovedOutIdentsExpr(cg, *fields[i].value, out)
+                pushIfBareIdent(*fields[i].value, &mut out)
+                collectMovedOutIdentsExpr(cg, *fields[i].value, &mut out)
             }
         }
         Expr.JsonObject(fields) => {
             for i in 0..fields.len {
-                pushIfBareIdent(*fields[i].value, out)
-                collectMovedOutIdentsExpr(cg, *fields[i].value, out)
+                pushIfBareIdent(*fields[i].value, &mut out)
+                collectMovedOutIdentsExpr(cg, *fields[i].value, &mut out)
             }
         }
         Expr.EnumLit(en, va, args) => {
             for i in 0..args.len {
-                pushIfBareIdent(*args[i], out)
-                collectMovedOutIdentsExpr(cg, *args[i], out)
+                pushIfBareIdent(*args[i], &mut out)
+                collectMovedOutIdentsExpr(cg, *args[i], &mut out)
             }
         }
         Expr.BinOp(op, l, r) => {
-            collectMovedOutIdentsExpr(cg, *l, out)
-            collectMovedOutIdentsExpr(cg, *r, out)
+            collectMovedOutIdentsExpr(cg, *l, &mut out)
+            collectMovedOutIdentsExpr(cg, *r, &mut out)
         }
         Expr.UnaryOp(op, x) => {
-            collectMovedOutIdentsExpr(cg, *x, out)
+            collectMovedOutIdentsExpr(cg, *x, &mut out)
         }
         Expr.FieldAccess(obj, field) => {
-            collectMovedOutIdentsExpr(cg, *obj, out)
+            collectMovedOutIdentsExpr(cg, *obj, &mut out)
         }
         Expr.ArrayLit(elems) => {
             for i in 0..elems.len {
-                pushIfBareIdent(*elems[i], out)
-                collectMovedOutIdentsExpr(cg, *elems[i], out)
+                pushIfBareIdent(*elems[i], &mut out)
+                collectMovedOutIdentsExpr(cg, *elems[i], &mut out)
             }
         }
         Expr.ArrayRepeat(x, n) => {
-            collectMovedOutIdentsExpr(cg, *x, out)
+            collectMovedOutIdentsExpr(cg, *x, &mut out)
         }
         Expr.IndexAccess(obj, idx) => {
-            collectMovedOutIdentsExpr(cg, *obj, out)
-            collectMovedOutIdentsExpr(cg, *idx, out)
+            collectMovedOutIdentsExpr(cg, *obj, &mut out)
+            collectMovedOutIdentsExpr(cg, *idx, &mut out)
         }
         Expr.Unwrap(x) => {
-            collectMovedOutIdentsExpr(cg, *x, out)
+            collectMovedOutIdentsExpr(cg, *x, &mut out)
         }
         Expr.Propagate(x) => {
-            collectMovedOutIdentsExpr(cg, *x, out)
+            collectMovedOutIdentsExpr(cg, *x, &mut out)
         }
         Expr.DefaultValue(x, d) => {
-            collectMovedOutIdentsExpr(cg, *x, out)
-            collectMovedOutIdentsExpr(cg, *d, out)
+            collectMovedOutIdentsExpr(cg, *x, &mut out)
+            collectMovedOutIdentsExpr(cg, *d, &mut out)
         }
         Expr.CastExpr(x, ty) => {
-            collectMovedOutIdentsExpr(cg, *x, out)
+            collectMovedOutIdentsExpr(cg, *x, &mut out)
         }
         // Bodies were lifted at lowering — follow the id, same as collectIdentsExpr.
         Expr.Closure(params, rt, body, isMove) => {
-            collectMovedOutIdentsBlocks(cg, e.id, 1, out)
+            collectMovedOutIdentsBlocks(cg, e.id, 1, &mut out)
         }
         Expr.RangeExpr(a, b) => {
-            collectMovedOutIdentsExpr(cg, *a, out)
-            collectMovedOutIdentsExpr(cg, *b, out)
+            collectMovedOutIdentsExpr(cg, *a, &mut out)
+            collectMovedOutIdentsExpr(cg, *b, &mut out)
         }
         Expr.IsExpr(x, pat) => {
-            collectMovedOutIdentsExpr(cg, *x, out)
+            collectMovedOutIdentsExpr(cg, *x, &mut out)
         }
         Expr.IfExpr(c, thenBody, elseBody) => {
-            collectMovedOutIdentsExpr(cg, *c, out)
-            collectMovedOutIdentsBlocks(cg, e.id, 2, out)
+            collectMovedOutIdentsExpr(cg, *c, &mut out)
+            collectMovedOutIdentsBlocks(cg, e.id, 2, &mut out)
         }
         Expr.MatchExpr(subject, arms) => {
-            collectMovedOutIdentsExpr(cg, *subject, out)
+            collectMovedOutIdentsExpr(cg, *subject, &mut out)
             let base = blockBase(cg, e.id, "match-expression")
             for ai in 0..cg.stmtBlocks[base].arms.len {
                 for j in 0..cg.stmtBlocks[base].arms[ai].body.len {
-                    collectMovedOutIdentsStmt(cg, *cg.stmtBlocks[base].arms[ai].body[j], out)
+                    collectMovedOutIdentsStmt(cg, *cg.stmtBlocks[base].arms[ai].body[j], &mut out)
                 }
             }
         }
@@ -2595,7 +2595,7 @@ fn collectMovedOutIdentsBlocks(cg: &Cgen, id: u32, count: i64, out: &mut Vec<str
     let base = blockBase(cg, id, "expression")
     for b in 0..count {
         for j in 0..cg.stmtBlocks[base + b].stmts.len {
-            collectMovedOutIdentsStmt(cg, *cg.stmtBlocks[base + b].stmts[j], out)
+            collectMovedOutIdentsStmt(cg, *cg.stmtBlocks[base + b].stmts[j], &mut out)
         }
     }
 }
@@ -2613,7 +2613,7 @@ fn pushIfBareIdent(e: &ExprNode, out: &mut Vec<string>) {
 fn pushIfBareIdentH(n: &HExprNode, out: &mut Vec<string>) {
     match n.kind {
         HExpr.Unlowered(e) => {
-            pushIfBareIdent(*e, out)
+            pushIfBareIdent(*e, &mut out)
         }
         _ => {
         }
@@ -2623,10 +2623,10 @@ fn pushIfBareIdentH(n: &HExprNode, out: &mut Vec<string>) {
 fn collectMovedOutIdentsHExpr(cg: &Cgen, n: &HExprNode, out: &mut Vec<string>) {
     match n.kind {
         HExpr.Unlowered(e) => {
-            collectMovedOutIdentsExpr(cg, *e, out)
+            collectMovedOutIdentsExpr(cg, *e, &mut out)
         }
         HExpr.FieldAccess(obj, field, isRefRead) => {
-            collectMovedOutIdentsHExpr(cg, *obj, out)
+            collectMovedOutIdentsHExpr(cg, *obj, &mut out)
         }
         _ => {
             hexprAbort(n, "expression in a move-out pre-scan")
@@ -2637,35 +2637,35 @@ fn collectMovedOutIdentsHExpr(cg: &Cgen, n: &HExprNode, out: &mut Vec<string>) {
 fn collectMovedOutIdentsStmt(cg: &Cgen, s: &HStmt, out: &mut Vec<string>) {
     match s {
         HStmt.Let(name, ty, value, mutable) => {
-            pushIfBareIdentH(*value, out)
-            collectMovedOutIdentsHExpr(cg, *value, out)
+            pushIfBareIdentH(*value, &mut out)
+            collectMovedOutIdentsHExpr(cg, *value, &mut out)
         }
         HStmt.Assign(target, value, isInit) => {
-            pushIfBareIdentH(*value, out)
-            collectMovedOutIdentsHExpr(cg, *value, out)
+            pushIfBareIdentH(*value, &mut out)
+            collectMovedOutIdentsHExpr(cg, *value, &mut out)
         }
         HStmt.Return(value, retType) => {
             match value {
                 Option.Some(e) => {
-                    pushIfBareIdentH(*e, out)
-                    collectMovedOutIdentsHExpr(cg, *e, out)
+                    pushIfBareIdentH(*e, &mut out)
+                    collectMovedOutIdentsHExpr(cg, *e, &mut out)
                 }
                 Option.None => {
                 }
             }
         }
         HStmt.ExprStmt(e) => {
-            collectMovedOutIdentsHExpr(cg, *e, out)
+            collectMovedOutIdentsHExpr(cg, *e, &mut out)
         }
         HStmt.If(cond, thenB, elseB) => {
-            collectMovedOutIdentsHExpr(cg, *cond, out)
+            collectMovedOutIdentsHExpr(cg, *cond, &mut out)
             for i in 0..thenB.len {
-                collectMovedOutIdentsStmt(cg, *thenB[i], out)
+                collectMovedOutIdentsStmt(cg, *thenB[i], &mut out)
             }
             match elseB {
                 Option.Some(eb) => {
                     for i in 0..eb.len {
-                        collectMovedOutIdentsStmt(cg, *eb[i], out)
+                        collectMovedOutIdentsStmt(cg, *eb[i], &mut out)
                     }
                 }
                 Option.None => {
@@ -2673,47 +2673,47 @@ fn collectMovedOutIdentsStmt(cg: &Cgen, s: &HStmt, out: &mut Vec<string>) {
             }
         }
         HStmt.While(cond, body, invariants) => {
-            collectMovedOutIdentsHExpr(cg, *cond, out)
+            collectMovedOutIdentsHExpr(cg, *cond, &mut out)
             for i in 0..body.len {
-                collectMovedOutIdentsStmt(cg, *body[i], out)
+                collectMovedOutIdentsStmt(cg, *body[i], &mut out)
             }
         }
         HStmt.ForRange(varName, varTy, startE, endE, body, invariants) => {
-            collectMovedOutIdentsHExpr(cg, *startE, out)
-            collectMovedOutIdentsHExpr(cg, *endE, out)
+            collectMovedOutIdentsHExpr(cg, *startE, &mut out)
+            collectMovedOutIdentsHExpr(cg, *endE, &mut out)
             for i in 0..body.len {
-                collectMovedOutIdentsStmt(cg, *body[i], out)
+                collectMovedOutIdentsStmt(cg, *body[i], &mut out)
             }
         }
         HStmt.ForEach(varName, varName2, varTy, varTy2, iterable, kind, body, invariants) => {
-            collectMovedOutIdentsHExpr(cg, *iterable, out)
+            collectMovedOutIdentsHExpr(cg, *iterable, &mut out)
             for i in 0..body.len {
-                collectMovedOutIdentsStmt(cg, *body[i], out)
+                collectMovedOutIdentsStmt(cg, *body[i], &mut out)
             }
         }
         HStmt.ForIterator(varName, varTy, iterable, nextMethod, resultEnum, body, invariants, okVariant) => {
-            collectMovedOutIdentsHExpr(cg, *iterable, out)
+            collectMovedOutIdentsHExpr(cg, *iterable, &mut out)
             for i in 0..body.len {
-                collectMovedOutIdentsStmt(cg, *body[i], out)
+                collectMovedOutIdentsStmt(cg, *body[i], &mut out)
             }
         }
         HStmt.ForStrView(varName, varName2, varTy, src, sep, mode, body, invariants) => {
-            collectMovedOutIdentsHExpr(cg, *src, out)
+            collectMovedOutIdentsHExpr(cg, *src, &mut out)
             for i in 0..body.len {
-                collectMovedOutIdentsStmt(cg, *body[i], out)
+                collectMovedOutIdentsStmt(cg, *body[i], &mut out)
             }
         }
         HStmt.Match(subj, arms, enumName, isRef) => {
-            collectMovedOutIdentsHExpr(cg, *subj, out)
+            collectMovedOutIdentsHExpr(cg, *subj, &mut out)
             for i in 0..arms.len {
                 for j in 0..arms[i].body.len {
-                    collectMovedOutIdentsStmt(cg, *arms[i].body[j], out)
+                    collectMovedOutIdentsStmt(cg, *arms[i].body[j], &mut out)
                 }
             }
         }
         HStmt.UnsafeBlock(body) => {
             for i in 0..body.len {
-                collectMovedOutIdentsStmt(cg, *body[i], out)
+                collectMovedOutIdentsStmt(cg, *body[i], &mut out)
             }
         }
         _ => {
@@ -2736,7 +2736,7 @@ pub fn autoMoveClosureArg(cg: &Cgen, nodeId: u32, params: &Vec<Param>, locs: &Ve
     let base = blockBase(cg, nodeId, "closure")
     var moved: Vec<string> = Vec.new()
     for i in 0..cg.stmtBlocks[base].stmts.len {
-        collectMovedOutIdentsStmt(cg, *cg.stmtBlocks[base].stmts[i], moved)
+        collectMovedOutIdentsStmt(cg, *cg.stmtBlocks[base].stmts[i], &mut moved)
     }
     let caps = closureCaptures(cg, params, cg.stmtBlocks[base].stmts, locs)
     for ci in 0..caps.len {
@@ -2817,7 +2817,7 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
 
     // The body was lifted out of the AST at lowering; take it, walk it, put it back.
     let bodyIdx = blockBase(cg, nodeId, "closure")
-    var body = takeBlock(cg, bodyIdx)
+    var body = takeBlock(&mut cg, bodyIdx)
 
     let caps = closureCaptures(cg, params, body, locs)
     // move closures heap-copy their captures (survive an escaping/threaded call);
@@ -2865,11 +2865,11 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
     let pushHints = inferVecPushHints(body)
     cg.vecPushHints = pushHints
 
-    emit(cg, "entry.bb:\n")
+    emit(&mut cg, "entry.bb:\n")
     var clocs: Vec<Local> = Vec.new()
     for ci in 0..caps.len {
-        let gp = nextTemp(cg)
-        emit(cg, "  " + gp + " = getelementptr " + envTy + ", ptr %__env, i32 0, i32 " + (ci + 1).toString() + "\n")
+        let gp = nextTemp(&mut cg)
+        emit(&mut cg, "  " + gp + " = getelementptr " + envTy + ", ptr %__env, i32 0, i32 " + (ci + 1).toString() + "\n")
         if isMove {
             // env slot holds the value directly — gp IS the local's storage
             clocs.push(Local {
@@ -2878,8 +2878,8 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
             )
         } else {
             // env slot holds a pointer to the original variable
-            let ca = nextTemp(cg)
-            emit(cg, "  " + ca + " = load ptr, ptr " + gp + "\n")
+            let ca = nextTemp(&mut cg)
+            emit(&mut cg, "  " + ca + " = load ptr, ptr " + gp + "\n")
             clocs.push(Local {
                 name: caps[ci].name.clone(), ty: caps[ci].ty.clone(), addr: ca, isRef: true, isArr: false, range: noRange()
             }
@@ -2907,7 +2907,7 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
     }
     var term = false
     for si in 0..body.len {
-        if genStmt(cg, *body[si], clocs, sigs, walkRet) {
+        if genStmt(&mut cg, *body[si], &mut clocs, sigs, walkRet) {
             term = true
         }
     }
@@ -2917,10 +2917,10 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
     let retLl = llType(retTyStr)
     if !term {
         if retLl == "void" {
-            emit(cg, "  ret void\n")
+            emit(&mut cg, "  ret void\n")
         } 
         else {
-            emit(cg, "  ret " + retLl + " zeroinitializer\n")
+            emit(&mut cg, "  ret " + retLl + " zeroinitializer\n")
         }
     }
 
@@ -2943,7 +2943,7 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
     cg.forceMoveClosures = savedForceMove
     cg.vecPushHints = savedVecPushHints
     cg.globals = cg.globals + closureIR
-    putBlock(cg, bodyIdx, body)
+    putBlock(&mut cg, bodyIdx, body)
 
     // build the env at the call site, then the { fnptr, env } pair
     var envVal = "null"
@@ -2951,25 +2951,25 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
         var ea = ""
         if isMove {
             // heap-allocate and COPY each captured value in (outlives this frame)
-            ensureMalloc(cg)
-            let szp = nextTemp(cg)
-            emit(cg, "  " + szp + " = getelementptr " + envTy + ", ptr null, i32 1\n")
-            let szi = nextTemp(cg)
-            emit(cg, "  " + szi + " = ptrtoint ptr " + szp + " to i64\n")
-            ea = nextTemp(cg)
-            emit(cg, "  " + ea + " = call ptr @malloc(i64 " + szi + ")\n")
+            ensureMalloc(&mut cg)
+            let szp = nextTemp(&mut cg)
+            emit(&mut cg, "  " + szp + " = getelementptr " + envTy + ", ptr null, i32 1\n")
+            let szi = nextTemp(&mut cg)
+            emit(&mut cg, "  " + szi + " = ptrtoint ptr " + szp + " to i64\n")
+            ea = nextTemp(&mut cg)
+            emit(&mut cg, "  " + ea + " = call ptr @malloc(i64 " + szi + ")\n")
             // slot 0: this env's drop glue. src-milo emits none, so null tells
             // std/runtime to free the block rather than call through it.
-            let hdr0 = nextTemp(cg)
-            emit(cg, "  " + hdr0 + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 0\n")
-            emit(cg, "  store ptr null, ptr " + hdr0 + "\n")
+            let hdr0 = nextTemp(&mut cg)
+            emit(&mut cg, "  " + hdr0 + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 0\n")
+            emit(&mut cg, "  store ptr null, ptr " + hdr0 + "\n")
             for ci in 0..caps.len {
                 let cll = llType(caps[ci].ty)
-                let cv = nextTemp(cg)
-                emit(cg, "  " + cv + " = load " + cll + ", ptr " + caps[ci].addr.clone() + "\n")
-                let gp = nextTemp(cg)
-                emit(cg, "  " + gp + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 " + (ci + 1).toString() + "\n")
-                emit(cg, "  store " + cll + " " + cv + ", ptr " + gp + "\n")
+                let cv = nextTemp(&mut cg)
+                emit(&mut cg, "  " + cv + " = load " + cll + ", ptr " + caps[ci].addr.clone() + "\n")
+                let gp = nextTemp(&mut cg)
+                emit(&mut cg, "  " + gp + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 " + (ci + 1).toString() + "\n")
+                emit(&mut cg, "  store " + cll + " " + cv + ", ptr " + gp + "\n")
                 // The bits now live in TWO places (this local's slot and the env
                 // slot just stored above) but ownership was only ever meant to
                 // transfer once — same move genOwnedArg performs for a by-value
@@ -2982,30 +2982,30 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
                 // counter into a silent lost-update generator. A ref capture
                 // (isRef) borrows someone else's storage and must not be zeroed.
                 if !caps[ci].isRef && cgNeedsDrop(cg, caps[ci].ty) {
-                    zeroStore(cg, caps[ci].addr, caps[ci].ty)
+                    zeroStore(&mut cg, caps[ci].addr, caps[ci].ty)
                     cg.movedLocalAddrs.push(caps[ci].addr.clone())
                 }
             }
         } else {
-            ea = nextTemp(cg)
-            emit(cg, "  " + ea + " = alloca " + envTy + "\n")
+            ea = nextTemp(&mut cg)
+            emit(&mut cg, "  " + ea + " = alloca " + envTy + "\n")
             // slot 0: this env's drop glue. src-milo emits none, so null tells
             // std/runtime to free the block rather than call through it.
-            let hdr1 = nextTemp(cg)
-            emit(cg, "  " + hdr1 + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 0\n")
-            emit(cg, "  store ptr null, ptr " + hdr1 + "\n")
+            let hdr1 = nextTemp(&mut cg)
+            emit(&mut cg, "  " + hdr1 + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 0\n")
+            emit(&mut cg, "  store ptr null, ptr " + hdr1 + "\n")
             for ci in 0..caps.len {
-                let gp = nextTemp(cg)
-                emit(cg, "  " + gp + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 " + (ci + 1).toString() + "\n")
-                emit(cg, "  store ptr " + caps[ci].addr.clone() + ", ptr " + gp + "\n")
+                let gp = nextTemp(&mut cg)
+                emit(&mut cg, "  " + gp + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 " + (ci + 1).toString() + "\n")
+                emit(&mut cg, "  store ptr " + caps[ci].addr.clone() + ", ptr " + gp + "\n")
             }
         }
         envVal = ea
     }
-    let c0 = nextTemp(cg)
-    emit(cg, "  " + c0 + " = insertvalue %Closure undef, ptr @" + cname + ", 0\n")
-    let c1 = nextTemp(cg)
-    emit(cg, "  " + c1 + " = insertvalue %Closure " + c0 + ", ptr " + envVal + ", 1\n")
+    let c0 = nextTemp(&mut cg)
+    emit(&mut cg, "  " + c0 + " = insertvalue %Closure undef, ptr @" + cname + ", 0\n")
+    let c1 = nextTemp(&mut cg)
+    emit(&mut cg, "  " + c1 + " = insertvalue %Closure " + c0 + ", ptr " + envVal + ", 1\n")
     // carry the return type in the surface ty ("Closure:R") so a generic call site
     // can disambiguate which monomorphization to invoke (arenaWith_T_R).
     return Val {
@@ -3016,16 +3016,16 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
 // Indirect call of a %Closure-typed local: load { fnptr, env }, pass every arg BY
 // POINTER (uniform ABI). retHint supplies R since "fn" drops the return type.
 pub fn genClosureCall(cg: &mut Cgen, lc: &Local, args: &Vec<Heap<ExprNode>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, retHint: &string): Val {
-    let clv = nextTemp(cg)
-    emit(cg, "  " + clv + " = load %Closure, ptr " + lc.addr.clone() + "\n")
-    let fp = nextTemp(cg)
-    emit(cg, "  " + fp + " = extractvalue %Closure " + clv + ", 0\n")
-    let env = nextTemp(cg)
-    emit(cg, "  " + env + " = extractvalue %Closure " + clv + ", 1\n")
+    let clv = nextTemp(&mut cg)
+    emit(&mut cg, "  " + clv + " = load %Closure, ptr " + lc.addr.clone() + "\n")
+    let fp = nextTemp(&mut cg)
+    emit(&mut cg, "  " + fp + " = extractvalue %Closure " + clv + ", 0\n")
+    let env = nextTemp(&mut cg)
+    emit(&mut cg, "  " + env + " = extractvalue %Closure " + clv + ", 1\n")
 
     var argStr = "ptr " + env
     for i in 0..args.len {
-        let alv = genLvalue(cg, *args[i], locs, sigs)
+        let alv = genLvalue(&mut cg, *args[i], locs, sigs)
         argStr = argStr + ", ptr " + alv.v
     }
     // the closure param's own type carries R ("fn:Response" / "Closure:Response");
@@ -3054,13 +3054,13 @@ pub fn genClosureCall(cg: &mut Cgen, lc: &Local, args: &Vec<Heap<ExprNode>>, loc
     let retLl = llType(resolveTyStr(cg, retTyStr))
     let retTyResolved = resolveTyStr(cg, retTyStr)
     if retLl == "void" {
-        emit(cg, "  call void " + fp + "(" + argStr + ")\n")
+        emit(&mut cg, "  call void " + fp + "(" + argStr + ")\n")
         return Val {
             v: "0", ty: "void"
         }
     }
-    let t = nextTemp(cg)
-    emit(cg, "  " + t + " = call " + retLl + " " + fp + "(" + argStr + ")\n")
+    let t = nextTemp(&mut cg)
+    emit(&mut cg, "  " + t + " = call " + retLl + " " + fp + "(" + argStr + ")\n")
     return Val {
         v: t, ty: retTyResolved
     }

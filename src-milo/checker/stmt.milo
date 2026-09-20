@@ -38,22 +38,22 @@ from "src-milo/checker/moves.milo" import {
 pub fn checkStmt(ck: &mut Checker, stmt: &Stmt, fnRetType: &TypeKind) {
     match stmt {
         Stmt.LetDecl(name, typeAnno, value, span) => {
-            checkLetDecl(ck, name, typeAnno, *value, false, span)
+            checkLetDecl(&mut ck, name, typeAnno, *value, false, span)
         }
         Stmt.VarDecl(name, typeAnno, value, span) => {
-            checkLetDecl(ck, name, typeAnno, *value, true, span)
+            checkLetDecl(&mut ck, name, typeAnno, *value, true, span)
         }
         Stmt.Assign(target, value, span) => {
-            checkAssign(ck, *target, *value, span)
+            checkAssign(&mut ck, *target, *value, span)
         }
         Stmt.Return(value, span) => {
-            checkReturn(ck, value, fnRetType, span)
+            checkReturn(&mut ck, value, fnRetType, span)
         }
         Stmt.IfStmt(cond, thenBody, elseBody, span) => {
-            checkIf(ck, *cond, thenBody, elseBody, fnRetType, span)
+            checkIf(&mut ck, *cond, thenBody, elseBody, fnRetType, span)
         }
         Stmt.WhileStmt(cond, body, span) => {
-            checkWhile(ck, *cond, body, fnRetType, span)
+            checkWhile(&mut ck, *cond, body, fnRetType, span)
         }
         Stmt.ExprStmt(expr, span) => {
             // A view produced by a discarded expression (`print(lx.word(0, 5))`)
@@ -61,36 +61,36 @@ pub fn checkStmt(ck: &mut Checker, stmt: &Stmt, fnRetType: &TypeKind) {
             // survive it either — same reasoning as the RHS snapshot in
             // checkAssign/checkLetDecl, which this mirrors.
             let frozenBefore = snapshotFrozenNames(ck)
-            checkExpr(ck, *expr)
-            releaseOrRetainFreezes(ck, frozenBefore, false)
+            checkExpr(&mut ck, *expr)
+            releaseOrRetainFreezes(&mut ck, frozenBefore, false)
         }
         Stmt.MatchStmt(subject, arms, span) => {
-            checkMatch(ck, *subject, arms, fnRetType)
+            checkMatch(&mut ck, *subject, arms, fnRetType)
         }
         Stmt.BreakStmt(span) => {
             if ck.loopDepth == 0 {
-                error(ck, "'break' outside of loop", cloneSpan(span))
+                error(&mut ck, "'break' outside of loop", cloneSpan(span))
             }
         }
         Stmt.ContinueStmt(span) => {
             if ck.loopDepth == 0 {
-                error(ck, "'continue' outside of loop", cloneSpan(span))
+                error(&mut ck, "'continue' outside of loop", cloneSpan(span))
             }
         }
         Stmt.IfLetStmt(pattern, expr, thenBody, elseBody, span) => {
-            checkIfLet(ck, *pattern, *expr, thenBody, elseBody, fnRetType)
+            checkIfLet(&mut ck, *pattern, *expr, thenBody, elseBody, fnRetType)
         }
         Stmt.UnsafeBlock(body, span) => {
             ck.unsafeDepth = ck.unsafeDepth + 1
-            pushScope(ck)
+            pushScope(&mut ck)
             for i in 0..body.len {
-                checkStmt(ck, *body[i], fnRetType)
+                checkStmt(&mut ck, *body[i], fnRetType)
             }
-            popScope(ck)
+            popScope(&mut ck)
             ck.unsafeDepth = ck.unsafeDepth - 1
         }
         Stmt.ForInStmt(varName, varName2, iterable, body, span) => {
-            checkForIn(ck, varName, varName2, *iterable, body, fnRetType, span)
+            checkForIn(&mut ck, varName, varName2, *iterable, body, fnRetType, span)
         }
     }
 }
@@ -105,7 +105,7 @@ pub fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>
     var hint = tyUnknown()
     match typeAnno {
         Option.Some(ty) => {
-            hint = resolveAstType(ck, ty)
+            hint = resolveAstType(&mut ck, ty)
             hasHint = true
         }
         Option.None => {
@@ -116,7 +116,7 @@ pub fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>
     // (second-class, can't escape the function), but nothing marks a
     // CONTAINER as borrowed the way a plain reference binding is.
     if hasHint && nestedRef(ck, hint) {
-        error(ck, "'" + name.clone() + "': references cannot be stored in a collection", cloneSpan(span))
+        error(&mut ck, "'" + name.clone() + "': references cannot be stored in a collection", cloneSpan(span))
     }
     if hasHint {
         ck.expectedType = Option.Some(hint.clone())
@@ -127,7 +127,7 @@ pub fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>
     // only what THIS statement newly froze is in scope for the keep/release
     // decision below.
     let frozenBefore = snapshotFrozenNames(ck)
-    var valType = checkExpr(ck, value)
+    var valType = checkExpr(&mut ck, value)
     ck.expectedType = Option.None
 
     if hasHint {
@@ -135,9 +135,9 @@ pub fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>
         !floatLitCoercible(hint, valType, value) &&
         !arrayIntCoercible(hint, valType) && !arrayToVecCoercible(hint, valType) &&
         !optionIntWrapCoercible(ck, hint, valType) && !interfaceCoercible(ck, hint, valType) {
-            error(ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(hint) + " but got " + typeName(valType), cloneSpan(span))
+            error(&mut ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(hint) + " but got " + typeName(valType), cloneSpan(span))
         }
-        enforceRangeInto(ck, value, hint, span)
+        enforceRangeInto(&mut ck, value, hint, span)
         valType = hint
         // Re-record the initializer node's type as the DECLARED one. Lowering keys
         // HStmt.Let's type off this node, and checkExpr answers a bare `5` with i64 no
@@ -157,9 +157,9 @@ pub fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>
         _ => {
         }
     }
-    releaseOrRetainFreezes(ck, frozenBefore, isRefBinding)
+    releaseOrRetainFreezes(&mut ck, frozenBefore, isRefBinding)
 
-    declare(ck, name.clone(), VarInfo {
+    declare(&mut ck, name.clone(), VarInfo {
         ty: valType,
         mutable: mutable,
         moved: false,
@@ -185,20 +185,20 @@ pub fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>
             }
         }
     }
-    tryMove(ck, value)
+    tryMove(&mut ck, value)
 }
 
 // -- Assignment --
 
 pub fn checkAssign(ck: &mut Checker, target: &ExprNode, value: &ExprNode, span: &Option<Span>) {
     if !isRootMutable(ck, target) {
-        error(ck, "cannot assign to immutable variable", cloneSpan(span))
+        error(&mut ck, "cannot assign to immutable variable", cloneSpan(span))
         return
     }
     // Whole-place assignment (`x = ...`, `x.f = ...`) drops the old value and
     // frees its buffer, so a live view into it would dangle. An in-place
     // element write (`v[i] = x`) is exempt — see errorIfAssignFrozen.
-    errorIfAssignFrozen(ck, target, span)
+    errorIfAssignFrozen(&mut ck, target, span)
 
     // A plain `x = ...` target is written, not read. Routing it through checkExpr
     // would hit checkIdent's use-after-move check and report "use of moved
@@ -218,7 +218,7 @@ pub fn checkAssign(ck: &mut Checker, target: &ExprNode, value: &ExprNode, span: 
                     targetDeclType = v.ty.clone()
                 }
                 Option.None => {
-                    error(ck, "undefined variable '" + name.clone() + "'", cloneSpan(span))
+                    error(&mut ck, "undefined variable '" + name.clone() + "'", cloneSpan(span))
                 }
             }
         }
@@ -228,7 +228,7 @@ pub fn checkAssign(ck: &mut Checker, target: &ExprNode, value: &ExprNode, span: 
             // whether it was already moved. checkFieldMoveState reads this depth to
             // suppress its "use of moved value" check for exactly this walk.
             ck.inAssignTargetDepth = ck.inAssignTargetDepth + 1
-            targetType = checkExpr(ck, target)
+            targetType = checkExpr(&mut ck, target)
             ck.inAssignTargetDepth = ck.inAssignTargetDepth - 1
             targetDeclType = targetType.clone()
         }
@@ -240,35 +240,35 @@ pub fn checkAssign(ck: &mut Checker, target: &ExprNode, value: &ExprNode, span: 
     // consumed within this statement — no binding outlives it — so it must
     // not leak a freeze onto the next statement.
     let frozenBeforeRhs = snapshotFrozenNames(ck)
-    let valType = checkExpr(ck, value)
+    let valType = checkExpr(&mut ck, value)
     ck.expectedType = Option.None
-    releaseOrRetainFreezes(ck, frozenBeforeRhs, false)
+    releaseOrRetainFreezes(&mut ck, frozenBeforeRhs, false)
     if !typeEq(targetDeclType, valType) &&
     !typeEq(targetType, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(targetType, valType, value) &&
     !arrayToVecCoercible(targetType, valType) && !floatLitCoercible(targetType, valType, value) &&
     !optionIntWrapCoercible(ck, targetType, valType) {
-        error(ck, "type mismatch: cannot assign " + typeName(valType) + " to " + typeName(targetType), cloneSpan(span))
+        error(&mut ck, "type mismatch: cannot assign " + typeName(valType) + " to " + typeName(targetType), cloneSpan(span))
     }
-    enforceRangeInto(ck, value, targetType, span)
+    enforceRangeInto(&mut ck, value, targetType, span)
 
     // Re-assigning un-moves the variable — or, for a field target, un-moves just
     // that place and anything nested under it (a different field was never
     // touched by this write).
     match target.kind {
         Expr.Ident(name) => {
-            setVarMoved(ck, name, false)
+            setVarMoved(&mut ck, name, false)
         }
         _ => {
             match staticFieldPlace(target) {
                 Option.Some(p) => {
-                    clearMovedFields(ck, p.root, Option.Some(fieldPathString(p.fields)))
+                    clearMovedFields(&mut ck, p.root, Option.Some(fieldPathString(p.fields)))
                 }
                 Option.None => {
                 }
             }
         }
     }
-    tryMove(ck, value)
+    tryMove(&mut ck, value)
 }
 
 // -- Return --
@@ -291,8 +291,8 @@ pub fn checkReturn(ck: &mut Checker, value: &Option<Heap<ExprNode>>, fnRetType: 
             // happens to reuse the same local/param name (e.g. every method's
             // "self").
             let frozenBeforeReturn = snapshotFrozenNames(ck)
-            let valType = checkExpr(ck, *expr)
-            releaseOrRetainFreezes(ck, frozenBeforeReturn, false)
+            let valType = checkExpr(&mut ck, *expr)
+            releaseOrRetainFreezes(&mut ck, frozenBeforeReturn, false)
             ck.expectedType = Option.None
             ck.inReturn = false
             // inside an unannotated closure (fnRetType unknown) this Return's type
@@ -302,9 +302,9 @@ pub fn checkReturn(ck: &mut Checker, value: &Option<Heap<ExprNode>>, fnRetType: 
             }
             if !typeEq(fnRetType, valType) && !typeEq(valType, tyUnknown()) && !typeEq(fnRetType, tyUnknown())
             && !intCoercible(fnRetType, valType, *expr) && !floatLitCoercible(fnRetType, valType, *expr) && !interfaceCoercible(ck, fnRetType, valType) {
-                error(ck, "return type mismatch: expected " + typeName(fnRetType) + ", got " + typeName(valType), cloneSpan(span))
+                error(&mut ck, "return type mismatch: expected " + typeName(fnRetType) + ", got " + typeName(valType), cloneSpan(span))
             }
-            enforceRangeInto(ck, *expr, fnRetType, span)
+            enforceRangeInto(&mut ck, *expr, fnRetType, span)
             // Deliberately no tryMove here: this checker is flow-insensitive, so
             // marking the returned variable moved poisons every later use of it
             // (`if cond { return result }` ... `result.push(x)`), which is exactly
@@ -315,11 +315,11 @@ pub fn checkReturn(ck: &mut Checker, value: &Option<Heap<ExprNode>>, fnRetType: 
             // inside the loop that borrowed it; unlike ordinary move tracking this
             // only reports, it never marks anything moved, so it can't poison later
             // reads the same way.
-            errorIfMovingBorrowedNonCopy(ck, *expr, span)
+            errorIfMovingBorrowedNonCopy(&mut ck, *expr, span)
         }
         Option.None => {
             if !typeEq(fnRetType, tyVoid()) {
-                error(ck, "return without value in function returning " + typeName(fnRetType), cloneSpan(span))
+                error(&mut ck, "return without value in function returning " + typeName(fnRetType), cloneSpan(span))
             }
         }
     }
@@ -332,48 +332,48 @@ pub fn checkIf(ck: &mut Checker, cond: &ExprNode, thenBody: &Vec<Heap<Stmt>>, el
     // consumed evaluating the bool — no binding outlives it — so it must not
     // leak into the branches, let alone past this whole statement.
     let frozenBeforeCond = snapshotFrozenNames(ck)
-    let condType = checkExpr(ck, cond)
-    releaseOrRetainFreezes(ck, frozenBeforeCond, false)
+    let condType = checkExpr(&mut ck, cond)
+    releaseOrRetainFreezes(&mut ck, frozenBeforeCond, false)
     if !typeEq(condType, tyBool()) && !typeEq(condType, tyUnknown()) {
-        error(ck, "if condition must be bool, got " + typeName(condType), cloneSpan(span))
+        error(&mut ck, "if condition must be bool, got " + typeName(condType), cloneSpan(span))
     }
 
     // Branches are checked in isolation from the pre-state (a sibling arm
     // must not see this arm's moves), then joined: any-path moves survive,
     // except from branches that terminate (break/continue/return).
     let preSnap = snapshotMoves(ck)
-    pushScope(ck)
+    pushScope(&mut ck)
     for i in 0..thenBody.len {
-        checkStmt(ck, *thenBody[i], fnRetType)
+        checkStmt(&mut ck, *thenBody[i], fnRetType)
     }
-    popScope(ck)
+    popScope(&mut ck)
     var thenTerm = false
     if thenBody.len > 0 {
         thenTerm = stmtTerminates(*thenBody[thenBody.len - 1])
     }
     let afterThen = snapshotMoves(ck)
-    restoreMoves(ck, preSnap)
+    restoreMoves(&mut ck, preSnap)
 
     match elseBody {
         Option.Some(body) => {
-            pushScope(ck)
+            pushScope(&mut ck)
             for j in 0..body.len {
-                checkStmt(ck, *body[j], fnRetType)
+                checkStmt(&mut ck, *body[j], fnRetType)
             }
-            popScope(ck)
+            popScope(&mut ck)
             var elseTerm = false
             if body.len > 0 {
                 elseTerm = stmtTerminates(*body[body.len - 1])
             }
             if elseTerm {
-                restoreMoves(ck, preSnap)
+                restoreMoves(&mut ck, preSnap)
             }
         }
         Option.None => {
         }
     }
     if !thenTerm {
-        orMoves(ck, afterThen)
+        orMoves(&mut ck, afterThen)
     }
 }
 
@@ -384,19 +384,19 @@ pub fn checkWhile(ck: &mut Checker, cond: &ExprNode, body: &Vec<Heap<Stmt>>, fnR
     // `while` condition is re-evaluated fresh each iteration at runtime, so
     // nothing should carry it forward past this one static check either.
     let frozenBeforeCond = snapshotFrozenNames(ck)
-    let condType = checkExpr(ck, cond)
-    releaseOrRetainFreezes(ck, frozenBeforeCond, false)
+    let condType = checkExpr(&mut ck, cond)
+    releaseOrRetainFreezes(&mut ck, frozenBeforeCond, false)
     if !typeEq(condType, tyBool()) && !typeEq(condType, tyUnknown()) {
-        error(ck, "while condition must be bool, got " + typeName(condType), cloneSpan(span))
+        error(&mut ck, "while condition must be bool, got " + typeName(condType), cloneSpan(span))
     }
 
-    pushScope(ck)
+    pushScope(&mut ck)
     ck.loopDepth = ck.loopDepth + 1
     for i in 0..body.len {
-        checkStmt(ck, *body[i], fnRetType)
+        checkStmt(&mut ck, *body[i], fnRetType)
     }
     ck.loopDepth = ck.loopDepth - 1
-    popScope(ck)
+    popScope(&mut ck)
 }
 
 // -- Match statement --
@@ -405,8 +405,8 @@ pub fn checkMatch(ck: &mut Checker, subject: &ExprNode, arms: &Vec<MatchArm>, fn
     // Same reasoning as checkIf's condition — a borrow taken to compute the
     // subject must not leak past this statement.
     let frozenBeforeSubj = snapshotFrozenNames(ck)
-    let subjType = checkExpr(ck, subject)
-    releaseOrRetainFreezes(ck, frozenBeforeSubj, false)
+    let subjType = checkExpr(&mut ck, subject)
+    releaseOrRetainFreezes(&mut ck, frozenBeforeSubj, false)
 
     // Arms are mutually exclusive: each checks from the pre-state, then the
     // join keeps any-path moves (terminated arms drop out) — same rules as
@@ -415,8 +415,8 @@ pub fn checkMatch(ck: &mut Checker, subject: &ExprNode, arms: &Vec<MatchArm>, fn
     var armSnaps: Vec<MoveSnapshot> = Vec.new()
     var armTerms: Vec<bool> = Vec.new()
     for i in 0..arms.len {
-        restoreMoves(ck, preSnap)
-        checkMatchArm(ck, arms[i], subjType, fnRetType)
+        restoreMoves(&mut ck, preSnap)
+        checkMatchArm(&mut ck, arms[i], subjType, fnRetType)
         armSnaps.push(snapshotMoves(ck))
         var term = false
         if arms[i].body.len > 0 {
@@ -424,16 +424,16 @@ pub fn checkMatch(ck: &mut Checker, subject: &ExprNode, arms: &Vec<MatchArm>, fn
         }
         armTerms.push(term)
     }
-    restoreMoves(ck, preSnap)
+    restoreMoves(&mut ck, preSnap)
     for i in 0..armSnaps.len {
         if !armTerms[i] {
-            orMoves(ck, armSnaps[i])
+            orMoves(&mut ck, armSnaps[i])
         }
     }
 }
 
 pub fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetType: &TypeKind) {
-    pushScope(ck)
+    pushScope(&mut ck)
 
     // Bind pattern variables into scope
     match arm.pattern {
@@ -453,12 +453,12 @@ pub fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRe
                             // then keep the min-length bind so the rest of the arm
                             // still type-checks against real slots.
                             if bindings.len != variantInfo.fields.len {
-                                error(ck, "variant '" + variant.clone() + "' has " + variantInfo.fields.len.toString() + " fields, but pattern has " + bindings.len.toString() + " bindings", cloneSpan(pspan))
+                                error(&mut ck, "variant '" + variant.clone() + "' has " + variantInfo.fields.len.toString() + " fields, but pattern has " + bindings.len.toString() + " bindings", cloneSpan(pspan))
                             }
                             var k: i64 = 0
                             while k < bindings.len && k < variantInfo.fields.len {
                                 if bindings[k] != "_" {
-                                    declare(ck, bindings[k].clone(), VarInfo {
+                                    declare(&mut ck, bindings[k].clone(), VarInfo {
                                         ty: variantInfo.fields[k].clone(),
                                         mutable: false,
                                         moved: false,
@@ -471,12 +471,12 @@ pub fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRe
                                 k = k + 1
                             }
                         } else {
-                            error(ck, "enum '" + name.clone() + "' has no variant '" + variant.clone() + "'", cloneSpan(pspan))
+                            error(&mut ck, "enum '" + name.clone() + "' has no variant '" + variant.clone() + "'", cloneSpan(pspan))
                         }
                     }
                 }
                 _ => {
-                    error(ck, "cannot use enum pattern when matching on " + typeName(subjType), cloneSpan(pspan))
+                    error(&mut ck, "cannot use enum pattern when matching on " + typeName(subjType), cloneSpan(pspan))
                 }
             }
         }
@@ -488,10 +488,10 @@ pub fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRe
 
     // Check arm body
     for j in 0..arm.body.len {
-        checkStmt(ck, *arm.body[j], fnRetType)
+        checkStmt(&mut ck, *arm.body[j], fnRetType)
     }
 
-    popScope(ck)
+    popScope(&mut ck)
 }
 
 // -- Match expression --
@@ -506,7 +506,7 @@ pub struct MatchArmCheck {
 // (return/break/continue) supplies none (the arm never reaches the join), and
 // anything else is a real error — no silent "treat as void" fallback.
 pub fn checkMatchArmValue(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetType: &TypeKind, span: &Option<Span>): MatchArmCheck {
-    pushScope(ck)
+    pushScope(&mut ck)
 
     match arm.pattern {
         Pattern.EnumPattern(enumName, variant, bindings, pspan) => {
@@ -517,12 +517,12 @@ pub fn checkMatchArmValue(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind,
                         if enumInfo.variants.contains(variant) {
                             let variantInfo = enumInfo.variants.get(variant)!
                             if bindings.len != variantInfo.fields.len {
-                                error(ck, "variant '" + variant.clone() + "' has " + variantInfo.fields.len.toString() + " fields, but pattern has " + bindings.len.toString() + " bindings", cloneSpan(pspan))
+                                error(&mut ck, "variant '" + variant.clone() + "' has " + variantInfo.fields.len.toString() + " fields, but pattern has " + bindings.len.toString() + " bindings", cloneSpan(pspan))
                             }
                             var k: i64 = 0
                             while k < bindings.len && k < variantInfo.fields.len {
                                 if bindings[k] != "_" {
-                                    declare(ck, bindings[k].clone(), VarInfo {
+                                    declare(&mut ck, bindings[k].clone(), VarInfo {
                                         ty: variantInfo.fields[k].clone(),
                                         mutable: false,
                                         moved: false,
@@ -535,12 +535,12 @@ pub fn checkMatchArmValue(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind,
                                 k = k + 1
                             }
                         } else {
-                            error(ck, "enum '" + name.clone() + "' has no variant '" + variant.clone() + "'", cloneSpan(pspan))
+                            error(&mut ck, "enum '" + name.clone() + "' has no variant '" + variant.clone() + "'", cloneSpan(pspan))
                         }
                     }
                 }
                 _ => {
-                    error(ck, "cannot use enum pattern when matching on " + typeName(subjType), cloneSpan(pspan))
+                    error(&mut ck, "cannot use enum pattern when matching on " + typeName(subjType), cloneSpan(pspan))
                 }
             }
         }
@@ -560,25 +560,25 @@ pub fn checkMatchArmValue(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind,
             match *arm.body[i] {
                 Stmt.ExprStmt(e, espan) => {
                     result = MatchArmCheck {
-                        produced: true, ty: checkExpr(ck, *e)
+                        produced: true, ty: checkExpr(&mut ck, *e)
                     }
                 }
                 _ => {
                     if stmtTerminates(*arm.body[i]) {
-                        checkStmt(ck, *arm.body[i], fnRetType)
+                        checkStmt(&mut ck, *arm.body[i], fnRetType)
                     } else {
-                        error(ck, "match-expression arm must end in a value or return/break/continue", cloneSpan(span))
-                        checkStmt(ck, *arm.body[i], fnRetType)
+                        error(&mut ck, "match-expression arm must end in a value or return/break/continue", cloneSpan(span))
+                        checkStmt(&mut ck, *arm.body[i], fnRetType)
                     }
                 }
             }
         } else {
-            checkStmt(ck, *arm.body[i], fnRetType)
+            checkStmt(&mut ck, *arm.body[i], fnRetType)
         }
         i = i + 1
     }
 
-    popScope(ck)
+    popScope(&mut ck)
     return result
 }
 
@@ -587,7 +587,7 @@ pub fn checkMatchArmValue(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind,
 // additionally unifies each producing arm's value type — same rule as
 // if-expression branches, with the same const-int coercion.
 pub fn checkMatchExpr(ck: &mut Checker, subject: &ExprNode, arms: &Vec<MatchArm>, fnRetType: &TypeKind, span: &Option<Span>): TypeKind {
-    let subjType = checkExpr(ck, subject)
+    let subjType = checkExpr(&mut ck, subject)
 
     let preSnap = snapshotMoves(ck)
     var armSnaps: Vec<MoveSnapshot> = Vec.new()
@@ -595,8 +595,8 @@ pub fn checkMatchExpr(ck: &mut Checker, subject: &ExprNode, arms: &Vec<MatchArm>
     var resultTy = tyUnknown()
     var haveResult = false
     for i in 0..arms.len {
-        restoreMoves(ck, preSnap)
-        let res = checkMatchArmValue(ck, arms[i], subjType, fnRetType, span)
+        restoreMoves(&mut ck, preSnap)
+        let res = checkMatchArmValue(&mut ck, arms[i], subjType, fnRetType, span)
         armSnaps.push(snapshotMoves(ck))
         var term = false
         if arms[i].body.len > 0 {
@@ -608,14 +608,14 @@ pub fn checkMatchExpr(ck: &mut Checker, subject: &ExprNode, arms: &Vec<MatchArm>
                 resultTy = res.ty
                 haveResult = true
             } else if !typeEq(resultTy, res.ty) && !containsUnknown(resultTy) && !containsUnknown(res.ty) {
-                error(ck, "match-expression arms disagree: " + typeName(resultTy) + " vs " + typeName(res.ty), cloneSpan(span))
+                error(&mut ck, "match-expression arms disagree: " + typeName(resultTy) + " vs " + typeName(res.ty), cloneSpan(span))
             }
         }
     }
-    restoreMoves(ck, preSnap)
+    restoreMoves(&mut ck, preSnap)
     for i in 0..armSnaps.len {
         if !armTerms[i] {
-            orMoves(ck, armSnaps[i])
+            orMoves(&mut ck, armSnaps[i])
         }
     }
     return resultTy
@@ -627,10 +627,10 @@ pub fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &ExprNode, thenBody
     // Same reasoning as checkIf's condition — a borrow taken to compute the
     // scrutinee must not leak past this statement.
     let frozenBeforeScrutinee = snapshotFrozenNames(ck)
-    let exprType = checkExpr(ck, expr)
-    releaseOrRetainFreezes(ck, frozenBeforeScrutinee, false)
+    let exprType = checkExpr(&mut ck, expr)
+    releaseOrRetainFreezes(&mut ck, frozenBeforeScrutinee, false)
 
-    pushScope(ck)
+    pushScope(&mut ck)
 
     // Bind pattern variables
     match pattern {
@@ -642,12 +642,12 @@ pub fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &ExprNode, thenBody
                         if enumInfo.variants.contains(variant) {
                             let variantInfo = enumInfo.variants.get(variant)!
                             if bindings.len != variantInfo.fields.len {
-                                error(ck, "variant '" + variant.clone() + "' has " + variantInfo.fields.len.toString() + " fields, but pattern has " + bindings.len.toString() + " bindings", cloneSpan(pspan))
+                                error(&mut ck, "variant '" + variant.clone() + "' has " + variantInfo.fields.len.toString() + " fields, but pattern has " + bindings.len.toString() + " bindings", cloneSpan(pspan))
                             }
                             var k: i64 = 0
                             while k < bindings.len && k < variantInfo.fields.len {
                                 if bindings[k] != "_" {
-                                    declare(ck, bindings[k].clone(), VarInfo {
+                                    declare(&mut ck, bindings[k].clone(), VarInfo {
                                         ty: variantInfo.fields[k].clone(),
                                         mutable: false,
                                         moved: false,
@@ -671,17 +671,17 @@ pub fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &ExprNode, thenBody
     }
 
     for s in thenBody {
-        checkStmt(ck, *s, fnRetType)
+        checkStmt(&mut ck, *s, fnRetType)
     }
-    popScope(ck)
+    popScope(&mut ck)
 
     match elseBody {
         Option.Some(body) => {
-            pushScope(ck)
+            pushScope(&mut ck)
             for s in body {
-                checkStmt(ck, *s, fnRetType)
+                checkStmt(&mut ck, *s, fnRetType)
             }
-            popScope(ck)
+            popScope(&mut ck)
         }
         Option.None => {
         }
@@ -786,18 +786,18 @@ pub fn peekPathType(ck: &Checker, e: &ExprNode): Option<TypeKind> {
 // second-class reference rule: a view can't travel through the `next(): Option<T>`
 // iterator protocol, since a reference inside an enum payload is a rejected return.
 pub fn checkStringViewForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, recv: &ExprNode, mode: &string, args: &Vec<Heap<ExprNode>>, body: &Vec<Heap<Stmt>>, fnRetType: &TypeKind, span: &Option<Span>) {
-    checkExpr(ck, recv)
+    checkExpr(&mut ck, recv)
     if mode == "splitView" {
         if args.len != 1 {
-            error(ck, "'splitView' expects 1 argument, got " + args.len.toString(), cloneSpan(span))
+            error(&mut ck, "'splitView' expects 1 argument, got " + args.len.toString(), cloneSpan(span))
         } else {
-            let sepType = checkExpr(ck, *args[0])
+            let sepType = checkExpr(&mut ck, *args[0])
             if !typeEq(sepType, tyString()) && !typeEq(sepType, tyUnknown()) {
-                error(ck, "'splitView': expected string, got " + typeName(sepType), cloneSpan(span))
+                error(&mut ck, "'splitView': expected string, got " + typeName(sepType), cloneSpan(span))
             }
         }
     } else if args.len != 0 {
-        error(ck, "'lines' takes no arguments", cloneSpan(span))
+        error(&mut ck, "'lines' takes no arguments", cloneSpan(span))
     }
 
     let viewType = TypeKind.TRef(Heap(tyString()), false)
@@ -808,26 +808,26 @@ pub fn checkStringViewForIn(ck: &mut Checker, varName: &string, varName2: &Optio
     var frozenRoot: Option<string> = Option.None
     match accessPath(recv) {
         Option.Some(p) => {
-            freezeName(ck, p.root, p.fields)
+            freezeName(&mut ck, p.root, p.fields)
             frozenRoot = Option.Some(p.root)
         }
         Option.None => {
         }
     }
-    pushScope(ck)
+    pushScope(&mut ck)
     match varName2 {
         Option.Some(name2) => {
-            declare(ck, varName.clone(), VarInfo {
+            declare(&mut ck, varName.clone(), VarInfo {
                 ty: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
             }
             )
-            declare(ck, name2.clone(), VarInfo {
+            declare(&mut ck, name2.clone(), VarInfo {
                 ty: viewType, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
             }
             )
         }
         Option.None => {
-            declare(ck, varName.clone(), VarInfo {
+            declare(&mut ck, varName.clone(), VarInfo {
                 ty: viewType, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
             }
             )
@@ -835,13 +835,13 @@ pub fn checkStringViewForIn(ck: &mut Checker, varName: &string, varName2: &Optio
     }
     ck.loopDepth = ck.loopDepth + 1
     for s in body {
-        checkStmt(ck, *s, fnRetType)
+        checkStmt(&mut ck, *s, fnRetType)
     }
     ck.loopDepth = ck.loopDepth - 1
-    popScope(ck)
+    popScope(&mut ck)
     match frozenRoot {
         Option.Some(r) => {
-            unfreezeName(ck, r)
+            unfreezeName(&mut ck, r)
         }
         Option.None => {
         }
@@ -874,13 +874,13 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
     // Range expression handled specially
     match iterable.kind {
         Expr.RangeExpr(start, end) => {
-            let startType = checkExpr(ck, *start)
-            let endType = checkExpr(ck, *end)
+            let startType = checkExpr(&mut ck, *start)
+            let endType = checkExpr(&mut ck, *end)
             if !isInteger(startType) && !typeEq(startType, tyUnknown()) {
-                error(ck, "for range start must be integer, got " + typeName(startType), cloneSpan(span))
+                error(&mut ck, "for range start must be integer, got " + typeName(startType), cloneSpan(span))
             }
             if !isInteger(endType) && !typeEq(endType, tyUnknown()) {
-                error(ck, "for range end must be integer, got " + typeName(endType), cloneSpan(span))
+                error(&mut ck, "for range end must be integer, got " + typeName(endType), cloneSpan(span))
             }
 
             // Use wider of start/end types
@@ -902,8 +902,8 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
             }
 
             ck.forIns.insert(iterable.id, forInInfo(ForInKind.FRange, varType.clone()))
-            pushScope(ck)
-            declare(ck, varName.clone(), VarInfo {
+            pushScope(&mut ck)
+            declare(&mut ck, varName.clone(), VarInfo {
                 ty: varType,
                 mutable: false,
                 moved: false,
@@ -914,10 +914,10 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
             )
             ck.loopDepth = ck.loopDepth + 1
             for s in body {
-                checkStmt(ck, *s, fnRetType)
+                checkStmt(&mut ck, *s, fnRetType)
             }
             ck.loopDepth = ck.loopDepth - 1
-            popScope(ck)
+            popScope(&mut ck)
             return
         }
         _ => {
@@ -955,7 +955,7 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
                     var svi = forInInfo(ForInKind.FStrView, TypeKind.TRef(Heap(tyString()), false))
                     svi.mode = mMethod.clone()
                     ck.forIns.insert(iterable.id, svi)
-                    checkStringViewForIn(ck, varName, varName2, *mObj, mMethod, mArgs, body, fnRetType, span)
+                    checkStringViewForIn(&mut ck, varName, varName2, *mObj, mMethod, mArgs, body, fnRetType, span)
                     return
                 }
             }
@@ -964,7 +964,7 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
         }
     }
 
-    var iterType = checkExpr(ck, iterable)
+    var iterType = checkExpr(&mut ck, iterable)
     // slices (&[T]) and &Vec iterate like the owned collection — same loop shapes,
     // just borrowed instead of moved.
     match iterType.clone() {
@@ -1050,7 +1050,7 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
     if needsIterFreeze {
         match accessPath(iterable) {
             Option.Some(p) => {
-                freezeName(ck, p.root, p.fields)
+                freezeName(&mut ck, p.root, p.fields)
                 iterFrozenRoot = Option.Some(p.root)
             }
             Option.None => {
@@ -1058,7 +1058,7 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
         }
     }
 
-    pushScope(ck)
+    pushScope(&mut ck)
     ck.loopDepth = ck.loopDepth + 1
 
     // Filled in by whichever branch below claims this loop, then recorded against the
@@ -1087,17 +1087,17 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
             }
             match varName2 {
                 Option.Some(name2) => {
-                    declare(ck, varName.clone(), VarInfo {
+                    declare(&mut ck, varName.clone(), VarInfo {
                         ty: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                     }
                     )
-                    declare(ck, name2.clone(), VarInfo {
+                    declare(&mut ck, name2.clone(), VarInfo {
                         ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                     }
                     )
                 }
                 Option.None => {
-                    declare(ck, varName.clone(), VarInfo {
+                    declare(&mut ck, varName.clone(), VarInfo {
                         ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                     }
                     )
@@ -1119,17 +1119,17 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
             }
             match varName2 {
                 Option.Some(name2) => {
-                    declare(ck, varName.clone(), VarInfo {
+                    declare(&mut ck, varName.clone(), VarInfo {
                         ty: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                     }
                     )
-                    declare(ck, name2.clone(), VarInfo {
+                    declare(&mut ck, name2.clone(), VarInfo {
                         ty: byteType, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                     }
                     )
                 }
                 Option.None => {
-                    declare(ck, varName.clone(), VarInfo {
+                    declare(&mut ck, varName.clone(), VarInfo {
                         ty: byteType, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                     }
                     )
@@ -1143,13 +1143,13 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
             finfo.kind = ForInKind.FHashMap
             finfo.varTy = keyRef.clone()
             finfo.varTy2 = Option.Some(valRef.clone())
-            declare(ck, varName.clone(), VarInfo {
+            declare(&mut ck, varName.clone(), VarInfo {
                 ty: keyRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
             }
             )
             match varName2 {
                 Option.Some(name2) => {
-                    declare(ck, name2.clone(), VarInfo {
+                    declare(&mut ck, name2.clone(), VarInfo {
                         ty: valRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                     }
                     )
@@ -1173,17 +1173,17 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
             }
             match varName2 {
                 Option.Some(name2) => {
-                    declare(ck, varName.clone(), VarInfo {
+                    declare(&mut ck, varName.clone(), VarInfo {
                         ty: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                     }
                     )
-                    declare(ck, name2.clone(), VarInfo {
+                    declare(&mut ck, name2.clone(), VarInfo {
                         ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                     }
                     )
                 }
                 Option.None => {
-                    declare(ck, varName.clone(), VarInfo {
+                    declare(&mut ck, varName.clone(), VarInfo {
                         ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                     }
                     )
@@ -1209,7 +1209,7 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
                 finfo.nextMethod = sname.clone() + "$recv"
                 finfo.resultEnum = enumNameOf(ck, sname, "recv")
                 finfo.okVariant = "Ok"
-                declare(ck, varName.clone(), VarInfo {
+                declare(&mut ck, varName.clone(), VarInfo {
                     ty: elemTy, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                 }
                 )
@@ -1229,20 +1229,20 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
                         finfo.nextMethod = sname.clone() + "$next"
                         finfo.resultEnum = enumNameOf(ck, sname, "next")
                         finfo.okVariant = "Some"
-                        declare(ck, varName.clone(), VarInfo {
+                        declare(&mut ck, varName.clone(), VarInfo {
                             ty: t, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
                         }
                         )
                     }
                     Option.None => {
-                        error(ck, "cannot iterate over type '" + sname.clone() + "'", cloneSpan(span))
+                        error(&mut ck, "cannot iterate over type '" + sname.clone() + "'", cloneSpan(span))
                     }
                 }
             }
         }
         _ => {
             if !typeEq(iterType, tyUnknown()) {
-                error(ck, "cannot iterate over type '" + typeName(iterType) + "'", cloneSpan(span))
+                error(&mut ck, "cannot iterate over type '" + typeName(iterType) + "'", cloneSpan(span))
             }
         }
     }
@@ -1252,14 +1252,14 @@ pub fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>,
     }
 
     for s in body {
-        checkStmt(ck, *s, fnRetType)
+        checkStmt(&mut ck, *s, fnRetType)
     }
 
     ck.loopDepth = ck.loopDepth - 1
-    popScope(ck)
+    popScope(&mut ck)
     match iterFrozenRoot {
         Option.Some(r) => {
-            unfreezeName(ck, r)
+            unfreezeName(&mut ck, r)
         }
         Option.None => {
         }
@@ -1294,7 +1294,7 @@ fn errorIfNestedRefReturn(ck: &mut Checker, func: &Function, retType: &TypeKind)
         _ => {
         }
     }
-    error(ck, "function '" + func.name.clone() + "': cannot return a reference stored inside '" + outer + "'", Option.None)
+    error(&mut ck, "function '" + func.name.clone() + "': cannot return a reference stored inside '" + outer + "'", Option.None)
 }
 
 // A view-returning method (`&[T]`/`&string` receiver getter) may only hand
@@ -1378,7 +1378,7 @@ fn checkViewReturnStmt(ck: &mut Checker, s: &Stmt, chains: &mut Vec<Vec<string>>
                     match viewReturnRoot(*e) {
                         Option.Some(root) => {
                             if root != "self" {
-                                error(ck, "cannot return a view of '" + root.clone() + "'", cloneSpan(sp))
+                                error(&mut ck, "cannot return a view of '" + root.clone() + "'", cloneSpan(sp))
                             }
                         }
                         Option.None => {
@@ -1398,12 +1398,12 @@ fn checkViewReturnStmt(ck: &mut Checker, s: &Stmt, chains: &mut Vec<Vec<string>>
         }
         Stmt.IfStmt(cond, thenBody, elseBody, sp) => {
             for s2 in thenBody {
-                checkViewReturnStmt(ck, *s2, chains)
+                checkViewReturnStmt(&mut ck, *s2, &mut chains)
             }
             match elseBody {
                 Option.Some(eb) => {
                     for s2 in eb {
-                        checkViewReturnStmt(ck, *s2, chains)
+                        checkViewReturnStmt(&mut ck, *s2, &mut chains)
                     }
                 }
                 Option.None => {
@@ -1413,7 +1413,7 @@ fn checkViewReturnStmt(ck: &mut Checker, s: &Stmt, chains: &mut Vec<Vec<string>>
         Stmt.MatchStmt(subj, arms, sp) => {
             for a in arms {
                 for s2 in a.body {
-                    checkViewReturnStmt(ck, *s2, chains)
+                    checkViewReturnStmt(&mut ck, *s2, &mut chains)
                 }
             }
         }
@@ -1431,7 +1431,7 @@ fn checkViewReturnProvenance(ck: &mut Checker, func: &Function, retType: &TypeKi
     }
     var chains: Vec<Vec<string>> = Vec.new()
     for s in func.body {
-        checkViewReturnStmt(ck, *s, chains)
+        checkViewReturnStmt(&mut ck, *s, &mut chains)
     }
     // Record provenance only when every `return` agrees on the same field
     // chain — a fork whose arms return different fields has no single answer,
@@ -1451,14 +1451,14 @@ fn checkViewReturnProvenance(ck: &mut Checker, func: &Function, retType: &TypeKi
 }
 
 pub fn checkFunction(ck: &mut Checker, func: &Function) {
-    pushScope(ck)
-    let retType = resolveAstType(ck, func.retType)
+    pushScope(&mut ck)
+    let retType = resolveAstType(&mut ck, func.retType)
     ck.currentFnRetType = retType.clone()
-    errorIfNestedRefReturn(ck, func, retType)
+    errorIfNestedRefReturn(&mut ck, func, retType)
 
     // Declare parameters
     for param in func.params {
-        let pType = resolveAstType(ck, param.ty)
+        let pType = resolveAstType(&mut ck, param.ty)
         // a &mut param makes the pointee assignable through the ref
         var pMut = false
         match pType.clone() {
@@ -1468,7 +1468,7 @@ pub fn checkFunction(ck: &mut Checker, func: &Function) {
             _ => {
             }
         }
-        declare(ck, param.name.clone(), VarInfo {
+        declare(&mut ck, param.name.clone(), VarInfo {
             ty: pType,
             mutable: pMut,
             moved: false,
@@ -1481,10 +1481,10 @@ pub fn checkFunction(ck: &mut Checker, func: &Function) {
 
     // Check body
     for s in func.body {
-        checkStmt(ck, *s, retType)
+        checkStmt(&mut ck, *s, retType)
     }
 
-    popScope(ck)
+    popScope(&mut ck)
 }
 
 // -- Top-level: register declarations and check program --
@@ -1494,13 +1494,13 @@ pub fn registerFunction(ck: &mut Checker, func: &Function) {
     for param in func.params {
         params.push(FnParam {
             name: param.name.clone(),
-            ty: resolveAstType(ck, param.ty),
+            ty: resolveAstType(&mut ck, param.ty),
         }
         )
     }
     let sig = FnSig {
         params: params,
-        ret: resolveAstType(ck, func.retType),
+        ret: resolveAstType(&mut ck, func.retType),
         variadic: func.isVariadic,
         isExtern: func.isExtern,
     }
@@ -1511,7 +1511,7 @@ pub fn registerStruct(ck: &mut Checker, decl: &StructDecl) {
     var fields: Vec<CkStructField> = Vec.new()
     var iterFieldCount = 0
     for field in decl.fields {
-        let fty = resolveAstType(ck, field.ty)
+        let fty = resolveAstType(&mut ck, field.ty)
         // References are second-class: they can only live in a param or a local
         // binding, never in storage that outlives the call that took the borrow.
         // A struct field is exactly that kind of storage, direct or nested
@@ -1527,15 +1527,15 @@ pub fn registerStruct(ck: &mut Checker, decl: &StructDecl) {
             }
         }
         if isDirectRef {
-            error(ck, "struct '" + decl.name.clone() + "' field '" + field.name.clone() + "': references cannot be stored in structs", Option.None)
+            error(&mut ck, "struct '" + decl.name.clone() + "' field '" + field.name.clone() + "': references cannot be stored in structs", Option.None)
         } else if nestedRef(ck, fty) {
-            error(ck, "struct '" + decl.name.clone() + "' field '" + field.name.clone() + "': references cannot be stored in a collection", Option.None)
+            error(&mut ck, "struct '" + decl.name.clone() + "' field '" + field.name.clone() + "': references cannot be stored in a collection", Option.None)
         }
         let isIterDelegate = hasAttr(field.attributes, "iter")
         if isIterDelegate {
             iterFieldCount = iterFieldCount + 1
             if iterFieldCount > 1 {
-                error(ck, "'" + decl.name.clone() + "' has more than one @iter field", Option.None)
+                error(&mut ck, "'" + decl.name.clone() + "' has more than one @iter field", Option.None)
             }
         }
         fields.push(CkStructField {
@@ -1564,7 +1564,7 @@ pub fn registerEnum(ck: &mut Checker, decl: &EnumDecl) {
     while i < decl.variants.len {
         var fields: Vec<TypeKind> = Vec.new()
         for vfield in decl.variants[i].fields {
-            fields.push(resolveAstType(ck, vfield))
+            fields.push(resolveAstType(&mut ck, vfield))
         }
         match decl.variants[i].discriminant {
             Option.Some(d) => {
@@ -1607,7 +1607,7 @@ pub fn structEmbedsSelf(ck: &Checker, name: &string, stack: &mut Vec<string>): b
     stack.push(name.clone())
     var found = false
     for i in 0..info.fields.len {
-        if structFieldEmbedsSelf(ck, info.fields[i].ty, stack) {
+        if structFieldEmbedsSelf(ck, info.fields[i].ty, &mut stack) {
             found = true
         }
     }
@@ -1618,10 +1618,10 @@ pub fn structEmbedsSelf(ck: &Checker, name: &string, stack: &mut Vec<string>): b
 fn structFieldEmbedsSelf(ck: &Checker, t: &TypeKind, stack: &mut Vec<string>): bool {
     match t {
         TypeKind.TArray(inner, size) => {
-            return structFieldEmbedsSelf(ck, *inner, stack)
+            return structFieldEmbedsSelf(ck, *inner, &mut stack)
         }
         TypeKind.TStruct(name) => {
-            return structEmbedsSelf(ck, name, stack)
+            return structEmbedsSelf(ck, name, &mut stack)
         }
         _ => {
             return false
@@ -1648,7 +1648,7 @@ pub fn registerBuiltinGenericEnums(ck: &mut Checker) {
         name: "T", bounds: Vec.new()
     }
     )
-    registerGenericEnum(ck, EnumDecl {
+    registerGenericEnum(&mut ck, EnumDecl {
         name: "Option",
         typeParams: optParams,
         variants: optVariants,
@@ -1678,7 +1678,7 @@ pub fn registerBuiltinGenericEnums(ck: &mut Checker) {
         name: "E", bounds: Vec.new()
     }
     )
-    registerGenericEnum(ck, EnumDecl {
+    registerGenericEnum(&mut ck, EnumDecl {
         name: "Result",
         typeParams: resParams,
         variants: resVariants,
@@ -1698,7 +1698,7 @@ pub fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
     // exist), which can only ever produce a bare, non-generic TStruct.
     if !ty.isFn && ty.typeArgs.len == 0 && ck.typeAliases.contains(ty.name) {
         let rawBase = ck.typeAliases.get(ty.name)!
-        var base = resolveAstType(ck, rawBase)
+        var base = resolveAstType(&mut ck, rawBase)
         if ty.ptrDepth > 0 {
             var i: i32 = 0
             while i < ty.ptrDepth {
@@ -1721,22 +1721,22 @@ pub fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
         if ck.genericEnums.contains(ty.name) {
             var typeArgs: Vec<TypeKind> = Vec.new()
             for i in 0..ty.typeArgs.len {
-                typeArgs.push(resolveAstType(ck, ty.typeArgs[i]))
+                typeArgs.push(resolveAstType(&mut ck, ty.typeArgs[i]))
             }
-            base = TypeKind.TEnum(monomorphizeEnum(ck, ty.name, typeArgs))
+            base = TypeKind.TEnum(monomorphizeEnum(&mut ck, ty.name, typeArgs))
             matched = true
         } else if ck.genericStructs.contains(ty.name) {
             var typeArgs: Vec<TypeKind> = Vec.new()
             for i in 0..ty.typeArgs.len {
-                typeArgs.push(resolveAstType(ck, ty.typeArgs[i]))
+                typeArgs.push(resolveAstType(&mut ck, ty.typeArgs[i]))
             }
-            base = TypeKind.TStruct(monomorphizeStruct(ck, ty.name, typeArgs))
+            base = TypeKind.TStruct(monomorphizeStruct(&mut ck, ty.name, typeArgs))
             matched = true
         } else if ty.name == "Vec" && ty.typeArgs.len == 1 {
-            base = TypeKind.TVec(Heap(resolveAstType(ck, ty.typeArgs[0])))
+            base = TypeKind.TVec(Heap(resolveAstType(&mut ck, ty.typeArgs[0])))
             matched = true
         } else if ty.name == "Heap" && ty.typeArgs.len == 1 {
-            let hinner = resolveAstType(ck, ty.typeArgs[0])
+            let hinner = resolveAstType(&mut ck, ty.typeArgs[0])
             // Heap<Interface> collapses to the interface type (a trait object fat
             // pointer whose data ptr is heap-allocated).
             var isIface = false
@@ -1754,7 +1754,7 @@ pub fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
             }
             matched = true
         } else if ty.name == "HashMap" && ty.typeArgs.len == 2 {
-            base = TypeKind.THashMap(Heap(resolveAstType(ck, ty.typeArgs[0])), Heap(resolveAstType(ck, ty.typeArgs[1])))
+            base = TypeKind.THashMap(Heap(resolveAstType(&mut ck, ty.typeArgs[0])), Heap(resolveAstType(&mut ck, ty.typeArgs[1])))
             matched = true
         }
         if matched {
@@ -1785,8 +1785,8 @@ pub fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
 
 pub fn checkProgram(ck: &mut Checker, program: &Program) {
     // Phase 0: register builtin traits and generic types
-    registerBuiltinTraits(ck)
-    registerBuiltinGenericEnums(ck)
+    registerBuiltinTraits(&mut ck)
+    registerBuiltinGenericEnums(&mut ck)
     // type aliases (`type Altitude = i32(0..N)`) — store the RAW base AST; it is
     // resolved lazily by resolveAstType at each use site (see that fn's alias
     // branch), same as any other annotation. Eagerly resolving here with
@@ -1804,7 +1804,7 @@ pub fn checkProgram(ck: &mut Checker, program: &Program) {
             var mparams: Vec<FnParam> = Vec.new()
             for pi in 0..td.methods[mi].params.len {
                 mparams.push(FnParam {
-                    name: td.methods[mi].params[pi].name.clone(), ty: resolveAstType(ck, td.methods[mi].params[pi].ty)
+                    name: td.methods[mi].params[pi].name.clone(), ty: resolveAstType(&mut ck, td.methods[mi].params[pi].ty)
                 }
                 )
             }
@@ -1817,7 +1817,7 @@ pub fn checkProgram(ck: &mut Checker, program: &Program) {
                 }
             }
             tmethods.insert(td.methods[mi].name.clone(), TraitMethodInfo {
-                params: mparams, ret: resolveAstType(ck, td.methods[mi].retType), hasDefault: hasDef
+                params: mparams, ret: resolveAstType(&mut ck, td.methods[mi].retType), hasDefault: hasDef
             }
             )
         }
@@ -1839,29 +1839,29 @@ pub fn checkProgram(ck: &mut Checker, program: &Program) {
     var i: i64 = 0
     for s in program.structs {
         if s.typeParams.len > 0 {
-            registerGenericStruct(ck, s)
+            registerGenericStruct(&mut ck, s)
         }
     }
     for e in program.enums {
         if e.typeParams.len > 0 {
-            registerGenericEnum(ck, e)
+            registerGenericEnum(&mut ck, e)
         }
     }
     for s in program.structs {
         if s.typeParams.len == 0 {
-            registerStruct(ck, s)
+            registerStruct(&mut ck, s)
         }
     }
     for e in program.enums {
         if e.typeParams.len == 0 {
-            registerEnum(ck, e)
+            registerEnum(&mut ck, e)
         }
     }
     for f in program.functions {
         if f.typeParams.len > 0 {
-            registerGenericFn(ck, f)
+            registerGenericFn(&mut ck, f)
         } else {
-            registerFunction(ck, f)
+            registerFunction(&mut ck, f)
         }
     }
 
@@ -1919,8 +1919,8 @@ pub fn checkProgram(ck: &mut Checker, program: &Program) {
         let s = program.structs[si]
         if s.typeParams.len == 0 {
             var stack: Vec<string> = Vec.new()
-            if structEmbedsSelf(ck, s.name, stack) {
-                errorHint(ck, "struct '" + s.name.clone() + "' is recursive by value and has infinite size", "a struct cannot contain itself by value — put the recursive field behind an indirection (e.g. 'Heap<" + s.name.clone() + ">' or 'Vec<" + s.name.clone() + ">')", Option.None)
+            if structEmbedsSelf(ck, s.name, &mut stack) {
+                errorHint(&mut ck, "struct '" + s.name.clone() + "' is recursive by value and has infinite size", "a struct cannot contain itself by value — put the recursive field behind an indirection (e.g. 'Heap<" + s.name.clone() + ">' or 'Vec<" + s.name.clone() + ">')", Option.None)
             }
         }
     }
@@ -1933,7 +1933,7 @@ pub fn checkProgram(ck: &mut Checker, program: &Program) {
                     match vi.fields[fi] {
                         TypeKind.TEnum(fname) => {
                             if fname == e.name {
-                                errorHint(ck, "enum '" + e.name.clone() + "' has infinite size due to recursive field", "wrap the recursive field in Heap<" + e.name.clone() + "> for heap allocation", Option.None)
+                                errorHint(&mut ck, "enum '" + e.name.clone() + "' has infinite size due to recursive field", "wrap the recursive field in Heap<" + e.name.clone() + "> for heap allocation", Option.None)
                             }
                         }
                         _ => {
@@ -1945,9 +1945,9 @@ pub fn checkProgram(ck: &mut Checker, program: &Program) {
     }
 
     // Phase 2: register impls and derive macros
-    registerAllImpls(ck, program)
-    synthesizeDefaultMethods(ck, program)
-    processDerives(ck, program)
+    registerAllImpls(&mut ck, program)
+    synthesizeDefaultMethods(&mut ck, program)
+    processDerives(&mut ck, program)
 
     // Phase 2.5: record view-return provenance (which field a `&[T]`/`&string`
     // getter method reads off `self`) for every impl method BEFORE any body is
@@ -1959,25 +1959,25 @@ pub fn checkProgram(ck: &mut Checker, program: &Program) {
     var vi: i64 = 0
     while vi < ck.monomorphizedFns.len {
         let vfn = ck.monomorphizedFns[vi].clone()
-        let vRetType = resolveAstType(ck, vfn.retType)
-        checkViewReturnProvenance(ck, vfn, vRetType)
+        let vRetType = resolveAstType(&mut ck, vfn.retType)
+        checkViewReturnProvenance(&mut ck, vfn, vRetType)
         vi = vi + 1
     }
 
     // Register module-level globals in a persistent scope below every function
     // scope, so function bodies can reference them (e.g. `if key == KEY_QUIT`).
-    pushScope(ck)
+    pushScope(&mut ck)
     for gi in 0..program.globals.len {
         var gty = tyUnknown()
         match program.globals[gi].ty {
             Option.Some(t) => {
-                gty = resolveAstType(ck, t)
+                gty = resolveAstType(&mut ck, t)
             }
             Option.None => {
-                gty = checkExpr(ck, *program.globals[gi].value)
+                gty = checkExpr(&mut ck, *program.globals[gi].value)
             }
         }
-        declare(ck, program.globals[gi].name.clone(), VarInfo {
+        declare(&mut ck, program.globals[gi].name.clone(), VarInfo {
             ty: gty, mutable: program.globals[gi].mutable, moved: false, borrowed: false, read: true,
             span: cloneSpan(program.globals[gi].span),
         }
@@ -1995,7 +1995,7 @@ pub fn checkProgram(ck: &mut Checker, program: &Program) {
     i = 0
     while i < program.functions.len {
         if !program.functions[i].isExtern && program.functions[i].typeParams.len == 0 {
-            checkFunction(ck, program.functions[i])
+            checkFunction(&mut ck, program.functions[i])
         }
         i = i + 1
     }
@@ -2004,7 +2004,7 @@ pub fn checkProgram(ck: &mut Checker, program: &Program) {
     i = 0
     while i < ck.monomorphizedFns.len {
         let monoFn = ck.monomorphizedFns[i].clone()
-        checkFunction(ck, monoFn)
+        checkFunction(&mut ck, monoFn)
         // Store back the body that was actually checked. Reading a Function out of the
         // Vec copies it, and a copied ExprNode takes a FRESH id (see ast.milo's Clone
         // impl) — so every type and loop shape recorded just now is keyed to nodes that
@@ -2029,6 +2029,6 @@ pub fn checkProgram(ck: &mut Checker, program: &Program) {
     }
     ck.pendingVecInfer = Vec.new()
     for pv in pending {
-        error(ck, "cannot infer Vec element type — no 'push' found to infer from; add a type annotation: 'let v: Vec<T> = Vec.new()'", cloneSpan(pv.span))
+        error(&mut ck, "cannot infer Vec element type — no 'push' found to infer from; add a type annotation: 'let v: Vec<T> = Vec.new()'", cloneSpan(pv.span))
     }
 }

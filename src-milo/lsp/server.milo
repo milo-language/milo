@@ -153,7 +153,7 @@ pub fn startServer(): void {
                     let params = msg.params
                     let hasParams = msg.hasParams
                     if isNotificationId(id) {
-                        handleNotification(documents, method, params, hasParams)
+                        handleNotification(&mut documents, method, params, hasParams)
                     } else {
                         handleRequest(id, method, params, hasParams)
                     }

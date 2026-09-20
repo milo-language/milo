@@ -457,7 +457,7 @@ pub fn parseFile(path: &string): Program {
     }
     let tokens = tokenize(source)
     var p = newParser(tokens, path.clone())
-    return parse(p)
+    return parse(&mut p)
 }
 
 // A name declared twice at the top level of ONE file. The flat-namespace merge
@@ -484,26 +484,26 @@ fn checkDupKey(seen: &mut HashMap<string, bool>, key: string, label: string) {
 pub fn checkDuplicateDecls(prog: &Program) {
     var seen: HashMap<string, bool> = HashMap.new()
     for i in 0..prog.functions.len {
-        checkDupKey(seen, "value:" + prog.functions[i].name.clone(), "fn " + prog.functions[i].name.clone())
+        checkDupKey(&mut seen, "value:" + prog.functions[i].name.clone(), "fn " + prog.functions[i].name.clone())
     }
     for i in 0..prog.globals.len {
         var kind = "let "
         if prog.globals[i].mutable {
             kind = "var "
         }
-        checkDupKey(seen, "value:" + prog.globals[i].name.clone(), kind + prog.globals[i].name.clone())
+        checkDupKey(&mut seen, "value:" + prog.globals[i].name.clone(), kind + prog.globals[i].name.clone())
     }
     for i in 0..prog.structs.len {
-        checkDupKey(seen, "type:" + prog.structs[i].name.clone(), "struct " + prog.structs[i].name.clone())
+        checkDupKey(&mut seen, "type:" + prog.structs[i].name.clone(), "struct " + prog.structs[i].name.clone())
     }
     for i in 0..prog.enums.len {
-        checkDupKey(seen, "type:" + prog.enums[i].name.clone(), "enum " + prog.enums[i].name.clone())
+        checkDupKey(&mut seen, "type:" + prog.enums[i].name.clone(), "enum " + prog.enums[i].name.clone())
     }
     for i in 0..prog.traits.len {
-        checkDupKey(seen, "type:" + prog.traits[i].name.clone(), "trait " + prog.traits[i].name.clone())
+        checkDupKey(&mut seen, "type:" + prog.traits[i].name.clone(), "trait " + prog.traits[i].name.clone())
     }
     for i in 0..prog.typeAliases.len {
-        checkDupKey(seen, "type:" + prog.typeAliases[i].name.clone(), "type " + prog.typeAliases[i].name.clone())
+        checkDupKey(&mut seen, "type:" + prog.typeAliases[i].name.clone(), "type " + prog.typeAliases[i].name.clone())
     }
     for i in 0..prog.impls.len {
         var traitPart = ""
@@ -517,7 +517,7 @@ pub fn checkDuplicateDecls(prog: &Program) {
         for j in 0..prog.impls[i].methods.len {
             let key = "impl:" + prog.impls[i].typeName.clone() + ":" + traitPart.clone() + ":" + prog.impls[i].methods[j].name.clone()
             let label = "fn " + prog.impls[i].typeName.clone() + "." + prog.impls[i].methods[j].name.clone()
-            checkDupKey(seen, key, label)
+            checkDupKey(&mut seen, key, label)
         }
     }
 }
@@ -665,37 +665,37 @@ fn collectBoundNames(stmts: &Vec<Heap<Stmt>>, out: &mut Vec<string>) {
                 out.push(name.clone())
             }
             Stmt.IfStmt(cond, thenBody, elseBody, span) => {
-                collectBoundNames(thenBody, out)
+                collectBoundNames(thenBody, &mut out)
                 match elseBody {
                     Option.Some(eb) => {
-                        collectBoundNames(eb, out)
+                        collectBoundNames(eb, &mut out)
                     }
                     Option.None => {
                     }
                 }
             }
             Stmt.WhileStmt(cond, body, span) => {
-                collectBoundNames(body, out)
+                collectBoundNames(body, &mut out)
             }
             Stmt.MatchStmt(subject, arms, span) => {
                 for ai in 0..arms.len {
-                    collectPatternNames(arms[ai].pattern, out)
-                    collectBoundNames(arms[ai].body, out)
+                    collectPatternNames(arms[ai].pattern, &mut out)
+                    collectBoundNames(arms[ai].body, &mut out)
                 }
             }
             Stmt.IfLetStmt(pat, value, thenBody, elseBody, span) => {
-                collectPatternNames(*pat, out)
-                collectBoundNames(thenBody, out)
+                collectPatternNames(*pat, &mut out)
+                collectBoundNames(thenBody, &mut out)
                 match elseBody {
                     Option.Some(eb) => {
-                        collectBoundNames(eb, out)
+                        collectBoundNames(eb, &mut out)
                     }
                     Option.None => {
                     }
                 }
             }
             Stmt.UnsafeBlock(body, span) => {
-                collectBoundNames(body, out)
+                collectBoundNames(body, &mut out)
             }
             Stmt.ForInStmt(name, indexName, iter, body, span) => {
                 out.push(name.clone())
@@ -706,7 +706,7 @@ fn collectBoundNames(stmts: &Vec<Heap<Stmt>>, out: &mut Vec<string>) {
                     Option.None => {
                     }
                 }
-                collectBoundNames(body, out)
+                collectBoundNames(body, &mut out)
             }
             _ => {
             }
@@ -756,14 +756,14 @@ pub fn scopeStdPrivates(prog: &mut Program, moduleId: &string) {
         for pi in 0..prog.functions[i].params.len {
             bound.push(prog.functions[i].params[pi].name.clone())
         }
-        collectBoundNames(prog.functions[i].body, bound)
+        collectBoundNames(prog.functions[i].body, &mut bound)
     }
     for ii in 0..prog.impls.len {
         for mi in 0..prog.impls[ii].methods.len {
             for pi in 0..prog.impls[ii].methods[mi].params.len {
                 bound.push(prog.impls[ii].methods[mi].params[pi].name.clone())
             }
-            collectBoundNames(prog.impls[ii].methods[mi].body, bound)
+            collectBoundNames(prog.impls[ii].methods[mi].body, &mut bound)
         }
     }
 
@@ -790,7 +790,7 @@ pub fn scopeStdPrivates(prog: &mut Program, moduleId: &string) {
     }
     for pi in 0..privates.len {
         let to = moduleId.clone() + "$" + privates[pi].clone()
-        renamePrivateValue(prog, privates[pi], to)
+        renamePrivateValue(&mut prog, privates[pi], to)
     }
 }
 
@@ -806,7 +806,7 @@ pub fn mergeImportedFile(rs: &mut ResolverState, absPath: string) {
     var imported = parseFile(absPath)
     match stdModuleId(rs, absPath) {
         Option.Some(id) => {
-            scopeStdPrivates(imported, id)
+            scopeStdPrivates(&mut imported, id)
         }
         Option.None => {
         }
@@ -842,12 +842,12 @@ pub fn mergeImportedFile(rs: &mut ResolverState, absPath: string) {
         )
     }
     for li in 0..imported.linkLibs.len {
-        addLinkLib(rs, imported.linkLibs[li])
+        addLinkLib(&mut rs, imported.linkLibs[li])
     }
 
     // Recurse into this module's imports
     let importDir = Path.dirname(absPath)
-    processImports(rs, imported, importDir)
+    processImports(&mut rs, imported, importDir)
 }
 
 // Whether any struct here has @derive(Json) — its synthesized methods call
@@ -873,12 +873,12 @@ pub fn programDerivesJson(structs: &Vec<StructDecl>): bool {
 pub fn processImports(rs: &mut ResolverState, prog: &Program, dir: &string) {
     if programDerivesJson(prog.structs) {
         let jsonPath = resolvePath(rs, dir, "std/json")
-        mergeImportedFile(rs, jsonPath)
+        mergeImportedFile(&mut rs, jsonPath)
     }
     for i in 0..prog.imports.len {
         let imp = prog.imports[i]
         let absPath = resolvePath(rs, dir, imp.path)
-        mergeImportedFile(rs, absPath)
+        mergeImportedFile(&mut rs, absPath)
     }
 }
 
@@ -1009,7 +1009,7 @@ pub fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, ta
             )
         }
         let preludeDir = Path.dirname(preludePath)
-        processImports(rs, prelude, preludeDir)
+        processImports(&mut rs, prelude, preludeDir)
     }
 
     checkDuplicateDecls(program)
@@ -1043,11 +1043,11 @@ pub fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, ta
         )
     }
     for li in 0..program.linkLibs.len {
-        addLinkLib(rs, program.linkLibs[li])
+        addLinkLib(&mut rs, program.linkLibs[li])
     }
 
     // Process user program's imports
-    processImports(rs, program, sourceDir)
+    processImports(&mut rs, program, sourceDir)
 
     // Dedup and return merged program
     return Program {

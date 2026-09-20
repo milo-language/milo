@@ -436,7 +436,7 @@ pub fn emit(cg: &mut Cgen, s: &string) {
 pub fn emitLabel(cg: &mut Cgen, lbl: &string) {
     // Must go through emit(), not straight to `body`: inside a function the text belongs in
     // fnBuf, and writing here directly dumped block labels at module top level.
-    emit(cg, lbl.clone() + ":\n")
+    emit(&mut cg, lbl.clone() + ":\n")
     cg.curBlock = lbl.clone()
 }
 
@@ -446,35 +446,35 @@ pub fn emitG(cg: &mut Cgen, s: &string) {
 
 pub fn ensureStringTy(cg: &mut Cgen) {
     if !cg.declaredStringTy {
-        emitG(cg, "%String = type { ptr, i64, i64 }\n")
+        emitG(&mut cg, "%String = type { ptr, i64, i64 }\n")
         cg.declaredStringTy = true
     }
 }
 
 pub fn ensureMalloc(cg: &mut Cgen) {
     if !cg.declaredMalloc {
-        emitG(cg, "declare ptr @malloc(i64)\n")
+        emitG(&mut cg, "declare ptr @malloc(i64)\n")
         cg.declaredMalloc = true
     }
 }
 
 pub fn ensureMemcpy(cg: &mut Cgen) {
     if !cg.declaredMemcpy {
-        emitG(cg, "declare ptr @memcpy(ptr, ptr, i64)\n")
+        emitG(&mut cg, "declare ptr @memcpy(ptr, ptr, i64)\n")
         cg.declaredMemcpy = true
     }
 }
 
 pub fn ensureMemcmp(cg: &mut Cgen) {
     if !cg.declaredMemcmp {
-        emitG(cg, "declare i32 @memcmp(ptr, ptr, i64)\n")
+        emitG(&mut cg, "declare i32 @memcmp(ptr, ptr, i64)\n")
         cg.declaredMemcmp = true
     }
 }
 
 pub fn ensurePutchar(cg: &mut Cgen) {
     if !cg.declaredPutchar {
-        emitG(cg, "declare i32 @putchar(i32)\n")
+        emitG(&mut cg, "declare i32 @putchar(i32)\n")
         cg.declaredPutchar = true
     }
 }
@@ -482,7 +482,7 @@ pub fn ensurePutchar(cg: &mut Cgen) {
 // `declare @free`, shared with any explicit `extern fn free` via declaredFree.
 pub fn ensureFree(cg: &mut Cgen) {
     if !cg.declaredFree {
-        emitG(cg, "declare void @free(ptr)\n")
+        emitG(&mut cg, "declare void @free(ptr)\n")
         cg.declaredFree = true
     }
 }
@@ -505,7 +505,7 @@ pub fn ensureFpSat(cg: &mut Cgen, opBase: string, toLl: string, fromLl: string):
         }
     }
     cg.declaredFpSat.push(name.clone())
-    emitG(cg, "declare " + toLl.clone() + " @" + name.clone() + "(" + fromLl.clone() + ")\n")
+    emitG(&mut cg, "declare " + toLl.clone() + " @" + name.clone() + "(" + fromLl.clone() + ")\n")
     return name
 }
 
@@ -1032,8 +1032,8 @@ pub fn findLocal(locs: &Vec<Local>, name: &string): Local {
 }
 
 pub fn genLoad(cg: &mut Cgen, addr: &string, ty: &string): Val {
-    let t = nextTemp(cg)
-    emit(cg, "  " + t + " = load " + ty + ", ptr " + addr + "\n")
+    let t = nextTemp(&mut cg)
+    emit(&mut cg, "  " + t + " = load " + ty + ", ptr " + addr + "\n")
     return Val {
         v: t, ty: ty.clone()
     }
@@ -1053,7 +1053,7 @@ pub fn unwrapVec(t: &string): string {
 
 pub fn ensureVecTy(cg: &mut Cgen) {
     if !cg.declaredVecTy {
-        emitG(cg, "%Vec = type { ptr, i64, i64 }\n")
+        emitG(&mut cg, "%Vec = type { ptr, i64, i64 }\n")
         cg.declaredVecTy = true
     }
 }
@@ -1441,56 +1441,56 @@ pub fn resolveFnName(cg: &Cgen, base: &string): string {
 
 pub fn ensureHashMapTy(cg: &mut Cgen) {
     if !cg.declaredHashMapTy {
-        emitG(cg, "%HashMap = type { ptr, i64, i64 }\n")
+        emitG(&mut cg, "%HashMap = type { ptr, i64, i64 }\n")
         cg.declaredHashMapTy = true
     }
 }
 
 pub fn ensureExit(cg: &mut Cgen) {
     if !cg.declaredExit {
-        emitG(cg, "declare void @exit(i32)\n")
+        emitG(&mut cg, "declare void @exit(i32)\n")
         cg.declaredExit = true
     }
 }
 
 pub fn ensureStrlen(cg: &mut Cgen) {
     if !cg.declaredStrlen {
-        emitG(cg, "declare i64 @strlen(ptr)\n")
+        emitG(&mut cg, "declare i64 @strlen(ptr)\n")
         cg.declaredStrlen = true
     }
 }
 
 pub fn ensureStrtod(cg: &mut Cgen) {
     if !cg.declaredStrtod {
-        emitG(cg, "declare double @strtod(ptr, ptr)\n")
+        emitG(&mut cg, "declare double @strtod(ptr, ptr)\n")
         cg.declaredStrtod = true
     }
 }
 
 pub fn ensureRealloc(cg: &mut Cgen) {
     if !cg.declaredRealloc {
-        emitG(cg, "declare ptr @realloc(ptr, i64)\n")
+        emitG(&mut cg, "declare ptr @realloc(ptr, i64)\n")
         cg.declaredRealloc = true
     }
 }
 
 pub fn ensureAbort(cg: &mut Cgen) {
     if !cg.declaredAbort {
-        emitG(cg, "declare void @abort()\n")
+        emitG(&mut cg, "declare void @abort()\n")
         cg.declaredAbort = true
     }
 }
 
 pub fn ensureDprintf(cg: &mut Cgen) {
     if !cg.declaredDprintf {
-        emitG(cg, "declare i32 @dprintf(i32, ptr, ...)\n")
+        emitG(&mut cg, "declare i32 @dprintf(i32, ptr, ...)\n")
         cg.declaredDprintf = true
     }
 }
 
 pub fn ensureFflush(cg: &mut Cgen) {
     if !cg.declaredFflush {
-        emitG(cg, "declare i32 @fflush(ptr)\n")
+        emitG(&mut cg, "declare i32 @fflush(ptr)\n")
         cg.declaredFflush = true
     }
 }
@@ -1498,10 +1498,10 @@ pub fn ensureFflush(cg: &mut Cgen) {
 // Byte size of an LLVM type, computed by the compiler rather than a table —
 // %String and user structs have no fixed size we can hardcode.
 pub fn genSizeOf(cg: &mut Cgen, llTy: &string): string {
-    let p = nextTemp(cg)
-    emit(cg, "  " + p + " = getelementptr " + llTy.clone() + ", ptr null, i32 1\n")
-    let n = nextTemp(cg)
-    emit(cg, "  " + n + " = ptrtoint ptr " + p + " to i64\n")
+    let p = nextTemp(&mut cg)
+    emit(&mut cg, "  " + p + " = getelementptr " + llTy.clone() + ", ptr null, i32 1\n")
+    let n = nextTemp(&mut cg)
+    emit(&mut cg, "  " + n + " = ptrtoint ptr " + p + " to i64\n")
     return n
 }
 

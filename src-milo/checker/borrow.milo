@@ -184,7 +184,7 @@ pub fn releaseOrRetainFreezes(ck: &mut Checker, before: &Vec<string>, isRefBindi
         }
     } else {
         for i in 0..newly.len {
-            unfreezeName(ck, newly[i])
+            unfreezeName(&mut ck, newly[i])
         }
     }
 }
@@ -259,7 +259,7 @@ pub fn frozenAgainst(ck: &Checker, name: &string, fields: &Vec<string>): bool {
 pub fn freezePlace(ck: &mut Checker, place: &ExprNode) {
     match accessPath(place) {
         Option.Some(p) => {
-            freezeName(ck, p.root, p.fields)
+            freezeName(&mut ck, p.root, p.fields)
         }
         Option.None => {
         }
@@ -287,10 +287,10 @@ pub fn freezeViewMethodSource(ck: &mut Checker, obj: &ExprNode, extraFields: &Ve
                     nf.push(extraFields[i].clone())
                 }
             }
-            freezeName(ck, p.root, nf)
+            freezeName(&mut ck, p.root, nf)
         }
         Option.None => {
-            error(ck, "cannot take a view of a temporary", cloneSpan(sp))
+            error(&mut ck, "cannot take a view of a temporary", cloneSpan(sp))
         }
     }
 }
@@ -303,7 +303,7 @@ pub fn errorIfFrozenRoot(ck: &mut Checker, obj: &ExprNode, action: &string, sp: 
     match accessPath(obj) {
         Option.Some(p) => {
             if frozenAgainst(ck, p.root, p.fields) {
-                error(ck, "cannot " + action.clone() + " '" + p.root.clone() + "' because it is borrowed", cloneSpan(sp))
+                error(&mut ck, "cannot " + action.clone() + " '" + p.root.clone() + "' because it is borrowed", cloneSpan(sp))
             }
         }
         Option.None => {
@@ -408,7 +408,7 @@ pub fn errorIfAssignFrozen(ck: &mut Checker, target: &ExprNode, sp: &Option<Span
                 if place != p.root {
                     why = "'" + p.root.clone() + "' is borrowed"
                 }
-                error(ck, "cannot assign to '" + place + "' because " + why, cloneSpan(sp))
+                error(&mut ck, "cannot assign to '" + place + "' because " + why, cloneSpan(sp))
             }
         }
         Option.None => {
@@ -430,7 +430,7 @@ pub fn borrowDuringCallback(ck: &mut Checker, obj: &ExprNode): Option<string> {
             if isFrozen(ck, name) {
                 return Option.None
             }
-            freezeName(ck, name, Vec.new())
+            freezeName(&mut ck, name, Vec.new())
             return Option.Some(name)
         }
         Option.None => {
@@ -570,7 +570,7 @@ pub fn checkCallSiteExclusivity(ck: &mut Checker, muts: &Vec<BorrowArg>, shared:
     for mi in 0..muts.len {
         for si in 0..shared.len {
             if muts[mi].root == shared[si].root && pathsOverlap(muts[mi].fields, shared[si].fields) {
-                error(ck, "'" + muts[mi].root.clone() + "' is borrowed mutably and shared in the same call", cloneSpan(sp))
+                error(&mut ck, "'" + muts[mi].root.clone() + "' is borrowed mutably and shared in the same call", cloneSpan(sp))
             }
         }
     }
@@ -578,7 +578,7 @@ pub fn checkCallSiteExclusivity(ck: &mut Checker, muts: &Vec<BorrowArg>, shared:
         var j: i64 = i + 1
         while j < muts.len {
             if muts[i].root == muts[j].root && aliasesByContainment(muts[i].steps, muts[j].steps) {
-                error(ck, "'" + muts[i].root.clone() + "' is borrowed mutably twice in the same call", cloneSpan(sp))
+                error(&mut ck, "'" + muts[i].root.clone() + "' is borrowed mutably twice in the same call", cloneSpan(sp))
             }
             j = j + 1
         }
