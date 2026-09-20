@@ -83,7 +83,7 @@ requires h.count.len >= 16
     var first: i64 = 0
     var index: i64 = 0
     for len in 1..16 {
-        code = code | bits(st, src, 1)
+        code = code | bits(&mut st, src, 1)
         if st.err {
             return -20
         }
@@ -178,7 +178,7 @@ requires distcode.count.len >= 16
     let distExtra = distExtra()
     var symbol: i64 = 0
     while true {
-        symbol = _decode(st, src, lencode)
+        symbol = _decode(&mut st, src, lencode)
         if symbol < 0 {
             return symbol
         }
@@ -191,15 +191,15 @@ requires distcode.count.len >= 16
             if symbol >= 29 {
                 return -10
             }
-            let len = lenBase[symbol] + bits(st, src, lenExtra[symbol])
-            let dsym = _decode(st, src, distcode)
+            let len = lenBase[symbol] + bits(&mut st, src, lenExtra[symbol])
+            let dsym = _decode(&mut st, src, distcode)
             if dsym < 0 {
                 return dsym
             }
             if dsym >= 30 {
                 return -10
             }
-            let dist = distBase[dsym] + bits(st, src, distExtra[dsym])
+            let dist = distBase[dsym] + bits(&mut st, src, distExtra[dsym])
             if st.err {
                 return -20
             }
@@ -261,7 +261,7 @@ fn fixed(st: &mut InfState, src: &string): i64 {
     var lencode = Huff {
         count: zeros(16), symbol: zeros(FIXLCODES)
     }
-    construct(lencode, lengths, 0, FIXLCODES)
+    construct(&mut lencode, lengths, 0, FIXLCODES)
     var distLengths = zeros(MAXDCODES)
     for sym in 0..MAXDCODES {
         distLengths[sym] = 5
@@ -269,8 +269,8 @@ fn fixed(st: &mut InfState, src: &string): i64 {
     var distcode = Huff {
         count: zeros(16), symbol: zeros(MAXDCODES)
     }
-    construct(distcode, distLengths, 0, MAXDCODES)
-    return codes(st, src, lencode, distcode)
+    construct(&mut distcode, distLengths, 0, MAXDCODES)
+    return codes(&mut st, src, lencode, distcode)
 }
 
 // Order in which code-length-code lengths appear (RFC 1951 §3.2.7).
@@ -280,9 +280,9 @@ fn clcOrder(): [i64; 19] {
 
 // Dynamic Huffman block: read the two code tables from the stream, then decode.
 fn dynamic(st: &mut InfState, src: &string): i64 {
-    let nlen = bits(st, src, 5) + 257
-    let ndist = bits(st, src, 5) + 1
-    let ncode = bits(st, src, 4) + 4
+    let nlen = bits(&mut st, src, 5) + 257
+    let ndist = bits(&mut st, src, 5) + 1
+    let ncode = bits(&mut st, src, 4) + 4
     if st.err {
         return -20
     }
@@ -294,19 +294,19 @@ fn dynamic(st: &mut InfState, src: &string): i64 {
     var lengths = zeros(MAXLCODES + MAXDCODES)
     var clcLen = zeros(19)
     for i in 0..ncode {
-        clcLen[order[i]] = bits(st, src, 3)
+        clcLen[order[i]] = bits(&mut st, src, 3)
     }
     var lencode = Huff {
         count: zeros(16), symbol: zeros(19)
     }
-    let e0 = construct(lencode, clcLen, 0, 19)
+    let e0 = construct(&mut lencode, clcLen, 0, 19)
     if e0 != 0 {
         return -4
     }
     // Repeat-coded lengths for the nlen literal + ndist distance symbols.
     var index: i64 = 0
     while index < nlen + ndist {
-        let sym = _decode(st, src, lencode)
+        let sym = _decode(&mut st, src, lencode)
         if sym < 0 {
             return sym
         }
@@ -321,11 +321,11 @@ fn dynamic(st: &mut InfState, src: &string): i64 {
                     return -5
                 }
                 val = lengths[index - 1]
-                rep = 3 + bits(st, src, 2)
+                rep = 3 + bits(&mut st, src, 2)
             } else if sym == 17 {
-                rep = 3 + bits(st, src, 3)
+                rep = 3 + bits(&mut st, src, 3)
             } else {
-                rep = 11 + bits(st, src, 7)
+                rep = 11 + bits(&mut st, src, 7)
             }
             if index + rep > nlen + ndist {
                 return -6
@@ -345,7 +345,7 @@ fn dynamic(st: &mut InfState, src: &string): i64 {
     var litcode = Huff {
         count: zeros(16), symbol: zeros(MAXLCODES)
     }
-    let e1 = construct(litcode, lengths, 0, nlen)
+    let e1 = construct(&mut litcode, lengths, 0, nlen)
     // Incomplete literal code is only legal in the degenerate single-symbol case.
     if e1 != 0 && (e1 < 0 || nlen != litcode.count[0] + litcode.count[1]) {
         return -7
@@ -353,11 +353,11 @@ fn dynamic(st: &mut InfState, src: &string): i64 {
     var distcode = Huff {
         count: zeros(16), symbol: zeros(MAXDCODES)
     }
-    let e2 = construct(distcode, lengths, nlen, ndist)
+    let e2 = construct(&mut distcode, lengths, nlen, ndist)
     if e2 != 0 && (e2 < 0 || ndist != distcode.count[0] + distcode.count[1]) {
         return -8
     }
-    return codes(st, src, litcode, distcode)
+    return codes(&mut st, src, litcode, distcode)
 }
 
 // Inflate a raw DEFLATE stream (no gzip/zlib wrapper).
@@ -367,18 +367,18 @@ fn inflate(src: &string): Result<string, string> {
     }
     var last: i64 = 0
     while last == 0 {
-        last = bits(st, src, 1)
-        let btype = bits(st, src, 2)
+        last = bits(&mut st, src, 1)
+        let btype = bits(&mut st, src, 2)
         if st.err {
             return Result.Err("inflate: unexpected end of input")
         }
         var e: i64 = 0
         if btype == 0 {
-            e = stored(st, src)
+            e = stored(&mut st, src)
         } else if btype == 1 {
-            e = fixed(st, src)
+            e = fixed(&mut st, src)
         } else if btype == 2 {
-            e = dynamic(st, src)
+            e = dynamic(&mut st, src)
         } else {
             return Result.Err("inflate: invalid block type 3")
         }

@@ -2,17 +2,17 @@
 
 // Sort Vec<i64> in ascending order.
 pub fn sortI64(v: &mut Vec<i64>): void {
-    qsortI64(v, 0, v.len - 1)
+    qsortI64(&mut v, 0, v.len - 1)
 }
 
 // Sort Vec<i32> in ascending order.
 pub fn sortI32(v: &mut Vec<i32>): void {
-    qsortI32(v, 0 as i32, (v.len - 1) as i32)
+    qsortI32(&mut v, 0 as i32, (v.len - 1) as i32)
 }
 
 // Sort Vec<string> in lexicographic order.
 pub fn sortStrings(v: &mut Vec<string>): void {
-    isortStrings(v, 0, v.len - 1)
+    isortStrings(&mut v, 0, v.len - 1)
 }
 
 // Reverse a Vec<i64> in place.
@@ -51,8 +51,8 @@ requires lo >= 0
     let tmp = v[i]
     v[i] = v[hi]
     v[hi] = tmp
-    qsortI64(v, lo, i - 1)
-    qsortI64(v, i + 1, hi)
+    qsortI64(&mut v, lo, i - 1)
+    qsortI64(&mut v, i + 1, hi)
 }
 
 // ── quicksort i32 ──
@@ -78,8 +78,8 @@ requires lo >= 0 as i32
     let tmp = v[i]
     v[i] = v[hi]
     v[hi] = tmp
-    qsortI32(v, lo, i - 1 as i32)
-    qsortI32(v, i + 1 as i32, hi)
+    qsortI32(&mut v, lo, i - 1 as i32)
+    qsortI32(&mut v, i + 1 as i32, hi)
 }
 
 // Sort Vec<string> + parallel Vec<i64> by values descending, then keys ascending (for top-N).

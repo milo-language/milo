@@ -145,10 +145,10 @@ impl Bump {
     fn alloc(self: &mut Self, size: i64): Result<i64>
     requires size > 0
     {
-        return bumpAlloc(self, size)
+        return bumpAlloc(&mut self, size)
     }
     fn reset(self: &mut Self): void {
-        bumpReset(self)
+        bumpReset(&mut self)
     }
     fn remaining(self: &Self): i64 {
         return bumpRemaining(self)

@@ -769,7 +769,7 @@ fn buildEnvBlock(cmd: &Command): Result<*u8> {
         }
         // CreateProcess documents the block as sorted; this is byte order rather than the
         // case-insensitive order the docs describe, which no Windows version enforces.
-        sortStrings(records)
+        sortStrings(&mut records)
 
         var flat = ""
         for i in 0..records.len {

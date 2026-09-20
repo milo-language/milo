@@ -68,7 +68,7 @@ fn pbkdf2Core(password: &string, salt: &string, iterations: i64, dkLen: i64, has
     var out = ""
     var index: i64 = 1
     while out.len < dkLen {
-        pbkdf2Block(password, salt, iterations, index, mac, out)
+        pbkdf2Block(password, salt, iterations, index, mac, &mut out)
         index = index + 1
     }
     var dk = ""

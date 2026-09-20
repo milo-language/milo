@@ -273,12 +273,12 @@ impl Bytes {
 
     // Append `v` as 2 little-endian bytes, two's complement.
     fn writeI16Le(out: &mut string, v: i16): void {
-        Bytes.writeU16Le(out, v as u16)
+        Bytes.writeU16Le(&mut out, v as u16)
     }
 
     // Append `v` as 2 big-endian bytes, two's complement.
     fn writeI16Be(out: &mut string, v: i16): void {
-        Bytes.writeU16Be(out, v as u16)
+        Bytes.writeU16Be(&mut out, v as u16)
     }
 
     // Append `v` as 4 little-endian bytes.
@@ -299,12 +299,12 @@ impl Bytes {
 
     // Append `v` as 4 little-endian bytes, two's complement.
     fn writeI32Le(out: &mut string, v: i32): void {
-        Bytes.writeU32Le(out, v as u32)
+        Bytes.writeU32Le(&mut out, v as u32)
     }
 
     // Append `v` as 4 big-endian bytes, two's complement.
     fn writeI32Be(out: &mut string, v: i32): void {
-        Bytes.writeU32Be(out, v as u32)
+        Bytes.writeU32Be(&mut out, v as u32)
     }
 
     // Append `v` as 8 little-endian bytes.
@@ -332,31 +332,31 @@ impl Bytes {
 
     // Append `v` as 8 little-endian bytes, two's complement.
     fn writeI64Le(out: &mut string, v: i64): void {
-        Bytes.writeU64Le(out, v as u64)
+        Bytes.writeU64Le(&mut out, v as u64)
     }
 
     // Append `v` as 8 big-endian bytes, two's complement.
     fn writeI64Be(out: &mut string, v: i64): void {
-        Bytes.writeU64Be(out, v as u64)
+        Bytes.writeU64Be(&mut out, v as u64)
     }
 
     // Append `v` as 4 little-endian IEEE-754 bytes.
     fn writeF32Le(out: &mut string, v: f32): void {
-        Bytes.writeU32Le(out, Bytes.f32ToBits(v))
+        Bytes.writeU32Le(&mut out, Bytes.f32ToBits(v))
     }
 
     // Append `v` as 4 big-endian IEEE-754 bytes.
     fn writeF32Be(out: &mut string, v: f32): void {
-        Bytes.writeU32Be(out, Bytes.f32ToBits(v))
+        Bytes.writeU32Be(&mut out, Bytes.f32ToBits(v))
     }
 
     // Append `v` as 8 little-endian IEEE-754 bytes.
     fn writeF64Le(out: &mut string, v: f64): void {
-        Bytes.writeU64Le(out, Bytes.f64ToBits(v))
+        Bytes.writeU64Le(&mut out, Bytes.f64ToBits(v))
     }
 
     // Append `v` as 8 big-endian IEEE-754 bytes.
     fn writeF64Be(out: &mut string, v: f64): void {
-        Bytes.writeU64Be(out, Bytes.f64ToBits(v))
+        Bytes.writeU64Be(&mut out, Bytes.f64ToBits(v))
     }
 }

@@ -104,7 +104,7 @@ pub fn acceptsGzip(headerVal: &string): bool {
 // and the body clears GZIP_MIN. Sets `Content-Encoding: gzip`; Content-Length is
 // recomputed from the (compressed) body downstream, so no manual length bookkeeping.
 pub fn gzip(ctx: &mut Context, next: (&mut Context) => Response): Response {
-    let resp = next(ctx)
+    let resp = next(&mut ctx)
     if !acceptsGzip(ctx.header("Accept-Encoding") ?? "") {
         return resp
     }

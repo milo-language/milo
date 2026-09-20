@@ -105,7 +105,7 @@ impl Random {
         return randBool()
     }
     fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
-        shuffleI64(v, n)
+        shuffleI64(&mut v, n)
     }
     fn bytes(buf: *u8, n: i64): void {
         randBytes(buf, n)

@@ -798,7 +798,7 @@ pub fn glob(root: &string, pattern: &string): Result<Vec<string>, IoError> {
             out.push(entry.path.clone())
         }
     }
-    sortStrings(out)
+    sortStrings(&mut out)
     return Result.Ok(out)
 }
 

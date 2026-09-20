@@ -590,7 +590,7 @@ pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
         // does not fit a 16-byte sockaddr_in
         var clientAddr = makeZeroedSockaddrStorage()
         var addrlen: u32 = sockAddrStorageLen()
-        let clientFd = accept(sock.fd, clientAddr, addrlen)
+        let clientFd = accept(sock.fd, &mut clientAddr, &mut addrlen)
         if clientFd < 0 {
             continue
         }
@@ -700,11 +700,11 @@ impl Router {
             let mw = self.middleware[m]
             let next = final
             final = (c: &mut Context) => {
-                return mw(c, next)
+                return mw(&mut c, next)
             }
             m = m - 1
         }
-        let resp = final(ctx)
+        let resp = final(&mut ctx)
         return HandledResponse {
             response: resp, headers: ctx.respHeaders
         }
@@ -721,7 +721,7 @@ pub fn serveRouter(port: u16?, router: &Router): Result<Unit> {
         // does not fit a 16-byte sockaddr_in
         var clientAddr = makeZeroedSockaddrStorage()
         var addrlen: u32 = sockAddrStorageLen()
-        let clientFd = accept(sock.fd, clientAddr, addrlen)
+        let clientFd = accept(sock.fd, &mut clientAddr, &mut addrlen)
         if clientFd < 0 {
             continue
         }
@@ -815,7 +815,7 @@ pub fn serveRouterConcurrent(port: u16?, router: Router): Result<Unit> {
             while true {
                 var clientAddr = makeZeroedSockaddrStorage()
                 var addrlen: u32 = sockAddrStorageLen()
-                let clientFd = accept(listenFd, clientAddr, addrlen)
+                let clientFd = accept(listenFd, &mut clientAddr, &mut addrlen)
                 if clientFd < 0 {
                     break
                 }

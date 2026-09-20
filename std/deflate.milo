@@ -42,14 +42,14 @@ fn putBit(w: &mut BitW, bit: i64) {
 // LSB-first: bit 0 of val first. Used for the block header and extra bits.
 fn putBits(w: &mut BitW, val: i64, n: i64) {
     for k in 0..n {
-        putBit(w, (val >> k) & 1)
+        putBit(&mut w, (val >> k) & 1)
     }
 }
 
 // MSB-first: bit (n-1) of code first. Used for Huffman codes (RFC 1951 §3.1.1).
 fn putCode(w: &mut BitW, code: i64, n: i64) {
     for k in 0..n {
-        putBit(w, (code >> (n - 1 - k)) & 1)
+        putBit(&mut w, (code >> (n - 1 - k)) & 1)
     }
 }
 
@@ -65,13 +65,13 @@ fn flush(w: &mut BitW) {
 // Emit a literal/length symbol (0..287) with the fixed-Huffman code table.
 fn emitSym(w: &mut BitW, s: i64) {
     if s < 144 {
-        putCode(w, 48 + s, 8) // 00110000..10111111
+        putCode(&mut w, 48 + s, 8) // 00110000..10111111
     } else if s < 256 {
-        putCode(w, 400 + (s - 144), 9) // 110010000..111111111
+        putCode(&mut w, 400 + (s - 144), 9) // 110010000..111111111
     } else if s < 280 {
-        putCode(w, s - 256, 7) // 0000000..0010111
+        putCode(&mut w, s - 256, 7) // 0000000..0010111
     } else {
-        putCode(w, 192 + (s - 280), 8) // 11000000..11000111
+        putCode(&mut w, 192 + (s - 280), 8) // 11000000..11000111
     }
 }
 
@@ -103,8 +103,8 @@ fn emitMatch(w: &mut BitW, len: i64, dist: i64) {
             break
         }
     }
-    emitSym(w, 257 + li)
-    putBits(w, len - lenBase[li], lenExtra[li])
+    emitSym(&mut w, 257 + li)
+    putBits(&mut w, len - lenBase[li], lenExtra[li])
 
     let distBase = distBase()
     let distExtra = distExtra()
@@ -115,8 +115,8 @@ fn emitMatch(w: &mut BitW, len: i64, dist: i64) {
             break
         }
     }
-    putCode(w, di, 5) // fixed distance codes are 5 bits, MSB-first
-    putBits(w, dist - distBase[di], distExtra[di])
+    putCode(&mut w, di, 5) // fixed distance codes are 5 bits, MSB-first
+    putBits(&mut w, dist - distBase[di], distExtra[di])
 }
 
 // Hash of the 3 bytes at position p (p+2 must be in range).
@@ -138,8 +138,8 @@ fn deflate(src: &string): string {
     var w = BitW {
         acc: 0, nbits: 0, out: ""
     }
-    putBits(w, 1, 1) // BFINAL = 1
-    putBits(w, 1, 2) // BTYPE  = 01 (fixed Huffman)
+    putBits(&mut w, 1, 1) // BFINAL = 1
+    putBits(&mut w, 1, 2) // BTYPE  = 01 (fixed Huffman)
 
     let n = src.len
     var head = Vec.new() // hash -> most recent position, -1 if none
@@ -180,7 +180,7 @@ fn deflate(src: &string): string {
             head[h] = pos
         }
         if bestLen >= MINMATCH {
-            emitMatch(w, bestLen, bestDist)
+            emitMatch(&mut w, bestLen, bestDist)
             // Register the positions we're skipping so later matches can find them.
             for k in 1..bestLen {
                 let p = pos + k
@@ -192,12 +192,12 @@ fn deflate(src: &string): string {
             }
             pos = pos + bestLen
         } else {
-            emitSym(w, src[pos] as i64)
+            emitSym(&mut w, src[pos] as i64)
             pos = pos + 1
         }
     }
-    emitSym(w, 256) // end of block
-    flush(w)
+    emitSym(&mut w, 256) // end of block
+    flush(&mut w)
     return w.out
 }
 
@@ -223,15 +223,15 @@ fn gzipCompress(src: &string): string {
     out.push(0x8b as u8)
     out.push(8 as u8) // CM = deflate
     out.push(0 as u8) // FLG = none
-    push32LE(out, 0) // MTIME = 0 (unknown)
+    push32LE(&mut out, 0) // MTIME = 0 (unknown)
     out.push(0 as u8) // XFL
     out.push(255 as u8) // OS = unknown
     let body = deflate(src)
     for i in 0..body.len {
         out.push(body[i])
     }
-    push32LE(out, Checksum.crc32(src))
-    push32LE(out, src.len & 0xffffffff)
+    push32LE(&mut out, Checksum.crc32(src))
+    push32LE(&mut out, src.len & 0xffffffff)
     return out
 }
 
@@ -244,7 +244,7 @@ fn zlibCompress(src: &string): string {
     for i in 0..body.len {
         out.push(body[i])
     }
-    push32BE(out, Checksum.adler32(src))
+    push32BE(&mut out, Checksum.adler32(src))
     return out
 }
 

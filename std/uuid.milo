@@ -162,7 +162,7 @@ impl Uuid {
             if i == 4 || i == 6 || i == 8 || i == 10 {
                 s.push('-')
             }
-            _byteToHex(self.bytes[i], s)
+            _byteToHex(self.bytes[i], &mut s)
             i = i + 1
         }
         return s

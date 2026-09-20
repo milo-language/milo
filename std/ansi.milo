@@ -64,22 +64,22 @@ fn ansiPushRaw(buf: &mut string, s: &string): void {
 }
 
 fn ansiPush24(buf: &mut string, lead: &string, r: i64, g: i64, b: i64): void {
-    ansiPushRaw(buf, lead)
-    ansiPushU8(buf, r)
+    ansiPushRaw(&mut buf, lead)
+    ansiPushU8(&mut buf, r)
     buf.push(59 as u8) // ';'
-    ansiPushU8(buf, g)
+    ansiPushU8(&mut buf, g)
     buf.push(59 as u8)
-    ansiPushU8(buf, b)
+    ansiPushU8(&mut buf, b)
     buf.push(109 as u8) // 'm'
 }
 
 // Append a 24-bit foreground / background SGR directly into buf (no allocation).
 fn pushFg24(buf: &mut string, r: i64, g: i64, b: i64): void {
-    ansiPush24(buf, "\x1b[38;2;", r, g, b)
+    ansiPush24(&mut buf, "\x1b[38;2;", r, g, b)
 }
 
 fn pushBg24(buf: &mut string, r: i64, g: i64, b: i64): void {
-    ansiPush24(buf, "\x1b[48;2;", r, g, b)
+    ansiPush24(&mut buf, "\x1b[48;2;", r, g, b)
 }
 
 // Reset all attributes to the terminal default.
@@ -190,10 +190,10 @@ impl Ansi {
         return bg24(r, g, b)
     }
     fn pushFg24(buf: &mut string, r: i64, g: i64, b: i64): void {
-        pushFg24(buf, r, g, b)
+        pushFg24(&mut buf, r, g, b)
     }
     fn pushBg24(buf: &mut string, r: i64, g: i64, b: i64): void {
-        pushBg24(buf, r, g, b)
+        pushBg24(&mut buf, r, g, b)
     }
     fn reset(): string {
         return ansiReset()

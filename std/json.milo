@@ -883,15 +883,15 @@ fn jsonParse(s: string): Result<Json> {
     var scratchLen: i64 = 0
     var pos: i64 = 0
     var err: bool = false
-    jsonSkipWs(s, pos)
+    jsonSkipWs(s, &mut pos)
     if pos >= s.len {
         return Result.Err("empty json input at byte " + pos.toString())
     }
-    let rootIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err)
+    let rootIdx = jsonParseValue(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
     if err {
         return Result.Err("malformed json at byte " + pos.toString())
     }
-    jsonSkipWs(s, pos)
+    jsonSkipWs(s, &mut pos)
     if pos != s.len {
         return Result.Err("trailing json content at byte " + pos.toString())
     }
@@ -1035,7 +1035,7 @@ fn jsonLitAt(s: &string, pos: i64, lit: &string): bool {
 }
 
 fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
-    jsonSkipWs(s, pos)
+    jsonSkipWs(s, &mut pos)
     if pos >= s.len {
         err = true
         let idx = nodes.len()
@@ -1047,13 +1047,13 @@ fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
     }
     let c = s[pos]
     if c == '"' {
-        return jsonParseString(s, pos, nodes, err)
+        return jsonParseString(s, &mut pos, &mut nodes, &mut err)
     }
     if c == '{' {
-        return jsonParseObject(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err)
+        return jsonParseObject(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
     }
     if c == '[' {
-        return jsonParseArray(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err)
+        return jsonParseArray(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
     }
     if c == 't' {
         if !jsonLitAt(s, pos, "true") {
@@ -1094,7 +1094,7 @@ fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
     // Only '-' or a digit can begin a value here; anything else (',', ']', '}', ':', stray punctuation)
     // is a structural error — guarding here is what rejects empty/leading-comma elements like `[ , x]`.
     if c == '-' || (c >= '0' && c <= '9') {
-        return jsonParseNumber(s, pos, nodes, err)
+        return jsonParseNumber(s, &mut pos, &mut nodes, &mut err)
     }
     err = true
     let idx = nodes.len()
@@ -1146,7 +1146,7 @@ fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
 fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, err: &mut bool): i64 {
     pos = pos + 1
     let start = pos
-    jsonScanString(s, pos, err)
+    jsonScanString(s, &mut pos, &mut err)
     let slen = pos - start
     if pos < s.len {
         pos = pos + 1
@@ -1162,7 +1162,7 @@ fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, err: &m
 fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i64, err: &mut bool) {
     pos = pos + 1
     start = pos
-    jsonScanString(s, pos, err)
+    jsonScanString(s, &mut pos, &mut err)
     _slen = pos - start
     if pos < s.len {
         pos = pos + 1
@@ -1258,7 +1258,7 @@ fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
         kind: 4, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0
     }
     )
-    jsonSkipWs(s, pos)
+    jsonSkipWs(s, &mut pos)
     if pos < s.len && s[pos] == ']' {
         pos = pos + 1
         return myIdx
@@ -1267,12 +1267,12 @@ fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
     while pos < s.len {
         // After a comma the next iteration re-enters here; jsonParseValue's value-start guard
         // turns a trailing comma (`,]`) into an error because ']' cannot begin a value.
-        let childNodeIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err)
-        jsonScratchPush(scratch, scratchLen, childNodeIdx)
+        let childNodeIdx = jsonParseValue(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
+        jsonScratchPush(&mut scratch, &mut scratchLen, childNodeIdx)
         if err {
             break
         }
-        jsonSkipWs(s, pos)
+        jsonSkipWs(s, &mut pos)
         if pos < s.len && s[pos] == ',' {
             pos = pos + 1
         } else {
@@ -1305,7 +1305,7 @@ fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childId
         kind: 5, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0
     }
     )
-    jsonSkipWs(s, pos)
+    jsonSkipWs(s, &mut pos)
     if pos < s.len && s[pos] == '}' {
         pos = pos + 1
         return myIdx
@@ -1317,7 +1317,7 @@ fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childId
     // expectKey stays true after every comma so a trailing comma (`{...,}`) is rejected.
     var expectKey: bool = true
     while pos < s.len {
-        jsonSkipWs(s, pos)
+        jsonSkipWs(s, &mut pos)
         if pos >= s.len || s[pos] != '"' {
             if expectKey {
                 err = true
@@ -1327,22 +1327,22 @@ fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childId
         expectKey = false
         var koff: i64 = 0
         var klen: i64 = 0
-        jsonScanStringRange(s, pos, koff, klen, err)
-        jsonSkipWs(s, pos)
+        jsonScanStringRange(s, &mut pos, &mut koff, &mut klen, &mut err)
+        jsonSkipWs(s, &mut pos)
         // The colon separating key and value is mandatory (`{"k" null}` is an error).
         if pos < s.len && s[pos] == ':' {
             pos = pos + 1
         } else {
             err = true
         }
-        let childNodeIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err)
-        jsonScratchPush(scratch, scratchLen, childNodeIdx)
-        jsonScratchPush(scratch, scratchLen, koff)
-        jsonScratchPush(scratch, scratchLen, klen)
+        let childNodeIdx = jsonParseValue(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
+        jsonScratchPush(&mut scratch, &mut scratchLen, childNodeIdx)
+        jsonScratchPush(&mut scratch, &mut scratchLen, koff)
+        jsonScratchPush(&mut scratch, &mut scratchLen, klen)
         if err {
             break
         }
-        jsonSkipWs(s, pos)
+        jsonSkipWs(s, &mut pos)
         if pos < s.len && s[pos] == ',' {
             pos = pos + 1
             expectKey = true
@@ -1484,7 +1484,7 @@ pub fn jsonPretty(src: &string, indent: i64): string {
     while i < src.len {
         let c = src[i]
         if c == '"' {
-            i = jsonFmtCopyString(src, i, out)
+            i = jsonFmtCopyString(src, i, &mut out)
         } else if jsonFmtIsSpace(c) {
             i = i + 1
         } else if c == '{' || c == '[' {
@@ -1499,7 +1499,7 @@ pub fn jsonPretty(src: &string, indent: i64): string {
                 depth = depth + 1
                 out.push(c)
                 if indent > 0 {
-                    jsonFmtNewline(out, indent, depth)
+                    jsonFmtNewline(&mut out, indent, depth)
                 }
                 i = i + 1
             }
@@ -1511,14 +1511,14 @@ pub fn jsonPretty(src: &string, indent: i64): string {
                 depth = 0
             }
             if indent > 0 {
-                jsonFmtNewline(out, indent, depth)
+                jsonFmtNewline(&mut out, indent, depth)
             }
             out.push(c)
             i = i + 1
         } else if c == ',' {
             out.push(c)
             if indent > 0 {
-                jsonFmtNewline(out, indent, depth)
+                jsonFmtNewline(&mut out, indent, depth)
             }
             i = i + 1
         } else if c == ':' {
@@ -1947,7 +1947,7 @@ fn jsonPullNumber(s: &string, pos: &mut i64): f64 {
 impl JsonPull {
     fn next(self: &mut Self): JsonToken {
         while true {
-            jsonSkipWs(self.src, self.pos)
+            jsonSkipWs(self.src, &mut self.pos)
             if self.pos >= self.src.len {
                 return jsonTok(JsonEvent.End)
             }
@@ -1994,7 +1994,7 @@ impl JsonPull {
                 var strStart: i64 = 0
                 var strLen: i64 = 0
                 var strErr: bool = false
-                jsonScanStringRange(self.src, self.pos, strStart, strLen, strErr)
+                jsonScanStringRange(self.src, &mut self.pos, &mut strStart, &mut strLen, &mut strErr)
                 var t = jsonTok(JsonEvent.Str)
                 // in an object at a key slot (state 1) the string is the key
                 if self.stack.len > 0 && self.stack[self.stack.len - 1] == 1 {
@@ -2021,7 +2021,7 @@ impl JsonPull {
             }
             if c == '-' || (c >= '0' && c <= '9') {
                 var t = jsonTok(JsonEvent.Num)
-                t.num = jsonPullNumber(self.src, self.pos)
+                t.num = jsonPullNumber(self.src, &mut self.pos)
                 return t
             }
             return jsonTok(JsonEvent.Error)

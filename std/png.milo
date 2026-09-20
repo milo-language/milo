@@ -194,13 +194,13 @@ fn decodePng(src: &string): Result<PngImage, string> {
 // not the length. Getting that span wrong produces a file every decoder rejects
 // with a checksum error and no hint as to which half was wrong.
 fn chunk(out: &mut string, kind: &string, body: &string) {
-    Bytes.writeU32Be(out, body.len as u32)
+    Bytes.writeU32Be(&mut out, body.len as u32)
     var crcInput = ""
     crcInput.pushStr(kind)
     crcInput.pushStr(body)
     out.pushStr(kind)
     out.pushStr(body)
-    Bytes.writeU32Be(out, Checksum.crc32(crcInput) as u32)
+    Bytes.writeU32Be(&mut out, Checksum.crc32(crcInput) as u32)
 }
 
 // Encode 8-bit truecolour (3 channels) or truecolour+alpha (4) to a PNG.
@@ -248,8 +248,8 @@ pub fn encodePng(pixels: &string, width: i64, height: i64, channels: i64): Resul
     out.push(10 as u8)
 
     var ihdr = ""
-    Bytes.writeU32Be(ihdr, width as u32)
-    Bytes.writeU32Be(ihdr, height as u32)
+    Bytes.writeU32Be(&mut ihdr, width as u32)
+    Bytes.writeU32Be(&mut ihdr, height as u32)
     ihdr.push(8 as u8) // bit depth
     if channels == 3 {
         ihdr.push(2 as u8) // truecolour
@@ -259,9 +259,9 @@ pub fn encodePng(pixels: &string, width: i64, height: i64, channels: i64): Resul
     ihdr.push(0 as u8) // deflate
     ihdr.push(0 as u8) // adaptive filtering
     ihdr.push(0 as u8) // no interlace
-    chunk(out, "IHDR", ihdr)
-    chunk(out, "IDAT", Deflate.zlib(raw))
-    chunk(out, "IEND", "")
+    chunk(&mut out, "IHDR", ihdr)
+    chunk(&mut out, "IDAT", Deflate.zlib(raw))
+    chunk(&mut out, "IEND", "")
     return Result.Ok(out)
 }
 

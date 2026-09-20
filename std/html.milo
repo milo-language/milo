@@ -97,7 +97,7 @@ impl Html {
                 i = i + 1
                 continue
             }
-            let consumed = decodeEntity(s, i, out)
+            let consumed = decodeEntity(s, i, &mut out)
             if consumed == 0 {
                 out.push(s[i])
                 i = i + 1
@@ -239,7 +239,7 @@ fn decodeEntity(s: &string, at: i64, out: &mut string): i64 {
     if value > 1114111 || value == 0 {
         value = 65533
     }
-    encodeCodepoint(out, value as i32)
+    encodeCodepoint(&mut out, value as i32)
     return i + 1 - at
 }
 

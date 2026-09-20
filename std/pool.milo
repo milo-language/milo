@@ -167,7 +167,7 @@ impl Pool {
     }
 
     fn alloc(self: &mut Self): Result<i64> {
-        return poolAlloc(self)
+        return poolAlloc(&mut self)
     }
 
     fn free(self: &mut Self, block: i64): void
@@ -176,7 +176,7 @@ impl Pool {
     requires
     self.liveCount > 0
     {
-        poolFree(self, block)
+        poolFree(&mut self, block)
     }
 
     // Restate poolLive's preconditions (Pool has no struct invariant): without them the
@@ -212,6 +212,6 @@ impl Pool {
     ensures
     self.liveCount == 0
     {
-        poolReset(self)
+        poolReset(&mut self)
     }
 }

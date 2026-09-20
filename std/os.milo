@@ -127,7 +127,7 @@ pub fn getSockPort(fd: i32): i32 {
     unsafe {
         var st = makeZeroedSockaddrStorage()
         var len: u32 = sockAddrStorageLen()
-        if getsockname(fd, st, len) < 0 {
+        if getsockname(fd, &mut st, &mut len) < 0 {
             return -1
         }
         let portPtr = (st.addrOf() as i64 + 2) as *u16
@@ -470,7 +470,7 @@ pub fn acceptFd(fd: i32): i32 {
         // peer used, and a v6 peer needs 28 bytes.
         var clientAddr = makeZeroedSockaddrStorage()
         var addrlen: u32 = sockAddrStorageLen()
-        let clientFd = accept(fd, clientAddr, addrlen)
+        let clientFd = accept(fd, &mut clientAddr, &mut addrlen)
         if clientFd < 0 && inGreen && netErrno() == netEagain() {
             schedulerWaitRead(fd)
             continue
@@ -491,7 +491,7 @@ pub fn acceptFdNb(fd: i32): i32 {
     setNonblocking(fd)
     var clientAddr = makeZeroedSockaddrStorage()
     var addrlen: u32 = sockAddrStorageLen()
-    let clientFd = accept(fd, clientAddr, addrlen)
+    let clientFd = accept(fd, &mut clientAddr, &mut addrlen)
     if clientFd >= 0 {
         setNonblocking(clientFd)
     }
@@ -521,7 +521,7 @@ pub fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
     schedulerWaitWrite(fd)
     var err: i32 = 0
     var len: u32 = 4
-    if getsockopt(fd, solSocket(), soError(), err, len) < 0 {
+    if getsockopt(fd, solSocket(), soError(), &mut err, &mut len) < 0 {
         return -1
     }
     if err != 0 {

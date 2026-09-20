@@ -243,12 +243,12 @@ fn fseDecodeHeader(src: &string, base: i64, maxAccuracy: i64): FseHdr {
 }
 
 fn fseInitState(t: &FseTable, src: &string, r: &mut Rev): i64 {
-    return streamRead(src, t.accuracyLog, r)
+    return streamRead(src, t.accuracyLog, &mut r)
 }
 
 fn fseUpdate(t: &FseTable, state: i64, src: &string, r: &mut Rev): i64 {
     let bits = t.numBits[state]
-    let rest = streamRead(src, bits, r)
+    let rest = streamRead(src, bits, &mut r)
     return t.newStateBase[state] + rest
 }
 
@@ -413,12 +413,12 @@ fn hufDecode1Stream(t: &HufTable, stream: &string): string {
     var r = Rev {
         off: stream.len * 8 - padding
     }
-    var state = streamRead(stream, t.maxBits, r)
+    var state = streamRead(stream, t.maxBits, &mut r)
     let mask = (1 << t.maxBits) - 1
     while r.off > 0 - t.maxBits {
         let symb = t.symbols[state]
         let bits = t.numBits[state]
-        let rest = streamRead(stream, bits, r)
+        let rest = streamRead(stream, bits, &mut r)
         state = ((state << bits) + rest) & mask
         out.push(symb as u8)
     }
@@ -436,18 +436,18 @@ fn fseDecompressInterleaved2(t: &FseTable, stream: &string): Vec<i64> {
     var r = Rev {
         off: stream.len * 8 - padding
     }
-    var s1 = fseInitState(t, stream, r)
-    var s2 = fseInitState(t, stream, r)
+    var s1 = fseInitState(t, stream, &mut r)
+    var s2 = fseInitState(t, stream, &mut r)
     var done = false
     while !done {
         out.push(t.symbols[s1])
-        s1 = fseUpdate(t, s1, stream, r)
+        s1 = fseUpdate(t, s1, stream, &mut r)
         if r.off < 0 {
             out.push(t.symbols[s2])
             done = true
         } else {
             out.push(t.symbols[s2])
-            s2 = fseUpdate(t, s2, stream, r)
+            s2 = fseUpdate(t, s2, stream, &mut r)
             if r.off < 0 {
                 out.push(t.symbols[s1])
                 done = true
@@ -772,9 +772,9 @@ fn decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mut
     var r = Rev {
         off: seqStream.len * 8 - padding
     }
-    var llState = fseInitState(llTable, seqStream, r)
-    var ofState = fseInitState(ofTable, seqStream, r)
-    var mlState = fseInitState(mlTable, seqStream, r)
+    var llState = fseInitState(llTable, seqStream, &mut r)
+    var ofState = fseInitState(ofTable, seqStream, &mut r)
+    var mlState = fseInitState(mlTable, seqStream, &mut r)
 
     let llBase = llBaselines()
     let llEB = llExtraBits()
@@ -788,17 +788,17 @@ fn decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mut
         let llCode = llTable.symbols[llState]
         let mlCode = mlTable.symbols[mlState]
         // Order of raw-bit reads: offset, then match length, then literal length.
-        let rawOffset = (1 << ofCode) + streamRead(seqStream, ofCode, r)
-        let matchLen = mlBase[mlCode] + streamRead(seqStream, mlEB[mlCode], r)
-        let litLen = llBase[llCode] + streamRead(seqStream, llEB[llCode], r)
+        let rawOffset = (1 << ofCode) + streamRead(seqStream, ofCode, &mut r)
+        let matchLen = mlBase[mlCode] + streamRead(seqStream, mlEB[mlCode], &mut r)
+        let litLen = llBase[llCode] + streamRead(seqStream, llEB[llCode], &mut r)
         seqs.push(Seq {
             litLen: litLen, matchLen: matchLen, offset: rawOffset
         }
         )
         if i != numSeq - 1 {
-            llState = fseUpdate(llTable, llState, seqStream, r)
-            mlState = fseUpdate(mlTable, mlState, seqStream, r)
-            ofState = fseUpdate(ofTable, ofState, seqStream, r)
+            llState = fseUpdate(llTable, llState, seqStream, &mut r)
+            mlState = fseUpdate(mlTable, mlState, seqStream, &mut r)
+            ofState = fseUpdate(ofTable, ofState, seqStream, &mut r)
         }
     }
     // ── Execute sequences: literals run, then LZ77 match copy ──
@@ -809,7 +809,7 @@ fn decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mut
             out.push(literals[litPos])
             litPos = litPos + 1
         }
-        let dist = computeOffset(sq.offset, sq.litLen, st.hist)
+        let dist = computeOffset(sq.offset, sq.litLen, &mut st.hist)
         if dist > out.len {
             return 0 - 103
         }
@@ -947,7 +947,7 @@ fn zstdDecompress(src: &string): Result<string, string> {
             if pos + blockSize > src.len {
                 return Result.Err("zstd: truncated compressed block")
             }
-            let e = decompressCompressed(src, pos, blockSize, out, st)
+            let e = decompressCompressed(src, pos, blockSize, &mut out, &mut st)
             if e < 0 {
                 return Result.Err("zstd: corrupt compressed block")
             }
@@ -1005,9 +1005,9 @@ fn zstdCompressRaw(src: &string): string {
     // Frame_Header_Descriptor: Single_Segment (0x20) + Content_Checksum (0x04) +
     // Frame_Content_Size flag 2 → a 4-byte content size (0xc0 = flag 2 in bits 6..7).
     out.push(0xa4 as u8)
-    enc32LE(out, src.len)
+    enc32LE(&mut out, src.len)
     if src.len == 0 {
-        encRawBlockHeader(out, 0, true)
+        encRawBlockHeader(&mut out, 0, true)
     }
     var pos: i64 = 0
     while pos < src.len {
@@ -1017,13 +1017,13 @@ fn zstdCompressRaw(src: &string): string {
             bsize = maxBlock
         }
         let last = pos + bsize >= src.len
-        encRawBlockHeader(out, bsize, last)
+        encRawBlockHeader(&mut out, bsize, last)
         for i in 0..bsize {
             out.push(src[pos + i])
         }
         pos = pos + bsize
     }
-    enc32LE(out, (Xxhash.hash64(src, 0) & 0xffffffff) as i64)
+    enc32LE(&mut out, (Xxhash.hash64(src, 0) & 0xffffffff) as i64)
     return out
 }
 
@@ -1063,7 +1063,7 @@ fn bcAdd(b: &mut BitCS, value: i64, n: i64) {
 // Append the '1' padding marker (so the last non-zero byte's top set bit locates the
 // stream end) and byte-align.
 fn bcClose(b: &mut BitCS) {
-    bcAdd(b, 1, 1)
+    bcAdd(&mut b, 1, 1)
     if b.nb > 0 {
         b.bytes.push((b.acc & 0xff) as u8)
         b.acc = 0
@@ -1174,7 +1174,7 @@ fn fseInitCState2(ct: &FseCTable, symbol: i64): i64 {
 // Encode one symbol: write the low nbBitsOut bits of the current state, then transition.
 fn fseEncodeSymbol(b: &mut BitCS, ct: &FseCTable, value: i64, symbol: i64): i64 {
     let nbBitsOut = (value + ct.deltaNbBits[symbol]) >> 16
-    bcAdd(b, value, nbBitsOut)
+    bcAdd(&mut b, value, nbBitsOut)
     return ct.stateTable[(value >> nbBitsOut) + ct.deltaFindState[symbol]]
 }
 
@@ -1228,7 +1228,7 @@ fn fseWriteNCount(dist: &Vec<i64>, tableLog: i64, maxSymbol: i64): string {
     var b = BitCS {
         bytes: "", acc: 0, nb: 0
     }
-    bcAdd(b, tableLog - 5, 4)
+    bcAdd(&mut b, tableLog - 5, 4)
     let tableSize = 1 << tableLog
     var remaining = tableSize + 1 // +1 for the "extra accuracy" bit the format carries
     var threshold = tableSize
@@ -1244,10 +1244,10 @@ fn fseWriteNCount(dist: &Vec<i64>, tableLog: i64, maxSymbol: i64): string {
             var run = s - start
             // Each 2-bit group encodes up to 3 further zeros; a value of 3 means "continue".
             while run >= 3 {
-                bcAdd(b, 3, 2)
+                bcAdd(&mut b, 3, 2)
                 run = run - 3
             }
-            bcAdd(b, run, 2)
+            bcAdd(&mut b, run, 2)
             previousIs0 = false
             if s > maxSymbol {
                 break
@@ -1268,7 +1268,7 @@ fn fseWriteNCount(dist: &Vec<i64>, tableLog: i64, maxSymbol: i64): string {
         if c < max {
             nb = nbBits - 1
         }
-        bcAdd(b, c, nb)
+        bcAdd(&mut b, c, nb)
         previousIs0 = count == 0
         while remaining < threshold {
             nbBits = nbBits - 1
@@ -1276,7 +1276,7 @@ fn fseWriteNCount(dist: &Vec<i64>, tableLog: i64, maxSymbol: i64): string {
         }
         s = s + 1
     }
-    bcAlign(b)
+    bcAlign(&mut b)
     return b.bytes
 }
 
@@ -1423,7 +1423,7 @@ fn encodeOffsetBase(offset: i64, litLen: i64, rep: &mut Vec<i64>): i64 {
             offBase = offset + 3
         }
     }
-    computeOffset(offBase, litLen, rep) // advance rep exactly as the decoder will
+    computeOffset(offBase, litLen, &mut rep) // advance rep exactly as the decoder will
     return offBase
 }
 
@@ -1442,7 +1442,7 @@ fn computeCodes(seqs: &Vec<Seq3>): SeqCodes {
         let s = seqs[i]
         let litLen = s.litLen
         let mlBase = s.matchLen - 3
-        let offBase = encodeOffsetBase(s.offset, litLen, rep)
+        let offBase = encodeOffsetBase(s.offset, litLen, &mut rep)
         if litLen > 63 {
             ll[i] = highestSetBit(litLen) + 19
         } else {
@@ -1478,24 +1478,24 @@ fn encSeqBitstream(c: &SeqCodes, llCT: &FseCTable, ofCT: &FseCTable, mlCT: &FseC
     var mlState = fseInitCState2(mlCT, c.ml[last])
     var ofState = fseInitCState2(ofCT, c.of[last])
     var llState = fseInitCState2(llCT, c.ll[last])
-    bcAdd(b, c.llVal[last], llEB[c.ll[last]])
-    bcAdd(b, c.mlVal[last], mlEB[c.ml[last]])
-    bcAdd(b, c.ofVal[last], c.of[last])
+    bcAdd(&mut b, c.llVal[last], llEB[c.ll[last]])
+    bcAdd(&mut b, c.mlVal[last], mlEB[c.ml[last]])
+    bcAdd(&mut b, c.ofVal[last], c.of[last])
     var n = nb - 2
     while n >= 0 {
-        ofState = fseEncodeSymbol(b, ofCT, ofState, c.of[n])
-        mlState = fseEncodeSymbol(b, mlCT, mlState, c.ml[n])
-        llState = fseEncodeSymbol(b, llCT, llState, c.ll[n])
-        bcAdd(b, c.llVal[n], llEB[c.ll[n]])
-        bcAdd(b, c.mlVal[n], mlEB[c.ml[n]])
-        bcAdd(b, c.ofVal[n], c.of[n])
+        ofState = fseEncodeSymbol(&mut b, ofCT, ofState, c.of[n])
+        mlState = fseEncodeSymbol(&mut b, mlCT, mlState, c.ml[n])
+        llState = fseEncodeSymbol(&mut b, llCT, llState, c.ll[n])
+        bcAdd(&mut b, c.llVal[n], llEB[c.ll[n]])
+        bcAdd(&mut b, c.mlVal[n], mlEB[c.ml[n]])
+        bcAdd(&mut b, c.ofVal[n], c.of[n])
         n = n - 1
     }
     // Flush final states (ML, OF, LL) — reverse of the decoder's init read order.
-    bcAdd(b, mlState, mlCT.accuracyLog)
-    bcAdd(b, ofState, ofCT.accuracyLog)
-    bcAdd(b, llState, llCT.accuracyLog)
-    bcClose(b)
+    bcAdd(&mut b, mlState, mlCT.accuracyLog)
+    bcAdd(&mut b, ofState, ofCT.accuracyLog)
+    bcAdd(&mut b, llState, llCT.accuracyLog)
+    bcClose(&mut b)
     return b.bytes
 }
 
@@ -1659,10 +1659,10 @@ fn hufEncode1Stream(literals: &string, from: i64, to: i64, hufCode: &Vec<i64>, h
     var i = to - 1
     while i >= from {
         let s = literals[i] as i64
-        bcAdd(b, hufCode[s], hufLen[s])
+        bcAdd(&mut b, hufCode[s], hufLen[s])
         i = i - 1
     }
-    bcClose(b)
+    bcClose(&mut b)
     return b.bytes
 }
 
@@ -1735,9 +1735,9 @@ fn hufLiteralsSection(literals: &string): string {
         let s2 = hufEncode1Stream(literals, seg, 2 * seg, hufCode, codeLen)
         let s3 = hufEncode1Stream(literals, 2 * seg, 3 * seg, hufCode, codeLen)
         let s4 = hufEncode1Stream(literals, 3 * seg, regen, hufCode, codeLen)
-        emitLE(streamsData, s1.len, 2)
-        emitLE(streamsData, s2.len, 2)
-        emitLE(streamsData, s3.len, 2)
+        emitLE(&mut streamsData, s1.len, 2)
+        emitLE(&mut streamsData, s2.len, 2)
+        emitLE(&mut streamsData, s3.len, 2)
         for i in 0..s1.len {
             streamsData.push(s1[i])
         }
@@ -1781,7 +1781,7 @@ fn hufLiteralsSection(literals: &string): string {
         headerBytes = 5
     }
     var section = ""
-    emitLE(section, headerVal, headerBytes)
+    emitLE(&mut section, headerVal, headerBytes)
     for i in 0..hufData.len {
         section.push(hufData[i])
     }
@@ -1791,7 +1791,7 @@ fn hufLiteralsSection(literals: &string): string {
 // Raw literals section (header + bytes), the never-expands fallback.
 fn rawLiteralsSection(literals: &string): string {
     var out = ""
-    encRawLiteralsHeader(out, literals.len)
+    encRawLiteralsHeader(&mut out, literals.len)
     for i in 0..literals.len {
         out.push(literals[i])
     }
@@ -1872,7 +1872,7 @@ fn compressBlock(block: &string): BlockResult {
     for i in 0..litSection.len {
         out.push(litSection[i])
     }
-    encSeqCount(out, lz.seqs.len)
+    encSeqCount(&mut out, lz.seqs.len)
     // Sequence-compression modes byte: LL in bits 7:6, OF in 5:4, ML in 3:2.
     out.push(((llPlan.mode << 6) | (ofPlan.mode << 4) | (mlPlan.mode << 2)) as u8)
     // FSE distribution headers, in the order the decoder reads them: LL, OF, ML.
@@ -1906,10 +1906,10 @@ fn zstdCompress(src: &string): string {
     out.push(0x2f as u8)
     out.push(0xfd as u8)
     out.push(0xa4 as u8)
-    enc32LE(out, src.len)
+    enc32LE(&mut out, src.len)
     if src.len == 0 {
-        encRawBlockHeader(out, 0, true)
-        enc32LE(out, (Xxhash.hash64(src, 0) & 0xffffffff) as i64)
+        encRawBlockHeader(&mut out, 0, true)
+        enc32LE(&mut out, (Xxhash.hash64(src, 0) & 0xffffffff) as i64)
         return out
     }
     let maxBlock: i64 = 131072
@@ -1924,19 +1924,19 @@ fn zstdCompress(src: &string): string {
         let block = slice(src, pos, pos + bsize)
         let comp = compressBlock(block)
         if comp.ok && comp.data.len < bsize {
-            encBlockHeader(out, comp.data.len, 2, last)
+            encBlockHeader(&mut out, comp.data.len, 2, last)
             for i in 0..comp.data.len {
                 out.push(comp.data[i])
             }
         } else {
-            encRawBlockHeader(out, bsize, last)
+            encRawBlockHeader(&mut out, bsize, last)
             for i in 0..bsize {
                 out.push(block[i])
             }
         }
         pos = pos + bsize
     }
-    enc32LE(out, (Xxhash.hash64(src, 0) & 0xffffffff) as i64)
+    enc32LE(&mut out, (Xxhash.hash64(src, 0) & 0xffffffff) as i64)
     return out
 }
 
