@@ -86,8 +86,16 @@ export function isForeignModule(file: string | undefined): boolean {
 // to decide that. `payload` is the inside of an Option/Result reached by `!`/`?`.
 // Why a variable is frozen. The distinction matters at exactly one place — an
 // index-qualified assignment (`v[0] = x`) — which a view survives and an iteration
-// does not. See `freeze` and the Assign case.
-export type BorrowKind = "view" | "iteration";
+// does not. See `freeze` and the Assign case. A `pointer` borrow is a bound `*T` from
+// `v.ptr()` / `s.cstr()` / `h.ptr()`: it survives an index write like a view does, and
+// unlike either it survives a MOVE of its source (the buffer stays where it is; see
+// `tryMoveLeaf`).
+export type BorrowKind = "view" | "iteration" | "pointer";
+
+// The binding that holds a pointer borrow, so the diagnostic can name both ends:
+// `'v' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on
+// line N)`. `null` in `VarInfo.borrowHolders` for every non-pointer borrow.
+export interface PointerHolder { name: string; info: VarInfo; root: string; call: string; line: number }
 
 export type PlaceStep =
   | { tag: "field"; name: string }
@@ -194,6 +202,8 @@ export interface VarInfo {
   // sees the new value); a loop ITERATION does not, because the loop is handing out that
   // element and rewriting it mid-loop is the invalidation the rule exists to stop.
   borrowKinds?: BorrowKind[];
+  // Who holds each borrow in `borrowedPaths`, same order; only a `pointer` borrow has one.
+  borrowHolders?: (PointerHolder | null)[];
   // Bound by a MATCH/if-let pattern rather than by a `let`/`var` declaration. Assignment
   // to one is rejected like any other immutable binding, but the generic advice ("declare
   // with 'var'") names a declaration the reader cannot find: there is no `let` here, and
@@ -1861,7 +1871,7 @@ export class TypeChecker {
     const scope = this.scopes.pop();
     if (scope) {
       for (const [, vi] of scope) {
-        if (vi.freezes) for (const src of vi.freezes) this.unfreeze(src);
+        if (vi.freezes) for (const src of vi.freezes) { this.unfreeze(src); this.releasePointerBorrows(src, vi); }
       }
     }
   }
@@ -1961,10 +1971,11 @@ export class TypeChecker {
 
   // Freeze `info` for a borrow of `place`. The path is recorded so a later mutation of a
   // provably different field isn't rejected; pass null when the borrowed place is unknown.
-  private freeze(info: VarInfo, place: Expr | null, kind: BorrowKind = "view") {
+  private freeze(info: VarInfo, place: Expr | null, kind: BorrowKind = "view", holder: PointerHolder | null = null) {
     info.borrowed = true;
     (info.borrowedPaths ??= []).push(place ? this.borrowPrefix(place) : null);
     (info.borrowKinds ??= []).push(kind);
+    (info.borrowHolders ??= []).push(holder);
   }
 
   // The exact field prefix of a borrowed place, stopping at the first step that is not a
@@ -1985,10 +1996,202 @@ export class TypeChecker {
     return fields;
   }
 
+  // Release the view/iteration/capture borrows of `info`. Every caller is the code that
+  // took one of those and knows it is over (a loop ended, a statement's temporaries
+  // died). A pointer borrow is owned by a BINDING and outlives all of them, so it is
+  // kept here and released only through `releasePointerBorrows` by its holder; otherwise
+  // `let p = v.ptr(); for x in v {}; v.push(0)` would drop `p`'s borrow with the loop's.
   private unfreeze(info: VarInfo) {
-    info.borrowed = false;
-    info.borrowedPaths = undefined;
-    info.borrowKinds = undefined;
+    this.retainBorrows(info, (_, i) => info.borrowKinds?.[i] === "pointer");
+  }
+
+  private releasePointerBorrows(info: VarInfo, holder: VarInfo) {
+    this.retainBorrows(info, (h) => !(h && h.info === holder));
+  }
+
+  private retainBorrows(info: VarInfo, keep: (holder: PointerHolder | null, i: number) => boolean) {
+    const holders = info.borrowHolders ?? [];
+    const idx: number[] = [];
+    for (let i = 0; i < (info.borrowedPaths?.length ?? 0); i++) if (keep(holders[i] ?? null, i)) idx.push(i);
+    if (idx.length === 0) {
+      info.borrowed = false;
+      info.borrowedPaths = undefined;
+      info.borrowKinds = undefined;
+      info.borrowHolders = undefined;
+      return;
+    }
+    info.borrowedPaths = idx.map(i => info.borrowedPaths![i]);
+    info.borrowKinds = idx.map(i => info.borrowKinds![i]);
+    info.borrowHolders = idx.map(i => holders[i] ?? null);
+  }
+
+  // The pointer borrow of `info` that a mutation of `target` would invalidate, if any.
+  // Same collision test as `frozenAgainst`, restricted to the `pointer` kind, so a
+  // mutation site can say WHICH binding still points into the buffer.
+  private pointerBorrowAgainst(info: VarInfo, target: Expr | null): PointerHolder | null {
+    if (!info.borrowed) return null;
+    const holders = info.borrowHolders;
+    if (!holders) return null;
+    const paths = info.borrowedPaths;
+    const mut = target ? this.accessPath(target) : null;
+    const mutFields = mut ? mut.fields : null;
+    for (let i = 0; i < holders.length; i++) {
+      const h = holders[i];
+      if (h && this.borrowCollides(paths?.[i], mutFields)) return h;
+    }
+    return null;
+  }
+
+  // Whether a borrow of field prefix `p` and a mutation of field prefix `mutFields` can
+  // alias: two chains off one root diverge only at a named field, and an unknown path on
+  // either side (an index or deref step, or a place with no single root) is a collision.
+  private borrowCollides(p: string[] | null | undefined, mutFields: string[] | null): boolean {
+    if (p === null || p === undefined || mutFields === null) return true;
+    const n = Math.min(p.length, mutFields.length);
+    for (let j = 0; j < n; j++) if (p[j] !== mutFields[j]) return false;
+    return true;
+  }
+
+  // Whether every live borrow of `info` is a pointer borrow. A move of such a source is
+  // allowed (see `tryMoveLeaf`), where any other borrow kind forbids it.
+  private onlyPointerBorrows(info: VarInfo): boolean {
+    const kinds = info.borrowKinds;
+    return !!info.borrowed && !!kinds && kinds.length > 0 && kinds.every(k => k === "pointer");
+  }
+
+  // The `*T`-producing calls whose result is an element view of the receiver, reached
+  // through the casts and struct literals a binding's initializer may wrap them in.
+  // `let base = s.cstr() as i64` still points into `s`; `let c = Cfg { buf: v.ptr() }`
+  // holds the pointer for as long as `c` does. Anything else (a call result, an
+  // arithmetic value, a bare pointer variable) carries no provenance this can see.
+  private pointerViewsIn(e: Expr, out: { source: Expr; call: string; line: number }[] = []): { source: Expr; call: string; line: number }[] {
+    switch (e.kind) {
+      case "CastExpr":
+        return this.pointerViewsIn(e.operand, out);
+      case "StructLit":
+        for (const f of e.fields) this.pointerViewsIn(f.value, out);
+        return out;
+      case "MethodCall": {
+        if (e.args.length !== 0) return out;
+        const t = this.exprTypes.get(e);
+        if (!t || t.tag !== "ptr") return out;
+        const recv = this.exprTypes.get(e.object);
+        const bare = recv?.tag === "ref" ? recv.inner : recv;
+        // A user `ptr` on T wins over the `Heap<T>` give leg (heapPtrUserMethodWins.milo);
+        // `heapMethodReceivers` is the record of that dispatch.
+        const isView = (e.method === "ptr" && (bare?.tag === "vec" || (bare?.tag === "heap" && !this.heapMethodReceivers.has(e))))
+          || (e.method === "cstr" && bare?.tag === "string")
+          // `CStr.ptr()` (std/cstr.milo) returns its own backing pointer; same hazard.
+          || (e.method === "ptr" && bare?.tag === "struct" && bare.name === "CStr");
+        if (isView) out.push({ source: e.object, call: `${this.describeExpr(e.object)}.${e.method}()`, line: e.span?.line ?? 0 });
+        return out;
+      }
+      default:
+        return out;
+    }
+  }
+
+  // Bind the pointer views in `value` to the binding `name`: each source is frozen with
+  // a `pointer` borrow until `name`'s scope pops (the same lexical release a `&[T]`
+  // binding gets through `freezes`). Only a BINDING creates the borrow: an inline
+  // `strlen(v.ptr())` has nothing that could outlive the statement, so it stays legal.
+  private bindPointerViews(name: string, holderInfo: VarInfo, value: Expr): void {
+    for (const pv of this.pointerViewsIn(value)) {
+      const ap = this.accessPath(pv.source);
+      if (!ap) continue;
+      const src = this.lookup(ap.root);
+      if (!src || src === holderInfo) continue;
+      this.freeze(src, pv.source, "pointer", { name, info: holderInfo, root: ap.root, call: pv.call, line: pv.line });
+      (holderInfo.freezes ??= []).push(src);
+    }
+  }
+
+  // The scope index a binding lives in, or -1 when it is not in scope (a global is 0).
+  private scopeIndexOf(info: VarInfo): number {
+    for (let i = this.scopes.length - 1; i >= 0; i--) for (const [, vi] of this.scopes[i]) if (vi === info) return i;
+    return -1;
+  }
+
+  // Storage this frame owns and frees on exit: a local or by-value param. A `&T` param
+  // and a global outlive the call, so a pointer into them is the caller's business.
+  private frameOwned(info: VarInfo): boolean {
+    return info.type.tag !== "ref" && this.scopeIndexOf(info) >= this.fnScopeFloor;
+  }
+
+  // `p = v.ptr()` where `v` was declared in an inner block: `v` is freed when that
+  // block ends and `p` is still in scope. The `let` form cannot hit this (the binding is
+  // never older than its initializer's sources), so only assignment checks it.
+  private errorIfPointerOutlivesSource(name: string, holder: VarInfo, value: Expr, sp?: Span): void {
+    const holderDepth = this.scopeIndexOf(holder);
+    for (const pv of this.pointerViewsIn(value)) {
+      const ap = this.accessPath(pv.source);
+      const src = ap ? this.lookup(ap.root) : null;
+      if (!src || src.type.tag === "ref") continue;
+      if (this.scopeIndexOf(src) > holderDepth) {
+        this.error(`'${ap!.root}' goes out of scope before '${name}', which would still point into its buffer (from '${pv.call}' on line ${pv.line})`, sp,
+          `declare '${ap!.root}' in the same block as '${name}' or an enclosing one`);
+        return;
+      }
+    }
+  }
+
+  // `return v.ptr()` (or a struct carrying it, or a binding still holding it) where `v`
+  // dies with this frame hands the caller a pointer into freed memory. A `&T` param, a
+  // global, or a source that was moved on (`forget(v)` / `store.push(v)`) is fine: the
+  // buffer outlives the call. The same rule `errorIfRefReturn` states for `&T`.
+  private errorIfReturnedPointerDangles(value: Expr, sp?: Span): void {
+    for (const pv of this.pointerViewsIn(value)) {
+      const ap = this.accessPath(pv.source);
+      const src = ap ? this.lookup(ap.root) : null;
+      if (src && this.frameOwned(src)) {
+        this.error(`cannot return '${pv.call}': '${ap!.root}' is freed when this function returns, so the pointer would dangle`, sp,
+          `return the ${typeName(src.type)} itself, or 'forget' it first if the caller takes ownership of the buffer`);
+        return;
+      }
+    }
+    if (value.kind === "Ident") {
+      const holder = this.lookup(value.name);
+      for (const src of holder?.freezes ?? []) {
+        const ph = src.borrowHolders?.find(h => h?.info === holder);
+        if (ph && src.borrowed && this.frameOwned(src)) {
+          this.error(`cannot return '${value.name}': '${ph.root}' is freed when this function returns, so the pointer would dangle (from '${ph.call}' on line ${ph.line})`, sp,
+            `return the buffer itself, or 'forget' it first if the caller takes ownership of it`);
+          return;
+        }
+      }
+    }
+  }
+
+  private pointerHint(h: PointerHolder): string {
+    return `take the pointer after the last mutation, or pass '${h.call}' inline to the call`;
+  }
+
+  // A move keeps the heap buffer where it is, so a pointer borrow of the source is not
+  // invalidated by `let w = v`, but its obligation now belongs to `w`. Snapshot the
+  // pointer borrows a whole-variable initializer carries BEFORE `tryMove` releases them
+  // from the source; `carryPointerBorrows` re-attaches them to the new binding.
+  private pointerBorrowsCarriedBy(value: Expr): { from: VarInfo; paths: (string[] | null)[]; holders: PointerHolder[] } | null {
+    if (value.kind !== "Ident") return null;
+    const info = this.lookup(value.name);
+    if (!info || !this.onlyPointerBorrows(info) || !info.borrowHolders || !info.borrowedPaths) return null;
+    const holders: PointerHolder[] = [];
+    const paths: (string[] | null)[] = [];
+    info.borrowHolders.forEach((h, i) => { if (h) { holders.push(h); paths.push(info.borrowedPaths![i]); } });
+    return holders.length > 0 ? { from: info, paths, holders } : null;
+  }
+
+  private carryPointerBorrows(carried: { from: VarInfo; paths: (string[] | null)[]; holders: PointerHolder[] }, toName: string): void {
+    const to = this.lookup(toName);
+    // Only a binding that actually took ownership carries the borrow: a Copy source is
+    // still the owner, `tryMoveLeaf` left its borrows in place, and there is nothing to carry.
+    if (!to || !carried.from.moved) return;
+    carried.holders.forEach((h, i) => {
+      to.borrowed = true;
+      (to.borrowedPaths ??= []).push(carried.paths[i]);
+      (to.borrowKinds ??= []).push("pointer");
+      (to.borrowHolders ??= []).push(h);
+      (h.info.freezes ??= []).push(to);
+    });
   }
 
   // Whether a mutation of `target` collides with a live borrow of `info`. Two chains off
@@ -2004,14 +2207,7 @@ export class TypeChecker {
     const paths = info.borrowedPaths;
     const mut = target ? this.accessPath(target) : null;
     const mutFields = mut ? mut.fields : null;
-    return kinds.some((k, i) => {
-      if (k !== "iteration") return false;
-      const p = paths?.[i];
-      if (p === null || p === undefined || mutFields === null) return true;
-      const n = Math.min(p.length, mutFields.length);
-      for (let j = 0; j < n; j++) if (p[j] !== mutFields[j]) return false;
-      return true;
-    });
+    return kinds.some((k, i) => k === "iteration" && this.borrowCollides(paths?.[i], mutFields));
   }
 
   private frozenAgainst(info: VarInfo, target: Expr | null): boolean {
@@ -2020,13 +2216,7 @@ export class TypeChecker {
     if (!paths || paths.length === 0) return true;
     const mut = target ? this.accessPath(target) : null;
     const mutFields = mut ? mut.fields : null;
-    if (mutFields === null) return true;
-    return paths.some(p => {
-      if (p === null) return true;
-      const n = Math.min(p.length, mutFields.length);
-      for (let i = 0; i < n; i++) if (p[i] !== mutFields[i]) return false;
-      return true;
-    });
+    return paths.some(p => this.borrowCollides(p, mutFields));
   }
 
   private lookup(name: string): VarInfo | null {
@@ -5679,6 +5869,8 @@ export class TypeChecker {
         }
         if (bindingType.tag !== "ref") for (const vi of newlyFrozen) this.unfreeze(vi);
         this.declare(stmt.name, { type: bindingType, mutable: false, moved: false, borrowed: false, read: false, span: sp, ...(stmt.value && this.onceClosures.has(stmt.value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
+        const letInfo = this.lookup(stmt.name);
+        if (letInfo) this.bindPointerViews(stmt.name, letInfo, stmt.value);
         // An unannotated `let x = <const-int-value>` stays width-adaptable until
         // its first use (see VarInfo.flexInt): its default i32 can widen to an
         // i64 (etc.) context without an `as` cast, since the value is literals.
@@ -5691,7 +5883,9 @@ export class TypeChecker {
         }
         if (bindingType.tag === "array") this.lintStackArray(stmt.name, bindingType, sp);
         this.lintIndexClone(stmt.value, bindingType, sp);
+        const letCarried = this.pointerBorrowsCarriedBy(stmt.value);
         this.tryMove(stmt.value);
+        if (letCarried) this.carryPointerBorrows(letCarried, stmt.name);
         break;
       }
       case "VarDecl": {
@@ -5741,10 +5935,14 @@ export class TypeChecker {
           }
           if (bindingType.tag !== "ref") for (const vi of newlyFrozen) this.unfreeze(vi);
           this.declare(stmt.name, { type: bindingType, mutable: true, moved: false, borrowed: false, read: false, span: sp, ...(stmt.value && this.onceClosures.has(stmt.value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
+          const varInfo = this.lookup(stmt.name);
+          if (varInfo) this.bindPointerViews(stmt.name, varInfo, stmt.value);
           if (bindingType.tag === "array") this.lintStackArray(stmt.name, bindingType, sp);
           this.lintIndexClone(stmt.value, bindingType, sp);
         }
+        const varCarried = this.pointerBorrowsCarriedBy(stmt.value);
         this.tryMove(stmt.value);
+        if (varCarried) this.carryPointerBorrows(varCarried, stmt.name);
         break;
       }
       case "Assign": {
@@ -5788,6 +5986,16 @@ export class TypeChecker {
         // `v.push(x)` was rejected inside the loop and `v[0] = x` was not.
         const indexQualified = assignPath ? assignPath.steps.some((s) => s === "[]" || s === "*") : false;
         const assignInfo = assignPath ? this.lookup(assignPath.root) : null;
+        // An element write never moves the buffer, so a slice view survives it; a bound
+        // pointer does not get that exemption. The pointer's user may be another thread
+        // (tests/fixtures/bandParallelBuffer.milo writes through it from workers), and a
+        // write through the owner at the same time is the race the view rule exists to stop.
+        const indexPh = assignPath && indexQualified && assignInfo ? this.pointerBorrowAgainst(assignInfo, stmt.target) : null;
+        if (indexPh) {
+          this.error(`'${assignPath!.root}' is written here while '${indexPh.name}' still points into its buffer (from '${indexPh.call}' on line ${indexPh.line})`, sp,
+            `write through '${indexPh.name}' instead, or take the pointer after the last write`);
+          break;
+        }
         if (assignPath && indexQualified && assignInfo && this.frozenByIteration(assignInfo, stmt.target)) {
           this.error(`cannot assign to '${this.describeExpr(stmt.target)}' because '${assignPath.root}' is being iterated`, sp,
             `the loop hands out this element — finish the loop, or collect the writes and apply them after it`);
@@ -5796,6 +6004,12 @@ export class TypeChecker {
         if (assignPath && !indexQualified) {
           const info = this.lookup(assignPath.root);
           const isCapturedMutation = this.closureScopeDepth !== null && this.currentClosureCaptures?.has(assignPath.root);
+          const ph = info && !isCapturedMutation ? this.pointerBorrowAgainst(info, stmt.target) : null;
+          if (ph) {
+            this.error(`'${this.describeExpr(stmt.target)}' is reassigned here while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
+              this.pointerHint(ph));
+            break;
+          }
           if (info && !isCapturedMutation && this.frozenAgainst(info, stmt.target)) {
             const place = this.describeExpr(stmt.target);
             const why = place === assignPath.root ? "it is borrowed" : `'${assignPath.root}' is borrowed`;
@@ -5828,7 +6042,15 @@ export class TypeChecker {
         // ident-ok: assigning a whole variable revives it, and a field assignment deliberately must not revive the whole
         if (stmt.target.kind === "Ident") {
           const info = this.lookup(stmt.target.name);
-          if (info) info.moved = false;
+          if (info) {
+            info.moved = false;
+            // `p = w.ptr()` overwrites whatever `p` pointed at, so the borrows the old
+            // value held end here; the new ones are bound below. A `var` can never hold a
+            // reference, so every freeze on it is a pointer borrow.
+            if (info.freezes) { for (const src of info.freezes) this.releasePointerBorrows(src, info); info.freezes = undefined; }
+            this.errorIfPointerOutlivesSource(stmt.target.name, info, stmt.value, sp);
+            this.bindPointerViews(stmt.target.name, info, stmt.value);
+          }
         }
         this.tryMove(stmt.value);
         break;
@@ -5854,6 +6076,7 @@ export class TypeChecker {
           // see checkEscapingClosures for why the promotion that used to live here was
           // itself unsound.
           if (this.isViewReturn(fnRetType)) this.checkViewProvenance(stmt.value, sp);
+          this.errorIfReturnedPointerDangles(stmt.value, sp);
           // A `return v[i]` allocates exactly like `let m = v[i]` does, and was invisible
           // even with the lint on: the check only ran at a binding. `return b.v[0]` on a
           // borrowed struct is the shape docs/backlog.md #7 is about — the field spelling
@@ -6768,6 +6991,13 @@ export class TypeChecker {
         return;
       }
       if (info && !isCopy(info.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+        // A pointer borrow survives the move. Moving a Vec/string/Heap copies its header,
+        // not its heap buffer, so `let p = v.ptr(); forget(v)` and `store.push(v)` (the
+        // FFI give leg, 8 of the 15 bound sites in std+examples) leave `p` valid; the
+        // buffer's fate is now the new owner's, exactly as for any pointer handed to C.
+        // The borrow is released here rather than left on a dead binding so a later
+        // revive (`v = Vec.new()`) is not mistaken for a reassignment under `p`.
+        if (info.borrowed && this.onlyPointerBorrows(info)) this.retainBorrows(info, () => false);
         if (info.borrowed) {
           // `borrowed` covers closure capture *and* a live slice/view/iteration borrow —
           // naming only closures misdiagnosed `let s = b.view(); consume(b)`.
@@ -7519,7 +7749,14 @@ export class TypeChecker {
     for (const place of this.placesOf(obj)) {
       if (place.tag !== "path") continue;
       const info = this.lookup(place.root);
-      if (info && this.frozenAgainst(info, obj)) {
+      if (!info) continue;
+      const ph = this.pointerBorrowAgainst(info, obj);
+      if (ph) {
+        this.error(`'${this.describeExpr(obj)}' may reallocate here while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
+          this.pointerHint(ph));
+        return;
+      }
+      if (this.frozenAgainst(info, obj)) {
         this.error(`cannot ${action} '${place.root}' because it is borrowed`, sp,
           `a slice or loop iteration over this variable is still live — mutating it could move memory the borrow points into`);
         return;

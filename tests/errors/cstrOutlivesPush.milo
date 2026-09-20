@@ -1,0 +1,16 @@
+// @error: 's' may reallocate here while 'p' still points into its buffer (from 's.cstr()' on line 9)
+from "std/os" import {
+    strlen
+}
+
+pub fn main(): i32 {
+    var s = "hello".clone()
+    var i = 0
+    let p = s.cstr()
+    while i < 100000 {
+        s.push(65 as u8)
+        i = i + 1
+    }
+    print(strlen(p))
+    return 0
+}

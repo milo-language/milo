@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: testing
 purpose: how to write/run tests, what to avoid, and an index of every test file and what it covers
-key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh
+key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/*.test.ts, tools/wasm/float-diff.sh
 update-when: a test file or out-of-band harness is added/removed/repurposed, or the fixture protocol changes
-last-verified: 2026-09-19 (known-red list added for the soundness-sweep reproducers)
+last-verified: 2026-08-15 (toml moved to the milo-toml package; its oracle went with it)
 -->
 
 # Testing
@@ -70,7 +70,7 @@ while the driver can still run them by explicit path.
 - `tests/fixtures/*.milo` — **compiled + executed.** stdout must match the `// @expect: <line>` annotations, one per expected output line.
 - `tests/errors/*.milo` — **must fail type-check.** Error output must contain the `// @error: <substring>` annotation.
 
-Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->691<!-- /stat --> fixtures, <!-- stat:error-fixtures -->337<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->30<!-- /stat --> runtime-error cases.)
+Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->692<!-- /stat --> fixtures, <!-- stat:error-fixtures -->346<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->30<!-- /stat --> runtime-error cases.)
 
 **One caveat to "that's it", and it costs a red CI run every time it is forgotten.** A new fixture
 also enters the JS backend's conformance corpus, and that gate does NOT run locally by default, so
@@ -87,17 +87,6 @@ The baseline may shrink but never grow on its own: an entry is a claim that this
 the supported subset, not a way to silence a real mismatch.
 
 There's also `tests/runtime-errors/` for programs that compile but must fail at runtime.
-
-**Known-red fixtures.** `tests/known-red.txt` lists fixtures that reproduce an *open*
-soundness hole (today: the three `hole*` reproducers from
-[plans/soundness-sweep-2026-09.md](plans/soundness-sweep-2026-09.md)). The driver skips
-their `@expect` comparison, registers each as a skip that names the reason, and prints
-`known-red: N fixtures skipped (tests/known-red.txt)`. Nothing else honours the list:
-`bun run test:asan` (`scripts/asan-sweep.ts --all`, also the CI step) still builds and runs
-them under AddressSanitizer, labels the report line `known-red`, and exits 1, which is where
-the hole stays visible. `scripts/gen-spec.ts` leaves them out of `docs/spec.md`, since a
-listed program is one the language must eventually reject. Each entry names the work package
-that closes it; delete the entry in that change (a stale entry throws in the driver).
 
 ## Examples as smoke tests
 `bun run scripts/run-examples.ts` compiles **every** example entrypoint (`examples/**/*.milo` with a `fn main`) — a hard gate — and runs the ones that opt in:

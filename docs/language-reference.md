@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-19 (@parks and the cross-task freeze rule added to Thread boundaries; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-19 (@parks cross-task freeze rule; raw pointers from ptr()/cstr() are element views; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -2567,7 +2567,9 @@ never applies to an `extern fn`, whose unsafety is already decided by its signat
 
 ### string.cstr()
 
-Returns the string's `*u8` data pointer without `unsafe`. The string remains alive in the caller's scope, so the pointer is valid.
+Returns the string's `*u8` data pointer without `unsafe`. The pointer is valid because the
+string is alive and its buffer has not moved; the checker enforces both while the pointer is
+bound to a name (see [element views](#raw-pointers-are-element-views) below).
 
 ```milo
 let msg = "hello"
@@ -2583,7 +2585,8 @@ parameter), never in an expression. To take a raw pointer, use a method, split b
 what it points at:
 
 - **`v.ptr(): *T`** — a `Vec`'s backing data pointer (its first element). Safe to
-  call (like `string.cstr()`); the `Vec` stays alive in the caller.
+  call (like `string.cstr()`); while a binding holds the result the `Vec` may not
+  reallocate (see below).
   ```milo
   var buf: Vec<u8> = [72, 73, 10]
   extern fn write(fd: i32, p: *u8, n: i64): i64
@@ -2617,6 +2620,39 @@ For a `Vec`, `v.ptr()` is the data buffer's address; `v.addrOf()` is the `Vec`
 header's address. The same split holds for a `Heap<T>`: `h.ptr()` is the box,
 `h.addrOf()` is the slot that points at it. A fixed array `[T; N]` coerces to `*T` at an FFI call — pass it
 bare. A pointer to an absolute address is `<int> as *T` (in `unsafe`).
+
+### Raw pointers are element views
+
+A `*T` from `v.ptr()`, `s.cstr()`, `h.ptr()` or `CStr.ptr()` that is **bound to a name**
+(`let`/`var`, an assignment, or a struct literal the binding holds) is an element view of
+its source, checked the same way a slice binding is. While the binding is in scope its
+source may not reallocate, be reassigned, or be written through the owner:
+
+- no `&mut self` method on it: `push`, `pop`, `clear`, `insert`, `remove`, `pushStr`, or a
+  user method taking `self: &mut Self`;
+- not passed to a `&mut` parameter;
+- not reassigned (`v = Vec.new()`), and not indexed into (`v[0] = x`);
+- not returned as a pointer into a local that dies with the function.
+
+A cast forwards the view: `let base = s.cstr() as i64` still points into `s`. Reading the
+source is always fine. The binding's scope is the lexical block it is declared in, the
+same release a `&[T]` binding gets, so a pointer taken in an inner block frees its source
+when the block ends.
+
+```milo error
+var v: Vec<u8> = Vec.new()
+v.push(0)
+let p = v.ptr()
+v.push(1)                          // error: 'v' may reallocate here while 'p' still points into its buffer
+```
+
+Two things the rule leaves alone, on purpose. An **inline** argument has no binding and
+nothing that could outlive the call, so `strlen(v.ptr())` needs no ceremony. A **move** of
+the source keeps its heap buffer where it is: `let p = v.ptr(); forget(v)` and
+`let p = v.ptr(); store.push(v)` are the FFI give leg, and both compile. The pointer's
+validity is then the new owner's business, exactly as for any pointer handed to C; when the
+new owner is a local binding (`let w = v`) the view follows it, so `w.push(0)` is still
+rejected.
 
 ### Opaque Foreign Types
 
