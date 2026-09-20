@@ -1,0 +1,7 @@
+// A method receiver borrows implicitly; `&mut` goes on non-receiver arguments only.
+// @error: '&mut' is implicit on a method receiver; write 'v.push(1)'
+fn main(): i32 {
+    var v: Vec<i64> = []
+    (&mut v).push(1)
+    return v.len() as i32
+}

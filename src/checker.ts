@@ -7551,6 +7551,8 @@ export class TypeChecker {
 
   private describeExpr(expr: Expr): string {
     if (expr.kind === "Ident") return expr.name;
+    if (expr.kind === "IntLit") return expr.value.toString();
+    if (expr.kind === "UnaryOp" && expr.op === "*") return `*${this.describeExpr(expr.operand)}`;
     if (expr.kind === "FieldAccess") return `${this.describeExpr(expr.object)}.${expr.field}`;
     if (expr.kind === "IndexAccess") return `${this.describeExpr(expr.object)}[...]`;
     return "<expr>";
@@ -9448,6 +9450,13 @@ export class TypeChecker {
 
   private checkMethodCallExpr(expr: ExprOf<"MethodCall">): TypeKind {
     const sp = expr.span;
+    if (expr.object.kind === "UnaryOp" && expr.object.op === "&mut") {
+      // Receivers borrow implicitly (decision 1 in docs/plans/local-reasoning-2026-09.md).
+      // Stripped so the call is still checked as written and one error is reported.
+      const inner = this.describeExpr(expr.object.operand);
+      this.error(`'&mut' is implicit on a method receiver; write '${inner}.${expr.method}(${expr.args.map(a => this.describeExpr(a)).join(", ")})'`, expr.object.span);
+      expr.object = expr.object.operand;
+    }
     const rawObjType = this.checkExpr(expr.object);
     // auto-deref `&T` for method dispatch (mutating methods still need !isRootMutable to allow)
     const objTypeRaw = rawObjType.tag === "ref" ? rawObjType.inner : rawObjType;
