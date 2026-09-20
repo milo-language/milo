@@ -3,7 +3,7 @@ system: tooling-api
 purpose: the compiler's machine-readable surfaces — what tooling reads instead of importing TypeScript
 key-files: src/api-search.ts, src/lang-info.ts, src/warnings.ts, src/main.ts (runCheck), tests/apiJson.test.ts, tests/langInfo.test.ts
 update-when: a JSON payload gains or loses a field, or a new machine-readable command lands
-last-verified: 2026-08-15
+last-verified: 2026-09-19
 -->
 
 # Machine-readable compiler API
@@ -154,7 +154,7 @@ broken suite look green. In `--json` mode nothing but the document reaches stdou
 | CI dashboards, flake trackers | `test --json` | the ✓/✗ log lines were never a contract |
 | certification workflows | `prove --json`, `safety --json` | a proof verdict per obligation is the artifact, not a table |
 
-Two things still import the compiler on purpose:
+Three things still import the compiler on purpose:
 
 - **The fuzzers** (`scripts/fuzz-*.ts`) drive `Lexer`/`Parser`/`TypeChecker` in-process
   because they run millions of mutants; a subprocess per mutant is a thousand times
@@ -163,3 +163,5 @@ Two things still import the compiler on purpose:
   renderer into a script would give the repo two markdown renderers to keep in step, which
   is the drift this whole document exists to prevent. `milo api --module <m> --markdown`
   and `milo doc <file|dir> -o <dir>` are the public equivalents.
+- **`scripts/playground/compiler.ts`** is bundled into a browser page, and a browser
+  bundle cannot spawn a `milo` subprocess; the compiler itself has to be in the bundle.

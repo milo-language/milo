@@ -52,9 +52,9 @@ export const EXPECTED: Record<string, Expected> = {
   // The `impl Crypto` namespace wrappers restate the AES key/iv/tag-length `requires` of
   // the private free fns they forward to, so each wrapper's call into the free fn proves
   // its precondition at the wrapper's own call site (10 = 2 aesGcm + 2 aesGcm128 wrappers'
-  // encrypt/decrypt obligations across the length checks).
-  "std/crypto.darwin.milo": { proven: 10, unknown: 0, errors: 0 },
-  "std/crypto.windows.milo": { proven: 10, unknown: 0, errors: 0 },
+  // encrypt/decrypt obligations across the length checks). The platform arms
+  // (std/cryptosys.*) carry no contracts; the facade holds them once for every platform.
+  "std/crypto.milo": { proven: 10, unknown: 0, errors: 0 },
   // `fixed` was refuted here until `construct` grew frame conditions (`ensures h.count.len
   // == old(h.count.len)`); the +6 proven is that baseline retiring.
   "std/inflate.milo": { proven: 31, unknown: 44, errors: 0 },

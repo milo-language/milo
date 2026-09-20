@@ -62,7 +62,7 @@ const TRACKED = ["CLAUDE.md", "AGENTS.md", "README.md", "docs/testing.md", "docs
 const MARKER = /<!-- stat:([a-z-]+) -->(.*?)<!-- \/stat -->/g;
 
 function rewrite(text: string, file: string): string {
-  return text.replace(MARKER, (_m, name: string, old: string) => {
+  return text.replace(MARKER, (_m, name: string) => {
     const fn = STATS[name];
     if (!fn) throw new Error(`${file}: unknown stat '${name}' — add it to STATS in scripts/gen-stats.ts`);
     return `<!-- stat:${name} -->${fn()}<!-- /stat -->`;

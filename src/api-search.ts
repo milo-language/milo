@@ -8,7 +8,6 @@
 // visibility) once it earns its keep; the CLI surface stays identical.
 
 import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSync } from "fs";
-import { fileURLToPath } from "url";
 import { resolve, dirname, relative, join } from "path";
 import { STDLIB_DIR, readStd, bundledStdPaths } from "./stdlibBundle";
 import { must } from "./must";
@@ -223,7 +222,7 @@ export function stdDocsByModule(): Map<string, string> {
 
 // Same rendering as the std reference, over any directory (or a single .milo file).
 // Keyed by module path relative to `root`, so callers can write <out>/<module>.md.
-export function docsByModuleForPath(target: string): Map<string, string> {
+function docsByModuleForPath(target: string): Map<string, string> {
   const isFile = statSync(target).isFile();
   const root = isFile ? dirname(resolve(target)) : resolve(target);
   const files: string[] = [];
@@ -355,7 +354,7 @@ export function runMiloDoc(args: string[]): number {
 // `schema` on a breaking change; tests/apiJson.test.ts pins the shape.
 export const API_JSON_SCHEMA = 1;
 
-export function apiJson(entries: Entry[]): string {
+function apiJson(entries: Entry[]): string {
   const out = {
     schema: API_JSON_SCHEMA,
     entries: [...entries]

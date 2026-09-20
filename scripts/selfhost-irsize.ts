@@ -26,7 +26,7 @@
 //
 // A codegen refactor that legitimately changes the shape of emitted IR should rebaseline
 // with --write rather than have this fail. It is a drift detector, not a budget.
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { guardedRun } from "./guard";
 

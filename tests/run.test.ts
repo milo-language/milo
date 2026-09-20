@@ -1,8 +1,8 @@
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { poolTimeoutMs, poolMarginWarning } from "./pool-budget";
-import { readdirSync, readFileSync, unlinkSync, existsSync, mkdtempSync, rmSync, statSync } from "fs";
+import { readdirSync, readFileSync, unlinkSync, existsSync, mkdtempSync, rmSync } from "fs";
 import { execSync, spawnSync } from "child_process";
-import { tmpdir, devNull, homedir } from "os";
+import { tmpdir, devNull } from "os";
 import { join } from "path";
 import { parseExpected, parseExpectedError, parseExpectedRuntimeError, parseKnownRed } from "./annotations";
 import { guardedRun, type RunResult } from "../scripts/guard";

@@ -36,7 +36,7 @@ function normalizeSignature(sig: string): string {
     .trim();
 }
 
-export interface SurfaceEntry { sig: string; isExtern: boolean }
+interface SurfaceEntry { sig: string; isExtern: boolean }
 export interface Surface { [qualifiedName: string]: SurfaceEntry }
 
 function surfaceFrom(files: Map<string, string>): Surface {

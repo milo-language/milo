@@ -9,7 +9,7 @@
 // distinguishes the two, so it is what this test asserts.
 import { test, expect } from "bun:test";
 import { execSync } from "child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 

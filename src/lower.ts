@@ -3,7 +3,7 @@
 
 import type { Program, Function as AstFn, Stmt, Expr, Pattern } from "./ast";
 import { declaredType, floatNamespaceConst } from "./ast";
-import type { CheckResult, FnSig, EnumInfo } from "./checker";
+import type { CheckResult, EnumInfo } from "./checker";
 import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, isForeignModule } from "./checker";
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal, HIRContract } from "./hir";
 import type { TypeKind } from "./types";
@@ -827,7 +827,7 @@ class LowerCtx {
         }
         const funcName = this.c.rewrittenCalls.get(expr) ?? expr.func;
         const sig = this.c.functions.get(funcName);
-        const args: HIRArg[] = expr.args.map((arg, i) => {
+        const args: HIRArg[] = expr.args.map((arg) => {
           const borrowed = this.c.autoBorrowed.get(arg);
           return {
             expr: this.lowerExpr(arg),
@@ -907,7 +907,7 @@ class LowerCtx {
         const rewrittenCall = this.c.rewrittenCalls.get(expr as any);
         if (rewrittenCall) {
           const sig = this.c.functions.get(rewrittenCall);
-          const args: HIRArg[] = expr.args.map((arg, i) => {
+          const args: HIRArg[] = expr.args.map((arg) => {
             const borrowed = this.c.autoBorrowed.get(arg);
             return {
               expr: this.lowerExpr(arg),
@@ -920,7 +920,7 @@ class LowerCtx {
         const staticMangled = this.c.staticCalls.get(expr);
         if (staticMangled) {
           const sig = this.c.functions.get(staticMangled);
-          const args: HIRArg[] = expr.args.map((arg, i) => {
+          const args: HIRArg[] = expr.args.map((arg) => {
             const borrowed = this.c.autoBorrowed.get(arg);
             return {
               expr: this.lowerExpr(arg),
@@ -1390,7 +1390,7 @@ class LowerCtx {
         // user-defined method (trait or inherent)
         const resolved = this.c.resolvedMethods.get(expr);
         if (resolved) {
-          const sig = must(this.c.functions, resolved, "functions");
+          must(this.c.functions, resolved, "functions"); // asserts the resolved method has a signature before lowering its call
           const heapRecv = this.c.heapMethodReceivers.has(expr);
           const allExprs = [expr.object, ...expr.args];
           const args: HIRArg[] = allExprs.map((a, i) => {
@@ -1444,9 +1444,7 @@ class LowerCtx {
             field: expr.method,
             type: { tag: "fn" as const, params: [], ret: type },
           };
-          const fnType = this.typeOf(expr);
-          const objFnType = this.c.exprTypes.get(expr);
-          const args: HIRArg[] = expr.args.map((a, i) => {
+          const args: HIRArg[] = expr.args.map((a) => {
             const borrowed = this.c.autoBorrowed.get(a);
             return { expr: this.lowerExpr(a), passByRef: !!borrowed, refMut: borrowed?.mutable ?? false };
           });

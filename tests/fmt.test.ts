@@ -7,7 +7,7 @@
 // (idempotence — the property that catches "fix moves the mangling around").
 import { test, expect, beforeAll } from "bun:test";
 import { execFileSync } from "child_process";
-import { writeFileSync, mkdtempSync, rmSync } from "fs";
+import { writeFileSync, mkdtempSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 

@@ -40,7 +40,7 @@ const FIXTURES_DIR = join(ROOT, "tests", "fixtures");
 const KNOWN_RED_FILE = join(ROOT, "tests", "known-red.txt");
 const OUT = join(ROOT, "docs", "spec.md");
 
-export interface Requirement {
+interface Requirement {
   id: string;
   kind: "reject" | "behaviour";
   file: string;          // repo-relative path of the program

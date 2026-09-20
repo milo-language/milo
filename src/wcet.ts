@@ -15,7 +15,7 @@
 
 import type { Program, Stmt, Expr } from "./ast";
 
-export interface LoopBound {
+interface LoopBound {
   fn: string;
   line: number;
   kind: "exact" | "max" | "unresolved";
@@ -23,7 +23,7 @@ export interface LoopBound {
   note: string;             // human-readable basis for the bound
 }
 
-export interface FlowFactResult {
+interface FlowFactResult {
   file: string;
   bounds: LoopBound[];
 }

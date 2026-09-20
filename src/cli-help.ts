@@ -11,7 +11,7 @@
 // the banner is one document, and the test checks the two agree.
 
 import { OFF_BY_DEFAULT } from "./warnings";
-export interface CliCommand {
+interface CliCommand {
   /** The dispatch token, e.g. "emit-ir". */
   name: string;
   /** Full left column of the banner, e.g. "build <file> [-o out]". */
@@ -99,7 +99,7 @@ export const PACKAGE_COMMANDS: CliCommand[] = [
   },
 ];
 
-export interface CliOption {
+interface CliOption {
   /** The flag as written, e.g. "--target=<name>". Its name for matching is the leading `--word`. */
   flag: string;
   help: string[];

@@ -5,7 +5,6 @@ import { Lexer } from "../../src/lexer";
 import { Parser } from "../../src/parser";
 import { TypeChecker } from "../../src/checker";
 import type { Program } from "../../src/ast";
-import type { TargetInfo } from "../../src/target";
 import { lower } from "../../src/lower";
 import { CodegenJS, JS_RUNTIME_HELPERS } from "../../src/codegen-js";
 import { formatDiagnostic } from "../../src/diagnostics";

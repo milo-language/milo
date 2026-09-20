@@ -12,9 +12,9 @@
 // `targets` is what the attribute may be written on; the checker derives its per-target
 // checks from this rather than restating them. Adding an entry here is what makes an
 // attribute known, documented in `milo lang --json`, and legal on its targets.
-export type AttrTarget = "fn" | "method" | "struct" | "extern";
+type AttrTarget = "fn" | "method" | "struct" | "extern";
 
-export interface AttrInfo {
+interface AttrInfo {
   name: string;
   targets: AttrTarget[];
   /** One line, for `milo lang --json` and editor hovers. */

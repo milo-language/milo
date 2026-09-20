@@ -16,7 +16,7 @@
 // Leak detection is OFF here on purpose: LeakSanitizer does not exist on darwin/arm64, and
 // leaks are already ratcheted by scripts/leak-check.ts. This is for the errors ASan finds
 // that a leak checker structurally cannot.
-import { readdirSync, readFileSync, mkdtempSync, rmSync, existsSync, statSync } from "fs";
+import { readdirSync, readFileSync, mkdtempSync, rmSync, existsSync } from "fs";
 import { execFileSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";

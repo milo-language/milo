@@ -37,7 +37,7 @@ const SRC_DIR = resolve(ROOT, "src");
 // the checkout's).
 const COMPILED = !existsSync(join(SRC_DIR, "main.ts"));
 
-export type FmtBin = { path: string } | { error: string };
+type FmtBin = { path: string } | { error: string };
 
 // argv for invoking this compiler: a shipped binary IS the compiler; in a
 // checkout it's the current runtime plus src/main.ts.

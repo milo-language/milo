@@ -17,7 +17,7 @@ const ROOT = join(import.meta.dir, "..");
 const ERRORS_DIR = join(ROOT, "tests", "errors");
 const OUT = join(ROOT, "docs", "errors.md");
 
-export interface ErrorCase {
+interface ErrorCase {
   file: string;
   message: string;
   /** The fixture's own explanation, if it opens with one. */

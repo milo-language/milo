@@ -13,11 +13,10 @@
 
 import type {
   Program, Function, Expr, Stmt, MiloType, Pattern, Span,
-  StructDecl, EnumDecl, TraitDecl, InterfaceDecl, TypeAlias, GlobalDecl, ImplDecl,
   DeclOrigins, DeclOrigin,
 } from "./ast";
 
-export interface VisibilityViolation {
+interface VisibilityViolation {
   name: string;
   kind: "value" | "type";
   refFile: string;

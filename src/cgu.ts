@@ -176,7 +176,7 @@ function parseModule(ir: string): Module | null {
  * module with one 4000-line function and 900 small ones gives no speedup at all.
  */
 function packFunctions(funcs: Func[], units: number): number[] {
-  const order = funcs.map((f, i) => i).sort((a, b) => funcs[b]!.lineCount - funcs[a]!.lineCount);
+  const order = funcs.map((_f, i) => i).sort((a, b) => funcs[b]!.lineCount - funcs[a]!.lineCount);
   const load = new Array<number>(units).fill(0);
   const home = new Array<number>(funcs.length).fill(0);
   for (const idx of order) {

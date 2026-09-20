@@ -221,7 +221,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
 };
 
-export interface SafetyViolation {
+interface SafetyViolation {
   rule: string;
   message: string;
   span?: Span;
@@ -773,7 +773,7 @@ export function walkExprs(stmts: Stmt[], onExpr: (e: Expr) => void, onStmt?: (s:
 // Machine-readable compliance report (schema 1). A safety profile is exactly the kind of
 // result that gets pasted into a certification artifact or gated on in CI, and both of
 // those want records, not a rendered report.
-export const SAFETY_JSON_SCHEMA = 1;
+const SAFETY_JSON_SCHEMA = 1;
 
 export function safetyJson(violations: SafetyViolation[], level: SafetyLevel, file: string): string {
   return JSON.stringify({

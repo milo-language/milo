@@ -276,7 +276,6 @@ export class Codegen {
     _atomicCasBool: { kind: "cas", ty: "i8", align: 1, isBool: true },
   };
   private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid", ...Object.keys(Codegen.ATOMIC_INTRINSICS), "_schedulerGet", "_schedulerSet"]);
-  private needsArgGlobals = false;
   private usesSchedulerGlobal = false;
   private currentFnName = "";
   // Set for the duration of a `@wrapping` function: + - * -x, div INT_MIN/-1 and over-shifts
@@ -1091,8 +1090,6 @@ export class Codegen {
     this.structDropCache.set(name, result);
     return result;
   }
-
-  private needsPanicFmt = false;
 
   // Natural alignment of an LLVM type, mirroring typeSize's cases. `min(size,8)` is
   // WRONG for aggregates — a 12-byte nested struct or [3 x i32] aligns to 4, not 8 —
@@ -2380,7 +2377,7 @@ export class Codegen {
         }
         const [valLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...valLines);
-        const [targetLines, targetPtr, targetTy] = this.genLValue(stmt.target);
+        const [targetLines, targetPtr] = this.genLValue(stmt.target);
         lines.push(...targetLines);
         // Drop the old value at the target slot before overwriting it — for ANY
         // place (Ident/FieldAccess/IndexAccess), not just idents, or reassigning
@@ -3425,7 +3422,7 @@ export class Codegen {
 
     if (stmt.iterableKind === "vec") {
       // get pointer to the vec so we can extract data ptr and len
-      const [iterLines, iterAddr, iterTy] = this.genForEachIterableAddr(stmt.iterable);
+      const [iterLines, iterAddr] = this.genForEachIterableAddr(stmt.iterable);
       lines.push(...iterLines);
       const dataPtr = this.nextTemp();
       const lenPtr = this.nextTemp();
@@ -3997,7 +3994,6 @@ export class Codegen {
     const layout = this.enumLayouts.get(stmt.optionEnumName);
     if (!layout) throw new Error(`enum layout not found for ${stmt.optionEnumName}`);
 
-    const someVariant = must(layout.variants, "Some", "variants");
     const noneVariant = must(layout.variants, "None", "variants");
     const elemTy = this.llvmType(stmt.varType);
 
@@ -4624,7 +4620,6 @@ export class Codegen {
       return [lines, result, at1];
     }
     if (expr.func === "_miloArgCount") {
-      this.needsArgGlobals = true;
       const raw = this.nextTemp();
       lines.push(`  ${raw} = load i32, ptr @_milo_argc_global`);
       const ext = this.nextTemp();
@@ -4755,7 +4750,6 @@ export class Codegen {
     const atomicSpec = Codegen.ATOMIC_INTRINSICS[expr.func];
     if (atomicSpec) return this.genAtomicIntrinsic(expr, atomicSpec, lines);
     if (expr.func === "_miloArgAt") {
-      this.needsArgGlobals = true;
       this.needsMalloc = true;
       this.needsMemcpy = true;
       this.needsStrlen = true;
@@ -5735,7 +5729,7 @@ export class Codegen {
     // outlive its buffer.
     const tempMark = this.argTempDrops.length;
     if (effObj.tag === "vec" || (effObj.tag === "array" && effObj.size === null)) {
-      const [ptrLines, ptr, elemTy] = this.genVecBoundsCheckedPtr(expr, lines);
+      const [, ptr, elemTy] = this.genVecBoundsCheckedPtr(expr, lines);
       const elemKind = effObj.element;
       // Auto-clone non-Copy elements so the Vec stays intact. The user-facing
       // semantics: Vec[i] always returns an independent value.
@@ -5749,7 +5743,7 @@ export class Codegen {
       this.flushArgTempDrops(lines, tempMark);
       return [lines, val, elemTy];
     }
-    const [ptrLines, ptr, elemTy] = this.genBoundsCheckedPtr(expr, lines);
+    const [, ptr, elemTy] = this.genBoundsCheckedPtr(expr, lines);
     // Sized arrays clone non-Copy elements for the same reason Vec does: a
     // bare load hands out a second owner of the same buffer, and both free
     // it at scope exit. `fn peek(a: &[string; 2]) { return a[0] }` aborted
@@ -5935,7 +5929,7 @@ export class Codegen {
     // malloc(cap * elemSize); empty (len=0) but pre-sized so pushes up to
     // cap don't realloc. cap==0 still allocates 0 bytes — harmless, matches
     // the "buffer or null" invariant push checks (null only when cap==0).
-    const { buf: buf, bytes: bytes } = this.emitAllocBytes(lines, capVal, elemSize, "veccap", expr.span);
+    const { buf } = this.emitAllocBytes(lines, capVal, elemSize, "veccap", expr.span);
     const v0 = this.nextTemp();
     lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
     const v1 = this.nextTemp();
@@ -5955,7 +5949,7 @@ export class Codegen {
     this.emitNonNegativeCheck(lines, cntVal, "length", expr.span);
     const [valLines, valVal] = this.genExpr(expr.value);
     lines.push(...valLines);
-    const { buf: buf, bytes: bytes } = this.emitAllocBytes(lines, cntVal, elemSize, "vecrep", expr.span);
+    const { buf } = this.emitAllocBytes(lines, cntVal, elemSize, "vecrep", expr.span);
     // fill loop: for i in 0..count { buf[i] = value }
     const idxSlot = this.nextTemp();
     lines.push(`  ${idxSlot} = alloca i64`);
@@ -6034,7 +6028,6 @@ export class Codegen {
   }
 
   private genClosure(expr: HIRExpr & { kind: "Closure" }, lines: string[]): Gen {
-    const lt = this.llvmType(expr.type);
     const closureName = `__closure_${this.closureCounter++}`;
     const captures = expr.captures;
     const retTy = this.llvmType(expr.retType);
@@ -6565,7 +6558,7 @@ export class Codegen {
   private genUnwrap(expr: HIRExpr & { kind: "Unwrap" }, lines: string[]): Gen {
     this.needsPrintf = true;
     this.needsExit = true;
-    const [ol, ov, ot] = this.genExpr(expr.operand);
+    const [ol, ov] = this.genExpr(expr.operand);
     lines.push(...ol);
 
     const layout = must(this.enumLayouts, expr.enumName, "enum layouts");
@@ -6646,7 +6639,7 @@ export class Codegen {
   }
 
   private genPropagate(expr: HIRExpr & { kind: "Propagate" }, lines: string[]): Gen {
-    const [ol, ov, ot] = this.genExpr(expr.operand);
+    const [ol, ov] = this.genExpr(expr.operand);
     lines.push(...ol);
 
     const layout = must(this.enumLayouts, expr.enumName, "enum layouts");
@@ -6712,7 +6705,6 @@ export class Codegen {
 
       if (expr.fromConversion && srcErrFieldTy) {
         // From conversion: wrap source err in target error enum variant
-        const convLayout = must(this.enumLayouts, expr.fromConversion.targetEnumName, "enum layouts");
         const convEnumTy = `%${expr.fromConversion.targetEnumName}`;
         const srcPayload = this.nextTemp();
         lines.push(`  ${srcPayload} = load ${srcErrFieldTy}, ptr ${errPayloadPtr}`);
@@ -6899,7 +6891,7 @@ export class Codegen {
         }
       }
       // parameter or closure: extract fn ptr from closure tuple
-      const [ol, ov, fromTy] = this.genExpr(expr.operand);
+      const [ol, ov] = this.genExpr(expr.operand);
       lines.push(...ol);
       const tmp = this.nextTemp();
       lines.push(`  ${tmp} = extractvalue { ptr, ptr } ${ov}, 0`);
@@ -7356,7 +7348,7 @@ export class Codegen {
     const doubled = this.nextTemp();
     lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
     lines.push(`  ${newCap} = select i1 ${isZero}, i64 ${initialCap}, i64 ${doubled}`);
-    const { buf: newBuf, bytes: newBytes } = this.emitAllocBytes(lines, newCap, elemSize, "vecgrow", expr.span);
+    const { buf: newBuf } = this.emitAllocBytes(lines, newCap, elemSize, "vecgrow", expr.span);
 
     // copy old data if any
     const dataPtr = this.nextTemp();
@@ -7524,7 +7516,7 @@ export class Codegen {
     this.needsMalloc = true;
 
     // allocate result buffer: malloc(len * elemSize)
-    const { buf: buf, bytes: bufSize } = this.emitAllocBytes(lines, len, resultElemSize, "vecmap", expr.span);
+    const { buf } = this.emitAllocBytes(lines, len, resultElemSize, "vecmap", expr.span);
 
     const idxAddr = `%__map_idx.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
@@ -7585,7 +7577,7 @@ export class Codegen {
     this.needsMalloc = true;
 
     // allocate result buffer with capacity = source len (worst case all match)
-    const { buf: buf, bytes: bufSize } = this.emitAllocBytes(lines, len, elemSize, "vecfilt", expr.span);
+    const { buf } = this.emitAllocBytes(lines, len, elemSize, "vecfilt", expr.span);
 
     const idxAddr = `%__filter_idx.${this.scopeCounter++}.addr`;
     const outIdxAddr = `%__filter_out.${this.scopeCounter++}.addr`;
@@ -8201,7 +8193,7 @@ export class Codegen {
     lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
     const newCap = this.nextTemp();
     lines.push(`  ${newCap} = select i1 ${isZero}, i64 8, i64 ${doubled}`);
-    const { buf: newBuf, bytes: newBytes } = this.emitAllocBytes(lines, newCap, elemSize, "vecgrow2", expr.span);
+    const { buf: newBuf } = this.emitAllocBytes(lines, newCap, elemSize, "vecgrow2", expr.span);
     const dataPtr = this.nextTemp();
     lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
     const oldBuf = this.nextTemp();
@@ -10424,7 +10416,7 @@ export class Codegen {
     const probeNext = this.nextLabel("hmc.pnext");
     const doneLabel = this.nextLabel("hmc.done");
 
-    const { slot, entryPtr } = this.emitHashProbePrologue(
+    const { slot } = this.emitHashProbePrologue(
       lines,
       { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
       { slotAddr, data, entryTy, keyTy, keyVal, keyType },
@@ -10459,7 +10451,6 @@ export class Codegen {
     const keyType = mapType.key;
     const valueType = mapType.value;
     const keyTy = this.llvmType(keyType);
-    const valTy = this.llvmType(valueType);
     const entryTy = this.hashMapEntryType(keyType, valueType);
 
     const { ptr: mapPtr, tempSlot: mapTempSlot } = this.mapReceiverPtr(lines, expr.map);
@@ -10738,7 +10729,7 @@ export class Codegen {
     lines.push(`  ${len} = extractvalue %HashMap ${ov}, 1`);
     const cap = this.nextTemp();
     lines.push(`  ${cap} = extractvalue %HashMap ${ov}, 2`);
-    const { buf: buf, bytes: bytes } = this.emitAllocBytes(lines, len, elemSize, "hmvals", expr.span);
+    const { buf } = this.emitAllocBytes(lines, len, elemSize, "hmvals", expr.span);
 
     const iAddr = this.nextTemp();
     lines.push(`  ${iAddr} = alloca i64`);

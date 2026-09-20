@@ -18,7 +18,7 @@ import { typeName as formatTypeName } from "./types";
 import { getHostTarget } from "./target";
 import { dirname, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
-import { existsSync, readFileSync, readdirSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { STDLIB_DIR, stdExists, readStd, materializeStd } from "./stdlibBundle";
 import { ensureFmtBinary } from "./fmtbin";
 import { spawnSync } from "child_process";
@@ -79,37 +79,6 @@ const documents = new Map<string, string>();
 // Project root from `initialize`; enables whole-project references/rename beyond
 // the currently-open buffers. Null when the client sends no root (single-file).
 let workspaceRoot: string | null = null;
-
-// ── Symbol index (rebuilt on each change) ──
-
-interface SymbolInfo {
-  name: string;
-  kind: "function" | "struct" | "enum" | "variable";
-  span?: Span;
-  type?: string;
-  uri: string;
-}
-
-let symbolIndex: SymbolInfo[] = [];
-
-function buildSymbolIndex(uri: string, program: Program) {
-  const symbols: SymbolInfo[] = [];
-  for (const fn of program.functions) {
-    if (fn.isExtern) continue;
-    symbols.push({ name: fn.name, kind: "function", uri });
-    // index params as variables within this function
-    for (const p of fn.params) {
-      symbols.push({ name: p.name, kind: "variable", type: declaredType(p).name, uri });
-    }
-  }
-  for (const s of program.structs) {
-    symbols.push({ name: s.name, kind: "struct", uri });
-  }
-  for (const e of program.enums) {
-    symbols.push({ name: e.name, kind: "enum", uri });
-  }
-  symbolIndex = symbols;
-}
 
 function inferLiteralType(expr: Expr): string | null {
   switch (expr.kind) {
@@ -315,7 +284,6 @@ function validateDocument(uri: string) {
     // terminal, which is the wrong half of the tooling to put a style rule in.
     diagnostics = new TypeChecker({ ...projectLints(sourceDir), expected: new Set<string>() }).check(program).diagnostics
       .map(d => hoistIfImported(d, docPath));
-    buildSymbolIndex(uri, program);
   } catch (e: any) {
     // Parse errors carry a structured Diagnostic (span + hint) — use it directly.
     if (e instanceof ParseError) {
@@ -772,7 +740,7 @@ const BUILTIN_METHOD_HOVERS: Record<string, (recv: string, elem: string) => stri
 // fn that happens to share the name (`foo.len` field access) is left alone. The
 // receiver type comes from the checker's expr types, letting `T` resolve concretely.
 function findBuiltinMethodHover(
-  source: string, word: string, line: number,
+  _source: string, word: string, line: number,
   exprTypes: Map<Expr, import("./types").TypeKind>,
 ): string | null {
   const make = BUILTIN_METHOD_HOVERS[word];
@@ -912,7 +880,7 @@ function findBuiltinTypeHover(source: string, word: string, line: number): strin
   return null;
 }
 
-function findEnumHover(source: string, program: Program, word: string, line: number, character: number, parsed: Program, sourceDir: string): string | null {
+function findEnumHover(source: string, program: Program, word: string, line: number, _character: number, parsed: Program, sourceDir: string): string | null {
   const lineText = source.split("\n")[line] ?? "";
   const allEnums = [...program.enums, ...BUILTIN_ENUMS];
 
@@ -974,7 +942,7 @@ function findInImportedFiles(parsed: Program, sourceDir: string, word: string, v
     const fileSource = readStd(absPath);
     if (fileSource === null) continue;
 
-    for (const [keyword, re] of [["fn", new RegExp(`\\bfn\\s+${word}\\s*[<(]`)], ["struct", new RegExp(`\\bstruct\\s+${word}\\b`)], ["enum", new RegExp(`\\benum\\s+${word}\\b`)]] as const) {
+    for (const [, re] of [["fn", new RegExp(`\\bfn\\s+${word}\\s*[<(]`)], ["struct", new RegExp(`\\bstruct\\s+${word}\\b`)], ["enum", new RegExp(`\\benum\\s+${word}\\b`)]] as const) {
       const lines = fileSource.split("\n");
       for (let i = 0; i < lines.length; i++) {
         if (re.test(lines[i])) {

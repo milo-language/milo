@@ -5,7 +5,7 @@
 // A user typing `--deny=unused-varibale` got silence, and a warning added to the checker
 // never reached the help. tests/warnings.test.ts holds this file to the call sites in both
 // directions, and cli-help.ts renders the help line from it.
-export interface WarningInfo {
+interface WarningInfo {
   name: string;
   /** Off by default: not reported unless `--deny=<name>` (or `--deny-all`) asks for it. */
   offByDefault?: true;

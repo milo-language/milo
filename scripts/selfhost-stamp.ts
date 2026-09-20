@@ -44,7 +44,7 @@ function walk(dir: string, out: string[] = []): string[] {
 // Path is hashed alongside content: a file that only MOVED changes what the
 // compiler resolves (platform suffix split, import paths) without changing any
 // byte of content, and must invalidate.
-export function sourceHash(): string {
+function sourceHash(): string {
   const h = createHash("sha256");
   for (const dir of SOURCE_DIRS) {
     const abs = join(MILO_ROOT, dir);
@@ -59,13 +59,13 @@ export function sourceHash(): string {
   return h.digest("hex").slice(0, 16);
 }
 
-export interface Stamp {
+interface Stamp {
   sourceHash: string;
   gitSha: string;
   builtAt: string;
 }
 
-export function writeStamp(): Stamp {
+function writeStamp(): Stamp {
   let gitSha = "unknown";
   try {
     gitSha = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: MILO_ROOT })
@@ -76,7 +76,7 @@ export function writeStamp(): Stamp {
   return stamp;
 }
 
-export function checkStamp(): { ok: boolean; reason: string } {
+function checkStamp(): { ok: boolean; reason: string } {
   if (!existsSync(BIN)) return { ok: false, reason: "no .selfhost/milo-self.bin — run: sh scripts/selfhost.sh" };
   if (!existsSync(STAMP)) {
     return { ok: false, reason: "no .selfhost/milo-self.stamp — binary predates stamping; rebuild: sh scripts/selfhost.sh" };

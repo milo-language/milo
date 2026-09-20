@@ -29,7 +29,7 @@ function resolveImportPath(importPath: string, fromDir: string): string {
   return resolve(fromDir, importPath.endsWith(".milo") ? importPath : importPath + ".milo");
 }
 
-function findUsedSymbols(src: string, exports: string[], importLine: string): string[] {
+function findUsedSymbols(src: string, exports: string[]): string[] {
   const srcWithoutImports = src.split("\n")
     .filter(l => !l.startsWith("from ") && !l.startsWith("import ") && !l.startsWith("//"))
     .join("\n");
@@ -56,7 +56,7 @@ function processFile(filePath: string) {
 
     if (exports.length === 0) continue;
 
-    const used = findUsedSymbols(src, exports, lines[i]);
+    const used = findUsedSymbols(src, exports);
 
     if (used.length === 0) {
       // no symbols used — remove the import entirely

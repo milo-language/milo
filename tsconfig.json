@@ -25,9 +25,10 @@
     "noUncheckedIndexedAccess": false,
     "noImplicitOverride": true,
 
-    // Some stricter flags (disabled by default)
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
+    // Gated by tests/typecheck.test.ts: a dead local or import is a defect, not noise.
+    // Prefix an intentionally unused parameter with `_`.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noPropertyAccessFromIndexSignature": false
   }
 }

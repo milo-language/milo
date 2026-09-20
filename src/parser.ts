@@ -5,7 +5,7 @@ import { Lexer, FSTRING_LBRACE, FSTRING_RBRACE } from "./lexer";
 import { ParseError } from "./diagnostics";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
-  EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, CastExpr,
+  EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl,
   TraitDecl, TraitMethod, ImplDecl, Attribute, TypeAlias, InterfaceDecl, GlobalDecl,
   DeriveTemplate,
 } from "./ast";

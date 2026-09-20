@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: planning
 purpose: ranked findings from the 2026-09-19 system-design review (dup unifier, dead code, abstraction police, split seam, useless tests) and which became work
-key-files: src/checker.ts, src/types.ts, src/builtin-members.ts, std/crypto.*.milo, scripts/check-api-docs.ts, tests/apiDocsSite.test.ts
+key-files: src/checker.ts, src/types.ts, src/builtin-members.ts, std/crypto.milo, std/cryptosys.*.milo, scripts/check-api-docs.ts, tests/apiDocsSite.test.ts
 update-when: a finding ships or is declined
 last-verified: 2026-09-19 (review at 61c80c6e)
 -->
@@ -24,6 +24,12 @@ judgment ("may this element be read by value") made at one site and not another.
 | F9 | abstraction | `scripts/playground/compiler.ts` | imports `src/*` | doc fix: sanction it in `docs/json-api.md` | WP13 |
 | F10 | test | `tests/apiDocsSite.test.ts` | passes on 0 compared signatures; floor only in the CLI half | assert `comparedCount >= FLOOR` | WP13 |
 | F11 | dead (API) | 55 `pub fn` in std, zero callers in-repo and across 13 sibling repos | public API, not dead | feed `docs/stdlib-audit-2026-08.md` | note |
+
+TODO (WP13 follow-up, after WP4/WP9/WP11 merge): fix the 8 `noUnusedLocals` diagnostics
+in `src/checker.ts` (`TraitDecl` import, `key`, `i32_t`, `e`, `literalInferred`,
+`paramOffset`, `subject`, `sp`) and the 9 in-file-only `export`s there (`BorrowKind`,
+`PointerHolder`, `PlaceStep`, `VarInfo`, `CaptureInfo`, `StructInfo`, `CLayout`, `CSig`,
+`CValue`), then delete the `src/checker.ts` carve-out in `tests/typecheck.test.ts`.
 
 Nothing found: dead warnings (`src/warnings.ts`), dead attributes, marker-less fixtures,
 tautological asserts in `tests/*.test.ts`.

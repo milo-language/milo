@@ -10,7 +10,7 @@
 // out-of-bounds read reachable from safe Milo through a pub std API.
 //
 // Skipped on Windows because that arm has no AES to guard: the MSVC CRT provides no
-// C-linkable AES-GCM, so std/crypto.windows aborts by design (aesUnsupported). There is
+// C-linkable AES-GCM, so the std/cryptosys.windows arm fails by design (aesUnsupported). There is
 // no pointer handed to C there, and so no length to check.
 //
 // The lengths are checked at runtime now, so the guard holds in a release build. Both bad

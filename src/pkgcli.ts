@@ -29,7 +29,7 @@ import { MILO_VERSION } from "./version";
 
 // What the CLI needs from the compiler. Passed in rather than imported so this
 // module never pulls in main.ts (which would re-run its top-level main()).
-export interface PkgHost {
+interface PkgHost {
   // Compile sourcePath to outPath. extraLinkFlags reach the linker verbatim — that
   // is how the metadata object file gets into an installed binary.
   build(sourcePath: string, outPath: string, extraLinkFlags: string[]): string;
@@ -52,7 +52,7 @@ interface Project {
   manifest: Manifest;
 }
 
-export function findProject(startDir: string): Project | null {
+function findProject(startDir: string): Project | null {
   let dir = resolve(startDir);
   for (let i = 0; i < 20; i++) {
     const p = join(dir, "milo.json");
@@ -299,7 +299,7 @@ function libOnlyMessage(name: string, spec: string): string {
 //   strings <bin> | grep MILO_PKG
 const PKG_TAG = "MILO_PKG";
 
-export interface PkgSection {
+interface PkgSection {
   name: string;
   version: string;
   url: string;
@@ -321,7 +321,7 @@ function sectionName(os: string): string {
 // otool/readelf/dumpbin: the bytes are the same on all three formats, and a package
 // manager that cannot identify its own binaries without platform tooling installed
 // is one bad container image away from deleting the wrong file.
-export function readPkgSection(binPath: string): PkgSection | null {
+function readPkgSection(binPath: string): PkgSection | null {
   let buf: Buffer;
   try {
     buf = readFileSync(binPath);
