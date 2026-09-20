@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: ownership-patterns
 purpose: the catalogue of data-structure patterns that buy safety properties without lifetimes, and the test that picks between them
-key-files: std/arena.milo, std/seal.milo, std/shard.milo, docs/residue-vs-rust.md, src/checker.ts
+key-files: std/arena.milo, std/seal.milo, std/shard.milo, docs/memory-safety-vs-rust.md, src/checker.ts
 update-when: a new pattern is found, a pattern gains or loses a compiler diagnostic, or a seam moves between the closed and open lists
-last-verified: 2026-09-19
+last-verified: 2026-09-20 (WP7: the claim-discipline link now points at memory-safety-vs-rust; patterns 3 and 5 verified against WP3/WP2/WP4 as shipped)
 -->
 
 # Ownership patterns
@@ -38,7 +38,8 @@ The answers pick the pattern, and they are exhaustive:
 
 The third row is the honest one. When a value both escapes and needs the operation, no
 data structure closes the hole; the best available is to make a wrong answer into a
-named failure. That is the claim discipline of [residue-vs-rust](residue-vs-rust.md)
+named failure. That is the claim discipline of
+[memory-safety-vs-rust](memory-safety-vs-rust.md) (§What the compiler does not check)
 applied to this repo's own designs.
 
 ## The patterns

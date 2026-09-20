@@ -64,7 +64,7 @@ The last 25 commits, filtered to real compiler defects, are dominated by one cla
 
 All four are **incomplete traversal reporting success** — the class recorded in
 `feedback_silent_success`. Same shape as the eight ad-hoc place-walkers collapsed into one
-fail-closed `placesOf` (backlog, Tier 1 residue).
+fail-closed `placesOf` (backlog, Tier 1 what-is-left section).
 
 **No language prevents this class.** Exhaustive `match` catches *tag* dispatch; nothing in
 Milo, Rust, or TS catches "you forgot to recurse into field 7 of a node you did handle." A

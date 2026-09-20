@@ -32,7 +32,7 @@
 // one against a different Sealed is a named failure rather than wrong-but-plausible
 // bytes. Tying the two together at COMPILE time would need a lifetime or a type-level
 // brand, and neither exists under this language's axiom, so the tie is checked at
-// runtime instead. See docs/residue-vs-rust.md.
+// runtime instead. See docs/memory-safety-vs-rust.md, "what the compiler does not check".
 
 // A start, a length, and `_bufferId`, the identity of the buffer it was measured from.
 // (Called a "brand" in the type-theory sense; named for what it holds instead, since the
@@ -42,7 +42,7 @@
 // against a DIFFERENT sealed buffer used to read wrong-but-in-bounds bytes and report
 // nothing. Rust prevents that with an invariant lifetime; with no lifetimes to carry
 // the tie, a runtime tag is the honest substitute, and it demotes a wrong answer to a
-// named error — the claim discipline in docs/residue-vs-rust.md, applied to itself.
+// named error: the claim discipline in docs/memory-safety-vs-rust.md, applied to itself.
 //
 // It costs nothing in space: `len` narrowed to i32 to make room, so a Span is the same
 // 16 bytes it was. That caps one span at 2GB, which is a span, not a buffer.

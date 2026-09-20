@@ -25,7 +25,7 @@ pub struct Json {
     // Identity of this parse, carried in the high bits of every cursor the
     // document hands out (see the cursor-branding section below). Always in
     // 1..2^31-1; 0 is reserved so a hand-built cursor never matches. The same
-    // runtime brand seal.Span carries as _bufferId — docs/residue-vs-rust.md.
+    // runtime brand seal.Span carries as _bufferId (docs/memory-safety-vs-rust.md).
     _docId: i64,
 }
 
@@ -36,7 +36,7 @@ pub struct Json {
 // document A resolved against document B named an in-bounds node of B and
 // nothing objected. Rust rejects that tie-up at compile time with an invariant
 // lifetime; Milo has no lifetimes to carry the tie, so it is a runtime tag,
-// exactly as seal.Span carries _bufferId. See docs/residue-vs-rust.md.
+// exactly as seal.Span carries _bufferId. See docs/memory-safety-vs-rust.md.
 //
 // -1 stays the "nothing here" cursor: brands fit 31 bits, so every packed
 // cursor is positive and `cur < 0` still separates missing from present.
