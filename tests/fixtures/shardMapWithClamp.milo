@@ -1,4 +1,4 @@
-// Regression: `shatter` clamps the window count to one window per element, so
+// Regression: std/shard clamps the window count to one window per element, so
 // asking for more windows than the buffer has elements produces fewer windows
 // than were requested. parallelMapWith used to drive its collection loop off the
 // requested count, so it waited on windows nobody would ever send and hung with

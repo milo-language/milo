@@ -1,20 +1,31 @@
 // @expect: len=40 windows=2
 // @expect: disjoint misses the seam: 2
 // @expect: overlap finds it: 3
+// @expect: per window: 2 1
 // @expect: start0=0 start1=20
 // @expect: byte0=109 byte1=105
-// @expect: foreign rejected
-// Read-only windows over a string. The interesting case is the seam: with disjoint
-// windows a match straddling the boundary is found by neither side, which is why
-// windows() takes an overlap. Nothing writes, so the overlap is sound.
+// @expect: uneven: windows=4 total=3
+// Read-only windows over a string, divided and scanned by parallelScanStr. The
+// interesting case is the seam: with disjoint windows a match straddling the boundary
+// is found by neither side, which is why the call takes an overlap. Nothing writes,
+// so the overlap is sound.
 from "std/shard" import {
-    StrShard, shatterStr
+    StrShard, parallelScanStr
 }
 
-fn countIn(w: &StrShard, needle: &string, ownLen: i64): i64 {
+// "milo" sits at 0, at 18 (straddling the 20-byte seam is the one at 18..22), and 36.
+fn corpus(): string {
+    return "milo..............milo..............milo"
+}
+
+// Count only matches BEGINNING in this window's own range, or the overlap would let
+// two neighbours count the same one. The window carries that length, so an uneven
+// last window needs no arithmetic here.
+fn countMilo(w: &StrShard): i64 {
+    let needle: string = "milo"
     var n: i64 = 0
     var i: i64 = 0
-    while i < ownLen {
+    while i < w.ownLen() {
         if w.matchesAt(i, needle) {
             n = n + 1
         }
@@ -23,58 +34,62 @@ fn countIn(w: &StrShard, needle: &string, ownLen: i64): i64 {
     return n
 }
 
-// "milo" sits at 0, at 18 (straddling the 20-byte seam is the one at 18..22), and 36.
-fn corpus(): string {
-    return "milo..............milo..............milo"
+// Counting over the whole window including its overlap is the mistake the comment
+// above warns about; with overlap 0 it is the same as counting the own range.
+fn countAll(w: &StrShard): i64 {
+    let needle: string = "milo"
+    var n: i64 = 0
+    var i: i64 = 0
+    while i < w.len() {
+        if w.matchesAt(i, needle) {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    return n
+}
+
+fn startOf(w: &StrShard): i64 {
+    return w.start()
+}
+
+fn firstTwoBytes(w: &StrShard): i64 {
+    return (w.byteAt(0) as i64) * 1000 + (w.byteAt(1) as i64)
+}
+
+fn sum(xs: &Vec<i64>): i64 {
+    var t: i64 = 0
+    for x in xs {
+        t = t + x
+    }
+    return t
 }
 
 pub fn main(): i32 {
-    let needle: string = "milo"
-
-    var owner = shatterStr(corpus(), 2)
-    print("len=" + owner.len().toString() + " windows=" + owner.count().toString())
-
     // Disjoint: the match beginning at 18 runs past the first window's end and is
     // invisible to the second, whose own range starts at 20.
-    var disjoint = shatterStr(corpus(), 2)
-    var dw = disjoint.windows(0)
-    var dTotal: i64 = 0
-    for w in dw {
-        dTotal = dTotal + countIn(w, needle, w.len())
-    }
-    print("disjoint misses the seam: " + dTotal.toString())
+    let disjoint = parallelScanStr(corpus(), 2, 0, countAll)
+    print("len=" + disjoint.text.len.toString() + " windows=" + disjoint.results.len.toString())
+    print("disjoint misses the seam: " + sum(disjoint.results).toString())
 
     // With needle.len - 1 bytes of slack the first window can see the whole match.
-    var over = shatterStr(corpus(), 2)
-    var ow = over.windows(needle.len - 1)
-    var oTotal: i64 = 0
-    for w in ow {
-        // Count only matches BEGINNING in this window's own range, or the overlap
-        // would let two neighbours count the same one. The window carries that
-        // length, so an uneven last window needs no arithmetic here.
-        oTotal = oTotal + countIn(w, needle, w.ownLen())
-    }
-    print("overlap finds it: " + oTotal.toString())
+    let over = parallelScanStr(corpus(), 2, 3, countMilo)
+    print("overlap finds it: " + sum(over.results).toString())
+    // Results come back in window order whatever order the workers finished in.
+    print("per window: " + over.results[0].toString() + " " + over.results[1].toString())
 
-    var starts = shatterStr(corpus(), 2)
-    var sw = starts.windows(0)
-    print("start0=" + sw[0].start().toString() + " start1=" + sw[1].start().toString())
+    let starts = parallelScanStr(corpus(), 2, 0, startOf)
+    print("start0=" + starts.results[0].toString() + " start1=" + starts.results[1].toString())
 
     // byteAt is the primitive read; matchesAt is built on it, and a caller writing
     // any other scan needs it.
-    print("byte0=" + sw[0].byteAt(0).toString() + " byte1=" + sw[0].byteAt(1).toString())
+    let bytes = parallelScanStr(corpus(), 2, 0, firstTwoBytes)
+    print("byte0=" + (bytes.results[0] / 1000).toString() + " byte1=" + (bytes.results[0] % 1000).toString())
 
-    // A window from another shatter is rejected on identity.
-    var a = shatterStr(corpus(), 2)
-    var b = shatterStr(corpus(), 2)
-    let foreign = b.windows(0)
-    match a.weld(foreign) {
-        Result.Ok(_s) => {
-            print("WRONG: welded a foreign window")
-        }
-        Result.Err(_e) => {
-            print("foreign rejected")
-        }
-    }
+    // Four windows over 40 bytes: the last one takes the remainder, the one at 18
+    // straddles a seam, and the string comes back whole.
+    let uneven = parallelScanStr(corpus(), 4, 3, countMilo)
+    print("uneven: windows=" + uneven.results.len.toString() + " total=" + sum(uneven.results).toString())
+    assert(uneven.text == corpus(), "string must come back untouched")
     return 0
 }

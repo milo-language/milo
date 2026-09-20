@@ -4,7 +4,7 @@ A `Shard` is an owned window over part of a `Vec`. Splitting a buffer into disjo
 
 A shard holds a pointer into the original buffer and a length, which is the same representation a mutable slice has in any other language. Milo gives it the *type* of an owned value, so the move checker decides who may touch each range and no lifetime has to be written down. The buffer is allocated once and is never copied and never split. What moves is the right to write a range.
 
-`parallelMap` runs that whole cycle in one call and is what most uses want. `shatter`, `windows` and `weld` are the same cycle by hand, for when the workers must differ from each other.
+`parallelMap` runs that whole cycle in one call. `parallelMapWith` is the same cycle with per-worker state and a window queue, and `parallelScanStr` is the read-only version over a `string`. There is no way to hold the windows apart from the call that made them, and that is deliberate (see [why there is no manual path](#why-there-is-no-manual-path)).
 
 ## Why this module exists
 
@@ -12,10 +12,10 @@ Milo has no stored references. A `&T` or `&mut T` exists only as a function para
 
 Parallel transforms are where that restriction costs something. The standard move is to split a buffer into mutable slices and give one to each worker, which Rust spells `split_at_mut`. It works because the type system can state that the slices borrow one buffer over disjoint regions, and can check that claim. Milo cannot state it, and adding lifetimes so that it could would give back exactly what the restriction bought. That leaves copying a chunk per worker and stitching the copies together, and on a 20M-element buffer the copy costs more than the parallelism saves.
 
-So this module divides the *ownership* instead of the borrow. `shatter` consumes the `Vec` and hands out windows, each an ordinary owned value that a worker receives by move like anything else. No reference crosses a thread because no reference exists, and the aliasing argument is the move checker that already shipped rather than a new rule to trust.
+So this module divides the *ownership* instead of the borrow. `parallelMap` consumes the `Vec` and hands out windows, each an ordinary owned value that a worker receives by move like anything else. No reference crosses a thread because no reference exists, and the aliasing argument is the move checker that already shipped rather than a new rule to trust.
 
 ```milo
-from "std/shard" import { Shard, shatter, parallelMap }
+from "std/shard" import { Shard, parallelMap, parallelMapWith, StrShard, parallelScanStr }
 ```
 
 ## Quick start
@@ -37,7 +37,7 @@ pub fn main(): i32 {
         data.push(1.0)
     }
 
-    let out = parallelMap(data, 4, double)!    // divide, run on 4 threads, reassemble
+    let out = parallelMap(data, 4, double)     // divide, run on 4 threads, reassemble
     print(out[0].toString())
     return 0
 }
@@ -55,87 +55,34 @@ sharing anything. The ergonomics and the safety property are the same choice.
 
 The three things that make it safe are all rules Milo already had:
 
-- **`shatter` consumes the `Vec`.** After it there is no binding through which the buffer can be reached except the windows. Touching the original is `error: use of moved variable`.
-- **The windows are disjoint by construction.** Window `i` covers exactly `[i*chunk, (i+1)*chunk)`, computed inside `windows()`, never supplied by you.
+- **`parallelMap` consumes the `Vec`.** While the buffer is divided there is no binding through which it can be reached except the windows. Touching the original is `error: use of moved variable`.
+- **The windows are disjoint by construction.** Window `i` covers exactly `[i*chunk, (i+1)*chunk)`, computed inside the module, never supplied by you.
 - **`Shard` is `@noCopy`.** Handing the same window to two workers is a compile error, not a race. A struct of a pointer and three integers would otherwise be `Copy`, and a copyable window would make the race representable again.
 
 So the aliasing argument is the move checker that already shipped. Nothing new had to be proven.
 
-## The escape hatch
+## Why there is no manual path
 
-`shatter` / `windows` / `weld` are public and supported, but they are not the path you
-should be on by default, and the compiler will say so:
+A window is a raw pointer into the buffer. The module used to offer the pieces of the
+cycle separately (`shatter` to divide, `windows` to take the set, `weld` to reassemble),
+with one obligation attached: keep the owner alive until `weld`. That obligation was the
+hole. A function that divided a buffer, handed a window to a `Promise.blocking` worker
+and returned, dropped the owner while the worker was still writing through the window:
+a heap-use-after-free that no checker rule could see, because nothing was moved twice,
+and that `weld` could only have noticed afterwards, in a program that never welded.
 
-```
-warning: this shatters and welds by hand
-  hint: 'parallelMap(v, workers, f)' is the same cycle in one call, and the form in
-        which weld cannot fail — nothing between making the windows and welding them
-        is your code.
-```
+So the pieces are private now. Every public form creates every window, hands out every
+window, awaits every worker and reassembles inside one call, and none of your code runs
+between those steps. That is the same guarantee Rust's scoped threads get from
+lifetimes, reached by closing the cycle inside one function rather than by proving a
+lifetime. What it costs is expressiveness: a worker pool you drive yourself, or windows
+kept for something other than one task each, are not expressible here. See
+[how Milo compares to Rust](/language/vs-rust).
 
-Reach for them when the workers need to differ from each other, or when you want the
-windows for something other than one task each:
-
-```milo
-from "std/shard" import { Shard, shatter }
-
-pub fn main(): i32 {
-    var data: Vec<i64> = Vec.withCapacity(4)
-    data.push(1)
-    data.push(2)
-
-    var owner = shatter(data, 2)
-    var windows = owner.windows()
-    // ... hand each window to a worker by move, collect them back ...
-    let out = owner.weld(windows)!
-    print(out.len.toString())
-    return 0
-}
-```
-
-## The one obligation (on the manual path only)
-
-Keep the owner alive until `weld`. A window is a pointer into the owner's buffer, so dropping the owner while a worker still holds one is a use-after-free that nothing here catches.
-
-`weld` checks what it can: every window must carry this shatter's identity and the set must cover the buffer exactly. A missing window means some worker may still be holding a pointer, so `weld` refuses rather than handing the `Vec` back.
-
-`windows()` hands its set out once, and a second call aborts naming the double call. A
-second set would be a second batch of pointers into the same storage, which is the alias
-this design exists to prevent; and since `windows()` only borrows the owner, a refusal
-would have nothing to give back and the caller nothing to do with it.
-
-A refusal does not cost you the buffer. `weld` consumes both the owner and the windows, so an error that was only a message would destroy the very thing this module exists to avoid copying. Instead it returns a `WeldRejected<T>` holding the owner (`shards`), the windows exactly as you handed them in (`returned`), a `reason` you can branch on and the `index` of the offending window. Fix the set and weld again.
-
-```milo
-var data: Vec<i64> = Vec.withCapacity(4)
-data.push(1)
-data.push(2)
-var owner = shatter(data, 2)
-var windows = owner.windows()
-let held = windows.pop()!
-
-match owner.weld(windows) {
-    Result.Ok(v) => {
-        print("welded " + v.len.toString())
-    }
-    Result.Err(rej) => {
-        // Deterministic: a window is missing, or came from another shatter.
-        print(rej.message())
-        // Nothing was lost. Put the missing window back and weld again.
-        var again = rej.shards
-        var back = rej.returned
-        back.push(held)
-        print("welded " + again.weld(back)!.len.toString())
-    }
-}
-```
-
-That is a runtime check, not a proof, and it is the honest residue of the manual path.
-
-`reason` is a `WeldReason`: `Foreign`, `NotCovered`, `CountMismatch`, or `NoWorkers`.
-An owner that never handed a window out has no windows to weld, so it gets the buffer
-back with `reclaim()` instead. That is how `parallelMapWith` refuses an empty `states`
-without eating the `Vec` it was already given:
+The one refusal a closed form can make is `parallelMapWith` being handed no states,
+which means no worker to run on. `pixels` was already moved in, so a refusal that was
+only a message would destroy the buffer over an empty `Vec`. Instead it comes back
+whole in the `NoWorkers<T>` error:
 
 ```milo
 from "std/shard" import { Shard, parallelMapWith }
@@ -155,8 +102,7 @@ pub fn main(): i32 {
             print(m.data.len.toString())
         }
         Result.Err(rej) => {
-            var idle = rej.shards
-            let recovered = idle.reclaim()!
+            let recovered = rej.data
             print("no workers, and the buffer came home: " + recovered.len.toString())
         }
     }
@@ -164,14 +110,8 @@ pub fn main(): i32 {
 }
 ```
 
-The reading side refuses the same way, with a `StrWeldRejected` that carries the string home.
-
-**`parallelMap` does not have that residue.** It creates every window, hands out every
-window, awaits all of them and welds them itself, so no caller code can drop one or let
-the owner die first: the completeness `weld` checks is guaranteed by the shape of the
-call rather than verified after the fact. That is the same guarantee Rust's scoped
-threads get from lifetimes, reached here by closing the cycle inside one function. Use
-`parallelMap` unless you have a reason not to. See [how Milo compares to Rust](/language/vs-rust).
+`parallelMap` and `parallelScanStr` have no refusal at all and return their result
+directly.
 
 ## What it costs
 
@@ -180,7 +120,7 @@ Measured on a 10-core machine, 20M `f64`, `a[i] = a[i] * 1.0000001 + 0.5`, 4 wor
 | | time | peak memory |
 |---|---|---|
 | sequential, in place | 6 ms | 153.9 MiB |
-| shatter/weld, 4 workers | 3 ms | 163.0 MiB |
+| `parallelMap`, 4 workers | 3 ms | 163.0 MiB |
 | C, pthreads over one shared buffer | 3 ms | 154.0 MiB |
 
 Reproduce with `sh benchmarks/shard/run.sh`.
@@ -222,7 +162,7 @@ It keeps improving well past the core count, because smaller units even out the 
 The caveat is that `parallelMap` spawns one OS thread per window, so 64 windows is 64 threads on a
 ten-core machine. `parallelMapWith` below fixes the worker count and queues the windows instead.
 
-The point is the memory column. The copying approach this replaces roughly doubles peak memory; shatter/weld adds a flat 9.1 MiB, which is the worker stacks and is the same fixed cost at 40M elements. As a percentage that is 5.9% at 20M and 3.0% at 40M.
+The point is the memory column. The copying approach this replaces roughly doubles peak memory; `parallelMap` adds a flat 9.1 MiB, which is the worker stacks and is the same fixed cost at 40M elements. As a percentage that is 5.9% at 20M and 3.0% at 40M.
 
 Build the `Vec` with `Vec.withCapacity` if you know the size. Growing one by pushing peaks at roughly 2.7x the final size during the doubling reallocs, which dwarfs anything this module does.
 
@@ -251,7 +191,7 @@ pub fn main(): i32 {
     for k in 0..4 {
         envs.push(Env { scale: 2.0, sum: 0.0 })
     }
-    let r = parallelMapWith(data, 16, envs, scale)!   // 16 windows, 4 workers
+    let r = parallelMapWith(data, 16, envs, scale)!   // 16 windows, 4 workers; ! unwraps NoWorkers
     var total: f64 = 0.0
     for e in r.states { total = total + e.sum }
     print(total.toString())                           // 2000
@@ -281,30 +221,51 @@ deterministic; "worker 0 saw window 5" is not.
 ## Scanning a string
 
 `parallelMap` is map-shaped: a `Vec<T>` goes in and a `Vec<T>` comes back. A scan is a
-different shape — it reads and returns counts, offsets, or whatever you accumulate — so
-there is no one-call form for it, and `shatterStr` is the supported way to divide a
-string across workers rather than an escape hatch.
+different shape: it reads, and returns counts, offsets, or whatever you accumulate. And
+the buffer is almost always a `string`, because that is what `readFile` hands back;
+converting it to a `Vec<u8>` first is a full copy that eats the parallelism it was
+bought for. `parallelScanStr` is the read-only cycle: the string goes in, `f` runs over
+every window on its own thread, and the string comes back whole with one result per
+window, in window order.
 
-Because nothing writes, its windows may overlap: `windows(needle.len - 1)` finds a match
-straddling a boundary without a second pass over the seams. Count only matches that
+```milo
+from "std/shard" import { StrShard, parallelScanStr }
+
+fn countMilo(w: &StrShard): i64 {
+    let needle: string = "milo"
+    var n: i64 = 0
+    var i: i64 = 0
+    while i < w.ownLen() {
+        if w.matchesAt(i, needle) {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    return n
+}
+
+pub fn main(): i32 {
+    let text: string = "milo..............milo..............milo"
+    let scanned = parallelScanStr(text, 4, 3, countMilo)   // 4 windows, 3 bytes of overlap
+    var total: i64 = 0
+    for n in scanned.results {
+        total = total + n
+    }
+    print(total.toString())                                // 3
+    print(scanned.text.len.toString())                     // 40, the same string
+    return 0
+}
+```
+
+Because nothing writes, the windows may overlap: an overlap of `needle.len - 1` finds a
+match straddling a boundary without a second pass over the seams. Count only matches that
 BEGIN inside a window's own range, which is `w.ownLen()`, the window's length before the
 overlap was added. Ask it rather than recomputing `total / count`: the last window takes
 the remainder of an uneven division, so the derived figure is wrong for exactly one
 window and the miscount is silent.
 
-`weld` on this side asks for the same completeness the writing side does: every window it
-handed out must come back exactly once, by `index`, and must carry this shatter's
-identity. What it does *not* ask is that the windows cover the bytes disjointly, because
-overlapping ranges share bytes by design and a coverage-of-bytes test would reject the
-recommended usage.
-
-Read-only does not exempt it from that check. The owner is the only thing keeping the
-string alive, so handing it back while a window is still out lets you mutate or drop a
-buffer a live `StrShard` still points into. Overlap is sound because reads do not race;
-a dangling read is not sound at all. A refusal returns a `StrWeldRejected` holding the
-string's owner (`shards`), the windows as you handed them in (`returned`), a `reason`
-and an `index`, so fixing the set costs nothing. An owner that never called `windows()`
-has nothing outstanding and gets its string back with `reclaim()`.
+`f` borrows the window and is a plain function for the reason `parallelMap`'s is; the
+needle lives inside it (or in a global) rather than in a capture.
 
 See `benchmarks/strscan/` for the worked example: 51.3 MiB, 35 ms sequential against
 10 ms on eight windows, with the runner failing if any windowing disagrees with the

@@ -1,11 +1,11 @@
 // @expect: n=16 first=3 last=3
 // @expect: uneven n=10 sum=20
 // @expect: one worker n=4 sum=8
-// parallelMap is the whole divide/run/reassemble cycle in one call. It is also the
-// form in which weld cannot fail: this function creates every window, hands out every
-// window, awaits all of them and welds them itself, so no caller code can drop one or
-// let the owner die first. The runtime completeness check only has something to catch
-// on the raw shatter/windows/weld path.
+// parallelMap is the whole divide/run/reassemble cycle in one call, and it is
+// infallible: this function creates every window, hands out every window, awaits all
+// of them and welds them itself, so no caller code can drop one or let the owner die
+// first. The completeness check inside the weld is an internal assertion, not an error
+// a caller can see.
 from "std/shard" import {
     Shard, parallelMap
 }
@@ -37,7 +37,7 @@ pub fn main(): i32 {
         v.push(2.0)
         i = i + 1
     }
-    let out = parallelMap(v, 4, addOne)!
+    let out = parallelMap(v, 4, addOne)
     print("n=" + out.len.toString() + " first=" + out[0].toString() + " last=" + out[out.len - 1].toString())
 
     // 10 elements over 4 workers: the last window carries the remainder, and every
@@ -48,7 +48,7 @@ pub fn main(): i32 {
         u.push(1)
         k = k + 1
     }
-    let out2 = parallelMap(u, 4, double)!
+    let out2 = parallelMap(u, 4, double)
     var sum: i64 = 0
     for x in out2 {
         sum = sum + x
@@ -62,7 +62,7 @@ pub fn main(): i32 {
         w.push(1)
         m = m + 1
     }
-    let out3 = parallelMap(w, 1, double)!
+    let out3 = parallelMap(w, 1, double)
     var sum3: i64 = 0
     for x in out3 {
         sum3 = sum3 + x

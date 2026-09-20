@@ -66,7 +66,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/runtime`](runtime) | `Task.spawn`, `Promise` / `Promise.blocking`, green scheduler |
 | [`std/event`](event) | kqueue/epoll/IOCP readiness polling — the layer `std/runtime` drives |
 | [`std/sync`](sync) | `Channel`, `WaitGroup`, `AtomicI64`, `AtomicBool` — all method-based |
-| [`std/shard`](shard) | `parallelMap`, `shatter` — divide a buffer's ownership across cores, no copy, nothing shared |
+| [`std/shard`](shard) | `parallelMap`, `parallelScanStr` — divide a buffer's ownership across cores, no copy, nothing shared |
 
 ## Database & Network
 

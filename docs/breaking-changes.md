@@ -3,7 +3,7 @@ system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
 key-files: std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo
 update-when: a public stdlib name moves, is renamed, or changes signature
-last-verified: 2026-08-22
+last-verified: 2026-09-19
 -->
 
 # Breaking changes
@@ -16,6 +16,34 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 `"milo": "^0.1.0"` in its `milo.json` (see
 [the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
 marker is added here each time a version is cut.
+
+## `std/shard`'s manual divide/weld path is private; the closed forms are infallible (2026-09-19)
+
+**`shatter`, `shatterStr`, `Shards<T>`, `StrShards`, `WeldRejected<T>`,
+`StrWeldRejected` and `WeldReason` are gone from the public surface**, and with them
+the methods `windows`, `weld`, `reclaim`, `count` and `len` on the two owners.
+Dividing a buffer across threads is now only possible through a closed form that
+awaits every worker before the owner can go away:
+
+| removed | use instead |
+|---|---|
+| `shatter(v, n)` / `owner.windows()` / `owner.weld(back)` | `parallelMap(v, n, f)`, or `parallelMapWith(v, windows, states, f)` when the workers need state or the windows outnumber the workers |
+| `shatterStr(s, n)` / `owner.windows(overlap)` / `owner.weld(back)` | `parallelScanStr(s, n, overlap, f)` with `f: (&StrShard) => R`; the string comes back in `.text`, the per-window results in `.results` |
+| `Shards.reclaim()` after a `NoWorkers` refusal | `rej.data` on the new `NoWorkers<T>` |
+| `WeldRejected.message()` / `.reason` / `.index` | nothing to replace: a weld inside a closed form cannot fail, so the error no longer exists |
+| `parallelMap(v, n, f)!` | `parallelMap(v, n, f)` (it returns `Vec<T>` now; the `!` is a compile error) |
+| `parallelMapWith(...)` refusing with `WeldRejected<T>` | refuses with `NoWorkers<T>`, which carries the caller's `Vec<T>` back as `data` |
+
+Why it is a removal and not a rule: a window is a raw pointer into the owner's
+buffer. Handing windows to a worker by hand and returning from the function
+before the worker finished dropped the `Shards` owner under a live window, and the
+worker then wrote into freed memory (H2 in
+[the soundness sweep](plans/soundness-sweep-2026-09.md); heap-use-after-free under
+`--sanitize`). The move checker cannot see it because nothing is moved twice; the
+`weld` check could only notice the miss after the fact, and a program that never
+welds never reaches it. No caller in-tree needed the pieces apart, so the pieces
+are no longer offered. The residue paragraph in `docs/residue-vs-rust.md` §2 is
+withdrawn: there is no "keep the owner alive" obligation left to document.
 
 ## `std/json` cursors are branded with their document (2026-08-28)
 

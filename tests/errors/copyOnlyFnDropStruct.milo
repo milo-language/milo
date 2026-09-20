@@ -26,7 +26,7 @@ pub fn main(): i32 {
         fd: 3
     }
     )
-    let back = parallelMap(conns, 1, keep)!
+    let back = parallelMap(conns, 1, keep)
     print(back.len)
     return 0
 }

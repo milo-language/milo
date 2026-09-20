@@ -1929,7 +1929,7 @@ enums whose fields are all Copy. `Drop` and `@noCopy` types are never Copy. Bare
 to, for a generic such as `parallelMapWith<T, S>` whose per-worker state `S` never
 crosses the raw pointer and may own a `Vec`. It is rejected on a declaration with no
 type parameters. The standard library writes it on `Shard`, `Shards`, `parallelMap` and
-`parallelMapWith`, which is why `shatter` of a `Vec<string>` does not compile.
+`parallelMapWith`, which is why `parallelMap` over a `Vec<string>` does not compile.
 
 The attribute cannot be forgotten by omission. A generic body is only ever checked as
 an instance, and the unsound instance is the one nobody wrote, so the compiler scans

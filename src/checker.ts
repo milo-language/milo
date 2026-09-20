@@ -35,9 +35,9 @@ export const FOREIGN_MODULE = "std/foreign.milo";
 // 'adoptHeap'" while the whole macOS and Linux lane stayed green: the gate was not merely
 // wrong on Windows, it silently removed the feature. Compare on posix separators.
 // Windows hands back `std\arena.milo`, so any rule that recognises a module by its path
-// has to normalise first. `lintArenaNeverFrees` and `lintManualShatterCycle` skip the
-// module that IMPLEMENTS the pattern they warn about; without this they stopped skipping
-// on Windows and warned inside std, where the reader cannot act on it.
+// has to normalise first. `lintArenaNeverFrees` skips the module that IMPLEMENTS the
+// pattern it warns about; without this it stopped skipping on Windows and warned inside
+// std, where the reader cannot act on it.
 export function inModule(file: string | undefined, module: string): boolean {
   return !!file && file.replace(/\\/g, "/").includes(module);
 }
@@ -558,9 +558,9 @@ export class TypeChecker {
   // is not registered yet answers false, which would reject `Shard<Point>` for a `Point`
   // declared further down the file.
   private _pendingCopyOnly: { generic: string; mangled: string; concrete: TypeKind; span?: Span }[] = [];
-  // One report per offending type, not per instantiation: `shatter(strings, 4)` reaches
-  // `Shards<string>`, whose fields and methods then reach `Shard<string>` and
-  // `WeldRejected<string>`, and only the first of those sits on a line the user wrote.
+  // One report per offending type, not per instantiation: `parallelMap(strings, 4, f)`
+  // reaches `Shards<string>`, whose fields and methods then reach `Shard<string>`, and
+  // only the first of those sits on a line the user wrote.
   private copyOnlyReported = new Set<string>();
   private resolvedMethods = new Map<Expr, string>();
   private heapMethodReceivers = new Set<Expr>();
@@ -3049,7 +3049,6 @@ export class TypeChecker {
     // Needs the finished call-resolution maps too: the global-write summary is a fixpoint
     // over the call graph, so every callee has to be resolvable before it runs.
     this.checkGlobalBorrowInvalidation(program);
-    this.lintManualShatterCycle(program);
     this.lintArenaNeverFrees(program);
 
     // An expectation that never fired means the code it excused was fixed and the
@@ -4616,55 +4615,6 @@ export class TypeChecker {
           span,
           `'${name}.sealGrowth()' gives an infallible 'get' and keeps 'alloc'; ` +
           `'${name}.freeze()' also gives up 'alloc'. See docs/ownership-patterns.md.`);
-      }
-    }
-  }
-
-  // `shatter` … `weld` written out by hand, where `parallelMap` does the whole cycle.
-  //
-  // This is a readability lint with a safety edge. Both spellings are correct, but the
-  // manual one carries an obligation the one-call form does not: a window is a pointer
-  // into the owner's buffer, so dropping the owner while a worker still holds one is a
-  // use-after-free, and `weld` can only catch the miss AFTER the fact. `parallelMap`
-  // makes every window, hands out every window, awaits them and welds them itself, so
-  // there is no caller code in between to get wrong. Pointing at the safer form is the
-  // whole reason this fires rather than leaving both equally discoverable.
-  //
-  // Deliberately coarse: any function that both shatters and welds. A function doing
-  // the cycle across a helper boundary is exactly the case where `parallelMap` helps
-  // most, but it is also where a caller may genuinely need the windows apart, so the
-  // narrow shape is the one worth naming.
-  private lintManualShatterCycle(program: Program): void {
-    if (this.warningConfig.allowed.has("manual-shatter-cycle")) return;
-    for (const f of program.functions) {
-      if (!f.body) continue;
-      // std/shard implements the cycle; parallelMap IS this pattern.
-      if (inModule(f.sourceFile, "std/shard")) continue;
-      let shatterSpan: Span | undefined;
-      let welds = false;
-      const walk = (node: unknown) => {
-        if (!node || typeof node !== "object") return;
-        if (Array.isArray(node)) { for (const n of node) walk(n); return; }
-        const n = node as Record<string, unknown> & { kind?: string; func?: unknown; method?: unknown; span?: unknown };
-        // `shatterStr` deliberately has NO one-call form (std/shard: the read-only
-        // half is the supported way to divide a string), so recommending
-        // parallelMap to a string caller sends them at an API that will not take
-        // their argument. Only the Vec side has a form to prefer.
-        if (n.kind === "Call" && typeof n.func === "string" && n.func === "shatter") {
-          shatterSpan ??= n.span as Span | undefined;
-        }
-        if (n.kind === "MethodCall" && n.method === "weld") welds = true;
-        for (const k of Object.keys(n)) if (k !== "span") walk(n[k]);
-      };
-      walk(f.body);
-      if (shatterSpan && welds) {
-        this.warn("manual-shatter-cycle",
-          `this shatters and welds by hand`,
-          shatterSpan,
-          `'parallelMap(v, workers, f)' is the same cycle in one call, and the form in ` +
-          `which weld cannot fail — nothing between making the windows and welding them ` +
-          `is your code. Keep the manual form only if the workers must differ, or you ` +
-          `want the windows for something other than one task each.`);
       }
     }
   }

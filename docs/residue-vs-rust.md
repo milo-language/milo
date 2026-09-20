@@ -3,7 +3,7 @@ system: positioning
 purpose: honest account of where Rust genuinely wins over Milo, and the claims Milo may and may not make
 key-files: docs/ownership-model.md, docs/memory-safety-vs-rust.md, docs/design.md, std/arena.milo, std/seal.milo, std/shard.milo, std/json.milo
 update-when: the residue changes (a feature lands that closes one of the three gaps, or the safe-claim boundary moves)
-last-verified: 2026-08-22
+last-verified: 2026-09-19
 -->
 
 # The residue: where Rust genuinely wins
@@ -20,7 +20,7 @@ checker proves the removal:
 | Residue | Rust proves | Milo removes | Mechanism |
 |---|---|---|---|
 | 1 staleness | a stored reference never goes stale | removal (`free`/`clear` do not exist) | `Arena.freeze` |
-| 2 aliasing | disjoint `&mut` borrows | aliasing (ownership divides) | `shatter` / `weld` |
+| 2 aliasing | disjoint `&mut` borrows | aliasing (ownership divides) | `parallelMap` and friends |
 | 3 invalidation | a borrow outlives its referent | mutation (no mutating method exists) | `seal` + `Span`, branded `json` cursors |
 
 Each section below says what its mechanism closed and, at more length, what it did not. The residue
@@ -56,10 +56,10 @@ For most code, runtime-deterministic is fine. For TLS session state, kernel obje
 
 **Divisible ownership now covers the in-place case** (2026-08-22, `std/shard`). Rust proves that
 several `&mut` slices into one buffer are disjoint. Milo does not prove it, because it makes the
-ownership itself divisible: `shatter` CONSUMES a `Vec` and yields disjoint owned windows, each of
-which a worker receives by move like any other value. No reference crosses a thread. The aliasing
-argument is the move checker that already shipped, plus `@noCopy` on the window, so handing the
-same window to two workers is a compile error rather than a race.
+ownership itself divisible: `parallelMap` CONSUMES a `Vec`, divides it into disjoint owned
+windows, and each worker receives one by move like any other value. No reference crosses a
+thread. The aliasing argument is the move checker that already shipped, plus `@noCopy` on the
+window, so handing the same window to two workers is a compile error rather than a race.
 
 Measured on a 10-core machine, 20M `f64`, 4 workers, against the C program doing the banned thing
 (pthreads over one shared buffer): Milo 3 ms / 163.0 MiB, C 3 ms / 154.0 MiB, Milo sequential
@@ -67,16 +67,18 @@ Measured on a 10-core machine, 20M `f64`, 4 workers, against the C program doing
 run; the memory figures are stable to a tenth of a MiB. The copy tax is gone; what remains is a flat 9.1 MiB of worker stacks, the same
 fixed cost at 40M elements. Reproduce with `sh benchmarks/shard/run.sh`.
 
-What does NOT close, and how far it shrank: `weld` verifies at RUNTIME that every window came
-back, because a window is a pointer into the owner's buffer and dropping the owner early is a
-use-after-free nothing catches. Rust's borrow checker rejects the equivalent at compile time.
-**That residue applies only to the manual `shatter`/`windows`/`weld` path.** `parallelMap` creates
-every window, hands out every window, awaits all of them and welds them itself, so no caller code
-can drop one or let the owner die first: completeness follows from the shape of the call instead of
-being checked afterwards. It is the same guarantee Rust's scoped threads get from lifetimes,
-reached by closing the cycle inside one function rather than by proving a lifetime. The runtime
-check remains for callers who take the windows apart themselves. Stencils with overlapping halos, true 2D
-tiles, and long-lived contended shared state all remain outside what dividing ownership can do.
+What closed on 2026-09-19, and what it cost: a window is a pointer into the owner's buffer, and
+dropping the owner while a worker still held a window was a use-after-free nothing caught (the
+sweep's H2). Until then the manual `shatter`/`windows`/`weld` path was offered with a "keep the
+owner alive until weld" obligation and a runtime completeness check that could only notice a miss
+after the fact. That path is now private to `std/shard`. Every public form (`parallelMap`,
+`parallelMapWith`, `parallelScanStr`) creates every window, hands out every window, awaits every
+worker and reassembles inside one call, so no caller code exists in which the owner can die first:
+completeness follows from the shape of the call. It is the same guarantee Rust's scoped threads
+get from lifetimes, reached by closing the cycle inside one function rather than by proving a
+lifetime. The cost is expressiveness, not soundness: the windows are never yours to hold apart,
+so a worker pool you drive yourself, stencils with overlapping halos, true 2D tiles, and
+long-lived contended shared state all remain outside what dividing ownership can do.
 
 For a parser, CLI, or service this is the right trade and often faster to reason about. For a physics kernel, an ECS inner loop, or a tiled image filter that must share one buffer across cores, Rust does the thing Milo won't. Don't pretend the process model covers it — it covers throughput, not shared-memory data parallelism.
 

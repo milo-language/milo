@@ -3,7 +3,7 @@ system: planning
 purpose: canonical status — what shipped, what is in flight, what is planned, what was retired
 key-files: docs/backlog.md (ROI ordering over the open items), docs/safety-roadmap.md, docs/self-hosting.md, docs/verification-roadmap.md
 update-when: a feature ships, a track is abandoned, or a new track opens
-last-verified: 2026-09-19 (prover: builtin container contracts, honest verdicts on contract-less havocs; earlier: self-host endgame decided proof-only and src-milo frozen; packages ecosystem at 8 published with an install-and-build gate)
+last-verified: 2026-08-23 (self-host endgame decided proof-only and src-milo frozen; packages ecosystem at 8 published with an install-and-build gate; green main; counts re-measured)
 -->
 
 # Milo Roadmap
@@ -48,76 +48,10 @@ See [safety-roadmap.md](safety-roadmap.md) for the enforced-vs-remaining breakdo
 - **Termination**: a self-recursive call is modelled by assuming the function's own `ensures`, which is induction; `decreases` discharges the well-foundedness it needs. Without a measure the proof is reported as conditional on a termination nothing checked
 - Callee `ensures` are assumed only under the callee's `requires` (the bare form let a call-site precondition prove itself)
 - `unknown` is reported as unknown, never as proven — an i64 overflow inside the elimination degrades the verdict rather than producing a false proof
-- **`unknown` is reported as unknown, never as `failed`, either.** A `failed` verdict is a counterexample, and a counterexample is only a counterexample when every value in it is one the program constrains. A havoc (a `&mut` argument or method receiver at a call, a variable a loop writes) mints a free symbol; if no `ensures`, builtin contract, loop guard or invariant ever mentions that symbol, a model that assigns it is a state the program may never reach, so any obligation resting on it degrades to `unknown` with the offending value named (`the value of 'v_len' after 'frob(…)' (no contract) is unconstrained`). Same rule a `@pure` call with no `ensures` already followed. `ensures v.len == old(v.len) + 1` after `v.push(x)` was "refuted" with `v_len__mut1 = 0` before this; `v.len > 0` after `Vec.new()` + `push` was refuted with `len = -1`
-- Every `len` of a Vec/string/array place carries `>= 0`, including the fresh symbol a havoc mints for it, so no state with a negative length is ever offered as a witness
-- **Builtin containers have contracts**, stated in Milo as the `ensures` each method would carry if it were library code (`BUILTIN_CONTRACTS_SRC` in `src/verify.ts`, consumed by the same frame machinery as a user `&mut` callee). A method absent from the table still havocs its receiver and, by the rule above, yields `unknown`. Each entry is checked against the runtime by `tests/prove/builtinContainerContracts.milo`, which the prove driver both proves and executes under `--debug`. The table is keyed by method name and applied only when the receiver is known to be a Vec/string/array, so a user type's own `push` is untouched:
-
-<!-- builtin-contracts -->
-```milo
-fn Vec.new(): Vec<i64>
-ensures result.len == 0
-{}
-fn Vec.withCapacity(n: i64): Vec<i64>
-ensures result.len == 0
-{}
-fn push(self: &mut Vec<i64>, x: i64): void
-ensures self.len == old(self.len) + 1
-{}
-fn pop(self: &mut Vec<i64>): void
-ensures old(self.len) == 0 || self.len == old(self.len) - 1
-ensures old(self.len) > 0 || self.len == 0
-{}
-fn clear(self: &mut Vec<i64>): void
-ensures self.len == 0
-{}
-fn insert(self: &mut Vec<i64>, i: i64, x: i64): void
-ensures self.len == old(self.len) + 1
-{}
-fn remove(self: &mut Vec<i64>, i: i64): void
-ensures self.len == old(self.len) - 1
-{}
-fn truncate(self: &mut Vec<i64>, n: i64): void
-ensures n < 0 || n >= old(self.len) || self.len == n
-ensures n < old(self.len) || self.len == old(self.len)
-{}
-fn extend(self: &mut Vec<i64>, other: Vec<i64>): void
-ensures self.len == old(self.len) + old(other.len)
-{}
-fn pushStr(self: &mut string, s: string): void
-ensures self.len == old(self.len) + s.len
-{}
-fn retain(self: &mut Vec<i64>, keep: i64): void
-ensures self.len <= old(self.len)
-{}
-fn reverse(self: &mut Vec<i64>): void
-ensures self.len == old(self.len)
-{}
-fn swap(self: &mut Vec<i64>, i: i64, j: i64): void
-ensures self.len == old(self.len)
-{}
-fn sort(self: &mut Vec<i64>): void
-ensures self.len == old(self.len)
-{}
-fn sortBy(self: &mut Vec<i64>, cmp: i64): void
-ensures self.len == old(self.len)
-{}
-fn sortByKey(self: &mut Vec<i64>, key: i64): void
-ensures self.len == old(self.len)
-{}
-fn reserve(self: &mut Vec<i64>, n: i64): void
-ensures self.len == old(self.len)
-{}
-fn [i]=(self: &mut Vec<i64>, i: i64, x: i64): void
-ensures self.len == old(self.len)
-{}
-```
-
-Read-only, so the receiver is not havoced at all: `len`, `isEmpty`, `capacity`, `get`, `first`, `last`, `slice`, `contains`, `indexOf`, `position`, `join`, `map`, `filter`, `fold`, `reduce`, `each`, `enumerate`, `find`, `any`, `all`, `sum`, `min`, `max`, `clone`, `startsWith`, `endsWith`, `indexOfFrom`, `lastIndexOf`, `charAt`, `substr`, `toLower`, `toUpper`, `trim`, `trimStart`, `trimEnd`, `repeat`, `padStart`, `padEnd`, `replace`, `replaceFirst`, `split`, `splitWords`, `splitWhitespace`, `lines`, `splitView`, `codePoints`, `parseInt`, `parseF64`, `cstr`.
-<!-- /builtin-contracts -->
 
 This is roughly SPARK's contract vocabulary (`Pre`/`Post`/`Loop_Invariant`/`Type_Invariant`/`Loop_Variant`/`Subprogram_Variant`/`'Old`) and lands at their "silver" level: absence of runtime error, plus termination and simple data invariants — not functional correctness.
 
-Known frontier (tracked in backlog Tier 1 #1–#3 and Tier 2 #2/#3/#12): **no quantifiers** — `forall`/`exists` over container contents is unstateable, so sortedness cannot be specified and binary search cannot be verified; no bitvector theory (`&`, `<<`); no `IndexAccess` reasoning (`v[i]` has a frame on `len` but no value); no `Option` model, so `pop`'s result is untracked; the native solver enumerates atoms and answers `unknown` past 20 of them, and every `len` frame fact costs two, so a long chain of container ops proves under `--solver=z3` only; and *intermediate* arithmetic carries no range, so derived values can be refuted by inputs no real i32 could produce. `milo verify` remains as a deprecated alias for `prove`.
+Known frontier (tracked in backlog Tier 1 #1–#3 and Tier 2 #2/#3/#12): **no quantifiers** — `forall`/`exists` over container contents is unstateable, so sortedness cannot be specified and binary search cannot be verified; no bitvector theory (`&`, `<<`); no `IndexAccess` reasoning; no `Vec.len` through a builder; and *intermediate* arithmetic carries no range, so derived values can be refuted by inputs no real i32 could produce. `milo verify` remains as a deprecated alias for `prove`.
 
 ### Safety Profiles, WCET, Bare Metal
 
@@ -200,7 +134,7 @@ Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; 
 - **Package manager**: `milo init/new/add/remove/install/update/tree/why/vendor/publish` plus `tool install/uninstall/list/run`, git-based cache with a lockfile, GitHub repos as the registry, per-package name mangling. Folded into the one `milo` binary. See [plans/package-manager.md](plans/package-manager.md)
 - **Published packages (8)**: postgres, redis, markdown, toml, yaml, json-rpc, gl, sdl — indexed on [the packages page](site/packages.md), each graded against something that is *not itself* (CommonMark's 655 spec examples and `cmark`, Python's `tomllib`, a real PostgreSQL requiring SCRAM, a real Redis, `ruamel.yaml`). `scripts/ecosystem-check.ts` is the gate that installs each one from GitHub and builds it against this checkout — added after two packages shipped green in-repo and uninstallable to everyone else, for two different reasons (a string global invisible to its own package's functions, and a capitalised global parsing as an enumlit and recovering by a value lookup that mangling had already renamed away)
 - **Docs from source**: `milo doc <file|dir>` generates reference markdown from doc-comments; `milo api <terms>` searches std signatures
-- **Test framework**: `@expect:`/`@error:` annotations, `milo test` runner — <!-- stat:fixtures -->693<!-- /stat --> fixtures, <!-- stat:error-fixtures -->353<!-- /stat --> error fixtures, <!-- stat:prove-fixtures -->37<!-- /stat --> prove fixtures
+- **Test framework**: `@expect:`/`@error:` annotations, `milo test` runner — <!-- stat:fixtures -->690<!-- /stat --> fixtures, <!-- stat:error-fixtures -->354<!-- /stat --> error fixtures, <!-- stat:prove-fixtures -->37<!-- /stat --> prove fixtures
 - **Fuzzers**: `scripts/fuzz-frontend.ts` (2 bugs per 150k mutants) and `scripts/fuzz-ownership.ts`, which grades ownership bugs under a *real* ASan oracle. Two silent-success bugs were found in the harness itself before it graded anything: `--sanitize` linked the ASan runtime but instrumented nothing, so every use-after-free read passed while the interceptors kept the sanitizer looking alive; and the fuzzer graded a UAF by whether the freed bytes happened to be reused. Surface coverage is 27 of 39 expression and statement forms, now composed at depth 5–7 rather than emitted alone at the top level of `main` — a generator can reach 39/39 wide and still test nothing about how the rules compose
 - **Benchmarks**: `benchmarks/run.sh` with per-benchmark `results-*.md` (fib, binarytrees, grep, json, matmul, maplookup)
 - **JS target**: `milo emit-js` — the playground on the docs site runs the compiler output in-browser

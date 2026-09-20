@@ -1,10 +1,7 @@
-// The same transform over four workers, in place, via shatter/weld. No element is
+// The same transform over four workers, in place, via parallelMap. No element is
 // copied: each worker owns a disjoint window of the one buffer.
 from "std/shard" import {
-    Shard, shatter
-}
-from "std/runtime" import {
-    Promise
+    Shard, parallelMap
 }
 from "std/time" import {
     epochMillis
@@ -30,18 +27,7 @@ pub fn main(): i32 {
         i = i + 1
     }
     let t0 = epochMillis()
-    var owner = shatter(v, workers)
-    var windows = owner.windows()
-    var ps: Vec<Promise<Shard<f64>>> = Vec.new()
-    while windows.len > 0 {
-        let w = windows.pop()!
-        ps.push(Promise<Shard<f64>>.blocking(move(): Shard<f64> => {
-            return work(w)
-        }
-        ))
-    }
-    let back = Promise.all(ps).await()!
-    let out = owner.weld(back)!
+    let out = parallelMap(v, workers, work)
     let t1 = epochMillis()
     print("par ms=" + (t1 - t0).toString() + " check=" + (out[0] + out[n - 1]).toString())
     return 0

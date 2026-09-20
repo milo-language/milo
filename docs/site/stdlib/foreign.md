@@ -2,7 +2,7 @@
 
 `withRaw` turns a `(pointer, length)` pair from C into a real `&[T]`, for as long as one closure call, and never a moment longer. `adopt` does the other half: it turns a pointer to a Milo allocation back into an owned `Heap<T>` whose drop frees it.
 
-Every other safety mechanism in Milo works by being the allocator. `seal` consumes a buffer and offers no mutating method; `Arena.freeze` consumes an arena and removes `free`; `shatter` consumes a `Vec` and hands out disjoint owned windows. At a C boundary all three preconditions are false at once: C allocated the memory, C will free it, C may write it after you return. Without this module a program crossing that seam falls back to raw pointer arithmetic and loses every guarantee at exactly the place it needs one.
+Every other safety mechanism in Milo works by being the allocator. `seal` consumes a buffer and offers no mutating method; `Arena.freeze` consumes an arena and removes `free`; `parallelMap` consumes a `Vec` and hands out disjoint owned windows. At a C boundary all three preconditions are false at once: C allocated the memory, C will free it, C may write it after you return. Without this module a program crossing that seam falls back to raw pointer arithmetic and loses every guarantee at exactly the place it needs one.
 
 What is missing there turns out to be small. The slice type already exists and is already checked. Nothing here adds a reference kind, a lifetime, or a rule. These are *constructors* for a type the language shipped with.
 

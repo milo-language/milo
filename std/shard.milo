@@ -6,33 +6,32 @@
 // For a 20M-element buffer that copy costs more than the parallelism saves.
 //
 // The way out is not to weaken the reference rules, it is to make ownership
-// divisible. `shatter` CONSUMES a Vec and returns an owner holding it, from which
-// you take disjoint windows. Each window is an ordinary owned value, so a worker
-// receives it by move like any other value, and the aliasing argument is the move
-// checker that already shipped:
+// divisible. `parallelMap` CONSUMES a Vec, divides its storage into disjoint windows,
+// hands each window to a worker BY MOVE like any other value, and reassembles the
+// same allocation once every worker has returned:
 //
 //     var data: Vec<f64> = Vec.filled(n, 1.0)
-//     var owner = shatter(data, 4)     // `data` is moved; nothing else can reach it
-//     let windows = owner.windows()    // 4 disjoint Shard<f64>, once
-//     ... hand each window to a worker by move, transform in place ...
-//     let back = owner.weld(returned)! // the original Vec, same allocation
+//     let back = parallelMap(data, 4, shade)   // `data` is moved; same allocation returns
 //
 // The three things that make that safe are all rules Milo already had:
 //
-//   - `shatter` consumes the Vec, so after it there is no binding through which
+//   - the Vec is consumed, so while it is divided there is no binding through which
 //     the buffer can be reached except the windows.
 //   - the windows are disjoint BY CONSTRUCTION: window i covers exactly
 //     [i*chunk, (i+1)*chunk), computed here, never supplied by the caller.
 //   - `Shard` is @noCopy, so handing the same window to two workers is
 //     `error: use of moved variable`, not a race.
 //
-// What is NOT proven, and is checked at runtime instead: that every window comes
-// back to `weld`. A window is a raw pointer into the owner's buffer, so a program
-// that drops the owner while a worker still holds one has a use-after-free that
-// nothing here catches. `weld` verifies that the windows it is handed all came
-// from this shatter and cover it exactly, and fails deterministically otherwise.
-// Keep the owner alive until weld: that is the one obligation this module asks of
-// you, and it is the residue that stays honest in docs/residue-vs-rust.md.
+// And the fourth is the shape of the API. A window is a raw pointer into the owner's
+// buffer, so a program that dropped the owner while a worker still held a window
+// would write into freed memory. The divide/run/reassemble cycle therefore lives
+// INSIDE this module: `parallelMap`, `parallelMapWith` and `parallelScanStr` make
+// every window, hand out every window, await every worker and reassemble, and no
+// caller code exists between those steps to get wrong. The pieces of that cycle
+// (`shatter`, `windows`, `weld`) are module-private on purpose. They used to be an
+// escape hatch, and the hatch was a use-after-free the move checker could not see
+// (H2 in docs/plans/soundness-sweep-2026-09.md); the completeness check `weld` runs
+// is now an internal assertion, not a contract a caller can miss.
 //
 // Element types are Copy only (`@copyOnly` on Shard, Shards, parallelMap and
 // parallelMapWith). `Shard.get` reads `self.base[i]` through the raw pointer, a bitwise
@@ -97,7 +96,7 @@ impl Shard<T> {
         return self.len
     }
 
-    // Which window of the shatter this is, counting from 0.
+    // Which window of the division this is, counting from 0.
     fn index(self: &Self): i64 {
         return self.index
     }
@@ -139,40 +138,21 @@ unsafe
 impl Send for Shard {
 }
 
-// Why a weld was refused, with no text attached: the numbers that used to be
-// baked into a sentence (which window, how many were expected) live next to the
-// data in the rejection, so a caller can branch on the cause instead of matching
-// on a string.
-pub enum WeldReason {
-    // A window from a different shatter, or a hand-built one.
-    Foreign,
-    // The count is right but the coverage is not: a duplicate and a gap.
-    NotCovered,
-    // Wrong number of windows handed back.
-    CountMismatch,
-    // `parallelMapWith` was given no states, so there would be no worker to run on.
-    NoWorkers,
-}
-
-// The verdict of a weld check, so both welds share one implementation of it. To this
-// logic a window is an id and an index, and both sides have those, so a second copy
-// would only be somewhere for the two to drift apart. They already did once: the
-// string side shipped with the count and coverage checks missing, justified by a
-// comment about overlap that applies to neither of them.
-struct WeldVerdict {
-    ok: bool,
-    reason: WeldReason,
-    bad: i64,
-}
-
+// The verdict of a reassembly check, shared by both sides so the two cannot drift
+// apart. To this logic a window is an id and an index, and both sides have those.
+// They did drift once: the string side shipped with the count and coverage checks
+// missing, justified by a comment about overlap that applies to neither of them.
+//
 // `ids` and `indices` are the windows handed back, paired by position. Overlap is
 // irrelevant here: `index` stays unique per window whether or not the byte ranges
 // overlap, so the same coverage argument holds for reading and writing windows.
-fn weldVerdict(count: i64, shatterId: i64, ids: &Vec<i64>, indices: &Vec<i64>): WeldVerdict {
+//
+// Returns "" when every window this shatter handed out is present exactly once, else
+// what is wrong. Every caller is a closed form that collected every window it made,
+// so a non-empty verdict is a bug in this module and the callers assert on it.
+fn weldVerdict(count: i64, shatterId: i64, ids: &Vec<i64>, indices: &Vec<i64>): string {
     if ids.len != count {
-        return WeldVerdict {
-            ok: false, reason: WeldReason.CountMismatch, bad: -1
-        }
+        return "expected " + count.toString() + " windows, got " + ids.len.toString()
     }
     var seen: Vec<bool> = Vec.new()
     var i: i64 = 0
@@ -184,14 +164,10 @@ fn weldVerdict(count: i64, shatterId: i64, ids: &Vec<i64>, indices: &Vec<i64>): 
     while k < ids.len {
         let idx = indices[k]
         if ids[k] != shatterId || idx < 0 || idx >= count {
-            return WeldVerdict {
-                ok: false, reason: WeldReason.Foreign, bad: idx
-            }
+            return "window " + idx.toString() + " did not come from this shatter"
         }
         if seen[idx] {
-            return WeldVerdict {
-                ok: false, reason: WeldReason.NotCovered, bad: idx
-            }
+            return "window " + idx.toString() + " came back twice"
         }
         seen[idx] = true
         k = k + 1
@@ -199,73 +175,27 @@ fn weldVerdict(count: i64, shatterId: i64, ids: &Vec<i64>, indices: &Vec<i64>): 
     var j: i64 = 0
     while j < count {
         if !seen[j] {
-            return WeldVerdict {
-                ok: false, reason: WeldReason.NotCovered, bad: j
-            }
+            return "window " + j.toString() + " never came back"
         }
         j = j + 1
     }
-    return WeldVerdict {
-        ok: true, reason: WeldReason.CountMismatch, bad: -1
-    }
+    return ""
 }
 
-// Owns the buffer while it is divided. Hold this until weld.
+// Owns the buffer while it is divided. Module-private: the only code that may hold
+// one is a closed form in this file, which is what guarantees it outlives its windows.
 @copyOnly
-pub struct Shards<T> {
+struct Shards<T> {
     buf: Vec<T>,
     count: i64,
     shatterId: i64,
     handedOut: bool,
 }
 
-// Why a refused weld is a struct and not a message: `weld` consumes the owner AND
-// the windows, so a `Result<Vec<T>, string>` would destroy a 20M-element buffer
-// and every window over it the instant a caller miscounted. This module exists so
-// that buffer is never copied, which makes dropping it the one failure it cannot
-// afford. The rejection carries all of it home: fix the set and weld again. Same
-// shape, and the same reason, as `FreezeRejected` in std/arena and `ThawRejected`
-// in std/seal.
-pub struct WeldRejected<T> {
-    // The owner, still holding the buffer untouched.
-    shards: Shards<T>,
-    // The windows exactly as they were handed in, in the order given.
-    returned: Vec<Shard<T>>,
-    // What was wrong.
-    reason: WeldReason,
-    // The window the refusal is about, or -1 when no single window is at fault.
-    index: i64,
-}
-
-impl WeldRejected<T> {
-    // A sentence for a human. The machine-readable form is `reason` and `index`;
-    // this exists so a caller that only wants to log has something to log.
-    fn message(self: &Self): string {
-        match self.reason {
-            WeldReason.CountMismatch => {
-                return "weld: expected " + self.shards.count.toString() + " windows, got " + self.returned.len.toString()
-            }
-            WeldReason.Foreign => {
-                return "weld: window " + self.index.toString() + " did not come from this shatter"
-            }
-            WeldReason.NotCovered => {
-                return "weld: window " + self.index.toString() + " came back twice, or never came back"
-            }
-            WeldReason.NoWorkers => {
-                return "parallelMapWith: states is empty, so there is no worker to run on"
-            }
-        }
-    }
-}
-
 // Per-process shatter identity, so a window cannot be welded into the wrong owner.
 // Allocated atomically because shatter can run on a Promise.blocking worker.
 var nextShatterId: i64 = 1
 
-// ESCAPE HATCH. Prefer `parallelMap`, which is this whole cycle in one call and the
-// form in which `weld` cannot fail. Reach here only when the workers must differ from
-// each other, or when you want the windows for something other than one task each.
-//
 // Consume a Vec and return an owner that can hand out `n` disjoint windows over
 // its storage. O(1): nothing is copied, and the Vec's buffer is untouched.
 //
@@ -275,7 +205,7 @@ var nextShatterId: i64 = 1
 // clamp up rather than down: `min(n, v.len)` would be 0 there, and a count of 0
 // divides by zero in `windows`, so the lower bound wins and an empty buffer is
 // one empty window.
-pub fn shatter<T>(v: Vec<T>, n: i64): Shards<T> {
+fn shatter<T>(v: Vec<T>, n: i64): Shards<T> {
     var id: i64 = 0
     unsafe {
         id = _atomicAddI64((nextShatterId.addrOf()) as *u8, 1)
@@ -297,25 +227,12 @@ pub fn shatter<T>(v: Vec<T>, n: i64): Shards<T> {
 }
 
 impl Shards<T> {
-    // How many windows this shatter divides into.
-    fn count(self: &Self): i64 {
-        return self.count
-    }
-
-    // Elements across all windows.
-    fn len(self: &Self): i64 {
-        return self.buf.len
-    }
-
-    // ESCAPE HATCH (see `shatter`). The windows, once.
+    // The windows, once.
     //
-    // A second call aborts rather than returning anything. It cannot hand out a
-    // second set of pointers to the same storage without creating the aliases the
-    // whole design exists to prevent, and it cannot refuse into a `WeldRejected`
-    // either: this borrows the owner instead of consuming it, so there is nothing
-    // of the caller's to hand back and nothing a caller could do about it except
-    // stop asking twice. Returning an empty Vec used to defer the report to `weld`,
-    // which then blamed the wrong step ("expected 4 windows, got 0").
+    // A second call aborts: it cannot hand out a second set of pointers to the same
+    // storage without creating the aliases the whole design exists to prevent. Every
+    // caller in this file calls it exactly once, so the assertion guards this module
+    // against itself, not a user against a misuse.
     fn windows(self: &mut Self): Vec<Shard<T>> {
         assert(!self.handedOut, "shard: windows() called twice on one shatter; the first set is still outstanding")
         var out: Vec<Shard<T>> = Vec.new()
@@ -345,65 +262,44 @@ impl Shards<T> {
         return out
     }
 
-    // ESCAPE HATCH (see `shatter`). Reassemble: consume the owner and the windows, and
-    // hand back the original Vec with its original allocation.
+    // Reassemble: consume the owner and the windows, and hand back the original Vec
+    // with its original allocation.
     //
-    // The checks are what keep a mistake a logic error instead of corruption: every
-    // window must carry this shatter's identity, and the set must cover every index
-    // exactly once. A missing window would mean some worker still holds a pointer
-    // into this buffer, and returning the Vec then would be the use-after-free this
-    // module exists to avoid.
-    //
-    // A refusal costs nothing: the `WeldRejected` hands the owner and every window
-    // back, so the caller fixes the set and welds again.
-    fn weld(self: Self, returned: Vec<Shard<T>>): Result<Vec<T>, WeldRejected<T>> {
+    // The check is what keeps a bug in this module a loud abort instead of silent
+    // corruption: every window must carry this shatter's identity, and the set must
+    // cover every index exactly once. A missing window would mean some worker still
+    // holds a pointer into this buffer, and returning the Vec then would be the
+    // use-after-free this module exists to avoid. The closed forms await every worker
+    // before welding, so the verdict is always clean; the assertion is there for the
+    // day one of them is edited wrong.
+    fn weld(self: Self, returned: Vec<Shard<T>>): Vec<T> {
         var ids: Vec<i64> = Vec.new()
         var indices: Vec<i64> = Vec.new()
         for w in returned {
             ids.push(w.shatterId)
             indices.push(w.index)
         }
-        let v = weldVerdict(self.count, self.shatterId, ids, indices)
-        if !v.ok {
-            var r: WeldRejected<T> = WeldRejected {
-                shards: self, returned: returned, reason: v.reason, index: v.bad
-            }
-            return Result.Err(r)
-        }
-        return Result.Ok(self.buf)
-    }
-
-    // Take the buffer back from an owner that never handed a window out.
-    //
-    // This is the way home for a refusal that happens BEFORE any division, where
-    // `weld` is not an option because there are no windows to weld. Once
-    // `windows` has run, some worker may hold a pointer into the buffer, so the
-    // only sound route back is `weld` and its coverage check; `handedOut` records
-    // exactly that moment, which is why it is the condition here.
-    fn reclaim(self: Self): Result<Vec<T>, Shards<T>> {
-        if self.handedOut {
-            return Result.Err(self)
-        }
-        return Result.Ok(self.buf)
+        let bad = weldVerdict(self.count, self.shatterId, ids, indices)
+        assert(bad.len == 0, "shard: internal weld check failed: " + bad)
+        return self.buf
     }
 }
 
 // Divide, run on `workers` threads, reassemble. The whole cycle in one call.
 //
-//     let out = parallelMap(pixels, 4, shade)!
+//     let out = parallelMap(pixels, 4, shade)
 //
-// This is the shape almost every use wants, and doing it by hand means draining the
-// window Vec, building a Vec of Promises, awaiting them and welding — plumbing that
-// says nothing about the work. Reach for shatter/windows/weld directly only when the
-// workers need to differ from each other, or when you want the windows for something
-// other than one task each.
+// Infallible: this function creates every window, hands out every window, awaits
+// every worker and welds the set itself, so there is no way for a window to be
+// missing at the weld. Workers that need to differ from each other, or more windows
+// than workers, are `parallelMapWith`.
 //
 // `f` is a plain function rather than a closure because each worker needs its own
 // copy: a capturing closure would be moved into the first task and gone for the rest.
 // Everything the work depends on therefore travels in the window itself, which is
 // also what keeps the workers from sharing anything.
 @copyOnly
-pub fn parallelMap<T>(v: Vec<T>, workers: i64, f: (Shard<T>) => Shard<T>): Result<Vec<T>, WeldRejected<T>> {
+pub fn parallelMap<T>(v: Vec<T>, workers: i64, f: (Shard<T>) => Shard<T>): Vec<T> {
     var owner = shatter(v, workers)
     var windows = owner.windows()
     var ps: Vec<Promise<Shard<T>>> = Vec.new()
@@ -423,6 +319,27 @@ pub fn parallelMap<T>(v: Vec<T>, workers: i64, f: (Shard<T>) => Shard<T>): Resul
 pub struct Mapped<T, S> {
     data: Vec<T>,
     states: Vec<S>,
+}
+
+// `parallelMapWith` was given no states, so there would be no worker to run on.
+//
+// Why a refusal is a struct and not a message: `v` was moved in at the call, so a
+// `Result<Mapped, string>` would destroy a 20M-element buffer over an empty Vec of
+// states. This module exists so that buffer is never copied, which makes dropping it
+// the one failure it cannot afford. The refusal carries it home untouched, and
+// nothing else: `states` is empty by definition of this refusal, so there is nothing
+// of the caller's in it to return. Same shape, and the same reason, as
+// `FreezeRejected` in std/arena and `ThawRejected` in std/seal.
+pub struct NoWorkers<T> {
+    // The caller's buffer, whole. It was never divided.
+    data: Vec<T>,
+}
+
+impl NoWorkers<T> {
+    // A sentence for a human, for a caller that only wants to log.
+    fn message(self: &Self): string {
+        return "parallelMapWith: states is empty, so there is no worker to run on"
+    }
 }
 
 // parallelMap with two things it cannot express: more windows than workers, and
@@ -445,21 +362,13 @@ pub struct Mapped<T, S> {
 // must not encode the assignment: per-worker tallies merge into totals that are
 // deterministic even though each worker's share is not.
 @copyOnly(T)
-pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<T>, &mut S) => Shard<T>): Result<Mapped<T, S>, WeldRejected<T>> {
-    // `v` was moved in at the call, so refusing here with a message alone would
-    // take the caller's buffer down with the refusal. Shatter it into an owner
-    // that never hands a window out and refuse with THAT: `rej.shards.reclaim()`
-    // gives the buffer back whole. `states` is empty by definition of this
-    // refusal, so there is nothing of the caller's in it to return.
-    //
-    // A non-positive `windows` is not checked at all: `shatter` already clamps the
-    // count to at least one, so the old guard rejected an input the divider was
-    // about to accept.
+pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<T>, &mut S) => Shard<T>): Result<Mapped<T, S>, NoWorkers<T>> {
+    // Refuse BEFORE dividing anything, so the buffer goes home whole. A non-positive
+    // `windows` is not checked at all: `shatter` already clamps the count to at
+    // least one, so the old guard rejected an input the divider was about to accept.
     if states.len <= 0 {
-        var idle = shatter(v, 1)
-        var none: Vec<Shard<T>> = Vec.new()
-        var r: WeldRejected<T> = WeldRejected {
-            shards: idle, returned: none, reason: WeldReason.NoWorkers, index: -1
+        var r: NoWorkers<T> = NoWorkers {
+            data: v
         }
         return Result.Err(r)
     }
@@ -511,7 +420,7 @@ pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<
     while got.len > 0 {
         ordered.push(got.pop()!)
     }
-    let data = owner.weld(back)?
+    let data = owner.weld(back)
     return Result.Ok(Mapped {
         data: data, states: ordered
     }
@@ -528,16 +437,17 @@ pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<
 // `Vec<u8>` first costs a full copy (19-33 ms for 51 MiB, against a 34 ms scan), so
 // the copy would eat the parallelism it was bought for.
 //
-// So this is the read-only half: the owner keeps the string, the windows are views,
-// and nothing mutates. The two consequences of nobody writing are:
+// So this is the read-only half: `parallelScanStr` keeps the string, the windows are
+// views, and nothing mutates. The two consequences of nobody writing are:
 //
 //   - windows may OVERLAP. A literal that straddles a boundary is missed by disjoint
 //     windows, and the usual fix is to scan the seams afterwards. Overlap is sound
-//     here precisely because these are reads, so `windows(overlap)` lets a scanner
-//     ask for `needle.len - 1` bytes of slack and stop thinking about seams. Mind
-//     that a match inside the overlap is found by BOTH neighbours, so a counter must
-//     ignore hits that begin at or past its own `ownLen()`. Ask the window; `len`
-//     minus the overlap is wrong for the last one, which was never extended.
+//     here precisely because these are reads, so `parallelScanStr(s, n, overlap, f)`
+//     lets a scanner ask for `needle.len - 1` bytes of slack and stop thinking about
+//     seams. Mind that a match inside the overlap is found by BOTH neighbours, so a
+//     counter must ignore hits that begin at or past its own `ownLen()`. Ask the
+//     window; `len` minus the overlap is wrong for the last one, which was never
+//     extended.
 //   - overlap removes the COVERAGE-OF-BYTES check, not the liveness one. Two windows
 //     legally sharing bytes means `weld` cannot ask which window owns which byte, so
 //     it does not. It still asks that every window it handed out has come back
@@ -579,7 +489,7 @@ impl StrShard {
         return self.start
     }
 
-    // Which window of the shatter this is, counting from 0.
+    // Which window of the division this is, counting from 0.
     fn index(self: &Self): i64 {
         return self.index
     }
@@ -620,56 +530,18 @@ unsafe
 impl Send for StrShard {
 }
 
-pub struct StrShards {
+// Owns the string while it is divided. Module-private for the same reason `Shards`
+// is: only a closed form in this file may hold one.
+struct StrShards {
     buf: string,
     count: i64,
     shatterId: i64,
     handedOut: bool,
 }
 
-// The reading side's refusal, carrying the string back for the same reason the
-// writing side carries the buffer back: `weld` consumes the owner, and a 51 MiB
-// file that a scanner misrouted is not something to throw away over a diagnostic.
-pub struct StrWeldRejected {
-    // The owner, still holding the string.
-    shards: StrShards,
-    // The windows exactly as they were handed in.
-    returned: Vec<StrShard>,
-    // `Foreign`, `CountMismatch` or `NotCovered`, the same three the writing side
-    // refuses over. `NoWorkers` belongs to `parallelMapWith` and cannot appear here.
-    reason: WeldReason,
-    // The window the refusal is about, or -1 when no single window is at fault.
-    index: i64,
-}
-
-impl StrWeldRejected {
-    // A sentence for a human; `reason` and `index` are the machine-readable form.
-    fn message(self: &Self): string {
-        match self.reason {
-            WeldReason.CountMismatch => {
-                return "weld: expected " + self.shards.count.toString() + " windows, got " + self.returned.len.toString()
-            }
-            WeldReason.NotCovered => {
-                return "weld: window " + self.index.toString() + " came back twice, or never came back"
-            }
-            WeldReason.Foreign => {
-                return "weld: window " + self.index.toString() + " did not come from this shatter"
-            }
-            // Unreachable: nothing on this side constructs `NoWorkers`. The arm
-            // exists because the match must be exhaustive over the shared enum.
-            WeldReason.NoWorkers => {
-                return "weld: no workers"
-            }
-        }
-    }
-}
-
-// Consume a string and return an owner that hands out `n` read-only windows.
-//
-// Unlike the Vec side there is no one-call form to prefer: `parallelMap` is map-shaped
-// (Vec<T> in, Vec<T> out) and a scan returns something else entirely, so this IS the
-// supported way to divide a string across workers.
-pub fn shatterStr(s: string, n: i64): StrShards {
+// Consume a string and return an owner that hands out `n` read-only windows. Same
+// clamping as `shatter`: at least one window, at most one per byte.
+fn shatterStr(s: string, n: i64): StrShards {
     var id: i64 = 0
     unsafe {
         id = _atomicAddI64((nextShatterId.addrOf()) as *u8, 1)
@@ -691,24 +563,11 @@ pub fn shatterStr(s: string, n: i64): StrShards {
 }
 
 impl StrShards {
-    // How many windows this shatter divides into.
-    fn count(self: &Self): i64 {
-        return self.count
-    }
-
-    // Bytes in the underlying string, across all windows.
-    fn len(self: &Self): i64 {
-        return self.buf.len
-    }
-
     // The windows, once. `overlap` extends each window that far into the next, so a
     // scanner looking for an `m`-byte needle passes `m - 1` and never has to stitch
-    // the seams. Pass 0 for exactly disjoint windows.
+    // the seams. 0 gives exactly disjoint windows.
     //
-    // A second call aborts, for the reason the writing side's `windows` does: this
-    // borrows the owner rather than consuming it, so a refusal has nothing to hand
-    // back, and a silent empty Vec only moved the report to `weld`, which then
-    // named the wrong step.
+    // A second call aborts, for the reason the writing side's `windows` does.
     fn windows(self: &mut Self, overlap: i64): Vec<StrShard> {
         assert(!self.handedOut, "shard: windows() called twice on one shatter; the first set is still outstanding")
         var out: Vec<StrShard> = Vec.new()
@@ -749,41 +608,84 @@ impl StrShards {
     // identity, and every `index` this shatter handed out must appear exactly once.
     // What is NOT checked is that the returned windows cover the bytes disjointly,
     // because `windows(overlap)` hands out ranges that deliberately share bytes and
-    // a coverage-of-bytes test would reject the module's own recommended usage.
+    // a coverage-of-bytes test would reject the module's own usage.
     //
     // The count and the seen-set are not about writes. This owner is the only thing
     // keeping the string alive: hand it back while a window is still out and the
-    // caller can mutate or drop a buffer that a live StrShard still points into,
-    // which is the use-after-free the writing side refuses for the same reason.
-    // Reads make overlap sound; they do not make a dangling read sound.
-    fn weld(self: Self, returned: Vec<StrShard>): Result<string, StrWeldRejected> {
+    // caller can mutate or drop a buffer that a live StrShard still points into.
+    // Reads make overlap sound; they do not make a dangling read sound. As on the
+    // Vec side the verdict is an internal assertion: `parallelScanStr` awaits every
+    // worker before it welds.
+    fn weld(self: Self, returned: Vec<StrShard>): string {
         var ids: Vec<i64> = Vec.new()
         var indices: Vec<i64> = Vec.new()
         for w in returned {
             ids.push(w.shatterId)
             indices.push(w.index)
         }
-        let v = weldVerdict(self.count, self.shatterId, ids, indices)
-        if !v.ok {
-            var r: StrWeldRejected = StrWeldRejected {
-                shards: self, returned: returned, reason: v.reason, index: v.bad
-            }
-            return Result.Err(r)
-        }
-        return Result.Ok(self.buf)
+        let bad = weldVerdict(self.count, self.shatterId, ids, indices)
+        assert(bad.len == 0, "shard: internal weld check failed: " + bad)
+        return self.buf
     }
+}
 
-    // Take the string back from an owner that never handed a window out.
-    //
-    // `weld` now requires the full set, so an owner that was shattered and then
-    // abandoned before dividing had no route home at all: it would refuse an empty
-    // Vec on the count. `handedOut` marks the moment a pointer into the string
-    // escaped, and before that moment there is nothing to wait for. Same shape as
-    // the writing side's `reclaim`.
-    fn reclaim(self: Self): Result<string, StrShards> {
-        if self.handedOut {
-            return Result.Err(self)
+// The result of a parallel scan: the string, whole and untouched, plus what each
+// window's scan returned, in window order (results[i] is for the window whose
+// `index()` is i, so results[0] covers the start of the string).
+pub struct Scanned<R> {
+    text: string,
+    results: Vec<R>,
+}
+
+// One worker's return: the window, so `weld` can confirm it came home, and what the
+// scan of it produced.
+struct ScanPart<R> {
+    window: StrShard,
+    result: R,
+}
+
+// Divide a string into `windows` read-only windows, each extended `overlap` bytes into
+// the next, run `f` over every window on its own OS thread, and hand back the string
+// with the per-window results. The whole read-only cycle in one call; `parallelMap`
+// is the writing equivalent.
+//
+//     let scanned = parallelScanStr(text, 4, needle.len - 1, countMilo)
+//     for n in scanned.results { total = total + n }
+//
+// `f` borrows the window and returns whatever the scan produced: a count, a position
+// list, a checksum. It is a plain function for the reason `parallelMap`'s is: each
+// worker needs its own copy, and a capturing closure would be moved into the first
+// task and gone for the rest. Anything the scan depends on beyond the bytes travels
+// as a global or a constant inside `f`.
+//
+// A match that begins inside a window's overlap is also visible to the next window,
+// so a counting `f` must stop at `w.ownLen()`, not `w.len()`.
+pub fn parallelScanStr<R>(s: string, windows: i64, overlap: i64, f: (&StrShard) => R): Scanned<R> {
+    var owner = shatterStr(s, windows)
+    var ws = owner.windows(overlap)
+    var ps: Vec<Promise<ScanPart<R>>> = Vec.new()
+    while ws.len > 0 {
+        let w = ws.pop()!
+        ps.push(Promise<ScanPart<R>>.blocking(move(): ScanPart<R> => {
+            let r = f(w)
+            return ScanPart {
+                window: w, result: r
+            }
         }
-        return Result.Ok(self.buf)
+        ))
+    }
+    var parts = Promise.all(ps).await()!
+    // Windows were popped from the tail, so `parts` is in reverse index order;
+    // popping again restores it, and `weld` checks the set regardless of order.
+    var back: Vec<StrShard> = Vec.new()
+    var results: Vec<R> = Vec.new()
+    while parts.len > 0 {
+        let part = parts.pop()!
+        back.push(part.window)
+        results.push(part.result)
+    }
+    let text = owner.weld(back)
+    return Scanned {
+        text: text, results: results
     }
 }

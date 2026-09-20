@@ -1,8 +1,8 @@
+// Count a needle across the file on several OS threads, without copying the string:
+// parallelScanStr divides it into overlapping read-only windows and hands back the
+// per-window counts in window order.
 from "std/shard" import {
-    StrShard, shatterStr
-}
-from "std/runtime" import {
-    Promise
+    StrShard, parallelScanStr
 }
 from "std/fs" import {
     readFile
@@ -17,14 +17,19 @@ from "std/strconv" import {
     parseInt
 }
 
-fn countIn(w: StrShard, needle: string, ownLen: i64): i64 {
-    var s = w
+// Every worker gets its own copy of the needle by naming it here rather than
+// capturing it: a plain fn is what parallelScanStr takes, for that reason.
+fn countIn(w: &StrShard): i64 {
+    let needle: string = "milo"
     var n: i64 = 0
     var i: i64 = 0
     // Only count a match that BEGINS inside this window's own range; anything that
-    // begins in the overlap belongs to the next window.
-    while i < ownLen {
-        if s.matchesAt(i, needle) {
+    // begins in the overlap belongs to the next window. The window knows that range:
+    // recomputing it here meant repeating the divider's arithmetic, including the
+    // last window's uneven remainder, and getting that wrong loses or double-counts
+    // matches silently.
+    while i < w.ownLen() {
+        if w.matchesAt(i, needle) {
             n = n + 1
         }
         i = i + 1
@@ -39,31 +44,14 @@ pub fn main(): i32 {
     if argv.len > 2 {
         workers = parseInt(argv[2].clone()) ?? 4
     }
-    let needle: string = "milo"
     let content = readFile(path)!
 
     let t0 = epochMillis()
-    var owner = shatterStr(content, workers)
-    var windows = owner.windows(needle.len - 1)
-    var ps: Vec<Promise<i64>> = Vec.new()
-    while windows.len > 0 {
-        let w = windows.pop()!
-        // The window knows its own pre-overlap range. Recomputing it here meant
-        // repeating the divider's arithmetic, including the last window's uneven
-        // remainder, and getting that wrong loses or double-counts matches silently.
-        let own = w.ownLen()
-        // Each worker needs its OWN needle: the closure takes its captures with it,
-        // so a single shared one would be gone after the first iteration. The compiler
-        // rejects the shared version outright now.
-        let mine = needle.clone()
-        ps.push(Promise<i64>.blocking(move(): i64 => {
-            return countIn(w, mine, own)
-        }
-        ))
-    }
-    let parts = Promise.all(ps).await()!
+    // Overlap of needle.len - 1 so a match straddling a seam is seen by the window
+    // it begins in.
+    let scanned = parallelScanStr(content, workers, 3, countIn)
     var count: i64 = 0
-    for p in parts {
+    for p in scanned.results {
         count = count + p
     }
     let t1 = epochMillis()
