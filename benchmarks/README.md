@@ -85,7 +85,7 @@ claim there: the move-only route to parallelism used to force a copy per worker,
 | | time | peak memory |
 |---|---|---|
 | milo sequential, in place | 6 ms | 153.9 MiB |
-| milo shatter/weld, 4 workers | 3 ms | 163.0 MiB |
+| milo parallelMap, 4 workers | 3 ms | 163.0 MiB |
 | c pthreads over one shared buffer | 3 ms | 154.0 MiB |
 
 20M `f64`, `a[i] = a[i] * 1.0000001 + 0.5`, best of 3, Apple M-series, `--release`.

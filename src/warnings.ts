@@ -24,7 +24,6 @@ export const WARNINGS: WarningInfo[] = [
   { name: "manual-option-default" },
   { name: "adopt-raw-fields" },
   { name: "arena-never-frees" },
-  { name: "manual-shatter-cycle" },
   { name: "missing-interpolation" },
   { name: "nan-comparison" },
   // The thread-boundary global check cannot see through a call to a function value, so it

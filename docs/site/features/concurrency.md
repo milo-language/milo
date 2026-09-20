@@ -405,7 +405,7 @@ Green tasks never run in parallel, so plain sequencing is enough between them. O
 
 | You want to | Use | What crosses the thread |
 |-------------|-----|-------------------------|
-| Transform a big buffer across cores | `parallelMap` / `shatter` ([`std/shard`](/stdlib/shard)) | disjoint owned windows, no copy |
+| Transform a big buffer across cores | `parallelMap` ([`std/shard`](/stdlib/shard)) | disjoint owned windows, no copy |
 | Return a result, or stream work out | `Channel`, `Promise` | ownership |
 | Share one counter or flag | `AtomicI64` and friends ([`std/sync`](/stdlib/sync)) | one cell |
 
@@ -414,7 +414,7 @@ std exposes no `Mutex` for you to hold. `Channel` owns one internally (a pthread
 ### Divide the Data, Share Nothing
 
 The usual reason to want shared state is a large `Vec` several cores should work on.
-Don't share it, divide its ownership. `shatter` consumes the `Vec` and hands out
+Don't share it, divide its ownership. `parallelMap` consumes the `Vec` and hands out
 disjoint owned windows; each worker takes one **by move**, writes into it in place, and
 gives it back. No reference crosses a thread, and nothing is copied.
 
@@ -429,10 +429,10 @@ fn shade(w: Shard<f64>): Shard<f64> {
 }
 ```
 
-`parallelMap(pixels, 4, shade)!` is the whole divide/run/reassemble cycle in one call.
-The buffer is moved in and comes back transformed in the same allocation. It is also the
-form in which `weld` cannot fail: every window is made, handed out, awaited and welded
-inside that call, so none of your code runs in between.
+`parallelMap(pixels, 4, shade)` is the whole divide/run/reassemble cycle in one call.
+The buffer is moved in and comes back transformed in the same allocation. It is
+infallible: every window is made, handed out, awaited and welded inside that call, so
+none of your code runs in between, and the owner cannot go away under a live window.
 
 `f` is a plain function rather than a closure because each worker needs its own copy: a
 capturing closure is moved into the first worker and gone for the rest. Everything the
@@ -440,9 +440,10 @@ work depends on therefore travels in the window, which is the same thing that ke
 workers from sharing anything. Use `w.start()` when a worker needs to know which slice of
 the original buffer it holds.
 
-Reach for `shatter`/`windows`/`weld` directly only when the workers must differ from each
-other. [`std/shard`](/stdlib/shard) also has the read-only string half (`shatterStr`, with
-overlapping windows so a scanner never loses a match at a seam).
+When the workers need their own state, or the windows should outnumber the workers,
+`parallelMapWith` is the same cycle with a queue. [`std/shard`](/stdlib/shard) also has
+the read-only string half (`parallelScanStr`, with overlapping windows so a scanner
+never loses a match at a seam).
 
 ### Atomics
 
@@ -544,7 +545,8 @@ value, turning a cache into a per-access allocation.
 | `p.await()` | Wait for a promise's result |
 | `Promise.all(v)` / `Promise.race(v)` | Collect all results / first to finish |
 | `parallelMap(v, n, f)` | Divide a `Vec` across `n` OS threads, transform in place, reassemble (`std/shard`) |
-| `shatter(v, n)` / `.windows()` / `.weld(v)` | The same cycle by hand, when workers must differ from each other |
+| `parallelMapWith(v, windows, states, f)` | The same cycle with per-worker state and a window queue |
+| `parallelScanStr(s, n, overlap, f)` | Divide a `string` into read-only windows and scan on `n` threads |
 | `Channel.new(cap)` | Create bounded channel |
 | `ch.send(val)` | Send value (blocks if full) |
 | `ch.recv()` | Receive value (blocks if empty) |

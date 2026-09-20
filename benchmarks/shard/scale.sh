@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Worker scaling for shatter/weld on a compute-bound kernel.
+# Worker scaling for std/shard (parallelMapWith) on a compute-bound kernel.
 #
 #   sh benchmarks/shard/scale.sh
 #

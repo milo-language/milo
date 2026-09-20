@@ -83,8 +83,10 @@ use it and destroy it inside one call, so no caller code exists in between.
 `parallelMap(v, workers, f)` makes every window, hands out every window, awaits them
 and welds them itself. The windows are raw pointers into a buffer, and dropping the
 owner while one is live would be a use-after-free — but there is nowhere to write that
-mistake. The runtime completeness check that the manual `shatter`/`weld` path needs
-has nothing to catch here.
+mistake. The pieces of the cycle (`shatter`, `windows`, `weld`) are private to
+`std/shard` for exactly that reason: offered separately they were the mistake
+(soundness sweep H2), and the after-the-fact completeness check inside `weld` is now an
+internal assertion rather than a contract a caller can miss.
 
 This is the same guarantee Rust's scoped threads get from lifetimes, reached by
 closing the cycle instead of proving a lifetime. Its limit is that scoped means
@@ -133,7 +135,6 @@ compiler names it:
 
 | diagnostic | says |
 |---|---|
-| `manual-shatter-cycle` (warning) | you hand-rolled the cycle; `parallelMap` is pattern 3 |
 | `arena-never-frees` (warning) | this arena never frees; `sealGrowth()` is pattern 2 |
 | `use of moved variable` (error) | patterns 1, 3 and 5 all land here — the move checker doing the work |
 | missing field `brand` (error) | build spans with `spanOf`, not by hand (pattern 4) |
@@ -148,6 +149,5 @@ escape *and* keep their operation, where only a brand is available:
 
 - a rope or incremental parser holding views into a buffer it must keep mutating;
 - an arena that genuinely frees and reuses, which keeps its generation check;
-- the manual `shatter`/`weld` path, whose completeness is checked after the fact.
 
 If you find a pattern that closes one of these without lifetimes, it belongs here.

@@ -3,7 +3,7 @@
 //
 // Every other safety mechanism in this language works by BEING the allocator. `seal`
 // consumes a buffer and offers no mutating method; `Arena.freeze` consumes an arena and
-// removes `free`; `shatter` consumes a Vec and hands out disjoint owned windows. At a C
+// removes `free`; `parallelMap` consumes a Vec and hands out disjoint owned windows. At a C
 // boundary all three preconditions are false at once: C allocated the memory, C will free
 // it, C may write it after you return. So a program crossing that seam falls back to raw
 // pointers and loses every guarantee at exactly the place it needs one.

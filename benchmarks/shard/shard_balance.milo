@@ -64,7 +64,7 @@ pub fn main(): i32 {
     var data: Vec<f64> = Vec.filled(n, 1.0)
     let t0 = epochMillis()
     if mode == "static" {
-        let out = parallelMap(data, workers, grind)!
+        let out = parallelMap(data, workers, grind)
         let t1 = epochMillis()
         print("static  workers=" + workers.toString() + " " + (t1 - t0).toString() + "ms (checksum " + out[0].toString() + ")")
     } else {

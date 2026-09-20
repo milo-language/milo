@@ -1,0 +1,57 @@
+// A refusal must not eat the buffer. This module's whole reason to exist is that a
+// large Vec is never copied, so a refusal that dropped it would destroy the one
+// thing the caller could not afford to lose over an empty Vec of states. The only
+// refusal the closed forms can make is "no workers", and it carries the buffer home.
+// @expect: refused: parallelMapWith: states is empty, so there is no worker to run on
+// @expect: recovered undivided buffer: n=5 sum=15
+// @expect: mapped after recovery: n=5 sum=30 seen=2
+from "std/shard" import {
+    Shard, parallelMapWith
+}
+
+pub struct Env {
+    seen: i64,
+}
+
+fn double(w: Shard<i64>, e: &mut Env): Shard<i64> {
+    for i in 0..w.len() {
+        w.set(i, w.get(i) * 2)
+    }
+    e.seen = e.seen + 1
+    return w
+}
+
+pub fn main(): i32 {
+    var c: Vec<i64> = Vec.new()
+    for k in 1..6 {
+        c.push(k)
+    }
+    var noStates: Vec<Env> = Vec.new()
+    match parallelMapWith(c, 4, noStates, double) {
+        Result.Ok(_m) => {
+            print("WRONG: mapped with no workers")
+        }
+        Result.Err(rej) => {
+            print("refused: " + rej.message())
+            let v = rej.data
+            var sum: i64 = 0
+            for x in v {
+                sum = sum + x
+            }
+            print("recovered undivided buffer: n=" + v.len.toString() + " sum=" + sum.toString())
+            // The buffer came back whole, so the fix is to supply workers and go again.
+            var envs: Vec<Env> = Vec.new()
+            envs.push(Env {
+                seen: 0
+            }
+            )
+            let r = parallelMapWith(v, 2, envs, double)!
+            var sum2: i64 = 0
+            for y in r.data {
+                sum2 = sum2 + y
+            }
+            print("mapped after recovery: n=" + r.data.len.toString() + " sum=" + sum2.toString() + " seen=" + r.states[0].seen.toString())
+        }
+    }
+    return 0
+}

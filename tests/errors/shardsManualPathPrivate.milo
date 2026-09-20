@@ -1,0 +1,34 @@
+// @error: 'shatter' is private to shard.milo
+// H2 from docs/plans/soundness-sweep-2026-09.md. This program divided a Vec by hand,
+// handed a window to a worker and returned, dropping the `Shards` owner while the
+// worker still wrote through the window: a heap-use-after-free under --sanitize that
+// no checker rule could see. The fix is that the manual cycle no longer exists
+// outside std/shard: `shatter`, `windows` and `weld` are module-private, and the
+// only way to divide a buffer is a closed form (`parallelMap`, `parallelMapWith`,
+// `parallelScanStr`) that awaits every worker before the owner can go away.
+from "std/shard" import {
+    Shard, shatter
+}
+from "std/runtime" import {
+    Promise
+}
+
+fn leak(): Promise<Shard<f64>> {
+    var data: Vec<f64> = Vec.filled(1000, 1.0)
+    var owner = shatter(data, 1)
+    var ws = owner.windows()
+    let w = ws.pop()!
+    return Promise<Shard<f64>>.blocking(move(): Shard<f64> => {
+        var s = w
+        s.set(0, 2.0)
+        return s
+    }
+    )
+}
+
+pub fn main(): i32 {
+    let p = leak()
+    let s = p.await()!
+    print(s.get(0))
+    return 0
+}

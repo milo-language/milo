@@ -1,0 +1,20 @@
+// @error: use of moved variable 'data'
+// parallelMap CONSUMES the Vec. That is the whole aliasing argument: while the buffer
+// is divided there is no binding through which it can be reached except the disjoint
+// windows, so nothing the workers touch can alias anything the caller still holds.
+from "std/shard" import {
+    Shard, parallelMap
+}
+
+fn keep(w: Shard<f64>): Shard<f64> {
+    return w
+}
+
+pub fn main(): i32 {
+    var data: Vec<f64> = Vec.new()
+    data.push(1.0)
+    let out = parallelMap(data, 2, keep)
+    data.push(2.0)
+    print(out.len.toString())
+    return 0
+}

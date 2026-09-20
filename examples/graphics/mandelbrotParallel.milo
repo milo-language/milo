@@ -94,7 +94,7 @@ pub fn main(): i32 {
     // The whole divide/run/reassemble cycle. Also the form in which weld cannot
     // fail: every window is made, handed out, awaited and welded inside this one
     // call, so there is no code of ours in between to get wrong.
-    let out = parallelMap(pixels, windowCount, renderWindow)!
+    let out = parallelMap(pixels, windowCount, renderWindow)
 
     let t1 = epochMillis()
 
