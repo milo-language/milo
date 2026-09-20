@@ -68,9 +68,8 @@ struct Bad {
 ### Missing `&mut` on a call argument
 
 A non-receiver argument bound to a `&mut` parameter is written `&mut x`, so the call
-shows which values it can change. The bare form is the error `implicit-mut-borrow`.
-It sits in the warning table so `--allow=implicit-mut-borrow` (or a `milo.json`
-`lints.allow` entry) can silence it for a tree mid-migration;
+shows which values it can change. The bare form is the hard error `implicit-mut-borrow`.
+It is not a warning, so no `--allow` or `milo.json` `lints` entry reaches it;
 `bun scripts/explicit-mut.ts <file>` rewrites a file from the checker's resolved
 signatures. Method receivers are exempt (`v.push(1)` stays as it is).
 
@@ -194,7 +193,6 @@ milo build app.milo --deny-all
 | `bare-embedfile` | warn | `embedFile(...)` written without its `@` sigil |
 | `unused-move` | allow | Owned param never moved — could be a borrow instead |
 | `large-stack-array` | allow | Local fixed array over `--max-stack-array` (default 512 KiB) — stack-overflow risk |
-| `implicit-mut-borrow` | allow | Argument bound to a `&mut` parameter without `&mut` at the call site |
 
 ## Error formatting
 

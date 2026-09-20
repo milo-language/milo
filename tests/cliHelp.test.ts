@@ -35,10 +35,10 @@ test("the package verbs in the table are exactly PKG_COMMANDS", () => {
 });
 
 test("knownCommandNames covers both groups, hidden commands included", () => {
-  // `lex` and `verify` are hidden from the banner but must still be accepted, or the
+  // `lex` is hidden from the banner but must still be accepted, or the
   // unknown-command guard would reject a command the dispatch chain handles.
   const known = knownCommandNames();
-  for (const name of ["lex", "verify", "lsp", "run", "install", "tool"]) expect(known).toContain(name);
+  for (const name of ["lex", "lsp", "run", "install", "tool"]) expect(known).toContain(name);
 });
 
 test("every flag main.ts parses is documented, and no documented flag is unparsed", () => {

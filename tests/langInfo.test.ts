@@ -15,7 +15,7 @@ import { KEYWORDS, SOFT_KEYWORDS } from "../src/tokens";
 import { KEYWORD_DOCS } from "../src/keyword-docs";
 import { PRIMITIVE_TYPE_NAMES } from "../src/types";
 import { BUILTIN_MEMBERS } from "../src/builtin-members";
-import { WARNINGS, WARNING_NAMES, OFF_BY_DEFAULT, ERROR_BY_DEFAULT } from "../src/warnings";
+import { WARNINGS, WARNING_NAMES, OFF_BY_DEFAULT } from "../src/warnings";
 import { ATTRIBUTES, ATTRIBUTE_NAMES } from "../src/attributes";
 
 const ROOT = join(import.meta.dir, "..");
@@ -61,18 +61,16 @@ test("off-by-default matches the checker's allow-list", () => {
   expect([...new Set(allowed)].sort()).toEqual([...OFF_BY_DEFAULT].sort());
 });
 
-test("error-by-default matches the checker's deny-list", () => {
-  // Same shape as the allow-list test: a rule the constructor denies unless allowed has
-  // to be declared so, or `milo lang --json` tells tools it is an ordinary warning.
+test("the checker denies no warning by default", () => {
+  // A rule the language requires is a hard error, not a warning the constructor promotes;
+  // a warning promoted here would be one `milo lang --json` misreports as ordinary.
   const denied = [...CHECKER.matchAll(/config\.denied\.add\("([a-z-]+)"\)/g)].map(m => m[1]!);
-  expect([...new Set(denied)].sort()).toEqual([...ERROR_BY_DEFAULT].sort());
-  expect(ERROR_BY_DEFAULT).toContain("implicit-mut-borrow");
+  expect(denied).toEqual([]);
 });
 
 test("the --deny-all help line is rendered, not retyped", () => {
   const help = execFileSync("bun", ["run", join(ROOT, "src", "main.ts"), "--help"], { encoding: "utf-8" });
   for (const name of OFF_BY_DEFAULT) expect(help).toContain(name);
-  for (const name of ERROR_BY_DEFAULT) expect(help).toContain(name);
   expect(WARNINGS.length).toBeGreaterThan(OFF_BY_DEFAULT.length);
 });
 

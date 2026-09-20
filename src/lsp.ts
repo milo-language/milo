@@ -1270,13 +1270,8 @@ function getModuleExports(modulePath: string, sourceDir: string): { name: string
   if (!absPath) return [];
   const src = readStd(absPath);
   if (src === null) return [];
-  // A name in another file is only importable/referenceable when it's marked `pub`
-  // (declarations are file-private by default). std isn't fully `pub`-annotated
-  // yet, so a module with NO `pub` at all is treated as legacy and shows
-  // everything, matching pre-visibility behavior — a missing completion is worse
-  // than an extra one. Once a module adopts `pub`, its unmarked names are private
-  // and hidden. These come from imported modules, so they are always other files.
-  const moduleHasPub = /^pub\s+(?:fn|struct|enum|trait|type|interface|let|var|thread_local)\b/m.test(src);
+  // Declarations are file-private by default (src/visibility.ts), so a name from
+  // another module is importable iff it is marked `pub`; only those are offered.
   const all: { name: string; kind: string; pub: boolean }[] = [];
   for (const line of src.split("\n")) {
     let m;
@@ -1286,7 +1281,7 @@ function getModuleExports(modulePath: string, sourceDir: string): { name: string
     else if ((m = line.match(/^(pub\s+)?trait\s+(\w+)/)) && !m[2].startsWith("_")) all.push({ name: m[2], kind: "trait", pub: !!m[1] });
     else if ((m = line.match(/^(pub\s+)?let\s+(\w+)\s*:/)) && !m[2].startsWith("_")) all.push({ name: m[2], kind: "variable", pub: !!m[1] });
   }
-  return (moduleHasPub ? all.filter(e => e.pub) : all).map(({ name, kind }) => ({ name, kind }));
+  return all.filter(e => e.pub).map(({ name, kind }) => ({ name, kind }));
 }
 
 // Static ("namespace") methods of a type defined in another module — an `impl

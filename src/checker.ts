@@ -334,12 +334,8 @@ export interface EnumInfo {
   reprType?: string; // set for `enum Kind: i32 { ... }` — the tag IS the integer value
 }
 
-// A bare argument bound to a `&mut` parameter (see `milo check --count-implicit-mut`).
-export interface ImplicitMutSite { span?: Span; callee: string; param: string }
-
 export interface CheckResult {
   diagnostics: Diagnostic[];
-  implicitMutSites: ImplicitMutSite[];
   exprTypes: Map<Expr, TypeKind>;
   patternBindingTypes: Map<import("./ast").Pattern, TypeKind[]>;
   // The reference each nullable-extern-reference unwrap (`let g = p else { … }`) binds.
@@ -540,10 +536,8 @@ export class TypeChecker {
   // marker was written; a bare argument bound to `&mut T` is what implicit-mut-borrow
   // reports.
   private explicitMutArgs = new Set<Expr>();
-  // Every bare non-receiver argument bound to a `&mut` parameter, one entry per source
-  // position (a generic body is checked once per instantiation). `milo check
-  // --count-implicit-mut` prints these; the plan's migration gate is this list reaching 0.
-  private implicitMutSites: ImplicitMutSite[] = [];
+  // Source positions already reported as implicit-mut-borrow. A generic body is checked
+  // once per instantiation, so without this one bare argument yields N copies of the error.
   private implicitMutSeen = new Set<string>();
   private matchSubjectRef = new Set<Expr>();
   private rewrittenCalls = new Map<Expr, string>();
@@ -685,11 +679,6 @@ export class TypeChecker {
     // every one of them, and the fix ("just delete it") would break the build — so the
     // projects that don't do that opt in.
     if (!config.denied.has("unused-import") && !config.expected?.has("unused-import")) config.allowed.add("unused-import");
-    // implicit-mut-borrow is an ERROR by default: `f(&mut x)` is the language rule (track A
-    // of docs/plans/local-reasoning-2026-09.md, flipped 2026-09-20). It stays in the
-    // warning table so `--allow=implicit-mut-borrow` can silence it for a tree that is
-    // mid-migration and so a project's milo.json lints reach it like any other rule.
-    if (!config.allowed.has("implicit-mut-borrow") && !config.expected?.has("implicit-mut-borrow")) config.denied.add("implicit-mut-borrow");
     // large-stack-array is OFF unless asked for. Big fixed-size locals are a real
     // stack-overflow footgun, but plenty are intentional (main-thread framebuffers
     // that work fine), so warning by default would nag every graphics program. The
@@ -2674,7 +2663,6 @@ export class TypeChecker {
       patternBindingTypes: this.patternBindingTypes,
       nullRefUnwraps: this.nullRefUnwraps,
       autoBorrowed: this.autoBorrowed,
-      implicitMutSites: this.implicitMutSites,
       matchSubjectRef: this.matchSubjectRef,
       rewrittenCalls: this.rewrittenCalls,
       rewrittenEnums: this.rewrittenEnums,
@@ -7549,19 +7537,23 @@ export class TypeChecker {
 
   private noteImplicitMut(arg: Expr, callee: string, param: string) {
     const at = arg.span;
-    const key = at ? `${at.file ?? ""}:${at.line}:${at.col}` : `${callee}:${param}:${this.implicitMutSites.length}`;
+    // A span-less argument cannot be deduplicated by position, so it is always reported.
+    const key = at ? `${at.file ?? ""}:${at.line}:${at.col}` : `${callee}:${param}:${this.implicitMutSeen.size}`;
     if (this.implicitMutSeen.has(key)) return;
     this.implicitMutSeen.add(key);
-    this.implicitMutSites.push({ span: at, callee, param });
     const text = this.describeExpr(arg);
     // A dependency's symbols reach here as `<pkg>$name` (src/mangle.ts); the hint has
     // to print the call as the package's own source spells it, or it names a symbol
     // nobody can write.
     const sep = callee.indexOf("$");
     const shown = sep > 0 && this._packageNames?.has(callee.slice(0, sep)) ? callee.slice(sep + 1) : callee;
-    this.warn("implicit-mut-borrow",
-      `argument '${text}' is passed to a '&mut' parameter without '&mut'`, at,
-      `write '${shown}(... &mut ${text} ...)'; run 'bun scripts/explicit-mut.ts <file>' to rewrite the file`);
+    // A hard error, not a warning-table entry: no --allow reaches it. The code stays so
+    // tooling (scripts/explicit-mut.ts, the LSP) can match the diagnostic.
+    this.diagnostics.push({
+      severity: "error", span: at, code: "implicit-mut-borrow",
+      message: `argument '${text}' is passed to a '&mut' parameter without '&mut'`,
+      hint: `write '${shown}(... &mut ${text} ...)'; run 'bun scripts/explicit-mut.ts <file>' to rewrite the file`,
+    });
   }
 
   // Auto-borrow a call argument; passing a frozen var by mutable ref is the same

@@ -1,8 +1,8 @@
 // Explicit `&mut` on call arguments (docs/plans/local-reasoning-2026-09.md, track A):
-// the `implicit-mut-borrow` rule (an error by default since A7; `--allow` silences it),
-// the misplacement errors, and the fixer that rewrites a file from the checker's
+// the `implicit-mut-borrow` hard error (no --allow reaches it; it is not a warning-table
+// entry), the misplacement errors, and the fixer that rewrites a file from the checker's
 // resolved signatures. tests/errors pins the error texts on whole programs; this file
-// covers the flag levels and the script, which only a CLI run can exercise.
+// covers the CLI surface and the script, which only a CLI run can exercise.
 import { test, expect, afterAll } from "bun:test";
 import { spawnSync } from "child_process";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "fs";
@@ -41,13 +41,22 @@ const explicit = bare
   .replace("fill(v[0..1], 3)", "fill(&mut v[0..1], 3)")
   .replace("fill(v, 4)", "fill(&mut v, 4)");
 
-test("--allow=implicit-mut-borrow silences the rule: a bare argument checks", () => {
-  const r = check(write(bare), "--allow=implicit-mut-borrow");
-  expect(r.code).toBe(0);
-  expect(r.out).not.toContain(WARN);
+test("a bare argument to a &mut parameter is a hard error with code implicit-mut-borrow in check --json", () => {
+  const r = check(write(bare), "--json");
+  expect(r.code).toBe(1);
+  const diags = JSON.parse(r.out).diagnostics.filter((d: any) => d.code === "implicit-mut-borrow");
+  expect(diags.length).toBe(3);
+  for (const d of diags) expect(d.severity).toBe("error");
 });
 
-test("a bare argument to a &mut parameter is an error by default, with the rewrite hint", () => {
+test("--allow=implicit-mut-borrow does not silence it: the name is no longer a warning", () => {
+  const r = check(write(bare), "--allow=implicit-mut-borrow");
+  expect(r.code).not.toBe(0);
+  expect(r.out).toContain("unknown warning 'implicit-mut-borrow'");
+  expect(check(write(bare), "--json").code).toBe(1);
+});
+
+test("a bare argument to a &mut parameter is an error, with the rewrite hint", () => {
   const r = check(write(bare));
   expect(r.code).toBe(1);
   expect(r.out).toContain("argument 'p' is passed to a '&mut' parameter without '&mut'");
@@ -142,8 +151,8 @@ test("scripts/explicit-mut.ts rewrites a file to the explicit form and is idempo
   expect(check(f).code).toBe(0);
 });
 
-test("milo lang --json reports implicit-mut-borrow as error-by-default", () => {
+test("milo lang --json no longer lists implicit-mut-borrow as a warning", () => {
   const r = spawnSync("bun", [join(ROOT, "src", "main.ts"), "lang", "--json"], { encoding: "utf8" });
   const w = JSON.parse(r.stdout).warnings.find((x: any) => x.name === "implicit-mut-borrow");
-  expect(w).toEqual({ name: "implicit-mut-borrow", offByDefault: false, errorByDefault: true });
+  expect(w).toBeUndefined();
 });

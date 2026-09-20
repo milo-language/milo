@@ -9,9 +9,6 @@ interface WarningInfo {
   name: string;
   /** Off by default: not reported unless `--deny=<name>` (or `--deny-all`) asks for it. */
   offByDefault?: true;
-  /** An error by default: `--allow=<name>` is the only way to silence it. A rule the
-   *  language requires, kept in this table so the same flags and project lints reach it. */
-  errorByDefault?: true;
 }
 
 export const WARNINGS: WarningInfo[] = [
@@ -23,11 +20,6 @@ export const WARNINGS: WarningInfo[] = [
   { name: "external-linkage-not-pub" },
   { name: "borrow-that-clones" },
   { name: "index-clone" },
-  // A bare argument bound to a `&mut` parameter. The language rule since 2026-09-20
-  // (docs/plans/local-reasoning-2026-09.md, track A): `f(&mut x)` is mandatory, and the
-  // hint names the fixer. `--allow=implicit-mut-borrow` is the escape hatch for a tree
-  // mid-migration.
-  { name: "implicit-mut-borrow", errorByDefault: true },
   { name: "large-stack-array", offByDefault: true },
   { name: "manual-option-default" },
   { name: "adopt-raw-fields" },
@@ -54,4 +46,3 @@ export const WARNINGS: WarningInfo[] = [
 
 export const WARNING_NAMES: string[] = WARNINGS.map(w => w.name);
 export const OFF_BY_DEFAULT: string[] = WARNINGS.filter(w => w.offByDefault).map(w => w.name);
-export const ERROR_BY_DEFAULT: string[] = WARNINGS.filter(w => w.errorByDefault).map(w => w.name);

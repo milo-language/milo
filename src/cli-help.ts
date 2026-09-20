@@ -10,7 +10,7 @@
 // Package-manager verbs live in pkgcli.ts's PKG_COMMANDS; their help text is here so
 // the banner is one document, and the test checks the two agree.
 
-import { OFF_BY_DEFAULT, ERROR_BY_DEFAULT } from "./warnings";
+import { OFF_BY_DEFAULT } from "./warnings";
 interface CliCommand {
   /** The dispatch token, e.g. "emit-ir". */
   name: string;
@@ -74,7 +74,6 @@ export const COMPILER_COMMANDS: CliCommand[] = [
   { name: "api", usage: "api <terms>", help: ["search std signatures by name/doc (--module std/x to dump one, --markdown to emit reference docs)"] },
   { name: "doc", usage: "doc <file|dir>", help: ["reference markdown from doc-comments (-o <dir> to write one .md per module)"] },
   { name: "lex", usage: "lex <file>", help: ["dump the token stream as JSON"], hidden: "compiler-debug output, not a user-facing command" },
-  { name: "verify", usage: "verify <file>", help: ["deprecated alias for `prove <file> --emit-smt`"], hidden: "deprecated; it prints a warning pointing at prove" },
 ];
 
 export const PACKAGE_COMMANDS: CliCommand[] = [
@@ -131,7 +130,6 @@ export const OPTIONS: CliOption[] = [
       // Rendered from src/warnings.ts: this line used to be prose and had to be edited by
       // hand every time a warning landed, which is how it fell behind the checker.
       `(off-by-default warnings: ${OFF_BY_DEFAULT.join(", ")})`,
-      `(error-by-default, --allow to silence: ${ERROR_BY_DEFAULT.join(", ")})`,
     ],
   },
   {
@@ -153,9 +151,6 @@ export const OPTIONS: CliOption[] = [
   { flag: "--all", help: [], subcommandOnly: "emit-ast / emit-hir / prove" },
   { flag: "--spans", help: [], subcommandOnly: "emit-ast / emit-hir" },
   { flag: "--emit-smt", help: [], subcommandOnly: "prove" },
-  // Lists every bare argument bound to a `&mut` parameter; the migration gate that
-  // scripts/count-implicit-mut.ts drives, not a user-facing switch.
-  { flag: "--count-implicit-mut", help: [], subcommandOnly: "check" },
   { flag: "--solver=z3", help: [], subcommandOnly: "prove" },
   { flag: "--list", help: [], subcommandOnly: "safety" },
   { flag: "--cycles", help: [], subcommandOnly: "wcet" },

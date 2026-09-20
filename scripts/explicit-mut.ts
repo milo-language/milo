@@ -32,7 +32,7 @@ if (files.length === 0) { console.error("usage: bun scripts/explicit-mut.ts <fil
 interface Site { file: string; line: number; col: number }
 
 function sitesOf(file: string): { sites: Site[]; elsewhere: Site[]; ok: boolean } {
-  const r = spawnSync("bun", ["run", MAIN, "check", file, "--json", "--deny=implicit-mut-borrow", ...passthrough], { encoding: "utf8", maxBuffer: 1 << 30 });
+  const r = spawnSync("bun", ["run", MAIN, "check", file, "--json", ...passthrough], { encoding: "utf8", maxBuffer: 1 << 30 });
   let parsed: any;
   try { parsed = JSON.parse(r.stdout ?? ""); } catch {
     console.error(`${file}: check produced no JSON\n${r.stderr ?? ""}`);

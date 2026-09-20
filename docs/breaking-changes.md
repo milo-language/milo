@@ -43,8 +43,7 @@ expression.
 Migration: `bun scripts/explicit-mut.ts <file.milo>...` rewrites every site in the named
 files from the checker's resolved signatures (never a regex); `--closure` also rewrites
 the modules a file imports, for a package whose `src/` only resolves from its entry.
-Idempotent. `--allow=implicit-mut-borrow` (or `"lints": { "allow": [...] }` in
-`milo.json`) turns the error into silence for a tree mid-migration.
+Idempotent. There is no switch that silences the error; run the fixer.
 
 Why: the soundness argument against the marker still holds (a second-class borrow cannot
 escape or alias), but reading is the other half. `f(x)` mutated `x` or did not depending

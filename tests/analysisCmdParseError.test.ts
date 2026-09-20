@@ -1,4 +1,4 @@
-// Analysis subcommands (verify/wcet/prove/safety) must render a clean Elm-style
+// Analysis subcommands (wcet/prove/safety) must render a clean Elm-style
 // diagnostic on a syntax error, not leak a raw JS ParseError stack trace the way
 // they did before parseCheckProgram wrapped their parse step. Regression guard for
 // the security audit's D3 finding.
@@ -29,7 +29,7 @@ function run(args: string[]): { out: string; code: number } {
   }
 }
 
-for (const cmd of [["verify", bad] as const, ["wcet"] as const, ["prove"] as const, ["safety", "@FILE", "do178c-a"] as const]) {
+for (const cmd of [["wcet"] as const, ["prove"] as const, ["safety", "@FILE", "do178c-a"] as const]) {
   const name = cmd[0];
   test(`${name} on a syntax error renders a diagnostic, not a JS trace`, () => {
     const args = name === "safety" ? [name, bad, "do178c-a"] : [name, bad];
