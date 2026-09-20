@@ -1,0 +1,16 @@
+// @error: pointer parameter 'c' is stored in the global 'GS', which outlives the buffer it points into
+// The pointer travels inside a struct passed by value; the type carries it, so the
+// store is caught the same way as a bare `*u8` parameter.
+struct Cfg { buf: *u8 }
+var GS: Cfg = Cfg { buf: 0 as *u8 }
+
+fn keepS(c: Cfg): void {
+    GS = c
+}
+
+fn main(): void {
+    var v: Vec<u8> = Vec.new()
+    v.push(1 as u8)
+    keepS(Cfg { buf: v.ptr() })
+    v.push(2 as u8)
+}

@@ -52,6 +52,10 @@ export interface ProgramPassHost {
   isSend(ty: TypeKind): boolean;
   whyNotSend(ty: TypeKind): string;
   pointerViewsIn(e: Expr): { source: Expr; call: string; line: number }[];
+  // Whether a value of this type holds a raw pointer anywhere inside it (`*T`, a struct
+  // or enum with a pointer field, `Vec<*T>`, ...). `@copy` does not exempt: a non-owning
+  // view is exactly what must not outlive its buffer.
+  carriesRawPointer(ty: TypeKind): boolean;
 }
 
 
@@ -758,6 +762,81 @@ function globalWriteSummary(host: ProgramPassHost, view: ProgramView, mutableGlo
 // freed memory before host. Element views are the for-in binding, a slice binding, and
 // a `&`/`&[T]` argument into the global; a `&mut` to the global's header itself is not
 // one (the header outlives a realloc, the buffer does not) and stays legal.
+// A pointer parameter stored in a global outlives every holder the pointer-view rule can
+// see. `let p = v.ptr()` freezes `v` while `p` is live, and passing `p` to a callee is a
+// hold for the duration of the call; a callee that copies the parameter into a mutable
+// global keeps it past the call, and the next `v.push` is a use-after-free with zero
+// `unsafe` (backlog #43, ASan-verified). Rather than summarize "which fns stash which
+// params" and freeze the caller's buffer forever, the store itself is rejected: the
+// buffer belongs in the global, the pointer does not. Decided by type, so a struct or
+// Vec that carries the pointer counts, and a `*T` laundered to `i64` does not (documented
+// gap: an integer is not a pointer to the checker). `@externalLinkage` entry points are
+// exempt: their pointer parameters come from C, which owns them by contract.
+export function checkPointerParamEscape(host: ProgramPassHost, program: Program, view: ProgramView): void {
+  const mutableGlobals = new Set<string>();
+  for (const g of program.globals) if (g.mutable) mutableGlobals.add(g.name);
+  if (mutableGlobals.size === 0) return;
+  const { fns, rootOf, calleeOf } = view;
+  for (const f of fns.values()) {
+    if (!f.body) continue;
+    if (f.attributes?.some(a => a.name === "externalLinkage")) continue;
+    const sig = host.functions.get(f.name);
+    // Every binding that may alias a pointer parameter: the parameters themselves, then
+    // each `let`/`var` whose initializer mentions one and still carries a pointer.
+    const aliases = new Set<string>();
+    f.params.forEach((p, i) => {
+      const ty = sig?.params[i]?.type;
+      if (ty && host.carriesRawPointer(ty)) aliases.add(p.name);
+    });
+    if (aliases.size === 0) continue;
+    const mentions = (node: unknown): string | undefined => {
+      if (!node || typeof node !== "object") return undefined;
+      if (Array.isArray(node)) { for (const n of node) { const m = mentions(n); if (m) return m; } return undefined; }
+      const n = node as Record<string, unknown> & { kind?: string; name?: unknown };
+      if (n.kind === "Ident" && typeof n.name === "string" && aliases.has(n.name)) return n.name;
+      for (const k of Object.keys(n)) if (k !== "span") { const m = mentions(n[k]); if (m) return m; }
+      return undefined;
+    };
+    const pointerValue = (e: Expr | undefined): string | undefined => {
+      if (!e) return undefined;
+      const ty = host.exprTypes.get(e);
+      if (!ty || !host.carriesRawPointer(ty)) return undefined;
+      return mentions(e);
+    };
+    const shadowed = new Set<string>();
+    const isGlobal = (g: string | undefined): g is string => !!g && mutableGlobals.has(g) && !shadowed.has(g);
+    const hint = (g: string, p: string) =>
+      `'${p}' points into a buffer some caller owns, and '${g}' outlives that call; store the buffer itself in '${g}' (or an index into it), not the pointer`;
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) { for (const n of node) walk(n); return; }
+      const n = node as Record<string, unknown> & { kind?: string; name?: unknown; span?: Span };
+      if ((n.kind === "LetDecl" || n.kind === "VarDecl") && typeof n.name === "string") {
+        if (mutableGlobals.has(n.name)) shadowed.add(n.name);
+        const p = pointerValue(n.value as Expr | undefined);
+        if (p) aliases.add(n.name); else aliases.delete(n.name);
+      }
+      if (n.kind === "Assign") {
+        const g = rootOf(n.target);
+        const p = isGlobal(g) ? pointerValue(n.value as Expr) : undefined;
+        if (g && p) host.error(`pointer parameter '${p}' is stored in the global '${g}', which outlives the buffer it points into`, n.span, hint(g, p));
+      }
+      if (n.kind === "MethodCall" && mutatesReceiver(host, n as unknown as Expr)) {
+        const g = rootOf(n.object);
+        if (isGlobal(g)) {
+          for (const a of (n.args as Expr[]) ?? []) {
+            const p = pointerValue(a);
+            if (p) { host.error(`pointer parameter '${p}' is stored in the global '${g}' by '${String(n.method)}', which outlives the buffer it points into`, n.span, hint(g, p)); break; }
+          }
+        }
+      }
+      for (const k of Object.keys(n)) if (k !== "span") walk(n[k]);
+    };
+    void calleeOf;
+    walk(f.body);
+  }
+}
+
 export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Program, view: ProgramView): void {
   const mutableGlobals = new Set<string>();
   for (const g of program.globals) if (g.mutable) mutableGlobals.add(g.name);

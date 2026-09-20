@@ -1,12 +1,19 @@
+// A `*u8` global: declared, read, and assigned from a value the function itself
+// produces. Assigning a pointer PARAMETER to it is the error tests/errors/ptrParamStoredInGlobal.milo pins.
 pub var ptr: *u8 = 0 as *u8
 
-pub fn setPtr(p: *u8): void {
-    ptr = p
+pub fn setPtr(): void {
+    unsafe {
+        ptr = 8 as *u8
+    }
 }
 
 pub fn main(): i32 {
+    print(ptr as i64)
+    setPtr()
     print(ptr as i64)
     return 0
 }
 
 // @expect: 0
+// @expect: 8

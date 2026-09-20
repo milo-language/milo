@@ -1,0 +1,22 @@
+// @error: pointer parameter 'p' is stored in the global 'G', which outlives the buffer it points into
+// Backlog #43: `let p = v.ptr()` freezes `v` while `p` is live, and a call holds `p`
+// for its duration, but a callee that copies `p` into a global keeps it past the call.
+// The next `v.push` reallocates and `G` dangles: heap-use-after-free under --sanitize
+// with zero `unsafe`. The store is the error.
+var G: *u8 = 0 as *u8
+
+fn keep(p: *u8): void {
+    G = p
+}
+
+fn main(): void {
+    var v: Vec<u8> = Vec.new()
+    v.push(104 as u8)
+    keep(v.ptr())
+    var i = 0
+    while i < 1000 {
+        v.push(0 as u8)
+        i = i + 1
+    }
+    print(G as i64 != 0)
+}

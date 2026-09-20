@@ -1,0 +1,29 @@
+// A pointer parameter may feed a global as long as what is stored carries no pointer:
+// the length read through it is an integer, and a local that only counts is not a view.
+var total: i64 = 0
+
+fn count(p: *u8, n: i64): void {
+    var i = 0
+    var seen = 0
+    while i < n {
+        // Reading through the raw parameter is the point: the value that reaches the
+        // global must be the count, never the pointer.
+        unsafe {
+            if p[i] != (0 as u8) {
+                seen = seen + 1
+            }
+        }
+        i = i + 1
+    }
+    total = total + seen
+}
+
+fn main(): void {
+    var v: Vec<u8> = Vec.new()
+    v.push(1 as u8)
+    v.push(0 as u8)
+    v.push(3 as u8)
+    count(v.ptr(), v.len)
+    print(total)
+}
+// @expect: 2

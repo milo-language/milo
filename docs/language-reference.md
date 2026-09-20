@@ -2926,11 +2926,15 @@ carries the view to `w`, so `w.push(0)` is still rejected. Where a store really 
 outlive the pointer (a struct of `Vec<Vec<u8>>` freed after the C caller is done),
 `unsafe { }` around the use admits it.
 
-Two shapes the rule cannot see, documented rather than checked: a user function that
-stashes its `*T` parameter in a global or returns it (`let q = keep(v.ptr())` makes `q`
-no holder), and a copy of the pointer value into a variable that outlives the original
-holder (`var q: *u8; if c { let p = v.ptr(); q = p }`). Once `p` reaches C, the buffer's lifetime is the owner's obligation, as in every
-language with raw pointers.
+A callee cannot launder the provenance: storing a pointer parameter (or a struct or
+Vec carrying one) in a mutable global is an error at the store, and a call whose result
+carries a pointer inherits the views of its pointer arguments, so `let q = keep(v.ptr())`
+makes `q` a holder of `v`. `@externalLinkage` entry points are exempt from the store
+rule (their pointers come from C). Two shapes the rule cannot see, documented rather
+than checked: a pointer laundered through an integer (`G = p as i64`), and a copy of the
+pointer value into a variable that outlives the original holder
+(`var q: *u8; if c { let p = v.ptr(); q = p }`). Once `p` reaches C, the buffer's
+lifetime is the owner's obligation, as in every language with raw pointers.
 
 ### Opaque Foreign Types
 

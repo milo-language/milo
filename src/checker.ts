@@ -11,7 +11,7 @@ import type { Diagnostic, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
 import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
-import { checkPurity, checkEscapingClosures, checkThreadBoundary, checkGlobalBorrowInvalidation, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
+import { checkPurity, checkEscapingClosures, checkThreadBoundary, checkGlobalBorrowInvalidation, checkPointerParamEscape, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, closest, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError, formatMiloType } from "./derive-template";
@@ -1010,6 +1010,30 @@ export class TypeChecker {
   // strings and Vecs buffer by buffer but never consults a Drop impl, so a resource
   // nested in an `Option<Fd>` or a `Vec<Fd>` element is duplicated just as surely as a
   // bare `Fd`. Returns which mechanism and the type that carries it, for the diagnostic.
+  // Whether a value of `ty` holds a raw pointer anywhere inside it. `@copy` is not an
+  // exemption here (unlike `resourceKind`): this asks "can it dangle", not "does copying
+  // it duplicate an owner".
+  private carriesRawPointer(ty: TypeKind, seen: Set<string> = new Set()): boolean {
+    switch (ty.tag) {
+      case "ptr": return true;
+      case "vec": return this.carriesRawPointer(ty.element, seen);
+      case "heap": return this.carriesRawPointer(ty.inner, seen);
+      case "struct": {
+        const info = this.structs.get(ty.name);
+        if (!info || seen.has(ty.name)) return false;
+        seen.add(ty.name);
+        return info.fields.some(f => this.carriesRawPointer(f.type, seen));
+      }
+      case "enum": {
+        const info = this.enums.get(ty.name);
+        if (!info || seen.has(ty.name)) return false;
+        seen.add(ty.name);
+        return [...info.variants.values()].some(v => v.fields.some(t => this.carriesRawPointer(t, seen)));
+      }
+      default: return false;
+    }
+  }
+
   private resourceKind(ty: TypeKind, seen: Set<string> = new Set()): { kind: string; via: TypeKind } | null {
     switch (ty.tag) {
       case "struct": {
@@ -2430,8 +2454,23 @@ export class TypeChecker {
       case "EnumLit":
         for (const a of e.args) this.pointerViewsIn(a, out);
         return out;
+      case "Call": {
+        // A call whose result carries a pointer inherits the views of its pointer
+        // arguments: `let q = keep(v.ptr())` with `fn keep(p: *u8): *u8` makes `q` a
+        // holder of `v` just as `let q = v.ptr()` would (backlog #43, the returned-param
+        // half). Conservative on purpose: a fn that takes a view and returns an unrelated
+        // pointer ties the two, and the corpus has none.
+        const t = this.exprTypes.get(e);
+        if (!t || !this.carriesRawPointer(t)) return out;
+        for (const a of e.args) this.pointerViewsIn(a, out);
+        return out;
+      }
       case "MethodCall": {
-        if (e.args.length !== 0) return out;
+        if (e.args.length !== 0) {
+          const rt = this.exprTypes.get(e);
+          if (rt && this.carriesRawPointer(rt)) for (const a of e.args) this.pointerViewsIn(a, out);
+          return out;
+        }
         const t = this.exprTypes.get(e);
         if (!t || t.tag !== "ptr") return out;
         const recv = this.exprTypes.get(e.object);
@@ -3335,6 +3374,7 @@ export class TypeChecker {
     // Needs the finished call-resolution maps too: the global-write summary is a fixpoint
     // over the call graph, so every callee has to be resolvable before it runs.
     checkGlobalBorrowInvalidation(host, program, view);
+    checkPointerParamEscape(host, program, view);
     this.lintArenaNeverFrees(program);
 
     // An expectation that never fired means the code it excused was fixed and the
@@ -4250,6 +4290,7 @@ export class TypeChecker {
       isSend: (ty) => this.isSend(ty),
       whyNotSend: (ty) => this.whyNotSend(ty),
       pointerViewsIn: (e) => this.pointerViewsIn(e),
+      carriesRawPointer: (t) => this.carriesRawPointer(t),
     };
   }
 

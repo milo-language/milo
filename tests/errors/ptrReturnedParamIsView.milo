@@ -1,0 +1,13 @@
+// @error: 'v' may reallocate here while 'q' still points into its buffer (from 'v.ptr()' on line 10)
+// A call whose result carries a pointer inherits the views of its pointer arguments,
+// so a fn that hands its `*T` parameter back does not launder the provenance.
+fn keep(p: *u8): *u8 {
+    return p
+}
+fn main(): void {
+    var v: Vec<u8> = Vec.new()
+    v.push(1 as u8)
+    let q = keep(v.ptr())
+    v.push(2 as u8)
+    print(q as i64 != 0)
+}

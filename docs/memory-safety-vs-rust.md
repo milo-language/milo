@@ -257,9 +257,11 @@ from `./milo check` on the named error test), the closing commit, and who found 
   `forget(v)` as the one sanctioned hand-off); a pointer pushed into a `Vec<*u8>` (the
   container is a holder); and `let p = g.ptr(); schedulerYield()` in a task (the park walk reads
   the same list). `tests/errors/ptrGlobalCalleePush.milo`, `ptrInlineAliasMutArg`,
-  `ptrUsedAfterSourceMoved`, `ptrEscapesIntoVec`, `ptrGlobalAcrossPark`. Remaining gap,
-  documented in [ownership-model.md](ownership-model.md) rather than checked: a user function
-  that stashes its `*T` parameter in a global.
+  `ptrUsedAfterSourceMoved`, `ptrEscapesIntoVec`, `ptrGlobalAcrossPark`. The callee-side
+  gap closed 2026-09-20 (backlog #43): a pointer parameter stored in a global is an error at
+  the store (`ptrParamStoredInGlobal`, `ptrParamStoredInGlobalStruct`, `ptrParamPushedIntoGlobal`)
+  and a pointer-returning call inherits its arguments' views (`ptrReturnedParamIsView`). Left,
+  documented in [ownership-model.md](ownership-model.md): a pointer laundered through `as i64`.
 - **Found by:** independent review, 2026-09-19 (H4); round 2 by `fuzz:tasks`'s first pass.
 
 ### Finding #7 (closed): a `Drop` element copied out of a container anywhere but `let`

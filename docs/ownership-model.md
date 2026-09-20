@@ -194,12 +194,18 @@ the explicit statement that the pointer's owner has the buffer now. A plain rebi
 (giflib's `CStore`, a struct of `Vec<Vec<u8>>` freed after the C caller is done) admits
 the read under `unsafe { }` with a comment saying so.
 
-Remaining gaps, documented rather than checked: a user function that stashes its `*T`
-parameter in a global, or returns it, launders the provenance (`let q = keep(v.ptr())`
-makes `q` no holder); and a copy of the pointer value into a variable that outlives the
-original holder (`var q: *u8; if c { let p = v.ptr(); q = p }`) is not followed, though
-`let q = p` beside a live `p` is still blocked by `p`. Once `p` reaches C, the buffer's lifetime is the owner's
-obligation, as it is in every language with raw pointers.
+A callee cannot launder the provenance either: storing a pointer parameter (or a
+struct or Vec carrying one) in a mutable global is an error at the store (`pointer
+parameter 'p' is stored in the global 'G', which outlives the buffer it points into`),
+and a call whose result carries a pointer inherits the views of its pointer arguments,
+so `let q = keep(v.ptr())` makes `q` a holder of `v` (closed 2026-09-20, backlog #43).
+`@externalLinkage` entry points are exempt from the store rule: their pointer
+parameters come from C, which owns them by contract. Remaining gaps, documented rather
+than checked: a pointer laundered through an integer (`G = p as i64`), and a copy of the
+pointer value into a variable that outlives the original holder
+(`var q: *u8; if c { let p = v.ptr(); q = p }`) is not followed, though `let q = p`
+beside a live `p` is still blocked by `p`. Once `p` reaches C, the buffer's lifetime is
+the owner's obligation, as it is in every language with raw pointers.
 
 ## Raw pointers in structs: move-tracked unless `@copy`
 

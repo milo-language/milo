@@ -1,0 +1,13 @@
+// @error: pointer parameter 'p' is stored in the global 'GV' by 'push', which outlives the buffer it points into
+var GV: Vec<*u8> = Vec.new()
+
+fn keepV(p: *u8): void {
+    GV.push(p)
+}
+
+fn main(): void {
+    var v: Vec<u8> = Vec.new()
+    v.push(1 as u8)
+    keepV(v.ptr())
+    v.push(2 as u8)
+}
