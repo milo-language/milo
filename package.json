@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "verify": "bun scripts/verify-contracts.ts",
-    "test:asan": "bun scripts/asan-sweep.ts --all"
+    "test:asan": "bun scripts/asan-sweep.ts --all",
+    "fuzz:generic-drop": "bun scripts/fuzz-generic-drop.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"
