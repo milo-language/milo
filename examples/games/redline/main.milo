@@ -416,9 +416,22 @@ pub fn main(): i32 {
         // ever shows up as "the road is green now".
         gfx.lights.clear()
         let eye = cam.shakenEye()
-        world.nearestLights(gfx.lights, eye, 14)
-        // The player's own lamps, which are the only lights that move.
-        gfx.addLight(player.nose(), 5.5, 5.2, 4.4, 26.0)
+        world.nearestLights(gfx.lights, eye, 12)
+        // The player's own lamps, which are the only lights that move, and the
+        // only ones that are aimed. A headlamp as a bare point source lights the
+        // shopfront beside the car and the facade behind it as hard as the road
+        // in front, so every lit thing the car passes appeared to switch on as
+        // it arrived and switch off as it left. Two beams down the road, plus a
+        // dim unaimed wash so the tarmac immediately under the nose is not
+        // black, and the spill stops.
+        let aim = player.forward()
+        let beam = v3(aim.x, argValue("--hldy", "-0.30").parseF64() ?? -0.30, aim.z)
+        let side = player.right().scale(0.62)
+        let hli = argValue("--hli", "30").parseF64() ?? 30.0
+        let hlc = argValue("--hlc", "0.80").parseF64() ?? 0.80
+        gfx.addSpot(player.nose() + side, beam, hli, hli * 0.95, hli * 0.81, 55.0, hlc)
+        gfx.addSpot(player.nose() - side, beam, hli, hli * 0.95, hli * 0.81, 55.0, hlc)
+        gfx.addLight(player.nose(), 0.85, 0.82, 0.75, 9.0)
         gfx.addLight(player.tail(), 3.4, 0.30, 0.18, 9.0)
         if player.boost > 0.02 {
             gfx.addLight(player.tail(), 9.0 * player.boost, 3.4 * player.boost, 0.7 * player.boost, 16.0)

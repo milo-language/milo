@@ -3254,7 +3254,11 @@ export class TypeChecker {
       if (info.baseName === undefined) continue;
       if (!this.embedsSelf(mangled, new Set())) continue;
       const shown = this.demangle(mangled);
-      this.error(`struct '${shown}' is recursive by value and has infinite size`, undefined,
+      // Point at the generic declaration: the instantiation has no source of its own
+      // (created on demand, possibly from a call three files away), and an error with
+      // no location makes the reader grep for a type name.
+      const declSpan = this.genericStructs.get(info.baseName)?.decl.span;
+      this.error(`struct '${shown}' is recursive by value and has infinite size`, declSpan,
         `a struct cannot contain itself by value: put the recursive field behind an indirection (e.g. 'Heap<${shown}>' or 'Vec<${shown}>')`);
     }
 
