@@ -24,7 +24,7 @@ The rules reviewers check by hand. Anything mechanically checkable lives in `scr
 - Semantic errors are caught in `checker.ts` **before** codegen. If codegen can hit an invalid state, the checker missed it — fix the checker.
 - LLVM IR uses opaque `ptr` (LLVM 15+), never `i8*`.
 - New language feature = checker + lower + codegen **+ formatter + LSP**. The last two are part of done, not a follow-up.
-- Match the file's existing structure; the checker is a monolith by design (a prior split was dead code and deleted — don't re-split).
+- Match the file's existing structure. The checker splits only along a measured seam: a cluster whose transitive closure needs the fewest host members (`src/checker-program-passes.ts` took the five whole-program passes behind an 18-member host, 2026-09-20). A split that needs a wide interface, or that a prior attempt showed was dead code, is not a split; do not move code for tidiness alone.
 - Platform-specific code splits by filename suffix (`*.darwin.ts` / `*.linux.ts`), resolved per host — don't branch on `process.platform` inline where a suffix split fits.
 
 ## Comments
