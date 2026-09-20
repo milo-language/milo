@@ -177,9 +177,19 @@ fn readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
 }
 
 impl WsConn {
+    // A second handle over a socket some other WsConn owns: same fd and TLS handle, but
+    // this one never closes them. It is how one task reads while another writes on the
+    // same connection (`ws.fd()` / `ws.tlsHandle()` are the values to pass). The owner
+    // must outlive it.
+    fn view(fd: i32, ssl: i64, isClient: bool): WsConn {
+        return WsConn {
+            fd: fd, ssl: ssl, _ctx: 0, _closed: true, _isClient: isClient
+        }
+    }
+
     // The socket fd. Callers select and poll on it, which is why it is reachable at all;
-    // going through a method is what lets the field go private once Milo has field
-    // visibility (docs/safety-roadmap.md).
+    // going through a method is what lets `_ctx`, `_closed` and `_isClient` stay
+    // file-private.
     fn fd(self: &WsConn): i32 {
         return self.fd
     }

@@ -47,6 +47,43 @@ let d = Dog { age: 7 }
 print(d.getAge())
 ```
 
+## Private fields
+
+A field whose name starts with `_` can be read, written, or named in a struct literal
+only inside the file that declares the struct. Other files use whatever constructor and
+accessors that file exports:
+
+```milo skip
+// counter.milo
+pub struct Counter {
+    _n: i32,
+}
+
+pub fn newCounter(): Counter {
+    return Counter { _n: 0 }
+}
+
+impl Counter {
+    fn bump(self: &mut Self) {
+        self._n = self._n + 1
+    }
+    fn value(self: &Self): i32 {
+        return self._n
+    }
+}
+
+// main.milo
+var c = newCounter()
+c.bump()
+print(c.value())
+c._n = 5        // error: field '_n' of 'Counter' is private to 'counter.milo'
+```
+
+There is no keyword: the leading underscore is the whole rule, and it applies to fields
+only (a function named `_helper` is an ordinary function). Derived methods
+(`@derive(Eq)`, `@derive(Json)`, ...) are generated in the declaring file's scope, so
+`@derive(Json)` still serializes `_` fields.
+
 ## JSON serialization
 
 Any struct can be serialized with the built-in `jsonStringify`:

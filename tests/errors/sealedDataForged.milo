@@ -1,0 +1,11 @@
+// The seal forge path: swapping `_data` under a live Span would leave the span resolving
+// against different bytes with the brand still matching. `_data` is file-private to
+// std/seal.milo, so user code cannot reach it.
+// @error: field '_data' of 'Sealed' is private to 'std/seal.milo'
+from "std/seal" import { Sealed, seal }
+
+fn main(): i32 {
+    var s = seal("hello")
+    s._data = "world"
+    return 0
+}

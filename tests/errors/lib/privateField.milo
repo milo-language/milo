@@ -1,0 +1,13 @@
+// A `pub struct` with a `_`-prefixed field: the field is visible only in this file.
+pub struct S {
+    _x: i32,
+    y: i32,
+}
+
+pub fn makeS(x: i32): S {
+    return S { _x: x, y: 0 }
+}
+
+pub fn readX(s: &S): i32 {
+    return s._x
+}

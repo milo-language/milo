@@ -30,13 +30,9 @@ pub fn main(): i32 {
     }
 
     // Client masks outgoing frames, server does not — so this also exercises the
-    // masked path. _closed: true on both so neither Drop closes the shared fds.
-    let sender = WsConn {
-        fd: fds[1], ssl: 0, _ctx: 0, _closed: true, _isClient: true
-    }
-    var receiver = WsConn {
-        fd: fds[0], ssl: 0, _ctx: 0, _closed: true, _isClient: false
-    }
+    // masked path. Views on both ends so neither Drop closes the pipe fds.
+    let sender = WsConn.view(fds[1], 0, true)
+    var receiver = WsConn.view(fds[0], 0, false)
 
     let _ = sender.sendText("hello ws")
     let msg = receiver.recv()!

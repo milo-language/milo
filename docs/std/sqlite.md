@@ -2,6 +2,15 @@
 
 ## std/sqlite
 
+### `Database.handle`
+
+```milo
+fn Database.handle(self: &Database): *u8
+```
+
+The raw `sqlite3*`, for callers that reach sqlite3 functions this module does not
+wrap. Borrowed: the Database still owns and closes it.
+
 ### `dbBindInt`
 
 ```milo
@@ -145,3 +154,12 @@ pub fn dbStep(stmt: &Statement): bool
 ```
 
 _Undocumented._
+
+### `Statement.handle`
+
+```milo
+fn Statement.handle(self: &Statement): *u8
+```
+
+The raw `sqlite3_stmt*`, for callers that reach sqlite3 functions this module does
+not wrap. Borrowed: the Statement still owns and finalizes it.

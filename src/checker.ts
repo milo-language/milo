@@ -17,7 +17,8 @@ import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-js
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError } from "./derive-template";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
-import { basename } from "path";
+import { basename, relative, resolve as resolvePath, sep } from "path";
+import { STDLIB_DIR } from "./stdlibBundle";
 import { must } from "./must";
 
 // The view constructors for foreign memory, and the one module allowed to call them.
@@ -42,6 +43,16 @@ export const FOREIGN_MODULE = "std/foreign.milo";
 // std, where the reader cannot act on it.
 export function inModule(file: string | undefined, module: string): boolean {
   return !!file && file.replace(/\\/g, "/").includes(module);
+}
+
+// A file path as a diagnostic names it: `std/seal.milo` for the stdlib, cwd-relative
+// for a project file, basename when neither applies.
+function displayPath(file: string): string {
+  const norm = (p: string) => p.split(sep).join("/");
+  const root = STDLIB_DIR + sep;
+  if (file.startsWith(root)) return norm(file.slice(root.length));
+  const rel = relative(process.cwd(), file);
+  return rel && !rel.startsWith("..") ? norm(rel) : basename(file);
 }
 
 // Substitute a generic alias's arguments into its body, at the AST level rather than on
@@ -281,6 +292,9 @@ interface StructInfo {
   // second copy would be a second owner of whatever the pointer addresses. Named so the
   // diagnostics can point at it. See isAllCopyStruct.
   pointerField?: string;
+  // File of the declaration (the generic's, for an instantiation). A `_`-prefixed field
+  // may only be reached from this file; see checkFieldPrivacy.
+  file?: string;
 }
 
 // The first field whose type is a raw pointer, directly or through a fixed array. A struct
@@ -552,6 +566,8 @@ export class TypeChecker {
   // the other half.
   private closureRetHint: TypeKind | null = null;
   private currentFnRetType: TypeKind = { tag: "void" };
+  // Origin file of the fn body being checked; see checkFieldPrivacy.
+  private currentFnFile: string | undefined;
   private loopDepth = 0;
   // Track variables moved exclusively inside return stmts within loops.
   // Stack entry per loop nesting level.
@@ -1846,6 +1862,7 @@ export class TypeChecker {
     // re-entrant reader only needs the name to exist, not the layout.
     const entry: StructInfo = {
       fields: [], baseName, typeArgs,
+      ...(generic.decl.span?.file && { file: generic.decl.span.file }),
       // Copy-ness is a property of the declaration, so every instantiation of a
       // `@noCopy` generic inherits it — `Handle<Texture>` is no more copyable than
       // the `Handle<T>` it came from.
@@ -2780,6 +2797,7 @@ export class TypeChecker {
         const pointerField = copy ? undefined : rawPointerField(fields);
         this.structs.set(s.name, {
           fields, isExtern: s.isExtern, isOpaque: s.isOpaque,
+          ...(s.span?.file && { file: s.span.file }),
           ...(s.attributes?.some(a => a.name === "noCopy") ? { noCopy: true } : {}),
           ...(copy ? { copy: true } : {}),
           ...(pointerField ? { pointerField } : {}),
@@ -5326,6 +5344,7 @@ export class TypeChecker {
     const savedIsUser = this.currentFnIsUser;
     const savedRetType = this.currentFnRetType;
     const savedScopeFloor = this.fnScopeFloor;
+    const savedFnFile = this.currentFnFile;
     // The restore is a `finally` because a `fatal()` anywhere below unwinds past
     // it — leaving currentFnRetType pointing at an abandoned function would make
     // the NEXT function's `return`/`?` check answer against the wrong signature.
@@ -5335,11 +5354,16 @@ export class TypeChecker {
       this.currentFnIsUser = savedIsUser;
       this.currentFnRetType = savedRetType;
       this.fnScopeFloor = savedScopeFloor;
+      this.currentFnFile = savedFnFile;
     }
   }
 
   private checkFunctionBody(fn: Function) {
     this.currentFnIsUser = this.fnIsUserCode(fn.name);
+    // `sourceFile` first: a derived method's spans name the synthetic
+    // `<derive Json for S>` unit, but the resolver-style origin is the struct's file,
+    // which is where generated code has to count as living for field privacy.
+    this.currentFnFile = fn.sourceFile ?? fn.span?.file;
     this.pushScope();
     this.fnScopeFloor = this.scopes.length - 1;
     const retType = this.resolve(fn.retType);
@@ -6834,6 +6858,7 @@ export class TypeChecker {
         if (!info) this.fatal(`unknown struct '${objType.name}'`, sp);
         const field = info.fields.find(f => f.name === expr.field);
         if (!field) this.fatal(`struct '${objType.name}' has no field '${expr.field}'`, sp, memberHint(expr.field, this.fieldCandidates(objType)));
+        this.checkFieldPrivacy(objType.name, expr.field, sp);
         this.setType(expr, field.type);
         const mutable = throughPtr ? true : this.isRootMutable(expr.object);
         return { type: field.type, mutable };
@@ -7597,6 +7622,7 @@ export class TypeChecker {
         for (const f of expr.fields) {
           const fieldDef = hintInfo.fields.find(d => d.name === f.name);
           if (!fieldDef) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp, memberHint(f.name, hintInfo.fields.map(d => d.name))); continue; }
+          this.checkFieldPrivacy(hint.name, f.name, sp);
           let valType = this.checkExprWithHint(f.value, fieldDef.type);
           if (fieldDef.type.tag === "int" && valType.tag === "int" && !typeEq(fieldDef.type, valType) && this.isConstIntExpr(f.value)) {
             this.retypeConstInt(f.value, fieldDef.type);
@@ -8682,6 +8708,7 @@ export class TypeChecker {
       for (const f of expr.fields) {
         const declField = genericInfo.decl.fields.find(d => d.name === f.name);
         if (!declField) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp, memberHint(f.name, genericInfo.decl.fields.map(d => d.name))); continue; }
+        this.checkFieldPrivacy(expr.name, f.name, sp);
         const valType = this.checkExpr(f.value);
         // Infer type params from the field's declared (unsubstituted) type against the
         // argument's concrete type — recursively, so `Vec<T>`/`[T]`/nested generics
@@ -8722,6 +8749,7 @@ export class TypeChecker {
     for (const f of expr.fields) {
       const fieldDef = info.fields.find(d => d.name === f.name);
       if (!fieldDef) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp, memberHint(f.name, info.fields.map(d => d.name))); continue; }
+      this.checkFieldPrivacy(expr.name, f.name, sp);
       let valType = this.checkExprWithHint(f.value, fieldDef.type);
       if (fieldDef.type.tag === "int" && valType.tag === "int" && !typeEq(fieldDef.type, valType) && this.isConstIntExpr(f.value)) {
         this.retypeConstInt(f.value, fieldDef.type);
@@ -8745,6 +8773,38 @@ export class TypeChecker {
     return this.setType(expr, { tag: "struct", name: expr.name });
   }
 
+  // Per-field privacy: a field named with a leading `_` is reachable only from the file
+  // that declares its struct. The referencing file is the enclosing fn's origin (so a
+  // derived method counts as the struct's file) and falls back to the expression's own
+  // span outside any fn (a global initializer). Fn and method names are not covered:
+  // `_sendFrame` is an ordinary name. Called from every read, write and literal site.
+  private checkFieldPrivacy(structName: string, field: string, refSpan?: Span): void {
+    if (!field.startsWith("_")) return;
+    // A generic literal names the base struct before it is instantiated.
+    const info = this.structs.get(structName);
+    const declFile = info?.file ?? this.genericStructs.get(structName)?.decl.span?.file;
+    const refFile = this.currentFnFile ?? refSpan?.file;
+    // Compared as absolute paths: the entry file is parsed under the path the CLI was
+    // given, and the same file reached again through an import is parsed under its
+    // absolute one (a std module checked directly is the everyday case).
+    if (!declFile || !refFile || this.absFile(declFile) === this.absFile(refFile)) return;
+    const shown = info?.baseName ?? structName;
+    this.diagnostics.push({
+      severity: "error",
+      span: refSpan,
+      message: `field '${field}' of '${shown}' is private to '${displayPath(declFile)}'`,
+      hint: `a field named with a leading '_' is visible only in the file that declares the struct; add an accessor or constructor there`,
+      code: "private-field",
+    });
+  }
+
+  private absFileCache = new Map<string, string>();
+  private absFile(file: string): string {
+    let abs = this.absFileCache.get(file);
+    if (abs === undefined) { abs = file.startsWith("<") ? file : resolvePath(file); this.absFileCache.set(file, abs); }
+    return abs;
+  }
+
   private checkFieldAccessExpr(expr: ExprOf<"FieldAccess">): TypeKind {
     const sp = expr.span;
     // Float namespace constants resolve before the object is checked: `f64` is a type,
@@ -8766,6 +8826,7 @@ export class TypeChecker {
       if (!info) { this.error(`unknown struct '${objType.name}'`, sp); return this.setType(expr, { tag: "unknown" }); }
       const field = info.fields.find(f => f.name === expr.field);
       if (!field) { this.error(`struct '${objType.name}' has no field '${expr.field}'`, sp, memberHint(expr.field, this.fieldCandidates(objType))); return this.setType(expr, { tag: "unknown" }); }
+      this.checkFieldPrivacy(objType.name, expr.field, sp);
       this.setType(expr, field.type);
       if (field.type.tag === "cfn") this.strandedCFnReads.set(expr, { struct: objType.name, field: expr.field, span: sp });
       // The field's own move state, the counterpart of the `info.moved` check on a

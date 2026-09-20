@@ -1,0 +1,9 @@
+// Reading a `_` field of a struct declared in another file. The declaring file exports
+// a constructor and an accessor; this file has to use them.
+// @error: field '_x' of 'S' is private to
+from "lib/privateField" import { S, makeS }
+
+fn main(): i32 {
+    let s = makeS(3)
+    return s._x
+}

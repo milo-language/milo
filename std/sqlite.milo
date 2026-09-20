@@ -70,6 +70,22 @@ pub struct Statement {
     _db: *u8,
 }
 
+impl Database {
+    // The raw `sqlite3*`, for callers that reach sqlite3 functions this module does not
+    // wrap. Borrowed: the Database still owns and closes it.
+    fn handle(self: &Self): *u8 {
+        return self._handle
+    }
+}
+
+impl Statement {
+    // The raw `sqlite3_stmt*`, for callers that reach sqlite3 functions this module does
+    // not wrap. Borrowed: the Statement still owns and finalizes it.
+    fn handle(self: &Self): *u8 {
+        return self._handle
+    }
+}
+
 pub fn dbOpen(path: string): Result<Database> {
     unsafe {
         var handle: *u8 = 0 as *u8
