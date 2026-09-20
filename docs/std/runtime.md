@@ -628,6 +628,15 @@ before the target can run (i.e. before yielding/driving the scheduler),
 so the registration below always precedes completion. A green caller
 parks; the main thread drives the scheduler until the done cell is set.
 
+### `Task.raw`
+
+```milo
+fn Task.raw(self: &Task): *u8
+```
+
+The scheduler's pointer to this task, for `schedulerPark`/`schedulerUnpark`. Opaque:
+pass it back to std, never read through it.
+
 ### `Task.spawn`
 
 ```milo

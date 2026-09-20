@@ -148,9 +148,12 @@ Implemented for arenas in debug and release. Handles carry arena identity, slot,
 
 Via `milo build --profile strict` or per-module annotation.
 
-## Open gap: a `pub struct` cannot protect its own fields
+## Closed gap: a `pub struct` cannot protect its own fields
 
-Found 2026-08-24. Safe code with no `unsafe` block anywhere can segfault:
+Found 2026-08-24, closed 2026-09-20: a field named with a leading `_` is now private to
+the file that declares the struct (reference, "Private fields"), so the literal below is
+`error: field '_ptr' of 'CStr' is private to 'std/cstr.milo'`. The record of the gap:
+safe code with no `unsafe` block anywhere could segfault:
 
 ```milo
 from "std/cstr" import { CStr }
@@ -175,27 +178,16 @@ Each step is individually defensible, which is why it went unnoticed:
 | `CStr { _ptr: … }` | yes | **the gap** |
 | `c.toString()` derefs `_ptr` in its own `unsafe` | yes | yes, a module may trust its own invariant |
 
-The break is the third row. `pub struct` exposes every field (there is no per-field
-visibility), so a struct literal or a field assignment from another file can put anything
-into a field the module's `unsafe` blocks then trust. The module's invariant is not
-enforceable by the module.
+The break was the third row. `pub struct` exposed every field, so a struct literal or a
+field assignment from another file could put anything into a field the module's `unsafe`
+blocks then trust.
 
-Scope: 25 `pub struct`s across `std/` already mark 44 fields with a leading underscore to
-mean "do not touch", which is the convention standing in for the missing feature. Several
-hold raw pointers or OS handles: `CStr._ptr`, `Regex._preg`, `sqlite.Database._handle`,
-`Task._ptr`, `Pty._hpcon`. Others hold logic invariants where the failure is a wrong
-answer rather than a crash: `Sealed._bufferId`, `Select._state`.
-
-Two candidate fixes, neither designed yet:
-
-- **Field visibility.** A field without `pub` is file-private, matching how declarations
-  already work ("the unit of privacy is the file"). Changes the meaning of every existing
-  `pub struct`, so it is a breaking change and wants `docs/breaking-changes.md`.
-- **Readonly fields.** Readable anywhere, writable only in the defining file. Weaker, and
-  it does not stop the struct-literal path above, which is the one that forges the pointer.
-
-Until one lands, the honest statement is that a module's invariants hold by convention at
-the field boundary, not by construction. `std/seal` documents this at its own type.
+The fix chosen over a `pub`-per-field spelling: the `_` prefix that std already used on
+44 fields across 25 `pub struct`s to mean "do not touch" became the rule. A `_` field may
+be read, written, or named in a literal only in the declaring file; derived methods are
+generated in that file's scope. No existing `pub struct` changed meaning, and the sweep
+that landed it found four cross-file sites (all struct literals building std types) and
+gave each a constructor in its own module (`WsConn.view`, `Task.raw`, `AtomicBool.clone`).
 
 ## Design Principles
 

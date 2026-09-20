@@ -41,9 +41,7 @@ fn Pty.fd(self: &Pty): i32
 ```
 
 The OS file descriptor for the master side. Callers poll, select and fcntl on it,
-which is why it is exposed at all; reading it through a method rather than the
-field is what will let the field go private when Milo gets field visibility
-(docs/safety-roadmap.md).
+which is why it is exposed at all.
 
 ### `Pty.kill`
 

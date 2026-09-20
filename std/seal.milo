@@ -77,11 +77,8 @@ pub struct Span {
 // An immutable byte buffer. Produced by consuming a string with `seal`; the
 // only way back to a mutable buffer is `unseal`, which consumes this.
 //
-// Every method here reads. That is the design, with one honest limit: Milo has no
-// per-field visibility, so `pub struct` exposes `_data` to any caller who names the type,
-// and `s._data = ...` on a `var` holder is not rejected. A same-length replacement then
-// leaves live spans resolving against different bytes, id matching and bounds passing.
-// The API maintains the invariant; the type cannot enforce it until fields can be private.
+// Every method here reads, and `_data` / `_bufferId` are file-private, so no caller can
+// swap the bytes under a live span: the compiler enforces the invariant, not convention.
 pub struct Sealed {
     _data: string,
     _bufferId: i32,

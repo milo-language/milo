@@ -2384,6 +2384,8 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `field '_x' of 'S' is private to`
 
+**Rationale.** Naming a `_` field in a struct literal from another file. A struct with any `_` field can only be built by literal in its own file; other files go through a constructor.
+
 *Program:* [`tests/errors/privateFieldLiteral.milo`](../tests/errors/privateFieldLiteral.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
 ### MILO-E-privateFieldRead
@@ -2392,6 +2394,8 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `field '_x' of 'S' is private to`
 
+**Rationale.** Reading a `_` field of a struct declared in another file. The declaring file exports a constructor and an accessor; this file has to use them.
+
 *Program:* [`tests/errors/privateFieldRead.milo`](../tests/errors/privateFieldRead.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
 ### MILO-E-privateFieldWrite
@@ -2399,6 +2403,8 @@ A conforming implementation shall reject this program at compile time.
 A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `field '_x' of 'S' is private to`
+
+**Rationale.** Assigning a `_` field from outside the declaring file: the write is what would break whatever invariant the declaring file keeps on it.
 
 *Program:* [`tests/errors/privateFieldWrite.milo`](../tests/errors/privateFieldWrite.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 

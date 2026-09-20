@@ -2669,7 +2669,52 @@ unit of privacy is the file, matching how imports already work.
 
 `pub` applies to top-level declarations: `fn`, `struct`, `enum`, `trait`, `type`,
 `interface`, and globals (`let`, `var`, `thread_local`). A `pub struct` exposes its
-fields — field-level visibility is all-or-nothing per struct.
+fields, with one exception below.
+
+### Private fields
+
+A struct field whose name begins with `_` is **private to the file that declares the
+struct**. Reading it, assigning it, or naming it in a struct literal from any other file
+is an error:
+
+```
+error: field '_data' of 'Sealed' is private to 'std/seal.milo'
+hint: a field named with a leading '_' is visible only in the file that declares the
+      struct; add an accessor or constructor there
+```
+
+There is no syntax and no attribute: the name is the rule. A struct with any `_` field
+can therefore only be built by literal in its own file; other files go through a
+constructor or static method it exports. Because the rule is about where the field is
+*named*, it is what lets a module keep an invariant the compiler cannot express (a raw
+pointer that is always valid, a buffer id that always matches a live buffer): nothing
+outside the file can put a value into the field.
+
+```milo skip
+// std/seal.milo
+pub struct Sealed {
+    _data: string,
+    _bufferId: i32,
+}
+pub fn seal(s: string): Sealed { ... }        // the constructor other files use
+
+// user.milo
+var s = seal("hello")
+s._data = "world"          // error: field '_data' of 'Sealed' is private to 'std/seal.milo'
+```
+
+What the rule covers, and what it does not:
+
+- **Fields only.** A fn or method named `_sendFrame` is an ordinary name; fn visibility
+  is `pub` as above.
+- **Methods count where the `impl` is written.** A method body in the declaring file
+  reaches `_` fields as before; an `impl` for the struct in another file cannot.
+- **Derived code keeps access.** `@derive(Eq)`, `@derive(Clone)`, `@derive(Json)` and a
+  user `derive` template generate their methods in the declaring struct's scope. In
+  particular `@derive(Json)` still serializes and decodes `_` fields: serialization is
+  not access, and the JSON name is the field name unless `@json(name)` says otherwise.
+- **Same-file code is unchanged**, including the `_x` convention for a private field
+  that the file's own methods read and write freely.
 
 Two things `pub` does **not** mark:
 

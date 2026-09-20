@@ -50,8 +50,8 @@ fn WsConn.fd(self: &WsConn): i32
 ```
 
 The socket fd. Callers select and poll on it, which is why it is reachable at all;
-going through a method is what lets the field go private once Milo has field
-visibility (docs/safety-roadmap.md).
+going through a method is what lets `_ctx`, `_closed` and `_isClient` stay
+file-private.
 
 ### `WsConn.ping`
 
@@ -93,6 +93,17 @@ fn WsConn.tlsHandle(self: &WsConn): i64
 
 The TLS handle, 0 for plain TCP. Opaque to callers: pass it back to std, never
 construct one.
+
+### `WsConn.view`
+
+```milo
+fn WsConn.view(fd: i32, ssl: i64, isClient: bool): WsConn
+```
+
+A second handle over a socket some other WsConn owns: same fd and TLS handle, but
+this one never closes them. It is how one task reads while another writes on the
+same connection (`ws.fd()` / `ws.tlsHandle()` are the values to pass). The owner
+must outlive it.
 
 ### `wsConnect`
 

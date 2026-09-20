@@ -304,17 +304,14 @@ all**: a start, a length, and the id of the buffer it was measured against. On i
 means nothing. Paired with its `Sealed` it means a slice, and `src.text(sp)` is what turns
 it back into characters.
 
-One honest caveat, since the fields are right there: Milo has no per-field visibility, so
-a `pub struct` exposes everything it holds. Nothing stops a caller writing `s._data = ...`
-directly, and a same-length replacement would leave every existing span resolving happily
-against different bytes. The underscore and the doc comments are the only thing marking
-that boundary. The methods maintain the invariant; the type cannot enforce it.
+The `_` prefix is what keeps that true: a field named with a leading underscore is
+private to the file that declares the struct, so `s._data = ...` from a caller is a
+compile error (`field '_data' of 'Sealed' is private to 'std/seal.milo'`), and no
+same-length replacement can leave existing spans resolving against different bytes.
 
-That matching `_bufferId` on both sides is the tie, and the leading underscore is the
-convention for a field you are not meant to set: a zero-valued `Span` (hand-built, or a
-zeroed struct field) matches no buffer, so the accidental case fails closed. A
-deliberately forged id is the same pub-field hole as the caveat above, and can resolve
-against whichever live buffer owns that id. It
+That matching `_bufferId` on both sides is the tie. A zero-valued `Span` (a zeroed struct
+field) matches no buffer, so the accidental case fails closed, and a forged id cannot be
+written from outside `std/seal` for the same reason `_data` cannot. It
 is why a span can be an ordinary value, kept in a `Vec`, a struct field, or a map key,
 without the compiler tracking where its buffer went. The check happens when you resolve it.
 

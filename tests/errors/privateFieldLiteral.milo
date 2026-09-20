@@ -1,3 +1,5 @@
+// Naming a `_` field in a struct literal from another file. A struct with any `_` field
+// can only be built by literal in its own file; other files go through a constructor.
 // @error: field '_x' of 'S' is private to
 from "lib/privateField" import { S }
 

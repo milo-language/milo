@@ -1,3 +1,5 @@
+// Assigning a `_` field from outside the declaring file: the write is what would break
+// whatever invariant the declaring file keeps on it.
 // @error: field '_x' of 'S' is private to
 from "lib/privateField" import { S, makeS }
 
