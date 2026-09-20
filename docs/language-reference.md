@@ -758,12 +758,19 @@ stale handle could be dropped on the floor in silence. `@mustUse` on the declara
 gives such a routine the same rule:
 
 ```milo
-@mustUse
-fn tryLock(m: &mut Mutex): bool { ... }
+struct Latch { held: bool }
 
-tryLock(m)              // warning: unused result of '@mustUse' function 'tryLock'
-let _ = tryLock(m)      // discarded on purpose, silent
-if !tryLock(m) { ... }  // used
+@mustUse
+fn tryAcquire(l: &mut Latch): bool {
+    if l.held { return false }
+    l.held = true
+    return true
+}
+
+var l = Latch { held: false }
+tryAcquire(l)                      // warning: unused result of '@mustUse' function 'tryAcquire'
+let _ = tryAcquire(l)              // discarded on purpose, silent
+if !tryAcquire(l) { print("busy") }  // used
 ```
 
 It works on free functions, on methods in an `impl`, on generic functions (every
