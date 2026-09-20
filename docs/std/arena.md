@@ -70,6 +70,9 @@ exists as a free function only: its result is a type parameter of the
 METHOD rather than of Arena, and a method's own type parameter is never
 inferred at the call site.
 
+Absent on an arena whose T carries Drop or @noCopy: the copy would be a
+second owner of the resource. `read` and `modifyMut` remain.
+
 ### `Arena.handles`
 
 ```milo
@@ -97,7 +100,8 @@ fn Arena.modify(self: &mut Arena, h: Handle<T>, f: (T) => T): bool
 
 Update the slot by mapping its value through `f`. False (and `f` not
 called) if `h` is stale. Moves T out and back, so prefer modifyMut when T
-is large or you touch only a field or two.
+is large or you touch only a field or two. Absent when T carries Drop or
+@noCopy, for the same reason as `get`.
 
 ### `Arena.modifyMut`
 
@@ -216,7 +220,8 @@ pub fn arenaGet<T>(a: &Arena<T>, h: Handle<T>): Option<T>
 
 Get a copy of the value at a handle. Returns None if the handle is stale.
 Returns by value, not &T, because second-class refs cannot be stored in
-Option<_>. For large T, prefer arenaModify to avoid the copy churn.
+Option<_>. For large T, prefer arenaModify to avoid the copy churn. A T that
+carries Drop or @noCopy has no sound copy: this is rejected for it, use arenaRead.
 
 ### `arenaHandles`
 
@@ -245,7 +250,8 @@ pub fn arenaModify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool
 
 In-place update via closure. Avoids the manual get/modify/set dance and
 is the recommended way to mutate a single field of an arena value.
-Returns false if the handle is stale (closure not invoked).
+Returns false if the handle is stale (closure not invoked). The closure takes
+the value by copy, so a T carrying Drop or @noCopy is rejected: use arenaModifyMut.
 
 ### `arenaModifyMut`
 
@@ -337,6 +343,7 @@ fn FrozenArena.get(self: &FrozenArena, h: Handle<T>): T
 
 The value at `h`, with no Option to unwrap. Aborts only on a handle from
 another arena or an out-of-range index, neither of which is staleness.
+Absent when T carries Drop or @noCopy; `read` is the borrowing form.
 
 ### `FrozenArena.holds`
 
@@ -377,6 +384,8 @@ checks: a handle from ANOTHER arena, or an index outside this arena's
 storage, has nothing to do with staleness and must not be allowed to read
 unrelated memory. Both abort with a named message rather than return a
 plausible-looking value.
+
+A copy, so rejected for a T that carries Drop or @noCopy; `frozenRead` borrows.
 
 ### `frozenHolds`
 
@@ -432,7 +441,8 @@ fn GrowOnlyArena.get(self: &GrowOnlyArena, h: Handle<T>): T
 
 The value at `h`, with no Option to unwrap. Infallible for any handle this
 arena or the one it was sealed from minted: no slot is ever recycled, so a
-handle cannot come to name something else.
+handle cannot come to name something else. A copy, so absent for a T that
+carries Drop or @noCopy (see the module comment); `read` is the borrowing form.
 
 ### `GrowOnlyArena.holds`
 

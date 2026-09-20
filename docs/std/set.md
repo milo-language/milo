@@ -24,7 +24,10 @@ Drop every element, keeping the table's capacity.
 fn HashSet.clone(self: &HashSet<T>): HashSet<T>
 ```
 
-_Undocumented._
+Element by element rather than `self.inner.clone()`: the builtin map clone copies
+each key structurally and never runs T's own Clone impl, so a T carrying Drop
+was released once per copy (the generic-drop fuzzer's HashSet.clone finding).
+Same reason every other constructor here spells `x.clone()`.
 
 ### `HashSet.contains`
 
@@ -106,6 +109,7 @@ fn HashSet.toVec(self: &HashSet<T>): Vec<T>
 
 Snapshot the elements into a Vec. Sort it if you need a stable order —
 `print` on a set would otherwise expose the randomized bucket order.
+Not `self.inner.keys()`, for the reason `clone` gives.
 
 ### `HashSet.union`
 

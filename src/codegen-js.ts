@@ -765,6 +765,10 @@ export class CodegenJS {
         return this.genExpr(expr.operand);
       case "VecNew":
         return "[]";
+      case "VecWithCapacity":
+        // A capacity hint has no JS spelling; the argument is still evaluated for its
+        // side effects and its value discarded, matching native's ordering.
+        return `(${this.genExpr(expr.capacity)}, [])`;
       case "VecFilled": {
         // Vec.filled(n, x). Cloned per element like ArrayRepeat: the value is
         // evaluated once in Milo too, but each slot owns its own copy, so a

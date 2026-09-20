@@ -2452,6 +2452,8 @@ export class TypeChecker {
         return;
       }
     }
+    // ident-ok: a pointer holder is a NAME by construction (`let p = v.ptr()`); the
+    // holder-of-a-place case is the `pointerViewsIn` loop above.
     if (value.kind === "Ident") {
       const holder = this.lookup(value.name);
       for (const src of holder?.freezes ?? []) {
@@ -2474,6 +2476,8 @@ export class TypeChecker {
   // pointer borrows a whole-variable initializer carries BEFORE `tryMove` releases them
   // from the source; `carryPointerBorrows` re-attaches them to the new binding.
   private pointerBorrowsCarriedBy(value: Expr): { from: VarInfo; paths: (string[] | null)[]; holders: PointerHolder[] } | null {
+    // ident-ok: only a whole-variable move (`let w = v`) carries the borrows; a field or
+    // element move leaves the source's buffer, and its holders, where they are.
     if (value.kind !== "Ident") return null;
     const info = this.lookup(value.name);
     if (!info || !this.onlyPointerBorrows(info) || !info.borrowHolders || !info.borrowedPaths) return null;
@@ -5541,7 +5545,11 @@ export class TypeChecker {
         // write through the owner at the same time is the race the view rule exists to stop.
         const indexPh = assignPath && indexQualified && assignInfo ? this.pointerBorrowAgainst(assignInfo, stmt.target) : null;
         if (indexPh) {
-          this.error(`'${assignPath!.root}' is written here while '${indexPh.name}' still points into its buffer (from '${indexPh.call}' on line ${indexPh.line})`, sp,
+          // The three pointer-freeze sites (index write, reassignment, reallocating
+          // call) all go through requireUnsafe: `unsafe { }` is the one spelling that
+          // says the writer owns this pointer's validity, and it is what tests/sanitize
+          // and the fuzzers' self-check probes use to build a real use-after-free.
+          this.requireUnsafe(`'${assignPath!.root}' is written here while '${indexPh.name}' still points into its buffer (from '${indexPh.call}' on line ${indexPh.line})`, sp,
             `write through '${indexPh.name}' instead, or take the pointer after the last write`);
           break;
         }
@@ -5555,7 +5563,7 @@ export class TypeChecker {
           const isCapturedMutation = this.closureScopeDepth !== null && this.currentClosureCaptures?.has(assignPath.root);
           const ph = info && !isCapturedMutation ? this.pointerBorrowAgainst(info, stmt.target) : null;
           if (ph) {
-            this.error(`'${this.describeExpr(stmt.target)}' is reassigned here while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
+            this.requireUnsafe(`'${this.describeExpr(stmt.target)}' is reassigned here while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
               this.pointerHint(ph));
             break;
           }
@@ -7339,7 +7347,7 @@ export class TypeChecker {
       if (!info) continue;
       const ph = this.pointerBorrowAgainst(info, obj);
       if (ph) {
-        this.error(`'${this.describeExpr(obj)}' may reallocate here while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
+        this.requireUnsafe(`'${this.describeExpr(obj)}' may reallocate here while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
           this.pointerHint(ph));
         return;
       }
