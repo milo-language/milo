@@ -1,17 +1,14 @@
 // `f(&mut x)` on every kind of call whose parameter is `&mut T`: free fn, generic fn,
-// method argument, interface method argument, closure call, closure stored in a field,
-// slice and Vec-to-slice coercion, and a `&mut` param passed on. The marker is stripped
-// by the checker, so every path below must behave exactly as the bare form did.
+// method argument, closure call, closure stored in a field, slice and Vec-to-slice
+// coercion, and a `&mut` param passed on. The marker is stripped by the checker, so
+// every path below must behave exactly as the bare form did. The interface-method case
+// is explicitMutArgInterface.milo: milo-self crashes on a `&mut i64` argument through
+// an interface with or without the marker, so it stays out of the self-host manifest.
 // @expect: 3 9 9 7 7
 // @expect: 2
 // @expect: 5
 // @expect: 12 12
-// @expect: 20
-// @expect: 21
-interface Bumper {
-    fn bumpBy(self: &Self, n: &mut i64): void
-}
-
+// @expect: 18
 struct P {
     xs: Vec<i64>, n: i64
 }
@@ -23,9 +20,6 @@ struct Adder {
 impl P {
     fn addTo(self: &Self, out: &mut i64): void {
         out = out + self.n
-    }
-    fn bumpBy(self: &Self, n: &mut i64): void {
-        n = n + self.n
     }
 }
 
@@ -54,10 +48,6 @@ fn twice(f: (&mut i64) => void, x: &mut i64): void {
     f(&mut x)
 }
 
-fn viaBumper(b: &Bumper, n: &mut i64): void {
-    b.bumpBy(&mut n)
-}
-
 fn main(): i32 {
     var p = P {
         xs: [0, 0, 0, 0], n: 1
@@ -77,8 +67,6 @@ fn main(): i32 {
     ys[1] = 12
     print(ys[0], " ", ys[1])
     var m: i64 = 17
-    viaBumper(p, &mut m)
-    print(m)
     let a = Adder {
         by: 1, f: inc
     }

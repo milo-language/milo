@@ -157,6 +157,7 @@ escapingClosureMove
 escapingClosures
 eventLoop
 exePath
+explicitMutArg
 externalLinkage
 externFwriteAndPrint
 externMutBuf
