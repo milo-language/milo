@@ -14,7 +14,7 @@ from "src-milo/checker/types.milo" import {
 from "src-milo/checker/state.milo" import {
     Checker, FnSig, FnParam, StructInfo, CkStructField,
     EnumInfo, VariantInfo, error, normalizeEnumNames,
-    GenericFnInfo, GenericStructInfo, GenericEnumInfo, StructInst, hasAttr,
+    GenericFnInfo, GenericStructInfo, GenericEnumInfo, StructInst, hasAttr, displayType,
 }
 from "src-milo/checker/derive_json.milo" import {
     deriveJson
@@ -562,6 +562,19 @@ pub fn instantiateImpl(ck: &mut Checker, gi: &ImplDecl, mangled: &string, typeAr
 
 // -- Monomorphize a generic enum --
 
+// `Result_P_string` displays as `Result<P, string>`. Args are rendered through
+// displayText so an arg that is itself an instance is already pretty.
+fn registerDisplayName(ck: &mut Checker, mangled: &string, baseName: &string, typeArgs: &Vec<TypeKind>): void {
+    var args = ""
+    for i in 0..typeArgs.len {
+        if i > 0 {
+            args = args + ", "
+        }
+        args = args + displayType(ck, typeArgs[i])
+    }
+    ck.displayNames.insert(mangled.clone(), baseName.clone() + "<" + args + ">")
+}
+
 pub fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgsIn: &Vec<TypeKind>): string {
     // Result<T> sugar: the error type defaults to string
     var typeArgs: Vec<TypeKind> = Vec.new()
@@ -617,6 +630,7 @@ pub fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgsIn: &Vec<Ty
         baseName: baseName.clone(), variants: variants
     }
     )
+    registerDisplayName(&mut ck, mangled, baseName, typeArgs)
 
     // Create monomorphized EnumDecl for codegen
     var monoVariants: Vec<EnumVariant> = Vec.new()
@@ -702,6 +716,7 @@ pub fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<Ty
         fields: fields, baseName: baseName.clone(), noCopy: hasAttr(generic.decl.attributes, "noCopy")
     }
     )
+    registerDisplayName(&mut ck, mangled, baseName, typeArgs)
 
     // Create monomorphized StructDecl
     var monoFields: Vec<StructField> = Vec.new()

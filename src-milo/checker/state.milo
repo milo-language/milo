@@ -193,6 +193,10 @@ pub struct PendingVecInfer {
 
 pub struct Checker {
     diagnostics: Vec<Diagnostic>,
+    // Mangled instance name -> the name a user wrote (`Result_P_string` ->
+    // `Result<P, string>`). Filled by monomorphizeStruct/Enum, applied to every
+    // diagnostic in error()/warn(), so messages match the TS checker's text.
+    displayNames: HashMap<string, string>,
     functions: HashMap<string, FnSig>,
     structs: HashMap<string, StructInfo>,
     enums: HashMap<string, EnumInfo>,
@@ -306,6 +310,7 @@ pub fn newChecker(): Checker {
     return Checker {
         pendingVecInfer: Vec.new(),
         diagnostics: Vec.new(),
+        displayNames: HashMap.new(),
         functions: HashMap.new(),
         structs: HashMap.new(),
         enums: HashMap.new(),
@@ -344,10 +349,53 @@ pub fn newChecker(): Checker {
 
 // -- Error/warning emission --
 
+// Rewrite every mangled instance name in `text` to its written form. Identifier
+// runs are looked up whole, so `Result_P_string` never matches inside a longer name.
+pub fn displayText(ck: &Checker, text: &string): string {
+    if ck.displayNames.len == 0 {
+        return text.clone()
+    }
+    var out = ""
+    var i: i64 = 0
+    while i < text.len {
+        let c = text[i]
+        if isIdentByte(c) {
+            var j = i
+            while j < text.len && isIdentByte(text[j]) {
+                j = j + 1
+            }
+            let word = text.substr(i, j)
+            match ck.displayNames.get(word) {
+                Option.Some(pretty) => {
+                    out = out + pretty
+                }
+                Option.None => {
+                    out = out + word
+                }
+            }
+            i = j
+        } else {
+            out = out + text.substr(i, i + 1)
+            i = i + 1
+        }
+    }
+    return out
+}
+
+fn isIdentByte(c: u8): bool {
+    return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || c == 36
+}
+
+// typeName with instance names written the way the user spelled them.
+pub fn displayType(ck: &Checker, t: &TypeKind): string {
+    return displayText(ck, typeName(t))
+}
+
 pub fn error(ck: &mut Checker, msg: string, span: Option<Span>) {
+    let shown = displayText(ck, msg)
     ck.diagnostics.push(Diagnostic {
         severity: "error",
-        message: msg,
+        message: shown,
         hint: "",
         span: span,
     }
@@ -355,19 +403,22 @@ pub fn error(ck: &mut Checker, msg: string, span: Option<Span>) {
 }
 
 pub fn errorHint(ck: &mut Checker, msg: string, hint: string, span: Option<Span>) {
+    let shownMsg = displayText(ck, msg)
+    let shownHint = displayText(ck, hint)
     ck.diagnostics.push(Diagnostic {
         severity: "error",
-        message: msg,
-        hint: hint,
+        message: shownMsg,
+        hint: shownHint,
         span: span,
     }
     )
 }
 
 pub fn warn(ck: &mut Checker, msg: string, span: Option<Span>) {
+    let shown = displayText(ck, msg)
     ck.diagnostics.push(Diagnostic {
         severity: "warning",
-        message: msg,
+        message: shown,
         hint: "",
         span: span,
     }

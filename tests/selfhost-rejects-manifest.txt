@@ -1,11 +1,16 @@
 # Negative tests milo-self already handles correctly. Monotonic: entries are never removed
 # except by deleting the fixture. Grow with: bun scripts/selfhost-rejects.ts --write
+errors/adoptHeapOutsideForeign
+errors/adoptVecOutsideForeign
 errors/aliasMutContainerElement
+errors/arenaFreezeUseAfterMove
 errors/arrayNonCopyMove
 errors/assertBadArg
 errors/assertTooManyArgs
+errors/borrowExprRejected
 errors/borrowSliceMethod
 errors/borrowSliceReassign
+errors/brandMismatchNamesWrittenType
 errors/breakOutsideLoop
 errors/callSiteExclusivity
 errors/continueOutsideLoop
@@ -25,6 +30,8 @@ errors/explicitMutOnSharedParam
 errors/externTypeMismatch
 errors/fieldAssignUnderView
 errors/flexIntLocked
+errors/forInFieldMutate
+errors/forInFieldMutateThroughFn
 errors/hashmapUseAfterMove
 errors/heapUseAfterMove
 errors/ifLetWrongBindings
@@ -32,6 +39,7 @@ errors/implicitMutBorrow
 errors/iterDelegateTwoFields
 errors/jsonStringifyUnsupportedField
 errors/jwtVerifyIsNotBool
+errors/keyExtractorUserCombinator
 errors/letToMutParam
 errors/mapMoveFieldOutOfBorrow
 errors/mixedSignArith
@@ -62,6 +70,7 @@ errors/rangeOverflowLiteral
 errors/rangeReassign
 errors/rangeReturn
 errors/rangeUnderflowLiteral
+errors/rawSliceOutsideForeign
 errors/readPartiallyMovedStruct
 errors/recursiveEnumNoHeap
 errors/recursiveStructByValue
@@ -72,6 +81,7 @@ errors/resultMapConsumesNonCopyErr
 errors/resultUnwrapOrElseNonCopy
 errors/saturatingArithNoArgs
 errors/sendImplRequiresUnsafe
+errors/shardUseAfterMap
 errors/stringArith
 errors/stringFieldSliceEscape
 errors/stringPushWhileSliced
@@ -108,12 +118,15 @@ errors/viewOfTemporary
 errors/viewSameFieldFrozen
 errors/wrongArgCount
 runtime-errors/arrayIndexOutOfBounds
+runtime-errors/boundsCheckShadowedProof
 runtime-errors/divByZero
 runtime-errors/intMinDivNegOne
 runtime-errors/integerOverflowAdd
 runtime-errors/integerOverflowMul
 runtime-errors/integerOverflowNeg
 runtime-errors/integerOverflowSub
+runtime-errors/jsonCursorHandBuilt
+runtime-errors/jsonCursorWrongDoc
 runtime-errors/rangeCheckFail
 runtime-errors/rangePropagationFail
 runtime-errors/rangeRuntime
@@ -121,4 +134,5 @@ runtime-errors/shiftAmountOutOfRange
 runtime-errors/sliceRangeFail
 runtime-errors/substrRangeFail
 runtime-errors/vecFilledNegative
+runtime-errors/vecIndexOutOfBounds
 runtime-errors/vecWithCapacityNegative
