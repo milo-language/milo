@@ -136,3 +136,22 @@ fn main(): void { print(parse("z")) }
   expect(r.code).toBe(0);
   expect(r.out.trim()).toBe("plain:z");
 });
+
+// ── display names (src/mangle.ts) ──
+//
+// `display()` is the one function every human-facing surface renders through, so its
+// matching rules are the contract: a registered key is replaced wherever it starts an
+// identifier, and never inside one. std's short module ids are what make the second
+// half matter: `io$x` must not fire inside a user's own `Radio$x`.
+test("display() swaps a mangled name wherever it starts a symbol and nowhere else", async () => {
+  const { display } = await import("../src/mangle");
+  const map = new Map([["io$x", "x"], ["gfx$User", "User"], ["mygfx$tone", "tone"], ["gfx$tone", "tone"]]);
+  expect(display(map, "'gfx$User' has no field 'nope'")).toBe("'User' has no field 'nope'");
+  expect(display(map, "gfx$User$greet")).toBe("User$greet");          // impl method
+  expect(display(map, "gfx$User_i64")).toBe("User_i64");              // generic instance
+  expect(display(map, "Vec_gfx$User")).toBe("Vec_User");              // container on it
+  expect(display(map, "Radio$io$Trait$m")).toBe("Radio$io$Trait$m");  // `io$Trait` is not a key
+  expect(display(map, "Radio$x")).toBe("Radio$x");                    // NOT `Radiox`
+  expect(display(map, "mygfx$tone")).toBe("tone");                    // longest key wins
+  expect(display(undefined, "io$x")).toBe("io$x");
+});
