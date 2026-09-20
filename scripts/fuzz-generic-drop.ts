@@ -318,18 +318,19 @@ function derive(sym: Symbol): Path | null {
 
 // Seeds: happy paths the deriver cannot spell, one per symbol, keyed by api name.
 // Sizes come from the seeded PRNG so `--seed` changes element and window counts.
-const SHARD_IMPORTS = { "std/shard": ["Shard", "Shards", "shatter"] };
-const SHARD_ROUNDTRIP = (n: number, w: number, mid: string[]): string[] => [
-  `var owner = shatter(mkVec(${n}), ${w})`,
-  "var ws = owner.windows()",
-  "let win = ws.pop()!",
-  ...mid,
-  "ws.push(win)",
-  "let back = owner.weld(ws)!",
-  "sink = sink + back.len",
-];
-// parallelMap's worker is a plain fn (a closure cannot be copied to N threads), so it
-// is a top-level declaration rather than a body line.
+// The manual shatter/windows/weld path is private (WP3), so every Shard method is
+// exercised inside a parallelMap worker. The worker is a plain fn (a closure cannot be
+// copied to N threads) and must not touch globals (it runs on an OS thread), so `ops`
+// see the window as `w` and the body only reads the welded result.
+const SHARD_PROBE = (n: number, workers: number, ops: string[]): Path => ({
+  imports: { "std/shard": ["Shard", "parallelMap"] },
+  decls: `fn probe(w: Shard<T>): Shard<T> {
+${ops.map(o => "    " + o).join("\n")}
+    return w
+}
+`,
+  body: [`let out = parallelMap(mkVec(${n}), ${workers}, probe)`, "sink = sink + out.len"],
+});
 const TOUCH_DECL = `fn touch(w: Shard<T>): Shard<T> {
     for i in 0..w.len() {
         let x = w.get(i)
@@ -342,37 +343,13 @@ const PROMISE_IMPORTS = { "std/runtime": ["Promise"] };
 
 const SEEDS: Record<string, () => Path> = {
   // std/shard
-  "Shard.get": () => ({ imports: SHARD_IMPORTS, body: SHARD_ROUNDTRIP(between(2, 6), between(1, 2), ["let x = win.get(0)", "sink = sink + peek(x)"]) }),
-  "Shard.set": () => ({ imports: SHARD_IMPORTS, body: SHARD_ROUNDTRIP(between(2, 6), between(1, 2), ["win.set(0, mk(9))"]) }),
-  "Shard.len": () => ({ imports: SHARD_IMPORTS, body: SHARD_ROUNDTRIP(between(2, 6), between(1, 3), ["sink = sink + win.len()"]) }),
-  "Shard.index": () => ({ imports: SHARD_IMPORTS, body: SHARD_ROUNDTRIP(between(2, 6), between(1, 3), ["sink = sink + win.index()"]) }),
-  "Shard.start": () => ({ imports: SHARD_IMPORTS, body: SHARD_ROUNDTRIP(between(2, 6), between(1, 3), ["sink = sink + win.start()"]) }),
-  "Shards.windows": () => ({ imports: SHARD_IMPORTS, body: SHARD_ROUNDTRIP(between(2, 6), between(1, 3), []) }),
-  "Shards.weld": () => ({ imports: SHARD_IMPORTS, body: SHARD_ROUNDTRIP(between(2, 6), between(1, 3), []) }),
-  "Shards.count": () => ({ imports: SHARD_IMPORTS, body: SHARD_ROUNDTRIP(between(2, 6), between(1, 3), ["sink = sink + owner.count()"]) }),
-  "Shards.len": () => ({ imports: SHARD_IMPORTS, body: SHARD_ROUNDTRIP(between(2, 6), between(1, 3), ["sink = sink + owner.len()"]) }),
-  "shatter": () => ({ imports: SHARD_IMPORTS, body: SHARD_ROUNDTRIP(between(2, 6), between(1, 3), []) }),
-  "Shards.reclaim": () => ({ imports: SHARD_IMPORTS, body: [
-    `var owner = shatter(mkVec(${between(1, 5)}), 2)`, "let back = owner.reclaim()!", "sink = sink + back.len",
-  ] }),
-  // A CountMismatch refusal hands the owner back; the second weld is the happy path.
-  "WeldRejected.message": () => ({ imports: { "std/shard": ["Shard", "Shards", "WeldRejected", "shatter"] }, body: [
-    `var owner = shatter(mkVec(${between(2, 6)}), 2)`,
-    "var ws = owner.windows()",
-    "let none: Vec<Shard<T>> = Vec.new()",
-    "match owner.weld(none) {",
-    "    Result.Ok(v) => {",
-    "        sink = sink + v.len",
-    "    }",
-    "    Result.Err(rej) => {",
-    "        sink = sink + rej.message().len",
-    "        let back = rej.shards.weld(ws)!",
-    "        sink = sink + back.len",
-    "    }",
-    "}",
-  ] }),
+  "Shard.get": () => SHARD_PROBE(between(2, 6), between(1, 2), ["let x = w.get(0)", "w.set(0, x)"]),
+  "Shard.set": () => SHARD_PROBE(between(2, 6), between(1, 2), ["w.set(0, mk(9))"]),
+  "Shard.len": () => SHARD_PROBE(between(2, 6), between(1, 3), ["let _n = w.len()"]),
+  "Shard.index": () => SHARD_PROBE(between(2, 6), between(1, 3), ["let _i = w.index()"]),
+  "Shard.start": () => SHARD_PROBE(between(2, 6), between(1, 3), ["let _s = w.start()"]),
   "parallelMap": () => ({ imports: { "std/shard": ["Shard", "parallelMap"] }, decls: TOUCH_DECL, body: [
-    `let out = parallelMap(mkVec(${between(2, 8)}), ${between(1, 3)}, touch)!`, "sink = sink + out.len",
+    `let out = parallelMap(mkVec(${between(2, 8)}), ${between(1, 3)}, touch)`, "sink = sink + out.len",
   ] }),
   "parallelMapWith": () => ({ imports: { "std/shard": ["Shard", "Mapped", "parallelMapWith"] }, decls: `struct Acc {
     n: i64,
@@ -667,12 +644,20 @@ const bySym = new Map<string, Outcome[]>();
 for (const o of outcomes) bySym.set(o.sym.name, [...(bySym.get(o.sym.name) ?? []), o]);
 
 // Covered means the oracle actually ran: at least one instantiation built and executed.
-// A symbol every instantiation of which the checker rejected exercised nothing.
+// A symbol every instantiation of which the checker rejected exercised nothing, with one
+// exception: a `@copyOnly` symbol refuses every T this script can offer (both `string`
+// and the Drop struct own memory), and that refusal at the USER's call is the verdict
+// H1 asked for. It is listed separately, counted as covered, and stays a finding if the
+// rejection ever lands inside std/ instead.
 const covered: string[] = [];
+const refusedByDesign: { sym: Symbol; diagnostic: string }[] = [];
 for (const [name, os] of bySym) {
-  if (os.some(o => !isRejected(o.verdict))) covered.push(name);
-  else {
-    const first = os[0]!.verdict as Rejected;
+  if (os.some(o => !isRejected(o.verdict))) { covered.push(name); continue; }
+  const first = os[0]!.verdict as Rejected;
+  if (/is @copyOnly/.test(first.diagnostic) && os.every(o => !(o.verdict as Rejected).inStd)) {
+    covered.push(name);
+    refusedByDesign.push({ sym: os[0]!.sym, diagnostic: first.diagnostic });
+  } else {
     uncovered.push({ sym: os[0]!.sym, reason: `every instantiation rejected: ${first.diagnostic}` });
   }
 }
@@ -691,6 +676,9 @@ if (rejected.length && !VERBOSE) {
 const total = FILTER || Number.isFinite(LIMIT) ? selected.length : symbols.length;
 const pct = total ? Math.round((covered.length / total) * 100) : 0;
 console.log(`\ncovered ${covered.length} / ${total} generic pub std symbols (${pct}%)`);
+if (refusedByDesign.length) {
+  console.log(`refused by @copyOnly at the call, as designed (${refusedByDesign.length}): ${refusedByDesign.map(r => r.sym.name).join(", ")}`);
+}
 if (uncovered.length) {
   console.log(`uncovered (${uncovered.length}):`);
   for (const u of uncovered) console.log(`  ${u.sym.name.padEnd(28)} ${u.reason}`);
@@ -708,7 +696,8 @@ if (failures.length) {
   }
 }
 
-// Vacuity: a sweep in which nothing executed proves nothing, and must not exit 0.
+// Vacuity: a sweep in which nothing executed proves nothing, and must not exit 0. A
+// run made only of by-design refusals did check something (the refusal), so it passes.
 if (outcomes.length > 0 && covered.length === 0) {
   console.error("VACUOUS RUN: every generated program was rejected; the oracle never ran");
   process.exit(2);

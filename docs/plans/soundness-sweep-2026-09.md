@@ -3,7 +3,7 @@ system: planning
 purpose: work plan for closing the three safe-code memory holes found 2026-09-19, the prover false-failed verdict, and the gates that keep them closed
 key-files: tests/holes-2026-09/, src/checker.ts, std/shard.milo, src/verify.ts, scripts/fuzz-ownership.ts, scripts/asan-sweep.ts
 update-when: a work package ships, is re-scoped, or its gate changes
-last-verified: 2026-09-20 (every WP shipped and merged at 1edda9fe; F5 in progress; the reproducers are error tests and prove fixtures, tests/holes-2026-09 deleted)
+last-verified: 2026-09-20 (every WP shipped and merged; F5 at fc7bc3d0; the reproducers are error tests and prove fixtures, tests/holes-2026-09 deleted)
 -->
 
 # Soundness sweep, September 2026
@@ -12,8 +12,8 @@ Baseline commit `284606cc`. Five reproducers lived in `tests/holes-2026-09/`; ea
 package (WP) below names the reproducer it had to turn from red to green. The directory was
 deleted in `470f5d73` once every file in it had become an error test or a prove fixture.
 **Status 2026-09-20: every WP below has shipped** (closing commit in each heading; the user-facing
-account is `docs/memory-safety-vs-rust.md` findings #3 to #10). Lane F's F5 split is in
-progress on a separate branch.
+account is `docs/memory-safety-vs-rust.md` findings #3 to #10). Lane F's F5 split shipped at
+fc7bc3d0.
 
 ## The holes
 
@@ -409,7 +409,7 @@ Findings and evidence in `design-pass-2026-09.md`. Order:
    once in `checkProgram` and a purity fixture for the late-resolved method case; F3
    `retainsArg`/`grows` flags on `BUILTIN_MEMBERS`; the 8 checker.ts unused locals WP13
    left.
-3. **F5** (after WP12; in progress 2026-09-20, not yet on main): move the five thread/global
+3. **F5** (shipped fc7bc3d0, 2026-09-20): move the five thread/global
    passes (793 lines, 12 fields + 7 methods, 4 inbound edges) to
    `src/checker-program-passes.ts`.
 4. **WP7** docs last, so it documents the final state. Shipped 2026-09-20 with F5 still open;
