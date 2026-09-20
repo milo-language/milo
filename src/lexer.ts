@@ -13,7 +13,12 @@ export class Lexer {
   private line = 1;
   private col = 1;
 
-  constructor(private source: string) {}
+  // `allowMangledIdents` lets an identifier carry `$`. Never set it for user source: `$`
+  // is not a Milo identifier character and the mangling schemes (per-package, per-module,
+  // `Type$method`) rely on that to stay unforgeable. It exists for the one place the
+  // compiler lexes text IT generated: `@derive` codecs, which name the struct they were
+  // generated for, and that name may already have been mangled.
+  constructor(private source: string, private allowMangledIdents = false) {}
 
   private peek(): string {
     return this.pos < this.source.length ? this.source[this.pos] : "\0";
@@ -265,7 +270,8 @@ export class Lexer {
 
   private lexIdent(line: number, col: number): Token {
     let value = "";
-    while (this.pos < this.source.length && /[a-zA-Z0-9_]/.test(this.peek())) {
+    const cont = this.allowMangledIdents ? /[a-zA-Z0-9_$]/ : /[a-zA-Z0-9_]/;
+    while (this.pos < this.source.length && cont.test(this.peek())) {
       value += this.advance();
     }
     const kind = KEYWORDS.has(value) ? (value as TokenKind) : TokenKind.Ident;

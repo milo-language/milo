@@ -16,6 +16,7 @@ import { Codegen } from "./codegen";
 import { CodegenJS } from "./codegen-js";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
+import { display } from "./mangle";
 import { generateHeader } from "./headergen";
 import { writeStdout } from "./stdout";
 import { formatDiagnostic, ParseError, RESET, BOLD, GREEN, DIM, type WarningConfig, type Diagnostic } from "./diagnostics";
@@ -108,7 +109,11 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
     process.exit(1);
   }
 
-  return lower(program, result, sourceDir, target.os);
+  const hir = lower(program, result, sourceDir, target.os);
+  // Attached here rather than inside `lower`: the map is a resolver fact codegen renders
+  // through (print text, DWARF names), not anything lowering computes or reads.
+  hir.displayNames = program.displayNames;
+  return hir;
 }
 
 // `milo check <file> [--json]` — parse + resolve + type-check, report, stop. No codegen.
@@ -2219,7 +2224,9 @@ async function main() {
     const src = readFileSync(source!, "utf-8");
     const program = parseCheckProgram(src, target, source!, warningConfig);
     const result = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: source! });
-    console.log(formatVerifyReport(result));
+    // Rendered text, not the program: an analysis report names functions and types for a
+    // reader, so the per-module pass's symbols get swapped back out on the way to stdout.
+    console.log(display(program.displayNames, formatVerifyReport(result)));
     return;
   }
 
@@ -2270,8 +2277,8 @@ async function main() {
     // opts into z3 for the theories std/smt doesn't yet model.
     const useZ3 = rest.includes("--solver=z3") || rest.includes("--z3");
     const pr = useZ3 ? proveWithZ3(vcs) : proveWithMilo(vcs);
-    if (rest.includes("--json")) writeStdout(proveJson(pr));
-    else console.log(formatProveReport(pr));
+    if (rest.includes("--json")) writeStdout(display(program.displayNames, proveJson(pr)));
+    else console.log(display(program.displayNames, formatProveReport(pr)));
     if (pr.failed > 0) process.exit(1);
     return;
   }
@@ -2295,8 +2302,8 @@ async function main() {
     const program = parseCheckProgram(src, target, source!, warningConfig, diagnostics);
     const unusedResults = diagnostics.filter(d => d.code === "unused-result");
     const violations = checkSafetyCompliance(program, level, unusedResults);
-    if (rest.includes("--json")) writeStdout(safetyJson(violations, level, source!));
-    else console.log(formatSafetyReport(violations, level));
+    if (rest.includes("--json")) writeStdout(display(program.displayNames, safetyJson(violations, level, source!)));
+    else console.log(display(program.displayNames, formatSafetyReport(violations, level)));
     if (violations.some(v => v.severity === "error")) process.exit(1);
     return;
   }

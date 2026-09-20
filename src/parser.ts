@@ -10,6 +10,18 @@ import type {
   DeriveTemplate,
 } from "./ast";
 
+// Whether an identifier is spelled like a TYPE, which is what tells `Foo { … }` from a
+// control-flow brace and `Foo.Bar` from a field access. The test is on the segment after
+// the last `$`: a mangled name (`http2$Client`, `gfx$User`) is capitalised at the part
+// that names the type, while the prefix is a package or module id. Only compiler-generated
+// source can contain one (the lexer rejects `$` in user source), and a derived `Json`
+// codec is exactly that: it writes `Result.Ok(gfx$User { … })` for a struct the
+// per-module pass had already renamed.
+function typeSpelled(name: string): boolean {
+  const head = name.charAt(name.lastIndexOf("$") + 1);
+  return head >= "A" && head <= "Z";
+}
+
 export class Parser {
   private pos = 0;
   private codePointLoopCounter = 0;
@@ -1546,7 +1558,7 @@ export class Parser {
     if (tok.kind === TokenKind.Ident) {
       this.advance();
       // enum variant: Name.Variant or Name.Variant(args)
-      if (this.at(TokenKind.Dot) && tok.value[0] >= "A" && tok.value[0] <= "Z") {
+      if (this.at(TokenKind.Dot) && typeSpelled(tok.value)) {
         this.advance();
         const variant = this.expect(TokenKind.Ident).value;
         const args: Expr[] = [];
@@ -1604,7 +1616,7 @@ export class Parser {
           // the type-argument comma, pointing at a character the author had no reason to
           // suspect. A struct literal takes its type arguments from the fields, or from
           // the binding's annotation when the fields do not determine them.
-          if (this.at(TokenKind.LBrace) && tok.value[0] >= "A" && tok.value[0] <= "Z") {
+          if (this.at(TokenKind.LBrace) && typeSpelled(tok.value)) {
             // Recorded, not thrown: this whole block is speculative and its `catch`
             // restores, so raising here would be swallowed and the parse would fall back
             // to `<`-as-comparison — which is how this reported `unexpected token ','` at
@@ -1627,7 +1639,7 @@ export class Parser {
       // struct literal: Name { field: value, ... }
       // disambiguate from control-flow braces via lookahead: empty `{}`, `{ IDENT :`,
       // or field shorthand `{ IDENT ,` / `{ IDENT }` (desugars to `{ IDENT: IDENT }`).
-      if (this.at(TokenKind.LBrace) && tok.value[0] >= "A" && tok.value[0] <= "Z"
+      if (this.at(TokenKind.LBrace) && typeSpelled(tok.value)
           && (this.peekN(1).kind === TokenKind.RBrace
               || (this.peekN(1).kind === TokenKind.Ident
                   && (this.peekN(2).kind === TokenKind.Colon

@@ -10,7 +10,7 @@ import { closest, importHint, stdModuleNames } from "./suggest";
 import type { TargetInfo } from "./target";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
-import { collectModulePrivateDecls, collectPkgDecls, emptyPkgDecls, manglePackage, type PkgDeclNames } from "./mangle";
+import { collectModulePrivateDecls, collectPkgDecls, emptyPkgDecls, manglePackage, type DisplayNames, type PkgDeclNames } from "./mangle";
 
 // repo root: walk up from src/ to find the directory containing std/.
 // MILO_ROOT overrides for contexts where import.meta.url doesn't map to the repo
@@ -559,16 +559,46 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     for (const n of new Set([...all.values, ...all.types])) declCount.set(n, (declCount.get(n) ?? 0) + 1);
   }
 
-  const moduleNames = new Set<string>();
+  // Test-only widening: rename EVERY private name in every user module, not only the
+  // contested ones. A program compiled this way must behave and report identically to
+  // one compiled without it; the fixture suite run under this switch is the gate that
+  // proves no mangled name reaches a human-facing surface (docs/plans/module-namespaces.md).
+  const mangleAll = process.env.MILO_MANGLE_ALL === "1";
+  // A private name that also names a std/prelude declaration stays flat even under the
+  // widening: user-vs-std shadowing keeps today's behaviour (the `shadows-stdlib` and
+  // `duplicate-global` diagnostics fire on the flat name), and renaming it would turn
+  // those diagnostics off without anyone deciding to.
+  const stdNames = new Set<string>();
+  if (mangleAll) {
+    for (const u of units) {
+      if (u.pkg !== "" || !(preludeFiles.has(u.file) || u.file.startsWith(stdModuleRoot))) continue;
+      const all = emptyPkgDecls();
+      collectPkgDecls(u.prog, all);
+      for (const n of all.values) stdNames.add(n);
+      for (const n of all.types) stdNames.add(n);
+    }
+  }
+
+  const displayNames: DisplayNames = new Map();
   const usedModuleIds = new Set<string>();
   for (const u of userUnits) {
     const priv = emptyPkgDecls();
     collectModulePrivateDecls(u.prog, priv);
-    for (const n of [...priv.values]) if ((declCount.get(n) ?? 0) < 2) priv.values.delete(n);
-    for (const n of [...priv.types]) if ((declCount.get(n) ?? 0) < 2) priv.types.delete(n);
+    if (!mangleAll) {
+      for (const n of [...priv.values]) if ((declCount.get(n) ?? 0) < 2) priv.values.delete(n);
+      for (const n of [...priv.types]) if ((declCount.get(n) ?? 0) < 2) priv.types.delete(n);
+    } else {
+      for (const n of [...priv.values]) if (stdNames.has(n)) priv.values.delete(n);
+      for (const n of [...priv.types]) if (stdNames.has(n)) priv.types.delete(n);
+    }
     if (priv.values.size === 0 && priv.types.size === 0) continue;
     const id = uniqueModuleId(u.file, usedModuleIds);
-    moduleNames.add(id);
+    // Record what each rename hides BEFORE it happens: the mangled name is a symbol, and
+    // every surface a human reads renders it back through `display()` (src/mangle.ts).
+    // `sourceName` carries the same fact on the decl itself, for the paths that hold one.
+    for (const n of priv.values) displayNames.set(`${id}$${n}`, n);
+    for (const n of priv.types) displayNames.set(`${id}$${n}`, n);
+    for (const f of u.prog.functions) if (priv.values.has(f.name)) f.sourceName ??= f.name;
     manglePackage(u.prog, id, priv, new Map(), true);
   }
 
@@ -770,5 +800,5 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // the separate arrays above), so its impls are the user's own.
   const userImplKeys = new Set<string>();
   for (const impl of program.impls) for (const m of impl.methods) userImplKeys.add(`${impl.typeName}.${m.name}`);
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), deriveTemplates: dedup(deriveTemplates), declOrigins, packageNames, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), deriveTemplates: dedup(deriveTemplates), declOrigins, packageNames, displayNames, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib };
 }

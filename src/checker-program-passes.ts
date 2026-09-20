@@ -635,7 +635,7 @@ export function checkThreadBoundary(host: ProgramPassHost, program: Program, vie
       const key = `${entry}|${t.name}`;
       if (reported.has(key)) continue;
       reported.add(key);
-      const where = t.chain.length ? ` (via ${t.chain.map(c => `'${c.replace(/\$/g, ".")}'`).join(" → ")})` : "";
+      const where = t.chain.length ? ` (via ${t.chain.map(c => `'${view.pretty(c)}'`).join(" → ")})` : "";
       host.error(
         `'${t.name}' is a mutable global, and this code runs on a real OS thread${where}`,
         t.span,

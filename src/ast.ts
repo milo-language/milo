@@ -353,6 +353,10 @@ export interface Program {
   // prefixes per-package mangling put on symbols (see src/mangle.ts). Empty/absent
   // when the program has no package dependencies.
   packageNames?: Set<string>;
+  // Mangled symbol -> the name the programmer wrote, for every rename the per-module pass
+  // performed (src/mangle.ts, display names). Empty when nothing was renamed. Every
+  // human-facing surface (diagnostics, `print`, DWARF, LSP) renders through it.
+  displayNames?: Map<string, string>;
   userFnNames?: Set<string>;
   userImplKeys?: Set<string>;   // `${typeName}.${method}` for user-defined impl methods
   entryFile?: string;           // the file being compiled; imports carry their own span.file

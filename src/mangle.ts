@@ -359,6 +359,9 @@ export function manglePackage(
     for (const t of prog.traits) if (typ(t.name)) t.name = q(t.name);
     for (const i of prog.interfaces) if (typ(i.name)) i.name = q(i.name);
     for (const a of prog.typeAliases) if (typ(a.name)) a.name = q(a.name);
+    // A `derive X { … }` template is named for the trait it implements, so it moves with
+    // that trait or `@derive(X)` resolves to a trait that no longer exists under that name.
+    for (const d of prog.deriveTemplates ?? []) if (typ(d.name)) d.name = q(d.name);
   }
 
   // ── 2. rewrite references ──
@@ -366,16 +369,23 @@ export function manglePackage(
 
   for (const fn of prog.functions) walkFnBody(fn, [], false);
 
+  // `@derive(Describe)` names a trait, so it follows the type rule. A built-in (`Clone`,
+  // `Eq`, `Json`) is declared nowhere and resolves to itself.
+  const walkDeriveArgs = (attrs: { name: string; args: string[] }[] | undefined, sc: Scopes) => {
+    for (const a of attrs ?? []) if (a.name === "derive") a.args = a.args.map((t) => resolveType(t, sc));
+  };
   for (const s of prog.structs) {
     const sc = topScope();
     for (const tp of s.typeParams ?? []) sc.bindType(tp.name);
     walkBounds(s.typeParams, sc);
+    walkDeriveArgs(s.attributes, sc);
     for (const f of s.fields) walkType(f.type, sc);
   }
   for (const e of prog.enums) {
     const sc = topScope();
     for (const tp of e.typeParams ?? []) sc.bindType(tp.name);
     walkBounds(e.typeParams, sc);
+    walkDeriveArgs(e.attributes, sc);
     for (const v of e.variants) for (const ft of v.fields ?? []) walkType(ft, sc);
   }
   for (const a of prog.typeAliases) {
@@ -410,5 +420,91 @@ export function manglePackage(
     impl.typeName = resolveType(impl.typeName, sc);
     if (impl.traitName) impl.traitName = resolveType(impl.traitName, sc);
     for (const m of impl.methods ?? []) walkFnBody(m, impl.typeParams ?? [], true);
+  }
+}
+
+// ── display names (docs/plans/module-namespaces.md, stage 3) ──
+//
+// A mangled name is a SYMBOL. It reaches the linker and nothing else: a reader who wrote
+// `fn tone` is never shown `gfx$tone`, in a diagnostic, in `print` output, in a debugger
+// or in an editor hover. Every rename this file performs is recorded here, mangled to
+// as-written, and every human-facing surface renders through `display()`.
+//
+// A side table rather than a demangling step, because the mangled string is not
+// self-describing: only the pass that did the renaming knows which prefixes it invented,
+// and `$` also separates `Type$method` and generic instances (`Pair_i64`). Keyed by name
+// because almost every consumer has a NAME in hand and not a decl: a diagnostic is a
+// string, `print` gets a struct name, DWARF gets a symbol.
+export type DisplayNames = Map<string, string>;
+
+// Built once per map: the alternation is O(renamed names) and diagnostics run it per
+// message. The map is built once by the resolver and never mutated after.
+const displayRegexes = new WeakMap<DisplayNames, RegExp>();
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Render `text`, a bare symbol or a whole diagnostic message, with every mangled name
+ * replaced by the name the programmer wrote.
+ *
+ * Substring matching with no word boundary is deliberate. `$` cannot occur in a Milo
+ * identifier, so every `$` in a compiler-facing name is a separator this compiler put
+ * there, and every context a mangled name is embedded in wants the same substitution:
+ * `gfx$User$greet` (an impl method), `gfx$Pair_i64` (a monomorphized instance) and
+ * `Vec_gfx$User` (a container instantiated on one) all read correctly once the registered
+ * part is swapped. Longest key first, so `mygfx$tone` never loses to `gfx$tone`.
+ */
+export function display(map: DisplayNames | undefined, text: string): string {
+  if (!map || map.size === 0) return text;
+  let re = displayRegexes.get(map);
+  if (!re) {
+    const keys = [...map.keys()].sort((a, b) => b.length - a.length).map(escapeRegex);
+    re = new RegExp(keys.join("|"), "g");
+    displayRegexes.set(map, re);
+  }
+  return text.replace(re, (m) => map.get(m) ?? m);
+}
+
+/**
+ * Rewrite a RESOLVED program's declarations back to their written names, in place.
+ *
+ * For display-only consumers; the LSP is the one that exists. Hover, go-to-definition
+ * and document symbols look a decl up by the identifier under the cursor and then print
+ * its signature, so against a mangled program they find nothing at all (`tone` never
+ * matches `gfx$tone`). They have no reason to see symbols, so the cheapest correct
+ * answer is a program that has none.
+ *
+ * MUST run after type checking, never before: the checker resolves by these names, and
+ * two modules' `tone` collapsing back into one is exactly the collision mangling prevents.
+ */
+export function restoreDisplayNames(prog: Program): void {
+  const map = prog.displayNames;
+  if (!map || map.size === 0) return;
+  const d = (n: string) => display(map, n);
+  const ty = (t: MiloType | null | undefined): void => {
+    if (!t) return;
+    if (t.name) t.name = d(t.name);
+    for (const a of t.typeArgs ?? []) ty(a);
+    for (const p of t.fnParams ?? []) ty(p);
+    ty(t.fnRet);
+  };
+  const fn = (f: Function | TraitMethod): void => {
+    f.name = d(f.name);
+    for (const p of f.params) ty(p.type);
+    ty(f.retType);
+  };
+  for (const f of prog.functions) fn(f);
+  for (const g of prog.globals) { g.name = d(g.name); ty(g.type); }
+  for (const s of prog.structs) { s.name = d(s.name); for (const f of s.fields) ty(f.type); }
+  for (const e of prog.enums) { e.name = d(e.name); for (const v of e.variants) for (const f of v.fields ?? []) ty(f); }
+  for (const t of prog.traits) { t.name = d(t.name); t.supertraits = t.supertraits.map(d); for (const m of t.methods) fn(m); }
+  for (const i of prog.interfaces) { i.name = d(i.name); for (const m of i.methods) fn(m); }
+  for (const a of prog.typeAliases) { a.name = d(a.name); ty(a.type); }
+  for (const impl of prog.impls) {
+    impl.typeName = d(impl.typeName);
+    if (impl.traitName) impl.traitName = d(impl.traitName);
+    for (const m of impl.methods ?? []) fn(m);
   }
 }

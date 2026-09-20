@@ -439,6 +439,133 @@ fn main(): void {
   expect(r.out.trim().split("\n")).toEqual(["3", "b"]);
 });
 
+// ── display names (docs/plans/module-namespaces.md, stage 3) ──
+//
+// The rename is a SYMBOL change. Every surface a person reads has to keep showing the
+// name they wrote, or the pass trades one bad error message for another, which is
+// exactly what blocked it from ever widening past collisions.
+
+// Both modules define a private `User` and a private `tone`; both are contested, so both
+// get renamed. `print` is program output, not a symbol.
+const DISPLAY_A = `struct User { id: i64 }
+fn tone(x: i64): i64 { return x + 1 }
+pub fn fromA(): i64 {
+    let u = User { id: tone(10) }
+    print(u)
+    return u.id
+}
+`;
+const DISPLAY_B = `struct User { name: string }
+fn tone(x: i64): i64 { return x * 100 }
+pub fn fromB(): i64 {
+    let u = User { name: "b" }
+    print(u)
+    return tone(10)
+}
+`;
+const DISPLAY_MAIN = `from "disp_a" import { fromA }
+from "disp_b" import { fromB }
+fn main(): void {
+    print(fromA())
+    print(fromB())
+}
+`;
+
+test("print of a collided private struct shows the name as written", () => {
+  write("disp_a.milo", DISPLAY_A);
+  write("disp_b.milo", DISPLAY_B);
+  const main = write("disp_main.milo", DISPLAY_MAIN);
+  const r = milo(`run ${main}`);
+  expect(`${r.code} ${r.err}`).toContain("0 ");
+  expect(r.out.trim().split("\n")).toEqual([
+    "User { id: 11 }", "11", "User { name: \"b\" }", "1000",
+  ]);
+  // Not a revert: the symbols themselves are still renamed, which is the whole point.
+  const ir = milo(`emit-ir ${main}`);
+  expect(ir.out).toContain("%disp_a$User = type");
+  expect(ir.out).toContain("%disp_b$User = type");
+  expect(ir.out).toContain("@disp_a$tone");
+});
+
+test("a diagnostic about a collided private name shows the name as written", () => {
+  write("disp_a.milo", DISPLAY_A.replace("tone(10)", "tone(10, 2)").replace("print(u)", "print(u.nope)"));
+  write("disp_b.milo", DISPLAY_B);
+  const main = write("disp_main.milo", DISPLAY_MAIN);
+  const r = milo(`check ${main}`);
+  const msg = r.err + r.out;
+  expect(r.code).not.toBe(0);
+  expect(msg).toContain("function 'tone' expects 1 args");
+  expect(msg).toContain("struct 'User' has no field 'nope'");
+  // The module prefix must not reach the reader anywhere in the report.
+  expect(msg).not.toContain("$");
+});
+
+// The regressions that kept stage 1 collision-only were `print` output and `@error:`
+// text. With display names in place the pass can rename every private name; this pins
+// that the two surfaces stay clean when it does (the fixture suite run under the same
+// switch is the wide version of this test).
+test("display names hold when EVERY private name is mangled, not just contested ones", () => {
+  // Nothing collides here: `Solo`/`solo` exist in one module only, so the pass is a
+  // no-op by default and renames them only under the widening switch.
+  write("wide_a.milo", `struct Solo { id: i64 }
+fn solo(x: i64): i64 { return x + 1 }
+pub fn fromWide(): i64 {
+    let s = Solo { id: solo(10) }
+    print(s)
+    return s.id
+}
+`);
+  const main = write("wide_main.milo", `from "wide_a" import { fromWide }
+fn main(): void { print(fromWide()) }
+`);
+  const env = { MILO_MANGLE_ALL: "1" };
+  const r = milo(`run ${main}`, { env });
+  expect(`${r.code} ${r.err}`).toContain("0 ");
+  expect(r.out.trim().split("\n")).toEqual(["Solo { id: 11 }", "11"]);
+  // ...and it really did rename them, so the assertion above is not vacuous.
+  expect(milo(`emit-ir ${main}`, { env }).out).toContain("%wide_a$Solo = type");
+
+  write("wide_a.milo", `struct Solo { id: i64 }
+fn solo(x: i64): i64 { return x + 1 }
+pub fn fromWide(): i64 {
+    let s = Solo { id: solo(10, 2) }
+    return s.nope
+}
+`);
+  const bad = milo(`check ${main}`, { env });
+  const msg = bad.err + bad.out;
+  expect(bad.code).not.toBe(0);
+  expect(msg).toContain("function 'solo' expects 1 args");
+  expect(msg).toContain("struct 'Solo' has no field 'nope'");
+  expect(msg).not.toContain("$");
+});
+
+// DWARF is the surface with no second chance: a debugger shows what the metadata says,
+// and `gfx$tone` in a backtrace is a worse debugging story than the collision error the
+// pass replaced. Skipped rather than failed where no dwarfdump exists.
+test("a collided private fn keeps its written name in DWARF", () => {
+  write("disp_a.milo", DISPLAY_A);
+  write("disp_b.milo", DISPLAY_B);
+  const main = write("disp_main.milo", DISPLAY_MAIN);
+  const bin = join(DIR, "disp_bin");
+  const b = milo(`build ${main} -o ${bin} -g --debug`);
+  expect(`${b.code} ${b.err}`).toContain("0 ");
+
+  const dumper = ["llvm-dwarfdump", "dwarfdump", "/opt/homebrew/opt/llvm/bin/llvm-dwarfdump"].find(d => {
+    try { execSync(`command -v ${d}`, { stdio: "ignore" }); return true; } catch { return false; }
+  });
+  if (!dumper) { console.log("no DWARF reader on this box; DWARF name check skipped"); return; }
+  // macOS puts the debug map in a .dSYM bundle; ELF keeps it in the binary.
+  const target = existsSync(`${bin}.dSYM`) ? `${bin}.dSYM` : bin;
+  const dump = execSync(`${dumper} ${target}`, { encoding: "utf-8", maxBuffer: 256 * 1024 * 1024 });
+  const names = new Set(Array.from(dump.matchAll(/DW_AT_name\s*\(?"([^"]+)"/g), m => m[1]));
+  expect(names.has("tone")).toBe(true);
+  expect(names.has("User")).toBe(true);
+  expect([...names].filter(n => n.startsWith("disp_a$") || n.startsWith("disp_b$"))).toEqual([]);
+  // The linker still sees the renamed symbol; display names change nothing about that.
+  expect(execSync(`nm ${bin} 2>/dev/null || true`, { encoding: "utf-8" })).toContain("disp_a$tone");
+});
+
 test("cleanup", () => {
   rmSync(DIR, { recursive: true, force: true });
 });

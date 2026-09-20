@@ -15,6 +15,7 @@ import { checkPurity, checkEscapingClosures, checkThreadBoundary, checkGlobalBor
 import { memberHint, closest, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError } from "./derive-template";
+import { display } from "./mangle";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import { basename, relative, resolve as resolvePath, sep } from "path";
@@ -642,6 +643,11 @@ export class TypeChecker {
   private _userImplKeys?: Set<string>;
   // Manifest dep names whose symbols carry a `<pkg>$` prefix (see fnIsUserCode).
   private _packageNames?: Set<string>;
+  // Mangled symbol -> as-written name, for the private names the per-module pass renamed
+  // (src/mangle.ts). Applied to every diagnostic on the way out of `check()`: a diagnostic
+  // is built as a string from a hundred call sites, so the one place that can guarantee no
+  // mangled name reaches a reader is the boundary they all pass through.
+  private _displayNames?: Map<string, string>;
   // true while checking a function from the user's own file (not imported code);
   // gates lints that would otherwise flood every compile with stdlib noise
   private currentFnIsUser = true;
@@ -2598,6 +2604,12 @@ export class TypeChecker {
     } catch (e) {
       if (!(e instanceof CheckAbort)) throw e;
     }
+    if (this._displayNames?.size) {
+      for (const d of this.diagnostics) {
+        d.message = display(this._displayNames, d.message);
+        if (d.hint) d.hint = display(this._displayNames, d.hint);
+      }
+    }
     return {
       diagnostics: this.diagnostics,
       exprTypes: this.exprTypes,
@@ -2666,6 +2678,7 @@ export class TypeChecker {
     }
     this._userImplKeys = program.userImplKeys;
     this._packageNames = program.packageNames;
+    this._displayNames = program.displayNames;
     // register built-in functions
     const ptrU8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
     const i32t: TypeKind = { tag: "int", bits: 32, signed: true };
@@ -3559,7 +3572,7 @@ export class TypeChecker {
   // this expansion, and it is the half the author of the failing program controls.
   private expandUserDerive(s: import("./ast").StructDecl, tpl: import("./ast").DeriveTemplate): import("./ast").ImplDecl | null {
     try {
-      const impl = expandDeriveTemplate(tpl, s, s.span);
+      const impl = expandDeriveTemplate(tpl, s, s.span, (n) => display(this._displayNames, n));
       if (process.env.MILO_DUMP_DERIVES) {
         process.stderr.write(`// derive ${tpl.name} for ${s.name}\n${dumpTokens(tpl.body)}\n`);
       }
@@ -3774,7 +3787,7 @@ export class TypeChecker {
     if (process.env.MILO_DUMP_DERIVES) process.stderr.write(`// ${s.name}: @derive(Json)\n${src}\n`);
     let parsed: Program;
     try {
-      parsed = new Parser(new Lexer(src).tokenize(), src, `<derive Json for ${s.name}>`).parse();
+      parsed = new Parser(new Lexer(src, true).tokenize(), src, `<derive Json for ${s.name}>`).parse();
     } catch (e) {
       this.error(`internal error: generated Json codec for '${s.name}' did not parse: ${e instanceof Error ? e.message : String(e)}`, s.span);
       return null;
@@ -4187,7 +4200,10 @@ export class TypeChecker {
         if (!e || typeof e !== "object" || typeof (e as { kind?: unknown }).kind !== "string") return undefined;
         return this.rootNameOf(e as Expr) ?? undefined;
       },
-      pretty: (n) => asWritten.get(n) ?? n.replace(/\$/g, "."),
+      // display() FIRST: this reads `$` as the method separator and turns it into a dot,
+      // which would otherwise turn a module prefix into `gfx.tone`, a name the diagnostic
+      // post-pass can no longer recognise.
+      pretty: (n) => asWritten.get(n) ?? display(this._displayNames, n).replace(/\$/g, "."),
     };
   }
 
