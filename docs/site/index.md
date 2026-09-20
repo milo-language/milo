@@ -3,7 +3,7 @@ layout: home
 hero:
   name: Milo
   text: "A memory-safe systems language that guides you to correct, readable programs."
-  tagline: "Memory safe with no lifetime annotations to write, and ergonomic enough to reach for every day. Contracts and formal verification are built in, so the code you ship is correct with confidence."
+  tagline: "Memory safe with no lifetime annotations to write, and ergonomic enough to reach for every day. Contracts and formal verification are built in, so correctness is proven, not just tested."
   image:
     src: /logo.svg
     alt: Milo
@@ -122,18 +122,18 @@ fn main() {
 
 ## What it is, and is not
 
-**What Milo is.** A systems language built for local reasoning: the function you are reading is the whole story of the values it touches. References are second-class (never stored, so no lifetimes), every value has one owner, mutation happens only through a `&mut` parameter that cannot outlive the call, and every effect is declared where it happens (`@unsafe`, `@thread`, `@parks`, `@mustUse`). It is verbose on purpose: an extra `clone()` or `let _ =` where you are already looking is cheaper than state you have to look up. That is what makes a Milo function reviewable by a person and generatable by a model in one pass ([how](/ai-coding#local-reasoning), [why there are no lifetimes](/language/why-no-lifetimes)).
+**What Milo is.** A systems language built for local reasoning: the function you are reading is the whole story of the values it touches. References are second-class (never stored, so no lifetimes), every value has one owner, mutation happens only through a `&mut` parameter that cannot outlive the call, and every effect is declared where it happens (`@unsafe`, `@thread`, `@parks`, `@mustUse`). It is verbose on purpose: an extra `clone()` or `let _ =` where you are already looking is cheaper than reasoning about state you cannot see ([how](/ai-coding#local-reasoning), [why there are no lifetimes](/language/why-no-lifetimes)).
 
-**What Milo is not.** Not functional: `var`, `for` and in-place mutation are the idiom; it gets FP's "nothing else can change this" by scoping mutation, not by banning it. Not garbage collected and not reference counted. Not Rust: no lifetimes, no stored references, no `Send`/`Sync`; the price is that a view cannot be returned or kept, so you copy, or hold an arena handle. Not a scripting language: it compiles through LLVM to a static binary.
+**What Milo is not.** Not functional: `var`, `for` and in-place mutation are the idiom; it gets functional programming's "nothing else can change this" guarantee by scoping mutation, not by banning it. Not garbage collected and not reference counted. Not Rust: no lifetimes, no stored references, no `Send`/`Sync`; the price is that a view cannot be returned or kept, so you copy, or hold an arena handle. Not a scripting language: it compiles through LLVM to a static binary.
 
-**Measured, not claimed.** Over 250k lines of Milo exist across the compiler (self-hosted), a JS engine, three emulator cores, a debugger and a dozen packages. Nearly every `unsafe` block in them is the C boundary, and not one exists because the ownership model rejected a program ([the numbers](/language/vs-rust)).
+**Measured, not claimed.** We have written over 250k lines of Milo across the compiler (self-hosted), a JS engine, three emulator cores, a debugger and a dozen packages. Nearly every `unsafe` block in them is the C boundary, and not one exists because the ownership model rejected a program ([the numbers](/language/vs-rust)).
 
 </div>
 
 <div class="showcase">
   <div class="showcase-head">
     <h2>Built with Milo</h2>
-    <p>Milo is young - still a puppy 🐶 - but we have built a lot with it already! We dogfood the language by writing a variety of real-world programs to prove it works. This allows for maximum contact with reality, and rapid iteration on things that need improvement. It's ready for you to try today, feedback is appreciated.</p>
+    <p>Milo is young, still a puppy 🐶, but we dogfood it hard: every program below is real, and building them is how we find what needs fixing. It's ready for you to try today.</p>
   </div>
   <div class="cat cat-emu">
     <h3 class="cat-head">Emulators</h3>
