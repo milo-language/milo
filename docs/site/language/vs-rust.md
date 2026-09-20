@@ -3,7 +3,7 @@ system: memory-safety-vs-rust
 purpose: where Rust and Milo each catch a memory bug, and the Rust-shape translation table
 key-files: src/checker.ts, src/safety.ts, rust-comparison/
 update-when: a safety check moves between compile time and runtime in either language
-last-verified: 2026-08-24
+last-verified: 2026-09-20
 -->
 
 # Memory Safety vs Rust
@@ -20,9 +20,14 @@ kept as a Milo regression fixture. `unsafe` and FFI are trust boundaries in both
 | Null dereference | can't express | can't express | even |
 | Iterator invalidation | compile time | compile time | even |
 | `&mut` aliasing `&` | compile time | compile time | even |
+| Closure capturing a borrow | compile time | compile time | even |
 | Out-of-bounds index | runtime | runtime | even |
 | Divide by zero, `INT_MIN / -1` | runtime | runtime | even |
 | Use-after-free through cyclic data | runtime | runtime | even |
+| Zero-copy read through an arena | compile time, `&T` out of the arena carries a lifetime | compile time, `arenaWith` / `arenaRead` scope the `&T` to a closure, so nothing aliases the arena | even |
+| Handle used against the wrong arena | runtime, `slotmap` / `generational-arena` return `None` or panic | runtime, `None` from the `arenaId` check; compile time once each role is [branded](/language/patterns#stop-two-kinds-of-index-from-being-mixed-up) | even |
+| Discarded fallible result | compile time, `#[must_use]` warning | compile time, `unused-result` warning on `Option`/`Result` and `@mustUse`, an error under the [safety profiles](/language/safety) | even |
+| Forged struct internals | compile time, private fields | compile time, `_`-prefixed fields are private to their file | even |
 | Integer overflow | runtime, debug builds only | runtime, every build | Milo ahead |
 | Contracts: `requires` / `ensures` / `invariant` | runtime, unstable | [compile time](/language/safety), for linear arithmetic | Milo ahead |
 | Reference stored in a struct | compile time | can't express | Rust ahead |
