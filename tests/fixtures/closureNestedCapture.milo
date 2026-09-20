@@ -1,0 +1,66 @@
+// A closure nested inside another closure reaches past the outer one for a local of
+// the enclosing fn. The outer closure has to capture that local too, since the inner
+// env is built from the outer env's slot (backlog #45: only the innermost closure
+// recorded the capture, and codegen named the enclosing fn's alloca from inside the
+// outer body, which LLVM rejected as `use of undefined value '%n.addr'`).
+fn consume(s: string): i64 {
+    return s.len()
+}
+
+fn callOnce(f: move () => i64): i64 {
+    return f()
+}
+
+fn main() {
+    let n: i32 = 2
+
+    // the four move / by-ref spellings of outer x inner
+    let a = () => {
+        let inner = (x: i32) => x + n
+        return inner(1)
+    }
+    print(a())
+
+    let b = () => {
+        let inner = move(x: i32) => x + n
+        return inner(10)
+    }
+    print(b())
+
+    let c = move() => {
+        let inner = (x: i32) => x + n
+        return inner(100)
+    }
+    print(c())
+
+    let d = move() => {
+        let inner = move(x: i32) => x + n
+        return inner(1000)
+    }
+    print(d())
+
+    // three deep: the middle closure never names m itself
+    let m: i64 = 7
+    let three = () => {
+        let mid = () => {
+            let deep = (x: i64) => x * m
+            return deep(6)
+        }
+        return mid()
+    }
+    print(three())
+
+    // a non-Copy capture moved through two env levels; called once, dropped once
+    let s = "hello world, long enough to force a heap allocation" + "!"
+    let outer = move() => {
+        let inner = move () => consume(s)
+        return callOnce(inner)
+    }
+    print(callOnce(outer))
+}
+// @expect: 3
+// @expect: 12
+// @expect: 102
+// @expect: 1002
+// @expect: 42
+// @expect: 52

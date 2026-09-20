@@ -564,12 +564,23 @@ export class TypeChecker {
   private cSigs = new Map<string, CSig>();
   private cValues = new Map<string, CValue>();
   private offsetOfFields = new Map<Expr, string>();
-  private closureScopeDepth: number | null = null;
+  // One frame per closure literal currently being checked, innermost last. A stack rather
+  // than a single (depth, captures) pair because an enclosing closure must carry every
+  // capture its nested closures reach past it for: `inner`'s env is built from `outer`'s
+  // env slot, so `outer` has to capture the binding too (backlog #45).
+  private closureFrames: { depth: number; captures: Map<string, CaptureInfo> }[] = [];
+  private get closureScopeDepth(): number | null {
+    const f = this.closureFrames[this.closureFrames.length - 1];
+    return f ? f.depth : null;
+  }
+  private get currentClosureCaptures(): Map<string, CaptureInfo> | null {
+    const f = this.closureFrames[this.closureFrames.length - 1];
+    return f ? f.captures : null;
+  }
   // Nesting depth of a `sortByKey` key-extractor body currently being checked — the one
   // callee known to read a returned field without retaining or dropping it. Only the
   // move-out-of-a-borrow rule reads it; see the FieldAccess branch of tryMove.
   private keyExtractorDepth = 0;
-  private currentClosureCaptures: Map<string, CaptureInfo> | null = null;
   private closureParamHints: TypeKind[] | null = null;
   // The expected RETURN type of a closure being checked against a fn-typed hint. Without
   // it an un-annotated `() => 0` always infers i64, so `opt.unwrapOrElse(() => 0)` on an
@@ -921,8 +932,7 @@ export class TypeChecker {
     const unsafeDepth = this.unsafeDepth;
     const unsafeUsed = this.unsafeUsedStack.length;
     const loopDepth = this.loopDepth;
-    const closureDepth = this.closureScopeDepth;
-    const captures = this.currentClosureCaptures;
+    const closureFrameCount = this.closureFrames.length;
     try {
       f();
     } catch (e) {
@@ -931,8 +941,7 @@ export class TypeChecker {
       this.unsafeDepth = unsafeDepth;
       this.unsafeUsedStack.length = unsafeUsed;
       this.loopDepth = loopDepth;
-      this.closureScopeDepth = closureDepth;
-      this.currentClosureCaptures = captures;
+      this.closureFrames.length = closureFrameCount;
     }
   }
 
@@ -2655,10 +2664,17 @@ export class TypeChecker {
     for (let i = this.scopes.length - 1; i >= 0; i--) {
       const info = this.scopes[i].get(name);
       if (info) {
-        if (this.closureScopeDepth !== null && i < this.closureScopeDepth && this.currentClosureCaptures) {
-          // globals are accessible directly in closures — don't capture them
-          if (!this._globalTypes.has(name) && !this.currentClosureCaptures.has(name)) {
-            this.currentClosureCaptures.set(name, { name, type: info.type, mutable: info.mutable });
+        // globals are accessible directly in closures, so they are never captured
+        if (!this._globalTypes.has(name)) {
+          // Every closure between the binding's scope and the use captures it; the walk
+          // stops at the first closure the binding lives inside, since nothing enclosing
+          // that one needs a slot for it.
+          for (let f = this.closureFrames.length - 1; f >= 0; f--) {
+            const frame = this.closureFrames[f];
+            if (i >= frame.depth) break;
+            if (!frame.captures.has(name)) {
+              frame.captures.set(name, { name, type: info.type, mutable: info.mutable });
+            }
           }
         }
         return info;
@@ -6919,10 +6935,7 @@ export class TypeChecker {
         // Moving a capture out of a `move` closure empties the environment slot it
         // lives in, so the closure cannot run a second time. Record it on the capture
         // and the literal is typed call-once below.
-        if (this.closureScopeDepth !== null) {
-          const consumedCap = this.currentClosureCaptures?.get(expr.name);
-          if (consumedCap) consumedCap.consumedInClosure = true;
-        }
+        this.eachCaptureOf(expr.name, cap => { cap.consumedInClosure = true; });
         if (this.loopDepth > 0 && this.returnOnlyMovesStack.length > 0) {
           const cur = this.returnOnlyMovesStack[this.returnOnlyMovesStack.length - 1];
           if (this.inReturnInLoop) {
@@ -7156,9 +7169,16 @@ export class TypeChecker {
   // under the caller (which still needs to see the mutation / drop it).
   private markCaptureMutated(expr: Expr) {
     const capRoot = this.rootNameOf(expr);
-    if (capRoot !== null && this.closureScopeDepth !== null) {
-      const cap = this.currentClosureCaptures?.get(capRoot);
-      if (cap) cap.mutatedInClosure = true;
+    if (capRoot !== null) this.eachCaptureOf(capRoot, cap => { cap.mutatedInClosure = true; });
+  }
+
+  // Apply fn to `name`'s capture in every open closure that holds one. A nested closure
+  // that consumes or mutates a capture does so through each enclosing closure's slot,
+  // so those are marked the same way.
+  private eachCaptureOf(name: string, fn: (cap: CaptureInfo) => void) {
+    for (const frame of this.closureFrames) {
+      const cap = frame.captures.get(name);
+      if (cap) fn(cap);
     }
   }
 
@@ -9596,11 +9616,9 @@ export class TypeChecker {
     this.closureParamHints = null;
     const retHint = this.closureRetHint;
     this.closureRetHint = null;
-    const savedClosureScopeDepth = this.closureScopeDepth;
-    const savedClosureCaptures = this.currentClosureCaptures;
-    this.currentClosureCaptures = new Map();
     this.pushScope();
-    this.closureScopeDepth = this.scopes.length - 1;
+    const frame = { depth: this.scopes.length - 1, captures: new Map<string, CaptureInfo>() };
+    this.closureFrames.push(frame);
     const paramTypes: TypeKind[] = [];
     for (let i = 0; i < expr.params.length; i++) {
       const p = expr.params[i];
@@ -9652,7 +9670,7 @@ export class TypeChecker {
     }
     this.currentFnRetType = savedRetType;
     this.popScope();
-    const captures = Array.from(this.currentClosureCaptures.values());
+    const captures = Array.from(frame.captures.values());
     this.closureCaptures.set(expr, captures);
     if ((expr as any).isMove && captures.some(c => c.consumedInClosure)) this.onceClosures.add(expr);
     for (const cap of captures) {
@@ -9676,8 +9694,7 @@ export class TypeChecker {
         }
       }
     }
-    this.closureScopeDepth = savedClosureScopeDepth;
-    this.currentClosureCaptures = savedClosureCaptures;
+    this.closureFrames.pop();
     // Owning only when it MOVED something in. `move` with no captures lowers to a null
     // environment and owns nothing, so typing it as owning would make it non-Copy for no
     // reason; a by-reference closure's environment is a stack slot in the frame that built
