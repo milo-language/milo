@@ -60,7 +60,7 @@ fn fillViaCallee(v: &mut Vec<i64>): i64
 requires v.len >= 4
 {
     for i in 0..3 {
-        setFirst(v)
+        setFirst(&mut v)
     }
     return needsFour(v)
 }
@@ -76,9 +76,9 @@ fn growThenRead(): i64 {
 pub fn main(): i32 {
     var v = zeros(8)
     print(fillLocal())
-    fillParam(v)
+    fillParam(&mut v)
     print(needsFour(v))
-    print(fillViaCallee(v))
+    print(fillViaCallee(&mut v))
     growThenRead()
     return 0
 }

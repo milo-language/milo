@@ -24,7 +24,7 @@ fn f(): i64
 ensures result == 0
 {
     var x: i64 = 0
-    bump(x)
+    bump(&mut x)
     return x
 }
 

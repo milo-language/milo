@@ -371,7 +371,7 @@ const SHAPES: Shape[] = [
       const v = p.fresh("v"), pp = p.fresh("p"), grow = p.fresh("grow");
       p.fn(`fn ${grow}(v: &mut Vec<u8>): void {\n${p.grow("v", "u8", "    ").join("\n")}\n}`);
       p.body.push(`var ${v}: Vec<u8> = []`, `${v}.push(65)`, `${v}.push(0)`, `let ${pp} = ${v}.ptr()`,
-        `${grow}(${v})`, `print("len " + strlen(${pp}).toString())`);
+        `${grow}(&mut ${v})`, `print("len " + strlen(${pp}).toString())`);
     },
   },
   {
@@ -383,7 +383,7 @@ const SHAPES: Shape[] = [
       const v = p.fresh("v"), grow = p.fresh("growRead");
       p.fn(`fn ${grow}(p: *u8, v: &mut Vec<u8>): u64 {\n${p.grow("v", "u8", "    ").join("\n")}\n    return strlen(p)\n}`);
       p.body.push(`var ${v}: Vec<u8> = []`, `${v}.push(65)`, `${v}.push(0)`,
-        `print("len " + ${grow}(${v}.ptr(), ${v}).toString())`);
+        `print("len " + ${grow}(${v}.ptr(), &mut ${v}).toString())`);
     },
   },
   {
@@ -495,7 +495,7 @@ const SHAPES: Shape[] = [
     var ws = owner.windows()
     out.push(ws.pop()!)
 }`);
-        p.body.push(`var ${out}: Vec<Shard<i64>> = []`, `${mk}(${out})`);
+        p.body.push(`var ${out}: Vec<Shard<i64>> = []`, `${mk}(&mut ${out})`);
       } else {
         p.body.push(`var ${out}: Vec<Shard<i64>> = []`, `if true {`,
           `    var data: Vec<i64> = Vec.filled(${n}, 3)`, `    var owner = shatter(data, 2)`,

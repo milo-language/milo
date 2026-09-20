@@ -240,7 +240,7 @@ function generateContainer(): ContainerCase {
       modelled = false;
       const loopK = int(1, 3);
       const which = pick(["frob", "loop"]);
-      ops.push({ code: which === "frob" ? "    frob(v)\n" : `    for i in 0..${loopK} {\n        v.push(i)\n    }\n`, modelled: false });
+      ops.push({ code: which === "frob" ? "    frob(&mut v)\n" : `    for i in 0..${loopK} {\n        v.push(i)\n    }\n`, modelled: false });
       // The oracle still knows the length: frob is a no-op, the loop pushes loopK.
       len = which === "frob" ? len : (len.kind === "affine" ? { kind: "affine", d: len.d + loopK } : { kind: "const", c: len.c + loopK });
       continue;
@@ -273,7 +273,7 @@ function generateContainer(): ContainerCase {
     `fn probe(v: &mut Vec<i64>, a: i64, b: i64): void\n` +
     (need.n > 0 ? `requires v.len >= ${need.n}\n` : "") +
     `ensures ${clause}\n{\n${ops.map(o => o.code).join("")}}\n\n` +
-    `fn main() {\n    var v: Vec<i64> = Vec.new()\n${setup}\n    probe(v, 3, 4)\n    print(v.len)\n}\n`;
+    `fn main() {\n    var v: Vec<i64> = Vec.new()\n${setup}\n    probe(&mut v, 3, 4)\n    print(v.len)\n}\n`;
   return { src, clause, shape: `vec-${ops.length}${modelled ? "" : "-unmodelled"}`, control: false, holds, modelled };
 }
 

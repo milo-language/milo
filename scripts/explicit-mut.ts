@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
-// Rewrites `f(x)` to `f(&mut x)` wherever `x` is bound to a `&mut` parameter, using the
-// checker's resolved signatures (`milo check --json --deny=implicit-mut-borrow`), never a
-// regex: only the checker knows which parameter an argument binds to.
+// Rewrites `f(x)` to `f(&mut x)` wherever `x` is bound to a `&mut` parameter.
+//
+// Driven by the checker's resolved signatures (`milo check --json`), never a regex: only
+// the checker knows which parameter an argument binds to.
 //
 // Usage: bun scripts/explicit-mut.ts [--closure] [--target=<os-arch>] <file.milo>...
 //

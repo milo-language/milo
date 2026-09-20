@@ -13,7 +13,7 @@ pub fn main(): i32 {
     var v = [1, 2, 3]
     let i = 0
     let j = 0
-    twiddle(v[i], v[j])
+    twiddle(&mut v[i], &mut v[j])
     print(v[0])
     return 0
 }

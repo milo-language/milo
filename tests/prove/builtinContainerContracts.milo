@@ -161,62 +161,62 @@ requires v.len == 0
 
 fn drivePop(): void {
     var v: Vec<i64> = Vec.new()
-    pushOne(v, 1)
-    popOne(v)
-    needsEmpty(v)
+    pushOne(&mut v, 1)
+    popOne(&mut v)
+    needsEmpty(&mut v)
     print(v.len)
 }
 
 fn driveEmptyPop(): void {
     var v: Vec<i64> = Vec.new()
-    popEmptyStaysEmpty(v)
+    popEmptyStaysEmpty(&mut v)
     print(v.len)
 }
 
 fn driveRemove(): void {
     var v: Vec<i64> = Vec.new()
-    pushOne(v, 1)
-    insertAt(v, 9)
-    removeAt(v)
+    pushOne(&mut v, 1)
+    insertAt(&mut v, 9)
+    removeAt(&mut v)
     print(v.len)
 }
 
 fn driveTruncate(): void {
     var v: Vec<i64> = Vec.new()
-    pushOne(v, 1)
-    pushOne(v, 2)
-    truncateAbove(v)
-    truncateBelow(v)
+    pushOne(&mut v, 1)
+    pushOne(&mut v, 2)
+    truncateAbove(&mut v)
+    truncateBelow(&mut v)
     print(v.len)
 }
 
 fn driveKeep(): void {
     var v: Vec<i64> = Vec.new()
-    pushOne(v, 1)
-    pushOne(v, 2)
-    lengthKept(v)
-    setFirst(v, 7)
+    pushOne(&mut v, 1)
+    pushOne(&mut v, 2)
+    lengthKept(&mut v)
+    setFirst(&mut v, 7)
     print(v.len)
 }
 
 fn driveGrow(): void {
     var v: Vec<i64> = Vec.new()
     var w: Vec<i64> = Vec.new()
-    pushOne(w, 4)
-    pushOne(w, 5)
-    extendBy(v, w)
-    let _n = readOnly(v)
-    retainSome(v)
+    pushOne(&mut w, 4)
+    pushOne(&mut w, 5)
+    extendBy(&mut v, w)
+    let _n = readOnly(&mut v)
+    retainSome(&mut v)
     print(v.len)
-    clearAll(v)
+    clearAll(&mut v)
     print(v.len)
 }
 
 fn driveStr(): void {
     var s: string = "abc"
-    strPush(s)
-    strPushStr(s, "wxyz")
-    strReadOnly(s)
+    strPush(&mut s)
+    strPushStr(&mut s, "wxyz")
+    strReadOnly(&mut s)
     print(s.len)
 }
 

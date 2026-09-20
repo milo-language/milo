@@ -4,12 +4,16 @@ from "std/arena" import {
 
 fn main(): i32 {
     var arena: Arena<string> = arenaNew()
-    let alice: Handle<string> = arenaAlloc(arena, "alice")
-    let _freed = arenaFree(arena, alice)
-    let _carol = arenaAlloc(arena, "carol")
+    let alice: Handle<string> = arenaAlloc(&mut arena, "alice")
+    let _freed = arenaFree(&mut arena, alice)
+    let _carol = arenaAlloc(&mut arena, "carol")
     match arenaGet(arena, alice) {
-        Option.Some(value) => { print("LEAKED wrong value: ", value) }
-        Option.None => { print("caught: stale handle -> None (no corruption)") }
+        Option.Some(value) => {
+            print("LEAKED wrong value: ", value)
+        }
+        Option.None => {
+            print("caught: stale handle -> None (no corruption)")
+        }
     }
     return 0
 }

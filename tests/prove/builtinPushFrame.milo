@@ -37,18 +37,18 @@ ensures v.len == old(v.len) + 2
 fn callsPush1(v: &mut Vec<i64>): void
 ensures v.len == old(v.len) + 1
 {
-    push1(v, 3)
+    push1(&mut v, 3)
 }
 
 pub fn main(): i32 {
     var v: Vec<i64> = Vec.new()
-    push1(v, 3)
+    push1(&mut v, 3)
     print(v.len)
-    bad(v)
+    bad(&mut v)
     print(v.len)
-    plusTwo(v)
+    plusTwo(&mut v)
     print(v.len)
-    callsPush1(v)
+    callsPush1(&mut v)
     print(v.len)
     return 0
 }

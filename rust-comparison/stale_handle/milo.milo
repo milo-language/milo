@@ -10,12 +10,12 @@ struct Person {
 
 fn main(): i32 {
     var a = arenaNew<Person>()
-    let h = arenaAlloc(a, Person {
+    let h = arenaAlloc(&mut a, Person {
         name: "alice"
     }
     ) // handle -> alice
-    let _freed = arenaFree(a, h) // free the slot
-    let _carol = arenaAlloc(a, Person {
+    let _freed = arenaFree(&mut a, h) // free the slot
+    let _carol = arenaAlloc(&mut a, Person {
         name: "carol"
     }
     ) // reuse the same slot

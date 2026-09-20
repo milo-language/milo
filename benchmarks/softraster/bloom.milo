@@ -260,18 +260,18 @@ pub fn present(c: &mut Canvas, bloomGain: f64, exposure: f64) {
     // filling the frame: mid-grey in linear light is about 0.21, so the entire
     // ground sat above the threshold and the whole picture bloomed into haze.
     // Thin overlay strokes lose their halo; the ground stops being milk.
-    brightPass(c, 0.90)
-    blurPass(c, 1)
-    blurPass(c, 2)
-    blurPass(c, 4)
-    blurPass(c, 8) // without the widest pass the halo has a visible square edge
+    brightPass(&mut c, 0.90)
+    blurPass(&mut c, 1)
+    blurPass(&mut c, 2)
+    blurPass(&mut c, 4)
+    blurPass(&mut c, 8) // without the widest pass the halo has a visible square edge
 
     // The composite is the expensive half — a million pixels against 57k for the
     // whole bloom chain above — and it is the only pass with no cross-row reads
     // on the buffer it writes, so it parallelises with a single fan-out. The
     // bloom chain would need a barrier between each of its nine passes and is
     // left alone: nine thread spawns cost more than the passes do.
-    compositeAll(c, bloomGain, exposure)
+    compositeAll(&mut c, bloomGain, exposure)
 }
 
 // Per-band arguments for the composite pass. Same shape and same rules as

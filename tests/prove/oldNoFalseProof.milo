@@ -13,6 +13,6 @@ ensures n == old(n) + 99
 
 fn main() {
     var x: i64 = 1
-    bumpWrong(x)
+    bumpWrong(&mut x)
     print(x)
 }

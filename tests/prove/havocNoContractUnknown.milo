@@ -22,7 +22,7 @@ fn frob(_v: &mut Vec<i64>): void
 fn throughFrob(v: &mut Vec<i64>): void
 ensures v.len == old(v.len)
 {
-    frob(v)
+    frob(&mut v)
 }
 
 fn throughPtr(v: &mut Vec<i64>): void
@@ -37,8 +37,8 @@ requires v.len == 0
 }
 
 fn obligationAfterFrob(v: &mut Vec<i64>): void {
-    frob(v)
-    needsEmpty(v)
+    frob(&mut v)
+    needsEmpty(&mut v)
 }
 
 fn throughPush(v: &mut Vec<i64>): void
@@ -49,9 +49,9 @@ ensures v.len == old(v.len) + 1
 
 pub fn main(): i32 {
     var v: Vec<i64> = Vec.new()
-    throughFrob(v)
-    throughPtr(v)
-    throughPush(v)
+    throughFrob(&mut v)
+    throughPtr(&mut v)
+    throughPush(&mut v)
     print(v.len)
     return 0
 }

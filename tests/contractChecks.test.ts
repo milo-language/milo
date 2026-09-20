@@ -56,10 +56,10 @@ fn main(): i32 {
     // an INCLUSIVE [min, max] range, so Random.range(1, 2) would be 1 or 2 and this test
     // would flake between printing 11 and 12.
     var a: i64 = Random.range(1, 1)
-    bump(a, 10)
+    bump(&mut a, 10)
     print(a)
     var b: i64 = Random.range(1, 1)
-    drift(b, 10)
+    drift(&mut b, 10)
     print(b)
     return 0
 }

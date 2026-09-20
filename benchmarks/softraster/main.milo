@@ -166,14 +166,14 @@ pub fn main(): i32 {
         }
 
         let t0 = epochMillis()
-        rasterFrame(c, zbuf, cmds, bins, binLens, bands, w, h)
+        rasterFrame(&mut c, &mut zbuf, cmds, bins, binLens, bands, w, h)
         let t1 = epochMillis()
         // A handful of additive splats, because `spot` was the hottest single
         // function in the profile and the composite alone does not exercise it.
         for i in 0..70 {
-            spot(c, hash(i, 31) * (w as f64), hash(i, 32) * (h as f64), 6.0 + hash(i, 33) * 34.0, 0.9, 0.7, 0.4)
+            spot(&mut c, hash(i, 31) * (w as f64), hash(i, 32) * (h as f64), 6.0 + hash(i, 33) * 34.0, 0.9, 0.7, 0.4)
         }
-        present(c, 0.35, 1.0)
+        present(&mut c, 0.35, 1.0)
         let t2 = epochMillis()
         rasterMs = rasterMs + (t1 - t0)
         postMs = postMs + (t2 - t1)

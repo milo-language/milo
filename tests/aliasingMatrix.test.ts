@@ -80,7 +80,7 @@ struct Box { v: string }
 fn bump(b: &mut Box, s: &string): void { b.v = $"clobber {1}"; print(s) }
 fn main(): i32 {
     var b = Box { v: $"heap {0}" }
-    bump(b, b.v)
+    bump(&mut b, b.v)
     return 0
 }`,
   },
@@ -121,7 +121,7 @@ fn grow(v: &mut Vec<string>, s: &[string]): void { v.push($"clobber {1}"); print
 fn main(): i32 {
     var v: Vec<string> = Vec.new()
     v.push($"heap {0}")
-    grow(v, v[0..1])
+    grow(&mut v, v[0..1])
     return 0
 }`,
   },
@@ -159,7 +159,7 @@ fn main(): i32 {
 fn clobber(a: &mut [string; 2], s: &string): void { a[0] = $"clobber {1}"; print(s) }
 fn main(): i32 {
     var a: [string; 2] = [$"heap {0}", $"heap {1}"]
-    clobber(a, a[1])
+    clobber(&mut a, a[1])
     return 0
 }`,
   },

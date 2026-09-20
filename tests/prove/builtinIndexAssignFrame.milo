@@ -25,13 +25,13 @@ fn viaCall(v: &mut Vec<i64>): void
 requires v.len > 0
 ensures v.len == old(v.len)
 {
-    setFirst(v)
+    setFirst(&mut v)
 }
 
 pub fn main(): i32 {
     var v: Vec<i64> = Vec.new()
     v.push(1)
-    viaCall(v)
+    viaCall(&mut v)
     print(v.len)
     return 0
 }

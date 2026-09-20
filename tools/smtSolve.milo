@@ -50,63 +50,63 @@ fn main(): i32 {
     let toks = s.splitWhitespace()
     var pos: i64 = 0
 
-    let nprob = nextInt(toks, pos)
+    let nprob = nextInt(toks, &mut pos)
 
     var pi: i64 = 0
     while pi < nprob {
-        let nvars = nextInt(toks, pos)
-        let natoms = nextInt(toks, pos)
+        let nvars = nextInt(toks, &mut pos)
+        let natoms = nextInt(toks, &mut pos)
         var flags: Vec<bool> = []
         var f: i64 = 0
         while f < nvars {
-            flags.push(nextInt(toks, pos) == 1)
+            flags.push(nextInt(toks, &mut pos) == 1)
             f = f + 1
         }
         var p = newProblemMixed(nvars, flags)
 
         var a: i64 = 0
         while a < natoms {
-            let strict = nextInt(toks, pos)
+            let strict = nextInt(toks, &mut pos)
             var row: Vec<i64> = []
             var c: i64 = 0
             while c < nvars {
-                row.push(nextInt(toks, pos))
+                row.push(nextInt(toks, &mut pos))
                 c = c + 1
             }
-            let konst = nextInt(toks, pos)
+            let konst = nextInt(toks, &mut pos)
             // atoms are created in order, so atom index == a
-            let _ai = addAtom(p, row, konst, strict == 1)
+            let _ai = addAtom(&mut p, row, konst, strict == 1)
             a = a + 1
         }
 
-        let nnodes = nextInt(toks, pos)
+        let nnodes = nextInt(toks, &mut pos)
         var nd: i64 = 0
         while nd < nnodes {
-            let kind = nextInt(toks, pos)
+            let kind = nextInt(toks, &mut pos)
             if kind == 0 {
-                let ai = nextInt(toks, pos)
-                let _n = nAtom(p, ai)
+                let ai = nextInt(toks, &mut pos)
+                let _n = nAtom(&mut p, ai)
             } else if kind == 1 {
-                let ch = nextInt(toks, pos)
-                let _n = nNot(p, ch)
+                let ch = nextInt(toks, &mut pos)
+                let _n = nNot(&mut p, ch)
             } else {
-                let nk = nextInt(toks, pos)
+                let nk = nextInt(toks, &mut pos)
                 var kids: Vec<i64> = []
                 var kk: i64 = 0
                 while kk < nk {
-                    kids.push(nextInt(toks, pos))
+                    kids.push(nextInt(toks, &mut pos))
                     kk = kk + 1
                 }
                 if kind == 2 {
-                    let _n = nAnd(p, kids)
+                    let _n = nAnd(&mut p, kids)
                 } else {
-                    let _n = nOr(p, kids)
+                    let _n = nOr(&mut p, kids)
                 }
             }
             nd = nd + 1
         }
 
-        let root = nextInt(toks, pos)
+        let root = nextInt(toks, &mut pos)
         // A violated verdict carries a witness — emit the concrete values (one
         // per variable, in declaration order) so the caller can report the
         // failing input, not just that one exists.

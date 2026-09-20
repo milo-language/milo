@@ -29,7 +29,7 @@ requires v >= 100
 fn caller(): i64 {
     var x: i64 = 5
     // Provable only from the frame condition: 5 is far below 100 on the way in.
-    bump(x)
+    bump(&mut x)
     return needsBig(x)
 }
 

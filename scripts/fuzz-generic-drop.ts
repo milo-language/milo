@@ -298,12 +298,15 @@ function derive(sym: Symbol): Path | null {
   const pre: string[] = [];
   const args: string[] = [];
   const isFree = sym.owner === null;
+  // A `&mut T` parameter takes `&mut x` at the call (the explicit-mut rule); a fixture
+  // value is always a `var`, so the spelling is the only thing the rule adds.
+  const spell = (type: string, a: string) => (/^&mut /.test(type) ? `&mut ${a}` : a);
   for (let i = 0; i < params.length; i++) {
     const p = params[i]!;
-    if (isFree && i === 0) { args.push(fixture.self); continue; }
+    if (isFree && i === 0) { args.push(spell(p.type, fixture.self)); continue; }
     const a = argFor(p.type, anchor!, fixture, pre, i);
     if (a === null) return null;
-    args.push(a);
+    args.push(spell(p.type, a));
   }
   let call: string;
   if (isFree) call = `${sym.name}(${args.join(", ")})`;
@@ -408,12 +411,12 @@ fn touchWith(w: Shard<T>, e: &mut Acc): Shard<T> {
   // std/select: a value already queued means wait() returns without parking.
   "selectRecv": () => ({ imports: { "std/sync": ["Channel"], "std/select": ["Select", "selectRecv"] }, body: [
     "let c = Channel<T>.new(4)!", "c.send(mk(1))!",
-    "var sel = Select.new()", "selectRecv(sel, c)", "sel.onTimeout(5000)", "let w = sel.wait()", "sel.destroy()",
+    "var sel = Select.new()", "selectRecv(&mut sel, c)", "sel.onTimeout(5000)", "let w = sel.wait()", "sel.destroy()",
     "sink = sink + w", "let x = c.recv()!", "sink = sink + peek(x)",
   ] }),
   "selectSend": () => ({ imports: { "std/sync": ["Channel"], "std/select": ["Select", "selectSend"] }, body: [
     "let c = Channel<T>.new(4)!",
-    "var sel = Select.new()", "selectSend(sel, c)", "sel.onTimeout(5000)", "let w = sel.wait()", "sel.destroy()",
+    "var sel = Select.new()", "selectSend(&mut sel, c)", "sel.onTimeout(5000)", "let w = sel.wait()", "sel.destroy()",
     "sink = sink + w", "c.send(mk(1))!", "let x = c.recv()!", "sink = sink + peek(x)",
   ] }),
 
