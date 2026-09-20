@@ -161,20 +161,19 @@ fn palettePtr(store: &mut CStore, src: &Option<Palette>): *ColorMapObject {
                 )
                 i = i + 1
             }
-            let colorsPtr = colors.ptr()
+            // Pointers are taken from the slot in `store` after the push, so they point
+            // into a buffer `store` owns rather than one that was just moved away.
             store.colors.push(colors)
-
             var map: Vec<ColorMapObject> = Vec.withCapacity(1)
             map.push(ColorMapObject {
                 ColorCount: p.colorCount as i32,
                 BitsPerPixel: p.bitsPerPixel as i32,
                 SortFlag: p.sortFlag,
-                Colors: colorsPtr,
+                Colors: store.colors[store.colors.len - 1].ptr(),
             }
             )
-            let mapPtr = map.ptr()
             store.maps.push(map)
-            return mapPtr
+            return store.maps[store.maps.len - 1].ptr()
         }
     }
 }
@@ -199,19 +198,22 @@ fn extsPtr(store: &mut CStore, exts: Vec<Ext>): *ExtensionBlock {
                 let byteCount = payload.len as i32
                 let payloadPtr = payload.ptr()
                 store.bytes.push(payload)
-                arr.push(ExtensionBlock {
-                    ByteCount: byteCount, Bytes: payloadPtr, Function: block.function
+                // unsafe: `store.bytes` owns the buffer now and outlives the pointer; the
+                // checker cannot see that a Vec<Vec<u8>> push keeps the inner buffers put.
+                unsafe {
+                    arr.push(ExtensionBlock {
+                        ByteCount: byteCount, Bytes: payloadPtr, Function: block.function
+                    }
+                    )
                 }
-                )
             }
         }
     }
     if arr.len == 0 {
         return nullOf<ExtensionBlock>()
     }
-    let arrPtr = arr.ptr()
     store.exts.push(arr)
-    return arrPtr
+    return store.exts[store.exts.len - 1].ptr()
 }
 
 // Publish a decoded document through the C struct the caller holds. Called once per slurp,
@@ -236,30 +238,28 @@ fn publish(doc: &mut Doc, store: &mut CStore, gif: &mut GifFileType) {
                 let blocks = replace(image.exts, Vec.new())
                 let blockCount = blocks.len as i32
                 let blocksPtr = extsPtr(store, blocks)
-                arr.push(SavedImage {
-                    ImageDesc: GifImageDesc {
-                        Left: image.left,
-                        Top: image.top,
-                        Width: image.width,
-                        Height: image.height,
-                        Interlace: image.interlace,
-                        ColorMap: mapPtr,
+                // unsafe: `store.bytes` owns the raster now and outlives the pointer; the
+                // checker cannot see that a Vec<Vec<u8>> push keeps the inner buffers put.
+                unsafe {
+                    arr.push(SavedImage {
+                        ImageDesc: GifImageDesc {
+                            Left: image.left,
+                            Top: image.top,
+                            Width: image.width,
+                            Height: image.height,
+                            Interlace: image.interlace,
+                            ColorMap: mapPtr,
+                        }
+                        ,
+                        RasterBits: rasterPtr,
+                        ExtensionBlockCount: blockCount,
+                        ExtensionBlocks: blocksPtr,
                     }
-                    ,
-                    RasterBits: rasterPtr,
-                    ExtensionBlockCount: blockCount,
-                    ExtensionBlocks: blocksPtr,
+                    )
                 }
-                )
             }
         }
     }
-    let imageCount = arr.len as i32
-    let imagesPtr = arr.ptr()
-    store.images.push(arr)
-    gif.ImageCount = imageCount
-    gif.SavedImages = imagesPtr
-
     // Extensions that arrived after the last image stay on the file, as in C.
     let trailing = replace(doc.pending, Vec.new())
     let trailingCount = trailing.len as i32
@@ -275,6 +275,13 @@ fn publish(doc: &mut Doc, store: &mut CStore, gif: &mut GifFileType) {
         Interlace: doc.curInterlace,
         ColorMap: palettePtr(store, doc.curMap),
     }
+
+    // Last, because from here `gif` points into `store` and nothing may grow `store`
+    // while it does; the pointer is taken from the slot after the push so it is into a
+    // buffer `store` owns.
+    gif.ImageCount = arr.len as i32
+    store.images.push(arr)
+    gif.SavedImages = store.images[store.images.len - 1].ptr()
 }
 
 // ---------------------------------------------------------------------------

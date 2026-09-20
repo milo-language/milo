@@ -1,0 +1,19 @@
+// A bound `*T` into a global is an element view like a slice binding: a callee that
+// pushes to the global frees the buffer it points into. The main pass cannot see a write
+// made inside another function; the global walk has the write summary and the view list.
+// @error: 'writer' writes the global 'g' while 'p' still points into 'g's buffer (from 'g.ptr()' on line 15)
+from "std/os" import {
+    strlen
+}
+var g: Vec<u8> = []
+
+fn writer() {
+    g.push(65)
+}
+
+pub fn main(): i32 {
+    let p = g.ptr()
+    writer()
+    print(strlen(p))
+    return 0
+}

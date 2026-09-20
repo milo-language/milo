@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-19 (@copy and the pointer-field move rule; @parks cross-task freeze rule; ptr()/cstr() element views; @copyOnly and the raw type-param read rule; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-19 (@parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -2726,16 +2726,25 @@ bare. A pointer to an absolute address is `<int> as *T` (in `unsafe`).
 
 ### Raw pointers are element views
 
-A `*T` from `v.ptr()`, `s.cstr()`, `h.ptr()` or `CStr.ptr()` that is **bound to a name**
-(`let`/`var`, an assignment, or a struct literal the binding holds) is an element view of
-its source, checked the same way a slice binding is. While the binding is in scope its
-source may not reallocate, be reassigned, or be written through the owner:
+A `*T` from `v.ptr()`, `s.cstr()`, `h.ptr()` or `CStr.ptr()` is an element view of its
+source for as long as any **holder** of it is live, and every check that asks "is a view
+of `x` live" reads the one list that slice bindings, for-in loop variables and these
+pointers all sit on. A holder is anything the pointer flows into other than a direct
+extern-call argument: a `let`/`var` binding, an assignment target (`p = v.ptr()`,
+`c.buf = v.ptr()`), a struct or enum literal (`Cfg { buf: v.ptr() }`, `Some(v.ptr())`), a
+container (`ps.push(v.ptr())`, `[v.ptr()]`), or a user function's by-value `*T`
+parameter (a holder for the duration of that call). While a holder is live the source may
+not reallocate, be reassigned, or be written through the owner:
 
 - no `&mut self` method on it: `push`, `pop`, `clear`, `insert`, `remove`, `pushStr`, or a
   user method taking `self: &mut Self`;
-- not passed to a `&mut` parameter;
+- not passed to a `&mut` parameter, including in the same call as an inline `v.ptr()`
+  argument (`growRead(v.ptr(), v)` is rejected as borrowed mutably and shared);
 - not reassigned (`v = Vec.new()`), and not indexed into (`v[0] = x`);
-- not returned as a pointer into a local that dies with the function.
+- not returned as a pointer into a local that dies with the function;
+- for a mutable **global** source: not written by any function the call may reach
+  (`let p = g.ptr(); writer()` where `writer` pushes to `g`), and not held across a call
+  that may park the task (the `@parks` rule for slices, applied to pointers).
 
 A cast forwards the view: `let base = s.cstr() as i64` still points into `s`. Reading the
 source is always fine. The binding's scope is the lexical block it is declared in, the
@@ -2749,13 +2758,22 @@ let p = v.ptr()
 v.push(1)                          // error: 'v' may reallocate here while 'p' still points into its buffer
 ```
 
-Two things the rule leaves alone, on purpose. An **inline** argument has no binding and
-nothing that could outlive the call, so `strlen(v.ptr())` needs no ceremony. A **move** of
-the source keeps its heap buffer where it is: `let p = v.ptr(); forget(v)` and
-`let p = v.ptr(); store.push(v)` are the FFI give leg, and both compile. The pointer's
-validity is then the new owner's business, exactly as for any pointer handed to C; when the
-new owner is a local binding (`let w = v`) the view follows it, so `w.push(0)` is still
-rejected.
+An **inline** extern-call argument has no holder and nothing that could outlive the call,
+so `strlen(v.ptr())` needs no ceremony. A **move** of the source is allowed (the header
+moves, the buffer stays put) but it ends every holder: after `take(v)` or `store.push(v)`
+the new owner may free the buffer at any time, so reading `p` is
+`'p' used after its source 'v' was moved`. Two moves keep the holder alive. `forget(v)` is
+the explicit "the pointer's owner has the buffer now" spelling of the FFI give leg, so
+`let p = v.ptr(); forget(v); return p` compiles; and a plain rebinding (`let w = v`)
+carries the view to `w`, so `w.push(0)` is still rejected. Where a store really does
+outlive the pointer (a struct of `Vec<Vec<u8>>` freed after the C caller is done),
+`unsafe { }` around the use admits it.
+
+Two shapes the rule cannot see, documented rather than checked: a user function that
+stashes its `*T` parameter in a global or returns it (`let q = keep(v.ptr())` makes `q`
+no holder), and a copy of the pointer value into a variable that outlives the original
+holder (`var q: *u8; if c { let p = v.ptr(); q = p }`). Once `p` reaches C, the buffer's lifetime is the owner's obligation, as in every
+language with raw pointers.
 
 ### Opaque Foreign Types
 

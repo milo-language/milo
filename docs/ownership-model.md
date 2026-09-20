@@ -3,7 +3,7 @@ system: ownership-model
 purpose: why Milo has no lifetimes — second-class references as guardrails, and how that compares to Rust
 key-files: src/checker.ts, docs/language-reference.md, docs/design.md
 update-when: reference semantics change (second-class rule, borrow/exclusivity checks, slices/arenas)
-last-verified: 2026-09-19 (pointer fields make a struct move-tracked unless @copy; raw pointers from ptr()/cstr()/h.ptr() bound to a name are element views of their source)
+last-verified: 2026-09-19 (ptr()/cstr() element views, one view list; pointer-holding structs move-only)
 -->
 
 # Ownership & references — why there are no lifetimes
@@ -127,20 +127,35 @@ return a `*T` into a `Vec`, `string` or `Heap` without `unsafe`. That is only so
 buffer is still there when the pointer is used, and "the source is alive" is not enough:
 a `push` can reallocate and free the old buffer while the source is very much alive.
 
-So a `*T` from one of these calls that is **bound to a name** is treated as a view of its
-source, under the same freeze a slice binding gets. While the binding is in scope the source
-may not reallocate (`push`, `pop`, `clear`, any `&mut self` method, a `&mut` argument), be
-reassigned, or be written through (`v[i] = x`). Reading it is fine. A cast forwards the
-view (`let base = s.cstr() as i64`), and returning a pointer into a local that dies with
-the function is rejected. An inline argument (`strlen(v.ptr())`) binds nothing and needs
-nothing. Moving the source is allowed: the move copies the header, not the buffer, and
-the FFI give leg is exactly `let p = v.ptr(); forget(v)` (or `store.push(v)`); the view
-follows a move into a local binding.
+So a `*T` from one of these calls is a view of its source for as long as any **holder**
+of it is live, and it sits on the same view list as a slice binding or a for-in loop
+variable: every check that asks "is a view of `x` live" (the local freeze, the global
+write summary, the `@parks` cross-task rule) reads one list. A holder is anything the
+pointer flows into except a direct extern-call argument: a binding, an assignment target,
+a struct or enum literal, a container it is pushed into, or a user function's by-value
+`*T` parameter (for the call). While a holder lives the source may not reallocate (`push`,
+`pop`, `clear`, any `&mut self` method, a `&mut` argument, including one in the same call
+as an inline `v.ptr()`), be reassigned, or be written through (`v[i] = x`); a global
+source may not be written by any callee or held across a park. Reading it is fine. A cast
+forwards the view (`let base = s.cstr() as i64`), and returning a pointer into a local
+that dies with the function is rejected. An inline extern argument (`strlen(v.ptr())`)
+has no holder and needs nothing.
 
-This closes the raw-pointer analogue of the slice rule, which is the one place a safe-code
-`*T` could observe a freed buffer. What it does not do is track copies of the pointer
-value: once `p` is stored in a struct field or passed to C, the buffer's lifetime is the
-owner's obligation, as it is in every language with raw pointers.
+Moving the source is allowed (the move copies the header, not the buffer) but ends every
+holder: after `take(v)` or `store.push(v)` the new owner may free the buffer whenever it
+likes, so a read of `p` is `'p' used after its source 'v' was moved`. The FFI give leg is
+spelled `let p = v.ptr(); forget(v)`: `forget` is the one move that keeps the holder, as
+the explicit statement that the pointer's owner has the buffer now. A plain rebinding
+(`let w = v`) carries the view to `w`. A store that provably outlives the pointer
+(giflib's `CStore`, a struct of `Vec<Vec<u8>>` freed after the C caller is done) admits
+the read under `unsafe { }` with a comment saying so.
+
+Remaining gaps, documented rather than checked: a user function that stashes its `*T`
+parameter in a global, or returns it, launders the provenance (`let q = keep(v.ptr())`
+makes `q` no holder); and a copy of the pointer value into a variable that outlives the
+original holder (`var q: *u8; if c { let p = v.ptr(); q = p }`) is not followed, though
+`let q = p` beside a live `p` is still blocked by `p`. Once `p` reaches C, the buffer's lifetime is the owner's
+obligation, as it is in every language with raw pointers.
 
 ## Raw pointers in structs: move-tracked unless `@copy`
 

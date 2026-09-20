@@ -89,8 +89,8 @@ export function isForeignModule(file: string | undefined): boolean {
 // index-qualified assignment (`v[0] = x`) — which a view survives and an iteration
 // does not. See `freeze` and the Assign case. A `pointer` borrow is a bound `*T` from
 // `v.ptr()` / `s.cstr()` / `h.ptr()`: it survives an index write like a view does, and
-// unlike either it survives a MOVE of its source (the buffer stays where it is; see
-// `tryMoveLeaf`).
+// unlike either it does not forbid a MOVE of its source; the move ends the holder
+// instead, except through `forget` (see `tryMoveLeaf`).
 export type BorrowKind = "view" | "iteration" | "pointer";
 
 // The binding that holds a pointer borrow, so the diagnostic can name both ends:
@@ -205,6 +205,10 @@ export interface VarInfo {
   borrowKinds?: BorrowKind[];
   // Who holds each borrow in `borrowedPaths`, same order; only a `pointer` borrow has one.
   borrowHolders?: (PointerHolder | null)[];
+  // This binding holds a `*T` whose source has since been moved to an owner the checker
+  // cannot see (`take(v)`, `store.push(v)`), so the buffer may be freed at any point after.
+  // Any read of the binding is an error until it is reassigned. Set by `tryMoveLeaf`.
+  pointerSourceMoved?: { root: string; call: string; line: number };
   // Bound by a MATCH/if-let pattern rather than by a `let`/`var` declaration. Assignment
   // to one is rejected like any other immutable binding, but the generic advice ("declare
   // with 'var'") names a declaration the reader cannot find: there is no `let` here, and
@@ -2099,6 +2103,9 @@ export class TypeChecker {
   // Index of the innermost scope belonging to the function currently being
   // checked. Shadowing is judged relative to this, not to the whole stack.
   private fnScopeFloor = 0;
+  // True while `tryMove` runs for a move that hands the source to an owner the pointer's
+  // holders can still trust: `forget(v)` and `let w = v`. See `tryMoveLeaf`.
+  private pointerMoveKeepsHolders = false;
 
   // `span` is the binding site to point diagnostics at; VarInfo carries one for every
   // binding form now (params, pattern bindings, `let`/`var`, for-in), so `span` here is
@@ -2235,14 +2242,21 @@ export class TypeChecker {
   // The `*T`-producing calls whose result is an element view of the receiver, reached
   // through the casts and struct literals a binding's initializer may wrap them in.
   // `let base = s.cstr() as i64` still points into `s`; `let c = Cfg { buf: v.ptr() }`
-  // holds the pointer for as long as `c` does. Anything else (a call result, an
-  // arithmetic value, a bare pointer variable) carries no provenance this can see.
+  // holds the pointer for as long as `c` does, and so does `let ps: Vec<*u8> = [v.ptr()]`
+  // or `Some(v.ptr())`. Anything else (a call result, an arithmetic value, a bare pointer
+  // variable) carries no provenance this can see.
   private pointerViewsIn(e: Expr, out: { source: Expr; call: string; line: number }[] = []): { source: Expr; call: string; line: number }[] {
     switch (e.kind) {
       case "CastExpr":
         return this.pointerViewsIn(e.operand, out);
       case "StructLit":
         for (const f of e.fields) this.pointerViewsIn(f.value, out);
+        return out;
+      case "ArrayLit":
+        for (const el of e.elements) this.pointerViewsIn(el, out);
+        return out;
+      case "EnumLit":
+        for (const a of e.args) this.pointerViewsIn(a, out);
         return out;
       case "MethodCall": {
         if (e.args.length !== 0) return out;
@@ -2279,6 +2293,17 @@ export class TypeChecker {
     }
   }
 
+  // `ps.push(v.ptr())` / `m.insert(k, v.ptr())`: the container now holds the pointer, so
+  // it is the holder and `v` stays frozen for as long as `ps` lives. Without this the
+  // pointer escaped through an inline argument with no binding of `*T` anywhere in the
+  // program text, and `v.push(..); strlen(ps[0])` read a freed buffer (h4-ptr-in-vec).
+  private holdPointerArgsIn(container: Expr, args: Expr[]): void {
+    const ap = this.accessPath(container);
+    const info = ap ? this.lookup(ap.root) : null;
+    if (!ap || !info) return;
+    for (const a of args) this.bindPointerViews(ap.root, info, a);
+  }
+
   // The scope index a binding lives in, or -1 when it is not in scope (a global is 0).
   private scopeIndexOf(info: VarInfo): number {
     for (let i = this.scopes.length - 1; i >= 0; i--) for (const [, vi] of this.scopes[i]) if (vi === info) return i;
@@ -2310,8 +2335,9 @@ export class TypeChecker {
 
   // `return v.ptr()` (or a struct carrying it, or a binding still holding it) where `v`
   // dies with this frame hands the caller a pointer into freed memory. A `&T` param, a
-  // global, or a source that was moved on (`forget(v)` / `store.push(v)`) is fine: the
-  // buffer outlives the call. The same rule `errorIfRefReturn` states for `&T`.
+  // global, or a source given away with `forget(v)` is fine: the buffer outlives the
+  // call. (Any other move of the source already ended the holder, and the `return p`
+  // is rejected as a read of it.) The same rule `errorIfRefReturn` states for `&T`.
   private errorIfReturnedPointerDangles(value: Expr, sp?: Span): void {
     for (const pv of this.pointerViewsIn(value)) {
       const ap = this.accessPath(pv.source);
@@ -4718,28 +4744,44 @@ export class TypeChecker {
       // reference into the container's buffer, so anything that reallocs or replaces the
       // container leaves it dangling for the rest of the iteration.
       //
-      // `views` are reference bindings into a global (`let s = g[a..b]`, or a method
-      // returning `&[T]` from a receiver rooted at g) that stay live to the end of their
-      // block: a statement list is walked in order and each such binding extends the
+      // `views` are element views into a global held by a binding that stays live to the
+      // end of its block: a reference binding (`let s = g[a..b]`, or a method returning
+      // `&[T]` from a receiver rooted at g) or a raw pointer binding (`let p = g.ptr()`,
+      // `let c = Cfg { buf: g.cstr() }`; `pointerViewsIn` is the same recognizer the
+      // freeze machinery uses, so this walk and `bindPointerViews` agree on what a pointer
+      // view is). A statement list is walked in order and each such binding extends the
       // context for the statements after it. Decided by the binding's checked type, not
       // its spelling, so every way of producing a view counts (`g[a..b]` itself parses as
-      // `g.slice(a, b)`).
-      type View = { name: string; global: string };
-      const viewOf = (n: Record<string, unknown> & { kind?: string; name?: unknown }): View | undefined => {
-        if ((n.kind !== "LetDecl" && n.kind !== "VarDecl") || typeof n.name !== "string") return undefined;
+      // `g.slice(a, b)`). `via` names the pointer call for the diagnostic; a ref view has none.
+      type View = { name: string; global: string; via?: string };
+      const viewsOf = (n: Record<string, unknown> & { kind?: string; name?: unknown }): View[] => {
+        if ((n.kind !== "LetDecl" && n.kind !== "VarDecl") || typeof n.name !== "string") return [];
         const v = n.value as Expr | undefined;
-        if (!v || this.exprTypes.get(v)?.tag !== "ref") return undefined;
-        const g = rootOf(v.kind === "MethodCall" ? v.object : v);
-        return g && mutableGlobals.has(g) && !bound.has(g) ? { name: n.name, global: g } : undefined;
+        if (!v) return [];
+        const name = n.name;
+        const isGlobal = (g: string | undefined): g is string => !!g && mutableGlobals.has(g) && !bound.has(g);
+        if (this.exprTypes.get(v)?.tag === "ref") {
+          const g = rootOf(v.kind === "MethodCall" ? v.object : v);
+          return isGlobal(g) ? [{ name, global: g }] : [];
+        }
+        const out: View[] = [];
+        for (const pv of this.pointerViewsIn(v)) {
+          const g = rootOf(pv.source);
+          if (isGlobal(g)) out.push({ name, global: g, via: `${pv.call}' on line ${pv.line}` });
+        }
+        return out;
       };
+      const describeView = (v: View) => v.via
+        ? `'${v.name}' still points into '${v.global}'s buffer (from '${v.via})`
+        : `'${v.name}' is a view into '${v.global}'s buffer`;
       const walk = (node: unknown, iterated: string[], views: View[]) => {
         if (!node || typeof node !== "object") return;
         if (Array.isArray(node)) {
           let live = views;
           for (const n of node) {
             walk(n, iterated, live);
-            const v = viewOf(n as Record<string, unknown> & { kind?: string; name?: unknown });
-            if (v) live = [...live, v];
+            const vs = viewsOf(n as Record<string, unknown> & { kind?: string; name?: unknown });
+            if (vs.length > 0) live = [...live, ...vs];
           }
           return;
         }
@@ -4776,7 +4818,7 @@ export class TypeChecker {
             for (const v of views) {
               if (iterated.includes(v.global)) continue;
               report(
-                `'${pretty(t)}' can park this task while '${v.name}' is a view into '${v.global}'s buffer; another task may push to '${v.global}' before it resumes`,
+                `'${pretty(t)}' can park this task while ${describeView(v)}; another task may push to '${v.global}' before it resumes`,
                 span,
                 parkHint(v.global),
               );
@@ -4785,9 +4827,11 @@ export class TypeChecker {
             // for as long as the callee runs, and the callee parks.
             for (const [argIdx, a] of callArgs.entries()) {
               // A slice expression is already a reference whatever the parameter says;
-              // it roots at its receiver (`g[a..b]` parses as `g.slice(a, b)`).
-              const isViewArg = this.exprTypes.get(a)?.tag === "ref";
-              const g = rootOf(isViewArg && a.kind === "MethodCall" ? a.object : a);
+              // it roots at its receiver (`g[a..b]` parses as `g.slice(a, b)`). An inline
+              // `g.ptr()` is a view for the duration of the call in the same way.
+              const ptrView = this.pointerViewsIn(a)[0];
+              const isViewArg = this.exprTypes.get(a)?.tag === "ref" || ptrView !== undefined;
+              const g = ptrView ? rootOf(ptrView.source) : rootOf(isViewArg && a.kind === "MethodCall" ? a.object : a);
               if (!g || !mutableGlobals.has(g) || bound.has(g)) continue;
               if (iterated.includes(g) || views.some(v => v.global === g)) continue;
               const prm = paramOffset >= 0 ? callee!.params[argIdx + paramOffset] : undefined;
@@ -4823,6 +4867,31 @@ export class TypeChecker {
                 `reassigning it from inside the loop frees that buffer and leaves the reference dangling. ` +
                 `Iterate a copy ('for x in ${g}.clone()'), or collect the changes and apply them after the loop`,
               );
+            }
+            // `let p = g.ptr(); writer()` (or a slice binding) where `writer` pushes to g:
+            // the callee frees the buffer the binding points into (h4-global-callee-push).
+            // The main pass cannot see a write made inside another function, and this
+            // walk is the one place that knows both the live views and the write summary.
+            for (const v of views) {
+              if (!w.has(v.global) || iterated.includes(v.global)) continue;
+              report(
+                `'${pretty(t)}' writes the global '${v.global}' while ${describeView(v)}`,
+                span,
+                `pushing to, clearing or reassigning '${v.global}' frees the buffer '${v.name}' points into: ` +
+                `take '${v.name}' after the call, or end its block before it`,
+              );
+            }
+            for (const a of callArgs) {
+              for (const pv of this.pointerViewsIn(a)) {
+                const g = rootOf(pv.source);
+                if (!g || !mutableGlobals.has(g) || bound.has(g) || !w.has(g)) continue;
+                if (iterated.includes(g) || views.some(v => v.global === g)) continue;
+                report(
+                  `'${pretty(t)}' writes the global '${g}', and is passed '${pv.call}' here`,
+                  (a.span as Span | undefined) ?? span,
+                  `the pointer is into '${g}'s buffer, and '${pretty(t)}' can realloc or replace '${g}' while it holds it: take the pointer inside '${pretty(t)}', or have it not write '${g}'`,
+                );
+              }
             }
             // `use(G[0])` — the argument is a reference into G's storage and the callee
             // reallocs G, so the reference dies before the callee is done with it.
@@ -6075,7 +6144,8 @@ export class TypeChecker {
         if (bindingType.tag === "array") this.lintStackArray(stmt.name, bindingType, sp);
         this.lintIndexClone(stmt.value, bindingType, sp);
         const letCarried = this.pointerBorrowsCarriedBy(stmt.value);
-        this.tryMove(stmt.value);
+        this.pointerMoveKeepsHolders = letCarried !== null;
+        try { this.tryMove(stmt.value); } finally { this.pointerMoveKeepsHolders = false; }
         if (letCarried) this.carryPointerBorrows(letCarried, stmt.name);
         break;
       }
@@ -6132,7 +6202,8 @@ export class TypeChecker {
           this.lintIndexClone(stmt.value, bindingType, sp);
         }
         const varCarried = this.pointerBorrowsCarriedBy(stmt.value);
-        this.tryMove(stmt.value);
+        this.pointerMoveKeepsHolders = varCarried !== null;
+        try { this.tryMove(stmt.value); } finally { this.pointerMoveKeepsHolders = false; }
         if (varCarried) this.carryPointerBorrows(varCarried, stmt.name);
         break;
       }
@@ -6239,9 +6310,17 @@ export class TypeChecker {
             // value held end here; the new ones are bound below. A `var` can never hold a
             // reference, so every freeze on it is a pointer borrow.
             if (info.freezes) { for (const src of info.freezes) this.releasePointerBorrows(src, info); info.freezes = undefined; }
+            info.pointerSourceMoved = undefined;
             this.errorIfPointerOutlivesSource(stmt.target.name, info, stmt.value, sp);
             this.bindPointerViews(stmt.target.name, info, stmt.value);
           }
+        } else if (assignPath && assignInfo && this.pointerViewsIn(stmt.value).length > 0) {
+          // `c.buf = v.ptr()` / `ps[0] = v.ptr()`: the pointer now lives inside `c`/`ps`,
+          // which holds it for as long as it lives. The old value of the slot is not
+          // released (a field write cannot tell which of `c`'s borrows it overwrote), so
+          // this can only over-approximate, and the whole-variable arm above is the reset.
+          this.errorIfPointerOutlivesSource(assignPath.root, assignInfo, stmt.value, sp);
+          this.bindPointerViews(assignPath.root, assignInfo, stmt.value);
         }
         this.tryMove(stmt.value);
         break;
@@ -7188,13 +7267,23 @@ export class TypeChecker {
         return;
       }
       if (info && !isCopy(info.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
-        // A pointer borrow survives the move. Moving a Vec/string/Heap copies its header,
-        // not its heap buffer, so `let p = v.ptr(); forget(v)` and `store.push(v)` (the
-        // FFI give leg, 8 of the 15 bound sites in std+examples) leave `p` valid; the
-        // buffer's fate is now the new owner's, exactly as for any pointer handed to C.
-        // The borrow is released here rather than left on a dead binding so a later
-        // revive (`v = Vec.new()`) is not mistaken for a reassignment under `p`.
-        if (info.borrowed && this.onlyPointerBorrows(info)) this.retainBorrows(info, () => false);
+        // A pointer borrow does not forbid the move (the header moves, the buffer stays),
+        // but the new owner may free that buffer at any time the checker cannot see, so
+        // every holder of the pointer is dead from here: `let p = v.ptr(); take(v);
+        // strlen(p)` was a heap-use-after-free (h4-ptr-then-move). Two moves keep the
+        // holders alive, and set `pointerMoveKeepsHolders`: `forget(v)` (the explicit "the
+        // pointer's owner has the buffer now" spelling of the FFI give leg) and a plain
+        // `let w = v`, where `carryPointerBorrows` re-attaches the borrow to `w`. The
+        // borrow is released from the source either way, so a later revive
+        // (`v = Vec.new()`) is not mistaken for a reassignment under `p`.
+        if (info.borrowed && this.onlyPointerBorrows(info)) {
+          if (!this.pointerMoveKeepsHolders) {
+            for (const h of info.borrowHolders ?? []) {
+              if (h && !h.info.pointerSourceMoved) h.info.pointerSourceMoved = { root: h.root, call: h.call, line: h.line };
+            }
+          }
+          this.retainBorrows(info, () => false);
+        }
         if (info.borrowed) {
           // `borrowed` covers closure capture *and* a live slice/view/iteration borrow —
           // naming only closures misdiagnosed `let s = b.view(); consume(b)`.
@@ -7565,10 +7654,19 @@ export class TypeChecker {
   // none; both may be undefined, and the diagnostic then carries no source context.
   private checkCallSiteExclusivity(args: Expr[], sp: Span | undefined) {
     const muts: { root: string; fields: string[] | null; span: Span | undefined }[] = [];
-    const shared: { root: string; fields: string[] | null }[] = [];
+    const shared: { root: string; fields: string[] | null; via?: string }[] = [];
     for (const arg of args) {
       const ab = this.borrowModeOf(arg);
-      if (!ab) continue;
+      if (!ab) {
+        // An inline `v.ptr()` / `s.cstr()` argument is a shared borrow of its source for
+        // the duration of the call: `growRead(v.ptr(), v)` with `v: &mut Vec<u8>` pushed
+        // through the reference and then read the stale pointer (h4-inline-alias).
+        for (const pv of this.pointerViewsIn(arg)) {
+          const p = this.accessPath(pv.source);
+          if (p) shared.push({ root: p.root, fields: p.fields, via: pv.call });
+        }
+        continue;
+      }
       const p = this.accessPath(arg);
       if (!p) continue;
       if (ab.mutable) muts.push({ root: p.root, fields: p.fields, span: arg.span ?? sp });
@@ -7588,7 +7686,9 @@ export class TypeChecker {
       for (const s of shared) {
         if (m.root === s.root && overlaps(m.fields, s.fields)) {
           this.error(`'${m.root}' is borrowed mutably and shared in the same call`, m.span,
-            `a mutation through the '&var'/'&mut' argument could invalidate the '&' argument into '${m.root}' — clone the shared argument inline (e.g. 'x.clone()') or split the call into two statements`);
+            s.via
+              ? `a mutation through the '&var'/'&mut' argument could reallocate '${m.root}' under '${s.via}', which points into its buffer: take the pointer after the call, or split the call into two statements`
+              : `a mutation through the '&var'/'&mut' argument could invalidate the '&' argument into '${m.root}' — clone the shared argument inline (e.g. 'x.clone()') or split the call into two statements`);
         }
       }
     }
@@ -8297,6 +8397,14 @@ export class TypeChecker {
       return this.setType(expr, { tag: "unknown" });
     }
     info.read = true;
+    // `unsafe` admits the read: the new owner is then the programmer's claim to make
+    // (giflib's CStore keeps every buffer alive until the C caller is done with it).
+    if (info.pointerSourceMoved) {
+      const m = info.pointerSourceMoved;
+      this.requireUnsafe(`'${expr.name}' used after its source '${m.root}' was moved (from '${m.call}' on line ${m.line})`, sp,
+        `use 'forget(${m.root})' to hand the buffer to the pointer's new owner, or take the pointer after the move`);
+      return this.setType(expr, this.deref(info.type));
+    }
     // A use of the WHOLE value while one of its places is missing. Reading `p.b`
     // after `p.a` left is fine — a different place — and that read reaches here
     // with placeBaseDepth raised, because `p` is only the base of a narrower place.
@@ -8600,7 +8708,8 @@ export class TypeChecker {
         this.warn("useless-forget", `'forget' on a Copy value does nothing`, sp,
           `${this.show(t)} owns no resource, so there is no drop to suppress`);
       }
-      this.tryMove(expr.args[0]);
+      this.pointerMoveKeepsHolders = true;
+      try { this.tryMove(expr.args[0]); } finally { this.pointerMoveKeepsHolders = false; }
       return this.setType(expr, { tag: "void" });
     }
     // `isNull(s.field)` — the ONE test a C function-pointer field admits besides being
@@ -10300,6 +10409,7 @@ export class TypeChecker {
           this.inferVecElems.delete(objType.element as object);
           Object.assign(objType.element as object, argType);
           this.tryMove(expr.args[0]);
+          this.holdPointerArgsIn(expr.object, expr.args);
           return this.setType(expr, { tag: "void" });
         }
         const argType = this.checkExprWithHint(expr.args[0], objType.element);
@@ -10312,6 +10422,7 @@ export class TypeChecker {
           }
         }
         this.tryMove(expr.args[0]);
+        this.holdPointerArgsIn(expr.object, expr.args);
         return this.setType(expr, { tag: "void" });
       }
       if (expr.method === "clear" || expr.method === "truncate") {
@@ -10515,6 +10626,7 @@ export class TypeChecker {
           this.error(`'insert' value: expected ${this.show(objType.element)}, got ${this.show(valType)}`, sp);
         }
         this.tryMove(expr.args[1]);
+        this.holdPointerArgsIn(expr.object, [expr.args[1]]);
         return this.setType(expr, { tag: "void" });
       }
       if (expr.method === "remove") {
@@ -10711,6 +10823,7 @@ export class TypeChecker {
         }
         this.tryMove(expr.args[0]);
         this.tryMove(expr.args[1]);
+        this.holdPointerArgsIn(expr.object, expr.args);
         return this.setType(expr, { tag: "void" });
       }
       if (expr.method === "get") {

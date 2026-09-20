@@ -1,0 +1,20 @@
+// The FFI give leg: `forget(v)` hands the buffer to whoever holds the pointer, so `p`
+// stays usable after it. Every other move of the source ends the holder
+// (tests/errors/ptrUsedAfterSourceMoved.milo).
+from "std/os" import {
+    strlen
+}
+
+fn giveBuffer(): *u8 {
+    var v: Vec<u8> = [72, 105, 0]
+    let p = v.ptr()
+    forget(v)
+    return p
+}
+
+pub fn main(): i32 {
+    let p = giveBuffer()
+    print(strlen(p))
+    return 0
+}
+// @expect: 2

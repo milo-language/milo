@@ -1,0 +1,19 @@
+// Moving the source to an owner the checker cannot see ends every holder of a pointer
+// into it: `take` may free the buffer before `p` is read. `forget(v)` is the one move
+// that keeps `p` alive (tests/fixtures/ptrForgetStillLegal.milo).
+// @error: 'p' used after its source 'v' was moved (from 'v.ptr()' on line 15)
+from "std/os" import {
+    strlen
+}
+
+fn take(v: Vec<u8>): i64 {
+    return v.len
+}
+
+pub fn main(): i32 {
+    var v: Vec<u8> = [65, 0]
+    let p = v.ptr()
+    print(take(v))
+    print(strlen(p))
+    return 0
+}

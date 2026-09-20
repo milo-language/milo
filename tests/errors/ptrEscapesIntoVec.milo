@@ -1,0 +1,15 @@
+// A `*T` pushed into a container makes the container the holder: no binding of `*u8`
+// exists in the program text, but `ps` points into `v`'s buffer for as long as it lives.
+// @error: 'v' may reallocate here while 'ps' still points into its buffer (from 'v.ptr()' on line 11)
+from "std/os" import {
+    strlen
+}
+
+pub fn main(): i32 {
+    var v: Vec<u8> = [65, 0]
+    var ps: Vec<*u8> = []
+    ps.push(v.ptr())
+    v.push(66)
+    print(strlen(ps[0]))
+    return 0
+}
