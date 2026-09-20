@@ -1,0 +1,19 @@
+// An enum with a Drop impl must never get clone(): both the clone and the original run
+// drop, so the resource is released twice. Same message the struct derive gives.
+// @error: cannot derive Clone for 'Handle': it implements Drop
+@derive(Clone)
+enum Handle {
+    Closed,
+    Open(i32),
+}
+
+impl Drop for Handle {
+    fn drop(self: &mut Self) {
+        print("close")
+    }
+}
+
+fn main() {
+    let h = Handle.Open(3)
+    let _c = h.clone()
+}

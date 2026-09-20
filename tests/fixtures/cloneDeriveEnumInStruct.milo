@@ -1,0 +1,57 @@
+// Structs and enums share one derive fixpoint, so a struct holding an enum and an enum
+// holding that struct both end up clonable.
+struct A {
+    name: string,
+    e: E,
+}
+
+enum E {
+    X(A),
+    Y,
+    Z(string),
+}
+
+fn describe(a: &A): string {
+    match a.e {
+        E.X(inner) => {
+            return $"{a.name}>" + describe(inner)
+        }
+        E.Y => {
+            return $"{a.name}>Y"
+        }
+        E.Z(s) => {
+            return $"{a.name}>Z({s})"
+        }
+    }
+}
+
+fn main() {
+    let leaf = A {
+        name: "leaf", e: E.Z("z")
+    }
+    let root = A {
+        name: "root", e: E.X(leaf)
+    }
+    let copy = root.clone()
+    print(describe(root))
+    print(describe(copy))
+    let e = E.X(A {
+        name: "solo", e: E.Y
+    }
+    )
+    let e2 = e.clone()
+    match e2 {
+        E.X(a) => {
+            print(describe(a))
+        }
+        E.Y => {
+            print("Y")
+        }
+        E.Z(s) => {
+            print(s)
+        }
+    }
+}
+// @expect: root>leaf>Z(z)
+// @expect: root>leaf>Z(z)
+// @expect: solo>Y

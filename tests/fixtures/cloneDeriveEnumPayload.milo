@@ -1,0 +1,55 @@
+// A plain enum gets clone() without ceremony, like a plain struct: each payload is
+// copied when Copy and .clone()d otherwise, unit variants are rebuilt bare.
+struct P {
+    a: string, n: i32
+}
+
+enum E {
+    Unit,
+    Text(string),
+    Num(i32),
+    Both(string, i32),
+    Wrapped(P),
+}
+
+fn show(e: &E) {
+    match e {
+        E.Unit => {
+            print("Unit")
+        }
+        E.Text(s) => {
+            print($"Text {s}")
+        }
+        E.Num(n) => {
+            print($"Num {n}")
+        }
+        E.Both(s, n) => {
+            print($"Both {s} {n}")
+        }
+        E.Wrapped(p) => {
+            print($"Wrapped {p.a} {p.n}")
+        }
+    }
+}
+
+fn main() {
+    let items = [E.Unit, E.Text("t"), E.Num(7), E.Both("b", 2), E.Wrapped(P {
+        a: "p", n: 9
+    }
+    )]
+    for e in items {
+        let c = e.clone()
+        show(e)
+        show(c)
+    }
+}
+// @expect: Unit
+// @expect: Unit
+// @expect: Text t
+// @expect: Text t
+// @expect: Num 7
+// @expect: Num 7
+// @expect: Both b 2
+// @expect: Both b 2
+// @expect: Wrapped p 9
+// @expect: Wrapped p 9

@@ -1,0 +1,47 @@
+// Explicit @derive(Clone) on an enum: the same synthesized clone the auto pass would
+// give, spelled out. Its struct payload is only made clonable by the auto pass, so
+// the explicit derive has to be validated after the fixpoint, as it is for structs.
+struct P {
+    s: string
+}
+
+@derive(Clone)
+enum Shape {
+    Dot,
+    Line(i32, i32),
+    Tagged(P),
+}
+
+fn show(s: &Shape) {
+    match s {
+        Shape.Dot => {
+            print("Dot")
+        }
+        Shape.Line(a, b) => {
+            print($"Line {a} {b}")
+        }
+        Shape.Tagged(p) => {
+            print($"Tagged {p.s}")
+        }
+    }
+}
+
+fn main() {
+    let a = Shape.Line(1, 2)
+    let b = a.clone()
+    show(a)
+    show(b)
+    let t = Shape.Tagged(P {
+        s: "tag"
+    }
+    )
+    let u = t.clone()
+    show(t)
+    show(u)
+    show(Shape.Dot.clone())
+}
+// @expect: Line 1 2
+// @expect: Line 1 2
+// @expect: Tagged tag
+// @expect: Tagged tag
+// @expect: Dot

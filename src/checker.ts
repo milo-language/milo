@@ -3451,10 +3451,26 @@ export class TypeChecker {
         }
       }
     }
+    for (const e of program.enums) {
+      if (!e.attributes || e.typeParams.length > 0) continue;
+      for (const attr of e.attributes) {
+        if (attr.name !== "derive") continue;
+        for (const traitName of attr.args) {
+          if (traitName !== "Clone") continue; // rejected in validateAttributes
+          explicitClone.add(e.name);
+          if (program.impls.some(i => i.traitName === "Drop" && i.typeName === e.name)) {
+            this.error(`cannot derive Clone for '${e.name}': it implements Drop, so each clone would release the resource again on drop`, e.span);
+          }
+        }
+      }
+    }
+    // Hand-written Clone impls are not in traitImpls until registerImpl runs, which is
+    // after this pass; without this set the fixpoint cannot see that `struct Q { p: P }`
+    // is clonable when P's clone() is the user's own.
+    this.handWrittenClone = new Set(program.impls.filter(i => i.traitName === "Clone").map(i => i.typeName));
     // auto-derive Eq for all structs not explicitly derived and not generic
     // loop until fixpoint (struct A containing struct B needs B derived first)
     const derived = new Set<string>();
-    const cloneDerived = new Set<string>();
     let changed = true;
     while (changed) {
       changed = false;
@@ -3474,49 +3490,148 @@ export class TypeChecker {
           if (impl) { result.push(impl); derived.add(s.name); changed = true; }
         }
       }
-      // Auto-derive Clone by the same fixpoint, so `.clone()` exists on every plain
-      // struct without ceremony — the explicit spelling the index-clone lint asks for
-      // has to actually be available. Fixpoint, because struct A { b: B } is clonable
-      // only once B is. Explicit `@derive(Clone)` structs are candidates here too;
-      // the ones the fixpoint cannot close are validated afterwards so the error
-      // names what blocked them.
-      //
-      // Two exclusions Eq does not need: a Drop type (cloning an fd closes it twice —
-      // the TcpStream bug, as a method) and `@noCopy` (the attribute exists precisely
-      // to stop copies of a resource handle; a clone() would be the same hazard with
-      // an explicit spelling).
+    }
+    // Auto-derive Clone for every plain struct and enum, so `.clone()` exists without
+    // ceremony: the explicit spelling the index-clone lint asks for has to actually be
+    // available. Explicit `@derive(Clone)` types are candidates here too; the ones the
+    // fixpoint cannot close are validated afterwards so the error names what blocked them.
+    //
+    // Greatest fixpoint, unlike Eq: start from every candidate and drop the ones a field
+    // disqualifies until nothing changes. Growing from the leaves can never close a cycle
+    // through Vec (`enum T { Node(Vec<T>) }`, or `struct A { e: E }` / `enum E { X(Vec<A>) }`):
+    // T is clonable only if T already is. Cycles with no indirection are infinite-size
+    // types the enum/struct registration already rejects.
+    //
+    // Two exclusions Eq does not need: a Drop type (cloning an fd closes it twice,
+    // the TcpStream bug, as a method) and `@noCopy` (the attribute exists precisely
+    // to stop copies of a resource handle; a clone() would be the same hazard with
+    // an explicit spelling). Generic enums are left to monomorphization (Option/Result included).
+    const cloneDerived = new Set<string>();
+    for (const s of program.structs) {
+      if (s.typeParams.length > 0) continue;
+      if (s.isOpaque) continue;
+      if (program.impls.some(i => (i.traitName === "Clone" || i.traitName === "Drop") && i.typeName === s.name)) continue;
+      if (s.attributes?.some(a => a.name === "noCopy")) continue;
+      if (this.structs.get(s.name)?.pointerField) continue;
+      cloneDerived.add(s.name);
+    }
+    for (const e of program.enums) {
+      if (e.typeParams.length > 0) continue;
+      if (program.impls.some(i => (i.traitName === "Clone" || i.traitName === "Drop") && i.typeName === e.name)) continue;
+      if (e.attributes?.some(a => a.name === "noCopy")) continue;
+      cloneDerived.add(e.name);
+    }
+    let shrunk = true;
+    while (shrunk) {
+      shrunk = false;
       for (const s of program.structs) {
-        if (s.typeParams.length > 0) continue;
-        if (s.isOpaque) continue;
-        if (cloneDerived.has(s.name)) continue;
-        if (program.impls.some(i => i.traitName === "Clone" && i.typeName === s.name)) continue;
-        if (program.impls.some(i => i.traitName === "Drop" && i.typeName === s.name)) continue;
-        if (s.attributes?.some(a => a.name === "noCopy")) continue;
-        if (this.structs.get(s.name)?.pointerField) continue;
-        let allClone = true;
-        for (const f of s.fields) {
-          const ft = this.resolve(f.type);
-          if (!this.canAutoClone(ft, cloneDerived)) { allClone = false; break; }
-        }
-        if (allClone) {
-          const impl = this.deriveClone(s, true);
-          if (impl) { result.push(impl); cloneDerived.add(s.name); changed = true; }
-        }
+        if (!cloneDerived.has(s.name)) continue;
+        if (s.fields.every(f => this.canAutoClone(this.resolve(f.type), cloneDerived))) continue;
+        cloneDerived.delete(s.name);
+        shrunk = true;
       }
+      for (const e of program.enums) {
+        if (!cloneDerived.has(e.name) || !this.enumCloneBlocker(e, cloneDerived)) continue;
+        cloneDerived.delete(e.name);
+        shrunk = true;
+      }
+    }
+    for (const s of program.structs) {
+      if (cloneDerived.has(s.name)) result.push(this.deriveClone(s, true));
+    }
+    for (const e of program.enums) {
+      if (!cloneDerived.has(e.name)) continue;
+      const impl = this.deriveCloneEnum(e, true);
+      if (impl) result.push(impl);
     }
     for (const s of program.structs) {
       if (!explicitClone.has(s.name) || cloneDerived.has(s.name)) continue;
       const impl = this.deriveClone(s, false, cloneDerived);
       if (impl) result.push(impl);
     }
+    for (const e of program.enums) {
+      if (!explicitClone.has(e.name) || cloneDerived.has(e.name)) continue;
+      const impl = this.deriveCloneEnum(e, false, cloneDerived);
+      if (impl) result.push(impl);
+    }
     return result;
   }
 
+  private handWrittenClone = new Set<string>();
+
+  // The first payload a synthesized enum clone() cannot reproduce, or null when every
+  // variant is rebuildable. A closure payload is excluded even when it is Copy, for the
+  // reason canAutoClone gives for Vec<closure>; a raw pointer payload would make the
+  // clone a second owner of the pointee, the same hazard the struct path's pointerField
+  // check refuses. An empty enum has nothing to match on.
+  private enumCloneBlocker(e: import("./ast").EnumDecl, pending?: Set<string>): { variant: string; index: number; type: TypeKind; why: string } | null {
+    const info = this.enums.get(e.name);
+    if (!info || info.variants.size === 0) return { variant: "", index: -1, type: { tag: "void" }, why: "it has no variants" };
+    for (const [vname, v] of info.variants) {
+      for (let i = 0; i < v.fields.length; i++) {
+        const ft = v.fields[i]!;
+        const why = ft.tag === "fn" ? "a closure's environment cannot be duplicated"
+          : ft.tag === "ptr" ? "a clone would be a second owner of what the raw pointer addresses"
+          : !this.canAutoClone(ft, pending) ? "it has no clone" : null;
+        if (why) return { variant: vname, index: i, type: ft, why };
+      }
+    }
+    return null;
+  }
+
+  // Mirror of deriveClone for an enum: `match self { E.V(a0, a1) => return E.V(a0, a1.clone()) … }`,
+  // a Copy payload passed bare and anything else `.clone()`d. Reads the resolved payload
+  // types off `this.enums`, registered before derives run.
+  private deriveCloneEnum(e: import("./ast").EnumDecl, skipValidation = false, pending?: Set<string>): import("./ast").ImplDecl | null {
+    if (!skipValidation) {
+      if (this.dropImpls.has(e.name) || e.attributes?.some(a => a.name === "noCopy")) {
+        this.error(`cannot derive Clone for '${e.name}': it is a resource type (Drop or @noCopy), and duplicating it would release the resource twice`, e.span);
+      }
+      const blocker = this.enumCloneBlocker(e, pending);
+      if (blocker) {
+        if (blocker.index < 0) this.error(`cannot derive Clone for '${e.name}': ${blocker.why}`, e.span);
+        else this.error(`cannot derive Clone for '${e.name}': variant '${blocker.variant}' payload ${blocker.index} of type '${this.show(blocker.type)}': ${blocker.why}`, e.span);
+        return null;
+      }
+    }
+    const info = this.enums.get(e.name);
+    if (!info) return null;
+    const selfParam: import("./ast").Param = { name: "self", type: { name: "Self", isPtr: false, isRef: true, isRefMut: false, isArray: false, arraySize: null } };
+    const arms: import("./ast").MatchArm[] = [];
+    for (const [vname, v] of info.variants) {
+      const bindings = v.fields.map((_, i) => `a${i}`);
+      const args: Expr[] = v.fields.map((ft, i) => {
+        const bound: Expr = { kind: "Ident" as const, name: bindings[i]! };
+        return this.isCopyType(ft) ? bound : { kind: "MethodCall" as const, object: bound, method: "clone", args: [] };
+      });
+      arms.push({
+        pattern: { kind: "EnumPattern", enumName: e.name, variant: vname, bindings, bindingSpans: [] },
+        body: [{ kind: "Return" as const, value: { kind: "EnumLit", enumName: e.name, variant: vname, args } }],
+      });
+    }
+    const cloneFn: Function = {
+      kind: "Function",
+      name: "clone",
+      typeParams: [],
+      params: [selfParam],
+      retType: { name: e.name, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null },
+      contracts: [],
+      body: [{ kind: "MatchStmt" as const, subject: { kind: "Ident" as const, name: "self" }, arms }],
+      isExtern: false,
+      isVariadic: false,
+    };
+    return this.stampOrigin({
+      kind: "ImplDecl",
+      traitName: "Clone",
+      typeName: e.name,
+      typeParams: [],
+      methods: [cloneFn],
+    }, e);
+  }
+
   // A field the synthesized clone() can reproduce: copied when Copy, `.clone()`d when the
-  // builtin or the struct provides one. Enums with payloads have no clone path yet, so a
-  // struct holding one is not auto-clonable — explicit `@derive(Clone)` on it errors with
-  // the field name rather than synthesizing something wrong.
-  // `pending` carries the structs derived earlier in the same fixpoint loop — they are
+  // builtin, the struct or the enum provides one.
+  // `pending` carries the structs and enums still standing in the derive fixpoint: they are
   // not in traitImpls yet (registration happens after synthesis), and without them the
   // fixpoint can never close over `struct A { b: B }`.
   private canAutoClone(t: TypeKind, pending?: Set<string>): boolean {
@@ -3531,7 +3646,9 @@ export class TypeChecker {
     // disqualifies the container even when the closure itself is copyable.
     if (t.tag === "vec") return t.element.tag !== "fn" && this.canAutoClone(t.element, pending);
     if (t.tag === "hashmap") return t.value.tag !== "fn" && this.canAutoClone(t.key, pending) && this.canAutoClone(t.value, pending);
-    if (t.tag === "struct") return this.typeImplementsTrait(t.name, "Clone") || !!pending?.has(t.name);
+    if (t.tag === "struct" || t.tag === "enum") {
+      return this.typeImplementsTrait(t.name, "Clone") || this.handWrittenClone.has(t.name) || !!pending?.has(t.name);
+    }
     return false;
   }
 
@@ -3658,7 +3775,7 @@ export class TypeChecker {
   // auto-derived for every eligible struct that never asked for it — that path calls
   // `deriveEq` directly, and stamping only the explicit route left 40 of 1006 functions
   // in `java-dap` with no origin.
-  private stampOrigin(impl: import("./ast").ImplDecl, s: StructDecl): import("./ast").ImplDecl {
+  private stampOrigin(impl: import("./ast").ImplDecl, s: StructDecl | import("./ast").EnumDecl): import("./ast").ImplDecl {
     const file = s.span?.file;
     if (file) for (const m of impl.methods) m.sourceFile ??= file;
     return impl;
@@ -4414,6 +4531,9 @@ export class TypeChecker {
       if (!TypeChecker.KNOWN_ATTRS.includes(attr.name)) {
         this.error(`unknown attribute '@${attr.name}' on '${declName}'`, undefined, `known attributes: ${known}`);
       } else if (target === "enum") {
+        // Clone is the one derive an enum consumes (processDerives); Eq/Json/user
+        // templates still only expand over a struct, so they keep the old rejection.
+        if (attr.name === "derive" && attr.args.every(a => a === "Clone")) continue;
         this.error(`'@${attr.name}' is not supported on enums — '${declName}'`, undefined,
           `only structs consume attributes today; on an enum it would be silently ignored`);
       }

@@ -1,0 +1,55 @@
+// A hand-written impl Clone on an enum is honoured by the struct that holds it: the
+// struct's auto-derived clone() calls the user's method (which prints) exactly once per
+// clone, and the enum is never given a second, synthesized clone. The payload is a
+// string so the enum is not Copy; a Copy field is copied bare, never cloned, for enums
+// exactly as for structs.
+enum Mode {
+    Off,
+    Named(string),
+}
+
+impl Clone for Mode {
+    fn clone(self: &Self): Mode {
+        print("Mode.clone")
+        match self {
+            Mode.Off => {
+                return Mode.Off
+            }
+            Mode.Named(s) => {
+                return Mode.Named(s.clone() + "'")
+            }
+        }
+    }
+}
+
+struct Device {
+    name: string,
+    mode: Mode,
+}
+
+fn label(d: &Device): string {
+    match d.mode {
+        Mode.Off => {
+            return "off"
+        }
+        Mode.Named(s) => {
+            return s.clone()
+        }
+    }
+}
+
+fn main() {
+    let d = Device {
+        name: "lamp", mode: Mode.Named("dim")
+    }
+    let e = d.clone()
+    print(label(d))
+    print(label(e))
+    let f = e.clone()
+    print(label(f))
+}
+// @expect: Mode.clone
+// @expect: dim
+// @expect: dim'
+// @expect: Mode.clone
+// @expect: dim''

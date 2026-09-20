@@ -1,0 +1,14 @@
+// A closure payload cannot be cloned: an owning closure's environment has no duplicate.
+// The explicit derive names the variant and payload that block it instead of
+// synthesizing a clone() whose body would not compile.
+// @error: cannot derive Clone for 'E': variant 'F' payload 0
+@derive(Clone)
+enum E {
+    Plain(i32),
+    F((i32) => i32),
+}
+
+fn main() {
+    let e = E.Plain(1)
+    let _c = e.clone()
+}

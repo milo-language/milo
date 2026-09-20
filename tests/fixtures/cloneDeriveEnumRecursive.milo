@@ -1,0 +1,26 @@
+// A recursive enum closes in the auto-derive fixpoint: Vec<T> is clonable once T is
+// pending, and T is pending as soon as its other variants are.
+enum T {
+    Leaf(i32),
+    Node(Vec<T>),
+}
+
+fn first_leaf(t: &T): i32 {
+    match t {
+        T.Leaf(n) => {
+            return n
+        }
+        T.Node(kids) => {
+            return first_leaf(kids[0])
+        }
+    }
+}
+
+fn main() {
+    let tree = T.Node([T.Node([T.Leaf(41), T.Leaf(2)]), T.Leaf(3)])
+    let copy = tree.clone()
+    print(first_leaf(copy))
+    print(first_leaf(tree))
+}
+// @expect: 41
+// @expect: 41
