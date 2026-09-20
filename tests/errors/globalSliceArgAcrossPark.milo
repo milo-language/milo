@@ -1,0 +1,23 @@
+// A `&[T]` parameter is a view into the argument's buffer for as long as the callee
+// runs, even when the argument is the bare global (the whole Vec coerces to a slice).
+// `&Vec<T>` / `&mut Vec<T>` name the header, which survives a realloc, and stay legal.
+// @error: 'total' can park this task while it holds a reference into 'g's buffer
+from "std/runtime" import {
+    schedulerYield
+}
+var g: Vec<i64> = []
+
+fn total(xs: &[i64]): i64 {
+    schedulerYield()
+    var t: i64 = 0
+    for x in xs {
+        t = t + x
+    }
+    return t
+}
+
+pub fn main(): i32 {
+    g.push(1)
+    print(total(g))
+    return 0
+}

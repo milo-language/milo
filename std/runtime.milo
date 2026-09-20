@@ -795,6 +795,14 @@ pub fn promiseRace<T>(promises: Vec<Promise<T>>): Promise<T> {
     return Promise<T>._fromChannel(ch)
 }
 
+// Give up the CPU to the other ready tasks and resume on the next scheduler turn.
+//
+// @parks: this and the three wrappers below (wait-read, wait-write, park) are where
+// a green task leaves the CPU through swapcontext, an extern the checker cannot see
+// through. Everything that reaches one of them (channel send/recv, Select.wait,
+// sleepMs, fd reads that park on EAGAIN, join) is derived as parking transitively,
+// so a caller never repeats the attribute.
+@parks
 pub fn schedulerYield(): void {
     let sched = getSched()
     if sched as i64 == 0 {
@@ -808,6 +816,8 @@ pub fn schedulerYield(): void {
     swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
 }
 
+// Park until `fd` is readable. @parks: see schedulerYield.
+@parks
 pub fn schedulerWaitRead(fd: i32): void {
     let sched = getSched()
     if sched as i64 == 0 {
@@ -831,6 +841,8 @@ pub fn schedulerWaitRead(fd: i32): void {
     swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
 }
 
+// Park until `fd` is writable. @parks: see schedulerYield.
+@parks
 pub fn schedulerWaitWrite(fd: i32): void {
     let sched = getSched()
     if sched as i64 == 0 {
@@ -906,6 +918,8 @@ pub fn schedulerExists(): bool {
 // future schedulerUnpark can find it, or the task never runs again.
 // Unpark must not precede park on the same thread — cross-thread unparks are
 // safe at any time because they are applied only in scheduler context.
+// @parks: see schedulerYield.
+@parks
 pub fn schedulerPark(): void {
     let sched = getSched()
     if sched as i64 == 0 {
@@ -1335,6 +1349,12 @@ fn reapTask(sched: *u8, task: *u8): void {
 // Run one batch of ready tasks, then poll events once with `timeoutMs`
 // (-1 blocks until an fd/wakeup/timer fires — used by the main-context
 // blocking driver; 100 is the cooperative tick used by legacy spin loops).
+// @parks: the main-context driver. It does not park a task in the swapcontext
+// sense, but from the caller's view it is the same event: other tasks run to
+// their next yield before this returns, and any of them may push to a global
+// the caller holds a view into. `schedulerTick`, `schedulerRunToCompletion`
+// and the main-context blocking waits inherit it from here.
+@parks
 fn schedulerRunOnce(timeoutMs: i32): void {
     let sched = getSched()
     if sched as i64 == 0 {

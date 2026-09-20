@@ -198,6 +198,18 @@ pub fn main() {
 `;
 const CFNFIELD_URI = "file:///tmp/milo-lsp-cfnfield.milo";
 
+// `@parks` is a caller-facing contract (it decides whether a call is legal inside a
+// for-in over a global), so hover shows it the way it shows `@pure`.
+const PARKS_SRC = `@parks
+fn pause(): void {
+}
+
+pub fn main() {
+    pause()
+}
+`;
+const PARKS_URI = "file:///tmp/milo-lsp-parks.milo";
+
 // Hover on a global variable, both at its decl and at a reference in a fn.
 const GLOBAL_SRC = `var ptr: *u8 = 0 as *u8
 
@@ -348,7 +360,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC], [PARKS_URI, PARKS_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -380,6 +392,13 @@ test("hover on a nullable-extern-ref unwrap binding shows the reference type", a
   expect(atBind?.contents?.value).toContain("&mut Bump");
   const inBody = await req(61, "textDocument/hover", { textDocument: { uri: NULLREF_URI }, position: { line: 9, character: 11 } });
   expect(inBody?.contents?.value).toContain("&mut Bump");
+});
+
+test("hover on a @parks fn leads with the attribute and glosses it", async () => {
+  // `pause` at its call site (line 5, char 5).
+  const hover = await req(78, "textDocument/hover", { textDocument: { uri: PARKS_URI }, position: { line: 5, character: 5 } });
+  expect(hover?.contents?.value).toContain("@parks fn pause()");
+  expect(hover?.contents?.value).toContain("may park the current green task");
 });
 
 test("hover and completion on a C function-pointer field do not crash", async () => {

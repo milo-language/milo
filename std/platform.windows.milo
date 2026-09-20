@@ -363,6 +363,9 @@ pub fn makecontext(ucp: *u8, func: *u8, _argc: i32): void {
     }
 }
 
+// @parks: same surface as the POSIX extern, so the checker's park summary roots
+// here on every target.
+@parks
 pub fn swapcontext(oucp: *u8, ucp: *u8): i32 {
     unsafe {
         let from = oucp as *i64

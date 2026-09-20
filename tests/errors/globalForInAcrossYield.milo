@@ -1,0 +1,43 @@
+// A for-in binding is a reference into the global's buffer. `schedulerYield` parks this
+// task; the writer task then pushes 100000 elements, the buffer reallocs, and the next
+// iteration reads freed memory. This program printed `reader sees 4528` before the rule.
+// The fix is to iterate by index, snapshot with `.clone()`, or move the global into a
+// task-owned value (see tests/fixtures/globalIndexLoopAcrossYield.milo).
+// @error: 'schedulerYield' can park this task while the loop variable is a reference into 'g's buffer
+from "std/runtime" import {
+    Task, schedulerYield, schedulerRunToCompletion
+}
+var g: Vec<i64> = []
+
+fn reader(): void {
+    for x in g {
+        print("reader sees " + x.toString())
+        schedulerYield()
+    }
+}
+
+fn writer(): void {
+    var i: i64 = 0
+    while i < 100000 {
+        g.push(777)
+        i = i + 1
+    }
+    var _junk: Vec<i64> = Vec.filled(4, 424242)
+    print("writer done")
+}
+
+pub fn main(): i32 {
+    g.push(1)
+    g.push(2)
+    g.push(3)
+    Task.spawn(move() => {
+        reader()
+    }
+    )
+    Task.spawn(move() => {
+        writer()
+    }
+    )
+    schedulerRunToCompletion()
+    return 0
+}

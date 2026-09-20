@@ -2509,6 +2509,14 @@ export class TypeChecker {
               this.error(`'@thread' takes no arguments`, undefined, `write '@thread fn ${fn.name}(...)'`);
             }
           }
+          // @parks marks a fn that can switch the current green task out. It sits on the
+          // primitives that call swapcontext (the checker cannot see through that extern);
+          // everything reaching them inherits it in checkGlobalBorrowInvalidation.
+          else if (attr.name === "parks") {
+            if (attr.args.length > 0) {
+              this.error(`'@parks' takes no arguments`, undefined, `write '@parks fn ${fn.name}(...)'`);
+            }
+          }
           // @unsafe moves the proof obligation to the caller: the body may be entirely
           // checkable and the function still unsound to call with the wrong arguments.
           // Nothing is verified here (that is the point), so the only check is the shape.
@@ -4151,7 +4159,10 @@ export class TypeChecker {
     return !!self && self.tag === "ref" && self.mutable;
   }
 
-  private globalWriteSummary(fns: Map<string, Function>, mutableGlobals: Set<string>): Map<string, Set<string>> {
+  // `parks` rides the same call graph: a fn may park the current green task if it carries
+  // `@parks` or calls one that may. Stops at the declared boundary, so the scheduler's
+  // internals are never modelled here.
+  private globalWriteSummary(fns: Map<string, Function>, mutableGlobals: Set<string>): { writes: Map<string, Set<string>>; parks: Set<string> } {
     const rootOf = (e: unknown): string | undefined => {
       let cur = e as Record<string, unknown> & { kind?: string };
       while (cur && typeof cur === "object") {
@@ -4192,6 +4203,8 @@ export class TypeChecker {
       writes.set(name, w);
       callees.set(name, c);
     }
+    const parks = new Set<string>();
+    for (const [name, f] of fns) if (f.attributes?.some(a => a.name === "parks")) parks.add(name);
     // Least fixpoint over the call graph. Recursion just stops adding on the round where
     // nothing new propagates, so no explicit cycle guard is needed.
     for (let changed = true; changed;) {
@@ -4200,10 +4213,17 @@ export class TypeChecker {
         const w = writes.get(name)!;
         for (const t of cs) {
           for (const g of writes.get(t) ?? []) if (!w.has(g)) { w.add(g); changed = true; }
+          if (parks.has(t) && !parks.has(name)) { parks.add(name); changed = true; }
         }
       }
+      // FFI re-entry: C code can call back into any `@externalLinkage` fn, so once one
+      // of those may park, every extern call may park too (the walk cannot see which C
+      // routine reaches which callback). Coarse on purpose; today no such fn parks.
+      if (!changed && [...fns.values()].some(f => parks.has(f.name) && f.attributes?.some(a => a.name === "externalLinkage"))) {
+        for (const [name, f] of fns) if (f.isExtern && !parks.has(name)) { parks.add(name); changed = true; }
+      }
     }
-    return writes;
+    return { writes, parks };
   }
 
   // An arena that is read but never freed, where a tier exists that would make the
@@ -4320,13 +4340,21 @@ export class TypeChecker {
   // Two shapes, both heap-use-after-free before this: iterating a global while a callee
   // reallocs or replaces it, and passing a place rooted at a global to a function that
   // reallocs that global under the reference it was just handed.
+  //
+  // The same walk applies the cross-task rule: an element view of a mutable global may
+  // not be live across a call that may park the current green task. The callee need not
+  // write anything itself; while the task is parked ANY other task can push to the global
+  // and free the buffer the view points into. `for x in g { schedulerYield() }` printed
+  // freed memory before this. Element views are the for-in binding, a slice binding, and
+  // a `&`/`&[T]` argument into the global; a `&mut` to the global's header itself is not
+  // one (the header outlives a realloc, the buffer does not) and stays legal.
   private checkGlobalBorrowInvalidation(program: Program): void {
     const mutableGlobals = new Set<string>();
     for (const g of program.globals) if (g.mutable) mutableGlobals.add(g.name);
     if (mutableGlobals.size === 0) return;
     const fns = new Map<string, Function>();
     for (const f of [...program.functions, ...this.monomorphizedFns]) fns.set(f.name, f);
-    const writes = this.globalWriteSummary(fns, mutableGlobals);
+    const { writes, parks } = this.globalWriteSummary(fns, mutableGlobals);
 
     const rootOf = (e: unknown): string | undefined => {
       let cur = e as Record<string, unknown> & { kind?: string };
@@ -4349,15 +4377,45 @@ export class TypeChecker {
       this.error(msg, span, hint);
     };
 
+    // A `&[T]` parameter is a fat pointer into the argument's buffer, so even the bare
+    // global is an element view there; only `&Vec<T>`/`&mut Vec<T>` name the header.
+    const isSliceParam = (t: { isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null } | undefined) =>
+      !!t && (t.isRef || t.isRefMut) && t.isArray && t.arraySize === null;
+    const parkHint = (g: string) =>
+      `iterate by index ('while i < ${g}.len'), snapshot first ('${g}.clone()'), or move the global into a value the task owns`;
+
     for (const f of fns.values()) {
       if (!f.body) continue;
       const bound = new Set<string>(f.params.map(p => p.name));
       // Globals whose storage is borrowed by an enclosing for-in. A loop iterand is a
       // reference into the container's buffer, so anything that reallocs or replaces the
       // container leaves it dangling for the rest of the iteration.
-      const walk = (node: unknown, iterated: string[]) => {
+      //
+      // `views` are reference bindings into a global (`let s = g[a..b]`, or a method
+      // returning `&[T]` from a receiver rooted at g) that stay live to the end of their
+      // block: a statement list is walked in order and each such binding extends the
+      // context for the statements after it. Decided by the binding's checked type, not
+      // its spelling, so every way of producing a view counts (`g[a..b]` itself parses as
+      // `g.slice(a, b)`).
+      type View = { name: string; global: string };
+      const viewOf = (n: Record<string, unknown> & { kind?: string; name?: unknown }): View | undefined => {
+        if ((n.kind !== "LetDecl" && n.kind !== "VarDecl") || typeof n.name !== "string") return undefined;
+        const v = n.value as Expr | undefined;
+        if (!v || this.exprTypes.get(v)?.tag !== "ref") return undefined;
+        const g = rootOf(v.kind === "MethodCall" ? v.object : v);
+        return g && mutableGlobals.has(g) && !bound.has(g) ? { name: n.name, global: g } : undefined;
+      };
+      const walk = (node: unknown, iterated: string[], views: View[]) => {
         if (!node || typeof node !== "object") return;
-        if (Array.isArray(node)) { for (const n of node) walk(n, iterated); return; }
+        if (Array.isArray(node)) {
+          let live = views;
+          for (const n of node) {
+            walk(n, iterated, live);
+            const v = viewOf(n as Record<string, unknown> & { kind?: string; name?: unknown });
+            if (v) live = [...live, v];
+          }
+          return;
+        }
         const n = node as Record<string, unknown> & { kind?: string; name?: unknown; span?: unknown };
         const span = n.span as Span | undefined;
         if ((n.kind === "LetDecl" || n.kind === "VarDecl") && typeof n.name === "string") bound.add(n.name);
@@ -4365,13 +4423,68 @@ export class TypeChecker {
         if (n.kind === "ForInStmt") {
           const g = rootOf(n.iterable);
           const next = g && mutableGlobals.has(g) && !bound.has(g) ? [...iterated, g] : iterated;
-          walk(n.iterable, iterated);
-          walk(n.body, next);
+          walk(n.iterable, iterated, views);
+          walk(n.body, next, views);
           return;
         }
 
         if (n.kind === "Call" || n.kind === "EnumLit" || n.kind === "MethodCall") {
           const t = target(n as unknown as Expr);
+          const callArgs = (n.args as Expr[] | undefined) ?? [];
+          const callee = t ? fns.get(t) : undefined;
+          // A method call carries its receiver as params[0]; anything that does not
+          // line up leaves paramOffset -1 and the check stays fail-closed.
+          const paramOffset = !callee ? -1
+            : callee.params.length === callArgs.length ? 0
+            : callee.params.length === callArgs.length + 1 ? 1
+            : -1;
+          if (t && parks.has(t)) {
+            for (const g of iterated) {
+              report(
+                `'${pretty(t)}' can park this task while the loop variable is a reference into '${g}'s buffer; another task may push to '${g}' before it resumes`,
+                span,
+                parkHint(g),
+              );
+            }
+            for (const v of views) {
+              if (iterated.includes(v.global)) continue;
+              report(
+                `'${pretty(t)}' can park this task while '${v.name}' is a view into '${v.global}'s buffer; another task may push to '${v.global}' before it resumes`,
+                span,
+                parkHint(v.global),
+              );
+            }
+            // `use(g[0])` / `sum(g)` into a `&[T]`: the argument is a view into g's buffer
+            // for as long as the callee runs, and the callee parks.
+            for (const [argIdx, a] of callArgs.entries()) {
+              // A slice expression is already a reference whatever the parameter says;
+              // it roots at its receiver (`g[a..b]` parses as `g.slice(a, b)`).
+              const isViewArg = this.exprTypes.get(a)?.tag === "ref";
+              const g = rootOf(isViewArg && a.kind === "MethodCall" ? a.object : a);
+              if (!g || !mutableGlobals.has(g) || bound.has(g)) continue;
+              if (iterated.includes(g) || views.some(v => v.global === g)) continue;
+              const prm = paramOffset >= 0 ? callee!.params[argIdx + paramOffset] : undefined;
+              const isElement = ((): boolean => {
+                let cur = a as unknown as Record<string, unknown> & { kind?: string };
+                while (cur && typeof cur === "object") {
+                  if (cur.kind === "IndexAccess") return true;
+                  if (cur.kind === "FieldAccess") { cur = cur.object as typeof cur; continue; }
+                  return false;
+                }
+                return false;
+              })();
+              if (!isViewArg) {
+                if (prm?.type) {
+                  if (!isSliceParam(prm.type) && !(isElement && (prm.type.isRef || prm.type.isRefMut))) continue;
+                } else if (!isElement) continue;
+              }
+              report(
+                `'${pretty(t)}' can park this task while it holds a reference into '${g}'s buffer; another task may push to '${g}' before it resumes`,
+                (a.span as Span | undefined) ?? span,
+                parkHint(g),
+              );
+            }
+          }
           const w = t ? writes.get(t) : undefined;
           if (t && w) {
             for (const g of iterated) {
@@ -4398,14 +4511,6 @@ export class TypeChecker {
             //   - the PARAMETER has to be a reference. A by-value parameter materialises
             //     its argument before the callee runs, so nothing of the global's is
             //     still borrowed while the callee writes.
-            const callee = fns.get(t);
-            const callArgs = (n.args as Expr[] | undefined) ?? [];
-            // A method call carries its receiver as params[0]; anything that does not
-            // line up leaves paramOffset -1 and the check stays fail-closed.
-            const paramOffset = !callee ? -1
-              : callee.params.length === callArgs.length ? 0
-              : callee.params.length === callArgs.length + 1 ? 1
-              : -1;
             const reachesHeapInterior = (e: unknown): boolean => {
               let cur = e as Record<string, unknown> & { kind?: string };
               while (cur && typeof cur === "object") {
@@ -4433,9 +4538,9 @@ export class TypeChecker {
             }
           }
         }
-        for (const k of Object.keys(n)) if (k !== "span") walk(n[k], iterated);
+        for (const k of Object.keys(n)) if (k !== "span") walk(n[k], iterated, views);
       };
-      walk(f.body, []);
+      walk(f.body, [], []);
     }
   }
 
@@ -4780,7 +4885,7 @@ export class TypeChecker {
       // Method attributes were silently dropped before they could be parsed at all;
       // reject the unknown ones here so a typo can't look like it took effect.
       for (const attr of m.attributes ?? []) {
-        if (attr.name !== "pure" && attr.name !== "wrapping" && attr.name !== "thread" && attr.name !== "synchronized") {
+        if (!attributesFor("method").includes(attr.name)) {
           this.error(`'@${attr.name}' is not supported on methods — '${typeName}.${m.name}'`, m.span ?? impl.span,
             `only ${attributesFor("method").map(a => `'@${a}'`).join(", ")} apply to a method`);
         } else if (attr.args.length > 0) {

@@ -1,0 +1,17 @@
+// A slice binding is a fat pointer into the global's buffer and stays live to the end
+// of its block, so a park anywhere after it in that block is the same hazard as a park
+// inside a for-in. Decided by the binding's type, not its spelling.
+// @error: 'schedulerYield' can park this task while 's' is a view into 'g's buffer
+from "std/runtime" import {
+    schedulerYield
+}
+var g: Vec<i64> = []
+
+pub fn main(): i32 {
+    g.push(1)
+    g.push(2)
+    let s = g[0..2]
+    schedulerYield()
+    print(s[0])
+    return 0
+}

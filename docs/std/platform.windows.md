@@ -693,7 +693,8 @@ _Undocumented._
 pub fn swapcontext(oucp: *u8, ucp: *u8): i32
 ```
 
-_Undocumented._
+@parks: same surface as the POSIX extern, so the checker's park summary roots
+here on every target.
 
 ### `uctxLinkOffset`
 

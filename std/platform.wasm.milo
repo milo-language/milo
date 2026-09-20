@@ -344,6 +344,9 @@ pub fn makecontext(ucp: *u8, func: *u8, argc: i32,...): void {
     assert(false, "makecontext: wasm64 has no stackful coroutines — see getcontext")
 }
 
+// @parks: same surface as the POSIX extern, so the checker's park summary roots
+// here on every target.
+@parks
 pub fn swapcontext(oucp: *u8, ucp: *u8): i32 {
     assert(false, "swapcontext: wasm64 has no stackful coroutines — see getcontext")
     return -1

@@ -79,6 +79,17 @@ export const ATTRIBUTES: AttrInfo[] = [
       "frame to another thread.",
   },
   {
+    name: "parks",
+    targets: ["fn", "method", "extern"],
+    doc:
+      "This function may park the current green task. The checker forbids an element " +
+      "view of a mutable global (a for-in binding, a slice, a `&` into an element) from " +
+      "being live across a call to it: while the task is parked another task can push " +
+      "to that global and free the buffer the view points into. Rooted at the extern " +
+      "that switches context (`swapcontext`) and declared on the public primitives; " +
+      "every caller inherits it transitively, so a wrapper nobody annotated is still seen.",
+  },
+  {
     name: "synchronized",
     targets: ["method"],
     doc:

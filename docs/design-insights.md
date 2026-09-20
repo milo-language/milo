@@ -3,7 +3,7 @@ system: design-insights
 purpose: durable arguments and framings for external writing about Milo (talks, posts, README)
 key-files: docs/ownership-model.md, docs/memory-safety-vs-rust.md, docs/concurrency-safety.md, src/checker.ts
 update-when: a design argument is validated or falsified by shipped work, or a claim here goes stale
-last-verified: 2026-08-21
+last-verified: 2026-09-19
 -->
 
 # Design Insights
@@ -40,6 +40,14 @@ That single constraint has since paid out three more times, in areas it was not 
    That is a *list*, and it is now literally a list in the compiler (`@thread`, read by
    `checkThreadBoundary`). In Go the surface is every goroutine and there is no list to
    write.
+
+   The caveat: "cannot race" is not "cannot dangle". A cooperative switch is still a
+   switch, and a for-in binding, slice, or `&` into a mutable global is a pointer into a
+   buffer another task may realloc while this one is parked. That was a real
+   use-after-free (`for x in g { schedulerYield() }`), and it has its own door: `@parks`,
+   rooted at `swapcontext` and derived transitively, with the rule that no element view of
+   a mutable global may be live across a call that may park. Same shape as `@thread`: one
+   declared boundary, a walk that stops there.
 
 The pattern worth naming: one decision made for reason A turning out to also solve B, C,
 and D. That is the signature of a model that is coherent rather than assembled. A language
