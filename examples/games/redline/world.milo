@@ -29,7 +29,7 @@ from "./mesh" import {
     Builder, builder
 }
 from "./render" import {
-    LIGHT_FLOATS, Material, material, sceneAttrs
+    Material, material, sceneAttrs
 }
 from "./rng" import {
     Rand, rand
@@ -72,6 +72,10 @@ pub let BUCKETS: i64 = 10
 
 // Height of the barrier wall, and where its neon cap sits.
 let WALL_H: f64 = 1.45
+
+// Seven floats per light: position, colour, range. Same packing the renderer
+// wants, so the frame loop can copy a slice of this straight across.
+let LIGHT_FLOATS: i64 = 7
 
 // Four floats per pad: arc length along the circuit, lateral offset, half
 // length and half width. The geometry is in the mesh; this is the only copy the
@@ -304,11 +308,6 @@ fn emitBand(neon: &mut Builder, a: &Vec3, c: &Vec3, nx: &Vec3, nrm: &Vec3, y0: f
     pushQuadN(neon, v3(a.x + nx.x, y0, a.z + nx.z), v3(c.x + nx.x, y0, c.z + nx.z), v3(c.x + nx.x, y1, c.z + nx.z), v3(a.x + nx.x, y1, a.z + nx.z), nrm, 0.0, 0.0, 1.0, 1.0, flip)
 }
 
-// Every fixed light on the circuit is a point light: a shop window, a neon tube
-// and a lamp head under a shade all throw light in every direction that is not
-// blocked, and none of them is aimed. The packing carries a direction and a cone
-// anyway, because the renderer's array is one layout and the car's headlamps do
-// aim. See LIGHT_FLOATS in render.milo.
 fn pushLight(pool: &mut Vec<f64>, p: Vec3, r: f64, g: f64, b: f64, range: f64) {
     pool.push(p.x)
     pool.push(p.y)
@@ -317,17 +316,13 @@ fn pushLight(pool: &mut Vec<f64>, p: Vec3, r: f64, g: f64, b: f64, range: f64) {
     pool.push(g)
     pool.push(b)
     pool.push(range)
-    pool.push(0.0)
-    pool.push(-1.0)
-    pool.push(0.0)
-    pool.push(-2.0)
 }
 
 // Lamp posts down both sides, and an arch over the road every so often. Both
 // exist to break the barrier's continuous line into a rhythm: a corridor of two
 // unbroken glowing rails has no sense of speed because nothing passes you.
 fn addFurniture(steel: &mut Builder, neon: &mut Builder, track: &Track, pool: &mut Vec<f64>) {
-    // Lamp posts, alternating sides every 25 m.
+    // Lamp posts, alternating sides every 38 m.
     var s = 0.0
     var flip = false
     while s < track.length {
@@ -337,64 +332,26 @@ fn addFurniture(steel: &mut Builder, neon: &mut Builder, track: &Track, pool: &m
             -1.0
         }
         let base = track.pointAt(s, (WALL + 1.1) * side)
-        // Towards the road. The head hangs out over it, which is where a street
-        // lamp puts its light and what makes the pole read as a street lamp
-        // rather than as a post with a bulb on it.
-        let nrm = track.normalAt(s).scale(side)
-        let inward = v3(-nrm.x, 0.0, -nrm.z).norm()
-        let up = v3(0.0, 1.0, 0.0)
         steel.setUvScale(1.2)
         steel.setTint(0.34, 0.35, 0.42)
         steel.setAo(0.8)
         steel.resetXform()
-        // Base collar, mast, and a thinner section above the arm's spring line.
-        // The step is worth its four triangles: a column of constant diameter
-        // reads as scaffolding pipe, and the taper is most of what says "this is
-        // a lighting column" from two hundred metres away.
-        steel.cylinder(v3(base.x, 0.0, base.z), 0.24, 0.55, 10, true)
-        steel.cylinder(v3(base.x, 0.0, base.z), 0.16, 6.6, 10, false)
-        steel.cylinder(v3(base.x, 6.6, base.z), 0.13, 0.7, 10, false)
-
-        // The arm, as three straight segments that step out and up. A single
-        // straight bar out of the top of the pole reads as a T; the whole
-        // silhouette of a street lamp is in the curve, and three chords of it
-        // are enough at the distance anything is ever seen from here.
-        var arm = v3(base.x, 7.15, base.z)
-        var seg = 0
-        while seg < 3 {
-            let outStep = 0.62 + (seg as f64) * 0.42
-            let riseStep = 0.42 - (seg as f64) * 0.19
-            let nextP = arm + inward.scale(outStep) + up.scale(riseStep)
-            let axis = nextP.sub(arm)
-            let len = axis.len()
-            let ax = axis.scale(1.0 / len)
-            let uu = ax.anyPerp()
-            let vv = ax.cross(uu)
-            steel.tube(arm, ax, uu, vv, 0.085, len, 8, false)
-            arm = nextP
-            seg = seg + 1
-        }
-
-        // The lantern: a dark shell with the lit element under it, not a bare
-        // glowing plate. The plate was visible from every angle including from
-        // above and behind, which is why the lamps read as floating white marks
-        // hung beside the road: a real luminaire shows you a dark canister and a
-        // bright underside, and only the underside is emissive here.
-        let headC = arm + inward.scale(0.30) + up.scale(-0.06)
-        let hu = inward.anyPerp()
-        let hv = inward.cross(hu)
-        steel.setTint(0.24, 0.25, 0.30)
-        steel.tube(arm + inward.scale(-0.10), inward, hu, hv, 0.20, 0.86, 10, true)
-        neon.setUvScale(1.0)
-        neon.setAo(1.0)
+        steel.cylinder(v3(base.x, 0.0, base.z), 0.16, 7.2, 8, false)
+        // The head leans out over the road, which is what a street lamp does and
+        // what puts its light where the cars are.
+        let nrm = track.normalAt(s).scale(side)
+        let head = v3(base.x - nrm.x * 2.2, 7.2, base.z - nrm.z * 2.2)
+        steel.boxSpan(v3(Math.minF64(base.x, head.x) - 0.09, 7.0, Math.minF64(base.z, head.z) - 0.09), v3(Math.maxF64(base.x, head.x) + 0.09, 7.2, Math.maxF64(base.z, head.z) + 0.09))
         // Warm white, not neon. At night these are the only thing lighting the
         // pavement and the bottom of the facades, and a magenta street lamp
         // leaves the buildings the same black they were with none: the tubes on
         // the barrier already own the colour, and what the city needs from these
         // is plain light with enough reach to actually land on a wall.
         neon.setTint(2.30, 1.95, 1.40)
-        neon.tube(headC + inward.scale(-0.26) + up.scale(-0.13), inward, hu, hv, 0.115, 0.62, 8, true)
-        pushLight(pool, headC + up.scale(-0.35), 5.4, 4.4, 3.0, 34.0)
+        neon.setUvScale(1.0)
+        neon.setAo(1.0)
+        neon.box(v3(head.x, 6.86, head.z), 0.42, 0.09, 0.42)
+        pushLight(pool, v3(head.x, 6.5, head.z), 5.4, 4.4, 3.0, 34.0)
         s = s + 25.0
         flip = !flip
     }

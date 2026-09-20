@@ -31,11 +31,6 @@ from "./post" import {
 
 pub let SHADOW_SIZE: i64 = 2048
 
-// Floats per light in the packed array the frame loop hands the shader:
-// position, colour, range, direction, cone cosine. world.milo's pool uses the
-// same packing so a slice of it copies straight across.
-pub let LIGHT_FLOATS: i64 = 11
-
 // How the surface is lit, independent of what shape it is. Textures are indices
 // into `Gfx.tex` rather than `Texture2D` values because a Texture2D is @noCopy, 
 // two materials naming one texture would otherwise be two things that each think
@@ -489,24 +484,22 @@ impl Gfx {
         self.bindLights()
     }
 
-    // Eleven floats in, five uniforms out. The count is clamped to the shader's
+    // Seven floats in, three uniforms out. The count is clamped to the shader's
     // own array bound rather than trusted: an out-of-range uniform name silently
     // resolves to -1 and the light simply never appears, which is a much harder
     // thing to notice than a light that is missing because you can count them.
     fn bindLights(self: &Self) {
-        var n = self.lights.len / LIGHT_FLOATS
+        var n = self.lights.len / 7
         if n > 16 {
             n = 16
         }
         self.scene.uniformI("uLightCount", n)
         for i in 0..n {
-            let o = i * LIGHT_FLOATS
+            let o = i * 7
             self.scene.uniform3F($"uLightPos[{i}]", self.lights[o], self.lights[o + 1], self.lights[o + 2])
             self.scene.uniform3F($"uLightColor[{i}]", self.lights[o + 3], self.lights[o + 4], self.lights[o + 5])
             let range = Math.maxF64(self.lights[o + 6], 0.05)
             self.scene.uniformF($"uLightInvRange2[{i}]", 1.0 / (range * range))
-            self.scene.uniform3F($"uLightDir[{i}]", self.lights[o + 7], self.lights[o + 8], self.lights[o + 9])
-            self.scene.uniformF($"uLightCone[{i}]", self.lights[o + 10])
         }
     }
 
@@ -514,12 +507,6 @@ impl Gfx {
     // a tube two metres away wants a number well above one or the inverse square
     // eats it before it reaches anything.
     fn addLight(self: &mut Self, p: Vec3, r: f64, g: f64, b: f64, range: f64) {
-        self.addSpot(p, v3(0.0, -1.0, 0.0), r, g, b, range, -2.0)
-    }
-
-    // The same with a direction and the cosine of its half angle. Pass -2.0 for
-    // the cone and it is a point light again; see uLightCone in the shader.
-    fn addSpot(self: &mut Self, p: Vec3, dir: Vec3, r: f64, g: f64, b: f64, range: f64, coneCos: f64) {
         self.lights.push(p.x)
         self.lights.push(p.y)
         self.lights.push(p.z)
@@ -527,11 +514,6 @@ impl Gfx {
         self.lights.push(g)
         self.lights.push(b)
         self.lights.push(range)
-        let d = dir.norm()
-        self.lights.push(d.x)
-        self.lights.push(d.y)
-        self.lights.push(d.z)
-        self.lights.push(coneCos)
     }
 
     // The view model is drawn through the same shader but is not in the prepass,
