@@ -19,12 +19,16 @@ errors/duplicateImplMethod
 errors/duplicateStructDecl
 errors/eachMutateReceiver
 errors/embedFileMissing
+errors/explicitMutNotAValue
+errors/explicitMutOnReceiver
+errors/explicitMutOnSharedParam
 errors/externTypeMismatch
 errors/fieldAssignUnderView
 errors/flexIntLocked
 errors/hashmapUseAfterMove
 errors/heapUseAfterMove
 errors/ifLetWrongBindings
+errors/implicitMutBorrow
 errors/iterDelegateTwoFields
 errors/jsonStringifyUnsupportedField
 errors/jwtVerifyIsNotBool
