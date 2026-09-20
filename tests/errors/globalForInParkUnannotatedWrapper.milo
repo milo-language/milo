@@ -1,0 +1,26 @@
+// `@parks` is a declared marker, not the mechanism. The summary walks the call graph
+// down to the runtime leaves, so a std-style wrapper that forgets the attribute is still
+// seen as parking: this `yieldNow` has no `@parks` and calls `schedulerYield` two levels
+// down through helpers that have none either.
+// @error: 'yieldNow' can park this task while the loop variable is a reference into 'g's buffer
+from "std/runtime" import {
+    schedulerYield
+}
+var g: Vec<i64> = []
+
+fn yieldInner(): void {
+    schedulerYield()
+}
+
+pub fn yieldNow(): void {
+    yieldInner()
+}
+
+pub fn main(): i32 {
+    g.push(1)
+    for x in g {
+        yieldNow()
+        print(x)
+    }
+    return 0
+}

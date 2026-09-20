@@ -288,6 +288,7 @@ scheduler list: the caller must have stashed schedulerCurrent() somewhere a
 future schedulerUnpark can find it, or the task never runs again.
 Unpark must not precede park on the same thread — cross-thread unparks are
 safe at any time because they are applied only in scheduler context.
+@parks: see schedulerYield.
 
 ### `schedulerPollMain`
 
@@ -368,7 +369,7 @@ wakeup event is signaled so a blocked poll returns promptly.
 pub fn schedulerWaitRead(fd: i32): void
 ```
 
-_Undocumented._
+Park until `fd` is readable. @parks: see schedulerYield.
 
 ### `schedulerWaitWrite`
 
@@ -376,7 +377,7 @@ _Undocumented._
 pub fn schedulerWaitWrite(fd: i32): void
 ```
 
-_Undocumented._
+Park until `fd` is writable. @parks: see schedulerYield.
 
 ### `schedulerYield`
 
@@ -384,7 +385,13 @@ _Undocumented._
 pub fn schedulerYield(): void
 ```
 
-_Undocumented._
+Give up the CPU to the other ready tasks and resume on the next scheduler turn.
+
+@parks: this and the three wrappers below (wait-read, wait-write, park) are where
+a green task leaves the CPU through swapcontext, an extern the checker cannot see
+through. Everything that reaches one of them (channel send/recv, Select.wait,
+sleepMs, fd reads that park on EAGAIN, join) is derived as parking transitively,
+so a caller never repeats the attribute.
 
 ### `sCtx`
 

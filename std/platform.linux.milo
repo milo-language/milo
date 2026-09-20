@@ -303,6 +303,9 @@ pub extern fn getcontext(ucp: *u8): i32
 
 pub extern fn makecontext(ucp: *u8, func: *u8, argc: i32,...): void
 
+// @parks: the one call the checker cannot see through. Every green-task park in
+// std/runtime is a wrapper around this, and inherits the mark from here.
+@parks
 pub extern fn swapcontext(oucp: *u8, ucp: *u8): i32
 
 // An UPPER BOUND on sizeof(ucontext_t) across Linux architectures, not the exact

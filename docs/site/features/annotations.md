@@ -3,7 +3,7 @@ system: annotations
 purpose: the `@` surface — every compile-time builtin and declaration attribute the compiler understands
 key-files: src/parser.ts, src/checker.ts (validateAttributes), src/lower.ts (embedFile/targetOs), src/codegen.ts (cSigGuard)
 update-when: an `@` construct is added, removed, or changes what it accepts
-last-verified: 2026-08-02
+last-verified: 2026-09-19
 -->
 
 # Annotations and Compiler Builtins
@@ -29,6 +29,7 @@ list, and `tests/langInfo.test.ts` fails if this table omits an attribute it rep
 | `@pure` | `fn`, method | Asserts the function reads no global or module state; the checker enforces it |
 | `@thread` | `fn`, method | Declares that this function hands a closure to a real OS thread, so the checker holds its captures to `Send` |
 | `@synchronized` | method | Declares that the method provides mutual exclusion, so a global written inside it is not racing |
+| `@parks` | `fn`, method, `extern fn` | Declares that the call may park the current green task; no view into a mutable global (for-in binding, slice, `&` into an element) may be live across it. Derived transitively from `swapcontext`, so callers need not repeat it |
 | `@unsafe` | `fn` | Calling this function requires an `unsafe` block: it has a precondition the compiler cannot check |
 
 Two of these are **builtins** — they appear where a value does, and evaluate while

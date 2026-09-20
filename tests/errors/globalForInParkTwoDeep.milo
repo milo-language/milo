@@ -1,0 +1,25 @@
+// The may-park summary is transitive over the call graph: the loop body calls `step`,
+// `step` calls `pause`, `pause` yields. The error names the call the loop body made,
+// which is where the fix goes.
+// @error: 'step' can park this task while the loop variable is a reference into 'g's buffer
+from "std/runtime" import {
+    schedulerYield
+}
+var g: Vec<i64> = []
+
+fn pause(): void {
+    schedulerYield()
+}
+
+fn step(x: i64): void {
+    pause()
+    print(x)
+}
+
+pub fn main(): i32 {
+    g.push(1)
+    for x in g {
+        step(x)
+    }
+    return 0
+}

@@ -1,0 +1,52 @@
+// The index-loop rewrite of tests/errors/globalForInAcrossYield.milo. `g[i]` copies the
+// element out before the yield, so no reference into the buffer is live while the writer
+// task reallocs it; the reader also re-reads `g.len` each turn and sees the growth.
+// @expect: reader sees 1
+// @expect: writer done
+// @expect: reader sees 2
+// @expect: reader sees 3
+// @expect: reader saw 100003 elements
+from "std/runtime" import {
+    Task, schedulerYield, schedulerRunToCompletion
+}
+var g: Vec<i64> = []
+
+fn reader(): void {
+    var i: i64 = 0
+    var seen: i64 = 0
+    while i < g.len {
+        let x = g[i]
+        if i < 3 {
+            print("reader sees " + x.toString())
+            schedulerYield()
+        }
+        seen = seen + 1
+        i = i + 1
+    }
+    print("reader saw " + seen.toString() + " elements")
+}
+
+fn writer(): void {
+    var i: i64 = 0
+    while i < 100000 {
+        g.push(777)
+        i = i + 1
+    }
+    print("writer done")
+}
+
+pub fn main(): i32 {
+    g.push(1)
+    g.push(2)
+    g.push(3)
+    Task.spawn(move() => {
+        reader()
+    }
+    )
+    Task.spawn(move() => {
+        writer()
+    }
+    )
+    schedulerRunToCompletion()
+    return 0
+}

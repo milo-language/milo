@@ -3,7 +3,7 @@ system: proposal-task-shared-state
 purpose: language options for sharing long-lived state across green tasks without lifetimes, and why milojs needs global singletons today
 key-files: std/runtime.milo, src/checker.ts (milojs itself lives in https://github.com/milo-language/milojs)
 update-when: any of these options is adopted, rejected, or the second-class reference rule changes
-last-verified: 2026-07-20
+last-verified: 2026-09-19 (Option 1 shipped as @parks + the cross-task freeze rule)
 -->
 
 # Proposal: sharing long-lived state across green tasks
@@ -29,23 +29,32 @@ costs re-entrancy (one process can only ever run one program) and clarity
 concession to the language, and anything in Milo needing long-lived state shared
 across tasks lands in the same place.
 
-## Option 1 — forbid borrows across a park point
+## Option 1 — forbid borrows across a park point (shipped 2026-09-19)
 
-Green tasks are cooperative: they switch only at explicit park points. Shared
-mutable access across tasks is therefore already safe; the only hazard is
-holding a borrow *across* a yield, where another task could invalidate it.
+Green tasks are cooperative: they switch only at explicit park points. A mutable
+global is therefore never *racing* across tasks, but it was not "already safe"
+either: a for-in binding, a slice, or a `&` into an element is a reference into
+the global's buffer, and holding one *across* a yield let another task push to
+the global, realloc the buffer, and leave the reference reading freed memory
+(`for x in g { schedulerYield() }` printed garbage; `tests/errors/globalForInAcrossYield.milo`).
 
 That is a checkable rule, the same shape as the existing second-class reference
-rule: a borrow may not be live across an `await`/park. With it, a task body can
-borrow long-lived state directly and the global singletons become unnecessary.
+rule, and it is now enforced: **an element view of a mutable global may not be
+live across a call that may park.** `@parks` is the effect annotation, rooted at
+`swapcontext` and declared on the runtime's park primitives; the checker derives
+"may park" transitively over the call graph, so `Channel.recv`, `Select.wait`,
+`sleepMs`, `Task.join` and a blocking fd read all count without being listed.
+See "Thread boundaries" in [language-reference.md](language-reference.md).
 
 - No lifetimes appear, no runtime cost, and the dangerous case is a compile
   error rather than a documented convention.
-- Needs the checker to know which calls can park — a small effect annotation, or
-  a fixed list of parking primitives.
+- A `&mut` to the global's *header* (`grow(g)` with `fn grow(v: &mut Vec<T>)`)
+  stays legal: the header survives a realloc, only the buffer does not.
 
-Best fit for Milo's ethos: it turns "you cannot do this" into "you can, and the
-compiler catches the one case that breaks".
+What it does not yet give: a task body still cannot *borrow* long-lived state
+directly (references remain second-class), so the global singletons milojs uses
+are still the spelling for shared state. Option 1 makes them safe to use; it
+does not remove them.
 
 ## Option 2 — scoped tasks
 

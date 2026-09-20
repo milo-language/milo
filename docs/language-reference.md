@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-08-23 (Uuid value-type section added and compiled; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-19 (@parks and the cross-task freeze rule added to Thread boundaries; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -626,7 +626,7 @@ is then marked conditional.
 
 Use `milo prove file.milo` to discharge contracts against the built-in `std/smt` prover (`--solver=z3` for theories it doesn't model, `--emit-smt` to print the raw SMT-LIB2 conditions instead of solving them). Contracts are not emitted at `-O1`+; `--debug` and `--contract-checks` turn them into runtime asserts. Use `milo safety file.milo --safety=do178c-a` to check against domain-specific safety profiles (DO-178C, ISO 26262, NASA, IEC 61508, IEC 62304).
 
-### Thread boundaries — `@thread` and `@synchronized`
+### Thread boundaries — `@thread`, `@synchronized` and `@parks`
 
 A data race can only enter a program somewhere, and `@thread` marks that somewhere: a
 function that hands a closure to a **real OS thread**. Two functions in `std` carry it,
@@ -654,8 +654,43 @@ The scan stops at the boundary instead of modelling the primitive, so a new
 synchronization type only has to declare itself rather than teach the checker how it
 works.
 
-Both are enforced annotations, not documentation: `milo lang --json` reports the whole
-attribute vocabulary, so an editor or linter outside this repo can discover them.
+`@parks` is the third boundary, for the *green* scheduler. A green task never races,
+but it does switch, and a switch is enough to dangle a reference: a for-in binding, a
+slice, or a `&` into an element of a mutable global is a pointer into that global's
+buffer, and while this task is parked another task may push to the global and free
+that buffer. The rule, stated once: **an element view of a mutable global may not be
+live across a call that may park.**
+
+```milo skip
+var g: Vec<i64> = []
+
+fn reader(): void {
+    for x in g {           // x is a reference into g's buffer
+        schedulerYield()   // error: 'schedulerYield' can park this task while the loop
+    }                      //   variable is a reference into 'g's buffer; another task
+}                          //   may push to 'g' before it resumes
+```
+
+Iterate by index (`while i < g.len { let x = g[i]; ... }` copies the element out before
+the park), snapshot first (`for x in g.clone()`), or move the global into a value the
+task owns. A `&mut` to the global's *header* is not an element view and stays legal:
+`grow(g)` with `fn grow(v: &mut Vec<i64>)` is fine, because the header survives a
+realloc and only the buffer does not. A `&[T]` parameter is a view into the buffer, so
+`total(g)` with `fn total(xs: &[i64])` is held to the rule even though `g` is passed
+bare.
+
+"May park" is derived, not listed. `@parks` sits on `swapcontext`, the one extern the
+checker cannot see through, and is declared on the runtime's park primitives
+(`schedulerYield`, `schedulerWaitRead`, `schedulerWaitWrite`, `schedulerPark`, and the
+main-context driver `schedulerRunOnce`). Every function that reaches one of them
+transitively may park, so `Channel.recv`, `Select.wait`, `sleepMs`, `Task.join` and a
+blocking read that parks on `EAGAIN` all count without anyone annotating them, and a
+wrapper nobody annotated is still seen. One conservative edge: if any `@externalLinkage`
+function in the program may park, every `extern` call may park too, since C code can
+call back into the runtime through it. No such function exists today.
+
+All three are enforced annotations, not documentation: `milo lang --json` reports the
+whole attribute vocabulary, so an editor or linter outside this repo can discover them.
 
 ### Purity — `@pure`
 

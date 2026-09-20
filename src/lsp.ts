@@ -136,14 +136,21 @@ function visibilityNote(isPub?: boolean): string {
 
 // `@pure` is the whole reason to hover a function you're about to call from pure code,
 // so it leads the signature the way `pub` does — and gets a gloss, because the guarantee
-// (no ambient effect) is narrower than the word suggests (it can still trap).
+// (no ambient effect) is narrower than the word suggests (it can still trap). `@parks`
+// is the same kind of caller-facing contract: it is what decides whether the call is
+// legal inside a for-in over a global. Only the DECLARED attribute shows; a fn that
+// parks transitively is reported by the checker at the call, not here.
+const CALLER_FACING_ATTRS = ["pure", "parks"];
 function attrPrefix(fn: { attributes?: { name: string }[] }): string {
-  return fn.attributes?.some(a => a.name === "pure") ? "@pure " : "";
+  return CALLER_FACING_ATTRS.filter(n => fn.attributes?.some(a => a.name === n)).map(n => `@${n} `).join("");
 }
 function purityNote(fn: { attributes?: { name: string }[] }): string {
-  return fn.attributes?.some(a => a.name === "pure")
-    ? "\n\n*`@pure` — reads and writes only its parameters and locals; no I/O, no module state, no raw memory. It can still trap.*"
-    : "";
+  let note = "";
+  if (fn.attributes?.some(a => a.name === "pure"))
+    note += "\n\n*`@pure` — reads and writes only its parameters and locals; no I/O, no module state, no raw memory. It can still trap.*";
+  if (fn.attributes?.some(a => a.name === "parks"))
+    note += "\n\n*`@parks` — may park the current green task; no view into a mutable global (for-in binding, slice, `&` into an element) may be live across this call.*";
+  return note;
 }
 
 // Byte width of the scalar primitives, for spelling out `[T; N]` in plain terms.
