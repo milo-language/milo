@@ -35,7 +35,7 @@ export function emptyPkgDecls(): PkgDeclNames {
 
 // `extern fn` binds a C symbol by name and `@externalLinkage` is a deliberate C ABI
 // surface: renaming either would change what the linker sees.
-export function isManglableFn(f: Function): boolean {
+function isManglableFn(f: Function): boolean {
   if (f.isExtern) return false;
   if (f.attributes?.some((a) => a.name === "externalLinkage")) return false;
   return true;
@@ -45,7 +45,7 @@ export function isManglableFn(f: Function): boolean {
 // carve-outs that apply when the unit being renamed is a plain user MODULE rather than
 // a package. `main` is looked up by the linker under that exact name, and a `@cName` or
 // `@cLayout` decl exists precisely to pin a symbol or a layout a C peer names.
-export function isModuleManglableFn(f: Function): boolean {
+function isModuleManglableFn(f: Function): boolean {
   if (!isManglableFn(f)) return false;
   if (f.name === "main") return false;
   return !f.attributes?.some((a) => a.name === "cName");

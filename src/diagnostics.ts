@@ -2,7 +2,7 @@
 // and the LSP so a message reads the same in a terminal and an editor.
 import type { Span } from "./ast";
 
-export type Severity = "error" | "warning" | "hint";
+type Severity = "error" | "warning" | "hint";
 
 export interface Diagnostic {
   severity: Severity;
@@ -42,10 +42,10 @@ export class ParseError extends Error {
 
 export const RESET = "\x1b[0m";
 export const BOLD = "\x1b[1m";
-export const RED = "\x1b[31m";
+const RED = "\x1b[31m";
 export const GREEN = "\x1b[32m";
-export const YELLOW = "\x1b[33m";
-export const CYAN = "\x1b[36m";
+const YELLOW = "\x1b[33m";
+const CYAN = "\x1b[36m";
 export const DIM = "\x1b[2m";
 
 const SEV_COLOR: Record<Severity, string> = { error: RED, warning: YELLOW, hint: CYAN };

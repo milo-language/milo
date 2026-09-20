@@ -170,7 +170,7 @@ export type HIRStmt =
   // `&string` view into `src`, so no piece is ever copied or allocated.
   | { kind: "ForStrView"; varName: string; varName2: string | null; varType: TypeKind; src: HIRExpr; sep: HIRExpr | null; mode: "lines" | "split"; body: HIRStmt[]; invariants?: HIRContract[]; span?: Span };
 
-export interface HIRMatchArm {
+interface HIRMatchArm {
   pattern: HIRPattern;
   body: HIRStmt[];
 }

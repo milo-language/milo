@@ -7,9 +7,9 @@
 // whitespace into trivia, so a token stream can't be printed back to the source
 // it came from. This scanner never fails and never loses a byte:
 // `scan(s).map(t => s.slice(t.start, t.end)).join("") === s`.
-export type RawKind = "ws" | "comment" | "string" | "fstring" | "char" | "num" | "ident" | "punct" | "other";
+type RawKind = "ws" | "comment" | "string" | "fstring" | "char" | "num" | "ident" | "punct" | "other";
 
-export interface RawTok {
+interface RawTok {
   kind: RawKind;
   start: number;
   end: number;

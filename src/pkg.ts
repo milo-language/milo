@@ -358,7 +358,7 @@ export function binRoot(): string {
 }
 
 // Content-addressed download cache, shared across versions.
-export function blobsRoot(): string {
+function blobsRoot(): string {
   return join(cacheRoot(), ".blobs");
 }
 
@@ -451,7 +451,7 @@ export function fetchLocal(source: { kind: "local"; path: string }, destDir: str
   cpSync(src, destDir, { recursive: true });
 }
 
-export interface FetchResult {
+interface FetchResult {
   // The pin: an exact git commit SHA, or "sha256:<hex>" for a tarball, or "local".
   commit: string;
   // The ref that was asked for ("v1.2.0", a SHA, a branch), or "main".
@@ -584,7 +584,7 @@ export function listRemoteTags(source: Source): string[] {
 
 // Descending semver-ish order over tags. Non-numeric tags sort last (alphabetically),
 // so a `latest`/`nightly` tag can never outrank a real version.
-export function compareVersionsDesc(a: string, b: string): number {
+function compareVersionsDesc(a: string, b: string): number {
   const pa = versionParts(a);
   const pb = versionParts(b);
   if (pa === null && pb === null) return a < b ? -1 : a > b ? 1 : 0;

@@ -1,6 +1,6 @@
-# std/crypto.windows
+# std/crypto
 
-## std/crypto.windows
+## std/crypto
 
 ### `Crypto.aesGcm128Decrypt`
 

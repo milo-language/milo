@@ -20,7 +20,6 @@ export const TARGETS: Target[] = [
   { target: "linux-arm64", os: "linux", cpu: "arm64", debArch: "arm64" },
 ];
 
-export const NPM_SCOPE = "@milo-lang";
 export const REPO = "milo-language/milo";
 
 /** `v0.1.0` -> `0.1.0`. Rejects anything else so a stray tag can't publish a package. */

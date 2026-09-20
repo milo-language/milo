@@ -1,177 +1,53 @@
-// std/crypto — cryptographic primitives (macOS/CommonCrypto)
+// std/crypto — cryptographic primitives: SHA-256/SHA-1/MD5 digests and AES-GCM over the
+// platform crypto library (CommonCrypto, OpenSSL, CNG).
+//
+// Everything platform-independent lives here once. The platform binding is
+// std/cryptosys.{darwin,linux,windows}.milo, which exposes only raw digest bytes and the
+// raw GCM calls; the facade used to be copied into each arm and the copies had drifted.
 
-from "std/os" import {
-    malloc, free
+from "std/cryptosys" import {
+    sha256Raw, sha1Raw, md5Raw, gcmEncryptRaw, gcmDecryptRaw
 }
-
-pub extern fn CC_SHA256(_data: *u8, _len: u32, _md: *u8): *u8
-
-pub extern fn CC_MD5(_data: *u8, _len: u32, _md: *u8): *u8
-
-pub extern fn CC_SHA1(_data: *u8, _len: u32, _md: *u8): *u8
-
-// kCCAlgorithmAES=0, encrypt=0, decrypt=1
-pub extern fn CCCryptorGCMOneshotEncrypt(_alg: i32, _key: *u8, _keyLen: i64, _iv: *u8, _ivLen: i64, _aad: *u8, _aadLen: i64, _dataIn: *u8, _dataInLen: i64, _cipherOut: *u8, _tagOut: *u8, _tagLen: i64): i32
-
-pub extern fn CCCryptorGCMOneshotDecrypt(_alg: i32, _key: *u8, _keyLen: i64, _iv: *u8, _ivLen: i64, _aad: *u8, _aadLen: i64, _cipherIn: *u8, _cipherInLen: i64, _plainOut: *u8, _tagIn: *u8, _tagLen: i64): i32
-
-fn bytesToHex(buf: &[u8; 32], n: i64): string {
-    var result = ""
-    for i in 0..n {
-        let b = buf[i]
-        let hi = b >> 4
-        let lo = b & 15
-        if hi < 10 {
-            result.push(hi + 48)
-        } else {
-            result.push(hi - 10 + 97)
-        }
-        if lo < 10 {
-            result.push(lo + 48)
-        } else {
-            result.push(lo - 10 + 97)
-        }
-    }
-    return result
+from "std/hex" import {
+    Hex
 }
 
 // Compute SHA-256 hash of a string. Returns 64-char lowercase hex string.
 fn cryptoSha256(input: &string): string {
-    var hash: [u8; 32] = [0; 32]
-    unsafe {
-        CC_SHA256(input, input.len as u32, hash)
-    }
-    return bytesToHex(hash, 32)
+    let raw = sha256Raw(input)
+    return Hex.encode(raw)
 }
 
 // Compute MD5 hash of a string. Returns 32-char lowercase hex string.
 fn md5(input: &string): string {
-    var hash: [u8; 32] = [0; 32]
-    unsafe {
-        CC_MD5(input, input.len as u32, hash)
-    }
-    return bytesToHex(hash, 16)
+    let raw = md5Raw(input)
+    return Hex.encode(raw)
 }
 
 // Compute SHA-1 hash. Returns 40-char lowercase hex string.
 fn cryptoSha1(input: &string): string {
-    var hash: [u8; 32] = [0; 32]
-    unsafe {
-        CC_SHA1(input, input.len as u32, hash)
-    }
-    return bytesToHex(hash, 20)
+    let raw = sha1Raw(input)
+    return Hex.encode(raw)
 }
 
 // Raw 20-byte SHA-1 digest as a string (for WebSocket handshake, HMAC, etc.)
 fn cryptoSha1Bytes(input: &string): string {
-    var hash: [u8; 32] = [0; 32]
-    unsafe {
-        CC_SHA1(input, input.len as u32, hash)
-    }
-    var result: string = ""
-    for i in 0..20 {
-        result.push(hash[i])
-    }
-    return result
+    return sha1Raw(input)
 }
 
-// ── AES-256-GCM ──
+// ── AES-GCM ──
 
 pub struct AesGcmResult {
     ciphertext: string,
     tag: string,
 }
 
-// ── One GCM implementation per direction ──
-//
-// AES-128-GCM and AES-256-GCM differ by exactly one argument to CommonCrypto: the key
-// length. They used to be two 60-line copies each, and the copies had already drifted —
-// the 256 arm reported "AES-GCM encrypt failed" where the 128 arm said "AES-128-GCM".
-// The public wrappers keep the `requires` contracts and the self-naming length errors;
-// only the CommonCrypto call is shared.
-
-fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string> {
-    var tag: [u8; 16] = [0; 16]
-
-    unsafe {
-        let aadPtr = if aad.len > 0 {
-            aad as *u8
-        } else {
-            0 as *u8
-        }
-        let ptPtr = if plaintext.len > 0 {
-            plaintext as *u8
-        } else {
-            0 as *u8
-        }
-
-        var ctBuf: *u8 = 0 as *u8
-        if plaintext.len > 0 {
-            ctBuf = malloc(plaintext.len)
-        }
-
-        let ret = CCCryptorGCMOneshotEncrypt(0, key, keyBits / 8, iv, 12, aadPtr, aad.len, ptPtr, plaintext.len, ctBuf, tag, 16)
-        if ret != 0 {
-            if plaintext.len > 0 {
-                free(ctBuf)
-            }
-            return Result.Err("AES-" + keyBits.toString() + "-GCM encrypt failed")
-        }
-
-        var ciphertext: string = ""
-        for i in 0..plaintext.len {
-            ciphertext.push(*((ctBuf as i64 + i) as *u8))
-        }
-        if plaintext.len > 0 {
-            free(ctBuf)
-        }
-
-        var tagStr: string = ""
-        for i in 0..16 {
-            tagStr.push(tag[i])
-        }
-
-        return Result.Ok(AesGcmResult {
-            ciphertext: ciphertext, tag: tagStr
-        }
-        )
-    }
-}
-
-fn gcmDecryptRaw(keyBits: i64, key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string> {
-    unsafe {
-        let aadPtr = if aad.len > 0 {
-            aad as *u8
-        } else {
-            0 as *u8
-        }
-        let ctPtr = if ciphertext.len > 0 {
-            ciphertext as *u8
-        } else {
-            0 as *u8
-        }
-
-        var ptBuf: *u8 = 0 as *u8
-        if ciphertext.len > 0 {
-            ptBuf = malloc(ciphertext.len)
-        }
-
-        let ret = CCCryptorGCMOneshotDecrypt(0, key, keyBits / 8, iv, 12, aadPtr, aad.len, ctPtr, ciphertext.len, ptBuf, tag, 16)
-        if ret != 0 {
-            if ciphertext.len > 0 {
-                free(ptBuf)
-            }
-            return Result.Err("AES-" + keyBits.toString() + "-GCM decrypt failed: authentication error")
-        }
-
-        var plaintext: string = ""
-        for i in 0..ciphertext.len {
-            plaintext.push(*((ptBuf as i64 + i) as *u8))
-        }
-        if ciphertext.len > 0 {
-            free(ptBuf)
-        }
-        return Result.Ok(plaintext)
+// The arm returns ciphertext with the 16-byte tag appended (the usual wire layout);
+// the split into fields happens once, here.
+fn aesGcmSplit(raw: string): AesGcmResult {
+    let n = raw.len - 16
+    return AesGcmResult {
+        ciphertext: raw.substr(0, n), tag: raw.substr(n, raw.len)
     }
 }
 
@@ -191,7 +67,8 @@ requires iv.len == 12
     if iv.len != 12 {
         return Result.Err("aesGcmEncrypt: iv must be 12 bytes, got " + iv.len.toString())
     }
-    return gcmEncryptRaw(256, key, iv, plaintext, aad)
+    let raw = gcmEncryptRaw(256, key, iv, plaintext, aad)?
+    return Result.Ok(aesGcmSplit(raw))
 }
 
 // Decrypt with AES-256-GCM. Key must be 32 bytes, IV 12 bytes, tag 16 bytes.
@@ -233,7 +110,8 @@ requires iv.len == 12
     if iv.len != 12 {
         return Result.Err("aesGcm128Encrypt: iv must be 12 bytes, got " + iv.len.toString())
     }
-    return gcmEncryptRaw(128, key, iv, plaintext, aad)
+    let raw = gcmEncryptRaw(128, key, iv, plaintext, aad)?
+    return Result.Ok(aesGcmSplit(raw))
 }
 
 // Decrypt with AES-128-GCM. Key 16 bytes, IV 12 bytes, tag 16 bytes.

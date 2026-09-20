@@ -30,7 +30,7 @@ function cyclesFor(mnemonic: string): number {
   return DEFAULT_ALU;
 }
 
-export interface CycleEstimate {
+interface CycleEstimate {
   fn: string;
   loopStart: number;     // address (hex) of loop head
   bodyInstrs: number;    // instructions in the loop body

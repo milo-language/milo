@@ -18,7 +18,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { guardedRun } from "./guard";
 import { BASELINE } from "./verify-contracts.baseline";
-import { EXPECTED, type Expected } from "./verify-contracts.expected";
+import { EXPECTED } from "./verify-contracts.expected";
 
 const ROOT = join(import.meta.dir, "..");
 const CONTRACT_RE = /^[ \t]*(requires|ensures|invariant)\b/m;
@@ -58,7 +58,7 @@ export function contractFiles(): string[] {
     .sort();
 }
 
-export interface Refutation {
+interface Refutation {
   fn: string;       // the refuted function
   key: string;      // "<file>::<fn>" — baseline lookup key
   line: string;     // the raw ✗ counterexample line, for reporting
@@ -78,7 +78,7 @@ export interface FileResult {
 // Solver for the gate. z3 discharges nonlinear/bitwise contracts the native
 // QF_LIA prover can only mark `unknown`; the native prover needs no external
 // dependency. Default to z3 when it's on PATH (CI installs it), else native.
-export function gateSolver(): "z3" | "native" {
+function gateSolver(): "z3" | "native" {
   if (process.env.MILO_VERIFY_SOLVER === "native") return "native";
   if (process.env.MILO_VERIFY_SOLVER === "z3") return "z3";
   const which = Bun.spawnSync(["which", "z3"]);
@@ -115,7 +115,7 @@ export async function proveFile(miloc: string, file: string, solver = gateSolver
   };
 }
 
-export async function verifyAll(miloc: string): Promise<FileResult[]> {
+async function verifyAll(miloc: string): Promise<FileResult[]> {
   // Serial: prove is CPU-bound and guardedRun already caps memory; parallel runs
   // would fight over the same budget on CI's small runners.
   const solver = gateSolver();

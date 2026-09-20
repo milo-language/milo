@@ -5,7 +5,7 @@ import { must } from "./must";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 
-export interface VerificationCondition {
+interface VerificationCondition {
   fn: string;
   kind: "precondition" | "postcondition" | "loop-invariant" | "termination" | "struct-invariant" | "assert";
   smtlib: string;
@@ -2742,7 +2742,7 @@ export function untranslatable(smtlib: string): string[] {
 // but a reader deserves to know the difference between a proof and a proof-modulo-an-
 // unchecked-claim. A callee with no postcondition VC at all (not analyzed in this run,
 // e.g. filtered out by --onlyFile) counts as unestablished for the same reason.
-export function conditionalProofs(pr: ProveResult): Map<SolverResult, string[]> {
+function conditionalProofs(pr: ProveResult): Map<SolverResult, string[]> {
   const postconditionsByFn = new Map<string, SolverResult[]>();
   for (const r of pr.results) {
     if (r.vc.kind !== "postcondition") continue;
@@ -2885,7 +2885,7 @@ export function proveWithZ3(result: VerifyResult): ProveResult {
 // table is how a consumer ends up depending on its column widths. The SMT-LIB text of each
 // obligation is deliberately NOT included: it is large, it is an implementation detail of
 // the translator, and `--emit-smt` already prints it for anyone who wants it.
-export const PROVE_JSON_SCHEMA = 1;
+const PROVE_JSON_SCHEMA = 1;
 
 export function proveJson(pr: ProveResult): string {
   return JSON.stringify({

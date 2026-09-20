@@ -29,7 +29,6 @@ import { estimateLoopCycles, formatCycleEstimate } from "./wcet-cycles";
 import { PKG_COMMANDS, ensureDepsInstalled } from "./pkgcli";
 import { renderHelp, knownCommandNames } from "./cli-help";
 import { ensureFmtBinary } from "./fmtbin";
-import { must } from "./must";
 import { splitModule, type SplitStats } from "./cgu";
 
 // `--cgus=N` (also MILO_CGUS): how many codegen units to hand clang. Module-level rather
@@ -118,7 +117,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
 // LSP, and fuzzers that want to classify a rejection by diagnostic code instead of
 // grepping the rendered message. Before it, every consumer outside this repo had to parse
 // Elm-style terminal output — or import the TypeScript, which only in-repo code can do.
-export const CHECK_JSON_SCHEMA = 1;
+const CHECK_JSON_SCHEMA = 1;
 
 function runCheck(source: string, filePath: string, target: TargetInfo, warningConfig: WarningConfig | undefined, json: boolean): void {
   const sourceDir = dirname(resolve(filePath));
@@ -1263,7 +1262,7 @@ type TestOutcome = { file: string; name: string; ok: boolean; ms: number; output
 // `milo test [--json]`. The JSON form (schema 1) is a PUBLIC surface: a CI dashboard, a
 // flake tracker or a bisect script wants per-test records, and the alternative is scraping
 // a log whose ✓/✗ lines were never a contract.
-export const TEST_JSON_SCHEMA = 1;
+const TEST_JSON_SCHEMA = 1;
 
 async function runTests(
   testFiles: string[],

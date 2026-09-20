@@ -23,7 +23,7 @@ const TOTAL_MB = Math.floor(totalmem() / (1024 * 1024));
 // (compression would hide RSS growth and blind the watchdog).
 export const DEFAULT_MEM_MB =
   Number(process.env.MILO_GUARD_MEM_MB || 0) || Math.min(4096, Math.floor(TOTAL_MB / 4));
-export const DEFAULT_TIMEOUT_MS = Number(process.env.MILO_GUARD_TIMEOUT_MS || 0) || 60_000;
+const DEFAULT_TIMEOUT_MS = Number(process.env.MILO_GUARD_TIMEOUT_MS || 0) || 60_000;
 // Backstop across ALL concurrently guarded trees (e.g. parallel compile pools):
 // past half of RAM, the largest tree is killed even if no single tree breached.
 const GLOBAL_MEM_KB = (Number(process.env.MILO_GUARD_TOTAL_MB || 0) || Math.floor(TOTAL_MB / 2)) * 1024;
@@ -55,7 +55,7 @@ function guardedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 const FOOTPRINT_EVERY_TICKS = 10;
 
-export type GuardKill =
+type GuardKill =
   | "memory"
   | "footprint"
   | "global-memory"
@@ -110,7 +110,7 @@ async function pressureLevel(): Promise<number> {
 // phys_footprint (KB/MB/GB) and sums per group key. Dead pids just drop out
 // of the output. Returns null when footprint(1) is unavailable (linux —
 // where ulimits are enforced anyway).
-export async function footprintSums(pidsByGroup: Map<number, number[]>): Promise<Map<number, number> | null> {
+async function footprintSums(pidsByGroup: Map<number, number[]>): Promise<Map<number, number> | null> {
   const args: string[] = [];
   for (const pids of pidsByGroup.values()) for (const p of pids) args.push("-p", String(p));
   if (args.length === 0) return new Map();
@@ -201,7 +201,7 @@ async function poll() {
   schedulePoll();
 }
 
-export interface GuardOpts {
+interface GuardOpts {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;

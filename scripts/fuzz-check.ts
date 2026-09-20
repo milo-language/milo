@@ -23,7 +23,7 @@ export interface CaseResult {
   phase?: string;
 }
 
-export interface CaseOpts {
+interface CaseOpts {
   resolve?: boolean;
   sourceDir?: string;
   // Written before each stage so a caller watching from another thread can tell

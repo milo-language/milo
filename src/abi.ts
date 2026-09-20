@@ -14,12 +14,12 @@
 // GP registers (integer coerce). SysV classifies each eightbyte independently as SSE
 // (all-float -> double, lone trailing f32 -> float) or INTEGER (-> i64).
 
-export type Arch = "aarch64" | "x86_64" | "arm" | "wasm64";
+type Arch = "aarch64" | "x86_64" | "arm" | "wasm64";
 
 // The ABI is a function of arch AND OS: x86_64 Windows uses Microsoft x64, not System V,
 // and the two disagree on every struct that isn't exactly 1/2/4/8 bytes. Windows on
 // aarch64 follows AAPCS64 (HFAs included), so only the x86_64 arm needs the split.
-export type Os = "darwin" | "linux" | "windows" | "none" | "wasm";
+type Os = "darwin" | "linux" | "windows" | "none" | "wasm";
 
 export interface AbiLeaf {
   offset: number; // byte offset within the struct
@@ -35,7 +35,7 @@ export interface AbiStruct {
 }
 
 // One register-sized piece of a coerced struct: an LLVM type loaded from `offset`.
-export interface Reg {
+interface Reg {
   ty: string;
   offset: number;
 }

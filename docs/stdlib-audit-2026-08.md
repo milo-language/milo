@@ -156,7 +156,7 @@ shipped entries are deleted). This file is a record of a single audit, not a liv
   OWASP iteration floors and its honest weakness (compute-hard, not memory-hard).* Ships HMAC, JWT and AES-GCM, but `constantTimeEq` does
   not exist — so every user-written MAC check will be `==`. Also missing: sha512, HKDF,
   PBKDF2/bcrypt/argon2. A stdlib with an HTTP server, cookies and JWT has no password hashing.
-  Ref: `std/crypto.*.milo`, `std/hmac.milo`.
+  Ref: `std/crypto.milo`, `std/hmac.milo`.
 
 ---
 

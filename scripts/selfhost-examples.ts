@@ -15,7 +15,7 @@
 //
 // Every milo-self invocation goes through guardedRun: the binary under test is untrusted
 // (scripts/guard.ts), and an unguarded self-compile has crashed this machine twice.
-import { readdirSync, statSync, readFileSync, mkdtempSync, existsSync } from "fs";
+import { readdirSync, statSync, readFileSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { guardedRun } from "./guard";

@@ -1,5 +1,5 @@
 // JS codegen backend — HIR → JavaScript for browser playground
-import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern } from "./hir";
+import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg } from "./hir";
 import type { TypeKind } from "./types";
 
 // Quote a Milo string literal as its UTF-8 bytes, one byte per JS code unit — the
@@ -12,7 +12,7 @@ const __utf8 = new TextEncoder();
 // arrives here as one char per byte, so a multi-megabyte embed makes this the hottest loop
 // in the backend. Same shape as `escapeCString` in codegen.ts, which cost ~15s on
 // `examples/games/flight` before it was chunked.
-export function jsByteString(s: string): string {
+function jsByteString(s: string): string {
   const parts: string[] = ['"'];
   let chunk = "";
   for (const b of __utf8.encode(s)) {

@@ -1,0 +1,146 @@
+// std/cryptosys — platform crypto binding for std/crypto (macOS/CommonCrypto).
+//
+// Exposes raw digest bytes and the raw GCM calls only; hex encoding, the AesGcmResult
+// split, the length guards and the `Crypto` namespace live once in std/crypto.milo.
+
+from "std/os" import {
+    malloc, free
+}
+
+pub extern fn CC_SHA256(_data: *u8, _len: u32, _md: *u8): *u8
+
+pub extern fn CC_MD5(_data: *u8, _len: u32, _md: *u8): *u8
+
+pub extern fn CC_SHA1(_data: *u8, _len: u32, _md: *u8): *u8
+
+// kCCAlgorithmAES=0, encrypt=0, decrypt=1
+pub extern fn CCCryptorGCMOneshotEncrypt(_alg: i32, _key: *u8, _keyLen: i64, _iv: *u8, _ivLen: i64, _aad: *u8, _aadLen: i64, _dataIn: *u8, _dataInLen: i64, _cipherOut: *u8, _tagOut: *u8, _tagLen: i64): i32
+
+pub extern fn CCCryptorGCMOneshotDecrypt(_alg: i32, _key: *u8, _keyLen: i64, _iv: *u8, _ivLen: i64, _aad: *u8, _aadLen: i64, _cipherIn: *u8, _cipherInLen: i64, _plainOut: *u8, _tagIn: *u8, _tagLen: i64): i32
+
+// The first `n` bytes of a digest buffer as a string.
+fn cryptosysBytes(buf: &[u8; 32], n: i64): string {
+    var result: string = ""
+    for i in 0..n {
+        result.push(buf[i])
+    }
+    return result
+}
+
+// Raw 32-byte SHA-256 digest.
+pub fn sha256Raw(input: &string): string {
+    var hash: [u8; 32] = [0; 32]
+    unsafe {
+        CC_SHA256(input, input.len as u32, hash)
+    }
+    return cryptosysBytes(hash, 32)
+}
+
+// Raw 16-byte MD5 digest.
+pub fn md5Raw(input: &string): string {
+    var hash: [u8; 32] = [0; 32]
+    unsafe {
+        CC_MD5(input, input.len as u32, hash)
+    }
+    return cryptosysBytes(hash, 16)
+}
+
+// Raw 20-byte SHA-1 digest.
+pub fn sha1Raw(input: &string): string {
+    var hash: [u8; 32] = [0; 32]
+    unsafe {
+        CC_SHA1(input, input.len as u32, hash)
+    }
+    return cryptosysBytes(hash, 20)
+}
+
+// ── One GCM implementation per direction ──
+//
+// AES-128-GCM and AES-256-GCM differ by exactly one argument to CommonCrypto: the key
+// length. They used to be two 60-line copies each, and the copies had already drifted —
+// the 256 arm reported "AES-GCM encrypt failed" where the 128 arm said "AES-128-GCM".
+// std/crypto keeps the `requires` contracts and the self-naming length errors; only the
+// CommonCrypto call lives here.
+
+// AES-GCM encrypt; returns ciphertext with the 16-byte tag appended. Lengths are the
+// caller's to guarantee: std/crypto checks them before calling.
+pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string, aad: &string): Result<string, string> {
+    var tag: [u8; 16] = [0; 16]
+
+    unsafe {
+        let aadPtr = if aad.len > 0 {
+            aad as *u8
+        } else {
+            0 as *u8
+        }
+        let ptPtr = if plaintext.len > 0 {
+            plaintext as *u8
+        } else {
+            0 as *u8
+        }
+
+        var ctBuf: *u8 = 0 as *u8
+        if plaintext.len > 0 {
+            ctBuf = malloc(plaintext.len)
+        }
+
+        let ret = CCCryptorGCMOneshotEncrypt(0, key, keyBits / 8, iv, 12, aadPtr, aad.len, ptPtr, plaintext.len, ctBuf, tag, 16)
+        if ret != 0 {
+            if plaintext.len > 0 {
+                free(ctBuf)
+            }
+            return Result.Err("AES-" + keyBits.toString() + "-GCM encrypt failed")
+        }
+
+        var ciphertext: string = ""
+        for i in 0..plaintext.len {
+            ciphertext.push(*((ctBuf as i64 + i) as *u8))
+        }
+        if plaintext.len > 0 {
+            free(ctBuf)
+        }
+
+        for i in 0..16 {
+            ciphertext.push(tag[i])
+        }
+        return Result.Ok(ciphertext)
+    }
+}
+
+// AES-GCM decrypt; Err on authentication failure.
+pub fn gcmDecryptRaw(keyBits: i64, key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string> {
+    unsafe {
+        let aadPtr = if aad.len > 0 {
+            aad as *u8
+        } else {
+            0 as *u8
+        }
+        let ctPtr = if ciphertext.len > 0 {
+            ciphertext as *u8
+        } else {
+            0 as *u8
+        }
+
+        var ptBuf: *u8 = 0 as *u8
+        if ciphertext.len > 0 {
+            ptBuf = malloc(ciphertext.len)
+        }
+
+        let ret = CCCryptorGCMOneshotDecrypt(0, key, keyBits / 8, iv, 12, aadPtr, aad.len, ctPtr, ciphertext.len, ptBuf, tag, 16)
+        if ret != 0 {
+            if ciphertext.len > 0 {
+                free(ptBuf)
+            }
+            return Result.Err("AES-" + keyBits.toString() + "-GCM decrypt failed: authentication error")
+        }
+
+        var plaintext: string = ""
+        for i in 0..ciphertext.len {
+            plaintext.push(*((ptBuf as i64 + i) as *u8))
+        }
+        if ciphertext.len > 0 {
+            free(ptBuf)
+        }
+        return Result.Ok(plaintext)
+    }
+}

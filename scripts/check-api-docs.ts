@@ -60,7 +60,7 @@ function apiByModule(): Map<string, Entry[]> {
   const add = (mod: string, e: Entry) => out.set(mod, [...(out.get(mod) ?? []), e]);
   for (const e of milo(["api", "--json"]).entries) {
     if (e.kind !== "function") continue;
-    // Platform arms (regex.darwin, crypto.linux) are one importable module behind one
+    // Platform arms (regex.darwin, cryptosys.linux) are one importable module behind one
     // name; the site documents `std/regex`, so the arms fold together here.
     const base = e.module.replace(/^std\//, "").split(".")[0]!;
     add(base, { name: e.name, signature: e.signature });
@@ -139,9 +139,10 @@ function splitParams(text: string): string[] {
 
 const baseName = (n: string) => n.split(".").pop()!;
 
-export interface Problem { module: string; line: number; detail: string }
+interface Problem { module: string; line: number; detail: string }
 
 export function check(): Problem[] {
+  comparedCount = 0;
   const problems: Problem[] = [];
   for (const file of readdirSync(SITE).sort()) {
     if (!file.endsWith(".md") || file === "index.md") continue;
@@ -197,7 +198,11 @@ export function checkOne(mod: string, pageText: string): Problem[] {
 // ratcheted page look fixed — but that list is empty now, so the count is the only signal
 // left that this gate is still doing anything.
 export let comparedCount = 0;
-export function resetComparedCount(): void { comparedCount = 0; }
+// Floor, not an exact count, so adding or removing a page does not need a code edit.
+// Set well under today's number and well over zero: the failure this catches is the
+// fence detector matching nothing at all, not a page-sized drift. Shared with
+// tests/apiDocsSite.test.ts so the bun gate and the CLI gate cannot disagree.
+export const COMPARED_FLOOR = 200;
 
 function checkFence(mod: string, fence: { start: number; lines: string[] }, byBase: Map<string, Entry[]>, byName: Map<string, Entry[]>, structs: Map<string, string[]>, problems: Problem[]): void {
   checkStructListing(mod, fence, structs, problems);
@@ -266,12 +271,8 @@ if (import.meta.main) {
   const fixed = [...NOT_YET_MATCHING].filter(m => !failing.has(m) && existsSync(join(SITE, `${m}.md`)));
   console.log(`\n${comparedCount} documented signatures compared; ${problems.length} mismatched across ${failing.size} pages (${NOT_YET_MATCHING.size} on the ratchet)`);
   if (process.argv.includes("--check")) {
-    // Floor, not an exact count, so adding or removing a page does not need a code edit.
-    // Set well under today's number and well over zero: the failure this catches is the
-    // fence detector matching nothing at all, not a page-sized drift.
-    const FLOOR = 200;
-    if (comparedCount < FLOOR) {
-      console.error(`doc gate compared only ${comparedCount} signatures (floor ${FLOOR}) — the fence detector is probably not matching any more; a green run here would mean nothing`);
+    if (comparedCount < COMPARED_FLOOR) {
+      console.error(`doc gate compared only ${comparedCount} signatures (floor ${COMPARED_FLOOR}) — the fence detector is probably not matching any more; a green run here would mean nothing`);
       process.exit(1);
     }
     if (offRatchet.length) { console.error(`pages failing that are not on the ratchet: ${offRatchet.join(", ")}`); process.exit(1); }
