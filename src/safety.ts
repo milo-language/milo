@@ -2,6 +2,7 @@
 import type { Program, Function, Stmt, Expr, MiloType } from "./ast";
 import type { Span } from "./ast";
 import { must } from "./must";
+import { GROWING_MEMBERS } from "./builtin-members";
 
 export type SafetyLevel =
   | "do178c-a"    // DAL A — catastrophic failure condition (fly-by-wire, flight control)
@@ -332,8 +333,8 @@ function isAllocExpr(e: Expr): boolean {
     case "Call":
       return ["Heap", "Box", "alloc", "malloc", "format"].includes(e.func);
     case "MethodCall":
-      // growth / reallocation
-      return ["push", "append", "insert", "extend"].includes(e.method);
+      // growth / reallocation: the `grows` rows of the builtin table
+      return GROWING_MEMBERS.has(e.method);
     default:
       return false;
   }

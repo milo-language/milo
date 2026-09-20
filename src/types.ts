@@ -151,15 +151,19 @@ export function isFloat(t: TypeKind): boolean {
 // Payload-free enums are also Copy — they're just a tag, no heap-owning data inside.
 // The optional `enumIsPayloadFree` callback lets the caller (the checker) inject its
 // view of which enums have payload-bearing variants without us reaching into checker state here.
-export function isCopy(t: TypeKind, enumIsCopy?: (name: string) => boolean, structIsAllCopy?: (name: string) => boolean): boolean {
+// The callbacks are REQUIRED: a caller that omits them silently makes every struct and
+// enum non-Copy, which is how `unwrapOr` came to reject a struct that `let e = d` had just
+// copied (design pass 2026-09, F1). The checker routes every call through
+// `TypeChecker.isCopyType`; do not add a second entry point with defaults.
+export function isCopy(t: TypeKind, enumIsCopy: (name: string) => boolean, structIsAllCopy: (name: string) => boolean): boolean {
   // An OWNING closure is the one function-ish value that is not Copy: it holds a heap
   // environment, and two copies of the pair would be two owners of it. Everything else in
   // this list owns nothing — a bare function pointer, a C function pointer, a
   // by-reference closure (its environment is a stack slot in the frame that made it).
   if (t.tag === "fn") return !t.owning;
   if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr" || t.tag === "cfn" || t.tag === "ref") return true;
-  if (t.tag === "enum" && enumIsCopy && enumIsCopy(t.name)) return true;
-  if (t.tag === "struct" && structIsAllCopy && structIsAllCopy(t.name)) return true;
+  if (t.tag === "enum" && enumIsCopy(t.name)) return true;
+  if (t.tag === "struct" && structIsAllCopy(t.name)) return true;
   // A fixed-size array of Copy elements is itself Copy — it is a value with no heap and no
   // drop glue, exactly like the struct case above (Rust: `[T; N]: Copy where T: Copy`).
   // Without this, `[u8; 16]` (an IPv6 address) could not be passed to two functions: the
