@@ -40,6 +40,15 @@ export const ATTRIBUTES: AttrInfo[] = [
       "when the release is NOT a Drop impl, since Drop already forces non-Copy.",
   },
   {
+    name: "copy",
+    targets: ["struct"],
+    doc:
+      "This struct is Copy although it holds a raw pointer: it does not own what the pointer " +
+      "points at. A pointer field otherwise makes a struct move-tracked, so an owning handle " +
+      "cannot be duplicated by accident; `@copy` is the explicit claim for a C-owned record " +
+      "or a view into a buffer some other value owns. Rejected on a struct with no pointer field.",
+  },
+  {
     name: "copyOnly",
     targets: ["struct", "fn"],
     takesArgs: true,

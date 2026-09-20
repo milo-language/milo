@@ -15,7 +15,8 @@
 // `shatter` consumes the Vec, so after it there is no binding through which the
 // pixels can be reached except the windows, and the windows are disjoint by
 // construction. Each worker receives one BY MOVE — no reference crosses a thread.
-// `Shard` is @noCopy, so handing the same window to two workers would not compile.
+// `Shard` holds a raw pointer, so it is move-tracked: handing the same window to two
+// workers would not compile.
 //
 // Each worker needs to know WHICH pixels it owns, which is what `start()` is for:
 // a window's own indices run 0..len, and `start() + i` is the position in the

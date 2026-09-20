@@ -112,21 +112,25 @@ A brand does not reach what Rust reaches. Rust rejects the wrong-buffer program 
 compile time with an invariant lifetime. A brand converts a wrong answer into a named
 failure, which is strictly less, and saying so plainly is the point.
 
-### 5. `@noCopy` as the single-owner enforcer
+### 5. Move tracking as the single-owner enforcer
 
 A struct of plain scalars is `Copy`, and a `Copy` handle can be duplicated — which
 means the move checker never engages for exactly the type most likely to be used after
-it is released. `@noCopy` turns the ordinary move rule into the enforcement mechanism.
+it is released. Two rules turn the ordinary move rule into the enforcement mechanism: a
+struct with a raw pointer field is move-tracked unless it says `@copy` (the claim that
+it does not own the pointee), and `@noCopy` does the same for a handle that is only an
+integer (an fd, a GL name).
 
-`Shard<T>` is a pointer and three integers. With `@noCopy`, handing the same window to
-two workers is `error: use of moved variable` — a data race rejected at compile time
-with no concurrency analysis, by the same rule that stops you using a string twice.
+`Shard<T>` is a pointer and three integers. The pointer makes it move-tracked, so
+handing the same window to two workers is `error: use of moved variable`: a data race
+rejected at compile time with no concurrency analysis, by the same rule that stops you
+using a string twice.
 
-`@copyOnly` is its dual, and `Shard<T>` carries both: `get` reads an element through the
-raw pointer, a bitwise copy that is a second owner for any heap-owning `T`, so
-`Shard<string>` is refused at the instantiation rather than freeing one block twice at
-runtime. The two attributes together say "this handle moves, and what it hands out
-copies", which is the whole ownership story of a window.
+`@copyOnly` closes the other half: `get` reads an element through the raw pointer, a
+bitwise copy that is a second owner for any heap-owning `T`, so `Shard<string>` is
+refused at the instantiation rather than freeing one block twice at runtime. Together
+they say "this handle moves, and what it hands out copies", which is the whole
+ownership story of a window.
 
 ## What the compiler tells you
 

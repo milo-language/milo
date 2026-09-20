@@ -35,6 +35,8 @@ from "std/platform" import {
 // global namespace is rarely what a caller wants.
 pub let RTLD_NOW: i32 = 2
 
+// Owns the dlopen handle, so the pointer field makes it move-tracked: two copies would
+// each `close` it. No `@copy`, on purpose.
 pub struct Lib {
     handle: *u8,
 }

@@ -1,0 +1,58 @@
+// @expect: 7
+// @expect: 7
+// @expect: 9
+// A struct with no pointer of its own is still move-tracked when a field's struct holds
+// one: the verdict rides up through the all-fields-Copy rule. Borrows are unlimited, the
+// move happens exactly once, and a `@copy` inner struct keeps the outer one Copy.
+
+struct Inner {
+    p: *u8,
+}
+
+struct Outer {
+    inner: Inner,
+    n: i64,
+}
+
+impl Outer {
+    fn peek(self: &Self): i64 {
+        return self.n
+    }
+
+    fn release(self: Self): i64 {
+        return self.n
+    }
+}
+
+@copy
+struct Tag {
+    p: *u8,
+}
+
+struct Labeled {
+    tag: Tag,
+    n: i64,
+}
+
+fn labelN(l: Labeled): i64 {
+    return l.n
+}
+
+fn main() {
+    let o = Outer {
+        inner: Inner {
+            p: 0 as *u8
+        }
+        , n: 7
+    }
+    print(o.peek())
+    print(o.release())
+    let l = Labeled {
+        tag: Tag {
+            p: 0 as *u8
+        }
+        , n: 9
+    }
+    labelN(l)
+    print(labelN(l))
+}

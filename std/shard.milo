@@ -19,8 +19,9 @@
 //     the buffer can be reached except the windows.
 //   - the windows are disjoint BY CONSTRUCTION: window i covers exactly
 //     [i*chunk, (i+1)*chunk), computed here, never supplied by the caller.
-//   - `Shard` is @noCopy, so handing the same window to two workers is
-//     `error: use of moved variable`, not a race.
+//   - `Shard` holds a raw pointer and is not `@copy`, so it is move-tracked, and
+//     handing the same window to two workers is `error: use of moved variable`,
+//     not a race.
 //
 // And the fourth is the shape of the API. A window is a raw pointer into the owner's
 // buffer, so a program that dropped the owner while a worker still held a window
@@ -69,16 +70,16 @@ from "std/sync" import {
 
 // A disjoint, owned window over part of one Vec's storage.
 //
-// @noCopy is doing real work here: a struct of a pointer and three integers would
-// otherwise be Copy, and a Copy window could be handed to two workers at once,
-// which is exactly the race the design claims to make unrepresentable.
+// A struct of a pointer and three integers is move-tracked because of the pointer:
+// a Copy window could be handed to two workers at once, which is exactly the race
+// the design claims to make unrepresentable. (It carried `@noCopy` before a pointer
+// field made every struct move-only by default.)
 //
-// @copyOnly is its dual, and closes the other half: `get` reads `self.base[i]` through
+// @copyOnly closes the other half: `get` reads `self.base[i]` through
 // a raw pointer, which is a bitwise copy of the element. For a Copy `T` that is the
 // value; for a `string` it is a second owner of the same heap block, freed once by the
 // caller and once more when the buffer is welded back and dropped. A `Shard<string>`
 // is therefore rejected at the instantiation, where the element type is written.
-@noCopy
 @copyOnly
 pub struct Shard<T> {
     base: *T,
@@ -130,7 +131,7 @@ impl Shard<T> {
 
 // Safety: the windows a shatter hands out are pairwise disjoint by construction,
 // the Vec they cover was consumed by that shatter so no other binding reaches it,
-// and @noCopy means a window has exactly one owner at a time. What crosses the
+// and a window (a pointer-holding struct) has exactly one owner at a time. What crosses the
 // thread boundary is therefore a pointer into memory nothing else can touch for
 // as long as the window is alive.
 unsafe
@@ -456,7 +457,6 @@ pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<
 //     can be mutated or dropped while a live StrShard still points into it, so a
 //     window that never came home is the same dangling pointer the Vec side refuses.
 
-@noCopy
 pub struct StrShard {
     base: *u8,
     len: i64,

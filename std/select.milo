@@ -64,6 +64,7 @@ fn nodeChan(): i64 {
     return nodeDeadline()
 }
 
+// Owns its runtime state, so the pointer fields make it move-tracked (no `@copy`).
 pub struct Select {
     _state: *u8, // SelectState (runtime)
     _nodes: *u8, // array of _maxArms nodes, nodeSize() bytes each

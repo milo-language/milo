@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-19 (@parks cross-task freeze rule; ptr()/cstr() element views; @copyOnly and the raw type-param read rule; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-19 (@copy and the pointer-field move rule; @parks cross-task freeze rule; ptr()/cstr() element views; @copyOnly and the raw type-param read rule; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -1757,7 +1757,11 @@ print(b)         // fine
 This applies to structs, enums, strings, Vec, HashMap, and Heap.
 Primitive types (`i32`, `bool`, `f64`, etc.) are copied, not moved.
 
-A struct whose fields are all Copy is itself Copy, and so is never move-tracked.
+A struct whose fields are all Copy is itself Copy, and so is never move-tracked, with
+one exception: a struct with a field of raw pointer type (`*T`, directly or through a
+fixed array or an embedded struct) is move-tracked unless it is marked `@copy`. The
+pointer itself is a scalar, but what it addresses is often owned, and a Copy owning
+handle could be released twice. See the `@copy` section below.
 
 Ownership is tracked per **place**, not per variable, so a field can be moved out on
 its own and the rest of the struct stays usable:
@@ -1902,6 +1906,66 @@ undefined behaviour rather than a leak. `@noCopy` is move-tracked with **no dest
 forgetting to release is still a leak, but releasing twice, or using after release, is a
 compile error.
 
+### `@copy`: pointer-holding structs that own nothing
+
+The mirror image of `@noCopy`. A raw pointer is a scalar, so a struct of pointers and
+integers used to be Copy, and every owning handle in the standard library (`Database`,
+`Lib`, `Select`, a GL window) was silently duplicable unless its author remembered
+`@noCopy`. The default is now the safe one: **a struct with a raw pointer field is
+move-tracked**, and the field may sit behind a fixed array or inside an embedded struct.
+
+```milo error
+struct Conn {
+    handle: *u8,
+    id: i32,
+}
+
+impl Conn {
+    fn close(self: Self) {
+        print(self.id)
+    }
+}
+
+let c = Conn { handle: 0 as *u8, id: 3 }
+c.close()
+c.close()   // error: use of moved variable 'c'
+// hint: ... mark 'Conn' @copy if it does not own what the pointer points at.
+```
+
+`@copy` is the explicit claim that the struct does not own the pointee, so copying it
+duplicates a view and releases nothing. `std/cstr`'s `CStr` (bytes another value owns)
+and the kqueue `Kevent` record (C's, with a caller cookie in `udata`) carry it:
+
+```milo
+@copy
+struct View {
+    p: *u8,
+    len: i64,
+}
+
+fn viewLen(v: View): i64 {
+    return v.len
+}
+
+let s = "hey"
+let v = View { p: s.cstr(), len: s.len }
+print(viewLen(v))
+print(viewLen(v))    // still here: a @copy struct is Copy
+```
+
+The attribute takes no arguments, a generic's instantiations inherit it, and it is
+rejected on a struct with no pointer field (a no-op that would lie about why the type
+is Copy), alongside `@noCopy`, or on a type with a `Drop` impl. `@cLayout` does **not**
+imply `@copy`: C owning the memory does not stop a Milo-side double release, so a C
+record that is only ever read takes `@copy` explicitly, with the reason. A struct that
+is move-tracked this way gets no automatic `clone()` and refuses `@derive(Clone)`,
+exactly like `@noCopy`, and taking one out of a container by index is an error.
+
+`--deny=unowned-pointer-copy` promotes an off-by-default warning that lists every
+`@copy` struct in the build with the field that made it pointer-holding: the census of
+"Copy, although it points at something", so an audit can re-ask each one the question the
+attribute answered.
+
 ### `@copyOnly` — generics that may only hold Copy types
 
 The dual of `@noCopy`. A generic that moves elements through a raw pointer, such as
@@ -1924,7 +1988,8 @@ let c: Cells<Vec<i64>> = Cells { first: Vec.new(), len: 0 }
 ```
 
 Copy is structural: scalars, `bool`, raw pointers, payload-free enums, and structs and
-enums whose fields are all Copy. `Drop` and `@noCopy` types are never Copy. Bare,
+enums whose fields are all Copy. `Drop` and `@noCopy` types are never Copy, and neither is
+a struct with a raw pointer field unless it is `@copy`. Bare,
 `@copyOnly` constrains every type parameter; `@copyOnly(T)` names the ones it applies
 to, for a generic such as `parallelMapWith<T, S>` whose per-worker state `S` never
 crosses the raw pointer and may own a `Vec`. It is rejected on a declaration with no

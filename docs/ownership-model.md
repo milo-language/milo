@@ -3,7 +3,7 @@ system: ownership-model
 purpose: why Milo has no lifetimes — second-class references as guardrails, and how that compares to Rust
 key-files: src/checker.ts, docs/language-reference.md, docs/design.md
 update-when: reference semantics change (second-class rule, borrow/exclusivity checks, slices/arenas)
-last-verified: 2026-09-19 (raw pointers from ptr()/cstr()/h.ptr() bound to a name are element views of their source)
+last-verified: 2026-09-19 (pointer fields make a struct move-tracked unless @copy; raw pointers from ptr()/cstr()/h.ptr() bound to a name are element views of their source)
 -->
 
 # Ownership & references — why there are no lifetimes
@@ -141,6 +141,22 @@ This closes the raw-pointer analogue of the slice rule, which is the one place a
 `*T` could observe a freed buffer. What it does not do is track copies of the pointer
 value: once `p` is stored in a struct field or passed to C, the buffer's lifetime is the
 owner's obligation, as it is in every language with raw pointers.
+
+## Raw pointers in structs: move-tracked unless `@copy`
+
+The other place a `*T` lives is a struct field, and there the question is not lifetime
+but ownership. A pointer is a scalar, so a struct of pointers and integers would be Copy
+by the all-fields rule, and a Copy owning handle is a double release waiting for the
+first program to copy it: `Database`, `Lib` and `Select` in std were all exactly that
+shape. So a struct with a raw pointer field (directly, through a fixed array, or through
+an embedded struct) is **move-tracked**: pass it by value once, borrow it as often as you
+like. `@copy` is the explicit claim that the struct does not own the pointee, for a view
+such as `CStr` or a C record such as `Kevent`, and the compiler rejects it on a struct
+with no pointer field so the claim cannot be decorative. `@noCopy` remains for the handle
+with no pointer at all, an integer fd or a GL name. Both are the same idea from opposite
+ends: the type says who owns the resource, and the move checker enforces it with no
+concurrency or escape analysis of its own. See
+the `@copy` section of [the language reference](language-reference.md).
 
 ## When each model wins
 

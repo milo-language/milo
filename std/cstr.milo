@@ -5,6 +5,9 @@ from "std/os" import {
     strlen, strncmp
 }
 
+// @copy: a non-owning view. The bytes belong to whoever produced the pointer (C, or a
+// Milo string's buffer), so two CStr values over them are two readers, not two owners.
+@copy
 pub struct CStr {
     _ptr: *u8,
     _len: i64,
