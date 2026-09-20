@@ -1,0 +1,15 @@
+// `@copy` says "this struct holds a raw pointer it does not own". On a struct with no
+// pointer field it is a no-op that lies about why the type is Copy, so it is rejected
+// rather than ignored.
+// @error: '@copy' on 'Point' does nothing: no field of it is a raw pointer
+
+@copy
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    print(p.x)
+}

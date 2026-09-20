@@ -1,4 +1,6 @@
-// extern struct carrying a raw pointer, round-tripped through C by value
+// extern struct carrying a raw pointer, round-tripped through C by value.
+// @copy: the bytes are C's static buffer; a Span is a view, so passing it twice is fine.
+@copy
 pub extern struct Span {
     ptr: *u8,
     len: i64,

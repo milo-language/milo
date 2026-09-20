@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
-key-files: std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo
+key-files: std/platform.*.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo
 update-when: a public stdlib name moves, is renamed, or changes signature
 last-verified: 2026-09-19
 -->
@@ -16,6 +16,42 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 `"milo": "^0.1.0"` in its `milo.json` (see
 [the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
 marker is added here each time a version is cut.
+
+## A struct with a raw pointer field is move-tracked unless it is `@copy` (2026-09-19)
+
+**A struct holding a `*T` field, directly or through a fixed array or an embedded
+struct, is no longer Copy.** Passing one by value, assigning it, or returning it from a
+container by index moves it, and a second use is `use of moved variable`. The new
+`@copy` attribute restores Copy for a struct that does not own what the pointer points
+at; the diagnostic's hint names it. `@cLayout` does not imply `@copy`.
+
+Why: a raw pointer is a scalar, so the all-fields-Copy rule made every owning handle
+Copy unless its author remembered `@noCopy`. At the census that shipped this, five
+std types and three example handles were duplicable owning handles, each a
+double `close` waiting for the first program to copy one (WP4 of
+[the soundness sweep](plans/soundness-sweep-2026-09.md)). The default is now the safe
+one and the unsafe direction is the one that has to be spelled.
+
+What changed copy-ability, and the fix at a call site that copied it:
+
+| type | was | now | fix |
+|---|---|---|---|
+| `std/sqlite` `Database`, `Statement` | Copy | move-only | pass to a `&Database` / `&Statement` parameter; move it exactly once |
+| `std/dl` `Lib` | Copy | move-only | same |
+| `std/select` `Select` | Copy | move-only | same |
+| `std/sync` `ChannelInner` | Copy | move-only | internal; reached only through `ChannelHandle` |
+| `std/cstr` `CStr` | Copy | Copy (`@copy`: a non-owning view) | none |
+| `std/platform` `Kevent` | Copy | Copy (`@copy`: C's record, `udata` is a caller cookie) | none |
+| `std/shard` `Shard<T>`, `StrShard`; `std/seal` `Shared` | move-only via `@noCopy` | move-only via the pointer field; `@noCopy` removed | none |
+| examples: `Host` (atlas, apsis), `Screen` (flight) | Copy | move-only | none needed in-tree |
+| any user struct with a `*T` field | Copy | move-only | add `@copy` with a reason if it does not own the pointee; otherwise borrow instead of copying |
+
+A struct that is move-tracked this way also gets no automatic `clone()` and refuses
+`@derive(Clone)`, and `v[i]` on a `Vec` of them is an error, exactly as for `@noCopy`.
+`@noCopy` itself is unchanged and still needed for a handle with no pointer field (an
+integer fd, a GL name). `--deny=unowned-pointer-copy` lists every `@copy` struct in a
+build. No shim was possible: Copy-ness is a property of the declaration, and the
+whole point is that the old default was the unsound one.
 
 ## `std/shard`'s manual divide/weld path is private; the closed forms are infallible (2026-09-19)
 

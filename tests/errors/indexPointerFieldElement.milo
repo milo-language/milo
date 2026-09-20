@@ -1,0 +1,16 @@
+// Taking a pointer-holding struct out of a container by index copies it memberwise, so
+// the copy and the container's own element would both own the pointee. The same error
+// `Drop` and `@noCopy` elements get.
+// @error: cannot take 'Handle' out of a container by index: it carries a raw pointer field ('p')
+
+struct Handle {
+    p: *u8,
+    n: i64,
+}
+
+fn main() {
+    var v: Vec<Handle> = Vec.new()
+    v.push(Handle { p: 0 as *u8, n: 1 })
+    let h = v[0]
+    print(h.n)
+}

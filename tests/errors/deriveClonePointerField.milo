@@ -1,0 +1,15 @@
+// A pointer-holding struct without `@copy` gets no automatic clone(), and an explicit
+// @derive(Clone) is refused: a clone would be a second owner of what the pointer
+// addresses, the very copy the move tracking exists to prevent.
+// @error: cannot derive Clone for 'Handle': it holds a raw pointer ('p') and is not @copy
+
+@derive(Clone)
+struct Handle {
+    p: *u8,
+}
+
+fn main() {
+    let h = Handle { p: 0 as *u8 }
+    let h2 = h.clone()
+    print(h2.p as i64)
+}

@@ -1,0 +1,45 @@
+// @expect: 3
+// @expect: 3
+// @expect: 101
+// @expect: 3
+// @expect: 0
+// A `@copy` struct holds a raw pointer it does not own, so it stays Copy: pass it by
+// value as often as you like, and instantiations of a `@copy` generic inherit it.
+
+// A view over bytes another value owns.
+@copy
+struct View {
+    p: *u8,
+    len: i64,
+}
+
+fn viewLen(v: View): i64 {
+    return v.len
+}
+
+@copy
+struct Cursor<T> {
+    base: *T,
+    at: i64,
+}
+
+fn cursorAt<T>(c: Cursor<T>): i64 {
+    return c.at
+}
+
+fn main() {
+    let s = "hey"
+    let v = View {
+        p: s.cstr(), len: s.len
+    }
+    print(viewLen(v))
+    print(viewLen(v))
+    unsafe {
+        print(v.p[1] as i64)
+    }
+    let c: Cursor<u8> = Cursor {
+        base: s.cstr(), at: 3
+    }
+    print(cursorAt(c))
+    print(cursorAt(c) - 3)
+}

@@ -1,0 +1,22 @@
+// A struct with a raw pointer field is move-tracked unless it says `@copy`: the pointer
+// is a scalar, but what it addresses may be owned, and two copies of an owning handle
+// would each release it. The hint names the opt-out, so a non-owning view knows what to
+// write.
+// @error: mark 'Conn' @copy if it does not own what the pointer points at
+
+struct Conn {
+    handle: *u8,
+    id: i32,
+}
+
+impl Conn {
+    fn close(self: Self) {
+        print(self.id)
+    }
+}
+
+fn main() {
+    let c = Conn { handle: 0 as *u8, id: 3 }
+    c.close()
+    c.close()
+}

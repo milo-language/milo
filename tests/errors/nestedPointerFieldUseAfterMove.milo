@@ -1,0 +1,22 @@
+// The move tracking a pointer field brings reaches every struct that embeds it by
+// value: `Outer` has no pointer of its own, yet moving it ends its life.
+// @error: use of moved variable 'o'
+
+struct Inner {
+    p: *u8,
+}
+
+struct Outer {
+    inner: Inner,
+    n: i64,
+}
+
+fn take(o: Outer): i64 {
+    return o.n
+}
+
+fn main() {
+    let o = Outer { inner: Inner { p: 0 as *u8 }, n: 7 }
+    take(o)
+    take(o)
+}

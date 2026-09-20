@@ -294,7 +294,8 @@ impl Sealed {
 //
 // `Send` and `Sync` are audited rather than derived: the raw pointer is reached
 // only by the read paths below and by a refcount that moves under an atomic.
-@noCopy
+//
+// Move-tracked twice over: the Drop impl and the raw pointer field each make it so.
 pub struct Shared {
     _ptr: *u8,
     _bufferId: i32,

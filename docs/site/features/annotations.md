@@ -24,7 +24,8 @@ list, and `tests/langInfo.test.ts` fails if this table omits an attribute it rep
 | `@cLayout(cType, header)` | `extern struct` | Verifies field offsets against a C header |
 | `@cValue(cName, header)` | global `let` | Verifies an integer constant against a C macro |
 | `@cOpaque` | struct field | Marks filler with no C counterpart, so `@cLayout` skips it |
-| `@noCopy` | struct | Opts a struct out of the all-fields-Copy rule, so move checking engages for a type that wraps a handle |
+| `@noCopy` | struct | Opts a struct out of the all-fields-Copy rule, so move checking engages for a type that wraps an integer handle |
+| `@copy` | struct | Keeps a struct with a raw pointer field Copy: it does not own what the pointer points at. Without it a pointer field makes the struct move-tracked |
 | `@copyOnly`, `@copyOnly(T)` | struct, `fn` | Restricts a generic's type parameters to Copy types, so a container that moves elements through a raw pointer cannot be instantiated with a heap-owning `T` |
 | `@wrapping` | `fn`, method | Arithmetic inside wraps instead of trapping, for inherently modular code; `@!wrapping` applies it to a whole file |
 | `@pure` | `fn`, method | Asserts the function reads no global or module state; the checker enforces it |

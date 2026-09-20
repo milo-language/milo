@@ -209,6 +209,9 @@ pub extern fn kqueue(): i32
 pub extern fn kevent(kq: i32, changelist: *u8, nchanges: i32, eventlist: *u8, nevents: i32, timeout: *u8): i32
 
 // kevent struct: 32 bytes on darwin arm64
+// @copy: C's record, filled in by kevent(2). `udata` is the caller's opaque cookie, not
+// something a Kevent owns, so duplicating one releases nothing.
+@copy
 pub struct Kevent {
     ident: u64,
     filter: i16,

@@ -58,8 +58,9 @@ For most code, runtime-deterministic is fine. For TLS session state, kernel obje
 several `&mut` slices into one buffer are disjoint. Milo does not prove it, because it makes the
 ownership itself divisible: `parallelMap` CONSUMES a `Vec`, divides it into disjoint owned
 windows, and each worker receives one by move like any other value. No reference crosses a
-thread. The aliasing argument is the move checker that already shipped, plus `@noCopy` on the
-window, so handing the same window to two workers is a compile error rather than a race.
+thread. The aliasing argument is the move checker that already shipped: a window holds a raw
+pointer and is therefore move-tracked, so handing the same window to two workers is a compile
+error rather than a race.
 
 Measured on a 10-core machine, 20M `f64`, 4 workers, against the C program doing the banned thing
 (pthreads over one shared buffer): Milo 3 ms / 163.0 MiB, C 3 ms / 154.0 MiB, Milo sequential

@@ -267,6 +267,22 @@ export interface StructInfo {
   cLayout?: CLayout;
   // `@noCopy`: this type is move-tracked however plain its fields are. See isAllCopyStruct.
   noCopy?: boolean;
+  // `@copy`: this type stays Copy although it holds a raw pointer, because it does not own
+  // what the pointer addresses. Inherited by every instantiation of a generic.
+  copy?: boolean;
+  // The first field of raw pointer type (directly or through a fixed array) on a struct
+  // that is not `@copy`. Set at registration; it makes the struct move-tracked, since a
+  // second copy would be a second owner of whatever the pointer addresses. Named so the
+  // diagnostics can point at it. See isAllCopyStruct.
+  pointerField?: string;
+}
+
+// The first field whose type is a raw pointer, directly or through a fixed array. A struct
+// field of a pointer-holding struct is not reported here: that inner struct is itself
+// move-tracked (or `@copy`), and the ordinary all-fields-Copy rule carries the verdict up.
+export function rawPointerField(fields: { name: string; type: TypeKind }[]): string | undefined {
+  const holdsPtr = (t: TypeKind): boolean => t.tag === "ptr" || (t.tag === "array" && holdsPtr(t.element));
+  return fields.find(f => holdsPtr(f.type))?.name;
 }
 
 // A verified claim about a C type's layout, from `@cLayout(cType, header)`.
@@ -635,6 +651,10 @@ export class TypeChecker {
     // fixture) is a callback that touches no global, so on-by-default would be two false
     // positives and no true ones. Flip it on once the scan can see through `let f = bump`.
     if (!config.denied.has("opaque-call-on-thread") && !config.expected?.has("opaque-call-on-thread")) config.allowed.add("opaque-call-on-thread");
+    // unowned-pointer-copy is OFF by default: it fires on every `@copy` struct, which is to
+    // say on a deliberate annotation, not a smell. It exists so `--deny=unowned-pointer-copy`
+    // can enumerate the pointer-holding Copy types of a build and audit each claim.
+    if (!config.denied.has("unowned-pointer-copy") && !config.expected?.has("unowned-pointer-copy")) config.allowed.add("unowned-pointer-copy");
     // index-clone is ON by default. It was off on the theory that most hits are working
     // code paying a cost the author accepted, but the lint does not fire on the cases
     // where that is true: `isCopy` skips register copies, so a `Vec<Pod>` bind is silent
@@ -930,11 +950,15 @@ export class TypeChecker {
   // per iteration. `for m in v` binds by reference and clones nothing, so the cheap
   // spelling already exists — it is just undiscoverable at the moment it matters.
   // A struct whose duplication has a MEANING beyond copying bytes: a Drop impl that
-  // releases something, or `@noCopy` on a handle. Returns which, for the diagnostic.
-  private resourceKind(ty: TypeKind): "Drop" | "@noCopy" | null {
+  // releases something, `@noCopy` on a handle, or a raw pointer field without `@copy`.
+  // Returns which, for the diagnostic.
+  private resourceKind(ty: TypeKind): string | null {
     if (ty.tag !== "struct") return null;
     if (this.dropImpls.has(ty.name)) return "Drop";
-    return this.structs.get(ty.name)?.noCopy ? "@noCopy" : null;
+    const info = this.structs.get(ty.name);
+    if (info?.noCopy) return "@noCopy";
+    if (info?.pointerField) return `a raw pointer field ('${info.pointerField}') and is not @copy`;
+    return null;
   }
 
   private lintIndexClone(value: Expr, ty: TypeKind, span?: Span) {
@@ -1619,7 +1643,9 @@ export class TypeChecker {
       case "string": case "vec": case "hashmap": case "heap": return "it owns heap memory";
       case "struct": {
         if (this.dropImpls.has(t.name)) return "it implements Drop";
-        if (this.structs.get(t.name)?.noCopy) return "it is @noCopy";
+        const info = this.structs.get(t.name);
+        if (info?.noCopy) return "it is @noCopy";
+        if (info?.pointerField) return `it holds a raw pointer ('${info.pointerField}') and is not @copy`;
         return "a field of it owns heap memory";
       }
       case "enum": return "a variant of it owns heap memory";
@@ -1704,6 +1730,7 @@ export class TypeChecker {
       // `@noCopy` generic inherits it — `Handle<Texture>` is no more copyable than
       // the `Handle<T>` it came from.
       ...(generic.decl.attributes?.some(a => a.name === "noCopy") ? { noCopy: true } : {}),
+      ...(generic.decl.attributes?.some(a => a.name === "copy") ? { copy: true } : {}),
     };
     this.structs.set(mangled, entry);
     entry.fields = generic.decl.fields.map(f => ({
@@ -1711,6 +1738,12 @@ export class TypeChecker {
       type: this.resolve(this.substituteMiloType(f.type, generic.typeParams, typeArgs)),
       ...(f.attributes?.some(a => a.name === "iter") ? { iterDelegate: true } : {}),
     }));
+    // Judged on the instance, not the template: `Shard<T> { base: *T }` holds a pointer
+    // in every instance, and `Cell<T> { v: T }` holds one exactly when `T` is a pointer.
+    if (!entry.copy) {
+      const pf = rawPointerField(entry.fields);
+      if (pf) entry.pointerField = pf;
+    }
 
     const decl: StructDecl = {
       kind: "StructDecl",
@@ -2574,9 +2607,13 @@ export class TypeChecker {
             this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in a collection`, undefined, `references are second-class — store owned values instead`);
           }
         }
+        const copy = s.attributes?.some(a => a.name === "copy") ?? false;
+        const pointerField = copy ? undefined : rawPointerField(fields);
         this.structs.set(s.name, {
           fields, isExtern: s.isExtern, isOpaque: s.isOpaque,
           ...(s.attributes?.some(a => a.name === "noCopy") ? { noCopy: true } : {}),
+          ...(copy ? { copy: true } : {}),
+          ...(pointerField ? { pointerField } : {}),
         });
       }
     }
@@ -2645,6 +2682,7 @@ export class TypeChecker {
             this.error(`'@noCopy' on '${s.name}' takes no arguments`, s.span,
               `write '@noCopy' on its own line above the struct`);
           }
+          if (attr.name === "copy") this.validateCopyAttr(s, attr, program);
           if (attr.name === "copyOnly") this.validateCopyOnly(s.name, attr, s.typeParams.map(t => t.name), s.span);
         }
       }
@@ -3173,6 +3211,7 @@ export class TypeChecker {
         if (program.impls.some(i => i.traitName === "Clone" && i.typeName === s.name)) continue;
         if (program.impls.some(i => i.traitName === "Drop" && i.typeName === s.name)) continue;
         if (s.attributes?.some(a => a.name === "noCopy")) continue;
+        if (this.structs.get(s.name)?.pointerField) continue;
         let allClone = true;
         for (const f of s.fields) {
           const ft = this.resolve(f.type);
@@ -3214,6 +3253,11 @@ export class TypeChecker {
     if (!skipValidation) {
       if (this.dropImpls.has(s.name) || s.attributes?.some(a => a.name === "noCopy")) {
         this.error(`cannot derive Clone for '${s.name}': it is a resource type (Drop or @noCopy), and duplicating it would release the resource twice`, s.span);
+      }
+      const pointerField = this.structs.get(s.name)?.pointerField;
+      if (pointerField) {
+        this.error(`cannot derive Clone for '${s.name}': it holds a raw pointer ('${pointerField}') and is not @copy, so a clone would be a second owner of what the pointer addresses`, s.span,
+          `mark '${s.name}' @copy if it does not own what the pointer points at; otherwise write the Clone impl by hand so it duplicates the pointee`);
       }
       for (const f of s.fields) {
         const ft = this.resolve(f.type);
@@ -4825,6 +4869,43 @@ export class TypeChecker {
       };
       walk(f.body, [], []);
     }
+  }
+
+  // `@copy` is a claim with one meaning: this struct holds a raw pointer it does not own.
+  // On a struct with no pointer field it is a no-op that lies about why the type is Copy,
+  // so it is rejected rather than ignored. A generic template is judged on its declared
+  // field types (`*T`, `*u8`), since a bare `T` may or may not become a pointer.
+  private validateCopyAttr(s: StructDecl, attr: Attribute, program: Program) {
+    if (attr.args && attr.args.length > 0) {
+      this.error(`'@copy' on '${s.name}' takes no arguments`, s.span,
+        `write '@copy' on its own line above the struct`);
+    }
+    if (s.attributes?.some(a => a.name === "noCopy")) {
+      this.error(`'@copy' and '@noCopy' on '${s.name}' contradict each other`, s.span,
+        `'@copy' keeps a pointer-holding struct Copy; '@noCopy' makes a struct move-tracked. Keep the one that says who owns the resource`);
+      return;
+    }
+    if (program.impls.some(i => i.traitName === "Drop" && i.typeName === s.name)) {
+      this.error(`'@copy' on '${s.name}' contradicts its Drop impl: a type with a destructor is never Copy`, s.span,
+        `a Drop impl means the value owns something to release, which is exactly what '@copy' denies. Drop the attribute`);
+      return;
+    }
+    const isPtrType = (t: MiloType): boolean => t.isPtr || (t.ptrDepth ?? 0) > 0;
+    const pointerField = s.typeParams.length > 0
+      ? s.fields.find(f => isPtrType(f.type))?.name
+      : rawPointerField(this.structs.get(s.name)?.fields ?? []);
+    if (!pointerField) {
+      this.error(`'@copy' on '${s.name}' does nothing: no field of it is a raw pointer`, s.span,
+        `'@copy' keeps a struct Copy although it holds a raw pointer it does not own. A struct with no pointer field is already Copy when its fields are, so drop the attribute`);
+      return;
+    }
+    // The census of pointer-carrying Copy structs, as a lint. Off by default: every
+    // `@copy` in the tree was placed on purpose. `--deny=unowned-pointer-copy` lists them,
+    // so an audit can re-ask each one the question the attribute answered.
+    this.warn("unowned-pointer-copy",
+      `'${s.name}' is @copy and holds a raw pointer ('${pointerField}'): a copy of it shares whatever the pointer addresses`,
+      s.span,
+      `this is what '@copy' asks for. Confirm that '${s.name}' does not own the pointee (a C-owned record, a view into a buffer another value owns); if it does, remove '@copy' so the struct is move-tracked`);
   }
 
   // `@copyOnly` constrains type parameters, so on a declaration without any it would be
@@ -6866,6 +6947,12 @@ export class TypeChecker {
     // requirement the compiler can't see (glDeleteTextures needs the context still
     // current) can't take a Drop. This is that case: move-tracked, no destructor.
     if (info.noCopy) { this.allCopyCache.set(name, false); return false; }
+    // A raw pointer is Copy as a scalar, so a struct of pointers used to be Copy too, and
+    // every owning handle (`Database`, `Lib`, a GL window) was silently duplicable unless
+    // its author remembered `@noCopy`. The default is now the safe one: a pointer field
+    // makes the struct move-tracked, and `@copy` is the explicit claim that the struct
+    // does not own the pointee (a C record, a view into someone else's buffer).
+    if (info.pointerField) { this.allCopyCache.set(name, false); return false; }
     // guard against cycles
     this.allCopyCache.set(name, false);
     const result = info.fields.every(f =>
@@ -8233,6 +8320,7 @@ export class TypeChecker {
         // that cannot be applied. Point at the ownership question instead.
         const t = this.deref(info.type);
         const noCopy = t.tag === "struct" && this.structs.get(t.name)?.noCopy === true;
+        const pointerField = t.tag === "struct" ? this.structs.get(t.name)?.pointerField : undefined;
         // An owning closure has no `.clone()` to suggest — cloning it would mean copying a
         // captured environment whose contents may not be clonable at all, and duplicating
         // the environment is exactly what makes it unsound to own. Say what it is instead.
@@ -8246,6 +8334,8 @@ export class TypeChecker {
             // A type from a package is stored as `gl$Texture2D`; the hint tells the
             // reader what to type, and what they type is the bare name they imported.
             ? `'${expr.name}' is a @noCopy handle, so transferring it ended its life here — copying one would let the same resource be released twice. Borrow it (pass it to a '&${this.show(t).split("$").pop()}' parameter) instead of transferring, or reorder so the transfer is last.`
+            : pointerField
+            ? `'${expr.name}' holds a raw pointer ('${pointerField}'), so it is move-tracked and transferring it ended its life here: a copy would be a second owner of whatever the pointer addresses. Borrow it (pass it to a '&${this.show(t).split("$").pop()}' parameter) instead of transferring, reorder so the transfer is last, or mark '${this.show(t).split("$").pop()}' @copy if it does not own what the pointer points at.`
             : `ownership of '${expr.name}' was transferred earlier and it can no longer be used here. To keep it alive, clone it at the point of transfer: '${expr.name}.clone()'.`,
         );
       }

@@ -33,6 +33,9 @@ export const WARNINGS: WarningInfo[] = [
   { name: "shadows-stdlib-override" },
   { name: "single-variant-match", offByDefault: true },
   { name: "unused-import", offByDefault: true },
+  // The census of `@copy` structs. Every hit is a deliberate annotation, so it is off by
+  // default; `--deny=unowned-pointer-copy` enumerates them for an ownership audit.
+  { name: "unowned-pointer-copy", offByDefault: true },
   { name: "unused-move", offByDefault: true },
   { name: "unused-result" },
   { name: "unused-unsafe" },

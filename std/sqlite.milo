@@ -59,6 +59,8 @@ pub extern fn sqlite3_changes(db: *u8): i32
 
 pub extern fn sqlite3_last_insert_rowid(db: *u8): i64
 
+// Both handles own what sqlite handed back, so the pointer fields make them
+// move-tracked: a second copy would `close`/`finalize` the same object again.
 pub struct Database {
     _handle: *u8,
 }
