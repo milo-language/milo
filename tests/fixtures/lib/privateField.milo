@@ -1,0 +1,15 @@
+// A struct with `_`-prefixed fields, derived Json and Eq. Other files reach the fields
+// only through the constructor and the derived methods: serialization is not access.
+@derive(Json)
+@derive(Eq)
+pub struct Secret {
+    _code: i64,
+    _tag: string,
+    name: string,
+}
+
+pub fn makeSecret(code: i64, tag: string, name: string): Secret {
+    return Secret {
+        _code: code, _tag: tag, name: name
+    }
+}

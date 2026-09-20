@@ -1,0 +1,33 @@
+// A `_`-prefixed field is file-private. Inside the declaring file nothing changes: the
+// literal, the read, the write and the methods all reach it as before.
+// @expect: 3 4
+// @expect: 5
+// @expect: 6
+
+struct Counter {
+    _n: i32,
+    label: string,
+}
+
+impl Counter {
+    fn bump(self: &mut Self) {
+        self._n = self._n + 1
+    }
+    fn value(self: &Self): i32 {
+        return self._n
+    }
+}
+
+fn main(): i32 {
+    var c = Counter {
+        _n: 3, label: "c"
+    }
+    let before = c._n
+    c._n = 4
+    print(before, " ", c._n)
+    c.bump()
+    print(c.value())
+    c._n = c._n + 1
+    print(c._n)
+    return 0
+}

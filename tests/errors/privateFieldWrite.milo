@@ -1,0 +1,8 @@
+// @error: field '_x' of 'S' is private to
+from "lib/privateField" import { S, makeS }
+
+fn main(): i32 {
+    var s = makeS(3)
+    s._x = 4
+    return s.y
+}

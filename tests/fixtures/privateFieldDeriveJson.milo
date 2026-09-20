@@ -1,0 +1,28 @@
+// `@derive(Json)` and `@derive(Eq)` on a struct whose fields are `_`-private. The derived
+// methods are generated in the declaring file's scope, so they keep reading the fields;
+// this file cannot name `_code` but still round-trips and compares whole values.
+// @expect: {"_code":7,"_tag":"t","name":"n"}
+// @expect: rt {"_code":7,"_tag":"t","name":"n"}
+// @expect: eq true
+// @expect: ne true
+from "lib/privateField" import {
+    Secret, makeSecret
+}
+
+fn main(): i32 {
+    let s = makeSecret(7, "t", "n")
+    let text = s.toJson()
+    print(text)
+    match Secret.fromJson(text) {
+        Result.Ok(r) => {
+            print("rt ", r.toJson())
+            print("eq ", r == s)
+        }
+        Result.Err(e) => {
+            print("decode failed")
+        }
+    }
+    let other = makeSecret(8, "t", "n")
+    print("ne ", other != s)
+    return 0
+}
