@@ -73,26 +73,26 @@ fn loadFont(gl: &mut GlContext, png: &string): Texture2D {
                 px[i] = 0xFF000000 | (a << 16) | (a << 8) | a
                 i = i + 1
             }
-            return Texture2D.rgba8(gl, img.width, img.height, px, true)
+            return Texture2D.rgba8(&mut gl, img.width, img.height, px, true)
         }
         Result.Err(_) => {
             var px: Vec<u32> = Vec.filled(1, 0)
-            return Texture2D.rgba8(gl, 1, 1, px, false)
+            return Texture2D.rgba8(&mut gl, 1, 1, px, false)
         }
     }
 }
 
 pub fn uiNew(gl: &mut GlContext, fontPng: &string): Result<Ui, string> {
-    let sh = Shader.compile(gl, UI_VERT, UI_FRAG)?
+    let sh = Shader.compile(&mut gl, UI_VERT, UI_FRAG)?
     var attrs: Vec<i64> = Vec.new()
     attrs.push(2) // position, in drawable pixels
     attrs.push(2) // uv
     attrs.push(4) // rgba
     attrs.push(4) // mode, radius, halfWidth, halfHeight
-    let font = loadFont(gl, fontPng)
+    let font = loadFont(&mut gl, fontPng)
     return Result.Ok(Ui {
         verts: Vec.new(),
-        mesh: Mesh.new(gl, attrs),
+        mesh: Mesh.new(&mut gl, attrs),
         shader: sh,
         font: font,
         atlasW: 1.0,
@@ -127,12 +127,12 @@ fn vert(u: &mut Ui, x: f64, y: f64, s: f64, t: f64, r: f64, g: f64, b: f64, a: f
 fn quad(u: &mut Ui, x: f64, y: f64, w: f64, h: f64, s0: f64, t0: f64, s1: f64, t1: f64, r: f64, g: f64, b: f64, a: f64, mode: f64, rad: f64) {
     let hw = w * 0.5
     let hh = h * 0.5
-    vert(u, x, y, s0, t0, r, g, b, a, mode, rad, hw, hh)
-    vert(u, x + w, y, s1, t0, r, g, b, a, mode, rad, hw, hh)
-    vert(u, x + w, y + h, s1, t1, r, g, b, a, mode, rad, hw, hh)
-    vert(u, x, y, s0, t0, r, g, b, a, mode, rad, hw, hh)
-    vert(u, x + w, y + h, s1, t1, r, g, b, a, mode, rad, hw, hh)
-    vert(u, x, y + h, s0, t1, r, g, b, a, mode, rad, hw, hh)
+    vert(&mut u, x, y, s0, t0, r, g, b, a, mode, rad, hw, hh)
+    vert(&mut u, x + w, y, s1, t0, r, g, b, a, mode, rad, hw, hh)
+    vert(&mut u, x + w, y + h, s1, t1, r, g, b, a, mode, rad, hw, hh)
+    vert(&mut u, x, y, s0, t0, r, g, b, a, mode, rad, hw, hh)
+    vert(&mut u, x + w, y + h, s1, t1, r, g, b, a, mode, rad, hw, hh)
+    vert(&mut u, x, y + h, s0, t1, r, g, b, a, mode, rad, hw, hh)
 }
 
 pub struct Rgba {
@@ -156,26 +156,26 @@ pub fn fade(c: &Rgba, k: f64): Rgba {
 
 impl Ui {
     fn rect(self: &mut Self, x: f64, y: f64, w: f64, h: f64, c: &Rgba) {
-        quad(self, x, y, w, h, 0.0, 0.0, 1.0, 1.0, c.r, c.g, c.b, c.a, MODE_SOLID, 0.0)
+        quad(&mut self, x, y, w, h, 0.0, 0.0, 1.0, 1.0, c.r, c.g, c.b, c.a, MODE_SOLID, 0.0)
     }
 
     fn roundRect(self: &mut Self, x: f64, y: f64, w: f64, h: f64, rad: f64, c: &Rgba) {
-        quad(self, x, y, w, h, 0.0, 0.0, 1.0, 1.0, c.r, c.g, c.b, c.a, MODE_ROUND, rad)
+        quad(&mut self, x, y, w, h, 0.0, 0.0, 1.0, 1.0, c.r, c.g, c.b, c.a, MODE_ROUND, rad)
     }
 
     // A soft radial falloff, centred on (cx, cy).
     fn glow(self: &mut Self, cx: f64, cy: f64, radius: f64, c: &Rgba) {
-        quad(self, cx - radius, cy - radius, radius * 2.0, radius * 2.0, 0.0, 0.0, 1.0, 1.0, c.r, c.g, c.b, c.a, MODE_GLOW, 0.0)
+        quad(&mut self, cx - radius, cy - radius, radius * 2.0, radius * 2.0, 0.0, 0.0, 1.0, 1.0, c.r, c.g, c.b, c.a, MODE_GLOW, 0.0)
     }
 
     // A filled circle, antialiased by its own radius: the marker for a body that
     // is too small on screen to be worth a sphere.
     fn disc(self: &mut Self, cx: f64, cy: f64, radius: f64, c: &Rgba) {
-        quad(self, cx - radius, cy - radius, radius * 2.0, radius * 2.0, 0.0, 0.0, 1.0, 1.0, c.r, c.g, c.b, c.a, MODE_DISC, radius)
+        quad(&mut self, cx - radius, cy - radius, radius * 2.0, radius * 2.0, 0.0, 0.0, 1.0, 1.0, c.r, c.g, c.b, c.a, MODE_DISC, radius)
     }
 
     fn ring(self: &mut Self, cx: f64, cy: f64, radius: f64, thick: f64, c: &Rgba) {
-        quad(self, cx - radius, cy - radius, radius * 2.0, radius * 2.0, 0.0, 0.0, 1.0, 1.0, c.r, c.g, c.b, c.a, MODE_RING, thick)
+        quad(&mut self, cx - radius, cy - radius, radius * 2.0, radius * 2.0, 0.0, 0.0, 1.0, 1.0, c.r, c.g, c.b, c.a, MODE_RING, thick)
     }
 
     // One segment, `width` pixels across, with uv.y running -1 to +1 across the
@@ -183,13 +183,13 @@ impl Ui {
     // width along the segment, which closes the notch a polyline would otherwise
     // show on the outside of every bend.
     fn line(self: &mut Self, x0: f64, y0: f64, x1: f64, y1: f64, width: f64, c: &Rgba) {
-        lineMode(self, x0, y0, x1, y1, width, c, MODE_LINE)
+        lineMode(&mut self, x0, y0, x1, y1, width, c, MODE_LINE)
     }
 
     // The same segment with a gaussian falloff across it — the halo that sits
     // under the transfer arc and makes it read as light rather than as ink.
     fn lineGlow(self: &mut Self, x0: f64, y0: f64, x1: f64, y1: f64, width: f64, c: &Rgba) {
-        lineMode(self, x0, y0, x1, y1, width, c, MODE_LINE_GLOW)
+        lineMode(&mut self, x0, y0, x1, y1, width, c, MODE_LINE_GLOW)
     }
 
     // `size` is the advance per character in pixels; a glyph box is 4/3 of that
@@ -210,7 +210,7 @@ impl Ui {
                 let idx = code - FIRST
                 let s0 = ((idx % COLS) as f64) * du
                 let t0 = ((idx / COLS) as f64) * dv
-                quad(self, x + adv * (i as f64), y, boxW, boxH, s0, t0, s0 + du, t0 + dv, c.r, c.g, c.b, c.a, MODE_GLYPH, 0.0)
+                quad(&mut self, x + adv * (i as f64), y, boxW, boxH, s0, t0, s0 + du, t0 + dv, c.r, c.g, c.b, c.a, MODE_GLYPH, 0.0)
             }
             i = i + 1
         }
@@ -250,9 +250,9 @@ impl Ui {
     }
 
     fn free(self: Self, gl: &mut GlContext) {
-        self.mesh.free(gl)
-        self.shader.free(gl)
-        self.font.free(gl)
+        self.mesh.free(&mut gl)
+        self.shader.free(&mut gl)
+        self.font.free(&mut gl)
     }
 }
 
@@ -274,12 +274,12 @@ fn lineMode(u: &mut Ui, x0: f64, y0: f64, x1: f64, y1: f64, width: f64, c: &Rgba
     let ay = y0 - ey
     let bx = x1 + ex
     let by = y1 + ey
-    vert(u, ax + nx, ay + ny, 0.0, 1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
-    vert(u, bx + nx, by + ny, 1.0, 1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
-    vert(u, bx - nx, by - ny, 1.0, -1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
-    vert(u, ax + nx, ay + ny, 0.0, 1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
-    vert(u, bx - nx, by - ny, 1.0, -1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
-    vert(u, ax - nx, ay - ny, 0.0, -1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
+    vert(&mut u, ax + nx, ay + ny, 0.0, 1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
+    vert(&mut u, bx + nx, by + ny, 1.0, 1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
+    vert(&mut u, bx - nx, by - ny, 1.0, -1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
+    vert(&mut u, ax + nx, ay + ny, 0.0, 1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
+    vert(&mut u, bx - nx, by - ny, 1.0, -1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
+    vert(&mut u, ax - nx, ay - ny, 0.0, -1.0, c.r, c.g, c.b, c.a, mode, hw, 0.0, 0.0)
 }
 
 pub fn textWidth(s: &string, size: f64): f64 {

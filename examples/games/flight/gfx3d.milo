@@ -423,7 +423,7 @@ fn behind(v: &View, a: &Vtx, b: &Vtx, d: &Vtx): bool {
 // A flat-shaded world-space triangle: the Gouraud case with one colour on all
 // three vertices and no light term, which the interpolation reproduces exactly.
 pub fn triangle(s: &mut Scene, v: &View, wa: &Vec3, wb: &Vec3, wd: &Vec3, col: &Rgb) {
-    triangleG(s, v, vtxC(wa.x, wa.y, wa.z, 0.0, 0.0, 1.0, col.r, col.g, col.b, 0.0), vtxC(wb.x, wb.y, wb.z, 0.0, 0.0, 1.0, col.r, col.g, col.b, 0.0), vtxC(wd.x, wd.y, wd.z, 0.0, 0.0, 1.0, col.r, col.g, col.b, 0.0), 1.0, 1.0, 1.0)
+    triangleG(&mut s, v, vtxC(wa.x, wa.y, wa.z, 0.0, 0.0, 1.0, col.r, col.g, col.b, 0.0), vtxC(wb.x, wb.y, wb.z, 0.0, 0.0, 1.0, col.r, col.g, col.b, 0.0), vtxC(wd.x, wd.y, wd.z, 0.0, 0.0, 1.0, col.r, col.g, col.b, 0.0), 1.0, 1.0, 1.0)
 }
 
 // A textured world-space triangle. The texture is named by the `&Texture` it was
@@ -433,9 +433,9 @@ pub fn triangleV(s: &mut Scene, view: &View, t: &Texture, wa: &Vtx, wb: &Vtx, wd
         return
     }
     let slot = t.slot
-    push(s.streams[slot], wa, tr, tg, tb, wa.tw)
-    push(s.streams[slot], wb, tr, tg, tb, wb.tw)
-    push(s.streams[slot], wd, tr, tg, tb, wd.tw)
+    push(&mut s.streams[slot], wa, tr, tg, tb, wa.tw)
+    push(&mut s.streams[slot], wb, tr, tg, tb, wb.tw)
+    push(&mut s.streams[slot], wd, tr, tg, tb, wd.tw)
     s.tris = s.tris + 1
 }
 
@@ -449,9 +449,9 @@ pub fn triangleF(s: &mut Scene, view: &View, wa: &Vtx, wb: &Vtx, wd: &Vtx, width
     if behind(view, wa, wb, wd) {
         return
     }
-    push(s.streams[SLOT_FALL], wa, width, total, spray, wa.tw)
-    push(s.streams[SLOT_FALL], wb, width, total, spray, wb.tw)
-    push(s.streams[SLOT_FALL], wd, width, total, spray, wd.tw)
+    push(&mut s.streams[SLOT_FALL], wa, width, total, spray, wa.tw)
+    push(&mut s.streams[SLOT_FALL], wb, width, total, spray, wb.tw)
+    push(&mut s.streams[SLOT_FALL], wd, width, total, spray, wd.tw)
     s.tris = s.tris + 1
 }
 
@@ -462,9 +462,9 @@ pub fn triangleG(s: &mut Scene, view: &View, wa: &Vtx, wb: &Vtx, wd: &Vtx, tr: f
     if behind(view, wa, wb, wd) {
         return
     }
-    push(s.streams[SLOT_NONE], wa, tr, tg, tb, 0.0)
-    push(s.streams[SLOT_NONE], wb, tr, tg, tb, 0.0)
-    push(s.streams[SLOT_NONE], wd, tr, tg, tb, 0.0)
+    push(&mut s.streams[SLOT_NONE], wa, tr, tg, tb, 0.0)
+    push(&mut s.streams[SLOT_NONE], wb, tr, tg, tb, 0.0)
+    push(&mut s.streams[SLOT_NONE], wd, tr, tg, tb, 0.0)
     s.tris = s.tris + 1
 }
 

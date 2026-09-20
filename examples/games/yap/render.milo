@@ -42,7 +42,7 @@ fn rectY(c: &mut Canvas, x0: f64, x1: f64, ya: f64, yb: f64, r: f64, g: f64, b: 
         y0 = yb
         y1 = ya
     }
-    fillRect(c, x0, y0, x1, y1, r, g, b, 1.0)
+    fillRect(&mut c, x0, y0, x1, y1, r, g, b, 1.0)
 }
 
 // ── background ────────────────────────────────────────────────────────────────
@@ -55,10 +55,10 @@ fn drawClouds(c: &mut Canvas, w: &World) {
         x = x - Math.floor(x / span) * span
         let y = 48.0 + hashi(i, 5) * 210.0
         let s = 0.55 + hashi(i, 7) * 0.75
-        spot(c, x, y, 62.0 * s, 0.20, 0.20, 0.23)
-        spot(c, x + 44.0 * s, y + 10.0 * s, 46.0 * s, 0.17, 0.17, 0.20)
-        spot(c, x - 40.0 * s, y + 12.0 * s, 40.0 * s, 0.15, 0.15, 0.18)
-        spot(c, x + 14.0 * s, y - 20.0 * s, 34.0 * s, 0.14, 0.14, 0.17)
+        spot(&mut c, x, y, 62.0 * s, 0.20, 0.20, 0.23)
+        spot(&mut c, x + 44.0 * s, y + 10.0 * s, 46.0 * s, 0.17, 0.17, 0.20)
+        spot(&mut c, x - 40.0 * s, y + 12.0 * s, 40.0 * s, 0.15, 0.15, 0.18)
+        spot(&mut c, x + 14.0 * s, y - 20.0 * s, 34.0 * s, 0.14, 0.14, 0.17)
     }
 }
 
@@ -75,14 +75,14 @@ fn drawHouses(c: &mut Canvas, w: &World) {
         let hgt = 74.0 + hashi(idx, 21) * 96.0
         let wid = 96.0 + hashi(idx, 23) * 74.0
         let top = base - hgt
-        fillRect(c, x, top, x + wid, base, 0.055, 0.050, 0.090, 1.0)
+        fillRect(&mut c, x, top, x + wid, base, 0.055, 0.050, 0.090, 1.0)
         // roof: three stacked steps read as a pitch at this size
-        fillRect(c, x - 8.0, top, x + wid + 8.0, top + 7.0, 0.040, 0.035, 0.070, 1.0)
-        fillRect(c, x + wid * 0.18, top - 12.0, x + wid * 0.82, top, 0.048, 0.042, 0.078, 1.0)
-        fillRect(c, x + wid * 0.34, top - 22.0, x + wid * 0.66, top - 12.0, 0.048, 0.042, 0.078, 1.0)
+        fillRect(&mut c, x - 8.0, top, x + wid + 8.0, top + 7.0, 0.040, 0.035, 0.070, 1.0)
+        fillRect(&mut c, x + wid * 0.18, top - 12.0, x + wid * 0.82, top, 0.048, 0.042, 0.078, 1.0)
+        fillRect(&mut c, x + wid * 0.34, top - 22.0, x + wid * 0.66, top - 12.0, 0.048, 0.042, 0.078, 1.0)
         if hashi(idx, 27) > 0.55 {
             let cx = x + wid * (0.15 + hashi(idx, 29) * 0.2)
-            fillRect(c, cx, top - 30.0, cx + 14.0, top, 0.045, 0.040, 0.075, 1.0)
+            fillRect(&mut c, cx, top - 30.0, cx + 14.0, top, 0.045, 0.040, 0.075, 1.0)
         }
         k = k + 1
     }
@@ -92,8 +92,8 @@ fn drawFence(c: &mut Canvas, w: &World) {
     let span = 30.0
     let off = w.groundX * 0.55
     let top = GROUND_Y - 104.0
-    fillRect(c, 0.0, top + 24.0, c.w as f64, top + 34.0, 0.115, 0.062, 0.030, 1.0)
-    fillRect(c, 0.0, top + 66.0, c.w as f64, top + 76.0, 0.115, 0.062, 0.030, 1.0)
+    fillRect(&mut c, 0.0, top + 24.0, c.w as f64, top + 34.0, 0.115, 0.062, 0.030, 1.0)
+    fillRect(&mut c, 0.0, top + 66.0, c.w as f64, top + 76.0, 0.115, 0.062, 0.030, 1.0)
     var k: i64 = 0 - 1
     while k < 46 {
         let idx = (Math.floor(off / span) as i64) + k
@@ -101,18 +101,18 @@ fn drawFence(c: &mut Canvas, w: &World) {
         if x > 0.0 - 30.0 && x < (c.w as f64) + 30.0 {
             let jitter = hashi(idx, 41) * 6.0
             let shade = 0.10 + hashi(idx, 43) * 0.05
-            fillRect(c, x, top + jitter, x + 22.0, GROUND_Y, shade, shade * 0.55, shade * 0.28, 1.0)
+            fillRect(&mut c, x, top + jitter, x + 22.0, GROUND_Y, shade, shade * 0.55, shade * 0.28, 1.0)
             // pointed plank cap
-            fillRect(c, x + 4.0, top - 6.0 + jitter, x + 18.0, top + jitter, shade, shade * 0.55, shade * 0.28, 1.0)
+            fillRect(&mut c, x + 4.0, top - 6.0 + jitter, x + 18.0, top + jitter, shade, shade * 0.55, shade * 0.28, 1.0)
         }
         k = k + 1
     }
 }
 
 fn drawGrass(c: &mut Canvas, w: &World) {
-    fillRect(c, 0.0, GROUND_Y, c.w as f64, c.h as f64, 0.055, 0.140, 0.035, 1.0)
-    fillRect(c, 0.0, GROUND_Y, c.w as f64, GROUND_Y + 9.0, 0.180, 0.430, 0.090, 1.0)
-    fillRect(c, 0.0, GROUND_Y + 46.0, c.w as f64, c.h as f64, 0.038, 0.100, 0.028, 1.0)
+    fillRect(&mut c, 0.0, GROUND_Y, c.w as f64, c.h as f64, 0.055, 0.140, 0.035, 1.0)
+    fillRect(&mut c, 0.0, GROUND_Y, c.w as f64, GROUND_Y + 9.0, 0.180, 0.430, 0.090, 1.0)
+    fillRect(&mut c, 0.0, GROUND_Y + 46.0, c.w as f64, c.h as f64, 0.038, 0.100, 0.028, 1.0)
     let span = 24.0
     let off = w.groundX
     var k: i64 = 0 - 1
@@ -122,20 +122,20 @@ fn drawGrass(c: &mut Canvas, w: &World) {
         if x > 0.0 - 20.0 && x < (c.w as f64) + 20.0 {
             let h = 6.0 + hashi(idx, 61) * 12.0
             let lean = hashi(idx, 63) * 6.0 - 3.0
-            line(c, x, GROUND_Y + 8.0, x + lean, GROUND_Y + 8.0 - h, 0.06, 0.16, 0.03)
+            line(&mut c, x, GROUND_Y + 8.0, x + lean, GROUND_Y + 8.0 - h, 0.06, 0.16, 0.03)
         }
         k = k + 1
     }
 }
 
 pub fn drawBackground(c: &mut Canvas, w: &World) {
-    skyGradient(c, 0.075, 0.230, 0.580, 0.680, 0.540, 0.380)
-    spot(c, 1090.0, 118.0, 190.0, 0.55, 0.30, 0.10)
-    spot(c, 1090.0, 118.0, 74.0, 1.10, 0.70, 0.28)
-    drawClouds(c, w)
-    drawHouses(c, w)
-    drawFence(c, w)
-    drawGrass(c, w)
+    skyGradient(&mut c, 0.075, 0.230, 0.580, 0.680, 0.540, 0.380)
+    spot(&mut c, 1090.0, 118.0, 190.0, 0.55, 0.30, 0.10)
+    spot(&mut c, 1090.0, 118.0, 74.0, 1.10, 0.70, 0.28)
+    drawClouds(&mut c, w)
+    drawHouses(&mut c, w)
+    drawFence(&mut c, w)
+    drawGrass(&mut c, w)
 }
 
 // ── hydrants ──────────────────────────────────────────────────────────────────
@@ -149,10 +149,10 @@ fn hydrant(c: &mut Canvas, cx: f64, tipY: f64, baseY: f64, dir: f64) {
     let body = tipY + dir * 34.0
 
     // shaft
-    rectY(c, x0, x1, body, baseY, 0.300, 0.030, 0.035)
-    rectY(c, x0 + 8.0, x0 + 26.0, body, baseY, 0.520, 0.060, 0.060)
-    rectY(c, x0 + 12.0, x0 + 20.0, body, baseY, 0.760, 0.130, 0.110)
-    rectY(c, x1 - 12.0, x1, body, baseY, 0.150, 0.012, 0.018)
+    rectY(&mut c, x0, x1, body, baseY, 0.300, 0.030, 0.035)
+    rectY(&mut c, x0 + 8.0, x0 + 26.0, body, baseY, 0.520, 0.060, 0.060)
+    rectY(&mut c, x0 + 12.0, x0 + 20.0, body, baseY, 0.760, 0.130, 0.110)
+    rectY(&mut c, x1 - 12.0, x1, body, baseY, 0.150, 0.012, 0.018)
 
     // bolt band every so often down the shaft, so a tall hydrant does not read
     // as a plain red bar
@@ -163,23 +163,23 @@ fn hydrant(c: &mut Canvas, cx: f64, tipY: f64, baseY: f64, dir: f64) {
         if far > 0.0 {
             n = 9
         } else {
-            rectY(c, x0 - 5.0, x1 + 5.0, y, y + dir * 13.0, 0.230, 0.022, 0.028)
-            rectY(c, x0 - 5.0, x0 + 22.0, y, y + dir * 13.0, 0.430, 0.050, 0.050)
+            rectY(&mut c, x0 - 5.0, x1 + 5.0, y, y + dir * 13.0, 0.230, 0.022, 0.028)
+            rectY(&mut c, x0 - 5.0, x0 + 22.0, y, y + dir * 13.0, 0.430, 0.050, 0.050)
             y = y + dir * 96.0
             n = n + 1
         }
     }
 
     // flange, side nozzles and the dome cap: the silhouette that says hydrant
-    rectY(c, x0 - 11.0, x1 + 11.0, tipY + dir * 20.0, body, 0.360, 0.035, 0.040)
-    rectY(c, x0 - 11.0, x0 + 24.0, tipY + dir * 20.0, body, 0.620, 0.075, 0.070)
-    rectY(c, x0 - 23.0, x0 + 2.0, tipY + dir * 30.0, tipY + dir * 62.0, 0.330, 0.032, 0.038)
-    rectY(c, x1 - 2.0, x1 + 23.0, tipY + dir * 30.0, tipY + dir * 62.0, 0.240, 0.024, 0.030)
-    rectY(c, x0 + 6.0, x1 - 6.0, tipY + dir * 8.0, tipY + dir * 22.0, 0.430, 0.042, 0.045)
-    rectY(c, x0 + 16.0, x1 - 16.0, tipY, tipY + dir * 10.0, 0.680, 0.090, 0.080)
-    rectY(c, x0 + 26.0, x1 - 26.0, tipY - dir * 8.0, tipY, 0.560, 0.070, 0.065)
+    rectY(&mut c, x0 - 11.0, x1 + 11.0, tipY + dir * 20.0, body, 0.360, 0.035, 0.040)
+    rectY(&mut c, x0 - 11.0, x0 + 24.0, tipY + dir * 20.0, body, 0.620, 0.075, 0.070)
+    rectY(&mut c, x0 - 23.0, x0 + 2.0, tipY + dir * 30.0, tipY + dir * 62.0, 0.330, 0.032, 0.038)
+    rectY(&mut c, x1 - 2.0, x1 + 23.0, tipY + dir * 30.0, tipY + dir * 62.0, 0.240, 0.024, 0.030)
+    rectY(&mut c, x0 + 6.0, x1 - 6.0, tipY + dir * 8.0, tipY + dir * 22.0, 0.430, 0.042, 0.045)
+    rectY(&mut c, x0 + 16.0, x1 - 16.0, tipY, tipY + dir * 10.0, 0.680, 0.090, 0.080)
+    rectY(&mut c, x0 + 26.0, x1 - 26.0, tipY - dir * 8.0, tipY, 0.560, 0.070, 0.065)
     // a little chrome glint on the cap, which is what the bloom picks up
-    spot(c, cx - 14.0, tipY + dir * 6.0, 13.0, 0.55, 0.16, 0.10)
+    spot(&mut c, cx - 14.0, tipY + dir * 6.0, 13.0, 0.55, 0.16, 0.10)
 }
 
 pub fn drawGates(c: &mut Canvas, w: &World, bone: &Sprite, ox: f64, oy: f64) {
@@ -189,14 +189,14 @@ pub fn drawGates(c: &mut Canvas, w: &World, bone: &Sprite, ox: f64, oy: f64) {
         let top = w.gates[i].gapY - w.gates[i].gap * 0.5 + oy
         let bot = w.gates[i].gapY + w.gates[i].gap * 0.5 + oy
         if gx > 0.0 - 160.0 && gx < (c.w as f64) + 160.0 {
-            hydrant(c, gx, top, 0.0 - 40.0, 0.0 - 1.0)
-            hydrant(c, gx, bot, GROUND_Y + 40.0, 1.0)
+            hydrant(&mut c, gx, top, 0.0 - 40.0, 0.0 - 1.0)
+            hydrant(&mut c, gx, bot, GROUND_Y + 40.0, 1.0)
             if w.gates[i].bone && !w.gates[i].boneTaken {
                 let by = w.gates[i].gapY + oy + Math.sin(w.t * 3.0 + (i as f64)) * 9.0
                 let bw = (bone.w as f64) * ART
                 let bh = (bone.h as f64) * ART
-                spot(c, gx, by, 34.0, 0.28, 0.24, 0.14)
-                drawSprite(c, bone, gx - bw * 0.5, by - bh * 0.5, ART, false, 0.65)
+                spot(&mut c, gx, by, 34.0, 0.28, 0.24, 0.14)
+                drawSprite(&mut c, bone, gx - bw * 0.5, by - bh * 0.5, ART, false, 0.65)
             }
         }
         i = i + 1
@@ -254,16 +254,16 @@ pub fn drawDog(c: &mut Canvas, w: &World, frames: &Vec<Sprite>, ox: f64, oy: f64
     // contact shadow on the grass, tighter and darker the closer he gets
     let hgt = Math.clampF64((GROUND_Y - w.y) / 420.0, 0.0, 1.0)
     let sw = 46.0 * (1.0 - hgt * 0.45)
-    fillRect(c, x - sw, GROUND_Y + 4.0, x + sw, GROUND_Y + 16.0, 0.02, 0.05, 0.01, 0.45 * (1.0 - hgt * 0.6))
+    fillRect(&mut c, x - sw, GROUND_Y + 4.0, x + sw, GROUND_Y + 16.0, 0.02, 0.05, 0.01, 0.45 * (1.0 - hgt * 0.6))
 
-    blitSprite(c, s, dx, dy, sx, sy, flip, 1.0, 0.16, 1.4, 0.7, 0.5, w.flash * 0.5)
+    blitSprite(&mut c, s, dx, dy, sx, sy, flip, 1.0, 0.16, 1.4, 0.7, 0.5, w.flash * 0.5)
 }
 
 pub fn drawParts(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
     var i = 0
     while i < w.parts.len {
         let t = w.parts[i].life / w.parts[i].max
-        spot(c, w.parts[i].x + ox, w.parts[i].y + oy, w.parts[i].size * (0.4 + t * 1.0), w.parts[i].r * t, w.parts[i].g * t, w.parts[i].b * t)
+        spot(&mut c, w.parts[i].x + ox, w.parts[i].y + oy, w.parts[i].size * (0.4 + t * 1.0), w.parts[i].r * t, w.parts[i].g * t, w.parts[i].b * t)
         i = i + 1
     }
 }
@@ -274,9 +274,9 @@ pub fn drawParts(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
 // letterboxing, and the game is still running behind it.
 fn panel(c: &mut Canvas, y0: f64, y1: f64) {
     let w = c.w as f64
-    fillRect(c, w * 0.20, y0, w * 0.80, y1, 0.0, 0.0, 0.0, 0.58)
-    fillRect(c, w * 0.20, y0, w * 0.80, y0 + 3.0, 0.45, 0.30, 0.12, 0.75)
-    fillRect(c, w * 0.20, y1 - 3.0, w * 0.80, y1, 0.45, 0.30, 0.12, 0.75)
+    fillRect(&mut c, w * 0.20, y0, w * 0.80, y1, 0.0, 0.0, 0.0, 0.58)
+    fillRect(&mut c, w * 0.20, y0, w * 0.80, y0 + 3.0, 0.45, 0.30, 0.12, 0.75)
+    fillRect(&mut c, w * 0.20, y1 - 3.0, w * 0.80, y1, 0.45, 0.30, 0.12, 0.75)
 }
 
 pub fn drawHud(c: &mut Canvas, w: &World, bone: &Sprite, fps: i64) {
@@ -285,14 +285,14 @@ pub fn drawHud(c: &mut Canvas, w: &World, bone: &Sprite, fps: i64) {
     let sc = w.score.toString()
     let sw = textWidth(sc, 8) as f64
     let cx = (c.w / 2) as f64
-    fillRect(c, cx - sw * 0.5 - 22.0, 18.0, cx + sw * 0.5 + 22.0, 96.0, 0.0, 0.0, 0.0, 0.32)
-    textCentered(c, c.w / 2, 34, sc, 8, 1.60, 1.45, 0.85)
+    fillRect(&mut c, cx - sw * 0.5 - 22.0, 18.0, cx + sw * 0.5 + 22.0, 96.0, 0.0, 0.0, 0.0, 0.32)
+    textCentered(&mut c, c.w / 2, 34, sc, 8, 1.60, 1.45, 0.85)
 
-    drawSprite(c, bone, 26.0, 24.0, 3.0, false, 0.5)
-    text(c, 82, 30, "x" + w.treats.toString(), 3, 1.00, 0.95, 0.65)
+    drawSprite(&mut c, bone, 26.0, 24.0, 3.0, false, 0.5)
+    text(&mut c, 82, 30, "x" + w.treats.toString(), 3, 1.00, 0.95, 0.65)
 
     let bst = "BEST " + w.best.toString()
-    text(c, c.w - 26 - textWidth(bst, 3), 30, bst, 3, 0.80, 0.95, 1.20)
+    text(&mut c, c.w - 26 - textWidth(bst, 3), 30, bst, 3, 0.80, 0.95, 1.20)
 
     if w.toastT > 0.0 {
         var a = w.toastT / 1.9
@@ -300,35 +300,35 @@ pub fn drawHud(c: &mut Canvas, w: &World, bone: &Sprite, fps: i64) {
             a = 1.0
         }
         let lift = (1.0 - a) * 26.0
-        textCentered(c, c.w / 2, (168.0 - lift) as i64, w.toast, 4, 1.40 * a, 0.75 * a, 1.10 * a)
+        textCentered(&mut c, c.w / 2, (168.0 - lift) as i64, w.toast, 4, 1.40 * a, 0.75 * a, 1.10 * a)
     }
 
     if w.state == ST_READY {
-        panel(c, (c.h / 2 - 210) as f64, (c.h / 2 - 100) as f64)
-        textCentered(c, c.w / 2, c.h / 2 - 190, "Y A P", 9, 1.40, 0.95, 0.45)
-        textCentered(c, c.w / 2, c.h / 2 - 120, "MILO THE CHIHUAHUA FLAPS HIS EARS", 2, 0.80, 0.85, 1.00)
-        panel(c, (c.h / 2 + 80) as f64, (c.h / 2 + 160) as f64)
+        panel(&mut c, (c.h / 2 - 210) as f64, (c.h / 2 - 100) as f64)
+        textCentered(&mut c, c.w / 2, c.h / 2 - 190, "Y A P", 9, 1.40, 0.95, 0.45)
+        textCentered(&mut c, c.w / 2, c.h / 2 - 120, "MILO THE CHIHUAHUA FLAPS HIS EARS", 2, 0.80, 0.85, 1.00)
+        panel(&mut c, (c.h / 2 + 80) as f64, (c.h / 2 + 160) as f64)
         // The prompt blinks rather than sitting there: a still screen with one
         // line of text on it reads as a loading screen.
         if Math.sin(w.bobT * 5.0) > 0.0 - 0.3 {
-            textCentered(c, c.w / 2, c.h / 2 + 92, "SPACE TO YAP", 4, 1.20, 1.10, 0.60)
+            textCentered(&mut c, c.w / 2, c.h / 2 + 92, "SPACE TO YAP", 4, 1.20, 1.10, 0.60)
         }
-        textCentered(c, c.w / 2, c.h / 2 + 134, "MIND THE HYDRANTS   EAT THE TREATS", 2, 0.70, 0.78, 0.92)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 134, "MIND THE HYDRANTS   EAT THE TREATS", 2, 0.70, 0.78, 0.92)
     }
 
     if w.state == ST_OVER {
-        panel(c, (c.h / 2 - 150) as f64, (c.h / 2 + 166) as f64)
-        textCentered(c, c.w / 2, c.h / 2 - 128, "O O F", 8, 1.50, 0.45, 0.40)
-        textCentered(c, c.w / 2, c.h / 2 - 40, "SCORE " + w.score.toString(), 4, 1.20, 1.10, 0.70)
-        textCentered(c, c.w / 2, c.h / 2 + 8, "TREATS " + w.treats.toString(), 3, 0.90, 0.95, 0.60)
-        textCentered(c, c.w / 2, c.h / 2 + 48, "BEST " + w.best.toString(), 3, 0.75, 0.95, 1.20)
+        panel(&mut c, (c.h / 2 - 150) as f64, (c.h / 2 + 166) as f64)
+        textCentered(&mut c, c.w / 2, c.h / 2 - 128, "O O F", 8, 1.50, 0.45, 0.40)
+        textCentered(&mut c, c.w / 2, c.h / 2 - 40, "SCORE " + w.score.toString(), 4, 1.20, 1.10, 0.70)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 8, "TREATS " + w.treats.toString(), 3, 0.90, 0.95, 0.60)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 48, "BEST " + w.best.toString(), 3, 0.75, 0.95, 1.20)
         if w.score >= w.best && w.score > 0 {
-            textCentered(c, c.w / 2, c.h / 2 + 86, "NEW BEST   GOOD BOY", 3, 1.40, 0.80, 1.10)
+            textCentered(&mut c, c.w / 2, c.h / 2 + 86, "NEW BEST   GOOD BOY", 3, 1.40, 0.80, 1.10)
         }
-        textCentered(c, c.w / 2, c.h / 2 + 124, "SPACE TO GO AGAIN", 3, 0.85, 0.85, 0.95)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 124, "SPACE TO GO AGAIN", 3, 0.85, 0.85, 0.95)
     }
 
-    text(c, 22, c.h - 30, fps.toString() + " FPS", 2, 0.30, 0.36, 0.30)
+    text(&mut c, 22, c.h - 30, fps.toString() + " FPS", 2, 0.30, 0.36, 0.30)
     let help = "SPACE FLAP   R RESTART   M MUSIC   ESC QUIT"
-    text(c, c.w - 22 - textWidth(help, 2), c.h - 30, help, 2, 0.30, 0.36, 0.30)
+    text(&mut c, c.w - 22 - textWidth(help, 2), c.h - 30, help, 2, 0.30, 0.36, 0.30)
 }

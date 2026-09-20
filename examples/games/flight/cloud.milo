@@ -205,7 +205,7 @@ pub fn cloudSynthetic(reach: f64, coverage: f64, baseM: f64, thicknessM: f64, se
 }
 
 pub fn cloudUpload(gl: &mut GlContext, f: &CloudField): Texture2D {
-    return Texture2D.rgb32f(gl, f.n, f.n, f.texel, true)
+    return Texture2D.rgb32f(&mut gl, f.n, f.n, f.texel, true)
 }
 
 pub fn cloudUpdate(tex: &Texture2D, f: &CloudField) {

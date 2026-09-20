@@ -91,7 +91,7 @@ pub fn main(): i32 {
         }
         // Deliberately imperfect: a paddle that tracks exactly returns every ball
         // dead centre, which is not what a capture should show.
-        gameUpdate(g, dt, target + Math.sin((frame as f64) * 0.11) * 26.0, true)
+        gameUpdate(&mut g, dt, target + Math.sin((frame as f64) * 0.11) * 26.0, true)
 
         var want = false
         for i in 0..shots.len {
@@ -100,9 +100,9 @@ pub fn main(): i32 {
             }
         }
         if want {
-            drawGame(c, g, 0.0, 0.0)
-            drawHud(c, g)
-            present(c, 0.6, 1.0)
+            drawGame(&mut c, g, 0.0, 0.0)
+            drawHud(&mut c, g)
+            present(&mut c, 0.6, 1.0)
             writePpm(prefix + "-" + frame.toString() + ".ppm", c)
             print("wrote " + prefix + "-" + frame.toString() + ".ppm")
         }

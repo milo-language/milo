@@ -40,43 +40,43 @@ fn decodeMap(gl: &mut GlContext, src: &string): Texture2D {
                 px[i] = pack(img.pixels[o] as i64, img.pixels[o + 1] as i64, img.pixels[o + 2] as i64)
                 i = i + 1
             }
-            return Texture2D.rgba8(gl, img.width, img.height, px, true)
+            return Texture2D.rgba8(&mut gl, img.width, img.height, px, true)
         }
         Result.Err(_) => {
             // A map that will not decode is a broken build, not a runtime state
             // to design around: one magenta texel says so loudly.
             var px: Vec<u32> = Vec.filled(1, pack(255, 0, 255))
-            return Texture2D.rgba8(gl, 1, 1, px, false)
+            return Texture2D.rgba8(&mut gl, 1, 1, px, false)
         }
     }
 }
 
 pub fn mapMercury(gl: &mut GlContext): Texture2D {
-    return decodeMap(gl, @embedFile("../apsis/bodies/mercury.png"))
+    return decodeMap(&mut gl, @embedFile("../apsis/bodies/mercury.png"))
 }
 
 pub fn mapVenus(gl: &mut GlContext): Texture2D {
-    return decodeMap(gl, @embedFile("../apsis/bodies/venus.png"))
+    return decodeMap(&mut gl, @embedFile("../apsis/bodies/venus.png"))
 }
 
 pub fn mapEarth(gl: &mut GlContext): Texture2D {
-    return decodeMap(gl, @embedFile("../apsis/bodies/earth.png"))
+    return decodeMap(&mut gl, @embedFile("../apsis/bodies/earth.png"))
 }
 
 pub fn mapMoon(gl: &mut GlContext): Texture2D {
-    return decodeMap(gl, @embedFile("../apsis/bodies/moon.png"))
+    return decodeMap(&mut gl, @embedFile("../apsis/bodies/moon.png"))
 }
 
 pub fn mapMars(gl: &mut GlContext): Texture2D {
-    return decodeMap(gl, @embedFile("../apsis/bodies/mars.png"))
+    return decodeMap(&mut gl, @embedFile("../apsis/bodies/mars.png"))
 }
 
 pub fn mapJupiter(gl: &mut GlContext): Texture2D {
-    return decodeMap(gl, @embedFile("../apsis/bodies/jupiter.png"))
+    return decodeMap(&mut gl, @embedFile("../apsis/bodies/jupiter.png"))
 }
 
 pub fn mapSaturn(gl: &mut GlContext): Texture2D {
-    return decodeMap(gl, @embedFile("../apsis/bodies/saturn.png"))
+    return decodeMap(&mut gl, @embedFile("../apsis/bodies/saturn.png"))
 }
 
 pub fn fontAtlas(): string {
@@ -184,15 +184,15 @@ fn iceGiant(gl: &mut GlContext, r0: f64, g0: f64, b0: f64, r1: f64, g1: f64, b1:
         }
         y = y + 1
     }
-    return Texture2D.rgba8(gl, GEN_W, GEN_H, px, true)
+    return Texture2D.rgba8(&mut gl, GEN_W, GEN_H, px, true)
 }
 
 pub fn mapUranus(gl: &mut GlContext): Texture2D {
-    return iceGiant(gl, 0.55, 0.78, 0.79, 0.78, 0.92, 0.90, 9.0, false)
+    return iceGiant(&mut gl, 0.55, 0.78, 0.79, 0.78, 0.92, 0.90, 9.0, false)
 }
 
 pub fn mapNeptune(gl: &mut GlContext): Texture2D {
-    return iceGiant(gl, 0.10, 0.24, 0.62, 0.36, 0.55, 0.86, 11.0, true)
+    return iceGiant(&mut gl, 0.10, 0.24, 0.62, 0.36, 0.55, 0.86, 11.0, true)
 }
 
 // The photosphere: granulation cells with darker sunspot clusters. It is
@@ -223,5 +223,5 @@ pub fn mapSun(gl: &mut GlContext): Texture2D {
         }
         y = y + 1
     }
-    return Texture2D.rgba8(gl, GEN_W, GEN_H, px, true)
+    return Texture2D.rgba8(&mut gl, GEN_W, GEN_H, px, true)
 }

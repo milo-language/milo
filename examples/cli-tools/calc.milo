@@ -146,10 +146,10 @@ pub fn advance(p: &mut Parser): CalcToken {
 }
 
 pub fn parseExpr(p: &mut Parser): f64 {
-    var left = parseTerm(p)
+    var left = parseTerm(&mut p)
     while peek(p) == CalcTok.Plus || peek(p) == CalcTok.Minus {
-        let op = advance(p)
-        let right = parseTerm(p)
+        let op = advance(&mut p)
+        let right = parseTerm(&mut p)
         if op.kind == CalcTok.Plus {
             left = left + right
         } else {
@@ -160,10 +160,10 @@ pub fn parseExpr(p: &mut Parser): f64 {
 }
 
 pub fn parseTerm(p: &mut Parser): f64 {
-    var left = parsePower(p)
+    var left = parsePower(&mut p)
     while peek(p) == CalcTok.Star || peek(p) == CalcTok.Slash || peek(p) == CalcTok.Percent {
-        let op = advance(p)
-        let right = parsePower(p)
+        let op = advance(&mut p)
+        let right = parsePower(&mut p)
         if op.kind == CalcTok.Star {
             left = left * right
         } else if op.kind == CalcTok.Slash {
@@ -176,10 +176,10 @@ pub fn parseTerm(p: &mut Parser): f64 {
 }
 
 pub fn parsePower(p: &mut Parser): f64 {
-    let base = parseUnary(p)
+    let base = parseUnary(&mut p)
     if peek(p) == CalcTok.StarStar {
-        advance(p)
-        let exp = parsePower(p)
+        advance(&mut p)
+        let exp = parsePower(&mut p)
         return Math.pow(base, exp)
     }
     return base
@@ -187,22 +187,22 @@ pub fn parsePower(p: &mut Parser): f64 {
 
 pub fn parseUnary(p: &mut Parser): f64 {
     if peek(p) == CalcTok.Minus {
-        advance(p)
-        return 0.0 - parseUnary(p)
+        advance(&mut p)
+        return 0.0 - parseUnary(&mut p)
     }
-    return parsePrimary(p)
+    return parsePrimary(&mut p)
 }
 
 pub fn parsePrimary(p: &mut Parser): f64 {
     if peek(p) == CalcTok.Num {
-        let tok = advance(p)
+        let tok = advance(&mut p)
         return tok.val
     }
     if peek(p) == CalcTok.LParen {
-        advance(p)
-        let val = parseExpr(p)
+        advance(&mut p)
+        let val = parseExpr(&mut p)
         if peek(p) == CalcTok.RParen {
-            advance(p)
+            advance(&mut p)
         } else {
             print("error: expected ')'")
         }
@@ -254,7 +254,7 @@ pub fn main(): i32 {
     var p = Parser {
         tokens: tokens, pos: 0
     }
-    let result = parseExpr(p)
+    let result = parseExpr(&mut p)
     print(formatResult(result))
     return 0
 }

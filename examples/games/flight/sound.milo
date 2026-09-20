@@ -124,11 +124,11 @@ fn buildMusic(): Vec<i16> {
     for c in 0..bars {
         let base = (c as i64) * spc
         // bass: one long root per chord
-        addNote(buf, base, roots[c], CHORD * 0.95, 0.30, 0.05, 0.30)
+        addNote(&mut buf, base, roots[c], CHORD * 0.95, 0.30, 0.05, 0.30)
         // pad: the triad, quiet and sustained
-        addNote(buf, base, t1[c], CHORD * 0.92, 0.085, 0.0, 0.55)
-        addNote(buf, base, t2[c], CHORD * 0.92, 0.075, 0.0, 0.55)
-        addNote(buf, base, t3[c], CHORD * 0.92, 0.065, 0.0, 0.55)
+        addNote(&mut buf, base, t1[c], CHORD * 0.92, 0.085, 0.0, 0.55)
+        addNote(&mut buf, base, t2[c], CHORD * 0.92, 0.075, 0.0, 0.55)
+        addNote(&mut buf, base, t3[c], CHORD * 0.92, 0.065, 0.0, 0.55)
         // arpeggio: eighth notes up and back down, an octave above the pad
         let eighth = CHORD / 8.0
         let es = (eighth * (RATE as f64)) as i64
@@ -145,7 +145,7 @@ fn buildMusic(): Vec<i16> {
                 f = t1[c] * 2.0
             }
             // let the last note of the bar ring into the next
-            addNote(buf, base + (k as i64) * es, f * 2.0, eighth * 1.8, 0.10, 0.10, 0.010)
+            addNote(&mut buf, base + (k as i64) * es, f * 2.0, eighth * 1.8, 0.10, 0.10, 0.010)
         }
     }
     return buf
@@ -189,29 +189,29 @@ pub fn soundNew(): Sound {
 
     // ring: a clean two-note chime
     var ring: Vec<i16> = Vec.new()
-    toneWave(ring, 880.0, 900.0, 0.10, 0.55, 0.18)
-    toneWave(ring, 1320.0, 1340.0, 0.22, 0.42, 0.12)
+    toneWave(&mut ring, 880.0, 900.0, 0.10, 0.55, 0.18)
+    toneWave(&mut ring, 1320.0, 1340.0, 0.22, 0.42, 0.12)
 
     // blue ring: higher, brighter, with a third note
     var ringBig: Vec<i16> = Vec.new()
-    toneWave(ringBig, 1046.0, 1060.0, 0.08, 0.55, 0.22)
-    toneWave(ringBig, 1568.0, 1580.0, 0.08, 0.50, 0.20)
-    toneWave(ringBig, 2093.0, 2100.0, 0.30, 0.46, 0.16)
+    toneWave(&mut ringBig, 1046.0, 1060.0, 0.08, 0.55, 0.22)
+    toneWave(&mut ringBig, 1568.0, 1580.0, 0.08, 0.50, 0.20)
+    toneWave(&mut ringBig, 2093.0, 2100.0, 0.30, 0.46, 0.16)
 
     // region: a rising fanfare
     var region: Vec<i16> = Vec.new()
-    toneWave(region, 392.0, 400.0, 0.14, 0.55, 0.30)
-    toneWave(region, 523.0, 530.0, 0.14, 0.55, 0.28)
-    toneWave(region, 659.0, 665.0, 0.16, 0.55, 0.26)
-    toneWave(region, 784.0, 800.0, 0.55, 0.60, 0.22)
+    toneWave(&mut region, 392.0, 400.0, 0.14, 0.55, 0.30)
+    toneWave(&mut region, 523.0, 530.0, 0.14, 0.55, 0.28)
+    toneWave(&mut region, 659.0, 665.0, 0.16, 0.55, 0.26)
+    toneWave(&mut region, 784.0, 800.0, 0.55, 0.60, 0.22)
 
     var boost: Vec<i16> = Vec.new()
-    rush(boost, 0.55, 0.7)
+    rush(&mut boost, 0.55, 0.7)
 
     // miss: a falling minor third, the universal "you lost it"
     var miss: Vec<i16> = Vec.new()
-    toneWave(miss, 330.0, 300.0, 0.13, 0.5, 0.10)
-    toneWave(miss, 262.0, 220.0, 0.40, 0.5, 0.08)
+    toneWave(&mut miss, 330.0, 300.0, 0.13, 0.5, 0.10)
+    toneWave(&mut miss, 262.0, 220.0, 0.40, 0.5, 0.08)
 
     return Sound {
         dev: dev, ok: dev != 0,

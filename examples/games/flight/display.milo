@@ -107,7 +107,7 @@ pub fn screenOpen(title: &string, w: i64, h: i64, ow: i64, oh: i64, renderPct: i
         let d = drawableOf(win)
         let r = renderSize(d.w, d.h, renderPct)
         var glc = GlContext.new()
-        match postNew(glc, r.w, r.h, ow, oh) {
+        match postNew(&mut glc, r.w, r.h, ow, oh) {
             Result.Ok(p) => {
                 print("gpu: OpenGL " + Gpu.version())
                 return Result.Ok(Screen {
@@ -193,7 +193,7 @@ pub fn screenBegin(s: &mut Screen): Size {
     let d = drawableOf(s.win)
     let r = renderSize(d.w, d.h, s.renderPct)
     if r.w != s.rw || r.h != s.rh {
-        match postResize(s.gl, s.post, r.w, r.h) {
+        match postResize(&mut s.gl, &mut s.post, r.w, r.h) {
             Result.Ok(_) => {
                 s.rw = r.w
                 s.rh = r.h
@@ -233,7 +233,7 @@ pub fn screenPresent(s: &mut Screen, c: &mut Canvas, v: &View, sc: &Scene, cov: 
     let d = drawableOf(s.win)
     postFinish(s.post, c, v, sc, cov, cover, coverDirty, hasSea, time, bloomGain, exposure, d.w, d.h)
     SDL_GL_SwapWindow(s.win)
-    canvasClear(c)
+    canvasClear(&mut c)
 }
 
 // The context is a public field rather than something handed out by a getter:
@@ -265,7 +265,7 @@ fn sdlError(): string {
 // hand them over, which is why this takes the Screen by value.
 pub fn screenClose(s: Screen) {
     var own = s
-    postFree(own.gl, own.post)
+    postFree(&mut own.gl, own.post)
     // Anything the game forgot goes here, before the context it belongs to is
     // destroyed two lines down.
     own.gl.free()

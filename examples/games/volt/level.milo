@@ -123,15 +123,15 @@ fn levelParse(name: string, rows: &Vec<string>): Level {
             let wx = ((x as f64) + 0.5) * TILE
             let wy = ((y as f64) + 0.5) * TILE
             if ch == 35 { // '#'
-                setTile(l, x, y, T_SOLID)
+                setTile(&mut l, x, y, T_SOLID)
             } else if ch == 61 { // '='
-                setTile(l, x, y, T_PLAT)
+                setTile(&mut l, x, y, T_PLAT)
             } else if ch == 94 { // '^'
-                setTile(l, x, y, T_SPIKE)
+                setTile(&mut l, x, y, T_SPIKE)
             } else if ch == 37 { // '%'
-                setTile(l, x, y, T_CRATE)
+                setTile(&mut l, x, y, T_CRATE)
             } else if ch == 33 { // '!'
-                setTile(l, x, y, T_PAD)
+                setTile(&mut l, x, y, T_PAD)
             } else if ch == 83 { // 'S'
                 l.spawnX = wx
                 l.spawnY = wy

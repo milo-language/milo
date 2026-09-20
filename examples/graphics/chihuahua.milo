@@ -86,23 +86,23 @@ pub fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
 pub fn charRGB(ch: u8, out: &mut [i64; 4]): void {
     let c = ch as i64
     if c == 100 {
-        setC(out, 96, 60, 38) // d  dark brown (ear/outline)
+        setC(&mut out, 96, 60, 38) // d  dark brown (ear/outline)
     } else if c == 98 {
-        setC(out, 145, 96, 58) // b  brown shadow
+        setC(&mut out, 145, 96, 58) // b  brown shadow
     } else if c == 116 {
-        setC(out, 200, 152, 104) // t  tan
+        setC(&mut out, 200, 152, 104) // t  tan
     } else if c == 108 {
-        setC(out, 226, 192, 150) // l  light tan
+        setC(&mut out, 226, 192, 150) // l  light tan
     } else if c == 119 {
-        setC(out, 240, 226, 206) // w  cream muzzle
+        setC(&mut out, 240, 226, 206) // w  cream muzzle
     } else if c == 87 {
-        setC(out, 255, 250, 245) // W  white highlight
+        setC(&mut out, 255, 250, 245) // W  white highlight
     } else if c == 107 {
-        setC(out, 34, 28, 24) // k  eye / nose
+        setC(&mut out, 34, 28, 24) // k  eye / nose
     } else if c == 103 {
-        setC(out, 255, 255, 255) // g  eye glint
+        setC(&mut out, 255, 255, 255) // g  eye glint
     } else if c == 112 {
-        setC(out, 226, 150, 162) // p  pink inner ear
+        setC(&mut out, 226, 150, 162) // p  pink inner ear
     } else {
         out[3] = 0 // space / '.' → transparent
     }
@@ -148,28 +148,28 @@ pub fn drawSprite(buf: &mut string, row0: i64, col0: i64): void {
     var tcol: [i64; 4] = [0; 4]
     var bcol: [i64; 4] = [0; 4]
     for tr in 0..hc {
-        emit(buf, Ansi.cursorTo(row0 + tr, col0))
+        emit(&mut buf, Ansi.cursorTo(row0 + tr, col0))
         let rowTop = spriteRow(tr * 2)
         let rowBot = spriteRow(tr * 2 + 1)
         for c in 0..SPR_W {
-            charRGB(charAt(rowTop, c), tcol)
-            charRGB(charAt(rowBot, c), bcol)
+            charRGB(charAt(rowTop, c), &mut tcol)
+            charRGB(charAt(rowBot, c), &mut bcol)
             let topOp = tcol[3] == 1
             let botOp = bcol[3] == 1
             if topOp && botOp {
-                Ansi.pushFg24(buf, tcol[0], tcol[1], tcol[2])
-                Ansi.pushBg24(buf, bcol[0], bcol[1], bcol[2])
-                emit(buf, "▀")
+                Ansi.pushFg24(&mut buf, tcol[0], tcol[1], tcol[2])
+                Ansi.pushBg24(&mut buf, bcol[0], bcol[1], bcol[2])
+                emit(&mut buf, "▀")
             } else if topOp {
-                emit(buf, "\x1b[49m") // default bg for the empty lower half
-                Ansi.pushFg24(buf, tcol[0], tcol[1], tcol[2])
-                emit(buf, "▀")
+                emit(&mut buf, "\x1b[49m") // default bg for the empty lower half
+                Ansi.pushFg24(&mut buf, tcol[0], tcol[1], tcol[2])
+                emit(&mut buf, "▀")
             } else if botOp {
-                emit(buf, "\x1b[49m")
-                Ansi.pushFg24(buf, bcol[0], bcol[1], bcol[2])
-                emit(buf, "▄")
+                emit(&mut buf, "\x1b[49m")
+                Ansi.pushFg24(&mut buf, bcol[0], bcol[1], bcol[2])
+                emit(&mut buf, "▄")
             } else {
-                emit(buf, "\x1b[49m")
+                emit(&mut buf, "\x1b[49m")
                 buf.push(32 as u8)
             }
         }
@@ -177,9 +177,9 @@ pub fn drawSprite(buf: &mut string, row0: i64, col0: i64): void {
 }
 
 pub fn eraseRect(buf: &mut string, row0: i64, col0: i64, w: i64, h: i64): void {
-    emit(buf, Ansi.reset())
+    emit(&mut buf, Ansi.reset())
     for r in 0..h {
-        emit(buf, Ansi.cursorTo(row0 + r, col0))
+        emit(&mut buf, Ansi.cursorTo(row0 + r, col0))
         for c in 0..w {
             buf.push(32 as u8)
         }
@@ -191,7 +191,7 @@ pub fn main(): i32 {
     writeStdout(Ansi.hideCursor() + Ansi.clearScreen())
 
     var size: [i64; 2] = [0; 2]
-    termSize(size)
+    termSize(&mut size)
     let rows = size[0]
     let cols = size[1]
 
@@ -238,17 +238,17 @@ pub fn main(): i32 {
         let corner = bx && by
 
         var buf = String.withCapacity(16384)
-        eraseRect(buf, prevY + playTop, prevX + 1, SPR_W, sprH)
-        drawSprite(buf, y + playTop, x + 1)
-        emit(buf, Ansi.reset())
+        eraseRect(&mut buf, prevY + playTop, prevX + 1, SPR_W, sprH)
+        drawSprite(&mut buf, y + playTop, x + 1)
+        emit(&mut buf, Ansi.reset())
 
-        emit(buf, Ansi.cursorTo(1, 1))
-        emit(buf, Color.bold(" chihuahua "))
-        emit(buf, Color.gray($" bounces: {bounces}  "))
+        emit(&mut buf, Ansi.cursorTo(1, 1))
+        emit(&mut buf, Color.bold(" chihuahua "))
+        emit(&mut buf, Color.gray($" bounces: {bounces}  "))
         if corner {
-            emit(buf, Color.bold("★ CORNER! ★"))
+            emit(&mut buf, Color.bold("★ CORNER! ★"))
         }
-        emit(buf, Color.gray("  ·  q quit          "))
+        emit(&mut buf, Color.gray("  ·  q quit          "))
 
         writeStdout(buf)
         prevX = x

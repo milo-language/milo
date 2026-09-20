@@ -199,7 +199,7 @@ fn anyAnchored(rules: &Vec<IgnoreRule>): bool {
 // Parse one ignore file's text. `base` is stored on the set verbatim.
 pub fn parseIgnore(content: &string, base: &string): IgnoreSet {
     var rules: Vec<IgnoreRule> = Vec.new()
-    appendRules(content, rules)
+    appendRules(content, &mut rules)
     let anchored = anyAnchored(rules)
     return IgnoreSet {
         base: base.clone(), rules: rules, hasAnchored: anchored
@@ -220,7 +220,7 @@ pub fn loadIgnoreSet(dirPath: &string, useGit: bool): Option<IgnoreSet> {
         let gitignorePath = Path.join(dirPath, ".gitignore")
         if isFile(gitignorePath) {
             if let Result.Ok(content) = readFile(gitignorePath) {
-                appendRules(content, rules)
+                appendRules(content, &mut rules)
             }
         }
     }
@@ -228,7 +228,7 @@ pub fn loadIgnoreSet(dirPath: &string, useGit: bool): Option<IgnoreSet> {
     let ignorePath = Path.join(dirPath, ".ignore")
     if isFile(ignorePath) {
         if let Result.Ok(content) = readFile(ignorePath) {
-            appendRules(content, rules)
+            appendRules(content, &mut rules)
         }
     }
 

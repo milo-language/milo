@@ -247,7 +247,7 @@ fn readPalette(rd: &mut GifReader, bitsPerPixel: i64, sortFlag: bool): Result<Pa
     var rgb: Vec<u8> = Vec.filled(count * 3, 0)
     var i: i64 = 0
     while i < count {
-        if !rd.takeInto(rgb, i * 3, 3) {
+        if !rd.takeInto(&mut rgb, i * 3, 3) {
             return Result.Err(errReadFailed)
         }
         i = i + 1
@@ -266,11 +266,11 @@ fn readPalette(rd: &mut GifReader, bitsPerPixel: i64, sortFlag: bool): Result<Pa
 // there is no check that the background colour indexes the screen map, and the port must
 // not add one: a clamped background byte is a visible difference in the digest.
 pub fn getScreenDesc(rd: &mut GifReader, doc: &mut Doc): Result<Unit, i32> {
-    doc.sWidth = getWord(rd)?
-    doc.sHeight = getWord(rd)?
+    doc.sWidth = getWord(&mut rd)?
+    doc.sHeight = getWord(&mut rd)?
 
     var buf: Vec<u8> = Vec.filled(3, 0)
-    if !rd.takeInto(buf, 0, 3) {
+    if !rd.takeInto(&mut buf, 0, 3) {
         doc.screenMap = Option.None
         return Result.Err(errReadFailed)
     }
@@ -285,7 +285,7 @@ pub fn getScreenDesc(rd: &mut GifReader, doc: &mut Doc): Result<Unit, i32> {
     doc.aspectByte = buf[2]
 
     if (flags & 0x80) != 0 {
-        match readPalette(rd, bitsPerPixel, sortFlag) {
+        match readPalette(&mut rd, bitsPerPixel, sortFlag) {
             Result.Ok(p) => {
                 doc.screenMap = Option.Some(p)
             }
@@ -363,7 +363,7 @@ fn bufferedInput(rd: &mut GifReader, lzw: &mut Lzw): Result<u8, i32> {
         if blockLen == 0 {
             return Result.Err(errImageDefect)
         }
-        if !rd.takeInto(lzw.buf, 1, blockLen as i64) {
+        if !rd.takeInto(&mut lzw.buf, 1, blockLen as i64) {
             return Result.Err(errReadFailed)
         }
         let first = lzw.buf[1]
@@ -390,7 +390,7 @@ fn decompressInput(rd: &mut GifReader, lzw: &mut Lzw): Result<i64, i32> {
     }
 
     while lzw.crntShiftState < runningBits {
-        let nextByte = bufferedInput(rd, lzw)?
+        let nextByte = bufferedInput(&mut rd, &mut lzw)?
         lzw.crntShiftDword = lzw.crntShiftDword | ((nextByte as i64) << lzw.crntShiftState)
         lzw.crntShiftState = lzw.crntShiftState + 8
     }
@@ -454,7 +454,7 @@ fn decompressLine(rd: &mut GifReader, lzw: &mut Lzw, out: &mut Vec<u8>, at: i64,
     }
 
     while i < lineLen {
-        let crntCode = decompressInput(rd, lzw)?
+        let crntCode = decompressInput(&mut rd, &mut lzw)?
 
         if crntCode == eofCode {
             return Result.Err(errEofTooSoon)
@@ -534,7 +534,7 @@ fn getCodeNext(rd: &mut GifReader, lzw: &mut Lzw, pixelCount: &mut i64): Result<
     }
     if blockLen > 0 {
         lzw.buf[0] = blockLen
-        if !rd.takeInto(lzw.buf, 1, blockLen as i64) {
+        if !rd.takeInto(&mut lzw.buf, 1, blockLen as i64) {
             return Result.Err(errReadFailed)
         }
         return Result.Ok(true)
@@ -554,14 +554,14 @@ fn getLine(rd: &mut GifReader, lzw: &mut Lzw, out: &mut Vec<u8>, at: i64, lineLe
         return Result.Err(errDataTooBig)
     }
 
-    decompressLine(rd, lzw, out, at, lineLen)?
+    decompressLine(&mut rd, &mut lzw, &mut out, at, lineLen)?
 
     if pixelCount == 0 {
         // Drain the rest of the image's sub-blocks so the stream is positioned on the
         // next record.
         var more = true
         while more {
-            more = getCodeNext(rd, lzw, pixelCount)?
+            more = getCodeNext(&mut rd, &mut lzw, &mut pixelCount)?
         }
     }
     return ok()
@@ -573,10 +573,10 @@ fn getLine(rd: &mut GifReader, lzw: &mut Lzw, out: &mut Vec<u8>, at: i64, lineLe
 
 // DGifGetImageHeader.
 fn getImageHeader(rd: &mut GifReader, lzw: &mut Lzw, doc: &mut Doc, pixelCount: &mut i64,): Result<Unit, i32> {
-    doc.curLeft = getWord(rd)?
-    doc.curTop = getWord(rd)?
-    doc.curWidth = getWord(rd)?
-    doc.curHeight = getWord(rd)?
+    doc.curLeft = getWord(&mut rd)?
+    doc.curTop = getWord(&mut rd)?
+    doc.curWidth = getWord(&mut rd)?
+    doc.curHeight = getWord(&mut rd)?
 
     let Option.Some(flagsByte) = rd.readByte() else {
         doc.curMap = Option.None
@@ -593,7 +593,7 @@ fn getImageHeader(rd: &mut GifReader, lzw: &mut Lzw, doc: &mut Doc, pixelCount: 
     if (flags & 0x80) != 0 {
         // A local colour table is never marked sorted by giflib: GifMakeMapObject clears
         // SortFlag and DGifGetImageHeader never sets it.
-        match readPalette(rd, bitsPerPixel, false) {
+        match readPalette(&mut rd, bitsPerPixel, false) {
             Result.Ok(p) => {
                 doc.curMap = Option.Some(p)
             }
@@ -605,7 +605,7 @@ fn getImageHeader(rd: &mut GifReader, lzw: &mut Lzw, doc: &mut Doc, pixelCount: 
     }
 
     pixelCount = (doc.curWidth as i64) * (doc.curHeight as i64)
-    return setupDecompress(rd, lzw)
+    return setupDecompress(&mut rd, &mut lzw)
 }
 
 // ---------------------------------------------------------------------------
@@ -623,7 +623,7 @@ fn getExtensionNext(rd: &mut GifReader, lzw: &mut Lzw): Result<Option<Vec<u8>>, 
         return Result.Ok(Option.None)
     }
     lzw.buf[0] = blockLen
-    if !rd.takeInto(lzw.buf, 1, blockLen as i64) {
+    if !rd.takeInto(&mut lzw.buf, 1, blockLen as i64) {
         return Result.Err(errReadFailed)
     }
     var payload: Vec<u8> = Vec.withCapacity(blockLen as i64)
@@ -646,12 +646,12 @@ let interlacedJumps: [i64; 4] = [8, 8, 4, 2]
 pub fn slurp(rd: &mut GifReader, lzw: &mut Lzw, doc: &mut Doc, pixelCount: &mut i64, continueExtFuncCode: i32,): Result<Unit, i32> {
     var running = true
     while running {
-        let recordType = getRecordType(rd)?
+        let recordType = getRecordType(&mut rd)?
 
         if recordType == recordTerminate {
             running = false
         } else if recordType == recordImage {
-            getImageHeader(rd, lzw, doc, pixelCount)?
+            getImageHeader(&mut rd, &mut lzw, &mut doc, &mut pixelCount)?
 
             let width = doc.curWidth
             let height = doc.curHeight
@@ -670,13 +670,13 @@ pub fn slurp(rd: &mut GifReader, lzw: &mut Lzw, doc: &mut Doc, pixelCount: &mut 
                 while pass < 4 {
                     var row = interlacedOffset[pass]
                     while row < height as i64 {
-                        getLine(rd, lzw, raster, row * (width as i64), width as i64, pixelCount)?
+                        getLine(&mut rd, &mut lzw, &mut raster, row * (width as i64), width as i64, &mut pixelCount)?
                         row = row + interlacedJumps[pass]
                     }
                     pass = pass + 1
                 }
             } else {
-                getLine(rd, lzw, raster, 0, imageSize, pixelCount)?
+                getLine(&mut rd, &mut lzw, &mut raster, 0, imageSize, &mut pixelCount)?
             }
 
             // C's DGifSlurp appends the SavedImage only once the image has fully decoded,
@@ -704,7 +704,7 @@ pub fn slurp(rd: &mut GifReader, lzw: &mut Lzw, doc: &mut Doc, pixelCount: &mut 
             let Option.Some(extFunction) = rd.readByte() else {
                 return Result.Err(errReadFailed)
             }
-            match getExtensionNext(rd, lzw)? {
+            match getExtensionNext(&mut rd, &mut lzw)? {
                 Option.Some(payload) => {
                     doc.pending.push(Ext {
                         function: extFunction as i32, bytes: payload
@@ -716,7 +716,7 @@ pub fn slurp(rd: &mut GifReader, lzw: &mut Lzw, doc: &mut Doc, pixelCount: &mut 
             }
             var more = true
             while more {
-                match getExtensionNext(rd, lzw)? {
+                match getExtensionNext(&mut rd, &mut lzw)? {
                     Option.Some(payload) => {
                         doc.pending.push(Ext {
                             function: continueExtFuncCode, bytes: payload

@@ -387,27 +387,27 @@ pub struct GpuWorld {
 }
 
 pub fn gpuWorldNew(gl: &mut GlContext, ground: &Texture, skin: &Texture, facade: &Texture): Result<GpuWorld, string> {
-    let shader = Shader.compile(gl, WORLD_VERT, worldFrag())?
+    let shader = Shader.compile(&mut gl, WORLD_VERT, worldFrag())?
     // The same vertex shader: the attributes are the same ten floats, they just
     // mean different things downstream.
-    let fall = Shader.compile(gl, WORLD_VERT, fallFrag())?
-    let sky = Shader.compile(gl, QUAD_VERT_LOCAL, skyboxFrag())?
+    let fall = Shader.compile(&mut gl, WORLD_VERT, fallFrag())?
+    let sky = Shader.compile(&mut gl, QUAD_VERT_LOCAL, skyboxFrag())?
     var white: Vec<f32> = Vec.filled(3, 1.0)
     return Result.Ok(GpuWorld {
         shader: shader,
         fall: fall,
         sky: sky,
-        quad: Mesh.fullscreenQuad(gl),
-        meshNone: worldMesh(gl),
-        meshGround: worldMesh(gl),
-        meshSkin: worldMesh(gl),
-        meshFacade: worldMesh(gl),
-        meshOrtho: worldMesh(gl),
-        meshFall: worldMesh(gl),
-        white: Texture2D.rgb32f(gl, 1, 1, white, false),
-        ground: uploadTexture(gl, ground),
-        skin: uploadTexture(gl, skin),
-        facade: uploadTexture(gl, facade),
+        quad: Mesh.fullscreenQuad(&mut gl),
+        meshNone: worldMesh(&mut gl),
+        meshGround: worldMesh(&mut gl),
+        meshSkin: worldMesh(&mut gl),
+        meshFacade: worldMesh(&mut gl),
+        meshOrtho: worldMesh(&mut gl),
+        meshFall: worldMesh(&mut gl),
+        white: Texture2D.rgb32f(&mut gl, 1, 1, white, false),
+        ground: uploadTexture(&mut gl, ground),
+        skin: uploadTexture(&mut gl, skin),
+        facade: uploadTexture(&mut gl, facade),
         ortho: Option.None,
         // 1024 over a 2.6 km square is 2.5 m a texel.
         //
@@ -419,8 +419,8 @@ pub fn gpuWorldNew(gl: &mut GlContext, ground: &Texture, skin: &Texture, facade:
         // At half the side it is a quarter of the fill and costs about 2 ms, and
         // the shadows it casts are visibly the same: at this range what reads is
         // the PATTERN of shadow down the avenues, not its edge sharpness.
-        shadow: shadowNew(gl, 1024)?,
-        cloudTex: cloudUpload(gl, cloudEmpty()),
+        shadow: shadowNew(&mut gl, 1024)?,
+        cloudTex: cloudUpload(&mut gl, cloudEmpty()),
     }
     )
 }
@@ -444,7 +444,7 @@ fn worldMesh(gl: &mut GlContext): Mesh {
     attrs.push(1) // light
     attrs.push(3) // tint
     attrs.push(1) // texture weight
-    return Mesh.new(gl, attrs)
+    return Mesh.new(&mut gl, attrs)
 }
 
 // A CPU texture becomes a GL one, once, at startup.
@@ -459,11 +459,11 @@ fn worldMesh(gl: &mut GlContext): Mesh {
 // detail texture had to be faded out by distance — drawn to the horizon it would
 // have crawled. With a mip chain it settles, and the fade could be deleted.
 fn uploadTexture(gl: &mut GlContext, t: &Texture): Texture2D {
-    var tex = Texture2D.rgb32f(gl, 1, 1, Vec.filled(3, 1.0), false)
+    var tex = Texture2D.rgb32f(&mut gl, 1, 1, Vec.filled(3, 1.0), false)
     if t.byteSrc {
-        tex = Texture2D.srgb8(gl, t.w, t.h, t.pxu, true)
+        tex = Texture2D.srgb8(&mut gl, t.w, t.h, t.pxu, true)
     } else {
-        tex = Texture2D.rgb32f(gl, t.w, t.h, t.px, true)
+        tex = Texture2D.rgb32f(&mut gl, t.w, t.h, t.px, true)
     }
     if t.mirror {
         tex.setWrap(Wrap.Mirror)
@@ -481,18 +481,18 @@ fn uploadTexture(gl: &mut GlContext, t: &Texture): Texture2D {
 pub fn setOrtho(gl: &mut GlContext, g: &mut GpuWorld, t: &Texture) {
     match replace(g.ortho, Option.None) {
         Option.Some(old) => {
-            old.free(gl)
+            old.free(&mut gl)
         }
         Option.None => {
         }
     }
-    g.ortho = Option.Some(uploadTexture(gl, t))
+    g.ortho = Option.Some(uploadTexture(&mut gl, t))
 }
 
 pub fn clearOrtho(gl: &mut GlContext, g: &mut GpuWorld) {
     match replace(g.ortho, Option.None) {
         Option.Some(old) => {
-            old.free(gl)
+            old.free(&mut gl)
         }
         Option.None => {
         }
@@ -688,11 +688,11 @@ pub fn drawStreams(g: &mut GpuWorld, s: &mut Scene, v: &View, w: f64, h: f64, ti
     g.shader.uniformF("uCloudReach", s.cloudReach)
     g.shader.uniformF("uCloudOn", s.cloudOn)
 
-    drawSlot(g, s, SLOT_NONE)
-    drawSlot(g, s, SLOT_GROUND)
-    drawSlot(g, s, SLOT_FACADE)
-    drawSlot(g, s, SLOT_ORTHO)
-    drawSlot(g, s, SLOT_SKIN)
+    drawSlot(&mut g, &mut s, SLOT_NONE)
+    drawSlot(&mut g, &mut s, SLOT_GROUND)
+    drawSlot(&mut g, &mut s, SLOT_FACADE)
+    drawSlot(&mut g, &mut s, SLOT_ORTHO)
+    drawSlot(&mut g, &mut s, SLOT_SKIN)
 
     // Water last, and translucent.
     //
@@ -809,25 +809,25 @@ pub fn gpuWorldFree(gl: &mut GlContext, g: GpuWorld) {
     // of the field first — a borrow cannot hand over a @noCopy handle.
     match replace(own.ortho, Option.None) {
         Option.Some(t) => {
-            t.free(gl)
+            t.free(&mut gl)
         }
         Option.None => {
         }
     }
-    own.cloudTex.free(gl)
-    shadowFree(gl, own.shadow)
-    own.shader.free(gl)
-    own.fall.free(gl)
-    own.sky.free(gl)
-    own.quad.free(gl)
-    own.meshNone.free(gl)
-    own.meshGround.free(gl)
-    own.meshSkin.free(gl)
-    own.meshFacade.free(gl)
-    own.meshOrtho.free(gl)
-    own.meshFall.free(gl)
-    own.white.free(gl)
-    own.ground.free(gl)
-    own.skin.free(gl)
-    own.facade.free(gl)
+    own.cloudTex.free(&mut gl)
+    shadowFree(&mut gl, own.shadow)
+    own.shader.free(&mut gl)
+    own.fall.free(&mut gl)
+    own.sky.free(&mut gl)
+    own.quad.free(&mut gl)
+    own.meshNone.free(&mut gl)
+    own.meshGround.free(&mut gl)
+    own.meshSkin.free(&mut gl)
+    own.meshFacade.free(&mut gl)
+    own.meshOrtho.free(&mut gl)
+    own.meshFall.free(&mut gl)
+    own.white.free(&mut gl)
+    own.ground.free(&mut gl)
+    own.skin.free(&mut gl)
+    own.facade.free(&mut gl)
 }

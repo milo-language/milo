@@ -231,13 +231,13 @@ fn publish(doc: &mut Doc, store: &mut CStore, gif: &mut GifFileType) {
             }
             Option.Some(img) => {
                 var image = img
-                let mapPtr = palettePtr(store, image.map)
+                let mapPtr = palettePtr(&mut store, image.map)
                 var raster = replace(image.raster, Vec.new())
                 let rasterPtr = raster.ptr()
                 store.bytes.push(raster)
                 let blocks = replace(image.exts, Vec.new())
                 let blockCount = blocks.len as i32
-                let blocksPtr = extsPtr(store, blocks)
+                let blocksPtr = extsPtr(&mut store, blocks)
                 // unsafe: `store.bytes` owns the raster now and outlives the pointer; the
                 // checker cannot see that a Vec<Vec<u8>> push keeps the inner buffers put.
                 unsafe {
@@ -264,7 +264,7 @@ fn publish(doc: &mut Doc, store: &mut CStore, gif: &mut GifFileType) {
     let trailing = replace(doc.pending, Vec.new())
     let trailingCount = trailing.len as i32
     gif.ExtensionBlockCount = trailingCount
-    gif.ExtensionBlocks = extsPtr(store, trailing)
+    gif.ExtensionBlocks = extsPtr(&mut store, trailing)
 
     // GifFile->Image: the low-level API's cursor, left on the last header read.
     gif.Image = GifImageDesc {
@@ -273,7 +273,7 @@ fn publish(doc: &mut Doc, store: &mut CStore, gif: &mut GifFileType) {
         Width: doc.curWidth,
         Height: doc.curHeight,
         Interlace: doc.curInterlace,
-        ColorMap: palettePtr(store, doc.curMap),
+        ColorMap: palettePtr(&mut store, doc.curMap),
     }
 
     // Last, because from here `gif` points into `store` and nothing may grow `store`
@@ -325,7 +325,7 @@ fn openPath(path: &string): Result<*GifFileType, i32> {
 
     var rd = GifReader.new(data)
     var stamp: Vec<u8> = Vec.filled(6, 0)
-    if !rd.takeInto(stamp, 0, 6) {
+    if !rd.takeInto(&mut stamp, 0, 6) {
         return Result.Err(dGifErrReadFailed)
     }
     // GIF_VERSION_POS is 3, so only "GIF" is required; the version digits are advisory.
@@ -336,7 +336,7 @@ fn openPath(path: &string): Result<*GifFileType, i32> {
 
     var lzw = Lzw.new()
     var doc = Doc.new()
-    match getScreenDesc(rd, doc) {
+    match getScreenDesc(&mut rd, &mut doc) {
         Result.Ok(_) => {
         }
         Result.Err(_) => {
@@ -345,7 +345,7 @@ fn openPath(path: &string): Result<*GifFileType, i32> {
     }
 
     var store = CStore.new()
-    let screenMap = palettePtr(store, doc.screenMap)
+    let screenMap = palettePtr(&mut store, doc.screenMap)
     let sWidth = doc.sWidth
     let sHeight = doc.sHeight
     let sColorResolution = doc.sColorResolution
@@ -433,7 +433,7 @@ pub fn DGifSlurp(gifFile: ?&mut GifFileType): i32 {
     var state = taken
 
     var status = gifOk
-    match slurp(state.rd, state.lzw, state.doc, state.pixelCount, continueExtFuncCode) {
+    match slurp(&mut state.rd, &mut state.lzw, &mut state.doc, &mut state.pixelCount, continueExtFuncCode) {
         Result.Ok(_) => {
         }
         Result.Err(e) => {
@@ -449,7 +449,7 @@ pub fn DGifSlurp(gifFile: ?&mut GifFileType): i32 {
     // failed slurp still hands back every image and extension block it managed to read;
     // publishing only on success made a truncated file look like an empty one, which the
     // differential reddened on 360 of the 3021 corpus files.
-    publish(state.doc, state.store, gif)
+    publish(&mut state.doc, &mut state.store, &mut gif)
     // The state goes back even on the error path: the caller still has to close, and
     // close is what frees it.
     gif.Private = boxState(state)

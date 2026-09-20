@@ -58,7 +58,7 @@ pub fn main(): i32 {
         return 0
     }
 
-    shuffleLines(lines)
+    shuffleLines(&mut lines)
 
     let head = args.getI64("head")
     let count = if head > 0 && head < lines.len {

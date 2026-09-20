@@ -412,8 +412,8 @@ pub fn worldNew(lvlIdx: i64, vw: f64, vh: f64): World {
         evWall: false, evBark: false, evBone: false, evHurt: false, evCheck: false,
         evPee: false,
     }
-    spawnEntities(w)
-    centreCamera(w)
+    spawnEntities(&mut w)
+    centreCamera(&mut w)
     return w
 }
 
@@ -430,8 +430,8 @@ pub fn worldGoto(w: &mut World, n: i64) {
     w.state = ST_PLAY
     w.clearT = 0.0
     w.barkRingT = 0.0
-    spawnEntities(w)
-    centreCamera(w)
+    spawnEntities(&mut w)
+    centreCamera(&mut w)
 }
 
 // Restart after a death, at the last hydrant rather than at the start of the
@@ -452,13 +452,13 @@ pub fn worldRetry(w: &mut World) {
     w.parts = Vec.new()
     w.ghosts = Vec.new()
     w.barkRingT = 0.0
-    spawnEntities(w)
+    spawnEntities(&mut w)
     i = 0
     while i < w.checks.len && i < lit.len {
         w.checks[i].lit = lit[i]
         i = i + 1
     }
-    centreCamera(w)
+    centreCamera(&mut w)
 }
 
 pub fn centreCamera(w: &mut World) {
@@ -677,10 +677,10 @@ fn breakCrateAt(w: &mut World, cx: i64, cy: i64) {
     if tileAt(w.lvl, cx, cy) != T_CRATE {
         return
     }
-    setTile(w.lvl, cx, cy, T_EMPTY)
+    setTile(&mut w.lvl, cx, cy, T_EMPTY)
     let px = ((cx as f64) + 0.5) * TILE
     let py = ((cy as f64) + 0.5) * TILE
-    burst(w, px, py, 16, 520.0, 0.95, 0.55, 0.18)
+    burst(&mut w, px, py, 16, 520.0, 0.95, 0.55, 0.18)
     w.shake = w.shake + 5.0
     w.evBreak = true
 }
@@ -698,7 +698,7 @@ fn breakCrates(w: &mut World) {
     let y1 = cellOf(w.p.y + PLAYER_H + 4.0)
     for cy in y0..y1 + 1 {
         for cx in x0..x1 + 1 {
-            breakCrateAt(w, cx, cy)
+            breakCrateAt(&mut w, cx, cy)
         }
     }
 }
@@ -715,7 +715,7 @@ fn killPlayer(w: &mut World) {
     w.shake = w.shake + 16.0
     w.flash = 0.9
     w.hitstop = 0.09
-    burst(w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H * 0.5, 34, 840.0, 1.6, 0.35, 0.55)
+    burst(&mut w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H * 0.5, 34, 840.0, 1.6, 0.35, 0.55)
     w.evDie = true
 }
 
@@ -744,10 +744,10 @@ fn hurtPlayer(w: &mut World, fromX: f64) {
         w.shake = w.shake + 12.0
         w.flash = Math.maxF64(w.flash, 0.55)
         w.hitstop = 0.07
-        burst(w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H * 0.5, 24, 640.0, 1.5, 0.75, 0.25)
+        burst(&mut w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H * 0.5, 24, 640.0, 1.5, 0.75, 0.25)
         w.evHurt = true
     } else {
-        killPlayer(w)
+        killPlayer(&mut w)
     }
 }
 
@@ -796,7 +796,7 @@ fn doBark(w: &mut World) {
             let dx = mx - cx
             let dy = my - cy
             if dx * dx + dy * dy <= r * r {
-                killMob(w, i, 1.5, 1.1, 0.35)
+                killMob(&mut w, i, 1.5, 1.1, 0.35)
             }
         }
         i = i + 1
@@ -813,7 +813,7 @@ fn doBark(w: &mut World) {
             let tx = ((gx as f64) + 0.5) * TILE - cx
             let ty = ((gy as f64) + 0.5) * TILE - cy
             if tx * tx + ty * ty <= r * r {
-                breakCrateAt(w, gx, gy)
+                breakCrateAt(&mut w, gx, gy)
             }
         }
     }
@@ -895,9 +895,9 @@ fn updatePlayer(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, jump
             // against a wall cannot push him into the rock.
             let want = w.peeStandX - w.p.x
             if Math.abs(want) > 1.5 {
-                let _ = stepX(w.p, w.lvl, Math.clampF64(want, 0.0 - 7.0, 7.0))
+                let _ = stepX(&mut w.p, w.lvl, Math.clampF64(want, 0.0 - 7.0, 7.0))
             }
-            peeStream(w)
+            peeStream(&mut w)
         }
     }
     w.p.buffer = w.p.buffer - dt
@@ -906,7 +906,7 @@ fn updatePlayer(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, jump
     }
 
     if bark && w.p.barkCd <= 0.0 {
-        doBark(w)
+        doBark(&mut w)
     }
 
     var mx = moveX
@@ -961,7 +961,7 @@ fn updatePlayer(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, jump
         w.p.sqY = 0.62
         w.shake = w.shake + 4.0
         w.evDash = true
-        puff(w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H * 0.5, 12, 380.0, 1.5, 0.9, 0.5, 2.4, 80.0)
+        puff(&mut w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H * 0.5, 12, 380.0, 1.5, 0.9, 0.5, 2.4, 80.0)
     }
 
     let dashing = w.p.dashT > 0.0
@@ -1015,7 +1015,7 @@ fn updatePlayer(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, jump
                 } else {
                     w.p.x
                 }
-                puff(w, sx, w.p.y + Random.floatRange(12.0, 40.0), 1, 60.0, 0.9, 0.9, 1.2, 1.6, 180.0)
+                puff(&mut w, sx, w.p.y + Random.floatRange(12.0, 40.0), 1, 60.0, 0.9, 0.9, 1.2, 1.6, 180.0)
             }
         }
 
@@ -1029,7 +1029,7 @@ fn updatePlayer(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, jump
                 w.p.sqX = 0.72
                 w.p.sqY = 1.38
                 w.evJump = true
-                puff(w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H, 8, 220.0, 0.8, 0.85, 1.1, 2.2, 520.0)
+                puff(&mut w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H, 8, 220.0, 0.8, 0.85, 1.1, 2.2, 520.0)
             } else if w.p.wallT > 0.0 && w.p.wallDir != 0.0 {
                 w.p.vy = 0.0 - WALL_JUMP_VY
                 w.p.vx = 0.0 - w.p.wallDir * WALL_JUMP_VX
@@ -1047,7 +1047,7 @@ fn updatePlayer(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, jump
                 } else {
                     w.p.x
                 }
-                puff(w, sx, w.p.y + PLAYER_H * 0.6, 12, 340.0, 1.0, 0.95, 1.4, 2.4, 400.0)
+                puff(&mut w, sx, w.p.y + PLAYER_H * 0.6, 12, 340.0, 1.0, 0.95, 1.4, 2.4, 400.0)
             }
         }
         // Releasing the key early cuts the rise — the whole of variable jump
@@ -1076,13 +1076,13 @@ fn updatePlayer(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, jump
     let sdy = dy / (steps as f64)
     var landed = 0
     for i in 0..steps {
-        let hitX = stepX(w.p, w.lvl, sdx)
+        let hitX = stepX(&mut w.p, w.lvl, sdx)
         if hitX && dashing {
             // A dash into a wall ends there rather than scraping along it.
             w.p.dashT = 0.0
             w.p.dashCd = DASH_COOL
         }
-        let r = stepY(w.p, w.lvl, sdy, down)
+        let r = stepY(&mut w.p, w.lvl, sdy, down)
         if r > landed {
             landed = r
         }
@@ -1113,7 +1113,7 @@ fn updatePlayer(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, jump
             w.p.sqX = 1.28
             w.p.sqY = 0.74
             w.evLand = true
-            puff(w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H, 7, 180.0 + speed * 0.2, 0.85, 0.9, 1.15, 2.2, 640.0)
+            puff(&mut w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H, 7, 180.0 + speed * 0.2, 0.85, 0.9, 1.15, 2.2, 640.0)
         }
     }
 
@@ -1127,14 +1127,14 @@ fn updatePlayer(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, jump
         w.p.sqY = 1.55
         w.shake = w.shake + 7.0
         w.evPad = true
-        puff(w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H, 18, 520.0, 1.7, 1.2, 0.35, 2.8, 520.0)
+        puff(&mut w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H, 18, 520.0, 1.7, 1.2, 0.35, 2.8, 520.0)
     }
 
-    breakCrates(w)
+    breakCrates(&mut w)
 
     // running dust
     if w.p.onGround && Math.abs(w.p.vx) > 380.0 && Random.float() < 0.5 {
-        puff(w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H - 1.0, 1, 80.0, 0.7, 0.75, 0.95, 1.8, 400.0)
+        puff(&mut w, w.p.x + PLAYER_W * 0.5, w.p.y + PLAYER_H - 1.0, 1, 80.0, 0.7, 0.75, 0.95, 1.8, 400.0)
     }
 
     // squash springs back
@@ -1145,10 +1145,10 @@ fn updatePlayer(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, jump
     if overlapsSpike(w.p, w.lvl) {
         // Thrown back the way you came: a spike you walked into sideways is a
         // hit and a shove, not the end of the run.
-        hurtPlayer(w, w.p.x + PLAYER_W * 0.5 + w.p.facing * TILE)
+        hurtPlayer(&mut w, w.p.x + PLAYER_W * 0.5 + w.p.facing * TILE)
     }
     if w.p.y > (w.lvl.rows as f64) * TILE + 160.0 {
-        killPlayer(w)
+        killPlayer(&mut w)
     }
 }
 
@@ -1202,7 +1202,7 @@ fn updateMobs(w: &mut World, dt: f64) {
 fn killMob(w: &mut World, i: i64, r: f64, g: f64, b: f64) {
     w.mobs[i].alive = false
     w.mobs[i].dieT = 0.35
-    burst(w, w.mobs[i].x + w.mobs[i].w * 0.5, w.mobs[i].y + w.mobs[i].h * 0.5, 22, 660.0, r, g, b)
+    burst(&mut w, w.mobs[i].x + w.mobs[i].w * 0.5, w.mobs[i].y + w.mobs[i].h * 0.5, 22, 660.0, r, g, b)
     w.shake = w.shake + 8.0
     w.hitstop = 0.055
     w.evStomp = true
@@ -1227,16 +1227,16 @@ fn hitMobs(w: &mut World) {
                 if w.p.dashT > 0.0 {
                     // A dash goes through anything. That is what makes the dash
                     // an answer to the bird rather than only a movement toy.
-                    killMob(w, i, 1.5, 0.9, 0.3)
+                    killMob(&mut w, i, 1.5, 0.9, 0.3)
                 } else if w.mobs[i].kind == MOB_CAT && w.p.vy > 50.0 && py1 < my0 + 32.0 {
-                    killMob(w, i, 1.2, 0.5, 1.6)
+                    killMob(&mut w, i, 1.2, 0.5, 1.6)
                     w.p.vy = 0.0 - STOMP_BOUNCE
                     w.p.sqX = 1.3
                     w.p.sqY = 0.7
                     w.p.dashes = 1
                     w.p.jumping = true
                 } else {
-                    hurtPlayer(w, mx0 + w.mobs[i].w * 0.5)
+                    hurtPlayer(&mut w, mx0 + w.mobs[i].w * 0.5)
                 }
             }
         }
@@ -1264,7 +1264,7 @@ fn hitPickups(w: &mut World, dt: f64) {
                     w.cores = w.cores + 1
                     w.flash = Math.maxF64(w.flash, 0.45)
                     w.shake = w.shake + 5.0
-                    burst(w, w.pk[i].x, w.pk[i].y, 26, 600.0, 0.5, 1.4, 1.7)
+                    burst(&mut w, w.pk[i].x, w.pk[i].y, 26, 600.0, 0.5, 1.4, 1.7)
                     w.evCore = true
                 } else if w.pk[i].kind == PK_BONE {
                     if w.p.form == FORM_CHI {
@@ -1275,11 +1275,11 @@ fn hitPickups(w: &mut World, dt: f64) {
                     w.p.sqY = 1.45
                     w.flash = Math.maxF64(w.flash, 0.75)
                     w.shake = w.shake + 9.0
-                    burst(w, w.pk[i].x, w.pk[i].y, 34, 720.0, 1.7, 1.5, 0.9)
+                    burst(&mut w, w.pk[i].x, w.pk[i].y, 34, 720.0, 1.7, 1.5, 0.9)
                     w.evBone = true
                 } else {
                     w.shards = w.shards + 1
-                    burst(w, w.pk[i].x, w.pk[i].y, 10, 400.0, 1.5, 1.0, 0.4)
+                    burst(&mut w, w.pk[i].x, w.pk[i].y, 10, 400.0, 1.5, 1.0, 0.4)
                     w.evShard = true
                 }
             }
@@ -1305,7 +1305,7 @@ fn hitChecks(w: &mut World, dt: f64) {
                 w.spawnX = w.checks[i].x
                 w.spawnY = w.checks[i].y + 4.0
                 w.flash = Math.maxF64(w.flash, 0.35)
-                burst(w, w.checks[i].x, w.checks[i].y - 21.0, 20, 440.0, 0.5, 1.3, 1.6)
+                burst(&mut w, w.checks[i].x, w.checks[i].y - 21.0, 20, 440.0, 0.5, 1.3, 1.6)
                 w.evCheck = true
                 // Face away from it and lift a leg. A dog marks with his back to
                 // the thing, so the facing is the opposite of the approach.
@@ -1343,7 +1343,7 @@ fn hitGoal(w: &mut World) {
         w.banked = w.banked + w.shards
         w.flash = 1.0
         w.evGoal = true
-        burst(w, gx, gy, 46, 840.0, 0.7, 1.6, 1.5)
+        burst(&mut w, gx, gy, 46, 840.0, 0.7, 1.6, 1.5)
     }
 }
 
@@ -1369,7 +1369,7 @@ fn clearEvents(w: &mut World) {
 }
 
 pub fn worldUpdate(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, jumpHeld: bool, dash: bool, bark: bool) {
-    clearEvents(w)
+    clearEvents(&mut w)
     w.t = w.t + dt
     if w.barkRingT > 0.0 {
         w.barkRingT = w.barkRingT - dt
@@ -1379,7 +1379,7 @@ pub fn worldUpdate(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, j
     // drawing, so it reads as weight rather than as a dropped frame.
     if w.hitstop > 0.0 {
         w.hitstop = w.hitstop - dt
-        stepParts(w, dt * 0.25)
+        stepParts(&mut w, dt * 0.25)
         w.shake = Math.maxF64(0.0, w.shake - dt * 26.0)
         return
     }
@@ -1389,21 +1389,21 @@ pub fn worldUpdate(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, j
 
     if w.state == ST_CLEAR {
         w.clearT = w.clearT - dt
-        stepParts(w, dt)
-        updateCamera(w, dt)
+        stepParts(&mut w, dt)
+        updateCamera(&mut w, dt)
         if w.clearT <= 0.0 {
             let next = w.lvlIdx + 1
             if next >= levelCount() {
                 w.state = ST_DONE
             } else {
-                worldGoto(w, next)
+                worldGoto(&mut w, next)
             }
         }
         return
     }
     if w.state == ST_DONE {
-        stepParts(w, dt)
-        updateCamera(w, dt)
+        stepParts(&mut w, dt)
+        updateCamera(&mut w, dt)
         return
     }
 
@@ -1411,22 +1411,22 @@ pub fn worldUpdate(w: &mut World, dt: f64, moveX: f64, down: bool, jump: bool, j
 
     if w.p.dead {
         w.p.deadT = w.p.deadT - dt
-        stepParts(w, dt)
-        updateCamera(w, dt)
+        stepParts(&mut w, dt)
+        updateCamera(&mut w, dt)
         if w.p.deadT <= 0.0 {
-            worldRetry(w)
+            worldRetry(&mut w)
         }
         return
     }
 
-    updatePlayer(w, dt, moveX, down, jump, jumpHeld, dash, bark)
-    updateMobs(w, dt)
-    hitMobs(w)
-    hitPickups(w, dt)
-    hitChecks(w, dt)
-    hitGoal(w)
-    stepParts(w, dt)
-    updateCamera(w, dt)
+    updatePlayer(&mut w, dt, moveX, down, jump, jumpHeld, dash, bark)
+    updateMobs(&mut w, dt)
+    hitMobs(&mut w)
+    hitPickups(&mut w, dt)
+    hitChecks(&mut w, dt)
+    hitGoal(&mut w)
+    stepParts(&mut w, dt)
+    updateCamera(&mut w, dt)
 }
 
 fn updateCamera(w: &mut World, dt: f64) {

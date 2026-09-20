@@ -56,7 +56,7 @@ fn pad(s: &string, n: i64): string {
 fn settle(g: &mut Game) {
     var i = 0
     while i < 400 {
-        updateCamera(g, 0.05)
+        updateCamera(&mut g, 0.05)
         i = i + 1
     }
 }
@@ -159,31 +159,31 @@ pub fn main(): i32 {
     var failures = 0
     var mi = 0
     while mi < MISSION_COUNT {
-        startMission(g, mi)
+        startMission(&mut g, mi)
         print("== " + g.missions[mi].name)
-        settle(g)
-        report(g, PHASE_DEPART, failures)
+        settle(&mut g)
+        report(&mut g, PHASE_DEPART, &mut failures)
 
-        setPhase(g, PHASE_TARGET)
-        settle(g)
-        report(g, PHASE_TARGET, failures)
+        setPhase(&mut g, PHASE_TARGET)
+        settle(&mut g)
+        report(&mut g, PHASE_TARGET, &mut failures)
 
-        setPhase(g, PHASE_PLAN)
-        settle(g)
-        report(g, PHASE_PLAN, failures)
+        setPhase(&mut g, PHASE_PLAN)
+        settle(&mut g)
+        report(&mut g, PHASE_PLAN, &mut failures)
 
         // Mid-flight, with the ship half way round the arc. The dials have to be
         // snapped to a plan that fits first, because that is the only kind of
         // plan the game will let anyone launch.
-        snapToBest(g)
-        commit(g)
+        snapToBest(&mut g)
+        commit(&mut g)
         if g.phase != PHASE_FLY {
             print("        FAIL: the cheapest plan in the window will not commit")
             failures = failures + 1
         }
         g.flightT = g.tof * 0.5
-        settle(g)
-        report(g, PHASE_FLY, failures)
+        settle(&mut g)
+        report(&mut g, PHASE_FLY, &mut failures)
         let sp = shipPoint(g)
         let v = viewOf(g, W, H)
         let pr = projectPoint(v, sp)

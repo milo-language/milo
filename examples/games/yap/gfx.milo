@@ -283,7 +283,7 @@ fn plot(c: &mut Canvas, x: i64, y: i64, cov: f64, r: f64, g: f64, b: f64) {
     if cov <= 0.0 {
         return
     }
-    addPix(c, x, y, r * cov, g * cov, b * cov)
+    addPix(&mut c, x, y, r * cov, g * cov, b * cov)
 }
 
 // Xiaolin Wu antialiased line, drawn additively.
@@ -340,11 +340,11 @@ pub fn line(c: &mut Canvas, x0i: f64, y0i: f64, x1i: f64, y1i: f64, r: f64, g: f
         let frac = yv - fy
         let iy = fy as i64
         if steep {
-            plot(c, iy, x, 1.0 - frac, r, g, b)
-            plot(c, iy + 1, x, frac, r, g, b)
+            plot(&mut c, iy, x, 1.0 - frac, r, g, b)
+            plot(&mut c, iy + 1, x, frac, r, g, b)
         } else {
-            plot(c, x, iy, 1.0 - frac, r, g, b)
-            plot(c, x, iy + 1, frac, r, g, b)
+            plot(&mut c, x, iy, 1.0 - frac, r, g, b)
+            plot(&mut c, x, iy + 1, frac, r, g, b)
         }
         yv = yv + grad
         x = x + 1
@@ -421,9 +421,9 @@ pub fn blitSprite(c: &mut Canvas, s: &Sprite, dx: f64, dy: f64, sx: f64, sy: f64
                     g = g + (tg - g) * tmix
                     b = b + (tb - b) * tmix
                 }
-                blendPix(c, x, y, r, g, b, a)
+                blendPix(&mut c, x, y, r, g, b, a)
                 if glow > 0.0 {
-                    addPix(c, x, y, r * a * glow, g * a * glow, b * a * glow)
+                    addPix(&mut c, x, y, r * a * glow, g * a * glow, b * a * glow)
                 }
             }
             x = x + 1
@@ -434,12 +434,12 @@ pub fn blitSprite(c: &mut Canvas, s: &Sprite, dx: f64, dy: f64, sx: f64, sy: f64
 
 // The common case: upright, opaque, untinted.
 pub fn drawSprite(c: &mut Canvas, s: &Sprite, dx: f64, dy: f64, scale: f64, flip: bool, glow: f64) {
-    blitSprite(c, s, dx, dy, scale, scale, flip, 1.0, glow, 0.0, 0.0, 0.0, 0.0)
+    blitSprite(&mut c, s, dx, dy, scale, scale, flip, 1.0, glow, 0.0, 0.0, 0.0, 0.0)
 }
 
 // A flat silhouette of a sprite, for shadows and dash ghosts.
 pub fn shadowSprite(c: &mut Canvas, s: &Sprite, dx: f64, dy: f64, sx: f64, sy: f64, flip: bool, alpha: f64, r: f64, g: f64, b: f64) {
-    blitSprite(c, s, dx, dy, sx, sy, flip, alpha, 0.0, r, g, b, 1.0)
+    blitSprite(&mut c, s, dx, dy, sx, sy, flip, alpha, 0.0, r, g, b, 1.0)
 }
 
 // ── text ──────────────────────────────────────────────────────────────────────
@@ -465,7 +465,7 @@ pub fn text(c: &mut Canvas, x: i64, y: i64, s: &string, scale: i64, r: f64, g: f
                             let py = y + row * scale
                             for sy in 0..scale {
                                 for sx in 0..scale {
-                                    addPix(c, px + sx, py + sy, r, g, b)
+                                    addPix(&mut c, px + sx, py + sy, r, g, b)
                                 }
                             }
                         }
@@ -478,7 +478,7 @@ pub fn text(c: &mut Canvas, x: i64, y: i64, s: &string, scale: i64, r: f64, g: f
 }
 
 pub fn textCentered(c: &mut Canvas, cx: i64, y: i64, s: &string, scale: i64, r: f64, g: f64, b: f64) {
-    text(c, cx - textWidth(s, scale) / 2, y, s, scale, r, g, b)
+    text(&mut c, cx - textWidth(s, scale) / 2, y, s, scale, r, g, b)
 }
 
 // ── bloom + tone mapping ──────────────────────────────────────────────────────
@@ -606,11 +606,11 @@ fn encodeSlow(v: f64): u32 {
 // art fills most of the frame, and a low threshold would bloom the level itself
 // into fog. Only the emissive ink — visors, shards, beams, sparks — clears it.
 pub fn present(c: &mut Canvas, bloomGain: f64, exposure: f64, threshold: f64) {
-    brightPass(c, threshold)
-    blurPass(c, 1)
-    blurPass(c, 2)
-    blurPass(c, 4)
-    blurPass(c, 8) // without the widest pass the halo has a visible square edge
+    brightPass(&mut c, threshold)
+    blurPass(&mut c, 1)
+    blurPass(&mut c, 2)
+    blurPass(&mut c, 4)
+    blurPass(&mut c, 8) // without the widest pass the halo has a visible square edge
 
     let bw = c.bw
     let gain = (bloomGain * exposure) as f32

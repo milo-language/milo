@@ -145,14 +145,14 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64], scale: f64) {
         if ks[SC_Q] != 0 || ks[SC_ESCAPE] != 0 {
             inp.quit = true
         }
-        inp.advance = edge(ks[SC_SPACE] != 0, inp.spaceHeld)
-        inp.commit = edge(ks[SC_RETURN] != 0, inp.returnHeld)
-        inp.snap = edge(ks[SC_S] != 0, inp.snapHeld)
-        inp.reset = edge(ks[SC_R] != 0, inp.resetHeld)
-        inp.help = edge(ks[SC_H] != 0, inp.helpHeld)
-        inp.fullscreen = edge(ks[SC_F] != 0, inp.fullHeld)
-        inp.warpDown = edge(ks[SC_LEFTBRACKET] != 0, inp.warpDownHeld)
-        inp.warpUp = edge(ks[SC_RIGHTBRACKET] != 0, inp.warpUpHeld)
+        inp.advance = edge(ks[SC_SPACE] != 0, &mut inp.spaceHeld)
+        inp.commit = edge(ks[SC_RETURN] != 0, &mut inp.returnHeld)
+        inp.snap = edge(ks[SC_S] != 0, &mut inp.snapHeld)
+        inp.reset = edge(ks[SC_R] != 0, &mut inp.resetHeld)
+        inp.help = edge(ks[SC_H] != 0, &mut inp.helpHeld)
+        inp.fullscreen = edge(ks[SC_F] != 0, &mut inp.fullHeld)
+        inp.warpDown = edge(ks[SC_LEFTBRACKET] != 0, &mut inp.warpDownHeld)
+        inp.warpUp = edge(ks[SC_RIGHTBRACKET] != 0, &mut inp.warpUpHeld)
 
         // The dials are held, not tapped: the whole feel of the plan screen is
         // watching a number fall while a key is down.
@@ -190,7 +190,7 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64], scale: f64) {
             i = i + 1
         }
         inp.digit = 0
-        if edge(pressed != 0, inp.digitHeld) {
+        if edge(pressed != 0, &mut inp.digitHeld) {
             inp.digit = pressed
         }
     }

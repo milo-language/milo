@@ -311,8 +311,8 @@ pub fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFil
             return
         }
     }
-    let res = searchContent(content, filePath, re, opts, multiFile, false)
-    emitResult(res, opts)
+    let res = searchContent(content, filePath, &mut re, opts, multiFile, false)
+    emitResult(res, &mut opts)
 }
 
 // `knownMatch` is set by the parallel path, which already proved the literal is in
@@ -339,7 +339,7 @@ pub fn searchContent(content: &string, filePath: &string, re: &mut Regex, opts: 
         return searchLiteral(content, filePath, opts, multiFile)
     }
 
-    return searchWithRegex(content, filePath, re, opts, multiFile)
+    return searchWithRegex(content, filePath, &mut re, opts, multiFile)
 }
 
 // The half of the search that never touches the regex engine, split out so a worker
@@ -486,7 +486,7 @@ pub fn searchWithRegex(content: &string, filePath: &string, re: &mut Regex, opts
     var headerPrinted: bool = false
 
     for i in 0..numLines {
-        let matches = getMatches(re, lines[i], opts.wordBound)
+        let matches = getMatches(&mut re, lines[i], opts.wordBound)
         var isMatch = matches.len > 0
         if opts.invert {
             isMatch = matches.len == 0
@@ -792,13 +792,13 @@ pub fn searchDirParallel(dirPath: &string, re: &mut Regex, opts: &mut RgOpts): v
 
         for j in 0..done.len {
             if done[j].formatted {
-                emitResult(done[j].result, opts)
+                emitResult(done[j].result, &mut opts)
             } else {
                 // The worker read it but could not format it — a regex pattern, and the
                 // engine only runs here. Same work as before, just no longer the whole
                 // job for every search.
-                let res = searchWithRegex(done[j].content, done[j].path, re, opts, true)
-                emitResult(res, opts)
+                let res = searchWithRegex(done[j].content, done[j].path, &mut re, opts, true)
+                emitResult(res, &mut opts)
             }
         }
     }
@@ -827,11 +827,11 @@ pub fn searchDir(dirPath: &string, re: &mut Regex, opts: &mut RgOpts, sets: &mut
         let fullPath = Path.join(dirPath, name)
         if entryIsDir {
             if !shouldSkipDir(name) && !stackIgnores(sets, fullPath, name, true) {
-                searchDir(fullPath, re, opts, sets)
+                searchDir(fullPath, &mut re, &mut opts, &mut sets)
             }
         } else if entryIsFile {
             if !stackIgnores(sets, fullPath, name, false) {
-                searchFile(fullPath, re, opts, true)
+                searchFile(fullPath, &mut re, &mut opts, true)
             }
         }
     }
@@ -850,13 +850,13 @@ pub fn searchPath(path: &string, re: &mut Regex, opts: &mut RgOpts): bool {
         // question for a regex too — so a regex with a provable required substring
         // gets the parallel walk, not just a plain literal.
         if opts.prefilter.len > 0 && !opts.invert {
-            searchDirParallel(path, re, opts)
+            searchDirParallel(path, &mut re, &mut opts)
         } else {
             var sets: Vec<IgnoreSet> = Vec.new()
-            searchDir(path, re, opts, sets)
+            searchDir(path, &mut re, &mut opts, &mut sets)
         }
     } else if isFile(path) {
-        searchFile(path, re, opts, false)
+        searchFile(path, &mut re, &mut opts, false)
     } else {
         eprint($"rg: {path}: no such file or directory")
         return false
@@ -969,7 +969,7 @@ pub fn main(): i32 {
         useGitIgnore:!args.getBool("no-ignore") && inGitRepo(target),
     }
 
-    if !searchPath(target, re, opts) {
+    if !searchPath(target, &mut re, &mut opts) {
         return 2
     }
 

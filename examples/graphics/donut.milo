@@ -124,30 +124,30 @@ pub fn renderColor(buf: &mut string, lum: &[f64; 3520]): void {
     var top: [i64; 3] = [0; 3]
     var bot: [i64; 3] = [0; 3]
     for r in 0..hc {
-        emit(buf, Ansi.cursorTo(r + 2, 1))
+        emit(&mut buf, Ansi.cursorTo(r + 2, 1))
         for c in 0..PW {
             let lt = lum[(r * 2) * PW + c]
             let lb = lum[(r * 2 + 1) * PW + c]
             let topOn = lt >= 0.0
             let botOn = lb >= 0.0
             if topOn && botOn {
-                lumColor(lt, top)
-                lumColor(lb, bot)
-                Ansi.pushFg24(buf, top[0], top[1], top[2])
-                Ansi.pushBg24(buf, bot[0], bot[1], bot[2])
-                emit(buf, "▀")
+                lumColor(lt, &mut top)
+                lumColor(lb, &mut bot)
+                Ansi.pushFg24(&mut buf, top[0], top[1], top[2])
+                Ansi.pushBg24(&mut buf, bot[0], bot[1], bot[2])
+                emit(&mut buf, "▀")
             } else if topOn {
-                lumColor(lt, top)
-                emit(buf, "\x1b[49m")
-                Ansi.pushFg24(buf, top[0], top[1], top[2])
-                emit(buf, "▀")
+                lumColor(lt, &mut top)
+                emit(&mut buf, "\x1b[49m")
+                Ansi.pushFg24(&mut buf, top[0], top[1], top[2])
+                emit(&mut buf, "▀")
             } else if botOn {
-                lumColor(lb, bot)
-                emit(buf, "\x1b[49m")
-                Ansi.pushFg24(buf, bot[0], bot[1], bot[2])
-                emit(buf, "▄")
+                lumColor(lb, &mut bot)
+                emit(&mut buf, "\x1b[49m")
+                Ansi.pushFg24(&mut buf, bot[0], bot[1], bot[2])
+                emit(&mut buf, "▄")
             } else {
-                emit(buf, "\x1b[49m")
+                emit(&mut buf, "\x1b[49m")
                 buf.push(32 as u8)
             }
         }
@@ -158,7 +158,7 @@ pub fn renderColor(buf: &mut string, lum: &[f64; 3520]): void {
 pub fn printAscii(): void {
     var zbuf: [f64; 3520] = [0.0; 3520]
     var lum: [f64; 3520] = [0.0; 3520]
-    computeFrame(zbuf, lum, 1.0, 0.5)
+    computeFrame(&mut zbuf, &mut lum, 1.0, 0.5)
     let ramp = " .,-~:;=!*#$@"
     var out = ""
     for r in 0..PH {
@@ -194,13 +194,13 @@ pub fn runInteractive(): void {
     var fps: f64 = 0.0
 
     while !quit {
-        computeFrame(zbuf, lum, a, b)
+        computeFrame(&mut zbuf, &mut lum, a, b)
         var buf = String.withCapacity(65536)
-        renderColor(buf, lum)
-        emit(buf, Ansi.reset())
-        emit(buf, Ansi.cursorTo(1, 1))
-        emit(buf, Color.bold(" milo donut "))
-        emit(buf, Color.gray($"  {formatFloat(fps, 0)} fps  ·  q quit "))
+        renderColor(&mut buf, lum)
+        emit(&mut buf, Ansi.reset())
+        emit(&mut buf, Ansi.cursorTo(1, 1))
+        emit(&mut buf, Color.bold(" milo donut "))
+        emit(&mut buf, Color.gray($"  {formatFloat(fps, 0)} fps  ·  q quit "))
         writeStdout(buf)
 
         a = a + 0.045

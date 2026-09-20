@@ -731,7 +731,7 @@ impl JdwpIo {
         var out: Vec<JValue> = []
         var i: i64 = 0
         while i < n {
-            out.push(self.readValue(r))
+            out.push(self.readValue(&mut r))
             i = i + 1
         }
         return Result.Ok(out)
@@ -782,7 +782,7 @@ impl JdwpIo {
         while i < n {
             let fid = r.id(self.sizes.frameId)
             out.push(FrameEntry {
-                frameId: fid, loc: self.readLocation(r)
+                frameId: fid, loc: self.readLocation(&mut r)
             }
             )
             i = i + 1
@@ -813,7 +813,7 @@ impl JdwpIo {
         var i: i64 = 0
         while i < n {
             if isObjectTag(regionTag) {
-                out.push(self.readValue(r))
+                out.push(self.readValue(&mut r))
             } else {
                 out.push(JValue {
                     tag: regionTag, num: r.id(tagWidth(regionTag, self.sizes))
@@ -845,7 +845,7 @@ impl JdwpIo {
         var out: Vec<JValue> = []
         var j: i64 = 0
         while j < n {
-            out.push(self.readValue(r))
+            out.push(self.readValue(&mut r))
             j = j + 1
         }
         return Result.Ok(out)
@@ -856,7 +856,7 @@ impl JdwpIo {
         w.id(threadId, self.sizes.objectId)
         w.id(frameId, self.sizes.frameId)
         var r = self.request(16, 3, w.buf)?
-        return Result.Ok(self.readValue(r))
+        return Result.Ok(self.readValue(&mut r))
     }
 
     // --- EventRequest (15) ---------------------------------------------------------
@@ -868,7 +868,7 @@ impl JdwpIo {
         w.u8(2) // suspend ALL
         w.u32(1)
         w.u8(7) // LocationOnly
-        self.writeLocation(w, loc)
+        self.writeLocation(&mut w, loc)
         var r = self.request(15, 1, w.buf)?
         return Result.Ok(r.i32v())
     }
@@ -957,15 +957,15 @@ impl JdwpIo {
             if kind == 1 || kind == 2 {
                 // SINGLE_STEP / BREAKPOINT: thread + location
                 ev.thread = r.id(self.sizes.objectId)
-                ev.loc = self.readLocation(r)
+                ev.loc = self.readLocation(&mut r)
             } else if kind == 4 {
                 // EXCEPTION: thread, throwLocation, tagged exception obj,
                 // catchLocation (all-zero classId ⇒ uncaught). loc = throw site.
                 ev.thread = r.id(self.sizes.objectId)
-                ev.loc = self.readLocation(r)
+                ev.loc = self.readLocation(&mut r)
                 let _tag = r.u8()
                 ev.exception = r.id(self.sizes.objectId)
-                let catchLoc = self.readLocation(r)
+                let catchLoc = self.readLocation(&mut r)
                 ev.caught = catchLoc.classId.v != 0
             } else if kind == 8 {
                 // CLASS_PREPARE: thread, refTypeTag, typeID, signature, status

@@ -17,7 +17,7 @@ from "./levels" import {
 }
 
 pub fn drawGame(c: &mut Canvas, g: &Game, ox: f64, oy: f64) {
-    gridDraw(c, g.grid, 0.006, 0.018, 0.075)
+    gridDraw(&mut c, g.grid, 0.006, 0.018, 0.075)
 
     // bricks
     for i in 0..g.bricks.len {
@@ -36,22 +36,22 @@ pub fn drawGame(c: &mut Canvas, g: &Game, ox: f64, oy: f64) {
         }
         let x0 = g.bricks[i].x + ox
         let y0 = g.bricks[i].y + oy
-        brickFill(c, x0 + 1.0, y0 + 1.0, x0 + BRICK_W - 1.0, y0 + BRICK_H - 1.0, r * 0.42, gg * 0.42, b * 0.42, 0.45)
+        brickFill(&mut c, x0 + 1.0, y0 + 1.0, x0 + BRICK_W - 1.0, y0 + BRICK_H - 1.0, r * 0.42, gg * 0.42, b * 0.42, 0.45)
         // bright rim so each brick reads as a separate object
-        line(c, x0 + 1.0, y0 + 1.0, x0 + BRICK_W - 1.0, y0 + 1.0, r, gg, b)
-        line(c, x0 + 1.0, y0 + BRICK_H - 1.0, x0 + BRICK_W - 1.0, y0 + BRICK_H - 1.0, r * 0.5, gg * 0.5, b * 0.5)
-        line(c, x0 + 1.0, y0 + 1.0, x0 + 1.0, y0 + BRICK_H - 1.0, r * 0.7, gg * 0.7, b * 0.7)
-        line(c, x0 + BRICK_W - 1.0, y0 + 1.0, x0 + BRICK_W - 1.0, y0 + BRICK_H - 1.0, r * 0.7, gg * 0.7, b * 0.7)
+        line(&mut c, x0 + 1.0, y0 + 1.0, x0 + BRICK_W - 1.0, y0 + 1.0, r, gg, b)
+        line(&mut c, x0 + 1.0, y0 + BRICK_H - 1.0, x0 + BRICK_W - 1.0, y0 + BRICK_H - 1.0, r * 0.5, gg * 0.5, b * 0.5)
+        line(&mut c, x0 + 1.0, y0 + 1.0, x0 + 1.0, y0 + BRICK_H - 1.0, r * 0.7, gg * 0.7, b * 0.7)
+        line(&mut c, x0 + BRICK_W - 1.0, y0 + 1.0, x0 + BRICK_W - 1.0, y0 + BRICK_H - 1.0, r * 0.7, gg * 0.7, b * 0.7)
         // pips showing remaining hits
         if g.bricks[i].kind == 0 && g.bricks[i].maxHp > 1 {
             for k in 0..g.bricks[i].hp {
                 let px = x0 + BRICK_W * 0.5 + ((k as f64) - ((g.bricks[i].hp - 1) as f64) * 0.5) * 9.0
-                spot(c, px, y0 + BRICK_H * 0.5, 2.6, r * 1.4, gg * 1.4, b * 1.4)
+                spot(&mut c, px, y0 + BRICK_H * 0.5, 2.6, r * 1.4, gg * 1.4, b * 1.4)
             }
         }
         if g.bricks[i].kind == 2 {
             let pulse = 0.6 + 0.4 * Math.sin(g.time * 8.0 + (i as f64))
-            circle(c, x0 + BRICK_W * 0.5, y0 + BRICK_H * 0.5, 7.0, 10, r * pulse, gg * pulse, b * pulse)
+            circle(&mut c, x0 + BRICK_W * 0.5, y0 + BRICK_H * 0.5, 7.0, 10, r * pulse, gg * pulse, b * pulse)
         }
     }
 
@@ -61,20 +61,20 @@ pub fn drawGame(c: &mut Canvas, g: &Game, ox: f64, oy: f64) {
         let x = g.pups[i].x + ox
         let y = g.pups[i].y + oy
         let s = 13.0 + Math.sin(g.pups[i].spin * 2.0) * 2.0
-        spot(c, x, y, s * 1.3, col.r * 0.25, col.g * 0.25, col.b * 0.25)
-        line(c, x - s, y, x, y - s, col.r, col.g, col.b)
-        line(c, x, y - s, x + s, y, col.r, col.g, col.b)
-        line(c, x + s, y, x, y + s, col.r, col.g, col.b)
-        line(c, x, y + s, x - s, y, col.r, col.g, col.b)
+        spot(&mut c, x, y, s * 1.3, col.r * 0.25, col.g * 0.25, col.b * 0.25)
+        line(&mut c, x - s, y, x, y - s, col.r, col.g, col.b)
+        line(&mut c, x, y - s, x + s, y, col.r, col.g, col.b)
+        line(&mut c, x + s, y, x, y + s, col.r, col.g, col.b)
+        line(&mut c, x, y + s, x - s, y, col.r, col.g, col.b)
         let label = pupName(g.pups[i].kind)
-        text(c, (x as i64) - 3, (y as i64) - 5, label[0..1], 2, 1.4, 1.4, 1.5)
+        text(&mut c, (x as i64) - 3, (y as i64) - 5, label[0..1], 2, 1.4, 1.4, 1.5)
     }
 
     // particles
     for i in 0..g.parts.len {
         let t = g.parts[i].life / g.parts[i].maxLife
         let f = t * t
-        spot(c, g.parts[i].x + ox, g.parts[i].y + oy, g.parts[i].size * (0.6 + t), g.parts[i].cr * f, g.parts[i].cg * f, g.parts[i].cb * f)
+        spot(&mut c, g.parts[i].x + ox, g.parts[i].y + oy, g.parts[i].size * (0.6 + t), g.parts[i].cr * f, g.parts[i].cg * f, g.parts[i].cb * f)
     }
 
     // paddle
@@ -88,18 +88,18 @@ pub fn drawGame(c: &mut Canvas, g: &Game, ox: f64, oy: f64) {
         pg = 0.5
         pb = 1.7
     }
-    capsule(c, px, py, g.padW * 0.5, 9.0, pr * 0.5, pg * 0.5, pb * 0.5)
-    line(c, px - g.padW * 0.5 + 9.0, py - 9.0, px + g.padW * 0.5 - 9.0, py - 9.0, pr * 1.8, pg * 1.8, pb * 1.8)
+    capsule(&mut c, px, py, g.padW * 0.5, 9.0, pr * 0.5, pg * 0.5, pb * 0.5)
+    line(&mut c, px - g.padW * 0.5 + 9.0, py - 9.0, px + g.padW * 0.5 - 9.0, py - 9.0, pr * 1.8, pg * 1.8, pb * 1.8)
 
     // balls, with a motion streak
     for i in 0..g.balls.len {
         let x = g.balls[i].x + ox
         let y = g.balls[i].y + oy
-        line(c, g.balls[i].px + ox, g.balls[i].py + oy, x, y, 0.8, 1.0, 1.2)
-        spot(c, x, y, g.balls[i].r * 1.9, 0.5, 0.8, 1.1)
-        spot(c, x, y, g.balls[i].r * 0.85, 1.9, 2.0, 2.1)
+        line(&mut c, g.balls[i].px + ox, g.balls[i].py + oy, x, y, 0.8, 1.0, 1.2)
+        spot(&mut c, x, y, g.balls[i].r * 1.9, 0.5, 0.8, 1.1)
+        spot(&mut c, x, y, g.balls[i].r * 0.85, 1.9, 2.0, 2.1)
         if g.balls[i].held {
-            circle(c, x, y, g.balls[i].r + 8.0 + Math.sin(g.time * 8.0) * 2.0, 16, 0.5, 0.9, 1.2)
+            circle(&mut c, x, y, g.balls[i].r + 8.0 + Math.sin(g.time * 8.0) * 2.0, 16, 0.5, 0.9, 1.2)
         }
     }
 
@@ -110,30 +110,30 @@ pub fn drawGame(c: &mut Canvas, g: &Game, ox: f64, oy: f64) {
         }
         let f = Math.minF64(1.0, g.pops[i].life * 2.0)
         let s = "+" + g.pops[i].value.toString()
-        textCentered(c, (g.pops[i].x + ox) as i64, (g.pops[i].y + oy) as i64, s, 2, g.pops[i].cr * f, g.pops[i].cg * f, g.pops[i].cb * f)
+        textCentered(&mut c, (g.pops[i].x + ox) as i64, (g.pops[i].y + oy) as i64, s, 2, g.pops[i].cr * f, g.pops[i].cg * f, g.pops[i].cb * f)
     }
 }
 
 pub fn drawHud(c: &mut Canvas, g: &Game) {
-    text(c, 24, 22, "SCORE " + g.score.toString(), 3, 0.34, 0.66, 0.86)
+    text(&mut c, 24, 22, "SCORE " + g.score.toString(), 3, 0.34, 0.66, 0.86)
     let bs = "BEST " + g.best.toString()
-    text(c, 24, 56, bs, 2, 0.22, 0.38, 0.48)
+    text(&mut c, 24, 56, bs, 2, 0.22, 0.38, 0.48)
 
     let lv = levelName(g.level)
-    textCentered(c, c.w / 2, 26, lv, 3, 0.75, 0.55, 0.95)
+    textCentered(&mut c, c.w / 2, 26, lv, 3, 0.75, 0.55, 0.95)
 
     // balls remaining
-    text(c, c.w - 200, 22, "BALLS", 2, 0.22, 0.38, 0.48)
+    text(&mut c, c.w - 200, 22, "BALLS", 2, 0.22, 0.38, 0.48)
     for i in 0..g.lives {
-        spot(c, (c.w - 130 + i * 20) as f64, 28.0, 6.0, 0.4, 0.8, 1.2)
+        spot(&mut c, (c.w - 130 + i * 20) as f64, 28.0, 6.0, 0.4, 0.8, 1.2)
     }
 
     // combo: the number that makes you keep the rally alive
     if g.combo > 1 {
         let s = "x" + g.combo.toString()
         let f = Math.minF64(1.6, 0.6 + (g.combo as f64) * 0.06)
-        textCentered(c, c.w / 2, 62, s, 4, 1.5 * f, 1.1 * f, 0.25 * f)
-        textCentered(c, c.w / 2, 96, "COMBO", 2, 0.5, 0.4, 0.2)
+        textCentered(&mut c, c.w / 2, 62, s, 4, 1.5 * f, 1.1 * f, 0.25 * f)
+        textCentered(&mut c, c.w / 2, 96, "COMBO", 2, 0.5, 0.4, 0.2)
     }
 
     if g.banner > 0.0 && !g.gameOver && !g.won {
@@ -141,26 +141,26 @@ pub fn drawHud(c: &mut Canvas, g: &Game) {
         if g.banner < 0.8 {
             f = g.banner / 0.8
         }
-        textCentered(c, c.w / 2, c.h / 2 - 60, levelName(g.level), 7, 0.7 * f, 0.5 * f, 1.3 * f)
+        textCentered(&mut c, c.w / 2, c.h / 2 - 60, levelName(g.level), 7, 0.7 * f, 0.5 * f, 1.3 * f)
         if g.level == 0 {
-            textCentered(c, c.w / 2, c.h / 2 + 20, "MOVE THE PADDLE — THAT IS THE WHOLE GAME", 2, 0.5 * f, 0.9 * f, 1.1 * f)
-            textCentered(c, c.w / 2, c.h / 2 + 46, "WHERE THE BALL LANDS ON IT SETS THE ANGLE", 2, 0.35 * f, 0.6 * f, 0.8 * f)
+            textCentered(&mut c, c.w / 2, c.h / 2 + 20, "MOVE THE PADDLE — THAT IS THE WHOLE GAME", 2, 0.5 * f, 0.9 * f, 1.1 * f)
+            textCentered(&mut c, c.w / 2, c.h / 2 + 46, "WHERE THE BALL LANDS ON IT SETS THE ANGLE", 2, 0.35 * f, 0.6 * f, 0.8 * f)
         }
     }
 
     if g.clearedTimer > 0.0 {
-        textCentered(c, c.w / 2, c.h / 2 - 40, "CLEARED", 8, 0.5, 1.4, 0.7)
-        textCentered(c, c.w / 2, c.h / 2 + 40, "BEST COMBO x" + g.bestCombo.toString(), 3, 1.4, 1.1, 0.3)
+        textCentered(&mut c, c.w / 2, c.h / 2 - 40, "CLEARED", 8, 0.5, 1.4, 0.7)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 40, "BEST COMBO x" + g.bestCombo.toString(), 3, 1.4, 1.1, 0.3)
     }
 
     if g.gameOver {
-        textCentered(c, c.w / 2, c.h / 2 - 60, "OUT OF BALLS", 7, 1.7, 0.35, 0.45)
-        textCentered(c, c.w / 2, c.h / 2 + 20, "SCORE " + g.score.toString(), 4, 1.3, 1.3, 1.7)
-        textCentered(c, c.w / 2, c.h / 2 + 70, "PRESS ENTER TO PLAY AGAIN", 2, 0.8, 1.0, 1.3)
+        textCentered(&mut c, c.w / 2, c.h / 2 - 60, "OUT OF BALLS", 7, 1.7, 0.35, 0.45)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 20, "SCORE " + g.score.toString(), 4, 1.3, 1.3, 1.7)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 70, "PRESS ENTER TO PLAY AGAIN", 2, 0.8, 1.0, 1.3)
     }
     if g.won {
-        textCentered(c, c.w / 2, c.h / 2 - 60, "ALL CLEAR", 8, 0.6, 1.5, 0.8)
-        textCentered(c, c.w / 2, c.h / 2 + 20, "SCORE " + g.score.toString(), 4, 1.3, 1.3, 1.7)
-        textCentered(c, c.w / 2, c.h / 2 + 70, "PRESS ENTER TO PLAY AGAIN", 2, 0.8, 1.0, 1.3)
+        textCentered(&mut c, c.w / 2, c.h / 2 - 60, "ALL CLEAR", 8, 0.6, 1.5, 0.8)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 20, "SCORE " + g.score.toString(), 4, 1.3, 1.3, 1.7)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 70, "PRESS ENTER TO PLAY AGAIN", 2, 0.8, 1.0, 1.3)
     }
 }

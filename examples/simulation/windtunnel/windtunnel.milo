@@ -310,7 +310,7 @@ pub fn drawText(fb: &mut Vec<u32>, x0: i64, y0: i64, s: string, scale: i64, col:
     var cx = x0
     var i = 0
     while i < s.len {
-        drawChar(fb, cx, y0, s[i], scale, col)
+        drawChar(&mut fb, cx, y0, s[i], scale, col)
         cx = cx + 4 * scale
         i = i + 1
     }
@@ -342,8 +342,8 @@ pub fn main(): i32 {
 
     var f: Vec<f64> = Vec.new()
     var g: Vec<f64> = Vec.new()
-    lbmInit(f, NX, NY)
-    lbmInit(g, NX, NY)
+    lbmInit(&mut f, NX, NY)
+    lbmInit(&mut g, NX, NY)
 
     var solid: Vec<bool> = Vec.new()
     var interior: Vec<bool> = Vec.new()
@@ -369,9 +369,9 @@ pub fn main(): i32 {
     var view = VIEW_VORTICITY
     var aoa = 0.0
     var re = 150.0
-    buildSolid(solid, shape, aoa)
-    lbmBuildInterior(solid, NX, NY, interior)
-    lbmBuildInterior(solid, NX, NY, interior)
+    buildSolid(&mut solid, shape, aoa)
+    lbmBuildInterior(solid, NX, NY, &mut interior)
+    lbmBuildInterior(solid, NX, NY, &mut interior)
 
     var paused = false
     var quit = false
@@ -432,8 +432,8 @@ pub fn main(): i32 {
             let k1 = ks[30] != 0
             if k1 && !prevKeys[3] && shape != SHAPE_CYLINDER {
                 shape = SHAPE_CYLINDER
-                buildSolid(solid, shape, aoa)
-                lbmBuildInterior(solid, NX, NY, interior)
+                buildSolid(&mut solid, shape, aoa)
+                lbmBuildInterior(solid, NX, NY, &mut interior)
                 wantReset = true
             }
             prevKeys[3] = k1
@@ -441,8 +441,8 @@ pub fn main(): i32 {
             let k2 = ks[31] != 0
             if k2 && !prevKeys[4] && shape != SHAPE_AIRFOIL {
                 shape = SHAPE_AIRFOIL
-                buildSolid(solid, shape, aoa)
-                lbmBuildInterior(solid, NX, NY, interior)
+                buildSolid(&mut solid, shape, aoa)
+                lbmBuildInterior(solid, NX, NY, &mut interior)
                 wantReset = true
             }
             prevKeys[4] = k2
@@ -450,8 +450,8 @@ pub fn main(): i32 {
             let k3 = ks[32] != 0
             if k3 && !prevKeys[5] && shape != SHAPE_CAR {
                 shape = SHAPE_CAR
-                buildSolid(solid, shape, aoa)
-                lbmBuildInterior(solid, NX, NY, interior)
+                buildSolid(&mut solid, shape, aoa)
+                lbmBuildInterior(solid, NX, NY, &mut interior)
                 wantReset = true
             }
             prevKeys[5] = k3
@@ -462,16 +462,16 @@ pub fn main(): i32 {
                 if aoa > 30.0 {
                     aoa = 30.0
                 }
-                buildSolid(solid, shape, aoa)
-                lbmBuildInterior(solid, NX, NY, interior)
+                buildSolid(&mut solid, shape, aoa)
+                lbmBuildInterior(solid, NX, NY, &mut interior)
             }
             if ks[81] != 0 && shape != SHAPE_CYLINDER {
                 aoa = aoa - 0.4
                 if aoa < -30.0 {
                     aoa = -30.0
                 }
-                buildSolid(solid, shape, aoa)
-                lbmBuildInterior(solid, NX, NY, interior)
+                buildSolid(&mut solid, shape, aoa)
+                lbmBuildInterior(solid, NX, NY, &mut interior)
             }
             if ks[79] != 0 {
                 re = re * 1.02
@@ -488,8 +488,8 @@ pub fn main(): i32 {
         }
 
         if wantReset {
-            lbmInit(f, NX, NY)
-            lbmInit(g, NX, NY)
+            lbmInit(&mut f, NX, NY)
+            lbmInit(&mut g, NX, NY)
             cdS = 0.0
             clS = 0.0
             step = 0
@@ -519,12 +519,12 @@ pub fn main(): i32 {
                     vIn = 0.06 * U_IN
                 }
 
-                lbmStep(f, g, solid, interior, NX, NY, tau, 0.0, true, force)
-                lbmInlet(g, NX, NY, U_IN, vIn)
-                lbmOutlet(g, NX, NY)
-                lbmStep(g, f, solid, interior, NX, NY, tau, 0.0, true, force)
-                lbmInlet(f, NX, NY, U_IN, vIn)
-                lbmOutlet(f, NX, NY)
+                lbmStep(f, &mut g, solid, interior, NX, NY, tau, 0.0, true, &mut force)
+                lbmInlet(&mut g, NX, NY, U_IN, vIn)
+                lbmOutlet(&mut g, NX, NY)
+                lbmStep(g, &mut f, solid, interior, NX, NY, tau, 0.0, true, &mut force)
+                lbmInlet(&mut f, NX, NY, U_IN, vIn)
+                lbmOutlet(&mut f, NX, NY)
                 step = step + 2
 
                 // Momentum-exchange force -> coefficients. Reference area in 2D is
@@ -548,8 +548,8 @@ pub fn main(): i32 {
             }
         }
 
-        lbmMacro(f, solid, NX, NY, rho, ux, uy)
-        lbmVorticity(ux, uy, solid, NX, NY, vort)
+        lbmMacro(f, solid, NX, NY, &mut rho, &mut ux, &mut uy)
+        lbmVorticity(ux, uy, solid, NX, NY, &mut vort)
 
         // Render. Lattice y is up, framebuffer row 0 is the top, so flip.
         let vScale = 12.0 / D_CHAR
@@ -600,21 +600,21 @@ pub fn main(): i32 {
         if view == VIEW_PRESSURE {
             viewName = "pressure"
         }
-        drawText(fb, 4, 4, shapeName, 2, rgb(1.0, 1.0, 1.0))
-        drawText(fb, 4, 18, $"re {formatFloat(re, 0)}  tau {formatFloat(tau, 3)}", 2, rgb(0.75, 0.85, 0.95))
-        drawText(fb, 4, 32, $"cd {formatFloat(cdS, 3)}  cl {formatFloat(clS, 3)}", 2, rgb(0.95, 0.85, 0.6))
+        drawText(&mut fb, 4, 4, shapeName, 2, rgb(1.0, 1.0, 1.0))
+        drawText(&mut fb, 4, 18, $"re {formatFloat(re, 0)}  tau {formatFloat(tau, 3)}", 2, rgb(0.75, 0.85, 0.95))
+        drawText(&mut fb, 4, 32, $"cd {formatFloat(cdS, 3)}  cl {formatFloat(clS, 3)}", 2, rgb(0.95, 0.85, 0.6))
         if shape != SHAPE_CYLINDER {
-            drawText(fb, 4, 46, $"aoa {formatFloat(aoa, 1)}", 2, rgb(0.95, 0.85, 0.6))
+            drawText(&mut fb, 4, 46, $"aoa {formatFloat(aoa, 1)}", 2, rgb(0.95, 0.85, 0.6))
         }
         // Strouhal only means something once the wake is periodic, so show it only
         // after at least two full shedding cycles have been timed.
         if stCount > 1 {
             let st = stSum / (stCount as f64)
-            drawText(fb, 4, 60, $"st {formatFloat(st, 3)}", 2, rgb(0.7, 0.95, 0.75))
+            drawText(&mut fb, 4, 60, $"st {formatFloat(st, 3)}", 2, rgb(0.7, 0.95, 0.75))
         }
-        drawText(fb, 4, NY - 16, $"{viewName}  fps {formatFloat(fpsAvg, 0)}  1 cyl 2 foil 3 car", 2, rgb(0.55, 0.55, 0.6))
+        drawText(&mut fb, 4, NY - 16, $"{viewName}  fps {formatFloat(fpsAvg, 0)}  1 cyl 2 foil 3 car", 2, rgb(0.55, 0.55, 0.6))
         if paused {
-            drawText(fb, NX - 60, 4, "paused", 2, rgb(1.0, 0.5, 0.4))
+            drawText(&mut fb, NX - 60, 4, "paused", 2, rgb(1.0, 0.5, 0.4))
         }
 
         unsafe {

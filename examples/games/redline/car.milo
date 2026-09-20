@@ -338,8 +338,8 @@ fn bodyGeometry(b: &mut Builder) {
     // Nose and tail caps, as fans onto the centre of the end section. They are
     // nearly edge-on from the chase camera and exist mostly so the shell is
     // watertight for the shadow pass.
-    capEnd(b, pts, 0, true)
-    capEnd(b, pts, count - 1, false)
+    capEnd(&mut b, pts, 0, true)
+    capEnd(&mut b, pts, count - 1, false)
 
 }
 
@@ -390,7 +390,7 @@ fn trimGeometry(b: &mut Builder) {
     // Front spoiler: one wide low lip under the nose, not a race splitter with
     // dive planes. This car's front end is a plain folded plane and hanging
     // aero off it is what turns it into a generic modern supercar.
-    carbon(b)
+    carbon(&mut b)
     b.boxSpan(v3(-0.92, 0.10, 1.82), v3(0.92, 0.19, 2.14))
     b.boxSpan(v3(-0.96, 0.19, 1.90), v3(-0.66, 0.30, 2.10))
     b.boxSpan(v3(0.66, 0.19, 1.90), v3(0.96, 0.30, 2.10))
@@ -415,14 +415,14 @@ fn trimGeometry(b: &mut Builder) {
 
     // The NACA duct in each door: a shallow scoop let into the flat of the
     // flank, widening toward its rear edge.
-    naca(b, -1.0)
-    naca(b, 1.0)
+    naca(&mut b, -1.0)
+    naca(&mut b, 1.0)
 
     // The ear scoops behind the doors. Two boxes standing proud of the shoulder,
     // one per side, feeding the engine bay. On the reference these are the
     // single most recognisable thing about the car from behind, and the flank is
     // a slab without them.
-    carbon(b)
+    carbon(&mut b)
     var side = -1.0
     while side < 2.0 {
         let x = side * 0.94
@@ -476,7 +476,7 @@ fn trimGeometry(b: &mut Builder) {
     // Spanning it blacks out the whole rear face, and the rear face of this car
     // is mostly body colour with the lamps let into it: paint over that and from
     // the chase camera the car has no colour at all where you look at it most.
-    carbon(b)
+    carbon(&mut b)
     b.boxSpan(v3(-0.76, 0.60, -2.09), v3(-0.28, 0.79, -2.065))
     b.boxSpan(v3(0.28, 0.60, -2.09), v3(0.76, 0.79, -2.065))
 
@@ -485,7 +485,7 @@ fn trimGeometry(b: &mut Builder) {
     // Quad exhausts, recessed into a black cutout in the valance rather than
     // standing out on the end of it. Sticking the pipes out past the bodywork is
     // what turns a tail into a plumbing rack.
-    carbon(b)
+    carbon(&mut b)
     b.boxSpan(v3(-0.23, 0.33, -2.10), v3(0.23, 0.47, -2.055))
     b.setTint(0.72, 0.74, 0.80)
     b.resetXform()
@@ -508,7 +508,7 @@ fn trimGeometry(b: &mut Builder) {
 // front and opening out at the back. Three tapering slabs is enough for
 // something read at thirty degrees off and forty miles an hour.
 fn naca(b: &mut Builder, side: f64) {
-    carbon(b)
+    carbon(&mut b)
     let x = side * 0.945
     var i = 0
     while i < 3 {
@@ -596,9 +596,9 @@ fn flameGeometry(b: &mut Builder) {
         // Core, mid and outer: three cones, each longer and dimmer than the one
         // inside it. A single cone reads as a traffic cone; the nesting is what
         // makes it read as combustion.
-        cone(b, x, 0.055, 0.55, 9.0, 8.4, 6.0)
-        cone(b, x, 0.085, 1.00, 7.0, 2.60, 0.45)
-        cone(b, x, 0.115, 1.55, 3.4, 0.55, 0.12)
+        cone(&mut b, x, 0.055, 0.55, 9.0, 8.4, 6.0)
+        cone(&mut b, x, 0.085, 1.00, 7.0, 2.60, 0.45)
+        cone(&mut b, x, 0.115, 1.55, 3.4, 0.55, 0.12)
         e = e + 1
     }
 }
@@ -740,33 +740,33 @@ fn wheelGeometry(b: &mut Builder) {
 
 pub fn buildCarModel(gl: &mut GlContext): CarModel {
     var bb = builder()
-    bodyGeometry(bb)
-    var body = Mesh.new(gl, sceneAttrs())
+    bodyGeometry(&mut bb)
+    var body = Mesh.new(&mut gl, sceneAttrs())
     body.upload(bb.data.clone())
 
     var tb = builder()
-    trimGeometry(tb)
-    var trim = Mesh.new(gl, sceneAttrs())
+    trimGeometry(&mut tb)
+    var trim = Mesh.new(&mut gl, sceneAttrs())
     trim.upload(tb.data.clone())
 
     var gb = builder()
-    glassGeometry(gb)
-    var glass = Mesh.new(gl, sceneAttrs())
+    glassGeometry(&mut gb)
+    var glass = Mesh.new(&mut gl, sceneAttrs())
     glass.upload(gb.data.clone())
 
     var wb = builder()
-    wheelGeometry(wb)
-    var wheel = Mesh.new(gl, sceneAttrs())
+    wheelGeometry(&mut wb)
+    var wheel = Mesh.new(&mut gl, sceneAttrs())
     wheel.upload(wb.data.clone())
 
     var fb = builder()
-    flameGeometry(fb)
-    var flame = Mesh.new(gl, sceneAttrs())
+    flameGeometry(&mut fb)
+    var flame = Mesh.new(&mut gl, sceneAttrs())
     flame.upload(fb.data.clone())
 
     var lb = builder()
-    lampGeometry(lb)
-    var lamps = Mesh.new(gl, sceneAttrs())
+    lampGeometry(&mut lb)
+    var lamps = Mesh.new(&mut gl, sceneAttrs())
     lamps.upload(lb.data.clone())
 
     return CarModel {
@@ -776,12 +776,12 @@ pub fn buildCarModel(gl: &mut GlContext): CarModel {
 
 impl CarModel {
     fn free(self: Self, gl: &mut GlContext) {
-        self.body.free(gl)
-        self.flame.free(gl)
-        self.trim.free(gl)
-        self.glass.free(gl)
-        self.wheel.free(gl)
-        self.lamps.free(gl)
+        self.body.free(&mut gl)
+        self.flame.free(&mut gl)
+        self.trim.free(&mut gl)
+        self.glass.free(&mut gl)
+        self.wheel.free(&mut gl)
+        self.lamps.free(&mut gl)
     }
 }
 

@@ -147,7 +147,7 @@ fn botStep(b: &mut Bot, w: &World, dt: f64) {
 // says "dog" before it is six pixels tall in a level.
 fn sheet(path: &string) {
     var c = canvasNew(W, H)
-    fillRect(c, 0.0, 0.0, W as f64, H as f64, 0.020, 0.022, 0.038, 1.0)
+    fillRect(&mut c, 0.0, 0.0, W as f64, H as f64, 0.020, 0.022, 0.038, 1.0)
     let dog = dogFrames()
     let cat = catFrames()
     let bird = birdFrames()
@@ -155,33 +155,33 @@ fn sheet(path: &string) {
     var i = 0
     while i < dog.chi.len {
         let x = 16.0 + (i as f64) * 105.0
-        drawSprite(c, dog.chi[i], x, 60.0, s, false, 0.25)
-        drawSprite(c, dog.shep[i], x, 200.0, s, false, 0.25)
+        drawSprite(&mut c, dog.chi[i], x, 60.0, s, false, 0.25)
+        drawSprite(&mut c, dog.shep[i], x, 200.0, s, false, 0.25)
         i = i + 1
     }
     i = 0
     while i < cat.len {
-        drawSprite(c, cat[i], 40.0 + (i as f64) * 130.0, 360.0, s, false, 0.25)
+        drawSprite(&mut c, cat[i], 40.0 + (i as f64) * 130.0, 360.0, s, false, 0.25)
         i = i + 1
     }
     i = 0
     while i < bird.len {
-        drawSprite(c, bird[i], 600.0 + (i as f64) * 130.0, 360.0, s, false, 0.25)
+        drawSprite(&mut c, bird[i], 600.0 + (i as f64) * 130.0, 360.0, s, false, 0.25)
         i = i + 1
     }
-    drawSprite(c, boneSprite(), 40.0, 500.0, s, false, 0.6)
-    drawSprite(c, hydrantSprite(), 240.0, 480.0, s, false, 0.4)
-    drawSprite(c, coreSprite(), 400.0, 500.0, s, false, 0.5)
+    drawSprite(&mut c, boneSprite(), 40.0, 500.0, s, false, 0.6)
+    drawSprite(&mut c, hydrantSprite(), 240.0, 480.0, s, false, 0.4)
+    drawSprite(&mut c, coreSprite(), 400.0, 500.0, s, false, 0.5)
     let shards = shardFrames()
     i = 0
     while i < shards.len {
-        drawSprite(c, shards[i], 560.0 + (i as f64) * 70.0, 500.0, s, false, 0.6)
+        drawSprite(&mut c, shards[i], 560.0 + (i as f64) * 70.0, 500.0, s, false, 0.6)
         i = i + 1
     }
     // the marking pose large, because it is the one that has to be right
-    drawSprite(c, dog.chi[DOG_PEE], 700.0, 440.0, 11.0, false, 0.25)
-    drawSprite(c, dog.shep[DOG_PEE], 960.0, 420.0, 11.0, false, 0.25)
-    present(c, 0.4, 1.0, 0.9)
+    drawSprite(&mut c, dog.chi[DOG_PEE], 700.0, 440.0, 11.0, false, 0.25)
+    drawSprite(&mut c, dog.shep[DOG_PEE], 960.0, 420.0, 11.0, false, 0.25)
+    present(&mut c, 0.4, 1.0, 0.9)
     writePpm(path, c)
     print("wrote " + path)
 }
@@ -233,8 +233,8 @@ pub fn main(): i32 {
     let dt = 1.0 / 60.0
 
     for frame in 0..maxFrame + 1 {
-        botStep(b, w, dt)
-        worldUpdate(w, dt, b.moveX, false, b.jump, true, b.dash, b.bark)
+        botStep(&mut b, w, dt)
+        worldUpdate(&mut w, dt, b.moveX, false, b.jump, true, b.dash, b.bark)
 
         if w.evPee {
             print("marking a hydrant at frame " + frame.toString())
@@ -246,19 +246,19 @@ pub fn main(): i32 {
             }
         }
         if want {
-            drawBackground(c, w)
-            drawLevel(c, w, ts, 0.0, 0.0)
-            drawGoal(c, w, 0.0, 0.0)
-            drawChecks(c, w, hydrant, 0.0, 0.0)
-            drawPickups(c, w, shards, core, bone, 0.0, 0.0)
-            drawMobs(c, w, cat, bird, 0.0, 0.0)
-            drawPlayer(c, w, dog, 0.0, 0.0)
-            drawPee(c, w, 0.0, 0.0)
-            drawBark(c, w, 0.0, 0.0)
-            drawParts(c, w, 0.0, 0.0)
-            drawSpeedLines(c, w)
-            drawHud(c, w, shards[0], bone, 60)
-            present(c, 0.28, 1.0, 2.2)
+            drawBackground(&mut c, w)
+            drawLevel(&mut c, w, ts, 0.0, 0.0)
+            drawGoal(&mut c, w, 0.0, 0.0)
+            drawChecks(&mut c, w, hydrant, 0.0, 0.0)
+            drawPickups(&mut c, w, shards, core, bone, 0.0, 0.0)
+            drawMobs(&mut c, w, cat, bird, 0.0, 0.0)
+            drawPlayer(&mut c, w, dog, 0.0, 0.0)
+            drawPee(&mut c, w, 0.0, 0.0)
+            drawBark(&mut c, w, 0.0, 0.0)
+            drawParts(&mut c, w, 0.0, 0.0)
+            drawSpeedLines(&mut c, w)
+            drawHud(&mut c, w, shards[0], bone, 60)
+            present(&mut c, 0.28, 1.0, 2.2)
             writePpm(prefix + "-" + frame.toString() + ".ppm", c)
             print("wrote " + prefix + "-" + frame.toString() + ".ppm")
         }

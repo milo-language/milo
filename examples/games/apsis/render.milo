@@ -68,40 +68,40 @@ pub struct Renderer {
 }
 
 pub fn rendererNew(gl: &mut GlContext): Result<Renderer, string> {
-    let planetSh = Shader.compile(gl, PLANET_VERT, PLANET_FRAG)?
-    let atmoSh = Shader.compile(gl, PLANET_VERT, ATMO_FRAG)?
-    let ringSh = Shader.compile(gl, PLANET_VERT, RING_FRAG)?
-    let skySh = Shader.compile(gl, QUAD_VERT, SKY_FRAG)?
+    let planetSh = Shader.compile(&mut gl, PLANET_VERT, PLANET_FRAG)?
+    let atmoSh = Shader.compile(&mut gl, PLANET_VERT, ATMO_FRAG)?
+    let ringSh = Shader.compile(&mut gl, PLANET_VERT, RING_FRAG)?
+    let skySh = Shader.compile(&mut gl, QUAD_VERT, SKY_FRAG)?
     var attrs: Vec<i64> = Vec.new()
     attrs.push(3)
     attrs.push(2)
     attrs.push(3)
-    var ball = Mesh.new(gl, attrs)
+    var ball = Mesh.new(&mut gl, attrs)
     ball.upload(sphereMesh(180, 90))
     var attrs2: Vec<i64> = Vec.new()
     attrs2.push(3)
     attrs2.push(2)
     attrs2.push(3)
-    var shell = Mesh.new(gl, attrs2)
+    var shell = Mesh.new(&mut gl, attrs2)
     shell.upload(invertedSphereMesh(72, 36))
     var attrs3: Vec<i64> = Vec.new()
     attrs3.push(3)
     attrs3.push(2)
     attrs3.push(3)
-    var ring = Mesh.new(gl, attrs3)
+    var ring = Mesh.new(&mut gl, attrs3)
     ring.upload(ringMesh(256, 1.24, 2.28))
 
     var tex: Vec<Texture2D> = Vec.new()
     var loaded: Vec<bool> = Vec.new()
     var i = 0
     while i < BODY_COUNT {
-        tex.push(dummyTexture(gl))
+        tex.push(dummyTexture(&mut gl))
         loaded.push(false)
         i = i + 1
     }
     return Result.Ok(Renderer {
         planetSh: planetSh, atmoSh: atmoSh, ringSh: ringSh, skySh: skySh,
-        ball: ball, shell: shell, ring: ring, skyQuad: Mesh.fullscreenQuad(gl),
+        ball: ball, shell: shell, ring: ring, skyQuad: Mesh.fullscreenQuad(&mut gl),
         tex: tex, loaded: loaded,
     }
     )
@@ -115,26 +115,26 @@ pub fn ensureLoaded(gl: &mut GlContext, r: &mut Renderer, id: i64) {
     }
     // Swap the placeholder out and free it: `r.tex[id].free(gl)` would read the
     // @noCopy handle out of the Vec by copy, which the checker rejects.
-    let stale = replace(r.tex[id], loadMap(gl, id))
-    stale.free(gl)
+    let stale = replace(r.tex[id], loadMap(&mut gl, id))
+    stale.free(&mut gl)
     r.loaded[id] = true
 }
 
 impl Renderer {
     fn free(self: Self, gl: &mut GlContext) {
-        self.ball.free(gl)
-        self.shell.free(gl)
-        self.ring.free(gl)
-        self.skyQuad.free(gl)
-        self.planetSh.free(gl)
-        self.atmoSh.free(gl)
-        self.ringSh.free(gl)
-        self.skySh.free(gl)
+        self.ball.free(&mut gl)
+        self.shell.free(&mut gl)
+        self.ring.free(&mut gl)
+        self.skyQuad.free(&mut gl)
+        self.planetSh.free(&mut gl)
+        self.atmoSh.free(&mut gl)
+        self.ringSh.free(&mut gl)
+        self.skySh.free(&mut gl)
         // Drain rather than index: each texture is a @noCopy handle, and popping
         // hands over the Vec's own copy instead of duplicating it.
         var tex = self.tex
         while tex.len > 0 {
-            tex.pop()!.free(gl)
+            tex.pop()!.free(&mut gl)
         }
     }
 }
@@ -308,7 +308,7 @@ fn drawBody(gl: &mut GlContext, r: &mut Renderer, g: &Game, v: &View, id: i64, t
     if (p - v.eye).len() * v.scale > 700.0 {
         return
     }
-    ensureLoaded(gl, r, id)
+    ensureLoaded(&mut gl, &mut r, id)
     let sc = scenePoint(v, p)
     let rs = radius * v.scale
     let rot = multiply(rotationZ(g.bodies[id].tilt), rotationY(spinAngle(g, id, t)))
@@ -424,7 +424,7 @@ fn drawSky(r: &mut Renderer, g: &Game, v: &View, time: f64) {
 // Draw the scene and hand back where every body landed, so the overlay can put
 // markers and labels on exactly the same pixels.
 pub fn drawScene(gl: &mut GlContext, r: &mut Renderer, g: &Game, v: &View, time: f64): Vec<Marker> {
-    drawSky(r, g, v, time)
+    drawSky(&mut r, g, v, time)
     let t = displayTime(g)
     var ids = missionBodies(g)
     var out: Vec<Marker> = Vec.new()
@@ -432,7 +432,7 @@ pub fn drawScene(gl: &mut GlContext, r: &mut Renderer, g: &Game, v: &View, time:
     while i < ids.len {
         let id = ids[i]
         let p = bodyPoint(g, id, t)
-        drawBody(gl, r, g, v, id, t, 1.0)
+        drawBody(&mut gl, &mut r, g, v, id, t, 1.0)
         out.push(markerOf(v, id, p, g.bodies[id].radius))
         i = i + 1
     }

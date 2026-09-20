@@ -305,9 +305,9 @@ pub fn blitSprite(c: &mut Canvas, s: &Sprite, cxi: f64, cyi: f64, sx: f64, sy: f
                     g = g + (tg - g) * tmix
                     b = b + (tb - b) * tmix
                 }
-                blendPix(c, x, y, r, g, b, a)
+                blendPix(&mut c, x, y, r, g, b, a)
                 if glow > 0.0 {
-                    addPix(c, x, y, r * a * glow, g * a * glow, b * a * glow)
+                    addPix(&mut c, x, y, r * a * glow, g * a * glow, b * a * glow)
                 }
             }
             x = x + 1
@@ -318,7 +318,7 @@ pub fn blitSprite(c: &mut Canvas, s: &Sprite, cxi: f64, cyi: f64, sx: f64, sy: f
 
 // The common case: upright, opaque, untinted.
 pub fn drawSprite(c: &mut Canvas, s: &Sprite, cx: f64, cy: f64, scale: f64, flip: bool, glow: f64) {
-    blitSprite(c, s, cx, cy, scale, scale, flip, 1.0, glow, 0.0, 0.0, 0.0, 0.0)
+    blitSprite(&mut c, s, cx, cy, scale, scale, flip, 1.0, glow, 0.0, 0.0, 0.0, 0.0)
 }
 
 // A soft radial blob — the workhorse for particles, muzzle flashes and cores.
@@ -372,7 +372,7 @@ fn plot(c: &mut Canvas, x: i64, y: i64, cov: f64, r: f64, g: f64, b: f64) {
     if cov <= 0.0 {
         return
     }
-    addPix(c, x, y, r * cov, g * cov, b * cov)
+    addPix(&mut c, x, y, r * cov, g * cov, b * cov)
 }
 
 // True for a coordinate that can safely be cast to i64 and then have small
@@ -390,7 +390,7 @@ fn drawable(v: f64): bool {
 // unstable, and losing a line for one frame is the correct response to that,
 // not losing the game.
 pub fn line(c: &mut Canvas, x0i: f64, y0i: f64, x1i: f64, y1i: f64, r: f64, g: f64, b: f64) {
-    lineRaw(c, x0i + c.camX, y0i + c.camY, x1i + c.camX, y1i + c.camY, r, g, b)
+    lineRaw(&mut c, x0i + c.camX, y0i + c.camY, x1i + c.camX, y1i + c.camY, r, g, b)
 }
 
 // The camera is applied once, at the public entry point. `poly` and `circle`
@@ -453,11 +453,11 @@ fn lineRaw(c: &mut Canvas, x0i: f64, y0i: f64, x1i: f64, y1i: f64, r: f64, g: f6
         let frac = yv - fy
         let iy = fy as i64
         if steep {
-            plot(c, iy, x, 1.0 - frac, r, g, b)
-            plot(c, iy + 1, x, frac, r, g, b)
+            plot(&mut c, iy, x, 1.0 - frac, r, g, b)
+            plot(&mut c, iy + 1, x, frac, r, g, b)
         } else {
-            plot(c, x, iy, 1.0 - frac, r, g, b)
-            plot(c, x, iy + 1, frac, r, g, b)
+            plot(&mut c, x, iy, 1.0 - frac, r, g, b)
+            plot(&mut c, x, iy + 1, frac, r, g, b)
         }
         yv = yv + grad
         x = x + 1
@@ -480,7 +480,7 @@ pub fn poly(c: &mut Canvas, pts: &Vec<f64>, cxi: f64, cyi: f64, ang: f64, scale:
     for i in 0..n {
         let qx = cx + pts[i * 2] * ca - pts[i * 2 + 1] * sa
         let qy = cy + pts[i * 2] * sa + pts[i * 2 + 1] * ca
-        lineRaw(c, px, py, qx, qy, r, g, b)
+        lineRaw(&mut c, px, py, qx, qy, r, g, b)
         px = qx
         py = qy
     }
@@ -496,7 +496,7 @@ pub fn circle(c: &mut Canvas, cxi: f64, cyi: f64, rad: f64, segs: i64, r: f64, g
         let a = (i as f64) * step
         let qx = cx + Math.cos(a) * rad
         let qy = cy + Math.sin(a) * rad
-        lineRaw(c, px, py, qx, qy, r, g, b)
+        lineRaw(&mut c, px, py, qx, qy, r, g, b)
         px = qx
         py = qy
     }
@@ -525,7 +525,7 @@ pub fn text(c: &mut Canvas, x: i64, y: i64, s: &string, scale: i64, r: f64, g: f
                             let py = y + row * scale
                             for sy in 0..scale {
                                 for sx in 0..scale {
-                                    addPix(c, px + sx, py + sy, r, g, b)
+                                    addPix(&mut c, px + sx, py + sy, r, g, b)
                                 }
                             }
                         }
@@ -538,7 +538,7 @@ pub fn text(c: &mut Canvas, x: i64, y: i64, s: &string, scale: i64, r: f64, g: f
 }
 
 pub fn textCentered(c: &mut Canvas, cx: i64, y: i64, s: &string, scale: i64, r: f64, g: f64, b: f64) {
-    text(c, cx - textWidth(s, scale) / 2, y, s, scale, r, g, b)
+    text(&mut c, cx - textWidth(s, scale) / 2, y, s, scale, r, g, b)
 }
 
 // ── bloom + tone mapping ──────────────────────────────────────────────────────
@@ -669,11 +669,11 @@ fn encodeSlow(v: f64): u32 {
 pub fn present(c: &mut Canvas, bloomGain: f64, exposure: f64) {
     // A 1px antialiased line averages to ~1/16 after the 4x downsample, so the
     // threshold has to sit well under 1.0 or thin strokes never bloom at all.
-    brightPass(c, 0.16)
-    blurPass(c, 1)
-    blurPass(c, 2)
-    blurPass(c, 4)
-    blurPass(c, 8) // without the widest pass the halo has a visible square edge
+    brightPass(&mut c, 0.16)
+    blurPass(&mut c, 1)
+    blurPass(&mut c, 2)
+    blurPass(&mut c, 4)
+    blurPass(&mut c, 8) // without the widest pass the halo has a visible square edge
 
     let bw = c.bw
     let gain = (bloomGain * exposure) as f32

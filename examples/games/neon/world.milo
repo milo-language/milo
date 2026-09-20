@@ -635,12 +635,12 @@ pub fn dropOrb(w: &mut World, x: f64, y: f64) {
     var e = makeEnemy(Kind.Orb, x, y)
     e.tier = t
     e.vy = Random.floatRange(0.0 - 40.0, 40.0)
-    orbColour(t, e)
+    orbColour(t, &mut e)
     let cr = e.cr
     let cg = e.cg
     let cb = e.cb
-    let _ = spawn(w, e)
-    burst(w, x, y, 14, 180.0, cr * 0.4, cg * 0.4, cb * 0.4, 2.0)
+    let _ = spawn(&mut w, e)
+    burst(&mut w, x, y, 14, 180.0, cr * 0.4, cg * 0.4, cb * 0.4, 2.0)
 }
 
 // A squad is a formation that pays out only if you clear all of it. The counter
@@ -654,13 +654,13 @@ pub fn newSquad(w: &mut World, n: i64): i64 {
 // A snake is a doubly linked chain of entities. Killing a middle segment has to
 // splice the chain back together, in both directions.
 pub fn spawnSnake(w: &mut World, x: f64, y: f64, len: i64) {
-    let head = spawn(w, makeEnemy(Kind.SnakeHead, x, y))
+    let head = spawn(&mut w, makeEnemy(Kind.SnakeHead, x, y))
     var prev = head
     for i in 0..len {
         var seg = makeEnemy(Kind.SnakeSeg, x + (i as f64 + 1.0) * 20.0, y)
         seg.leader = prev
         seg.radius = 12.0 - (i as f64) * 0.2
-        let h = spawn(w, seg)
+        let h = spawn(&mut w, seg)
         w.ents[prev.slot].follower = h
         prev = h
     }
@@ -670,7 +670,7 @@ pub fn spawnSnake(w: &mut World, x: f64, y: f64, len: i64) {
 // the core and the core counts its plates; a plate's death mutates the core, and
 // the core's death takes every plate that points at it.
 pub fn spawnBoss(w: &mut World, x: f64, y: f64) {
-    let core = spawn(w, makeEnemy(Kind.Core, x, y))
+    let core = spawn(&mut w, makeEnemy(Kind.Core, x, y))
     w.ents[core.slot].hp = 110.0 + (w.stage as f64) * 40.0
     w.ents[core.slot].maxHp = w.ents[core.slot].hp
     for i in 0..6 {
@@ -678,7 +678,7 @@ pub fn spawnBoss(w: &mut World, x: f64, y: f64) {
         p.leader = core
         p.tier = i
         p.phase = (i as f64) * TAU / 6.0
-        let h = spawn(w, p)
+        let h = spawn(&mut w, p)
         if i == 0 {
             w.ents[core.slot].follower = h
         }
@@ -704,36 +704,36 @@ pub fn onDeath(w: &mut World, slot: i64, byPlayer: bool) {
     let e = w.ents[slot]
     let kind = e.kind
 
-    burst(w, e.x, e.y, 24, 300.0, e.cr, e.cg, e.cb, 2.4)
-    gridImpulse(w.grid, e.x, e.y, 220.0, 80.0)
+    burst(&mut w, e.x, e.y, 24, 300.0, e.cr, e.cg, e.cb, 2.4)
+    gridImpulse(&mut w.grid, e.x, e.y, 220.0, 80.0)
     w.shake = Math.maxF64(w.shake, 2.2)
 
     if byPlayer {
-        addScore(w, e.value)
+        addScore(&mut w, e.value)
         w.chain = w.chain + 1
         w.mult = Math.minI64(1 + w.chain / 12, 8)
     }
 
     match kind {
         Kind.SnakeHead => {
-            spliceChain(w, slot)
+            spliceChain(&mut w, slot)
         }
         Kind.SnakeSeg => {
-            spliceChain(w, slot)
+            spliceChain(&mut w, slot)
         }
         Kind.Mine => {
             // A mine is a trade: killing it at range is free, killing it in your
             // face is not.
             for i in 0..7 {
                 let a = (i as f64) * TAU / 7.0 + Random.floatRange(0.0, 0.3)
-                fireHostile(w, e.x, e.y, a, 150.0, 1.0)
+                fireHostile(&mut w, e.x, e.y, a, 150.0, 1.0)
             }
-            burst(w, e.x, e.y, 40, 380.0, 2.0, 0.6, 0.1, 2.8)
+            burst(&mut w, e.x, e.y, 40, 380.0, 2.0, 0.6, 0.1, 2.8)
             w.shake = Math.maxF64(w.shake, 5.0)
         }
         Kind.Carrier => {
-            dropOrb(w, e.x, e.y)
-            burst(w, e.x, e.y, 90, 480.0, 2.2, 0.9, 0.1, 3.0)
+            dropOrb(&mut w, e.x, e.y)
+            burst(&mut w, e.x, e.y, 90, 480.0, 2.2, 0.9, 0.1, 3.0)
             w.shake = Math.maxF64(w.shake, 8.0)
         }
         Kind.Plate => {
@@ -754,8 +754,8 @@ pub fn onDeath(w: &mut World, slot: i64, byPlayer: bool) {
                     match w.ents[i].kind {
                         Kind.Plate => {
                             if w.ents[i].leader.slot == slot {
-                                burst(w, w.ents[i].x, w.ents[i].y, 40, 420.0, 1.8, 0.9, 0.2, 2.6)
-                                kill(w, i)
+                                burst(&mut w, w.ents[i].x, w.ents[i].y, 40, 420.0, 1.8, 0.9, 0.2, 2.6)
+                                kill(&mut w, i)
                             }
                         }
                         _ => {
@@ -763,16 +763,16 @@ pub fn onDeath(w: &mut World, slot: i64, byPlayer: bool) {
                     }
                 }
             }
-            burst(w, e.x, e.y, 300, 820.0, 1.9, 0.6, 0.15, 3.4)
-            gridImpulse(w.grid, e.x, e.y, 700.0, 260.0)
+            burst(&mut w, e.x, e.y, 300, 820.0, 1.9, 0.6, 0.15, 3.4)
+            gridImpulse(&mut w.grid, e.x, e.y, 700.0, 260.0)
             w.shake = 18.0
             w.flash = 0.9
             w.bossUp = false
             w.boss = nullHandle()
             for i in 0..3 {
-                dropOrb(w, e.x + (i as f64) * 40.0 - 40.0, e.y)
+                dropOrb(&mut w, e.x + (i as f64) * 40.0 - 40.0, e.y)
             }
-            nextStage(w)
+            nextStage(&mut w)
         }
         _ => {
         }
@@ -783,11 +783,11 @@ pub fn onDeath(w: &mut World, slot: i64, byPlayer: bool) {
     if e.squad >= 0 && e.squad < w.squadLive.len {
         w.squadLive[e.squad] = w.squadLive[e.squad] - 1
         if w.squadLive[e.squad] == 0 && byPlayer {
-            dropOrb(w, e.x, e.y)
+            dropOrb(&mut w, e.x, e.y)
         }
     }
 
-    kill(w, slot)
+    kill(&mut w, slot)
 }
 
 // Splice a dead link out of a snake, in both directions. If the head died, the
@@ -837,7 +837,7 @@ pub fn damage(w: &mut World, slot: i64, dmg: f64, byPlayer: bool) {
     w.ents[slot].hp = w.ents[slot].hp - dmg
     w.ents[slot].flash = 0.18
     if w.ents[slot].hp <= 0.0 {
-        onDeath(w, slot, byPlayer)
+        onDeath(&mut w, slot, byPlayer)
     }
 }
 
@@ -939,7 +939,7 @@ fn fireAtPlayer(w: &mut World, x: f64, y: f64, speed: f64, dmg: f64) {
     let d = Math.sqrt(dx * dx + dy * dy) + 0.0001
     let lead = d / speed * 0.6
     let a = Math.atan2(dy + w.player.vy * lead, dx + w.player.vx * lead)
-    fireHostile(w, x, y, a, speed, dmg)
+    fireHostile(&mut w, x, y, a, speed, dmg)
 }
 
 fn fireMissile(w: &mut World, x: f64, y: f64, up: bool) {
@@ -979,8 +979,8 @@ fn fireBeam(w: &mut World, x: f64, y: f64, charge: f64) {
     )
     w.player.beamFlash = 0.3
     w.shake = Math.maxF64(w.shake, 3.0 + p * 5.0)
-    gridImpulse(w.grid, x, y, 260.0, 0.0 - 90.0)
-    burst(w, x + 20.0, y, 26, 260.0, 1.2, 2.0, 2.4, 2.4)
+    gridImpulse(&mut w.grid, x, y, 260.0, 0.0 - 90.0)
+    burst(&mut w, x + 20.0, y, 26, 260.0, 1.2, 2.0, 2.4, 2.4)
 }
 
 fn playerFire(w: &mut World) {
@@ -998,17 +998,17 @@ fn playerFire(w: &mut World) {
     }
     for i in 0..straight {
         let off = ((i as f64) - ((straight - 1) as f64) * 0.5) * 11.0
-        firePlayer(w, px, py + off, 0.0, 1120.0, dmg, SRC_GUN, 1.5, 1.9, 0.6)
+        firePlayer(&mut w, px, py + off, 0.0, 1120.0, dmg, SRC_GUN, 1.5, 1.9, 0.6)
     }
     if p >= 3 {
-        firePlayer(w, px, py, 0.0 - 0.20, 1060.0, dmg * 0.8, SRC_GUN, 1.6, 1.2, 0.4)
-        firePlayer(w, px, py, 0.20, 1060.0, dmg * 0.8, SRC_GUN, 1.6, 1.2, 0.4)
+        firePlayer(&mut w, px, py, 0.0 - 0.20, 1060.0, dmg * 0.8, SRC_GUN, 1.6, 1.2, 0.4)
+        firePlayer(&mut w, px, py, 0.20, 1060.0, dmg * 0.8, SRC_GUN, 1.6, 1.2, 0.4)
     }
     if p >= 5 {
-        firePlayer(w, px, py, 0.0 - 0.42, 1000.0, dmg * 0.7, SRC_GUN, 1.7, 0.9, 0.3)
-        firePlayer(w, px, py, 0.42, 1000.0, dmg * 0.7, SRC_GUN, 1.7, 0.9, 0.3)
+        firePlayer(&mut w, px, py, 0.0 - 0.42, 1000.0, dmg * 0.7, SRC_GUN, 1.7, 0.9, 0.3)
+        firePlayer(&mut w, px, py, 0.42, 1000.0, dmg * 0.7, SRC_GUN, 1.7, 0.9, 0.3)
     }
-    gridImpulse(w.grid, px, py, 80.0, 12.0)
+    gridImpulse(&mut w.grid, px, py, 80.0, 12.0)
 }
 
 // A hit is where a pickup gets to rewrite what hitting means.
@@ -1016,7 +1016,7 @@ fn onBulletHit(w: &mut World, bi: i64, slot: i64) {
     let bx = w.bullets[bi].x
     let by = w.bullets[bi].y
     let dmg = w.bullets[bi].dmg
-    burst(w, bx, by, 4, 170.0, w.bullets[bi].cr, w.bullets[bi].cg, w.bullets[bi].cb, 1.5)
+    burst(&mut w, bx, by, 4, 170.0, w.bullets[bi].cr, w.bullets[bi].cg, w.bullets[bi].cb, 1.5)
 
     // Two pods overcharge: hits arc to a second target. The hop resolves through
     // the slot table, so anything that died earlier in this same frame is
@@ -1026,12 +1026,12 @@ fn onBulletHit(w: &mut World, bi: i64, slot: i64) {
         let sy = w.ents[slot].y
         let h = nearestEnemy(w, sx, sy, 190.0, slot)
         if !handleIsNull(h) {
-            addArc(w, sx, sy, w.ents[h.slot].x, w.ents[h.slot].y)
-            damage(w, h.slot, dmg * 0.6, true)
+            addArc(&mut w, sx, sy, w.ents[h.slot].x, w.ents[h.slot].y)
+            damage(&mut w, h.slot, dmg * 0.6, true)
         }
     }
 
-    damage(w, slot, dmg, true)
+    damage(&mut w, slot, dmg, true)
     w.bullets[bi].pierce = w.bullets[bi].pierce - 1
     if w.bullets[bi].pierce < 0 {
         w.bullets[bi].alive = false
@@ -1048,7 +1048,7 @@ fn addPod(w: &mut World) {
     var p = makeEnemy(Kind.Pod, w.player.x, w.player.y)
     p.tier = w.player.pods
     p.phase = (w.player.pods as f64) * PI
-    let _ = spawn(w, p)
+    let _ = spawn(&mut w, p)
     w.player.pods = w.player.pods + 1
 }
 
@@ -1066,7 +1066,7 @@ fn collectOrb(w: &mut World, slot: i64) {
             w.score = w.score + 500
         }
     } else if t == ORB_POD {
-        addPod(w)
+        addPod(&mut w)
     } else if t == ORB_MISSILE {
         if w.player.missiles < 2 {
             w.player.missiles = w.player.missiles + 1
@@ -1088,9 +1088,9 @@ fn collectOrb(w: &mut World, slot: i64) {
     w.pickupX = x
     w.pickupY = y
     w.flash = Math.maxF64(w.flash, 0.28)
-    kill(w, slot)
-    burst(w, x, y, 40, 340.0, cr, cg, cb, 2.6)
-    gridImpulse(w.grid, x, y, 320.0, 90.0)
+    kill(&mut w, slot)
+    burst(&mut w, x, y, 40, 340.0, cr, cg, cb, 2.6)
+    gridImpulse(&mut w.grid, x, y, 320.0, 90.0)
 }
 
 // ── entity behaviour ──────────────────────────────────────────────────────────
@@ -1129,7 +1129,7 @@ fn updateEnts(w: &mut World, dt: f64) {
         // system and can kill without anything shooting.
         if w.ents[i].burn > 0.0 {
             w.ents[i].burn = w.ents[i].burn - dt
-            damage(w, i, 2.4 * dt, true)
+            damage(&mut w, i, 2.4 * dt, true)
             if !w.ents[i].alive {
                 continue
             }
@@ -1144,7 +1144,7 @@ fn updateEnts(w: &mut World, dt: f64) {
                 w.ents[i].fireT = w.ents[i].fireT - dt
                 if w.ents[i].fireT <= 0.0 && w.ents[i].x < w.w - 20.0 {
                     w.ents[i].fireT = Random.floatRange(2.2, 4.0)
-                    fireHostile(w, w.ents[i].x - 16.0, w.ents[i].y, PI, 300.0, 1.0)
+                    fireHostile(&mut w, w.ents[i].x - 16.0, w.ents[i].y, PI, 300.0, 1.0)
                 }
             }
             Kind.Weaver => {
@@ -1153,7 +1153,7 @@ fn updateEnts(w: &mut World, dt: f64) {
                 w.ents[i].fireT = w.ents[i].fireT - dt
                 if w.ents[i].fireT <= 0.0 && w.ents[i].x < w.w - 20.0 {
                     w.ents[i].fireT = Random.floatRange(2.4, 4.4)
-                    fireAtPlayer(w, w.ents[i].x, w.ents[i].y, 265.0, 1.0)
+                    fireAtPlayer(&mut w, w.ents[i].x, w.ents[i].y, 265.0, 1.0)
                 }
             }
             Kind.Swooper => {
@@ -1178,7 +1178,7 @@ fn updateEnts(w: &mut World, dt: f64) {
                     w.ents[i].fireT = 2.8
                     for k in 0..3 {
                         let a = PI + ((k as f64) - 1.0) * 0.30
-                        fireHostile(w, w.ents[i].x - 24.0, w.ents[i].y, a, 300.0, 1.0)
+                        fireHostile(&mut w, w.ents[i].x - 24.0, w.ents[i].y, a, 300.0, 1.0)
                     }
                 }
             }
@@ -1187,7 +1187,7 @@ fn updateEnts(w: &mut World, dt: f64) {
                 let mdx = px - w.ents[i].x
                 let mdy = py - w.ents[i].y
                 if mdx * mdx + mdy * mdy < 56.0 * 56.0 && w.player.alive {
-                    onDeath(w, i, false)
+                    onDeath(&mut w, i, false)
                     continue
                 }
             }
@@ -1207,7 +1207,7 @@ fn updateEnts(w: &mut World, dt: f64) {
                 w.ents[i].fireT = w.ents[i].fireT - dt
                 if w.ents[i].fireT <= 0.0 && w.ents[i].x < w.w - 10.0 && w.ents[i].x > 0.0 {
                     w.ents[i].fireT = Random.floatRange(2.3, 3.8)
-                    fireAtPlayer(w, w.ents[i].x, w.ents[i].y, 275.0, 1.0)
+                    fireAtPlayer(&mut w, w.ents[i].x, w.ents[i].y, 275.0, 1.0)
                 }
             }
             Kind.SnakeHead => {
@@ -1253,7 +1253,7 @@ fn updateEnts(w: &mut World, dt: f64) {
                 if alive(w, t2) {
                     let tx = w.ents[t2.slot].x
                     let ty = w.ents[t2.slot].y
-                    steer(w, i, tx + 60.0, ty, 320.0, 200.0, dt)
+                    steer(&mut w, i, tx + 60.0, ty, 320.0, 200.0, dt)
                     let hdx = tx - w.ents[i].x
                     let hdy = ty - w.ents[i].y
                     if hdx * hdx + hdy * hdy < 280.0 * 280.0 {
@@ -1277,17 +1277,17 @@ fn updateEnts(w: &mut World, dt: f64) {
                     if w.ents[i].tier > 0 {
                         for k in 0..5 {
                             let a = PI + ((k as f64) - 2.0) * 0.26
-                            fireHostile(w, w.ents[i].x - 40.0, w.ents[i].y, a, 300.0, 1.0)
+                            fireHostile(&mut w, w.ents[i].x - 40.0, w.ents[i].y, a, 300.0, 1.0)
                         }
                     } else {
                         // Stripped: it stops being careful.
                         for k in 0..14 {
                             let a = (k as f64) * TAU / 14.0 + w.ents[i].age
-                            fireHostile(w, w.ents[i].x, w.ents[i].y, a, 250.0, 1.0)
+                            fireHostile(&mut w, w.ents[i].x, w.ents[i].y, a, 250.0, 1.0)
                         }
                         var d = makeEnemy(Kind.Swooper, w.ents[i].x, w.ents[i].y)
                         d.spawnT = 0.3
-                        let _ = spawn(w, d)
+                        let _ = spawn(&mut w, d)
                     }
                     w.ents[i].flash = 0.2
                 }
@@ -1323,13 +1323,13 @@ fn updateEnts(w: &mut World, dt: f64) {
                 w.ents[i].vx = w.ents[i].vx * Math.pow(0.45, dt)
                 w.ents[i].vy = w.ents[i].vy * Math.pow(0.45, dt)
                 if w.ents[i].age > 16.0 {
-                    burst(w, w.ents[i].x, w.ents[i].y, 10, 120.0, w.ents[i].cr * 0.4, w.ents[i].cg * 0.4, w.ents[i].cb * 0.4, 1.6)
-                    kill(w, i)
+                    burst(&mut w, w.ents[i].x, w.ents[i].y, 10, 120.0, w.ents[i].cr * 0.4, w.ents[i].cg * 0.4, w.ents[i].cb * 0.4, 1.6)
+                    kill(&mut w, i)
                     continue
                 }
             }
             Kind.Pod => {
-                podUpdate(w, i, dt)
+                podUpdate(&mut w, i, dt)
             }
         }
 
@@ -1362,14 +1362,14 @@ fn updateEnts(w: &mut World, dt: f64) {
                 Kind.Pod => {
                 }
                 _ => {
-                    kill(w, i)
+                    kill(&mut w, i)
                     continue
                 }
             }
         }
 
         if isEnemy(w.ents[i].kind) {
-            gridImpulse(w.grid, w.ents[i].x, w.ents[i].y, w.ents[i].radius * 4.0, 0.0 - 12.0)
+            gridImpulse(&mut w.grid, w.ents[i].x, w.ents[i].y, w.ents[i].radius * 4.0, 0.0 - 12.0)
         }
     }
 }
@@ -1405,7 +1405,7 @@ fn podUpdate(w: &mut World, i: i64, dt: f64) {
             // Never shoot backwards: a pod firing left reads as a bug.
             a = Math.clampF64(a, 0.0 - 1.0, 1.0)
         }
-        firePlayer(w, w.ents[i].x + 10.0, w.ents[i].y, a, 940.0, 0.9, SRC_POD, 2.2, 0.7, 2.2)
+        firePlayer(&mut w, w.ents[i].x + 10.0, w.ents[i].y, a, 940.0, 0.9, SRC_POD, 2.2, 0.7, 2.2)
     }
     if Random.range(0, 3) == 0 {
         w.parts.push(Particle {
@@ -1456,7 +1456,7 @@ fn beamSweep(w: &mut World, bi: i64) {
             let dy = w.bullets[k].y - by
             if dx * dx < 5000.0 && dy * dy < rad * rad {
                 w.bullets[k].alive = false
-                burst(w, w.bullets[k].x, w.bullets[k].y, 3, 120.0, 1.4, 2.0, 2.2, 1.4)
+                burst(&mut w, w.bullets[k].x, w.bullets[k].y, 3, 120.0, 1.4, 2.0, 2.2, 1.4)
             }
         }
     }
@@ -1471,7 +1471,7 @@ fn hitPlayerBullet(w: &mut World, bi: i64): bool {
     let rr = w.bullets[bi].size * 0.5 + 10.0
     if dx * dx + dy * dy < rr * rr {
         w.bullets[bi].alive = false
-        hurtPlayer(w)
+        hurtPlayer(&mut w)
         return true
     }
     return false
@@ -1488,7 +1488,7 @@ fn hitPodBullet(w: &mut World, bi: i64): bool {
                     let rr = w.bullets[bi].size * 0.5 + w.ents[i].radius
                     if dx * dx + dy * dy < rr * rr {
                         w.bullets[bi].alive = false
-                        burst(w, w.bullets[bi].x, w.bullets[bi].y, 8, 200.0, 2.0, 0.6, 2.0, 1.8)
+                        burst(&mut w, w.bullets[bi].x, w.bullets[bi].y, 8, 200.0, 2.0, 0.6, 2.0, 1.8)
                         return true
                     }
                 }
@@ -1557,25 +1557,25 @@ fn updateBullets(w: &mut World, dt: f64) {
         // The cave stops bullets. A beam does not care.
         if !w.bullets[i].beam {
             if terrainHit(w.terrain, w.bullets[i].x, w.bullets[i].y, 2.0) {
-                burst(w, w.bullets[i].x, w.bullets[i].y, 4, 150.0, w.bullets[i].cr * 0.7, w.bullets[i].cg * 0.7, w.bullets[i].cb * 0.7, 1.5)
-                gridImpulse(w.grid, w.bullets[i].x, w.bullets[i].y, 60.0, 8.0)
+                burst(&mut w, w.bullets[i].x, w.bullets[i].y, 4, 150.0, w.bullets[i].cr * 0.7, w.bullets[i].cg * 0.7, w.bullets[i].cb * 0.7, 1.5)
+                gridImpulse(&mut w.grid, w.bullets[i].x, w.bullets[i].y, 60.0, 8.0)
                 w.bullets[i].alive = false
                 continue
             }
         }
 
         if w.bullets[i].hostile {
-            if hitPodBullet(w, i) {
+            if hitPodBullet(&mut w, i) {
                 continue
             }
-            let _ = hitPlayerBullet(w, i)
+            let _ = hitPlayerBullet(&mut w, i)
             continue
         }
 
         if w.bullets[i].beam {
-            beamSweep(w, i)
+            beamSweep(&mut w, i)
         }
-        gridImpulse(w.grid, w.bullets[i].x, w.bullets[i].y, 50.0, 6.0)
+        gridImpulse(&mut w.grid, w.bullets[i].x, w.bullets[i].y, 50.0, 6.0)
 
         // hash lookup: own cell plus the ring around it
         let bx = w.bullets[i].x
@@ -1601,7 +1601,7 @@ fn updateBullets(w: &mut World, dt: f64) {
                         let dy = w.ents[e].y - by
                         let rr = w.ents[e].radius + w.bullets[i].size * 0.5
                         if dx * dx + dy * dy < rr * rr {
-                            onBulletHit(w, i, e)
+                            onBulletHit(&mut w, i, e)
                         }
                     }
                     e = nxt
@@ -1638,11 +1638,11 @@ fn hurtPlayer(w: &mut World) {
         w.hurt = 0.5
         w.shake = 7.0
         w.flash = 0.4
-        burst(w, w.player.x, w.player.y, 70, 420.0, 0.3, 2.2, 1.0, 2.6)
-        gridImpulse(w.grid, w.player.x, w.player.y, 340.0, 130.0)
+        burst(&mut w, w.player.x, w.player.y, 70, 420.0, 0.3, 2.2, 1.0, 2.6)
+        gridImpulse(&mut w.grid, w.player.x, w.player.y, 340.0, 130.0)
         return
     }
-    killPlayer(w)
+    killPlayer(&mut w)
 }
 
 fn killPlayer(w: &mut World) {
@@ -1662,15 +1662,15 @@ fn killPlayer(w: &mut World) {
     w.shake = 18.0
     w.flash = 0.9
     w.slowmo = 0.8
-    burst(w, w.player.x, w.player.y, 280, 720.0, 1.6, 1.6, 1.9, 3.2)
-    gridImpulse(w.grid, w.player.x, w.player.y, 640.0, 280.0)
+    burst(&mut w, w.player.x, w.player.y, 280, 720.0, 1.6, 1.6, 1.9, 3.2)
+    gridImpulse(&mut w.grid, w.player.x, w.player.y, 640.0, 280.0)
     // Clear the lane you are about to come back into.
     for i in 0..w.bullets.len {
         if w.bullets[i].hostile {
             w.bullets[i].alive = false
         }
     }
-    terrainOpen(w.terrain, 90)
+    terrainOpen(&mut w.terrain, 90)
     if w.player.lives <= 0 {
         w.gameOver = true
     }
@@ -1689,7 +1689,7 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
             w.player.vx = 0.0
             w.player.vy = 0.0
             w.player.invuln = 3.4
-            gridImpulse(w.grid, w.player.x, w.player.y, 400.0, 110.0)
+            gridImpulse(&mut w.grid, w.player.x, w.player.y, 400.0, 110.0)
         }
         return
     }
@@ -1706,7 +1706,7 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
         if w.player.shieldT <= 0.0 {
             w.player.shield = 1.0
             w.flash = Math.maxF64(w.flash, 0.2)
-            burst(w, w.player.x, w.player.y, 18, 180.0, 0.2, 1.6, 0.8, 2.0)
+            burst(&mut w, w.player.x, w.player.y, 18, 180.0, 0.2, 1.6, 0.8, 2.0)
         }
     }
 
@@ -1745,12 +1745,12 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
     }
     )
 
-    gridImpulse(w.grid, w.player.x, w.player.y, 140.0, 0.0 - 30.0)
+    gridImpulse(&mut w.grid, w.player.x, w.player.y, 140.0, 0.0 - 30.0)
 
     // Flying into the rock is fatal. It is also the only thing in the game that
     // kills you without shooting at you.
     if terrainHit(w.terrain, w.player.x, w.player.y, 8.0) {
-        killPlayer(w)
+        killPlayer(&mut w)
         return
     }
 
@@ -1773,7 +1773,7 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
         if w.player.charging {
             w.player.charging = false
             if w.player.charge > 0.22 {
-                fireBeam(w, w.player.x + 26.0, w.player.y, w.player.charge)
+                fireBeam(&mut w, w.player.x + 26.0, w.player.y, w.player.charge)
             }
             w.player.charge = 0.0
         }
@@ -1784,16 +1784,16 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
     w.player.cooldown = w.player.cooldown - dt
     if w.player.cooldown <= 0.0 {
         w.player.cooldown = 0.165 - (w.player.power as f64) * 0.013
-        playerFire(w)
+        playerFire(&mut w)
     }
 
     if w.player.missiles > 0 {
         w.player.missileT = w.player.missileT - dt
         if w.player.missileT <= 0.0 {
             w.player.missileT = 0.75
-            fireMissile(w, w.player.x + 6.0, w.player.y - 10.0, true)
+            fireMissile(&mut w, w.player.x + 6.0, w.player.y - 10.0, true)
             if w.player.missiles > 1 {
-                fireMissile(w, w.player.x + 6.0, w.player.y + 10.0, false)
+                fireMissile(&mut w, w.player.x + 6.0, w.player.y + 10.0, false)
             }
         }
     }
@@ -1809,12 +1809,12 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
         if tdx * tdx + tdy * tdy < rr * rr {
             match w.ents[i].kind {
                 Kind.Orb => {
-                    collectOrb(w, i)
+                    collectOrb(&mut w, i)
                 }
                 Kind.Pod => {
                 }
                 _ => {
-                    hurtPlayer(w)
+                    hurtPlayer(&mut w)
                     if !w.player.alive {
                         return
                     }
@@ -1881,20 +1881,20 @@ fn spawnY(w: &World, pad: f64): f64 {
 
 fn squadDrones(w: &mut World) {
     let n = 4 + Random.range(0, 3)
-    let id = newSquad(w, n)
+    let id = newSquad(&mut w, n)
     let y0 = spawnY(w, 90.0)
     for i in 0..n {
         var e = makeEnemy(Kind.Drone, w.w + 60.0 + (i as f64) * 46.0, y0 + (i as f64) * 26.0 - (n as f64) * 13.0)
         e.squad = id
         e.y = Math.clampF64(e.y, 30.0, w.h - 30.0)
-        let _ = spawn(w, e)
+        let _ = spawn(&mut w, e)
     }
 }
 
 // The teaching wave: a plain line of grunts, no escort, entering slowly and
 // holding their fire long enough for you to shoot first.
 fn introSquad(w: &mut World, n: i64) {
-    let id = newSquad(w, n)
+    let id = newSquad(&mut w, n)
     let y0 = spawnY(w, 110.0)
     for i in 0..n {
         var e = makeEnemy(Kind.Drone, w.w + 60.0 + (i as f64) * 58.0, y0 + ((i as f64) - ((n - 1) as f64) * 0.5) * 40.0)
@@ -1902,27 +1902,27 @@ fn introSquad(w: &mut World, n: i64) {
         e.vx = 0.0 - 95.0
         e.fireT = 3.4 + (i as f64) * 0.5
         e.y = Math.clampF64(e.y, 40.0, w.h - 40.0)
-        let _ = spawn(w, e)
+        let _ = spawn(&mut w, e)
     }
 }
 
 fn squadWeavers(w: &mut World) {
     let n = 3 + Random.range(0, 3)
-    let id = newSquad(w, n)
+    let id = newSquad(&mut w, n)
     for i in 0..n {
         var e = makeEnemy(Kind.Weaver, w.w + 60.0 + (i as f64) * 70.0, w.h * 0.5)
         e.squad = id
         e.phase = (i as f64) * 0.7
-        let _ = spawn(w, e)
+        let _ = spawn(&mut w, e)
     }
 }
 
 fn squadSwoopers(w: &mut World) {
-    let id = newSquad(w, 3)
+    let id = newSquad(&mut w, 3)
     for i in 0..3 {
         var e = makeEnemy(Kind.Swooper, w.w + 60.0 + (i as f64) * 90.0, spawnY(w, 70.0))
         e.squad = id
-        let _ = spawn(w, e)
+        let _ = spawn(&mut w, e)
     }
 }
 
@@ -1931,17 +1931,17 @@ fn squadCarrier(w: &mut World) {
     c.hp = 16.0 + (w.stage as f64) * 5.0
     c.maxHp = c.hp
     let cy = c.y
-    let _ = spawn(w, c)
+    let _ = spawn(&mut w, c)
     for i in 0..3 {
         var e = makeEnemy(Kind.Drone, w.w + 160.0 + (i as f64) * 40.0, cy + ((i as f64) - 1.0) * 60.0)
         e.y = Math.clampF64(e.y, 30.0, w.h - 30.0)
-        let _ = spawn(w, e)
+        let _ = spawn(&mut w, e)
     }
 }
 
 fn squadMines(w: &mut World) {
     for i in 0..7 {
-        let _ = spawn(w, makeEnemy(Kind.Mine, w.w + 60.0 + Random.floatRange(0.0, 380.0), spawnY(w, 40.0)))
+        let _ = spawn(&mut w, makeEnemy(Kind.Mine, w.w + 60.0 + Random.floatRange(0.0, 380.0), spawnY(w, 40.0)))
     }
 }
 
@@ -1957,28 +1957,28 @@ fn squadTurrets(w: &mut World) {
             e.tier = 0
             e.y = botAt(w.terrain, w.w + 60.0)
         }
-        let _ = spawn(w, e)
+        let _ = spawn(&mut w, e)
     }
 }
 
 fn squadSnake(w: &mut World) {
-    spawnSnake(w, w.w + 80.0, spawnY(w, 120.0), 5 + Math.minI64(w.stage * 2, 8))
+    spawnSnake(&mut w, w.w + 80.0, spawnY(w, 120.0), 5 + Math.minI64(w.stage * 2, 8))
 }
 
 fn squadHealer(w: &mut World) {
     let n = 4
-    let id = newSquad(w, n + 1)
+    let id = newSquad(&mut w, n + 1)
     let y0 = spawnY(w, 110.0)
     var hl = makeEnemy(Kind.Healer, w.w + 200.0, y0)
     hl.squad = id
-    let _ = spawn(w, hl)
+    let _ = spawn(&mut w, hl)
     for i in 0..n {
         var e = makeEnemy(Kind.Drone, w.w + 60.0 + (i as f64) * 44.0, y0 + ((i as f64) - 1.5) * 44.0)
         e.squad = id
         e.hp = 4.0
         e.maxHp = 4.0
         e.y = Math.clampF64(e.y, 30.0, w.h - 30.0)
-        let _ = spawn(w, e)
+        let _ = spawn(&mut w, e)
     }
 }
 
@@ -2009,34 +2009,34 @@ pub fn squadName(id: i64): string {
 
 fn runSquad(w: &mut World, id: i64) {
     if id == 0 {
-        squadDrones(w)
+        squadDrones(&mut w)
         return
     }
     if id == 1 {
-        squadWeavers(w)
+        squadWeavers(&mut w)
         return
     }
     if id == 2 {
-        squadSwoopers(w)
+        squadSwoopers(&mut w)
         return
     }
     if id == 3 {
-        squadTurrets(w)
+        squadTurrets(&mut w)
         return
     }
     if id == 4 {
-        squadMines(w)
+        squadMines(&mut w)
         return
     }
     if id == 5 {
-        squadCarrier(w)
+        squadCarrier(&mut w)
         return
     }
     if id == 6 {
-        squadSnake(w)
+        squadSnake(&mut w)
         return
     }
-    squadHealer(w)
+    squadHealer(&mut w)
 }
 
 fn nextStage(w: &mut World) {
@@ -2048,14 +2048,14 @@ fn nextStage(w: &mut World) {
     w.intro = 1
     w.banner = 2.6
     w.player.lives = Math.minI64(w.player.lives + 1, 5)
-    terrainSetGap(w.terrain, Math.maxF64(w.h * 0.92 - (w.stage as f64) * 24.0, w.h * 0.60))
-    terrainOpen(w.terrain, 60)
+    terrainSetGap(&mut w.terrain, Math.maxF64(w.h * 0.92 - (w.stage as f64) * 24.0, w.h * 0.60))
+    terrainOpen(&mut w.terrain, 60)
 }
 
 fn updateStage(w: &mut World, dt: f64) {
     if w.bossUp {
         // The boss fight happens in a clear room, and the stage waits for it.
-        terrainOpen(w.terrain, 30)
+        terrainOpen(&mut w.terrain, 30)
         if !alive(w, w.boss) {
             w.bossUp = false
         }
@@ -2063,14 +2063,14 @@ fn updateStage(w: &mut World, dt: f64) {
     }
     w.dist = w.dist + w.scroll * dt
     if w.dist > w.stageLen {
-        spawnBoss(w, w.w + 140.0, w.h * 0.5)
+        spawnBoss(&mut w, w.w + 140.0, w.h * 0.5)
         return
     }
     // The free pod. A run that opens with the weakest gun and nothing helping you
     // is a run that teaches nothing in its first ten seconds.
     if !w.gaveGift && w.dist > 220.0 {
         w.gaveGift = true
-        dropOrb(w, w.w + 30.0, w.h * 0.5)
+        dropOrb(&mut w, w.w + 30.0, w.h * 0.5)
     }
 
     if w.dist > w.nextSpawn {
@@ -2079,7 +2079,7 @@ fn updateStage(w: &mut World, dt: f64) {
         // the very first thing you ever see is not difficulty, it is an ambush at
         // the point where you do not yet know what the game is.
         if w.intro > 0 {
-            introSquad(w, 6 - w.intro)
+            introSquad(&mut w, 6 - w.intro)
             w.intro = w.intro - 1
             w.nextSpawn = w.dist + 640.0
             return
@@ -2095,7 +2095,7 @@ fn updateStage(w: &mut World, dt: f64) {
         // The rolls are drawn here; the decision itself is a pure function with a
         // contract, so the pacing rules are checked rather than believed.
         let pick = pickSquad(w.intro, unlocked, roll)
-        runSquad(w, pick)
+        runSquad(&mut w, pick)
         w.nextSpawn = w.dist + Math.maxF64(260.0, Random.floatRange(560.0, 880.0) - (w.stage as f64) * 22.0)
     }
 }
@@ -2130,21 +2130,21 @@ pub fn worldUpdate(w: &mut World, dtIn: f64, mx: f64, my: f64, holdFire: bool) {
     // Game over freezes the stage but keeps the background alive, so the lattice
     // keeps rippling behind the text.
     if w.gameOver {
-        updateParticles(w, dt)
-        updateStars(w, dt)
-        gridUpdate(w.grid, dt)
+        updateParticles(&mut w, dt)
+        updateStars(&mut w, dt)
+        gridUpdate(&mut w.grid, dt)
         return
     }
 
-    terrainAdvance(w.terrain, w.scroll * dt)
-    updateStars(w, dt)
-    rehash(w)
-    updatePlayer(w, dt, mx, my, holdFire)
-    updateEnts(w, dt)
-    updateBullets(w, dt)
-    updateParticles(w, dt)
-    updateStage(w, dt)
-    gridUpdate(w.grid, dt)
+    terrainAdvance(&mut w.terrain, w.scroll * dt)
+    updateStars(&mut w, dt)
+    rehash(&mut w)
+    updatePlayer(&mut w, dt, mx, my, holdFire)
+    updateEnts(&mut w, dt)
+    updateBullets(&mut w, dt)
+    updateParticles(&mut w, dt)
+    updateStage(&mut w, dt)
+    gridUpdate(&mut w.grid, dt)
 }
 
 pub fn worldReset(w: &mut World) {
@@ -2195,6 +2195,6 @@ pub fn worldReset(w: &mut World) {
     w.hurt = 0.0
     w.pickupT = 0.0
     w.pickupCode = 0 - 1
-    gridReset(w.grid)
-    terrainReset(w.terrain)
+    gridReset(&mut w.grid)
+    terrainReset(&mut w.terrain)
 }

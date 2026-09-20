@@ -314,7 +314,7 @@ pub fn setPhase(g: &mut Game, phase: i64) {
     g.phase = phase
     g.phaseT = 0.0
     g.fade = 0.0
-    cameraTargets(g)
+    cameraTargets(&mut g)
 }
 
 pub fn replan(g: &mut Game) {
@@ -335,13 +335,13 @@ pub fn calibrate(g: &mut Game, i: i64) {
     // hand out both out of the same `g` at once — which is the rule doing its
     // job, since a table that grew mid-call would leave a dangling reference.
     var m = g.missions[i]
-    let _ = calibrateMission(g.bodies, m, nowSeconds())
+    let _ = calibrateMission(g.bodies, &mut m, nowSeconds())
     g.missions[i] = m
 }
 
 pub fn startMission(g: &mut Game, index: i64) {
     g.mi = clampf(index as f64, 0.0, (MISSION_COUNT - 1) as f64) as i64
-    calibrate(g, g.mi)
+    calibrate(&mut g, g.mi)
     let m = g.missions[g.mi]
     g.departT = m.windowOpen + m.departNominal
     g.tof = m.tofNominal
@@ -350,10 +350,10 @@ pub fn startMission(g: &mut Game, index: i64) {
     g.spentArrive = 0.0
     g.won = false
     g.paused = false
-    replan(g)
+    replan(&mut g)
     g.guide = bestPlan(g.bodies, g.missions[g.mi])
     g.warp = g.tof / 26.0
-    setPhase(g, PHASE_BRIEF)
+    setPhase(&mut g, PHASE_BRIEF)
     // Land the camera on the departure world immediately rather than easing in
     // from wherever the last mission ended, which would fly across the solar
     // system for two seconds before the mission starts.
@@ -394,18 +394,18 @@ pub fn gameNew(): Game {
         fade: 0.0,
         titleAt: -1,
     }
-    calibrate(g, 0)
+    calibrate(&mut g, 0)
     // The title screen is a picture before it is a game state, so its dials sit
     // where the transfer draws well rather than where a mission starts.
     let m = g.missions[0]
     g.departT = m.windowOpen + m.windowSpan * 0.42
     g.tof = m.tofMin + (m.tofMax - m.tofMin) * 0.62
-    replan(g)
+    replan(&mut g)
     g.guide = bestPlan(g.bodies, g.missions[0])
     // Without this the title camera keeps the focus it was built with — body 0,
     // the Sun — and eases away from the map over the first few seconds, taking
     // the transfer arc behind the type with it and ending up inside the Sun.
-    cameraTargets(g)
+    cameraTargets(&mut g)
     g.cam.focus = g.cam.tFocus
     g.cam.dist = g.cam.tDist
     g.cam.pitch = g.cam.tPitch
@@ -426,7 +426,7 @@ pub fn scrub(g: &mut Game, dDays: f64, dTofDays: f64) {
     if dTofDays != 0.0 {
         g.tof = clampf(g.tof + dTofDays * SEC_PER_DAY, m.tofMin, m.tofMax)
     }
-    replan(g)
+    replan(&mut g)
 }
 
 pub fn snapToBest(g: &mut Game) {
@@ -453,7 +453,7 @@ pub fn commit(g: &mut Game) {
     g.spentDepart = g.plan.dvDepart
     g.flightT = 0.0
     g.warp = g.tof / 26.0
-    setPhase(g, PHASE_FLY)
+    setPhase(&mut g, PHASE_FLY)
 }
 
 // ── time ──────────────────────────────────────────────────────────────────────
@@ -521,7 +521,7 @@ pub fn advance(g: &mut Game, dt: f64) {
         let slot = titleSlot(g)
         if slot != g.titleAt {
             g.titleAt = slot
-            cameraTargets(g)
+            cameraTargets(&mut g)
             g.cam.focus = g.cam.tFocus
             g.cam.at = focusPoint(g, g.cam.focus)
             g.cam.dist = g.cam.tDist
@@ -532,13 +532,13 @@ pub fn advance(g: &mut Game, dt: f64) {
     g.spin = g.spin + dt * 0.10
 
     if g.phase == PHASE_BRIEF && g.phaseT > BRIEF_SECONDS {
-        advancePhase(g)
+        advancePhase(&mut g)
     }
     if g.phase == PHASE_DEPART && g.phaseT > DEPART_SECONDS {
-        advancePhase(g)
+        advancePhase(&mut g)
     }
     if g.phase == PHASE_TARGET && g.phaseT > TARGET_SECONDS {
-        advancePhase(g)
+        advancePhase(&mut g)
     }
 
     if g.phase == PHASE_FLY && !g.paused {
@@ -550,7 +550,7 @@ pub fn advance(g: &mut Game, dt: f64) {
             if g.won {
                 g.cleared[g.mi] = true
             }
-            setPhase(g, PHASE_ARRIVED)
+            setPhase(&mut g, PHASE_ARRIVED)
         }
     }
 
@@ -573,26 +573,26 @@ pub fn advance(g: &mut Game, dt: f64) {
 
 pub fn advancePhase(g: &mut Game) {
     if g.phase == PHASE_TITLE {
-        startMission(g, 0)
+        startMission(&mut g, 0)
         return
     }
     if g.phase == PHASE_BRIEF {
-        setPhase(g, PHASE_DEPART)
+        setPhase(&mut g, PHASE_DEPART)
         return
     }
     if g.phase == PHASE_DEPART {
-        setPhase(g, PHASE_TARGET)
+        setPhase(&mut g, PHASE_TARGET)
         return
     }
     if g.phase == PHASE_TARGET {
-        setPhase(g, PHASE_PLAN)
+        setPhase(&mut g, PHASE_PLAN)
         return
     }
     if g.phase == PHASE_ARRIVED {
         if g.won && g.mi + 1 < MISSION_COUNT {
-            startMission(g, g.mi + 1)
+            startMission(&mut g, g.mi + 1)
         } else {
-            startMission(g, g.mi)
+            startMission(&mut g, g.mi)
         }
     }
 }

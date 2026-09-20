@@ -137,38 +137,38 @@ fn shortName(s: &string): string {
 // nine bogus ones, so each slot gets its own.
 fn dummyTexture(gl: &mut GlContext): Texture2D {
     var px: Vec<u32> = Vec.filled(1, 0xFF303840)
-    return Texture2D.rgba8(gl, 1, 1, px, false)
+    return Texture2D.rgba8(&mut gl, 1, 1, px, false)
 }
 
 fn loadMap(gl: &mut GlContext, i: i64): Texture2D {
     if i == W_SUN {
-        return mapSun(gl)
+        return mapSun(&mut gl)
     }
     if i == W_MERCURY {
-        return mapMercury(gl)
+        return mapMercury(&mut gl)
     }
     if i == W_VENUS {
-        return mapVenus(gl)
+        return mapVenus(&mut gl)
     }
     if i == W_EARTH {
-        return mapEarth(gl)
+        return mapEarth(&mut gl)
     }
     if i == W_MOON {
-        return mapMoon(gl)
+        return mapMoon(&mut gl)
     }
     if i == W_MARS {
-        return mapMars(gl)
+        return mapMars(&mut gl)
     }
     if i == W_JUPITER {
-        return mapJupiter(gl)
+        return mapJupiter(&mut gl)
     }
     if i == W_SATURN {
-        return mapSaturn(gl)
+        return mapSaturn(&mut gl)
     }
     if i == W_URANUS {
-        return mapUranus(gl)
+        return mapUranus(&mut gl)
     }
-    return mapNeptune(gl)
+    return mapNeptune(&mut gl)
 }
 
 fn ensureLoaded(gl: &mut GlContext, app: &mut App, i: i64) {
@@ -177,8 +177,8 @@ fn ensureLoaded(gl: &mut GlContext, app: &mut App, i: i64) {
     }
     // Swap the placeholder out and free it: `app.tex[i].free(gl)` would read the
     // @noCopy handle out of the Vec by copy, which the checker rejects.
-    let stale = replace(app.tex[i], loadMap(gl, i))
-    stale.free(gl)
+    let stale = replace(app.tex[i], loadMap(&mut gl, i))
+    stale.free(&mut gl)
     app.loaded[i] = true
 }
 
@@ -190,7 +190,7 @@ fn pumpLoading(gl: &mut GlContext, app: &mut App) {
         let i = app.order[app.cursor]
         app.cursor = app.cursor + 1
         if !app.loaded[i] {
-            ensureLoaded(gl, app, i)
+            ensureLoaded(&mut gl, &mut app, i)
             return
         }
     }
@@ -413,23 +413,23 @@ fn drawInfoPanel(ui: &mut Ui, app: &App, u: f64) {
     y = y + 30.0 * u
 
     let fx = x + 22.0 * u
-    factRow(ui, fx, y, u, "ACROSS", commas(app.worlds[app.wi].diameterKm) + " km")
+    factRow(&mut ui, fx, y, u, "ACROSS", commas(app.worlds[app.wi].diameterKm) + " km")
     y = y + 30.0 * u
-    factRow(ui, fx, y, u, "ONE SPIN", hoursLabel(app.worlds[app.wi].dayHours))
+    factRow(&mut ui, fx, y, u, "ONE SPIN", hoursLabel(app.worlds[app.wi].dayHours))
     y = y + 30.0 * u
-    factRow(ui, fx, y, u, "ONE ORBIT", yearLabel(app.worlds[app.wi].yearDays))
+    factRow(&mut ui, fx, y, u, "ONE ORBIT", yearLabel(app.worlds[app.wi].yearDays))
     y = y + 30.0 * u
-    factRow(ui, fx, y, u, "TEMPERATURE", fmtFixed(app.worlds[app.wi].tempC, 0) + " C")
+    factRow(&mut ui, fx, y, u, "TEMPERATURE", fmtFixed(app.worlds[app.wi].tempC, 0) + " C")
     y = y + 30.0 * u
-    factRow(ui, fx, y, u, "MOONS", $"{app.worlds[app.wi].moons}")
+    factRow(&mut ui, fx, y, u, "MOONS", $"{app.worlds[app.wi].moons}")
     y = y + 30.0 * u
-    factRow(ui, fx, y, u, "YOU WOULD WEIGH", weightLabel(app.worlds[app.wi].gravity))
+    factRow(&mut ui, fx, y, u, "YOU WOULD WEIGH", weightLabel(app.worlds[app.wi].gravity))
     y = y + 30.0 * u
     if app.worlds[app.wi].distanceOf.len > 0 {
-        factRow(ui, fx, y, u, "FROM " + app.worlds[app.wi].distanceOf, commas(app.worlds[app.wi].distanceKm) + " km")
+        factRow(&mut ui, fx, y, u, "FROM " + app.worlds[app.wi].distanceOf, commas(app.worlds[app.wi].distanceKm) + " km")
         y = y + 30.0 * u
     }
-    factRow(ui, fx, y, u, "TILT", fmtFixed(app.worlds[app.wi].tilt, 1) + " degrees")
+    factRow(&mut ui, fx, y, u, "TILT", fmtFixed(app.worlds[app.wi].tilt, 1) + " degrees")
 
     var ly = y + 34.0 * u
     var i = 0
@@ -734,61 +734,61 @@ pub fn main(): i32 {
     // Owns every GL object the app makes, so teardown is one sweep while the
     // context is still current.
     var gl = GlContext.new()
-    var planetSh = match Shader.compile(gl, PLANET_VERT, PLANET_FRAG) {
+    var planetSh = match Shader.compile(&mut gl, PLANET_VERT, PLANET_FRAG) {
         Result.Ok(s) => s
         Result.Err(e) => {
             print("planet shader: " + e)
             return 2
         }
     }
-    var atmoSh = match Shader.compile(gl, PLANET_VERT, ATMO_FRAG) {
+    var atmoSh = match Shader.compile(&mut gl, PLANET_VERT, ATMO_FRAG) {
         Result.Ok(s) => s
         Result.Err(e) => {
             print("atmosphere shader: " + e)
             return 2
         }
     }
-    var ringSh = match Shader.compile(gl, PLANET_VERT, RING_FRAG) {
+    var ringSh = match Shader.compile(&mut gl, PLANET_VERT, RING_FRAG) {
         Result.Ok(s) => s
         Result.Err(e) => {
             print("ring shader: " + e)
             return 2
         }
     }
-    var skySh = match Shader.compile(gl, QUAD_VERT, SKY_FRAG) {
+    var skySh = match Shader.compile(&mut gl, QUAD_VERT, SKY_FRAG) {
         Result.Ok(s) => s
         Result.Err(e) => {
             print("sky shader: " + e)
             return 2
         }
     }
-    var ui = match uiNew(gl, fontAtlas()) {
+    var ui = match uiNew(&mut gl, fontAtlas()) {
         Result.Ok(x) => x
         Result.Err(e) => {
             print("ui: " + e)
             return 2
         }
     }
-    uiSetAtlasSize(ui, 384.0, 240.0)
+    uiSetAtlasSize(&mut ui, 384.0, 240.0)
 
     var attrs: Vec<i64> = Vec.new()
     attrs.push(3)
     attrs.push(2)
     attrs.push(3)
-    var ball = Mesh.new(gl, attrs)
+    var ball = Mesh.new(&mut gl, attrs)
     ball.upload(sphereMesh(180, 90))
     var attrs2: Vec<i64> = Vec.new()
     attrs2.push(3)
     attrs2.push(2)
     attrs2.push(3)
-    var shell = Mesh.new(gl, attrs2)
+    var shell = Mesh.new(&mut gl, attrs2)
     shell.upload(invertedSphereMesh(72, 36))
     var attrs3: Vec<i64> = Vec.new()
     attrs3.push(3)
     attrs3.push(2)
     attrs3.push(3)
-    var ring = Mesh.new(gl, attrs3)
-    var skyQuad = Mesh.fullscreenQuad(gl)
+    var ring = Mesh.new(&mut gl, attrs3)
+    var skyQuad = Mesh.fullscreenQuad(&mut gl)
 
     var worlds = allWorlds()
     ring.upload(ringMesh(256, worlds[W_SATURN].ringInner, worlds[W_SATURN].ringOuter))
@@ -797,7 +797,7 @@ pub fn main(): i32 {
     var loaded: Vec<bool> = Vec.new()
     var i = 0
     while i < worlds.len {
-        tex.push(dummyTexture(gl))
+        tex.push(dummyTexture(&mut gl))
         loaded.push(false)
         i = i + 1
     }
@@ -822,8 +822,8 @@ pub fn main(): i32 {
         sel: -1, hov: -1, level: 0, help: true, pulse: 1.0, arrive: 0.0,
         pins: Vec.new(),
     }
-    ensureLoaded(gl, app, W_EARTH)
-    faceWorld(app)
+    ensureLoaded(&mut gl, &mut app, W_EARTH)
+    faceWorld(&mut app)
 
     let opt = parseOptions()
     let shooting = opt.shot.len > 0
@@ -831,22 +831,22 @@ pub fn main(): i32 {
         app.help = false
         app.level = opt.level
         if opt.world >= 0 && opt.world < app.worlds.len {
-            ensureLoaded(gl, app, opt.world)
+            ensureLoaded(&mut gl, &mut app, opt.world)
             app.wi = opt.world
         }
-        faceWorld(app)
+        faceWorld(&mut app)
         if opt.dist > 0.0 {
             app.dist = opt.dist
             app.tDist = opt.dist
         }
         if opt.landmark >= 0 && opt.landmark < app.worlds[app.wi].landmarks.len {
             app.sel = opt.landmark
-            flyTo(app, opt.landmark)
+            flyTo(&mut app, opt.landmark)
         }
     }
 
     var size = drawableSize(host.win)
-    var post = match postNew(gl, size.w, size.h) {
+    var post = match postNew(&mut gl, size.w, size.h) {
         Result.Ok(p) => p
         Result.Err(e) => {
             print("render targets: " + e)
@@ -879,11 +879,11 @@ pub fn main(): i32 {
         // Everything on the HUD is in these units, so the layout is identical on
         // a Retina panel and a 1080p monitor instead of half the size on one.
         let u = h / 900.0
-        pollInput(inp, ev, pixelScale(host.win))
+        pollInput(&mut inp, &mut ev, pixelScale(host.win))
 
         if size.w != postW || size.h != postH {
-            post.free(gl)
-            post = match postNew(gl, size.w, size.h) {
+            post.free(&mut gl)
+            post = match postNew(&mut gl, size.w, size.h) {
                 Result.Ok(p) => p
                 Result.Err(_) => {
                     return 3
@@ -893,7 +893,7 @@ pub fn main(): i32 {
             postH = size.h
         }
 
-        pumpLoading(gl, app)
+        pumpLoading(&mut gl, &mut app)
 
         // ── input ─────────────────────────────────────────────────────────────
         if inp.toggleHelp {
@@ -954,7 +954,7 @@ pub fn main(): i32 {
             app.spin = app.spin + dt * 0.055
             app.tSpin = app.spin
         }
-        easeCamera(app, dt)
+        easeCamera(&mut app, dt)
         app.pulse = clampf(app.pulse + dt * 0.55, 0.0, 1.0)
         app.arrive = clampf(app.arrive + dt * 2.2, 0.0, 1.0)
 
@@ -967,7 +967,7 @@ pub fn main(): i32 {
         let model = worldModel(app)
         let mvp = multiply(vp, model)
 
-        updatePins(app, vp, model, eye, w, h)
+        updatePins(&mut app, vp, model, eye, w, h)
 
         // ── pick ──────────────────────────────────────────────────────────────
         app.hov = -1
@@ -1069,14 +1069,14 @@ pub fn main(): i32 {
 
         // ── overlay ───────────────────────────────────────────────────────────
         if app.help {
-            drawHelp(ui, u, w, h)
+            drawHelp(&mut ui, u, w, h)
         } else {
-            drawPins(ui, app, u, time)
-            drawInfoPanel(ui, app, u)
-            drawLandmarkCard(ui, app, u, w)
-            drawTopBar(ui, app, u, w)
-            drawHint(ui, app, u, w, h)
-            chipHit = drawChips(ui, app, u, w, h, inp.mx, inp.my)
+            drawPins(&mut ui, app, u, time)
+            drawInfoPanel(&mut ui, app, u)
+            drawLandmarkCard(&mut ui, app, u, w)
+            drawTopBar(&mut ui, app, u, w)
+            drawHint(&mut ui, app, u, w, h)
+            chipHit = drawChips(&mut ui, app, u, w, h, inp.mx, inp.my)
         }
         ui.flush(w, h)
 
@@ -1090,7 +1090,7 @@ pub fn main(): i32 {
                 } else {
                     if app.hov >= 0 {
                         app.sel = app.hov
-                        flyTo(app, app.hov)
+                        flyTo(&mut app, app.hov)
                     } else {
                         app.sel = -1
                     }
@@ -1099,10 +1099,10 @@ pub fn main(): i32 {
         }
 
         if goto >= 0 && goto != app.wi {
-            ensureLoaded(gl, app, goto)
+            ensureLoaded(&mut gl, &mut app, goto)
             app.wi = goto
             app.sel = -1
-            faceWorld(app)
+            faceWorld(&mut app)
         }
 
         if shooting && frame >= opt.frames {
@@ -1115,20 +1115,20 @@ pub fn main(): i32 {
         SDL_GL_SwapWindow(host.win)
     }
 
-    ball.free(gl)
-    shell.free(gl)
-    ring.free(gl)
-    skyQuad.free(gl)
-    planetSh.free(gl)
-    atmoSh.free(gl)
-    ringSh.free(gl)
-    skySh.free(gl)
-    ui.free(gl)
-    post.free(gl)
+    ball.free(&mut gl)
+    shell.free(&mut gl)
+    ring.free(&mut gl)
+    skyQuad.free(&mut gl)
+    planetSh.free(&mut gl)
+    atmoSh.free(&mut gl)
+    ringSh.free(&mut gl)
+    skySh.free(&mut gl)
+    ui.free(&mut gl)
+    post.free(&mut gl)
     // Drain rather than index: each texture is a @noCopy handle, and popping hands
     // over the Vec's own copy instead of duplicating it.
     while app.tex.len > 0 {
-        app.tex.pop()!.free(gl)
+        app.tex.pop()!.free(&mut gl)
     }
     gl.free()
     SDL_GL_DeleteContext(host.ctx)

@@ -205,35 +205,35 @@ fn handleInput(g: &mut Game, inp: &Input, dt: f64) {
         return
     }
     if inp.down && inp.dragged {
-        dragCamera(g, inp.dragX, inp.dragY)
+        dragCamera(&mut g, inp.dragX, inp.dragY)
     }
     let zoom = inp.wheel * 0.16 + inp.zoom * dt * 1.8
     if zoom != 0.0 {
-        zoomCamera(g, zoom)
+        zoomCamera(&mut g, zoom)
     }
     if inp.digit > 0 {
-        startMission(g, inp.digit - 1)
+        startMission(&mut g, inp.digit - 1)
     }
     if inp.reset {
-        startMission(g, g.mi)
+        startMission(&mut g, g.mi)
     }
 
     if g.phase == PHASE_TITLE || g.phase == PHASE_BRIEF || g.phase == PHASE_DEPART || g.phase == PHASE_TARGET {
         if inp.advance || inp.commit || inp.clicked {
-            advancePhase(g)
+            advancePhase(&mut g)
         }
     }
     if g.phase == PHASE_PLAN {
         if inp.scrubX != 0.0 || inp.scrubY != 0.0 {
             let dayStep = g.missions[g.mi].windowSpan / SEC_PER_DAY / DIAL_SECONDS * dt
             let tofStep = (g.missions[g.mi].tofMax - g.missions[g.mi].tofMin) / SEC_PER_DAY / DIAL_SECONDS * dt
-            scrub(g, inp.scrubX * dayStep, inp.scrubY * tofStep)
+            scrub(&mut g, inp.scrubX * dayStep, inp.scrubY * tofStep)
         }
         if inp.snap {
-            snapToBest(g)
+            snapToBest(&mut g)
         }
         if inp.commit {
-            commit(g)
+            commit(&mut g)
         }
         // SPACE deliberately does nothing here. It used to replay the two
         // cinematics, which meant a player pressing the key that skipped them
@@ -244,15 +244,15 @@ fn handleInput(g: &mut Game, inp: &Input, dt: f64) {
             g.paused = !g.paused
         }
         if inp.warpUp {
-            stepWarp(g, true)
+            stepWarp(&mut g, true)
         }
         if inp.warpDown {
-            stepWarp(g, false)
+            stepWarp(&mut g, false)
         }
     }
     if g.phase == PHASE_ARRIVED {
         if inp.commit || inp.advance || inp.clicked {
-            advancePhase(g)
+            advancePhase(&mut g)
         }
     }
 }
@@ -260,7 +260,7 @@ fn handleInput(g: &mut Game, inp: &Input, dt: f64) {
 // Put the game straight into a state worth photographing, so a look can be
 // checked from a terminal without a person at the keyboard.
 fn stage(g: &mut Game, o: &Options) {
-    startMission(g, o.mission)
+    startMission(&mut g, o.mission)
     if o.phase < 0 {
         return
     }
@@ -268,26 +268,26 @@ fn stage(g: &mut Game, o: &Options) {
         // The dials open over budget on most missions, and `commit` refuses a
         // plan that does not fit — so a staged flight has to be a plan a player
         // could actually have launched.
-        snapToBest(g)
-        commit(g)
+        snapToBest(&mut g)
+        commit(&mut g)
         g.flightT = g.tof * o.flight
         if o.phase == PHASE_ARRIVED {
             g.flightT = g.tof
             g.spentArrive = g.plan.dvArrive
             g.won = true
-            setPhase(g, PHASE_ARRIVED)
+            setPhase(&mut g, PHASE_ARRIVED)
         }
     } else {
-        setPhase(g, o.phase)
+        setPhase(&mut g, o.phase)
     }
     // The camera eases, and a shot taken on frame one would catch it mid-flight
     // between two phases; land it where the phase wants it. The clock is wound
     // forward first, so a slideshow shot gets the world it asked for.
     g.phaseT = o.phaseT
-    advance(g, 0.0)
+    advance(&mut g, 0.0)
     var i = 0
     while i < 400 {
-        updateCamera(g, 0.05)
+        updateCamera(&mut g, 0.05)
         i = i + 1
     }
     g.fade = 1.0
@@ -305,34 +305,34 @@ pub fn main(): i32 {
     // Owns every GL object the game makes, so teardown is one sweep while the
     // context is still current.
     var gl = GlContext.new()
-    var renderer = match rendererNew(gl) {
+    var renderer = match rendererNew(&mut gl) {
         Result.Ok(r) => r
         Result.Err(e) => {
             print("shaders: " + e)
             return 2
         }
     }
-    var ui = match uiNew(gl, fontAtlas()) {
+    var ui = match uiNew(&mut gl, fontAtlas()) {
         Result.Ok(x) => x
         Result.Err(e) => {
             print("overlay: " + e)
             return 2
         }
     }
-    uiSetAtlasSize(ui, 384.0, 240.0)
+    uiSetAtlasSize(&mut ui, 384.0, 240.0)
 
     var g = gameNew()
     if shooting {
-        stage(g, opt)
+        stage(&mut g, opt)
     }
     // The two worlds this mission visits, decoded before the first frame rather
     // than during it: twenty megabytes of PNG is a visible stall, and the place
     // to spend it is the loading of a mission, not the middle of a camera move.
-    ensureLoaded(gl, renderer, g.missions[g.mi].from)
-    ensureLoaded(gl, renderer, g.missions[g.mi].to)
+    ensureLoaded(&mut gl, &mut renderer, g.missions[g.mi].from)
+    ensureLoaded(&mut gl, &mut renderer, g.missions[g.mi].to)
 
     var size = drawableSize(host.win)
-    var post = match postNew(gl, size.w, size.h) {
+    var post = match postNew(&mut gl, size.w, size.h) {
         Result.Ok(p) => p
         Result.Err(e) => {
             print("render targets: " + e)
@@ -366,11 +366,11 @@ pub fn main(): i32 {
         size = drawableSize(host.win)
         let w = size.w as f64
         let h = size.h as f64
-        pollInput(inp, ev, pixelScale(host.win))
+        pollInput(&mut inp, &mut ev, pixelScale(host.win))
 
         if size.w != postW || size.h != postH {
-            post.free(gl)
-            post = match postNew(gl, size.w, size.h) {
+            post.free(&mut gl)
+            post = match postNew(&mut gl, size.w, size.h) {
                 Result.Ok(p) => p
                 Result.Err(_) => {
                     return 3
@@ -389,23 +389,23 @@ pub fn main(): i32 {
             let _ = SDL_SetWindowFullscreen(host.win, flag)
         }
 
-        handleInput(g, inp, dt)
+        handleInput(&mut g, inp, dt)
         if loadedFor != g.mi {
-            ensureLoaded(gl, renderer, g.missions[g.mi].from)
-            ensureLoaded(gl, renderer, g.missions[g.mi].to)
+            ensureLoaded(&mut gl, &mut renderer, g.missions[g.mi].from)
+            ensureLoaded(&mut gl, &mut renderer, g.missions[g.mi].to)
             loadedFor = g.mi
         }
         if !shooting {
-            advance(g, dt)
-            updateCamera(g, dt)
+            advance(&mut g, dt)
+            updateCamera(&mut g, dt)
         }
 
         let view = viewOf(g, w, h)
         post.beginScene()
-        var marks = drawScene(gl, renderer, g, view, time)
+        var marks = drawScene(&mut gl, &mut renderer, g, view, time)
         post.resolve(opt.gain, titleLevel(g), 0.36, size.w, size.h)
 
-        drawOverlay(ui, g, view, marks)
+        drawOverlay(&mut ui, g, view, marks)
         ui.flush(w, h)
 
         if shooting {
@@ -423,9 +423,9 @@ pub fn main(): i32 {
         }
     }
 
-    renderer.free(gl)
-    ui.free(gl)
-    post.free(gl)
+    renderer.free(&mut gl)
+    ui.free(&mut gl)
+    post.free(&mut gl)
     gl.free()
     SDL_GL_DeleteContext(host.ctx)
     SDL_DestroyWindow(host.win)

@@ -88,17 +88,17 @@ fn wantsFlap(w: &World): bool {
 // Every frame in the game, laid out large on a flat background.
 fn sheet(path: &string) {
     var c = canvasNew(W, H)
-    fillRect(c, 0.0, 0.0, W as f64, H as f64, 0.030, 0.035, 0.055, 1.0)
+    fillRect(&mut c, 0.0, 0.0, W as f64, H as f64, 0.030, 0.035, 0.055, 1.0)
     let dog = dogFrames()
     let bone = boneSprite()
     var i = 0
     while i < dog.len {
-        drawSprite(c, dog[i], 40.0 + (i as f64) * 310.0, 120.0, 10.0, false, 0.25)
+        drawSprite(&mut c, dog[i], 40.0 + (i as f64) * 310.0, 120.0, 10.0, false, 0.25)
         i = i + 1
     }
-    drawSprite(c, bone, 520.0, 520.0, 10.0, false, 0.6)
-    text(c, 40, 40, "MILO — EARS UP, EARS OUT, EARS DOWN, OOF", 3, 0.9, 0.95, 1.1)
-    present(c, 0.35, 1.0, 0.9)
+    drawSprite(&mut c, bone, 520.0, 520.0, 10.0, false, 0.6)
+    text(&mut c, 40, 40, "MILO — EARS UP, EARS OUT, EARS DOWN, OOF", 3, 0.9, 0.95, 1.1)
+    present(&mut c, 0.35, 1.0, 0.9)
     writePpm(path, c)
     print("wrote " + path)
 }
@@ -148,11 +148,11 @@ pub fn main(): i32 {
     var tick = 0
     while tick <= last {
         if w.state == ST_READY && tick > 20 {
-            flap(w)
+            flap(&mut w)
         } else if w.state == ST_PLAY && (giveUp < 0 || tick < giveUp) && wantsFlap(w) {
-            flap(w)
+            flap(&mut w)
         }
-        worldUpdate(w, dt)
+        worldUpdate(&mut w, dt)
         if w.state != prevState {
             print("tick " + tick.toString() + ": state " + prevState.toString() + " -> " + w.state.toString() + "  y=" + (w.y as i64).toString() + " score=" + w.score.toString())
             prevState = w.state
@@ -165,12 +165,12 @@ pub fn main(): i32 {
             }
         }
         if shoot {
-            drawBackground(c, w)
-            drawGates(c, w, bone, 0.0, 0.0)
-            drawDog(c, w, dog, 0.0, 0.0)
-            drawParts(c, w, 0.0, 0.0)
-            drawHud(c, w, bone, 60)
-            present(c, 0.40, 1.0, 0.90)
+            drawBackground(&mut c, w)
+            drawGates(&mut c, w, bone, 0.0, 0.0)
+            drawDog(&mut c, w, dog, 0.0, 0.0)
+            drawParts(&mut c, w, 0.0, 0.0)
+            drawHud(&mut c, w, bone, 60)
+            present(&mut c, 0.40, 1.0, 0.90)
             let path = prefix + "_" + tick.toString() + ".ppm"
             writePpm(path, c)
             print("wrote " + path + "  score=" + w.score.toString() + " state=" + w.state.toString())

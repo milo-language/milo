@@ -134,12 +134,12 @@ void main() {
 // Two triangles, five floats a vertex. Everything drawn this frame goes in here
 // in call order and leaves in one draw.
 fn quad(v: &mut Vec<f32>, x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64) {
-    corner(v, x, y, r, g, b)
-    corner(v, x + w, y, r, g, b)
-    corner(v, x + w, y + h, r, g, b)
-    corner(v, x, y, r, g, b)
-    corner(v, x + w, y + h, r, g, b)
-    corner(v, x, y + h, r, g, b)
+    corner(&mut v, x, y, r, g, b)
+    corner(&mut v, x + w, y, r, g, b)
+    corner(&mut v, x + w, y + h, r, g, b)
+    corner(&mut v, x, y, r, g, b)
+    corner(&mut v, x + w, y + h, r, g, b)
+    corner(&mut v, x, y + h, r, g, b)
 }
 
 fn corner(v: &mut Vec<f32>, x: f64, y: f64, r: f64, g: f64, b: f64) {
@@ -154,9 +154,9 @@ fn corner(v: &mut Vec<f32>, x: f64, y: f64, r: f64, g: f64, b: f64) {
 // that into a halo for the cost of two more quads — 30 floats — which is cheaper
 // than any per-pixel glow and is why nothing here needs a blur pass.
 fn glow(v: &mut Vec<f32>, x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64) {
-    quad(v, x - 10.0, y - 10.0, w + 20.0, h + 20.0, r * 0.10, g * 0.10, b * 0.10)
-    quad(v, x - 4.0, y - 4.0, w + 8.0, h + 8.0, r * 0.22, g * 0.22, b * 0.22)
-    quad(v, x, y, w, h, r, g, b)
+    quad(&mut v, x - 10.0, y - 10.0, w + 20.0, h + 20.0, r * 0.10, g * 0.10, b * 0.10)
+    quad(&mut v, x - 4.0, y - 4.0, w + 8.0, h + 8.0, r * 0.22, g * 0.22, b * 0.22)
+    quad(&mut v, x, y, w, h, r, g, b)
 }
 
 // ── game state ────────────────────────────────────────────────────────────────
@@ -276,26 +276,26 @@ fn update(g: &mut Game, dt: f64, up: bool, down: bool, wantServe: bool) {
         if g.ballY < 0.0 {
             g.ballY = 0.0
             g.ballVy = 0.0 - g.ballVy
-            burst(g, g.ballX, 0.0, 0.5, 0.9, 1.6)
+            burst(&mut g, g.ballX, 0.0, 0.5, 0.9, 1.6)
         }
         if g.ballY + BALL > H {
             g.ballY = H - BALL
             g.ballVy = 0.0 - g.ballVy
-            burst(g, g.ballX, H, 0.5, 0.9, 1.6)
+            burst(&mut g, g.ballX, H, 0.5, 0.9, 1.6)
         }
 
-        bounceOff(g, 40.0, g.playerY, true)
-        bounceOff(g, W - 40.0 - PADDLE_W, g.aiY, false)
+        bounceOff(&mut g, 40.0, g.playerY, true)
+        bounceOff(&mut g, W - 40.0 - PADDLE_W, g.aiY, false)
 
         if g.ballX + BALL < 0.0 {
             g.aiScore = g.aiScore + 1
-            burst(g, 0.0, g.ballY, 2.0, 0.4, 0.5)
-            serve(g, true)
+            burst(&mut g, 0.0, g.ballY, 2.0, 0.4, 0.5)
+            serve(&mut g, true)
         }
         if g.ballX > W {
             g.playerScore = g.playerScore + 1
-            burst(g, W, g.ballY, 0.5, 2.0, 0.9)
-            serve(g, false)
+            burst(&mut g, W, g.ballY, 0.5, 2.0, 0.9)
+            serve(&mut g, false)
         }
     }
 
@@ -314,7 +314,7 @@ fn update(g: &mut Game, dt: f64, up: bool, down: bool, wantServe: bool) {
     }
     g.aiY = clamp(g.aiY, 0.0, H - PADDLE_H)
 
-    stepSparks(g, dt)
+    stepSparks(&mut g, dt)
 }
 
 // Reflect off a paddle, with the contact point setting the angle — the one rule
@@ -339,10 +339,10 @@ fn bounceOff(g: &mut Game, px: f64, py: f64, isPlayer: bool) {
     g.ballVy = hit * 620.0
     if isPlayer {
         g.ballX = px + PADDLE_W
-        burst(g, g.ballX, g.ballY, 0.5, 2.0, 0.9)
+        burst(&mut g, g.ballX, g.ballY, 0.5, 2.0, 0.9)
     } else {
         g.ballX = px - BALL
-        burst(g, g.ballX, g.ballY, 2.0, 0.5, 1.4)
+        burst(&mut g, g.ballX, g.ballY, 2.0, 0.5, 1.4)
     }
 }
 
@@ -383,7 +383,7 @@ fn build(g: &Game, v: &mut Vec<f32>) {
     // Net: dashes rather than a line, so it reads as background.
     var y = 12.0
     while y < H {
-        quad(v, W * 0.5 - 2.0, y, 4.0, 16.0, 0.10, 0.13, 0.18)
+        quad(&mut v, W * 0.5 - 2.0, y, 4.0, 16.0, 0.10, 0.13, 0.18)
         y = y + 30.0
     }
     // Score as pips along the top — no font, no texture, and readable across a
@@ -393,23 +393,23 @@ fn build(g: &Game, v: &mut Vec<f32>) {
         if i < g.playerScore {
             lit = 1.0
         }
-        quad(v, W * 0.5 - 40.0 - (i as f64) * 26.0, 22.0, 16.0, 10.0, 0.25 * lit, 1.0 * lit, 0.45 * lit)
+        quad(&mut v, W * 0.5 - 40.0 - (i as f64) * 26.0, 22.0, 16.0, 10.0, 0.25 * lit, 1.0 * lit, 0.45 * lit)
         var lit2 = 0.06
         if i < g.aiScore {
             lit2 = 1.0
         }
-        quad(v, W * 0.5 + 24.0 + (i as f64) * 26.0, 22.0, 16.0, 10.0, 1.0 * lit2, 0.30 * lit2, 0.70 * lit2)
+        quad(&mut v, W * 0.5 + 24.0 + (i as f64) * 26.0, 22.0, 16.0, 10.0, 1.0 * lit2, 0.30 * lit2, 0.70 * lit2)
     }
-    glow(v, 40.0, g.playerY, PADDLE_W, PADDLE_H, 0.25, 1.05, 0.45)
-    glow(v, W - 40.0 - PADDLE_W, g.aiY, PADDLE_W, PADDLE_H, 1.05, 0.30, 0.70)
-    glow(v, g.ballX, g.ballY, BALL, BALL, 1.0, 1.0, 1.15)
+    glow(&mut v, 40.0, g.playerY, PADDLE_W, PADDLE_H, 0.25, 1.05, 0.45)
+    glow(&mut v, W - 40.0 - PADDLE_W, g.aiY, PADDLE_W, PADDLE_H, 1.05, 0.30, 0.70)
+    glow(&mut v, g.ballX, g.ballY, BALL, BALL, 1.0, 1.0, 1.15)
     for s in g.sparks {
         let f = s.life * 2.2
-        quad(v, s.x - 2.0, s.y - 2.0, 4.0, 4.0, s.r * f, s.g * f, s.b * f)
+        quad(&mut v, s.x - 2.0, s.y - 2.0, 4.0, 4.0, s.r * f, s.g * f, s.b * f)
     }
     if !g.served {
         // A serve prompt drawn as a pulsing bar, for the same reason as the pips.
-        quad(v, W * 0.5 - 60.0, H - 60.0, 120.0, 6.0, 0.30, 0.36, 0.50)
+        quad(&mut v, W * 0.5 - 60.0, H - 60.0, 120.0, 6.0, 0.30, 0.36, 0.50)
     }
 }
 
@@ -442,7 +442,7 @@ pub fn main(): i32 {
     // Owns every GL object made through it; one call at the end sweeps whatever
     // was not freed by hand.
     var gl = GlContext.new()
-    var sh = match Shader.compile(gl, VERT, FRAG) {
+    var sh = match Shader.compile(&mut gl, VERT, FRAG) {
         Result.Ok(s) => s
         Result.Err(e) => {
             print(e)
@@ -452,13 +452,13 @@ pub fn main(): i32 {
     var attrs: Vec<i64> = Vec.new()
     attrs.push(2) // position, in world pixels
     attrs.push(3) // colour, linear and allowed past 1.0
-    var batch = Mesh.new(gl, attrs)
+    var batch = Mesh.new(&mut gl, attrs)
 
     Gpu.depthTest(false)
     Gpu.blendAdd()
 
     var g = gameNew()
-    serve(g, true)
+    serve(&mut g, true)
     var verts: Vec<f32> = Vec.new()
     var ev: [u8; 64] = [0; 64]
     var quit = false
@@ -496,18 +496,18 @@ pub fn main(): i32 {
             wantServe = keys[SC_SPACE] != 0
             if keys[SC_R] != 0 {
                 g = gameNew()
-                serve(g, true)
+                serve(&mut g, true)
             }
         }
 
         // Match point ends the rally and freezes the score; R starts again.
         let over = g.playerScore >= WIN_SCORE || g.aiScore >= WIN_SCORE
         if !over {
-            update(g, dt, up, down, wantServe)
+            update(&mut g, dt, up, down, wantServe)
         }
 
         verts.clear()
-        build(g, verts)
+        build(g, &mut verts)
         batch.upload(verts)
 
         var dw: i32 = 0
@@ -533,8 +533,8 @@ pub fn main(): i32 {
         SDL_GL_SwapWindow(win)
     }
 
-    batch.free(gl)
-    sh.free(gl)
+    batch.free(&mut gl)
+    sh.free(&mut gl)
     gl.free()
     SDL_GL_DeleteContext(ctx)
     SDL_DestroyWindow(win)

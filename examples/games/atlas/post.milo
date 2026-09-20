@@ -34,18 +34,18 @@ pub struct Post {
 }
 
 pub fn postNew(gl: &mut GlContext, w: i64, h: i64): Result<Post, string> {
-    let bright = Shader.compile(gl, QUAD_VERT, BRIGHT_FRAG)?
-    let blur = Shader.compile(gl, QUAD_VERT, BLUR_FRAG)?
-    let comp = Shader.compile(gl, QUAD_VERT, COMPOSITE_FRAG)?
+    let bright = Shader.compile(&mut gl, QUAD_VERT, BRIGHT_FRAG)?
+    let blur = Shader.compile(&mut gl, QUAD_VERT, BLUR_FRAG)?
+    let comp = Shader.compile(&mut gl, QUAD_VERT, COMPOSITE_FRAG)?
     // The scene target is the only one with a depth buffer; the post passes are
     // flat quads that must never depth-test against anything.
-    let scene = Target.new(gl, w, h, true, true)?
-    let a = Target.new(gl, w / SHRINK, h / SHRINK, false, true)?
-    let b = Target.new(gl, w / SHRINK, h / SHRINK, false, true)?
+    let scene = Target.new(&mut gl, w, h, true, true)?
+    let a = Target.new(&mut gl, w / SHRINK, h / SHRINK, false, true)?
+    let b = Target.new(&mut gl, w / SHRINK, h / SHRINK, false, true)?
     return Result.Ok(Post {
         scene: scene, a: a, b: b,
         bright: bright, blur: blur, comp: comp,
-        quad: Mesh.fullscreenQuad(gl), w: w, h: h,
+        quad: Mesh.fullscreenQuad(&mut gl), w: w, h: h,
     }
     )
 }
@@ -113,12 +113,12 @@ impl Post {
     }
 
     fn free(self: Self, gl: &mut GlContext) {
-        self.quad.free(gl)
-        self.bright.free(gl)
-        self.blur.free(gl)
-        self.comp.free(gl)
-        self.scene.free(gl)
-        self.a.free(gl)
-        self.b.free(gl)
+        self.quad.free(&mut gl)
+        self.bright.free(&mut gl)
+        self.blur.free(&mut gl)
+        self.comp.free(&mut gl)
+        self.scene.free(&mut gl)
+        self.a.free(&mut gl)
+        self.b.free(&mut gl)
     }
 }

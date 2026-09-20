@@ -608,7 +608,7 @@ pub fn drawWorld(c: &mut Canvas, s: &mut Scene, w: &World, ground: &Texture, ski
         // The measured visibility when there is one, and a clear-day default
         // when there is not. `hazeK` is where that decision already happened.
         s.haze = w.env.hazeK
-        applyClouds(s, w)
+        applyClouds(&mut s, w)
         // The sun is WHERE THE SUN IS: computed from the city's own latitude and
         // longitude and the current UTC instant (`solar.milo`), not chosen.
         //
@@ -627,7 +627,7 @@ pub fn drawWorld(c: &mut Canvas, s: &mut Scene, w: &World, ground: &Texture, ski
         s.sunY = w.env.sunY
         s.sunZ = w.env.sunZ
     } else {
-        applyWeather(s, w.prevTheme, w.theme, w.themeMix)
+        applyWeather(&mut s, w.prevTheme, w.theme, w.themeMix)
     }
     // Fog HAS to finish inside the draw distance. Every preset was written with
     // an end past the far plane, so nothing was ever more than half fogged and
@@ -660,7 +660,7 @@ pub fn drawWorld(c: &mut Canvas, s: &mut Scene, w: &World, ground: &Texture, ski
     if s.fogStart < s.fogEnd * 0.66 {
         s.fogStart = s.fogEnd * 0.66
     }
-    sceneClear(s)
+    sceneClear(&mut s)
 
     // Walk a grid of quads centred on the aircraft. Anything behind the camera is
     // rejected before any per-vertex work.
@@ -724,11 +724,11 @@ pub fn drawWorld(c: &mut Canvas, s: &mut Scene, w: &World, ground: &Texture, ski
                 let qtr = tile * 0.25
                 for sz in 0..4 {
                     for sx in 0..4 {
-                        let q00 = cornerAt(vfc, s, w, vx + sx, vz + sz)
-                        let q10 = cornerAt(vfc, s, w, vx + sx + 1, vz + sz)
-                        let q01 = cornerAt(vfc, s, w, vx + sx, vz + sz + 1)
-                        let q11 = cornerAt(vfc, s, w, vx + sx + 1, vz + sz + 1)
-                        terrainQuad(s, w, v, ground, q00, q10, q01, q11, x0 + (sx as f64) * qtr, z0 + (sz as f64) * qtr, qtr, ring)
+                        let q00 = cornerAt(&mut vfc, s, w, vx + sx, vz + sz)
+                        let q10 = cornerAt(&mut vfc, s, w, vx + sx + 1, vz + sz)
+                        let q01 = cornerAt(&mut vfc, s, w, vx + sx, vz + sz + 1)
+                        let q11 = cornerAt(&mut vfc, s, w, vx + sx + 1, vz + sz + 1)
+                        terrainQuad(&mut s, w, v, ground, q00, q10, q01, q11, x0 + (sx as f64) * qtr, z0 + (sz as f64) * qtr, qtr, ring)
                     }
                 }
                 continue
@@ -742,32 +742,32 @@ pub fn drawWorld(c: &mut Canvas, s: &mut Scene, w: &World, ground: &Texture, ski
                 let half = tile * 0.5
                 for sz in 0..2 {
                     for sx in 0..2 {
-                        let f00 = cornerAt(fc, s, w, hx + sx, hz + sz)
-                        let f10 = cornerAt(fc, s, w, hx + sx + 1, hz + sz)
-                        let f01 = cornerAt(fc, s, w, hx + sx, hz + sz + 1)
-                        let f11 = cornerAt(fc, s, w, hx + sx + 1, hz + sz + 1)
-                        terrainQuad(s, w, v, ground, f00, f10, f01, f11, x0 + (sx as f64) * half, z0 + (sz as f64) * half, half, ring)
+                        let f00 = cornerAt(&mut fc, s, w, hx + sx, hz + sz)
+                        let f10 = cornerAt(&mut fc, s, w, hx + sx + 1, hz + sz)
+                        let f01 = cornerAt(&mut fc, s, w, hx + sx, hz + sz + 1)
+                        let f11 = cornerAt(&mut fc, s, w, hx + sx + 1, hz + sz + 1)
+                        terrainQuad(&mut s, w, v, ground, f00, f10, f01, f11, x0 + (sx as f64) * half, z0 + (sz as f64) * half, half, ring)
                     }
                 }
                 continue
             }
             let ix = tx - baseX + VIEW_TILES
             let iz = tz - baseZ + VIEW_TILES
-            let k00 = cornerAt(cc, s, w, ix, iz)
-            let k10 = cornerAt(cc, s, w, ix + 1, iz)
-            let k01 = cornerAt(cc, s, w, ix, iz + 1)
-            let k11 = cornerAt(cc, s, w, ix + 1, iz + 1)
+            let k00 = cornerAt(&mut cc, s, w, ix, iz)
+            let k10 = cornerAt(&mut cc, s, w, ix + 1, iz)
+            let k01 = cornerAt(&mut cc, s, w, ix, iz + 1)
+            let k11 = cornerAt(&mut cc, s, w, ix + 1, iz + 1)
 
-            terrainQuad(s, w, v, ground, k00, k10, k01, k11, x0, z0, tile, ring)
+            terrainQuad(&mut s, w, v, ground, k00, k10, k01, k11, x0, z0, tile, ring)
         }
     }
 
     if w.city.loaded {
-        drawCity(s, w, v, facade)
-        drawBridges(s, w, v)
-        drawFalls(s, w, v)
+        drawCity(&mut s, w, v, facade)
+        drawBridges(&mut s, w, v)
+        drawFalls(&mut s, w, v)
     } else {
-        drawProps(s, w, v, baseX, baseZ)
+        drawProps(&mut s, w, v, baseX, baseZ)
     }
     // Everything below draws into the 2D overlay rather than recording geometry,
     // and the overlay is composited over the finished scene. It used to matter
@@ -775,11 +775,11 @@ pub fn drawWorld(c: &mut Canvas, s: &mut Scene, w: &World, ground: &Texture, ski
     // this point — they would have landed on top of the contrails otherwise —
     // and with the depth buffer and the compositing order both being the
     // driver's now, it does not.
-    drawTrails(c, w, v)
-    drawRings(s, w, v)
-    drawPlane(c, s, w, v, skin)
-    drawBirds(c, s, w, v)
-    drawSparks(c, w, v)
+    drawTrails(&mut c, w, v)
+    drawRings(&mut s, w, v)
+    drawPlane(&mut c, &mut s, w, v, skin)
+    drawBirds(&mut c, s, w, v)
+    drawSparks(&mut c, w, v)
 }
 
 // One terrain quad, from four corners that were sampled once and shared with its
@@ -843,8 +843,8 @@ fn terrainQuad(s: &mut Scene, w: &World, v: &View, ground: &Texture, k00: &Corne
         // No distance cutoff: the far field is exactly what the drape is
         // for, and dropping to flat colour out there would put the
         // diorama back at the horizon.
-        triangleV(s, v, w.city.ortho, oa, od, ob, 1.0, 1.0, 1.0)
-        triangleV(s, v, w.city.ortho, ob, od, oe, 1.0, 1.0, 1.0)
+        triangleV(&mut s, v, w.city.ortho, oa, od, ob, 1.0, 1.0, 1.0)
+        triangleV(&mut s, v, w.city.ortho, ob, od, oe, 1.0, 1.0, 1.0)
         return
     }
     let a = vtxC(x0, k00.h, z0, u0, v0, k00.lt, k00.r, k00.g, k00.b, k00.tw * texFade)
@@ -858,11 +858,11 @@ fn terrainQuad(s: &mut Scene, w: &World, v: &View, ground: &Texture, k00: &Corne
     // out; nearer than that it was a visible line across the ground
     // where the detail simply stopped.
     if ring < 11 {
-        triangleV(s, v, ground, a, d, b, 1.0, 1.0, 1.0)
-        triangleV(s, v, ground, b, d, e, 1.0, 1.0, 1.0)
+        triangleV(&mut s, v, ground, a, d, b, 1.0, 1.0, 1.0)
+        triangleV(&mut s, v, ground, b, d, e, 1.0, 1.0, 1.0)
     } else {
-        triangleG(s, v, a, d, b, 1.0, 1.0, 1.0)
-        triangleG(s, v, b, d, e, 1.0, 1.0, 1.0)
+        triangleG(&mut s, v, a, d, b, 1.0, 1.0, 1.0)
+        triangleG(&mut s, v, b, d, e, 1.0, 1.0, 1.0)
     }
 }
 
@@ -889,7 +889,7 @@ fn drawFalls(s: &mut Scene, w: &World, v: &View) {
         if dx * dx + dz * dz > v.far * v.far {
             continue
         }
-        fallRibbon(s, w, v, fx, fz, w.marks[i].fall)
+        fallRibbon(&mut s, w, v, fx, fz, w.marks[i].fall)
     }
 }
 
@@ -1003,8 +1003,8 @@ fn fallRibbon(s: &mut Scene, w: &World, v: &View, lipX: f64, lipZ: f64, wide: f6
         let a1 = vtxC(px[i] + ax * h0, py[i] + lift, pz[i] + az * h0, 1.0, pfall[i], pspeed[i], 1.0, 1.0, 1.0, 0.0)
         let b0 = vtxC(px[i + 1] - ax * h1, py[i + 1] + lift, pz[i + 1] - az * h1, 0.0, pfall[i + 1], pspeed[i + 1], 1.0, 1.0, 1.0, 0.0)
         let b1 = vtxC(px[i + 1] + ax * h1, py[i + 1] + lift, pz[i + 1] + az * h1, 1.0, pfall[i + 1], pspeed[i + 1], 1.0, 1.0, 1.0, 0.0)
-        triangleF(s, v, a0, a1, b1, wide, drop, 0.0)
-        triangleF(s, v, a0, b1, b0, wide, drop, 0.0)
+        triangleF(&mut s, v, a0, a1, b1, wide, drop, 0.0)
+        triangleF(&mut s, v, a0, b1, b0, wide, drop, 0.0)
     }
 
     // Mist torn off the sheet on the way down. A drop this tall is half spray
@@ -1033,8 +1033,8 @@ fn fallRibbon(s: &mut Scene, w: &World, v: &View, lipX: f64, lipZ: f64, wide: f6
             let q1 = vtxC(sx + rx - ux, sy + ry - uy, sz + rz - uz, 1.0, 0.0 - 1.0, fade, 1.0, 1.0, 1.0, 0.0)
             let q2 = vtxC(sx + rx + ux, sy + ry + uy, sz + rz + uz, 1.0, 1.0, fade, 1.0, 1.0, 1.0, 0.0)
             let q3 = vtxC(sx - rx + ux, sy - ry + uy, sz - rz + uz, 0.0 - 1.0, 1.0, fade, 1.0, 1.0, 1.0, 0.0)
-            triangleF(s, v, q0, q1, q2, wide, drop, 1.0)
-            triangleF(s, v, q0, q2, q3, wide, drop, 1.0)
+            triangleF(&mut s, v, q0, q1, q2, wide, drop, 1.0)
+            triangleF(&mut s, v, q0, q2, q3, wide, drop, 1.0)
         }
     }
 
@@ -1082,8 +1082,8 @@ fn fallRibbon(s: &mut Scene, w: &World, v: &View, lipX: f64, lipZ: f64, wide: f6
         let q1 = vtxC(cxx + rx - ux, cyy + ry - uy, czz + rz - uz, 1.0, 0.0 - 1.0, fade, 1.0, 1.0, 1.0, 0.0)
         let q2 = vtxC(cxx + rx + ux, cyy + ry + uy, czz + rz + uz, 1.0, 1.0, fade, 1.0, 1.0, 1.0, 0.0)
         let q3 = vtxC(cxx - rx + ux, cyy - ry + uy, czz - rz + uz, 0.0 - 1.0, 1.0, fade, 1.0, 1.0, 1.0, 0.0)
-        triangleF(s, v, q0, q1, q2, wide, drop, 1.0)
-        triangleF(s, v, q0, q2, q3, wide, drop, 1.0)
+        triangleF(&mut s, v, q0, q1, q2, wide, drop, 1.0)
+        triangleF(&mut s, v, q0, q2, q3, wide, drop, 1.0)
     }
 }
 
@@ -1112,7 +1112,7 @@ fn drawBridges(s: &mut Scene, w: &World, v: &View) {
     for kz in kz0..(kz1 + 1) {
         for kx in kx0..(kx1 + 1) {
             for b in 0..w.city.brCount {
-                bridgeSpan(s, w, v, b, kx, kz, reach, far, fwdX, fwdZ)
+                bridgeSpan(&mut s, w, v, b, kx, kz, reach, far, fwdX, fwdZ)
             }
         }
     }
@@ -1159,14 +1159,14 @@ fn bridgeSpan(s: &mut Scene, w: &World, v: &View, b: i64, kx: i64, kz: i64, reac
         if sd2 > far2 {
             continue
         }
-        deckSegment(s, v, ax, ay, az, bx, by, bz, hw, deep, col, sd2 > 640000.0)
+        deckSegment(&mut s, v, ax, ay, az, bx, by, bz, hw, deep, col, sd2 > 640000.0)
     }
     // Towers stand at the two ends of the water the way crosses, which is where
     // the real ones are founded.
     if w.city.brTower[b] > 0.0 {
-        bridgeTower(s, w, v, b, kx, kz, reach, w.city.brTowerA[b], col)
-        bridgeTower(s, w, v, b, kx, kz, reach, w.city.brTowerB[b], col)
-        bridgeCables(s, w, v, b, kx, kz, reach, col)
+        bridgeTower(&mut s, w, v, b, kx, kz, reach, w.city.brTowerA[b], col)
+        bridgeTower(&mut s, w, v, b, kx, kz, reach, w.city.brTowerB[b], col)
+        bridgeCables(&mut s, w, v, b, kx, kz, reach, col)
     }
 }
 
@@ -1195,8 +1195,8 @@ fn deckSegment(s: &mut Scene, v: &View, ax: f64, ay: f64, az: f64, bx: f64, by: 
     // box built from its own local frame comes out correctly wound on a mirrored
     // copy of the map too — there is no winding to flip because none was stored.
     let top = col.scale(1.06)
-    triangle(s, v, a0, a1, b1, top)
-    triangle(s, v, a0, b1, b0, top)
+    triangle(&mut s, v, a0, a1, b1, top)
+    triangle(&mut s, v, a0, b1, b0, top)
     if lod {
         return
     }
@@ -1206,14 +1206,14 @@ fn deckSegment(s: &mut Scene, v: &View, ax: f64, ay: f64, az: f64, bx: f64, by: 
     let d1 = v3(b1.x, by - deep, b1.z)
     // Flanks: the side a driver sees as a parapet and a pilot sees as the girder.
     let side = col.scale(0.62)
-    triangle(s, v, a0, b0, d0, side)
-    triangle(s, v, a0, d0, c0, side)
-    triangle(s, v, a1, d1, b1, side)
-    triangle(s, v, a1, c1, d1, side)
+    triangle(&mut s, v, a0, b0, d0, side)
+    triangle(&mut s, v, a0, d0, c0, side)
+    triangle(&mut s, v, a1, d1, b1, side)
+    triangle(&mut s, v, a1, c1, d1, side)
     // Soffit, in shadow — nothing lights the underside of a bridge but the water.
     let under = col.scale(0.30)
-    triangle(s, v, c0, d0, d1, under)
-    triangle(s, v, c0, d1, c1, under)
+    triangle(&mut s, v, c0, d0, d1, under)
+    triangle(&mut s, v, c0, d1, c1, under)
 }
 
 // Where the arc-length fraction `t` along a way lands: deck position, and the
@@ -1287,18 +1287,18 @@ fn cableSeg(s: &mut Scene, v: &View, ax: f64, ay: f64, az: f64, bx: f64, by: f64
     let h1 = v3(ax + px, ay, az + pz)
     let h2 = v3(bx + px, by, bz + pz)
     let h3 = v3(bx - px, by, bz - pz)
-    triangle(s, v, h0, h1, h2, col)
-    triangle(s, v, h0, h2, h3, col)
-    triangle(s, v, h2, h1, h0, col)
-    triangle(s, v, h3, h2, h0, col)
+    triangle(&mut s, v, h0, h1, h2, col)
+    triangle(&mut s, v, h0, h2, h3, col)
+    triangle(&mut s, v, h2, h1, h0, col)
+    triangle(&mut s, v, h3, h2, h0, col)
     let w0 = v3(ax, ay - rad, az)
     let w1 = v3(ax, ay + rad, az)
     let w2 = v3(bx, by + rad, bz)
     let w3 = v3(bx, by - rad, bz)
-    triangle(s, v, w0, w1, w2, col)
-    triangle(s, v, w0, w2, w3, col)
-    triangle(s, v, w2, w1, w0, col)
-    triangle(s, v, w3, w2, w0, col)
+    triangle(&mut s, v, w0, w1, w2, col)
+    triangle(&mut s, v, w0, w2, w3, col)
+    triangle(&mut s, v, w2, w1, w0, col)
+    triangle(&mut s, v, w3, w2, w0, col)
 }
 
 // The cables, which are what makes a suspension bridge one. The main span hangs
@@ -1362,10 +1362,10 @@ fn bridgeCables(s: &mut Scene, w: &World, v: &View, b: i64, kx: i64, kz: i64, re
             let cx = unfold(kx, p.x, reach) + ox
             let cz = unfold(kz, p.z, reach) + oz
             if have {
-                cableSeg(s, v, prevX, prevY, prevZ, cx, cy, cz, rad, cableCol)
+                cableSeg(&mut s, v, prevX, prevY, prevZ, cx, cy, cz, rad, cableCol)
             }
             if hangers && i > 0 && i < SEGS && cy - p.y > 6.0 {
-                cableSeg(s, v, cx, cy, cz, cx, p.y, cz, rad * 0.45, cableCol)
+                cableSeg(&mut s, v, cx, cy, cz, cx, p.y, cz, rad * 0.45, cableCol)
             }
             prevX = cx
             prevY = cy
@@ -1384,8 +1384,8 @@ fn bridgeCables(s: &mut Scene, w: &World, v: &View, b: i64, kx: i64, kz: i64, re
         let taZ = unfold(kz, pa.z, reach) + pa.ex * offA * sign
         let tbX = unfold(kx, pb.x, reach) - pb.ez * offA * sign
         let tbZ = unfold(kz, pb.z, reach) + pb.ex * offA * sign
-        cableSeg(s, v, taX, topA, taZ, axx, endA.y + 3.0, azz, rad, cableCol)
-        cableSeg(s, v, tbX, topB, tbZ, bxx, endB.y + 3.0, bzz, rad, cableCol)
+        cableSeg(&mut s, v, taX, topA, taZ, axx, endA.y + 3.0, azz, rad, cableCol)
+        cableSeg(&mut s, v, tbX, topB, tbZ, bxx, endB.y + 3.0, bzz, rad, cableCol)
     }
 }
 
@@ -1411,17 +1411,17 @@ fn bridgeTower(s: &mut Scene, w: &World, v: &View, b: i64, kx: i64, kz: i64, rea
     let ox = 0.0 - p.ez * hw * 0.86
     let oz = p.ex * hw * 0.86
     let leg = Math.maxF64(hw * 0.28, 3.2)
-    box3(s, v, x + ox, base, top, z + oz, leg, col.scale(0.9))
-    box3(s, v, x - ox, base, top, z - oz, leg, col.scale(0.9))
+    box3(&mut s, v, x + ox, base, top, z + oz, leg, col.scale(0.9))
+    box3(&mut s, v, x - ox, base, top, z - oz, leg, col.scale(0.9))
     // Cross braces: one above the roadway and two more up the tower, which is
     // the ladder shape that reads as a suspension tower rather than two posts.
-    box3(s, v, x, top - leg * 2.4, top, z, hw * 1.05, col.scale(0.82))
+    box3(&mut s, v, x, top - leg * 2.4, top, z, hw * 1.05, col.scale(0.82))
     let above = top - dy
     if above > 40.0 {
         let b1 = dy + above * 0.30
         let b2 = dy + above * 0.66
-        box3(s, v, x, b1, b1 + leg * 1.3, z, hw * 1.0, col.scale(0.80))
-        box3(s, v, x, b2, b2 + leg * 1.3, z, hw * 1.0, col.scale(0.80))
+        box3(&mut s, v, x, b1, b1 + leg * 1.3, z, hw * 1.0, col.scale(0.80))
+        box3(&mut s, v, x, b2, b2 + leg * 1.3, z, hw * 1.0, col.scale(0.80))
     }
 }
 
@@ -1456,16 +1456,16 @@ fn box3(s: &mut Scene, v: &View, cx: f64, y0: f64, y1: f64, cz: f64, hw: f64, co
     let east = col.scale(0.85)
     let west = col.scale(0.55)
     let top = col.scale(1.15)
-    triangle(s, v, b00, t00, t10, north)
-    triangle(s, v, b00, t10, b10, north)
-    triangle(s, v, b11, t11, t01, south)
-    triangle(s, v, b11, t01, b01, south)
-    triangle(s, v, b10, t10, t11, east)
-    triangle(s, v, b10, t11, b11, east)
-    triangle(s, v, b01, t01, t00, west)
-    triangle(s, v, b01, t00, b00, west)
-    triangle(s, v, t00, t01, t11, top)
-    triangle(s, v, t00, t11, t10, top)
+    triangle(&mut s, v, b00, t00, t10, north)
+    triangle(&mut s, v, b00, t10, b10, north)
+    triangle(&mut s, v, b11, t11, t01, south)
+    triangle(&mut s, v, b11, t01, b01, south)
+    triangle(&mut s, v, b10, t10, t11, east)
+    triangle(&mut s, v, b10, t11, b11, east)
+    triangle(&mut s, v, b01, t01, t00, west)
+    triangle(&mut s, v, b01, t00, b00, west)
+    triangle(&mut s, v, t00, t01, t11, top)
+    triangle(&mut s, v, t00, t11, t10, top)
 }
 
 fn cone3(s: &mut Scene, v: &View, cx: f64, y0: f64, y1: f64, cz: f64, rad: f64, col: &Rgb) {
@@ -1478,8 +1478,8 @@ fn cone3(s: &mut Scene, v: &View, cx: f64, y0: f64, y1: f64, cz: f64, rad: f64, 
         let p0 = v3(cx + Math.cos(a0) * rad, y0, cz + Math.sin(a0) * rad)
         let p1 = v3(cx + Math.cos(a1) * rad, y0, cz + Math.sin(a1) * rad)
         let sh = 0.65 + 0.35 * Math.cos(a0)
-        triangle(s, v, p0, apex, p1, col.scale(sh))
-        triangle(s, v, p1, apex, p0, col.scale(sh * 0.7))
+        triangle(&mut s, v, p0, apex, p1, col.scale(sh))
+        triangle(&mut s, v, p1, apex, p0, col.scale(sh * 0.7))
     }
 }
 
@@ -1503,8 +1503,8 @@ fn palmCrown(s: &mut Scene, v: &View, crown: &Vec3, reach: f64, droop: f64, col:
         let sh = 0.72 + 0.28 * Math.cos(a)
         let l = crown + wing
         let r = crown - wing
-        triangle(s, v, l, tip, r, col.scale(sh))
-        triangle(s, v, r, tip, l, col.scale(sh * 0.75))
+        triangle(&mut s, v, l, tip, r, col.scale(sh))
+        triangle(&mut s, v, r, tip, l, col.scale(sh * 0.75))
     }
 }
 
@@ -1530,20 +1530,20 @@ fn drawProps(s: &mut Scene, w: &World, v: &View, baseX: i64, baseZ: i64) {
             let scale = 0.7 + h * 3.0
             if (w.theme as i32) == (Theme.Desert as i32) {
                 // cactus: a trunk and one arm
-                box3(s, v, x, g0, g0 + 16.0 * scale, z, 2.2, rgb(0.16, 0.34, 0.14))
-                box3(s, v, x + 3.0, g0 + 7.0 * scale, g0 + 13.0 * scale, z, 1.4, rgb(0.14, 0.30, 0.12))
+                box3(&mut s, v, x, g0, g0 + 16.0 * scale, z, 2.2, rgb(0.16, 0.34, 0.14))
+                box3(&mut s, v, x + 3.0, g0 + 7.0 * scale, g0 + 13.0 * scale, z, 1.4, rgb(0.14, 0.30, 0.12))
             } else if (w.theme as i32) == (Theme.Forest as i32) {
                 // conifer
-                box3(s, v, x, g0, g0 + 7.0 * scale, z, 1.4, rgb(0.20, 0.12, 0.06))
-                cone3(s, v, x, g0 + 5.0 * scale, g0 + 30.0 * scale, z, 7.0 * scale, rgb(0.07, 0.26, 0.10))
+                box3(&mut s, v, x, g0, g0 + 7.0 * scale, z, 1.4, rgb(0.20, 0.12, 0.06))
+                cone3(&mut s, v, x, g0 + 5.0 * scale, g0 + 30.0 * scale, z, 7.0 * scale, rgb(0.07, 0.26, 0.10))
             } else if (w.theme as i32) == (Theme.City as i32) {
                 // tower block, height keyed off the same hash so a district varies
                 let tall = 22.0 + propHash(tz, tx) * 90.0
-                box3(s, v, x, g0, g0 + tall, z, 6.0 + h * 12.0, rgb(0.30, 0.31, 0.34))
+                box3(&mut s, v, x, g0, g0 + tall, z, 6.0 + h * 12.0, rgb(0.30, 0.31, 0.34))
             } else {
                 // palm: bare trunk, fronds drooping off the top of it
-                box3(s, v, x, g0, g0 + 15.0 * scale, z, 1.2, rgb(0.26, 0.18, 0.09))
-                palmCrown(s, v, v3(x, g0 + 15.0 * scale, z), 11.0 * scale, 6.0 * scale, rgb(0.11, 0.34, 0.13))
+                box3(&mut s, v, x, g0, g0 + 15.0 * scale, z, 1.2, rgb(0.26, 0.18, 0.09))
+                palmCrown(&mut s, v, v3(x, g0 + 15.0 * scale, z), 11.0 * scale, 6.0 * scale, rgb(0.11, 0.34, 0.13))
             }
         }
     }
@@ -1663,7 +1663,7 @@ fn drawCity(s: &mut Scene, w: &World, v: &View, facade: &Texture) {
                         // fly in. Scale the switch by the footprint instead, so
                         // what pops is always something a few pixels across.
                         let ext = Math.maxF64(w.city.bMaxX[b] - w.city.bMinX[b], w.city.bMaxZ[b] - w.city.bMinZ[b])
-                        prism(s, w, v, facade, px, pz, b, kx, kz, reach, reversed, midX, midZ, d > Math.maxF64(780.0, ext * 26.0))
+                        prism(&mut s, w, v, facade, &mut px, &mut pz, b, kx, kz, reach, reversed, midX, midZ, d > Math.maxF64(780.0, ext * 26.0))
                     }
                 }
             }
@@ -1793,13 +1793,13 @@ fn prism(s: &mut Scene, w: &World, v: &View, facade: &Texture, px: &mut Vec<f64>
         let x1 = w.city.bMaxX[b]
         let z0 = w.city.bMinZ[b]
         let z1 = w.city.bMaxZ[b]
-        pushPt(px, pz, kx, kz, reach, x0, z0)
-        pushPt(px, pz, kx, kz, reach, x1, z0)
-        pushPt(px, pz, kx, kz, reach, x1, z1)
-        pushPt(px, pz, kx, kz, reach, x0, z1)
+        pushPt(&mut px, &mut pz, kx, kz, reach, x0, z0)
+        pushPt(&mut px, &mut pz, kx, kz, reach, x1, z0)
+        pushPt(&mut px, &mut pz, kx, kz, reach, x1, z1)
+        pushPt(&mut px, &mut pz, kx, kz, reach, x0, z1)
     } else {
         for i in 0..n {
-            pushPt(px, pz, kx, kz, reach, w.city.bPtX[start + i], w.city.bPtZ[start + i])
+            pushPt(&mut px, &mut pz, kx, kz, reach, w.city.bPtX[start + i], w.city.bPtZ[start + i])
         }
     }
     // A mirrored copy flips the winding, and the rasteriser backface-culls, so
@@ -1854,8 +1854,8 @@ fn prism(s: &mut Scene, w: &World, v: &View, facade: &Texture, px: &mut Vec<f64>
         let a1 = vtxC(px[i], y1, pz[i], 0.0, fv, lt, 1.0, 1.0, 1.0, wtw)
         let b1 = vtxC(px[j], y1, pz[j], fu, fv, lt, 1.0, 1.0, 1.0, wtw)
         let b0 = vtxC(px[j], y0, pz[j], fu, 0.0, ao, 1.0, 1.0, 1.0, wtw)
-        triangleV(s, v, facade, a0, a1, b1, wall.r, wall.g, wall.b)
-        triangleV(s, v, facade, a0, b1, b0, wall.r, wall.g, wall.b)
+        triangleV(&mut s, v, facade, a0, a1, b1, wall.r, wall.g, wall.b)
+        triangleV(&mut s, v, facade, a0, b1, b0, wall.r, wall.g, wall.b)
     }
 
     // Roof. Flat is a fan wound the opposite way round from the base ring, which
@@ -1873,11 +1873,11 @@ fn prism(s: &mut Scene, w: &World, v: &View, facade: &Texture, px: &mut Vec<f64>
     if lod || kind == ROOF_FLAT || rh < 0.5 {
         let a = v3(px[0], y1, pz[0])
         for i in 1..(m - 1) {
-            triangle(s, v, a, v3(px[i + 1], y1, pz[i + 1]), v3(px[i], y1, pz[i]), roof)
+            triangle(&mut s, v, a, v3(px[i + 1], y1, pz[i + 1]), v3(px[i], y1, pz[i]), roof)
         }
         return
     }
-    shapedRoof(s, v, px, pz, m, y1 - rh, y1, kind, roof, roofTop)
+    shapedRoof(&mut s, v, px, pz, m, y1 - rh, y1, kind, roof, roofTop)
 }
 
 // The roof shapes OSM tags and this renderer builds, standing on the ring the
@@ -1908,7 +1908,7 @@ fn shapedRoof(s: &mut Scene, v: &View, px: &Vec<f64>, pz: &Vec<f64>, m: i64, yEa
             if j == m {
                 j = 0
             }
-            triangle(s, v, v3(px[i], yEave, pz[i]), apex, v3(px[j], yEave, pz[j]), side)
+            triangle(&mut s, v, v3(px[i], yEave, pz[i]), apex, v3(px[j], yEave, pz[j]), side)
         }
         return
     }
@@ -1932,8 +1932,8 @@ fn shapedRoof(s: &mut Scene, v: &View, px: &Vec<f64>, pz: &Vec<f64>, m: i64, yEa
                 let a1 = v3(cx + (px[i] - cx) * k, y, cz + (pz[i] - cz) * k)
                 let b1 = v3(cx + (px[j] - cx) * k, y, cz + (pz[j] - cz) * k)
                 let b0 = v3(cx + (px[j] - cx) * prevK, prevY, cz + (pz[j] - cz) * prevK)
-                triangle(s, v, a0, a1, b1, side)
-                triangle(s, v, a0, b1, b0, side)
+                triangle(&mut s, v, a0, a1, b1, side)
+                triangle(&mut s, v, a0, b1, b0, side)
             }
             prevK = k
             prevY = y
@@ -1953,12 +1953,12 @@ fn shapedRoof(s: &mut Scene, v: &View, px: &Vec<f64>, pz: &Vec<f64>, m: i64, yEa
             let a1 = v3(cx + (px[i] - cx) * k, yTop, cz + (pz[i] - cz) * k)
             let b1 = v3(cx + (px[j] - cx) * k, yTop, cz + (pz[j] - cz) * k)
             let b0 = v3(px[j], yEave, pz[j])
-            triangle(s, v, a0, a1, b1, side)
-            triangle(s, v, a0, b1, b0, side)
+            triangle(&mut s, v, a0, a1, b1, side)
+            triangle(&mut s, v, a0, b1, b0, side)
         }
         let a = v3(cx + (px[0] - cx) * k, yTop, cz + (pz[0] - cz) * k)
         for i in 1..(m - 1) {
-            triangle(s, v, a, v3(cx + (px[i + 1] - cx) * k, yTop, cz + (pz[i + 1] - cz) * k), v3(cx + (px[i] - cx) * k, yTop, cz + (pz[i] - cz) * k), roof)
+            triangle(&mut s, v, a, v3(cx + (px[i + 1] - cx) * k, yTop, cz + (pz[i + 1] - cz) * k), v3(cx + (px[i] - cx) * k, yTop, cz + (pz[i] - cz) * k), roof)
         }
         return
     }
@@ -1998,8 +1998,8 @@ fn shapedRoof(s: &mut Scene, v: &View, px: &Vec<f64>, pz: &Vec<f64>, m: i64, yEa
             ri = v3(px[i], yTop, cz)
             rj = v3(px[j], yTop, cz)
         }
-        triangle(s, v, v3(px[i], yEave, pz[i]), ri, rj, side)
-        triangle(s, v, v3(px[i], yEave, pz[i]), rj, v3(px[j], yEave, pz[j]), side)
+        triangle(&mut s, v, v3(px[i], yEave, pz[i]), ri, rj, side)
+        triangle(&mut s, v, v3(px[i], yEave, pz[i]), rj, v3(px[j], yEave, pz[j]), side)
     }
 }
 
@@ -2054,10 +2054,10 @@ fn drawRings(s: &mut Scene, w: &World, v: &View) {
             let front = col.scale(band * br)
             let back = front.scale(0.6)
             // both faces, so the ring is solid from either side
-            triangle(s, v, outer0, outer1, inner0, front)
-            triangle(s, v, inner0, outer1, inner1, front)
-            triangle(s, v, outer1, outer0, inner0, back)
-            triangle(s, v, outer1, inner0, inner1, back)
+            triangle(&mut s, v, outer0, outer1, inner0, front)
+            triangle(&mut s, v, inner0, outer1, inner1, front)
+            triangle(&mut s, v, outer1, outer0, inner0, back)
+            triangle(&mut s, v, outer1, inner0, inner1, back)
         }
     }
 }
@@ -2065,8 +2065,8 @@ fn drawRings(s: &mut Scene, w: &World, v: &View) {
 // Contrails: project each stored point and join consecutive ones. Drawn without
 // depth test, which is fine — they are thin, bright, and always near the camera.
 fn drawTrails(c: &mut Canvas, w: &World, v: &View) {
-    drawOneTrail(c, w.trailL, v)
-    drawOneTrail(c, w.trailR, v)
+    drawOneTrail(&mut c, w.trailL, v)
+    drawOneTrail(&mut c, w.trailR, v)
 }
 
 fn drawOneTrail(c: &mut Canvas, t: &Vec<Trail>, v: &View) {
@@ -2084,7 +2084,7 @@ fn drawOneTrail(c: &mut Canvas, t: &Vec<Trail>, v: &View) {
         let bx = v.cx + b.x * v.scale / b.z
         let by = v.cy - b.y * v.scale / b.z
         let f = Math.minF64(t[i].life, 1.0) * 0.55
-        line(c, ax, ay, bx, by, f, f * 1.05, f * 1.15)
+        line(&mut c, ax, ay, bx, by, f, f * 1.05, f * 1.15)
     }
 }
 
@@ -2101,7 +2101,7 @@ fn drawSparks(c: &mut Canvas, w: &World, v: &View) {
         let t = w.sparks[i].life / w.sparks[i].maxLife
         let size = Math.clampF64(v.scale * 1.6 / p.z, 1.2, 14.0) * (0.4 + t)
         let f = t * t
-        spot(c, sx, sy, size, w.sparks[i].cr * f, w.sparks[i].cg * f, w.sparks[i].cb * f)
+        spot(&mut c, sx, sy, size, w.sparks[i].cr * f, w.sparks[i].cg * f, w.sparks[i].cb * f)
     }
 }
 
@@ -2187,11 +2187,11 @@ fn drawBirds(c: &mut Canvas, _s: &Scene, w: &World, v: &View) {
             // gentle value disappears entirely. Doubled up a pixel down for
             // thickness once the bird is big enough to warrant it.
             let dark = 0.92 * vis * Math.minF64(1.0, span * 0.7)
-            darkLine(c, sx - span, sy + dy, sx, sy, dark)
-            darkLine(c, sx, sy, sx + span, sy + dy, dark)
+            darkLine(&mut c, sx - span, sy + dy, sx, sy, dark)
+            darkLine(&mut c, sx, sy, sx + span, sy + dy, dark)
             if span > 3.0 {
-                darkLine(c, sx - span, sy + dy + 1.0, sx, sy + 1.0, dark * 0.8)
-                darkLine(c, sx, sy + 1.0, sx + span, sy + dy + 1.0, dark * 0.8)
+                darkLine(&mut c, sx - span, sy + dy + 1.0, sx, sy + 1.0, dark * 0.8)
+                darkLine(&mut c, sx, sy + 1.0, sx + span, sy + dy + 1.0, dark * 0.8)
             }
         }
     }
@@ -2207,7 +2207,7 @@ fn drawPlane(c: &mut Canvas, s: &mut Scene, w: &World, v: &View, skin: &Texture)
     // holding, which is what those surfaces would be doing to hold it.
     let ail = Math.clampF64(w.plane.roll * 1.4, 0.0 - 1.0, 1.0)
     let elev = Math.clampF64(w.plane.pitch * 1.8, 0.0 - 1.0, 1.0)
-    drawAirframe(s, w, v, skin, ail, elev)
+    drawAirframe(&mut s, w, v, skin, ail, elev)
 
     // The burner glow stays a 2D additive splat: it is light in the air, not a
     // surface, and a splat with no depth is both cheaper and more correct than
@@ -2228,16 +2228,16 @@ fn drawPlane(c: &mut Canvas, s: &mut Scene, w: &World, v: &View, skin: &Texture)
             let sy2 = v.cy - ep.y * v.scale / ep.z
             let px2 = Math.clampF64(v.scale * 3.2 / ep.z, 2.0, 26.0)
             let ab = w.boostBlend
-            spot(c, sx, sy2, px2 * (1.4 + k + ab * 3.4), 0.9 + k * 1.2 + ab * 1.6, 0.32 + k * 0.5 + ab * 0.5, 0.10)
-            spot(c, sx, sy2, px2 * (0.55 + ab * 1.1), 1.8 + k + ab * 1.5, 1.2 + k + ab, 0.7 + ab * 0.6)
+            spot(&mut c, sx, sy2, px2 * (1.4 + k + ab * 3.4), 0.9 + k * 1.2 + ab * 1.6, 0.32 + k * 0.5 + ab * 0.5, 0.10)
+            spot(&mut c, sx, sy2, px2 * (0.55 + ab * 1.1), 1.8 + k + ab * 1.5, 1.2 + k + ab, 0.7 + ab * 0.6)
         }
     }
 }
 
 // Two triangles from four corner indices, sharing the diagonal.
 fn quadT(s: &mut Scene, v: &View, t: &Texture, p: &Vec<Vec3>, a: i64, b: i64, d: i64, e: i64, ua: f64, va: f64, ub: f64, vb: f64, ud: f64, vd: f64, ue: f64, ve: f64, col: &Rgb) {
-    triT(s, v, t, p, a, b, d, ua, va, ub, vb, ud, vd, col)
-    triT(s, v, t, p, a, d, e, ua, va, ud, vd, ue, ve, col)
+    triT(&mut s, v, t, p, a, b, d, ua, va, ub, vb, ud, vd, col)
+    triT(&mut s, v, t, p, a, d, e, ua, va, ud, vd, ue, ve, col)
 }
 
 // A point on the aircraft, given as an offset along its own axes: how far
@@ -2249,7 +2249,7 @@ fn bodyPt(p: &mut Vec<Vec3>, origin: &Vec3, f: &Frame, fwd: f64, right: f64, up:
 // Textured variant: the three UVs pick which patch of the skin sheet this facet
 // wears, so panel lines and the spine stripe land where they should.
 fn triT(s: &mut Scene, v: &View, t: &Texture, p: &Vec<Vec3>, a: i64, b: i64, d: i64, ua: f64, va: f64, ub: f64, vb: f64, ud: f64, vd: f64, col: &Rgb) {
-    triangleV(s, v, t, vtx(p[a].x, p[a].y, p[a].z, ua, va, 1.0), vtx(p[b].x, p[b].y, p[b].z, ub, vb, 1.0), vtx(p[d].x, p[d].y, p[d].z, ud, vd, 1.0), col.r, col.g, col.b)
+    triangleV(&mut s, v, t, vtx(p[a].x, p[a].y, p[a].z, ua, va, 1.0), vtx(p[b].x, p[b].y, p[b].z, ub, vb, 1.0), vtx(p[d].x, p[d].y, p[d].z, ud, vd, 1.0), col.r, col.g, col.b)
 }
 
 // A reticle on the next coin, and an edge arrow when it is off screen. Without
@@ -2295,14 +2295,14 @@ pub fn drawGuide(c: &mut Canvas, w: &World, v: &View) {
             let r = Math.clampF64(900.0 / p.z, 16.0, 90.0)
             let a = 0.30 * r
             // four corner brackets
-            line(c, sx - r, sy - r + a, sx - r, sy - r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
-            line(c, sx - r, sy - r, sx - r + a, sy - r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
-            line(c, sx + r, sy - r + a, sx + r, sy - r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
-            line(c, sx + r, sy - r, sx + r - a, sy - r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
-            line(c, sx - r, sy + r - a, sx - r, sy + r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
-            line(c, sx - r, sy + r, sx - r + a, sy + r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
-            line(c, sx + r, sy + r - a, sx + r, sy + r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
-            line(c, sx + r, sy + r, sx + r - a, sy + r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
+            line(&mut c, sx - r, sy - r + a, sx - r, sy - r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
+            line(&mut c, sx - r, sy - r, sx - r + a, sy - r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
+            line(&mut c, sx + r, sy - r + a, sx + r, sy - r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
+            line(&mut c, sx + r, sy - r, sx + r - a, sy - r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
+            line(&mut c, sx - r, sy + r - a, sx - r, sy + r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
+            line(&mut c, sx - r, sy + r, sx - r + a, sy + r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
+            line(&mut c, sx + r, sy + r - a, sx + r, sy + r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
+            line(&mut c, sx + r, sy + r, sx + r - a, sy + r, 0.4 * pulse, 1.2 * pulse, 0.5 * pulse)
             return
         }
     }
@@ -2320,9 +2320,9 @@ pub fn drawGuide(c: &mut Canvas, w: &World, v: &View) {
     let ay = v.cy + dirY * rad
     let px2 = 0.0 - dirY
     let py2 = dirX
-    line(c, ax + dirX * 20.0, ay + dirY * 20.0, ax + px2 * 12.0, ay + py2 * 12.0, 0.5 * pulse, 1.3 * pulse, 0.6 * pulse)
-    line(c, ax + dirX * 20.0, ay + dirY * 20.0, ax - px2 * 12.0, ay - py2 * 12.0, 0.5 * pulse, 1.3 * pulse, 0.6 * pulse)
-    line(c, ax - px2 * 12.0, ay - py2 * 12.0, ax + px2 * 12.0, ay + py2 * 12.0, 0.4 * pulse, 1.0 * pulse, 0.5 * pulse)
+    line(&mut c, ax + dirX * 20.0, ay + dirY * 20.0, ax + px2 * 12.0, ay + py2 * 12.0, 0.5 * pulse, 1.3 * pulse, 0.6 * pulse)
+    line(&mut c, ax + dirX * 20.0, ay + dirY * 20.0, ax - px2 * 12.0, ay - py2 * 12.0, 0.5 * pulse, 1.3 * pulse, 0.6 * pulse)
+    line(&mut c, ax - px2 * 12.0, ay - py2 * 12.0, ax + px2 * 12.0, ay + py2 * 12.0, 0.4 * pulse, 1.0 * pulse, 0.5 * pulse)
 }
 
 // Where the next landmark is. Brackets over it when it is in view, an arrow
@@ -2418,7 +2418,7 @@ pub fn drawMarkBeam(c: &mut Canvas, w: &World, v: &View) {
                 let a = toCamera(v, bx + ox, by + TOP * t0, bz + oz)
                 let b = toCamera(v, bx + ox, by + TOP * t1, bz + oz)
                 let hot = core * up * k * 0.9
-                beamSeg(c, v, a, b, (0.22 + hot) * amp, (0.62 + hot) * amp, (1.85 + hot) * amp)
+                beamSeg(&mut c, v, a, b, (0.22 + hot) * amp, (0.62 + hot) * amp, (1.85 + hot) * amp)
             }
         }
         // The circle on the ground is the collection radius, drawn where it is:
@@ -2426,8 +2426,8 @@ pub fn drawMarkBeam(c: &mut Canvas, w: &World, v: &View) {
         // Two rings rather than one, the inner one turning: a single static
         // circle on a photographic drape is easy to lose, and the rotation is
         // what tells you at a glance that this is the live target.
-        groundRing(c, w, v, bx, bz, MARK_REACH, 0.0, k * 1.6)
-        groundRing(c, w, v, bx, bz, MARK_REACH * 0.62, w.time * 0.7, k * 0.9)
+        groundRing(&mut c, w, v, bx, bz, MARK_REACH, 0.0, k * 1.6)
+        groundRing(&mut c, w, v, bx, bz, MARK_REACH * 0.62, w.time * 0.7, k * 0.9)
     }
 }
 
@@ -2446,7 +2446,7 @@ fn fenceSeg(c: &mut Canvas, v: &View, a: &Vec3, b: &Vec3, wide: f64, r: f64, g: 
     if pb.z <= v.near {
         pb = pb.lerp(pa, (v.near - pb.z) / (pa.z - pb.z))
     }
-    thickLine(c, v.cx + pa.x * v.scale / pa.z, v.cy - pa.y * v.scale / pa.z, v.cx + pb.x * v.scale / pb.z, v.cy - pb.y * v.scale / pb.z, wide, r, g, bl)
+    thickLine(&mut c, v.cx + pa.x * v.scale / pa.z, v.cy - pa.y * v.scale / pa.z, v.cx + pb.x * v.scale / pb.z, v.cy - pb.y * v.scale / pb.z, wide, r, g, bl)
 }
 
 // How much of the lattice survives the ground between it and the camera. Nothing
@@ -2546,7 +2546,7 @@ pub fn drawFence(c: &mut Canvas, w: &World, v: &View) {
                     let e = amp * up * 1.5 * fenceClear(w, gx, (y0 + y1) * 0.5, gz)
                     let a = toCamera(v, gx, y0, gz)
                     let b = toCamera(v, gx, y1, gz)
-                    fenceSeg(c, v, a, b, 3.0, 0.16 * e, 0.62 * e, 2.10 * e)
+                    fenceSeg(&mut c, v, a, b, 3.0, 0.16 * e, 0.62 * e, 2.10 * e)
                 }
             }
             if prevOk {
@@ -2564,7 +2564,7 @@ pub fn drawFence(c: &mut Canvas, w: &World, v: &View) {
                     }
                     let a = toCamera(v, prevX, y, prevZ)
                     let b = toCamera(v, gx, y, gz)
-                    fenceSeg(c, v, a, b, 2.4, 0.16 * e, 0.62 * e, 2.10 * e)
+                    fenceSeg(&mut c, v, a, b, 2.4, 0.16 * e, 0.62 * e, 2.10 * e)
                 }
             }
             prevOk = true
@@ -2597,7 +2597,7 @@ fn groundRing(c: &mut Canvas, w: &World, v: &View, cx: f64, cz: f64, rad: f64, s
         let sy = v.cy - p.y * v.scale / p.z
         // Two segments on, one off.
         if prevOk && si % 3 != 2 {
-            thickLine(c, pvx, pvy, sx, sy, 3.0, 0.20 * k, 0.55 * k, 1.30 * k)
+            thickLine(&mut c, pvx, pvy, sx, sy, 3.0, 0.20 * k, 0.55 * k, 1.30 * k)
         }
         pvx = sx
         pvy = sy
@@ -2620,7 +2620,7 @@ fn beamSeg(c: &mut Canvas, v: &View, a: &Vec3, b: &Vec3, r: f64, g: f64, bl: f64
     if pb.z <= v.near {
         pb = pb.lerp(pa, (v.near - pb.z) / (pa.z - pb.z))
     }
-    line(c, v.cx + pa.x * v.scale / pa.z, v.cy - pa.y * v.scale / pa.z, v.cx + pb.x * v.scale / pb.z, v.cy - pb.y * v.scale / pb.z, r, g, bl)
+    line(&mut c, v.cx + pa.x * v.scale / pa.z, v.cy - pa.y * v.scale / pa.z, v.cx + pb.x * v.scale / pb.z, v.cy - pb.y * v.scale / pb.z, r, g, bl)
 }
 
 pub fn drawMarkGuide(c: &mut Canvas, w: &World, v: &View) {
@@ -2659,23 +2659,23 @@ pub fn drawMarkGuide(c: &mut Canvas, w: &World, v: &View) {
             // A diamond rather than the ring reticle, so a landmark never reads
             // as something to fly through.
             let r = Math.clampF64(26000.0 / p.z, 18.0, 54.0)
-            thickLine(c, sx, sy - r, sx + r, sy, 3.0, cr, cg, cb)
-            thickLine(c, sx + r, sy, sx, sy + r, 3.0, cr, cg, cb)
-            thickLine(c, sx, sy + r, sx - r, sy, 3.0, cr, cg, cb)
-            thickLine(c, sx - r, sy, sx, sy - r, 3.0, cr, cg, cb)
+            thickLine(&mut c, sx, sy - r, sx + r, sy, 3.0, cr, cg, cb)
+            thickLine(&mut c, sx + r, sy, sx, sy + r, 3.0, cr, cg, cb)
+            thickLine(&mut c, sx, sy + r, sx - r, sy, 3.0, cr, cg, cb)
+            thickLine(&mut c, sx - r, sy, sx, sy - r, 3.0, cr, cg, cb)
             // Corner ticks outside the diamond: they widen the mark's footprint
             // without filling the middle of it, which is where the landmark is.
             let t = r * 0.42
-            thickLine(c, sx - r - t, sy, sx - r - t * 0.3, sy, 2.0, cr, cg, cb)
-            thickLine(c, sx + r + t * 0.3, sy, sx + r + t, sy, 2.0, cr, cg, cb)
-            thickLine(c, sx, sy - r - t, sx, sy - r - t * 0.3, 2.0, cr, cg, cb)
-            thickLine(c, sx, sy + r + t * 0.3, sx, sy + r + t, 2.0, cr, cg, cb)
+            thickLine(&mut c, sx - r - t, sy, sx - r - t * 0.3, sy, 2.0, cr, cg, cb)
+            thickLine(&mut c, sx + r + t * 0.3, sy, sx + r + t, sy, 2.0, cr, cg, cb)
+            thickLine(&mut c, sx, sy - r - t, sx, sy - r - t * 0.3, 2.0, cr, cg, cb)
+            thickLine(&mut c, sx, sy + r + t * 0.3, sx, sy + r + t, 2.0, cr, cg, cb)
             // ABOVE the diamond, not below. You are almost always flying at the
             // thing, so the diamond is almost always in the middle of the screen
             // — which is where the aircraft is drawn, and a label under it lands
             // on the fuselage.
-            textCentered(c, sx as i64, (sy - r - 46.0) as i64, w.markName, 3, cr, cg, cb)
-            textCentered(c, sx as i64, (sy - r - 20.0) as i64, range, 2, cr * 0.8, cg * 0.8, cb * 0.8)
+            textCentered(&mut c, sx as i64, (sy - r - 46.0) as i64, w.markName, 3, cr, cg, cb)
+            textCentered(&mut c, sx as i64, (sy - r - 20.0) as i64, range, 2, cr * 0.8, cg * 0.8, cb * 0.8)
             return
         }
     }
@@ -2710,10 +2710,10 @@ pub fn drawMarkGuide(c: &mut Canvas, w: &World, v: &View) {
     let wing = 26.0
     for i in 0..7 {
         let s = 1.0 - (i as f64) * 0.13
-        thickLine(c, ax + dirX * tip * s, ay + dirY * tip * s, ax + nx * wing * s, ay + ny * wing * s, 3.0, cr, cg, cb)
-        thickLine(c, ax + dirX * tip * s, ay + dirY * tip * s, ax - nx * wing * s, ay - ny * wing * s, 3.0, cr, cg, cb)
+        thickLine(&mut c, ax + dirX * tip * s, ay + dirY * tip * s, ax + nx * wing * s, ay + ny * wing * s, 3.0, cr, cg, cb)
+        thickLine(&mut c, ax + dirX * tip * s, ay + dirY * tip * s, ax - nx * wing * s, ay - ny * wing * s, 3.0, cr, cg, cb)
     }
-    thickLine(c, ax - nx * wing, ay - ny * wing, ax + nx * wing, ay + ny * wing, 3.0, cr * 0.8, cg * 0.8, cb * 0.8)
+    thickLine(&mut c, ax - nx * wing, ay - ny * wing, ax + nx * wing, ay + ny * wing, 3.0, cr * 0.8, cg * 0.8, cb * 0.8)
     // The label sits BEHIND the chevron, and how far behind depends on which way
     // the chevron points. Text only ever grows sideways, so an arrow pointing
     // left or right has to be cleared by half a name — a fixed offset put
@@ -2727,8 +2727,8 @@ pub fn drawMarkGuide(c: &mut Canvas, w: &World, v: &View) {
     // Clamped so a name near the edge of the ring is never half off screen.
     lx = Math.clampF64(lx, half + 14.0, (c.w as f64) - half - 14.0)
     ly = Math.clampF64(ly, 30.0, (c.h as f64) - 54.0)
-    textCentered(c, lx as i64, (ly - 12.0) as i64, w.markName, 3, cr, cg, cb)
-    textCentered(c, lx as i64, (ly + 16.0) as i64, range, 2, cr * 0.8, cg * 0.8, cb * 0.8)
+    textCentered(&mut c, lx as i64, (ly - 12.0) as i64, w.markName, 3, cr, cg, cb)
+    textCentered(&mut c, lx as i64, (ly + 16.0) as i64, range, 2, cr * 0.8, cg * 0.8, cb * 0.8)
 }
 
 // Speed lines: short streaks flying outward from the centre of the screen. The
@@ -2759,7 +2759,7 @@ pub fn drawSpeedLines(c: &mut Canvas, w: &World) {
             continue
         }
         let b = f * k * 0.5
-        line(c, cx + dx * r0, cy + dy * r0, cx + dx * (r0 + len), cy + dy * (r0 + len), b * 0.8, b * 0.9, b)
+        line(&mut c, cx + dx * r0, cy + dy * r0, cx + dx * (r0 + len), cy + dy * (r0 + len), b * 0.8, b * 0.9, b)
     }
 }
 
@@ -2776,8 +2776,8 @@ pub let TELEGRAPH_Y: i64 = 236
 // A tick, drawn rather than typed: the 5x7 font is uppercase ASCII and there is
 // no glyph for it. Two strokes, short arm down-right then long arm up-right.
 fn checkMark(c: &mut Canvas, x: f64, y: f64, s: f64, r: f64, g: f64, b: f64) {
-    thickLine(c, x, y + s * 0.55, x + s * 0.38, y + s, 3.0, r, g, b)
-    thickLine(c, x + s * 0.38, y + s, x + s, y, 3.0, r, g, b)
+    thickLine(&mut c, x, y + s * 0.55, x + s * 0.38, y + s, 3.0, r, g, b)
+    thickLine(&mut c, x + s * 0.38, y + s, x + s, y, 3.0, r, g, b)
 }
 
 pub let PANEL_W: i64 = 330
@@ -2793,13 +2793,13 @@ pub fn drawChecklist(c: &mut Canvas, w: &World) {
     let rowH = 34
     let top = 110
     let h = 94 + rowH * w.marks.len + 54
-    shadeRect(c, x0 as f64, (top - 70) as f64, (x0 + PANEL_W) as f64, ((top - 70) + h) as f64, 0.34)
+    shadeRect(&mut c, x0 as f64, (top - 70) as f64, (x0 + PANEL_W) as f64, ((top - 70) + h) as f64, 0.34)
     // Where you are, over what you are looking for. It used to sit in the far
     // bottom-left corner, which is the one part of the screen nothing else uses
     // and therefore the one part nobody looks at.
-    text(c, x0 + 16, top - 58, w.city.name, 3, 0.86, 0.82, 0.66)
-    text(c, x0 + 16, top - 22, "LANDMARKS", 2, 0.50, 0.62, 0.80)
-    text(c, c.w - 92, top - 22, w.markFound.toString() + " / " + w.marks.len.toString(), 2, 0.50, 0.62, 0.80)
+    text(&mut c, x0 + 16, top - 58, w.city.name, 3, 0.86, 0.82, 0.66)
+    text(&mut c, x0 + 16, top - 22, "LANDMARKS", 2, 0.50, 0.62, 0.80)
+    text(&mut c, c.w - 92, top - 22, w.markFound.toString() + " / " + w.marks.len.toString(), 2, 0.50, 0.62, 0.80)
     for i in 0..w.marks.len {
         let y = top + 22 + rowH * i
         let done = w.marks[i].found
@@ -2827,19 +2827,19 @@ pub fn drawChecklist(c: &mut Canvas, w: &World) {
             r = r + 1.5 * f
             g = g + 1.5 * f
             b = b + 1.2 * f
-            shadeRect(c, (x0 + 6) as f64, (y - 6) as f64, (x0 + PANEL_W - 6) as f64, (y + 24) as f64, 1.0 + 2.0 * f)
+            shadeRect(&mut c, (x0 + 6) as f64, (y - 6) as f64, (x0 + PANEL_W - 6) as f64, (y + 24) as f64, 1.0 + 2.0 * f)
         }
         if done {
-            checkMark(c, (x0 + 16) as f64, y as f64, 15.0, r, g, b)
+            checkMark(&mut c, (x0 + 16) as f64, y as f64, 15.0, r, g, b)
         } else if here {
             // A caret, not a tick: this one is where you are going.
-            thickLine(c, (x0 + 17) as f64, y as f64, (x0 + 29) as f64, (y + 8) as f64, 3.0, r, g, b)
-            thickLine(c, (x0 + 29) as f64, (y + 8) as f64, (x0 + 17) as f64, (y + 16) as f64, 3.0, r, g, b)
+            thickLine(&mut c, (x0 + 17) as f64, y as f64, (x0 + 29) as f64, (y + 8) as f64, 3.0, r, g, b)
+            thickLine(&mut c, (x0 + 29) as f64, (y + 8) as f64, (x0 + 17) as f64, (y + 16) as f64, 3.0, r, g, b)
         }
-        text(c, x0 + 42, y + 2, w.marks[i].name, 2, r, g, b)
+        text(&mut c, x0 + 42, y + 2, w.marks[i].name, 2, r, g, b)
         if done {
             let stamp = fmtTime(w.marks[i].took)
-            text(c, c.w - 34 - textWidth(stamp, 2), y + 2, stamp, 2, r * 0.9, g * 0.9, b * 0.9)
+            text(&mut c, c.w - 34 - textWidth(stamp, 2), y + 2, stamp, 2, r * 0.9, g * 0.9, b * 0.9)
         }
     }
     // The region after this one, named but not opened up. Knowing there is more
@@ -2847,8 +2847,8 @@ pub fn drawChecklist(c: &mut Canvas, w: &World) {
     // reason to skip them.
     let ny = top + 22 + rowH * w.marks.len + 16
     if w.nextName != "" {
-        text(c, x0 + 16, ny, "NEXT", 2, 0.30, 0.34, 0.40)
-        text(c, x0 + 16 + textWidth("NEXT  ", 2), ny, w.nextName, 2, 0.52, 0.50, 0.42)
+        text(&mut c, x0 + 16, ny, "NEXT", 2, 0.30, 0.34, 0.40)
+        text(&mut c, x0 + 16 + textWidth("NEXT  ", 2), ny, w.nextName, 2, 0.52, 0.50, 0.42)
     }
 }
 
@@ -2857,8 +2857,8 @@ pub fn drawChecklist(c: &mut Canvas, w: &World) {
 // bar the full width of the screen.
 fn cardBack(c: &mut Canvas, cx: i64, y0: i64, y1: i64, wide: i64, k: f64) {
     let half = (wide / 2 + 46) as f64
-    shadeRect(c, (cx as f64) - half - 26.0, y0 as f64, (cx as f64) + half + 26.0, y1 as f64, 1.0 - 0.55 * k)
-    shadeRect(c, (cx as f64) - half, (y0 + 8) as f64, (cx as f64) + half, (y1 - 8) as f64, 1.0 - 0.82 * k)
+    shadeRect(&mut c, (cx as f64) - half - 26.0, y0 as f64, (cx as f64) + half + 26.0, y1 as f64, 1.0 - 0.55 * k)
+    shadeRect(&mut c, (cx as f64) - half, (y0 + 8) as f64, (cx as f64) + half, (y1 - 8) as f64, 1.0 - 0.82 * k)
 }
 
 // The arrival card, over the orbit: what you found, what it is, and what it
@@ -2884,22 +2884,22 @@ pub fn drawFound(c: &mut Canvas, w: &World) {
     // here, and a screen-centred plate runs under the panel.
     let cx = (c.w - PANEL_W - 38) / 2
     if w.regionDone {
-        cardBack(c, cx, 14, 132, textWidth(w.city.name, 4), k)
-        textCentered(c, cx, 30, w.city.name, 4, 2.2 * k, 1.85 * k, 0.70 * k)
-        textCentered(c, cx, 78, "ALL " + w.marks.len.toString() + " FOUND", 2, 0.70 * k, 1.70 * k, 1.05 * k)
+        cardBack(&mut c, cx, 14, 132, textWidth(w.city.name, 4), k)
+        textCentered(&mut c, cx, 30, w.city.name, 4, 2.2 * k, 1.85 * k, 0.70 * k)
+        textCentered(&mut c, cx, 78, "ALL " + w.marks.len.toString() + " FOUND", 2, 0.70 * k, 1.70 * k, 1.05 * k)
         if w.nextName != "" {
-            textCentered(c, cx, 104, "NEXT UP  " + w.nextName, 2, 0.90 * k, 0.92 * k, 0.96 * k)
+            textCentered(&mut c, cx, 104, "NEXT UP  " + w.nextName, 2, 0.90 * k, 0.92 * k, 0.96 * k)
         }
         return
     }
     // Indexed at each use rather than bound to a local: `let m = w.marks[i]`
     // would move a Mark out of a borrowed Vec, which is exactly the thing the
     // checker is there to stop.
-    cardBack(c, cx, 14, 138, Math.maxI64(textWidth(w.marks[w.showIdx].name, 4), textWidth(w.marks[w.showIdx].fact, 2)), k)
-    textCentered(c, cx, 28, "FOUND", 2, 0.40 * k, 0.90 * k, 1.70 * k)
-    textCentered(c, cx, 52, w.marks[w.showIdx].name, 4, 2.1 * k, 2.0 * k, 1.75 * k)
-    textCentered(c, cx, 92, w.marks[w.showIdx].fact, 2, 0.90 * k, 0.94 * k, 1.00 * k)
-    textCentered(c, cx, 114, fmtTime(w.marks[w.showIdx].took) + "     " + w.markFound.toString() + " OF " + w.marks.len.toString(), 2, 0.55 * k, 1.55 * k, 1.00 * k)
+    cardBack(&mut c, cx, 14, 138, Math.maxI64(textWidth(w.marks[w.showIdx].name, 4), textWidth(w.marks[w.showIdx].fact, 2)), k)
+    textCentered(&mut c, cx, 28, "FOUND", 2, 0.40 * k, 0.90 * k, 1.70 * k)
+    textCentered(&mut c, cx, 52, w.marks[w.showIdx].name, 4, 2.1 * k, 2.0 * k, 1.75 * k)
+    textCentered(&mut c, cx, 92, w.marks[w.showIdx].fact, 2, 0.90 * k, 0.94 * k, 1.00 * k)
+    textCentered(&mut c, cx, 114, fmtTime(w.marks[w.showIdx].took) + "     " + w.markFound.toString() + " OF " + w.marks.len.toString(), 2, 0.55 * k, 1.55 * k, 1.00 * k)
 }
 
 pub fn drawHud(c: &mut Canvas, w: &World, _s: &Scene, _fps: i64) {
@@ -2912,7 +2912,7 @@ pub fn drawHud(c: &mut Canvas, w: &World, _s: &Scene, _fps: i64) {
         // The place name moved to the top of the checklist and the landmark's
         // name and range onto the marker itself, where the player is already
         // looking. What is left down here is the two keys that are not obvious.
-        text(c, 24, c.h - 26, "ENTER  ELSEWHERE      M  MUSIC", 2, 0.26, 0.28, 0.32)
+        text(&mut c, 24, c.h - 26, "ENTER  ELSEWHERE      M  MUSIC", 2, 0.26, 0.28, 0.32)
         // Where the sky came from, and the hour it describes.
         //
         // Not decoration. This sky is assembled from measurements when it can be
@@ -2921,15 +2921,15 @@ pub fn drawHud(c: &mut Canvas, w: &World, _s: &Scene, _fps: i64) {
         // and stamping the time is what keeps "the weather in the game is the
         // weather outside" a checkable claim rather than an assertion. When it is
         // invented it says so, in the same place, in the same words.
-        text(c, 24, c.h - 48, envWeatherLabel(w.env), 2, 0.26, 0.30, 0.34)
-        text(c, 24, c.h - 70, envStamp(w.env) + "Z", 2, 0.22, 0.25, 0.29)
+        text(&mut c, 24, c.h - 48, envWeatherLabel(w.env), 2, 0.26, 0.30, 0.34)
+        text(&mut c, 24, c.h - 70, envStamp(w.env) + "Z", 2, 0.22, 0.25, 0.29)
         return
     }
     // Invented country still runs the hoop game, so it keeps its readouts.
-    text(c, 24, 22, "SCORE " + w.score.toString(), 3, 0.95, 0.80, 0.30)
-    text(c, 24, c.h - 58, themeName(w.theme), 3, 0.75, 0.72, 0.55)
-    text(c, 24, c.h - 26, "NEXT REGION IN " + w.toNext.toString(), 2, 0.32, 0.34, 0.38)
+    text(&mut c, 24, 22, "SCORE " + w.score.toString(), 3, 0.95, 0.80, 0.30)
+    text(&mut c, 24, c.h - 58, themeName(w.theme), 3, 0.75, 0.72, 0.55)
+    text(&mut c, 24, c.h - 26, "NEXT REGION IN " + w.toNext.toString(), 2, 0.32, 0.34, 0.38)
     if w.combo > 0 {
-        textCentered(c, c.w / 2, STREAK_Y, "x" + w.combo.toString(), 4, 1.5, 1.1, 0.25)
+        textCentered(&mut c, c.w / 2, STREAK_Y, "x" + w.combo.toString(), 4, 1.5, 1.1, 0.25)
     }
 }

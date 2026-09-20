@@ -102,29 +102,29 @@ pub fn main(): i32 {
             dt = 0.0005
         }
 
-        pollInput(inp, ev)
+        pollInput(&mut inp, &mut ev)
         if inp.mute {
-            musicToggle(snd)
+            musicToggle(&mut snd)
         }
         musicTick(snd)
 
         if inp.restart {
-            worldReset(w)
+            worldReset(&mut w)
         }
         if inp.flap {
             if w.state == ST_OVER {
                 if canRestart(w) {
-                    worldReset(w)
+                    worldReset(&mut w)
                 }
             } else {
-                flap(w)
+                flap(&mut w)
             }
         }
 
-        worldUpdate(w, dt)
+        worldUpdate(&mut w, dt)
 
         if w.evFlap {
-            playYap(snd)
+            playYap(&mut snd)
         }
         if w.evScore {
             playPoint(snd)
@@ -148,10 +148,10 @@ pub fn main(): i32 {
             oy = Random.floatRange(0.0 - w.shake, w.shake)
         }
 
-        drawBackground(c, w)
-        drawGates(c, w, bone, ox, oy)
-        drawDog(c, w, dog, ox, oy)
-        drawParts(c, w, ox, oy)
+        drawBackground(&mut c, w)
+        drawGates(&mut c, w, bone, ox, oy)
+        drawDog(&mut c, w, dog, ox, oy)
+        drawParts(&mut c, w, ox, oy)
 
         fpsAccum = fpsAccum + dt
         fpsFrames = fpsFrames + 1
@@ -160,7 +160,7 @@ pub fn main(): i32 {
             fpsAccum = 0.0
             fpsFrames = 0
         }
-        drawHud(c, w, bone, fpsShown)
+        drawHud(&mut c, w, bone, fpsShown)
 
         var exposure = 1.0
         if w.flash > 0.0 {
@@ -169,7 +169,7 @@ pub fn main(): i32 {
         // A high bloom threshold: it is daytime and most of the frame is bright,
         // so a low one would fog the sky instead of lighting the collar, the
         // treats and the chrome on the hydrant caps.
-        present(c, 0.40, exposure, 0.90)
+        present(&mut c, 0.40, exposure, 0.90)
 
         unsafe {
             SDL_UpdateTexture(tex, 0 as *u8, c.fb[0].addrOf() as *u8, (W * 4) as i32)

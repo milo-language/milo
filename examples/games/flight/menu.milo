@@ -96,7 +96,7 @@ pub fn chooseRegion(s: &mut Screen, gw: &GpuWorld, c: &mut Canvas, sc: &Scene, i
     // Francisco before the screen was ever drawn.
     var armed = false
     while true {
-        pollInput(inp, ev)
+        pollInput(&mut inp, &mut ev)
         if inp.quit {
             return 0 - 1
         }
@@ -109,12 +109,12 @@ pub fn chooseRegion(s: &mut Screen, gw: &GpuWorld, c: &mut Canvas, sc: &Scene, i
         armed = true
         t = t + 1.0 / 60.0
 
-        drawMenu(c, sel, t)
+        drawMenu(&mut c, sel, t)
         // The start screen has no world yet, so it renders an empty scene: the
         // sky pass draws, nothing is recorded, and the menu covers all of it.
-        let rs = screenBegin(s)
+        let rs = screenBegin(&mut s)
         drawSkyPass(gw, sc, view, rs.w as f64, rs.h as f64, t)
-        screenPresent(s, c, view, sc, noCover, empty, false, false, t, 0.35, 1.0)
+        screenPresent(&mut s, &mut c, view, sc, noCover, empty, false, false, t, 0.35, 1.0)
     }
     return sel
 }
@@ -122,9 +122,9 @@ pub fn chooseRegion(s: &mut Screen, gw: &GpuWorld, c: &mut Canvas, sc: &Scene, i
 // One frame of the start screen. Pure drawing — no SDL, no input, no loop — so
 // the headless capture tool can render it exactly as the game does.
 pub fn drawMenu(c: &mut Canvas, sel: i64, t: f64) {
-    canvasFill(c, 0.014, 0.020, 0.038)
-    textCentered(c, c.w / 2, 74, "FLYBY", 9, 1.30, 1.55, 2.40)
-    textCentered(c, c.w / 2, 178, "CHOOSE WHERE TO FLY", 2, 0.42, 0.50, 0.62)
+    canvasFill(&mut c, 0.014, 0.020, 0.038)
+    textCentered(&mut c, c.w / 2, 74, "FLYBY", 9, 1.30, 1.55, 2.40)
+    textCentered(&mut c, c.w / 2, 178, "CHOOSE WHERE TO FLY", 2, 0.42, 0.50, 0.62)
     let x0 = c.w / 2 - 300
     for i in 0..PLACE_COUNT {
         let y = 226 + 74 * i
@@ -133,14 +133,14 @@ pub fn drawMenu(c: &mut Canvas, sel: i64, t: f64) {
             let pulse = 0.80 + 0.20 * Math.sin(t * 4.0)
             // The bar is the selection, so it is drawn as light rather than
             // as a darkened panel — the screen behind it is already black.
-            fillRect(c, (x0 - 26) as f64, (y - 14) as f64, (x0 + 626) as f64, (y + 54) as f64, 0.04 * pulse, 0.09 * pulse, 0.19 * pulse)
-            thickLine(c, (x0 - 12) as f64, y as f64, (x0 - 12) as f64, (y + 26) as f64, 3.0, 0.40 * pulse, 0.90 * pulse, 1.80 * pulse)
-            text(c, x0 + 8, y, name, 3, 0.70 * pulse, 1.45 * pulse, 2.40 * pulse)
-            text(c, x0 + 8, y + 32, placeBlurb(i), 2, 0.48, 0.56, 0.70)
+            fillRect(&mut c, (x0 - 26) as f64, (y - 14) as f64, (x0 + 626) as f64, (y + 54) as f64, 0.04 * pulse, 0.09 * pulse, 0.19 * pulse)
+            thickLine(&mut c, (x0 - 12) as f64, y as f64, (x0 - 12) as f64, (y + 26) as f64, 3.0, 0.40 * pulse, 0.90 * pulse, 1.80 * pulse)
+            text(&mut c, x0 + 8, y, name, 3, 0.70 * pulse, 1.45 * pulse, 2.40 * pulse)
+            text(&mut c, x0 + 8, y + 32, placeBlurb(i), 2, 0.48, 0.56, 0.70)
         } else {
-            text(c, x0 + 8, y, name, 3, 0.30, 0.33, 0.40)
+            text(&mut c, x0 + 8, y, name, 3, 0.30, 0.33, 0.40)
         }
     }
-    textCentered(c, c.w / 2, c.h - 92, "UP / DOWN  CHOOSE      ENTER  FLY", 2, 0.34, 0.38, 0.46)
-    textCentered(c, c.w / 2, c.h - 56, "FIVE LANDMARKS EACH. FLY OVER THE BLUE BEAM.", 2, 0.24, 0.27, 0.33)
+    textCentered(&mut c, c.w / 2, c.h - 92, "UP / DOWN  CHOOSE      ENTER  FLY", 2, 0.34, 0.38, 0.46)
+    textCentered(&mut c, c.w / 2, c.h - 56, "FIVE LANDMARKS EACH. FLY OVER THE BLUE BEAM.", 2, 0.24, 0.27, 0.33)
 }

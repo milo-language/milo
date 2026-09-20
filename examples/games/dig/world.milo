@@ -216,7 +216,7 @@ fn sizeForLevel(m: &mut Mine) {
 }
 
 fn generate(m: &mut Mine) {
-    sizeForLevel(m)
+    sizeForLevel(&mut m)
     // The level number offsets every noise field, so each level is a different
     // stretch of ground rather than the same map re-tuned.
     let seed = (m.level as f64) * 137.0
@@ -311,7 +311,7 @@ fn generate(m: &mut Mine) {
             m.tiles[y * MAP_W + x] = T_GATE as u8
         }
     }
-    ensureEnoughTreasure(m)
+    ensureEnoughTreasure(&mut m)
 }
 
 // A level must always be winnable. Noise thresholds do not promise that: an
@@ -396,7 +396,7 @@ pub fn mineNew(): Mine {
         blinkT: 2.0,
         doorAnim: 0.0,
     }
-    generate(m)
+    generate(&mut m)
     return m
 }
 
@@ -416,7 +416,7 @@ pub fn nextLevel(m: &mut Mine) {
     m.digX = 0 - 1
     m.digProgress = 0.0
     m.flies.clear()
-    generate(m)
+    generate(&mut m)
 }
 
 // Each ground gets its own HUE, not its own shade of brown: warm tan, orange
@@ -642,7 +642,7 @@ fn collect(m: &mut Mine, t: i64, x: f64, y: f64) {
         return
     }
     let col = tileColor(t)
-    burst(m, x, y, 22, 240.0, col)
+    burst(&mut m, x, y, 22, 240.0, col)
     m.flash = Math.maxF64(m.flash, 0.14)
     m.shake = Math.maxF64(m.shake, 2.5)
     // Split the tile's worth across a handful of nuggets, so a gold seam sprays
@@ -700,12 +700,12 @@ fn bank(m: &mut Mine, kind: i64, value: i64) {
         let dx = (m.exitX as f64) * TILE + TILE
         for i in 0..5 {
             let dy = m.py + Random.floatRange(0.0 - 90.0, 90.0)
-            poof(m, dx, dy, Col {
+            poof(&mut m, dx, dy, Col {
                 r: 0.70, g: 0.34, b: 0.12
             }
             )
         }
-        addPop(m, m.px, m.py - 44.0, "THE DOOR IS OPEN", Col {
+        addPop(&mut m, m.px, m.py - 44.0, "THE DOOR IS OPEN", Col {
             r: 0.4, g: 1.4, b: 0.6
         }
         )
@@ -751,8 +751,8 @@ fn updateFlies(m: &mut Mine, dt: f64) {
             let last = m.flies.len - 1
             m.flies[i] = m.flies[last]
             let _ = m.flies.pop()
-            bank(m, k, v2)
-            burst(m, tx, ty, 4, 90.0, col)
+            bank(&mut m, k, v2)
+            burst(&mut m, tx, ty, 4, 90.0, col)
         } else {
             i = i + 1
         }
@@ -762,14 +762,14 @@ fn updateFlies(m: &mut Mine, dt: f64) {
 fn breakTile(m: &mut Mine, tx: i64, ty: i64, t: i64) {
     let cx = (tx as f64) * TILE + TILE * 0.5
     let cy = (ty as f64) * TILE + TILE * 0.5
-    setTile(m, tx, ty, T_SKY)
+    setTile(&mut m, tx, ty, T_SKY)
     let col = tileColor(t)
-    poof(m, cx, cy, col)
+    poof(&mut m, cx, cy, col)
     m.shake = Math.maxF64(m.shake, 1.2)
     if isUpgrade(t) {
-        applyUpgrade(m, t, cx, cy)
+        applyUpgrade(&mut m, t, cx, cy)
     } else {
-        collect(m, t, cx, cy)
+        collect(&mut m, t, cx, cy)
     }
     if ty > m.deepest {
         m.deepest = ty
@@ -783,25 +783,25 @@ fn breakSoft(m: &mut Mine, tx: i64, ty: i64) {
     if t == T_SKY || t == T_BEDROCK || t == T_WATER {
         return
     }
-    breakTile(m, tx, ty, t)
+    breakTile(&mut m, tx, ty, t)
 }
 
 fn applyUpgrade(m: &mut Mine, t: i64, x: f64, y: f64) {
     let col = tileColor(t)
-    burst(m, x, y, 40, 300.0, col)
+    burst(&mut m, x, y, 40, 300.0, col)
     m.flash = Math.maxF64(m.flash, 0.5)
     m.shake = Math.maxF64(m.shake, 6.0)
     if t == T_PWR_DRILL {
         m.drillLevel = m.drillLevel + 1
         m.drillRate = m.drillRate * 1.45
-        addPop(m, x, y - 12.0, "DRILL UPGRADED", col)
+        addPop(&mut m, x, y - 12.0, "DRILL UPGRADED", col)
     } else if t == T_PWR_WIDE {
         m.wideDig = true
-        addPop(m, x, y - 12.0, "WIDE DRILL", col)
+        addPop(&mut m, x, y - 12.0, "WIDE DRILL", col)
     } else {
         m.lampLevel = m.lampLevel + 1
         m.lampRadius = m.lampRadius + 110.0
-        addPop(m, x, y - 12.0, "BRIGHTER LAMP", col)
+        addPop(&mut m, x, y - 12.0, "BRIGHTER LAMP", col)
     }
 }
 
@@ -843,16 +843,16 @@ fn drill(m: &mut Mine, tx: i64, ty: i64, dt: f64): bool {
         )
     }
     if m.digProgress >= 1.0 {
-        breakTile(m, tx, ty, t)
+        breakTile(&mut m, tx, ty, t)
         // A wide drill takes the two tiles either side of the bit as well, along
         // whichever axis is perpendicular to the direction of travel.
         if m.wideDig {
             if m.faceY != 0.0 {
-                breakSoft(m, tx - 1, ty)
-                breakSoft(m, tx + 1, ty)
+                breakSoft(&mut m, tx - 1, ty)
+                breakSoft(&mut m, tx + 1, ty)
             } else {
-                breakSoft(m, tx, ty - 1)
-                breakSoft(m, tx, ty + 1)
+                breakSoft(&mut m, tx, ty - 1)
+                breakSoft(&mut m, tx, ty + 1)
             }
         }
         m.digX = 0 - 1
@@ -895,7 +895,7 @@ pub fn mineUpdate(m: &mut Mine, dt: f64, inX: f64, inY: f64, viewW: f64, viewH: 
             m.px = nx
             moved = true
         } else {
-            biting = drill(m, tx, ty, dt) || biting
+            biting = drill(&mut m, tx, ty, dt) || biting
             moved = true
         }
     }
@@ -908,7 +908,7 @@ pub fn mineUpdate(m: &mut Mine, dt: f64, inX: f64, inY: f64, viewW: f64, viewH: 
             m.py = ny
             moved = true
         } else {
-            biting = drill(m, tx, ty, dt) || biting
+            biting = drill(&mut m, tx, ty, dt) || biting
             moved = true
         }
     }
@@ -936,7 +936,7 @@ pub fn mineUpdate(m: &mut Mine, dt: f64, inX: f64, inY: f64, viewW: f64, viewH: 
     if m.cleared > 0.0 {
         m.cleared = m.cleared - dt
         if m.cleared <= 0.0 {
-            nextLevel(m)
+            nextLevel(&mut m)
         }
     } else if m.exitOpen {
         // Standing anywhere in the doorway finishes the level.
@@ -957,8 +957,8 @@ pub fn mineUpdate(m: &mut Mine, dt: f64, inX: f64, inY: f64, viewW: f64, viewH: 
     m.camX = m.camX + (wantX - m.camX) * Math.minF64(1.0, dt * 4.0)
     m.camY = m.camY + (wantY - m.camY) * Math.minF64(1.0, dt * 4.0)
 
-    updateParts(m, dt)
-    updateFlies(m, dt)
+    updateParts(&mut m, dt)
+    updateFlies(&mut m, dt)
     // The leaf swings clear over about a second, so the moment you earn it is
     // something you watch happen rather than something that has already happened.
     if m.exitOpen && m.doorAnim < 1.0 {

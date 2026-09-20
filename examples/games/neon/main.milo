@@ -93,15 +93,15 @@ pub fn main(): i32 {
             dt = 0.0005
         }
 
-        pollInput(inp, ev, 1.0)
+        pollInput(&mut inp, &mut ev, 1.0)
 
         if world.gameOver && inp.restart && !restartHeld {
-            worldReset(world)
+            worldReset(&mut world)
             titleTimer = 0.0
         }
         restartHeld = inp.restart
 
-        worldUpdate(world, dt, inp.moveX, inp.moveY, inp.charge)
+        worldUpdate(&mut world, dt, inp.moveX, inp.moveY, inp.charge)
 
         // screen shake
         var ox = 0.0
@@ -111,8 +111,8 @@ pub fn main(): i32 {
             oy = Random.floatRange(0.0 - world.shake, world.shake)
         }
 
-        drawWorld(c, world, shapes, ox, oy)
-        drawHud(c, world)
+        drawWorld(&mut c, world, shapes, ox, oy)
+        drawHud(&mut c, world)
 
         fpsAccum = fpsAccum + dt
         fpsFrames = fpsFrames + 1
@@ -121,11 +121,11 @@ pub fn main(): i32 {
             fpsAccum = 0.0
             fpsFrames = 0
         }
-        text(c, 24, H - 30, fpsShown.toString() + " FPS", 2, 0.18, 0.30, 0.38)
+        text(&mut c, 24, H - 30, fpsShown.toString() + " FPS", 2, 0.18, 0.30, 0.38)
         // Control strip stays up permanently — cheap, and there is nowhere else
         // to find this out.
         let help = "ARROWS FLY    HOLD SPACE TO CHARGE    ORBS ARE GOOD    ESC QUIT"
-        text(c, W - 24 - textWidth(help, 2), H - 30, help, 2, 0.18, 0.30, 0.38)
+        text(&mut c, W - 24 - textWidth(help, 2), H - 30, help, 2, 0.18, 0.30, 0.38)
 
         if titleTimer > 0.0 {
             titleTimer = titleTimer - dt
@@ -133,15 +133,15 @@ pub fn main(): i32 {
             if titleTimer < 1.0 {
                 f = titleTimer
             }
-            textCentered(c, W / 2, 150, "NEON", 12, 0.6 * f, 1.4 * f, 2.0 * f)
-            textCentered(c, W / 2, 250, "WRITTEN IN MILO", 3, 1.4 * f, 1.0 * f, 0.4 * f)
+            textCentered(&mut c, W / 2, 150, "NEON", 12, 0.6 * f, 1.4 * f, 2.0 * f)
+            textCentered(&mut c, W / 2, 250, "WRITTEN IN MILO", 3, 1.4 * f, 1.0 * f, 0.4 * f)
         }
 
         var exposure = 1.0
         if world.flash > 0.0 {
             exposure = 1.0 + world.flash * 2.2
         }
-        present(c, 1.0, exposure)
+        present(&mut c, 1.0, exposure)
 
         unsafe {
             SDL_UpdateTexture(tex, 0 as *u8, c.fb[0].addrOf() as *u8, (W * 4) as i32)

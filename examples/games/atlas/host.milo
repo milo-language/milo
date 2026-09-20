@@ -141,16 +141,16 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64], scale: f64) {
         inp.my = ny
 
         let ks = SDL_GetKeyboardState(0 as *i32)
-        inp.deselect = edge(ks[SC_ESCAPE] != 0, inp.escHeld)
+        inp.deselect = edge(ks[SC_ESCAPE] != 0, &mut inp.escHeld)
         if ks[SC_Q] != 0 {
             inp.quit = true
         }
-        inp.prevWorld = edge(ks[SC_LEFTBRACKET] != 0, inp.prevHeld)
-        inp.nextWorld = edge(ks[SC_RIGHTBRACKET] != 0, inp.nextHeld)
-        inp.toggleLevel = edge(ks[SC_L] != 0, inp.levelHeld)
-        inp.toggleHelp = edge(ks[SC_H] != 0, inp.helpHeld)
-        inp.toggleSpin = edge(ks[SC_SPACE] != 0, inp.spinHeld)
-        inp.fullscreen = edge(ks[SC_F] != 0, inp.fullHeld)
+        inp.prevWorld = edge(ks[SC_LEFTBRACKET] != 0, &mut inp.prevHeld)
+        inp.nextWorld = edge(ks[SC_RIGHTBRACKET] != 0, &mut inp.nextHeld)
+        inp.toggleLevel = edge(ks[SC_L] != 0, &mut inp.levelHeld)
+        inp.toggleHelp = edge(ks[SC_H] != 0, &mut inp.helpHeld)
+        inp.toggleSpin = edge(ks[SC_SPACE] != 0, &mut inp.spinHeld)
+        inp.fullscreen = edge(ks[SC_F] != 0, &mut inp.fullHeld)
 
         inp.orbitX = 0.0
         inp.orbitY = 0.0
@@ -189,7 +189,7 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64], scale: f64) {
             pressed = 10
         }
         inp.digit = 0
-        if edge(pressed != 0, inp.digitHeld) {
+        if edge(pressed != 0, &mut inp.digitHeld) {
             inp.digit = pressed
         }
     }

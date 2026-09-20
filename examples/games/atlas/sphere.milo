@@ -63,12 +63,12 @@ pub fn sphereMesh(segments: i64, rings: i64): Vec<f32> {
             let b = latLonToUnit(lat0, lon1)
             let c = latLonToUnit(lat1, lon1)
             let d = latLonToUnit(lat1, lon0)
-            push8(v, a.x, a.y, a.z, u0, v0, a.x, a.y, a.z)
-            push8(v, d.x, d.y, d.z, u0, v1, d.x, d.y, d.z)
-            push8(v, c.x, c.y, c.z, u1, v1, c.x, c.y, c.z)
-            push8(v, a.x, a.y, a.z, u0, v0, a.x, a.y, a.z)
-            push8(v, c.x, c.y, c.z, u1, v1, c.x, c.y, c.z)
-            push8(v, b.x, b.y, b.z, u1, v0, b.x, b.y, b.z)
+            push8(&mut v, a.x, a.y, a.z, u0, v0, a.x, a.y, a.z)
+            push8(&mut v, d.x, d.y, d.z, u0, v1, d.x, d.y, d.z)
+            push8(&mut v, c.x, c.y, c.z, u1, v1, c.x, c.y, c.z)
+            push8(&mut v, a.x, a.y, a.z, u0, v0, a.x, a.y, a.z)
+            push8(&mut v, c.x, c.y, c.z, u1, v1, c.x, c.y, c.z)
+            push8(&mut v, b.x, b.y, b.z, u1, v0, b.x, b.y, b.z)
             i = i + 1
         }
         j = j + 1
@@ -119,12 +119,12 @@ pub fn ringMesh(segments: i64, inner: f64, outer: f64): Vec<f32> {
         let s0 = Math.sin(a0)
         let c1 = Math.cos(a1)
         let s1 = Math.sin(a1)
-        push8(v, c0 * inner, 0.0, s0 * inner, 0.0, 0.0, 0.0, 1.0, 0.0)
-        push8(v, c1 * inner, 0.0, s1 * inner, 0.0, 1.0, 0.0, 1.0, 0.0)
-        push8(v, c1 * outer, 0.0, s1 * outer, 1.0, 1.0, 0.0, 1.0, 0.0)
-        push8(v, c0 * inner, 0.0, s0 * inner, 0.0, 0.0, 0.0, 1.0, 0.0)
-        push8(v, c1 * outer, 0.0, s1 * outer, 1.0, 1.0, 0.0, 1.0, 0.0)
-        push8(v, c0 * outer, 0.0, s0 * outer, 1.0, 0.0, 0.0, 1.0, 0.0)
+        push8(&mut v, c0 * inner, 0.0, s0 * inner, 0.0, 0.0, 0.0, 1.0, 0.0)
+        push8(&mut v, c1 * inner, 0.0, s1 * inner, 0.0, 1.0, 0.0, 1.0, 0.0)
+        push8(&mut v, c1 * outer, 0.0, s1 * outer, 1.0, 1.0, 0.0, 1.0, 0.0)
+        push8(&mut v, c0 * inner, 0.0, s0 * inner, 0.0, 0.0, 0.0, 1.0, 0.0)
+        push8(&mut v, c1 * outer, 0.0, s1 * outer, 1.0, 1.0, 0.0, 1.0, 0.0)
+        push8(&mut v, c0 * outer, 0.0, s0 * outer, 1.0, 0.0, 0.0, 1.0, 0.0)
         i = i + 1
     }
     return v

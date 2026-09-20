@@ -87,7 +87,7 @@ pub fn groundTexture(): Texture {
                 k = k * 0.72
             }
             // slight warm/cool tilt so the mottling is not pure luminance
-            texSet(t, x, y, k * 1.04, k, k * 0.94)
+            texSet(&mut t, x, y, k * 1.04, k, k * 0.94)
         }
     }
     return t
@@ -129,7 +129,7 @@ pub fn planeTexture(): Texture {
             // a subtle wash so the metal is not perfectly flat
             let n = fbm((x as f64) / (TEX_SIZE as f64), (y as f64) / (TEX_SIZE as f64), 5.0)
             let k = 0.94 + n * 0.12
-            texSet(t, x, y, r * k, g * k, b * k)
+            texSet(&mut t, x, y, r * k, g * k, b * k)
         }
     }
     return t
@@ -173,7 +173,7 @@ pub fn facadeTexture(): Texture {
             }
             // Vertical grime streaks, very low contrast, breaks the perfect grid
             k = k * (0.96 + lattice((x as f64) / (TEX_SIZE as f64), 0.0, 32, 3) * 0.08)
-            texSet(t, x, y, k, k, k * 1.02)
+            texSet(&mut t, x, y, k, k, k * 1.02)
         }
     }
     return t

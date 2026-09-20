@@ -169,7 +169,7 @@ pub fn lightMatrix(sunX: f64, sunY: f64, sunZ: f64, cx: f64, cy: f64, cz: f64, h
     fwd.push(0.0 - sunX)
     fwd.push(0.0 - sunY)
     fwd.push(0.0 - sunZ)
-    norm3(fwd)
+    norm3(&mut fwd)
 
     // Any axis not parallel to the light will do for the cross product. Straight
     // up fails exactly at local noon on the equator, which is a real place and a
@@ -184,9 +184,9 @@ pub fn lightMatrix(sunX: f64, sunY: f64, sunZ: f64, cx: f64, cy: f64, cz: f64, h
         upz = 1.0
     }
     var right = cross3(upx, upy, upz, fwd[0], fwd[1], fwd[2])
-    norm3(right)
+    norm3(&mut right)
     var up = cross3(fwd[0], fwd[1], fwd[2], right[0], right[1], right[2])
-    norm3(up)
+    norm3(&mut up)
 
     let tr = 0.0 - (right[0] * cx + right[1] * cy + right[2] * cz)
     let tu = 0.0 - (up[0] * cx + up[1] * cy + up[2] * cz)
@@ -222,8 +222,8 @@ pub fn shadowNew(gl: &mut GlContext, size: i64): Result<ShadowMap, string> {
     // that was ever written. The nine-tap loop does the smoothing instead, on
     // the comparison RESULT, which is the only place smoothing a shadow is
     // meaningful.
-    let target = Target.new(gl, size, size, true, false)?
-    let shader = Shader.compile(gl, SHADOW_VERT, SHADOW_FRAG)?
+    let target = Target.new(&mut gl, size, size, true, false)?
+    let shader = Shader.compile(&mut gl, SHADOW_VERT, SHADOW_FRAG)?
     var m: Vec<f32> = Vec.filled(16, 0.0)
     m[0] = 1.0 as f32
     m[5] = 1.0 as f32
@@ -241,6 +241,6 @@ pub fn shadowNew(gl: &mut GlContext, size: i64): Result<ShadowMap, string> {
 
 pub fn shadowFree(gl: &mut GlContext, sm: ShadowMap) {
     var own = sm
-    own.target.free(gl)
-    own.shader.free(gl)
+    own.target.free(&mut gl)
+    own.shader.free(&mut gl)
 }

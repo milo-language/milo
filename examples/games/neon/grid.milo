@@ -93,10 +93,10 @@ pub fn gridUpdate(g: &mut Grid, dt: f64) {
         for c in 0..cols {
             let i = r * cols + c
             if c + 1 < cols {
-                springPair(g, i, i + 1, rest, k, dt)
+                springPair(&mut g, i, i + 1, rest, k, dt)
             }
             if r + 1 < rows {
-                springPair(g, i, i + cols, rest, k, dt)
+                springPair(&mut g, i, i + cols, rest, k, dt)
             }
         }
     }
@@ -209,7 +209,7 @@ pub fn gridDrawShock(c: &mut Canvas, g: &Grid, r: f64, gg: f64, b: f64) {
                 let t = Math.abs(Math.sqrt(dx * dx + dy * dy) - g.spacing)
                 if t > cut {
                     let m = Math.minF64((t - cut) * 0.30, 2.4)
-                    line(c, g.nodes[i].x, g.nodes[i].y, g.nodes[j].x, g.nodes[j].y, r * m, gg * m, b * m)
+                    line(&mut c, g.nodes[i].x, g.nodes[i].y, g.nodes[j].x, g.nodes[j].y, r * m, gg * m, b * m)
                 }
             }
             if row + 1 < rows {
@@ -219,7 +219,7 @@ pub fn gridDrawShock(c: &mut Canvas, g: &Grid, r: f64, gg: f64, b: f64) {
                 let t = Math.abs(Math.sqrt(dx * dx + dy * dy) - g.spacing)
                 if t > cut {
                     let m = Math.minF64((t - cut) * 0.30, 2.4)
-                    line(c, g.nodes[i].x, g.nodes[i].y, g.nodes[j].x, g.nodes[j].y, r * m, gg * m, b * m)
+                    line(&mut c, g.nodes[i].x, g.nodes[i].y, g.nodes[j].x, g.nodes[j].y, r * m, gg * m, b * m)
                 }
             }
         }

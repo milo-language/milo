@@ -191,7 +191,7 @@ pub fn sweepX(f: &Vec<f64>, fout: &mut Vec<f64>, dt: f64, dx: f64, dv: f64) {
             uline[i] = f[j * NX + i]
             i = i + 1
         }
-        advect1D(uline, un, NX, s, dt / dx, true)
+        advect1D(uline, &mut un, NX, s, dt / dx, true)
         i = 0
         while i < NX {
             fout[j * NX + i] = un[i]
@@ -213,7 +213,7 @@ pub fn sweepV(f: &Vec<f64>, fout: &mut Vec<f64>, evec: &Vec<f64>, dt: f64, dv: f
             uline[j] = f[j * NX + i]
             j = j + 1
         }
-        advect1D(uline, un, NV, s, dt / dv, false)
+        advect1D(uline, &mut un, NV, s, dt / dv, false)
         j = 0
         while j < NV {
             fout[j * NX + i] = un[j]
@@ -313,7 +313,7 @@ pub fn drawText(fb: &mut Vec<u32>, x0: i64, y0: i64, s: string, scale: i64, col:
     var cx = x0
     var i = 0
     while i < s.len {
-        drawChar(fb, cx, y0, s[i], scale, col)
+        drawChar(&mut fb, cx, y0, s[i], scale, col)
         cx = cx + 4 * scale
         i = i + 1
     }
@@ -333,7 +333,7 @@ pub fn drawInt(fb: &mut Vec<u32>, x0: i64, y0: i64, n: i64, scale: i64, col: u32
     }
     var i = digits - 1
     while i >= 0 {
-        drawChar(fb, x0 + i * (4 * scale), y0, (48 + v % 10) as u8, scale, col)
+        drawChar(&mut fb, x0 + i * (4 * scale), y0, (48 + v % 10) as u8, scale, col)
         v = v / 10
         i = i - 1
     }
@@ -428,7 +428,7 @@ pub fn main(): i32 {
         g.push(0.0)
         z = z + 1
     }
-    initF(f, dv)
+    initF(&mut f, dv)
 
     // reference mass for the conservation check
     var mass0 = 0.0
@@ -478,7 +478,7 @@ pub fn main(): i32 {
         }
         if wantReset {
             if !rHeld {
-                initF(f, dv)
+                initF(&mut f, dv)
                 t = 0.0
                 mass0 = massOf(f, dx, dv)
             }
@@ -516,9 +516,9 @@ pub fn main(): i32 {
             var step = 0
             while step < substeps {
                 // Strang split: half x, full v, half x — result left in f
-                sweepX(f, g, dt * 0.5, dx, dv) // g <- f
-                sweepV(g, f, evec, dt, dv) // f <- g
-                sweepX(f, g, dt * 0.5, dx, dv) // g <- f
+                sweepX(f, &mut g, dt * 0.5, dx, dv) // g <- f
+                sweepV(g, &mut f, evec, dt, dv) // f <- g
+                sweepX(f, &mut g, dt * 0.5, dx, dv) // g <- f
                 let tmp = f
                 f = g
                 g = tmp // swap so f holds the result
@@ -556,13 +556,13 @@ pub fn main(): i32 {
 
         // ---- on-canvas labels so the window is self-explanatory ----
         let ink: u32 = 0xFFF0F0F0
-        drawText(fb, 4, 4, "VLASOV PHASE SPACE", 1, ink)
-        drawText(fb, 4, 12, "DISTRIBUTION F OF X V", 1, ink)
-        drawText(fb, 4, NV - 9, "X POSITION", 1, ink)
-        drawText(fb, NX - 44, NV - 9, "CLICK POKE", 1, ink)
+        drawText(&mut fb, 4, 4, "VLASOV PHASE SPACE", 1, ink)
+        drawText(&mut fb, 4, 12, "DISTRIBUTION F OF X V", 1, ink)
+        drawText(&mut fb, 4, NV - 9, "X POSITION", 1, ink)
+        drawText(&mut fb, NX - 44, NV - 9, "CLICK POKE", 1, ink)
         // FPS top-right
-        drawInt(fb, NX - 34, 4, fpsAvg as i64, 1, ink)
-        drawText(fb, NX - 18, 4, "FPS", 1, ink)
+        drawInt(&mut fb, NX - 34, 4, fpsAvg as i64, 1, ink)
+        drawText(&mut fb, NX - 18, 4, "FPS", 1, ink)
 
         unsafe {
             SDL_UpdateTexture(tex, 0 as *u8, fb[0].addrOf() as *u8, (NX * 4) as i32)

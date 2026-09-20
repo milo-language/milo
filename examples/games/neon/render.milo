@@ -49,7 +49,7 @@ fn nodule(c: &mut Canvas, cx: f64, cy: f64, r: f64, v: f64, warm: f64) {
         let hw = r * Math.sqrt(Math.maxF64(1.0 - dy * dy, 0.0))
         let y0 = cy - r + t * 2.0 * r - r / (n as f64)
         let lit = v * (1.45 - t * 1.15)
-        fillRect(c, cx - hw, y0, cx + hw, y0 + 2.0 * r / (n as f64) + 1.0, lit, lit * warm, lit * warm * 0.88, 1.0)
+        fillRect(&mut c, cx - hw, y0, cx + hw, y0 + 2.0 * r / (n as f64) + 1.0, lit, lit * warm, lit * warm * 0.88, 1.0)
     }
 }
 
@@ -75,7 +75,7 @@ fn noduleField(c: &mut Canvas, off: f64, sp: f64, rad: f64, base: f64, spread: f
             // Warmth varies per lump so the wall is flesh-over-bone rather than
             // one flat grey.
             let warm = 0.62 + cellHash(cid, gy, salt + 19) * 0.36
-            nodule(c, x, y, r, base + cellHash(cid, gy, salt + 13) * spread, warm)
+            nodule(&mut c, x, y, r, base + cellHash(cid, gy, salt + 13) * spread, warm)
         }
     }
 }
@@ -93,15 +93,15 @@ fn ribcage(c: &mut Canvas, off: f64, sp: f64) {
             continue
         }
         let wd = 20.0 + cellHash(cid, 0, 91) * 14.0
-        fillRect(c, x, 0.0, x + wd, ch, 0.016, 0.014, 0.012, 1.0)
-        fillRect(c, x + wd - 5.0, 0.0, x + wd, ch, 0.030, 0.027, 0.022, 1.0)
-        fillRect(c, x, 0.0, x + 3.0, ch, 0.005, 0.004, 0.004, 1.0)
+        fillRect(&mut c, x, 0.0, x + wd, ch, 0.016, 0.014, 0.012, 1.0)
+        fillRect(&mut c, x + wd - 5.0, 0.0, x + wd, ch, 0.030, 0.027, 0.022, 1.0)
+        fillRect(&mut c, x, 0.0, x + 3.0, ch, 0.005, 0.004, 0.004, 1.0)
         // vertebrae: the rib is segmented, and the joints catch the light
         var k: i64 = 0
         while k < 12 {
             let y = (k as f64) * 64.0 + cellHash(cid, k, 55) * 12.0
-            fillRect(c, x - 4.0, y, x + wd + 4.0, y + 7.0, 0.036, 0.032, 0.026, 1.0)
-            fillRect(c, x - 4.0, y + 5.0, x + wd + 4.0, y + 7.0, 0.008, 0.007, 0.006, 1.0)
+            fillRect(&mut c, x - 4.0, y, x + wd + 4.0, y + 7.0, 0.036, 0.032, 0.026, 1.0)
+            fillRect(&mut c, x - 4.0, y + 5.0, x + wd + 4.0, y + 7.0, 0.008, 0.007, 0.006, 1.0)
             k = k + 1
         }
     }
@@ -124,13 +124,13 @@ fn tendrils(c: &mut Canvas, off: f64, sp: f64, h: f64) {
         let len = 40.0 + cellHash(cid, 0, 9) * 150.0
         let wd = 5.0 + cellHash(cid, 0, 11) * 7.0
         if up {
-            fillRect(c, x, 0.0, x + wd, len, 0.026, 0.023, 0.019, 1.0)
-            fillRect(c, x + wd - 2.0, 0.0, x + wd, len, 0.044, 0.039, 0.031, 1.0)
-            nodule(c, x + wd * 0.5, len, wd * 0.9, 0.034, 0.80)
+            fillRect(&mut c, x, 0.0, x + wd, len, 0.026, 0.023, 0.019, 1.0)
+            fillRect(&mut c, x + wd - 2.0, 0.0, x + wd, len, 0.044, 0.039, 0.031, 1.0)
+            nodule(&mut c, x + wd * 0.5, len, wd * 0.9, 0.034, 0.80)
         } else {
-            fillRect(c, x, h - len, x + wd, h, 0.026, 0.023, 0.019, 1.0)
-            fillRect(c, x + wd - 2.0, h - len, x + wd, h, 0.044, 0.039, 0.031, 1.0)
-            nodule(c, x + wd * 0.5, h - len, wd * 0.9, 0.034, 0.80)
+            fillRect(&mut c, x, h - len, x + wd, h, 0.026, 0.023, 0.019, 1.0)
+            fillRect(&mut c, x + wd - 2.0, h - len, x + wd, h, 0.044, 0.039, 0.031, 1.0)
+            nodule(&mut c, x + wd * 0.5, h - len, wd * 0.9, 0.034, 0.80)
         }
     }
 }
@@ -141,11 +141,11 @@ fn backdrop(c: &mut Canvas, w: &World) {
     let ch = c.h as f64
     // A floor tone under everything: without it the gaps between lumps are pure
     // black, and the wall reads as high-frequency noise rather than as a surface.
-    fillRect(c, 0.0 - 80.0, 0.0 - 80.0, (c.w as f64) + 80.0, ch + 80.0, 0.0075, 0.0068, 0.0085, 1.0)
-    noduleField(c, w.dist * 0.16, 62.0, 34.0, 0.0075, 0.0055, 101)
-    ribcage(c, w.dist * 0.34, 224.0)
-    noduleField(c, w.dist * 0.52, 104.0, 52.0, 0.016, 0.011, 401)
-    tendrils(c, w.dist * 0.78, 168.0, ch)
+    fillRect(&mut c, 0.0 - 80.0, 0.0 - 80.0, (c.w as f64) + 80.0, ch + 80.0, 0.0075, 0.0068, 0.0085, 1.0)
+    noduleField(&mut c, w.dist * 0.16, 62.0, 34.0, 0.0075, 0.0055, 101)
+    ribcage(&mut c, w.dist * 0.34, 224.0)
+    noduleField(&mut c, w.dist * 0.52, 104.0, 52.0, 0.016, 0.011, 401)
+    tendrils(&mut c, w.dist * 0.78, 168.0, ch)
 }
 
 // ── bodies ────────────────────────────────────────────────────────────────────
@@ -156,47 +156,47 @@ fn backdrop(c: &mut Canvas, w: &World) {
 fn drawBody(c: &mut Canvas, s: &Sprites, k: Kind, x: f64, y: f64, radius: f64, tint: f64, orbKind: i64) {
     match k {
         Kind.Drone => {
-            fitSprite(c, s.drone, x, y, radius, tint, 0.10)
+            fitSprite(&mut c, s.drone, x, y, radius, tint, 0.10)
         }
         Kind.Weaver => {
-            fitSprite(c, s.weaver, x, y, radius, tint, 0.22)
+            fitSprite(&mut c, s.weaver, x, y, radius, tint, 0.22)
         }
         Kind.Swooper => {
-            fitSprite(c, s.swooper, x, y, radius, tint, 0.14)
+            fitSprite(&mut c, s.swooper, x, y, radius, tint, 0.14)
         }
         Kind.Carrier => {
-            fitSprite(c, s.carrier, x, y, radius, tint, 0.12)
+            fitSprite(&mut c, s.carrier, x, y, radius, tint, 0.12)
         }
         Kind.Mine => {
-            fitSprite(c, s.mine, x, y, radius, tint, 0.30)
+            fitSprite(&mut c, s.mine, x, y, radius, tint, 0.30)
         }
         Kind.Turret => {
-            fitSprite(c, s.turret, x, y, radius, tint, 0.12)
+            fitSprite(&mut c, s.turret, x, y, radius, tint, 0.12)
         }
         Kind.SnakeHead => {
-            fitSprite(c, s.snakeHead, x, y, radius, tint, 0.16)
+            fitSprite(&mut c, s.snakeHead, x, y, radius, tint, 0.16)
         }
         Kind.SnakeSeg => {
-            fitSprite(c, s.snakeSeg, x, y, radius, tint, 0.16)
+            fitSprite(&mut c, s.snakeSeg, x, y, radius, tint, 0.16)
         }
         Kind.Healer => {
-            fitSprite(c, s.healer, x, y, radius, tint, 0.30)
+            fitSprite(&mut c, s.healer, x, y, radius, tint, 0.30)
         }
         Kind.Core => {
-            fitSprite(c, s.core, x, y, radius, tint, 0.16)
+            fitSprite(&mut c, s.core, x, y, radius, tint, 0.16)
         }
         Kind.Plate => {
-            fitSprite(c, s.plate, x, y, radius, tint, 0.14)
+            fitSprite(&mut c, s.plate, x, y, radius, tint, 0.14)
         }
         Kind.Orb => {
             var i = orbKind
             if i < 0 || i >= s.orbs.len {
                 i = 0
             }
-            fitSprite(c, s.orbs[i], x, y, radius, tint, 0.55)
+            fitSprite(&mut c, s.orbs[i], x, y, radius, tint, 0.55)
         }
         Kind.Pod => {
-            fitSprite(c, s.pod, x, y, radius, tint, 0.45)
+            fitSprite(&mut c, s.pod, x, y, radius, tint, 0.45)
         }
     }
 }
@@ -206,9 +206,9 @@ fn drawBody(c: &mut Canvas, s: &Sprites, k: Kind, x: f64, y: f64, radius: f64, t
 fn fitSprite(c: &mut Canvas, sp: &Sprite, x: f64, y: f64, radius: f64, tint: f64, glow: f64) {
     let sc = radius * 2.9 / (sp.w as f64)
     if tint > 0.0 {
-        blitSprite(c, sp, x, y, sc, sc, false, 1.0, glow, 2.4, 2.3, 2.2, tint)
+        blitSprite(&mut c, sp, x, y, sc, sc, false, 1.0, glow, 2.4, 2.3, 2.2, tint)
     } else {
-        drawSprite(c, sp, x, y, sc, false, glow)
+        drawSprite(&mut c, sp, x, y, sc, false, glow)
     }
 }
 
@@ -222,19 +222,19 @@ fn hashf(seed: i64, i: i64): f64 {
 pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
     // Enter world space once. Every primitive below picks the shake up from the
     // canvas, so there is no per-call-site offset left to forget.
-    cameraSet(c, ox, oy)
-    backdrop(c, w)
+    cameraSet(&mut c, ox, oy)
+    backdrop(&mut c, w)
     // Drifting spores. Dim and cold on purpose — this layer used to be bright
     // enough to hide a bullet in.
     for i in 0..w.stars.len {
         let z = w.stars[i].z
         let f = 0.03 + z * 0.11
-        spot(c, w.stars[i].x, w.stars[i].y, 0.6 + z * 1.1, f * 0.55, f * 0.6, f * 0.7)
+        spot(&mut c, w.stars[i].x, w.stars[i].y, 0.6 + z * 1.1, f * 0.55, f * 0.6, f * 0.7)
     }
-    terrainDraw(c, w.terrain)
+    terrainDraw(&mut c, w.terrain)
     // The lattice is invisible until something shoves it; what you see here is
     // the shockwave, not a grid.
-    gridDrawShock(c, w.grid, 0.10, 0.22, 0.40)
+    gridDrawShock(&mut c, w.grid, 0.10, 0.22, 0.40)
 
     // links drawn straight from the handles
     for i in 0..w.ents.len {
@@ -246,26 +246,26 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
                 let t = w.ents[i].target
                 if alive(w, t) {
                     let pulse = 0.6 + 0.4 * Math.sin(w.time * 14.0)
-                    line(c, w.ents[i].x, w.ents[i].y, w.ents[t.slot].x, w.ents[t.slot].y, 0.15 * pulse, 1.5 * pulse, 0.7 * pulse)
-                    spot(c, w.ents[t.slot].x, w.ents[t.slot].y, 9.0, 0.1, 0.9, 0.4)
+                    line(&mut c, w.ents[i].x, w.ents[i].y, w.ents[t.slot].x, w.ents[t.slot].y, 0.15 * pulse, 1.5 * pulse, 0.7 * pulse)
+                    spot(&mut c, w.ents[t.slot].x, w.ents[t.slot].y, 9.0, 0.1, 0.9, 0.4)
                 }
             }
             Kind.Plate => {
                 let core = w.ents[i].leader
                 if alive(w, core) {
-                    line(c, w.ents[i].x, w.ents[i].y, w.ents[core.slot].x, w.ents[core.slot].y, 0.55, 0.34, 0.08)
+                    line(&mut c, w.ents[i].x, w.ents[i].y, w.ents[core.slot].x, w.ents[core.slot].y, 0.55, 0.34, 0.08)
                 }
             }
             Kind.SnakeSeg => {
                 let ld = w.ents[i].leader
                 if alive(w, ld) {
-                    line(c, w.ents[i].x, w.ents[i].y, w.ents[ld.slot].x, w.ents[ld.slot].y, 0.5, 0.45, 0.30)
+                    line(&mut c, w.ents[i].x, w.ents[i].y, w.ents[ld.slot].x, w.ents[ld.slot].y, 0.5, 0.45, 0.30)
                 }
             }
             Kind.Pod => {
                 // A short tether to the ship, so a pod reads as yours and not as
                 // one more thing trying to kill you.
-                line(c, w.ents[i].x, w.ents[i].y, w.player.x, w.player.y, 0.55, 0.25, 0.05)
+                line(&mut c, w.ents[i].x, w.ents[i].y, w.player.x, w.player.y, 0.55, 0.25, 0.05)
             }
             _ => {
             }
@@ -276,7 +276,7 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
     for i in 0..w.parts.len {
         let t = w.parts[i].life / w.parts[i].maxLife
         let f = t * t
-        spot(c, w.parts[i].x, w.parts[i].y, w.parts[i].size * (0.5 + t), w.parts[i].cr * f, w.parts[i].cg * f, w.parts[i].cb * f)
+        spot(&mut c, w.parts[i].x, w.parts[i].y, w.parts[i].size * (0.5 + t), w.parts[i].cr * f, w.parts[i].cg * f, w.parts[i].cb * f)
     }
 
     // lightning arcs
@@ -296,7 +296,7 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
                 qx = qx + hashf(a.seed, k) * 16.0
                 qy = qy + hashf(a.seed, k + 99) * 16.0
             }
-            line(c, px, py, qx, qy, 1.4 * f, 1.6 * f, 2.2 * f)
+            line(&mut c, px, py, qx, qy, 1.4 * f, 1.6 * f, 2.2 * f)
             px = qx
             py = qy
         }
@@ -315,11 +315,11 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
                 let t = ((k as f64) / 8.0) * 2.0 - 1.0
                 let f = 1.0 - Math.abs(t) * 0.82
                 let yy = b.y + t * half
-                line(c, tailX, yy, b.x, yy, b.cr * f, b.cg * f, b.cb * f)
+                line(&mut c, tailX, yy, b.x, yy, b.cr * f, b.cg * f, b.cb * f)
                 k = k + 1
             }
-            line(c, tailX, b.y, b.x, b.y, 2.6, 2.6, 2.6)
-            spot(c, b.x, b.y, half * 1.2, 1.6, 2.0, 2.4)
+            line(&mut c, tailX, b.y, b.x, b.y, 2.6, 2.6, 2.6)
+            spot(&mut c, b.x, b.y, half * 1.2, 1.6, 2.0, 2.4)
             continue
         }
         // Every other projectile is a sprite. Shape carries the meaning, so the
@@ -329,18 +329,18 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
         let by = b.y
         if b.src == SRC_HOSTILE {
             // a short wake, then the bead itself on top of it
-            line(c, b.px, b.py, bx, by, 0.55, 0.05, 0.04)
-            spot(c, bx, by, 9.0, 0.34, 0.02, 0.02)
-            drawSprite(c, s.hostileShot, bx, by, 1.7, false, 0.30)
+            line(&mut c, b.px, b.py, bx, by, 0.55, 0.05, 0.04)
+            spot(&mut c, bx, by, 9.0, 0.34, 0.02, 0.02)
+            drawSprite(&mut c, s.hostileShot, bx, by, 1.7, false, 0.30)
         } else if b.src == SRC_MISSILE {
-            drawSprite(c, s.missile, bx, by, 1.9, false, 0.25)
-            spot(c, bx - 14.0, by, 5.0, 1.3, 0.55, 0.10)
+            drawSprite(&mut c, s.missile, bx, by, 1.9, false, 0.25)
+            spot(&mut c, bx - 14.0, by, 5.0, 1.3, 0.55, 0.10)
         } else if b.src == SRC_POD {
-            line(c, b.px, b.py, bx, by, 0.7, 0.15, 0.7)
-            drawSprite(c, s.podShot, bx, by, 1.5, false, 0.40)
+            line(&mut c, b.px, b.py, bx, by, 0.7, 0.15, 0.7)
+            drawSprite(&mut c, s.podShot, bx, by, 1.5, false, 0.40)
         } else {
-            line(c, b.px, b.py, bx, by, 0.6, 0.45, 0.10)
-            drawSprite(c, s.shot, bx, by, 1.6, false, 0.40)
+            line(&mut c, b.px, b.py, bx, by, 0.6, 0.45, 0.10)
+            drawSprite(&mut c, s.shot, bx, by, 1.6, false, 0.40)
         }
     }
 
@@ -356,8 +356,8 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
             // materialising: a shrinking warning ring, no collision yet
             let r = e.radius * (1.0 + e.spawnT * 5.0)
             let f = 0.5 + 0.5 * Math.sin(e.spawnT * 40.0)
-            circle(c, x, y, r, 24, e.cr * f, e.cg * f, e.cb * f)
-            circle(c, x, y, e.radius * 1.15, 20, e.cr * 0.5, e.cg * 0.5, e.cb * 0.5)
+            circle(&mut c, x, y, r, 24, e.cr * f, e.cg * f, e.cb * f)
+            circle(&mut c, x, y, e.radius * 1.15, 20, e.cr * 0.5, e.cg * 0.5, e.cb * 0.5)
             continue
         }
         var tint = 0.0
@@ -370,48 +370,48 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
                 // The whole pitch for the pickup system is this: a glowing thing
                 // that is obviously good, that comes to you.
                 let pulse = 0.72 + 0.28 * Math.sin(w.time * 7.0 + e.phase)
-                spot(c, x, y, e.radius * 2.6 * pulse, e.cr * 0.22, e.cg * 0.22, e.cb * 0.22)
-                spot(c, x, y, e.radius * 1.4 * pulse, e.cr * 0.30, e.cg * 0.30, e.cb * 0.30)
+                spot(&mut c, x, y, e.radius * 2.6 * pulse, e.cr * 0.22, e.cg * 0.22, e.cb * 0.22)
+                spot(&mut c, x, y, e.radius * 1.4 * pulse, e.cr * 0.30, e.cg * 0.30, e.cb * 0.30)
             }
             Kind.Pod => {
                 let pulse = 0.8 + 0.2 * Math.sin(w.time * 12.0 + e.phase)
-                spot(c, x, y, e.radius * 1.9 * pulse, 0.30, 0.12, 0.02)
+                spot(&mut c, x, y, e.radius * 1.9 * pulse, 0.30, 0.12, 0.02)
             }
             Kind.Mine => {
                 let pulse = 0.5 + 0.5 * Math.sin(w.time * 6.0 + e.phase)
-                circle(c, x, y, 56.0, 26, 0.22 * pulse, 0.01, 0.02)
+                circle(&mut c, x, y, 56.0, 26, 0.22 * pulse, 0.01, 0.02)
             }
             _ => {
             }
         }
 
-        drawBody(c, s, e.kind, x, y, e.radius, tint, e.tier)
+        drawBody(&mut c, s, e.kind, x, y, e.radius, tint, e.tier)
 
         match e.kind {
             Kind.Core => {
                 if e.tier <= 0 {
                     // Weak point exposed, and it looks like one.
                     let pulse = 0.6 + 0.4 * Math.sin(w.time * 11.0)
-                    spot(c, x, y, e.radius * 0.8 * pulse, 2.0, 0.35, 0.10)
+                    spot(&mut c, x, y, e.radius * 0.8 * pulse, 2.0, 0.35, 0.10)
                 }
                 let frac = Math.maxF64(e.hp / e.maxHp, 0.0)
                 let bw = 200.0
-                fillRect(c, x - bw * 0.5, y - e.radius - 30.0, x + bw * 0.5, y - e.radius - 24.0, 0.10, 0.05, 0.05, 1.0)
-                fillRect(c, x - bw * 0.5, y - e.radius - 30.0, x - bw * 0.5 + bw * frac, y - e.radius - 24.0, 1.9, 0.3, 0.1, 1.0)
+                fillRect(&mut c, x - bw * 0.5, y - e.radius - 30.0, x + bw * 0.5, y - e.radius - 24.0, 0.10, 0.05, 0.05, 1.0)
+                fillRect(&mut c, x - bw * 0.5, y - e.radius - 30.0, x - bw * 0.5 + bw * frac, y - e.radius - 24.0, 1.9, 0.3, 0.1, 1.0)
             }
             Kind.Carrier => {
                 let frac = Math.maxF64(e.hp / e.maxHp, 0.0)
                 let bw = e.radius * 2.4
-                fillRect(c, x - bw * 0.5, y - e.radius - 14.0, x + bw * 0.5, y - e.radius - 10.0, 0.10, 0.06, 0.02, 1.0)
-                fillRect(c, x - bw * 0.5, y - e.radius - 14.0, x - bw * 0.5 + bw * frac, y - e.radius - 10.0, 1.9, 0.9, 0.1, 1.0)
+                fillRect(&mut c, x - bw * 0.5, y - e.radius - 14.0, x + bw * 0.5, y - e.radius - 10.0, 0.10, 0.06, 0.02, 1.0)
+                fillRect(&mut c, x - bw * 0.5, y - e.radius - 14.0, x - bw * 0.5 + bw * frac, y - e.radius - 10.0, 1.9, 0.9, 0.1, 1.0)
                 let pulse = 0.6 + 0.4 * Math.sin(w.time * 9.0)
-                spot(c, x, y, e.radius * 0.45 * pulse, 0.4, 1.8, 2.0)
+                spot(&mut c, x, y, e.radius * 0.45 * pulse, 0.4, 1.8, 2.0)
             }
             Kind.Turret => {
                 let bx = x + Math.cos(e.ang) * e.radius * 1.6
                 let by = y + Math.sin(e.ang) * e.radius * 1.6
-                line(c, x, y, bx, by, 0.9, 0.85, 0.70)
-                line(c, x, y, bx, by, 0.3, 0.3, 0.26)
+                line(&mut c, x, y, bx, by, 0.9, 0.85, 0.70)
+                line(&mut c, x, y, bx, by, 0.3, 0.3, 0.26)
             }
             _ => {
             }
@@ -427,8 +427,8 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
         let x = w.player.x
         let y = w.player.y
         // exhaust first, so the hull sits on top of it
-        spot(c, x - 34.0, y, 10.0, 0.9 * f, 0.34 * f, 0.06 * f)
-        spot(c, x - 38.0, y, 5.0, 1.2 * f, 0.8 * f, 0.3 * f)
+        spot(&mut c, x - 34.0, y, 10.0, 0.9 * f, 0.34 * f, 0.06 * f)
+        spot(&mut c, x - 38.0, y, 5.0, 1.2 * f, 0.8 * f, 0.3 * f)
 
         // The shield used to be a ring drawn around the ship, which read as a
         // separate object orbiting it. It is now the hull's own silhouette blown
@@ -436,21 +436,21 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
         // is supposed to look like.
         if w.player.shield > 0.0 {
             let pulse = 0.55 + 0.45 * Math.sin(w.time * 6.0)
-            blitSprite(c, s.ship, x, y, 1.72, 1.78, false, 0.30 + 0.16 * pulse, 0.55, 0.20, 1.90, 1.30, 1.0)
+            blitSprite(&mut c, s.ship, x, y, 1.72, 1.78, false, 0.30 + 0.16 * pulse, 0.55, 0.20, 1.90, 1.30, 1.0)
         }
-        blitSprite(c, s.ship, x, y, 1.35, 1.35, false, f, 0.05, 0.0, 0.0, 0.0, 0.0)
+        blitSprite(&mut c, s.ship, x, y, 1.35, 1.35, false, f, 0.05, 0.0, 0.0, 0.0, 0.0)
         if w.player.charge > 0.05 {
             // The charge is drawn on the nose, where the beam will come out.
             let ch = w.player.charge
             let rr = 8.0 + ch * 18.0
-            circle(c, x + 24.0, y, rr, 22, 0.6 + ch * 1.2, 1.4 * ch + 0.4, 1.8 * ch + 0.5)
-            spot(c, x + 24.0, y, rr * 0.6, 0.4 + ch, 1.0 * ch, 1.4 * ch)
+            circle(&mut c, x + 24.0, y, rr, 22, 0.6 + ch * 1.2, 1.4 * ch + 0.4, 1.8 * ch + 0.5)
+            spot(&mut c, x + 24.0, y, rr * 0.6, 0.4 + ch, 1.0 * ch, 1.4 * ch)
             if ch >= 1.0 {
-                circle(c, x + 24.0, y, rr + 6.0 + Math.sin(w.time * 30.0) * 3.0, 24, 1.8, 2.2, 2.6)
+                circle(&mut c, x + 24.0, y, rr + 6.0 + Math.sin(w.time * 30.0) * 3.0, 24, 1.8, 2.2, 2.6)
             }
         }
         if w.player.beamFlash > 0.0 {
-            spot(c, x + 30.0, y, w.player.beamFlash * 130.0, 1.4, 2.0, 2.4)
+            spot(&mut c, x + 30.0, y, w.player.beamFlash * 130.0, 1.4, 2.0, 2.4)
         }
     }
 }
@@ -461,57 +461,57 @@ fn pipRow(c: &mut Canvas, x: i64, y: i64, n: i64, maxN: i64, r: f64, g: f64, b: 
     for i in 0..maxN {
         let px = (x + i * 16) as f64
         if i < n {
-            spot(c, px, y as f64, 5.0, r, g, b)
+            spot(&mut c, px, y as f64, 5.0, r, g, b)
         } else {
-            circle(c, px, y as f64, 4.0, 10, r * 0.16, g * 0.16, b * 0.16)
+            circle(&mut c, px, y as f64, 4.0, 10, r * 0.16, g * 0.16, b * 0.16)
         }
     }
 }
 
 pub fn drawHud(c: &mut Canvas, w: &World) {
-    cameraClear(c) // back to screen space: the HUD must not move
+    cameraClear(&mut c) // back to screen space: the HUD must not move
     // The wall behind the HUD is busy now, so the HUD gets its own plate.
-    fillRect(c, 0.0, 0.0, 300.0, 226.0, 0.02, 0.02, 0.03, 0.72)
-    fillRect(c, 0.0, 224.0, 300.0, 226.0, 0.20, 0.30, 0.40, 0.9)
-    fillRect(c, 298.0, 0.0, 300.0, 226.0, 0.20, 0.30, 0.40, 0.9)
+    fillRect(&mut c, 0.0, 0.0, 300.0, 226.0, 0.02, 0.02, 0.03, 0.72)
+    fillRect(&mut c, 0.0, 224.0, 300.0, 226.0, 0.20, 0.30, 0.40, 0.9)
+    fillRect(&mut c, 298.0, 0.0, 300.0, 226.0, 0.20, 0.30, 0.40, 0.9)
 
-    text(c, 16, 16, "SCORE " + w.score.toString(), 3, 0.32, 0.62, 0.82)
+    text(&mut c, 16, 16, "SCORE " + w.score.toString(), 3, 0.32, 0.62, 0.82)
     if w.mult > 1 {
-        text(c, 16, 52, "x" + w.mult.toString(), 3, 0.85, 0.62, 0.14)
+        text(&mut c, 16, 52, "x" + w.mult.toString(), 3, 0.85, 0.62, 0.14)
     }
 
     let sstr = "STAGE " + w.stage.toString()
-    text(c, c.w - 24 - textWidth(sstr, 3), 22, sstr, 3, 0.55, 0.24, 0.68)
+    text(&mut c, c.w - 24 - textWidth(sstr, 3), 22, sstr, 3, 0.55, 0.24, 0.68)
 
     // How far into the stage you are — the only pacing cue a scroller has.
     let barW = 240.0
     let bx = (c.w as f64) - 24.0 - barW
     let frac = Math.clampF64(w.dist / w.stageLen, 0.0, 1.0)
-    fillRect(c, bx, 60.0, bx + barW, 66.0, 0.05, 0.03, 0.07, 0.9)
-    fillRect(c, bx, 60.0, bx + barW * frac, 66.0, 0.7, 0.3, 0.9, 1.0)
+    fillRect(&mut c, bx, 60.0, bx + barW, 66.0, 0.05, 0.03, 0.07, 0.9)
+    fillRect(&mut c, bx, 60.0, bx + barW * frac, 66.0, 0.7, 0.3, 0.9, 1.0)
     if w.bossUp {
-        textCentered(c, c.w - 24 - 120, 78, "BOSS", 2, 1.6, 0.3, 0.3)
+        textCentered(&mut c, c.w - 24 - 120, 78, "BOSS", 2, 1.6, 0.3, 0.3)
     }
 
     // The loadout, always visible, so a pickup is legible as a change.
-    text(c, 16, 90, "SHIPS", 2, 0.22, 0.38, 0.48)
-    pipRow(c, 116, 96, w.player.lives, 5, 0.3, 1.2, 1.7)
-    text(c, 16, 114, "POWER", 2, 0.22, 0.38, 0.48)
-    pipRow(c, 116, 120, w.player.power, 5, 0.2, 1.6, 2.0)
-    text(c, 16, 138, "PODS", 2, 0.22, 0.38, 0.48)
-    pipRow(c, 116, 144, w.player.pods, 2, 2.0, 0.4, 1.8)
-    text(c, 16, 162, "MISSILE", 2, 0.22, 0.38, 0.48)
-    pipRow(c, 116, 168, w.player.missiles, 2, 2.0, 1.0, 0.2)
-    text(c, 16, 186, "SPEED", 2, 0.22, 0.38, 0.48)
-    pipRow(c, 116, 192, w.player.speed, 3, 1.6, 1.6, 1.8)
+    text(&mut c, 16, 90, "SHIPS", 2, 0.22, 0.38, 0.48)
+    pipRow(&mut c, 116, 96, w.player.lives, 5, 0.3, 1.2, 1.7)
+    text(&mut c, 16, 114, "POWER", 2, 0.22, 0.38, 0.48)
+    pipRow(&mut c, 116, 120, w.player.power, 5, 0.2, 1.6, 2.0)
+    text(&mut c, 16, 138, "PODS", 2, 0.22, 0.38, 0.48)
+    pipRow(&mut c, 116, 144, w.player.pods, 2, 2.0, 0.4, 1.8)
+    text(&mut c, 16, 162, "MISSILE", 2, 0.22, 0.38, 0.48)
+    pipRow(&mut c, 116, 168, w.player.missiles, 2, 2.0, 1.0, 0.2)
+    text(&mut c, 16, 186, "SPEED", 2, 0.22, 0.38, 0.48)
+    pipRow(&mut c, 116, 192, w.player.speed, 3, 1.6, 1.6, 1.8)
     // The shield comes back on its own, so the wait for it has to be visible.
     if w.player.shield > 0.0 {
-        text(c, 16, 208, "SHIELD", 2, 0.15, 1.4, 0.7)
+        text(&mut c, 16, 208, "SHIELD", 2, 0.15, 1.4, 0.7)
     } else {
-        text(c, 16, 208, "SHIELD", 2, 0.10, 0.24, 0.18)
+        text(&mut c, 16, 208, "SHIELD", 2, 0.10, 0.24, 0.18)
         let sfrac = Math.clampF64(1.0 - w.player.shieldT / 13.0, 0.0, 1.0)
-        fillRect(c, 116.0, 210.0, 236.0, 216.0, 0.03, 0.07, 0.05, 0.9)
-        fillRect(c, 116.0, 210.0, 116.0 + 120.0 * sfrac, 216.0, 0.10, 0.85, 0.42, 1.0)
+        fillRect(&mut c, 116.0, 210.0, 236.0, 216.0, 0.03, 0.07, 0.05, 0.9)
+        fillRect(&mut c, 116.0, 210.0, 116.0 + 120.0 * sfrac, 216.0, 0.10, 0.85, 0.42, 1.0)
     }
 
     // taking a hit stains the screen edges red for a moment
@@ -521,10 +521,10 @@ pub fn drawHud(c: &mut Canvas, w: &World) {
             let t = (i as f64) / 39.0
             let xx = t * (c.w as f64)
             let yy = t * (c.h as f64)
-            spot(c, xx, 6.0, 90.0, f, 0.0, 0.0)
-            spot(c, xx, (c.h as f64) - 6.0, 90.0, f, 0.0, 0.0)
-            spot(c, 6.0, yy, 90.0, f, 0.0, 0.0)
-            spot(c, (c.w as f64) - 6.0, yy, 90.0, f, 0.0, 0.0)
+            spot(&mut c, xx, 6.0, 90.0, f, 0.0, 0.0)
+            spot(&mut c, xx, (c.h as f64) - 6.0, 90.0, f, 0.0, 0.0)
+            spot(&mut c, 6.0, yy, 90.0, f, 0.0, 0.0)
+            spot(&mut c, (c.w as f64) - 6.0, yy, 90.0, f, 0.0, 0.0)
         }
     }
 
@@ -555,7 +555,7 @@ pub fn drawHud(c: &mut Canvas, w: &World) {
             pg = 1.8
             pb = 2.0
         }
-        textCentered(c, w.pickupX as i64, w.pickupY as i64, orbName(w.pickupCode), 3, pr * f, pg * f, pb * f)
+        textCentered(&mut c, w.pickupX as i64, w.pickupY as i64, orbName(w.pickupCode), 3, pr * f, pg * f, pb * f)
     }
 
     if w.banner > 0.0 && !w.gameOver {
@@ -564,23 +564,23 @@ pub fn drawHud(c: &mut Canvas, w: &World) {
             f = w.banner / 0.7
         }
         if w.bossUp {
-            textCentered(c, c.w / 2, c.h / 2 - 40, "WARNING", 8, 1.9 * f, 0.3 * f, 0.3 * f)
-            textCentered(c, c.w / 2, c.h / 2 + 40, "BREAK THE PLATES, THEN THE CORE", 2, 1.3 * f, 0.7 * f, 0.5 * f)
+            textCentered(&mut c, c.w / 2, c.h / 2 - 40, "WARNING", 8, 1.9 * f, 0.3 * f, 0.3 * f)
+            textCentered(&mut c, c.w / 2, c.h / 2 + 40, "BREAK THE PLATES, THEN THE CORE", 2, 1.3 * f, 0.7 * f, 0.5 * f)
         } else {
-            textCentered(c, c.w / 2, c.h / 2 - 40, "STAGE " + w.stage.toString(), 8, 0.7 * f, 0.5 * f, 1.4 * f)
+            textCentered(&mut c, c.w / 2, c.h / 2 - 40, "STAGE " + w.stage.toString(), 8, 0.7 * f, 0.5 * f, 1.4 * f)
             if w.stage == 1 {
-                textCentered(c, c.w / 2, c.h / 2 + 40, "THE GUN FIRES ITSELF — HOLD SPACE TO CHARGE", 2, 0.5 * f, 0.9 * f, 1.1 * f)
-                textCentered(c, c.w / 2, c.h / 2 + 64, "GLOWING ORBS ARE ALWAYS GOOD, AND THEY COME TO YOU", 2, 0.4 * f, 0.9 * f, 0.7 * f)
-                textCentered(c, c.w / 2, c.h / 2 + 88, "THE CAVE KILLS YOU TOO", 2, 0.9 * f, 0.3 * f, 0.35 * f)
+                textCentered(&mut c, c.w / 2, c.h / 2 + 40, "THE GUN FIRES ITSELF — HOLD SPACE TO CHARGE", 2, 0.5 * f, 0.9 * f, 1.1 * f)
+                textCentered(&mut c, c.w / 2, c.h / 2 + 64, "GLOWING ORBS ARE ALWAYS GOOD, AND THEY COME TO YOU", 2, 0.4 * f, 0.9 * f, 0.7 * f)
+                textCentered(&mut c, c.w / 2, c.h / 2 + 88, "THE CAVE KILLS YOU TOO", 2, 0.9 * f, 0.3 * f, 0.35 * f)
             }
         }
     }
 
     if w.gameOver {
         let cx = c.w / 2
-        fillRect(c, 0.0, (c.h / 2 - 110) as f64, c.w as f64, (c.h / 2 + 110) as f64, 0.02, 0.01, 0.02, 0.78)
-        textCentered(c, cx, c.h / 2 - 60, "GAME OVER", 7, 1.9, 0.3, 0.4)
-        textCentered(c, cx, c.h / 2 + 20, "SCORE " + w.score.toString(), 4, 1.4, 1.4, 1.8)
-        textCentered(c, cx, c.h / 2 + 70, "PRESS ENTER TO RESTART", 2, 0.8, 1.0, 1.3)
+        fillRect(&mut c, 0.0, (c.h / 2 - 110) as f64, c.w as f64, (c.h / 2 + 110) as f64, 0.02, 0.01, 0.02, 0.78)
+        textCentered(&mut c, cx, c.h / 2 - 60, "GAME OVER", 7, 1.9, 0.3, 0.4)
+        textCentered(&mut c, cx, c.h / 2 + 20, "SCORE " + w.score.toString(), 4, 1.4, 1.4, 1.8)
+        textCentered(&mut c, cx, c.h / 2 + 70, "PRESS ENTER TO RESTART", 2, 0.8, 1.0, 1.3)
     }
 }

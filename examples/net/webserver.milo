@@ -153,7 +153,7 @@ pub fn searchHandler(ctx: &mut Context): Response {
 
 pub fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Response {
     print(ctx.req.method + " " + ctx.req.path)
-    return next(ctx)
+    return next(&mut ctx)
 }
 
 // ── Main ──

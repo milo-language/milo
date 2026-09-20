@@ -116,7 +116,7 @@ fn stepColumn(t: &mut Terrain) {
     t.gen = t.gen + 1
     t.hold = t.hold - 1
     if t.hold <= 0 {
-        nextTarget(t)
+        nextTarget(&mut t)
     }
     if t.calm > 0 {
         t.calm = t.calm - 1
@@ -140,7 +140,7 @@ pub fn terrainAdvance(t: &mut Terrain, dx: f64) {
     var guard: i64 = 0
     while t.offset >= t.pitch && guard < 64 {
         t.offset = t.offset - t.pitch
-        stepColumn(t)
+        stepColumn(&mut t)
         guard = guard + 1
     }
 }
@@ -222,8 +222,8 @@ pub fn terrainDraw(c: &mut Canvas, t: &Terrain) {
         let by = t.bot[i]
 
         // body — over-drawn past the frame so a shake never opens a gap
-        fillRect(c, x0, 0.0 - 60.0, x1, ty, 0.008, 0.007, 0.009, 1.0)
-        fillRect(c, x0, by, x1, h + 60.0, 0.008, 0.007, 0.009, 1.0)
+        fillRect(&mut c, x0, 0.0 - 60.0, x1, ty, 0.008, 0.007, 0.009, 1.0)
+        fillRect(&mut c, x0, by, x1, h + 60.0, 0.008, 0.007, 0.009, 1.0)
 
         // Bulbous nodules pressed into the surface: two per column at hashed
         // depths, which is enough to stop the rock reading as a flat bar.
@@ -231,29 +231,29 @@ pub fn terrainDraw(c: &mut Canvas, t: &Terrain) {
             let d0 = 6.0 + colHash(t, i, k * 7 + 1) * 46.0
             let sz = 3.0 + colHash(t, i, k * 7 + 2) * 5.0
             let lit = 0.020 + colHash(t, i, k * 7 + 3) * 0.030
-            fillRect(c, x0, ty - d0 - sz, x1, ty - d0, lit, lit * 0.92, lit * 0.80, 1.0)
+            fillRect(&mut c, x0, ty - d0 - sz, x1, ty - d0, lit, lit * 0.92, lit * 0.80, 1.0)
             let d1 = 6.0 + colHash(t, i, k * 7 + 4) * 46.0
             let s1 = 3.0 + colHash(t, i, k * 7 + 5) * 5.0
             let l1 = 0.020 + colHash(t, i, k * 7 + 6) * 0.030
-            fillRect(c, x0, by + d1, x1, by + d1 + s1, l1, l1 * 0.92, l1 * 0.80, 1.0)
+            fillRect(&mut c, x0, by + d1, x1, by + d1 + s1, l1, l1 * 0.92, l1 * 0.80, 1.0)
         }
 
         // The lip: a band of pale bone right at the edge, then the wet rim.
-        fillRect(c, x0, ty - 7.0, x1, ty, 0.34, 0.31, 0.24, 1.0)
-        fillRect(c, x0, by, x1, by + 7.0, 0.34, 0.31, 0.24, 1.0)
-        fillRect(c, x0, ty - 3.0, x1, ty, 1.05, 0.98, 0.78, 1.0)
-        fillRect(c, x0, by, x1, by + 3.0, 1.05, 0.98, 0.78, 1.0)
-        line(c, x0, ty, x1, t.top[i + 1], 0.30, 0.55, 0.62)
-        line(c, x0, by, x1, t.bot[i + 1], 0.30, 0.55, 0.62)
+        fillRect(&mut c, x0, ty - 7.0, x1, ty, 0.34, 0.31, 0.24, 1.0)
+        fillRect(&mut c, x0, by, x1, by + 7.0, 0.34, 0.31, 0.24, 1.0)
+        fillRect(&mut c, x0, ty - 3.0, x1, ty, 1.05, 0.98, 0.78, 1.0)
+        fillRect(&mut c, x0, by, x1, by + 3.0, 1.05, 0.98, 0.78, 1.0)
+        line(&mut c, x0, ty, x1, t.top[i + 1], 0.30, 0.55, 0.62)
+        line(&mut c, x0, by, x1, t.bot[i + 1], 0.30, 0.55, 0.62)
 
         // Every so often the wall has something alive in it. It is deliberately
         // cold and unlit: red glow that pulses is the language this game uses for
         // "this will kill you", and scenery must not speak it.
         if (t.gen + i) % 23 == 0 {
-            fillRect(c, x0 + 4.0, ty - 16.0, x1 - 4.0, ty - 8.0, 0.05, 0.13, 0.15, 1.0)
+            fillRect(&mut c, x0 + 4.0, ty - 16.0, x1 - 4.0, ty - 8.0, 0.05, 0.13, 0.15, 1.0)
         }
         if (t.gen + i) % 31 == 0 {
-            fillRect(c, x0 + 4.0, by + 8.0, x1 - 4.0, by + 16.0, 0.05, 0.13, 0.15, 1.0)
+            fillRect(&mut c, x0 + 4.0, by + 8.0, x1 - 4.0, by + 16.0, 0.05, 0.13, 0.15, 1.0)
         }
     }
 }

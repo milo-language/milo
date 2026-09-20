@@ -94,7 +94,7 @@ pub fn main(): i32 {
             dt = 0.0005
         }
 
-        pollInput(inp, ev, 1.0)
+        pollInput(&mut inp, &mut ev, 1.0)
 
         // Keyboard and mouse both drive the same target: whichever moved last wins,
         // so there is nothing to configure and nothing to discover.
@@ -116,11 +116,11 @@ pub fn main(): i32 {
         let wantLaunch = inp.bomb || inp.restart
 
         if (g.gameOver || g.won) && inp.restart && !restartHeld {
-            gameReset(g)
+            gameReset(&mut g)
         }
         restartHeld = inp.restart
 
-        gameUpdate(g, dt, wantX, wantLaunch)
+        gameUpdate(&mut g, dt, wantX, wantLaunch)
 
         var ox = 0.0
         var oy = 0.0
@@ -129,8 +129,8 @@ pub fn main(): i32 {
             oy = Random.floatRange(0.0 - g.shake, g.shake)
         }
 
-        drawGame(c, g, ox, oy)
-        drawHud(c, g)
+        drawGame(&mut c, g, ox, oy)
+        drawHud(&mut c, g)
 
         fpsAccum = fpsAccum + dt
         fpsFrames = fpsFrames + 1
@@ -139,15 +139,15 @@ pub fn main(): i32 {
             fpsAccum = 0.0
             fpsFrames = 0
         }
-        text(c, 24, H - 30, fpsShown.toString() + " FPS", 2, 0.16, 0.26, 0.34)
+        text(&mut c, 24, H - 30, fpsShown.toString() + " FPS", 2, 0.16, 0.26, 0.34)
         let help = "MOVE THE PADDLE    SPACE LAUNCHES    ESC QUITS"
-        text(c, W - 24 - textWidth(help, 2), H - 30, help, 2, 0.16, 0.26, 0.34)
+        text(&mut c, W - 24 - textWidth(help, 2), H - 30, help, 2, 0.16, 0.26, 0.34)
 
         var exposure = 1.0
         if g.flash > 0.0 {
             exposure = 1.0 + g.flash * 1.8
         }
-        present(c, 0.6, exposure)
+        present(&mut c, 0.6, exposure)
 
         unsafe {
             SDL_UpdateTexture(tex, 0 as *u8, c.fb[0].addrOf() as *u8, (W * 4) as i32)

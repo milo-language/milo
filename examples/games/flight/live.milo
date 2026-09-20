@@ -194,8 +194,8 @@ pub fn envNew(lat: f64, lon: f64, reach: f64, groundM: f64): LiveEnv {
         rainFrac: 0.0,
         cloudsDirty: true,
     }
-    envRetime(e, 0.0)
-    envSynthWeather(e, reach)
+    envRetime(&mut e, 0.0)
+    envSynthWeather(&mut e, reach)
     return e
 }
 
@@ -222,7 +222,7 @@ pub fn envSynthWeather(e: &mut LiveEnv, reachIn: f64) {
     // renderer can be checked when nothing is raining over any real city.
     let fake = envF64("FLYBY_FAKE_RAIN", 0.0)
     if fake > 0.01 {
-        cloudAddTestCell(f, reach * 0.25, 0.0 - reach * 0.15, reach * 0.30, fake)
+        cloudAddTestCell(&mut f, reach * 0.25, 0.0 - reach * 0.15, reach * 0.30, fake)
         e.rainPeak = fake
         e.rainFrac = 0.08
     }
@@ -305,7 +305,7 @@ pub fn envFetchLive(e: &mut LiveEnv, reachIn: f64): bool {
         return false
     }
     e.lastFetchSec = epochSecs()
-    envInstall(e, snap)
+    envInstall(&mut e, snap)
     return true
 }
 
@@ -505,7 +505,7 @@ pub fn envWeatherTick(e: &mut LiveEnv, reachIn: f64) {
             let sameLon = snap.forLon - e.lon < 0.0001 && e.lon - snap.forLon < 0.0001
             if snap.ok && sameLat && sameLon {
                 e.lastFetchSec = epochSecs()
-                envInstall(e, snap)
+                envInstall(&mut e, snap)
                 if envF64("FLYBY_DEBUG_WX", 0.0) > 0.5 {
                     print("weather refreshed: " + envWeatherLabel(e))
                 }
@@ -555,7 +555,7 @@ pub fn envLiveRequested(): bool {
 // Ask for the real sky here and at every place this run visits afterwards.
 pub fn envGoLive(e: &mut LiveEnv, reach: f64): bool {
     e.liveWanted = true
-    return envFetchLive(e, reach)
+    return envFetchLive(&mut e, reach)
 }
 
 // One line describing where the sky came from, for the HUD and the console.
@@ -589,13 +589,13 @@ pub fn envSetPlace(e: &mut LiveEnv, lat: f64, lon: f64, reach: f64, groundM: f64
     e.lat = lat
     e.lon = lon
     e.groundM = groundM
-    envRetime(e, 0.0)
+    envRetime(&mut e, 0.0)
     // Synthetic first so the new place always has A sky, then the real one over
     // the top if it can be had. A fetch that fails on arrival leaves invented
     // weather rather than no weather, and the HUD says which it is.
-    envSynthWeather(e, reach)
+    envSynthWeather(&mut e, reach)
     if e.liveWanted {
-        let _ = envFetchLive(e, reach)
+        let _ = envFetchLive(&mut e, reach)
     }
 }
 

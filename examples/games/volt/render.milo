@@ -61,23 +61,23 @@ fn noise1(x: f64, seed: i64): f64 {
 fn skyOf(c: &mut Canvas, lvl: i64) {
     if lvl == 1 {
         // midday
-        skyGradient(c, 0.26, 0.60, 1.70, 1.05, 1.40, 1.85)
+        skyGradient(&mut c, 0.26, 0.60, 1.70, 1.05, 1.40, 1.85)
     } else if lvl == 2 {
         // late afternoon, warmer down at the horizon
-        skyGradient(c, 0.34, 0.52, 1.30, 1.60, 1.30, 1.15)
+        skyGradient(&mut c, 0.34, 0.52, 1.30, 1.60, 1.30, 1.15)
     } else {
         // morning
-        skyGradient(c, 0.30, 0.64, 1.60, 1.15, 1.42, 1.70)
+        skyGradient(&mut c, 0.30, 0.64, 1.60, 1.15, 1.42, 1.70)
     }
 }
 
 // A soft cloud: a handful of overlapping discs, additive over the sky so the
 // edges stay feathered instead of cutting a hard hole in the blue.
 fn cloud(c: &mut Canvas, x: f64, y: f64, scale: f64, k: f64) {
-    spot(c, x, y, 34.0 * scale, 0.42 * k, 0.46 * k, 0.52 * k)
-    spot(c, x - 26.0 * scale, y + 6.0 * scale, 24.0 * scale, 0.34 * k, 0.38 * k, 0.44 * k)
-    spot(c, x + 28.0 * scale, y + 5.0 * scale, 26.0 * scale, 0.34 * k, 0.38 * k, 0.44 * k)
-    spot(c, x + 8.0 * scale, y - 12.0 * scale, 22.0 * scale, 0.30 * k, 0.34 * k, 0.40 * k)
+    spot(&mut c, x, y, 34.0 * scale, 0.42 * k, 0.46 * k, 0.52 * k)
+    spot(&mut c, x - 26.0 * scale, y + 6.0 * scale, 24.0 * scale, 0.34 * k, 0.38 * k, 0.44 * k)
+    spot(&mut c, x + 28.0 * scale, y + 5.0 * scale, 26.0 * scale, 0.34 * k, 0.38 * k, 0.44 * k)
+    spot(&mut c, x + 8.0 * scale, y - 12.0 * scale, 22.0 * scale, 0.30 * k, 0.34 * k, 0.40 * k)
 }
 
 fn drawClouds(c: &mut Canvas, camX: f64, camY: f64, t: f64) {
@@ -104,7 +104,7 @@ fn drawClouds(c: &mut Canvas, camX: f64, camY: f64, t: f64) {
         } else {
             1.05
         }
-        cloud(c, x, y, scale, if far {
+        cloud(&mut c, x, y, scale, if far {
             0.55
         } else {
             0.85
@@ -132,14 +132,14 @@ fn drawRidge(c: &mut Canvas, camX: f64, camY: f64, par: f64, base: f64, amp: f64
         if y < 0 {
             y = 0
         }
-        blendPix(c, x, y, r * 2.6, g * 2.6, b * 2.4, 0.95)
+        blendPix(&mut c, x, y, r * 2.6, g * 2.6, b * 2.4, 0.95)
         y = y + 1
         if y < c.h {
-            blendPix(c, x, y, r * 1.5, g * 1.5, b * 1.4, 1.0)
+            blendPix(&mut c, x, y, r * 1.5, g * 1.5, b * 1.4, 1.0)
             y = y + 1
         }
         while y < c.h {
-            blendPix(c, x, y, r, g, b, 1.0)
+            blendPix(&mut c, x, y, r, g, b, 1.0)
             y = y + 1
         }
     }
@@ -155,7 +155,7 @@ fn disc(c: &mut Canvas, cx: f64, cy: f64, r: f64, red: f64, green: f64, blue: f6
             let dx = (x as f64) + 0.5 - cx
             let dy = (y as f64) + 0.5 - cy
             if dx * dx + dy * dy <= r * r {
-                blendPix(c, x, y, red, green, blue, a)
+                blendPix(&mut c, x, y, red, green, blue, a)
             }
             x = x + 1
         }
@@ -178,35 +178,35 @@ fn drawTrees(c: &mut Canvas, camX: f64, camY: f64, par: f64, base: f64, amp: f64
             let ground = ridgeTop(ix, off, yoff, base, amp, freq, seed)
             let sc = 1.15 + hashi(i, 37) * 1.05
             let trunkH = 20.0 * sc
-            fillRect(c, sx - 3.0 * sc, ground - trunkH, sx + 3.0 * sc, ground + 2.0, 0.115 * tint, 0.070 * tint, 0.038 * tint, 1.0)
+            fillRect(&mut c, sx - 3.0 * sc, ground - trunkH, sx + 3.0 * sc, ground + 2.0, 0.115 * tint, 0.070 * tint, 0.038 * tint, 1.0)
             // three discs make a canopy that is not a circle
             let cy = ground - trunkH - 12.0 * sc
-            disc(c, sx - 11.0 * sc, cy + 8.0 * sc, 15.0 * sc, 0.075 * tint, 0.185 * tint, 0.065 * tint, 1.0)
-            disc(c, sx + 11.0 * sc, cy + 7.0 * sc, 15.0 * sc, 0.075 * tint, 0.185 * tint, 0.065 * tint, 1.0)
-            disc(c, sx, cy, 19.0 * sc, 0.095 * tint, 0.235 * tint, 0.080 * tint, 1.0)
+            disc(&mut c, sx - 11.0 * sc, cy + 8.0 * sc, 15.0 * sc, 0.075 * tint, 0.185 * tint, 0.065 * tint, 1.0)
+            disc(&mut c, sx + 11.0 * sc, cy + 7.0 * sc, 15.0 * sc, 0.075 * tint, 0.185 * tint, 0.065 * tint, 1.0)
+            disc(&mut c, sx, cy, 19.0 * sc, 0.095 * tint, 0.235 * tint, 0.080 * tint, 1.0)
             // the sun catches the top left of every canopy, which is what makes
             // a row of green blobs read as a row of trees
-            disc(c, sx - 5.0 * sc, cy - 6.0 * sc, 8.0 * sc, 0.150 * tint, 0.360 * tint, 0.110 * tint, 1.0)
+            disc(&mut c, sx - 5.0 * sc, cy - 6.0 * sc, 8.0 * sc, 0.150 * tint, 0.360 * tint, 0.110 * tint, 1.0)
         }
     }
 }
 
 pub fn drawBackground(c: &mut Canvas, w: &World) {
-    skyOf(c, w.lvlIdx)
+    skyOf(&mut c, w.lvlIdx)
     // the sun, parked high and barely moving
     let sunX = (c.w as f64) * 0.78 - w.camX * 0.02
     let sunY = (c.h as f64) * 0.16 - w.camY * 0.02
-    spot(c, sunX, sunY, 260.0, 0.55, 0.45, 0.22)
-    spot(c, sunX, sunY, 76.0, 1.60, 1.40, 0.80)
-    drawClouds(c, w.camX, w.camY, w.t)
+    spot(&mut c, sunX, sunY, 260.0, 0.55, 0.45, 0.22)
+    spot(&mut c, sunX, sunY, 76.0, 1.60, 1.40, 0.80)
+    drawClouds(&mut c, w.camX, w.camY, w.t)
 
     // far mountains, hazy and blue, with a rim bright enough to read as snow
-    drawRidge(c, w.camX, w.camY, 0.08, (c.h as f64) * 0.60, 190.0, 0.0011, 5, 0.300, 0.400, 0.620)
+    drawRidge(&mut c, w.camX, w.camY, 0.08, (c.h as f64) * 0.60, 190.0, 0.0011, 5, 0.300, 0.400, 0.620)
     // middle hills, green, with a line of trees standing on them
-    drawRidge(c, w.camX, w.camY, 0.22, (c.h as f64) * 0.80, 120.0, 0.0022, 17, 0.155, 0.330, 0.135)
-    drawTrees(c, w.camX, w.camY, 0.22, (c.h as f64) * 0.80, 120.0, 0.0022, 17, 1.0)
+    drawRidge(&mut c, w.camX, w.camY, 0.22, (c.h as f64) * 0.80, 120.0, 0.0022, 17, 0.155, 0.330, 0.135)
+    drawTrees(&mut c, w.camX, w.camY, 0.22, (c.h as f64) * 0.80, 120.0, 0.0022, 17, 1.0)
     // near hills, darker because they are out of the haze
-    drawRidge(c, w.camX, w.camY, 0.42, (c.h as f64) * 1.06, 90.0, 0.0038, 29, 0.085, 0.195, 0.080)
+    drawRidge(&mut c, w.camX, w.camY, 0.42, (c.h as f64) * 1.06, 90.0, 0.0038, 29, 0.085, 0.195, 0.080)
 }
 
 // ── tiles ─────────────────────────────────────────────────────────────────────
@@ -234,18 +234,18 @@ pub fn drawLevel(c: &mut Canvas, w: &World, ts: &TileSet, ox: f64, oy: f64) {
                     // The only autotiling there is: an exposed top gets the lit
                     // cap, everything else gets fill.
                     if tileAt(w.lvl, cx, cy - 1) == T_SOLID {
-                        drawSprite(c, ts.groundFill, sx, sy, ART, false, 0.0)
+                        drawSprite(&mut c, ts.groundFill, sx, sy, ART, false, 0.0)
                     } else {
-                        drawSprite(c, ts.groundCap, sx, sy, ART, false, 0.35)
+                        drawSprite(&mut c, ts.groundCap, sx, sy, ART, false, 0.35)
                     }
                 } else if v == T_PLAT {
-                    drawSprite(c, ts.platform, sx, sy, ART, false, 0.55)
+                    drawSprite(&mut c, ts.platform, sx, sy, ART, false, 0.55)
                 } else if v == T_SPIKE {
-                    drawSprite(c, ts.spike, sx, sy, ART, false, 0.7)
+                    drawSprite(&mut c, ts.spike, sx, sy, ART, false, 0.7)
                 } else if v == T_CRATE {
-                    drawSprite(c, ts.crate, sx, sy, ART, false, 0.2)
+                    drawSprite(&mut c, ts.crate, sx, sy, ART, false, 0.2)
                 } else if v == T_PAD {
-                    drawSprite(c, ts.pad, sx, sy, ART, false, 0.9)
+                    drawSprite(&mut c, ts.pad, sx, sy, ART, false, 0.9)
                 }
             }
         }
@@ -266,7 +266,7 @@ pub fn drawGoal(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
         let t = (k as f64) / 26.0
         let a = (1.0 - t) * 0.55
         let wob = Math.sin(w.t * 3.0 + t * 8.0) * 5.0
-        fillRectAdd(c, x - 29.0 + wob * 0.4, y - 32.0 - (k as f64) * 32.0, x + 29.0 + wob * 0.4, y - (k as f64) * 32.0 + 4.0, 0.30 * a, 0.24 * a, 0.07 * a)
+        fillRectAdd(&mut c, x - 29.0 + wob * 0.4, y - 32.0 - (k as f64) * 32.0, x + 29.0 + wob * 0.4, y - (k as f64) * 32.0 + 4.0, 0.30 * a, 0.24 * a, 0.07 * a)
         k = k + 1
     }
     // the ring itself
@@ -277,11 +277,11 @@ pub fn drawGoal(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
         let r = 44.0 * pulse
         let px = x + Math.cos(a) * r
         let py = y - 40.0 + Math.sin(a) * r * 0.85
-        spot(c, px, py, 9.0, 1.70, 1.30, 0.40)
+        spot(&mut c, px, py, 9.0, 1.70, 1.30, 0.40)
         i = i + 1
     }
-    spot(c, x, y - 40.0, 50.0, 0.42, 0.32, 0.10)
-    spot(c, x, y, 66.0, 0.50, 0.38, 0.12)
+    spot(&mut c, x, y - 40.0, 50.0, 0.42, 0.32, 0.10)
+    spot(&mut c, x, y, 66.0, 0.50, 0.38, 0.12)
 }
 
 // Hydrants. An unlit one is a dull red lump with a slow pulse; a lit one throws
@@ -301,23 +301,23 @@ pub fn drawChecks(c: &mut Canvas, w: &World, hydrant: &Sprite, ox: f64, oy: f64)
                 while e < 7 {
                     let t = (e as f64) / 7.0
                     let rw = (30.0 - t * 22.0) * k
-                    fillRect(c, x - rw, y - 3.0 + t * 5.0, x + rw, y + 1.0 + t * 5.0, 0.55 * k, 0.44 * k, 0.09 * k, 0.22 * k)
+                    fillRect(&mut c, x - rw, y - 3.0 + t * 5.0, x + rw, y + 1.0 + t * 5.0, 0.55 * k, 0.44 * k, 0.09 * k, 0.22 * k)
                     e = e + 1
                 }
             }
             if w.checks[i].lit {
                 let pulse = 0.75 + 0.25 * Math.sin(w.checks[i].t * 4.0)
-                spot(c, x, y - 30.0, 66.0 * pulse, 0.55, 0.42, 0.10)
+                spot(&mut c, x, y - 30.0, 66.0 * pulse, 0.55, 0.42, 0.10)
                 var k = 0
                 while k < 12 {
                     let t = (k as f64) / 12.0
                     let a = (1.0 - t) * 0.30 * pulse
-                    fillRectAdd(c, x - 12.0, y - 40.0 - (k as f64) * 18.0, x + 12.0, y - 30.0 - (k as f64) * 18.0, 0.34 * a, 0.26 * a, 0.06 * a)
+                    fillRectAdd(&mut c, x - 12.0, y - 40.0 - (k as f64) * 18.0, x + 12.0, y - 30.0 - (k as f64) * 18.0, 0.34 * a, 0.26 * a, 0.06 * a)
                     k = k + 1
                 }
-                drawSprite(c, hydrant, x - 6.0 * ART, y - 14.0 * ART, ART, false, 0.60)
+                drawSprite(&mut c, hydrant, x - 6.0 * ART, y - 14.0 * ART, ART, false, 0.60)
             } else {
-                drawSprite(c, hydrant, x - 6.0 * ART, y - 14.0 * ART, ART, false, 0.0)
+                drawSprite(&mut c, hydrant, x - 6.0 * ART, y - 14.0 * ART, ART, false, 0.0)
             }
         }
         i = i + 1
@@ -333,22 +333,22 @@ pub fn drawPickups(c: &mut Canvas, w: &World, shards: &Vec<Sprite>, core: &Sprit
             let y = w.pk[i].y - w.camY + oy + bob
             if x > -90.0 && x < (c.w as f64) + 90.0 {
                 if w.pk[i].kind == PK_CORE {
-                    spot(c, x, y, 46.0, 0.16, 0.42, 0.10)
+                    spot(&mut c, x, y, 46.0, 0.16, 0.42, 0.10)
                     let s = 1.0 + 0.08 * Math.sin(w.pk[i].t * 3.4)
-                    drawSprite(c, core, x - 8.0 * ART * s, y - 8.0 * ART * s, ART * s, false, 0.35)
+                    drawSprite(&mut c, core, x - 8.0 * ART * s, y - 8.0 * ART * s, ART * s, false, 0.35)
                 } else if w.pk[i].kind == PK_BONE {
                     // The bone gets its own halo and a slow tumble. Nothing else
                     // in the level is this warm, so it is never mistaken for a
                     // treat lying on the floor.
                     let pulse = 0.75 + 0.25 * Math.sin(w.pk[i].t * 3.2)
-                    spot(c, x, y, 44.0 * pulse, 0.34, 0.27, 0.09)
-                    spot(c, x, y, 20.0, 0.45, 0.36, 0.15)
+                    spot(&mut c, x, y, 44.0 * pulse, 0.34, 0.27, 0.09)
+                    spot(&mut c, x, y, 20.0, 0.45, 0.36, 0.15)
                     let s = 1.0 + 0.07 * Math.sin(w.pk[i].t * 2.2)
-                    drawSprite(c, bone, x - 8.0 * ART * s, y - 5.0 * ART * s, ART * s, false, 0.30)
+                    drawSprite(&mut c, bone, x - 8.0 * ART * s, y - 5.0 * ART * s, ART * s, false, 0.30)
                 } else {
                     let f = ((w.pk[i].t * 7.0) as i64) % SHARD_FRAMES
-                    spot(c, x, y, 24.0, 0.30, 0.20, 0.06)
-                    drawSprite(c, shards[f], x - 5.5 * ART, y - 5.5 * ART, ART, false, 0.35)
+                    spot(&mut c, x, y, 24.0, 0.30, 0.20, 0.06)
+                    drawSprite(&mut c, shards[f], x - 5.5 * ART, y - 5.5 * ART, ART, false, 0.35)
                 }
             }
         }
@@ -369,17 +369,17 @@ pub fn drawMobs(c: &mut Canvas, w: &World, cat: &Vec<Sprite>, bird: &Vec<Sprite>
                 // a flattened, fading corpse
                 let t = Math.maxF64(0.0, w.mobs[i].dieT / 0.35)
                 let aw = (cat[0].w as f64) * CHAR_ART
-                blitSprite(c, cat[0], x + (mw - aw) * 0.5, y + mh * (1.0 - t), CHAR_ART, CHAR_ART * t, flip, t, 0.9, 1.4, 1.4, 1.6, 0.6)
+                blitSprite(&mut c, cat[0], x + (mw - aw) * 0.5, y + mh * (1.0 - t), CHAR_ART, CHAR_ART * t, flip, t, 0.9, 1.4, 1.4, 1.6, 0.6)
             } else if w.mobs[i].kind == MOB_CAT {
                 let f = ((w.mobs[i].phase * 0.9) as i64) % CAT_FRAMES
                 let aw = (cat[f].w as f64) * CHAR_ART
                 let ah = (cat[f].h as f64) * CHAR_ART
-                drawSprite(c, cat[f], x + (mw - aw) * 0.5, y + mh - ah, CHAR_ART, flip, 0.12)
+                drawSprite(&mut c, cat[f], x + (mw - aw) * 0.5, y + mh - ah, CHAR_ART, flip, 0.12)
             } else {
                 let f = ((w.mobs[i].phase * 6.0) as i64) % BIRD_FRAMES
                 let aw = (bird[f].w as f64) * CHAR_ART
                 let ah = (bird[f].h as f64) * CHAR_ART
-                drawSprite(c, bird[f], x + (mw - aw) * 0.5, y + mh - ah, CHAR_ART, flip, 0.14)
+                drawSprite(&mut c, bird[f], x + (mw - aw) * 0.5, y + mh - ah, CHAR_ART, flip, 0.14)
             }
         }
         i = i + 1
@@ -408,10 +408,10 @@ pub fn drawBark(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
         }
         let px = x + Math.cos(a) * r * dir
         let py = y + Math.sin(a) * r * 0.8
-        spot(c, px, py, 7.0 * fade, 1.10 * fade, 0.85 * fade, 0.30 * fade)
+        spot(&mut c, px, py, 7.0 * fade, 1.10 * fade, 0.85 * fade, 0.30 * fade)
         i = i + 1
     }
-    spot(c, x, y, 30.0 * fade, 0.40 * fade, 0.30 * fade, 0.10 * fade)
+    spot(&mut c, x, y, 30.0 * fade, 0.40 * fade, 0.30 * fade, 0.10 * fade)
 }
 
 // Which build is on screen is the only thing the two paths differ by, and it is
@@ -449,15 +449,15 @@ pub fn drawPee(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
         let size = (4.2 - t * 1.4) * ramp
         // Alpha-over, and no glow under it: additive yellow on a bright sky
         // washes straight to white, and the one thing this has to be is yellow.
-        disc(c, px, py, size, 1.05, 0.72, 0.06, 1.0)
+        disc(&mut c, px, py, size, 1.05, 0.72, 0.06, 1.0)
     }
 }
 
 pub fn drawPlayer(c: &mut Canvas, w: &World, art: &DogArt, ox: f64, oy: f64) {
     if w.p.form == FORM_SHEP {
-        drawDog(c, w, art.shep, ox, oy)
+        drawDog(&mut c, w, art.shep, ox, oy)
     } else {
-        drawDog(c, w, art.chi, ox, oy)
+        drawDog(&mut c, w, art.chi, ox, oy)
     }
 }
 
@@ -475,7 +475,7 @@ fn drawDog(c: &mut Canvas, w: &World, frames: &Vec<Sprite>, ox: f64, oy: f64) {
         let t = w.ghosts[i].t / 0.22
         let gx = w.ghosts[i].x - w.camX + ox - 3.0
         let gy = w.ghosts[i].y - w.camY + oy
-        shadowSprite(c, frames[w.ghosts[i].frame], gx, gy, CHAR_ART, CHAR_ART, w.ghosts[i].flip, t * 0.40, 1.30 * t, 1.00 * t, 0.45 * t)
+        shadowSprite(&mut c, frames[w.ghosts[i].frame], gx, gy, CHAR_ART, CHAR_ART, w.ghosts[i].flip, t * 0.40, 1.30 * t, 1.00 * t, 0.45 * t)
         i = i + 1
     }
 
@@ -501,7 +501,7 @@ fn drawDog(c: &mut Canvas, w: &World, frames: &Vec<Sprite>, ox: f64, oy: f64) {
 
     // contact shadow
     if w.p.onGround {
-        fillRect(c, bx - 5.0, footY - 5.0, bx + PLAYER_W + 5.0, footY + 1.0, 0.0, 0.0, 0.0, 0.30)
+        fillRect(&mut c, bx - 5.0, footY - 5.0, bx + PLAYER_W + 5.0, footY + 1.0, 0.0, 0.0, 0.0, 0.30)
     }
     var glow = 0.10
     if w.p.growT > 0.0 {
@@ -529,10 +529,10 @@ fn drawDog(c: &mut Canvas, w: &World, frames: &Vec<Sprite>, ox: f64, oy: f64) {
     if w.p.spawnT > 0.0 {
         // materialising: flicker in over half a second
         let t = w.p.spawnT / 0.55
-        spot(c, bx + PLAYER_W * 0.5, by + PLAYER_H * 0.5, 70.0 * t, 0.9 * t, 0.7 * t, 0.3 * t)
-        blitSprite(c, sq, dx, dy, sx, sy, flip, 1.0 - t * 0.6, glow + t, 1.6, 1.3, 0.6, t)
+        spot(&mut c, bx + PLAYER_W * 0.5, by + PLAYER_H * 0.5, 70.0 * t, 0.9 * t, 0.7 * t, 0.3 * t)
+        blitSprite(&mut c, sq, dx, dy, sx, sy, flip, 1.0 - t * 0.6, glow + t, 1.6, 1.3, 0.6, t)
     } else {
-        blitSprite(c, sq, dx, dy, sx, sy, flip, alpha, glow, 1.5, 1.1, 0.5, tmix)
+        blitSprite(&mut c, sq, dx, dy, sx, sy, flip, alpha, glow, 1.5, 1.1, 0.5, tmix)
     }
 }
 
@@ -543,7 +543,7 @@ pub fn drawParts(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
         let x = w.parts[i].x - w.camX + ox
         let y = w.parts[i].y - w.camY + oy
         if x > -20.0 && x < (c.w as f64) + 20.0 {
-            spot(c, x, y, w.parts[i].size * (0.4 + t * 0.9), w.parts[i].r * t, w.parts[i].g * t, w.parts[i].b * t)
+            spot(&mut c, x, y, w.parts[i].size * (0.4 + t * 0.9), w.parts[i].r * t, w.parts[i].g * t, w.parts[i].b * t)
         }
         i = i + 1
     }
@@ -560,7 +560,7 @@ pub fn drawSpeedLines(c: &mut Canvas, w: &World) {
         let len = 175.0 + hashi(i, 73) * 350.0
         let x = hashi(i + 400, 79) * (c.w as f64)
         let dir = 0.0 - w.p.dashX
-        line(c, x, y, x + dir * len, y + w.p.dashY * len * 0.4, 0.10 * k, 0.22 * k, 0.30 * k)
+        line(&mut c, x, y, x + dir * len, y + w.p.dashY * len * 0.4, 0.10 * k, 0.22 * k, 0.30 * k)
     }
 }
 
@@ -584,65 +584,65 @@ fn timeString(t: f64): string {
 
 pub fn drawHud(c: &mut Canvas, w: &World, shard: &Sprite, bone: &Sprite, fps: i64) {
     // a dark bar so text stays readable over a bright sky
-    fillRect(c, 0.0, 0.0, c.w as f64, 46.0, 0.0, 0.0, 0.0, 0.35)
+    fillRect(&mut c, 0.0, 0.0, c.w as f64, 46.0, 0.0, 0.0, 0.0, 0.35)
 
-    text(c, 22, 16, w.lvl.name, 2, 0.35, 0.95, 1.10)
+    text(&mut c, 22, 16, w.lvl.name, 2, 0.35, 0.95, 1.10)
 
-    drawSprite(c, shard, 300.0, 10.0, 2.0, false, 0.9)
+    drawSprite(&mut c, shard, 300.0, 10.0, 2.0, false, 0.9)
     let got = w.shards.toString() + "/" + w.shardTotal.toString()
-    text(c, 322, 16, got, 2, 1.00, 0.80, 0.40)
+    text(&mut c, 322, 16, got, 2, 1.00, 0.80, 0.40)
 
     if w.cores > 0 {
-        text(c, 420, 16, "GEMS " + w.cores.toString(), 2, 0.55, 1.20, 1.30)
+        text(&mut c, 420, 16, "GEMS " + w.cores.toString(), 2, 0.55, 1.20, 1.30)
     }
 
     // What you are, which is also how many hits you have left. The bone icon is
     // the same one that is lying in the level, so the connection needs no words.
     if w.p.form == FORM_SHEP {
-        drawSprite(c, bone, 540.0, 12.0, 1.4, false, 1.0)
-        text(c, 572, 16, "SHEPHERD", 2, 1.20, 0.95, 0.45)
+        drawSprite(&mut c, bone, 540.0, 12.0, 1.4, false, 1.0)
+        text(&mut c, 572, 16, "SHEPHERD", 2, 1.20, 0.95, 0.45)
     } else {
-        text(c, 540, 16, "CHIHUAHUA", 2, 0.55, 0.42, 0.30)
+        text(&mut c, 540, 16, "CHIHUAHUA", 2, 0.55, 0.42, 0.30)
     }
 
     let tm = timeString(w.time)
-    text(c, c.w - 22 - textWidth(tm, 2), 16, tm, 2, 0.55, 0.70, 0.95)
+    text(&mut c, c.w - 22 - textWidth(tm, 2), 16, tm, 2, 0.55, 0.70, 0.95)
 
     let dth = "DEATHS " + w.deaths.toString()
-    text(c, c.w - 200 - textWidth(dth, 2), 16, dth, 2, 0.70, 0.30, 0.35)
+    text(&mut c, c.w - 200 - textWidth(dth, 2), 16, dth, 2, 0.70, 0.30, 0.35)
 
     // Dash on the left, bark beside it: the two things that are either ready or
     // not, shown as bars rather than as numbers.
     let cx = 22
     let cy = 34
     if w.p.dashes > 0 && w.p.dashCd <= 0.0 {
-        fillRectAdd(c, cx as f64, cy as f64, (cx + 16) as f64, (cy + 4) as f64, 0.9, 0.35, 1.2)
+        fillRectAdd(&mut c, cx as f64, cy as f64, (cx + 16) as f64, (cy + 4) as f64, 0.9, 0.35, 1.2)
     } else {
-        fillRect(c, cx as f64, cy as f64, (cx + 16) as f64, (cy + 4) as f64, 0.25, 0.12, 0.30, 1.0)
+        fillRect(&mut c, cx as f64, cy as f64, (cx + 16) as f64, (cy + 4) as f64, 0.25, 0.12, 0.30, 1.0)
     }
     if w.p.barkCd <= 0.0 {
-        fillRectAdd(c, (cx + 22) as f64, cy as f64, (cx + 38) as f64, (cy + 4) as f64, 1.1, 0.85, 0.30)
+        fillRectAdd(&mut c, (cx + 22) as f64, cy as f64, (cx + 38) as f64, (cy + 4) as f64, 1.1, 0.85, 0.30)
     } else {
-        fillRect(c, (cx + 22) as f64, cy as f64, (cx + 38) as f64, (cy + 4) as f64, 0.30, 0.22, 0.10, 1.0)
+        fillRect(&mut c, (cx + 22) as f64, cy as f64, (cx + 38) as f64, (cy + 4) as f64, 0.30, 0.22, 0.10, 1.0)
     }
 
-    text(c, 22, c.h - 28, fps.toString() + " FPS", 2, 0.16, 0.26, 0.34)
+    text(&mut c, 22, c.h - 28, fps.toString() + " FPS", 2, 0.16, 0.26, 0.34)
     let help = "ARROWS MOVE   SPACE JUMP   SHIFT DASH   B BARK   R RESET   ESC QUIT"
-    text(c, c.w - 22 - textWidth(help, 2), c.h - 28, help, 2, 0.16, 0.26, 0.34)
+    text(&mut c, c.w - 22 - textWidth(help, 2), c.h - 28, help, 2, 0.16, 0.26, 0.34)
 
     if w.state == ST_CLEAR {
-        fillRect(c, 0.0, (c.h / 2 - 70) as f64, c.w as f64, (c.h / 2 + 60) as f64, 0.0, 0.0, 0.0, 0.45)
-        textCentered(c, c.w / 2, c.h / 2 - 46, "GOOD DOG", 6, 1.40, 1.10, 0.45)
+        fillRect(&mut c, 0.0, (c.h / 2 - 70) as f64, c.w as f64, (c.h / 2 + 60) as f64, 0.0, 0.0, 0.0, 0.45)
+        textCentered(&mut c, c.w / 2, c.h / 2 - 46, "GOOD DOG", 6, 1.40, 1.10, 0.45)
         let line1 = "TREATS " + w.shards.toString() + "/" + w.shardTotal.toString()
-        textCentered(c, c.w / 2, c.h / 2 + 16, line1, 3, 1.00, 0.80, 0.40)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 16, line1, 3, 1.00, 0.80, 0.40)
     }
     if w.state == ST_DONE {
-        fillRect(c, 0.0, 0.0, c.w as f64, c.h as f64, 0.0, 0.0, 0.0, 0.55)
-        textCentered(c, c.w / 2, c.h / 2 - 90, "WHO IS A GOOD DOG", 5, 1.50, 1.15, 0.50)
-        textCentered(c, c.w / 2, c.h / 2 + 6, "TREATS " + w.banked.toString(), 3, 1.00, 0.80, 0.40)
-        textCentered(c, c.w / 2, c.h / 2 + 42, "GEMS " + w.cores.toString(), 3, 0.55, 1.20, 1.30)
-        textCentered(c, c.w / 2, c.h / 2 + 78, "TIME " + timeString(w.time), 3, 0.55, 0.70, 0.95)
-        textCentered(c, c.w / 2, c.h / 2 + 114, "DEATHS " + w.deaths.toString(), 3, 0.70, 0.30, 0.35)
-        textCentered(c, c.w / 2, c.h / 2 + 164, "R TO RUN IT AGAIN", 2, 0.40, 0.50, 0.65)
+        fillRect(&mut c, 0.0, 0.0, c.w as f64, c.h as f64, 0.0, 0.0, 0.0, 0.55)
+        textCentered(&mut c, c.w / 2, c.h / 2 - 90, "WHO IS A GOOD DOG", 5, 1.50, 1.15, 0.50)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 6, "TREATS " + w.banked.toString(), 3, 1.00, 0.80, 0.40)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 42, "GEMS " + w.cores.toString(), 3, 0.55, 1.20, 1.30)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 78, "TIME " + timeString(w.time), 3, 0.55, 0.70, 0.95)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 114, "DEATHS " + w.deaths.toString(), 3, 0.70, 0.30, 0.35)
+        textCentered(&mut c, c.w / 2, c.h / 2 + 164, "R TO RUN IT AGAIN", 2, 0.40, 0.50, 0.65)
     }
 }

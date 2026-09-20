@@ -202,7 +202,7 @@ fn parsePlace(name: &string): City {
             var c = city
             let png = orthoBytes(name)
             if png != "" {
-                match cityAttachOrtho(c, png) {
+                match cityAttachOrtho(&mut c, png) {
                     Result.Ok(_) => {
                     }
                     Result.Err(e) => {
@@ -334,7 +334,7 @@ pub fn main(): i32 {
     let groundTex = groundTexture()
     let skinTex = planeTexture()
     let facadeTex = facadeTexture()
-    var gw = match gpuWorldNew(scr.gl, groundTex, skinTex, facadeTex) {
+    var gw = match gpuWorldNew(&mut scr.gl, groundTex, skinTex, facadeTex) {
         Result.Ok(g) => g
         Result.Err(e) => {
             // No screenClose here: it consumes the Screen, and the checker then
@@ -352,9 +352,9 @@ pub fn main(): i32 {
     // wrong order — `--place`, `--city` and `--procedural` all say the answer
     // already, so the screen only appears when nothing has.
     if placeIdx >= 0 && (o.getString("place") ?? "") == "" {
-        let pick = chooseRegion(scr, gw, c, s, inp, ev, placeIdx)
+        let pick = chooseRegion(&mut scr, gw, &mut c, s, &mut inp, &mut ev, placeIdx)
         if pick < 0 {
-            gpuWorldFree(scr.gl, gw)
+            gpuWorldFree(&mut scr.gl, gw)
             screenClose(scr)
             SDL_Quit()
             return 0
@@ -368,9 +368,9 @@ pub fn main(): i32 {
     // API. Every place visited afterwards refetches at the place change, which is
     // already a pause for decoding the next city.
     if envLiveRequested() {
-        if envGoLive(w.env, w.city.reach) {
+        if envGoLive(&mut w.env, w.city.reach) {
             print("weather: " + envWeatherLabel(w.env))
-            settleUnderCeiling(w)
+            settleUnderCeiling(&mut w)
         } else {
             print("weather: fetch failed, using synthetic sky")
         }
@@ -387,7 +387,7 @@ pub fn main(): i32 {
     }
     var coverDirty = true
     if w.city.orthoLoaded {
-        setOrtho(scr.gl, gw, w.city.ortho)
+        setOrtho(&mut scr.gl, &mut gw, w.city.ortho)
     }
     var snd = soundNew()
     var full = o.getBool("fullscreen")
@@ -406,10 +406,10 @@ pub fn main(): i32 {
         if dt < 0.0005 {
             dt = 0.0005
         }
-        pollInput(inp, ev)
+        pollInput(&mut inp, &mut ev)
 
         if inp.mute {
-            musicToggle(snd)
+            musicToggle(&mut snd)
         }
         if inp.fullscreen {
             full = !full
@@ -428,40 +428,40 @@ pub fn main(): i32 {
         }
         if step != 0 && placeIdx >= 0 {
             placeIdx = (placeIdx + step + PLACE_COUNT) % PLACE_COUNT
-            worldSetPlace(w, parsePlace(placeName(placeIdx)))
+            worldSetPlace(&mut w, parsePlace(placeName(placeIdx)))
             cover = demHeights(w.city)
             grid = CoverGrid {
                 n: w.city.demN, x0: w.city.demX0, z0: w.city.demZ0, step: w.city.demStep, reach: w.city.reach
             }
             coverDirty = true
             if w.city.orthoLoaded {
-                setOrtho(scr.gl, gw, w.city.ortho)
+                setOrtho(&mut scr.gl, &mut gw, w.city.ortho)
             } else {
-                clearOrtho(scr.gl, gw)
+                clearOrtho(&mut scr.gl, &mut gw)
             }
             w.nextName = placeTitle((placeIdx + 1) % PLACE_COUNT)
         } else if w.evPlaceDone {
-            resetTour(w)
+            resetTour(&mut w)
         }
         musicTick(snd)
 
         // Off the frame path in the sense that matters: this yields to the
         // fetching task and returns, it never waits on the network itself.
-        envWeatherTick(w.env, w.city.reach)
-        worldUpdate(w, dt, inp.moveX, inp.moveY, inp.boost)
+        envWeatherTick(&mut w.env, w.city.reach)
+        worldUpdate(&mut w, dt, inp.moveX, inp.moveY, inp.boost)
         let view = viewOf(w.cam, c.w, c.h)
         // Bind the scene target and match it to the window before any geometry is
         // recorded, because the render size is what the projection is built from.
-        let rs = screenBegin(scr)
-        drawWorld(c, s, w, groundTex, skinTex, facadeTex, view)
+        let rs = screenBegin(&mut scr)
+        drawWorld(&mut c, &mut s, w, groundTex, skinTex, facadeTex, view)
         // Record, upload once, then rasterise twice: from the sun, then from the
         // camera. The shadow pass binds its own framebuffer, so the scene target
         // has to be bound again before anything else is drawn.
-        uploadStreams(gw, s)
-        drawShadowPass(gw, s, view)
+        uploadStreams(&mut gw, &mut s)
+        drawShadowPass(&mut gw, &mut s, view)
         screenRebind(scr)
         drawSkyPass(gw, s, view, rs.w as f64, rs.h as f64, w.time)
-        drawStreams(gw, s, view, rs.w as f64, rs.h as f64, w.time)
+        drawStreams(&mut gw, &mut s, view, rs.w as f64, rs.h as f64, w.time)
 
         fpsAccum = fpsAccum + dt
         fpsFrames = fpsFrames + 1
@@ -485,14 +485,14 @@ pub fn main(): i32 {
         if w.evMiss {
             playMiss(snd)
         }
-        drawSpeedLines(c, w)
-        drawGuide(c, w, view)
-        drawFence(c, w, view)
-        drawMarkBeam(c, w, view)
-        drawMarkGuide(c, w, view)
-        drawChecklist(c, w)
-        drawFound(c, w)
-        drawHud(c, w, s, fpsShown)
+        drawSpeedLines(&mut c, w)
+        drawGuide(&mut c, w, view)
+        drawFence(&mut c, w, view)
+        drawMarkBeam(&mut c, w, view)
+        drawMarkGuide(&mut c, w, view)
+        drawChecklist(&mut c, w)
+        drawFound(&mut c, w)
+        drawHud(&mut c, w, s, fpsShown)
 
         var exposure = 1.0
         if w.flash > 0.0 {
@@ -505,10 +505,10 @@ pub fn main(): i32 {
             gpuWorldSetClouds(gw, w.env.clouds)
             w.env.cloudsDirty = false
         }
-        screenPresent(scr, c, view, s, grid, cover, coverDirty, cityHasSea(w.city), w.time, 0.35, exposure)
+        screenPresent(&mut scr, &mut c, view, s, grid, cover, coverDirty, cityHasSea(w.city), w.time, 0.35, exposure)
         coverDirty = false
     }
-    gpuWorldFree(scr.gl, gw)
+    gpuWorldFree(&mut scr.gl, gw)
     screenClose(scr)
     SDL_Quit()
     return 0

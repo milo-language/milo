@@ -86,22 +86,22 @@ pub fn nextU64(s: &mut u64): u64 {
 }
 
 pub fn randF(s: &mut u64): f64 {
-    let r = nextU64(s) >> 11
+    let r = nextU64(&mut s) >> 11
     return (r as f64) * (1.0 / 9007199254740992.0)
 }
 
 pub fn spawnBall(balls: &mut Vec<Ball>, s: &mut u64, x: f64, y: f64) {
-    let rad = 5.0 + randF(s) * 9.0
+    let rad = 5.0 + randF(&mut s) * 9.0
     let mass = rad * rad // area-proportional
     balls.push(Ball {
         px: x, py: y,
-        vx: (randF(s) * 2.0 - 1.0) * 120.0,
-        vy: randF(s) * 40.0,
+        vx: (randF(&mut s) * 2.0 - 1.0) * 120.0,
+        vy: randF(&mut s) * 40.0,
         r: rad,
         invMass: 1.0 / mass,
-        cr: (60.0 + randF(s) * 195.0) as u32,
-        cg: (60.0 + randF(s) * 195.0) as u32,
-        cb: (60.0 + randF(s) * 195.0) as u32,
+        cr: (60.0 + randF(&mut s) * 195.0) as u32,
+        cg: (60.0 + randF(&mut s) * 195.0) as u32,
+        cb: (60.0 + randF(&mut s) * 195.0) as u32,
     }
     )
 }
@@ -111,9 +111,9 @@ pub fn resetScene(balls: &mut Vec<Ball>, s: &mut u64) {
     while m < 40 {
         // seed is borrowed &mut once per call, so compute coords in separate
         // statements rather than borrowing it several times in one expression.
-        let sx = 40.0 + randF(s) * 240.0
-        let sy = 20.0 + randF(s) * 100.0
-        spawnBall(balls, s, sx, sy)
+        let sx = 40.0 + randF(&mut s) * 240.0
+        let sy = 20.0 + randF(&mut s) * 100.0
+        spawnBall(&mut balls, &mut s, sx, sy)
         m = m + 1
     }
 }
@@ -156,7 +156,7 @@ pub fn fillCircle(fb: &mut [u32; 76800], cx: f64, cy: f64, rad: f64, col: u32) {
                         cov = 1.0
                     }
                     if cov > 0.0 {
-                        blendPixel(fb, y * W + x, col, cov)
+                        blendPixel(&mut fb, y * W + x, col, cov)
                     }
                 }
                 x = x + 1
@@ -281,7 +281,7 @@ pub fn main(): i32 {
 
     var seed: u64 = 0x9E3779B97F4A7C15
     var balls: Vec<Ball> = Vec.new()
-    resetScene(balls, seed)
+    resetScene(&mut balls, &mut seed)
 
     let dt: f64 = 1.0 / 60.0
     let gmag: f64 = 900.0
@@ -348,8 +348,8 @@ pub fn main(): i32 {
         // SPACE: drop one ball on the rising edge
         if wantSpace {
             if !spaceHeld && balls.len < 200 {
-                let sx = 40.0 + randF(seed) * 240.0
-                spawnBall(balls, seed, sx, 20.0)
+                let sx = 40.0 + randF(&mut seed) * 240.0
+                spawnBall(&mut balls, &mut seed, sx, 20.0)
             }
             spaceHeld = true
         } else {
@@ -360,7 +360,7 @@ pub fn main(): i32 {
         if wantReset {
             if !rHeld {
                 balls = Vec.new()
-                resetScene(balls, seed)
+                resetScene(&mut balls, &mut seed)
             }
             rHeld = true
         } else {
@@ -369,13 +369,13 @@ pub fn main(): i32 {
 
         // MOUSE: hold left button to spray a stream of balls from the cursor
         if mouseDown && balls.len < 250 {
-            spawnBall(balls, seed, mouseX, mouseY)
+            spawnBall(&mut balls, &mut seed, mouseX, mouseY)
         }
 
         // ---- integrate + resolve, several substeps for stability (all safe) ----
         var step = 0
         while step < substeps {
-            stepSim(balls, gx, gy, sdt, restitution)
+            stepSim(&mut balls, gx, gy, sdt, restitution)
             step = step + 1
         }
 
@@ -389,7 +389,7 @@ pub fn main(): i32 {
         while d < balls.len {
             let b = balls[d]
             let col = b.cr | (b.cg << 8) | (b.cb << 16) | (0xFF << 24)
-            fillCircle(fb, b.px, b.py, b.r, col)
+            fillCircle(&mut fb, b.px, b.py, b.r, col)
             d = d + 1
         }
 

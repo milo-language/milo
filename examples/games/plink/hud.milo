@@ -112,7 +112,7 @@ fn seg(s: &mut Vec<f64>, x0: f64, y0: f64, x1: f64, y1: f64) {
 fn poly(s: &mut Vec<f64>, p: &Vec<f64>) {
     var i = 0
     while i + 3 < p.len {
-        seg(s, p[i], p[i + 1], p[i + 2], p[i + 3])
+        seg(&mut s, p[i], p[i + 1], p[i + 2], p[i + 3])
         i = i + 2
     }
 }
@@ -127,7 +127,7 @@ fn arc(s: &mut Vec<f64>, cx: f64, cy: f64, rx: f64, ry: f64, a0: f64, a1: f64, s
         let a = (a0 + (a1 - a0) * ((i as f64) / (steps as f64))) * k
         let x = cx + rx * Math.cos(a)
         let y = cy + ry * Math.sin(a)
-        seg(s, prevX, prevY, x, y)
+        seg(&mut s, prevX, prevY, x, y)
         prevX = x
         prevY = y
     }
@@ -135,7 +135,7 @@ fn arc(s: &mut Vec<f64>, cx: f64, cy: f64, rx: f64, ry: f64, a0: f64, a1: f64, s
 
 // A dot: a zero-length segment, which the pen renders as a disc.
 fn dot(s: &mut Vec<f64>, x: f64, y: f64) {
-    seg(s, x, y, x, y)
+    seg(&mut s, x, y, x, y)
 }
 
 // How far the pen moves after each glyph, in design units. Proportional, because
@@ -184,168 +184,168 @@ fn glyphStrokes(code: i64): Vec<f64> {
     let H = B - T
     if code == 65 {
         // A
-        seg(s, 0.1, B, 2.6, T)
-        seg(s, 2.6, T, 5.1, B)
-        seg(s, 1.05, B - 2.1, 4.15, B - 2.1)
+        seg(&mut s, 0.1, B, 2.6, T)
+        seg(&mut s, 2.6, T, 5.1, B)
+        seg(&mut s, 1.05, B - 2.1, 4.15, B - 2.1)
     } else if code == 66 {
-        seg(s, 0.3, T, 0.3, B)
-        arc(s, 0.3, (T + M) / 2.0, 3.9, (M - T) / 2.0, -90.0, 90.0, 8)
-        arc(s, 0.3, (M + B) / 2.0, 4.3, (B - M) / 2.0, -90.0, 90.0, 8)
+        seg(&mut s, 0.3, T, 0.3, B)
+        arc(&mut s, 0.3, (T + M) / 2.0, 3.9, (M - T) / 2.0, -90.0, 90.0, 8)
+        arc(&mut s, 0.3, (M + B) / 2.0, 4.3, (B - M) / 2.0, -90.0, 90.0, 8)
     } else if code == 67 {
-        arc(s, 2.8, (T + B) / 2.0, 2.5, H / 2.0, 55.0, 305.0, 18)
+        arc(&mut s, 2.8, (T + B) / 2.0, 2.5, H / 2.0, 55.0, 305.0, 18)
     } else if code == 68 {
-        seg(s, 0.3, T, 0.3, B)
-        arc(s, 0.3, (T + B) / 2.0, 4.5, H / 2.0, -90.0, 90.0, 14)
+        seg(&mut s, 0.3, T, 0.3, B)
+        arc(&mut s, 0.3, (T + B) / 2.0, 4.5, H / 2.0, -90.0, 90.0, 14)
     } else if code == 69 {
-        seg(s, 0.4, T, 0.4, B)
-        seg(s, 0.4, T, 4.6, T)
-        seg(s, 0.4, M, 4.0, M)
-        seg(s, 0.4, B, 4.6, B)
+        seg(&mut s, 0.4, T, 0.4, B)
+        seg(&mut s, 0.4, T, 4.6, T)
+        seg(&mut s, 0.4, M, 4.0, M)
+        seg(&mut s, 0.4, B, 4.6, B)
     } else if code == 70 {
-        seg(s, 0.4, T, 0.4, B)
-        seg(s, 0.4, T, 4.6, T)
-        seg(s, 0.4, M, 4.0, M)
+        seg(&mut s, 0.4, T, 0.4, B)
+        seg(&mut s, 0.4, T, 4.6, T)
+        seg(&mut s, 0.4, M, 4.0, M)
     } else if code == 71 {
-        arc(s, 2.8, (T + B) / 2.0, 2.5, H / 2.0, 0.0, 305.0, 20)
-        seg(s, 5.3, (T + B) / 2.0, 5.3, M + 0.35)
-        seg(s, 3.1, M + 0.35, 5.3, M + 0.35)
+        arc(&mut s, 2.8, (T + B) / 2.0, 2.5, H / 2.0, 0.0, 305.0, 20)
+        seg(&mut s, 5.3, (T + B) / 2.0, 5.3, M + 0.35)
+        seg(&mut s, 3.1, M + 0.35, 5.3, M + 0.35)
     } else if code == 72 {
-        seg(s, 0.4, T, 0.4, B)
-        seg(s, 4.9, T, 4.9, B)
-        seg(s, 0.4, M, 4.9, M)
+        seg(&mut s, 0.4, T, 0.4, B)
+        seg(&mut s, 4.9, T, 4.9, B)
+        seg(&mut s, 0.4, M, 4.9, M)
     } else if code == 73 {
-        seg(s, 1.0, T, 1.0, B)
+        seg(&mut s, 1.0, T, 1.0, B)
     } else if code == 74 {
-        seg(s, 4.4, T, 4.4, B - 1.5)
-        arc(s, 2.4, B - 1.5, 2.0, 1.5, 0.0, 175.0, 10)
+        seg(&mut s, 4.4, T, 4.4, B - 1.5)
+        arc(&mut s, 2.4, B - 1.5, 2.0, 1.5, 0.0, 175.0, 10)
     } else if code == 75 {
-        seg(s, 0.4, T, 0.4, B)
-        seg(s, 0.4, M + 0.5, 4.7, T)
-        seg(s, 1.6, M - 0.35, 5.0, B)
+        seg(&mut s, 0.4, T, 0.4, B)
+        seg(&mut s, 0.4, M + 0.5, 4.7, T)
+        seg(&mut s, 1.6, M - 0.35, 5.0, B)
     } else if code == 76 {
-        seg(s, 0.5, T, 0.5, B)
-        seg(s, 0.5, B, 4.6, B)
+        seg(&mut s, 0.5, T, 0.5, B)
+        seg(&mut s, 0.5, B, 4.6, B)
     } else if code == 77 {
-        seg(s, 0.4, B, 0.4, T)
-        seg(s, 0.4, T, 3.3, M + 0.9)
-        seg(s, 3.3, M + 0.9, 6.2, T)
-        seg(s, 6.2, T, 6.2, B)
+        seg(&mut s, 0.4, B, 0.4, T)
+        seg(&mut s, 0.4, T, 3.3, M + 0.9)
+        seg(&mut s, 3.3, M + 0.9, 6.2, T)
+        seg(&mut s, 6.2, T, 6.2, B)
     } else if code == 78 {
-        seg(s, 0.4, B, 0.4, T)
-        seg(s, 0.4, T, 4.9, B)
-        seg(s, 4.9, B, 4.9, T)
+        seg(&mut s, 0.4, B, 0.4, T)
+        seg(&mut s, 0.4, T, 4.9, B)
+        seg(&mut s, 4.9, B, 4.9, T)
     } else if code == 79 {
-        arc(s, 2.7, (T + B) / 2.0, 2.5, H / 2.0, 0.0, 360.0, 24)
+        arc(&mut s, 2.7, (T + B) / 2.0, 2.5, H / 2.0, 0.0, 360.0, 24)
     } else if code == 80 {
-        seg(s, 0.4, T, 0.4, B)
-        arc(s, 0.4, (T + M + 0.3) / 2.0, 4.2, (M + 0.3 - T) / 2.0, -90.0, 90.0, 10)
+        seg(&mut s, 0.4, T, 0.4, B)
+        arc(&mut s, 0.4, (T + M + 0.3) / 2.0, 4.2, (M + 0.3 - T) / 2.0, -90.0, 90.0, 10)
     } else if code == 81 {
-        arc(s, 2.7, (T + B) / 2.0, 2.5, H / 2.0, 0.0, 360.0, 24)
-        seg(s, 3.3, B - 1.4, 5.2, B + 0.35)
+        arc(&mut s, 2.7, (T + B) / 2.0, 2.5, H / 2.0, 0.0, 360.0, 24)
+        seg(&mut s, 3.3, B - 1.4, 5.2, B + 0.35)
     } else if code == 82 {
-        seg(s, 0.4, T, 0.4, B)
-        arc(s, 0.4, (T + M + 0.3) / 2.0, 4.0, (M + 0.3 - T) / 2.0, -90.0, 90.0, 10)
-        seg(s, 2.4, M + 0.3, 4.9, B)
+        seg(&mut s, 0.4, T, 0.4, B)
+        arc(&mut s, 0.4, (T + M + 0.3) / 2.0, 4.0, (M + 0.3 - T) / 2.0, -90.0, 90.0, 10)
+        seg(&mut s, 2.4, M + 0.3, 4.9, B)
     } else if code == 83 {
         var p: Vec<f64> = [4.7, T + 1.2, 4.2, T + 0.4, 3.1, T + 0.05, 1.8, T + 0.1, 0.7, T + 0.8, 0.55, T + 1.7, 1.2, M + 0.1, 2.8, M + 0.4, 4.2, M + 0.9, 4.7, B - 1.5, 4.4, B - 0.6, 3.3, B - 0.05, 1.7, B - 0.1, 0.5, B - 0.9,]
-        poly(s, p)
+        poly(&mut s, p)
     } else if code == 84 {
-        seg(s, 0.2, T, 5.0, T)
-        seg(s, 2.6, T, 2.6, B)
+        seg(&mut s, 0.2, T, 5.0, T)
+        seg(&mut s, 2.6, T, 2.6, B)
     } else if code == 85 {
-        seg(s, 0.4, T, 0.4, B - 1.7)
-        seg(s, 5.0, T, 5.0, B - 1.7)
-        arc(s, 2.7, B - 1.7, 2.3, 1.7, 0.0, 180.0, 12)
+        seg(&mut s, 0.4, T, 0.4, B - 1.7)
+        seg(&mut s, 5.0, T, 5.0, B - 1.7)
+        arc(&mut s, 2.7, B - 1.7, 2.3, 1.7, 0.0, 180.0, 12)
     } else if code == 86 {
-        seg(s, 0.2, T, 2.6, B)
-        seg(s, 2.6, B, 5.0, T)
+        seg(&mut s, 0.2, T, 2.6, B)
+        seg(&mut s, 2.6, B, 5.0, T)
     } else if code == 87 {
-        seg(s, 0.2, T, 1.7, B)
-        seg(s, 1.7, B, 3.2, T + 1.4)
-        seg(s, 3.2, T + 1.4, 4.7, B)
-        seg(s, 4.7, B, 6.3, T)
+        seg(&mut s, 0.2, T, 1.7, B)
+        seg(&mut s, 1.7, B, 3.2, T + 1.4)
+        seg(&mut s, 3.2, T + 1.4, 4.7, B)
+        seg(&mut s, 4.7, B, 6.3, T)
     } else if code == 88 || code == 120 {
-        seg(s, 0.3, T, 4.9, B)
-        seg(s, 4.9, T, 0.3, B)
+        seg(&mut s, 0.3, T, 4.9, B)
+        seg(&mut s, 4.9, T, 0.3, B)
     } else if code == 89 {
-        seg(s, 0.3, T, 2.6, M + 0.2)
-        seg(s, 4.9, T, 2.6, M + 0.2)
-        seg(s, 2.6, M + 0.2, 2.6, B)
+        seg(&mut s, 0.3, T, 2.6, M + 0.2)
+        seg(&mut s, 4.9, T, 2.6, M + 0.2)
+        seg(&mut s, 2.6, M + 0.2, 2.6, B)
     } else if code == 90 {
-        seg(s, 0.3, T, 4.9, T)
-        seg(s, 4.9, T, 0.3, B)
-        seg(s, 0.3, B, 4.9, B)
+        seg(&mut s, 0.3, T, 4.9, T)
+        seg(&mut s, 4.9, T, 0.3, B)
+        seg(&mut s, 0.3, B, 4.9, B)
     } else if code == 48 {
-        arc(s, 2.5, (T + B) / 2.0, 2.2, H / 2.0, 0.0, 360.0, 24)
+        arc(&mut s, 2.5, (T + B) / 2.0, 2.2, H / 2.0, 0.0, 360.0, 24)
     } else if code == 49 {
-        seg(s, 0.7, T + 1.3, 2.4, T)
-        seg(s, 2.4, T, 2.4, B)
+        seg(&mut s, 0.7, T + 1.3, 2.4, T)
+        seg(&mut s, 2.4, T, 2.4, B)
     } else if code == 50 {
         var p: Vec<f64> = [0.4, T + 1.5, 0.9, T + 0.5, 2.2, T + 0.05, 3.6, T + 0.35, 4.4, T + 1.4, 4.0, T + 2.9, 0.4, B, 4.7, B,]
-        poly(s, p)
+        poly(&mut s, p)
     } else if code == 51 {
         var p: Vec<f64> = [0.5, T + 1.1, 1.6, T + 0.1, 3.2, T + 0.15, 4.4, T + 1.1, 3.9, M - 0.1, 2.3, M + 0.2,]
-        poly(s, p)
+        poly(&mut s, p)
         var q: Vec<f64> = [2.9, M + 0.1, 4.3, M + 1.0, 4.4, B - 1.2, 3.3, B - 0.05, 1.5, B - 0.1, 0.4, B - 1.1,]
-        poly(s, q)
+        poly(&mut s, q)
     } else if code == 52 {
-        seg(s, 3.7, T, 0.3, B - 1.9)
-        seg(s, 0.3, B - 1.9, 4.9, B - 1.9)
-        seg(s, 3.7, T, 3.7, B)
+        seg(&mut s, 3.7, T, 0.3, B - 1.9)
+        seg(&mut s, 0.3, B - 1.9, 4.9, B - 1.9)
+        seg(&mut s, 3.7, T, 3.7, B)
     } else if code == 53 {
-        seg(s, 4.3, T, 1.2, T)
-        seg(s, 1.2, T, 0.9, M - 0.3)
+        seg(&mut s, 4.3, T, 1.2, T)
+        seg(&mut s, 1.2, T, 0.9, M - 0.3)
         var p: Vec<f64> = [0.9, M - 0.3, 2.4, M - 0.7, 3.9, M - 0.1, 4.5, M + 1.3, 3.9, B - 0.5, 2.3, B - 0.02, 0.7, B - 0.7,]
-        poly(s, p)
+        poly(&mut s, p)
     } else if code == 54 {
-        arc(s, 2.5, B - 1.6, 2.2, 1.6, 0.0, 360.0, 18)
+        arc(&mut s, 2.5, B - 1.6, 2.2, 1.6, 0.0, 360.0, 18)
         var p: Vec<f64> = [4.3, T + 0.5, 2.6, T + 0.05, 1.1, T + 1.2, 0.4, M + 0.6, 0.3, B - 1.6,]
-        poly(s, p)
+        poly(&mut s, p)
     } else if code == 55 {
-        seg(s, 0.3, T, 4.9, T)
-        seg(s, 4.9, T, 1.9, B)
+        seg(&mut s, 0.3, T, 4.9, T)
+        seg(&mut s, 4.9, T, 1.9, B)
     } else if code == 56 {
-        arc(s, 2.5, T + 1.5, 2.0, 1.5, 0.0, 360.0, 18)
-        arc(s, 2.5, B - 1.7, 2.3, 1.7, 0.0, 360.0, 18)
+        arc(&mut s, 2.5, T + 1.5, 2.0, 1.5, 0.0, 360.0, 18)
+        arc(&mut s, 2.5, B - 1.7, 2.3, 1.7, 0.0, 360.0, 18)
     } else if code == 57 {
-        arc(s, 2.5, T + 1.6, 2.2, 1.6, 0.0, 360.0, 18)
+        arc(&mut s, 2.5, T + 1.6, 2.2, 1.6, 0.0, 360.0, 18)
         var p: Vec<f64> = [4.7, T + 1.6, 4.6, M + 1.0, 3.9, B - 0.6, 2.4, B - 0.02, 0.8, B - 0.5,]
-        poly(s, p)
+        poly(&mut s, p)
     } else if code == 46 {
-        dot(s, 0.9, B)
+        dot(&mut s, 0.9, B)
     } else if code == 44 {
-        seg(s, 1.0, B - 0.1, 0.55, B + 0.85)
+        seg(&mut s, 1.0, B - 0.1, 0.55, B + 0.85)
     } else if code == 58 {
-        dot(s, 0.9, M - 0.6)
-        dot(s, 0.9, B)
+        dot(&mut s, 0.9, M - 0.6)
+        dot(&mut s, 0.9, B)
     } else if code == 33 {
-        seg(s, 0.9, T, 0.9, B - 1.5)
-        dot(s, 0.9, B)
+        seg(&mut s, 0.9, T, 0.9, B - 1.5)
+        dot(&mut s, 0.9, B)
     } else if code == 39 {
-        seg(s, 0.8, T, 0.8, T + 1.3)
+        seg(&mut s, 0.8, T, 0.8, T + 1.3)
     } else if code == 45 {
-        seg(s, 0.4, M, 3.7, M)
+        seg(&mut s, 0.4, M, 3.7, M)
     } else if code == 43 {
-        seg(s, 0.4, M, 4.4, M)
-        seg(s, 2.4, M - 2.0, 2.4, M + 2.0)
+        seg(&mut s, 0.4, M, 4.4, M)
+        seg(&mut s, 2.4, M - 2.0, 2.4, M + 2.0)
     } else if code == 47 {
-        seg(s, 0.4, B, 4.0, T)
+        seg(&mut s, 0.4, B, 4.0, T)
     } else if code == 63 {
         var p: Vec<f64> = [0.5, T + 1.2, 1.3, T + 0.2, 2.8, T + 0.05, 4.0, T + 0.9, 3.8, T + 2.1, 2.3, M + 0.9, 2.3, M + 1.6,]
-        poly(s, p)
-        dot(s, 2.3, B)
+        poly(&mut s, p)
+        dot(&mut s, 2.3, B)
     } else if code == 42 {
-        seg(s, 2.2, T + 0.2, 2.2, T + 2.6)
-        seg(s, 1.1, T + 0.6, 3.3, T + 2.2)
-        seg(s, 3.3, T + 0.6, 1.1, T + 2.2)
+        seg(&mut s, 2.2, T + 0.2, 2.2, T + 2.6)
+        seg(&mut s, 1.1, T + 0.6, 3.3, T + 2.2)
+        seg(&mut s, 3.3, T + 0.6, 1.1, T + 2.2)
     } else if code == 37 {
-        arc(s, 1.5, T + 1.2, 1.1, 1.1, 0.0, 360.0, 12)
-        arc(s, 4.6, B - 1.2, 1.1, 1.1, 0.0, 360.0, 12)
-        seg(s, 5.4, T + 0.2, 0.7, B - 0.2)
+        arc(&mut s, 1.5, T + 1.2, 1.1, 1.1, 0.0, 360.0, 12)
+        arc(&mut s, 4.6, B - 1.2, 1.1, 1.1, 0.0, 360.0, 12)
+        seg(&mut s, 5.4, T + 0.2, 0.7, B - 0.2)
     } else if code == 40 {
-        arc(s, 2.9, (T + B) / 2.0, 2.3, H / 2.0 + 0.2, 110.0, 250.0, 10)
+        arc(&mut s, 2.9, (T + B) / 2.0, 2.3, H / 2.0 + 0.2, 110.0, 250.0, 10)
     } else if code == 41 {
-        arc(s, 0.3, (T + B) / 2.0, 2.3, H / 2.0 + 0.2, -70.0, 70.0, 10)
+        arc(&mut s, 0.3, (T + B) / 2.0, 2.3, H / 2.0 + 0.2, -70.0, 70.0, 10)
     }
     return s
 }

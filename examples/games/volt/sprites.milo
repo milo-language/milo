@@ -60,7 +60,7 @@ fn spriteFrom(rows: &Vec<string>, pal: &Vec<f64>, boxW: i64, boxH: i64): Sprite 
             if ch >= 48 && ch <= 57 {
                 let i = (ch - 48) * 3
                 if i + 2 < pal.len {
-                    spriteSet(s, x, y, pal[i], pal[i + 1], pal[i + 2], 1.0)
+                    spriteSet(&mut s, x, y, pal[i], pal[i + 1], pal[i + 2], 1.0)
                 }
             }
         }
@@ -216,7 +216,7 @@ fn ellipse(g: &mut Vec<i64>, w: i64, h: i64, cx: f64, cy: f64, rx: f64, ry: f64,
             let dx = ((x as f64) + 0.5 - cx) / rx
             let dy = ((y as f64) + 0.5 - cy) / ry
             if dx * dx + dy * dy <= 1.0 {
-                gset(g, w, h, x, y, v)
+                gset(&mut g, w, h, x, y, v)
             }
         }
     }
@@ -227,7 +227,7 @@ fn rectF(g: &mut Vec<i64>, w: i64, h: i64, x0: f64, y0: f64, x1: f64, y1: f64, v
     while (y as f64) < y1 {
         var x = Math.floor(x0) as i64
         while (x as f64) < x1 {
-            gset(g, w, h, x, y, v)
+            gset(&mut g, w, h, x, y, v)
             x = x + 1
         }
         y = y + 1
@@ -247,7 +247,7 @@ fn segment(g: &mut Vec<i64>, w: i64, h: i64, x0: f64, y0: f64, x1: f64, y1: f64,
         let t = (i as f64) / (steps as f64)
         let px = x0 + dx * t
         let py = y0 + dy * t
-        rectF(g, w, h, px - half, py - half, px + half, py + half, v)
+        rectF(&mut g, w, h, px - half, py - half, px + half, py + half, v)
     }
 }
 
@@ -260,12 +260,12 @@ fn earTri(g: &mut Vec<i64>, w: i64, h: i64, cx: f64, baseY: f64, halfW: f64, hei
         let mid = cx + lean * t
         var x = Math.floor(mid - hw) as i64
         while (x as f64) < mid + hw {
-            gset(g, w, h, x, (baseY - (y as f64)) as i64, fill)
+            gset(&mut g, w, h, x, (baseY - (y as f64)) as i64, fill)
             x = x + 1
         }
         // a warm centre, but only while the ear is wide enough to have one
         if hw > 1.1 {
-            gset(g, w, h, mid as i64, (baseY - (y as f64)) as i64, inner)
+            gset(&mut g, w, h, mid as i64, (baseY - (y as f64)) as i64, inner)
         }
         y = y + 1
     }
@@ -298,33 +298,33 @@ fn palSet(p: &mut Vec<f64>, i: i64, r: f64, g: f64, b: f64) {
 
 fn chiPalette(): Vec<f64> {
     var p: Vec<f64> = Vec.filled(48, 0.0)
-    palSet(p, C_FUR, 0.400, 0.240, 0.125)
-    palSet(p, C_LIT, 0.620, 0.395, 0.205)
-    palSet(p, C_BELLY, 0.800, 0.590, 0.380)
-    palSet(p, C_MASK, 0.880, 0.680, 0.460)
-    palSet(p, C_EAR, 0.900, 0.420, 0.420)
-    palSet(p, C_EYE, 1.300, 1.300, 1.350)
-    palSet(p, C_PUPIL, 0.020, 0.018, 0.028)
-    palSet(p, C_COLLAR, 1.700, 0.600, 0.160)
-    palSet(p, C_NOSE, 0.030, 0.026, 0.036)
-    palSet(p, C_TONGUE, 1.250, 0.320, 0.480)
-    palSet(p, C_OUTLINE, 0.018, 0.014, 0.024)
+    palSet(&mut p, C_FUR, 0.400, 0.240, 0.125)
+    palSet(&mut p, C_LIT, 0.620, 0.395, 0.205)
+    palSet(&mut p, C_BELLY, 0.800, 0.590, 0.380)
+    palSet(&mut p, C_MASK, 0.880, 0.680, 0.460)
+    palSet(&mut p, C_EAR, 0.900, 0.420, 0.420)
+    palSet(&mut p, C_EYE, 1.300, 1.300, 1.350)
+    palSet(&mut p, C_PUPIL, 0.020, 0.018, 0.028)
+    palSet(&mut p, C_COLLAR, 1.700, 0.600, 0.160)
+    palSet(&mut p, C_NOSE, 0.030, 0.026, 0.036)
+    palSet(&mut p, C_TONGUE, 1.250, 0.320, 0.480)
+    palSet(&mut p, C_OUTLINE, 0.018, 0.014, 0.024)
     return p
 }
 
 fn shepPalette(): Vec<f64> {
     var p: Vec<f64> = Vec.filled(48, 0.0)
-    palSet(p, C_FUR, 0.075, 0.066, 0.078) // the black saddle
-    palSet(p, C_LIT, 0.130, 0.115, 0.130)
-    palSet(p, C_BELLY, 0.560, 0.340, 0.130)
-    palSet(p, C_MASK, 0.780, 0.500, 0.200)
-    palSet(p, C_EAR, 0.330, 0.180, 0.130)
-    palSet(p, C_EYE, 1.300, 1.300, 1.350)
-    palSet(p, C_PUPIL, 0.020, 0.018, 0.028)
-    palSet(p, C_COLLAR, 1.900, 0.680, 0.180)
-    palSet(p, C_NOSE, 0.030, 0.026, 0.036)
-    palSet(p, C_TONGUE, 1.250, 0.320, 0.480)
-    palSet(p, C_OUTLINE, 0.012, 0.010, 0.018)
+    palSet(&mut p, C_FUR, 0.075, 0.066, 0.078) // the black saddle
+    palSet(&mut p, C_LIT, 0.130, 0.115, 0.130)
+    palSet(&mut p, C_BELLY, 0.560, 0.340, 0.130)
+    palSet(&mut p, C_MASK, 0.780, 0.500, 0.200)
+    palSet(&mut p, C_EAR, 0.330, 0.180, 0.130)
+    palSet(&mut p, C_EYE, 1.300, 1.300, 1.350)
+    palSet(&mut p, C_PUPIL, 0.020, 0.018, 0.028)
+    palSet(&mut p, C_COLLAR, 1.900, 0.680, 0.180)
+    palSet(&mut p, C_NOSE, 0.030, 0.026, 0.036)
+    palSet(&mut p, C_TONGUE, 1.250, 0.320, 0.480)
+    palSet(&mut p, C_OUTLINE, 0.012, 0.010, 0.018)
     return p
 }
 
@@ -505,9 +505,9 @@ fn dogSprite(sp: &DogSpec, pal: &Vec<f64>, frame: i64): Sprite {
             i = i + 1
             continue
         }
-        segment(g, w, h, hx, hipY, hx + ps.dx, footY + ps.dy, sp.legW, col)
+        segment(&mut g, w, h, hx, hipY, hx + ps.dx, footY + ps.dy, sp.legW, col)
         // a lighter paw, so the foot reads against the ground
-        rectF(g, w, h, hx + ps.dx - sp.legW * 0.5, footY + ps.dy - 0.6, hx + ps.dx + sp.legW * 0.7, footY + ps.dy + 0.6, C_BELLY)
+        rectF(&mut g, w, h, hx + ps.dx - sp.legW * 0.5, footY + ps.dy - 0.6, hx + ps.dx + sp.legW * 0.7, footY + ps.dy + 0.6, C_BELLY)
         i = i + 1
     }
 
@@ -520,18 +520,18 @@ fn dogSprite(sp: &DogSpec, pal: &Vec<f64>, frame: i64): Sprite {
         // rear leg want the same six pixels
         tailRise = tailRise + 3.5
     }
-    segment(g, w, h, tailBaseX, tailBaseY, tailBaseX - sp.tailLen * 0.6, tailBaseY - tailRise, sp.tailW, C_FUR)
+    segment(&mut g, w, h, tailBaseX, tailBaseY, tailBaseX - sp.tailLen * 0.6, tailBaseY - tailRise, sp.tailW, C_FUR)
     if tailRise > 2.0 {
         // the chihuahua's tail carries on up and over
-        segment(g, w, h, tailBaseX - sp.tailLen * 0.6, tailBaseY - tailRise, tailBaseX - sp.tailLen * 0.15, tailBaseY - tailRise - 1.6, sp.tailW, C_FUR)
+        segment(&mut g, w, h, tailBaseX - sp.tailLen * 0.6, tailBaseY - tailRise, tailBaseX - sp.tailLen * 0.15, tailBaseY - tailRise - 1.6, sp.tailW, C_FUR)
     }
 
     // body
-    ellipse(g, w, h, sp.bodyCx, bodyCy, bodyRx, bodyRy, C_FUR)
+    ellipse(&mut g, w, h, sp.bodyCx, bodyCy, bodyRx, bodyRy, C_FUR)
     // chest and belly: a second ellipse low and forward, in the lighter colour
-    ellipse(g, w, h, sp.bodyCx + bodyRx * 0.35, bodyCy + bodyRy * 0.45, bodyRx * 0.62, bodyRy * 0.55, C_BELLY)
+    ellipse(&mut g, w, h, sp.bodyCx + bodyRx * 0.35, bodyCy + bodyRy * 0.45, bodyRx * 0.62, bodyRy * 0.55, C_BELLY)
     // top light along the spine
-    ellipse(g, w, h, sp.bodyCx, bodyCy - bodyRy * 0.70, bodyRx * 0.72, bodyRy * 0.22, C_LIT)
+    ellipse(&mut g, w, h, sp.bodyCx, bodyCy - bodyRy * 0.70, bodyRx * 0.72, bodyRy * 0.22, C_LIT)
 
     // The cocked leg, drawn over the body rather than under it, and sized off
     // this build's own leg length rather than a shared offset — a fixed offset
@@ -551,12 +551,12 @@ fn dogSprite(sp: &DogSpec, pal: &Vec<f64>, frame: i64): Sprite {
         let hipY2 = hipY - 0.4
         let pawX = hipX - sp.legLen * 0.95
         let pawY = hipY2 - sp.legLen * 0.45
-        segment(g, w, h, hipX, hipY2, pawX, pawY, sp.legW * 0.85, legCol)
-        rectF(g, w, h, pawX - sp.legW * 0.5, pawY - sp.legW * 0.5, pawX + sp.legW * 0.6, pawY + sp.legW * 0.6, C_BELLY)
+        segment(&mut g, w, h, hipX, hipY2, pawX, pawY, sp.legW * 0.85, legCol)
+        rectF(&mut g, w, h, pawX - sp.legW * 0.5, pawY - sp.legW * 0.5, pawX + sp.legW * 0.6, pawY + sp.legW * 0.6, C_BELLY)
     }
 
     // neck, joining head to body so the two never read as two animals
-    segment(g, w, h, sp.bodyCx + bodyRx * 0.5, bodyCy - bodyRy * 0.55, headCx - sp.headR * 0.45, headCy + sp.headR * 0.65, sp.neckW, C_FUR)
+    segment(&mut g, w, h, sp.bodyCx + bodyRx * 0.5, bodyCy - bodyRy * 0.55, headCx - sp.headR * 0.45, headCy + sp.headR * 0.65, sp.neckW, C_FUR)
 
     // ears, behind the skull
     var lean = 0.0
@@ -576,39 +576,39 @@ fn dogSprite(sp: &DogSpec, pal: &Vec<f64>, frame: i64): Sprite {
     } else {
         C_LIT
     }
-    earTri(g, w, h, sp.earX0, earBase, sp.earW * 0.5, earH, lean, earFill, C_EAR)
-    earTri(g, w, h, sp.earX1, earBase, sp.earW * 0.42, earH * 0.88, lean, earFill, C_EAR)
+    earTri(&mut g, w, h, sp.earX0, earBase, sp.earW * 0.5, earH, lean, earFill, C_EAR)
+    earTri(&mut g, w, h, sp.earX1, earBase, sp.earW * 0.42, earH * 0.88, lean, earFill, C_EAR)
 
     // skull
-    ellipse(g, w, h, headCx, headCy, sp.headR, sp.headR * 0.92, C_FUR)
+    ellipse(&mut g, w, h, headCx, headCy, sp.headR, sp.headR * 0.92, C_FUR)
     if sp.saddle {
         // the tan mask: a shepherd's face is light everywhere but the muzzle
-        ellipse(g, w, h, headCx + sp.headR * 0.25, headCy + sp.headR * 0.15, sp.headR * 0.85, sp.headR * 0.78, C_MASK)
+        ellipse(&mut g, w, h, headCx + sp.headR * 0.25, headCy + sp.headR * 0.15, sp.headR * 0.85, sp.headR * 0.78, C_MASK)
     }
 
     // snout, and the mouth if this frame has one open
     let snoutY = headCy + sp.headR * 0.25
     if frame == DOG_BARK {
         // a wedge: upper jaw up, lower jaw down, tongue between them
-        rectF(g, w, h, headCx + sp.headR * 0.4, snoutY - sp.snoutH * 0.9, headCx + sp.headR * 0.4 + sp.snoutLen, snoutY - sp.snoutH * 0.1, C_MASK)
-        rectF(g, w, h, headCx + sp.headR * 0.4, snoutY + sp.snoutH * 0.5, headCx + sp.headR * 0.4 + sp.snoutLen * 0.8, snoutY + sp.snoutH * 1.3, C_MASK)
-        rectF(g, w, h, headCx + sp.headR * 0.5, snoutY, headCx + sp.headR * 0.5 + sp.snoutLen * 0.6, snoutY + sp.snoutH * 0.55, C_TONGUE)
+        rectF(&mut g, w, h, headCx + sp.headR * 0.4, snoutY - sp.snoutH * 0.9, headCx + sp.headR * 0.4 + sp.snoutLen, snoutY - sp.snoutH * 0.1, C_MASK)
+        rectF(&mut g, w, h, headCx + sp.headR * 0.4, snoutY + sp.snoutH * 0.5, headCx + sp.headR * 0.4 + sp.snoutLen * 0.8, snoutY + sp.snoutH * 1.3, C_MASK)
+        rectF(&mut g, w, h, headCx + sp.headR * 0.5, snoutY, headCx + sp.headR * 0.5 + sp.snoutLen * 0.6, snoutY + sp.snoutH * 0.55, C_TONGUE)
     } else {
-        rectF(g, w, h, headCx + sp.headR * 0.4, snoutY - sp.snoutH * 0.5, headCx + sp.headR * 0.4 + sp.snoutLen, snoutY + sp.snoutH * 0.5, C_MASK)
+        rectF(&mut g, w, h, headCx + sp.headR * 0.4, snoutY - sp.snoutH * 0.5, headCx + sp.headR * 0.4 + sp.snoutLen, snoutY + sp.snoutH * 0.5, C_MASK)
     }
     // nose
-    rectF(g, w, h, headCx + sp.headR * 0.4 + sp.snoutLen - 1.2, snoutY - sp.snoutH * 0.5, headCx + sp.headR * 0.4 + sp.snoutLen, snoutY + sp.snoutH * 0.1, C_NOSE)
+    rectF(&mut g, w, h, headCx + sp.headR * 0.4 + sp.snoutLen - 1.2, snoutY - sp.snoutH * 0.5, headCx + sp.headR * 0.4 + sp.snoutLen, snoutY + sp.snoutH * 0.1, C_NOSE)
 
     // eye. Shut when hurt — one dark pixel row reads as a wince at this size.
     let eyeX = (headCx + sp.headR * 0.05) as i64
     let eyeY = (headCy - sp.headR * 0.25) as i64
     if frame == DOG_HURT {
-        gset(g, w, h, eyeX, eyeY, C_PUPIL)
-        gset(g, w, h, eyeX + 1, eyeY, C_PUPIL)
+        gset(&mut g, w, h, eyeX, eyeY, C_PUPIL)
+        gset(&mut g, w, h, eyeX + 1, eyeY, C_PUPIL)
     } else {
-        gset(g, w, h, eyeX, eyeY, C_EYE)
-        gset(g, w, h, eyeX + 1, eyeY, C_PUPIL)
-        gset(g, w, h, eyeX, eyeY + 1, C_PUPIL)
+        gset(&mut g, w, h, eyeX, eyeY, C_EYE)
+        gset(&mut g, w, h, eyeX + 1, eyeY, C_PUPIL)
+        gset(&mut g, w, h, eyeX, eyeY + 1, C_PUPIL)
     }
 
     // collar, the one emissive thing on the animal
@@ -616,19 +616,19 @@ fn dogSprite(sp: &DogSpec, pal: &Vec<f64>, frame: i64): Sprite {
     var cy = (headCy + sp.headR * 0.7) as i64
     let collarBot = cy + 3
     while cy < collarBot {
-        gset(g, w, h, collarX, cy, C_COLLAR)
-        gset(g, w, h, collarX - 1, cy, C_COLLAR)
+        gset(&mut g, w, h, collarX, cy, C_COLLAR)
+        gset(&mut g, w, h, collarX - 1, cy, C_COLLAR)
         cy = cy + 1
     }
 
-    outlinePass(g, w, h)
+    outlinePass(&mut g, w, h)
 
     var s = spriteNew(w, h)
     for y in 0..h {
         for x in 0..w {
             let v = gget(g, w, h, x, y)
             if v != 0 {
-                spriteSet(s, x, y, pal[v * 3], pal[v * 3 + 1], pal[v * 3 + 2], 1.0)
+                spriteSet(&mut s, x, y, pal[v * 3], pal[v * 3 + 1], pal[v * 3 + 2], 1.0)
             }
         }
     }
@@ -665,13 +665,13 @@ pub let CAT_H: i64 = 13
 
 fn catPalette(): Vec<f64> {
     var p: Vec<f64> = Vec.new()
-    palAdd(p, 0.015, 0.012, 0.028) // 0 outline
-    palAdd(p, 0.180, 0.130, 0.260) // 1 fur dark
-    palAdd(p, 0.360, 0.260, 0.480) // 2 fur
-    palAdd(p, 0.520, 0.400, 0.640) // 3 belly
-    palAdd(p, 0.400, 1.800, 0.900) // 4 eye (emissive)
-    palAdd(p, 1.200, 0.400, 0.560) // 5 nose
-    palAdd(p, 1.300, 1.300, 1.350) // 6 white
+    palAdd(&mut p, 0.015, 0.012, 0.028) // 0 outline
+    palAdd(&mut p, 0.180, 0.130, 0.260) // 1 fur dark
+    palAdd(&mut p, 0.360, 0.260, 0.480) // 2 fur
+    palAdd(&mut p, 0.520, 0.400, 0.640) // 3 belly
+    palAdd(&mut p, 0.400, 1.800, 0.900) // 4 eye (emissive)
+    palAdd(&mut p, 1.200, 0.400, 0.560) // 5 nose
+    palAdd(&mut p, 1.300, 1.300, 1.350) // 6 white
     return p
 }
 
@@ -693,25 +693,25 @@ pub fn catFrames(): Vec<Sprite> {
     var out: Vec<Sprite> = Vec.new()
 
     var f0: Vec<string> = Vec.new()
-    catBody(f0)
+    catBody(&mut f0)
     f0.push("...020......020")
     f0.push("..0220.....0220")
     out.push(spriteFrom(f0, pal, CAT_W, CAT_H))
 
     var f1: Vec<string> = Vec.new()
-    catBody(f1)
+    catBody(&mut f1)
     f1.push("....020...020")
     f1.push("....020...020")
     out.push(spriteFrom(f1, pal, CAT_W, CAT_H))
 
     var f2: Vec<string> = Vec.new()
-    catBody(f2)
+    catBody(&mut f2)
     f2.push("..020........020")
     f2.push(".0220.......0220")
     out.push(spriteFrom(f2, pal, CAT_W, CAT_H))
 
     var f3: Vec<string> = Vec.new()
-    catBody(f3)
+    catBody(&mut f3)
     f3.push(".....020..020")
     f3.push(".....020..020")
     out.push(spriteFrom(f3, pal, CAT_W, CAT_H))
@@ -732,13 +732,13 @@ pub let BIRD_H: i64 = 11
 
 fn birdPalette(): Vec<f64> {
     var p: Vec<f64> = Vec.new()
-    palAdd(p, 0.012, 0.012, 0.020) // 0 outline
-    palAdd(p, 0.120, 0.140, 0.230) // 1 wing dark
-    palAdd(p, 0.260, 0.300, 0.460) // 2 body
-    palAdd(p, 0.420, 0.480, 0.700) // 3 wing lit
-    palAdd(p, 2.100, 0.320, 0.300) // 4 eye (emissive)
-    palAdd(p, 1.500, 0.850, 0.200) // 5 beak (emissive)
-    palAdd(p, 1.300, 1.300, 1.350) // 6 white
+    palAdd(&mut p, 0.012, 0.012, 0.020) // 0 outline
+    palAdd(&mut p, 0.120, 0.140, 0.230) // 1 wing dark
+    palAdd(&mut p, 0.260, 0.300, 0.460) // 2 body
+    palAdd(&mut p, 0.420, 0.480, 0.700) // 3 wing lit
+    palAdd(&mut p, 2.100, 0.320, 0.300) // 4 eye (emissive)
+    palAdd(&mut p, 1.500, 0.850, 0.200) // 5 beak (emissive)
+    palAdd(&mut p, 1.300, 1.300, 1.350) // 6 white
     return p
 }
 
@@ -762,12 +762,12 @@ pub fn birdFrames(): Vec<Sprite> {
 
     // up
     var f0: Vec<string> = Vec.new()
-    birdBody(f0, "...0330", "..033330", "..033330")
+    birdBody(&mut f0, "...0330", "..033330", "..033330")
     out.push(spriteFrom(f0, pal, BIRD_W, BIRD_H))
 
     // mid, coming down
     var f1: Vec<string> = Vec.new()
-    birdBody(f1, "", "...0330", "..0333330")
+    birdBody(&mut f1, "", "...0330", "..0333330")
     out.push(spriteFrom(f1, pal, BIRD_W, BIRD_H))
 
     // down: the wing is under the body, so the silhouette drops for a frame
@@ -791,7 +791,7 @@ pub fn birdFrames(): Vec<Sprite> {
 
     // mid, going up
     var f3: Vec<string> = Vec.new()
-    birdBody(f3, "", "...0330", "..0333330")
+    birdBody(&mut f3, "", "...0330", "..0333330")
     out.push(spriteFrom(f3, pal, BIRD_W, BIRD_H))
 
     return out
@@ -820,7 +820,7 @@ fn knuckle(s: &mut Sprite, cx: f64, cy: f64, r: f64, k: f64) {
                 // that has to be spotted from anywhere
                 let edge = 1.0 - d / (r + 0.001)
                 let g = k * (0.75 + edge * 0.65)
-                spriteSet(s, x, y, 1.85 * g, 1.70 * g, 1.35 * g, 1.0)
+                spriteSet(&mut s, x, y, 1.85 * g, 1.70 * g, 1.35 * g, 1.0)
             }
             x = x + 1
         }
@@ -830,15 +830,15 @@ fn knuckle(s: &mut Sprite, cx: f64, cy: f64, r: f64, k: f64) {
 
 pub fn boneSprite(): Sprite {
     var s = spriteNew(BONE_W, BONE_H)
-    knuckle(s, 2.6, 2.4, 2.5, 1.0)
-    knuckle(s, 2.6, 7.0, 2.5, 1.0)
-    knuckle(s, 13.0, 2.4, 2.5, 1.0)
-    knuckle(s, 13.0, 7.0, 2.5, 1.0)
+    knuckle(&mut s, 2.6, 2.4, 2.5, 1.0)
+    knuckle(&mut s, 2.6, 7.0, 2.5, 1.0)
+    knuckle(&mut s, 13.0, 2.4, 2.5, 1.0)
+    knuckle(&mut s, 13.0, 7.0, 2.5, 1.0)
     for y in 3..7 {
         for x in 2..14 {
             let edge = 1.0 - Math.abs((y as f64) - 4.5) / 3.0
             let g = 0.80 + edge * 0.55
-            spriteSet(s, x, y, 1.85 * g, 1.70 * g, 1.35 * g, 1.0)
+            spriteSet(&mut s, x, y, 1.85 * g, 1.70 * g, 1.35 * g, 1.0)
         }
     }
     return s
@@ -870,16 +870,16 @@ pub fn shardFrames(): Vec<Sprite> {
                 if d <= 1.0 {
                     let edge = 1.0 - d
                     let lit = 0.72 + edge * 0.75
-                    spriteSet(s, x, y, 1.05 * lit, 0.70 * lit, 0.32 * lit, 1.0)
+                    spriteSet(&mut s, x, y, 1.05 * lit, 0.70 * lit, 0.32 * lit, 1.0)
                 } else if d <= 1.16 {
-                    spriteSet(s, x, y, 0.30, 0.17, 0.07, 1.0)
+                    spriteSet(&mut s, x, y, 0.30, 0.17, 0.07, 1.0)
                 }
             }
         }
         // the two dents every dog biscuit has
         if k > 0.5 {
-            spriteSet(s, 4, 3, 0.42, 0.26, 0.11, 1.0)
-            spriteSet(s, 6, 7, 0.42, 0.26, 0.11, 1.0)
+            spriteSet(&mut s, 4, 3, 0.42, 0.26, 0.11, 1.0)
+            spriteSet(&mut s, 6, 7, 0.42, 0.26, 0.11, 1.0)
         }
         out.push(s)
     }
@@ -913,9 +913,9 @@ pub fn coreSprite(): Sprite {
                     g = 1.30
                     b = 1.15
                 }
-                spriteSet(s, x, y, r, g, b, 1.0)
+                spriteSet(&mut s, x, y, r, g, b, 1.0)
             } else if d <= 8.3 {
-                spriteSet(s, x, y, 0.05, 0.09, 0.02, 1.0)
+                spriteSet(&mut s, x, y, 0.05, 0.09, 0.02, 1.0)
             }
         }
     }
@@ -928,10 +928,10 @@ pub fn coreSprite(): Sprite {
 
 pub fn hydrantSprite(): Sprite {
     var p: Vec<f64> = Vec.new()
-    palAdd(p, 0.015, 0.010, 0.012) // 0 outline
-    palAdd(p, 0.420, 0.075, 0.070) // 1 body shadow
-    palAdd(p, 0.900, 0.170, 0.140) // 2 body
-    palAdd(p, 0.380, 0.400, 0.470) // 3 bolt
+    palAdd(&mut p, 0.015, 0.010, 0.012) // 0 outline
+    palAdd(&mut p, 0.420, 0.075, 0.070) // 1 body shadow
+    palAdd(&mut p, 0.900, 0.170, 0.140) // 2 body
+    palAdd(&mut p, 0.380, 0.400, 0.470) // 3 bolt
     var v: Vec<string> = Vec.new()
     v.push("....000")
     v.push("...02220")

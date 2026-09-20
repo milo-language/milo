@@ -102,32 +102,32 @@ pub struct Post {
 }
 
 pub fn postNew(gl: &mut GlContext, w: i64, h: i64, ow: i64, oh: i64): Result<Post, string> {
-    let sea = Shader.compile(gl, QUAD_VERT_LOCAL, seaFrag())?
-    let over = Shader.compile(gl, QUAD_VERT_LOCAL, OVERLAY_FRAG)?
-    let bright = Shader.compile(gl, QUAD_VERT_LOCAL, BRIGHT_FRAG)?
-    let blur = Shader.compile(gl, QUAD_VERT_LOCAL, BLUR_FRAG)?
-    let comp = Shader.compile(gl, QUAD_VERT_LOCAL, COMPOSITE_FRAG)?
+    let sea = Shader.compile(&mut gl, QUAD_VERT_LOCAL, seaFrag())?
+    let over = Shader.compile(&mut gl, QUAD_VERT_LOCAL, OVERLAY_FRAG)?
+    let bright = Shader.compile(&mut gl, QUAD_VERT_LOCAL, BRIGHT_FRAG)?
+    let blur = Shader.compile(&mut gl, QUAD_VERT_LOCAL, BLUR_FRAG)?
+    let comp = Shader.compile(&mut gl, QUAD_VERT_LOCAL, COMPOSITE_FRAG)?
     var p = Post {
-        world: Target.new(gl, 4, 4, true, false)?,
-        scene: Target.new(gl, 4, 4, false, false)?,
-        a: Target.new(gl, 4, 4, false, true)?,
-        b: Target.new(gl, 4, 4, false, true)?,
+        world: Target.new(&mut gl, 4, 4, true, false)?,
+        scene: Target.new(&mut gl, 4, 4, false, false)?,
+        a: Target.new(&mut gl, 4, 4, false, true)?,
+        b: Target.new(&mut gl, 4, 4, false, true)?,
         // LINEAR, because the overlay is at a fixed resolution and the scene is
         // not: at anything but 1:1 a nearest-sampled HUD is a staircase.
-        overlay: Texture2D.rgb32f(gl, ow, oh, Vec.filled(ow * oh * 3, 0.0), true),
-        overlayCov: Texture2D.r32f(gl, ow, oh, Vec.filled(ow * oh, 0.0), true),
+        overlay: Texture2D.rgb32f(&mut gl, ow, oh, Vec.filled(ow * oh * 3, 0.0), true),
+        overlayCov: Texture2D.r32f(&mut gl, ow, oh, Vec.filled(ow * oh, 0.0), true),
         // One fixed allocation, big enough for any shipped map's cover grid, so
         // changing place is a sub-image upload rather than a reallocation.
         // LINEAR: the grid is coarse, and a nearest-sampled shoreline is a
         // staircase of 10 m steps. Filtering makes it a soft waterline.
-        cover: Texture2D.r32fEmpty(gl, COVER_TEX, COVER_TEX, true),
-        cloudTex: cloudUpload(gl, cloudEmpty()),
+        cover: Texture2D.r32fEmpty(&mut gl, COVER_TEX, COVER_TEX, true),
+        cloudTex: cloudUpload(&mut gl, cloudEmpty()),
         sea: sea,
         over: over,
         bright: bright,
         blur: blur,
         comp: comp,
-        quad: Mesh.fullscreenQuad(gl),
+        quad: Mesh.fullscreenQuad(&mut gl),
         w: 0,
         h: 0,
         ow: ow,
@@ -135,7 +135,7 @@ pub fn postNew(gl: &mut GlContext, w: i64, h: i64, ow: i64, oh: i64): Result<Pos
         bw: 1,
         bh: 1,
     }
-    postResize(gl, p, w, h)?
+    postResize(&mut gl, &mut p, w, h)?
     return Result.Ok(p)
 }
 
@@ -153,10 +153,10 @@ pub fn postResize(gl: &mut GlContext, p: &mut Post, w: i64, h: i64): Result<i64,
     }
     let bw = Math.maxI64(1, w / SHRINK)
     let bh = Math.maxI64(1, h / SHRINK)
-    replace(p.world, Target.new(gl, w, h, true, false)?).free(gl)
-    replace(p.scene, Target.new(gl, w, h, false, false)?).free(gl)
-    replace(p.a, Target.new(gl, bw, bh, false, true)?).free(gl)
-    replace(p.b, Target.new(gl, bw, bh, false, true)?).free(gl)
+    replace(p.world, Target.new(&mut gl, w, h, true, false)?).free(&mut gl)
+    replace(p.scene, Target.new(&mut gl, w, h, false, false)?).free(&mut gl)
+    replace(p.a, Target.new(&mut gl, bw, bh, false, true)?).free(&mut gl)
+    replace(p.b, Target.new(&mut gl, bw, bh, false, true)?).free(&mut gl)
     p.w = w
     p.h = h
     p.bw = bw
@@ -301,19 +301,19 @@ fn gpuBlurPass(p: &Post, stride: i64) {
 }
 
 pub fn postFree(gl: &mut GlContext, p: Post) {
-    p.world.free(gl)
-    p.scene.free(gl)
-    p.a.free(gl)
-    p.b.free(gl)
-    p.overlay.free(gl)
-    p.overlayCov.free(gl)
-    p.cover.free(gl)
-    p.sea.free(gl)
-    p.over.free(gl)
-    p.bright.free(gl)
-    p.blur.free(gl)
-    p.comp.free(gl)
-    p.quad.free(gl)
+    p.world.free(&mut gl)
+    p.scene.free(&mut gl)
+    p.a.free(&mut gl)
+    p.b.free(&mut gl)
+    p.overlay.free(&mut gl)
+    p.overlayCov.free(&mut gl)
+    p.cover.free(&mut gl)
+    p.sea.free(&mut gl)
+    p.over.free(&mut gl)
+    p.bright.free(&mut gl)
+    p.blur.free(&mut gl)
+    p.comp.free(&mut gl)
+    p.quad.free(&mut gl)
 }
 
 // ── the sea ───────────────────────────────────────────────────────────────────

@@ -313,8 +313,8 @@ pub fn splash(cols: i64, rows: i64): void {
         let rowBot = spriteRow(r * 2 + 1)
         var c: i64 = 0
         while c < 18 {
-            pixelRGB(spriteCharAt(rowTop, c), tcol)
-            pixelRGB(spriteCharAt(rowBot, c), bcol)
+            pixelRGB(spriteCharAt(rowTop, c), &mut tcol)
+            pixelRGB(spriteCharAt(rowBot, c), &mut bcol)
             let topOp = tcol[3] == 1
             let botOp = bcol[3] == 1
             if topOp && botOp {
@@ -735,8 +735,8 @@ pub fn main(): void {
                                 k = k + 1
                             }
 
-                            let got0 = drainInto(pty0, term0)
-                            let got1 = drainInto(pty1, term1)
+                            let got0 = drainInto(pty0, &mut term0)
+                            let got1 = drainInto(pty1, &mut term1)
 
                             if redrawBorder {
                                 drawBorder(focus, half, paneRows, shellName)

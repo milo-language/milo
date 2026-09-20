@@ -270,7 +270,7 @@ pub fn cityAttachOrtho(c: &mut City, png: &string): Result<i64, string> {
             t.pxu[dst + 2] = img.pixels[src + 2]
         }
     }
-    fillNoData(c, t, n)
+    fillNoData(c, &mut t, n)
     c.ortho = t
     c.orthoLoaded = true
     return Result.Ok(n)
@@ -648,7 +648,7 @@ pub fn getI32(src: &string, off: i64): i64 {
 }
 
 pub fn putCm(out: &mut string, v: f64) {
-    putI32(out, Math.round(v * 100.0) as i64)
+    putI32(&mut out, Math.round(v * 100.0) as i64)
 }
 
 pub let MAGIC: string = "MILOCITY"
@@ -670,7 +670,7 @@ pub fn cityLoad(path: &string): Result<City, string> {
     // to read is silence rather than a message about a file nobody asked for.
     match readFile(orthoPathFor(path)) {
         Result.Ok(png) => {
-            let _ = cityAttachOrtho(c, png)
+            let _ = cityAttachOrtho(&mut c, png)
         }
         Result.Err(_) => {
         }
@@ -891,7 +891,7 @@ pub fn cityParse(src: &string): Result<City, string> {
 
     c.bodyEnd = p
     if ver >= 2 {
-        p = parseBridges(c, src, p)?
+        p = parseBridges(&mut c, src, p)?
     }
     c.bridgeEnd = p
     // The roof section is optional even at version 3: a file may legitimately end
@@ -900,14 +900,14 @@ pub fn cityParse(src: &string): Result<City, string> {
     // not a promise that every layer is present. A section that IS there still
     // has to be complete and to match the building count.
     if ver >= 3 && have(src, p, 4) {
-        parseRoofs(c, src, p)?
+        parseRoofs(&mut c, src, p)?
     }
 
     c.loaded = true
-    buildIndex(c)
-    deckProfile(c)
-    claimBridgeStructures(c)
-    computeTop(c)
+    buildIndex(&mut c)
+    deckProfile(&mut c)
+    claimBridgeStructures(&mut c)
+    computeTop(&mut c)
     return Result.Ok(c)
 }
 

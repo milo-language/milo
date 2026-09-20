@@ -247,7 +247,7 @@ pub fn applyIterate(values: &Vec<string>): Vec<string> {
     var next: Vec<string> = Vec.new()
     for vi in 0..values.len {
         var items: Vec<string> = Vec.new()
-        let ok = collectArray(values[vi], items)
+        let ok = collectArray(values[vi], &mut items)
         for item in items {
             next.push(item.clone())
         }

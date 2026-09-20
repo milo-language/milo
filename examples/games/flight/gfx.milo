@@ -98,7 +98,7 @@ pub fn darkPix(c: &mut Canvas, x: i64, y: i64, k: f64) {
     if k <= 0.0 {
         return
     }
-    hide(c, x, y, Math.minF64(k, 1.0))
+    hide(&mut c, x, y, Math.minF64(k, 1.0))
 }
 
 // A dark line, for silhouettes. Same DDA walk as `line`, darkening instead of
@@ -124,10 +124,10 @@ pub fn darkLine(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, k: f64) {
         let fy = py - Math.floor(py)
         let bx = Math.floor(px) as i64
         let by = Math.floor(py) as i64
-        darkPix(c, bx, by, k * (1.0 - fx) * (1.0 - fy))
-        darkPix(c, bx + 1, by, k * fx * (1.0 - fy))
-        darkPix(c, bx, by + 1, k * (1.0 - fx) * fy)
-        darkPix(c, bx + 1, by + 1, k * fx * fy)
+        darkPix(&mut c, bx, by, k * (1.0 - fx) * (1.0 - fy))
+        darkPix(&mut c, bx + 1, by, k * fx * (1.0 - fy))
+        darkPix(&mut c, bx, by + 1, k * (1.0 - fx) * fy)
+        darkPix(&mut c, bx + 1, by + 1, k * fx * fy)
         px = px + ix
         py = py + iy
     }
@@ -179,7 +179,7 @@ fn plot(c: &mut Canvas, x: i64, y: i64, cov: f64, r: f64, g: f64, b: f64) {
     if cov <= 0.0 {
         return
     }
-    addPix(c, x, y, r * cov, g * cov, b * cov)
+    addPix(&mut c, x, y, r * cov, g * cov, b * cov)
 }
 
 // Xiaolin Wu antialiased line, drawn additively. Thin and bright — the bloom
@@ -238,11 +238,11 @@ pub fn line(c: &mut Canvas, x0i: f64, y0i: f64, x1i: f64, y1i: f64, r: f64, g: f
         let frac = yv - fy
         let iy = fy as i64
         if steep {
-            plot(c, iy, x, 1.0 - frac, r, g, b)
-            plot(c, iy + 1, x, frac, r, g, b)
+            plot(&mut c, iy, x, 1.0 - frac, r, g, b)
+            plot(&mut c, iy + 1, x, frac, r, g, b)
         } else {
-            plot(c, x, iy, 1.0 - frac, r, g, b)
-            plot(c, x, iy + 1, frac, r, g, b)
+            plot(&mut c, x, iy, 1.0 - frac, r, g, b)
+            plot(&mut c, x, iy + 1, frac, r, g, b)
         }
         yv = yv + grad
         x = x + 1
@@ -283,7 +283,7 @@ pub fn thickLine(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, wide: f64, 
     let k = 1.0 / (n as f64)
     for i in 0..n {
         let off = ((i as f64) - ((n as f64) - 1.0) * 0.5) * 0.9
-        line(c, x0 + nx * off, y0 + ny * off, x1 + nx * off, y1 + ny * off, r * k, g * k, b * k)
+        line(&mut c, x0 + nx * off, y0 + ny * off, x1 + nx * off, y1 + ny * off, r * k, g * k, b * k)
     }
 }
 
@@ -299,7 +299,7 @@ pub fn shadeRect(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, k: f64) {
     while y < iy1 {
         var x = ix0
         while x < ix1 {
-            hide(c, x, y, 1.0 - k)
+            hide(&mut c, x, y, 1.0 - k)
             x = x + 1
         }
         y = y + 1
@@ -329,7 +329,7 @@ pub fn text(c: &mut Canvas, x: i64, y: i64, s: &string, scale: i64, r: f64, g: f
                             let py = y + row * scale
                             for sy in 0..scale {
                                 for sx in 0..scale {
-                                    addPix(c, px + sx, py + sy, r, g, b)
+                                    addPix(&mut c, px + sx, py + sy, r, g, b)
                                 }
                             }
                         }
@@ -342,7 +342,7 @@ pub fn text(c: &mut Canvas, x: i64, y: i64, s: &string, scale: i64, r: f64, g: f
 }
 
 pub fn textCentered(c: &mut Canvas, cx: i64, y: i64, s: &string, scale: i64, r: f64, g: f64, b: f64) {
-    text(c, cx - textWidth(s, scale) / 2, y, s, scale, r, g, b)
+    text(&mut c, cx - textWidth(s, scale) / 2, y, s, scale, r, g, b)
 }
 
 pub fn fillRect(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, r: f64, g: f64, b: f64) {

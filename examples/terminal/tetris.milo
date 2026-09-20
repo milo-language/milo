@@ -79,7 +79,7 @@ pub fn emit(buf: &mut string, s: &string): void {
 }
 
 pub fn cursor(buf: &mut string, row: i64, col: i64): void {
-    emit(buf, Ansi.cursorTo(row, col))
+    emit(&mut buf, Ansi.cursorTo(row, col))
 }
 
 // a solid 2-wide cell in the piece's color
@@ -147,24 +147,24 @@ pub fn setCells(out: &mut [i64; 8], a: i64, b: i64, c: i64, d: i64, e: i64, f: i
 // spawn-state cells (x,y pairs) within the piece's NxN box
 pub fn spawnCells(kind: i64, out: &mut [i64; 8]): void {
     if kind == KIND_I {
-        setCells(out, 0, 1, 1, 1, 2, 1, 3, 1)
+        setCells(&mut out, 0, 1, 1, 1, 2, 1, 3, 1)
     } else if kind == KIND_O {
-        setCells(out, 0, 0, 1, 0, 0, 1, 1, 1)
+        setCells(&mut out, 0, 0, 1, 0, 0, 1, 1, 1)
     } else if kind == KIND_T {
-        setCells(out, 1, 0, 0, 1, 1, 1, 2, 1)
+        setCells(&mut out, 1, 0, 0, 1, 1, 1, 2, 1)
     } else if kind == KIND_S {
-        setCells(out, 1, 0, 2, 0, 0, 1, 1, 1)
+        setCells(&mut out, 1, 0, 2, 0, 0, 1, 1, 1)
     } else if kind == KIND_Z {
-        setCells(out, 0, 0, 1, 0, 1, 1, 2, 1)
+        setCells(&mut out, 0, 0, 1, 0, 1, 1, 2, 1)
     } else if kind == KIND_J {
-        setCells(out, 0, 0, 0, 1, 1, 1, 2, 1)
+        setCells(&mut out, 0, 0, 0, 1, 1, 1, 2, 1)
     } else {
-        setCells(out, 2, 0, 0, 1, 1, 1, 2, 1)
+        setCells(&mut out, 2, 0, 0, 1, 1, 1, 2, 1)
     }
 }
 
 pub fn pieceCells(kind: i64, rot: i64, out: &mut [i64; 8]): void {
-    spawnCells(kind, out)
+    spawnCells(kind, &mut out)
     let n = pieceN(kind)
     var r: i64 = 0
     while r < rot {
@@ -181,7 +181,7 @@ pub fn pieceCells(kind: i64, rot: i64, out: &mut [i64; 8]): void {
 // true if piece at (px,py) is off-board or overlaps a settled cell
 pub fn collides(board: &Board, kind: i64, rot: i64, px: i64, py: i64): bool {
     var cells: [i64; 8] = [0; 8]
-    pieceCells(kind, rot, cells)
+    pieceCells(kind, rot, &mut cells)
     for i in 0..4 {
         let bx = px + cells[i * 2]
         let by = py + cells[i * 2 + 1]
@@ -197,7 +197,7 @@ pub fn collides(board: &Board, kind: i64, rot: i64, px: i64, py: i64): bool {
 
 pub fn lockPiece(board: &mut Board, kind: i64, rot: i64, px: i64, py: i64): void {
     var cells: [i64; 8] = [0; 8]
-    pieceCells(kind, rot, cells)
+    pieceCells(kind, rot, &mut cells)
     let color = pieceColor(kind)
     for i in 0..4 {
         let bx = px + cells[i * 2]
@@ -271,9 +271,9 @@ pub fn dropInterval(lines: i64): i64 {
 
 pub fn renderNext(buf: &mut string, kind: i64, row: i64, col: i64): void {
     var cells: [i64; 8] = [0; 8]
-    pieceCells(kind, 0, cells)
+    pieceCells(kind, 0, &mut cells)
     for ry in 0..2 {
-        cursor(buf, row + (ry as i64), col)
+        cursor(&mut buf, row + (ry as i64), col)
         for rx in 0..4 {
             var hit = false
             for i in 0..4 {
@@ -282,9 +282,9 @@ pub fn renderNext(buf: &mut string, kind: i64, row: i64, col: i64): void {
                 }
             }
             if hit {
-                emit(buf, blockStr(pieceColor(kind)))
+                emit(&mut buf, blockStr(pieceColor(kind)))
             } else {
-                emit(buf, "  ")
+                emit(&mut buf, "  ")
             }
         }
     }
@@ -292,7 +292,7 @@ pub fn renderNext(buf: &mut string, kind: i64, row: i64, col: i64): void {
 
 pub fn render(buf: &mut string, board: &Board, kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
     var cells: [i64; 8] = [0; 8]
-    pieceCells(kind, rot, cells)
+    pieceCells(kind, rot, &mut cells)
     var pcx: [i64; 4] = [0; 4]
     var pcy: [i64; 4] = [0; 4]
     for i in 0..4 {
@@ -310,13 +310,13 @@ pub fn render(buf: &mut string, board: &Board, kind: i64, rot: i64, px: i64, py:
     top = top + "┐"
     bottom = bottom + "┘"
 
-    cursor(buf, 1, 2)
-    emit(buf, Color.gray(top))
+    cursor(&mut buf, 1, 2)
+    emit(&mut buf, Color.gray(top))
 
     let bar = Color.gray("│")
     for y in 0..H {
-        cursor(buf, 2 + y, 2)
-        emit(buf, bar)
+        cursor(&mut buf, 2 + y, 2)
+        emit(&mut buf, bar)
         for x in 0..W {
             var c: i64 = board[y * W + x] as i64
             var hit = false
@@ -329,57 +329,57 @@ pub fn render(buf: &mut string, board: &Board, kind: i64, rot: i64, px: i64, py:
                 }
             }
             if c == 0 && !hit {
-                emit(buf, "  ")
+                emit(&mut buf, "  ")
             } else {
-                emit(buf, blockStr(c))
+                emit(&mut buf, blockStr(c))
             }
         }
-        emit(buf, bar)
+        emit(&mut buf, bar)
     }
 
-    cursor(buf, 2 + H, 2)
-    emit(buf, Color.gray(bottom))
+    cursor(&mut buf, 2 + H, 2)
+    emit(&mut buf, Color.gray(bottom))
 
     // sidebar
     let sx = 2 + W * 2 + 5
-    cursor(buf, 1, sx)
-    emit(buf, Color.bold(Color.cyan("MILO TETRIS")))
-    cursor(buf, 2, sx)
-    emit(buf, Color.gray("a tetris written in Milo"))
-    cursor(buf, 3, sx)
-    emit(buf, "score  " + Color.bold($"{score}") + "   ")
-    cursor(buf, 4, sx)
-    emit(buf, "lines  " + Color.bold($"{lines}") + "   ")
-    cursor(buf, 6, sx)
-    emit(buf, "next")
-    renderNext(buf, nextKind, 7, sx)
-    cursor(buf, 11, sx)
-    emit(buf, Color.gray("<- ->  move"))
-    cursor(buf, 12, sx)
-    emit(buf, Color.gray("  ^    rotate"))
-    cursor(buf, 13, sx)
-    emit(buf, Color.gray("  v    soft drop"))
-    cursor(buf, 14, sx)
-    emit(buf, Color.gray("space  hard drop"))
-    cursor(buf, 15, sx)
-    emit(buf, Color.gray("q/^C   quit"))
+    cursor(&mut buf, 1, sx)
+    emit(&mut buf, Color.bold(Color.cyan("MILO TETRIS")))
+    cursor(&mut buf, 2, sx)
+    emit(&mut buf, Color.gray("a tetris written in Milo"))
+    cursor(&mut buf, 3, sx)
+    emit(&mut buf, "score  " + Color.bold($"{score}") + "   ")
+    cursor(&mut buf, 4, sx)
+    emit(&mut buf, "lines  " + Color.bold($"{lines}") + "   ")
+    cursor(&mut buf, 6, sx)
+    emit(&mut buf, "next")
+    renderNext(&mut buf, nextKind, 7, sx)
+    cursor(&mut buf, 11, sx)
+    emit(&mut buf, Color.gray("<- ->  move"))
+    cursor(&mut buf, 12, sx)
+    emit(&mut buf, Color.gray("  ^    rotate"))
+    cursor(&mut buf, 13, sx)
+    emit(&mut buf, Color.gray("  v    soft drop"))
+    cursor(&mut buf, 14, sx)
+    emit(&mut buf, Color.gray("space  hard drop"))
+    cursor(&mut buf, 15, sx)
+    emit(&mut buf, Color.gray("q/^C   quit"))
 
     // pitch: this is a real program in a real systems language, not a toy
-    cursor(buf, 18, sx)
-    emit(buf, Color.bold(Color.cyan("memory-safe systems lang")))
-    cursor(buf, 19, sx)
-    emit(buf, Color.gray("native via LLVM · no GC · no"))
-    cursor(buf, 20, sx)
-    emit(buf, Color.gray("polling — one green task on"))
-    cursor(buf, 21, sx)
-    emit(buf, Color.gray("select(keys, gravity timer)"))
-    cursor(buf, 23, sx)
-    emit(buf, Color.bold(Color.yellow("★ github.com/milo-language/milo")))
+    cursor(&mut buf, 18, sx)
+    emit(&mut buf, Color.bold(Color.cyan("memory-safe systems lang")))
+    cursor(&mut buf, 19, sx)
+    emit(&mut buf, Color.gray("native via LLVM · no GC · no"))
+    cursor(&mut buf, 20, sx)
+    emit(&mut buf, Color.gray("polling — one green task on"))
+    cursor(&mut buf, 21, sx)
+    emit(&mut buf, Color.gray("select(keys, gravity timer)"))
+    cursor(&mut buf, 23, sx)
+    emit(&mut buf, Color.bold(Color.yellow("★ github.com/milo-language/milo")))
 }
 
 pub fn drawFrame(board: &Board, kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
     var buf = ""
-    render(buf, board, kind, rot, px, py, score, lines, nextKind)
+    render(&mut buf, board, kind, rot, px, py, score, lines, nextKind)
     writeStdout(buf)
 }
 
@@ -487,8 +487,8 @@ pub fn runGame(): void {
         }
 
         if doLock {
-            lockPiece(board, kind, rot, px, py)
-            let cleared = clearLines(board)
+            lockPiece(&mut board, kind, rot, px, py)
+            let cleared = clearLines(&mut board)
             lines = lines + cleared
             score = score + scoreFor(cleared)
             kind = nextKind
@@ -507,12 +507,12 @@ pub fn runGame(): void {
 
     if gameOver {
         var buf = ""
-        cursor(buf, 10, 6)
-        emit(buf, Color.bold(Color.red(" GAME OVER ")))
-        cursor(buf, 11, 6)
-        emit(buf, Color.bold($" score {score} "))
-        cursor(buf, 12, 6)
-        emit(buf, Color.gray(" press q "))
+        cursor(&mut buf, 10, 6)
+        emit(&mut buf, Color.bold(Color.red(" GAME OVER ")))
+        cursor(&mut buf, 11, 6)
+        emit(&mut buf, Color.bold($" score {score} "))
+        cursor(&mut buf, 12, 6)
+        emit(&mut buf, Color.gray(" press q "))
         writeStdout(buf)
         waitForQuit()
     }

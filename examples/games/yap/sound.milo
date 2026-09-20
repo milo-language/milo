@@ -78,9 +78,9 @@ fn noiseWave(out: &mut Vec<i16>, secs: f64, amp: f64, cut: f64, decay: f64) {
 // The noise on the front is the whole trick — without it a bark is a whistle.
 fn barkWave(pitch: f64, bend: f64): Vec<i16> {
     var v: Vec<i16> = Vec.new()
-    noiseWave(v, 0.022, 0.55, 0.55, 0.00002)
-    toneWave(v, pitch, pitch * bend, 0.055, 0.50, 0.75)
-    toneWave(v, pitch * bend * 0.72, pitch * 0.55, 0.045, 0.24, 0.40)
+    noiseWave(&mut v, 0.022, 0.55, 0.55, 0.00002)
+    toneWave(&mut v, pitch, pitch * bend, 0.055, 0.50, 0.75)
+    toneWave(&mut v, pitch * bend * 0.72, pitch * 0.55, 0.045, 0.24, 0.40)
     return v
 }
 
@@ -150,9 +150,9 @@ fn buildMusic(): Vec<i16> {
             if k % 2 == 1 {
                 f = f * 2.0 // the bounce: root, octave, root, octave
             }
-            addNote(buf, base + (k as i64) * es, f, eighth * 0.75, 0.30, 0.05, 0.04)
+            addNote(&mut buf, base + (k as i64) * es, f, eighth * 0.75, 0.30, 0.05, 0.04)
         }
-        addNote(buf, base, third[c], BAR * 0.9, 0.055, 0.0, 0.55)
+        addNote(&mut buf, base, third[c], BAR * 0.9, 0.055, 0.0, 0.55)
         for k in 0..8 {
             let m = (k + c * 3) % 5
             if m == 0 || m == 1 || m == 3 {
@@ -163,7 +163,7 @@ fn buildMusic(): Vec<i16> {
                 if m == 3 {
                     f = fifth[c] * 1.25
                 }
-                addNote(buf, base + (k as i64) * es, f, eighth * 1.2, 0.085, 0.10, 0.02)
+                addNote(&mut buf, base + (k as i64) * es, f, eighth * 1.2, 0.085, 0.10, 0.02)
             }
         }
     }
@@ -187,23 +187,23 @@ pub fn soundNew(): Sound {
     let mdev = openDevice()
 
     var point: Vec<i16> = Vec.new()
-    toneWave(point, 880.0, 1320.0, 0.055, 0.30, 0.30)
+    toneWave(&mut point, 880.0, 1320.0, 0.055, 0.30, 0.30)
 
     var crunch: Vec<i16> = Vec.new()
-    noiseWave(crunch, 0.055, 0.50, 0.70, 0.00008)
-    noiseWave(crunch, 0.045, 0.40, 0.55, 0.00010)
-    toneWave(crunch, 1320.0, 1760.0, 0.10, 0.26, 0.18)
+    noiseWave(&mut crunch, 0.055, 0.50, 0.70, 0.00008)
+    noiseWave(&mut crunch, 0.045, 0.40, 0.55, 0.00010)
+    toneWave(&mut crunch, 1320.0, 1760.0, 0.10, 0.26, 0.18)
 
     // The death sound is the bark's opposite: a bend *down*, which is the shape
     // of every cartoon whimper ever recorded.
     var hurt: Vec<i16> = Vec.new()
-    noiseWave(hurt, 0.05, 0.55, 0.35, 0.00004)
-    toneWave(hurt, 900.0, 300.0, 0.22, 0.45, 0.55)
-    toneWave(hurt, 420.0, 180.0, 0.30, 0.32, 0.30)
+    noiseWave(&mut hurt, 0.05, 0.55, 0.35, 0.00004)
+    toneWave(&mut hurt, 900.0, 300.0, 0.22, 0.45, 0.55)
+    toneWave(&mut hurt, 420.0, 180.0, 0.30, 0.32, 0.30)
 
     var thud: Vec<i16> = Vec.new()
-    noiseWave(thud, 0.10, 0.60, 0.16, 0.00015)
-    toneWave(thud, 150.0, 60.0, 0.14, 0.42, 0.55)
+    noiseWave(&mut thud, 0.10, 0.60, 0.16, 0.00015)
+    toneWave(&mut thud, 150.0, 60.0, 0.14, 0.42, 0.55)
 
     return Sound {
         dev: dev, ok: dev != 0,

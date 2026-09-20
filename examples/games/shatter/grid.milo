@@ -93,10 +93,10 @@ pub fn gridUpdate(g: &mut Grid, dt: f64) {
         for c in 0..cols {
             let i = r * cols + c
             if c + 1 < cols {
-                springPair(g, i, i + 1, rest, k, dt)
+                springPair(&mut g, i, i + 1, rest, k, dt)
             }
             if r + 1 < rows {
-                springPair(g, i, i + cols, rest, k, dt)
+                springPair(&mut g, i, i + cols, rest, k, dt)
             }
         }
     }
@@ -170,7 +170,7 @@ pub fn gridDraw(c: &mut Canvas, g: &Grid, r: f64, gg: f64, b: f64) {
                     t = 3.0
                 }
                 let m = 0.42 + t * 11.0
-                line(c, g.nodes[i].x, g.nodes[i].y, g.nodes[j].x, g.nodes[j].y, r * m, gg * m + t * 0.18, b * m + t * 0.55)
+                line(&mut c, g.nodes[i].x, g.nodes[i].y, g.nodes[j].x, g.nodes[j].y, r * m, gg * m + t * 0.18, b * m + t * 0.55)
             }
             if row + 1 < rows {
                 let j = i + cols
@@ -182,7 +182,7 @@ pub fn gridDraw(c: &mut Canvas, g: &Grid, r: f64, gg: f64, b: f64) {
                     t = 3.0
                 }
                 let m = 0.42 + t * 11.0
-                line(c, g.nodes[i].x, g.nodes[i].y, g.nodes[j].x, g.nodes[j].y, r * m, gg * m + t * 0.18, b * m + t * 0.55)
+                line(&mut c, g.nodes[i].x, g.nodes[i].y, g.nodes[j].x, g.nodes[j].y, r * m, gg * m + t * 0.18, b * m + t * 0.55)
             }
         }
     }

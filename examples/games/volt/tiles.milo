@@ -111,7 +111,7 @@ fn rockTile(capped: bool, seed: i64): Sprite {
                 g = g * 0.80
                 b = b * 0.82
             }
-            spriteSet(s, x, y, r, g, b, 1.0)
+            spriteSet(&mut s, x, y, r, g, b, 1.0)
         }
     }
     return s
@@ -144,7 +144,7 @@ fn platformTile(): Sprite {
                 g = g * 0.52
                 b = b * 0.50
             }
-            spriteSet(s, x, y, r, g, b, 1.0)
+            spriteSet(&mut s, x, y, r, g, b, 1.0)
         }
     }
     return s
@@ -165,7 +165,7 @@ fn spikeTile(): Sprite {
                 let t = (y as f64) / ((TILE_ART - 1) as f64)
                 let up = 1.0 - t
                 // iron: dark at the base, a hard white glint at the point
-                spriteSet(s, x, y, 0.20 + up * up * 1.10, 0.21 + up * up * 1.15, 0.26 + up * up * 1.20, 1.0)
+                spriteSet(&mut s, x, y, 0.20 + up * up * 1.10, 0.21 + up * up * 1.15, 0.26 + up * up * 1.20, 1.0)
             }
         }
     }
@@ -194,7 +194,7 @@ fn crateTile(): Sprite {
                 g = 0.55
                 b = 0.18
             }
-            spriteSet(s, x, y, r, g, b, 1.0)
+            spriteSet(&mut s, x, y, r, g, b, 1.0)
         }
     }
     return s
@@ -207,7 +207,7 @@ fn padTile(): Sprite {
         for x in 0..TILE_ART {
             if y < 4 {
                 let t = (y as f64) / 3.0
-                spriteSet(s, x, y, 1.70 * (1.0 - t * 0.4), 0.55 * (1.0 - t * 0.3), 0.30, 1.0)
+                spriteSet(&mut s, x, y, 1.70 * (1.0 - t * 0.4), 0.55 * (1.0 - t * 0.3), 0.30, 1.0)
             } else if y < 12 {
                 // zigzag coil
                 let band = (y - 4) / 2
@@ -217,10 +217,10 @@ fn padTile(): Sprite {
                     x % 6 >= 3
                 }
                 if on {
-                    spriteSet(s, x, y, 0.72, 0.62, 0.30, 1.0)
+                    spriteSet(&mut s, x, y, 0.72, 0.62, 0.30, 1.0)
                 }
             } else {
-                spriteSet(s, x, y, 0.30, 0.22, 0.14, 1.0)
+                spriteSet(&mut s, x, y, 0.30, 0.22, 0.14, 1.0)
             }
         }
     }

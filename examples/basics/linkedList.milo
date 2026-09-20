@@ -32,11 +32,11 @@ pub fn pushBack(list: &mut DLList, value: i64) {
         prev: list.tail,
         next: Option.None,
     }
-    let h = arenaAlloc(list.arena, node)
+    let h = arenaAlloc(&mut list.arena, node)
 
     match list.tail {
         Option.Some(tailH) => {
-            let _ = arenaModify(list.arena, tailH, (n: DLNode) => {
+            let _ = arenaModify(&mut list.arena, tailH, (n: DLNode) => {
                 var updated = n
                 updated.next = Option.Some(h)
                 return updated
@@ -58,11 +58,11 @@ pub fn pushFront(list: &mut DLList, value: i64) {
         prev: Option.None,
         next: list.head,
     }
-    let h = arenaAlloc(list.arena, node)
+    let h = arenaAlloc(&mut list.arena, node)
 
     match list.head {
         Option.Some(headH) => {
-            let _ = arenaModify(list.arena, headH, (n: DLNode) => {
+            let _ = arenaModify(&mut list.arena, headH, (n: DLNode) => {
                 var updated = n
                 updated.prev = Option.Some(h)
                 return updated
@@ -139,11 +139,11 @@ pub fn printBackward(list: &DLList) {
 pub fn main(): i32 {
     var list = newList()
 
-    pushBack(list, 10)
-    pushBack(list, 20)
-    pushBack(list, 30)
-    pushFront(list, 5)
-    pushFront(list, 1)
+    pushBack(&mut list, 10)
+    pushBack(&mut list, 20)
+    pushBack(&mut list, 30)
+    pushFront(&mut list, 5)
+    pushFront(&mut list, 1)
 
     print("forward:")
     printForward(list)

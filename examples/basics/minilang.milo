@@ -211,24 +211,24 @@ pub fn evalExpr(arena: &Arena<Expr>, h: Handle<Expr>, env: &mut Vec<Binding>): V
             return envLookup(env, name)
         }
         Expr.Bin(op, a, b) => {
-            let va = evalExpr(arena, a, env)
-            let vb = evalExpr(arena, b, env)
+            let va = evalExpr(arena, a, &mut env)
+            let vb = evalExpr(arena, b, &mut env)
             return evalBin(op, va, vb)
         }
         Expr.If(c, t, f) => {
-            let vc = evalExpr(arena, c, env)
+            let vc = evalExpr(arena, c, &mut env)
             if asInt(vc) != 0 {
-                return evalExpr(arena, t, env)
+                return evalExpr(arena, t, &mut env)
             }
-            return evalExpr(arena, f, env)
+            return evalExpr(arena, f, &mut env)
         }
         Expr.Let(nm, valExpr, body) => {
-            let v = evalExpr(arena, valExpr, env)
+            let v = evalExpr(arena, valExpr, &mut env)
             env.push(Binding {
                 name: nm, value: v
             }
             )
-            let result = evalExpr(arena, body, env)
+            let result = evalExpr(arena, body, &mut env)
             env.pop()!
             return result
         }
@@ -429,16 +429,16 @@ pub fn parsePrimary(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     if k == T_NUM {
         let v = p.toks[p.pos].num
         p.pos = p.pos + 1
-        return arenaAlloc(arena, Expr.Num(v))
+        return arenaAlloc(&mut arena, Expr.Num(v))
     }
     if k == T_IDENT {
         let name = p.toks[p.pos].text.clone()
         p.pos = p.pos + 1
-        return arenaAlloc(arena, Expr.Var(name))
+        return arenaAlloc(&mut arena, Expr.Var(name))
     }
     if k == T_LPAREN {
         p.pos = p.pos + 1
-        let e = parseExpr(p, arena)
+        let e = parseExpr(&mut p, &mut arena)
         if peekKind(p) == T_RPAREN {
             p.pos = p.pos + 1
         }
@@ -446,16 +446,16 @@ pub fn parsePrimary(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     }
     if k == T_IF {
         p.pos = p.pos + 1
-        let cond = parseExpr(p, arena)
+        let cond = parseExpr(&mut p, &mut arena)
         if peekKind(p) == T_THEN {
             p.pos = p.pos + 1
         }
-        let thenE = parseExpr(p, arena)
+        let thenE = parseExpr(&mut p, &mut arena)
         if peekKind(p) == T_ELSE {
             p.pos = p.pos + 1
         }
-        let elseE = parseExpr(p, arena)
-        return arenaAlloc(arena, Expr.If(cond, thenE, elseE))
+        let elseE = parseExpr(&mut p, &mut arena)
+        return arenaAlloc(&mut arena, Expr.If(cond, thenE, elseE))
     }
     if k == T_LET {
         p.pos = p.pos + 1
@@ -467,26 +467,26 @@ pub fn parsePrimary(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
         if peekKind(p) == T_EQ {
             p.pos = p.pos + 1
         }
-        let valE = parseExpr(p, arena)
+        let valE = parseExpr(&mut p, &mut arena)
         if peekKind(p) == T_IN {
             p.pos = p.pos + 1
         }
-        let bodyE = parseExpr(p, arena)
-        return arenaAlloc(arena, Expr.Let(name, valE, bodyE))
+        let bodyE = parseExpr(&mut p, &mut arena)
+        return arenaAlloc(&mut arena, Expr.Let(name, valE, bodyE))
     }
     // error: emit a 0 so eval still terminates
-    return arenaAlloc(arena, Expr.Num(0))
+    return arenaAlloc(&mut arena, Expr.Num(0))
 }
 
 pub fn parseMul(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
-    var left = parsePrimary(p, arena)
+    var left = parsePrimary(&mut p, &mut arena)
     var go = true
     while go {
         let k = peekKind(p)
         if k == T_STAR || k == T_SLASH {
             p.pos = p.pos + 1
-            let right = parsePrimary(p, arena)
-            left = arenaAlloc(arena, Expr.Bin(opStr(k), left, right))
+            let right = parsePrimary(&mut p, &mut arena)
+            left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
         } else {
             go = false
         }
@@ -495,14 +495,14 @@ pub fn parseMul(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
 }
 
 pub fn parseAdd(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
-    var left = parseMul(p, arena)
+    var left = parseMul(&mut p, &mut arena)
     var go = true
     while go {
         let k = peekKind(p)
         if k == T_PLUS || k == T_MINUS {
             p.pos = p.pos + 1
-            let right = parseMul(p, arena)
-            left = arenaAlloc(arena, Expr.Bin(opStr(k), left, right))
+            let right = parseMul(&mut p, &mut arena)
+            left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
         } else {
             go = false
         }
@@ -511,14 +511,14 @@ pub fn parseAdd(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
 }
 
 pub fn parseExpr(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
-    var left = parseAdd(p, arena)
+    var left = parseAdd(&mut p, &mut arena)
     var go = true
     while go {
         let k = peekKind(p)
         if k == T_LT || k == T_GT || k == T_EQEQ {
             p.pos = p.pos + 1
-            let right = parseAdd(p, arena)
-            left = arenaAlloc(arena, Expr.Bin(opStr(k), left, right))
+            let right = parseAdd(&mut p, &mut arena)
+            left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
         } else {
             go = false
         }
@@ -531,20 +531,20 @@ pub fn run(arena: &mut Arena<Expr>, src: &string): string {
     var p = PState {
         toks: toks, pos: 0
     }
-    let root = parseExpr(p, arena)
+    let root = parseExpr(&mut p, &mut arena)
     var env: Vec<Binding> = Vec.new()
-    let result = evalExpr(arena, root, env)
+    let result = evalExpr(arena, root, &mut env)
     return valueToString(result)
 }
 
 pub fn main(): i32 {
     var arena: Arena<Expr> = arenaNew()
 
-    print(run(arena, "let x = 6 in let y = 7 in x * y")) // 42
-    print(run(arena, "if 3 < 5 then 100 else 200")) // 100
-    print(run(arena, "1 + 2 * 3 - 4")) // 3
-    print(run(arena, "let n = 10 in if n > 5 then n * n else 0")) // 100
-    print(run(arena, "(2 + 3) * (4 + 1)")) // 25
+    print(run(&mut arena, "let x = 6 in let y = 7 in x * y")) // 42
+    print(run(&mut arena, "if 3 < 5 then 100 else 200")) // 100
+    print(run(&mut arena, "1 + 2 * 3 - 4")) // 3
+    print(run(&mut arena, "let n = 10 in if n > 5 then n * n else 0")) // 100
+    print(run(&mut arena, "(2 + 3) * (4 + 1)")) // 25
 
     return 0
 }

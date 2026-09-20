@@ -24,7 +24,7 @@ pub fn newGraph(): DepGraph {
 }
 
 pub fn addNode(g: &mut DepGraph, name: string): Handle<Node> {
-    let h = arenaAlloc(g.arena, Node {
+    let h = arenaAlloc(&mut g.arena, Node {
         name: name,
         deps: Vec.new(),
         dependents: Vec.new(),
@@ -35,13 +35,13 @@ pub fn addNode(g: &mut DepGraph, name: string): Handle<Node> {
 }
 
 pub fn addEdge(g: &mut DepGraph, src: Handle<Node>, dst: Handle<Node>) {
-    let _ = arenaModify(g.arena, src, (n: Node) => {
+    let _ = arenaModify(&mut g.arena, src, (n: Node) => {
         var updated = n
         updated.deps.push(dst)
         return updated
     }
     )
-    let _ = arenaModify(g.arena, dst, (n: Node) => {
+    let _ = arenaModify(&mut g.arena, dst, (n: Node) => {
         var updated = n
         updated.dependents.push(src)
         return updated
@@ -118,20 +118,20 @@ pub fn topoSort(g: &DepGraph): Vec<string> {
 pub fn main(): i32 {
     var g = newGraph()
 
-    let libc = addNode(g, "libc")
-    let net = addNode(g, "net")
-    let json = addNode(g, "json")
-    let http = addNode(g, "http")
-    let db = addNode(g, "db")
-    let app = addNode(g, "app")
+    let libc = addNode(&mut g, "libc")
+    let net = addNode(&mut g, "net")
+    let json = addNode(&mut g, "json")
+    let http = addNode(&mut g, "http")
+    let db = addNode(&mut g, "db")
+    let app = addNode(&mut g, "app")
 
-    addEdge(g, net, libc)
-    addEdge(g, json, libc)
-    addEdge(g, http, net)
-    addEdge(g, http, json)
-    addEdge(g, db, net)
-    addEdge(g, app, http)
-    addEdge(g, app, db)
+    addEdge(&mut g, net, libc)
+    addEdge(&mut g, json, libc)
+    addEdge(&mut g, http, net)
+    addEdge(&mut g, http, json)
+    addEdge(&mut g, db, net)
+    addEdge(&mut g, app, http)
+    addEdge(&mut g, app, db)
 
     print("build order:")
     let order = topoSort(g)

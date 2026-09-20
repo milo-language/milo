@@ -326,11 +326,11 @@ fn placeRigs(): Vec<Rig> {
     // The pitch is barely more than a diameter on the front row: they nearly
     // touch, which is what makes the stage read as covered in targets rather
     // than as a shelf with some targets on it.
-    row(out, 9, 1.30, 6.60, DECK_Y[0] + POST_H, KIND_100)
-    row(out, 11, 1.30, 9.60, DECK_Y[1] + POST_H, KIND_250)
-    row(out, 11, 1.35, 12.80, DECK_Y[2] + POST_H, KIND_500)
-    row(out, 11, 1.40, 16.00, DECK_Y[3] + POST_H, KIND_1000)
-    row(out, 11, 1.45, 19.40, DECK_Y[4] + POST_H, KIND_5000)
+    row(&mut out, 9, 1.30, 6.60, DECK_Y[0] + POST_H, KIND_100)
+    row(&mut out, 11, 1.30, 9.60, DECK_Y[1] + POST_H, KIND_250)
+    row(&mut out, 11, 1.35, 12.80, DECK_Y[2] + POST_H, KIND_500)
+    row(&mut out, 11, 1.40, 16.00, DECK_Y[3] + POST_H, KIND_1000)
+    row(&mut out, 11, 1.45, 19.40, DECK_Y[4] + POST_H, KIND_5000)
     return out
 }
 
@@ -369,28 +369,28 @@ pub fn newTargets(gl: &mut GlContext, faceTex: i64, flatTex: i64): Targets {
     var rimMeshes: Vec<Mesh> = Vec.new()
     for k in 0..KINDS {
         var fb = builder()
-        faceGeometry(fb, k)
-        var fm = Mesh.new(gl, sceneAttrs())
+        faceGeometry(&mut fb, k)
+        var fm = Mesh.new(&mut gl, sceneAttrs())
         fm.upload(fb.data.clone())
         faceMeshes.push(fm)
 
         var rb = builder()
-        rimGeometry(rb, k)
-        var rm = Mesh.new(gl, sceneAttrs())
+        rimGeometry(&mut rb, k)
+        var rm = Mesh.new(&mut gl, sceneAttrs())
         rm.upload(rb.data.clone())
         rimMeshes.push(rm)
     }
 
     var sb = builder()
-    baseGeometry(sb)
-    var baseMesh = Mesh.new(gl, sceneAttrs())
+    baseGeometry(&mut sb)
+    var baseMesh = Mesh.new(&mut gl, sceneAttrs())
     baseMesh.upload(sb.data.clone())
 
     // The pop at the point of impact. Emissive far above the bloom threshold on
     // purpose: what you actually see is the flare around it rather than the ball.
     var burstBuilder = builder()
     burstBuilder.sphere(v3(0.0, 0.0, 0.0), 1.0, 8, 12)
-    var burstMesh = Mesh.new(gl, sceneAttrs())
+    var burstMesh = Mesh.new(&mut gl, sceneAttrs())
     burstMesh.upload(burstBuilder.data.clone())
     var burstMat = material(TEX_PAINT, 0.0, 0.0, 0.0, 1.0, 0.0)
     burstMat.emissive = v3(14.0, 12.0, 8.0)
@@ -429,7 +429,7 @@ pub fn newTargets(gl: &mut GlContext, faceTex: i64, flatTex: i64): Targets {
         faceMeshes: faceMeshes,
         rimMeshes: rimMeshes,
         baseMesh: baseMesh,
-        shardMesh: Mesh.new(gl, sceneAttrs()),
+        shardMesh: Mesh.new(&mut gl, sceneAttrs()),
         faceMats: faceMats,
         faceDimMats: faceDimMats,
         rimMat: rimMat,
@@ -872,19 +872,19 @@ impl Targets {
     }
 
     fn free(self: Self, gl: &mut GlContext) {
-        self.baseMesh.free(gl)
-        self.shardMesh.free(gl)
+        self.baseMesh.free(&mut gl)
+        self.shardMesh.free(&mut gl)
         var faces = self.faceMeshes
         while faces.len > 0 {
             let m = faces.pop()!
-            m.free(gl)
+            m.free(&mut gl)
         }
         var rims = self.rimMeshes
         while rims.len > 0 {
             let m = rims.pop()!
-            m.free(gl)
+            m.free(&mut gl)
         }
-        self.burstMesh.free(gl)
+        self.burstMesh.free(&mut gl)
     }
 }
 

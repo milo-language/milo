@@ -157,7 +157,7 @@ pub fn gameNew(w: f64, h: f64): Game {
         gameOver: false,
         won: false,
     }
-    loadLevel(g, 0)
+    loadLevel(&mut g, 0)
     return g
 }
 
@@ -209,7 +209,7 @@ pub fn loadLevel(g: &mut Game, n: i64) {
     g.slow = 0.0
     g.speed = 560.0 + (n as f64) * 20.0
     g.banner = 2.4
-    gridReset(g.grid)
+    gridReset(&mut g.grid)
 
     let rows = levelRows(n)
     for r in 0..rows.len {
@@ -256,7 +256,7 @@ pub fn loadLevel(g: &mut Game, n: i64) {
             c = c + 1
         }
     }
-    resetBall(g)
+    resetBall(&mut g)
 }
 
 pub fn resetBall(g: &mut Game) {
@@ -337,9 +337,9 @@ fn killBrick(g: &mut Game, i: i64) {
     if g.score > g.best {
         g.best = g.score
     }
-    addPop(g, bx, by, value, col)
-    burst(g, bx, by, 16, 260.0, col.r, col.g, col.b)
-    gridImpulse(g.grid, bx, by, 150.0, 34.0)
+    addPop(&mut g, bx, by, value, col)
+    burst(&mut g, bx, by, 16, 260.0, col.r, col.g, col.b)
+    gridImpulse(&mut g.grid, bx, by, 150.0, 34.0)
     g.shake = Math.maxF64(g.shake, 2.0)
 
     if drops || Random.range(0, 9) == 0 {
@@ -356,14 +356,14 @@ fn killBrick(g: &mut Game, i: i64) {
 
     if explosive {
         g.shake = Math.maxF64(g.shake, 9.0)
-        burst(g, bx, by, 60, 520.0, 1.7, 0.7, 0.12)
-        gridImpulse(g.grid, bx, by, 320.0, 130.0)
+        burst(&mut g, bx, by, 60, 520.0, 1.7, 0.7, 0.12)
+        gridImpulse(&mut g.grid, bx, by, 320.0, 130.0)
         for k in 0..g.bricks.len {
             if g.bricks[k].alive && k != i {
                 let dx = g.bricks[k].x - g.bricks[i].x
                 let dy = g.bricks[k].y - g.bricks[i].y
                 if dx * dx + dy * dy < 130.0 * 130.0 {
-                    killBrick(g, k)
+                    killBrick(&mut g, k)
                 }
             }
         }
@@ -375,18 +375,18 @@ fn hitBrick(g: &mut Game, i: i64) {
         g.bricks[i].flash = 0.16
         let bx = g.bricks[i].x + BRICK_W * 0.5
         let by = g.bricks[i].y + BRICK_H * 0.5
-        burst(g, bx, by, 5, 150.0, 0.7, 0.75, 0.85)
+        burst(&mut g, bx, by, 5, 150.0, 0.7, 0.75, 0.85)
         return
     }
     g.bricks[i].hp = g.bricks[i].hp - 1
     g.bricks[i].flash = 0.18
     if g.bricks[i].hp <= 0 {
-        killBrick(g, i)
+        killBrick(&mut g, i)
     } else {
         let bx = g.bricks[i].x + BRICK_W * 0.5
         let by = g.bricks[i].y + BRICK_H * 0.5
         let col = brickColor(g.bricks[i].hp, g.bricks[i].kind)
-        burst(g, bx, by, 6, 170.0, col.r, col.g, col.b)
+        burst(&mut g, bx, by, 6, 170.0, col.r, col.g, col.b)
     }
 }
 
@@ -486,8 +486,8 @@ fn bounceOffPaddle(g: &mut Game, i: i64) {
     g.balls[i].vy = Math.sin(ang) * sp
     g.balls[i].y = g.padY - g.balls[i].r - 1.0
     g.combo = 0
-    gridImpulse(g.grid, g.balls[i].x, g.padY, 130.0, 26.0)
-    burst(g, g.balls[i].x, g.padY - 6.0, 6, 120.0, 0.5, 1.0, 1.5)
+    gridImpulse(&mut g.grid, g.balls[i].x, g.padY, 130.0, 26.0)
+    burst(&mut g, g.balls[i].x, g.padY - 6.0, 6, 120.0, 0.5, 1.0, 1.5)
     if g.sticky > 0.0 {
         g.balls[i].held = true
     }
@@ -542,7 +542,7 @@ fn collideBricks(g: &mut Game, i: i64) {
             g.balls[i].y = by1 + r
             g.balls[i].vy = Math.abs(g.balls[i].vy)
         }
-        hitBrick(g, k)
+        hitBrick(&mut g, k)
         return
     }
 }
@@ -583,21 +583,21 @@ pub fn gameUpdate(g: &mut Game, dtIn: f64, wantX: f64, launchHeld: bool) {
         for i in 0..g.parts.len {
             g.parts[i].life = g.parts[i].life - dt
         }
-        gridUpdate(g.grid, dt)
-        compactParts(g)
+        gridUpdate(&mut g.grid, dt)
+        compactParts(&mut g)
         return
     }
 
     // level cleared: pause, then advance
     if g.clearedTimer > 0.0 {
         g.clearedTimer = g.clearedTimer - dt
-        gridUpdate(g.grid, dt)
-        updateParticles(g, dt)
+        gridUpdate(&mut g.grid, dt)
+        updateParticles(&mut g, dt)
         if g.clearedTimer <= 0.0 {
             if g.level + 1 >= levelCount() {
                 g.won = true
             } else {
-                loadLevel(g, g.level + 1)
+                loadLevel(&mut g, g.level + 1)
             }
         }
         return
@@ -610,7 +610,7 @@ pub fn gameUpdate(g: &mut Game, dtIn: f64, wantX: f64, launchHeld: bool) {
     g.padX = g.padX + (want - g.padX) * Math.minF64(1.0, dt * 22.0)
 
     if launchHeld {
-        launch(g)
+        launch(&mut g)
     }
 
     for i in 0..g.balls.len {
@@ -637,24 +637,24 @@ pub fn gameUpdate(g: &mut Game, dtIn: f64, wantX: f64, launchHeld: bool) {
             if g.balls[i].x < r {
                 g.balls[i].x = r
                 g.balls[i].vx = Math.abs(g.balls[i].vx)
-                gridImpulse(g.grid, 0.0, g.balls[i].y, 120.0, 22.0)
+                gridImpulse(&mut g.grid, 0.0, g.balls[i].y, 120.0, 22.0)
             }
             if g.balls[i].x > g.w - r {
                 g.balls[i].x = g.w - r
                 g.balls[i].vx = 0.0 - Math.abs(g.balls[i].vx)
-                gridImpulse(g.grid, g.w, g.balls[i].y, 120.0, 22.0)
+                gridImpulse(&mut g.grid, g.w, g.balls[i].y, 120.0, 22.0)
             }
             if g.balls[i].y < r {
                 g.balls[i].y = r
                 g.balls[i].vy = Math.abs(g.balls[i].vy)
-                gridImpulse(g.grid, g.balls[i].x, 0.0, 120.0, 22.0)
+                gridImpulse(&mut g.grid, g.balls[i].x, 0.0, 120.0, 22.0)
             }
             if g.balls[i].vy > 0.0 && g.balls[i].y + r >= g.padY && g.balls[i].y - r <= g.padY + 18.0 {
                 if Math.abs(g.balls[i].x - g.padX) <= g.padW * 0.5 + r {
-                    bounceOffPaddle(g, i)
+                    bounceOffPaddle(&mut g, i)
                 }
             }
-            collideBricks(g, i)
+            collideBricks(&mut g, i)
         }
 
         // A near-horizontal ball is a stalled rally, so tilt it back to work.
@@ -675,7 +675,7 @@ pub fn gameUpdate(g: &mut Game, dtIn: f64, wantX: f64, launchHeld: bool) {
 
         if g.balls[i].y - g.balls[i].r > g.h {
             g.balls[i].alive = false
-            burst(g, g.balls[i].x, g.h - 4.0, 20, 260.0, 1.5, 0.4, 0.4)
+            burst(&mut g, g.balls[i].x, g.h - 4.0, 20, 260.0, 1.5, 0.4, 0.4)
         }
     }
 
@@ -700,18 +700,18 @@ pub fn gameUpdate(g: &mut Game, dtIn: f64, wantX: f64, launchHeld: bool) {
         if g.lives <= 0 {
             g.gameOver = true
         } else {
-            resetBall(g)
+            resetBall(&mut g)
         }
     }
 
-    updatePups(g, dt)
-    updateParticles(g, dt)
+    updatePups(&mut g, dt)
+    updateParticles(&mut g, dt)
     for i in 0..g.bricks.len {
         if g.bricks[i].flash > 0.0 {
             g.bricks[i].flash = g.bricks[i].flash - dt
         }
     }
-    gridUpdate(g.grid, dt)
+    gridUpdate(&mut g.grid, dt)
 
     if bricksLeft(g) == 0 {
         g.clearedTimer = 2.0
@@ -731,10 +731,10 @@ fn updatePups(g: &mut Game, dt: f64) {
         }
         if !gone && g.pups[i].y > g.padY - 14.0 && g.pups[i].y < g.padY + 20.0 {
             if Math.abs(g.pups[i].x - g.padX) < g.padW * 0.5 + 16.0 {
-                applyPup(g, g.pups[i].kind)
+                applyPup(&mut g, g.pups[i].kind)
                 let c = pupColor(g.pups[i].kind)
-                burst(g, g.pups[i].x, g.pups[i].y, 26, 240.0, c.r, c.g, c.b)
-                addPop(g, g.pups[i].x, g.pups[i].y - 20.0, 0, c)
+                burst(&mut g, g.pups[i].x, g.pups[i].y, 26, 240.0, c.r, c.g, c.b)
+                addPop(&mut g, g.pups[i].x, g.pups[i].y - 20.0, 0, c)
                 gone = true
             }
         }
@@ -770,7 +770,7 @@ fn updateParticles(g: &mut Game, dt: f64) {
         g.parts[i].x = g.parts[i].x + g.parts[i].vx * dt
         g.parts[i].y = g.parts[i].y + g.parts[i].vy * dt
     }
-    compactParts(g)
+    compactParts(&mut g)
     var p: i64 = 0
     while p < g.pops.len {
         g.pops[p].life = g.pops[p].life - dt
@@ -792,5 +792,5 @@ pub fn gameReset(g: &mut Game) {
     g.gameOver = false
     g.won = false
     g.clearedTimer = 0.0
-    loadLevel(g, 0)
+    loadLevel(&mut g, 0)
 }

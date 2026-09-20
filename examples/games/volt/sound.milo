@@ -150,11 +150,11 @@ fn buildMusic(): Vec<i16> {
             if k % 4 == 3 {
                 f = f * 2.0
             }
-            addNote(buf, base + (k as i64) * es, f, eighth * 0.9, 0.34, 0.06, 0.05)
+            addNote(&mut buf, base + (k as i64) * es, f, eighth * 0.9, 0.34, 0.06, 0.05)
         }
         // pad
-        addNote(buf, base, third[c], BAR * 0.92, 0.075, 0.0, 0.60)
-        addNote(buf, base, fifth[c], BAR * 0.92, 0.065, 0.0, 0.60)
+        addNote(&mut buf, base, third[c], BAR * 0.92, 0.075, 0.0, 0.60)
+        addNote(&mut buf, base, fifth[c], BAR * 0.92, 0.065, 0.0, 0.60)
         // lead: a syncopated figure, an octave up
         for k in 0..8 {
             let m = (k + c) % 7
@@ -166,7 +166,7 @@ fn buildMusic(): Vec<i16> {
                 if m == 5 {
                     f = fifth[c] * 1.5
                 }
-                addNote(buf, base + (k as i64) * es, f * 2.0, eighth * 1.4, 0.075, 0.12, 0.012)
+                addNote(&mut buf, base + (k as i64) * es, f * 2.0, eighth * 1.4, 0.075, 0.12, 0.012)
             }
         }
     }
@@ -190,69 +190,69 @@ pub fn soundNew(): Sound {
     let mdev = openDevice()
 
     var jump: Vec<i16> = Vec.new()
-    toneWave(jump, 380.0, 720.0, 0.10, 0.34, 0.55)
+    toneWave(&mut jump, 380.0, 720.0, 0.10, 0.34, 0.55)
 
     var land: Vec<i16> = Vec.new()
-    noiseWave(land, 0.07, 0.30, 0.10, 0.0004)
+    noiseWave(&mut land, 0.07, 0.30, 0.10, 0.0004)
 
     var dash: Vec<i16> = Vec.new()
-    noiseWave(dash, 0.20, 0.55, 0.22, 0.0008)
-    toneWave(dash, 900.0, 260.0, 0.16, 0.30, 0.40)
+    noiseWave(&mut dash, 0.20, 0.55, 0.22, 0.0008)
+    toneWave(&mut dash, 900.0, 260.0, 0.16, 0.30, 0.40)
 
     var shard: Vec<i16> = Vec.new()
-    toneWave(shard, 1320.0, 1340.0, 0.06, 0.42, 0.20)
-    toneWave(shard, 1976.0, 2000.0, 0.14, 0.34, 0.14)
+    toneWave(&mut shard, 1320.0, 1340.0, 0.06, 0.42, 0.20)
+    toneWave(&mut shard, 1976.0, 2000.0, 0.14, 0.34, 0.14)
 
     var core: Vec<i16> = Vec.new()
-    toneWave(core, 523.0, 530.0, 0.09, 0.50, 0.30)
-    toneWave(core, 784.0, 790.0, 0.09, 0.50, 0.26)
-    toneWave(core, 1046.0, 1060.0, 0.36, 0.55, 0.22)
+    toneWave(&mut core, 523.0, 530.0, 0.09, 0.50, 0.30)
+    toneWave(&mut core, 784.0, 790.0, 0.09, 0.50, 0.26)
+    toneWave(&mut core, 1046.0, 1060.0, 0.36, 0.55, 0.22)
 
     var stomp: Vec<i16> = Vec.new()
-    noiseWave(stomp, 0.11, 0.60, 0.30, 0.0002)
-    toneWave(stomp, 220.0, 90.0, 0.13, 0.45, 0.60)
+    noiseWave(&mut stomp, 0.11, 0.60, 0.30, 0.0002)
+    toneWave(&mut stomp, 220.0, 90.0, 0.13, 0.45, 0.60)
 
     var die: Vec<i16> = Vec.new()
-    toneWave(die, 330.0, 120.0, 0.16, 0.50, 0.45)
-    toneWave(die, 165.0, 70.0, 0.42, 0.45, 0.35)
+    toneWave(&mut die, 330.0, 120.0, 0.16, 0.50, 0.45)
+    toneWave(&mut die, 165.0, 70.0, 0.42, 0.45, 0.35)
 
     var goal: Vec<i16> = Vec.new()
-    toneWave(goal, 523.0, 530.0, 0.11, 0.50, 0.24)
-    toneWave(goal, 659.0, 665.0, 0.11, 0.50, 0.22)
-    toneWave(goal, 784.0, 790.0, 0.12, 0.52, 0.20)
-    toneWave(goal, 1046.0, 1060.0, 0.55, 0.58, 0.18)
+    toneWave(&mut goal, 523.0, 530.0, 0.11, 0.50, 0.24)
+    toneWave(&mut goal, 659.0, 665.0, 0.11, 0.50, 0.22)
+    toneWave(&mut goal, 784.0, 790.0, 0.12, 0.52, 0.20)
+    toneWave(&mut goal, 1046.0, 1060.0, 0.55, 0.58, 0.18)
 
     var pad: Vec<i16> = Vec.new()
-    toneWave(pad, 200.0, 1200.0, 0.22, 0.45, 0.50)
+    toneWave(&mut pad, 200.0, 1200.0, 0.22, 0.45, 0.50)
 
     var crash: Vec<i16> = Vec.new()
-    noiseWave(crash, 0.16, 0.55, 0.45, 0.0003)
+    noiseWave(&mut crash, 0.16, 0.55, 0.45, 0.0003)
 
     // The two barks are the same gesture an octave and a half apart: a yip that
     // snaps shut, and a woof with a chest behind it.
     var barkChi: Vec<i16> = Vec.new()
-    toneWave(barkChi, 780.0, 1500.0, 0.045, 0.55, 0.70)
-    toneWave(barkChi, 1400.0, 520.0, 0.11, 0.50, 0.55)
+    toneWave(&mut barkChi, 780.0, 1500.0, 0.045, 0.55, 0.70)
+    toneWave(&mut barkChi, 1400.0, 520.0, 0.11, 0.50, 0.55)
 
     var barkShep: Vec<i16> = Vec.new()
-    noiseWave(barkShep, 0.035, 0.45, 0.30, 0.0006)
-    toneWave(barkShep, 300.0, 175.0, 0.055, 0.75, 0.80)
-    toneWave(barkShep, 190.0, 95.0, 0.20, 0.65, 0.55)
+    noiseWave(&mut barkShep, 0.035, 0.45, 0.30, 0.0006)
+    toneWave(&mut barkShep, 300.0, 175.0, 0.055, 0.75, 0.80)
+    toneWave(&mut barkShep, 190.0, 95.0, 0.20, 0.65, 0.55)
 
     var bone: Vec<i16> = Vec.new()
-    toneWave(bone, 392.0, 400.0, 0.09, 0.50, 0.28)
-    toneWave(bone, 587.0, 595.0, 0.09, 0.50, 0.25)
-    toneWave(bone, 784.0, 800.0, 0.30, 0.55, 0.22)
+    toneWave(&mut bone, 392.0, 400.0, 0.09, 0.50, 0.28)
+    toneWave(&mut bone, 587.0, 595.0, 0.09, 0.50, 0.25)
+    toneWave(&mut bone, 784.0, 800.0, 0.30, 0.55, 0.22)
 
     var hurt: Vec<i16> = Vec.new()
-    toneWave(hurt, 620.0, 240.0, 0.13, 0.48, 0.60)
+    toneWave(&mut hurt, 620.0, 240.0, 0.13, 0.48, 0.60)
 
     var pee: Vec<i16> = Vec.new()
-    noiseWave(pee, 0.85, 0.13, 0.72, 0.00004)
+    noiseWave(&mut pee, 0.85, 0.13, 0.72, 0.00004)
 
     var check: Vec<i16> = Vec.new()
-    toneWave(check, 659.0, 665.0, 0.08, 0.42, 0.20)
-    toneWave(check, 988.0, 1000.0, 0.22, 0.45, 0.18)
+    toneWave(&mut check, 659.0, 665.0, 0.08, 0.42, 0.20)
+    toneWave(&mut check, 988.0, 1000.0, 0.22, 0.45, 0.18)
 
     return Sound {
         dev: dev, ok: dev != 0,

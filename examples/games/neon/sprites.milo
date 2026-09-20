@@ -57,7 +57,7 @@ fn spriteFrom(rows: &Vec<string>, pal: &Vec<f64>): Sprite {
             if ch >= 48 && ch <= 57 {
                 let i = (ch - 48) * 3
                 if i + 2 < pal.len {
-                    spriteSet(s, x, y, pal[i], pal[i + 1], pal[i + 2], 1.0)
+                    spriteSet(&mut s, x, y, pal[i], pal[i + 1], pal[i + 2], 1.0)
                 }
             }
         }
@@ -72,16 +72,16 @@ fn spriteFrom(rows: &Vec<string>, pal: &Vec<f64>): Sprite {
 // belong here.
 pub fn shipSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.03, 0.03, 0.05) // 0 outline
-    palAdd(pal, 0.22, 0.24, 0.30) // 1 hull shadow
-    palAdd(pal, 0.52, 0.55, 0.62) // 2 hull mid
-    palAdd(pal, 0.88, 0.91, 0.98) // 3 hull light
-    palAdd(pal, 1.35, 1.38, 1.48) // 4 hull white
-    palAdd(pal, 0.16, 0.14, 0.42) // 5 capsule shadow
-    palAdd(pal, 0.38, 0.34, 0.95) // 6 capsule body
-    palAdd(pal, 0.80, 0.76, 1.60) // 7 capsule light
-    palAdd(pal, 0.28, 1.80, 2.30) // 8 canopy
-    palAdd(pal, 2.30, 1.10, 0.28) // 9 engine / trim
+    palAdd(&mut pal, 0.03, 0.03, 0.05) // 0 outline
+    palAdd(&mut pal, 0.22, 0.24, 0.30) // 1 hull shadow
+    palAdd(&mut pal, 0.52, 0.55, 0.62) // 2 hull mid
+    palAdd(&mut pal, 0.88, 0.91, 0.98) // 3 hull light
+    palAdd(&mut pal, 1.35, 1.38, 1.48) // 4 hull white
+    palAdd(&mut pal, 0.16, 0.14, 0.42) // 5 capsule shadow
+    palAdd(&mut pal, 0.38, 0.34, 0.95) // 6 capsule body
+    palAdd(&mut pal, 0.80, 0.76, 1.60) // 7 capsule light
+    palAdd(&mut pal, 0.28, 1.80, 2.30) // 8 canopy
+    palAdd(&mut pal, 2.30, 1.10, 0.28) // 9 engine / trim
     // The R-9 silhouette is one big smooth coloured capsule slung under a grey
     // mechanical hull, with a swept fin and a gun barrel out front. The capsule
     // is the thing that reads at 40 pixels — it is the only large smooth mass on
@@ -124,9 +124,9 @@ pub fn shipSprite(): Sprite {
 // reads as horizontal motion.
 pub fn shotSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.05, 0.04, 0.02) // 0 rim
-    palAdd(pal, 1.30, 0.95, 0.20) // 1 body
-    palAdd(pal, 2.60, 2.20, 0.90) // 2 core
+    palAdd(&mut pal, 0.05, 0.04, 0.02) // 0 rim
+    palAdd(&mut pal, 1.30, 0.95, 0.20) // 1 body
+    palAdd(&mut pal, 2.60, 2.20, 0.90) // 2 core
     var rows: Vec<string> = Vec.new()
     rows.push("..000000000")
     rows.push(".011111111 0")
@@ -140,9 +140,9 @@ pub fn shotSprite(): Sprite {
 // be told apart under pressure.
 pub fn podShotSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.05, 0.02, 0.05) // 0 rim
-    palAdd(pal, 1.30, 0.30, 1.20) // 1 body
-    palAdd(pal, 2.40, 1.40, 2.40) // 2 core
+    palAdd(&mut pal, 0.05, 0.02, 0.05) // 0 rim
+    palAdd(&mut pal, 1.30, 0.30, 1.20) // 1 body
+    palAdd(&mut pal, 2.40, 1.40, 2.40) // 2 core
     var rows: Vec<string> = Vec.new()
     rows.push(".0000000")
     rows.push("01111110")
@@ -156,10 +156,10 @@ pub fn podShotSprite(): Sprite {
 // versus flat is the read — you never have to resolve the colour.
 pub fn hostileShotSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.02, 0.01, 0.01) // 0 rim
-    palAdd(pal, 0.70, 0.05, 0.06) // 1 shell
-    palAdd(pal, 2.20, 0.18, 0.12) // 2 body
-    palAdd(pal, 2.90, 1.60, 1.30) // 3 core
+    palAdd(&mut pal, 0.02, 0.01, 0.01) // 0 rim
+    palAdd(&mut pal, 0.70, 0.05, 0.06) // 1 shell
+    palAdd(&mut pal, 2.20, 0.18, 0.12) // 2 body
+    palAdd(&mut pal, 2.90, 1.60, 1.30) // 3 core
     var rows: Vec<string> = Vec.new()
     rows.push("..00000")
     rows.push(".0011100")
@@ -176,12 +176,12 @@ pub fn hostileShotSprite(): Sprite {
 // A missile is a machine, so it gets a body, a nose and fins.
 pub fn missileSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.04, 0.03, 0.02) // 0 outline
-    palAdd(pal, 0.35, 0.32, 0.28) // 1 casing dark
-    palAdd(pal, 0.85, 0.80, 0.70) // 2 casing
-    palAdd(pal, 1.40, 1.34, 1.18) // 3 casing light
-    palAdd(pal, 2.60, 1.20, 0.20) // 4 warhead
-    palAdd(pal, 2.80, 1.90, 0.60) // 5 flame
+    palAdd(&mut pal, 0.04, 0.03, 0.02) // 0 outline
+    palAdd(&mut pal, 0.35, 0.32, 0.28) // 1 casing dark
+    palAdd(&mut pal, 0.85, 0.80, 0.70) // 2 casing
+    palAdd(&mut pal, 1.40, 1.34, 1.18) // 3 casing light
+    palAdd(&mut pal, 2.60, 1.20, 0.20) // 4 warhead
+    palAdd(&mut pal, 2.80, 1.90, 0.60) // 5 flame
     var rows: Vec<string> = Vec.new()
     rows.push("...0110")
     rows.push("50112223300")
@@ -194,12 +194,12 @@ pub fn missileSprite(): Sprite {
 // The Force: a captured piece of the enemy, welded into a shell that obeys you.
 pub fn podSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.06, 0.04, 0.03) // 0 outline
-    palAdd(pal, 0.45, 0.18, 0.03) // 1 dark
-    palAdd(pal, 1.20, 0.50, 0.06) // 2 orange
-    palAdd(pal, 2.20, 1.00, 0.15) // 3 hot
-    palAdd(pal, 2.90, 2.40, 1.30) // 4 core
-    palAdd(pal, 1.55, 1.10, 0.30) // 5 gold nub
+    palAdd(&mut pal, 0.06, 0.04, 0.03) // 0 outline
+    palAdd(&mut pal, 0.45, 0.18, 0.03) // 1 dark
+    palAdd(&mut pal, 1.20, 0.50, 0.06) // 2 orange
+    palAdd(&mut pal, 2.20, 1.00, 0.15) // 3 hot
+    palAdd(&mut pal, 2.90, 2.40, 1.30) // 4 core
+    palAdd(&mut pal, 1.55, 1.10, 0.30) // 5 gold nub
     var rows: Vec<string> = Vec.new()
     rows.push(".....0000")
     rows.push("...00122100")
@@ -224,16 +224,16 @@ pub fn podSprite(): Sprite {
 // size, which is the point of a hive.
 fn bioPal(): Vec<f64> {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.04, 0.03, 0.04) // 0 outline
-    palAdd(pal, 0.20, 0.08, 0.09) // 1 shell rim
-    palAdd(pal, 0.38, 0.14, 0.16) // 2 shell dark
-    palAdd(pal, 0.68, 0.27, 0.28) // 3 shell mid
-    palAdd(pal, 1.00, 0.47, 0.44) // 4 shell lit
-    palAdd(pal, 0.88, 0.83, 0.68) // 5 bone
-    palAdd(pal, 0.40, 0.37, 0.30) // 6 bone dark
-    palAdd(pal, 2.60, 0.25, 0.15) // 7 eye
-    palAdd(pal, 0.55, 0.07, 0.06) // 8 eye socket
-    palAdd(pal, 1.35, 1.30, 1.15) // 9 bone white
+    palAdd(&mut pal, 0.04, 0.03, 0.04) // 0 outline
+    palAdd(&mut pal, 0.20, 0.08, 0.09) // 1 shell rim
+    palAdd(&mut pal, 0.38, 0.14, 0.16) // 2 shell dark
+    palAdd(&mut pal, 0.68, 0.27, 0.28) // 3 shell mid
+    palAdd(&mut pal, 1.00, 0.47, 0.44) // 4 shell lit
+    palAdd(&mut pal, 0.88, 0.83, 0.68) // 5 bone
+    palAdd(&mut pal, 0.40, 0.37, 0.30) // 6 bone dark
+    palAdd(&mut pal, 2.60, 0.25, 0.15) // 7 eye
+    palAdd(&mut pal, 0.55, 0.07, 0.06) // 8 eye socket
+    palAdd(&mut pal, 1.35, 1.30, 1.15) // 9 bone white
     return pal
 }
 
@@ -259,13 +259,13 @@ pub fn droneSprite(): Sprite {
 // Spore. Drifts on a sine, trails filaments, pops loudly.
 pub fn weaverSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.04, 0.03, 0.05) // 0 outline
-    palAdd(pal, 0.22, 0.14, 0.30) // 1 sac dark
-    palAdd(pal, 0.55, 0.30, 0.75) // 2 sac mid
-    palAdd(pal, 1.00, 0.60, 1.30) // 3 sac lit
-    palAdd(pal, 1.90, 1.30, 2.40) // 4 sac hot
-    palAdd(pal, 0.85, 0.80, 0.68) // 5 bone
-    palAdd(pal, 2.40, 0.30, 1.60) // 6 nucleus
+    palAdd(&mut pal, 0.04, 0.03, 0.05) // 0 outline
+    palAdd(&mut pal, 0.22, 0.14, 0.30) // 1 sac dark
+    palAdd(&mut pal, 0.55, 0.30, 0.75) // 2 sac mid
+    palAdd(&mut pal, 1.00, 0.60, 1.30) // 3 sac lit
+    palAdd(&mut pal, 1.90, 1.30, 2.40) // 4 sac hot
+    palAdd(&mut pal, 0.85, 0.80, 0.68) // 5 bone
+    palAdd(&mut pal, 2.40, 0.30, 1.60) // 6 nucleus
     var rows: Vec<string> = Vec.new()
     rows.push("...05550")
     rows.push("..05122150")
@@ -286,14 +286,14 @@ pub fn weaverSprite(): Sprite {
 // Diver. All jaw, no patience.
 pub fn swooperSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.03, 0.04, 0.05) // 0 outline
-    palAdd(pal, 0.10, 0.26, 0.34) // 1 chitin dark
-    palAdd(pal, 0.24, 0.60, 0.78) // 2 chitin mid
-    palAdd(pal, 0.55, 1.10, 1.45) // 3 chitin lit
-    palAdd(pal, 0.90, 0.86, 0.72) // 4 fang
-    palAdd(pal, 1.40, 1.36, 1.20) // 5 fang lit
-    palAdd(pal, 2.60, 0.60, 0.20) // 6 eye
-    palAdd(pal, 0.06, 0.16, 0.22) // 7 vent
+    palAdd(&mut pal, 0.03, 0.04, 0.05) // 0 outline
+    palAdd(&mut pal, 0.10, 0.26, 0.34) // 1 chitin dark
+    palAdd(&mut pal, 0.24, 0.60, 0.78) // 2 chitin mid
+    palAdd(&mut pal, 0.55, 1.10, 1.45) // 3 chitin lit
+    palAdd(&mut pal, 0.90, 0.86, 0.72) // 4 fang
+    palAdd(&mut pal, 1.40, 1.36, 1.20) // 5 fang lit
+    palAdd(&mut pal, 2.60, 0.60, 0.20) // 6 eye
+    palAdd(&mut pal, 0.06, 0.16, 0.22) // 7 vent
     var rows: Vec<string> = Vec.new()
     rows.push("........011110")
     rows.push("....0011223321")
@@ -334,12 +334,12 @@ pub fn carrierSprite(): Sprite {
 // Mine. A seed pod that resents being near you.
 pub fn mineSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.05, 0.02, 0.02) // 0 outline
-    palAdd(pal, 0.30, 0.06, 0.06) // 1 husk dark
-    palAdd(pal, 0.70, 0.14, 0.12) // 2 husk mid
-    palAdd(pal, 1.30, 0.28, 0.20) // 3 husk lit
-    palAdd(pal, 2.80, 0.35, 0.20) // 4 core
-    palAdd(pal, 0.85, 0.80, 0.68) // 5 spine
+    palAdd(&mut pal, 0.05, 0.02, 0.02) // 0 outline
+    palAdd(&mut pal, 0.30, 0.06, 0.06) // 1 husk dark
+    palAdd(&mut pal, 0.70, 0.14, 0.12) // 2 husk mid
+    palAdd(&mut pal, 1.30, 0.28, 0.20) // 3 husk lit
+    palAdd(&mut pal, 2.80, 0.35, 0.20) // 4 core
+    palAdd(&mut pal, 0.85, 0.80, 0.68) // 5 spine
     var rows: Vec<string> = Vec.new()
     rows.push("..5...5...5..")
     rows.push("..05.50.5.50")
@@ -408,13 +408,13 @@ pub fn snakeSegSprite(): Sprite {
 // Medic. A gland on legs; the beam is drawn by the renderer, not the sprite.
 pub fn healerSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.03, 0.05, 0.04) // 0 outline
-    palAdd(pal, 0.10, 0.30, 0.22) // 1 sac dark
-    palAdd(pal, 0.24, 0.70, 0.50) // 2 sac mid
-    palAdd(pal, 0.50, 1.30, 0.95) // 3 sac lit
-    palAdd(pal, 0.90, 2.20, 1.60) // 4 sac hot
-    palAdd(pal, 0.86, 0.82, 0.68) // 5 bone
-    palAdd(pal, 0.40, 0.38, 0.30) // 6 bone dark
+    palAdd(&mut pal, 0.03, 0.05, 0.04) // 0 outline
+    palAdd(&mut pal, 0.10, 0.30, 0.22) // 1 sac dark
+    palAdd(&mut pal, 0.24, 0.70, 0.50) // 2 sac mid
+    palAdd(&mut pal, 0.50, 1.30, 0.95) // 3 sac lit
+    palAdd(&mut pal, 0.90, 2.20, 1.60) // 4 sac hot
+    palAdd(&mut pal, 0.86, 0.82, 0.68) // 5 bone
+    palAdd(&mut pal, 0.40, 0.38, 0.30) // 6 bone dark
     var rows: Vec<string> = Vec.new()
     rows.push("....0655560")
     rows.push("..065511225560")
@@ -432,16 +432,16 @@ pub fn healerSprite(): Sprite {
 // Boss core: an eye the size of a house, behind its own armour.
 pub fn coreSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.04, 0.03, 0.03) // 0 outline
-    palAdd(pal, 0.26, 0.22, 0.16) // 1 bone dark
-    palAdd(pal, 0.60, 0.55, 0.42) // 2 bone mid
-    palAdd(pal, 0.96, 0.90, 0.72) // 3 bone
-    palAdd(pal, 1.40, 1.34, 1.14) // 4 bone white
-    palAdd(pal, 1.55, 1.05, 0.25) // 5 gold
-    palAdd(pal, 0.30, 0.10, 0.12) // 6 socket
-    palAdd(pal, 2.80, 0.30, 0.18) // 7 iris
-    palAdd(pal, 0.20, 1.90, 2.20) // 8 gem
-    palAdd(pal, 0.12, 0.08, 0.07) // 9 shadow
+    palAdd(&mut pal, 0.04, 0.03, 0.03) // 0 outline
+    palAdd(&mut pal, 0.26, 0.22, 0.16) // 1 bone dark
+    palAdd(&mut pal, 0.60, 0.55, 0.42) // 2 bone mid
+    palAdd(&mut pal, 0.96, 0.90, 0.72) // 3 bone
+    palAdd(&mut pal, 1.40, 1.34, 1.14) // 4 bone white
+    palAdd(&mut pal, 1.55, 1.05, 0.25) // 5 gold
+    palAdd(&mut pal, 0.30, 0.10, 0.12) // 6 socket
+    palAdd(&mut pal, 2.80, 0.30, 0.18) // 7 iris
+    palAdd(&mut pal, 0.20, 1.90, 2.20) // 8 gem
+    palAdd(&mut pal, 0.12, 0.08, 0.07) // 9 shadow
     // Horned skull with a jaw of teeth on the side that faces you, and a gem set
     // above the iris. It should look like it was grown, then decorated.
     var rows: Vec<string> = Vec.new()
@@ -473,12 +473,12 @@ pub fn coreSprite(): Sprite {
 // One scale off the boss, orbiting on its own.
 pub fn plateSprite(): Sprite {
     var pal: Vec<f64> = Vec.new()
-    palAdd(pal, 0.04, 0.03, 0.03) // 0 outline
-    palAdd(pal, 0.28, 0.24, 0.17) // 1 bone dark
-    palAdd(pal, 0.62, 0.57, 0.43) // 2 bone mid
-    palAdd(pal, 0.98, 0.92, 0.74) // 3 bone
-    palAdd(pal, 1.45, 1.38, 1.18) // 4 bone white
-    palAdd(pal, 1.60, 1.10, 0.28) // 5 gold
+    palAdd(&mut pal, 0.04, 0.03, 0.03) // 0 outline
+    palAdd(&mut pal, 0.28, 0.24, 0.17) // 1 bone dark
+    palAdd(&mut pal, 0.62, 0.57, 0.43) // 2 bone mid
+    palAdd(&mut pal, 0.98, 0.92, 0.74) // 3 bone
+    palAdd(&mut pal, 1.45, 1.38, 1.18) // 4 bone white
+    palAdd(&mut pal, 1.60, 1.10, 0.28) // 5 gold
     var rows: Vec<string> = Vec.new()
     rows.push("...05550")
     rows.push(".005122150")
@@ -542,15 +542,15 @@ pub fn orbSprite(kind: i64, r: f64, g: f64, b: f64): Sprite {
             }
             if d > 6.4 {
                 // dark rim, so the capsule keeps an edge against a bright wall
-                spriteSet(s, x, y, r * 0.10, g * 0.10, b * 0.10, 1.0)
+                spriteSet(&mut s, x, y, r * 0.10, g * 0.10, b * 0.10, 1.0)
             } else if d > 5.2 {
-                spriteSet(s, x, y, r * 1.30, g * 1.30, b * 1.30, 1.0)
+                spriteSet(&mut s, x, y, r * 1.30, g * 1.30, b * 1.30, 1.0)
             } else if markPixel(kind, x, y) {
-                spriteSet(s, x, y, 2.60, 2.55, 2.40, 1.0)
+                spriteSet(&mut s, x, y, 2.60, 2.55, 2.40, 1.0)
             } else {
                 // body, brighter toward the top-left so it reads as a solid
                 let f = 0.55 + 0.35 * (1.0 - d / 5.2) - dy * 0.04
-                spriteSet(s, x, y, r * f, g * f, b * f, 1.0)
+                spriteSet(&mut s, x, y, r * f, g * f, b * f, 1.0)
             }
         }
     }

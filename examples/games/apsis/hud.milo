@@ -257,7 +257,7 @@ fn drawOrbits(ui: &mut Ui, g: &Game, v: &View, alpha: f64) {
     while i < ids.len {
         let per = orbitPeriod(g.bodies, ids[i], center)
         let pts = orbitPoints(g.bodies, ids[i], center, t, per, 220)
-        polyline(ui, v, pts, 1.8, fade(colOrbit(), alpha), 0)
+        polyline(&mut ui, v, pts, 1.8, fade(colOrbit(), alpha), 0)
         i = i + 1
     }
 }
@@ -284,12 +284,12 @@ fn drawTransfer(ui: &mut Ui, g: &Game, v: &View, alpha: f64) {
             }
             i = i + 1
         }
-        polylineGlow(ui, v, flown, 9.0, fade(colAccent(), 0.16 * alpha))
-        polyline(ui, v, flown, 2.0, fade(colAccent(), alpha), 0)
-        polyline(ui, v, ahead, 1.4, fade(colAccent(), 0.34 * alpha), 3)
+        polylineGlow(&mut ui, v, flown, 9.0, fade(colAccent(), 0.16 * alpha))
+        polyline(&mut ui, v, flown, 2.0, fade(colAccent(), alpha), 0)
+        polyline(&mut ui, v, ahead, 1.4, fade(colAccent(), 0.34 * alpha), 3)
     } else {
-        polylineGlow(ui, v, pts, 10.0, fade(colAccent(), 0.13 * alpha))
-        polyline(ui, v, pts, 1.8, fade(colAccent(), 0.92 * alpha), 0)
+        polylineGlow(&mut ui, v, pts, 10.0, fade(colAccent(), 0.13 * alpha))
+        polyline(&mut ui, v, pts, 1.8, fade(colAccent(), 0.92 * alpha), 0)
     }
 }
 
@@ -438,12 +438,12 @@ pub fn drawMap(ui: &mut Ui, g: &Game, v: &View, marks: &Vec<Marker>) {
     if alpha <= 0.01 {
         return
     }
-    drawOrbits(ui, g, v, alpha)
-    drawParkingOrbit(ui, g, v, marks, alpha)
-    drawTransfer(ui, g, v, alpha)
-    drawArrivalMark(ui, g, v, alpha)
-    drawBodyMarkers(ui, g, v, marks, alpha)
-    drawShip(ui, g, v, alpha)
+    drawOrbits(&mut ui, g, v, alpha)
+    drawParkingOrbit(&mut ui, g, v, marks, alpha)
+    drawTransfer(&mut ui, g, v, alpha)
+    drawArrivalMark(&mut ui, g, v, alpha)
+    drawBodyMarkers(&mut ui, g, v, marks, alpha)
+    drawShip(&mut ui, g, v, alpha)
 }
 
 // ── panels ────────────────────────────────────────────────────────────────────
@@ -455,7 +455,7 @@ fn missionTag(g: &Game): string {
 // A horizontal track with a handle, and the value written above it. This is the
 // dial the whole game is played on, so it is the only widget that gets to be big.
 fn dial(ui: &mut Ui, x: f64, y: f64, w: f64, u: f64, name: &string, value: &string, frac: f64, mark: f64, live: bool) {
-    label(ui, x, y, u, name, colDim())
+    label(&mut ui, x, y, u, name, colDim())
     var c = colInk()
     if live {
         c = colAccent()
@@ -480,7 +480,7 @@ fn dial(ui: &mut Ui, x: f64, y: f64, w: f64, u: f64, name: &string, value: &stri
 }
 
 fn costRow(ui: &mut Ui, x: f64, y: f64, w: f64, u: f64, name: &string, value: &string, c: &Rgba) {
-    label(ui, x, y + 2.0 * u, u, name, colDim())
+    label(&mut ui, x, y + 2.0 * u, u, name, colDim())
     ui.textRight(x + w, y, 10.0 * u, value, c)
 }
 
@@ -502,12 +502,12 @@ fn drawPlanPanel(ui: &mut Ui, g: &Game, u: f64, _w: f64, _h: f64) {
         departMark = (g.guide.t0 - m.windowOpen) / m.windowSpan
         tofMark = (g.guide.tof - m.tofMin) / (m.tofMax - m.tofMin)
     }
-    dial(ui, x + pad, y + 26.0 * u, inner * 0.46, u, "DEPART", fmtDate(g.departT), departFrac, departMark, true)
-    dial(ui, x + pad + inner * 0.54, y + 26.0 * u, inner * 0.46, u, "FLIGHT TIME", fmtDays(g.tof), tofFrac, tofMark, true)
+    dial(&mut ui, x + pad, y + 26.0 * u, inner * 0.46, u, "DEPART", fmtDate(g.departT), departFrac, departMark, true)
+    dial(&mut ui, x + pad + inner * 0.54, y + 26.0 * u, inner * 0.46, u, "FLIGHT TIME", fmtDays(g.tof), tofFrac, tofMark, true)
 
     // The number the game is about.
     let ty = y + 124.0 * u
-    label(ui, x + pad, ty, u, "TOTAL BURN", colDim())
+    label(&mut ui, x + pad, ty, u, "TOTAL BURN", colDim())
     var big = "NO TRANSFER"
     var bigCol = colBad()
     if g.plan.ok {
@@ -580,24 +580,24 @@ fn drawCostPanel(ui: &mut Ui, g: &Game, u: f64, _w: f64, _h: f64) {
     ui.roundRect(x, y, panelW, panelH, 14.0 * u, colPanel())
     let pad = 24.0 * u
     let inner = panelW - pad * 2.0
-    label(ui, x + pad, y + 22.0 * u, u, "THE TWO BURNS", colDim())
-    costRow(ui, x + pad, y + 56.0 * u, inner, u, "LEAVE", commas(Math.round(g.plan.dvDepart)) + " m/s", colInk())
-    costRow(ui, x + pad, y + 90.0 * u, inner, u, "ARRIVE", commas(Math.round(g.plan.dvArrive)) + " m/s", colInk())
+    label(&mut ui, x + pad, y + 22.0 * u, u, "THE TWO BURNS", colDim())
+    costRow(&mut ui, x + pad, y + 56.0 * u, inner, u, "LEAVE", commas(Math.round(g.plan.dvDepart)) + " m/s", colInk())
+    costRow(&mut ui, x + pad, y + 90.0 * u, inner, u, "ARRIVE", commas(Math.round(g.plan.dvArrive)) + " m/s", colInk())
     ui.rect(x + pad, y + 118.0 * u, inner, 1.0, fade(colFaint(), 0.6))
     let margin = g.missions[g.mi].budget - g.plan.dvTotal
     var mc = colGood()
     if margin < 0.0 {
         mc = colBad()
     }
-    costRow(ui, x + pad, y + 134.0 * u, inner, u, "MARGIN", commas(Math.round(margin)) + " m/s", mc)
-    costRow(ui, x + pad, y + 166.0 * u, inner, u, "ARRIVAL", fmtDate(g.departT + g.tof), colDim())
+    costRow(&mut ui, x + pad, y + 134.0 * u, inner, u, "MARGIN", commas(Math.round(margin)) + " m/s", mc)
+    costRow(&mut ui, x + pad, y + 166.0 * u, inner, u, "ARRIVAL", fmtDate(g.departT + g.tof), colDim())
 }
 
 fn drawMissionHeader(ui: &mut Ui, g: &Game, u: f64, alpha: f64) {
     let x = 44.0 * u
-    label(ui, x, 44.0 * u, u, missionTag(g), fade(colDim(), alpha))
+    label(&mut ui, x, 44.0 * u, u, missionTag(g), fade(colDim(), alpha))
     let name = g.missions[g.mi].name.clone()
-    title(ui, x, 64.0 * u, 21.0 * u, name.toUpper(), fade(colInk(), alpha))
+    title(&mut ui, x, 64.0 * u, 21.0 * u, name.toUpper(), fade(colInk(), alpha))
     var lines = wrapText(g.missions[g.mi].blurb, 9.0 * u, 430.0 * u)
     var y = 120.0 * u
     var i = 0
@@ -640,7 +640,7 @@ fn drawBrief(ui: &mut Ui, g: &Game, u: f64, w: f64, h: f64) {
     if titleWidth(head, size) > room {
         size = size * room / titleWidth(head, size)
     }
-    title(ui, cx - titleWidth(head, size) * 0.5, y, size, head, fade(colInk(), a))
+    title(&mut ui, cx - titleWidth(head, size) * 0.5, y, size, head, fade(colInk(), a))
     y = y + size * 2.4
 
     var lines = wrapText(m.blurb, 11.0 * u, 620.0 * u)
@@ -677,9 +677,9 @@ fn drawCinematic(ui: &mut Ui, g: &Game, u: f64, h: f64) {
     let x = 64.0 * u
     var y = h * 0.34
 
-    label(ui, x, y, u, kicker, fade(colAccent(), a))
+    label(&mut ui, x, y, u, kicker, fade(colAccent(), a))
     y = y + 34.0 * u
-    title(ui, x, y, 31.0 * u, displayName(id), fade(colInk(), a))
+    title(&mut ui, x, y, 31.0 * u, displayName(id), fade(colInk(), a))
     y = y + 78.0 * u
     var lines = wrapText(note, 10.0 * u, 460.0 * u)
     var i = 0
@@ -692,7 +692,7 @@ fn drawCinematic(ui: &mut Ui, g: &Game, u: f64, h: f64) {
     if leaving {
         y = y + 20.0 * u
         let speed = parkSpeed(g.bodies, g.missions[g.mi])
-        label(ui, x, y, u, "PARKING ORBIT   " + commas(Math.round(g.missions[g.mi].parkAlt / 1000.0)) + " KM   " + fmtSpeed(speed), fade(colDim(), a))
+        label(&mut ui, x, y, u, "PARKING ORBIT   " + commas(Math.round(g.missions[g.mi].parkAlt / 1000.0)) + " KM   " + fmtSpeed(speed), fade(colDim(), a))
     }
 
     // A hairline that fills as the shot runs out. It is the only clock in the
@@ -710,7 +710,7 @@ fn drawCinematic(ui: &mut Ui, g: &Game, u: f64, h: f64) {
     ui.rect(x, by, barW, 1.5, fade(colFaint(), a * 0.7))
     ui.rect(x, by, barW * frac, 1.5, fade(colAccent(), a))
     ui.textTracked(x, by + 14.0 * u, 7.5 * u, 2.4 * u, "SPACE TO SKIP", fade(colDim(), a))
-    label(ui, x, 44.0 * u, u, missionTag(g) + "   -   " + g.missions[g.mi].name.toUpper(), fade(colDim(), a))
+    label(&mut ui, x, 44.0 * u, u, missionTag(g) + "   -   " + g.missions[g.mi].name.toUpper(), fade(colDim(), a))
 }
 
 // ── flight ────────────────────────────────────────────────────────────────────
@@ -724,7 +724,7 @@ fn drawFlightHud(ui: &mut Ui, g: &Game, u: f64, _w: f64, _h: f64) {
     let pad = 26.0 * u
     let inner = panelW - pad * 2.0
 
-    label(ui, x + pad, y + 20.0 * u, u, fmtDate(displayTime(g)), colDim())
+    label(&mut ui, x + pad, y + 20.0 * u, u, fmtDate(displayTime(g)), colDim())
     var warpText = "x" + fmtFixed(warpMultiple(g), 2)
     if g.paused {
         warpText = "HOLD"
@@ -750,7 +750,7 @@ fn drawFuel(ui: &mut Ui, g: &Game, u: f64, _w: f64, _h: f64) {
     ui.roundRect(x, y, panelW, 132.0 * u, 14.0 * u, colPanel())
     let pad = 24.0 * u
     let inner = panelW - pad * 2.0
-    label(ui, x + pad, y + 22.0 * u, u, "TANK", colDim())
+    label(&mut ui, x + pad, y + 22.0 * u, u, "TANK", colDim())
     let budget = g.missions[g.mi].budget
     let spent = g.spentDepart + g.spentArrive
     var frac = 1.0 - spent / budget
@@ -775,16 +775,16 @@ fn drawArrived(ui: &mut Ui, g: &Game, u: f64, _w: f64, h: f64) {
     ui.rect(x, y, cardW, 3.0 * u, colAccent())
 
     let cx = x + cardW * 0.5
-    label(ui, cx - trackedWidth("IN ORBIT AROUND", 8.0 * u, 3.0 * u) * 0.5, y + 34.0 * u, u, "IN ORBIT AROUND", colAccent())
+    label(&mut ui, cx - trackedWidth("IN ORBIT AROUND", 8.0 * u, 3.0 * u) * 0.5, y + 34.0 * u, u, "IN ORBIT AROUND", colAccent())
     let name = displayName(g.missions[g.mi].to)
-    title(ui, cx - titleWidth(name, 25.0 * u) * 0.5, y + 60.0 * u, 25.0 * u, name, colInk())
+    title(&mut ui, cx - titleWidth(name, 25.0 * u) * 0.5, y + 60.0 * u, 25.0 * u, name, colInk())
 
     let pad = 40.0 * u
     let inner = cardW - pad * 2.0
-    costRow(ui, x + pad, y + 138.0 * u, inner, u, "ARRIVED", fmtDate(g.plan.t0 + g.tof), colInk())
-    costRow(ui, x + pad, y + 168.0 * u, inner, u, "FLIGHT TIME", fmtDays(g.tof), colInk())
-    costRow(ui, x + pad, y + 198.0 * u, inner, u, "BURNED", commas(Math.round(g.spentDepart + g.spentArrive)) + " m/s", colInk())
-    costRow(ui, x + pad, y + 228.0 * u, inner, u, "LEFT IN THE TANK", commas(Math.round(fuelLeft(g))) + " m/s", colGood())
+    costRow(&mut ui, x + pad, y + 138.0 * u, inner, u, "ARRIVED", fmtDate(g.plan.t0 + g.tof), colInk())
+    costRow(&mut ui, x + pad, y + 168.0 * u, inner, u, "FLIGHT TIME", fmtDays(g.tof), colInk())
+    costRow(&mut ui, x + pad, y + 198.0 * u, inner, u, "BURNED", commas(Math.round(g.spentDepart + g.spentArrive)) + " m/s", colInk())
+    costRow(&mut ui, x + pad, y + 228.0 * u, inner, u, "LEFT IN THE TANK", commas(Math.round(fuelLeft(g))) + " m/s", colGood())
 
     var next = "ENTER  -  FLY IT AGAIN"
     if g.won && g.mi + 1 < MISSION_COUNT {
@@ -803,7 +803,7 @@ fn drawTitle(ui: &mut Ui, g: &Game, u: f64, w: f64, h: f64) {
     var y = h * 0.30
     ui.textTracked(x, y, 9.0 * u, 6.0 * u, "A GAME ABOUT GETTING SOMEWHERE", colDim())
     y = y + 44.0 * u
-    title(ui, x, y, 46.0 * u, "APSIS", colInk())
+    title(&mut ui, x, y, 46.0 * u, "APSIS", colInk())
     y = y + 116.0 * u
     ui.text(x, y, 15.0 * u, "You can be a rocket scientist too.", colAccent())
     y = y + 56.0 * u
@@ -829,7 +829,7 @@ fn drawHelp(ui: &mut Ui, u: f64, w: f64, h: f64) {
     ui.rect(0.0, 0.0, w, h, rgba(0.0, 0.006, 0.014, 0.90))
     let cx = w * 0.5
     var y = h * 0.20
-    title(ui, cx - titleWidth("APSIS", 26.0 * u) * 0.5, y, 26.0 * u, "APSIS", colInk())
+    title(&mut ui, cx - titleWidth("APSIS", 26.0 * u) * 0.5, y, 26.0 * u, "APSIS", colInk())
     y = y + 92.0 * u
     var rows: Vec<string> = Vec.new()
     rows.push("LEFT RIGHT    when you leave")
@@ -864,34 +864,34 @@ pub fn drawOverlay(ui: &mut Ui, g: &Game, v: &View, marks: &Vec<Marker>) {
     let u = h / 900.0
 
     if g.help {
-        drawHelp(ui, u, w, h)
+        drawHelp(&mut ui, u, w, h)
         return
     }
 
     if g.phase == PHASE_TITLE {
-        drawTitle(ui, g, u, w, h)
+        drawTitle(&mut ui, g, u, w, h)
     }
     if g.phase == PHASE_BRIEF {
-        drawBrief(ui, g, u, w, h)
+        drawBrief(&mut ui, g, u, w, h)
     }
     if g.phase == PHASE_DEPART || g.phase == PHASE_TARGET {
-        drawCinematic(ui, g, u, h)
+        drawCinematic(&mut ui, g, u, h)
     }
     if g.phase == PHASE_PLAN {
-        drawMap(ui, g, v, marks)
-        drawMissionHeader(ui, g, u, g.fade)
-        drawPlanPanel(ui, g, u, w, h)
-        drawCostPanel(ui, g, u, w, h)
+        drawMap(&mut ui, g, v, marks)
+        drawMissionHeader(&mut ui, g, u, g.fade)
+        drawPlanPanel(&mut ui, g, u, w, h)
+        drawCostPanel(&mut ui, g, u, w, h)
     }
     if g.phase == PHASE_FLY {
-        drawMap(ui, g, v, marks)
-        drawMissionHeader(ui, g, u, 0.55)
-        drawFlightHud(ui, g, u, w, h)
-        drawFuel(ui, g, u, w, h)
+        drawMap(&mut ui, g, v, marks)
+        drawMissionHeader(&mut ui, g, u, 0.55)
+        drawFlightHud(&mut ui, g, u, w, h)
+        drawFuel(&mut ui, g, u, w, h)
     }
     if g.phase == PHASE_ARRIVED {
-        drawMap(ui, g, v, marks)
-        drawArrived(ui, g, u, w, h)
+        drawMap(&mut ui, g, v, marks)
+        drawArrived(&mut ui, g, u, w, h)
     }
     if g.phase != PHASE_TITLE && g.phase != PHASE_BRIEF {
         ui.textTracked(w - 150.0 * u, h - 26.0 * u, 7.0 * u, 2.0 * u, "H  HELP", fade(colFaint(), 0.9))

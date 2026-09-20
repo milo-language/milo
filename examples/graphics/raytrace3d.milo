@@ -423,7 +423,7 @@ pub fn main(): i32 {
     var ev: [u8; 64] = [0; 64]
 
     var scene: Vec<Ball> = Vec.new()
-    buildScene(scene)
+    buildScene(&mut scene)
 
     let dt: f64 = 1.0 / 60.0
     let substeps = 6
@@ -483,7 +483,7 @@ pub fn main(): i32 {
         }
         if wantReset {
             scene = Vec.new()
-            buildScene(scene)
+            buildScene(&mut scene)
         }
         if kick {
             var i = 0
@@ -498,7 +498,7 @@ pub fn main(): i32 {
         // ---- physics ----
         var step = 0
         while step < substeps {
-            stepPhysics(scene, sdt, gravity, restitution, airDamp)
+            stepPhysics(&mut scene, sdt, gravity, restitution, airDamp)
             step = step + 1
         }
 

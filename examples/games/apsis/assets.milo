@@ -42,13 +42,13 @@ fn decodeMap(gl: &mut GlContext, src: &string): Texture2D {
                 px[i] = pack(img.pixels[o] as i64, img.pixels[o + 1] as i64, img.pixels[o + 2] as i64)
                 i = i + 1
             }
-            return Texture2D.rgba8(gl, img.width, img.height, px, true)
+            return Texture2D.rgba8(&mut gl, img.width, img.height, px, true)
         }
         Result.Err(_) => {
             // A map that will not decode is a broken build, not a runtime state
             // to design around: one magenta texel says so loudly.
             var px: Vec<u32> = Vec.filled(1, pack(255, 0, 255))
-            return Texture2D.rgba8(gl, 1, 1, px, false)
+            return Texture2D.rgba8(&mut gl, 1, 1, px, false)
         }
     }
 }
@@ -61,27 +61,27 @@ pub fn fontAtlas(): string {
 // mission starts.
 pub fn loadMap(gl: &mut GlContext, id: i64): Texture2D {
     if id == SUN {
-        return mapSun(gl)
+        return mapSun(&mut gl)
     }
     if id == MERCURY {
-        return decodeMap(gl, @embedFile("bodies/mercury.png"))
+        return decodeMap(&mut gl, @embedFile("bodies/mercury.png"))
     }
     if id == VENUS {
-        return decodeMap(gl, @embedFile("bodies/venus.png"))
+        return decodeMap(&mut gl, @embedFile("bodies/venus.png"))
     }
     if id == EARTH {
-        return decodeMap(gl, @embedFile("bodies/earth.png"))
+        return decodeMap(&mut gl, @embedFile("bodies/earth.png"))
     }
     if id == MOON {
-        return decodeMap(gl, @embedFile("bodies/moon.png"))
+        return decodeMap(&mut gl, @embedFile("bodies/moon.png"))
     }
     if id == MARS {
-        return decodeMap(gl, @embedFile("bodies/mars.png"))
+        return decodeMap(&mut gl, @embedFile("bodies/mars.png"))
     }
     if id == JUPITER {
-        return decodeMap(gl, @embedFile("bodies/jupiter.png"))
+        return decodeMap(&mut gl, @embedFile("bodies/jupiter.png"))
     }
-    return decodeMap(gl, @embedFile("bodies/saturn.png"))
+    return decodeMap(&mut gl, @embedFile("bodies/saturn.png"))
 }
 
 // A 1x1 placeholder so every texture slot is a real texture before its map has
@@ -89,7 +89,7 @@ pub fn loadMap(gl: &mut GlContext, id: i64): Texture2D {
 // seven bogus ones, so each slot gets its own.
 pub fn dummyTexture(gl: &mut GlContext): Texture2D {
     var px: Vec<u32> = Vec.filled(1, 0xFF303840)
-    return Texture2D.rgba8(gl, 1, 1, px, false)
+    return Texture2D.rgba8(&mut gl, 1, 1, px, false)
 }
 
 // ── the generated Sun ─────────────────────────────────────────────────────────
@@ -185,5 +185,5 @@ pub fn mapSun(gl: &mut GlContext): Texture2D {
         }
         y = y + 1
     }
-    return Texture2D.rgba8(gl, GEN_W, GEN_H, px, true)
+    return Texture2D.rgba8(&mut gl, GEN_W, GEN_H, px, true)
 }

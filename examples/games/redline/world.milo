@@ -186,15 +186,15 @@ fn addMarkings(b: &mut Builder, track: &Track) {
     // Solid edge lines, then two dashed lane dividers splitting the road in
     // three. Three lanes is what makes a ten-car pack legible: cars queue up in
     // lanes rather than smearing across twenty-two metres of tarmac.
-    addStripe(b, track, -(HALF_WIDTH - 0.55), 0.14, 0.0, 0.0, 0.95, 0.95, 0.98)
-    addStripe(b, track, HALF_WIDTH - 0.55, 0.14, 0.0, 0.0, 0.95, 0.95, 0.98)
-    addStripe(b, track, -HALF_WIDTH / 3.0, 0.12, 4.0, 5.0, 0.90, 0.90, 0.95)
-    addStripe(b, track, HALF_WIDTH / 3.0, 0.12, 4.0, 5.0, 0.90, 0.90, 0.95)
+    addStripe(&mut b, track, -(HALF_WIDTH - 0.55), 0.14, 0.0, 0.0, 0.95, 0.95, 0.98)
+    addStripe(&mut b, track, HALF_WIDTH - 0.55, 0.14, 0.0, 0.0, 0.95, 0.95, 0.98)
+    addStripe(&mut b, track, -HALF_WIDTH / 3.0, 0.12, 4.0, 5.0, 0.90, 0.90, 0.95)
+    addStripe(&mut b, track, HALF_WIDTH / 3.0, 0.12, 4.0, 5.0, 0.90, 0.90, 0.95)
     // The double yellow down the middle. It is the one marking that says "public
     // road" rather than "circuit", and on a dark surface at night it is also the
     // only thing besides the kerbs telling you where the middle is.
-    addStripe(b, track, -0.30, 0.13, 0.0, 0.0, 0.92, 0.68, 0.06)
-    addStripe(b, track, 0.30, 0.13, 0.0, 0.0, 0.92, 0.68, 0.06)
+    addStripe(&mut b, track, -0.30, 0.13, 0.0, 0.0, 0.92, 0.68, 0.06)
+    addStripe(&mut b, track, 0.30, 0.13, 0.0, 0.0, 0.92, 0.68, 0.06)
 }
 
 // Rumble strips down both edges, alternating red and white every three metres.
@@ -228,11 +228,11 @@ fn addCurbs(b: &mut Builder, track: &Track) {
             let e = track.pointAt(s1, inner)
             // Top face. Its corners run across the road, so it is the right-hand
             // curb whose winding comes out inverted.
-            pushQuadN(b, v3(a.x, h, a.z), v3(c.x, h, c.z), v3(d.x, h, d.z), v3(e.x, h, e.z), up, 0.0, 0.0, 1.0, 1.0, side < 0.0)
+            pushQuadN(&mut b, v3(a.x, h, a.z), v3(c.x, h, c.z), v3(d.x, h, d.z), v3(e.x, h, e.z), up, 0.0, 0.0, 1.0, 1.0, side < 0.0)
             // Inner face, so the strip has visible thickness from the road. Its
             // corners run along the road, so it is the other side that flips.
             let nrm = track.normalAt(s0).scale(-side)
-            pushQuadN(b, v3(a.x, 0.0, a.z), v3(e.x, 0.0, e.z), v3(e.x, h, e.z), v3(a.x, h, a.z), nrm, 0.0, 0.0, 1.0, 1.0, side > 0.0)
+            pushQuadN(&mut b, v3(a.x, 0.0, a.z), v3(e.x, 0.0, e.z), v3(e.x, h, e.z), v3(a.x, h, a.z), nrm, 0.0, 0.0, 1.0, 1.0, side > 0.0)
         }
         side = side + 2.0
     }
@@ -267,8 +267,8 @@ fn addBarriers(wall: &mut Builder, neon: &mut Builder, track: &Track, pool: &mut
             wall.setUvScale(0.35)
             wall.setTint(0.62, 0.62, 0.70)
             wall.setAo(0.9)
-            pushQuadN(wall, v3(a.x, 0.0, a.z), v3(c.x, 0.0, c.z), v3(c.x, WALL_H, c.z), v3(a.x, WALL_H, a.z), nrm, s0, 0.0, s1, WALL_H, side > 0.0)
-            pushQuadN(wall, v3(a.x, WALL_H, a.z), v3(c.x, WALL_H, c.z), v3(d.x, WALL_H, d.z), v3(e.x, WALL_H, e.z), up, s0, 0.0, s1, thick, side > 0.0)
+            pushQuadN(&mut wall, v3(a.x, 0.0, a.z), v3(c.x, 0.0, c.z), v3(c.x, WALL_H, c.z), v3(a.x, WALL_H, a.z), nrm, s0, 0.0, s1, WALL_H, side > 0.0)
+            pushQuadN(&mut wall, v3(a.x, WALL_H, a.z), v3(c.x, WALL_H, c.z), v3(d.x, WALL_H, d.z), v3(e.x, WALL_H, e.z), up, s0, 0.0, s1, thick, side > 0.0)
 
             // A thin lit strip along the top edge, and nothing else.
             //
@@ -285,14 +285,14 @@ fn addBarriers(wall: &mut Builder, neon: &mut Builder, track: &Track, pool: &mut
             neon.setUvScale(1.0)
             neon.setAo(1.0)
             let nx = nrm.scale(0.06)
-            emitBand(neon, a, c, nx, nrm, WALL_H - 0.10, WALL_H + 0.02, side > 0.0)
+            emitBand(&mut neon, a, c, nx, nrm, WALL_H - 0.10, WALL_H + 0.02, side > 0.0)
 
             // A light every twelve metres or so along each barrier. Dense
             // enough that the road under the cap is lit continuously once the
             // frame loop picks the nearest ones.
             if i % 5 == 0 {
                 let p = track.pointAt(s0, inner * 0.94)
-                pushLight(pool, v3(p.x, WALL_H + 0.35, p.z), 1.5, 1.28, 1.00, 17.0)
+                pushLight(&mut pool, v3(p.x, WALL_H + 0.35, p.z), 1.5, 1.28, 1.00, 17.0)
             }
         }
         side = side + 2.0
@@ -301,7 +301,7 @@ fn addBarriers(wall: &mut Builder, neon: &mut Builder, track: &Track, pool: &mut
 
 // One lit band on the inner face of the barrier, between two heights.
 fn emitBand(neon: &mut Builder, a: &Vec3, c: &Vec3, nx: &Vec3, nrm: &Vec3, y0: f64, y1: f64, flip: bool) {
-    pushQuadN(neon, v3(a.x + nx.x, y0, a.z + nx.z), v3(c.x + nx.x, y0, c.z + nx.z), v3(c.x + nx.x, y1, c.z + nx.z), v3(a.x + nx.x, y1, a.z + nx.z), nrm, 0.0, 0.0, 1.0, 1.0, flip)
+    pushQuadN(&mut neon, v3(a.x + nx.x, y0, a.z + nx.z), v3(c.x + nx.x, y0, c.z + nx.z), v3(c.x + nx.x, y1, c.z + nx.z), v3(a.x + nx.x, y1, a.z + nx.z), nrm, 0.0, 0.0, 1.0, 1.0, flip)
 }
 
 // Every fixed light on the circuit is a point light: a shop window, a neon tube
@@ -394,7 +394,7 @@ fn addFurniture(steel: &mut Builder, neon: &mut Builder, track: &Track, pool: &m
         // is plain light with enough reach to actually land on a wall.
         neon.setTint(2.30, 1.95, 1.40)
         neon.tube(headC + inward.scale(-0.26) + up.scale(-0.13), inward, hu, hv, 0.115, 0.62, 8, true)
-        pushLight(pool, headC + up.scale(-0.35), 5.4, 4.4, 3.0, 34.0)
+        pushLight(&mut pool, headC + up.scale(-0.35), 5.4, 4.4, 3.0, 34.0)
         s = s + 25.0
         flip = !flip
     }
@@ -427,7 +427,7 @@ fn addPatios(city: &mut Builder, steel: &mut Builder, neon: &mut Builder, track:
         var k = 0
         while k < 4 {
             let c = track.pointAt(s + (k as f64) * 3.1, lat)
-            cafeTable(city, steel, c, shade, k % 2 == 0)
+            cafeTable(&mut city, &mut steel, c, shade, k % 2 == 0)
             k = k + 1
         }
 
@@ -449,7 +449,7 @@ fn addPatios(city: &mut Builder, steel: &mut Builder, neon: &mut Builder, track:
         // One warm lamp over the whole set. Four table lights would be four of
         // the sixteen the shader has.
         let mid = track.pointAt(s + 4.6, lat)
-        pushLight(pool, v3(mid.x, 2.6, mid.z), 2.6, 1.85, 1.05, 13.0)
+        pushLight(&mut pool, v3(mid.x, 2.6, mid.z), 2.6, 1.85, 1.05, 13.0)
         neon.setUvScale(1.0)
         neon.setAo(1.0)
         neon.setTint(1.9, 1.35, 0.72)
@@ -548,7 +548,7 @@ fn addStartLine(mark: &mut Builder, steel: &mut Builder, neon: &mut Builder, tra
     neon.setTint(2.50, 1.90, 0.35)
     neon.boxSpan(v3(lo.x + 0.1, top - 0.22, lo.z + 0.1), v3(hi.x - 0.1, top - 0.04, hi.z - 0.1))
     let mid = track.pointAt(3.0, 0.0)
-    pushLight(pool, v3(mid.x, top - 1.0, mid.z), 7.0, 5.0, 1.6, 38.0)
+    pushLight(&mut pool, v3(mid.x, top - 1.0, mid.z), 7.0, 5.0, 1.6, 38.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -597,7 +597,7 @@ fn addCity(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, track: &
                 height = rg.range(62.0, 90.0)
             }
             let off = (WALL + PAVEMENT + halfX) * side
-            let _ = tryBuilding(city, neon, steel, pool, track, off, s + halfZ, halfX, halfZ, height, rg)
+            let _ = tryBuilding(&mut city, &mut neon, &mut steel, &mut pool, track, off, s + halfZ, halfX, halfZ, height, &mut rg)
             // Step by arc length ON THE FACADE, not on the centreline.
             //
             // The blocks stand thirteen metres out, so on a corner of radius R
@@ -631,7 +631,7 @@ fn addCity(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, track: &
                     height = rg.range(135.0, 210.0)
                 }
                 let off = (WALL + 24.0 + rg.range(0.0, 44.0) + Math.maxF64(halfX, halfZ)) * bside
-                let _ = tryBuilding(city, neon, steel, pool, track, off, t + rg.jitter(12.0), halfX, halfZ, height, rg)
+                let _ = tryBuilding(&mut city, &mut neon, &mut steel, &mut pool, track, off, t + rg.jitter(12.0), halfX, halfZ, height, &mut rg)
             }
             bside = bside + 2.0
         }
@@ -673,7 +673,7 @@ fn tryBuilding(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, pool
             -1.0
         }
         let o = off - sgn * (halfX - hx)
-        if placeBuilding(city, neon, steel, pool, track, o, s, hx, hz, height, rg) {
+        if placeBuilding(&mut city, &mut neon, &mut steel, &mut pool, track, o, s, hx, hz, height, &mut rg) {
             return true
         }
         shrink = shrink + 1
@@ -738,7 +738,7 @@ fn placeBuilding(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, po
             3
         }
     }
-    addBuilding(city, neon, steel, pool, c, halfX, halfZ, height, face, rg)
+    addBuilding(&mut city, &mut neon, &mut steel, &mut pool, c, halfX, halfZ, height, face, &mut rg)
     return true
 }
 
@@ -834,7 +834,7 @@ fn addBuilding(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, pool
             }
             sx = sx + 2.0
         }
-        addWindows(neon, c, hx, hz, y, top, rg)
+        addWindows(&mut neon, c, hx, hz, y, top, &mut rg)
         // The cornice that caps this tier.
         city.setTint(tr * 1.12, tg * 1.12, tb * 1.12)
         city.box(v3(c.x, top + 0.20, c.z), hx + 0.55, 0.20, hz + 0.55)
@@ -853,7 +853,7 @@ fn addBuilding(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, pool
     city.box(v3(c.x - hx, rh + 0.55, c.z), 0.18, 0.55, hz)
     city.box(v3(c.x + hx, rh + 0.55, c.z), 0.18, 0.55, hz)
 
-    addRoofKit(steel, neon, pool, c, hx, hz, rh, rg)
+    addRoofKit(&mut steel, &mut neon, &mut pool, c, hx, hz, rh, &mut rg)
 
     // Signage. Every third building carries a lit sign on one face, and it is
     // the single cheapest thing in this game that says "city": a coloured
@@ -887,7 +887,7 @@ fn addBuilding(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, pool
                 neon.box(v3(c.x + halfX + 0.36, sy, c.z), 0.10, w * 0.62, w)
                 city.box(v3(c.x + halfX + 0.20, sy, c.z), 0.16, w * 0.62 + 0.30, w + 0.30)
             }
-            pushLight(pool, v3(c.x, sy, c.z), r * 0.9, g * 0.9, b * 0.9, 26.0)
+            pushLight(&mut pool, v3(c.x, sy, c.z), r * 0.9, g * 0.9, b * 0.9, 26.0)
         }
     }
 
@@ -913,7 +913,7 @@ fn addBuilding(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, pool
     } else {
         halfX
     }
-    addShopRow(city, neon, pool, c, span, depth, alongX, dir, rg)
+    addShopRow(&mut city, &mut neon, &mut pool, c, span, depth, alongX, dir, &mut rg)
 }
 
 // One saturated awning colour. Primaries, not tints: the shopfronts are the
@@ -982,7 +982,7 @@ fn addShopRow(city: &mut Builder, neon: &mut Builder, pool: &mut Vec<f64>, c: &V
         neon.setUvScale(1.0)
         neon.setAo(1.0)
         neon.setTint(gr, gg, gb)
-        shopBox(neon, c, alongX, dir, depth, mid, hw, 0.95, 2.80, 0.10, 0.18)
+        shopBox(&mut neon, c, alongX, dir, depth, mid, hw, 0.95, 2.80, 0.10, 0.18)
 
         // The awning, as three steps that fall away from the wall. A single
         // slab with a tall valance hanging off it presents the road a flat
@@ -1001,19 +1001,19 @@ fn addShopRow(city: &mut Builder, neon: &mut Builder, pool: &mut Vec<f64>, c: &V
                 1.18
             }
             city.setTint(col.x * k, col.y * k, col.z * k)
-            shopBox(city, c, alongX, dir, depth, mid, hw + 0.10, 3.30 - t * 0.17, 3.44 - t * 0.17, 0.15 + t * 0.42, 0.60 + t * 0.42)
+            shopBox(&mut city, c, alongX, dir, depth, mid, hw + 0.10, 3.30 - t * 0.17, 3.44 - t * 0.17, 0.15 + t * 0.42, 0.60 + t * 0.42)
             st = st + 1
         }
         // The valance is now a lip, not a curtain.
         city.setTint(col.x * 0.82, col.y * 0.82, col.z * 0.82)
-        shopBox(city, c, alongX, dir, depth, mid, hw + 0.10, 2.72, 2.96, 1.29, 1.44)
+        shopBox(&mut city, c, alongX, dir, depth, mid, hw + 0.10, 2.72, 2.96, 1.29, 1.44)
 
         // The signboard over the awning, dark surround with a lit face. Narrower
         // than the shop so the building shows between one board and the next.
         city.setTint(0.10, 0.10, 0.13)
-        shopBox(city, c, alongX, dir, depth, mid, hw * 0.80, 3.66, 4.66, 0.05, 0.26)
+        shopBox(&mut city, c, alongX, dir, depth, mid, hw * 0.80, 3.66, 4.66, 0.05, 0.26)
         neon.setTint(gr * 1.15 + 0.18, gg * 1.15 + 0.18, gb * 1.15 + 0.18)
-        shopBox(neon, c, alongX, dir, depth, mid, hw * 0.64, 3.82, 4.50, 0.24, 0.33)
+        shopBox(&mut neon, c, alongX, dir, depth, mid, hw * 0.64, 3.82, 4.50, 0.24, 0.33)
 
         // A blade sign on some units: a tall panel hung out square to the wall,
         // which is the one piece of street furniture that breaks the facade
@@ -1023,11 +1023,11 @@ fn addShopRow(city: &mut Builder, neon: &mut Builder, pool: &mut Vec<f64>, c: &V
             let bh = rg.range(2.2, 3.6)
             let bc = awningColor((rg.f() * 6.0) as i64)
             neon.setTint(bc.x * 3.4 + 0.25, bc.y * 3.4 + 0.25, bc.z * 3.4 + 0.25)
-            bladeSign(neon, c, alongX, dir, depth, mid, by, by + bh)
-            pushLight(pool, shopPoint(c, alongX, dir, depth, mid, by + bh * 0.5, 1.5), bc.x * 2.2 + 0.2, bc.y * 2.2 + 0.2, bc.z * 2.2 + 0.2, 15.0)
+            bladeSign(&mut neon, c, alongX, dir, depth, mid, by, by + bh)
+            pushLight(&mut pool, shopPoint(c, alongX, dir, depth, mid, by + bh * 0.5, 1.5), bc.x * 2.2 + 0.2, bc.y * 2.2 + 0.2, bc.z * 2.2 + 0.2, 15.0)
         }
 
-        pushLight(pool, shopPoint(c, alongX, dir, depth, mid, 2.4, 2.2), gr * 2.4, gg * 2.4, gb * 2.4, 17.0)
+        pushLight(&mut pool, shopPoint(c, alongX, dir, depth, mid, 2.4, 2.2), gr * 2.4, gg * 2.4, gb * 2.4, 17.0)
         i = i + 1
     }
 }
@@ -1111,7 +1111,7 @@ fn addRoofKit(steel: &mut Builder, neon: &mut Builder, pool: &mut Vec<f64>, c: &
         neon.setAo(1.0)
         neon.setTint(3.4, 0.16, 0.10)
         neon.box(v3(c.x, rh + mh + 0.3, c.z), 0.34, 0.34, 0.34)
-        pushLight(pool, v3(c.x, rh + mh + 0.3, c.z), 2.6, 0.2, 0.15, 30.0)
+        pushLight(&mut pool, v3(c.x, rh + mh + 0.3, c.z), 2.6, 0.2, 0.15, 30.0)
     }
 }
 
@@ -1279,7 +1279,7 @@ fn addBoostPads(b: &mut Builder, pads: &mut Vec<f64>, track: &Track) {
             let t = (k as f64) / 2.0
             let cs = s - PAD_HALF_LEN + 0.9 + (k as f64) * 2.7
             let glow = 1.5 + t * 2.6
-            chevron(b, track, cs, lane, 0.55 + t * 0.35, glow)
+            chevron(&mut b, track, cs, lane, 0.55 + t * 0.35, glow)
             k = k + 1
         }
         i = i + 1
@@ -1309,7 +1309,7 @@ fn chevron(b: &mut Builder, track: &Track, s: f64, lane: f64, cyan: f64, glow: f
         let c = track.pointAt(s + tip, xo)
         let a2 = track.pointAt(s + back + thick, xo + side * PAD_HALF_W)
         let c2 = track.pointAt(s + tip + thick, xo)
-        pushQuadN(b, v3(a.x, y, a.z), v3(c.x, y, c.z), v3(c2.x, y, c2.z), v3(a2.x, y, a2.z), up, 0.0, 0.0, 1.0, 1.0, side > 0.0)
+        pushQuadN(&mut b, v3(a.x, y, a.z), v3(c.x, y, c.z), v3(c2.x, y, c2.z), v3(a2.x, y, a2.z), up, 0.0, 0.0, 1.0, 1.0, side > 0.0)
         side = side + 2.0
     }
 }
@@ -1323,21 +1323,21 @@ pub fn buildWorld(gl: &mut GlContext, track: &Track): World {
     }
     var pool: Vec<f64> = Vec.new()
 
-    addRoad(builders[B_ROAD], track)
-    addMarkings(builders[B_MARK], track)
-    addCurbs(builders[B_CURB], track)
-    addBarriers(builders[B_WALL], builders[B_NEON], track, pool)
-    addFurniture(builders[B_STEEL], builders[B_NEON], track, pool)
-    addStartLine(builders[B_MARK], builders[B_STEEL], builders[B_NEON], track, pool)
-    addCity(builders[B_CITY], builders[B_NEON], builders[B_STEEL], track, pool)
-    addPatios(builders[B_CITY], builders[B_STEEL], builders[B_NEON], track, pool)
-    addGround(builders[B_GROUND], track)
+    addRoad(&mut builders[B_ROAD], track)
+    addMarkings(&mut builders[B_MARK], track)
+    addCurbs(&mut builders[B_CURB], track)
+    addBarriers(&mut builders[B_WALL], &mut builders[B_NEON], track, &mut pool)
+    addFurniture(&mut builders[B_STEEL], &mut builders[B_NEON], track, &mut pool)
+    addStartLine(&mut builders[B_MARK], &mut builders[B_STEEL], &mut builders[B_NEON], track, &mut pool)
+    addCity(&mut builders[B_CITY], &mut builders[B_NEON], &mut builders[B_STEEL], track, &mut pool)
+    addPatios(&mut builders[B_CITY], &mut builders[B_STEEL], &mut builders[B_NEON], track, &mut pool)
+    addGround(&mut builders[B_GROUND], track)
     var pads: Vec<f64> = Vec.new()
-    addBoostPads(builders[B_PAD], pads, track)
+    addBoostPads(&mut builders[B_PAD], &mut pads, track)
 
     var meshes: Vec<Mesh> = Vec.new()
     for i in 0..BUCKETS {
-        var m = Mesh.new(gl, sceneAttrs())
+        var m = Mesh.new(&mut gl, sceneAttrs())
         m.upload(builders[i].data.clone())
         meshes.push(m)
     }
@@ -1419,7 +1419,7 @@ impl World {
         var meshes = self.meshes
         while meshes.len > 0 {
             let m = meshes.pop()!
-            m.free(gl)
+            m.free(&mut gl)
         }
     }
 

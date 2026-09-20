@@ -84,11 +84,11 @@ pub fn drawFish(fb: &mut [i64; 3520], x0: i64, y0: i64, r: i64, g: i64, b: i64, 
                     px = x0 + (9 - dxi)
                 }
                 if ch == 111 {
-                    setPx(fb, px, y0 + dyi, 20, 22, 28) // 'o' eye
+                    setPx(&mut fb, px, y0 + dyi, 20, 22, 28) // 'o' eye
                 } else if ch == 60 {
-                    setPx(fb, px, y0 + dyi, r * 7 / 10, g * 7 / 10, b * 7 / 10) // '<' fin (darker)
+                    setPx(&mut fb, px, y0 + dyi, r * 7 / 10, g * 7 / 10, b * 7 / 10) // '<' fin (darker)
                 } else {
-                    setPx(fb, px, y0 + dyi, r, g, b) // '#' body
+                    setPx(&mut fb, px, y0 + dyi, r, g, b) // '#' body
                 }
             }
         }
@@ -113,17 +113,17 @@ pub fn fishColor(i: i64, out: &mut [i64; 3]): void {
         k = k - 6
     }
     if k == 0 {
-        set3(out, 240, 140, 40)
+        set3(&mut out, 240, 140, 40)
     } else if k == 1 {
-        set3(out, 240, 210, 60)
+        set3(&mut out, 240, 210, 60)
     } else if k == 2 {
-        set3(out, 225, 80, 65)
+        set3(&mut out, 225, 80, 65)
     } else if k == 3 {
-        set3(out, 80, 160, 235)
+        set3(&mut out, 80, 160, 235)
     } else if k == 4 {
-        set3(out, 175, 95, 215)
+        set3(&mut out, 175, 95, 215)
     } else {
-        set3(out, 50, 205, 185)
+        set3(&mut out, 50, 205, 185)
     }
 }
 
@@ -172,7 +172,7 @@ pub fn main(): i32 {
             let baseB = 205.0 - 140.0 * f
             for x in 0..PW {
                 let sh = Math.sin((x as f64) * 0.22 + (y as f64) * 0.12 + t) * 6.0
-                setPx(fb, x, y, clampU8(baseR + sh), clampU8(baseG + sh), clampU8(baseB + sh))
+                setPx(&mut fb, x, y, clampU8(baseR + sh), clampU8(baseG + sh), clampU8(baseB + sh))
             }
         }
 
@@ -188,14 +188,14 @@ pub fn main(): i32 {
                 let sway = Math.sin(t * 0.9 + (h as f64) * 0.28 + phase) * 2.2
                 let xx = rootX + (sway as i64)
                 let g = 150 - h * 4
-                setPx(fb, xx, yy, 30, g, 60)
-                setPx(fb, xx + 1, yy, 25, g - 20, 50)
+                setPx(&mut fb, xx, yy, 30, g, 60)
+                setPx(&mut fb, xx + 1, yy, 25, g - 20, 50)
             }
         }
         // sand
         for x in 0..PW {
-            setPx(fb, x, PH - 2, 180, 165, 120)
-            setPx(fb, x, PH - 1, 150, 135, 95)
+            setPx(&mut fb, x, PH - 2, 180, 165, 120)
+            setPx(&mut fb, x, PH - 1, 150, 135, 95)
         }
 
         // ── fish ──
@@ -210,12 +210,12 @@ pub fn main(): i32 {
                 fy[i] = Random.floatRange(3.0, (PH - 12) as f64)
             }
             let bob = Math.sin(t * 1.4 + (i as f64)) * 1.2
-            fishColor(fcol[i], tmp)
+            fishColor(fcol[i], &mut tmp)
             var dir: i64 = 1
             if fvx[i] < 0.0 {
                 dir = -1
             }
-            drawFish(fb, fx[i] as i64, (fy[i] + bob) as i64, tmp[0], tmp[1], tmp[2], dir)
+            drawFish(&mut fb, fx[i] as i64, (fy[i] + bob) as i64, tmp[0], tmp[1], tmp[2], dir)
         }
 
         // ── bubbles (rise + wobble, respawn at the bottom) ──
@@ -226,14 +226,14 @@ pub fn main(): i32 {
                 bx[i] = Random.floatRange(0.0, PW as f64)
             }
             let wob = Math.sin(t * 2.0 + by[i] * 0.3) * 1.5
-            setPx(fb, (bx[i] + wob) as i64, by[i] as i64, 200, 235, 255)
+            setPx(&mut fb, (bx[i] + wob) as i64, by[i] as i64, 200, 235, 255)
         }
 
         // ── blit framebuffer via half-blocks ──
         var buf = String.withCapacity(65536)
         let hc = PH / 2
         for r in 0..hc {
-            emit(buf, Ansi.cursorTo(r + 2, 1))
+            emit(&mut buf, Ansi.cursorTo(r + 2, 1))
             for c in 0..PW {
                 let vt = fb[(r * 2) * PW + c]
                 let vb = fb[(r * 2 + 1) * PW + c]
@@ -243,15 +243,15 @@ pub fn main(): i32 {
                 let br = vb / 65536
                 let bg = (vb - br * 65536) / 256
                 let bb = vb - br * 65536 - bg * 256
-                Ansi.pushFg24(buf, tr, tg, tb)
-                Ansi.pushBg24(buf, br, bg, bb)
-                emit(buf, "▀")
+                Ansi.pushFg24(&mut buf, tr, tg, tb)
+                Ansi.pushBg24(&mut buf, br, bg, bb)
+                emit(&mut buf, "▀")
             }
         }
-        emit(buf, Ansi.reset())
-        emit(buf, Ansi.cursorTo(1, 1))
-        emit(buf, Color.bold(" milo aquarium "))
-        emit(buf, Color.gray("  ·  q quit "))
+        emit(&mut buf, Ansi.reset())
+        emit(&mut buf, Ansi.cursorTo(1, 1))
+        emit(&mut buf, Color.bold(" milo aquarium "))
+        emit(&mut buf, Color.gray("  ·  q quit "))
         writeStdout(buf)
 
         t = t + 0.08

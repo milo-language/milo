@@ -54,7 +54,7 @@ pub fn emptyNode(kind: NodeKind, name: string, text: string): Node {
 
 pub fn domNew(): Dom {
     var arena: Arena<Node> = arenaNew()
-    let doc = arenaAlloc(arena, emptyNode(NodeKind.Document, "", ""))
+    let doc = arenaAlloc(&mut arena, emptyNode(NodeKind.Document, "", ""))
     return Dom {
         arena: arena, document: doc
     }
@@ -140,30 +140,30 @@ pub fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
 // ── The TreeSink-style operations (refs only in params, never stored) ──
 
 pub fn createElement(dom: &mut Dom, name: string): Handle<Node> {
-    return arenaAlloc(dom.arena, emptyNode(NodeKind.Element, name, ""))
+    return arenaAlloc(&mut dom.arena, emptyNode(NodeKind.Element, name, ""))
 }
 
 pub fn createText(dom: &mut Dom, text: string): Handle<Node> {
-    return arenaAlloc(dom.arena, emptyNode(NodeKind.Text, "", text))
+    return arenaAlloc(&mut dom.arena, emptyNode(NodeKind.Text, "", text))
 }
 
 pub fn createComment(dom: &mut Dom, text: string): Handle<Node> {
-    return arenaAlloc(dom.arena, emptyNode(NodeKind.Comment, "", text))
+    return arenaAlloc(&mut dom.arena, emptyNode(NodeKind.Comment, "", text))
 }
 
 pub fn setParent(dom: &mut Dom, child: Handle<Node>, parent: Option<Handle<Node>>) {
-    let _ = arenaModifyMut(dom.arena, child, (c: &mut Node): void => {
+    let _ = arenaModifyMut(&mut dom.arena, child, (c: &mut Node): void => {
         c.parent = parent
     }
     )
 }
 
 pub fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
-    let _ = arenaModifyMut(dom.arena, parent, (n: &mut Node): void => {
+    let _ = arenaModifyMut(&mut dom.arena, parent, (n: &mut Node): void => {
         n.children.push(child)
     }
     )
-    setParent(dom, child, Option.Some(parent))
+    setParent(&mut dom, child, Option.Some(parent))
 }
 
 // html5ever coalesces adjacent text: appending text after a Text sibling
@@ -178,7 +178,7 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
                 // `t` survives for the non-coalescing path. Handles, being
                 // small Copy structs, capture fine without this.
                 let extra = t.clone()
-                let _ = arenaModifyMut(dom.arena, last, (n: &mut Node): void => {
+                let _ = arenaModifyMut(&mut dom.arena, last, (n: &mut Node): void => {
                     n.text = n.text + extra
                 }
                 )
@@ -188,8 +188,8 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
             }
         }
     }
-    let tn = createText(dom, t)
-    append(dom, parent, tn)
+    let tn = createText(&mut dom, t)
+    append(&mut dom, parent, tn)
 }
 
 pub fn sameNode(a: Handle<Node>, b: Handle<Node>): bool {
@@ -199,7 +199,7 @@ pub fn sameNode(a: Handle<Node>, b: Handle<Node>): bool {
 pub fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
     match nodeParent(dom, child) {
         Option.Some(p) => {
-            let _ = arenaModifyMut(dom.arena, p, (n: &mut Node): void => {
+            let _ = arenaModifyMut(&mut dom.arena, p, (n: &mut Node): void => {
                 var found = false
                 var idx: i64 = 0
                 for i in 0..n.children.len() {
@@ -213,7 +213,7 @@ pub fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
                 }
             }
             )
-            setParent(dom, child, Option.None)
+            setParent(&mut dom, child, Option.None)
         }
         Option.None => {
         }
@@ -223,7 +223,7 @@ pub fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
 pub fn appendBeforeSibling(dom: &mut Dom, sibling: Handle<Node>, newNode: Handle<Node>) {
     match nodeParent(dom, sibling) {
         Option.Some(p) => {
-            let _ = arenaModifyMut(dom.arena, p, (n: &mut Node): void => {
+            let _ = arenaModifyMut(&mut dom.arena, p, (n: &mut Node): void => {
                 var found = false
                 var idx: i64 = 0
                 for i in 0..n.children.len() {
@@ -237,7 +237,7 @@ pub fn appendBeforeSibling(dom: &mut Dom, sibling: Handle<Node>, newNode: Handle
                 }
             }
             )
-            setParent(dom, newNode, Option.Some(p))
+            setParent(&mut dom, newNode, Option.Some(p))
         }
         Option.None => {
         }
@@ -250,12 +250,12 @@ pub fn reparentChildren(dom: &mut Dom, oldParent: Handle<Node>, newParent: Handl
     for i in 0..c {
         kids.push(childAt(dom, oldParent, i))
     }
-    let _ = arenaModifyMut(dom.arena, oldParent, (n: &mut Node): void => {
+    let _ = arenaModifyMut(&mut dom.arena, oldParent, (n: &mut Node): void => {
         n.children = Vec.new()
     }
     )
     for i in 0..kids.len() {
-        append(dom, newParent, kids[i])
+        append(&mut dom, newParent, kids[i])
     }
 }
 
@@ -297,30 +297,30 @@ pub fn main(): i32 {
     let root = dom.document
 
     // Build <p>hi<b>x</b></p>
-    let p = createElement(dom, "p")
-    append(dom, root, p)
-    appendText(dom, p, "h")
-    appendText(dom, p, "i") // coalesces with "h" -> "hi"
-    let b = createElement(dom, "b")
-    append(dom, p, b)
-    appendText(dom, b, "x")
+    let p = createElement(&mut dom, "p")
+    append(&mut dom, root, p)
+    appendText(&mut dom, p, "h")
+    appendText(&mut dom, p, "i") // coalesces with "h" -> "hi"
+    let b = createElement(&mut dom, "b")
+    append(&mut dom, p, b)
+    appendText(&mut dom, b, "x")
 
     print(serialize(dom, root)) // <p>hi<b>x</b></p>
 
     // appendBeforeSibling: <span> before <b>
-    let span = createElement(dom, "span")
-    appendBeforeSibling(dom, b, span)
-    appendText(dom, span, "S")
+    let span = createElement(&mut dom, "span")
+    appendBeforeSibling(&mut dom, b, span)
+    appendText(&mut dom, span, "S")
     print(serialize(dom, root)) // <p>hi<span>S</span><b>x</b></p>
 
     // removeFromParent: drop <b>
-    removeFromParent(dom, b)
+    removeFromParent(&mut dom, b)
     print(serialize(dom, root)) // <p>hi<span>S</span></p>
 
     // reparentChildren: move p's children into a fresh <div>
-    let div = createElement(dom, "div")
-    append(dom, root, div)
-    reparentChildren(dom, p, div)
+    let div = createElement(&mut dom, "div")
+    append(&mut dom, root, div)
+    reparentChildren(&mut dom, p, div)
     print(serialize(dom, root)) // <p></p><div>hi<span>S</span></div>
 
     // sameNode sanity

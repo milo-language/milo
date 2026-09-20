@@ -189,7 +189,7 @@ pub fn main(): i32 {
 
     var gl = GlContext.new()
     let sky = buildSky(skyLight)
-    var gfx = match newGfx(gl, rw, rh, sky, buildAtlas(), ATLAS) {
+    var gfx = match newGfx(&mut gl, rw, rh, sky, buildAtlas(), ATLAS) {
         Result.Ok(g) => g
         Result.Err(e) => {
             print("gfx: " + e)
@@ -201,14 +201,14 @@ pub fn main(): i32 {
     // contract.
     let texes = makeTextures()
     for t in texes {
-        let a = Texture2D.rgba8(gl, TEX_SIZE, TEX_SIZE, t.albedo.clone(), true)
+        let a = Texture2D.rgba8(&mut gl, TEX_SIZE, TEX_SIZE, t.albedo.clone(), true)
         // REPEAT, not the default clamp. Every one of these is tiled across
         // hundreds of metres of road, and on clamp only the first repeat has any
         // content at all.
         a.setWrap(Wrap.Repeat)
         a.generateMipmaps()
         a.setAnisotropy(16.0)
-        let s = Texture2D.rgba8(gl, TEX_SIZE, TEX_SIZE, t.surf.clone(), true)
+        let s = Texture2D.rgba8(&mut gl, TEX_SIZE, TEX_SIZE, t.surf.clone(), true)
         s.setWrap(Wrap.Repeat)
         s.generateMipmaps()
         s.setAnisotropy(16.0)
@@ -224,13 +224,13 @@ pub fn main(): i32 {
     }
     print($"circuit: {(track.length as i64)} m over {track.n} samples")
 
-    var world = buildWorld(gl, track)
-    var rain = buildRain(gl)
+    var world = buildWorld(&mut gl, track)
+    var rain = buildRain(&mut gl)
     // How hard it is raining, 0 to 1. A constant for now: the wet road, the
     // reflections and the spray are all keyed off it, so turning it down is the
     // one knob that makes the night dry again.
     let rainAmount = argValue("--rain", "1").parseF64() ?? 1.0
-    let carModel = buildCarModel(gl)
+    let carModel = buildCarModel(&mut gl)
     let trimMat = trimMaterial()
     let glassMat = glassMaterial()
     let wheelMat = wheelMaterial()
@@ -416,7 +416,7 @@ pub fn main(): i32 {
         // ever shows up as "the road is green now".
         gfx.lights.clear()
         let eye = cam.shakenEye()
-        world.nearestLights(gfx.lights, eye, 12)
+        world.nearestLights(&mut gfx.lights, eye, 12)
         // The player's own lamps, which are the only lights that move, and the
         // only ones that are aimed. A headlamp as a bare point source lights the
         // shopfront beside the car and the facade behind it as hard as the road
@@ -547,7 +547,7 @@ pub fn main(): i32 {
         gfx.present(dw as i64, dh as i64)
 
         hud.clear()
-        drawHud(hud, dw as f64, dh as f64, player, raceTime, track.length, 0.5 + 0.5 * Math.sin(gfx.time * 6.0))
+        drawHud(&mut hud, dw as f64, dh as f64, player, raceTime, track.length, 0.5 + 0.5 * Math.sin(gfx.time * 6.0))
         gfx.drawHud(hud.verts, dw as i64, dh as i64)
 
         if headless && warmup > 0 {
@@ -578,9 +578,9 @@ pub fn main(): i32 {
         SDL_GL_SwapWindow(win)
     }
 
-    carModel.free(gl)
-    world.free(gl)
-    gfx.free(gl)
+    carModel.free(&mut gl)
+    world.free(&mut gl)
+    gfx.free(&mut gl)
     gl.free()
     SDL_GL_DeleteContext(ctx)
     SDL_DestroyWindow(win)

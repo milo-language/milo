@@ -107,17 +107,17 @@ pub fn buildRain(gl: &mut GlContext): Rain {
         // A slight lean, different per streak. Uniformly vertical rain reads as
         // a wire fence.
         let lean = rg.jitter(0.10)
-        streak(b, v3(x, y, z), len, w, lean, k)
+        streak(&mut b, v3(x, y, z), len, w, lean, k)
         i = i + 1
     }
-    var m = Mesh.new(gl, sceneAttrs())
+    var m = Mesh.new(&mut gl, sceneAttrs())
     m.upload(b.data.clone())
 
     var s = builder()
     s.setUvScale(1.0)
     s.setAo(1.0)
-    sprayGeometry(s, rg)
-    var sm = Mesh.new(gl, sceneAttrs())
+    sprayGeometry(&mut s, &mut rg)
+    var sm = Mesh.new(&mut gl, sceneAttrs())
     sm.upload(s.data.clone())
 
     return Rain {

@@ -118,8 +118,8 @@ pub fn runCavity(re: i64, n: i64, tolSteady: f64, maxIters: i64, verbose: bool):
 
     var f: Vec<f64> = Vec.new()
     var g: Vec<f64> = Vec.new()
-    lbmInit(f, n, n)
-    lbmInit(g, n, n)
+    lbmInit(&mut f, n, n)
+    lbmInit(&mut g, n, n)
 
     var solid: Vec<bool> = Vec.new()
     var interior: Vec<bool> = Vec.new()
@@ -143,7 +143,7 @@ pub fn runCavity(re: i64, n: i64, tolSteady: f64, maxIters: i64, verbose: bool):
     // Force accumulator, unused here: the cavity has no immersed obstacle, so this
     // stays zero. It exists only to satisfy lbmStep, which the wind tunnel shares.
     var fw: Vec<f64> = [0.0, 0.0]
-    lbmBuildInterior(solid, n, n, interior)
+    lbmBuildInterior(solid, n, n, &mut interior)
 
     // Steady state is detected on the velocity field, so it is only worth sampling
     // every `checkEvery` steps — the residual moves far slower than one lattice step.
@@ -153,12 +153,12 @@ pub fn runCavity(re: i64, n: i64, tolSteady: f64, maxIters: i64, verbose: bool):
     while iters < maxIters {
         // Two half-steps per pass keeps the ping-pong buffers in phase without
         // ever moving a Vec out of a slot: f -> g, then g -> f.
-        lbmStep(f, g, solid, interior, n, n, tau, uLid, false, fw)
-        lbmStep(g, f, solid, interior, n, n, tau, uLid, false, fw)
+        lbmStep(f, &mut g, solid, interior, n, n, tau, uLid, false, &mut fw)
+        lbmStep(g, &mut f, solid, interior, n, n, tau, uLid, false, &mut fw)
         iters = iters + 2
 
         if iters % checkEvery == 0 {
-            lbmMacro(f, solid, n, n, rho, ux, uy)
+            lbmMacro(f, solid, n, n, &mut rho, &mut ux, &mut uy)
             let delta = lbmMaxDelta(ux, uy, pux, puy, uLid)
             var i = 0
             while i < n * n {
@@ -177,7 +177,7 @@ pub fn runCavity(re: i64, n: i64, tolSteady: f64, maxIters: i64, verbose: bool):
         }
     }
 
-    lbmMacro(f, solid, n, n, rho, ux, uy)
+    lbmMacro(f, solid, n, n, &mut rho, &mut ux, &mut uy)
 
     var maxErrU = 0.0
     var maxErrV = 0.0

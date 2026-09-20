@@ -143,7 +143,7 @@ pub fn winPaneCount(paneWin: &Vec<i64>, win: i64): i64 {
 // Re-tile the ACTIVE window: split its width across its panes, resize each.
 pub fn reTile(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, activeWin: i64, cols: i64, gridRows: i64): void {
     var idxs: [i64; 16] = [0; 16]
-    let m = activePaneIdxs(paneWin, activeWin, idxs)
+    let m = activePaneIdxs(paneWin, activeWin, &mut idxs)
     if m == 0 {
         return
     }
@@ -162,7 +162,7 @@ pub fn reTile(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, active
 pub fn reTileAll(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, winCount: i64, cols: i64, gridRows: i64): void {
     var w: i64 = 0
     while w < winCount {
-        reTile(ptys, terms, paneWin, w, cols, gridRows)
+        reTile(ptys, &mut terms, paneWin, w, cols, gridRows)
         w = w + 1
     }
 }
@@ -170,7 +170,7 @@ pub fn reTileAll(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, win
 // Composite the active window's panes + a status bar with WINDOW tabs.
 pub fn renderCompositeN(terms: &Vec<Term>, paneWin: &Vec<i64>, activeWin: i64, winCount: i64, focus: i64, copyMode: bool, copyOffset: i64): string {
     var idxs: [i64; 16] = [0; 16]
-    let m = activePaneIdxs(paneWin, activeWin, idxs)
+    let m = activePaneIdxs(paneWin, activeWin, &mut idxs)
     if m == 0 {
         return "\x1b[2J\x1b[H"
     }
@@ -265,7 +265,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
     var cols = cols0
     var activeWin: i64 = 0
     var winCount: i64 = 1
-    reTile(ptys, terms, paneWin, activeWin, cols, gridRows)
+    reTile(ptys, &mut terms, paneWin, activeWin, cols, gridRows)
 
     var clientFd: i32 = -1
     var buf: [u8; 4096] = [0; 4096]
@@ -321,10 +321,10 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
         if anyDied {
             // re-tile all windows (a pane count changed) and fix focus if the
             // focused pane closed; if nothing is left, the daemon exits.
-            reTileAll(ptys, terms, paneWin, winCount, cols, gridRows)
+            reTileAll(ptys, &mut terms, paneWin, winCount, cols, gridRows)
             if paneWin[focus] < 0 {
                 var fidx: [i64; 16] = [0; 16]
-                let fm = activePaneIdxs(paneWin, activeWin, fidx)
+                let fm = activePaneIdxs(paneWin, activeWin, &mut fidx)
                 if fm > 0 {
                     focus = fidx[0]
                 } else {
@@ -334,7 +334,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                         if winPaneCount(paneWin, w2) > 0 {
                             activeWin = w2
                             var gidx: [i64; 16] = [0; 16]
-                            let gm = activePaneIdxs(paneWin, activeWin, gidx)
+                            let gm = activePaneIdxs(paneWin, activeWin, &mut gidx)
                             focus = gidx[0]
                             found = true
                             w2 = winCount
@@ -397,7 +397,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                         }
                         if press && !copyMode {
                             var idxs: [i64; 16] = [0; 16]
-                            let m = activePaneIdxs(paneWin, activeWin, idxs)
+                            let m = activePaneIdxs(paneWin, activeWin, &mut idxs)
                             if m > 0 {
                                 let paneW = terms[idxs[0]].cols
                                 var pos = (col - 1) / (paneW + 1)
@@ -415,11 +415,11 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                     } else if ctrlMode {
                         if b == RESIZE_MARK {
                             var sz: [i64; 2] = [0; 2]
-                            parseSize(ctrlBuf, sz)
+                            parseSize(ctrlBuf, &mut sz)
                             if sz[0] > 1 && sz[1] > 0 {
                                 cols = sz[1]
                                 gridRows = sz[0] - 1
-                                reTileAll(ptys, terms, paneWin, winCount, cols, gridRows)
+                                reTileAll(ptys, &mut terms, paneWin, winCount, cols, gridRows)
                                 dirty = true
                             }
                             ctrlMode = false
@@ -457,7 +457,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                         if b == 111 || b == 9 {
                             // cycle focus among active-window panes
                             var idxs: [i64; 16] = [0; 16]
-                            let m = activePaneIdxs(paneWin, activeWin, idxs)
+                            let m = activePaneIdxs(paneWin, activeWin, &mut idxs)
                             var fp: i64 = 0
                             var q: i64 = 0
                             while q < m {
@@ -480,7 +480,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                                         terms.push(newTerm(gridRows, 1))
                                         paneWin.push(activeWin)
                                         focus = ptys.len - 1
-                                        reTile(ptys, terms, paneWin, activeWin, cols, gridRows)
+                                        reTile(ptys, &mut terms, paneWin, activeWin, cols, gridRows)
                                         dirty = true
                                     }
                                     Result.Err(_) => {
@@ -499,7 +499,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                                         activeWin = winCount
                                         winCount = winCount + 1
                                         focus = ptys.len - 1
-                                        reTile(ptys, terms, paneWin, activeWin, cols, gridRows)
+                                        reTile(ptys, &mut terms, paneWin, activeWin, cols, gridRows)
                                         dirty = true
                                     }
                                     Result.Err(_) => {
@@ -521,7 +521,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                             if winPaneCount(paneWin, nw) > 0 {
                                 activeWin = nw
                                 var idxs2: [i64; 16] = [0; 16]
-                                let mm = activePaneIdxs(paneWin, activeWin, idxs2)
+                                let mm = activePaneIdxs(paneWin, activeWin, &mut idxs2)
                                 if mm > 0 {
                                     focus = idxs2[0]
                                 }

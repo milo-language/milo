@@ -143,14 +143,14 @@ pub fn main(): i32 {
     var s = storeNew()
 
     // inserts that force splits (PAGE_CAP = 4)
-    put(s, "delta", "4")
-    put(s, "alpha", "1")
-    put(s, "echo", "5")
-    put(s, "bravo", "2")
-    put(s, "golf", "7")
-    put(s, "charlie", "3")
-    put(s, "foxtrot", "6")
-    put(s, "hotel", "8")
+    put(&mut s, "delta", "4")
+    put(&mut s, "alpha", "1")
+    put(&mut s, "echo", "5")
+    put(&mut s, "bravo", "2")
+    put(&mut s, "golf", "7")
+    put(&mut s, "charlie", "3")
+    put(&mut s, "foxtrot", "6")
+    put(&mut s, "hotel", "8")
 
     print(s.count) // 8
     print(s.pages.len()) // >1 — splits happened
@@ -174,7 +174,7 @@ pub fn main(): i32 {
     }
 
     // overwrite
-    put(s, "alpha", "one")
+    put(&mut s, "alpha", "one")
     match get(s, "alpha") {
         Option.Some(v) => {
             print(v)
@@ -190,7 +190,7 @@ pub fn main(): i32 {
     var keys = String.withCapacity(64)
     var go = true
     while go {
-        let r = scanNext(s, c)
+        let r = scanNext(s, &mut c)
         match r {
             Option.Some(e) => {
                 keys = keys + e.key + " "

@@ -490,7 +490,7 @@ fn makeSteel(): TexData {
                 // Bare steel under a chip is cool and dark, not brown, rust is
                 // a different material and it has its own texture.
                 let l = 0.33 + n * 0.12
-                stamp(f, cix + dx, ciy + dy, w, l * 0.97, l * 0.99, l * 1.02, -0.35 * w, 0.86)
+                stamp(&mut f, cix + dx, ciy + dy, w, l * 0.97, l * 0.99, l * 1.02, -0.35 * w, 0.86)
             }
         }
     }
@@ -552,9 +552,9 @@ fn makeGlass(): TexData {
         let py = (rand01(d, 1, 9301) * (TEX_SIZE as f64)) as i64
         let dark = rand01(d, 2, 9301)
         let l = 0.40 + dark * 0.30
-        stamp(f, px, py, 0.7, l, l, l, 0.15, 0.55)
-        stamp(f, px + 1, py, 0.25, l, l, l, 0.06, 0.30)
-        stamp(f, px, py + 1, 0.25, l, l, l, 0.06, 0.30)
+        stamp(&mut f, px, py, 0.7, l, l, l, 0.15, 0.55)
+        stamp(&mut f, px + 1, py, 0.25, l, l, l, 0.06, 0.30)
+        stamp(&mut f, px, py + 1, 0.25, l, l, l, 0.06, 0.30)
     }
     return packField(f, 0.35)
 }

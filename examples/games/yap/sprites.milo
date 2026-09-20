@@ -49,7 +49,7 @@ fn spriteFrom(rows: &Vec<string>, pal: &Vec<f64>): Sprite {
             if ch >= 48 && ch <= 57 {
                 let i = (ch - 48) * 3
                 if i + 2 < pal.len {
-                    spriteSet(s, x, y, pal[i], pal[i + 1], pal[i + 2], 1.0)
+                    spriteSet(&mut s, x, y, pal[i], pal[i + 1], pal[i + 2], 1.0)
                 }
             }
         }
@@ -64,16 +64,16 @@ fn spriteFrom(rows: &Vec<string>, pal: &Vec<f64>): Sprite {
 
 fn dogPalette(): Vec<f64> {
     var p: Vec<f64> = Vec.new()
-    palAdd(p, 0.030, 0.020, 0.030) // 0 outline
-    palAdd(p, 0.240, 0.150, 0.080) // 1 fur shadow
-    palAdd(p, 0.520, 0.330, 0.150) // 2 fur
-    palAdd(p, 0.780, 0.550, 0.280) // 3 fur lit
-    palAdd(p, 0.880, 0.740, 0.550) // 4 cream
-    palAdd(p, 1.300, 0.420, 0.550) // 5 ear / tongue (glows)
-    palAdd(p, 1.500, 1.500, 1.600) // 6 eye glint
-    palAdd(p, 0.020, 0.020, 0.030) // 7 eye, nose
-    palAdd(p, 1.500, 0.200, 0.220) // 8 collar  (glows)
-    palAdd(p, 1.800, 1.300, 0.300) // 9 name tag (glows)
+    palAdd(&mut p, 0.030, 0.020, 0.030) // 0 outline
+    palAdd(&mut p, 0.240, 0.150, 0.080) // 1 fur shadow
+    palAdd(&mut p, 0.520, 0.330, 0.150) // 2 fur
+    palAdd(&mut p, 0.780, 0.550, 0.280) // 3 fur lit
+    palAdd(&mut p, 0.880, 0.740, 0.550) // 4 cream
+    palAdd(&mut p, 1.300, 0.420, 0.550) // 5 ear / tongue (glows)
+    palAdd(&mut p, 1.500, 1.500, 1.600) // 6 eye glint
+    palAdd(&mut p, 0.020, 0.020, 0.030) // 7 eye, nose
+    palAdd(&mut p, 1.500, 0.200, 0.220) // 8 collar  (glows)
+    palAdd(&mut p, 1.800, 1.300, 0.300) // 9 name tag (glows)
     return p
 }
 
@@ -212,11 +212,11 @@ pub fn dogFrames(): Vec<Sprite> {
 
 pub fn boneSprite(): Sprite {
     var p: Vec<f64> = Vec.new()
-    palAdd(p, 0.030, 0.020, 0.030) // 0 outline
-    palAdd(p, 0.0, 0.0, 0.0)
-    palAdd(p, 0.0, 0.0, 0.0)
-    palAdd(p, 0.0, 0.0, 0.0)
-    palAdd(p, 1.500, 1.420, 1.150) // 4 bone (glows)
+    palAdd(&mut p, 0.030, 0.020, 0.030) // 0 outline
+    palAdd(&mut p, 0.0, 0.0, 0.0)
+    palAdd(&mut p, 0.0, 0.0, 0.0)
+    palAdd(&mut p, 0.0, 0.0, 0.0)
+    palAdd(&mut p, 1.500, 1.420, 1.150) // 4 bone (glows)
     var v: Vec<string> = Vec.new()
     v.push(".00...00.")
     v.push("0440.0440")

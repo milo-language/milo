@@ -31,7 +31,7 @@ pub fn main(): i32 {
     var missions = missionTable()
     var bad = 0
     for m in missions {
-        let _ = calibrateMission(bodies, m, nowSeconds())
+        let _ = calibrateMission(bodies, &mut m, nowSeconds())
         // The scale everything on this map is measured against: how far out the
         // transfer itself reaches, which is the FARTHER of its two endpoints and
         // not the target alone. Measured against the target alone an inbound

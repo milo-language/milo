@@ -225,8 +225,8 @@ pub fn main(): i32 {
         }
 
         let error = target - state.altitude
-        thrust = Math.clampF64(0.5 + pidUpdate(pid, error, dt), 0.0, 1.0)
-        physicsTick(state, thrust, dt)
+        thrust = Math.clampF64(0.5 + pidUpdate(&mut pid, error, dt), 0.0, 1.0)
+        physicsTick(&mut state, thrust, dt)
 
         renderFrame(state.altitude, state.velocity, target, thrust, tick as i64)
         sleepMs(20)

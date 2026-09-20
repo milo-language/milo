@@ -148,7 +148,7 @@ pub fn main(): i32 {
         } else {
             iy = 1.0
         }
-        mineUpdate(m, dt, ix, iy, W as f64, H as f64)
+        mineUpdate(&mut m, dt, ix, iy, W as f64, H as f64)
 
         var want = false
         for i in 0..shots.len {
@@ -157,9 +157,9 @@ pub fn main(): i32 {
             }
         }
         if want {
-            drawMine(c, m, 0.0, 0.0)
-            drawHud(c, m)
-            present(c, 0.18, 1.0)
+            drawMine(&mut c, m, 0.0, 0.0)
+            drawHud(&mut c, m)
+            present(&mut c, 0.18, 1.0)
             writePpm(prefix + "-" + frame.toString() + ".ppm", c)
             print("wrote " + prefix + "-" + frame.toString() + ".ppm")
         }

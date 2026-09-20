@@ -181,7 +181,7 @@ fn tileFor(t: &mut Tiles, latDeg: i64, lonDeg: i64): i64 {
 fn srtmAt(t: &mut Tiles, lat: f64, lon: f64): f64 {
     let latDeg = Math.floor(lat) as i64
     let lonDeg = Math.floor(lon) as i64
-    let ti = tileFor(t, latDeg, lonDeg)
+    let ti = tileFor(&mut t, latDeg, lonDeg)
     if ti < 0 {
         return 0.0
     }
@@ -808,7 +808,7 @@ fn mergeParts(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64,
     var pPtZ: Vec<f64> = Vec.new()
     var pRoof: Vec<u8> = Vec.new()
     var pRoofH: Vec<f64> = Vec.new()
-    scanParts(bbox, latMin, lonMin, latMax, lonMax, lat, lon, mPerLon, pH, pBase, pStart, pLen, pPtX, pPtZ, pRoof, pRoofH)
+    scanParts(bbox, latMin, lonMin, latMax, lonMax, lat, lon, mPerLon, &mut pH, &mut pBase, &mut pStart, &mut pLen, &mut pPtX, &mut pPtZ, &mut pRoof, &mut pRoofH)
     if pH.len == 0 {
         return
     }
@@ -983,11 +983,11 @@ fn cellOf(x0: f64, z0: f64, x1: f64, z1: f64, cell: f64, side: i64, half: i64): 
 }
 
 fn putRoofs(buf: &mut string, bRoof: &Vec<u8>, bRoofH: &Vec<f64>, bBase: &Vec<f64>) {
-    putI32(buf, bRoof.len)
+    putI32(&mut buf, bRoof.len)
     for i in 0..bRoof.len {
         buf.push(bRoof[i])
-        putCm(buf, bRoofH[i])
-        putCm(buf, bBase[i])
+        putCm(&mut buf, bRoofH[i])
+        putCm(&mut buf, bBase[i])
     }
 }
 
@@ -1148,16 +1148,16 @@ fn midGap(br: &Bridges, i: i64, ax: f64, az: f64, bx: f64, bz: f64): f64 {
 }
 
 fn putBridges(buf: &mut string, br: &Bridges) {
-    putI32(buf, br.halfW.len)
+    putI32(&mut buf, br.halfW.len)
     for i in 0..br.halfW.len {
-        putCm(buf, br.halfW[i])
-        putI32(buf, br.structure[i])
-        putI32(buf, br.colour[i])
-        putI32(buf, br.len[i])
+        putCm(&mut buf, br.halfW[i])
+        putI32(&mut buf, br.structure[i])
+        putI32(&mut buf, br.colour[i])
+        putI32(&mut buf, br.len[i])
         let s = br.start[i]
         for k in 0..br.len[i] {
-            putCm(buf, br.ptX[s + k])
-            putCm(buf, br.ptZ[s + k])
+            putCm(&mut buf, br.ptX[s + k])
+            putCm(&mut buf, br.ptZ[s + k])
         }
     }
 }
@@ -1270,9 +1270,9 @@ fn fetchOrtho(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64, out: &string):
                 let base = row * ORTHO_TILE_PX * ch
                 for px in 0..ORTHO_TILE_PX {
                     let k = base + px * ch
-                    Bytes.writeU8(pixels, band[tx].pixels[k])
-                    Bytes.writeU8(pixels, band[tx].pixels[k + 1])
-                    Bytes.writeU8(pixels, band[tx].pixels[k + 2])
+                    Bytes.writeU8(&mut pixels, band[tx].pixels[k])
+                    Bytes.writeU8(&mut pixels, band[tx].pixels[k + 1])
+                    Bytes.writeU8(&mut pixels, band[tx].pixels[k + 2])
                 }
             }
         }
@@ -1387,7 +1387,7 @@ fn main() {
         for ix in 0..demN {
             let x = demX0 + (ix as f64) * DEM_STEP
             let sLon = lon + x / mPerLon
-            let h = srtmAt(tiles, sLat, sLon)
+            let h = srtmAt(&mut tiles, sLat, sLon)
             dem[iz * demN + ix] = h
             if h > peak {
                 peak = h
@@ -1437,7 +1437,7 @@ fn main() {
                             px.push((plon - lon) * mPerLon)
                             pz.push((plat - lat) * M_PER_DEG_LAT)
                         }
-                        fillPoly(cover, coverN, coverX0, coverZ0, COVER_STEP, px, pz, code)
+                        fillPoly(&mut cover, coverN, coverX0, coverZ0, COVER_STEP, px, pz, code)
                         greens = greens + 1
                     }
                 }
@@ -1461,11 +1461,11 @@ fn main() {
     var bRoof: Vec<u8> = Vec.new()
     var bRoofH: Vec<f64> = Vec.new()
     var bBase: Vec<f64> = Vec.new()
-    scanBuildings(bbox, latMin, lonMin, latMax, lonMax, lat, lon, mPerLon, bH, bStart, bLen, bPtX, bPtZ, bRoof, bRoofH)
+    scanBuildings(bbox, latMin, lonMin, latMax, lonMax, lat, lon, mPerLon, &mut bH, &mut bStart, &mut bLen, &mut bPtX, &mut bPtZ, &mut bRoof, &mut bRoofH)
     for i in 0..bH.len {
         bBase.push(0.0)
     }
-    mergeParts(bbox, latMin, lonMin, latMax, lonMax, lat, lon, mPerLon, bH, bBase, bStart, bLen, bPtX, bPtZ, bRoof, bRoofH)
+    mergeParts(bbox, latMin, lonMin, latMax, lonMax, lat, lon, mPerLon, &mut bH, &mut bBase, &mut bStart, &mut bLen, &mut bPtX, &mut bPtZ, &mut bRoof, &mut bRoofH)
 
     // ── bridges ──
     let br = fetchBridges(bbox, lat, lon, mPerLon, cacheName("bridges", latMin, lonMin, latMax, lonMax))
@@ -1475,44 +1475,44 @@ fn main() {
     for i in 0..8 {
         buf.push(MAGIC[i])
     }
-    putI32(buf, VERSION)
-    putI32(buf, name.len)
+    putI32(&mut buf, VERSION)
+    putI32(&mut buf, name.len)
     for i in 0..name.len {
         buf.push(name[i])
     }
-    putI32(buf, Math.round(lat * 10000000.0) as i64)
-    putI32(buf, Math.round(lon * 10000000.0) as i64)
-    putCm(buf, radius)
+    putI32(&mut buf, Math.round(lat * 10000000.0) as i64)
+    putI32(&mut buf, Math.round(lon * 10000000.0) as i64)
+    putCm(&mut buf, radius)
 
-    putI32(buf, demN)
-    putCm(buf, DEM_STEP)
-    putCm(buf, demX0)
-    putCm(buf, demZ0)
+    putI32(&mut buf, demN)
+    putCm(&mut buf, DEM_STEP)
+    putCm(&mut buf, demX0)
+    putCm(&mut buf, demZ0)
     for i in 0..(demN * demN) {
-        putCm(buf, dem[i])
+        putCm(&mut buf, dem[i])
     }
 
-    putI32(buf, coverN)
-    putCm(buf, COVER_STEP)
-    putCm(buf, coverX0)
-    putCm(buf, coverZ0)
+    putI32(&mut buf, coverN)
+    putCm(&mut buf, COVER_STEP)
+    putCm(&mut buf, coverX0)
+    putCm(&mut buf, coverZ0)
     for i in 0..(coverN * coverN) {
         buf.push(cover[i])
     }
 
-    putI32(buf, bH.len)
+    putI32(&mut buf, bH.len)
     for i in 0..bH.len {
-        putCm(buf, bH[i])
-        putI32(buf, bLen[i])
+        putCm(&mut buf, bH[i])
+        putI32(&mut buf, bLen[i])
         let s = bStart[i]
         for k in 0..bLen[i] {
-            putCm(buf, bPtX[s + k])
-            putCm(buf, bPtZ[s + k])
+            putCm(&mut buf, bPtX[s + k])
+            putCm(&mut buf, bPtZ[s + k])
         }
     }
 
-    putBridges(buf, br)
-    putRoofs(buf, bRoof, bRoofH, bBase)
+    putBridges(&mut buf, br)
+    putRoofs(&mut buf, bRoof, bRoofH, bBase)
 
     match writeFile(out.clone(), buf) {
         Ok(nbytes) => {
@@ -1576,7 +1576,7 @@ fn updateParts(path: string) {
     var bRoof: Vec<u8> = Vec.new()
     var bRoofH: Vec<f64> = Vec.new()
     var bBase: Vec<f64> = Vec.new()
-    scanBuildings(bbox, latMin, lonMin, latMax, lonMax, c.originLat, c.originLon, mPerLon, bH, bStart, bLen, bPtX, bPtZ, bRoof, bRoofH)
+    scanBuildings(bbox, latMin, lonMin, latMax, lonMax, c.originLat, c.originLon, mPerLon, &mut bH, &mut bStart, &mut bLen, &mut bPtX, &mut bPtZ, &mut bRoof, &mut bRoofH)
     // The rescan has to reproduce the section it is replacing before it is
     // allowed to add to it. A different count means OSM moved under the cache,
     // and the terrain and cover sections about to be copied across came from the
@@ -1588,7 +1588,7 @@ fn updateParts(path: string) {
     for i in 0..bH.len {
         bBase.push(0.0)
     }
-    mergeParts(bbox, latMin, lonMin, latMax, lonMax, c.originLat, c.originLon, mPerLon, bH, bBase, bStart, bLen, bPtX, bPtZ, bRoof, bRoofH)
+    mergeParts(bbox, latMin, lonMin, latMax, lonMax, c.originLat, c.originLon, mPerLon, &mut bH, &mut bBase, &mut bStart, &mut bLen, &mut bPtX, &mut bPtZ, &mut bRoof, &mut bRoofH)
 
     // Where the building section starts: everything before it is fixed-size or
     // sized by a field already parsed.
@@ -1600,25 +1600,25 @@ fn updateParts(path: string) {
     for i in 0..8 {
         buf.push(MAGIC[i])
     }
-    putI32(buf, VERSION)
+    putI32(&mut buf, VERSION)
     for i in 12..head {
         buf.push(src[i])
     }
-    putI32(buf, bH.len)
+    putI32(&mut buf, bH.len)
     for i in 0..bH.len {
-        putCm(buf, bH[i])
-        putI32(buf, bLen[i])
+        putCm(&mut buf, bH[i])
+        putI32(&mut buf, bLen[i])
         let st = bStart[i]
         for k in 0..bLen[i] {
-            putCm(buf, bPtX[st + k])
-            putCm(buf, bPtZ[st + k])
+            putCm(&mut buf, bPtX[st + k])
+            putCm(&mut buf, bPtZ[st + k])
         }
     }
     // Bridges, byte for byte.
     for i in c.bodyEnd..c.bridgeEnd {
         buf.push(src[i])
     }
-    putRoofs(buf, bRoof, bRoofH, bBase)
+    putRoofs(&mut buf, bRoof, bRoofH, bBase)
     match writeFile(path, buf) {
         Ok(nbytes) => {
             print("rewrote " + path + " (" + (nbytes / 1024).toString() + " KiB, version " + VERSION.toString() + ")")
@@ -1654,15 +1654,15 @@ fn updateBridges(path: string) {
     for i in 0..8 {
         buf.push(MAGIC[i])
     }
-    putI32(buf, VERSION)
+    putI32(&mut buf, VERSION)
     for i in 12..c.bodyEnd {
         buf.push(src[i])
     }
-    putBridges(buf, br)
+    putBridges(&mut buf, br)
     // The roof section sits after the bridges, so a new bridge section of a
     // different length moves it. Written back out from what was parsed rather
     // than copied byte-wise for that reason.
-    putRoofs(buf, c.bRoof, c.bRoofH, c.bBase)
+    putRoofs(&mut buf, c.bRoof, c.bRoofH, c.bBase)
     match writeFile(path, buf) {
         Ok(nbytes) => {
             print("rewrote " + path + " (" + (nbytes / 1024).toString() + " KiB, version " + VERSION.toString() + ")")

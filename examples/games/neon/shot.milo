@@ -90,22 +90,22 @@ pub fn main(): i32 {
 
     // stack the deck so a capture shows a fully kitted ship
     for i in 0..6 {
-        dropOrb(world, world.player.x + 30.0, world.player.y)
-        worldUpdate(world, 1.0 / 60.0, 0.0, 0.0, false)
+        dropOrb(&mut world, world.player.x + 30.0, world.player.y)
+        worldUpdate(&mut world, 1.0 / 60.0, 0.0, 0.0, false)
     }
 
     let dt = 1.0 / 60.0
     for frame in 0..maxFrame + 1 {
         if frame == 40 {
-            spawnSnake(world, 1200.0, 300.0, 8)
+            spawnSnake(&mut world, 1200.0, 300.0, 8)
             for i in 0..6 {
-                let _ = spawn(world, makeEnemy(Kind.Drone, 900.0 + (i as f64) * 60.0, 160.0 + (i as f64) * 44.0))
+                let _ = spawn(&mut world, makeEnemy(Kind.Drone, 900.0 + (i as f64) * 60.0, 160.0 + (i as f64) * 44.0))
             }
-            let _ = spawn(world, makeEnemy(Kind.Carrier, 1150.0, 520.0))
-            let _ = spawn(world, makeEnemy(Kind.Healer, 1000.0, 600.0))
+            let _ = spawn(&mut world, makeEnemy(Kind.Carrier, 1150.0, 520.0))
+            let _ = spawn(&mut world, makeEnemy(Kind.Healer, 1000.0, 600.0))
         }
         if frame == 700 {
-            spawnBoss(world, 1000.0, 360.0)
+            spawnBoss(&mut world, 1000.0, 360.0)
         }
 
         // scripted pilot: stay centred in the cave, drift toward the nearest
@@ -121,7 +121,7 @@ pub fn main(): i32 {
             mvy = mvy + Math.clampF64((world.ents[h.slot].y - world.player.y) * 0.01, 0.0 - 0.8, 0.8)
         }
         let charging = (frame % 150) < 90
-        worldUpdate(world, dt, mvx, mvy, charging)
+        worldUpdate(&mut world, dt, mvx, mvy, charging)
 
         var want = false
         for i in 0..shots.len {
@@ -130,9 +130,9 @@ pub fn main(): i32 {
             }
         }
         if want {
-            drawWorld(c, world, shapes, 0.0, 0.0)
-            drawHud(c, world)
-            present(c, 1.0, 1.0)
+            drawWorld(&mut c, world, shapes, 0.0, 0.0)
+            drawHud(&mut c, world)
+            present(&mut c, 1.0, 1.0)
             writePpm(prefix + "-" + frame.toString() + ".ppm", c)
             print("wrote " + prefix + "-" + frame.toString() + ".ppm")
         }

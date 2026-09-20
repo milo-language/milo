@@ -119,9 +119,9 @@ pub fn main(): i32 {
             dt = 0.0005
         }
 
-        pollInput(inp, ev)
+        pollInput(&mut inp, &mut ev)
         if inp.mute {
-            musicToggle(snd)
+            musicToggle(&mut snd)
         }
         musicTick(snd)
 
@@ -129,11 +129,11 @@ pub fn main(): i32 {
             if w.state == ST_DONE {
                 w = worldNew(0, W as f64, H as f64)
             } else {
-                worldRetry(w)
+                worldRetry(&mut w)
             }
         }
 
-        worldUpdate(w, dt, inp.moveX, inp.down, inp.jump, inp.jumpHeld, inp.dash, inp.bark)
+        worldUpdate(&mut w, dt, inp.moveX, inp.down, inp.jump, inp.jumpHeld, inp.dash, inp.bark)
 
         if w.evJump {
             playJump(snd)
@@ -194,17 +194,17 @@ pub fn main(): i32 {
             oy = Random.floatRange(0.0 - w.shake, w.shake)
         }
 
-        drawBackground(c, w)
-        drawLevel(c, w, ts, ox, oy)
-        drawGoal(c, w, ox, oy)
-        drawChecks(c, w, hydrant, ox, oy)
-        drawPickups(c, w, shards, core, bone, ox, oy)
-        drawMobs(c, w, cat, bird, ox, oy)
-        drawPlayer(c, w, dog, ox, oy)
-        drawPee(c, w, ox, oy)
-        drawBark(c, w, ox, oy)
-        drawParts(c, w, ox, oy)
-        drawSpeedLines(c, w)
+        drawBackground(&mut c, w)
+        drawLevel(&mut c, w, ts, ox, oy)
+        drawGoal(&mut c, w, ox, oy)
+        drawChecks(&mut c, w, hydrant, ox, oy)
+        drawPickups(&mut c, w, shards, core, bone, ox, oy)
+        drawMobs(&mut c, w, cat, bird, ox, oy)
+        drawPlayer(&mut c, w, dog, ox, oy)
+        drawPee(&mut c, w, ox, oy)
+        drawBark(&mut c, w, ox, oy)
+        drawParts(&mut c, w, ox, oy)
+        drawSpeedLines(&mut c, w)
 
         fpsAccum = fpsAccum + dt
         fpsFrames = fpsFrames + 1
@@ -213,7 +213,7 @@ pub fn main(): i32 {
             fpsAccum = 0.0
             fpsFrames = 0
         }
-        drawHud(c, w, shards[0], bone, fpsShown)
+        drawHud(&mut c, w, shards[0], bone, fpsShown)
 
         var exposure = 1.0
         if w.flash > 0.0 {
@@ -222,7 +222,7 @@ pub fn main(): i32 {
         // The threshold sits above the sky. Daylight art is bright everywhere,
         // and a low threshold would bloom the blue into white fog instead of
         // lighting the few things that are actually emitting.
-        present(c, 0.28, exposure, 2.2)
+        present(&mut c, 0.28, exposure, 2.2)
 
         unsafe {
             SDL_UpdateTexture(tex, 0 as *u8, c.fb[0].addrOf() as *u8, (W * 4) as i32)

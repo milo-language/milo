@@ -151,7 +151,7 @@ pub fn nextU64(s: &mut u64): u64 {
 
 // uniform f64 in [0, 1)
 pub fn randF(s: &mut u64): f64 {
-    let r = nextU64(s) >> 11 // top 53 bits
+    let r = nextU64(&mut s) >> 11 // top 53 bits
     return (r as f64) * (1.0 / 9007199254740992.0)
 }
 
@@ -160,7 +160,7 @@ pub fn randInUnitSphere(s: &mut u64): Vec3 {
     var p = v3(0.0, 0.0, 0.0)
     var tries = 0
     while tries < 32 {
-        p = v3(randF(s) * 2.0 - 1.0, randF(s) * 2.0 - 1.0, randF(s) * 2.0 - 1.0)
+        p = v3(randF(&mut s) * 2.0 - 1.0, randF(&mut s) * 2.0 - 1.0, randF(&mut s) * 2.0 - 1.0)
         if vdot(p, p) < 1.0 {
             return p
         }
@@ -241,13 +241,13 @@ pub fn radiance(scene: &Vec<Sphere>, ro0: Vec3, rd0: Vec3, s: &mut u64): Vec3 {
         }
         if sp.mat == MATT_METAL {
             let refl = vreflect(vnorm(rd), h.normal)
-            let fuzzed = vadd(refl, vscale(randInUnitSphere(s), sp.fuzz))
+            let fuzzed = vadd(refl, vscale(randInUnitSphere(&mut s), sp.fuzz))
             ro = h.point
             rd = fuzzed
             through = vmul(through, sp.albedo)
         } else {
             // lambertian: cosine-ish scatter around the normal
-            let target = vadd(h.normal, vnorm(randInUnitSphere(s)))
+            let target = vadd(h.normal, vnorm(randInUnitSphere(&mut s)))
             ro = h.point
             rd = target
             through = vmul(through, sp.albedo)
@@ -399,11 +399,11 @@ pub fn main(): i32 {
         while y < H {
             var x = 0
             while x < W {
-                let su = ((x as f64) + randF(seed)) / (W as f64)
-                let sv = ((y as f64) + randF(seed)) / (H as f64)
+                let su = ((x as f64) + randF(&mut seed)) / (W as f64)
+                let sv = ((y as f64) + randF(&mut seed)) / (H as f64)
                 // image row 0 is top; flip v so +y is up in world space
                 let dir = vsub(vadd(vadd(lowerLeft, vscale(horiz, su)), vscale(vert, 1.0 - sv)), eye)
-                let col = radiance(scene, eye, vnorm(dir), seed)
+                let col = radiance(scene, eye, vnorm(dir), &mut seed)
                 let base = (y * W + x) * 3
                 acc[base] = acc[base] + col.x
                 acc[base + 1] = acc[base + 1] + col.y

@@ -150,7 +150,7 @@ fn ring(b: &mut Builder, centre: Vec3, axis: Vec3, radius: f64, thick: f64, segs
     for i in 1..(segs + 1) {
         let a = 2.0 * Math.pi() * (i as f64) / (segs as f64)
         let p = centre + ux.scale(Math.cos(a) * radius) + uz.scale(Math.sin(a) * radius)
-        bar(b, prev, p, thick, 6)
+        bar(&mut b, prev, p, thick, 6)
         prev = p
     }
 }
@@ -208,7 +208,7 @@ fn addFloor(carpet: &mut Builder, neon: &mut Builder, tread: &mut Builder) {
     var z = Z_BACK
     while z < DECK_Z[0] - 0.01 {
         let zEnd = Math.minF64(z + 2.2, DECK_Z[0])
-        deck(carpet, -HALF_W, z + 0.09, HALF_W, zEnd - 0.09, 0.0)
+        deck(&mut carpet, -HALF_W, z + 0.09, HALF_W, zEnd - 0.09, 0.0)
         z = zEnd
     }
     carpet.setUvScale(1.0)
@@ -220,18 +220,18 @@ fn addFloor(carpet: &mut Builder, neon: &mut Builder, tread: &mut Builder) {
     z = Z_BACK
     while z < DECK_Z[0] - 0.01 {
         let zEnd = Math.minF64(z + 2.2, DECK_Z[0])
-        deck(neon, -HALF_W, zEnd - 0.09, HALF_W, zEnd - 0.02, 0.006)
+        deck(&mut neon, -HALF_W, zEnd - 0.09, HALF_W, zEnd - 0.02, 0.006)
         z = zEnd
     }
     // and two running the length of the room, hard against the walls
     neon.setTint(1.90, 0.45, 1.70)
-    deck(neon, -HALF_W + 0.05, Z_BACK, -HALF_W + 0.17, DECK_Z[0], 0.006)
-    deck(neon, HALF_W - 0.17, Z_BACK, HALF_W - 0.05, DECK_Z[0], 0.006)
+    deck(&mut neon, -HALF_W + 0.05, Z_BACK, -HALF_W + 0.17, DECK_Z[0], 0.006)
+    deck(&mut neon, HALF_W - 0.17, Z_BACK, HALF_W - 0.05, DECK_Z[0], 0.006)
     neon.setTint(1.0, 1.0, 1.0)
 
     // A plate under the firing line: you are standing on metal, not carpet.
     tread.setUvScale(0.5)
-    deck(tread, -3.6, -1.8, 3.6, 2.6, 0.012)
+    deck(&mut tread, -3.6, -1.8, 3.6, 2.6, 0.012)
     tread.setUvScale(1.0)
 }
 
@@ -251,10 +251,10 @@ fn addCounter(panel: &mut Builder, chrome: &mut Builder, neon: &mut Builder, pla
 
     // A padded rail along the top, and the light under its lip.
     chrome.setTint(0.9, 0.92, 1.0)
-    bar(chrome, v3(-half, top + 0.05, z0 + 0.06), v3(half, top + 0.05, z0 + 0.06), 0.045, 10)
+    bar(&mut chrome, v3(-half, top + 0.05, z0 + 0.06), v3(half, top + 0.05, z0 + 0.06), 0.045, 10)
     chrome.setTint(1.0, 1.0, 1.0)
     neon.setTint(0.35, 1.60, 2.40)
-    faceQuad(neon, z0 - 0.012, -half, top - 0.12, half, top - 0.05)
+    faceQuad(&mut neon, z0 - 0.012, -half, top - 0.12, half, top - 0.05)
     neon.setTint(1.0, 1.0, 1.0)
 
     // Player stations: two coloured plinths on the counter, one either side,
@@ -287,7 +287,7 @@ fn addWall(panel: &mut Builder, chrome: &mut Builder, neon: &mut Builder, dark: 
     // panel, which is where the grooves and rivets in TEX_PANEL come from.
     panel.setUvScale(0.55)
     panel.setTint(0.42, 0.46, 0.62)
-    sideFace(panel, xin, side, 0.42, SPRING, Z_BACK, Z_FAR)
+    sideFace(&mut panel, xin, side, 0.42, SPRING, Z_BACK, Z_FAR)
     panel.setTint(1.0, 1.0, 1.0)
     panel.setUvScale(1.0)
 
@@ -318,7 +318,7 @@ fn addWall(panel: &mut Builder, chrome: &mut Builder, neon: &mut Builder, dark: 
             neon.setTint(0.35, 1.70, 2.50)
         }
         let xt = x - side * 0.36
-        bar(neon, v3(xt, 0.5, z), v3(xt, SPRING - 0.15, z), 0.045, 8)
+        bar(&mut neon, v3(xt, 0.5, z), v3(xt, SPRING - 0.15, z), 0.045, 8)
         neon.setTint(1.0, 1.0, 1.0)
 
         // A lamp housing at the top of each pilaster, aimed down the wall.
@@ -326,7 +326,7 @@ fn addWall(panel: &mut Builder, chrome: &mut Builder, neon: &mut Builder, dark: 
         dark.boxSpan(v3(x - side * 0.30, SPRING - 0.55, z - 0.26), v3(x - side * 0.70, SPRING - 0.20, z + 0.26))
         dark.setTint(1.0, 1.0, 1.0)
         glass.setTint(1.0, 1.0, 1.0)
-        deck(glass, Math.minF64(x - side * 0.32, x - side * 0.68), z - 0.22, Math.maxF64(x - side * 0.32, x - side * 0.68), z + 0.22, SPRING - 0.565)
+        deck(&mut glass, Math.minF64(x - side * 0.32, x - side * 0.68), z - 0.22, Math.maxF64(x - side * 0.32, x - side * 0.68), z + 0.22, SPRING - 0.565)
         n = n + 1
         z = z + 3.4
     }
@@ -334,12 +334,12 @@ fn addWall(panel: &mut Builder, chrome: &mut Builder, neon: &mut Builder, dark: 
     // A tube the length of the room at head height, and the painted band under
     // it. This is the line that makes both walls converge on the stage.
     neon.setTint(1.40, 1.05, 0.35)
-    bar(neon, v3(x - side * 0.30, 3.05, Z_BACK), v3(x - side * 0.30, 3.05, Z_FAR), 0.05, 8)
+    bar(&mut neon, v3(x - side * 0.30, 3.05, Z_BACK), v3(x - side * 0.30, 3.05, Z_FAR), 0.05, 8)
     neon.setTint(1.0, 1.0, 1.0)
     plastic.setUvScale(0.6)
     plastic.setTint(0.85, 0.20, 0.55)
     dark.setTint(1.0, 1.0, 1.0)
-    sideFace(plastic, x - side * 0.02, side, 2.62, 2.94, Z_BACK, Z_FAR)
+    sideFace(&mut plastic, x - side * 0.02, side, 2.62, 2.94, Z_BACK, Z_FAR)
     plastic.setTint(1.0, 1.0, 1.0)
     plastic.setUvScale(1.0)
 }
@@ -382,7 +382,7 @@ fn addVault(panel: &mut Builder, chrome: &mut Builder, neon: &mut Builder) {
         for i in 1..(across + 1) {
             let p = arcPoint((i as f64) / (across as f64), z)
             chrome.setUvScale(1.5)
-            bar(chrome, prev, p, 0.11, 6)
+            bar(&mut chrome, prev, p, 0.11, 6)
             prev = p
         }
         chrome.setTint(1.0, 1.0, 1.0)
@@ -397,7 +397,7 @@ fn addVault(panel: &mut Builder, chrome: &mut Builder, neon: &mut Builder) {
         var pv = arcPoint(0.0, z + 0.20)
         for i in 1..(across + 1) {
             let p = arcPoint((i as f64) / (across as f64), z + 0.20)
-            bar(neon, pv, p, 0.035, 5)
+            bar(&mut neon, pv, p, 0.035, 5)
             pv = p
         }
         neon.setTint(1.0, 1.0, 1.0)
@@ -412,7 +412,7 @@ fn addVault(panel: &mut Builder, chrome: &mut Builder, neon: &mut Builder) {
         neon.setTint(0.85, 0.95, 2.60)
         let a = arcPoint(t, Z_BACK)
         let c = arcPoint(t, Z_FAR)
-        bar(neon, a, c, 0.03, 5)
+        bar(&mut neon, a, c, 0.03, 5)
         neon.setTint(1.0, 1.0, 1.0)
     }
 }
@@ -429,8 +429,8 @@ fn addGantry(chrome: &mut Builder, dark: &mut Builder, neon: &mut Builder, glass
             2.6
         }
         chrome.setTint(0.62, 0.65, 0.78)
-        bar(chrome, v3(x, y, Z_BACK + 1.0), v3(x, y, Z_FAR - 1.0), 0.07, 6)
-        bar(chrome, v3(x, y - 0.45, Z_BACK + 1.0), v3(x, y - 0.45, Z_FAR - 1.0), 0.05, 6)
+        bar(&mut chrome, v3(x, y, Z_BACK + 1.0), v3(x, y, Z_FAR - 1.0), 0.07, 6)
+        bar(&mut chrome, v3(x, y - 0.45, Z_BACK + 1.0), v3(x, y - 0.45, Z_FAR - 1.0), 0.05, 6)
         chrome.setTint(1.0, 1.0, 1.0)
         // Zig-zag web between the two chords, which is what makes it a truss.
         var z = Z_BACK + 1.0
@@ -438,9 +438,9 @@ fn addGantry(chrome: &mut Builder, dark: &mut Builder, neon: &mut Builder, glass
         while z < Z_FAR - 1.6 {
             chrome.setTint(0.55, 0.58, 0.70)
             if up {
-                bar(chrome, v3(x, y, z), v3(x, y - 0.45, z + 1.2), 0.028, 5)
+                bar(&mut chrome, v3(x, y, z), v3(x, y - 0.45, z + 1.2), 0.028, 5)
             } else {
-                bar(chrome, v3(x, y - 0.45, z), v3(x, y, z + 1.2), 0.028, 5)
+                bar(&mut chrome, v3(x, y - 0.45, z), v3(x, y, z + 1.2), 0.028, 5)
             }
             chrome.setTint(1.0, 1.0, 1.0)
             up = !up
@@ -453,7 +453,7 @@ fn addGantry(chrome: &mut Builder, dark: &mut Builder, neon: &mut Builder, glass
             dark.boxSpan(v3(x - 0.20, y - 0.95, z - 0.20), v3(x + 0.20, y - 0.50, z + 0.20))
             dark.setTint(1.0, 1.0, 1.0)
             glass.setTint(1.0, 1.0, 1.0)
-            deck(glass, x - 0.17, z - 0.17, x + 0.17, z + 0.17, y - 0.96)
+            deck(&mut glass, x - 0.17, z - 0.17, x + 0.17, z + 0.17, y - 0.96)
             neon.setTint(1.30, 1.20, 0.85)
             neon.sphere(v3(x, y - 0.99, z), 0.09, 5, 8)
             neon.setTint(1.0, 1.0, 1.0)
@@ -500,14 +500,14 @@ fn addStage(tread: &mut Builder, panel: &mut Builder, neon: &mut Builder, plasti
 
         tread.setUvScale(0.55)
         tread.setTint(0.85, 0.88, 1.0)
-        deck(tread, -STAGE_HALF, zF, STAGE_HALF, zB, y)
+        deck(&mut tread, -STAGE_HALF, zF, STAGE_HALF, zB, y)
         tread.setTint(1.0, 1.0, 1.0)
         tread.setUvScale(1.0)
 
         // The riser, in two bands: dark panel below, painted colour above.
         panel.setUvScale(0.6)
         panel.setTint(0.30, 0.34, 0.55)
-        faceQuad(panel, zF, -STAGE_HALF, yPrev, STAGE_HALF, y - 0.26)
+        faceQuad(&mut panel, zF, -STAGE_HALF, yPrev, STAGE_HALF, y - 0.26)
         panel.setTint(1.0, 1.0, 1.0)
         panel.setUvScale(1.0)
 
@@ -517,7 +517,7 @@ fn addStage(tread: &mut Builder, panel: &mut Builder, neon: &mut Builder, plasti
         } else {
             plastic.setTint(0.18, 0.34, 1.10)
         }
-        faceQuad(plastic, zF - 0.01, -STAGE_HALF, y - 0.26, STAGE_HALF, y - 0.07)
+        faceQuad(&mut plastic, zF - 0.01, -STAGE_HALF, y - 0.26, STAGE_HALF, y - 0.07)
         plastic.setTint(1.0, 1.0, 1.0)
         plastic.setUvScale(1.0)
 
@@ -531,12 +531,12 @@ fn addStage(tread: &mut Builder, panel: &mut Builder, neon: &mut Builder, plasti
         }
         var dx = -STAGE_HALF
         while dx < STAGE_HALF - 0.01 {
-            faceQuad(neon, zF - 0.02, dx, y - 0.065, Math.minF64(dx + 0.55, STAGE_HALF), y - 0.015)
+            faceQuad(&mut neon, zF - 0.02, dx, y - 0.065, Math.minF64(dx + 0.55, STAGE_HALF), y - 0.015)
             dx = dx + 0.80
         }
         neon.setTint(1.0, 1.0, 1.0)
         chrome.setTint(0.9, 0.92, 1.0)
-        bar(chrome, v3(-STAGE_HALF, y + 0.01, zF + 0.03), v3(STAGE_HALF, y + 0.01, zF + 0.03), 0.045, 8)
+        bar(&mut chrome, v3(-STAGE_HALF, y + 0.01, zF + 0.03), v3(STAGE_HALF, y + 0.01, zF + 0.03), 0.045, 8)
         chrome.setTint(1.0, 1.0, 1.0)
 
         // Lamps along the riser. The front riser is the single biggest flat
@@ -553,12 +553,12 @@ fn addStage(tread: &mut Builder, panel: &mut Builder, neon: &mut Builder, plasti
                 neon.setTint(2.30, 1.60, 0.35)
             }
             let cyy = (yPrev + y - 0.26) * 0.5
-            faceQuad(neon, zF - 0.03, lx - 0.075, cyy - 0.075, lx + 0.075, cyy + 0.075)
+            faceQuad(&mut neon, zF - 0.03, lx - 0.075, cyy - 0.075, lx + 0.075, cyy + 0.075)
             neon.setTint(1.0, 1.0, 1.0)
             // The chrome bezel round each one, which is what makes it a fitting
             // rather than a painted dot.
             chrome.setTint(0.85, 0.88, 1.0)
-            ring(chrome, v3(lx, cyy, zF - 0.02), v3(0.0, 0.0, 1.0), 0.115, 0.022, 10)
+            ring(&mut chrome, v3(lx, cyy, zF - 0.02), v3(0.0, 0.0, 1.0), 0.115, 0.022, 10)
             chrome.setTint(1.0, 1.0, 1.0)
             lx = lx + 1.15
             n = n + 1
@@ -575,8 +575,8 @@ fn addStage(tread: &mut Builder, panel: &mut Builder, neon: &mut Builder, plasti
         // own floor stepping up.
         dark.setUvScale(0.5)
         dark.setTint(0.30, 0.32, 0.42)
-        deck(dark, -HALF_W, zF, -STAGE_HALF, zB, 0.02)
-        deck(dark, STAGE_HALF, zF, HALF_W, zB, 0.02)
+        deck(&mut dark, -HALF_W, zF, -STAGE_HALF, zB, 0.02)
+        deck(&mut dark, STAGE_HALF, zF, HALF_W, zB, 0.02)
         dark.setTint(1.0, 1.0, 1.0)
         dark.setUvScale(1.0)
     }
@@ -587,7 +587,7 @@ fn addStage(tread: &mut Builder, panel: &mut Builder, neon: &mut Builder, plasti
 fn addBackWall(panel: &mut Builder, neon: &mut Builder, dark: &mut Builder, chrome: &mut Builder) {
     panel.setUvScale(0.5)
     panel.setTint(0.26, 0.30, 0.50)
-    faceQuad(panel, Z_FAR - 0.01, -HALF_W, DECK_Y[4], HALF_W, SPRING)
+    faceQuad(&mut panel, Z_FAR - 0.01, -HALF_W, DECK_Y[4], HALF_W, SPRING)
     panel.setTint(1.0, 1.0, 1.0)
     panel.setUvScale(1.0)
 
@@ -610,13 +610,13 @@ fn addBackWall(panel: &mut Builder, neon: &mut Builder, dark: &mut Builder, chro
     var prev = arcPoint(0.0, Z_FAR - 0.10)
     for i in 1..(across + 1) {
         let p = arcPoint((i as f64) / (across as f64), Z_FAR - 0.10)
-        bar(neon, prev, p, 0.05, 6)
+        bar(&mut neon, prev, p, 0.05, 6)
         prev = p
     }
     neon.setTint(1.0, 1.0, 1.0)
 
     chrome.setTint(0.8, 0.83, 0.95)
-    bar(chrome, v3(-HALF_W, SPRING, Z_FAR - 0.10), v3(HALF_W, SPRING, Z_FAR - 0.10), 0.09, 8)
+    bar(&mut chrome, v3(-HALF_W, SPRING, Z_FAR - 0.10), v3(HALF_W, SPRING, Z_FAR - 0.10), 0.09, 8)
     chrome.setTint(1.0, 1.0, 1.0)
 }
 
@@ -638,13 +638,13 @@ fn addMarquee(sign: &mut Builder, chrome: &mut Builder, neon: &mut Builder, dark
     dark.setTint(1.0, 1.0, 1.0)
 
     sign.setTint(1.0, 1.0, 1.0)
-    signQuad(sign, z - 0.012, x0, y0, x1, y1)
+    signQuad(&mut sign, z - 0.012, x0, y0, x1, y1)
 
     chrome.setTint(0.95, 0.96, 1.0)
-    bar(chrome, v3(x0 - 0.18, y1 + 0.18, z - 0.05), v3(x1 + 0.18, y1 + 0.18, z - 0.05), 0.07, 8)
-    bar(chrome, v3(x0 - 0.18, y0 - 0.18, z - 0.05), v3(x1 + 0.18, y0 - 0.18, z - 0.05), 0.07, 8)
-    bar(chrome, v3(x0 - 0.18, y0 - 0.18, z - 0.05), v3(x0 - 0.18, y1 + 0.18, z - 0.05), 0.07, 8)
-    bar(chrome, v3(x1 + 0.18, y0 - 0.18, z - 0.05), v3(x1 + 0.18, y1 + 0.18, z - 0.05), 0.07, 8)
+    bar(&mut chrome, v3(x0 - 0.18, y1 + 0.18, z - 0.05), v3(x1 + 0.18, y1 + 0.18, z - 0.05), 0.07, 8)
+    bar(&mut chrome, v3(x0 - 0.18, y0 - 0.18, z - 0.05), v3(x1 + 0.18, y0 - 0.18, z - 0.05), 0.07, 8)
+    bar(&mut chrome, v3(x0 - 0.18, y0 - 0.18, z - 0.05), v3(x0 - 0.18, y1 + 0.18, z - 0.05), 0.07, 8)
+    bar(&mut chrome, v3(x1 + 0.18, y0 - 0.18, z - 0.05), v3(x1 + 0.18, y1 + 0.18, z - 0.05), 0.07, 8)
     chrome.setTint(1.0, 1.0, 1.0)
 
     // Bulbs: warm, and above the bloom threshold on purpose.
@@ -665,8 +665,8 @@ fn addMarquee(sign: &mut Builder, chrome: &mut Builder, neon: &mut Builder, dark
 
     // Hangers up to the vault, so it is holding on to something.
     chrome.setTint(0.7, 0.72, 0.85)
-    bar(chrome, v3(x0 + 0.6, y1 + 0.2, z + 0.15), v3(x0 + 0.6, SPRING + RISE * 0.86, z + 0.15), 0.035, 6)
-    bar(chrome, v3(x1 - 0.6, y1 + 0.2, z + 0.15), v3(x1 - 0.6, SPRING + RISE * 0.86, z + 0.15), 0.035, 6)
+    bar(&mut chrome, v3(x0 + 0.6, y1 + 0.2, z + 0.15), v3(x0 + 0.6, SPRING + RISE * 0.86, z + 0.15), 0.035, 6)
+    bar(&mut chrome, v3(x1 - 0.6, y1 + 0.2, z + 0.15), v3(x1 - 0.6, SPRING + RISE * 0.86, z + 0.15), 0.035, 6)
     chrome.setTint(1.0, 1.0, 1.0)
 }
 
@@ -683,8 +683,8 @@ fn addBanners(sign: &mut Builder, chrome: &mut Builder, side: f64) {
     var z = 4.0
     while z < 24.0 {
         chrome.setTint(0.7, 0.72, 0.85)
-        bar(chrome, v3(x, BAN_HI, z - 0.05), v3(x, BAN_HI, z + 2.25), 0.035, 6)
-        bar(chrome, v3(x, BAN_LO, z - 0.05), v3(x, BAN_LO, z + 2.25), 0.035, 6)
+        bar(&mut chrome, v3(x, BAN_HI, z - 0.05), v3(x, BAN_HI, z + 2.25), 0.035, 6)
+        bar(&mut chrome, v3(x, BAN_LO, z - 0.05), v3(x, BAN_LO, z + 2.25), 0.035, 6)
         chrome.setTint(1.0, 1.0, 1.0)
         sign.setTint(0.85, 0.85, 0.95)
         // Faces both ways: a one-sided quad on the near wall is an invisible
@@ -723,8 +723,8 @@ fn addLogos(logo: &mut Builder, chrome: &mut Builder, dark: &mut Builder, side: 
         dark.boxSpan(v3(x - side * 0.12, lo - 0.14, z - 0.14), v3(x + side * 0.10, hi + 0.14, z + 1.44))
         dark.setTint(1.0, 1.0, 1.0)
         chrome.setTint(0.80, 0.83, 0.95)
-        bar(chrome, v3(x, hi + 0.14, z - 0.14), v3(x, hi + 0.14, z + 1.44), 0.035, 6)
-        bar(chrome, v3(x, lo - 0.14, z - 0.14), v3(x, lo - 0.14, z + 1.44), 0.035, 6)
+        bar(&mut chrome, v3(x, hi + 0.14, z - 0.14), v3(x, hi + 0.14, z + 1.44), 0.035, 6)
+        bar(&mut chrome, v3(x, lo - 0.14, z - 0.14), v3(x, lo - 0.14, z + 1.44), 0.035, 6)
         chrome.setTint(1.0, 1.0, 1.0)
         logo.setTint(1.0, 1.0, 1.0)
         // Same two windings, same reason as the banners: world +x is screen
@@ -763,11 +763,11 @@ fn addSpeakers(dark: &mut Builder, chrome: &mut Builder, neon: &mut Builder, sid
         chrome.setTint(0.70, 0.73, 0.86)
         for k in 0..3 {
             let cy = 1.45 + 0.72 * (k as f64)
-            ring(chrome, v3(x - side * 0.56, cy, z + 0.42), v3(side, 0.0, 0.0), 0.26 - 0.05 * (k as f64), 0.035, 12)
+            ring(&mut chrome, v3(x - side * 0.56, cy, z + 0.42), v3(side, 0.0, 0.0), 0.26 - 0.05 * (k as f64), 0.035, 12)
         }
         chrome.setTint(1.0, 1.0, 1.0)
         neon.setTint(1.60, 0.35, 1.40)
-        bar(neon, v3(x - side * 0.57, 3.02, z + 0.10), v3(x - side * 0.57, 3.02, z + 0.75), 0.028, 5)
+        bar(&mut neon, v3(x - side * 0.57, 3.02, z + 0.10), v3(x - side * 0.57, 3.02, z + 0.75), 0.028, 5)
         neon.setTint(1.0, 1.0, 1.0)
         z = z + 4.9
     }
@@ -825,17 +825,17 @@ fn droneGeometry(b: &mut Builder) {
         let a = 2.0 * Math.pi() * (i as f64) / 6.0 + 0.5236
         let p = v3(Math.cos(a) * DRONE_ARM, 0.0, Math.sin(a) * DRONE_ARM)
         b.setTint(0.22, 0.90, 0.35)
-        bar(b, v3(Math.cos(a) * 0.5, 0.0, Math.sin(a) * 0.5), p, 0.075, 6)
+        bar(&mut b, v3(Math.cos(a) * 0.5, 0.0, Math.sin(a) * 0.5), p, 0.075, 6)
         // The ring the rotor turns inside, which is the shape that reads at
         // twenty metres, the blades do not.
         b.setTint(0.35, 2.60, 0.80)
-        ring(b, p, v3(0.0, 1.0, 0.0), 0.60, 0.045, 20)
+        ring(&mut b, p, v3(0.0, 1.0, 0.0), 0.60, 0.045, 20)
         b.setTint(0.20, 1.40, 0.45)
-        ring(b, p, v3(0.0, 1.0, 0.0), 0.52, 0.030, 18)
+        ring(&mut b, p, v3(0.0, 1.0, 0.0), 0.52, 0.030, 18)
     }
     // The rack the payload hangs off, and the lamp that lights it.
     b.setTint(0.16, 0.70, 0.28)
-    bar(b, v3(-0.70, -0.30, 0.0), v3(0.70, -0.30, 0.0), 0.045, 6)
+    bar(&mut b, v3(-0.70, -0.30, 0.0), v3(0.70, -0.30, 0.0), 0.045, 6)
     b.setTint(2.60, 2.40, 1.10)
     b.sphere(v3(0.0, -0.20, 0.0), 0.13, 6, 10)
     b.setTint(1.0, 1.0, 1.0)
@@ -851,16 +851,16 @@ fn payloadGeometry(b: &mut Builder) {
     for i in 0..DROP_COUNT {
         let x = -0.525 + 0.35 * (i as f64)
         b.setTint(0.55, 0.58, 0.68)
-        bar(b, v3(x, -0.30, 0.0), v3(x, -0.46, 0.0), 0.022, 5)
+        bar(&mut b, v3(x, -0.30, 0.0), v3(x, -0.46, 0.0), 0.022, 5)
         // Edge on to the player, the way a coin sits in a rack. The body goes
         // down first: two rims on their own are an annulus, and at twenty metres
         // a gold annulus reads as a hole rather than as a prize.
         b.setTint(1.90, 1.30, 0.24)
-        bar(b, v3(x, -0.62, -0.016), v3(x, -0.62, 0.016), 0.150, 14)
+        bar(&mut b, v3(x, -0.62, -0.016), v3(x, -0.62, 0.016), 0.150, 14)
         b.setTint(2.60, 1.90, 0.45)
-        ring(b, v3(x, -0.62, 0.0), v3(0.0, 0.0, 1.0), 0.155, 0.030, 14)
+        ring(&mut b, v3(x, -0.62, 0.0), v3(0.0, 0.0, 1.0), 0.155, 0.030, 14)
         b.setTint(1.80, 1.25, 0.22)
-        ring(b, v3(x, -0.62, 0.0), v3(0.0, 0.0, 1.0), 0.095, 0.024, 12)
+        ring(&mut b, v3(x, -0.62, 0.0), v3(0.0, 0.0, 1.0), 0.095, 0.024, 12)
         b.setTint(1.0, 1.0, 1.0)
     }
 }
@@ -921,41 +921,41 @@ pub fn buildWorld(gl: &mut GlContext, marqueeTex: i64, flatTex: i64, bannerTex: 
         builders.push(builder())
     }
 
-    addFloor(builders[B_CARPET], builders[B_NEON], builders[B_TREAD])
-    addCounter(builders[B_PANEL], builders[B_CHROME], builders[B_NEON], builders[B_PLASTIC])
-    addWall(builders[B_PANEL], builders[B_CHROME], builders[B_NEON], builders[B_DARK], builders[B_PLASTIC], builders[B_GLASS], 1.0)
-    addWall(builders[B_PANEL], builders[B_CHROME], builders[B_NEON], builders[B_DARK], builders[B_PLASTIC], builders[B_GLASS], -1.0)
-    addVault(builders[B_PANEL], builders[B_CHROME], builders[B_NEON])
-    addRays(builders[B_NEON])
-    addGantry(builders[B_CHROME], builders[B_DARK], builders[B_NEON], builders[B_GLASS])
-    addStage(builders[B_TREAD], builders[B_PANEL], builders[B_NEON], builders[B_PLASTIC], builders[B_DARK], builders[B_CHROME])
-    addBackWall(builders[B_PANEL], builders[B_NEON], builders[B_DARK], builders[B_CHROME])
-    addMarquee(builders[B_SIGN], builders[B_CHROME], builders[B_NEON], builders[B_DARK])
-    addBanners(builders[B_BANNER], builders[B_CHROME], 1.0)
-    addBanners(builders[B_BANNER], builders[B_CHROME], -1.0)
-    addLogos(builders[B_LOGO], builders[B_CHROME], builders[B_DARK], 1.0)
-    addLogos(builders[B_LOGO], builders[B_CHROME], builders[B_DARK], -1.0)
-    addSpeakers(builders[B_DARK], builders[B_CHROME], builders[B_NEON], 1.0)
-    addSpeakers(builders[B_DARK], builders[B_CHROME], builders[B_NEON], -1.0)
+    addFloor(&mut builders[B_CARPET], &mut builders[B_NEON], &mut builders[B_TREAD])
+    addCounter(&mut builders[B_PANEL], &mut builders[B_CHROME], &mut builders[B_NEON], &mut builders[B_PLASTIC])
+    addWall(&mut builders[B_PANEL], &mut builders[B_CHROME], &mut builders[B_NEON], &mut builders[B_DARK], &mut builders[B_PLASTIC], &mut builders[B_GLASS], 1.0)
+    addWall(&mut builders[B_PANEL], &mut builders[B_CHROME], &mut builders[B_NEON], &mut builders[B_DARK], &mut builders[B_PLASTIC], &mut builders[B_GLASS], -1.0)
+    addVault(&mut builders[B_PANEL], &mut builders[B_CHROME], &mut builders[B_NEON])
+    addRays(&mut builders[B_NEON])
+    addGantry(&mut builders[B_CHROME], &mut builders[B_DARK], &mut builders[B_NEON], &mut builders[B_GLASS])
+    addStage(&mut builders[B_TREAD], &mut builders[B_PANEL], &mut builders[B_NEON], &mut builders[B_PLASTIC], &mut builders[B_DARK], &mut builders[B_CHROME])
+    addBackWall(&mut builders[B_PANEL], &mut builders[B_NEON], &mut builders[B_DARK], &mut builders[B_CHROME])
+    addMarquee(&mut builders[B_SIGN], &mut builders[B_CHROME], &mut builders[B_NEON], &mut builders[B_DARK])
+    addBanners(&mut builders[B_BANNER], &mut builders[B_CHROME], 1.0)
+    addBanners(&mut builders[B_BANNER], &mut builders[B_CHROME], -1.0)
+    addLogos(&mut builders[B_LOGO], &mut builders[B_CHROME], &mut builders[B_DARK], 1.0)
+    addLogos(&mut builders[B_LOGO], &mut builders[B_CHROME], &mut builders[B_DARK], -1.0)
+    addSpeakers(&mut builders[B_DARK], &mut builders[B_CHROME], &mut builders[B_NEON], 1.0)
+    addSpeakers(&mut builders[B_DARK], &mut builders[B_CHROME], &mut builders[B_NEON], -1.0)
 
     var meshes: Vec<Mesh> = Vec.new()
     for i in 0..BUCKETS {
-        var m = Mesh.new(gl, sceneAttrs())
+        var m = Mesh.new(&mut gl, sceneAttrs())
         m.upload(builders[i].data.clone())
         meshes.push(m)
     }
 
     var db = builder()
-    droneGeometry(db)
-    var droneMesh = Mesh.new(gl, sceneAttrs())
+    droneGeometry(&mut db)
+    var droneMesh = Mesh.new(&mut gl, sceneAttrs())
     droneMesh.upload(db.data.clone())
     var rb = builder()
-    rotorGeometry(rb)
-    var rotorMesh = Mesh.new(gl, sceneAttrs())
+    rotorGeometry(&mut rb)
+    var rotorMesh = Mesh.new(&mut gl, sceneAttrs())
     rotorMesh.upload(rb.data.clone())
     var pb = builder()
-    payloadGeometry(pb)
-    var payloadMesh = Mesh.new(gl, sceneAttrs())
+    payloadGeometry(&mut pb)
+    var payloadMesh = Mesh.new(&mut gl, sceneAttrs())
     payloadMesh.upload(pb.data.clone())
 
     var mats: Vec<Material> = Vec.new()
@@ -1086,13 +1086,13 @@ impl World {
     }
 
     fn free(self: Self, gl: &mut GlContext) {
-        self.droneMesh.free(gl)
-        self.rotorMesh.free(gl)
-        self.payloadMesh.free(gl)
+        self.droneMesh.free(&mut gl)
+        self.rotorMesh.free(&mut gl)
+        self.payloadMesh.free(&mut gl)
         var meshes = self.meshes
         while meshes.len > 0 {
             let m = meshes.pop()!
-            m.free(gl)
+            m.free(&mut gl)
         }
     }
 }

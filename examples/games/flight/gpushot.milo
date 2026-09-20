@@ -86,7 +86,7 @@ fn loadPlace(name: &string): City {
             var c = city
             match readFile(base + ".ortho.png") {
                 Result.Ok(png) => {
-                    match cityAttachOrtho(c, png) {
+                    match cityAttachOrtho(&mut c, png) {
                         Result.Ok(_) => {
                         }
                         Result.Err(e) => {
@@ -175,9 +175,9 @@ pub fn main(): i32 {
     // Before the render loop, never inside it: this is several network round
     // trips and the frame path must not be able to block on a public API.
     if envLiveRequested() {
-        if envGoLive(w.env, w.city.reach) {
+        if envGoLive(&mut w.env, w.city.reach) {
             print("weather: " + envWeatherLabel(w.env))
-            settleUnderCeiling(w)
+            settleUnderCeiling(&mut w)
         } else {
             print("weather: fetch failed, keeping synthetic sky")
         }
@@ -187,7 +187,7 @@ pub fn main(): i32 {
     let facadeTex = facadeTexture()
 
     var gl = GlContext.new()
-    var gw = match gpuWorldNew(gl, groundTex, skinTex, facadeTex) {
+    var gw = match gpuWorldNew(&mut gl, groundTex, skinTex, facadeTex) {
         Result.Ok(x) => x
         Result.Err(e) => {
             print("gpu: " + e)
@@ -195,9 +195,9 @@ pub fn main(): i32 {
         }
     }
     if w.city.orthoLoaded {
-        setOrtho(gl, gw, w.city.ortho)
+        setOrtho(&mut gl, &mut gw, w.city.ortho)
     }
-    var p = match postNew(gl, W, H, W, H) {
+    var p = match postNew(&mut gl, W, H, W, H) {
         Result.Ok(x) => x
         Result.Err(e) => {
             print("post: " + e)
@@ -218,15 +218,15 @@ pub fn main(): i32 {
     for i in 0..frames {
         // Off the frame path in the sense that matters: this yields to the
         // fetching task and returns, it never waits on the network itself.
-        envWeatherTick(w.env, w.city.reach)
+        envWeatherTick(&mut w.env, w.city.reach)
         // Timing starts after a warm-up so shader compiles, the first upload and
         // the driver's lazy setup are not charged to the steady-state frame cost.
         if i == WARMUP {
             loopStart = epochMillis()
         }
-        worldUpdate(w, 1.0 / 60.0, 0.0, 0.0, false)
+        worldUpdate(&mut w, 1.0 / 60.0, 0.0, 0.0, false)
         if mark >= 0 {
-            aimAtMark(w, place, mark, dist)
+            aimAtMark(&mut w, place, mark, dist)
         }
         // Put the camera where the picture needs it.
         //
@@ -241,23 +241,23 @@ pub fn main(): i32 {
         }
         let view = viewOf(w.cam, c.w, c.h)
         postBeginWorld(p)
-        drawWorld(c, s, w, groundTex, skinTex, facadeTex, view)
+        drawWorld(&mut c, &mut s, w, groundTex, skinTex, facadeTex, view)
         // Record, upload once, then rasterise twice: from the sun, then from the
         // camera. The shadow pass binds its own framebuffer, so the scene target
         // has to be bound again before anything else is drawn.
-        uploadStreams(gw, s)
-        drawShadowPass(gw, s, view)
+        uploadStreams(&mut gw, &mut s)
+        drawShadowPass(&mut gw, &mut s, view)
         postBindWorld(p)
         drawSkyPass(gw, s, view, W as f64, H as f64, w.time)
-        drawStreams(gw, s, view, W as f64, H as f64, w.time)
-        drawSpeedLines(c, w)
-        drawGuide(c, w, view)
-        drawFence(c, w, view)
-        drawMarkBeam(c, w, view)
-        drawMarkGuide(c, w, view)
-        drawChecklist(c, w)
-        drawFound(c, w)
-        drawHud(c, w, s, 60)
+        drawStreams(&mut gw, &mut s, view, W as f64, H as f64, w.time)
+        drawSpeedLines(&mut c, w)
+        drawGuide(&mut c, w, view)
+        drawFence(&mut c, w, view)
+        drawMarkBeam(&mut c, w, view)
+        drawMarkGuide(&mut c, w, view)
+        drawChecklist(&mut c, w)
+        drawFound(&mut c, w)
+        drawHud(&mut c, w, s, 60)
         if w.env.cloudsDirty {
             postSetClouds(p, w.env.clouds)
             gpuWorldSetClouds(gw, w.env.clouds)
@@ -288,10 +288,10 @@ pub fn main(): i32 {
                 }
             }
         }
-        canvasClear(c)
+        canvasClear(&mut c)
     }
-    gpuWorldFree(gl, gw)
-    postFree(gl, p)
+    gpuWorldFree(&mut gl, gw)
+    postFree(&mut gl, p)
     gl.free()
     SDL_Quit()
     return 0

@@ -50,7 +50,7 @@ pub fn emptyNode(kind: NodeKind, name: string, text: string): Node {
 
 pub fn domNew(): Dom {
     var arena: Arena<Node> = arenaNew()
-    let doc = arenaAlloc(arena, emptyNode(NodeKind.Document, "", ""))
+    let doc = arenaAlloc(&mut arena, emptyNode(NodeKind.Document, "", ""))
     return Dom {
         arena: arena, document: doc
     }
@@ -159,30 +159,30 @@ pub fn attrValueAt(dom: &Dom, h: Handle<Node>, i: i64): string {
 // ── Mutators ──
 
 pub fn createElement(dom: &mut Dom, name: string): Handle<Node> {
-    return arenaAlloc(dom.arena, emptyNode(NodeKind.Element, name, ""))
+    return arenaAlloc(&mut dom.arena, emptyNode(NodeKind.Element, name, ""))
 }
 
 pub fn createText(dom: &mut Dom, text: string): Handle<Node> {
-    return arenaAlloc(dom.arena, emptyNode(NodeKind.Text, "", text))
+    return arenaAlloc(&mut dom.arena, emptyNode(NodeKind.Text, "", text))
 }
 
 pub fn createComment(dom: &mut Dom, text: string): Handle<Node> {
-    return arenaAlloc(dom.arena, emptyNode(NodeKind.Comment, "", text))
+    return arenaAlloc(&mut dom.arena, emptyNode(NodeKind.Comment, "", text))
 }
 
 pub fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
-    let _ = arenaModifyMut(dom.arena, parent, (n: &mut Node): void => {
+    let _ = arenaModifyMut(&mut dom.arena, parent, (n: &mut Node): void => {
         n.children.push(child)
     }
     )
-    let _ = arenaModifyMut(dom.arena, child, (c: &mut Node): void => {
+    let _ = arenaModifyMut(&mut dom.arena, child, (c: &mut Node): void => {
         c.parent = Option.Some(parent)
     }
     )
 }
 
 pub fn addAttr(dom: &mut Dom, h: Handle<Node>, name: string, value: string) {
-    let _ = arenaModifyMut(dom.arena, h, (n: &mut Node): void => {
+    let _ = arenaModifyMut(&mut dom.arena, h, (n: &mut Node): void => {
         n.attrs.push(Attr {
             name: name, value: value
         }
@@ -198,7 +198,7 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
         match nodeKind(dom, last) {
             NodeKind.Text => {
                 let extra = t.clone()
-                let _ = arenaModifyMut(dom.arena, last, (n: &mut Node): void => {
+                let _ = arenaModifyMut(&mut dom.arena, last, (n: &mut Node): void => {
                     for i in 0..extra.len() {
                         n.text.push(extra[i])
                     }
@@ -210,8 +210,8 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
             }
         }
     }
-    let tn = createText(dom, t)
-    append(dom, parent, tn)
+    let tn = createText(&mut dom, t)
+    append(&mut dom, parent, tn)
 }
 
 // ── Lexical helpers ──
@@ -289,11 +289,11 @@ pub fn namedEntity(name: &string, out: &mut string): bool {
         return true
     }
     if name == "nbsp" {
-        appendCodepoint(out, 0xA0)
+        appendCodepoint(&mut out, 0xA0)
         return true
     }
     if name == "copy" {
-        appendCodepoint(out, 0xA9)
+        appendCodepoint(&mut out, 0xA9)
         return true
     }
     return false
@@ -348,7 +348,7 @@ pub fn decodeEntity(src: &string, pos: i64, n: i64, out: &mut string): i64 {
             }
         }
         if any && ok && i < n && src[i] == ';' {
-            appendCodepoint(out, code)
+            appendCodepoint(&mut out, code)
             return i + 1
         }
     } else {
@@ -359,7 +359,7 @@ pub fn decodeEntity(src: &string, pos: i64, n: i64, out: &mut string): i64 {
             i = i + 1
         }
         if i < n && src[i] == ';' {
-            if namedEntity(name, out) {
+            if namedEntity(name, &mut out) {
                 return i + 1
             }
         }
@@ -379,13 +379,13 @@ pub fn parseText(dom: &mut Dom, parent: Handle<Node>, src: &string, pos: i64, n:
     var i = pos
     while i < n && src[i] != '<' {
         if src[i] == '&' {
-            i = decodeEntity(src, i, n, out)
+            i = decodeEntity(src, i, n, &mut out)
         } else {
             out.push(src[i])
             i = i + 1
         }
     }
-    appendText(dom, parent, out)
+    appendText(&mut dom, parent, out)
     return i
 }
 
@@ -454,11 +454,11 @@ pub fn closeImplied(dom: &Dom, stack: &mut Vec<Handle<Node>>, newTag: &string) {
 // onto the open-element stack unless it is void or self-closed.
 pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, pos: i64, n: i64): i64 {
     var name = String.withCapacity(8)
-    var i = readName(src, pos, n, name)
-    closeImplied(dom, stack, name)
-    let el = createElement(dom, name.clone())
+    var i = readName(src, pos, n, &mut name)
+    closeImplied(dom, &mut stack, name)
+    let el = createElement(&mut dom, name.clone())
     let parent = topOf(stack)
-    append(dom, parent, el)
+    append(&mut dom, parent, el)
 
     var selfClose = false
     var done = false
@@ -475,7 +475,7 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
         } else {
             // attribute name
             var an = String.withCapacity(8)
-            i = readName(src, i, n, an)
+            i = readName(src, i, n, &mut an)
             if an.len() == 0 {
                 // stray character; skip it to avoid an infinite loop
                 i = i + 1
@@ -490,7 +490,7 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
                         i = i + 1
                         while i < n && src[i] != q {
                             if src[i] == '&' {
-                                i = decodeEntity(src, i, n, av)
+                                i = decodeEntity(src, i, n, &mut av)
                             } else {
                                 av.push(src[i])
                                 i = i + 1
@@ -502,7 +502,7 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
                     } else {
                         while i < n && !isSpace(src[i]) && src[i] != '>' && src[i] != '/' {
                             if src[i] == '&' {
-                                i = decodeEntity(src, i, n, av)
+                                i = decodeEntity(src, i, n, &mut av)
                             } else {
                                 av.push(src[i])
                                 i = i + 1
@@ -510,7 +510,7 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
                         }
                     }
                 }
-                addAttr(dom, el, an, av)
+                addAttr(&mut dom, el, an, av)
             }
         }
     }
@@ -525,7 +525,7 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
 // open inside it).
 pub fn parseEndTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, pos: i64, n: i64): i64 {
     var name = String.withCapacity(8)
-    var i = readName(src, pos, n, name)
+    var i = readName(src, pos, n, &mut name)
     while i < n && src[i] != '>' {
         i = i + 1
     }
@@ -565,8 +565,8 @@ pub fn parseComment(dom: &mut Dom, parent: Handle<Node>, src: &string, pos: i64,
             i = i + 1
         }
     }
-    let cm = createComment(dom, out)
-    append(dom, parent, cm)
+    let cm = createComment(&mut dom, out)
+    append(&mut dom, parent, cm)
     return i
 }
 
@@ -626,15 +626,15 @@ pub fn consumeRaw(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, po
         if src[i] == '<' && i + 1 < n && src[i + 1] == '/' && matchesCloseTag(src, i + 2, n, tag) {
             done = true
         } else if decode && src[i] == '&' {
-            i = decodeEntity(src, i, n, out)
+            i = decodeEntity(src, i, n, &mut out)
         } else {
             out.push(src[i])
             i = i + 1
         }
     }
-    appendText(dom, here, out)
+    appendText(&mut dom, here, out)
     if done {
-        i = parseEndTag(dom, stack, src, i + 2, n)
+        i = parseEndTag(&mut dom, &mut stack, src, i + 2, n)
     }
     return i
 }
@@ -648,29 +648,29 @@ pub fn parseHtml(dom: &mut Dom, src: &string) {
         let c = src[pos]
         if c == '<' {
             if pos + 3 < n && src[pos + 1] == '!' && src[pos + 2] == '-' && src[pos + 3] == '-' {
-                pos = parseComment(dom, topOf(stack), src, pos, n)
+                pos = parseComment(&mut dom, topOf(stack), src, pos, n)
             } else if pos + 1 < n && src[pos + 1] == '!' {
                 pos = skipTo(src, pos, n, '>')
             } else if pos + 1 < n && src[pos + 1] == '/' {
-                pos = parseEndTag(dom, stack, src, pos + 2, n)
+                pos = parseEndTag(&mut dom, &mut stack, src, pos + 2, n)
             } else if pos + 1 < n && isAlpha(src[pos + 1]) {
-                pos = parseStartTag(dom, stack, src, pos + 1, n)
+                pos = parseStartTag(&mut dom, &mut stack, src, pos + 1, n)
                 // raw-text (script/style) and rcdata (textarea/title) elements
                 // swallow their content literally until the matching close tag.
                 if stack.len() > 1 {
                     let openName = nodeName(dom, topOf(stack))
                     if isRawText(openName) {
-                        pos = consumeRaw(dom, stack, src, pos, n, false)
+                        pos = consumeRaw(&mut dom, &mut stack, src, pos, n, false)
                     } else if isRcData(openName) {
-                        pos = consumeRaw(dom, stack, src, pos, n, true)
+                        pos = consumeRaw(&mut dom, &mut stack, src, pos, n, true)
                     }
                 }
             } else {
                 // stray '<' — treat as text
-                pos = parseText(dom, topOf(stack), src, pos + 1, n)
+                pos = parseText(&mut dom, topOf(stack), src, pos + 1, n)
             }
         } else {
-            pos = parseText(dom, topOf(stack), src, pos, n)
+            pos = parseText(&mut dom, topOf(stack), src, pos, n)
         }
     }
 }
@@ -681,30 +681,30 @@ pub fn serialize(dom: &Dom, h: Handle<Node>, out: &mut string) {
     match nodeKind(dom, h) {
         NodeKind.Text => {
             let t = nodeText(dom, h)
-            appendStr(out, t)
+            appendStr(&mut out, t)
         }
         NodeKind.Comment => {
-            appendStr(out, "<!--")
+            appendStr(&mut out, "<!--")
             let t = nodeText(dom, h)
-            appendStr(out, t)
-            appendStr(out, "-->")
+            appendStr(&mut out, t)
+            appendStr(&mut out, "-->")
         }
         NodeKind.Doctype => {
-            appendStr(out, "<!DOCTYPE html>")
+            appendStr(&mut out, "<!DOCTYPE html>")
         }
         NodeKind.Element => {
             let name = nodeName(dom, h)
             out.push('<')
-            appendStr(out, name)
+            appendStr(&mut out, name)
             let na = attrCount(dom, h)
             for i in 0..na {
                 out.push(' ')
                 let an = attrNameAt(dom, h, i)
-                appendStr(out, an)
+                appendStr(&mut out, an)
                 out.push('=')
                 out.push('"')
                 let av = attrValueAt(dom, h, i)
-                appendStr(out, av)
+                appendStr(&mut out, av)
                 out.push('"')
             }
             out.push('>')
@@ -712,17 +712,17 @@ pub fn serialize(dom: &Dom, h: Handle<Node>, out: &mut string) {
             if !isVoidElement(name) {
                 let c = childCount(dom, h)
                 for i in 0..c {
-                    serialize(dom, childAt(dom, h, i), out)
+                    serialize(dom, childAt(dom, h, i), &mut out)
                 }
-                appendStr(out, "</")
-                appendStr(out, name)
+                appendStr(&mut out, "</")
+                appendStr(&mut out, name)
                 out.push('>')
             }
         }
         NodeKind.Document => {
             let c = childCount(dom, h)
             for i in 0..c {
-                serialize(dom, childAt(dom, h, i), out)
+                serialize(dom, childAt(dom, h, i), &mut out)
             }
         }
     }
@@ -751,10 +751,10 @@ pub fn main(): i32 {
     let html = "<!DOCTYPE html><html><head><title>T &amp; U</title></head><body class=\"main\" data-n=3><!-- hi --><h1>Hello &#87;orld</h1><p>a<br>b<img src=\"x.png\" alt=unq>c</p><ul><li>one<li>two</ul></body></html>"
 
     var dom = domNew()
-    parseHtml(dom, html)
+    parseHtml(&mut dom, html)
 
     var out = String.withCapacity(256)
-    serialize(dom, dom.document, out)
+    serialize(dom, dom.document, &mut out)
     print(out)
 
     print(countTag(dom, dom.document, "li")) // 2

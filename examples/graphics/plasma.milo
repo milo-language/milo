@@ -90,29 +90,29 @@ pub fn plasmaRGB(px: f64, py: f64, cx: f64, cy: f64, t: f64, out: &mut [i64; 3])
 // Draw one full plasma frame (rows 2..) into buf. Returns the frame's byte size.
 pub fn drawPlasma(buf: &mut string, cols: i64, pRows: i64, cx: f64, cy: f64, t: f64, top: &mut [i64; 3], bot: &mut [i64; 3]): i64 {
     for r in 0..pRows {
-        emit(buf, Ansi.cursorTo(r + 2, 1))
+        emit(&mut buf, Ansi.cursorTo(r + 2, 1))
         let yTop = (r * 2) as f64
         let yBot = (r * 2 + 1) as f64
         for c in 0..cols {
             let px = c as f64
-            plasmaRGB(px, yTop, cx, cy, t, top)
-            plasmaRGB(px, yBot, cx, cy, t, bot)
-            Ansi.pushFg24(buf, top[0], top[1], top[2])
-            Ansi.pushBg24(buf, bot[0], bot[1], bot[2])
-            emit(buf, "▀")
+            plasmaRGB(px, yTop, cx, cy, t, &mut top)
+            plasmaRGB(px, yBot, cx, cy, t, &mut bot)
+            Ansi.pushFg24(&mut buf, top[0], top[1], top[2])
+            Ansi.pushBg24(&mut buf, bot[0], bot[1], bot[2])
+            emit(&mut buf, "▀")
         }
     }
-    emit(buf, Ansi.reset())
+    emit(&mut buf, Ansi.reset())
     return buf.len as i64
 }
 
 pub fn hud(buf: &mut string, cols: i64, rows: i64, fps: f64, frameMs: f64, mbps: f64, tail: &string): void {
-    emit(buf, Ansi.cursorTo(1, 1))
-    emit(buf, Color.bold(" milo plasma "))
-    emit(buf, Color.gray($" {cols}x{rows}  "))
-    emit(buf, Color.bold($"{formatFloat(fps, 0)} fps"))
-    emit(buf, Color.gray($"  {formatFloat(frameMs, 1)} ms/frame  {formatFloat(mbps, 1)} MB/s  ·  "))
-    emit(buf, Color.gray(tail))
+    emit(&mut buf, Ansi.cursorTo(1, 1))
+    emit(&mut buf, Color.bold(" milo plasma "))
+    emit(&mut buf, Color.gray($" {cols}x{rows}  "))
+    emit(&mut buf, Color.bold($"{formatFloat(fps, 0)} fps"))
+    emit(&mut buf, Color.gray($"  {formatFloat(frameMs, 1)} ms/frame  {formatFloat(mbps, 1)} MB/s  ·  "))
+    emit(&mut buf, Color.gray(tail))
 }
 
 // Headless benchmark: render uncapped for ~2s with no input, report the rate.
@@ -133,7 +133,7 @@ pub fn runBench(): void {
     var now = start
     while now - start < 2000 {
         var buf = String.withCapacity(262144)
-        bytes = bytes + drawPlasma(buf, cols, pRows, cx, cy, t, top, bot)
+        bytes = bytes + drawPlasma(&mut buf, cols, pRows, cx, cy, t, &mut top, &mut bot)
         writeStdout(buf)
         t = t + 0.06
         frames = frames + 1
@@ -152,7 +152,7 @@ pub fn runInteractive(): void {
     writeStdout(Ansi.hideCursor() + Ansi.clearScreen())
 
     var size: [i64; 2] = [0; 2]
-    termSize(size)
+    termSize(&mut size)
     let rows = size[0]
     let cols = size[1]
     let pRows = rows - 1 // reserve row 1 for the HUD
@@ -173,11 +173,11 @@ pub fn runInteractive(): void {
     while !quit {
         let frameStart = epochMillis()
         var buf = String.withCapacity(262144)
-        let bytes = drawPlasma(buf, cols, pRows, cx, cy, t, top, bot)
+        let bytes = drawPlasma(&mut buf, cols, pRows, cx, cy, t, &mut top, &mut bot)
 
         let frameMs = (epochMillis() - frameStart) as f64
         let mbps = (bytes as f64) * fps / 1000000.0
-        hud(buf, cols, rows, fps, frameMs, mbps, "q quit ")
+        hud(&mut buf, cols, rows, fps, frameMs, mbps, "q quit ")
         writeStdout(buf)
 
         t = t + 0.06

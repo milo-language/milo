@@ -71,11 +71,11 @@ pub fn emit(buf: &mut string, s: &string): void {
 }
 
 pub fn cursor(buf: &mut string, row: i64, col: i64): void {
-    emit(buf, $"\x1b[{row};{col}H")
+    emit(&mut buf, $"\x1b[{row};{col}H")
 }
 
 pub fn clr(buf: &mut string): void {
-    emit(buf, "\x1b[K")
+    emit(&mut buf, "\x1b[K")
 }
 
 pub fn spaces(buf: &mut string, n: i64): void {
@@ -94,17 +94,17 @@ pub fn bg256(code: i64): string {
 }
 
 pub fn drawBar(buf: &mut string, filled: i64, total: i64, color: &string): void {
-    emit(buf, "[")
+    emit(&mut buf, "[")
     for i in 0..total {
         if i < filled {
-            emit(buf, color)
-            emit(buf, "|")
-            emit(buf, "\x1b[0m")
+            emit(&mut buf, color)
+            emit(&mut buf, "|")
+            emit(&mut buf, "\x1b[0m")
         } else {
-            emit(buf, "\x1b[90m-\x1b[0m")
+            emit(&mut buf, "\x1b[90m-\x1b[0m")
         }
     }
-    emit(buf, "]")
+    emit(&mut buf, "]")
 }
 
 // ── format helpers ──
@@ -184,18 +184,18 @@ pub fn fetchProcesses(maxProcs: i64): Vec<ProcInfo> {
 pub fn renderHeader(buf: &mut string, cols: i64): void {
     let host = hostname()
     let model = cpuModel()
-    cursor(buf, 1, 1)
-    emit(buf, "\x1b[7m") // inverse video
-    emit(buf, " sysmon ")
-    emit(buf, "\x1b[27m\x1b[1;36m ")
-    emit(buf, host)
-    emit(buf, " \x1b[0;90m")
-    emit(buf, model)
+    cursor(&mut buf, 1, 1)
+    emit(&mut buf, "\x1b[7m") // inverse video
+    emit(&mut buf, " sysmon ")
+    emit(&mut buf, "\x1b[27m\x1b[1;36m ")
+    emit(&mut buf, host)
+    emit(&mut buf, " \x1b[0;90m")
+    emit(&mut buf, model)
     let used = 10 + host.len + 1 + model.len
     if cols > used {
-        spaces(buf, cols - used)
+        spaces(&mut buf, cols - used)
     }
-    emit(buf, "\x1b[0m")
+    emit(&mut buf, "\x1b[0m")
 }
 
 pub fn renderCpuBar(buf: &mut string, row: i64, cols: i64): void {
@@ -217,19 +217,19 @@ pub fn renderCpuBar(buf: &mut string, row: i64, cols: i64): void {
         color = "\x1b[31m"
     } // red
 
-    cursor(buf, row, 1)
-    clr(buf)
-    emit(buf, "  \x1b[1mCPU\x1b[0m  ")
-    drawBar(buf, filled, barWidth, color)
-    emit(buf, " " + padLeft(formatFloat(pct, 1), 5, 32) + "%")
+    cursor(&mut buf, row, 1)
+    clr(&mut buf)
+    emit(&mut buf, "  \x1b[1mCPU\x1b[0m  ")
+    drawBar(&mut buf, filled, barWidth, color)
+    emit(&mut buf, " " + padLeft(formatFloat(pct, 1), 5, 32) + "%")
 
-    cursor(buf, row + 1, 1)
-    clr(buf)
+    cursor(&mut buf, row + 1, 1)
+    clr(&mut buf)
     let l1 = formatFloat(load[0], 2)
     let l5 = formatFloat(load[1], 2)
     let l15 = formatFloat(load[2], 2)
-    emit(buf, "\x1b[90m         load " + l1 + "  " + l5 + "  " + l15)
-    emit(buf, "  |  " + nCpus.toString() + " cores\x1b[0m")
+    emit(&mut buf, "\x1b[90m         load " + l1 + "  " + l5 + "  " + l15)
+    emit(&mut buf, "  |  " + nCpus.toString() + " cores\x1b[0m")
 }
 
 pub fn renderMemBar(buf: &mut string, row: i64, cols: i64): void {
@@ -251,39 +251,39 @@ pub fn renderMemBar(buf: &mut string, row: i64, cols: i64): void {
         color = "\x1b[31m"
     }
 
-    cursor(buf, row, 1)
-    clr(buf)
-    emit(buf, "  \x1b[1mMem\x1b[0m  ")
-    drawBar(buf, filled, barWidth, color)
-    emit(buf, " " + padLeft(formatFloat(pct, 1), 5, 32) + "%")
+    cursor(&mut buf, row, 1)
+    clr(&mut buf)
+    emit(&mut buf, "  \x1b[1mMem\x1b[0m  ")
+    drawBar(&mut buf, filled, barWidth, color)
+    emit(&mut buf, " " + padLeft(formatFloat(pct, 1), 5, 32) + "%")
 
-    cursor(buf, row + 1, 1)
-    clr(buf)
-    emit(buf, "\x1b[90m         " + formatBytes(used) + " / " + formatBytes(total) + "\x1b[0m")
+    cursor(&mut buf, row + 1, 1)
+    clr(&mut buf)
+    emit(&mut buf, "\x1b[90m         " + formatBytes(used) + " / " + formatBytes(total) + "\x1b[0m")
 }
 
 pub fn renderProcessHeader(buf: &mut string, row: i64, cols: i64): void {
-    cursor(buf, row, 1)
-    emit(buf, "\x1b[7;1;36m") // inverse + bold + cyan
+    cursor(&mut buf, row, 1)
+    emit(&mut buf, "\x1b[7;1;36m") // inverse + bold + cyan
     let header = padRight("  PID", 8, 32) +
     padRight("USER", 12, 32) +
     padLeft("CPU%", 6, 32) + "  " +
     padLeft("MEM%", 6, 32) + "  " +
     padRight("TIME", 12, 32) +
     "COMMAND"
-    emit(buf, header)
+    emit(&mut buf, header)
     if cols > header.len {
-        spaces(buf, cols - header.len)
+        spaces(&mut buf, cols - header.len)
     }
-    emit(buf, "\x1b[0m")
+    emit(&mut buf, "\x1b[0m")
 }
 
 pub fn renderProcess(buf: &mut string, row: i64, cols: i64, proc: &ProcInfo, highlighted: bool): void {
-    cursor(buf, row, 1)
-    clr(buf)
+    cursor(&mut buf, row, 1)
+    clr(&mut buf)
 
     if highlighted {
-        emit(buf, "\x1b[7m")
+        emit(&mut buf, "\x1b[7m")
     }
 
     let pid = padLeft(proc.pid, 7, 32)
@@ -312,28 +312,28 @@ pub fn renderProcess(buf: &mut string, row: i64, cols: i64, proc: &ProcInfo, hig
         cpuColor = "\x1b[33m"
     }
 
-    emit(buf, " \x1b[90m" + pid + "\x1b[0m ")
-    emit(buf, "\x1b[36m" + userPad + "\x1b[0m")
-    emit(buf, cpuColor + cpu + "\x1b[0m  ")
-    emit(buf, mem + "  ")
-    emit(buf, "\x1b[90m" + time + "\x1b[0m")
+    emit(&mut buf, " \x1b[90m" + pid + "\x1b[0m ")
+    emit(&mut buf, "\x1b[36m" + userPad + "\x1b[0m")
+    emit(&mut buf, cpuColor + cpu + "\x1b[0m  ")
+    emit(&mut buf, mem + "  ")
+    emit(&mut buf, "\x1b[90m" + time + "\x1b[0m")
     if highlighted {
-        emit(buf, "\x1b[7m")
+        emit(&mut buf, "\x1b[7m")
     }
-    emit(buf, cmd)
-    emit(buf, "\x1b[0m")
+    emit(&mut buf, cmd)
+    emit(&mut buf, "\x1b[0m")
 }
 
 pub fn renderStatusBar(buf: &mut string, row: i64, cols: i64, numProcs: i64): void {
-    cursor(buf, row, 1)
+    cursor(&mut buf, row, 1)
     let up = formatUptime(uptime())
-    emit(buf, "\x1b[7m") // inverse
+    emit(&mut buf, "\x1b[7m") // inverse
     let status = $" q:quit  arrows:scroll  up {up}  {numProcs} processes "
-    emit(buf, status)
+    emit(&mut buf, status)
     if cols > status.len {
-        spaces(buf, cols - status.len)
+        spaces(&mut buf, cols - status.len)
     }
-    emit(buf, "\x1b[0m")
+    emit(&mut buf, "\x1b[0m")
 }
 
 // ── main ──
@@ -402,27 +402,27 @@ pub fn main(): i32 {
 
         var buf = ""
 
-        renderHeader(buf, cols)
-        cursor(buf, 2, 1)
-        clr(buf)
-        renderCpuBar(buf, 3, cols)
-        renderMemBar(buf, 5, cols)
-        cursor(buf, 7, 1)
-        clr(buf)
-        renderProcessHeader(buf, 8, cols)
+        renderHeader(&mut buf, cols)
+        cursor(&mut buf, 2, 1)
+        clr(&mut buf)
+        renderCpuBar(&mut buf, 3, cols)
+        renderMemBar(&mut buf, 5, cols)
+        cursor(&mut buf, 7, 1)
+        clr(&mut buf)
+        renderProcessHeader(&mut buf, 8, cols)
 
         for i in 0..procAreaRows {
             let idx = scroll + i
             if idx < procs.len {
-                renderProcess(buf, 9 + i, cols, procs[idx], i == 0 && scroll > 0)
+                renderProcess(&mut buf, 9 + i, cols, procs[idx], i == 0 && scroll > 0)
             } else {
-                cursor(buf, 9 + i, 1)
-                clr(buf)
+                cursor(&mut buf, 9 + i, 1)
+                clr(&mut buf)
             }
         }
 
-        renderStatusBar(buf, rows, cols, procs.len as i64)
-        emit(buf, "\x1b[J")
+        renderStatusBar(&mut buf, rows, cols, procs.len as i64)
+        emit(&mut buf, "\x1b[J")
         writeStdout(buf)
 
         sleepMs(16)

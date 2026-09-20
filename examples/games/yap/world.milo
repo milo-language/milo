@@ -250,10 +250,10 @@ fn stepGates(w: &mut World, dt: f64) {
         }
     }
     if w.gates.len == 0 {
-        spawnGate(w, w.vw + 220.0)
+        spawnGate(&mut w, w.vw + 220.0)
     } else {
         if far < w.vw + SPACING {
-            spawnGate(w, far + SPACING)
+            spawnGate(&mut w, far + SPACING)
         }
     }
 }
@@ -289,7 +289,7 @@ pub fn flap(w: &mut World) {
     w.vy = 0.0 - FLAP
     w.flapT = 0.0
     w.evFlap = true
-    puff(w, DOG_X - 40.0, w.y + 6.0, 5, 80.0, 0.30, 0.26, 0.20, 3.0, 200.0)
+    puff(&mut w, DOG_X - 40.0, w.y + 6.0, 5, 80.0, 0.30, 0.26, 0.20, 3.0, 200.0)
 }
 
 fn die(w: &mut World, hitX: f64, hitY: f64) {
@@ -305,7 +305,7 @@ fn die(w: &mut World, hitX: f64, hitY: f64) {
         w.vy = w.vy * 0.3
     }
     w.vy = w.vy - 120.0
-    burst(w, hitX, hitY, 16, 340.0, 0.90, 0.55, 0.30)
+    burst(&mut w, hitX, hitY, 16, 340.0, 0.90, 0.55, 0.30)
     if w.score > w.best {
         w.best = w.score
     }
@@ -359,7 +359,7 @@ fn checkGates(w: &mut World) {
         w.score = w.score + 3
         w.evTreat = true
         w.flash = 0.18
-        burst(w, treatX, treatY, 14, 260.0, 1.20, 1.10, 0.70)
+        burst(&mut w, treatX, treatY, 14, 260.0, 1.20, 1.10, 0.70)
     }
     if scored > 0 {
         w.score = w.score + scored
@@ -367,10 +367,10 @@ fn checkGates(w: &mut World) {
     }
     if w.score >= w.nextPraise {
         w.nextPraise = w.nextPraise + 10
-        praise(w)
+        praise(&mut w)
     }
     if hit {
-        die(w, hitX, hitY)
+        die(&mut w, hitX, hitY)
     }
 }
 
@@ -388,7 +388,7 @@ pub fn worldUpdate(w: &mut World, dt: f64) {
     if w.toastT > 0.0 {
         w.toastT = w.toastT - dt
     }
-    stepParts(w, dt)
+    stepParts(&mut w, dt)
 
     if w.state == ST_READY {
         // Idle bob. The dog is already airborne, so the pose the player sees
@@ -397,7 +397,7 @@ pub fn worldUpdate(w: &mut World, dt: f64) {
         w.y = 300.0 + Math.sin(w.bobT * 3.4) * 14.0
         w.vy = 0.0
         w.groundX = w.groundX + w.scroll * dt * 0.55
-        stepGates(w, dt)
+        stepGates(&mut w, dt)
         return
     }
 
@@ -416,11 +416,11 @@ pub fn worldUpdate(w: &mut World, dt: f64) {
                 w.vy = 60.0
             }
         }
-        stepGates(w, dt)
-        checkGates(w)
+        stepGates(&mut w, dt)
+        checkGates(&mut w)
         if w.state == ST_PLAY && w.y + HIT_HH >= GROUND_Y {
             w.y = GROUND_Y - HIT_HH
-            die(w, DOG_X, GROUND_Y - 20.0)
+            die(&mut w, DOG_X, GROUND_Y - 20.0)
             w.state = ST_FALL
         }
         return
@@ -440,7 +440,7 @@ pub fn worldUpdate(w: &mut World, dt: f64) {
             w.runs = w.runs + 1
             w.evThud = true
             w.shake = 11.0
-            puff(w, DOG_X, GROUND_Y - 6.0, 14, 190.0, 0.35, 0.30, 0.18, 4.5, 240.0)
+            puff(&mut w, DOG_X, GROUND_Y - 6.0, 14, 190.0, 0.35, 0.30, 0.18, 4.5, 240.0)
         }
         return
     }

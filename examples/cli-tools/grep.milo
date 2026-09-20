@@ -180,9 +180,9 @@ pub fn grepRecursive(dirPath: &string, opts: &mut GrepOpts): void {
         if name[0] != 46 {
             let fullPath = Path.join(dirPath, name)
             if entryIsDir {
-                grepRecursive(fullPath, opts)
+                grepRecursive(fullPath, &mut opts)
             } else if entryIsFile {
-                grepFile(fullPath, opts)
+                grepFile(fullPath, &mut opts)
             }
         }
     }
@@ -229,9 +229,9 @@ pub fn main(): i32 {
     }
 
     if recursive || isDir(target) {
-        grepRecursive(target, opts)
+        grepRecursive(target, &mut opts)
     } else {
-        grepFile(target, opts)
+        grepFile(target, &mut opts)
     }
 
     if opts.totalMatches == 0 as i64 {

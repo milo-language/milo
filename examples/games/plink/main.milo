@@ -191,7 +191,7 @@ pub fn main(): i32 {
 
     var gl = GlContext.new()
     let sky = buildRoom(houseLight)
-    var gfx = match newGfx(gl, rw, rh, sky, buildAtlas(), ATLAS) {
+    var gfx = match newGfx(&mut gl, rw, rh, sky, buildAtlas(), ATLAS) {
         Result.Ok(g) => g
         Result.Err(e) => {
             print("gfx: " + e)
@@ -202,7 +202,7 @@ pub fn main(): i32 {
     // declares, the TEX_* constants index this list, so the order is a contract.
     let texes = makeTextures()
     for t in texes {
-        let a = Texture2D.rgba8(gl, TEX_SIZE, TEX_SIZE, t.albedo.clone(), true)
+        let a = Texture2D.rgba8(&mut gl, TEX_SIZE, TEX_SIZE, t.albedo.clone(), true)
         // REPEAT, not the default clamp. Every one of these is tiled across
         // metres of surface, and on clamp only the first repeat has any content
         // at all, the rest is the edge texel smeared, which reads as a smooth
@@ -210,7 +210,7 @@ pub fn main(): i32 {
         a.setWrap(Wrap.Repeat)
         a.generateMipmaps()
         a.setAnisotropy(16.0)
-        let s = Texture2D.rgba8(gl, TEX_SIZE, TEX_SIZE, t.surf.clone(), true)
+        let s = Texture2D.rgba8(&mut gl, TEX_SIZE, TEX_SIZE, t.surf.clone(), true)
         s.setWrap(Wrap.Repeat)
         s.generateMipmaps()
         s.setAnisotropy(16.0)
@@ -226,31 +226,31 @@ pub fn main(): i32 {
         // the shader reads as "exactly what the material says".
         flatPixels[i] = 0xFF8080FF
     }
-    let flat = Texture2D.rgba8(gl, 2, 2, flatPixels, false)
+    let flat = Texture2D.rgba8(&mut gl, 2, 2, flatPixels, false)
     let flatIdx = gfx.addTexture(flat)
-    let marquee = Texture2D.rgba8(gl, MARQUEE_W, MARQUEE_H, marqueePixels(), true)
+    let marquee = Texture2D.rgba8(&mut gl, MARQUEE_W, MARQUEE_H, marqueePixels(), true)
     marquee.generateMipmaps()
     marquee.setAnisotropy(16.0)
     let marqueeIdx = gfx.addTexture(marquee)
-    let banner = Texture2D.rgba8(gl, BANNER_W, BANNER_H, bannerPixels(), true)
+    let banner = Texture2D.rgba8(&mut gl, BANNER_W, BANNER_H, bannerPixels(), true)
     banner.generateMipmaps()
     let bannerIdx = gfx.addTexture(banner)
     // The face atlas holds all four target faces in one 2x2 grid. It must not
     // repeat: a disc whose uv strays a texel past its cell would print the
     // neighbouring face round its rim.
-    let faces = Texture2D.rgba8(gl, FACE_SIZE, FACE_SIZE, facePixels(), true)
+    let faces = Texture2D.rgba8(&mut gl, FACE_SIZE, FACE_SIZE, facePixels(), true)
     faces.generateMipmaps()
     faces.setAnisotropy(16.0)
     let faceIdx = gfx.addTexture(faces)
-    let logo = Texture2D.rgba8(gl, LOGO_W, LOGO_H, logoPixels(), true)
+    let logo = Texture2D.rgba8(&mut gl, LOGO_W, LOGO_H, logoPixels(), true)
     logo.generateMipmaps()
     logo.setAnisotropy(16.0)
     let logoIdx = gfx.addTexture(logo)
 
-    var world = buildWorld(gl, marqueeIdx, flatIdx, bannerIdx, logoIdx)
-    var targets = newTargets(gl, faceIdx, flatIdx)
+    var world = buildWorld(&mut gl, marqueeIdx, flatIdx, bannerIdx, logoIdx)
+    var targets = newTargets(&mut gl, faceIdx, flatIdx)
     let staticLights = roomLights()
-    var gun = newGun(gl)
+    var gun = newGun(&mut gl)
     var cam = newCamera()
     // Capture-only camera overrides, so a lighting or texture change can be
     // judged from the same frame every time instead of from wherever the mouse
@@ -433,7 +433,7 @@ pub fn main(): i32 {
         }
         targets.update(dt, pressure, running)
         gun.update(dt)
-        stepPops(pops, dt)
+        stepPops(&mut pops, dt)
         hitFlash = Math.maxF64(0.0, hitFlash - dt * 3.2)
         missFlash = Math.maxF64(0.0, missFlash - dt * 2.4)
 
@@ -445,7 +445,7 @@ pub fn main(): i32 {
                 if targets.rigs[k].state == ST_UP {
                     let c = rigCentre(targets.rigs[k])
                     let value = valueOf(targets.rigs[k].kind) * Math.minI64(1 + combo / 3, 6)
-                    pushPop(pops, c, value, targets.rigs[k].kind)
+                    pushPop(&mut pops, c, value, targets.rigs[k].kind)
                     targets.shatter(k, cam.eye())
                     hitFlash = 1.0
                     break
@@ -514,7 +514,7 @@ pub fn main(): i32 {
                     let mult = Math.minI64(1 + combo / 3, 6)
                     score = score + valueOf(hit.kind) * mult
                     lastValue = valueOf(hit.kind) * mult
-                    pushPop(pops, hit.point, lastValue, hit.kind)
+                    pushPop(&mut pops, hit.point, lastValue, hit.kind)
                 }
             } else {
                 missFlash = 1.0
@@ -624,8 +624,8 @@ pub fn main(): i32 {
         gfx.present(dw as i64, dh as i64)
 
         hud.clear()
-        drawHud(hud, dw as f64, dh as f64, running, timeLeft, score, best, combo, hits, shotsFired, lastScore, bonusLive, hitFlash, missFlash, aiming, gfx.time)
-        drawPops(hud, pops, vp, dw as f64, dh as f64)
+        drawHud(&mut hud, dw as f64, dh as f64, running, timeLeft, score, best, combo, hits, shotsFired, lastScore, bonusLive, hitFlash, missFlash, aiming, gfx.time)
+        drawPops(&mut hud, pops, vp, dw as f64, dh as f64)
         gfx.drawHud(hud.verts, dw as i64, dh as i64)
 
         if headless && warmup > 0 {
@@ -656,10 +656,10 @@ pub fn main(): i32 {
         SDL_GL_SwapWindow(win)
     }
 
-    targets.free(gl)
-    gun.free(gl)
-    world.free(gl)
-    gfx.free(gl)
+    targets.free(&mut gl)
+    gun.free(&mut gl)
+    world.free(&mut gl)
+    gfx.free(&mut gl)
     gl.free()
     SDL_GL_DeleteContext(ctx)
     SDL_DestroyWindow(win)
@@ -715,17 +715,17 @@ fn drawHud(hud: &mut Hud, dw: f64, dh: f64, running: bool, timeLeft: f64, score:
     // Left: the multiplier badge and the score.
     let bx = 62.0 * s
     let by = barY + barH * 0.5
-    disc(hud, bx, by, 34.0 * s, 0.10, 0.55, 0.72, 0.95)
-    disc(hud, bx, by, 28.0 * s, 0.04, 0.16, 0.24, 0.95)
+    disc(&mut hud, bx, by, 34.0 * s, 0.10, 0.55, 0.72, 0.95)
+    disc(&mut hud, bx, by, 28.0 * s, 0.04, 0.16, 0.24, 0.95)
     hud.textCentred($"X{mult}", bx, by - 16.0 * s, 3.6 * s, 0.55, 1.0, 1.0, 1.0)
 
-    plate(hud, 108.0 * s, barY + 20.0 * s, 250.0 * s, 64.0 * s, 0.25, 0.60, 0.95)
+    plate(&mut hud, 108.0 * s, barY + 20.0 * s, 250.0 * s, 64.0 * s, 0.25, 0.60, 0.95)
     let _ = hud.text("SCORE", 120.0 * s, barY + 26.0 * s, 1.5 * s, 0.55, 0.80, 1.0, 0.85)
     let _ = hud.text($"{score}", 120.0 * s, barY + 44.0 * s, 3.4 * s, 1.0, 0.95, 0.70, 1.0)
 
     // Middle: the clock, which is the only number that is ever urgent.
     let clockW = 190.0 * s
-    plate(hud, cx - clockW * 0.5, barY + 20.0 * s, clockW, 64.0 * s, 0.95, 0.35, 0.20)
+    plate(&mut hud, cx - clockW * 0.5, barY + 20.0 * s, clockW, 64.0 * s, 0.95, 0.35, 0.20)
     let secs = timeLeft as i64
     let tenths = ((timeLeft - (secs as f64)) * 10.0) as i64
     // Under ten seconds it goes red and pulses, because at that point the clock
@@ -742,8 +742,8 @@ fn drawHud(hud: &mut Hud, dw: f64, dh: f64, running: bool, timeLeft: f64, score:
 
     // Right: the best of the session, and whether the drone has a gold one out.
     let rx = dw - 62.0 * s
-    disc(hud, rx, by, 34.0 * s, 0.62, 0.12, 0.52, 0.95)
-    disc(hud, rx, by, 28.0 * s, 0.18, 0.03, 0.14, 0.95)
+    disc(&mut hud, rx, by, 34.0 * s, 0.62, 0.12, 0.52, 0.95)
+    disc(&mut hud, rx, by, 28.0 * s, 0.18, 0.03, 0.14, 0.95)
     hud.textCentred($"{hits}", rx, by - 16.0 * s, 3.4 * s, 1.0, 0.75, 1.0, 1.0)
 
     let pw = 250.0 * s
@@ -752,11 +752,11 @@ fn drawHud(hud: &mut Hud, dw: f64, dh: f64, running: bool, timeLeft: f64, score:
         // The gold target is out. This is the only thing on the bar that ever
         // changes colour on its own, so it cannot be confused with anything else.
         let p = 0.55 + 0.45 * Math.sin(time * 9.0)
-        plate(hud, px, barY + 20.0 * s, pw, 64.0 * s, 1.0, 0.78, 0.20)
+        plate(&mut hud, px, barY + 20.0 * s, pw, 64.0 * s, 1.0, 0.78, 0.20)
         let _ = hud.text("MEGA BONUS", px + 12.0 * s, barY + 26.0 * s, 1.5 * s, 1.0, 0.85, 0.35, 0.9)
         let _ = hud.text($"{MEGA_BONUS}", px + 12.0 * s, barY + 44.0 * s, 3.4 * s, 1.0, 0.82 * p, 0.25 * p, 1.0)
     } else {
-        plate(hud, px, barY + 20.0 * s, pw, 64.0 * s, 0.55, 0.30, 0.85)
+        plate(&mut hud, px, barY + 20.0 * s, pw, 64.0 * s, 0.55, 0.30, 0.85)
         let _ = hud.text("BEST", px + 12.0 * s, barY + 26.0 * s, 1.5 * s, 0.80, 0.70, 1.0, 0.85)
         let _ = hud.text($"{best}", px + 12.0 * s, barY + 44.0 * s, 3.4 * s, 0.92, 0.88, 1.0, 1.0)
     }
@@ -826,7 +826,7 @@ fn drawHud(hud: &mut Hud, dw: f64, dh: f64, running: bool, timeLeft: f64, score:
     // The crosshair opens up while the gun is recovering, so how ready you are
     // is something you can see rather than something you have to count. Drawn
     // after the attract panel, which sits over the middle of the screen.
-    crosshair(hud, cx, cy, s, 1.0 - aiming * 0.6)
+    crosshair(&mut hud, cx, cy, s, 1.0 - aiming * 0.6)
 }
 
 pub let POP_LIFE: f64 = 0.85
@@ -966,7 +966,7 @@ fn drawPops(hud: &mut Hud, pops: &Vec<f64>, vp: &Vec<f32>, dw: f64, dh: f64) {
         }
         let size = 3.4 * s * pop
         let v = pops[o + 3] as i64
-        boldText(hud, $"{v}", sx, sy, size, pops[o + 4], pops[o + 5], pops[o + 6], a)
+        boldText(&mut hud, $"{v}", sx, sy, size, pops[o + 4], pops[o + 5], pops[o + 6], a)
     }
 }
 

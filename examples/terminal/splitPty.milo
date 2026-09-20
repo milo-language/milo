@@ -290,8 +290,8 @@ pub fn main(): void {
                                             dirty = true
                                         }
 
-                                        let got1 = drainPty(pty1, out1)
-                                        let got2 = drainPty(pty2, out2)
+                                        let got1 = drainPty(pty1, &mut out1)
+                                        let got2 = drainPty(pty2, &mut out2)
 
                                         // right pane loops: on refresh marker, keep only latest
                                         if out2.contains("---REFRESH---") {

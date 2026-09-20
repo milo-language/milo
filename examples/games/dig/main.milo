@@ -82,7 +82,7 @@ pub fn main(): i32 {
         if dt < 0.0005 {
             dt = 0.0005
         }
-        pollInput(inp, ev, 1.0)
+        pollInput(&mut inp, &mut ev, 1.0)
 
         // One axis at a time: diagonal drilling would let you cut corners through
         // solid ground, and it makes the tunnels messy.
@@ -91,7 +91,7 @@ pub fn main(): i32 {
         if ix != 0.0 && iy != 0.0 {
             iy = 0.0
         }
-        mineUpdate(m, dt, ix, iy, W as f64, H as f64)
+        mineUpdate(&mut m, dt, ix, iy, W as f64, H as f64)
 
         var ox = 0.0
         var oy = 0.0
@@ -99,8 +99,8 @@ pub fn main(): i32 {
             ox = Random.floatRange(0.0 - m.shake, m.shake)
             oy = Random.floatRange(0.0 - m.shake, m.shake)
         }
-        drawMine(c, m, ox, oy)
-        drawHud(c, m)
+        drawMine(&mut c, m, ox, oy)
+        drawHud(&mut c, m)
 
         fpsAccum = fpsAccum + dt
         fpsFrames = fpsFrames + 1
@@ -109,15 +109,15 @@ pub fn main(): i32 {
             fpsAccum = 0.0
             fpsFrames = 0
         }
-        text(c, 24, H - 30, fpsShown.toString() + " FPS", 2, 0.16, 0.20, 0.24)
+        text(&mut c, 24, H - 30, fpsShown.toString() + " FPS", 2, 0.16, 0.20, 0.24)
         let help = "HOLD A DIRECTION TO DIG    ESC QUITS"
-        text(c, W - 24 - textWidth(help, 2), H - 30, help, 2, 0.16, 0.20, 0.24)
+        text(&mut c, W - 24 - textWidth(help, 2), H - 30, help, 2, 0.16, 0.20, 0.24)
 
         var exposure = 1.0
         if m.flash > 0.0 {
             exposure = 1.0 + m.flash * 1.2
         }
-        present(c, 0.18, exposure)
+        present(&mut c, 0.18, exposure)
 
         unsafe {
             SDL_UpdateTexture(tex, 0 as *u8, c.fb[0].addrOf() as *u8, (W * 4) as i32)

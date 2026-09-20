@@ -35,7 +35,7 @@ pub fn main(): i32 {
     // every mission has been hung on the opportunity it actually has.
     var c = 0
     while c < MISSION_COUNT {
-        let _ = calibrateMission(bodies, missions[c], nowSeconds())
+        let _ = calibrateMission(bodies, &mut missions[c], nowSeconds())
         c = c + 1
     }
     var i = 0
