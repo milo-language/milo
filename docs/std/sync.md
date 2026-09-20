@@ -254,7 +254,9 @@ fn Channel.clone(self: &Channel): Channel<T>
 ```
 
 Share this channel with another owner (a spawned producer/consumer). Each clone
-must be dropped exactly once; the queue is torn down when the last owner drops.
+must be dropped exactly once; the queue is torn down when the last owner drops,
+and any payload still queued at that point is destroyed (its `Drop` runs once).
+Values already received are the receiver's and are not touched.
 send/recv take &Self, so a handle only needs cloning when moved into a task while
 the parent still uses it.
 

@@ -1,0 +1,47 @@
+// promiseRace losers: their results are sent into channels that nobody receives from,
+// and those channels drop with the losing Promises when the race task returns. The
+// undelivered payloads must be destroyed then (soundness sweep H6: they used to leak
+// with the freed ring buffer). The winner is delivered and dropped once by the caller.
+
+from "std/runtime" import {
+    Promise, promiseRace
+}
+
+// @expect: winner ok
+// @expect: made 3 gone 3
+
+var made: i64 = 0
+var gone: i64 = 0
+
+struct Res {
+    id: i64,
+    tag: string,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        gone = gone + 1
+    }
+}
+
+fn mk(n: i64): Res {
+    made = made + 1
+    return Res {
+        id: n, tag: "r".repeat(8 + n)
+    }
+}
+
+pub fn main(): i32 {
+    if true {
+        var ps: Vec<Promise<Res>> = Vec.new()
+        ps.push(Promise<Res>.run(move(): Res => mk(1)))
+        ps.push(Promise<Res>.run(move(): Res => mk(2)))
+        ps.push(Promise<Res>.run(move(): Res => mk(3)))
+        let first = promiseRace(ps).await()!
+        if first.id >= 1 && first.id <= 3 {
+            print("winner ok")
+        }
+    }
+    print("made " + made.toString() + " gone " + gone.toString())
+    return 0
+}

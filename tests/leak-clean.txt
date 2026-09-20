@@ -84,6 +84,7 @@ castFloatSaturate
 channelBasic
 channelCloseGreen
 channelCrossThreadPark
+channelDropsUndelivered
 channelGreenPark
 channelIterator
 channelMainDrivesScheduler
@@ -431,6 +432,7 @@ promiseBlockingAll
 promiseCaptureDropOrder
 promiseConstructor
 promiseRace
+promiseRaceLosersDropped
 propagateGenericRet
 propagateOption
 propagateSome
