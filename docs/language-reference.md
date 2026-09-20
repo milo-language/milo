@@ -749,6 +749,36 @@ encode and no hidden state between calls, which is exactly the shape `milo prove
 about best. See [docs/effects-and-capabilities.md](effects-and-capabilities.md) for the
 wider design — what is shipped, and what capability-passing would add.
 
+### Must-use results — `@mustUse`
+
+Discarding an `Option` or `Result` is the `unused-result` warning, always, with no
+annotation: the type says the value may carry a failure. A `bool` or an integer that
+encodes failure says nothing of the kind, so `arenaFree(a, h)` returning `false` on a
+stale handle could be dropped on the floor in silence. `@mustUse` on the declaration
+gives such a routine the same rule:
+
+```milo
+@mustUse
+fn tryLock(m: &mut Mutex): bool { ... }
+
+tryLock(m)              // warning: unused result of '@mustUse' function 'tryLock'
+let _ = tryLock(m)      // discarded on purpose, silent
+if !tryLock(m) { ... }  // used
+```
+
+It works on free functions, on methods in an `impl`, on generic functions (every
+instantiation inherits it), and on an `extern`, where a C routine returning an error
+code is the main use. It takes no arguments. `std/arena`'s `arenaFree`, `arenaSet`,
+`arenaModify`, `arenaModifyMut`, `arenaRead`, `arenaValid` and `frozenHolds` carry it.
+
+The warning is `unused-result`, the same name the `Option`/`Result` rule uses, so one
+`--deny=unused-result` or `--allow=unused-result` governs both. A statement never
+reports twice: a `@mustUse` function that returns an `Option` is reported once, for the
+`Option`. Under the DO-178C and NASA safety profiles (`milo safety --safety=do178c-a`
+and the rest of `do178c-*`, `nasa-a`, `nasa-b`) every discarded result is an error, the
+way those profiles make contracts mandatory; the ISO 26262 and IEC 61508 profiles leave
+it a warning.
+
 ---
 
 ## Strings
