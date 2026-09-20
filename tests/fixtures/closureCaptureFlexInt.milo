@@ -1,0 +1,21 @@
+// An unannotated `let n = 2` is width-adaptable until its first read. When that
+// first read is inside a closure body against an i32, the binding narrows to i32
+// and the closure's environment slot must follow it (backlog #44: it stayed i64
+// and LLVM's verifier rejected the add).
+fn main() {
+    let n = 2
+    let f = (x: i32) => x + n
+    print(f(1))
+
+    let m = 5
+    let g = move(x: i32) => x * m
+    print(g(3))
+
+    // Widening still works from inside a closure too.
+    let k = 7
+    let h = (x: i64) => x + k
+    print(h(1))
+}
+// @expect: 3
+// @expect: 15
+// @expect: 8

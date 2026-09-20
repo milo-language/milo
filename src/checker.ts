@@ -9659,6 +9659,11 @@ export class TypeChecker {
       for (let i = this.scopes.length - 1; i >= 0; i--) {
         const info = this.scopes[i].get(cap.name);
         if (info) {
+          // The capture was recorded (in lookup) at the binding's FIRST read inside the
+          // body, before that read could resolve a flexInt binding: `let n = 2` is i64
+          // until `x + n` against an i32 narrows it. Re-read the type now so the env
+          // slot matches the width every use in the body was checked against.
+          cap.type = info.type;
           // A closure env is storage, and references are second-class. Capturing a
           // view outlived its source once the closure escaped the frame that owned
           // the Vec — `let s = v[0..2]; return move () => s[0]` read freed memory.

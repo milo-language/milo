@@ -4,7 +4,7 @@
 
 **Learn more at [milo-language.github.io/milo](https://milo-language.github.io/milo/)** — docs, language tour, playground, and demos you can play in the browser.
 
-**The one rule.** `&T` and `&mut T` exist only as parameter types. A reference cannot be returned, stored, or captured past its call. Everything below follows from that.
+**The one rule.** `&T` and `&mut T` exist only as parameter types. A reference cannot be returned, stored, or captured past its call. Every value is on the stack or explicitly heap-allocated (`Vec`, `Heap<T>`, `string`), with one owner and no hidden indirection. Everything below follows from that.
 
 **What you get:**  no lifetime annotations, local reasoning, single ownership settled inside one function, concurrency without `Send`/`Sync`, no GC, contracts with a prover.
 
