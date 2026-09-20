@@ -20,12 +20,6 @@ pub fn note(s: string): void {
     gLog = gLog + s + " "
 }
 
-// Borrow, don't consume: Task owns a refcounted join-cell now (impl Drop), so it
-// is non-Copy — a by-value param would move `child` and break the join below.
-pub fn taskPtr(t: &Task): *u8 {
-    return t._ptr
-}
-
 pub fn callAsyncLike(): void {
     let caller = schedulerCurrent()
     let child = Task.spawnWithStack(move(): void => {
@@ -38,7 +32,7 @@ pub fn callAsyncLike(): void {
     , 1048576)
     schedulerPark()
     note("caller-continues")
-    schedulerUnpark(taskPtr(child))
+    schedulerUnpark(child.raw())
     child.join()
 }
 

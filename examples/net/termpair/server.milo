@@ -264,9 +264,7 @@ pub fn handleTerminalWs(ws: WsConn): void {
     let tid = terminalId.clone()
     let sendFd = conn.fd
     Task.spawn(move(): void => {
-        var sendWs = WsConn {
-            fd: sendFd, ssl: 0, _ctx: 0, _closed: true, _isClient: false
-        }
+        var sendWs = WsConn.view(sendFd, 0, false)
         while true {
             let idx = findSession(tid)
             if idx < 0 {
@@ -362,9 +360,7 @@ pub fn handleBrowserWs(ws: WsConn, terminalId: string): void {
     let tid2 = terminalId.clone()
     let bcastFd = conn.fd
     Task.spawn(move(): void => {
-        var sendWs = WsConn {
-            fd: bcastFd, ssl: 0, _ctx: 0, _closed: true, _isClient: false
-        }
+        var sendWs = WsConn.view(bcastFd, 0, false)
         while true {
             let bidx = findSession(tid2)
             if bidx < 0 {

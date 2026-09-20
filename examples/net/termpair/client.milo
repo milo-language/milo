@@ -150,7 +150,14 @@ pub fn ptyOutputJson(raw: &string): string {
 
 // ── Main ──
 
-pub fn main(): i32 {
+pub fn connectWs(useTls: bool, ip: u32, port: u16, host: &string, path: &string): Result<WsConn, string> {
+    if useTls {
+        return wsConnectTls(ip, port, host, path)
+    }
+    return wsConnect(ip, port, path)
+}
+
+fn main(): i32 {
     // Don't die with SIGPIPE if the server/PTY closes mid-write; the I/O loops
     // already handle the resulting error and shut down cleanly.
     ignoreSignal(SIGPIPE)
@@ -220,13 +227,8 @@ pub fn main(): i32 {
 
     // open PTY and spawn shell
     var shellArgs: Vec<string> = []
-    var pty: Pty = Pty {
-        masterFd: -1, slavePath: "", childPid: -1, _rows: 0 as u16, _cols: 0 as u16
-    }
-    match openAndSpawn(shell, shellArgs) {
-        Result.Ok(v) => {
-            pty = v
-        }
+    var pty: Pty = match openAndSpawn(shell, shellArgs) {
+        Result.Ok(v) => v
         Result.Err(e) => {
             print($"error: {e}")
             return 1
@@ -242,28 +244,11 @@ pub fn main(): i32 {
     pty.resize(ptyRows as u16, cols as u16)
 
     // connect to server
-    var ws: WsConn = WsConn {
-        fd: -1, ssl: 0, _ctx: 0, _closed: true, _isClient: true
-    }
-    if useTls {
-        match wsConnectTls(ip, port, host, connectPath) {
-            Result.Ok(v) => {
-                ws = v
-            }
-            Result.Err(e) => {
-                print($"error: could not connect to server: {e}")
-                return 1
-            }
-        }
-    } else {
-        match wsConnect(ip, port, connectPath) {
-            Result.Ok(v) => {
-                ws = v
-            }
-            Result.Err(e) => {
-                print($"error: could not connect to server: {e}")
-                return 1
-            }
+    var ws: WsConn = match connectWs(useTls, ip, port, host, connectPath) {
+        Result.Ok(v) => v
+        Result.Err(e) => {
+            print($"error: could not connect to server: {e}")
+            return 1
         }
     }
 
@@ -347,15 +332,9 @@ pub fn main(): i32 {
     let wsFd3 = ws.fd()
     let wsSsl1 = ws.tlsHandle()
     let wsSsl3 = ws.tlsHandle()
-    let done1 = AtomicBool {
-        _ptr: done._ptr
-    }
-    let done2 = AtomicBool {
-        _ptr: done._ptr
-    }
-    let done3 = AtomicBool {
-        _ptr: done._ptr
-    }
+    let done1 = done.clone()
+    let done2 = done.clone()
+    let done3 = done.clone()
 
     // per-thread key clones — no shared mutable crypto state (read-only, no rotation)
     let unixKeyA = unixKey.clone()
@@ -373,9 +352,7 @@ pub fn main(): i32 {
 
     // task 1: PTY output → WebSocket (terminal → server → browsers)
     Task.spawn(move(): void => {
-        var sendWs = WsConn {
-            fd: wsFd1, ssl: wsSsl1, _ctx: 0, _closed: true, _isClient: true
-        }
+        var sendWs = WsConn.view(wsFd1, wsSsl1, true)
         var buf: [u8; 4096] = [0; 4096]
         var msgCount: i64 = 0
         while !done1.load() {
@@ -452,9 +429,7 @@ pub fn main(): i32 {
 
     // task 3: WebSocket → control handling (browser joins, resize requests)
     Task.spawn(move(): void => {
-        var recvWs = WsConn {
-            fd: wsFd3, ssl: wsSsl3, _ctx: 0, _closed: true, _isClient: true
-        }
+        var recvWs = WsConn.view(wsFd3, wsSsl3, true)
         var bootstrapCount: i64 = 0
         var browserCount: i64 = 0
         while !done3.load() {

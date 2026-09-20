@@ -511,6 +511,12 @@ impl Task {
         }
     }
 
+    // The scheduler's pointer to this task, for `schedulerPark`/`schedulerUnpark`. Opaque:
+    // pass it back to std, never read through it.
+    fn raw(self: &Self): *u8 {
+        return self._ptr
+    }
+
     // Block until the spawned task finishes. Cooperative contract: call join
     // before the target can run (i.e. before yielding/driving the scheduler),
     // so the registration below always precedes completion. A green caller
