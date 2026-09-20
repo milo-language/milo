@@ -7555,6 +7555,8 @@ export class TypeChecker {
     if (expr.kind === "UnaryOp" && expr.op === "*") return `*${this.describeExpr(expr.operand)}`;
     if (expr.kind === "FieldAccess") return `${this.describeExpr(expr.object)}.${expr.field}`;
     if (expr.kind === "IndexAccess") return `${this.describeExpr(expr.object)}[...]`;
+    // `v[a..b]` parses as a `slice` call.
+    if (expr.kind === "MethodCall") return expr.method === "slice" ? `${this.describeExpr(expr.object)}[..]` : `${this.describeExpr(expr.object)}.${expr.method}(...)`;
     return "<expr>";
   }
 

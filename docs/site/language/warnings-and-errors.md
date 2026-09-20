@@ -152,6 +152,17 @@ var fb: [u32; 172800] = [0; 172800]   // warning: 'fb' is a 675 KiB stack alloca
                                        //   hint: use Vec<u32> for a heap buffer
 ```
 
+### implicit-mut-borrow
+
+A non-receiver argument bound to a `&mut` parameter without `&mut` written at the call. Off by default while the standard library and the corpus are migrated; opt in with `--deny=implicit-mut-borrow`, and `bun scripts/explicit-mut.ts <file>` rewrites a file from the checker's resolved signatures. Method receivers are exempt (`v.push(1)` stays as it is).
+
+```milo
+fn bump(p: &mut Point, by: i64): void { p.x = p.x + by }
+
+bump(p, 2)          // warning: argument 'p' is passed to a '&mut' parameter without '&mut'
+bump(&mut p, 2)     // correct — the mutation is visible at the call site
+```
+
 ## Configuring warnings
 
 Use `--deny` to turn a warning into a hard error, `--allow` to suppress it, or `--deny-all` to treat every warning as an error.
@@ -174,6 +185,7 @@ milo build app.milo --deny-all
 | `bare-embedfile` | warn | `embedFile(...)` written without its `@` sigil |
 | `unused-move` | allow | Owned param never moved — could be a borrow instead |
 | `large-stack-array` | allow | Local fixed array over `--max-stack-array` (default 512 KiB) — stack-overflow risk |
+| `implicit-mut-borrow` | allow | Argument bound to a `&mut` parameter without `&mut` at the call site |
 
 ## Error formatting
 
