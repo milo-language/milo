@@ -359,6 +359,21 @@ counterexample.
 
 ---
 
+## Lane F: design-pass follow-ups (after every lane above)
+
+Findings and evidence in `design-pass-2026-09.md`. Order:
+
+1. **WP13** (independent, running): F6 unused-locals gate, F7 dead exports, F10 weak
+   api-docs gate, F9 doc, F4 crypto facade dedup.
+2. **WP12** (checker, after WP4/WP9/WP11 merge): F1 one `isCopyType()` chokepoint with
+   required callbacks; F2 one `ProgramView` (`fns`, `calleeOf`, `rootOf`, `pretty`) built
+   once in `checkProgram` and a purity fixture for the late-resolved method case; F3
+   `retainsArg`/`grows` flags on `BUILTIN_MEMBERS`; the 8 checker.ts unused locals WP13
+   left.
+3. **F5** (after WP12): move the five thread/global passes (793 lines, 12 fields +
+   7 methods, 4 inbound edges) to `src/checker-program-passes.ts`.
+4. **WP7** docs last, so it documents the final state.
+
 ## Not in this sweep
 
 - **Formal core (Lean or otherwise).** Contracts speak about program values and
