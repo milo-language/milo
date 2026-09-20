@@ -132,3 +132,7 @@ examples/games/flight/cities/*.ortho.png
 examples/games/apsis/bodies/*.png
 # font.png is a hand-made bitmap font, not a fetched planet map — it stays.
 !examples/games/apsis/bodies/font.png
+
+a.out
+m.txt
+benchmarks/shard/shard_balance
