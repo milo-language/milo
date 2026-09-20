@@ -148,7 +148,7 @@ fn main(): void {
 }
 ```
 
-When you read `main`, you know `v` can only change inside `zero_negatives` because that is the only call that borrows it mutably. No other pointer to `v` exists. That is local reasoning: the call site tells you the full blast radius of a mutation, and the compiler enforces it.
+When you read `main`, you know `v` can only change inside `zeroNegatives` because that is the only call that borrows it mutably. No other pointer to `v` exists. That is local reasoning: the call site tells you the full blast radius of a mutation, and the compiler enforces it.
 
 </div>
 
