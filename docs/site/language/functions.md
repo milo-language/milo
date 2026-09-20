@@ -50,7 +50,7 @@ fn double(x: &mut i32) {
 }
 
 var n: i32 = 21
-double(n)          // n is now 42
+double(&mut n)          // n is now 42
 ```
 
 Milo auto-borrows at call sites — you write `double(n)` not `double(&n)`.

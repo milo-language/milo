@@ -768,9 +768,9 @@ fn tryAcquire(l: &mut Latch): bool {
 }
 
 var l = Latch { held: false }
-tryAcquire(l)                      // warning: unused result of '@mustUse' function 'tryAcquire'
-let _ = tryAcquire(l)              // discarded on purpose, silent
-if !tryAcquire(l) { print("busy") }  // used
+tryAcquire(&mut l)                      // warning: unused result of '@mustUse' function 'tryAcquire'
+let _ = tryAcquire(&mut l)              // discarded on purpose, silent
+if !tryAcquire(&mut l) { print("busy") }  // used
 ```
 
 It works on free functions, on methods in an `impl`, on generic functions (every
@@ -1562,7 +1562,7 @@ fn recordLookup(st: &mut State, keys: &Vec<string>): bool {
 
 var st = State { keys: ["a"], log: [] }
 // recordLookup(st, st.keys) is rejected — st is borrowed mutably and shared
-let found = recordLookup(st, st.keys.clone())   // ok — the callee gets its own copy
+let found = recordLookup(&mut st, st.keys.clone())   // ok — the callee gets its own copy
 ```
 
 `clone()` is unavailable on `Vec<SomeInterface>` (the concrete type is erased and the itable carries no clone slot) and on Vec of closures.
@@ -1791,9 +1791,9 @@ from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaMo
 struct GNode { id: i32, edges: Vec<Handle<GNode>> }   // handles stored freely — Copy
 
 var g = arenaNew<GNode>()
-let a = arenaAlloc(g, GNode { id: 0, edges: Vec.new() })
-let b = arenaAlloc(g, GNode { id: 1, edges: Vec.new() })
-arenaModifyMut(g, a, (n: &mut GNode) => { n.edges.push(b) })   // a -> b, no borrow stored
+let a = arenaAlloc(&mut g, GNode { id: 0, edges: Vec.new() })
+let b = arenaAlloc(&mut g, GNode { id: 1, edges: Vec.new() })
+arenaModifyMut(&mut g, a, (n: &mut GNode) => { n.edges.push(b) })   // a -> b, no borrow stored
 ```
 
 Slices (`v[a..b]`), `Heap<T>`, and `std/arena` together cover the cases Rust uses lifetimes for. The one thing none of them express is a type that *stores a borrow* (`struct Parser<'a> { src: &'a str }`) — own the data or hold an index instead. See [ownership-model.md](ownership-model.md) for the full Rust→Milo mapping.
@@ -3657,7 +3657,7 @@ from "std/time" import { now, since }
 
 fn timing(ctx: &mut Context, next: (&mut Context) => Response): Response {
     let start = now()
-    let resp = next(ctx)
+    let resp = next(&mut ctx)
     let ms = since(start).toMillis()
     ctx.setHeader("X-Response-Time", ms.toString() + "ms")
     return resp
@@ -3715,11 +3715,11 @@ fn parseObject(s: &string, pos: &mut i64): Heap<JsonValue> { return Heap(JsonVal
 fn parseArray(s: &string, pos: &mut i64): Heap<JsonValue> { return Heap(JsonValue.Null) }
 
 fn parseValue(s: &string, pos: &mut i64): Heap<JsonValue> {
-    skipWs(s, pos)
+    skipWs(s, &mut pos)
     let ch = s[pos]
-    if ch == '"' { return parseString(s, pos) }
-    if ch == '{' { return parseObject(s, pos) }
-    if ch == '[' { return parseArray(s, pos) }
+    if ch == '"' { return parseString(s, &mut pos) }
+    if ch == '{' { return parseObject(s, &mut pos) }
+    if ch == '[' { return parseArray(s, &mut pos) }
     return Heap(JsonValue.Null)  // ... numbers, bools, null
 }
 ```
@@ -4312,7 +4312,7 @@ fn main(): i32 {
                 // sockaddr_storage-sized — a v6 peer does not fit a 16-byte sockaddr_in
                 var clientAddr = makeZeroedSockaddrStorage()
                 var addrlen: u32 = sockAddrStorageLen()
-                let clientFd = accept(serverFd, clientAddr, addrlen)
+                let clientFd = accept(serverFd, &mut clientAddr, &mut addrlen)
                 if clientFd < 0 {
                     if getErrno() == eagain() {
                         schedulerWaitRead(serverFd)

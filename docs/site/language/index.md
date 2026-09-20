@@ -258,7 +258,7 @@ fn double(x: &mut i32) {
 
 fn main(): i32 {
     var n: i32 = 21
-    double(n)            // n is now 42
+    double(&mut n)            // n is now 42
     print(n)
     return 0
 }
@@ -417,8 +417,8 @@ from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet }
 
 fn main(): i32 {
     var nodes: Arena<i32> = arenaNew()
-    let a = arenaAlloc(nodes, 10)   // Handle<i32> — copyable, safe
-    let b = arenaAlloc(nodes, 20)
+    let a = arenaAlloc(&mut nodes, 10)   // Handle<i32> — copyable, safe
+    let b = arenaAlloc(&mut nodes, 20)
     print(arenaGet(nodes, a))       // 10
     return 0
 }

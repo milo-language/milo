@@ -65,9 +65,9 @@ Writes append and cannot fail, so they return `void`:
 
 ```milo
 var out = ""
-Bytes.writeU32Be(out, body.len as u32)   // body.len is i64 — the cast is required
-Bytes.writeI16Le(out, -40)               // a literal adopts the parameter's type
-Bytes.writeF64Le(out, 1.5)
+Bytes.writeU32Be(&mut out, body.len as u32)   // body.len is i64 — the cast is required
+Bytes.writeI16Le(&mut out, -40)               // a literal adopts the parameter's type
+Bytes.writeF64Le(&mut out, 1.5)
 ```
 
 A literal needs no cast: it takes the width from the parameter it is passed to. A
