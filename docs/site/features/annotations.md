@@ -3,7 +3,7 @@ system: annotations
 purpose: the `@` surface — every compile-time builtin and declaration attribute the compiler understands
 key-files: src/parser.ts, src/checker.ts (validateAttributes), src/lower.ts (embedFile/targetOs), src/codegen.ts (cSigGuard)
 update-when: an `@` construct is added, removed, or changes what it accepts
-last-verified: 2026-08-02
+last-verified: 2026-09-19
 -->
 
 # Annotations and Compiler Builtins
@@ -25,6 +25,7 @@ list, and `tests/langInfo.test.ts` fails if this table omits an attribute it rep
 | `@cValue(cName, header)` | global `let` | Verifies an integer constant against a C macro |
 | `@cOpaque` | struct field | Marks filler with no C counterpart, so `@cLayout` skips it |
 | `@noCopy` | struct | Opts a struct out of the all-fields-Copy rule, so move checking engages for a type that wraps a handle |
+| `@copyOnly`, `@copyOnly(T)` | struct, `fn` | Restricts a generic's type parameters to Copy types, so a container that moves elements through a raw pointer cannot be instantiated with a heap-owning `T` |
 | `@wrapping` | `fn`, method | Arithmetic inside wraps instead of trapping, for inherently modular code; `@!wrapping` applies it to a whole file |
 | `@pure` | `fn`, method | Asserts the function reads no global or module state; the checker enforces it |
 | `@thread` | `fn`, method | Declares that this function hands a closure to a real OS thread, so the checker holds its captures to `Send` |

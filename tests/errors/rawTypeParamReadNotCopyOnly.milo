@@ -1,0 +1,29 @@
+// @error: reading 'T' by value through a raw pointer copies it bitwise; 'T' may own memory
+// The shape that `Shard<string>` freed a block twice through, kept from recurring by
+// omission: a generic body is only ever checked as an instance, and the unsound
+// instance is the one nobody wrote a fixture for. So the TEMPLATE is scanned: an rvalue
+// read of `self.base[i]` where `base: *T` and `T` is a type parameter of a generic that
+// is not `@copyOnly` is refused here, whatever `T` the program goes on to use. Writes,
+// borrows (`self.base[i].len`) and memcpy-style moves are not this rule's business.
+struct Window<T> {
+    base: *T,
+    len: i64,
+}
+
+impl Window<T> {
+    fn get(self: &Self, i: i64): T {
+        unsafe {
+            return self.base[i]
+        }
+    }
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    v.push(4)
+    let w: Window<i64> = Window {
+        base: v.ptr(), len: v.len
+    }
+    print(w.get(0))
+    return 0
+}

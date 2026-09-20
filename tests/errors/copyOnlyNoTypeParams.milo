@@ -1,0 +1,16 @@
+// @error: '@copyOnly' on 'Plain': it has no type parameters to constrain
+// The attribute restricts what a generic's type parameters may be instantiated with.
+// On a concrete type it would be a claim about nothing, and an annotation that does no
+// work is the silent-failure class the attribute registry exists to close.
+@copyOnly
+struct Plain {
+    n: i64,
+}
+
+pub fn main(): i32 {
+    let p = Plain {
+        n: 1
+    }
+    print(p.n)
+    return 0
+}

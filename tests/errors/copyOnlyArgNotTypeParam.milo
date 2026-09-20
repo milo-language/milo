@@ -1,0 +1,16 @@
+// @error: '@copyOnly(U)' on 'pick': 'U' is not one of its type parameters
+// `@copyOnly(T)` names the parameters it constrains, for a generic like
+// `parallelMapWith<T, S>` whose per-worker state S never crosses the raw pointer. A
+// name that is not a type parameter of the declaration constrains nothing, and an
+// annotation that does no work is exactly what the attribute registry exists to catch.
+@copyOnly(U)
+fn pick<T>(v: &Vec<T>, i: i64): i64 {
+    return i
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    print(pick(v, 0))
+    return 0
+}

@@ -695,8 +695,9 @@ function checkRecursiveTypes(program: Program, violations: SafetyViolation[], le
 }
 
 // Generic AST walker: visits every expr (and optionally every stmt) reachable
-// from a statement list. Used by the float check and call-graph extraction.
-function walkExprs(stmts: Stmt[], onExpr: (e: Expr) => void, onStmt?: (s: Stmt) => void) {
+// from a statement list. Used by the float check and call-graph extraction, and by the
+// checker's scan of generic templates for raw-pointer element reads.
+export function walkExprs(stmts: Stmt[], onExpr: (e: Expr) => void, onStmt?: (s: Stmt) => void) {
   const ex = (e: Expr | null | undefined) => {
     if (!e) return;
     onExpr(e);

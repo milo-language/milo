@@ -1,0 +1,19 @@
+// @error: 'Cells<Vec<i64>>' is not allowed: 'Cells' is @copyOnly and 'Vec<i64>' is not a Copy type (it owns heap memory)
+// The diagnostic names the type the user WROTE. Monomorphization calls this instance
+// `Cells_Vec_i64`, and that spelling used to leak into messages (backlog Tier 1 #33);
+// nobody typed it, so nobody should have to read it. A nested generic is rejected on
+// the same rule: `Vec<i64>` owns heap memory, so it is not Copy. The struct's body is
+// beside the point; the attribute is a promise about how T is handled, not a scan.
+@copyOnly
+struct Cells<T> {
+    first: T,
+    len: i64,
+}
+
+pub fn main(): i32 {
+    let c: Cells<Vec<i64>> = Cells {
+        first: Vec.new(), len: 0
+    }
+    print(c.len)
+    return 0
+}

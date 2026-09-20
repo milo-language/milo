@@ -40,6 +40,17 @@ export const ATTRIBUTES: AttrInfo[] = [
       "when the release is NOT a Drop impl, since Drop already forces non-Copy.",
   },
   {
+    name: "copyOnly",
+    targets: ["struct", "fn"],
+    takesArgs: true,
+    doc:
+      "A generic whose type parameters may only be instantiated with Copy types. The dual " +
+      "of @noCopy: a container that moves elements through a raw pointer (std/shard's " +
+      "`Shard<T>.get` returns `self.base[i]` bitwise) would hand out a second owner of a " +
+      "heap-owning `T`, so `Shard<string>` is rejected at the instantiation, not at runtime. " +
+      "Bare, it constrains every type parameter; `@copyOnly(T)` names the ones it applies to.",
+  },
+  {
     name: "cLayout",
     targets: ["struct"],
     takesArgs: true,

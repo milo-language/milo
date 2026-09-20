@@ -1,0 +1,24 @@
+// @error: 'Shards<string>' is not allowed: 'Shards' is @copyOnly and 'string' is not a Copy type (it owns heap memory)
+// `Shard.get` reads `self.base[i]` through a raw pointer: a bitwise copy of the
+// element. For a `string` that is a second owner of one heap block, and this program
+// (the 2026-09 soundness sweep's hole 1) freed it twice: once when `a` went out of
+// scope and again when the welded Vec was dropped, a malloc abort at HEAD. The element
+// type is decided where `shatter` is called, so that is where it is refused.
+from "std/shard" import {
+    Shard, Shards, shatter
+}
+
+pub fn main(): i32 {
+    var data: Vec<string> = Vec.new()
+    data.push("y".repeat(100))
+    var owner = shatter(data, 1)
+    var ws = owner.windows()
+    let w = ws.pop()!
+    var a = w.get(0)
+    a = a + "tail"
+    var back: Vec<Shard<string>> = Vec.new()
+    back.push(w)
+    let v = owner.weld(back)!
+    print(v[0].len)
+    return 0
+}

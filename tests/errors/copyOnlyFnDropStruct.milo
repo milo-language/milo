@@ -1,0 +1,32 @@
+// @error: 'parallelMap<Conn>' is not allowed: 'parallelMap' is @copyOnly and 'Conn' is not a Copy type (it implements Drop)
+// `@copyOnly` on a generic FN is checked at the call, with the type argument the call
+// inferred. A struct with a Drop impl is move-tracked however plain its fields are, so a
+// window over a Vec<Conn> would hand `get`'s caller a second owner of every descriptor.
+from "std/shard" import {
+    Shard, parallelMap
+}
+
+struct Conn {
+    fd: i32,
+}
+
+impl Drop for Conn {
+    fn drop(self: &mut Self) {
+        print(self.fd)
+    }
+}
+
+fn keep(w: Shard<Conn>): Shard<Conn> {
+    return w
+}
+
+pub fn main(): i32 {
+    var conns: Vec<Conn> = Vec.new()
+    conns.push(Conn {
+        fd: 3
+    }
+    )
+    let back = parallelMap(conns, 1, keep)!
+    print(back.len)
+    return 0
+}

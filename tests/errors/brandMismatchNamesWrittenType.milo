@@ -1,0 +1,27 @@
+// @error: argument 1 of 'loadUser': expected Id<UserTag>, got Id<OrderTag>
+// A phantom brand exists so that this line is rejected, which makes this the error a
+// reader meets exactly when they are doing the right thing. It used to be spelled
+// `expected Id_UserTag, got Id_OrderTag`: the monomorphized instance name, which is an
+// implementation detail nobody wrote (backlog Tier 1 #33). Diagnostics format a type
+// back to the source spelling; the mangled name stays internal to lookups.
+struct UserTag {
+}
+
+struct OrderTag {
+}
+
+struct Id<Tag> {
+    n: i64,
+}
+
+fn loadUser(id: Id<UserTag>): i64 {
+    return id.n
+}
+
+pub fn main(): i32 {
+    let orderId: Id<OrderTag> = Id {
+        n: 7
+    }
+    print(loadUser(orderId))
+    return 0
+}
