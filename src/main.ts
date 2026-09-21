@@ -1135,6 +1135,9 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
 
   try {
     writeFileSync(tmpLl, ir);
+    // Dev hook: keep a copy of the whole-program IR for inspection (objdump shows
+    // what clang made of it, not what we handed clang).
+    if (process.env.MILO_KEEP_LL) writeFileSync(process.env.MILO_KEEP_LL, ir);
     if (target.arch === "wasm64") {
       // Also bareMetal (freestanding), but a different freestanding runtime/linker
       // path than ARM Cortex-M — see linkWasm's comment and target.ts's bareMetal
