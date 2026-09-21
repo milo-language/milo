@@ -593,18 +593,23 @@ fn strIsEmpty(s: &string): bool {
 
 // The character that starts at byte `idx`, as a string of one to four bytes. `idx`
 // is a byte offset, so `"aéb".charAt(1)` is "é" and `.charAt(2)`, the middle of the
-// é, aborts through substr's boundary check rather than answering half a character.
-// Requires 0 <= idx < s.len.
+// é, aborts rather than answering half a character. An `if` and not an `assert`:
+// contracts compile out at -O2 and this must hold in every build. Requires
+// 0 <= idx < s.len. Bytes that are not text go through `s[idx]`, which is a byte.
 fn strCharAt(s: &string, idx: i64): string
 requires idx >= 0 && idx < s.len
 {
+    if (s[idx] & 192) == 128 {
+        eprint("milo: charAt(", idx, ") lands inside a multibyte UTF-8 character; charAt takes a byte offset, iterate with codePoints() for characters")
+        exit(1)
+    }
     return s.substr(idx, idx + _utf8Width(s[idx]))
 }
 
 // Byte length of the UTF-8 sequence that `lead` begins: 1 for ASCII, 2-4 by the
 // lead byte's high bits. A continuation byte (10xxxxxx) has no width of its own and
-// is reported as 1 so a caller that lands on one gets substr's boundary abort, not
-// an over-long read.
+// is reported as 1 so a caller that lands on one reads a single byte, never past
+// the character.
 fn _utf8Width(lead: u8): i64 {
     if lead < 128 {
         return 1

@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-21 (struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-21 (charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -919,6 +919,33 @@ s.repeat(3)             // "Hello, World!Hello, World!Hello, World!"
 "3.14".parseF64()       // Option<f64> — Some(3.14); "abc" is None
 s.substr(0, 5)          // "Hello" (owned copy)
 ```
+
+#### Bytes and characters
+
+A `string` is a byte buffer, and std keeps ciphertext, digests and PNG bytes in one, so
+the primitives are byte operations and binary-safe: `len`, `s[i]`, `substr`, `slice`,
+`indexOf` and everything that takes or returns an offset counts bytes. A `substr` bound
+inside a multibyte character copies the bytes it was asked for, exactly as it would in
+a digest. The operations whose names promise characters answer in characters:
+
+| operation | unit |
+|---|---|
+| `len`, `s[i]`, `substr`, `slice`, `indexOf`, `split`, `trim`, `contains` | bytes |
+| `charAt(i)` | the whole character that starts at byte `i`; aborts on a continuation byte |
+| `codePoints()`, `reverse()` | characters |
+| `padStart(n, p)`, `padEnd(n, p)` | `n` counts characters, `p` is cycled by character |
+| `toUpper()`, `toLower()`, `splitWords()` | ASCII letters only; `"aéb".toUpper()` is `"AéB"` |
+
+```milo
+let s = "aéb"
+print(s.charAt(1))               // é (two bytes)
+print("café".padStart(6, "*"))   // **café: four characters padded to six
+for c in s.codePoints() { print(c) }   // 97, 233, 98
+```
+
+To walk a string by character, iterate `codePoints()`; to find a character's byte
+offset, `indexOf` its spelling. Real case mapping and classification beyond ASCII need
+a generated table and are not in std.
 
 #### Iterating views — `lines()` and `splitView()`
 
