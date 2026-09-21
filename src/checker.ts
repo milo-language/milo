@@ -9779,6 +9779,13 @@ export class TypeChecker {
     if (!toOk) {
       this.error(`cannot cast to ${this.show(toType)}`, sp);
     }
+    // An array, string, closure or C fn casts to a POINTER (its data, its code); to an
+    // integer it has no meaning, and codegen emitted `add [16 x i8]` for `arr as i64`
+    // and clang rejected the module far from the line that wrote it.
+    if ((fromType.tag === "array" || fromType.tag === "string" || fromType.tag === "fn" || fromType.tag === "cfn") && toType.tag !== "ptr" && toType.tag !== "cfn") {
+      this.error(`cannot cast ${this.show(fromType)} to ${this.show(toType)}: only to a pointer`, sp,
+        `cast to '*u8' first, then to an integer: '(x as *u8) as i64'`);
+    }
     const isNullPtrConst = toType.tag === "ptr" && expr.operand.kind === "IntLit" && expr.operand.value === 0n;
     if (toType.tag === "ptr" && !isNullPtrConst) {
       this.requireUnsafe(`cast to pointer type requires 'unsafe' block`, sp);

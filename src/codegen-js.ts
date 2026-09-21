@@ -596,9 +596,17 @@ export class CodegenJS {
           this.emit(`${first ? "" : "} else "}if (${tmp}.tag === ${p.tag}) {`);
           this.indent++;
           for (let i = 0; i < p.bindings.length; i++) {
-            if (p.bindings[i].name !== "_") {
-              this.emit(`const ${p.bindings[i].name} = ${tmp}.data[${i}];`);
+            const b = p.bindings[i]!;
+            if (b.name === "_") continue;
+            // Through a `&mut` subject a primitive payload binds as a box over its slot
+            // (the checker types it `&mut T`, and reads/writes go through `.v`); an
+            // object payload is mutated where it sits, so the value itself will do.
+            if (stmt.subjectIsMut && this.needsBox(b.type)) {
+              this.boxed.add(b.name);
+              this.emit(`const ${b.name} = {get v() { return ${tmp}.data[${i}]; }, set v(_x) { ${tmp}.data[${i}] = _x; }};`);
+              continue;
             }
+            this.emit(`const ${b.name} = ${tmp}.data[${i}];`);
           }
           this.indent--;
         }

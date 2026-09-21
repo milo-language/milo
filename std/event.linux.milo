@@ -98,7 +98,7 @@ pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
         var ev: [u8; 16] = [0; 16]
         let pEvents = ev as *u32
         pEvents[0] = epollIn()
-        let pData = ((ev as i64) + epollDataOffset()) as *i32
+        let pData = (((ev as *u8) as i64) + epollDataOffset()) as *i32
         pData[0] = fd
         return epoll_ctl(el.epfd, epollCtlAdd(), fd, ev as *u8)
     }
@@ -109,7 +109,7 @@ pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
         var ev: [u8; 16] = [0; 16]
         let pEvents = ev as *u32
         pEvents[0] = epollOut()
-        let pData = ((ev as i64) + epollDataOffset()) as *i32
+        let pData = (((ev as *u8) as i64) + epollDataOffset()) as *i32
         pData[0] = fd
         return epoll_ctl(el.epfd, epollCtlAdd(), fd, ev as *u8)
     }

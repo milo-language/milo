@@ -1,0 +1,9 @@
+// A fixed array casts to a pointer, never straight to an integer: codegen emitted
+// `add [16 x i8]` for the arithmetic that followed and clang rejected the module.
+// @error: cannot cast [u8; 4] to i64: only to a pointer
+fn main(): i32 {
+    var a: [u8; 4] = [0; 4]
+    let n = (a as i64) + 1
+    print(n)
+    return 0
+}
