@@ -1,0 +1,25 @@
+// `todo()` is a body that is not written yet: it type-checks as diverging, so a
+// signature with contracts compiles before its implementation exists, and it aborts
+// naming the function if it ever runs. Only the written path runs here.
+fn label(n: i64): string {
+    if n > 0 {
+        return "pos"
+    }
+    todo("negatives")
+}
+
+fn area(w: i64, h: i64): i64
+requires w >= 0 && h >= 0
+ensures result >= 0
+{
+    todo()
+}
+
+fn main(): i32 {
+    print(label(1))
+    if false {
+        print(area(1, 1))
+    }
+    return 0
+}
+// @expect: pos

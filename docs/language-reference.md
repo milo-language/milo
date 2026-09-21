@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-21 (HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-21 (todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -424,6 +424,7 @@ let s = identity("hello")  // T inferred as string
 |----------|-------------|
 | `print(fmt, ...)` | Print formatted text with trailing newline |
 | `exit(code)` | Exit the process |
+| `todo()` / `todo(msg)` | A body not written yet: counts as returning on every path, aborts naming the function if it runs (see [Skeletons with todo](#skeletons-with-todo)) |
 | `replace(place, value)` | Store `value` into a mutable `place`, returning its old contents. Move-in/move-out — needs no `clone`, works on non-copyable types |
 | `swap(a, b)` | Exchange two mutable places of the same type. Move-only, no `clone` |
 | `forget(x)` | Consume `x` WITHOUT running its drop. For seams where ownership leaves through a raw pointer the checker cannot see — the alternative there is a double free or a leak. Memory-safe (leaking is safe), so it needs no `unsafe`; it is merely usually wrong |
@@ -3630,6 +3631,32 @@ warning: 'embedFile' is a compile-time builtin — write '@embedFile(...)'
 
 Silence it with `--allow=bare-embedfile`, or make it fatal with
 `--deny=bare-embedfile`.
+
+### Skeletons with todo
+
+`todo()` stands in for a body that is not written yet. The checker treats it as
+returning on every path, so a function with only its signature, doc comment and
+contracts type-checks, and a program made of such skeletons builds and links. If a
+`todo()` ever runs it aborts, naming the function and the site, with the optional
+message after it:
+
+```milo
+fn area(w: i64, h: i64): i64
+requires w >= 0 && h >= 0
+ensures result >= 0
+{
+    todo()
+}
+
+fn label(n: i64): string {
+    if n > 0 { return "pos" }
+    todo("negatives")
+}
+```
+
+`milo prove` does not take a `todo` body's `ensures` on trust: a caller's proof that
+rests on it is reported as conditional, as with any postcondition the run could not
+establish.
 
 ### Compile-Time Target OS
 

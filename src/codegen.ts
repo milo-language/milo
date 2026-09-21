@@ -279,7 +279,7 @@ export class Codegen {
     _atomicSwapBool: { kind: "rmw", rmwOp: "xchg", ty: "i8", align: 1, isBool: true },
     _atomicCasBool: { kind: "cas", ty: "i8", align: 1, isBool: true },
   };
-  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid", ...Object.keys(Codegen.ATOMIC_INTRINSICS), "_schedulerGet", "_schedulerSet"]);
+  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid", ...Object.keys(Codegen.ATOMIC_INTRINSICS), "_schedulerGet", "_schedulerSet"]);
   private usesSchedulerGlobal = false;
   private currentFnName = "";
   // Set for the duration of a `@wrapping` function: + - * -x, div INT_MIN/-1 and over-shifts
@@ -4592,6 +4592,29 @@ export class Codegen {
       const [al, av] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
       lines.push(`  call void @exit(i32 ${av})`);
+      return [lines, "void", "void"];
+    }
+    if (expr.func === "todo") {
+      // A body that is not written yet: say which function and where, then abort.
+      this.needsDprintf = true;
+      this.needsExit = true;
+      const at = this.panicAt(expr.span);
+      const who = this.currentFnName.slice(this.currentFnName.lastIndexOf("$") + 1);
+      if (expr.args.length === 1) {
+        const [ml, msgVal] = this.genExpr(expr.args[0].expr);
+        lines.push(...ml);
+        const msgPtr = this.nextTemp();
+        lines.push(`  ${msgPtr} = extractvalue %String ${msgVal}, 0`);
+        const fmtStr = this.addString(`todo: '${who}' is not implemented (${at}): %s\n`);
+        this.emitFdPrintf(lines, 2, fmtStr.label, `, ptr ${msgPtr}`);
+      } else {
+        const fmtStr = this.addString(`todo: '${who}' is not implemented (${at})\n`);
+        this.emitFdPrintf(lines, 2, fmtStr.label, "");
+      }
+      this.panicAbort(lines);
+      lines.push(`  unreachable`);
+      // The block after an abort still needs a label for whatever follows in the IR.
+      lines.push(`${this.nextLabel("todo.after")}:`);
       return [lines, "void", "void"];
     }
     if (expr.func === "assert") {

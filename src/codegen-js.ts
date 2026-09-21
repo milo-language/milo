@@ -1211,6 +1211,8 @@ export class CodegenJS {
         return `(() => { throw new Error("exit: " + ${args[0]}); })()`;
       case "assert":
         return `__assert(${args[0]}, ${args[1] ?? '""'})`;
+      case "todo":
+        return `__trap("todo: not implemented" + (${args[0] ?? '""'} ? ": " + ${args[0] ?? '""'} : ""))`;
       case "max":
         return `Math.max(${args.join(", ")})`;
       case "min":

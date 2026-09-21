@@ -2838,6 +2838,11 @@ export class TypeChecker {
     this.functions.set("_loadI32", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "int", bits: 32, signed: true }, variadic: false });
     this.functions.set("_callClosureVoid", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "fn" }, { type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "env" }], ret: { tag: "void" }, variadic: false });
     this.functions.set("assert", { params: [{ type: { tag: "bool" }, name: "cond" }], ret: { tag: "void" }, variadic: true });
+    // `todo()` / `todo("why")`: a body that is not written yet. Aborts at runtime naming
+    // the function and site, and counts as diverging, so a skeleton of signatures and
+    // contracts type-checks (and proves, where the contracts allow) before any body
+    // exists. Variadic so the message is optional.
+    this.functions.set("todo", { params: [], ret: { tag: "void" }, variadic: true });
     this.functions.set("max", { params: [{ type: i32t, name: "a" }, { type: i32t, name: "b" }], ret: i32t, variadic: false });
     this.functions.set("min", { params: [{ type: i32t, name: "a" }, { type: i32t, name: "b" }], ret: i32t, variadic: false });
     // Atomic intrinsics — ptr arg is *u8, codegen emits LLVM atomic instructions
@@ -6685,6 +6690,10 @@ export class TypeChecker {
     for (const s of body) {
       switch (s.kind) {
         case "Return": case "BreakStmt": case "ContinueStmt": return true;
+        case "ExprStmt":
+          // `todo()` aborts, so a body that is only a todo returns on every path.
+          if (s.expr.kind === "Call" && s.expr.func === "todo") return true;
+          break;
         case "IfStmt": case "IfLetStmt":
           if (s.elseBody && this.bodyNeverFallsOff(s.thenBody) && this.bodyNeverFallsOff(s.elseBody)) return true;
           break;
@@ -9032,6 +9041,14 @@ export class TypeChecker {
         return this.setType(expr, runSig.ret);
       }
       this.error(`undefined function '${expr.func}'`, sp); return this.setType(expr, { tag: "unknown" });
+    }
+    if (expr.func === "todo") {
+      if (expr.args.length > 1) { this.error(`todo() takes at most one argument (a message), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
+      if (expr.args.length === 1) {
+        const msgType = this.checkExpr(expr.args[0]);
+        if (msgType.tag !== "string" && msgType.tag !== "unknown") this.error(`todo() message must be a string, got ${this.show(msgType)}`, sp);
+      }
+      return this.setType(expr, { tag: "void" });
     }
     if (expr.func === "assert") {
       if (expr.args.length < 1 || expr.args.length > 2) {
