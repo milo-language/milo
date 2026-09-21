@@ -43,6 +43,13 @@ export const JS_RUNTIME_HELPERS: string = [
   `function __irem(a, b) { if (b === 0) __trap('division by zero'); return a % b; }`,
   `function __idx(a, i) { if (!(i >= 0 && i < a.length)) __trap('array index out of bounds: ' + i + '/' + a.length); return a[i]; }`,
   `function __idxSet(a, i, v) { if (!(i >= 0 && i < a.length)) __trap('array index out of bounds: ' + i + '/' + a.length); a[i] = v; return v; }`,
+  // 64-bit `& | ^` on doubles: split into int32 halves (the low word via >>> 0, the high
+  // word by division, both correct for negatives), combine, and rebuild. Exact whenever
+  // the result fits a JS integer (53 bits). When it does not, keep the low word exact and
+  // let the high word lose its top bits: a rotate such as `(x << 30) | (x >> 2)` followed
+  // by `& 0xffffffff` (every 32-bit hash in std) reads only the low word, while nothing
+  // can read the true top bits of a 61-bit value from a double anyway.
+  `function __b64(a, b, op) { const ah = Math.floor(a / 4294967296) | 0, al = a >>> 0, bh = Math.floor(b / 4294967296) | 0, bl = b >>> 0; let h = op === '&' ? (ah & bh) : op === '|' ? (ah | bh) : (ah ^ bh); const l = (op === '&' ? (al & bl) : op === '|' ? (al | bl) : (al ^ bl)) >>> 0; if (h > 2097151 || h < -2097152) h = (h << 11) >> 11; return h * 4294967296 + l; }`,
   `function __sh(s, bits) { if (!(s >= 0 && s < bits)) __trap('shift amount out of range (>= ' + bits + ')'); return s; }`,
   `function __unwrap(o) { if (o.tag !== 0) __trap('unwrap called on ' + (o.data === undefined ? 'None' : 'Err')); return o.data[0]; }`,
   // Milo strings are UTF-8 byte buffers, so in JS they are held as one byte per
@@ -417,6 +424,9 @@ export class CodegenJS {
   private genLet(stmt: HIRStmt & { kind: "Let" }) {
     // Initializer first, THEN the rename — see the note on `fnNames`.
     const val = this.genExpr(stmt.value);
+    // `let _ = f()` discards the value; a second one in the same block redeclared `_`,
+    // which is a SyntaxError at load. Nothing can read `_`, so evaluate and drop it.
+    if (stmt.name === "_") return this.emit(`${val};`);
     const js = this.bindLocal(stmt.name);
     // ref-taken primitive local: box it so callees mutating `&mut name` write back.
     if (this.boxed.has(stmt.name)) return this.emit(`const ${js} = {v: ${val}};`);
@@ -778,6 +788,9 @@ export class CodegenJS {
       }
       case "VecPush":
         return `${this.genExpr(expr.vec)}.push(${this.genExpr(expr.value)})`;
+      case "VecReserve":
+        // A JS array grows itself; the operands are still evaluated for their effects.
+        return `(() => { ${this.genExpr(expr.object)}; ${this.genExpr(expr.additional)}; })()`;
       case "VecPop":
         // pop(): Option<T> — Some(last)/None. Bind the array once so the length
         // check and the mutating .pop() hit the same reference.
@@ -1053,8 +1066,10 @@ export class CodegenJS {
       // 32-bit CPU cores to hold masked 32-bit registers — need explicit
       // normalization so a bit31-set value like 0xFFFFFFFF isn't seen as -1.
       if (op === "&" || op === "|" || op === "^") {
-        const raw = `(${l} ${op} ${r})`;
-        return bits >= 64 ? `(${raw} >>> 0)` : this.maskInt(raw, expr.type);
+        // JS bitwise ops coerce to int32, so a 64-bit operand above 2^32 lost its high
+        // word: `(docId << 32) | idx` came back as `idx`. Work the halves separately.
+        if (bits >= 64) return `__b64(${l}, ${r}, "${op}")`;
+        return this.maskInt(`(${l} ${op} ${r})`, expr.type);
       }
       if (op === "<<" || op === ">>") {
         // Native traps on a shift amount >= the type width; `@wrapping` masks it
@@ -1109,10 +1124,46 @@ export class CodegenJS {
   // shares mutations); everything else evaluates normally (objects are already refs).
   private genArg(a: HIRArg): string {
     if (a.refMut && a.expr.kind === "Ident" && this.boxed.has(a.expr.name)) return a.expr.name;
+    // `f(&mut self.pos)`, `f(&mut v[i])`: the callee reads and writes its parameter as a
+    // box (`p.v`), so a primitive place that is not a local gets an accessor box over the
+    // place, evaluated once. Passing the field's value handed the callee a fresh number
+    // and dropped every write (std/json's string scanner lost its cursor this way).
+    if (a.refMut && this.needsBox(a.expr.type)) {
+      if (a.expr.kind === "FieldAccess") {
+        return `((_o) => ({get v() { return _o.${a.expr.field}; }, set v(_x) { _o.${a.expr.field} = _x; }}))(${this.genExpr(a.expr.object)})`;
+      }
+      if (a.expr.kind === "IndexAccess" && a.expr.object.type.tag !== "string" && a.expr.object.type.tag !== "hashmap") {
+        return `((_o, _i) => ({get v() { return __idx(_o, _i); }, set v(_x) { __idxSet(_o, _i, _x); }}))(${this.genExpr(a.expr.object)}, ${this.genExpr(a.expr.index)})`;
+      }
+    }
     return this.genExpr(a.expr);
   }
 
+  // `_atomicAddI64((g.addrOf()) as *u8, n)` and its siblings, on a place. The native
+  // backend needs the address for a real atomic; this one runs on a single thread and
+  // has no addresses, so the place itself is the operand and the op is plain
+  // arithmetic. Without this every program importing std/json or std/seal (both mint
+  // a brand from such a counter) fell outside the JS subset.
+  private genAtomicOnPlace(expr: HIRExpr & { kind: "Call" }): string | null {
+    const m = /^_atomic(Add|Sub|Load|Store)(I64|I32)$/.exec(expr.func);
+    if (!m) return null;
+    let addr = expr.args[0]?.expr;
+    while (addr && addr.kind === "Cast") addr = addr.operand;
+    if (!addr || addr.kind !== "UnaryOp" || addr.op !== "&") return null;
+    const place = addr.operand;
+    if (place.kind !== "Ident" && place.kind !== "FieldAccess") return null;
+    const p = this.genExpr(place);
+    switch (m[1]) {
+      case "Load": return `(${p})`;
+      case "Store": return `(${p} = ${this.genArg(expr.args[1])})`;
+      case "Add": { const n = this.genArg(expr.args[1]); return `((${p} += ${n}) - ${n})`; }
+      default: { const n = this.genArg(expr.args[1]); return `((${p} -= ${n}) + ${n})`; }
+    }
+  }
+
   private genCall(expr: HIRExpr & { kind: "Call" }): string {
+    const atomic = this.genAtomicOnPlace(expr);
+    if (atomic !== null) return atomic;
     const args = expr.args.map(a => this.genArg(a));
 
     switch (expr.func) {
@@ -1258,6 +1309,23 @@ export class CodegenJS {
 
   private genClosure(expr: HIRExpr & { kind: "Closure" }): string {
     const params = expr.params.map(p => p.name).join(", ");
+    // A `&mut` primitive parameter arrives as a box, exactly as it does for a fn
+    // (genFunction): `(v: &mut string) => v.pushStr("!")` wrote to a copy otherwise.
+    // The enclosing function's boxes stay visible, since captures read them.
+    const prevBoxed = this.boxed;
+    this.boxed = new Set(prevBoxed);
+    for (const p of expr.params) {
+      if (p.type.tag === "ref" && p.type.mutable && this.needsBox(p.type.inner)) this.boxed.add(p.name);
+    }
+    this.collectRefTaken(expr.body, this.boxed);
+    try {
+      return this.genClosureBody(expr, params);
+    } finally {
+      this.boxed = prevBoxed;
+    }
+  }
+
+  private genClosureBody(expr: HIRExpr & { kind: "Closure" }, params: string): string {
     if (expr.body.length === 1 && expr.body[0].kind === "Return" && expr.body[0].value) {
       const ret = this.genExpr(expr.body[0].value);
       return `((${params}) => ${ret})`;

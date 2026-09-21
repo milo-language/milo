@@ -6568,7 +6568,12 @@ export class TypeChecker {
         if (index.has(n.enumName)) reads.add(n.enumName);
         if (typeof n.variant === "string") calls.add(`${n.enumName}.${n.variant}`);
       }
-      if (n.kind === "Call" && n.callee?.kind === "Ident") calls.add(n.callee.name);
+      // `Call.func` is the callee's name. This read `n.callee`, which no Call has, so a
+      // global initialized through a free fn (`var pool = arenaNew<Node>()`) never
+      // learned that fn reads `nextArenaId`: natively a constant global is a static
+      // initializer and the order never mattered, but emit-js runs every initializer
+      // in list order and read the counter before its declaration.
+      if (n.kind === "Call" && typeof n.func === "string") calls.add(n.func);
       if (n.kind === "MethodCall" && typeof n.method === "string") calls.add(n.method);
       for (const k in n) { if (k !== "span") scan(n[k], reads, calls); }
     };

@@ -3,10 +3,6 @@
 // String values stored as offsets into source — zero allocation during parse.
 // ~6 allocations total for any document size.
 
-from "std/binary" import {
-    Bytes
-}
-
 // kind: 0=null 1=bool 2=number 3=string 4=array 5=object
 //
 // 24 bytes, down from 56 with one named field per kind: the pool is the parse's
@@ -16,7 +12,7 @@ from "std/binary" import {
 //   null:          a = 0, b = 0
 //   bool:          a = 1 for true, 0 for false
 //   string:        a = strStart, b = strLen
-//   number:        a = the f64's IEEE-754 bit pattern, b = (strStart << 32) | strLen
+//   number:        a = index into the document's nums table, b = (strStart << 32) | strLen
 //   array, object: a = childStart, b = (keyStart << 32) | childCount (keyStart 0 for arrays)
 // The packed halves fit because jsonParse caps the input at 2^31-1 bytes and
 // the pool at 2^32-1 nodes: every count fits the low 32 bits, and every source
@@ -52,9 +48,14 @@ fn jsonNewStr(start: i64, len: i64): JsonNode {
     }
 }
 
-fn jsonNewNum(val: f64, start: i64, len: i64): JsonNode {
+// The value lives in `Json.nums`, not in the node: keeping the f64 inline meant
+// punning its bits through a raw pointer, which the JS backend has no answer for
+// (it has no addresses, and its integers are doubles), so every JSON program fell
+// out of the playground. The table costs 8 bytes per number, against the 8 bytes
+// per node the 24-byte layout saved.
+fn jsonNewNum(numIdx: i64, start: i64, len: i64): JsonNode {
     return JsonNode {
-        kind: 2, a: Bytes.f64ToBits(val) as i64, b: (start << 32) | len
+        kind: 2, a: numIdx, b: (start << 32) | len
     }
 }
 
@@ -72,8 +73,8 @@ fn jsonNodeBool(n: &JsonNode): bool {
     return n.a != 0
 }
 
-fn jsonNodeNum(n: &JsonNode): f64 {
-    return Bytes.f64FromBits(n.a as u64)
+fn jsonNodeNum(nums: &Vec<f64>, n: &JsonNode): f64 {
+    return nums[n.a]
 }
 
 // Source span of a string (kind 3) or number literal (kind 2).
@@ -111,6 +112,7 @@ fn jsonNodeKeyStart(n: &JsonNode): i64 {
 pub struct Json {
     source: string,
     nodes: Vec<JsonNode>,
+    nums: Vec<f64>,
     childIdx: Vec<i64>,
     keyOffsets: Vec<i64>,
     keyLens: Vec<i64>,
@@ -474,7 +476,7 @@ impl Json {
             if jsonKeyEq(self.source, self.keyOffsets[jsonNodeKeyStart(node) + i], self.keyLens[jsonNodeKeyStart(node) + i], key) {
                 let child = self.nodes[self.childIdx[jsonNodeChildStart(node) + i]]
                 if child.kind == 2 {
-                    return Option.Some(jsonNodeNum(child))
+                    return Option.Some(jsonNodeNum(self.nums, child))
                 }
                 return Option.None
             }
@@ -636,7 +638,7 @@ impl Json {
         }
         let node = self.nodes[raw]
         if node.kind == 2 {
-            return Option.Some(jsonNodeNum(node))
+            return Option.Some(jsonNodeNum(self.nums, node))
         }
         return Option.None
     }
@@ -686,7 +688,7 @@ impl Json {
     fn asF64(self: &Self): Option<f64> {
         let node = self.nodes[self.root]
         if node.kind == 2 {
-            return Option.Some(jsonNodeNum(node))
+            return Option.Some(jsonNodeNum(self.nums, node))
         }
         return Option.None
     }
@@ -877,7 +879,7 @@ fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
         if jsonNodeStrLen(node) > 0 {
             return jsonMaterializeStr(doc.source, jsonNodeStrStart(node), jsonNodeStrLen(node))
         }
-        return $"{jsonNodeNum(node)}"
+        return $"{jsonNodeNum(doc.nums, node)}"
     }
     if node.kind == 3 {
         return "\"" + jsonEscapeStr(jsonMaterializeStr(doc.source, jsonNodeStrStart(node), jsonNodeStrLen(node))) + "\""
@@ -956,8 +958,10 @@ fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json {
     // extract would name a renumbered-wrong node. Its own brand turns that
     // mistake into the named abort. No node-count assert needed here: the pool
     // is a subset of one jsonParse already capped.
+    // Scalars copy as-is, so number nodes keep indexing the source's table; the
+    // whole table is cloned with the source text for the same reason the text is.
     return Json {
-        source: src.source.clone(), nodes: nodes, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, root: 0, _docId: jsonMintDocId()
+        source: src.source.clone(), nodes: nodes, nums: src.nums.clone(), childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, root: 0, _docId: jsonMintDocId()
     }
 }
 
@@ -970,6 +974,7 @@ struct JsonParser {
     pos: i64,
     err: bool,
     nodes: Vec<JsonNode>,
+    nums: Vec<f64>,
     childIdx: Vec<i64>,
     keyOffsets: Vec<i64>,
     keyLens: Vec<i64>,
@@ -1011,8 +1016,10 @@ fn jsonParse(s: string): Result<Json> {
     keyLens.reserve(s.len / 64)
     var scratch: Vec<i64> = Vec.new()
     scratch.reserve(64)
+    var nums: Vec<f64> = Vec.new()
+    nums.reserve(s.len / 16)
     var p = JsonParser {
-        s: s, pos: 0, err: false, nodes: nodes, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, scratch: scratch, scratchLen: 0
+        s: s, pos: 0, err: false, nodes: nodes, nums: nums, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, scratch: scratch, scratchLen: 0
     }
     p.skipWs()
     if p.pos >= p.s.len {
@@ -1177,7 +1184,7 @@ impl JsonParser {
     // cannot lend `s` out as a `&string`, so moving is the only copy-free handover.
     fn finish(self: Self, root: i64): Json {
         return Json {
-            source: self.s, nodes: self.nodes, childIdx: self.childIdx, keyOffsets: self.keyOffsets, keyLens: self.keyLens, root: root, _docId: jsonMintDocId()
+            source: self.s, nodes: self.nodes, nums: self.nums, childIdx: self.childIdx, keyOffsets: self.keyOffsets, keyLens: self.keyLens, root: root, _docId: jsonMintDocId()
         }
     }
 
@@ -1355,7 +1362,9 @@ impl JsonParser {
             result = 0.0 - result
         }
         let idx = self.nodes.len()
-        self.nodes.push(jsonNewNum(result, numStart, self.pos - numStart))
+        let numIdx = self.nums.len()
+        self.nums.push(result)
+        self.nodes.push(jsonNewNum(numIdx, numStart, self.pos - numStart))
         return idx
     }
 
