@@ -182,7 +182,7 @@ impl Bytes {
         var i: i64 = 7
         while i >= 0 {
             v = (v << 8) | (src[off + i] as u64)
-            i = i - 1
+            i -= 1
         }
         return Option.Some(v)
     }
@@ -326,7 +326,7 @@ impl Bytes {
             if shift == 0 {
                 return
             }
-            shift = shift - 8
+            shift -= 8
         }
     }
 

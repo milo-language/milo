@@ -78,9 +78,9 @@ pub struct Ball {
 pub fn nextU64(s: &mut u64): u64 {
     // &mut scalar params auto-deref in Milo: read `s` directly, write via `s = ...`
     var x = s
-    x = x ^ (x << 13)
-    x = x ^ (x >> 7)
-    x = x ^ (x << 17)
+    x ^= (x << 13)
+    x ^= (x >> 7)
+    x ^= (x << 17)
     s = x
     return x
 }
@@ -114,7 +114,7 @@ pub fn resetScene(balls: &mut Vec<Ball>, s: &mut u64) {
         let sx = 40.0 + randF(&mut s) * 240.0
         let sy = 20.0 + randF(&mut s) * 100.0
         spawnBall(&mut balls, &mut s, sx, sy)
-        m = m + 1
+        m += 1
     }
 }
 
@@ -159,10 +159,10 @@ pub fn fillCircle(fb: &mut [u32; 76800], cx: f64, cy: f64, rad: f64, col: u32) {
                         blendPixel(&mut fb, y * W + x, col, cov)
                     }
                 }
-                x = x + 1
+                x += 1
             }
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -177,7 +177,7 @@ pub fn stepSim(balls: &mut Vec<Ball>, gx: f64, gy: f64, sdt: f64, restitution: f
         b.px = b.px + b.vx * sdt
         b.py = b.py + b.vy * sdt
         balls[i] = b
-        i = i + 1
+        i += 1
     }
 
     // wall collisions
@@ -201,7 +201,7 @@ pub fn stepSim(balls: &mut Vec<Ball>, gx: f64, gy: f64, sdt: f64, restitution: f
             b.vy = 0.0 - b.vy * restitution
         }
         balls[w] = b
-        w = w + 1
+        w += 1
     }
 
     // ball-ball pairwise collisions (O(n^2))
@@ -243,10 +243,10 @@ pub fn stepSim(balls: &mut Vec<Ball>, gx: f64, gy: f64, sdt: f64, restitution: f
                 }
                 balls[c] = bj
             }
-            c = c + 1
+            c += 1
         }
         balls[a] = bi
-        a = a + 1
+        a += 1
     }
 }
 
@@ -376,21 +376,21 @@ pub fn main(): i32 {
         var step = 0
         while step < substeps {
             stepSim(&mut balls, gx, gy, sdt, restitution)
-            step = step + 1
+            step += 1
         }
 
         // ---- render: clear to dark slate, draw every ball (safe) ----
         var q = 0
         while q < 76800 {
             fb[q] = 0x1E1E28 | (0xFF << 24) // dark background
-            q = q + 1
+            q += 1
         }
         var d = 0
         while d < balls.len {
             let b = balls[d]
             let col = b.cr | (b.cg << 8) | (b.cb << 16) | (0xFF << 24)
             fillCircle(&mut fb, b.px, b.py, b.r, col)
-            d = d + 1
+            d += 1
         }
 
         // --- present: hand the safe framebuffer to SDL (raw pointers) ---

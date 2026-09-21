@@ -188,7 +188,7 @@ fn polyline(ui: &mut Ui, v: &View, pts: &Vec<Vec3>, width: f64, c: &Rgba, dash: 
             }
         }
         prev = cur
-        i = i + 1
+        i += 1
     }
 }
 
@@ -208,7 +208,7 @@ fn polylineGlow(ui: &mut Ui, v: &View, pts: &Vec<Vec3>, width: f64, c: &Rgba) {
             }
         }
         prev = cur
-        i = i + 1
+        i += 1
     }
 }
 
@@ -218,7 +218,7 @@ fn markerFor(marks: &Vec<Marker>, id: i64): i64 {
         if marks[i].id == id {
             return i
         }
-        i = i + 1
+        i += 1
     }
     return -1
 }
@@ -233,7 +233,7 @@ fn mapAlpha(marks: &Vec<Marker>): f64 {
         if marks[i].px > biggest {
             biggest = marks[i].px
         }
-        i = i + 1
+        i += 1
     }
     let k = 1.0 - (biggest - 40.0) / 160.0
     if k < 0.0 {
@@ -258,7 +258,7 @@ fn drawOrbits(ui: &mut Ui, g: &Game, v: &View, alpha: f64) {
         let per = orbitPeriod(g.bodies, ids[i], center)
         let pts = orbitPoints(g.bodies, ids[i], center, t, per, 220)
         polyline(&mut ui, v, pts, 1.8, fade(colOrbit(), alpha), 0)
-        i = i + 1
+        i += 1
     }
 }
 
@@ -282,7 +282,7 @@ fn drawTransfer(ui: &mut Ui, g: &Game, v: &View, alpha: f64) {
             if i >= done {
                 ahead.push(pts[i])
             }
-            i = i + 1
+            i += 1
         }
         polylineGlow(&mut ui, v, flown, 9.0, fade(colAccent(), 0.16 * alpha))
         polyline(&mut ui, v, flown, 2.0, fade(colAccent(), alpha), 0)
@@ -386,7 +386,7 @@ fn drawBodyMarkers(ui: &mut Ui, g: &Game, v: &View, marks: &Vec<Marker>, alpha: 
                 nameCol = colInk()
             }
             if id == g.missions[g.mi].to && g.plan.ok && g.phase == PHASE_PLAN {
-                name = name + " TODAY"
+                name += " TODAY"
             }
             var ly = marks[i].y + off
             // The target's own label goes above it, because the arrival marker
@@ -400,13 +400,13 @@ fn drawBodyMarkers(ui: &mut Ui, g: &Game, v: &View, marks: &Vec<Marker>, alpha: 
                 if Math.abs(takenX[k] - marks[i].x) < 120.0 * u && Math.abs(takenY[k] - ly) < 26.0 * u {
                     ly = marks[i].y - off - 12.0 * u
                 }
-                k = k + 1
+                k += 1
             }
             takenX.push(marks[i].x)
             takenY.push(ly)
             ui.textTracked(marks[i].x - trackedWidth(name, 7.5 * u, 2.6 * u) * 0.5, ly, 7.5 * u, 2.6 * u, name, fade(nameCol, alpha))
         }
-        i = i + 1
+        i += 1
     }
 }
 
@@ -603,8 +603,8 @@ fn drawMissionHeader(ui: &mut Ui, g: &Game, u: f64, alpha: f64) {
     var i = 0
     while i < lines.len {
         ui.text(x, y, 9.0 * u, lines[i], fade(colDim(), alpha))
-        y = y + lineHeight(9.0 * u)
-        i = i + 1
+        y += lineHeight(9.0 * u)
+        i += 1
     }
     // The blurb is a hint about the physics; this is the instruction. Without it
     // the plan screen shows two dials and a number and never says what winning
@@ -647,8 +647,8 @@ fn drawBrief(ui: &mut Ui, g: &Game, u: f64, w: f64, h: f64) {
     var i = 0
     while i < lines.len {
         ui.textCentered(cx, y, 11.0 * u, lines[i], fade(colDim(), a))
-        y = y + lineHeight(11.0 * u)
-        i = i + 1
+        y += lineHeight(11.0 * u)
+        i += 1
     }
 
     y = y + 26.0 * u
@@ -685,8 +685,8 @@ fn drawCinematic(ui: &mut Ui, g: &Game, u: f64, h: f64) {
     var i = 0
     while i < lines.len {
         ui.text(x, y, 10.0 * u, lines[i], fade(colInk(), a * 0.72))
-        y = y + lineHeight(10.0 * u)
-        i = i + 1
+        y += lineHeight(10.0 * u)
+        i += 1
     }
 
     if leaving {
@@ -811,8 +811,8 @@ fn drawTitle(ui: &mut Ui, g: &Game, u: f64, w: f64, h: f64) {
     var i = 0
     while i < lines.len {
         ui.text(x, y, 10.0 * u, lines[i], colDim())
-        y = y + lineHeight(10.0 * u)
-        i = i + 1
+        y += lineHeight(10.0 * u)
+        i += 1
     }
     y = y + 34.0 * u
     let pulse = 0.55 + 0.45 * Math.sin(g.spin * 9.0)
@@ -848,7 +848,7 @@ fn drawHelp(ui: &mut Ui, u: f64, w: f64, h: f64) {
     while i < rows.len {
         ui.textCentered(cx, y, 10.0 * u, rows[i], colDim())
         y = y + lineHeight(10.0 * u) * 1.1
-        i = i + 1
+        i += 1
     }
     y = y + 26.0 * u
     ui.textCenteredTracked(cx, y, 9.0 * u, 4.0 * u, "H TO GO BACK", colAccent())

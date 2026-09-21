@@ -405,7 +405,7 @@ fn jwtVerify(v: &JwtVerifier, token: &string): Result<JwtClaims, JwtError> {
     var dots: i64 = 0
     for i in 0..token.len {
         if token[i] == '.' {
-            dots = dots + 1
+            dots += 1
             if firstDot < 0 {
                 firstDot = i
             }

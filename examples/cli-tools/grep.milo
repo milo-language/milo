@@ -57,25 +57,25 @@ pub fn highlight(line: &string, pattern: &string, ignoreCase: bool, red: &string
                 var b: u8 = pattern[j]
                 if ignoreCase {
                     if a >= 65 && a <= 90 {
-                        a = a + 32
+                        a += 32
                     }
                     if b >= 65 && b <= 90 {
-                        b = b + 32
+                        b += 32
                     }
                 }
                 if a != b {
                     matchHere = false
                     break
                 }
-                j = j + 1
+                j += 1
             }
         }
         if matchHere {
             result = result + red + line.substr(pos, pos + pattern.len) + reset
-            pos = pos + pattern.len
+            pos += pattern.len
         } else {
             result.push(line[pos])
-            pos = pos + 1
+            pos += 1
         }
     }
     return result
@@ -146,19 +146,19 @@ pub fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
             }
 
             if isMatch {
-                matchCount = matchCount + 1
+                matchCount += 1
                 if !opts.countOnly {
                     printMatch(line, filePath, lineNum, opts)
                 }
             }
 
             lineStart = pos + 1
-            lineNum = lineNum + 1
+            lineNum += 1
         }
-        pos = pos + 1
+        pos += 1
     }
 
-    opts.totalMatches = opts.totalMatches + matchCount
+    opts.totalMatches += matchCount
 
     if opts.countOnly && matchCount > 0 {
         if opts.showFilename {

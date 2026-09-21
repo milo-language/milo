@@ -23,8 +23,8 @@ pub fn reverseI64(v: &mut Vec<i64>): void {
         let tmp = v[lo]
         v[lo] = v[hi]
         v[hi] = tmp
-        lo = lo + 1
-        hi = hi - 1
+        lo += 1
+        hi -= 1
     }
 }
 
@@ -44,9 +44,9 @@ requires lo >= 0
             let tmp = v[i]
             v[i] = v[j]
             v[j] = tmp
-            i = i + 1
+            i += 1
         }
-        j = j + 1
+        j += 1
     }
     let tmp = v[i]
     v[i] = v[hi]
@@ -99,11 +99,11 @@ pub fn sortStringsByFreq(keys: &mut Vec<string>, vals: &mut Vec<i64>): void {
             }
             keys[j + 1] = keys[j].clone()
             vals[j + 1] = vals[j]
-            j = j - 1
+            j -= 1
         }
         keys[j + 1] = kk
         vals[j + 1] = vv
-        i = i + 1
+        i += 1
     }
 }
 
@@ -124,12 +124,12 @@ fn isortStrings(v: &mut Vec<string>, lo: i64, hi: i64): void {
         while j >= lo {
             if strLessThan(key, v[j]) {
                 v[j + 1] = v[j].clone()
-                j = j - 1
+                j -= 1
             } else {
                 break
             }
         }
         v[j + 1] = key
-        i = i + 1
+        i += 1
     }
 }

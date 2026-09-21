@@ -49,7 +49,7 @@ pub fn pushBack(list: &mut DLList, value: i64) {
     }
 
     list.tail = Option.Some(h)
-    list.len = list.len + 1
+    list.len += 1
 }
 
 pub fn pushFront(list: &mut DLList, value: i64) {
@@ -75,7 +75,7 @@ pub fn pushFront(list: &mut DLList, value: i64) {
     }
 
     list.head = Option.Some(h)
-    list.len = list.len + 1
+    list.len += 1
 }
 
 pub fn printForward(list: &DLList) {
@@ -89,9 +89,9 @@ pub fn printForward(list: &DLList) {
                 match arenaGet(list.arena, handle) {
                     Option.Some(node) => {
                         if result.len > 0 {
-                            result = result + " <-> "
+                            result += " <-> "
                         }
-                        result = result + node.value.toString()
+                        result += node.value.toString()
                         cur = node.next
                     }
                     Option.None => {
@@ -118,9 +118,9 @@ pub fn printBackward(list: &DLList) {
                 match arenaGet(list.arena, handle) {
                     Option.Some(node) => {
                         if result.len > 0 {
-                            result = result + " <-> "
+                            result += " <-> "
                         }
-                        result = result + node.value.toString()
+                        result += node.value.toString()
                         cur = node.prev
                     }
                     Option.None => {

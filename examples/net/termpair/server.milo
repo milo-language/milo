@@ -79,7 +79,7 @@ pub var nextId: i64 = 1
 
 pub fn generateId(): string {
     let id = nextId
-    nextId = nextId + 1
+    nextId += 1
     return "t" + id.toString()
 }
 
@@ -106,9 +106,9 @@ pub fn sendHttp(fd: i32, status: i32, contentType: &string, body: &string): void
     var resp: string = "HTTP/1.1 " + statusText + "\r\n"
     resp = resp + "Content-Type: " + contentType + "\r\n"
     resp = resp + "Content-Length: " + body.len.toString() + "\r\n"
-    resp = resp + "Access-Control-Allow-Origin: *\r\n"
-    resp = resp + "Connection: close\r\n\r\n"
-    resp = resp + body
+    resp += "Access-Control-Allow-Origin: *\r\n"
+    resp += "Connection: close\r\n\r\n"
+    resp += body
     write(fd, resp, resp.len)
 }
 
@@ -119,15 +119,15 @@ pub struct RequestLine {
 pub fn parseRequestLine(raw: &string): RequestLine {
     var i: i64 = 0
     while i < raw.len && raw[i] != ' ' {
-        i = i + 1
+        i += 1
     }
     let method = raw.substr(0, i)
     while i < raw.len && raw[i] == ' ' {
-        i = i + 1
+        i += 1
     }
     let uriStart = i
     while i < raw.len && raw[i] != ' ' {
-        i = i + 1
+        i += 1
     }
     let uri = raw.substr(uriStart, i)
 
@@ -165,15 +165,15 @@ pub fn queryParam(qs: &string, name: &string): string {
     while i < qs.len {
         let ks = i
         while i < qs.len && qs[i] != '=' && qs[i] != '&' {
-            i = i + 1
+            i += 1
         }
         let key = qs.substr(ks, i)
         var value: string = ""
         if i < qs.len && qs[i] == '=' {
-            i = i + 1
+            i += 1
             let vs = i
             while i < qs.len && qs[i] != '&' {
-                i = i + 1
+                i += 1
             }
             value = qs.substr(vs, i)
         }
@@ -181,7 +181,7 @@ pub fn queryParam(qs: &string, name: &string): string {
             return value
         }
         if i < qs.len && qs[i] == '&' {
-            i = i + 1
+            i += 1
         }
     }
     return ""
@@ -338,7 +338,7 @@ pub fn handleBrowserWs(ws: WsConn, terminalId: string): void {
         return
     }
 
-    sessions[idx].browserCount = sessions[idx].browserCount + 1
+    sessions[idx].browserCount += 1
     let count = sessions[idx].browserCount
     bcastChans[idx].trySend(makeNumClients(count))
 
@@ -422,7 +422,7 @@ pub fn handleBrowserWs(ws: WsConn, terminalId: string): void {
 
     let didx = findSession(terminalId)
     if didx >= 0 {
-        sessions[didx].browserCount = sessions[didx].browserCount - 1
+        sessions[didx].browserCount -= 1
         bcastChans[didx].trySend(makeNumClients(sessions[didx].browserCount))
         print($"browser disconnected from {terminalId} (viewers: {sessions[didx].browserCount})")
     }
@@ -436,13 +436,13 @@ pub fn handleGetSessions(): string {
     for i in 0..sessions.len {
         if sessions[i].isPublic && sessions[i].alive {
             if !first {
-                result = result + ","
+                result += ","
             }
             first = false
-            result = result + makePublicSession(sessions[i].terminalId, sessions[i].displayName, sessions[i].command, sessions[i].rows, sessions[i].cols, sessions[i].startTime, sessions[i].browserCount)
+            result += makePublicSession(sessions[i].terminalId, sessions[i].displayName, sessions[i].command, sessions[i].rows, sessions[i].cols, sessions[i].startTime, sessions[i].browserCount)
         }
     }
-    result = result + "]"
+    result += "]"
     return result
 }
 

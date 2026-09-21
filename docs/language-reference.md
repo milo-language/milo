@@ -65,12 +65,17 @@ fn mightFail(): i32 { return 0 }
 
 let x: i32 = 42       // immutable — cannot be reassigned
 var count: i32 = 0     // mutable — can be reassigned
-count = count + 1
+count += 1             // compound assignment; same as count = count + 1
 
 let name = "Milo"      // type inference works
 
 let _ = mightFail()    // `_` discards a result; it may be repeated in one scope
 ```
+
+Compound assignment exists for every binary arithmetic and bitwise operator: `+=`, `-=`,
+`*=`, `/=`, `%=`, `&=`, `|=`, `^=`. `a op= b` is exactly `a = a op b`, so the target can
+be any assignable place (`v[i] += 1`, `p.x -= dx`) and the arithmetic is overflow-checked
+like the spelled-out form. There is no `++`/`--`; the parser names `i += 1` as the fix.
 
 Under the hood, `let` maps to an SSA register and `var` maps to a stack allocation.
 This means what you write is what LLVM sees — no hidden costs.
@@ -244,8 +249,8 @@ methods would be thousands of edits. Annotate the function:
 ```milo skip
 @wrapping
 fn step(cpu: &mut Cpu) {
-    cpu.a = cpu.a + operand      // wraps; no trap, no method call
-    cpu.pc = cpu.pc + 1          // 16-bit program counter, modular by design
+    cpu.a += operand      // wraps; no trap, no method call
+    cpu.pc += 1          // 16-bit program counter, modular by design
 }
 ```
 
@@ -524,8 +529,8 @@ while i <= n
   invariant total >= 0
   invariant i >= 1
 {
-    total = total + i
-    i = i + 1
+    total += i
+    i += 1
 }
 ```
 
@@ -535,7 +540,7 @@ var total: i64 = 0
 for i in 0..n
   invariant total >= 0
 {
-    total = total + i
+    total += i
 }
 ```
 
@@ -552,7 +557,7 @@ struct Countdown { n: i64 }
 impl Countdown {
     fn next(self: &mut Self): Option<i64> {
         if self.n == 0 { return Option.None }
-        self.n = self.n - 1
+        self.n -= 1
         return Option.Some(self.n)
     }
 }
@@ -611,7 +616,7 @@ otherwise talk only about `result`:
 fn bump(n: &mut i64): void
   ensures n == old(n) + 100
 {
-    n = n + 100
+    n += 100
 }
 ```
 
@@ -1424,7 +1429,7 @@ fn readLine(n: i32): Option<string> {
 var i: i32 = 0
 while let Option.Some(line) = readLine(i) {
     print(line)
-    i = i + 1
+    i += 1
 }
 ```
 
@@ -2286,7 +2291,7 @@ fn length(s: &string): i64 {
 
 // Mutable reference
 fn double(x: &mut i32) {
-    x = x * 2
+    x *= 2
 }
 
 var n: i32 = 21
@@ -2817,11 +2822,11 @@ var i: i32 = 0
 while i < 10 {
     if i == 5 { break }
     if i % 2 == 0 {
-        i = i + 1
+        i += 1
         continue
     }
     print(i)
-    i = i + 1
+    i += 1
 }
 ```
 

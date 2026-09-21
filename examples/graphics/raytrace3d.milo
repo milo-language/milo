@@ -193,7 +193,7 @@ pub fn hitSpheres(scene: &Vec<Ball>, ro: Vec3, rd: Vec3): SphereHit {
                 idx = i
             }
         }
-        i = i + 1
+        i += 1
     }
     return SphereHit {
         t: best, idx: idx
@@ -220,7 +220,7 @@ pub fn inShadow(scene: &Vec<Ball>, p: Vec3): bool {
                 return true
             }
         }
-        i = i + 1
+        i += 1
     }
     return false
 }
@@ -340,7 +340,7 @@ pub fn stepPhysics(scene: &mut Vec<Ball>, sdt: f64, gravity: f64, restitution: f
             b.vel.z = 0.0 - b.vel.z * restitution
         }
         scene[i] = b
-        i = i + 1
+        i += 1
     }
     // pairwise collisions
     var a = 0
@@ -370,10 +370,10 @@ pub fn stepPhysics(scene: &mut Vec<Ball>, sdt: f64, gravity: f64, restitution: f
                 }
                 scene[c] = bj
             }
-            c = c + 1
+            c += 1
         }
         scene[a] = bi
-        a = a + 1
+        a += 1
     }
 }
 
@@ -457,16 +457,16 @@ pub fn main(): i32 {
                 quit = true
             } // Esc
             if ks[80] != 0 {
-                camAngle = camAngle - 0.03
+                camAngle -= 0.03
             } // Left
             if ks[79] != 0 {
-                camAngle = camAngle + 0.03
+                camAngle += 0.03
             } // Right
             if ks[82] != 0 {
-                camHeight = camHeight + 0.06
+                camHeight += 0.06
             } // Up
             if ks[81] != 0 {
-                camHeight = camHeight - 0.06
+                camHeight -= 0.06
             } // Down
             if ks[44] != 0 {
                 kick = true
@@ -489,9 +489,9 @@ pub fn main(): i32 {
             var i = 0
             while i < scene.len {
                 var b = scene[i]
-                b.vel.y = b.vel.y + 5.0
+                b.vel.y += 5.0
                 scene[i] = b
-                i = i + 1
+                i += 1
             }
         }
 
@@ -499,7 +499,7 @@ pub fn main(): i32 {
         var step = 0
         while step < substeps {
             stepPhysics(&mut scene, sdt, gravity, restitution, airDamp)
-            step = step + 1
+            step += 1
         }
 
         // ---- camera basis (orbit around lookAt) ----
@@ -519,9 +519,9 @@ pub fn main(): i32 {
                 let dir = vnorm(vadd(vadd(fwd, vscale(right, su * halfW)), vscale(up, sv * halfH)))
                 let col = trace(scene, eye, dir, MAXDEPTH)
                 fb[y * W + x] = packColor(col)
-                x = x + 1
+                x += 1
             }
-            y = y + 1
+            y += 1
         }
 
         // --- present ---

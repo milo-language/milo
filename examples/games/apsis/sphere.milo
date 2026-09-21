@@ -65,9 +65,9 @@ pub fn sphereMesh(segments: i64, rings: i64): Vec<f32> {
             push8(&mut v, a.x, a.y, a.z, u0, v0, a.x, a.y, a.z)
             push8(&mut v, c.x, c.y, c.z, u1, v1, c.x, c.y, c.z)
             push8(&mut v, b.x, b.y, b.z, u1, v0, b.x, b.y, b.z)
-            i = i + 1
+            i += 1
         }
-        j = j + 1
+        j += 1
     }
     return v
 }
@@ -85,19 +85,19 @@ pub fn invertedSphereMesh(segments: i64, rings: i64): Vec<f32> {
         var k = 0
         while k < 8 {
             v.push(src[t + k])
-            k = k + 1
+            k += 1
         }
         k = 0
         while k < 8 {
             v.push(src[t + 16 + k])
-            k = k + 1
+            k += 1
         }
         k = 0
         while k < 8 {
             v.push(src[t + 8 + k])
-            k = k + 1
+            k += 1
         }
-        t = t + 24
+        t += 24
     }
     return v
 }
@@ -121,7 +121,7 @@ pub fn ringMesh(segments: i64, inner: f64, outer: f64): Vec<f32> {
         push8(&mut v, c0 * inner, 0.0, s0 * inner, 0.0, 0.0, 0.0, 1.0, 0.0)
         push8(&mut v, c1 * outer, 0.0, s1 * outer, 1.0, 1.0, 0.0, 1.0, 0.0)
         push8(&mut v, c0 * outer, 0.0, s0 * outer, 1.0, 0.0, 0.0, 1.0, 0.0)
-        i = i + 1
+        i += 1
     }
     return v
 }

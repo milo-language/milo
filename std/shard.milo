@@ -159,7 +159,7 @@ fn weldVerdict(count: i64, shatterId: i64, ids: &Vec<i64>, indices: &Vec<i64>): 
     var i: i64 = 0
     while i < count {
         seen.push(false)
-        i = i + 1
+        i += 1
     }
     var k: i64 = 0
     while k < ids.len {
@@ -171,14 +171,14 @@ fn weldVerdict(count: i64, shatterId: i64, ids: &Vec<i64>, indices: &Vec<i64>): 
             return "window " + idx.toString() + " came back twice"
         }
         seen[idx] = true
-        k = k + 1
+        k += 1
     }
     var j: i64 = 0
     while j < count {
         if !seen[j] {
             return "window " + j.toString() + " never came back"
         }
-        j = j + 1
+        j += 1
     }
     return ""
 }
@@ -257,7 +257,7 @@ impl Shards<T> {
                     index: i,
                 }
                 out.push(sh)
-                i = i + 1
+                i += 1
             }
         }
         return out
@@ -515,7 +515,7 @@ impl StrShard {
                 if self.base[i + k] != needle[k] {
                     return false
                 }
-                k = k + 1
+                k += 1
             }
         }
         return true
@@ -596,7 +596,7 @@ impl StrShards {
                     index: i,
                 }
                 out.push(sh)
-                i = i + 1
+                i += 1
             }
         }
         return out

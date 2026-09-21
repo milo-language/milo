@@ -15,7 +15,7 @@ pub fn pad(n: i64): string {
     let s = n.toString()
     var result: string = ""
     for p in 0..8 - s.len {
-        result = result + " "
+        result += " "
     }
     return result + s
 }
@@ -53,7 +53,7 @@ pub fn main(): i32 {
     var lines: i64 = 0
     for ch in content {
         if ch == 10 {
-            lines = lines + 1
+            lines += 1
         }
     }
 
@@ -63,7 +63,7 @@ pub fn main(): i32 {
     for ch in content {
         if ch == 32 || ch == 10 || ch == 9 || ch == 13 {
             if inWord {
-                words = words + 1
+                words += 1
                 inWord = false
             }
         } else {
@@ -71,7 +71,7 @@ pub fn main(): i32 {
         }
     }
     if inWord {
-        words = words + 1
+        words += 1
     }
 
     let chars = content.len
@@ -81,13 +81,13 @@ pub fn main(): i32 {
     } else {
         var output: string = ""
         if showLines {
-            output = output + pad(lines)
+            output += pad(lines)
         }
         if showWords {
-            output = output + pad(words)
+            output += pad(words)
         }
         if showChars {
-            output = output + pad(chars)
+            output += pad(chars)
         }
         print($"{output} {label}")
     }

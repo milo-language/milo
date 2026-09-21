@@ -28,9 +28,9 @@ fn base32Encode(input: &string): string {
     var bits: i64 = 0
     for i in 0..input.len {
         buffer = (buffer << 8) | (input[i] as i64)
-        bits = bits + 8
+        bits += 8
         while bits >= 5 {
-            bits = bits - 5
+            bits -= 5
             out.push(b32Char((buffer >> bits) & 0x1f))
         }
     }
@@ -72,9 +72,9 @@ fn b32Emit(symbols: &string): string {
     var bits: i64 = 0
     for i in 0..symbols.len {
         buffer = (buffer << 5) | b32Val(symbols[i])
-        bits = bits + 5
+        bits += 5
         if bits >= 8 {
-            bits = bits - 8
+            bits -= 8
             out.push(((buffer >> bits) & 0xff) as u8)
         }
     }
@@ -86,7 +86,7 @@ fn b32Emit(symbols: &string): string {
 fn base32Decode(input: &string): Result<string> {
     var end = input.len
     while end > 0 && input[end - 1] == '=' {
-        end = end - 1
+        end -= 1
     }
     if input.len % 8 != 0 {
         return Result.Err("base32: length " + input.len.toString() + " is not a multiple of 8")

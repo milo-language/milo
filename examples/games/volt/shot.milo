@@ -112,7 +112,7 @@ fn botStep(b: &mut Bot, w: &World, dt: f64) {
     b.jump = false
     b.dash = false
     b.bark = false
-    b.barkT = b.barkT - dt
+    b.barkT -= dt
 
     // Let a marking finish. Jump and dash both cancel it, and a bot that jumps
     // whenever it feels like it never sees the animation at all.
@@ -121,7 +121,7 @@ fn botStep(b: &mut Bot, w: &World, dt: f64) {
     }
 
     if w.p.onGround && Math.abs(w.p.vx) < 24.0 {
-        b.stuckT = b.stuckT + dt
+        b.stuckT += dt
     } else {
         b.stuckT = 0.0
     }
@@ -157,17 +157,17 @@ fn sheet(path: &string) {
         let x = 16.0 + (i as f64) * 105.0
         drawSprite(&mut c, dog.chi[i], x, 60.0, s, false, 0.25)
         drawSprite(&mut c, dog.shep[i], x, 200.0, s, false, 0.25)
-        i = i + 1
+        i += 1
     }
     i = 0
     while i < cat.len {
         drawSprite(&mut c, cat[i], 40.0 + (i as f64) * 130.0, 360.0, s, false, 0.25)
-        i = i + 1
+        i += 1
     }
     i = 0
     while i < bird.len {
         drawSprite(&mut c, bird[i], 600.0 + (i as f64) * 130.0, 360.0, s, false, 0.25)
-        i = i + 1
+        i += 1
     }
     drawSprite(&mut c, boneSprite(), 40.0, 500.0, s, false, 0.6)
     drawSprite(&mut c, hydrantSprite(), 240.0, 480.0, s, false, 0.4)
@@ -176,7 +176,7 @@ fn sheet(path: &string) {
     i = 0
     while i < shards.len {
         drawSprite(&mut c, shards[i], 560.0 + (i as f64) * 70.0, 500.0, s, false, 0.6)
-        i = i + 1
+        i += 1
     }
     // the marking pose large, because it is the one that has to be right
     drawSprite(&mut c, dog.chi[DOG_PEE], 700.0, 440.0, 11.0, false, 0.25)
@@ -198,13 +198,13 @@ pub fn main(): i32 {
             return 0
         } else if argv[i] == "--level" && i + 1 < argv.len {
             level = argv[i + 1].parseInt().unwrapOr(level)
-            i = i + 2
+            i += 2
         } else if argv[i].len > 0 && argv[i][0] >= 48 && argv[i][0] <= 57 {
             shots.push(argv[i].parseInt().unwrapOr(0))
-            i = i + 1
+            i += 1
         } else {
             prefix = argv[i]
-            i = i + 1
+            i += 1
         }
     }
     if shots.len == 0 {

@@ -85,11 +85,11 @@ pub fn lambert(r1: &Vec3, r2: &Vec3, dt: f64, mu: f64, prograde: bool): Lambert 
         if a > 0.0 && y < 0.0 {
             var guard = 0
             while y < 0.0 && guard < 200 {
-                psi = psi + 0.1
+                psi += 0.1
                 let d2 = stumpff2(psi)
                 let d3 = stumpff3(psi)
                 y = n1 + n2 + a * (psi * d3 - 1.0) / Math.sqrt(d2)
-                guard = guard + 1
+                guard += 1
             }
             psiLow = psi
         }
@@ -109,7 +109,7 @@ pub fn lambert(r1: &Vec3, r2: &Vec3, dt: f64, mu: f64, prograde: bool): Lambert 
         if Math.abs(dtCalc - dt) < 1.0e-6 * dt {
             i = 200
         } else {
-            i = i + 1
+            i += 1
         }
     }
 

@@ -81,20 +81,20 @@ pub fn prettyJson(input: &string): string {
             result.push(ch)
             // skip escaped characters
             if ch == '\\' && pos + 1 < input.len {
-                pos = pos + 1
+                pos += 1
                 result.push(input[pos])
             }
             if ch == '"' {
                 inString = false
             }
-            pos = pos + 1
+            pos += 1
             continue
         }
 
         if ch == '"' {
             inString = true
             result.push(ch)
-            pos = pos + 1
+            pos += 1
             continue
         }
 
@@ -102,23 +102,23 @@ pub fn prettyJson(input: &string): string {
         if ch == '{' || ch == '[' {
             result.push(ch)
             result.push('\n')
-            indent = indent + 1
+            indent += 1
             for sp in 0..indent * 2 {
                 result.push(' ')
             }
-            pos = pos + 1
+            pos += 1
             continue
         }
 
         // } or ]
         if ch == '}' || ch == ']' {
             result.push('\n')
-            indent = indent - 1
+            indent -= 1
             for sp in 0..indent * 2 {
                 result.push(' ')
             }
             result.push(ch)
-            pos = pos + 1
+            pos += 1
             continue
         }
 
@@ -129,7 +129,7 @@ pub fn prettyJson(input: &string): string {
             for sp in 0..indent * 2 {
                 result.push(' ')
             }
-            pos = pos + 1
+            pos += 1
             continue
         }
 
@@ -137,18 +137,18 @@ pub fn prettyJson(input: &string): string {
         if ch == ':' {
             result.push(':')
             result.push(' ')
-            pos = pos + 1
+            pos += 1
             continue
         }
 
         // skip whitespace outside strings
         if ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t' {
-            pos = pos + 1
+            pos += 1
             continue
         }
 
         result.push(ch)
-        pos = pos + 1
+        pos += 1
     }
 
     return result

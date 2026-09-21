@@ -212,7 +212,7 @@ pub fn main(): i32 {
     while !quit {
         var bx = false
         var by = false
-        x = x + vx
+        x += vx
         if x < 0 {
             x = 0
             vx = -vx
@@ -222,7 +222,7 @@ pub fn main(): i32 {
             vx = -vx
             bx = true
         }
-        y = y + vy
+        y += vy
         if y < 0 {
             y = 0
             vy = -vy
@@ -233,7 +233,7 @@ pub fn main(): i32 {
             by = true
         }
         if bx || by {
-            bounces = bounces + 1
+            bounces += 1
         }
         let corner = bx && by
 

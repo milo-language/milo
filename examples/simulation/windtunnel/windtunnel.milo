@@ -147,9 +147,9 @@ pub fn buildSolid(solid: &mut Vec<bool>, shape: i64, aoaDeg: f64) {
                 }
             }
             solid[c] = hit
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -295,14 +295,14 @@ pub fn drawChar(fb: &mut Vec<u32>, x0: i64, y0: i64, ch: u8, scale: i64, col: u3
                         if px >= 0 && px < NX && py >= 0 && py < NY {
                             fb[py * NX + px] = col
                         }
-                        xx = xx + 1
+                        xx += 1
                     }
-                    yy = yy + 1
+                    yy += 1
                 }
             }
-            cc = cc + 1
+            cc += 1
         }
-        row = row + 1
+        row += 1
     }
 }
 
@@ -312,7 +312,7 @@ pub fn drawText(fb: &mut Vec<u32>, x0: i64, y0: i64, s: string, scale: i64, col:
     while i < s.len {
         drawChar(&mut fb, cx, y0, s[i], scale, col)
         cx = cx + 4 * scale
-        i = i + 1
+        i += 1
     }
 }
 
@@ -361,7 +361,7 @@ pub fn main(): i32 {
         uy.push(0.0)
         vort.push(0.0)
         fb.push(0)
-        c = c + 1
+        c += 1
     }
     var force: Vec<f64> = [0.0, 0.0]
 
@@ -458,7 +458,7 @@ pub fn main(): i32 {
 
             // Angle of attack and Reynolds are held, not tapped — they ramp.
             if ks[82] != 0 && shape != SHAPE_CYLINDER {
-                aoa = aoa + 0.4
+                aoa += 0.4
                 if aoa > 30.0 {
                     aoa = 30.0
                 }
@@ -466,7 +466,7 @@ pub fn main(): i32 {
                 lbmBuildInterior(solid, NX, NY, &mut interior)
             }
             if ks[81] != 0 && shape != SHAPE_CYLINDER {
-                aoa = aoa - 0.4
+                aoa -= 0.4
                 if aoa < -30.0 {
                     aoa = -30.0
                 }
@@ -474,13 +474,13 @@ pub fn main(): i32 {
                 lbmBuildInterior(solid, NX, NY, &mut interior)
             }
             if ks[79] != 0 {
-                re = re * 1.02
+                re *= 1.02
                 if re > 3000.0 {
                     re = 3000.0
                 }
             }
             if ks[80] != 0 {
-                re = re / 1.02
+                re /= 1.02
                 if re < 20.0 {
                     re = 20.0
                 }
@@ -525,7 +525,7 @@ pub fn main(): i32 {
                 lbmStep(g, &mut f, solid, interior, NX, NY, tau, 0.0, true, &mut force)
                 lbmInlet(&mut f, NX, NY, U_IN, vIn)
                 lbmOutlet(&mut f, NX, NY)
-                step = step + 2
+                step += 2
 
                 // Momentum-exchange force -> coefficients. Reference area in 2D is
                 // just the characteristic length, and rho ~ 1 in lattice units.
@@ -539,12 +539,12 @@ pub fn main(): i32 {
                     if lastCross > 0 {
                         let period = (step - lastCross) as f64
                         stSum = stSum + D_CHAR / (period * U_IN)
-                        stCount = stCount + 1
+                        stCount += 1
                     }
                     lastCross = step
                 }
                 prevCl = clS
-                s = s + 1
+                s += 1
             }
         }
 
@@ -573,9 +573,9 @@ pub fn main(): i32 {
                         }
                     }
                 }
-                x = x + 1
+                x += 1
             }
-            y = y + 1
+            y += 1
         }
 
         let now = SDL_GetTicks()

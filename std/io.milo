@@ -277,7 +277,7 @@ impl FdReader {
             for i in 0..r {
                 out.push(buf[i])
             }
-            got = got + r
+            got += r
         }
         return Result.Ok(out)
     }
@@ -368,7 +368,7 @@ impl File {
                     if n <= 0 {
                         break
                     }
-                    got = got + n
+                    got += n
                 }
                 return Result.Ok(_bytesToString(base as *u8, got))
             }
@@ -810,7 +810,7 @@ impl BufReader<R> {
             return Result.Ok(-1)
         }
         let b = self.buf[self.pos] as i64
-        self.pos = self.pos + 1
+        self.pos += 1
         return Result.Ok(b)
     }
 
@@ -824,7 +824,7 @@ impl BufReader<R> {
             any = true
             while self.pos < self.buf.len {
                 let b = self.buf[self.pos]
-                self.pos = self.pos + 1
+                self.pos += 1
                 if b == delim {
                     return Result.Ok(Option.Some(out))
                 }
@@ -867,8 +867,8 @@ impl BufReader<R> {
                 take = n - got
             }
             out.pushStr(self.buf.substr(self.pos, self.pos + take))
-            self.pos = self.pos + take
-            got = got + take
+            self.pos += take
+            got += take
         }
         return Result.Ok(out)
     }
@@ -1021,7 +1021,7 @@ pub fn copyStream<R: Reader, W: Writer>(src: &mut R, dst: &mut W): Result<i64, I
         if chunk.len == 0 {
             return Result.Ok(total)
         }
-        total = total + chunk.len
+        total += chunk.len
         dst.write(chunk)?
     }
     return Result.Ok(total)

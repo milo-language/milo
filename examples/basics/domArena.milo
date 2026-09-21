@@ -179,7 +179,7 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
                 // small Copy structs, capture fine without this.
                 let extra = t.clone()
                 let _ = arenaModifyMut(&mut dom.arena, last, (n: &mut Node): void => {
-                    n.text = n.text + extra
+                    n.text += extra
                 }
                 )
                 return

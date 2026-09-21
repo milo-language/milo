@@ -788,7 +788,7 @@ pub fn promiseRace<T>(promises: Vec<Promise<T>>): Promise<T> {
                     Option.None => {
                     }
                 }
-                i = i + 1
+                i += 1
             }
             if schedulerCurrent() as i64 != 0 {
                 schedulerYield()
@@ -1174,7 +1174,7 @@ fn wakeSelectFds(sched: *u8, readyFds: *i32, count: i32): void {
                     if readyFds[i as i64] == fd {
                         selectTryClaim(rtReadPtr(cur, nodeA()), rtReadI64(cur, nodeArm()))
                     }
-                    i = i + 1
+                    i += 1
                 }
             }
             cur = next
@@ -1213,7 +1213,7 @@ fn pollAndWake(sched: *u8, timeoutMs: i32): void {
                 if fds[i as i64] == wakeupId {
                     eventLoopDrainWakeup(el, wakeupId)
                 }
-                i = i + 1
+                i += 1
             }
             wakeReadyTasks(sched, fds, n)
             wakeSelectFds(sched, fds, n)
@@ -1274,7 +1274,7 @@ fn wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
                 if readyFds[i as i64] == waitFd {
                     woken = true
                 }
-                i = i + 1
+                i += 1
             }
 
             if woken {
@@ -1389,7 +1389,7 @@ fn schedulerRunOnce(timeoutMs: i32): void {
             enqueueRun(sched, task)
         }
 
-        batch = batch + 1
+        batch += 1
         task = dequeueRun(sched)
     }
 

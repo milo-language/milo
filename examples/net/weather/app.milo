@@ -114,7 +114,7 @@ pub fn keyHasAllTokens(key: &string, q: &string): bool {
         if !key.contains(tok) {
             return false
         }
-        n = n + 1
+        n += 1
     }
     // A one-token query already had its shot in the contains pass; only a
     // multi-token query can find anything new here.
@@ -223,11 +223,11 @@ pub fn citiesHandler(ctx: &mut Context): Response {
     var body = "["
     for i in 0..out.len {
         if i > 0 {
-            body = body + ","
+            body += ","
         }
-        body = body + out[i]
+        body += out[i]
     }
-    body = body + "]"
+    body += "]"
 
     ctx.setHeader("Cache-Control", "public, max-age=600")
     return ctx.json(body)
@@ -514,7 +514,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
         var waited: i64 = 0
         while inFlightHas(key) && waited < 30000 {
             sleepMs(25)
-            waited = waited + 25
+            waited += 25
         }
         if let Option.Some(hit) = freshHit(key) {
             ctx.setHeader("Cache-Control", "public, max-age=" + hit.left.toString())
@@ -739,7 +739,7 @@ pub fn main(): i32 {
     // og:image must be absolute, so a prefix without its trailing slash would
     // concatenate into a 404 that no unfurler reports back.
     if publicUrl.len > 0 && !publicUrl.endsWith("/") {
-        publicUrl = publicUrl + "/"
+        publicUrl += "/"
     }
 
     loadCities()

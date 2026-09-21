@@ -36,7 +36,7 @@ pub let CHAR_ART: f64 = 4.6
 fn hash2(x: i64, y: i64, seed: i64): f64 {
     var h = x * 374761393 + y * 668265263 + seed * 1442695040
     h = (h ^ (h >> 13)) * 1274126177
-    h = h ^ (h >> 16)
+    h ^= (h >> 16)
     var m = h % 4096
     if m < 0 {
         m = 0 - m
@@ -84,9 +84,9 @@ fn rockTile(capped: bool, seed: i64): Sprite {
             var b = 0.075 + n * 0.060
             // a few darker pebbles in the dirt
             if n > 0.78 {
-                r = r * 0.72
-                g = g * 0.70
-                b = b * 0.68
+                r *= 0.72
+                g *= 0.70
+                b *= 0.68
             }
             if capped {
                 let blade = valueNoise((x as f64) * 1.7, 0.0, seed + 3)
@@ -99,17 +99,17 @@ fn rockTile(capped: bool, seed: i64): Sprite {
                     b = 0.140 + (1.0 - t) * 0.180 + n * 0.06
                 } else if (y as f64) < grassDepth + 1.0 {
                     // the shadow the grass casts on the earth under it
-                    r = r * 0.68
-                    g = g * 0.70
-                    b = b * 0.72
+                    r *= 0.68
+                    g *= 0.70
+                    b *= 0.72
                 }
             }
             // a darker seam at the tile border keeps a wall of tiles from
             // melting into one flat field
             if x == 0 || y == TILE_ART - 1 {
-                r = r * 0.80
-                g = g * 0.80
-                b = b * 0.82
+                r *= 0.80
+                g *= 0.80
+                b *= 0.82
             }
             spriteSet(&mut s, x, y, r, g, b, 1.0)
         }
@@ -135,14 +135,14 @@ fn platformTile(): Sprite {
             }
             // the grain
             if y == 2 || y == 4 {
-                r = r * 0.82
-                g = g * 0.80
-                b = b * 0.80
+                r *= 0.82
+                g *= 0.80
+                b *= 0.80
             }
             if y == 5 {
-                r = r * 0.55
-                g = g * 0.52
-                b = b * 0.50
+                r *= 0.55
+                g *= 0.52
+                b *= 0.50
             }
             spriteSet(&mut s, x, y, r, g, b, 1.0)
         }

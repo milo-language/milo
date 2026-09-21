@@ -102,7 +102,7 @@ pub fn addPix(c: &mut Canvas, x: i64, y: i64, r: f64, g: f64, b: f64) {
         return
     }
     let i = (y * c.w + x) * 3
-    c.hdr[i] = c.hdr[i] + (r as f32)
+    c.hdr[i] += (r as f32)
     c.hdr[i + 1] = c.hdr[i + 1] + (g as f32)
     c.hdr[i + 2] = c.hdr[i + 2] + (b as f32)
 }
@@ -143,9 +143,9 @@ pub fn spot(c: &mut Canvas, cx: f64, cy: f64, rad: f64, r: f64, g: f64, b: f64) 
                 c.hdr[i + 1] = c.hdr[i + 1] + ((g * f) as f32)
                 c.hdr[i + 2] = c.hdr[i + 2] + ((b * f) as f32)
             }
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -218,8 +218,8 @@ pub fn line(c: &mut Canvas, x0i: f64, y0i: f64, x1i: f64, y1i: f64, r: f64, g: f
             plot(&mut c, x, iy, 1.0 - frac, r, g, b)
             plot(&mut c, x, iy + 1, frac, r, g, b)
         }
-        yv = yv + grad
-        x = x + 1
+        yv += grad
+        x += 1
     }
 }
 
@@ -268,7 +268,7 @@ pub fn text(c: &mut Canvas, x: i64, y: i64, s: &string, scale: i64, r: f64, g: f
     for k in 0..s.len {
         var code = s[k] as i64
         if code >= 97 && code <= 122 && code != 120 {
-            code = code - 32 // the table is uppercase-only, apart from 'x'
+            code -= 32 // the table is uppercase-only, apart from 'x'
         }
         if code >= 0 && code < 128 {
             let bits = c.font[code]
@@ -312,14 +312,14 @@ fn brightPass(c: &mut Canvas, threshold: f64) {
                 let rowBase = ((sy0 + dy) * c.w + sx0) * 3
                 for dx in 0..4 {
                     let i = rowBase + dx * 3
-                    sr = sr + (c.hdr[i] as f64)
-                    sg = sg + (c.hdr[i + 1] as f64)
-                    sb = sb + (c.hdr[i + 2] as f64)
+                    sr += (c.hdr[i] as f64)
+                    sg += (c.hdr[i + 1] as f64)
+                    sb += (c.hdr[i + 2] as f64)
                 }
             }
-            sr = sr * 0.0625
-            sg = sg * 0.0625
-            sb = sb * 0.0625
+            sr *= 0.0625
+            sg *= 0.0625
+            sb *= 0.0625
             let lum = sr * 0.299 + sg * 0.587 + sb * 0.114
             var keep = 0.0
             if lum > threshold {
@@ -480,8 +480,8 @@ pub fn present(c: &mut Canvas, bloomGain: f64, exposure: f64) {
                 n2 = maxIdx
             }
             c.fb[o] = 0xFF000000 | (c.tonelut[n2] << 16) | (c.tonelut[n1] << 8) | c.tonelut[n0]
-            s = s + 3
-            o = o + 1
+            s += 3
+            o += 1
         }
     }
 }
@@ -514,12 +514,12 @@ pub fn fillRect(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, r: f64, g: f
         var x = ix0
         while x < ix1 {
             let i = (y * c.w + x) * 3
-            c.hdr[i] = c.hdr[i] + (r as f32)
+            c.hdr[i] += (r as f32)
             c.hdr[i + 1] = c.hdr[i + 1] + (g as f32)
             c.hdr[i + 2] = c.hdr[i + 2] + (b as f32)
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -552,10 +552,10 @@ pub fn brickFill(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, r: f64, g: 
         var k = 1.0 - t * (1.0 - botScale)
         // top highlight, bottom seam
         if y == iy0 {
-            k = k * 1.9
+            k *= 1.9
         }
         if y == iy1 - 1 {
-            k = k * 0.45
+            k *= 0.45
         }
         let rr = r * k
         let gg = g * k
@@ -563,12 +563,12 @@ pub fn brickFill(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, r: f64, g: 
         var x = ix0
         while x < ix1 {
             let i = (y * c.w + x) * 3
-            c.hdr[i] = c.hdr[i] + (rr as f32)
+            c.hdr[i] += (rr as f32)
             c.hdr[i + 1] = c.hdr[i + 1] + (gg as f32)
             c.hdr[i + 2] = c.hdr[i + 2] + (bb as f32)
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -609,8 +609,8 @@ pub fn setRect(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, r: f64, g: f6
             c.hdr[i] = r as f32
             c.hdr[i + 1] = g as f32
             c.hdr[i + 2] = b as f32
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }

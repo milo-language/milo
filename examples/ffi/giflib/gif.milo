@@ -159,7 +159,7 @@ fn palettePtr(store: &mut CStore, src: &Option<Palette>): *ColorMapObject {
                     Red: p.rgb[i * 3], Green: p.rgb[i * 3 + 1], Blue: p.rgb[i * 3 + 2]
                 }
                 )
-                i = i + 1
+                i += 1
             }
             // Pointers are taken from the slot in `store` after the push, so they point
             // into a buffer `store` owns rather than one that was just moved away.

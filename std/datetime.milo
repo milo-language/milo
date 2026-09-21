@@ -34,7 +34,7 @@ impl DateTime {
         // weekday: 1970-01-01 was Thursday (4)
         var wd = ((totalDays + 4) % 7) as i32
         if wd < 0 {
-            wd = wd + 7
+            wd += 7
         }
 
         // civil date from day count (Hinnant algorithm)
@@ -106,7 +106,7 @@ impl DateTime {
     fn format(self: &DateTime): string {
         var result: string = ""
         result = result + padI32(self.year, 4) + "-" + padI32(self.month, 2) + "-" + padI32(self.day, 2)
-        result = result + "T"
+        result += "T"
         result = result + padI32(self.hour, 2) + ":" + padI32(self.minute, 2) + ":" + padI32(self.second, 2)
         return result
     }
@@ -199,7 +199,7 @@ fn tmI32(buf: &[u8; 128], off: i64): i32 {
     var i: i64 = 3
     while i >= 0 {
         v = v * 256 + (buf[off + i] as i64)
-        i = i - 1
+        i -= 1
     }
     return v as i32
 }

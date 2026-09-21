@@ -86,7 +86,7 @@ pub fn main(): i32 {
     var i = 1
     while i < argv.len {
         only = argv[i].clone()
-        i = i + 1
+        i += 1
     }
     let all = sources()
     var failed = 0
@@ -104,7 +104,7 @@ pub fn main(): i32 {
                     // document wearing a .png name.
                     if resp.body.len < 8 || resp.body[1] != 80 || resp.body[2] != 78 || resp.body[3] != 71 {
                         print("  NOT A PNG — the server returned " + resp.body.len.toString() + " bytes, probably a service exception")
-                        failed = failed + 1
+                        failed += 1
                     } else {
                         match writeFile(out, resp.body) {
                             Result.Ok(_) => {
@@ -113,18 +113,18 @@ pub fn main(): i32 {
                             Result.Err(err) => {
                                 let _ = err
                                 print("  write failed")
-                                failed = failed + 1
+                                failed += 1
                             }
                         }
                     }
                 }
                 Result.Err(_) => {
                     print("  download failed")
-                    failed = failed + 1
+                    failed += 1
                 }
             }
         }
-        k = k + 1
+        k += 1
     }
     if failed > 0 {
         return 1

@@ -67,14 +67,14 @@ impl PacketWriter {
         var shift = (width - 1) * 8
         while shift >= 0 {
             self.buf.push(((v >> shift) & 255) as u8)
-            shift = shift - 8
+            shift -= 8
         }
     }
 
     // JDWP string: u32 byte length + UTF-8 bytes.
     fn str(self: &mut PacketWriter, s: &string): void {
         self.u32(s.len)
-        self.buf = self.buf + s.clone()
+        self.buf += s.clone()
     }
 }
 
@@ -95,7 +95,7 @@ pub fn newReader(buf: string): PacketReader {
 impl PacketReader {
     fn u8(self: &mut PacketReader): i64 {
         let v = self.buf[self.pos] as i64
-        self.pos = self.pos + 1
+        self.pos += 1
         return v
     }
 
@@ -126,8 +126,8 @@ impl PacketReader {
         var i: i64 = 0
         while i < width {
             v = (v << 8) | (self.buf[self.pos] as i64)
-            self.pos = self.pos + 1
-            i = i + 1
+            self.pos += 1
+            i += 1
         }
         return v
     }
@@ -138,9 +138,9 @@ impl PacketReader {
         var i: i64 = 0
         while i < n {
             out.push(self.buf[self.pos + i])
-            i = i + 1
+            i += 1
         }
-        self.pos = self.pos + n
+        self.pos += n
         return out
     }
 }
@@ -456,7 +456,7 @@ pub fn writeAllFd(fd: i32, data: &string): Result<i64> {
 impl JdwpIo {
     fn request(self: &mut JdwpIo, cmdSet: i64, cmd: i64, body: &string): Result<PacketReader> {
         let id = self.nextId
-        self.nextId = self.nextId + 1
+        self.nextId += 1
 
         var head = newWriter()
         head.u32(11 + body.len)
@@ -543,7 +543,7 @@ impl JdwpIo {
             }
             )
             let _status = r.u32()
-            i = i + 1
+            i += 1
         }
         return Result.Ok(out)
     }
@@ -556,7 +556,7 @@ impl JdwpIo {
         var i: i64 = 0
         while i < n {
             out.push(r.id(self.sizes.objectId))
-            i = i + 1
+            i += 1
         }
         return Result.Ok(out)
     }
@@ -612,7 +612,7 @@ impl JdwpIo {
                 modBits: r.u32(),
             }
             )
-            i = i + 1
+            i += 1
         }
         return Result.Ok(out)
     }
@@ -635,7 +635,7 @@ impl JdwpIo {
                 modBits: r.u32(),
             }
             )
-            i = i + 1
+            i += 1
         }
         return Result.Ok(out)
     }
@@ -677,7 +677,7 @@ impl JdwpIo {
                 codeIndex: r.u64(), line: r.u32()
             }
             )
-            i = i + 1
+            i += 1
         }
         return Result.Ok(out)
     }
@@ -700,7 +700,7 @@ impl JdwpIo {
                 slot: r.u32(),
             }
             )
-            i = i + 1
+            i += 1
         }
         return Result.Ok(out)
     }
@@ -732,7 +732,7 @@ impl JdwpIo {
         var i: i64 = 0
         while i < n {
             out.push(self.readValue(&mut r))
-            i = i + 1
+            i += 1
         }
         return Result.Ok(out)
     }
@@ -785,7 +785,7 @@ impl JdwpIo {
                 frameId: fid, loc: self.readLocation(&mut r)
             }
             )
-            i = i + 1
+            i += 1
         }
         return Result.Ok(out)
     }
@@ -820,7 +820,7 @@ impl JdwpIo {
                 }
                 )
             }
-            i = i + 1
+            i += 1
         }
         return Result.Ok(out)
     }
@@ -838,7 +838,7 @@ impl JdwpIo {
         while i < slots.len {
             w.u32(slots[i])
             w.u8(tags[i])
-            i = i + 1
+            i += 1
         }
         var r = self.request(16, 1, w.buf)?
         let n = r.u32()
@@ -846,7 +846,7 @@ impl JdwpIo {
         var j: i64 = 0
         while j < n {
             out.push(self.readValue(&mut r))
-            j = j + 1
+            j += 1
         }
         return Result.Ok(out)
     }
@@ -989,7 +989,7 @@ impl JdwpIo {
                 return out
             }
             out.push(ev)
-            i = i + 1
+            i += 1
         }
         return out
     }

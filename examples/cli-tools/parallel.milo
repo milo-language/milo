@@ -88,10 +88,10 @@ pub fn main(): i32 {
                     exit((code >> 8) & 255)
                 }
                 pids[si] = pid as i64
-                nextLine = nextLine + 1
-                launched = launched + 1
+                nextLine += 1
+                launched += 1
             }
-            si = si + 1
+            si += 1
         }
 
         // wait for any child to finish
@@ -100,13 +100,13 @@ pub fn main(): i32 {
         if pid > 0 {
             let exitCode = status[1] as i32
             if exitCode != 0 {
-                failures = failures + 1
+                failures += 1
                 if haltOnError {
                     // don't launch more, but wait for in-flight
                     nextLine = lines.len
                 }
             }
-            completed = completed + 1
+            completed += 1
             // free the slot
             for fi in 0..jobs {
                 if pids[fi] == pid as i64 {

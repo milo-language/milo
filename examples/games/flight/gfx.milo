@@ -78,7 +78,7 @@ pub fn addPix(c: &mut Canvas, x: i64, y: i64, r: f64, g: f64, b: f64) {
         return
     }
     let i = (y * c.w + x) * 3
-    c.hdr[i] = c.hdr[i] + (r as f32)
+    c.hdr[i] += (r as f32)
     c.hdr[i + 1] = c.hdr[i + 1] + (g as f32)
     c.hdr[i + 2] = c.hdr[i + 2] + (b as f32)
 }
@@ -128,8 +128,8 @@ pub fn darkLine(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, k: f64) {
         darkPix(&mut c, bx + 1, by, k * fx * (1.0 - fy))
         darkPix(&mut c, bx, by + 1, k * (1.0 - fx) * fy)
         darkPix(&mut c, bx + 1, by + 1, k * fx * fy)
-        px = px + ix
-        py = py + iy
+        px += ix
+        py += iy
     }
 }
 
@@ -169,9 +169,9 @@ pub fn spot(c: &mut Canvas, cx: f64, cy: f64, rad: f64, r: f64, g: f64, b: f64) 
                 c.hdr[i + 1] = c.hdr[i + 1] + ((g * f) as f32)
                 c.hdr[i + 2] = c.hdr[i + 2] + ((b * f) as f32)
             }
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -244,8 +244,8 @@ pub fn line(c: &mut Canvas, x0i: f64, y0i: f64, x1i: f64, y1i: f64, r: f64, g: f
             plot(&mut c, x, iy, 1.0 - frac, r, g, b)
             plot(&mut c, x, iy + 1, frac, r, g, b)
         }
-        yv = yv + grad
-        x = x + 1
+        yv += grad
+        x += 1
     }
 }
 
@@ -300,9 +300,9 @@ pub fn shadeRect(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, k: f64) {
         var x = ix0
         while x < ix1 {
             hide(&mut c, x, y, 1.0 - k)
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -317,7 +317,7 @@ pub fn text(c: &mut Canvas, x: i64, y: i64, s: &string, scale: i64, r: f64, g: f
     for k in 0..s.len {
         var code = s[k] as i64
         if code >= 97 && code <= 122 && code != 120 {
-            code = code - 32 // the table is uppercase-only, apart from 'x'
+            code -= 32 // the table is uppercase-only, apart from 'x'
         }
         if code >= 0 && code < 128 {
             let bits = c.font[code]
@@ -367,11 +367,11 @@ pub fn fillRect(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, r: f64, g: f
         var x = ix0
         while x < ix1 {
             let i = (y * c.w + x) * 3
-            c.hdr[i] = c.hdr[i] + (r as f32)
+            c.hdr[i] += (r as f32)
             c.hdr[i + 1] = c.hdr[i + 1] + (g as f32)
             c.hdr[i + 2] = c.hdr[i + 2] + (b as f32)
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }

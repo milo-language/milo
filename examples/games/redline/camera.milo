@@ -153,7 +153,7 @@ impl Chase {
         // than gliding.
         let rumble = Math.maxF64(0.0, k - 0.66) * 0.62 + 0.30 * car.boost + 0.22 * car.padLevel()
         self.shake = Math.maxF64(rumble, self.shake - dt * 2.4)
-        self.shakeT = self.shakeT + dt
+        self.shakeT += dt
     }
 
     // The shake is applied to the eye only, and only ever sideways and up. A

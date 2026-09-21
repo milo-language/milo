@@ -73,14 +73,14 @@ impl DapOut {
     }
 
     fn event(self: &mut DapOut, name: &string, body: &string): void {
-        self.seq = self.seq + 1
+        self.seq += 1
         let msg = Json.obj().int("seq", self.seq).str("type", "event")
             .str("event", name.clone()).raw("body", body.clone()).build()
         self.sendRaw(msg)
     }
 
     fn respond(self: &mut DapOut, reqSeq: i64, command: &string, body: &string): void {
-        self.seq = self.seq + 1
+        self.seq += 1
         let msg = Json.obj().int("seq", self.seq).str("type", "response")
             .int("request_seq", reqSeq).bool("success", true)
             .str("command", command.clone()).raw("body", body.clone()).build()
@@ -88,7 +88,7 @@ impl DapOut {
     }
 
     fn fail(self: &mut DapOut, reqSeq: i64, command: &string, message: &string): void {
-        self.seq = self.seq + 1
+        self.seq += 1
         let msg = Json.obj().int("seq", self.seq).str("type", "response")
             .int("request_seq", reqSeq).bool("success", false)
             .str("command", command.clone()).str("message", message.clone()).build()
@@ -286,7 +286,7 @@ pub fn strArray(args: &Json, key: &string): Vec<string> {
                         Option.None => {
                         }
                     }
-                    i = i + 1
+                    i += 1
                 }
             }
         }
@@ -433,7 +433,7 @@ pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result
             }
         }
         sleepMs(100)
-        tries = tries + 1
+        tries += 1
     }
     return Result.Err("JVM spawned but JDWP agent never listened on port " + port.toString())
 }
@@ -466,7 +466,7 @@ pub fn joinPaths(v: Vec<string>): string {
         if !first {
             out.push(':' as u8)
         }
-        out = out + p.clone()
+        out += p.clone()
         first = false
     }
     return out
@@ -479,7 +479,7 @@ pub fn dirOf(path: &string): string {
         if path[i] == '/' {
             lastSlash = i
         }
-        i = i + 1
+        i += 1
     }
     if lastSlash <= 0 {
         return "."
@@ -494,7 +494,7 @@ pub fn baseNameNoExt(path: &string): string {
         if path[i] == '/' {
             start = i + 1
         }
-        i = i + 1
+        i += 1
     }
     var end = path.len
     if path.endsWith(".java") {
@@ -518,7 +518,7 @@ pub fn classNameForSource(path: &string): string {
                     // strip trailing ';' and whitespace
                     var end = p.len
                     while end > 0 && (p[end - 1] == ';' || p[end - 1] == ' ') {
-                        end = end - 1
+                        end -= 1
                     }
                     pkg = p.substr(0, end)
                     break
@@ -571,7 +571,7 @@ pub fn prettyTypeName(sig: &string): string {
             } else {
                 out.push(sig[i])
             }
-            i = i + 1
+            i += 1
         }
         return out
     }
@@ -613,7 +613,7 @@ pub fn simpleName(dotted: &string): string {
         if dotted[i] == '.' {
             start = i + 1
         }
-        i = i + 1
+        i += 1
     }
     return dotted.substr(start, dotted.len)
 }
@@ -644,8 +644,8 @@ pub fn floatFromBits(bits: i64, expBits: i64, manBits: i64): string {
     var manScale: f64 = 1.0
     var k: i64 = 0
     while k < manBits {
-        manScale = manScale * 2.0
-        k = k + 1
+        manScale *= 2.0
+        k += 1
     }
     var frac: f64 = (man as f64) / manScale
     var e = exp - bias
@@ -653,16 +653,16 @@ pub fn floatFromBits(bits: i64, expBits: i64, manBits: i64): string {
         // subnormal: no implicit leading 1, exponent is 1-bias
         e = 1 - bias
     } else {
-        frac = frac + 1.0
+        frac += 1.0
     }
     var val = frac
     while e > 0 {
-        val = val * 2.0
-        e = e - 1
+        val *= 2.0
+        e -= 1
     }
     while e < 0 {
-        val = val / 2.0
-        e = e + 1
+        val /= 2.0
+        e += 1
     }
     if sign == 1 {
         val = 0.0 - val
@@ -764,7 +764,7 @@ impl Sess {
             if self.threads[i] == jdwpId {
                 return i + 1
             }
-            i = i + 1
+            i += 1
         }
         self.threads.push(jdwpId)
         return self.threads.len
@@ -827,7 +827,7 @@ impl Sess {
                         Option.None => {
                         }
                     }
-                    i = i + 1
+                    i += 1
                 }
             }
             Option.None => {
@@ -849,7 +849,7 @@ impl Sess {
                 idx = i
                 break
             }
-            i = i + 1
+            i += 1
         }
         if idx < 0 {
             self.bps.push(BpFile {
@@ -941,7 +941,7 @@ impl Sess {
                 }
             }
             arr = arr.raw(Json.obj().bool("verified", planted).int("line", want).build())
-            lineIdx = lineIdx + 1
+            lineIdx += 1
         }
         return arr.build()
     }
@@ -1070,7 +1070,7 @@ impl Sess {
                     }
                 }
             }
-            depth = depth + 1
+            depth += 1
         }
         return ""
     }
@@ -1120,7 +1120,7 @@ impl Sess {
                 }
                 return Result.Ok(out)
             }
-            i = i + 1
+            i += 1
         }
         let sig = self.io.typeSignature(classId)?
         let methods = self.io.typeMethods(classId)?
@@ -1145,7 +1145,7 @@ impl Sess {
             if self.classes[i].classId == classId {
                 return self.classes[i].signature.clone()
             }
-            i = i + 1
+            i += 1
         }
         // classMethods populates the cache (signature included)
         match self.classMethods(classId) {
@@ -1160,7 +1160,7 @@ impl Sess {
             if self.classes[j].classId == classId {
                 return self.classes[j].signature.clone()
             }
-            j = j + 1
+            j += 1
         }
         return ""
     }
@@ -1200,7 +1200,7 @@ impl Sess {
             if self.bps[i].signature == sig {
                 return self.bps[i].srcPath.clone()
             }
-            i = i + 1
+            i += 1
         }
         let dotted = prettyTypeName(sig)
         if self.program.len > 0 && classNameForSource(self.program) == dotted {
@@ -1225,7 +1225,7 @@ impl Sess {
                 if inner[j] == '/' {
                     lastSlash = j
                 }
-                j = j + 1
+                j += 1
             }
             if lastSlash > 0 {
                 pkgPath = inner.substr(0, lastSlash + 1)
@@ -1287,7 +1287,7 @@ impl Sess {
                 b = b.raw("source", Json.obj().str("name", baseNameNoExt(srcPath) + ".java").str("path", srcPath).build())
             }
             arr = arr.raw(b.build())
-            fi = fi + 1
+            fi += 1
         }
         self.out.respond(seq, c, Json.obj().raw("stackFrames", arr.build()).int("totalFrames", entries.len).build())
     }
@@ -1298,7 +1298,7 @@ impl Sess {
             if self.frames[i].dapId == dapId {
                 return i
             }
-            i = i + 1
+            i += 1
         }
         return -1
     }
@@ -1460,7 +1460,7 @@ impl Sess {
                         var i: i64 = 0
                         while i < vals.len && i < names.len {
                             arr = arr.raw(self.renderVariable(names[i], vals[i]))
-                            i = i + 1
+                            i += 1
                         }
                     }
                     Result.Err(e) => {
@@ -1501,7 +1501,7 @@ impl Sess {
                         var i: i64 = 0
                         while i < vals.len && i < names.len {
                             arr = arr.raw(self.renderVariable(names[i], vals[i]))
-                            i = i + 1
+                            i += 1
                         }
                     }
                     Result.Err(e) => {
@@ -1527,7 +1527,7 @@ impl Sess {
                         while i < vals.len {
                             let nm = "[" + i.toString() + "]"
                             arr = arr.raw(self.renderVariable(nm, vals[i]))
-                            i = i + 1
+                            i += 1
                         }
                     }
                     Result.Err(e) => {
@@ -1602,7 +1602,7 @@ impl Sess {
                 return
             }
             cur = v
-            pi = pi + 1
+            pi += 1
         }
 
         let nm: string = "result"
@@ -1721,7 +1721,7 @@ impl Sess {
                                     Option.None => {
                                     }
                                 }
-                                j = j + 1
+                                j += 1
                             }
                         }
                         Result.Err(_e) => {
@@ -1732,7 +1732,7 @@ impl Sess {
                         self.bps[i].prepReqId = 0
                     }
                 }
-                i = i + 1
+                i += 1
             }
             let _r = self.io.threadResume(ev.thread)
         } else if ev.kind == 6 {

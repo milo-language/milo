@@ -336,7 +336,7 @@ pub fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
             if n < 0 {
                 return n
             }
-            sent = sent + n
+            sent += n
         }
         return sent
     }
@@ -385,7 +385,7 @@ pub fn sendFd(fd: i32, buf: *u8, len: i64): i64 {
             if n < 0 {
                 return n
             }
-            sent = sent + n
+            sent += n
         }
         return sent
     }

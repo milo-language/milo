@@ -90,7 +90,7 @@ requires thrust >= 0.0 && thrust <= 1.0
     let force = thrust * maxThrust - mass * gravity
     let accel = force / mass
     state.velocity = state.velocity + accel * dt
-    state.velocity = state.velocity * 0.999
+    state.velocity *= 0.999
     state.altitude = state.altitude + state.velocity * dt
 
     if state.altitude < 0.0 {

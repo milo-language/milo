@@ -36,7 +36,7 @@ pub fn newTerm(rows: i64, cols: i64): Term {
     while i < n {
         chars.push(32) // space
         attrs.push(0)
-        i = i + 1
+        i += 1
     }
     return Term {
         cols: cols, rows: rows, chars: chars, attrs: attrs,
@@ -61,7 +61,7 @@ impl Term {
         var c: i64 = 0
         while c < self.cols {
             self.clearCell(r, c)
-            c = c + 1
+            c += 1
         }
     }
 
@@ -74,7 +74,7 @@ impl Term {
             let k = self.idx(0, c0)
             self.histChars.push(self.chars[k])
             self.histAttrs.push(self.attrs[k])
-            c0 = c0 + 1
+            c0 += 1
         }
         self.trimHistory()
 
@@ -86,9 +86,9 @@ impl Term {
                 let src = self.idx(r, c)
                 self.chars[dst] = self.chars[src]
                 self.attrs[dst] = self.attrs[src]
-                c = c + 1
+                c += 1
             }
-            r = r + 1
+            r += 1
         }
         self.clearRow(self.rows - 1)
     }
@@ -112,7 +112,7 @@ impl Term {
         while i < self.histChars.len {
             nc.push(self.histChars[i])
             na.push(self.histAttrs[i])
-            i = i + 1
+            i += 1
         }
         self.histChars = nc
         self.histAttrs = na
@@ -154,14 +154,14 @@ impl Term {
                     }
                 }
                 if a != curAttr {
-                    out = out + sgrFor(a)
+                    out += sgrFor(a)
                     curAttr = a
                 }
                 out.push(ch)
-                c = c + 1
+                c += 1
             }
-            out = out + "\x1b[0m"
-            vr = vr + 1
+            out += "\x1b[0m"
+            vr += 1
         }
         return out
     }
@@ -170,7 +170,7 @@ impl Term {
         if self.cr + 1 >= self.rows {
             self.scrollUp()
         } else {
-            self.cr = self.cr + 1
+            self.cr += 1
         }
     }
 
@@ -183,7 +183,7 @@ impl Term {
         let k = self.idx(self.cr, self.cc)
         self.chars[k] = ch
         self.attrs[k] = self.attr
-        self.cc = self.cc + 1
+        self.cc += 1
     }
 
     fn param(self: &Self, i: i64, dflt: i64): i64 {
@@ -208,17 +208,17 @@ impl Term {
             if p == 0 {
                 self.attr = 0
             } else if p == 1 {
-                self.attr = self.attr | 1 // bold on
+                self.attr |= 1 // bold on
             } else if p == 22 {
-                self.attr = self.attr & 0x7ffffffe // bold off
+                self.attr &= 0x7ffffffe // bold off
             } else if p >= 30 && p <= 37 {
                 self.attr = (self.attr & 1) | (((p - 30 + 1) as i32) << 1)
             } else if p >= 90 && p <= 97 {
                 self.attr = (self.attr & 1) | (((p - 90 + 9) as i32) << 1)
             } else if p == 39 {
-                self.attr = self.attr & 1 // default fg, keep bold
+                self.attr &= 1 // default fg, keep bold
             }
-            i = i + 1
+            i += 1
         }
     }
 
@@ -228,29 +228,29 @@ impl Term {
             var r: i64 = 0
             while r < self.rows {
                 self.clearRow(r)
-                r = r + 1
+                r += 1
             }
         } else if kind == 0 {
             var c = self.cc
             while c < self.cols {
                 self.clearCell(self.cr, c)
-                c = c + 1
+                c += 1
             }
             var r = self.cr + 1
             while r < self.rows {
                 self.clearRow(r)
-                r = r + 1
+                r += 1
             }
         } else if kind == 1 {
             var r: i64 = 0
             while r < self.cr {
                 self.clearRow(r)
-                r = r + 1
+                r += 1
             }
             var c: i64 = 0
             while c <= self.cc && c < self.cols {
                 self.clearCell(self.cr, c)
-                c = c + 1
+                c += 1
             }
         }
     }
@@ -261,13 +261,13 @@ impl Term {
             var c = self.cc
             while c < self.cols {
                 self.clearCell(self.cr, c)
-                c = c + 1
+                c += 1
             }
         } else if kind == 1 {
             var c: i64 = 0
             while c <= self.cc && c < self.cols {
                 self.clearCell(self.cr, c)
-                c = c + 1
+                c += 1
             }
         } else if kind == 2 {
             self.clearRow(self.cr)
@@ -299,16 +299,16 @@ impl Term {
             self.cc = c
             self.clampCursor()
         } else if final == 65 { // 'A' up
-            self.cr = self.cr - self.param(0, 1)
+            self.cr -= self.param(0, 1)
             self.clampCursor()
         } else if final == 66 { // 'B' down
-            self.cr = self.cr + self.param(0, 1)
+            self.cr += self.param(0, 1)
             self.clampCursor()
         } else if final == 67 { // 'C' right
-            self.cc = self.cc + self.param(0, 1)
+            self.cc += self.param(0, 1)
             self.clampCursor()
         } else if final == 68 { // 'D' left
-            self.cc = self.cc - self.param(0, 1)
+            self.cc -= self.param(0, 1)
             self.clampCursor()
         } else if final == 71 { // 'G' cursor to column
             self.cc = self.param(0, 1) - 1
@@ -335,7 +335,7 @@ impl Term {
                 self.cc = 0
             } else if b == 8 { // BS
                 if self.cc > 0 {
-                    self.cc = self.cc - 1
+                    self.cc -= 1
                 }
             } else if b == 9 { // TAB
                 var nc = (self.cc / 8 + 1) * 8
@@ -388,7 +388,7 @@ impl Term {
         var i: i64 = 0
         while i < n {
             self.feedByte(buf[i])
-            i = i + 1
+            i += 1
         }
     }
 }
@@ -396,7 +396,7 @@ impl Term {
 pub fn sgrFor(attr: i32): string {
     var s = "\x1b[0m"
     if (attr & 1) != 0 {
-        s = s + "\x1b[1m"
+        s += "\x1b[1m"
     }
     let fg = (attr >> 1) as i64
     if fg >= 1 && fg <= 8 {
@@ -419,15 +419,15 @@ pub fn renderTerm(term: &Term, startCol: i64): void {
             let k = r * term.cols + c
             let a = term.attrs[k]
             if a != curAttr {
-                line = line + sgrFor(a)
+                line += sgrFor(a)
                 curAttr = a
             }
             line.push(term.chars[k])
-            c = c + 1
+            c += 1
         }
-        line = line + "\x1b[0m"
+        line += "\x1b[0m"
         writeStdout(line)
-        r = r + 1
+        r += 1
     }
 }
 
@@ -444,14 +444,14 @@ pub fn renderTermString(term: &Term, startRow: i64, startCol: i64): string {
             let k = r * term.cols + c
             let a = term.attrs[k]
             if a != curAttr {
-                out = out + sgrFor(a)
+                out += sgrFor(a)
                 curAttr = a
             }
             out.push(term.chars[k])
-            c = c + 1
+            c += 1
         }
-        out = out + "\x1b[0m"
-        r = r + 1
+        out += "\x1b[0m"
+        r += 1
     }
     return out
 }
@@ -460,7 +460,7 @@ pub fn renderTermString(term: &Term, startRow: i64, startCol: i64): string {
 // the emulator's cursor is. This is what a client gets the instant it (re)attaches.
 pub fn fullRepaint(term: &Term): string {
     var out = "\x1b[2J\x1b[H"
-    out = out + renderTermString(term, 1, 1)
+    out += renderTermString(term, 1, 1)
     out = out + $"\x1b[{term.cr + 1};{term.cc + 1}H"
     return out
 }

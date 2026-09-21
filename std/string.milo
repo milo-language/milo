@@ -63,7 +63,7 @@ ensures result >= -1
         if cmp == 0 {
             return i
         }
-        i = i + 1
+        i += 1
     }
     return -1
 }
@@ -106,7 +106,7 @@ ensures result >= -1
             anchor = k
             break
         }
-        k = k + 1
+        k += 1
     }
     let ab = needle[anchor]
     let c1 = asciiToLower(ab) as i32
@@ -164,7 +164,7 @@ ensures result >= -1
             if asciiToLower(haystack[start + j]) != asciiToLower(needle[j]) {
                 break
             }
-            j = j + 1
+            j += 1
         }
         if j == needle.len {
             return start
@@ -204,12 +204,12 @@ fn strLastIndexOf(haystack: &string, needle: &string): i64 {
             if haystack[i + j] != needle[j] {
                 break
             }
-            j = j + 1
+            j += 1
         }
         if j == needle.len {
             return i
         }
-        i = i - 1
+        i -= 1
     }
     return -1
 }
@@ -291,7 +291,7 @@ fn strTrim(s: &string): string {
         if ch != 32 && ch != 9 && ch != 10 && ch != 13 {
             break
         }
-        start = start + 1
+        start += 1
     }
     var end: i64 = s.len
     while end > start {
@@ -299,7 +299,7 @@ fn strTrim(s: &string): string {
         if ch != 32 && ch != 9 && ch != 10 && ch != 13 {
             break
         }
-        end = end - 1
+        end -= 1
     }
     if start >= end {
         return ""
@@ -317,7 +317,7 @@ fn strTrimStart(s: &string): string {
         if ch != 32 && ch != 9 && ch != 10 && ch != 13 {
             break
         }
-        start = start + 1
+        start += 1
     }
     if start >= s.len {
         return ""
@@ -335,7 +335,7 @@ fn strTrimEnd(s: &string): string {
         if ch != 32 && ch != 9 && ch != 10 && ch != 13 {
             break
         }
-        end = end - 1
+        end -= 1
     }
     if end <= 0 as i64 {
         return ""
@@ -381,28 +381,32 @@ requires n >= 0
 {
     var result: string = ""
     for i in 0..n {
-        result = result + s
+        result += s
     }
     return result
 }
 
 // Pad start of string to targetLen using padStr (cycles if shorter than needed).
 
-// Left-pad `s` with repeated `padStr` until it reaches `targetLen` bytes
-// (returned unchanged if already at least that long).
+// Left-pad `s` with repeated `padStr` until it is `targetLen` characters long
+// (returned unchanged if already at least that long). Characters, not bytes: a
+// column of "café" and "cafe" lines up. The pad string is cycled by character too,
+// so a multibyte pad is never cut.
 fn strPadStart(s: &string, targetLen: i64, padStr: &string): string
 requires targetLen >= 0
 {
-    if s.len >= targetLen || padStr.len == 0 {
+    var needed: i64 = targetLen - _charCount(s)
+    if needed <= 0 || padStr.len == 0 {
         return s.clone()
     }
     var padding: string = ""
-    var needed: i64 = targetLen - s.len
-    while padding.len < needed {
+    while needed > 0 {
         var i: i64 = 0
-        while i < padStr.len && padding.len < needed {
-            padding.push(padStr[i])
-            i = i + 1
+        while i < padStr.len && needed > 0 {
+            let w = _utf8Width(padStr[i])
+            padding += padStr.substr(i, i + w)
+            i += w
+            needed -= 1
         }
     }
     return padding + s
@@ -410,23 +414,24 @@ requires targetLen >= 0
 
 // Pad end of string to targetLen using padStr (cycles if shorter than needed).
 
-// Right-pad `s` with repeated `padStr` until it reaches `targetLen` bytes
-// (returned unchanged if already at least that long).
+// Right-pad `s` with repeated `padStr` until it is `targetLen` characters long
+// (returned unchanged if already at least that long). Characters, not bytes, as
+// strPadStart.
 fn strPadEnd(s: &string, targetLen: i64, padStr: &string): string
 requires targetLen >= 0
 {
-    if s.len >= targetLen || padStr.len == 0 {
+    var needed: i64 = targetLen - _charCount(s)
+    if needed <= 0 || padStr.len == 0 {
         return s.clone()
     }
     var result: string = s.clone()
-    var needed: i64 = targetLen - s.len
-    var added: i64 = 0
-    while added < needed {
+    while needed > 0 {
         var i: i64 = 0
-        while i < padStr.len && added < needed {
-            result.push(padStr[i])
-            i = i + 1
-            added = added + 1
+        while i < padStr.len && needed > 0 {
+            let w = _utf8Width(padStr[i])
+            result += padStr.substr(i, i + w)
+            i += w
+            needed -= 1
         }
     }
     return result
@@ -447,14 +452,14 @@ fn strReplace(s: &string, old: &string, newVal: &string): string {
     {
         let found = strIndexOfFrom(s, old, pos)
         if found < 0 {
-            result = result + s.substr(pos, s.len)
+            result += s.substr(pos, s.len)
             break
         }
         let idx = found
         if idx > pos {
-            result = result + s.substr(pos, idx)
+            result += s.substr(pos, idx)
         }
-        result = result + newVal
+        result += newVal
         pos = idx + old.len
     }
     return result
@@ -574,9 +579,9 @@ fn vecJoin(parts: &Vec<string>, sep: &string): string {
     var result: string = ""
     for i in 0..parts.len {
         if i > 0 {
-            result = result + sep
+            result += sep
         }
-        result = result + parts[i]
+        result += parts[i]
     }
     return result
 }
@@ -586,12 +591,47 @@ fn strIsEmpty(s: &string): bool {
     return s.len == 0
 }
 
-// The single byte at `idx` as a length-1 string. Requires 0 <= idx < s.len
-// (byte index, not codepoint).
+// The character that starts at byte `idx`, as a string of one to four bytes. `idx`
+// is a byte offset, so `"aéb".charAt(1)` is "é" and `.charAt(2)`, the middle of the
+// é, aborts through substr's boundary check rather than answering half a character.
+// Requires 0 <= idx < s.len.
 fn strCharAt(s: &string, idx: i64): string
 requires idx >= 0 && idx < s.len
 {
-    return s.substr(idx, idx + 1)
+    return s.substr(idx, idx + _utf8Width(s[idx]))
+}
+
+// Byte length of the UTF-8 sequence that `lead` begins: 1 for ASCII, 2-4 by the
+// lead byte's high bits. A continuation byte (10xxxxxx) has no width of its own and
+// is reported as 1 so a caller that lands on one gets substr's boundary abort, not
+// an over-long read.
+fn _utf8Width(lead: u8): i64 {
+    if lead < 128 {
+        return 1
+    }
+    if lead >= 240 {
+        return 4
+    }
+    if lead >= 224 {
+        return 3
+    }
+    if lead >= 192 {
+        return 2
+    }
+    return 1
+}
+
+// Characters (code points) in `s`: every byte that is not a continuation byte
+// starts one. What padStart/padEnd measure, so "日本" pads as two columns wide,
+// not six.
+fn _charCount(s: &string): i64 {
+    var n: i64 = 0
+    for i in 0..s.len {
+        if (s[i] & 192) != 128 {
+            n += 1
+        }
+    }
+    return n
 }
 
 // UTF-8 aware: scans backward past continuation bytes to reverse whole codepoints
@@ -603,12 +643,12 @@ ensures result.len == s.len
     while i > 0 {
         var start: i64 = i - 1
         while start > 0 && (s[start] & 192) == 128 {
-            start = start - 1
+            start -= 1
         }
         var j: i64 = start
         while j < i {
             result.push(s[j])
-            j = j + 1
+            j += 1
         }
         i = start
     }
@@ -648,7 +688,7 @@ fn strParseInt(s: &string): Option<i64> {
             return Option.None
         }
         acc = acc * 10 - digit
-        i = i + 1
+        i += 1
     }
     if negative {
         return Option.Some(acc)
@@ -665,32 +705,32 @@ fn strParseInt(s: &string): Option<i64> {
 fn _strIsFloatText(s: &string): bool {
     var i: i64 = 0
     if i < s.len && (s[i] == 43 || s[i] == 45) {
-        i = i + 1
+        i += 1
     }
     var digits: i64 = 0
     while i < s.len && s[i] >= 48 && s[i] <= 57 {
-        digits = digits + 1
-        i = i + 1
+        digits += 1
+        i += 1
     }
     if i < s.len && s[i] == 46 {
-        i = i + 1
+        i += 1
         while i < s.len && s[i] >= 48 && s[i] <= 57 {
-            digits = digits + 1
-            i = i + 1
+            digits += 1
+            i += 1
         }
     }
     if digits == 0 {
         return false
     }
     if i < s.len && (s[i] == 101 || s[i] == 69) {
-        i = i + 1
+        i += 1
         if i < s.len && (s[i] == 43 || s[i] == 45) {
-            i = i + 1
+            i += 1
         }
         var expDigits: i64 = 0
         while i < s.len && s[i] >= 48 && s[i] <= 57 {
-            expDigits = expDigits + 1
-            i = i + 1
+            expDigits += 1
+            i += 1
         }
         if expDigits == 0 {
             return false

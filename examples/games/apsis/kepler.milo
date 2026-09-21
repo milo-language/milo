@@ -143,7 +143,7 @@ fn solveDeltaE(esinE0: f64, ecosE0: f64, mdt: f64): f64 {
             return next
         }
         dE = next
-        i = i + 1
+        i += 1
     }
     return dE
 }
@@ -165,7 +165,7 @@ fn hyperResidual(esinhH0: f64, ecoshH0: f64, mdt: f64, dH: f64): f64 {
 fn solveDeltaH(esinhH0: f64, ecoshH0: f64, mdt: f64): f64 {
     var span = 1.0
     while span < 700.0 && hyperResidual(esinhH0, ecoshH0, mdt, span) < 0.0 {
-        span = span * 2.0
+        span *= 2.0
     }
     var lo = -span
     var hi = span
@@ -174,7 +174,7 @@ fn solveDeltaH(esinhH0: f64, ecoshH0: f64, mdt: f64): f64 {
     } else {
         hi = 0.0
         while lo > -700.0 && hyperResidual(esinhH0, ecoshH0, mdt, lo) > 0.0 {
-            lo = lo * 2.0
+            lo *= 2.0
         }
     }
     var dH = (lo + hi) * 0.5
@@ -200,7 +200,7 @@ fn solveDeltaH(esinhH0: f64, ecoshH0: f64, mdt: f64): f64 {
             return next
         }
         dH = next
-        i = i + 1
+        i += 1
     }
     return dH
 }

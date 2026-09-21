@@ -76,31 +76,31 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64]) {
         }
         inp.muteHeld = mDown
         if ks[SC_A] != 0 {
-            inp.moveX = inp.moveX - 1.0
+            inp.moveX -= 1.0
         }
         if ks[SC_D] != 0 {
-            inp.moveX = inp.moveX + 1.0
+            inp.moveX += 1.0
         }
         // `moveY` is a pitch rate, +1 climb: the sign flips once, at the end,
         // rather than in four places.
         if ks[SC_W] != 0 {
-            inp.moveY = inp.moveY + 1.0
+            inp.moveY += 1.0
         }
         if ks[SC_S] != 0 {
-            inp.moveY = inp.moveY - 1.0
+            inp.moveY -= 1.0
         }
         // Arrows do the same thing as WASD.
         if ks[SC_LEFT] != 0 {
-            inp.moveX = inp.moveX - 1.0
+            inp.moveX -= 1.0
         }
         if ks[SC_RIGHT] != 0 {
-            inp.moveX = inp.moveX + 1.0
+            inp.moveX += 1.0
         }
         if ks[SC_UP] != 0 {
-            inp.moveY = inp.moveY + 1.0
+            inp.moveY += 1.0
         }
         if ks[SC_DOWN] != 0 {
-            inp.moveY = inp.moveY - 1.0
+            inp.moveY -= 1.0
         }
         var raw = 0
         if ks[SC_UP] != 0 || ks[SC_W] != 0 {

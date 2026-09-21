@@ -101,8 +101,8 @@ fn logTimestamp(): string {
     // Truncating division rounds toward zero, so a pre-1970 clock would other-
     // wise render a negative millisecond field.
     if frac < 0 {
-        frac = frac + 1000
-        secs = secs - 1
+        frac += 1000
+        secs -= 1
     }
     return DateTime.fromEpoch(secs).format() + "." + zeroPad(frac, 3) + "Z"
 }
@@ -118,7 +118,7 @@ fn logNeedsQuote(v: &string): bool {
         if c == ' ' || c == '"' || c == '=' || c == '\\' || (c as i64) < 32 {
             return true
         }
-        i = i + 1
+        i += 1
     }
     return false
 }
@@ -133,7 +133,7 @@ fn logOneLine(s: &string): string {
         if (s[i] as i64) < 32 {
             return jsonEscapeStr(s)
         }
-        i = i + 1
+        i += 1
     }
     return s.clone()
 }
@@ -162,9 +162,9 @@ fn logRenderText(f: &LogFields, level: LogLevel, msg: &string): string {
         if f.quoted[i] && logNeedsQuote(f.vals[i]) {
             line = line + "\"" + jsonEscapeStr(f.vals[i]) + "\""
         } else {
-            line = line + f.vals[i]
+            line += f.vals[i]
         }
-        i = i + 1
+        i += 1
     }
     return line + "\n"
 }
@@ -185,9 +185,9 @@ fn logRenderJson(f: &LogFields, level: LogLevel, msg: &string): string {
         if f.quoted[i] {
             line = line + "\"" + jsonEscapeStr(f.vals[i]) + "\""
         } else {
-            line = line + f.vals[i]
+            line += f.vals[i]
         }
-        i = i + 1
+        i += 1
     }
     return line + "}\n"
 }

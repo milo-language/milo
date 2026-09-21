@@ -108,7 +108,7 @@ pub fn buildRain(gl: &mut GlContext): Rain {
         // a wire fence.
         let lean = rg.jitter(0.10)
         streak(&mut b, v3(x, y, z), len, w, lean, k)
-        i = i + 1
+        i += 1
     }
     var m = Mesh.new(&mut gl, sceneAttrs())
     m.upload(b.data.clone())
@@ -190,7 +190,7 @@ fn sprayGeometry(b: &mut Builder, rg: &mut Rand) {
         b.push(v3(x - s, y - s, z), n, 0.0, 0.0)
         b.push(v3(x + s, y + s, z), n, 1.0, 1.0)
         b.push(v3(x - s, y + s, z), n, 0.0, 1.0)
-        i = i + 1
+        i += 1
     }
 }
 

@@ -97,7 +97,7 @@ pub fn rendererNew(gl: &mut GlContext): Result<Renderer, string> {
     while i < BODY_COUNT {
         tex.push(dummyTexture(&mut gl))
         loaded.push(false)
-        i = i + 1
+        i += 1
     }
     return Result.Ok(Renderer {
         planetSh: planetSh, atmoSh: atmoSh, ringSh: ringSh, skySh: skySh,
@@ -434,7 +434,7 @@ pub fn drawScene(gl: &mut GlContext, r: &mut Renderer, g: &Game, v: &View, time:
         let p = bodyPoint(g, id, t)
         drawBody(&mut gl, &mut r, g, v, id, t, 1.0)
         out.push(markerOf(v, id, p, g.bodies[id].radius))
-        i = i + 1
+        i += 1
     }
     return out
 }

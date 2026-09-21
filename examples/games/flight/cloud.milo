@@ -77,7 +77,7 @@ pub fn cloudEmpty(): CloudField {
 fn hash2(x: i64, y: i64): f64 {
     var h = x * 374761393 + y * 668265263
     h = (h ^ (h >> 13)) * 1274126177
-    h = h ^ (h >> 16)
+    h ^= (h >> 16)
     var m = h % 65536
     if m < 0 {
         m = 0 - m
@@ -112,7 +112,7 @@ fn fbm2(x: f64, y: f64): f64 {
         let ny = py * 1.7 - px * 1.1
         px = nx
         py = ny
-        amp = amp * 0.5
+        amp *= 0.5
     }
     return v
 }

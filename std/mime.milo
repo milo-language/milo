@@ -36,10 +36,10 @@ impl Mime {
         while i < ext.len {
             var b = ext[i]
             if b >= 'A' && b <= 'Z' {
-                b = b + 32
+                b += 32
             }
             norm.push(b)
-            i = i + 1
+            i += 1
         }
         return lookupExtension(norm)
     }
@@ -98,7 +98,7 @@ impl Mime {
             }
         }
         while end > 0 && (mediaType[end - 1] == ' ' || mediaType[end - 1] == 9) {
-            end = end - 1
+            end -= 1
         }
         let base = mediaType[0..end]
         if base.startsWith("text/") {
@@ -134,7 +134,7 @@ fn extensionOf(path: &string): Option<string> {
         if path[i] == '.' {
             dot = i
         }
-        i = i + 1
+        i += 1
     }
     if dot <= segStart || dot + 1 >= path.len {
         return Option.None

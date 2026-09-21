@@ -332,7 +332,7 @@ fn bodyGeometry(b: &mut Builder) {
             b.push(pts[c], nrm[c], u1, v1)
             b.push(pts[d], nrm[d], u0, v1)
         }
-        i = i + 1
+        i += 1
     }
 
     // Nose and tail caps, as fans onto the centre of the end section. They are
@@ -428,7 +428,7 @@ fn trimGeometry(b: &mut Builder) {
         let x = side * 0.94
         b.boxSpan(v3(x - 0.075, 0.74, -0.86), v3(x + 0.075, 0.90, -0.40))
         b.boxSpan(v3(x - 0.085, 0.72, -0.90), v3(x + 0.085, 0.78, -0.80))
-        side = side + 2.0
+        side += 2.0
     }
 
     // Mirrors, on stalks.
@@ -437,7 +437,7 @@ fn trimGeometry(b: &mut Builder) {
         let x = side * 0.95
         b.boxSpan(v3(x - 0.04, 0.84, 0.62), v3(x + 0.18 * side + 0.04, 0.88, 0.74))
         b.boxSpan(v3(x + 0.13 * side - 0.09, 0.82, 0.56), v3(x + 0.13 * side + 0.09, 0.97, 0.70))
-        side = side + 2.0
+        side += 2.0
     }
 
     // The rear screen is a slatted grille, not glass. Eight louvres laid over
@@ -493,7 +493,7 @@ fn trimGeometry(b: &mut Builder) {
     while e < 4 {
         let x = -0.165 + (e as f64) * 0.11
         b.cylinderZ(v3(x, 0.40, -2.11), 0.038, 0.055, 8, true)
-        e = e + 1
+        e += 1
     }
 
     // No racing stripes. They used to run the length of the shell, sampled from
@@ -516,7 +516,7 @@ fn naca(b: &mut Builder, side: f64) {
         let z = 0.52 - t * 0.62
         let h = 0.035 + t * 0.075
         b.boxSpan(v3(x - 0.03, 0.55 - h, z - 0.22), v3(x + 0.03, 0.55 + h, z))
-        i = i + 1
+        i += 1
     }
 }
 
@@ -567,7 +567,7 @@ fn lampGeometry(b: &mut Builder) {
         b.boxSpan(v3(side * 0.34 - 0.004, 0.665, -2.102), v3(side * 0.52 + 0.004, 0.730, -2.082))
         b.setTint(2.10, 0.68, 0.05)
         b.boxSpan(v3(side * 0.56 - 0.004, 0.665, -2.102), v3(side * 0.68 + 0.004, 0.730, -2.082))
-        side = side + 2.0
+        side += 2.0
     }
     // Reversing lamps, small and low in the valance either side of the pipes.
     b.setTint(0.95, 0.95, 0.90)
@@ -599,7 +599,7 @@ fn flameGeometry(b: &mut Builder) {
         cone(&mut b, x, 0.055, 0.55, 9.0, 8.4, 6.0)
         cone(&mut b, x, 0.085, 1.00, 7.0, 2.60, 0.45)
         cone(&mut b, x, 0.115, 1.55, 3.4, 0.55, 0.12)
-        e = e + 1
+        e += 1
     }
 }
 
@@ -1052,7 +1052,7 @@ impl Car {
         if handbrake {
             grip = GRIP_HANDBRAKE
         }
-        vr = vr * Math.exp(-grip * dt)
+        vr *= Math.exp(-grip * dt)
         // Off the road the car also simply will not go, which is most of what
         // stops a player cutting the hairpin across the infield.
         if self.offTrack {
@@ -1064,7 +1064,7 @@ impl Car {
         let nf = self.forward()
         let nr = self.right()
         self.vel = nf.scale(vf) + nr.scale(vr)
-        self.pos = self.pos + self.vel.scale(dt)
+        self.pos += self.vel.scale(dt)
         self.pos.y = 0.0
 
         // Cosmetics. The body leans out of the corner and squats under power.
@@ -1100,7 +1100,7 @@ impl Car {
         // score a lap every frame it wobbled there.
         let step = track.delta(self.prevS, loc.s)
         if self.prevS > track.length * 0.75 && loc.s < track.length * 0.25 && step > 0.0 {
-            self.lap = self.lap + 1
+            self.lap += 1
         }
         self.prevS = loc.s
         self.s = loc.s

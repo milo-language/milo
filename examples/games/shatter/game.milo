@@ -253,7 +253,7 @@ pub fn loadLevel(g: &mut Game, n: i64) {
                 }
                 )
             }
-            c = c + 1
+            c += 1
         }
     }
     resetBall(&mut g)
@@ -279,7 +279,7 @@ pub fn bricksLeft(g: &Game): i64 {
     var n: i64 = 0
     for i in 0..g.bricks.len {
         if g.bricks[i].alive && g.bricks[i].kind != 1 {
-            n = n + 1
+            n += 1
         }
     }
     return n
@@ -326,14 +326,14 @@ fn killBrick(g: &mut Game, i: i64) {
     let drops = g.bricks[i].drops
     g.bricks[i].alive = false
 
-    g.combo = g.combo + 1
+    g.combo += 1
     if g.combo > g.bestCombo {
         g.bestCombo = g.combo
     }
     // Every brick in a rally is worth more than the last. This is the loop that
     // makes you want one more go.
     let value = 25 * Math.minI64(g.combo, 20)
-    g.score = g.score + value
+    g.score += value
     if g.score > g.best {
         g.best = g.score
     }
@@ -378,7 +378,7 @@ fn hitBrick(g: &mut Game, i: i64) {
         burst(&mut g, bx, by, 5, 150.0, 0.7, 0.75, 0.85)
         return
     }
-    g.bricks[i].hp = g.bricks[i].hp - 1
+    g.bricks[i].hp -= 1
     g.bricks[i].flash = 0.18
     if g.bricks[i].hp <= 0 {
         killBrick(&mut g, i)
@@ -465,7 +465,7 @@ fn applyPup(g: &mut Game, kind: i64) {
     } else if kind == PUP_SLOW {
         g.slow = 6.0
     } else if kind == PUP_LIFE {
-        g.lives = g.lives + 1
+        g.lives += 1
     } else {
         g.sticky = 12.0
     }
@@ -562,26 +562,26 @@ pub fn launch(g: &mut Game) {
 pub fn gameUpdate(g: &mut Game, dtIn: f64, wantX: f64, launchHeld: bool) {
     var dt = dtIn
     if g.slow > 0.0 {
-        g.slow = g.slow - dtIn
+        g.slow -= dtIn
         dt = dtIn * 0.55
     }
-    g.time = g.time + dt
+    g.time += dt
     if g.shake > 0.0 {
-        g.shake = g.shake * Math.pow(0.02, dt)
+        g.shake *= Math.pow(0.02, dt)
     }
     if g.flash > 0.0 {
         g.flash = g.flash - dt * 2.0
     }
     if g.banner > 0.0 {
-        g.banner = g.banner - dt
+        g.banner -= dt
     }
     if g.sticky > 0.0 {
-        g.sticky = g.sticky - dt
+        g.sticky -= dt
     }
 
     if g.gameOver || g.won {
         for i in 0..g.parts.len {
-            g.parts[i].life = g.parts[i].life - dt
+            g.parts[i].life -= dt
         }
         gridUpdate(&mut g.grid, dt)
         compactParts(&mut g)
@@ -590,7 +590,7 @@ pub fn gameUpdate(g: &mut Game, dtIn: f64, wantX: f64, launchHeld: bool) {
 
     // level cleared: pause, then advance
     if g.clearedTimer > 0.0 {
-        g.clearedTimer = g.clearedTimer - dt
+        g.clearedTimer -= dt
         gridUpdate(&mut g.grid, dt)
         updateParticles(&mut g, dt)
         if g.clearedTimer <= 0.0 {
@@ -683,7 +683,7 @@ pub fn gameUpdate(g: &mut Game, dtIn: f64, wantX: f64, launchHeld: bool) {
     var b: i64 = 0
     while b < g.balls.len {
         if g.balls[b].alive {
-            b = b + 1
+            b += 1
         } else {
             let last = g.balls.len - 1
             g.balls[b] = g.balls[last]
@@ -692,7 +692,7 @@ pub fn gameUpdate(g: &mut Game, dtIn: f64, wantX: f64, launchHeld: bool) {
     }
 
     if g.balls.len == 0 {
-        g.lives = g.lives - 1
+        g.lives -= 1
         g.combo = 0
         g.shake = 12.0
         g.flash = 0.5
@@ -708,7 +708,7 @@ pub fn gameUpdate(g: &mut Game, dtIn: f64, wantX: f64, launchHeld: bool) {
     updateParticles(&mut g, dt)
     for i in 0..g.bricks.len {
         if g.bricks[i].flash > 0.0 {
-            g.bricks[i].flash = g.bricks[i].flash - dt
+            g.bricks[i].flash -= dt
         }
     }
     gridUpdate(&mut g.grid, dt)
@@ -743,7 +743,7 @@ fn updatePups(g: &mut Game, dt: f64) {
             g.pups[i] = g.pups[last]
             let _ = g.pups.pop()
         } else {
-            i = i + 1
+            i += 1
         }
     }
 }
@@ -756,31 +756,31 @@ fn compactParts(g: &mut Game) {
             g.parts[i] = g.parts[last]
             let _ = g.parts.pop()
         } else {
-            i = i + 1
+            i += 1
         }
     }
 }
 
 fn updateParticles(g: &mut Game, dt: f64) {
     for i in 0..g.parts.len {
-        g.parts[i].life = g.parts[i].life - dt
+        g.parts[i].life -= dt
         g.parts[i].vy = g.parts[i].vy + 420.0 * dt
         let d = Math.pow(0.35, dt)
-        g.parts[i].vx = g.parts[i].vx * d
+        g.parts[i].vx *= d
         g.parts[i].x = g.parts[i].x + g.parts[i].vx * dt
         g.parts[i].y = g.parts[i].y + g.parts[i].vy * dt
     }
     compactParts(&mut g)
     var p: i64 = 0
     while p < g.pops.len {
-        g.pops[p].life = g.pops[p].life - dt
+        g.pops[p].life -= dt
         g.pops[p].y = g.pops[p].y - 34.0 * dt
         if g.pops[p].life <= 0.0 {
             let last = g.pops.len - 1
             g.pops[p] = g.pops[last]
             let _ = g.pops.pop()
         } else {
-            p = p + 1
+            p += 1
         }
     }
 }

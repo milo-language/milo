@@ -44,9 +44,9 @@ fn noiseHash(x: i64, y: i64, salt: i64): f64 {
     var h = (((x & 0xFFF) as u64) * 0x9E3779B1) & 0xFFFFFFFF
     h = (h + ((((y & 0xFFF) as u64) * 0x85EBCA77) & 0xFFFFFFFF)) & 0xFFFFFFFF
     h = (h + ((((salt & 0xFFF) as u64) * 0xC2B2AE35) & 0xFFFFFFFF)) & 0xFFFFFFFF
-    h = h ^ (h >> 15)
+    h ^= (h >> 15)
     h = (h * 0x2545F491) & 0xFFFFFFFF
-    h = h ^ (h >> 13)
+    h ^= (h >> 13)
     return ((h & 0xFFFFFF) as f64) / 16777216.0
 }
 
@@ -108,7 +108,7 @@ fn stampGlyph(px: &mut Vec<u32>, w: i64, h: i64, table: &Vec<i64>, code: i64, x0
 fn stampText(px: &mut Vec<u32>, w: i64, h: i64, table: &Vec<i64>, msg: &string, cx: i64, y0: i64, scale: i64, r: f64, g: f64, b: f64) {
     var n = 0
     for _c in msg.codePoints() {
-        n = n + 1
+        n += 1
     }
     let width = n * 6 * scale - scale
     var x = cx - width / 2
@@ -244,11 +244,11 @@ fn drawFace(px: &mut Vec<u32>, cell: i64, msg: &string, gr: f64, gg: f64, gb: f6
     // ring at 0.62 of the radius, which is 78 px across.
     var n = 0
     for _ch in msg.codePoints() {
-        n = n + 1
+        n += 1
     }
     var scale = 12
     while scale > 2 && (n * 6 - 1) * scale > 82 {
-        scale = scale - 1
+        scale -= 1
     }
     let w = (n * 6 - 1) * scale
     let h = 7 * scale
@@ -379,9 +379,9 @@ pub fn logoPixels(): Vec<u32> {
                     }
                 }
             }
-            col = col + 1
+            col += 1
         }
-        row = row + 1
+        row += 1
     }
     let table = fontTable()
     stampText(&mut px, w, h, table, "MILO", w / 2, h - 46, 5, 1.0, 0.80, 0.25)

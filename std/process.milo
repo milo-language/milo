@@ -85,7 +85,7 @@ fn waitpidGreen(pid: i32, statusBuf: &mut [u8; 4]): i32 {
         }
         sleepMs(delay)
         if delay < 16 {
-            delay = delay * 2
+            delay *= 2
         }
     }
     return -1
@@ -620,7 +620,7 @@ fn commandSpawn(cmd: &Command): Result<Child> {
             var extraFd: i32 = 3
             while extraFd < 1024 {
                 close(extraFd)
-                extraFd = extraFd + 1
+                extraFd += 1
             }
             var prog0: *u8 = 0 as *u8
             memcpy((prog0.addrOf()) as *u8, argv, 8)
@@ -712,7 +712,7 @@ fn buildEnvp(cmd: &Command): Result<*u8> {
                     if lastEnvChange(cmd.envChanges, envRecordName(record)) < 0 {
                         records.push(record)
                     }
-                    i = i + 1
+                    i += 1
                 }
             }
         }
@@ -739,7 +739,7 @@ fn freeEnvp(envp: *u8): void {
             if p as i64 == 0 {
                 going = false
             } else {
-                count = count + 1
+                count += 1
             }
         }
         freeArgv(envp, count + 1)

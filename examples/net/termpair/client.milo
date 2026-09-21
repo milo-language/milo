@@ -121,8 +121,8 @@ pub fn isoTimestamp(): string {
         if remaining < daysInYear {
             break
         }
-        remaining = remaining - daysInYear
-        y = y + 1
+        remaining -= daysInYear
+        y += 1
     }
 
     let isLeap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
@@ -134,11 +134,11 @@ pub fn isoTimestamp(): string {
     let monthDays: [i64; 12] = [31, febDays, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     var m: i64 = 0
     while m < 12 && remaining >= monthDays[m] {
-        remaining = remaining - monthDays[m]
-        m = m + 1
+        remaining -= monthDays[m]
+        m += 1
     }
     let d = remaining + 1
-    m = m + 1
+    m += 1
 
     return y.toString() + "-" + pad2(m) + "-" + pad2(d) + "T" + pad2(hours) + ":" + pad2(minutes) + ":" + pad2(seconds) + "Z"
 }
@@ -379,7 +379,7 @@ fn main(): i32 {
                 if isPublicA {
                     payload = Base64.encode(plaintext)
                 } else {
-                    msgCount = msgCount + 1
+                    msgCount += 1
                     match encryptWithKey(unixKeyA, msgCount, plaintext) {
                         Result.Ok(v) => {
                             payload = v
@@ -441,10 +441,10 @@ fn main(): i32 {
                         if !isPublicB {
                             // hand the unix/browser keys to the new browser, wrapped
                             // under the bootstrap key it derived from the URL fragment.
-                            browserCount = browserCount + 1
+                            browserCount += 1
                             let c1 = bootstrapCount + 1
                             let c2 = bootstrapCount + 2
-                            bootstrapCount = bootstrapCount + 2
+                            bootstrapCount += 2
                             var eu: string = ""
                             var eb: string = ""
                             if let Result.Ok(v) = encryptWithKey(bootKeyB, c1, unixKeyB) {

@@ -18,9 +18,9 @@ impl Rand {
     @wrapping
     fn next(self: &mut Self): u64 {
         var x = self.state
-        x = x ^ (x << 13)
-        x = x ^ (x >> 7)
-        x = x ^ (x << 17)
+        x ^= (x << 13)
+        x ^= (x >> 7)
+        x ^= (x << 17)
         self.state = x
         return x
     }

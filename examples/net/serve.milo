@@ -77,13 +77,13 @@ pub fn formatSize(size: i64): string {
 pub fn dirListing(dirPath: &string, urlPath: &string): string {
     let entries = readDir(dirPath)!
     var html: string = "<!DOCTYPE html><html><head><title>Index of " + urlPath + "</title>"
-    html = html + "<style>body{font-family:monospace;margin:2em}a{text-decoration:none;color:#0366d6}"
-    html = html + "a:hover{text-decoration:underline}table{border-collapse:collapse}"
-    html = html + "td{padding:4px 16px}tr:hover{background:#f6f8fa}</style></head>"
+    html += "<style>body{font-family:monospace;margin:2em}a{text-decoration:none;color:#0366d6}"
+    html += "a:hover{text-decoration:underline}table{border-collapse:collapse}"
+    html += "td{padding:4px 16px}tr:hover{background:#f6f8fa}</style></head>"
     html = html + "<body><h2>Index of " + urlPath + "</h2><table>"
 
     if urlPath != "/" {
-        html = html + "<tr><td><a href=\"../\">..</a></td><td></td></tr>"
+        html += "<tr><td><a href=\"../\">..</a></td><td></td></tr>"
     }
 
     for i in 0..entries.len {
@@ -101,7 +101,7 @@ pub fn dirListing(dirPath: &string, urlPath: &string): string {
         }
     }
 
-    html = html + "</table></body></html>"
+    html += "</table></body></html>"
     return html
 }
 

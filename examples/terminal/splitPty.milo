@@ -143,31 +143,31 @@ pub fn renderPane(text: &string, startCol: i64, half: i64, paneRows: i64): void 
 
         if ch == 10 {
             writeStdout("\x1b[0m")
-            row = row + 1
+            row += 1
             col = 0
-            i = i + 1
+            i += 1
         } else if ch == 13 {
-            i = i + 1
+            i += 1
         } else if ch == 27 {
             // pass through ANSI escape sequences (for colors)
             moveTo(row, startCol + col)
             var seq = ""
             seq.push(text[i])
-            i = i + 1
+            i += 1
             if i < text.len && text[i] == 91 {
                 seq.push(text[i])
-                i = i + 1
+                i += 1
                 while i < text.len && text[i] < 64 {
                     seq.push(text[i])
-                    i = i + 1
+                    i += 1
                 }
                 if i < text.len {
                     seq.push(text[i])
-                    i = i + 1
+                    i += 1
                 }
             } else if i < text.len {
                 seq.push(text[i])
-                i = i + 1
+                i += 1
             }
             writeStdout(seq)
         } else if ch >= 32 && col < maxCol {
@@ -175,10 +175,10 @@ pub fn renderPane(text: &string, startCol: i64, half: i64, paneRows: i64): void 
             var s = ""
             s.push(ch)
             writeStdout(s)
-            col = col + 1
-            i = i + 1
+            col += 1
+            i += 1
         } else {
-            i = i + 1
+            i += 1
         }
     }
     writeStdout("\x1b[0m")

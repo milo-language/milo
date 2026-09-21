@@ -110,7 +110,7 @@ pub fn _lastIndexOf(s: &string, ch: u8): i64 {
         if s[i] == ch {
             return i
         }
-        i = i - 1
+        i -= 1
     }
     return -1
 }
@@ -120,7 +120,7 @@ pub fn slice(s: &string, start: i64, end: i64): string {
     var i = start
     while i < end {
         out.push(s[i])
-        i = i + 1
+        i += 1
     }
     return out
 }
@@ -137,7 +137,7 @@ pub fn _parsePort(s: &string, start: i64): i64 {
             return -1
         }
         v = v * 10 + ((c - 48) as i64)
-        i = i + 1
+        i += 1
     }
     if v > 65535 {
         return -1

@@ -47,7 +47,7 @@ fn parseTlsRequest(raw: &string): Request {
     var n: i64 = 0
     while n < raw.len && n < 8192 {
         buf[n] = raw[n]
-        n = n + 1
+        n += 1
     }
     return parseRequest(buf, n)
 }

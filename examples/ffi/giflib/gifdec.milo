@@ -81,7 +81,7 @@ impl GifReader {
             return Option.None
         }
         let b = self.data[self.pos]
-        self.pos = self.pos + 1
+        self.pos += 1
         return Option.Some(b)
     }
 
@@ -95,9 +95,9 @@ impl GifReader {
         var i: i64 = 0
         while i < n {
             dst[at + i] = self.data[self.pos + i]
-            i = i + 1
+            i += 1
         }
-        self.pos = self.pos + n
+        self.pos += n
         return true
     }
 }
@@ -220,7 +220,7 @@ impl Lzw {
         var i: i64 = 0
         while i <= lzMaxCode {
             self.prefix[i] = noSuchCode
-            i = i + 1
+            i += 1
         }
     }
 }
@@ -250,7 +250,7 @@ fn readPalette(rd: &mut GifReader, bitsPerPixel: i64, sortFlag: bool): Result<Pa
         if !rd.takeInto(&mut rgb, i * 3, 3) {
             return Result.Err(errReadFailed)
         }
-        i = i + 1
+        i += 1
     }
     return Result.Ok(Palette {
         colorCount: count, bitsPerPixel: bitsPerPixel, sortFlag: sortFlag, rgb: rgb
@@ -368,7 +368,7 @@ fn bufferedInput(rd: &mut GifReader, lzw: &mut Lzw): Result<u8, i32> {
         }
         let first = lzw.buf[1]
         lzw.buf[1] = 2
-        lzw.buf[0] = lzw.buf[0] - 1
+        lzw.buf[0] -= 1
         return Result.Ok(first)
     }
     let cursor = lzw.buf[1] as i64
@@ -377,7 +377,7 @@ fn bufferedInput(rd: &mut GifReader, lzw: &mut Lzw): Result<u8, i32> {
     // cursor rolling over to 0 on the read that also takes buf[0] to zero, so the wrap is
     // never observed, but a trap here would be a crash C does not have.
     lzw.buf[1] = ((cursor + 1) & 255) as u8
-    lzw.buf[0] = lzw.buf[0] - 1
+    lzw.buf[0] -= 1
     return Result.Ok(b)
 }
 
@@ -392,20 +392,20 @@ fn decompressInput(rd: &mut GifReader, lzw: &mut Lzw): Result<i64, i32> {
     while lzw.crntShiftState < runningBits {
         let nextByte = bufferedInput(&mut rd, &mut lzw)?
         lzw.crntShiftDword = lzw.crntShiftDword | ((nextByte as i64) << lzw.crntShiftState)
-        lzw.crntShiftState = lzw.crntShiftState + 8
+        lzw.crntShiftState += 8
     }
 
     let code = lzw.crntShiftDword & ((1 << runningBits) - 1)
     lzw.crntShiftDword = lzw.crntShiftDword >> runningBits
-    lzw.crntShiftState = lzw.crntShiftState - runningBits
+    lzw.crntShiftState -= runningBits
 
     // C spells this as one short-circuited condition with a pre-increment in the middle:
     // the running code only advances while it is below LZ_MAX_CODE + 2.
     if lzw.runningCode < lzMaxCode + 2 {
-        lzw.runningCode = lzw.runningCode + 1
+        lzw.runningCode += 1
         if lzw.runningCode > lzw.maxCode1 && runningBits < lzBits {
             lzw.maxCode1 = lzw.maxCode1 << 1
-            lzw.runningBits = lzw.runningBits + 1
+            lzw.runningBits += 1
         }
     }
     return Result.Ok(code)
@@ -421,7 +421,7 @@ fn getPrefixChar(prefix: &Vec<i64>, code: i64, clearCode: i64): i64 {
             return noSuchCode
         }
         c = prefix[c]
-        i = i + 1
+        i += 1
     }
     return c
 }
@@ -448,9 +448,9 @@ fn decompressLine(rd: &mut GifReader, lzw: &mut Lzw, out: &mut Vec<u8>, at: i64,
     }
 
     while stackPtr != 0 && i < lineLen {
-        stackPtr = stackPtr - 1
+        stackPtr -= 1
         out[at + i] = lzw.stack[stackPtr]
-        i = i + 1
+        i += 1
     }
 
     while i < lineLen {
@@ -469,7 +469,7 @@ fn decompressLine(rd: &mut GifReader, lzw: &mut Lzw, out: &mut Vec<u8>, at: i64,
         } else {
             if crntCode < clearCode {
                 out[at + i] = crntCode as u8
-                i = i + 1
+                i += 1
             } else {
                 var crntPrefix: i64 = 0
                 if lzw.prefix[crntCode] == noSuchCode {
@@ -484,7 +484,7 @@ fn decompressLine(rd: &mut GifReader, lzw: &mut Lzw, out: &mut Vec<u8>, at: i64,
                     let pc = getPrefixChar(lzw.prefix, traceFrom, clearCode)
                     lzw.suffix[rcIdx] = pc as u8
                     lzw.stack[stackPtr] = pc as u8
-                    stackPtr = stackPtr + 1
+                    stackPtr += 1
                 } else {
                     crntPrefix = crntCode
                 }
@@ -492,19 +492,19 @@ fn decompressLine(rd: &mut GifReader, lzw: &mut Lzw, out: &mut Vec<u8>, at: i64,
                 var cp = crntPrefix
                 while stackPtr < lzMaxCode && cp > clearCode && cp <= lzMaxCode {
                     lzw.stack[stackPtr] = lzw.suffix[cp]
-                    stackPtr = stackPtr + 1
+                    stackPtr += 1
                     cp = lzw.prefix[cp]
                 }
                 if stackPtr >= lzMaxCode || cp > lzMaxCode {
                     return Result.Err(errImageDefect)
                 }
                 lzw.stack[stackPtr] = cp as u8
-                stackPtr = stackPtr + 1
+                stackPtr += 1
 
                 while stackPtr != 0 && i < lineLen {
-                    stackPtr = stackPtr - 1
+                    stackPtr -= 1
                     out[at + i] = lzw.stack[stackPtr]
-                    i = i + 1
+                    i += 1
                 }
             }
 
@@ -549,7 +549,7 @@ fn getCodeNext(rd: &mut GifReader, lzw: &mut Lzw, pixelCount: &mut i64): Result<
 fn getLine(rd: &mut GifReader, lzw: &mut Lzw, out: &mut Vec<u8>, at: i64, lineLen: i64, pixelCount: &mut i64,): Result<Unit, i32> {
     // C's `LineLen == 0 -> LineLen = Image.Width` fallback is unreachable from slurp,
     // which validates the dimensions above zero before it ever calls this.
-    pixelCount = pixelCount - lineLen
+    pixelCount -= lineLen
     if pixelCount < 0 {
         return Result.Err(errDataTooBig)
     }
@@ -630,7 +630,7 @@ fn getExtensionNext(rd: &mut GifReader, lzw: &mut Lzw): Result<Option<Vec<u8>>, 
     var i: i64 = 1
     while i <= blockLen as i64 {
         payload.push(lzw.buf[i])
-        i = i + 1
+        i += 1
     }
     return Result.Ok(Option.Some(payload))
 }
@@ -671,9 +671,9 @@ pub fn slurp(rd: &mut GifReader, lzw: &mut Lzw, doc: &mut Doc, pixelCount: &mut 
                     var row = interlacedOffset[pass]
                     while row < height as i64 {
                         getLine(&mut rd, &mut lzw, &mut raster, row * (width as i64), width as i64, &mut pixelCount)?
-                        row = row + interlacedJumps[pass]
+                        row += interlacedJumps[pass]
                     }
-                    pass = pass + 1
+                    pass += 1
                 }
             } else {
                 getLine(&mut rd, &mut lzw, &mut raster, 0, imageSize, &mut pixelCount)?

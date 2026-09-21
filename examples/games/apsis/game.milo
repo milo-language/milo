@@ -68,7 +68,7 @@ pub fn titleWorlds(): Vec<i64> {
 pub fn titleSlot(g: &Game): i64 {
     let n = titleWorlds().len
     var i = (g.phaseT / TITLE_SLOT) as i64
-    i = i % n
+    i %= n
     if i < 0 {
         i = 0
     }
@@ -485,12 +485,12 @@ pub fn stepWarp(g: &mut Game, up: bool) {
         if Math.abs(steps[i] * base - g.warp) < Math.abs(steps[idx] * base - g.warp) {
             idx = i
         }
-        i = i + 1
+        i += 1
     }
     if up {
-        idx = idx + 1
+        idx += 1
     } else {
-        idx = idx - 1
+        idx -= 1
     }
     if idx < 0 {
         idx = 0
@@ -513,7 +513,7 @@ pub fn warpMultiple(g: &Game): f64 {
 // ── the frame ─────────────────────────────────────────────────────────────────
 
 pub fn advance(g: &mut Game, dt: f64) {
-    g.phaseT = g.phaseT + dt
+    g.phaseT += dt
     // The slideshow cuts rather than eases: the next world is a billion
     // kilometres away, and easing to it would fly the camera across the solar
     // system in the middle of the title.

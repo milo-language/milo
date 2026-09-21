@@ -60,10 +60,10 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64]) {
             inp.quit = true
         }
         if ks[SC_A] != 0 || ks[SC_LEFT] != 0 {
-            inp.moveX = inp.moveX - 1.0
+            inp.moveX -= 1.0
         }
         if ks[SC_D] != 0 || ks[SC_RIGHT] != 0 {
-            inp.moveX = inp.moveX + 1.0
+            inp.moveX += 1.0
         }
         if ks[SC_W] != 0 || ks[SC_UP] != 0 {
             inp.up = true

@@ -466,8 +466,8 @@ pub fn main(): i32 {
         drawSkyPass(gw, s, view, rs.w as f64, rs.h as f64, w.time)
         drawStreams(&mut gw, &mut s, view, rs.w as f64, rs.h as f64, w.time)
 
-        fpsAccum = fpsAccum + dt
-        fpsFrames = fpsFrames + 1
+        fpsAccum += dt
+        fpsFrames += 1
         if fpsAccum > 0.5 {
             fpsShown = ((fpsFrames as f64) / fpsAccum) as i64
             fpsAccum = 0.0

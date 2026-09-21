@@ -76,7 +76,7 @@ ensures result >= outLo && result <= outHi
         let error: i32 = setpoint - measured
         integral = clampI32(integral + (error >> 8), 0 - iLimit, iLimit)
         prevError = error
-        measured = measured + (cmd >> 8)
+        measured += (cmd >> 8)
     }
     // Re-clamp on the way out: runtime-wise cmd is already in range (pidStep
     // clamps every iteration and the loop always runs), but this hands the

@@ -150,7 +150,7 @@ pub fn drawLineAA(fb: &mut [u32; 172800], x0f: f64, y0f: f64, x1f: f64, y1f: f64
             plotAA(&mut fb, xi, iy, col, 1.0 - fr)
             plotAA(&mut fb, xi, iy + 1, col, fr)
         }
-        xi = xi + 1
+        xi += 1
     }
 }
 
@@ -169,9 +169,9 @@ pub fn fillDot(fb: &mut [u32; 172800], cx: f64, cy: f64, rad: f64, col: u32) {
                 cov = 1.0
             }
             plotAA(&mut fb, x, y, col, cov)
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -219,9 +219,9 @@ pub fn buildCloth(nodes: &mut Vec<Node>, cons: &mut Vec<Con>) {
                 px: px, py: py, ppx: px, ppy: py, pinned: row == 0
             }
             )
-            coli = coli + 1
+            coli += 1
         }
-        row = row + 1
+        row += 1
     }
     // structural (drawn) + shear + bending (skip-one, soft — unfolds creases)
     var r2 = 0
@@ -247,9 +247,9 @@ pub fn buildCloth(nodes: &mut Vec<Node>, cons: &mut Vec<Con>) {
             if r2 + 2 < ROWS {
                 addCon(nodes, &mut cons, i, i + 2 * COLS, 0.25, false)
             } // bend ↓↓
-            c2 = c2 + 1
+            c2 += 1
         }
-        r2 = r2 + 1
+        r2 += 1
     }
 }
 
@@ -293,7 +293,7 @@ pub fn solve(nodes: &mut Vec<Node>, cons: &Vec<Con>, grabbed: i64) {
                 nodes[con.b] = mb
             }
         }
-        i = i + 1
+        i += 1
     }
 }
 
@@ -398,7 +398,7 @@ pub fn main(): i32 {
                         bestD = d2
                         best = gi
                     }
-                    gi = gi + 1
+                    gi += 1
                 }
                 grabbed = best
                 prevMouseX = mouseX
@@ -421,7 +421,7 @@ pub fn main(): i32 {
                 nd.py = nd.py + vy + gravity * dt2
                 nodes[vi] = nd
             }
-            vi = vi + 1
+            vi += 1
         }
 
         // pin the grabbed node to the cursor; encode the (clamped) mouse velocity into
@@ -455,14 +455,14 @@ pub fn main(): i32 {
         var it = 0
         while it < iterations {
             solve(&mut nodes, cons, grabbed)
-            it = it + 1
+            it += 1
         }
 
         // ---- render: dark backdrop, structural grid tinted by motion ----
         var q = 0
         while q < 172800 {
             fb[q] = 0x141420 | (0xFF << 24)
-            q = q + 1
+            q += 1
         }
         var di = 0
         while di < cons.len {
@@ -474,7 +474,7 @@ pub fn main(): i32 {
                 let sb = Math.sqrt((nb.px - nb.ppx) * (nb.px - nb.ppx) + (nb.py - nb.ppy) * (nb.py - nb.ppy))
                 drawLineAA(&mut fb, na.px, na.py, nb.px, nb.py, motionColor((sa + sb) * 0.5))
             }
-            di = di + 1
+            di += 1
         }
         var pi = 0
         while pi < n {
@@ -482,7 +482,7 @@ pub fn main(): i32 {
             if nd.pinned {
                 fillDot(&mut fb, nd.px, nd.py, 2.0, 0xFFE0E0E0)
             }
-            pi = pi + 1
+            pi += 1
         }
         if grabbed >= 0 {
             let g = nodes[grabbed]

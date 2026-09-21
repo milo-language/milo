@@ -89,7 +89,7 @@ impl Rng {
             let t = v[i]
             v[i] = v[j]
             v[j] = t
-            i = i - 1
+            i -= 1
         }
     }
 }

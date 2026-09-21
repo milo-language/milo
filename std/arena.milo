@@ -145,7 +145,7 @@ ensures a.live == old(a.live) + 1
         // positive generation before publishing the new handle.
         a.gens[idx] = -a.gens[idx]
         let gen = a.gens[idx]
-        a.live = a.live + 1
+        a.live += 1
         var h: Handle<T> = Handle {
             arenaId: a.id, index: fi, generation: gen
         }
@@ -157,7 +157,7 @@ ensures a.live == old(a.live) + 1
     assert(idx <= 2147483647, "arena slot capacity exceeded")
     a.data.push(val)
     a.gens.push(1)
-    a.live = a.live + 1
+    a.live += 1
     var h: Handle<T> = Handle {
         arenaId: a.id, index: idx as i32, generation: 1
     }
@@ -208,7 +208,7 @@ ensures a.live <= old(a.live)
     } else {
         a.gens[idx] = 0
     }
-    a.live = a.live - 1
+    a.live -= 1
     return true
 }
 
@@ -450,7 +450,7 @@ pub fn arenaSealGrowth<T>(a: Arena<T>): Result<GrowOnlyArena<T>, FreezeRejected<
             bad = i
             i = a.gens.len
         } else {
-            i = i + 1
+            i += 1
         }
     }
     if bad >= 0 {
@@ -584,7 +584,7 @@ pub fn arenaFreeze<T>(a: Arena<T>): Result<FrozenArena<T>, FreezeRejected<T>> {
             bad = i
             i = a.gens.len
         } else {
-            i = i + 1
+            i += 1
         }
     }
     if bad >= 0 {

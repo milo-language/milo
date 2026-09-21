@@ -32,7 +32,7 @@ from "./sprites" import {
 fn hashi(i: i64, seed: i64): f64 {
     var h = i * 374761393 + seed * 668265263
     h = (h ^ (h >> 13)) * 1274126177
-    h = h ^ (h >> 16)
+    h ^= (h >> 16)
     var m = h % 8192
     if m < 0 {
         m = 0 - m
@@ -133,14 +133,14 @@ fn drawRidge(c: &mut Canvas, camX: f64, camY: f64, par: f64, base: f64, amp: f64
             y = 0
         }
         blendPix(&mut c, x, y, r * 2.6, g * 2.6, b * 2.4, 0.95)
-        y = y + 1
+        y += 1
         if y < c.h {
             blendPix(&mut c, x, y, r * 1.5, g * 1.5, b * 1.4, 1.0)
-            y = y + 1
+            y += 1
         }
         while y < c.h {
             blendPix(&mut c, x, y, r, g, b, 1.0)
-            y = y + 1
+            y += 1
         }
     }
 }
@@ -157,9 +157,9 @@ fn disc(c: &mut Canvas, cx: f64, cy: f64, r: f64, red: f64, green: f64, blue: f6
             if dx * dx + dy * dy <= r * r {
                 blendPix(&mut c, x, y, red, green, blue, a)
             }
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -267,7 +267,7 @@ pub fn drawGoal(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
         let a = (1.0 - t) * 0.55
         let wob = Math.sin(w.t * 3.0 + t * 8.0) * 5.0
         fillRectAdd(&mut c, x - 29.0 + wob * 0.4, y - 32.0 - (k as f64) * 32.0, x + 29.0 + wob * 0.4, y - (k as f64) * 32.0 + 4.0, 0.30 * a, 0.24 * a, 0.07 * a)
-        k = k + 1
+        k += 1
     }
     // the ring itself
     let pulse = 1.0 + 0.25 * Math.sin(w.t * 4.0)
@@ -278,7 +278,7 @@ pub fn drawGoal(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
         let px = x + Math.cos(a) * r
         let py = y - 40.0 + Math.sin(a) * r * 0.85
         spot(&mut c, px, py, 9.0, 1.70, 1.30, 0.40)
-        i = i + 1
+        i += 1
     }
     spot(&mut c, x, y - 40.0, 50.0, 0.42, 0.32, 0.10)
     spot(&mut c, x, y, 66.0, 0.50, 0.38, 0.12)
@@ -302,7 +302,7 @@ pub fn drawChecks(c: &mut Canvas, w: &World, hydrant: &Sprite, ox: f64, oy: f64)
                     let t = (e as f64) / 7.0
                     let rw = (30.0 - t * 22.0) * k
                     fillRect(&mut c, x - rw, y - 3.0 + t * 5.0, x + rw, y + 1.0 + t * 5.0, 0.55 * k, 0.44 * k, 0.09 * k, 0.22 * k)
-                    e = e + 1
+                    e += 1
                 }
             }
             if w.checks[i].lit {
@@ -313,14 +313,14 @@ pub fn drawChecks(c: &mut Canvas, w: &World, hydrant: &Sprite, ox: f64, oy: f64)
                     let t = (k as f64) / 12.0
                     let a = (1.0 - t) * 0.30 * pulse
                     fillRectAdd(&mut c, x - 12.0, y - 40.0 - (k as f64) * 18.0, x + 12.0, y - 30.0 - (k as f64) * 18.0, 0.34 * a, 0.26 * a, 0.06 * a)
-                    k = k + 1
+                    k += 1
                 }
                 drawSprite(&mut c, hydrant, x - 6.0 * ART, y - 14.0 * ART, ART, false, 0.60)
             } else {
                 drawSprite(&mut c, hydrant, x - 6.0 * ART, y - 14.0 * ART, ART, false, 0.0)
             }
         }
-        i = i + 1
+        i += 1
     }
 }
 
@@ -352,7 +352,7 @@ pub fn drawPickups(c: &mut Canvas, w: &World, shards: &Vec<Sprite>, core: &Sprit
                 }
             }
         }
-        i = i + 1
+        i += 1
     }
 }
 
@@ -382,7 +382,7 @@ pub fn drawMobs(c: &mut Canvas, w: &World, cat: &Vec<Sprite>, bird: &Vec<Sprite>
                 drawSprite(&mut c, bird[f], x + (mw - aw) * 0.5, y + mh - ah, CHAR_ART, flip, 0.14)
             }
         }
-        i = i + 1
+        i += 1
     }
 }
 
@@ -409,7 +409,7 @@ pub fn drawBark(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
         let px = x + Math.cos(a) * r * dir
         let py = y + Math.sin(a) * r * 0.8
         spot(&mut c, px, py, 7.0 * fade, 1.10 * fade, 0.85 * fade, 0.30 * fade)
-        i = i + 1
+        i += 1
     }
     spot(&mut c, x, y, 30.0 * fade, 0.40 * fade, 0.30 * fade, 0.10 * fade)
 }
@@ -441,7 +441,7 @@ pub fn drawPee(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
     for i in 0..n {
         var t = ((i as f64) + march) / (n as f64)
         if t > 1.0 {
-            t = t - 1.0
+            t -= 1.0
         }
         let px = sx + (tx - sx) * t
         let py = sy + (ty - sy) * t - arc * 4.0 * t * (1.0 - t)
@@ -476,7 +476,7 @@ fn drawDog(c: &mut Canvas, w: &World, frames: &Vec<Sprite>, ox: f64, oy: f64) {
         let gx = w.ghosts[i].x - w.camX + ox - 3.0
         let gy = w.ghosts[i].y - w.camY + oy
         shadowSprite(&mut c, frames[w.ghosts[i].frame], gx, gy, CHAR_ART, CHAR_ART, w.ghosts[i].flip, t * 0.40, 1.30 * t, 1.00 * t, 0.45 * t)
-        i = i + 1
+        i += 1
     }
 
     let sq = frames[dogFrameOf(w)]
@@ -514,7 +514,7 @@ fn drawDog(c: &mut Canvas, w: &World, frames: &Vec<Sprite>, ox: f64, oy: f64) {
     }
     if w.p.form == FORM_SHEP {
         // the shepherd is darker art, so he needs the extra lift to stay legible
-        glow = glow + 0.10
+        glow += 0.10
     }
     // Invulnerable: flicker, and do not draw at all on the off beat. Skipping
     // frames outright reads as invulnerability; dimming reads as a bug.
@@ -545,7 +545,7 @@ pub fn drawParts(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
         if x > -20.0 && x < (c.w as f64) + 20.0 {
             spot(&mut c, x, y, w.parts[i].size * (0.4 + t * 0.9), w.parts[i].r * t, w.parts[i].g * t, w.parts[i].b * t)
         }
-        i = i + 1
+        i += 1
     }
 }
 
@@ -573,11 +573,11 @@ fn timeString(t: f64): string {
     let mins = total / 6000
     var s = mins.toString() + ":"
     if secs < 10 {
-        s = s + "0"
+        s += "0"
     }
     s = s + secs.toString() + "."
     if cs < 10 {
-        s = s + "0"
+        s += "0"
     }
     return s + cs.toString()
 }

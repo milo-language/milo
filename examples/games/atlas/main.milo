@@ -188,7 +188,7 @@ fn ensureLoaded(gl: &mut GlContext, app: &mut App, i: i64) {
 fn pumpLoading(gl: &mut GlContext, app: &mut App) {
     while app.cursor < app.order.len {
         let i = app.order[app.cursor]
-        app.cursor = app.cursor + 1
+        app.cursor += 1
         if !app.loaded[i] {
             ensureLoaded(&mut gl, &mut app, i)
             return
@@ -261,7 +261,7 @@ fn flyTo(app: &mut App, li: i64) {
     // Not dead-on: a light source directly behind the camera flattens every bit
     // of relief the bump term just produced. Stopping short of the sub-solar
     // point leaves the shadows that make a mountain look like a mountain.
-    delta = delta - 0.95
+    delta -= 0.95
     app.tSpin = app.spin + wrapAngle(delta - app.spin)
 
     // Where that puts it, so the camera can be aimed at the arrival point.
@@ -332,7 +332,7 @@ fn updatePins(app: &mut App, vp: &Vec<f32>, model: &Vec<f32>, eye: &V3, w: f64, 
             x: p.x, y: p.y, onScreen: vis, facing: facing
         }
         )
-        i = i + 1
+        i += 1
     }
 }
 
@@ -350,7 +350,7 @@ fn pickPin(app: &App, mx: f64, my: f64, u: f64): i64 {
                 best = i
             }
         }
-        i = i + 1
+        i += 1
     }
     return best
 }
@@ -435,8 +435,8 @@ fn drawInfoPanel(ui: &mut Ui, app: &App, u: f64) {
     var i = 0
     while i < lines.len {
         ui.text(x + 22.0 * u, ly, body, lines[i], 0.72, 0.79, 0.9, 1.0)
-        ly = ly + lineHeight(body)
-        i = i + 1
+        ly += lineHeight(body)
+        i += 1
     }
 }
 
@@ -467,8 +467,8 @@ fn drawLandmarkCard(ui: &mut Ui, app: &App, u: f64, w: f64) {
     var i = 0
     while i < lines.len {
         ui.text(x + 24.0 * u, ly, body, lines[i], 0.80, 0.86, 0.95, 1.0)
-        ly = ly + lineHeight(body)
-        i = i + 1
+        ly += lineHeight(body)
+        i += 1
     }
     ui.text(x + 24.0 * u, ly + 12.0 * u, 7.5 * u, "PRESS L FOR THE OTHER READING LEVEL", 0.42, 0.5, 0.62, 1.0)
 }
@@ -509,7 +509,7 @@ fn drawPins(ui: &mut Ui, app: &App, u: f64, time: f64) {
                 ui.text(lx, ly, ts, label, r, g, b, 1.0)
             }
         }
-        i = i + 1
+        i += 1
     }
 }
 
@@ -555,7 +555,7 @@ fn drawChips(ui: &mut Ui, app: &App, u: f64, w: f64, h: f64, mx: f64, my: f64): 
             cb = 0.50
         }
         ui.textCentered(x + cw * 0.5, y + 13.0 * u, 8.0 * u, shortName(app.worlds[i].name), cr, cg, cb, 1.0)
-        i = i + 1
+        i += 1
     }
     return hit
 }
@@ -585,7 +585,7 @@ fn drawHelp(ui: &mut Ui, u: f64, w: f64, h: f64) {
     while i < rows.len {
         ui.textCentered(cx, y, 10.0 * u, rows[i], 0.75, 0.82, 0.94, 1.0)
         y = y + lineHeight(10.0 * u) * 1.15
-        i = i + 1
+        i += 1
     }
     y = y + 30.0 * u
     ui.textCentered(cx, y, 9.0 * u, "PRESS H TO START EXPLORING", 0.55, 0.85, 1.0, 1.0)
@@ -645,9 +645,9 @@ fn writePpm(path: &string, w: i64, h: i64, px: &Vec<u32>) {
             rgb[o] = (p & 0xFF) as u8
             rgb[o + 1] = ((p >> 8) & 0xFF) as u8
             rgb[o + 2] = ((p >> 16) & 0xFF) as u8
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
     let header = "P6\n" + $"{w}" + " " + $"{h}" + "\n255\n"
     unsafe {
@@ -716,7 +716,7 @@ fn parseOptions(): Options {
         if k == "--sky" {
             o.sky = parseFloat(v.clone()).unwrapOr(1.0)
         }
-        i = i + 1
+        i += 1
     }
     return o
 }
@@ -799,7 +799,7 @@ pub fn main(): i32 {
     while i < worlds.len {
         tex.push(dummyTexture(&mut gl))
         loaded.push(false)
-        i = i + 1
+        i += 1
     }
     var order: Vec<i64> = Vec.new()
     order.push(W_EARTH)
@@ -864,7 +864,7 @@ pub fn main(): i32 {
     var frame = 0
 
     while !inp.quit {
-        frame = frame + 1
+        frame += 1
         let nowMs = SDL_GetTicks()
         var dt = ((nowMs - prevMs) as f64) / 1000.0
         prevMs = nowMs

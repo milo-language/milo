@@ -29,7 +29,7 @@ pub fn padNum(n: i64, width: i64): string {
     let s = n.toString()
     var result: string = ""
     for p in 0..width - s.len {
-        result = result + " "
+        result += " "
     }
     return result + s
 }
@@ -41,8 +41,8 @@ pub fn numDigits(n: i64): i64 {
     var count: i64 = 0
     var v: i64 = n
     while v > 0 {
-        count = count + 1
-        v = v / 10
+        count += 1
+        v /= 10
     }
     return count
 }
@@ -184,14 +184,14 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
             var end: i64 = pos + 1
             while end < line.len {
                 if line[end] == 92 {
-                    end = end + 2
+                    end += 2
                     continue
                 }
                 if line[end] == quote {
-                    end = end + 1
+                    end += 1
                     break
                 }
-                end = end + 1
+                end += 1
             }
             result = result + Color.green(line.substr(pos, end))
             pos = end
@@ -202,7 +202,7 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
         if ch >= 48 && ch <= 57 {
             var end: i64 = pos
             while end < line.len && ((line[end] >= 48 && line[end] <= 57) || line[end] == 46) {
-                end = end + 1
+                end += 1
             }
             result = result + Color.magenta(line.substr(pos, end))
             pos = end
@@ -213,19 +213,19 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
         if isAlpha(ch) {
             var end: i64 = pos
             while end < line.len && isAlnum(line[end]) {
-                end = end + 1
+                end += 1
             }
             let word = line.substr(pos, end)
             if isKeyword(word, kwList) {
-                result = result + Color.red(word)
+                result += Color.red(word)
             } else if end < line.len && line[end] == 40 {
                 // function call
-                result = result + Color.blue(word)
+                result += Color.blue(word)
             } else if word[0] >= 65 && word[0] <= 90 {
                 // capitalized = type name
-                result = result + Color.cyan(word)
+                result += Color.cyan(word)
             } else {
-                result = result + word
+                result += word
             }
             pos = end
             continue
@@ -234,8 +234,8 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
         // default: emit char as-is
         var chStr: string = ""
         chStr.push(ch)
-        result = result + chStr
-        pos = pos + 1
+        result += chStr
+        pos += 1
     }
 
     return result
@@ -336,7 +336,7 @@ pub fn main(): i32 {
                 print($" {Color.gray($"{padNum(idx + 1, width)} |")} {displayLine}")
             }
         }
-        idx = idx + 1
+        idx += 1
     }
 
     // footer

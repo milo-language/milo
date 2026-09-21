@@ -38,7 +38,7 @@ Every program starts at `main`, which returns an `i32` exit code. `print` is a b
 fn main(): i32 {
     let x = 42              // immutable, type inferred as i64
     var count: i32 = 0      // mutable, type annotated
-    count = count + 1
+    count += 1
 
     let name = "Milo"       // string
     let pi = 3.14           // f64
@@ -253,7 +253,7 @@ fn main(): i32 {
 
 ```milo
 fn double(x: &mut i32) {
-    x = x * 2
+    x *= 2
 }
 
 fn main(): i32 {

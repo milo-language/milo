@@ -88,7 +88,7 @@ pub fn parseSignal(s: &string): i32 {
         let ch = s[i]
         if ch >= 48 && ch <= 57 {
             num = num * 10 + (ch as i64 - 48)
-            i = i + 1
+            i += 1
         } else {
             return -1
         }
@@ -132,7 +132,7 @@ pub fn parseFlags(argv: &Vec<string>): TimeoutOpts {
             exit(0)
         }
         if arg == "-s" || arg == "--signal" {
-            opts.cmdStart = opts.cmdStart + 1
+            opts.cmdStart += 1
             if opts.cmdStart >= argv.len {
                 print("error: --signal requires a value")
                 exit(125)
@@ -143,11 +143,11 @@ pub fn parseFlags(argv: &Vec<string>): TimeoutOpts {
                 print($"error: unknown signal '{sigStr}'")
                 exit(125)
             }
-            opts.cmdStart = opts.cmdStart + 1
+            opts.cmdStart += 1
             continue
         }
         if arg == "-k" || arg == "--kill-after" {
-            opts.cmdStart = opts.cmdStart + 1
+            opts.cmdStart += 1
             if opts.cmdStart >= argv.len {
                 print("error: --kill-after requires a value")
                 exit(125)
@@ -155,21 +155,21 @@ pub fn parseFlags(argv: &Vec<string>): TimeoutOpts {
             let kaStr = argv[opts.cmdStart].clone()
             opts.killAfterMs = parseDuration(kaStr)
             opts.hasKillAfter = true
-            opts.cmdStart = opts.cmdStart + 1
+            opts.cmdStart += 1
             continue
         }
         if arg == "--preserve-status" {
             opts.preserveStatus = true
-            opts.cmdStart = opts.cmdStart + 1
+            opts.cmdStart += 1
             continue
         }
         if arg == "--foreground" {
-            opts.cmdStart = opts.cmdStart + 1
+            opts.cmdStart += 1
             continue
         }
         if arg == "-v" || arg == "--verbose" {
             opts.verbose = true
-            opts.cmdStart = opts.cmdStart + 1
+            opts.cmdStart += 1
             continue
         }
         break
@@ -200,21 +200,21 @@ pub fn main(): i32 {
     var i: i64 = cmdIdx
     while i < argv.len {
         if i > cmdIdx {
-            cmd = cmd + " "
+            cmd += " "
         }
         let arg = argv[i].clone()
-        cmd = cmd + "'"
+        cmd += "'"
         for c in arg {
             if c == 39 {
-                cmd = cmd + "'\\''"
+                cmd += "'\\''"
             } else {
                 var ch: string = ""
                 ch.push(c)
-                cmd = cmd + ch
+                cmd += ch
             }
         }
-        cmd = cmd + "'"
-        i = i + 1
+        cmd += "'"
+        i += 1
     }
 
     let deadlineMs = epochMillis() + durMs

@@ -337,7 +337,7 @@ fn buildSnapshot(lat: f64, lon: f64, reachIn: f64, groundM: f64): WxSnapshot {
         base = 150.0
     }
     // The observation is above ground; the renderer is above sea level.
-    base = base + groundM
+    base += groundM
     let coverage = o.coverOktas / 8.0
 
     var structure: Vec<f32> = Vec.filled(CLOUD_N * CLOUD_N, 1.0)
@@ -361,7 +361,7 @@ fn buildSnapshot(lat: f64, lon: f64, reachIn: f64, groundM: f64): WxSnapshot {
                     peak = v
                 }
                 if v > 0.15 {
-                    wet = wet + 1
+                    wet += 1
                 }
             }
             rain = g
@@ -390,9 +390,9 @@ fn buildSnapshot(lat: f64, lon: f64, reachIn: f64, groundM: f64): WxSnapshot {
     // hour and the ground temperature — would set how cloudy the game is.
     var mean = 0.0
     for i in 0..structure.len {
-        mean = mean + (structure[i] as f64)
+        mean += (structure[i] as f64)
     }
-    mean = mean / (structure.len as f64)
+    mean /= (structure.len as f64)
     if mean < 0.02 {
         mean = 0.02
     }
@@ -572,7 +572,7 @@ pub fn envWeatherLabel(e: &LiveEnv): string {
         // a sky. Printing 0/8 there would be inventing a clear sky — and the radar
         // is simultaneously showing showers over Oahu, which is how it was caught.
         if e.obs.coverOktas <= 0.0 && e.obs.baseM < 0.0 {
-            s = s + "  SKY UNREPORTED"
+            s += "  SKY UNREPORTED"
         } else {
             s = s + "  " + ((e.obs.coverOktas as i64)).toString() + "/8"
         }
@@ -580,7 +580,7 @@ pub fn envWeatherLabel(e: &LiveEnv): string {
         // One bright cell in a corner is not a rainy day. A fiftieth of the map
         // under a real echo is.
         if e.rainFrac > 0.02 {
-            s = s + "  RAIN"
+            s += "  RAIN"
         }
         return s
     }

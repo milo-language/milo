@@ -379,7 +379,7 @@ pub fn kill(w: &mut World, slot: i64) {
         return
     }
     w.ents[slot].alive = false
-    w.ents[slot].gen = w.ents[slot].gen + 1
+    w.ents[slot].gen += 1
     w.free.push(slot)
 }
 
@@ -710,7 +710,7 @@ pub fn onDeath(w: &mut World, slot: i64, byPlayer: bool) {
 
     if byPlayer {
         addScore(&mut w, e.value)
-        w.chain = w.chain + 1
+        w.chain += 1
         w.mult = Math.minI64(1 + w.chain / 12, 8)
     }
 
@@ -741,10 +741,10 @@ pub fn onDeath(w: &mut World, slot: i64, byPlayer: bool) {
             // which case the handle simply does not resolve.
             let core = e.leader
             if alive(w, core) {
-                w.ents[core.slot].tier = w.ents[core.slot].tier - 1
-                w.ents[core.slot].spin = w.ents[core.slot].spin * 1.3
+                w.ents[core.slot].tier -= 1
+                w.ents[core.slot].spin *= 1.3
                 w.ents[core.slot].flash = 0.3
-                w.ents[core.slot].fireT = w.ents[core.slot].fireT * 0.86
+                w.ents[core.slot].fireT *= 0.86
             }
         }
         Kind.Core => {
@@ -781,7 +781,7 @@ pub fn onDeath(w: &mut World, slot: i64, byPlayer: bool) {
     // Squad payout: the counter belongs to the world, the id to the entity, and
     // the last one to die by your hand is the one that pays.
     if e.squad >= 0 && e.squad < w.squadLive.len {
-        w.squadLive[e.squad] = w.squadLive[e.squad] - 1
+        w.squadLive[e.squad] -= 1
         if w.squadLive[e.squad] == 0 && byPlayer {
             dropOrb(&mut w, e.x, e.y)
         }
@@ -834,7 +834,7 @@ pub fn damage(w: &mut World, slot: i64, dmg: f64, byPlayer: bool) {
         _ => {
         }
     }
-    w.ents[slot].hp = w.ents[slot].hp - dmg
+    w.ents[slot].hp -= dmg
     w.ents[slot].flash = 0.18
     if w.ents[slot].hp <= 0.0 {
         onDeath(&mut w, slot, byPlayer)
@@ -1032,7 +1032,7 @@ fn onBulletHit(w: &mut World, bi: i64, slot: i64) {
     }
 
     damage(&mut w, slot, dmg, true)
-    w.bullets[bi].pierce = w.bullets[bi].pierce - 1
+    w.bullets[bi].pierce -= 1
     if w.bullets[bi].pierce < 0 {
         w.bullets[bi].alive = false
     }
@@ -1049,7 +1049,7 @@ fn addPod(w: &mut World) {
     p.tier = w.player.pods
     p.phase = (w.player.pods as f64) * PI
     let _ = spawn(&mut w, p)
-    w.player.pods = w.player.pods + 1
+    w.player.pods += 1
 }
 
 fn collectOrb(w: &mut World, slot: i64) {
@@ -1061,28 +1061,28 @@ fn collectOrb(w: &mut World, slot: i64) {
     let cb = w.ents[slot].cb
     if t == ORB_POWER {
         if w.player.power < 5 {
-            w.player.power = w.player.power + 1
+            w.player.power += 1
         } else {
-            w.score = w.score + 500
+            w.score += 500
         }
     } else if t == ORB_POD {
         addPod(&mut w)
     } else if t == ORB_MISSILE {
         if w.player.missiles < 2 {
-            w.player.missiles = w.player.missiles + 1
+            w.player.missiles += 1
         } else {
-            w.score = w.score + 500
+            w.score += 500
         }
     } else if t == ORB_SHIELD {
         w.player.shield = 1.0
     } else {
         if w.player.speed < 3 {
-            w.player.speed = w.player.speed + 1
+            w.player.speed += 1
         } else {
-            w.score = w.score + 500
+            w.score += 500
         }
     }
-    w.score = w.score + 100
+    w.score += 100
     w.pickupCode = t
     w.pickupT = 1.7
     w.pickupX = x
@@ -1104,8 +1104,8 @@ fn steer(w: &mut World, i: i64, tx: f64, ty: f64, accel: f64, maxSpeed: f64, dt:
     let sp = Math.sqrt(w.ents[i].vx * w.ents[i].vx + w.ents[i].vy * w.ents[i].vy)
     if sp > maxSpeed {
         let k = maxSpeed / sp
-        w.ents[i].vx = w.ents[i].vx * k
-        w.ents[i].vy = w.ents[i].vy * k
+        w.ents[i].vx *= k
+        w.ents[i].vy *= k
     }
 }
 
@@ -1117,18 +1117,18 @@ fn updateEnts(w: &mut World, dt: f64) {
         if !w.ents[i].alive {
             continue
         }
-        w.ents[i].age = w.ents[i].age + dt
+        w.ents[i].age += dt
         if w.ents[i].spawnT > 0.0 {
-            w.ents[i].spawnT = w.ents[i].spawnT - dt
+            w.ents[i].spawnT -= dt
             continue
         }
         if w.ents[i].flash > 0.0 {
-            w.ents[i].flash = w.ents[i].flash - dt
+            w.ents[i].flash -= dt
         }
         // Burn ticks damage over time; it was applied by a completely different
         // system and can kill without anything shooting.
         if w.ents[i].burn > 0.0 {
-            w.ents[i].burn = w.ents[i].burn - dt
+            w.ents[i].burn -= dt
             damage(&mut w, i, 2.4 * dt, true)
             if !w.ents[i].alive {
                 continue
@@ -1141,7 +1141,7 @@ fn updateEnts(w: &mut World, dt: f64) {
             Kind.Drone => {
                 w.ents[i].phase = w.ents[i].phase + dt * 2.0
                 w.ents[i].vy = Math.sin(w.ents[i].phase) * 46.0
-                w.ents[i].fireT = w.ents[i].fireT - dt
+                w.ents[i].fireT -= dt
                 if w.ents[i].fireT <= 0.0 && w.ents[i].x < w.w - 20.0 {
                     w.ents[i].fireT = Random.floatRange(2.2, 4.0)
                     fireHostile(&mut w, w.ents[i].x - 16.0, w.ents[i].y, PI, 300.0, 1.0)
@@ -1150,7 +1150,7 @@ fn updateEnts(w: &mut World, dt: f64) {
             Kind.Weaver => {
                 w.ents[i].phase = w.ents[i].phase + dt * 3.1
                 w.ents[i].vy = Math.sin(w.ents[i].phase) * 300.0
-                w.ents[i].fireT = w.ents[i].fireT - dt
+                w.ents[i].fireT -= dt
                 if w.ents[i].fireT <= 0.0 && w.ents[i].x < w.w - 20.0 {
                     w.ents[i].fireT = Random.floatRange(2.4, 4.4)
                     fireAtPlayer(&mut w, w.ents[i].x, w.ents[i].y, 265.0, 1.0)
@@ -1161,7 +1161,7 @@ fn updateEnts(w: &mut World, dt: f64) {
                 if w.ents[i].age < 1.6 {
                     let want = Math.clampF64(py - w.ents[i].y, 0.0 - 300.0, 300.0)
                     w.ents[i].vy = w.ents[i].vy + want * 2.4 * dt
-                    w.ents[i].vy = w.ents[i].vy * Math.pow(0.06, dt)
+                    w.ents[i].vy *= Math.pow(0.06, dt)
                 } else {
                     w.ents[i].vx = w.ents[i].vx - 700.0 * dt
                 }
@@ -1171,9 +1171,9 @@ fn updateEnts(w: &mut World, dt: f64) {
                 w.ents[i].phase = w.ents[i].phase + dt * 0.9
                 w.ents[i].vy = Math.sin(w.ents[i].phase) * 70.0
                 if w.ents[i].x < w.w * 0.72 {
-                    w.ents[i].vx = w.ents[i].vx * Math.pow(0.1, dt)
+                    w.ents[i].vx *= Math.pow(0.1, dt)
                 }
-                w.ents[i].fireT = w.ents[i].fireT - dt
+                w.ents[i].fireT -= dt
                 if w.ents[i].fireT <= 0.0 && w.ents[i].x < w.w - 20.0 {
                     w.ents[i].fireT = 2.8
                     for k in 0..3 {
@@ -1204,7 +1204,7 @@ fn updateEnts(w: &mut World, dt: f64) {
                 if w.player.alive {
                     w.ents[i].ang = Math.atan2(py - w.ents[i].y, px - w.ents[i].x)
                 }
-                w.ents[i].fireT = w.ents[i].fireT - dt
+                w.ents[i].fireT -= dt
                 if w.ents[i].fireT <= 0.0 && w.ents[i].x < w.w - 10.0 && w.ents[i].x > 0.0 {
                     w.ents[i].fireT = Random.floatRange(2.3, 3.8)
                     fireAtPlayer(&mut w, w.ents[i].x, w.ents[i].y, 275.0, 1.0)
@@ -1233,7 +1233,7 @@ fn updateEnts(w: &mut World, dt: f64) {
                     w.ents[i].ang = Math.atan2(sdy, sdx)
                 } else {
                     w.ents[i].vx = 0.0 - 150.0
-                    w.ents[i].vy = w.ents[i].vy * Math.pow(0.4, dt)
+                    w.ents[i].vy *= Math.pow(0.4, dt)
                 }
             }
             Kind.Healer => {
@@ -1271,7 +1271,7 @@ fn updateEnts(w: &mut World, dt: f64) {
                 w.ents[i].vx = (holdX - w.ents[i].x) * 1.4
                 w.ents[i].phase = w.ents[i].phase + dt * 0.7
                 w.ents[i].vy = Math.sin(w.ents[i].phase) * 150.0
-                w.ents[i].fireT = w.ents[i].fireT - dt
+                w.ents[i].fireT -= dt
                 if w.ents[i].fireT <= 0.0 {
                     w.ents[i].fireT = 1.5
                     if w.ents[i].tier > 0 {
@@ -1320,8 +1320,8 @@ fn updateEnts(w: &mut World, dt: f64) {
                 } else {
                     w.ents[i].vx = w.ents[i].vx + (0.0 - 40.0 - w.ents[i].vx) * dt
                 }
-                w.ents[i].vx = w.ents[i].vx * Math.pow(0.45, dt)
-                w.ents[i].vy = w.ents[i].vy * Math.pow(0.45, dt)
+                w.ents[i].vx *= Math.pow(0.45, dt)
+                w.ents[i].vy *= Math.pow(0.45, dt)
                 if w.ents[i].age > 16.0 {
                     burst(&mut w, w.ents[i].x, w.ents[i].y, 10, 120.0, w.ents[i].cr * 0.4, w.ents[i].cg * 0.4, w.ents[i].cb * 0.4, 1.6)
                     kill(&mut w, i)
@@ -1388,14 +1388,14 @@ fn podUpdate(w: &mut World, i: i64, dt: f64) {
     // swing when you move — the movement is most of the character.
     w.ents[i].vx = w.ents[i].vx + (tx - w.ents[i].x) * 42.0 * dt
     w.ents[i].vy = w.ents[i].vy + (ty - w.ents[i].y) * 42.0 * dt
-    w.ents[i].vx = w.ents[i].vx * Math.pow(0.0009, dt)
-    w.ents[i].vy = w.ents[i].vy * Math.pow(0.0009, dt)
+    w.ents[i].vx *= Math.pow(0.0009, dt)
+    w.ents[i].vy *= Math.pow(0.0009, dt)
 
     let t = w.ents[i].target
     if !alive(w, t) {
         w.ents[i].target = nearestEnemy(w, w.ents[i].x, w.ents[i].y, 620.0, 0 - 1)
     }
-    w.ents[i].fireT = w.ents[i].fireT - dt
+    w.ents[i].fireT -= dt
     if w.ents[i].fireT <= 0.0 {
         w.ents[i].fireT = 0.26
         let t2 = w.ents[i].target
@@ -1506,7 +1506,7 @@ fn updateBullets(w: &mut World, dt: f64) {
         if !w.bullets[i].alive {
             continue
         }
-        w.bullets[i].life = w.bullets[i].life - dt
+        w.bullets[i].life -= dt
         if w.bullets[i].life <= 0.0 {
             w.bullets[i].alive = false
             continue
@@ -1531,7 +1531,7 @@ fn updateBullets(w: &mut World, dt: f64) {
                 w.bullets[i].vy = w.bullets[i].vy * sp / s2
             } else {
                 // Nothing to chase: flatten out and fly on down the lane.
-                w.bullets[i].vy = w.bullets[i].vy * Math.pow(0.02, dt)
+                w.bullets[i].vy *= Math.pow(0.02, dt)
                 w.bullets[i].vx = w.bullets[i].vx + 400.0 * dt
             }
             if Random.range(0, 2) == 0 {
@@ -1614,7 +1614,7 @@ fn updateBullets(w: &mut World, dt: f64) {
     var k: i64 = 0
     while k < w.bullets.len {
         if w.bullets[k].alive {
-            k = k + 1
+            k += 1
         } else {
             let last = w.bullets.len - 1
             w.bullets[k] = w.bullets[last]
@@ -1651,7 +1651,7 @@ fn killPlayer(w: &mut World) {
     }
     w.player.alive = false
     w.hurt = 1.2
-    w.player.lives = w.player.lives - 1
+    w.player.lives -= 1
     w.player.respawn = 1.7
     w.player.shieldT = 6.0 // come back bare, but not for long
     w.player.charge = 0.0
@@ -1678,7 +1678,7 @@ fn killPlayer(w: &mut World) {
 
 fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
     if !w.player.alive {
-        w.player.respawn = w.player.respawn - dt
+        w.player.respawn -= dt
         if w.player.respawn <= 0.0 && !w.gameOver {
             w.player.alive = true
             w.player.x = w.w * 0.22
@@ -1694,15 +1694,15 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
         return
     }
     if w.player.invuln > 0.0 {
-        w.player.invuln = w.player.invuln - dt
+        w.player.invuln -= dt
     }
     if w.player.beamFlash > 0.0 {
-        w.player.beamFlash = w.player.beamFlash - dt
+        w.player.beamFlash -= dt
     }
     // The hull re-plates itself if you stay clean for a while. A shooter where a
     // single mistake compounds into the next one is not hard, it is brittle.
     if w.player.shield <= 0.0 {
-        w.player.shieldT = w.player.shieldT - dt
+        w.player.shieldT -= dt
         if w.player.shieldT <= 0.0 {
             w.player.shield = 1.0
             w.flash = Math.maxF64(w.flash, 0.2)
@@ -1716,14 +1716,14 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
     var dy = my
     let m = Math.sqrt(dx * dx + dy * dy)
     if m > 0.0001 {
-        dx = dx / m
-        dy = dy / m
+        dx /= m
+        dy /= m
         w.player.vx = w.player.vx + dx * accel * dt
         w.player.vy = w.player.vy + dy * accel * dt
     }
     let drag = Math.pow(0.0016, dt)
-    w.player.vx = w.player.vx * drag
-    w.player.vy = w.player.vy * drag
+    w.player.vx *= drag
+    w.player.vy *= drag
     let sp = Math.sqrt(w.player.vx * w.player.vx + w.player.vy * w.player.vy)
     if sp > maxSpd {
         w.player.vx = w.player.vx * maxSpd / sp
@@ -1781,14 +1781,14 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
 
     // The gun never stops. Holding a key to shoot adds nothing here — the key is
     // for the charge.
-    w.player.cooldown = w.player.cooldown - dt
+    w.player.cooldown -= dt
     if w.player.cooldown <= 0.0 {
         w.player.cooldown = 0.165 - (w.player.power as f64) * 0.013
         playerFire(&mut w)
     }
 
     if w.player.missiles > 0 {
-        w.player.missileT = w.player.missileT - dt
+        w.player.missileT -= dt
         if w.player.missileT <= 0.0 {
             w.player.missileT = 0.75
             fireMissile(&mut w, w.player.x + 6.0, w.player.y - 10.0, true)
@@ -1829,29 +1829,29 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
 fn updateParticles(w: &mut World, dt: f64) {
     var k: i64 = 0
     while k < w.parts.len {
-        w.parts[k].life = w.parts[k].life - dt
+        w.parts[k].life -= dt
         if w.parts[k].life <= 0.0 {
             let last = w.parts.len - 1
             w.parts[k] = w.parts[last]
             let _ = w.parts.pop()
         } else {
             let d = Math.pow(0.0001, w.parts[k].drag * dt)
-            w.parts[k].vx = w.parts[k].vx * d
-            w.parts[k].vy = w.parts[k].vy * d
+            w.parts[k].vx *= d
+            w.parts[k].vy *= d
             w.parts[k].x = w.parts[k].x + w.parts[k].vx * dt
             w.parts[k].y = w.parts[k].y + w.parts[k].vy * dt
-            k = k + 1
+            k += 1
         }
     }
     var a: i64 = 0
     while a < w.arcs.len {
-        w.arcs[a].life = w.arcs[a].life - dt
+        w.arcs[a].life -= dt
         if w.arcs[a].life <= 0.0 {
             let last = w.arcs.len - 1
             w.arcs[a] = w.arcs[last]
             let _ = w.arcs.pop()
         } else {
-            a = a + 1
+            a += 1
         }
     }
 }
@@ -2040,7 +2040,7 @@ fn runSquad(w: &mut World, id: i64) {
 }
 
 fn nextStage(w: &mut World) {
-    w.stage = w.stage + 1
+    w.stage += 1
     w.dist = 0.0
     w.stageLen = 5200.0 + (w.stage as f64) * 900.0
     w.scroll = Math.minF64(170.0 + (w.stage as f64) * 18.0, 280.0)
@@ -2080,7 +2080,7 @@ fn updateStage(w: &mut World, dt: f64) {
         // the point where you do not yet know what the game is.
         if w.intro > 0 {
             introSquad(&mut w, 6 - w.intro)
-            w.intro = w.intro - 1
+            w.intro -= 1
             w.nextSpawn = w.dist + 640.0
             return
         }
@@ -2105,25 +2105,25 @@ fn updateStage(w: &mut World, dt: f64) {
 pub fn worldUpdate(w: &mut World, dtIn: f64, mx: f64, my: f64, holdFire: bool) {
     var dt = dtIn
     if w.slowmo > 0.0 {
-        w.slowmo = w.slowmo - dtIn
+        w.slowmo -= dtIn
         dt = dtIn * 0.32
     }
-    w.time = w.time + dt
+    w.time += dt
 
     if w.shake > 0.0 {
-        w.shake = w.shake * Math.pow(0.02, dt)
+        w.shake *= Math.pow(0.02, dt)
     }
     if w.flash > 0.0 {
         w.flash = w.flash - dt * 2.2
     }
     if w.banner > 0.0 {
-        w.banner = w.banner - dt
+        w.banner -= dt
     }
     if w.hurt > 0.0 {
-        w.hurt = w.hurt - dt
+        w.hurt -= dt
     }
     if w.pickupT > 0.0 {
-        w.pickupT = w.pickupT - dt
+        w.pickupT -= dt
         w.pickupY = w.pickupY - 34.0 * dt
     }
 

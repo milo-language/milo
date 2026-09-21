@@ -65,7 +65,7 @@ pub fn newCounter(): Counter {
 
 impl Counter {
     fn bump(self: &mut Self) {
-        self._n = self._n + 1
+        self._n += 1
     }
     fn value(self: &Self): i32 {
         return self._n

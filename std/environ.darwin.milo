@@ -35,27 +35,27 @@ pub fn envVars(): Vec<EnvEntry> {
                     if text[k] == '=' {
                         eq = k
                     }
-                    k = k + 1
+                    k += 1
                 }
                 if eq > 0 {
                     var name = String.withCapacity(eq)
                     var n: i64 = 0
                     while n < eq {
                         name.push(text[n])
-                        n = n + 1
+                        n += 1
                     }
                     var value = String.withCapacity(text.len() - eq)
                     var v = eq + 1
                     while v < text.len() {
                         value.push(text[v])
-                        v = v + 1
+                        v += 1
                     }
                     out.push(EnvEntry {
                         name: name, value: value
                     }
                     )
                 }
-                i = i + 1
+                i += 1
             }
         }
     }

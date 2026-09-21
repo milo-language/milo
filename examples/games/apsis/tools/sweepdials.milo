@@ -65,7 +65,7 @@ pub fn main(): i32 {
                         if r > far {
                             far = r
                         }
-                        k = k + 1
+                        k += 1
                     }
                     let ratio = far / scale
                     if ratio > worst {
@@ -73,17 +73,17 @@ pub fn main(): i32 {
                         worstDay = (t0 - m.windowOpen) / SEC_PER_DAY
                     }
                     if ratio > 4.0 {
-                        bad = bad + 1
+                        bad += 1
                         if bad < 12 {
                             print("  " + m.name + "  depart+" + round0((t0 - m.windowOpen) / SEC_PER_DAY) + "d  tof " + round0(tof / SEC_PER_DAY) + "d  arc reaches " + round0(ratio) + "x the target orbit  dv " + round0(p.dvTotal))
                         }
                     }
                 } else {
-                    fails = fails + 1
+                    fails += 1
                 }
-                i = i + 1
+                i += 1
             }
-            j = j + 1
+            j += 1
         }
         print(m.name + ": worst arc " + $"{Math.round(worst * 100.0) / 100.0}" + "x at depart+" + round0(worstDay) + "d, no-solution samples " + $"{fails}" + " of " + $"{(steps + 1) * (tofSteps + 1)}")
     }

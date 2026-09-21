@@ -219,7 +219,7 @@ fn srtmRaw(d: &string, r: i64, c: i64): f64 {
     let off = (r * SRTM_N + c) * 2
     var v = ((d[off] as i64) << 8) | (d[off + 1] as i64)
     if v >= 32768 {
-        v = v - 65536
+        v -= 65536
     }
     // -32768 is SRTM's void marker, and it is what sits over open water.
     if v < -1000 {
@@ -276,7 +276,7 @@ fn overpass(query: &string, cacheKey: &string): Result<string, string> {
                 print("  mirror " + (attempt % mirrors.len).toString() + " unreachable")
             }
         }
-        attempt = attempt + 1
+        attempt += 1
         if attempt < 6 {
             sleepSecs(4)
         }
@@ -359,7 +359,7 @@ fn fillPoly(cover: &mut Vec<u8>, n: i64, x0: f64, z0: f64, step: f64, px: &Vec<f
             var b = a - 1
             while b >= 0 && xs[b] > v {
                 xs[b + 1] = xs[b]
-                b = b - 1
+                b -= 1
             }
             xs[b + 1] = v
         }
@@ -376,7 +376,7 @@ fn fillPoly(cover: &mut Vec<u8>, n: i64, x0: f64, z0: f64, step: f64, px: &Vec<f
             for ix in ix0..(ix1 + 1) {
                 cover[iz * n + ix] = code
             }
-            k = k + 2
+            k += 2
         }
     }
 }
@@ -400,14 +400,14 @@ fn tagStr(doc: &Json, tags: i64, key: &string): string {
 fn leadingNum(s: &string): f64 {
     var i = 0
     while i < s.len && (s[i] == 32 as u8) {
-        i = i + 1
+        i += 1
     }
     var out = ""
     while i < s.len {
         let ch = s[i]
         if (ch >= 48 as u8 && ch <= 57 as u8) || ch == 46 as u8 {
             out.push(ch)
-            i = i + 1
+            i += 1
         } else {
             break
         }
@@ -654,13 +654,13 @@ fn scanBuildings(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f
                             continue
                         }
                         // A closed way repeats its first node last.
-                        gn = gn - 1
+                        gn -= 1
                         // Footprints with dozens of nodes are curved facades and
                         // bay windows; at 150 m up and 190 m/s they are a
                         // rectangle. Decimate rather than drop.
                         var stride = 1
                         while gn / stride > 14 {
-                            stride = stride + 1
+                            stride += 1
                         }
                         let tags = doc.curField(el, "tags")
                         let h = buildingHeight(doc, tags)
@@ -676,8 +676,8 @@ fn scanBuildings(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f
                             let plon = floatOf(doc, doc.curField(p, "lon"))
                             bPtX.push((plon - lon) * mPerLon)
                             bPtZ.push((plat - lat) * M_PER_DEG_LAT)
-                            count = count + 1
-                            k = k + stride
+                            count += 1
+                            k += stride
                         }
                         if count < 3 {
                             bPtX.truncate(start)
@@ -686,7 +686,7 @@ fn scanBuildings(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f
                         }
                         let kind = roofKindFor(doc, tags)
                         if kind != ROOF_FLAT {
-                            shaped = shaped + 1
+                            shaped += 1
                         }
                         bH.push(h)
                         bStart.push(start)
@@ -731,10 +731,10 @@ fn scanParts(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64, 
                         if gn < 4 {
                             continue
                         }
-                        gn = gn - 1
+                        gn -= 1
                         var stride = 1
                         while gn / stride > 14 {
-                            stride = stride + 1
+                            stride += 1
                         }
                         let tags = doc.curField(el, "tags")
                         let h = buildingHeight(doc, tags)
@@ -758,8 +758,8 @@ fn scanParts(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64, 
                             let pt = doc.curChild(geom, k)
                             pPtX.push((floatOf(doc, doc.curField(pt, "lon")) - lon) * mPerLon)
                             pPtZ.push((floatOf(doc, doc.curField(pt, "lat")) - lat) * M_PER_DEG_LAT)
-                            count = count + 1
-                            k = k + stride
+                            count += 1
+                            k += stride
                         }
                         if count < 3 {
                             pPtX.truncate(start)
@@ -858,7 +858,7 @@ fn mergeParts(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64,
     var acc = 0
     for i in 0..side * side {
         cellStart[i] = acc
-        acc = acc + counts[i]
+        acc += counts[i]
     }
     cellStart[side * side] = acc
     var items: Vec<i64> = Vec.filled(acc, 0)
@@ -869,7 +869,7 @@ fn mergeParts(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64,
     for b in 0..nb {
         let ci = cellOf(minX[b], minZ[b], maxX[b], maxZ[b], CELL, side, half)
         items[cursor[ci]] = b
-        cursor[ci] = cursor[ci] + 1
+        cursor[ci] += 1
     }
 
     var drop: Vec<bool> = Vec.filled(nb, false)
@@ -881,8 +881,8 @@ fn mergeParts(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64,
             cx = cx + pPtX[pStart[i] + k]
             cz = cz + pPtZ[pStart[i] + k]
         }
-        cx = cx / (pLen[i] as f64)
-        cz = cz / (pLen[i] as f64)
+        cx /= (pLen[i] as f64)
+        cz /= (pLen[i] as f64)
         let gx = ((cx / CELL) as i64) + half
         let gz = ((cz / CELL) as i64) + half
         var dz = 0 - 1
@@ -905,12 +905,12 @@ fn mergeParts(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64,
                             continue
                         }
                         drop[b] = true
-                        dropped = dropped + 1
+                        dropped += 1
                     }
                 }
-                dx = dx + 1
+                dx += 1
             }
-            dz = dz + 1
+            dz += 1
         }
     }
 
@@ -1025,7 +1025,7 @@ fn fetchBridges(bbox: &string, lat: f64, lon: f64, mPerLon: f64, cacheKey: &stri
                         for k in 1..gn {
                             let dx = wx[k] - wx[k - 1]
                             let dz = wz[k] - wz[k - 1]
-                            length = length + Math.sqrt(dx * dx + dz * dz)
+                            length += Math.sqrt(dx * dx + dz * dz)
                         }
                         if length < 55.0 {
                             continue
@@ -1064,18 +1064,18 @@ fn fetchBridges(bbox: &string, lat: f64, lon: f64, mPerLon: f64, cacheKey: &stri
                                 let t = (walked - acc) / seg
                                 br.ptX.push(wx[k - 1] + dx * t)
                                 br.ptZ.push(wz[k - 1] + dz * t)
-                                count = count + 1
-                                walked = walked + spacing
+                                count += 1
+                                walked += spacing
                             }
-                            acc = acc + seg
-                            k = k + 1
+                            acc += seg
+                            k += 1
                         }
                         // The last node always survives: a resampling that stops
                         // short leaves a gap at the abutment.
                         if walked - spacing < length - 0.5 {
                             br.ptX.push(wx[gn - 1])
                             br.ptZ.push(wz[gn - 1])
-                            count = count + 1
+                            count += 1
                         }
                         // Half the carriageway plus a parapet.
                         var halfW = lanes * 3.65 * 0.5 + 1.5
@@ -1214,7 +1214,7 @@ fn fetchOrthoTile(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64): Option<Pn
                 print("  imagery service unreachable")
             }
         }
-        attempt = attempt + 1
+        attempt += 1
         if attempt < 3 {
             sleepSecs(4)
         }
@@ -1302,7 +1302,7 @@ fn fetchOrtho(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64, out: &string):
 fn orthoPathOf(cityPath: &string): string {
     var n = cityPath.len
     if cityPath.endsWith(".city") {
-        n = n - 5
+        n -= 5
     }
     var base = ""
     for i in 0..n {
@@ -1438,7 +1438,7 @@ fn main() {
                             pz.push((plat - lat) * M_PER_DEG_LAT)
                         }
                         fillPoly(&mut cover, coverN, coverX0, coverZ0, COVER_STEP, px, pz, code)
-                        greens = greens + 1
+                        greens += 1
                     }
                 }
                 Err(_e) => {

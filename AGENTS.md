@@ -46,6 +46,7 @@ Every doc in this repo starts with a 7-line `<!-- doc-meta ... -->` block. To fi
 | The language spec / grammar | [docs/language-reference.md](docs/language-reference.md) (prose), [docs/spec.md](docs/spec.md) (normative requirements, generated), [docs/grammar.ebnf](docs/grammar.ebnf) (syntax) |
 | Look up a compile error, or see what a rule rejects | [docs/errors.md](docs/errors.md) — every pinned message with the program that provokes it (generated from `tests/errors/`) |
 | What's planned / allowed to build | [docs/roadmap.md](docs/roadmap.md) — check before proposing features |
+| Ergonomics findings to walk and implement (per-language verdicts, status of each item) | [docs/ergonomics-review-2026-09-21.md](docs/ergonomics-review-2026-09-21.md) |
 | Move or rename a public stdlib name | record it in [docs/breaking-changes.md](docs/breaking-changes.md) — the flat namespace makes compat shims impossible, so the doc is the only migration path users get |
 | Find an stdlib API | `bun run src/main.ts api <terms>` |
 | Design or review a public stdlib API | [docs/stdlib-design.md](docs/stdlib-design.md) |

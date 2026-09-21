@@ -7,10 +7,12 @@
 ```milo
 let x = 42          // can't reassign
 var count = 0       // can reassign
-count = count + 1
+count += 1          // compound assignment: same as count = count + 1
 
 let name = "Milo"   // type inference works
 ```
+
+`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=` and `^=` all exist, and the target can be any assignable place (`v[i] += 1`, `p.x -= dx`). There is no `++`.
 
 `let` maps to an SSA register and `var` maps to a stack allocation. What you write is what LLVM sees.
 
@@ -79,7 +81,7 @@ if x > 0 {
 var i: i32 = 0
 while i < 10 {
     if i == 5 { break }
-    i = i + 1
+    i += 1
 }
 ```
 

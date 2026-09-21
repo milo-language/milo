@@ -30,7 +30,7 @@ pub fn envVars(): Vec<EnvEntry> {
             // Each record runs to its NUL; an empty record is the block's closing NUL.
             var segEnd = i
             while block[segEnd] != 0 as u8 {
-                segEnd = segEnd + 1
+                segEnd += 1
             }
             if segEnd == i {
                 going = false
@@ -44,20 +44,20 @@ pub fn envVars(): Vec<EnvEntry> {
                     if block[k] == '=' {
                         eq = k
                     }
-                    k = k + 1
+                    k += 1
                 }
                 if eq > i {
                     var name = String.withCapacity(eq - i)
                     var n = i
                     while n < eq {
                         name.push(block[n])
-                        n = n + 1
+                        n += 1
                     }
                     var value = String.withCapacity(segEnd - eq)
                     var v = eq + 1
                     while v < segEnd {
                         value.push(block[v])
-                        v = v + 1
+                        v += 1
                     }
                     out.push(EnvEntry {
                         name: name, value: value

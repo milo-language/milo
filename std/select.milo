@@ -98,7 +98,7 @@ impl Select {
         rtWritePtr(node, nodeA(), self._state)
         rtWriteI64(node, nodeArm(), self._count)
         rtWritePtr(node, nodeChan(), ptr)
-        self._count = self._count + 1
+        self._count += 1
     }
 
     // Arm on a value becoming receivable from `ch`.
@@ -120,7 +120,7 @@ impl Select {
         rtWritePtr(node, nodeA(), self._state)
         rtWriteI64(node, nodeArm(), self._count)
         rtWriteI64(node, nodeFd(), fd as i64)
-        self._count = self._count + 1
+        self._count += 1
     }
 
     fn onWrite(self: &mut Self, fd: i32): void {
@@ -132,7 +132,7 @@ impl Select {
         rtWritePtr(node, nodeA(), self._state)
         rtWriteI64(node, nodeArm(), self._count)
         rtWriteI64(node, nodeFd(), fd as i64)
-        self._count = self._count + 1
+        self._count += 1
     }
 
     fn onTimeout(self: &mut Self, ms: i64): void {
@@ -144,7 +144,7 @@ impl Select {
         rtWritePtr(node, nodeA(), self._state)
         rtWriteI64(node, nodeArm(), self._count)
         rtWriteI64(node, nodeDeadline(), epochMillis() + ms)
-        self._count = self._count + 1
+        self._count += 1
     }
 
     // Arm every source, park until one fires, tear down the rest, return the
@@ -165,10 +165,10 @@ impl Select {
             }
             if ready {
                 selectTryClaim(self._state, i)
-                i = i + 1
+                i += 1
                 break
             }
-            i = i + 1
+            i += 1
         }
 
         // With no scheduler, fd and timer arms can never fire — _selectRegisterFd needs the
@@ -195,7 +195,7 @@ impl Select {
             if kind == kindSelRecv() || kind == kindSelSend() {
                 return true
             }
-            i = i + 1
+            i += 1
         }
         return false
     }
@@ -214,7 +214,7 @@ impl Select {
             } else {
                 selectUnregisterFd(node)
             }
-            i = i + 1
+            i += 1
         }
     }
 

@@ -46,7 +46,7 @@ fn round0(v: f64): string {
 fn pad(s: &string, n: i64): string {
     var out = s.clone()
     while out.len < n {
-        out = out + " "
+        out += " "
     }
     return out
 }
@@ -57,7 +57,7 @@ fn settle(g: &mut Game) {
     var i = 0
     while i < 400 {
         updateCamera(&mut g, 0.05)
-        i = i + 1
+        i += 1
     }
 }
 
@@ -90,7 +90,7 @@ fn report(g: &mut Game, phase: i64, failures: &mut i64) {
             mark = "ball"
         }
         line = line + pad(displayName(ids[i]) + " " + round0(pr.x) + "," + round0(pr.y) + " r" + round0(px) + " " + mark, 30)
-        i = i + 1
+        i += 1
     }
     print(line)
 
@@ -119,23 +119,23 @@ fn report(g: &mut Game, phase: i64, failures: &mut i64) {
                     maxY = pr.y
                 }
                 if pr.x < 0.0 || pr.x > W || pr.y < 0.0 || pr.y > H {
-                    offScreen = offScreen + 1
+                    offScreen += 1
                 }
             } else {
-                offScreen = offScreen + 1
+                offScreen += 1
             }
-            k = k + 1
+            k += 1
         }
         let spanX = maxX - minX
         let spanY = maxY - minY
         print("        arc x " + round0(minX) + ".." + round0(maxX) + "  y " + round0(minY) + ".." + round0(maxY) + "  off-screen " + $"{offScreen}" + "/" + $"{pts.len}")
         if offScreen > 6 {
             print("        FAIL: the transfer arc does not fit the window")
-            failures = failures + 1
+            failures += 1
         }
         if spanX < 120.0 && spanY < 120.0 {
             print("        FAIL: the transfer arc is smaller than a thumbnail")
-            failures = failures + 1
+            failures += 1
         }
     }
 
@@ -149,7 +149,7 @@ fn report(g: &mut Game, phase: i64, failures: &mut i64) {
         let px = apparentRadius(v, bodyPoint(g, id, g.departT), g.bodies[id].radius)
         if px < H * 0.18 {
             print("        FAIL: " + displayName(id) + " is only " + round0(px) + " px across on its own card")
-            failures = failures + 1
+            failures += 1
         }
     }
 }
@@ -179,7 +179,7 @@ pub fn main(): i32 {
         commit(&mut g)
         if g.phase != PHASE_FLY {
             print("        FAIL: the cheapest plan in the window will not commit")
-            failures = failures + 1
+            failures += 1
         }
         g.flightT = g.tof * 0.5
         settle(&mut g)
@@ -190,9 +190,9 @@ pub fn main(): i32 {
         print("        ship at " + round0(pr.x) + "," + round0(pr.y))
         if !pr.visible || pr.x < 0.0 || pr.x > W || pr.y < 0.0 || pr.y > H {
             print("        FAIL: the ship is off the window in mid-flight")
-            failures = failures + 1
+            failures += 1
         }
-        mi = mi + 1
+        mi += 1
     }
     if failures > 0 {
         print($"{failures}" + " layout problems")

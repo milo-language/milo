@@ -36,7 +36,7 @@ pub fn main(): i32 {
     var c = 0
     while c < MISSION_COUNT {
         let _ = calibrateMission(bodies, &mut missions[c], nowSeconds())
-        c = c + 1
+        c += 1
     }
     var i = 0
     while i < MISSION_COUNT {
@@ -68,12 +68,12 @@ pub fn main(): i32 {
                     bestT = t
                     bestF = tof
                 }
-                k = k + 1
+                k += 1
             }
-            d = d + stepDays
+            d += stepDays
         }
         print(missions[i].name + ": best " + round0(bestDv) + " m/s at " + $"{dateOf(bestT)}" + " tof " + round0(bestF / SEC_PER_DAY) + "d" + "  (window opens " + $"{dateOf(missions[i].windowOpen)}" + ", offset " + round0((bestT - missions[i].windowOpen) / SEC_PER_DAY) + "d)")
-        i = i + 1
+        i += 1
     }
     return 0
 }

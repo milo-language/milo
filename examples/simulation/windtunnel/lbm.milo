@@ -135,7 +135,7 @@ pub fn lbmInit(f: &mut Vec<f64>, nx: i64, ny: i64) {
         var k = 0
         while k < want {
             f[k] = lbmW(k % 9)
-            k = k + 1
+            k += 1
         }
         return
     }
@@ -144,9 +144,9 @@ pub fn lbmInit(f: &mut Vec<f64>, nx: i64, ny: i64) {
         var i = 0
         while i < 9 {
             f.push(lbmW(i))
-            i = i + 1
+            i += 1
         }
-        n = n + 1
+        n += 1
     }
 }
 
@@ -194,15 +194,15 @@ pub fn lbmBuildInterior(solid: &Vec<bool>, nx: i64, ny: i64, interior: &mut Vec<
                         if solid[c + dy * nx + dx] {
                             ok = false
                         }
-                        dx = dx + 1
+                        dx += 1
                     }
-                    dy = dy + 1
+                    dy += 1
                 }
             }
             interior[c] = ok
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -227,7 +227,7 @@ pub fn lbmStep(src: &Vec<f64>, dst: &mut Vec<f64>, solid: &Vec<bool>, interior: 
         while x < nx {
             let cell = y * nx + x
             if solid[cell] {
-                x = x + 1
+                x += 1
                 continue
             }
             let base = cell * 9
@@ -239,10 +239,10 @@ pub fn lbmStep(src: &Vec<f64>, dst: &mut Vec<f64>, solid: &Vec<bool>, interior: 
             var i = 0
             while i < 9 {
                 let fi = src[base + i]
-                rho = rho + fi
+                rho += fi
                 mx = mx + fi * cxT[i]
                 my = my + fi * cyT[i]
-                i = i + 1
+                i += 1
             }
             let ux = mx / rho
             let uy = my / rho
@@ -257,9 +257,9 @@ pub fn lbmStep(src: &Vec<f64>, dst: &mut Vec<f64>, solid: &Vec<bool>, interior: 
                     let cu = 3.0 * (cxT[i] * ux + cyT[i] * uy)
                     let feq = wT[i] * rho * (1.0 + cu + 0.5 * cu * cu - usq)
                     dst[base + (dyT[i] * nx + dxT[i]) * 9 + i] = fi - omega * (fi - feq)
-                    i = i + 1
+                    i += 1
                 }
-                x = x + 1
+                x += 1
                 continue
             }
 
@@ -280,7 +280,7 @@ pub fn lbmStep(src: &Vec<f64>, dst: &mut Vec<f64>, solid: &Vec<bool>, interior: 
 
                 if offGrid && openX && (xd < 0 || xd >= nx) {
                     // Open channel end: let it leave. lbmInlet/lbmOutlet reimpose.
-                    i = i + 1
+                    i += 1
                     continue
                 }
 
@@ -299,11 +299,11 @@ pub fn lbmStep(src: &Vec<f64>, dst: &mut Vec<f64>, solid: &Vec<bool>, interior: 
                 } else {
                     dst[lbmIdx(xd, yd, i, nx)] = post
                 }
-                i = i + 1
+                i += 1
             }
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -323,15 +323,15 @@ pub fn lbmInlet(f: &mut Vec<f64>, nx: i64, ny: i64, u: f64, v: f64) {
         var i = 0
         while i < 9 {
             rho = rho + f[inner + i]
-            i = i + 1
+            i += 1
         }
         let base = (y * nx) * 9
         i = 0
         while i < 9 {
             f[base + i] = lbmEquilibrium(i, rho, u, v)
-            i = i + 1
+            i += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -345,9 +345,9 @@ pub fn lbmOutlet(f: &mut Vec<f64>, nx: i64, ny: i64) {
         var i = 0
         while i < 9 {
             f[edge + i] = f[inner + i]
-            i = i + 1
+            i += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -362,18 +362,18 @@ pub fn lbmVorticity(ux: &Vec<f64>, uy: &Vec<f64>, solid: &Vec<bool>, nx: i64, ny
             let c = y * nx + x
             if solid[c] || x == 0 || x == nx - 1 || y == 0 || y == ny - 1 {
                 out[c] = 0.0
-                x = x + 1
+                x += 1
                 continue
             }
             if solid[c + 1] || solid[c - 1] || solid[c + nx] || solid[c - nx] {
                 out[c] = 0.0
-                x = x + 1
+                x += 1
                 continue
             }
             out[c] = 0.5 * (uy[c + 1] - uy[c - 1]) - 0.5 * (ux[c + nx] - ux[c - nx])
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -386,7 +386,7 @@ pub fn lbmMacro(f: &Vec<f64>, solid: &Vec<bool>, nx: i64, ny: i64, rho: &mut Vec
             rho[cell] = 1.0
             ux[cell] = 0.0
             uy[cell] = 0.0
-            cell = cell + 1
+            cell += 1
             continue
         }
         let base = cell * 9
@@ -396,15 +396,15 @@ pub fn lbmMacro(f: &Vec<f64>, solid: &Vec<bool>, nx: i64, ny: i64, rho: &mut Vec
         var i = 0
         while i < 9 {
             let fi = f[base + i]
-            r = r + fi
+            r += fi
             mx = mx + fi * lbmCx(i)
             my = my + fi * lbmCy(i)
-            i = i + 1
+            i += 1
         }
         rho[cell] = r
         ux[cell] = mx / r
         uy[cell] = my / r
-        cell = cell + 1
+        cell += 1
     }
 }
 
@@ -419,7 +419,7 @@ pub fn lbmMaxDelta(ux: &Vec<f64>, uy: &Vec<f64>, pux: &Vec<f64>, puy: &Vec<f64>,
         if d > worst {
             worst = d
         }
-        i = i + 1
+        i += 1
     }
     return worst
 }

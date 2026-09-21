@@ -67,11 +67,11 @@ requires need <= 32
             return 0
         }
         val = val | ((src[st.inpos] as i64) << st.bitcnt)
-        st.inpos = st.inpos + 1
-        st.bitcnt = st.bitcnt + 8
+        st.inpos += 1
+        st.bitcnt += 8
     }
     st.bitbuf = val >> need
-    st.bitcnt = st.bitcnt - need
+    st.bitcnt -= need
     return val & ((1 << need) - 1)
 }
 
@@ -83,7 +83,7 @@ requires h.count.len >= 16
     var first: i64 = 0
     var index: i64 = 0
     for len in 1..16 {
-        code = code | bits(&mut st, src, 1)
+        code |= bits(&mut st, src, 1)
         if st.err {
             return -20
         }
@@ -91,8 +91,8 @@ requires h.count.len >= 16
         if code - count < first {
             return h.symbol[index + (code - first)]
         }
-        index = index + count
-        first = first + count
+        index += count
+        first += count
         first = first << 1
         code = code << 1
     }
@@ -120,7 +120,7 @@ ensures h.symbol.len == old(h.symbol.len)
     }
     for sym in 0..n {
         let l = length[off + sym]
-        h.count[l] = h.count[l] + 1
+        h.count[l] += 1
     }
     if h.count[0] == n {
         return 0
@@ -128,7 +128,7 @@ ensures h.symbol.len == old(h.symbol.len)
     var left: i64 = 1
     for len in 1..16 {
         left = left << 1
-        left = left - h.count[len]
+        left -= h.count[len]
         if left < 0 {
             return left
         }
@@ -141,7 +141,7 @@ ensures h.symbol.len == old(h.symbol.len)
         let l = length[off + sym]
         if l != 0 {
             h.symbol[offs[l]] = sym
-            offs[l] = offs[l] + 1
+            offs[l] += 1
         }
     }
     return left
@@ -187,7 +187,7 @@ requires distcode.count.len >= 16
         } else if symbol == 256 {
             return 0
         } else {
-            symbol = symbol - 257
+            symbol -= 257
             if symbol >= 29 {
                 return -10
             }
@@ -229,7 +229,7 @@ ensures result <= 0
     }
     let len = (src[st.inpos] as i64) | ((src[st.inpos + 1] as i64) << 8)
     let nlen = (src[st.inpos + 2] as i64) | ((src[st.inpos + 3] as i64) << 8)
-    st.inpos = st.inpos + 4
+    st.inpos += 4
     if (len ^ 0xffff) != nlen {
         return -3
     }
@@ -238,7 +238,7 @@ ensures result <= 0
     }
     for _i in 0..len {
         st.out.push(src[st.inpos])
-        st.inpos = st.inpos + 1
+        st.inpos += 1
     }
     return 0
 }
@@ -312,7 +312,7 @@ fn dynamic(st: &mut InfState, src: &string): i64 {
         }
         if sym < 16 {
             lengths[index] = sym
-            index = index + 1
+            index += 1
         } else {
             var rep: i64 = 0
             var val: i64 = 0
@@ -332,7 +332,7 @@ fn dynamic(st: &mut InfState, src: &string): i64 {
             }
             for _r in 0..rep {
                 lengths[index] = val
-                index = index + 1
+                index += 1
             }
         }
         if st.err {
@@ -419,19 +419,19 @@ fn gzipDecompress(src: &string): Result<string, string> {
     // FNAME (bit 3) / FCOMMENT (bit 4): NUL-terminated strings.
     if (flg & 8) != 0 {
         while pos < src.len && src[pos] != 0 {
-            pos = pos + 1
+            pos += 1
         }
-        pos = pos + 1
+        pos += 1
     }
     if (flg & 16) != 0 {
         while pos < src.len && src[pos] != 0 {
-            pos = pos + 1
+            pos += 1
         }
-        pos = pos + 1
+        pos += 1
     }
     // FHCRC (bit 1): 2-byte header CRC.
     if (flg & 2) != 0 {
-        pos = pos + 2
+        pos += 2
     }
     if pos + 8 > src.len {
         return Result.Err("gzip: truncated body")

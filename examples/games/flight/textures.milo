@@ -24,7 +24,7 @@ pub let TEX_SHIFT: i64 = 7
 fn hashi(x: i64, y: i64, seed: i64): f64 {
     var h = x * 374761393 + y * 668265263 + seed * 1442695040
     h = (h ^ (h >> 13)) * 1274126177
-    h = h ^ (h >> 16)
+    h ^= (h >> 16)
     var m = h % 4096
     if m < 0 {
         m = 0 - m
@@ -82,9 +82,9 @@ pub fn groundTexture(): Texture {
             var k = 0.58 + clump * 0.78 + fine * 0.18
             let grain = hashi(x, y, 5)
             if grain > 0.92 {
-                k = k * 1.30
+                k *= 1.30
             } else if grain < 0.10 {
-                k = k * 0.72
+                k *= 0.72
             }
             // slight warm/cool tilt so the mottling is not pure luminance
             texSet(&mut t, x, y, k * 1.04, k, k * 0.94)
@@ -164,12 +164,12 @@ pub fn facadeTexture(): Texture {
                 k = 0.42 + r * 0.5
                 // a brighter top edge on each pane reads as a reflection
                 if fy < 0.34 {
-                    k = k + 0.22
+                    k += 0.22
                 }
             }
             // Storey line: a darker course at every floor slab.
             if fy < 0.06 {
-                k = k * 0.72
+                k *= 0.72
             }
             // Vertical grime streaks, very low contrast, breaks the perfect grid
             k = k * (0.96 + lattice((x as f64) / (TEX_SIZE as f64), 0.0, 32, 3) * 0.08)

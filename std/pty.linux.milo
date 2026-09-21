@@ -165,7 +165,7 @@ impl Pty {
                 var extraFd: i32 = 3
                 while extraFd < 1024 {
                     close(extraFd)
-                    extraFd = extraFd + 1
+                    extraFd += 1
                 }
                 execvp(pcopy, argv)
                 exit(127)

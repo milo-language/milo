@@ -60,7 +60,7 @@ fn loadFont(gl: &mut GlContext, png: &string): Texture2D {
             while i < img.width * img.height {
                 let a = img.pixels[i * img.channels] as u32
                 px[i] = 0xFF000000 | (a << 16) | (a << 8) | a
-                i = i + 1
+                i += 1
             }
             return Texture2D.rgba8(&mut gl, img.width, img.height, px, true)
         }
@@ -160,7 +160,7 @@ impl Ui {
                 let t0 = ((idx / COLS) as f64) * dv
                 quad(&mut self, x + size * (i as f64), y, boxW, boxH, s0, t0, s0 + du, t0 + dv, r, g, b, a, MODE_GLYPH, 0.0)
             }
-            i = i + 1
+            i += 1
         }
     }
 
@@ -237,7 +237,7 @@ pub fn wrapText(s: &string, size: f64, maxWidth: f64): Vec<string> {
         } else {
             word = word + s.slice(i, i + 1).clone()
         }
-        i = i + 1
+        i += 1
     }
     if line.len > 0 {
         out.push(line)
@@ -252,14 +252,14 @@ pub fn fmtFixed(v: f64, decimals: i64): string {
     var scale = 1.0
     var i = 0
     while i < decimals {
-        scale = scale * 10.0
-        i = i + 1
+        scale *= 10.0
+        i += 1
     }
     let rounded = Math.round(v * scale) / scale
     var whole = (Math.abs(rounded)) as i64
     var frac = (Math.round((Math.abs(rounded) - (whole as f64)) * scale)) as i64
     if frac >= (scale as i64) {
-        whole = whole + 1
+        whole += 1
         frac = 0
     }
     var s = ""
@@ -287,11 +287,11 @@ pub fn commas(v: f64): string {
     var i = digits.len - 1
     while i >= 0 {
         out = digits.slice(i, i + 1).clone() + out
-        count = count + 1
+        count += 1
         if count % 3 == 0 && i > 0 {
             out = "," + out
         }
-        i = i - 1
+        i -= 1
     }
     if v < 0.0 {
         return "-" + out

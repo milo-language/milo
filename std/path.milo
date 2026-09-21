@@ -12,7 +12,7 @@ fn pathExt(path: &string): string {
         if path[i] == 47 {
             return ""
         }
-        i = i - 1
+        i -= 1
     }
     return ""
 }
@@ -27,7 +27,7 @@ fn pathBasename(path: &string): string {
     var end: i64 = path.len
     // strip trailing slashes
     while end > 0 as i64 && path[end - 1] == 47 {
-        end = end - 1
+        end -= 1
     }
     if end == 0 as i64 {
         return "/"
@@ -37,7 +37,7 @@ fn pathBasename(path: &string): string {
         if path[i] == 47 {
             return path.substr(i + 1, end)
         }
-        i = i - 1
+        i -= 1
     }
     return path.substr(0 as i64, end)
 }
@@ -52,7 +52,7 @@ fn pathDirname(path: &string): string {
     var end: i64 = path.len
     // strip trailing slashes
     while end > 0 as i64 && path[end - 1] == 47 {
-        end = end - 1
+        end -= 1
     }
     if end == 0 as i64 {
         return "/"
@@ -66,7 +66,7 @@ fn pathDirname(path: &string): string {
             }
             return path.substr(0 as i64, i)
         }
-        i = i - 1
+        i -= 1
     }
     return "."
 }
@@ -97,7 +97,7 @@ fn pathStem(path: &string): string {
         if base[i] == 46 {
             return base.substr(0 as i64, i)
         }
-        i = i - 1
+        i -= 1
     }
     return base
 }

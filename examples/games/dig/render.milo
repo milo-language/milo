@@ -63,7 +63,7 @@ fn roundTile(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, r: f64, g: f64,
             cutR = Math.maxF64(cutR, rbr - Math.sqrt(Math.maxF64(rbr * rbr - d * d, 0.0)))
         }
         setRect(&mut c, x0 + cutL, yy as f64, x1 - cutR, (yy + 1) as f64, r, g, b)
-        yy = yy + 1
+        yy += 1
     }
 }
 
@@ -83,10 +83,10 @@ fn bulge(m: &Mine, tx: i64, ty: i64, dx: i64, dy: i64, seed: i64): f64 {
 fn cornerR(m: &Mine, tx: i64, ty: i64, dx: i64, dy: i64, seed: i64): f64 {
     var open = 0
     if !isSolid(tileAt(m, tx + dx, ty)) {
-        open = open + 1
+        open += 1
     }
     if !isSolid(tileAt(m, tx, ty + dy)) {
-        open = open + 1
+        open += 1
     }
     if open == 0 {
         return 0.0
@@ -118,7 +118,7 @@ fn drawSurface(c: &mut Canvas, m: &Mine, camX: f64, camY: f64) {
             let b = 0.80 + 0.10 * t
             fillRect(&mut c, 0.0, y as f64, c.w as f64, (y + 1) as f64, r, g, b)
         }
-        y = y + 1
+        y += 1
     }
     // sun, fixed in the sky rather than pinned to the world
     let sunX = (c.w as f64) * 0.80
@@ -140,7 +140,7 @@ fn drawSurface(c: &mut Canvas, m: &Mine, camX: f64, camY: f64) {
     while gx < (c.w as f64) {
         let hh = 7.0 + tileNoise((gx as i64), 3) * 9.0
         line(&mut c, gx, groundY, gx + 2.5, groundY - hh, 0.20, 0.66, 0.22)
-        gx = gx + 13.0
+        gx += 13.0
     }
     // a tree just right of the mine mouth
     let treeX = 8.0 * TILE - camX
@@ -227,7 +227,7 @@ fn oval(c: &mut Canvas, x: f64, y: f64, rx: f64, ry: f64, cr: f64, cg: f64, cb: 
             let iw = rx * Math.sqrt(ti)
             setRect(&mut c, x - iw, y + yy, x + iw, y + yy + 1.0, cr, cg, cb)
         }
-        yy = yy + 1.0
+        yy += 1.0
     }
 }
 
@@ -314,8 +314,8 @@ fn drawDog(c: &mut Canvas, m: &Mine, px: f64, py: f64) {
         let dcy = ((m.gateY as f64) + 1.0) * TILE - (m.py - py)
         cx = cx + (dcx - cx) * t
         cy = cy + (dcy - cy) * t
-        sclX = sclX * (1.0 - 0.45 * t)
-        sclY = sclY * (1.0 - 0.45 * t)
+        sclX *= (1.0 - 0.45 * t)
+        sclY *= (1.0 - 0.45 * t)
     }
     // Every stuck-on part is sized off `half`, so shrinking that shrinks the
     // whole animal together. Without it the tail and ears kept their full length
@@ -360,7 +360,7 @@ fn drawDog(c: &mut Canvas, m: &Mine, px: f64, py: f64) {
             let r2 = (7.0 - t * 0.8) * sc
             oval(&mut c, tx2, ty2, r2, r2, furR * 0.86, furG * 0.86, furB * 0.86)
         }
-        seg = seg + 1
+        seg += 1
     }
 
     // Back legs, behind the body.
@@ -369,7 +369,7 @@ fn drawDog(c: &mut Canvas, m: &Mine, px: f64, py: f64) {
         let ph = m.time * legFreq + (i as f64) * 3.14159
         let sw = Math.sin(ph) * legSwing
         leg(&mut c, bodyX + behind * (2.0 + (i as f64) * 9.0) * sc + sw * 0.6 * sc, bodyY + 4.0 * sc, rearLen * sc, darkR, darkG, darkB)
-        i = i + 1
+        i += 1
     }
 
     oval(&mut c, bodyX, bodyY, 19.0 * sc, 13.0 * sc, furR, furG, furB)
@@ -389,7 +389,7 @@ fn drawDog(c: &mut Canvas, m: &Mine, px: f64, py: f64) {
         } else {
             leg(&mut c, bodyX + flip * (8.0 + (f2 as f64) * 7.0) * sc + sw * legSwing * 0.6 * sc, bodyY + 3.0 * sc, 13.0 * sc, furR * 0.9, furG * 0.9, furB * 0.9)
         }
-        f2 = f2 + 1
+        f2 += 1
     }
 
     // dark outline: four offset silhouettes under the real head sprite
@@ -428,7 +428,7 @@ fn drawDog(c: &mut Canvas, m: &Mine, px: f64, py: f64) {
             let ey = headY - 0.5 * sclY
             setRect(&mut c, ex - sclX, ey - sclY, ex + sclX * 1.4, ey + sclY, 0.886, 0.753, 0.588)
             line(&mut c, ex - sclX, ey, ex + sclX * 1.2, ey, 0.10, 0.07, 0.05)
-            e = e + 1
+            e += 1
         }
     }
 
@@ -450,7 +450,7 @@ fn drawDog(c: &mut Canvas, m: &Mine, px: f64, py: f64) {
             let zy = headY - half * 0.9 - ph * 34.0
             let fz = (1.0 - ph) * Math.minF64(1.0, (m.stateT - 6.0) * 0.7)
             text(&mut c, zx as i64, zy as i64, "Z", 2 + (ph * 2.0) as i64, 0.7 * fz, 0.7 * fz, 0.9 * fz)
-            z = z + 1
+            z += 1
         }
     }
 
@@ -466,7 +466,7 @@ fn drawDog(c: &mut Canvas, m: &Mine, px: f64, py: f64) {
         while q < 3 {
             let a = m.time * 30.0 + (q as f64) * 2.0944
             line(&mut c, bx, by, bx + Math.cos(a) * 9.0, by + Math.sin(a) * 9.0, 1.1, 0.95, 0.6)
-            q = q + 1
+            q += 1
         }
         spot(&mut c, bx, by, 6.0, 0.9, 0.75, 0.35)
     }
@@ -494,9 +494,9 @@ fn hostKind(m: &Mine, tx: i64, ty: i64): i64 {
             if n == T_DIRT || n == T_CLAY || n == T_STONE {
                 return n
             }
-            d = d + 1
+            d += 1
         }
-        q = q + 1
+        q += 1
     }
     return T_DIRT
 }
@@ -532,7 +532,7 @@ fn drawGrain(c: &mut Canvas, tx: i64, ty: i64, sx: f64, sy: f64, t: i64, col: &C
             } else {
                 setRect(&mut c, xb, yb, xb + wb, yb + 3.0, col.r * kk * 0.60, col.g * kk * 0.45, col.b * kk * 0.38)
             }
-            q = q + 1
+            q += 1
         }
         return
     }
@@ -622,7 +622,7 @@ fn drawDoor(c: &mut Canvas, m: &Mine, camX: f64, camY: f64) {
             while p < 3 {
                 let pxp = lx0 + halfW * (p as f64) / 3.0
                 setRect(&mut c, pxp, ly0, pxp + 1.5, ly1, 0.05 * shade, 0.34 * shade, 0.14 * shade)
-                p = p + 1
+                p += 1
             }
             // iron straps and the meeting edge
             setRect(&mut c, lx0, ly0 + h * 0.16, lx1, ly0 + h * 0.24, 0.16, 0.18, 0.16)
@@ -634,7 +634,7 @@ fn drawDoor(c: &mut Canvas, m: &Mine, camX: f64, camY: f64) {
             }
             setRect(&mut c, inner, ly0, inner + 2.5, ly1, 0.03, 0.20, 0.09)
         }
-        side = side + 1
+        side += 1
     }
 
     // Handles where the two leaves meet, and a keyhole under them while it is
@@ -650,7 +650,7 @@ fn drawDoor(c: &mut Canvas, m: &Mine, camX: f64, camY: f64) {
                 cxd + 5.0 + gap
             }
             circle(&mut c, hx, cyd - 2.0, 5.5, 10, 1.30 * f, 0.95 * f, 0.30 * f)
-            s2 = s2 + 1
+            s2 += 1
         }
         if !m.exitOpen {
             setRect(&mut c, cxd - 2.5, cyd + 5.0, cxd + 2.5, cyd + 11.0, 0.04, 0.10, 0.05)
@@ -826,7 +826,7 @@ pub fn drawMine(c: &mut Canvas, m: &Mine, ox: f64, oy: f64) {
             // smoothstep instead of a hard linear edge
             lit = lit * lit * (3.0 - 2.0 * lit)
             if !exposed {
-                lit = lit * 0.45
+                lit *= 0.45
             }
             // Tiles are lit almost flat, and the lamp is added afterwards as one
             // smooth glow over the whole scene. Per-tile lamp falloff was the
@@ -838,7 +838,7 @@ pub fn drawMine(c: &mut Canvas, m: &Mine, ox: f64, oy: f64) {
                 ambient = 0.46
             }
             if t == T_GOLD || t == T_GEM || t == T_CRYSTAL {
-                ambient = ambient + 0.06
+                ambient += 0.06
             }
             if isUpgrade(t) {
                 ambient = 0.80 + 0.25 * Math.sin(m.time * 6.0 + (tx as f64))

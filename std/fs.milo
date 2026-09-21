@@ -559,7 +559,7 @@ pub fn walkDir(root: &string): Result<Vec<WalkEntry>, IoError> {
         // clone is spelled out so the copy reads as deliberate rather than as
         // the implicit one the compiler warns about.
         let rel = pending[head].clone()
-        head = head + 1
+        head += 1
         var dirPath = root.clone()
         if rel.len > 0 {
             dirPath = Path.join(root, rel)
@@ -591,17 +591,17 @@ pub fn walkDir(root: &string): Result<Vec<WalkEntry>, IoError> {
 fn globClassEnd(pat: &string, start: i64): Option<i64> {
     var i = start + 1
     if i < pat.len && (pat[i] == '!' || pat[i] == '^') {
-        i = i + 1
+        i += 1
     }
     // A ']' in first position is a literal, not the terminator.
     if i < pat.len && pat[i] == ']' {
-        i = i + 1
+        i += 1
     }
     while i < pat.len {
         if pat[i] == ']' {
             return Option.Some(i + 1)
         }
-        i = i + 1
+        i += 1
     }
     return Option.None
 }
@@ -614,7 +614,7 @@ fn globClassHas(pat: &string, start: i64, end: i64, ch: u8): bool {
     var negate = false
     if i < last && (pat[i] == '!' || pat[i] == '^') {
         negate = true
-        i = i + 1
+        i += 1
     }
     var found = false
     while i < last {
@@ -622,12 +622,12 @@ fn globClassHas(pat: &string, start: i64, end: i64, ch: u8): bool {
             if ch >= pat[i] && ch <= pat[i + 2] {
                 found = true
             }
-            i = i + 3
+            i += 3
         } else {
             if pat[i] == ch {
                 found = true
             }
-            i = i + 1
+            i += 1
         }
     }
     if negate {
@@ -683,13 +683,13 @@ pub fn globMatchSegment(pat: &string, text: &string): bool {
             if pat[p] == '*' {
                 starP = p
                 starS = s
-                p = p + 1
+                p += 1
                 stepped = true
             } else {
                 match globStep(pat, p, text[s]) {
                     Option.Some(next) => {
                         p = next
-                        s = s + 1
+                        s += 1
                         stepped = true
                     }
                     Option.None => {
@@ -701,13 +701,13 @@ pub fn globMatchSegment(pat: &string, text: &string): bool {
             if starP < 0 {
                 return false
             }
-            starS = starS + 1
+            starS += 1
             s = starS
             p = starP + 1
         }
     }
     while p < pat.len && pat[p] == '*' {
-        p = p + 1
+        p += 1
     }
     return p >= pat.len
 }
@@ -730,7 +730,7 @@ fn globMatchSegments(pat: &Vec<string>, pi: i64, text: &Vec<string>, ti: i64): b
             if globMatchSegments(pat, pi + 1, text, k) {
                 return true
             }
-            k = k + 1
+            k += 1
         }
         return false
     }
@@ -894,7 +894,7 @@ pub fn removeAll(path: &string): Result<Unit, IoError> {
         // Copied out for the same reason as in `walkDir`: the body pushes onto
         // `dirs`, so this cannot borrow it.
         let dir = dirs[head].clone()
-        head = head + 1
+        head += 1
         let entries = readDir(dir)?
         for entry in entries {
             let child = Path.join(dir, entry.name)
@@ -912,7 +912,7 @@ pub fn removeAll(path: &string): Result<Unit, IoError> {
     var i = dirs.len - 1
     while i >= 0 as i64 {
         removeDir(dirs[i])?
-        i = i - 1
+        i -= 1
     }
     return ok()
 }

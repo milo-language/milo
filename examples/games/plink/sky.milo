@@ -160,13 +160,13 @@ pub fn buildRoom(intensity: f64): Sky {
                 upR = upR + rad.x * w
                 upG = upG + rad.y * w
                 upB = upB + rad.z * w
-                upW = upW + w
+                upW += w
             } else {
                 let w = -cosT * dOmega
                 downR = downR + rad.x * w
                 downG = downG + rad.y * w
                 downB = downB + rad.z * w
-                downW = downW + w
+                downW += w
             }
         }
     }

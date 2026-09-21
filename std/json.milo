@@ -225,7 +225,7 @@ fn jsonNodeInt(source: &string, n: &JsonNode): Option<i64> {
     var neg: bool = false
     if i < end && source[i] == '-' {
         neg = true
-        i = i + 1
+        i += 1
     }
     if i >= end {
         return Option.None
@@ -239,13 +239,13 @@ fn jsonNodeInt(source: &string, n: &JsonNode): Option<i64> {
         if acc > 922337203685477580 {
             return Option.None
         }
-        acc = acc * 10
+        acc *= 10
         let d = (c as i64) - 48
         if acc > 9223372036854775807 - d {
             return Option.None
         }
-        acc = acc + d
-        i = i + 1
+        acc += d
+        i += 1
     }
     if neg {
         return Option.Some(0 - acc)
@@ -276,13 +276,13 @@ fn jsonNodeUint(source: &string, n: &JsonNode): Option<u64> {
         if acc > 1844674407370955161 {
             return Option.None
         }
-        acc = acc * 10
+        acc *= 10
         let d = (c as i64) as u64 - 48
         if acc > 18446744073709551615 - d {
             return Option.None
         }
-        acc = acc + d
-        i = i + 1
+        acc += d
+        i += 1
     }
     return Option.Some(acc)
 }
@@ -295,14 +295,14 @@ fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
             hasEscape = true
             break
         }
-        i = i + 1
+        i += 1
     }
     if !hasEscape {
         var result: string = String.withCapacity(len)
         i = 0
         while i < len {
             result.push(source[start + i])
-            i = i + 1
+            i += 1
         }
         return result
     }
@@ -310,7 +310,7 @@ fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
     i = 0
     while i < len {
         if source[start + i] == '\\' && i + 1 < len {
-            i = i + 1
+            i += 1
             let esc = source[start + i]
             if esc == 'n' {
                 result.push('\n')
@@ -349,7 +349,7 @@ fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
                 | (jsonHexVal(source[start + i + 2]) << 8)
                 | (jsonHexVal(source[start + i + 3]) << 4)
                 | jsonHexVal(source[start + i + 4])
-                i = i + 4
+                i += 4
                 if cp >= 0xD800 && cp <= 0xDBFF && i + 6 < len
                 && source[start + i + 1] == '\\' && source[start + i + 2] == 'u' {
                     let lo = (jsonHexVal(source[start + i + 3]) << 12)
@@ -358,7 +358,7 @@ fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
                     | jsonHexVal(source[start + i + 6])
                     if lo >= 0xDC00 && lo <= 0xDFFF {
                         cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00)
-                        i = i + 6
+                        i += 6
                     }
                 }
                 // An unpaired surrogate — a high one nothing followed, or a stray low —
@@ -389,7 +389,7 @@ fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
         } else {
             result.push(source[start + i])
         }
-        i = i + 1
+        i += 1
     }
     return result
 }
@@ -857,7 +857,7 @@ impl Json {
         var i: i64 = 0
         while i < self.curLen(root) {
             result.push(self.curKeyAt(root, i))
-            i = i + 1
+            i += 1
         }
         return result
     }
@@ -889,10 +889,10 @@ fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
         var i: i64 = 0
         while i < jsonNodeChildCount(node) {
             if i > 0 {
-                s = s + ","
+                s += ","
             }
             s = s + jsonNodeRawStr(doc, doc.childIdx[jsonNodeChildStart(node) + i])
-            i = i + 1
+            i += 1
         }
         return s + "]"
     }
@@ -901,10 +901,10 @@ fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
         var i: i64 = 0
         while i < jsonNodeChildCount(node) {
             if i > 0 {
-                s = s + ","
+                s += ","
             }
             s = s + "\"" + jsonEscapeStr(jsonMaterializeStr(doc.source, doc.keyOffsets[jsonNodeKeyStart(node) + i], doc.keyLens[jsonNodeKeyStart(node) + i])) + "\":" + jsonNodeRawStr(doc, doc.childIdx[jsonNodeChildStart(node) + i])
-            i = i + 1
+            i += 1
         }
         return s + "}"
     }
@@ -941,7 +941,7 @@ fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json {
                     keyOffsets.push(src.keyOffsets[jsonNodeKeyStart(old) + c])
                     keyLens.push(src.keyLens[jsonNodeKeyStart(old) + c])
                 }
-                c = c + 1
+                c += 1
             }
         }
         // Scalars carry only source spans, which the cloned source keeps valid, so
@@ -951,7 +951,7 @@ fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json {
         } else {
             nodes.push(old)
         }
-        processed = processed + 1
+        processed += 1
     }
     // A fresh brand, not src's: extraction renumbers the pool (BFS order, the
     // subtree root becomes node 0), so a cursor into src resolved against the
@@ -1058,31 +1058,31 @@ fn jsonStripJsonc(s: &string): string {
             nc.push(c)
             if c == '\\' && i + 1 < s.len {
                 nc.push(s[i + 1])
-                i = i + 2
+                i += 2
             } else {
                 if c == '"' {
                     inStr = false
                 }
-                i = i + 1
+                i += 1
             }
         } else if c == '"' {
             inStr = true
             nc.push(c)
-            i = i + 1
+            i += 1
         } else if c == '/' && i + 1 < s.len && s[i + 1] == '/' {
-            i = i + 2
+            i += 2
             while i < s.len && s[i] != '\n' {
-                i = i + 1
+                i += 1
             }
         } else if c == '/' && i + 1 < s.len && s[i + 1] == '*' {
-            i = i + 2
+            i += 2
             while i + 1 < s.len && !(s[i] == '*' && s[i + 1] == '/') {
-                i = i + 1
+                i += 1
             }
-            i = i + 2
+            i += 2
         } else {
             nc.push(c)
-            i = i + 1
+            i += 1
         }
     }
     // Pass 2: drop any comma whose next non-whitespace char is ] or } (trailing comma).
@@ -1095,31 +1095,31 @@ fn jsonStripJsonc(s: &string): string {
             out.push(c)
             if c == '\\' && j + 1 < nc.len {
                 out.push(nc[j + 1])
-                j = j + 2
+                j += 2
             } else {
                 if c == '"' {
                     inStr2 = false
                 }
-                j = j + 1
+                j += 1
             }
         } else if c == '"' {
             inStr2 = true
             out.push(c)
-            j = j + 1
+            j += 1
         } else if c == ',' {
             var k: i64 = j + 1
             while k < nc.len && (nc[k] == ' ' || nc[k] == '\t' || nc[k] == '\n' || nc[k] == '\r') {
-                k = k + 1
+                k += 1
             }
             if k < nc.len && (nc[k] == '}' || nc[k] == ']') {
-                j = j + 1
+                j += 1
             } else {
                 out.push(c)
-                j = j + 1
+                j += 1
             }
         } else {
             out.push(c)
-            j = j + 1
+            j += 1
         }
     }
     return out
@@ -1137,7 +1137,7 @@ fn jsonSkipWs(s: &string, pos: &mut i64) {
         if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
             break
         }
-        pos = pos + 1
+        pos += 1
     }
 }
 
@@ -1156,21 +1156,21 @@ fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
             break
         }
         if ch == '\\' {
-            p = p + 1
+            p += 1
             if p < n {
                 let e = s[p]
                 if !(e == '"' || e == '\\' || e == '/' || e == 'b' || e == 'f' || e == 'n' || e == 'r' || e == 't' || e == 'u') {
                     _err = true
                 }
-                p = p + 1
+                p += 1
             } else {
                 _err = true
             }
         } else if ch < ' ' {
             _err = true
-            p = p + 1
+            p += 1
         } else {
-            p = p + 1
+            p += 1
         }
     }
     if p >= n {
@@ -1204,7 +1204,7 @@ impl JsonParser {
             if self.s[self.pos + i] != lit[i] {
                 return false
             }
-            i = i + 1
+            i += 1
         }
         return true
     }
@@ -1231,7 +1231,7 @@ impl JsonParser {
             if !self.litAt("true") {
                 self.err = true
             }
-            self.pos = self.pos + 4
+            self.pos += 4
             let idx = self.nodes.len()
             self.nodes.push(jsonNewBool(true))
             return idx
@@ -1240,7 +1240,7 @@ impl JsonParser {
             if !self.litAt("false") {
                 self.err = true
             }
-            self.pos = self.pos + 5
+            self.pos += 5
             let idx = self.nodes.len()
             self.nodes.push(jsonNewBool(false))
             return idx
@@ -1249,7 +1249,7 @@ impl JsonParser {
             if !self.litAt("null") {
                 self.err = true
             }
-            self.pos = self.pos + 4
+            self.pos += 4
             let idx = self.nodes.len()
             self.nodes.push(jsonNewNull())
             return idx
@@ -1270,12 +1270,12 @@ impl JsonParser {
     }
 
     fn parseString(self: &mut Self): i64 {
-        self.pos = self.pos + 1
+        self.pos += 1
         let start = self.pos
         self.scanString()
         let slen = self.pos - start
         if self.pos < self.s.len {
-            self.pos = self.pos + 1
+            self.pos += 1
         }
         let idx = self.nodes.len()
         self.nodes.push(jsonNewStr(start, slen))
@@ -1283,12 +1283,12 @@ impl JsonParser {
     }
 
     fn scanStringRange(self: &mut Self, start: &mut i64, _slen: &mut i64) {
-        self.pos = self.pos + 1
+        self.pos += 1
         start = self.pos
         self.scanString()
         _slen = self.pos - start
         if self.pos < self.s.len {
-            self.pos = self.pos + 1
+            self.pos += 1
         }
     }
 
@@ -1300,43 +1300,43 @@ impl JsonParser {
         var negative: bool = false
         if self.pos < self.s.len && self.s[self.pos] == '-' {
             negative = true
-            self.pos = self.pos + 1
+            self.pos += 1
         }
         // Integer part: RFC requires at least one digit, and forbids leading zeros (`013`); a single
         // '0' is the only int that may start with '0'.
         if self.pos >= self.s.len || !(self.s[self.pos] >= '0' && self.s[self.pos] <= '9') {
             self.err = true
         } else if self.s[self.pos] == '0' {
-            self.pos = self.pos + 1
+            self.pos += 1
             if self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
                 self.err = true
             }
         } else {
             while self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
                 result = result * 10.0 + (self.s[self.pos] as i32 - 48) as f64
-                self.pos = self.pos + 1
+                self.pos += 1
             }
         }
         if self.pos < self.s.len && self.s[self.pos] == '.' {
-            self.pos = self.pos + 1
+            self.pos += 1
             if self.pos >= self.s.len || !(self.s[self.pos] >= '0' && self.s[self.pos] <= '9') {
                 self.err = true
             }
             var frac: f64 = 0.1
             while self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
                 result = result + (self.s[self.pos] as i32 - 48) as f64 * frac
-                frac = frac * 0.1
-                self.pos = self.pos + 1
+                frac *= 0.1
+                self.pos += 1
             }
         }
         if self.pos < self.s.len && (self.s[self.pos] == 'e' || self.s[self.pos] == 'E') {
-            self.pos = self.pos + 1
+            self.pos += 1
             var expNeg: bool = false
             if self.pos < self.s.len && self.s[self.pos] == '-' {
                 expNeg = true
-                self.pos = self.pos + 1
+                self.pos += 1
             } else if self.pos < self.s.len && self.s[self.pos] == '+' {
-                self.pos = self.pos + 1
+                self.pos += 1
             }
             if self.pos >= self.s.len || !(self.s[self.pos] >= '0' && self.s[self.pos] <= '9') {
                 self.err = true
@@ -1344,18 +1344,18 @@ impl JsonParser {
             var exp: i64 = 0
             while self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
                 exp = exp * 10 + (self.s[self.pos] as i32 - 48) as i64
-                self.pos = self.pos + 1
+                self.pos += 1
             }
             var factor: f64 = 1.0
             var e: i64 = 0
             while e < exp {
-                factor = factor * 10.0
-                e = e + 1
+                factor *= 10.0
+                e += 1
             }
             if expNeg {
-                result = result / factor
+                result /= factor
             } else {
-                result = result * factor
+                result *= factor
             }
         }
         if negative {
@@ -1373,12 +1373,12 @@ impl JsonParser {
     // the container closes, then commit as one contiguous block. This replaced a pre-counting
     // scan to the matching close bracket that re-read every container body (73% of parse time).
     fn parseArray(self: &mut Self): i64 {
-        self.pos = self.pos + 1
+        self.pos += 1
         let myIdx = self.nodes.len()
         self.nodes.push(jsonNewContainer(4, 0, 0, 0))
         self.skipWs()
         if self.pos < self.s.len && self.s[self.pos] == ']' {
-            self.pos = self.pos + 1
+            self.pos += 1
             return myIdx
         }
         let sStart = self.scratchLen
@@ -1392,20 +1392,20 @@ impl JsonParser {
             } else {
                 self.scratch.push(childNodeIdx)
             }
-            self.scratchLen = self.scratchLen + 1
+            self.scratchLen += 1
             if self.err {
                 break
             }
             self.skipWs()
             if self.pos < self.s.len && self.s[self.pos] == ',' {
-                self.pos = self.pos + 1
+                self.pos += 1
             } else {
                 break
             }
         }
         // Unterminated array (`["x"`) is an error: the close bracket is mandatory.
         if self.pos < self.s.len && self.s[self.pos] == ']' {
-            self.pos = self.pos + 1
+            self.pos += 1
         } else {
             self.err = true
         }
@@ -1414,7 +1414,7 @@ impl JsonParser {
         var k: i64 = 0
         while k < ci {
             self.childIdx.push(self.scratch[sStart + k])
-            k = k + 1
+            k += 1
         }
         self.scratchLen = sStart
         self.nodes[myIdx] = jsonNewContainer(4, childStart, ci, 0)
@@ -1422,12 +1422,12 @@ impl JsonParser {
     }
 
     fn parseObject(self: &mut Self): i64 {
-        self.pos = self.pos + 1
+        self.pos += 1
         let myIdx = self.nodes.len()
         self.nodes.push(jsonNewContainer(5, 0, 0, 0))
         self.skipWs()
         if self.pos < self.s.len && self.s[self.pos] == '}' {
-            self.pos = self.pos + 1
+            self.pos += 1
             return myIdx
         }
         // Each entry parks 3 scratch slots: nodeIdx, keyOffset, keyLen. Arrays park 1 per child,
@@ -1451,7 +1451,7 @@ impl JsonParser {
             self.skipWs()
             // The colon separating key and value is mandatory (`{"k" null}` is an error).
             if self.pos < self.s.len && self.s[self.pos] == ':' {
-                self.pos = self.pos + 1
+                self.pos += 1
             } else {
                 self.err = true
             }
@@ -1462,25 +1462,25 @@ impl JsonParser {
             } else {
                 self.scratch.push(childNodeIdx)
             }
-            self.scratchLen = self.scratchLen + 1
+            self.scratchLen += 1
             if self.scratchLen < self.scratch.len() {
                 self.scratch[self.scratchLen] = koff
             } else {
                 self.scratch.push(koff)
             }
-            self.scratchLen = self.scratchLen + 1
+            self.scratchLen += 1
             if self.scratchLen < self.scratch.len() {
                 self.scratch[self.scratchLen] = klen
             } else {
                 self.scratch.push(klen)
             }
-            self.scratchLen = self.scratchLen + 1
+            self.scratchLen += 1
             if self.err {
                 break
             }
             self.skipWs()
             if self.pos < self.s.len && self.s[self.pos] == ',' {
-                self.pos = self.pos + 1
+                self.pos += 1
                 expectKey = true
             } else {
                 break
@@ -1488,7 +1488,7 @@ impl JsonParser {
         }
         // Unterminated object (`{"k":1,`) is an error: the close brace is mandatory.
         if self.pos < self.s.len && self.s[self.pos] == '}' {
-            self.pos = self.pos + 1
+            self.pos += 1
         } else {
             self.err = true
         }
@@ -1500,7 +1500,7 @@ impl JsonParser {
             self.childIdx.push(self.scratch[sStart + k * 3])
             self.keyOffsets.push(self.scratch[sStart + k * 3 + 1])
             self.keyLens.push(self.scratch[sStart + k * 3 + 2])
-            k = k + 1
+            k += 1
         }
         self.scratchLen = sStart
         self.nodes[myIdx] = jsonNewContainer(5, childStart, ci, keyStart)
@@ -1514,32 +1514,32 @@ pub fn jsonEscapeStr(s: &string): string {
     while i < s.len {
         let c = s[i]
         if c == '"' {
-            result = result + "\\\""
+            result += "\\\""
         } 
         else if c == '\\' {
-            result = result + "\\\\"
+            result += "\\\\"
         } 
         else if c == '\n' {
-            result = result + "\\n"
+            result += "\\n"
         } 
         else if c == '\t' {
-            result = result + "\\t"
+            result += "\\t"
         } 
         else if c == '\r' {
-            result = result + "\\r"
+            result += "\\r"
         } 
         else if c < 32 {
             // RFC 8259: all control chars MUST be escaped. Terminal streams
             // (ESC etc.) otherwise produce unparseable frames.
             let digits: string = "0123456789abcdef"
-            result = result + "\\u00"
+            result += "\\u00"
             result.push(digits[((c as i64) >> 4) & 15])
             result.push(digits[(c as i64) & 15])
         } 
         else {
             result.push(c)
         }
-        i = i + 1
+        i += 1
     }
     return result
 }
@@ -1562,7 +1562,7 @@ fn jsonFmtIsSpace(c: u8): bool {
 fn jsonFmtSkipSpace(src: &string, i: i64): i64 {
     var j = i
     while j < src.len && jsonFmtIsSpace(src[j]) {
-        j = j + 1
+        j += 1
     }
     return j
 }
@@ -1580,15 +1580,15 @@ fn jsonFmtNewline(out: &mut string, indent: i64, depth: i64) {
 fn jsonFmtCopyString(src: &string, i: i64, out: &mut string): i64 {
     var j = i
     out.push(src[j])
-    j = j + 1
+    j += 1
     while j < src.len {
         let c = src[j]
         out.push(c)
-        j = j + 1
+        j += 1
         if c == '\\' {
             if j < src.len {
                 out.push(src[j])
-                j = j + 1
+                j += 1
             }
         } else if c == '"' {
             return j
@@ -1621,7 +1621,7 @@ pub fn jsonPretty(src: &string, indent: i64): string {
         if c == '"' {
             i = jsonFmtCopyString(src, i, &mut out)
         } else if jsonFmtIsSpace(c) {
-            i = i + 1
+            i += 1
         } else if c == '{' || c == '[' {
             let n = jsonFmtSkipSpace(src, i + 1)
             if n < src.len && (src[n] == '}' || src[n] == ']') {
@@ -1631,15 +1631,15 @@ pub fn jsonPretty(src: &string, indent: i64): string {
                 out.push(src[n])
                 i = n + 1
             } else {
-                depth = depth + 1
+                depth += 1
                 out.push(c)
                 if indent > 0 {
                     jsonFmtNewline(&mut out, indent, depth)
                 }
-                i = i + 1
+                i += 1
             }
         } else if c == '}' || c == ']' {
-            depth = depth - 1
+            depth -= 1
             // Unbalanced input would otherwise indent by a negative count. The
             // reformatter is not a validator, so it clamps and keeps going.
             if depth < 0 {
@@ -1649,22 +1649,22 @@ pub fn jsonPretty(src: &string, indent: i64): string {
                 jsonFmtNewline(&mut out, indent, depth)
             }
             out.push(c)
-            i = i + 1
+            i += 1
         } else if c == ',' {
             out.push(c)
             if indent > 0 {
                 jsonFmtNewline(&mut out, indent, depth)
             }
-            i = i + 1
+            i += 1
         } else if c == ':' {
             out.push(c)
             if indent > 0 {
                 out.push(' ')
             }
-            i = i + 1
+            i += 1
         } else {
             out.push(c)
-            i = i + 1
+            i += 1
         }
     }
     return out
@@ -1720,9 +1720,9 @@ pub fn jsonSer(v: &JsonVal): string {
             var out = "["
             for i in 0..items.len {
                 if i > 0 {
-                    out = out + ","
+                    out += ","
                 }
-                out = out + jsonSer(items[i])
+                out += jsonSer(items[i])
             }
             return out + "]"
         }
@@ -1730,7 +1730,7 @@ pub fn jsonSer(v: &JsonVal): string {
             var out = "{"
             for i in 0..members.len {
                 if i > 0 {
-                    out = out + ","
+                    out += ","
                 }
                 out = out + "\"" + jsonEscapeStr(members[i].key) + "\":" + jsonSer(members[i].val)
             }
@@ -1888,7 +1888,7 @@ impl JsonObj {
         var out = "{"
         for i in 0..self.members.len {
             if i > 0 {
-                out = out + ","
+                out += ","
             }
             out = out + "\"" + jsonEscapeStr(self.members[i].key) + "\":" + jsonSer(self.members[i].val)
         }
@@ -1965,9 +1965,9 @@ impl JsonArr {
         var out = "["
         for i in 0..self.items.len {
             if i > 0 {
-                out = out + ","
+                out += ","
             }
-            out = out + jsonSer(self.items[i])
+            out += jsonSer(self.items[i])
         }
         return out + "]"
     }
@@ -2032,45 +2032,45 @@ fn jsonPullNumber(s: &string, pos: &mut i64): f64 {
     var negative: bool = false
     if pos < s.len && s[pos] == '-' {
         negative = true
-        pos = pos + 1
+        pos += 1
     }
     while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
         result = result * 10.0 + (s[pos] as i32 - 48) as f64
-        pos = pos + 1
+        pos += 1
     }
     if pos < s.len && s[pos] == '.' {
-        pos = pos + 1
+        pos += 1
         var frac: f64 = 0.1
         while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
             result = result + (s[pos] as i32 - 48) as f64 * frac
-            frac = frac * 0.1
-            pos = pos + 1
+            frac *= 0.1
+            pos += 1
         }
     }
     if pos < s.len && (s[pos] == 'e' || s[pos] == 'E') {
-        pos = pos + 1
+        pos += 1
         var expNeg: bool = false
         if pos < s.len && s[pos] == '+' {
-            pos = pos + 1
+            pos += 1
         } else if pos < s.len && s[pos] == '-' {
             expNeg = true
-            pos = pos + 1
+            pos += 1
         }
         var exp: i64 = 0
         while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
             exp = exp * 10 + (s[pos] as i32 - 48) as i64
-            pos = pos + 1
+            pos += 1
         }
         var scale: f64 = 1.0
         var i: i64 = 0
         while i < exp {
-            scale = scale * 10.0
-            i = i + 1
+            scale *= 10.0
+            i += 1
         }
         if expNeg {
-            result = result / scale
+            result /= scale
         } else {
-            result = result * scale
+            result *= scale
         }
     }
     if negative {
@@ -2088,51 +2088,51 @@ impl JsonPull {
             }
             let c = self.src[self.pos]
             if c == '{' {
-                self.pos = self.pos + 1
+                self.pos += 1
                 self.stack.push(1)
                 return jsonTok(JsonEvent.StartObject)
             }
             if c == '}' {
-                self.pos = self.pos + 1
+                self.pos += 1
                 if self.stack.len > 0 {
                     self.stack.pop()!
                 }
                 return jsonTok(JsonEvent.EndObject)
             }
             if c == '[' {
-                self.pos = self.pos + 1
+                self.pos += 1
                 self.stack.push(0)
                 return jsonTok(JsonEvent.StartArray)
             }
             if c == ']' {
-                self.pos = self.pos + 1
+                self.pos += 1
                 if self.stack.len > 0 {
                     self.stack.pop()!
                 }
                 return jsonTok(JsonEvent.EndArray)
             }
             if c == ',' {
-                self.pos = self.pos + 1
+                self.pos += 1
                 if self.stack.len > 0 && self.stack[self.stack.len - 1] == 2 {
                     self.stack[self.stack.len - 1] = 1
                 }
                 continue
             }
             if c == ':' {
-                self.pos = self.pos + 1
+                self.pos += 1
                 if self.stack.len > 0 && self.stack[self.stack.len - 1] == 1 {
                     self.stack[self.stack.len - 1] = 2
                 }
                 continue
             }
             if c == '"' {
-                self.pos = self.pos + 1
+                self.pos += 1
                 let strStart = self.pos
                 var strErr: bool = false
                 jsonScanString(self.src, &mut self.pos, &mut strErr)
                 let strLen = self.pos - strStart
                 if self.pos < self.src.len {
-                    self.pos = self.pos + 1
+                    self.pos += 1
                 }
                 var t = jsonTok(JsonEvent.Str)
                 // in an object at a key slot (state 1) the string is the key
@@ -2143,19 +2143,19 @@ impl JsonPull {
                 return t
             }
             if c == 't' {
-                self.pos = self.pos + 4
+                self.pos += 4
                 var t = jsonTok(JsonEvent.Bool)
                 t.flag = true
                 return t
             }
             if c == 'f' {
-                self.pos = self.pos + 5
+                self.pos += 5
                 var t = jsonTok(JsonEvent.Bool)
                 t.flag = false
                 return t
             }
             if c == 'n' {
-                self.pos = self.pos + 4
+                self.pos += 4
                 return jsonTok(JsonEvent.Null)
             }
             if c == '-' || (c >= '0' && c <= '9') {

@@ -54,30 +54,30 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64], scale: f64) {
             inp.quit = true
         }
         if ks[SC_A] != 0 {
-            inp.moveX = inp.moveX - 1.0
+            inp.moveX -= 1.0
         }
         if ks[SC_D] != 0 {
-            inp.moveX = inp.moveX + 1.0
+            inp.moveX += 1.0
         }
         if ks[SC_W] != 0 {
-            inp.moveY = inp.moveY - 1.0
+            inp.moveY -= 1.0
         }
         if ks[SC_S] != 0 {
-            inp.moveY = inp.moveY + 1.0
+            inp.moveY += 1.0
         }
         // Arrows move too. Aiming is the mouse's job only — a second keyboard
         // stick reads as a puzzle, not a control scheme.
         if ks[SC_LEFT] != 0 {
-            inp.moveX = inp.moveX - 1.0
+            inp.moveX -= 1.0
         }
         if ks[SC_RIGHT] != 0 {
-            inp.moveX = inp.moveX + 1.0
+            inp.moveX += 1.0
         }
         if ks[SC_UP] != 0 {
-            inp.moveY = inp.moveY - 1.0
+            inp.moveY -= 1.0
         }
         if ks[SC_DOWN] != 0 {
-            inp.moveY = inp.moveY + 1.0
+            inp.moveY += 1.0
         }
         if ks[SC_SPACE] != 0 {
             inp.bomb = true

@@ -110,7 +110,7 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64], scale: f64) {
                 // SDL_MouseWheelEvent's signed y delta sits at byte offset 20;
                 // the event union arrives here as raw little-endian storage.
                 let raw: u32 = (ev[20] as u32) | ((ev[21] as u32) << 8) | ((ev[22] as u32) << 16) | ((ev[23] as u32) << 24)
-                inp.wheel = inp.wheel + (raw as i32 as f64)
+                inp.wheel += (raw as i32 as f64)
             }
         }
         var wx: i32 = 0
@@ -156,22 +156,22 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64], scale: f64) {
         inp.orbitY = 0.0
         inp.zoom = 0.0
         if ks[SC_LEFT] != 0 || ks[SC_A] != 0 {
-            inp.orbitX = inp.orbitX - 1.0
+            inp.orbitX -= 1.0
         }
         if ks[SC_RIGHT] != 0 || ks[SC_D] != 0 {
-            inp.orbitX = inp.orbitX + 1.0
+            inp.orbitX += 1.0
         }
         if ks[SC_UP] != 0 {
-            inp.orbitY = inp.orbitY - 1.0
+            inp.orbitY -= 1.0
         }
         if ks[SC_DOWN] != 0 {
-            inp.orbitY = inp.orbitY + 1.0
+            inp.orbitY += 1.0
         }
         if ks[SC_W] != 0 {
-            inp.zoom = inp.zoom - 1.0
+            inp.zoom -= 1.0
         }
         if ks[SC_S] != 0 {
-            inp.zoom = inp.zoom + 1.0
+            inp.zoom += 1.0
         }
 
         // The number row picks a world directly. One `digitHeld` for all ten
@@ -183,7 +183,7 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64], scale: f64) {
             if ks[SC_1 + i] != 0 {
                 pressed = i + 1
             }
-            i = i + 1
+            i += 1
         }
         if ks[SC_0] != 0 {
             pressed = 10

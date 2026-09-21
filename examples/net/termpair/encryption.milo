@@ -115,6 +115,6 @@ pub fn aesKeysMessage(encUnix: &string, encBrowser: &string, browserNumber: i64)
     p = p + ",\"b64_bootstrap_browser_aes_key\":\"" + encBrowser + "\""
     p = p + ",\"iv_count\":" + ivCount.toString()
     p = p + ",\"max_iv_count\":" + maxIv.toString()
-    p = p + "}"
+    p += "}"
     return "{\"event\":\"aes_keys\",\"payload\":" + p + "}"
 }

@@ -77,7 +77,7 @@ fn dayOfYear(t: &DateTime): i64 {
     var d = cum[m - 1] + (t.day as i64)
     if m > 2 {
         if isLeap(t.year) {
-            d = d + 1
+            d += 1
         }
     }
     return d
@@ -112,10 +112,10 @@ pub fn sunAt(lat: f64, lon: f64, t: &DateTime): SunDir {
     var tst = utcMin + eqTime + 4.0 * lon
     // Fold into a day so the hour angle stays in range near the date line.
     while tst < 0.0 {
-        tst = tst + 1440.0
+        tst += 1440.0
     }
     while tst >= 1440.0 {
-        tst = tst - 1440.0
+        tst -= 1440.0
     }
 
     let ha = (tst / 4.0 - 180.0) * DEG

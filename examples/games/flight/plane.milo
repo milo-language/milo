@@ -126,10 +126,10 @@ fn accumulate(b: &mut Build) {
         let c = b.idx[i + 1]
         let d = b.idx[i + 2]
         let n = (b.pos[c] - b.pos[a]).cross(b.pos[d] - b.pos[a])
-        b.nrm[a] = b.nrm[a] + n
-        b.nrm[c] = b.nrm[c] + n
-        b.nrm[d] = b.nrm[d] + n
-        i = i + 3
+        b.nrm[a] += n
+        b.nrm[c] += n
+        b.nrm[d] += n
+        i += 3
     }
     for k in 0..b.nrm.len {
         b.nrm[k] = b.nrm[k].norm()
@@ -156,7 +156,7 @@ fn fuselage(b: &mut Build, origin: &Vec3, f: &Frame) {
             // a rocket; real fuselages are close to flat-bottomed where the wing
             // and the intake meet them.
             if sa < 0.0 {
-                sa = sa * 0.72
+                sa *= 0.72
             }
             let p = bodyAt(origin, f, sts[i].fwd, ca * sts[i].halfW, sts[i].up + sa * sts[i].halfH)
             ring.push(vert(&mut b, p, (k as f64) / (RING as f64), vv))
@@ -251,7 +251,7 @@ pub fn drawAirframe(s: &mut Scene, w: &World, v: &View, skin: &Texture, ail: f64
         let c = b.idx[i + 1]
         let d = b.idx[i + 2]
         triangleV(&mut s, v, skin, skinVtx(s, b, a, tint), skinVtx(s, b, c, tint), skinVtx(s, b, d, tint), 1.0, 1.0, 1.0)
-        i = i + 3
+        i += 3
     }
 }
 

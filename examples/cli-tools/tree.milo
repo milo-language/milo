@@ -40,12 +40,12 @@ pub fn printTree(dirPath: &string, prefix: &string, depth: i64, maxLevel: i64, c
         print(prefix, connector, name)
 
         if entryIsDir {
-            counts.dirs = counts.dirs + 1
+            counts.dirs += 1
             let childPath = Path.join(dirPath, name)
             let childPrefix = prefix + extension
             printTree(childPath, childPrefix, depth + 1, maxLevel, &mut counts)
         } else {
-            counts.files = counts.files + 1
+            counts.files += 1
         }
     }
 }
@@ -69,13 +69,13 @@ pub fn main(): i32 {
 
     var summary: string = "\n" + counts.dirs.toString() + " director"
     if counts.dirs == 1 as i64 {
-        summary = summary + "y"
+        summary += "y"
     } else {
-        summary = summary + "ies"
+        summary += "ies"
     }
     summary = summary + ", " + counts.files.toString() + " file"
     if counts.files != 1 as i64 {
-        summary = summary + "s"
+        summary += "s"
     }
     print(summary)
 

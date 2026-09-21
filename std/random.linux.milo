@@ -53,7 +53,7 @@ fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
         let tmp = v[i]
         v[i] = v[j]
         v[j] = tmp
-        i = i - 1
+        i -= 1
     }
 }
 
@@ -68,7 +68,7 @@ fn randBytes(buf: *u8, n: i64): void {
                 chunk = 256
             }
             getentropy((buf as i64 + offset) as *u8, chunk)
-            offset = offset + chunk
+            offset += chunk
         }
     }
 }

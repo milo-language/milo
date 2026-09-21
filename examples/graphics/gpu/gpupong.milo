@@ -263,7 +263,7 @@ fn update(g: &mut Game, dt: f64, up: bool, down: bool, wantServe: bool) {
             g.ballVy = (g.rng.float() - 0.5) * 320.0
         }
     } else {
-        g.rally = g.rally + dt
+        g.rally += dt
         // Speed rises with the rally and then stops. Without the cap a long
         // rally ends by tunnelling the ball straight through a paddle.
         var boost = 1.0 + g.rally * 0.06
@@ -288,12 +288,12 @@ fn update(g: &mut Game, dt: f64, up: bool, down: bool, wantServe: bool) {
         bounceOff(&mut g, W - 40.0 - PADDLE_W, g.aiY, false)
 
         if g.ballX + BALL < 0.0 {
-            g.aiScore = g.aiScore + 1
+            g.aiScore += 1
             burst(&mut g, 0.0, g.ballY, 2.0, 0.4, 0.5)
             serve(&mut g, true)
         }
         if g.ballX > W {
-            g.playerScore = g.playerScore + 1
+            g.playerScore += 1
             burst(&mut g, W, g.ballY, 0.5, 2.0, 0.9)
             serve(&mut g, false)
         }
@@ -307,9 +307,9 @@ fn update(g: &mut Game, dt: f64, up: bool, down: bool, wantServe: bool) {
     if Math.abs(delta) > 8.0 {
         let step = 330.0 * dt
         if delta > 0.0 {
-            g.aiY = g.aiY + step
+            g.aiY += step
         } else {
-            g.aiY = g.aiY - step
+            g.aiY -= step
         }
     }
     g.aiY = clamp(g.aiY, 0.0, H - PADDLE_H)
@@ -384,7 +384,7 @@ fn build(g: &Game, v: &mut Vec<f32>) {
     var y = 12.0
     while y < H {
         quad(&mut v, W * 0.5 - 2.0, y, 4.0, 16.0, 0.10, 0.13, 0.18)
-        y = y + 30.0
+        y += 30.0
     }
     // Score as pips along the top — no font, no texture, and readable across a
     // room, which a two-digit number at this size is not.

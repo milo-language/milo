@@ -185,7 +185,7 @@ fn sealedEq(s: &Sealed, sp: Span, other: &string): bool {
         if s._data[sp.start + i] != other[i] {
             return false
         }
-        i = i + 1
+        i += 1
     }
     return true
 }
@@ -198,7 +198,7 @@ fn sealedEach(s: &Sealed, sp: Span, f: (u8) => void): void {
     var i: i64 = 0
     while i < (sp.len as i64) {
         f(s._data[sp.start + i])
-        i = i + 1
+        i += 1
     }
 }
 

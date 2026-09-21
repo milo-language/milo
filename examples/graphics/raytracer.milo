@@ -142,9 +142,9 @@ pub struct Hit {
 pub fn nextU64(s: &mut u64): u64 {
     // &mut scalar params auto-deref in Milo: read `s` directly, write via `s = ...`
     var x = s
-    x = x ^ (x << 13)
-    x = x ^ (x >> 7)
-    x = x ^ (x << 17)
+    x ^= (x << 13)
+    x ^= (x >> 7)
+    x ^= (x << 17)
     s = x
     return x
 }
@@ -164,7 +164,7 @@ pub fn randInUnitSphere(s: &mut u64): Vec3 {
         if vdot(p, p) < 1.0 {
             return p
         }
-        tries = tries + 1
+        tries += 1
     }
     return vnorm(p)
 }
@@ -207,7 +207,7 @@ pub fn traceScene(scene: &Vec<Sphere>, ro: Vec3, rd: Vec3): Hit {
                 hit: true, t: t, point: p, normal: n, matIdx: i
             }
         }
-        i = i + 1
+        i += 1
     }
     return best
 }
@@ -252,7 +252,7 @@ pub fn radiance(scene: &Vec<Sphere>, ro0: Vec3, rd0: Vec3, s: &mut u64): Vec3 {
             rd = target
             through = vmul(through, sp.albedo)
         }
-        depth = depth + 1
+        depth += 1
     }
     return color // exceeded depth -> black (absorbed)
 }
@@ -339,7 +339,7 @@ pub fn main(): i32 {
     var k = 0
     while k < 43200 * 3 {
         acc.push(0.0)
-        k = k + 1
+        k += 1
     }
 
     var seed: u64 = 0x2545F4914F6CDD1D
@@ -359,11 +359,11 @@ pub fn main(): i32 {
             }
             let ks = SDL_GetKeyboardState(0 as *i32)
             if ks[80] != 0 {
-                camAngle = camAngle - 0.03
+                camAngle -= 0.03
                 moved = true
             } // Left
             if ks[79] != 0 {
-                camAngle = camAngle + 0.03
+                camAngle += 0.03
                 moved = true
             } // Right
             if ks[41] != 0 {
@@ -376,7 +376,7 @@ pub fn main(): i32 {
             var z = 0
             while z < 43200 * 3 {
                 acc[z] = 0.0
-                z = z + 1
+                z += 1
             }
             samples = 0.0
             moved = false
@@ -394,7 +394,7 @@ pub fn main(): i32 {
         let vert = vscale(vv, 2.0 * halfH)
 
         // one jittered sample per pixel this frame — pure, safe compute
-        samples = samples + 1.0
+        samples += 1.0
         var y = 0
         while y < H {
             var x = 0
@@ -405,12 +405,12 @@ pub fn main(): i32 {
                 let dir = vsub(vadd(vadd(lowerLeft, vscale(horiz, su)), vscale(vert, 1.0 - sv)), eye)
                 let col = radiance(scene, eye, vnorm(dir), &mut seed)
                 let base = (y * W + x) * 3
-                acc[base] = acc[base] + col.x
+                acc[base] += col.x
                 acc[base + 1] = acc[base + 1] + col.y
                 acc[base + 2] = acc[base + 2] + col.z
-                x = x + 1
+                x += 1
             }
-            y = y + 1
+            y += 1
         }
 
         // resolve: average, tone-map (Reinhard), gamma 2.0, pack ABGR
@@ -421,14 +421,14 @@ pub fn main(): i32 {
             var r = acc[base] * inv
             var g = acc[base + 1] * inv
             var b = acc[base + 2] * inv
-            r = r / (1.0 + r)
-            g = g / (1.0 + g)
-            b = b / (1.0 + b)
+            r /= (1.0 + r)
+            g /= (1.0 + g)
+            b /= (1.0 + b)
             let ri = (clamp01(Math.sqrt(r)) * 255.0) as u32
             let gi = (clamp01(Math.sqrt(g)) * 255.0) as u32
             let bi = (clamp01(Math.sqrt(b)) * 255.0) as u32
             fb[p] = ri | (gi << 8) | (bi << 16) | (0xFF << 24)
-            p = p + 1
+            p += 1
         }
 
         // --- present: hand the safe framebuffer to SDL (raw pointers) ---

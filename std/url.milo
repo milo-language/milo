@@ -28,7 +28,7 @@ fn urlParse(s: string): Result<Url> {
         if s[schemeEnd] == '/' || s[schemeEnd] == '?' || s[schemeEnd] == '#' {
             break
         }
-        schemeEnd = schemeEnd + 1
+        schemeEnd += 1
     }
     if schemeEnd < s.len && s[schemeEnd] == ':' {
         scheme = s[0..schemeEnd].clone()
@@ -37,10 +37,10 @@ fn urlParse(s: string): Result<Url> {
 
     // authority (//host:port)
     if i + 1 < s.len && s[i] == '/' && s[i + 1] == '/' {
-        i = i + 2
+        i += 2
         let authStart = i
         while i < s.len && s[i] != '/' && s[i] != '?' && s[i] != '#' {
-            i = i + 1
+            i += 1
         }
         let auth = s[authStart..i]
 
@@ -55,7 +55,7 @@ fn urlParse(s: string): Result<Url> {
             if auth[j] == ']' {
                 break
             }
-            j = j - 1
+            j -= 1
         }
 
         if colonPos > 0 {
@@ -70,23 +70,23 @@ fn urlParse(s: string): Result<Url> {
     // path
     let pathStart = i
     while i < s.len && s[i] != '?' && s[i] != '#' {
-        i = i + 1
+        i += 1
     }
     path = s[pathStart..i].clone()
 
     // query
     if i < s.len && s[i] == '?' {
-        i = i + 1
+        i += 1
         let qStart = i
         while i < s.len && s[i] != '#' {
-            i = i + 1
+            i += 1
         }
         query = s[qStart..i].clone()
     }
 
     // fragment
     if i < s.len && s[i] == '#' {
-        i = i + 1
+        i += 1
         fragment = s[i..s.len].clone()
     }
 
@@ -123,7 +123,7 @@ fn _parsePort(s: &string): Result<i32> {
         if result > 65535 {
             return Result.Err("URL port is out of range")
         }
-        i = i + 1
+        i += 1
     }
     return Result.Ok(result as i32)
 }
@@ -136,15 +136,15 @@ fn urlQueryGet(u: &Url, key: &string): Option<string> {
     while i < u.query.len {
         let kStart = i
         while i < u.query.len && u.query[i] != '=' && u.query[i] != '&' {
-            i = i + 1
+            i += 1
         }
         let k = u.query[kStart..i]
         var val: string = ""
         if i < u.query.len && u.query[i] == '=' {
-            i = i + 1
+            i += 1
             let vStart = i
             while i < u.query.len && u.query[i] != '&' {
-                i = i + 1
+                i += 1
             }
             val = u.query[vStart..i].clone()
         }
@@ -152,7 +152,7 @@ fn urlQueryGet(u: &Url, key: &string): Option<string> {
             return Option.Some(val)
         }
         if i < u.query.len && u.query[i] == '&' {
-            i = i + 1
+            i += 1
         }
     }
     return Option.None
@@ -167,7 +167,7 @@ fn strEqUrl(a: &string, b: &string): bool {
         if a[i] != b[i] {
             return false
         }
-        i = i + 1
+        i += 1
     }
     return true
 }
@@ -177,11 +177,11 @@ fn urlString(u: &Url): string {
     if u.scheme.len > 0 {
         result = result + u.scheme + "://"
     }
-    result = result + u.host
+    result += u.host
     if u.port > 0 && u.port != 80 && u.port != 443 {
         result = result + ":" + format(u.port)
     }
-    result = result + u.path
+    result += u.path
     if u.query.len > 0 {
         result = result + "?" + u.query
     }

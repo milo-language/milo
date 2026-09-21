@@ -95,10 +95,10 @@ fn frac(x: f64): f64 {
 fn wrapDelta(a: f64, b: f64): f64 {
     var d = a - b
     if d > 0.5 {
-        d = d - 1.0
+        d -= 1.0
     }
     if d < -0.5 {
-        d = d + 1.0
+        d += 1.0
     }
     return d
 }
@@ -196,10 +196,10 @@ fn fbm(u: f64, v: f64, px: i64, py: i64, oct: i64, seed: i64): f64 {
     var qy = py
     for o in 0..oct {
         sum = sum + valueNoise(u, v, qx, qy, seed + o * 7919) * amp
-        norm = norm + amp
-        amp = amp * 0.5
-        qx = qx * 2
-        qy = qy * 2
+        norm += amp
+        amp *= 0.5
+        qx *= 2
+        qy *= 2
     }
     return sum / norm
 }

@@ -156,16 +156,16 @@ fn main() {
     var i: i64 = 0
     var reached: i64 = 0
     while i < 1000000 {
-        st = st ^ (st << 13)
-        st = st ^ (st >> 7)
-        st = st ^ (st << 17)
+        st ^= (st << 13)
+        st ^= (st >> 7)
+        st ^= (st << 17)
         let forged = Value {
             bits: SIGN | QNAN | (st & 0x3ffffffffffff)
         }
         if forged.show(strings) != "<dangling>" {
-            reached = reached + 1
+            reached += 1
         }
-        i = i + 1
+        i += 1
     }
     print("forged 1000000 string references, dereferenced " + reached.toString())
 }

@@ -87,7 +87,7 @@ pub fn ip6(text: &string): Option<[u8; 16]> {
         var i: i64 = 0
         while i < text.len {
             cbuf[i] = text[i]
-            i = i + 1
+            i += 1
         }
         if inet_pton(afInet6(), cbuf as *u8, out as *u8) != 1 {
             return Option.None

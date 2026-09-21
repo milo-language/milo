@@ -47,7 +47,7 @@ pub fn pageFor(s: &Store, key: &string): i64 {
         if s.pages[i].entries.len() > 0 && s.pages[i].entries[0].key <= key {
             lo = i
         }
-        i = i + 1
+        i += 1
     }
     return lo
 }
@@ -59,7 +59,7 @@ pub fn slotIn(s: &Store, p: i64, key: &string): i64 {
         if s.pages[p].entries[i].key == key {
             return i
         }
-        i = i + 1
+        i += 1
     }
     return 0 - 1 as i64
 }
@@ -84,13 +84,13 @@ pub fn put(s: &mut Store, key: string, value: string) {
     // sorted insert position
     var pos: i64 = 0
     while pos < s.pages[p].entries.len() && s.pages[p].entries[pos].key < key {
-        pos = pos + 1
+        pos += 1
     }
     s.pages[p].entries.insert(pos, Entry {
         key: key, value: value
     }
     )
-    s.count = s.count + 1
+    s.count += 1
 
     // split when over capacity: move the upper half into a new page after p
     if s.pages[p].entries.len() > PAGE_CAP {
@@ -130,10 +130,10 @@ pub fn scanNext(s: &Store, c: &mut Cursor): Option<Entry> {
                 key: s.pages[c.page].entries[c.slot].key.clone(),
                 value: s.pages[c.page].entries[c.slot].value.clone(),
             }
-            c.slot = c.slot + 1
+            c.slot += 1
             return Option.Some(e)
         }
-        c.page = c.page + 1
+        c.page += 1
         c.slot = 0
     }
     return Option.None

@@ -25,7 +25,7 @@ A manual cursor over a string is almost never needed:
 var i: i64 = 0
 while i < s.len {
     out.push(s[i])
-    i = i + 1
+    i += 1
 }
 
 // do
@@ -63,7 +63,7 @@ Malformed UTF-8 yields U+FFFD and advances one byte. It never stalls and never r
 ```milo
 // don't — reallocates and recopies the whole accumulator per concat (quadratic)
 var out = ""
-out = out + chunk
+out += chunk
 
 // do — amortized growth, copies only the addition
 var out = ""
@@ -71,7 +71,7 @@ out.pushStr(chunk)
 out.push(byte)      // single u8
 ```
 
-`+` is fine for a fixed number of joins. It is not fine inside a loop.
+`+` (and `+=`, which is the same operation) is fine for a fixed number of joins. Neither is fine inside a loop.
 
 ### Slices are views; `substr` copies
 

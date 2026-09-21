@@ -306,15 +306,15 @@ fn strEqNocase(a: &string, ai: i64, b: &string, blen: i64): bool {
         var cb: u8 = b[i]
         // lowercase ASCII
         if ca >= 'A' && ca <= 'Z' {
-            ca = ca + 32
+            ca += 32
         }
         if cb >= 'A' && cb <= 'Z' {
-            cb = cb + 32
+            cb += 32
         }
         if ca != cb {
             return false
         }
-        i = i + 1
+        i += 1
     }
     return true
 }
@@ -333,16 +333,16 @@ pub fn findHeader(headers: &string, name: &string): Option<string> {
                 var start: i64 = i + name.len + 1
                 // skip spaces after colon
                 while start < headers.len && headers[start] == ' ' {
-                    start = start + 1
+                    start += 1
                 }
                 var end: i64 = start
                 while end < headers.len && headers[end] != '\r' && headers[end] != '\n' {
-                    end = end + 1
+                    end += 1
                 }
                 return Option.Some(headers.substr(start, end))
             }
         }
-        i = i + 1
+        i += 1
     }
     return Option.None
 }
@@ -373,7 +373,7 @@ fn parseStatus(raw: &string): i32 {
     var i: i64 = 9
     while i < raw.len && raw[i] >= '0' && raw[i] <= '9' {
         code = code * 10 + (raw[i] as i32 - 48)
-        i = i + 1
+        i += 1
     }
     return code
 }
@@ -390,7 +390,7 @@ fn parseRawHeaders(raw: &string): string {
                 return raw.substr(start, i)
             }
         }
-        i = i + 1
+        i += 1
     }
     return ""
 }
@@ -401,7 +401,7 @@ fn parseBody(raw: &string): string {
         if raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
             return raw.substr(i + 4, raw.len)
         }
-        i = i + 1
+        i += 1
     }
     return raw.clone()
 }
@@ -418,11 +418,11 @@ fn decodeChunked(rawBody: &string): string {
                 break
             }
             chunkSize = chunkSize * 16 + d
-            i = i + 1
+            i += 1
         }
         // skip \r\n after size
         if i + 1 < rawBody.len && rawBody[i] == '\r' {
-            i = i + 2
+            i += 2
         }
         if chunkSize == 0 {
             break
@@ -431,12 +431,12 @@ fn decodeChunked(rawBody: &string): string {
         var j: i64 = 0
         while j < chunkSize && i < rawBody.len {
             result.push(rawBody[i])
-            i = i + 1
-            j = j + 1
+            i += 1
+            j += 1
         }
         // skip trailing \r\n
         if i + 1 < rawBody.len && rawBody[i] == '\r' {
-            i = i + 2
+            i += 2
         }
     }
     return result
@@ -476,7 +476,7 @@ pub fn parseHost(url: &string): string {
     let start = schemeOffset(url)
     var end: i64 = start
     while end < url.len && url[end] != '/' && url[end] != ':' {
-        end = end + 1
+        end += 1
     }
     return url.substr(start, end)
 }
@@ -484,14 +484,14 @@ pub fn parseHost(url: &string): string {
 pub fn parsePort(url: &string): u16 {
     var i: i64 = schemeOffset(url)
     while i < url.len && url[i] != '/' && url[i] != ':' {
-        i = i + 1
+        i += 1
     }
     if i < url.len && url[i] == ':' {
-        i = i + 1
+        i += 1
         var port: i32 = 0
         while i < url.len && url[i] >= '0' && url[i] <= '9' {
             port = port * 10 + (url[i] as i32 - 48)
-            i = i + 1
+            i += 1
         }
         return port as u16
     }
@@ -523,7 +523,7 @@ pub fn hostHeader(url: &string): string {
 pub fn parsePath(url: &string): string {
     var i: i64 = schemeOffset(url)
     while i < url.len && url[i] != '/' {
-        i = i + 1
+        i += 1
     }
     if i >= url.len {
         return "/"
@@ -550,7 +550,7 @@ pub fn urlEncode(s: &string): string {
             out.push(hex[(c as i64) / 16])
             out.push(hex[(c as i64) % 16])
         }
-        i = i + 1
+        i += 1
     }
     return out
 }
@@ -572,7 +572,7 @@ pub fn formEncode(fields: &Vec<FormField>): string {
             out.push('&')
         }
         out = out + urlEncode(fields[i].name) + "=" + urlEncode(fields[i].value)
-        i = i + 1
+        i += 1
     }
     return out
 }
@@ -598,15 +598,15 @@ pub fn buildRequest(host: &string, path: &string, opts: &FetchOptions): string {
         req = req + opts.headers.clone() + "\r\n"
     }
     if findHeader(opts.headers, "Accept").isNone() {
-        req = req + "Accept: */*\r\n"
+        req += "Accept: */*\r\n"
     }
     if findHeader(opts.headers, "User-Agent").isNone() {
-        req = req + "User-Agent: milo/0.1\r\n"
+        req += "User-Agent: milo/0.1\r\n"
     }
     if opts.body.len > 0 {
         req = req + "Content-Length: " + opts.body.len.toString() + "\r\n\r\n" + opts.body.clone()
     } else {
-        req = req + "\r\n"
+        req += "\r\n"
     }
     return req
 }

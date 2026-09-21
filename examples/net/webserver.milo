@@ -22,7 +22,7 @@ pub fn fibonacci(n: i64): i64 {
         let next = a + b
         a = b
         b = next
-        i = i + 1
+        i += 1
     }
     return b
 }
@@ -42,7 +42,7 @@ pub fn isPrime(n: i64): bool {
         if n % i == 0 {
             return false
         }
-        i = i + 2
+        i += 2
     }
     return true
 }
@@ -52,11 +52,11 @@ pub fn collatzSteps(start: i64): i64 {
     var steps: i64 = 0
     while x != 1 && steps < 500 {
         if x % 2 == 0 {
-            x = x / 2
+            x /= 2
         } else {
             x = x * 3 + 1
         }
-        steps = steps + 1
+        steps += 1
     }
     return steps
 }
@@ -66,18 +66,18 @@ pub fn fizzbuzzText(n: i64): string {
     var i: i64 = 1
     while i <= n {
         if i > 1 {
-            result = result + "\n"
+            result += "\n"
         }
         if i % 15 == 0 {
-            result = result + "FizzBuzz"
+            result += "FizzBuzz"
         } else if i % 3 == 0 {
-            result = result + "Fizz"
+            result += "Fizz"
         } else if i % 5 == 0 {
-            result = result + "Buzz"
+            result += "Buzz"
         } else {
-            result = result + i.toString()
+            result += i.toString()
         }
-        i = i + 1
+        i += 1
     }
     return result
 }

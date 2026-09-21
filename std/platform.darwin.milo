@@ -86,7 +86,7 @@ pub fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6 {
     var i: i64 = 0
     while i < 16 {
         a.sin6_addr[i] = addr[i]
-        i = i + 1
+        i += 1
     }
     return a
 }
@@ -112,7 +112,7 @@ pub fn makeSockaddrUn(path: &string): SockAddrUn {
     var i: i64 = 0
     while i < path.len && i < sockAddrUnMaxPath() {
         a.sun_path[i] = path[i]
-        i = i + 1
+        i += 1
     }
     return a
 }

@@ -228,9 +228,9 @@ fn rectF(g: &mut Vec<i64>, w: i64, h: i64, x0: f64, y0: f64, x1: f64, y1: f64, v
         var x = Math.floor(x0) as i64
         while (x as f64) < x1 {
             gset(&mut g, w, h, x, y, v)
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -261,13 +261,13 @@ fn earTri(g: &mut Vec<i64>, w: i64, h: i64, cx: f64, baseY: f64, halfW: f64, hei
         var x = Math.floor(mid - hw) as i64
         while (x as f64) < mid + hw {
             gset(&mut g, w, h, x, (baseY - (y as f64)) as i64, fill)
-            x = x + 1
+            x += 1
         }
         // a warm centre, but only while the ear is wide enough to have one
         if hw > 1.1 {
             gset(&mut g, w, h, mid as i64, (baseY - (y as f64)) as i64, inner)
         }
-        y = y + 1
+        y += 1
     }
 }
 
@@ -468,16 +468,16 @@ fn dogSprite(sp: &DogSpec, pal: &Vec<f64>, frame: i64): Sprite {
     var headCx = sp.headCx
     var headCy = sp.headCy + lift * 0.7
     if frame == DOG_BARK {
-        headCx = headCx - 0.6
-        headCy = headCy - 1.4
+        headCx -= 0.6
+        headCy -= 1.4
     } else if frame == DOG_DASH {
-        headCx = headCx + 1.2
-        headCy = headCy + 1.6
+        headCx += 1.2
+        headCy += 1.6
     } else if frame == DOG_HURT {
-        headCy = headCy + 1.2
+        headCy += 1.2
     } else if frame == DOG_PEE {
-        headCx = headCx - 0.5
-        headCy = headCy + 0.5
+        headCx -= 0.5
+        headCy += 0.5
     }
 
     // legs first, so the body covers the hips
@@ -502,13 +502,13 @@ fn dogSprite(sp: &DogSpec, pal: &Vec<f64>, frame: i64): Sprite {
         }
         if frame == DOG_PEE && i == 0 {
             // cocked, and drawn later so the body does not paint over it
-            i = i + 1
+            i += 1
             continue
         }
         segment(&mut g, w, h, hx, hipY, hx + ps.dx, footY + ps.dy, sp.legW, col)
         // a lighter paw, so the foot reads against the ground
         rectF(&mut g, w, h, hx + ps.dx - sp.legW * 0.5, footY + ps.dy - 0.6, hx + ps.dx + sp.legW * 0.7, footY + ps.dy + 0.6, C_BELLY)
-        i = i + 1
+        i += 1
     }
 
     // tail
@@ -518,7 +518,7 @@ fn dogSprite(sp: &DogSpec, pal: &Vec<f64>, frame: i64): Sprite {
     if frame == DOG_PEE {
         // straight up and out of the way: at this size the tail and a cocked
         // rear leg want the same six pixels
-        tailRise = tailRise + 3.5
+        tailRise += 3.5
     }
     segment(&mut g, w, h, tailBaseX, tailBaseY, tailBaseX - sp.tailLen * 0.6, tailBaseY - tailRise, sp.tailW, C_FUR)
     if tailRise > 2.0 {
@@ -563,10 +563,10 @@ fn dogSprite(sp: &DogSpec, pal: &Vec<f64>, frame: i64): Sprite {
     var earH = sp.earH
     if frame == DOG_DASH {
         lean = 0.0 - 2.6 // streaming back
-        earH = earH * 0.85
+        earH *= 0.85
     } else if frame == DOG_HURT {
         lean = 0.0 - 1.8
-        earH = earH * 0.55
+        earH *= 0.55
     } else if frame == DOG_BARK {
         lean = 0.0 - 0.6
     }
@@ -618,7 +618,7 @@ fn dogSprite(sp: &DogSpec, pal: &Vec<f64>, frame: i64): Sprite {
     while cy < collarBot {
         gset(&mut g, w, h, collarX, cy, C_COLLAR)
         gset(&mut g, w, h, collarX - 1, cy, C_COLLAR)
-        cy = cy + 1
+        cy += 1
     }
 
     outlinePass(&mut g, w, h)
@@ -822,9 +822,9 @@ fn knuckle(s: &mut Sprite, cx: f64, cy: f64, r: f64, k: f64) {
                 let g = k * (0.75 + edge * 0.65)
                 spriteSet(&mut s, x, y, 1.85 * g, 1.70 * g, 1.35 * g, 1.0)
             }
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
 }
 

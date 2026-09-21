@@ -321,7 +321,7 @@ pub fn decodeEntity(src: &string, pos: i64, n: i64, out: &mut string): i64 {
         var hex = false
         if i < n && (src[i] == 'x' || src[i] == 'X') {
             hex = true
-            i = i + 1
+            i += 1
         }
         var code: i64 = 0
         var any = false
@@ -344,7 +344,7 @@ pub fn decodeEntity(src: &string, pos: i64, n: i64, out: &mut string): i64 {
             }
             if ok {
                 any = true
-                i = i + 1
+                i += 1
             }
         }
         if any && ok && i < n && src[i] == ';' {
@@ -356,7 +356,7 @@ pub fn decodeEntity(src: &string, pos: i64, n: i64, out: &mut string): i64 {
         var name = String.withCapacity(8)
         while i < n && isAlpha(src[i]) {
             name.push(src[i])
-            i = i + 1
+            i += 1
         }
         if i < n && src[i] == ';' {
             if namedEntity(name, &mut out) {
@@ -382,7 +382,7 @@ pub fn parseText(dom: &mut Dom, parent: Handle<Node>, src: &string, pos: i64, n:
             i = decodeEntity(src, i, n, &mut out)
         } else {
             out.push(src[i])
-            i = i + 1
+            i += 1
         }
     }
     appendText(&mut dom, parent, out)
@@ -393,7 +393,7 @@ pub fn readName(src: &string, pos: i64, n: i64, out: &mut string): i64 {
     var i = pos
     while i < n && isNameChar(src[i]) {
         out.push(lower(src[i]))
-        i = i + 1
+        i += 1
     }
     return i
 }
@@ -401,7 +401,7 @@ pub fn readName(src: &string, pos: i64, n: i64, out: &mut string): i64 {
 pub fn skipSpaces(src: &string, pos: i64, n: i64): i64 {
     var i = pos
     while i < n && isSpace(src[i]) {
-        i = i + 1
+        i += 1
     }
     return i
 }
@@ -467,37 +467,37 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
         if i >= n {
             done = true
         } else if src[i] == '>' {
-            i = i + 1
+            i += 1
             done = true
         } else if src[i] == '/' {
             selfClose = true
-            i = i + 1
+            i += 1
         } else {
             // attribute name
             var an = String.withCapacity(8)
             i = readName(src, i, n, &mut an)
             if an.len() == 0 {
                 // stray character; skip it to avoid an infinite loop
-                i = i + 1
+                i += 1
             } else {
                 i = skipSpaces(src, i, n)
                 var av = String.withCapacity(8)
                 if i < n && src[i] == '=' {
-                    i = i + 1
+                    i += 1
                     i = skipSpaces(src, i, n)
                     if i < n && (src[i] == '"' || src[i] == 39 as u8) {
                         let q = src[i]
-                        i = i + 1
+                        i += 1
                         while i < n && src[i] != q {
                             if src[i] == '&' {
                                 i = decodeEntity(src, i, n, &mut av)
                             } else {
                                 av.push(src[i])
-                                i = i + 1
+                                i += 1
                             }
                         }
                         if i < n {
-                            i = i + 1
+                            i += 1
                         }
                     } else {
                         while i < n && !isSpace(src[i]) && src[i] != '>' && src[i] != '/' {
@@ -505,7 +505,7 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
                                 i = decodeEntity(src, i, n, &mut av)
                             } else {
                                 av.push(src[i])
-                                i = i + 1
+                                i += 1
                             }
                         }
                     }
@@ -527,10 +527,10 @@ pub fn parseEndTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, p
     var name = String.withCapacity(8)
     var i = readName(src, pos, n, &mut name)
     while i < n && src[i] != '>' {
-        i = i + 1
+        i += 1
     }
     if i < n {
-        i = i + 1
+        i += 1
     }
 
     // find topmost open element with this name
@@ -540,7 +540,7 @@ pub fn parseEndTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, p
         if nodeName(dom, stack[k]) == name {
             found = true
         } else {
-            k = k - 1
+            k -= 1
         }
     }
     if found {
@@ -559,10 +559,10 @@ pub fn parseComment(dom: &mut Dom, parent: Handle<Node>, src: &string, pos: i64,
     while i < n && !done {
         if i + 2 < n && src[i] == '-' && src[i + 1] == '-' && src[i + 2] == '>' {
             done = true
-            i = i + 3
+            i += 3
         } else {
             out.push(src[i])
-            i = i + 1
+            i += 1
         }
     }
     let cm = createComment(&mut dom, out)
@@ -573,10 +573,10 @@ pub fn parseComment(dom: &mut Dom, parent: Handle<Node>, src: &string, pos: i64,
 pub fn skipTo(src: &string, pos: i64, n: i64, target: u8): i64 {
     var i = pos
     while i < n && src[i] != target {
-        i = i + 1
+        i += 1
     }
     if i < n {
-        i = i + 1
+        i += 1
     }
     return i
 }
@@ -629,7 +629,7 @@ pub fn consumeRaw(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, po
             i = decodeEntity(src, i, n, &mut out)
         } else {
             out.push(src[i])
-            i = i + 1
+            i += 1
         }
     }
     appendText(&mut dom, here, out)
@@ -734,7 +734,7 @@ pub fn countTag(dom: &Dom, h: Handle<Node>, tag: &string): i64 {
     match nodeKind(dom, h) {
         NodeKind.Element => {
             if nodeName(dom, h) == tag {
-                total = total + 1
+                total += 1
             }
         }
         _ => {

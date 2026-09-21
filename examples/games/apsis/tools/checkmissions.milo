@@ -31,7 +31,7 @@ from "./../plan" import {
 fn pad(s: &string, n: i64): string {
     var out = s.clone()
     while out.len < n {
-        out = out + " "
+        out += " "
     }
     return out
 }
@@ -48,7 +48,7 @@ pub fn main(): i32 {
     var c = 0
     while c < MISSION_COUNT {
         let _ = calibrateMission(bodies, &mut missions[c], nowSeconds())
-        c = c + 1
+        c += 1
     }
     var failures = 0
 
@@ -58,14 +58,14 @@ pub fn main(): i32 {
         let p = bestPlan(bodies, missions[i])
         if !p.ok {
             print(pad(missions[i].name, 12) + "no transfer found in the window")
-            failures = failures + 1
+            failures += 1
         } else {
             let waitDays = (p.t0 - missions[i].windowOpen) / SEC_PER_DAY
             let margin = missions[i].budget - p.dvTotal
             print(pad(missions[i].name, 12) + pad("+" + round0(waitDays) + "d", 9) + pad(round0(p.tof / SEC_PER_DAY) + "d", 9) + pad(round0(p.dvDepart), 9) + pad(round0(p.dvArrive), 9) + pad(round0(p.dvTotal), 9) + pad(round0(missions[i].budget), 9) + round0(margin))
             if margin < 0.0 {
                 print("  FAIL: the cheapest plan in the window does not fit the budget")
-                failures = failures + 1
+                failures += 1
             }
             // The drawn arc IS the flight: propagating the departure state to the
             // arrival time has to land on the target, not near it.
@@ -75,20 +75,20 @@ pub fn main(): i32 {
             let rel = miss / target.len()
             if rel > 1.0e-4 {
                 print("  FAIL: the propagated arc misses the target by " + round0(miss / 1000.0) + " km")
-                failures = failures + 1
+                failures += 1
             }
             // The dials start somewhere playable: the nominal plan must at least
             // exist, or the first thing a player sees is 'no transfer'.
             let nominal = solvePlan(bodies, missions[i], missions[i].windowOpen + missions[i].departNominal, missions[i].tofNominal)
             if !nominal.ok {
                 print("  FAIL: the starting position of the dials has no transfer")
-                failures = failures + 1
+                failures += 1
             } else {
                 let over = nominal.dvTotal / missions[i].budget
                 print("             opens at " + round0(nominal.dvTotal) + " m/s, " + $"{Math.round(over * 100.0) as i64}" + "% of budget")
             }
         }
-        i = i + 1
+        i += 1
     }
 
     if failures > 0 {

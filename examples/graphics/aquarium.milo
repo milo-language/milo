@@ -110,7 +110,7 @@ pub fn set3(out: &mut [i64; 3], a: i64, b: i64, c: i64): void {
 pub fn fishColor(i: i64, out: &mut [i64; 3]): void {
     var k = i
     while k >= 6 {
-        k = k - 6
+        k -= 6
     }
     if k == 0 {
         set3(&mut out, 240, 140, 40)
@@ -200,7 +200,7 @@ pub fn main(): i32 {
 
         // ── fish ──
         for i in 0..NFISH {
-            fx[i] = fx[i] + fvx[i]
+            fx[i] += fvx[i]
             if fx[i] > (PW as f64) + 2.0 {
                 fx[i] = -12.0
                 fy[i] = Random.floatRange(3.0, (PH - 12) as f64)
@@ -220,7 +220,7 @@ pub fn main(): i32 {
 
         // ── bubbles (rise + wobble, respawn at the bottom) ──
         for i in 0..NBUB {
-            by[i] = by[i] - bsp[i]
+            by[i] -= bsp[i]
             if by[i] < 0.0 {
                 by[i] = (PH as f64) - 3.0
                 bx[i] = Random.floatRange(0.0, PW as f64)
@@ -254,7 +254,7 @@ pub fn main(): i32 {
         emit(&mut buf, Color.gray("  ·  q quit "))
         writeStdout(buf)
 
-        t = t + 0.08
+        t += 0.08
         sleepMs(50)
 
         var k = readKey()

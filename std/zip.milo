@@ -55,7 +55,7 @@ fn findEocd(src: &string): i64 {
         if Bytes.readU32Le(src, p).unwrapOr(0 as u32) == 0x06054b50 as u32 {
             return p
         }
-        p = p - 1
+        p -= 1
     }
     return -1
 }

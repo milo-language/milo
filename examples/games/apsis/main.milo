@@ -150,7 +150,7 @@ fn parseOptions(): Options {
         if k == "--gain" {
             o.gain = parseFloat(v.clone()).unwrapOr(0.34)
         }
-        i = i + 1
+        i += 1
     }
     return o
 }
@@ -167,9 +167,9 @@ fn toRgb(px: &Vec<u32>, w: i64, h: i64): string {
             out.push((p & 0xFF) as u8)
             out.push(((p >> 8) & 0xFF) as u8)
             out.push(((p >> 16) & 0xFF) as u8)
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
     return out
 }
@@ -288,7 +288,7 @@ fn stage(g: &mut Game, o: &Options) {
     var i = 0
     while i < 400 {
         updateCamera(&mut g, 0.05)
-        i = i + 1
+        i += 1
     }
     g.fade = 1.0
 }
@@ -351,7 +351,7 @@ pub fn main(): i32 {
     var loadedFor = -1
 
     while !inp.quit {
-        frame = frame + 1
+        frame += 1
         let nowMs = SDL_GetTicks()
         var dt = ((nowMs - prevMs) as f64) / 1000.0
         prevMs = nowMs

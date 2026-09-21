@@ -47,7 +47,7 @@ pub fn parseIntRadix(s: string, base: i32): Option<i64> {
         if digit >= base as i64 {
             return Option.None
         }
-        i = i + 1
+        i += 1
     }
     return Option.Some(strtoll(s, 0 as **u8, base))
 }
@@ -82,7 +82,7 @@ fn eqAsciiFold(a: &string, b: &string): bool {
     for i in 0..a.len {
         var ca = a[i]
         if ca >= 'A' && ca <= 'Z' {
-            ca = ca + 32
+            ca += 32
         }
         if ca != b[i] {
             return false
@@ -154,7 +154,7 @@ pub fn unquoteString(s: &string): Option<string> {
         }
         if b != '\\' {
             out.push(b)
-            i = i + 1
+            i += 1
             continue
         }
         if i + 1 >= end {
@@ -181,12 +181,12 @@ pub fn unquoteString(s: &string): Option<string> {
                 return Option.None
             }
             out.push((hi * 16 + lo) as u8)
-            i = i + 4
+            i += 4
             continue
         } else {
             return Option.None
         }
-        i = i + 2
+        i += 2
     }
     return Option.Some(out)
 }

@@ -285,15 +285,15 @@ fn parseMultipartBody(body: &string, boundary: &string, limits: &Limits): Result
         }
         // Transport padding is allowed between the delimiter and its CRLF.
         while p < body.len && (body[p] == ' ' || body[p] == 9) {
-            p = p + 1
+            p += 1
         }
         if p < body.len && body[p] == '\r' {
-            p = p + 1
+            p += 1
         }
         if p >= body.len || body[p] != '\n' {
             return Result.Err(MultipartError.Unterminated(p))
         }
-        p = p + 1
+        p += 1
 
         let headerStart = p
         var disposition = ""
@@ -306,16 +306,16 @@ fn parseMultipartBody(body: &string, boundary: &string, limits: &Limits): Result
             }
             var e = p
             while e < body.len && body[e] != '\n' {
-                e = e + 1
+                e += 1
             }
             if e >= body.len {
                 return Result.Err(MultipartError.Unterminated(headerStart))
             }
             var lineEnd = e
             if lineEnd > p && body[lineEnd - 1] == '\r' {
-                lineEnd = lineEnd - 1
+                lineEnd -= 1
             }
-            headerBytes = headerBytes + (e + 1 - p)
+            headerBytes += (e + 1 - p)
             if headerBytes > limits.maxHeaderBytes {
                 return Result.Err(MultipartError.HeadersTooLarge(limits.maxHeaderBytes))
             }
@@ -350,7 +350,7 @@ fn parseMultipartBody(body: &string, boundary: &string, limits: &Limits): Result
         }
         var bodyEnd = sep
         if bodyEnd > bodyStart && body[bodyEnd - 1] == '\r' {
-            bodyEnd = bodyEnd - 1
+            bodyEnd -= 1
         }
         if bodyEnd - bodyStart > limits.maxPartBytes {
             return Result.Err(MultipartError.PartTooLarge(limits.maxPartBytes))
@@ -416,7 +416,7 @@ fn endsDelimiterLine(body: &string, q: i64): bool {
     }
     var r = q
     while r < body.len && (body[r] == ' ' || body[r] == 9) {
-        r = r + 1
+        r += 1
     }
     if r >= body.len {
         return true
@@ -435,43 +435,43 @@ fn endsDelimiterLine(body: &string, q: i64): bool {
 fn multipartHeaderParam(header: &string, key: &string): Option<string> {
     var i: i64 = 0
     while i < header.len && header[i] != ';' {
-        i = i + 1
+        i += 1
     }
     while i < header.len {
-        i = i + 1
+        i += 1
         while i < header.len && (header[i] == ' ' || header[i] == 9) {
-            i = i + 1
+            i += 1
         }
         let keyStart = i
         while i < header.len && header[i] != '=' && header[i] != ';' {
-            i = i + 1
+            i += 1
         }
         let thisKey = header[keyStart..i].trim()
         var value = ""
         if i < header.len && header[i] == '=' {
-            i = i + 1
+            i += 1
             while i < header.len && (header[i] == ' ' || header[i] == 9) {
-                i = i + 1
+                i += 1
             }
             if i < header.len && header[i] == '"' {
-                i = i + 1
+                i += 1
                 while i < header.len && header[i] != '"' {
                     if header[i] == '\\' && i + 1 < header.len {
-                        i = i + 1
+                        i += 1
                     }
                     value.push(header[i])
-                    i = i + 1
+                    i += 1
                 }
                 if i < header.len {
-                    i = i + 1
+                    i += 1
                 }
                 while i < header.len && header[i] != ';' {
-                    i = i + 1
+                    i += 1
                 }
             } else {
                 let valStart = i
                 while i < header.len && header[i] != ';' {
-                    i = i + 1
+                    i += 1
                 }
                 value = header[valStart..i].trim().clone()
             }
@@ -537,7 +537,7 @@ fn sanitizeUploadFilename(raw: &string): Option<string> {
     var i: i64 = 0
     while i < name.len && name[i] != '.' {
         stem.push(name[i])
-        i = i + 1
+        i += 1
     }
     if isReservedDeviceName(stem) {
         return Option.None

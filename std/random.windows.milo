@@ -77,7 +77,7 @@ fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
         let tmp = v[i]
         v[i] = v[j]
         v[j] = tmp
-        i = i - 1
+        i -= 1
     }
 }
 

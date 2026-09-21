@@ -40,27 +40,27 @@ pub fn envVars(): Vec<EnvEntry> {
                         if text[k] == '=' {
                             eq = k
                         }
-                        k = k + 1
+                        k += 1
                     }
                     if eq > 0 {
                         var name = String.withCapacity(eq)
                         var n: i64 = 0
                         while n < eq {
                             name.push(text[n])
-                            n = n + 1
+                            n += 1
                         }
                         var value = String.withCapacity(text.len() - eq)
                         var v = eq + 1
                         while v < text.len() {
                             value.push(text[v])
-                            v = v + 1
+                            v += 1
                         }
                         out.push(EnvEntry {
                             name: name, value: value
                         }
                         )
                     }
-                    b = b + 1
+                    b += 1
                 }
             }
             return out
@@ -81,20 +81,20 @@ pub fn envVars(): Vec<EnvEntry> {
                             if blob[k] == '=' {
                                 eq = k
                             }
-                            k = k + 1
+                            k += 1
                         }
                         if eq > start {
                             var name = String.withCapacity(eq - start)
                             var n = start
                             while n < eq {
                                 name.push(blob[n])
-                                n = n + 1
+                                n += 1
                             }
                             var value = String.withCapacity(i - eq)
                             var v = eq + 1
                             while v < i {
                                 value.push(blob[v])
-                                v = v + 1
+                                v += 1
                             }
                             out.push(EnvEntry {
                                 name: name, value: value
@@ -104,7 +104,7 @@ pub fn envVars(): Vec<EnvEntry> {
                     }
                     start = i + 1
                 }
-                i = i + 1
+                i += 1
             }
         }
         Result.Err(_e) => {

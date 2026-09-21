@@ -234,7 +234,7 @@ fn addCurbs(b: &mut Builder, track: &Track) {
             let nrm = track.normalAt(s0).scale(-side)
             pushQuadN(&mut b, v3(a.x, 0.0, a.z), v3(e.x, 0.0, e.z), v3(e.x, h, e.z), v3(a.x, h, a.z), nrm, 0.0, 0.0, 1.0, 1.0, side > 0.0)
         }
-        side = side + 2.0
+        side += 2.0
     }
 }
 
@@ -295,7 +295,7 @@ fn addBarriers(wall: &mut Builder, neon: &mut Builder, track: &Track, pool: &mut
                 pushLight(&mut pool, v3(p.x, WALL_H + 0.35, p.z), 1.5, 1.28, 1.00, 17.0)
             }
         }
-        side = side + 2.0
+        side += 2.0
     }
 }
 
@@ -372,7 +372,7 @@ fn addFurniture(steel: &mut Builder, neon: &mut Builder, track: &Track, pool: &m
             let vv = ax.cross(uu)
             steel.tube(arm, ax, uu, vv, 0.085, len, 8, false)
             arm = nextP
-            seg = seg + 1
+            seg += 1
         }
 
         // The lantern: a dark shell with the lit element under it, not a bare
@@ -395,7 +395,7 @@ fn addFurniture(steel: &mut Builder, neon: &mut Builder, track: &Track, pool: &m
         neon.setTint(2.30, 1.95, 1.40)
         neon.tube(headC + inward.scale(-0.26) + up.scale(-0.13), inward, hu, hv, 0.115, 0.62, 8, true)
         pushLight(&mut pool, headC + up.scale(-0.35), 5.4, 4.4, 3.0, 34.0)
-        s = s + 25.0
+        s += 25.0
         flip = !flip
     }
 
@@ -428,7 +428,7 @@ fn addPatios(city: &mut Builder, steel: &mut Builder, neon: &mut Builder, track:
         while k < 4 {
             let c = track.pointAt(s + (k as f64) * 3.1, lat)
             cafeTable(&mut city, &mut steel, c, shade, k % 2 == 0)
-            k = k + 1
+            k += 1
         }
 
         // A planter at each end, which is what a real pavement cafe is fenced
@@ -443,7 +443,7 @@ fn addPatios(city: &mut Builder, steel: &mut Builder, neon: &mut Builder, track:
             city.box(v3(p.x, 0.30, p.z), 0.42, 0.30, 0.42)
             city.setTint(0.10, 0.30, 0.11)
             city.box(v3(p.x, 0.78, p.z), 0.36, 0.24, 0.36)
-            e = e + 2.0
+            e += 2.0
         }
 
         // One warm lamp over the whole set. Four table lights would be four of
@@ -454,7 +454,7 @@ fn addPatios(city: &mut Builder, steel: &mut Builder, neon: &mut Builder, track:
         neon.setAo(1.0)
         neon.setTint(1.9, 1.35, 0.72)
         neon.box(v3(mid.x, 2.42, mid.z), 0.16, 0.10, 0.16)
-        i = i + 1
+        i += 1
     }
 }
 
@@ -481,7 +481,7 @@ fn cafeTable(city: &mut Builder, steel: &mut Builder, c: &Vec3, shade: &Vec3, um
         // seat, and they cost sixteen times the triangles to say it.
         steel.setTint(0.16, 0.16, 0.19)
         steel.boxSpan(v3(cx - 0.16, 0.0, c.z - 0.16), v3(cx + 0.16, 0.42, c.z + 0.16))
-        d = d + 2.0
+        d += 2.0
     }
 
     if umbrella {
@@ -528,7 +528,7 @@ fn addStartLine(mark: &mut Builder, steel: &mut Builder, neon: &mut Builder, tra
             mark.push(v3(d.x, y, d.z), up, 1.0, 1.0)
             mark.push(v3(e.x, y, e.z), up, 0.0, 1.0)
         }
-        row = row + 1
+        row += 1
     }
 
     // The gantry, taller and heavier than the plain arches so the start of the
@@ -614,7 +614,7 @@ fn addCity(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, track: &
             let stretch = Math.clampF64(Math.sqrt(dxs * dxs + dzs * dzs) / 8.0, 0.45, 2.4)
             s = s + halfZ * 1.62 / stretch
         }
-        side = side + 2.0
+        side += 2.0
     }
 
     // The back row: towers, far enough behind the front wall that anything seen
@@ -633,9 +633,9 @@ fn addCity(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, track: &
                 let off = (WALL + 24.0 + rg.range(0.0, 44.0) + Math.maxF64(halfX, halfZ)) * bside
                 let _ = tryBuilding(&mut city, &mut neon, &mut steel, &mut pool, track, off, t + rg.jitter(12.0), halfX, halfZ, height, &mut rg)
             }
-            bside = bside + 2.0
+            bside += 2.0
         }
-        t = t + 19.0
+        t += 19.0
     }
 }
 
@@ -676,7 +676,7 @@ fn tryBuilding(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, pool
         if placeBuilding(&mut city, &mut neon, &mut steel, &mut pool, track, o, s, hx, hz, height, &mut rg) {
             return true
         }
-        shrink = shrink + 1
+        shrink += 1
     }
     return false
 }
@@ -713,7 +713,7 @@ fn placeBuilding(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, po
         if Math.abs(p.lateral) < WALL + 0.9 {
             return false
         }
-        i = i + 1
+        i += 1
     }
 
     // Which way the road is from here, as one of the four world-axis faces. The
@@ -830,18 +830,18 @@ fn addBuilding(city: &mut Builder, neon: &mut Builder, steel: &mut Builder, pool
             while sz < 2.0 {
                 city.box(v3(c.x + sx * hx, y + h * 0.5, c.z + sz * (hz - 0.9)), 0.22, h * 0.5, 0.32)
                 city.box(v3(c.x + sx * (hx - 0.9), y + h * 0.5, c.z + sz * hz), 0.32, h * 0.5, 0.22)
-                sz = sz + 2.0
+                sz += 2.0
             }
-            sx = sx + 2.0
+            sx += 2.0
         }
         addWindows(&mut neon, c, hx, hz, y, top, &mut rg)
         // The cornice that caps this tier.
         city.setTint(tr * 1.12, tg * 1.12, tb * 1.12)
         city.box(v3(c.x, top + 0.20, c.z), hx + 0.55, 0.20, hz + 0.55)
         y = top + 0.40
-        hx = hx * rg.range(0.72, 0.88)
-        hz = hz * rg.range(0.72, 0.88)
-        tier = tier + 1
+        hx *= rg.range(0.72, 0.88)
+        hz *= rg.range(0.72, 0.88)
+        tier += 1
     }
 
     // Parapet: a low wall round the roof, so the top of the building is an edge
@@ -1002,7 +1002,7 @@ fn addShopRow(city: &mut Builder, neon: &mut Builder, pool: &mut Vec<f64>, c: &V
             }
             city.setTint(col.x * k, col.y * k, col.z * k)
             shopBox(&mut city, c, alongX, dir, depth, mid, hw + 0.10, 3.30 - t * 0.17, 3.44 - t * 0.17, 0.15 + t * 0.42, 0.60 + t * 0.42)
-            st = st + 1
+            st += 1
         }
         // The valance is now a lip, not a curtain.
         city.setTint(col.x * 0.82, col.y * 0.82, col.z * 0.82)
@@ -1028,7 +1028,7 @@ fn addShopRow(city: &mut Builder, neon: &mut Builder, pool: &mut Vec<f64>, c: &V
         }
 
         pushLight(&mut pool, shopPoint(c, alongX, dir, depth, mid, 2.4, 2.2), gr * 2.4, gg * 2.4, gb * 2.4, 17.0)
-        i = i + 1
+        i += 1
     }
 }
 
@@ -1096,7 +1096,7 @@ fn addRoofKit(steel: &mut Builder, neon: &mut Builder, pool: &mut Vec<f64>, c: &
                 1.0
             }
             steel.cylinder(v3(tx + lx * 1.0, rh, tz + lz * 1.0), 0.11, 2.2, 6, false)
-            leg = leg + 1
+            leg += 1
         }
         steel.setTint(0.40, 0.31, 0.26)
         steel.cylinder(v3(tx, rh + 2.2, tz), 1.45, 3.0, 12, true)
@@ -1198,7 +1198,7 @@ fn addWindows(neon: &mut Builder, c: &Vec3, halfX: f64, halfZ: f64, y0: f64, y1:
                 }
             }
         }
-        face = face + 1
+        face += 1
     }
 }
 
@@ -1210,11 +1210,11 @@ fn addGround(b: &mut Builder, track: &Track) {
     var cx = 0.0
     var cz = 0.0
     for i in 0..track.n {
-        cx = cx + track.xs[i]
-        cz = cz + track.zs[i]
+        cx += track.xs[i]
+        cz += track.zs[i]
     }
-    cx = cx / (track.n as f64)
-    cz = cz / (track.n as f64)
+    cx /= (track.n as f64)
+    cz /= (track.n as f64)
     let r = 4200.0
     let up = v3(0.0, 1.0, 0.0)
     b.setUvScale(1.0 / 14.0)
@@ -1280,9 +1280,9 @@ fn addBoostPads(b: &mut Builder, pads: &mut Vec<f64>, track: &Track) {
             let cs = s - PAD_HALF_LEN + 0.9 + (k as f64) * 2.7
             let glow = 1.5 + t * 2.6
             chevron(&mut b, track, cs, lane, 0.55 + t * 0.35, glow)
-            k = k + 1
+            k += 1
         }
-        i = i + 1
+        i += 1
     }
 }
 
@@ -1310,7 +1310,7 @@ fn chevron(b: &mut Builder, track: &Track, s: f64, lane: f64, cyan: f64, glow: f
         let a2 = track.pointAt(s + back + thick, xo + side * PAD_HALF_W)
         let c2 = track.pointAt(s + tip + thick, xo)
         pushQuadN(&mut b, v3(a.x, y, a.z), v3(c.x, y, c.z), v3(c2.x, y, c2.z), v3(a2.x, y, a2.z), up, 0.0, 0.0, 1.0, 1.0, side > 0.0)
-        side = side + 2.0
+        side += 2.0
     }
 }
 

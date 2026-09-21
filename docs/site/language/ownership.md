@@ -98,7 +98,7 @@ bound to a `&mut` parameter is written `&mut n`.
 
 ```milo
 fn double(x: &mut i32) {
-    x = x * 2
+    x *= 2
 }
 
 var n: i32 = 21

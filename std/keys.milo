@@ -182,7 +182,7 @@ pub fn decodeCsi(s: &string, start: i64, at: i64): Key {
     var private = false
     if i < s.len && s[i] == 63 {
         private = true
-        i = i + 1
+        i += 1
     }
     // Parse up to two numeric parameters separated by ';'.
     var first: i64 = 0
@@ -198,12 +198,12 @@ pub fn decodeCsi(s: &string, start: i64, at: i64): Key {
                 first = first * 10 + (b - 48)
                 haveFirst = true
             }
-            i = i + 1
+            i += 1
             continue
         }
         if b == 59 {
             onSecond = true
-            i = i + 1
+            i += 1
             continue
         }
         break

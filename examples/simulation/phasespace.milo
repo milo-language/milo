@@ -139,7 +139,7 @@ pub fn advect1D(u: &Line, un: &mut Line, n: i64, s: f64, dtdx: f64, periodic: bo
             }
         }
         slope[k] = minmod(u[k] - u[km], u[kp] - u[k])
-        k = k + 1
+        k += 1
     }
     // flux[k] = numerical flux at interface k-1/2 (between cells k-1 and k), k = 0..n
     var flux: [f64; 257] = [0.0; 257]
@@ -170,12 +170,12 @@ pub fn advect1D(u: &Line, un: &mut Line, n: i64, s: f64, dtdx: f64, periodic: bo
             face = uL
         }
         flux[k] = s * face
-        k = k + 1
+        k += 1
     }
     k = 0
     while k < n {
         un[k] = u[k] - dtdx * (flux[k + 1] - flux[k])
-        k = k + 1
+        k += 1
     }
 }
 
@@ -189,15 +189,15 @@ pub fn sweepX(f: &Vec<f64>, fout: &mut Vec<f64>, dt: f64, dx: f64, dv: f64) {
         var i = 0
         while i < NX {
             uline[i] = f[j * NX + i]
-            i = i + 1
+            i += 1
         }
         advect1D(uline, &mut un, NX, s, dt / dx, true)
         i = 0
         while i < NX {
             fout[j * NX + i] = un[i]
-            i = i + 1
+            i += 1
         }
-        j = j + 1
+        j += 1
     }
 }
 
@@ -211,15 +211,15 @@ pub fn sweepV(f: &Vec<f64>, fout: &mut Vec<f64>, evec: &Vec<f64>, dt: f64, dv: f
         var j = 0
         while j < NV {
             uline[j] = f[j * NX + i]
-            j = j + 1
+            j += 1
         }
         advect1D(uline, &mut un, NV, s, dt / dv, false)
         j = 0
         while j < NV {
             fout[j * NX + i] = un[j]
-            j = j + 1
+            j += 1
         }
-        i = i + 1
+        i += 1
     }
 }
 
@@ -298,14 +298,14 @@ pub fn drawChar(fb: &mut Vec<u32>, x0: i64, y0: i64, ch: u8, scale: i64, col: u3
                         if px >= 0 && px < NX && py >= 0 && py < NV {
                             fb[py * NX + px] = col
                         }
-                        xx = xx + 1
+                        xx += 1
                     }
-                    yy = yy + 1
+                    yy += 1
                 }
             }
-            cc = cc + 1
+            cc += 1
         }
-        row = row + 1
+        row += 1
     }
 }
 
@@ -315,7 +315,7 @@ pub fn drawText(fb: &mut Vec<u32>, x0: i64, y0: i64, s: string, scale: i64, col:
     while i < s.len {
         drawChar(&mut fb, cx, y0, s[i], scale, col)
         cx = cx + 4 * scale
-        i = i + 1
+        i += 1
     }
 }
 
@@ -328,14 +328,14 @@ pub fn drawInt(fb: &mut Vec<u32>, x0: i64, y0: i64, n: i64, scale: i64, col: u32
     var digits = 1
     var t = v
     while t >= 10 {
-        digits = digits + 1
-        t = t / 10
+        digits += 1
+        t /= 10
     }
     var i = digits - 1
     while i >= 0 {
         drawChar(&mut fb, x0 + i * (4 * scale), y0, (48 + v % 10) as u8, scale, col)
-        v = v / 10
-        i = i - 1
+        v /= 10
+        i -= 1
     }
 }
 
@@ -344,8 +344,8 @@ pub fn massOf(f: &Vec<f64>, dx: f64, dv: f64): f64 {
     var m = 0.0
     var c = 0
     while c < NX * NV {
-        m = m + f[c]
-        c = c + 1
+        m += f[c]
+        c += 1
     }
     return m * dx * dv
 }
@@ -359,9 +359,9 @@ pub fn initF(f: &mut Vec<f64>, dv: f64) {
         var i = 0
         while i < NX {
             f[j * NX + i] = fv
-            i = i + 1
+            i += 1
         }
-        j = j + 1
+        j += 1
     }
 }
 
@@ -407,7 +407,7 @@ pub fn main(): i32 {
     var fbz = 0
     while fbz < NX * NV {
         fb.push(0)
-        fbz = fbz + 1
+        fbz += 1
     }
     var ev: [u8; 64] = [0; 64]
 
@@ -416,7 +416,7 @@ pub fn main(): i32 {
     var ie = 0
     while ie < NX {
         evec.push(2.0 * AWELL * Math.sin(2.0 * cellX(ie, dx)))
-        ie = ie + 1
+        ie += 1
     }
 
     // two ping-pong grids
@@ -426,7 +426,7 @@ pub fn main(): i32 {
     while z < NX * NV {
         f.push(0.0)
         g.push(0.0)
-        z = z + 1
+        z += 1
     }
     initF(&mut f, dv)
 
@@ -434,8 +434,8 @@ pub fn main(): i32 {
     var mass0 = 0.0
     var mi = 0
     while mi < NX * NV {
-        mass0 = mass0 + f[mi]
-        mi = mi + 1
+        mass0 += f[mi]
+        mi += 1
     }
     mass0 = mass0 * dx * dv
 
@@ -503,10 +503,10 @@ pub fn main(): i32 {
                             let r2 = ddx * ddx + ddy * ddy
                             f[jj * NX + ii] = f[jj * NX + ii] + 0.16 * Math.pow(E_CONST, 0.0 - r2 / 14.0)
                         }
-                        ii = ii + 1
+                        ii += 1
                     }
                 }
-                jj = jj + 1
+                jj += 1
             }
             mass0 = massOf(f, dx, dv)
         }
@@ -522,8 +522,8 @@ pub fn main(): i32 {
                 let tmp = f
                 f = g
                 g = tmp // swap so f holds the result
-                t = t + dt
-                step = step + 1
+                t += dt
+                step += 1
             }
         }
 
@@ -535,9 +535,9 @@ pub fn main(): i32 {
                 let col = magma(f[p * NX + q] / FMAX)
                 let sy = NV - 1 - p
                 fb[sy * NX + q] = col
-                q = q + 1
+                q += 1
             }
-            p = p + 1
+            p += 1
         }
 
         // FPS from real frame time (SDL ticks), smoothed
@@ -578,17 +578,17 @@ pub fn main(): i32 {
             var c = 0
             while c < NX * NV {
                 let val = f[c]
-                mass = mass + val
+                mass += val
                 if val < minf {
                     minf = val
                 }
-                c = c + 1
+                c += 1
             }
             mass = mass * dx * dv
             let relErr = Math.abs(mass - mass0) / mass0
             print("t=" + formatFloat(t, 2) + "  massRelErr=" + formatFloat(relErr, 8) + "  min(f)=" + formatFloat(minf, 6))
         }
-        frame = frame + 1
+        frame += 1
         SDL_Delay(4)
     }
 

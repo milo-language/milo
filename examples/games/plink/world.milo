@@ -327,8 +327,8 @@ fn addWall(panel: &mut Builder, chrome: &mut Builder, neon: &mut Builder, dark: 
         dark.setTint(1.0, 1.0, 1.0)
         glass.setTint(1.0, 1.0, 1.0)
         deck(&mut glass, Math.minF64(x - side * 0.32, x - side * 0.68), z - 0.22, Math.maxF64(x - side * 0.32, x - side * 0.68), z + 0.22, SPRING - 0.565)
-        n = n + 1
-        z = z + 3.4
+        n += 1
+        z += 3.4
     }
 
     // A tube the length of the room at head height, and the painted band under
@@ -401,7 +401,7 @@ fn addVault(panel: &mut Builder, chrome: &mut Builder, neon: &mut Builder) {
             pv = p
         }
         neon.setTint(1.0, 1.0, 1.0)
-        j = j + 2
+        j += 2
     }
 
     // Two lines running the length of the vault, off the crown either side. They
@@ -444,7 +444,7 @@ fn addGantry(chrome: &mut Builder, dark: &mut Builder, neon: &mut Builder, glass
             }
             chrome.setTint(1.0, 1.0, 1.0)
             up = !up
-            z = z + 1.2
+            z += 1.2
         }
         // Lamp cans, every third bay, aimed at the stage.
         z = Z_BACK + 2.4
@@ -457,7 +457,7 @@ fn addGantry(chrome: &mut Builder, dark: &mut Builder, neon: &mut Builder, glass
             neon.setTint(1.30, 1.20, 0.85)
             neon.sphere(v3(x, y - 0.99, z), 0.09, 5, 8)
             neon.setTint(1.0, 1.0, 1.0)
-            z = z + 3.6
+            z += 3.6
         }
     }
 }
@@ -532,7 +532,7 @@ fn addStage(tread: &mut Builder, panel: &mut Builder, neon: &mut Builder, plasti
         var dx = -STAGE_HALF
         while dx < STAGE_HALF - 0.01 {
             faceQuad(&mut neon, zF - 0.02, dx, y - 0.065, Math.minF64(dx + 0.55, STAGE_HALF), y - 0.015)
-            dx = dx + 0.80
+            dx += 0.80
         }
         neon.setTint(1.0, 1.0, 1.0)
         chrome.setTint(0.9, 0.92, 1.0)
@@ -560,8 +560,8 @@ fn addStage(tread: &mut Builder, panel: &mut Builder, neon: &mut Builder, plasti
             chrome.setTint(0.85, 0.88, 1.0)
             ring(&mut chrome, v3(lx, cyy, zF - 0.02), v3(0.0, 0.0, 1.0), 0.115, 0.022, 10)
             chrome.setTint(1.0, 1.0, 1.0)
-            lx = lx + 1.15
-            n = n + 1
+            lx += 1.15
+            n += 1
         }
 
         // Under-deck shadow box, so the riser is not a cardboard cut-out when
@@ -653,13 +653,13 @@ fn addMarquee(sign: &mut Builder, chrome: &mut Builder, neon: &mut Builder, dark
     while bx <= x1 + 0.19 {
         neon.sphere(v3(bx, y1 + 0.18, z - 0.14), 0.055, 5, 8)
         neon.sphere(v3(bx, y0 - 0.18, z - 0.14), 0.055, 5, 8)
-        bx = bx + 0.56
+        bx += 0.56
     }
     var by = y0 - 0.18
     while by <= y1 + 0.19 {
         neon.sphere(v3(x0 - 0.18, by, z - 0.14), 0.055, 5, 8)
         neon.sphere(v3(x1 + 0.18, by, z - 0.14), 0.055, 5, 8)
-        by = by + 0.52
+        by += 0.52
     }
     neon.setTint(1.0, 1.0, 1.0)
 
@@ -707,7 +707,7 @@ fn addBanners(sign: &mut Builder, chrome: &mut Builder, side: f64) {
             sign.push(v3(x, BAN_LO, z + 2.2), v3(1.0, 0.0, 0.0), 0.0, 1.0)
         }
         sign.setTint(1.0, 1.0, 1.0)
-        z = z + 4.6
+        z += 4.6
     }
 }
 
@@ -745,7 +745,7 @@ fn addLogos(logo: &mut Builder, chrome: &mut Builder, dark: &mut Builder, side: 
             logo.push(v3(x, lo, z + 1.3), v3(1.0, 0.0, 0.0), 0.0, 1.0)
         }
         logo.setTint(1.0, 1.0, 1.0)
-        z = z + 4.9
+        z += 4.9
     }
 }
 
@@ -769,7 +769,7 @@ fn addSpeakers(dark: &mut Builder, chrome: &mut Builder, neon: &mut Builder, sid
         neon.setTint(1.60, 0.35, 1.40)
         bar(&mut neon, v3(x - side * 0.57, 3.02, z + 0.10), v3(x - side * 0.57, 3.02, z + 0.75), 0.028, 5)
         neon.setTint(1.0, 1.0, 1.0)
-        z = z + 4.9
+        z += 4.9
     }
 }
 

@@ -110,7 +110,7 @@ pub fn pubLeadsDecl(tokens: &Vec<Token>, i: i64): bool {
             return (nk == TokKind.Ident || nk == TokKind.Keyword) &&
             pubStartsDeclKw(tokens[j].text)
         }
-        j = j + 1
+        j += 1
     }
     return false
 }
@@ -172,9 +172,9 @@ impl Lexer {
 
     fn advance(self: &mut Self): u8 {
         let ch = self.src[self.pos]
-        self.pos = self.pos + 1
+        self.pos += 1
         if ch == 10 {
-            self.line = self.line + 1
+            self.line += 1
         }
         return ch
     }
@@ -231,10 +231,10 @@ impl Lexer {
                 continue
             }
             if ch == 123 {
-                depth = depth + 1
+                depth += 1
             }
             if ch == 125 && depth > 0 {
-                depth = depth - 1
+                depth -= 1
             }
             s.push(ch)
         }
@@ -681,26 +681,26 @@ pub fn commentLeadsTopLevel(tokens: &Vec<Token>, i: i64): bool {
     while j < tokens.len {
         let k = tokens[j].kind
         if k == TokKind.Comment || k == TokKind.Newline {
-            j = j + 1
+            j += 1
             continue
         }
         // An attribute (`@ derive(...)`) is part of the decl it precedes — skip it
         // so a doc comment above the attribute still counts as leading the decl.
         if isAtToken(tokens[j]) {
-            j = j + 1
+            j += 1
             if j < tokens.len && tokens[j].kind == TokKind.Ident {
-                j = j + 1
+                j += 1
             }
             if j < tokens.len && tokens[j].kind == TokKind.LParen {
                 var d: i64 = 1
-                j = j + 1
+                j += 1
                 while j < tokens.len && d > 0 {
                     if tokens[j].kind == TokKind.LParen {
-                        d = d + 1
+                        d += 1
                     } else if tokens[j].kind == TokKind.RParen {
-                        d = d - 1
+                        d -= 1
                     }
-                    j = j + 1
+                    j += 1
                 }
             }
             continue
@@ -742,9 +742,9 @@ pub fn isGenericOpen(tokens: &Vec<Token>, i: i64): bool {
     while j < tokens.len && depth > 0 {
         let t = tokens[j]
         if t.kind == TokKind.Lt {
-            depth = depth + 1
+            depth += 1
         } else if t.kind == TokKind.Gt {
-            depth = depth - 1
+            depth -= 1
             if depth == 0 {
                 return true
             }
@@ -773,7 +773,7 @@ pub fn isGenericOpen(tokens: &Vec<Token>, i: i64): bool {
         } else {
             return false
         }
-        j = j + 1
+        j += 1
     }
     return false
 }
@@ -785,9 +785,9 @@ pub fn isInsideGeneric(tokens: &Vec<Token>, i: i64): bool {
     while j >= 0 {
         let t = tokens[j]
         if t.kind == TokKind.Gt {
-            depth = depth + 1
+            depth += 1
         } else if t.kind == TokKind.Lt {
-            depth = depth - 1
+            depth -= 1
             if depth == 0 {
                 return isGenericOpen(tokens, j)
             }
@@ -798,7 +798,7 @@ pub fn isInsideGeneric(tokens: &Vec<Token>, i: i64): bool {
         t.kind == TokKind.GtEq {
             return false
         }
-        j = j - 1
+        j -= 1
     }
     return false
 }
@@ -823,14 +823,14 @@ pub fn isMoveFnType(tokens: &Vec<Token>, i: i64): bool {
     while j < tokens.len {
         let t = tokens[j]
         if t.kind == TokKind.LParen {
-            depth = depth + 1
+            depth += 1
         } else if t.kind == TokKind.Colon && depth == 1 {
             // A `:` directly inside the parens is a PARAMETER annotation, so these are a
             // closure's params, not a type's argument list: `move(x: i64) => x + n`. A
             // type's parens hold bare types and never one.
             sawColon = true
         } else if t.kind == TokKind.RParen {
-            depth = depth - 1
+            depth -= 1
             if depth == 0 {
                 if sawColon {
                     return false
@@ -848,7 +848,7 @@ pub fn isMoveFnType(tokens: &Vec<Token>, i: i64): bool {
                 return tokens[j + 2].kind != TokKind.LBrace
             }
         }
-        j = j + 1
+        j += 1
     }
     return false
 }
@@ -1104,12 +1104,12 @@ pub fn formatSource(src: string): string {
                         nextLine = tokens[j].line
                         break
                     }
-                    j = j + 1
+                    j += 1
                 }
                 let sameLineStmt = nextLine == tok.line && nextKind != TokKind.RBrace &&
                 nextKind != TokKind.Comment && nextKind != TokKind.Eof
                 if sameLineStmt {
-                    out = out + "\n"
+                    out += "\n"
                     atLineStart = true
                 }
             }
@@ -1134,7 +1134,7 @@ pub fn formatSource(src: string): string {
             inPattern = false
         } else if tok.kind == TokKind.RBrace {
             if depth > 0 {
-                depth = depth - 1
+                depth -= 1
             }
             // Restore the enclosing block's paren/bracket nesting (see parenStack).
             if parenStack.len > 0 {
@@ -1144,7 +1144,7 @@ pub fn formatSource(src: string): string {
                 bracketDepth = bracketStack.pop()!
             }
             if !atLineStart {
-                out = out + "\n"
+                out += "\n"
                 atLineStart = true
             }
         }
@@ -1162,9 +1162,9 @@ pub fn formatSource(src: string): string {
         if depth == 0 && startsTopLevelItem && !hugExtern && !hugPub && !attachedDoc && !afterAttr {
             if out.len > 0 && !out.endsWith("\n\n") {
                 if !atLineStart {
-                    out = out + "\n"
+                    out += "\n"
                 }
-                out = out + "\n"
+                out += "\n"
                 atLineStart = true
             }
         }
@@ -1174,9 +1174,9 @@ pub fn formatSource(src: string): string {
         tok.line > lastLine && commentLeadsTopLevel(tokens, i) {
             if out.len > 0 && !out.endsWith("\n\n") {
                 if !atLineStart {
-                    out = out + "\n"
+                    out += "\n"
                 }
-                out = out + "\n"
+                out += "\n"
                 atLineStart = true
             }
         }
@@ -1185,34 +1185,34 @@ pub fn formatSource(src: string): string {
         // Not inside ( ) or [ ] — there the whole group reflows onto one line.
         let atStmtLevel = parenDepth == 0 && bracketDepth == 0
         if blank && atStmtLevel && !atLineStart && !hugExtern && !hugPub {
-            out = out + "\n"
+            out += "\n"
             atLineStart = true
         }
         if blank && atStmtLevel && atLineStart && out.len > 0 && !out.endsWith("\n\n") && !hugExtern && !hugPub {
-            out = out + "\n"
+            out += "\n"
         }
 
         // Comment on its own line
         if tok.kind == TokKind.Comment {
             if !atLineStart && tok.line > lastLine {
-                out = out + "\n"
+                out += "\n"
                 atLineStart = true
             }
             var ownLine: bool = false
             if atLineStart {
                 for d in 0..depth {
-                    out = out + "    "
+                    out += "    "
                 }
                 atLineStart = false
                 ownLine = true
             } else {
-                out = out + " "
+                out += " "
             }
-            out = out + tok.text
+            out += tok.text
             // A `//` comment runs to end of line, so the next token MUST start a new
             // line — even inside ( ) or [ ], where reflow would otherwise collapse
             // it up and swallow that token into the comment text.
-            out = out + "\n"
+            out += "\n"
             atLineStart = true
             lastLine = tok.line
             lastWasOwnLineComment = ownLine
@@ -1232,7 +1232,7 @@ pub fn formatSource(src: string): string {
             let curStartsStmt = tok.kind == TokKind.Ident ||
             (tok.kind == TokKind.Keyword && isStmtLeadKeyword(tok.text))
             if prevEndsStmt && curStartsStmt && !isContractLeadKeyword(prevText) {
-                out = out + "\n"
+                out += "\n"
                 atLineStart = true
             }
         }
@@ -1241,7 +1241,7 @@ pub fn formatSource(src: string): string {
         // param list / call args / array literal split across source lines reflows
         // onto one line.
         if tok.line > lastLine && !atLineStart && tok.kind != TokKind.RBrace && !hugExtern && !hugPub && atStmtLevel {
-            out = out + "\n"
+            out += "\n"
             atLineStart = true
         }
 
@@ -1261,15 +1261,15 @@ pub fn formatSource(src: string): string {
                 indentLevels = depth + 1
             }
             for d2 in 0..indentLevels {
-                out = out + "    "
+                out += "    "
             }
             atLineStart = false
         } else if hugExtern || hugPub || wantSpaceBefore(tokens, i) {
-            out = out + " "
+            out += " "
         }
 
         // Emit token
-        out = out + tok.text
+        out += tok.text
         lastLine = tok.line
         lastWasExtern = tok.kind == TokKind.Keyword && tok.text == "extern"
         lastWasPub = tok.kind == TokKind.Ident && tok.text == "pub" && depth == 0
@@ -1291,7 +1291,7 @@ pub fn formatSource(src: string): string {
         (tokens[i - 1].text == "let" || tokens[i - 1].text == "var") {
             inPattern = true
         } else if tok.kind == TokKind.LBrace {
-            depth = depth + 1
+            depth += 1
             // The body is a fresh statement context: save the enclosing paren/
             // bracket nesting and reset, so reflow inside this block is independent
             // of an unclosed ( around it (e.g. a closure passed as a call arg).
@@ -1308,7 +1308,7 @@ pub fn formatSource(src: string): string {
             if nextIsTrailing {
                 atLineStart = false
             } else {
-                out = out + "\n"
+                out += "\n"
                 atLineStart = true
             }
         }
@@ -1323,10 +1323,10 @@ pub fn formatSource(src: string): string {
                     nextKind = tokens[j].kind
                     break
                 }
-                j = j + 1
+                j += 1
             }
             if nextKind == TokKind.Keyword && tokens[j].text == "else" {
-                out = out + " "
+                out += " "
                 atLineStart = false
             } else if nextKind == TokKind.Eq {
                 // `let { a, b } = e`: the pattern's `}` continues the statement (the
@@ -1338,7 +1338,7 @@ pub fn formatSource(src: string): string {
                 // attaches the comment here instead of on its own line.
                 atLineStart = false
             } else {
-                out = out + "\n"
+                out += "\n"
                 atLineStart = true
             }
         }
@@ -1347,16 +1347,16 @@ pub fn formatSource(src: string): string {
         // declared): deferring it to here keeps a closing ) or ] "inside" its group
         // for the line-break decisions above.
         if tok.kind == TokKind.LParen {
-            parenDepth = parenDepth + 1
+            parenDepth += 1
         } else if tok.kind == TokKind.RParen {
             if parenDepth > 0 {
-                parenDepth = parenDepth - 1
+                parenDepth -= 1
             }
         } else if tok.kind == TokKind.LBracket {
-            bracketDepth = bracketDepth + 1
+            bracketDepth += 1
         } else if tok.kind == TokKind.RBracket {
             if bracketDepth > 0 {
-                bracketDepth = bracketDepth - 1
+                bracketDepth -= 1
             }
         }
     }
@@ -1367,7 +1367,7 @@ pub fn formatSource(src: string): string {
         out = out.substr(0, out.len - 1)
     }
     if out.len > 0 {
-        out = out + "\n"
+        out += "\n"
     }
     return out
 }

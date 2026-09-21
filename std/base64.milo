@@ -66,7 +66,7 @@ fn base64Encode(input: &string): string {
         result.push(b64EncodeChar(((a & 3) << 4) | (b >> 4)))
         result.push(b64EncodeChar(((b & 15) << 2) | (c >> 6)))
         result.push(b64EncodeChar(c & 63))
-        i = i + 3
+        i += 3
     }
     let remaining = input.len - i
     if remaining == 2 {
@@ -114,7 +114,7 @@ fn b64DecodeCore(input: &string, urlSafe: bool, padRequired: bool, label: &strin
     // it may appear only at the very end.
     var end = input.len
     while end > 0 && input[end - 1] == 61 {
-        end = end - 1
+        end -= 1
     }
     let pad = input.len - end
     if pad > 2 {
@@ -158,7 +158,7 @@ fn b64DecodeCore(input: &string, urlSafe: bool, padRequired: bool, label: &strin
             if c < 0 {
                 return Result.Err(label + ": invalid character at byte " + (i + 2).toString())
             }
-            acc = acc | (c << 6)
+            acc |= (c << 6)
             out.push(((acc >> 16) & 0xff) as u8)
             if group == 3 {
                 out.push(((acc >> 8) & 0xff) as u8)
@@ -168,10 +168,10 @@ fn b64DecodeCore(input: &string, urlSafe: bool, padRequired: bool, label: &strin
                 if d < 0 {
                     return Result.Err(label + ": invalid character at byte " + (i + 3).toString())
                 }
-                acc = acc | d
+                acc |= d
                 out.push(((acc >> 8) & 0xff) as u8)
                 out.push((acc & 0xff) as u8)
-                i = i + 4
+                i += 4
             }
         }
     }

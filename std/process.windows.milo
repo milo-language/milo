@@ -757,7 +757,7 @@ fn buildEnvBlock(cmd: &Command): Result<*u8> {
                     if lastEnvChange(cmd.envChanges, envRecordName(record)) < 0 {
                         records.push(record)
                     }
-                    i = i + 1
+                    i += 1
                 }
             }
         }

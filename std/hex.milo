@@ -57,7 +57,7 @@ fn hexDecode(input: &string): Result<string> {
             return Result.Err("hex: invalid digit at byte " + (i + 1).toString())
         }
         result.push(((hi << 4) | lo) as u8)
-        i = i + 2
+        i += 2
     }
     return Result.Ok(result)
 }

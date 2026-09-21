@@ -19,7 +19,7 @@ pub fn isNumeric(s: &string): bool {
         if !asciiIsDigit(s[i]) {
             return false
         }
-        i = i + 1
+        i += 1
     }
     return true
 }
@@ -43,7 +43,7 @@ pub fn isAlphaStr(s: &string): bool {
         if !asciiIsAlpha(s[i]) {
             return false
         }
-        i = i + 1
+        i += 1
     }
     return true
 }
@@ -110,7 +110,7 @@ pub fn decodeCodepoint(s: &string, at: i64): CodePoint {
             }
         }
         cp = (cp << 6) | ((c & 63) as i32)
-        k = k + 1
+        k += 1
     }
     // Reject overlongs, surrogates, and out-of-range: each has a shorter or no
     // legal encoding, so accepting them would let two byte sequences compare
@@ -178,7 +178,7 @@ pub fn codepoints(s: &string): Vec<i32> {
     while i < s.len {
         let cp = decodeCodepoint(s, i)
         result.push(cp.value)
-        i = i + cp.size
+        i += cp.size
     }
     return result
 }
@@ -189,7 +189,7 @@ pub fn codepointCount(s: &string): i64 {
     var i: i64 = 0
     while i < s.len {
         i = i + decodeCodepoint(s, i).size
-        count = count + 1
+        count += 1
     }
     return count
 }
@@ -416,7 +416,7 @@ pub fn displayWidth(s: &string): i64 {
     var openRegional = false
     while i < s.len {
         let c = decodeCodepoint(s, i)
-        i = i + c.size
+        i += c.size
         let cp = c.value
         if cp == ZERO_WIDTH_JOINER {
             pendingJoin = true
@@ -432,14 +432,14 @@ pub fn displayWidth(s: &string): i64 {
         // VS15 forces text presentation and narrows it back.
         if cp == VARIATION_SELECTOR_16 {
             if headWidth == 1 {
-                total = total + 1
+                total += 1
                 headWidth = 2
             }
             continue
         }
         if cp == VARIATION_SELECTOR_15 {
             if headWidth == 2 {
-                total = total - 1
+                total -= 1
                 headWidth = 1
             }
             continue
@@ -459,12 +459,12 @@ pub fn displayWidth(s: &string): i64 {
                 continue
             }
             openRegional = true
-            total = total + 2
+            total += 2
             headWidth = 2
             continue
         }
         openRegional = false
-        total = total + w
+        total += w
         headWidth = w
     }
     return total
@@ -482,8 +482,8 @@ pub fn truncateToWidth(s: &string, maxCols: i64): i64 {
         if used + w > maxCols {
             return i
         }
-        used = used + w
-        i = i + c.size
+        used += w
+        i += c.size
     }
     return s.len
 }

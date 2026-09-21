@@ -31,7 +31,7 @@ pub struct BitW {
 
 fn putBit(w: &mut BitW, bit: i64) {
     w.acc = w.acc | ((bit & 1) << w.nbits)
-    w.nbits = w.nbits + 1
+    w.nbits += 1
     if w.nbits == 8 {
         w.out.push((w.acc & 0xff) as u8)
         w.acc = 0
@@ -128,7 +128,7 @@ fn hash3(src: &string, p: i64): i64 {
 fn matchLen(src: &string, a: i64, b: i64, maxLen: i64): i64 {
     var n: i64 = 0
     while n < maxLen && src[a + n] == src[b + n] {
-        n = n + 1
+        n += 1
     }
     return n
 }
@@ -174,7 +174,7 @@ fn deflate(src: &string): string {
                     }
                 }
                 cand = prev[cand]
-                chain = chain + 1
+                chain += 1
             }
             prev[pos] = head[h]
             head[h] = pos
@@ -190,10 +190,10 @@ fn deflate(src: &string): string {
                     head[hh] = p
                 }
             }
-            pos = pos + bestLen
+            pos += bestLen
         } else {
             emitSym(&mut w, src[pos] as i64)
-            pos = pos + 1
+            pos += 1
         }
     }
     emitSym(&mut w, 256) // end of block

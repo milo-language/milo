@@ -177,7 +177,7 @@ A free function with three or more `&mut` parameters is a struct's method with t
 
 ```milo
 fn step(a: &mut i64, b: &mut i64, c: &mut i64) {   // warning: fn step threads 3 &mut parameters; the same 3 variables travel together at all 2 call sites
-    a = a + 1                                       //   hint: bundle them in a struct and make step a method on it
+    a += 1                                       //   hint: bundle them in a struct and make step a method on it
 }
 ```
 

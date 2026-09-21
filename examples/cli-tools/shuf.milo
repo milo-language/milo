@@ -19,7 +19,7 @@ pub fn shuffleLines(lines: &mut Vec<string>): void {
     while i > 0 {
         let j = Random.range(0, i)
         lines.swap(i, j)
-        i = i - 1
+        i -= 1
     }
 }
 

@@ -26,7 +26,7 @@ ensures result >= 0
 {
     var r: i64 = 0
     while (r + 1) * (r + 1) <= n {
-        r = r + 1
+        r += 1
     }
     return r
 }
@@ -47,7 +47,7 @@ ensures result >= 0
 {
     var r: i64 = 0
     while (r + 1) * (r + 1) <= n {
-        r = r + 1
+        r += 1
     }
     return r
 }
@@ -81,7 +81,7 @@ ensures result >= 0
 {
     var r: i64 = 0
     while (r + 1) * (r + 1) <= n {
-        r = r + 1
+        r += 1
     }
     return r
 }
@@ -126,7 +126,7 @@ ensures result >= 0
 {
     var r: i64 = 0
     while (r + 1) * (r + 1) <= n {
-        r = r + 1
+        r += 1
     }
     return r
 }
@@ -160,7 +160,7 @@ ensures result >= 0
 {
     var r: i64 = 0
     while (r + 1) * (r + 1) <= n {
-        r = r + 1
+        r += 1
     }
     return r
 }
@@ -205,8 +205,8 @@ ensures result >= 0
     invariant total >= 0
     invariant i >= 1
     {
-        total = total + i
-        i = i + 1
+        total += i
+        i += 1
     }
     return total
 }
@@ -230,7 +230,7 @@ A function that writes through a `&mut` has no `result` to describe. `old(e)` na
 fn bump(n: &mut i64): void
 ensures n == old(n) + 100
 {
-    n = n + 100
+    n += 100
 }
 ```
 

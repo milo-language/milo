@@ -460,9 +460,9 @@ fn cornerAt(cc: &mut Corners, s: &Scene, w: &World, ix: i64, iz: i64): Corner {
             var vy = h - w.cam.y
             var vz = z - w.cam.z
             let vl = Math.sqrt(vx * vx + vy * vy + vz * vz) + 0.0001
-            vx = vx / vl
-            vy = vy / vl
-            vz = vz / vl
+            vx /= vl
+            vy /= vl
+            vz /= vl
             // Schlick, but capped. Physically the term goes to 1 at a grazing
             // angle; taken literally, a chase camera looking flat across a bay
             // turns the whole bay into sky colour and the water vanishes into
@@ -519,9 +519,9 @@ fn cornerAt(cc: &mut Corners, s: &Scene, w: &World, ix: i64, iz: i64): Corner {
             // ~480 units gives eleven samples per wave, which interpolates clean.
             let rip = Math.sin(x * 0.013 + w.time * 0.9) * Math.sin(z * 0.011 - w.time * 0.7)
             let ripK = 1.0 + 0.10 * rip
-            wr = wr * ripK
-            wg = wg * ripK
-            wb = wb * ripK
+            wr *= ripK
+            wg *= ripK
+            wb *= ripK
 
             // Foam at the waterline. The wave train moves the surface up and
             // down through sea level, so this band crawls up and down the beach
@@ -970,12 +970,12 @@ fn fallRibbon(s: &mut Scene, w: &World, v: &View, lipX: f64, lipZ: f64, wide: f6
             if ground >= cy - 0.4 {
                 break
             }
-            drop = drop + (cy - ground)
+            drop += (cy - ground)
             cy = ground
             cx = nx
             cz = nz
         } else {
-            drop = drop + stepDown
+            drop += stepDown
             cy = ny
             cx = nx
             cz = nz
@@ -1182,8 +1182,8 @@ fn deckSegment(s: &mut Scene, v: &View, ax: f64, ay: f64, az: f64, bx: f64, by: 
     if el < 0.01 {
         return
     }
-    ex = ex / el
-    ez = ez / el
+    ex /= el
+    ez /= el
     // Perpendicular in the ground plane. The deck stays level across its width —
     // real ones are crowned by centimetres, which is nothing from a cockpit.
     let px = 0.0 - ez * hw
@@ -1236,7 +1236,7 @@ fn arcPoint(w: &World, b: i64, t: f64): ArcPoint {
     for k in 1..n {
         let ddx = w.city.brPtX[start + k] - w.city.brPtX[start + k - 1]
         let ddz = w.city.brPtZ[start + k] - w.city.brPtZ[start + k - 1]
-        total = total + Math.sqrt(ddx * ddx + ddz * ddz)
+        total += Math.sqrt(ddx * ddx + ddz * ddz)
     }
     let want = total * Math.clampF64(t, 0.0, 1.0)
     var acc = 0.0
@@ -1253,7 +1253,7 @@ fn arcPoint(w: &World, b: i64, t: f64): ArcPoint {
             }
             break
         }
-        acc = acc + seg
+        acc += seg
     }
     frac = Math.clampF64(frac, 0.0, 1.0)
     let ex = w.city.brPtX[start + idx + 1] - w.city.brPtX[start + idx]
@@ -1816,8 +1816,8 @@ fn prism(s: &mut Scene, w: &World, v: &View, facade: &Texture, px: &mut Vec<f64>
             pz[lo] = pz[hi]
             px[hi] = tx
             pz[hi] = tz
-            lo = lo + 1
-            hi = hi - 1
+            lo += 1
+            hi -= 1
         }
     }
     let m = px.len
@@ -1896,11 +1896,11 @@ fn shapedRoof(s: &mut Scene, v: &View, px: &Vec<f64>, pz: &Vec<f64>, m: i64, yEa
     var cx = 0.0
     var cz = 0.0
     for i in 0..m {
-        cx = cx + px[i]
-        cz = cz + pz[i]
+        cx += px[i]
+        cz += pz[i]
     }
-    cx = cx / (m as f64)
-    cz = cz / (m as f64)
+    cx /= (m as f64)
+    cz /= (m as f64)
     let side = col.scale(shade(s, 0.7, 0.6, 0.0, 0.42) * 1.02)
 
     if kind == ROOF_PYRAMIDAL {
@@ -2315,8 +2315,8 @@ pub fn drawGuide(c: &mut Canvas, w: &World, v: &View) {
         dirY = 0.0
     }
     let l = Math.sqrt(dirX * dirX + dirY * dirY) + 0.001
-    dirX = dirX / l
-    dirY = dirY / l
+    dirX /= l
+    dirY /= l
     let rad = Math.minF64((c.w as f64), (c.h as f64)) * 0.36
     let ax = v.cx + dirX * rad
     let ay = v.cy + dirY * rad
@@ -2401,7 +2401,7 @@ pub fn drawMarkBeam(c: &mut Canvas, w: &World, v: &View) {
             if across <= 0.0 {
                 continue
             }
-            across = across * Math.sqrt(across)
+            across *= Math.sqrt(across)
             // A hot white core inside a blue column: the core is what makes it
             // read as light rather than as a painted cylinder, and it is narrow
             // enough that the beam still reads blue from a distance.
@@ -2698,8 +2698,8 @@ pub fn drawMarkGuide(c: &mut Canvas, w: &World, v: &View) {
         }
     }
     let l = Math.sqrt(dirX * dirX + dirY * dirY) + 0.001
-    dirX = dirX / l
-    dirY = dirY / l
+    dirX /= l
+    dirY /= l
     let rad = Math.minF64(c.w as f64, c.h as f64) * 0.30
     let ax = v.cx + dirX * rad
     let ay = v.cy + dirY * rad

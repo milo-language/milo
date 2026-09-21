@@ -73,13 +73,13 @@ fn xxh64(src: &string, seed: u64): u64 {
         let limit = len - 32
         while p <= limit {
             v1 = _round(v1, read64(src, p))
-            p = p + 8
+            p += 8
             v2 = _round(v2, read64(src, p))
-            p = p + 8
+            p += 8
             v3 = _round(v3, read64(src, p))
-            p = p + 8
+            p += 8
             v4 = _round(v4, read64(src, p))
-            p = p + 8
+            p += 8
         }
         acc = rotl(v1, 1).wrappingAdd(rotl(v2, 7)).wrappingAdd(rotl(v3, 12)).wrappingAdd(rotl(v4, 18))
         acc = mergeRound(acc, v1)
@@ -95,24 +95,24 @@ fn xxh64(src: &string, seed: u64): u64 {
         let k1 = _round(0, read64(src, p))
         acc = (acc ^ k1)
         acc = rotl(acc, 27).wrappingMul(p1()).wrappingAdd(p4())
-        p = p + 8
+        p += 8
     }
     if p + 4 <= len {
         acc = acc ^ read32(src, p).wrappingMul(p1())
         acc = rotl(acc, 23).wrappingMul(p2()).wrappingAdd(p3())
-        p = p + 4
+        p += 4
     }
     while p < len {
         acc = acc ^ (src[p] as u64).wrappingMul(p5())
         acc = rotl(acc, 11).wrappingMul(p1())
-        p = p + 1
+        p += 1
     }
     // Final avalanche.
-    acc = acc ^ (acc >> 33)
+    acc ^= (acc >> 33)
     acc = acc.wrappingMul(p2())
-    acc = acc ^ (acc >> 29)
+    acc ^= (acc >> 29)
     acc = acc.wrappingMul(p3())
-    acc = acc ^ (acc >> 32)
+    acc ^= (acc >> 32)
     return acc
 }
 
@@ -131,7 +131,7 @@ fn xxh64Hex(src: &string, seed: u64): string {
     while i >= 0 {
         let nib = (h >> ((i as u64) * 4)) & 0xf
         out.push(hexNibble(nib))
-        i = i - 1
+        i -= 1
     }
     return out
 }

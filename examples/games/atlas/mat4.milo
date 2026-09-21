@@ -78,12 +78,12 @@ pub fn multiply(a: &Vec<f32>, b: &Vec<f32>): Vec<f32> {
             var k = 0
             while k < 4 {
                 s = s + a[k * 4 + row] * b[col * 4 + k]
-                k = k + 1
+                k += 1
             }
             m[col * 4 + row] = s
-            row = row + 1
+            row += 1
         }
-        col = col + 1
+        col += 1
     }
     return m
 }

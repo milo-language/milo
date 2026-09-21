@@ -53,7 +53,7 @@ pub fn newProblem(nvars: i64): SmtProblem {
     var j: i64 = 0
     while j < nvars {
         flags.push(true)
-        j = j + 1
+        j += 1
     }
     return newProblemMixed(nvars, flags)
 }
@@ -87,7 +87,7 @@ pub fn allReal(varIsInt: &Vec<bool>, nvars: i64): bool {
         if varIsInt[j] {
             return false
         }
-        j = j + 1
+        j += 1
     }
     return true
 }
@@ -100,7 +100,7 @@ pub fn rowAllInt(coeffs: &Vec<i64>, varIsInt: &Vec<bool>): bool {
                 return false
             }
         }
-        j = j + 1
+        j += 1
     }
     return true
 }
@@ -199,13 +199,13 @@ pub fn reduceConstraint(c: &Constraint, allInt: bool): Constraint {
     }
     var konst = c.konst
     if c.strict {
-        konst = konst + 1
+        konst += 1
     }
     var g: i64 = 0
     var j: i64 = 0
     while j < c.coeffs.len {
         g = gcd2(g, c.coeffs[j])
-        j = j + 1
+        j += 1
     }
     // An all-zero row is a bare constant claim: there is no g to divide by, and the
     // feasibility check reads `konst` directly.
@@ -214,7 +214,7 @@ pub fn reduceConstraint(c: &Constraint, allInt: bool): Constraint {
         j = 0
         while j < c.coeffs.len {
             zc.push(0)
-            j = j + 1
+            j += 1
         }
         return Constraint {
             coeffs: zc, konst: konst, strict: false
@@ -224,7 +224,7 @@ pub fn reduceConstraint(c: &Constraint, allInt: bool): Constraint {
     j = 0
     while j < c.coeffs.len {
         nc.push(c.coeffs[j] / g)
-        j = j + 1
+        j += 1
     }
     return Constraint {
         coeffs: nc, konst: ceilDiv(konst, g), strict: false
@@ -242,7 +242,7 @@ pub fn reduceRational(c: &Constraint): Constraint {
     var j: i64 = 0
     while j < c.coeffs.len {
         g = gcd2(g, c.coeffs[j])
-        j = j + 1
+        j += 1
     }
     if g < 2 || c.konst % g != 0 {
         return Constraint {
@@ -253,7 +253,7 @@ pub fn reduceRational(c: &Constraint): Constraint {
     j = 0
     while j < c.coeffs.len {
         nc.push(c.coeffs[j] / g)
-        j = j + 1
+        j += 1
     }
     return Constraint {
         coeffs: nc, konst: c.konst / g, strict: c.strict
@@ -265,7 +265,7 @@ pub fn cloneRow(row: &Vec<i64>): Vec<i64> {
     var j: i64 = 0
     while j < row.len {
         out.push(row[j])
-        j = j + 1
+        j += 1
     }
     return out
 }
@@ -303,7 +303,7 @@ pub fn combine(p: &Constraint, n: &Constraint, k: i64, varIsInt: &Vec<bool>): Op
             }
             nc.push(v)
         }
-        j = j + 1
+        j += 1
     }
     let Option.Some(kon) = combineTerm(b, p.konst, a, n.konst) else {
         return Option.None
@@ -322,7 +322,7 @@ pub fn eliminateVar(cs: &Vec<Constraint>, k: i64, varIsInt: &Vec<bool>): Option<
         if cs[i].coeffs[k] == 0 {
             out.push(reduceConstraint(cs[i], rowAllInt(cs[i].coeffs, varIsInt)))
         }
-        i = i + 1
+        i += 1
     }
     var p: i64 = 0
     while p < cs.len {
@@ -335,10 +335,10 @@ pub fn eliminateVar(cs: &Vec<Constraint>, k: i64, varIsInt: &Vec<bool>): Option<
                     }
                     out.push(c)
                 }
-                n = n + 1
+                n += 1
             }
         }
-        p = p + 1
+        p += 1
     }
     return Option.Some(out)
 }
@@ -352,7 +352,7 @@ pub fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64, varIsInt: &Vec<bool>)
     var i0: i64 = 0
     while i0 < cs0.len {
         cs.push(reduceConstraint(cs0[i0], rowAllInt(cs0[i0].coeffs, varIsInt)))
-        i0 = i0 + 1
+        i0 += 1
     }
     var k: i64 = 0
     while k < nvars {
@@ -360,7 +360,7 @@ pub fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64, varIsInt: &Vec<bool>)
             return Option.None
         }
         cs = next
-        k = k + 1
+        k += 1
     }
     var i: i64 = 0
     while i < cs.len {
@@ -374,7 +374,7 @@ pub fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64, varIsInt: &Vec<bool>)
                 return Option.Some(false)
             }
         }
-        i = i + 1
+        i += 1
     }
     return Option.Some(true)
 }
@@ -386,7 +386,7 @@ pub fn satisfiesAll(cs: &Vec<Constraint>, x: &Vec<i64>): bool {
         var j: i64 = 0
         while j < cs[i].coeffs.len {
             s = s + cs[i].coeffs[j] * x[j]
-            j = j + 1
+            j += 1
         }
         if cs[i].strict {
             if s >= 0 {
@@ -397,7 +397,7 @@ pub fn satisfiesAll(cs: &Vec<Constraint>, x: &Vec<i64>): bool {
                 return false
             }
         }
-        i = i + 1
+        i += 1
     }
     return true
 }
@@ -423,7 +423,7 @@ pub fn findWitness(cs: &Vec<Constraint>, nvars: i64, bound: i64, maxIters: i64):
     while j < nvars {
         step.push(0)
         x.push(0)
-        j = j + 1
+        j += 1
     }
     var iters: i64 = 0
     var done: bool = false
@@ -431,20 +431,20 @@ pub fn findWitness(cs: &Vec<Constraint>, nvars: i64, bound: i64, maxIters: i64):
         var c: i64 = 0
         while c < nvars {
             x[c] = zigzag(step[c])
-            c = c + 1
+            c += 1
         }
         if satisfiesAll(cs, x) {
             return x
         }
-        iters = iters + 1
+        iters += 1
         var idx: i64 = 0
         while idx < nvars {
-            step[idx] = step[idx] + 1
+            step[idx] += 1
             if step[idx] < span {
                 break
             }
             step[idx] = 0
-            idx = idx + 1
+            idx += 1
         }
         if idx == nvars {
             done = true
@@ -490,7 +490,7 @@ pub fn evalNode(p: &SmtProblem, node: i64, mask: i64): bool {
             if !evalNode(p, p.nodeKids[node][i], mask) {
                 return false
             }
-            i = i + 1
+            i += 1
         }
         return true
     }
@@ -500,7 +500,7 @@ pub fn evalNode(p: &SmtProblem, node: i64, mask: i64): bool {
         if evalNode(p, p.nodeKids[node][i], mask) {
             return true
         }
-        i = i + 1
+        i += 1
     }
     return false
 }
@@ -524,14 +524,14 @@ pub fn inducedConstraints(p: &SmtProblem, mask: i64): Vec<Constraint> {
             var j: i64 = 0
             while j < row.len {
                 nr.push(-row[j])
-                j = j + 1
+                j += 1
             }
             cs.push(Constraint {
                 coeffs: nr, konst: -p.atomKonst[a], strict:!p.atomStrict[a]
             }
             )
         }
-        a = a + 1
+        a += 1
     }
     return cs
 }
@@ -599,7 +599,7 @@ pub fn decide(p: &SmtProblem, root: i64): Verdict {
                 }
             }
         }
-        mask = mask + 1
+        mask += 1
     }
     if sawRationalOnly {
         return Verdict.Unknown

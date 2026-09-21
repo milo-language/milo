@@ -161,10 +161,10 @@ pub fn maskWrite(): i32 {
 pub fn maskToNet(mask: i32): i32 {
     var net: i32 = 0
     if (mask & maskRead()) != 0 {
-        net = net | 41
+        net |= 41
     }
     if (mask & maskWrite()) != 0 {
-        net = net | 18
+        net |= 18
     }
     return net
 }
@@ -201,7 +201,7 @@ pub fn eventLoopNew(): Result<EventLoop, string> {
             if tbl[slot as i64] == 0 {
                 break
             }
-            slot = slot + 1
+            slot += 1
         }
         if slot >= winLoopTableCap() {
             return Result.Err("windows event-loop table full")
@@ -274,7 +274,7 @@ fn wlFind(st: *u8, fd: i32): i64 {
         if wlGet(st, wlSockIdx(i)) == fd as i64 {
             return i
         }
-        i = i + 1
+        i += 1
     }
     return -1
 }
@@ -372,7 +372,7 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32
         var i: i64 = 0
         while i < n {
             hp[1 + i] = wlGet(st, wlWevtIdx(i))
-            i = i + 1
+            i += 1
         }
 
         var ms: u32 = 4294967295 as u32
@@ -389,7 +389,7 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32
         // costs nothing.
         if WaitForSingleObject(wlGet(st, 0), 0 as u32) == 0 as u32 {
             readyFds[k as i64] = wakeupIdentBase()
-            k = k + 1
+            k += 1
         }
 
         // WSANETWORKEVENTS { long lNetworkEvents; int iErrorCode[10]; } — 44 bytes; we only
@@ -401,9 +401,9 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32
             WSAEnumNetworkEvents(fd, wlGet(st, wlWevtIdx(i)), evbuf as *u8)
             if (evbuf as *i32) [0] != 0 {
                 readyFds[k as i64] = fd as i32
-                k = k + 1
+                k += 1
             }
-            i = i + 1
+            i += 1
         }
         return k
     }
@@ -434,7 +434,7 @@ pub fn eventLoopClose(el: &EventLoop): void {
             var i: i64 = 0
             while i < n {
                 WSACloseEvent(wlGet(st, wlWevtIdx(i)))
-                i = i + 1
+                i += 1
             }
             free(st)
             let tbl = winLoopTable as *i64

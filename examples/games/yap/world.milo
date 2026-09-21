@@ -184,14 +184,14 @@ fn burst(w: &mut World, x: f64, y: f64, n: i64, speed: f64, r: f64, g: f64, b: f
 fn stepParts(w: &mut World, dt: f64) {
     var i = 0
     while i < w.parts.len {
-        w.parts[i].life = w.parts[i].life - dt
+        w.parts[i].life -= dt
         if w.parts[i].life <= 0.0 {
             let _ = w.parts.remove(i)
         } else {
             w.parts[i].vy = w.parts[i].vy + w.parts[i].grav * dt
             w.parts[i].x = w.parts[i].x + w.parts[i].vx * dt - w.scroll * dt * 0.25
             w.parts[i].y = w.parts[i].y + w.parts[i].vy * dt
-            i = i + 1
+            i += 1
         }
     }
 }
@@ -240,7 +240,7 @@ fn stepGates(w: &mut World, dt: f64) {
         if w.gates[i].x < 0.0 - 140.0 {
             let _ = w.gates.remove(i)
         } else {
-            i = i + 1
+            i += 1
         }
     }
     var far = 0.0 - 1.0e9
@@ -302,9 +302,9 @@ fn die(w: &mut World, hitX: f64, hitY: f64) {
     // whatever he hit — falling straight down out of a collision looks like the
     // game stopped rather than like an impact.
     if w.vy < 0.0 {
-        w.vy = w.vy * 0.3
+        w.vy *= 0.3
     }
-    w.vy = w.vy - 120.0
+    w.vy -= 120.0
     burst(&mut w, hitX, hitY, 16, 340.0, 0.90, 0.55, 0.30)
     if w.score > w.best {
         w.best = w.score
@@ -344,29 +344,29 @@ fn checkGates(w: &mut World) {
         }
         if !w.gates[i].passed && w.gates[i].x < DOG_X {
             w.gates[i].passed = true
-            scored = scored + 1
+            scored += 1
         }
         if !hit && overlapsGate(w, w.gates[i]) {
             hit = true
             hitX = w.gates[i].x - POST_HW
             hitY = w.y
         }
-        i = i + 1
+        i += 1
     }
 
     if treat {
-        w.treats = w.treats + 1
-        w.score = w.score + 3
+        w.treats += 1
+        w.score += 3
         w.evTreat = true
         w.flash = 0.18
         burst(&mut w, treatX, treatY, 14, 260.0, 1.20, 1.10, 0.70)
     }
     if scored > 0 {
-        w.score = w.score + scored
+        w.score += scored
         w.evScore = true
     }
     if w.score >= w.nextPraise {
-        w.nextPraise = w.nextPraise + 10
+        w.nextPraise += 10
         praise(&mut w)
     }
     if hit {
@@ -381,19 +381,19 @@ pub fn worldUpdate(w: &mut World, dt: f64) {
     w.evHit = false
     w.evThud = false
 
-    w.t = w.t + dt
-    w.flapT = w.flapT + dt
-    w.shake = w.shake * Math.pow(0.0015, dt)
-    w.flash = w.flash * Math.pow(0.0009, dt)
+    w.t += dt
+    w.flapT += dt
+    w.shake *= Math.pow(0.0015, dt)
+    w.flash *= Math.pow(0.0009, dt)
     if w.toastT > 0.0 {
-        w.toastT = w.toastT - dt
+        w.toastT -= dt
     }
     stepParts(&mut w, dt)
 
     if w.state == ST_READY {
         // Idle bob. The dog is already airborne, so the pose the player sees
         // first is the pose the controls produce.
-        w.bobT = w.bobT + dt
+        w.bobT += dt
         w.y = 300.0 + Math.sin(w.bobT * 3.4) * 14.0
         w.vy = 0.0
         w.groundX = w.groundX + w.scroll * dt * 0.55
@@ -437,7 +437,7 @@ pub fn worldUpdate(w: &mut World, dt: f64) {
             w.y = GROUND_Y - HIT_HH
             w.state = ST_OVER
             w.overT = 0.55
-            w.runs = w.runs + 1
+            w.runs += 1
             w.evThud = true
             w.shake = 11.0
             puff(&mut w, DOG_X, GROUND_Y - 6.0, 14, 190.0, 0.35, 0.30, 0.18, 4.5, 240.0)
@@ -446,7 +446,7 @@ pub fn worldUpdate(w: &mut World, dt: f64) {
     }
 
     if w.overT > 0.0 {
-        w.overT = w.overT - dt
+        w.overT -= dt
     }
 }
 

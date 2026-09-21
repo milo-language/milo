@@ -118,7 +118,7 @@ pub fn main(): i32 {
             lastScore = m.score
             stall = 0
         } else {
-            stall = stall + 1
+            stall += 1
         }
         if stall > 240 {
             detour = 100
@@ -127,7 +127,7 @@ pub fn main(): i32 {
         var ix = 0.0
         var iy = 0.0
         if detour > 0 {
-            detour = detour - 1
+            detour -= 1
             iy = 0.0 - 1.0
         } else if tgtX >= 0 {
             let dx = ((tgtX as f64) + 0.5) * TILE - m.px

@@ -201,14 +201,14 @@ pub fn highlightLine(line: &string, matches: &Vec<RegexMatch>, noColor: bool): s
     var pos: i64 = 0
     for i in 0..matches.len {
         if matches[i].start > pos {
-            result = result + line.substr(pos, matches[i].start)
+            result += line.substr(pos, matches[i].start)
         }
         let m = line.substr(matches[i].start, matches[i].end)
         result = result + Color.bold(Color.red(m))
         pos = matches[i].end
     }
     if pos < line.len {
-        result = result + line.substr(pos, line.len)
+        result += line.substr(pos, line.len)
     }
     return result
 }
@@ -227,22 +227,22 @@ pub fn formatLine(content: &string, lineNum: i64, isMatch: bool, filePath: &stri
     var out: string = ""
     if multiFile && opts.noHeading {
         if opts.noColor {
-            out = out + filePath
+            out += filePath
         } else {
-            out = out + Color.magenta(filePath)
+            out += Color.magenta(filePath)
         }
-        out = out + delim
+        out += delim
     }
     if !opts.noLineNum {
         let num = (lineNum + 1).toString()
         if opts.noColor {
-            out = out + num
+            out += num
         } else {
-            out = out + Color.green(num)
+            out += Color.green(num)
         }
-        out = out + delim
+        out += delim
     }
-    out = out + content
+    out += content
     return out
 }
 
@@ -297,7 +297,7 @@ pub fn emitResult(res: &FileResult, opts: &mut RgOpts): void {
     for i in 0..res.lines.len {
         print(res.lines[i])
     }
-    opts.totalMatches = opts.totalMatches + res.matchCount
+    opts.totalMatches += res.matchCount
 }
 
 pub fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: bool): void {
@@ -397,7 +397,7 @@ pub fn searchLiteral(content: &string, filePath: &string, opts: &RgOpts, multiFi
                         break
                     }
                     lineStart = nl + 1
-                    lineNo = lineNo + 1
+                    lineNo += 1
                 }
             } else if needLineText {
                 lineStart = 0
@@ -407,7 +407,7 @@ pub fn searchLiteral(content: &string, filePath: &string, opts: &RgOpts, multiFi
                         lineStart = b
                         break
                     }
-                    b = b - 1
+                    b -= 1
                 }
             }
             var lineEnd = content.len
@@ -415,7 +415,7 @@ pub fn searchLiteral(content: &string, filePath: &string, opts: &RgOpts, multiFi
                 lineEnd = nl
             }
 
-            matchCountF = matchCountF + 1
+            matchCountF += 1
             if !opts.countOnly {
                 if !headerPrintedF && multiFile && !opts.noHeading {
                     res.leadSep = LeadSep.Blank
@@ -477,7 +477,7 @@ pub fn searchWithRegex(content: &string, filePath: &string, re: &mut Regex, opts
     let lines = content.split("\n")
     var numLines = lines.len
     if numLines > 0 && lines[numLines - 1].len == 0 {
-        numLines = numLines - 1
+        numLines -= 1
     }
 
     var matchCount: i64 = 0
@@ -493,7 +493,7 @@ pub fn searchWithRegex(content: &string, filePath: &string, re: &mut Regex, opts
         }
 
         if isMatch {
-            matchCount = matchCount + 1
+            matchCount += 1
 
             let hasCtx = opts.beforeCtx > 0 || opts.afterCtx > 0
 
@@ -553,7 +553,7 @@ pub fn searchWithRegex(content: &string, filePath: &string, re: &mut Regex, opts
         } else if afterRemaining > 0 {
             res.lines.push(formatLine(lines[i], i, false, filePath, multiFile, opts))
             lastPrinted = i
-            afterRemaining = afterRemaining - 1
+            afterRemaining -= 1
         }
     }
 
@@ -768,7 +768,7 @@ pub fn searchDirParallel(dirPath: &string, re: &mut Regex, opts: &mut RgOpts): v
             break
         }
         inflight.push(spawnChunk(batch, opts))
-        chunkSize = chunkSize * 2
+        chunkSize *= 2
         if chunkSize > chunkCap() {
             chunkSize = chunkCap()
         }
@@ -777,14 +777,14 @@ pub fn searchDirParallel(dirPath: &string, re: &mut Regex, opts: &mut RgOpts): v
     var head: i64 = 0
     while head < inflight.len {
         let done = inflight[head].await()!
-        head = head + 1
+        head += 1
 
         // Refill before writing, not after: the workers should be reading and
         // formatting the next chunk while this thread writes the current one.
         let batch = walker.nextBatch(chunkSize)
         if batch.len > 0 {
             inflight.push(spawnChunk(batch, opts))
-            chunkSize = chunkSize * 2
+            chunkSize *= 2
             if chunkSize > chunkCap() {
                 chunkSize = chunkCap()
             }

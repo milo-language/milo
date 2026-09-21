@@ -48,7 +48,7 @@ fn hkdfExpandCore(prk: &string, info: &string, length: i64, hashLen: i64, mac: (
             }
         }
         prev = t
-        counter = counter + 1
+        counter += 1
     }
     return Result.Ok(okm)
 }

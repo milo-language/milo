@@ -94,15 +94,15 @@ impl Html {
         while i < s.len {
             if s[i] != '&' {
                 out.push(s[i])
-                i = i + 1
+                i += 1
                 continue
             }
             let consumed = decodeEntity(s, i, &mut out)
             if consumed == 0 {
                 out.push(s[i])
-                i = i + 1
+                i += 1
             } else {
-                i = i + consumed
+                i += consumed
             }
         }
         return out
@@ -128,7 +128,7 @@ impl Html {
         }
         var i: i64 = 0
         while i < url.len && url[i] == ' ' {
-            i = i + 1
+            i += 1
         }
         var scheme = ""
         while i < url.len {
@@ -143,7 +143,7 @@ impl Html {
                 return true
             }
             scheme.push(lowerAscii(b))
-            i = i + 1
+            i += 1
         }
         return true
     }
@@ -213,7 +213,7 @@ fn decodeEntity(s: &string, at: i64, out: &mut string): i64 {
     var radix: i64 = 10
     if s[i] == 'x' || s[i] == 'X' {
         radix = 16
-        i = i + 1
+        i += 1
     }
     let digitsStart = i
     var value: i64 = 0
@@ -228,7 +228,7 @@ fn decodeEntity(s: &string, at: i64, out: &mut string): i64 {
         if value <= 1114111 {
             value = value * radix + d
         }
-        i = i + 1
+        i += 1
     }
     if i == digitsStart || i >= s.len || s[i] != ';' {
         return 0

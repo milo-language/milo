@@ -32,13 +32,13 @@ pub fn makeInitMessage(rows: i64, cols: i64, command: &string, startTime: &strin
     )
     msg = msg + ",\"command\":\"" + command + "\""
     msg = msg + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
-    msg = msg + ",\"subprotocol_version\":\"4\""
+    msg += ",\"subprotocol_version\":\"4\""
     if isPublic {
-        msg = msg + ",\"is_public\":true"
+        msg += ",\"is_public\":true"
     } else {
-        msg = msg + ",\"is_public\":false"
+        msg += ",\"is_public\":false"
     }
-    msg = msg + "}"
+    msg += "}"
     return msg
 }
 
@@ -57,7 +57,7 @@ pub fn makeTerminalInfo(terminalId: &string, rows: i64, cols: i64, command: &str
     )
     j = j + ",\"command\":\"" + command + "\""
     j = j + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
-    j = j + ",\"termpair_version\":\"0.1.0\""
+    j += ",\"termpair_version\":\"0.1.0\""
     j = j + ",\"is_public\":" + (if isPublic {
         "true"
     } else {
@@ -65,7 +65,7 @@ pub fn makeTerminalInfo(terminalId: &string, rows: i64, cols: i64, command: &str
     }
     )
     j = j + ",\"display_name\":\"" + displayName + "\""
-    j = j + "}"
+    j += "}"
     return j
 }
 
@@ -78,10 +78,10 @@ pub fn makePublicSession(terminalId: &string, displayName: &string, command: &st
     j = j + ",\"command\":\"" + command + "\""
     j = j + ",\"cols\":" + cols.toString()
     j = j + ",\"rows\":" + rows.toString()
-    j = j + ",\"allow_browser_control\":false"
+    j += ",\"allow_browser_control\":false"
     j = j + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
     j = j + ",\"viewer_count\":" + viewerCount.toString()
-    j = j + "}"
+    j += "}"
     return j
 }
 

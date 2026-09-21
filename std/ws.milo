@@ -114,10 +114,10 @@ pub fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
     let acceptKey = computeAcceptKey(clientKey)
 
     var resp: string = "HTTP/1.1 101 Switching Protocols\r\n"
-    resp = resp + "Upgrade: websocket\r\n"
-    resp = resp + "Connection: Upgrade\r\n"
+    resp += "Upgrade: websocket\r\n"
+    resp += "Connection: Upgrade\r\n"
     resp = resp + "Sec-WebSocket-Accept: " + acceptKey + "\r\n"
-    resp = resp + "\r\n"
+    resp += "\r\n"
 
     let n = writeFd(fd, resp, resp.len)
     if n < 0 {
@@ -156,7 +156,7 @@ fn readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
             if n <= 0 {
                 return false
             }
-            got = got + n
+            got += n
         }
     }
     return true
@@ -274,7 +274,7 @@ impl WsConn {
                 resultOpcode = opcode
                 resultPayload = payload
             } else {
-                resultPayload = resultPayload + payload
+                resultPayload += payload
             }
 
             if fin {
@@ -342,10 +342,10 @@ impl WsConn {
             // byte 0: FIN + opcode
             var b0: u8 = (opcode as i32) as u8
             if fin {
-                b0 = b0 | 128
+                b0 |= 128
             }
             *((frame as i64 + pos) as *u8) = b0
-            pos = pos + 1
+            pos += 1
 
             // byte 1+: mask bit + payload length
             let maskBit: u8 = if self._isClient {
@@ -355,21 +355,21 @@ impl WsConn {
             }
             if payload.len < 126 {
                 *((frame as i64 + pos) as *u8) = maskBit | (payload.len as u8)
-                pos = pos + 1
+                pos += 1
             } else if payload.len < 65536 {
                 *((frame as i64 + pos) as *u8) = maskBit | 126
-                pos = pos + 1
+                pos += 1
                 * ((frame as i64 + pos) as *u8) = (payload.len >> 8) as u8
-                pos = pos + 1
+                pos += 1
                 * ((frame as i64 + pos) as *u8) = (payload.len & 255) as u8
-                pos = pos + 1
+                pos += 1
             } else {
                 *((frame as i64 + pos) as *u8) = maskBit | 127
-                pos = pos + 1
+                pos += 1
                 for i in 0..8 {
                     let shift = ((7 - i) * 8) as i64
                     * ((frame as i64 + pos) as *u8) = (payload.len >> shift) as u8
-                    pos = pos + 1
+                    pos += 1
                 }
             }
 
@@ -377,7 +377,7 @@ impl WsConn {
             if self._isClient {
                 for i in 0..4 {
                     *((frame as i64 + pos) as *u8) = mask[i]
-                    pos = pos + 1
+                    pos += 1
                 }
             }
 
@@ -409,7 +409,7 @@ impl WsConn {
                         return Result.Err("write failed")
                     }
                 }
-                sent = sent + n
+                sent += n
             }
             free(frame)
         }
@@ -440,12 +440,12 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     let clientKey = "dGVybXBhaXItbWlsbw=="
 
     var req: string = "GET " + path + " HTTP/1.1\r\n"
-    req = req + "Host: localhost\r\n"
-    req = req + "Upgrade: websocket\r\n"
-    req = req + "Connection: Upgrade\r\n"
+    req += "Host: localhost\r\n"
+    req += "Upgrade: websocket\r\n"
+    req += "Connection: Upgrade\r\n"
     req = req + "Sec-WebSocket-Key: " + clientKey + "\r\n"
-    req = req + "Sec-WebSocket-Version: 13\r\n"
-    req = req + "\r\n"
+    req += "Sec-WebSocket-Version: 13\r\n"
+    req += "\r\n"
 
     let n = writeFd(fd, req, req.len)
     if n < 0 {
@@ -545,11 +545,11 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
 
         var req: string = "GET " + path + " HTTP/1.1\r\n"
         req = req + "Host: " + hostname + "\r\n"
-        req = req + "Upgrade: websocket\r\n"
-        req = req + "Connection: Upgrade\r\n"
+        req += "Upgrade: websocket\r\n"
+        req += "Connection: Upgrade\r\n"
         req = req + "Sec-WebSocket-Key: " + clientKey + "\r\n"
-        req = req + "Sec-WebSocket-Version: 13\r\n"
-        req = req + "\r\n"
+        req += "Sec-WebSocket-Version: 13\r\n"
+        req += "\r\n"
 
         if sslWriteFd(ssl, fd, req, req.len as i32) <= 0 {
             SSL_free(ssl)
@@ -624,16 +624,16 @@ fn findHeaderValue(raw: &string, name: &string): string {
             if found && i + name.len < raw.len && raw[i + name.len] == ':' {
                 var start: i64 = i + name.len + 1
                 while start < raw.len && raw[start] == ' ' {
-                    start = start + 1
+                    start += 1
                 }
                 var end: i64 = start
                 while end < raw.len && raw[end] != '\r' && raw[end] != '\n' {
-                    end = end + 1
+                    end += 1
                 }
                 return raw.substr(start, end)
             }
         }
-        i = i + 1
+        i += 1
     }
     return ""
 }

@@ -102,7 +102,7 @@ fn ribcage(c: &mut Canvas, off: f64, sp: f64) {
             let y = (k as f64) * 64.0 + cellHash(cid, k, 55) * 12.0
             fillRect(&mut c, x - 4.0, y, x + wd + 4.0, y + 7.0, 0.036, 0.032, 0.026, 1.0)
             fillRect(&mut c, x - 4.0, y + 5.0, x + wd + 4.0, y + 7.0, 0.008, 0.007, 0.006, 1.0)
-            k = k + 1
+            k += 1
         }
     }
 }
@@ -316,7 +316,7 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
                 let f = 1.0 - Math.abs(t) * 0.82
                 let yy = b.y + t * half
                 line(&mut c, tailX, yy, b.x, yy, b.cr * f, b.cg * f, b.cb * f)
-                k = k + 1
+                k += 1
             }
             line(&mut c, tailX, b.y, b.x, b.y, 2.6, 2.6, 2.6)
             spot(&mut c, b.x, b.y, half * 1.2, 1.6, 2.0, 2.4)

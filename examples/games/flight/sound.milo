@@ -45,7 +45,7 @@ fn toneWave(out: &mut Vec<i16>, freq0: f64, freq1: f64, secs: f64, amp: f64, har
         // exponential decay, plus a short attack so it does not click
         var env = Math.pow(0.0016, t)
         if t < 0.01 {
-            env = env * (t / 0.01)
+            env *= (t / 0.01)
         }
         var v = Math.sin(phase)
         if harm > 0.0 {
@@ -69,11 +69,11 @@ fn addNote(out: &mut Vec<i16>, start: i64, freq: f64, secs: f64, amp: f64, harm:
     let step = freq * 6.283185307179586 / (RATE as f64)
     for i in 0..dur {
         let t = (i as f64) / (dur as f64)
-        phase = phase + step
+        phase += step
         // exponential decay to `tail`, with a short attack so it does not click
         var env = Math.pow(tail, t)
         if t < 0.02 {
-            env = env * (t / 0.02)
+            env *= (t / 0.02)
         }
         if t > 0.94 {
             env = env * ((1.0 - t) / 0.06)
@@ -83,7 +83,7 @@ fn addNote(out: &mut Vec<i16>, start: i64, freq: f64, secs: f64, amp: f64, harm:
             v = v + Math.sin(phase * 2.0) * harm + Math.sin(phase * 3.0) * harm * 0.35
         }
         var idx = start + i
-        idx = idx % n
+        idx %= n
         let mixed = (out[idx] as f64) + v * env * amp * 9000.0
         out[idx] = Math.clampF64(mixed, 0.0 - 32000.0, 32000.0) as i16
     }

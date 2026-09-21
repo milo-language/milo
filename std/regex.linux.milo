@@ -80,7 +80,7 @@ fn writeMatchI32(buf: &mut [u8; 80], off: i64, val: i64) {
     var k: i64 = 0
     while k < 4 {
         buf[off + k] = ((val >> (k * 8)) & 255) as u8
-        k = k + 1
+        k += 1
     }
 }
 
@@ -89,7 +89,7 @@ fn readMatchI32(buf: &[u8; 80], off: i64): i32 {
     var k: i64 = 0
     while k < 4 {
         val = val | ((buf[off + k] as i32) << ((k * 8) as i32))
-        k = k + 1
+        k += 1
     }
     return val
 }

@@ -9,7 +9,7 @@
 fn crc32(data: &string): i64 {
     var crc: i64 = 0xffffffff
     for i in 0..data.len {
-        crc = crc ^ (data[i] as i64)
+        crc ^= (data[i] as i64)
         for _b in 0..8 {
             // mask = 0xFFFFFFFF when the low bit is set, else 0 — the reflected poly
             // 0xEDB88320 is XORed in only on a 1 bit, with no data-dependent branch.

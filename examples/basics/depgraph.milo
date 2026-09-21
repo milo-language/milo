@@ -95,7 +95,7 @@ pub fn topoSort(g: &DepGraph): Vec<string> {
                 for d in 0..node.dependents.len {
                     for j in 0..n {
                         if g.nodes[j].index == node.dependents[d].index {
-                            inDeg[j] = inDeg[j] - 1
+                            inDeg[j] -= 1
                             if inDeg[j] == 0 {
                                 queue.push(j)
                             }
@@ -106,7 +106,7 @@ pub fn topoSort(g: &DepGraph): Vec<string> {
             Option.None => {
             }
         }
-        qi = qi + 1
+        qi += 1
     }
 
     if order.len != n {

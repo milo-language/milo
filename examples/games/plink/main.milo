@@ -138,7 +138,7 @@ pub fn main(): i32 {
         let _ = SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24)
         var flags = SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI
         if headless {
-            flags = flags | SDL_WINDOW_HIDDEN
+            flags |= SDL_WINDOW_HIDDEN
         } else {
             flags = flags | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
         }
@@ -320,7 +320,7 @@ pub fn main(): i32 {
         if headless {
             dt = 0.016
         }
-        gfx.time = gfx.time + dt
+        gfx.time += dt
 
         var fireNow = false
         // `--aim` holds the iron sights up for a capture, which is the only way
@@ -397,7 +397,7 @@ pub fn main(): i32 {
 
         // ── simulate ──────────────────────────────────────────────────────────
         if running {
-            timeLeft = timeLeft - dt
+            timeLeft -= dt
             if timeLeft <= 0.0 {
                 timeLeft = 0.0
                 running = false
@@ -423,7 +423,7 @@ pub fn main(): i32 {
         // instead of two copies of the drop.
         var dropNow = false
         if running {
-            bonusIn = bonusIn - dt
+            bonusIn -= dt
             // The timer keeps running while the rack is empty and the drop
             // fires the moment it is loaded again, so a shot at the rack costs
             // the player nothing on the clock.
@@ -450,12 +450,12 @@ pub fn main(): i32 {
                     hitFlash = 1.0
                     break
                 }
-                k = k + 1
+                k += 1
             }
         }
         if fireNow && gun.canFire() {
             if running {
-                shotsFired = shotsFired + 1
+                shotsFired += 1
             }
             cam.kick(0.022 + 0.006 * ((shotsFired % 3) as f64), 0.004 * (if shotsFired % 2 == 0 {
                 1.0
@@ -506,8 +506,8 @@ pub fn main(): i32 {
                 targets.shatter(hit.index, cam.eye())
                 hitFlash = 1.0
                 if running {
-                    hits = hits + 1
-                    combo = combo + 1
+                    hits += 1
+                    combo += 1
                     // Speed is what is being scored, so the multiplier is the
                     // whole reward: a chain of quick hits is worth several times
                     // the same hits taken one at a time.
@@ -629,7 +629,7 @@ pub fn main(): i32 {
         gfx.drawHud(hud.verts, dw as i64, dh as i64)
 
         if headless && warmup > 0 {
-            warmup = warmup - 1
+            warmup -= 1
             SDL_GL_SwapWindow(win)
             continue
         }
@@ -784,7 +784,7 @@ fn drawHud(hud: &mut Hud, dw: f64, dh: f64, running: bool, timeLeft: f64, score:
         let panelW = Math.minF64(dw * 0.9, 700.0 * s)
         var contentH = 372.0
         if lastScore > 0 {
-            contentH = contentH + 74.0
+            contentH += 74.0
         }
         let panelH = contentH * s
         let top = dh * 0.40 - panelH * 0.5
@@ -859,12 +859,12 @@ fn boldText(hud: &mut Hud, msg: &string, cx: f64, y: f64, size: f64, r: f64, g: 
     var i = 0
     while i < 8 {
         let _ = hud.text(msg, x + dirs[i * 2] * o * 3.2, y + dirs[i * 2 + 1] * o * 3.2, size, r, g, b, a * 0.10)
-        i = i + 1
+        i += 1
     }
     i = 0
     while i < 8 {
         let _ = hud.text(msg, x + dirs[i * 2] * o, y + dirs[i * 2 + 1] * o, size, 0.0, 0.0, 0.0, a * 0.40)
-        i = i + 1
+        i += 1
     }
     let _ = hud.text(msg, x, y, size, r, g, b, a * 0.72)
 }
@@ -920,7 +920,7 @@ fn stepPops(pops: &mut Vec<f64>, dt: f64) {
             }
             continue
         }
-        i = i + 1
+        i += 1
     }
 }
 
@@ -943,7 +943,7 @@ fn drawPops(hud: &mut Hud, pops: &Vec<f64>, vp: &Vec<f32>, dw: f64, dh: f64) {
         let cxp = (vp[0] as f64) * x + (vp[4] as f64) * y + (vp[8] as f64) * z + (vp[12] as f64)
         let cyp = (vp[1] as f64) * x + (vp[5] as f64) * y + (vp[9] as f64) * z + (vp[13] as f64)
         let cwp = (vp[3] as f64) * x + (vp[7] as f64) * y + (vp[11] as f64) * z + (vp[15] as f64)
-        i = i + 1
+        i += 1
         // Behind the eye: there is no sensible place to draw it, and dividing by
         // a negative w puts it on the opposite side of the screen.
         if cwp <= 0.001 {

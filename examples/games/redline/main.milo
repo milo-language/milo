@@ -141,7 +141,7 @@ pub fn main(): i32 {
         let _ = SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24)
         var flags = SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI
         if headless {
-            flags = flags | SDL_WINDOW_HIDDEN
+            flags |= SDL_WINDOW_HIDDEN
         } else {
             flags = flags | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
         }
@@ -280,7 +280,7 @@ pub fn main(): i32 {
         if headless {
             dt = 0.016
         }
-        gfx.time = gfx.time + dt
+        gfx.time += dt
 
         var throttle = 0.0
         var brake = 0.0
@@ -317,10 +317,10 @@ pub fn main(): i32 {
                     brake = 1.0
                 }
                 if keys[SC_LEFT] != 0 || keys[SC_A] != 0 {
-                    steer = steer - 1.0
+                    steer -= 1.0
                 }
                 if keys[SC_RIGHT] != 0 || keys[SC_D] != 0 {
-                    steer = steer + 1.0
+                    steer += 1.0
                 }
                 // Space is the turbo, because it is the button a player's thumb
                 // is already on, and the one they will hit in a panic.
@@ -339,7 +339,7 @@ pub fn main(): i32 {
 
         // ── simulate ──────────────────────────────────────────────────────────
         player.drive(dt, throttle, brake, steer, handbrake, nitro, track)
-        raceTime = raceTime + dt
+        raceTime += dt
         if player.scraping {
             cam.kick(0.55)
         } else if player.offTrack {
@@ -355,9 +355,9 @@ pub fn main(): i32 {
         while pi + PAD_FLOATS <= world.pads.len {
             var ds = player.s - world.pads[pi]
             if ds > track.length * 0.5 {
-                ds = ds - track.length
+                ds -= track.length
             } else if ds < -track.length * 0.5 {
-                ds = ds + track.length
+                ds += track.length
             }
             if Math.abs(ds) < world.pads[pi + 2] && Math.abs(player.lateral - world.pads[pi + 1]) < world.pads[pi + 3] {
                 if padCooldown <= 0.0 {
@@ -372,7 +372,7 @@ pub fn main(): i32 {
                     padCooldown = 0.40
                 }
             }
-            pi = pi + PAD_FLOATS
+            pi += PAD_FLOATS
         }
         padCooldown = Math.maxF64(0.0, padCooldown - dt)
 
@@ -516,11 +516,11 @@ pub fn main(): i32 {
                     var tl = 0
                     while tl < 3 {
                         gfx.sceneDraw(rain.tile, tileMatrix(eye, player.vel, gfx.time, ti, tj, tl), rainM)
-                        tl = tl + 1
+                        tl += 1
                     }
-                    tj = tj + 1
+                    tj += 1
                 }
-                ti = ti + 1
+                ti += 1
             }
             // Spray needs the car to actually be rolling. Below walking pace a
             // stationary rooster tail reads as the car leaking.
@@ -551,7 +551,7 @@ pub fn main(): i32 {
         gfx.drawHud(hud.verts, dw as i64, dh as i64)
 
         if headless && warmup > 0 {
-            warmup = warmup - 1
+            warmup -= 1
             SDL_GL_SwapWindow(win)
             continue
         }

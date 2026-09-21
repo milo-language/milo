@@ -137,7 +137,7 @@ pub fn runCavity(re: i64, n: i64, tolSteady: f64, maxIters: i64, verbose: bool):
         uy.push(0.0)
         pux.push(0.0)
         puy.push(0.0)
-        c = c + 1
+        c += 1
     }
 
     // Force accumulator, unused here: the cavity has no immersed obstacle, so this
@@ -155,7 +155,7 @@ pub fn runCavity(re: i64, n: i64, tolSteady: f64, maxIters: i64, verbose: bool):
         // ever moving a Vec out of a slot: f -> g, then g -> f.
         lbmStep(f, &mut g, solid, interior, n, n, tau, uLid, false, &mut fw)
         lbmStep(g, &mut f, solid, interior, n, n, tau, uLid, false, &mut fw)
-        iters = iters + 2
+        iters += 2
 
         if iters % checkEvery == 0 {
             lbmMacro(f, solid, n, n, &mut rho, &mut ux, &mut uy)
@@ -164,7 +164,7 @@ pub fn runCavity(re: i64, n: i64, tolSteady: f64, maxIters: i64, verbose: bool):
             while i < n * n {
                 pux[i] = ux[i]
                 puy[i] = uy[i]
-                i = i + 1
+                i += 1
             }
             if verbose {
                 print($"    iter {iters}  residual {formatFloat(delta, 8)}")
@@ -197,12 +197,12 @@ pub fn runCavity(re: i64, n: i64, tolSteady: f64, maxIters: i64, verbose: bool):
                 maxErrU = e
             }
             sumSq = sumSq + e * e
-            count = count + 1
+            count += 1
             if verbose {
                 print($"   {formatFloat(ghiaY(k), 4)}   {formatFloat(want, 5)}   {formatFloat(got, 5)}   {formatFloat(e, 5)}")
             }
         }
-        k = k + 1
+        k += 1
     }
 
     if verbose {
@@ -218,12 +218,12 @@ pub fn runCavity(re: i64, n: i64, tolSteady: f64, maxIters: i64, verbose: bool):
                 maxErrV = e
             }
             sumSq = sumSq + e * e
-            count = count + 1
+            count += 1
             if verbose {
                 print($"   {formatFloat(ghiaX(k), 4)}   {formatFloat(want, 5)}   {formatFloat(got, 5)}   {formatFloat(e, 5)}")
             }
         }
-        k = k + 1
+        k += 1
     }
 
     let rms = Math.sqrt(sumSq / (count as f64))
@@ -306,7 +306,7 @@ pub fn main(): i32 {
         if e > worst {
             worst = e
         }
-        r = r + 1
+        r += 1
     }
 
     print($"worst centreline error across all Re: {formatFloat(worst, 4)}")

@@ -495,7 +495,7 @@ pub fn main(): i32 {
             pitch = 0.0 - 0.45
         }
         if !paused {
-            clock = clock + dt
+            clock += dt
             // A full day in ninety seconds. Slow enough to watch, fast enough
             // that nobody has to wait for sunset.
             sunT = sunT + dt * (6.2831853 / 90.0)

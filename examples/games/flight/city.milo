@@ -228,8 +228,8 @@ fn shiftOf(n: i64): i64 {
     var k = 0
     var v = 1
     while v < n {
-        v = v * 2
-        k = k + 1
+        v *= 2
+        k += 1
     }
     if v != n {
         return 0 - 1
@@ -351,14 +351,14 @@ fn fillNoData(city: &City, t: &mut Texture, n: i64) {
         for x in 0..n {
             let i = (y * n + x) * 3
             if isNoData(t, i) {
-                holes = holes + 1
+                holes += 1
                 continue
             }
             let c = cy * m + x / ORTHO_COARSE
-            sumR[c] = sumR[c] + (t.pxu[i] as f64)
-            sumG[c] = sumG[c] + (t.pxu[i + 1] as f64)
-            sumB[c] = sumB[c] + (t.pxu[i + 2] as f64)
-            cnt[c] = cnt[c] + 1
+            sumR[c] += (t.pxu[i] as f64)
+            sumG[c] += (t.pxu[i + 1] as f64)
+            sumB[c] += (t.pxu[i + 2] as f64)
+            cnt[c] += 1
         }
     }
     if holes == 0 {
@@ -408,7 +408,7 @@ fn fillNoData(city: &City, t: &mut Texture, n: i64) {
                     continue
                 }
                 known[cell] = true
-                found = found + 1
+                found += 1
                 r[cell] = sumR[cell] / (cnt[cell] as f64)
                 g[cell] = sumG[cell] / (cnt[cell] as f64)
                 b[cell] = sumB[cell] / (cnt[cell] as f64)
@@ -422,7 +422,7 @@ fn fillNoData(city: &City, t: &mut Texture, n: i64) {
                 known[cell] = false
             }
         }
-        tier = tier + 1
+        tier += 1
     }
     if !anyKnown {
         return
@@ -459,25 +459,25 @@ fn fillNoData(city: &City, t: &mut Texture, n: i64) {
                     sr = sr + r[c - 1]
                     sg = sg + g[c - 1]
                     sb = sb + b[c - 1]
-                    k = k + 1
+                    k += 1
                 }
                 if x < m - 1 && filled[c + 1] {
                     sr = sr + r[c + 1]
                     sg = sg + g[c + 1]
                     sb = sb + b[c + 1]
-                    k = k + 1
+                    k += 1
                 }
                 if y > 0 && filled[c - m] {
                     sr = sr + r[c - m]
                     sg = sg + g[c - m]
                     sb = sb + b[c - m]
-                    k = k + 1
+                    k += 1
                 }
                 if y < m - 1 && filled[c + m] {
                     sr = sr + r[c + m]
                     sg = sg + g[c + m]
                     sb = sb + b[c + m]
-                    k = k + 1
+                    k += 1
                 }
                 if k > 0 {
                     r[c] = sr / (k as f64)
@@ -513,10 +513,10 @@ fn fillNoData(city: &City, t: &mut Texture, n: i64) {
     var mn = 0
     for c in 0..m * m {
         if known[c] {
-            mr = mr + r[c]
-            mg = mg + g[c]
-            mb = mb + b[c]
-            mn = mn + 1
+            mr += r[c]
+            mg += g[c]
+            mb += b[c]
+            mn += 1
         }
     }
     for c in 0..m * m {
@@ -550,25 +550,25 @@ fn fillNoData(city: &City, t: &mut Texture, n: i64) {
                     sr = sr + r[c - 1]
                     sg = sg + g[c - 1]
                     sb = sb + b[c - 1]
-                    k = k + 1
+                    k += 1
                 }
                 if x < m - 1 {
                     sr = sr + r[c + 1]
                     sg = sg + g[c + 1]
                     sb = sb + b[c + 1]
-                    k = k + 1
+                    k += 1
                 }
                 if y > 0 {
                     sr = sr + r[c - m]
                     sg = sg + g[c - m]
                     sb = sb + b[c - m]
-                    k = k + 1
+                    k += 1
                 }
                 if y < m - 1 {
                     sr = sr + r[c + m]
                     sg = sg + g[c + m]
                     sb = sb + b[c + m]
-                    k = k + 1
+                    k += 1
                 }
                 nr[c] = sr / (k as f64)
                 ng[c] = sg / (k as f64)
@@ -642,7 +642,7 @@ pub fn putI32(out: &mut string, v: i64) {
 pub fn getI32(src: &string, off: i64): i64 {
     var v = (src[off] as i64) | ((src[off + 1] as i64) << 8) | ((src[off + 2] as i64) << 16) | ((src[off + 3] as i64) << 24)
     if v >= 2147483648 {
-        v = v - 4294967296
+        v -= 4294967296
     }
     return v
 }
@@ -681,7 +681,7 @@ pub fn cityLoad(path: &string): Result<City, string> {
 fn orthoPathFor(path: &string): string {
     var n = path.len
     if path.endsWith(".city") {
-        n = n - 5
+        n -= 5
     }
     var base = ""
     for i in 0..n {
@@ -726,7 +726,7 @@ pub fn cityParse(src: &string): Result<City, string> {
     }
     var p = 8
     let ver = getI32(src, p)
-    p = p + 4
+    p += 4
     if ver < 1 || ver > VERSION {
         return Result.Err("city file version " + ver.toString() + ", expected 1 or " + VERSION.toString())
     }
@@ -735,7 +735,7 @@ pub fn cityParse(src: &string): Result<City, string> {
         return Result.Err("truncated city file: no name")
     }
     let nameLen = getI32(src, p)
-    p = p + 4
+    p += 4
     if !plausible(src, p, nameLen, 1) {
         return Result.Err("truncated city file: name length " + nameLen.toString())
     }
@@ -743,7 +743,7 @@ pub fn cityParse(src: &string): Result<City, string> {
     for i in 0..nameLen {
         name.push(src[p + i])
     }
-    p = p + nameLen
+    p += nameLen
 
     var c = cityEmpty()
     c.name = name
@@ -751,23 +751,23 @@ pub fn cityParse(src: &string): Result<City, string> {
         return Result.Err("truncated city file: no header")
     }
     c.originLat = (getI32(src, p) as f64) / 10000000.0
-    p = p + 4
+    p += 4
     c.originLon = (getI32(src, p) as f64) / 10000000.0
-    p = p + 4
+    p += 4
     c.reach = (getI32(src, p) as f64) / 100.0
-    p = p + 4
+    p += 4
 
     if !have(src, p, 16) {
         return Result.Err("truncated city file: no terrain header")
     }
     c.demN = getI32(src, p)
-    p = p + 4
+    p += 4
     c.demStep = (getI32(src, p) as f64) / 100.0
-    p = p + 4
+    p += 4
     c.demX0 = (getI32(src, p) as f64) / 100.0
-    p = p + 4
+    p += 4
     c.demZ0 = (getI32(src, p) as f64) / 100.0
-    p = p + 4
+    p += 4
     if c.demN < 0 || c.demN > 65535 {
         return Result.Err("city file terrain grid " + c.demN.toString())
     }
@@ -778,20 +778,20 @@ pub fn cityParse(src: &string): Result<City, string> {
     c.dem = Vec.filled(demCount, 0.0)
     for i in 0..demCount {
         c.dem[i] = (getI32(src, p) as f64) / 100.0
-        p = p + 4
+        p += 4
     }
 
     if !have(src, p, 16) {
         return Result.Err("truncated city file: no land-cover header")
     }
     c.coverN = getI32(src, p)
-    p = p + 4
+    p += 4
     c.coverStep = (getI32(src, p) as f64) / 100.0
-    p = p + 4
+    p += 4
     c.coverX0 = (getI32(src, p) as f64) / 100.0
-    p = p + 4
+    p += 4
     c.coverZ0 = (getI32(src, p) as f64) / 100.0
-    p = p + 4
+    p += 4
     if c.coverN < 0 || c.coverN > 65535 {
         return Result.Err("city file cover grid " + c.coverN.toString())
     }
@@ -803,13 +803,13 @@ pub fn cityParse(src: &string): Result<City, string> {
     for i in 0..coverCount {
         c.cover[i] = src[p + i]
     }
-    p = p + coverCount
+    p += coverCount
 
     if !have(src, p, 4) {
         return Result.Err("truncated city file: no building count")
     }
     let nb = getI32(src, p)
-    p = p + 4
+    p += 4
     // Eight bytes is the smallest a building can be (height + a zero point
     // count), so a count claiming more than that is not merely wrong, it cannot
     // be in the file at all.
@@ -822,9 +822,9 @@ pub fn cityParse(src: &string): Result<City, string> {
             return Result.Err("truncated city file: building " + i.toString())
         }
         let h = (getI32(src, p) as f64) / 100.0
-        p = p + 4
+        p += 4
         let n = getI32(src, p)
-        p = p + 4
+        p += 4
         if !plausible(src, p, n, 8) {
             return Result.Err("truncated city file: building " + i.toString() + " has " + n.toString() + " points")
         }
@@ -837,9 +837,9 @@ pub fn cityParse(src: &string): Result<City, string> {
         c.bLen.push(n)
         for k in 0..n {
             let x = (getI32(src, p) as f64) / 100.0
-            p = p + 4
+            p += 4
             let z = (getI32(src, p) as f64) / 100.0
-            p = p + 4
+            p += 4
             c.bPtX.push(x)
             c.bPtZ.push(z)
             if x < minX {
@@ -883,8 +883,8 @@ pub fn cityParse(src: &string): Result<City, string> {
                 c.bPtZ[start + lo] = c.bPtZ[start + hi]
                 c.bPtX[start + hi] = tx
                 c.bPtZ[start + hi] = tz
-                lo = lo + 1
-                hi = hi - 1
+                lo += 1
+                hi -= 1
             }
         }
     }
@@ -1002,7 +1002,7 @@ fn parseBridges(c: &mut City, src: &string, from: i64): Result<i64, string> {
         return Result.Err("truncated city file: no bridge count")
     }
     let n = getI32(src, p)
-    p = p + 4
+    p += 4
     // 20 bytes is the smallest a bridge can be (three i32 of header, a zero
     // point count, and two points is already more).
     if !plausible(src, p, n, 16) {
@@ -1013,13 +1013,13 @@ fn parseBridges(c: &mut City, src: &string, from: i64): Result<i64, string> {
             return Result.Err("truncated city file: bridge " + i.toString())
         }
         let halfW = (getI32(src, p) as f64) / 100.0
-        p = p + 4
+        p += 4
         let structure = getI32(src, p)
-        p = p + 4
+        p += 4
         let packed = getI32(src, p)
-        p = p + 4
+        p += 4
         let np = getI32(src, p)
-        p = p + 4
+        p += 4
         if !plausible(src, p, np, 8) {
             return Result.Err("truncated city file: bridge " + i.toString() + " has " + np.toString() + " points")
         }
@@ -1035,9 +1035,9 @@ fn parseBridges(c: &mut City, src: &string, from: i64): Result<i64, string> {
         c.brLen.push(np)
         for k in 0..np {
             c.brPtX.push((getI32(src, p) as f64) / 100.0)
-            p = p + 4
+            p += 4
             c.brPtZ.push((getI32(src, p) as f64) / 100.0)
-            p = p + 4
+            p += 4
         }
     }
     c.brCount = c.brHalfW.len
@@ -1053,7 +1053,7 @@ fn parseRoofs(c: &mut City, src: &string, from: i64): Result<i64, string> {
         return Result.Err("truncated city file: no roof count")
     }
     let n = getI32(src, p)
-    p = p + 4
+    p += 4
     if n != c.bCount {
         return Result.Err("city file has " + n.toString() + " roofs for " + c.bCount.toString() + " buildings")
     }
@@ -1065,11 +1065,11 @@ fn parseRoofs(c: &mut City, src: &string, from: i64): Result<i64, string> {
     c.bBase = Vec.filled(n, 0.0)
     for i in 0..n {
         c.bRoof[i] = src[p]
-        p = p + 1
+        p += 1
         c.bRoofH[i] = (getI32(src, p) as f64) / 100.0
-        p = p + 4
+        p += 4
         c.bBase[i] = (getI32(src, p) as f64) / 100.0
-        p = p + 4
+        p += 4
     }
     return Result.Ok(p)
 }
@@ -1158,7 +1158,7 @@ fn deckProfile(c: &mut City) {
             if k > 0 {
                 let dx = c.brPtX[s0 + k] - c.brPtX[s0 + k - 1]
                 let dz = c.brPtZ[s0 + k] - c.brPtZ[s0 + k - 1]
-                total = total + Math.sqrt(dx * dx + dz * dz)
+                total += Math.sqrt(dx * dx + dz * dz)
             }
             arc[k] = total
             gnd[k] = cityHeightAt(c, c.brPtX[s0 + k], c.brPtZ[s0 + k])
@@ -1260,13 +1260,13 @@ fn buildIndex(c: &mut City) {
 
     for b in 0..c.bCount {
         let ci = cellIdxZ(c, (c.bMinZ[b] + c.bMaxZ[b]) * 0.5) * n + cellIdx(c, (c.bMinX[b] + c.bMaxX[b]) * 0.5)
-        counts[ci] = counts[ci] + 1
+        counts[ci] += 1
     }
     c.cellStart = Vec.filled(cells + 1, 0)
     var acc = 0
     for i in 0..cells {
         c.cellStart[i] = acc
-        acc = acc + counts[i]
+        acc += counts[i]
     }
     c.cellStart[cells] = acc
     c.cellItems = Vec.filled(acc, 0)
@@ -1277,7 +1277,7 @@ fn buildIndex(c: &mut City) {
     for b in 0..c.bCount {
         let ci = cellIdxZ(c, (c.bMinZ[b] + c.bMaxZ[b]) * 0.5) * n + cellIdx(c, (c.bMinX[b] + c.bMaxX[b]) * 0.5)
         c.cellItems[cursor[ci]] = b
-        cursor[ci] = cursor[ci] + 1
+        cursor[ci] += 1
     }
 }
 
@@ -1412,10 +1412,10 @@ pub fn cityRoofAt(c: &City, x: f64, z: f64, pad: f64): f64 {
                         }
                     }
                 }
-                gx = gx + 1
+                gx += 1
             }
         }
-        gz = gz + 1
+        gz += 1
     }
     return top
 }
@@ -1489,8 +1489,8 @@ pub fn cityOrthoLocal(c: &City, lx: f64, lz: f64): Rgb {
     // the wrong end of the city.
     var tz = (((c.reach - lz) * inv) * (n as f64)) as i64
     // Mirror onto the map, matching the drape and world3d.foldIn.
-    tx = tx & (n * 2 - 1)
-    tz = tz & (n * 2 - 1)
+    tx &= (n * 2 - 1)
+    tz &= (n * 2 - 1)
     if tx >= n {
         tx = n * 2 - 1 - tx
     }

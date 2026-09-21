@@ -109,7 +109,7 @@ fn catmull(p0: f64, p1: f64, p2: f64, p3: f64, t: f64): f64 {
 fn wrapC(i: i64, n: i64): i64 {
     var m = i % n
     if m < 0 {
-        m = m + n
+        m += n
     }
     return m
 }
@@ -159,7 +159,7 @@ pub fn buildTrack(): Track {
     for i in 0..n {
         let want = (i as f64) * step
         while cursor + 1 < ds.len && ds[cursor + 1] < want {
-            cursor = cursor + 1
+            cursor += 1
         }
         // Interpolate inside the dense segment the target distance falls in.
         let s0 = ds[cursor]
@@ -228,8 +228,8 @@ pub fn buildTrack(): Track {
         var j = -half
         while j <= half {
             sum = sum + raw[wrapC(i + j, n)]
-            cnt = cnt + 1
-            j = j + 1
+            cnt += 1
+            j += 1
         }
         ks[i] = sum / (cnt as f64)
     }
@@ -253,7 +253,7 @@ impl Track {
     fn wrapS(self: &Self, s: f64): f64 {
         var t = s % self.length
         if t < 0.0 {
-            t = t + self.length
+            t += self.length
         }
         return t
     }
@@ -324,7 +324,7 @@ impl Track {
                 bestD = d
                 best = i
             }
-            k = k + 1
+            k += 1
         }
         let edge = wrapC(hint - window, self.n)
         let edge2 = wrapC(hint + window, self.n)
@@ -384,7 +384,7 @@ impl Track {
                 bestD = d
                 best = i
             }
-            k = k + 1
+            k += 1
         }
         let step = self.length / (self.n as f64)
         let dx = x - self.xs[best]
@@ -419,7 +419,7 @@ impl Track {
     fn delta(self: &Self, a: f64, b: f64): f64 {
         var d = self.wrapS(b - a)
         if d > self.length * 0.5 {
-            d = d - self.length
+            d -= self.length
         }
         return d
     }
@@ -443,11 +443,11 @@ impl Track {
                     print($"track: self-intersection between sample {i} and {j}")
                     return false
                 }
-                j = j + 1
+                j += 1
             }
             // Every fourth sample is enough to catch a crossing at this scale
             // and turns a 1.2 M pair check into 75 k.
-            i = i + 4
+            i += 4
         }
         return true
     }

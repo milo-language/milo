@@ -146,9 +146,9 @@ fn cross3(ax: f64, ay: f64, az: f64, bx: f64, by: f64, bz: f64): Vec<f64> {
 
 fn norm3(v: &mut Vec<f64>) {
     let l = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) + 0.000000001
-    v[0] = v[0] / l
-    v[1] = v[1] / l
-    v[2] = v[2] / l
+    v[0] /= l
+    v[1] /= l
+    v[2] /= l
 }
 
 // World → light clip, orthographic, centred on `cx,cy,cz`.

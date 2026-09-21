@@ -22,7 +22,7 @@ fn readI64FromBuf(buf: &[u8; 16], off: i64): i64 {
     var i: i64 = 0
     while i < 8 {
         val = val | ((buf[off + i] as i64) << (i * 8))
-        i = i + 1
+        i += 1
     }
     return val
 }
@@ -358,19 +358,19 @@ fn fracText(rem: i64, digits: i64): string {
     var v = rem
     var i = digits
     while i > 0 {
-        i = i - 1
+        i -= 1
         buf[i] = ((v % 10) as u8) + 48
-        v = v / 10
+        v /= 10
     }
     var end = digits
     while end > 0 && buf[end - 1] == 48 {
-        end = end - 1
+        end -= 1
     }
     var out = "."
     var k: i64 = 0
     while k < end {
         out.push(buf[k])
-        k = k + 1
+        k += 1
     }
     return out
 }
@@ -471,20 +471,20 @@ fn parseDurationText(text: &string): Option<Duration> {
             }
             whole = whole * 10 + d
             sawDigit = true
-            i = i + 1
+            i += 1
         }
 
         var fracDigits: [u8; 20] = [0; 20]
         var fracCount: i64 = 0
         if i < text.len && text[i] == 46 {
-            i = i + 1
+            i += 1
             while i < text.len && text[i] >= 48 && text[i] <= 57 {
                 if fracCount < 20 {
                     fracDigits[fracCount] = text[i] - 48
-                    fracCount = fracCount + 1
+                    fracCount += 1
                 }
                 sawDigit = true
-                i = i + 1
+                i += 1
             }
         }
         if !sawDigit {
@@ -508,18 +508,18 @@ fn parseDurationText(text: &string): Option<Duration> {
         var f: i64 = 0
         var k: i64 = 0
         while k < fracCount {
-            scale = scale / 10
+            scale /= 10
             f = f + (fracDigits[k] as i64) * scale
-            k = k + 1
+            k += 1
         }
         if part > maxNanos() - f {
             return Option.None
         }
-        part = part + f
+        part += f
         if total > maxNanos() - part {
             return Option.None
         }
-        total = total + part
+        total += part
     }
 
     if neg {
@@ -551,7 +551,7 @@ fn usleepLong(us: i64): void {
             chunk = 1000000
         }
         usleep(chunk as u32)
-        left = left - chunk
+        left -= chunk
     }
 }
 

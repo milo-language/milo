@@ -524,11 +524,11 @@ impl Lexer {
 
     fn nextWord(self: &mut Self): string {
         while self.pos < self.src.len && self.src[self.pos] == ' ' {
-            self.pos = self.pos + 1
+            self.pos += 1
         }
         let start = self.pos
         while self.pos < self.src.len && self.src[self.pos] != ' ' {
-            self.pos = self.pos + 1
+            self.pos += 1
         }
         return self.src.substr(start, self.pos)
     }

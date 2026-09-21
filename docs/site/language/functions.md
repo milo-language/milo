@@ -46,7 +46,7 @@ fn length(s: &string): i64 {
 }
 
 fn double(x: &mut i32) {
-    x = x * 2
+    x *= 2
 }
 
 var n: i32 = 21

@@ -357,12 +357,12 @@ pub fn main(): i32 {
                 gotQuit = true
             }
             if key == KEY_DOWN {
-                scroll = scroll + 1
+                scroll += 1
                 needsRender = true
             }
             if key == KEY_UP {
                 if scroll > 0 {
-                    scroll = scroll - 1
+                    scroll -= 1
                     needsRender = true
                 }
             }

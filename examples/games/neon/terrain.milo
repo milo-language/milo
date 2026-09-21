@@ -113,13 +113,13 @@ fn nextTarget(t: &mut Terrain) {
 }
 
 fn stepColumn(t: &mut Terrain) {
-    t.gen = t.gen + 1
-    t.hold = t.hold - 1
+    t.gen += 1
+    t.hold -= 1
     if t.hold <= 0 {
         nextTarget(&mut t)
     }
     if t.calm > 0 {
-        t.calm = t.calm - 1
+        t.calm -= 1
     }
     // Cap the vertical change per column: a wall you cannot fly around is a
     // dead end, not a challenge.
@@ -136,12 +136,12 @@ fn stepColumn(t: &mut Terrain) {
 }
 
 pub fn terrainAdvance(t: &mut Terrain, dx: f64) {
-    t.offset = t.offset + dx
+    t.offset += dx
     var guard: i64 = 0
     while t.offset >= t.pitch && guard < 64 {
-        t.offset = t.offset - t.pitch
+        t.offset -= t.pitch
         stepColumn(&mut t)
-        guard = guard + 1
+        guard += 1
     }
 }
 

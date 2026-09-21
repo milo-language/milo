@@ -25,7 +25,7 @@ pub fn offsetToHex(n: i64): string {
         var chBuf: string = ""
         chBuf.push(hex[val % 16])
         result = chBuf + result
-        val = val / 16
+        val /= 16
     }
     return result
 }
@@ -73,29 +73,29 @@ pub fn main(): i32 {
             hexPart = hexPart + byteToHex(b) + " "
 
             if col == 7 {
-                hexPart = hexPart + " "
+                hexPart += " "
             }
 
             if !plain {
                 if isPrintable(b) {
                     var ch: string = ""
                     ch.push(b)
-                    asciiPart = asciiPart + ch
+                    asciiPart += ch
                 } else {
-                    asciiPart = asciiPart + "."
+                    asciiPart += "."
                 }
             }
 
-            col = col + 1
+            col += 1
         }
 
         // pad remaining columns
         while col < cols {
-            hexPart = hexPart + "   "
+            hexPart += "   "
             if col == 7 {
-                hexPart = hexPart + " "
+                hexPart += " "
             }
-            col = col + 1
+            col += 1
         }
 
         var line: string = offsetToHex(offset) + ": " + hexPart
@@ -105,7 +105,7 @@ pub fn main(): i32 {
         }
 
         print(line)
-        offset = offset + cols
+        offset += cols
     }
 
     return 0

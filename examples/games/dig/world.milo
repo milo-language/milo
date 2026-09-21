@@ -327,7 +327,7 @@ fn ensureEnoughTreasure(m: &mut Mine) {
     var total: i64 = 0
     for y in SURFACE..m.worldH {
         for x in 0..m.worldW {
-            total = total + tileValue(m.tiles[y * MAP_W + x] as i64)
+            total += tileValue(m.tiles[y * MAP_W + x] as i64)
         }
     }
     let need = m.quota * 2
@@ -336,7 +336,7 @@ fn ensureEnoughTreasure(m: &mut Mine) {
         let idx = (i * 7919) % cells
         let x = idx % m.worldW
         let y = idx / m.worldW
-        i = i + 1
+        i += 1
         if x < 1 || x >= m.worldW - 1 || y < SURFACE + 1 || y >= m.worldH - 1 {
             continue
         }
@@ -345,7 +345,7 @@ fn ensureEnoughTreasure(m: &mut Mine) {
             continue
         }
         m.tiles[y * MAP_W + x] = T_GOLD as u8
-        total = total + tileValue(T_GOLD)
+        total += tileValue(T_GOLD)
     }
 }
 
@@ -402,7 +402,7 @@ pub fn mineNew(): Mine {
 
 // Fresh ground, one level further along the seam.
 pub fn nextLevel(m: &mut Mine) {
-    m.level = m.level + 1
+    m.level += 1
     m.levelValue = 0
     m.exitOpen = false
     m.wideDig = false
@@ -681,16 +681,16 @@ pub fn satchelY(m: &Mine): f64 {
 }
 
 fn bank(m: &mut Mine, kind: i64, value: i64) {
-    m.score = m.score + value
-    m.levelValue = m.levelValue + value
+    m.score += value
+    m.levelValue += value
     m.satchelPulse = 0.30
     m.goldPulse = 0.30
     if kind == T_GOLD {
-        m.gold = m.gold + 1
+        m.gold += 1
     } else if kind == T_GEM {
-        m.gems = m.gems + 1
+        m.gems += 1
     } else if kind == T_CRYSTAL {
-        m.crystals = m.crystals + 1
+        m.crystals += 1
     }
     if m.levelValue >= m.quota && !m.exitOpen {
         m.exitOpen = true
@@ -719,14 +719,14 @@ fn updateFlies(m: &mut Mine, dt: f64) {
     let ty = satchelY(m)
     var i: i64 = 0
     while i < m.flies.len {
-        m.flies[i].age = m.flies[i].age + dt
+        m.flies[i].age += dt
         if m.flies[i].age < 0.0 {
-            i = i + 1
+            i += 1
             continue
         }
         if m.flies[i].age < 0.22 {
             let d = Math.pow(0.02, dt)
-            m.flies[i].vx = m.flies[i].vx * d
+            m.flies[i].vx *= d
             m.flies[i].vy = m.flies[i].vy * d + 260.0 * dt
         } else {
             let dx = tx - m.flies[i].x
@@ -736,8 +736,8 @@ fn updateFlies(m: &mut Mine, dt: f64) {
             m.flies[i].vx = m.flies[i].vx + dx / dist * pull * dt
             m.flies[i].vy = m.flies[i].vy + dy / dist * pull * dt
             let damp = Math.pow(0.18, dt)
-            m.flies[i].vx = m.flies[i].vx * damp
-            m.flies[i].vy = m.flies[i].vy * damp
+            m.flies[i].vx *= damp
+            m.flies[i].vy *= damp
         }
         m.flies[i].x = m.flies[i].x + m.flies[i].vx * dt
         m.flies[i].y = m.flies[i].y + m.flies[i].vy * dt
@@ -754,7 +754,7 @@ fn updateFlies(m: &mut Mine, dt: f64) {
             bank(&mut m, k, v2)
             burst(&mut m, tx, ty, 4, 90.0, col)
         } else {
-            i = i + 1
+            i += 1
         }
     }
 }
@@ -792,15 +792,15 @@ fn applyUpgrade(m: &mut Mine, t: i64, x: f64, y: f64) {
     m.flash = Math.maxF64(m.flash, 0.5)
     m.shake = Math.maxF64(m.shake, 6.0)
     if t == T_PWR_DRILL {
-        m.drillLevel = m.drillLevel + 1
-        m.drillRate = m.drillRate * 1.45
+        m.drillLevel += 1
+        m.drillRate *= 1.45
         addPop(&mut m, x, y - 12.0, "DRILL UPGRADED", col)
     } else if t == T_PWR_WIDE {
         m.wideDig = true
         addPop(&mut m, x, y - 12.0, "WIDE DRILL", col)
     } else {
-        m.lampLevel = m.lampLevel + 1
-        m.lampRadius = m.lampRadius + 110.0
+        m.lampLevel += 1
+        m.lampRadius += 110.0
         addPop(&mut m, x, y - 12.0, "BRIGHTER LAMP", col)
     }
 }
@@ -862,18 +862,18 @@ fn drill(m: &mut Mine, tx: i64, ty: i64, dt: f64): bool {
 }
 
 pub fn mineUpdate(m: &mut Mine, dt: f64, inX: f64, inY: f64, viewW: f64, viewH: f64) {
-    m.time = m.time + dt
+    m.time += dt
     if m.shake > 0.0 {
-        m.shake = m.shake * Math.pow(0.02, dt)
+        m.shake *= Math.pow(0.02, dt)
     }
     if m.flash > 0.0 {
         m.flash = m.flash - dt * 1.6
     }
     if m.banner > 0.0 {
-        m.banner = m.banner - dt
+        m.banner -= dt
     }
     if m.hint > 0.0 && (inX != 0.0 || inY != 0.0) {
-        m.hint = m.hint - dt
+        m.hint -= dt
     }
 
     if inX != 0.0 || inY != 0.0 {
@@ -921,11 +921,11 @@ pub fn mineUpdate(m: &mut Mine, dt: f64, inX: f64, inY: f64, viewW: f64, viewH: 
     if biting != m.digging || moved != m.moving {
         m.stateT = 0.0
     } else {
-        m.stateT = m.stateT + dt
+        m.stateT += dt
     }
     m.digging = biting
     m.moving = moved
-    m.blinkT = m.blinkT - dt
+    m.blinkT -= dt
     if m.blinkT < 0.0 - 0.13 {
         m.blinkT = Random.floatRange(1.4, 4.5)
     }
@@ -934,7 +934,7 @@ pub fn mineUpdate(m: &mut Mine, dt: f64, inX: f64, inY: f64, viewW: f64, viewH: 
 
     // reaching the lit shaft on the right ends the level
     if m.cleared > 0.0 {
-        m.cleared = m.cleared - dt
+        m.cleared -= dt
         if m.cleared <= 0.0 {
             nextLevel(&mut m)
         }
@@ -965,17 +965,17 @@ pub fn mineUpdate(m: &mut Mine, dt: f64, inX: f64, inY: f64, viewW: f64, viewH: 
         m.doorAnim = Math.minF64(1.0, m.doorAnim + dt * 0.9)
     }
     if m.satchelPulse > 0.0 {
-        m.satchelPulse = m.satchelPulse - dt
+        m.satchelPulse -= dt
     }
     if m.goldPulse > 0.0 {
-        m.goldPulse = m.goldPulse - dt
+        m.goldPulse -= dt
     }
 }
 
 fn updateParts(m: &mut Mine, dt: f64) {
     var i: i64 = 0
     while i < m.parts.len {
-        m.parts[i].life = m.parts[i].life - dt
+        m.parts[i].life -= dt
         if m.parts[i].life <= 0.0 {
             let last = m.parts.len - 1
             m.parts[i] = m.parts[last]
@@ -983,22 +983,22 @@ fn updateParts(m: &mut Mine, dt: f64) {
         } else {
             m.parts[i].vy = m.parts[i].vy + m.parts[i].gravity * dt
             let d = Math.pow(0.25, m.parts[i].drag * dt * 4.0)
-            m.parts[i].vx = m.parts[i].vx * d
+            m.parts[i].vx *= d
             m.parts[i].x = m.parts[i].x + m.parts[i].vx * dt
             m.parts[i].y = m.parts[i].y + m.parts[i].vy * dt
-            i = i + 1
+            i += 1
         }
     }
     var p: i64 = 0
     while p < m.pops.len {
-        m.pops[p].life = m.pops[p].life - dt
+        m.pops[p].life -= dt
         m.pops[p].y = m.pops[p].y - 26.0 * dt
         if m.pops[p].life <= 0.0 {
             let last = m.pops.len - 1
             m.pops[p] = m.pops[last]
             let _ = m.pops.pop()
         } else {
-            p = p + 1
+            p += 1
         }
     }
 }

@@ -113,7 +113,7 @@ fn poly(s: &mut Vec<f64>, p: &Vec<f64>) {
     var i = 0
     while i + 3 < p.len {
         seg(&mut s, p[i], p[i + 1], p[i + 2], p[i + 3])
-        i = i + 2
+        i += 2
     }
 }
 
@@ -399,7 +399,7 @@ pub fn buildAtlas(): Vec<u32> {
                     if dd < d {
                         d = dd
                     }
-                    i = i + 4
+                    i += 4
                 }
                 // Opaque inside the pen, and one texel of ramp across the edge:
                 // the ramp is the whole difference between this and a bitmap.

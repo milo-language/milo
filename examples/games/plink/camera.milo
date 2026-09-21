@@ -121,7 +121,7 @@ impl Camera {
     }
 
     fn kick(self: &mut Self, pitch: f64, yaw: f64) {
-        self.kickPitch = self.kickPitch + pitch
-        self.kickYaw = self.kickYaw + yaw
+        self.kickPitch += pitch
+        self.kickYaw += yaw
     }
 }

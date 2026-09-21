@@ -40,7 +40,7 @@ fn decodeMap(gl: &mut GlContext, src: &string): Texture2D {
             while i < n {
                 let o = i * ch
                 px[i] = pack(img.pixels[o] as i64, img.pixels[o + 1] as i64, img.pixels[o + 2] as i64)
-                i = i + 1
+                i += 1
             }
             return Texture2D.rgba8(&mut gl, img.width, img.height, px, true)
         }
@@ -97,7 +97,7 @@ pub fn dummyTexture(gl: &mut GlContext): Texture2D {
 fn hash2(x: i64, y: i64): f64 {
     var h = (x * 374761393 + y * 668265263) & 0x7FFFFFFF
     h = (h ^ (h >> 13)) * 1274126177
-    h = h & 0x7FFFFFFF
+    h &= 0x7FFFFFFF
     return (h as f64) / 2147483647.0
 }
 
@@ -130,11 +130,11 @@ fn fbm2(x: f64, y: f64, base: i64, octaves: i64): f64 {
     var i = 0
     while i < octaves {
         sum = sum + amp * noise2(x * freq, y * freq, period)
-        norm = norm + amp
-        amp = amp * 0.5
-        freq = freq * 2.0
-        period = period * 2
-        i = i + 1
+        norm += amp
+        amp *= 0.5
+        freq *= 2.0
+        period *= 2
+        i += 1
     }
     return sum / norm
 }
@@ -181,9 +181,9 @@ pub fn mapSun(gl: &mut GlContext): Texture2D {
             let g = mixc(0.26, 0.86, t)
             let b = mixc(0.05, 0.46, t)
             px[y * GEN_W + x] = pack((r * 255.0) as i64, (g * 255.0) as i64, (b * 255.0) as i64)
-            x = x + 1
+            x += 1
         }
-        y = y + 1
+        y += 1
     }
     return Texture2D.rgba8(&mut gl, GEN_W, GEN_H, px, true)
 }

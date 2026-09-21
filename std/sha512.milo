@@ -115,14 +115,14 @@ fn sha512Compress(input: &string, initial: [u64; 8]): [u64; 8] {
             a = t1 + t2
         }
 
-        h[0] = h[0] + a
-        h[1] = h[1] + b
-        h[2] = h[2] + c
-        h[3] = h[3] + d
-        h[4] = h[4] + e
-        h[5] = h[5] + f
-        h[6] = h[6] + g
-        h[7] = h[7] + hh
+        h[0] += a
+        h[1] += b
+        h[2] += c
+        h[3] += d
+        h[4] += e
+        h[5] += f
+        h[6] += g
+        h[7] += hh
     }
     return h
 }

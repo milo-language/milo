@@ -25,7 +25,7 @@ pub let ART: f64 = 4.0 // art pixels to screen pixels
 fn hashi(i: i64, seed: i64): f64 {
     var h = i * 374761393 + seed * 668265263
     h = (h ^ (h >> 13)) * 1274126177
-    h = h ^ (h >> 16)
+    h ^= (h >> 16)
     var m = h % 8192
     if m < 0 {
         m = 0 - m
@@ -84,7 +84,7 @@ fn drawHouses(c: &mut Canvas, w: &World) {
             let cx = x + wid * (0.15 + hashi(idx, 29) * 0.2)
             fillRect(&mut c, cx, top - 30.0, cx + 14.0, top, 0.045, 0.040, 0.075, 1.0)
         }
-        k = k + 1
+        k += 1
     }
 }
 
@@ -105,7 +105,7 @@ fn drawFence(c: &mut Canvas, w: &World) {
             // pointed plank cap
             fillRect(&mut c, x + 4.0, top - 6.0 + jitter, x + 18.0, top + jitter, shade, shade * 0.55, shade * 0.28, 1.0)
         }
-        k = k + 1
+        k += 1
     }
 }
 
@@ -124,7 +124,7 @@ fn drawGrass(c: &mut Canvas, w: &World) {
             let lean = hashi(idx, 63) * 6.0 - 3.0
             line(&mut c, x, GROUND_Y + 8.0, x + lean, GROUND_Y + 8.0 - h, 0.06, 0.16, 0.03)
         }
-        k = k + 1
+        k += 1
     }
 }
 
@@ -166,7 +166,7 @@ fn hydrant(c: &mut Canvas, cx: f64, tipY: f64, baseY: f64, dir: f64) {
             rectY(&mut c, x0 - 5.0, x1 + 5.0, y, y + dir * 13.0, 0.230, 0.022, 0.028)
             rectY(&mut c, x0 - 5.0, x0 + 22.0, y, y + dir * 13.0, 0.430, 0.050, 0.050)
             y = y + dir * 96.0
-            n = n + 1
+            n += 1
         }
     }
 
@@ -199,7 +199,7 @@ pub fn drawGates(c: &mut Canvas, w: &World, bone: &Sprite, ox: f64, oy: f64) {
                 drawSprite(&mut c, bone, gx - bw * 0.5, by - bh * 0.5, ART, false, 0.65)
             }
         }
-        i = i + 1
+        i += 1
     }
 }
 
@@ -264,7 +264,7 @@ pub fn drawParts(c: &mut Canvas, w: &World, ox: f64, oy: f64) {
     while i < w.parts.len {
         let t = w.parts[i].life / w.parts[i].max
         spot(&mut c, w.parts[i].x + ox, w.parts[i].y + oy, w.parts[i].size * (0.4 + t * 1.0), w.parts[i].r * t, w.parts[i].g * t, w.parts[i].b * t)
-        i = i + 1
+        i += 1
     }
 }
 

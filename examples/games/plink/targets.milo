@@ -477,7 +477,7 @@ impl Targets {
         var n = 0
         for r in self.rigs {
             if r.state == ST_RISING || r.state == ST_UP {
-                n = n + 1
+                n += 1
             }
         }
         return n
@@ -545,13 +545,13 @@ impl Targets {
                 }
             }
             if self.rigs[i].cooldown > 0.0 {
-                self.rigs[i].cooldown = self.rigs[i].cooldown - dt
+                self.rigs[i].cooldown -= dt
             }
             if self.rigs[i].state == ST_RISING && self.rigs[i].angle > 1.45 {
                 self.rigs[i].state = ST_UP
             }
             if self.rigs[i].state == ST_UP {
-                self.rigs[i].hold = self.rigs[i].hold - dt
+                self.rigs[i].hold -= dt
                 if self.rigs[i].hold <= 0.0 {
                     self.drop(i)
                 }
@@ -572,7 +572,7 @@ impl Targets {
         // up, a few at a time and for a long hold, so someone who has just
         // launched the game can see what a target is and shoot a few before the
         // clock ever starts.
-        self.sinceSpawn = self.sinceSpawn + dt
+        self.sinceSpawn += dt
         let want = if running {
             20 + (pressure * 8.0) as i64
         } else {
@@ -600,7 +600,7 @@ impl Targets {
                     self.rigs[k].cooldown = 1.0
                     break
                 }
-                tries = tries + 1
+                tries += 1
             }
         }
 
@@ -649,7 +649,7 @@ impl Targets {
             // expire as a block and there is a reason to take them in order.
             self.raise(best, hold + 0.35 * (placed as f64))
             self.rigs[best].cooldown = 1.0
-            placed = placed + 1
+            placed += 1
         }
         return placed
     }
@@ -700,7 +700,7 @@ impl Targets {
         let deck = self.rigs[index].pos.y - POST_H
         self.rigs[index].broken = true
         self.drop(index)
-        self.rigs[index].angVel = self.rigs[index].angVel - 7.0
+        self.rigs[index].angVel -= 7.0
         self.rigs[index].cooldown = 1.1
 
         let away = (c - from).norm()
@@ -755,7 +755,7 @@ impl Targets {
         self.burstT = Math.maxF64(0.0, self.burstT - dt)
         var i = 0
         while i < self.shards.len {
-            self.shards[i].life = self.shards[i].life + dt
+            self.shards[i].life += dt
             if self.shards[i].life > self.shards[i].maxLife {
                 // Swap-remove: order does not matter and this keeps the step
                 // linear no matter how many discs are in the air.
@@ -767,7 +767,7 @@ impl Targets {
                 continue
             }
             if !self.shards[i].onGround {
-                self.shards[i].vel = self.shards[i].vel + v3(0.0, -12.5 * dt, 0.0)
+                self.shards[i].vel += v3(0.0, -12.5 * dt, 0.0)
                 self.shards[i].pos = self.shards[i].pos + self.shards[i].vel.scale(dt)
                 self.shards[i].spin = self.shards[i].spin + self.shards[i].rate * dt
                 let floor = self.shards[i].floorY + 0.012
@@ -776,9 +776,9 @@ impl Targets {
                     if self.shards[i].vel.y < -1.4 {
                         // One bounce, then it lies where it fell.
                         self.shards[i].vel.y = -self.shards[i].vel.y * 0.32
-                        self.shards[i].vel.x = self.shards[i].vel.x * 0.55
-                        self.shards[i].vel.z = self.shards[i].vel.z * 0.55
-                        self.shards[i].rate = self.shards[i].rate * 0.5
+                        self.shards[i].vel.x *= 0.55
+                        self.shards[i].vel.z *= 0.55
+                        self.shards[i].rate *= 0.5
                     } else {
                         self.shards[i].onGround = true
                         self.shards[i].axis = v3(1.0, 0.0, 0.0)
@@ -786,7 +786,7 @@ impl Targets {
                     }
                 }
             }
-            i = i + 1
+            i += 1
         }
     }
 

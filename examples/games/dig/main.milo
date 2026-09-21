@@ -102,8 +102,8 @@ pub fn main(): i32 {
         drawMine(&mut c, m, ox, oy)
         drawHud(&mut c, m)
 
-        fpsAccum = fpsAccum + dt
-        fpsFrames = fpsFrames + 1
+        fpsAccum += dt
+        fpsFrames += 1
         if fpsAccum > 0.5 {
             fpsShown = ((fpsFrames as f64) / fpsAccum) as i64
             fpsAccum = 0.0

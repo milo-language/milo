@@ -92,7 +92,7 @@ impl Uuid {
         }
         var seq: i64 = 0
         if ms == _v7LastMs {
-            _v7Seq = _v7Seq + 1
+            _v7Seq += 1
             seq = _v7Seq
         } else {
             _v7LastMs = ms
@@ -136,7 +136,7 @@ impl Uuid {
                 if s[i] != '-' {
                     return Option.None
                 }
-                i = i + 1
+                i += 1
             } else {
                 let hi = hexNibble(s[i])
                 let lo = hexNibble(s[i + 1])
@@ -144,8 +144,8 @@ impl Uuid {
                     return Option.None
                 }
                 b[out] = ((hi << 4) | lo) as u8
-                out = out + 1
-                i = i + 2
+                out += 1
+                i += 2
             }
         }
         let parsed = Uuid {
@@ -163,7 +163,7 @@ impl Uuid {
                 s.push('-')
             }
             _byteToHex(self.bytes[i], &mut s)
-            i = i + 1
+            i += 1
         }
         return s
     }
@@ -175,7 +175,7 @@ impl Uuid {
             if self.bytes[i] != 0 {
                 return false
             }
-            i = i + 1
+            i += 1
         }
         return true
     }
@@ -208,7 +208,7 @@ impl Uuid {
         var i: i64 = 0
         while i < 6 {
             ms = (ms << 8) | (self.bytes[i] as i64)
-            i = i + 1
+            i += 1
         }
         return ms
     }
@@ -221,7 +221,7 @@ impl Eq for Uuid {
             if self.bytes[i] != other.bytes[i] {
                 return false
             }
-            i = i + 1
+            i += 1
         }
         return true
     }

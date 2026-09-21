@@ -94,7 +94,7 @@ fn sheet(path: &string) {
     var i = 0
     while i < dog.len {
         drawSprite(&mut c, dog[i], 40.0 + (i as f64) * 310.0, 120.0, 10.0, false, 0.25)
-        i = i + 1
+        i += 1
     }
     drawSprite(&mut c, bone, 520.0, 520.0, 10.0, false, 0.6)
     text(&mut c, 40, 40, "MILO — EARS UP, EARS OUT, EARS DOWN, OOF", 3, 0.9, 0.95, 1.1)
@@ -119,11 +119,11 @@ pub fn main(): i32 {
             wantSheet = true
         } else if a[k] == "--die" && k + 1 < a.len {
             giveUp = parseInt(a[k + 1]) ?? 0
-            k = k + 1
+            k += 1
         } else {
             ticks.push(parseInt(a[k]) ?? 0)
         }
-        k = k + 1
+        k += 1
     }
     if wantSheet {
         sheet(prefix + "_sheet.ppm")
@@ -175,7 +175,7 @@ pub fn main(): i32 {
             writePpm(path, c)
             print("wrote " + path + "  score=" + w.score.toString() + " state=" + w.state.toString())
         }
-        tick = tick + 1
+        tick += 1
     }
     return 0
 }

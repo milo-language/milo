@@ -230,9 +230,9 @@ pub fn encodePng(pixels: &string, width: i64, height: i64, channels: i64): Resul
         var i = 0
         while i < width * channels {
             raw.push(pixels[start + i])
-            i = i + 1
+            i += 1
         }
-        y = y + 1
+        y += 1
     }
 
     var out = ""

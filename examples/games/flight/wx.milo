@@ -278,7 +278,7 @@ pub fn fetchObs(lat: f64, lon: f64): Obs {
             if isIcao(id) != (pass == 0) {
                 continue
             }
-            tried = tried + 1
+            tried += 1
             let o = readStation(u)
             if o.ok {
                 // Keep the first station that reports anything, but keep LOOKING

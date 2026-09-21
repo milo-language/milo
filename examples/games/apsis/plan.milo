@@ -191,7 +191,7 @@ fn solveFromOrbit(bodies: &Vec<Body>, m: &Mission, t0: f64, tof: f64): Plan {
                 best = finish(m, bodies, t0, tof, r1, lam.v1, s2.pos, lam.v2, dv1, dv1, s2.vel)
             }
         }
-        i = i + 1
+        i += 1
     }
     return best
 }
@@ -245,15 +245,15 @@ pub fn bestPlan(bodies: &Vec<Body>, m: &Mission): Plan {
                         best = p
                     }
                 }
-                j = j + 1
+                j += 1
             }
-            i = i + 1
+            i += 1
         }
         t0 = bt
         tof = bf
         spanT = spanT / (steps as f64) * 2.0
         spanF = spanF / (steps as f64) * 2.0
-        round = round + 1
+        round += 1
     }
     return best
 }
@@ -286,9 +286,9 @@ pub fn searchWindow(bodies: &Vec<Body>, m: &Mission, fromT: f64): Plan {
                 bestF = tof
                 best = p
             }
-            j = j + 1
+            j += 1
         }
-        i = i + 1
+        i += 1
     }
 
     var spanT = m.searchDays * SEC_PER_DAY / (steps as f64)
@@ -312,13 +312,13 @@ pub fn searchWindow(bodies: &Vec<Body>, m: &Mission, fromT: f64): Plan {
                         best = p
                     }
                 }
-                b = b + 1
+                b += 1
             }
-            a = a + 1
+            a += 1
         }
-        spanT = spanT * 0.35
-        spanF = spanF * 0.35
-        round = round + 1
+        spanT *= 0.35
+        spanF *= 0.35
+        round += 1
     }
     return best
 }
@@ -366,9 +366,9 @@ fn pickOpening(bodies: &Vec<Body>, m: &Mission): Opening {
                     bestF = tof
                 }
             }
-            j = j + 1
+            j += 1
         }
-        i = i + 1
+        i += 1
     }
     return Opening {
         depart: bestD, tof: bestF
@@ -425,7 +425,7 @@ pub fn arcPoints(bodies: &Vec<Body>, m: &Mission, p: &Plan, n: i64): Vec<Vec3> {
         let dt = p.tof * (i as f64) / (n as f64)
         let s = shipAt(bodies, m, p, dt)
         out.push(s.pos)
-        i = i + 1
+        i += 1
     }
     return out
 }
@@ -438,7 +438,7 @@ pub fn orbitPoints(bodies: &Vec<Body>, id: i64, center: i64, t: f64, periodSec: 
     while i <= n {
         let ti = t + periodSec * (i as f64) / (n as f64)
         out.push(relPos(bodies, id, ti, center))
-        i = i + 1
+        i += 1
     }
     return out
 }
