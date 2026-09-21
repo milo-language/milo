@@ -4,7 +4,7 @@
 
 `&T` and `&mut T` are parameters only. You cannot return a reference, store one in a struct, or keep one past the call. That is the whole language bet, and everything below follows from it.
 
-[Docs](https://milo-language.github.io/milo/) · [Tour](https://milo-language.github.io/milo/tour) · [Playground](https://milo-language.github.io/milo/playground) · [Stdlib](https://milo-language.github.io/milo/stdlib/)
+[Docs](https://milo-language.github.io/milo/) · [Tour](https://milo-language.github.io/milo/tour) · [Stdlib](https://milo-language.github.io/milo/stdlib/)
 
 ```milo
 from "std/http" import { Request, Response, serve }
@@ -111,7 +111,7 @@ Not the default if your data model is an object graph of pointers, a zero-copy t
 
 ## Read more
 
-- [Language tour](https://milo-language.github.io/milo/tour), runs in the browser
+- [Language tour](https://milo-language.github.io/milo/tour)
 - [Why there are no lifetimes](https://milo-language.github.io/milo/language/why-no-lifetimes), with the census of five Rust codebases
 - [Memory safety vs Rust](https://milo-language.github.io/milo/language/vs-rust)
 - [`std/arena`](https://milo-language.github.io/milo/stdlib/arena)

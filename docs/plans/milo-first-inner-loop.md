@@ -55,7 +55,7 @@ The frontend is not the problem. Measured over real programs:
 | `examples/games/flight` | 10,635 | 135,056 | **9.68s** |
 
 The `flight` outlier is not frontend scaling — it embeds four `@embedFile` city assets, and
-that time is byte-string emission (the same hot loop `codegen-js.ts` already had to chunk).
+that time is byte-string emission, the hot loop the backend has to chunk.
 Read the other three rows: the frontend does ~100k IR lines in ~0.2s.
 
 clang is the problem, and it is the *only* problem:
@@ -163,14 +163,11 @@ measured 2.5x), the 15s edit becomes **~1–2s**. That is a loop.
 
 ### The escape hatch, if ~1–2s still isn't enough
 
-`emit-js` exists (`src/codegen-js.ts`, 1,325 lines — the smallest backend, with a locked
-parity fixture sweep). A Milo-hosted compiler that carries its own JS backend can run
-**itself** on bun for the dev loop: edit `.milo` → emit JS (~0.2s) → run, no clang in the
-path at all. Native build stays the release artifact and the correctness oracle.
-
-This is the move that makes "Milo-first" honest rather than masochistic: the JS is
-*generated and disposable*, never hand-maintained. It is the opposite of keeping the
-compiler written in TS.
+The JS backend that this section once proposed as the loop (a
+Milo-hosted compiler running itself on bun) was removed 2026-09-21: a second
+implementation of the language's semantics cost a parity fix on most changes. The
+remaining escape hatch is LLVM's `--target=wasm64` running under a wasm runtime, which
+shares the one backend and so cannot drift from the native build.
 
 ---
 

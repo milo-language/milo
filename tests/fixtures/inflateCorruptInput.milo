@@ -29,10 +29,9 @@ pub fn main(): i32 {
         k = k + 1
     }
     let comp = Deflate.zlib(src)
-    // NOT the exact byte count: deflate's output differs by a byte between the native
-    // and emit-js backends, and this fixture is about surviving CORRUPT input, not about
-    // pinning a compressor's size. Asserting 244 made it a backend-parity mismatch and
-    // told us nothing extra about the property under test.
+    // NOT the exact byte count: this fixture is about surviving CORRUPT input, not about
+    // pinning a compressor's size. Asserting 244 tied the test to the encoder's exact
+    // output and told us nothing extra about the property under test.
     print("compressed-plausible=" + (comp.len > 100 && comp.len < 400).toString())
 
     var r = Rng.new(987654)

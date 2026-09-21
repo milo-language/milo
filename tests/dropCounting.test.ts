@@ -163,8 +163,8 @@ ${body}
 
 // Each cell is a compile AND a run, so the matrix costs ~40 child processes. That is
 // cheap on a CI runner and unaffordable on a busy dev box, where the guard sheds builds
-// under memory pressure and the whole file reports UNMEASURED. Same gate the emit-js
-// parity sweep uses: on in CI, opt-in locally.
+// under memory pressure and the whole file reports UNMEASURED. So: on in CI, opt-in
+// locally.
 const enabled = !!process.env.CI || !!process.env.MILO_DROP_MATRIX;
 
 type Cell = { drops: number; detail: string };

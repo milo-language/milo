@@ -50,7 +50,6 @@ export const COMPILER_COMMANDS: CliCommand[] = [
   { name: "emit-ir", usage: "emit-ir <file>", help: ["emit LLVM IR"] },
   { name: "emit-obj", usage: "emit-obj <file>", help: ["compile to object file (.o)"] },
   { name: "build-lib", usage: "build-lib <files...>", help: ["compile to static library (.a)"] },
-  { name: "emit-js", usage: "emit-js <file>", help: ["emit JavaScript (playground target)"] },
   { name: "fmt", usage: "fmt <file...>", help: ["format source files (-w to write in place)"] },
   {
     name: "prove", usage: "prove <file> [--json]",

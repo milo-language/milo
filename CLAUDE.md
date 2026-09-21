@@ -66,7 +66,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/main.ts` | CLI driver |
 
 The pipeline files above are the map most changes need. [docs/src.md](docs/src.md) indexes
-**every** file in `src/` (abi, cgu, codegen-js, pkg, safety, suggest, verify, wcet, …),
+**every** file in `src/` (abi, cgu, pkg, safety, suggest, verify, wcet, …),
 generated from each file's own header comment — check there before assuming a subsystem
 has no home.
 

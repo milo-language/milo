@@ -75,7 +75,6 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/hir-cover.ts` | Which fixtures exercise which HIR expression kinds? |
 | `scripts/hir-ratchet.ts` | How much of src-milo's backend still re-derives what the frontend already knew? |
 | `scripts/ir-diff.ts` | Byte-exact IR differential: emit LLVM IR for every fixture with BOTH compilers and compare the bytes. |
-| `scripts/js-sweep.ts` | codegen-js coverage sweep: how many fixtures run byte-identical under `emit-js`. |
 | `scripts/leak-check.ts` | Leak gate: compile every stdout-comparable fixture, run it, and fail if the process exits still holding heap it allocated. |
 | `scripts/lint.ts` | Repo linter: deterministic smell checks with auto-fix. |
 | `scripts/lsp-probe.ts` | Differential + crash-safety probe for the Milo language server. |

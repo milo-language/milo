@@ -24,30 +24,9 @@ jobs:
         with:
           bun-version: latest
 
-      # The emulators are their own repo; the docs site only hosts their browser
-      # builds. Checked out here so the deployed cores always match that repo's
-      # main — nothing emulator-shaped lives in this one.
-      - uses: actions/checkout@v4
-        with:
-          repository: milo-language/milo-emulators
-          path: .emulators
-
-      # Compile the Milo emulator cores to JS and stage each demo under the
-      # VitePress public dir so they deploy at /milo/emulators/nes/, /genesis/ and
-      # /snes/. They must stay siblings under one parent: each page's system-switcher
-      # nav links to ../<system>/. The *-core.js checked into the emulators repo is
-      # regenerated here so a compiler change can never ship a stale core.
-      - name: Build Milo browser demos
-        run: |
-          bun install
-          bun run src/main.ts emit-js .emulators/nes/webcore.milo -o .emulators/nes/web/nes-core.js
-          bun run src/main.ts emit-js .emulators/genesis/genesisWebcore.milo -o .emulators/genesis/web/genesis-core.js
-          bun run src/main.ts emit-js .emulators/snes/snesWebcore.milo -o .emulators/snes/web/snes-core.js
-          mkdir -p docs/site/public/emulators/nes docs/site/public/emulators/genesis docs/site/public/emulators/snes
-          cp .emulators/nes/web/index.html .emulators/nes/web/nes-core.js docs/site/public/emulators/nes/
-          cp .emulators/genesis/web/index.html .emulators/genesis/web/genesis-core.js docs/site/public/emulators/genesis/
-          cp .emulators/snes/web/index.html .emulators/snes/web/snes-core.js docs/site/public/emulators/snes/
-
+      # The in-browser emulator demos were compiled here by the JavaScript backend
+      # until 2026-09-21. They return once the emulators build for LLVM's wasm64
+      # target; until then the site ships docs only.
       - name: Install dependencies
         run: cd docs/site && bun install
 

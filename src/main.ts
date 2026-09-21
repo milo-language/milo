@@ -13,7 +13,6 @@ import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import { TypeChecker } from "./checker";
 import { Codegen } from "./codegen";
-import { CodegenJS } from "./codegen-js";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { display } from "./mangle";
@@ -406,11 +405,6 @@ function verifyCDecls(cGuards: string | null, target: TargetInfo, linkLibs: stri
   } finally {
     try { unlinkSync(tmpC); } catch {}
   }
-}
-
-function compileToJS(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig): string {
-  const hirModule = frontendToHIR(source, target, filePath, warningConfig);
-  return new CodegenJS().generate(hirModule);
 }
 
 function compileToIr(sourcePath: string, outputPath: string | null, target: TargetInfo, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false) {
@@ -2452,28 +2446,6 @@ async function main() {
     const obj = compileToObj(source!, output, target, optFlag, warningConfig, noEntry, overflowChecks, contractChecks);
     reportCompiled(source!, obj, Date.now() - t0);
     if (emitHeader) writeHeader(source!, obj.replace(/\.o$/, "") + ".h", target, warningConfig);
-  } else if (cmd === "emit-js") {
-    const src = readFileSync(source!, "utf-8");
-    // The JS backend covers a subset (no FFI, no pointers, no threads, i64 to 2^53).
-    // Falling outside it is a fact about the program, not a compiler crash — print
-    // the one line that says which construct, not a stack trace.
-    let js: string;
-    try {
-      js = compileToJS(src, target, source!, warningConfig);
-    } catch (e: any) {
-      if (typeof e?.message === "string" && e.message.startsWith("codegen-js: ")) {
-        console.error(`error: ${e.message.slice("codegen-js: ".length)}`);
-        console.error("note: 'emit-js' supports a subset of Milo — no FFI, pointers or threads");
-        process.exit(1);
-      }
-      throw e;
-    }
-    if (output) {
-      writeFileSync(output, js);
-      console.log(`wrote ${output}`);
-    } else {
-      process.stdout.write(js);
-    }
   } else {
     console.error(`unknown command: ${cmd}`);
     process.exit(1);

@@ -167,8 +167,8 @@ Ranked by return on effort.
    and it is free.
 
 3. **Invest in oracles, not host languages.** The frontend fuzzer found 2 bugs per 150k
-   mutants (`project_frontend_fuzzer`); its named next oracles — emit-js differential and
-   fmt idempotence — are still unbuilt, as is broader shape coverage in
+   mutants (`project_frontend_fuzzer`); its named next oracle, fmt idempotence, is
+   still unbuilt, as is broader shape coverage in
    `scripts/fuzz-ownership.ts`. These find the *logic* bugs that no type system in any
    language catches, which per the commit log is what is actually biting.
 

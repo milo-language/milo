@@ -1,16 +1,16 @@
 <!--
-  MiloLab — the single "learn + play" widget. The 10 lessons and the free-form
-  playground are the same surface: every lesson IS an editable playground preloaded
-  with a concept, and a final Sandbox tab is a blank slate with an example library.
-  CodeMirror editor + the in-browser emit-js compiler (playground/compiler.js).
-  Lessons gate the next step on a successful run; Sandbox never gates.
-  Native-only lessons (green threads, `milo prove`) replay captured output because
-  the browser compiler has no native runtime — flagged in the output header.
+  MiloLab — the single "learn + play" widget. Every lesson is a CodeMirror editor
+  preloaded with a concept, and a final Sandbox tab is a blank slate with an example
+  library. Lessons gate the next step on a run; Sandbox never gates.
+  The in-browser compiler (the JS backend's bundle) was removed with `milo emit-js`
+  on 2026-09-21 and returns once the compiler builds for LLVM's wasm64 target. Until
+  then every lesson replays its captured native output, flagged in the output header,
+  and the Sandbox points at the native toolchain.
 -->
 <template>
   <div class="lab" ref="rootEl">
     <div class="lab-head">
-      <a class="sub-link" :href="base + 'features/javascript-target'">Runs in your browser via the emit-js backend →</a>
+      <a class="sub-link" :href="base + 'getting-started/installation'">In-browser runs are paused until the wasm64 port lands; install Milo to edit and run these →</a>
     </div>
 
     <!-- rail: Sandbox (free play) first, then the 10 lessons -->
@@ -69,10 +69,10 @@
             <span class="fname dim">output</span>
             <span class="sp"></span>
             <span v-if="!sandbox && concepts[cur].native" class="native">native runtime</span>
-            <span v-else-if="!compilerReady" class="native">loading compiler…</span>
+            <span v-else class="native">captured output</span>
           </div>
           <div class="term">
-            <div v-if="!outLines.length" class="idle">// edit the code, then press Run</div>
+            <div v-if="!outLines.length" class="idle">// press Run to see the captured output</div>
             <template v-else>
               <div class="ttag">{{ outTag }}</div>
               <div v-for="(l, k) in outLines" :key="k" class="oline" :class="{ err: outErr }">
@@ -498,8 +498,6 @@ const running = ref(false)
 const outLines = ref([])
 const outErr = ref(false)
 const outTag = ref('')
-const compilerReady = ref(false)
-let playground = null
 
 const rootEl = ref(null)
 const cmEl = ref(null)
@@ -537,37 +535,14 @@ function showOutput(lines, isErr, tag) {
 }
 
 function run() {
-  const native = !sandbox.value && concepts[cur.value].native
-  const errLesson = !sandbox.value && concepts[cur.value].err
   const file = sandbox.value ? 'sandbox.milo' : concepts[cur.value].file
   running.value = true
   const finishRun = () => { running.value = false; if (!sandbox.value) ran.value[cur.value] = true }
 
-  if (compilerReady.value && playground && !native) {
-    const src = view.value ? view.value.state.doc.toString() : srcs.value[slot.value]
-    let r
-    try { r = playground.compileAndRun(src) }
-    catch (ex) { r = { ok: false, error: String((ex && ex.message) || ex) } }
-    if (r.ok) {
-      const o = (r.output == null) ? '' : r.output
-      const lines = o === '' ? ['(no output)'] : o.replace(/\n$/, '').split('\n')
-      showOutput(lines, false, file + ' · compiled to JS · exit 0')
-    } else if (r.runtime) {
-      // The program compiled but aborted at runtime — e.g. a violated contract.
-      const out = (r.output == null || r.output === '') ? [] : r.output.replace(/\n$/, '').split('\n')
-      const msg = String(r.error || 'error').replace(/\x1b\[[0-9;]*m/g, '').replace(/\s+$/, '')
-      showOutput([...out, 'runtime error: ' + msg], true, file + ' · runtime error')
-    } else {
-      const errLines = String(r.error || 'error').replace(/\x1b\[[0-9;]*m/g, '').replace(/\s+$/, '').split('\n')
-      showOutput(errLines, true, file + ' · rejected by the checker')
-    }
-    finishRun()
-    return
-  }
-  // native-only lesson, or compiler not yet loaded: replay captured output
+  // Replay captured output: there is no in-browser compiler until the wasm64 port.
   const c = sandbox.value ? null : concepts[cur.value]
   if (c) showOutput(c.out, !!c.err, file + (c.native ? ' · native binary · exit 0' : (c.err ? ' · compile' : ' · exit 0')))
-  else showOutput(['loading compiler…'], false, file)
+  else showOutput(['The in-browser compiler is paused until Milo builds for wasm64.', 'Install Milo and run this file locally: milo run sandbox.milo'], false, file + ' · not run')
   finishRun()
 }
 
@@ -619,16 +594,6 @@ onMounted(() => {
   })
 
   if (props.startMode === 'sandbox') sandbox.value = true
-
-  const attach = () => { playground = window.MiloPlayground; compilerReady.value = !!playground }
-  if (window.MiloPlayground) { attach(); return }
-  const s = document.createElement('script')
-  s.type = 'module'
-  s.textContent = `import "${base}playground/compiler.js"; window.__miloReady = true; window.dispatchEvent(new Event('milo-ready'));`
-  s.onerror = () => {}
-  document.head.appendChild(s)
-  if (window.__miloReady) attach()
-  else window.addEventListener('milo-ready', attach, { once: true })
 })
 </script>
 

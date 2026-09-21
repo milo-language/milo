@@ -58,7 +58,7 @@ function hasCAttr(attrs: { name: string }[] | undefined): boolean {
 // std/string's private helpers that the COMPILER calls by name: lowering rewrites
 // `s.contains(x)` to a call of `strContains` (src/lower.ts strMethodMap), codegen emits
 // `strIndexOf`/`strIndexOfFrom`/`strLastIndexOf` for the indexOf family and `vecJoin`
-// for `Vec<string>.join`, and the JS backend switches on `strToLower`/`strToUpper`.
+// for `Vec<string>.join`.
 // They are private so nothing outside std can name them, but their symbol is part of
 // the compiler's ABI with std, so the per-module pass leaves it flat. Drift here is
 // loud, not silent: a renamed helper is an undefined function in every program that
