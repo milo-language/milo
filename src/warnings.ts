@@ -27,7 +27,7 @@ export const WARNINGS: WarningInfo[] = [
   { name: "missing-interpolation" },
   // A free fn with three or more `&mut` parameters is a struct's method with the struct
   // un-bundled: every call site is a row of same-typed `&mut` markers that can be swapped
-  // silently. Off by default: about 41 hits in tree today (std/json, the gifdec and plink
+  // silently. Off by default: about 34 hits in tree today (gifdec, the plink and redline
   // world builders), so it is a census lint until those are restructured.
   { name: "mut-param-bundle", offByDefault: true },
   { name: "nan-comparison" },

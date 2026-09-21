@@ -713,8 +713,8 @@ export class TypeChecker {
     // can enumerate the pointer-holding Copy types of a build and audit each claim.
     if (!config.denied.has("unowned-pointer-copy") && !config.expected?.has("unowned-pointer-copy")) config.allowed.add("unowned-pointer-copy");
     // mut-param-bundle is OFF by default: a free fn threading three or more `&mut`
-    // parameters is a method with its struct un-bundled, but the tree has about 41 of them
-    // (std/json, the gifdec and plink world builders). `--deny=mut-param-bundle` lists them
+    // parameters is a method with its struct un-bundled, but the tree has about 34 of them
+    // (gifdec, the plink and redline world builders). `--deny=mut-param-bundle` lists them
     // for the restructuring sweep; flip it on once that reaches zero.
     if (!config.denied.has("mut-param-bundle") && !config.expected?.has("mut-param-bundle")) config.allowed.add("mut-param-bundle");
     // index-clone is ON by default. It was off on the theory that most hits are working
