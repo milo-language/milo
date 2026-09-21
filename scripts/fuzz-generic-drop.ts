@@ -518,7 +518,11 @@ type Verdict =
   | { kind: "rejected"; inStd: boolean; diagnostic: string }
   | { kind: "asan"; what: string }
   | { kind: "drop-imbalance"; made: string; gone: string }
-  | { kind: "crash"; detail: string };
+  | { kind: "crash"; detail: string }
+  // A `!` on an Err the callee returned on purpose (`Channel.new(0)` refuses a
+  // non-positive capacity): the program ended by a checked refusal, not a memory bug.
+  // Still judged by ASan and drop accounting above, since the refusal path drops too.
+  | { kind: "refused"; detail: string };
 
 // The SUMMARY line names the bug class bare (`double-free`); the ERROR line wraps it in
 // prose (`attempting double-free on 0x...`), so it is only the fallback.
@@ -548,7 +552,9 @@ async function judge(file: string, bin: string, inst: Inst, timeoutMs = 60000): 
   const text = r.stderr + r.stdout;
   const m = ASAN_SUMMARY.exec(text) ?? ASAN_REPORT.exec(text);
   if (m) return { kind: "asan", what: m[1]!.trim().slice(0, 80) };
-  if (r.code !== 0) return { kind: "crash", detail: `exit ${r.code}${r.signal ? ` (${r.signal})` : ""}: ${(r.stderr.split("\n").find(l => l.trim()) ?? "").trim().slice(0, 120)}` };
+  const firstErr = (r.stderr.split("\n").find(l => l.trim()) ?? "").trim();
+  if (r.code !== 0 && /^error at \S+:\d+:\d+: /.test(firstErr)) return { kind: "refused", detail: firstErr.slice(0, 120) };
+  if (r.code !== 0) return { kind: "crash", detail: `exit ${r.code}${r.signal ? ` (${r.signal})` : ""}: ${firstErr.slice(0, 120)}` };
   const out = r.stdout.trim().split("\n");
   const made = out[out.length - 2] ?? "?", gone = out[out.length - 1] ?? "?";
   if (inst.countsDrops && (made !== gone || made === "?")) return { kind: "drop-imbalance", made, gone };
@@ -672,6 +678,8 @@ const failures = outcomes.filter(o => o.verdict.kind === "asan" || o.verdict.kin
 console.log(`seed ${SEED}, ${selected.length} symbols selected of ${symbols.length} generic pub std symbols, ${outcomes.length} programs, ${((Date.now() - started) / 1000).toFixed(1)}s`);
 console.log(`oracle: ASan (+ MallocScribble) for <string>; ASan + made/gone drop accounting for <res>`);
 console.log(`accepted and ran: ${outcomes.length - rejected.length}; rejected by the checker: ${rejected.length} (${rejectedInStd.length} of those inside std/)`);
+const refused = outcomes.filter(o => o.verdict.kind === "refused");
+if (refused.length) console.log(`refused at runtime by a checked Err (${refused.length}): ${refused.map(o => `${o.sym.name} <${o.inst}>`).join(", ")}`);
 if (rejected.length && !VERBOSE) {
   for (const o of rejected) console.log(`  rejected ${o.sym.name} <${o.inst}>${o.verdict.inStd ? " [in std]" : ""}: ${o.verdict.diagnostic}`);
 }
