@@ -252,6 +252,8 @@ test("every probeable signature's return type matches what the checker infers", 
     "heap.ptr",
     "option.andThen", "option.map", "option.orElse", "option.unwrapOrElse",
     "result.andThen", "result.map", "result.mapErr", "result.orElse", "result.unwrapOrElse",
+    // Names a prelude type (Heap<Error>); tests/fixtures/errorContext.milo runs it.
+    "result.context",
     "string.codePoints", "string.cstr", "string.lines", "string.splitView",
     "vec.all", "vec.any", "vec.each", "vec.enumerate", "vec.filter", "vec.find", "vec.fold",
     "vec.map", "vec.position", "vec.ptr", "vec.reduce", "vec.retain", "vec.slice",
