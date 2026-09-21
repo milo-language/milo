@@ -25,6 +25,11 @@ export const WARNINGS: WarningInfo[] = [
   { name: "adopt-raw-fields" },
   { name: "arena-never-frees" },
   { name: "missing-interpolation" },
+  // A free fn with three or more `&mut` parameters is a struct's method with the struct
+  // un-bundled: every call site is a row of same-typed `&mut` markers that can be swapped
+  // silently. Off by default: about 41 hits in tree today (std/json, the gifdec and plink
+  // world builders), so it is a census lint until those are restructured.
+  { name: "mut-param-bundle", offByDefault: true },
   { name: "nan-comparison" },
   // The thread-boundary global check cannot see through a call to a function value, so it
   // is incomplete there. Off by default: every occurrence in the tree today is a callback

@@ -1,6 +1,6 @@
 // Whole-program passes that run after every function body is checked and read only the
-// recorded results: escaping closures, `@pure`, the thread boundary, and global borrow
-// invalidation. They need the finished call-resolution maps and the full set of
+// recorded results: escaping closures, `@pure`, the thread boundary, global borrow
+// invalidation, pointer-parameter escape, and the `&mut` bundle census. They need the finished call-resolution maps and the full set of
 // monomorphized instances, which is why they cannot run per function, and they reach
 // the checker only through `ProgramPassHost` (its recorded maps and diagnostics) plus
 // the `ProgramView` it builds once for all of them (design pass 2026-09, F5).
@@ -834,6 +834,76 @@ export function checkPointerParamEscape(host: ProgramPassHost, program: Program,
     };
     void calleeOf;
     walk(f.body);
+  }
+}
+
+// A free fn with three or more `&mut` parameters is a struct's method with the struct
+// un-bundled. Milo spells every `&mut` argument at the call site except a method
+// receiver, so each caller of such a fn is a row of `&mut` markers over same-typed
+// arguments that can be swapped without a diagnostic; a receiver needs no marker and a
+// named field cannot be passed in the wrong slot. The threshold is on the signature; the
+// call sites only sharpen the message: when every caller passes the same variables in
+// the same slots the fn is threading state (std/json's parser), which is the case the
+// hint fits exactly, as opposed to out-parameters fed different locals each time
+// (`lbmMacro(&mut rho, &mut ux, &mut uy)`). Off by default (see warnings.ts).
+export function checkMutParamBundle(host: ProgramPassHost, program: Program, view: ProgramView): void {
+  const { fns, rootOf, calleeOf, pretty } = view;
+  // Free fns only: impl methods live in monomorphizedFns, never program.functions. A
+  // generic fn is judged once, at its declaration; its instances are folded back onto it
+  // through `sourceName` below so their call sites count toward the one report.
+  const subjects = new Map<string, { fn: Function; mutIdx: number[] }>();
+  for (const f of program.functions) {
+    if (f.isExtern || !f.body) continue;
+    // A generic declaration has no FnSig of its own; any instance carries the same
+    // ref-ness at every slot, so the first one stands in. An instantiation-free generic
+    // has no sig at all and is skipped: its body was never checked either.
+    const sig = host.functions.get(f.name)
+      ?? (f.typeParams.length > 0 ? host.functions.get(host.monomorphizedFns.find(m => m.sourceName === f.name)?.name ?? "") : undefined);
+    if (!sig) continue;
+    const mutIdx: number[] = [];
+    sig.params.forEach((p, i) => { if (p.type.tag === "ref" && p.type.mutable) mutIdx.push(i); });
+    if (mutIdx.length >= 3) subjects.set(f.name, { fn: f, mutIdx });
+  }
+  if (subjects.size === 0) return;
+
+  // Every resolved call site of each subject, deduplicated by source position: a call
+  // inside a generic body is copied into every instance, and counting it per instance
+  // would inflate "all K call sites".
+  const sites = new Map<string, Expr[]>();
+  const seen = new Set<string>();
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { for (const n of node) walk(n); return; }
+    const n = node as Record<string, unknown> & { kind?: string; span?: Span };
+    if (n.kind === "Call") {
+      const e = n as unknown as Expr;
+      const callee = host.closureCalls.has(e) || host.cfnCalls.has(e) ? undefined : calleeOf(e);
+      const subject = callee === undefined ? undefined : (fns.get(callee)?.sourceName ?? callee);
+      if (subject !== undefined && subjects.has(subject)) {
+        const key = n.span ? `${n.span.file ?? ""}:${n.span.line}:${n.span.col}` : "";
+        if (!key || !seen.has(key)) {
+          seen.add(key);
+          (sites.get(subject) ?? sites.set(subject, []).get(subject)!).push(e);
+        }
+      }
+    }
+    for (const k of Object.keys(n)) if (k !== "span") walk(n[k]);
+  };
+  for (const f of fns.values()) walk(f.body);
+
+  for (const [name, { fn, mutIdx }] of subjects) {
+    const calls = sites.get(name) ?? [];
+    let msg = `fn ${pretty(name)} threads ${mutIdx.length} &mut parameters`;
+    // The `&mut` marker is stripped from the argument by the time the passes run (see
+    // takeExplicitMutArgs), so the argument roots directly.
+    const rootsAt = (i: number) => calls.map(c => rootOf((c as { args: Expr[] }).args[i]));
+    const travelTogether = calls.length >= 2 && mutIdx.every(i => {
+      const roots = rootsAt(i);
+      return roots[0] !== undefined && roots.every(r => r === roots[0]);
+    });
+    if (travelTogether) msg += `; the same ${mutIdx.length} variables travel together at all ${calls.length} call sites`;
+    host.warn("mut-param-bundle", msg, fn.span,
+      `bundle them in a struct and make ${pretty(name)} a method on it: a receiver needs no &mut marker at call sites, and named fields cannot be passed in the wrong order`);
   }
 }
 

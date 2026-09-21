@@ -28,7 +28,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/attributes.ts` | The attribute vocabulary, in one place. |
 | `src/builtin-members.ts` | The builtin method surface, for the receivers whose dispatch is a hand-written if-chain in checker.ts rather than a symbol table. |
 | `src/cgu.ts` | Split one emitted LLVM module into N codegen units so clang can optimize them in parallel processes. |
-| `src/checker-program-passes.ts` | Whole-program passes that run after every function body is checked and read only the recorded results: escaping closures, `@pure`, the thread boundary, and global borrow invalidation. |
+| `src/checker-program-passes.ts` | Whole-program passes that run after every function body is checked and read only the recorded results: escaping closures, `@pure`, the thread boundary, global borrow invalidation, pointer-parameter e… |
 | `src/checker.ts` | Type checking, move checking and scope validation over the merged AST, producing the CheckResult that lowering reads. |
 | `src/cli-help.ts` | The CLI surface: every subcommand and top-level option, in one table. |
 | `src/codegen-js.ts` | JS codegen backend — HIR → JavaScript for browser playground |

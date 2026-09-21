@@ -1,0 +1,71 @@
+// @expect: 3 6 9
+// @expect: 4 8 12
+// @expect: 2 4
+// @expect: 3 7 4 1
+// The mut-param-bundle census, off by default (tests/mutParamBundleLint.test.ts reads
+// this file with `--deny=mut-param-bundle`). `stepState` threads three `&mut` params
+// and both callers pass the same three locals in the same slots: state threading, and
+// the evidence suffix names it. `fillOut` also has three `&mut` params but each caller
+// hands it different locals: out-parameters, so the base message only. `bump2` is
+// under the threshold and `Counter.step` is a method, so neither is reported even
+// though the method carries `&mut self` plus three `&mut` params.
+
+fn stepState(a: &mut i64, b: &mut i64, c: &mut i64) {
+    a = a + 1
+    b = b + 2
+    c = c + 3
+}
+
+fn fillOut(x: &mut i64, y: &mut i64, z: &mut i64) {
+    x = 1
+    y = 2
+    z = 3
+}
+
+fn bump2(p: &mut i64, q: &mut i64) {
+    p = p * 2
+    q = q * 2
+}
+
+struct Counter {
+    n: i64,
+}
+
+impl Counter {
+    fn step(self: &mut Counter, a: &mut i64, b: &mut i64, c: &mut i64) {
+        self.n = self.n + 1
+        a = a + self.n
+        b = b + self.n
+        c = c + self.n
+    }
+}
+
+pub fn main(): i32 {
+    var a = 2
+    var b = 4
+    var c = 6
+    stepState(&mut a, &mut b, &mut c)
+    print($"{a} {b} {c}")
+    stepState(&mut a, &mut b, &mut c)
+    print($"{a} {b} {c}")
+
+    var x = 0
+    var y = 0
+    var z = 0
+    fillOut(&mut x, &mut y, &mut z)
+    var p = 0
+    var q = 0
+    var r = 0
+    fillOut(&mut p, &mut q, &mut r)
+    print($"{x + p} {y + q}")
+
+    var m = 1
+    var n = 3
+    bump2(&mut m, &mut n)
+    var k = Counter {
+        n: 0,
+    }
+    k.step(&mut m, &mut n, &mut z)
+    print($"{m} {n} {z} {k.n}")
+    return 0
+}

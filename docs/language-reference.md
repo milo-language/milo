@@ -2165,6 +2165,14 @@ Two things to be aware of:
 - **Shared borrows are implicit at call sites; mutable ones are spelled.** `length(s)` borrows `s` and `consume(s)` moves `s`, and the calls look identical — the function signature, not the call site, tells you which happens. The compiler still rejects any use-after-move, so mistakes are compile errors, not bugs. A mutation is the one effect a reader cannot recover from the call site, so an argument bound to a `&mut T` parameter is written `&mut x` (`&mut a.b`, `&mut v[i..j]`); it is a marker, not an expression, and `let r = &mut x` is an error. A method receiver stays implicit: `v.push(1)`, never `(&mut v).push(1)`. `&x` for a shared borrow is not an expression either. The bare form `double(n)` is a hard error (`implicit-mut-borrow`; no flag silences it), and `bun scripts/explicit-mut.ts <file>` rewrites a file from the checker's resolved signatures.
 - **Assignment through `&mut` has no deref sigil.** Inside `double`, `x = x * 2` writes through the reference to the caller's variable. (Reassigning a `&string` slice *local*, by contrast, just rebinds the view — see [Strings](#strings).)
 
+Because every `&mut` argument is spelled at the call site except a method receiver, a free
+function threading three or more `&mut` parameters is a struct's method with the struct
+un-bundled: each caller is a row of same-typed markers that can be swapped silently.
+`--deny=mut-param-bundle` promotes an off-by-default warning that lists every such fn, and
+says when all of its callers pass the same variables in the same slots (state threading,
+where a struct with those fields is the fix, as opposed to out-parameters fed different
+locals each time).
+
 **What you can't do:**
 
 ```milo error

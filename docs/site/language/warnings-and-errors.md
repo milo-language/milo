@@ -171,6 +171,16 @@ var fb: [u32; 172800] = [0; 172800]   // warning: 'fb' is a 675 KiB stack alloca
                                        //   hint: use Vec<u32> for a heap buffer
 ```
 
+### mut-param-bundle
+
+A free function with three or more `&mut` parameters is a struct's method with the struct un-bundled: every argument bound to a `&mut` parameter is spelled `&mut x` at the call site (a method receiver is the one exception), so each caller is a row of same-typed markers that can be swapped without a diagnostic. Off by default; opt in with `--deny=mut-param-bundle`. When every caller passes the same variables in the same slots, the message says so: that is state threading, and a struct with those fields is the fix.
+
+```milo
+fn step(a: &mut i64, b: &mut i64, c: &mut i64) {   // warning: fn step threads 3 &mut parameters; the same 3 variables travel together at all 2 call sites
+    a = a + 1                                       //   hint: bundle them in a struct and make step a method on it
+}
+```
+
 ## Configuring warnings
 
 Use `--deny` to turn a warning into a hard error, `--allow` to suppress it, or `--deny-all` to treat every warning as an error.
@@ -193,6 +203,7 @@ milo build app.milo --deny-all
 | `bare-embedfile` | warn | `embedFile(...)` written without its `@` sigil |
 | `unused-move` | allow | Owned param never moved — could be a borrow instead |
 | `large-stack-array` | allow | Local fixed array over `--max-stack-array` (default 512 KiB) — stack-overflow risk |
+| `mut-param-bundle` | allow | Free fn with three or more `&mut` params: a method with its struct un-bundled |
 
 ## Error formatting
 

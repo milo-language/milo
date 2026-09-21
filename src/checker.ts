@@ -11,7 +11,7 @@ import type { Diagnostic, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
 import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
-import { checkPurity, checkEscapingClosures, checkThreadBoundary, checkGlobalBorrowInvalidation, checkPointerParamEscape, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
+import { checkPurity, checkEscapingClosures, checkThreadBoundary, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, closest, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError, formatMiloType } from "./derive-template";
@@ -712,6 +712,11 @@ export class TypeChecker {
     // say on a deliberate annotation, not a smell. It exists so `--deny=unowned-pointer-copy`
     // can enumerate the pointer-holding Copy types of a build and audit each claim.
     if (!config.denied.has("unowned-pointer-copy") && !config.expected?.has("unowned-pointer-copy")) config.allowed.add("unowned-pointer-copy");
+    // mut-param-bundle is OFF by default: a free fn threading three or more `&mut`
+    // parameters is a method with its struct un-bundled, but the tree has about 41 of them
+    // (std/json, the gifdec and plink world builders). `--deny=mut-param-bundle` lists them
+    // for the restructuring sweep; flip it on once that reaches zero.
+    if (!config.denied.has("mut-param-bundle") && !config.expected?.has("mut-param-bundle")) config.allowed.add("mut-param-bundle");
     // index-clone is ON by default. It was off on the theory that most hits are working
     // code paying a cost the author accepted, but the lint does not fire on the cases
     // where that is true: `isCopy` skips register copies, so a `Vec<Pod>` bind is silent
@@ -3408,6 +3413,9 @@ export class TypeChecker {
     // over the call graph, so every callee has to be resolvable before it runs.
     checkGlobalBorrowInvalidation(host, program, view);
     checkPointerParamEscape(host, program, view);
+    // Needs every call site resolved: the evidence suffix compares the argument roots
+    // across all of a fn's callers.
+    checkMutParamBundle(host, program, view);
     this.lintArenaNeverFrees(program);
 
     // An expectation that never fired means the code it excused was fixed and the
