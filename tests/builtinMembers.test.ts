@@ -202,6 +202,9 @@ function unprobeable(m: BuiltinMember): boolean {
   // inspects the parsed PARAMETERS, not the whole string: matching `key` against the
   // raw signature also hit HashMap's `(key: K)`, silently skipping five real rows.
   if (/=>|\*|&\[|\bU\b|\bF\b/.test(m.sig)) return true;
+  // The probe checks a bare program with no prelude, so a signature naming a prelude
+  // type (`Heap<Error>` from Result.context) cannot resolve there.
+  if (m.sig.includes("Heap<Error>")) return true;
   const parsed = parseSig(m.sig);
   return parsed === null || parsed.params.some(p => p === "");
 }
