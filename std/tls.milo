@@ -183,9 +183,7 @@ impl TlsListener {
                 close(fd)
                 return Result.Err(NetError.TlsError("private key does not match certificate"))
             }
-            return Result.Ok(TlsListener {
-                fd: fd, ctx: ctxAddr
-            })
+            return Result.Ok(TlsListener { fd: fd, ctx: ctxAddr })
         }
     }
 
@@ -212,9 +210,7 @@ impl TlsListener {
                 close(clientFd)
                 return Result.Err(NetError.TlsError("SSL_accept failed"))
             }
-            return Result.Ok(TlsConn {
-                fd: clientFd, ssl: sslAddr
-            })
+            return Result.Ok(TlsConn { fd: clientFd, ssl: sslAddr })
         }
     }
 

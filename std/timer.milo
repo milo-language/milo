@@ -59,9 +59,7 @@ impl Timer {
             }
             chTask.close()
         })
-        return Timer {
-            _ch: ch, _stopped: stopped
-        }
+        return Timer { _ch: ch, _stopped: stopped }
     }
 
     // The delivery channel, for arming in a Select alongside other sources.
@@ -119,9 +117,7 @@ impl Ticker {
         if ns <= 0 {
             ch.close()
             stopped.store(true)
-            return Ticker {
-                _ch: ch, _stopped: stopped
-            }
+            return Ticker { _ch: ch, _stopped: stopped }
         }
         let chTask = ch.clone()
         let stopTask = stopped.clone()
@@ -135,9 +131,7 @@ impl Ticker {
             }
             chTask.close()
         })
-        return Ticker {
-            _ch: ch, _stopped: stopped
-        }
+        return Ticker { _ch: ch, _stopped: stopped }
     }
 
     // The tick channel, for arming in a Select.

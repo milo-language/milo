@@ -72,9 +72,7 @@ impl UnixStream {
             close(fd)
             return Result.Err("connect() failed")
         }
-        return Result.Ok(UnixStream {
-            fd: fd
-        })
+        return Result.Ok(UnixStream { fd: fd })
     }
 
     fn send(self: &Self, data: &string): Result<i64, string> {
@@ -155,9 +153,7 @@ impl UnixListener {
             close(fd)
             return Result.Err("listen() failed")
         }
-        return Result.Ok(UnixListener {
-            fd: fd
-        })
+        return Result.Ok(UnixListener { fd: fd })
     }
 
     // Accept one connection. Inside the green scheduler this yields instead of blocking the
@@ -167,9 +163,7 @@ impl UnixListener {
         if clientFd < 0 {
             return Result.Err("accept() failed")
         }
-        return Result.Ok(UnixStream {
-            fd: clientFd
-        })
+        return Result.Ok(UnixStream { fd: clientFd })
     }
 }
 

@@ -69,15 +69,11 @@ pub struct CodePoint {
 // what keeps decode/encode round-trips honest.
 pub fn decodeCodepoint(s: &string, at: i64): CodePoint {
     if at < 0 || at >= s.len {
-        return CodePoint {
-            value: REPLACEMENT_CHAR, size: 1
-        }
+        return CodePoint { value: REPLACEMENT_CHAR, size: 1 }
     }
     let b = s[at]
     if b < 128 {
-        return CodePoint {
-            value: b as i32, size: 1
-        }
+        return CodePoint { value: b as i32, size: 1 }
     }
     var size: i64 = 0
     var cp: i32 = 0
@@ -92,22 +88,16 @@ pub fn decodeCodepoint(s: &string, at: i64): CodePoint {
         cp = (b & 7) as i32
     } else {
         // continuation byte or 5/6-byte form: not a legal lead
-        return CodePoint {
-            value: REPLACEMENT_CHAR, size: 1
-        }
+        return CodePoint { value: REPLACEMENT_CHAR, size: 1 }
     }
     if at + size > s.len {
-        return CodePoint {
-            value: REPLACEMENT_CHAR, size: 1
-        }
+        return CodePoint { value: REPLACEMENT_CHAR, size: 1 }
     }
     var k: i64 = 1
     while k < size {
         let c = s[at + k]
         if (c & 192) != 128 {
-            return CodePoint {
-                value: REPLACEMENT_CHAR, size: 1
-            }
+            return CodePoint { value: REPLACEMENT_CHAR, size: 1 }
         }
         cp = (cp << 6) | ((c & 63) as i32)
         k += 1
@@ -116,28 +106,18 @@ pub fn decodeCodepoint(s: &string, at: i64): CodePoint {
     // legal encoding, so accepting them would let two byte sequences compare
     // unequal while decoding to the same codepoint.
     if size == 2 && cp < 128 {
-        return CodePoint {
-            value: REPLACEMENT_CHAR, size: 1
-        }
+        return CodePoint { value: REPLACEMENT_CHAR, size: 1 }
     }
     if size == 3 && cp < 2048 {
-        return CodePoint {
-            value: REPLACEMENT_CHAR, size: 1
-        }
+        return CodePoint { value: REPLACEMENT_CHAR, size: 1 }
     }
     if size == 4 && cp < 65536 {
-        return CodePoint {
-            value: REPLACEMENT_CHAR, size: 1
-        }
+        return CodePoint { value: REPLACEMENT_CHAR, size: 1 }
     }
     if cp > 1114111 || (cp >= 55296 && cp <= 57343) {
-        return CodePoint {
-            value: REPLACEMENT_CHAR, size: 1
-        }
+        return CodePoint { value: REPLACEMENT_CHAR, size: 1 }
     }
-    return CodePoint {
-        value: cp, size: size
-    }
+    return CodePoint { value: cp, size: size }
 }
 
 // Byte offset of the next codepoint boundary at or after `at`.

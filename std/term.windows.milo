@@ -68,9 +68,7 @@ pub fn enableRawMode(): TermState {
     let h = stdinHandle()
     let saved = getConsoleModeOf(h)
     SetConsoleMode(h, rawModeFrom(saved))
-    return TermState {
-        saved: saved
-    }
+    return TermState { saved: saved }
 }
 
 // The Windows console has no VMIN/VTIME: ReadFile on a console handle in raw mode
@@ -133,9 +131,7 @@ pub fn terminalSize(): TermSize {
         ok = GetConsoleScreenBufferInfo(GetStdHandle(-11), (info.addrOf()) as *u8)
     }
     if ok == 0 {
-        return TermSize {
-            rows: 24, cols: 80
-        }
+        return TermSize { rows: 24, cols: 80 }
     }
     // srWindow is inclusive on both ends, so the extent is right-left+1 / bottom-top+1.
     let left = info[5] as i64
@@ -145,11 +141,7 @@ pub fn terminalSize(): TermSize {
     let cols = right - left + 1
     let rows = bottom - top + 1
     if rows <= 0 || cols <= 0 {
-        return TermSize {
-            rows: 24, cols: 80
-        }
+        return TermSize { rows: 24, cols: 80 }
     }
-    return TermSize {
-        rows: rows, cols: cols
-    }
+    return TermSize { rows: rows, cols: cols }
 }

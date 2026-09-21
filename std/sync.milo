@@ -67,9 +67,7 @@ impl ChannelHandle {
         unsafe {
             let inner = self._ptr as *ChannelInner
             _atomicAddI64(((*inner).refcount).addrOf() as *u8, 1)
-            return ChannelHandle {
-                _ptr: self._ptr
-            }
+            return ChannelHandle { _ptr: self._ptr }
         }
     }
 }
@@ -352,9 +350,7 @@ impl Channel<T> {
             (*inner).refcount = 1
 
             return Result.Ok(Channel {
-                h: ChannelHandle {
-                    _ptr: raw
-                }
+                h: ChannelHandle { _ptr: raw }
             })
         }
     }
@@ -525,9 +521,7 @@ impl Channel<T> {
     // send/recv take &Self, so a handle only needs cloning when moved into a task while
     // the parent still uses it.
     fn clone(self: &Self): Channel<T> {
-        return Channel {
-            h: self.h.retain()
-        }
+        return Channel { h: self.h.retain() }
     }
 
     // Signal no more values will be sent. Pending items are still delivered.
@@ -644,9 +638,7 @@ impl AtomicI64 {
             let p = malloc(16)
             _atomicStoreI64(p, initial)
             _atomicStoreI64((p as i64 + 8) as *u8, 1)
-            return AtomicI64 {
-                _ptr: p
-            }
+            return AtomicI64 { _ptr: p }
         }
     }
 
@@ -655,9 +647,7 @@ impl AtomicI64 {
     fn clone(self: &Self): AtomicI64 {
         unsafe {
             _atomicAddI64((self._ptr as i64 + 8) as *u8, 1)
-            return AtomicI64 {
-                _ptr: self._ptr
-            }
+            return AtomicI64 { _ptr: self._ptr }
         }
     }
 
@@ -727,9 +717,7 @@ impl AtomicBool {
             let p = malloc(16)
             _atomicStoreBool(p, initial)
             _atomicStoreI64((p as i64 + 8) as *u8, 1)
-            return AtomicBool {
-                _ptr: p
-            }
+            return AtomicBool { _ptr: p }
         }
     }
 
@@ -737,9 +725,7 @@ impl AtomicBool {
     fn clone(self: &Self): AtomicBool {
         unsafe {
             _atomicAddI64((self._ptr as i64 + 8) as *u8, 1)
-            return AtomicBool {
-                _ptr: self._ptr
-            }
+            return AtomicBool { _ptr: self._ptr }
         }
     }
 
@@ -801,9 +787,7 @@ impl AtomicI32 {
             let p = malloc(16)
             _atomicStoreI32(p, initial)
             _atomicStoreI64((p as i64 + 8) as *u8, 1)
-            return AtomicI32 {
-                _ptr: p
-            }
+            return AtomicI32 { _ptr: p }
         }
     }
 
@@ -811,9 +795,7 @@ impl AtomicI32 {
     fn clone(self: &Self): AtomicI32 {
         unsafe {
             _atomicAddI64((self._ptr as i64 + 8) as *u8, 1)
-            return AtomicI32 {
-                _ptr: self._ptr
-            }
+            return AtomicI32 { _ptr: self._ptr }
         }
     }
 
@@ -889,9 +871,7 @@ impl AtomicU64 {
             let p = malloc(16)
             _atomicStoreI64(p, initial as i64)
             _atomicStoreI64((p as i64 + 8) as *u8, 1)
-            return AtomicU64 {
-                _ptr: p
-            }
+            return AtomicU64 { _ptr: p }
         }
     }
 
@@ -899,9 +879,7 @@ impl AtomicU64 {
     fn clone(self: &Self): AtomicU64 {
         unsafe {
             _atomicAddI64((self._ptr as i64 + 8) as *u8, 1)
-            return AtomicU64 {
-                _ptr: self._ptr
-            }
+            return AtomicU64 { _ptr: self._ptr }
         }
     }
 
@@ -989,9 +967,7 @@ impl WaitGroup {
             nodeStorePtr(p, 0, mtx)
             nodeStorePtr(p, 8, cond)
             nodeStoreI64(p, 32, 1)
-            return WaitGroup {
-                _p: p
-            }
+            return WaitGroup { _p: p }
         }
     }
 
@@ -1000,9 +976,7 @@ impl WaitGroup {
     fn clone(self: &Self): WaitGroup {
         unsafe {
             _atomicAddI64((self._p as i64 + 32) as *u8, 1)
-            return WaitGroup {
-                _p: self._p
-            }
+            return WaitGroup { _p: self._p }
         }
     }
 
@@ -1214,9 +1188,7 @@ impl Once {
             nodeStorePtr(p, 0, mtx)
             nodeStorePtr(p, 8, cond)
             nodeStoreI64(p, 48, 1)
-            return Once {
-                _p: p
-            }
+            return Once { _p: p }
         }
     }
 
@@ -1225,9 +1197,7 @@ impl Once {
     fn clone(self: &Self): Once {
         unsafe {
             _atomicAddI64((self._p as i64 + 48) as *u8, 1)
-            return Once {
-                _p: self._p
-            }
+            return Once { _p: self._p }
         }
     }
 

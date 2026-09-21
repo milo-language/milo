@@ -29,9 +29,7 @@ pub struct TermState {
 }
 
 pub fn enableRawMode(): TermState {
-    var state = TermState {
-        saved: [0; 80],
-    }
+    var state = TermState { saved: [0; 80], }
 
     unsafe {
         tcgetattr(0, state.saved as *u8)
@@ -71,9 +69,7 @@ pub fn enableRawMode(): TermState {
 // of returning immediately. For an input-driven loop (a line editor) this waits on
 // the keyboard without busy-spinning, which VMIN=0 would force.
 pub fn enableRawModeBlocking(): TermState {
-    var state = TermState {
-        saved: [0; 80],
-    }
+    var state = TermState { saved: [0; 80], }
 
     unsafe {
         tcgetattr(0, state.saved as *u8)
@@ -164,11 +160,7 @@ pub fn terminalSize(): TermSize {
         ioctl(1, 1074295912, (ws.addrOf()) as *u8)
     }
     if ws[0] == 0 || ws[1] == 0 {
-        return TermSize {
-            rows: 24, cols: 80
-        }
+        return TermSize { rows: 24, cols: 80 }
     }
-    return TermSize {
-        rows: ws[0] as i64, cols: ws[1] as i64
-    }
+    return TermSize { rows: ws[0] as i64, cols: ws[1] as i64 }
 }

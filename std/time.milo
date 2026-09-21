@@ -40,9 +40,7 @@ pub fn now(): Instant {
     gettimeofday(tv, 0 as *u8)
     let sec = readI64FromBuf(tv, 0)
     let usec = readI64FromBuf(tv, 8)
-    return Instant {
-        sec: sec, usec: usec
-    }
+    return Instant { sec: sec, usec: usec }
 }
 
 // Milliseconds since Unix epoch.
@@ -116,17 +114,13 @@ pub struct Duration {
 
 impl Add for Duration {
     fn add(self: &Self, other: &Self): Self {
-        return Duration {
-            _nanos: self._nanos + other._nanos
-        }
+        return Duration { _nanos: self._nanos + other._nanos }
     }
 }
 
 impl Sub for Duration {
     fn sub(self: &Self, other: &Self): Self {
-        return Duration {
-            _nanos: self._nanos - other._nanos
-        }
+        return Duration { _nanos: self._nanos - other._nanos }
     }
 }
 
@@ -134,51 +128,35 @@ impl Duration {
     // ── constructors ──
 
     fn zero(): Duration {
-        return Duration {
-            _nanos: 0
-        }
+        return Duration { _nanos: 0 }
     }
 
     fn nanos(n: i64): Duration {
-        return Duration {
-            _nanos: n
-        }
+        return Duration { _nanos: n }
     }
 
     fn micros(n: i64): Duration {
-        return Duration {
-            _nanos: n * nsPerUs()
-        }
+        return Duration { _nanos: n * nsPerUs() }
     }
 
     fn millis(n: i64): Duration {
-        return Duration {
-            _nanos: n * nsPerMs()
-        }
+        return Duration { _nanos: n * nsPerMs() }
     }
 
     fn secs(n: i64): Duration {
-        return Duration {
-            _nanos: n * nsPerSec()
-        }
+        return Duration { _nanos: n * nsPerSec() }
     }
 
     fn mins(n: i64): Duration {
-        return Duration {
-            _nanos: n * nsPerMin()
-        }
+        return Duration { _nanos: n * nsPerMin() }
     }
 
     fn hours(n: i64): Duration {
-        return Duration {
-            _nanos: n * nsPerHour()
-        }
+        return Duration { _nanos: n * nsPerHour() }
     }
 
     fn days(n: i64): Duration {
-        return Duration {
-            _nanos: n * nsPerDay()
-        }
+        return Duration { _nanos: n * nsPerDay() }
     }
 
     // ── accessors, truncating toward zero ──
@@ -222,17 +200,13 @@ impl Duration {
     // (`Mul` is `Self × Self`), and a Duration times a Duration is meaningless,
     // so scaling is a method rather than `*`.
     fn times(self: &Self, k: i64): Duration {
-        return Duration {
-            _nanos: self._nanos * k
-        }
+        return Duration { _nanos: self._nanos * k }
     }
 
     // Divide by an integer factor, truncating toward zero. `k == 0` traps like
     // any other division by zero.
     fn dividedBy(self: &Self, k: i64): Duration {
-        return Duration {
-            _nanos: self._nanos / k
-        }
+        return Duration { _nanos: self._nanos / k }
     }
 
     // How many times `other` fits in self, as a ratio. The answer to "divide a
@@ -242,18 +216,14 @@ impl Duration {
     }
 
     fn negated(self: &Self): Duration {
-        return Duration {
-            _nanos: 0 - self._nanos
-        }
+        return Duration { _nanos: 0 - self._nanos }
     }
 
     fn abs(self: &Self): Duration {
         if self._nanos < 0 {
             return self.negated()
         }
-        return Duration {
-            _nanos: self._nanos
-        }
+        return Duration { _nanos: self._nanos }
     }
 
     // ── comparison ──
@@ -384,9 +354,7 @@ struct UnitScan {
 }
 
 fn scanUnit(s: &string, start: i64): UnitScan {
-    let bad = UnitScan {
-        scale: 0, next: start, ok: false
-    }
+    let bad = UnitScan { scale: 0, next: start, ok: false }
     if start >= s.len {
         return bad
     }
@@ -394,46 +362,30 @@ fn scanUnit(s: &string, start: i64): UnitScan {
     // two-byte units first: "ns"/"us"/"ms" would otherwise be read as "m" + junk
     if start + 1 < s.len && s[start + 1] == 115 {
         if c == 110 {
-            return UnitScan {
-                scale: 1, next: start + 2, ok: true
-            }
+            return UnitScan { scale: 1, next: start + 2, ok: true }
         }
         if c == 117 {
-            return UnitScan {
-                scale: nsPerUs(), next: start + 2, ok: true
-            }
+            return UnitScan { scale: nsPerUs(), next: start + 2, ok: true }
         }
         if c == 109 {
-            return UnitScan {
-                scale: nsPerMs(), next: start + 2, ok: true
-            }
+            return UnitScan { scale: nsPerMs(), next: start + 2, ok: true }
         }
     }
     // "µs" — U+00B5 is two UTF-8 bytes (0xC2 0xB5)
     if start + 2 < s.len && c == 194 && s[start + 1] == 181 && s[start + 2] == 115 {
-        return UnitScan {
-            scale: nsPerUs(), next: start + 3, ok: true
-        }
+        return UnitScan { scale: nsPerUs(), next: start + 3, ok: true }
     }
     if c == 115 {
-        return UnitScan {
-            scale: nsPerSec(), next: start + 1, ok: true
-        }
+        return UnitScan { scale: nsPerSec(), next: start + 1, ok: true }
     }
     if c == 109 {
-        return UnitScan {
-            scale: nsPerMin(), next: start + 1, ok: true
-        }
+        return UnitScan { scale: nsPerMin(), next: start + 1, ok: true }
     }
     if c == 104 {
-        return UnitScan {
-            scale: nsPerHour(), next: start + 1, ok: true
-        }
+        return UnitScan { scale: nsPerHour(), next: start + 1, ok: true }
     }
     if c == 100 {
-        return UnitScan {
-            scale: nsPerDay(), next: start + 1, ok: true
-        }
+        return UnitScan { scale: nsPerDay(), next: start + 1, ok: true }
     }
     return bad
 }

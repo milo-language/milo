@@ -124,9 +124,7 @@ pub fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
         return Result.Err("failed to send handshake response")
     }
 
-    return Result.Ok(WsConn {
-        fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: false
-    })
+    return Result.Ok(WsConn { fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: false })
 }
 
 // ── Frame reading ──
@@ -167,9 +165,7 @@ impl WsConn {
     // same connection (`ws.fd()` / `ws.tlsHandle()` are the values to pass). The owner
     // must outlive it.
     fn view(fd: i32, ssl: i64, isClient: bool): WsConn {
-        return WsConn {
-            fd: fd, ssl: ssl, _ctx: 0, _closed: true, _isClient: isClient
-        }
+        return WsConn { fd: fd, ssl: ssl, _ctx: 0, _closed: true, _isClient: isClient }
     }
 
     // The socket fd. Callers select and poll on it, which is why it is reachable at all;
@@ -277,9 +273,7 @@ impl WsConn {
             }
 
             if fin {
-                return Result.Ok(WsMessage {
-                    opcode: resultOpcode, payload: resultPayload
-                })
+                return Result.Ok(WsMessage { opcode: resultOpcode, payload: resultPayload })
             }
         }
 
@@ -477,9 +471,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
         return Result.Err("invalid Sec-WebSocket-Accept")
     }
 
-    return Result.Ok(WsConn {
-        fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true
-    })
+    return Result.Ok(WsConn { fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true })
 }
 
 // Connect to a WebSocket server over TLS (wss://). Performs TCP connect, TLS

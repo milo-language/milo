@@ -124,9 +124,7 @@ fn zipRead(src: &string): Result<Vec<ZipEntry>, string> {
             return Result.Err($"zip: CRC-32 mismatch for {name}")
         }
 
-        entries.push(ZipEntry {
-            name: name, data: data
-        })
+        entries.push(ZipEntry { name: name, data: data })
         cd = cd + 46 + nameLen + extraLen + commentLen
     }
     return Result.Ok(entries)

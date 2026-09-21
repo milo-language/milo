@@ -216,9 +216,7 @@ pub fn reduceConstraint(c: &Constraint, allInt: bool): Constraint {
             zc.push(0)
             j += 1
         }
-        return Constraint {
-            coeffs: zc, konst: konst, strict: false
-        }
+        return Constraint { coeffs: zc, konst: konst, strict: false }
     }
     var nc: Vec<i64> = []
     j = 0
@@ -226,9 +224,7 @@ pub fn reduceConstraint(c: &Constraint, allInt: bool): Constraint {
         nc.push(c.coeffs[j] / g)
         j += 1
     }
-    return Constraint {
-        coeffs: nc, konst: ceilDiv(konst, g), strict: false
-    }
+    return Constraint { coeffs: nc, konst: ceilDiv(konst, g), strict: false }
 }
 
 // Normalize a row that mentions at least one real-valued variable. Dividing an inequality
@@ -245,9 +241,7 @@ pub fn reduceRational(c: &Constraint): Constraint {
         j += 1
     }
     if g < 2 || c.konst % g != 0 {
-        return Constraint {
-            coeffs: cloneRow(c.coeffs), konst: c.konst, strict: c.strict
-        }
+        return Constraint { coeffs: cloneRow(c.coeffs), konst: c.konst, strict: c.strict }
     }
     var nc: Vec<i64> = []
     j = 0
@@ -255,9 +249,7 @@ pub fn reduceRational(c: &Constraint): Constraint {
         nc.push(c.coeffs[j] / g)
         j += 1
     }
-    return Constraint {
-        coeffs: nc, konst: c.konst / g, strict: c.strict
-    }
+    return Constraint { coeffs: nc, konst: c.konst / g, strict: c.strict }
 }
 
 pub fn cloneRow(row: &Vec<i64>): Vec<i64> {
@@ -308,9 +300,7 @@ pub fn combine(p: &Constraint, n: &Constraint, k: i64, varIsInt: &Vec<bool>): Op
     let Option.Some(kon) = combineTerm(b, p.konst, a, n.konst) else {
         return Option.None
     }
-    let c = Constraint {
-        coeffs: nc, konst: kon, strict: p.strict || n.strict
-    }
+    let c = Constraint { coeffs: nc, konst: kon, strict: p.strict || n.strict }
     return Option.Some(reduceConstraint(c, rowAllInt(c.coeffs, varIsInt)))
 }
 
@@ -514,9 +504,7 @@ pub fn inducedConstraints(p: &SmtProblem, mask: i64): Vec<Constraint> {
         let bit = (mask >> a) & 1
         let row = cloneRow(p.atomCoeffs[a])
         if bit == 1 {
-            cs.push(Constraint {
-                coeffs: row, konst: p.atomKonst[a], strict: p.atomStrict[a]
-            })
+            cs.push(Constraint { coeffs: row, konst: p.atomKonst[a], strict: p.atomStrict[a] })
         } else {
             // ¬(L <= 0) is (-L < 0); ¬(L < 0) is (-L <= 0)
             var nr: Vec<i64> = []
@@ -525,9 +513,7 @@ pub fn inducedConstraints(p: &SmtProblem, mask: i64): Vec<Constraint> {
                 nr.push(-row[j])
                 j += 1
             }
-            cs.push(Constraint {
-                coeffs: nr, konst: -p.atomKonst[a], strict:!p.atomStrict[a]
-            })
+            cs.push(Constraint { coeffs: nr, konst: -p.atomKonst[a], strict:!p.atomStrict[a] })
         }
         a += 1
     }
