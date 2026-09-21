@@ -1105,6 +1105,11 @@ export class Parser {
       this.valueTailToExpr(last.elseBody);
       const asExpr: Expr = { kind: "IfExpr", cond: last.cond, thenBody: last.thenBody, elseBody: last.elseBody, span: last.span };
       body[body.length - 1] = { kind: "ExprStmt", expr: asExpr, span: last.span };
+    } else if (last.kind === "MatchStmt") {
+      // Same for a tail `match`; its arms become value arms in turn.
+      for (const arm of last.arms) this.valueTailToExpr(arm.body);
+      const asExpr: Expr = { kind: "MatchExpr", subject: last.subject, arms: last.arms, span: last.span };
+      body[body.length - 1] = { kind: "ExprStmt", expr: asExpr, span: last.span };
     }
   }
 
@@ -1263,13 +1268,27 @@ export class Parser {
     while (!this.at(TokenKind.RBrace)) {
       const pattern = this.parsePattern();
       this.expect(TokenKind.FatArrow);
-      this.expect(TokenKind.LBrace);
-      const body = this.parseStmts();
-      this.expect(TokenKind.RBrace);
-      arms.push({ pattern, body });
+      arms.push({ pattern, body: this.parseArmBody(false) });
+      this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
     return { kind: "MatchStmt", subject, arms, span: s };
+  }
+
+  // A match arm is a braced block or a bare expression (`P => print(x)`), in
+  // statement and expression position alike; the statement form used to demand the
+  // braces, so a `match` at the tail of an if-expression block (parsed as a statement)
+  // rejected the expression arms every other match accepts.
+  private parseArmBody(yieldsValue: boolean): Stmt[] {
+    if (this.at(TokenKind.LBrace)) {
+      this.expect(TokenKind.LBrace);
+      const body = this.parseStmts();
+      this.expect(TokenKind.RBrace);
+      if (yieldsValue) this.valueTailToExpr(body);
+      return body;
+    }
+    const es = this.span(this.peek());
+    return [{ kind: "ExprStmt", expr: this.parseExpr(), span: es }];
   }
 
   // Expression-position match: each arm yields a value. Accepts both a braced
@@ -1283,17 +1302,7 @@ export class Parser {
     while (!this.at(TokenKind.RBrace)) {
       const pattern = this.parsePattern();
       this.expect(TokenKind.FatArrow);
-      let body: Stmt[];
-      if (this.at(TokenKind.LBrace)) {
-        this.expect(TokenKind.LBrace);
-        body = this.parseStmts();
-        this.expect(TokenKind.RBrace);
-        this.valueTailToExpr(body);
-      } else {
-        const es = this.span(this.peek());
-        body = [{ kind: "ExprStmt", expr: this.parseExpr(), span: es }];
-      }
-      arms.push({ pattern, body });
+      arms.push({ pattern, body: this.parseArmBody(true) });
       this.match(TokenKind.Comma); // optional separator between arms
     }
     this.expect(TokenKind.RBrace);

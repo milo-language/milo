@@ -1,0 +1,50 @@
+// A match arm is a bare expression or a block in statement position too, as the
+// grammar says (`match_arm = pattern "=>" ( expr | block )`); the statement parser used
+// to demand the block. And a `match` at the tail of an if-expression block, or of a
+// block arm of a match expression, is that block's value.
+enum Shape {
+    Dot,
+    Line(i64),
+}
+
+fn describe(s: &Shape): string {
+    return match s {
+        Shape.Dot => "dot"
+        Shape.Line(n) => { if n > 10 { "long line" } else { "line" } }
+    }
+}
+
+fn main() {
+    let shapes: Vec<Shape> = [Shape.Dot, Shape.Line(3), Shape.Line(30)]
+    for s in shapes {
+        // statement match, bare expression arms
+        match s {
+            Shape.Dot => print("saw a dot")
+            Shape.Line(n) => print("saw a line of ", n)
+        }
+        let verbose = true
+        let label = if verbose {
+            match s {
+                Shape.Dot => "a single dot"
+                Shape.Line(n) => { let unit = if n == 1 { "step" } else { "steps" } $"a line of {n} {unit}" }
+            }
+        } else {
+            describe(s)
+        }
+        print(label)
+        let short = match s {
+            Shape.Dot => { match 1 { 1 => "d" _ => "?" } }
+            Shape.Line(n) => { if n > 10 { "L" } else { "l" } }
+        }
+        print(short, " ", describe(s))
+    }
+}
+// @expect: saw a dot
+// @expect: a single dot
+// @expect: d dot
+// @expect: saw a line of 3
+// @expect: a line of 3 steps
+// @expect: l line
+// @expect: saw a line of 30
+// @expect: a line of 30 steps
+// @expect: L long line

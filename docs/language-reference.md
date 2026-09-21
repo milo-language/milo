@@ -1539,6 +1539,25 @@ let doubled = match r {
 
 All arms must agree on a type, and the match must still be exhaustive.
 
+The two arm forms are the same in statement position: `match s { Shape.Dot => print("dot")
+Shape.Line(n) => print(n) }` needs no braces. A `match` (or an `if`/`else`) that ends a
+block in value position, such as the branch of an if-expression or a block arm of a match
+expression, is that block's value:
+
+```milo
+enum Shape { Dot, Line(i64) }
+let s = Shape.Line(3)
+let verbose = true
+let label = if verbose {
+    match s {
+        Shape.Dot => "a single dot"
+        Shape.Line(n) => $"a line of {n}"
+    }
+} else {
+    "shape"
+}
+```
+
 ---
 
 ## Arrays
