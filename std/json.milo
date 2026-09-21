@@ -18,8 +18,11 @@ from "std/binary" import {
 //   string:        a = strStart, b = strLen
 //   number:        a = the f64's IEEE-754 bit pattern, b = (strStart << 32) | strLen
 //   array, object: a = childStart, b = (keyStart << 32) | childCount (keyStart 0 for arrays)
-// The packed halves fit because jsonParse caps the input at 2^32-1 bytes and
-// the pool at 2^32-1 nodes: every source offset, length and count is below 2^32.
+// The packed halves fit because jsonParse caps the input at 2^31-1 bytes and
+// the pool at 2^32-1 nodes: every count fits the low 32 bits, and every source
+// offset and key index (at most one per input byte) stays below 2^31, so the
+// high half never reaches the sign bit. That matters because `>>` on i64 is an
+// arithmetic shift: a high half of 2^31 or more would unpack negative.
 pub struct JsonNode {
     kind: i32,
     a: i64,
@@ -59,7 +62,7 @@ fn jsonNewNum(val: f64, start: i64, len: i64): JsonNode {
 // cap alone: the cap is checked after the parse, and this is the one pack that
 // jsonExtractSubtree also performs outside jsonParse.
 fn jsonNewContainer(kind: i32, childStart: i64, childCount: i64, keyStart: i64): JsonNode {
-    assert(childCount <= 0xFFFFFFFF && keyStart <= 0xFFFFFFFF, "json: container exceeds 2^32 children, node cannot pack it")
+    assert(childCount <= 0xFFFFFFFF && keyStart <= 0x7FFFFFFF, "json: container exceeds 2^32 children or 2^31 keys, node cannot pack it")
     return JsonNode {
         kind: kind, a: childStart, b: (keyStart << 32) | childCount
     }
@@ -967,7 +970,7 @@ fn jsonParse(s: string): Result<Json> {
     // A number node packs its source offset and length into 32 bits each (see
     // JsonNode), so an input past 2^32 bytes would store a truncated span: in
     // bounds and wrong. Same rule as the node-count cap below: enforce at mint.
-    assert(s.len <= 0xFFFFFFFF, "json: input exceeds 2^32 bytes, node spans cannot address it")
+    assert(s.len <= 0x7FFFFFFF, "json: input exceeds 2GB, node spans cannot address it")
     var nodes: Vec<JsonNode> = Vec.new()
     var childIdx: Vec<i64> = Vec.new()
     var keyOffsets: Vec<i64> = Vec.new()
