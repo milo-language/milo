@@ -31,7 +31,6 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/checker-program-passes.ts` | Whole-program passes that run after every function body is checked and read only the recorded results. |
 | `src/checker.ts` | Type checking, move checking and scope validation over the merged AST, producing the CheckResult that lowering reads. |
 | `src/cli-help.ts` | The CLI surface: every subcommand and top-level option, in one table. |
-| `src/codegen-js.ts` | JS codegen backend — HIR → JavaScript for browser playground |
 | `src/codegen-vec.ts` | Vec method codegen helpers — extracted to keep codegen.ts manageable. |
 | `src/codegen.ts` | HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target calling conventions. |
 | `src/csig.ts` | Parsing for the C signature text in `@cSig("<header>", "<signature>")`. |

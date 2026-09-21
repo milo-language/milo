@@ -89,7 +89,6 @@ macOS and Linux are fully supported on both aarch64 and x86_64. Windows is a par
 - **Test framework**: `@expect:`/`@error:` annotations and a `milo test` runner over <!-- stat:fixtures -->733<!-- /stat --> fixtures, plus <!-- stat:error-fixtures -->422<!-- /stat --> that must fail to compile and <!-- stat:prove-fixtures -->38<!-- /stat --> that must be proved
 - **Debugging**: `-g` emits DWARF that composes with any optimization level
 - **CI**: build and test on macOS, Linux, and Windows, plus a release pipeline with static linking
-- **Playground**: the compiler's JavaScript backend running in the browser
 
 ### Self-Hosting
 

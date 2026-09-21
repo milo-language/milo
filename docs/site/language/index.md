@@ -2,7 +2,7 @@
 
 A memory-safe systems language with simple syntax — Rust's semantics with a lighter, more TypeScript-like surface. Compiles to native code via LLVM.
 
-This page walks through every major concept with runnable examples. [Open the Playground](/playground) to try them as you go. For the exhaustive spec rather than the tour, read
+This page walks through every major concept with runnable examples. [Install Milo](/getting-started/installation) to run them as you go. For the exhaustive spec rather than the tour, read
 [the language reference](https://github.com/milo-language/milo/blob/main/docs/language-reference.md).
 
 ## Philosophy
@@ -615,7 +615,6 @@ Use `milo prove` to discharge contracts against the prover built into the standa
 You've seen the core of Milo. To go deeper:
 
 - **[Learn step by step](/language/variables)** — work through each topic in detail
-- **[Try it in the Playground](/playground)** — write and run Milo in your browser
 - **[Install Milo](/getting-started/installation)** — build real programs locally
 - **[Standard Library](/stdlib/)** — HTTP servers, JSON, SQLite, concurrency, and more
 - **[Showcase](/demos)** — complete programs: CLI tools, web servers, games, emulators

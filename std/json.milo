@@ -49,10 +49,9 @@ fn jsonNewStr(start: i64, len: i64): JsonNode {
 }
 
 // The value lives in `Json.nums`, not in the node: keeping the f64 inline meant
-// punning its bits through a raw pointer, which the JS backend has no answer for
-// (it has no addresses, and its integers are doubles), so every JSON program fell
-// out of the playground. The table costs 8 bytes per number, against the 8 bytes
-// per node the 24-byte layout saved.
+// punning its bits through a raw pointer to fit the 24-byte node. The table keeps
+// the node pointer-free and costs 8 bytes per number, against the 8 bytes per node
+// the 24-byte layout saved.
 fn jsonNewNum(numIdx: i64, start: i64, len: i64): JsonNode {
     return JsonNode {
         kind: 2, a: numIdx, b: (start << 32) | len
@@ -997,7 +996,7 @@ fn jsonParse(s: string): Result<Json> {
     // ~12% of parse time on benchmarks/json/data.json. Measured bytes per node (and per
     // childIdx entry, which is nodes minus one for any tree) on the repo's json files:
     // 11 (data.json, dense one-line), 24 (tests/hir-cover.json), 29-38 (package.json,
-    // the vscode manifests, emitJsParity.baseline.json). Bytes per object key: 20, 31-46,
+    // the vscode manifests, a 270-entry list of file names). Bytes per object key: 20, 31-46,
     // and 1584 for the numeric-array-heavy hir-cover.json. Divisors sit at the sparse end
     // (40 for nodes, 64 for keys) so every measured doc reserves at or below what it needs
     // and a doc of long strings never over-allocates by more than ~60% of its own size.

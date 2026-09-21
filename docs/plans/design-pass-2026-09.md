@@ -21,7 +21,7 @@ judgment ("may this element be read by value") made at one site and not another.
 | F6 | dead | `tsc --noUnusedLocals --noUnusedParameters` | 65 unused locals/imports (codegen 21, checker 8, lower 8, lsp 5, visibility 7, scripts 7, tests 4) | fix and make it a gate | WP13 |
 | F7 | dead | `check-api-docs.ts:200`, `release-meta.ts:23` | 2 dead exports; 51 `export` keywords with no external reference | delete 2, drop 51 | WP13 |
 | F8 | abstraction | `lower.ts` embedFile host I/O, `checker.ts` `process.env` | host detail in lowering/checking | declined for now: works, low value | declined |
-| F9 | abstraction | `scripts/playground/compiler.ts` | imports `src/*` | doc fix: sanction it in `docs/json-api.md` | WP13 |
+| F9 | abstraction | the browser bundle of the JS backend | imports `src/*` | moot: removed with the JS backend 2026-09-21 | done |
 | F10 | test | `tests/apiDocsSite.test.ts` | passes on 0 compared signatures; floor only in the CLI half | assert `comparedCount >= FLOOR` | WP13 |
 | F11 | dead (API) | 55 `pub fn` in std, zero callers in-repo and across 13 sibling repos | public API, not dead | feed `docs/stdlib-audit-2026-08.md` | note |
 

@@ -12766,7 +12766,7 @@ export class Codegen {
     // An owning closure is `{ ptr fn, ptr env }`, and the drop glue lives in the FIRST
     // word of the environment rather than in a third word of the pair. That choice is
     // what keeps a closure two words wide, so nothing that passes one around — call
-    // sites, the Task struct, `_callClosureVoid`, emit-js — has to change. The header is
+    // sites, the Task struct, `_callClosureVoid` — has to change. The header is
     // null for a by-reference closure (its environment is a stack slot in the frame that
     // built it, and freeing that would corrupt the frame), and the whole environment is
     // null for a closure that captured nothing — the two null checks are what let one

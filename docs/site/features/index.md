@@ -16,7 +16,6 @@ do once the code type-checks.
 |---|---|
 | [Concurrency](/features/concurrency) | Green tasks, `Promise`, channels, `Select`, `Promise.blocking` for real threads, and CPU parallelism over disjoint bands |
 | [C FFI](/features/ffi) | `extern` declarations, `@cLayout`/`@cSig` layout verification, struct-by-value calls, `@noCopy` handles |
-| [JavaScript target](/features/javascript-target) | `emit-js`: the same source compiled to JS for the browser, and what differs from the native backend |
 | [Annotations & Builtins](/features/annotations) | Every `@annotation` the compiler understands, and the builtin functions available without an import |
 | [Packages](/packages) | `milo add`, the GitHub-as-registry model, `milo.lock`, and publishing your own |
 | [AI-assisted development](/ai-coding) | Why the compiler catches machine-generated bugs at compile time, and how to drive it from an agent |

@@ -6657,9 +6657,9 @@ export class TypeChecker {
       }
       // `Call.func` is the callee's name. This read `n.callee`, which no Call has, so a
       // global initialized through a free fn (`var pool = arenaNew<Node>()`) never
-      // learned that fn reads `nextArenaId`: natively a constant global is a static
-      // initializer and the order never mattered, but emit-js runs every initializer
-      // in list order and read the counter before its declaration.
+      // learned that fn reads `nextArenaId`. A constant global is a static initializer
+      // and its order never matters, but a global built by a call runs at startup in
+      // list order, so the fn's reads have to count for the ordering pass.
       if (n.kind === "Call" && typeof n.func === "string") calls.add(n.func);
       if (n.kind === "MethodCall" && typeof n.method === "string") calls.add(n.method);
       for (const k in n) { if (k !== "span") scan(n[k], reads, calls); }
@@ -8172,7 +8172,7 @@ export class TypeChecker {
   // the checker rewrites the node IN PLACE into the same `EnumLit` the qualified spelling
   // parses to, at the first sight of it and before any hint is consumed: `let o: Option<i64>
   // = Some(3)` must reach the EnumLit-with-hint path, not the unwrapped-Option one. Every
-  // later pass (lower, codegen, codegen-js, verify, LSP) therefore sees only the qualified
+  // later pass (lower, codegen, verify, LSP) therefore sees only the qualified
   // shape. A user fn, variable, struct, enum or alias of the same name wins, so existing
   // programs that define their own `Some` are untouched; `bindElidedPattern` is the same
   // rule for patterns.

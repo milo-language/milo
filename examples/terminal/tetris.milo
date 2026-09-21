@@ -530,6 +530,6 @@ pub fn main(): i32 {
     writeStdout(Ansi.showCursor() + Ansi.clearScreen() + Ansi.cursorHome() + Ansi.reset())
     restoreTerminal(termState)
     print("thanks for playing milo tetris ♥")
-    print("built with milo — docs & playground: https://milo-language.github.io/milo/")
+    print("built with milo, docs: https://milo-language.github.io/milo/")
     return 0
 }

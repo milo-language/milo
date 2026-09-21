@@ -61,12 +61,10 @@ Vec skipped its entire destructor, user `Drop` impl included. Improved 2026-08-1
 consult every heap field (a moved-from struct has all of them null) and to let a non-zero
 integer field vouch for liveness alongside them.
 
-**`emit-js` implements no destructors at all** — `src/codegen-js.ts` contains zero
-references to `Drop`. So every fixture with a `Drop` impl is a known native-vs-JS
-divergence (`dropAccounting`, `dropWithFields`, and now the two added here) and is recorded
-as `mismatch` in `tests/emitJsParity.baseline.json`. Worth stating plainly because the
-baseline makes it quiet: programs that rely on RAII do not behave the same under the JS
-backend, and no gate says so beyond that file.
+**The JS backend implemented no destructors at all**, so every fixture with a `Drop` impl
+(`dropAccounting`, `dropWithFields`, and the two added here) diverged under it and was
+carried in its parity baseline. That backend was removed 2026-09-21; the native backend is
+the only implementation of drop glue now.
 
 **Residual, recorded rather than papered over:** a struct whose fields all read as zero —
 `Res { id: 0, v: Vec.new() }`, or one whose only field is an empty container — still cannot

@@ -5,7 +5,7 @@
 //       bun run scripts/gen-src-doc.ts --check  # fail if it is stale (CI/test)
 //
 // CLAUDE.md carries a hand-written table of the pipeline's core files; it had 14 rows
-// against 39 files in src/, so two thirds of the compiler — abi, cgu, codegen-js, pkg,
+// against 39 files in src/, so two thirds of the compiler — abi, cgu, pkg,
 // safety, suggest, verify, wcet — was undocumented at the level an agent reads first.
 // Growing that table is the wrong fix: CLAUDE.md is loaded into every session, so its
 // cost is per-conversation. The full index lives here and is projected, exactly like

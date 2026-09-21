@@ -1,6 +1,6 @@
 <!-- doc-meta
 system: demos-showcase
-purpose: showcase page listing runnable Milo demos (browser emulators, debugger, TUIs, servers)
+purpose: showcase page listing runnable Milo demos (emulators, debugger, TUIs, servers)
 key-files: examples/, examples/cli-tools, docs/site/.vitepress/config.mts
 update-when: a demo is added/removed or its capabilities change
 last-verified: 2026-07-15
@@ -12,11 +12,11 @@ Real programs written in Milo. Most are a single `.milo` file in [`examples/`](h
 
 ## What do you want to build today?
 
-Pick what you have in mind. Each row jumps to real, runnable examples further down this page, and to the docs that teach the language features they lean on. New to Milo? Start with the [Language Tour](/tour) and the [Playground](/playground) — no install needed.
+Pick what you have in mind. Each row jumps to real, runnable examples further down this page, and to the docs that teach the language features they lean on. New to Milo? Start with the [Language Tour](/tour).
 
 | I want to build… | See it working | Learn the pieces |
 |---|---|---|
-| **A game or console emulator** | [Emulators](#emulators-desktop-and-browser), [graphics demos](#terminal-graphics-apps) | [Ownership](/language/ownership), [Concurrency](/features/concurrency), [FFI (SDL)](/features/ffi) |
+| **A game or console emulator** | [Emulators](#emulators), [graphics demos](#terminal-graphics-apps) | [Ownership](/language/ownership), [Concurrency](/features/concurrency), [FFI (SDL)](/features/ffi) |
 | **A web server or API** | [Servers & network apps](#servers-network-apps) | [Error handling](/language/error-handling), [Concurrency](/features/concurrency), [Get started](/getting-started/quickstart) |
 | **A command-line tool** | [CLI tools](#cli-tools) | [Your first program](/getting-started/quickstart), [Strings](/language/strings), [Collections](/language/collections) |
 | **A terminal app (TUI)** | [Terminal & graphics apps](#terminal-graphics-apps) | [Concurrency: green tasks & Select](/features/concurrency) |
@@ -24,29 +24,29 @@ Pick what you have in mind. Each row jumps to real, runnable examples further do
 | **A language or interpreter** | [Data & interpreters](#data-interpreters), [the prover and formatter](#the-language-feeding-itself) | [Enums & pattern matching](/language/enums), [Ownership](/language/ownership) |
 | **Low-level / embedded** | [flightController](#terminal-graphics-apps) | [Safety](/language/safety), [FFI](/features/ffi) |
 
-## Emulators: desktop and browser
+## Emulators
 
-Three retro-console cores. Same Milo source runs two ways: native binary on desktop (SDL video/audio/input) or JavaScript in the browser via `milo emit-js`. No plugins. Drop a ROM and play.
+Three retro-console cores, each a native binary on desktop with SDL video, audio and input. Drop a ROM and play. The in-browser builds are paused: they compiled through the JavaScript backend, which was removed in favour of LLVM's `--target=wasm64`, and come back once the cores build for it.
 
-### <a href="/milo/emulators/nes/" target="_self" data-vp-ignore>NES</a>
+### [NES](https://github.com/milo-language/milo-emulators/tree/main/nes)
 
-Cycle-stepped 6502, PPU, and APU with DMC audio and multiple mappers. Ships six free homebrew games playable in one click: **Blade Buster**, **Battle Kid**, **Super PakPak**, **Sir Ababol**, **Lawn Mower**, **Mad Wizard**. Drag in your own `.nes` ROM to play anything else.
+Cycle-stepped 6502, PPU, and APU with DMC audio and multiple mappers. Ships six free homebrew games: **Blade Buster**, **Battle Kid**, **Super PakPak**, **Sir Ababol**, **Lawn Mower**, **Mad Wizard**. Drag in your own `.nes` ROM to play anything else.
 
 ![Super Mario Bros. 3 running on the Milo NES emulator](/showcase/nes.png)
 
-### <a href="/milo/emulators/genesis/" target="_self" data-vp-ignore>Genesis / Mega Drive</a>
+### [Genesis / Mega Drive](https://github.com/milo-language/milo-emulators/tree/main/genesis)
 
 Motorola 68000 + Z80 dual-CPU core with the VDP graphics processor and FM/PSG audio. Preset homebrew: **Headship**, **Astro Perdido**, **Gravity Pig**, **Dragon's Castle**. Accepts `.md` / `.bin` / `.gen` / `.smd` ROMs.
 
 ![Sonic the Hedgehog running on the Milo Genesis emulator](/showcase/genesis.png)
 
-### <a href="/milo/emulators/snes/" target="_self" data-vp-ignore>SNES</a>
+### [SNES](https://github.com/milo-language/milo-emulators/tree/main/snes)
 
 65C816 CPU plus the SNES PPU, including a Super FX (GSU) coprocessor core. Plays Super Mario World and Donkey Kong Country; Star Fox boots with GSU-rendered 3D. Preset homebrew: **UWOL: Quest for Money**, **Super Boss Gaiden**, **BLT**, **Bucket**, **Mega Family Bros**, **Hilda**. Load your own `.sfc` / `.smc` ROM to play anything else.
 
 ![Super Mario World running on the Milo SNES emulator](/showcase/snes.png)
 
-> All three live in [milo-language/emulators](https://github.com/milo-language/milo-emulators) and run natively too: `./arcade.sh <rom>` builds the right core with SDL video, audio, and input. [`retro/`](https://github.com/milo-language/milo-emulators/tree/main/retro) turns them into a Raspberry Pi couch console with a gamepad-driven menu.
+> All three live in [milo-language/emulators](https://github.com/milo-language/milo-emulators): `./arcade.sh <rom>` builds the right core with SDL video, audio, and input. [`retro/`](https://github.com/milo-language/milo-emulators/tree/main/retro) turns them into a Raspberry Pi couch console with a gamepad-driven menu.
 
 ## Debugger
 
@@ -165,5 +165,3 @@ fn main(): i32 {
     return 0
 }
 ```
-
-Prefer no install? Compile and run Milo in your browser on the [Playground](/playground).

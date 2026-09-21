@@ -686,7 +686,7 @@ pub fn main() {
         // The gap is stated rather than left for a user to discover by having a flag
         // silently do nothing. These are implemented in the TypeScript driver only.
         print("not implemented here (use `bun run src/main.ts`):")
-        print("  emit-ast, emit-js, build-lib, test, prove, verify, wcet, safety")
+        print("  emit-ast, build-lib, test, prove, verify, wcet, safety")
         print("  api, doc")
         print("  --target, --emit-header, --heap-size, --safety/--allow/--deny")
         exit(0)

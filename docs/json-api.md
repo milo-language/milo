@@ -173,5 +173,3 @@ Three things still import the compiler on purpose:
   renderer into a script would give the repo two markdown renderers to keep in step, which
   is the drift this whole document exists to prevent. `milo api --module <m> --markdown`
   and `milo doc <file|dir> -o <dir>` are the public equivalents.
-- **`scripts/playground/compiler.ts`** is bundled into a browser page, and a browser
-  bundle cannot spawn a `milo` subprocess; the compiler itself has to be in the bundle.

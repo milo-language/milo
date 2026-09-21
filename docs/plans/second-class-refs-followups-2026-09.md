@@ -93,13 +93,11 @@ Design (decided 2026-09-20, replaces the `@private` attribute proposal):
 - Derives (`Eq`, `Clone`, `Json`) are generated in the declaring file's
   scope and keep access. `@derive(Json)` keeps serializing `_` fields:
   serialization is not access. State that in the reference.
-- Emit-js backend: confirm the JS field-access lowering needs no change
-  (privacy is a checker rule only).
 - Done: `tests/errors/privateFieldRead.milo`, `privateFieldWrite.milo`,
   `privateFieldLiteral.milo` (each: second file reaches a `_` field of a
   `pub struct` from the first); `tests/fixtures/privateFieldSameFile.milo`
-  and `privateFieldDeriveJson.milo`. `bun test`, `run-examples.ts`, emit-js
-  parity baseline unchanged, `sh scripts/selfhost.sh` + guarded selfhost
+  and `privateFieldDeriveJson.milo`. `bun test`, `run-examples.ts`,
+  `sh scripts/selfhost.sh` + guarded selfhost
   tests (std changed).
 
 ### WP4. `TaggedArena<T, Tag>`: DROPPED to an idiom (decided 2026-09-20)
@@ -108,8 +106,8 @@ across the org, 29 with one arena, zero real programs with two arenas of one
 payload type (the four that exist are `std/arena`'s own fixtures exercising the
 runtime id check). Prior art: slotmap, generational-arena, id-arena, Bevy all
 rely on the runtime check; none brand per instance. One recorded incident ever,
-the 2026-07-22 library gap that `arenaId` closed. Cost was 229 std lines, a
-permanent emit-js baseline entry, and the `with` method had to be dropped because
+the 2026-07-22 library gap that `arenaId` closed. Cost was 229 std lines,
+and the `with` method had to be dropped because
 milo-self cannot build a method-level generic in std. Shipped instead: the
 paragraph in `docs/milo-idioms.md` (phantom brand) showing the two-struct wrapper,
 and `tests/errors/arenaBrandMixup.milo` pinning the compile error. Review row
@@ -216,8 +214,8 @@ borrowing two &mut Mem fields at once". Disjoint field borrows compile today
 (verified 2026-09-20: `step(m.rom, m.ram)` and `both(m.rom, m.ram)` with two
 `&mut` params both type-check). Remove the ROM clone and borrow the field;
 run the emulators' own test suite and the SNES test ROMs it names. If the
-clone turns out to exist for another reason (emit-js core isolation is the
-other candidate the comment names), fix the comment instead and say so.
+clone turns out to exist for another reason (the comment also names core
+isolation for the since-removed JS backend), fix the comment instead and say so.
 Done: suite green, comment true.
 
 ### WP6 (deferred). Safety-profile lint: no bare integer index into a pool
@@ -263,8 +261,7 @@ WP4 by their shipped names.
 
 Every package: own worktree, small green commits, gates listed under its
 "Done" before merge. Any checker change runs `bun run scripts/run-examples.ts`.
-Any std change checks the emit-js parity baseline did not grow and runs
-`sh scripts/selfhost.sh` before the selfhost tests.
+Any std change runs `sh scripts/selfhost.sh` before the selfhost tests.
 
 ## Unresolved questions
 

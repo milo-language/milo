@@ -2,7 +2,7 @@
 // first comment line by scripts/gen-src-doc.ts.
 //
 // The only map of the compiler was the 14-row table in CLAUDE.md, against 39 files:
-// abi, cgu, codegen-js, pkg, safety, suggest, verify and wcet were invisible to anyone
+// abi, cgu, pkg, safety, suggest, verify and wcet were invisible to anyone
 // (agent or human) reading the docs to find where a change belongs.
 import { test, expect } from "bun:test";
 import { readFileSync } from "fs";

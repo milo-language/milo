@@ -89,7 +89,6 @@ const gettingStartedSidebar = [
       { text: 'Language', link: '/language/' },
       { text: 'Features', link: '/features/' },
       { text: 'Standard Library', link: '/stdlib/' },
-      { text: 'Playground', link: '/playground' },
     ]
   },
 ]
@@ -142,7 +141,6 @@ const featuresSidebar = [
       { text: 'Overview', link: '/features/' },
       { text: 'Concurrency', link: '/features/concurrency' },
       { text: 'C FFI', link: '/features/ffi' },
-      { text: 'JavaScript target', link: '/features/javascript-target' },
       { text: 'Annotations & Builtins', link: '/features/annotations' },
       { text: 'Packages', link: '/packages' },
       { text: 'AI-assisted development', link: '/ai-coding' },
@@ -290,7 +288,7 @@ const stdlibSidebar = [
   },
 ]
 
-// Landing, playground, demos and roadmap belong to no section: give them the four
+// Landing, demos and roadmap belong to no section: give them the four
 // entry points rather than an arbitrary section's tree.
 const rootSidebar = [
   {
@@ -298,7 +296,6 @@ const rootSidebar = [
     items: [
       { text: 'Installation', link: '/getting-started/installation' },
       { text: 'Tour of the language', link: '/tour' },
-      { text: 'Playground', link: '/playground' },
     ]
   },
   {
@@ -343,7 +340,6 @@ export default defineConfig({
       { text: 'Language', link: '/language/', activeMatch: '^/(language|reference)' },
       { text: 'Features', link: '/features/', activeMatch: '^/(features|packages|ai-coding|benchmarks)' },
       { text: 'Standard Library', link: '/stdlib/' },
-      { text: 'Playground', link: '/playground' },
       { text: 'Blog', link: '/blog/', activeMatch: '/blog/' },
       {
         text: 'More',
