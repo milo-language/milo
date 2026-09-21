@@ -877,9 +877,23 @@ fn jsonParse(s: string): Result<Json> {
     var childIdx: Vec<i64> = Vec.new()
     var keyOffsets: Vec<i64> = Vec.new()
     var keyLens: Vec<i64> = Vec.new()
-    // Scratch stack for in-flight container children (see jsonScratchPush) — shared across
-    // the whole parse so it allocates once, not per container.
+    // Size the pools from the input up front: growing them by doubling from empty was
+    // ~12% of parse time on benchmarks/json/data.json. Measured bytes per node (and per
+    // childIdx entry, which is nodes minus one for any tree) on the repo's json files:
+    // 11 (data.json, dense one-line), 24 (tests/hir-cover.json), 29-38 (package.json,
+    // the vscode manifests, emitJsParity.baseline.json). Bytes per object key: 20, 31-46,
+    // and 1584 for the numeric-array-heavy hir-cover.json. Divisors sit at the sparse end
+    // (40 for nodes, 64 for keys) so every measured doc reserves at or below what it needs
+    // and a doc of long strings never over-allocates by more than ~60% of its own size.
+    nodes.reserve(s.len / 40)
+    childIdx.reserve(s.len / 40)
+    keyOffsets.reserve(s.len / 64)
+    keyLens.reserve(s.len / 64)
+    // Scratch stack for in-flight container children (see jsonScratchPush), shared across
+    // the whole parse so it allocates once, not per container. It only holds the open
+    // containers' pending children, so a small fixed reserve covers most documents.
     var scratch: Vec<i64> = Vec.new()
+    scratch.reserve(64)
     var scratchLen: i64 = 0
     var pos: i64 = 0
     var err: bool = false
