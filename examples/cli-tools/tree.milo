@@ -1,14 +1,8 @@
 // @run: examples/embedded
 // tree — display directory tree
-from "std/argparse" import {
-    ArgParser
-}
-from "std/fs" import {
-    isDir, readDir
-}
-from "std/path" import {
-    Path
-}
+from "std/argparse" import { ArgParser }
+from "std/fs" import { readDir }
+from "std/path" import { Path }
 
 pub struct Counts {
     dirs: i64,
@@ -16,34 +10,22 @@ pub struct Counts {
 }
 
 pub fn printTree(dirPath: &string, prefix: &string, depth: i64, maxLevel: i64, counts: &mut Counts): void {
-    if maxLevel > 0 as i64 && depth >= maxLevel {
+    if maxLevel > 0 && depth >= maxLevel {
         return
     }
 
     let entries = readDir(dirPath)!
-    for idx in 0..entries.len {
-        let name = entries[idx].name.clone()
-        let entryIsDir = entries[idx].isDir
+    for idx, entry in entries {
         let isLast = idx == entries.len - 1
+        // ASCII tree characters
+        let connector = if isLast { "`-- " } else { "|-- " }
+        let extension = if isLast { "    " } else { "|   " }
 
-        // use ASCII tree characters
-        var connector: string = ""
-        var extension: string = ""
-        if isLast {
-            connector = "`-- "
-            extension = "    "
-        } else {
-            connector = "|-- "
-            extension = "|   "
-        }
+        print(prefix, connector, entry.name)
 
-        print(prefix, connector, name)
-
-        if entryIsDir {
+        if entry.isDir {
             counts.dirs += 1
-            let childPath = Path.join(dirPath, name)
-            let childPrefix = prefix + extension
-            printTree(childPath, childPrefix, depth + 1, maxLevel, &mut counts)
+            printTree(Path.join(dirPath, entry.name), prefix + extension, depth + 1, maxLevel, &mut counts)
         } else {
             counts.files += 1
         }
@@ -57,27 +39,15 @@ pub fn main(): i32 {
     let args = parser.parse()
 
     let root: string = args.getString("dir") ?? "."
-
     let maxLevel = args.getI64("level")
 
     print(root)
-    var counts = Counts {
-        dirs: 1, files: 0
-    }
-    let prefix: string = ""
-    printTree(root, prefix, 0 as i64, maxLevel, &mut counts)
+    var counts = Counts { dirs: 1, files: 0 }
+    printTree(root, "", 0, maxLevel, &mut counts)
 
-    var summary: string = "\n" + counts.dirs.toString() + " director"
-    if counts.dirs == 1 as i64 {
-        summary += "y"
-    } else {
-        summary += "ies"
-    }
-    summary = summary + ", " + counts.files.toString() + " file"
-    if counts.files != 1 as i64 {
-        summary += "s"
-    }
-    print(summary)
+    let dirWord = if counts.dirs == 1 { "directory" } else { "directories" }
+    let fileWord = if counts.files == 1 { "file" } else { "files" }
+    print($"\n{counts.dirs} {dirWord}, {counts.files} {fileWord}")
 
     return 0
 }

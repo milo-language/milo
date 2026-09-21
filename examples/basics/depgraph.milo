@@ -1,11 +1,12 @@
 // @run:
-// Dependency graph with topological sort — classic arena use case
-// Nodes cross-reference each other via Handle, not pointers or &T
-from "std/arena" import {
-    Arena, Handle, arenaAlloc, arenaGet, arenaModify, arenaNew
-}
+// Dependency graph with topological sort, the classic arena use case. Nodes name
+// each other by Handle, not by pointer or stored &T; the graph owns the arena and
+// every walk goes through it. A node also carries its own position in `nodes`, so
+// Kahn's algorithm indexes its in-degree table by that instead of searching handles.
+from "std/arena" import { Arena, Handle }
 
 pub struct Node {
+    id: i64,
     name: string,
     deps: Vec<Handle<Node>>,
     dependents: Vec<Handle<Node>>,
@@ -17,47 +18,24 @@ pub struct DepGraph {
 }
 
 pub fn newGraph(): DepGraph {
-    return DepGraph {
-        arena: arenaNew(),
-        nodes: Vec.new(),
-    }
+    return DepGraph { arena: Arena<Node>.new(), nodes: Vec.new() }
 }
 
 pub fn addNode(g: &mut DepGraph, name: string): Handle<Node> {
-    let h = arenaAlloc(&mut g.arena, Node {
-        name: name,
-        deps: Vec.new(),
-        dependents: Vec.new(),
-    }
-    )
+    let h = g.arena.alloc(Node { id: g.nodes.len, name: name, deps: Vec.new(), dependents: Vec.new() })
     g.nodes.push(h)
     return h
 }
 
 pub fn addEdge(g: &mut DepGraph, src: Handle<Node>, dst: Handle<Node>) {
-    let _ = arenaModify(&mut g.arena, src, (n: Node) => {
-        var updated = n
-        updated.deps.push(dst)
-        return updated
-    }
-    )
-    let _ = arenaModify(&mut g.arena, dst, (n: Node) => {
-        var updated = n
-        updated.dependents.push(src)
-        return updated
-    }
-    )
+    let _ = g.arena.modifyMut(src, (n: &mut Node) => { n.deps.push(dst) })
+    let _ = g.arena.modifyMut(dst, (n: &mut Node) => { n.dependents.push(src) })
 }
 
+// Reads the name by borrow: `with` hands the closure a `&Node` and returns only
+// what it computes, so the node's two Vecs are never copied.
 pub fn nodeName(g: &DepGraph, h: Handle<Node>): string {
-    match arenaGet(g.arena, h) {
-        Option.Some(n) => {
-            return n.name
-        }
-        Option.None => {
-            return "<invalid>"
-        }
-    }
+    return g.arena.with(h, (n: &Node): string => n.name.clone()) ?? "<invalid>"
 }
 
 // Kahn's algorithm
@@ -66,45 +44,24 @@ pub fn topoSort(g: &DepGraph): Vec<string> {
     let n = g.nodes.len
 
     var inDeg: Vec<i64> = Vec.new()
-    for i in 0..n {
-        match arenaGet(g.arena, g.nodes[i]) {
-            Option.Some(node) => {
-                inDeg.push(node.deps.len)
-            }
-            Option.None => {
-                inDeg.push(0)
-            }
-        }
+    for h in g.nodes {
+        inDeg.push(g.arena.with(h, (node: &Node): i64 => node.deps.len) ?? 0)
     }
 
     var queue: Vec<i64> = Vec.new()
-    for i in 0..n {
-        if inDeg[i] == 0 {
-            queue.push(i)
-        }
+    for i, d in inDeg {
+        if d == 0 { queue.push(i) }
     }
 
     var qi: i64 = 0
     while qi < queue.len {
-        let idx = queue[qi]
-        let h = g.nodes[idx]
+        let h = g.nodes[queue[qi]]
         order.push(nodeName(g, h))
-
-        match arenaGet(g.arena, h) {
-            Option.Some(node) => {
-                for d in 0..node.dependents.len {
-                    for j in 0..n {
-                        if g.nodes[j].index == node.dependents[d].index {
-                            inDeg[j] -= 1
-                            if inDeg[j] == 0 {
-                                queue.push(j)
-                            }
-                        }
-                    }
-                }
-            }
-            Option.None => {
-            }
+        let dependents = g.arena.with(h, (node: &Node): Vec<Handle<Node>> => node.dependents.clone()) ?? []
+        for dh in dependents {
+            let Some(j) = g.arena.with(dh, (d: &Node): i64 => d.id) else { continue }
+            inDeg[j] -= 1
+            if inDeg[j] == 0 { queue.push(j) }
         }
         qi += 1
     }
@@ -134,8 +91,7 @@ pub fn main(): i32 {
     addEdge(&mut g, app, db)
 
     print("build order:")
-    let order = topoSort(g)
-    for item in order {
+    for item in topoSort(g) {
         print("  ", item)
     }
 
