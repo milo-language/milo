@@ -6187,6 +6187,33 @@ export class Codegen {
       }
     }
 
+    // A `move` closure whose body moves a capture out can run once: the move zeroes
+    // the environment slot and clears its liveness flag, so a second call would read an
+    // empty capture and compute a wrong answer, quietly. The checker rejects the second
+    // call when it can see it (a local called twice); through a function parameter it
+    // cannot (`fn twice(f: move () => i64) { f() + f() }`), so the environment is asked
+    // here: a cleared flag on a consumed capture means this call is the second one.
+    if (isMove) {
+      for (let i = 0; i < captures.length; i++) {
+        const cap = captures[i];
+        const flagIdx = capFlagSlot(i);
+        if (!cap.consumedInClosure || flagIdx === null) continue;
+        this.needsDprintf = true;
+        this.needsExit = true;
+        const flag = this.nextTemp();
+        closureBody.push(`  ${flag} = load i1, ptr %${cap.name}.aliveflag`);
+        const okLabel = this.nextLabel("once.ok");
+        const spentLabel = this.nextLabel("once.spent");
+        closureBody.push(`  br i1 ${flag}, label %${okLabel}, label %${spentLabel}`);
+        closureBody.push(`${spentLabel}:`);
+        const fmtStr = this.addString(`closure called again after it moved '${cap.name}' out (${this.panicAt(expr.span)}): a move closure that gives a capture away can run once\n`);
+        this.emitFdPrintf(closureBody, 2, fmtStr.label, "");
+        this.panicAbort(closureBody);
+        closureBody.push(`  unreachable`);
+        closureBody.push(`${okLabel}:`);
+      }
+    }
+
     // set up params
     for (const p of expr.params) {
       const isRefParam = p.type.tag === "ref";

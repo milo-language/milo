@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-21 (destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-21 (once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -2723,6 +2723,16 @@ fn compose(f: (i32) => i32, g: (i32) => i32): (i32) => i32 {
 }
 let add5ThenDouble = compose(makeMultiplier(2), makeAdder(5))
 ```
+
+#### A closure that gives a capture away runs once
+
+A `move` closure whose body moves a capture out (hands it to a callee by value, returns
+it) empties the environment slot it came from, so it can run once. Calling such a closure
+twice where the checker can see both calls is a compile error. Through a function
+parameter the checker cannot see it (`fn twice(f: move () => i64): i64 { return f() + f() }`),
+so the second call aborts at runtime, naming the capture, instead of computing with an
+empty one. Once-ness is not part of the closure's type; a body that only reads its
+captures may be called any number of times.
 
 ### Closures in Structs
 
