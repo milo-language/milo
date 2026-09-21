@@ -1,0 +1,21 @@
+// While a payload view from a match arm is alive, the subject it points into cannot be
+// reassigned: `n = Node.Empty` would drop the string `s` still views. This held a
+// use-after-free for `&` views too (ASan: global-buffer-overflow on the print).
+// @error: cannot assign to 'n' because it is borrowed
+enum Node { Pair(string, i64), Empty }
+
+fn clobber(n: &mut Node): void {
+    match n {
+        Node.Pair(s, k) => {
+            n = Node.Empty
+            print(s)
+        }
+        Node.Empty => {}
+    }
+}
+
+fn main(): i32 {
+    var x = Node.Pair("a", 1)
+    clobber(&mut x)
+    return 0
+}

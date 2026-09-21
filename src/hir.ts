@@ -50,7 +50,7 @@ export type HIRExpr =
   | { kind: "HeapCreate"; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HeapDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "PtrDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "MatchExpr"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; subjectIsRef?: boolean; type: TypeKind; span?: Span }
+  | { kind: "MatchExpr"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; subjectIsRef?: boolean; subjectIsMut?: boolean; type: TypeKind; span?: Span }
   | { kind: "VecNew"; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecWithCapacity"; capacity: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecFilled"; count: HIRExpr; value: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
@@ -156,7 +156,7 @@ export type HIRStmt =
   | { kind: "Break"; span?: Span }
   | { kind: "Continue"; span?: Span }
   | { kind: "ExprStmt"; expr: HIRExpr; span?: Span }
-  | { kind: "Match"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; subjectIsRef?: boolean; span?: Span }
+  | { kind: "Match"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; subjectIsRef?: boolean; subjectIsMut?: boolean; span?: Span }
   | { kind: "UnsafeBlock"; body: HIRStmt[]; span?: Span }
   // `let g = p else { … }` over a `?&mut T` extern parameter. `ptr` is the incoming
   // pointer (the parameter's real ABI type), `elseBody` runs when it is null and always

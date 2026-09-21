@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-20 (@copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-21 (&mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -1103,6 +1103,39 @@ match s {
     _ => { print("something else") }
 }
 ```
+
+#### Payloads through a reference
+
+Matching an owned enum moves its payloads into the bindings. Matching through `&Enum`
+(a reference parameter, or a place such as `v[i]` or `s.field`) borrows instead: a
+non-Copy payload binds as a `&T` view into the subject, a Copy payload by value, and the
+subject stays intact. Through `&mut Enum` every payload binds as a `&mut T` view, so an
+arm updates the payload in place with plain assignment, the same way a `&mut T`
+parameter is written:
+
+```milo
+enum Node {
+    Leaf(i64),
+    Pair(string, i64),
+}
+
+fn bump(n: &mut Node): void {
+    match n {
+        Node.Leaf(v) => { v = v + 1 }
+        Node.Pair(s, k) => { s.pushStr("!"); k = k * 2 }
+    }
+}
+
+fn main() {
+    var n = Node.Pair("hi", 5)
+    bump(&mut n)
+}
+```
+
+While a view binding is alive the subject is borrowed: assigning the subject inside
+the arm is an error, since that would drop the payload the view points into. A binding
+of an immutable subject cannot be assigned; the error says so and names the two ways
+that work (a `&mut` subject, or rebuilding the variant).
 
 ### Generic Enums
 

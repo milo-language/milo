@@ -1,0 +1,61 @@
+// A `&mut` enum subject lends its payloads as `&mut` views: an arm writes `v = v + 1` and
+// `s.pushStr(..)` in place, on a local, a Vec element and through if-let. Before this the
+// only in-place update was replace, rebuild the variant, assign back (backlog #41).
+enum Node {
+    Leaf(i64), Pair(string, i64), Empty
+}
+
+fn bump(n: &mut Node): void {
+    match n {
+        Node.Leaf(v) => {
+            v = v + 1
+        }
+        Node.Pair(s, k) => {
+            s.pushStr("!")
+            k = k * 2
+        }
+        Node.Empty => {
+        }
+    }
+}
+
+fn triple(n: &mut Node): void {
+    if let Node.Leaf(x) = n {
+        x = x * 3
+    }
+}
+
+fn show(n: &Node): string {
+    match n {
+        Node.Leaf(v) => {
+            return $"Leaf({v})"
+        }
+        Node.Pair(s, k) => {
+            return $"Pair({s}, {k})"
+        }
+        Node.Empty => {
+            return "Empty"
+        }
+    }
+}
+
+fn main(): i32 {
+    var a = Node.Leaf(1)
+    var b = Node.Pair("hi", 5)
+    bump(&mut a)
+    bump(&mut a)
+    bump(&mut b)
+    print(show(a))
+    print(show(b))
+    var v: Vec<Node> = [Node.Leaf(10), Node.Empty]
+    bump(&mut v[0])
+    print(show(v[0]))
+    var w = Node.Leaf(7)
+    triple(&mut w)
+    print(show(w))
+    return 0
+}
+// @expect: Leaf(3)
+// @expect: Pair(hi!, 10)
+// @expect: Leaf(11)
+// @expect: Leaf(21)

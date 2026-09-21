@@ -1,19 +1,16 @@
-// @error: is bound by a pattern, and no spelling of the pattern makes it mutable
+// @error: is bound by a pattern of an immutable subject
 //
-// Assigning to a match binding is rejected, which is correct. The DIAGNOSTIC was the
-// problem: it offered the generic "declare with 'var' instead of 'let'" advice, and
-// there is no `let` here to change. `v` is a pattern binding, no spelling of the pattern
-// makes it mutable, and the reader was sent to fix something that does not exist.
-//
-// The hint now names the move that works, which is O(1) and clones nothing: rebuild the
-// variant and assign it to the matched variable. See backlog Tier 1 #24, whose expensive
-// half (binding a payload as `&mut` so it can be mutated in place) is still open.
+// Assigning to a match binding of a `&Node` subject is rejected. The hint names the two
+// ways that work: match through a `&mut` subject (the payload then binds as a `&mut`
+// view, tests/fixtures/matchMutPayload.milo) or rebuild the variant. It must not offer
+// the generic "declare with 'var'" advice: `v` is a pattern binding and there is no
+// `let` to change.
 enum Node {
     Leaf(i64),
     Branch(string),
 }
 
-fn bump(n: &mut Node): void {
+fn bump(n: &Node): void {
     match n {
         Node.Leaf(v) => { v = v + 1 }
         Node.Branch(s) => { print("branch ", s) }
@@ -22,5 +19,5 @@ fn bump(n: &mut Node): void {
 
 fn main() {
     var n = Node.Leaf(1)
-    bump(&mut n)
+    bump(n)
 }

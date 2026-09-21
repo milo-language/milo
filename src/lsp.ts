@@ -1633,13 +1633,6 @@ function nameRangeOnLine(source: string, line: number, name: string): object {
   return { start: { line, character: col }, end: { line, character: col + name.length } };
 }
 
-function posToOffset(source: string, line: number, character: number): number {
-  const lines = source.split("\n");
-  let off = 0;
-  for (let i = 0; i < line && i < lines.length; i++) off += lines[i].length + 1;
-  return off + character;
-}
-
 function offsetToPos(source: string, offset: number): { line: number; character: number } {
   let line = 0, col = 0;
   for (let i = 0; i < offset && i < source.length; i++) {

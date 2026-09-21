@@ -375,6 +375,9 @@ export interface CheckResult {
   nullRefUnwraps: Map<import("./ast").LetElseStmt, { inner: TypeKind; mutable: boolean }>;
   autoBorrowed: Map<Expr, { mutable: boolean }>;
   matchSubjectRef: Set<Expr>;
+  // Subjects that are `&mut Enum`: their payload bindings are `&mut` views into the
+  // payload, so an arm can write `v = v + 1` in place (lower emits subjectIsMut).
+  matchSubjectMut: Set<Expr>;
   rewrittenCalls: Map<Expr, string>;
   rewrittenEnums: Map<Expr, string>;
   staticCalls: Map<Expr, string>;
@@ -571,6 +574,7 @@ export class TypeChecker {
   // once per instantiation, so without this one bare argument yields N copies of the error.
   private implicitMutSeen = new Set<string>();
   private matchSubjectRef = new Set<Expr>();
+  private matchSubjectMut = new Set<Expr>();
   private rewrittenCalls = new Map<Expr, string>();
   private rewrittenEnums = new Map<Expr, string>();
   private staticCalls = new Map<Expr, string>();
@@ -2746,6 +2750,7 @@ export class TypeChecker {
       nullRefUnwraps: this.nullRefUnwraps,
       autoBorrowed: this.autoBorrowed,
       matchSubjectRef: this.matchSubjectRef,
+      matchSubjectMut: this.matchSubjectMut,
       rewrittenCalls: this.rewrittenCalls,
       rewrittenEnums: this.rewrittenEnums,
       staticCalls: this.staticCalls,
@@ -5916,7 +5921,7 @@ export class TypeChecker {
           const tgtInfo = stmt.target.kind === "Ident" ? this.lookup(stmt.target.name) : null;
           this.error(`cannot assign to immutable variable '${this.describeExpr(stmt.target)}'`, sp,
             tgtInfo?.patternBound
-              ? `'${this.describeExpr(stmt.target)}' is bound by a pattern, and no spelling of the pattern makes it mutable. Assign a rebuilt value to the matched variable instead (e.g. 'n = Node.Leaf(v + 1)')`
+              ? `'${this.describeExpr(stmt.target)}' is bound by a pattern of an immutable subject. Match through a '&mut' subject to write the payload in place, or assign a rebuilt value to the matched variable (e.g. 'n = Node.Leaf(v + 1)')`
               : `declare with 'var' instead of 'let' to make it mutable`);
           break;
         }
@@ -6360,7 +6365,7 @@ export class TypeChecker {
       }
       case "IfLetStmt": {
         const rawSubjType = this.checkExpr(stmt.subject);
-        const { subjType, subjBorrows } = this.enumSubjectBorrow(stmt.subject, rawSubjType, [stmt.pattern]);
+        const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(stmt.subject, rawSubjType, [stmt.pattern]);
         this.bindElidedPattern(stmt.pattern, subjType);
         if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
           this.error(`if let subject must be an enum, got ${this.show(subjType)}`, sp);
@@ -6380,12 +6385,13 @@ export class TypeChecker {
           }
           this.pushScope();
           if (variant) {
-            const bindTypes = variant.fields.slice(0, stmt.pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows));
+            const bindTypes = variant.fields.slice(0, stmt.pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows, subjIsMut));
             this.patternBindingTypes.set(stmt.pattern, bindTypes);
+            const freezes = this.freezeSubjectFor(stmt.subject, bindTypes);
             for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
               const bindSpan = stmt.pattern.bindingSpans?.[i] ?? stmt.pattern.span;
-              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: false, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
-                copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.subject)) });
+              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
+                copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
             }
           }
           // Same arm-entry consumption as match: a destructuring then-branch
@@ -6423,7 +6429,7 @@ export class TypeChecker {
       case "LetElseStmt": {
         if (stmt.bindName !== undefined) { this.checkNullRefUnwrap(stmt, stmt.bindName, fnRetType, sp); break; }
         const rawSubjType = this.checkExpr(stmt.value);
-        const { subjType, subjBorrows } = this.enumSubjectBorrow(stmt.value, rawSubjType, [stmt.pattern]);
+        const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(stmt.value, rawSubjType, [stmt.pattern]);
         this.bindElidedPattern(stmt.pattern, subjType);
         if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
           this.error(`let-else value must be an enum (Option/Result/…), got ${this.show(subjType)}`, sp);
@@ -6452,13 +6458,14 @@ export class TypeChecker {
             this.error(`variant '${stmt.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${stmt.pattern.bindings.length} bindings`, ps);
           }
           if (variant) {
-            const bindTypes = variant.fields.slice(0, stmt.pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows));
+            const bindTypes = variant.fields.slice(0, stmt.pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows, subjIsMut));
             this.patternBindingTypes.set(stmt.pattern, bindTypes);
+            const freezes = this.freezeSubjectFor(stmt.value, bindTypes);
             // Bindings escape into the CURRENT scope (the whole point vs if-let).
             for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
               const bindSpan = stmt.pattern.bindingSpans?.[i] ?? stmt.pattern.span;
-              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: false, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
-                copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.value)) });
+              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
+                copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.value)), ...(i === 0 && freezes.length > 0 && { freezes }) });
             }
           }
         }
@@ -11382,21 +11389,23 @@ export class TypeChecker {
   // so its non-Copy payload must bind as a borrow, not a move. Resolves the enum
   // type behind the ref and registers the subject in matchSubjectRef when it
   // borrows (lower reads that to emit subjectIsRef).
-  private enumSubjectBorrow(subject: Expr, rawSubjType: TypeKind, patterns: (Pattern | undefined)[] = []): { subjType: TypeKind; subjBorrows: boolean } {
+  private enumSubjectBorrow(subject: Expr, rawSubjType: TypeKind, patterns: (Pattern | undefined)[] = []): { subjType: TypeKind; subjBorrows: boolean; subjIsMut: boolean } {
     let subjIsRef = rawSubjType.tag === "ref" && rawSubjType.inner.tag === "enum";
     let subjType: TypeKind = subjIsRef && rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType;
+    let subjIsMut = subjIsRef && rawSubjType.tag === "ref" && rawSubjType.mutable;
     // ident-ok: asks whether the subject BINDING was declared `&E`, a property of the declaration
     if (!subjIsRef && subject.kind === "Ident") {
       const info = this.lookup(subject.name);
-      if (info && info.type.tag === "ref" && info.type.inner.tag === "enum") { subjIsRef = true; subjType = info.type.inner; }
+      if (info && info.type.tag === "ref" && info.type.inner.tag === "enum") { subjIsRef = true; subjIsMut = info.type.mutable; subjType = info.type.inner; }
     }
+    if (subjIsMut) this.matchSubjectMut.add(subject);
     const subjIsPlace = !subjIsRef && subjType.tag === "enum" &&
       (subject.kind === "FieldAccess" || subject.kind === "IndexAccess" ||
        (subject.kind === "UnaryOp" && subject.op === "*"));
     const subjBorrows = subjIsRef || subjIsPlace ||
       (!subjIsRef && this.ownedInspectOnly(subject, subjType, patterns));
     if (subjBorrows) this.matchSubjectRef.add(subject);
-    return { subjType, subjBorrows };
+    return { subjType, subjBorrows, subjIsMut };
   }
 
   // A borrowed subject's non-Copy payload binds as `&T` (a view into the still-
@@ -11519,11 +11528,23 @@ export class TypeChecker {
     return this.rootNameOf(e) !== null;
   }
 
-  private payloadBindType(bt: TypeKind, subjBorrows: boolean): TypeKind {
+  // Through a `&mut` subject every payload binds as a `&mut` view (see checkMatchLike).
+  private payloadBindType(bt: TypeKind, subjBorrows: boolean, subjIsMut = false): TypeKind {
+    if (subjIsMut) return { tag: "ref", inner: bt, mutable: true };
     if (subjBorrows && !this.isCopyType(bt)) {
       return { tag: "ref", inner: bt, mutable: false };
     }
     return bt;
+  }
+
+  // A ref binding into the subject (a `&`/`&mut` payload view) keeps the subject's root
+  // frozen for as long as the binding lives: assigning the subject would drop the
+  // payload the view points into (`n = Node.Empty; print(s)` read freed memory). The
+  // freeze rides on the binding's `freezes`, which the scope pop releases.
+  private freezeSubjectFor(subject: Expr, bindTypes: TypeKind[]): VarInfo[] {
+    if (!bindTypes.some(t => t.tag === "ref")) return [];
+    const root = this.freezeRootOf(subject);
+    return root ? [root] : [];
   }
 
   // Shared checking for `match` in both statement and expression position:
@@ -11621,14 +11642,20 @@ export class TypeChecker {
     // Reading a ref Ident auto-derefs, so also consult its declared type.
     let subjIsRef = rawSubjType.tag === "ref" && rawSubjType.inner.tag === "enum";
     let subjType = subjIsRef && rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType;
+    // A `&mut Enum` subject lends its payloads mutably: bindings are `&mut` views and
+    // `Node.Leaf(v) => { v = v + 1 }` writes the payload in place. Before this the only
+    // in-place update was replace-rebuild-assign with a sentinel variant.
+    let subjIsMut = subjIsRef && rawSubjType.tag === "ref" && rawSubjType.mutable;
     // ident-ok: asks whether the subject BINDING was declared `&E`, a property of the declaration
     if (!subjIsRef && subject.kind === "Ident") {
       const info = this.lookup(subject.name);
       if (info && info.type.tag === "ref" && info.type.inner.tag === "enum") {
         subjIsRef = true;
+        subjIsMut = info.type.mutable;
         subjType = info.type.inner;
       }
     }
+    if (subjIsMut) this.matchSubjectMut.add(subject);
     // Matching on a place (s.field, v[i], *heapBox) also borrows: the
     // container keeps ownership, so consuming the subject would zero data
     // the checker cannot track (a second `match v[i].f` read a zeroed enum;
@@ -11749,14 +11776,21 @@ export class TypeChecker {
               let bt = variant.fields[i];
               // Ref- or place-match: a non-Copy payload binds as a borrow
               // (`&T`) — a view into the still-owned subject, so it can't be
-              // moved out or dropped. Copy payloads bind by value.
-              if (subjBorrows && !this.isCopyType(bt)) {
+              // moved out or dropped. Copy payloads bind by value, except through a
+              // `&mut` subject, where every payload is a `&mut` view so the arm can
+              // assign to it (the same shape a `&mut T` parameter has).
+              if (subjIsMut) {
+                bt = { tag: "ref", inner: bt, mutable: true };
+              } else if (subjBorrows && !this.isCopyType(bt)) {
                 bt = { tag: "ref", inner: bt, mutable: false };
               }
               bindTypes.push(bt);
+            }
+            const freezes = this.freezeSubjectFor(subject, bindTypes);
+            for (let i = 0; i < bindTypes.length; i++) {
               const bindSpan = arm.pattern.bindingSpans?.[i] ?? arm.pattern.span;
-              this.declare(arm.pattern.bindings[i], { type: bt, mutable: false, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
-                copyBind: this.isCopyBind(bt, this.isPlaceExpr(subject)) });
+              this.declare(arm.pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
+                copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
             }
             this.patternBindingTypes.set(arm.pattern, bindTypes);
           }

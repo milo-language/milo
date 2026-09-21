@@ -4342,7 +4342,7 @@ export class Codegen {
       const armDropStart = this.droppableLocals.length;
       if (arm.pattern.kind === "EnumPattern" && arm.pattern.bindings.length > 0) {
         const variant = must(layout.variants, arm.pattern.variant, "variants");
-        this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern, !!stmt.subjectIsRef);
+        this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern, !!stmt.subjectIsRef, !!stmt.subjectIsMut);
       }
       const armTerminated = this.emitMatchArmBody(lines, arm.body, resultSlot);
       // Drop the arm's own bindings when it falls through: the alloca is reused
@@ -4393,6 +4393,7 @@ export class Codegen {
     variant: { tag: number; fieldTypes: string[] },
     pattern: HIRPattern & { kind: "EnumPattern" },
     subjectIsRef: boolean,
+    subjectIsMut = false,
   ) {
     if (pattern.bindings.length === 0) return;
     const payloadPtr = this.nextTemp();
@@ -4406,12 +4407,14 @@ export class Codegen {
       const uid = this.scopeCounter++;
       // Ref-match of a non-Copy payload: bind a BORROW — the local holds a
       // pointer into the still-owned subject. No load, no zeroing, no drop, so
-      // there is no double-free with the subject's real owner.
-      if (subjectIsRef && this.needsDropCg(fieldKind)) {
+      // there is no double-free with the subject's real owner. Through a `&mut`
+      // subject every payload binds this way, as a `&mut` view, so an assignment
+      // to the binding stores into the payload (the checker types it `&mut T`).
+      if (subjectIsMut || (subjectIsRef && this.needsDropCg(fieldKind))) {
         const addr = `%${name}.${uid}.addr`;
         lines.push(`  ${addr} = alloca ptr`);
         lines.push(`  store ptr ${fieldPtr}, ptr ${addr}`);
-        this.locals.set(name, { type: ty, typeKind: { tag: "ref", inner: fieldKind, mutable: false }, mutable: false, isRef: true, addr });
+        this.locals.set(name, { type: ty, typeKind: { tag: "ref", inner: fieldKind, mutable: subjectIsMut }, mutable: subjectIsMut, isRef: true, addr });
         return;
       }
       const val = this.nextTemp();
@@ -6498,6 +6501,7 @@ export class Codegen {
       arms: expr.arms,
       enumName: expr.enumName,
       subjectIsRef: expr.subjectIsRef,
+      subjectIsMut: expr.subjectIsMut,
       span: expr.span,
     };
     const [ml, allTerminated] = this.genMatch(asStmt, { addr: resultAddr, ty: resultTy });

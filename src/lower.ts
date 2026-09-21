@@ -335,6 +335,7 @@ class LowerCtx {
       case "IfLetStmt": {
         let subjType = this.typeOf(stmt.subject);
         const subjectIsRef = this.c.matchSubjectRef.has(stmt.subject);
+        const subjectIsMut = this.c.matchSubjectMut.has(stmt.subject);
         if (subjType?.tag === "ref" && subjType.inner.tag === "enum") subjType = subjType.inner;
         const enumName = subjType?.tag === "enum" ? subjType.name : "";
         const enumInfo = this.c.enums.get(enumName);
@@ -355,7 +356,7 @@ class LowerCtx {
             body: [],
           });
         }
-        return { kind: "Match", subject: this.lowerExpr(stmt.subject), arms, enumName, subjectIsRef, span: stmt.span };
+        return { kind: "Match", subject: this.lowerExpr(stmt.subject), arms, enumName, subjectIsRef, subjectIsMut, span: stmt.span };
       }
       case "LetElseStmt": {
         // `let g = p else { E }` over a `?&mut T` parameter: no enum, no match, just the
@@ -409,6 +410,7 @@ class LowerCtx {
         // Matching on a borrowed enum (`&Enum`): the checker already decided this
         // (reading a ref Ident auto-derefs, hiding the ref from typeOf here).
         const subjectIsRef = this.c.matchSubjectRef.has(stmt.subject);
+        const subjectIsMut = this.c.matchSubjectMut.has(stmt.subject);
         if (subjType?.tag === "ref" && subjType.inner.tag === "enum") subjType = subjType.inner;
         const enumName = subjType?.tag === "enum" ? subjType.name : "";
         const enumInfo = this.c.enums.get(enumName);
@@ -421,6 +423,7 @@ class LowerCtx {
           })),
           enumName,
           subjectIsRef,
+          subjectIsMut,
           span: stmt.span,
         };
       }
@@ -1530,6 +1533,7 @@ class LowerCtx {
         const fnRetType = this.currentRetType;
         let subjType = this.typeOf(expr.subject);
         const subjectIsRef = this.c.matchSubjectRef.has(expr.subject);
+        const subjectIsMut = this.c.matchSubjectMut.has(expr.subject);
         if (subjType?.tag === "ref" && subjType.inner.tag === "enum") subjType = subjType.inner;
         const enumName = subjType?.tag === "enum" ? subjType.name : "";
         const enumInfo = this.c.enums.get(enumName);
@@ -1542,6 +1546,7 @@ class LowerCtx {
           })),
           enumName,
           subjectIsRef,
+          subjectIsMut,
           type,
           span: expr.span,
         };

@@ -777,7 +777,7 @@ function windowsIncludeFlags(): string {
 // Compile one unit to an object through the cache: a hit copies the object in, a miss
 // runs `compileCmd` and stores the result. Returns the shell command to run, or null on
 // a hit. Reporting is per unit so MILO_VERBOSE shows exactly what the cache bought.
-function objCompileCommand(ccId: string, ccFlags: string, ir: string, ll: string, obj: string, compileCmd: string, pending: { key: string; obj: string }[]): string | null {
+function objCompileCommand(ccId: string, ccFlags: string, ir: string, obj: string, compileCmd: string, pending: { key: string; obj: string }[]): string | null {
   if (!objCacheEnabled()) return compileCmd;
   const key = objCacheKey(ir, ccId, ccFlags);
   if (objCacheFetch(key, obj)) {
@@ -812,7 +812,7 @@ function compileSplit(cc: string, ccId: string, llFile: string, ccFlags: string,
     // `wait` reports only the last job's status, so a failed unit would go unnoticed and
     // resurface as a confusing undefined-symbol error at link time.
     const pending: { key: string; obj: string }[] = [];
-    const jobs = lls.map((f, i) => objCompileCommand(ccId, ccFlags, mods[i]!, f, objs[i]!,
+    const jobs = lls.map((f, i) => objCompileCommand(ccId, ccFlags, mods[i]!, objs[i]!,
       `${cc} ${ccFlags} -c ${f} -o ${objs[i]} -Wno-override-module & pids="$pids $!"`, pending))
       .filter((j): j is string => j !== null).join("\n");
     const script = `pids=""\n${jobs}\nfor p in $pids; do wait $p || exit 1; done`;
@@ -888,10 +888,12 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
       // Object first, then link, so an unchanged program (a fixture on the suite's
       // next run, `milo run` of the same file) takes its object from the cache and
       // skips clang; the link of one object is milliseconds.
-      const obj = `${outFile}.o`;
+      // Next to the IR in the temp dir, not next to the output: `-o /dev/null` is a
+      // real build (the error fixtures use it) and `/dev/null.o` cannot be created.
+      const obj = llFile.replace(/\.ll$/, ".o");
       const pending: { key: string; obj: string }[] = [];
       try {
-        const compile = objCompileCommand(tc.id, ccFlags, readFileSync(llFile, "utf-8"), llFile, obj,
+        const compile = objCompileCommand(tc.id, ccFlags, readFileSync(llFile, "utf-8"), obj,
           `${tc.path}${ccFlags} -c ${llFile} -o ${obj} -Wno-override-module`, pending);
         if (compile !== null) {
           execSync(compile, { stdio: ["pipe", "pipe", "pipe"] });
