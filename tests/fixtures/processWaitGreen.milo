@@ -1,0 +1,37 @@
+// Process.wait() inside a green task parks only that task: the ticker's six 40 ms
+// sleeps (240 ms) finish before the child's 600 ms sleep does. Before 2026-09-21 the
+// blocking waitpid wedged the scheduler thread and the ticker printed second.
+// @skip-os: win32
+from "std/process" import {
+    Command
+}
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/time" import {
+    sleepMs
+}
+
+fn main(): i32 {
+    var ticks: i64 = 0
+    let t = Task.spawn(move(): void => {
+        let cmd = Command.new("sh").arg("-c").arg("sleep 0.6")
+        let child = cmd.spawn()!
+        let status = child.wait()!
+        print($"child status {status}")
+    }
+    )
+    let ticker = Task.spawn(move(): void => {
+        var i = 0
+        while i < 6 {
+            sleepMs(40)
+            i = i + 1
+        }
+        print("ticker finished 6 ticks")
+    }
+    )
+    schedulerRunToCompletion()
+    return 0
+}
+// @expect: ticker finished 6 ticks
+// @expect: child status 0

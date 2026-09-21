@@ -87,7 +87,8 @@ Only valid when stdout is a pipe (the default).
 fn Child.wait(self: &Child): Result<i32>
 ```
 
-_Undocumented._
+Block until the child exits and return its status. Inside a green task only this
+task parks (see waitpidGreen); the rest of the scheduler keeps running.
 
 ### `Child.writeStdin`
 
@@ -243,7 +244,8 @@ _Undocumented._
 fn Process.wait(self: &Process): Result<i32>
 ```
 
-_Undocumented._
+Block until the child exits and return its status. Inside a green task only this
+task parks (see waitpidGreen); the rest of the scheduler keeps running.
 
 ### `run`
 

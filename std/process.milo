@@ -32,6 +32,12 @@ from "std/os" import {
     system,
     waitpid
 }
+from "std/time" import {
+    sleepMs
+}
+from "std/runtime" import {
+    schedulerCurrent
+}
 from "std/io" import {
     fdChannel
 }
@@ -59,6 +65,32 @@ pub fn run(cmd: &string): Result<i32> {
 // ── Process with lifecycle management ──
 
 // Handle to a spawned child process.
+
+// `waitpid` that does not wedge the scheduler. Inside a green task a blocking
+// `waitpid` parks the whole thread and every other task with it, so there it polls
+// with WNOHANG and sleeps green between polls, 1 ms doubling to 16 ms: a child that
+// exits is reaped within that bound, and the other tasks keep running meanwhile. On
+// the main context with no scheduler it is the one blocking call it always was.
+// Polling rather than a SIGCHLD self-pipe because a signal disposition is
+// process-wide: installing one here would replace a handler the program owns.
+fn waitpidGreen(pid: i32, statusBuf: &mut [u8; 4]): i32 {
+    if schedulerCurrent() as i64 == 0 {
+        return waitpid(pid, statusBuf, 0)
+    }
+    var delay: i64 = 1
+    while true {
+        let r = waitpid(pid, statusBuf, 1)
+        if r != 0 {
+            return r
+        }
+        sleepMs(delay)
+        if delay < 16 {
+            delay = delay * 2
+        }
+    }
+    return -1
+}
+
 pub struct Process {
     pid: i32,
 }
@@ -79,9 +111,11 @@ impl Process {
         )
     }
 
+    // Block until the child exits and return its status. Inside a green task only this
+    // task parks (see waitpidGreen); the rest of the scheduler keeps running.
     fn wait(self: &Self): Result<i32> {
         var statusBuf: [u8; 4] = [0; 4]
-        let r = waitpid(self.pid, statusBuf, 0)
+        let r = waitpidGreen(self.pid, &mut statusBuf)
         if r < 0 {
             return Result.Err("waitpid() failed")
         }
@@ -190,9 +224,11 @@ impl Child {
         }
     }
 
+    // Block until the child exits and return its status. Inside a green task only this
+    // task parks (see waitpidGreen); the rest of the scheduler keeps running.
     fn wait(self: &Self): Result<i32> {
         var statusBuf: [u8; 4] = [0; 4]
-        let r = waitpid(self.pid, statusBuf, 0)
+        let r = waitpidGreen(self.pid, &mut statusBuf)
         if r < 0 {
             return Result.Err("waitpid() failed")
         }
