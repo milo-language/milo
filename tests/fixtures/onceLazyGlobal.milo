@@ -20,8 +20,7 @@ fn ensureTable(): void {
         gTable.push(10)
         gTable.push(20)
         gTable.push(30)
-    }
-    )
+    })
 }
 
 pub fn main(): i32 {

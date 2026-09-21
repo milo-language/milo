@@ -13,8 +13,7 @@ pub fn main(): i32 {
     let t = Promise<i64>.blocking(move(): i64 => {
         print("MSG: ", msg)
         return 0
-    }
-    )
+    })
 
     t.await()!
     print("done")

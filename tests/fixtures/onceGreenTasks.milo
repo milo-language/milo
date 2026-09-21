@@ -29,15 +29,13 @@ pub fn main(): i32 {
                 schedulerYield()
                 schedulerYield()
                 gValue = 42
-            }
-            )
+            })
             // every waiter must observe the finished value, not a half-built one
             if gValue == 42 {
                 s.add(1)
             }
             w.done()
-        }
-        )
+        })
         i = i + 1
     }
     wg.wait()

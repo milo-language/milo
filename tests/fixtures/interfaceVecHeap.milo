@@ -40,16 +40,13 @@ pub fn main(): i32 {
     var shapes: Vec<Heap<Shape>> = Vec.new()
     shapes.push(Heap(Circle {
         radius: 5.0
-    }
-    ))
+    }))
     shapes.push(Heap(Square {
         side: 4.0
-    }
-    ))
+    }))
     shapes.push(Heap(Triangle {
         base: 10.0, height: 5.6549
-    }
-    ))
+    }))
     for s in shapes {
         print(s.area())
     }

@@ -41,8 +41,7 @@ pub fn main(): i32 {
     let p = Promise<i64>.blocking(move(): i64 => {
         print("worker done")
         return held.id
-    }
-    )
+    })
     let got = p.await()!
     print("await returned " + got.toString())
     return 0

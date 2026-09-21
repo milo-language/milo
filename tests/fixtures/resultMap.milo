@@ -53,14 +53,12 @@ pub fn main() {
     print(ok3.map((n) => {
         print("mapped")
         return n * 10
-    }
-    ).unwrapOr(0))
+    }).unwrapOr(0))
     // @expect: 0
     print(err3.map((n) => {
         print("mapped")
         return n * 10
-    }
-    ).unwrapOr(0))
+    }).unwrapOr(0))
 
     // Closures capture.
     let base = 100

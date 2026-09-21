@@ -49,15 +49,13 @@ pub fn main(): i32 {
     greeting.pushStr("hello")
     forwardTwice(move(n: i64): void => {
         print(greeting)
-    }
-    )
+    })
 
     var short = String.withCapacity(4)
     short.pushStr("hi")
     let h = hold(move(n: i64): void => {
         print(short)
-    }
-    )
+    })
     h.f(1)
 
     var body = String.withCapacity(8)
@@ -71,7 +69,6 @@ pub fn main(): i32 {
     other.pushStr("count")
     print(ownsIt(move(): i64 => {
         return other.len
-    }
-    ))
+    }))
     return 0
 }

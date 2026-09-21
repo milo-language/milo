@@ -35,8 +35,7 @@ pub fn mangleTypeName(t: &TypeKind): string {
         TypeKind.TInt(bits, signed, _, _) => {
             if signed {
                 return "i" + bits.toString()
-            } 
-            else {
+            } else {
                 return "u" + bits.toString()
             }
         }
@@ -316,8 +315,7 @@ pub fn substExpr(e: &ExprNode, tps: &Vec<string>, tas: &Vec<TypeKind>): Heap<Exp
             for i in 0..fields.len {
                 fs.push(StructLitField {
                     name: fields[i].name.clone(), value: substExpr(*fields[i].value, tps, tas)
-                }
-                )
+                })
             }
             return mkExpr(Expr.StructLit(litName, fs), cloneSpan(e.span))
         }
@@ -362,8 +360,7 @@ pub fn substExpr(e: &ExprNode, tps: &Vec<string>, tas: &Vec<TypeKind>): Heap<Exp
             for i in 0..params.len {
                 ps.push(Param {
                     name: params[i].name.clone(), ty: substituteMiloType(params[i].ty, tps, tas)
-                }
-                )
+                })
             }
             return mkExpr(Expr.Closure(ps, substOptType(retType, tps, tas), substStmts(body, tps, tas), isMove), cloneSpan(e.span))
         }
@@ -381,8 +378,7 @@ pub fn substExpr(e: &ExprNode, tps: &Vec<string>, tas: &Vec<TypeKind>): Heap<Exp
             for i in 0..arms.len {
                 as2.push(MatchArm {
                     pattern: arms[i].pattern.clone(), body: substStmts(arms[i].body, tps, tas)
-                }
-                )
+                })
             }
             return mkExpr(Expr.MatchExpr(substExpr(*subject, tps, tas), as2), cloneSpan(e.span))
         }
@@ -409,8 +405,7 @@ pub fn substExpr(e: &ExprNode, tps: &Vec<string>, tas: &Vec<TypeKind>): Heap<Exp
             for i in 0..fields.len {
                 fs.push(StructLitField {
                     name: fields[i].name.clone(), value: substExpr(*fields[i].value, tps, tas)
-                }
-                )
+                })
             }
             return mkExpr(Expr.JsonObject(fs), cloneSpan(e.span))
         }
@@ -471,8 +466,7 @@ pub fn substStmt(s: &Stmt, tps: &Vec<string>, tas: &Vec<TypeKind>): Stmt {
             for i in 0..arms.len {
                 as2.push(MatchArm {
                     pattern: arms[i].pattern.clone(), body: substStmts(arms[i].body, tps, tas)
-                }
-                )
+                })
             }
             return Stmt.MatchStmt(substExpr(*subject, tps, tas), as2, cloneSpan(span))
         }
@@ -526,8 +520,7 @@ pub fn instantiateImpl(ck: &mut Checker, gi: &ImplDecl, mangled: &string, typeAr
             mParams.push(Param {
                 name: gi.methods[mi].params[pi].name.clone(),
                 ty: substituteMiloType(gi.methods[mi].params[pi].ty, tps, tas2),
-            }
-            )
+            })
         }
         monoMethods.push(Function {
             name: gi.methods[mi].name.clone(),
@@ -538,8 +531,7 @@ pub fn instantiateImpl(ck: &mut Checker, gi: &ImplDecl, mangled: &string, typeAr
             isExtern: false,
             isVariadic: false,
             attributes: gi.methods[mi].attributes.clone(),
-        }
-        )
+        })
     }
     var cTraitName: Option<string> = Option.None
     match gi.traitName {
@@ -622,14 +614,12 @@ pub fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgsIn: &Vec<Ty
         }
         variants.insert(vname.clone(), VariantInfo {
             tag: vinfo.tag, fields: fields
-        }
-        )
+        })
     }
 
     ck.enums.insert(mangled.clone(), EnumInfo {
         baseName: baseName.clone(), variants: variants
-    }
-    )
+    })
     registerDisplayName(&mut ck, mangled, baseName, typeArgs)
 
     // Create monomorphized EnumDecl for codegen
@@ -642,16 +632,14 @@ pub fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgsIn: &Vec<Ty
         }
         monoVariants.push(EnumVariant {
             name: v.name.clone(), fields: monoFields, discriminant: cloneOptI64(v.discriminant)
-        }
-        )
+        })
     }
     ck.monomorphizedEnums.push(EnumDecl {
         name: mangled.clone(),
         typeParams: Vec.new(),
         variants: monoVariants,
         attributes: Vec.new(),
-    }
-    )
+    })
 
     return mangled
 }
@@ -694,8 +682,7 @@ pub fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<Ty
     // recursively resolves; fields are filled in below.
     ck.structs.insert(mangled.clone(), StructInfo {
         fields: Vec.new(), baseName: baseName.clone(), noCopy: hasAttr(generic.decl.attributes, "noCopy")
-    }
-    )
+    })
     for fi in 0..generic.fields.len {
         // Resolve from the AST field type (which keeps `<T>`): substituteTypeKind on
         // the stored TypeKind can't recover a user-generic arg (TStruct holds only a
@@ -708,14 +695,12 @@ pub fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<Ty
             name: generic.fields[fi].name.clone(),
             ty: fty,
             iterDelegate: generic.fields[fi].iterDelegate,
-        }
-        )
+        })
     }
 
     ck.structs.insert(mangled.clone(), StructInfo {
         fields: fields, baseName: baseName.clone(), noCopy: hasAttr(generic.decl.attributes, "noCopy")
-    }
-    )
+    })
     registerDisplayName(&mut ck, mangled, baseName, typeArgs)
 
     // Create monomorphized StructDecl
@@ -729,8 +714,7 @@ pub fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<Ty
             name: generic.decl.fields[si].name.clone(),
             ty: substituteMiloType(generic.decl.fields[si].ty, generic.typeParams, typeArgs),
             attributes: fieldAttrs,
-        }
-        )
+        })
     }
     let monoDecl = StructDecl {
         name: mangled.clone(),
@@ -742,8 +726,7 @@ pub fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<Ty
 
     ck.structInsts.push(StructInst {
         base: baseName.clone(), mangled: mangled.clone(), args: cloneTypeArgs(typeArgs)
-    }
-    )
+    })
 
     // @derive(Json) on a generic struct has to be resynthesized per
     // monomorphization (Box<T> -> Box_i64): the derive body is field-by-field
@@ -888,8 +871,7 @@ pub fn monomorphizeFn(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKi
         params.push(FnParam {
             name: generic.decl.params[pi].name.clone(),
             ty: resolveMonoType(&mut ck, subType),
-        }
-        )
+        })
     }
     let subRetType = substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs)
     let ret = resolveMonoType(&mut ck, subRetType)
@@ -898,8 +880,7 @@ pub fn monomorphizeFn(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKi
         ret: ret,
         variadic: false,
         isExtern: false,
-    }
-    )
+    })
 
     // Create concrete function declaration
     var monoParams: Vec<Param> = Vec.new()
@@ -907,8 +888,7 @@ pub fn monomorphizeFn(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKi
         monoParams.push(Param {
             name: generic.decl.params[pi].name.clone(),
             ty: substituteMiloType(generic.decl.params[pi].ty, generic.typeParams, typeArgs),
-        }
-        )
+        })
     }
 
     let concreteDecl = Function {
@@ -936,8 +916,7 @@ pub fn registerGenericFn(ck: &mut Checker, f: &Function) {
     ck.genericFns.insert(f.name.clone(), GenericFnInfo {
         typeParams: typeParams,
         decl: f.clone(),
-    }
-    )
+    })
 }
 
 pub fn registerGenericStruct(ck: &mut Checker, s: &StructDecl) {
@@ -951,15 +930,13 @@ pub fn registerGenericStruct(ck: &mut Checker, s: &StructDecl) {
             name: s.fields[j].name.clone(),
             ty: typeFromAst(s.fields[j].ty),
             iterDelegate: hasAttr(s.fields[j].attributes, "iter"),
-        }
-        )
+        })
     }
     ck.genericStructs.insert(s.name.clone(), GenericStructInfo {
         typeParams: typeParams,
         decl: s.clone(),
         fields: fields,
-    }
-    )
+    })
 }
 
 pub fn registerGenericEnum(ck: &mut Checker, e: &EnumDecl) {
@@ -983,14 +960,12 @@ pub fn registerGenericEnum(ck: &mut Checker, e: &EnumDecl) {
         }
         variants.insert(e.variants[vi].name.clone(), VariantInfo {
             tag: nextTag as i32, fields: fields
-        }
-        )
+        })
         nextTag = nextTag + 1
     }
     ck.genericEnums.insert(e.name.clone(), GenericEnumInfo {
         typeParams: typeParams,
         decl: e.clone(),
         variants: variants,
-    }
-    )
+    })
 }

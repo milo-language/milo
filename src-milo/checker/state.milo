@@ -398,8 +398,7 @@ pub fn error(ck: &mut Checker, msg: string, span: Option<Span>) {
         message: shown,
         hint: "",
         span: span,
-    }
-    )
+    })
 }
 
 pub fn errorHint(ck: &mut Checker, msg: string, hint: string, span: Option<Span>) {
@@ -410,8 +409,7 @@ pub fn errorHint(ck: &mut Checker, msg: string, hint: string, span: Option<Span>
         message: shownMsg,
         hint: shownHint,
         span: span,
-    }
-    )
+    })
 }
 
 pub fn warn(ck: &mut Checker, msg: string, span: Option<Span>) {
@@ -421,8 +419,7 @@ pub fn warn(ck: &mut Checker, msg: string, span: Option<Span>) {
         message: shown,
         hint: "",
         span: span,
-    }
-    )
+    })
 }
 
 // -- Scope management --
@@ -484,8 +481,7 @@ pub fn setVarType(ck: &mut Checker, name: &string, ty: TypeKind) {
         if pv.name != name {
             kept.push(PendingVecInfer {
                 name: pv.name.clone(), span: cloneSpan(pv.span)
-            }
-            )
+            })
         }
     }
     ck.pendingVecInfer = kept

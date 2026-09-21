@@ -14,14 +14,12 @@ pub fn main(): i32 {
     let t1 = Promise<i64>.blocking(move(): i64 => {
         wg1.done()
         return 0
-    }
-    )
+    })
     let wg2 = wg.clone()
     let t2 = Promise<i64>.blocking(move(): i64 => {
         wg2.done()
         return 0
-    }
-    )
+    })
     wg.wait()
     print("both done")
     t1.await()!

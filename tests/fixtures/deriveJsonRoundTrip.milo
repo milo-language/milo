@@ -37,8 +37,7 @@ pub fn main(): i32 {
     var friends: Vec<Address> = Vec.new()
     friends.push(Address {
         city: "Paris", zip: 75001
-    }
-    )
+    })
     let u = User {
         name: "ada \"lovelace\"", age: 36, score: 99.5, active: true, role: Role.Admin, email: Option.Some("ada@example.com"), tags: tags, address: Address {
             city: "London", zip: 12345
@@ -52,8 +51,7 @@ pub fn main(): i32 {
         Result.Ok(back) => {
             if back.toJson() == text {
                 print("round-trip identical")
-            } 
-            else {
+            } else {
                 print("round-trip differs: " + back.toJson())
             }
         }

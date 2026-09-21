@@ -308,8 +308,7 @@ pub fn parallelMap<T>(v: Vec<T>, workers: i64, f: (Shard<T>) => Shard<T>): Vec<T
         let w = windows.pop()!
         ps.push(Promise<Shard<T>>.blocking(move(): Shard<T> => {
             return f(w)
-        }
-        ))
+        }))
     }
     let back = Promise.all(ps).await()!
     return owner.weld(back)
@@ -403,8 +402,7 @@ pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<
                 oc.send(f(j!, &mut s))!
             }
             return s
-        }
-        ))
+        }))
     }
     while ws.len > 0 {
         jobs.send(ws.pop()!)!
@@ -424,8 +422,7 @@ pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<
     let data = owner.weld(back)
     return Result.Ok(Mapped {
         data: data, states: ordered
-    }
-    )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -671,8 +668,7 @@ pub fn parallelScanStr<R>(s: string, windows: i64, overlap: i64, f: (&StrShard) 
             return ScanPart {
                 window: w, result: r
             }
-        }
-        ))
+        }))
     }
     var parts = Promise.all(ps).await()!
     // Windows were popped from the tail, so `parts` is in reverse index order;

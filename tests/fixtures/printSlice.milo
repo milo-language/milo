@@ -30,8 +30,7 @@ pub fn main(): i32 {
     var ps: Vec<P> = Vec.new()
     ps.push(P {
         x: 1
-    }
-    )
+    })
     print(ps[0..1])
 
     let arr: [i64; 3] = [7, 8, 9]

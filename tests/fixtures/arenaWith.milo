@@ -14,8 +14,7 @@ pub fn main(): i32 {
     var a: Arena<P> = arenaNew()
     let h = arenaAlloc(&mut a, P {
         x: 10, y: 20
-    }
-    )
+    })
 
     let r = arenaWith(a, h, (p: &P): i64 => p.x)
     match r {
@@ -29,8 +28,7 @@ pub fn main(): i32 {
 
     let _ = arenaModifyMut(&mut a, h, (p: &mut P): void => {
         p.x = p.x + 5
-    }
-    )
+    })
 
     let r2 = arenaWith(a, h, (p: &P): i64 => p.x)
     match r2 {

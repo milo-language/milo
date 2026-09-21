@@ -16,16 +16,14 @@ pub struct Box {
 pub fn addOne(a: &mut Arena<Box>, h: Handle<Box>, s: string) {
     let _ = arenaModifyMut(&mut a, h, (b: &mut Box): void => {
         b.items.push(s)
-    }
-    )
+    })
 }
 
 pub fn main(): i32 {
     var a: Arena<Box> = arenaNew()
     let h = arenaAlloc(&mut a, Box {
         items: Vec.new()
-    }
-    )
+    })
 
     var built = String.withCapacity(8)
     built.push('h')

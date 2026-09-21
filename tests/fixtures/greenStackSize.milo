@@ -25,16 +25,14 @@ pub fn main(): i32 {
         if deep(2000) == 2000 {
             print("deep recursion on a large green stack: ok")
         }
-    }
-    , 8388608)
+    }, 8388608)
     big.join()
 
     let small = Task.spawn(move(): void => {
         if deep(50) == 50 {
             print("default stack still works")
         }
-    }
-    )
+    })
     small.join()
     return 0
 }

@@ -31,8 +31,7 @@ pub fn main(): i32 {
             i = i + 1
         }
         doneSend.send(1)!
-    }
-    )
+    })
 
     var n: i64 = 1
     while n <= 4 {

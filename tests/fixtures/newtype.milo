@@ -30,32 +30,26 @@ fn main() {
     // @expect: true
     print(n == NodeId {
         idx: 5
-    }
-    )
+    })
 
     // newtypes are usable as HashMap keys (structural hash)
     var m: HashMap<NodeId, i64> = HashMap.new()
     m.insert(NodeId {
         idx: 7
-    }
-    , 100)
+    }, 100)
     m.insert(NodeId {
         idx: 8
-    }
-    , 200)
+    }, 200)
     // @expect: 100
     print(m.get(NodeId {
         idx: 7
-    }
-    )!)
+    })!)
     // @expect: 200
     print(m.get(NodeId {
         idx: 8
-    }
-    )!)
+    })!)
     // @expect: false
     print(m.contains(NodeId {
         idx: 9
-    }
-    ))
+    }))
 }

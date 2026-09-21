@@ -57,8 +57,7 @@ pub fn envVars(): Vec<EnvEntry> {
                         }
                         out.push(EnvEntry {
                             name: name, value: value
-                        }
-                        )
+                        })
                     }
                     b += 1
                 }
@@ -98,8 +97,7 @@ pub fn envVars(): Vec<EnvEntry> {
                             }
                             out.push(EnvEntry {
                                 name: name, value: value
-                            }
-                            )
+                            })
                         }
                     }
                     start = i + 1

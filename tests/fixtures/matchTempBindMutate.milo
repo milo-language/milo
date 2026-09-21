@@ -24,8 +24,7 @@ pub enum Box {
 pub fn makeCtr(): Box {
     return Box.Full(Ctr {
         v: 1
-    }
-    )
+    })
 }
 
 pub fn main() {

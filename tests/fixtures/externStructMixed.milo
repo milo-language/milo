@@ -18,14 +18,12 @@ pub extern fn m2_use(m: M2): f32
 pub fn main(): i32 {
     print(m1_use(M1 {
         d: 10.0, i: 5
-    }
-    ))
+    }))
     let m = m1_make(3.0, 4)
     print(m1_use(m))
     print(m2_use(M2 {
         i: 6, f: 7.0
-    }
-    ))
+    }))
     return 0
 }
 // @expect: 15

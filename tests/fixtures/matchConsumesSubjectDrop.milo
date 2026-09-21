@@ -21,8 +21,7 @@ impl Drop for Res {
 fn main() {
     var o: Option<Res> = Option.Some(Res {
         id: 1
-    }
-    )
+    })
     match o {
         Option.Some(r) => {
             print("got ", r.id)

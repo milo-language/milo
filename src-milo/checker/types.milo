@@ -267,8 +267,7 @@ pub fn intRangeOf(t: &TypeKind): Option<IntRange> {
                         Option.Some(h) => {
                             return Option.Some(IntRange {
                                 min: l, max: h
-                            }
-                            )
+                            })
                         }
                         Option.None => {
                         }

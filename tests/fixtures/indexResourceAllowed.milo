@@ -23,16 +23,13 @@ pub fn main(): i32 {
     var v: Vec<Fd> = Vec.new()
     v.push(Fd {
         fd: 3
-    }
-    )
+    })
     v.push(Fd {
         fd: 4
-    }
-    )
+    })
     v.push(Fd {
         fd: 5
-    }
-    )
+    })
 
     // borrow: binds by reference, copies nothing
     for f in v {

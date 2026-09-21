@@ -15,8 +15,7 @@ fn main(): void {
     e.push(2)
     let h = a.alloc(Node {
         name: "root", edges: e
-    }
-    )
+    })
     let edges = a.with(h, (n: &Node): i64 => n.edges.len) ?? -1
     print(edges)
     let name = a.with(h, (n: &Node): string => n.name.clone()) ?? "stale"

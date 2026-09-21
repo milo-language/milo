@@ -20,8 +20,7 @@ pub fn main(): i32 {
         print("parking")
         schedulerPark()
         print("resumed")
-    }
-    )
+    })
 
     // foreign OS thread unparks the task via the transfer list + wakeup event
     // (fire-and-forget — it finishes before the task resumes, handle unused)
@@ -35,8 +34,7 @@ pub fn main(): i32 {
             schedulerUnpark(s2.load() as *u8)
         }
         return 0
-    }
-    )
+    })
 
     schedulerRunToCompletion()
     return 0

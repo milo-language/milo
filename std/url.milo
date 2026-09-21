@@ -104,8 +104,7 @@ fn urlParse(s: string): Result<Url> {
         scheme: scheme, host: host, port: port,
         path: path, query: query, fragment: fragment,
         raw: s.clone(),
-    }
-    )
+    })
 }
 
 fn _parsePort(s: &string): Result<i32> {

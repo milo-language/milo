@@ -25,8 +25,7 @@ pub fn main(): i32 {
     let w = Wrap {
         c: Heap(K {
             n: 7
-        }
-        )
+        })
     }
     print(w.c.value())
     return 0

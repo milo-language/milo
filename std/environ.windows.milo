@@ -61,8 +61,7 @@ pub fn envVars(): Vec<EnvEntry> {
                     }
                     out.push(EnvEntry {
                         name: name, value: value
-                    }
-                    )
+                    })
                 }
                 i = segEnd + 1
             }

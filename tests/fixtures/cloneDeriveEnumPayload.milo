@@ -35,8 +35,7 @@ fn show(e: &E) {
 fn main() {
     let items = [E.Unit, E.Text("t"), E.Num(7), E.Both("b", 2), E.Wrapped(P {
         a: "p", n: 9
-    }
-    )]
+    })]
     for e in items {
         let c = e.clone()
         show(e)

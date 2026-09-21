@@ -20,8 +20,7 @@ pub fn main(): i32 {
             tag: "nested"
         }
         , n: 2
-    }
-    )
+    })
     let c = v[0].clone()
     print(c.name)
     print(c.inner.tag)

@@ -106,8 +106,7 @@ impl Pty {
             let name = _cstrToString(namePtr)
             return Result.Ok(Pty {
                 masterFd: master, slavePath: name, childPid: -1, _rows: 24 as u16, _cols: 80 as u16
-            }
-            )
+            })
         }
     }
 

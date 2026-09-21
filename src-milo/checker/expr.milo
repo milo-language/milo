@@ -253,8 +253,7 @@ fn resolveFieldChain(ck: &Checker, root: &string, fields: &Vec<string>): Option<
     }
     return Option.Some(FieldChainInfo {
         finalType: curType, dropAncestor: dropAncestor
-    }
-    )
+    })
 }
 
 // Whether `e` (a move position) is a field-only place off a `&T`/`&mut T`
@@ -2966,8 +2965,7 @@ pub fn findGenericStaticMethod(ck: &Checker, typeName: &string, method: &string)
             }
             return Option.Some(GenericStaticMethod {
                 typeParams: tps, params: ps
-            }
-            )
+            })
         }
     }
     return Option.None
@@ -5260,8 +5258,7 @@ pub fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<Milo
             borrowed: false,
             read: false,
             span: Option.None,
-        }
-        )
+        })
         paramTypes.push(pType)
     }
 

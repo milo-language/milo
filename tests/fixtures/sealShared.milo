@@ -50,8 +50,7 @@ pub fn main(): i32 {
                 i = i + 1
             }
             return hits
-        }
-        ))
+        }))
     }
     let counts = Promise.all(ps).await()!
     var total: i64 = 0

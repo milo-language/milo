@@ -21,16 +21,14 @@ pub fn main(): i32 {
             print(v)
         }
         print("done")
-    }
-    )
+    })
 
     Task.spawn(move(): void => {
         chProd.send(1)!
         chProd.send(2)!
         chProd.send(3)!
         chProd.close()
-    }
-    )
+    })
 
     schedulerRunToCompletion()
     return 0

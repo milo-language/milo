@@ -36,8 +36,7 @@ pub fn main(): i32 {
         Result.Ok(back) => {
             if back.toJson() == text {
                 print("round-trip identical")
-            } 
-            else {
+            } else {
                 print("round-trip differs: " + back.toJson())
             }
         }

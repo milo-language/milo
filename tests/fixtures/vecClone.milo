@@ -39,8 +39,7 @@ pub fn main() {
 
     var people: Vec<Person> = [Person {
         name: "a", tags: ["t1"]
-    }
-    ]
+    }]
     var people2 = people.clone()
     people2[0].tags.push("t2")
     print($"{people[0].tags.len()} {people2[0].tags.len()}")

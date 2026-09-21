@@ -39,8 +39,7 @@ pub fn eventLoopNew(): Result<EventLoop, string> {
     }
     return Result.Ok(EventLoop {
         kqfd: fd
-    }
-    )
+    })
 }
 
 impl EventLoop {

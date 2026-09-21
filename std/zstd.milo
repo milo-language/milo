@@ -793,8 +793,7 @@ fn decompressCompressed(src: &string, blockStart: i64, blockSize: i64, out: &mut
         let litLen = llBase[llCode] + streamRead(seqStream, llEB[llCode], &mut r)
         seqs.push(Seq {
             litLen: litLen, matchLen: matchLen, offset: rawOffset
-        }
-        )
+        })
         if i != numSeq - 1 {
             llState = fseUpdate(llTable, llState, seqStream, &mut r)
             mlState = fseUpdate(mlTable, mlState, seqStream, &mut r)
@@ -1356,8 +1355,7 @@ fn lz77(block: &string): LzResult {
             }
             seqs.push(Seq3 {
                 litLen: litLen, matchLen: bestLen, offset: bestOff
-            }
-            )
+            })
             // Insert interior match positions so later matches can find them.
             var j = i + 1
             let matchEnd = i + bestLen

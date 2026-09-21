@@ -52,8 +52,7 @@ pub fn envVars(): Vec<EnvEntry> {
                     }
                     out.push(EnvEntry {
                         name: name, value: value
-                    }
-                    )
+                    })
                 }
                 i += 1
             }

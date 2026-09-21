@@ -126,8 +126,7 @@ pub fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
 
     return Result.Ok(WsConn {
         fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: false
-    }
-    )
+    })
 }
 
 // ── Frame reading ──
@@ -280,8 +279,7 @@ impl WsConn {
             if fin {
                 return Result.Ok(WsMessage {
                     opcode: resultOpcode, payload: resultPayload
-                }
-                )
+                })
             }
         }
 
@@ -481,8 +479,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
 
     return Result.Ok(WsConn {
         fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true
-    }
-    )
+    })
 }
 
 // Connect to a WebSocket server over TLS (wss://). Performs TCP connect, TLS
@@ -591,8 +588,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
 
         return Result.Ok(WsConn {
             fd: fd, ssl: sslAddr, _ctx: ctxAddr, _closed: false, _isClient: true
-        }
-        )
+        })
     }
 }
 

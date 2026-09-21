@@ -206,8 +206,7 @@ pub struct ExprNode {
 pub fn mkExpr(kind: Expr, span: Option<Span>): Heap<ExprNode> {
     return Heap(ExprNode {
         id: freshExprId(), kind: kind, span: span
-    }
-    )
+    })
 }
 
 // -- Patterns --
@@ -382,8 +381,7 @@ pub fn cloneSpan(sp: &Option<Span>): Option<Span> {
         Option.Some(s) => {
             return Option.Some(Span {
                 line: s.line, col: s.col, file: s.file.clone()
-            }
-            )
+            })
         }
         Option.None => {
             return Option.None
@@ -878,8 +876,7 @@ pub fn renameExpr(e: &ExprNode, from: &string, to: &string): Heap<ExprNode> {
             for i in 0..fields.len {
                 fs.push(StructLitField {
                     name: fields[i].name.clone(), value: renameExpr(*fields[i].value, from, to)
-                }
-                )
+                })
             }
             return mkExpr(Expr.StructLit(n, fs), sp)
         }
@@ -888,8 +885,7 @@ pub fn renameExpr(e: &ExprNode, from: &string, to: &string): Heap<ExprNode> {
             for i in 0..fields.len {
                 fs.push(StructLitField {
                     name: fields[i].name.clone(), value: renameExpr(*fields[i].value, from, to)
-                }
-                )
+                })
             }
             return mkExpr(Expr.JsonObject(fs), sp)
         }

@@ -459,8 +459,7 @@ pub fn genForRange(cg: &mut Cgen, varName: &string, startE: &HExprNode, endE: &H
     // the loop variable — the bound compare and the increment are both i64.
     locs.push(Local {
         name: varName.clone(), ty: "i64", addr: idxAddr.clone(), isRef: false, isArr: false, range: noRange()
-    }
-    )
+    })
     markLoopBindingView(&mut cg, idxAddr)
     genLoopBody(&mut cg, body, &mut locs, sigs, retTy, locsPreLen, l.step)
     emitIndexStep(&mut cg, idxAddr, l.step, l.cond)
@@ -535,15 +534,13 @@ fn genForInHashMap(cg: &mut Cgen, varName: &string, varName2: &Option<string>, o
     let locsPreLen = locs.len
     locs.push(Local {
         name: varName.clone(), ty: keyTy.clone(), addr: keyAddr.clone(), isRef: false, isArr: false, range: noRange()
-    }
-    )
+    })
     markLoopBindingView(&mut cg, keyAddr)
     match varName2 {
         Option.Some(valName) => {
             locs.push(Local {
                 name: valName.clone(), ty: valTy.clone(), addr: valAddr.clone(), isRef: false, isArr: false, range: noRange()
-            }
-            )
+            })
             markLoopBindingView(&mut cg, valAddr)
         }
         Option.None => {
@@ -596,20 +593,17 @@ fn genForInIndexed(cg: &mut Cgen, varName: &string, varName2: &Option<string>, o
         Option.Some(valName) => {
             locs.push(Local {
                 name: varName.clone(), ty: "i64", addr: idxAddr.clone(), isRef: false, isArr: false, range: noRange()
-            }
-            )
+            })
             markLoopBindingView(&mut cg, idxAddr)
             locs.push(Local {
                 name: valName.clone(), ty: elemTy.clone(), addr: elemAddr.clone(), isRef: false, isArr: false, range: noRange()
-            }
-            )
+            })
             markLoopBindingView(&mut cg, elemAddr)
         }
         Option.None => {
             locs.push(Local {
                 name: varName.clone(), ty: elemTy.clone(), addr: elemAddr.clone(), isRef: false, isArr: false, range: noRange()
-            }
-            )
+            })
             markLoopBindingView(&mut cg, elemAddr)
         }
     }
@@ -662,8 +656,7 @@ pub fn genForIterator(cg: &mut Cgen, varName: &string, iterable: &HExprNode, nex
     let locsPreLen = locs.len
     locs.push(Local {
         name: varName.clone(), ty: elemTy.clone(), addr: valAddr.clone(), isRef: false, isArr: false, range: noRange()
-    }
-    )
+    })
     markLoopBindingView(&mut cg, valAddr)
     genLoopBody(&mut cg, body, &mut locs, sigs, retTy, locsPreLen, l.step)
     emitLabel(&mut cg, l.step)
@@ -861,20 +854,17 @@ pub fn genForStrView(cg: &mut Cgen, varName: &string, varName2: &Option<string>,
         Option.Some(viewName) => {
             locs.push(Local {
                 name: varName.clone(), ty: "i64", addr: idxAddr.clone(), isRef: false, isArr: false, range: noRange()
-            }
-            )
+            })
             markLoopBindingView(&mut cg, idxAddr)
             locs.push(Local {
                 name: viewName.clone(), ty: "string", addr: viewAddr.clone(), isRef: false, isArr: false, range: noRange()
-            }
-            )
+            })
             markLoopBindingView(&mut cg, viewAddr)
         }
         Option.None => {
             locs.push(Local {
                 name: varName.clone(), ty: "string", addr: viewAddr.clone(), isRef: false, isArr: false, range: noRange()
-            }
-            )
+            })
             markLoopBindingView(&mut cg, viewAddr)
         }
     }
@@ -1048,8 +1038,7 @@ fn bindArmPayloads(cg: &mut Cgen, payPtr: &string, payloadTypes: &Vec<string>, b
         if subjBorrows && droppable {
             locs.push(Local {
                 name: bindings[bi].name.clone(), ty: pty.clone(), addr: fp, isRef: true, isArr: false, range: noRange()
-            }
-            )
+            })
         } else {
             let loaded = nextTemp(&mut cg)
             emit(&mut cg, "  " + loaded + " = load " + ftyLl + ", ptr " + fp + "\n")
@@ -1061,8 +1050,7 @@ fn bindArmPayloads(cg: &mut Cgen, payPtr: &string, payloadTypes: &Vec<string>, b
             }
             locs.push(Local {
                 name: bindings[bi].name.clone(), ty: pty.clone(), addr: bindAddr, isRef: false, isArr: false, range: noRange()
-            }
-            )
+            })
         }
     }
 }
@@ -1859,8 +1847,7 @@ fn genLetBinding(cg: &mut Cgen, name: &string, ty: &TypeKind, value: &HExprNode,
     emit(&mut cg, "  store " + vtyLl + " " + v.v + ", ptr " + addr + "\n")
     locs.push(Local {
         name: name.clone(), ty: v.ty.clone(), addr: addr, isRef: false, isArr: isArrAnno, range: lrange.clone()
-    }
-    )
+    })
 }
 
 fn genReturnValue(cg: &mut Cgen, hexpr: &HExprNode, span: &Option<Span>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
@@ -2764,8 +2751,7 @@ pub fn forcedMoveClosure(value: &ExprNode): Option<Heap<ExprNode>> {
                 id: value.id,
                 kind: Expr.Closure(cloneParams(params), cloneOptType(retType), cloneStmts(body), true),
                 span: cloneSpan(value.span),
-            }
-            ))
+            }))
         }
         _ => {
             return Option.None
@@ -2874,16 +2860,14 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
             // env slot holds the value directly — gp IS the local's storage
             clocs.push(Local {
                 name: caps[ci].name.clone(), ty: caps[ci].ty.clone(), addr: gp, isRef: true, isArr: false, range: noRange()
-            }
-            )
+            })
         } else {
             // env slot holds a pointer to the original variable
             let ca = nextTemp(&mut cg)
             emit(&mut cg, "  " + ca + " = load ptr, ptr " + gp + "\n")
             clocs.push(Local {
                 name: caps[ci].name.clone(), ty: caps[ci].ty.clone(), addr: ca, isRef: true, isArr: false, range: noRange()
-            }
-            )
+            })
         }
     }
     for pj in 0..params.len {
@@ -2895,8 +2879,7 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
         }
         clocs.push(Local {
             name: params[pj].name.clone(), ty: pty, addr: "%" + params[pj].name.clone(), isRef: true, isArr: false, range: noRange()
-        }
-        )
+        })
     }
 
     // annotated → gen against the annotation; unannotated → sentinel so `return`
@@ -2918,8 +2901,7 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
     if !term {
         if retLl == "void" {
             emit(&mut cg, "  ret void\n")
-        } 
-        else {
+        } else {
             emit(&mut cg, "  ret " + retLl + " zeroinitializer\n")
         }
     }

@@ -14,14 +14,11 @@ struct User {
 fn main() {
     var users: Vec<User> = [User {
         name: "Carol", age: 41,
-    }
-    , User {
+    }, User {
         name: "Alice", age: 30,
-    }
-    , User {
+    }, User {
         name: "Bob", age: 25,
-    }
-    ,]
+    },]
 
     users.sortByKey((u: &User) => u.name)
     var i: i64 = 0

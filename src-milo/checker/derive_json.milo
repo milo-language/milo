@@ -433,8 +433,7 @@ pub fn jsonPlanFor(ck: &mut Checker, t: &TypeKind, structName: &string, fieldNam
             if bits == 64 {
                 return Option.Some(JsonPlan.PInt(Heap(PIntSpec {
                     ty: ty, unsigned64:!signed, hasRange: false, lo: "0", hi: "0"
-                }
-                )))
+                })))
             }
             // Narrower than the i64 the cursor hands back, so the value has to be
             // range-checked before the cast — bits is always 8/16/32 here (64 is
@@ -463,8 +462,7 @@ pub fn jsonPlanFor(ck: &mut Checker, t: &TypeKind, structName: &string, fieldNam
             }
             return Option.Some(JsonPlan.PInt(Heap(PIntSpec {
                 ty: ty, unsigned64: false, hasRange: true, lo: lo.toString(), hi: hi.toString()
-            }
-            )))
+            })))
         }
         TypeKind.TFloat(bits) => {
             return Option.Some(JsonPlan.PFloat("f" + bits.toString()))
@@ -509,8 +507,7 @@ pub fn jsonPlanFor(ck: &mut Checker, t: &TypeKind, structName: &string, fieldNam
                     }
                     return Option.Some(JsonPlan.PUnitEnum(Heap(PUnitEnumSpec {
                         name: name.clone(), variants: variants
-                    }
-                    )))
+                    })))
                 }
                 Result.Err(msg) => {
                     error(&mut ck, "cannot derive Json for '" + structName.clone() + "': field '" + fieldName.clone() + "': enum '" + name.clone() + "' " + msg, Option.None)
@@ -657,8 +654,7 @@ pub fn deriveJson(ck: &mut Checker, s: &StructDecl): Option<ImplDecl> {
                 seenKeys.push(key.clone())
                 fields.push(JsonFieldPlan {
                     field: fname, key: key, plan: plan
-                }
-                )
+                })
             }
             Option.None => {
                 return Option.None

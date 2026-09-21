@@ -34,8 +34,7 @@ pub fn main(): i32 {
     for k in 0..4 {
         envs.push(Env {
             id: k, scale: 3.0, sum: 0.0, windowsSeen: 0
-        }
-        )
+        })
     }
     let r = parallelMapWith(data, 16, envs, scale)!
     var total: f64 = 0.0

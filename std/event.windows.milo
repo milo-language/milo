@@ -211,8 +211,7 @@ pub fn eventLoopNew(): Result<EventLoop, string> {
         tbl[slot as i64] = st as i64
         return Result.Ok(EventLoop {
             slot: slot
-        }
-        )
+        })
     }
 }
 

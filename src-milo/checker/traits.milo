@@ -27,12 +27,10 @@ pub fn registerBuiltinTraits(ck: &mut Checker) {
         params: Vec.new(), // self + other handled via convention
         ret: tyBool(),
         hasDefault: false,
-    }
-    )
+    })
     ck.traits.insert("Eq", TraitInfo {
         name: "Eq", supertraits: Vec.new(), methods: eqMethods
-    }
-    )
+    })
 
     // Hash
     var hashMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
@@ -40,12 +38,10 @@ pub fn registerBuiltinTraits(ck: &mut Checker) {
         params: Vec.new(),
         ret: TypeKind.TInt(64, false, Option.None, Option.None),
         hasDefault: false,
-    }
-    )
+    })
     ck.traits.insert("Hash", TraitInfo {
         name: "Hash", supertraits: Vec.new(), methods: hashMethods
-    }
-    )
+    })
 
     // Clone
     var cloneMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
@@ -53,12 +49,10 @@ pub fn registerBuiltinTraits(ck: &mut Checker) {
         params: Vec.new(),
         ret: selfType.clone(),
         hasDefault: false,
-    }
-    )
+    })
     ck.traits.insert("Clone", TraitInfo {
         name: "Clone", supertraits: Vec.new(), methods: cloneMethods
-    }
-    )
+    })
 
     // Display
     var displayMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
@@ -66,12 +60,10 @@ pub fn registerBuiltinTraits(ck: &mut Checker) {
         params: Vec.new(),
         ret: tyString(),
         hasDefault: false,
-    }
-    )
+    })
     ck.traits.insert("Display", TraitInfo {
         name: "Display", supertraits: Vec.new(), methods: displayMethods
-    }
-    )
+    })
 
     // Iterator marker trait. Milo has no associated types, so the element type
     // can't be named in the trait method — instead the iteration contract
@@ -81,8 +73,7 @@ pub fn registerBuiltinTraits(ck: &mut Checker) {
     // marker, matching the oracle (checker.ts registerBuiltinTraits).
     ck.traits.insert("Iterator", TraitInfo {
         name: "Iterator", supertraits: Vec.new(), methods: HashMap.new()
-    }
-    )
+    })
 
     // Drop
     var dropMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
@@ -90,12 +81,10 @@ pub fn registerBuiltinTraits(ck: &mut Checker) {
         params: Vec.new(),
         ret: tyVoid(),
         hasDefault: false,
-    }
-    )
+    })
     ck.traits.insert("Drop", TraitInfo {
         name: "Drop", supertraits: Vec.new(), methods: dropMethods
-    }
-    )
+    })
 
     // Add, Sub, Mul, Div
     var opTraits: Vec<string> = Vec.new()
@@ -110,12 +99,10 @@ pub fn registerBuiltinTraits(ck: &mut Checker) {
             params: Vec.new(),
             ret: selfType.clone(),
             hasDefault: false,
-        }
-        )
+        })
         ck.traits.insert(op.clone(), TraitInfo {
             name: op.clone(), supertraits: Vec.new(), methods: methods
-        }
-        )
+        })
     }
 
     // Register Eq for primitives
@@ -139,15 +126,13 @@ pub fn registerBuiltinTraits(ck: &mut Checker) {
             ret: tyBool(),
             variadic: false,
             isExtern: false,
-        }
-        )
+        })
         var implList: Vec<ImplInfo> = Vec.new()
         implList.push(ImplInfo {
             traitName: Option.Some("Eq"),
             typeName: primTypes[i].clone(),
             methods: eqImplMethods,
-        }
-        )
+        })
         ck.traitImpls.insert(primTypes[i].clone(), implList)
     }
 }
@@ -236,8 +221,7 @@ pub fn substSelfParams(params: &Vec<Param>, concrete: &string): Vec<Param> {
         out.push(Param {
             name: params[i].name.clone(),
             ty: substSelfMiloType(params[i].ty, concrete),
-        }
-        )
+        })
     }
     return out
 }
@@ -309,8 +293,7 @@ pub fn synthesizeDefaultMethods(ck: &mut Checker, program: &Program) {
                             }
                             params.push(FnParam {
                                 name: tm.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType)
-                            }
-                            )
+                            })
                         }
                         var retType = resolveAstType(&mut ck, tm.retType)
                         match retType.clone() {
@@ -349,8 +332,7 @@ pub fn synthesizeDefaultMethods(ck: &mut Checker, program: &Program) {
                             isExtern: false,
                             isVariadic: false,
                             attributes: Vec.new(),
-                        }
-                        )
+                        })
                     }
                 }
             }
@@ -435,8 +417,7 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     }
                     params.push(FnParam {
                         name: m.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType)
-                    }
-                    )
+                    })
                 }
                 var retType = resolveAstType(&mut ck, m.retType)
                 match retType.clone() {
@@ -464,8 +445,7 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     isExtern: false,
                     isVariadic: false,
                     attributes: m.attributes.clone(),
-                }
-                )
+                })
             }
 
             let implInfo = ImplInfo {
@@ -516,8 +496,7 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     }
                     params.push(FnParam {
                         name: m.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType)
-                    }
-                    )
+                    })
                 }
                 var retType = resolveAstType(&mut ck, m.retType)
                 match retType.clone() {
@@ -544,16 +523,14 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     isExtern: false,
                     isVariadic: false,
                     attributes: m.attributes.clone(),
-                }
-                )
+                })
             }
 
             ck.inherentImpls.insert(tn, ImplInfo {
                 traitName: Option.None,
                 typeName: implDecl.typeName.clone(),
                 methods: methods,
-            }
-            )
+            })
         }
     }
 }
@@ -611,8 +588,7 @@ pub fn deriveEq(s: &StructDecl): Option<ImplDecl> {
         isExtern: false,
         isVariadic: false,
         attributes: Vec.new(),
-    }
-    )
+    })
 
     return Option.Some(ImplDecl {
         traitName: Option.Some("Eq"),
@@ -621,8 +597,7 @@ pub fn deriveEq(s: &StructDecl): Option<ImplDecl> {
         methods: methods,
         isUnsafe: false,
         span: Option.None,
-    }
-    )
+    })
 }
 
 // -- Process @derive attributes --

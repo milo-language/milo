@@ -508,8 +508,7 @@ pub fn buildFnTable(cg: &Cgen, fns: &Vec<HFunction>, generics: &Vec<Function>): 
             paramRefs: prefs,
             isVariadic: fns[i].isVariadic,
             paramRanges: pranges,
-        }
-        )
+        })
     }
     // A template's parameter types are still syntax — `T` names nothing the checker
     // resolved — so these read the AST. They are hints and modes only; no instantiation
@@ -530,8 +529,7 @@ pub fn buildFnTable(cg: &Cgen, fns: &Vec<HFunction>, generics: &Vec<Function>): 
             paramRefs: grefs,
             isVariadic: generics[i].isVariadic,
             paramRanges: granges,
-        }
-        )
+        })
     }
     return sigs
 }
@@ -922,8 +920,7 @@ pub fn genFn(cg: &mut Cgen, f: &HFunction, sigs: &Vec<CgFnSig>) {
         if pIsRef {
             locs.push(Local {
                 name: f.params[pj].name.clone(), ty: pTyStr, addr: "%" + f.params[pj].name, isRef: true, isArr: pIsArr, range: noRange()
-            }
-            )
+            })
         } else {
             let llt = llType(pTyStr)
             let addr = "%" + f.params[pj].name + "_addr"
@@ -931,8 +928,7 @@ pub fn genFn(cg: &mut Cgen, f: &HFunction, sigs: &Vec<CgFnSig>) {
             emit(&mut cg, "  store " + llt + " %" + f.params[pj].name + ", ptr " + addr + "\n")
             locs.push(Local {
                 name: f.params[pj].name.clone(), ty: pTyStr, addr: addr, isRef: false, isArr: pIsArr, range: rangeOfTyK(f.params[pj].ty)
-            }
-            )
+            })
         }
     }
 
@@ -1136,8 +1132,7 @@ pub fn genProgram(m: HIRModule, sourceDir: string): string {
         for mi in 0..mod.astTraits[ti].methods.len {
             slots.push(FieldInfo {
                 name: mod.astTraits[ti].methods[mi].name.clone(), ty: resolveTyStr(cg, astTypeStr(mod.astTraits[ti].methods[mi].retType)), range: noRange()
-            }
-            )
+            })
         }
         cg.structs.insert(tn.clone(), slots)
     }
@@ -1158,13 +1153,11 @@ pub fn genProgram(m: HIRModule, sourceDir: string): string {
             }
             variants.push(CgVariantInfo {
                 name: mod.enums[ei].variants[vi].name.clone(), tag: mod.enums[ei].variants[vi].tag as i32, payloadTypes: payloadTypes
-            }
-            )
+            })
         }
         cg.enums.insert(mod.enums[ei].name.clone(), CgEnumInfo {
             name: mod.enums[ei].name.clone(), variants: variants, payloadSlots: 0
-        }
-        )
+        })
     }
 
     // (2) struct metadata. Register all struct NAMES first, so a field that references
@@ -1181,8 +1174,7 @@ pub fn genProgram(m: HIRModule, sourceDir: string): string {
                 name: mod.structs[si].fields[fi].name.clone(),
                 ty: fieldTyStr(cg, sname, mod.structs[si].fields[fi].name, mod.structs[si].fields[fi].ty),
                 range: rangeOfTyK(mod.structs[si].fields[fi].ty),
-            }
-            )
+            })
         }
         cg.structs.insert(sname, fields)
     }
@@ -1226,8 +1218,7 @@ pub fn genProgram(m: HIRModule, sourceDir: string): string {
         // move einfo's owned fields back in with the computed slot count (no clone)
         cg.enums.insert(ename.clone(), CgEnumInfo {
             name: einfo.name, variants: einfo.variants, payloadSlots: slots
-        }
-        )
+        })
         if slots > 0 {
             emitG(&mut cg, "%" + ename + " = type { i32, [" + slots.toString() + " x i64] }\n")
         } else {

@@ -42,8 +42,7 @@ pub fn main() {
     print(c.andThen((n) => {
         print("ran")
         return halve(n)
-    }
-    ) ?? -1)
+    }) ?? -1)
 
     // U need not equal T, and the heap receiver survives the call
     let s: Option<string> = Option.Some(heapStr("hi"))

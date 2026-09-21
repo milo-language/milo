@@ -180,8 +180,7 @@ impl Pty {
                 _hpcon: hpc[0],
                 _childHandle: 0,
                 _attrList: 0 as *u8,
-            }
-            )
+            })
         }
     }
 

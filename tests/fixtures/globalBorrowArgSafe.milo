@@ -31,35 +31,30 @@ var log: i64 = 0
 fn byValue(id: Id): void {
     G.push(Id {
         index: 99
-    }
-    )
+    })
     log = id.index
 }
 
 fn takesField(n: i64): void {
     H.ids.push(Id {
         index: 7
-    }
-    )
+    })
     log = n
 }
 
 fn takesWhole(v: &mut Vec<Id>): void {
     G.push(Id {
         index: 5
-    }
-    )
+    })
     v.push(Id {
         index: 6
-    }
-    )
+    })
 }
 
 pub fn main(): i32 {
     G.push(Id {
         index: 1
-    }
-    )
+    })
     byValue(G[0])
     print("byValue " + log.toString())
 

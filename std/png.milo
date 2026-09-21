@@ -184,8 +184,7 @@ fn decodePng(src: &string): Result<PngImage, string> {
 
     return Result.Ok(PngImage {
         width: width, height: height, channels: channels, pixels: out
-    }
-    )
+    })
 }
 
 // ── encoding ──────────────────────────────────────────────────────────────────

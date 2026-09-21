@@ -94,20 +94,17 @@ pub fn main(): i32 {
                     sendFd(fd, resp, resp.len)
                 }
                 closeSocket(fd)
-            }
-            )
+            })
             handled = handled + 1
         }
         closeSocket(serverFd)
-    }
-    )
+    })
 
     // run clients sequentially so output order is deterministic
     Task.spawn(move(): void => {
         doClient(port as u16, 1)
         doClient(port as u16, 2)
-    }
-    )
+    })
 
     print("done")
     schedulerRunToCompletion()

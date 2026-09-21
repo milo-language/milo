@@ -32,13 +32,11 @@ pub fn raceOnce(withSend: bool): void {
             }
         }
         sel.destroy()
-    }
-    )
+    })
     if withSend {
         Task.spawn(move(): void => {
             chSend.send(42)!
-        }
-        )
+        })
     }
 }
 

@@ -150,14 +150,12 @@ pub fn main(): i32 {
     print(freed.modify(forged, (value: i64): i64 => {
         print(-1)
         return value
-    }
-    ))
+    }))
     match arenaWith(freed, forged, (value: &i64): i64 => {
         print(-1)
         let _ = value
         return 0
-    }
-    ) {
+    }) {
         Option.Some(_value) => {
             print(-1)
         }
@@ -168,8 +166,7 @@ pub fn main(): i32 {
     print(freed.modifyMut(forged, (value: &mut i64): void => {
         print(-1)
         let _ = value
-    }
-    ))
+    }))
     print(freed.free(forged))
 
     // Keep names live so the fixture also validates every returned handle type.

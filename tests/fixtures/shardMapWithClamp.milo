@@ -29,8 +29,7 @@ pub fn main(): i32 {
     for k in 0..2 {
         envs.push(Env {
             seen: 0
-        }
-        )
+        })
     }
     // 8 windows requested, only 2 elements exist.
     let r = parallelMapWith(v, 8, envs, double)!

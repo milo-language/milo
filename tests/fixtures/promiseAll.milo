@@ -12,8 +12,7 @@ pub fn main(): i32 {
         let val = i * 20
         promises.push(Promise<i64>.run(move(): i64 => {
             return val
-        }
-        ))
+        }))
         i = i + 1
     }
 

@@ -58,8 +58,7 @@ impl Timer {
                 chTask.trySend(now())
             }
             chTask.close()
-        }
-        )
+        })
         return Timer {
             _ch: ch, _stopped: stopped
         }
@@ -135,8 +134,7 @@ impl Ticker {
                 chTask.trySend(now())
             }
             chTask.close()
-        }
-        )
+        })
         return Ticker {
             _ch: ch, _stopped: stopped
         }

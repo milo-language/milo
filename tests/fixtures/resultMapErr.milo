@@ -42,14 +42,12 @@ pub fn main() {
     print(describe(bad.mapErr((e) => {
         print("converting")
         return e.len
-    }
-    )))
+    })))
     // @expect: ok:99
     print(describe(ok.mapErr((e) => {
         print("converting")
         return e.len
-    }
-    )))
+    })))
 
     // Non-Copy Ok payload forwarded through the Ok branch: the heap string moves into the
     // new enum (consuming s) and is freed exactly once. The callback never touched it.

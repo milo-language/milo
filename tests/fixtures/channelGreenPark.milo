@@ -24,8 +24,7 @@ pub fn main(): i32 {
             print("got ", v)
             i = i + 1
         }
-    }
-    )
+    })
 
     Task.spawn(move(): void => {
         var i: i64 = 0
@@ -34,8 +33,7 @@ pub fn main(): i32 {
             i = i + 1
         }
         print("producer done")
-    }
-    )
+    })
 
     schedulerRunToCompletion()
     return 0

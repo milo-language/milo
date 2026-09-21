@@ -14,12 +14,10 @@ from "std/runtime" import {
 pub fn main(): i32 {
     let t1 = Task.spawn(move(): void => {
         print("t1")
-    }
-    )
+    })
     let t2 = Task.spawn(move(): void => {
         print("t2")
-    }
-    )
+    })
     t2.join() // drives the scheduler: both t1 and t2 run + reap in this batch
     t1.join() // late join on an already-reaped task
     t1.join() // double join

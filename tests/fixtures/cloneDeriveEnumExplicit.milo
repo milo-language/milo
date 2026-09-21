@@ -33,8 +33,7 @@ fn main() {
     show(b)
     let t = Shape.Tagged(P {
         s: "tag"
-    }
-    )
+    })
     let u = t.clone()
     show(t)
     show(u)

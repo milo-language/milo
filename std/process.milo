@@ -107,8 +107,7 @@ impl Process {
         }
         return Result.Ok(Process {
             pid: pid
-        }
-        )
+        })
     }
 
     // Block until the child exits and return its status. Inside a green task only this
@@ -367,8 +366,7 @@ impl Command {
         var c = self
         c.envChanges.push(EnvChange {
             name: name.clone(), value: value.clone(), remove: false
-        }
-        )
+        })
         return c
     }
 
@@ -377,8 +375,7 @@ impl Command {
         var c = self
         c.envChanges.push(EnvChange {
             name: name.clone(), value: "", remove: true
-        }
-        )
+        })
         return c
     }
 
@@ -447,13 +444,11 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 if childWrites {
                     return Result.Ok(StreamFds {
                         child: fds[1], parent: fds[0]
-                    }
-                    )
+                    })
                 }
                 return Result.Ok(StreamFds {
                     child: fds[0], parent: fds[1]
-                }
-                )
+                })
             }
             Stdio.Null => {
                 let flags = if childWrites {
@@ -467,8 +462,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 }
                 return Result.Ok(StreamFds {
                     child: fd, parent: -1
-                }
-                )
+                })
             }
             Stdio.Read(path) => {
                 if childWrites {
@@ -480,8 +474,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 }
                 return Result.Ok(StreamFds {
                     child: fd, parent: -1
-                }
-                )
+                })
             }
             Stdio.Write(path) => {
                 if !childWrites {
@@ -493,8 +486,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 }
                 return Result.Ok(StreamFds {
                     child: fd, parent: -1
-                }
-                )
+                })
             }
             Stdio.Append(path) => {
                 if !childWrites {
@@ -506,8 +498,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 }
                 return Result.Ok(StreamFds {
                     child: fd, parent: -1
-                }
-                )
+                })
             }
             Stdio.Merge => {
                 return Result.Err(label + " cannot be Stdio.Merge — only stderr can merge")
@@ -649,8 +640,7 @@ fn commandSpawn(cmd: &Command): Result<Child> {
             stdinFd: inFds.parent,
             stdoutFd: outFds.parent,
             stderrFd: errFds.parent,
-        }
-        )
+        })
     }
 }
 

@@ -516,8 +516,7 @@ pub fn inducedConstraints(p: &SmtProblem, mask: i64): Vec<Constraint> {
         if bit == 1 {
             cs.push(Constraint {
                 coeffs: row, konst: p.atomKonst[a], strict: p.atomStrict[a]
-            }
-            )
+            })
         } else {
             // ¬(L <= 0) is (-L < 0); ¬(L < 0) is (-L <= 0)
             var nr: Vec<i64> = []
@@ -528,8 +527,7 @@ pub fn inducedConstraints(p: &SmtProblem, mask: i64): Vec<Constraint> {
             }
             cs.push(Constraint {
                 coeffs: nr, konst: -p.atomKonst[a], strict:!p.atomStrict[a]
-            }
-            )
+            })
         }
         a += 1
     }

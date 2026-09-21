@@ -23,8 +23,7 @@ pub fn main(): i32 {
     let p = Promise<i64>.blocking(move(): i64 => {
         sleepMs(20)
         return 42
-    }
-    )
+    })
     var sel = Select.new()
     sel.onRecv(p.channel()) // arm 0 — the worker thread fires this
     // arm 1 is INERT here and is not a safety net: Promise.blocking spawns a real pthread,
@@ -43,8 +42,7 @@ pub fn main(): i32 {
     // Green-task result, same bridge.
     let g = Promise<i64>.run(move(): i64 => {
         return 7
-    }
-    )
+    })
     var sel2 = Select.new()
     sel2.onRecv(g.channel())
     sel2.onTimeout(5000) // live here — Promise.run means a scheduler exists

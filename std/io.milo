@@ -159,8 +159,7 @@ pub fn fdChannel(fd: i32): Channel<string> {
             }
         }
         chPump.close()
-    }
-    )
+    })
     return ch
 }
 
@@ -309,8 +308,7 @@ impl File {
         }
         return Result.Ok(File {
             fd: fd
-        }
-        )
+        })
     }
 
     fn openWrite(path: &string): Result<File, IoError> {
@@ -320,8 +318,7 @@ impl File {
         }
         return Result.Ok(File {
             fd: fd
-        }
-        )
+        })
     }
 
     fn openAppend(path: &string): Result<File, IoError> {
@@ -331,8 +328,7 @@ impl File {
         }
         return Result.Ok(File {
             fd: fd
-        }
-        )
+        })
     }
 
     fn size(self: &Self): i64 {
@@ -433,8 +429,7 @@ impl File {
     fn close(self: &mut Self): Result<Unit, IoError> {
         if self.fd <= 0 {
             return Result.Ok(Unit {
-            }
-            )
+            })
         }
         let fd = self.fd
         self.fd = 0 as i32
@@ -442,8 +437,7 @@ impl File {
             return Result.Err(ioError("close"))
         }
         return Result.Ok(Unit {
-        }
-        )
+        })
     }
 }
 
@@ -464,8 +458,7 @@ impl Writer for File {
     // kernel's page cache out to the device.
     fn flush(self: &mut Self): Result<Unit, IoError> {
         return Result.Ok(Unit {
-        }
-        )
+        })
     }
 }
 
@@ -559,8 +552,7 @@ fn fdRead(fd: i32, socket: bool, max: i64): Result<string, IoError> {
 fn fdWrite(fd: i32, socket: bool, data: &string): Result<Unit, IoError> {
     if data.len == 0 {
         return Result.Ok(Unit {
-        }
-        )
+        })
     }
     var n: i64 = 0
     if socket {
@@ -574,8 +566,7 @@ fn fdWrite(fd: i32, socket: bool, data: &string): Result<Unit, IoError> {
         return Result.Err(fdError("write", fd))
     }
     return Result.Ok(Unit {
-    }
-    )
+    })
 }
 
 // A borrowed byte stream over an OS handle — the adapter that turns anything with
@@ -655,8 +646,7 @@ impl Writer for FdStream {
     // No-op: the kernel owns the buffering below this point.
     fn flush(self: &mut Self): Result<Unit, IoError> {
         return Result.Ok(Unit {
-        }
-        )
+        })
     }
 }
 
@@ -724,14 +714,12 @@ impl Writer for BytesWriter {
     fn write(self: &mut Self, data: &string): Result<Unit, IoError> {
         self.buf.pushStr(data)
         return Result.Ok(Unit {
-        }
-        )
+        })
     }
 
     fn flush(self: &mut Self): Result<Unit, IoError> {
         return Result.Ok(Unit {
-        }
-        )
+        })
     }
 }
 
@@ -949,8 +937,7 @@ impl BufWriter<W> {
             return self.flush()
         }
         return Result.Ok(Unit {
-        }
-        )
+        })
     }
 
     fn writeLine(self: &mut Self, line: &string): Result<Unit, IoError> {
@@ -977,8 +964,7 @@ impl Writer for BufWriter<W> {
         }
         self.buf.pushStr(data)
         return Result.Ok(Unit {
-        }
-        )
+        })
     }
 
     fn flush(self: &mut Self): Result<Unit, IoError> {

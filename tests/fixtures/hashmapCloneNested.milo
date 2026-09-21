@@ -15,8 +15,7 @@ pub fn main(): i32 {
     v.insert("Red", 1)
     m.insert("Color", Info {
         variants: v
-    }
-    )
+    })
     let info = m.get("Color")!
     if info.variants.contains("Red") {
         print("yes")

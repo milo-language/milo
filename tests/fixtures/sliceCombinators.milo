@@ -35,8 +35,7 @@ fn biggest(s: &[i64]): i64 {
         acc
     } else {
         n
-    }
-    )
+    })
 }
 
 fn hasThree(s: &[i64]): bool {

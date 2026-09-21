@@ -71,8 +71,7 @@ fn spawnWorkers(total: &AtomicI64, maxId: &AtomicI64, ch: &Channel<i64>): Vec<Pr
         let id = w
         proms.push(Promise<i64>.blocking(move(): i64 => {
             return runWorker(id, t, mx, c)
-        }
-        ))
+        }))
         w = w + 1
     }
     return proms

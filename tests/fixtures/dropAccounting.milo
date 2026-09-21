@@ -161,8 +161,7 @@ pub fn main(): i32 {
     while d < 5 {
         direct.push(Tracked {
             id: d,
-        }
-        )
+        })
         d = d + 1
     }
     var fromCall: Vec<Tracked> = Vec.new()

@@ -11,12 +11,10 @@ pub fn main(): i32 {
     let done = Task.spawn(move(): void => {
         let p = Promise<i64>.blocking(move(): i64 => {
             return 99
-        }
-        )
+        })
         let v = p.await()!
         print(v)
-    }
-    )
+    })
     done.join()
     print("done")
     return 0

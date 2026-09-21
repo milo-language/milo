@@ -56,6 +56,24 @@ const cases: Record<string, string> = {
   // `&mut x` on a call argument (explicit mutable borrow): the `&` must hug `mut` after
   // `(` and after `, `, while a binary `&` keeps its spaces.
   explicitMutArg: `fn main(): i32 {\n    var x: i64 = 1\n    var v: Vec<i64> = []\n    g(&mut x, 2, &mut v)\n    let y = x & 3\n    return y\n}\n`,
+  // A `{ }` pair on one source line is an inline group: every `{` used to force a
+  // newline and every `}` a newline on both sides, so `take(P { x: 1 })` came out as
+  // four lines with the `)` alone on the last. The line structure is the author's.
+  inlineStructDecl: `struct P { x: i64, y: i64 }\n`,
+  inlineStructLitArg: `fn main(): i32 {\n    take(P { x: 1, y: 2 })\n    let q = P { x: 1, y: 2 }\n    return 0\n}\n`,
+  emptyFnBody: `fn take(p: P) {}\n`,
+  inlineMatchArm: `fn f(o: Option<i64>): i64 {\n    match o {\n        Option.Some(n) => { return n }\n        Option.None => {}\n    }\n    return 0\n}\n`,
+  inlineClosureArg: `fn main(): i32 {\n    let r = ap((n: i64) => { return n + 1 })\n    return r\n}\n`,
+  // `fn` inside the group is a top-level keyword; the blank-line rule must not fire
+  // inside a one-line trait.
+  inlineTrait: `trait T { fn f(self: &Self): i64 }\n`,
+  inlineIfElse: `fn f(x: bool): i64 {\n    if x { return 1 } else { return 2 }\n}\n`,
+  // A multi-line block that closes a call argument or an array element hugs the
+  // `)` / `,` after it (gofmt/prettier style) instead of dropping it on its own line.
+  blockArgHugsParen: `fn main(): i32 {\n    take(P {\n        x: 1,\n        y: 2,\n    })\n    return 0\n}\n`,
+  closureArgHugsParen: `fn main(): i32 {\n    arenaModify(&mut a, h, (n: DLNode) => {\n        n.x = 1\n        return n\n    })\n    return 0\n}\n`,
+  blockInArrayHugsComma: `fn main(): i32 {\n    let v = [P {\n        x: 1,\n    }, P {\n        x: 2,\n    }]\n    return v.len\n}\n`,
+  blockElse: `fn f(a: bool) {\n    if a {\n        b()\n    } else {\n        c()\n    }\n}\n`,
 };
 
 for (const [name, src] of Object.entries(cases)) {
@@ -74,4 +92,21 @@ test("extern keyword is never split from its declaration", () => {
   // between it and `extern`. Feed the mangled form and require it to be healed.
   const mangled = `extern\n\nstruct Foo {\n    a: i32,\n}\n`;
   expect(format(mangled, "healed")).toContain("extern struct Foo");
+}, 60000);
+
+test("a block closing a call argument heals `}\\n)` to `})`", () => {
+  // The old output shape, committed into 170 example files: the `)` alone on a line.
+  const mangled = `fn main(): i32 {\n    take(P {\n        x: 1, y: 2\n    }\n    )\n    return 0\n}\n`;
+  const once = format(mangled, "hugParen1");
+  expect(once).toBe(`fn main(): i32 {\n    take(P {\n        x: 1, y: 2\n    })\n    return 0\n}\n`);
+  expect(format(once, "hugParen2")).toBe(once);
+}, 60000);
+
+test("`else` on its own source line rejoins its `}`", () => {
+  // Used to come out as `} \nelse` (trailing space, then a bare `else` line): the `}`
+  // case kept the line open but the source-newline rule broke it again.
+  const mangled = `fn f(a: bool) {\n    if a {\n        b()\n    }\n    else {\n        c()\n    }\n}\n`;
+  const once = format(mangled, "hugElse1");
+  expect(once).toBe(`fn f(a: bool) {\n    if a {\n        b()\n    } else {\n        c()\n    }\n}\n`);
+  expect(format(once, "hugElse2")).toBe(once);
 }, 60000);

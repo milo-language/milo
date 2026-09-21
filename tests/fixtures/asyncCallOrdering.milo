@@ -28,8 +28,7 @@ pub fn callAsyncLike(): void {
         schedulerUnpark(caller)
         schedulerPark()
         note("body-resumed")
-    }
-    , 1048576)
+    }, 1048576)
     schedulerPark()
     note("caller-continues")
     schedulerUnpark(child.raw())
@@ -39,8 +38,7 @@ pub fn callAsyncLike(): void {
 pub fn main(): i32 {
     let t = Task.spawnWithStack(move(): void => {
         callAsyncLike()
-    }
-    , 1048576)
+    }, 1048576)
     t.join()
     print(gLog.trim())
     return 0

@@ -26,8 +26,7 @@ pub fn main(): i32 {
     let h = Heap(Point {
         x: 7,
         y: 9,
-    }
-    )
+    })
     unsafe {
         let slot = h.addrOf() as *i64
         let viaSlot = (*slot) as i64
@@ -51,8 +50,7 @@ pub fn main(): i32 {
     let g = Heap(Point {
         x: 4,
         y: 5,
-    }
-    )
+    })
     unsafe {
         let raw = g.ptr()
         print(raw.x, " done")

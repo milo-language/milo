@@ -7,7 +7,6 @@ pub fn main(): i32 {
     words.push("world")
     words.each((w: &string) => {
         print(w)
-    }
-    )
+    })
     return 0
 }

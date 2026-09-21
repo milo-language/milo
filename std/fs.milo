@@ -95,8 +95,7 @@ pub fn fileInfo(path: &string): Option<FileInfo> {
     }
     return Option.Some(FileInfo {
         size: size, mode: mode
-    }
-    )
+    })
 }
 
 // Check whether a path is visible to this process.
@@ -182,8 +181,7 @@ pub fn readDir(path: &string): Result<Vec<DirEntry>, IoError> {
                     name: name,
                     isDir: dType == 4,
                     isFile: dType == 8,
-                }
-                )
+                })
             }
         }
         closedir(dir)
@@ -240,8 +238,7 @@ pub fn appendFile(path: &string, data: &string): Result<i64, IoError> {
 // Commands return Unit because success carries no additional information.
 fn ok(): Result<Unit, IoError> {
     return Result.Ok(Unit {
-    }
-    )
+    })
 }
 
 fn errPath(path: &string): Result<Unit, IoError> {
@@ -477,8 +474,7 @@ pub fn lstatInfo(path: &string): Option<FileInfo> {
     }
     return Option.Some(FileInfo {
         size: size, mode: mode
-    }
-    )
+    })
 }
 
 // Check if a path is a symbolic link. Does not follow it — a dangling link is
@@ -577,8 +573,7 @@ pub fn walkDir(root: &string): Result<Vec<WalkEntry>, IoError> {
             }
             out.push(WalkEntry {
                 path: childPath, relPath: childRel, isDir: dirLike
-            }
-            )
+            })
         }
     }
     return Result.Ok(out)

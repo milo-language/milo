@@ -33,8 +33,7 @@ fn main(): i32 {
     for i in 0..50 {
         structTotal = structTotal + holderLen(Holder {
             name: i.toString(), n: 1
-        }
-        )
+        })
     }
     print(structTotal.toString())
     return 0

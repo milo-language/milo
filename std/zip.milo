@@ -126,8 +126,7 @@ fn zipRead(src: &string): Result<Vec<ZipEntry>, string> {
 
         entries.push(ZipEntry {
             name: name, data: data
-        }
-        )
+        })
         cd = cd + 46 + nameLen + extraLen + commentLen
     }
     return Result.Ok(entries)

@@ -10,8 +10,7 @@ fn main(): i32 {
         let n = i
         groups.modify(w.clone(), (v: &mut Vec<i64>): void => {
             v.push(n)
-        }
-        )
+        })
         i = i + 1
     }
     let ka = groups.getOrDefault("a", Vec.new())
@@ -19,14 +18,12 @@ fn main(): i32 {
     print(groups.getOrDefault("b", Vec.new()) [1])
     print(groups.modify("zzz", (v: &mut Vec<i64>): void => {
         v.push(0)
-    }
-    ))
+    }))
     var counts: HashMap<string, i64> = HashMap.new()
     for w in words {
         if !counts.modify(w.clone(), (c: &mut i64): void => {
             c = c + 1
-        }
-        ) {
+        }) {
             counts.insert(w.clone(), 1)
         }
     }

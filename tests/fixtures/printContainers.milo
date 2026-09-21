@@ -34,8 +34,7 @@ pub fn main(): i32 {
 
     let us: Vec<User> = [User {
         name: "x", age: 1
-    }
-    ]
+    }]
     print(us)
 
     var m: HashMap<string, i64> = HashMap.new()

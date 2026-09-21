@@ -33,16 +33,14 @@ pub fn main(): i32 {
     var v: Vec<Cell> = Vec.new()
     v.push(Cell {
         n: 3
-    }
-    )
+    })
     var w: Window<Cell> = Window {
         base: v.ptr(), len: v.len
     }
     print(w.firstN())
     w.set(0, Cell {
         n: 9
-    }
-    )
+    })
     print(w.firstN())
     return 0
 }

@@ -59,8 +59,7 @@ pub fn main(): i32 {
         let y1 = (k + 1) * H / bands
         ps.push(Promise<i64>.blocking(move(): i64 => {
             return fillBand(base, y0, y1)
-        }
-        ))
+        }))
     }
     let counts = Promise.all(ps).await()!
     var rows = 0

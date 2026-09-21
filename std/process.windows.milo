@@ -344,8 +344,7 @@ fn createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: i
         let pid = (pi as *u32) [4] as i32
         return Result.Ok(Process {
             pid: pid, handle: handle
-        }
-        )
+        })
     }
 }
 
@@ -436,8 +435,7 @@ impl Command {
         var c = self
         c.envChanges.push(EnvChange {
             name: name.clone(), value: value.clone(), remove: false
-        }
-        )
+        })
         return c
     }
 
@@ -445,8 +443,7 @@ impl Command {
         var c = self
         c.envChanges.push(EnvChange {
             name: name.clone(), value: "", remove: true
-        }
-        )
+        })
         return c
     }
 
@@ -519,8 +516,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 makeInheritable(childEnd)
                 return Result.Ok(StreamFds {
                     child: childEnd, parent: parentEnd
-                }
-                )
+                })
             }
             Stdio.Null => {
                 let flags = if childWrites {
@@ -535,8 +531,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 makeInheritable(fd)
                 return Result.Ok(StreamFds {
                     child: fd, parent: -1
-                }
-                )
+                })
             }
             Stdio.Read(path) => {
                 if childWrites {
@@ -549,8 +544,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 makeInheritable(fd)
                 return Result.Ok(StreamFds {
                     child: fd, parent: -1
-                }
-                )
+                })
             }
             Stdio.Write(path) => {
                 if !childWrites {
@@ -563,8 +557,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 makeInheritable(fd)
                 return Result.Ok(StreamFds {
                     child: fd, parent: -1
-                }
-                )
+                })
             }
             Stdio.Append(path) => {
                 if !childWrites {
@@ -577,8 +570,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 makeInheritable(fd)
                 return Result.Ok(StreamFds {
                     child: fd, parent: -1
-                }
-                )
+                })
             }
             Stdio.Merge => {
                 return Result.Err(label + " cannot be Stdio.Merge — only stderr can merge")
@@ -696,8 +688,7 @@ fn commandSpawn(cmd: &Command): Result<Child> {
                 stdinFd: inFds.parent,
                 stdoutFd: outFds.parent,
                 stderrFd: errFds.parent,
-            }
-            )
+            })
         }
     }
 }

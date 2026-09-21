@@ -46,15 +46,13 @@ fn main() {
     d0.push(7)
     s.items.push(Node {
         name: "alpha", deps: d0,
-    }
-    )
+    })
     var d1: Vec<i64> = Vec.new()
     d1.push(8)
     d1.push(9)
     s.items.push(Node {
         name: "beta", deps: d1,
-    }
-    )
+    })
 
     // Read every element twice: the second pass only survives if the first pass's
     // copies were independent of the store.

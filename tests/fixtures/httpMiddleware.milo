@@ -34,8 +34,7 @@ pub fn authHeader(value: string): Vec<Param> {
     var h: Vec<Param> = []
     h.push(Param {
         name: "Authorization", value: value
-    }
-    )
+    })
     return h
 }
 
@@ -103,13 +102,11 @@ pub fn main() {
     var ctxG = mkCtx([])
     ctxG.req.headers.push(Param {
         name: "Accept-Encoding", value: "gzip, br"
-    }
-    )
+    })
     let body = big.clone()
     let resp = gzip(&mut ctxG, (c: &mut Context) => {
         return Response.Text(body.clone())
-    }
-    )
+    })
     match resp {
         Response.Status(code, ct, cbody) => {
             // @expect: true
@@ -141,8 +138,7 @@ pub fn main() {
     var ctxP = mkCtx([])
     let plain = gzip(&mut ctxP, (c: &mut Context) => {
         return Response.Text("hello")
-    }
-    )
+    })
     match plain {
         Response.Text(t) => {
             // @expect: hello

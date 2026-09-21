@@ -244,8 +244,7 @@ pub fn check(json: string, expected: bool) {
     if result == expected {
         if expected {
             print("valid")
-        } 
-        else {
+        } else {
             print("invalid")
         }
     } else {

@@ -20,21 +20,17 @@ pub extern fn sum4(v: F4): f32
 pub fn main(): i32 {
     print(dot2(D2 {
         x: 1.0, y: 2.0
-    }
-    , D2 {
+    }, D2 {
         x: 3.0, y: 4.0
-    }
-    ))
+    }))
     let s = scale2(D2 {
         x: 1.5, y: 2.5
-    }
-    , 2.0)
+    }, 2.0)
     print(s.x)
     print(s.y)
     print(sum4(F4 {
         a: 1.0, b: 2.0, c: 3.0, d: 4.0
-    }
-    ))
+    }))
     return 0
 }
 // @expect: 11

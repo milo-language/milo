@@ -22,8 +22,7 @@ pub fn main(): i32 {
     let t = Promise<i64>.blocking(move(): i64 => {
         w.ch.send("hello from worker")!
         return 0
-    }
-    )
+    })
 
     let msg = chMain.recv()!
     print(msg)

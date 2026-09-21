@@ -44,16 +44,14 @@ fn main(): i32 {
         tags.push("beta")
         rows.push(Row {
             name: "row", tags: tags
-        }
-        )
+        })
     }
     rows.clear()
     // @expect: 0
     print(rows.len)
     rows.push(Row {
         name: "again", tags: Vec.new()
-    }
-    )
+    })
     // @expect: again
     print(rows[0].name)
     return 0

@@ -177,15 +177,13 @@ pub fn parsePkgUrl(url: &string): Option<PkgUrl> {
         let safe = fullPath.replace("/", "_")
         return Option.Some(PkgUrl {
             host: "local", path: safe, version: version
-        }
-        )
+        })
     }
     match fullPath.indexOf("/") {
         Option.Some(slashIdx) => {
             return Option.Some(PkgUrl {
                 host: fullPath.substr(0, slashIdx), path: fullPath.substr(slashIdx + 1, fullPath.len), version: version
-            }
-            )
+            })
         }
         Option.None => {
             return Option.None
@@ -838,8 +836,7 @@ pub fn mergeImportedFile(rs: &mut ResolverState, absPath: string) {
     for ai in 0..imported.typeAliases.len {
         rs.typeAliases.push(TypeAlias {
             name: imported.typeAliases[ai].name.clone(), base: imported.typeAliases[ai].base.clone()
-        }
-        )
+        })
     }
     for li in 0..imported.linkLibs.len {
         addLinkLib(&mut rs, imported.linkLibs[li])
@@ -1005,8 +1002,7 @@ pub fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, ta
         for ai in 0..prelude.typeAliases.len {
             rs.typeAliases.push(TypeAlias {
                 name: prelude.typeAliases[ai].name.clone(), base: prelude.typeAliases[ai].base.clone()
-            }
-            )
+            })
         }
         let preludeDir = Path.dirname(preludePath)
         processImports(&mut rs, prelude, preludeDir)
@@ -1039,8 +1035,7 @@ pub fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, ta
     for ai in 0..program.typeAliases.len {
         rs.typeAliases.push(TypeAlias {
             name: program.typeAliases[ai].name.clone(), base: program.typeAliases[ai].base.clone()
-        }
-        )
+        })
     }
     for li in 0..program.linkLibs.len {
         addLinkLib(&mut rs, program.linkLibs[li])

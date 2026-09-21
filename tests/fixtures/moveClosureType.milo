@@ -31,12 +31,10 @@ pub fn main(): i32 {
     s.pushStr("-heap")
     run(move(): void => {
         print(s)
-    }
-    )
+    })
     run((): void => {
         print("non-owning closure")
-    }
-    )
+    })
     run(bare)
     let g = move(): i64 => {
         return 21

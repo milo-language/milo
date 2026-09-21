@@ -22,8 +22,7 @@ pub fn main(): i32 {
             xs[1] = 6
             xs[2] = 7
             return xs[2]
-        }
-        )
+        })
         print(last!)
         print(p[0], " ", p[1], " ", p[2])
 

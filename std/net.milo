@@ -125,8 +125,7 @@ impl TcpStream {
 
         return Result.Ok(TcpStream {
             fd: fd
-        }
-        )
+        })
     }
 
     // IPv6 connect. Added alongside connect() rather than replacing it: a u32 cannot hold
@@ -145,8 +144,7 @@ impl TcpStream {
         }
         return Result.Ok(TcpStream {
             fd: fd
-        }
-        )
+        })
     }
 
     fn send(self: &Self, data: &string): Result<i64, NetError> {
@@ -304,8 +302,7 @@ impl TcpListener {
         }
         return Result.Ok(TcpListener {
             fd: fd
-        }
-        )
+        })
     }
 
     // Bind an IPv6 listener. Added alongside bind(); pass the 16 raw bytes (`ip6("::1")`,
@@ -329,8 +326,7 @@ impl TcpListener {
         }
         return Result.Ok(TcpListener {
             fd: fd
-        }
-        )
+        })
     }
 
     // The bound port — the point of `bind(0)`, which asks the OS to pick one.
@@ -354,8 +350,7 @@ impl TcpListener {
         }
         return Result.Ok(TcpStream {
             fd: clientFd
-        }
-        )
+        })
     }
 
     // Accept without parking: Ok(stream) only when a connection is already
@@ -369,8 +364,7 @@ impl TcpListener {
         }
         return Result.Ok(TcpStream {
             fd: clientFd
-        }
-        )
+        })
     }
 }
 
