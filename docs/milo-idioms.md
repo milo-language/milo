@@ -71,7 +71,7 @@ out.pushStr(chunk)
 out.push(byte)      // single u8
 ```
 
-`+` (and `+=`, which is the same operation) is fine for a fixed number of joins. Neither is fine inside a loop.
+`+` (and `+=`, which is the same operation) is fine for a fixed number of joins. Neither is fine inside a loop; `milo check --deny=string-concat-in-loop` lists every such site.
 
 ### Slices are views; `substr` copies
 

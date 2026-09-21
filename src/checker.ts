@@ -754,6 +754,7 @@ export class TypeChecker {
     // in milojs, 55 in examples/ at the census that shipped it. Default-on before the sweep
     // would bury every real warning under it. Flip it on once those reach zero.
     if (!config.denied.has("single-variant-match") && !config.expected?.has("single-variant-match")) config.allowed.add("single-variant-match");
+    if (!config.denied.has("string-concat-in-loop") && !config.expected?.has("string-concat-in-loop")) config.allowed.add("string-concat-in-loop");
     // opaque-call-on-thread is OFF until the thread-boundary scan resolves function values
     // with a statically known target. Every hit in the tree today (rg.milo, the Once
     // fixture) is a callback that touches no global, so on-by-default would be two false
@@ -1170,6 +1171,22 @@ export class TypeChecker {
       `the copy is structural and never runs a Drop, so the copy and the element still in the ${container} ` +
       `would each release it. ${borrowForm}, or clone the element where its own Clone impl runs.`);
     return true;
+  }
+
+  // `out += piece` and `out = out + piece` in a loop: `+` allocates a fresh string the
+  // size of the accumulator every iteration, so the loop is quadratic. `pushStr` grows
+  // in place. The compound form parses to the same `out = out + piece` (parseAssign),
+  // so one shape check covers both; only the leftmost operand has to be the target.
+  private lintStringConcatInLoop(target: Expr, value: Expr, targetType: TypeKind, span?: Span) {
+    if (this.loopDepth === 0 || targetType.tag !== "string" || !this.currentFnIsUser) return;
+    if (this.warningConfig.allowed.has("string-concat-in-loop")) return;
+    let leftmost = value;
+    while (leftmost.kind === "BinOp" && leftmost.op === "+") leftmost = leftmost.left;
+    if (leftmost === value || this.describeExpr(leftmost) !== this.describeExpr(target)) return;
+    const name = this.describeExpr(target);
+    this.warn("string-concat-in-loop",
+      `'${name}' is rebuilt with '+' on every iteration, copying the whole accumulator each time`,
+      span, `append in place: '${name}.pushStr(...)' for a string, '${name}.push(...)' for a byte`);
   }
 
   private lintIndexClone(value: Expr, ty: TypeKind, span?: Span) {
@@ -6049,6 +6066,7 @@ export class TypeChecker {
         const frozenBeforeRhs = new Set<VarInfo>();
         for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBeforeRhs.add(vi);
         const valType = this.checkExprWithHint(stmt.value, targetInfo.type);
+        this.lintStringConcatInLoop(stmt.target, stmt.value, targetInfo.type, sp);
         if (targetInfo.type.tag === "cfn" && valType.tag !== "unknown"
             && !this.checkCFnStore(stmt.value, targetInfo.type, valType, `cannot assign to '${this.describeExpr(stmt.target)}'`, sp)) {
           this.error(`type mismatch: cannot assign ${this.show(valType)} to ${this.show(targetInfo.type)}`, sp);

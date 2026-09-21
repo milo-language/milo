@@ -37,6 +37,10 @@ export const WARNINGS: WarningInfo[] = [
   { name: "opaque-call-on-thread", offByDefault: true },
   { name: "shadows-stdlib-override" },
   { name: "single-variant-match", offByDefault: true },
+  // `out += piece` inside a loop copies the whole accumulator per iteration; `pushStr`
+  // is amortized. Off by default until the example corpus is migrated (hundreds of
+  // hits on 2026-09-21); `--deny=string-concat-in-loop` lists them.
+  { name: "string-concat-in-loop", offByDefault: true },
   { name: "unused-import", offByDefault: true },
   // The census of `@copy` structs. Every hit is a deliberate annotation, so it is off by
   // default; `--deny=unowned-pointer-copy` enumerates them for an ownership audit.
