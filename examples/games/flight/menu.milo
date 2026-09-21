@@ -98,7 +98,7 @@ pub fn chooseRegion(s: &mut Screen, gw: &GpuWorld, c: &mut Canvas, sc: &Scene, i
     while true {
         pollInput(&mut inp, &mut ev)
         if inp.quit {
-            return 0 - 1
+            return -1
         }
         if inp.menuStep != 0 {
             sel = (sel + inp.menuStep + PLACE_COUNT) % PLACE_COUNT

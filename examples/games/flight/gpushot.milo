@@ -139,7 +139,7 @@ pub fn main(): i32 {
     // Without this there is no way to photograph a specific thing: the autopilot
     // decides where the aircraft is, and tuning a waterfall by re-running the
     // flight until it happens to point at one is not a workflow.
-    var mark = 0 - 1
+    var mark = -1
     if a.len > 4 {
         mark = strToI64(a[4])
     }

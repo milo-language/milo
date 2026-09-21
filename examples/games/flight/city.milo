@@ -232,7 +232,7 @@ fn shiftOf(n: i64): i64 {
         k += 1
     }
     if v != n {
-        return 0 - 1
+        return -1
     }
     return k
 }

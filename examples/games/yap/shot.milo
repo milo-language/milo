@@ -112,7 +112,7 @@ pub fn main(): i32 {
     let prefix = a[1]
     var ticks: Vec<i64> = Vec.new()
     var wantSheet = false
-    var giveUp: i64 = 0 - 1 // tick after which the bot stops flapping, to capture a death
+    var giveUp: i64 = -1 // tick after which the bot stops flapping, to capture a death
     var k = 2
     while k < a.len {
         if a[k] == "--sheet" {

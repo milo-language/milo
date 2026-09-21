@@ -859,8 +859,7 @@ pub fn layRing(w: &mut World) {
         bonus: bonus,
         beacon: false,
         armed: true,
-    }
-    )
+    })
 }
 
 // The current landmark, marked by a column of light standing on it and collected
@@ -897,8 +896,7 @@ pub fn placeMarkRing(w: &mut World) {
         x: mx, y: solidAt(w.city, mx, mz, 60.0), z: mz, face: heading,
         r: MARK_REACH, alive: true,
         pop: 0.0, side: 0.0 - 1.0, bonus: false, beacon: true, armed: false,
-    }
-    )
+    })
 }
 
 // How close, in plan, counts as arriving. Two seconds of flight at cruise: wide
@@ -971,7 +969,7 @@ pub fn wrapPi(a: f64): f64 {
 fn autoSteer(w: &mut World, dt: f64) {
     let fwdX = Math.sin(w.plane.yaw)
     let fwdZ = Math.cos(w.plane.yaw)
-    var bi = 0 - 1
+    var bi = -1
     var bd = 1.0e18
     for i in 0..w.rings.len {
         if w.rings[i].alive {
@@ -1191,7 +1189,7 @@ fn corridor(w: &mut World, dt: f64) {
     }
     let SOFT = 420.0
     let HARD = 950.0
-    var bi = 0 - 1
+    var bi = -1
     var bd = 1.0e18
     for i in 0..w.rings.len {
         if w.rings[i].alive {
@@ -1693,8 +1691,7 @@ fn updateFlocks(w: &mut World, dt: f64) {
             n: 5 + w.rng.range(0, 8),
             seed: w.rng.floatRange(0.0, 10.0),
             life: 44.0,
-        }
-        )
+        })
     }
     var i: i64 = 0
     while i < w.flocks.len {
@@ -1846,8 +1843,7 @@ fn burstAt(w: &mut World, x: f64, z: f64) {
             cr: 0.55 + w.rng.floatRange(0.0, 0.5),
             cg: 1.05 + w.rng.floatRange(0.0, 0.35),
             cb: 1.90,
-        }
-        )
+        })
     }
 }
 
@@ -1940,8 +1936,7 @@ fn clearRing(w: &mut World, i: i64) {
             cr: 1.7,
             cg: 1.25 + w.rng.floatRange(0.0, 0.4),
             cb: 0.30,
-        }
-        )
+        })
     }
     // Over a real place the course is a tour of that place and the aircraft
     // stays put. Being yanked to another city ten hoops into the Golden Gate run
@@ -1992,12 +1987,10 @@ fn updateTrails(w: &mut World, dt: f64) {
         let life = 0.8 + load * 0.9
         w.trailL.push(Trail {
             x: w.plane.x - fx * 4.0 - rx * 22.0, y: w.plane.y - fy * 4.0 - ry * 22.0, z: w.plane.z - fz * 4.0 - rz * 22.0, life: life
-        }
-        )
+        })
         w.trailR.push(Trail {
             x: w.plane.x - fx * 4.0 + rx * 22.0, y: w.plane.y - fy * 4.0 + ry * 22.0, z: w.plane.z - fz * 4.0 + rz * 22.0, life: life
-        }
-        )
+        })
     }
     ageTrail(&mut w.trailL, dt)
     ageTrail(&mut w.trailR, dt)

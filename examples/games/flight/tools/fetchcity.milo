@@ -578,7 +578,7 @@ fn hexNibble(ch: u8): i64 {
     if c >= 65 && c <= 70 {
         return c - 55
     }
-    return 0 - 1
+    return -1
 }
 
 // OSM's `colour` is either a CSS name or a #rrggbb. Both appear on real bridges —
@@ -885,9 +885,9 @@ fn mergeParts(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64,
         cz /= (pLen[i] as f64)
         let gx = ((cx / CELL) as i64) + half
         let gz = ((cz / CELL) as i64) + half
-        var dz = 0 - 1
+        var dz = -1
         while dz <= 1 {
-            var dx = 0 - 1
+            var dx = -1
             while dx <= 1 {
                 let ex = gx + dx
                 let ez = gz + dz
@@ -1136,7 +1136,7 @@ fn twinOf(br: &Bridges, ax: f64, az: f64, bx: f64, bz: f64): i64 {
             return i
         }
     }
-    return 0 - 1
+    return -1
 }
 
 fn midGap(br: &Bridges, i: i64, ax: f64, az: f64, bx: f64, bz: f64): f64 {

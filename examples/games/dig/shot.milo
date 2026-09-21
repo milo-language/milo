@@ -77,8 +77,8 @@ pub fn main(): i32 {
     var m = mineNew()
     let dt = 1.0 / 60.0
 
-    var tgtX: i64 = 0 - 1
-    var tgtY: i64 = 0 - 1
+    var tgtX: i64 = -1
+    var tgtY: i64 = -1
     var lastScore: i64 = 0
     var stall: i64 = 0
     var detour: i64 = 0
@@ -95,7 +95,7 @@ pub fn main(): i32 {
             let cx = (m.px / TILE) as i64
             let cy = (m.py / TILE) as i64
             var best: i64 = 1000000
-            tgtX = 0 - 1
+            tgtX = -1
             for y in 0..MAP_H {
                 for x in 0..MAP_W {
                     if tileValue(tileAt(m, x, y)) == 0 {

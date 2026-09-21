@@ -170,7 +170,7 @@ fn placeIndex(name: &string): i64 {
             return i
         }
     }
-    return 0 - 1
+    return -1
 }
 
 // The aerial photograph for a built-in place, or "" if it has none yet. Same
@@ -254,10 +254,10 @@ fn loadFile(path: &string): City {
 // (--procedural, or a --city asset from disk).
 fn startIndex(o: &ParsedArgs): i64 {
     if o.getBool("procedural") {
-        return 0 - 1
+        return -1
     }
     if (o.getString("city") ?? "") != "" {
-        return 0 - 1
+        return -1
     }
     let want = o.getString("place") ?? ""
     if want == "" {
@@ -267,7 +267,7 @@ fn startIndex(o: &ParsedArgs): i64 {
     let idx = placeIndex(want)
     if idx < 0 {
         print("no built-in place called '" + want + "' — try: " + PLACES)
-        return 0 - 1
+        return -1
     }
     return idx
 }
