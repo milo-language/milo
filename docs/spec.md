@@ -11463,7 +11463,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `5`
 - `AéB`
 
-**Rationale.** Strings are UTF-8, and the byte-offset API respects that instead of silently producing invalid UTF-8: `charAt(i)` is the whole character starting at byte `i`, `padStart`/`padEnd` count characters so a column of mixed scripts lines up, and a `substr` on a character boundary is fine. A bound INSIDE a character aborts (see tests/runtime-errors/substrSplitsChar.milo). Case mapping stays ASCII-only.
+**Rationale.** `string` is a byte string (std keeps ciphertext, digests and PNG bytes in one), so `len`, `s[i]`, `substr` and `slice` are byte operations and stay binary-safe. The operations whose names promise CHARACTERS answer in characters: `charAt(i)` is the whole character starting at byte `i` (a continuation byte aborts, see tests/runtime-errors/charAtContinuation.milo), and `padStart`/`padEnd` count characters so a column of mixed scripts lines up. Case mapping is ASCII-only.
 
 *Program:* [`tests/fixtures/stringCharBoundary.milo`](../tests/fixtures/stringCharBoundary.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

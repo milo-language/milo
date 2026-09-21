@@ -100,11 +100,14 @@ fn repeat(self: &string, count: i64): string
 fn padStart(self: &string, targetLen: i64, pad: &string): string
 ```
 
-Pad to `targetLen` on the start (end).
+Pad to `targetLen` characters (code points, not bytes) on the start (end); `pad` is
+cycled by character, so a multibyte pad is never cut.
 
 ### Other
 
-`s.len()`, `s.isEmpty()`, `s.charAt(i)`, `s.reverse()`, `s.substr(start, end)`, `s.slice(start, end)`.
+`s.len()`, `s.isEmpty()`, `s.charAt(i)` (the whole character starting at byte `i`;
+a continuation byte aborts), `s.reverse()` (by character), `s.substr(start, end)` and
+`s.slice(start, end)` (byte offsets, binary-safe).
 
 ## Character helpers
 

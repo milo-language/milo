@@ -1,0 +1,8 @@
+// @runtime-error: charAt(2) lands inside a multibyte UTF-8 character
+// charAt takes a byte offset and answers the whole character there; landing on a
+// continuation byte has no character to answer, so it aborts instead of handing back
+// one byte of invalid UTF-8.
+pub fn main(): void {
+    let s = "aéb"
+    print(s.charAt(2))
+}

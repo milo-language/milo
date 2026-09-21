@@ -1,0 +1,32 @@
+// `string` is a byte string (std keeps ciphertext, digests and PNG bytes in one), so
+// `len`, `s[i]`, `substr` and `slice` are byte operations and stay binary-safe. The
+// operations whose names promise CHARACTERS answer in characters: `charAt(i)` is the
+// whole character starting at byte `i` (a continuation byte aborts, see
+// tests/runtime-errors/charAtContinuation.milo), and `padStart`/`padEnd` count
+// characters so a column of mixed scripts lines up. Case mapping is ASCII-only.
+fn main(): i32 {
+    let s = "aéb日"
+    print(s.charAt(0))
+    print(s.charAt(1))
+    print(s.charAt(3))
+    print(s.charAt(4))
+    print(s.substr(1, 3))
+    print(s.slice(3, 7))
+    print("[" + "café".padStart(6, "*") + "]")
+    print("[" + "日本".padEnd(4, "・") + "]")
+    print("[" + "ab".padStart(5, "é") + "]")
+    print("café".padStart(3, "*").len)
+    print("aéb".toUpper())
+    return 0
+}
+// @expect: a
+// @expect: é
+// @expect: b
+// @expect: 日
+// @expect: é
+// @expect: b日
+// @expect: [**café]
+// @expect: [日本・・]
+// @expect: [éééab]
+// @expect: 5
+// @expect: AéB

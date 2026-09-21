@@ -75,8 +75,10 @@ for at, cp in "héllo".codePoints() { // at: i64 BYTE offset of cp
 Malformed UTF-8 never stalls or reads out of bounds — a bad sequence yields
 U+FFFD and advances one byte.
 
-Indexing is byte-oriented, so `s[i]` is a `u8` and `charAt` will split a
-multi-byte codepoint. To decode at a known offset without a loop, use
+Indexing is byte-oriented, so `s[i]` is a `u8`; `charAt(i)` is the whole
+character that starts at byte `i` and aborts on a continuation byte, and
+`padStart`/`padEnd` count characters. `substr`/`slice` take byte offsets and are
+binary-safe. To decode at a known offset without a loop, use
 `decodeCodepoint` from `std/unicode`, which returns the value and its byte
 width:
 
