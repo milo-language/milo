@@ -13,7 +13,7 @@ The rules reviewers check by hand. Anything mechanically checkable lives in `scr
 ## Milo language code (`.milo`, `std/`, `examples/`, `tests/`)
 - **camelCase** for identifiers — functions, methods, locals, fields. Repo-wide, no exceptions.
 - `let` by default; `var` only when you actually mutate. A `var` that's never reassigned is a smell.
-- Move semantics: single owner. Don't clone to dodge a borrow error — understand the ownership first, clone only when a real copy is intended. Equally, don't strip a clone without checking: moving out of a container zeroes the source slot silently.
+- Move semantics: single owner. Don't clone to dodge a borrow error — understand the ownership first, clone only when a real copy is intended. Equally, don't strip a clone without checking: moving a field out of a container element is a compile error, and moving a field out of a plain struct leaves that struct partially moved.
 - Iterate with `for` (it binds by reference); a manual `while i < x.len` cursor is a smell. Strings iterate as bytes; use `s.codePoints()` when the value is text. See [docs/milo-idioms.md](docs/milo-idioms.md).
 - Build strings with `pushStr`/`push`, not `s = s + t` in a loop — the latter reallocates the whole accumulator per concat.
 - Prefer existing stdlib. Run `milo api <terms>` before adding an API. A new capability lands *alongside* an existing API (e.g. `greenSpawn` next to `spawn`) rather than silently changing its contract. Deliberate pre-1.0 coherence migrations follow [docs/stdlib-design.md](docs/stdlib-design.md): migrate the whole domain, document the break, and do not retain permanent aliases for one operation.

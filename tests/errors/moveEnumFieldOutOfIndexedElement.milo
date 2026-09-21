@@ -1,0 +1,29 @@
+// @error: cannot move 'toks[...].e' out of 'toks': the element stays in the container, so the move would leave a zeroed 'e' behind
+// The enum-payload shape of moveFieldOutOfIndexedElement.milo. This one was the worst
+// of the class: the zeroing emptied the payload but the tag survived, so a later
+// `match toks[0].e` still entered the `A` arm and read an empty string out of it.
+enum E {
+    A(string),
+    B,
+}
+
+struct Tok {
+    e: E,
+}
+
+fn main(): i32 {
+    var toks: Vec<Tok> = Vec.new()
+    toks.push(Tok {
+        e: E.A("payload"),
+    })
+    let taken = toks[0].e
+    match toks[0].e {
+        E.A(s) => {
+            print(s)
+        }
+        E.B => {
+            print("b")
+        }
+    }
+    return 0
+}

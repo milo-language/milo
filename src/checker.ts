@@ -214,8 +214,9 @@ interface VarInfo {
   // compiled and handed back the zeroed slot as an empty string. Safe, and wrong.
   //
   // Only static field chains live here. An index step is a runtime value, so `v[i]`
-  // twice cannot be settled at compile time; that case keeps the move-zeroing, which
-  // is memory-safe on its own.
+  // twice cannot be settled at compile time; moving a field out through one is an
+  // error instead (`errorIfFieldMovedOutOfElement`), since the container keeps the
+  // element and the zeroed field would be read back as real data.
   movedPlaces?: Set<string>;
   // For a ref/slice binding: the source vars this binding's borrow froze.
   // Released (borrowed=false) when the binding's scope pops, so a slice in an
@@ -7277,8 +7278,12 @@ export class TypeChecker {
           // Reading it again is caught at the read (checkExpr), not here — a move
           // position reads first, so checking in both places would double-report.
           const place = this.staticFieldPath(expr);
-          const rootInfo = place ? this.lookup(place.root) : null;
-          if (place && rootInfo) this.markPlaceMoved(rootInfo, place.path);
+          if (place) {
+            const rootInfo = this.lookup(place.root);
+            if (rootInfo) this.markPlaceMoved(rootInfo, place.path);
+          } else if (this.errorIfFieldMovedOutOfElement(expr)) {
+            return;
+          }
           this.movedExprs.add(expr);
         } else if (this.keyExtractorDepth === 0) {
           // `replace` is only offered for `&mut`: it swaps something in, which needs write
@@ -7323,6 +7328,40 @@ export class TypeChecker {
   private borrowBasePath(expr: Expr): { root: string; path: string; mutable: boolean } | null {
     const p = this.soloPath(expr);
     return p ? this.borrowBaseOfPlace(p) : null;
+  }
+
+  // `let name = toks[0].text` used to compile: codegen zeroed `toks[0].text` while `toks`
+  // kept the element, so the next read of it handed back an empty string, and for an enum
+  // payload the tag outlived the zeroing, so a later `match` entered the arm on empty data.
+  // The element's owner is a live binding, so nothing has changed hands and there is no
+  // sound thing to zero; the field has to be cloned or the element taken out first. A
+  // temporary root (`f().name`, `makeVec()[0].name`) is consumed whole, so it keeps the
+  // move. A `&T` root never reaches here (the borrowed branch of `tryMoveLeaf` owns it).
+  private errorIfFieldMovedOutOfElement(expr: Extract<Expr, { kind: "FieldAccess" }>): boolean {
+    const throughElement = this.placesOf(expr).some(p =>
+      p.tag === "path" && p.steps.some(s => s.tag === "index") && this.lookup(p.root) !== null);
+    if (!throughElement) return false;
+    const path = this.describeExpr(expr);
+    const container = this.describeExpr(this.indexedContainerOf(expr) ?? expr.object);
+    this.error(`cannot move '${path}' out of '${container}': the element stays in the container, so the move would leave a zeroed '${expr.field}' behind`, expr.span,
+      `clone it ('${path}.clone()'), or take the element out first ('${container}.remove(i)', '${container}.pop()', or 'replace(${path}, ...)')`);
+    return true;
+  }
+
+  // The container the nearest index step of a field chain reads from: `toks` for
+  // `toks[i].name`, `a[...].b` for `a[i].b[j].c`. A view-returning method call is an
+  // index step too (see `placesOf`), so its receiver counts as the container.
+  private indexedContainerOf(e: Expr): Expr | null {
+    let cur: Expr = e;
+    for (;;) {
+      switch (cur.kind) {
+        case "IndexAccess": case "MethodCall": return cur.object;
+        case "FieldAccess": cur = cur.object; break;
+        case "Unwrap": case "Propagate": case "CastExpr": cur = cur.operand; break;
+        case "UnaryOp": if (cur.op !== "*") return null; cur = cur.operand; break;
+        default: return null;
+      }
+    }
   }
 
   // Never returns null: every failure path is `fatal()`, because there is no such

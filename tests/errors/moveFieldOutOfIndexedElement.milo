@@ -1,0 +1,20 @@
+// @error: cannot move 'toks[...].text' out of 'toks': the element stays in the container, so the move would leave a zeroed 'text' behind
+// Moving a non-Copy field out of a container element used to compile and zero the
+// slot while the container kept the element: `print(toks[0].text)` afterwards printed
+// "" with no diagnostic. The element never changed hands, so it is an error now; the
+// hint names the three ways out (`.clone()`, `remove`/`pop`, `replace`).
+struct Tok {
+    text: string,
+    n: i64,
+}
+
+fn main(): i32 {
+    var toks: Vec<Tok> = Vec.new()
+    toks.push(Tok {
+        text: "hi", n: 1,
+    })
+    let name = toks[0].text
+    print(name)
+    print(toks[0].text)
+    return 0
+}

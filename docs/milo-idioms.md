@@ -114,11 +114,24 @@ A sweep of all ~200 `.clone()` calls in milojs found exactly **one** that auto-b
 
 So before adding a clone, check whether the callee could take `&string` instead. If it genuinely needs ownership, the clone is correct and not a smell. Do not "optimize" clones away without checking which case you're in — dropping a required one is a silent data-loss bug, not a compile error (see below).
 
-### Moving out of a container zeroes it
+### Moving a field out of a container element is an error
 
-`let name = toks[i].text` does not copy — it **moves** the field out and zeroes the source slot, leaving a zeroed string inside the `Vec`. There is no error. If the container is still live afterwards, you need `.clone()`.
+`let name = toks[i].text` used to compile and zero the slot while `toks` kept the element, so the next read of `toks[i].text` handed back an empty string with no diagnostic. It was the single most common source of silent corruption in Milo code. It is now a compile error:
 
-This is the single most common source of silent corruption in Milo code.
+```
+error: cannot move 'toks[...].text' out of 'toks': the element stays in the container, so the move would leave a zeroed 'text' behind
+  hint: clone it ('toks[...].text.clone()'), or take the element out first ('toks.remove(i)', 'toks.pop()', or 'replace(toks[...].text, ...)')
+```
+
+Three ways out, depending on what you mean:
+
+```milo
+let name = toks[i].text.clone()            // the container keeps its value
+let tok = toks.remove(i)                   // the whole element leaves; its fields move freely
+let name = replace(toks[i].text, "")       // take the field, leave something in its place
+```
+
+Reading a WHOLE element (`let t = toks[i]`) already deep-clones (see the `index-clone` lint). A field of a call result (`f().name`) is still a plain move: the temporary is consumed and nothing is left behind.
 
 ## Control flow
 

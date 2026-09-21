@@ -1,0 +1,89 @@
+// The three sanctioned ways to get a non-Copy field out of a container element, now
+// that the bare `let x = v[i].field` is an error (tests/errors/moveFieldOutOfIndexedElement.milo):
+// clone the field, take the element out with `remove`/`pop`, or `replace` the field in
+// place. Each one is followed by a read of the container, to pin what it holds after.
+enum E {
+    A(string),
+    B,
+}
+
+impl Clone for E {
+    fn clone(self: &Self): Self {
+        match self {
+            E.A(s) => {
+                return E.A(s.clone())
+            }
+            E.B => {
+                return E.B
+            }
+        }
+    }
+}
+
+struct Tok {
+    text: string,
+    e: E,
+}
+
+fn mk(text: string, payload: string): Tok {
+    return Tok {
+        text: text, e: E.A(payload),
+    }
+}
+
+fn show(e: &E): string {
+    match e {
+        E.A(s) => {
+            return s.clone()
+        }
+        E.B => {
+            return "B"
+        }
+    }
+}
+
+fn main(): i32 {
+    var toks: Vec<Tok> = Vec.new()
+    toks.push(mk("first", "p1"))
+    toks.push(mk("second", "p2"))
+    toks.push(mk("third", "p3"))
+
+    // clone: the container keeps its value.
+    let name = toks[0].text.clone()
+    let payload = toks[0].e.clone()
+    print(name)
+    // @expect: first
+    print(show(payload))
+    // @expect: p1
+    print(toks[0].text)
+    // @expect: first
+    print(show(toks[0].e))
+    // @expect: p1
+
+    // replace: the field is swapped out, and the container sees the new value.
+    let old = replace(toks[1].text, "swapped")
+    let oldE = replace(toks[1].e, E.B)
+    print(old)
+    // @expect: second
+    print(show(oldE))
+    // @expect: p2
+    print(toks[1].text)
+    // @expect: swapped
+    print(show(toks[1].e))
+    // @expect: B
+
+    // remove / pop: the whole element leaves, then its fields move freely.
+    let last = toks.pop()!
+    let lastText = last.text
+    print(lastText)
+    // @expect: third
+    let first = toks.remove(0)
+    let firstE = first.e
+    print(show(firstE))
+    // @expect: p1
+    print(toks.len)
+    // @expect: 1
+    print(toks[0].text)
+    // @expect: swapped
+    return 0
+}
