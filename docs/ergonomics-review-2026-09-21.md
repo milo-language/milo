@@ -41,7 +41,7 @@ Status: **exists** = the language/std already has it and the examples do not use
 | S2 | Formatter: one-line brace groups stay inline; `}` hugs a following `)`, `]`, `,`, `.` (170 `}` / `)` splits in examples) | in progress |
 | S3 | Prelude `Some`/`None`/`Ok`/`Err` resolving to the `Option`/`Result` variants when nothing else in scope has the name | in progress |
 | S4 | `&self` receiver: no sugar; a targeted diagnostic ("write `self: &Self`") like the `++` one | in progress |
-| S5 | **Safety**: `let s = v[i].text` moves and zeroes the slot silently while `let m = v[i]` deep-clones (lint `index-clone`). Needs a diagnostic at the field-through-index move. | in progress |
+| S5 | **Safety**: `let s = v[i].text` moves and zeroes the slot silently while `let m = v[i]` deep-clones (lint `index-clone`). Needs a diagnostic at the field-through-index move. | **shipped** `67677389`: `cannot move 'v[...].text' out of 'v'`, hint names `.clone()`, `remove`/`pop`, `replace`. Zero hits in std, examples, sibling packages and milojs. |
 
 ### Language
 
