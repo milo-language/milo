@@ -99,12 +99,11 @@ pub fn rendererNew(gl: &mut GlContext): Result<Renderer, string> {
         loaded.push(false)
         i += 1
     }
-    return Result.Ok(Renderer {
+    return Ok(Renderer {
         planetSh: planetSh, atmoSh: atmoSh, ringSh: ringSh, skySh: skySh,
         ball: ball, shell: shell, ring: ring, skyQuad: Mesh.fullscreenQuad(&mut gl),
         tex: tex, loaded: loaded,
-    }
-    )
+    })
 }
 
 // Decoding a map is twenty megabytes of PNG and a visible hitch, so it happens

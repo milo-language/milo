@@ -251,13 +251,13 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
     var k: i64 = 0
     while k < 2 {
         match openAndSpawn(shell, sa) {
-            Result.Ok(p) => {
+            Ok(p) => {
                 setNonblock(p.fd())
                 ptys.push(p)
                 terms.push(newTerm(gridRows, 1))
                 paneWin.push(0)
             }
-            Result.Err(_) => {
+            Err(_) => {
             }
         }
         k += 1
@@ -474,7 +474,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                             // % → split: add a pane to the active window
                             if ptys.len < 12 {
                                 match openAndSpawn(shell, sa) {
-                                    Result.Ok(p) => {
+                                    Ok(p) => {
                                         setNonblock(p.fd())
                                         ptys.push(p)
                                         terms.push(newTerm(gridRows, 1))
@@ -483,7 +483,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                                         reTile(ptys, &mut terms, paneWin, activeWin, cols, gridRows)
                                         dirty = true
                                     }
-                                    Result.Err(_) => {
+                                    Err(_) => {
                                     }
                                 }
                             }
@@ -491,7 +491,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                             // c → new window with one shell
                             if ptys.len < 12 {
                                 match openAndSpawn(shell, sa) {
-                                    Result.Ok(p) => {
+                                    Ok(p) => {
                                         setNonblock(p.fd())
                                         ptys.push(p)
                                         terms.push(newTerm(gridRows, 1))
@@ -502,7 +502,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                                         reTile(ptys, &mut terms, paneWin, activeWin, cols, gridRows)
                                         dirty = true
                                     }
-                                    Result.Err(_) => {
+                                    Err(_) => {
                                     }
                                 }
                             }
@@ -580,14 +580,14 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
 
 pub fn runServe(): void {
     match TcpListener.bind(PORT) {
-        Result.Ok(listener) => {
+        Ok(listener) => {
             setNonblock(listener.fd)
             let shell = Env.getOr("SHELL", "/bin/sh")
             print($"tmuxd: serving on 127.0.0.1:{PORT} (attach with: tmuxdaemon attach)")
             serveMulti(listener.fd, shell, 24, 80)
             print("tmuxd: stopped")
         }
-        Result.Err(_) => {
+        Err(_) => {
             print("tmuxd: bind failed — is a daemon already running on 7373?")
         }
     }
@@ -686,7 +686,7 @@ pub fn runAttach(): void {
         return
     }
     match TcpStream.connect(ip4(127, 0, 0, 1), PORT) {
-        Result.Ok(stream) => {
+        Ok(stream) => {
             var s = stream
             let sockFd = s.take() // own the fd ourselves; close on the way out
             setNonblock(sockFd)
@@ -705,7 +705,7 @@ pub fn runAttach(): void {
             close(sockFd)
             print("tmuxd: detached (shell still running in the daemon)")
         }
-        Result.Err(_) => {
+        Err(_) => {
             print("tmuxd: connect failed — start it first with: tmuxdaemon serve")
         }
     }

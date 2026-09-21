@@ -133,8 +133,8 @@ fn boxState(st: GifState): *u8 {
 // before. `pop` moves the state out; the one-element Vec then drops and frees the block.
 fn takeState(p: *u8): Option<GifState> {
     unsafe {
-        let Option.Some(v) = adoptSlice(p as *GifState, 1) else {
-            return Option.None
+        let Some(v) = adoptSlice(p as *GifState, 1) else {
+            return None
         }
         var owned = v
         return owned.pop()
@@ -148,17 +148,16 @@ fn takeState(p: *u8): Option<GifState> {
 // GifMakeMapObject plus its Colors array. Both become Vecs the store keeps.
 fn palettePtr(store: &mut CStore, src: &Option<Palette>): *ColorMapObject {
     match src {
-        Option.None => {
+        None => {
             return nullOf<ColorMapObject>()
         }
-        Option.Some(p) => {
+        Some(p) => {
             var colors: Vec<GifColorType> = Vec.withCapacity(p.colorCount)
             var i: i64 = 0
             while i < p.colorCount {
                 colors.push(GifColorType {
                     Red: p.rgb[i * 3], Green: p.rgb[i * 3 + 1], Blue: p.rgb[i * 3 + 2]
-                }
-                )
+                })
                 i += 1
             }
             // Pointers are taken from the slot in `store` after the push, so they point
@@ -170,8 +169,7 @@ fn palettePtr(store: &mut CStore, src: &Option<Palette>): *ColorMapObject {
                 BitsPerPixel: p.bitsPerPixel as i32,
                 SortFlag: p.sortFlag,
                 Colors: store.colors[store.colors.len - 1].ptr(),
-            }
-            )
+            })
             store.maps.push(map)
             return store.maps[store.maps.len - 1].ptr()
         }
@@ -189,10 +187,10 @@ fn extsPtr(store: &mut CStore, exts: Vec<Ext>): *ExtensionBlock {
     var more = true
     while more {
         match src.pop() {
-            Option.None => {
+            None => {
                 more = false
             }
-            Option.Some(e) => {
+            Some(e) => {
                 var block = e
                 var payload = replace(block.bytes, Vec.new())
                 let byteCount = payload.len as i32
@@ -203,8 +201,7 @@ fn extsPtr(store: &mut CStore, exts: Vec<Ext>): *ExtensionBlock {
                 unsafe {
                     arr.push(ExtensionBlock {
                         ByteCount: byteCount, Bytes: payloadPtr, Function: block.function
-                    }
-                    )
+                    })
                 }
             }
         }
@@ -226,10 +223,10 @@ fn publish(doc: &mut Doc, store: &mut CStore, gif: &mut GifFileType) {
     var more = true
     while more {
         match doc.images.pop() {
-            Option.None => {
+            None => {
                 more = false
             }
-            Option.Some(img) => {
+            Some(img) => {
                 var image = img
                 let mapPtr = palettePtr(&mut store, image.map)
                 var raster = replace(image.raster, Vec.new())
@@ -254,8 +251,7 @@ fn publish(doc: &mut Doc, store: &mut CStore, gif: &mut GifFileType) {
                         RasterBits: rasterPtr,
                         ExtensionBlockCount: blockCount,
                         ExtensionBlocks: blocksPtr,
-                    }
-                    )
+                    })
                 }
             }
         }
@@ -297,24 +293,24 @@ fn publish(doc: &mut Doc, store: &mut CStore, gif: &mut GifFileType) {
 // which the differential caught on 49 of 2665 inputs. `errSilent` is that answer; C's own
 // error constant for it exists and is never stored.
 fn openPath(path: &string): Result<*GifFileType, i32> {
-    let Result.Ok(file) = File.openRead(path) else {
-        return Result.Err(dGifErrOpenFailed)
+    let Ok(file) = File.openRead(path) else {
+        return Err(dGifErrOpenFailed)
     }
     var handle = file
     // A read error is indistinguishable from a short file here, exactly as it is for
     // `fread`: both leave the stamp check with too few bytes.
     var text = ""
     match handle.readAll() {
-        Result.Ok(content) => {
+        Ok(content) => {
             text = content
         }
-        Result.Err(_) => {
+        Err(_) => {
         }
     }
     match handle.close() {
-        Result.Ok(_) => {
+        Ok(_) => {
         }
-        Result.Err(_) => {
+        Err(_) => {
         }
     }
 
@@ -326,21 +322,21 @@ fn openPath(path: &string): Result<*GifFileType, i32> {
     var rd = GifReader.new(data)
     var stamp: Vec<u8> = Vec.filled(6, 0)
     if !rd.takeInto(&mut stamp, 0, 6) {
-        return Result.Err(dGifErrReadFailed)
+        return Err(dGifErrReadFailed)
     }
     // GIF_VERSION_POS is 3, so only "GIF" is required; the version digits are advisory.
     if stamp[0] != 0x47 || stamp[1] != 0x49 || stamp[2] != 0x46 {
-        return Result.Err(dGifErrNotGifFile)
+        return Err(dGifErrNotGifFile)
     }
     let gif89 = stamp[4] == 0x39
 
     var lzw = Lzw.new()
     var doc = Doc.new()
     match getScreenDesc(&mut rd, &mut doc) {
-        Result.Ok(_) => {
+        Ok(_) => {
         }
-        Result.Err(_) => {
-            return Result.Err(errSilent)
+        Err(_) => {
+            return Err(errSilent)
         }
     }
 
@@ -354,8 +350,7 @@ fn openPath(path: &string): Result<*GifFileType, i32> {
 
     let statePtr = boxState(GifState {
         rd: rd, lzw: lzw, doc: doc, store: store, pixelCount: 0, gif89: gif89
-    }
-    )
+    })
 
     var gifs: Vec<GifFileType> = Vec.withCapacity(1)
     gifs.push(GifFileType {
@@ -381,11 +376,10 @@ fn openPath(path: &string): Result<*GifFileType, i32> {
         Error: 0,
         UserData: nullOf<u8>(),
         Private: statePtr,
-    }
-    )
+    })
     let gifPtr = gifs.ptr()
     forget(gifs)
-    return Result.Ok(gifPtr)
+    return Ok(gifPtr)
 }
 
 // DGifOpenFileName. Returns NULL on failure, writing `*Error` only where C does.
@@ -393,14 +387,14 @@ fn openPath(path: &string): Result<*GifFileType, i32> {
 pub fn DGifOpenFileName(fileName: *u8, errorOut: ?&mut i32): *GifFileType {
     var code = dGifErrOpenFailed
     match CStr.wrap(fileName) {
-        Option.None => {
+        None => {
         }
-        Option.Some(name) => {
+        Some(name) => {
             match openPath(name.toString()) {
-                Result.Ok(gif) => {
+                Ok(gif) => {
                     return gif
                 }
-                Result.Err(e) => {
+                Err(e) => {
                     code = e
                 }
             }
@@ -427,16 +421,16 @@ pub fn DGifSlurp(gifFile: ?&mut GifFileType): i32 {
     let gif = gifFile else {
         return gifError
     }
-    let Option.Some(taken) = takeState(gif.Private) else {
+    let Some(taken) = takeState(gif.Private) else {
         return gifError
     }
     var state = taken
 
     var status = gifOk
     match slurp(&mut state.rd, &mut state.lzw, &mut state.doc, &mut state.pixelCount, continueExtFuncCode) {
-        Result.Ok(_) => {
+        Ok(_) => {
         }
-        Result.Err(e) => {
+        Err(e) => {
             // Zero is the "GIF_ERROR without an error code" case C has in two places; the
             // C field keeps whatever it held, which is 0 for a handle that got this far.
             if e != 0 {
@@ -484,9 +478,9 @@ pub fn DGifCloseFile(gifFile: *GifFileType, errorCode: ?&mut i32): i32 {
     // palette, extension payload and array this library published.
     let state = takeState(statePtr)
     match state {
-        Option.Some(_) => {
+        Some(_) => {
         }
-        Option.None => {
+        None => {
         }
     }
 
@@ -497,9 +491,9 @@ pub fn DGifCloseFile(gifFile: *GifFileType, errorCode: ?&mut i32): i32 {
     // reclaim, and build.sh allows the warning for exactly that reason.
     unsafe {
         match adopt(gifFile) {
-            Option.Some(_) => {
+            Some(_) => {
             }
-            Option.None => {
+            None => {
             }
         }
     }

@@ -180,17 +180,17 @@ fn writeShot(path: &string, w: i64, h: i64) {
     Gpu.finish()
     let px = readPixelsRgba8(w, h)
     match encodePng(toRgb(px, w, h), w, h, 3) {
-        Result.Ok(bytes) => {
+        Ok(bytes) => {
             match writeFile(path, bytes) {
-                Result.Ok(_) => {
+                Ok(_) => {
                     print("wrote " + path)
                 }
-                Result.Err(e) => {
+                Err(e) => {
                     print("cannot write " + path + ": " + $"{e}")
                 }
             }
         }
-        Result.Err(e) => {
+        Err(e) => {
             print("encode failed: " + e)
         }
     }
@@ -306,15 +306,15 @@ pub fn main(): i32 {
     // context is still current.
     var gl = GlContext.new()
     var renderer = match rendererNew(&mut gl) {
-        Result.Ok(r) => r
-        Result.Err(e) => {
+        Ok(r) => r
+        Err(e) => {
             print("shaders: " + e)
             return 2
         }
     }
     var ui = match uiNew(&mut gl, fontAtlas()) {
-        Result.Ok(x) => x
-        Result.Err(e) => {
+        Ok(x) => x
+        Err(e) => {
             print("overlay: " + e)
             return 2
         }
@@ -333,8 +333,8 @@ pub fn main(): i32 {
 
     var size = drawableSize(host.win)
     var post = match postNew(&mut gl, size.w, size.h) {
-        Result.Ok(p) => p
-        Result.Err(e) => {
+        Ok(p) => p
+        Err(e) => {
             print("render targets: " + e)
             return 3
         }
@@ -371,8 +371,8 @@ pub fn main(): i32 {
         if size.w != postW || size.h != postH {
             post.free(&mut gl)
             post = match postNew(&mut gl, size.w, size.h) {
-                Result.Ok(p) => p
-                Result.Err(_) => {
+                Ok(p) => p
+                Err(_) => {
                     return 3
                 }
             }

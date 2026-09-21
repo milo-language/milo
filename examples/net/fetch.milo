@@ -10,14 +10,14 @@ from "std/fetch" import {
 pub fn main(): i32 {
     let resp = fetch("https://httpbin.org/get")
     match resp {
-        Result.Ok(r) => {
+        Ok(r) => {
             print("status: ", r.status)
             let data = r.json()
             print("origin: ", data.strPath("origin") ?? "(none)")
             print("host: ", data.strPath("headers.Host") ?? "(none)")
             print("url: ", data.strPath("url") ?? "(none)")
         }
-        Result.Err(msg) => {
+        Err(msg) => {
             print("error: ", msg)
         }
     }

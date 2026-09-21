@@ -125,10 +125,10 @@ fn parseLine(raw: &string): Option<IgnoreRule> {
     }
 
     if line.len == 0 {
-        return Option.None
+        return None
     }
     if line[0] == '#' {
-        return Option.None
+        return None
     }
 
     var negate = false
@@ -140,7 +140,7 @@ fn parseLine(raw: &string): Option<IgnoreRule> {
         line = line.substr(1, line.len)
     }
     if line.len == 0 {
-        return Option.None
+        return None
     }
 
     var dirOnly = false
@@ -159,7 +159,7 @@ fn parseLine(raw: &string): Option<IgnoreRule> {
         anchored = true
     }
     if line.len == 0 {
-        return Option.None
+        return None
     }
 
     let kind = classify(line)
@@ -169,15 +169,14 @@ fn parseLine(raw: &string): Option<IgnoreRule> {
     }
     // Precompute here, before `line` moves into `pattern` below.
     let patSegs = line.split("/")
-    return Option.Some(IgnoreRule {
+    return Some(IgnoreRule {
         pattern: line, negate: negate, dirOnly: dirOnly, anchored: anchored, kind: kind, suffix: suffix, patSegs: patSegs,
-    }
-    )
+    })
 }
 
 fn appendRules(content: &string, rules: &mut Vec<IgnoreRule>): void {
     for raw in content.lines() {
-        if let Option.Some(rule) = parseLine(raw) {
+        if let Some(rule) = parseLine(raw) {
             rules.push(rule)
         }
     }
@@ -207,7 +206,7 @@ pub fn parseIgnore(content: &string, base: &string): IgnoreSet {
 }
 
 // Read `<dirPath>/.gitignore` and `<dirPath>/.ignore` (either may be absent) and
-// return their merged rules, .gitignore first. Returns Option.None when neither
+// return their merged rules, .gitignore first. Returns None when neither
 // file exists or both are empty of real rules.
 //
 // `useGit` mirrors ripgrep's --require-git default: a .gitignore outside a git
@@ -219,7 +218,7 @@ pub fn loadIgnoreSet(dirPath: &string, useGit: bool): Option<IgnoreSet> {
     if useGit {
         let gitignorePath = Path.join(dirPath, ".gitignore")
         if isFile(gitignorePath) {
-            if let Result.Ok(content) = readFile(gitignorePath) {
+            if let Ok(content) = readFile(gitignorePath) {
                 appendRules(content, &mut rules)
             }
         }
@@ -227,19 +226,18 @@ pub fn loadIgnoreSet(dirPath: &string, useGit: bool): Option<IgnoreSet> {
 
     let ignorePath = Path.join(dirPath, ".ignore")
     if isFile(ignorePath) {
-        if let Result.Ok(content) = readFile(ignorePath) {
+        if let Ok(content) = readFile(ignorePath) {
             appendRules(content, &mut rules)
         }
     }
 
     if rules.len == 0 {
-        return Option.None
+        return None
     }
     let anchored = anyAnchored(rules)
-    return Option.Some(IgnoreSet {
+    return Some(IgnoreSet {
         base: dirPath.clone(), rules: rules, hasAnchored: anchored
-    }
-    )
+    })
 }
 
 // `fullPath` relative to `set.base`, with the joining "/" removed — "." + "./a/b"
@@ -251,7 +249,7 @@ pub fn loadIgnoreSet(dirPath: &string, useGit: bool): Option<IgnoreSet> {
 pub fn inGitRepo(path: &string): bool {
     // Relative paths have to be resolved first or the upward walk stops at "." and
     // never sees the repo root above the current directory.
-    let Result.Ok(start) = realPath(path) else {
+    let Ok(start) = realPath(path) else {
         return false
     }
     var dir = start
@@ -312,10 +310,10 @@ fn decideForSet(set: &IgnoreSet, fullPath: &string, name: &string, isDir: bool):
     if set.hasAnchored {
         rel = relativePath(set.base, fullPath)
     }
-    var decision: Option<bool> = Option.None
+    var decision: Option<bool> = None
     for rule in set.rules {
         if ruleMatches(rule, rel, name, isDir) {
-            decision = Option.Some(!rule.negate)
+            decision = Some(!rule.negate)
         }
     }
     return decision
@@ -332,7 +330,7 @@ pub fn stackIgnores(sets: &Vec<IgnoreSet>, fullPath: &string, name: &string, isD
     // reverse indexing (which would clone each IgnoreSet).
     var result = false
     for set in sets {
-        if let Option.Some(v) = decideForSet(set, fullPath, name, isDir) {
+        if let Some(v) = decideForSet(set, fullPath, name, isDir) {
             result = v
         }
     }

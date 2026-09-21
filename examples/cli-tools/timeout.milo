@@ -48,7 +48,7 @@ pub fn printHelp(): void {
 // here would throw away the sub-second precision `Duration.parse` just recovered.
 // 0 means "not a duration" — main already treats non-positive as an error.
 pub fn parseDuration(s: &string): i64 {
-    if let Option.Some(d) = Duration.parse(s) {
+    if let Some(d) = Duration.parse(s) {
         return d.toMillis()
     }
     return (s.parseInt() ?? 0) * 1000

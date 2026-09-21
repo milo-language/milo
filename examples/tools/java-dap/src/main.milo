@@ -44,8 +44,7 @@ pub fn main(): void {
         Task.spawn(move(): void => {
             let code = dapServe()
             exit(code as i32)
-        }
-        )
+        })
         schedulerRunToCompletion()
         exit(0)
     }
@@ -72,16 +71,15 @@ pub fn main(): void {
     // falls back to a pthread wait that blocks the only OS thread forever.
     Task.spawn(move(): void => {
         match smoke(host, port as u16) {
-            Result.Ok(v) => {
+            Ok(v) => {
                 exit(0)
             }
-            Result.Err(e) => {
+            Err(e) => {
                 print("java-dap: " + e)
                 exit(1)
             }
         }
-    }
-    )
+    })
     schedulerRunToCompletion()
 }
 
@@ -101,7 +99,7 @@ pub fn smoke(host: &string, port: u16): Result<i64> {
         print("  [" + t.toString() + "] " + name + " (status " + status.toString() + ")")
     }
     print("smoke ok")
-    return Result.Ok(0)
+    return Ok(0)
 }
 
 pub fn _lastIndexOf(s: &string, ch: u8): i64 {

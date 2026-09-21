@@ -29,10 +29,10 @@ pub fn main(): i32 {
     let input = readStdin()
     if args.getBool("decompress") {
         match Inflate.gzip(input) {
-            Result.Ok(out) => {
+            Ok(out) => {
                 writeStdout(out)
             }
-            Result.Err(e) => {
+            Err(e) => {
                 eprint($"gz: {e}")
                 return 1
             }

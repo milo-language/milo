@@ -39,8 +39,8 @@ pub fn main(): i32 {
     if args.has("file") {
         label = args.getString("file") ?? ""
         content = match readFile(args.getString("file") ?? "") {
-            Result.Ok(data) => data
-            Result.Err(e) => {
+            Ok(data) => data
+            Err(e) => {
                 print($"wc: {e}")
                 return 1
             }

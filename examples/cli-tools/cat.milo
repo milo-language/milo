@@ -257,8 +257,8 @@ pub fn main(): i32 {
     let forceLang = args.getString("language") ?? ""
 
     let content = match readFile(filePath) {
-        Result.Ok(data) => data
-        Result.Err(e) => {
+        Ok(data) => data
+        Err(e) => {
             print($"cat: {e}")
             return 1
         }
@@ -279,7 +279,7 @@ pub fn main(): i32 {
     var startLine: i64 = 1
     var endLine: i64 = lines.len
     if rangeStr.len > 0 {
-        if let Option.Some(colon) = rangeStr.indexOf(":") {
+        if let Some(colon) = rangeStr.indexOf(":") {
             let s1 = rangeStr.substr(0 as i64, colon)
             let s2 = rangeStr.substr(colon + 1, rangeStr.len)
             if s1.len > 0 {

@@ -211,9 +211,9 @@ pub fn main(): void {
     let winchFd = installSignalPipe(SIGWINCH)
 
     match Pty.open() {
-        Result.Ok(pty1) => {
+        Ok(pty1) => {
             match Pty.open() {
-                Result.Ok(pty2) => {
+                Ok(pty2) => {
                     var ws = termSize()
                     var half = (ws.cols as i64 - 2) / 2
                     var paneRows = ws.rows as i64 - 6
@@ -238,9 +238,9 @@ pub fn main(): void {
                     pty2.resize(paneRows as u16, (half - 1) as u16)
 
                     match pty1.spawn("/bin/sh", args1) {
-                        Result.Ok(_) => {
+                        Ok(_) => {
                             match pty2.spawn("/bin/sh", args2) {
-                                Result.Ok(_) => {
+                                Ok(_) => {
                                     drawBorder("ls -G (colored)", "PTY device info", half, paneRows)
 
                                     let f1 = fcntl(pty1.fd(), fGetfl())
@@ -324,26 +324,26 @@ pub fn main(): void {
                                     pty1.wait()
                                     pty2.wait()
                                 }
-                                Result.Err(msg) => {
+                                Err(msg) => {
                                     print($"error: {msg}")
                                 }
                             }
                             pty1.wait()
                         }
-                        Result.Err(msg) => {
+                        Err(msg) => {
                             print($"error: {msg}")
                         }
                     }
 
                     pty2.close()
                 }
-                Result.Err(msg) => {
+                Err(msg) => {
                     print($"error: {msg}")
                 }
             }
             pty1.close()
         }
-        Result.Err(msg) => {
+        Err(msg) => {
             print($"error: {msg}")
         }
     }

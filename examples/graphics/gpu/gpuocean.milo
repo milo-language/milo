@@ -406,15 +406,15 @@ pub fn main(): i32 {
     // was not freed by hand.
     var gl = GlContext.new()
     var ocean = match Shader.compile(&mut gl, QUAD_VERT, OCEAN_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
+        Ok(s) => s
+        Err(e) => {
             print(e)
             return 4
         }
     }
     var blit = match Shader.compile(&mut gl, QUAD_VERT, BLIT_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
+        Ok(s) => s
+        Err(e) => {
             print(e)
             return 5
         }
@@ -429,8 +429,8 @@ pub fn main(): i32 {
     var rw = renderWidth(dw as i64)
     var rh = (dh as i64) * rw / (dw as i64)
     var target = match Target.new(&mut gl, rw, rh, false, true) {
-        Result.Ok(t) => t
-        Result.Err(e) => {
+        Ok(t) => t
+        Err(e) => {
             print(e)
             return 6
         }
@@ -513,12 +513,12 @@ pub fn main(): i32 {
             // front would leave `target` dead on the Err path with the rest of
             // this frame still to draw.
             match Target.new(&mut gl, wantW, wantH, false, true) {
-                Result.Ok(t) => {
+                Ok(t) => {
                     replace(target, t).free(&mut gl)
                     rw = wantW
                     rh = wantH
                 }
-                Result.Err(e) => {
+                Err(e) => {
                     print("resize: " + e)
                     quit = true
                 }

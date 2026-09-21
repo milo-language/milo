@@ -172,17 +172,17 @@ pub fn main(): i32 {
 
     let result = fetch(url)
     match result {
-        Result.Ok(r) => {
+        Ok(r) => {
             let stext = statusText(r.status)
             print("HTTP ", r.status, " ", stext)
             print("")
 
             if outputFile.len > 0 {
                 match writeFile(outputFile.clone(), r.body) {
-                    Result.Ok(n) => {
+                    Ok(n) => {
                         print("saved ", n, " bytes to ", outputFile)
                     }
-                    Result.Err(e) => {
+                    Err(e) => {
                         print("http: failed to write file: ", e)
                         return 1
                     }
@@ -198,7 +198,7 @@ pub fn main(): i32 {
                 }
             }
         }
-        Result.Err(msg) => {
+        Err(msg) => {
             print("http: ", msg)
             return 1
         }

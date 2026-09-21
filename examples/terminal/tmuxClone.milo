@@ -118,7 +118,7 @@ pub fn themePath(): string {
 
 pub fn loadTheme(): void {
     match readFile(themePath()) {
-        Result.Ok(s) => {
+        Ok(s) => {
             var t: i64 = 0
             while t < THEME_COUNT {
                 if s.contains(themeName(t)) {
@@ -127,7 +127,7 @@ pub fn loadTheme(): void {
                 t += 1
             }
         }
-        Result.Err(_) => {
+        Err(_) => {
         }
     }
 }
@@ -399,7 +399,7 @@ pub fn termSize(): WinSize {
 
 // basename of a path, e.g. "/bin/zsh" → "zsh"
 pub fn baseName(path: &string): string {
-    let Option.Some(i) = path.lastIndexOf("/") else {
+    let Some(i) = path.lastIndexOf("/") else {
         return path.clone()
     }
     return path.substr(i + 1, path.len)
@@ -563,9 +563,9 @@ pub fn main(): void {
     let winchFd = installSignalPipe(SIGWINCH)
 
     match Pty.open() {
-        Result.Ok(pty0) => {
+        Ok(pty0) => {
             match Pty.open() {
-                Result.Ok(pty1) => {
+                Ok(pty1) => {
                     let shell = Env.getOr("SHELL", "/bin/sh")
                     let shellName = baseName(shell)
                     // resize before spawn — child inherits winsize via slave fd
@@ -574,18 +574,18 @@ pub fn main(): void {
                     var ok0 = false
                     var ok1 = false
                     match pty0.spawn(shell, shellArgs()) {
-                        Result.Ok(_) => {
+                        Ok(_) => {
                             ok0 = true
                         }
-                        Result.Err(_) => {
+                        Err(_) => {
                             ok0 = false
                         }
                     }
                     match pty1.spawn(shell, shellArgs()) {
-                        Result.Ok(_) => {
+                        Ok(_) => {
                             ok1 = true
                         }
-                        Result.Err(_) => {
+                        Err(_) => {
                             ok1 = false
                         }
                     }
@@ -782,13 +782,13 @@ pub fn main(): void {
                     }
                     pty1.close()
                 }
-                Result.Err(msg) => {
+                Err(msg) => {
                     print($"error: {msg}")
                 }
             }
             pty0.close()
         }
-        Result.Err(msg) => {
+        Err(msg) => {
             print($"error: {msg}")
         }
     }

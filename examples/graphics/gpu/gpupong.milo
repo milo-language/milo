@@ -236,8 +236,7 @@ fn burst(g: &mut Game, x: f64, y: f64, r: f64, gg: f64, b: f64) {
             r: r,
             g: gg,
             b: b,
-        }
-        )
+        })
     }
 }
 
@@ -361,8 +360,7 @@ fn stepSparks(g: &mut Game, dt: f64) {
             r: s.r,
             g: s.g,
             b: s.b,
-        }
-        )
+        })
     }
     g.sparks = live
 }
@@ -443,8 +441,8 @@ pub fn main(): i32 {
     // was not freed by hand.
     var gl = GlContext.new()
     var sh = match Shader.compile(&mut gl, VERT, FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
+        Ok(s) => s
+        Err(e) => {
             print(e)
             return 4
         }

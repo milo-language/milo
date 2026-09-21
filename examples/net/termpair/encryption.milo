@@ -68,7 +68,7 @@ requires key.len == 16
     let iv = ivFromCount(count)
     let r = Crypto.aesGcm128Encrypt(key, iv, plaintext, "")!
     let wire = iv + r.ciphertext + r.tag
-    return Result.Ok(Base64.encode(wire))
+    return Ok(Base64.encode(wire))
 }
 
 // Decrypt a base64( IV(12) ‖ ciphertext ‖ tag(16) ) wire payload under `key`.
@@ -80,7 +80,7 @@ requires key.len == 16
     let wire = Base64.decode(wireB64)?
     // 12-byte IV + 16-byte GCM tag is the minimum; reject anything shorter.
     if wire.len < 28 {
-        return Result.Err("ciphertext too short")
+        return Err("ciphertext too short")
     }
     let ctEnd = wire.len - 16
     var iv: string = ""

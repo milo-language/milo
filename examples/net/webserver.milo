@@ -95,32 +95,28 @@ pub fn helloHandler(ctx: &mut Context): Response {
 pub fn jsonHandler(ctx: &mut Context): Response {
     return ctx.json({
         language: "milo", backend: "llvm", memorySafe: true
-    }
-    )
+    })
 }
 
 pub fn fibHandler(ctx: &mut Context): Response {
     let n = parseInt(ctx.param("n") ?? "")!
     return ctx.json({
         n: n, result: fibonacci(n)
-    }
-    )
+    })
 }
 
 pub fn primeHandler(ctx: &mut Context): Response {
     let n = parseInt(ctx.param("n") ?? "")!
     return ctx.json({
         n: n, isPrime: isPrime(n)
-    }
-    )
+    })
 }
 
 pub fn collatzHandler(ctx: &mut Context): Response {
     let n = parseInt(ctx.param("n") ?? "")!
     return ctx.json({
         start: n, steps: collatzSteps(n)
-    }
-    )
+    })
 }
 
 pub fn fizzbuzzHandler(ctx: &mut Context): Response {
@@ -131,24 +127,21 @@ pub fn fizzbuzzHandler(ctx: &mut Context): Response {
 pub fn searchHandler(ctx: &mut Context): Response {
     // `?q=` is present with an empty value; no `?q=` at all is absent. They are
     // different client mistakes, so they get different messages.
-    let Option.Some(q) = ctx.query("q") else {
+    let Some(q) = ctx.query("q") else {
         ctx.setStatus(400)
         return ctx.json({
             error: "missing ?q= parameter"
-        }
-        )
+        })
     }
     if q.len == 0 {
         ctx.setStatus(400)
         return ctx.json({
             error: "empty ?q= parameter"
-        }
-        )
+        })
     }
     return ctx.json({
         query: q
-    }
-    )
+    })
 }
 
 pub fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Response {
@@ -177,7 +170,7 @@ pub fn main(): i32 {
 
     let port = args.getU16("port")
     let result = serveRouter(port, r)
-    if let Result.Err(msg) = result {
+    if let Err(msg) = result {
         print("server error: ", msg)
         return 1
     }

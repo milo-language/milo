@@ -35,13 +35,13 @@ pub fn main(): i32 {
     }
 
     // 4. Error handling — wrong type, missing key
-    if let Option.None = j.str("age") {
+    if let None = j.str("age") {
         print("age is not a string")
     }
-    if let Option.None = j.str("missing") {
+    if let None = j.str("missing") {
         print("key not found")
     }
-    if let Result.Err(e) = Json.parse("not json") {
+    if let Err(e) = Json.parse("not json") {
         print($"parse error: {e}")
     }
 

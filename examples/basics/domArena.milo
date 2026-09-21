@@ -47,7 +47,7 @@ pub fn emptyNode(kind: NodeKind, name: string, text: string): Node {
         name: name,
         text: text,
         attrs: Vec.new(),
-        parent: Option.None,
+        parent: None,
         children: Vec.new(),
     }
 }
@@ -66,10 +66,10 @@ pub fn domNew(): Dom {
 pub fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
     let r = arenaWith(dom.arena, h, (n: &Node): NodeKind => n.kind)
     match r {
-        Option.Some(k) => {
+        Some(k) => {
             return k
         }
-        Option.None => {
+        None => {
             assert(false, "nodeKind: stale handle")
             return NodeKind.Document
         }
@@ -79,10 +79,10 @@ pub fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
 pub fn nodeName(dom: &Dom, h: Handle<Node>): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.name.clone())
     match r {
-        Option.Some(s) => {
+        Some(s) => {
             return s
         }
-        Option.None => {
+        None => {
             return ""
         }
     }
@@ -91,10 +91,10 @@ pub fn nodeName(dom: &Dom, h: Handle<Node>): string {
 pub fn nodeText(dom: &Dom, h: Handle<Node>): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.text.clone())
     match r {
-        Option.Some(s) => {
+        Some(s) => {
             return s
         }
-        Option.None => {
+        None => {
             return ""
         }
     }
@@ -103,11 +103,11 @@ pub fn nodeText(dom: &Dom, h: Handle<Node>): string {
 pub fn nodeParent(dom: &Dom, h: Handle<Node>): Option<Handle<Node>> {
     let r = arenaWith(dom.arena, h, (n: &Node): Option<Handle<Node>> => n.parent)
     match r {
-        Option.Some(p) => {
+        Some(p) => {
             return p
         }
-        Option.None => {
-            return Option.None
+        None => {
+            return None
         }
     }
 }
@@ -115,10 +115,10 @@ pub fn nodeParent(dom: &Dom, h: Handle<Node>): Option<Handle<Node>> {
 pub fn childCount(dom: &Dom, h: Handle<Node>): i64 {
     let r = arenaWith(dom.arena, h, (n: &Node): i64 => n.children.len())
     match r {
-        Option.Some(c) => {
+        Some(c) => {
             return c
         }
-        Option.None => {
+        None => {
             return 0
         }
     }
@@ -127,10 +127,10 @@ pub fn childCount(dom: &Dom, h: Handle<Node>): i64 {
 pub fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
     let r = arenaWith(dom.arena, h, (n: &Node): Handle<Node> => n.children[i])
     match r {
-        Option.Some(c) => {
+        Some(c) => {
             return c
         }
-        Option.None => {
+        None => {
             assert(false, "childAt: stale handle")
             return h
         }
@@ -154,16 +154,14 @@ pub fn createComment(dom: &mut Dom, text: string): Handle<Node> {
 pub fn setParent(dom: &mut Dom, child: Handle<Node>, parent: Option<Handle<Node>>) {
     let _ = arenaModifyMut(&mut dom.arena, child, (c: &mut Node): void => {
         c.parent = parent
-    }
-    )
+    })
 }
 
 pub fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
     let _ = arenaModifyMut(&mut dom.arena, parent, (n: &mut Node): void => {
         n.children.push(child)
-    }
-    )
-    setParent(&mut dom, child, Option.Some(parent))
+    })
+    setParent(&mut dom, child, Some(parent))
 }
 
 // html5ever coalesces adjacent text: appending text after a Text sibling
@@ -180,8 +178,7 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
                 let extra = t.clone()
                 let _ = arenaModifyMut(&mut dom.arena, last, (n: &mut Node): void => {
                     n.text += extra
-                }
-                )
+                })
                 return
             }
             _ => {
@@ -198,7 +195,7 @@ pub fn sameNode(a: Handle<Node>, b: Handle<Node>): bool {
 
 pub fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
     match nodeParent(dom, child) {
-        Option.Some(p) => {
+        Some(p) => {
             let _ = arenaModifyMut(&mut dom.arena, p, (n: &mut Node): void => {
                 var found = false
                 var idx: i64 = 0
@@ -211,18 +208,17 @@ pub fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
                 if found {
                     n.children.remove(idx)
                 }
-            }
-            )
-            setParent(&mut dom, child, Option.None)
+            })
+            setParent(&mut dom, child, None)
         }
-        Option.None => {
+        None => {
         }
     }
 }
 
 pub fn appendBeforeSibling(dom: &mut Dom, sibling: Handle<Node>, newNode: Handle<Node>) {
     match nodeParent(dom, sibling) {
-        Option.Some(p) => {
+        Some(p) => {
             let _ = arenaModifyMut(&mut dom.arena, p, (n: &mut Node): void => {
                 var found = false
                 var idx: i64 = 0
@@ -235,11 +231,10 @@ pub fn appendBeforeSibling(dom: &mut Dom, sibling: Handle<Node>, newNode: Handle
                 if found {
                     n.children.insert(idx, newNode)
                 }
-            }
-            )
-            setParent(&mut dom, newNode, Option.Some(p))
+            })
+            setParent(&mut dom, newNode, Some(p))
         }
-        Option.None => {
+        None => {
         }
     }
 }
@@ -252,8 +247,7 @@ pub fn reparentChildren(dom: &mut Dom, oldParent: Handle<Node>, newParent: Handl
     }
     let _ = arenaModifyMut(&mut dom.arena, oldParent, (n: &mut Node): void => {
         n.children = Vec.new()
-    }
-    )
+    })
     for i in 0..kids.len() {
         append(&mut dom, newParent, kids[i])
     }

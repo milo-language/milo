@@ -243,11 +243,11 @@ fn shiftOf(n: i64): i64 {
 pub fn cityAttachOrtho(c: &mut City, png: &string): Result<i64, string> {
     let img = Png.decode(png)?
     if img.width != img.height {
-        return Result.Err($"ortho must be square, got {img.width}x{img.height}")
+        return Err($"ortho must be square, got {img.width}x{img.height}")
     }
     let shift = shiftOf(img.width)
     if shift < 0 {
-        return Result.Err($"ortho side must be a power of two, got {img.width}")
+        return Err($"ortho side must be a power of two, got {img.width}")
     }
     let n = img.width
     var t = texNew(n, shift)
@@ -273,7 +273,7 @@ pub fn cityAttachOrtho(c: &mut City, png: &string): Result<i64, string> {
     fillNoData(c, &mut t, n)
     c.ortho = t
     c.orthoLoaded = true
-    return Result.Ok(n)
+    return Ok(n)
 }
 
 // Imagery services answer "outside my coverage" with exact black, not with an
@@ -661,21 +661,21 @@ pub let VERSION: i64 = 3
 // ------------------------------------------------------------------- loading
 
 pub fn cityLoad(path: &string): Result<City, string> {
-    let Result.Ok(src) = readFile(path) else {
-        return Result.Err("cannot read " + path)
+    let Ok(src) = readFile(path) else {
+        return Err("cannot read " + path)
     }
     var c = cityParse(src)?
     // An aerial photograph sitting beside the asset, if someone built one. Its
     // absence is not an error — the palette path is still there — so a failure
     // to read is silence rather than a message about a file nobody asked for.
     match readFile(orthoPathFor(path)) {
-        Result.Ok(png) => {
+        Ok(png) => {
             let _ = cityAttachOrtho(&mut c, png)
         }
-        Result.Err(_) => {
+        Err(_) => {
         }
     }
-    return Result.Ok(c)
+    return Ok(c)
 }
 
 fn orthoPathFor(path: &string): string {
@@ -717,27 +717,27 @@ fn plausible(src: &string, off: i64, count: i64, itemBytes: i64): bool {
 // runtime at all.
 pub fn cityParse(src: &string): Result<City, string> {
     if src.len < 16 {
-        return Result.Err("truncated city file")
+        return Err("truncated city file")
     }
     for i in 0..8 {
         if src[i] != MAGIC[i] {
-            return Result.Err("not a .city file")
+            return Err("not a .city file")
         }
     }
     var p = 8
     let ver = getI32(src, p)
     p += 4
     if ver < 1 || ver > VERSION {
-        return Result.Err("city file version " + ver.toString() + ", expected 1 or " + VERSION.toString())
+        return Err("city file version " + ver.toString() + ", expected 1 or " + VERSION.toString())
     }
 
     if !have(src, p, 4) {
-        return Result.Err("truncated city file: no name")
+        return Err("truncated city file: no name")
     }
     let nameLen = getI32(src, p)
     p += 4
     if !plausible(src, p, nameLen, 1) {
-        return Result.Err("truncated city file: name length " + nameLen.toString())
+        return Err("truncated city file: name length " + nameLen.toString())
     }
     var name = ""
     for i in 0..nameLen {
@@ -748,7 +748,7 @@ pub fn cityParse(src: &string): Result<City, string> {
     var c = cityEmpty()
     c.name = name
     if !have(src, p, 12) {
-        return Result.Err("truncated city file: no header")
+        return Err("truncated city file: no header")
     }
     c.originLat = (getI32(src, p) as f64) / 10000000.0
     p += 4
@@ -758,7 +758,7 @@ pub fn cityParse(src: &string): Result<City, string> {
     p += 4
 
     if !have(src, p, 16) {
-        return Result.Err("truncated city file: no terrain header")
+        return Err("truncated city file: no terrain header")
     }
     c.demN = getI32(src, p)
     p += 4
@@ -769,11 +769,11 @@ pub fn cityParse(src: &string): Result<City, string> {
     c.demZ0 = (getI32(src, p) as f64) / 100.0
     p += 4
     if c.demN < 0 || c.demN > 65535 {
-        return Result.Err("city file terrain grid " + c.demN.toString())
+        return Err("city file terrain grid " + c.demN.toString())
     }
     let demCount = c.demN * c.demN
     if !plausible(src, p, demCount, 4) {
-        return Result.Err("truncated city file: terrain grid " + c.demN.toString())
+        return Err("truncated city file: terrain grid " + c.demN.toString())
     }
     c.dem = Vec.filled(demCount, 0.0)
     for i in 0..demCount {
@@ -782,7 +782,7 @@ pub fn cityParse(src: &string): Result<City, string> {
     }
 
     if !have(src, p, 16) {
-        return Result.Err("truncated city file: no land-cover header")
+        return Err("truncated city file: no land-cover header")
     }
     c.coverN = getI32(src, p)
     p += 4
@@ -793,11 +793,11 @@ pub fn cityParse(src: &string): Result<City, string> {
     c.coverZ0 = (getI32(src, p) as f64) / 100.0
     p += 4
     if c.coverN < 0 || c.coverN > 65535 {
-        return Result.Err("city file cover grid " + c.coverN.toString())
+        return Err("city file cover grid " + c.coverN.toString())
     }
     let coverCount = c.coverN * c.coverN
     if !plausible(src, p, coverCount, 1) {
-        return Result.Err("truncated city file: cover grid " + c.coverN.toString())
+        return Err("truncated city file: cover grid " + c.coverN.toString())
     }
     c.cover = Vec.filled(coverCount, 0 as u8)
     for i in 0..coverCount {
@@ -806,7 +806,7 @@ pub fn cityParse(src: &string): Result<City, string> {
     p += coverCount
 
     if !have(src, p, 4) {
-        return Result.Err("truncated city file: no building count")
+        return Err("truncated city file: no building count")
     }
     let nb = getI32(src, p)
     p += 4
@@ -814,19 +814,19 @@ pub fn cityParse(src: &string): Result<City, string> {
     // count), so a count claiming more than that is not merely wrong, it cannot
     // be in the file at all.
     if !plausible(src, p, nb, 8) {
-        return Result.Err("truncated city file: " + nb.toString() + " buildings")
+        return Err("truncated city file: " + nb.toString() + " buildings")
     }
     c.bCount = nb
     for i in 0..nb {
         if !have(src, p, 8) {
-            return Result.Err("truncated city file: building " + i.toString())
+            return Err("truncated city file: building " + i.toString())
         }
         let h = (getI32(src, p) as f64) / 100.0
         p += 4
         let n = getI32(src, p)
         p += 4
         if !plausible(src, p, n, 8) {
-            return Result.Err("truncated city file: building " + i.toString() + " has " + n.toString() + " points")
+            return Err("truncated city file: building " + i.toString() + " has " + n.toString() + " points")
         }
         var minX = 1000000000.0
         var minZ = 1000000000.0
@@ -908,7 +908,7 @@ pub fn cityParse(src: &string): Result<City, string> {
     deckProfile(&mut c)
     claimBridgeStructures(&mut c)
     computeTop(&mut c)
-    return Result.Ok(c)
+    return Ok(c)
 }
 
 // Tallest terrain sample plus tallest building. An upper bound rather than the
@@ -999,18 +999,18 @@ fn segDistSq(px: f64, pz: f64, ax: f64, az: f64, bx: f64, bz: f64): f64 {
 fn parseBridges(c: &mut City, src: &string, from: i64): Result<i64, string> {
     var p = from
     if !have(src, p, 4) {
-        return Result.Err("truncated city file: no bridge count")
+        return Err("truncated city file: no bridge count")
     }
     let n = getI32(src, p)
     p += 4
     // 20 bytes is the smallest a bridge can be (three i32 of header, a zero
     // point count, and two points is already more).
     if !plausible(src, p, n, 16) {
-        return Result.Err("truncated city file: " + n.toString() + " bridges")
+        return Err("truncated city file: " + n.toString() + " bridges")
     }
     for i in 0..n {
         if !have(src, p, 16) {
-            return Result.Err("truncated city file: bridge " + i.toString())
+            return Err("truncated city file: bridge " + i.toString())
         }
         let halfW = (getI32(src, p) as f64) / 100.0
         p += 4
@@ -1021,7 +1021,7 @@ fn parseBridges(c: &mut City, src: &string, from: i64): Result<i64, string> {
         let np = getI32(src, p)
         p += 4
         if !plausible(src, p, np, 8) {
-            return Result.Err("truncated city file: bridge " + i.toString() + " has " + np.toString() + " points")
+            return Err("truncated city file: bridge " + i.toString() + " has " + np.toString() + " points")
         }
         if np < 2 {
             p = p + np * 8
@@ -1041,7 +1041,7 @@ fn parseBridges(c: &mut City, src: &string, from: i64): Result<i64, string> {
         }
     }
     c.brCount = c.brHalfW.len
-    return Result.Ok(p)
+    return Ok(p)
 }
 
 // Roof shapes, one per building, in the same order the body wrote them. A count
@@ -1050,15 +1050,15 @@ fn parseBridges(c: &mut City, src: &string, from: i64): Result<i64, string> {
 fn parseRoofs(c: &mut City, src: &string, from: i64): Result<i64, string> {
     var p = from
     if !have(src, p, 4) {
-        return Result.Err("truncated city file: no roof count")
+        return Err("truncated city file: no roof count")
     }
     let n = getI32(src, p)
     p += 4
     if n != c.bCount {
-        return Result.Err("city file has " + n.toString() + " roofs for " + c.bCount.toString() + " buildings")
+        return Err("city file has " + n.toString() + " roofs for " + c.bCount.toString() + " buildings")
     }
     if !have(src, p, n * 9) {
-        return Result.Err("truncated city file: " + n.toString() + " roofs")
+        return Err("truncated city file: " + n.toString() + " roofs")
     }
     c.bRoof = Vec.filled(n, 0 as u8)
     c.bRoofH = Vec.filled(n, 0.0)
@@ -1071,7 +1071,7 @@ fn parseRoofs(c: &mut City, src: &string, from: i64): Result<i64, string> {
         c.bBase[i] = (getI32(src, p) as f64) / 100.0
         p += 4
     }
-    return Result.Ok(p)
+    return Ok(p)
 }
 
 // Roof shape of a building, or flat on an asset with no roof section.

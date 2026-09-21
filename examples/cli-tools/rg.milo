@@ -101,9 +101,9 @@ pub fn literalFrom(content: &string, opts: &RgOpts, from: i64): Option<i64> {
     if opts.ignoreCase {
         let at = strIndexOfFromIgnoreCase(content, opts.pattern, from)
         if at < 0 {
-            return Option.None
+            return None
         }
-        return Option.Some(at)
+        return Some(at)
     }
     return content.indexOfFrom(opts.pattern, from)
 }
@@ -134,8 +134,7 @@ pub fn filterWordBounds(line: &string, matches: Vec<RegexMatch>): Vec<RegexMatch
         if ok {
             result.push(RegexMatch {
                 start: matches[i].start, end: matches[i].end
-            }
-            )
+            })
         }
     }
     return result
@@ -180,7 +179,7 @@ pub fn isPlainLiteral(pat: &string): bool {
 // The check is one memchr over the whole buffer, ahead of the literal search rather
 // than after it, so a 40 MB `.a` costs a memchr instead of a memmem.
 pub fn isBinary(content: &string): bool {
-    if let Option.Some(_) = content.indexOf("\0") {
+    if let Some(_) = content.indexOf("\0") {
         return true
     }
     return false
@@ -306,8 +305,8 @@ pub fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFil
     }
 
     let content = match readFile(filePath) {
-        Result.Ok(data) => data
-        Result.Err(_) => {
+        Ok(data) => data
+        Err(_) => {
             return
         }
     }
@@ -383,14 +382,14 @@ pub fn searchLiteral(content: &string, filePath: &string, opts: &RgOpts, multiFi
         var pos: i64 = 0
         let plen = opts.pattern.len
         while true {
-            let Option.Some(at) = literalFrom(content, opts, pos) else {
+            let Some(at) = literalFrom(content, opts, pos) else {
                 break
             }
             // Walk forward to the line holding this match. lineStart never moves
             // backwards, so across the whole file this visits each newline once.
             if needLineNo {
                 while true {
-                    let Option.Some(nl) = content.indexOfFrom("\n", lineStart) else {
+                    let Some(nl) = content.indexOfFrom("\n", lineStart) else {
                         break
                     }
                     if nl >= at {
@@ -411,7 +410,7 @@ pub fn searchLiteral(content: &string, filePath: &string, opts: &RgOpts, multiFi
                 }
             }
             var lineEnd = content.len
-            if let Option.Some(nl) = content.indexOfFrom("\n", at) {
+            if let Some(nl) = content.indexOfFrom("\n", at) {
                 lineEnd = nl
             }
 
@@ -430,7 +429,7 @@ pub fn searchLiteral(content: &string, filePath: &string, opts: &RgOpts, multiFi
                 var lineMatches: Vec<RegexMatch> = Vec.new()
                 var m = at
                 while m + plen <= lineEnd {
-                    let Option.Some(mm) = literalFrom(content, opts, m) else {
+                    let Some(mm) = literalFrom(content, opts, m) else {
                         break
                     }
                     if mm + plen > lineEnd {
@@ -438,8 +437,7 @@ pub fn searchLiteral(content: &string, filePath: &string, opts: &RgOpts, multiFi
                     }
                     lineMatches.push(RegexMatch {
                         start: mm - lineStart, end: mm + plen - lineStart
-                    }
-                    )
+                    })
                     m = mm + plen
                 }
                 let lineText = content.substr(lineStart, lineEnd)
@@ -627,25 +625,23 @@ pub fn scanChunk(paths: Vec<string>, opts: RgOpts): Vec<ChunkItem> {
     let canFormat = workerCanFormat(opts)
     for i in 0..paths.len {
         match readFile(paths[i]) {
-            Result.Ok(data) => {
+            Ok(data) => {
                 if !isBinary(data) && literalIn(data, opts.prefilter, opts.ignoreCase) {
                     if canFormat {
                         let res = searchLiteral(data, paths[i], opts, true)
                         if res.lines.len > 0 || res.matchCount > 0 {
                             out.push(ChunkItem {
                                 path: paths[i].clone(), result: res, content: "", formatted: true
-                            }
-                            )
+                            })
                         }
                     } else {
                         out.push(ChunkItem {
                             path: paths[i].clone(), result: emptyResult(), content: data, formatted: false
-                        }
-                        )
+                        })
                     }
                 }
             }
-            Result.Err(_) => {
+            Err(_) => {
             }
         }
     }
@@ -678,13 +674,13 @@ pub fn inflightSetting(): i64 {
         return 4
     }
     match parseInt(raw) {
-        Option.Some(n) => {
+        Some(n) => {
             if n > 0 {
                 return n
             }
             return 4
         }
-        Option.None => {
+        None => {
             return 4
         }
     }
@@ -736,8 +732,7 @@ fn spawnChunk(chunk: Vec<string>, opts: &RgOpts): Promise<Vec<ChunkItem>> {
     let mine = cloneOpts(opts)
     return Promise<Vec<ChunkItem>>.blocking(move(): Vec<ChunkItem> => {
         return scanChunk(chunk, mine)
-    }
-    )
+    })
 }
 
 // Literal search over a directory, pipelined.
@@ -805,12 +800,12 @@ pub fn searchDirParallel(dirPath: &string, re: &mut Regex, opts: &mut RgOpts): v
 }
 
 pub fn searchDir(dirPath: &string, re: &mut Regex, opts: &mut RgOpts, sets: &mut Vec<IgnoreSet>): void {
-    let Result.Ok(entries) = readDir(dirPath) else {
+    let Ok(entries) = readDir(dirPath) else {
         return
     }
     var pushed = false
     if opts.useIgnore {
-        if let Option.Some(set) = loadIgnoreSet(dirPath, opts.useGitIgnore) {
+        if let Some(set) = loadIgnoreSet(dirPath, opts.useGitIgnore) {
             sets.push(set)
             pushed = true
         }
@@ -902,7 +897,7 @@ pub fn main(): i32 {
     // a dummy `Regex { _preg: [0; 128] }` just to satisfy definite-initialization, which
     // hardcoded the darwin regex_t size into an app — glibc's is 64, so this file could
     // not compile on Linux at all.
-    let Result.Ok(compiled) = Regex.compileFlags(pattern.clone(), flags) else {
+    let Ok(compiled) = Regex.compileFlags(pattern.clone(), flags) else {
         print($"rg: invalid regex: {pattern}")
         return 2
     }

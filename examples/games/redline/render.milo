@@ -184,112 +184,112 @@ pub fn sceneAttrs(): Vec<i64> {
 
 pub fn newGfx(gl: &mut GlContext, rw: i64, rh: i64, sky: &Sky, atlasPixels: &Vec<u32>, atlasSize: i64): Result<Gfx, string> {
     let scene = match Shader.compile(&mut gl, SCENE_VERT, sceneFrag()) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
-            return Result.Err("scene: " + e)
+        Ok(s) => s
+        Err(e) => {
+            return Err("scene: " + e)
         }
     }
     let shadowSh = match Shader.compile(&mut gl, SHADOW_VERT, SHADOW_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
-            return Result.Err("shadow: " + e)
+        Ok(s) => s
+        Err(e) => {
+            return Err("shadow: " + e)
         }
     }
     let skySh = match Shader.compile(&mut gl, SKY_VERT, skyFrag()) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
-            return Result.Err("sky: " + e)
+        Ok(s) => s
+        Err(e) => {
+            return Err("sky: " + e)
         }
     }
     let bright = match Shader.compile(&mut gl, QUAD_VERT, BRIGHT_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
-            return Result.Err("bright: " + e)
+        Ok(s) => s
+        Err(e) => {
+            return Err("bright: " + e)
         }
     }
     let blur = match Shader.compile(&mut gl, QUAD_VERT, BLUR_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
-            return Result.Err("blur: " + e)
+        Ok(s) => s
+        Err(e) => {
+            return Err("blur: " + e)
         }
     }
     let composite = match Shader.compile(&mut gl, QUAD_VERT, COMPOSITE_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
-            return Result.Err("composite: " + e)
+        Ok(s) => s
+        Err(e) => {
+            return Err("composite: " + e)
         }
     }
     let depthSh = match Shader.compile(&mut gl, DEPTH_VERT, DEPTH_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
-            return Result.Err("depth: " + e)
+        Ok(s) => s
+        Err(e) => {
+            return Err("depth: " + e)
         }
     }
     let ssaoSh = match Shader.compile(&mut gl, QUAD_VERT, SSAO_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
-            return Result.Err("ssao: " + e)
+        Ok(s) => s
+        Err(e) => {
+            return Err("ssao: " + e)
         }
     }
     let aoBlurSh = match Shader.compile(&mut gl, QUAD_VERT, AO_BLUR_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
-            return Result.Err("ao blur: " + e)
+        Ok(s) => s
+        Err(e) => {
+            return Err("ao blur: " + e)
         }
     }
     let hudSh = match Shader.compile(&mut gl, HUD_VERT, HUD_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
-            return Result.Err("hud: " + e)
+        Ok(s) => s
+        Err(e) => {
+            return Err("hud: " + e)
         }
     }
     let sceneTgt = match Target.new(&mut gl, rw, rh, true, true) {
-        Result.Ok(t) => t
-        Result.Err(e) => {
-            return Result.Err("scene target: " + e)
+        Ok(t) => t
+        Err(e) => {
+            return Err("scene target: " + e)
         }
     }
     let shadowTgt = match Target.new(&mut gl, SHADOW_SIZE, SHADOW_SIZE, true, false) {
-        Result.Ok(t) => t
-        Result.Err(e) => {
-            return Result.Err("shadow target: " + e)
+        Ok(t) => t
+        Err(e) => {
+            return Err("shadow target: " + e)
         }
     }
     // The prepass buffer is full resolution, AO reads neighbouring depths, and
     // halving it halves the distance a sample can tell apart. The AO itself is
     // half, because it is blurred anyway.
     let dnTgt = match Target.new(&mut gl, rw, rh, true, false) {
-        Result.Ok(t) => t
-        Result.Err(e) => {
-            return Result.Err("depth target: " + e)
+        Ok(t) => t
+        Err(e) => {
+            return Err("depth target: " + e)
         }
     }
     let aw = rw / 2
     let ah = rh / 2
     let aoTgt = match Target.new(&mut gl, aw, ah, false, true) {
-        Result.Ok(t) => t
-        Result.Err(e) => {
-            return Result.Err("ao target: " + e)
+        Ok(t) => t
+        Err(e) => {
+            return Err("ao target: " + e)
         }
     }
     let aoBlurTgt = match Target.new(&mut gl, aw, ah, false, true) {
-        Result.Ok(t) => t
-        Result.Err(e) => {
-            return Result.Err("ao blur target: " + e)
+        Ok(t) => t
+        Err(e) => {
+            return Err("ao blur target: " + e)
         }
     }
     let bw = rw / 4
     let bh = rh / 4
     let bloomA = match Target.new(&mut gl, bw, bh, false, true) {
-        Result.Ok(t) => t
-        Result.Err(e) => {
-            return Result.Err("bloom a: " + e)
+        Ok(t) => t
+        Err(e) => {
+            return Err("bloom a: " + e)
         }
     }
     let bloomB = match Target.new(&mut gl, bw, bh, false, true) {
-        Result.Ok(t) => t
-        Result.Err(e) => {
-            return Result.Err("bloom b: " + e)
+        Ok(t) => t
+        Err(e) => {
+            return Err("bloom b: " + e)
         }
     }
     let skyTex = Texture2D.rgb32f(&mut gl, SKY_W, SKY_H, sky.table.clone(), true)
@@ -302,7 +302,7 @@ pub fn newGfx(gl: &mut GlContext, rw: i64, rh: i64, sky: &Sky, atlasPixels: &Vec
     hudAttrs.push(2)
     hudAttrs.push(4)
 
-    return Result.Ok(Gfx {
+    return Ok(Gfx {
         scene: scene,
         shadowSh: shadowSh,
         skySh: skySh,
@@ -350,8 +350,7 @@ pub fn newGfx(gl: &mut GlContext, rw: i64, rh: i64, sky: &Sky, atlasPixels: &Vec
         rush: 0.0,
         flash: 0.0,
         time: 0.0,
-    }
-    )
+    })
 }
 
 impl Gfx {
