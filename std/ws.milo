@@ -1,27 +1,12 @@
 // std/ws — WebSocket server protocol (RFC 6455)
 
 from "std/os" import {
-    connectFdIn,
-    readFd,
-    writeFd,
-    htons,
-    malloc,
-    free,
-    memcpy,
-    socket,
-    connectFd,
-    TLS_client_method,
-    SSL_CTX_new,
-    SSL_CTX_free,
-    SSL_CTX_set_default_verify_paths,
-    SSL_CTX_set_verify,
-    SSL_new,
-    SSL_set1_host,
-    SSL_set_fd,
-    sslConnectFd,
-    sslReadFd,
-    sslWriteFd,
-    SSL_free,
+    connectFdIn, readFd, writeFd, htons, malloc, free,
+    memcpy, socket, connectFd
+}
+from "std/openssl" import {
+    TLS_client_method, SSL_CTX_new, SSL_CTX_free, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_new,
+    SSL_set1_host, SSL_set_fd, sslConnectFd, sslReadFd, sslWriteFd, SSL_free,
     SSL_ctrl
 }
 from "std/crypto" import {

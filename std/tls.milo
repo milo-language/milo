@@ -15,24 +15,11 @@ from "std/net" import {
     NetError, ignoreSigpipe
 }
 from "std/os" import {
-    SSL_CTX_check_private_key,
-    SSL_CTX_free,
-    SSL_CTX_new,
-    SSL_CTX_use_PrivateKey_file,
-    SSL_CTX_use_certificate_chain_file,
-    SSL_free,
-    SSL_new,
-    SSL_set_fd,
-    SSL_shutdown,
-    TLS_server_method,
-    acceptFd,
-    bindIn,
-    getSockPort,
-    listen,
-    setsockopt,
-    socket,
-    sslAcceptFd,
-    sslReadFd,
+    acceptFd, bindIn, getSockPort, listen, setsockopt, socket
+}
+from "std/openssl" import {
+    SSL_CTX_check_private_key, SSL_CTX_free, SSL_CTX_new, SSL_CTX_use_PrivateKey_file, SSL_CTX_use_certificate_chain_file, SSL_free,
+    SSL_new, SSL_set_fd, SSL_shutdown, TLS_server_method, sslAcceptFd, sslReadFd,
     sslWriteFd
 }
 from "std/platform" import {

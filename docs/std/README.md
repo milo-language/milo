@@ -49,6 +49,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/mime](./mime.md)
 - [std/multipart](./multipart.md)
 - [std/net](./net.md)
+- [std/openssl](./openssl.md)
 - [std/os](./os.md)
 - [std/path](./path.md)
 - [std/pbkdf2](./pbkdf2.md)

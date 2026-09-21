@@ -7,24 +7,12 @@ from "std/net" import {
     TcpStream, NetError, resolve
 }
 from "std/os" import {
-    SSL_CTX_free,
-    SSL_CTX_load_verify_locations,
-    SSL_CTX_new,
-    SSL_CTX_set_default_verify_paths,
-    SSL_CTX_set_verify,
-    SSL_ctrl,
-    SSL_free,
-    SSL_get_verify_result,
-    SSL_new,
-    SSL_set1_host,
-    SSL_set_fd,
-    SSL_shutdown,
-    TLS_client_method,
-    connectFdIn,
-    socket,
-    sslConnectFd,
-    sslReadFd,
-    sslWriteFd
+    connectFdIn, socket
+}
+from "std/openssl" import {
+    SSL_CTX_free, SSL_CTX_load_verify_locations, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl,
+    SSL_free, SSL_get_verify_result, SSL_new, SSL_set1_host, SSL_set_fd, SSL_shutdown,
+    TLS_client_method, sslConnectFd, sslReadFd, sslWriteFd
 }
 from "std/platform" import {
     makeSockaddr, close, ensureNetInit

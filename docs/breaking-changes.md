@@ -17,6 +17,24 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 [the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
 marker is added here each time a version is cut.
 
+## The OpenSSL binding moved from `std/os` to `std/openssl` (2026-09-21)
+
+`std/os` is the libc module every program reaches for `malloc`; it also declared
+the 22 `SSL_*`/`TLS_*` externs and the green-aware `sslConnectFd`/`sslAcceptFd`/
+`sslReadFd`/`sslWriteFd` loops, so a module importing it for memory dragged libssl
+into every program. At `-O2` the symbols were dead-stripped; at `-O0` they were not,
+and on a target with no OpenSSL in the sysroot the link failed naming symbols the
+program never mentioned. The binding is now its own leaf module; `std/os` never
+references libssl.
+
+| was | now |
+|---|---|
+| `from "std/os" import { SSL_new, sslConnectFd, … }` | `from "std/openssl" import { SSL_new, sslConnectFd, … }` |
+
+`std/fetch`, `std/tls` and `std/ws` already import from the new module. A program
+that used the externs directly moves the names between the two import lists;
+`milo check` names each one.
+
 ## `selectRecv` / `selectSend` are `Select.onRecv` / `Select.onSend` (2026-09-20)
 
 The channel arms of `std/select` were free functions because a method could not

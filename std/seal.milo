@@ -34,6 +34,10 @@
 // brand, and neither exists under this language's axiom, so the tie is checked at
 // runtime instead. See docs/memory-safety-vs-rust.md, "what the compiler does not check".
 
+from "std/os" import {
+    malloc, free, memcpy, memset
+}
+
 // A start, a length, and `_bufferId`, the identity of the buffer it was measured from.
 // (Called a "brand" in the type-theory sense; named for what it holds instead, since the
 // field is visible to anyone who reads the struct.)
@@ -49,23 +53,6 @@
 //
 // Make them with `src.span(start, len)`; a hand-built Span carries `_bufferId` 0, which no
 // buffer ever has, so it fails closed rather than reading something plausible.
-// Declared here rather than imported from std/os. std/os also declares the OpenSSL
-// externs, and a module that imports it for malloc drags those symbols into every
-// program that reaches it. At -O2 they are dead-stripped; at -O0 they are not, and on
-// a platform with no OpenSSL in the sysroot (Windows) the link fails naming symbols
-// this module has nothing to do with. Four libc declarations are cheaper than that
-// coupling. See docs/backlog.md for splitting std/os properly.
-@cSig("stdlib.h", "void *malloc(size_t)")
-extern fn malloc(size: i64): *u8
-
-@cSig("stdlib.h", "void free(void *)")
-extern fn free(p: *u8): void
-
-@cSig("string.h", "void *memcpy(void *, const void *, size_t)")
-extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
-
-@cSig("string.h", "void *memset(void *, int, size_t)")
-extern fn memset(dst: *u8, c: i32, n: i64): *u8
 
 @derive(Eq)
 pub struct Span {

@@ -32,6 +32,7 @@ Diagnostics carry "did you mean" suggestions on a missed method, field, or name 
 - **Borrow invalidation**: ref-while-frozen and use-after-invalidate for built-in borrows; call-site exclusivity (`f(&mut v, &v[0])` rejected)
 - **Arena safety**: identity + generation validation at runtime for `Arena<T>`/`Handle<T>`
 - **No implicit coercion**: explicit `as` casts only
+- **`std/os` is a libc module again** (2026-09-21): the OpenSSL externs and the green-aware SSL loops moved to `std/openssl`, so a program that never says TLS never references libssl (a `std/shard` program at `-O0` went from 28 `SSL_` references in its IR to 0), and `std/seal` imports `malloc` from `std/os` instead of redeclaring it. Backlog L1 closed; docs/breaking-changes.md has the migration
 - **A once-closure's second call aborts** (2026-09-21): a `move` closure that moved a capture out and is called again through a function parameter (where the checker cannot see the second call) used to read the emptied capture and answer wrong, quietly; the environment's liveness flag now turns that call into a named abort. Backlog #32 keeps only its type-level residue
 - **Destruction order is reverse-of-declaration** (2026-09-21) for locals as it always was for fields, and it is written down (language-reference §Destruction order), with the `Drop` global rule (never destroyed) beside it. Locals used to destroy in declaration order; four fixtures observed the old order and were updated. Backlog #28 closed
 - **`todo()`** (2026-09-21): a body not written yet. Counts as returning on every path, so a skeleton of signatures and contracts type-checks and builds; aborts naming the function and site if it runs; `milo prove` reports a caller's proof as conditional rather than trusting the missing body's `ensures`
@@ -153,7 +154,7 @@ Green-tier concurrency with one OS-thread escape hatch:
 - **`main` is itself a green task** wherever the program can reach `spawn`. Before this, a blocking call in `main` starved the very tasks that would satisfy it — `main` ran on the OS thread and nothing else could progress. Codegen decides this per program, so a program with no spawn keeps a plain `main`. Std APIs that block must therefore branch on `schedulerCurrent()` rather than assume they are off-scheduler
 - Public `Thread`/`Mutex`/`RwLock`/`parallel` were **removed** 2026-07-10 (green tier only — see [concurrency-simplification.md](concurrency-simplification.md))
 
-### Standard Library (<!-- stat:std-modules -->84<!-- /stat --> modules)
+### Standard Library (<!-- stat:std-modules -->85<!-- /stat --> modules)
 
 I/O & system: `io`, `fs`, `path`, `env`, `environ`, `args`, `process`, `signal`, `dl`, `sysinfo`, `mem`, `os`, `platform`, `term`, `pty`, `keys`, `ansi`, `foreign` (views over memory C allocated)
 Networking: `net` (TCP + DNS), `unix` (AF_UNIX), `fetch` (HTTPS client + TLS), `tls` (TLS server transport), `https` (HTTPS server), `http`, `httpmw`, `multipart`, `mime`, `html`, `ws`, `url`
