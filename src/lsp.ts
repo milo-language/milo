@@ -1,6 +1,7 @@
 // milod — Milo Language Server
 // Speaks LSP over JSON-RPC/stdio. Provides diagnostics, hover, go-to-definition.
 
+import { fixFor } from "./fixes";
 import { Lexer } from "./lexer";
 import { MILO_VERSION } from "./version";
 import { SOFT_KEYWORDS, type Token } from "./tokens";
@@ -1749,87 +1750,23 @@ function handleCodeAction(uri: string, range: any): object[] {
     // Only offer the fix if the diagnostic sits within the requested range's lines.
     const dl = d.span.line - 1;
     if (dl < range.start.line || dl > range.end.line) continue;
-
-    if (d.code === "bare-embedfile") {
-      const start = posToOffset(source, dl, d.span.col - 1);
-      if (source.slice(start, start + "embedFile".length) !== "embedFile") continue;
-      actions.push({
-        title: "Use '@embedFile'",
-        kind: "quickfix",
-        diagnostics: [{
-          range: { start: { line: dl, character: d.span.col - 1 }, end: { line: dl, character: d.span.col - 1 + "embedFile".length } },
-          severity: 2, source: "milo", message: d.message,
-        }],
-        edit: { changes: { [uri]: [{
-          range: { start: offsetToPos(source, start), end: offsetToPos(source, start) },
-          newText: "@",
-        }] } },
-      });
-      continue;
-    }
-
-    // `"hi ${name}"` → `$"hi {name}"`. The span points at the opening quote, and
-    // the fix is two edits: insert the `$` and drop each `$` that sits inside the
-    // literal ahead of a brace. Anchored to the quote so a literal that doesn't
-    // start where the diagnostic claims is left alone.
-    if (d.code === "missing-interpolation") {
-      const quote = posToOffset(source, dl, d.span.col - 1);
-      if (source[quote] !== '"') continue;
-      const close = source.indexOf('"', quote + 1);
-      if (close < 0) continue;
-      const edits: { range: object; newText: string }[] = [
-        { range: { start: offsetToPos(source, quote), end: offsetToPos(source, quote) }, newText: "$" },
-      ];
-      for (let i = quote + 1; i < close - 1; i++) {
-        if (source[i] === "$" && source[i + 1] === "{") {
-          edits.push({ range: { start: offsetToPos(source, i), end: offsetToPos(source, i + 1) }, newText: "" });
-        }
-      }
-      actions.push({
-        title: "Make this an interpolated string",
-        kind: "quickfix",
-        diagnostics: [{
-          range: { start: { line: dl, character: d.span.col - 1 }, end: { line: dl, character: d.span.col } },
-          severity: 2, source: "milo", message: d.message,
-        }],
-        edit: { changes: { [uri]: edits } },
-      });
-      continue;
-    }
-
-    if (d.code !== "unused-unsafe") continue;
-    const edit = unwrapUnsafeEdit(source, d.span.line - 1, d.span.col - 1);
-    if (!edit) continue;
+    // One source of fixes for the editor, `check --json` and `milo fix` (src/fixes.ts).
+    const fix = fixFor(d, source);
+    if (!fix) continue;
     actions.push({
-      title: "Remove unnecessary 'unsafe'",
+      title: fix.title,
       kind: "quickfix",
       diagnostics: [{
-        range: { start: { line: dl, character: d.span.col - 1 }, end: { line: dl, character: d.span.col } },
-        severity: 2, source: "milo", message: d.message,
+        range: { start: { line: dl, character: d.span.col - 1 }, end: { line: dl, character: d.span.col - 1 + (d.len ?? 1) } },
+        severity: d.severity === "error" ? 1 : 2, source: "milo", message: d.message,
       }],
-      edit: { changes: { [uri]: [edit] } },
+      edit: { changes: { [uri]: fix.edits.map(e => ({
+        range: { start: offsetToPos(source, e.offset), end: offsetToPos(source, e.offset + e.len) },
+        newText: e.newText,
+      })) } },
     });
   }
   return actions;
-}
-
-// Unwrap `unsafe { X }` -> `X` at the given 0-based position of the `unsafe` keyword.
-function unwrapUnsafeEdit(source: string, line: number, col: number): object | null {
-  const start = posToOffset(source, line, col);
-  if (source.slice(start, start + 6) !== "unsafe") return null;
-  const open = source.indexOf("{", start + 6);
-  if (open < 0) return null;
-  let depth = 0, close = -1;
-  for (let i = open; i < source.length; i++) {
-    if (source[i] === "{") depth++;
-    else if (source[i] === "}") { depth--; if (depth === 0) { close = i; break; } }
-  }
-  if (close < 0) return null;
-  const inner = source.slice(open + 1, close).trim();
-  return {
-    range: { start: offsetToPos(source, start), end: offsetToPos(source, close + 1) },
-    newText: inner,
-  };
 }
 
 // ── Signature help ──

@@ -31,6 +31,7 @@ import { PKG_COMMANDS, ensureDepsInstalled } from "./pkgcli";
 import { renderHelp, knownCommandNames } from "./cli-help";
 import { ensureFmtBinary } from "./fmtbin";
 import { splitModule, type SplitStats } from "./cgu";
+import { fixFor, applyEdits, type Fix } from "./fixes";
 import { objCacheEnabled, objCacheKey, objCacheFetch, objCacheStore, placementLoad, placementStore } from "./objcache";
 
 // `--cgus=N` (also MILO_CGUS): how many codegen units to hand clang. Module-level rather
@@ -123,7 +124,62 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
 // LSP, and fuzzers that want to classify a rejection by diagnostic code instead of
 // grepping the rendered message. Before it, every consumer outside this repo had to parse
 // Elm-style terminal output — or import the TypeScript, which only in-repo code can do.
-const CHECK_JSON_SCHEMA = 1;
+// 2: diagnostics may carry `fix` (src/fixes.ts): a title and the text edits that resolve
+// them, as 1-based line/col ranges in the diagnostic's file.
+const CHECK_JSON_SCHEMA = 2;
+
+function lineCol(src: string, offset: number): { line: number; col: number } {
+  let line = 1, col = 1;
+  for (let i = 0; i < offset && i < src.length; i++) { if (src[i] === "\n") { line++; col = 1; } else col++; }
+  return { line, col };
+}
+function endLineCol(src: string, offset: number): { endLine: number; endCol: number } {
+  const p = lineCol(src, offset);
+  return { endLine: p.line, endCol: p.col };
+}
+
+// `milo fix <file>`: apply every machine-applicable fix the check reports, in every file
+// the check reaches (a missing import in a library module only shows from an entry that
+// imports it), then re-check, up to three rounds. A fix never introduces a site, so this
+// converges; the loop is cheaper than proving one round suffices.
+function runFix(filePath: string, target: TargetInfo, warningConfig: WarningConfig | undefined): void {
+  let total = 0;
+  for (let round = 0; round < 3; round++) {
+    const source = readFileSync(filePath, "utf-8");
+    const sourceDir = dirname(resolve(filePath));
+    let diagnostics: Diagnostic[] = [];
+    try {
+      const program = resolveImports(new Parser(new Lexer(source).tokenize(), source, filePath).parse(), sourceDir, target, filePath);
+      diagnostics = new TypeChecker(warningConfig).check(program).diagnostics;
+    } catch (e: any) {
+      if (e instanceof ParseError) diagnostics = [e.diagnostic];
+      else throw e;
+    }
+    const byFile = new Map<string, { src: string; fixes: Fix[] }>();
+    for (const d of diagnostics) {
+      const file = d.span?.file ?? filePath;
+      let entry = byFile.get(file);
+      if (!entry) {
+        let src: string;
+        try { src = readFileSync(file, "utf-8"); } catch { continue; }
+        entry = { src, fixes: [] };
+        byFile.set(file, entry);
+      }
+      const fix = fixFor(d, entry.src);
+      if (fix) entry.fixes.push(fix);
+    }
+    let applied = 0;
+    for (const [file, { src, fixes }] of byFile) {
+      if (fixes.length === 0) continue;
+      writeFileSync(file, applyEdits(src, fixes.flatMap(f => f.edits)));
+      for (const f of fixes) console.log(`${file}: ${f.title}`);
+      applied += fixes.length;
+    }
+    total += applied;
+    if (applied === 0) break;
+  }
+  console.log(`${filePath}: ${total} fix(es) applied`);
+}
 
 function runCheck(source: string, filePath: string, target: TargetInfo, warningConfig: WarningConfig | undefined, json: boolean): void {
   const sourceDir = dirname(resolve(filePath));
@@ -142,25 +198,6 @@ function runCheck(source: string, filePath: string, target: TargetInfo, warningC
   }
 
   const errors = diagnostics.filter(d => d.severity === "error");
-  if (json) {
-    writeStdout(JSON.stringify({
-      schema: CHECK_JSON_SCHEMA,
-      file: filePath,
-      ok: errors.length === 0,
-      diagnostics: diagnostics.map(d => ({
-        severity: d.severity,
-        ...(d.code ? { code: d.code } : {}),
-        message: d.message,
-        ...(d.hint ? { hint: d.hint } : {}),
-        // A diagnostic from an imported module carries its own file; the entry file is
-        // the fallback, not the answer.
-        file: d.span?.file ?? filePath,
-        ...(d.span ? { line: d.span.line, col: d.span.col, len: d.len ?? 1 } : {}),
-      })),
-    }, null, 2) + "\n");
-    process.exit(errors.length ? 1 : 0);
-  }
-
   const srcCache = new Map<string, string | undefined>();
   const resolveSource = (f: string): string | undefined => {
     if (f === filePath) return source;
@@ -169,6 +206,30 @@ function runCheck(source: string, filePath: string, target: TargetInfo, warningC
     }
     return srcCache.get(f);
   };
+  if (json) {
+    writeStdout(JSON.stringify({
+      schema: CHECK_JSON_SCHEMA,
+      file: filePath,
+      ok: errors.length === 0,
+      diagnostics: diagnostics.map(d => {
+        // A diagnostic from an imported module carries its own file; the entry file is
+        // the fallback, not the answer.
+        const file = d.span?.file ?? filePath;
+        const src = resolveSource(file);
+        const fix = src !== undefined ? fixFor(d, src) : null;
+        return {
+          severity: d.severity,
+          ...(d.code ? { code: d.code } : {}),
+          message: d.message,
+          ...(d.hint ? { hint: d.hint } : {}),
+          file,
+          ...(d.span ? { line: d.span.line, col: d.span.col, len: d.len ?? 1 } : {}),
+          ...(fix ? { fix: { title: fix.title, edits: fix.edits.map(e => ({ ...lineCol(src!, e.offset), ...endLineCol(src!, e.offset + e.len), newText: e.newText })) } } : {}),
+        };
+      }),
+    }, null, 2) + "\n");
+    process.exit(errors.length ? 1 : 0);
+  }
   for (const d of diagnostics) console.error(formatDiagnostic(d, source, filePath, resolveSource));
   if (errors.length) process.exit(1);
   console.log(`${filePath}: ok`);
@@ -2374,6 +2435,8 @@ async function main() {
     reportCompiled(source!, bin, Date.now() - t0);
   } else if (cmd === "check") {
     runCheck(readFileSync(source!, "utf-8"), source!, target, warningConfig, args.includes("--json"));
+  } else if (cmd === "fix") {
+    runFix(source!, target, warningConfig);
   } else if (cmd === "emit-ast") {
     emitAst(source!, output, target, emitAll, emitSpans);
   } else if (cmd === "emit-hir") {

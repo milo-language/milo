@@ -39,7 +39,11 @@ export const COMPILER_COMMANDS: CliCommand[] = [
   },
   {
     name: "check", usage: "check <file> [--json]",
-    help: ["type-check only — no codegen (--json for machine-readable diagnostics)"],
+    help: ["type-check only — no codegen (--json for machine-readable diagnostics, each with its fix when one is mechanical)"],
+  },
+  {
+    name: "fix", usage: "fix <file>",
+    help: ["apply every machine-applicable fix the check reports (&mut markers, imports, @ sigils, unused unsafe), in every file it reaches"],
   },
   { name: "emit-ast", usage: "emit-ast <file>", help: ["emit the parsed AST as JSON (--all imports, --spans keep spans)"] },
   { name: "emit-hir", usage: "emit-hir <file>", help: ["emit the typed HIR as JSON (--all full module, --spans keep spans)"] },

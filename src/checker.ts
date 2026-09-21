@@ -59,7 +59,7 @@ function displayPath(file: string): string {
 // The import path that names `declFile` from inside `refFile`: `std/os` for the stdlib
 // (a platform suffix such as `.darwin` is not part of the path), otherwise relative to
 // the importing file, which is what a non-std import path means. Written so a tool can
-// paste it straight into an import line (scripts/fix-imports.ts does).
+// paste it straight into an import line (src/fixes.ts does).
 function importPathFrom(refFile: string, declFile: string): string {
   const norm = (p: string) => p.split(sep).join("/");
   const stripExt = (p: string) => p.replace(/\.(darwin|linux|windows|none|wasm)\.milo$|\.milo$/, "");

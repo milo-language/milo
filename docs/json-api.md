@@ -3,7 +3,7 @@ system: tooling-api
 purpose: the compiler's machine-readable surfaces — what tooling reads instead of importing TypeScript
 key-files: src/api-search.ts, src/lang-info.ts, src/warnings.ts, src/main.ts (runCheck), tests/apiJson.test.ts, tests/langInfo.test.ts
 update-when: a JSON payload gains or loses a field, or a new machine-readable command lands
-last-verified: 2026-09-20 (warnings lose the error-by-default field)
+last-verified: 2026-09-21 (check --json schema 2 adds `fix`; earlier: warnings lose the error-by-default field)
 -->
 
 # Machine-readable compiler API
@@ -91,18 +91,28 @@ need not rewrite it from the guide), `primitiveTypes`, `symbols` (operator token
 spelling), `builtinMembers` (receiver → the methods the checker dispatches by hand, with
 signatures and caveats), and `warnings` (name + `offByDefault`, i.e. what `--deny=` and `--allow=` accept).
 
-### `milo check <file> --json` (schema 1)
+### `milo check <file> --json` (schema 2)
 
 ```json
-{ "schema": 1, "file": "a.milo", "ok": false,
-  "diagnostics": [{ "severity": "error", "message": "...", "hint": "...",
-                    "file": "a.milo", "line": 14, "col": 16, "len": 1 }] }
+{ "schema": 2, "file": "a.milo", "ok": false,
+  "diagnostics": [{ "severity": "error", "code": "implicit-mut-borrow", "message": "...", "hint": "...",
+                    "file": "a.milo", "line": 14, "col": 16, "len": 1,
+                    "fix": { "title": "Write '&mut'",
+                             "edits": [{ "line": 14, "col": 16, "endLine": 14, "endCol": 16, "newText": "&mut " }] } }] }
 ```
 
 A parse error is reported in the same shape as a type error — a consumer should not have
 to distinguish "crashed" from "rejected". Exit code is 1 when any diagnostic is an error.
 `code` is present only where the diagnostic carries one; most do not yet, so classify on
 `code` when you can and treat its absence as "uncoded", not as a shape change.
+
+`fix` (schema 2) is present when the diagnostic has one right resolution: the edits that
+make it go away, as 1-based line/col ranges in `file` (an insertion has an empty range).
+Apply them highest offset first. `milo fix <file>` does exactly that for every fix in every
+file the check reaches, then re-checks. Fixes exist for `implicit-mut-borrow`,
+`unimported`, `unused-import`, `unused-unsafe`, `missing-interpolation`, `bare-embedfile`
+and `bare-targetos`; a hint that involves a choice (clone or borrow, `pub` in another file)
+stays a hint.
 
 ### `milo prove --json` (schema 1)
 

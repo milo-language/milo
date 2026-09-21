@@ -2725,8 +2725,8 @@ All imports must be explicit — list exactly which symbols you use. No `import 
 The list is also the whole of what the module lends you. An exported name the list does
 not mention is not in scope, whether it is a function, a type, or a global; methods need
 no import, since they are reached through their receiver, and the prelude's names
-(`Unit`, `asciiIsDigit`, ...) are in scope everywhere. `bun scripts/fix-imports.ts
-<file>` adds every name the checker reports missing.
+(`Unit`, `asciiIsDigit`, ...) are in scope everywhere. `milo fix <file>` adds every
+name the checker reports missing.
 
 ```milo error
 from "std/os" import { getenv }
