@@ -41,6 +41,10 @@ export const WARNINGS: WarningInfo[] = [
   // The census of `@copy` structs. Every hit is a deliberate annotation, so it is off by
   // default; `--deny=unowned-pointer-copy` enumerates them for an ownership audit.
   { name: "unowned-pointer-copy", offByDefault: true },
+  // A `requires` on an `unsafe`-bodied fn is the last guard before C, and `-O2` drops
+  // it: an AES key length and a pool block size both reached C unchecked this way
+  // (backlog #27). Off by default; `--deny=unchecked-ffi-contract` audits the set.
+  { name: "unchecked-ffi-contract", offByDefault: true },
   { name: "unused-move", offByDefault: true },
   { name: "unused-result" },
   { name: "unused-unsafe" },

@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-21 (once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-21 (unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -638,7 +638,16 @@ constructor that builds a short `prg` is refuted; a mutator that could break the
 cannot be shown not to is reported as unknown, and every proof that leaned on the invariant
 is then marked conditional.
 
-Use `milo prove file.milo` to discharge contracts against the built-in `std/smt` prover (`--solver=z3` for theories it doesn't model, `--emit-smt` to print the raw SMT-LIB2 conditions instead of solving them). Contracts are not emitted at `-O1`+; `--debug` and `--contract-checks` turn them into runtime asserts. Use `milo safety file.milo --safety=do178c-a` to check against domain-specific safety profiles (DO-178C, ISO 26262, NASA, IEC 61508, IEC 62304).
+Use `milo prove file.milo` to discharge contracts against the built-in `std/smt` prover (`--solver=z3` for theories it doesn't model, `--emit-smt` to print the raw SMT-LIB2 conditions instead of solving them). Contracts are not emitted at `-O1`+; `--debug` and `--contract-checks` turn them into runtime asserts.
+
+That makes a `requires` on a function whose body enters `unsafe` a guard that the
+default build removes, and past `unsafe` there is nothing else: an out-of-contract length
+reaches C as-is. The rule the standard library follows is that such a function checks the
+same values in its body too, returning an `Err` when the value could come from outside the
+program (a peer's tag length) and asserting when it could not (a handle the caller
+minted). `--deny=unchecked-ffi-contract` promotes an off-by-default warning that lists
+every `unsafe`-bodied function whose `requires` names parameters no `if` or `assert` in
+the body mentions; `std/crypto` and `std/pool` each carried one before it existed. Use `milo safety file.milo --safety=do178c-a` to check against domain-specific safety profiles (DO-178C, ISO 26262, NASA, IEC 61508, IEC 62304).
 
 ### Thread boundaries — `@thread`, `@synchronized` and `@parks`
 

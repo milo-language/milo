@@ -730,6 +730,10 @@ export class TypeChecker {
     // that work fine), so warning by default would nag every graphics program. The
     // always-on hover note already surfaces the size; projects opt into the hard lint.
     if (!config.denied.has("large-stack-array") && !config.expected?.has("large-stack-array")) config.allowed.add("large-stack-array");
+    // unchecked-ffi-contract is OFF unless asked for: a `requires` that is really a
+    // state precondition (`self.fd >= 0`) fails as a benign errno, and the lint cannot
+    // tell that from a length that C will trust. `--deny=` runs the audit.
+    if (!config.denied.has("unchecked-ffi-contract") && !config.expected?.has("unchecked-ffi-contract")) config.allowed.add("unchecked-ffi-contract");
     // single-variant-match is OFF while the tree is still being swept. The rewrite it asks
     // for is always an improvement, but the shape is everywhere: 304 sites in src-milo, 110
     // in milojs, 55 in examples/ at the census that shipped it. Default-on before the sweep
@@ -1920,15 +1924,26 @@ export class TypeChecker {
   // by-value structs / fixed arrays), which means it has no finite size. Vec/Heap/
   // pointer/ref indirection breaks the chain, since those are pointer-sized whatever
   // they point at, so only value-struct and fixed-array-of-struct fields keep walking.
+  // Does the struct or enum `name` contain itself by value, through struct fields, enum
+  // variant payloads and fixed arrays? Enum payloads are inline, so `enum E { X(A) }`
+  // with `struct A { e: E }` is as infinite as a struct that holds itself; the enum used
+  // to slip through when the cycle passed through a struct, get a payload sized before
+  // the struct's own size was known, and spill 32 bytes past it (ASan on
+  // cloneDeriveEnumInStruct).
   private embedsSelf(name: string, stack: Set<string>): boolean {
     if (stack.has(name)) return true;
-    const info = this.structs.get(name);
-    if (!info) return false;
+    const fields: TypeKind[] = [];
+    const sInfo = this.structs.get(name);
+    if (sInfo) for (const f of sInfo.fields) fields.push(f.type);
+    else {
+      const eInfo = this.enums.get(name);
+      if (!eInfo) return false;
+      for (const v of eInfo.variants.values()) fields.push(...v.fields);
+    }
     stack.add(name);
-    for (const f of info.fields) {
-      let t = f.type;
+    for (let t of fields) {
       while (t.tag === "array") t = t.element;
-      if (t.tag === "struct" && this.embedsSelf(t.name, stack)) { stack.delete(name); return true; }
+      if ((t.tag === "struct" || t.tag === "enum") && this.embedsSelf(t.name, stack)) { stack.delete(name); return true; }
     }
     stack.delete(name);
     return false;
@@ -3108,6 +3123,20 @@ export class TypeChecker {
         const copy = e.attributes?.some(a => a.name === "copy") ?? false;
         const pointerVariant = copy ? undefined : rawPointerVariant(variants);
         this.enums.set(e.name, { variants, ...(e.reprType && { reprType: e.reprType }), ...(pointerVariant && { pointerVariant }) });
+      }
+    }
+
+    // The indirect case: an enum whose payload reaches back to it through a struct (or
+    // another enum) by value. The direct case above keeps its message; this one names
+    // the cycle's other member.
+    for (const e of program.enums) {
+      if (e.typeParams.length > 0) continue;
+      const info = this.enums.get(e.name);
+      if (!info) continue;
+      const direct = [...info.variants.values()].some(v => v.fields.some(f => f.tag === "enum" && f.name === e.name));
+      if (!direct && this.embedsSelf(e.name, new Set())) {
+        this.error(`enum '${e.name}' is recursive by value and has infinite size`, e.span,
+          `a variant payload is stored inline, so a payload that contains '${e.name}' again (through a struct or another enum) has no layout; put it behind 'Heap<...>'`);
       }
     }
 
@@ -5745,6 +5774,7 @@ export class TypeChecker {
     // not the function, so a body with three independent errors still reports three.
     for (const stmt of fn.body) this.recover(() => this.checkStmt(stmt, retType));
     this.scanUnreachable(fn.body);
+    if (!fn.isExtern) this.lintUncheckedFfiContract(fn);
     // `main` keeps its implicit `return 0` (C's rule, and what codegen emits); no
     // other function gets one. Externs have no body to fall off.
     if (!fn.isExtern && fn.name !== "main") {
@@ -6677,6 +6707,70 @@ export class TypeChecker {
       }
     }
     return false;
+  }
+
+  // A `requires` on a function whose body enters `unsafe` is the last guard before C,
+  // and the default `-O2` build drops contract checks. Unless the body also checks the
+  // same values itself (an `if` or `assert` naming every parameter the clause names),
+  // an out-of-contract call reaches C unguarded: `std/crypto` read 32 bytes from an
+  // 8-byte key and `std/pool` wrote past a 2-byte block this way. The body check is
+  // matched by the names it mentions, not by negating the contract: `requires size >= 8`
+  // is satisfied by `if size < 8 { return Err }` as much as by `assert(size >= 8)`.
+  private ffiContractReported = new Set<string>();
+
+  private lintUncheckedFfiContract(fn: Function) {
+    const requires = (fn.contracts ?? []).filter(c => c.kind === "requires");
+    if (requires.length === 0 || !this.bodyEntersUnsafe(fn.body)) return;
+    // Once per source function: a generic is checked per instantiation.
+    const key = `${fn.span?.file}:${fn.span?.line}:${fn.span?.col}`;
+    if (this.ffiContractReported.has(key)) return;
+    this.ffiContractReported.add(key);
+    const params = new Set(fn.params.map(p => p.name));
+    const guards: Set<string>[] = [];
+    this.collectGuardNames(fn.body, params, guards);
+    for (const c of requires) {
+      const names = new Set<string>();
+      this.collectIdents(c.expr, params, names);
+      if (names.size === 0) continue;
+      if (guards.some(g => [...names].every(n => g.has(n)))) continue;
+      const shown = fn.sourceName ?? fn.name.slice(fn.name.lastIndexOf("$") + 1);
+      this.warn("unchecked-ffi-contract",
+        `'${shown}' enters 'unsafe' with only 'requires' guarding ${[...names].map(n => `'${n}'`).join(", ")}`,
+        c.expr.span ?? fn.span,
+        `a contract is checked at --debug and dropped at -O2, so this is the last guard before C. Check it in the body too (return an Err, or assert) or pass --allow=unchecked-ffi-contract`);
+    }
+  }
+
+  private bodyEntersUnsafe(node: unknown): boolean {
+    if (Array.isArray(node)) return node.some(n => this.bodyEntersUnsafe(n));
+    if (node === null || typeof node !== "object") return false;
+    const kind = (node as { kind?: string }).kind;
+    if (kind === "UnsafeBlock") return true;
+    if (kind === "Closure") return false;
+    return Object.values(node).some(v => this.bodyEntersUnsafe(v));
+  }
+
+  // Every `if` condition, `assert` argument and let-else in the body, as the set of
+  // parameter names it mentions.
+  private collectGuardNames(node: unknown, params: Set<string>, out: Set<string>[]) {
+    if (Array.isArray(node)) { for (const n of node) this.collectGuardNames(n, params, out); return; }
+    if (node === null || typeof node !== "object") return;
+    const n = node as { kind?: string; cond?: Expr; func?: string; args?: Expr[] };
+    if ((n.kind === "IfStmt" || n.kind === "WhileStmt") && n.cond) {
+      const names = new Set<string>(); this.collectIdents(n.cond, params, names); if (names.size) out.push(names);
+    }
+    if (n.kind === "Call" && n.func === "assert" && n.args?.[0]) {
+      const names = new Set<string>(); this.collectIdents(n.args[0], params, names); if (names.size) out.push(names);
+    }
+    for (const v of Object.values(node)) this.collectGuardNames(v, params, out);
+  }
+
+  private collectIdents(node: unknown, params: Set<string>, out: Set<string>) {
+    if (Array.isArray(node)) { for (const n of node) this.collectIdents(n, params, out); return; }
+    if (node === null || typeof node !== "object") return;
+    const n = node as { kind?: string; name?: string };
+    if (n.kind === "Ident" && n.name && params.has(n.name)) out.add(n.name);
+    for (const v of Object.values(node)) this.collectIdents(v, params, out);
   }
 
   // Does control ever fall off the end of a function body? Stricter shapes than

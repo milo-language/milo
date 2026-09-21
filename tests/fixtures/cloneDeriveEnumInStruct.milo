@@ -1,12 +1,18 @@
 // Structs and enums share one derive fixpoint, so a struct holding an enum and an enum
-// holding that struct both end up clonable.
+// holding a struct both end up clonable. The two do not hold each other: an enum whose
+// payload reached its container by value would have infinite size and is rejected
+// (tests/errors/enumRecursiveThroughStruct.milo).
 struct A {
     name: string,
     e: E,
 }
 
+struct B {
+    name: string,
+}
+
 enum E {
-    X(A),
+    X(B),
     Y,
     Z(string),
 }
@@ -14,7 +20,7 @@ enum E {
 fn describe(a: &A): string {
     match a.e {
         E.X(inner) => {
-            return $"{a.name}>" + describe(inner)
+            return $"{a.name}>{inner.name}"
         }
         E.Y => {
             return $"{a.name}>Y"
@@ -26,23 +32,23 @@ fn describe(a: &A): string {
 }
 
 fn main() {
-    let leaf = A {
-        name: "leaf", e: E.Z("z")
-    }
     let root = A {
-        name: "root", e: E.X(leaf)
+        name: "root", e: E.X(B {
+            name: "leaf"
+        }
+        )
     }
     let copy = root.clone()
     print(describe(root))
     print(describe(copy))
-    let e = E.X(A {
-        name: "solo", e: E.Y
+    let e = E.X(B {
+        name: "solo"
     }
     )
     let e2 = e.clone()
     match e2 {
-        E.X(a) => {
-            print(describe(a))
+        E.X(b) => {
+            print(b.name)
         }
         E.Y => {
             print("Y")
@@ -51,7 +57,12 @@ fn main() {
             print(s)
         }
     }
+    let a2 = A {
+        name: "z", e: E.Z("zed")
+    }
+    print(describe(a2.clone()))
 }
-// @expect: root>leaf>Z(z)
-// @expect: root>leaf>Z(z)
-// @expect: solo>Y
+// @expect: root>leaf
+// @expect: root>leaf
+// @expect: solo
+// @expect: z>Z(zed)

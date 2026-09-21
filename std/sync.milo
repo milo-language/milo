@@ -303,6 +303,12 @@ impl Channel<T> {
     requires
     capacity > 0
     {
+        // Checked at every -O, not only by the contract: a non-positive capacity mallocs
+        // nothing and `send` then writes through it (a negative one never sees the buffer
+        // as full).
+        if capacity <= 0 {
+            return Result.Err("channel capacity must be positive")
+        }
         unsafe {
             let raw = malloc(96)
             let inner = raw as *ChannelInner
