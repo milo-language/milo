@@ -1,6 +1,7 @@
 // Whole-program passes that run after every function body is checked and read only the
-// recorded results: escaping closures, `@pure`, the thread boundary, global borrow
-// invalidation, pointer-parameter escape, and the `&mut` bundle census. They need the finished call-resolution maps and the full set of
+// recorded results. Escaping closures, `@pure`, the thread boundary, global borrow
+// invalidation, pointer-parameter escape, and the `&mut` bundle census all live here:
+// they need the finished call-resolution maps and the full set of
 // monomorphized instances, which is why they cannot run per function, and they reach
 // the checker only through `ProgramPassHost` (its recorded maps and diagnostics) plus
 // the `ProgramView` it builds once for all of them (design pass 2026-09, F5).
