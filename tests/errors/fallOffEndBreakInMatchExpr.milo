@@ -1,0 +1,17 @@
+// A `break` in expression position (a match arm used as a value) leaves the
+// `while true`, so the loop is not the function's exit and the body can fall off.
+// @error: 'f' returns i64 but can reach the end of its body without a 'return'
+fn f(v: i64): i64 {
+    while true {
+        let x = match v {
+            0 => 1
+            _ => { break }
+        }
+        print(x)
+    }
+}
+
+fn main(): i32 {
+    print(f(1))
+    return 0
+}

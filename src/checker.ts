@@ -62,7 +62,7 @@ function displayPath(file: string): string {
 // paste it straight into an import line (scripts/fix-imports.ts does).
 function importPathFrom(refFile: string, declFile: string): string {
   const norm = (p: string) => p.split(sep).join("/");
-  const stripExt = (p: string) => p.replace(/\.[a-z0-9]+\.milo$|\.milo$/, "");
+  const stripExt = (p: string) => p.replace(/\.(darwin|linux|windows|none|wasm)\.milo$|\.milo$/, "");
   // STDLIB_DIR is the directory holding `std/`, so a sibling `examples/` file is under
   // it too; only the `std/` subtree gets the bare path.
   const root = STDLIB_DIR + sep;
@@ -5696,7 +5696,11 @@ export class TypeChecker {
     this.scanUnreachable(fn.body);
     // `main` keeps its implicit `return 0` (C's rule, and what codegen emits); no
     // other function gets one. Externs have no body to fall off.
-    if (!fn.isExtern && fn.name !== "main") this.errorIfFallsOff(`'${fn.name}'`, fn.body, retType, fn.span);
+    if (!fn.isExtern && fn.name !== "main") {
+      // `foo`, not the instance `foo_i64` or the method symbol `Sq$Shape$area`.
+      const shown = fn.sourceName ?? fn.name.slice(fn.name.lastIndexOf("$") + 1);
+      this.errorIfFallsOff(`'${shown}'`, fn.body, retType, fn.span);
+    }
 
     // Lint: warn if a non-ref, non-Copy param was never moved — suggest &T
     if (!fn.isExtern) {
@@ -6648,32 +6652,28 @@ export class TypeChecker {
     return false;
   }
 
-  // Is there a `break` in this loop body that targets THIS loop? Nested loops own
-  // their breaks; closure bodies are separate functions.
-  private bodyBreaksOut(body: Stmt[]): boolean {
-    for (const s of body) {
-      switch (s.kind) {
-        case "BreakStmt": return true;
-        case "IfStmt": case "IfLetStmt":
-          if (this.bodyBreaksOut(s.thenBody) || (s.elseBody && this.bodyBreaksOut(s.elseBody))) return true;
-          break;
-        case "LetElseStmt":
-          if (this.bodyBreaksOut(s.elseBody)) return true;
-          break;
-        case "MatchStmt":
-          if (s.arms.some(a => this.bodyBreaksOut(a.body))) return true;
-          break;
-        case "UnsafeBlock":
-          if (this.bodyBreaksOut(s.body)) return true;
-          break;
-      }
-    }
-    return false;
+  // Is there a `break` in this loop body that targets THIS loop? Structural over every
+  // node, because a `break` can sit in expression position too (a `match` or `if` arm
+  // used as a value); nested loops own their breaks and a closure body is another fn.
+  private bodyBreaksOut(node: unknown): boolean {
+    if (Array.isArray(node)) return node.some(n => this.bodyBreaksOut(n));
+    if (node === null || typeof node !== "object") return false;
+    const kind = (node as { kind?: string }).kind;
+    if (kind === "BreakStmt") return true;
+    if (kind === "WhileStmt" || kind === "ForInStmt" || kind === "Closure") return false;
+    return Object.values(node).some(v => this.bodyBreaksOut(v));
   }
+
+  // One report per source function: a generic is checked once per instantiation, and
+  // every instance falls off at the same place.
+  private fallOffReported = new Set<string>();
 
   private errorIfFallsOff(what: string, body: Stmt[], retType: TypeKind, span?: Span) {
     if (retType.tag === "void" || retType.tag === "unknown") return;
     if (this.bodyNeverFallsOff(body)) return;
+    const key = `${span?.file}:${span?.line}:${span?.col}`;
+    if (this.fallOffReported.has(key)) return;
+    this.fallOffReported.add(key);
     this.error(`${what} returns ${this.show(retType)} but can reach the end of its body without a 'return'`, span,
       `every path must end in 'return <value>' (or an if/else, match, or 'while true' whose every exit returns)`);
   }

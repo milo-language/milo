@@ -2223,8 +2223,9 @@ export class Codegen {
       else if (this.currentFnName === "main") lines.push("  ret i32 0");
       // The checker rejects any other non-void fn that can fall off, so this end is
       // only reached past a `while true` with no break: a block that needs a
-      // terminator and can never execute.
-      else lines.push("  unreachable");
+      // terminator and can never execute. A trap rather than bare `unreachable`, so a
+      // shape the checker misses aborts instead of running past the end of the function.
+      else { lines.push("  call void @llvm.trap()"); lines.push("  unreachable"); }
     }
 
     // hoist body allocas to entry block
@@ -6202,7 +6203,7 @@ export class Codegen {
     }
     if (!hasTerminator) {
       if (retTy === "void") closureBody.push("  ret void");
-      else closureBody.push("  unreachable"); // checker-rejected unless past a `while true`
+      else { closureBody.push("  call void @llvm.trap()"); closureBody.push("  unreachable"); } // see genFn's fall-off
     }
     if (this.entryAllocas.length > 0) {
       closureBody.splice(closureAllocaInsertPoint, 0, ...this.entryAllocas);
