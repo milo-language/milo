@@ -3,7 +3,7 @@ system: compiler-host-language-decision
 purpose: decision record for whether to rewrite the TS compiler (src/) in Milo (src-milo/) or Rust, and on what grounds
 key-files: src/, src-milo/, tsconfig.json, docs/self-hosting.md, docs/backlog.md
 update-when: the defect-class evidence changes, the index-access hole closes, or a self-host port actually starts
-last-verified: 2026-08-04
+last-verified: 2026-09-21 (STATUS: paused. The self-host endgame was decided proof-only and src-milo frozen on 2026-09-20, roadmap.md §Self-Hosting; nothing here is scheduled, and the ratchets it names are not to be resumed by accident. Previous: 2026-08-04)
 -->
 
 # Host language for the compiler — decision record

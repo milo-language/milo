@@ -3,7 +3,7 @@ system: milo-first-inner-loop
 purpose: whether a Milo-hosted compiler can have a fast edit/test loop, and the prerequisites that decide it
 key-files: src/main.ts, src/codegen.ts, tests/run.test.ts, src-milo/, docs/plans/compiler-host-language.md
 update-when: `src-milo` is un-rotted, the IR differential harness lands, or a port slice actually starts
-last-verified: 2026-08-04
+last-verified: 2026-09-21 (STATUS: paused. The self-host endgame was decided proof-only and src-milo frozen on 2026-09-20, roadmap.md §Self-Hosting; nothing here is scheduled, and the ratchets it names are not to be resumed by accident. Previous: 2026-08-04)
 -->
 
 # Milo-first: can the inner loop survive it?

@@ -563,15 +563,15 @@ Ranked by how often real programs hit them.
   | `std/fmt` | `fmt1`/`fmt2`/`fmt3`/`fmt4` | `$"…{x}…"` — probed, works |
   | `std/fmt` | `join`, `padLeft`, `padRight` | `Vec.join`, `str.padStart`/`padEnd` |
   | `std/sort` | `sortI32`/`sortI64`/`sortStrings`/`reverseI64` | `Vec.sort`/`sortBy`/`sortByKey` |
-  | `std/testing` | `assertEqual`(i32)/`assertEqual64`/`assertStrEqual`/`assertBool` | nothing — needs one generic `assertEq` |
+  | `std/testing` | `assertEqual`(i32)/`assertEqual64`/`assertStrEqual`/`assertBool` | `assertEq<T>`/`assertNe<T>`/`assertVecEq<T>` (shipped; the typed forms are the legacy) |
   | `std/math` | `maxI32`/`maxI64`/`maxF64`/`minI32`/… | nothing — needs a bounded generic |
   | `std/random`, `std/rng` | `shuffleI64` only | nothing — cannot shuffle `Vec<string>` at all |
   | `std/json` | ~~`bool`/`boolAt`/`boolPath`/`childBoolAt`/`curBool` × 4 types ≈ 20 accessors~~ | partly done: the `*At`/`child*At` shapes (10 methods) are deleted, see Tier 1. `bool`/`boolPath`/`curBool` × 4 types remain — one per *value type* per *addressing mode*, which `andThen` cannot collapse; that needs a generic `Json.as<T>()` |
 
   `std/fmt` is now ~100% redundant. `std/sort` is redundant except `sortStringsByFreq`.
 
-- [ ] **`std/testing` is too thin to test with.** Six assertions, all hand-monomorphized. No
-  generic `assertEq`, no subtests/table tests, no failure diffing, no benchmark harness.
+- [ ] **`std/testing` is too thin to test with.** `assertEq<T>` / `assertNe<T>` / `assertVecEq<T>`
+  exist now; still no subtests/table tests, no failure diffing, no benchmark harness.
   Compare Go `testing.T` (`t.Run`, benchmarks), Rust `assert_eq!` over any `Debug`, Node
   `node:test` `describe`/`it`.
 
