@@ -963,6 +963,28 @@ fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json {
 
 // ── Parser ──
 
+// The recursive-descent state. It owns the source because a struct cannot hold a
+// `&string`; `finish` moves the string and the pools into the Json, no copy.
+struct JsonParser {
+    s: string,
+    pos: i64,
+    err: bool,
+    nodes: Vec<JsonNode>,
+    childIdx: Vec<i64>,
+    keyOffsets: Vec<i64>,
+    keyLens: Vec<i64>,
+    // Scratch stack for in-flight container children, shared across the whole parse so it
+    // allocates once, not per container. scratchLen is the logical length, scratch.len() the
+    // high-water mark: entries above scratchLen are stale and overwritten in place, so
+    // repeated container parses cost zero allocations. The push is written out at each
+    // site in parseArray/parseObject: Milo has no inline attribute, and as a method LLVM
+    // leaves it out of line at -O2 (Vec.push's grow path inlines into it, making it too
+    // big for four call sites; the call was ~8% of parse time). It only holds the open
+    // containers' pending children, so a small fixed reserve covers most documents.
+    scratch: Vec<i64>,
+    scratchLen: i64,
+}
+
 fn jsonParse(s: string): Result<Json> {
     if s.len == 0 {
         return Result.Err("empty json input at byte 0")
@@ -987,39 +1009,29 @@ fn jsonParse(s: string): Result<Json> {
     childIdx.reserve(s.len / 40)
     keyOffsets.reserve(s.len / 64)
     keyLens.reserve(s.len / 64)
-    // Scratch stack for in-flight container children, shared across the whole parse so it
-    // allocates once, not per container. scratchLen is the logical length, scratch.len() the
-    // high-water mark: entries above scratchLen are stale and overwritten in place, so
-    // repeated container parses cost zero allocations. The push is written out at each
-    // site in jsonParseArray/jsonParseObject (Milo has no inline attribute and the call
-    // was ~8% of parse time). It only holds the open containers' pending children, so a
-    // small fixed reserve covers most documents.
     var scratch: Vec<i64> = Vec.new()
     scratch.reserve(64)
-    var scratchLen: i64 = 0
-    var pos: i64 = 0
-    var err: bool = false
-    jsonSkipWs(s, &mut pos)
-    if pos >= s.len {
-        return Result.Err("empty json input at byte " + pos.toString())
+    var p = JsonParser {
+        s: s, pos: 0, err: false, nodes: nodes, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, scratch: scratch, scratchLen: 0
     }
-    let rootIdx = jsonParseValue(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
-    if err {
-        return Result.Err("malformed json at byte " + pos.toString())
+    p.skipWs()
+    if p.pos >= p.s.len {
+        return Result.Err("empty json input at byte " + p.pos.toString())
     }
-    jsonSkipWs(s, &mut pos)
-    if pos != s.len {
-        return Result.Err("trailing json content at byte " + pos.toString())
+    let rootIdx = p.parseValue()
+    if p.err {
+        return Result.Err("malformed json at byte " + p.pos.toString())
+    }
+    p.skipWs()
+    if p.pos != p.s.len {
+        return Result.Err("trailing json content at byte " + p.pos.toString())
     }
     // A cursor gives the node index 32 bits (the brand takes the rest), so a
     // pool past 2^32 nodes would pack a truncated index: in bounds, brand
     // matching, and wrong. Same rule as seal's 2GB span cap: enforce at mint,
     // not on resolve.
-    assert(nodes.len() <= 0xFFFFFFFF, "json: document exceeds 2^32 nodes, cursors cannot address it")
-    return Result.Ok(Json {
-        source: s, nodes: nodes, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, root: rootIdx, _docId: jsonMintDocId()
-    }
-    )
+    assert(p.nodes.len() <= 0xFFFFFFFF, "json: document exceeds 2^32 nodes, cursors cannot address it")
+    return Result.Ok(p.finish(rootIdx))
 }
 
 // JSONC (Microsoft/VS Code flavor): JSON plus // and /* */ comments and trailing commas.
@@ -1111,6 +1123,7 @@ fn jsoncParse(s: string): Result<Json> {
     return jsonParse(stripped)
 }
 
+// Shared with JsonPull, which scans the same grammar over its own cursor.
 fn jsonSkipWs(s: &string, pos: &mut i64) {
     while pos < s.len {
         let c = s[pos]
@@ -1121,83 +1134,10 @@ fn jsonSkipWs(s: &string, pos: &mut i64) {
     }
 }
 
-// The three bare literals were previously accepted on their first byte alone, so
-// `nope` parsed as null and `trux` as true — malformed text became a plausible
-// value with no error.
-fn jsonLitAt(s: &string, pos: i64, lit: &string): bool {
-    if pos + lit.len > s.len {
-        return false
-    }
-    var i: i64 = 0
-    while i < lit.len {
-        if s[pos + i] != lit[i] {
-            return false
-        }
-        i = i + 1
-    }
-    return true
-}
-
-fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
-    jsonSkipWs(s, &mut pos)
-    if pos >= s.len {
-        err = true
-        let idx = nodes.len()
-        nodes.push(jsonNewNull())
-        return idx
-    }
-    let c = s[pos]
-    if c == '"' {
-        return jsonParseString(s, &mut pos, &mut nodes, &mut err)
-    }
-    if c == '{' {
-        return jsonParseObject(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
-    }
-    if c == '[' {
-        return jsonParseArray(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
-    }
-    if c == 't' {
-        if !jsonLitAt(s, pos, "true") {
-            err = true
-        }
-        pos = pos + 4
-        let idx = nodes.len()
-        nodes.push(jsonNewBool(true))
-        return idx
-    }
-    if c == 'f' {
-        if !jsonLitAt(s, pos, "false") {
-            err = true
-        }
-        pos = pos + 5
-        let idx = nodes.len()
-        nodes.push(jsonNewBool(false))
-        return idx
-    }
-    if c == 'n' {
-        if !jsonLitAt(s, pos, "null") {
-            err = true
-        }
-        pos = pos + 4
-        let idx = nodes.len()
-        nodes.push(jsonNewNull())
-        return idx
-    }
-    // Only '-' or a digit can begin a value here; anything else (',', ']', '}', ':', stray punctuation)
-    // is a structural error — guarding here is what rejects empty/leading-comma elements like `[ , x]`.
-    if c == '-' || (c >= '0' && c <= '9') {
-        return jsonParseNumber(s, &mut pos, &mut nodes, &mut err)
-    }
-    err = true
-    let idx = nodes.len()
-    nodes.push(jsonNewNull())
-    return idx
-}
-
 // RFC 8259 §7: a string char is any Unicode scalar except '"', '\' and the C0 controls (< 0x20),
 // which must be escaped. Valid escapes are " \ / b f n r t and \uXXXX. We validate the escape
 // letter but not the 4 hex digits (no fail case exercises bad \u, and over-checking risks false
-// positives on valid \u sequences).
+// positives on valid \u sequences). Shared with JsonPull.
 fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
     // Local cursor: writing through the &mut i64 every byte defeats LLVM's alias analysis
     // (the store could alias the string header), forcing len/data reloads per char.
@@ -1232,241 +1172,331 @@ fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
     pos = p
 }
 
-fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, err: &mut bool): i64 {
-    pos = pos + 1
-    let start = pos
-    jsonScanString(s, &mut pos, &mut err)
-    let slen = pos - start
-    if pos < s.len {
-        pos = pos + 1
+impl JsonParser {
+    // Give the source and the pools to the Json. Consumes the parser: a struct
+    // cannot lend `s` out as a `&string`, so moving is the only copy-free handover.
+    fn finish(self: Self, root: i64): Json {
+        return Json {
+            source: self.s, nodes: self.nodes, childIdx: self.childIdx, keyOffsets: self.keyOffsets, keyLens: self.keyLens, root: root, _docId: jsonMintDocId()
+        }
     }
-    let idx = nodes.len()
-    nodes.push(jsonNewStr(start, slen))
-    return idx
-}
 
-fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i64, err: &mut bool) {
-    pos = pos + 1
-    start = pos
-    jsonScanString(s, &mut pos, &mut err)
-    _slen = pos - start
-    if pos < s.len {
-        pos = pos + 1
+    fn skipWs(self: &mut Self) {
+        jsonSkipWs(self.s, &mut self.pos)
     }
-}
 
-fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &mut bool): i64 {
-    // Record the source span so rawStr can round-trip the literal verbatim —
-    // f64 formatting would mangle large ints ("1572864" → "1.57286e+06").
-    let numStart = pos
-    var result: f64 = 0.0
-    var negative: bool = false
-    if pos < s.len && s[pos] == '-' {
-        negative = true
-        pos = pos + 1
-    }
-    // Integer part: RFC requires at least one digit, and forbids leading zeros (`013`) — a single
-    // '0' is the only int that may start with '0'.
-    if pos >= s.len || !(s[pos] >= '0' && s[pos] <= '9') {
-        _err = true
-    } else if s[pos] == '0' {
-        pos = pos + 1
-        if pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            _err = true
+    // The three bare literals were previously accepted on their first byte alone, so
+    // `nope` parsed as null and `trux` as true; malformed text became a plausible
+    // value with no error.
+    fn litAt(self: &Self, lit: &string): bool {
+        if self.pos + lit.len > self.s.len {
+            return false
         }
-    } else {
-        while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            result = result * 10.0 + (s[pos] as i32 - 48) as f64
-            pos = pos + 1
-        }
-    }
-    if pos < s.len && s[pos] == '.' {
-        pos = pos + 1
-        if pos >= s.len || !(s[pos] >= '0' && s[pos] <= '9') {
-            _err = true
-        }
-        var frac: f64 = 0.1
-        while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            result = result + (s[pos] as i32 - 48) as f64 * frac
-            frac = frac * 0.1
-            pos = pos + 1
-        }
-    }
-    if pos < s.len && (s[pos] == 'e' || s[pos] == 'E') {
-        pos = pos + 1
-        var expNeg: bool = false
-        if pos < s.len && s[pos] == '-' {
-            expNeg = true
-            pos = pos + 1
-        } else if pos < s.len && s[pos] == '+' {
-            pos = pos + 1
-        }
-        if pos >= s.len || !(s[pos] >= '0' && s[pos] <= '9') {
-            _err = true
-        }
-        var exp: i64 = 0
-        while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            exp = exp * 10 + (s[pos] as i32 - 48) as i64
-            pos = pos + 1
-        }
-        var factor: f64 = 1.0
-        var e: i64 = 0
-        while e < exp {
-            factor = factor * 10.0
-            e = e + 1
-        }
-        if expNeg {
-            result = result / factor
-        } 
-        else {
-            result = result * factor
-        }
-    }
-    if negative {
-        result = 0.0 - result
-    }
-    let idx = nodes.len()
-    nodes.push(jsonNewNum(result, numStart, pos - numStart))
-    return idx
-}
-
-// Container children must be contiguous in childIdx, but grandchildren are discovered
-// interleaved while a container is still open. Children park on the scratch stack until
-// the container closes, then commit as one contiguous block — this replaced a pre-counting
-// scan to the matching close bracket that re-read every container body (73% of parse time).
-fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
-    pos = pos + 1
-    let myIdx = nodes.len()
-    nodes.push(jsonNewContainer(4, 0, 0, 0))
-    jsonSkipWs(s, &mut pos)
-    if pos < s.len && s[pos] == ']' {
-        pos = pos + 1
-        return myIdx
-    }
-    let sStart = scratchLen
-    while pos < s.len {
-        // After a comma the next iteration re-enters here; jsonParseValue's value-start guard
-        // turns a trailing comma (`,]`) into an error because ']' cannot begin a value.
-        let childNodeIdx = jsonParseValue(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
-        // Scratch push, see the scratch comment in jsonParse.
-        if scratchLen < scratch.len() {
-            scratch[scratchLen] = childNodeIdx
-        } else {
-            scratch.push(childNodeIdx)
-        }
-        scratchLen = scratchLen + 1
-        if err {
-            break
-        }
-        jsonSkipWs(s, &mut pos)
-        if pos < s.len && s[pos] == ',' {
-            pos = pos + 1
-        } else {
-            break
-        }
-    }
-    // Unterminated array (`["x"`) is an error — the close bracket is mandatory.
-    if pos < s.len && s[pos] == ']' {
-        pos = pos + 1
-    } else {
-        err = true
-    }
-    let ci = scratchLen - sStart
-    let childStart = childIdx.len()
-    var k: i64 = 0
-    while k < ci {
-        childIdx.push(scratch[sStart + k])
-        k = k + 1
-    }
-    scratchLen = sStart
-    nodes[myIdx] = jsonNewContainer(4, childStart, ci, 0)
-    return myIdx
-}
-
-fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
-    pos = pos + 1
-    let myIdx = nodes.len()
-    nodes.push(jsonNewContainer(5, 0, 0, 0))
-    jsonSkipWs(s, &mut pos)
-    if pos < s.len && s[pos] == '}' {
-        pos = pos + 1
-        return myIdx
-    }
-    // Each entry parks 3 scratch slots: nodeIdx, keyOffset, keyLen. Arrays park 1 per child,
-    // but mixed strides coexist fine — every container only reads back its own range.
-    let sStart = scratchLen
-    // The empty-object case returned above, so reaching the loop means a key is required;
-    // expectKey stays true after every comma so a trailing comma (`{...,}`) is rejected.
-    var expectKey: bool = true
-    while pos < s.len {
-        jsonSkipWs(s, &mut pos)
-        if pos >= s.len || s[pos] != '"' {
-            if expectKey {
-                err = true
+        var i: i64 = 0
+        while i < lit.len {
+            if self.s[self.pos + i] != lit[i] {
+                return false
             }
-            break
+            i = i + 1
         }
-        expectKey = false
-        var koff: i64 = 0
-        var klen: i64 = 0
-        jsonScanStringRange(s, &mut pos, &mut koff, &mut klen, &mut err)
-        jsonSkipWs(s, &mut pos)
-        // The colon separating key and value is mandatory (`{"k" null}` is an error).
-        if pos < s.len && s[pos] == ':' {
-            pos = pos + 1
-        } else {
-            err = true
+        return true
+    }
+
+    fn parseValue(self: &mut Self): i64 {
+        self.skipWs()
+        if self.pos >= self.s.len {
+            self.err = true
+            let idx = self.nodes.len()
+            self.nodes.push(jsonNewNull())
+            return idx
         }
-        let childNodeIdx = jsonParseValue(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
-        // Three scratch pushes, see the scratch comment in jsonParse.
-        if scratchLen < scratch.len() {
-            scratch[scratchLen] = childNodeIdx
-        } else {
-            scratch.push(childNodeIdx)
+        let c = self.s[self.pos]
+        if c == '"' {
+            return self.parseString()
         }
-        scratchLen = scratchLen + 1
-        if scratchLen < scratch.len() {
-            scratch[scratchLen] = koff
-        } else {
-            scratch.push(koff)
+        if c == '{' {
+            return self.parseObject()
         }
-        scratchLen = scratchLen + 1
-        if scratchLen < scratch.len() {
-            scratch[scratchLen] = klen
-        } else {
-            scratch.push(klen)
+        if c == '[' {
+            return self.parseArray()
         }
-        scratchLen = scratchLen + 1
-        if err {
-            break
+        if c == 't' {
+            if !self.litAt("true") {
+                self.err = true
+            }
+            self.pos = self.pos + 4
+            let idx = self.nodes.len()
+            self.nodes.push(jsonNewBool(true))
+            return idx
         }
-        jsonSkipWs(s, &mut pos)
-        if pos < s.len && s[pos] == ',' {
-            pos = pos + 1
-            expectKey = true
-        } else {
-            break
+        if c == 'f' {
+            if !self.litAt("false") {
+                self.err = true
+            }
+            self.pos = self.pos + 5
+            let idx = self.nodes.len()
+            self.nodes.push(jsonNewBool(false))
+            return idx
+        }
+        if c == 'n' {
+            if !self.litAt("null") {
+                self.err = true
+            }
+            self.pos = self.pos + 4
+            let idx = self.nodes.len()
+            self.nodes.push(jsonNewNull())
+            return idx
+        }
+        // Only '-' or a digit can begin a value here; anything else (',', ']', '}', ':', stray punctuation)
+        // is a structural error: guarding here is what rejects empty/leading-comma elements like `[ , x]`.
+        if c == '-' || (c >= '0' && c <= '9') {
+            return self.parseNumber()
+        }
+        self.err = true
+        let idx = self.nodes.len()
+        self.nodes.push(jsonNewNull())
+        return idx
+    }
+
+    fn scanString(self: &mut Self) {
+        jsonScanString(self.s, &mut self.pos, &mut self.err)
+    }
+
+    fn parseString(self: &mut Self): i64 {
+        self.pos = self.pos + 1
+        let start = self.pos
+        self.scanString()
+        let slen = self.pos - start
+        if self.pos < self.s.len {
+            self.pos = self.pos + 1
+        }
+        let idx = self.nodes.len()
+        self.nodes.push(jsonNewStr(start, slen))
+        return idx
+    }
+
+    fn scanStringRange(self: &mut Self, start: &mut i64, _slen: &mut i64) {
+        self.pos = self.pos + 1
+        start = self.pos
+        self.scanString()
+        _slen = self.pos - start
+        if self.pos < self.s.len {
+            self.pos = self.pos + 1
         }
     }
-    // Unterminated object (`{"k":1,`) is an error — the close brace is mandatory.
-    if pos < s.len && s[pos] == '}' {
-        pos = pos + 1
-    } else {
-        err = true
+
+    fn parseNumber(self: &mut Self): i64 {
+        // Record the source span so rawStr can round-trip the literal verbatim;
+        // f64 formatting would mangle large ints ("1572864" → "1.57286e+06").
+        let numStart = self.pos
+        var result: f64 = 0.0
+        var negative: bool = false
+        if self.pos < self.s.len && self.s[self.pos] == '-' {
+            negative = true
+            self.pos = self.pos + 1
+        }
+        // Integer part: RFC requires at least one digit, and forbids leading zeros (`013`); a single
+        // '0' is the only int that may start with '0'.
+        if self.pos >= self.s.len || !(self.s[self.pos] >= '0' && self.s[self.pos] <= '9') {
+            self.err = true
+        } else if self.s[self.pos] == '0' {
+            self.pos = self.pos + 1
+            if self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
+                self.err = true
+            }
+        } else {
+            while self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
+                result = result * 10.0 + (self.s[self.pos] as i32 - 48) as f64
+                self.pos = self.pos + 1
+            }
+        }
+        if self.pos < self.s.len && self.s[self.pos] == '.' {
+            self.pos = self.pos + 1
+            if self.pos >= self.s.len || !(self.s[self.pos] >= '0' && self.s[self.pos] <= '9') {
+                self.err = true
+            }
+            var frac: f64 = 0.1
+            while self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
+                result = result + (self.s[self.pos] as i32 - 48) as f64 * frac
+                frac = frac * 0.1
+                self.pos = self.pos + 1
+            }
+        }
+        if self.pos < self.s.len && (self.s[self.pos] == 'e' || self.s[self.pos] == 'E') {
+            self.pos = self.pos + 1
+            var expNeg: bool = false
+            if self.pos < self.s.len && self.s[self.pos] == '-' {
+                expNeg = true
+                self.pos = self.pos + 1
+            } else if self.pos < self.s.len && self.s[self.pos] == '+' {
+                self.pos = self.pos + 1
+            }
+            if self.pos >= self.s.len || !(self.s[self.pos] >= '0' && self.s[self.pos] <= '9') {
+                self.err = true
+            }
+            var exp: i64 = 0
+            while self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
+                exp = exp * 10 + (self.s[self.pos] as i32 - 48) as i64
+                self.pos = self.pos + 1
+            }
+            var factor: f64 = 1.0
+            var e: i64 = 0
+            while e < exp {
+                factor = factor * 10.0
+                e = e + 1
+            }
+            if expNeg {
+                result = result / factor
+            } else {
+                result = result * factor
+            }
+        }
+        if negative {
+            result = 0.0 - result
+        }
+        let idx = self.nodes.len()
+        self.nodes.push(jsonNewNum(result, numStart, self.pos - numStart))
+        return idx
     }
-    let ci = (scratchLen - sStart) / 3
-    let childStart = childIdx.len()
-    let keyStart = keyOffsets.len()
-    var k: i64 = 0
-    while k < ci {
-        childIdx.push(scratch[sStart + k * 3])
-        keyOffsets.push(scratch[sStart + k * 3 + 1])
-        keyLens.push(scratch[sStart + k * 3 + 2])
-        k = k + 1
+
+    // Container children must be contiguous in childIdx, but grandchildren are discovered
+    // interleaved while a container is still open. Children park on the scratch stack until
+    // the container closes, then commit as one contiguous block. This replaced a pre-counting
+    // scan to the matching close bracket that re-read every container body (73% of parse time).
+    fn parseArray(self: &mut Self): i64 {
+        self.pos = self.pos + 1
+        let myIdx = self.nodes.len()
+        self.nodes.push(jsonNewContainer(4, 0, 0, 0))
+        self.skipWs()
+        if self.pos < self.s.len && self.s[self.pos] == ']' {
+            self.pos = self.pos + 1
+            return myIdx
+        }
+        let sStart = self.scratchLen
+        while self.pos < self.s.len {
+            // After a comma the next iteration re-enters here; parseValue's value-start guard
+            // turns a trailing comma (`,]`) into an error because ']' cannot begin a value.
+            let childNodeIdx = self.parseValue()
+            // Scratch push, see the scratch comment on JsonParser.
+            if self.scratchLen < self.scratch.len() {
+                self.scratch[self.scratchLen] = childNodeIdx
+            } else {
+                self.scratch.push(childNodeIdx)
+            }
+            self.scratchLen = self.scratchLen + 1
+            if self.err {
+                break
+            }
+            self.skipWs()
+            if self.pos < self.s.len && self.s[self.pos] == ',' {
+                self.pos = self.pos + 1
+            } else {
+                break
+            }
+        }
+        // Unterminated array (`["x"`) is an error: the close bracket is mandatory.
+        if self.pos < self.s.len && self.s[self.pos] == ']' {
+            self.pos = self.pos + 1
+        } else {
+            self.err = true
+        }
+        let ci = self.scratchLen - sStart
+        let childStart = self.childIdx.len()
+        var k: i64 = 0
+        while k < ci {
+            self.childIdx.push(self.scratch[sStart + k])
+            k = k + 1
+        }
+        self.scratchLen = sStart
+        self.nodes[myIdx] = jsonNewContainer(4, childStart, ci, 0)
+        return myIdx
     }
-    scratchLen = sStart
-    nodes[myIdx] = jsonNewContainer(5, childStart, ci, keyStart)
-    return myIdx
+
+    fn parseObject(self: &mut Self): i64 {
+        self.pos = self.pos + 1
+        let myIdx = self.nodes.len()
+        self.nodes.push(jsonNewContainer(5, 0, 0, 0))
+        self.skipWs()
+        if self.pos < self.s.len && self.s[self.pos] == '}' {
+            self.pos = self.pos + 1
+            return myIdx
+        }
+        // Each entry parks 3 scratch slots: nodeIdx, keyOffset, keyLen. Arrays park 1 per child,
+        // but mixed strides coexist fine: every container only reads back its own range.
+        let sStart = self.scratchLen
+        // The empty-object case returned above, so reaching the loop means a key is required;
+        // expectKey stays true after every comma so a trailing comma (`{...,}`) is rejected.
+        var expectKey: bool = true
+        while self.pos < self.s.len {
+            self.skipWs()
+            if self.pos >= self.s.len || self.s[self.pos] != '"' {
+                if expectKey {
+                    self.err = true
+                }
+                break
+            }
+            expectKey = false
+            var koff: i64 = 0
+            var klen: i64 = 0
+            self.scanStringRange(&mut koff, &mut klen)
+            self.skipWs()
+            // The colon separating key and value is mandatory (`{"k" null}` is an error).
+            if self.pos < self.s.len && self.s[self.pos] == ':' {
+                self.pos = self.pos + 1
+            } else {
+                self.err = true
+            }
+            let childNodeIdx = self.parseValue()
+            // Three scratch pushes, see the scratch comment on JsonParser.
+            if self.scratchLen < self.scratch.len() {
+                self.scratch[self.scratchLen] = childNodeIdx
+            } else {
+                self.scratch.push(childNodeIdx)
+            }
+            self.scratchLen = self.scratchLen + 1
+            if self.scratchLen < self.scratch.len() {
+                self.scratch[self.scratchLen] = koff
+            } else {
+                self.scratch.push(koff)
+            }
+            self.scratchLen = self.scratchLen + 1
+            if self.scratchLen < self.scratch.len() {
+                self.scratch[self.scratchLen] = klen
+            } else {
+                self.scratch.push(klen)
+            }
+            self.scratchLen = self.scratchLen + 1
+            if self.err {
+                break
+            }
+            self.skipWs()
+            if self.pos < self.s.len && self.s[self.pos] == ',' {
+                self.pos = self.pos + 1
+                expectKey = true
+            } else {
+                break
+            }
+        }
+        // Unterminated object (`{"k":1,`) is an error: the close brace is mandatory.
+        if self.pos < self.s.len && self.s[self.pos] == '}' {
+            self.pos = self.pos + 1
+        } else {
+            self.err = true
+        }
+        let ci = (self.scratchLen - sStart) / 3
+        let childStart = self.childIdx.len()
+        let keyStart = self.keyOffsets.len()
+        var k: i64 = 0
+        while k < ci {
+            self.childIdx.push(self.scratch[sStart + k * 3])
+            self.keyOffsets.push(self.scratch[sStart + k * 3 + 1])
+            self.keyLens.push(self.scratch[sStart + k * 3 + 2])
+            k = k + 1
+        }
+        self.scratchLen = sStart
+        self.nodes[myIdx] = jsonNewContainer(5, childStart, ci, keyStart)
+        return myIdx
+    }
 }
 
 pub fn jsonEscapeStr(s: &string): string {
@@ -2087,10 +2117,14 @@ impl JsonPull {
                 continue
             }
             if c == '"' {
-                var strStart: i64 = 0
-                var strLen: i64 = 0
+                self.pos = self.pos + 1
+                let strStart = self.pos
                 var strErr: bool = false
-                jsonScanStringRange(self.src, &mut self.pos, &mut strStart, &mut strLen, &mut strErr)
+                jsonScanString(self.src, &mut self.pos, &mut strErr)
+                let strLen = self.pos - strStart
+                if self.pos < self.src.len {
+                    self.pos = self.pos + 1
+                }
                 var t = jsonTok(JsonEvent.Str)
                 // in an object at a key slot (state 1) the string is the key
                 if self.stack.len > 0 && self.stack[self.stack.len - 1] == 1 {
