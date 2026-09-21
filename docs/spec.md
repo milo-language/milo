@@ -8395,7 +8395,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `exponent rejected`
 - `negative -42`
 
-**Rationale.** An integer read re-scans the literal's source span. The parser accumulates every number into an f64, so reading through numVal loses everything past 2^53 and silently truncates 1.5 to 1 — both are data loss with no signal.
+**Rationale.** An integer read re-scans the literal's source span. The parser accumulates every number into an f64, so reading the stored f64 loses everything past 2^53 and silently truncates 1.5 to 1 — both are data loss with no signal.
 
 *Program:* [`tests/fixtures/jsonExactInt.milo`](../tests/fixtures/jsonExactInt.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

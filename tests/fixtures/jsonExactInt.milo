@@ -5,7 +5,7 @@
 // @expect: exponent rejected
 // @expect: negative -42
 // An integer read re-scans the literal's source span. The parser accumulates
-// every number into an f64, so reading through numVal loses everything past
+// every number into an f64, so reading the stored f64 loses everything past
 // 2^53 and silently truncates 1.5 to 1 — both are data loss with no signal.
 from "std/json" import {
     Json
