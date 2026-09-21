@@ -3,7 +3,7 @@ layout: home
 hero:
   name: Milo
   text: "A memory-safe systems language with second-class references."
-  tagline: "A reference lives only as long as the call it is passed to. No lifetimes to write, no GC, one owner per value. Contracts and a prover cover what the type system cannot."
+  tagline: "A reference lives only as long as the call it is passed to, so the function you are reading is the whole story of the values it touches. No lifetimes to write, no GC, one owner per value. Contracts and a prover cover what the type system cannot."
   image:
     src: /logo.svg
     alt: Milo
@@ -20,7 +20,7 @@ system: site-landing
 purpose: the milo-language.github.io home page: pitch, code carousel, what it is and is not, showcase
 key-files: docs/site/.vitepress/config.mts, docs/site/.vitepress/theme
 update-when: the pitch changes, a showcase project is added or retired, or the carousel snippets change
-last-verified: 2026-09-20
+last-verified: 2026-09-21 (local reasoning leads; C / Rust / Milo table)
 -->
 
 <div class="install-line">
@@ -137,13 +137,15 @@ References are second-class: `&T` and `&mut T` exist only as function parameters
 
 **Measured, not claimed.** 250k+ lines across the compiler (self-hosted), a JS engine, three emulator cores, a debugger and a dozen packages. Nearly every `unsafe` block is the C boundary, and not one exists because the ownership model rejected a program ([the numbers](/language/vs-rust)).
 
+### Local reasoning
+
+**The function you are reading is the whole story of the values it touches.** Nothing outside a function holds a pointer into its locals, because no such pointer can exist. `&mut x` at a call site is the full blast radius of a mutation, and every other effect is declared where it happens: `@unsafe` for C and raw memory, `@thread` and `@parks` for the two kinds of switch, `@mustUse` for a result that must not be dropped, `requires` / `ensures` for the contract. The checker's questions are settled inside one function, never by a signature three modules away, and so are yours.
+
 ### The details
 
 **No lifetime annotations.** A borrow lives for one call. There is nothing to name and nothing to propagate through types.
 
-**Local reasoning.** The function you are reading is the whole story of the values it touches. `&mut x` at a call site is the full blast radius of a mutation, and every other effect is declared where it happens (`@unsafe`, `@thread`, `@parks`, `@mustUse`).
-
-**Single ownership, answered locally.** Every value has one owner. A borrow ends at the call, so the checker's questions are settled inside one function, never by a signature three modules away.
+**Single ownership, answered locally.** Every value has one owner. A borrow ends at the call, so the checker's questions are settled inside one function.
 
 **Concurrency without `Send`/`Sync`.** A value that cannot hold a borrow can be handed to another task as is. The compiler checks the two doors OS threads start at and rejects a view into a global held across a park.
 
@@ -156,6 +158,20 @@ References are second-class: `&T` and `&mut T` exist only as function parameters
 **Storing a view.** `Parser<'a>`, an iterator over a borrowed slice, `struct Node { next: &Node }`: own the buffer and carry offsets, or use [`std/arena`](/stdlib/arena) (generational handles, checked at runtime). Across five Rust codebases, 13% of lifetime-carrying declarations are this shape ([the census](/language/why-no-lifetimes)).
 
 **One check moves to runtime.** The tie between a stored offset and its buffer is a named runtime failure where Rust's lifetime is a compile error. Nothing degrades to `unsafe`.
+
+### In C, in Rust, in Milo
+
+| What you want | C | Rust | Milo |
+|---|---|---|---|
+| Return a pointer into a buffer you still hold | `char *`, you promise it stays valid | `fn longest(...) -> &'a str` | Not expressible. Return an index, a `Span`, or an owned string. |
+| A parser that keeps the input | `struct Parser { char *src; }` | `struct Parser<'a> { src: &'a str }` | Not expressible. Own the input; store a cursor (`pos: i64`). |
+| Iterator over a collection | pointer into the array | `Iterator<Item = &T>` | Not a stored borrow. A cursor is a position; each step takes the store: `scanNext(&store, &mut cursor)`. |
+| Graph, parent pointer, DOM | `Node *next` | `Rc<RefCell<Node>>` or an arena crate | [`std/arena`](/stdlib/arena): `Arena<T>` plus `Handle<T>`. Lookup is checked at runtime. |
+| Temporary read in a call | pointer argument | `&T` | `&T`, auto-borrowed at the call. Same idea. |
+| Temporary mutation in a call | pointer argument | `&mut T` | `&mut T`, written at the call site: `f(&mut x)`. |
+| Two owners of one buffer | two pointers, good luck | lifetimes, or `clone` / `Arc` | `.clone()`, or `seal` the buffer and share a read-only copy. |
+
+Same memory-safety rows as Rust wherever both languages can say the program: use-after-move, use-after-free of owned data, no null. The rows Rust wins are one trade made twice: a view tied to its buffer is a compile error there and a named runtime check or a copy here. Nothing falls back to `unsafe` because the ownership model said no ([the full matrix](/language/vs-rust)).
 
 ### Mutation is scoped, not banned
 

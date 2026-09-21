@@ -2,38 +2,111 @@
 
 **A memory-safe systems language with second-class references: no lifetimes, no GC, one owner per value.**
 
-**Learn more at [milo-language.github.io/milo](https://milo-language.github.io/milo/)** — docs, language tour, playground, and demos you can play in the browser.
+`&T` and `&mut T` are parameters only. You cannot return a reference, store one in a struct, or keep one past the call. That is the whole language bet, and everything below follows from it.
 
-References are second-class: `&T` and `&mut T` exist only as function parameters. You can't return one, store one in a struct, or capture one past the call. Every value lives on the stack or in an explicit heap allocation (`Vec`, `Heap<T>`, `string`), with one owner and no hidden indirection.
+[Docs](https://milo-language.github.io/milo/) · [Tour](https://milo-language.github.io/milo/tour) · [Playground](https://milo-language.github.io/milo/playground) · [Stdlib](https://milo-language.github.io/milo/stdlib/)
 
-**What you get:**  no lifetime annotations, local reasoning, single ownership settled inside one function, concurrency without `Send`/`Sync`, no GC, contracts with a prover.
+```milo
+from "std/http" import { Request, Response, serve }
 
-**What you give up:**  you can't return or store a view. Use an index, an owned copy, or an arena handle instead. Where Rust hands out a borrow, Milo sometimes asks for a `clone()`.
+fn main(): i32 {
+    serve(8080, (req: &Request) => Response.Html("hello from milo"))!
+    return 0
+}
+```
 
----
+Compiles through LLVM to a static binary.
 
-### Second-class references in detail
+```sh
+curl -fsSL https://milo-language.github.io/milo/install.sh | sh
+milo run examples/hello.milo
+```
 
-**No lifetime annotations.** A borrow lives for one call. There is nothing to name and nothing to propagate through types.
+## The rule
 
-**Local reasoning.** The function you are reading is the whole story of the values it touches. `&mut x` at a call site is the full blast radius of a mutation, and every other effect is declared where it happens (`@unsafe`, `@thread`, `@parks`, `@mustUse`).
+When you hand a value to someone else, you don't have it anymore. A borrow is a temporary look during one call. After the call, the owner is the only name that still exists.
 
-**Single ownership, answered locally.** Every value has one owner. A borrow ends at the call, so the checker's questions are settled inside one function, never by a signature three modules away.
+A type that means "I point into memory I do not own" is not expressible. You own the buffer and carry an index, a `Span`, or an arena handle, or you `clone()`.
 
-**Concurrency without `Send`/`Sync`.** A value that cannot hold a borrow can be handed to another task as is. The compiler checks the two doors OS threads start at and rejects a view into a global held across a park.
+## Local reasoning
 
-**No GC, no RC, ordinary imperative code.** `var`, `for` and in-place mutation through `&mut` are the idiom. Compiles through LLVM to a static binary.
+This is the property the rule buys, and the reason the rule is worth its cost.
 
-**Contracts and a prover.** `requires`/`ensures` are part of the language. `milo prove` checks them for every input, not just the ones you tested.
+**The function you are reading is the whole story of the values it touches.** Nothing outside the function holds a pointer into its locals, because no such pointer can exist. Every way a value can change or escape is written in the function body, at the call site:
 
-### What you give up
+```milo
+fn zeroNegatives(values: &mut Vec<i64>): void {
+    for i in 0..values.len {
+        if values[i] < 0 {
+            values[i] = 0       // in place, no copy, no allocation
+        }
+    }
+}
 
-**Returning a view.** `fn longest(a: &str, b: &str): &str` cannot be written. Return an index, a `Span`, an owned copy, or move the work to the caller.
+fn main(): void {
+    var v: Vec<i64> = [3, -1, 4, -5, 9]
+    zeroNegatives(&mut v)      // the only line that can change v
+    print(v)                   // [3, 0, 4, 0, 9]
+}
+```
 
-**Storing a view.** `Parser<'a>`, an iterator over a borrowed slice, `struct Node { next: &Node }`: own the buffer and carry offsets, or use [`std/arena`](docs/site/stdlib/arena.md) (generational handles, checked at runtime). Across five Rust codebases, 13% of lifetime-carrying declarations are this shape ([the census](docs/site/language/why-no-lifetimes.md)).
+Reading `main`, you know `v` changes inside `zeroNegatives` and nowhere else, because that is the only call that takes `&mut v`. `&mut x` at a call site is the full blast radius of a mutation. There is no other pointer to `v`, so there is nothing else to check.
 
-**One check moves to runtime.** The tie between a stored offset and its buffer is a named runtime failure where Rust's lifetime is a compile error. Nothing degrades to `unsafe`.
+The same holds for every other effect. Each one is declared where it happens, in the function you are looking at:
 
-**Some zero-copy.** Where Rust would hand out a borrow, Milo sometimes asks for a `clone()`. Verbose on purpose: a copy where you are already looking is cheaper than state you cannot see.
+- `&mut x` at the call: this call may change `x`.
+- `@unsafe`: this block talks to C or raw memory.
+- `@thread`, `@parks`: this function starts an OS thread, or may yield a green task.
+- `@mustUse`: this result cannot be dropped silently.
+- `requires` / `ensures`: this function's contract, checked by `milo prove`.
 
-**Measured, not claimed.** We have written over 250k lines of Milo across the compiler (self-hosted), a JS engine, three emulator cores, a debugger and a dozen packages. Nearly every `unsafe` block in them is the C boundary, and not one exists because the ownership model rejected a program (see [memory safety vs Rust](docs/memory-safety-vs-rust.md)).
+The ownership checker's questions are settled inside one function. It never has to consult a lifetime on a signature three modules away, and neither do you.
+
+## In C, in Rust, in Milo
+
+| What you want | C | Rust | Milo |
+|---|---|---|---|
+| Return a pointer into a buffer you still hold | `char *`, you promise it stays valid | `fn longest(...) -> &'a str` | Not expressible. Return an index, a `Span`, or an owned string. |
+| A parser that keeps the input | `struct Parser { char *src; }` | `struct Parser<'a> { src: &'a str }` | Not expressible. Own the input; store a cursor (`pos: i64`). |
+| Iterator over a collection | pointer into the array | `Iterator<Item = &T>` | Not a stored borrow. A cursor is a position; each step takes the store: `scanNext(&store, &mut cursor)`. |
+| Graph, parent pointer, DOM | `Node *next` | `Rc<RefCell<Node>>` or an arena crate | `std/arena`: `Arena<T>` plus `Handle<T>`. Lookup is checked at runtime. |
+| Temporary read in a call | pointer argument | `&T` | `&T`, auto-borrowed at the call. Same idea. |
+| Temporary mutation in a call | pointer argument | `&mut T` | `&mut T`, written at the call site: `f(&mut x)`. |
+| Two owners of one buffer | two pointers, good luck | lifetimes, or `clone` / `Arc` | `.clone()`, or `seal` the buffer and share a read-only copy. |
+
+Same memory-safety rows as Rust wherever both languages can say the program: use-after-move, use-after-free of owned data, no null. The rows Rust wins are one trade made twice: a view tied to its buffer is a compile error there and a named runtime check or a copy here. Nothing falls back to `unsafe` because the ownership model said no.
+
+## What this is for
+
+Programs that already look like "own a buffer, walk it with an index, mutate in place, return owned values":
+
+- CLIs, HTTP services, tools
+- compilers, emulators, engines with pools and arenas
+- anything you would write in careful C as arena plus integer id
+
+Not the default if your data model is an object graph of pointers, a zero-copy token stream stored in a vec, or "this object points at that object". Those programs can be rewritten. They will not look like the program you had in TypeScript or in fluent Rust.
+
+## What you get
+
+- **Local reasoning.** The section above. A function's body is its complete aliasing and effect story.
+- **No lifetime annotations.** A borrow lives for one call. There is nothing to name and nothing to propagate through types.
+- **No GC and no reference counting.** `let` / `var`, `for`, in-place mutation through `&mut`.
+- **Concurrency without `Send` / `Sync`.** A value that cannot hold a borrow can move to another task as is. The compiler checks the two doors OS threads start at and rejects a view into a global held across a park.
+- **Contracts in the language.** `requires` / `ensures`, checked for every input by `milo prove`.
+
+## What you give up
+
+- **Returning or storing a view.** Index, `Span`, owned copy, or arena handle instead.
+- **Some zero-copy.** A copy you can see is the substitute for state you cannot see. Where Rust hands out a borrow, Milo sometimes asks for a `clone()`.
+- **One check moves to runtime.** "This offset still belongs to that buffer" is a named runtime failure, not a compile error and not a segfault.
+
+## Read more
+
+- [Language tour](https://milo-language.github.io/milo/tour), runs in the browser
+- [Why there are no lifetimes](https://milo-language.github.io/milo/language/why-no-lifetimes), with the census of five Rust codebases
+- [Memory safety vs Rust](https://milo-language.github.io/milo/language/vs-rust)
+- [`std/arena`](https://milo-language.github.io/milo/stdlib/arena)
+
+## Status
+
+Young, but dogfooded. More than 250k lines of Milo across a port of the compiler, a JS engine, three emulator cores, a debugger, and a dozen packages. Nearly every `unsafe` block is the C boundary. None exist because the ownership model rejected the program ([memory safety vs Rust](docs/memory-safety-vs-rust.md)).
