@@ -1,6 +1,7 @@
+// Locals drop in reverse declaration order (2026-09-21), as struct fields always did.
 // @expect: using 1 2
-// @expect: drop 1
 // @expect: drop 2
+// @expect: drop 1
 
 pub struct Resource {
     id: i32,

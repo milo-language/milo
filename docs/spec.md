@@ -5986,12 +5986,14 @@ A conforming implementation shall accept this program, and running it shall writ
 
 - `--- fail path ---`
 - `failing early`
-- `drop 1`
 - `drop 2`
+- `drop 1`
 - `--- success path ---`
 - `success`
-- `drop 1`
 - `drop 2`
+- `drop 1`
+
+**Rationale.** Locals drop in reverse declaration order (2026-09-21), as struct fields always did.
 
 *Program:* [`tests/fixtures/dropEarlyReturn.milo`](../tests/fixtures/dropEarlyReturn.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
@@ -6069,8 +6071,10 @@ A conforming implementation shall accept this program, and running it shall writ
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
 - `using 1 2`
-- `drop 1`
 - `drop 2`
+- `drop 1`
+
+**Rationale.** Locals drop in reverse declaration order (2026-09-21), as struct fields always did.
 
 *Program:* [`tests/fixtures/dropUser.milo`](../tests/fixtures/dropUser.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
@@ -7337,10 +7341,10 @@ A conforming implementation shall accept this program, and running it shall writ
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
 - `made`
-- `drop 5`
 - `drop 9`
+- `drop 5`
 
-**Rationale.** A generic trait impl WITH a body — `impl Drop for Boxed<T>`. This used to fail with "unknown struct 'Boxed'": the body was checked eagerly against the base name (not a concrete struct). Generic trait impls now defer to per-monomorphization like inherent ones, so the body checks against Boxed_i64 and Drop is registered there. (Drops run in declaration order at scope exit — a and b give 5 then 9.)
+**Rationale.** Locals drop in reverse declaration order (2026-09-21), as struct fields always did. A generic trait impl WITH a body — `impl Drop for Boxed<T>`. This used to fail with "unknown struct 'Boxed'": the body was checked eagerly against the base name (not a concrete struct). Generic trait impls now defer to per-monomorphization like inherent ones, so the body checks against Boxed_i64 and Drop is registered there. (Drops run in declaration order at scope exit — a and b give 5 then 9.)
 
 *Program:* [`tests/fixtures/genericTraitDrop.milo`](../tests/fixtures/genericTraitDrop.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
@@ -8247,11 +8251,11 @@ A conforming implementation shall accept this program, and running it shall writ
 - `borrowed fd=3`
 - `field fd=4`
 - `taken fd=5`
+- `close(5)`
 - `close(3)`
 - `close(4)`
-- `close(5)`
 
-**Rationale.** The spellings that stay legal for a Drop element, so the rule above is a redirect rather than a wall: borrow it, read one field of it, or take it out for real.
+**Rationale.** Locals drop in reverse declaration order (2026-09-21), as struct fields always did. The spellings that stay legal for a Drop element, so the rule above is a redirect rather than a wall: borrow it, read one field of it, or take it out for real.
 
 *Program:* [`tests/fixtures/indexResourceAllowed.milo`](../tests/fixtures/indexResourceAllowed.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

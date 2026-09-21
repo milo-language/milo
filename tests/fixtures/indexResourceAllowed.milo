@@ -1,9 +1,10 @@
+// Locals drop in reverse declaration order (2026-09-21), as struct fields always did.
 // @expect: borrowed fd=3
 // @expect: field fd=4
 // @expect: taken fd=5
+// @expect: close(5)
 // @expect: close(3)
 // @expect: close(4)
-// @expect: close(5)
 // The spellings that stay legal for a Drop element, so the rule above is a redirect
 // rather than a wall: borrow it, read one field of it, or take it out for real.
 struct Fd {

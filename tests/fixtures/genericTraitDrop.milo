@@ -1,6 +1,7 @@
+// Locals drop in reverse declaration order (2026-09-21), as struct fields always did.
 // @expect: made
-// @expect: drop 5
 // @expect: drop 9
+// @expect: drop 5
 
 // A generic trait impl WITH a body — `impl Drop for Boxed<T>`. This used to fail with
 // "unknown struct 'Boxed'": the body was checked eagerly against the base name (not a

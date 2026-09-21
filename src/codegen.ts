@@ -25,7 +25,7 @@ import { display } from "./mangle";
 export const NOT_OWNED_TEMP: readonly string[] = [
   "ArrayLen", "ArrayRepeat", "BitIntrinsic", "BoolLit", "CFnCall", "Cast",
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FieldAccess", "FloatLit",
-  "Forget", "HashMapClear", "HashMapContains", "HashMapInsert", "HashMapLen",
+  "Forget", "HashMapClear", "HashMapContains", "HashMapGetOrInsertWith", "HashMapInsert", "HashMapLen", "HashMapModify",
 "HashMapNew", "HashMapRemove", "HeapCreate", "HeapDeref", "HeapPtr", "Ident",
   "IntLit", "InterfaceCoerce", "IsCheck", "MemSwap", "OffsetOf",
   "OptionOp", "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
@@ -13778,9 +13778,14 @@ export class Codegen {
     return `{ ${parts.join(", ")} }`;
   }
 
+  // Locals drop in REVERSE declaration order, the RAII convention (Rust, C++) and what
+  // struct fields already did: a later local is the one most likely to depend on an
+  // earlier one (a writer on its file, a lock on its mutex), so it goes first. Before
+  // 2026-09-21 locals dropped in declaration order and fields in reverse, and nothing
+  // documented either.
   private emitDropGlue(lines: string[]) {
-    for (const local of this.droppableLocals) {
-      this.emitGuardedDrop(lines, local);
+    for (let i = this.droppableLocals.length - 1; i >= 0; i--) {
+      this.emitGuardedDrop(lines, this.droppableLocals[i]);
     }
   }
 
@@ -13794,13 +13799,13 @@ export class Codegen {
   // so its block-end drop is a no-op too. This is exactly the mechanism genMatch
   // already uses for match-arm bindings, generalized to if/loop/unsafe blocks.
   private emitScopeDrops(lines: string[], start: number) {
-    for (let d = start; d < this.droppableLocals.length; d++) {
+    for (let d = this.droppableLocals.length - 1; d >= start; d--) {
       this.emitGuardedDrop(lines, this.droppableLocals[d]);
     }
   }
 
   private emitLoopDropGlue(lines: string[]) {
-    for (let i = this.loopDropStart; i < this.droppableLocals.length; i++) {
+    for (let i = this.droppableLocals.length - 1; i >= this.loopDropStart; i--) {
       this.emitGuardedDrop(lines, this.droppableLocals[i]);
     }
   }

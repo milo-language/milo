@@ -1,11 +1,12 @@
+// Locals drop in reverse declaration order (2026-09-21), as struct fields always did.
 // @expect: --- fail path ---
 // @expect: failing early
-// @expect: drop 1
 // @expect: drop 2
+// @expect: drop 1
 // @expect: --- success path ---
 // @expect: success
-// @expect: drop 1
 // @expect: drop 2
+// @expect: drop 1
 
 pub struct Guard {
     id: i32,

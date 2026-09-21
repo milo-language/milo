@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-21 (todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-21 (destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -2209,6 +2209,30 @@ if condition {
 }
 // p is invalid after the if/else regardless of which branch ran
 ```
+
+### Destruction order
+
+A value is destroyed when the block that owns it ends (or at the function's exit for a
+value it still owns then), including on an early `return`. Within one block, values are
+destroyed in **reverse order of declaration**: the last one made is the first one
+destroyed, so a value that was built on top of an earlier one (a writer over its file, a
+guard over its lock) goes first. A struct's fields follow the same rule, last field first,
+and a `Vec`'s elements go in index order. Moving a value out of a block hands its
+destruction to wherever it went.
+
+```milo
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self) { print("drop ", self.id) } }
+
+fn main() {
+    let a = Res { id: 1 }
+    let b = Res { id: 2 }
+    print("end")          // end, drop 2, drop 1
+}
+```
+
+A `Drop` global is never destroyed: the process exits and the OS reclaims it, as with a
+Rust `static`. A global that must flush on exit needs an explicit call.
 
 ---
 
