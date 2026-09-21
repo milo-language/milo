@@ -889,9 +889,13 @@ fn jsonParse(s: string): Result<Json> {
     childIdx.reserve(s.len / 40)
     keyOffsets.reserve(s.len / 64)
     keyLens.reserve(s.len / 64)
-    // Scratch stack for in-flight container children (see jsonScratchPush), shared across
-    // the whole parse so it allocates once, not per container. It only holds the open
-    // containers' pending children, so a small fixed reserve covers most documents.
+    // Scratch stack for in-flight container children, shared across the whole parse so it
+    // allocates once, not per container. scratchLen is the logical length, scratch.len() the
+    // high-water mark: entries above scratchLen are stale and overwritten in place, so
+    // repeated container parses cost zero allocations. The push is written out at each
+    // site in jsonParseArray/jsonParseObject (Milo has no inline attribute and the call
+    // was ~8% of parse time). It only holds the open containers' pending children, so a
+    // small fixed reserve covers most documents.
     var scratch: Vec<i64> = Vec.new()
     scratch.reserve(64)
     var scratchLen: i64 = 0
@@ -1017,18 +1021,6 @@ fn jsonSkipWs(s: &string, pos: &mut i64) {
         }
         pos = pos + 1
     }
-}
-
-// Push onto the scratch stack reusing already-grown capacity: scratchLen is the logical
-// length, scratch.len() the high-water mark — entries above scratchLen are stale and
-// overwritten in place, so repeated container parses cost zero allocations.
-fn jsonScratchPush(scratch: &mut Vec<i64>, scratchLen: &mut i64, v: i64) {
-    if scratchLen < scratch.len() {
-        scratch[scratchLen] = v
-    } else {
-        scratch.push(v)
-    }
-    scratchLen = scratchLen + 1
 }
 
 // The three bare literals were previously accepted on their first byte alone, so
@@ -1282,7 +1274,13 @@ fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
         // After a comma the next iteration re-enters here; jsonParseValue's value-start guard
         // turns a trailing comma (`,]`) into an error because ']' cannot begin a value.
         let childNodeIdx = jsonParseValue(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
-        jsonScratchPush(&mut scratch, &mut scratchLen, childNodeIdx)
+        // Scratch push, see the scratch comment in jsonParse.
+        if scratchLen < scratch.len() {
+            scratch[scratchLen] = childNodeIdx
+        } else {
+            scratch.push(childNodeIdx)
+        }
+        scratchLen = scratchLen + 1
         if err {
             break
         }
@@ -1350,9 +1348,25 @@ fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childId
             err = true
         }
         let childNodeIdx = jsonParseValue(s, &mut pos, &mut nodes, &mut childIdx, &mut keyOffsets, &mut keyLens, &mut scratch, &mut scratchLen, &mut err)
-        jsonScratchPush(&mut scratch, &mut scratchLen, childNodeIdx)
-        jsonScratchPush(&mut scratch, &mut scratchLen, koff)
-        jsonScratchPush(&mut scratch, &mut scratchLen, klen)
+        // Three scratch pushes, see the scratch comment in jsonParse.
+        if scratchLen < scratch.len() {
+            scratch[scratchLen] = childNodeIdx
+        } else {
+            scratch.push(childNodeIdx)
+        }
+        scratchLen = scratchLen + 1
+        if scratchLen < scratch.len() {
+            scratch[scratchLen] = koff
+        } else {
+            scratch.push(koff)
+        }
+        scratchLen = scratchLen + 1
+        if scratchLen < scratch.len() {
+            scratch[scratchLen] = klen
+        } else {
+            scratch.push(klen)
+        }
+        scratchLen = scratchLen + 1
         if err {
             break
         }
