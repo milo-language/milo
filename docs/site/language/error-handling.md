@@ -165,4 +165,43 @@ fn process(path: string): Result<i32, AppError> {
 
 In Rust, this requires the `thiserror` crate or hand-written `From` implementations. In Milo, the compiler generates the conversion automatically.
 
+## Boxed errors and `.context`
+
+When a caller only needs to *report* an error, one enum per layer is too much. The
+prelude declares `interface Error { fn message(self: &Self): string }`, and a fn that
+returns `Result<T, Heap<Error>>` takes any error through `?`: a struct or enum with a
+`message` method is boxed, and a plain `string` error arrives as an `ErrorMessage`.
+`r.context("note")` adds a layer on the way up; its message reads outermost first.
+
+```milo
+struct NotFound { path: string }
+impl NotFound {
+    fn message(self: &Self): string { return "not found: " + self.path }
+}
+
+fn readConfig(path: string): Result<string, NotFound> {
+    return Result.Err(NotFound { path: path })
+}
+
+fn parse(text: string): Result<i64, string> {
+    return Result.Ok(text.len)
+}
+
+fn load(path: string): Result<i64, Heap<Error>> {
+    let text = readConfig(path).context("loading config")?   // NotFound, boxed
+    let n = parse(text).context("parsing")?                   // string, boxed as ErrorMessage
+    return Result.Ok(n)
+}
+
+fn main() {
+    match load("x.toml") {
+        Result.Ok(n) => { print(n) }
+        Result.Err(e) => { print(e.message()) }   // loading config: not found: x.toml
+    }
+}
+```
+
+This is the `anyhow` shape: `Heap<Error>` where the type no longer matters, a typed
+enum where a caller will match on it.
+
 Next: [Ownership](./ownership)

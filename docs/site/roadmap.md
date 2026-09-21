@@ -86,7 +86,7 @@ macOS and Linux are fully supported on both aarch64 and x86_64. Windows is a par
 - **Formatter**: `milo fmt`, written in Milo
 - **Package manager**: `milo add`/`install`/`publish` plus `milo tool install`, with a lockfile, a git-based cache, and GitHub repositories as the registry — built into the one `milo` binary. [Published packages](/packages) cover PostgreSQL, Redis, markdown, TOML, YAML, JSON-RPC, OpenGL and SDL.
 - **Docs from source**: `milo doc` generates reference markdown from doc-comments; `milo api` searches the standard library
-- **Test framework**: `@expect:`/`@error:` annotations and a `milo test` runner over <!-- stat:fixtures -->730<!-- /stat --> fixtures, plus <!-- stat:error-fixtures -->420<!-- /stat --> that must fail to compile and <!-- stat:prove-fixtures -->38<!-- /stat --> that must be proved
+- **Test framework**: `@expect:`/`@error:` annotations and a `milo test` runner over <!-- stat:fixtures -->731<!-- /stat --> fixtures, plus <!-- stat:error-fixtures -->422<!-- /stat --> that must fail to compile and <!-- stat:prove-fixtures -->38<!-- /stat --> that must be proved
 - **Debugging**: `-g` emits DWARF that composes with any optimization level
 - **CI**: build and test on macOS, Linux, and Windows, plus a release pipeline with static linking
 - **Playground**: the compiler's JavaScript backend running in the browser
@@ -115,7 +115,6 @@ The fixed point was the deliverable, and it is banked. Replacing `src/` with `mi
 - **Named enum-variant fields** — `ForEach { varName: string, … }` instead of long positional payloads
 - **Tuple binding in for-in** — `for (i, x) in vec.enumerate()`
 - **Combinators beyond `Vec`** — `map`/`filter`/`each`/`enumerate`/`find`/`any`/`all`/`sum` ship, but are gated on `Vec`, so `&[T]` and `[T; N]` get none of them. Lifting that gate is the work; `fold` is the one adapter genuinely missing
-- **Error context chaining** — the prelude `Error` interface and `?` boxing into `Heap<Error>` shipped 2026-09-21; `.context("…")` on a `Result` is the remaining half
 - **Ranged integers L3** — branch narrowing: after `if x < 50`, `x` is known to be `(min..49)` in the then-branch
 - **Structured OS errors** — `errno` plus syscall and path context
 - **C ABI layout control** — packed structs and alignment

@@ -71,7 +71,7 @@ export const JS_RUNTIME_HELPERS: string = [
   `function __fmtG(x) { if (Number.isNaN(x)) return 'nan'; if (!isFinite(x)) return x > 0 ? 'inf' : '-inf'; let dig = 1, pow = 10; const av = Math.abs(x); while (dig < 17 && av >= pow) { dig++; pow *= 10; } for (let p = dig; p < 17; p++) { const s = __gfmt(x, p); if (Number(s) === x) return s; } return __gfmt(x, 17); }`,
   `function __propagate(r) { if (r.tag !== 0) throw { __milo_prop: r }; return r.data[0]; }`,
   // `?` with an error conversion: the Err payload goes through f (a wrapping enum
-  // variant, or the prelude Message around a string) before it is thrown back.
+  // variant, or the prelude ErrorMessage around a string) before it is thrown back.
   // An enum value is a plain { tag, data } object, so interface dispatch (which keys the
   // itable on constructor.name) cannot see its type. Coercing one to an interface gives
   // it a prototype that answers with the enum's name; a struct is a class instance
@@ -743,7 +743,7 @@ export class CodegenJS {
         this.usedPropagate = true;
         if (expr.boxConversion) {
           // JS is duck-typed, so the box is the concrete instance itself; only a
-          // string needs the Message wrapper to grow a message() method.
+          // string needs the ErrorMessage wrapper to grow a message() method.
           const wrap = expr.boxConversion.viaMessage
             ? `e => new ${expr.boxConversion.fromType}(e)`
             : `e => __asIface(e, ${JSON.stringify(expr.boxConversion.fromType)})`;
@@ -1345,6 +1345,12 @@ export class CodegenJS {
       case "optionOrElse": return wrap(`${t}.tag === 0 ? ${t} : (${arg})()`);
       case "resultMap":    return wrap(`${t}.tag === 0 ? {tag: 0, data: [(${arg})(${t}.data[0])]} : ${t}`);
       case "resultMapErr": return wrap(`${t}.tag === 0 ? ${t} : {tag: 1, data: [(${arg})(${t}.data[0])]}`);
+      case "resultContext": {
+        // the note is the `default` slot; box the cause as `?` does, then wrap it
+        const b = expr.boxConversion;
+        const cause = !b ? `${t}.data[0]` : b.viaMessage ? `new ${b.fromType}(${t}.data[0])` : `__asIface(${t}.data[0], ${JSON.stringify(b.fromType)})`;
+        return wrap(`${t}.tag === 0 ? ${t} : {tag: 1, data: [new ErrorContext(${arg}, ${cause})]}`);
+      }
       case "resultAndThen":return wrap(`${t}.tag === 0 ? (${arg})(${t}.data[0]) : ${t}`);
       case "resultOrElse": return wrap(`${t}.tag === 0 ? ${t} : (${arg})(${t}.data[0])`);
     }

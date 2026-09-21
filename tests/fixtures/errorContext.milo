@@ -1,0 +1,58 @@
+// `r.context(note)` annotates an error on its way up: the Err payload is boxed the way
+// `?` boxes it (a struct or enum with message(), or a string as ErrorMessage; an error that
+// is already a Heap<Error> is used as is) and becomes the cause of a ErrorContext whose
+// message reads outermost first. Ok is forwarded untouched. Each layer adds what it
+// knows, so the reader gets "loading config: reading x.toml: not found: x.toml" with
+// no enum written for it.
+struct NotFound {
+    path: string,
+}
+
+impl NotFound {
+    fn message(self: &Self): string {
+        return "not found: " + self.path
+    }
+}
+
+fn open(path: string): Result<string, NotFound> {
+    if path.startsWith("x") {
+        return Result.Err(NotFound { path: path })
+    }
+    return Result.Ok(path)
+}
+
+fn read(path: string): Result<string, Heap<Error>> {
+    let note = "reading " + path
+    let text = open(path).context(note)?
+    return Result.Ok(text)
+}
+
+fn parse(text: string): Result<i64, string> {
+    if text == "y.toml" {
+        return Result.Err("empty")
+    }
+    return Result.Ok(text.len)
+}
+
+fn load(path: string): Result<i64, Heap<Error>> {
+    let text = read(path).context("loading config")?
+    let n = parse(text).context("parsing")?
+    return Result.Ok(n)
+}
+
+fn main(): i32 {
+    for p in ["a.toml", "x.toml", "y.toml"] {
+        match load(p.clone()) {
+            Result.Ok(n) => {
+                print("ok ", n)
+            }
+            Result.Err(e) => {
+                print(e.message())
+            }
+        }
+    }
+    return 0
+}
+// @expect: ok 6
+// @expect: loading config: reading x.toml: not found: x.toml
+// @expect: parsing: empty

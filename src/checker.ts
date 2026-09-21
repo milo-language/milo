@@ -28,7 +28,7 @@ import { must } from "./must";
 // names denote.
 // A `?` whose error is boxed into Heap<Iface> on the way out (checker.findPropagateBoxing).
 // `errType` is the operand's error type (what gets boxed; `viaMessage` wraps a string in
-// the prelude `Message` first); `fromType` names the concrete type behind the box, which
+// the prelude `ErrorMessage` first); `fromType` names the concrete type behind the box, which
 // is what the itable is keyed on.
 export interface PropagateBoxing { fromType: string; ifaceName: string; viaMessage: boolean; errType: TypeKind }
 
@@ -411,6 +411,7 @@ export interface CheckResult {
   cfnFieldCalls: Set<Expr>;
   propagateConversions: Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>;
   propagateBoxings: Map<Expr, PropagateBoxing>;
+  contextBoxings: Map<Expr, PropagateBoxing>;
   rangeCheckedExprs: Map<Expr, { min: number; max: number; typeName: string }>;
   sizeOfTypes: Map<Expr, TypeKind>;
   cSigs: Map<string, CSig>;
@@ -690,6 +691,9 @@ export class TypeChecker {
   // `?` in a fn returning Result<T, Heap<Iface>>: the operand's error is boxed and
   // coerced to the interface on the error path (see checkPropagateExpr).
   private propagateBoxings = new Map<Expr, PropagateBoxing>();
+  // `.context(note)` on a Result whose error is not yet a Heap<Error>: how to box it
+  // before it becomes the ErrorContext's cause. Absent when the error is already boxed.
+  private contextBoxings = new Map<Expr, PropagateBoxing>();
   private interfaces = new Map<string, InterfaceInfo>();
   private interfaceCoercions = new Map<Expr, { fromType: string; ifaceName: string }>();
   private interfaceMethodCalls = new Map<Expr, { ifaceName: string; methodName: string; methodIndex: number }>();
@@ -2802,6 +2806,7 @@ export class TypeChecker {
       cfnFieldCalls: this.cfnFieldCalls,
       propagateConversions: this.propagateConversions,
       propagateBoxings: this.propagateBoxings,
+      contextBoxings: this.contextBoxings,
       rangeCheckedExprs: this.rangeCheckedExprs,
       sizeOfTypes: this.sizeOfTypes,
       cSigs: this.cSigs,
@@ -2898,7 +2903,9 @@ export class TypeChecker {
     // flat namespace, so an unrelated file's builtin call binds to it without ever
     // importing it. The visibility pass exempts these: the call was written against the
     // builtin, and only the redeclaration diagnostics have anything to say about it.
-    this.builtinFnNames = new Set([...this.functions.keys(), "Option", "Result"]);
+    // `Heap` is a builtin type, so the prelude naming Heap<Error> is not an import of a
+    // user struct that happens to share the name (tests/fixtures/genericStruct.milo).
+    this.builtinFnNames = new Set([...this.functions.keys(), "Option", "Result", "Heap"]);
     this.registerBuiltinTraits();
     this.registerBuiltinOption();
     this.registerBuiltinResult();
@@ -10312,6 +10319,31 @@ export class TypeChecker {
         }
         return this.setType(expr, { tag: "unknown" });
       }
+      // context(note): Result<T,E> -> Result<T, Heap<Error>>. The Err payload is boxed
+      // (the same rule as `?` into Heap<Error>) and wrapped in the prelude ErrorContext with
+      // the note; Ok is forwarded. Consumes the receiver: the error moves into the box.
+      if (expr.method === "context") {
+        if (expr.args.length !== 1) { this.error(`'context' expects 1 argument (the note)`, sp); return this.setType(expr, { tag: "unknown" }); }
+        const inner = this.unwrapableInner(objType);
+        const errT = this.unwrapableErr(objType);
+        if (!inner || !errT) return this.setType(expr, { tag: "unknown" });
+        const heapError: TypeKind = { tag: "heap", inner: { tag: "interface", name: "Error" } };
+        if (!this.structs.has("ErrorContext") || !this.interfaces.has("Error")) {
+          this.error(`'context' needs the prelude's Error and ErrorContext (compiled with --no-prelude?)`, sp);
+          return this.setType(expr, { tag: "unknown" });
+        }
+        const noteT = this.checkExprWithHint(expr.args[0], { tag: "string" });
+        if (noteT.tag !== "string" && noteT.tag !== "unknown") {
+          this.error(`'context': note must be a string, got ${this.show(noteT)}`, sp);
+        }
+        this.tryMove(expr.args[0]);
+        if (!typeEq(errT, heapError)) {
+          const boxing = this.findPropagateBoxing(errT, heapError, sp, "'context'");
+          if (boxing && boxing !== "reported") this.contextBoxings.set(expr, boxing);
+        }
+        this.tryMove(expr.object);
+        return this.setType(expr, { tag: "enum", name: this.monomorphizeEnum("Result", [inner, heapError]) });
+      }
       // map(f): Result<T,E> -> Result<U,E>. Like Option.map the callback takes the
       // payload BY REF, which is why there is no Copy gate: nothing is moved out of
       // the receiver, so an owned Ok payload can't end up with two owners.
@@ -12270,15 +12302,15 @@ export class TypeChecker {
 
   // compiler-magic From: find a variant in targetErr that wraps sourceErr
   // `?` into a fn returning Result<T, Heap<Iface>>: a struct or enum error that satisfies
-  // the interface is boxed and coerced; a `string` error becomes the prelude's `Message`
+  // the interface is boxed and coerced; a `string` error becomes the prelude's `ErrorMessage`
   // when the interface is the prelude `Error`. Reports and returns null when the target
   // is a boxed interface the source cannot satisfy ("reported"), so the caller does not
   // fall through to the enum-variant search with a misleading second message.
-  private findPropagateBoxing(sourceErr: TypeKind, targetErr: TypeKind, sp?: Span): PropagateBoxing | "reported" | null {
+  private findPropagateBoxing(sourceErr: TypeKind, targetErr: TypeKind, sp?: Span, what = "'?'"): PropagateBoxing | "reported" | null {
     if (targetErr.tag !== "heap" || targetErr.inner.tag !== "interface") return null;
     const ifaceName = targetErr.inner.name;
-    if (sourceErr.tag === "string" && ifaceName === "Error" && this.structs.has("Message")) {
-      return { fromType: "Message", ifaceName, viaMessage: true, errType: sourceErr };
+    if (sourceErr.tag === "string" && ifaceName === "Error" && this.structs.has("ErrorMessage")) {
+      return { fromType: "ErrorMessage", ifaceName, viaMessage: true, errType: sourceErr };
     }
     if (sourceErr.tag === "struct" || sourceErr.tag === "enum") {
       const srcName = typeName(sourceErr);
@@ -12288,7 +12320,7 @@ export class TypeChecker {
     }
     const iface = this.interfaces.get(ifaceName);
     const wants = iface ? [...iface.methods.keys()].map(m => `${m}(self: &Self)`).join(", ") : "";
-    this.error(`'?' error type mismatch: '${this.show(sourceErr)}' cannot be boxed as '${this.show(targetErr)}' because it does not satisfy interface '${ifaceName}'${wants ? ` (needs ${wants})` : ""}`, sp);
+    this.error(`${what} error type mismatch: '${this.show(sourceErr)}' cannot be boxed as '${this.show(targetErr)}' because it does not satisfy interface '${ifaceName}'${wants ? ` (needs ${wants})` : ""}`, sp);
     return "reported";
   }
 
