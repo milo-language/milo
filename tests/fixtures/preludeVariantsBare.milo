@@ -1,0 +1,93 @@
+// @expect: some 3
+// @expect: none
+// @expect: iflet 3
+// @expect: letelse 3
+// @expect: pop 2
+// @expect: pop 1
+// @expect: ok 7
+// @expect: err bad
+// @expect: prop 8
+// @expect: default 9
+// @expect: infer 5
+// @expect: sum 3
+
+// Bare `Some` / `None` / `Ok` / `Err` resolve to the Option/Result variants when
+// nothing else in scope has the name (see preludeVariantsShadowed for the fn case).
+
+fn get(): Option<i64> {
+    return Some(3)
+}
+
+fn nothing(): Option<i64> {
+    return None
+}
+
+fn half(n: i64): Result<i64, string> {
+    if n % 2 == 0 {
+        return Ok(n / 2)
+    }
+    return Err("bad")
+}
+
+fn viaProp(n: i64): Result<i64, string> {
+    let h = half(n)?
+    return Ok(h + 4)
+}
+
+fn show(o: Option<i64>): void {
+    match o {
+        Some(v) => {
+            print("some ", v)
+        }
+        None => {
+            print("none")
+        }
+    }
+}
+
+pub fn main(): i32 {
+    show(get())
+    show(nothing())
+    if let Some(v) = get() {
+        print("iflet ", v)
+    }
+    let Some(w) = get() else {
+        return 1
+    }
+    print("letelse ", w)
+    var q: Vec<i64> = Vec.new()
+    q.push(1)
+    q.push(2)
+    while let Some(x) = q.pop() {
+        print("pop ", x)
+    }
+    match half(14) {
+        Ok(v) => {
+            print("ok ", v)
+        }
+        Err(e) => {
+            print("err ", e)
+        }
+    }
+    match half(3) {
+        Ok(v) => {
+            print("ok ", v)
+        }
+        Err(e) => {
+            print("err ", e)
+        }
+    }
+    if let Ok(p) = viaProp(8) {
+        print("prop ", p)
+    }
+    let d: i64 = nothing() ?? 9
+    print("default ", d)
+    let inferred = Option.Some(5)
+    if let Some(i) = inferred {
+        print("infer ", i)
+    }
+    let pair: Result<i64, string> = Ok(1)
+    let total = pair! + get()! -1
+    print("sum ", total)
+    return 0
+}

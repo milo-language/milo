@@ -72,6 +72,8 @@ enum Result<T, E> {
 
 `Option<T>` replaces null: `Option.Some(value)` or `Option.None`, and you must check which before using it. `Result<T, E>` replaces exceptions: `Result.Ok(value)` or `Result.Err(error)`, and the compiler won't let you ignore a failure. Both are built-in enums.
 
+The `Option.` and `Result.` prefixes are optional for these four variants: `Some(3)`, `None`, `Ok(v)` and `Err(e)` work in expressions and in patterns, and resolve to the Option/Result variants whenever nothing else in scope has that name (a function or variable called `Some` wins). The standard library keeps the qualified spelling.
+
 ## if let
 
 Sometimes you only care about one variant. `if let` extracts the inner value without a full `match`.
