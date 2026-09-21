@@ -277,7 +277,7 @@ impl FetchResponse {
 
     // Parse the response body as JSON.
     fn json(self: &Self): Json {
-        return Json.parse(self.body.clone())!
+        return Json.parse(self.body)!
     }
 
     // Return true if the status code is 2xx (success).

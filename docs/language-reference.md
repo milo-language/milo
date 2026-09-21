@@ -3664,7 +3664,7 @@ fn main(): i32 {
 | Method | Signature |
 |---|---|
 | `toJson` | `fn toJson(self: &Self): string` |
-| `fromJson` | `fn fromJson(text: string): Result<T, JsonError>` |
+| `fromJson` | `fn fromJson(text: &string): Result<T, JsonError>` |
 | `fromJsonNode` | `fn fromJsonNode(doc: &Json, cur: i64): Result<T, JsonError>` — decode a sub-node; what nested fields call |
 
 ```milo

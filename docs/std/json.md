@@ -330,18 +330,22 @@ New empty object builder: Json.obj().set("k", ...).build().
 ### `Json.parse`
 
 ```milo
-fn Json.parse(s: string): Result<Json>
+fn Json.parse(s: &string): Result<Json>
 ```
 
 Parse strict RFC 8259 JSON. Propagate failures with `?` or match on the error.
+Takes a borrow because most callers hold the text in a buffer they still need;
+the document owns its source, so this copies once. A caller done with its owned
+buffer can hand it to `jsonParse` and skip the copy.
 
 ### `Json.parseJsonc`
 
 ```milo
-fn Json.parseJsonc(s: string): Result<Json>
+fn Json.parseJsonc(s: &string): Result<Json>
 ```
 
-Parse JSON with JSONC extensions (comments, trailing commas).
+Parse JSON with JSONC extensions (comments, trailing commas). Borrows like `parse`;
+`jsoncParse` is the owned form.
 
 ### `Json.path`
 
@@ -452,7 +456,7 @@ _Undocumented._
 ### `JsonArr.raw`
 
 ```milo
-fn JsonArr.raw(self: JsonArr, json: string): JsonArr
+fn JsonArr.raw(self: JsonArr, json: &string): JsonArr
 ```
 
 Splice a pre-serialized JSON value verbatim (caller guarantees validity).
@@ -460,7 +464,7 @@ Splice a pre-serialized JSON value verbatim (caller guarantees validity).
 ### `JsonArr.str`
 
 ```milo
-fn JsonArr.str(self: JsonArr, val: string): JsonArr
+fn JsonArr.str(self: JsonArr, val: &string): JsonArr
 ```
 
 _Undocumented._
@@ -533,7 +537,7 @@ Human-readable name for a `curKind` result, including -1 for "no such node".
 ### `JsonObj.arr`
 
 ```milo
-fn JsonObj.arr(self: JsonObj, key: string, val: JsonArr): JsonObj
+fn JsonObj.arr(self: JsonObj, key: &string, val: JsonArr): JsonObj
 ```
 
 _Undocumented._
@@ -541,7 +545,7 @@ _Undocumented._
 ### `JsonObj.bool`
 
 ```milo
-fn JsonObj.bool(self: JsonObj, key: string, val: bool): JsonObj
+fn JsonObj.bool(self: JsonObj, key: &string, val: bool): JsonObj
 ```
 
 _Undocumented._
@@ -549,7 +553,7 @@ _Undocumented._
 ### `JsonObj.boolOpt`
 
 ```milo
-fn JsonObj.boolOpt(self: JsonObj, key: string, val: Option<bool>): JsonObj
+fn JsonObj.boolOpt(self: JsonObj, key: &string, val: Option<bool>): JsonObj
 ```
 
 _Undocumented._
@@ -573,7 +577,7 @@ build() with `indent` spaces per nesting level (0 or less minifies).
 ### `JsonObj.float`
 
 ```milo
-fn JsonObj.float(self: JsonObj, key: string, val: f64): JsonObj
+fn JsonObj.float(self: JsonObj, key: &string, val: f64): JsonObj
 ```
 
 _Undocumented._
@@ -581,7 +585,7 @@ _Undocumented._
 ### `JsonObj.floatOpt`
 
 ```milo
-fn JsonObj.floatOpt(self: JsonObj, key: string, val: Option<f64>): JsonObj
+fn JsonObj.floatOpt(self: JsonObj, key: &string, val: Option<f64>): JsonObj
 ```
 
 _Undocumented._
@@ -589,7 +593,7 @@ _Undocumented._
 ### `JsonObj.int`
 
 ```milo
-fn JsonObj.int(self: JsonObj, key: string, val: i64): JsonObj
+fn JsonObj.int(self: JsonObj, key: &string, val: i64): JsonObj
 ```
 
 _Undocumented._
@@ -597,7 +601,7 @@ _Undocumented._
 ### `JsonObj.intOpt`
 
 ```milo
-fn JsonObj.intOpt(self: JsonObj, key: string, val: Option<i64>): JsonObj
+fn JsonObj.intOpt(self: JsonObj, key: &string, val: Option<i64>): JsonObj
 ```
 
 _Undocumented._
@@ -605,7 +609,7 @@ _Undocumented._
 ### `JsonObj.nil`
 
 ```milo
-fn JsonObj.nil(self: JsonObj, key: string): JsonObj
+fn JsonObj.nil(self: JsonObj, key: &string): JsonObj
 ```
 
 _Undocumented._
@@ -613,7 +617,7 @@ _Undocumented._
 ### `JsonObj.obj`
 
 ```milo
-fn JsonObj.obj(self: JsonObj, key: string, val: JsonObj): JsonObj
+fn JsonObj.obj(self: JsonObj, key: &string, val: JsonObj): JsonObj
 ```
 
 _Undocumented._
@@ -621,7 +625,7 @@ _Undocumented._
 ### `JsonObj.raw`
 
 ```milo
-fn JsonObj.raw(self: JsonObj, key: string, json: string): JsonObj
+fn JsonObj.raw(self: JsonObj, key: &string, json: &string): JsonObj
 ```
 
 Splice a pre-serialized JSON value verbatim (caller guarantees validity).
@@ -629,7 +633,7 @@ Splice a pre-serialized JSON value verbatim (caller guarantees validity).
 ### `JsonObj.str`
 
 ```milo
-fn JsonObj.str(self: JsonObj, key: string, val: string): JsonObj
+fn JsonObj.str(self: JsonObj, key: &string, val: &string): JsonObj
 ```
 
 _Undocumented._
@@ -637,7 +641,7 @@ _Undocumented._
 ### `JsonObj.strOpt`
 
 ```milo
-fn JsonObj.strOpt(self: JsonObj, key: string, val: Option<string>): JsonObj
+fn JsonObj.strOpt(self: JsonObj, key: &string, val: Option<string>): JsonObj
 ```
 
 Optional-field helpers: add the key only when the Option is Some, so a
@@ -647,7 +651,7 @@ to an `if` around each call.
 ### `JsonObj.val`
 
 ```milo
-fn JsonObj.val(self: JsonObj, key: string, val: JsonVal): JsonObj
+fn JsonObj.val(self: JsonObj, key: &string, val: JsonVal): JsonObj
 ```
 
 _Undocumented._

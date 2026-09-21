@@ -388,13 +388,17 @@ impl Json {
     // ── Namespace entry points (static) ──
 
     // Parse strict RFC 8259 JSON. Propagate failures with `?` or match on the error.
-    fn parse(s: string): Result<Json> {
-        return jsonParse(s)
+    // Takes a borrow because most callers hold the text in a buffer they still need;
+    // the document owns its source, so this copies once. A caller done with its owned
+    // buffer can hand it to `jsonParse` and skip the copy.
+    fn parse(s: &string): Result<Json> {
+        return jsonParse(s.clone())
     }
 
-    // Parse JSON with JSONC extensions (comments, trailing commas).
-    fn parseJsonc(s: string): Result<Json> {
-        return jsoncParse(s)
+    // Parse JSON with JSONC extensions (comments, trailing commas). Borrows like `parse`;
+    // `jsoncParse` is the owned form.
+    fn parseJsonc(s: &string): Result<Json> {
+        return jsoncParse(s.clone())
     }
 
     // New empty object builder: Json.obj().set("k", ...).build().
@@ -980,7 +984,7 @@ struct JsonParser {
     scratchLen: i64,
 }
 
-fn jsonParse(s: string): Result<Json> {
+pub fn jsonParse(s: string): Result<Json> {
     if s.len == 0 {
         return Result.Err("empty json input at byte 0")
     }
@@ -1115,7 +1119,7 @@ fn jsonStripJsonc(s: &string): string {
     return out
 }
 
-fn jsoncParse(s: string): Result<Json> {
+pub fn jsoncParse(s: string): Result<Json> {
     let stripped = jsonStripJsonc(s)
     return jsonParse(stripped)
 }
@@ -1735,80 +1739,83 @@ fn jsonObj(): JsonObj {
     }
 }
 
+// Keys and string payloads are borrowed: a key is nearly always a literal and a
+// payload is usually a field the caller keeps, so an owned parameter forced a
+// `.clone()` at almost every call site. The member stores its own copy.
 impl JsonObj {
-    fn str(self: Self, key: string, val: string): Self {
+    fn str(self: Self, key: &string, val: &string): Self {
         var m = self
         m.members.push(JsonMember {
-            key: key, val: JsonVal.JStr(val)
+            key: key.clone(), val: JsonVal.JStr(val.clone())
         })
         return m
     }
-    fn int(self: Self, key: string, val: i64): Self {
+    fn int(self: Self, key: &string, val: i64): Self {
         var m = self
         m.members.push(JsonMember {
-            key: key, val: JsonVal.JInt(val)
+            key: key.clone(), val: JsonVal.JInt(val)
         })
         return m
     }
-    fn float(self: Self, key: string, val: f64): Self {
+    fn float(self: Self, key: &string, val: f64): Self {
         var m = self
         m.members.push(JsonMember {
-            key: key, val: JsonVal.JFloat(val)
+            key: key.clone(), val: JsonVal.JFloat(val)
         })
         return m
     }
-    fn bool(self: Self, key: string, val: bool): Self {
+    fn bool(self: Self, key: &string, val: bool): Self {
         var m = self
         m.members.push(JsonMember {
-            key: key, val: JsonVal.JBool(val)
+            key: key.clone(), val: JsonVal.JBool(val)
         })
         return m
     }
-    fn nil(self: Self, key: string): Self {
+    fn nil(self: Self, key: &string): Self {
         var m = self
         m.members.push(JsonMember {
-            key: key, val: JsonVal.JNull
+            key: key.clone(), val: JsonVal.JNull
         })
         return m
     }
-    fn obj(self: Self, key: string, val: JsonObj): Self {
+    fn obj(self: Self, key: &string, val: JsonObj): Self {
         var m = self
         m.members.push(JsonMember {
-            key: key, val: JsonVal.JObj(val.members)
+            key: key.clone(), val: JsonVal.JObj(val.members)
         })
         return m
     }
-    fn arr(self: Self, key: string, val: JsonArr): Self {
+    fn arr(self: Self, key: &string, val: JsonArr): Self {
         var m = self
         m.members.push(JsonMember {
-            key: key, val: JsonVal.JArr(val.items)
+            key: key.clone(), val: JsonVal.JArr(val.items)
         })
         return m
     }
-    fn val(self: Self, key: string, val: JsonVal): Self {
+    fn val(self: Self, key: &string, val: JsonVal): Self {
         var m = self
         m.members.push(JsonMember {
-            key: key, val: val
+            key: key.clone(), val: val
         })
         return m
     }
     // Splice a pre-serialized JSON value verbatim (caller guarantees validity).
-    fn raw(self: Self, key: string, json: string): Self {
+    fn raw(self: Self, key: &string, json: &string): Self {
         var m = self
         m.members.push(JsonMember {
-            key: key, val: JsonVal.JRaw(json)
+            key: key.clone(), val: JsonVal.JRaw(json.clone())
         })
         return m
     }
     // Optional-field helpers: add the key only when the Option is Some, so a
     // conditional field stays inside the fluent chain instead of breaking out
     // to an `if` around each call.
-    fn strOpt(self: Self, key: string, val: Option<string>): Self {
+    fn strOpt(self: Self, key: &string, val: Option<string>): Self {
         var m = self
         match val {
             Option.Some(v) => {
                 m.members.push(JsonMember {
-                    key: key, val: JsonVal.JStr(v)
+                    key: key.clone(), val: JsonVal.JStr(v)
                 })
             }
             Option.None => {
@@ -1816,12 +1823,12 @@ impl JsonObj {
         }
         return m
     }
-    fn intOpt(self: Self, key: string, val: Option<i64>): Self {
+    fn intOpt(self: Self, key: &string, val: Option<i64>): Self {
         var m = self
         match val {
             Option.Some(v) => {
                 m.members.push(JsonMember {
-                    key: key, val: JsonVal.JInt(v)
+                    key: key.clone(), val: JsonVal.JInt(v)
                 })
             }
             Option.None => {
@@ -1829,12 +1836,12 @@ impl JsonObj {
         }
         return m
     }
-    fn floatOpt(self: Self, key: string, val: Option<f64>): Self {
+    fn floatOpt(self: Self, key: &string, val: Option<f64>): Self {
         var m = self
         match val {
             Option.Some(v) => {
                 m.members.push(JsonMember {
-                    key: key, val: JsonVal.JFloat(v)
+                    key: key.clone(), val: JsonVal.JFloat(v)
                 })
             }
             Option.None => {
@@ -1842,12 +1849,12 @@ impl JsonObj {
         }
         return m
     }
-    fn boolOpt(self: Self, key: string, val: Option<bool>): Self {
+    fn boolOpt(self: Self, key: &string, val: Option<bool>): Self {
         var m = self
         match val {
             Option.Some(v) => {
                 m.members.push(JsonMember {
-                    key: key, val: JsonVal.JBool(v)
+                    key: key.clone(), val: JsonVal.JBool(v)
                 })
             }
             Option.None => {
@@ -1886,9 +1893,9 @@ fn jsonArr(): JsonArr {
 }
 
 impl JsonArr {
-    fn str(self: Self, val: string): Self {
+    fn str(self: Self, val: &string): Self {
         var m = self
-        m.items.push(JsonVal.JStr(val))
+        m.items.push(JsonVal.JStr(val.clone()))
         return m
     }
     fn int(self: Self, val: i64): Self {
@@ -1927,9 +1934,9 @@ impl JsonArr {
         return m
     }
     // Splice a pre-serialized JSON value verbatim (caller guarantees validity).
-    fn raw(self: Self, json: string): Self {
+    fn raw(self: Self, json: &string): Self {
         var m = self
-        m.items.push(JsonVal.JRaw(json))
+        m.items.push(JsonVal.JRaw(json.clone()))
         return m
     }
     fn build(self: &Self): string {
