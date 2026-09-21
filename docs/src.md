@@ -33,6 +33,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/cli-help.ts` | The CLI surface: every subcommand and top-level option, in one table. |
 | `src/codegen-vec.ts` | Vec method codegen helpers — extracted to keep codegen.ts manageable. |
 | `src/codegen.ts` | HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target calling conventions. |
+| `src/contract-tests.ts` | src/contract-tests — `milo test --contracts`: property tests written by the contracts. |
 | `src/csig.ts` | Parsing for the C signature text in `@cSig("<header>", "<signature>")`. |
 | `src/derive-json.ts` | @derive(Json) — generates `toJson` / `fromJson` / `fromJsonNode` for a struct. |
 | `src/derive-template.ts` | User-defined `@derive(Trait)` — the template mechanism that lets a derive ship in a package instead of a compiler PR. |

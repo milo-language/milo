@@ -1,0 +1,35 @@
+// Sample for tests/contractTests.test.ts: `milo test --contracts` draws inputs for each
+// contract-bearing fn, filters by `requires`, and checks `ensures`. `broken` lies in its
+// ensures and must be caught with the inputs that refute it; the others must pass.
+fn clampPct(x: i64): i64
+requires x >= -1000
+ensures result >= 0 && result <= 100
+{
+    if x < 0 {
+        return 0
+    }
+    if x > 100 {
+        return 100
+    }
+    return x
+}
+
+fn lower(s: string): string
+ensures result.len == s.len
+{
+    return s.toLower()
+}
+
+fn keyed(key: &string, n: u8): i64
+requires key.len == 32
+ensures result == 32 + (n as i64)
+{
+    return key.len + (n as i64)
+}
+
+fn broken(a: i64, b: i64): i64
+requires a >= 0 && b >= 0 && a < 1000 && b < 1000
+ensures result >= a
+{
+    return a - b
+}

@@ -1,5 +1,6 @@
 // CLI driver: subcommand dispatch for build/run/emit-*/test/fmt/lsp and the rest of
 // the surface described in src/cli-help.ts.
+import { discoverContractTests, contractTestSupport } from "./contract-tests";
 import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync, mkdirSync, statSync } from "fs";
 import { WARNING_NAMES } from "./warnings";
 import { projectLints } from "./pkg";
@@ -1309,6 +1310,21 @@ function collectTestFiles(dir: string): string[] {
   return out.sort();
 }
 
+// Every .milo under `dir`, for `--contracts`: contract-bearing fns live in ordinary
+// source files, so the scan is not limited to *_test.milo.
+function collectMiloFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.isDirectory()) {
+      if (TEST_SCAN_SKIP.has(e.name) || e.name.startsWith(".")) continue;
+      out.push(...collectMiloFiles(join(dir, e.name)));
+    } else if (e.name.endsWith(".milo")) {
+      out.push(join(dir, e.name));
+    }
+  }
+  return out.sort();
+}
+
 // A test is a top-level `fn test*()` taking no parameters. Discovered from the parsed AST,
 // never by scanning the text: a regex over source counts `fn testFoo(` inside a comment or
 // a string literal, and — worse — misses one written differently, which is a test silently
@@ -1382,6 +1398,7 @@ async function runTests(
   warningConfig?: WarningConfig,
   filter?: string,
   json = false,
+  contracts = false,
 ) {
   // In JSON mode nothing but the payload may reach stdout, or the consumer parses a log
   // line as the document.
@@ -1404,10 +1421,19 @@ async function runTests(
   const started = Date.now();
 
   for (const file of testFiles) {
-    const source = readFileSync(file, "utf-8");
+    let source = readFileSync(file, "utf-8");
     let found: TestDiscovery;
     try {
-      found = discoverTests(source, file);
+      if (contracts) {
+        // The synthesized tests are appended to the file's own source so they can call
+        // its private fns; discovery then reads them back like hand-written tests.
+        const program = new Parser(new Lexer(source).tokenize(), source, file).parse();
+        const ct = discoverContractTests(program);
+        found = { tests: ct.tests.map(t => t.name), rejected: ct.skipped };
+        if (ct.tests.length > 0) source += "\n" + ct.tests.map(t => t.source).join("\n") + contractTestSupport(program);
+      } else {
+        found = discoverTests(source, file);
+      }
     } catch (e: any) {
       compileErrors.push({ file, message: e.message ?? String(e) });
       continue;
@@ -1415,6 +1441,9 @@ async function runTests(
     for (const r of found.rejected) {
       log(`${DIM}  ${file}: skipping ${r.name} — ${r.why}${RESET}`);
     }
+    // A file with no contract fns is not news under --contracts; a *_test.milo with no
+    // tests still is, so only the contract scan stays quiet.
+    if (contracts && found.tests.length === 0) continue;
     const selected = found.tests.filter(name => matches(file, name));
     skipped += found.tests.length - selected.length;
     if (selected.length === 0) continue;
@@ -2285,9 +2314,13 @@ async function main() {
     // `-t <pattern>` / `--test-name-pattern <pattern>` filter, stripped before parseArgs so
     // the pattern is never mistaken for the source positional.
     let testFilter: string | undefined;
+    // `--contracts`: the tests are written by the contracts of the fns in the given
+    // files (any .milo, not only *_test.milo); see src/contract-tests.ts.
+    const contracts = testArgs.includes("--contracts");
     const filtered: string[] = [];
     for (let i = 0; i < testArgs.length; i++) {
       const a = testArgs[i]!;
+      if (a === "--contracts") continue;
       if (a === "-t" || a === "--test-name-pattern") {
         if (i + 1 >= testArgs.length) { console.error(`error: ${a} expects a pattern`); process.exit(1); }
         testFilter = testArgs[++i];
@@ -2304,15 +2337,15 @@ async function main() {
     for (const p of roots.length > 0 ? roots : [process.cwd()]) {
       if (!existsSync(p)) { console.error(`error: no such file or directory: ${p}`); process.exit(1); }
       if (statSync(p).isDirectory()) {
-        const found = collectTestFiles(p);
-        if (found.length === 0) { console.error(`no *_test.milo files under ${p}`); process.exit(1); }
+        const found = contracts ? collectMiloFiles(p) : collectTestFiles(p);
+        if (found.length === 0) { console.error(`no ${contracts ? "*.milo" : "*_test.milo"} files under ${p}`); process.exit(1); }
         files.push(...found);
       } else {
         files.push(p);
       }
     }
     if (files.length === 0) { console.error("no test files found"); process.exit(1); }
-    await runTests(files, target, testOpt, testWc, testFilter, testArgs.includes("--json"));
+    await runTests(files, target, testOpt, testWc, testFilter, testArgs.includes("--json"), contracts);
     return;
   }
 

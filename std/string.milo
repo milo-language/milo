@@ -376,8 +376,11 @@ fn strSplit(s: &string, sep: &string): Vec<string> {
 // Repeat a string n times.
 
 // `s` concatenated `n` times (n <= 0 → empty string).
+// The count is bounded because the contract is a promise: `requires n >= 0` alone says
+// any non-negative n works, and n = i64::MAX exhausts memory (found by
+// `milo test --contracts`). 16M repeats of a one-byte string is a 16 MB buffer.
 fn strRepeat(s: &string, n: i64): string
-requires n >= 0
+requires n >= 0 && n <= 16777216
 {
     var result: string = ""
     for i in 0..n {
@@ -393,7 +396,7 @@ requires n >= 0
 // column of "café" and "cafe" lines up. The pad string is cycled by character too,
 // so a multibyte pad is never cut.
 fn strPadStart(s: &string, targetLen: i64, padStr: &string): string
-requires targetLen >= 0
+requires targetLen >= 0 && targetLen <= 16777216
 {
     var needed: i64 = targetLen - _charCount(s)
     if needed <= 0 || padStr.len == 0 {
@@ -418,7 +421,7 @@ requires targetLen >= 0
 // (returned unchanged if already at least that long). Characters, not bytes, as
 // strPadStart.
 fn strPadEnd(s: &string, targetLen: i64, padStr: &string): string
-requires targetLen >= 0
+requires targetLen >= 0 && targetLen <= 16777216
 {
     var needed: i64 = targetLen - _charCount(s)
     if needed <= 0 || padStr.len == 0 {
@@ -598,6 +601,7 @@ fn strIsEmpty(s: &string): bool {
 // 0 <= idx < s.len. Bytes that are not text go through `s[idx]`, which is a byte.
 fn strCharAt(s: &string, idx: i64): string
 requires idx >= 0 && idx < s.len
+requires(s[idx] & 192) != 128
 {
     if (s[idx] & 192) == 128 {
         eprint("milo: charAt(", idx, ") lands inside a multibyte UTF-8 character; charAt takes a byte offset, iterate with codePoints() for characters")

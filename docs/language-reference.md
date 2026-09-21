@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-21 (Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-21 (milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -4783,6 +4783,34 @@ math_test.milo
 
 results: 3 passed, 0 failed, 3 total
 ```
+
+### Contract-driven tests
+
+A fn with `requires`/`ensures` already says what a test would check. `milo test
+--contracts <files|dir>` writes those tests: for every fn whose parameters are
+integers, bools, floats or strings (owned or `&string`) and whose contracts do not use
+`old()`, it draws inputs (biased to 0, 1, -1 and the type's bounds; a `requires
+key.len == 32` is drawn at exactly that length), skips draws that fail `requires`,
+calls the fn and evaluates every `ensures` with `result` bound. A violation names the
+inputs. Generic fns, methods and `&mut` parameters are reported as skipped.
+
+```bash
+milo test --contracts std/string.milo
+```
+
+```
+std/string.milo
+  ✓ testContract_strIndexOfFrom [24ms]
+  ✗ testContract_strRepeat
+      [guard] SIGKILL: process tree exceeded 2048 MB
+```
+
+The second line is the kind of thing it finds: `requires n >= 0` promised that any
+count works, and `n = i64::MAX` exhausted memory. Its first sweep of std tightened
+four contracts that way (`strRepeat`, `strPadStart`/`strPadEnd`, `Pool.new`,
+`inflate.zeros`) and one that was weaker than the fn's real precondition
+(`strCharAt` needs a character boundary). Draws are seeded, so a run is repeatable.
+A test whose `requires` no draw satisfies fails rather than passing on zero cases.
 
 ---
 

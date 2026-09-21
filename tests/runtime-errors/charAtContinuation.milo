@@ -1,7 +1,9 @@
-// @runtime-error: charAt(2) lands inside a multibyte UTF-8 character
+// @runtime-error: requires clause violated at std/string.milo
 // charAt takes a byte offset and answers the whole character there; landing on a
-// continuation byte has no character to answer, so it aborts instead of handing back
-// one byte of invalid UTF-8.
+// continuation byte has no character to answer. The contract says so (`requires
+// (s[idx] & 192) != 128`, which is what a debug build reports here), and the body
+// repeats the check with its own message for a release build, where contracts are
+// compiled out.
 pub fn main(): void {
     let s = "aéb"
     print(s.charAt(2))

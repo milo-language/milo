@@ -28,9 +28,13 @@ impl Drop for Pool {
 
 // Create a pool of `count` blocks, each `size` bytes (minimum 8 for free-list pointer).
 // Single malloc at init — no further heap allocation.
+// The product is bounded (1 GB) because `size >= 8, count > 0` alone promises that
+// `Pool.new(i64::MAX, 1)` works, and it exhausts memory instead (found by
+// `milo test --contracts`). Clause order matters: the division relies on `size >= 8`.
 fn poolNew(size: i64, count: i64): Result<Pool>
 requires size >= 8
 requires count > 0
+requires size <= 1073741824 && count <= 1073741824 / size
 {
     // Checked at runtime as well as by the `requires`, because the contract is dropped at
     // the default -O2 and this body is unsafe. The free list threads an 8-byte pointer
@@ -169,6 +173,7 @@ impl Pool {
     fn new(size: i64, count: i64): Result<Pool>
     requires size >= 8
     requires count > 0
+    requires size <= 1073741824 && count <= 1073741824 / size
     {
         return poolNew(size, count)
     }

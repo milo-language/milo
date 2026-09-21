@@ -38,8 +38,10 @@ pub struct Huff {
     symbol: Vec<i64>,
 }
 
+// Bounded above because a contract is a promise and n = i64::MAX exhausts memory
+// (found by `milo test --contracts`); every caller passes a table size under 300.
 fn zeros(n: i64): Vec<i64>
-requires n >= 0
+requires n >= 0 && n <= 65536
 ensures result.len == n
 {
     var v: Vec<i64> = Vec.new()

@@ -28,9 +28,10 @@ export const COMPILER_COMMANDS: CliCommand[] = [
   { name: "run", usage: "run <file> [args]", help: ["compile and run (no artifacts left behind)"] },
   { name: "build", usage: "build <file> [-o out]", help: ["compile to executable"] },
   {
-    name: "test", usage: "test [file|dir...] [--json]",
+    name: "test", usage: "test [file|dir...] [--contracts] [--json]",
     help: [
       "run tests (*_test.milo, recursive in a dir; cwd by default)",
+      "--contracts: instead, test every fn's requires/ensures on drawn inputs (any .milo)",
       "a test is a top-level `fn test*()` with no parameters;",
       "each runs in its own process, so a trap fails only that test",
       "-t <pattern>  run only tests matching (substring or regex)",
