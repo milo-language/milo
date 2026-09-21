@@ -81,7 +81,7 @@ Status: **exists** = the language/std already has it and the examples do not use
 
 | # | Item | Status / notes |
 |---|---|---|
-| E1 | Rewrite the example corpus to CONVENTIONS: `pushStr`, `for x in xs`, `while let`, `arenaModifyMut`, `jq` on `std/json`, no `entries[i].name.clone()` once T1 lands | **partial**. `linkedList` (157 to 80 lines), `kvstore`, `depgraph`, `tree`, `jq` rewritten 2026-09-21. Census of the other 197 files that day: 814 qualified `Option.Some`, 398 `ch == 10` byte numerals, 32 `0 - 1` sentinels, 14 `var done = false` loops, 91 string `+=` in loops. The mechanical rows are being swept; `pushStr` adoption is the lint's worklist. |
+| E1 | Rewrite the example corpus to CONVENTIONS: `pushStr`, `for x in xs`, `while let`, `arenaModifyMut`, `jq` on `std/json`, no `entries[i].name.clone()` once T1 lands | **partial**. `linkedList` (157 to 80 lines), `kvstore`, `depgraph`, `tree`, `jq` rewritten 2026-09-21. Census of the other 197 files that day: 814 qualified `Option.Some`, 398 `ch == 10` byte numerals, 32 `0 - 1` sentinels, 14 `var done = false` loops, 91 string `+=` in loops. Mechanical sweep merged the same day (`45d44e8a`, 74 files): 807 qualified variants, 36 sentinels, ~284 byte numerals and 8 loop flags rewritten; what is left is `i64` operands that are not bytes, and 6 flags that gate a nested loop (no labeled break). `pushStr` adoption (91 sites) is the lint's worklist and the next step. |
 | E2 | One short "patterns without lifetimes" example: kv scan, AST handles, sealed spans | **open**. |
 | E3 | Fix `return 0 - 1 as i64` and similar in showcase files | **shipped** for `kvstore` (`slotIn` returns `Option<i64>`); the other 32 sentinels are in the mechanical sweep. |
 
