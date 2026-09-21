@@ -395,6 +395,18 @@ fn g(x: i64) {
 }
 ```
 
+A non-`void` function must `return` on every path. There is no implicit tail value:
+`fn f(): i64 { 42 }` is an error, as is a body whose `if` has no `else`. A path ends
+in `return`, or in an `if`/`else`, `match`, or `while true` whose every exit returns.
+The one exception is `main`, which falls off the end as `return 0` (C's rule).
+
+```milo error
+fn sign(n: i64): i64 {
+    if n < 0 { return -1 }
+    // error: 'sign' returns i64 but can reach the end of its body without a 'return'
+}
+```
+
 ### Generic Functions
 
 ```milo

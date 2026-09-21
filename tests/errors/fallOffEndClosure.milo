@@ -1,0 +1,10 @@
+// A closure with a declared non-void return that can fall off: codegen returned a
+// zero of the return type, which for `string` is a null pointer.
+// @error: closure returns string but can reach the end of its body without a 'return'
+fn main(): i32 {
+    let name = (n: i64): string => {
+        if n == 0 { return "zero" }
+    }
+    print(name(0))
+    return 0
+}

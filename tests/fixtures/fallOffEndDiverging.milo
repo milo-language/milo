@@ -1,0 +1,71 @@
+// Every diverging body shape the fall-off-end check accepts, compiled and run:
+// return, if/else, exhaustive match, if-let/else, unsafe, and a break-less while true.
+// Codegen puts 'unreachable' after a break-less loop instead of an LLVM block with no terminator.
+fn f(): i64 {
+    while true {
+        return 1
+    }
+}
+
+fn g(): i64 {
+    var i = 0
+    while true {
+        i = i + 1
+        if i > 3 {
+            return i
+        }
+    }
+}
+
+fn k(x: i64): string {
+    match x {
+        0 => {
+            return "zero"
+        }
+        _ => {
+            return "other"
+        }
+    }
+}
+
+fn q(x: Option<i64>): i64 {
+    if let Option.Some(v) = x {
+        return v
+    } else {
+        return -1
+    }
+}
+
+fn u(): i64 {
+    if true {
+        return 7
+    } else {
+        return 8
+    }
+}
+
+pub fn main(): i32 {
+    let c = (x: i64): i64 => {
+        while true {
+            if x > 0 {
+                return x
+            }
+            return 0
+        }
+    }
+    print(f())
+    print(g())
+    print(k(0))
+    print(k(2))
+    print(q(Option.Some(5)))
+    print(u())
+    print(c(3))
+    return 0
+}
+// @expect: 1
+// @expect: 4
+// @expect: zero
+// @expect: other
+// @expect: 5
+// @expect: 7
+// @expect: 3

@@ -1,0 +1,17 @@
+// Every arm returns, but the arms do not cover the subject: the missing variant is
+// the path that falls off. Only the exhaustiveness error is reported, since the
+// fall-off is a consequence of it and not a second mistake.
+// @error: non-exhaustive match
+enum Color { Red, Green, Blue }
+
+fn code(c: Color): i64 {
+    match c {
+        Color.Red => { return 1 }
+        Color.Green => { return 2 }
+    }
+}
+
+fn main(): i32 {
+    print(code(Color.Blue))
+    return 0
+}

@@ -5663,6 +5663,9 @@ export class TypeChecker {
     // not the function, so a body with three independent errors still reports three.
     for (const stmt of fn.body) this.recover(() => this.checkStmt(stmt, retType));
     this.scanUnreachable(fn.body);
+    // `main` keeps its implicit `return 0` (C's rule, and what codegen emits); no
+    // other function gets one. Externs have no body to fall off.
+    if (!fn.isExtern && fn.name !== "main") this.errorIfFallsOff(`'${fn.name}'`, fn.body, retType, fn.span);
 
     // Lint: warn if a non-ref, non-Copy param was never moved — suggest &T
     if (!fn.isExtern) {
@@ -6581,6 +6584,67 @@ export class TypeChecker {
       }
     }
     return false;
+  }
+
+  // Does control ever fall off the end of a function body? Stricter shapes than
+  // bodyAlwaysReturns, which also feeds move tracking and the unreachable scan:
+  // adding `while true` there would make the `return 0` that most servers keep after
+  // their accept loop an "unreachable code" error, so this predicate is only asked
+  // at a fn or closure end. Codegen has no answer for a non-void fn that falls off:
+  // an `i32` fn silently returned 0, a closure returned a zero of its type (a null
+  // string pointer), and anything else was an LLVM "block must end with a terminator".
+  private bodyNeverFallsOff(body: Stmt[]): boolean {
+    for (const s of body) {
+      switch (s.kind) {
+        case "Return": case "BreakStmt": case "ContinueStmt": return true;
+        case "IfStmt": case "IfLetStmt":
+          if (s.elseBody && this.bodyNeverFallsOff(s.thenBody) && this.bodyNeverFallsOff(s.elseBody)) return true;
+          break;
+        case "MatchStmt":
+          // A match already reported as non-exhaustive counts as diverging: the
+          // uncovered variant IS the falling-off path, and that error names it.
+          if (s.arms.length > 0 && (this.nonExhaustiveMatches.has(s.arms) || s.arms.every(a => this.bodyNeverFallsOff(a.body)))) return true;
+          break;
+        case "UnsafeBlock":
+          if (this.bodyNeverFallsOff(s.body)) return true;
+          break;
+        case "WhileStmt":
+          // `while true` leaves only through a `break` aimed at it (or a return).
+          if (s.cond.kind === "BoolLit" && s.cond.value && !this.bodyBreaksOut(s.body)) return true;
+          break;
+      }
+    }
+    return false;
+  }
+
+  // Is there a `break` in this loop body that targets THIS loop? Nested loops own
+  // their breaks; closure bodies are separate functions.
+  private bodyBreaksOut(body: Stmt[]): boolean {
+    for (const s of body) {
+      switch (s.kind) {
+        case "BreakStmt": return true;
+        case "IfStmt": case "IfLetStmt":
+          if (this.bodyBreaksOut(s.thenBody) || (s.elseBody && this.bodyBreaksOut(s.elseBody))) return true;
+          break;
+        case "LetElseStmt":
+          if (this.bodyBreaksOut(s.elseBody)) return true;
+          break;
+        case "MatchStmt":
+          if (s.arms.some(a => this.bodyBreaksOut(a.body))) return true;
+          break;
+        case "UnsafeBlock":
+          if (this.bodyBreaksOut(s.body)) return true;
+          break;
+      }
+    }
+    return false;
+  }
+
+  private errorIfFallsOff(what: string, body: Stmt[], retType: TypeKind, span?: Span) {
+    if (retType.tag === "void" || retType.tag === "unknown") return;
+    if (this.bodyNeverFallsOff(body)) return;
+    this.error(`${what} returns ${this.show(retType)} but can reach the end of its body without a 'return'`, span,
+      `every path must end in 'return <value>' (or an if/else, match, or 'while true' whose every exit returns)`);
   }
 
   // Matches already reported as non-exhaustive, keyed by their arm list. "Every arm
@@ -9676,6 +9740,7 @@ export class TypeChecker {
         inferredRet = { tag: "void" };
       }
     }
+    this.errorIfFallsOff("closure", expr.body, inferredRet, expr.span);
     this.currentFnRetType = savedRetType;
     this.popScope();
     const captures = Array.from(frame.captures.values());

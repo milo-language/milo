@@ -2220,7 +2220,11 @@ export class Codegen {
       // Go exit semantics: when main returns the process exits and any
       // outstanding green tasks die. Waiting is explicit (Task.join/WaitGroup).
       if (ret === "void") lines.push("  ret void");
-      else if (ret === "i32") lines.push("  ret i32 0");
+      else if (this.currentFnName === "main") lines.push("  ret i32 0");
+      // The checker rejects any other non-void fn that can fall off, so this end is
+      // only reached past a `while true` with no break: a block that needs a
+      // terminator and can never execute.
+      else lines.push("  unreachable");
     }
 
     // hoist body allocas to entry block
@@ -6198,7 +6202,7 @@ export class Codegen {
     }
     if (!hasTerminator) {
       if (retTy === "void") closureBody.push("  ret void");
-      else closureBody.push(`  ret ${retTy} 0`);
+      else closureBody.push("  unreachable"); // checker-rejected unless past a `while true`
     }
     if (this.entryAllocas.length > 0) {
       closureBody.splice(closureAllocaInsertPoint, 0, ...this.entryAllocas);

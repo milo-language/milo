@@ -1,0 +1,12 @@
+// A non-void fn whose body can finish without a `return`. Codegen used to hand an
+// `i32` fn an implicit 0 and let every other type reach clang as a block with no
+// terminator.
+// @error: 'sign' returns i64 but can reach the end of its body without a 'return'
+fn sign(n: i64): i64 {
+    if n < 0 { return -1 }
+}
+
+fn main(): i32 {
+    print(sign(1))
+    return 0
+}
