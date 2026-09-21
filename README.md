@@ -76,6 +76,15 @@ The ownership checker's questions are settled inside one function. It never has 
 
 Same memory-safety rows as Rust wherever both languages can say the program: use-after-move, use-after-free of owned data, no null. The rows Rust wins are one trade made twice: a view tied to its buffer is a compile error there and a named runtime check or a copy here. Nothing falls back to `unsafe` because the ownership model said no.
 
+## Why not Rust minus lifetimes
+
+Because the lifetime annotations are the small visible part. What Milo removes is first-class references in types, and Rust's std is built on them (`&str`, `Option<&V>`, `&[T]`, iterators over a borrowed collection). Take those out and the std has to be rewritten anyway. So Milo is a different language that borrows Rust's good ideas, and differs on purpose where the bet allows something simpler:
+
+- **A different surface.** `let` / `var`, auto-borrow at the call site (`f(x)` for `&T`, `f(&mut x)` only when it mutates), TypeScript-shaped imports (`from "std/fs" import { readFile }`), and `?` / `!` / `??` on `Result` and `Option`.
+- **Contracts in the language.** `requires` / `ensures` on the signature, checked by `milo prove`, no external tool.
+- **No `Send` / `Sync` ritual.** A value that cannot hold a borrow can move to another task as is. The compiler checks the two doors OS threads start at, and that is the whole concurrency type system.
+- **Arenas and handles are the graph answer, in std.** `Arena<T>` plus `Handle<T>`, generational and checked at runtime, not a crate you choose between five of.
+
 ## What this is for
 
 Programs that already look like "own a buffer, walk it with an index, mutate in place, return owned values":
