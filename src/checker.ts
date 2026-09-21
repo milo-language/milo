@@ -6382,8 +6382,8 @@ export class TypeChecker {
         for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBefore.add(vi);
         const exprType = this.checkExpr(stmt.expr);
         for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed && !frozenBefore.has(vi)) this.unfreeze(vi);
-        let warned = false;
-        if (exprType.tag === "enum") {
+        let warned = this.valueTails.has(stmt.expr);
+        if (!warned && exprType.tag === "enum") {
           const enumInfo = this.enums.get(exprType.name);
           const base = enumInfo?.baseName;
           if (base === "Result" || base === "Option") {
@@ -8127,6 +8127,8 @@ export class TypeChecker {
     if (expr.kind === "UnaryOp" && expr.op === "*") return `*${this.describeExpr(expr.operand)}`;
     if (expr.kind === "FieldAccess") return `${this.describeExpr(expr.object)}.${expr.field}`;
     if (expr.kind === "IndexAccess") return `${this.describeExpr(expr.object)}[...]`;
+    if (expr.kind === "Unwrap") return `${this.describeExpr(expr.operand)}!`;
+    if (expr.kind === "Propagate") return `${this.describeExpr(expr.operand)}?`;
     // `v[a..b]` parses as a `slice` call.
     if (expr.kind === "MethodCall") return expr.method === "slice" ? `${this.describeExpr(expr.object)}[..]` : `${this.describeExpr(expr.object)}.${expr.method}(...)`;
     return "<expr>";
@@ -11468,7 +11470,7 @@ export class TypeChecker {
     const preMoves = this.snapshotMoveState();
 
     this.pushScope();
-    for (const s of expr.thenBody) this.checkStmt(s, fnRetType);
+    this.checkValueBody(expr.thenBody, fnRetType);
     this.popScope();
     const thenType = this.blockExprType(expr.thenBody);
 
@@ -11476,7 +11478,7 @@ export class TypeChecker {
     this.restoreMoveState(preMoves);
 
     this.pushScope();
-    for (const s of expr.elseBody) this.checkStmt(s, fnRetType);
+    this.checkValueBody(expr.elseBody, fnRetType);
     this.popScope();
     const elseType = this.blockExprType(expr.elseBody);
 
@@ -11946,7 +11948,8 @@ export class TypeChecker {
         }
         this.restoreMoveState(preMoves);
         this.pushScope();
-        for (const s of arm.body) this.checkStmt(s, fnRetType);
+        if (isStmt) for (const s of arm.body) this.checkStmt(s, fnRetType);
+        else this.checkValueBody(arm.body, fnRetType);
         armTypes.push(this.blockExprType(arm.body));
         this.popScope();
         // An arm that always exits never falls through to the code after the match,
@@ -12048,7 +12051,8 @@ export class TypeChecker {
             if (info) { patternMovedInfo = info; this.movedByPattern.add(info); }
           }
         }
-        for (const s of arm.body) this.checkStmt(s, fnRetType);
+        if (isStmt) for (const s of arm.body) this.checkStmt(s, fnRetType);
+        else this.checkValueBody(arm.body, fnRetType);
         if (patternMovedInfo) this.movedByPattern.delete(patternMovedInfo);
         armTypes.push(this.blockExprType(arm.body));
         this.popScope();
@@ -12098,6 +12102,18 @@ export class TypeChecker {
     if (body.length === 0) return null;
     const last = body[body.length - 1];
     return last.kind === "ExprStmt" ? last.expr : null;
+  }
+
+  // The tail of an `if`/`match` arm in value position is the arm's value, not a
+  // discarded statement, so `let next = if fwd { n.next } else { n.prev }` must not
+  // warn "unused Option value" on each arm (it did, and pushed people back to the
+  // statement form). Registered before the body is checked; ExprStmt consults it.
+  private valueTails = new Set<Expr>();
+
+  private checkValueBody(body: Stmt[], fnRetType: TypeKind): void {
+    const tail = this.tailExprOf(body);
+    if (tail) this.valueTails.add(tail);
+    for (const s of body) this.checkStmt(s, fnRetType);
   }
 
   // The integer-literal leaf expressions an expression's value is built from —

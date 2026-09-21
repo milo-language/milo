@@ -124,3 +124,28 @@ fn main(): i32 {
   const lax = run("iso26262-a");
   expect(lax.stdout + lax.stderr).not.toContain("unused Option value");
 });
+
+test("an Option-valued arm tail of an if/match expression is the value, not a discard", () => {
+  const r = check(`fn main(): i32 {
+  let a: Option<i64> = Option.Some(1)
+  let b: Option<i64> = Option.None
+  let c = if a.isSome() { a } else { b }
+  let d = match c { Option.Some(_) => a  Option.None => b }
+  var e: Option<i64> = Option.None
+  e = if d.isSome() { d } else { a }
+  return e! as i32
+}`);
+  expect(r.code).toBe(0);
+  expect(unusedResultCount(r.out)).toBe(0);
+});
+
+test("the same tails in statement position still warn", () => {
+  const r = check(`fn pick(x: bool): Option<i64> { return if x { Option.Some(1) } else { Option.None } }
+fn main(): i32 {
+  if true { pick(true) } else { pick(false) }
+  match 1 { 1 => { pick(true) }  _ => { pick(false) } }
+  return 0
+}`);
+  expect(r.code).toBe(1);
+  expect(unusedResultCount(r.out)).toBe(4);
+});
