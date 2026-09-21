@@ -181,6 +181,14 @@ class LowerCtx {
     for (const fn of program.functions) {
       if (fn.attributes?.some(a => a.name === "externalLinkage")) exported.add(fn.name);
     }
+    // Symbols: `pub` is the boundary the header already uses. A non-`pub` entry-file fn
+    // used to get external linkage too, so a C caller could hand-declare and link a
+    // private helper.
+    const symbolExports = new Set<string>();
+    for (const fn of program.functions) {
+      if (fn.name === "main" || fn.attributes?.some(a => a.name === "externalLinkage")) symbolExports.add(fn.name);
+      else if (fn.isPub && program.userFnNames?.has(fn.name)) symbolExports.add(fn.name);
+    }
     const linkLibs: string[] = [];
     for (const fn of program.functions) {
       if (!fn.attributes) continue;
@@ -191,7 +199,7 @@ class LowerCtx {
         }
       }
     }
-    return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables, userFnNames: exported, opaqueTypes, cSigs, cValues, linkLibs, nonConstGlobals: this.c.nonConstGlobals };
+    return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables, userFnNames: exported, exportedFnNames: symbolExports, opaqueTypes, cSigs, cValues, linkLibs, nonConstGlobals: this.c.nonConstGlobals };
   }
 
   private lowerParam(p: import("./ast").Param, sig: import("./checker").FnSig | undefined, i: number) {

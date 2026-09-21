@@ -35,6 +35,14 @@ describe("header generation", () => {
     expect(header).not.toContain("privateBump");
   });
 
+  // The symbol table follows the header: a C caller could hand-declare `privateBump` and
+  // link it while the archive still gave every entry-file fn external linkage.
+  test("non-pub functions are not exported symbols either", () => {
+    const syms = execSync(`nm ${libPath}`, { encoding: "utf-8" });
+    expect(syms).toMatch(/ T _?add\b/);
+    expect(syms).not.toMatch(/ T _?privateBump\b/);
+  });
+
   test("opaque extern type → forward typedef only", () => {
     expect(header).toContain("typedef struct Handle Handle;");
     expect(header).not.toContain("struct Handle {");

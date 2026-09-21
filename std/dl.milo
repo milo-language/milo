@@ -2,7 +2,9 @@
 //
 // Loading a library is only half of it: a plugin usually needs to call back into
 // the host, which requires the host's own symbols to be visible to the loaded
-// object. On macOS link the host with `-Wl,-export_dynamic` for that; on Linux the
+// object. A fn the library resolves against you must be `pub` (or carry
+// `@externalLinkage`): only those are external symbols, a private fn is `internal`.
+// Then, on macOS link the host with `-Wl,-export_dynamic`; on Linux the
 // compiler already passes -rdynamic on every link, and `-Wl,-export_dynamic` there
 // is actively harmful — GNU ld reads it as `-e xport_dynamic` and quietly replaces
 // the entry symbol. Without the export, dlOpen fails with an unresolved-symbol

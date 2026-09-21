@@ -55,8 +55,8 @@ describe("std/dl", () => {
 from "std/io" import { writeStdout }
 from "std/dl" import { dlOpen }
 
-// the library resolves this against us at load time
-fn hostValue(): i32 {
+// the library resolves this against us at load time: pub, so it is an exported symbol
+pub fn hostValue(): i32 {
     return 41
 }
 

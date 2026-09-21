@@ -17,6 +17,13 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 [the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
 marker is added here each time a version is cut.
 
+## Only `pub` fns are exported symbols from `build-lib` / `emit-obj` (2026-09-21)
+
+The header has declared `pub` fns only since the visibility work; the object still gave
+every entry-file fn external linkage, so C code could hand-declare and link a private
+helper. Linkage now follows the header: a non-`pub` fn is `internal`. A C caller that
+linked one gets an undefined symbol; mark the fn `pub`.
+
 ## The OpenSSL binding moved from `std/os` to `std/openssl` (2026-09-21)
 
 `std/os` is the libc module every program reaches for `malloc`; it also declared

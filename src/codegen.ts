@@ -228,6 +228,7 @@ export class Codegen {
   private hoistedLens: Map<string, { len: string; decl?: LocalInfo }>[] = [];
   private globalVars = new Map<string, { type: string; typeKind: TypeKind }>();
   private userFnNames = new Set<string>();
+  private exportedFnNames = new Set<string>();
   // Mangled symbol -> as-written name (src/mangle.ts). Codegen emits two things a human
   // reads: the `Name { .. }` text behind `print`/`$"…"`, and DWARF names.
   private displayNames?: Map<string, string>;
@@ -1706,6 +1707,7 @@ export class Codegen {
     const externs = module.functions.filter(f => f.isExtern);
     const functions = module.functions.filter(f => !f.isExtern);
     if (module.userFnNames) this.userFnNames = module.userFnNames;
+    this.exportedFnNames = module.exportedFnNames ?? module.userFnNames ?? new Set();
     this.displayNames = module.displayNames;
 
     // sret-lower internal fns returning big aggregates (after userFnNames is
@@ -2120,7 +2122,7 @@ export class Codegen {
       // Non-root fns are internal (like globals): each object carries its own copy.
       // linkonce_odr let the linker merge same-named fns across separately-compiled
       // objects and silently pick one body when they differed (issue #5).
-      const linkage = this.userFnNames.has(fn.name) ? "" : "internal ";
+      const linkage = this.exportedFnNames.has(fn.name) ? "" : "internal ";
       // `.` can't appear in a Milo identifier, so %__sret.out never collides
       const allParams = isSret ? (params ? `ptr %__sret.out, ${params}` : "ptr %__sret.out") : params;
       lines.push(`define ${linkage}${ret} @${fn.name}(${allParams})${dbgAttr} {`);

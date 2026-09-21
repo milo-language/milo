@@ -119,8 +119,9 @@ fn main(): void {
 test("separately compiled objects keep their own same-named helper bodies", () => {
   write("obj_helper_a.milo", `pub fn tag(): i64 { return 111 }\n`);
   write("obj_helper_b.milo", `pub fn tag(): i64 { return 222 }\n`);
-  const libA = write("obj_lib_a.milo", `from "obj_helper_a" import { tag }\nfn fromA(): i64 { return tag() }\nfn main(): void {}\n`);
-  const libB = write("obj_lib_b.milo", `from "obj_helper_b" import { tag }\nfn fromB(): i64 { return tag() }\nfn main(): void {}\n`);
+  // `pub`: only an exported fn is a linkable symbol (the header's rule, now the object's).
+  const libA = write("obj_lib_a.milo", `from "obj_helper_a" import { tag }\npub fn fromA(): i64 { return tag() }\nfn main(): void {}\n`);
+  const libB = write("obj_lib_b.milo", `from "obj_helper_b" import { tag }\npub fn fromB(): i64 { return tag() }\nfn main(): void {}\n`);
   const objA = join(DIR, "obj_a.o");
   const objB = join(DIR, "obj_b.o");
   let r = milo(`emit-obj ${libA} --no-entry -o ${objA}`);

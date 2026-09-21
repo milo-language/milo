@@ -3360,9 +3360,9 @@ milo build-lib mathlib.milo -o libmathlib.a   # also writes libmathlib.h
 milo emit-obj mathlib.milo --emit-header       # writes mathlib.h next to mathlib.o
 ```
 
-`pub` is the API boundary: only `pub` functions are declared, so a non-`pub` helper stays
-out of the published surface. (The object still carries an external symbol for it — the
-header is the contract, not yet the linkage; see `docs/backlog.md`.)
+`pub` is the API boundary: only `pub` functions are declared in the header, and only
+they (plus `main` and any `@externalLinkage` fn) are external symbols in the object. A
+non-`pub` helper is `internal` and cannot be hand-declared and linked from C.
 
 Alongside them the header declares the extern structs (opaque `extern type`
 declarations become forward `typedef struct X X;`). Anything without a stable C

@@ -250,6 +250,10 @@ export interface HIRModule {
   dropImpls: Set<string>;
   itables: { concreteType: string; ifaceName: string; methods: string[] }[];
   userFnNames?: Set<string>;
+  // The entry file's `pub` fns plus `main` and every `@externalLinkage` fn: the symbols
+  // an object exports. `userFnNames` is every entry-file fn and keeps its other jobs
+  // (sret lowering, user-code attribution); linkage alone reads this.
+  exportedFnNames?: Set<string>;
   // Mangled symbol -> as-written name for the per-module renaming pass (src/mangle.ts).
   // Codegen needs it because two of its outputs are read by humans, not the linker: the
   // `Name { .. }` text `print` emits for a struct, and the DWARF `name` a debugger shows.
