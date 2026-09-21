@@ -150,6 +150,7 @@
   "printSlice.milo": "noEmit",
   "processPipe.milo": "noEmit",
   "processPipeExecFail.milo": "noEmit",
+  "processWaitGreen.milo": "noEmit",
   "promiseAll.milo": "noEmit",
   "promiseBasic.milo": "noEmit",
   "promiseBlocking.milo": "noEmit",

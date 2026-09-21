@@ -94,12 +94,15 @@ ensures p.liveCount <= p.blockCount
 // Caller must pass a pointer previously returned by poolAlloc.
 fn poolFree(p: &mut Pool, block: i64): void
 requires block >= p.base
+requires block < p.base + p.blockCount * p.blockSize
+requires(block - p.base) % p.blockSize == 0
 requires p.liveCount > 0
 ensures p.liveCount >= 0
 {
     // The contract is dropped at -O2 and this store goes through `block` as an address:
     // a wrong handle would be an arbitrary write. A handle is a program bug, not peer
-    // input, so the check aborts like a bounds check does.
+    // input, so the check aborts like a bounds check does. The asserts restate the
+    // contract so the prover sees them discharged by it.
     assert(block >= p.base && block < p.base + p.blockCount * p.blockSize && (block - p.base) % p.blockSize == 0, "pool: free of a block this pool did not allocate")
     assert(p.liveCount > 0, "pool: free with no live blocks")
     unsafe {
@@ -178,6 +181,10 @@ impl Pool {
     fn free(self: &mut Self, block: i64): void
     requires
     block >= self.base
+    requires
+    block < self.base + self.blockCount * self.blockSize
+    requires
+    (block - self.base) % self.blockSize == 0
     requires
     self.liveCount > 0
     {

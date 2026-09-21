@@ -60,7 +60,7 @@ describe("stdlib site coverage", () => {
   // "_Undocumented._" because the sources carry no doc-comments (ansi 0/25, xxhash 0/2,
   // zstd 0/3), and publishing that would be worse than the gap it fills.
   const UNDOCUMENTED = new Set([
-    "ansi", "dl", "fetch", "https", "os", "png", "smt", "tls", "unix", "ws", "xxhash", "zstd",
+    "ansi", "dl", "fetch", "https", "openssl", "os", "png", "smt", "tls", "unix", "ws", "xxhash", "zstd",
   ]);
 
   const stdModules = readdirSync(join(root, "std"))
