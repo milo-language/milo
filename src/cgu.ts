@@ -196,9 +196,31 @@ const OVERSIZE_GROUP_FACTOR = 1.25;
  * top of a full one (placing loose functions after all groups cost milojs 8% of build time
  * that way: its 579k-line `callBuiltin` stacked onto a 113k-line unit).
  */
-function packFunctions(funcs: Func[], units: number): number[] {
+/**
+ * The previous build's placement, keyed the way `packFunctions` keys its items (a module
+ * key, or a function name for one placed alone). With it, an item keeps its unit across
+ * edits, so the object cache (src/objcache.ts) still hits on every unit the edit did not
+ * touch: size-driven packing alone re-shuffled all 8 units of milojs for a one-line edit.
+ * Ignored, and rebuilt from scratch, when keeping the old placement leaves the slowest
+ * unit more than STICKY_TOLERANCE over what a fresh packing would give.
+ */
+export type Placement = Map<string, number>;
+const STICKY_TOLERANCE = 1.25;
+
+function packFunctions(funcs: Func[], units: number, prev?: Placement, out?: { placement?: Placement }): number[] {
+  const fresh = packItems(funcs, units, undefined);
+  if (!prev || prev.size === 0) { out && (out.placement = fresh.placement); return fresh.home; }
+  const sticky = packItems(funcs, units, prev);
+  const freshMax = Math.max(...fresh.load), stickyMax = Math.max(...sticky.load);
+  const chosen = stickyMax <= freshMax * STICKY_TOLERANCE ? sticky : fresh;
+  if (out) out.placement = chosen.placement;
+  return chosen.home;
+}
+
+function packItems(funcs: Func[], units: number, prev: Placement | undefined): { home: number[]; load: number[]; placement: Placement } {
   const load = new Array<number>(units).fill(0);
   const home = new Array<number>(funcs.length).fill(0);
+  const placement: Placement = new Map();
 
   const groups = new Map<string, number[]>();
   let total = 0;
@@ -210,20 +232,31 @@ function packFunctions(funcs: Func[], units: number): number[] {
   });
   const oversize = Math.ceil(total / units) * OVERSIZE_GROUP_FACTOR;
 
-  const items: { idxs: number[]; lines: number }[] = [];
-  for (const idxs of groups.values()) {
+  const items: { key: string; idxs: number[]; lines: number }[] = [];
+  for (const [key, idxs] of groups) {
     const lines = idxs.reduce((n, i) => n + funcs[i]!.lineCount, 0);
-    if (lines > oversize) for (const i of idxs) items.push({ idxs: [i], lines: funcs[i]!.lineCount });
-    else items.push({ idxs, lines });
+    if (lines > oversize) for (const i of idxs) items.push({ key: funcs[i]!.name, idxs: [i], lines: funcs[i]!.lineCount });
+    else items.push({ key, idxs, lines });
   }
   items.sort((a, b) => b.lines - a.lines);
+  // Items with a remembered unit go there first; the rest fill the least-loaded units in
+  // largest-first order, as before.
+  const place = (it: typeof items[number], u: number) => {
+    for (const idx of it.idxs) home[idx] = u;
+    load[u]! += it.lines;
+    placement.set(it.key, u);
+  };
+  const loose: typeof items = [];
   for (const it of items) {
+    const u = prev?.get(it.key);
+    if (u !== undefined && u >= 0 && u < units) place(it, u); else loose.push(it);
+  }
+  for (const it of loose) {
     let best = 0;
     for (let u = 1; u < units; u++) if (load[u]! < load[best]!) best = u;
-    for (const idx of it.idxs) home[idx] = best;
-    load[best]! += it.lines;
+    place(it, best);
   }
-  return home;
+  return { home, load, placement };
 }
 
 /**
@@ -284,14 +317,14 @@ function externDeclFor(text: string): string | null {
   return `${m[1]}external ${quals} ${type}`;
 }
 
-export type SplitStats = { units: number; promoted: number };
+export type SplitStats = { units: number; promoted: number; placement?: Placement };
 
 /**
  * Split `ir` into `units` self-contained LLVM modules that link to the same program.
  * Returns null when the module cannot be split safely or is too small to be worth it —
  * the caller then compiles the original module unchanged.
  */
-export function splitModule(ir: string, units: number, stats?: { out?: SplitStats }): string[] | null {
+export function splitModule(ir: string, units: number, stats?: { out?: SplitStats }, prev?: Placement): string[] | null {
   if (units < 2) return null;
   const mod = parseModule(ir);
   if (!mod) return null;
@@ -299,7 +332,8 @@ export function splitModule(ir: string, units: number, stats?: { out?: SplitStat
   // the parallelism returns.
   if (mod.funcs.length < units * 4) return null;
 
-  const home = packFunctions(mod.funcs, units);
+  const packed: { placement?: Placement } = {};
+  const home = packFunctions(mod.funcs, units, prev, packed);
   const funcHome = new Map<string, number>();
   mod.funcs.forEach((f, i) => funcHome.set(f.name, home[i]!));
 
@@ -410,6 +444,6 @@ export function splitModule(ir: string, units: number, stats?: { out?: SplitStat
   for (const f of mod.funcs) emitted.add(renamed(f.name));
   if (emitted.size !== mod.funcs.length) return null;
 
-  if (stats) stats.out = { units, promoted: promote.size };
+  if (stats) stats.out = { units, promoted: promote.size, placement: packed.placement };
   return out;
 }

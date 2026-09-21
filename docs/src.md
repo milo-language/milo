@@ -49,6 +49,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/main.ts` | CLI driver: subcommand dispatch for build/run/emit-*/test/fmt/lsp and the rest of the surface described in src/cli-help.ts. |
 | `src/mangle.ts` | Per-package name mangling — see docs/plans/package-manager.md §P0. |
 | `src/must.ts` | Checked map lookup, replacing `map.get(k)!`. |
+| `src/objcache.ts` | Content-hashed object cache: skip clang for any codegen unit whose IR it has already compiled with the same flags. |
 | `src/parser.ts` | Recursive-descent parser: token stream -> AST. |
 | `src/pkg.ts` | milo package-manager data layer: manifest (milo.json), lockfile (milo.lock), dependency source specs, cache-path resolution, and content-addressed tree hashing. |
 | `src/pkgcli.ts` | milo package-manager CLI verbs: init/new/add/remove/install/update/tree/why/ vendor/publish and the `tool` namespace (install/uninstall/list/run). |

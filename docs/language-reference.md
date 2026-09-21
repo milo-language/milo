@@ -458,6 +458,7 @@ pub fn closeThing(p: *Thing): i32 {
 | `jsonStringify(val)` | Serialize a flat struct (scalar fields only) to JSON string |
 | `@embedFile(path)` | Embed file contents as string at compile time (see [Compile-Time File Embedding](#compile-time-file-embedding)) |
 | `@targetOs()` | Compile-time OS string (`"darwin"`/`"linux"`/`"windows"`); folds `if` branches (see [Compile-Time Target OS](#compile-time-target-os)) |
+| `@targetArch()` | Compile-time CPU string (`"aarch64"`/`"x86_64"`/`"arm"`/`"wasm64"`); folds `if` branches the same way |
 
 `replace` and `swap` are the sound way to move a value out of a place you only hold mutably — the move checker forbids a bare `x = someNewValue` from yielding the old `x`, and `x.clone(); x = ...` is a move disguised as a copy. They take the place as a `&mut` argument (`replace(&mut x, v)`), see [references](#references-second-class).
 
@@ -3591,7 +3592,12 @@ Silence it with `--allow=bare-embedfile`, or make it fatal with
 let bucket = if @targetOs() == "windows" { "NUL" } else { "/dev/null" }
 ```
 
-It exists so ordinary code — not just the stdlib's per-OS file split — can branch on
+`@targetArch()` is its CPU counterpart, one of `"aarch64"`, `"x86_64"`, `"arm"`, or
+`"wasm64"`, for the C layouts that differ by architecture on one OS: Linux's
+`epoll_event` is packed to 12 bytes on x86_64 and padded to 16 on aarch64, which is
+what std/event reads with it.
+
+They exist so ordinary code — not just the stdlib's per-OS file split — can branch on
 the target. Both arms of the `if` are type-checked, but the compiler evaluates the
 condition and keeps only the taken arm: the other is never lowered or code-generated.
 That means the dead branch may reference symbols that exist on no other platform (a

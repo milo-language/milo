@@ -209,7 +209,7 @@ fn main(): i32 {
   },
   arena: {
     moveOutOfBorrow: `
-from "std/arena" import { Arena }
+from "std/arena" import { Arena, Handle }
 fn peek(a: &Arena<string>, h: Handle<string>): string { return a.get(h)! }
 fn main(): i32 {
     var a: Arena<string> = Arena<string>.new()

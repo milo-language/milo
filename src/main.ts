@@ -31,6 +31,7 @@ import { PKG_COMMANDS, ensureDepsInstalled } from "./pkgcli";
 import { renderHelp, knownCommandNames } from "./cli-help";
 import { ensureFmtBinary } from "./fmtbin";
 import { splitModule, type SplitStats } from "./cgu";
+import { objCacheEnabled, objCacheKey, objCacheFetch, objCacheStore, placementLoad, placementStore } from "./objcache";
 
 // `--cgus=N` (also MILO_CGUS): how many codegen units to hand clang. Module-level rather
 // than threaded through compileToBinary's parameter list, which is already at its limit —
@@ -109,7 +110,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
     process.exit(1);
   }
 
-  const hir = lower(program, result, sourceDir, target.os);
+  const hir = lower(program, result, sourceDir, target.os, target.arch);
   // Attached here rather than inside `lower`: the map is a resolver fact codegen renders
   // through (print text, DWARF names), not anything lowering computes or reads.
   hir.displayNames = program.displayNames;
@@ -454,7 +455,9 @@ function clangMajor(versionOutput: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-type Toolchain = { kind: "clang"; path: string } | { kind: "llc+cc" };
+// `id` is the object cache's view of the compiler: its path and version line, so an
+// upgraded clang never serves objects built by the old one.
+type Toolchain = { kind: "clang"; path: string; id: string } | { kind: "llc+cc" };
 let cachedToolchain: Toolchain | null = null;
 function detectToolchain(): Toolchain {
   if (cachedToolchain) return cachedToolchain;
@@ -469,7 +472,7 @@ function detectToolchain(): Toolchain {
         tooOld ??= { path: cc, major };
         continue;
       }
-      cachedToolchain = { kind: "clang", path: cc };
+      cachedToolchain = { kind: "clang", path: cc, id: `${cc}\n${out.split("\n")[0] ?? ""}` };
       return cachedToolchain;
     } catch {}
   }
@@ -710,7 +713,21 @@ function windowsIncludeFlags(): string {
  * but can never turn a buildable program into a failed build, and a genuine error in the
  * user's IR still gets reported by the single-module path with its normal diagnostics.
  */
-function compileSplit(cc: string, llFile: string, ccFlags: string, linkFlags: string, optFlag: string, emitDebug: boolean): boolean {
+// Compile one unit to an object through the cache: a hit copies the object in, a miss
+// runs `compileCmd` and stores the result. Returns the shell command to run, or null on
+// a hit. Reporting is per unit so MILO_VERBOSE shows exactly what the cache bought.
+function objCompileCommand(ccId: string, ccFlags: string, ir: string, ll: string, obj: string, compileCmd: string, pending: { key: string; obj: string }[]): string | null {
+  if (!objCacheEnabled()) return compileCmd;
+  const key = objCacheKey(ir, ccId, ccFlags);
+  if (objCacheFetch(key, obj)) {
+    if (process.env.MILO_VERBOSE === "1") console.error(`objcache: hit ${key.slice(0, 12)} -> ${obj}`);
+    return null;
+  }
+  pending.push({ key, obj });
+  return compileCmd;
+}
+
+function compileSplit(cc: string, ccId: string, llFile: string, ccFlags: string, linkFlags: string, optFlag: string, emitDebug: boolean, programId: string): boolean {
   const ir = readFileSync(llFile, "utf-8");
   let irLines = 1;
   for (let i = 0; i < ir.length; i++) if (ir.charCodeAt(i) === 10) irLines++;
@@ -718,8 +735,12 @@ function compileSplit(cc: string, llFile: string, ccFlags: string, linkFlags: st
   if (units < 2) return false;
 
   const stats: { out?: SplitStats } = {};
-  const mods = splitModule(ir, units, stats);
+  // The previous build's unit placement keeps unchanged units byte-identical, which is
+  // what lets the object cache serve them (a size-driven repack moved everything).
+  const prev = objCacheEnabled() ? placementLoad(programId, units) : null;
+  const mods = splitModule(ir, units, stats, prev ?? undefined);
   if (!mods) return false;
+  if (objCacheEnabled() && stats.out?.placement) placementStore(programId, units, stats.out.placement);
 
   const base = llFile.replace(/\.ll$/, "");
   const lls = mods.map((_, i) => `${base}.cgu${i}.ll`);
@@ -729,13 +750,16 @@ function compileSplit(cc: string, llFile: string, ccFlags: string, linkFlags: st
     // One `sh` that backgrounds every unit, then waits on each PID individually: bare
     // `wait` reports only the last job's status, so a failed unit would go unnoticed and
     // resurface as a confusing undefined-symbol error at link time.
-    const jobs = lls.map((f, i) =>
-      `${cc} ${ccFlags} -c ${f} -o ${objs[i]} -Wno-override-module & pids="$pids $!"`).join("\n");
+    const pending: { key: string; obj: string }[] = [];
+    const jobs = lls.map((f, i) => objCompileCommand(ccId, ccFlags, mods[i]!, f, objs[i]!,
+      `${cc} ${ccFlags} -c ${f} -o ${objs[i]} -Wno-override-module & pids="$pids $!"`, pending))
+      .filter((j): j is string => j !== null).join("\n");
     const script = `pids=""\n${jobs}\nfor p in $pids; do wait $p || exit 1; done`;
     if (process.env.MILO_VERBOSE === "1") {
-      console.error(`cgu: ${units} units, ${stats.out?.promoted ?? 0} symbols promoted, ${irLines} IR lines`);
+      console.error(`cgu: ${units} units, ${stats.out?.promoted ?? 0} symbols promoted, ${irLines} IR lines, ${units - pending.length} cached`);
     }
-    execSync(script, { stdio: ["pipe", "pipe", "pipe"] });
+    if (pending.length > 0) execSync(script, { stdio: ["pipe", "pipe", "pipe"] });
+    for (const p of pending) objCacheStore(p.key, p.obj);
     const linkCmd = `${cc} ${ccFlags} ${objs.join(" ")} ${linkFlags}`;
     if (process.env.MILO_VERBOSE === "1") console.error(`link: ${linkCmd}`);
     execSync(linkCmd, { stdio: ["pipe", "pipe", "pipe"] });
@@ -750,7 +774,9 @@ function compileSplit(cc: string, llFile: string, ccFlags: string, linkFlags: st
   }
 }
 
-function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false, emitDebug = false, target?: TargetInfo) {
+// `programId` names the program across builds for the object cache's CGU placement; the
+// source path, since `milo run` links to a fresh temp path every time.
+function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false, emitDebug = false, target?: TargetInfo, programId: string = outFile) {
   const tc = detectToolchain();
   const san = sanitize ? " -fsanitize=address" : "";
   // Empty when the target is the host, so the common path is unchanged.
@@ -790,17 +816,34 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
       }
     } else {
       const linkFlags = `-o ${outFile}${libs}${extra}${mathLink}${linuxLink}`;
-      if (compileSplit(tc.path, llFile, `${tgt}${winSysroot}${opt}${san}`, linkFlags, optFlag, emitDebug)) return;
+      const ccFlags = `${tgt}${winSysroot}${opt}${san}`;
+      if (compileSplit(tc.path, tc.id, llFile, ccFlags, linkFlags, optFlag, emitDebug, programId)) return;
       // -lm: numToStr and other std math call floor/pow from libm. macOS folds
       // libm into libSystem so clang links it implicitly; Linux does not, so
       // without this the link fails with `undefined reference to 'floor'` for
       // any program that reaches those paths (the llc+cc branch already passes
       // it). Harmless on macOS where libm is always present.
-      const cmd = `${tc.path}${tgt}${winSysroot}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}${mathLink}${linuxLink}`;
-      // MILO_VERBOSE=1 surfaces the otherwise-invisible link command — the only
-      // place @link/detected/`--` flags actually land — so a link failure is diagnosable.
-      if (process.env.MILO_VERBOSE === "1") console.error(`link: ${cmd}`);
-      execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] });
+      //
+      // Object first, then link, so an unchanged program (a fixture on the suite's
+      // next run, `milo run` of the same file) takes its object from the cache and
+      // skips clang; the link of one object is milliseconds.
+      const obj = `${outFile}.o`;
+      const pending: { key: string; obj: string }[] = [];
+      try {
+        const compile = objCompileCommand(tc.id, ccFlags, readFileSync(llFile, "utf-8"), llFile, obj,
+          `${tc.path}${ccFlags} -c ${llFile} -o ${obj} -Wno-override-module`, pending);
+        if (compile !== null) {
+          execSync(compile, { stdio: ["pipe", "pipe", "pipe"] });
+          for (const p of pending) objCacheStore(p.key, p.obj);
+        }
+        const cmd = `${tc.path}${ccFlags} ${obj} -o ${outFile}${libs}${extra}${mathLink}${linuxLink}`;
+        // MILO_VERBOSE=1 surfaces the otherwise-invisible link command — the only
+        // place @link/detected/`--` flags actually land — so a link failure is diagnosable.
+        if (process.env.MILO_VERBOSE === "1") console.error(`link: ${cmd}`);
+        execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] });
+      } finally {
+        try { unlinkSync(obj); } catch {}
+      }
     }
   } else {
     if (sanitize) {
@@ -1149,7 +1192,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
     } else {
       const libs = detectLibs(ir, target, staticDeps) + declaredLibSpec(linkLibs, target, staticDeps);
       const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
-      linkIR(tmpLl, out, optFlag, libs, extra, sanitize, emitDebug, target);
+      linkIR(tmpLl, out, optFlag, libs, extra, sanitize, emitDebug, target, resolve(sourcePath));
     }
   } catch (e: any) {
     console.error(`error[link]: compilation failed:\n${e.stderr?.toString() ?? e.message}`);
@@ -1183,7 +1226,7 @@ function compileSourceToBinary(source: string, sourcePath: string, target: Targe
   try {
     writeFileSync(tmpLl, ir);
     const libs = detectLibs(ir, target) + declaredLibSpec(linkLibs, target, false);
-    linkIR(tmpLl, out, optFlag, libs, "", false, false, target);
+    linkIR(tmpLl, out, optFlag, libs, "", false, false, target, resolve(sourcePath));
   } catch (e: any) {
     throw new Error(`compilation failed:\n${e.stderr?.toString() ?? e.message}`);
   } finally {

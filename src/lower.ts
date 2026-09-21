@@ -12,11 +12,12 @@ import { readFileSync, existsSync, statSync } from "fs";
 import { resolve, dirname } from "path";
 import { must } from "./must";
 
-export function lower(program: Program, checked: CheckResult, sourceDir?: string, targetOs?: string): HIRModule {
-  // Default to the host OS so callers that don't thread a target (none today) still
-  // resolve @targetOs() to something real rather than a placeholder.
+export function lower(program: Program, checked: CheckResult, sourceDir?: string, targetOs?: string, targetArch?: string): HIRModule {
+  // Default to the host so callers that don't thread a target still resolve
+  // @targetOs() / @targetArch() to something real rather than a placeholder.
   const os = targetOs ?? (process.platform === "win32" ? "windows" : process.platform === "linux" ? "linux" : "darwin");
-  const ctx = new LowerCtx(checked, sourceDir ?? process.cwd(), os);
+  const arch = targetArch ?? (process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch);
+  const ctx = new LowerCtx(checked, sourceDir ?? process.cwd(), os, arch);
   return ctx.lowerProgram(program);
 }
 
@@ -25,7 +26,7 @@ class LowerCtx {
   // Non-null only while lowering one function's contracts: collects the `old(e)` snapshots
   // that clause references. Outside that window an `old(...)` call is an ordinary call.
   private oldSlots: { name: string; value: HIRExpr }[] | null = null;
-  constructor(private c: CheckResult, private sourceDir: string, private targetOs: string) {}
+  constructor(private c: CheckResult, private sourceDir: string, private targetOs: string, private targetArch: string) {}
 
   // Evaluate a lowered condition to a compile-time boolean when it rests entirely on
   // literals (the @targetOs() case: StringLit == StringLit, plus !/&&/|| over those).
@@ -792,6 +793,10 @@ class LowerCtx {
           // code (a Windows-only extern, an @embedFile of a per-OS asset) in the dead
           // branch is never lowered or codegen'd, while both arms still type-checked.
           return { kind: "StringLit", value: this.targetOs, type: { tag: "string" as const }, span: expr.span };
+        }
+        if (expr.func === "targetArch") {
+          // Same folding as @targetOs, for the architecture ("aarch64", "x86_64", ...).
+          return { kind: "StringLit", value: this.targetArch, type: { tag: "string" as const }, span: expr.span };
         }
         if (expr.func === "jsonStringify") {
           const argType = this.typeOf(expr.args[0]) ?? { tag: "unknown" as const };

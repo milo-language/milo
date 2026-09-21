@@ -6693,6 +6693,9 @@ export class TypeChecker {
           // `while true` leaves only through a `break` aimed at it (or a return).
           if (s.cond.kind === "BoolLit" && s.cond.value && !this.bodyBreaksOut(s.body)) return true;
           break;
+        default:
+          // let/var/assign/expr/for-in/let-else: control always continues past them.
+          break;
       }
     }
     return false;
@@ -8729,6 +8732,18 @@ export class TypeChecker {
           sp, `the '@' marks it as compiler magic, not a runtime call`, "targetOs".length);
       }
       if (expr.args.length !== 0) { this.error(`targetOs() takes no arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+      return this.setType(expr, { tag: "string" });
+    }
+    if (expr.func === "targetArch") {
+      // The CPU half of @targetOs ("aarch64"/"x86_64"/"arm"/"wasm64"), for a C struct
+      // whose layout differs by architecture on one OS: Linux's epoll_event is packed
+      // on x86_64 and padded to 16 bytes on aarch64.
+      if (!expr.sigil) {
+        this.warn("bare-targetos",
+          `'targetArch' is a compile-time builtin — write '@targetArch()'`,
+          sp, `the '@' marks it as compiler magic, not a runtime call`, "targetArch".length);
+      }
+      if (expr.args.length !== 0) { this.error(`targetArch() takes no arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
       return this.setType(expr, { tag: "string" });
     }
     if (expr.func === "jsonStringify") {
