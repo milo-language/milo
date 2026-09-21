@@ -825,9 +825,58 @@ export class Parser {
       // trailing (or same-line separating, or empty) ';' is a no-op. Tolerated at
       // boundaries only; a ';' inside an expression still errors in parseExpr.
       if (this.match(TokenKind.Semicolon)) continue;
+      // A destructuring `let { a, b } = e` is several bindings; see parseDestructure.
+      if ((this.at(TokenKind.Let) || this.at(TokenKind.Var)) && this.tokens[this.pos + 1]?.kind === TokenKind.LBrace) {
+        stmts.push(...this.parseDestructure());
+        continue;
+      }
       stmts.push(this.parseStmt());
     }
     return stmts;
+  }
+
+  // `let { a, b: y } = e` / `var { … } = e`: bind fields of a struct value by name.
+  // Desugared here, not a new statement kind: `let a = <place>.a` when the value is a
+  // place (a partial move that leaves the other fields usable, exactly as writing it by
+  // hand does), else the value goes into a hidden local first and each binding reads a
+  // field of it, so the checker's move, borrow, Copy and Drop rules apply unchanged
+  // (a field of a `Drop` struct cannot be moved out, a non-Copy field of a `&S` is a
+  // move out of a borrow). The hidden local's unlisted fields drop with the block.
+  private destructureCount = 0;
+  private parseDestructure(): Stmt[] {
+    const kw = this.advance();
+    const mutable = kw.kind === TokenKind.Var;
+    const s = this.span(kw);
+    this.expect(TokenKind.LBrace);
+    const fields: { field: string; name: string; span: Span }[] = [];
+    while (!this.at(TokenKind.RBrace)) {
+      const fieldTok = this.expect(TokenKind.Ident);
+      let name = fieldTok.value;
+      if (this.match(TokenKind.Colon)) name = this.expect(TokenKind.Ident).value;
+      fields.push({ field: fieldTok.value, name, span: this.span(fieldTok) });
+      if (!this.at(TokenKind.RBrace)) this.expect(TokenKind.Comma);
+    }
+    this.expect(TokenKind.RBrace);
+    if (fields.length === 0) this.error(`'${kw.value} { }' binds nothing — name the fields to take`, kw);
+    if (this.at(TokenKind.Colon)) this.error(`a destructuring binding takes no type annotation — the type is the value's`, this.peek());
+    this.expect(TokenKind.Eq);
+    const value = this.parseExpr();
+    const out: Stmt[] = [];
+    let source: Expr;
+    if (value.kind === "Ident" || value.kind === "FieldAccess" || value.kind === "IndexAccess") {
+      source = value;
+    } else {
+      const tmp = `_destructure${this.destructureCount++}`;
+      out.push({ kind: "LetDecl", name: tmp, type: null, value, span: s });
+      source = { kind: "Ident", name: tmp, span: s };
+    }
+    for (const f of fields) {
+      const read: Expr = { kind: "FieldAccess", object: source, field: f.field, span: f.span };
+      out.push(mutable
+        ? { kind: "VarDecl", name: f.name, type: null, value: read, span: f.span }
+        : { kind: "LetDecl", name: f.name, type: null, value: read, span: f.span });
+    }
+    return out;
   }
 
   private parseStmt(): Stmt {

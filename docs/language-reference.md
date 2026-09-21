@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-21 (unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-21 (struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -74,6 +74,33 @@ let _ = mightFail()    // `_` discards a result; it may be repeated in one scope
 
 Under the hood, `let` maps to an SSA register and `var` maps to a stack allocation.
 This means what you write is what LLVM sees — no hidden costs.
+
+### Destructuring a struct
+
+`let { a, b } = e` binds fields of a struct value by name; `{ a: x }` renames, and
+`var { … }` makes the bindings mutable. It is the same as writing `let a = e.a` for each
+field (through a hidden temporary when `e` is not a place), so the ownership rules are
+the ones a field read has: a Copy field is copied, a non-Copy field of a value moves
+out of it, a field of a `&S` cannot be moved out, and a struct with `Drop` cannot be
+taken apart. Fields not named stay where they were: the rest of a place is still
+usable, and the rest of a temporary is dropped at the end of the block.
+
+```milo
+struct Match { start: i64, len: i64, text: string }
+
+fn find(): Match { return Match { start: 3, len: 2, text: "hi" } }
+
+fn main() {
+    let { start, text } = find()
+    print(start)
+    print(text)
+    let m = find()
+    let { len: n } = m
+    print(n + m.start)      // m.start is still there: only len moved (and it is Copy)
+}
+```
+
+There is no tuple type; two values come back as a named struct and are bound this way.
 
 ### No shadowing
 

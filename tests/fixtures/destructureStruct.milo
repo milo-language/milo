@@ -1,0 +1,35 @@
+// `let { a, name } = f()` binds fields by name: a temporary holds the value and each
+// binding reads one field; on a place (`= p`) the fields move out of `p` directly and
+// the rest of `p` stays usable. `{ a: five }` renames. Decided over tuples (roadmap).
+struct P {
+    a: i64, name: string, tag: string
+}
+
+fn f(): P {
+    return P {
+        a: 1, name: "n", tag: "t"
+    }
+}
+
+fn main(): i32 {
+    let { a, name } = f()
+    print(a)
+    print(name)
+    let p = P {
+        a: 5, name: "x", tag: "y"
+    }
+    let { a: five, tag } = p
+    print(five)
+    print(tag)
+    print(p.name)
+    var { a: n } = f()
+    n = n + 41
+    print(n)
+    return 0
+}
+// @expect: 1
+// @expect: n
+// @expect: 5
+// @expect: y
+// @expect: x
+// @expect: 42

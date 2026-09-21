@@ -8070,7 +8070,9 @@ export class TypeChecker {
   }
 
   private describeExpr(expr: Expr): string {
-    if (expr.kind === "Ident") return expr.name;
+    // The hidden local a destructuring `let { a } = f()` reads from (parser.ts
+    // parseDestructure); nobody wrote its name, so a diagnostic shows the pattern.
+    if (expr.kind === "Ident") return expr.name.startsWith("_destructure") ? "{ … }" : expr.name;
     if (expr.kind === "IntLit") return expr.value.toString();
     if (expr.kind === "UnaryOp" && expr.op === "*") return `*${this.describeExpr(expr.operand)}`;
     if (expr.kind === "FieldAccess") return `${this.describeExpr(expr.object)}.${expr.field}`;

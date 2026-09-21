@@ -978,6 +978,12 @@ pub fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     if tk == TokKind.LBrace {
         return true
     }
+    // Space inside a destructuring pattern: `{ a, b }`. Only the pattern keeps a
+    // token on the `{` line or before the `}`; a block's braces always sit on
+    // line ends, so this never reaches block contents.
+    if pk == TokKind.LBrace || tk == TokKind.RBrace {
+        return true
+    }
     // Space after ) unless tight punctuation
     if pk == TokKind.RParen && tk != TokKind.Comma && tk != TokKind.RParen &&
     tk != TokKind.Dot && tk != TokKind.Bang && tk != TokKind.Question {
@@ -1037,6 +1043,9 @@ pub fn formatSource(src: string): string {
     var parenDepth: i64 = 0
     var parenStack: Vec<i64> = Vec.new()
     var bracketStack: Vec<i64> = Vec.new()
+    // Inside the `{ a, b: y }` of a destructuring `let`/`var`: those braces are a
+    // pattern, not a block, so they open no indent level and force no newline.
+    var inPattern: bool = false
     // Kind of the last emitted real token (skips newlines/comments/dropped ';'),
     // for detecting a statement boundary against the current token.
     var prevKind: TokKind = TokKind.Eof
@@ -1121,7 +1130,9 @@ pub fn formatSource(src: string): string {
         pubStartsDeclKw(tok.text)
 
         // } decreases indent
-        if tok.kind == TokKind.RBrace {
+        if tok.kind == TokKind.RBrace && inPattern {
+            inPattern = false
+        } else if tok.kind == TokKind.RBrace {
             if depth > 0 {
                 depth = depth - 1
             }
@@ -1276,7 +1287,10 @@ pub fn formatSource(src: string): string {
         }
 
         // { increases indent and forces newline
-        if tok.kind == TokKind.LBrace {
+        if tok.kind == TokKind.LBrace && i > 0 && tokens[i - 1].kind == TokKind.Keyword &&
+        (tokens[i - 1].text == "let" || tokens[i - 1].text == "var") {
+            inPattern = true
+        } else if tok.kind == TokKind.LBrace {
             depth = depth + 1
             // The body is a fresh statement context: save the enclosing paren/
             // bracket nesting and reset, so reflow inside this block is independent
@@ -1313,6 +1327,11 @@ pub fn formatSource(src: string): string {
             }
             if nextKind == TokKind.Keyword && tokens[j].text == "else" {
                 out = out + " "
+                atLineStart = false
+            } else if nextKind == TokKind.Eq {
+                // `let { a, b } = e`: the pattern's `}` continues the statement (the
+                // pattern case above left atLineStart alone; this keeps `}` before an
+                // `=` on the line even when a source newline sits between them).
                 atLineStart = false
             } else if nextKind == TokKind.Comment && tokens[j].line == tok.line {
                 // `} // note` — leave the line open so the comment branch

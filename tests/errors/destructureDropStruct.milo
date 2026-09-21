@@ -1,0 +1,11 @@
+// Destructuring takes fields out by value, so it follows the move rules: a struct that
+// implements Drop cannot be taken apart, by pattern any more than by hand.
+// @error: cannot move '{ … }.name' out of 'R', which implements Drop
+struct R { fd: i32, name: string }
+impl Drop for R { fn drop(self: &mut Self): void { print("close") } }
+fn f(): R { return R { fd: 1, name: "x" } }
+fn main(): i32 {
+    let { name } = f()
+    print(name)
+    return 0
+}

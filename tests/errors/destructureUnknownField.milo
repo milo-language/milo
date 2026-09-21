@@ -1,0 +1,7 @@
+// @error: struct 'P' has no field 'nope'
+struct P { a: i64 }
+fn main(): i32 {
+    let { nope } = P { a: 1 }
+    print(nope)
+    return 0
+}

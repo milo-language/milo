@@ -104,8 +104,12 @@ statement   = let_decl | var_decl | return_stmt | if_stmt | while_stmt | for_stm
 (* Two `else` forms: with a pattern it is the enum let-else, and with a bare IDENT it
    unwraps a nullable extern reference (the else block runs when C passed null). Both
    require the else block to diverge. A bare IDENT with a type annotation takes no else. *)
-let_decl    = "let" ( IDENT [ ":" type ] | pattern ) "=" expr [ "else" block ] ;
-var_decl    = "var" IDENT [ ":" type ] "=" expr ;
+let_decl    = "let" ( IDENT [ ":" type ] | pattern | field_bindings ) "=" expr [ "else" block ] ;
+(* `let { a, b: y } = e` binds fields of a struct value by name; `var { … }` makes them
+   mutable. Desugared to field reads of the value (a hidden temporary when the value is
+   not a place), so the move rules are the ones a hand-written `let a = e.a` gets. *)
+field_bindings = "{" IDENT [ ":" IDENT ] { "," IDENT [ ":" IDENT ] } "}" ;
+var_decl    = "var" ( IDENT [ ":" type ] | field_bindings ) "=" expr ;
 return_stmt = "return" [ expr ] ;
 if_stmt     = "if" ( expr | "let" pattern "=" expr ) block [ "else" ( if_stmt | block ) ] ;
 while_stmt  = "while" expr { loop_contract } block ;
