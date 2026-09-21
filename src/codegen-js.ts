@@ -70,6 +70,15 @@ export const JS_RUNTIME_HELPERS: string = [
   `function __gfmt(x, p) { if (x === 0) return Object.is(x, -0) ? '-0' : '0'; const es = x.toExponential(p - 1); const ei = es.indexOf('e'); const e = Number(es.slice(ei + 1)); if (e < -4 || e >= p) { let m = es.slice(0, ei); if (m.indexOf('.') >= 0) m = m.replace(/0+$/, '').replace(/\\.$/, ''); let ea = String(Math.abs(e)); if (ea.length < 2) ea = '0' + ea; return m + 'e' + (e < 0 ? '-' : '+') + ea; } let s = x.toFixed(Math.max(0, p - 1 - e)); if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\\.$/, ''); return s; }`,
   `function __fmtG(x) { if (Number.isNaN(x)) return 'nan'; if (!isFinite(x)) return x > 0 ? 'inf' : '-inf'; let dig = 1, pow = 10; const av = Math.abs(x); while (dig < 17 && av >= pow) { dig++; pow *= 10; } for (let p = dig; p < 17; p++) { const s = __gfmt(x, p); if (Number(s) === x) return s; } return __gfmt(x, 17); }`,
   `function __propagate(r) { if (r.tag !== 0) throw { __milo_prop: r }; return r.data[0]; }`,
+  // `?` with an error conversion: the Err payload goes through f (a wrapping enum
+  // variant, or the prelude Message around a string) before it is thrown back.
+  // An enum value is a plain { tag, data } object, so interface dispatch (which keys the
+  // itable on constructor.name) cannot see its type. Coercing one to an interface gives
+  // it a prototype that answers with the enum's name; a struct is a class instance
+  // already and passes through untouched. Object.keys and JSON are unaffected.
+  `const __enumProtos = {};`,
+  `function __asIface(v, ty) { if (v && typeof v === 'object' && v.constructor === Object) Object.setPrototypeOf(v, __enumProtos[ty] || (__enumProtos[ty] = { constructor: { name: ty } })); return v; }`,
+  `function __propagateMap(r, f) { if (r.tag !== 0) throw { __milo_prop: { tag: r.tag, data: [f(r.data[0])] } }; return r.data[0]; }`,
   // Display formatting to match native: structs as `Name { f: v, … }`, enums as
   // `Variant(a, …)`/`Variant`, strings quoted, floats via %g.
   // Array/Map are checked before the struct fallback: their constructor name is not
@@ -732,6 +741,18 @@ export class CodegenJS {
         // `?`: on Err/None (tag !== 0) throw a sentinel caught at the function
         // boundary (genFunction wraps propagating bodies), which returns the Err/None.
         this.usedPropagate = true;
+        if (expr.boxConversion) {
+          // JS is duck-typed, so the box is the concrete instance itself; only a
+          // string needs the Message wrapper to grow a message() method.
+          const wrap = expr.boxConversion.viaMessage
+            ? `e => new ${expr.boxConversion.fromType}(e)`
+            : `e => __asIface(e, ${JSON.stringify(expr.boxConversion.fromType)})`;
+          return `__propagateMap(${this.genExpr(expr.operand)}, ${wrap})`;
+        }
+        if (expr.fromConversion) {
+          const c = expr.fromConversion;
+          return `__propagateMap(${this.genExpr(expr.operand)}, e => ${c.targetEnumName}.${c.wrapVariant}(e))`;
+        }
         return `__propagate(${this.genExpr(expr.operand)})`;
       }
       case "DefaultValue": {
@@ -940,8 +961,9 @@ export class CodegenJS {
         return `${this.genExpr(expr.vec)}.reduce(${this.genExpr(expr.callback)}, ${this.genExpr(expr.init)})`;
       case "InterfaceCoerce":
         // JS is duck-typed: an interface value is just the concrete instance. Dispatch
-        // later reads its constructor.name, so no boxing needed.
-        return this.genExpr(expr.value);
+        // later reads its constructor.name, so no boxing needed; an enum instance gets
+        // that name stamped on (see __asIface).
+        return `__asIface(${this.genExpr(expr.value)}, ${JSON.stringify(expr.fromType)})`;
       case "InterfaceMethodCall": {
         // dispatch via the concrete type's itable slot; pass the object as `self`.
         const obj = this.genExpr(expr.object);

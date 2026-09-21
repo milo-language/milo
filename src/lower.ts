@@ -109,7 +109,9 @@ class LowerCtx {
 
     // collect itables for interface coercions
     const itableMap = new Map<string, { concreteType: string; ifaceName: string; methods: string[] }>();
-    for (const [, coercion] of this.c.interfaceCoercions) {
+    // a `?` that boxes its error needs the same itable an explicit coercion would
+    const coercions = [...this.c.interfaceCoercions.values(), ...this.c.propagateBoxings.values()];
+    for (const coercion of coercions) {
       const key = `${coercion.fromType}.${coercion.ifaceName}`;
       if (itableMap.has(key)) continue;
       const iface = this.c.interfaces.get(coercion.ifaceName);
@@ -974,12 +976,14 @@ class LowerCtx {
         const operandType = this.typeOf(expr.operand);
         const fnRetType = this.currentRetType;
         const fromConversion = this.c.propagateConversions.get(expr);
+        const boxConversion = this.c.propagateBoxings.get(expr);
         return {
           kind: "Propagate",
           operand: this.lowerExpr(expr.operand),
           enumName: operandType?.tag === "enum" ? operandType.name : "",
           retType: fnRetType,
           fromConversion,
+          boxConversion,
           type,
           span: expr.span,
         };

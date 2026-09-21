@@ -1,0 +1,74 @@
+// A fn that returns `Result<T, Heap<Error>>` takes any error through `?`: a struct or
+// enum with `message(self: &Self): string` is boxed and coerced to the prelude `Error`
+// interface, and a plain `string` error arrives as a `Message`. The caller reads
+// `.message()` without knowing which callee failed, which is the point: a CLI's main
+// no longer needs one enum per layer to say what went wrong.
+struct NotFound {
+    path: string,
+}
+
+impl NotFound {
+    fn message(self: &Self): string {
+        return "not found: " + self.path
+    }
+}
+
+enum ParseError {
+    Bad(i64),
+}
+
+impl ParseError {
+    fn message(self: &Self): string {
+        match self {
+            ParseError.Bad(line) => {
+                return $"bad input on line {line}"
+            }
+        }
+    }
+}
+
+fn open(path: string): Result<string, NotFound> {
+    if path == "missing" {
+        return Result.Err(NotFound { path: path })
+    }
+    return Result.Ok(path)
+}
+
+fn parse(s: string): Result<i64, ParseError> {
+    if s == "junk" {
+        return Result.Err(ParseError.Bad(7))
+    }
+    return Result.Ok(s.len)
+}
+
+fn check(n: i64): Result<i64, string> {
+    if n > 3 {
+        return Result.Err("too long")
+    }
+    return Result.Ok(n)
+}
+
+fn run(path: string): Result<i64, Heap<Error>> {
+    let text = open(path)?
+    let n = parse(text)?
+    let ok = check(n)?
+    return Result.Ok(ok)
+}
+
+fn main(): i32 {
+    for p in ["abc", "missing", "junk", "toolong"] {
+        match run(p.clone()) {
+            Result.Ok(n) => {
+                print("ok ", n)
+            }
+            Result.Err(e) => {
+                print("error: ", e.message())
+            }
+        }
+    }
+    return 0
+}
+// @expect: ok 3
+// @expect: error: not found: missing
+// @expect: error: bad input on line 7
+// @expect: error: too long

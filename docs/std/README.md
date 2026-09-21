@@ -59,6 +59,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/platform.windows](./platform.windows.md)
 - [std/png](./png.md)
 - [std/pool](./pool.md)
+- [std/prelude](./prelude.md)
 - [std/process](./process.md)
 - [std/process.windows](./process.windows.md)
 - [std/pty.darwin](./pty.darwin.md)

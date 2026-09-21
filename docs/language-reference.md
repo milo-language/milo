@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-21 (charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-21 (Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -1430,6 +1430,59 @@ fn doubleValid(x: i32): Result<i32> {
     return Result.Ok(v * 2)
 }
 ```
+
+### Boxed errors: `Result<T, Heap<Error>>`
+
+The prelude declares one interface for errors:
+
+```milo
+pub interface Error {
+    fn message(self: &Self): string
+}
+```
+
+A fn that returns `Result<T, Heap<Error>>` takes any error through `?`: a struct or
+enum with a `message(self: &Self): string` method is boxed and coerced to `Error` on
+the error path, and a plain `string` error arrives as the prelude's `Message`. The
+caller reads `.message()` without knowing which callee failed, so a CLI's `main` does
+not need one enum per layer to say what went wrong. The concrete type is still behind
+the box; a fn that wants to match on it keeps its own `Result<T, MyError>`.
+
+```milo
+struct NotFound { path: string }
+impl NotFound {
+    fn message(self: &Self): string { return "not found: " + self.path }
+}
+
+fn open(path: string): Result<string, NotFound> {
+    if path == "missing" { return Result.Err(NotFound { path: path }) }
+    return Result.Ok(path)
+}
+
+fn check(n: i64): Result<i64, string> {
+    if n > 3 { return Result.Err("too long") }
+    return Result.Ok(n)
+}
+
+fn run(path: string): Result<i64, Heap<Error>> {
+    let text = open(path)?      // NotFound, boxed
+    let n = check(text.len)?    // string, boxed as Message
+    return Result.Ok(n)
+}
+
+fn main() {
+    match run("missing") {
+        Result.Ok(n) => { print(n) }
+        Result.Err(e) => { print("error: ", e.message()) }
+    }
+}
+```
+
+A `?` whose error type has no `message` is rejected where it is written:
+`'?' error type mismatch: 'Silent' cannot be boxed as 'Heap<Error>' because it does not
+satisfy interface 'Error'`. The enum-variant conversion above (an `AppError.Io(IoError)`
+variant) still applies when the return type is an enum; boxing applies when it is
+`Heap<Iface>`, for any interface, not only `Error`.
 
 ### if let
 

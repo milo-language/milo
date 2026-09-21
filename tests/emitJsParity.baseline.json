@@ -163,7 +163,6 @@
   "promiseRaceLosersDropped.milo": "noEmit",
   "promiseSleep.milo": "noEmit",
   "propagateGenericRet.milo": "noEmit",
-  "propagateSretBigAgg.milo": "mismatch",
   "ptrDepth.milo": "noEmit",
   "ptrFieldAccess.milo": "crash",
   "ptrForgetStillLegal.milo": "noEmit",

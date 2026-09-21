@@ -3,6 +3,7 @@
 
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
+import type { PropagateBoxing } from "./checker";
 
 // ── Expressions ──
 
@@ -31,7 +32,7 @@ export type HIRExpr =
   | { kind: "VecPtr"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HeapPtr"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "Unwrap"; operand: HIRExpr; enumName: string; type: TypeKind; span?: Span }
-  | { kind: "Propagate"; operand: HIRExpr; enumName: string; retType: TypeKind; fromConversion?: { targetEnumName: string; wrapVariant: string; wrapTag: number }; type: TypeKind; span?: Span }
+  | { kind: "Propagate"; operand: HIRExpr; enumName: string; retType: TypeKind; fromConversion?: { targetEnumName: string; wrapVariant: string; wrapTag: number }; boxConversion?: PropagateBoxing; type: TypeKind; span?: Span }
   | { kind: "DefaultValue"; operand: HIRExpr; default: HIRExpr; enumName: string; type: TypeKind; span?: Span }
   | { kind: "Cast"; operand: HIRExpr; targetType: TypeKind; type: TypeKind; span?: Span }
   // `replace(place, value)`: stores `value` into `place` WITHOUT dropping the old occupant

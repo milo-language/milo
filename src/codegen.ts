@@ -6759,7 +6759,7 @@ export class Codegen {
     lines.push(`${errLabel}:`);
     this.emitDropGlue(lines);
     const retEnumName = expr.retType.tag === "enum" ? expr.retType.name : expr.enumName;
-    if (retEnumName === expr.enumName && !expr.fromConversion) {
+    if (retEnumName === expr.enumName && !expr.fromConversion && !expr.boxConversion) {
       // same enum type — return as-is. When the enclosing fn is sret-lowered
       // (big-aggregate return), the signature is `void @f(ptr %__sret.out, …)`,
       // so this early `?`-return must write the result buffer and `ret void`
@@ -6780,7 +6780,35 @@ export class Codegen {
       let finalErrPayload: string | null = null;
       let finalErrFieldTy: string | null = null;
 
-      if (expr.fromConversion && srcErrFieldTy) {
+      if (expr.boxConversion && srcErrFieldTy) {
+        // Box the error and hand back a fat pointer { data, itable }: the same shape
+        // genInterfaceCoerce builds for `Heap(e)` coerced to Heap<Iface>, done here
+        // because the payload is loaded out of the operand's Err slot, not from an
+        // expression. A string error is wrapped in the prelude `Message` first.
+        this.needsMalloc = true;
+        const box = expr.boxConversion;
+        const srcPayload = this.nextTemp();
+        lines.push(`  ${srcPayload} = load ${srcErrFieldTy}, ptr ${errPayloadPtr}`);
+        let boxedVal = srcPayload;
+        let boxedTy = srcErrFieldTy;
+        let boxedType: TypeKind = box.errType;
+        if (box.viaMessage) {
+          boxedType = { tag: "struct", name: box.fromType };
+          boxedTy = this.llvmType(boxedType);
+          boxedVal = this.nextTemp();
+          lines.push(`  ${boxedVal} = insertvalue ${boxedTy} undef, ${srcErrFieldTy} ${srcPayload}, 0`);
+        }
+        const boxPtr = this.nextTemp();
+        lines.push(`  ${boxPtr} = call ptr @malloc(i64 ${this.typeSizeOf(boxedType)})`);
+        lines.push(`  store ${boxedTy} ${boxedVal}, ptr ${boxPtr}`);
+        const itableInfo = this.itableLayouts.get(`${box.fromType}.${box.ifaceName}`);
+        const itableGlobal = itableInfo?.globalName ?? `@itable.${box.fromType}.${box.ifaceName}`;
+        const fat0 = this.nextTemp();
+        lines.push(`  ${fat0} = insertvalue { ptr, ptr } undef, ptr ${boxPtr}, 0`);
+        finalErrPayload = this.nextTemp();
+        lines.push(`  ${finalErrPayload} = insertvalue { ptr, ptr } ${fat0}, ptr ${itableGlobal}, 1`);
+        finalErrFieldTy = "{ ptr, ptr }";
+      } else if (expr.fromConversion && srcErrFieldTy) {
         // From conversion: wrap source err in target error enum variant
         const convEnumTy = `%${expr.fromConversion.targetEnumName}`;
         const srcPayload = this.nextTemp();

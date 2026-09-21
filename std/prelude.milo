@@ -15,3 +15,25 @@ from "std/string" import {
 // value that can inhabit Result.
 pub struct Unit {
 }
+
+// The structural error interface. Any type with `message(self: &Self): string`
+// satisfies it, so a fn can return `Result<T, Heap<Error>>` and `?` boxes whatever
+// error a callee produced (a struct, an enum, or a plain `string`, which arrives as a
+// `Message`). The message is the one thing every error owes its reader; the concrete
+// type is still there behind the box for a caller that wants to look.
+pub interface Error {
+    fn message(self: &Self): string
+}
+
+// A `string` error boxed as an `Error`: what `?` makes of a `Result<T, string>` in a
+// fn that returns `Result<T, Heap<Error>>`.
+pub struct Message {
+    text: string,
+}
+
+impl Message {
+    // The string the error was raised with.
+    fn message(self: &Self): string {
+        return self.text.clone()
+    }
+}

@@ -26,6 +26,12 @@ import { must } from "./must";
 // See the intrinsic in `checkCallExpr` for why the seam is a file rather than a keyword;
 // `src/lower.ts` imports both so the two passes cannot disagree about which calls these
 // names denote.
+// A `?` whose error is boxed into Heap<Iface> on the way out (checker.findPropagateBoxing).
+// `errType` is the operand's error type (what gets boxed; `viaMessage` wraps a string in
+// the prelude `Message` first); `fromType` names the concrete type behind the box, which
+// is what the itable is keyed on.
+export interface PropagateBoxing { fromType: string; ifaceName: string; viaMessage: boolean; errType: TypeKind }
+
 export const RAW_SLICE_INTRINSICS: ReadonlySet<string> = new Set(["rawSlice", "rawSliceMut"]);
 // The ownership constructors for foreign memory: the return leg of `forget`. Same file
 // seam and the same reason: an unchecked claim about a pointer's provenance belongs in
@@ -404,6 +410,7 @@ export interface CheckResult {
   fnFieldCalls: Set<Expr>;
   cfnFieldCalls: Set<Expr>;
   propagateConversions: Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>;
+  propagateBoxings: Map<Expr, PropagateBoxing>;
   rangeCheckedExprs: Map<Expr, { min: number; max: number; typeName: string }>;
   sizeOfTypes: Map<Expr, TypeKind>;
   cSigs: Map<string, CSig>;
@@ -680,6 +687,9 @@ export class TypeChecker {
   // rather than silently handing a thin pointer to code that expects a fat one.
   private strandedCFnReads = new Map<Expr, { struct: string; field: string; span?: Span }>();
   private propagateConversions = new Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>();
+  // `?` in a fn returning Result<T, Heap<Iface>>: the operand's error is boxed and
+  // coerced to the interface on the error path (see checkPropagateExpr).
+  private propagateBoxings = new Map<Expr, PropagateBoxing>();
   private interfaces = new Map<string, InterfaceInfo>();
   private interfaceCoercions = new Map<Expr, { fromType: string; ifaceName: string }>();
   private interfaceMethodCalls = new Map<Expr, { ifaceName: string; methodName: string; methodIndex: number }>();
@@ -2791,6 +2801,7 @@ export class TypeChecker {
       fnFieldCalls: this.fnFieldCalls,
       cfnFieldCalls: this.cfnFieldCalls,
       propagateConversions: this.propagateConversions,
+      propagateBoxings: this.propagateBoxings,
       rangeCheckedExprs: this.rangeCheckedExprs,
       sizeOfTypes: this.sizeOfTypes,
       cSigs: this.cSigs,
@@ -9906,8 +9917,13 @@ export class TypeChecker {
       const operandErr = this.unwrapableErr(operandType);
       const retErr = this.unwrapableErr(this.currentFnRetType);
       if (operandErr && retErr && !typeEq(operandErr, retErr)) {
-        const conversion = this.findFromConversion(operandErr, retErr);
-        if (conversion) {
+        const boxing = this.findPropagateBoxing(operandErr, retErr, sp);
+        const conversion = boxing === null ? this.findFromConversion(operandErr, retErr) : null;
+        if (boxing === "reported") {
+          // findPropagateBoxing already said why
+        } else if (boxing) {
+          this.propagateBoxings.set(expr, boxing);
+        } else if (conversion) {
           this.propagateConversions.set(expr, conversion);
         } else {
           this.error(`'?' error type mismatch: '${this.show(operandErr)}' cannot convert to '${this.show(retErr)}' (no wrapping variant found)`, sp);
@@ -12253,6 +12269,29 @@ export class TypeChecker {
   }
 
   // compiler-magic From: find a variant in targetErr that wraps sourceErr
+  // `?` into a fn returning Result<T, Heap<Iface>>: a struct or enum error that satisfies
+  // the interface is boxed and coerced; a `string` error becomes the prelude's `Message`
+  // when the interface is the prelude `Error`. Reports and returns null when the target
+  // is a boxed interface the source cannot satisfy ("reported"), so the caller does not
+  // fall through to the enum-variant search with a misleading second message.
+  private findPropagateBoxing(sourceErr: TypeKind, targetErr: TypeKind, sp?: Span): PropagateBoxing | "reported" | null {
+    if (targetErr.tag !== "heap" || targetErr.inner.tag !== "interface") return null;
+    const ifaceName = targetErr.inner.name;
+    if (sourceErr.tag === "string" && ifaceName === "Error" && this.structs.has("Message")) {
+      return { fromType: "Message", ifaceName, viaMessage: true, errType: sourceErr };
+    }
+    if (sourceErr.tag === "struct" || sourceErr.tag === "enum") {
+      const srcName = typeName(sourceErr);
+      if (this.typeSatisfiesInterface(srcName, ifaceName)) {
+        return { fromType: srcName, ifaceName, viaMessage: false, errType: sourceErr };
+      }
+    }
+    const iface = this.interfaces.get(ifaceName);
+    const wants = iface ? [...iface.methods.keys()].map(m => `${m}(self: &Self)`).join(", ") : "";
+    this.error(`'?' error type mismatch: '${this.show(sourceErr)}' cannot be boxed as '${this.show(targetErr)}' because it does not satisfy interface '${ifaceName}'${wants ? ` (needs ${wants})` : ""}`, sp);
+    return "reported";
+  }
+
   private findFromConversion(sourceErr: TypeKind, targetErr: TypeKind): { targetEnumName: string; wrapVariant: string; wrapTag: number } | null {
     if (targetErr.tag !== "enum") return null;
     const info = this.enums.get(targetErr.name);
