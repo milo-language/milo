@@ -69,8 +69,7 @@ pub fn dlOpen(path: &string): Result<Lib, string> {
         }
         return Result.Ok(Lib {
             handle: h
-        }
-        )
+        })
     }
 }
 
@@ -85,8 +84,7 @@ pub fn dlSelf(): Result<Lib, string> {
         }
         return Result.Ok(Lib {
             handle: h
-        }
-        )
+        })
     }
 }
 

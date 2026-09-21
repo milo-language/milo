@@ -23,16 +23,13 @@ pub fn main(): i32 {
     var ops: Vec<Op> = Vec.new()
     ops.push(Op {
         name: "double", apply: double
-    }
-    )
+    })
     ops.push(Op {
         name: "triple", apply: triple
-    }
-    )
+    })
     ops.push(Op {
         name: "negate", apply: negate
-    }
-    )
+    })
 
     var i: i64 = 0
     while i < ops.len {

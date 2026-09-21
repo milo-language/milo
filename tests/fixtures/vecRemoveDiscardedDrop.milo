@@ -20,12 +20,10 @@ fn main() {
     var v: Vec<Res> = Vec.new()
     v.push(Res {
         id: 1
-    }
-    )
+    })
     v.push(Res {
         id: 2
-    }
-    )
+    })
     v.remove(0)
     print("removed")
 }

@@ -19,17 +19,13 @@ pub fn escapeValue(s: &string): string {
         let c = s[i]
         if c == 10 {
             out = out + "\\n"
-        } 
-        else if c == 9 {
+        } else if c == 9 {
             out = out + "\\t"
-        } 
-        else if c == 13 {
+        } else if c == 13 {
             out = out + "\\r"
-        } 
-        else if c == 0 {
+        } else if c == 0 {
             out = out + "\\0"
-        } 
-        else if c < 32 || c == 127 {
+        } else if c < 32 || c == 127 {
             // \xHH for other control chars
             let hi = c / 16
             let lo = c % 16
@@ -45,8 +41,7 @@ pub fn escapeValue(s: &string): string {
                 hex.push(lo + 87)
             }
             out = out + hex
-        } 
-        else {
+        } else {
             out.push(c)
         }
     }

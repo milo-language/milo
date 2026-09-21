@@ -39,8 +39,7 @@ pub fn main(): i32 {
         }
         print("got ", s)
         close(rfd)
-    }
-    )
+    })
 
     Task.spawn(move(): void => {
         var sum: i64 = 0
@@ -53,8 +52,7 @@ pub fn main(): i32 {
         let msg = "hello"
         writeFd(wfd, msg, msg.len)
         close(wfd)
-    }
-    )
+    })
 
     schedulerRunToCompletion()
     return 0

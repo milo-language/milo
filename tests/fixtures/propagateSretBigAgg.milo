@@ -30,8 +30,7 @@ pub fn makeErr(): Result<Big, string> {
 pub fn makeOk(): Result<Big, string> {
     return Result.Ok(Big {
         a: "1", b: "2", c: "3", d: "4", e: "5", f: "6", g: "7"
-    }
-    )
+    })
 }
 
 impl Chainer {

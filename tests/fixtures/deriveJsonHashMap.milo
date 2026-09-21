@@ -58,8 +58,7 @@ pub fn main(): i32 {
     var o: HashMap<string, Inner> = HashMap.new()
     o.insert("k", Inner {
         v: 7
-    }
-    )
+    })
     var so: HashMap<string, string> = HashMap.new()
     so.insert("z", "zz")
     let d = Deep {

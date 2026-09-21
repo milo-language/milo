@@ -29,12 +29,10 @@ fn worlds(): Vec<World> {
     var v: Vec<World> = []
     v.push(World {
         name: "earth", r: 6371
-    }
-    )
+    })
     v.push(World {
         name: "mars", r: 3390
-    }
-    )
+    })
     return v
 }
 

@@ -978,9 +978,12 @@ pub fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     if tk == TokKind.LBrace {
         return true
     }
-    // Space inside a destructuring pattern: `{ a, b }`. Only the pattern keeps a
-    // token on the `{` line or before the `}`; a block's braces always sit on
-    // line ends, so this never reaches block contents.
+    // `{}` stays tight; otherwise a token that shares a line with its brace
+    // (an inline group `P { x: 1 }`, a pattern `{ a, b }`) gets one space inside.
+    // A multi-line block's braces sit on line ends, so this never reaches its body.
+    if pk == TokKind.LBrace && tk == TokKind.RBrace {
+        return false
+    }
     if pk == TokKind.LBrace || tk == TokKind.RBrace {
         return true
     }
@@ -995,9 +998,10 @@ pub fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     tk != TokKind.LBracket && tk != TokKind.LParen {
         return true
     }
-    // Space after } (but not before else — format engine handles } else)
+    // Space after } unless tight punctuation (`})`, `},`, `}.f()`); `} else`
+    // relies on this too, the engine only decides that `else` stays on the line.
     if pk == TokKind.RBrace && tk != TokKind.Comma && tk != TokKind.RParen &&
-    tk != TokKind.Dot && tk != TokKind.Keyword {
+    tk != TokKind.Dot {
         return true
     }
     // Space between values
@@ -1022,8 +1026,27 @@ pub fn formatSource(src: string): string {
         if rt.kind != TokKind.Newline {
             tokens.push(Token {
                 kind: rt.kind, text: rt.text.clone(), line: rt.line
+            })
+        }
+    }
+    // A `{` whose matching `}` sits on the same source line is an inline group
+    // (`P { x: 1 }`, `fn f() {}`, `Some(n) => { return n }`): both braces are
+    // marked here and the loop below emits no line break at either. Line
+    // structure is the author's choice, so a one-line group stays one line and
+    // a block the author broke stays a block.
+    var inlineBrace: Vec<bool> = Vec.new()
+    var openBraces: Vec<i64> = Vec.new()
+    for bi in 0..tokens.len {
+        inlineBrace.push(false)
+        let bk = tokens[bi].kind
+        if bk == TokKind.LBrace {
+            openBraces.push(bi)
+        } else if bk == TokKind.RBrace && openBraces.len > 0 {
+            let oi = openBraces.pop()!
+            if tokens[oi].line == tokens[bi].line {
+                inlineBrace[oi] = true
+                inlineBrace[bi] = true
             }
-            )
         }
     }
     var out: string = ""
@@ -1129,9 +1152,23 @@ pub fn formatSource(src: string): string {
         let hugPub = lastWasPub && (tok.kind == TokKind.Ident || tok.kind == TokKind.Keyword) &&
         pubStartsDeclKw(tok.text)
 
+        // `else` hugs the `}` it follows even when the author wrote `}\nelse`: the
+        // `}` case below keeps the line open for it, and without this the source-
+        // newline and blank-line rules would break it again (as `} \nelse`).
+        let hugElse = prevKind == TokKind.RBrace && tok.kind == TokKind.Keyword && tok.text == "else"
+
         // } decreases indent
         if tok.kind == TokKind.RBrace && inPattern {
             inPattern = false
+        } else if tok.kind == TokKind.RBrace && inlineBrace[i] {
+            // Inline group: undo the `{` case below, no line break. Spacing around
+            // it is wantSpaceBefore's call, like any other token on the line.
+            if depth > 0 {
+                depth = depth - 1
+            }
+            if parenDepth > 0 {
+                parenDepth = parenDepth - 1
+            }
         } else if tok.kind == TokKind.RBrace {
             if depth > 0 {
                 depth = depth - 1
@@ -1184,11 +1221,11 @@ pub fn formatSource(src: string): string {
         // Preserve one blank line between sections (when source had 2+ newlines).
         // Not inside ( ) or [ ] — there the whole group reflows onto one line.
         let atStmtLevel = parenDepth == 0 && bracketDepth == 0
-        if blank && atStmtLevel && !atLineStart && !hugExtern && !hugPub {
+        if blank && atStmtLevel && !atLineStart && !hugExtern && !hugPub && !hugElse {
             out = out + "\n"
             atLineStart = true
         }
-        if blank && atStmtLevel && atLineStart && out.len > 0 && !out.endsWith("\n\n") && !hugExtern && !hugPub {
+        if blank && atStmtLevel && atLineStart && out.len > 0 && !out.endsWith("\n\n") && !hugExtern && !hugPub && !hugElse {
             out = out + "\n"
         }
 
@@ -1240,7 +1277,7 @@ pub fn formatSource(src: string): string {
         // New source line → new output line. Suppressed inside ( ) and [ ] so a
         // param list / call args / array literal split across source lines reflows
         // onto one line.
-        if tok.line > lastLine && !atLineStart && tok.kind != TokKind.RBrace && !hugExtern && !hugPub && atStmtLevel {
+        if tok.line > lastLine && !atLineStart && tok.kind != TokKind.RBrace && !hugExtern && !hugPub && !hugElse && atStmtLevel {
             out = out + "\n"
             atLineStart = true
         }
@@ -1290,6 +1327,14 @@ pub fn formatSource(src: string): string {
         if tok.kind == TokKind.LBrace && i > 0 && tokens[i - 1].kind == TokKind.Keyword &&
         (tokens[i - 1].text == "let" || tokens[i - 1].text == "var") {
             inPattern = true
+        } else if tok.kind == TokKind.LBrace && inlineBrace[i] {
+            // An inline group is bracketed like a paren group rather than opened
+            // as a block: parenDepth > 0 keeps the statement-boundary reflow, the
+            // source-newline rule and the `;` rule quiet inside it, and depth > 0
+            // keeps the top-level blank-line rules out of a one-line
+            // `trait T { fn f(self: &Self): i64 }`.
+            depth = depth + 1
+            parenDepth = parenDepth + 1
         } else if tok.kind == TokKind.LBrace {
             depth = depth + 1
             // The body is a fresh statement context: save the enclosing paren/
@@ -1313,8 +1358,8 @@ pub fn formatSource(src: string): string {
             }
         }
 
-        // } forces newline unless next is else
-        if tok.kind == TokKind.RBrace {
+        // } forces newline unless the next token continues the construct
+        if tok.kind == TokKind.RBrace && !inlineBrace[i] {
             var nextKind: TokKind = TokKind.Eof
             // Peek ahead past newlines to find next real token
             var j: i64 = i + 1
@@ -1326,7 +1371,14 @@ pub fn formatSource(src: string): string {
                 j = j + 1
             }
             if nextKind == TokKind.Keyword && tokens[j].text == "else" {
-                out = out + " "
+                atLineStart = false
+            } else if nextKind == TokKind.RParen || nextKind == TokKind.RBracket ||
+            nextKind == TokKind.Comma || nextKind == TokKind.Dot {
+                // A block that closes a call argument, an array element or a
+                // receiver hugs what follows: `})`, `},`, `}.f()`. The enclosing
+                // ( or [ nesting was just restored from the stack, so the
+                // source-newline rule sees atStmtLevel == false and does not
+                // re-break before the `)`.
                 atLineStart = false
             } else if nextKind == TokKind.Eq {
                 // `let { a, b } = e`: the pattern's `}` continues the statement (the

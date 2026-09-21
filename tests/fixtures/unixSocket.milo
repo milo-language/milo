@@ -34,8 +34,7 @@ pub fn main(): i32 {
                 print("accept failed ", e)
             }
         }
-    }
-    )
+    })
 
     let cli = UnixStream.connect(path)!
     let _n = cli.send("hello over unix")!

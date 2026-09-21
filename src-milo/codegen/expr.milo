@@ -119,8 +119,7 @@ pub fn disambiguateStructLit(cg: &Cgen, base: &string, fields: &Vec<StructLitFie
             let idx = lookupFieldIndex(cg, k, fields[fi].name)
             if idx < 0 {
                 ok = false
-            } 
-            else {
+            } else {
                 let fcat = llCategory(llType(lookupFieldType(cg, k, idx)))
                 if fcat.len > 0 && fcat != cat {
                     ok = false
@@ -885,8 +884,7 @@ pub fn genVecMapFilter(cg: &mut Cgen, obj: &Val, resultVecTy: &string, resultEle
         emit(&mut cg, "  " + ev + " = load " + inElemLl + ", ptr " + slot + "\n")
         genVecPush(&mut cg, vecSlot, resultVecTy, Val {
             v: ev, ty: resultElemTy.clone()
-        }
-        )
+        })
         emit(&mut cg, "  br label %" + skipLbl + "\n")
         emitLabel(&mut cg, skipLbl)
     } else {
@@ -894,8 +892,7 @@ pub fn genVecMapFilter(cg: &mut Cgen, obj: &Val, resultVecTy: &string, resultEle
         emit(&mut cg, "  " + r + " = call " + outElemLl + " " + fp + "(ptr " + env + ", ptr " + slot + ")\n")
         genVecPush(&mut cg, vecSlot, resultVecTy, Val {
             v: r, ty: resultElemTy.clone()
-        }
-        )
+        })
     }
     let i1v = nextTemp(&mut cg)
     emit(&mut cg, "  " + i1v + " = add i64 " + i + ", 1\n")
@@ -2232,8 +2229,7 @@ pub fn genInterfaceCoerceIfNeeded(cg: &mut Cgen, v: &Val, hintTy: &string): Val 
     var concrete = ""
     if unwrapHeap(v.ty).len > 0 {
         concrete = stripPercent(resolveTyStr(cg, unwrapHeap(v.ty)))
-    } 
-    else {
+    } else {
         concrete = stripPercent(resolveTyStr(cg, stripPercent(v.ty)))
     }
     if concrete.len == 0 {
@@ -2499,8 +2495,7 @@ pub fn genOptionResultMap(cg: &mut Cgen, ov: &Val, enumName: &string, isResult: 
     emit(&mut cg, "  " + cr + " = call " + newInnerLl + " " + cfp + "(ptr " + cenv + ", ptr " + fp + ")\n")
     let someVal = genBuildVariant1(&mut cg, Val {
         v: cr, ty: newInnerTy.clone()
-    }
-    , newEnumTy, okVariant)
+    }, newEnumTy, okVariant)
     emit(&mut cg, "  store " + newStructTy + " " + someVal.v + ", ptr " + resAddr + "\n")
     emit(&mut cg, "  br label %" + endLbl + "\n")
 
@@ -2512,8 +2507,7 @@ pub fn genOptionResultMap(cg: &mut Cgen, ov: &Val, enumName: &string, isResult: 
         emit(&mut cg, "  " + ev + " = load " + llType(errTy) + ", ptr " + efp + "\n")
         let errVal = genBuildVariant1(&mut cg, Val {
             v: ev, ty: errTy
-        }
-        , newEnumTy, "Err")
+        }, newEnumTy, "Err")
         emit(&mut cg, "  store " + newStructTy + " " + errVal.v + ", ptr " + resAddr + "\n")
     } else {
         let noneVal = genBuildVariant0(&mut cg, newEnumTy, "None")
@@ -2559,8 +2553,7 @@ pub fn genOptionResultMapErr(cg: &mut Cgen, ov: &Val, enumName: &string, cbExpr:
     emit(&mut cg, "  " + okv + " = load " + llType(innerTy) + ", ptr " + ofp + "\n")
     let okVal = genBuildVariant1(&mut cg, Val {
         v: okv, ty: innerTy.clone()
-    }
-    , newEnumTy, "Ok")
+    }, newEnumTy, "Ok")
     emit(&mut cg, "  store " + newStructTy + " " + okVal.v + ", ptr " + resAddr + "\n")
     emit(&mut cg, "  br label %" + endLbl + "\n")
 
@@ -2575,8 +2568,7 @@ pub fn genOptionResultMapErr(cg: &mut Cgen, ov: &Val, enumName: &string, cbExpr:
     emit(&mut cg, "  " + cr + " = call " + newErrLl + " " + cfp + "(ptr " + cenv + ", ptr " + efp + ")\n")
     let errVal = genBuildVariant1(&mut cg, Val {
         v: cr, ty: newErrTy.clone()
-    }
-    , newEnumTy, "Err")
+    }, newEnumTy, "Err")
     emit(&mut cg, "  store " + newStructTy + " " + errVal.v + ", ptr " + resAddr + "\n")
     emit(&mut cg, "  br label %" + endLbl + "\n")
 
@@ -2634,8 +2626,7 @@ pub fn genOptionResultAndThen(cg: &mut Cgen, ov: &Val, enumName: &string, isResu
         emit(&mut cg, "  " + ev + " = load " + llType(errTy) + ", ptr " + efp + "\n")
         let errVal = genBuildVariant1(&mut cg, Val {
             v: ev, ty: errTy
-        }
-        , newEnumTy, "Err")
+        }, newEnumTy, "Err")
         emit(&mut cg, "  store " + newStructTy + " " + errVal.v + ", ptr " + resAddr + "\n")
     } else {
         let noneVal = genBuildVariant0(&mut cg, newEnumTy, "None")
@@ -2695,8 +2686,7 @@ pub fn genOptionResultOrElse(cg: &mut Cgen, ov: &Val, enumName: &string, isResul
     emit(&mut cg, "  " + okv + " = load " + llType(okTy) + ", ptr " + fp + "\n")
     let okVal = genBuildVariant1(&mut cg, Val {
         v: okv, ty: okTy
-    }
-    , newEnumTy, okVariant)
+    }, newEnumTy, okVariant)
     emit(&mut cg, "  store " + newStructTy + " " + okVal.v + ", ptr " + resAddr + "\n")
     emit(&mut cg, "  br label %" + endLbl + "\n")
 
@@ -2766,8 +2756,7 @@ pub fn genCheckedArith(cg: &mut Cgen, obj: &Val, method: &string, av: &Val): Val
     emitLabel(&mut cg, okLbl)
     let someV = genWrapSome(&mut cg, Val {
         v: val, ty: obj.ty.clone()
-    }
-    , optName)
+    }, optName)
     emit(&mut cg, "  store " + optTy + " " + someV.v + ", ptr " + slot + "\n")
     emit(&mut cg, "  br label %" + doneLbl + "\n")
     emitLabel(&mut cg, ovLbl)
@@ -3101,8 +3090,7 @@ pub fn genCheckedDivRem(cg: &mut Cgen, obj: &Val, method: &string, av: &Val): Va
     emit(&mut cg, "  " + val + " = " + llvmOp + " " + lt + " " + obj.v + ", " + av.v + "\n")
     let someV = genWrapSome(&mut cg, Val {
         v: val, ty: obj.ty.clone()
-    }
-    , optName)
+    }, optName)
     emit(&mut cg, "  store " + optTy + " " + someV.v + ", ptr " + slot + "\n")
     emit(&mut cg, "  br label %" + doneLbl + "\n")
 
@@ -3916,14 +3904,12 @@ pub fn genCloneOfLoaded(cg: &mut Cgen, v: &string, ty: &string): string {
     if isVecTy(ty) {
         return genDeepCloneVecVal(&mut cg, Val {
             v: v.clone(), ty: ty.clone()
-        }
-        ).v
+        }).v
     }
     if isHashMapTy(ty) {
         return genDeepCloneHashMapVal(&mut cg, Val {
             v: v.clone(), ty: ty.clone()
-        }
-        ).v
+        }).v
     }
     // A Heap<T> box is just a pointer. Copying it verbatim hands out a SECOND owner
     // of one allocation: `Expr.ArrayRepeat(elements[0], …)` returned a box the
@@ -4875,8 +4861,7 @@ pub fn genVecExtend(cg: &mut Cgen, dstAddr: &string, dstVecTy: &string, srcVal: 
     emit(&mut cg, "  " + val + " = load " + elemLl + ", ptr " + elemPtr + "\n")
     genVecPush(&mut cg, dstAddr, dstVecTy, Val {
         v: val, ty: elemTy.clone()
-    }
-    )
+    })
     let iNext = nextTemp(&mut cg)
     emit(&mut cg, "  " + iNext + " = add i64 " + i + ", 1\n")
     emit(&mut cg, "  store i64 " + iNext + ", ptr " + iAddr + "\n")
@@ -5892,8 +5877,7 @@ pub fn genMethodCall(cg: &mut Cgen, object: &ExprNode, method: &string, args: &V
         let kc = genCloneOfLoaded(&mut cg, k, keyTy)
         genVecPush(&mut cg, vecSlot, resultVecTy, Val {
             v: kc, ty: keyTy.clone()
-        }
-        )
+        })
         let i1v = nextTemp(&mut cg)
         emit(&mut cg, "  " + i1v + " = add i64 " + i + ", 1\n")
         emit(&mut cg, "  store i64 " + i1v + ", ptr " + iAddr + "\n")
@@ -5944,8 +5928,7 @@ pub fn genMethodCall(cg: &mut Cgen, object: &ExprNode, method: &string, args: &V
         let vc = genCloneOfLoaded(&mut cg, v, valTy)
         genVecPush(&mut cg, vecSlot, resultVecTy, Val {
             v: vc, ty: valTy.clone()
-        }
-        )
+        })
         let i1v = nextTemp(&mut cg)
         emit(&mut cg, "  " + i1v + " = add i64 " + i + ", 1\n")
         emit(&mut cg, "  store i64 " + i1v + ", ptr " + iAddr + "\n")
@@ -8381,8 +8364,7 @@ pub fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<ExprNode>>, typeArg
             emit(&mut cg, "  store " + ifTy + " " + v1 + ", ptr " + slot + "\n")
             argVals.push(Val {
                 v: slot, ty: "ptr"
-            }
-            )
+            })
             argPointees.push("")
         } else if isRefParam {
             let lv = genLvalueWithHint(&mut cg, *args[i], locs, sigs, hint.clone())
@@ -8396,8 +8378,7 @@ pub fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<ExprNode>>, typeArg
                 emit(&mut cg, "  " + dp + " = extractvalue %Vec " + loaded + ", 0\n")
                 argVals.push(Val {
                     v: dp, ty: "ptr"
-                }
-                )
+                })
                 argPointees.push("")
             } else {
                 // A STRING TEMPORARY passed to a `&string` param can be freed right after
@@ -8420,8 +8401,7 @@ pub fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<ExprNode>>, typeArg
                 }
                 argVals.push(Val {
                     v: lv.v, ty: "ptr"
-                }
-                )
+                })
                 argPointees.push(lv.ty.clone())
             }
         } else if cg.externFns.contains(name) && hint.len > 0 && hint[0] == 42 && isInlineArrTy(placeTypeStrOrAbort(cg, *args[i], locs, "an extern inline-array argument")) {
@@ -8434,8 +8414,7 @@ pub fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<ExprNode>>, typeArg
             let lv = genLvalue(&mut cg, *args[i], locs, sigs)
             argVals.push(Val {
                 v: lv.v, ty: "ptr"
-            }
-            )
+            })
             argPointees.push("")
         } else if cg.externFns.contains(name) && llType(hint) == "%Closure" && isBareFnName(cg, *args[i], locs) {
             // a bare fn name passed to a C extern's fn-ptr param is the RAW function
@@ -8450,8 +8429,7 @@ pub fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<ExprNode>>, typeArg
             }
             argVals.push(Val {
                 v: "@" + fnm, ty: "ptr"
-            }
-            )
+            })
             argPointees.push("")
         } else {
             // A by-value param of a real user fn TAKES OWNERSHIP → move the arg
@@ -9364,14 +9342,11 @@ pub fn genExpr(cg: &mut Cgen, e: &ExprNode, locs: &Vec<Local>, sigs: &Vec<CgFnSi
                     var fop = "fadd"
                     if op == "-" {
                         fop = "fsub"
-                    } 
-                    else if op == "*" {
+                    } else if op == "*" {
                         fop = "fmul"
-                    } 
-                    else if op == "/" {
+                    } else if op == "/" {
                         fop = "fdiv"
-                    } 
-                    else if op == "%" {
+                    } else if op == "%" {
                         fop = "frem"
                     }
                     emit(&mut cg, "  " + t + " = " + fop + " " + lvLl + " " + lvv + ", " + rvv + "\n")
@@ -9387,17 +9362,13 @@ pub fn genExpr(cg: &mut Cgen, e: &ExprNode, locs: &Vec<Local>, sigs: &Vec<CgFnSi
                     // `x != x` disagree, and NaN stops being detectable.
                     if op == "!=" {
                         fp = "une"
-                    } 
-                    else if op == "<" {
+                    } else if op == "<" {
                         fp = "olt"
-                    } 
-                    else if op == "<=" {
+                    } else if op == "<=" {
                         fp = "ole"
-                    } 
-                    else if op == ">" {
+                    } else if op == ">" {
                         fp = "ogt"
-                    } 
-                    else if op == ">=" {
+                    } else if op == ">=" {
                         fp = "oge"
                     }
                     emit(&mut cg, "  " + t + " = fcmp " + fp + " " + lvLl + " " + lvv + ", " + rvv + "\n")

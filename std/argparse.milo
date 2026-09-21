@@ -81,8 +81,7 @@ impl ArgParser {
             isBool: false,
             isI64: false,
             required: false,
-        }
-        )
+        })
     }
 
     // Add a required string flag. parse() exits with error if missing.
@@ -95,8 +94,7 @@ impl ArgParser {
             isBool: false,
             isI64: false,
             required: true,
-        }
-        )
+        })
     }
 
     // Add a boolean flag (present = true, absent = false).
@@ -109,8 +107,7 @@ impl ArgParser {
             isBool: true,
             isI64: false,
             required: false,
-        }
-        )
+        })
     }
 
     // Add an integer flag with a default value. Validated as numeric at parse time.
@@ -123,24 +120,21 @@ impl ArgParser {
             isBool: false,
             isI64: true,
             required: false,
-        }
-        )
+        })
     }
 
     // Add a required positional argument.
     fn addPositional(self: &mut Self, name: string, help: string): void {
         self.positionals.push(PositionalDef {
             name: name, help: help, required: true
-        }
-        )
+        })
     }
 
     // Add an optional positional argument.
     fn addOptionalPositional(self: &mut Self, name: string, help: string): void {
         self.positionals.push(PositionalDef {
             name: name, help: help, required: false
-        }
-        )
+        })
     }
 
     // Stop flag parsing after the first positional arg.
@@ -246,8 +240,7 @@ impl ArgParser {
                 name: self.flags[fi].longName.clone(),
                 value: self.flags[fi].defaultVal.clone(),
                 present: false,
-            }
-            )
+            })
         }
 
         // initialize positional entries
@@ -256,8 +249,7 @@ impl ArgParser {
                 name: self.positionals[pi].name.clone(),
                 value: "",
                 present: false,
-            }
-            )
+            })
         }
 
         var posIdx: i64 = 0

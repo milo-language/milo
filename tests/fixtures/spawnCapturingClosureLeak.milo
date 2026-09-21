@@ -17,8 +17,7 @@ pub fn main(): i32 {
     let n = 42
     let t = Task.spawn(move(): void => {
         print("captured ", n.toString())
-    }
-    )
+    })
     t.join()
     print("done")
     return 0

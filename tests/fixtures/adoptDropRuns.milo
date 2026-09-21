@@ -36,8 +36,7 @@ pub fn main(): i32 {
     let h = Heap(Labelled {
         label: "hello",
         n: 1,
-    }
-    )
+    })
     print("made")
     unsafe {
         let slot = h.addrOf() as *i64

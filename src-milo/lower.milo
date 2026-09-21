@@ -173,8 +173,7 @@ fn hoistFields(v: Vec<StructLitField>, fnRetType: &TypeKind, ck: &Checker, cx: &
         var f = rev.pop()!
         let value = replace(f.value, Heap(ExprNode {
             id: 0, kind: Expr.IntLit(0), span: Option.None
-        }
-        ))
+        }))
         f.value = hoistNode(value, fnRetType, ck, &mut cx)
         out.push(f)
     }
@@ -366,8 +365,7 @@ fn lowerArms(arms: Vec<MatchArm>, subj: &HSubject, fnRetType: &TypeKind, ck: &Ch
         let body = replace(arm.body, Vec.new())
         out.push(HMatchArm {
             pattern: pat, body: lowerBlock(body, fnRetType, ck, &mut cx)
-        }
-        )
+        })
     }
     return out
 }
@@ -402,8 +400,7 @@ fn lowerPattern(p: &Pattern, enumName: &string, ck: &Checker): HPattern {
                 }
                 bs.push(HBinding {
                     name: bindings[i].clone(), ty: vi.fields[i].clone()
-                }
-                )
+                })
             }
             return HPattern.HEnumPattern(variant.clone(), bs, vi.tag as i64)
         }
@@ -478,8 +475,7 @@ fn lowerStmt(s: Heap<Stmt>, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCt
             var hArms: Vec<HMatchArm> = Vec.new()
             hArms.push(HMatchArm {
                 pattern: pat, body: lowerBlock(thenBody, fnRetType, ck, &mut cx)
-            }
-            )
+            })
             var elseHir: Vec<Heap<HStmt>> = Vec.new()
             match elseBody {
                 Option.Some(b) => {
@@ -490,8 +486,7 @@ fn lowerStmt(s: Heap<Stmt>, fnRetType: &TypeKind, ck: &Checker, cx: &mut LowerCt
             }
             hArms.push(HMatchArm {
                 pattern: HPattern.HWildcardPattern, body: elseHir
-            }
-            )
+            })
             return Heap(HStmt.Match(sv, hArms, subj.enumName.clone(), subj.isRef))
         }
         Stmt.UnsafeBlock(body, span) => {
@@ -809,8 +804,7 @@ pub fn lowerProgram(prog: Program, ck: &Checker): HIRModule {
         for fi in 0..info.fields.len {
             fields.push(HStructField {
                 name: info.fields[fi].name.clone(), ty: info.fields[fi].ty.clone(), cOpaque: false
-            }
-            )
+            })
         }
         structs.push(HStruct {
             name: sname,
@@ -820,8 +814,7 @@ pub fn lowerProgram(prog: Program, ck: &Checker): HIRModule {
             // survives to here.
             isExtern: false,
             cLayout: Option.None,
-        }
-        )
+        })
     }
 
     // This vec's order is OBSERVABLE: the backend emits `%E = type { … }` decls by
@@ -855,13 +848,11 @@ pub fn lowerProgram(prog: Program, ck: &Checker): HIRModule {
             }
             variants.push(HEnumVariant {
                 name: vname, tag: vinfo.tag as i64, fields: vfields
-            }
-            )
+            })
         }
         enums.push(HEnum {
             name: ename, variants: variants
-        }
-        )
+        })
     }
 
     var functions: Vec<HFunction> = Vec.new()
@@ -943,8 +934,7 @@ pub fn lowerProgram(prog: Program, ck: &Checker): HIRModule {
             mutable: g.mutable,
             // src-milo has no `threadLocal` global form.
             threadLocal: false,
-        }
-        )
+        })
     }
 
     // Sorted, not table order: ck.dropImpls is a seeded hash table, so leaving this in

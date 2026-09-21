@@ -31,8 +31,7 @@ pub fn main(): i32 {
     var extra: Vec<Param> = []
     extra.push(Param {
         name: "X-Trace", value: "abc"
-    }
-    )
+    })
     show(renderRaw(201, "text/html", "<b>", extra))
     return 0
 }

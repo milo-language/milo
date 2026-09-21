@@ -21,8 +21,7 @@ pub var gDropped: i64 = 0
 pub fn make(): Result<Res, string> {
     return Result.Ok(Res {
         id: 7
-    }
-    )
+    })
 }
 
 pub fn returnFromArm(): i64 {

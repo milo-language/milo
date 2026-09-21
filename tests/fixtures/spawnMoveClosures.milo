@@ -14,8 +14,7 @@ pub fn main(): i32 {
         print(msg)
         print("value is ", val)
         return 0
-    }
-    )
+    })
 
     t.await()!
     print("done")

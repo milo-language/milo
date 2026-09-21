@@ -37,8 +37,7 @@ pub fn main() {
 
     let some: Option<Pt> = Option.Some(Pt {
         x: 1, y: 2
-    }
-    )
+    })
     let none: Option<Pt> = Option.None
     let a = some.unwrapOr(d)
     let b = none.unwrapOr(d)
@@ -52,15 +51,13 @@ pub fn main() {
 
     let c = none.unwrapOrElse(() => Pt {
         x: 3, y: 4
-    }
-    )
+    })
     // @expect: 3 4
     print(c.x.toString() + " " + c.y.toString())
 
     let ok: Result<Pt, string> = Result.Ok(Pt {
         x: 5, y: 6
-    }
-    )
+    })
     let bad: Result<Pt, string> = Result.Err("boom")
     let f = ok.unwrapOr(d)
     let g = bad.unwrapOr(d)
@@ -70,8 +67,7 @@ pub fn main() {
     print(g.x.toString() + " " + g.y.toString())
     let h = bad.unwrapOrElse((err) => Pt {
         x: err.len, y: 0
-    }
-    )
+    })
     // @expect: 4 0
     print(h.x.toString() + " " + h.y.toString())
 

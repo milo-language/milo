@@ -185,8 +185,7 @@ impl TlsListener {
             }
             return Result.Ok(TlsListener {
                 fd: fd, ctx: ctxAddr
-            }
-            )
+            })
         }
     }
 
@@ -215,8 +214,7 @@ impl TlsListener {
             }
             return Result.Ok(TlsConn {
                 fd: clientFd, ssl: sslAddr
-            }
-            )
+            })
         }
     }
 

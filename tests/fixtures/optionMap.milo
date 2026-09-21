@@ -26,8 +26,7 @@ pub fn main() {
     print(s2.map((n) => {
         print("mapped")
         return n * 10
-    }
-    ).unwrapOr(0))
+    }).unwrapOr(0))
 
     // U need not equal T — that is the whole point of map over unwrapOr.
     let s3: Option<i64> = Option.Some(7)

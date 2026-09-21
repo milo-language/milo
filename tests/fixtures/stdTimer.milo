@@ -92,8 +92,7 @@ pub fn main(): i32 {
     let _task = Task.spawn(move(): void => {
         sleepFor(Duration.millis(10))
         producer.trySend(7)
-    }
-    )
+    })
     print("recv got ", recvTimeout(ch, Duration.secs(5))!)
 
     var tk2 = Ticker.every(Duration.millis(15))

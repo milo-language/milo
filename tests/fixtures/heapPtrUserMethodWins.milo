@@ -16,8 +16,7 @@ impl Node {
 pub fn main(): i32 {
     let h = Heap(Node {
         id: 42,
-    }
-    )
+    })
     print("user ptr ", h.ptr())
     return 0
 }

@@ -22,18 +22,15 @@ fn main() {
     // @expect: a
     print(m.get(Point {
         x: 1, y: 2
-    }
-    )!)
+    })!)
     // @expect: b
     print(m.get(Point {
         x: 2, y: 1
-    }
-    )!)
+    })!)
     // @expect: false
     print(m.contains(Point {
         x: 9, y: 9
-    }
-    ))
+    }))
 
     // a string field participates in the structural hash
     var n: HashMap<Named, i64> = HashMap.new()
@@ -48,11 +45,9 @@ fn main() {
     // @expect: 10
     print(n.get(Named {
         id: 1, tag: "x"
-    }
-    )!)
+    })!)
     // @expect: 20
     print(n.get(Named {
         id: 1, tag: "y"
-    }
-    )!)
+    })!)
 }

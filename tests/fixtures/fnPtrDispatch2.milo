@@ -27,12 +27,10 @@ pub fn main(): i32 {
     var ops: Vec<Op> = Vec.new()
     ops.push(Op {
         name: "double", apply: double
-    }
-    )
+    })
     ops.push(Op {
         name: "triple", apply: triple
-    }
-    )
+    })
     dispatch(ops, 7)
     return 0
 }

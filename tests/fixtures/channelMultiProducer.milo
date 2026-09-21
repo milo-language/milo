@@ -18,8 +18,7 @@ pub fn main(): i32 {
         let t = Promise<i64>.blocking(move(): i64 => {
             chW.send(val)!
             return 0
-        }
-        )
+        })
         workers.push(t)
         i = i + 1
     }

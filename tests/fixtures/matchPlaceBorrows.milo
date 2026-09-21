@@ -20,8 +20,7 @@ pub fn main(): i32 {
     bs.push("v")
     arms.push(Arm {
         pattern: Pat.E("Opt", bs)
-    }
-    )
+    })
     match arms[0].pattern {
         Pat.E(name, bindings) => {
             print("first ", name, " ", bindings.len)

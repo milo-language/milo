@@ -27,8 +27,7 @@ pub fn main(): i32 {
         let hi = lo + chunk
         ps.push(Promise<i64>.blocking(move(): i64 => {
             return sumRange(lo, hi)
-        }
-        ))
+        }))
     }
     let parts = Promise.all(ps).await()!
     var total: i64 = 0

@@ -14,8 +14,7 @@ fn showP(p: &P) {
 fn main() {
     let o: Option<P> = Option.Some(P {
         name: "late", n: 3
-    }
-    )
+    })
     let q = o.clone()
     match q {
         Option.Some(p) => {
@@ -36,8 +35,7 @@ fn main() {
 
     let nested: Option<Option<P>> = Option.Some(Option.Some(P {
         name: "deep", n: 4
-    }
-    ))
+    }))
     let nested2 = nested.clone()
     match nested2 {
         Option.Some(inner) => {

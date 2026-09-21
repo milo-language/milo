@@ -21,8 +21,7 @@ pub fn main(): i32 {
     var e: string = "each:"
     v.each((x: i64) => {
         e = e + " " + x.toString()
-    }
-    )
+    })
     print(e)
 
     var m: string = "map:"
@@ -50,8 +49,7 @@ pub fn main(): i32 {
         1
     } else {
         0
-    }
-    )
+    })
     var o1: string = "sortBy"
     for x in sb {
         o1 = o1 + " " + x.toString()

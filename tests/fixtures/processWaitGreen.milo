@@ -19,8 +19,7 @@ fn main(): i32 {
         let child = cmd.spawn()!
         let status = child.wait()!
         print($"child status {status}")
-    }
-    )
+    })
     let ticker = Task.spawn(move(): void => {
         var i = 0
         while i < 6 {
@@ -28,8 +27,7 @@ fn main(): i32 {
             i = i + 1
         }
         print("ticker finished 6 ticks")
-    }
-    )
+    })
     schedulerRunToCompletion()
     return 0
 }

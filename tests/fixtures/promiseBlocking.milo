@@ -19,8 +19,7 @@ pub fn main(): i32 {
     // CPU-bound work on a real OS thread; main awaits without a scheduler.
     let p = Promise<i64>.blocking(move(): i64 => {
         return sumTo(50)
-    }
-    )
+    })
     let r = p.await()!
     print(r)
     print("done")

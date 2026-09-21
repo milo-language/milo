@@ -18,8 +18,7 @@ impl P {
 pub fn mk(): Heap<Greeter> {
     return Heap(P {
         n: "bob"
-    }
-    )
+    })
 }
 
 pub fn main(): i32 {

@@ -18,20 +18,17 @@ pub fn main(): i32 {
     var a: Arena<Node> = Arena<Node>.new()
     let h1 = a.alloc(Node {
         name: "root", n: 1
-    }
-    )
+    })
     let h2 = a.alloc(Node {
         name: "leaf", n: 2
-    }
-    )
+    })
     let tree = a.freeze()!
 
     let n1 = tree.get(h1)
     print(n1.name + " " + n1.n.toString())
     tree.read(h2, (v: &Node): void => {
         print(v.name + " " + v.n.toString())
-    }
-    )
+    })
     print("len=" + tree.len().toString())
     print("holds=" + tree.holds(h1).toString())
 
@@ -40,8 +37,7 @@ pub fn main(): i32 {
     var other: Arena<Node> = Arena<Node>.new()
     let foreign = other.alloc(Node {
         name: "elsewhere", n: 3
-    }
-    )
+    })
     print("foreign=" + tree.holds(foreign).toString())
 
     // An arena that ever freed a slot cannot be frozen: a stale handle would

@@ -32,8 +32,7 @@ pub fn main() {
     print(describe(a))
     let b: Option<Box> = Option.Some(Box {
         v: 42
-    }
-    )
+    })
     // @expect: 42
     print(valueOr(b))
     let n: Option<Box> = Option.None

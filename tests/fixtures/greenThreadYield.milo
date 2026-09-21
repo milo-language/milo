@@ -14,20 +14,17 @@ pub fn main(): i32 {
         print("A1")
         schedulerYield()
         print("A2")
-    }
-    )
+    })
     Task.spawn(move(): void => {
         print("B1")
         schedulerYield()
         print("B2")
-    }
-    )
+    })
     Task.spawn(move(): void => {
         print("C1")
         schedulerYield()
         print("C2")
-    }
-    )
+    })
     schedulerRunToCompletion()
     return 0
 }

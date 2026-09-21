@@ -24,8 +24,7 @@ pub fn main(): i32 {
             sleepMs(100)
             print("done!")
             return val
-        }
-        ))
+        }))
         i = i + 1
     }
 

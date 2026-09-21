@@ -35,8 +35,7 @@ pub fn main(): i32 {
         let h = Heap(GifLike {
             savedImages: images,
             imageCount: 3,
-        }
-        )
+        })
         let slot = h.addrOf() as *i64
         let raw = (*slot) as *GifLike
         forget(h)

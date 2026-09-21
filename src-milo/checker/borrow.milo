@@ -39,8 +39,7 @@ pub fn accessPath(e: &ExprNode): Option<AccessPath> {
         Expr.Ident(name) => {
             return Option.Some(AccessPath {
                 root: name.clone(), fields: Vec.new(), tainted: false
-            }
-            )
+            })
         }
         Expr.FieldAccess(obj, field) => {
             match accessPath(*obj) {
@@ -55,15 +54,13 @@ pub fn accessPath(e: &ExprNode): Option<AccessPath> {
                         // conflict between two provably disjoint fields of self.
                         return Option.Some(AccessPath {
                             root: p.root, fields: p.fields, tainted: true
-                        }
-                        )
+                        })
                     }
                     var nf = p.fields.clone()
                     nf.push(field.clone())
                     return Option.Some(AccessPath {
                         root: p.root, fields: nf, tainted: false
-                    }
-                    )
+                    })
                 }
                 Option.None => {
                     return Option.None
@@ -79,8 +76,7 @@ pub fn accessPath(e: &ExprNode): Option<AccessPath> {
                     // anything under self.bps) while leaving sibling fields free.
                     return Option.Some(AccessPath {
                         root: p.root, fields: p.fields, tainted: true
-                    }
-                    )
+                    })
                 }
                 Option.None => {
                     return Option.None
@@ -349,8 +345,7 @@ pub fn assignTargetPath(e: &ExprNode): Option<AssignTarget> {
         Expr.Ident(name) => {
             return Option.Some(AssignTarget {
                 root: name.clone(), fields: Vec.new(), hasIndex: false
-            }
-            )
+            })
         }
         Expr.FieldAccess(obj, field) => {
             match assignTargetPath(*obj) {
@@ -358,15 +353,13 @@ pub fn assignTargetPath(e: &ExprNode): Option<AssignTarget> {
                     if p.hasIndex {
                         return Option.Some(AssignTarget {
                             root: p.root, fields: Vec.new(), hasIndex: true
-                        }
-                        )
+                        })
                     }
                     var nf = p.fields.clone()
                     nf.push(field.clone())
                     return Option.Some(AssignTarget {
                         root: p.root, fields: nf, hasIndex: false
-                    }
-                    )
+                    })
                 }
                 Option.None => {
                     return Option.None
@@ -378,8 +371,7 @@ pub fn assignTargetPath(e: &ExprNode): Option<AssignTarget> {
                 Option.Some(p) => {
                     return Option.Some(AssignTarget {
                         root: p.root, fields: Vec.new(), hasIndex: true
-                    }
-                    )
+                    })
                 }
                 Option.None => {
                     return Option.None
@@ -460,8 +452,7 @@ pub fn borrowArgOf(e: &ExprNode): Option<BorrowArg> {
                 Option.Some(steps) => {
                     return Option.Some(BorrowArg {
                         root: p.root, fields: p.fields, steps: steps
-                    }
-                    )
+                    })
                 }
                 Option.None => {
                     return Option.None

@@ -17,8 +17,7 @@ pub fn main(): i32 {
         let n = withRaw(p, 0, (xs: &[i64]): i64 => {
             print("ran")
             return xs.len
-        }
-        )
+        })
         print(n!)
         let empty = withRaw(p, 0, (xs: &[i64]): bool => xs.isEmpty())
         print(empty!)

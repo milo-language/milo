@@ -43,8 +43,7 @@ pub fn main(): i32 {
             var envs: Vec<Env> = Vec.new()
             envs.push(Env {
                 seen: 0
-            }
-            )
+            })
             let r = parallelMapWith(v, 2, envs, double)!
             var sum2: i64 = 0
             for y in r.data {

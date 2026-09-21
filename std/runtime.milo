@@ -682,8 +682,7 @@ impl Promise<T> {
         Task.spawn(move(): void => {
             let result: T = runOnce(f)
             chSend.send(result)!
-        }
-        )
+        })
         return Promise {
             _ch: ch,
             _blocking: false
@@ -710,8 +709,7 @@ impl Promise<T> {
         spawnOsThreadDetached(move(): void => {
             let result: T = runOnce(f)
             chSend.send(result)!
-        }
-        )
+        })
         return Promise {
             _ch: ch,
             _blocking: true
@@ -765,8 +763,7 @@ pub fn promiseAll<T>(promises: Vec<Promise<T>>): Promise<Vec<T>> {
             results.push(val)
         }
         chW.send(results)!
-    }
-    )
+    })
     return Promise<Vec<T>>._fromChannel(ch)
 }
 
@@ -796,8 +793,7 @@ pub fn promiseRace<T>(promises: Vec<Promise<T>>): Promise<T> {
                 schedulerTick()
             }
         }
-    }
-    )
+    })
     return Promise<T>._fromChannel(ch)
 }
 
@@ -1091,8 +1087,7 @@ pub fn selectRegisterFd(node: *u8): void {
         let fd = rtReadI32(node, nodeFd())
         if kind == kindSelWrite() {
             eventRegisterWrite(el, fd)
-        } 
-        else {
+        } else {
             eventRegisterRead(el, fd)
         }
     }

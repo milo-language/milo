@@ -12,8 +12,7 @@ from "std/arena" import {
 fn theLongWay(a: &Arena<string>, h: Handle<string>): string {
     match arenaWith(a, h, (s: &string): string => {
         return s.clone()
-    }
-    ) {
+    }) {
         Some(s) => {
             return s
         }
@@ -32,8 +31,7 @@ fn theShortWay(a: &Arena<string>, h: Handle<string>): string {
 fn notALint(a: &Arena<string>, h: Handle<string>): i64 {
     match arenaWith(a, h, (s: &string): i64 => {
         return s.len
-    }
-    ) {
+    }) {
         Some(n) => {
             return n + 1
         }

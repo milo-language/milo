@@ -28,11 +28,9 @@ pub fn main(): i32 {
                 gInitCount = gInitCount + 1
                 sleepMs(50)
                 gValue = 99
-            }
-            )
+            })
             return gValue
-        }
-        ))
+        }))
         i = i + 1
     }
     var total: i64 = 0

@@ -55,8 +55,7 @@ pub fn hirType(n: &HExprNode): TypeKind {
 pub fn mkHExpr(kind: HExpr, ty: TypeKind, span: Option<Span>): Heap<HExprNode> {
     return Heap(HExprNode {
         ty: Option.Some(ty), kind: kind, span: span
-    }
-    )
+    })
 }
 
 // The migration's one sanctioned escape hatch: an AST node codegen has not been taught to
@@ -66,8 +65,7 @@ pub fn mkHExpr(kind: HExpr, ty: TypeKind, span: Option<Span>): Heap<HExprNode> {
 pub fn mkUnlowered(e: Heap<ExprNode>, span: Option<Span>): Heap<HExprNode> {
     return Heap(HExprNode {
         ty: Option.None, kind: HExpr.Unlowered(e), span: span
-    }
-    )
+    })
 }
 
 // The one thing a backend path may do when the node it holds is NOT the bridge.

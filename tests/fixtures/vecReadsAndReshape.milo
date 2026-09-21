@@ -73,12 +73,10 @@ pub fn main(): i32 {
     var items: Vec<Item> = []
     items.push(Item {
         name: "keep", n: 1
-    }
-    )
+    })
     items.push(Item {
         name: "toss", n: 2
-    }
-    )
+    })
     items.retain((it: &Item) => it.n != 2)
     print(items.len())
     print(items[0].name)

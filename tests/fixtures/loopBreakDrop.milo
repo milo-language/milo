@@ -14,8 +14,7 @@ pub fn getMsg(n: i64): Result<Msg, string> {
     }
     return Result.Ok(Msg {
         payload: "frame-" + n.toString() + "-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    }
-    )
+    })
 }
 
 pub fn main(): i32 {

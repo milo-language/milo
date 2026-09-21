@@ -12,13 +12,11 @@ pub fn main(): i32 {
     // auto-move inferred — no explicit `move` keyword needed
     let a = Promise<i64>.run((): i64 => {
         return 42
-    }
-    )
+    })
     let msg = "hello world"
     let b = Promise<string>.run((): string => {
         return msg
-    }
-    )
+    })
 
     let valA = a.await()!
     let valB = b.await()!

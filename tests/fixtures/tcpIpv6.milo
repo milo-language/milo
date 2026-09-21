@@ -53,8 +53,7 @@ pub fn main(): i32 {
                 print("accept failed")
             }
         }
-    }
-    )
+    })
 
     let cli = TcpStream.connect6(loopback, port, 0)!
     let _n = cli.send("hello over v6")!

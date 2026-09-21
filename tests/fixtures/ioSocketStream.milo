@@ -52,8 +52,7 @@ pub fn main(): i32 {
     let port = getSockPort(lis.fd) as u16
     Task.spawn(move(): void => {
         serve(lis)
-    }
-    )
+    })
 
     let cli = TcpStream.connect(ip4(127, 0, 0, 1), port)!
     var w = BufWriter<FdStream>.new(cli.stream())

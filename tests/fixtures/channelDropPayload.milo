@@ -35,8 +35,7 @@ fn main(): i32 {
     let reg = Channel<Peer>.new(4)!
     let sent = reg.trySend(Peer {
         id: 7, sink: sink.clone()
-    }
-    )
+    })
     print("sent: " + sent.toString())
 
     // The payload survives the move: its channel is the same queue as `sink`.

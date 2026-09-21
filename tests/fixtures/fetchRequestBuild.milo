@@ -60,12 +60,10 @@ fn main(): void {
     var fields: Vec<FormField> = []
     fields.push(FormField {
         name: "data", value: "way[\"natural\"]"
-    }
-    )
+    })
     fields.push(FormField {
         name: "n", value: "1&2"
-    }
-    )
+    })
     // @expect: data=way%5B%22natural%22%5D&n=1%262
     print(formEncode(fields))
 }

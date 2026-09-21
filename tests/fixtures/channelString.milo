@@ -18,8 +18,7 @@ pub fn main(): i32 {
         chW.send("world")!
         chW.send("")!
         return 0
-    }
-    )
+    })
 
     while true {
         let val = ch.recv()!

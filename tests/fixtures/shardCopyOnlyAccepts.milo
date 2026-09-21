@@ -37,8 +37,7 @@ fn shiftPoints(w: Shard<Point>): Shard<Point> {
         let p = s.get(i)
         s.set(i, Point {
             x: p.x + 1, y: p.y + 1
-        }
-        )
+        })
         i = i + 1
     }
     return s
@@ -64,8 +63,7 @@ pub fn main(): i32 {
     var pts: Vec<Point> = Vec.new()
     pts.push(Point {
         x: 3, y: 5
-    }
-    )
+    })
     let shifted = parallelMap(pts, 1, shiftPoints)
     print("point " + shifted[0].x.toString() + " " + shifted[0].y.toString())
     return 0

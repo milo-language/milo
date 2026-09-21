@@ -28,8 +28,7 @@ pub fn main(): i32 {
             }
         }
         print("after")
-    }
-    )
+    })
     t.join()
     return 0
 }

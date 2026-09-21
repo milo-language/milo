@@ -32,21 +32,18 @@ fn main() {
     kids.push(9)
     let h = ar.alloc(Node {
         a: 41, tag: "n", kids: kids
-    }
-    )
+    })
 
     var out = 0
     print(ar.read(h, (v: &Node) => {
         out = v.a + 1
-    }
-    ))
+    }))
     print(out)
 
     // A stale handle does not call the closure, so `out` keeps its old value.
     let _ = ar.free(h)
     print(ar.read(h, (v: &Node) => {
         out = 999
-    }
-    ))
+    }))
     print(out)
 }

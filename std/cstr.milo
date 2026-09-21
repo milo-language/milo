@@ -20,8 +20,7 @@ impl CStr {
         }
         return Option.Some(CStr {
             _ptr: ptr, _len: strlen(ptr) as i64
-        }
-        )
+        })
     }
 
     fn toString(self: &Self): string {

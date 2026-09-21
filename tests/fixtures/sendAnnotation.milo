@@ -21,8 +21,7 @@ pub fn main(): i32 {
     let t = Promise<i64>.blocking(move(): i64 => {
         let _x = h._ptr
         return 0
-    }
-    )
+    })
     t.await()!
     print(42)
     return 0

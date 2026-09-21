@@ -137,8 +137,7 @@ fn regexFind(re: &Regex, input: &string): Option<RegexMatch> {
     let eo = readMatchI64(pmatch, 8)
     return Option.Some(RegexMatch {
         start: so, end: eo
-    }
-    )
+    })
 }
 
 // Find all non-overlapping matches in a string.
@@ -164,8 +163,7 @@ fn regexFindAll(re: &Regex, input: &string): Vec<RegexMatch> {
         let eo = readMatchI64(pmatch, 8)
         matches.push(RegexMatch {
             start: so, end: eo
-        }
-        )
+        })
         offset = eo
         if so == eo {
             // A zero-width match advances by one CODE POINT, not one byte. Advancing a

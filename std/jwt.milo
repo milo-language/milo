@@ -533,8 +533,7 @@ fn jwtVerify(v: &JwtVerifier, token: &string): Result<JwtClaims, JwtError> {
     return Result.Ok(JwtClaims {
         payload: payloadText,
         doc: doc,
-    }
-    )
+    })
 }
 
 // Jwt namespace — Jwt.signHS256(payload, secret) and Jwt.verifyHS256(token, secret)

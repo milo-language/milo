@@ -98,8 +98,7 @@ pub fn dbOpen(path: string): Result<Database> {
         }
         return Result.Ok(Database {
             _handle: handle
-        }
-        )
+        })
     }
 }
 
@@ -128,8 +127,7 @@ pub fn dbQuery(db: &Database, sql: string): Result<Statement> {
         }
         return Result.Ok(Statement {
             _handle: handle, _db: db._handle
-        }
-        )
+        })
     }
 }
 

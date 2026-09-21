@@ -30,12 +30,10 @@ pub fn main(): i32 {
     var xs: Vec<Heap<Counter>> = Vec.new()
     xs.push(Heap(A {
         n: 5
-    }
-    ))
+    }))
     xs.push(Heap(B {
         m: 10
-    }
-    ))
+    }))
     var total: i64 = 0
     for i in 0..xs.len() {
         total = total + xs[i].value()

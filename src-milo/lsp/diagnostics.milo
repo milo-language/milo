@@ -167,8 +167,7 @@ fn extractLexError(raw: &string): Option<LspDiagnostic> {
             }
             return Option.Some(LspDiagnostic {
                 severity: "error", message: msg, hint: "", line: line, col: col
-            }
-            )
+            })
         }
         Option.None => {
             return Option.None
@@ -231,8 +230,7 @@ pub fn parseCheckLspOutput(raw: string): Vec<LspDiagnostic> {
     if trimmed.len == 0 {
         out.push(LspDiagnostic {
             severity: "warning", message: "milo-self check-lsp produced no output (it may have been killed by the memory/timeout guard)", hint: "", line: 1, col: 1
-        }
-        )
+        })
         return out
     }
     match Json.parse(trimmed.clone()) {
@@ -273,8 +271,7 @@ pub fn parseCheckLspOutput(raw: string): Vec<LspDiagnostic> {
     }
     out.push(LspDiagnostic {
         severity: "error", message: "milo-self check failed: " + firstLine, hint: "", line: 1, col: 1
-    }
-    )
+    })
     return out
 }
 

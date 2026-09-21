@@ -58,8 +58,7 @@ fn main() {
     let h = Holder {
         o: Option.Some(P {
             name: "alpha", n: 1
-        }
-        ),
+        }),
         r: Result.Err("bad"),
         k: Option.Some(7),
     }
@@ -70,8 +69,7 @@ fn main() {
         o: Option.None,
         r: Result.Ok(P {
             name: "beta", n: 2
-        }
-        ),
+        }),
         k: Option.None,
     }
     let h4 = h3.clone()

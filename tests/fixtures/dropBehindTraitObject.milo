@@ -41,16 +41,13 @@ fn main() {
     var v: Vec<Heap<Show>> = Vec.new()
     v.push(Heap(A {
         id: 1
-    }
-    ))
+    }))
     v.push(Heap(B {
         n: 2
-    }
-    ))
+    }))
     v.push(Heap(A {
         id: 3
-    }
-    ))
+    }))
     var sum = 0
     for it in v {
         sum = sum + it.value()

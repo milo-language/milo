@@ -29,8 +29,7 @@ pub fn main(): i32 {
         Task.spawn(move(): void => {
             print("green " + n.toString())
             wgc.done()
-        }
-        )
+        })
         i = i + 1
     }
     print("spawned")

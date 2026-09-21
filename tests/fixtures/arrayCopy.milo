@@ -30,11 +30,9 @@ pub fn main() {
     // Arrays of all-Copy STRUCTS are Copy too — the element rule composes.
     let pts: [Pt; 2] = [Pt {
         x: 1, y: 2
-    }
-    , Pt {
+    }, Pt {
         x: 3, y: 4
-    }
-    ]
+    }]
     // @expect: 4
     print(sumX(pts))
     // @expect: 4

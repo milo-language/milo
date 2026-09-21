@@ -346,11 +346,9 @@ pub fn genStringCmp(cg: &mut Cgen, av: &string, bv: &string, op: &string): Val {
     var pred = "slt"
     if op == "<=" {
         pred = "sle"
-    } 
-    else if op == ">" {
+    } else if op == ">" {
         pred = "sgt"
-    } 
-    else if op == ">=" {
+    } else if op == ">=" {
         pred = "sge"
     }
     let r = nextTemp(&mut cg)

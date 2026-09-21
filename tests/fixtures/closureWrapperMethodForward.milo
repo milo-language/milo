@@ -37,8 +37,7 @@ fn main() {
                 return Obj.List(ys)
             }
         }
-    }
-    )
+    })
     // @expect: free fn true 2
     print("free fn " + r1.toString() + " " + seen.toString())
 
@@ -52,8 +51,7 @@ fn main() {
                 return Obj.List(ys)
             }
         }
-    }
-    )
+    })
     // @expect: method true 10
     print("method " + r2.toString() + " " + touched.toString())
 

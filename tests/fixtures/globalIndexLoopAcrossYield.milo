@@ -41,12 +41,10 @@ pub fn main(): i32 {
     g.push(3)
     Task.spawn(move() => {
         reader()
-    }
-    )
+    })
     Task.spawn(move() => {
         writer()
-    }
-    )
+    })
     schedulerRunToCompletion()
     return 0
 }

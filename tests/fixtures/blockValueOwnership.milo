@@ -28,8 +28,7 @@ pub fn main(): i32 {
             big(i)
         } else {
             big(i + 1)
-        }
-        ).len
+        }).len
         i = i + 1
     }
     print("if-temps " + ifTemps.toString())
@@ -45,8 +44,7 @@ pub fn main(): i32 {
             Option.None => {
                 big(0)
             }
-        }
-        ).len
+        }).len
         j = j + 1
     }
     print("match-temps " + matchTemps.toString())
@@ -59,8 +57,7 @@ pub fn main(): i32 {
             big(m)
         } else {
             "z"
-        }
-        ).len
+        }).len
         m = m + 1
     }
     print("mixed " + mixed.toString())
@@ -75,8 +72,7 @@ pub fn main(): i32 {
             a
         } else {
             b
-        }
-        ).len
+        }).len
         p = p + 1
     }
     print("locals " + locals.toString())
@@ -89,8 +85,7 @@ pub fn main(): i32 {
             3
         } else {
             4
-        }
-        )
+        })
         q = q + 1
     }
     print("scalar " + scalar.toString())

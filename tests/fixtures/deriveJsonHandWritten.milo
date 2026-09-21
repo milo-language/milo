@@ -22,13 +22,11 @@ impl Stamp {
         let Option.Some(s) = doc.curStr(cur) else {
             return Result.Err(JsonError.Mismatch(JsonMismatch {
                 path: "", expected: "string", actual: jsonKindName(doc.curKind(cur))
-            }
-            ))
+            }))
         }
         return Result.Ok(Stamp {
             text: s
-        }
-        )
+        })
     }
 }
 

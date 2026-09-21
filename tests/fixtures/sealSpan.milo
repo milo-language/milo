@@ -26,16 +26,13 @@ pub fn main(): i32 {
     var toks: Vec<Token> = Vec.new()
     toks.push(Token {
         kind: 1, at: src.spanOf(2, 4)
-    }
-    )
+    })
     toks.push(Token {
         kind: 2, at: src.spanOf(9, 4)
-    }
-    )
+    })
     toks.push(Token {
         kind: 1, at: src.spanOf(16, 4)
-    }
-    )
+    })
 
     print(src.text(toks[0].at))
     print(src.text(toks[1].at))
@@ -51,8 +48,7 @@ pub fn main(): i32 {
     var n = 0
     src.each(toks[1].at, (b: u8): void => {
         n = n + 1
-    }
-    )
+    })
     print("bytes=" + n.toString())
 
     let back = src.unseal()

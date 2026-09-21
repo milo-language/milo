@@ -410,8 +410,7 @@ impl Log {
         gSinkFd = fd
         gSinkOwned = true
         return Result.Ok(Unit {
-        }
-        )
+        })
     }
 
     // Start an unnamed record with a text field, e.g.

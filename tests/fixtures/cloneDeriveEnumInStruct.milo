@@ -35,16 +35,14 @@ fn main() {
     let root = A {
         name: "root", e: E.X(B {
             name: "leaf"
-        }
-        )
+        })
     }
     let copy = root.clone()
     print(describe(root))
     print(describe(copy))
     let e = E.X(B {
         name: "solo"
-    }
-    )
+    })
     let e2 = e.clone()
     match e2 {
         E.X(b) => {

@@ -164,8 +164,7 @@ impl TlsStream {
 
             return Result.Ok(TlsStream {
                 fd: fd, ssl: sslAddr, ctx: ctxAddr
-            }
-            )
+            })
         }
     }
 
@@ -251,8 +250,7 @@ impl TlsStream {
                 }
             }
             chPump.close()
-        }
-        )
+        })
         return ch
     }
 }

@@ -37,8 +37,7 @@ pub fn main() {
     print(describe(bad.orElse((e) => {
         let r: Result<i64, i64> = Result.Ok(e.len)
         return r
-    }
-    )))
+    })))
 
     // the callback may fail again — that Err must come back as an Err, not an Ok
     let bad2: Result<i64, string> = Result.Err(heapStr("nope"))
@@ -46,8 +45,7 @@ pub fn main() {
     print(describe(bad2.orElse((e) => {
         let r: Result<i64, i64> = Result.Err(-1)
         return r
-    }
-    )))
+    })))
 
     // Ok short-circuits: the callback must not run, and the payload survives intact
     let good: Result<i64, string> = Result.Ok(3)
@@ -56,8 +54,7 @@ pub fn main() {
         print("ran")
         let r: Result<i64, i64> = Result.Err(-2)
         return r
-    }
-    )))
+    })))
 
     // heap Ok payload: orElse forwards it, so the receiver is consumed and the buffer
     // is freed exactly once
@@ -65,8 +62,7 @@ pub fn main() {
     match okStr.orElse((e) => {
         let r: Result<string, string> = Result.Err(heapStr("other"))
         return r
-    }
-    ) {
+    }) {
         Result.Ok(v) => {
             // @expect: kept!
             print(v)
@@ -82,10 +78,8 @@ pub fn main() {
     print(describe(start.orElse((e) => {
         let r: Result<i64, i64> = Result.Err(e + 1)
         return r
-    }
-    ).orElse((e) => {
+    }).orElse((e) => {
         let r: Result<i64, i64> = Result.Ok(e * 4)
         return r
-    }
-    )))
+    })))
 }

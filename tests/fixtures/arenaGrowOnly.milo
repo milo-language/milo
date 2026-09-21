@@ -43,8 +43,7 @@ pub fn main(): i32 {
     g2.set(leaf, "leaf-renamed")
     g2.modifyMut(leaf, (v: &mut string): void => {
         v.pushStr("!")
-    }
-    )
+    })
     print("mutated: " + g2.get(leaf))
 
     // A handle from another arena is not held here.

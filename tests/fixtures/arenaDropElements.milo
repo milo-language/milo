@@ -34,17 +34,14 @@ fn inner(): void {
     var seen: i64 = 0
     let _ = a.read(h, (r: &Res) => {
         seen = r.id
-    }
-    )
+    })
     let _ = a.modifyMut(h, (r: &mut Res) => {
         r.id = r.id + 1
-    }
-    )
+    })
     var after: i64 = 0
     let _ = a.read(h, (r: &Res) => {
         after = r.id
-    }
-    )
+    })
     let _ = a.free(h2)
     print("read " + seen.toString() + " mod " + after.toString() + " valid " + a.valid(h2).toString())
 }

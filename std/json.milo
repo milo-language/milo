@@ -314,29 +314,21 @@ fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
             let esc = source[start + i]
             if esc == 'n' {
                 result.push('\n')
-            } 
-            else if esc == 't' {
+            } else if esc == 't' {
                 result.push('\t')
-            } 
-            else if esc == 'r' {
+            } else if esc == 'r' {
                 result.push('\r')
-            } 
-            else if esc == '"' {
+            } else if esc == '"' {
                 result.push('"')
-            } 
-            else if esc == '\\' {
+            } else if esc == '\\' {
                 result.push('\\')
-            } 
-            else if esc == '/' {
+            } else if esc == '/' {
                 result.push('/')
-            } 
-            else if esc == 'b' {
+            } else if esc == 'b' {
                 result.push(8 as u8)
-            } 
-            else if esc == 'f' {
+            } else if esc == 'f' {
                 result.push(12 as u8)
-            } 
-            else if esc == 'u' && i + 4 < len {
+            } else if esc == 'u' && i + 4 < len {
                 // \uXXXX → code point → UTF-8.
                 //
                 // A non-BMP character arrives as a SURROGATE PAIR, because JSON inherits
@@ -382,8 +374,7 @@ fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
                     result.push((0x80 | ((cp >> 6) & 0x3F)) as u8)
                     result.push((0x80 | (cp & 0x3F)) as u8)
                 }
-            } 
-            else {
+            } else {
                 result.push(esc)
             }
         } else {
@@ -1515,28 +1506,22 @@ pub fn jsonEscapeStr(s: &string): string {
         let c = s[i]
         if c == '"' {
             result = result + "\\\""
-        } 
-        else if c == '\\' {
+        } else if c == '\\' {
             result = result + "\\\\"
-        } 
-        else if c == '\n' {
+        } else if c == '\n' {
             result = result + "\\n"
-        } 
-        else if c == '\t' {
+        } else if c == '\t' {
             result = result + "\\t"
-        } 
-        else if c == '\r' {
+        } else if c == '\r' {
             result = result + "\\r"
-        } 
-        else if c < 32 {
+        } else if c < 32 {
             // RFC 8259: all control chars MUST be escaped. Terminal streams
             // (ESC etc.) otherwise produce unparseable frames.
             let digits: string = "0123456789abcdef"
             result = result + "\\u00"
             result.push(digits[((c as i64) >> 4) & 15])
             result.push(digits[(c as i64) & 15])
-        } 
-        else {
+        } else {
             result.push(c)
         }
         i = i + 1
@@ -1756,64 +1741,56 @@ impl JsonObj {
         var m = self
         m.members.push(JsonMember {
             key: key, val: JsonVal.JStr(val)
-        }
-        )
+        })
         return m
     }
     fn int(self: Self, key: string, val: i64): Self {
         var m = self
         m.members.push(JsonMember {
             key: key, val: JsonVal.JInt(val)
-        }
-        )
+        })
         return m
     }
     fn float(self: Self, key: string, val: f64): Self {
         var m = self
         m.members.push(JsonMember {
             key: key, val: JsonVal.JFloat(val)
-        }
-        )
+        })
         return m
     }
     fn bool(self: Self, key: string, val: bool): Self {
         var m = self
         m.members.push(JsonMember {
             key: key, val: JsonVal.JBool(val)
-        }
-        )
+        })
         return m
     }
     fn nil(self: Self, key: string): Self {
         var m = self
         m.members.push(JsonMember {
             key: key, val: JsonVal.JNull
-        }
-        )
+        })
         return m
     }
     fn obj(self: Self, key: string, val: JsonObj): Self {
         var m = self
         m.members.push(JsonMember {
             key: key, val: JsonVal.JObj(val.members)
-        }
-        )
+        })
         return m
     }
     fn arr(self: Self, key: string, val: JsonArr): Self {
         var m = self
         m.members.push(JsonMember {
             key: key, val: JsonVal.JArr(val.items)
-        }
-        )
+        })
         return m
     }
     fn val(self: Self, key: string, val: JsonVal): Self {
         var m = self
         m.members.push(JsonMember {
             key: key, val: val
-        }
-        )
+        })
         return m
     }
     // Splice a pre-serialized JSON value verbatim (caller guarantees validity).
@@ -1821,8 +1798,7 @@ impl JsonObj {
         var m = self
         m.members.push(JsonMember {
             key: key, val: JsonVal.JRaw(json)
-        }
-        )
+        })
         return m
     }
     // Optional-field helpers: add the key only when the Option is Some, so a
@@ -1834,8 +1810,7 @@ impl JsonObj {
             Option.Some(v) => {
                 m.members.push(JsonMember {
                     key: key, val: JsonVal.JStr(v)
-                }
-                )
+                })
             }
             Option.None => {
             }
@@ -1848,8 +1823,7 @@ impl JsonObj {
             Option.Some(v) => {
                 m.members.push(JsonMember {
                     key: key, val: JsonVal.JInt(v)
-                }
-                )
+                })
             }
             Option.None => {
             }
@@ -1862,8 +1836,7 @@ impl JsonObj {
             Option.Some(v) => {
                 m.members.push(JsonMember {
                     key: key, val: JsonVal.JFloat(v)
-                }
-                )
+                })
             }
             Option.None => {
             }
@@ -1876,8 +1849,7 @@ impl JsonObj {
             Option.Some(v) => {
                 m.members.push(JsonMember {
                     key: key, val: JsonVal.JBool(v)
-                }
-                )
+                })
             }
             Option.None => {
             }
@@ -2274,8 +2246,7 @@ impl JsonError {
             JsonError.Mismatch(m) => {
                 return JsonError.Mismatch(JsonMismatch {
                     path: jsonPathJoin(seg, m.path), expected: m.expected, actual: m.actual
-                }
-                )
+                })
             }
         }
     }

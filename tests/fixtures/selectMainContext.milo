@@ -31,8 +31,7 @@ pub fn main(): i32 {
     Task.spawn(move(): void => {
         sleepMs(30)
         let _ = chSend.send(99)
-    }
-    )
+    })
 
     var sel = Select.new()
     sel.onRecv(ch) // arm 0 — the green task fires this

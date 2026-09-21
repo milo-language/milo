@@ -37,26 +37,21 @@ pub fn main(): void {
     var queryParams: Vec<Param> = []
     queryParams.push(Param {
         name: "empty", value: ""
-    }
-    )
+    })
     queryParams.push(Param {
         name: "full", value: "v"
-    }
-    )
+    })
     var headers: Vec<Param> = []
     headers.push(Param {
         name: "X-Empty", value: ""
-    }
-    )
+    })
     headers.push(Param {
         name: "Cookie", value: "a=; b=2"
-    }
-    )
+    })
     var params: Vec<Param> = []
     params.push(Param {
         name: "slug", value: ""
-    }
-    )
+    })
     let ctx = ctxWith(queryParams, headers, params)
 
     // @expect: query-empty some:

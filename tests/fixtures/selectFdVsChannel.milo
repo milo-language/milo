@@ -64,15 +64,13 @@ pub fn main(): i32 {
             }
         }
         sel.destroy()
-    }
-    )
+    })
 
     Task.spawn(move(): void => {
         let m = "hi"
         writeFd(wfd, m, m.len)
         close(wfd)
-    }
-    )
+    })
 
     schedulerRunToCompletion()
     return 0

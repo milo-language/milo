@@ -394,8 +394,7 @@ pub fn arenaHandles<T>(arena: &Arena<T>): Vec<Handle<T>> {
                 arenaId: arena.id,
                 index: i as i32,
                 generation: arena.gens[i],
-            }
-            )
+            })
         }
     }
     return result

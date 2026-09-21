@@ -18,8 +18,7 @@ pub fn main(): i32 {
         print("parking")
         schedulerPark()
         print("resumed")
-    }
-    )
+    })
 
     let s2 = slot.clone()
     Task.spawn(move(): void => {
@@ -30,8 +29,7 @@ pub fn main(): i32 {
         unsafe {
             schedulerUnpark(s2.load() as *u8)
         }
-    }
-    )
+    })
 
     schedulerRunToCompletion()
     return 0

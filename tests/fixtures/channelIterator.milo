@@ -19,8 +19,7 @@ pub fn main(): i32 {
         chW.send(3)!
         chW.close()
         return 0
-    }
-    )
+    })
 
     for val in ch {
         print(val)

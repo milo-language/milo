@@ -373,8 +373,7 @@ fn parseMultipartBody(body: &string, boundary: &string, limits: &Limits): Result
             filename: multipartHeaderParam(disposition, "filename"),
             contentType: partType,
             body: body[bodyStart..bodyEnd].clone(),
-        }
-        )
+        })
         p = sep + 1 + delim.len
     }
     return Result.Ok(parts)

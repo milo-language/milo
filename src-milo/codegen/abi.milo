@@ -70,22 +70,19 @@ pub fn leavesOf(cg: &Cgen, ty: &string, off: i64): Vec<AbiLeaf> {
     if ty == "f32" {
         out.push(AbiLeaf {
             offset: off, size: 4, isFloat: true
-        }
-        )
+        })
         return out
     }
     if ty == "f64" || ty == "double" {
         out.push(AbiLeaf {
             offset: off, size: 8, isFloat: true
-        }
-        )
+        })
         return out
     }
     if ty == "float" {
         out.push(AbiLeaf {
             offset: off, size: 4, isFloat: true
-        }
-        )
+        })
         return out
     }
     let raw = stripPercent(ty)
@@ -94,8 +91,7 @@ pub fn leavesOf(cg: &Cgen, ty: &string, off: i64): Vec<AbiLeaf> {
     }
     out.push(AbiLeaf {
         offset: off, size: payloadBytes(cg, ty), isFloat: false
-    }
-    )
+    })
     return out
 }
 
@@ -115,8 +111,7 @@ pub fn abiLeaves(cg: &Cgen, name: &string, base: i64): Vec<AbiLeaf> {
         for j in 0..sub.len {
             out.push(AbiLeaf {
                 offset: sub[j].offset, size: sub[j].size, isFloat: sub[j].isFloat
-            }
-            )
+            })
         }
         off = off + payloadBytes(cg, fty)
     }
@@ -232,8 +227,7 @@ pub fn sysvRegs(s: &AbiStruct): Vec<AbiReg> {
     for k in 0..n {
         regs.push(AbiReg {
             ty: sysvEightbyteTy(s, k), offset: k * 8
-        }
-        )
+        })
     }
     return regs
 }
@@ -267,8 +261,7 @@ pub fn classifyArg(arch: &string, s: &AbiStruct): ArgClass {
             var regs: Vec<AbiReg> = Vec.new()
             regs.push(AbiReg {
                 ty: hfaCoerceTy(h), offset: 0
-            }
-            )
+            })
             return coerceArg(regs, ceilDiv(s.size, 8) * 8)
         }
         if s.size > 16 {
@@ -278,14 +271,12 @@ pub fn classifyArg(arch: &string, s: &AbiStruct): ArgClass {
         if s.size <= 8 {
             regs.push(AbiReg {
                 ty: "i64", offset: 0
-            }
-            )
+            })
             return coerceArg(regs, 8)
         }
         regs.push(AbiReg {
             ty: "[2 x i64]", offset: 0
-        }
-        )
+        })
         return coerceArg(regs, 16)
     }
     // x86_64 System V

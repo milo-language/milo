@@ -20,8 +20,7 @@ pub fn main(): i32 {
         chW.send(30)!
         chW.send(0)!
         return 0
-    }
-    )
+    })
 
     while true {
         let val = ch.recv()!

@@ -32,12 +32,10 @@ pub fn printArea(s: &Shape) {
 pub fn main(): i32 {
     let c: Heap<Shape> = Heap(Circle {
         radius: 5.0
-    }
-    )
+    })
     let s: Heap<Shape> = Heap(Square {
         side: 4.0
-    }
-    )
+    })
     print(c.area())
     print(s.area())
     return 0

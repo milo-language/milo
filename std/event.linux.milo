@@ -59,8 +59,7 @@ pub fn eventLoopNew(): Result<EventLoop, string> {
         }
         return Result.Ok(EventLoop {
             epfd: fd
-        }
-        )
+        })
     }
 }
 

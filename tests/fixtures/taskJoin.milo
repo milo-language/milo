@@ -8,8 +8,7 @@ from "std/runtime" import {
 pub fn main(): i32 {
     let t = Task.spawn(move(): void => {
         print("worker")
-    }
-    )
+    })
     t.join()
     print("joined")
     return 0

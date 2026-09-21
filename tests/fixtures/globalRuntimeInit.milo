@@ -21,8 +21,7 @@ pub fn main(): i32 {
     print(names[1])
     let h = pool.alloc(Node {
         val: 9
-    }
-    )
+    })
     match pool.get(h) {
         Some(n) => {
             // @expect: 9

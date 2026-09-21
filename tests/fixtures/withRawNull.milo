@@ -19,8 +19,7 @@ pub fn main(): i32 {
         let r = withRaw(nullPtr, 4, (xs: &[i64]): i64 => {
             calls = calls + 1
             return xs.len
-        }
-        )
+        })
         match r {
             Option.Some(v) => {
                 print("some ", v)
@@ -35,8 +34,7 @@ pub fn main(): i32 {
         let neg = withRaw(p, -1, (xs: &[i64]): i64 => {
             calls = calls + 1
             return xs.len
-        }
-        )
+        })
         match neg {
             Option.Some(v) => {
                 print("some ", v)

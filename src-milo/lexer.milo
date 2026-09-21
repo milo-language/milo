@@ -96,8 +96,7 @@ pub fn readLeadingTrivia(lex: &mut Lexer): Vec<Trivia> {
             if newlines >= 2 && !emittedBlank {
                 trivia.push(Trivia {
                     kind: TriviaKind.Blank, text: "", line: lex.line
-                }
-                )
+                })
                 emittedBlank = true
             }
         } else if ch == 32 || ch == 9 || ch == 13 {
@@ -110,8 +109,7 @@ pub fn readLeadingTrivia(lex: &mut Lexer): Vec<Trivia> {
             }
             trivia.push(Trivia {
                 kind: TriviaKind.Comment, text: text, line: commentLine
-            }
-            )
+            })
             newlines = 0
             emittedBlank = false
         } else {
@@ -139,8 +137,7 @@ pub fn readTrailingTrivia(lex: &mut Lexer): Vec<Trivia> {
         var result: Vec<Trivia> = Vec.new()
         result.push(Trivia {
             kind: TriviaKind.Comment, text: text, line: commentLine
-        }
-        )
+        })
         return result
     }
     var empty: Vec<Trivia> = Vec.new()
@@ -291,33 +288,25 @@ pub fn lexChar(lex: &mut Lexer, line: i32, col: i32): Token {
         let esc = advanceChar(&mut lex)
         if esc == 110 {
             value = 10
-        } 
-        else if esc == 116 {
+        } else if esc == 116 {
             value = 9
-        } 
-        else if esc == 114 {
+        } else if esc == 114 {
             value = 13
-        } 
-        else if esc == 92 {
+        } else if esc == 92 {
             value = 92
-        } 
-        else if esc == 39 {
+        } else if esc == 39 {
             value = 39
-        } 
-        else if esc == 48 {
+        } else if esc == 48 {
             value = 0
-        } 
-        else if esc == 120 {
+        } else if esc == 120 {
             value = lexHexEscape(&mut lex) as i32
-        } 
-        else if esc == 117 {
+        } else if esc == 117 {
             // A char is one byte, so only the Latin-1 range has a single-byte form.
             value = lexUnicodeEscape(&mut lex, line, col)
             if value > 0xFF {
                 lexError("\\u{...} does not fit in a char (one byte); use a string", line, col)
             }
-        } 
-        else {
+        } else {
             lexError("unknown escape sequence '" + escapeName(esc) + "'", line, col)
         }
     } else {
@@ -351,26 +340,19 @@ pub fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
                     value.push(lexHexEscape(&mut lex))
                 } else if esc == 110 {
                     value.push(10 as u8)
-                } 
-                else if esc == 116 {
+                } else if esc == 116 {
                     value.push(9 as u8)
-                } 
-                else if esc == 114 {
+                } else if esc == 114 {
                     value.push(13 as u8)
-                } 
-                else if esc == 92 {
+                } else if esc == 92 {
                     value.push(92 as u8)
-                } 
-                else if esc == 34 {
+                } else if esc == 34 {
                     value.push(34 as u8)
-                } 
-                else if esc == 39 {
+                } else if esc == 39 {
                     value.push(39 as u8)
-                } 
-                else if esc == 48 {
+                } else if esc == 48 {
                     value.push(0 as u8)
-                } 
-                else if esc == 123 {
+                } else if esc == 123 {
                     // `\{` must NOT become a literal `{` here: the parser's brace
                     // scan (parseFString) re-walks this token's value looking for
                     // '{'/'}' bytes to find interpolation openers, and a real `{`
@@ -384,14 +366,12 @@ pub fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
                     value.push(0xEF as u8)
                     value.push(0x9D as u8)
                     value.push(0xBB as u8)
-                } 
-                else if esc == 125 {
+                } else if esc == 125 {
                     // `\}` mirror of `\{` above — U+F77D, UTF-8 EF 9D BD.
                     value.push(0xEF as u8)
                     value.push(0x9D as u8)
                     value.push(0xBD as u8)
-                } 
-                else if esc == 117 {
+                } else if esc == 117 {
                     // A `\u{7b}` must land on the same sentinel `\{` does, or it
                     // reopens the interpolation hole the sentinels exist to close.
                     let cp = lexUnicodeEscape(&mut lex, line, col)
@@ -406,8 +386,7 @@ pub fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
                     } else {
                         pushUtf8(&mut value, cp)
                     }
-                } 
-                else {
+                } else {
                     lexError("unknown escape sequence '" + escapeName(esc) + "'", line, col)
                 }
                 continue
