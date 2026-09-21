@@ -1,0 +1,19 @@
+// An enum whose variant carries a raw pointer is move-tracked, as a struct with a
+// pointer field is: an owning handle wrapped in an enum was Copy by the
+// all-variants-Copy rule, so `take(s); take(s)` duplicated it.
+// @error: use of moved variable 's'
+enum Slot { Some(*u8), Empty }
+
+fn take(s: Slot): void {
+    match s {
+        Slot.Some(p) => { print("some") }
+        Slot.Empty => { print("empty") }
+    }
+}
+
+fn main(): i32 {
+    let s = Slot.Some(0 as *u8)
+    take(s)
+    take(s)
+    return 0
+}

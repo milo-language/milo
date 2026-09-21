@@ -317,8 +317,17 @@ interface StructInfo {
 // field of a pointer-holding struct is not reported here: that inner struct is itself
 // move-tracked (or `@copy`), and the ordinary all-fields-Copy rule carries the verdict up.
 export function rawPointerField(fields: { name: string; type: TypeKind }[]): string | undefined {
-  const holdsPtr = (t: TypeKind): boolean => t.tag === "ptr" || (t.tag === "array" && holdsPtr(t.element));
-  return fields.find(f => holdsPtr(f.type))?.name;
+  return fields.find(f => holdsRawPtr(f.type))?.name;
+}
+
+// The enum form of rawPointerField: the first variant whose payload holds a raw pointer.
+export function rawPointerVariant(variants: Map<string, { fields: TypeKind[] }>): string | undefined {
+  for (const [name, v] of variants) if (v.fields.some(holdsRawPtr)) return name;
+  return undefined;
+}
+
+function holdsRawPtr(t: TypeKind): boolean {
+  return t.tag === "ptr" || (t.tag === "array" && holdsRawPtr(t.element));
 }
 
 // A verified claim about a C type's layout, from `@cLayout(cType, header)`.
@@ -347,6 +356,10 @@ export interface EnumInfo {
   typeArgs?: TypeKind[];
   variants: Map<string, { tag: number; fields: TypeKind[] }>;
   reprType?: string; // set for `enum Kind: i32 { ... }` — the tag IS the integer value
+  // The first variant carrying a raw pointer, when the enum is not `@copy`: the same
+  // rule as a struct's `pointerField`. An owning handle wrapped in an enum was Copy by
+  // the all-variants-Copy rule and so duplicable again.
+  pointerVariant?: string;
   // The synthetic declaration of a monomorphized instance (`Option_string`), so a derive
   // can be synthesized for it at either of the two times an instance can appear.
   decl?: import("./ast").EnumDecl;
@@ -1695,7 +1708,8 @@ export class TypeChecker {
         fields: v.fields.map(f => this.substituteMiloType(f, generic.typeParams, typeArgs)),
       })),
     };
-    this.enums.set(mangled, { baseName, typeArgs, variants, decl });
+    const pointerVariant = generic.decl.attributes?.some(a => a.name === "copy") ? undefined : rawPointerVariant(variants);
+    this.enums.set(mangled, { baseName, typeArgs, variants, decl, ...(pointerVariant && { pointerVariant }) });
     this.monomorphizedDecls.push(decl);
     // An instance that appears after the derive pass (`let o: Option<P>` inside a body)
     // missed the fixpoint, so it gets its conditional Clone here; one that appears
@@ -1880,7 +1894,10 @@ export class TypeChecker {
         if (info?.pointerField) return `it holds a raw pointer ('${info.pointerField}') and is not @copy`;
         return "a field of it owns heap memory";
       }
-      case "enum": return "a variant of it owns heap memory";
+      case "enum": {
+        const pv = this.enums.get(t.name)?.pointerVariant;
+        return pv ? `variant '${pv}' holds a raw pointer and it is not @copy` : "a variant of it owns heap memory";
+      }
       case "fn": return t.owning ? "it is a move closure" : "it is a closure";
       case "ref": return "it is a reference";
       default: return "it is move-tracked";
@@ -3004,7 +3021,10 @@ export class TypeChecker {
         }
       }
     }
-    for (const e of program.enums) this.validateAttributes(e.name, e.attributes, "enum");
+    for (const e of program.enums) {
+      this.validateAttributes(e.name, e.attributes, "enum");
+      for (const attr of e.attributes ?? []) if (attr.name === "copy") this.validateEnumCopyAttr(e, attr, program);
+    }
 
     // Option and Result are compiler builtins with dedicated syntax (`T?`, `!`, `??`,
     // `?`-propagation) that a redeclaration does not rebind, and prelude signatures
@@ -3075,7 +3095,9 @@ export class TypeChecker {
           }
           variants.set(v.name, { tag, fields });
         });
-        this.enums.set(e.name, { variants, ...(e.reprType && { reprType: e.reprType }) });
+        const copy = e.attributes?.some(a => a.name === "copy") ?? false;
+        const pointerVariant = copy ? undefined : rawPointerVariant(variants);
+        this.enums.set(e.name, { variants, ...(e.reprType && { reprType: e.reprType }), ...(pointerVariant && { pointerVariant }) });
       }
     }
 
@@ -4627,6 +4649,24 @@ export class TypeChecker {
     }
   }
 
+  // `@copy` on an enum: the same claims as on a struct, against a variant payload.
+  private validateEnumCopyAttr(e: import("./ast").EnumDecl, attr: Attribute, program: Program) {
+    if (attr.args && attr.args.length > 0) {
+      this.error(`'@copy' on '${e.name}' takes no arguments`, e.span, `write '@copy' on its own line above the enum`);
+    }
+    if (program.impls.some(i => i.traitName === "Drop" && i.typeName === e.name)) {
+      this.error(`'@copy' on '${e.name}' contradicts its Drop impl: a type with a destructor is never Copy`, e.span,
+        `a Drop impl means the value owns something to release, which is exactly what '@copy' denies. Drop the attribute`);
+      return;
+    }
+    // Read off the AST: this runs before the enum's variants are registered.
+    const isPtrType = (t: MiloType): boolean => t.isPtr || (t.ptrDepth ?? 0) > 0;
+    if (!e.variants.some(v => v.fields.some(isPtrType))) {
+      this.error(`'@copy' on '${e.name}' does nothing: no variant of it carries a raw pointer`, e.span,
+        `'@copy' keeps an enum Copy although a variant holds a raw pointer it does not own. An enum with no pointer payload is already Copy when its payloads are, so drop the attribute`);
+    }
+  }
+
   private validateAttributes(declName: string, attrs: Attribute[] | undefined, target: "struct" | "enum"): void {
     if (!attrs) return;
     const known = TypeChecker.KNOWN_ATTRS.map(a => `@${a}`).join(", ");
@@ -4637,6 +4677,7 @@ export class TypeChecker {
         // Clone is the one derive an enum consumes (processDerives); Eq/Json/user
         // templates still only expand over a struct, so they keep the old rejection.
         if (attr.name === "derive" && attr.args.every(a => a === "Clone")) continue;
+        if (attr.name === "copy") continue; // validated in validateEnumCopyAttr
         this.error(`'@${attr.name}' is not supported on enums — '${declName}'`, undefined,
           `only structs consume attributes today; on an enum it would be silently ignored`);
       }
@@ -6729,6 +6770,9 @@ export class TypeChecker {
     if (cached !== undefined) return cached;
     const info = this.enums.get(name);
     if (!info) { this.allCopyEnumCache.set(name, false); return false; }
+    // A raw pointer payload makes the enum move-tracked unless `@copy`, as a pointer
+    // field does a struct (see isAllCopyStruct).
+    if (info.pointerVariant) { this.allCopyEnumCache.set(name, false); return false; }
     this.allCopyEnumCache.set(name, false);
     const result = [...info.variants.values()].every(v =>
       v.fields.every(f => this.isCopyType(f))

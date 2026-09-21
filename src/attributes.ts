@@ -12,7 +12,7 @@
 // `targets` is what the attribute may be written on; the checker derives its per-target
 // checks from this rather than restating them. Adding an entry here is what makes an
 // attribute known, documented in `milo lang --json`, and legal on its targets.
-type AttrTarget = "fn" | "method" | "struct" | "extern";
+type AttrTarget = "fn" | "method" | "struct" | "enum" | "extern";
 
 interface AttrInfo {
   name: string;
@@ -41,12 +41,13 @@ export const ATTRIBUTES: AttrInfo[] = [
   },
   {
     name: "copy",
-    targets: ["struct"],
+    targets: ["struct", "enum"],
     doc:
-      "This struct is Copy although it holds a raw pointer: it does not own what the pointer " +
-      "points at. A pointer field otherwise makes a struct move-tracked, so an owning handle " +
-      "cannot be duplicated by accident; `@copy` is the explicit claim for a C-owned record " +
-      "or a view into a buffer some other value owns. Rejected on a struct with no pointer field.",
+      "This struct or enum is Copy although it holds a raw pointer: it does not own what the " +
+      "pointer points at. A pointer field or variant payload otherwise makes the type " +
+      "move-tracked, so an owning handle cannot be duplicated by accident; `@copy` is the " +
+      "explicit claim for a C-owned record or a view into a buffer some other value owns. " +
+      "Rejected on a type with no raw pointer in it.",
   },
   {
     name: "copyOnly",

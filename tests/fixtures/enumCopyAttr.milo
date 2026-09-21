@@ -1,0 +1,29 @@
+// `@copy` on an enum keeps a pointer-payload enum Copy: the pointer is a view into
+// memory something else owns, so duplicating it duplicates nothing.
+@copy
+enum View {
+    At(*u8), Nowhere
+}
+
+fn describe(v: View): void {
+    match v {
+        View.At(p) => {
+            print("at")
+        }
+        View.Nowhere => {
+            print("nowhere")
+        }
+    }
+}
+
+fn main(): i32 {
+    let buf = "abc"
+    let v = View.At(_strDataPtr(buf))
+    describe(v)
+    describe(v)
+    describe(View.Nowhere)
+    return 0
+}
+// @expect: at
+// @expect: at
+// @expect: nowhere

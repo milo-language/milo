@@ -1,0 +1,10 @@
+// `@copy` claims a pointer payload is not owned; with no pointer payload there is
+// nothing for it to say.
+// @error: '@copy' on 'Plain' does nothing: no variant of it carries a raw pointer
+@copy
+enum Plain { A, B }
+
+fn main(): i32 {
+    let p = Plain.A
+    return 0
+}

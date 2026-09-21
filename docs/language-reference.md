@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-20 (explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-20 (@copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -1830,7 +1830,9 @@ A struct whose fields are all Copy is itself Copy, and so is never move-tracked,
 one exception: a struct with a field of raw pointer type (`*T`, directly or through a
 fixed array or an embedded struct) is move-tracked unless it is marked `@copy`. The
 pointer itself is a scalar, but what it addresses is often owned, and a Copy owning
-handle could be released twice. See the `@copy` section below.
+handle could be released twice. The same rule holds for an enum whose variant carries
+a raw pointer (`enum Slot { Some(*u8), Empty }` is move-tracked; `@copy` on the enum
+opts out). See the `@copy` section below.
 
 Ownership is tracked per **place**, not per variable, so a field can be moved out on
 its own and the rest of the struct stays usable:
@@ -2049,6 +2051,21 @@ exactly like `@noCopy`, and taking one out of a container by index is an error.
 `@copy` struct in the build with the field that made it pointer-holding: the census of
 "Copy, although it points at something", so an audit can re-ask each one the question the
 attribute answered.
+
+An enum takes the same attribute for the same reason: a variant payload of raw pointer
+type makes the enum move-tracked, and `@copy` above the enum is the claim that the
+pointee is owned elsewhere. It is rejected on an enum with no pointer payload.
+
+```milo
+@copy
+enum View { At(*u8), Nowhere }     // a view into a buffer someone else owns
+
+fn main() {
+    let v = View.At(_strDataPtr("abc"))
+    let w = v                       // Copy: fine, twice
+    let x = v
+}
+```
 
 ### `@copyOnly` — generics that may only hold Copy types
 
