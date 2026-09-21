@@ -1,12 +1,15 @@
-// A droppable field read out of a container element (`sig.params[i].ty`) is a COPY,
-// not a move: the container keeps owning that field. Copying the header alone gives
-// two owners of one buffer, and whichever drops first leaves the other dangling —
+// A droppable field read out of a container element (`sig.params[i].ty`) needs an
+// explicit `.clone()`: the container keeps owning that field, so a bare read is
+// rejected (tests/errors/moveFieldOutOfIndexedElement.milo) instead of zeroing the
+// slot behind the container's back. The clone must be deep. Copying the header alone
+// gives two owners of one buffer, and whichever drops first leaves the other dangling;
 // milo-self's codegen did exactly that (the enclosing HashMap value and the local
 // copy both freed the same TStruct name string, aborting in libmalloc while the
 // compiler type-checked any method call with a struct-typed parameter).
 //
-// The reads are deliberately repeated: the first copy is dropped when its scope
+// The reads are deliberately repeated: the first clone is dropped when its scope
 // ends, so a shallow copy makes every later read of the same element see freed bytes.
+// The container is read back after each clone to pin that it still holds its value.
 enum TK {
     TStruct(string),
     TFlag(bool),
@@ -67,7 +70,7 @@ fn sigWith(a: string, b: string): FnSig {
 // Field of an indexed element, reached through a map value this function owns.
 fn firstParamName(m: &HashMap<string, FnSig>, key: string): string {
     let sig = m.get(key)!
-    let paramType = sig.params[0].ty
+    let paramType = sig.params[0].ty.clone()
     return nameOf(paramType)
 }
 
@@ -82,14 +85,16 @@ fn main(): i32 {
 
     // Same shape with an owned local as the container.
     let sig = sigWith("FirstOwned", "SecondOwned")
-    let t0 = sig.params[0].ty
+    let t0 = sig.params[0].ty.clone()
     print(nameOf(t0))
     // @expect: FirstOwned
-    let t1 = sig.params[1].ty
+    let t1 = sig.params[1].ty.clone()
     print(nameOf(t1))
     // @expect: SecondOwned
-    // NOTE: what `sig.params[0].ty` reads AFTER the copy above is deliberately not
-    // asserted — the TS compiler move-zeroes the source field there, milo-self
-    // deep-copies it. Both are memory-safe; they disagree on the leftover value.
+    // The container still holds both values after the clones.
+    print(nameOf(sig.params[0].ty))
+    // @expect: FirstOwned
+    print(nameOf(sig.params[1].ty))
+    // @expect: SecondOwned
     return 0
 }

@@ -2028,8 +2028,8 @@ An index is a runtime value, so `v[i]` is not tracked as a partial move. Reading
 element by value instead **copies** it (see [Reading elements](#reading-elements)), and
 for a type that carries `Drop` or `@noCopy` that copy is refused wherever it appears: a
 `let`, a call argument, an enum payload, a struct-literal field, a `return`, an
-assignment, an array literal. Borrow forms (`v[i].field`, `v[i].method()`, a `&T`
-parameter, `for x in v`, `match v[i]`) stay legal:
+assignment, an array literal. Borrow forms (`v[i].field` as a `&T` argument,
+`v[i].method()`, `for x in v`, `match v[i]`) stay legal:
 
 ```milo error
 struct Fd { fd: i32 }
@@ -2039,6 +2039,23 @@ fn main() {
     var v: Vec<Fd> = Vec.new()
     v.push(Fd { fd: 3 })
     let o = Option.Some(v[0])   // error: cannot take 'Fd' out of a container by index: it carries Drop
+}
+```
+
+A non-Copy **field** of an element cannot be moved out either. The element stays in the
+container, so there is nothing sound to leave in the field's place: the old behaviour
+zeroed it, and the next `v[i].field` read handed back an empty string. Clone the field,
+take the element out first (`remove`/`pop`), or `replace` the field in place; a field of
+a call result (`f().name`) is still a plain move, since the temporary is consumed whole:
+
+```milo error
+struct Tok { text: string }
+
+fn main() {
+    var toks: Vec<Tok> = Vec.new()
+    toks.push(Tok { text: "hi" })
+    let name = toks[0].text   // error: cannot move 'toks[...].text' out of 'toks': the element stays in the container
+    print(name)
 }
 ```
 
