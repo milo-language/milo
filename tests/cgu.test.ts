@@ -27,6 +27,11 @@ function synth(fnCount: number, opts: { shared?: boolean; embed?: boolean } = {}
   return out.join("\n") + "\n";
 }
 
+// `synth` with a module prefix on the first `count` functions: `json$fn0`, `json$fn1`, ...
+function synthModule(fnCount: number, count: number, name = "json"): string {
+  return synth(fnCount).replace(/@fn(\d+)\b/g, (whole, n: string) => (Number(n) < count ? `@${name}$fn${n}` : whole));
+}
+
 const DEFINE_RE = /^define\b.*?@([-a-zA-Z$._][-a-zA-Z$._0-9]*)\s*\(/gm;
 
 function definedIn(mod: string): string[] {
@@ -101,6 +106,27 @@ describe("cgu splitter", () => {
 
   test("units are balanced by body size, not function count", () => {
     const mods = splitModule(synth(80), 4)!;
+    const sizes = mods.map(m => m.split("\n").length);
+    const spread = Math.max(...sizes) / Math.min(...sizes);
+    expect(spread).toBeLessThan(1.5);
+  });
+
+  // Promotion renames a module-local symbol to `__milo_cgu.<name>`, so strip that before
+  // reading the module prefix.
+  const unitsOf = (mods: string[], prefix: string) =>
+    new Set(mods.flatMap((m, u) => definedIn(m).some(n => n.replace(/^__milo_cgu\./, "").startsWith(`${prefix}$`)) ? [u] : []));
+
+  test("functions of one small module share a unit", () => {
+    // 10 of 80 functions are `json$...`: well under a unit's share, so they stay together.
+    const mods = splitModule(synthModule(80, 10), 4)!;
+    expect(unitsOf(mods, "json").size).toBe(1);
+  });
+
+  test("an oversize module is split and units remain balanced", () => {
+    // 60 of 80 functions in one module: placing it whole would put ~75% of the program on
+    // one unit, so it falls back to per-function packing.
+    const mods = splitModule(synthModule(80, 60), 4)!;
+    expect(unitsOf(mods, "json").size).toBeGreaterThan(1);
     const sizes = mods.map(m => m.split("\n").length);
     const spread = Math.max(...sizes) / Math.min(...sizes);
     expect(spread).toBeLessThan(1.5);

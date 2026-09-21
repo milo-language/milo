@@ -170,20 +170,58 @@ function parseModule(ir: string): Module | null {
   return mod;
 }
 
+/** Module a function belongs to: `json$jsonParseValue` -> `json`. A bare name is its own module. */
+function moduleKey(name: string): string {
+  const i = name.indexOf("$");
+  return i === -1 ? name : name.slice(0, i);
+}
+
+// A module whose body exceeds this many times the ideal per-unit share is not placed
+// whole. Measured on std/json at 8 units: 1.25 leaves the 13.9k-line `json` module (1.9x
+// the share) split, 2.0 keeps it whole at +14% build time for +7% runtime.
+const OVERSIZE_GROUP_FACTOR = 1.25;
+
 /**
- * Greedy longest-first bin packing over function body size. Wall-clock is the SLOWEST
- * unit, not the average, so balancing matters more than unit count: round-robin over a
- * module with one 4000-line function and 900 small ones gives no speedup at all.
+ * Greedy largest-first bin packing over body size, one MODULE at a time. Functions are
+ * grouped by `moduleKey` and each group goes whole onto the least-loaded unit. Intra-module
+ * calls are the hot ones (a parser calling its own skipWs and scratchPush helpers), and
+ * clang can only inline a callee it can see: packing by size alone scattered std/json's
+ * helpers across all 8 units and made the json benchmark 30% slower at the default build
+ * than at MILO_CGUS=1.
+ *
+ * Wall-clock is the SLOWEST unit, not the average, so a group larger than
+ * `ceil(total / units) * OVERSIZE_GROUP_FACTOR` is not placed whole: its functions are
+ * placed individually. Whole groups and loose functions share one largest-first order, so
+ * a 4000-line function among 900 small ones still lands on an empty unit rather than on
+ * top of a full one (placing loose functions after all groups cost milojs 8% of build time
+ * that way: its 579k-line `callBuiltin` stacked onto a 113k-line unit).
  */
 function packFunctions(funcs: Func[], units: number): number[] {
-  const order = funcs.map((_f, i) => i).sort((a, b) => funcs[b]!.lineCount - funcs[a]!.lineCount);
   const load = new Array<number>(units).fill(0);
   const home = new Array<number>(funcs.length).fill(0);
-  for (const idx of order) {
+
+  const groups = new Map<string, number[]>();
+  let total = 0;
+  funcs.forEach((f, i) => {
+    total += f.lineCount;
+    const key = moduleKey(f.name);
+    const g = groups.get(key);
+    if (g) g.push(i); else groups.set(key, [i]);
+  });
+  const oversize = Math.ceil(total / units) * OVERSIZE_GROUP_FACTOR;
+
+  const items: { idxs: number[]; lines: number }[] = [];
+  for (const idxs of groups.values()) {
+    const lines = idxs.reduce((n, i) => n + funcs[i]!.lineCount, 0);
+    if (lines > oversize) for (const i of idxs) items.push({ idxs: [i], lines: funcs[i]!.lineCount });
+    else items.push({ idxs, lines });
+  }
+  items.sort((a, b) => b.lines - a.lines);
+  for (const it of items) {
     let best = 0;
     for (let u = 1; u < units; u++) if (load[u]! < load[best]!) best = u;
-    home[idx] = best;
-    load[best]! += funcs[idx]!.lineCount;
+    for (const idx of it.idxs) home[idx] = best;
+    load[best]! += it.lines;
   }
   return home;
 }
