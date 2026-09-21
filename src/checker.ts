@@ -8082,7 +8082,38 @@ export class TypeChecker {
     return "<expr>";
   }
 
+  // Bare `Some(x)` / `None` / `Ok(v)` / `Err(e)` are aliases for the Option/Result
+  // variants. The parser cannot tell them from a call or a variable (it has no scope), so
+  // the checker rewrites the node IN PLACE into the same `EnumLit` the qualified spelling
+  // parses to, at the first sight of it and before any hint is consumed: `let o: Option<i64>
+  // = Some(3)` must reach the EnumLit-with-hint path, not the unwrapped-Option one. Every
+  // later pass (lower, codegen, codegen-js, verify, LSP) therefore sees only the qualified
+  // shape. A user fn, variable, struct, enum or alias of the same name wins, so existing
+  // programs that define their own `Some` are untouched; `bindElidedPattern` is the same
+  // rule for patterns.
+  private static readonly PRELUDE_VARIANTS: Record<string, string> = { Some: "Option", None: "Option", Ok: "Result", Err: "Result" };
+
+  private canonicalizePreludeVariant(expr: Expr): void {
+    if (expr.kind !== "Call" && expr.kind !== "Ident") return;
+    if (expr.kind === "Call" && expr.sigil) return;
+    const variant = expr.kind === "Call" ? expr.func : expr.name;
+    const enumName = TypeChecker.PRELUDE_VARIANTS[variant];
+    if (!enumName || this.nameIsDefined(variant)) return;
+    const args = expr.kind === "Call" ? expr.args : [];
+    const typeArgs = expr.kind === "Call" ? expr.typeArgs : undefined;
+    const node = expr as unknown as Record<string, unknown>;
+    for (const k of Object.keys(node)) if (k !== "span") delete node[k];
+    Object.assign(node, { kind: "EnumLit", enumName, variant, args, ...(typeArgs && { typeArgs }) });
+  }
+
+  private nameIsDefined(name: string): boolean {
+    return this.scopes.some(s => s.has(name)) || this.functions.has(name) || this.genericFns.has(name)
+      || this.structs.has(name) || this.genericStructs.has(name) || this.enums.has(name)
+      || this.genericEnums.has(name) || this.typeAliases.has(name) || this.cSigs.has(name);
+  }
+
   private checkExprWithHint(expr: Expr, hint: TypeKind | null): TypeKind {
+    this.canonicalizePreludeVariant(expr);
     // Unwrap Option<T> hint to T for non-null/non-None expressions (enables auto-wrapping)
     if (hint && expr.kind !== "EnumLit") {
       const inner = this.optionInnerType(hint);
@@ -8275,6 +8306,7 @@ export class TypeChecker {
   // in isolation to be reviewable at all. Arms that are a single `return` stay inline —
   // extracting those buys no isolation and costs a jump.
   private checkExpr(expr: Expr): TypeKind {
+    this.canonicalizePreludeVariant(expr);
     const sp = expr.span;
     switch (expr.kind) {
       case "IntLit":

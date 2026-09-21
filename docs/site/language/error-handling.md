@@ -20,6 +20,8 @@ fn readNumber(path: &string): Result<i64, IoError> {
 }
 ```
 
+`Ok(n)` and `Err(e)` may be written without the `Result.` prefix, in expressions and in patterns, as long as nothing else in scope is named `Ok` or `Err` (the same holds for `Some` and `None`). The standard library keeps the qualified spelling.
+
 Three operators handle a `Result` at the call site: `?` propagates, `!` unwraps or panics, `??` falls back to a default. The rest of this page shows each one, then `match` for full control.
 
 ## `?` — propagate

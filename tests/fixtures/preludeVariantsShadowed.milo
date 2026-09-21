@@ -1,0 +1,22 @@
+// @expect: shadow 42
+// @expect: var 7
+// @expect: some 1
+
+// A user fn named `Some` (or a variable named `None`) wins over the prelude alias, so a
+// program that defined its own `Some` before the alias existed still means the same
+// thing. The qualified spelling always reaches the real variant.
+
+fn Some(x: i64): i64 {
+    return x * 2
+}
+
+pub fn main(): i32 {
+    print("shadow ", Some(21))
+    let None = 7
+    print("var ", None)
+    let o = Option.Some(1)
+    if let Some(v) = o {
+        print("some ", v)
+    }
+    return 0
+}

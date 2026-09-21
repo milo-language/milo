@@ -1210,6 +1210,10 @@ fn find(id: i32): i32? {
 }
 ```
 
+### Bare `Some` / `None` / `Ok` / `Err`
+
+The four variants may also be written without their enum: `Some(42)`, `None`, `Ok(v)`, `Err(e)`, in expressions and in patterns (`match`, `if let`, `let ... else`, `while let`). A bare name resolves to the Option/Result variant only when nothing else in scope has that name; a function, variable, struct or enum called `Some` takes precedence, and a user enum with its own `None` variant is unaffected because its variants are always reached as `Enum.None`. The checker rewrites the bare form to the qualified one, so both spellings mean exactly the same thing. The standard library keeps the qualified spelling.
+
 ### Unwrap, Propagate, Default
 
 Every fallible call site must be explicitly handled — `!`, `?`, or `??`. This makes error paths visible in source code, unlike languages where exceptions can silently propagate.

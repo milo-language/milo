@@ -518,11 +518,31 @@ export class Parser {
   // ── Functions ──
 
   private parseParam(allowNullableRef = false): Param {
+    this.rejectRustReceiver();
     const nameTok = this.expect(TokenKind.Ident);
     const name = nameTok.value;
     this.expect(TokenKind.Colon);
     const type = this.parseType(allowNullableRef);
     return { name, type, span: this.span(nameTok) };
+  }
+
+  // `&self`, `&mut self` and a bare `self` are the Rust receiver spellings. Milo's only
+  // receiver form is an ordinary typed parameter (`self: &Self` etc.), so a Rust reflex
+  // gets the exact replacement instead of "expected 'IDENT', got '&'".
+  private rejectRustReceiver(): void {
+    const tok = this.peek();
+    const next = this.tokens[this.pos + 1];
+    const next2 = this.tokens[this.pos + 2];
+    const isSelf = (t: Token | undefined) => t?.kind === TokenKind.Ident && t.value === "self";
+    if (tok.kind === TokenKind.Amp && isSelf(next)) {
+      this.error(`Milo has no '&self' receiver`, tok, undefined, `write 'self: &Self'`);
+    }
+    if (tok.kind === TokenKind.Amp && next?.kind === TokenKind.Mut && isSelf(next2)) {
+      this.error(`Milo has no '&mut self' receiver`, tok, undefined, `write 'self: &mut Self'`);
+    }
+    if (isSelf(tok) && next?.kind !== TokenKind.Colon) {
+      this.error(`Milo has no bare 'self' receiver`, tok, undefined, `write 'self: Self'`);
+    }
   }
 
   private parseParamList(allowNullableRef = false): { params: Param[]; variadic: boolean } {
@@ -965,9 +985,11 @@ export class Parser {
     const letTok = this.expect(TokenKind.Let);
     const s = this.span(letTok);
     // let-else: `let Enum.Variant(b) = value else { ... }`. A binding name is
-    // always `IDENT =` or `IDENT :`; an enum pattern is `IDENT . Variant`, so the
-    // Dot after the first ident disambiguates without lookahead ambiguity.
-    if (this.at(TokenKind.Ident) && this.tokens[this.pos + 1]?.kind === TokenKind.Dot) {
+    // always `IDENT =` or `IDENT :`; an enum pattern is `IDENT . Variant` or, with the
+    // enum name elided (`let Some(b) = …`), `IDENT (`, so the token after the first
+    // ident disambiguates without lookahead ambiguity.
+    const afterIdent = this.tokens[this.pos + 1]?.kind;
+    if (this.at(TokenKind.Ident) && (afterIdent === TokenKind.Dot || afterIdent === TokenKind.LParen)) {
       const pattern = this.parsePattern();
       this.expect(TokenKind.Eq);
       const value = this.parseExpr();

@@ -1,0 +1,13 @@
+// @error: write 'self: Self'
+
+// `self` is the Rust receiver spelling. Milo's only receiver form is an ordinary typed
+// parameter, so the parse error names the exact replacement instead of a stray ')'.
+struct Point { x: i64 }
+
+impl Point {
+    fn get(self): i64 { return self.x }
+}
+
+pub fn main(): i32 {
+    return 0
+}
