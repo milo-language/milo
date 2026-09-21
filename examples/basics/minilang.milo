@@ -466,48 +466,42 @@ pub fn parsePrimary(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
 
 pub fn parseMul(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     var left = parsePrimary(&mut p, &mut arena)
-    var go = true
-    while go {
+    while true {
         let k = peekKind(p)
-        if k == T_STAR || k == T_SLASH {
-            p.pos += 1
-            let right = parsePrimary(&mut p, &mut arena)
-            left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
-        } else {
-            go = false
+        if !(k == T_STAR || k == T_SLASH) {
+            break
         }
+        p.pos += 1
+        let right = parsePrimary(&mut p, &mut arena)
+        left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
     }
     return left
 }
 
 pub fn parseAdd(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     var left = parseMul(&mut p, &mut arena)
-    var go = true
-    while go {
+    while true {
         let k = peekKind(p)
-        if k == T_PLUS || k == T_MINUS {
-            p.pos += 1
-            let right = parseMul(&mut p, &mut arena)
-            left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
-        } else {
-            go = false
+        if !(k == T_PLUS || k == T_MINUS) {
+            break
         }
+        p.pos += 1
+        let right = parseMul(&mut p, &mut arena)
+        left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
     }
     return left
 }
 
 pub fn parseExpr(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     var left = parseAdd(&mut p, &mut arena)
-    var go = true
-    while go {
+    while true {
         let k = peekKind(p)
-        if k == T_LT || k == T_GT || k == T_EQEQ {
-            p.pos += 1
-            let right = parseAdd(&mut p, &mut arena)
-            left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
-        } else {
-            go = false
+        if !(k == T_LT || k == T_GT || k == T_EQEQ) {
+            break
         }
+        p.pos += 1
+        let right = parseAdd(&mut p, &mut arena)
+        left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
     }
     return left
 }

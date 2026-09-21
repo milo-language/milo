@@ -250,10 +250,9 @@ pub fn main(): void {
 
                                     var out1 = ""
                                     var out2 = ""
-                                    var done = false
                                     var dirty = false
 
-                                    while !done {
+                                    while true {
                                         // Event wait: wake the instant stdin (the q
                                         // key), either pane has output, or SIGWINCH
                                         // fires (resize, via its self-pipe fd). No
@@ -307,7 +306,7 @@ pub fn main(): void {
 
                                         let key = readKey()
                                         if key == KEY_QUIT {
-                                            done = true
+                                            break
                                         }
                                     }
 

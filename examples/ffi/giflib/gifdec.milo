@@ -642,12 +642,11 @@ let interlacedJumps: [i64; 4] = [8, 8, 4, 2]
 
 // DGifSlurp: read records until the trailer, decoding every image into core.
 pub fn slurp(rd: &mut GifReader, lzw: &mut Lzw, doc: &mut Doc, pixelCount: &mut i64, continueExtFuncCode: i32,): Result<Unit, i32> {
-    var running = true
-    while running {
+    while true {
         let recordType = getRecordType(&mut rd)?
 
         if recordType == recordTerminate {
-            running = false
+            break
         } else if recordType == recordImage {
             getImageHeader(&mut rd, &mut lzw, &mut doc, &mut pixelCount)?
 

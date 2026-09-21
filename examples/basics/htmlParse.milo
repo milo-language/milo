@@ -434,14 +434,12 @@ pub fn shouldImplicitClose(open: &string, newTag: &string): bool {
 }
 
 pub fn closeImplied(dom: &Dom, stack: &mut Vec<Handle<Node>>, newTag: &string) {
-    var go = true
-    while go && stack.len() > 1 {
+    while stack.len() > 1 {
         let topName = nodeName(dom, topOf(stack))
-        if shouldImplicitClose(topName, newTag) {
-            stack.pop()!
-        } else {
-            go = false
+        if !shouldImplicitClose(topName, newTag) {
+            break
         }
+        stack.pop()!
     }
 }
 
@@ -456,14 +454,13 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
     append(&mut dom, parent, el)
 
     var selfClose = false
-    var done = false
-    while i < n && !done {
+    while i < n {
         i = skipSpaces(src, i, n)
         if i >= n {
-            done = true
+            break
         } else if src[i] == '>' {
             i += 1
-            done = true
+            break
         } else if src[i] == '/' {
             selfClose = true
             i += 1
@@ -550,11 +547,10 @@ pub fn parseComment(dom: &mut Dom, parent: Handle<Node>, src: &string, pos: i64,
     // pos points at '<' of '<!--'
     var i = pos + 4
     var out = String.withCapacity(16)
-    var done = false
-    while i < n && !done {
+    while i < n {
         if i + 2 < n && src[i] == '-' && src[i + 1] == '-' && src[i + 2] == '>' {
-            done = true
             i += 3
+            break
         } else {
             out.push(src[i])
             i += 1
