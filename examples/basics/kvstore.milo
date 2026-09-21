@@ -10,6 +10,12 @@
 // Layout: fixed-capacity sorted pages in a Vec (a toy B-tree leaf level).
 // put: binary-search page, insert sorted, split when full.
 // get: binary-search page then key. scan: cursor walks (page, slot) pairs.
+//
+// The contracts are the page math a reader would otherwise have to check by hand:
+// `pageFor` always names a live page, `put` grows the store by at most one key, and
+// the split loop never drains a page below the half it keeps. A debug build asserts
+// them at runtime; `milo prove` reports them unknown, not refuted, because its SMT
+// translation has no model for Vec length or indexing.
 
 pub let PAGE_CAP: i64 = 4
 
@@ -29,55 +35,47 @@ pub struct Store {
 
 pub fn storeNew(): Store {
     var pages: Vec<Page> = Vec.new()
-    pages.push(Page {
-        entries: Vec.new()
-    }
-    )
-    return Store {
-        pages: pages, count: 0
-    }
+    pages.push(Page { entries: Vec.new() })
+    return Store { pages: pages, count: 0 }
 }
 
-// Index of the page whose key range should contain `key` — the last page whose
+// Index of the page whose key range should contain `key`: the last page whose
 // first key is <= key (or page 0).
-pub fn pageFor(s: &Store, key: &string): i64 {
+pub fn pageFor(s: &Store, key: &string): i64
+requires s.pages.len() > 0
+ensures result >= 0 && result < s.pages.len()
+{
     var lo: i64 = 0
-    var i: i64 = 1
-    while i < s.pages.len() {
-        if s.pages[i].entries.len() > 0 && s.pages[i].entries[0].key <= key {
-            lo = i
-        }
-        i += 1
+    for i, page in s.pages {
+        if page.entries.len() > 0 && page.entries[0].key <= key { lo = i }
     }
     return lo
 }
 
-// Slot of `key` in page `p`, or -1.
-pub fn slotIn(s: &Store, p: i64, key: &string): i64 {
-    var i: i64 = 0
-    while i < s.pages[p].entries.len() {
-        if s.pages[p].entries[i].key == key {
-            return i
-        }
-        i += 1
+// Slot of `key` in page `p`, if present.
+pub fn slotIn(s: &Store, p: i64, key: &string): Option<i64>
+requires p >= 0 && p < s.pages.len()
+{
+    for i, e in s.pages[p].entries {
+        if e.key == key { return Some(i) }
     }
-    return 0 - 1 as i64
+    return None
 }
 
 pub fn get(s: &Store, key: &string): Option<string> {
     let p = pageFor(s, key)
-    let slot = slotIn(s, p, key)
-    if slot < 0 {
-        return Option.None
-    }
+    let Some(slot) = slotIn(s, p, key) else { return None }
     // copy-out, never a borrow into the page
-    return Option.Some(s.pages[p].entries[slot].value.clone())
+    return Some(s.pages[p].entries[slot].value.clone())
 }
 
-pub fn put(s: &mut Store, key: string, value: string) {
+pub fn put(s: &mut Store, key: string, value: string)
+requires s.pages.len() > 0
+ensures s.count == old(s.count) || s.count == old(s.count) + 1
+ensures s.pages.len() >= old(s.pages.len())
+{
     let p = pageFor(s, key)
-    let slot = slotIn(s, p, key)
-    if slot >= 0 {
+    if let Some(slot) = slotIn(s, p, key) {
         s.pages[p].entries[slot].value = value
         return
     }
@@ -86,24 +84,19 @@ pub fn put(s: &mut Store, key: string, value: string) {
     while pos < s.pages[p].entries.len() && s.pages[p].entries[pos].key < key {
         pos += 1
     }
-    s.pages[p].entries.insert(pos, Entry {
-        key: key, value: value
-    }
-    )
+    s.pages[p].entries.insert(pos, Entry { key: key, value: value })
     s.count += 1
 
     // split when over capacity: move the upper half into a new page after p
     if s.pages[p].entries.len() > PAGE_CAP {
         let half = s.pages[p].entries.len() / 2
         var upper: Vec<Entry> = Vec.new()
-        while s.pages[p].entries.len() > half {
-            let e = s.pages[p].entries.remove(half)
-            upper.push(e)
+        while s.pages[p].entries.len() > half
+        invariant s.pages[p].entries.len() >= half
+        {
+            upper.push(s.pages[p].entries.remove(half))
         }
-        s.pages.insert(p + 1, Page {
-            entries: upper
-        }
-        )
+        s.pages.insert(p + 1, Page { entries: upper })
     }
 }
 
@@ -115,15 +108,16 @@ pub struct Cursor {
 }
 
 pub fn scanStart(): Cursor {
-    return Cursor {
-        page: 0, slot: 0
-    }
+    return Cursor { page: 0, slot: 0 }
 }
 
 // Advance the cursor and copy out the next entry, or None when exhausted.
-// (The Rust shape — an Iterator borrowing pages — needs a stored ref; this is
+// (The Rust shape, an Iterator borrowing pages, needs a stored ref; this is
 // the no-stored-refs equivalent: cursor by value, store by param.)
-pub fn scanNext(s: &Store, c: &mut Cursor): Option<Entry> {
+pub fn scanNext(s: &Store, c: &mut Cursor): Option<Entry>
+requires c.page >= 0 && c.slot >= 0
+ensures c.page >= old(c.page)
+{
     while c.page < s.pages.len() {
         if c.slot < s.pages[c.page].entries.len() {
             let e = Entry {
@@ -131,12 +125,12 @@ pub fn scanNext(s: &Store, c: &mut Cursor): Option<Entry> {
                 value: s.pages[c.page].entries[c.slot].value.clone(),
             }
             c.slot += 1
-            return Option.Some(e)
+            return Some(e)
         }
         c.page += 1
         c.slot = 0
     }
-    return Option.None
+    return None
 }
 
 pub fn main(): i32 {
@@ -153,52 +147,23 @@ pub fn main(): i32 {
     put(&mut s, "hotel", "8")
 
     print(s.count) // 8
-    print(s.pages.len()) // >1 — splits happened
+    print(s.pages.len()) // >1: splits happened
 
     // point reads
-    match get(s, "charlie") {
-        Option.Some(v) => {
-            print(v)
-        } // 3
-        Option.None => {
-            print("missing")
-        }
-    }
-    match get(s, "zulu") {
-        Option.Some(v) => {
-            print(v)
-        }
-        Option.None => {
-            print("missing")
-        } // missing
-    }
+    print(get(s, "charlie") ?? "missing") // 3
+    print(get(s, "zulu") ?? "missing") // missing
 
     // overwrite
     put(&mut s, "alpha", "one")
-    match get(s, "alpha") {
-        Option.Some(v) => {
-            print(v)
-        } // one
-        Option.None => {
-            print("missing")
-        }
-    }
+    print(get(s, "alpha") ?? "missing") // one
     print(s.count) // still 8
 
     // full ordered scan
     var c = scanStart()
     var keys = String.withCapacity(64)
-    var go = true
-    while go {
-        let r = scanNext(s, &mut c)
-        match r {
-            Option.Some(e) => {
-                keys = keys + e.key + " "
-            }
-            Option.None => {
-                go = false
-            }
-        }
+    while let Some(e) = scanNext(s, &mut c) {
+        keys.pushStr(e.key)
+        keys.push(32)
     }
     print(keys) // alpha bravo charlie delta echo foxtrot golf hotel
 
