@@ -6418,6 +6418,10 @@ export class TypeChecker {
           this.error(`if let subject must be an enum, got ${this.show(subjType)}`, sp);
           break;
         }
+        // Same branch rule as IfStmt: a body that always exits does not leak its moves
+        // to the code after the if. `if let Some(i) = find(k) { v[i] = value  return }`
+        // followed by `insert(value)` used to be "use of moved variable".
+        const preMoves = this.snapshotMoveState();
         if (subjType.tag === "enum" && stmt.pattern.kind === "EnumPattern") {
           const enumInfo = must(this.enums, subjType.name, "enums");
           const ps = stmt.pattern.span;
@@ -6464,11 +6468,15 @@ export class TypeChecker {
           for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
           this.popScope();
         }
+        const afterThen = this.snapshotMoveState();
+        this.restoreMoveState(preMoves);
         if (stmt.elseBody) {
           this.pushScope();
           for (const s of stmt.elseBody) this.checkStmt(s, fnRetType);
           this.popScope();
+          if (this.bodyAlwaysReturns(stmt.elseBody)) this.restoreMoveState(preMoves);
         }
+        if (!this.bodyAlwaysReturns(stmt.thenBody)) this.mergeMoveState(afterThen);
         // A borrowed subject is only read, not consumed.
         if (!subjBorrows) this.tryMove(stmt.subject);
         break;

@@ -1,0 +1,43 @@
+// An `if let` body that always returns does not leak its moves past the if, the
+// same rule `if` and `match` follow. The overwrite path moves `value` and returns;
+// the insert path after the if still owns it.
+struct Slot { key: string, value: string }
+
+fn find(v: &Vec<Slot>, key: &string): Option<i64> {
+    for i, s in v { if s.key == key { return Some(i) } }
+    return None
+}
+
+fn put(v: &mut Vec<Slot>, key: string, value: string) {
+    if let Some(i) = find(v, key) {
+        v[i].value = value
+        return
+    }
+    v.push(Slot { key: key, value: value })
+}
+
+fn putOrElse(v: &mut Vec<Slot>, key: string, value: string) {
+    if let Some(i) = find(v, key) {
+        v[i].value = value
+    } else {
+        v.push(Slot { key: key, value: value })
+        return
+    }
+    // Only the then-branch reaches here. The else-branch always returns, so its move
+    // of `value` does not count; the then-branch's does, and `value` is dead here.
+    print("updated ", key)
+}
+
+fn main() {
+    var v: Vec<Slot> = []
+    put(&mut v, "a", "1")
+    put(&mut v, "a", "2")
+    put(&mut v, "b", "3")
+    putOrElse(&mut v, "b", "4")
+    // @expect: updated b
+    putOrElse(&mut v, "c", "5")
+    for s in v { print(s.key, "=", s.value) }
+    // @expect: a=2
+    // @expect: b=4
+    // @expect: c=5
+}
