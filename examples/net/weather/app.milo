@@ -222,9 +222,9 @@ pub fn citiesHandler(ctx: &mut Context): Response {
     var body = "["
     for i in 0..out.len {
         if i > 0 {
-            body += ","
+            body.pushStr(",")
         }
-        body += out[i]
+        body.pushStr(out[i])
     }
     body += "]"
 

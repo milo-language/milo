@@ -754,7 +754,6 @@ export class TypeChecker {
     // in milojs, 55 in examples/ at the census that shipped it. Default-on before the sweep
     // would bury every real warning under it. Flip it on once those reach zero.
     if (!config.denied.has("single-variant-match") && !config.expected?.has("single-variant-match")) config.allowed.add("single-variant-match");
-    if (!config.denied.has("string-concat-in-loop") && !config.expected?.has("string-concat-in-loop")) config.allowed.add("string-concat-in-loop");
     // opaque-call-on-thread is OFF until the thread-boundary scan resolves function values
     // with a statically known target. Every hit in the tree today (rg.milo, the Once
     // fixture) is a callback that touches no global, so on-by-default would be two false

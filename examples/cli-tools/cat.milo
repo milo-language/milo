@@ -29,7 +29,7 @@ pub fn padNum(n: i64, width: i64): string {
     let s = n.toString()
     var result: string = ""
     for p in 0..width - s.len {
-        result += " "
+        result.pushStr(" ")
     }
     return result + s
 }
@@ -174,7 +174,7 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
 
         // line comment — color rest of line gray
         if isLineComment(lang, line, pos) {
-            result = result + Color.gray(line.substr(pos, line.len))
+            result.pushStr(Color.gray(line.substr(pos, line.len)))
             return result
         }
 
@@ -193,7 +193,7 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
                 }
                 end += 1
             }
-            result = result + Color.green(line.substr(pos, end))
+            result.pushStr(Color.green(line.substr(pos, end)))
             pos = end
             continue
         }
@@ -204,7 +204,7 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
             while end < line.len && ((line[end] >= '0' && line[end] <= '9') || line[end] == '.') {
                 end += 1
             }
-            result = result + Color.magenta(line.substr(pos, end))
+            result.pushStr(Color.magenta(line.substr(pos, end)))
             pos = end
             continue
         }
@@ -217,15 +217,15 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
             }
             let word = line.substr(pos, end)
             if isKeyword(word, kwList) {
-                result += Color.red(word)
+                result.pushStr(Color.red(word))
             } else if end < line.len && line[end] == '(' {
                 // function call
-                result += Color.blue(word)
+                result.pushStr(Color.blue(word))
             } else if word[0] >= 'A' && word[0] <= 'Z' {
                 // capitalized = type name
-                result += Color.cyan(word)
+                result.pushStr(Color.cyan(word))
             } else {
-                result += word
+                result.pushStr(word)
             }
             pos = end
             continue
@@ -234,7 +234,7 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
         // default: emit char as-is
         var chStr: string = ""
         chStr.push(ch)
-        result += chStr
+        result.pushStr(chStr)
         pos += 1
     }
 

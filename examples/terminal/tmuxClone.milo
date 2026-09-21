@@ -283,9 +283,9 @@ pub fn drawThemeSwatches(row: i64, cols: i64): void {
     while t < THEME_COUNT {
         let nm = themeName(t)
         if t == gTheme {
-            line = line + $"{themeFocus(t)} {nm} \x1b[0m  "
+            line.pushStr($"{themeFocus(t)} {nm} \x1b[0m  ")
         } else {
-            line = line + $"\x1b[90m {nm} \x1b[0m  "
+            line.pushStr($"\x1b[90m {nm} \x1b[0m  ")
         }
         t += 1
     }
@@ -318,17 +318,17 @@ pub fn splash(cols: i64, rows: i64): void {
             let topOp = tcol[3] == 1
             let botOp = bcol[3] == 1
             if topOp && botOp {
-                line = line + $"\x1b[38;2;{tcol[0]};{tcol[1]};{tcol[2]};48;2;{bcol[0]};{bcol[1]};{bcol[2]}m\xe2\x96\x80"
+                line.pushStr($"\x1b[38;2;{tcol[0]};{tcol[1]};{tcol[2]};48;2;{bcol[0]};{bcol[1]};{bcol[2]}m\xe2\x96\x80")
             } else if topOp {
-                line = line + $"\x1b[49;38;2;{tcol[0]};{tcol[1]};{tcol[2]}m\xe2\x96\x80"
+                line.pushStr($"\x1b[49;38;2;{tcol[0]};{tcol[1]};{tcol[2]}m\xe2\x96\x80")
             } else if botOp {
-                line = line + $"\x1b[49;38;2;{bcol[0]};{bcol[1]};{bcol[2]}m\xe2\x96\x84"
+                line.pushStr($"\x1b[49;38;2;{bcol[0]};{bcol[1]};{bcol[2]}m\xe2\x96\x84")
             } else {
-                line += "\x1b[49m "
+                line.pushStr("\x1b[49m ")
             }
             c += 1
         }
-        line += "\x1b[0m"
+        line.pushStr("\x1b[0m")
         writeStdout(line)
         r += 1
     }

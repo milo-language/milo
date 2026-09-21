@@ -200,10 +200,10 @@ pub fn highlightLine(line: &string, matches: &Vec<RegexMatch>, noColor: bool): s
     var pos: i64 = 0
     for i in 0..matches.len {
         if matches[i].start > pos {
-            result += line.substr(pos, matches[i].start)
+            result.pushStr(line.substr(pos, matches[i].start))
         }
         let m = line.substr(matches[i].start, matches[i].end)
-        result = result + Color.bold(Color.red(m))
+        result.pushStr(Color.bold(Color.red(m)))
         pos = matches[i].end
     }
     if pos < line.len {

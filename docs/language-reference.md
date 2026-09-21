@@ -893,9 +893,9 @@ s.pushStr(" there")
 ```
 
 `+` allocates a new string each time, so `out += piece` inside a loop copies the whole
-accumulator per iteration. `pushStr`/`push` append in place. `--deny=string-concat-in-loop`
-promotes an off-by-default warning that lists every `out += ...` / `out = out + ...` on a
-string inside a loop.
+accumulator per iteration. `pushStr`/`push` append in place. The `string-concat-in-loop`
+warning flags every `out += ...` / `out = out + ...` on a string inside a loop;
+`--deny=string-concat-in-loop` makes it an error.
 
 ### String Methods
 

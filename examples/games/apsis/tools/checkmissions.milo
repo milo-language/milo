@@ -31,7 +31,7 @@ from "./../plan" import {
 fn pad(s: &string, n: i64): string {
     var out = s.clone()
     while out.len < n {
-        out += " "
+        out.pushStr(" ")
     }
     return out
 }

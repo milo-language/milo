@@ -271,7 +271,7 @@ pub fn serialize(dom: &Dom, h: Handle<Node>): string {
             var s = "<" + name + ">"
             let c = childCount(dom, h)
             for i in 0..c {
-                s = s + serialize(dom, childAt(dom, h, i))
+                s.pushStr(serialize(dom, childAt(dom, h, i)))
             }
             return s + "</" + name + ">"
         }
@@ -279,7 +279,7 @@ pub fn serialize(dom: &Dom, h: Handle<Node>): string {
             var s = ""
             let c = childCount(dom, h)
             for i in 0..c {
-                s = s + serialize(dom, childAt(dom, h, i))
+                s.pushStr(serialize(dom, childAt(dom, h, i)))
             }
             return s
         }

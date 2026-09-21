@@ -66,16 +66,16 @@ pub fn fizzbuzzText(n: i64): string {
     var i: i64 = 1
     while i <= n {
         if i > 1 {
-            result += "\n"
+            result.pushStr("\n")
         }
         if i % 15 == 0 {
-            result += "FizzBuzz"
+            result.pushStr("FizzBuzz")
         } else if i % 3 == 0 {
-            result += "Fizz"
+            result.pushStr("Fizz")
         } else if i % 5 == 0 {
-            result += "Buzz"
+            result.pushStr("Buzz")
         } else {
-            result += i.toString()
+            result.pushStr(i.toString())
         }
         i += 1
     }

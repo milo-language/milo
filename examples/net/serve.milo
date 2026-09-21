@@ -92,11 +92,21 @@ pub fn dirListing(dirPath: &string, urlPath: &string): string {
         // skip hidden files
         if name[0] != '.' {
             if entryIsDir {
-                html = html + "<tr><td><a href=\"" + name.clone() + "/\">" + name + "/</a></td><td>-</td></tr>"
+                html.pushStr("<tr><td><a href=\"")
+                html.pushStr(name)
+                html.pushStr("/\">")
+                html.pushStr(name)
+                html.pushStr("/</a></td><td>-</td></tr>")
             } else {
                 let entryPath = Path.join(dirPath, name.clone())
                 let info = fileInfo(entryPath)!
-                html = html + "<tr><td><a href=\"" + name.clone() + "\">" + name + "</a></td><td>" + formatSize(info.size) + "</td></tr>"
+                html.pushStr("<tr><td><a href=\"")
+                html.pushStr(name)
+                html.pushStr("\">")
+                html.pushStr(name)
+                html.pushStr("</a></td><td>")
+                html.pushStr(formatSize(info.size))
+                html.pushStr("</td></tr>")
             }
         }
     }

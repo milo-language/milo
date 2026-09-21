@@ -70,19 +70,20 @@ pub fn main(): i32 {
 
         while col < cols && offset + col < end {
             let b = content[offset + col]
-            hexPart = hexPart + byteToHex(b) + " "
+            hexPart.pushStr(byteToHex(b))
+            hexPart.pushStr(" ")
 
             if col == 7 {
-                hexPart += " "
+                hexPart.pushStr(" ")
             }
 
             if !plain {
                 if isPrintable(b) {
                     var ch: string = ""
                     ch.push(b)
-                    asciiPart += ch
+                    asciiPart.pushStr(ch)
                 } else {
-                    asciiPart += "."
+                    asciiPart.pushStr(".")
                 }
             }
 
@@ -91,9 +92,9 @@ pub fn main(): i32 {
 
         // pad remaining columns
         while col < cols {
-            hexPart += "   "
+            hexPart.pushStr("   ")
             if col == 7 {
-                hexPart += " "
+                hexPart.pushStr(" ")
             }
             col += 1
         }
@@ -101,7 +102,9 @@ pub fn main(): i32 {
         var line: string = offsetToHex(offset) + ": " + hexPart
 
         if !plain {
-            line = line + " |" + asciiPart + "|"
+            line.pushStr(" |")
+            line.pushStr(asciiPart)
+            line.pushStr("|")
         }
 
         print(line)

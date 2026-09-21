@@ -200,20 +200,20 @@ pub fn main(): i32 {
     var i: i64 = cmdIdx
     while i < argv.len {
         if i > cmdIdx {
-            cmd += " "
+            cmd.pushStr(" ")
         }
         let arg = argv[i].clone()
-        cmd += "'"
+        cmd.pushStr("'")
         for c in arg {
             if c == '\'' {
-                cmd += "'\\''"
+                cmd.pushStr("'\\''")
             } else {
                 var ch: string = ""
                 ch.push(c)
-                cmd += ch
+                cmd.pushStr(ch)
             }
         }
-        cmd += "'"
+        cmd.pushStr("'")
         i += 1
     }
 

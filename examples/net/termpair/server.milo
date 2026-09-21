@@ -431,10 +431,10 @@ pub fn handleGetSessions(): string {
     for i in 0..sessions.len {
         if sessions[i].isPublic && sessions[i].alive {
             if !first {
-                result += ","
+                result.pushStr(",")
             }
             first = false
-            result += makePublicSession(sessions[i].terminalId, sessions[i].displayName, sessions[i].command, sessions[i].rows, sessions[i].cols, sessions[i].startTime, sessions[i].browserCount)
+            result.pushStr(makePublicSession(sessions[i].terminalId, sessions[i].displayName, sessions[i].command, sessions[i].rows, sessions[i].cols, sessions[i].startTime, sessions[i].browserCount))
         }
     }
     result += "]"

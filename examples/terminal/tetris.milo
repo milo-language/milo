@@ -304,8 +304,8 @@ pub fn render(buf: &mut string, board: &Board, kind: i64, rot: i64, px: i64, py:
     var top = "┌"
     var bottom = "└"
     for x in 0..W {
-        top += "──"
-        bottom += "──"
+        top.pushStr("──")
+        bottom.pushStr("──")
     }
     top += "┐"
     bottom += "┘"
