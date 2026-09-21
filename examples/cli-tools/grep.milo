@@ -56,10 +56,10 @@ pub fn highlight(line: &string, pattern: &string, ignoreCase: bool, red: &string
                 var a: u8 = line[pos + j]
                 var b: u8 = pattern[j]
                 if ignoreCase {
-                    if a >= 65 && a <= 90 {
+                    if a >= 'A' && a <= 'Z' {
                         a += 32
                     }
-                    if b >= 65 && b <= 90 {
+                    if b >= 'A' && b <= 'Z' {
                         b += 32
                     }
                 }
@@ -123,8 +123,8 @@ pub fn printMatch(line: &string, filePath: &string, lineNum: i64, opts: &GrepOpt
 
 pub fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
     let content = match readFile(filePath) {
-        Result.Ok(data) => data
-        Result.Err(e) => {
+        Ok(data) => data
+        Err(e) => {
             print($"grep: {e}")
             return 1
         }
@@ -137,7 +137,7 @@ pub fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
     var pos: i64 = 0
 
     while pos <= content.len {
-        if pos == content.len || content[pos] == 10 {
+        if pos == content.len || content[pos] == '\n' {
             let line = content.substr(lineStart, pos)
             let found = lineMatches(line, opts.searchPattern, opts.ignoreCase)
             var isMatch: bool = found
@@ -177,7 +177,7 @@ pub fn grepRecursive(dirPath: &string, opts: &mut GrepOpts): void {
         let name = entries[i].name.clone()
         let entryIsDir = entries[i].isDir
         let entryIsFile = entries[i].isFile
-        if name[0] != 46 {
+        if name[0] != '.' {
             let fullPath = Path.join(dirPath, name)
             if entryIsDir {
                 grepRecursive(fullPath, &mut opts)

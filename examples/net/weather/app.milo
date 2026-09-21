@@ -71,8 +71,7 @@ pub fn loadCities(): void {
             lon: f[3].clone(),
             key: f[0].toLower(),
             altKeys: alts,
-        }
-        )
+        })
     }
 }
 
@@ -352,7 +351,7 @@ pub fn upstreamTtlSecs(headers: &string): i64 {
             digits.push(ch)
         }
         if digits.len > 0 {
-            if let Option.Some(n) = parseInt(digits) {
+            if let Some(n) = parseInt(digits) {
                 ttl = n
             }
         }
@@ -390,19 +389,18 @@ pub struct CacheHit {
 pub fn freshHit(key: &string): Option<CacheHit> {
     let at = cacheFind(key)
     if at < 0 {
-        return Option.None
+        return None
     }
     let left = (apiCache[at].expiresMs - epochMillis()) / 1000
     if left <= 0 {
-        return Option.None
+        return None
     }
-    return Option.Some(CacheHit {
+    return Some(CacheHit {
         body: apiCache[at].body.clone(),
         contentType: apiCache[at].contentType.clone(),
         status: apiCache[at].status,
         left: left,
-    }
-    )
+    })
 }
 
 pub fn cacheStore(key: &string, body: string, contentType: string, status: i32, expiresMs: i64): void {
@@ -421,8 +419,7 @@ pub fn cacheStore(key: &string, body: string, contentType: string, status: i32, 
         contentType: contentType,
         status: status,
         expiresMs: expiresMs,
-    }
-    )
+    })
     evictToBudget()
 }
 
@@ -502,7 +499,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
     }
 
     let key = hostKey.clone() + path.clone()
-    if let Option.Some(hit) = freshHit(key) {
+    if let Some(hit) = freshHit(key) {
         ctx.setHeader("Cache-Control", "public, max-age=" + hit.left.toString())
         ctx.setHeader("X-Cache", "hit")
         return Response.Status(hit.status, hit.contentType.clone(), hit.body.clone())
@@ -516,7 +513,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
             sleepMs(25)
             waited += 25
         }
-        if let Option.Some(hit) = freshHit(key) {
+        if let Some(hit) = freshHit(key) {
             ctx.setHeader("Cache-Control", "public, max-age=" + hit.left.toString())
             ctx.setHeader("X-Cache", "coalesced")
             return Response.Status(hit.status, hit.contentType.clone(), hit.body.clone())
@@ -538,7 +535,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
         body: "",
     }
     match fetchWith(base + path.clone(), opts) {
-        Result.Ok(resp) => {
+        Ok(resp) => {
             upstreamStatus = resp.status
             if resp.status >= 200 && resp.status < 300 {
                 body = resp.body.clone()
@@ -547,7 +544,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
                 status = resp.status
             }
         }
-        Result.Err(_) => {
+        Err(_) => {
         }
     }
     // Before any return below: a key left marked in-flight would make every
@@ -713,8 +710,7 @@ pub fn appleIconHandler(ctx: &mut Context): Response {
 pub fn healthHandler(ctx: &mut Context): Response {
     return ctx.json({
         status: "ok", app: "weather", cities: cities.len
-    }
-    )
+    })
 }
 
 pub fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Response {
@@ -768,7 +764,7 @@ pub fn main(): i32 {
     // Concurrent, not serveRouter: /api/up talks to the network inside the
     // handler, and on the serial loop one slow upstream stalled every other
     // client for the whole round trip.
-    if let Result.Err(msg) = serveRouterConcurrent(port, r) {
+    if let Err(msg) = serveRouterConcurrent(port, r) {
         print($"error: {msg}")
         return 1
     }

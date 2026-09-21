@@ -140,7 +140,7 @@ fn tileFor(t: &mut Tiles, latDeg: i64, lonDeg: i64): i64 {
     let gzPath = CACHE + "/" + name.clone() + ".hgt.gz"
     var gz = ""
     if pathExists(gzPath) {
-        let Result.Ok(b) = readFile(gzPath) else {
+        let Ok(b) = readFile(gzPath) else {
             print("  cache read failed for " + name.clone())
             return -1
         }
@@ -148,7 +148,7 @@ fn tileFor(t: &mut Tiles, latDeg: i64, lonDeg: i64): i64 {
     } else {
         let url = "https://s3.amazonaws.com/elevation-tiles-prod/skadi/" + latDir + "/" + name.clone() + ".hgt.gz"
         print("  downloading " + name.clone() + " ...")
-        let Result.Ok(resp) = fetch(url) else {
+        let Ok(resp) = fetch(url) else {
             print("  no SRTM tile " + name.clone() + " (treated as sea)")
             t.names.push(name.clone())
             t.data.push("")
@@ -163,7 +163,7 @@ fn tileFor(t: &mut Tiles, latDeg: i64, lonDeg: i64): i64 {
         gz = resp.text()
         let _ = writeFile(gzPath, gz)
     }
-    let Result.Ok(raw) = Inflate.gzip(gz) else {
+    let Ok(raw) = Inflate.gzip(gz) else {
         print("  corrupt SRTM tile " + name.clone())
         return -1
     }
@@ -241,11 +241,11 @@ fn cacheName(kind: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64):
 fn overpass(query: &string, cacheKey: &string): Result<string, string> {
     let path = CACHE + "/" + cacheKey + ".json"
     if pathExists(path) {
-        let Result.Ok(b) = readFile(path) else {
-            return Result.Err("cache read failed")
+        let Ok(b) = readFile(path) else {
+            return Err("cache read failed")
         }
         print("  using cached " + cacheKey.clone() + " (" + (b.len / 1024).toString() + " KiB)")
-        return Result.Ok(b)
+        return Ok(b)
     }
     print("  querying Overpass for " + cacheKey + " ...")
     // Overpass only accepts the query form-encoded.
@@ -263,16 +263,16 @@ fn overpass(query: &string, cacheKey: &string): Result<string, string> {
     while attempt < 6 {
         let url = mirrors[attempt % mirrors.len].clone()
         match fetchForm(url, encoded) {
-            Result.Ok(resp) => {
+            Ok(resp) => {
                 let body = resp.text()
                 if resp.ok() {
                     print("  got " + (body.len / 1024).toString() + " KiB")
                     let _ = writeFile(path, body)
-                    return Result.Ok(body)
+                    return Ok(body)
                 }
                 print("  mirror " + (attempt % mirrors.len).toString() + " returned " + resp.status.toString())
             }
-            Result.Err(_e) => {
+            Err(_e) => {
                 print("  mirror " + (attempt % mirrors.len).toString() + " unreachable")
             }
         }
@@ -281,7 +281,7 @@ fn overpass(query: &string, cacheKey: &string): Result<string, string> {
             sleepSecs(4)
         }
     }
-    return Result.Err("every Overpass mirror refused the query")
+    return Err("every Overpass mirror refused the query")
 }
 
 fn bboxStr(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64): string {
@@ -386,10 +386,10 @@ fn fillPoly(cover: &mut Vec<u8>, n: i64, x0: f64, z0: f64, step: f64, px: &Vec<f
 fn tagStr(doc: &Json, tags: i64, key: &string): string {
     let c = doc.curField(tags, key)
     match doc.curStr(c) {
-        Option.Some(s) => {
+        Some(s) => {
             return s
         }
-        Option.None => {
+        None => {
             return ""
         }
     }
@@ -399,13 +399,13 @@ fn tagStr(doc: &Json, tags: i64, key: &string): string {
 // "173'" and worse. Take the leading number and ignore the rest.
 fn leadingNum(s: &string): f64 {
     var i = 0
-    while i < s.len && (s[i] == 32 as u8) {
+    while i < s.len && s[i] == ' ' {
         i += 1
     }
     var out = ""
     while i < s.len {
         let ch = s[i]
-        if (ch >= 48 as u8 && ch <= 57 as u8) || ch == 46 as u8 {
+        if (ch >= '0' && ch <= '9') || ch == '.' {
             out.push(ch)
             i += 1
         } else {
@@ -413,10 +413,10 @@ fn leadingNum(s: &string): f64 {
         }
     }
     match parseFloat(out) {
-        Option.Some(v) => {
+        Some(v) => {
             return v
         }
-        Option.None => {
+        None => {
             return 0.0
         }
     }
@@ -578,14 +578,14 @@ fn hexNibble(ch: u8): i64 {
     if c >= 65 && c <= 70 {
         return c - 55
     }
-    return 0 - 1
+    return -1
 }
 
 // OSM's `colour` is either a CSS name or a #rrggbb. Both appear on real bridges —
 // the Golden Gate carries `colour=orange`, which is the whole reason the asset
 // stores a colour at all instead of painting every deck concrete grey.
 fn parseColour(v: &string): i64 {
-    if v.len == 7 && v[0] == 35 as u8 {
+    if v.len == 7 && v[0] == '#' {
         var acc = 0
         var ok = true
         for i in 1..7 {
@@ -885,9 +885,9 @@ fn mergeParts(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64,
         cz /= (pLen[i] as f64)
         let gx = ((cx / CELL) as i64) + half
         let gz = ((cz / CELL) as i64) + half
-        var dz = 0 - 1
+        var dz = -1
         while dz <= 1 {
-            var dx = 0 - 1
+            var dx = -1
             while dx <= 1 {
                 let ex = gx + dx
                 let ez = gz + dz
@@ -1136,7 +1136,7 @@ fn twinOf(br: &Bridges, ax: f64, az: f64, bx: f64, bz: f64): i64 {
             return i
         }
     }
-    return 0 - 1
+    return -1
 }
 
 fn midGap(br: &Bridges, i: i64, ax: f64, az: f64, bx: f64, bz: f64): f64 {
@@ -1189,20 +1189,20 @@ fn fetchOrthoTile(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64): Option<Pn
     var attempt = 0
     while attempt < 3 {
         match fetch(url) {
-            Result.Ok(resp) => {
+            Ok(resp) => {
                 let body = resp.text()
                 // A PNG this small over a 2048-square extent is the service's
                 // empty tile, not a photograph — that is how a place outside the
                 // imagery's coverage announces itself, with a 200.
                 if resp.ok() && body.len > 200000 {
                     match Png.decode(body) {
-                        Result.Ok(img) => {
+                        Ok(img) => {
                             if img.width == ORTHO_TILE_PX && img.height == ORTHO_TILE_PX {
-                                return Option.Some(img)
+                                return Some(img)
                             }
                             print("  tile came back " + img.width.toString() + "x" + img.height.toString())
                         }
-                        Result.Err(e) => {
+                        Err(e) => {
                             print("  tile did not decode: " + e)
                         }
                     }
@@ -1210,7 +1210,7 @@ fn fetchOrthoTile(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64): Option<Pn
                     print("  imagery service returned " + resp.status.toString() + ", " + (body.len / 1024).toString() + " KiB")
                 }
             }
-            Result.Err(_e) => {
+            Err(_e) => {
                 print("  imagery service unreachable")
             }
         }
@@ -1219,7 +1219,7 @@ fn fetchOrthoTile(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64): Option<Pn
             sleepSecs(4)
         }
     }
-    return Option.None
+    return None
 }
 
 // A square aerial photograph of exactly the asset's extent, stitched from a grid
@@ -1256,7 +1256,7 @@ fn fetchOrtho(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64, out: &string):
         for tx in 0..ORTHO_TILES {
             let lonLo = lonMin + (lonMax - lonMin) * (tx as f64) / (ORTHO_TILES as f64)
             let lonHi = lonMin + (lonMax - lonMin) * ((tx + 1) as f64) / (ORTHO_TILES as f64)
-            let Option.Some(img) = fetchOrthoTile(latLo, lonLo, latHi, lonHi) else {
+            let Some(img) = fetchOrthoTile(latLo, lonLo, latHi, lonHi) else {
                 print("  imagery tile " + tx.toString() + "," + ty.toString() + " failed; giving up")
                 return false
             }
@@ -1279,19 +1279,19 @@ fn fetchOrtho(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64, out: &string):
     }
 
     match encodePng(pixels, side, side, 3) {
-        Result.Ok(enc) => {
+        Ok(enc) => {
             match writeFile(out.clone(), enc) {
-                Result.Ok(n) => {
+                Ok(n) => {
                     print("  wrote " + out.clone() + " (" + (n / 1024).toString() + " KiB, " + side.toString() + "px)")
                     return true
                 }
-                Result.Err(_e) => {
+                Err(_e) => {
                     print("  could not write " + out.clone())
                     return false
                 }
             }
         }
-        Result.Err(e) => {
+        Err(e) => {
             print("  could not encode drape: " + e)
             return false
         }
@@ -1312,11 +1312,11 @@ fn orthoPathOf(cityPath: &string): string {
 }
 
 fn updateOrtho(path: string) {
-    let Result.Ok(src) = readFile(path) else {
+    let Ok(src) = readFile(path) else {
         print("cannot read " + path)
         return
     }
-    let Result.Ok(c) = cityParse(src) else {
+    let Ok(c) = cityParse(src) else {
         print("cannot parse " + path)
         return
     }
@@ -1549,11 +1549,11 @@ fn main() {
 // the building section and the roof section after it — and copies everything
 // else across untouched.
 fn updateParts(path: string) {
-    let Result.Ok(src) = readFile(path) else {
+    let Ok(src) = readFile(path) else {
         print("cannot read " + path)
         return
     }
-    let Result.Ok(c) = cityParse(src) else {
+    let Ok(c) = cityParse(src) else {
         print("cannot parse " + path)
         return
     }
@@ -1630,11 +1630,11 @@ fn updateParts(path: string) {
 }
 
 fn updateBridges(path: string) {
-    let Result.Ok(src) = readFile(path) else {
+    let Ok(src) = readFile(path) else {
         print("cannot read " + path)
         return
     }
-    let Result.Ok(c) = cityParse(src) else {
+    let Ok(c) = cityParse(src) else {
         print("cannot parse " + path)
         return
     }
@@ -1675,10 +1675,10 @@ fn updateBridges(path: string) {
 
 fn floatOf(doc: &Json, cur: i64): f64 {
     match doc.curFloat(cur) {
-        Option.Some(v) => {
+        Some(v) => {
             return v
         }
-        Option.None => {
+        None => {
             return 0.0
         }
     }
@@ -1687,7 +1687,7 @@ fn floatOf(doc: &Json, cur: i64): f64 {
 fn leadingNumSigned(s: string): f64 {
     var neg = false
     var body = s.clone()
-    if body.len > 0 && body[0] == 45 as u8 {
+    if body.len > 0 && body[0] == '-' {
         neg = true
         var t = ""
         for i in 1..body.len {

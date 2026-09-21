@@ -290,35 +290,35 @@ impl Term {
     }
 
     fn dispatchCsi(self: &mut Self, final: u8): void {
-        if final == 109 { // 'm' SGR
+        if final == 'm' { // SGR
             self.applySgr()
-        } else if final == 72 || final == 102 { // 'H'/'f' cursor position
+        } else if final == 'H' || final == 'f' { // cursor position
             let r = self.param(0, 1) - 1
             let c = self.param(1, 1) - 1
             self.cr = r
             self.cc = c
             self.clampCursor()
-        } else if final == 65 { // 'A' up
+        } else if final == 'A' { // up
             self.cr -= self.param(0, 1)
             self.clampCursor()
-        } else if final == 66 { // 'B' down
+        } else if final == 'B' { // down
             self.cr += self.param(0, 1)
             self.clampCursor()
-        } else if final == 67 { // 'C' right
+        } else if final == 'C' { // right
             self.cc += self.param(0, 1)
             self.clampCursor()
-        } else if final == 68 { // 'D' left
+        } else if final == 'D' { // left
             self.cc -= self.param(0, 1)
             self.clampCursor()
-        } else if final == 71 { // 'G' cursor to column
+        } else if final == 'G' { // cursor to column
             self.cc = self.param(0, 1) - 1
             self.clampCursor()
-        } else if final == 100 { // 'd' cursor to row
+        } else if final == 'd' { // cursor to row
             self.cr = self.param(0, 1) - 1
             self.clampCursor()
-        } else if final == 74 { // 'J' erase display
+        } else if final == 'J' { // erase display
             self.eraseDisplay(self.param(0, 0))
-        } else if final == 75 { // 'K' erase line
+        } else if final == 'K' { // erase line
             self.eraseLine(self.param(0, 0))
         }
         // everything else (insert/delete char, DEC private modes, scroll
@@ -329,47 +329,47 @@ impl Term {
         if self.mode == 0 {
             if b == 27 { // ESC
                 self.mode = 1
-            } else if b == 10 { // LF
+            } else if b == '\n' { // LF
                 self.newline()
-            } else if b == 13 { // CR
+            } else if b == '\r' { // CR
                 self.cc = 0
             } else if b == 8 { // BS
                 if self.cc > 0 {
                     self.cc -= 1
                 }
-            } else if b == 9 { // TAB
+            } else if b == '\t' { // TAB
                 var nc = (self.cc / 8 + 1) * 8
                 if nc >= self.cols {
                     nc = self.cols - 1
                 }
                 self.cc = nc
             } else if b == 7 { // BEL — ignore
-            } else if b >= 32 { // printable (incl. UTF-8 bytes)
+            } else if b >= ' ' { // printable (incl. UTF-8 bytes)
                 self.putChar(b)
             }
         } else if self.mode == 1 { // after ESC
-            if b == 91 { // '[' → CSI
+            if b == '[' { // CSI
                 self.mode = 2
                 self.params = Vec.new()
                 self.curParam = 0
                 self.haveParam = false
                 self.priv = false
-            } else if b == 93 { // ']' → OSC (title etc.)
+            } else if b == ']' { // OSC (title etc.)
                 self.mode = 3
             } else {
                 // ESC ( / ) charset selects, ESC = / >, etc. — consume one byte
                 self.mode = 0
             }
         } else if self.mode == 2 { // in CSI
-            if b >= 48 && b <= 57 { // digit
+            if b >= '0' && b <= '9' { // digit
                 self.curParam = self.curParam * 10 + (b - 48) as i64
                 self.haveParam = true
-            } else if b == 59 { // ';'
+            } else if b == ';' {
                 self.params.push(self.curParam)
                 self.curParam = 0
-            } else if b == 63 { // '?' private marker
+            } else if b == '?' { // private marker
                 self.priv = true
-            } else if b >= 64 && b <= 126 { // final byte
+            } else if b >= '@' && b <= '~' { // final byte
                 self.params.push(self.curParam)
                 self.dispatchCsi(b)
                 self.mode = 0

@@ -148,7 +148,7 @@ pub fn fetchProcesses(maxProcs: i64): Vec<ProcInfo> {
     // </dev/null prevents child shell from touching terminal raw mode
     let cmd = $"ps -eo pid,user,%cpu,%mem,time,comm -r 2>/dev/null </dev/null | head -{maxProcs + 1}"
     match capture(cmd) {
-        Result.Ok(output) => {
+        Ok(output) => {
             let lines = output.split("\n")
             for i in 1..lines.len {
                 let line = lines[i].trim()
@@ -168,12 +168,11 @@ pub fn fetchProcesses(maxProcs: i64): Vec<ProcInfo> {
                         mem: fields[3].clone(),
                         time: fields[4].clone(),
                         command: cmdName,
-                    }
-                    )
+                    })
                 }
             }
         }
-        Result.Err(_) => {
+        Err(_) => {
         }
     }
     return procs
@@ -308,7 +307,7 @@ pub fn renderProcess(buf: &mut string, row: i64, cols: i64, proc: &ProcInfo, hig
 
     // highlight high CPU (doesn't start with '0')
     var cpuColor = "\x1b[0m"
-    if proc.cpu.len > 0 && proc.cpu[0] != 48 {
+    if proc.cpu.len > 0 && proc.cpu[0] != '0' {
         cpuColor = "\x1b[33m"
     }
 

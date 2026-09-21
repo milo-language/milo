@@ -32,7 +32,7 @@ pub fn main(): i32 {
     let key: string = args.getString("key") ?? "key.pem"
 
     match serveTls(args.getU16("port"), cert, key, handleRequest) {
-        Result.Err(msg) => {
+        Err(msg) => {
             print($"error: {msg}")
             return 1
         }

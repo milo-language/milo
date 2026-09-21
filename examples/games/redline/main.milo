@@ -159,8 +159,7 @@ pub fn main(): i32 {
             0
         } else {
             1
-        }
-        )
+        })
         if !headless {
             let _ = SDL_ShowCursor(0)
         }
@@ -190,8 +189,8 @@ pub fn main(): i32 {
     var gl = GlContext.new()
     let sky = buildSky(skyLight)
     var gfx = match newGfx(&mut gl, rw, rh, sky, buildAtlas(), ATLAS) {
-        Result.Ok(g) => g
-        Result.Err(e) => {
+        Ok(g) => g
+        Err(e) => {
             print("gfx: " + e)
             return 4
         }
@@ -306,8 +305,7 @@ pub fn main(): i32 {
                         SDL_WINDOW_FULLSCREEN_DESKTOP
                     } else {
                         0
-                    }
-                    )
+                    })
                 }
                 prevF = fDown
                 if keys[SC_UP] != 0 || keys[SC_W] != 0 {
@@ -558,17 +556,17 @@ pub fn main(): i32 {
         if headless {
             let px = readPixelsRgba8(dw as i64, dh as i64)
             match encodePng(toRgb(px, dw as i64, dh as i64), dw as i64, dh as i64, 3) {
-                Result.Ok(bytes) => {
+                Ok(bytes) => {
                     match writeFile(shot, bytes) {
-                        Result.Ok(_v) => {
+                        Ok(_v) => {
                             print($"wrote {shot}")
                         }
-                        Result.Err(e) => {
+                        Err(e) => {
                             print($"write: {e}")
                         }
                     }
                 }
-                Result.Err(e) => {
+                Err(e) => {
                     print("png: " + e)
                 }
             }
@@ -670,8 +668,7 @@ fn drawHud(hud: &mut Hud, dw: f64, dh: f64, car: &Car, raceTime: f64, lapLength:
             2.4 * s
         } else {
             1.4 * s
-        }
-        , r, g, b, 0.85)
+        }, r, g, b, 0.85)
     }
 
     // The needle, and the hub it turns on.

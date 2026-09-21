@@ -413,7 +413,7 @@ pub fn nextLevel(m: &mut Mine) {
     m.camY = 0.0
     m.doorAnim = 0.0
     m.deepest = SURFACE
-    m.digX = 0 - 1
+    m.digX = -1
     m.digProgress = 0.0
     m.flies.clear()
     generate(&mut m)
@@ -574,8 +574,7 @@ pub fn burst(m: &mut Mine, x: f64, y: f64, n: i64, speed: f64, c: &Col) {
             cr: c.r,
             cg: c.g,
             cb: c.b,
-        }
-        )
+        })
     }
 }
 
@@ -601,8 +600,7 @@ pub fn poof(m: &mut Mine, x: f64, y: f64, c: &Col) {
             cr: c.r * 0.55,
             cg: c.g * 0.50,
             cb: c.b * 0.46,
-        }
-        )
+        })
     }
     for i in 0..7 {
         let a = Random.floatRange(0.0 - 2.6, 0.0 - 0.5)
@@ -622,16 +620,14 @@ pub fn poof(m: &mut Mine, x: f64, y: f64, c: &Col) {
             cr: c.r,
             cg: c.g,
             cb: c.b,
-        }
-        )
+        })
     }
 }
 
 pub fn addPop(m: &mut Mine, x: f64, y: f64, t: string, c: &Col) {
     m.pops.push(Pop {
         x: x, y: y, life: 1.3, text: t, cr: c.r, cg: c.g, cb: c.b
-    }
-    )
+    })
 }
 
 // ── digging ───────────────────────────────────────────────────────────────────
@@ -666,8 +662,7 @@ fn collect(m: &mut Mine, t: i64, x: f64, y: f64) {
             age: 0.0 - Random.floatRange(0.0, 0.08),
             kind: t,
             value: each,
-        }
-        )
+        })
     }
 }
 
@@ -702,13 +697,11 @@ fn bank(m: &mut Mine, kind: i64, value: i64) {
             let dy = m.py + Random.floatRange(0.0 - 90.0, 90.0)
             poof(&mut m, dx, dy, Col {
                 r: 0.70, g: 0.34, b: 0.12
-            }
-            )
+            })
         }
         addPop(&mut m, m.px, m.py - 44.0, "THE DOOR IS OPEN", Col {
             r: 0.4, g: 1.4, b: 0.6
-        }
-        )
+        })
     }
 }
 
@@ -810,7 +803,7 @@ fn applyUpgrade(m: &mut Mine, t: i64, x: f64, y: f64) {
 fn drill(m: &mut Mine, tx: i64, ty: i64, dt: f64): bool {
     let t = tileAt(m, tx, ty)
     if t == T_SKY || t == T_BEDROCK || t == T_GATE {
-        m.digX = 0 - 1
+        m.digX = -1
         m.digProgress = 0.0
         return false
     }
@@ -839,8 +832,7 @@ fn drill(m: &mut Mine, tx: i64, ty: i64, dt: f64): bool {
             cr: col.r,
             cg: col.g,
             cb: col.b,
-        }
-        )
+        })
     }
     if m.digProgress >= 1.0 {
         breakTile(&mut m, tx, ty, t)
@@ -855,7 +847,7 @@ fn drill(m: &mut Mine, tx: i64, ty: i64, dt: f64): bool {
                 breakSoft(&mut m, tx, ty + 1)
             }
         }
-        m.digX = 0 - 1
+        m.digX = -1
         m.digProgress = 0.0
     }
     return true
@@ -913,7 +905,7 @@ pub fn mineUpdate(m: &mut Mine, dt: f64, inX: f64, inY: f64, viewW: f64, viewH: 
         }
     }
     if !moved {
-        m.digX = 0 - 1
+        m.digX = -1
         m.digProgress = 0.0
     }
     // Animation state. A change restarts the clock, so the renderer can play the

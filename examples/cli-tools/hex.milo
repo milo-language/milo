@@ -31,7 +31,7 @@ pub fn offsetToHex(n: i64): string {
 }
 
 pub fn isPrintable(b: u8): bool {
-    return b >= 32 && b < 127
+    return b >= ' ' && b <= '~'
 }
 
 pub fn main(): i32 {
@@ -49,8 +49,8 @@ pub fn main(): i32 {
     var skipBytes: i64 = args.getI64("skip")
 
     let content = match readFile(args.getString("file") ?? "") {
-        Result.Ok(data) => data
-        Result.Err(e) => {
+        Ok(data) => data
+        Err(e) => {
             print("hex: ", e)
             return 1
         }

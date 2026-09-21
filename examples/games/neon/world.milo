@@ -289,8 +289,7 @@ pub fn worldNew(w: f64, h: f64): World {
             x: Random.floatRange(0.0, w),
             y: Random.floatRange(0.0, h),
             z: Random.floatRange(0.15, 1.0),
-        }
-        )
+        })
     }
     return World {
         ents: Vec.new(),
@@ -344,9 +343,9 @@ pub fn worldNew(w: f64, h: f64): World {
 // ── slot table ────────────────────────────────────────────────────────────────
 
 pub fn spawn(w: &mut World, e: Ent): Handle {
-    var slot: i64 = 0 - 1
+    var slot: i64 = -1
     if w.free.len > 0 {
-        slot = w.free.pop() ?? (0 - 1)
+        slot = w.free.pop() ?? -1
     }
     if slot < 0 {
         slot = w.ents.len
@@ -354,7 +353,7 @@ pub fn spawn(w: &mut World, e: Ent): Handle {
         fresh.alive = true
         fresh.gen = 1
         w.ents.push(fresh)
-        w.hashNext.push(0 - 1)
+        w.hashNext.push(-1)
         return Handle {
             slot: slot, gen: 1
         }
@@ -402,16 +401,14 @@ pub fn burst(w: &mut World, x: f64, y: f64, n: i64, speed: f64, cr: f64, cg: f64
             vx: Math.cos(a) * s - w.scroll * 0.35, vy: Math.sin(a) * s,
             life: life, maxLife: life, drag: 1.9, size: size,
             cr: cr, cg: cg, cb: cb,
-        }
-        )
+        })
     }
 }
 
 pub fn addArc(w: &mut World, x0: f64, y0: f64, x1: f64, y1: f64) {
     w.arcs.push(Arc {
         x0: x0, y0: y0, x1: x1, y1: y1, life: 0.14, seed: Random.range(0, 100000)
-    }
-    )
+    })
 }
 
 // ── spawning ──────────────────────────────────────────────────────────────────
@@ -857,13 +854,13 @@ fn cellOf(w: &World, x: f64, y: f64): i64 {
 
 fn rehash(w: &mut World) {
     for i in 0..w.hashHead.len {
-        w.hashHead[i] = 0 - 1
+        w.hashHead[i] = -1
     }
     while w.hashNext.len < w.ents.len {
-        w.hashNext.push(0 - 1)
+        w.hashNext.push(-1)
     }
     for i in 0..w.ents.len {
-        w.hashNext[i] = 0 - 1
+        w.hashNext[i] = -1
         if w.ents[i].alive && w.ents[i].spawnT <= 0.0 && isEnemy(w.ents[i].kind) {
             let c = cellOf(w, w.ents[i].x, w.ents[i].y)
             w.hashNext[i] = w.hashHead[c]
@@ -875,7 +872,7 @@ fn rehash(w: &mut World) {
 // ── targeting ─────────────────────────────────────────────────────────────────
 
 pub fn nearestEnemy(w: &World, x: f64, y: f64, maxDist: f64, skip: i64): Handle {
-    var best: i64 = 0 - 1
+    var best: i64 = -1
     var bestD = maxDist * maxDist
     for i in 0..w.ents.len {
         if w.ents[i].alive && i != skip && w.ents[i].spawnT <= 0.0 && isEnemy(w.ents[i].kind) {
@@ -909,8 +906,7 @@ fn firePlayer(w: &mut World, x: f64, y: f64, ang: f64, speed: f64, dmg: f64, src
         hostile: false, beam: false, src: src,
         target: nullHandle(),
         cr: cr, cg: cg, cb: cb,
-    }
-    )
+    })
 }
 
 pub fn fireHostile(w: &mut World, x: f64, y: f64, ang: f64, speed: f64, dmg: f64) {
@@ -924,8 +920,7 @@ pub fn fireHostile(w: &mut World, x: f64, y: f64, ang: f64, speed: f64, dmg: f64
         hostile: true, beam: false, src: SRC_HOSTILE,
         target: nullHandle(),
         cr: 2.2, cg: 0.5, cb: 0.15,
-    }
-    )
+    })
 }
 
 // Aim where the ship will be, not where it is — a shot at the current position
@@ -957,8 +952,7 @@ fn fireMissile(w: &mut World, x: f64, y: f64, up: bool) {
         hostile: false, beam: false, src: SRC_MISSILE,
         target: nearestEnemy(w, x, y, 900.0, 0 - 1),
         cr: 2.6, cg: 1.5, cb: 0.35,
-    }
-    )
+    })
 }
 
 // The released charge: wide, piercing, and it burns return fire out of its own
@@ -975,8 +969,7 @@ fn fireBeam(w: &mut World, x: f64, y: f64, charge: f64) {
         hostile: false, beam: true, src: SRC_BEAM,
         target: nullHandle(),
         cr: 1.6, cg: 2.4, cb: 2.6,
-    }
-    )
+    })
     w.player.beamFlash = 0.3
     w.shake = Math.maxF64(w.shake, 3.0 + p * 5.0)
     gridImpulse(&mut w.grid, x, y, 260.0, 0.0 - 90.0)
@@ -1413,13 +1406,12 @@ fn podUpdate(w: &mut World, i: i64, dt: f64) {
             vx: Random.floatRange(0.0 - 60.0, 20.0), vy: Random.floatRange(0.0 - 40.0, 40.0),
             life: 0.3, maxLife: 0.3, drag: 2.4, size: 1.8,
             cr: 1.6, cg: 0.3, cb: 1.6,
-        }
-        )
+        })
     }
 }
 
 fn pickPatient(w: &World, self: i64): Handle {
-    var best: i64 = 0 - 1
+    var best: i64 = -1
     var bestScore = 0.0
     for i in 0..w.ents.len {
         if w.ents[i].alive && i != self && isEnemy(w.ents[i].kind) && w.ents[i].spawnT <= 0.0 {
@@ -1540,8 +1532,7 @@ fn updateBullets(w: &mut World, dt: f64) {
                     vx: Random.floatRange(0.0 - 60.0, 20.0), vy: Random.floatRange(0.0 - 30.0, 30.0),
                     life: 0.26, maxLife: 0.26, drag: 2.6, size: 1.9,
                     cr: 1.9, cg: 0.8, cb: 0.15,
-                }
-                )
+                })
             }
         }
         w.bullets[i].px = w.bullets[i].x
@@ -1742,8 +1733,7 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
         vx: 0.0 - 340.0 + w.player.vx * 0.4, vy: w.player.vy * 0.4 + Random.floatRange(0.0 - 40.0, 40.0),
         life: 0.26, maxLife: 0.26, drag: 3.0, size: 2.4,
         cr: 0.5, cg: 1.2, cb: 1.9,
-    }
-    )
+    })
 
     gridImpulse(&mut w.grid, w.player.x, w.player.y, 140.0, 0.0 - 30.0)
 
@@ -1766,8 +1756,7 @@ fn updatePlayer(w: &mut World, dt: f64, mx: f64, my: f64, holdFire: bool) {
                 vx: 0.0 - Math.cos(a) * r * 3.0, vy: 0.0 - Math.sin(a) * r * 3.0,
                 life: 0.22, maxLife: 0.22, drag: 0.4, size: 2.0,
                 cr: 1.0 + w.player.charge, cg: 1.8, cb: 2.2,
-            }
-            )
+            })
         }
     } else {
         if w.player.charging {
@@ -2194,7 +2183,7 @@ pub fn worldReset(w: &mut World) {
     w.banner = 2.6
     w.hurt = 0.0
     w.pickupT = 0.0
-    w.pickupCode = 0 - 1
+    w.pickupCode = -1
     gridReset(&mut w.grid)
     terrainReset(&mut w.terrain)
 }

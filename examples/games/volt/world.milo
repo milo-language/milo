@@ -631,7 +631,7 @@ fn stepY(p: &mut Player, l: &Level, dy: f64, dropThrough: bool): i64 {
         if hit {
             p.y = ((cy + 1) as f64) * TILE
             p.vy = 0.0
-            return 0 - 1
+            return -1
         }
     }
     return 0

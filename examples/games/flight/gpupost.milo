@@ -136,7 +136,7 @@ pub fn postNew(gl: &mut GlContext, w: i64, h: i64, ow: i64, oh: i64): Result<Pos
         bh: 1,
     }
     postResize(&mut gl, &mut p, w, h)?
-    return Result.Ok(p)
+    return Ok(p)
 }
 
 // Rebuild every full-resolution target for a new render size.
@@ -149,7 +149,7 @@ pub fn postNew(gl: &mut GlContext, w: i64, h: i64, ow: i64, oh: i64): Result<Pos
 // one goes in.
 pub fn postResize(gl: &mut GlContext, p: &mut Post, w: i64, h: i64): Result<i64, string> {
     if w == p.w && h == p.h {
-        return Result.Ok(0)
+        return Ok(0)
     }
     let bw = Math.maxI64(1, w / SHRINK)
     let bh = Math.maxI64(1, h / SHRINK)
@@ -161,7 +161,7 @@ pub fn postResize(gl: &mut GlContext, p: &mut Post, w: i64, h: i64): Result<i64,
     p.h = h
     p.bw = bw
     p.bh = bh
-    return Result.Ok(0)
+    return Ok(0)
 }
 
 // Point the driver at the world target and clear it. Everything the sky pass and

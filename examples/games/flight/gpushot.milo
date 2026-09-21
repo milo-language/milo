@@ -82,24 +82,24 @@ pub let HIDDEN: u32 = 0x8
 fn loadPlace(name: &string): City {
     let base = "examples/games/flight/cities/" + name
     match cityLoad(base + ".city") {
-        Result.Ok(city) => {
+        Ok(city) => {
             var c = city
             match readFile(base + ".ortho.png") {
-                Result.Ok(png) => {
+                Ok(png) => {
                     match cityAttachOrtho(&mut c, png) {
-                        Result.Ok(_) => {
+                        Ok(_) => {
                         }
-                        Result.Err(e) => {
+                        Err(e) => {
                             print("ortho: " + e)
                         }
                     }
                 }
-                Result.Err(_) => {
+                Err(_) => {
                 }
             }
             return c
         }
-        Result.Err(e) => {
+        Err(e) => {
             print($"city: {e}")
             return cityEmpty()
         }
@@ -139,7 +139,7 @@ pub fn main(): i32 {
     // Without this there is no way to photograph a specific thing: the autopilot
     // decides where the aircraft is, and tuning a waterfall by re-running the
     // flight until it happens to point at one is not a workflow.
-    var mark = 0 - 1
+    var mark = -1
     if a.len > 4 {
         mark = strToI64(a[4])
     }
@@ -188,8 +188,8 @@ pub fn main(): i32 {
 
     var gl = GlContext.new()
     var gw = match gpuWorldNew(&mut gl, groundTex, skinTex, facadeTex) {
-        Result.Ok(x) => x
-        Result.Err(e) => {
+        Ok(x) => x
+        Err(e) => {
             print("gpu: " + e)
             return 4
         }
@@ -198,8 +198,8 @@ pub fn main(): i32 {
         setOrtho(&mut gl, &mut gw, w.city.ortho)
     }
     var p = match postNew(&mut gl, W, H, W, H) {
-        Result.Ok(x) => x
-        Result.Err(e) => {
+        Ok(x) => x
+        Err(e) => {
             print("post: " + e)
             return 4
         }
@@ -268,9 +268,9 @@ pub fn main(): i32 {
         if i == frames - 1 {
             let px = readPixelsRgba8(W, H)
             match encodePng(toRgb(px, W, H), W, H, 3) {
-                Result.Ok(bytes) => {
+                Ok(bytes) => {
                     match writeFile(out, bytes) {
-                        Result.Ok(_) => {
+                        Ok(_) => {
                             print($"wrote {out}  alt {w.cam.y as i64} m  err {Gpu.error()}")
                             if frames > WARMUP {
                                 let ms = epochMillis() - loopStart
@@ -278,12 +278,12 @@ pub fn main(): i32 {
                                 print("render: " + ((ms / n) as i64).toString() + " ms/frame over " + n.toString() + " frames at " + W.toString() + "x" + H.toString())
                             }
                         }
-                        Result.Err(e) => {
+                        Err(e) => {
                             print($"write: {e}")
                         }
                     }
                 }
-                Result.Err(e) => {
+                Err(e) => {
                     print("png: " + e)
                 }
             }

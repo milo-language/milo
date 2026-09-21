@@ -42,12 +42,11 @@ pub fn postNew(gl: &mut GlContext, w: i64, h: i64): Result<Post, string> {
     let scene = Target.new(&mut gl, w, h, true, true)?
     let a = Target.new(&mut gl, w / SHRINK, h / SHRINK, false, true)?
     let b = Target.new(&mut gl, w / SHRINK, h / SHRINK, false, true)?
-    return Result.Ok(Post {
+    return Ok(Post {
         scene: scene, a: a, b: b,
         bright: bright, blur: blur, comp: comp,
         quad: Mesh.fullscreenQuad(&mut gl), w: w, h: h,
-    }
-    )
+    })
 }
 
 impl Post {

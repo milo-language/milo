@@ -26,12 +26,12 @@ fn findClassEnd(pat: &string, start: i64): Option<i64> {
         if pat[j] == '\\' && j + 1 < pat.len {
             j += 2
         } else if pat[j] == ']' {
-            return Option.Some(j)
+            return Some(j)
         } else {
             j += 1
         }
     }
-    return Option.None
+    return None
 }
 
 // Index of the '}' that closes the bound opened at `pat[start]` ('start' points
@@ -40,11 +40,11 @@ fn findBraceEnd(pat: &string, start: i64): Option<i64> {
     var j = start + 1
     while j < pat.len {
         if pat[j] == '}' {
-            return Option.Some(j)
+            return Some(j)
         }
         j += 1
     }
-    return Option.None
+    return None
 }
 
 // The longest substring that every string matching `pat` is guaranteed to contain,
@@ -78,7 +78,7 @@ pub fn requiredLiteral(pat: &string): string {
                 longest = run.clone()
             }
             run = ""
-            let Option.Some(close) = findClassEnd(pat, i) else {
+            let Some(close) = findClassEnd(pat, i) else {
                 return ""
             }
             i = close + 1
@@ -87,7 +87,7 @@ pub fn requiredLiteral(pat: &string): string {
                 if q == '*' || q == '+' || q == '?' {
                     i += 1
                 } else if q == '{' {
-                    let Option.Some(brace) = findBraceEnd(pat, i) else {
+                    let Some(brace) = findBraceEnd(pat, i) else {
                         return ""
                     }
                     i = brace + 1
@@ -130,7 +130,7 @@ pub fn requiredLiteral(pat: &string): string {
                 longest = run.clone()
             }
             run = ""
-            let Option.Some(brace) = findBraceEnd(pat, i) else {
+            let Some(brace) = findBraceEnd(pat, i) else {
                 return ""
             }
             i = brace + 1

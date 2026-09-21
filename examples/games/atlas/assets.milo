@@ -30,7 +30,7 @@ fn pack(r: i64, g: i64, b: i64): u32 {
 
 fn decodeMap(gl: &mut GlContext, src: &string): Texture2D {
     match Png.decode(src) {
-        Result.Ok(img) => {
+        Ok(img) => {
             var px: Vec<u32> = Vec.filled(img.width * img.height, 0)
             var i = 0
             let n = img.width * img.height
@@ -42,7 +42,7 @@ fn decodeMap(gl: &mut GlContext, src: &string): Texture2D {
             }
             return Texture2D.rgba8(&mut gl, img.width, img.height, px, true)
         }
-        Result.Err(_) => {
+        Err(_) => {
             // A map that will not decode is a broken build, not a runtime state
             // to design around: one magenta texel says so loudly.
             var px: Vec<u32> = Vec.filled(1, pack(255, 0, 255))

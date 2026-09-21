@@ -148,10 +148,10 @@ pub fn cloneExpr(e: &Expr): Expr {
 pub fn readExpr(arena: &Arena<Expr>, h: Handle<Expr>): Expr {
     let r = arenaWith(arena, h, (e: &Expr): Expr => cloneExpr(e))
     match r {
-        Option.Some(x) => {
+        Some(x) => {
             return x
         }
-        Option.None => {
+        None => {
             return Expr.Num(0)
         }
     }
@@ -226,8 +226,7 @@ pub fn evalExpr(arena: &Arena<Expr>, h: Handle<Expr>, env: &mut Vec<Binding>): V
             let v = evalExpr(arena, valExpr, &mut env)
             env.push(Binding {
                 name: nm, value: v
-            }
-            )
+            })
             let result = evalExpr(arena, body, &mut env)
             env.pop()!
             return result
@@ -280,7 +279,7 @@ pub struct Token {
 }
 
 pub fn isSpace(c: u8): bool {
-    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 pub fn isDigit(c: u8): bool {
@@ -326,8 +325,7 @@ pub fn lex(src: &string): Vec<Token> {
             }
             toks.push(Token {
                 kind: T_NUM, num: v, text: ""
-            }
-            )
+            })
         } else if isAlpha(c) {
             var name = String.withCapacity(8)
             while i < n && (isAlpha(src[i]) || isDigit(src[i])) {
@@ -337,54 +335,42 @@ pub fn lex(src: &string): Vec<Token> {
             let k = keywordKind(name)
             toks.push(Token {
                 kind: k, num: 0, text: name
-            }
-            )
+            })
         } else if c == '=' && i + 1 < n && src[i + 1] == '=' {
             toks.push(Token {
                 kind: T_EQEQ, num: 0, text: ""
-            }
-            )
+            })
             i += 2
         } else {
             var k: i32 = T_EOF
             if c == '+' {
                 k = T_PLUS
-            } 
-            else if c == '-' {
+            } else if c == '-' {
                 k = T_MINUS
-            } 
-            else if c == '*' {
+            } else if c == '*' {
                 k = T_STAR
-            } 
-            else if c == '/' {
+            } else if c == '/' {
                 k = T_SLASH
-            } 
-            else if c == '<' {
+            } else if c == '<' {
                 k = T_LT
-            } 
-            else if c == '>' {
+            } else if c == '>' {
                 k = T_GT
-            } 
-            else if c == '(' {
+            } else if c == '(' {
                 k = T_LPAREN
-            } 
-            else if c == ')' {
+            } else if c == ')' {
                 k = T_RPAREN
-            } 
-            else if c == '=' {
+            } else if c == '=' {
                 k = T_EQ
             }
             toks.push(Token {
                 kind: k, num: 0, text: ""
-            }
-            )
+            })
             i += 1
         }
     }
     toks.push(Token {
         kind: T_EOF, num: 0, text: ""
-    }
-    )
+    })
     return toks
 }
 
@@ -480,48 +466,42 @@ pub fn parsePrimary(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
 
 pub fn parseMul(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     var left = parsePrimary(&mut p, &mut arena)
-    var go = true
-    while go {
+    while true {
         let k = peekKind(p)
-        if k == T_STAR || k == T_SLASH {
-            p.pos += 1
-            let right = parsePrimary(&mut p, &mut arena)
-            left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
-        } else {
-            go = false
+        if !(k == T_STAR || k == T_SLASH) {
+            break
         }
+        p.pos += 1
+        let right = parsePrimary(&mut p, &mut arena)
+        left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
     }
     return left
 }
 
 pub fn parseAdd(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     var left = parseMul(&mut p, &mut arena)
-    var go = true
-    while go {
+    while true {
         let k = peekKind(p)
-        if k == T_PLUS || k == T_MINUS {
-            p.pos += 1
-            let right = parseMul(&mut p, &mut arena)
-            left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
-        } else {
-            go = false
+        if !(k == T_PLUS || k == T_MINUS) {
+            break
         }
+        p.pos += 1
+        let right = parseMul(&mut p, &mut arena)
+        left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
     }
     return left
 }
 
 pub fn parseExpr(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
     var left = parseAdd(&mut p, &mut arena)
-    var go = true
-    while go {
+    while true {
         let k = peekKind(p)
-        if k == T_LT || k == T_GT || k == T_EQEQ {
-            p.pos += 1
-            let right = parseAdd(&mut p, &mut arena)
-            left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
-        } else {
-            go = false
+        if !(k == T_LT || k == T_GT || k == T_EQEQ) {
+            break
         }
+        p.pos += 1
+        let right = parseAdd(&mut p, &mut arena)
+        left = arenaAlloc(&mut arena, Expr.Bin(opStr(k), left, right))
     }
     return left
 }

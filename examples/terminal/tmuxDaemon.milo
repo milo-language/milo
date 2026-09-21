@@ -83,9 +83,9 @@ pub fn parseSize(s: &string, out: &mut [i64; 2]): void {
     var j: i64 = 0
     while j < s.len {
         let ch = s[j]
-        if ch == 59 { // ';'
+        if ch == ';' {
             seenSemi = true
-        } else if ch >= 48 && ch <= 57 {
+        } else if ch >= '0' && ch <= '9' {
             let d = (ch - 48) as i64
             if seenSemi {
                 out[1] = out[1] * 10 + d
@@ -251,13 +251,13 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
     var k: i64 = 0
     while k < 2 {
         match openAndSpawn(shell, sa) {
-            Result.Ok(p) => {
+            Ok(p) => {
                 setNonblock(p.fd())
                 ptys.push(p)
                 terms.push(newTerm(gridRows, 1))
                 paneWin.push(0)
             }
-            Result.Err(_) => {
+            Err(_) => {
             }
         }
         k += 1
@@ -375,21 +375,21 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                     let b = buf[i]
                     // SGR mouse click: ESC [ < btn ; col ; row (M|m). A click
                     // focuses the pane it lands in (by column). Arrives whole.
-                    if b == 27 && i + 2 < n && buf[i + 1] == 91 && buf[i + 2] == 60 {
+                    if b == 27 && i + 2 < n && buf[i + 1] == '[' && buf[i + 2] == '<' {
                         var j = i + 3
                         var field = 0 // 0 btn, 1 col, 2 row
                         var col = 0
                         var press = false
                         while j < n {
                             let mb = buf[j]
-                            if mb >= 48 && mb <= 57 {
+                            if mb >= '0' && mb <= '9' {
                                 if field == 1 {
                                     col = col * 10 + (mb - 48) as i64
                                 }
-                            } else if mb == 59 {
+                            } else if mb == ';' {
                                 field += 1
-                            } else if mb == 77 || mb == 109 {
-                                press = mb == 77
+                            } else if mb == 'M' || mb == 'm' {
+                                press = mb == 'M'
                                 j += 1
                                 break
                             }
@@ -431,21 +431,21 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                         ctrlMode = true
                         ctrlBuf = ""
                     } else if copyMode {
-                        if b == 113 || b == 27 {
+                        if b == 'q' || b == 27 {
                             copyMode = false
                             dirty = true
-                        } else if b == 107 {
+                        } else if b == 'k' {
                             copyOffset += 1
                             dirty = true
-                        } else if b == 106 {
+                        } else if b == 'j' {
                             if copyOffset > 0 {
                                 copyOffset -= 1
                             }
                             dirty = true
-                        } else if b == 117 {
+                        } else if b == 'u' {
                             copyOffset += 10
                             dirty = true
-                        } else if b == 100 {
+                        } else if b == 'd' {
                             copyOffset -= 10
                             if copyOffset < 0 {
                                 copyOffset = 0
@@ -454,7 +454,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                         }
                     } else if prefixArmed {
                         prefixArmed = false
-                        if b == 111 || b == 9 {
+                        if b == 'o' || b == '\t' {
                             // cycle focus among active-window panes
                             var idxs: [i64; 16] = [0; 16]
                             let m = activePaneIdxs(paneWin, activeWin, &mut idxs)
@@ -470,11 +470,11 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                                 focus = idxs[(fp + 1) % m]
                             }
                             dirty = true
-                        } else if b == 37 {
+                        } else if b == '%' {
                             // % → split: add a pane to the active window
                             if ptys.len < 12 {
                                 match openAndSpawn(shell, sa) {
-                                    Result.Ok(p) => {
+                                    Ok(p) => {
                                         setNonblock(p.fd())
                                         ptys.push(p)
                                         terms.push(newTerm(gridRows, 1))
@@ -483,15 +483,15 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                                         reTile(ptys, &mut terms, paneWin, activeWin, cols, gridRows)
                                         dirty = true
                                     }
-                                    Result.Err(_) => {
+                                    Err(_) => {
                                     }
                                 }
                             }
-                        } else if b == 99 {
+                        } else if b == 'c' {
                             // c → new window with one shell
                             if ptys.len < 12 {
                                 match openAndSpawn(shell, sa) {
-                                    Result.Ok(p) => {
+                                    Ok(p) => {
                                         setNonblock(p.fd())
                                         ptys.push(p)
                                         terms.push(newTerm(gridRows, 1))
@@ -502,11 +502,11 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                                         reTile(ptys, &mut terms, paneWin, activeWin, cols, gridRows)
                                         dirty = true
                                     }
-                                    Result.Err(_) => {
+                                    Err(_) => {
                                     }
                                 }
                             }
-                        } else if b == 110 || b == 112 {
+                        } else if b == 'n' || b == 'p' {
                             // n / p → next non-empty window
                             var tries: i64 = 0
                             var nw = activeWin
@@ -527,7 +527,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                                 }
                                 dirty = true
                             }
-                        } else if b == 91 {
+                        } else if b == '[' {
                             copyMode = true
                             copyOffset = 0
                             dirty = true
@@ -580,14 +580,14 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
 
 pub fn runServe(): void {
     match TcpListener.bind(PORT) {
-        Result.Ok(listener) => {
+        Ok(listener) => {
             setNonblock(listener.fd)
             let shell = Env.getOr("SHELL", "/bin/sh")
             print($"tmuxd: serving on 127.0.0.1:{PORT} (attach with: tmuxdaemon attach)")
             serveMulti(listener.fd, shell, 24, 80)
             print("tmuxd: stopped")
         }
-        Result.Err(_) => {
+        Err(_) => {
             print("tmuxd: bind failed — is a daemon already running on 7373?")
         }
     }
@@ -650,7 +650,7 @@ pub fn attachLoop(sockFd: i32, winchFd: i32): void {
                 let b = buf[i]
                 if prefixArmed {
                     prefixArmed = false
-                    if b == 100 || b == 68 { // d / D → detach
+                    if b == 'd' || b == 'D' { // d / D → detach
                         done = true
                     } else {
                         one[0] = PREFIX
@@ -686,7 +686,7 @@ pub fn runAttach(): void {
         return
     }
     match TcpStream.connect(ip4(127, 0, 0, 1), PORT) {
-        Result.Ok(stream) => {
+        Ok(stream) => {
             var s = stream
             let sockFd = s.take() // own the fd ourselves; close on the way out
             setNonblock(sockFd)
@@ -705,7 +705,7 @@ pub fn runAttach(): void {
             close(sockFd)
             print("tmuxd: detached (shell still running in the daemon)")
         }
-        Result.Err(_) => {
+        Err(_) => {
             print("tmuxd: connect failed — start it first with: tmuxdaemon serve")
         }
     }

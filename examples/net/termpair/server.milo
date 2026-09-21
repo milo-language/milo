@@ -137,11 +137,9 @@ pub fn parseRequestLine(raw: &string): RequestLine {
     for ch in uri {
         if !foundQ && ch == '?' {
             foundQ = true
-        } 
-        else if foundQ {
+        } else if foundQ {
             query.push(ch)
-        } 
-        else {
+        } else {
             path.push(ch)
         }
     }
@@ -207,10 +205,10 @@ pub fn handleTerminalWs(ws: WsConn): void {
     // read init message
     var initPayload: string = ""
     match conn.recv() {
-        Result.Ok(msg) => {
+        Ok(msg) => {
             initPayload = msg.payload
         }
-        Result.Err(e) => {
+        Err(e) => {
             conn.close()
             return
         }
@@ -244,13 +242,12 @@ pub fn handleTerminalWs(ws: WsConn): void {
         rows: rows, cols: cols,
         browserCount: 0,
         alive: true,
-    }
-    )
+    })
     toTermChans.push(toTerminal)
     bcastChans.push(broadcast)
 
     match conn.sendText(makeStartBroadcast(terminalId)) {
-        Result.Err(_) => {
+        Err(_) => {
             conn.close()
             return
         }
@@ -276,22 +273,21 @@ pub fn handleTerminalWs(ws: WsConn): void {
 
             let maybe = toTermChans[idx].tryRecv()
             match maybe {
-                Option.Some(msg) => {
+                Some(msg) => {
                     let _ = sendWs.sendText(msg)
                 }
-                Option.None => {
+                None => {
                     schedulerYield()
                 }
             }
         }
-    }
-    )
+    })
 
     // read terminal output, broadcast to browsers
     let tid2 = terminalId.clone()
     while true {
         match conn.recv() {
-            Result.Ok(msg) => {
+            Ok(msg) => {
                 let raw = msg.payload
                 let event = parseEvent(raw)
                 let idx = findSession(tid2)
@@ -307,7 +303,7 @@ pub fn handleTerminalWs(ws: WsConn): void {
                     bcastChans[idx].trySend(raw.clone())
                 }
             }
-            Result.Err(e) => {
+            Err(e) => {
                 break
             }
         }
@@ -343,7 +339,7 @@ pub fn handleBrowserWs(ws: WsConn, terminalId: string): void {
     bcastChans[idx].trySend(makeNumClients(count))
 
     match conn.sendText(makeResizeMsg(sessions[idx].rows, sessions[idx].cols)) {
-        Result.Err(_) => {
+        Err(_) => {
             conn.close()
             return
         }
@@ -372,27 +368,26 @@ pub fn handleBrowserWs(ws: WsConn, terminalId: string): void {
             }
             let maybe = bcastChans[bidx].tryRecv()
             match maybe {
-                Option.Some(msg) => {
+                Some(msg) => {
                     match sendWs.sendText(msg) {
-                        Result.Err(_) => {
+                        Err(_) => {
                             break
                         }
                         _ => {
                         }
                     }
                 }
-                Option.None => {
+                None => {
                     schedulerYield()
                 }
             }
         }
-    }
-    )
+    })
 
     // read loop: browser → terminal
     while true {
         match conn.recv() {
-            Result.Ok(msg) => {
+            Ok(msg) => {
                 let raw = msg.payload
                 let event = parseEvent(raw)
                 let bidx = findSession(tid)
@@ -406,7 +401,7 @@ pub fn handleBrowserWs(ws: WsConn, terminalId: string): void {
                     bcastChans[bidx].trySend(raw.clone())
                 } else if event == "request_terminal_dimensions" {
                     match conn.sendText(makeResizeMsg(sessions[bidx].rows, sessions[bidx].cols)) {
-                        Result.Err(_) => {
+                        Err(_) => {
                             break
                         }
                         _ => {
@@ -414,7 +409,7 @@ pub fn handleBrowserWs(ws: WsConn, terminalId: string): void {
                     }
                 }
             }
-            Result.Err(e) => {
+            Err(e) => {
                 break
             }
         }
@@ -474,8 +469,7 @@ pub fn acceptLoop(rawFd: i32): void {
             setNonblocking(clientFd)
             Task.spawn(move(): void => {
                 handleConnection(clientFd)
-            }
-            )
+            })
         }
     }
 }
@@ -501,10 +495,10 @@ pub fn handleConnection(clientFd: i32): void {
         if isWsUpgrade(raw) {
             if rl.path == "/connect_to_terminal" {
                 match wsAccept(clientFd, raw) {
-                    Result.Ok(ws) => {
+                    Ok(ws) => {
                         handleTerminalWs(ws)
                     }
-                    Result.Err(e) => {
+                    Err(e) => {
                         close(clientFd)
                     }
                 }
@@ -515,10 +509,10 @@ pub fn handleConnection(clientFd: i32): void {
                     close(clientFd)
                 } else {
                     match wsAccept(clientFd, raw) {
-                        Result.Ok(ws) => {
+                        Ok(ws) => {
                             handleBrowserWs(ws, tid)
                         }
-                        Result.Err(e) => {
+                        Err(e) => {
                             close(clientFd)
                         }
                     }
@@ -548,8 +542,7 @@ pub fn handleConnection(clientFd: i32): void {
                 let body = handleGetTerminal(rl.path.substr(10, rl.path.len))
                 if body.len == 0 {
                     sendHttp(clientFd, 404, "text/plain", "not found")
-                } 
-                else {
+                } else {
                     sendHttp(clientFd, 200, "application/json", body)
                 }
             } else if rl.path.startsWith("/s/") {
@@ -612,8 +605,7 @@ pub fn main(): i32 {
     // run accept loop in a green thread so spawned handlers can execute
     Task.spawn(move(): void => {
         acceptLoop(rawFd)
-    }
-    )
+    })
     // Go exit semantics: main no longer drains implicitly. Drive the scheduler
     // so the accept loop (and the handlers it spawns) keep running — the server
     // never returns from here.

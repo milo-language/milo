@@ -330,8 +330,7 @@ fn updatePins(app: &mut App, vp: &Vec<f32>, model: &Vec<f32>, eye: &V3, w: f64, 
         }
         app.pins.push(Pin {
             x: p.x, y: p.y, onScreen: vis, facing: facing
-        }
-        )
+        })
         i += 1
     }
 }
@@ -735,36 +734,36 @@ pub fn main(): i32 {
     // context is still current.
     var gl = GlContext.new()
     var planetSh = match Shader.compile(&mut gl, PLANET_VERT, PLANET_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
+        Ok(s) => s
+        Err(e) => {
             print("planet shader: " + e)
             return 2
         }
     }
     var atmoSh = match Shader.compile(&mut gl, PLANET_VERT, ATMO_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
+        Ok(s) => s
+        Err(e) => {
             print("atmosphere shader: " + e)
             return 2
         }
     }
     var ringSh = match Shader.compile(&mut gl, PLANET_VERT, RING_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
+        Ok(s) => s
+        Err(e) => {
             print("ring shader: " + e)
             return 2
         }
     }
     var skySh = match Shader.compile(&mut gl, QUAD_VERT, SKY_FRAG) {
-        Result.Ok(s) => s
-        Result.Err(e) => {
+        Ok(s) => s
+        Err(e) => {
             print("sky shader: " + e)
             return 2
         }
     }
     var ui = match uiNew(&mut gl, fontAtlas()) {
-        Result.Ok(x) => x
-        Result.Err(e) => {
+        Ok(x) => x
+        Err(e) => {
             print("ui: " + e)
             return 2
         }
@@ -847,8 +846,8 @@ pub fn main(): i32 {
 
     var size = drawableSize(host.win)
     var post = match postNew(&mut gl, size.w, size.h) {
-        Result.Ok(p) => p
-        Result.Err(e) => {
+        Ok(p) => p
+        Err(e) => {
             print("render targets: " + e)
             return 3
         }
@@ -884,8 +883,8 @@ pub fn main(): i32 {
         if size.w != postW || size.h != postH {
             post.free(&mut gl)
             post = match postNew(&mut gl, size.w, size.h) {
-                Result.Ok(p) => p
-                Result.Err(_) => {
+                Ok(p) => p
+                Err(_) => {
                     return 3
                 }
             }

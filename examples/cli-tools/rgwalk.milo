@@ -75,20 +75,19 @@ impl Walker {
     // A dir we can't open (permissions, a dangling symlink) is skipped, not fatal —
     // one unreadable subdir under /var must not kill the whole walk.
     fn pushDir(self: &mut Self, dirPath: &string): void {
-        let Result.Ok(entries) = readDir(dirPath) else {
+        let Ok(entries) = readDir(dirPath) else {
             return
         }
         var pushed = false
         if self.useIgnore {
-            if let Option.Some(set) = loadIgnoreSet(dirPath, self.useGitIgnore) {
+            if let Some(set) = loadIgnoreSet(dirPath, self.useGitIgnore) {
                 self.sets.push(set)
                 pushed = true
             }
         }
         self.stack.push(WalkFrame {
             dirPath: dirPath.clone(), entries: entries, idx: 0, pushedIgnore: pushed
-        }
-        )
+        })
     }
 
     fn next(self: &mut Self): Option<string> {
@@ -106,7 +105,7 @@ impl Walker {
             let name = self.stack[top].entries[i].name.clone()
             let entryIsDir = self.stack[top].entries[i].isDir
             let entryIsFile = self.stack[top].entries[i].isFile
-            if !self.searchHidden && name.len > 0 && name[0] == 46 {
+            if !self.searchHidden && name.len > 0 && name[0] == '.' {
                 continue
             }
             let dir = self.stack[top].dirPath.clone()
@@ -119,18 +118,18 @@ impl Walker {
                 // Apply -t here, not at search time: a file the type filter rejects
                 // must never reach the prescan, or the threads read it for nothing.
                 if matchesType(fullPath, self.fileType) && !stackIgnores(self.sets, fullPath, name, false) {
-                    return Option.Some(fullPath)
+                    return Some(fullPath)
                 }
             }
         }
-        return Option.None
+        return None
     }
 
     // Up to `n` more paths. Short (or empty) only at the end of the walk.
     fn nextBatch(self: &mut Self, n: i64): Vec<string> {
         var out: Vec<string> = Vec.new()
         while out.len < n {
-            let Option.Some(p) = self.next() else {
+            let Some(p) = self.next() else {
                 break
             }
             out.push(p)

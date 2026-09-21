@@ -156,8 +156,7 @@ pub fn main(): i32 {
             0
         } else {
             1
-        }
-        )
+        })
         if !headless {
             let _ = SDL_SetRelativeMouseMode(1)
             let _ = SDL_ShowCursor(0)
@@ -192,8 +191,8 @@ pub fn main(): i32 {
     var gl = GlContext.new()
     let sky = buildRoom(houseLight)
     var gfx = match newGfx(&mut gl, rw, rh, sky, buildAtlas(), ATLAS) {
-        Result.Ok(g) => g
-        Result.Err(e) => {
+        Ok(g) => g
+        Err(e) => {
             print("gfx: " + e)
             return 4
         }
@@ -352,8 +351,7 @@ pub fn main(): i32 {
                         SDL_WINDOW_FULLSCREEN_DESKTOP
                     } else {
                         0
-                    }
-                    )
+                    })
                 }
                 prevF = fDown
                 if (buttons & SDL_BUTTON_RMASK) != 0 {
@@ -461,8 +459,7 @@ pub fn main(): i32 {
                 1.0
             } else {
                 -1.0
-            }
-            ))
+            }))
             let hit = targets.trace(cam.eye(), cam.forward())
             // Shooting the rack itself. Four gold discs hanging in the air are
             // the brightest thing in the room and every player shoots them, so
@@ -636,17 +633,17 @@ pub fn main(): i32 {
         if headless {
             let px = readPixelsRgba8(dw as i64, dh as i64)
             match encodePng(toRgb(px, dw as i64, dh as i64), dw as i64, dh as i64, 3) {
-                Result.Ok(bytes) => {
+                Ok(bytes) => {
                     match writeFile(shot, bytes) {
-                        Result.Ok(_v) => {
+                        Ok(_v) => {
                             print($"wrote {shot}")
                         }
-                        Result.Err(e) => {
+                        Err(e) => {
                             print($"write: {e}")
                         }
                     }
                 }
-                Result.Err(e) => {
+                Err(e) => {
                     print("png: " + e)
                 }
             }

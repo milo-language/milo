@@ -71,8 +71,7 @@ fn sources(): Vec<Source> {
         + "&REQUEST=GetMap&LAYERS=BlueMarble_ShadedRelief_Bathymetry&STYLES="
         + "&SRS=EPSG:4326&BBOX=-180,-90,180,90&WIDTH=2048&HEIGHT=2048&FORMAT=image/png",
         size: 2048,
-    }
-    )
+    })
     v.push(usgs("moon", "/maps/earth/moon_simp_cyl.map", "LROC_WAC", 1024))
     v.push(usgs("mars", "/maps/mars/mars_simp_cyl.map", "MDIM21_color", 2048))
     v.push(usgs("jupiter", "/maps/jupiter/jupiter_simp_cyl.map", "CASSINI", 1024))
@@ -97,20 +96,20 @@ pub fn main(): i32 {
             let out = "examples/games/apsis/bodies/" + name + ".png"
             print("fetching " + name + " (" + all[k].size.toString() + "px) ...")
             match fetch(all[k].url) {
-                Result.Ok(resp) => {
+                Ok(resp) => {
                     // The WMS reports its own failures with HTTP 200 and an XML
                     // body, so the status code proves nothing. A PNG starts with
                     // a fixed 8-byte signature; anything else is an error
                     // document wearing a .png name.
-                    if resp.body.len < 8 || resp.body[1] != 80 || resp.body[2] != 78 || resp.body[3] != 71 {
+                    if resp.body.len < 8 || resp.body[1] != 'P' || resp.body[2] != 'N' || resp.body[3] != 'G' {
                         print("  NOT A PNG — the server returned " + resp.body.len.toString() + " bytes, probably a service exception")
                         failed += 1
                     } else {
                         match writeFile(out, resp.body) {
-                            Result.Ok(_) => {
+                            Ok(_) => {
                                 print("  wrote " + out + " (" + resp.body.len.toString() + " bytes)")
                             }
-                            Result.Err(err) => {
+                            Err(err) => {
                                 let _ = err
                                 print("  write failed")
                                 failed += 1
@@ -118,7 +117,7 @@ pub fn main(): i32 {
                         }
                     }
                 }
-                Result.Err(_) => {
+                Err(_) => {
                     print("  download failed")
                     failed += 1
                 }

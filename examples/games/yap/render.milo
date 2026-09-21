@@ -68,7 +68,7 @@ fn drawHouses(c: &mut Canvas, w: &World) {
     let span = 232.0
     let off = w.groundX * 0.22
     let base = GROUND_Y - 52.0
-    var k: i64 = 0 - 1
+    var k: i64 = -1
     while k < 8 {
         let idx = (Math.floor(off / span) as i64) + k
         let x = (idx as f64) * span - off
@@ -94,7 +94,7 @@ fn drawFence(c: &mut Canvas, w: &World) {
     let top = GROUND_Y - 104.0
     fillRect(&mut c, 0.0, top + 24.0, c.w as f64, top + 34.0, 0.115, 0.062, 0.030, 1.0)
     fillRect(&mut c, 0.0, top + 66.0, c.w as f64, top + 76.0, 0.115, 0.062, 0.030, 1.0)
-    var k: i64 = 0 - 1
+    var k: i64 = -1
     while k < 46 {
         let idx = (Math.floor(off / span) as i64) + k
         let x = (idx as f64) * span - off
@@ -115,7 +115,7 @@ fn drawGrass(c: &mut Canvas, w: &World) {
     fillRect(&mut c, 0.0, GROUND_Y + 46.0, c.w as f64, c.h as f64, 0.038, 0.100, 0.028, 1.0)
     let span = 24.0
     let off = w.groundX
-    var k: i64 = 0 - 1
+    var k: i64 = -1
     while k < 58 {
         let idx = (Math.floor(off / span) as i64) + k
         let x = (idx as f64) * span - off

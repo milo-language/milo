@@ -145,10 +145,10 @@ pub struct LiveEnv {
 
 fn envI64(name: string, fallback: i64): i64 {
     match Env.get(name) {
-        Option.Some(v) => {
+        Some(v) => {
             return parseInt(v) ?? fallback
         }
-        Option.None => {
+        None => {
             return fallback
         }
     }
@@ -159,10 +159,10 @@ fn envI64(name: string, fallback: i64): i64 {
 // this would drift.
 pub fn envF64(name: string, fallback: f64): f64 {
     match Env.get(name) {
-        Option.Some(v) => {
+        Some(v) => {
             return parseFloat(v) ?? fallback
         }
-        Option.None => {
+        None => {
             return fallback
         }
     }
@@ -343,18 +343,18 @@ fn buildSnapshot(lat: f64, lon: f64, reachIn: f64, groundM: f64): WxSnapshot {
     var structure: Vec<f32> = Vec.filled(CLOUD_N * CLOUD_N, 1.0)
     var haveIr = false
     match fetchIr(lat, lon, reach, CLOUD_N) {
-        Option.Some(g) => {
+        Some(g) => {
             structure = g
             haveIr = true
         }
-        Option.None => {
+        None => {
         }
     }
     var rain: Vec<f32> = Vec.filled(CLOUD_N * CLOUD_N, 0.0)
     var peak = 0.0
     var wet = 0
     match fetchRadar(lat, lon, reach, CLOUD_N) {
-        Option.Some(g) => {
+        Some(g) => {
             for i in 0..g.len {
                 let v = g[i] as f64
                 if v > peak {
@@ -366,7 +366,7 @@ fn buildSnapshot(lat: f64, lon: f64, reachIn: f64, groundM: f64): WxSnapshot {
             }
             rain = g
         }
-        Option.None => {
+        None => {
         }
     }
     let rainFrac = (wet as f64) / ((CLOUD_N * CLOUD_N) as f64)
@@ -544,8 +544,7 @@ pub fn envWeatherTick(e: &mut LiveEnv, reachIn: f64) {
         let snap = buildSnapshot(lat, lon, reach, ground)
         WX_SNAP = snap
         WX_READY = true
-    }
-    )
+    })
 }
 
 // Whether the player asked for the real sky. Off by default: it costs several

@@ -89,13 +89,13 @@ pub fn screenOpen(title: &string, w: i64, h: i64, ow: i64, oh: i64, renderPct: i
         let flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI
         let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w as i32, h as i32, flags)
         if (win as i64) == 0 {
-            return Result.Err("window: " + sdlError())
+            return Err("window: " + sdlError())
         }
         let ctx = SDL_GL_CreateContext(win)
         if (ctx as i64) == 0 {
             let e = sdlError()
             SDL_DestroyWindow(win)
-            return Result.Err("no GL 3.3 core context: " + e)
+            return Err("no GL 3.3 core context: " + e)
         }
         let _ = SDL_GL_SetSwapInterval(1)
         if fullscreen {
@@ -108,17 +108,16 @@ pub fn screenOpen(title: &string, w: i64, h: i64, ow: i64, oh: i64, renderPct: i
         let r = renderSize(d.w, d.h, renderPct)
         var glc = GlContext.new()
         match postNew(&mut glc, r.w, r.h, ow, oh) {
-            Result.Ok(p) => {
+            Ok(p) => {
                 print("gpu: OpenGL " + Gpu.version())
-                return Result.Ok(Screen {
+                return Ok(Screen {
                     win: win, ctx: ctx, gl: glc, post: p, rw: r.w, rh: r.h, renderPct: renderPct
-                }
-                )
+                })
             }
-            Result.Err(e) => {
+            Err(e) => {
                 SDL_GL_DeleteContext(ctx)
                 SDL_DestroyWindow(win)
-                return Result.Err(e)
+                return Err(e)
             }
         }
     }
@@ -194,11 +193,11 @@ pub fn screenBegin(s: &mut Screen): Size {
     let r = renderSize(d.w, d.h, s.renderPct)
     if r.w != s.rw || r.h != s.rh {
         match postResize(&mut s.gl, &mut s.post, r.w, r.h) {
-            Result.Ok(_) => {
+            Ok(_) => {
                 s.rw = r.w
                 s.rh = r.h
             }
-            Result.Err(e) => {
+            Err(e) => {
                 // Keep drawing at the old size rather than dying because someone
                 // dragged a window corner.
                 print("gpu: could not resize to " + $"{r.w}x{r.h}" + ": " + e)

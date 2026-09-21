@@ -64,9 +64,9 @@ pub struct DapOut {
 impl DapOut {
     fn sendRaw(_self: &mut DapOut, json: &string): void {
         match writeFrame(1, json) {
-            Result.Ok(_n) => {
+            Ok(_n) => {
             }
-            Result.Err(_e) => {
+            Err(_e) => {
                 eprint("[java-dap] short write on DAP stdout\n")
             }
         }
@@ -166,16 +166,16 @@ pub fn dapServe(): i64 {
     let eventCh = Channel<Packet>.new(256)!
 
     // ── phase 1: not attached ──
-    var io: Option<JdwpIo> = Option.None
+    var io: Option<JdwpIo> = None
     var launched = false
     var program: string = ""
     var sourceRoots: Vec<string> = []
     while true {
-        let Result.Ok(raw) = readFrame(0) else {
+        let Ok(raw) = readFrame(0) else {
             eprint("client hung up before attach")
             return 0
         }
-        let Result.Ok(req) = Json.parse(raw) else {
+        let Ok(req) = Json.parse(raw) else {
             continue
         }
         let cmd = req.str("command") ?? ""
@@ -187,14 +187,14 @@ pub fn dapServe(): i64 {
             program = args.str("program") ?? ""
             sourceRoots = strArray(args, "sourceRoots")
             match connectJvm(cmd == "launch", args, eventCh.clone()) {
-                Result.Ok(j) => {
-                    io = Option.Some(j)
+                Ok(j) => {
+                    io = Some(j)
                     launched = cmd == "launch"
                     out.respond(seq, cmd, "{}")
                     out.event("initialized", "{}")
                     break
                 }
-                Result.Err(e) => {
+                Err(e) => {
                     out.fail(seq, cmd, e)
                 }
             }
@@ -206,7 +206,7 @@ pub fn dapServe(): i64 {
         }
     }
 
-    let Option.Some(theIo) = io else {
+    let Some(theIo) = io else {
         return 1
     }
 
@@ -227,12 +227,12 @@ pub fn dapServe(): i64 {
         sel.destroy()
         if arm == 0 {
             match readFrame(0) {
-                Result.Ok(raw) => {
+                Ok(raw) => {
                     if sess.dispatch(raw) {
                         return 0
                     }
                 }
-                Result.Err(_e) => {
+                Err(_e) => {
                     // client hung up: leave the debuggee as disconnect would
                     sess.shutdown(true)
                     return 0
@@ -240,10 +240,10 @@ pub fn dapServe(): i64 {
             }
         } else {
             match sess.eventCh.tryRecv() {
-                Option.Some(pkt) => {
+                Some(pkt) => {
                     sess.handlePacket(pkt)
                 }
-                Option.None => {
+                None => {
                 }
             }
         }
@@ -268,29 +268,29 @@ pub fn capabilitiesJson(): string {
 pub fn strArray(args: &Json, key: &string): Vec<string> {
     var out: Vec<string> = []
     match args.get(key) {
-        Option.Some(arr) => {
+        Some(arr) => {
             if arr.isArray() {
                 let n = arr.len()
                 var i: i64 = 0
                 while i < n {
                     match arr.at(i) {
-                        Option.Some(el) => {
+                        Some(el) => {
                             match el.asStr() {
-                                Option.Some(s) => {
+                                Some(s) => {
                                     out.push(s)
                                 }
-                                Option.None => {
+                                None => {
                                 }
                             }
                         }
-                        Option.None => {
+                        None => {
                         }
                     }
                     i += 1
                 }
             }
         }
-        Option.None => {
+        None => {
         }
     }
     return out
@@ -307,7 +307,7 @@ pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result
         let host = args.str("hostName") ?? (args.str("host") ?? "localhost")
         let port = args.i64("port") ?? (0 as i64)
         if port <= 0 {
-            return Result.Err("attach needs \"port\" (JDWP agent port)")
+            return Err("attach needs \"port\" (JDWP agent port)")
         }
         return jdwpAttach(host, port as u16, eventCh)
     }
@@ -316,11 +316,11 @@ pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result
     var mainClass = args.str("mainClass") ?? ""
     if mainClass.len == 0 {
         if program.len == 0 {
-            return Result.Err("launch needs \"mainClass\" or \"program\"")
+            return Err("launch needs \"mainClass\" or \"program\"")
         }
         mainClass = classNameForSource(program)
         if mainClass.len == 0 {
-            return Result.Err("cannot derive mainClass from " + program)
+            return Err("cannot derive mainClass from " + program)
         }
     }
     var cp = joinPaths(strArray(args, "classPaths"))
@@ -334,7 +334,7 @@ pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result
     let port = args.i64("jdwpPort") ?? (15737 as i64)
     let java = findJava(args.str("javaPath") ?? "")
     if java.len == 0 {
-        return Result.Err("no java executable found — set \"javaPath\" or JAVA_HOME")
+        return Err("no java executable found — set \"javaPath\" or JAVA_HOME")
     }
 
     var argv: Vec<string> = []
@@ -353,11 +353,11 @@ pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result
         pid: -1 as i32, stdinFd: -1 as i32, stdoutFd: -1 as i32, stderrFd: -1 as i32
     }
     match Child.spawn(java, argv, false) {
-        Result.Ok(c) => {
+        Ok(c) => {
             child = c
         }
-        Result.Err(e) => {
-            return Result.Err("failed to spawn java: " + e)
+        Err(e) => {
+            return Err("failed to spawn java: " + e)
         }
     }
 
@@ -370,16 +370,15 @@ pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result
     Task.spawn(move(): void => {
         while true {
             match errCh.recv() {
-                Result.Ok(chunk) => {
+                Ok(chunk) => {
                     let _s = errFwd.send(synthPacket(-3, 0, chunk))
                 }
-                Result.Err(_e) => {
+                Err(_e) => {
                     break
                 }
             }
         }
-    }
-    )
+    })
     // Gate the connect on the agent's own banner: connecting before the agent
     // listens can hang in TcpStream.connect (kqueue never reports a failed
     // connect as readable). The banner goes to child stdout; chunks seen here
@@ -387,14 +386,14 @@ pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result
     var booted = false
     while !booted {
         match outCh.recv() {
-            Result.Ok(chunk) => {
+            Ok(chunk) => {
                 if chunk.contains("Listening for transport") {
                     booted = true
                 }
                 let _s = eventCh.send(synthPacket(-2, 0, chunk))
             }
-            Result.Err(_e) => {
-                return Result.Err("JVM exited before its JDWP agent listened (check vmArgs/classPaths)")
+            Err(_e) => {
+                return Err("JVM exited before its JDWP agent listened (check vmArgs/classPaths)")
             }
         }
     }
@@ -406,36 +405,35 @@ pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result
     Task.spawn(move(): void => {
         while true {
             match outCh.recv() {
-                Result.Ok(chunk) => {
+                Ok(chunk) => {
                     let _s = outFwd.send(synthPacket(-2, 0, chunk))
                 }
-                Result.Err(_e) => {
+                Err(_e) => {
                     break
                 }
             }
         }
         var code: i64 = -1
-        if let Result.Ok(c) = child.wait() {
+        if let Ok(c) = child.wait() {
             code = c as i64
         }
         let _s = outFwd.send(synthPacket(-4, code, ""))
-    }
-    )
+    })
 
     let host: string = "127.0.0.1"
     var tries: i64 = 0
     while tries < 20 {
         match jdwpAttach(host, port as u16, eventCh.clone()) {
-            Result.Ok(io) => {
-                return Result.Ok(io)
+            Ok(io) => {
+                return Ok(io)
             }
-            Result.Err(_e) => {
+            Err(_e) => {
             }
         }
         sleepMs(100)
         tries += 1
     }
-    return Result.Err("JVM spawned but JDWP agent never listened on port " + port.toString())
+    return Err("JVM spawned but JDWP agent never listened on port " + port.toString())
 }
 
 pub fn findJava(explicit: string): string {
@@ -509,7 +507,7 @@ pub fn classNameForSource(path: &string): string {
     let stem = baseNameNoExt(path)
     var pkg: string = ""
     match readFile(path) {
-        Result.Ok(text) => {
+        Ok(text) => {
             let lines = text.split("\n")
             for line in lines {
                 let t = line.trim()
@@ -530,7 +528,7 @@ pub fn classNameForSource(path: &string): string {
                 }
             }
         }
-        Result.Err(_e) => {
+        Err(_e) => {
         }
     }
     if pkg.len == 0 {
@@ -685,7 +683,7 @@ pub fn signExtend(v: i64, bits: i64): i64 {
 impl Sess {
     // returns true when the adapter should exit (disconnect/terminate handled).
     fn dispatch(self: &mut Sess, raw: string): bool {
-        let Result.Ok(req) = Json.parse(raw) else {
+        let Ok(req) = Json.parse(raw) else {
             return false
         }
         let cmd = req.str("command") ?? ""
@@ -780,10 +778,10 @@ impl Sess {
     fn onThreads(self: &mut Sess, seq: i64): void {
         var ids: Vec<i64> = []
         match self.io.allThreads() {
-            Result.Ok(v) => {
+            Ok(v) => {
                 ids = v
             }
-            Result.Err(e) => {
+            Err(e) => {
                 let c: string = "threads"
                 self.out.fail(seq, c, e)
                 return
@@ -793,7 +791,7 @@ impl Sess {
         for t in ids {
             let dapId = self.dapThreadId(t)
             var name: string = "thread-" + dapId.toString()
-            if let Result.Ok(n) = self.io.threadName(t) {
+            if let Ok(n) = self.io.threadName(t) {
                 name = n
             }
             arr = arr.raw(Json.obj().int("id", dapId).str("name", name).build())
@@ -808,29 +806,29 @@ impl Sess {
         let cmdName: string = "setBreakpoints"
         var path: string = ""
         match args.get("source") {
-            Option.Some(src) => {
+            Some(src) => {
                 path = src.str("path") ?? ""
             }
-            Option.None => {
+            None => {
             }
         }
         var lines: Vec<i64> = []
         match args.get("breakpoints") {
-            Option.Some(arr) => {
+            Some(arr) => {
                 let n = arr.len()
                 var i: i64 = 0
                 while i < n {
                     match arr.curInt(arr.curField(arr.curChild(arr.curRoot(), i), "line")) {
-                        Option.Some(l) => {
+                        Some(l) => {
                             lines.push(l)
                         }
-                        Option.None => {
+                        None => {
                         }
                     }
                     i += 1
                 }
             }
-            Option.None => {
+            None => {
             }
         }
         if path.len == 0 {
@@ -859,8 +857,7 @@ impl Sess {
                     v: 0
                 }
                 , prepReqId: 0
-            }
-            )
+            })
             idx = self.bps.len - 1
         }
         for rid in self.bps[idx].reqIds {
@@ -876,7 +873,7 @@ impl Sess {
 
         // class loaded already?
         if self.bps[idx].classId.v == 0 {
-            if let Result.Ok(cls) = self.io.classesBySignature(sig) {
+            if let Ok(cls) = self.io.classesBySignature(sig) {
                 if cls.len > 0 {
                     self.bps[idx].classId = cls[0]
                 }
@@ -889,7 +886,7 @@ impl Sess {
         } else {
             // defer: arm CLASS_PREPARE for this class (once per file record)
             if self.bps[idx].prepReqId == 0 {
-                if let Result.Ok(rid) = self.io.setClassPrepareReq(className) {
+                if let Ok(rid) = self.io.setClassPrepareReq(className) {
                     self.bps[idx].prepReqId = rid
                 }
             }
@@ -907,7 +904,7 @@ impl Sess {
     fn plantBreakpoints(self: &mut Sess, idx: i64): string {
         let classId = self.bps[idx].classId
         var methods: Vec<MethodInfo> = []
-        if let Result.Ok(m) = self.classMethods(classId) {
+        if let Ok(m) = self.classMethods(classId) {
             methods = m
         }
         var arr = Json.arr()
@@ -917,14 +914,14 @@ impl Sess {
             var planted = false
             for m in methods {
                 match self.io.lineTable(classId, m.methodId) {
-                    Result.Ok(table) => {
+                    Ok(table) => {
                         for entry in table {
                             if entry.line == want {
                                 let loc = Location {
                                     typeTag: 1, classId: classId,
                                     methodId: m.methodId, index: entry.codeIndex
                                 }
-                                if let Result.Ok(rid) = self.io.setBreakpointReq(loc) {
+                                if let Ok(rid) = self.io.setBreakpointReq(loc) {
                                     self.bps[idx].reqIds.push(rid)
                                     self.bps[idx].reqLines.push(want)
                                     planted = true
@@ -933,7 +930,7 @@ impl Sess {
                             }
                         }
                     }
-                    Result.Err(_e) => {
+                    Err(_e) => {
                     }
                 }
                 if planted {
@@ -960,10 +957,10 @@ impl Sess {
             self.stepReqId = 0
         }
         match self.io.setStepReq(tid, depth) {
-            Result.Ok(rid) => {
+            Ok(rid) => {
                 self.stepReqId = rid
             }
-            Result.Err(e) => {
+            Err(e) => {
                 self.out.fail(seq, cmd, e)
                 return
             }
@@ -976,9 +973,9 @@ impl Sess {
     fn onPause(self: &mut Sess, seq: i64, args: Json): void {
         let c: string = "pause"
         match self.io.suspendAll() {
-            Result.Ok(_v) => {
+            Ok(_v) => {
             }
-            Result.Err(e) => {
+            Err(e) => {
                 self.out.fail(seq, c, e)
                 return
             }
@@ -1009,10 +1006,10 @@ impl Sess {
         }
         if caught || uncaught {
             match self.io.setExceptionReq(caught, uncaught) {
-                Result.Ok(rid) => {
+                Ok(rid) => {
                     self.excReqId = rid
                 }
-                Result.Err(e) => {
+                Err(e) => {
                     self.out.fail(seq, cmdName, e)
                     return
                 }
@@ -1028,43 +1025,43 @@ impl Sess {
             v: 0
         }
         match self.io.objectType(excId) {
-            Result.Ok(c) => {
+            Ok(c) => {
                 classId = c
             }
-            Result.Err(_e) => {
+            Err(_e) => {
                 return ""
             }
         }
         var depth: i64 = 0
         while classId.v != 0 && depth < 32 {
             match self.io.typeFields(classId) {
-                Result.Ok(fields) => {
+                Ok(fields) => {
                     for fld in fields {
                         if fld.name == "detailMessage" {
                             var ids: Vec<i64> = [fld.fieldId]
                             match self.io.objectGetValues(excId, ids) {
-                                Result.Ok(vals) => {
+                                Ok(vals) => {
                                     if vals.len > 0 && vals[0].num != 0 {
-                                        if let Result.Ok(s) = self.io.stringValue(vals[0].num) {
+                                        if let Ok(s) = self.io.stringValue(vals[0].num) {
                                             return s
                                         }
                                     }
                                 }
-                                Result.Err(_e) => {
+                                Err(_e) => {
                                 }
                             }
                             return ""
                         }
                     }
                 }
-                Result.Err(_e) => {
+                Err(_e) => {
                 }
             }
             match self.io.superclass(classId) {
-                Result.Ok(sc) => {
+                Ok(sc) => {
                     classId = sc
                 }
-                Result.Err(_e) => {
+                Err(_e) => {
                     classId = ClassId {
                         v: 0
                     }
@@ -1082,7 +1079,7 @@ impl Sess {
             return
         }
         var typeName: string = "Exception"
-        if let Result.Ok(classId) = self.io.objectType(self.lastExc) {
+        if let Ok(classId) = self.io.objectType(self.lastExc) {
             typeName = prettyTypeName(self.classSignature(classId))
         }
         let msg = self.exceptionMessage(self.lastExc)
@@ -1115,10 +1112,9 @@ impl Sess {
                     out.push(MethodInfo {
                         methodId: m.methodId, name: m.name.clone(),
                         signature: m.signature.clone(), modBits: m.modBits
-                    }
-                    )
+                    })
                 }
-                return Result.Ok(out)
+                return Ok(out)
             }
             i += 1
         }
@@ -1129,14 +1125,12 @@ impl Sess {
             stash.push(MethodInfo {
                 methodId: m.methodId, name: m.name.clone(),
                 signature: m.signature.clone(), modBits: m.modBits
-            }
-            )
+            })
         }
         self.classes.push(ClassCache {
             classId: classId, signature: sig, methods: stash
-        }
-        )
-        return Result.Ok(methods)
+        })
+        return Ok(methods)
     }
 
     fn classSignature(self: &mut Sess, classId: ClassId): string {
@@ -1149,9 +1143,9 @@ impl Sess {
         }
         // classMethods populates the cache (signature included)
         match self.classMethods(classId) {
-            Result.Ok(_m) => {
+            Ok(_m) => {
             }
-            Result.Err(_e) => {
+            Err(_e) => {
                 return ""
             }
         }
@@ -1166,7 +1160,7 @@ impl Sess {
     }
 
     fn methodNameOf(self: &mut Sess, classId: ClassId, methodId: MethodId): string {
-        if let Result.Ok(methods) = self.classMethods(classId) {
+        if let Ok(methods) = self.classMethods(classId) {
             for m in methods {
                 if m.methodId == methodId {
                     return m.name.clone()
@@ -1178,7 +1172,7 @@ impl Sess {
 
     // best-effort line for a code index: greatest table line whose codeIndex <= idx.
     fn lineForIndex(self: &mut Sess, classId: ClassId, methodId: MethodId, codeIndex: i64): i64 {
-        let Result.Ok(table) = self.io.lineTable(classId, methodId) else {
+        let Ok(table) = self.io.lineTable(classId, methodId) else {
             return 0
         }
         var best: i64 = 0
@@ -1208,10 +1202,10 @@ impl Sess {
         }
         var srcName: string = ""
         match self.io.sourceFile(classId) {
-            Result.Ok(s) => {
+            Ok(s) => {
                 srcName = s
             }
-            Result.Err(_e) => {
+            Err(_e) => {
                 return ""
             }
         }
@@ -1256,10 +1250,10 @@ impl Sess {
         }
         var entries: Vec<FrameEntry> = []
         match self.io.threadFrames(tid, 0, -1) {
-            Result.Ok(f) => {
+            Ok(f) => {
                 entries = f
             }
-            Result.Err(e) => {
+            Err(e) => {
                 self.out.fail(seq, c, e)
                 return
             }
@@ -1273,8 +1267,7 @@ impl Sess {
                 dapId: dapFrameId, threadId: tid,
                 frameId: fr.frameId, classId: fr.loc.classId,
                 methodId: fr.loc.methodId, codeIndex: fr.loc.index
-            }
-            )
+            })
             let sig = self.classSignature(fr.loc.classId)
             let cls = prettyTypeName(sig)
             let mname = self.methodNameOf(fr.loc.classId, fr.loc.methodId)
@@ -1306,8 +1299,7 @@ impl Sess {
     fn newVarRef(self: &mut Sess, kind: i64, a: i64): i64 {
         self.varRefs.push(VarRef {
             kind: kind, a: a
-        }
-        )
+        })
         return self.varRefs.len
     }
 
@@ -1323,7 +1315,7 @@ impl Sess {
         var arr = Json.arr().raw(Json.obj().str("name", "Locals").int("variablesReference", localsRef).bool("expensive", false).build())
         // "This" scope only when the frame has a this object (static methods don't)
         let fr = self.frames[fidx]
-        if let Result.Ok(v) = self.io.frameThisObject(fr.threadId, fr.frameId) {
+        if let Ok(v) = self.io.frameThisObject(fr.threadId, fr.frameId) {
             if v.num != 0 {
                 let thisRef = self.newVarRef(2, v.num)
                 arr = arr.raw(Json.obj().str("name", "This").int("variablesReference", thisRef).bool("expensive", false).build())
@@ -1379,10 +1371,10 @@ impl Sess {
                 value = "null"
             } else {
                 match self.io.stringValue(v.num) {
-                    Result.Ok(s) => {
+                    Ok(s) => {
                         value = "\"" + s + "\""
                     }
-                    Result.Err(_e) => {
+                    Err(_e) => {
                         value = "<string?>"
                     }
                 }
@@ -1392,11 +1384,11 @@ impl Sess {
                 value = "null"
             } else {
                 var len: i64 = -1
-                if let Result.Ok(l) = self.io.arrayLength(v.num) {
+                if let Ok(l) = self.io.arrayLength(v.num) {
                     len = l
                 }
                 var elemType: string = "?"
-                if let Result.Ok(cid) = self.io.objectType(v.num) {
+                if let Ok(cid) = self.io.objectType(v.num) {
                     elemType = prettyTypeName(self.classSignature(cid))
                 }
                 typeName = elemType.clone()
@@ -1410,7 +1402,7 @@ impl Sess {
                 value = "null"
             } else {
                 var cls: string = "Object"
-                if let Result.Ok(cid) = self.io.objectType(v.num) {
+                if let Ok(cid) = self.io.objectType(v.num) {
                     cls = prettyTypeName(self.classSignature(cid))
                 }
                 typeName = cls.clone()
@@ -1440,7 +1432,7 @@ impl Sess {
             // locals of a cached frame, filtered to slots live at the frame's pc
             let fr = self.frames[vr.a]
             var slots: Vec<VarSlot> = []
-            if let Result.Ok(t) = self.io.variableTable(fr.classId, fr.methodId) {
+            if let Ok(t) = self.io.variableTable(fr.classId, fr.methodId) {
                 slots = t
             }
             var slotIdxs: Vec<i64> = []
@@ -1456,14 +1448,14 @@ impl Sess {
             }
             if slotIdxs.len > 0 {
                 match self.io.frameGetValues(fr.threadId, fr.frameId, slotIdxs, slotTags) {
-                    Result.Ok(vals) => {
+                    Ok(vals) => {
                         var i: i64 = 0
                         while i < vals.len && i < names.len {
                             arr = arr.raw(self.renderVariable(names[i], vals[i]))
                             i += 1
                         }
                     }
-                    Result.Err(e) => {
+                    Err(e) => {
                         self.out.fail(seq, c, e)
                         return
                     }
@@ -1475,16 +1467,16 @@ impl Sess {
                 v: 0
             }
             match self.io.objectType(vr.a) {
-                Result.Ok(cid) => {
+                Ok(cid) => {
                     classId = cid
                 }
-                Result.Err(e) => {
+                Err(e) => {
                     self.out.fail(seq, c, e)
                     return
                 }
             }
             var fields: Vec<FieldInfo> = []
-            if let Result.Ok(f) = self.io.typeFields(classId) {
+            if let Ok(f) = self.io.typeFields(classId) {
                 fields = f
             }
             var ids: Vec<i64> = []
@@ -1497,14 +1489,14 @@ impl Sess {
             }
             if ids.len > 0 {
                 match self.io.objectGetValues(vr.a, ids) {
-                    Result.Ok(vals) => {
+                    Ok(vals) => {
                         var i: i64 = 0
                         while i < vals.len && i < names.len {
                             arr = arr.raw(self.renderVariable(names[i], vals[i]))
                             i += 1
                         }
                     }
-                    Result.Err(e) => {
+                    Err(e) => {
                         self.out.fail(seq, c, e)
                         return
                     }
@@ -1513,7 +1505,7 @@ impl Sess {
         } else {
             // array elements, first 100
             var len: i64 = 0
-            if let Result.Ok(l) = self.io.arrayLength(vr.a) {
+            if let Ok(l) = self.io.arrayLength(vr.a) {
                 len = l
             }
             var take = len
@@ -1522,7 +1514,7 @@ impl Sess {
             }
             if take > 0 {
                 match self.io.arrayGetValues(vr.a, 0, take) {
-                    Result.Ok(vals) => {
+                    Ok(vals) => {
                         var i: i64 = 0
                         while i < vals.len {
                             let nm = "[" + i.toString() + "]"
@@ -1530,7 +1522,7 @@ impl Sess {
                             i += 1
                         }
                     }
-                    Result.Err(e) => {
+                    Err(e) => {
                         self.out.fail(seq, c, e)
                         return
                     }
@@ -1559,13 +1551,13 @@ impl Sess {
             tag: 0, num: 0
         }
         var found = false
-        if let Result.Ok(slots) = self.io.variableTable(fr.classId, fr.methodId) {
+        if let Ok(slots) = self.io.variableTable(fr.classId, fr.methodId) {
             for s in slots {
                 if s.name == parts[0] && fr.codeIndex >= s.codeIndex
                 && fr.codeIndex < s.codeIndex + s.length {
                     var slotIdxs: Vec<i64> = [s.slot]
                     var slotTags: Vec<i64> = [s.signature[0] as i64]
-                    if let Result.Ok(vals) = self.io.frameGetValues(fr.threadId, fr.frameId, slotIdxs, slotTags) {
+                    if let Ok(vals) = self.io.frameGetValues(fr.threadId, fr.frameId, slotIdxs, slotTags) {
                         if vals.len > 0 {
                             cur = vals[0]
                             found = true
@@ -1576,9 +1568,9 @@ impl Sess {
             }
         }
         if !found {
-            if let Result.Ok(thisV) = self.io.frameThisObject(fr.threadId, fr.frameId) {
+            if let Ok(thisV) = self.io.frameThisObject(fr.threadId, fr.frameId) {
                 if thisV.num != 0 {
-                    if let Option.Some(v) = self.fieldOf(thisV.num, parts[0]) {
+                    if let Some(v) = self.fieldOf(thisV.num, parts[0]) {
                         cur = v
                         found = true
                     }
@@ -1597,7 +1589,7 @@ impl Sess {
                 self.out.fail(seq, c, "\"" + parts[pi - 1] + "\" is not an object")
                 return
             }
-            let Option.Some(v) = self.fieldOf(cur.num, parts[pi]) else {
+            let Some(v) = self.fieldOf(cur.num, parts[pi]) else {
                 self.out.fail(seq, c, "no field \"" + parts[pi] + "\"")
                 return
             }
@@ -1608,7 +1600,7 @@ impl Sess {
         let nm: string = "result"
         let rendered = self.renderVariable(nm, cur)
         // reshape the variable JSON into an evaluate response
-        let Result.Ok(d) = Json.parse(rendered) else {
+        let Ok(d) = Json.parse(rendered) else {
             self.out.fail(seq, c, "internal render error")
             return
         }
@@ -1619,23 +1611,23 @@ impl Sess {
     }
 
     fn fieldOf(self: &mut Sess, objectId: i64, name: &string): Option<JValue> {
-        let Result.Ok(classId) = self.io.objectType(objectId) else {
-            return Option.None
+        let Ok(classId) = self.io.objectType(objectId) else {
+            return None
         }
-        let Result.Ok(fields) = self.io.typeFields(classId) else {
-            return Option.None
+        let Ok(fields) = self.io.typeFields(classId) else {
+            return None
         }
         for f in fields {
             if f.name == name && (f.modBits & 8) == 0 {
                 var ids: Vec<i64> = [f.fieldId]
-                if let Result.Ok(vals) = self.io.objectGetValues(objectId, ids) {
+                if let Ok(vals) = self.io.objectGetValues(objectId, ids) {
                     if vals.len > 0 {
-                        return Option.Some(vals[0])
+                        return Some(vals[0])
                     }
                 }
             }
         }
-        return Option.None
+        return None
     }
 
     // ── JDWP / synthetic event handling ──
@@ -1688,7 +1680,7 @@ impl Sess {
             self.lastExcCaught = ev.caught
             let dapTid = self.dapThreadId(ev.thread)
             var typeName: string = "Exception"
-            if let Result.Ok(classId) = self.io.objectType(ev.exception) {
+            if let Ok(classId) = self.io.objectType(ev.exception) {
                 typeName = prettyTypeName(self.classSignature(classId))
             }
             self.out.event("stopped", Json.obj().str("reason", "exception").str("description", "Paused on exception").str("text", typeName).int("threadId", dapTid).bool("allThreadsStopped", true).build())
@@ -1710,21 +1702,21 @@ impl Sess {
                     let results = self.plantBreakpoints(i)
                     // re-announce each breakpoint's new verified state
                     match Json.parse(results) {
-                        Result.Ok(arr) => {
+                        Ok(arr) => {
                             let n = arr.len()
                             var j: i64 = 0
                             while j < n {
                                 match arr.at(j) {
-                                    Option.Some(bp) => {
+                                    Some(bp) => {
                                         self.out.event("breakpoint", Json.obj().str("reason", "changed").raw("breakpoint", bp.rawStr()).build())
                                     }
-                                    Option.None => {
+                                    None => {
                                     }
                                 }
                                 j += 1
                             }
                         }
-                        Result.Err(_e) => {
+                        Err(_e) => {
                         }
                     }
                     if self.bps[i].prepReqId != 0 {

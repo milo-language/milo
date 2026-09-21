@@ -229,14 +229,13 @@ pub fn shadowNew(gl: &mut GlContext, size: i64): Result<ShadowMap, string> {
     m[5] = 1.0 as f32
     m[10] = 1.0 as f32
     m[15] = 1.0 as f32
-    return Result.Ok(ShadowMap {
+    return Ok(ShadowMap {
         target: target,
         shader: shader,
         size: size,
         mat: m,
         texelWorld: 2.0 * SHADOW_EXTENT / (size as f64),
-    }
-    )
+    })
 }
 
 pub fn shadowFree(gl: &mut GlContext, sm: ShadowMap) {

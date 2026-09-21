@@ -43,7 +43,7 @@ pub fn emptyNode(kind: NodeKind, name: string, text: string): Node {
         name: name,
         text: text,
         attrs: Vec.new(),
-        parent: Option.None,
+        parent: None,
         children: Vec.new(),
     }
 }
@@ -61,10 +61,10 @@ pub fn domNew(): Dom {
 pub fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
     let r = arenaWith(dom.arena, h, (n: &Node): NodeKind => n.kind)
     match r {
-        Option.Some(k) => {
+        Some(k) => {
             return k
         }
-        Option.None => {
+        None => {
             assert(false, "nodeKind: stale handle")
             return NodeKind.Document
         }
@@ -74,10 +74,10 @@ pub fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
 pub fn nodeName(dom: &Dom, h: Handle<Node>): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.name.clone())
     match r {
-        Option.Some(s) => {
+        Some(s) => {
             return s
         }
-        Option.None => {
+        None => {
             return ""
         }
     }
@@ -86,10 +86,10 @@ pub fn nodeName(dom: &Dom, h: Handle<Node>): string {
 pub fn nodeText(dom: &Dom, h: Handle<Node>): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.text.clone())
     match r {
-        Option.Some(s) => {
+        Some(s) => {
             return s
         }
-        Option.None => {
+        None => {
             return ""
         }
     }
@@ -98,10 +98,10 @@ pub fn nodeText(dom: &Dom, h: Handle<Node>): string {
 pub fn childCount(dom: &Dom, h: Handle<Node>): i64 {
     let r = arenaWith(dom.arena, h, (n: &Node): i64 => n.children.len())
     match r {
-        Option.Some(c) => {
+        Some(c) => {
             return c
         }
-        Option.None => {
+        None => {
             return 0
         }
     }
@@ -110,10 +110,10 @@ pub fn childCount(dom: &Dom, h: Handle<Node>): i64 {
 pub fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
     let r = arenaWith(dom.arena, h, (n: &Node): Handle<Node> => n.children[i])
     match r {
-        Option.Some(c) => {
+        Some(c) => {
             return c
         }
-        Option.None => {
+        None => {
             assert(false, "childAt: stale handle")
             return h
         }
@@ -123,10 +123,10 @@ pub fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
 pub fn attrCount(dom: &Dom, h: Handle<Node>): i64 {
     let r = arenaWith(dom.arena, h, (n: &Node): i64 => n.attrs.len())
     match r {
-        Option.Some(c) => {
+        Some(c) => {
             return c
         }
-        Option.None => {
+        None => {
             return 0
         }
     }
@@ -135,10 +135,10 @@ pub fn attrCount(dom: &Dom, h: Handle<Node>): i64 {
 pub fn attrNameAt(dom: &Dom, h: Handle<Node>, i: i64): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.attrs[i].name.clone())
     match r {
-        Option.Some(s) => {
+        Some(s) => {
             return s
         }
-        Option.None => {
+        None => {
             return ""
         }
     }
@@ -147,10 +147,10 @@ pub fn attrNameAt(dom: &Dom, h: Handle<Node>, i: i64): string {
 pub fn attrValueAt(dom: &Dom, h: Handle<Node>, i: i64): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.attrs[i].value.clone())
     match r {
-        Option.Some(s) => {
+        Some(s) => {
             return s
         }
-        Option.None => {
+        None => {
             return ""
         }
     }
@@ -173,22 +173,18 @@ pub fn createComment(dom: &mut Dom, text: string): Handle<Node> {
 pub fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
     let _ = arenaModifyMut(&mut dom.arena, parent, (n: &mut Node): void => {
         n.children.push(child)
-    }
-    )
+    })
     let _ = arenaModifyMut(&mut dom.arena, child, (c: &mut Node): void => {
-        c.parent = Option.Some(parent)
-    }
-    )
+        c.parent = Some(parent)
+    })
 }
 
 pub fn addAttr(dom: &mut Dom, h: Handle<Node>, name: string, value: string) {
     let _ = arenaModifyMut(&mut dom.arena, h, (n: &mut Node): void => {
         n.attrs.push(Attr {
             name: name, value: value
-        }
-        )
-    }
-    )
+        })
+    })
 }
 
 pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
@@ -202,8 +198,7 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
                     for i in 0..extra.len() {
                         n.text.push(extra[i])
                     }
-                }
-                )
+                })
                 return
             }
             _ => {
@@ -217,7 +212,7 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
 // ── Lexical helpers ──
 
 pub fn isSpace(c: u8): bool {
-    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8 || c == 12 as u8
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 12 as u8
 }
 
 pub fn isAlpha(c: u8): bool {
@@ -439,14 +434,12 @@ pub fn shouldImplicitClose(open: &string, newTag: &string): bool {
 }
 
 pub fn closeImplied(dom: &Dom, stack: &mut Vec<Handle<Node>>, newTag: &string) {
-    var go = true
-    while go && stack.len() > 1 {
+    while stack.len() > 1 {
         let topName = nodeName(dom, topOf(stack))
-        if shouldImplicitClose(topName, newTag) {
-            stack.pop()!
-        } else {
-            go = false
+        if !shouldImplicitClose(topName, newTag) {
+            break
         }
+        stack.pop()!
     }
 }
 
@@ -461,14 +454,13 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
     append(&mut dom, parent, el)
 
     var selfClose = false
-    var done = false
-    while i < n && !done {
+    while i < n {
         i = skipSpaces(src, i, n)
         if i >= n {
-            done = true
+            break
         } else if src[i] == '>' {
             i += 1
-            done = true
+            break
         } else if src[i] == '/' {
             selfClose = true
             i += 1
@@ -485,7 +477,7 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
                 if i < n && src[i] == '=' {
                     i += 1
                     i = skipSpaces(src, i, n)
-                    if i < n && (src[i] == '"' || src[i] == 39 as u8) {
+                    if i < n && (src[i] == '"' || src[i] == '\'') {
                         let q = src[i]
                         i += 1
                         while i < n && src[i] != q {
@@ -555,11 +547,10 @@ pub fn parseComment(dom: &mut Dom, parent: Handle<Node>, src: &string, pos: i64,
     // pos points at '<' of '<!--'
     var i = pos + 4
     var out = String.withCapacity(16)
-    var done = false
-    while i < n && !done {
+    while i < n {
         if i + 2 < n && src[i] == '-' && src[i + 1] == '-' && src[i + 2] == '>' {
-            done = true
             i += 3
+            break
         } else {
             out.push(src[i])
             i += 1

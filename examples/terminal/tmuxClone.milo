@@ -118,7 +118,7 @@ pub fn themePath(): string {
 
 pub fn loadTheme(): void {
     match readFile(themePath()) {
-        Result.Ok(s) => {
+        Ok(s) => {
             var t: i64 = 0
             while t < THEME_COUNT {
                 if s.contains(themeName(t)) {
@@ -127,7 +127,7 @@ pub fn loadTheme(): void {
                 t += 1
             }
         }
-        Result.Err(_) => {
+        Err(_) => {
         }
     }
 }
@@ -201,49 +201,49 @@ pub fn spriteRow(r: i64): string {
 // pixel char → RGB into out[0..2], out[3] = 1 opaque / 0 transparent.
 pub fn pixelRGB(ch: u8, out: &mut [i64; 4]): void {
     out[3] = 1
-    if ch == 100 {
+    if ch == 'd' {
         out[0] = 96
         out[1] = 60
         out[2] = 38
         return
     } // d dark brown
-    if ch == 98 {
+    if ch == 'b' {
         out[0] = 145
         out[1] = 96
         out[2] = 58
         return
     } // b brown shadow
-    if ch == 116 {
+    if ch == 't' {
         out[0] = 200
         out[1] = 152
         out[2] = 104
         return
     } // t tan
-    if ch == 108 {
+    if ch == 'l' {
         out[0] = 226
         out[1] = 192
         out[2] = 150
         return
     } // l light tan
-    if ch == 119 {
+    if ch == 'w' {
         out[0] = 240
         out[1] = 226
         out[2] = 206
         return
     } // w cream
-    if ch == 107 {
+    if ch == 'k' {
         out[0] = 34
         out[1] = 28
         out[2] = 24
         return
     } // k eye / nose
-    if ch == 103 {
+    if ch == 'g' {
         out[0] = 255
         out[1] = 255
         out[2] = 255
         return
     } // g eye glint
-    if ch == 112 {
+    if ch == 'p' {
         out[0] = 226
         out[1] = 150
         out[2] = 162
@@ -366,7 +366,7 @@ pub fn splash(cols: i64, rows: i64): void {
             n = read(0, junk as *u8, 256)
         }
         if n > 0 {
-            if junk[0] == 9 { // Tab → next theme, redraw swatches live
+            if junk[0] == '\t' { // Tab → next theme, redraw swatches live
                 gTheme = (gTheme + 1) % THEME_COUNT
                 drawThemeSwatches(startRow + hc + 4, cols)
                 flush()
@@ -399,7 +399,7 @@ pub fn termSize(): WinSize {
 
 // basename of a path, e.g. "/bin/zsh" → "zsh"
 pub fn baseName(path: &string): string {
-    let Option.Some(i) = path.lastIndexOf("/") else {
+    let Some(i) = path.lastIndexOf("/") else {
         return path.clone()
     }
     return path.substr(i + 1, path.len)
@@ -563,9 +563,9 @@ pub fn main(): void {
     let winchFd = installSignalPipe(SIGWINCH)
 
     match Pty.open() {
-        Result.Ok(pty0) => {
+        Ok(pty0) => {
             match Pty.open() {
-                Result.Ok(pty1) => {
+                Ok(pty1) => {
                     let shell = Env.getOr("SHELL", "/bin/sh")
                     let shellName = baseName(shell)
                     // resize before spawn — child inherits winsize via slave fd
@@ -574,18 +574,18 @@ pub fn main(): void {
                     var ok0 = false
                     var ok1 = false
                     match pty0.spawn(shell, shellArgs()) {
-                        Result.Ok(_) => {
+                        Ok(_) => {
                             ok0 = true
                         }
-                        Result.Err(_) => {
+                        Err(_) => {
                             ok0 = false
                         }
                     }
                     match pty1.spawn(shell, shellArgs()) {
-                        Result.Ok(_) => {
+                        Ok(_) => {
                             ok1 = true
                         }
-                        Result.Err(_) => {
+                        Err(_) => {
                             ok1 = false
                         }
                     }
@@ -665,21 +665,21 @@ pub fn main(): void {
                                 // SGR mouse click: ESC [ < btn ; col ; row (M|m).
                                 // A whole event arrives in one read, so scan it
                                 // here and focus the pane the click lands in.
-                                if b == 27 && k + 2 < n && inbuf[k + 1] == 91 && inbuf[k + 2] == 60 {
+                                if b == 27 && k + 2 < n && inbuf[k + 1] == '[' && inbuf[k + 2] == '<' {
                                     var j = k + 3
                                     var field = 0 // 0 btn, 1 col, 2 row
                                     var col = 0
                                     var press = false
                                     while j < n {
                                         let mb = inbuf[j]
-                                        if mb >= 48 && mb <= 57 {
+                                        if mb >= '0' && mb <= '9' {
                                             if field == 1 {
                                                 col = col * 10 + (mb - 48) as i64
                                             }
-                                        } else if mb == 59 { // ';'
+                                        } else if mb == ';' {
                                             field += 1
-                                        } else if mb == 77 || mb == 109 { // 'M'/'m'
-                                            press = mb == 77
+                                        } else if mb == 'M' || mb == 'm' {
+                                            press = mb == 'M'
                                             j += 1
                                             break
                                         }
@@ -700,9 +700,9 @@ pub fn main(): void {
                                     k = j
                                 } else if prefixArmed {
                                     prefixArmed = false
-                                    if b == 113 || b == 81 || b == 17 { // q, Q, or Ctrl-Q
+                                    if b == 'q' || b == 'Q' || b == 17 { // q, Q, or Ctrl-Q
                                         done = true
-                                    } else if b == 111 || b == 9 { // o or Tab
+                                    } else if b == 'o' || b == '\t' { // o or Tab
                                         focus = 1 - focus
                                         redrawBorder = true
                                     } else if b == PREFIX { // literal Ctrl-B
@@ -721,7 +721,7 @@ pub fn main(): void {
                                     // terminal's \r); a shell's line reader wants \r
                                     // as "accept line", so forward it as \r.
                                     var fwd = b
-                                    if b == 10 {
+                                    if b == '\n' {
                                         fwd = 13
                                     }
                                     var s = ""
@@ -782,13 +782,13 @@ pub fn main(): void {
                     }
                     pty1.close()
                 }
-                Result.Err(msg) => {
+                Err(msg) => {
                     print($"error: {msg}")
                 }
             }
             pty0.close()
         }
-        Result.Err(msg) => {
+        Err(msg) => {
             print($"error: {msg}")
         }
     }

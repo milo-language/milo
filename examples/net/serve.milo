@@ -90,7 +90,7 @@ pub fn dirListing(dirPath: &string, urlPath: &string): string {
         let name = entries[i].name.clone()
         let entryIsDir = entries[i].isDir
         // skip hidden files
-        if name[0] != 46 {
+        if name[0] != '.' {
             if entryIsDir {
                 html = html + "<tr><td><a href=\"" + name.clone() + "/\">" + name + "/</a></td><td>-</td></tr>"
             } else {
@@ -117,7 +117,7 @@ pub fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
         // try index.html first
         let indexPath = Path.join(filePath, "index.html")
         if isFile(indexPath) {
-            if let Result.Ok(content) = readFile(indexPath) {
+            if let Ok(content) = readFile(indexPath) {
                 if !quiet {
                     print($"200 GET {req.path} -> index.html")
                 }
@@ -140,14 +140,14 @@ pub fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
     }
 
     match readFile(filePath) {
-        Result.Ok(content) => {
+        Ok(content) => {
             let mime = getMime(filePath)
             if !quiet {
                 print($"200 GET {req.path} ({formatSize(content.len)})")
             }
             return Response.Status(200, mime, content)
         }
-        Result.Err(e) => {
+        Err(e) => {
             if !quiet {
                 print($"500 GET {req.path}: {e}")
             }
@@ -174,10 +174,9 @@ pub fn main(): i32 {
 
     let result = serve(port, (req: &Request) => {
         return handleRequest(req, root, quiet)
-    }
-    )
+    })
     match result {
-        Result.Err(msg) => {
+        Err(msg) => {
             print($"error: {msg}")
             return 1
         }

@@ -120,21 +120,21 @@ fn oktasOf(amount: &string): f64 {
 
 fn httpJson(url: &string): Option<Json> {
     match fetch(url) {
-        Result.Ok(r) => {
+        Ok(r) => {
             if !r.ok() {
-                return Option.None
+                return None
             }
             match Json.parse(r.text()) {
-                Result.Ok(j) => {
-                    return Option.Some(j)
+                Ok(j) => {
+                    return Some(j)
                 }
-                Result.Err(_) => {
-                    return Option.None
+                Err(_) => {
+                    return None
                 }
             }
         }
-        Result.Err(_) => {
-            return Option.None
+        Err(_) => {
+            return None
         }
     }
 }
@@ -147,55 +147,55 @@ fn readStation(stationUrl: &string): Obs {
     // Returning a FRESH empty rather than `o` on this path: `o` is owned, so
     // handing it to the early return moves it, and every later write to it is
     // then a use-after-move the checker rejects.
-    let Option.Some(j) = httpJson(url) else {
+    let Some(j) = httpJson(url) else {
         return obsEmpty()
     }
     match getF64(j, "properties.temperature.value") {
-        Option.Some(t) => {
+        Some(t) => {
             o.tempC = t
             o.hasTemp = true
         }
-        Option.None => {
+        None => {
             return o
         }
     }
     match getF64(j, "properties.dewpoint.value") {
-        Option.Some(d) => {
+        Some(d) => {
             o.dewC = d
         }
-        Option.None => {
+        None => {
         }
     }
     match getF64(j, "properties.windDirection.value") {
-        Option.Some(d) => {
+        Some(d) => {
             o.windDirDeg = d
             o.hasWind = true
         }
-        Option.None => {
+        None => {
         }
     }
     match getF64(j, "properties.windSpeed.value") {
-        Option.Some(s) => {
+        Some(s) => {
             // The feed reports km/h whatever the unit code suggests.
             o.windMps = s / 3.6
         }
-        Option.None => {
+        None => {
             o.hasWind = false
         }
     }
     match getF64(j, "properties.visibility.value") {
-        Option.Some(v) => {
+        Some(v) => {
             o.visibilityM = v
             o.hasVis = true
         }
-        Option.None => {
+        None => {
         }
     }
     match j.strPath("properties.textDescription") {
-        Option.Some(d) => {
+        Some(d) => {
             o.desc = d
         }
-        Option.None => {
+        None => {
         }
     }
 
@@ -216,12 +216,12 @@ fn readStation(stationUrl: &string): Obs {
                 most = ok
             }
             match j.curFloat(j.curField(j.curField(layer, "base"), "value")) {
-                Option.Some(b) => {
+                Some(b) => {
                     if lowest < 0.0 || b < lowest {
                         lowest = b
                     }
                 }
-                Option.None => {
+                None => {
                 }
             }
         }
@@ -240,13 +240,13 @@ fn readStation(stationUrl: &string): Obs {
 // airport is the only thing that reports cloud.
 pub fn fetchObs(lat: f64, lon: f64): Obs {
     let pt = "https://api.weather.gov/points/" + formatFloat(lat, 4) + "," + formatFloat(lon, 4)
-    let Option.Some(pj) = httpJson(pt) else {
+    let Some(pj) = httpJson(pt) else {
         return obsEmpty()
     }
-    let Option.Some(stationsUrl) = pj.strPath("properties.observationStations") else {
+    let Some(stationsUrl) = pj.strPath("properties.observationStations") else {
         return obsEmpty()
     }
-    let Option.Some(sj) = httpJson(stationsUrl) else {
+    let Some(sj) = httpJson(stationsUrl) else {
         return obsEmpty()
     }
     let cur = sj.curPath("observationStations")
@@ -316,13 +316,13 @@ fn isIcao(id: &string): bool {
         return false
     }
     let c = id[0]
-    return c == 75 as u8 || c == 80 as u8
+    return c == 'K' || c == 'P'
 }
 
 fn stationIdOf(url: &string): string {
     var cut = 0
     for i in 0..url.len {
-        if url[i] == 47 as u8 {
+        if url[i] == '/' {
             cut = i + 1
         }
     }
@@ -362,21 +362,21 @@ fn fetchWms(base: &string, layer: &string, lat: f64, lon: f64, reach: f64, n: i6
     + "&FORMAT=image/png&TRANSPARENT=" + tr
 
     match fetch(url) {
-        Result.Ok(r) => {
+        Ok(r) => {
             if !r.ok() {
-                return Option.None
+                return None
             }
             match Png.decode(r.text()) {
-                Result.Ok(img) => {
-                    return Option.Some(gridOf(img.width, img.height, img.channels, img.pixels, n, mode))
+                Ok(img) => {
+                    return Some(gridOf(img.width, img.height, img.channels, img.pixels, n, mode))
                 }
-                Result.Err(_) => {
-                    return Option.None
+                Err(_) => {
+                    return None
                 }
             }
         }
-        Result.Err(_) => {
-            return Option.None
+        Err(_) => {
+            return None
         }
     }
 }

@@ -54,7 +54,7 @@ pub struct Ui {
 // and it is splatted across RGB so bilinear filtering treats the channels alike.
 fn loadFont(gl: &mut GlContext, png: &string): Texture2D {
     match Png.decode(png) {
-        Result.Ok(img) => {
+        Ok(img) => {
             var px: Vec<u32> = Vec.filled(img.width * img.height, 0)
             var i = 0
             while i < img.width * img.height {
@@ -64,7 +64,7 @@ fn loadFont(gl: &mut GlContext, png: &string): Texture2D {
             }
             return Texture2D.rgba8(&mut gl, img.width, img.height, px, true)
         }
-        Result.Err(_) => {
+        Err(_) => {
             var px: Vec<u32> = Vec.filled(1, 0)
             return Texture2D.rgba8(&mut gl, 1, 1, px, false)
         }
@@ -79,15 +79,14 @@ pub fn uiNew(gl: &mut GlContext, fontPng: &string): Result<Ui, string> {
     attrs.push(4) // rgba
     attrs.push(4) // mode, radius, halfWidth, halfHeight
     let font = loadFont(&mut gl, fontPng)
-    return Result.Ok(Ui {
+    return Ok(Ui {
         verts: Vec.new(),
         mesh: Mesh.new(&mut gl, attrs),
         shader: sh,
         font: font,
         atlasW: 1.0,
         atlasH: 1.0,
-    }
-    )
+    })
 }
 
 // The atlas dimensions are needed to turn a cell index into uv, and Texture2D

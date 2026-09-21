@@ -170,7 +170,7 @@ fn placeIndex(name: &string): i64 {
             return i
         }
     }
-    return 0 - 1
+    return -1
 }
 
 // The aerial photograph for a built-in place, or "" if it has none yet. Same
@@ -201,21 +201,21 @@ fn orthoBytes(name: &string): string {
 
 fn parsePlace(name: &string): City {
     match cityParse(placeBytes(name)) {
-        Result.Ok(city) => {
+        Ok(city) => {
             var c = city
             let png = orthoBytes(name)
             if png != "" {
                 match cityAttachOrtho(&mut c, png) {
-                    Result.Ok(_) => {
+                    Ok(_) => {
                     }
-                    Result.Err(e) => {
+                    Err(e) => {
                         print("built-in place '" + name + "' has a bad ortho: " + e)
                     }
                 }
             }
             return c
         }
-        Result.Err(e) => {
+        Err(e) => {
             print("built-in place '" + name + "' is corrupt: " + e)
             return cityEmpty()
         }
@@ -240,10 +240,10 @@ fn allPlaces(first: i64): Vec<City> {
 // the HUD the moment the window opens, which is where a player is looking.
 fn loadFile(path: &string): City {
     match cityLoad(path) {
-        Result.Ok(city) => {
+        Ok(city) => {
             return city
         }
-        Result.Err(e) => {
+        Err(e) => {
             print("could not load city: " + e)
             return cityEmpty()
         }
@@ -254,10 +254,10 @@ fn loadFile(path: &string): City {
 // (--procedural, or a --city asset from disk).
 fn startIndex(o: &ParsedArgs): i64 {
     if o.getBool("procedural") {
-        return 0 - 1
+        return -1
     }
     if (o.getString("city") ?? "") != "" {
-        return 0 - 1
+        return -1
     }
     let want = o.getString("place") ?? ""
     if want == "" {
@@ -267,7 +267,7 @@ fn startIndex(o: &ParsedArgs): i64 {
     let idx = placeIndex(want)
     if idx < 0 {
         print("no built-in place called '" + want + "' — try: " + PLACES)
-        return 0 - 1
+        return -1
     }
     return idx
 }
@@ -321,12 +321,12 @@ pub fn main(): i32 {
     // Some, but a string is not Copy, so the value has to be moved out with a match
     // rather than unwrapOr'd.
     let renderPct = match o.getString("scale") {
-        Option.Some(scaleArg) => parseInt(scaleArg) ?? 0
-        Option.None => 0
+        Some(scaleArg) => parseInt(scaleArg) ?? 0
+        None => 0
     }
     var scr = match screenOpen("FLYBY — written in Milo", W, H, W, H, renderPct, o.getBool("fullscreen"), o.getBool("maximized")) {
-        Result.Ok(opened) => opened
-        Result.Err(e) => {
+        Ok(opened) => opened
+        Err(e) => {
             print("SDL setup failed: " + e)
             return 2
         }
@@ -338,8 +338,8 @@ pub fn main(): i32 {
     let skinTex = planeTexture()
     let facadeTex = facadeTexture()
     var gw = match gpuWorldNew(&mut scr.gl, groundTex, skinTex, facadeTex) {
-        Result.Ok(g) => g
-        Result.Err(e) => {
+        Ok(g) => g
+        Err(e) => {
             // No screenClose here: it consumes the Screen, and the checker then
             // has to assume it is gone on the path that continues. SDL_Quit tears
             // the context and the window down anyway, which is all this would do.

@@ -2264,7 +2264,7 @@ pub fn drawGuide(c: &mut Canvas, w: &World, v: &View) {
         return
     }
     // nearest live coin ahead
-    var bi = 0 - 1
+    var bi = -1
     var bd = 1.0e18
     let fwdX = Math.sin(w.plane.yaw)
     let fwdZ = Math.cos(w.plane.yaw)

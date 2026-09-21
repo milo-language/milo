@@ -393,7 +393,7 @@ pub fn gpuWorldNew(gl: &mut GlContext, ground: &Texture, skin: &Texture, facade:
     let fall = Shader.compile(&mut gl, WORLD_VERT, fallFrag())?
     let sky = Shader.compile(&mut gl, QUAD_VERT_LOCAL, skyboxFrag())?
     var white: Vec<f32> = Vec.filled(3, 1.0)
-    return Result.Ok(GpuWorld {
+    return Ok(GpuWorld {
         shader: shader,
         fall: fall,
         sky: sky,
@@ -408,7 +408,7 @@ pub fn gpuWorldNew(gl: &mut GlContext, ground: &Texture, skin: &Texture, facade:
         ground: uploadTexture(&mut gl, ground),
         skin: uploadTexture(&mut gl, skin),
         facade: uploadTexture(&mut gl, facade),
-        ortho: Option.None,
+        ortho: None,
         // 1024 over a 2.6 km square is 2.5 m a texel.
         //
         // It was 2048, on the reasoning that finer is better. What that missed is
@@ -421,8 +421,7 @@ pub fn gpuWorldNew(gl: &mut GlContext, ground: &Texture, skin: &Texture, facade:
         // the PATTERN of shadow down the avenues, not its edge sharpness.
         shadow: shadowNew(&mut gl, 1024)?,
         cloudTex: cloudUpload(&mut gl, cloudEmpty()),
-    }
-    )
+    })
 }
 
 // The fullscreen-quad vertex shader, restated rather than imported, because the
@@ -479,22 +478,22 @@ fn uploadTexture(gl: &mut GlContext, t: &Texture): Texture2D {
 // not optional — `Texture2D` is @noCopy and `free` consumes it, so the previous
 // drape has to be taken out of the field before the new one goes in.
 pub fn setOrtho(gl: &mut GlContext, g: &mut GpuWorld, t: &Texture) {
-    match replace(g.ortho, Option.None) {
-        Option.Some(old) => {
+    match replace(g.ortho, None) {
+        Some(old) => {
             old.free(&mut gl)
         }
-        Option.None => {
+        None => {
         }
     }
-    g.ortho = Option.Some(uploadTexture(&mut gl, t))
+    g.ortho = Some(uploadTexture(&mut gl, t))
 }
 
 pub fn clearOrtho(gl: &mut GlContext, g: &mut GpuWorld) {
-    match replace(g.ortho, Option.None) {
-        Option.Some(old) => {
+    match replace(g.ortho, None) {
+        Some(old) => {
             old.free(&mut gl)
         }
-        Option.None => {
+        None => {
         }
     }
 }
@@ -774,10 +773,10 @@ fn bindSlot(g: &GpuWorld, slot: i64) {
         g.skin.bind(0)
     } else if slot == SLOT_ORTHO {
         match g.ortho {
-            Option.Some(t) => {
+            Some(t) => {
                 t.bind(0)
             }
-            Option.None => {
+            None => {
                 g.white.bind(0)
             }
         }
@@ -807,11 +806,11 @@ pub fn gpuWorldFree(gl: &mut GlContext, g: GpuWorld) {
     var own = g
     // The drape lives in an Option and `free` consumes it, so it has to come out
     // of the field first — a borrow cannot hand over a @noCopy handle.
-    match replace(own.ortho, Option.None) {
-        Option.Some(t) => {
+    match replace(own.ortho, None) {
+        Some(t) => {
             t.free(&mut gl)
         }
-        Option.None => {
+        None => {
         }
     }
     own.cloudTex.free(&mut gl)
