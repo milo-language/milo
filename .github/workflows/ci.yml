@@ -97,8 +97,19 @@ jobs:
   # budget and every test cascades to failure for a reason that says nothing about Linux.
   # A CI runner is the cheapest honest answer. If this goes red, read the failures before
   # assuming the job is at fault: the point is that this code has never been tested.
+  #
+  # Two architectures, because nothing here ever exercised linux-arm64 and the gap was
+  # not theoretical: milojs's release job, built against this compiler's rolling
+  # `latest`, aborted on that target from 2026-08-15 with `free(): invalid pointer` on a
+  # hello-world while linux-x64 and darwin-arm64 were clean. A failure belongs here,
+  # against the fixture suite, not downstream. `ubuntu-24.04-arm` is a GitHub-hosted
+  # arm64 runner, free for public repos.
   test-linux:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
