@@ -221,7 +221,7 @@ pub fn formatResult(n: f64): string {
     for digits in 0..6 {
         frac *= 10.0
         let d = frac as i64
-        result += d.toString()
+        result.pushStr(d.toString())
         frac = frac - d as f64
     }
     // trim trailing zeros

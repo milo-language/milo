@@ -159,7 +159,8 @@ pub fn fetchProcesses(maxProcs: i64): Vec<ProcInfo> {
                 if fields.len >= 6 {
                     var cmdName = fields[5].clone()
                     for j in 6..fields.len {
-                        cmdName = cmdName + " " + fields[j]
+                        cmdName.pushStr(" ")
+                        cmdName.pushStr(fields[j])
                     }
                     procs.push(ProcInfo {
                         pid: fields[0].clone(),

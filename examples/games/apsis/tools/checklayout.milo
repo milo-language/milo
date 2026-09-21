@@ -46,7 +46,7 @@ fn round0(v: f64): string {
 fn pad(s: &string, n: i64): string {
     var out = s.clone()
     while out.len < n {
-        out += " "
+        out.pushStr(" ")
     }
     return out
 }
@@ -89,7 +89,7 @@ fn report(g: &mut Game, phase: i64, failures: &mut i64) {
         if px >= SPHERE_MIN_PX {
             mark = "ball"
         }
-        line = line + pad(displayName(ids[i]) + " " + round0(pr.x) + "," + round0(pr.y) + " r" + round0(px) + " " + mark, 30)
+        line.pushStr(pad(displayName(ids[i]) + " " + round0(pr.x) + "," + round0(pr.y) + " r" + round0(px) + " " + mark, 30))
         i += 1
     }
     print(line)

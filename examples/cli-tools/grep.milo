@@ -71,7 +71,9 @@ pub fn highlight(line: &string, pattern: &string, ignoreCase: bool, red: &string
             }
         }
         if matchHere {
-            result = result + red + line.substr(pos, pos + pattern.len) + reset
+            result.pushStr(red)
+            result.pushStr(line[pos..pos + pattern.len])
+            result.pushStr(reset)
             pos += pattern.len
         } else {
             result.push(line[pos])

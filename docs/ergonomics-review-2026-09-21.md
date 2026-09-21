@@ -64,7 +64,7 @@ Status: **exists** = the language/std already has it and the examples do not use
 | # | Item | Status / notes |
 |---|---|---|
 | T1 | Take `&string` at library boundaries (`fromJson`, `jsonStringify`, path helpers); `readDir` names without a clone to recurse | **open**, backlog #14. |
-| T2 | One string story: `String.builder()` or a plus-in-loop lint; byte vs text split in names; `codePoints()` in examples | **partial**: `pushStr`, `codePoints()`, `std/unicode` exist. Lint `string-concat-in-loop` shipped 2026-09-21, off by default: 91 sites in examples (`pushStr` had 3 uses in the whole corpus). Flip it on once those are migrated. |
+| T2 | One string story: `String.builder()` or a plus-in-loop lint; byte vs text split in names; `codePoints()` in examples | **done** for the lint half: `pushStr`, `codePoints()`, `std/unicode` exist. Lint `string-concat-in-loop` shipped 2026-09-21 off by default with 91 sites in examples (`pushStr` had 3 uses in the whole corpus); the 77 distinct sites were rewritten to `pushStr` the same day and the lint is on by default. Byte vs text naming split still open. |
 | T3 | Cursor protocol as a type: `interface Scan<S, T> { fn next(self: &mut Self, store: &S): Option<T> }`, `for e in store.scan()` | **open**. `kvstore.milo` is the hand-rolled exhibit. |
 | T4 | JSON: byte-feed/incremental parser; `jq.milo` on `std/json` (`strPath`, cursor API) | **partial**: `strPath` and `curRoot` family exist; `jq.milo` is on `std/json` since 2026-09-21 (379 to 120 lines, `Step` enum). Incremental parser open. |
 | T5 | `.clone()` exists whenever a diagnostic says to clone: derive on enums, `index-clone` semantic half | **partial**: `@derive(Clone)` on enums shipped. `let m = v[i]` still clones silently (lint on by default); see S5 for the field case. |
@@ -81,7 +81,7 @@ Status: **exists** = the language/std already has it and the examples do not use
 
 | # | Item | Status / notes |
 |---|---|---|
-| E1 | Rewrite the example corpus to CONVENTIONS: `pushStr`, `for x in xs`, `while let`, `arenaModifyMut`, `jq` on `std/json`, no `entries[i].name.clone()` once T1 lands | **partial**. `linkedList` (157 to 80 lines), `kvstore`, `depgraph`, `tree`, `jq` rewritten 2026-09-21. Census of the other 197 files that day: 814 qualified `Option.Some`, 398 `ch == 10` byte numerals, 32 `0 - 1` sentinels, 14 `var done = false` loops, 91 string `+=` in loops. Mechanical sweep merged the same day (`45d44e8a`, 74 files): 807 qualified variants, 36 sentinels, ~284 byte numerals and 8 loop flags rewritten; what is left is `i64` operands that are not bytes, and 6 flags that gate a nested loop (no labeled break). `pushStr` adoption (91 sites) is the lint's worklist and the next step. |
+| E1 | Rewrite the example corpus to CONVENTIONS: `pushStr`, `for x in xs`, `while let`, `arenaModifyMut`, `jq` on `std/json`, no `entries[i].name.clone()` once T1 lands | **partial**. `linkedList` (157 to 80 lines), `kvstore`, `depgraph`, `tree`, `jq` rewritten 2026-09-21. Census of the other 197 files that day: 814 qualified `Option.Some`, 398 `ch == 10` byte numerals, 32 `0 - 1` sentinels, 14 `var done = false` loops, 91 string `+=` in loops. Mechanical sweep merged the same day (`45d44e8a`, 74 files): 807 qualified variants, 36 sentinels, ~284 byte numerals and 8 loop flags rewritten; what is left is `i64` operands that are not bytes, and 6 flags that gate a nested loop (no labeled break). `pushStr` adoption: the 77 distinct sites rewritten and the lint flipped on the same day. |
 | E2 | One short "patterns without lifetimes" example: kv scan, AST handles, sealed spans | **open**. |
 | E3 | Fix `return 0 - 1 as i64` and similar in showcase files | **shipped** for `kvstore` (`slotIn` returns `Option<i64>`); the other 32 sentinels are in the mechanical sweep. |
 
@@ -103,7 +103,7 @@ trait/HKT system. Async coloring. Self-host work ahead of these.
 ## Suggested order
 
 1. S1-S5, E3: done.
-2. L1 adoption + E1 for `linkedList`, `depgraph`, `tree`, `jq`, `kvstore`: done. Next: the mechanical sweep of the other 197 files, then the 91 `pushStr` sites, then flip `string-concat-in-loop` on.
+2. L1 adoption + E1 for `linkedList`, `depgraph`, `tree`, `jq`, `kvstore`: done. The mechanical sweep of the other 197 files, the `pushStr` sites (77 distinct, the 91 counted library modules once per importer) and the `string-concat-in-loop` default flip all landed 2026-09-21.
 3. T1 (`&string` boundaries): clone tax drops with no new concepts.
 4. L3 defaults, L5 nested patterns, L4 named variant fields.
 5. D1 error codes, T3 cursor protocol, L6/L7 parse holes.

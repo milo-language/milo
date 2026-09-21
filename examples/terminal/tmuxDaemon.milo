@@ -190,15 +190,15 @@ pub fn renderCompositeN(terms: &Vec<Term>, paneWin: &Vec<i64>, activeWin: i64, w
         let gi = idxs[p]
         let sc = paneStartCol(p, paneW)
         if copyMode && p == focusPos {
-            out = out + terms[gi].renderScrollback(1, sc, copyOffset)
+            out.pushStr(terms[gi].renderScrollback(1, sc, copyOffset))
         } else {
-            out += renderTermString(terms[gi], 1, sc)
+            out.pushStr(renderTermString(terms[gi], 1, sc))
         }
         if p < m - 1 {
             let sep = sc + paneW
             var r: i64 = 0
             while r < gridRows {
-                out = out + $"\x1b[{r + 1};{sep}H\x1b[90m\xe2\x94\x82\x1b[0m"
+                out.pushStr($"\x1b[{r + 1};{sep}H\x1b[90m\xe2\x94\x82\x1b[0m")
                 r += 1
             }
         }
@@ -217,9 +217,9 @@ pub fn renderCompositeN(terms: &Vec<Term>, paneWin: &Vec<i64>, activeWin: i64, w
             let pc = winPaneCount(paneWin, w)
             if pc > 0 {
                 if w == activeWin {
-                    out = out + $"\x1b[7;38;2;200;152;104m {w}\xc2\xb7{pc}p \x1b[0m "
+                    out.pushStr($"\x1b[7;38;2;200;152;104m {w}\xc2\xb7{pc}p \x1b[0m ")
                 } else {
-                    out = out + $"\x1b[90m {w}\xc2\xb7{pc}p \x1b[0m "
+                    out.pushStr($"\x1b[90m {w}\xc2\xb7{pc}p \x1b[0m ")
                 }
             }
             w += 1

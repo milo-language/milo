@@ -1132,7 +1132,7 @@ pub fn formatSource(src: string): string {
                 let sameLineStmt = nextLine == tok.line && nextKind != TokKind.RBrace &&
                 nextKind != TokKind.Comment && nextKind != TokKind.Eof
                 if sameLineStmt {
-                    out += "\n"
+                    out.pushStr("\n")
                     atLineStart = true
                 }
             }
@@ -1181,7 +1181,7 @@ pub fn formatSource(src: string): string {
                 bracketDepth = bracketStack.pop()!
             }
             if !atLineStart {
-                out += "\n"
+                out.pushStr("\n")
                 atLineStart = true
             }
         }
@@ -1199,9 +1199,9 @@ pub fn formatSource(src: string): string {
         if depth == 0 && startsTopLevelItem && !hugExtern && !hugPub && !attachedDoc && !afterAttr {
             if out.len > 0 && !out.endsWith("\n\n") {
                 if !atLineStart {
-                    out += "\n"
+                    out.pushStr("\n")
                 }
-                out += "\n"
+                out.pushStr("\n")
                 atLineStart = true
             }
         }
@@ -1211,9 +1211,9 @@ pub fn formatSource(src: string): string {
         tok.line > lastLine && commentLeadsTopLevel(tokens, i) {
             if out.len > 0 && !out.endsWith("\n\n") {
                 if !atLineStart {
-                    out += "\n"
+                    out.pushStr("\n")
                 }
-                out += "\n"
+                out.pushStr("\n")
                 atLineStart = true
             }
         }
@@ -1222,34 +1222,34 @@ pub fn formatSource(src: string): string {
         // Not inside ( ) or [ ] — there the whole group reflows onto one line.
         let atStmtLevel = parenDepth == 0 && bracketDepth == 0
         if blank && atStmtLevel && !atLineStart && !hugExtern && !hugPub && !hugElse {
-            out += "\n"
+            out.pushStr("\n")
             atLineStart = true
         }
         if blank && atStmtLevel && atLineStart && out.len > 0 && !out.endsWith("\n\n") && !hugExtern && !hugPub && !hugElse {
-            out += "\n"
+            out.pushStr("\n")
         }
 
         // Comment on its own line
         if tok.kind == TokKind.Comment {
             if !atLineStart && tok.line > lastLine {
-                out += "\n"
+                out.pushStr("\n")
                 atLineStart = true
             }
             var ownLine: bool = false
             if atLineStart {
                 for d in 0..depth {
-                    out += "    "
+                    out.pushStr("    ")
                 }
                 atLineStart = false
                 ownLine = true
             } else {
-                out += " "
+                out.pushStr(" ")
             }
-            out += tok.text
+            out.pushStr(tok.text)
             // A `//` comment runs to end of line, so the next token MUST start a new
             // line — even inside ( ) or [ ], where reflow would otherwise collapse
             // it up and swallow that token into the comment text.
-            out += "\n"
+            out.pushStr("\n")
             atLineStart = true
             lastLine = tok.line
             lastWasOwnLineComment = ownLine
@@ -1269,7 +1269,7 @@ pub fn formatSource(src: string): string {
             let curStartsStmt = tok.kind == TokKind.Ident ||
             (tok.kind == TokKind.Keyword && isStmtLeadKeyword(tok.text))
             if prevEndsStmt && curStartsStmt && !isContractLeadKeyword(prevText) {
-                out += "\n"
+                out.pushStr("\n")
                 atLineStart = true
             }
         }
@@ -1278,7 +1278,7 @@ pub fn formatSource(src: string): string {
         // param list / call args / array literal split across source lines reflows
         // onto one line.
         if tok.line > lastLine && !atLineStart && tok.kind != TokKind.RBrace && !hugExtern && !hugPub && !hugElse && atStmtLevel {
-            out += "\n"
+            out.pushStr("\n")
             atLineStart = true
         }
 
@@ -1298,15 +1298,15 @@ pub fn formatSource(src: string): string {
                 indentLevels = depth + 1
             }
             for d2 in 0..indentLevels {
-                out += "    "
+                out.pushStr("    ")
             }
             atLineStart = false
         } else if hugExtern || hugPub || wantSpaceBefore(tokens, i) {
-            out += " "
+            out.pushStr(" ")
         }
 
         // Emit token
-        out += tok.text
+        out.pushStr(tok.text)
         lastLine = tok.line
         lastWasExtern = tok.kind == TokKind.Keyword && tok.text == "extern"
         lastWasPub = tok.kind == TokKind.Ident && tok.text == "pub" && depth == 0
@@ -1353,7 +1353,7 @@ pub fn formatSource(src: string): string {
             if nextIsTrailing {
                 atLineStart = false
             } else {
-                out += "\n"
+                out.pushStr("\n")
                 atLineStart = true
             }
         }
@@ -1390,7 +1390,7 @@ pub fn formatSource(src: string): string {
                 // attaches the comment here instead of on its own line.
                 atLineStart = false
             } else {
-                out += "\n"
+                out.pushStr("\n")
                 atLineStart = true
             }
         }

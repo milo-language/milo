@@ -1,7 +1,7 @@
-// Unit tests for the string-concat-in-loop lint. OFF by default until the example
-// corpus is migrated: `out += piece` in a loop reallocates and copies the whole
-// accumulator per iteration, and `pushStr` is the amortized form the idioms doc asks
-// for. The compound form parses to `out = out + piece`, so both spellings hit.
+// Unit tests for the string-concat-in-loop lint (on by default since the example
+// corpus reached zero sites): `out += piece` in a loop reallocates and copies the
+// whole accumulator per iteration, and `pushStr` is the amortized form the idioms
+// doc asks for. The compound form parses to `out = out + piece`, so both spellings hit.
 import { test, expect } from "bun:test";
 import { Lexer } from "../src/lexer";
 import { Parser } from "../src/parser";
@@ -37,7 +37,7 @@ test("silent outside a loop, on integers, and when the accumulator is not the le
   expect(lint(`    for i in 0..3 {\n        out = "x" + out\n    }`)).toHaveLength(0);
 });
 
-test("off by default, and --allow silences it", () => {
-  expect(lint(`    for i in 0..3 {\n        out += "a"\n    }`, { denied: new Set(), allowed: new Set() })).toHaveLength(0);
+test("on by default, and --allow silences it", () => {
+  expect(lint(`    for i in 0..3 {\n        out += "a"\n    }`, { denied: new Set(), allowed: new Set() })).toHaveLength(1);
   expect(lint(`    for i in 0..3 {\n        out += "a"\n    }`, { denied: new Set(), allowed: new Set(["string-concat-in-loop"]) })).toHaveLength(0);
 });

@@ -15,7 +15,7 @@ pub fn pad(n: i64): string {
     let s = n.toString()
     var result: string = ""
     for p in 0..8 - s.len {
-        result += " "
+        result.pushStr(" ")
     }
     return result + s
 }
