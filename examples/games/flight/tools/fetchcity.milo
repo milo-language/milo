@@ -399,13 +399,13 @@ fn tagStr(doc: &Json, tags: i64, key: &string): string {
 // "173'" and worse. Take the leading number and ignore the rest.
 fn leadingNum(s: &string): f64 {
     var i = 0
-    while i < s.len && (s[i] == 32 as u8) {
+    while i < s.len && s[i] == ' ' {
         i += 1
     }
     var out = ""
     while i < s.len {
         let ch = s[i]
-        if (ch >= 48 as u8 && ch <= 57 as u8) || ch == 46 as u8 {
+        if (ch >= '0' && ch <= '9') || ch == '.' {
             out.push(ch)
             i += 1
         } else {
@@ -585,7 +585,7 @@ fn hexNibble(ch: u8): i64 {
 // the Golden Gate carries `colour=orange`, which is the whole reason the asset
 // stores a colour at all instead of painting every deck concrete grey.
 fn parseColour(v: &string): i64 {
-    if v.len == 7 && v[0] == 35 as u8 {
+    if v.len == 7 && v[0] == '#' {
         var acc = 0
         var ok = true
         for i in 1..7 {
@@ -1687,7 +1687,7 @@ fn floatOf(doc: &Json, cur: i64): f64 {
 fn leadingNumSigned(s: string): f64 {
     var neg = false
     var body = s.clone()
-    if body.len > 0 && body[0] == 45 as u8 {
+    if body.len > 0 && body[0] == '-' {
         neg = true
         var t = ""
         for i in 1..body.len {

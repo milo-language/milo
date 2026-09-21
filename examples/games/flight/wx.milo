@@ -316,13 +316,13 @@ fn isIcao(id: &string): bool {
         return false
     }
     let c = id[0]
-    return c == 75 as u8 || c == 80 as u8
+    return c == 'K' || c == 'P'
 }
 
 fn stationIdOf(url: &string): string {
     var cut = 0
     for i in 0..url.len {
-        if url[i] == 47 as u8 {
+        if url[i] == '/' {
             cut = i + 1
         }
     }

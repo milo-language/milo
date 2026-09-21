@@ -279,7 +279,7 @@ pub struct Token {
 }
 
 pub fn isSpace(c: u8): bool {
-    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 pub fn isDigit(c: u8): bool {

@@ -86,7 +86,7 @@ pub fn parseSignal(s: &string): i32 {
     var i: i64 = 0
     while i < s.len {
         let ch = s[i]
-        if ch >= 48 && ch <= 57 {
+        if ch >= '0' && ch <= '9' {
             num = num * 10 + (ch as i64 - 48)
             i += 1
         } else {
@@ -205,7 +205,7 @@ pub fn main(): i32 {
         let arg = argv[i].clone()
         cmd += "'"
         for c in arg {
-            if c == 39 {
+            if c == '\'' {
                 cmd += "'\\''"
             } else {
                 var ch: string = ""

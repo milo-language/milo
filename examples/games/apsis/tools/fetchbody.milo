@@ -101,7 +101,7 @@ pub fn main(): i32 {
                     // body, so the status code proves nothing. A PNG starts with
                     // a fixed 8-byte signature; anything else is an error
                     // document wearing a .png name.
-                    if resp.body.len < 8 || resp.body[1] != 80 || resp.body[2] != 78 || resp.body[3] != 71 {
+                    if resp.body.len < 8 || resp.body[1] != 'P' || resp.body[2] != 'N' || resp.body[3] != 'G' {
                         print("  NOT A PNG — the server returned " + resp.body.len.toString() + " bytes, probably a service exception")
                         failed += 1
                     } else {

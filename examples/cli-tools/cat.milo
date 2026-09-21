@@ -125,11 +125,11 @@ pub fn getKeywords(lang: &string): string {
 }
 
 pub fn isAlpha(ch: u8): bool {
-    return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || ch == 95
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
 }
 
 pub fn isAlnum(ch: u8): bool {
-    return isAlpha(ch) || (ch >= 48 && ch <= 57)
+    return isAlpha(ch) || (ch >= '0' && ch <= '9')
 }
 
 pub fn isKeyword(word: &string, kwList: &Vec<string>): bool {
@@ -143,19 +143,19 @@ pub fn isKeyword(word: &string, kwList: &Vec<string>): bool {
 
 // comment-start detection for a language
 pub fn isLineComment(lang: &string, line: &string, pos: i64): bool {
-    if pos + 1 < line.len && line[pos] == 47 && line[pos + 1] == 47 {
+    if pos + 1 < line.len && line[pos] == '/' && line[pos + 1] == '/' {
         // "//" for c-like langs
         if lang == "typescript" || lang == "javascript" || lang == "rust" || lang == "go" || lang == "c" || lang == "cpp" || lang == "java" || lang == "milo" {
             return true
         }
     }
-    if line[pos] == 35 {
+    if line[pos] == '#' {
         // "#" for python, shell, yaml, toml
         if lang == "python" || lang == "shell" || lang == "yaml" || lang == "toml" {
             return true
         }
     }
-    if pos + 1 < line.len && line[pos] == 45 && line[pos + 1] == 45 && lang == "sql" {
+    if pos + 1 < line.len && line[pos] == '-' && line[pos + 1] == '-' && lang == "sql" {
         return true
     }
     return false
@@ -179,11 +179,11 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
         }
 
         // string literals
-        if ch == 34 || ch == 39 || ch == 96 {
+        if ch == '"' || ch == '\'' || ch == '`' {
             let quote = ch
             var end: i64 = pos + 1
             while end < line.len {
-                if line[end] == 92 {
+                if line[end] == '\\' {
                     end += 2
                     continue
                 }
@@ -199,9 +199,9 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
         }
 
         // numbers
-        if ch >= 48 && ch <= 57 {
+        if ch >= '0' && ch <= '9' {
             var end: i64 = pos
-            while end < line.len && ((line[end] >= 48 && line[end] <= 57) || line[end] == 46) {
+            while end < line.len && ((line[end] >= '0' && line[end] <= '9') || line[end] == '.') {
                 end += 1
             }
             result = result + Color.magenta(line.substr(pos, end))
@@ -218,10 +218,10 @@ pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string
             let word = line.substr(pos, end)
             if isKeyword(word, kwList) {
                 result += Color.red(word)
-            } else if end < line.len && line[end] == 40 {
+            } else if end < line.len && line[end] == '(' {
                 // function call
                 result += Color.blue(word)
-            } else if word[0] >= 65 && word[0] <= 90 {
+            } else if word[0] >= 'A' && word[0] <= 'Z' {
                 // capitalized = type name
                 result += Color.cyan(word)
             } else {

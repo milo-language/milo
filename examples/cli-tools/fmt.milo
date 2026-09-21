@@ -70,7 +70,7 @@ pub struct Token {
 // ── Keywords ──
 
 pub fn charIsHexDigit(c: u8): bool {
-    return asciiIsDigit(c) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70)
+    return asciiIsDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
 pub fn isKeyword(s: &string): bool {
@@ -173,7 +173,7 @@ impl Lexer {
     fn advance(self: &mut Self): u8 {
         let ch = self.src[self.pos]
         self.pos += 1
-        if ch == 10 {
+        if ch == '\n' {
             self.line += 1
         }
         return ch
@@ -182,7 +182,7 @@ impl Lexer {
     fn skipSpaces(self: &mut Self): void {
         while self.pos < self.src.len {
             let ch = self.peek()
-            if ch == 32 || ch == 9 || ch == 13 {
+            if ch == ' ' || ch == '\t' || ch == '\r' {
                 self.advance()
             } else {
                 return
@@ -193,9 +193,9 @@ impl Lexer {
     fn lexString(self: &mut Self): string {
         self.advance()
         var s: string = "\""
-        while self.pos < self.src.len && self.peek() != 34 {
+        while self.pos < self.src.len && self.peek() != '"' {
             let ch = self.advance()
-            if ch == 92 {
+            if ch == '\\' {
                 s.push(ch)
                 if self.pos < self.src.len {
                     s.push(self.advance())
@@ -219,21 +219,21 @@ impl Lexer {
         var s: string = "$\""
         var depth: i64 = 0
         while self.pos < self.src.len {
-            if depth == 0 && self.peek() == 34 {
+            if depth == 0 && self.peek() == '"' {
                 break
             }
             let ch = self.advance()
-            if ch == 92 {
+            if ch == '\\' {
                 s.push(ch)
                 if self.pos < self.src.len {
                     s.push(self.advance())
                 }
                 continue
             }
-            if ch == 123 {
+            if ch == '{' {
                 depth += 1
             }
-            if ch == 125 && depth > 0 {
+            if ch == '}' && depth > 0 {
                 depth -= 1
             }
             s.push(ch)
@@ -252,8 +252,8 @@ impl Lexer {
         // plus exactly one char: `'\u{41}'` and `'\x7a'` are longer than that, and
         // stopping early spilled their tails back into the token stream as real
         // tokens — the formatter then reflowed `'\u{41}'` into `'\u {` + a block.
-        while self.pos < self.src.len && self.peek() != 39 {
-            if self.peek() == 92 {
+        while self.pos < self.src.len && self.peek() != '\'' {
+            if self.peek() == '\\' {
                 s.push(self.advance())
                 if self.pos < self.src.len {
                     s.push(self.advance())
@@ -262,7 +262,7 @@ impl Lexer {
             }
             s.push(self.advance())
         }
-        if self.pos < self.src.len && self.peek() == 39 {
+        if self.pos < self.src.len && self.peek() == '\'' {
             s.push(self.advance())
         }
         return s
@@ -272,41 +272,41 @@ impl Lexer {
         var s: string = ""
         // 0x.. / 0b.. must be consumed whole; stopping after the leading `0`
         // would split the literal into `0` and an identifier.
-        if self.peek() == 48 && self.pos + 1 < self.src.len {
+        if self.peek() == '0' && self.pos + 1 < self.src.len {
             let p = self.peekAt(1)
-            if p == 120 || p == 88 || p == 98 || p == 66 {
+            if p == 'x' || p == 'X' || p == 'b' || p == 'B' {
                 s.push(self.advance())
                 s.push(self.advance())
-                while self.pos < self.src.len && (charIsHexDigit(self.peek()) || self.peek() == 95) {
+                while self.pos < self.src.len && (charIsHexDigit(self.peek()) || self.peek() == '_') {
                     s.push(self.advance())
                 }
                 return s
             }
         }
-        while self.pos < self.src.len && (asciiIsDigit(self.peek()) || self.peek() == 95) {
+        while self.pos < self.src.len && (asciiIsDigit(self.peek()) || self.peek() == '_') {
             s.push(self.advance())
         }
         // decimal point only if followed by a digit (not .. range)
-        if self.peek() == 46 && self.peekAt(1) != 46 && asciiIsDigit(self.peekAt(1)) {
+        if self.peek() == '.' && self.peekAt(1) != '.' && asciiIsDigit(self.peekAt(1)) {
             s.push(self.advance())
-            while self.pos < self.src.len && (asciiIsDigit(self.peek()) || self.peek() == 95) {
+            while self.pos < self.src.len && (asciiIsDigit(self.peek()) || self.peek() == '_') {
                 s.push(self.advance())
             }
         }
         // scientific notation: e/E, optional +/- sign, >=1 digit (1e18, 1.5e-3).
         // Consume `e` only when a digit follows, else it's an identifier butted
         // against the number and splitting it would corrupt the literal.
-        if self.peek() == 101 || self.peek() == 69 {
+        if self.peek() == 'e' || self.peek() == 'E' {
             var k: i64 = 1
-            if self.peekAt(1) == 43 || self.peekAt(1) == 45 {
+            if self.peekAt(1) == '+' || self.peekAt(1) == '-' {
                 k = 2
             }
             if asciiIsDigit(self.peekAt(k)) {
                 s.push(self.advance())
-                if self.peek() == 43 || self.peek() == 45 {
+                if self.peek() == '+' || self.peek() == '-' {
                     s.push(self.advance())
                 }
-                while self.pos < self.src.len && (asciiIsDigit(self.peek()) || self.peek() == 95) {
+                while self.pos < self.src.len && (asciiIsDigit(self.peek()) || self.peek() == '_') {
                     s.push(self.advance())
                 }
             }
@@ -316,7 +316,7 @@ impl Lexer {
 
     fn lexIdent(self: &mut Self): string {
         var s: string = ""
-        while self.pos < self.src.len && (asciiIsAlphanumeric(self.peek()) || self.peek() == 95) {
+        while self.pos < self.src.len && (asciiIsAlphanumeric(self.peek()) || self.peek() == '_') {
             s.push(self.advance())
         }
         return s
@@ -324,7 +324,7 @@ impl Lexer {
 
     fn lexComment(self: &mut Self): string {
         var s: string = ""
-        while self.pos < self.src.len && self.peek() != 10 {
+        while self.pos < self.src.len && self.peek() != '\n' {
             s.push(self.advance())
         }
         return s
@@ -344,7 +344,7 @@ impl Lexer {
         let ch2 = self.peekAt(1)
 
         // Newline
-        if ch == 10 {
+        if ch == '\n' {
             self.advance()
             return Token {
                 kind: TokKind.Newline, text: "\n", line: line
@@ -352,7 +352,7 @@ impl Lexer {
         }
 
         // Comment
-        if ch == 47 && ch2 == 47 {
+        if ch == '/' && ch2 == '/' {
             let text = self.lexComment()
             return Token {
                 kind: TokKind.Comment, text: text, line: line
@@ -360,7 +360,7 @@ impl Lexer {
         }
 
         // F-string — must precede the plain-string case
-        if ch == 36 && ch2 == 34 {
+        if ch == '$' && ch2 == '"' {
             let text = self.lexFString()
             return Token {
                 kind: TokKind.Str, text: text, line: line
@@ -368,7 +368,7 @@ impl Lexer {
         }
 
         // String
-        if ch == 34 {
+        if ch == '"' {
             let text = self.lexString()
             return Token {
                 kind: TokKind.Str, text: text, line: line
@@ -376,7 +376,7 @@ impl Lexer {
         }
 
         // Char
-        if ch == 39 {
+        if ch == '\'' {
             let text = self.lexChar()
             return Token {
                 kind: TokKind.Char, text: text, line: line
@@ -397,7 +397,7 @@ impl Lexer {
         }
 
         // Ident / keyword
-        if asciiIsAlpha(ch) || ch == 95 {
+        if asciiIsAlpha(ch) || ch == '_' {
             let text = self.lexIdent()
             if isKeyword(text) {
                 return Token {
@@ -411,7 +411,7 @@ impl Lexer {
 
         // Three-char operators
         let ch3 = self.peekAt(2)
-        if ch == 46 && ch2 == 46 && ch3 == 46 {
+        if ch == '.' && ch2 == '.' && ch3 == '.' {
             self.advance()
             self.advance()
             self.advance()
@@ -421,77 +421,77 @@ impl Lexer {
         }
 
         // Two-char operators
-        if ch == 46 && ch2 == 46 {
+        if ch == '.' && ch2 == '.' {
             self.advance()
             self.advance()
             return Token {
                 kind: TokKind.DotDot, text: "..", line: line
             }
         }
-        if ch == 45 && ch2 == 62 {
+        if ch == '-' && ch2 == '>' {
             self.advance()
             self.advance()
             return Token {
                 kind: TokKind.Arrow, text: "->", line: line
             }
         }
-        if ch == 61 && ch2 == 62 {
+        if ch == '=' && ch2 == '>' {
             self.advance()
             self.advance()
             return Token {
                 kind: TokKind.FatArrow, text: "=>", line: line
             }
         }
-        if ch == 61 && ch2 == 61 {
+        if ch == '=' && ch2 == '=' {
             self.advance()
             self.advance()
             return Token {
                 kind: TokKind.EqEq, text: "==", line: line
             }
         }
-        if ch == 58 && ch2 == 58 {
+        if ch == ':' && ch2 == ':' {
             self.advance()
             self.advance()
             return Token {
                 kind: TokKind.ColonColon, text: "::", line: line
             }
         }
-        if ch == 33 && ch2 == 61 {
+        if ch == '!' && ch2 == '=' {
             self.advance()
             self.advance()
             return Token {
                 kind: TokKind.Neq, text: "!=", line: line
             }
         }
-        if ch == 60 && ch2 == 61 {
+        if ch == '<' && ch2 == '=' {
             self.advance()
             self.advance()
             return Token {
                 kind: TokKind.LtEq, text: "<=", line: line
             }
         }
-        if ch == 62 && ch2 == 61 {
+        if ch == '>' && ch2 == '=' {
             self.advance()
             self.advance()
             return Token {
                 kind: TokKind.GtEq, text: ">=", line: line
             }
         }
-        if ch == 63 && ch2 == 63 {
+        if ch == '?' && ch2 == '?' {
             self.advance()
             self.advance()
             return Token {
                 kind: TokKind.QuestionQuestion, text: "??", line: line
             }
         }
-        if ch == 38 && ch2 == 38 {
+        if ch == '&' && ch2 == '&' {
             self.advance()
             self.advance()
             return Token {
                 kind: TokKind.AmpAmp, text: "&&", line: line
             }
         }
-        if ch == 124 && ch2 == 124 {
+        if ch == '|' && ch2 == '|' {
             self.advance()
             self.advance()
             return Token {
@@ -500,7 +500,7 @@ impl Lexer {
         }
         // Compound assignment: += -= *= /= %= &= |= ^=
         // Must follow the ==/!=/<=/>= cases above, which share the trailing '='.
-        if ch2 == 61 && (ch == 43 || ch == 45 || ch == 42 || ch == 47 || ch == 37 || ch == 38 || ch == 124 || ch == 94) {
+        if ch2 == '=' && (ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' || ch == '&' || ch == '|' || ch == '^') {
             self.advance()
             self.advance()
             var op: string = ""
@@ -513,124 +513,124 @@ impl Lexer {
 
         // Single-char
         self.advance()
-        if ch == 40 {
+        if ch == '(' {
             return Token {
                 kind: TokKind.LParen, text: "(", line: line
             }
         }
-        if ch == 41 {
+        if ch == ')' {
             return Token {
                 kind: TokKind.RParen, text: ")", line: line
             }
         }
-        if ch == 123 {
+        if ch == '{' {
             return Token {
                 kind: TokKind.LBrace, text: "{", line: line
             }
         }
-        if ch == 125 {
+        if ch == '}' {
             return Token {
                 kind: TokKind.RBrace, text: "}", line: line
             }
         }
-        if ch == 91 {
+        if ch == '[' {
             return Token {
                 kind: TokKind.LBracket, text: "[", line: line
             }
         }
-        if ch == 93 {
+        if ch == ']' {
             return Token {
                 kind: TokKind.RBracket, text: "]", line: line
             }
         }
-        if ch == 58 {
+        if ch == ':' {
             return Token {
                 kind: TokKind.Colon, text: ":", line: line
             }
         }
-        if ch == 44 {
+        if ch == ',' {
             return Token {
                 kind: TokKind.Comma, text: ",", line: line
             }
         }
-        if ch == 46 {
+        if ch == '.' {
             return Token {
                 kind: TokKind.Dot, text: ".", line: line
             }
         }
-        if ch == 43 {
+        if ch == '+' {
             return Token {
                 kind: TokKind.Plus, text: "+", line: line
             }
         }
-        if ch == 45 {
+        if ch == '-' {
             return Token {
                 kind: TokKind.Minus, text: "-", line: line
             }
         }
-        if ch == 42 {
+        if ch == '*' {
             return Token {
                 kind: TokKind.Star, text: "*", line: line
             }
         }
-        if ch == 47 {
+        if ch == '/' {
             return Token {
                 kind: TokKind.Slash, text: "/", line: line
             }
         }
-        if ch == 37 {
+        if ch == '%' {
             return Token {
                 kind: TokKind.Percent, text: "%", line: line
             }
         }
-        if ch == 38 {
+        if ch == '&' {
             return Token {
                 kind: TokKind.Amp, text: "&", line: line
             }
         }
-        if ch == 61 {
+        if ch == '=' {
             return Token {
                 kind: TokKind.Eq, text: "=", line: line
             }
         }
-        if ch == 60 {
+        if ch == '<' {
             return Token {
                 kind: TokKind.Lt, text: "<", line: line
             }
         }
-        if ch == 62 {
+        if ch == '>' {
             return Token {
                 kind: TokKind.Gt, text: ">", line: line
             }
         }
-        if ch == 33 {
+        if ch == '!' {
             return Token {
                 kind: TokKind.Bang, text: "!", line: line
             }
         }
-        if ch == 63 {
+        if ch == '?' {
             return Token {
                 kind: TokKind.Question, text: "?", line: line
             }
         }
-        if ch == 124 {
+        if ch == '|' {
             return Token {
                 kind: TokKind.Pipe, text: "|", line: line
             }
         }
-        if ch == 94 {
+        if ch == '^' {
             return Token {
                 kind: TokKind.Caret, text: "^", line: line
             }
         }
-        if ch == 126 {
+        if ch == '~' {
             return Token {
                 kind: TokKind.Tilde, text: "~", line: line
             }
         }
 
         // `;` separates the element type and length in `[T; N]`
-        if ch == 59 {
+        if ch == ';' {
             return Token {
                 kind: TokKind.Semi, text: ";", line: line
             }

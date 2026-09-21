@@ -307,7 +307,7 @@ pub fn renderProcess(buf: &mut string, row: i64, cols: i64, proc: &ProcInfo, hig
 
     // highlight high CPU (doesn't start with '0')
     var cpuColor = "\x1b[0m"
-    if proc.cpu.len > 0 && proc.cpu[0] != 48 {
+    if proc.cpu.len > 0 && proc.cpu[0] != '0' {
         cpuColor = "\x1b[33m"
     }
 

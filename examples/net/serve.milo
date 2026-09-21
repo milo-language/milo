@@ -90,7 +90,7 @@ pub fn dirListing(dirPath: &string, urlPath: &string): string {
         let name = entries[i].name.clone()
         let entryIsDir = entries[i].isDir
         // skip hidden files
-        if name[0] != 46 {
+        if name[0] != '.' {
             if entryIsDir {
                 html = html + "<tr><td><a href=\"" + name.clone() + "/\">" + name + "/</a></td><td>-</td></tr>"
             } else {

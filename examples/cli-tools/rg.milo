@@ -45,7 +45,7 @@ from "./rgwalk" import {
 // ── helpers ──
 
 pub fn isWordChar(ch: u8): bool {
-    return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || (ch >= 48 && ch <= 57) || ch == 95
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_'
 }
 
 // ── options ──
@@ -150,22 +150,22 @@ pub fn isPlainLiteral(pat: &string): bool {
     }
     for byte in pat {
         // . * + ? [ ] ( ) { } | ^ $ \
-        if byte == 46 || byte == 42 || byte == 43 || byte == 63 {
+        if byte == '.' || byte == '*' || byte == '+' || byte == '?' {
             return false
         }
-        if byte == 91 || byte == 93 || byte == 40 || byte == 41 {
+        if byte == '[' || byte == ']' || byte == '(' || byte == ')' {
             return false
         }
-        if byte == 123 || byte == 125 || byte == 124 || byte == 94 {
+        if byte == '{' || byte == '}' || byte == '|' || byte == '^' {
             return false
         }
-        if byte == 36 || byte == 92 {
+        if byte == '$' || byte == '\\' {
             return false
         }
         // A newline in the pattern would let a whole-buffer match straddle two lines,
         // which the literal path's "one match per line" bookkeeping cannot express.
         // The regex path cannot match it either — it searches line by line.
-        if byte == 10 {
+        if byte == '\n' {
             return false
         }
     }
@@ -402,7 +402,7 @@ pub fn searchLiteral(content: &string, filePath: &string, opts: &RgOpts, multiFi
                 lineStart = 0
                 var b = at
                 while b > 0 {
-                    if content[b - 1] == 10 {
+                    if content[b - 1] == '\n' {
                         lineStart = b
                         break
                     }
@@ -815,7 +815,7 @@ pub fn searchDir(dirPath: &string, re: &mut Regex, opts: &mut RgOpts, sets: &mut
         let entryIsDir = entries[i].isDir
         let entryIsFile = entries[i].isFile
 
-        if !opts.searchHidden && name.len > 0 && name[0] == 46 {
+        if !opts.searchHidden && name.len > 0 && name[0] == '.' {
             continue
         }
 

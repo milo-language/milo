@@ -212,7 +212,7 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
 // ── Lexical helpers ──
 
 pub fn isSpace(c: u8): bool {
-    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8 || c == 12 as u8
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 12 as u8
 }
 
 pub fn isAlpha(c: u8): bool {
@@ -480,7 +480,7 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
                 if i < n && src[i] == '=' {
                     i += 1
                     i = skipSpaces(src, i, n)
-                    if i < n && (src[i] == '"' || src[i] == 39 as u8) {
+                    if i < n && (src[i] == '"' || src[i] == '\'') {
                         let q = src[i]
                         i += 1
                         while i < n && src[i] != q {

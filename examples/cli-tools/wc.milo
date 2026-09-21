@@ -52,7 +52,7 @@ pub fn main(): i32 {
     // count lines
     var lines: i64 = 0
     for ch in content {
-        if ch == 10 {
+        if ch == '\n' {
             lines += 1
         }
     }
@@ -61,7 +61,7 @@ pub fn main(): i32 {
     var words: i64 = 0
     var inWord: bool = false
     for ch in content {
-        if ch == 32 || ch == 10 || ch == 9 || ch == 13 {
+        if ch == ' ' || ch == '\n' || ch == '\t' || ch == '\r' {
             if inWord {
                 words += 1
                 inWord = false

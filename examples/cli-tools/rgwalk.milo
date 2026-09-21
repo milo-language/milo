@@ -105,7 +105,7 @@ impl Walker {
             let name = self.stack[top].entries[i].name.clone()
             let entryIsDir = self.stack[top].entries[i].isDir
             let entryIsFile = self.stack[top].entries[i].isFile
-            if !self.searchHidden && name.len > 0 && name[0] == 46 {
+            if !self.searchHidden && name.len > 0 && name[0] == '.' {
                 continue
             }
             let dir = self.stack[top].dirPath.clone()
