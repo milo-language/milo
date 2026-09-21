@@ -2704,6 +2704,21 @@ from "lib/math" import { add, multiply }
 
 All imports must be explicit — list exactly which symbols you use. No `import *` or bare `import "path"`. The LSP provides autocomplete for both module paths and symbols.
 
+The list is also the whole of what the module lends you. An exported name the list does
+not mention is not in scope, whether it is a function, a type, or a global; methods need
+no import, since they are reached through their receiver, and the prelude's names
+(`Unit`, `asciiIsDigit`, ...) are in scope everywhere. `bun scripts/fix-imports.ts
+<file>` adds every name the checker reports missing.
+
+```milo error
+from "std/os" import { getenv }
+
+fn main(): i32 {
+    print(strlen("hi"))     // error: 'strlen' is not imported
+    return 0
+}
+```
+
 ---
 
 ## Visibility
@@ -4404,7 +4419,7 @@ fn main(): i32 {
 ### Assertions (std/testing)
 
 ```milo
-from "std/testing" import { assert, assertEqual, assertStrEqual }
+from "std/testing" import { assert, assertEqual, assertEqual64, assertStrEqual, assertMsg }
 
 fn testArithmetic(): void {
     assertEqual(2 + 2, 4)

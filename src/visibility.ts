@@ -19,6 +19,10 @@ import type {
 interface VisibilityViolation {
   name: string;
   kind: "value" | "type";
+  // "private": no `pub` definition anywhere. "unimported": exported, but this file's
+  // import lines never named it. Before 2026-09-20 an import list validated and did
+  // not restrict, so `from "std/os" import { getenv }` made every std/os name callable.
+  why: "private" | "unimported";
   refFile: string;
   declFiles: string[];
   span?: Span;
@@ -60,7 +64,10 @@ class Scopes {
   hasType(n: string): boolean { return this.types.some((s) => s.has(n)); }
 }
 
-export function checkVisibility(prog: Program): VisibilityViolation[] {
+// `builtinNames`: fns and enums the checker defines itself (`assert`, `Option`). A user
+// decl of the same name is reported by the redeclaration diagnostics; a bare reference
+// to it elsewhere was written against the builtin and is not an import mistake.
+export function checkVisibility(prog: Program, builtinNames: ReadonlySet<string> = new Set()): VisibilityViolation[] {
   const idx = prog.declOrigins ?? deriveOrigins(prog);
   const out: VisibilityViolation[] = [];
 
@@ -75,12 +82,23 @@ export function checkVisibility(prog: Program): VisibilityViolation[] {
     if (!refFile || shadowed) return;
     const o = m.get(name);
     if (!o) return;            // not a user top-level decl (builtin/unknown) — skip
-    if (o.anyPub) return;      // exported by at least one definition
     if (o.files.has(refFile)) return; // this file defines it itself
+    let why: VisibilityViolation["why"];
+    if (!o.anyPub) why = "private"; // no definition is exported
+    else {
+      const admitted = prog.fileImports?.get(refFile);
+      // A file the resolver never saw (a synthesized derive unit, a bare Parser program)
+      // has no import list to hold it to.
+      if (!admitted) return;
+      if (prog.preludeVisible?.has(name) || builtinNames.has(name)) return;
+      if (admitted.names.has(name)) return;
+      if ([...o.files].some(f => admitted.wholeFiles.has(f))) return;
+      why = "unimported";
+    }
     const key = `${kind}:${name}:${refFile}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ name, kind, refFile, declFiles: [...o.files], span });
+    out.push({ name, kind, refFile, declFiles: [...o.files], span, why });
   };
 
   const refValue = (name: string, sc: Scopes, refFile: string | undefined, span?: Span) =>
@@ -270,7 +288,8 @@ export function checkVisibility(prog: Program): VisibilityViolation[] {
   for (const s of prog.structs) {
     const sc = scNone(); const refFile = s.span?.file;
     for (const tp of s.typeParams ?? []) sc.bindType(tp.name);
-    for (const f of s.fields) walkType(f.type, sc, refFile, f.type ? undefined : s.span);
+    // A field carries no span of its own; the struct's puts the report in the right file.
+    for (const f of s.fields) walkType(f.type, sc, refFile, s.span);
   }
   for (const e of prog.enums) {
     const sc = scNone(); const refFile = e.span?.file;

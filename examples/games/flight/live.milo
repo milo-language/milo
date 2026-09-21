@@ -41,6 +41,9 @@ from "./cloud" import {
 from "./wx" import {
     Obs, obsEmpty, fetchObs, fetchIr, fetchRadar, lclMetres
 }
+from "std/math" import {
+    Math
+}
 
 // How the environment was arrived at, so the HUD can say so rather than implying
 // a live feed that is not there. A fabricated sky presented as the real one is

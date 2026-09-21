@@ -68,6 +68,9 @@ from "./render3d" import {
     drawWorld, drawHud, drawGuide, drawMarkGuide, drawMarkBeam, drawSpeedLines,
     drawChecklist, drawFound, drawFence
 }
+from "std/strconv" import {
+    parseInt
+}
 
 pub let W: i64 = 1280
 

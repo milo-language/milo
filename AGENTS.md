@@ -3,7 +3,7 @@ system: agent-router
 purpose: entry point that routes any agent to the right skill, doc, script, or convention
 key-files: AGENT_WORKFLOW.md, CONVENTIONS.md, CLAUDE.md, docs/, scripts/, docs/worksheets/
 update-when: a new skill/doc/script/convention is added, or a routing entry goes stale
-last-verified: 2026-09-20 (memory-safety row: sweep findings #3-#9 and the fuzzer gates)
+last-verified: 2026-09-20 (fix-imports route and the milojs clone path; earlier: memory-safety row, sweep findings #3-#9 and the fuzzer gates)
 -->
 
 # AGENTS.md — Router
@@ -29,6 +29,7 @@ Every doc in this repo starts with a 7-line `<!-- doc-meta ... -->` block. To fi
 | Know what memory-safety Milo catches (compile vs runtime) vs Rust, or what it deliberately does not check | [docs/memory-safety-vs-rust.md](docs/memory-safety-vs-rust.md): battle-test matrix, 13 probes; finding #2 (move-out-of-borrow UAF) closed 2026-07-31, findings #3-#9 (the September soundness sweep: shard copy, owner-under-worker, global across a park, `ptr()` past a realloc, Drop copy-out, channel leak, impl-vs-trait signature) closed 2026-09-19/20. The sweep is fuzzer-gated now (`fuzz:tasks`, `fuzz:generic-drop` and the ASan sweep run in CI), scoped, not a no-UB proof; its last section is the three gaps Rust's stored references cover and Milo does not |
 | Write or run tests, or find what's covered | [docs/testing.md](docs/testing.md) |
 | Changing `src/verify.ts` or `src/prove-milo.ts` | ALWAYS run `bun test tests/verify-contracts.test.ts` before merging, whatever else is skipped: it is the only gate that notices a lost proof (WP6 lost four in `std/inflate.milo` and three merges went by) |
+| A program fails with `'x' is not imported` (an exported name its import list never named) | `bun scripts/fix-imports.ts <entry.milo>` adds every missing name, in the imported modules too |
 | Changing `src/checker.ts` rules | ALWAYS run `bun run scripts/run-examples.ts` before merging: a false positive on a real program is a rule not finished |
 | Measure what the ownership model costs real programs (non-FFI `unsafe`, clones, friction comments) | `bun scripts/corpus-census.ts` over every `.milo` in the org; `--check` is the shrink-only gate on non-FFI `unsafe`, `--comments` lists each block's reason. Findings in [docs/memory-safety-vs-rust.md](docs/memory-safety-vs-rust.md) §What the corpus says |
 | Hunt for compiler crashes / hangs on hostile input | `bun scripts/fuzz-frontend.ts` — token-mutation fuzzer over the fixture corpus, ddmin-reduced findings; `bun scripts/prove-soundness-fuzz.ts` for false proofs out of `milo prove`; `bun run fuzz:tasks` for unsafe-free programs the checker accepts that ASan then rejects (globals across parks, Shards windows past their owner, `ptr()` past a realloc) |
@@ -59,7 +60,7 @@ submodules for them; they are separate products that happen to be written in Mil
 | Repo | Contents | Local clone |
 |---|---|---|
 | `milo` | Compiler, stdlib, docs, examples (this repo) | `~/git/milo` |
-| `milojs` | JS engine + runtime written in Milo | `~/git/milo-language/milojs` |
+| `milojs` | JS engine + runtime written in Milo | `~/git/milojs` (`~/git/milo-language/milojs` is a stale second clone) |
 | `emulators` | NES/SNES/Genesis cores + console front-end | `~/git/milo-language/emulators` |
 | `dapweb` | DAP debugger + web UI (formerly named `hades`) | `~/git/milo-language/dapweb` |
 | `.github` | Org profile README = the org homepage | `~/git/milo-language/.github` |
@@ -77,7 +78,7 @@ about. Missing checkouts skip, so it is safe to run anywhere; suites needing a l
 service (postgres, redis, aws/s3) skip by name rather than by guessing from the error.
 
 **After a compiler change to codegen, closures, the scheduler or `std/runtime`, run
-milojs's app check** — `tools/check-apps.sh` in `~/git/milo-language/milojs` (one arg
+milojs's app check** — `tools/check-apps.sh` in `~/git/milojs` (one arg
 runs a single app). It boots real applications (an express + Prisma + tRPC server, and an
 express + ws chat) under node and under milojs and diffs the served bytes. Three defects
 have reached it that BOTH repos' fixture suites missed, which is the point: this repo's

@@ -183,6 +183,7 @@ LLMs forget annotations, add them wrong, or over-annotate with `'static` (forcin
 // Milo — no lifetimes, ever
 fn parse(input: &string): Vec<string> {
     // references are param-only, returned data must be owned
+    return input.split(",")
 }
 ```
 

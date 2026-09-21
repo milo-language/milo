@@ -4,6 +4,7 @@
 // OpenSSL (required on Windows, whose xwin sysroot ships none).
 
 from "std/os" import {
+    connectFdIn, bindIn,
     signal,
     acceptFd,
     acceptFdNb,

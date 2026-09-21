@@ -1,6 +1,7 @@
 // std/ws — WebSocket server protocol (RFC 6455)
 
 from "std/os" import {
+    connectFdIn,
     readFd,
     writeFd,
     htons,

@@ -9,6 +9,7 @@ so a plain-TCP program links without OpenSSL.
 ```milo
 from "std/net" import { resolve, TcpStream, TcpListener, NetError }
 from "std/fetch" import { fetch, TlsStream, FetchResponse }
+from "std/io" import { writeStdout }
 ```
 
 ## Types

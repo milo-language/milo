@@ -1,0 +1,9 @@
+// The import list is the whole of what a module lends this file: `square` is exported by
+// lib/math, but this file only asked for `add`. Before 2026-09-20 the list was validated
+// and then ignored, so any export of any imported module was callable.
+// @error: 'square' is not imported
+from "lib/math" import { add }
+
+fn main(): i32 {
+    return add(square(2), 1)
+}

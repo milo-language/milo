@@ -261,7 +261,7 @@ fn main(): i32 {
 Green tasks yield cooperatively. Use `schedulerYield()` to give other tasks a chance to run:
 
 ```milo
-from "std/runtime" import { Task, schedulerYield }
+from "std/runtime" import { Task, schedulerYield, schedulerRunToCompletion }
 
 fn main(): i32 {
     Task.spawn(move (): void => {

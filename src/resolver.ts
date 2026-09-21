@@ -4,7 +4,7 @@
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname, sep } from "path";
 import { cacheRoot } from "./pkg";
-import type { Program, Span, DeclOrigins, DeclOrigin, ImportDecl } from "./ast";
+import type { Program, Span, DeclOrigins, DeclOrigin, ImportDecl, FileImports } from "./ast";
 import { ParseError } from "./diagnostics";
 import { closest, importHint, stdModuleNames } from "./suggest";
 import type { TargetInfo } from "./target";
@@ -236,6 +236,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     targets: { names: string[]; aliases?: (string | undefined)[]; pkg: string; file?: string }[];
   }
   const units: Unit[] = [];
+  const fileImports = new Map<string, FileImports>();
   // One `targets` check per package, not per import — a package's manifest can't change
   // mid-build, and re-reading it for each of a dozen imports would show up in compile time.
   const pkgTargetsChecked = new Set<string>();
@@ -349,9 +350,15 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     if (derivesMap && !prog.imports.some(i => i.path === "std/sort")) {
       synthetic.push({ kind: "ImportDecl", path: "std/sort", names: ["sortStrings"] });
     }
+    let admitted = fileImports.get(unit.file);
+    if (!admitted) { admitted = { names: new Set(), wholeFiles: new Set() }; fileImports.set(unit.file, admitted); }
     for (const imp of [...prog.imports, ...synthetic]) {
       const resolved = resolvePath(dir, imp.path, pkg);
       const absPath = resolved.path;
+      // A synthetic import stands in for a whole module: the derived bodies reach std/json
+      // names the user never wrote an import for.
+      if (synthetic.includes(imp)) admitted.wholeFiles.add(absPath);
+      else for (const n of imp.names) admitted.names.add(n);
       if (resolved.pkg !== "" && imp.names) {
         unit.targets.push({ names: imp.names, aliases: imp.aliases, pkg: resolved.pkg });
       } else if (resolved.pkg === "" && imp.names) {
@@ -442,6 +449,17 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // user redefinition of these names is the documented last-wins override path
   const preludeFiles = new Set(visited);
   preludeFiles.add(preludePath);
+  // The prelude's imports are the names every file sees without an import line; the
+  // modules those names come from are ordinary modules to everyone else.
+  const preludeVisible = new Set<string>(fileImports.get(preludePath)?.names ?? []);
+  const preludeUnitProg = units.find(u => u.file === preludePath)?.prog;
+  if (preludeUnitProg) {
+    const own = emptyPkgDecls();
+    collectPkgDecls(preludeUnitProg, own);
+    for (const n of own.values) preludeVisible.add(n);
+    for (const n of own.types) preludeVisible.add(n);
+    for (const g of preludeUnitProg.globals) preludeVisible.add(g.name);
+  }
 
   // user code comes after prelude
   {
@@ -526,6 +544,9 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         bindings.set(t.aliases?.[i] ?? n, `${t.pkg}$${n}`);
       }
     }
+    // The import list admitted the written name; after this pass the reference and
+    // the decl both carry the mangled one, so the visibility check has to find that.
+    for (const v of bindings.values()) fileImports.get(u.file)?.names.add(v);
     // pkg="" with no bindings is a strict no-op inside manglePackage; skip the call.
     if (bindings.size > 0 || u.pkg !== "") {
       manglePackage(u.prog, u.pkg, pkgDecls.get(u.pkg) ?? emptyPkgDecls(), bindings);
@@ -642,6 +663,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         bindings.set(n, `${tp.id}$${n}`);
       }
     }
+    for (const v of bindings.values()) fileImports.get(u.file)?.names.add(v);
     if (!own && bindings.size === 0) continue;
     if (own) {
       // Record what each rename hides BEFORE it happens: the mangled name is a symbol, and
@@ -852,5 +874,5 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // the separate arrays above), so its impls are the user's own.
   const userImplKeys = new Set<string>();
   for (const impl of program.impls) for (const m of impl.methods) userImplKeys.add(`${impl.typeName}.${m.name}`);
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), deriveTemplates: dedup(deriveTemplates), declOrigins, packageNames, displayNames, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), deriveTemplates: dedup(deriveTemplates), declOrigins, packageNames, displayNames, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib, fileImports, preludeVisible };
 }

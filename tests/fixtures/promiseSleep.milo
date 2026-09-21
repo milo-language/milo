@@ -10,6 +10,7 @@ from "std/runtime" import {
     Task, Promise
 }
 from "std/time" import {
+    sleepMs,
 }
 
 pub fn main(): i32 {

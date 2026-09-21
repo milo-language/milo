@@ -48,6 +48,7 @@ from "json-rpc/frame" import {
     readFrame, writeFrame
 }
 from "jdwp" import {
+    ClassId, MethodId,
     JdwpIo, jdwpAttach, Packet, synthPacket, Location, zeroLocation,
     MethodInfo, FieldInfo, LineEntry, VarSlot, FrameEntry, JValue, JdwpEvent,
     isObjectTag, IdSizes, defaultSizes,

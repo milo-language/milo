@@ -15,11 +15,13 @@ pub struct Off {
 }
 
 from "./gfx3d" import {
+    Rgb, rgb, v3, frameOf, toCameraV, Frame,
     Vec3,
     Scene, View, Camera, viewOf, sceneClear, triangle, shade, toCamera,
     triangleV, triangleG, triangleF, farOf
 }
 from "./texture" import {
+    vtx,
     Texture, Vtx, vtxC
 }
 from "./textures" import {

@@ -1,6 +1,7 @@
 // std/http — high-level HTTP server for Milo
 
 from "std/os" import {
+    bindIn,
     accept,
     bind,
     getsockname,

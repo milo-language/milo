@@ -328,6 +328,8 @@ export interface GlobalDecl {
 // own references to it are legal. Derived from the merged program it would look
 // private-to-somewhere-else and produce false errors.
 export interface DeclOrigin { files: Set<string>; anyPub: boolean }
+export interface FileImports { names: Set<string>; wholeFiles: Set<string> }
+
 export interface DeclOrigins {
   values: Map<string, DeclOrigin>; // fns, globals
   types: Map<string, DeclOrigin>;  // structs, enums, traits, interfaces, aliases
@@ -349,6 +351,13 @@ export interface Program {
   // can reprint the directive.
   moduleWrapping?: boolean;
   declOrigins?: DeclOrigins; // set by the resolver; absent for a bare Parser program
+  // What each file's import lines admit, keyed by resolved path. `names` are the
+  // declared names listed in `from "x" import { … }` (an alias is already rewritten to
+  // the declared name); `wholeFiles` are modules the resolver imported on the file's
+  // behalf (`@derive(Json)` pulls all of std/json). Absent for a bare Parser program.
+  fileImports?: Map<string, FileImports>;
+  // Names every file sees without an import: the prelude's own decls plus what it imports.
+  preludeVisible?: Set<string>;
   // Manifest `deps` names whose files were actually loaded, i.e. the set of `$`
   // prefixes per-package mangling put on symbols (see src/mangle.ts). Empty/absent
   // when the program has no package dependencies.

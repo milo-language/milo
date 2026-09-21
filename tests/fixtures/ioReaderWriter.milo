@@ -12,6 +12,7 @@
 // @expect: flushed: abcde
 
 from "std/io" import {
+    IoError,
     BufReader,
     BufWriter,
     BytesReader,

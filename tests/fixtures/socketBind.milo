@@ -7,6 +7,9 @@
 from "std/platform" import {
     SockAddrIn, makeSockaddr, ensureNetInit, closeSocket
 }
+from "std/os" import {
+    bindIn
+}
 
 pub extern fn socket(domain: i32, sockType: i32, protocol: i32): i32
 

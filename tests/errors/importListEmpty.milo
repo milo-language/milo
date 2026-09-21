@@ -1,0 +1,8 @@
+// The degenerate case of the list-does-not-restrict hole: an empty list imported everything.
+// @error: 'strlen' is not imported
+from "std/os" import { }
+
+fn main(): i32 {
+    print(strlen("hi"))
+    return 0
+}

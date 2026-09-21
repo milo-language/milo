@@ -8,6 +8,7 @@ Fallible functions return `Result<T, E>`: either `Result.Ok(value)` or `Result.E
 
 ```milo
 from "std/fs" import { readFile }
+from "std/io" import { IoError }
 from "std/strconv" import { parseInt }
 
 fn readNumber(path: &string): Result<i64, IoError> {
@@ -27,6 +28,7 @@ On error, `?` returns it to the caller immediately. Only works inside functions 
 
 ```milo
 from "std/fs" import { readFile }
+from "std/io" import { IoError }
 
 fn loadConfig(path: &string): Result<string, IoError> {
     let text = readFile(path)?     // on error, returns it
@@ -68,6 +70,7 @@ When you need different behavior for success and failure:
 
 ```milo
 from "std/fs" import { readFile }
+from "std/io" import { IoError }
 from "std/strconv" import { parseInt }
 
 fn readNumber(path: &string): Result<i64, IoError> {
@@ -108,6 +111,7 @@ Callers match on specific failure modes. Patterns do not nest, so bind the error
 
 ```milo
 from "std/fs" import { readFile }
+from "std/io" import { IoError }
 
 fn parse(data: string) {
     print("parsed ", data.len, " bytes")
@@ -135,6 +139,7 @@ When your error enum wraps another error type, `?` converts automatically:
 
 ```milo
 from "std/fs" import { readFile }
+from "std/io" import { IoError }
 
 enum ParseError {
     BadNumber(string),

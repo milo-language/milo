@@ -18,7 +18,7 @@ import { expandDeriveTemplate, dumpTokens, DeriveTemplateError, formatMiloType }
 import { display } from "./mangle";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
-import { basename, relative, resolve as resolvePath, sep } from "path";
+import { basename, dirname, relative, resolve as resolvePath, sep } from "path";
 import { STDLIB_DIR } from "./stdlibBundle";
 import { must } from "./must";
 
@@ -54,6 +54,21 @@ function displayPath(file: string): string {
   if (file.startsWith(root)) return norm(file.slice(root.length));
   const rel = relative(process.cwd(), file);
   return rel && !rel.startsWith("..") ? norm(rel) : basename(file);
+}
+
+// The import path that names `declFile` from inside `refFile`: `std/os` for the stdlib
+// (a platform suffix such as `.darwin` is not part of the path), otherwise relative to
+// the importing file, which is what a non-std import path means. Written so a tool can
+// paste it straight into an import line (scripts/fix-imports.ts does).
+function importPathFrom(refFile: string, declFile: string): string {
+  const norm = (p: string) => p.split(sep).join("/");
+  const stripExt = (p: string) => p.replace(/\.[a-z0-9]+\.milo$|\.milo$/, "");
+  // STDLIB_DIR is the directory holding `std/`, so a sibling `examples/` file is under
+  // it too; only the `std/` subtree gets the bare path.
+  const root = STDLIB_DIR + sep;
+  if (declFile.startsWith(root + "std" + sep)) return stripExt(norm(declFile.slice(root.length)));
+  const rel = norm(relative(dirname(refFile), declFile));
+  return stripExt(rel.startsWith(".") ? rel : `./${rel}`);
 }
 
 // Substitute a generic alias's arguments into its body, at the AST level rather than on
@@ -2825,6 +2840,11 @@ export class TypeChecker {
     this.functions.set("_schedulerGet", { params: [], ret: ptrU8, variadic: false });
     this.functions.set("_schedulerSet", { params: [{ type: ptrU8, name: "ptr" }], ret: { tag: "void" }, variadic: false });
 
+    // A user fn with a builtin's name (std/testing's `assert`) wins everywhere in the
+    // flat namespace, so an unrelated file's builtin call binds to it without ever
+    // importing it. The visibility pass exempts these: the call was written against the
+    // builtin, and only the redeclaration diagnostics have anything to say about it.
+    this.builtinFnNames = new Set([...this.functions.keys(), "Option", "Result"]);
     this.registerBuiltinTraits();
     this.registerBuiltinOption();
     this.registerBuiltinResult();
@@ -3430,8 +3450,19 @@ export class TypeChecker {
 
     // File-level `pub` visibility: a reference to a non-`pub` decl defined in
     // another file is an error. Run last so it never masks a more basic type error.
-    for (const v of checkVisibility(program)) {
+    for (const v of checkVisibility(program, this.builtinFnNames)) {
       const where = v.declFiles.length === 1 ? basename(v.declFiles[0]) : `${v.declFiles.length} files`;
+      if (v.why === "unimported") {
+        const modulePath = importPathFrom(v.refFile, v.declFiles[0]);
+        this.diagnostics.push({
+          severity: "error",
+          span: v.span,
+          message: `'${v.name}' is not imported`,
+          hint: `it is exported by ${where}; add it to the import list: from "${modulePath}" import { ${v.name} }`,
+          code: "unimported",
+        });
+        continue;
+      }
       this.diagnostics.push({
         severity: "error",
         span: v.span,
@@ -6652,6 +6683,8 @@ export class TypeChecker {
   // reporting unreachable code after one of these would pile a bogus second error
   // onto a file that already has the real one.
   private nonExhaustiveMatches = new WeakSet<MatchArm[]>();
+
+  private builtinFnNames = new Set<string>();
 
   // Every Stmt kind, so the scan below can recognize a statement list by shape.
   private static readonly STMT_KINDS: ReadonlySet<string> = new Set([

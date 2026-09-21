@@ -3,7 +3,7 @@
 String-to-number and number-to-string conversions.
 
 ```milo
-from "std/strconv" import { parseInt, parseFloat, formatFloat, i64ToHex }
+from "std/strconv" import { parseInt, parseFloat, formatFloat, i64ToHex, quoteString }
 ```
 
 ## Functions

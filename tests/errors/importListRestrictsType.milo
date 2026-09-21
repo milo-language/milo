@@ -1,0 +1,12 @@
+// Types too: a struct named in a signature or literal has to be in the list, even when
+// a function that returns it is.
+// @error: 'S' is not imported
+from "lib/privateField" import { makeS }
+
+fn take(s: S): i32 {
+    return 0
+}
+
+fn main(): i32 {
+    return take(makeS(1))
+}
