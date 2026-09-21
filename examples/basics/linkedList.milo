@@ -1,8 +1,8 @@
 // @run:
-// Doubly-linked list via arena — nodes point to neighbors via Handle
-from "std/arena" import {
-    Arena, Handle, arenaAlloc, arenaGet, arenaModify, arenaNew
-}
+// Doubly-linked list on an arena. The list owns every node; a node names its
+// neighbours by Handle, a copyable token the arena resolves, so no stored reference
+// is needed and a walk is a chain of handle lookups.
+from "std/arena" import { Arena, Handle }
 
 pub struct DLNode {
     value: i64,
@@ -18,123 +18,47 @@ pub struct DLList {
 }
 
 pub fn newList(): DLList {
-    return DLList {
-        arena: arenaNew(),
-        head: Option.None,
-        tail: Option.None,
-        len: 0,
-    }
+    return DLList { arena: Arena<DLNode>.new(), head: None, tail: None, len: 0 }
 }
 
 pub fn pushBack(list: &mut DLList, value: i64) {
-    let node = DLNode {
-        value: value,
-        prev: list.tail,
-        next: Option.None,
+    let h = list.arena.alloc(DLNode { value: value, prev: list.tail, next: None })
+    if let Some(tailH) = list.tail {
+        let _ = list.arena.modifyMut(tailH, (n: &mut DLNode) => { n.next = Some(h) })
+    } else {
+        list.head = Some(h)
     }
-    let h = arenaAlloc(&mut list.arena, node)
-
-    match list.tail {
-        Option.Some(tailH) => {
-            let _ = arenaModify(&mut list.arena, tailH, (n: DLNode) => {
-                var updated = n
-                updated.next = Option.Some(h)
-                return updated
-            }
-            )
-        }
-        Option.None => {
-            list.head = Option.Some(h)
-        }
-    }
-
-    list.tail = Option.Some(h)
+    list.tail = Some(h)
     list.len += 1
 }
 
 pub fn pushFront(list: &mut DLList, value: i64) {
-    let node = DLNode {
-        value: value,
-        prev: Option.None,
-        next: list.head,
+    let h = list.arena.alloc(DLNode { value: value, prev: None, next: list.head })
+    if let Some(headH) = list.head {
+        let _ = list.arena.modifyMut(headH, (n: &mut DLNode) => { n.prev = Some(h) })
+    } else {
+        list.tail = Some(h)
     }
-    let h = arenaAlloc(&mut list.arena, node)
-
-    match list.head {
-        Option.Some(headH) => {
-            let _ = arenaModify(&mut list.arena, headH, (n: DLNode) => {
-                var updated = n
-                updated.prev = Option.Some(h)
-                return updated
-            }
-            )
-        }
-        Option.None => {
-            list.tail = Option.Some(h)
-        }
-    }
-
-    list.head = Option.Some(h)
+    list.head = Some(h)
     list.len += 1
 }
 
-pub fn printForward(list: &DLList) {
-    var cur = list.head
-    var result: string = ""
-
-    var done = false
-    while !done {
-        match cur {
-            Option.Some(handle) => {
-                match arenaGet(list.arena, handle) {
-                    Option.Some(node) => {
-                        if result.len > 0 {
-                            result += " <-> "
-                        }
-                        result += node.value.toString()
-                        cur = node.next
-                    }
-                    Option.None => {
-                        done = true
-                    }
-                }
-            }
-            Option.None => {
-                done = true
-            }
-        }
+// Joins the values from `start`, following `next` links forward or `prev` links back.
+fn render(list: &DLList, start: Option<Handle<DLNode>>, forward: bool): string {
+    var out = ""
+    var cur = start
+    while let Some(h) = cur {
+        let node = list.arena.get(h)!
+        if out.len > 0 { out.pushStr(" <-> ") }
+        out.pushStr(node.value.toString())
+        cur = if forward { node.next } else { node.prev }
     }
-    print(result)
+    return out
 }
 
-pub fn printBackward(list: &DLList) {
-    var cur = list.tail
-    var result: string = ""
+pub fn printForward(list: &DLList) { print(render(list, list.head, true)) }
 
-    var done = false
-    while !done {
-        match cur {
-            Option.Some(handle) => {
-                match arenaGet(list.arena, handle) {
-                    Option.Some(node) => {
-                        if result.len > 0 {
-                            result += " <-> "
-                        }
-                        result += node.value.toString()
-                        cur = node.prev
-                    }
-                    Option.None => {
-                        done = true
-                    }
-                }
-            }
-            Option.None => {
-                done = true
-            }
-        }
-    }
-    print(result)
-}
+pub fn printBackward(list: &DLList) { print(render(list, list.tail, false)) }
 
 pub fn main(): i32 {
     var list = newList()
