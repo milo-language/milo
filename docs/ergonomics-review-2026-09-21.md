@@ -63,7 +63,7 @@ Status: **exists** = the language/std already has it and the examples do not use
 
 | # | Item | Status / notes |
 |---|---|---|
-| T1 | Take `&string` at library boundaries (`fromJson`, `jsonStringify`, path helpers); `readDir` names without a clone to recurse | **open**, backlog #14. |
+| T1 | Take `&string` at library boundaries (`fromJson`, `jsonStringify`, path helpers); `readDir` names without a clone to recurse | **partial**: json boundaries done 2026-09-21 (backlog #14 closed, `Json.parse`/builders/`fromJson` borrow). Path helpers and `readDir` recursion still open. |
 | T2 | One string story: `String.builder()` or a plus-in-loop lint; byte vs text split in names; `codePoints()` in examples | **done** for the lint half: `pushStr`, `codePoints()`, `std/unicode` exist. Lint `string-concat-in-loop` shipped 2026-09-21 off by default with 91 sites in examples (`pushStr` had 3 uses in the whole corpus); the 77 distinct sites were rewritten to `pushStr` the same day and the lint is on by default. Byte vs text naming split still open. |
 | T3 | Cursor protocol as a type: `interface Scan<S, T> { fn next(self: &mut Self, store: &S): Option<T> }`, `for e in store.scan()` | **open**. `kvstore.milo` is the hand-rolled exhibit. |
 | T4 | JSON: byte-feed/incremental parser; `jq.milo` on `std/json` (`strPath`, cursor API) | **partial**: `strPath` and `curRoot` family exist; `jq.milo` is on `std/json` since 2026-09-21 (379 to 120 lines, `Step` enum). Incremental parser open. |

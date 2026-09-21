@@ -214,7 +214,7 @@ pub fn handleTerminalWs(ws: WsConn): void {
         }
     }
 
-    let j = Json.parse(initPayload.clone())!
+    let j = Json.parse(initPayload)!
     let rows = j.i64("rows") ?? 24
     let cols = j.i64("cols") ?? 80
     let command = j.str("command") ?? "bash"

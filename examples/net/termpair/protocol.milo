@@ -28,8 +28,7 @@ pub fn makeInitMessage(rows: i64, cols: i64, command: &string, startTime: &strin
         "true"
     } else {
         "false"
-    }
-    )
+    })
     msg = msg + ",\"command\":\"" + command + "\""
     msg = msg + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
     msg += ",\"subprotocol_version\":\"4\""
@@ -53,8 +52,7 @@ pub fn makeTerminalInfo(terminalId: &string, rows: i64, cols: i64, command: &str
         "true"
     } else {
         "false"
-    }
-    )
+    })
     j = j + ",\"command\":\"" + command + "\""
     j = j + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
     j += ",\"termpair_version\":\"0.1.0\""
@@ -62,8 +60,7 @@ pub fn makeTerminalInfo(terminalId: &string, rows: i64, cols: i64, command: &str
         "true"
     } else {
         "false"
-    }
-    )
+    })
     j = j + ",\"display_name\":\"" + displayName + "\""
     j += "}"
     return j
@@ -112,24 +109,24 @@ pub fn makeNumClients(n: i64): string {
 // ── parse helpers ──
 
 pub fn parseEvent(raw: &string): string {
-    let j = Json.parse(raw.clone())!
+    let j = Json.parse(raw)!
     return j.str("event") ?? ""
 }
 
 // Read a top-level string field (decrypted command payload is {"data":..,"salt":..}).
 pub fn parseField(raw: &string, field: &string): string {
-    let j = Json.parse(raw.clone())!
+    let j = Json.parse(raw)!
     return j.str(field) ?? ""
 }
 
 pub fn parsePayloadStr(raw: &string, field: &string): string {
-    let j = Json.parse(raw.clone())!
+    let j = Json.parse(raw)!
     let payload = j.get("payload")!
     return payload.str(field) ?? ""
 }
 
 pub fn parsePayloadI64(raw: &string, field: &string): i64 {
-    let j = Json.parse(raw.clone())!
+    let j = Json.parse(raw)!
     let payload = j.get("payload")!
     return payload.i64(field) ?? 0
 }

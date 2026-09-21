@@ -465,7 +465,7 @@ fn jwtVerify(v: &JwtVerifier, token: &string): Result<JwtClaims, JwtError> {
     // Only now is the payload worth parsing: everything below this line is data the
     // holder of the secret vouched for.
     let payloadText = jwtDecodeSegment(jwtSegment(token, firstDot + 1, lastDot), "payload")?
-    let Result.Ok(doc) = Json.parse(payloadText.clone()) else {
+    let Result.Ok(doc) = Json.parse(payloadText) else {
         return Result.Err(JwtError.Malformed("payload is not valid JSON"))
     }
     if !doc.isObject() {

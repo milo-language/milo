@@ -3,7 +3,7 @@ system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
 key-files: std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
-last-verified: 2026-09-20
+last-verified: 2026-09-21
 -->
 
 # Breaking changes
@@ -16,6 +16,16 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 `"milo": "^0.1.0"` in its `milo.json` (see
 [the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
 marker is added here each time a version is cut.
+
+## `Json.parse`, the `Json.obj()`/`Json.arr()` builders and derived `fromJson` borrow their strings (2026-09-21)
+
+`Json.parse(s)`, `Json.parseJsonc(s)`, `@derive(Json)`'s `fromJson(text)`, every builder
+key and the `str`/`raw` payloads take `&string`. An owned argument still auto-borrows, so
+call sites compile unchanged; the `.clone()` that a borrowed caller had to write
+(`Json.parse(raw.clone())`, `.str("name", name.clone())`) is now a redundant copy and
+can be dropped. The one behavior change is cost: a caller that handed over an owned
+buffer it no longer needed paid nothing and now pays one copy, because the document
+owns its source. `jsonParse(s)` / `jsoncParse(s)` keep the owned zero-copy form.
 
 ## Only `pub` fns are exported symbols from `build-lib` / `emit-obj` (2026-09-21)
 

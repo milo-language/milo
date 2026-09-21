@@ -350,7 +350,7 @@ export function deriveJsonSource(structName: string, fields: JsonFieldPlan[]): s
   }
 
   // ── fromJson ──
-  out.push(`    fn fromJson(text: string): Result<${structName}, JsonError> {`);
+  out.push(`    fn fromJson(text: &string): Result<${structName}, JsonError> {`);
   out.push(`        match Json.parse(text) {`);
   out.push(`            Result.Ok(doc) => {`);
   out.push(`                return ${structName}.fromJsonNode(doc, doc.curRoot())`);

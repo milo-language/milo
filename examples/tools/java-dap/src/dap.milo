@@ -75,7 +75,7 @@ impl DapOut {
     fn event(self: &mut DapOut, name: &string, body: &string): void {
         self.seq += 1
         let msg = Json.obj().int("seq", self.seq).str("type", "event")
-            .str("event", name.clone()).raw("body", body.clone()).build()
+            .str("event", name).raw("body", body).build()
         self.sendRaw(msg)
     }
 
@@ -83,7 +83,7 @@ impl DapOut {
         self.seq += 1
         let msg = Json.obj().int("seq", self.seq).str("type", "response")
             .int("request_seq", reqSeq).bool("success", true)
-            .str("command", command.clone()).raw("body", body.clone()).build()
+            .str("command", command).raw("body", body).build()
         self.sendRaw(msg)
     }
 
@@ -91,7 +91,7 @@ impl DapOut {
         self.seq += 1
         let msg = Json.obj().int("seq", self.seq).str("type", "response")
             .int("request_seq", reqSeq).bool("success", false)
-            .str("command", command.clone()).str("message", message.clone()).build()
+            .str("command", command).str("message", message).build()
         self.sendRaw(msg)
     }
 }
@@ -1093,10 +1093,10 @@ impl Sess {
             description = typeName.clone() + ": " + msg.clone()
         }
         let body = Json.obj()
-            .str("exceptionId", typeName.clone())
+            .str("exceptionId", typeName)
             .str("description", description)
             .str("breakMode", breakMode)
-            .raw("details", Json.obj().str("message", msg.clone()).str("typeName", typeName.clone()).build())
+            .raw("details", Json.obj().str("message", msg).str("typeName", typeName).build())
             .build()
         self.out.respond(seq, cmdName, body)
     }
@@ -1414,7 +1414,7 @@ impl Sess {
         } else {
             value = "<tag " + tag.toString() + ">"
         }
-        return Json.obj().str("name", name.clone()).str("value", value)
+        return Json.obj().str("name", name).str("value", value)
             .str("type", typeName).int("variablesReference", ref).build()
     }
 
@@ -1645,11 +1645,11 @@ impl Sess {
             return
         }
         if pkt.cmdSet == -2 {
-            self.out.event("output", Json.obj().str("category", "stdout").str("output", pkt.body.clone()).build())
+            self.out.event("output", Json.obj().str("category", "stdout").str("output", pkt.body).build())
             return
         }
         if pkt.cmdSet == -3 {
-            self.out.event("output", Json.obj().str("category", "stderr").str("output", pkt.body.clone()).build())
+            self.out.event("output", Json.obj().str("category", "stderr").str("output", pkt.body).build())
             return
         }
         if pkt.cmdSet == -4 {
