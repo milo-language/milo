@@ -80,8 +80,15 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 
 Eight items from an outside review under one lens: the AI writes the code, a human reads
 it, so extra characters are cheap and anything that makes the reader look up a signature
-is expensive. Ranked here by ROI against effort, which is not the order the review gave
-(it put 1, 2 and 5 first). None of these duplicates a declined item in roadmap.md.
+is expensive. The diagnoses were checked against the tree (no tuple type; no in-place
+HashMap access while `Arena.modifyMut` exists; `Result<T>` defaults to `string`; clang is
+95% of a build) and hold. The prescriptions are ranked here by ROI against effort, which
+is not the order the review gave (it put 1, 2 and 5 first). A8, A6, A2 and A5(a) are
+cheap and add no language surface; A1, A4 and A5(b) are real but wait for a concrete
+pull; A3 and the capabilities half of A7 are NOT approved: A3 is a whole-language syntax
+change against Ethos #3 whose lint form gives most of the reader benefit, and the
+capabilities rejection in docs/effects-and-capabilities.md is not answered by the
+review's "the writer is now the AI".
 
 | # | Item | ROI | Effort | Why / unblocks | Ref |
 |---|------|-----|--------|----------------|-----|
