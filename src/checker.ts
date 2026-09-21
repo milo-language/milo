@@ -10793,6 +10793,38 @@ export class TypeChecker {
         this.errorIfResourceCopyOut(objType.value, "getOrDefault", "HashMap", sp, `Borrow it with 'for k, v in m', or take it out for real with 'remove'`);
         return this.setType(expr, objType.value);
       }
+      // In-place access. `modify` hands the callback a `&mut V` view of the stored value,
+      // so a nested container is updated where it sits instead of get-clone-mutate-insert;
+      // `getOrInsertWith` is the "entry or default" half. The receiver is frozen for the
+      // callback's duration (borrowDuringCallback), so the callback cannot insert into or
+      // remove from the map it is reaching into.
+      if (expr.method === "modify") {
+        if (expr.args.length !== 2) { this.error(`'modify' expects 2 arguments (key, callback), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+        const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+        if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
+          this.error(`modify key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
+        }
+        const valRef: TypeKind = { tag: "ref", inner: objType.value, mutable: true };
+        const cbHint: TypeKind = { tag: "fn", params: [valRef], ret: { tag: "void" } };
+        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbSig = this.checkExprWithHint(expr.args[1], cbHint);
+        this.checkCallbackSig(cbSig, cbHint, "modify", sp);
+        if (cbBorrow) this.unfreeze(cbBorrow);
+        return this.setType(expr, { tag: "bool" });
+      }
+      if (expr.method === "getOrInsertWith") {
+        if (expr.args.length !== 2) { this.error(`'getOrInsertWith' expects 2 arguments (key, init), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+        const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+        if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
+          this.error(`getOrInsertWith key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
+        }
+        const cbHint: TypeKind = { tag: "fn", params: [], ret: objType.value };
+        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbSig = this.checkExprWithHint(expr.args[1], cbHint);
+        this.checkCallbackSig(cbSig, cbHint, "getOrInsertWith", sp);
+        if (cbBorrow) this.unfreeze(cbBorrow);
+        return this.setType(expr, { tag: "bool" });
+      }
       if (expr.method === "contains") {
         if (expr.args.length !== 1) { this.error(`'contains' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
         const keyType = this.checkExprWithHint(expr.args[0], objType.key);

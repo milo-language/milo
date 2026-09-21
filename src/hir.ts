@@ -62,6 +62,10 @@ export type HIRExpr =
   | { kind: "HashMapInsert"; map: HIRExpr; key: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapGet"; map: HIRExpr; key: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "HashMapGetOrDefault"; map: HIRExpr; key: HIRExpr; default: HIRExpr; type: TypeKind; span?: Span }
+  // `m.modify(k, f)`: f(&mut value) in place when the key is present; bool says whether.
+  | { kind: "HashMapModify"; map: HIRExpr; key: HIRExpr; callback: HIRExpr; type: TypeKind; span?: Span }
+  // `m.getOrInsertWith(k, init)`: insert init() when the key is absent; bool says whether it did.
+  | { kind: "HashMapGetOrInsertWith"; map: HIRExpr; key: HIRExpr; init: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapContains"; map: HIRExpr; key: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapRemove"; map: HIRExpr; key: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }

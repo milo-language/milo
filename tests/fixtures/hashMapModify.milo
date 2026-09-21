@@ -1,0 +1,47 @@
+// HashMap in-place access: modify runs a callback on the stored value as a `&mut V` view,
+// getOrInsertWith fills a missing key from a closure. Together they are the group-by and
+// count idioms without get-clone-mutate-insert (backlog A2).
+fn main(): i32 {
+    var groups: HashMap<string, Vec<i64>> = HashMap.new()
+    let words: Vec<string> = ["a", "b", "a", "c", "a", "b"]
+    var i: i64 = 0
+    for w in words {
+        groups.getOrInsertWith(w.clone(), (): Vec<i64> => Vec.new())
+        let n = i
+        groups.modify(w.clone(), (v: &mut Vec<i64>): void => {
+            v.push(n)
+        }
+        )
+        i = i + 1
+    }
+    let ka = groups.getOrDefault("a", Vec.new())
+    print(ka.len())
+    print(groups.getOrDefault("b", Vec.new()) [1])
+    print(groups.modify("zzz", (v: &mut Vec<i64>): void => {
+        v.push(0)
+    }
+    ))
+    var counts: HashMap<string, i64> = HashMap.new()
+    for w in words {
+        if !counts.modify(w.clone(), (c: &mut i64): void => {
+            c = c + 1
+        }
+        ) {
+            counts.insert(w.clone(), 1)
+        }
+    }
+    print(counts.getOrDefault("a", 0))
+    print(counts.getOrDefault("c", 0))
+    print(counts.getOrInsertWith("d", (): i64 => 7))
+    print(counts.getOrInsertWith("d", (): i64 => 8))
+    print(counts.getOrDefault("d", 0))
+    return 0
+}
+// @expect: 3
+// @expect: 5
+// @expect: false
+// @expect: 3
+// @expect: 1
+// @expect: true
+// @expect: false
+// @expect: 7

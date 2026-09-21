@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-21 (&mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-09-21 (HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -1737,15 +1737,30 @@ disturb the snapshot. This is the supported way to get a **stable** order out of
 map — collect, then sort (see the order note below). To read entries without
 copying, use `for k, v in m`, which borrows.
 
-There is no `entry` / `getOrInsert`. Both hand back a mutable reference *into* the
-table, and Milo's references are second-class — they cannot be returned. Count with
-the two-lookup form instead:
+### In-place access: modify() and getOrInsertWith()
+
+There is no `entry` that hands back a reference *into* the table: Milo's references
+are second-class and cannot be returned. The reference is passed in instead. `modify`
+runs a callback on the stored value as a `&mut V` view and says whether the key was
+present; `getOrInsertWith` fills a missing key from a closure and says whether it did.
+The map is borrowed for the callback's duration, so the callback cannot insert into or
+remove from the map it is reaching into.
 
 ```milo
-var m: HashMap<string, i64> = HashMap.new()
+var groups: HashMap<string, Vec<i64>> = HashMap.new()
+groups.getOrInsertWith("a", (): Vec<i64> => Vec.new())
+groups.modify("a", (v: &mut Vec<i64>): void => { v.push(1) })
+
+var counts: HashMap<string, i64> = HashMap.new()
 let word = "hello"
-m.insert(word, m.getOrDefault(word, 0) + 1)
+if !counts.modify(word, (c: &mut i64): void => { c = c + 1 }) {
+    counts.insert(word, 1)
+}
 ```
+
+For a Copy value the two-lookup form is as short: `m.insert(word, m.getOrDefault(word,
+0) + 1)`. `modify` is what removes the clone-mutate-insert round trip for a value that
+owns heap memory.
 
 ### Iteration
 

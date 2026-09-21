@@ -844,6 +844,18 @@ export class CodegenJS {
         const k = this.genExpr(expr.key);
         return `(${m}.has(${k}) ? ${m}.get(${k}) : ${this.genExpr(expr.default)})`;
       }
+      case "HashMapModify": {
+        // A primitive value reaches the callback as a `&mut` box (see genArg) that reads
+        // and writes the entry; an array, Map or object is mutated where it sits.
+        const m = this.genExpr(expr.map), k = this.genExpr(expr.key), f = this.genExpr(expr.callback);
+        const vt = expr.map.type.tag === "hashmap" ? expr.map.type.value : undefined;
+        const arg = this.needsBox(vt) ? `{get v() { return _m.get(_k); }, set v(_x) { _m.set(_k, _x); }}` : `_m.get(_k)`;
+        return `((_m, _k) => _m.has(_k) ? (${f}(${arg}), true) : false)(${m}, ${k})`;
+      }
+      case "HashMapGetOrInsertWith": {
+        const m = this.genExpr(expr.map), k = this.genExpr(expr.key), f = this.genExpr(expr.init);
+        return `((_m, _k) => _m.has(_k) ? false : (_m.set(_k, ${f}()), true))(${m}, ${k})`;
+      }
       case "HashMapContains":
         return `${this.genExpr(expr.map)}.has(${this.genExpr(expr.key)})`;
       case "HashMapRemove":

@@ -1289,6 +1289,12 @@ class LowerCtx {
           if (expr.method === "getOrDefault") {
             return { kind: "HashMapGetOrDefault", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), default: this.lowerExpr(expr.args[1]), type, span: expr.span };
           }
+          if (expr.method === "modify") {
+            return { kind: "HashMapModify", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), callback: this.lowerExpr(expr.args[1]), type, span: expr.span };
+          }
+          if (expr.method === "getOrInsertWith") {
+            return { kind: "HashMapGetOrInsertWith", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), init: this.lowerExpr(expr.args[1]), type, span: expr.span };
+          }
           if (expr.method === "contains") {
             return { kind: "HashMapContains", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), type, span: expr.span };
           }

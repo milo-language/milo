@@ -5177,6 +5177,10 @@ export class Codegen {
         return this.genHashMapGetOrDefault(expr, lines);
       case "HashMapContains":
         return this.genHashMapContains(expr, lines);
+      case "HashMapModify":
+        return this.genHashMapModify(expr, lines);
+      case "HashMapGetOrInsertWith":
+        return this.genHashMapGetOrInsertWith(expr, lines);
       case "HashMapRemove":
         return this.genHashMapRemove(expr, lines);
       case "HashMapWithCapacity":
@@ -9996,19 +10000,8 @@ export class Codegen {
   }
 
   private genHashMapInsert(expr: HIRExpr & { kind: "HashMapInsert" }, lines: string[]): Gen {
-    this.hasHashMapType = true;
-    this.needsMalloc = true;
-    this.needsFree = true;
-    this.needsGetentropy = true;
-
     const mapType = expr.map.type;
     if (mapType.tag !== "hashmap") throw new Error("HashMapInsert on non-hashmap");
-    const keyType = mapType.key;
-    const valueType = mapType.value;
-    const keyTy = this.llvmType(keyType);
-    const valTy = this.llvmType(valueType);
-    const entryTy = this.hashMapEntryType(keyType, valueType);
-
     // get pointer to map
     const { ptr: mapPtr, tempSlot: mapTempSlot } = this.mapReceiverPtr(lines, expr.map);
 
@@ -10017,6 +10010,27 @@ export class Codegen {
     lines.push(...keyLines);
     const [valLines, valVal] = this.genExpr(expr.value);
     lines.push(...valLines);
+    this.emitHashMapInsertValues(lines, mapPtr, mapType, keyVal, valVal, expr.span);
+    // Inserting into a temporary is pointless but legal, and the temporary still leaks
+    // without this.
+    if (mapTempSlot) this.emitDropValue(lines, mapTempSlot, mapType);
+    return [lines, "0", "void"];
+  }
+
+  // The insert proper, on an already-evaluated key and value: seed, grow, probe, store.
+  // `getOrInsertWith` reaches it with a value its init closure produced after its own
+  // probe missed; the key was evaluated once, up front, for both probes.
+  private emitHashMapInsertValues(lines: string[], mapPtr: string, mapType: TypeKind & { tag: "hashmap" }, keyVal: string, valVal: string, span?: Span): void {
+    this.hasHashMapType = true;
+    this.needsMalloc = true;
+    this.needsFree = true;
+    this.needsGetentropy = true;
+
+    const keyType = mapType.key;
+    const valueType = mapType.value;
+    const keyTy = this.llvmType(keyType);
+    const valTy = this.llvmType(valueType);
+    const entryTy = this.hashMapEntryType(keyType, valueType);
 
     // lazy seed init
     const seedPtr = this.nextTemp();
@@ -10095,7 +10109,7 @@ export class Codegen {
     lines.push(`  ${entrySize} = getelementptr ${entryTy}, ptr null, i32 1`);
     const entrySizeI = this.nextTemp();
     lines.push(`  ${entrySizeI} = ptrtoint ptr ${entrySize} to i64`);
-    const { buf: newData, bytes: newTotalSize } = this.emitAllocBytes(lines, entrySizeI, newCap, "hmresize", expr.span);
+    const { buf: newData, bytes: newTotalSize } = this.emitAllocBytes(lines, entrySizeI, newCap, "hmresize", span);
     this.needsMemset = true;
     lines.push(`  call ptr @memset(ptr ${newData}, i32 0, i64 ${newTotalSize})`);
     // rehash all occupied entries from old data
@@ -10330,10 +10344,6 @@ export class Codegen {
     lines.push(`  br label %${probeCond}`);
 
     lines.push(`${insertDone}:`);
-    // Inserting into a temporary is pointless but legal, and the temporary still leaks
-    // without this.
-    if (mapTempSlot) this.emitDropValue(lines, mapTempSlot, expr.map.type);
-    return [lines, "0", "void"];
   }
 
   // The open-addressing probe every keyed HashMap op opens with: read the slot, an empty
@@ -10462,6 +10472,149 @@ export class Codegen {
     // A materialized receiver is an owned temporary nobody else will free. This runs after
     // the phi above, so the block it opens cannot invalidate the phi's predecessors.
     if (mapTempSlot) this.emitDropValue(lines, mapTempSlot, expr.map.type);
+    return [lines, result, "i1"];
+  }
+
+  // One keyed probe, shared by modify and getOrInsertWith: evaluates the receiver and
+  // key, opens the probe, and returns the labels plus what the found block needs (the
+  // entry pointer) and what the not-found block needs (the map pointer and the evaluated
+  // key). The caller writes both blocks and the join.
+  private beginHashMapProbe(lines: string[], map: HIRExpr, key: HIRExpr, prefix: string): {
+    mapPtr: string; mapTempSlot: string | null; keyVal: string; keyTy: string; keyType: TypeKind; entryPtr: string; slot: string; mask: string; slotAddr: string;
+    probeCond: string; probeNext: string; foundLabel: string; notFoundLabel: string;
+  } {
+    this.hasHashMapType = true;
+    const mapType = map.type;
+    if (mapType.tag !== "hashmap") throw new Error(`${prefix} on non-hashmap`);
+    const keyType = mapType.key;
+    const keyTy = this.llvmType(keyType);
+    const entryTy = this.hashMapEntryType(keyType, mapType.value);
+
+    const { ptr: mapPtr, tempSlot: mapTempSlot } = this.mapReceiverPtr(lines, map);
+    const [keyLines, keyVal] = this.genExpr(key);
+    lines.push(...keyLines);
+
+    const seedPtr = this.nextTemp();
+    lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
+    const seed = this.nextTemp();
+    lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
+    const capPtr = this.nextTemp();
+    lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
+    const cap = this.nextTemp();
+    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+    const dataFieldPtr = this.nextTemp();
+    lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
+
+    const hash = this.emitFnvHash(lines, keyVal, keyType, seed);
+    const mask = this.nextTemp();
+    lines.push(`  ${mask} = sub i64 ${cap}, 1`);
+    const slotAddr = this.nextTemp();
+    lines.push(`  ${slotAddr} = alloca i64`);
+    const slot0 = this.nextTemp();
+    lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
+    lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
+
+    const probeCond = this.nextLabel(`${prefix}.probe`);
+    const probeOccupied = this.nextLabel(`${prefix}.occupied`);
+    const probeCheck = this.nextLabel(`${prefix}.check`);
+    const foundLabel = this.nextLabel(`${prefix}.found`);
+    const notFoundLabel = this.nextLabel(`${prefix}.notfound`);
+    const probeNext = this.nextLabel(`${prefix}.pnext`);
+    const { slot, entryPtr } = this.emitHashProbePrologue(
+      lines,
+      { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
+      { slotAddr, data, entryTy, keyTy, keyVal, keyType },
+    );
+    return { mapPtr, mapTempSlot, keyVal, keyTy, keyType, entryPtr, slot, mask, slotAddr, probeCond, probeNext, foundLabel, notFoundLabel };
+  }
+
+  private emitProbeNext(lines: string[], p: { slot: string; mask: string; slotAddr: string; probeCond: string; probeNext: string }): void {
+    lines.push(`${p.probeNext}:`);
+    const nextSlot = this.nextTemp();
+    lines.push(`  ${nextSlot} = add i64 ${p.slot}, 1`);
+    const wrappedSlot = this.nextTemp();
+    lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${p.mask}`);
+    lines.push(`  store i64 ${wrappedSlot}, ptr ${p.slotAddr}`);
+    lines.push(`  br label %${p.probeCond}`);
+  }
+
+  // `m.modify(k, f)`: on a hit, call f with a pointer to the stored value (a `&mut V`
+  // view, so the callback writes the entry in place) and yield true; a miss yields false.
+  private genHashMapModify(expr: HIRExpr & { kind: "HashMapModify" }, lines: string[]): Gen {
+    const mapType = expr.map.type;
+    if (mapType.tag !== "hashmap") throw new Error("HashMapModify on non-hashmap");
+    const entryTy = this.hashMapEntryType(mapType.key, mapType.value);
+    // The callback first: its environment must exist before the probe branches.
+    const [cl, cv] = this.genExpr(expr.callback);
+    lines.push(...cl);
+    const fnPtr = this.nextTemp();
+    lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
+    const envPtr = this.nextTemp();
+    lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+
+    const p = this.beginHashMapProbe(lines, expr.map, expr.key, "hmm");
+    const doneLabel = this.nextLabel("hmm.done");
+
+    lines.push(`${p.foundLabel}:`);
+    const valPtr = this.nextTemp();
+    lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${p.entryPtr}, i32 0, i32 2`);
+    lines.push(`  call void ${fnPtr}(ptr ${envPtr}, ptr ${valPtr})`);
+    lines.push(`  br label %${doneLabel}`);
+    lines.push(`${p.notFoundLabel}:`);
+    lines.push(`  br label %${doneLabel}`);
+    this.emitProbeNext(lines, p);
+
+    lines.push(`${doneLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = phi i1 [true, %${p.foundLabel}], [false, %${p.notFoundLabel}]`);
+    this.dropOwnedTemp(lines, p.keyVal, p.keyTy, expr.key);
+    if (p.mapTempSlot) this.emitDropValue(lines, p.mapTempSlot, mapType);
+    return [lines, result, "i1"];
+  }
+
+  // `m.getOrInsertWith(k, init)`: a miss calls init() and inserts the result under the
+  // key that was already evaluated for the probe; a hit does nothing. Yields whether it
+  // inserted. On a hit the key, if it was an owned temporary, is dropped as `get` does;
+  // on a miss the insert takes ownership of it.
+  private genHashMapGetOrInsertWith(expr: HIRExpr & { kind: "HashMapGetOrInsertWith" }, lines: string[]): Gen {
+    const mapType = expr.map.type;
+    if (mapType.tag !== "hashmap") throw new Error("HashMapGetOrInsertWith on non-hashmap");
+    const [cl, cv] = this.genExpr(expr.init);
+    lines.push(...cl);
+    const fnPtr = this.nextTemp();
+    lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
+    const envPtr = this.nextTemp();
+    lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+
+    const p = this.beginHashMapProbe(lines, expr.map, expr.key, "hmi");
+    const doneLabel = this.nextLabel("hmi.done");
+    const valTy = this.llvmType(mapType.value);
+
+    lines.push(`${p.foundLabel}:`);
+    this.dropOwnedTemp(lines, p.keyVal, p.keyTy, expr.key);
+    // The drop can open blocks; the phi names the one we end in.
+    const foundEnd = this.nextLabel("hmi.found.end");
+    lines.push(`  br label %${foundEnd}`);
+    lines.push(`${foundEnd}:`);
+    lines.push(`  br label %${doneLabel}`);
+
+    lines.push(`${p.notFoundLabel}:`);
+    const produced = this.nextTemp();
+    lines.push(`  ${produced} = call ${valTy} ${fnPtr}(ptr ${envPtr})`);
+    this.emitHashMapInsertValues(lines, p.mapPtr, mapType, p.keyVal, produced, expr.span);
+    // The insert opened blocks of its own; the phi below needs the block we end in.
+    const insertedEnd = this.nextLabel("hmi.inserted");
+    lines.push(`  br label %${insertedEnd}`);
+    lines.push(`${insertedEnd}:`);
+    lines.push(`  br label %${doneLabel}`);
+    this.emitProbeNext(lines, p);
+
+    lines.push(`${doneLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = phi i1 [false, %${foundEnd}], [true, %${insertedEnd}]`);
+    if (p.mapTempSlot) this.emitDropValue(lines, p.mapTempSlot, mapType);
     return [lines, result, "i1"];
   }
 

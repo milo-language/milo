@@ -243,6 +243,8 @@ test("every probeable signature's return type matches what the checker infers", 
   // nothing checks. Shrinking it is good; growing it must be a deliberate edit.
   expect(skipped.sort()).toEqual([
     "any.addrOf",
+    // Callback parameters, like vec.each; tests/fixtures/hashMapModify.milo runs both.
+    "hashmap.getOrInsertWith", "hashmap.modify",
     // Like vec.ptr: a raw-pointer return has no literal to compare against.
     "heap.ptr",
     "option.andThen", "option.map", "option.orElse", "option.unwrapOrElse",

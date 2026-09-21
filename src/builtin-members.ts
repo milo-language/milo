@@ -129,6 +129,8 @@ export const BUILTIN_MEMBERS: Record<BuiltinReceiver, BuiltinMember[]> = {
     { name: "insert", sig: "(key: K, value: V)", retainsArg: true, grows: true },
     { name: "get", sig: "(key: K): Option<V>" },
     { name: "getOrDefault", sig: "(key: K, fallback: V): V" },
+    { name: "modify", sig: "(key: K, f: (&mut V) => void): bool", note: "f runs on the value in place; false when the key is absent" },
+    { name: "getOrInsertWith", sig: "(key: K, init: () => V): bool", note: "inserts init() when the key is absent; true when it did" },
     { name: "contains", sig: "(key: K): bool" },
     { name: "remove", sig: "(key: K)" },
     { name: "keys", sig: "(): Vec<K>" },
@@ -224,7 +226,7 @@ export const GROWING_MEMBERS: ReadonlySet<string> = namesWith("grows");
 // share one copy without importing each other.
 export const MUTATING_COLLECTION_METHODS: ReadonlySet<string> = new Set([
   "push", "pushStr", "pop", "insert", "remove", "reverse", "swap", "sort", "sortBy", "sortByKey",
-  "clear", "truncate", "extend", "retain", "reserve",
+  "clear", "truncate", "extend", "retain", "reserve", "modify", "getOrInsertWith",
 ]);
 
 // The one-line detail an editor shows next to the name.
