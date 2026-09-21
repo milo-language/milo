@@ -4,6 +4,7 @@ import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRC
 import { type TypeKind, needsDrop, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
+import type { PropagateBoxing } from "./checker";
 import { genVecSort, genVecSortBy, genVecSortByKey } from "./codegen-vec";
 import { cSigParams, headerLabel } from "./csig";
 import { classifyArg, classifyRet, AbiError, type ArgClass, type RetClass, type AbiStruct, type AbiLeaf } from "./abi";
@@ -6455,6 +6456,38 @@ export class Codegen {
     return [lines, result, retTy];
   }
 
+  // Move an error value into a fresh heap box and answer the fat pointer { data, itable }
+  // that a Heap<Iface> holds. A string error is wrapped in the prelude ErrorMessage first.
+  // Shared by `?` into Heap<Error> and `.context`.
+  private emitBoxAsIface(lines: string[], payloadVal: string, payloadTy: string, box: PropagateBoxing): string {
+    this.needsMalloc = true;
+    let boxedVal = payloadVal;
+    let boxedTy = payloadTy;
+    let boxedType: TypeKind = box.errType;
+    if (box.viaMessage) {
+      boxedType = { tag: "struct", name: box.fromType };
+      boxedTy = this.llvmType(boxedType);
+      boxedVal = this.nextTemp();
+      lines.push(`  ${boxedVal} = insertvalue ${boxedTy} undef, ${payloadTy} ${payloadVal}, 0`);
+    }
+    return this.emitHeapFatPtr(lines, boxedVal, boxedTy, boxedType, box.fromType, box.ifaceName);
+  }
+
+  // malloc a copy of `val` and pair it with the itable for (concrete, iface).
+  private emitHeapFatPtr(lines: string[], val: string, ty: string, type: TypeKind, fromType: string, ifaceName: string): string {
+    this.needsMalloc = true;
+    const boxPtr = this.nextTemp();
+    lines.push(`  ${boxPtr} = call ptr @malloc(i64 ${this.typeSizeOf(type)})`);
+    lines.push(`  store ${ty} ${val}, ptr ${boxPtr}`);
+    const itableInfo = this.itableLayouts.get(`${fromType}.${ifaceName}`);
+    const itableGlobal = itableInfo?.globalName ?? `@itable.${fromType}.${ifaceName}`;
+    const fat0 = this.nextTemp();
+    lines.push(`  ${fat0} = insertvalue { ptr, ptr } undef, ptr ${boxPtr}, 0`);
+    const fat = this.nextTemp();
+    lines.push(`  ${fat} = insertvalue { ptr, ptr } ${fat0}, ptr ${itableGlobal}, 1`);
+    return fat;
+  }
+
   private genInterfaceCoerce(expr: HIRExpr & { kind: "InterfaceCoerce" }, lines: string[]): Gen {
     // build fat pointer { ptr data, ptr itable }
     const isHeapCoerce = expr.type.tag === "heap";
@@ -6784,29 +6817,10 @@ export class Codegen {
         // Box the error and hand back a fat pointer { data, itable }: the same shape
         // genInterfaceCoerce builds for `Heap(e)` coerced to Heap<Iface>, done here
         // because the payload is loaded out of the operand's Err slot, not from an
-        // expression. A string error is wrapped in the prelude `Message` first.
-        this.needsMalloc = true;
-        const box = expr.boxConversion;
+        // expression. A string error is wrapped in the prelude `ErrorMessage` first.
         const srcPayload = this.nextTemp();
         lines.push(`  ${srcPayload} = load ${srcErrFieldTy}, ptr ${errPayloadPtr}`);
-        let boxedVal = srcPayload;
-        let boxedTy = srcErrFieldTy;
-        let boxedType: TypeKind = box.errType;
-        if (box.viaMessage) {
-          boxedType = { tag: "struct", name: box.fromType };
-          boxedTy = this.llvmType(boxedType);
-          boxedVal = this.nextTemp();
-          lines.push(`  ${boxedVal} = insertvalue ${boxedTy} undef, ${srcErrFieldTy} ${srcPayload}, 0`);
-        }
-        const boxPtr = this.nextTemp();
-        lines.push(`  ${boxPtr} = call ptr @malloc(i64 ${this.typeSizeOf(boxedType)})`);
-        lines.push(`  store ${boxedTy} ${boxedVal}, ptr ${boxPtr}`);
-        const itableInfo = this.itableLayouts.get(`${box.fromType}.${box.ifaceName}`);
-        const itableGlobal = itableInfo?.globalName ?? `@itable.${box.fromType}.${box.ifaceName}`;
-        const fat0 = this.nextTemp();
-        lines.push(`  ${fat0} = insertvalue { ptr, ptr } undef, ptr ${boxPtr}, 0`);
-        finalErrPayload = this.nextTemp();
-        lines.push(`  ${finalErrPayload} = insertvalue { ptr, ptr } ${fat0}, ptr ${itableGlobal}, 1`);
+        finalErrPayload = this.emitBoxAsIface(lines, srcPayload, srcErrFieldTy, expr.boxConversion);
         finalErrFieldTy = "{ ptr, ptr }";
       } else if (expr.fromConversion && srcErrFieldTy) {
         // From conversion: wrap source err in target error enum variant
@@ -12482,6 +12496,80 @@ export class Codegen {
   // combinators whose result provably shares no buffer with their receiver. orElse and the
   // Result combinators forward a payload through, so their results are NOT unshared and a
   // chain built on them stays the caller's problem rather than risking a double free.
+  // r.context(note): Ok is forwarded; Err is boxed (unless already a Heap<Error>) and
+  // becomes the cause of a heap ErrorContext { note, cause } coerced to Heap<Error>. The
+  // receiver was consumed by the checker, so both payloads are moved, not copied.
+  private genResultContext(expr: HIRExpr & { kind: "OptionOp" }, lines: string[], addr: string, enumTy: string, isOk: string): Gen {
+    if (expr.type.tag !== "enum") throw new Error("Result.context result is not an enum");
+    const resEnum = expr.type.name;
+    const resTy = `%${resEnum}`;
+    const resLayout = must(this.enumLayouts, resEnum, "enum layouts");
+    const srcLayout = must(this.enumLayouts, expr.enumName, "enum layouts");
+    const resOk = must(resLayout.variants, "Ok", "Result variants");
+    const resErr = must(resLayout.variants, "Err", "Result variants");
+    const srcOk = must(srcLayout.variants, "Ok", "Result variants");
+    const srcErr = must(srcLayout.variants, "Err", "Result variants");
+    // the note is evaluated first, unconditionally, like any argument
+    const [nl, noteVal] = this.genExpr(expr.default!);
+    lines.push(...nl);
+    const resAddr = `%__resctx.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${resAddr} = alloca ${resTy}`);
+    lines.push(`  store ${resTy} zeroinitializer, ptr ${resAddr}`);
+    const okLabel = this.nextLabel("resctx.ok");
+    const errLabel = this.nextLabel("resctx.err");
+    const contLabel = this.nextLabel("resctx.cont");
+    lines.push(`  br i1 ${isOk}, label %${okLabel}, label %${errLabel}`);
+    const payloadPtr = () => {
+      const p = this.nextTemp();
+      lines.push(`  ${p} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 1`);
+      return p;
+    };
+    const store = (tag: number, ty: string | undefined, val: string | undefined) => {
+      const tp = this.nextTemp();
+      lines.push(`  ${tp} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 0`);
+      lines.push(`  store i32 ${tag}, ptr ${tp}`);
+      if (!ty || !val) return;
+      const pp = this.nextTemp();
+      lines.push(`  ${pp} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 1`);
+      lines.push(`  store ${ty} ${val}, ptr ${pp}`);
+    };
+
+    lines.push(`${okLabel}:`);
+    // the note is unused on this path and is owned here (emitDropValue takes an address)
+    const noteAddr = this.nextTemp();
+    lines.push(`  ${noteAddr} = alloca %String`);
+    lines.push(`  store %String ${noteVal}, ptr ${noteAddr}`);
+    this.emitDropValue(lines, noteAddr, { tag: "string" });
+    if (srcOk.fieldTypes[0]) {
+      const v = this.nextTemp();
+      lines.push(`  ${v} = load ${srcOk.fieldTypes[0]}, ptr ${payloadPtr()}`);
+      store(resOk.tag, srcOk.fieldTypes[0], v);
+    } else {
+      store(resOk.tag, undefined, undefined);
+    }
+    lines.push(`  br label %${contLabel}`);
+
+    lines.push(`${errLabel}:`);
+    const errTy = srcErr.fieldTypes[0] ?? "{ ptr, ptr }";
+    const errVal = this.nextTemp();
+    lines.push(`  ${errVal} = load ${errTy}, ptr ${payloadPtr()}`);
+    const cause = expr.boxConversion ? this.emitBoxAsIface(lines, errVal, errTy, expr.boxConversion) : errVal;
+    const ctxType: TypeKind = { tag: "struct", name: "ErrorContext" };
+    const ctxTy = this.llvmType(ctxType);
+    const c0 = this.nextTemp();
+    lines.push(`  ${c0} = insertvalue ${ctxTy} undef, %String ${noteVal}, 0`);
+    const c1 = this.nextTemp();
+    lines.push(`  ${c1} = insertvalue ${ctxTy} ${c0}, { ptr, ptr } ${cause}, 1`);
+    const fat = this.emitHeapFatPtr(lines, c1, ctxTy, ctxType, "ErrorContext", "Error");
+    store(resErr.tag, "{ ptr, ptr }", fat);
+    lines.push(`  br label %${contLabel}`);
+
+    lines.push(`${contLabel}:`);
+    const out = this.nextTemp();
+    lines.push(`  ${out} = load ${resTy}, ptr ${resAddr}`);
+    return [lines, out, resTy];
+  }
+
   private optionOpDropsReceiver(expr: HIRExpr & { kind: "OptionOp" }): boolean {
     if (expr.op !== "map" && expr.op !== "optionAndThen") return false;
     if (!this.needsDropCg(expr.value.type)) return false;
@@ -13465,6 +13553,7 @@ export class Codegen {
     // callback still carries a payload, and it must be copied from the source enum into the
     // result enum — skipping it leaves the zeroinitializer, i.e. `map` over an Err would
     // silently produce a zeroed error value instead of the real one.
+    if (expr.op === "resultContext") return this.genResultContext(expr, lines, addr, enumTy, isSome);
     if (expr.op === "resultMap" || expr.op === "resultMapErr" || expr.op === "resultAndThen"
         || expr.op === "resultOrElse") {
       if (expr.type.tag !== "enum") throw new Error(`Result.${expr.op} result is not an enum`);

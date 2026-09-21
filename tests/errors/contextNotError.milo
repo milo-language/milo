@@ -1,0 +1,14 @@
+// `.context` boxes the error the way `?` into Heap<Error> does, so it has the same
+// gate: an error type with no message() cannot become a cause.
+// @error: 'context' error type mismatch: 'Silent' cannot be boxed as 'Heap<Error>' because it does not satisfy interface 'Error' (needs message(self: &Self))
+struct Silent {
+    code: i32,
+}
+fn f(): Result<i32, Silent> {
+    return Result.Err(Silent { code: 1 })
+}
+fn main(): i32 {
+    let r = f().context("calling f")
+    let _ = r
+    return 0
+}

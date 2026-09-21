@@ -160,6 +160,7 @@ export const BUILTIN_MEMBERS: Record<BuiltinReceiver, BuiltinMember[]> = {
     { name: "unwrapOrElse", sig: "(f: (&E) => T): T", note: "Copy T only; f runs only on Err" },
     { name: "map", sig: "(f: (&T) => U): Result<U, E>" },
     { name: "mapErr", sig: "(f: (&E) => F): Result<T, F>" },
+    { name: "context", sig: "(note: string): Result<T, Heap<Error>>", note: "boxes the error (a type with message(), or a string as ErrorMessage) as the cause of an ErrorContext whose message reads note first; consumes the receiver" },
     { name: "andThen", sig: "(f: (&T) => Result<U, E>): Result<U, E>" },
     { name: "orElse", sig: "(f: (&E) => Result<T, F>): Result<T, F>" },
   ],

@@ -23,6 +23,8 @@ export function lower(program: Program, checked: CheckResult, sourceDir?: string
 
 class LowerCtx {
   private currentRetType: TypeKind = { tag: "void" };
+  // set when any `.context` is lowered: the ErrorContext.Error itable must then be emitted
+  private usedContext = false;
   // Non-null only while lowering one function's contracts: collects the `old(e)` snapshots
   // that clause references. Outside that window an `old(...)` call is an ordinary call.
   private oldSlots: { name: string; value: HIRExpr }[] | null = null;
@@ -109,8 +111,10 @@ class LowerCtx {
 
     // collect itables for interface coercions
     const itableMap = new Map<string, { concreteType: string; ifaceName: string; methods: string[] }>();
-    // a `?` that boxes its error needs the same itable an explicit coercion would
-    const coercions = [...this.c.interfaceCoercions.values(), ...this.c.propagateBoxings.values()];
+    // a `?` or `.context` that boxes its error needs the same itable an explicit coercion
+    // would, and every `.context` boxes the ErrorContext it builds
+    const coercions = [...this.c.interfaceCoercions.values(), ...this.c.propagateBoxings.values(), ...this.c.contextBoxings.values()];
+    if (this.usedContext) coercions.push({ fromType: "ErrorContext", ifaceName: "Error" });
     for (const coercion of coercions) {
       const key = `${coercion.fromType}.${coercion.ifaceName}`;
       if (itableMap.has(key)) continue;
@@ -1094,6 +1098,18 @@ class LowerCtx {
           return {
             kind: "OptionOp", op: "resultUnwrapOrElse", value: this.lowerExpr(expr.object),
             default: this.lowerExpr(expr.args[0]),
+            enumName: objType.name, type, span: expr.span,
+          };
+        }
+        // context(note): the note rides in the `default` slot; the error's boxing (if it is
+        // not already a Heap<Error>) in boxConversion. Codegen builds the ErrorContext itself.
+        if (objType?.tag === "enum" && this.c.enums.get(objType.name)?.baseName === "Result"
+            && expr.method === "context") {
+          this.usedContext = true;
+          return {
+            kind: "OptionOp", op: "resultContext", value: this.lowerExpr(expr.object),
+            default: this.lowerExpr(expr.args[0]),
+            boxConversion: this.c.contextBoxings.get(expr),
             enumName: objType.name, type, span: expr.span,
           };
         }

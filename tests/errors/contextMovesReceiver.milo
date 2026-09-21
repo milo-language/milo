@@ -1,0 +1,13 @@
+// `.context` consumes its receiver: the Err payload moves into the box and the Ok
+// payload is forwarded, so the original Result is gone afterwards.
+// @error: use of moved variable 'r'
+fn f(): Result<string, string> {
+    return Result.Err("boom")
+}
+fn main(): i32 {
+    let r = f()
+    let c = r.context("calling f")
+    let _ = c
+    print(r.isOk())
+    return 0
+}
