@@ -123,10 +123,12 @@ test("an attribute attaches to its decl (no blank between, name hugs @)", () => 
   expect(format(out)).toBe(out);
 });
 
-test("single-statement inline block is unaffected", () => {
-  // `if c { return 1 }` already expands (brace reflow); reflow must not corrupt it.
+test("single-statement inline block stays inline", () => {
+  // A one-line brace group is kept inline (commit 90eba160); reflow must not
+  // explode it or glue the next statement onto it.
   const out = format(`fn f(c: bool): i32 {\n    if c { return 1 }\n    return 0\n}\n`);
-  expect(out).toContain("if c {\n        return 1\n    }");
+  expect(out).toContain("if c { return 1 }\n    return 0\n");
+  expect(format(out)).toBe(out);
 });
 
 // Regressions: each of these used to emit source that no longer lexes/parses,
