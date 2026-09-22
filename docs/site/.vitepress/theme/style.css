@@ -274,10 +274,12 @@
 .tile-img {
   display: block;
   width: calc(100% + 2.2rem);
+  /* bleeds past the card padding; VitePress caps img at max-width 100%, which left a gap on the right */
+  max-width: none;
   margin: -1.1rem -1.1rem 0.6rem;
-  height: 132px;
+  height: 180px;
   object-fit: cover;
-  object-position: center top;
+  object-position: center;
   background: var(--vp-c-bg);
   border-bottom: 1px solid var(--vp-c-divider);
 }

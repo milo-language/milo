@@ -169,7 +169,7 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
     <h3 class="cat-head">Emulators</h3>
     <div class="tile-grid">
       <a class="tile" href="https://github.com/milo-language/milo-emulators/tree/main/nes" target="_blank" rel="noopener">
-        <img class="tile-img" src="/showcase/nes.png" alt="Super Mario Bros. 3 running on the Milo NES emulator" loading="lazy">
+        <video class="tile-img" src="/showcase/nes.mp4" poster="/showcase/nes-poster.png" autoplay muted loop playsinline preload="auto" aria-label="The Super Mario Bros. 3 intro running on the Milo NES emulator: the curtain up, raccoon Mario flying across the title screen"></video>
         <h3>NES Emulator</h3>
         <p>A complete Nintendo: native SDL build, drop in a ROM and play.</p>
         <div class="tile-tags"><span>6502 core</span><span>bitwise</span><span>SDL</span></div>
