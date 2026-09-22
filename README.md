@@ -66,7 +66,7 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
 - **Some zero-copy.** Where Rust hands out a borrow, Milo sometimes asks for a `clone()`.
 - **One check moves to runtime.** "This offset still belongs to that buffer" is a named runtime failure, not a compile error and not a segfault.
 
-Good fit: CLIs, services, compilers, emulators, anything you would write in careful C as a buffer plus integer ids. Awkward fit: code that wants to keep an object graph as is (widget trees with parent pointers, intrusive lists, parsers that store slices of their input). Those become arenas and handles, and won't look like the original.
+Good fit: CLIs, services, compilers, emulators, anything you would write in careful C as a buffer plus integer ids. Awkward fit: code that wants to keep an object graph as is (widget trees with parent pointers, intrusive lists, parsers that store slices of their input). Those become arenas and handles, and won't look like the original ([what that looks like](https://milo-language.github.io/milo/language/patterns#build-a-tree-or-graph-whose-nodes-refer-to-each-other)).
 
 ## Status
 
