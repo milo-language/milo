@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: language-reference
+purpose: what the compiler rejects and what it warns about, with the warning reference generated from src/warnings.ts
+key-files: src/warnings.ts, src/lang-info.ts, scripts/gen-lang-docs.ts, tests/langDocs.test.ts
+update-when: the prose sections change by hand; the warning reference regenerates with `bun run scripts/gen-lang-docs.ts`
+last-verified: 2026-09-22 (warning reference generated; every warning has an entry)
+-->
+
 # Warnings & Errors
 
 Milo's compiler catches bugs before your code runs. Errors stop compilation. Warnings flag code that compiles but is probably wrong. Both come with source locations, carets pointing at the problem, and hints telling you how to fix it.
@@ -646,7 +654,16 @@ milo build app.milo --allow=unused-result
 
 # strict mode: all warnings are errors
 milo build app.milo --deny-all
+
+# say a finding is known about, and be told when it stops occurring
+milo build app.milo --expect=index-clone
+
+# what does this name mean, and which flag reaches it?
+milo explain index-clone
 ```
+
+`--expect=<name>` is `--allow=` that deletes itself: it silences the finding, and reports
+when the finding stops happening, so a suppression cannot outlive the code it excused.
 
 ## Error formatting
 
