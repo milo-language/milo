@@ -807,8 +807,4 @@ pub fn main(): i32 {
 3
 ```
 
-One sharp edge: a static method on a generic struct needs its type arguments
-spelled out. `Arena<Node>.new()` works, bare `Arena.new()` is parsed as an enum
-variant and fails.
-
 :::

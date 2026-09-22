@@ -47,6 +47,35 @@ let d = Dog { age: 7 }
 print(d.getAge())
 ```
 
+## Destructuring
+
+`let { a, b } = e` binds fields of a struct value by name. `{ a: x }` renames, and
+`var { … }` makes the bindings mutable.
+
+```milo
+struct Match { start: i64, len: i64, text: string }
+
+fn find(): Match {
+    return Match { start: 4, len: 3, text: "abc" }
+}
+
+fn main() {
+    let { start, text } = find()
+    print($"{start} {text}")    // 4 abc
+
+    let m = find()
+    let { len: n } = m          // renamed; m.start is still usable, only len was taken
+    print($"{n} {m.start}")     // 3 4
+}
+```
+
+It is the same as writing `let a = e.a` for each field (through a hidden temporary when
+`e` is not a place), so the ownership rules are a field read's: a Copy field is copied, a
+non-Copy field of a value moves out of it, a field of a `&S` cannot be moved out, and a
+struct with `Drop` cannot be taken apart. Fields you do not name stay where they were.
+
+There is no tuple type: two values come back as a named struct and are bound this way.
+
 ## Visibility and private fields
 
 A struct is file-private unless declared `pub struct`. There is no per-field `pub`: every
