@@ -25,9 +25,9 @@ git clone https://github.com/milo-language/milo && cd milo
 
 Milo moves fast, so build from source ([install](https://milo-language.github.io/milo/getting-started/installation) has the details and prebuilt binaries).
 
-## Borrows end at the call
+## Second-class references
 
-`&T` and `&mut T` are parameters only. You cannot return a reference, store one in a struct, or keep one past the call. A type that means "I point into memory I do not own" is not expressible: you own the buffer and carry an index, a `Span`, or an arena handle, or you `clone()`.
+A borrow ends when the call returns: `&T` and `&mut T` are parameters only. You cannot return a reference, store one in a struct, or keep one past the call. A type that means "I point into memory I do not own" is not expressible: you own the buffer and carry an index, a `Span`, or an arena handle, or you `clone()`.
 
 What that buys is **local reasoning**: the function you are reading is the whole story of the values it touches. No pointer into its locals can exist anywhere else, so every mutation is visible at the call site.
 

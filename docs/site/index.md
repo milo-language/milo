@@ -5,7 +5,7 @@ titleTemplate: false
 hero:
   name: Milo
   text: "A memory-safe systems language with second-class references."
-  tagline: "The function you are reading is the whole story of the values it touches. No lifetimes, no GC, one owner per value."
+  tagline: "No lifetimes, no garbage collector, and every mutation visible at the call site."
   image:
     src: /logo.svg
     alt: Milo
@@ -119,9 +119,9 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
 
 <div class="whatis">
 
-## Borrows end at the call
+## Second-class references
 
-`&T` and `&mut T` exist only as function parameters. You can't return one, store one in a struct, or keep one past the call. Every value has one owner, and nothing else holds a pointer into it.
+A borrow ends when the call returns: `&T` and `&mut T` exist only as function parameters. You can't return one, store one in a struct, or keep one past the call. Every value has one owner, and nothing else holds a pointer into it.
 
 That buys **local reasoning**: `&mut x` at a call site is the full blast radius of a mutation, and the checker settles every ownership question inside one function, never by a signature three modules away.
 
