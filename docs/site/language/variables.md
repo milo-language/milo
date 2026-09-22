@@ -105,6 +105,19 @@ while i < 10 {
 }
 ```
 
+`break` leaves the loop; `continue` skips the rest of this iteration and starts the next
+one. Both work in `while` and in `for`:
+
+```milo
+var i: i32 = 0
+while i < 10 {
+    i += 1
+    if i % 2 == 0 { continue }   // even: go straight to the next iteration
+    if i == 7 { break }          // stop the loop entirely
+    print($"{i}")                // prints 1, 3, 5
+}
+```
+
 
 ## For loops
 

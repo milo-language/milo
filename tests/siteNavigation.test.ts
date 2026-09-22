@@ -1,6 +1,7 @@
 // Gates on the docs site's hand-written navigation and its stdlib coverage.
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { langInfo } from "../src/lang-info";
 import { join } from "node:path";
 
@@ -82,12 +83,16 @@ describe("stdlib site coverage", () => {
 // only because someone happened to notice. The stdlib ratchet above has caught that shape
 // for std MODULES since 2026-08-15; nothing was watching the language itself.
 describe("language surface site coverage", () => {
-  const siteDir = join(root, "docs", "site");
-  const mdFiles = (dir: string): string[] =>
-    readdirSync(dir, { withFileTypes: true }).flatMap(e =>
-      e.isDirectory() ? (e.name.startsWith(".") ? [] : mdFiles(join(dir, e.name)))
-        : e.name.endsWith(".md") ? [join(dir, e.name)] : []);
-  const site = mdFiles(siteDir).map(f => readFileSync(f, "utf8")).join("\n");
+  // TRACKED files only, via git. Walking the directory instead picks up
+  // docs/site/node_modules, which a local `vitepress` install fills with 172 vendored .md
+  // files: two thirds of the corpus would be somebody else's documentation, every check
+  // below would pass on a word that appears only there, and the gate would say something
+  // different on a dev machine than on a clean runner. CI caught exactly that.
+  const site = execFileSync("git", ["ls-files", "-z", "docs/site"], { cwd: root, encoding: "utf8" })
+    .split("\0")
+    .filter(f => f.endsWith(".md"))
+    .map(f => readFileSync(join(root, f), "utf8"))
+    .join("\n");
   // Identifier-boundary match, so `int` does not match `print` and `as` does not match
   // `class`. Attributes are searched with their `@`.
   const onSite = (s: string) =>
