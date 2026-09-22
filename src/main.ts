@@ -1469,7 +1469,7 @@ async function runTests(
         found = { tests: ct.tests.map(t => t.name), rejected: ct.skipped };
         if (ct.tests.length > 0) {
           source = renameUserMain(source, program)
-            + "\n" + ct.tests.map(t => t.source).join("\n") + contractTestSupport(program);
+            + "\n" + ct.tests.map(t => t.source).join("\n") + contractTestSupport(program, ct.tracing);
         }
       } else {
         found = discoverTests(source, file);

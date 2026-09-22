@@ -3,7 +3,7 @@ system: testing
 purpose: how to write/run tests, what to avoid, and an index of every test file and what it covers
 key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh
 update-when: a test file or out-of-band harness is added/removed/repurposed, or the fixture protocol changes
-last-verified: 2026-09-22 (--contracts builds struct params from their constructors and draws Vec<int>; 09-20: corpus census gate listed)
+last-verified: 2026-09-22 (--contracts applies a drawn sequence of mutator calls to a constructed struct param; builds struct params from their constructors and draws Vec<int>; 09-20: corpus census gate listed)
 -->
 
 # Testing
@@ -83,6 +83,10 @@ Its first sweep of std found five contracts promising results that exhaust memor
 precondition on `strCharAt`.
 
 The seed is fixed so a red run reproduces; `MILO_CONTRACT_SEED` draws a different sample.
+`MILO_CONTRACT_TRACE=1` prints every call a test makes on stderr *before* it runs, which is
+how a case that dies mid-sequence (a failed assert, an out-of-bounds store) is reproduced:
+a trap takes the process with it, so a message buffered until the end of the case would
+never print, and the last traced line is the call that died.
 
 **How a struct parameter is built.** Never field by field. A `Bump { used: 1, cap: 0 }`
 violates the invariant every constructor maintains, so it would refute a contract that is
@@ -108,12 +112,38 @@ constructor *in the same file* (the contracts path parses without resolving impo
 `Vec` of anything but integers, a pointer, an array. A `&mut` parameter of such a type
 still reports that it is `&mut`.
 
-There is a second limit, reported per test rather than per fn. The harness builds a value
-and calls the fn once, so a `requires` naming a state only a *mutation* reaches is never
-satisfied: `std/pool.milo::poolFree` wants `p.liveCount > 0`, which only `poolAlloc`
-produces. Such a test prints `⊘ <name>` naming the constructed parameter and is counted as
-`unreachable`, neither a pass nor a failure. The fix is to draw a *sequence* of calls, not
-one constructor; `tests/contracts/contractTestsStructs.milo::counterDrained` pins the shape.
+**How a state a constructor cannot return is reached.** After building a struct parameter
+the harness applies a drawn sequence of **mutator** calls to it: a length in `0..=8`, then
+that many calls picked uniformly. A mutator is a same-file, non-extern, non-generic fn with
+exactly one `&mut T` parameter and every other parameter a drawable by-value scalar
+(methods are out: there is no receiver to generate). This is what puts `poolFree`'s
+`requires p.liveCount > 0` in reach, since only `poolAlloc` makes that true.
+
+It buys reach without giving up the invariant above, because **every call in the sequence
+is gated by that call's own `requires`**, re-printed over the harness's locals and checked
+at runtime immediately before it. A drawn call the gate rejects is skipped and the rest of
+the sequence still runs: discarding the whole draw would throw away the states the earlier
+calls reached, and calling it anyway would fabricate one no program reaches.
+`tests/contracts/contractTestsSkipMutator.milo` pins that (its `neverBump` has a `requires`
+no argument satisfies and must appear in no refutation).
+
+An integer a call in the sequence returned is offered back to later calls as an argument,
+and *taken* rather than copied when used. A pool block is only ever a number `poolAlloc`
+handed out, so no drawn `i64` would ever satisfy `poolFree`'s address preconditions; and
+using the same handle twice is a double free, a state no correct program reaches and one no
+`requires` here can rule out. A refutation prints the sequence next to the constructor call
+(`p=poolNew(size=16, count=4) then poolAlloc(p) poolFree(p, block=...)`), which is what
+reproduces the state. One caveat on reproducibility: the *draws* are fixed by the seed, but
+a value the program returned is not (an allocator hands back a heap address), so a contract
+that compares against one reproduces in shape rather than byte for byte.
+
+There is still a limit, reported per test rather than per fn. The sequence can only use
+calls the file itself declares, so a `requires` that no constructor and no drawn sequence
+establishes is never satisfied: a struct with no mutator at all, for instance. Such a test
+prints `⊘ <name>` naming the constructed parameter and is counted as `unreachable`,
+neither a pass nor a failure. `tests/contracts/contractTestsStructs.milo::sealedStamp` pins
+that shape, and `::counterDrained` pins the other half: `hits > 0` is reachable only
+through `counterBump`, so that test must run real cases rather than report unreachable.
 
 That skip is scoped to constructed values, and deliberately so. When every parameter is a
 scalar the draw space IS the type, so zero satisfying draws means the `requires` is

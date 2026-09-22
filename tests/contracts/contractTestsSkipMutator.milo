@@ -1,0 +1,49 @@
+// Fixture for tests/contractTests.test.ts: the rule that keeps a drawn call sequence
+// sound. Every call the harness makes is gated by that call's own `requires`, checked at
+// runtime just before it; a drawn call the gate rejects is SKIPPED and the rest of the
+// sequence still runs.
+//
+// `neverBump` can never be called, so it must appear in no refutation's plan. `gaugeBump`
+// can, and it is the only way to reach `hits > 0`, so `gaugeLies` still gets refuted with
+// a plan naming the calls that produced the state.
+
+struct Gauge {
+    limit: i64,
+    hits: i64,
+}
+
+fn gaugeNew(limit: i64): Result<Gauge>
+requires limit > 0
+{
+    if limit > 4096 {
+        return Result.Err("gauge limit too large")
+    }
+    return Result.Ok(Gauge { limit: limit, hits: 0 })
+}
+
+fn gaugeBump(g: &mut Gauge, n: i64): void
+requires n >= 0
+{
+    var room = g.limit - g.hits
+    if n < room {
+        room = n
+    }
+    g.hits = g.hits + room
+}
+
+// No i64 satisfies both clauses, so no drawn argument ever passes the gate.
+fn neverBump(g: &mut Gauge, n: i64): void
+requires n > 0
+requires n < 0
+{
+    g.hits = n
+}
+
+// Deliberately false: `gaugeNew` starts at 0 and `gaugeBump` only adds, so the result is
+// never negative. The refutation must name the sequence that made `hits > 0`.
+fn gaugeLies(g: &Gauge): i64
+requires g.hits > 0
+ensures result < 0
+{
+    return g.hits
+}

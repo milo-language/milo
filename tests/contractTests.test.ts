@@ -43,21 +43,42 @@ test("a struct param is built by its constructor, and the refutation names the c
   const byName = new Map<string, any>(json.tests.map((t: any) => [t.name, t]));
   expect([...byName.keys()].sort()).toEqual([
     "testContract_counterBump", "testContract_counterDrained", "testContract_counterLimit",
-    "testContract_counterNew", "testContract_vecClamp",
+    "testContract_counterNew", "testContract_sealedNew", "testContract_sealedStamp",
+    "testContract_vecClamp",
   ]);
   // `&mut Counter` and `&mut Vec<i64>` both run, and their honest contracts hold.
   expect(byName.get("testContract_counterBump").ok).toBe(true);
   expect(byName.get("testContract_vecClamp").ok).toBe(true);
-  // A struct has no Display: the message carries the constructor call that rebuilds it.
+  // A struct has no Display: the message carries the constructor call and the drawn
+  // sequence of mutator calls that together rebuild the state.
   const lying = byName.get("testContract_counterLimit");
   expect(lying.ok).toBe(false);
-  expect(lying.output).toMatch(/ensures \(result < 0\) failed: c=counterNew\(limit=\d+\) result=\d+/);
-  // A precondition the constructor cannot establish is not a pass and not a defect: the
-  // harness only ever reaches freshly-constructed states, so it says so and skips.
-  const unreachable = byName.get("testContract_counterDrained");
+  expect(lying.output).toMatch(
+    /ensures \(result < 0\) failed: c=counterNew\(limit=\d+\)( then( counterBump\(c, n=-?\d+\))+)? result=\d+/);
+  // `hits > 0` is a state only counterBump reaches, so the drawn sequence is what makes
+  // this test run at all: it must run real cases, not report unreachable.
+  const sequenced = byName.get("testContract_counterDrained");
+  expect({ ok: sequenced.ok, unreachable: sequenced.unreachable ?? false }).toEqual({ ok: true, unreachable: false });
+  // A precondition neither the constructor nor any drawn sequence establishes is not a
+  // pass and not a defect: Sealed has no mutator at all, so the harness says so and skips.
+  const unreachable = byName.get("testContract_sealedStamp");
   expect(unreachable.unreachable).toBe(true);
-  expect(unreachable.output).toMatch(/no constructed value satisfied requires.*\bc\b/);
+  expect(unreachable.output).toMatch(/no constructed value satisfied requires.*construction of s.*declares none/);
   expect(json.unreachable).toBe(1);
+});
+
+test("a drawn sequence only ever makes a call whose own requires holds", () => {
+  // The rule that keeps every reached state reachable: a mutator drawn with arguments its
+  // own `requires` rejects is skipped and the rest of the sequence still runs. `neverBump`
+  // can never be called, so it must appear in no refutation's plan, while the sequence it
+  // was drawn into still reaches `hits > 0`.
+  const { code, json } = run("tests/contracts/contractTestsSkipMutator.milo");
+  expect(code).toBe(1);
+  const byName = new Map<string, any>(json.tests.map((t: any) => [t.name, t]));
+  const lying = byName.get("testContract_gaugeLies");
+  expect(lying.ok).toBe(false);
+  expect(lying.output).toContain("gaugeBump(g");
+  expect(lying.output).not.toContain("neverBump");
 });
 
 test("an unsatisfiable requires over scalars stays a hard failure, not a skip", () => {

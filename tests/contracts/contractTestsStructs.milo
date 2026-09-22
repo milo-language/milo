@@ -7,8 +7,9 @@
 // ensures with a value no constructor returns, which is a false alarm, not a bug.
 // `counterNew` is fallible, so a draw it rejects is a discarded draw and not a failure.
 //
-// `counterLimit` lies in its ensures and must be caught, with the CONSTRUCTOR ARGUMENTS in
-// the message: that is what reproduces the case, and a struct has no Display anyway.
+// `counterLimit` lies in its ensures and must be caught, with the CONSTRUCTOR ARGUMENTS
+// and the DRAWN CALL SEQUENCE in the message: that is what reproduces the case, and a
+// struct has no Display anyway.
 
 struct Counter {
     limit: i64,
@@ -46,16 +47,42 @@ ensures result < 0
     return c.limit
 }
 
-// Unreachable from construction: the harness builds a Counter and never mutates it before
-// the call, so `hits > 0` is a state only `counterBump` reaches. That is reported as a
-// SKIP naming the constructed param, not as a pass and not as a failure, the same shape as
-// `std/pool.milo::poolFree`, whose `requires p.liveCount > 0` needs an alloc first. The
-// anti-vacuity gate still hard-fails a scalar-only fn: see contractTestsVacuous.milo.
+// `hits > 0` is a state no constructor returns: only `counterBump` reaches it. The drawn
+// call sequence is what makes this test run, so it must run real cases rather than report
+// `unreachable`, the same shape as `std/pool.milo::poolFree`, whose `requires
+// p.liveCount > 0` needs an alloc first. `Sealed` below pins the other half.
 fn counterDrained(c: &Counter): i64
 requires c.hits > 0
 ensures result >= 0
 {
     return c.hits
+}
+
+// Sequencing narrows the gap, it does not close it, and this pins what is left. No fn in
+// this file takes a `&mut Sealed`, so there is no mutator to draw, and the only
+// constructor stamps every Sealed at 0. `stamp > 0` is therefore a state neither
+// construction nor any drawn sequence reaches: reported as a SKIP naming the constructed
+// param, not as a pass and not as a failure. The anti-vacuity gate still hard-fails a
+// scalar-only fn: see contractTestsVacuous.milo.
+struct Sealed {
+    limit: i64,
+    stamp: i64,
+}
+
+fn sealedNew(limit: i64): Result<Sealed>
+requires limit > 0
+{
+    if limit > 4096 {
+        return Result.Err("sealed limit too large")
+    }
+    return Result.Ok(Sealed { limit: limit, stamp: 0 })
+}
+
+fn sealedStamp(s: &Sealed): i64
+requires s.stamp > 0
+ensures result <= s.limit
+{
+    return s.stamp
 }
 
 // Clamp every element to `hi`, returning how many changed.

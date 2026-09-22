@@ -3,9 +3,12 @@
 // A fn with `requires`/`ensures` already states what a test would check. This module
 // turns each eligible fn into a `testContract_<name>` test fn, in Milo source, appended
 // to the file it lives in: draw inputs (biased toward the edges an integer contract
-// cares about), skip a draw that fails `requires`, call, and evaluate every `ensures`
-// with `result` bound to what came back. A violation prints the inputs and fails the
-// test through the ordinary `milo test` harness; nothing new runs the process.
+// cares about), apply a drawn sequence of mutating calls to any struct it built, skip a
+// draw that fails `requires`, call, and evaluate every `ensures` with `result` bound to
+// what came back. A violation prints the inputs and the sequence that produced the state,
+// and fails the test through the ordinary `milo test` harness; nothing new runs the
+// process. `MILO_CONTRACT_TRACE=1` prints each call before it runs, so a case that traps
+// mid-sequence is reproducible too.
 //
 // Deliberately source-level: the harness is Milo, so the contract expressions are
 // re-printed from the AST and evaluated by the same compiler that checks them, and a
@@ -14,7 +17,12 @@
 import type { Program, Function, Expr, MiloType, Param } from "./ast";
 
 export interface ContractTest { name: string; fn: string; source: string }
-export interface ContractDiscovery { tests: ContractTest[]; skipped: { name: string; why: string }[] }
+export interface ContractDiscovery {
+  tests: ContractTest[];
+  skipped: { name: string; why: string }[];
+  // Some harness draws a call sequence, so the support code needs the env-gated tracer.
+  tracing: boolean;
+}
 
 // Draws per test and the cap on rejected draws before "nothing satisfied requires" fails
 // the test. A property test that never ran is not green.
@@ -29,9 +37,14 @@ const SEED = Number(process.env.MILO_CONTRACT_SEED) || 20260921;
 // and "a few"; a 10,000-element draw only costs time.
 const MAX_VEC_LEN = 32;
 
+// Longest drawn call sequence applied to a constructed struct before the fn under test is
+// called. Depth is what reaches a state a constructor cannot return, and every extra step
+// costs a call in every one of the CASES draws, so this stays small.
+const MAX_SEQ = 8;
+
 // Exit code a synthesized test uses to say "I could not reach a state this `requires`
-// accepts, because every value I can build comes straight out of a constructor". The
-// driver reports it as a skip with that reason rather than as a pass or a failure.
+// accepts: not by construction, and not by any sequence of mutating calls this file
+// offers". The driver reports it as a skip with that reason, not a pass and not a failure.
 export const UNREACHABLE_STATE_EXIT = 3;
 
 const INT_TYPES: Record<string, { min: bigint; max: bigint }> = {
@@ -51,25 +64,33 @@ const INT_TYPES: Record<string, { min: bigint; max: bigint }> = {
 // draw and not a test failure.
 interface Ctor { fn: Function; wrap: "none" | "Result" | "Option" }
 
+// A call that moves a constructed struct into a state no constructor returns. `recv` is
+// the `&mut T` parameter; `stash` is the integer the call hands back, if any (a pool
+// block, a bump pointer).
+interface Mutator { fn: Function; recv: string; stash: { name: string; wrap: Ctor["wrap"] } | null }
+
 // What the file's own declarations let the harness build. Only same-file declarations are
 // visible: the contracts path parses without resolving imports.
-interface Ctx { ctors: Map<string, Ctor> }
+interface Ctx { ctors: Map<string, Ctor>; muts: Map<string, Mutator[]> }
 
 export function discoverContractTests(program: Program): ContractDiscovery {
-  const ctx: Ctx = { ctors: collectCtors(program) };
+  const structNames = new Set(program.structs.filter(s => s.typeParams.length === 0).map(s => s.name));
+  const ctx: Ctx = { ctors: collectCtors(program, structNames), muts: collectMutators(program, structNames) };
   const tests: ContractTest[] = [];
   const skipped: { name: string; why: string }[] = [];
+  let tracing = false;
   for (const fn of program.functions) {
     const why = ineligible(fn, ctx);
     if (why) {
       if (fn.contracts.some(c => c.kind === "requires" || c.kind === "ensures")) skipped.push({ name: fn.name, why });
       continue;
     }
-    const source = harnessFor(fn, ctx);
-    if (typeof source !== "string") { skipped.push({ name: fn.name, why: source.why }); continue; }
-    tests.push({ name: `testContract_${fn.name}`, fn: fn.name, source });
+    const built = harnessFor(fn, ctx);
+    if ("why" in built) { skipped.push({ name: fn.name, why: built.why }); continue; }
+    if (built.tracing) tracing = true;
+    tests.push({ name: `testContract_${fn.name}`, fn: fn.name, source: built.source });
   }
-  return { tests, skipped };
+  return { tests, skipped, tracing };
 }
 
 /**
@@ -86,8 +107,7 @@ export function discoverContractTests(program: Program): ContractDiscovery {
  * or `Option<T>` whose own parameters are all drawable scalars. First one in declaration
  * order wins, so the same file always generates the same harness.
  */
-function collectCtors(program: Program): Map<string, Ctor> {
-  const structNames = new Set(program.structs.filter(s => s.typeParams.length === 0).map(s => s.name));
+function collectCtors(program: Program, structNames: Set<string>): Map<string, Ctor> {
   const out = new Map<string, Ctor>();
   for (const fn of program.functions) {
     if (fn.isExtern || fn.typeParams.length > 0) continue;
@@ -98,6 +118,60 @@ function collectCtors(program: Program): Map<string, Ctor> {
     if (!out.has(built.name)) out.set(built.name, { fn, wrap: built.wrap });
   }
   return out;
+}
+
+/**
+ * The calls the harness may apply to a built struct before the fn under test runs.
+ *
+ * Construction alone only ever reaches the states a constructor returns, so a `requires`
+ * naming a state a *mutation* produces (`poolFree` wants `p.liveCount > 0`, which only
+ * `poolAlloc` makes true) is never satisfied. A drawn sequence of these closes that gap
+ * without giving up the invariant above: a mutator is a real fn of the same file, called
+ * with drawn arguments that satisfy its own `requires`, so every state it reaches is a
+ * state some program reaches by making the same calls.
+ *
+ * A mutator is a non-extern, non-generic, receiver-less fn with exactly one `&mut T`
+ * parameter and every other parameter a drawable by-value scalar. Methods are out: there
+ * is no receiver syntax to generate here, and `std/pool`/`std/mem` expose free fns anyway.
+ */
+function collectMutators(program: Program, structNames: Set<string>): Map<string, Mutator[]> {
+  const out = new Map<string, Mutator[]>();
+  for (const fn of program.functions) {
+    if (fn.isExtern || fn.typeParams.length > 0) continue;
+    if (fn.params.some(p => p.name === "self" || !p.type)) continue;
+    const recv = fn.params.filter(p => mutStruct(p.type!, structNames));
+    if (recv.length !== 1) continue;
+    const scalars = fn.params.filter(p => p !== recv[0]);
+    // A second `&mut` would need a mutable local of its own; nothing in reach needs it.
+    if (!scalars.every(p => scalar(p.type!) && !p.type!.isRefMut)) continue;
+    // Every call is gated by this fn's own `requires`, re-printed over the harness's
+    // locals. One the harness cannot re-print is one it cannot gate, so it is not usable.
+    const gateable = fn.contracts.every(c =>
+      c.kind !== "requires" || (!mentionsOld(c.expr) && typeof exprSource(c.expr) === "string"));
+    if (!gateable) continue;
+    const key = recv[0]!.type!.name;
+    const list = out.get(key) ?? [];
+    list.push({ fn, recv: recv[0]!.name, stash: stashType(fn.retType) });
+    out.set(key, list);
+  }
+  return out;
+}
+
+function mutStruct(t: MiloType, structNames: Set<string>): boolean {
+  return !!t.isRefMut && !t.isPtr && !t.isArray && !t.typeArgs?.length && structNames.has(t.name);
+}
+
+// The integer a mutator hands back, which is how a program comes to hold a pool block or a
+// bump pointer. Anything else is dropped: a struct or a string is not a value the harness
+// can feed to a later call as an argument.
+function stashType(r: MiloType): { name: string; wrap: Ctor["wrap"] } | null {
+  if (r.isPtr || r.isRef || r.isRefMut || r.isArray) return null;
+  if (!r.typeArgs || r.typeArgs.length === 0) return r.name in INT_TYPES ? { name: r.name, wrap: "none" } : null;
+  if (r.name !== "Result" && r.name !== "Option") return null;
+  const inner = r.typeArgs[0];
+  if (!inner || inner.isPtr || inner.isRef || inner.isRefMut || inner.isArray) return null;
+  if (inner.typeArgs && inner.typeArgs.length > 0) return null;
+  return inner.name in INT_TYPES ? { name: inner.name, wrap: r.name } : null;
 }
 
 function builtType(r: MiloType, structNames: Set<string>): { name: string; wrap: Ctor["wrap"] } | null {
@@ -115,11 +189,36 @@ function builtType(r: MiloType, structNames: Set<string>): { name: string; wrap:
 // The helpers every harness in a file shares. Emitted once, after the tests. The Rng
 // import is skipped when the file already has it (an import twice is a resolver error);
 // an aliased import would not do, a struct's static call does not go through the alias.
-export function contractTestSupport(program: Program): string {
+export function contractTestSupport(program: Program, tracing = false): string {
   const hasRng = program.imports.some(i => i.path === "std/rng" && i.names.includes("Rng"));
+  const hasEnv = program.imports.some(i => i.path === "std/env" && i.names.includes("Env"));
   return [
     ``,
     hasRng ? `` : `from "std/rng" import { Rng }`,
+    tracing && !hasEnv ? `from "std/env" import { Env }` : ``,
+    ``,
+    // A drawn sequence can reach a state that traps (a failed assert, an out-of-bounds
+    // store), and a trap kills the process with the plan still buffered in a local. So
+    // every call a sequence makes can announce itself on stderr, which is unbuffered,
+    // BEFORE it runs: `MILO_CONTRACT_TRACE=1` turns a crash into a printed reproducer
+    // whose last line is the call that died.
+    ...(tracing ? [
+      `fn __miloCtTracing(): bool {`,
+      `    return Env.getOr("MILO_CONTRACT_TRACE", "") != ""`,
+      `}`,
+      ``,
+    ] : []),
+    // Values earlier calls returned, offered to later ones. A pool block is only ever a
+    // number `poolAlloc` handed out, so a drawn i64 never satisfies `poolFree`'s
+    // `requires`; feeding the call sequence's own results back is how a program gets one.
+    // Taken rather than copied: using the same handle twice is a double free, a state no
+    // correct program reaches and one no `requires` here can rule out.
+    `fn __miloCtPick<T>(rng: &mut Rng, seen: &mut Vec<T>, fresh: T): T {`,
+    `    if seen.len > 0 && rng.int(2) == 0 {`,
+    `        return seen.remove(rng.int(seen.len))`,
+    `    }`,
+    `    return fresh`,
+    `}`,
     ``,
     // Edges first: a contract over integers is about 0, 1, -1 and the type's bounds far
     // more often than about 4,611,686,018,427,387,904, and a `requires 0 <= x && x < n`
@@ -245,7 +344,7 @@ function walk(e: Expr, visit: (n: Expr) => void): void {
   for (const k of ["args", "elements"]) if (Array.isArray(n[k])) for (const a of n[k]) walk(a, visit);
 }
 
-function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
+function harnessFor(fn: Function, ctx: Ctx): { source: string; tracing: boolean } | { why: string } {
   const body: string[] = [];
   const shown: string[] = [];
   const requires = fn.contracts.filter(c => c.kind === "requires");
@@ -258,6 +357,79 @@ function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
   let open = 0;
   const built: string[] = [];
   const emit = (s: string) => body.push("    ".repeat(depth) + s);
+  const emitIn = (extra: number, s: string) => body.push("    ".repeat(depth + extra) + s);
+
+  const mutsFor = (t: MiloType) => (paramKind(t, ctx) === "struct" ? ctx.muts.get(t.name) ?? [] : []);
+  const sequenced = fn.params.filter(p => p.type && mutsFor(p.type).length > 0);
+  const tracing = sequenced.length > 0;
+
+  // One take-pile per integer type the sequences produce, refilled every draw: a handle
+  // from a pool this draw discarded means nothing to the pool the next one builds.
+  const stashes = new Set<string>();
+  for (const p of sequenced) for (const m of ctx.muts.get(p.type!.name)!) if (m.stash) stashes.add(m.stash.name);
+  for (const ty of [...stashes].sort()) emit(`var __seen_${ty}: Vec<${ty}> = Vec.new()`);
+  // Nothing has returned anything until the first sequence has run, so a draw before that
+  // (every constructor argument) is always fresh.
+  let anySeq = false;
+  const draw = (t: MiloType) => {
+    const fresh = drawExpr(t);
+    return anySeq && stashes.has(t.name) ? `__miloCtPick(&mut __rng, &mut __seen_${t.name}, ${fresh})` : fresh;
+  };
+
+  const emitSeq = (name: string, muts: Mutator[]) => {
+    anySeq = true;
+    emit(`var __plan_${name}: string = ""`);
+    emit(`let __k_${name} = __rng.int(${MAX_SEQ + 1})`);
+    emit(`for _s in 0..__k_${name} {`);
+    emitIn(1, `let __m_${name} = __rng.int(${muts.length})`);
+    muts.forEach((m, j) => {
+      emitIn(1, `if __m_${name} == ${j} {`);
+      const rename = new Map<string, string>([[m.recv, name]]);
+      const argOf = new Map<string, string>([[m.recv, `&mut ${name}`]]);
+      const label: string[] = [];
+      for (const q of m.fn.params) {
+        if (q.name === m.recv) { label.push(name); continue; }
+        const t = q.type!;
+        const local = `__s${j}_${name}_${q.name}`;
+        rename.set(q.name, local);
+        emitIn(2, `let ${local}: ${typeSource({ ...t, isRef: false, isRefMut: false })} = ${draw(t)}`);
+        argOf.set(q.name, t.name === "string" && !t.isRef ? `${local}.clone()` : local);
+        label.push(`${q.name}={${local}}`);
+      }
+      // A drawn call its own `requires` rejects is skipped, and the rest of the sequence
+      // still runs: discarding the whole draw would throw away the states the calls before
+      // it reached, and calling it anyway would fabricate a state no program reaches.
+      for (const c of m.fn.contracts) {
+        if (c.kind !== "requires") continue;
+        emitIn(2, `if !(${exprSource(c.expr, rename) as string}) {`);
+        emitIn(3, `continue`);
+        emitIn(2, `}`);
+      }
+      const call = `${m.fn.name}(${m.fn.params.map(q => argOf.get(q.name)!).join(", ")})`;
+      const spelled = `${m.fn.name}(${label.join(", ")})`;
+      emitIn(2, `if __trace {`);
+      emitIn(3, `eprint($"  ${spelled}")`);
+      emitIn(2, `}`);
+      emitIn(2, `if __plan_${name}.len == 0 {`);
+      emitIn(3, `__plan_${name} = " then"`);
+      emitIn(2, `}`);
+      emitIn(2, `__plan_${name}.pushStr($" ${spelled}")`);
+      if (m.stash && m.stash.wrap === "none") {
+        emitIn(2, `__seen_${m.stash.name}.push(${call})`);
+      } else if (m.stash) {
+        const got = `__got${j}_${name}`;
+        emitIn(2, `if let ${m.stash.wrap === "Result" ? "Result.Ok" : "Option.Some"}(${got}) = ${call} {`);
+        emitIn(3, `__seen_${m.stash.name}.push(${got})`);
+        emitIn(2, `}`);
+      } else if (m.fn.retType.name === "void" && !m.fn.retType.typeArgs) {
+        emitIn(2, call);
+      } else {
+        emitIn(2, `let _drop${j}_${name} = ${call}`);
+      }
+      emitIn(1, `}`);
+    });
+    emit(`}`);
+  };
 
   for (const p of fn.params) {
     const t = p.type!;
@@ -266,10 +438,10 @@ function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
     const bind = t.isRefMut ? "var" : "let";
     if (kind === "scalar") {
       // a `&string` param is drawn as an owned local; the call auto-borrows it
-      const draw = t.name === "string" && exactLens.has(p.name)
+      const drawn = t.name === "string" && exactLens.has(p.name)
         ? `__miloCtStringOfLen(&mut __rng, ${exactLens.get(p.name)})`
-        : drawExpr(t);
-      emit(`${bind} ${p.name}: ${local} = ${draw}`);
+        : draw(t);
+      emit(`${bind} ${p.name}: ${local} = ${drawn}`);
       shown.push(`${p.name}={${p.name}}`);
       continue;
     }
@@ -298,7 +470,7 @@ function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
     for (const q of ctor.fn.params) {
       const arg = `__ctor_${p.name}_${q.name}`;
       rename.set(q.name, arg);
-      emit(`let ${arg}: ${typeSource({ ...q.type!, isRef: false, isRefMut: false })} = ${drawExpr(q.type!)}`);
+      emit(`let ${arg}: ${typeSource({ ...q.type!, isRef: false, isRefMut: false })} = ${draw(q.type!)}`);
       args.push(q.type!.name === "string" && !q.type!.isRef ? `${arg}.clone()` : arg);
     }
     // The constructor's own preconditions filter the draw exactly as the tested fn's do:
@@ -314,18 +486,28 @@ function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
       emit(`}`);
     }
     const call = `${ctor.fn.name}(${args.join(", ")})`;
+    // The constructor call, not the struct: it is what reproduces the case, and a struct
+    // has no Display to interpolate anyway.
+    const spelledCtor = `${ctor.fn.name}(${ctor.fn.params.map(q => `${q.name}={__ctor_${p.name}_${q.name}}`).join(", ")})`;
+    if (tracing) {
+      emit(`if __trace {`);
+      emit(`    eprint($"case {__tried}: ${p.name}=${spelledCtor}")`);
+      emit(`}`);
+    }
+    const muts = ctx.muts.get(t.name) ?? [];
+    // A sequence borrows the value mutably even when the fn under test only reads it.
+    const structBind = muts.length > 0 ? "var" : bind;
     if (ctor.wrap === "none") {
-      emit(`${bind} ${p.name}: ${local} = ${call}`);
+      emit(`${structBind} ${p.name}: ${local} = ${call}`);
     } else {
       const variant = ctor.wrap === "Result" ? "Result.Ok" : "Option.Some";
       emit(`if let ${variant}(__v_${p.name}) = ${call} {`);
       depth += 1;
       open += 1;
-      emit(`${bind} ${p.name}: ${local} = __v_${p.name}`);
+      emit(`${structBind} ${p.name}: ${local} = __v_${p.name}`);
     }
-    // The constructor call, not the struct: it is what reproduces the case, and a struct
-    // has no Display to interpolate anyway.
-    shown.push(`${p.name}=${ctor.fn.name}(${ctor.fn.params.map(q => `${q.name}={__ctor_${p.name}_${q.name}}`).join(", ")})`);
+    if (muts.length > 0) emitSeq(p.name, muts);
+    shown.push(`${p.name}=${spelledCtor}${muts.length > 0 ? `{__plan_${p.name}}` : ""}`);
   }
 
   const printed: string[] = [];
@@ -343,6 +525,11 @@ function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
     emit(`    continue`);
     emit(`}`);
   });
+  if (tracing) {
+    emit(`if __trace {`);
+    emit(`    eprint($"  -> ${fn.name}: ${shown.join(" ")}")`);
+    emit(`}`);
+  }
   if (retIsVoid) {
     emit(`${fn.name}(${callArgs})`);
   } else {
@@ -362,6 +549,7 @@ function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
   const lines: string[] = [];
   lines.push(`fn testContract_${fn.name}(): void {`);
   lines.push(`    var __rng: Rng = Rng.new(${SEED})`);
+  if (tracing) lines.push(`    let __trace: bool = __miloCtTracing()`);
   lines.push(`    var __tried: i64 = 0`);
   lines.push(`    var __ran: i64 = 0`);
   lines.push(`    while __tried < ${MAX_TRIES} && __ran < ${CASES} {`);
@@ -371,14 +559,17 @@ function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
   // Zero satisfying draws means two different things, and conflating them makes one of
   // them a gate nobody can turn green. For scalars the draw space IS the type, so nothing
   // satisfying the `requires` means the precondition is unsatisfiable: a real defect, and
-  // a hard failure. For a constructed struct the harness only ever reaches states a
-  // constructor returns, never states some other call produces (`poolFree` requires
-  // `liveCount > 0`, and only `poolAlloc` makes that true), so it reports a SKIP naming
-  // the params it could only draw fresh. Closing that gap means drawing a sequence of
-  // calls, not weakening this check.
+  // a hard failure. For a constructed struct the harness reaches only what a constructor
+  // returns plus what a drawn sequence of mutators reaches from there, which is a subset
+  // of what the program can reach and not all of it, so it reports a SKIP naming the
+  // params. Narrowing that gap further means reaching for calls this file does not offer
+  // (a method, a fn in another module), not weakening this check.
   lines.push(`    if __ran == 0 {`);
   if (built.length > 0) {
-    lines.push(`        eprint("no constructed value satisfied requires after ${MAX_TRIES} tries: ${built.join(", ")} can only be drawn fresh from a constructor, and this precondition needs a state another call produces")`);
+    const reach = tracing
+      ? `a drawn sequence of up to ${MAX_SEQ} mutator calls`
+      : `a drawn sequence of mutator calls (this file declares none taking it by &mut)`;
+    lines.push(`        eprint("no constructed value satisfied requires after ${MAX_TRIES} tries: neither construction of ${built.join(", ")} nor ${reach} reached a state this precondition accepts")`);
     lines.push(`        exit(${UNREACHABLE_STATE_EXIT})`);
   } else {
     lines.push(`        eprint("no drawn input satisfied requires after ${MAX_TRIES} tries; the contract wants a shape the generator does not produce")`);
@@ -388,7 +579,7 @@ function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
   lines.push(`    print($"{__ran} cases")`);
   lines.push(`}`);
   lines.push(``);
-  return lines.join("\n");
+  return { source: lines.join("\n"), tracing };
 }
 
 // an owned string is moved by the call and the ensures still reads it, so the call gets a
