@@ -244,23 +244,7 @@ function parseModule(file: string, root?: string): Entry[] {
   return entries;
 }
 
-// Generated reference markdown, one document per module. Keyed by a filename
-// stem ("runtime", "pty.darwin") so callers can write docs/std/<stem>.md. This
-// is the source of truth for the rendered docs page — see scripts/gen-std-docs.
-export function stdDocsByModule(): Map<string, string> {
-  const byMod = new Map<string, Entry[]>();
-  for (const e of loadAll(true)) {
-    if (e.kind === "function") (byMod.get(e.module) ?? byMod.set(e.module, []).get(e.module)!).push(e);
-  }
-  const out = new Map<string, string>();
-  for (const [module, entries] of byMod) {
-    const stem = module.replace(/^std\//, "");
-    out.set(stem, renderMarkdown(entries));
-  }
-  return out;
-}
-
-// Same rendering as the std reference, over any directory (or a single .milo file).
+// Reference markdown over any directory (or a single .milo file), for `milo doc`.
 // Keyed by module path relative to `root`, so callers can write <out>/<module>.md.
 function docsByModuleForPath(target: string): Map<string, string> {
   const isFile = statSync(target).isFile();

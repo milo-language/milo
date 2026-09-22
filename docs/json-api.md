@@ -196,12 +196,12 @@ broken suite look green. In `--json` mode nothing but the document reaches stdou
 | CI dashboards, flake trackers | `test --json` | the ✓/✗ log lines were never a contract |
 | certification workflows | `prove --json`, `safety --json` | a proof verdict per obligation is the artifact, not a table |
 
-Three things still import the compiler on purpose:
+What still imports the compiler on purpose:
 
 - **The fuzzers** (`scripts/fuzz-*.ts`) drive `Lexer`/`Parser`/`TypeChecker` in-process
   because they run millions of mutants; a subprocess per mutant is a thousand times
   slower. `milo check --json` is the out-of-repo equivalent for anyone who needs it.
-- **`scripts/gen-std-docs.ts`** renders the compiler's own reference markdown. Moving the
-  renderer into a script would give the repo two markdown renderers to keep in step, which
-  is the drift this whole document exists to prevent. `milo api --module <m> --markdown`
-  and `milo doc <file|dir> -o <dir>` are the public equivalents.
+
+`scripts/gen-std-docs.ts` used to import `src/api-search.ts` to write `docs/std/`; it now
+reads `api --json` and writes the API region of each docs-site stdlib page, and
+`docs/std/` is gone.

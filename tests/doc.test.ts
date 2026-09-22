@@ -1,5 +1,5 @@
 // `milo doc` — reference markdown for any .milo file or directory, using the same
-// extractor and renderer as the std reference (scripts/gen-std-docs.ts).
+// extractor as `milo api` (src/api-search.ts).
 //
 // The arg parsing has one trap worth pinning: `-o` is found with findIndex, which
 // returns -1 when absent, so a naive `i !== oIdx + 1` filter silently drops argv[0]

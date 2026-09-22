@@ -461,7 +461,7 @@ let s = identity("hello")  // T inferred as string
 | `swap(a, b)` | Exchange two mutable places of the same type. Move-only, no `clone` |
 | `forget(x)` | Consume `x` WITHOUT running its drop. For seams where ownership leaves through a raw pointer the checker cannot see — the alternative there is a double free or a leak. Memory-safe (leaking is safe), so it needs no `unsafe`; it is merely usually wrong |
 
-`forget` is the give direction. The take direction is [`std/foreign`](std/foreign.md)'s `adopt(p)` / `adoptSlice(p, len)`, which turn a raw pointer back into an owned `Heap<T>` / `Vec<T>` whose drop frees it. They are not built-ins: they are `@unsafe fn`s in one module, because the assertion they carry (the pointer came from a Milo allocation of this type, nothing aliases it, and it has not been adopted before) is not one the compiler can check, and adopting the same pointer twice is a double free. `forget` needs no `unsafe` because leaking is safe; `adopt` does, because un-leaking is not.
+`forget` is the give direction. The take direction is [`std/foreign`](site/stdlib/foreign.md)'s `adopt(p)` / `adoptSlice(p, len)`, which turn a raw pointer back into an owned `Heap<T>` / `Vec<T>` whose drop frees it. They are not built-ins: they are `@unsafe fn`s in one module, because the assertion they carry (the pointer came from a Milo allocation of this type, nothing aliases it, and it has not been adopted before) is not one the compiler can check, and adopting the same pointer twice is a double free. `forget` needs no `unsafe` because leaking is safe; `adopt` does, because un-leaking is not.
 
 ```milo
 from "std/foreign" import { adopt }
@@ -3189,7 +3189,7 @@ what it points at:
   ```
 - **`h.ptr(): *T`** — a `Heap<T>`'s box pointer: the allocation itself, not the
   slot holding it. Safe to call for the same reason `v.ptr()` is, and the give leg
-  that [`adopt`](std/foreign.md) is the take leg of. A `Heap<T>` whose `T` has its
+  that [`adopt`](site/stdlib/foreign.md) is the take leg of. A `Heap<T>` whose `T` has its
   own `ptr` method keeps that method; `Heap<SomeInterface>` has no `ptr()` at all,
   because an interface box is a pair (allocation, vtable) and no single raw pointer
   stands for it.
