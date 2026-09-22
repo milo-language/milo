@@ -53,6 +53,8 @@ fn Uuid.v4(): Uuid
 
 Random UUID (version 4): 122 random bits.
 
+The bits come from the OS CSPRNG.
+
 ### `Uuid.v7`
 
 ```milo
@@ -63,6 +65,10 @@ Time-ordered UUID (version 7): 48-bit Unix-epoch millisecond prefix, a
 12-bit monotonic counter, then random bits. Lexicographic order of the text
 form matches creation order, which is what makes v7 the better default for
 database keys.
+
+Ids minted inside the same millisecond still sort in creation order. The counter
+is per process and not synchronized across threads: a racing thread can reuse a
+counter value, which costs ordering but not uniqueness.
 
 ### `Uuid.variant`
 

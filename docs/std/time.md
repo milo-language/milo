@@ -164,7 +164,7 @@ so scaling is a method rather than `*`.
 fn Duration.toHours(self: &Duration): i64
 ```
 
-_Undocumented._
+Whole hours, truncated toward zero.
 
 ### `Duration.toMicros`
 
@@ -172,7 +172,7 @@ _Undocumented._
 fn Duration.toMicros(self: &Duration): i64
 ```
 
-_Undocumented._
+Whole microseconds, truncated toward zero.
 
 ### `Duration.toMillis`
 
@@ -180,7 +180,7 @@ _Undocumented._
 fn Duration.toMillis(self: &Duration): i64
 ```
 
-_Undocumented._
+Whole milliseconds, truncated toward zero.
 
 ### `Duration.toMillisF64`
 
@@ -196,7 +196,7 @@ _Undocumented._
 fn Duration.toMins(self: &Duration): i64
 ```
 
-_Undocumented._
+Whole minutes, truncated toward zero.
 
 ### `Duration.toNanos`
 
@@ -204,7 +204,7 @@ _Undocumented._
 fn Duration.toNanos(self: &Duration): i64
 ```
 
-_Undocumented._
+Whole nanoseconds.
 
 ### `Duration.toSecs`
 
@@ -212,7 +212,7 @@ _Undocumented._
 fn Duration.toSecs(self: &Duration): i64
 ```
 
-_Undocumented._
+Whole seconds, truncated toward zero.
 
 ### `Duration.toSecsF64`
 

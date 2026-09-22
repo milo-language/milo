@@ -271,7 +271,7 @@ full filesystems). After this the File is inert and its drop is a no-op.
 fn File.openAppend(path: &string): Result<File, IoError>
 ```
 
-_Undocumented._
+Open a file for appending, creating it if missing (mode 0644).
 
 ### `File.openRead`
 
@@ -279,7 +279,7 @@ _Undocumented._
 fn File.openRead(path: &string): Result<File, IoError>
 ```
 
-_Undocumented._
+Open a file for reading.
 
 ### `File.openWrite`
 
@@ -287,7 +287,7 @@ _Undocumented._
 fn File.openWrite(path: &string): Result<File, IoError>
 ```
 
-_Undocumented._
+Open a file for writing, creating it or truncating it (mode 0644).
 
 ### `File.rawFd`
 
@@ -322,7 +322,7 @@ seeking underneath one desynchronizes it — seek first, then wrap.
 fn File.size(self: &File): i64
 ```
 
-_Undocumented._
+Size of the open file in bytes. The read position is left where it was.
 
 ### `File.stream`
 

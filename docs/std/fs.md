@@ -81,6 +81,8 @@ pub fn fileSizePath(path: &string): Option<i64>
 
 Get file size in bytes.
 
+None when the file cannot be opened or measured.
+
 ### `glob`
 
 ```milo

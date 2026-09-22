@@ -27,6 +27,9 @@ impl Mime {
     // `ext` may be spelled with or without a leading dot and in any case:
     // "html", ".HTML" and "HtMl" all answer text/html. The answer is the bare
     // type with no parameters — see contentType for a full header value.
+    //
+    // ".ts" answers video/mp2t, matching the registry and every other server, not
+    // TypeScript source.
     fn fromExtension(ext: &string): Option<string> {
         var norm = ""
         var i: i64 = 0

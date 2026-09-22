@@ -17,7 +17,7 @@ wrap. Borrowed: the Database still owns and closes it.
 pub fn dbBindInt(stmt: &Statement, idx: i32, val: i32): Result<i32>
 ```
 
-_Undocumented._
+Bind an i32 to parameter `idx`. Parameter indices are 1-based.
 
 ### `dbBindInt64`
 
@@ -25,7 +25,7 @@ _Undocumented._
 pub fn dbBindInt64(stmt: &Statement, idx: i32, val: i64): Result<i32>
 ```
 
-_Undocumented._
+Bind an i64 to parameter `idx` (1-based).
 
 ### `dbBindNull`
 
@@ -33,7 +33,7 @@ _Undocumented._
 pub fn dbBindNull(stmt: &Statement, idx: i32): Result<i32>
 ```
 
-_Undocumented._
+Bind NULL to parameter `idx` (1-based).
 
 ### `dbBindText`
 
@@ -41,7 +41,7 @@ _Undocumented._
 pub fn dbBindText(stmt: &Statement, idx: i32, val: string): Result<i32>
 ```
 
-_Undocumented._
+Bind a string to parameter `idx` (1-based).
 
 ### `dbClose`
 
@@ -49,7 +49,7 @@ _Undocumented._
 pub fn dbClose(db: &Database): void
 ```
 
-_Undocumented._
+Close the connection. Nothing closes it on drop.
 
 ### `dbColumnCount`
 
@@ -57,7 +57,7 @@ _Undocumented._
 pub fn dbColumnCount(stmt: &Statement): i32
 ```
 
-_Undocumented._
+Number of columns in the result set.
 
 ### `dbColumnFloat`
 
@@ -65,7 +65,7 @@ _Undocumented._
 pub fn dbColumnFloat(stmt: &Statement, col: i32): f64
 ```
 
-_Undocumented._
+The column `col` (0-based) of the current row as an f64.
 
 ### `dbColumnInt`
 
@@ -73,7 +73,7 @@ _Undocumented._
 pub fn dbColumnInt(stmt: &Statement, col: i32): i32
 ```
 
-_Undocumented._
+The column `col` (0-based) of the current row as an i32.
 
 ### `dbColumnInt64`
 
@@ -81,7 +81,7 @@ _Undocumented._
 pub fn dbColumnInt64(stmt: &Statement, col: i32): i64
 ```
 
-_Undocumented._
+The column `col` (0-based) of the current row as an i64.
 
 ### `dbColumnIsNull`
 
@@ -89,7 +89,7 @@ _Undocumented._
 pub fn dbColumnIsNull(stmt: &Statement, col: i32): bool
 ```
 
-_Undocumented._
+Whether column `col` (0-based) of the current row is NULL.
 
 ### `dbColumnText`
 
@@ -97,7 +97,7 @@ _Undocumented._
 pub fn dbColumnText(stmt: &Statement, col: i32): string
 ```
 
-_Undocumented._
+The column `col` (0-based) of the current row as a string.
 
 ### `dbExec`
 
@@ -105,7 +105,8 @@ _Undocumented._
 pub fn dbExec(db: &Database, sql: string): Result<i32>
 ```
 
-_Undocumented._
+Execute SQL that returns no rows (CREATE, INSERT, UPDATE, DELETE). Errs with sqlite's
+message.
 
 ### `dbFinalize`
 
@@ -113,7 +114,7 @@ _Undocumented._
 pub fn dbFinalize(stmt: &Statement): void
 ```
 
-_Undocumented._
+Free the prepared statement.
 
 ### `dbLastInsertId`
 
@@ -121,7 +122,7 @@ _Undocumented._
 pub fn dbLastInsertId(db: &Database): i64
 ```
 
-_Undocumented._
+The rowid of the most recent successful INSERT on this connection.
 
 ### `dbOpen`
 
@@ -129,7 +130,7 @@ _Undocumented._
 pub fn dbOpen(path: string): Result<Database>
 ```
 
-_Undocumented._
+Open or create the database at `path`. `":memory:"` opens an in-memory database.
 
 ### `dbQuery`
 
@@ -137,7 +138,7 @@ _Undocumented._
 pub fn dbQuery(db: &Database, sql: string): Result<Statement>
 ```
 
-_Undocumented._
+Prepare a query for row-by-row iteration with `dbStep`.
 
 ### `dbReset`
 
@@ -145,7 +146,7 @@ _Undocumented._
 pub fn dbReset(stmt: &Statement): void
 ```
 
-_Undocumented._
+Reset the statement so it can run again with new bindings.
 
 ### `dbStep`
 
@@ -153,7 +154,7 @@ _Undocumented._
 pub fn dbStep(stmt: &Statement): bool
 ```
 
-_Undocumented._
+Advance to the next row: true if a row is available, false when done.
 
 ### `Statement.handle`
 

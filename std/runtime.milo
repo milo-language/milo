@@ -328,6 +328,7 @@ pub fn rtWritePtr(base: *u8, off: i64, val: *u8): void {
 
 // ── task handle ──
 
+// A handle to a spawned green task. `join` blocks the caller until it finishes.
 pub struct Task {
     _ptr: *u8,
     // Shared done-signal cell (taskCellNew), also stored in the task struct's
@@ -438,6 +439,9 @@ impl Task {
     // running it on a green task needs a comparable stack. The mapping is
     // anonymous and lazily committed, so a larger reservation costs address
     // space rather than resident memory.
+    //
+    // A task's stack does not grow: one that is too small overflows rather than
+    // reallocating.
     fn spawnWithStack(f: move () => void, stackBytes: i64): Task {
         unsafe {
             var fnPtr: *u8 = 0 as *u8
@@ -819,6 +823,8 @@ pub fn schedulerYield(): void {
 }
 
 // Park until `fd` is readable. @parks: see schedulerYield.
+//
+// Returns at once when the caller is not on the scheduler.
 @parks
 pub fn schedulerWaitRead(fd: i32): void {
     let sched = getSched()
@@ -844,6 +850,8 @@ pub fn schedulerWaitRead(fd: i32): void {
 }
 
 // Park until `fd` is writable. @parks: see schedulerYield.
+//
+// Returns at once when the caller is not on the scheduler.
 @parks
 pub fn schedulerWaitWrite(fd: i32): void {
     let sched = getSched()
@@ -898,6 +906,8 @@ pub fn schedulerRunMainRaw(fnPtr: *u8): void {
     schedulerShutdown()
 }
 
+// The running task, or null when the caller is not on the green scheduler. A std API
+// callable from either context branches on this; copy that check when you write one.
 pub fn schedulerCurrent(): *u8 {
     let sched = getSched()
     if sched as i64 == 0 {

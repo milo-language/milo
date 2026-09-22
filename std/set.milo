@@ -3,6 +3,7 @@
 // Iteration order is unspecified and reseeded every process, exactly as it is for
 // HashMap. Collect with toVec() and sort when you need a stable order.
 
+// An unordered collection of unique values.
 pub struct HashSet<T> {
     // `@iter` hands `for x in s` straight to the map, which yields its keys — the
     // set's elements. Without it a set would need a `next` method, and an iterator
@@ -12,6 +13,8 @@ pub struct HashSet<T> {
 
 impl HashSet<T> {
     // Create an empty HashSet.
+    //
+    // A generic static takes its type argument: `HashSet<string>.new()`.
     fn new(): HashSet<T> {
         return HashSet {
             inner: HashMap.new()
@@ -37,6 +40,8 @@ impl HashSet<T> {
     }
 
     // Add a value to the set.
+    //
+    // No-op if the value is already present.
     fn add(self: &mut HashSet<T>, val: T): void {
         self.inner.insert(val, true)
     }
@@ -47,6 +52,8 @@ impl HashSet<T> {
     }
 
     // Remove a value from the set.
+    //
+    // No-op if the value is absent.
     fn remove(self: &mut HashSet<T>, val: T): void {
         self.inner.remove(val)
     }

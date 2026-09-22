@@ -8,7 +8,8 @@
 fn Path.basename(path: &string): string
 ```
 
-_Undocumented._
+Final component of the path: `Path.basename("/home/user/file.txt")` is
+"file.txt".
 
 ### `Path.dirname`
 
@@ -16,7 +17,8 @@ _Undocumented._
 fn Path.dirname(path: &string): string
 ```
 
-_Undocumented._
+Directory portion of the path: `Path.dirname("/home/user/file.txt")` is
+"/home/user".
 
 ### `Path.ext`
 
@@ -24,7 +26,8 @@ _Undocumented._
 fn Path.ext(path: &string): string
 ```
 
-_Undocumented._
+File extension including the dot, or "" if there is none:
+`Path.ext("archive.tar.gz")` is ".gz".
 
 ### `Path.join`
 
@@ -32,7 +35,8 @@ _Undocumented._
 fn Path.join(a: &string, b: &string): string
 ```
 
-_Undocumented._
+Join two segments with a single "/": `Path.join("/home/user", "docs")` is
+"/home/user/docs".
 
 ### `Path.stem`
 
@@ -40,4 +44,4 @@ _Undocumented._
 fn Path.stem(path: &string): string
 ```
 
-_Undocumented._
+File name without its extension: `Path.stem("report.pdf")` is "report".

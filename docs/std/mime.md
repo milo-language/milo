@@ -28,6 +28,9 @@ Media type for `ext`, or None if the extension is not in the table.
 "html", ".HTML" and "HtMl" all answer text/html. The answer is the bare
 type with no parameters — see contentType for a full header value.
 
+".ts" answers video/mp2t, matching the registry and every other server, not
+TypeScript source.
+
 ### `Mime.fromPath`
 
 ```milo

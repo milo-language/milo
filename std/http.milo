@@ -32,11 +32,13 @@ from "std/platform" import {
 
 // ── Public types ──
 
+// A name/value pair: a path parameter, query parameter, header or cookie.
 pub struct Param {
     name: string,
     value: string,
 }
 
+// A parsed HTTP request.
 pub struct Request {
     method: string,
     path: string,
@@ -100,28 +102,33 @@ impl Context {
         }
     }
 
+    // Set the response status code used by `text`, `json`, `html` and `redirect`.
     fn setStatus(self: &mut Self, code: i32): void {
         self.statusCode = code
     }
 
+    // Add a response header.
     fn setHeader(self: &mut Self, name: string, value: string): void {
         self.respHeaders.push(Param {
             name: name, value: value
         })
     }
 
+    // Set a response cookie (`Set-Cookie: name=value`).
     fn setCookie(self: &mut Self, name: string, value: string): void {
         self.respHeaders.push(Param {
             name: "Set-Cookie", value: name + "=" + value
         })
     }
 
+    // Set a response cookie with attributes, e.g. `options` = "Path=/; HttpOnly".
     fn setCookieWithOptions(self: &mut Self, name: string, value: string, options: string): void {
         self.respHeaders.push(Param {
             name: "Set-Cookie", value: name + "=" + value + "; " + options
         })
     }
 
+    // Delete a cookie on the client (`Max-Age=0`).
     fn deleteCookie(self: &mut Self, name: string): void {
         self.respHeaders.push(Param {
             name: "Set-Cookie",
@@ -129,6 +136,7 @@ impl Context {
         })
     }
 
+    // A text/plain response, with the status from `setStatus`.
     fn text(self: &Self, body: string): Response {
         if self.statusCode != 200 {
             return Response.Status(self.statusCode, "text/plain; charset=utf-8", body)
@@ -136,6 +144,7 @@ impl Context {
         return Response.Text(body)
     }
 
+    // An application/json response, with the status from `setStatus`.
     fn json(self: &Self, body: string): Response {
         if self.statusCode != 200 {
             return Response.Status(self.statusCode, "application/json", body)
@@ -143,6 +152,7 @@ impl Context {
         return Response.Json(body)
     }
 
+    // A text/html response, with the status from `setStatus`.
     fn html(self: &Self, body: string): Response {
         if self.statusCode != 200 {
             return Response.Status(self.statusCode, "text/html; charset=utf-8", body)
@@ -150,6 +160,8 @@ impl Context {
         return Response.Html(body)
     }
 
+    // A 302 Found response with `url` as its body. It does not set a `Location` header;
+    // add one with `setHeader("Location", url)`.
     fn redirect(self: &Self, url: string): Response {
         if self.statusCode != 200 {
             return Response.Status(self.statusCode, "text/plain; charset=utf-8", url)
@@ -158,6 +170,7 @@ impl Context {
     }
 }
 
+// What a handler returns. `Status` carries the status code, content type and body.
 pub enum Response {
     Text(string),
     Html(string),
@@ -575,6 +588,8 @@ fn openListener(port: u16?): Result<Socket> {
     return Result.Ok(sock)
 }
 
+// The simplest server: every request goes to `handler`. Good for a static file server
+// or a single-handler app. Answers one connection at a time.
 pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
     let BUF_SIZE: i64 = 8192
     let sock = openListener(port)?
@@ -611,12 +626,15 @@ pub struct Route {
     handler: (&mut Context) => Response,
 }
 
+// Routes requests to handlers by method and path pattern (`/users/:id`), with
+// middleware run around every handler.
 pub struct Router {
     routes: Vec<Route>,
     middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>,
 }
 
 impl Router {
+    // An empty router.
     fn new(): Router {
         return Router {
             routes: [],
@@ -624,26 +642,34 @@ impl Router {
         }
     }
 
+    // Register a GET route. `:name` segments in `pattern` bind path parameters, read
+    // with `ctx.param("name")`.
     fn get(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
         self.addRoute("GET", pattern, h)
     }
 
+    // Register a POST route.
     fn post(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
         self.addRoute("POST", pattern, h)
     }
 
+    // Register a PUT route.
     fn put(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
         self.addRoute("PUT", pattern, h)
     }
 
+    // Register a DELETE route.
     fn delete(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
         self.addRoute("DELETE", pattern, h)
     }
 
+    // Register a route that matches any method.
     fn all(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
         self.addRoute("*", pattern, h)
     }
 
+    // Add middleware. It receives the context and `next`, the rest of the chain, and
+    // returns the response.
     fn use(self: &mut Self, mw: (&mut Context, (&mut Context) => Response) => Response): void {
         self.middleware.push(mw)
     }

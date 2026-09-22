@@ -49,6 +49,10 @@ short key to the block size, so the two inputs produce the same PRK. A salt
 need not be secret, and a random one is what makes the extract step provably
 a randomness extractor rather than just a hash.
 
+An empty `salt` is the RFC's default of HashLen zero bytes. A salt need not be
+secret; a random one is what makes extract a randomness extractor rather than
+just a hash.
+
 ### `Hkdf.extractSha512`
 
 ```milo

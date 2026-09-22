@@ -8,7 +8,7 @@
 fn Deflate.gzip(src: &string): string
 ```
 
-_Undocumented._
+Compress to a gzip stream: 10-byte header, DEFLATE body, CRC-32 + length trailer.
 
 ### `Deflate.raw`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn Deflate.raw(src: &string): string
 ```
 
-_Undocumented._
+Compress to a single fixed-Huffman DEFLATE stream (no container header).
 
 ### `Deflate.zlib`
 
@@ -24,4 +24,4 @@ _Undocumented._
 fn Deflate.zlib(src: &string): string
 ```
 
-_Undocumented._
+Compress to a zlib stream: 2-byte header, DEFLATE body, Adler-32 trailer.

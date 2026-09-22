@@ -496,12 +496,18 @@ pub struct Inflate {
 }
 
 impl Inflate {
+    // Decompress a raw DEFLATE stream (no container header). Malformed input is an
+    // `Err`, not a crash.
     fn raw(src: &string): Result<string, string> {
         return inflate(src)
     }
+    // Unwrap a gzip stream and decompress its body. Errs on malformed input or a
+    // checksum mismatch.
     fn gzip(src: &string): Result<string, string> {
         return gzipDecompress(src)
     }
+    // Unwrap a zlib stream and decompress its body. Errs on malformed input or a
+    // checksum mismatch.
     fn zlib(src: &string): Result<string, string> {
         return zlibDecompress(src)
     }

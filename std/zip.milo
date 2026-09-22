@@ -16,6 +16,7 @@ from "std/binary" import {
     Bytes
 }
 
+// One archive member: its stored `name` and its decompressed `data`.
 pub struct ZipEntry {
     name: string,
     data: string, // decompressed contents
@@ -135,6 +136,8 @@ pub struct Zip {
 }
 
 impl Zip {
+    // Read every entry, decompressing and CRC-checking each. Errs on a malformed
+    // archive, an unsupported compression method, or a CRC mismatch.
     fn read(src: &string): Result<Vec<ZipEntry>, string> {
         return zipRead(src)
     }

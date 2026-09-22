@@ -129,6 +129,8 @@ pub fn isFile(path: &string): bool {
 }
 
 // Get file size in bytes.
+//
+// None when the file cannot be opened or measured.
 pub fn fileSizePath(path: &string): Option<i64> {
     // Size via open + lseek(SEEK_END), not the struct-stat st_size field: that
     // offset is arch-specific (like st_mode; see isDir) and was wrong on arm64

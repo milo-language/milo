@@ -8,7 +8,7 @@
 fn Url.parse(s: string): Result<Url>
 ```
 
-_Undocumented._
+Parse a URL string into its components.
 
 ### `Url.queryGet`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn Url.queryGet(self: &Url, key: &string): Option<string>
 ```
 
-_Undocumented._
+The value of query parameter `key`, or None if the query has no such key.
 
 ### `Url.toString`
 
@@ -24,4 +24,4 @@ _Undocumented._
 fn Url.toString(self: &Url): string
 ```
 
-_Undocumented._
+Reassemble the URL from its components.

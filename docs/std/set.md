@@ -10,6 +10,8 @@ fn HashSet.add(self: &mut HashSet<T>, val: T): void
 
 Add a value to the set.
 
+No-op if the value is already present.
+
 ### `HashSet.clear`
 
 ```milo
@@ -93,6 +95,8 @@ fn HashSet.new(): HashSet<T>
 
 Create an empty HashSet.
 
+A generic static takes its type argument: `HashSet<string>.new()`.
+
 ### `HashSet.remove`
 
 ```milo
@@ -100,6 +104,8 @@ fn HashSet.remove(self: &mut HashSet<T>, val: T): void
 ```
 
 Remove a value from the set.
+
+No-op if the value is absent.
 
 ### `HashSet.toVec`
 

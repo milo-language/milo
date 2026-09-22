@@ -257,7 +257,8 @@ their own completion condition (Promise result, join cell, WaitGroup count).
 pub fn schedulerCurrent(): *u8
 ```
 
-_Undocumented._
+The running task, or null when the caller is not on the green scheduler. A std API
+callable from either context branches on this; copy that check when you write one.
 
 ### `schedulerEnsureInit`
 
@@ -371,6 +372,8 @@ pub fn schedulerWaitRead(fd: i32): void
 
 Park until `fd` is readable. @parks: see schedulerYield.
 
+Returns at once when the caller is not on the scheduler.
+
 ### `schedulerWaitWrite`
 
 ```milo
@@ -378,6 +381,8 @@ pub fn schedulerWaitWrite(fd: i32): void
 ```
 
 Park until `fd` is writable. @parks: see schedulerYield.
+
+Returns at once when the caller is not on the scheduler.
 
 ### `schedulerYield`
 
@@ -675,6 +680,9 @@ budgets its JS call depth against the 8 MB the OS main thread gets, so
 running it on a green task needs a comparable stack. The mapping is
 anonymous and lazily committed, so a larger reservation costs address
 space rather than resident memory.
+
+A task's stack does not grow: one that is too small overflows rather than
+reallocating.
 
 ### `taskDone`
 

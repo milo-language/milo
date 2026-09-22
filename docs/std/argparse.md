@@ -51,6 +51,8 @@ fn ArgParser.addString(self: &mut ArgParser, long: string, short: string, help: 
 Add a string flag with long name, short alias, help text, and default.
 Example: parser.addString("output", "o", "Output file", "out.txt")
 
+Pass "" as `defaultVal` for no default.
+
 ### `ArgParser.enableIgnoreUnknown`
 
 ```milo
@@ -67,6 +69,10 @@ fn ArgParser.enableTrailingArgs(self: &mut ArgParser): void
 
 Stop flag parsing after the first positional arg.
 Remaining args collected as positionals without interpretation.
+
+For a runtime or wrapper: flags before the command are yours, everything after
+belongs to the child. A `--` separator always ends flag parsing, whatever this
+setting.
 
 ### `ArgParser.helpText`
 
@@ -92,6 +98,10 @@ fn ArgParser.parse(self: &ArgParser): ParsedArgs
 
 Parse command-line arguments and return ParsedArgs.
 Automatically handles --help. Exits on invalid input.
+
+Returns no Result: a missing required flag prints usage and exits, so the value
+is always usable. `parseFrom` takes the argv vector instead, which is what a test
+wants.
 
 ### `ArgParser.parseFrom`
 

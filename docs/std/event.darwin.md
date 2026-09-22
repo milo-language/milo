@@ -18,7 +18,7 @@ reads return EAGAIN after we exit. Restore blocking mode before exiting.
 pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32
 ```
 
-_Undocumented._
+Stop watching `fd`. `forWrite` picks the write registration rather than the read one.
 
 ### `EventLoop.new`
 
@@ -26,7 +26,7 @@ _Undocumented._
 fn EventLoop.new(): Result<EventLoop, string>
 ```
 
-_Undocumented._
+Create a poller. Errs if the kernel will not hand one out.
 
 ### `eventLoopClose`
 
@@ -34,7 +34,7 @@ _Undocumented._
 pub fn eventLoopClose(el: &EventLoop): void
 ```
 
-_Undocumented._
+Release the poller.
 
 ### `eventLoopCloseWakeup`
 
@@ -42,7 +42,7 @@ _Undocumented._
 pub fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void
 ```
 
-_Undocumented._
+Tear down a wakeup made by eventLoopInitWakeup.
 
 ### `eventLoopDrainWakeup`
 
@@ -50,7 +50,7 @@ _Undocumented._
 pub fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void
 ```
 
-_Undocumented._
+Consume a delivered wakeup so the next poll does not report it again.
 
 ### `eventLoopFd`
 
@@ -58,7 +58,7 @@ _Undocumented._
 pub fn eventLoopFd(el: &EventLoop): i32
 ```
 
-_Undocumented._
+The poller's descriptor, to hand to another runtime's poller when embedding.
 
 ### `eventLoopFromFd`
 
@@ -66,7 +66,8 @@ _Undocumented._
 pub fn eventLoopFromFd(fd: i32): EventLoop
 ```
 
-_Undocumented._
+Wrap a poller that another runtime already owns. Does not take ownership: closing it
+is still the original owner's job.
 
 ### `eventLoopInitWakeup`
 
@@ -74,7 +75,9 @@ _Undocumented._
 pub fn eventLoopInitWakeup(el: &EventLoop): i32
 ```
 
-_Undocumented._
+Arm a wakeup that breaks a blocked `eventPoll` from elsewhere; this is how a
+`Promise.blocking` worker tells the scheduler its result is ready. Returns the id to
+pass to eventLoopNotify, eventLoopDrainWakeup and eventLoopCloseWakeup.
 
 ### `eventLoopNotify`
 
@@ -94,13 +97,15 @@ poll for ready events. readyFds: caller-allocated *i32 array with capacity >= ma
 returns count of ready fds, or -1 on error.
 timeoutMs < 0 means block indefinitely.
 
+A fixed `[i32; N]` array passes bare: it coerces to `*i32`.
+
 ### `eventRegisterRead`
 
 ```milo
 pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32
 ```
 
-_Undocumented._
+Watch `fd` for readability.
 
 ### `eventRegisterWrite`
 
@@ -108,7 +113,7 @@ _Undocumented._
 pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32
 ```
 
-_Undocumented._
+Watch `fd` for writability.
 
 ### `keventSize`
 
@@ -124,7 +129,9 @@ _Undocumented._
 pub fn setNonblocking(fd: i32): i32
 ```
 
-_Undocumented._
+Make `fd` non-blocking. 0 on success, -1 on error. Register only non-blocking fds: a
+poller that reports ready and then hangs in `read` is the usual symptom otherwise,
+because readiness says a byte was available, not that the next read will return.
 
 ### `wakeupIdentBase`
 

@@ -16,7 +16,8 @@ _Undocumented._
 pub fn ip4(a: u8, b: u8, c: u8, d: u8): u32
 ```
 
-_Undocumented._
+Construct an IPv4 address from four octets.
+Example: ip4(127, 0, 0, 1) for localhost.
 
 ### `ip6`
 
@@ -24,8 +25,6 @@ _Undocumented._
 pub fn ip6(text: &string): Option<[u8; 16]>
 ```
 
-Construct an IPv4 address from four octets.
-Example: ip4(127, 0, 0, 1) for localhost.
 Parse an IPv6 literal ("::1", "2001:db8::1") into its 16 raw bytes.
 None if the text isn't a valid v6 address — inet_pton is strict, and a v4 literal like
 "127.0.0.1" is NOT auto-mapped, so it returns None here rather than a v4-mapped address.
@@ -36,7 +35,7 @@ None if the text isn't a valid v6 address — inet_pton is strict, and a v4 lite
 pub fn resolve(hostname: &string): Result<u32, NetError>
 ```
 
-_Undocumented._
+DNS lookup: the first IPv4 address for `hostname`.
 
 ### `TcpListener.accept`
 
@@ -98,7 +97,7 @@ plausible-looking port number.
 fn TcpStream.connect(ip: u32, port: u16): Result<TcpStream, NetError>
 ```
 
-_Undocumented._
+Open a TCP connection to an IPv4 address (see `ip4`, `resolve`).
 
 ### `TcpStream.connect6`
 
@@ -160,7 +159,7 @@ for a request's headers.
 fn TcpStream.send(self: &TcpStream, data: &string): Result<i64, NetError>
 ```
 
-_Undocumented._
+Send `data`. Returns the number of bytes sent.
 
 ### `TcpStream.stream`
 

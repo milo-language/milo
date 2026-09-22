@@ -17,7 +17,7 @@ not carry `name`. `name=` in the header is Some("").
 fn Context.deleteCookie(self: &mut Context, name: string): void
 ```
 
-_Undocumented._
+Delete a cookie on the client (`Max-Age=0`).
 
 ### `Context.header`
 
@@ -34,7 +34,7 @@ did not carry it. A header sent with an empty value is Some("").
 fn Context.html(self: &Context, body: string): Response
 ```
 
-_Undocumented._
+A text/html response, with the status from `setStatus`.
 
 ### `Context.json`
 
@@ -42,7 +42,7 @@ _Undocumented._
 fn Context.json(self: &Context, body: string): Response
 ```
 
-_Undocumented._
+An application/json response, with the status from `setStatus`.
 
 ### `Context.param`
 
@@ -68,7 +68,8 @@ Value of query-string parameter `name`, or None if it was not in the URL.
 fn Context.redirect(self: &Context, url: string): Response
 ```
 
-_Undocumented._
+A 302 Found response with `url` as its body. It does not set a `Location` header;
+add one with `setHeader("Location", url)`.
 
 ### `Context.setCookie`
 
@@ -76,7 +77,7 @@ _Undocumented._
 fn Context.setCookie(self: &mut Context, name: string, value: string): void
 ```
 
-_Undocumented._
+Set a response cookie (`Set-Cookie: name=value`).
 
 ### `Context.setCookieWithOptions`
 
@@ -84,7 +85,7 @@ _Undocumented._
 fn Context.setCookieWithOptions(self: &mut Context, name: string, value: string, options: string): void
 ```
 
-_Undocumented._
+Set a response cookie with attributes, e.g. `options` = "Path=/; HttpOnly".
 
 ### `Context.setHeader`
 
@@ -92,7 +93,7 @@ _Undocumented._
 fn Context.setHeader(self: &mut Context, name: string, value: string): void
 ```
 
-_Undocumented._
+Add a response header.
 
 ### `Context.setStatus`
 
@@ -100,7 +101,7 @@ _Undocumented._
 fn Context.setStatus(self: &mut Context, code: i32): void
 ```
 
-_Undocumented._
+Set the response status code used by `text`, `json`, `html` and `redirect`.
 
 ### `Context.text`
 
@@ -108,7 +109,7 @@ _Undocumented._
 fn Context.text(self: &Context, body: string): Response
 ```
 
-_Undocumented._
+A text/plain response, with the status from `setStatus`.
 
 ### `parseRequest`
 
@@ -152,7 +153,7 @@ _Undocumented._
 fn Router.all(self: &mut Router, pattern: string, h: (&mut Context) => Response): void
 ```
 
-_Undocumented._
+Register a route that matches any method.
 
 ### `Router.delete`
 
@@ -160,7 +161,7 @@ _Undocumented._
 fn Router.delete(self: &mut Router, pattern: string, h: (&mut Context) => Response): void
 ```
 
-_Undocumented._
+Register a DELETE route.
 
 ### `Router.get`
 
@@ -168,7 +169,8 @@ _Undocumented._
 fn Router.get(self: &mut Router, pattern: string, h: (&mut Context) => Response): void
 ```
 
-_Undocumented._
+Register a GET route. `:name` segments in `pattern` bind path parameters, read
+with `ctx.param("name")`.
 
 ### `Router.handle`
 
@@ -184,7 +186,7 @@ _Undocumented._
 fn Router.new(): Router
 ```
 
-_Undocumented._
+An empty router.
 
 ### `Router.post`
 
@@ -192,7 +194,7 @@ _Undocumented._
 fn Router.post(self: &mut Router, pattern: string, h: (&mut Context) => Response): void
 ```
 
-_Undocumented._
+Register a POST route.
 
 ### `Router.put`
 
@@ -200,7 +202,7 @@ _Undocumented._
 fn Router.put(self: &mut Router, pattern: string, h: (&mut Context) => Response): void
 ```
 
-_Undocumented._
+Register a PUT route.
 
 ### `Router.use`
 
@@ -208,7 +210,8 @@ _Undocumented._
 fn Router.use(self: &mut Router, mw: (&mut Context, (&mut Context) => Response) => Response): void
 ```
 
-_Undocumented._
+Add middleware. It receives the context and `next`, the rest of the chain, and
+returns the response.
 
 ### `serve`
 
@@ -216,7 +219,8 @@ _Undocumented._
 pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit>
 ```
 
-_Undocumented._
+The simplest server: every request goes to `handler`. Good for a static file server
+or a single-handler app. Answers one connection at a time.
 
 ### `serveRouter`
 

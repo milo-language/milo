@@ -37,6 +37,7 @@ fn sha1Bytes(input: &string): string {
 
 // ── AES-GCM ──
 
+// The two outputs of an AES-GCM encryption. Keep both: decryption needs the `tag`.
 pub struct AesGcmResult {
     ciphertext: string,
     tag: string,
@@ -142,25 +143,35 @@ pub struct Crypto {
 }
 
 impl Crypto {
+    // SHA-256 as a 64-char lowercase hex string.
     fn sha256(input: &string): string {
         return sha256(input)
     }
+    // SHA-1 as a 40-char lowercase hex string.
     fn sha1(input: &string): string {
         return sha1(input)
     }
+    // SHA-1 as the raw 20-byte digest (the WebSocket handshake, legacy protocols).
     fn sha1Bytes(input: &string): string {
         return sha1Bytes(input)
     }
+    // MD5 as a 32-char lowercase hex string.
     fn md5(input: &string): string {
         return md5(input)
     }
     // Encrypt with AES-256-GCM. The key is 32 bytes and the IV is 12 bytes.
+    //
+    // `aad` is additional authenticated data; pass "" if unused. The key and IV lengths
+    // are preconditions (`requires`), not runtime errors.
     fn aesGcmEncrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
     requires key.len == 32
     requires iv.len == 12
     {
         return aesGcmEncrypt(key, iv, plaintext, aad)
     }
+    // Decrypt and authenticate with AES-256-GCM: 32-byte key, 12-byte IV, and the
+    // 16-byte `tag` from encryption. A tag that does not verify is an `Err`, never
+    // corrupted plaintext.
     fn aesGcmDecrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
     requires key.len == 32
     requires iv.len == 12
@@ -169,12 +180,16 @@ impl Crypto {
         return aesGcmDecrypt(key, iv, ciphertext, tag, aad)
     }
     // Encrypt with AES-128-GCM. The key is 16 bytes and the IV is 12 bytes.
+    //
+    // `aad` is additional authenticated data; pass "" if unused.
     fn aesGcm128Encrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
     requires key.len == 16
     requires iv.len == 12
     {
         return aesGcm128Encrypt(key, iv, plaintext, aad)
     }
+    // Decrypt and authenticate with AES-128-GCM: 16-byte key, 12-byte IV, 16-byte
+    // `tag`. A tag that does not verify is an `Err`.
     fn aesGcm128Decrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
     requires key.len == 16
     requires iv.len == 12

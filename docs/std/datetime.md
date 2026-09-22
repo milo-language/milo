@@ -16,7 +16,7 @@ ISO 8601: 2024-03-15T14:30:00
 fn DateTime.formatDate(self: &DateTime): string
 ```
 
-_Undocumented._
+The date portion only: 2024-03-15.
 
 ### `DateTime.formatTime`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn DateTime.formatTime(self: &DateTime): string
 ```
 
-_Undocumented._
+The time portion only: 14:30:00.
 
 ### `DateTime.fromEpoch`
 
@@ -68,7 +68,7 @@ Current UTC time.
 pub fn monthName(m: i32): string
 ```
 
-_Undocumented._
+English name for a month, 1 = January.
 
 ### `weekdayName`
 
@@ -76,4 +76,4 @@ _Undocumented._
 pub fn weekdayName(wd: i32): string
 ```
 
-_Undocumented._
+English name for a weekday, 0 = Sunday.

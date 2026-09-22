@@ -124,6 +124,8 @@ impl Hmac {
         return hmacSha256Bytes(key, msg)
     }
     // HMAC-SHA1, 20 raw bytes.
+    //
+    // Needed by HOTP/TOTP (std/totp) and PBKDF2-HMAC-SHA1, both specified on SHA-1.
     fn sha1Bytes(key: &string, msg: &string): string {
         return hmacSha1Bytes(key, msg)
     }

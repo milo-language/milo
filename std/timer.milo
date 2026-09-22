@@ -35,6 +35,8 @@ from "std/select" import {
 
 // ── Timer — fires once ──
 
+// A one-shot timer. Dropping it cancels it: otherwise an unfired timer's task would
+// sleep out the full span and send into a channel nobody holds.
 pub struct Timer {
     _ch: Channel<Instant>,
     _stopped: AtomicBool,
@@ -96,6 +98,7 @@ impl Drop for Timer {
 
 // ── Ticker — fires repeatedly ──
 
+// A periodic timer. Dropping it stops it.
 pub struct Ticker {
     _ch: Channel<Instant>,
     _stopped: AtomicBool,

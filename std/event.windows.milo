@@ -169,6 +169,9 @@ pub fn maskToNet(mask: i32): i32 {
     return net
 }
 
+// Make `fd` non-blocking. 0 on success, -1 on error. Register only non-blocking fds: a
+// poller that reports ready and then hangs in `read` is the usual symptom otherwise,
+// because readiness says a byte was available, not that the next read will return.
 pub fn setNonblocking(fd: i32): i32 {
     var flag: u32 = 1
     unsafe {
@@ -216,6 +219,7 @@ pub fn eventLoopNew(): Result<EventLoop, string> {
 }
 
 impl EventLoop {
+    // Create a poller. Errs if the kernel will not hand one out.
     fn new(): Result<EventLoop, string> {
         return eventLoopNew()
     }
@@ -248,10 +252,12 @@ pub fn eventLoopNotify(el: &EventLoop, _wakeupId: i32): i32 {
     return 0
 }
 
+// Consume a delivered wakeup so the next poll does not report it again.
 pub fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
     // auto-reset Event was reset by the wait that observed it; nothing to consume
 }
 
+// Tear down a wakeup made by eventLoopInitWakeup.
 pub fn eventLoopCloseWakeup(el: &EventLoop, _wakeupId: i32): void {
     let st = winLoopAt(el.slot)
     unsafe {
@@ -313,14 +319,17 @@ fn wlRegister(st: *u8, fd: i32, bit: i32): i32 {
     return 0
 }
 
+// Watch `fd` for readability.
 pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
     return wlRegister(winLoopAt(el.slot), fd, maskRead())
 }
 
+// Watch `fd` for writability.
 pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
     return wlRegister(winLoopAt(el.slot), fd, maskWrite())
 }
 
+// Stop watching `fd`. `forWrite` picks the write registration rather than the read one.
 pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
     let st = winLoopAt(el.slot)
     let idx = wlFind(st, fd)
@@ -410,16 +419,20 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32
 
 // ── reconstruction + teardown ──
 
+// Wrap a poller that another runtime already owns. Does not take ownership: closing it
+// is still the original owner's job.
 pub fn eventLoopFromFd(slot: i32): EventLoop {
     return EventLoop {
         slot: slot
     }
 }
 
+// The poller's descriptor, to hand to another runtime's poller when embedding.
 pub fn eventLoopFd(el: &EventLoop): i32 {
     return el.slot
 }
 
+// Release the poller.
 pub fn eventLoopClose(el: &EventLoop): void {
     let st = winLoopAt(el.slot)
     unsafe {

@@ -18,7 +18,8 @@ pub fn getFlag(name: &string): string?
 ```
 
 Get the value following a --name flag.
-Returns null if the flag is not present.
+None if the flag is absent or is the last argument. Only the `--name value`
+form is recognised, not `--name=value`.
 Example: getFlag("port") returns the value after --port.
 
 ### `hasFlag`

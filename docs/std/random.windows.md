@@ -8,7 +8,7 @@
 fn Random.bool(): bool
 ```
 
-_Undocumented._
+`true` or `false` with equal probability.
 
 ### `Random.bytes`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn Random.bytes(buf: *u8, n: i64): void
 ```
 
-_Undocumented._
+Fill `buf` with `n` random bytes.
 
 ### `Random.float`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn Random.float(): f64
 ```
 
-_Undocumented._
+A random float in [0.0, 1.0).
 
 ### `Random.floatRange`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn Random.floatRange(min: f64, max: f64): f64
 ```
 
-_Undocumented._
+A random float in [min, max).
 
 ### `Random.int`
 
@@ -40,7 +40,7 @@ _Undocumented._
 fn Random.int(max: i64): i64
 ```
 
-_Undocumented._
+A random integer in [0, max). `max` must be positive.
 
 ### `Random.range`
 
@@ -48,7 +48,7 @@ _Undocumented._
 fn Random.range(min: i64, max: i64): i64
 ```
 
-_Undocumented._
+A random integer in [min, max], both ends inclusive.
 
 ### `Random.shuffleI64`
 
@@ -56,7 +56,8 @@ _Undocumented._
 fn Random.shuffleI64(v: &mut Vec<i64>, n: i64): void
 ```
 
-_Undocumented._
+Shuffle the first `n` elements of `v` in place (Fisher-Yates). Pass `v.len()` for
+all.
 
 ### `Random.u32`
 
@@ -64,4 +65,4 @@ _Undocumented._
 fn Random.u32(): u32
 ```
 
-_Undocumented._
+A random u32 in [0, 2^32).

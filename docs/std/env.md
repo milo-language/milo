@@ -8,7 +8,7 @@
 fn Env.get(name: string): Option<string>
 ```
 
-_Undocumented._
+Look up an environment variable. None if it is unset.
 
 ### `Env.getOr`
 
@@ -16,7 +16,8 @@ _Undocumented._
 fn Env.getOr(name: string, defaultVal: string): string
 ```
 
-_Undocumented._
+Look up an environment variable, or `defaultVal` if it is unset:
+`Env.getOr("PORT", "8080")`.
 
 ### `Env.remove`
 
@@ -50,3 +51,6 @@ freed memory — a real crash, not a stale read. What Milo does and does not pro
 
 The safe pattern is the one Go and Rust also recommend: set the environment during
 startup, before spawning anything.
+
+To give one child a variable without changing your own environment, use
+`Command.env` in std/process instead.

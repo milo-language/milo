@@ -149,9 +149,12 @@ pub struct Sha256 {
 }
 
 impl Sha256 {
+    // SHA-256 digest as a 64-char lowercase hex string.
     fn hash(input: &string): string {
         return sha256(input)
     }
+    // SHA-256 digest as 32 raw bytes. Use this when the digest feeds further bytes
+    // (HMAC, key derivation); `Sha256.hash` wraps it for the common hex case.
     fn bytes(input: &string): string {
         return sha256Bytes(input)
     }

@@ -19,7 +19,8 @@ caller has not set their own, so an explicit header always wins.
 pub fn fetch(url: &string): Result<FetchResponse, NetError>
 ```
 
-_Undocumented._
+HTTP GET. Resolves the host, uses TLS for an https URL, and follows 301/302/307/308
+redirects.
 
 ### `fetchDelete`
 
@@ -27,7 +28,7 @@ _Undocumented._
 pub fn fetchDelete(url: &string): Result<FetchResponse, NetError>
 ```
 
-_Undocumented._
+HTTP DELETE.
 
 ### `fetchForm`
 
@@ -45,7 +46,7 @@ hand-roll it with urlEncode. Several APIs that nominally accept a raw body
 pub fn fetchPatch(url: &string, body: &string): Result<FetchResponse, NetError>
 ```
 
-_Undocumented._
+HTTP PATCH of `body` with `Content-Type: application/json`.
 
 ### `fetchPost`
 
@@ -53,7 +54,7 @@ _Undocumented._
 pub fn fetchPost(url: &string, body: &string): Result<FetchResponse, NetError>
 ```
 
-_Undocumented._
+HTTP POST of `body` with `Content-Type: application/json`.
 
 ### `fetchPut`
 
@@ -61,7 +62,7 @@ _Undocumented._
 pub fn fetchPut(url: &string, body: &string): Result<FetchResponse, NetError>
 ```
 
-_Undocumented._
+HTTP PUT of `body` with `Content-Type: application/json`.
 
 ### `FetchResponse.header`
 
@@ -102,7 +103,8 @@ Return the response body as a string.
 pub fn fetchWith(url: &string, opts: FetchOptions): Result<FetchResponse, NetError>
 ```
 
-_Undocumented._
+An HTTP request with full control over method, headers and body. Redirects are
+followed as for `fetch`; a 301 or 302 turns the retry into a GET with no body.
 
 ### `findHeader`
 
@@ -181,7 +183,8 @@ _Undocumented._
 fn TlsStream.connect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetError>
 ```
 
-_Undocumented._
+Open a TLS connection to an IPv4 address. `hostname` is used for SNI and
+certificate verification.
 
 ### `TlsStream.connectWithCA`
 
@@ -244,7 +247,7 @@ so recv() would deadlock there; this returns after one record.
 fn TlsStream.send(self: &TlsStream, data: &string): Result<i64, NetError>
 ```
 
-_Undocumented._
+Send `data` over the TLS connection. Returns the number of bytes sent.
 
 ### `urlEncode`
 

@@ -145,6 +145,8 @@ pub struct Process {
 }
 
 impl Process {
+    // Start the program at `path` in the background, with no arguments and no shell.
+    // For arguments, a working directory or redirection, use `Command`.
     fn spawn(path: &string): Result<Process> {
         var args: Vec<string> = Vec.new()
         return createProcess(path, args, -1, -1, -1, false, 0 as *u8, 0 as *u8)
@@ -361,6 +363,9 @@ fn makeInheritable(fd: i32): void {
 // working directory fails spawn() here instead of failing the child with exit code 126.
 
 // Where one of a child's standard streams comes from, or goes to.
+//
+// Reading a stream that is not a pipe is a contract violation: `writeStdin`,
+// `readStdout` and `stdout()` require their fd, checked in debug builds.
 pub enum Stdio {
     // A pipe the parent holds the other end of: Child.writeStdin / stdout() / stderr().
     Pipe,
@@ -384,6 +389,12 @@ struct EnvChange {
     remove: bool,
 }
 
+// Builds a child process: program, arguments, working directory, environment, and where
+// each standard stream goes. Each method takes the builder and hands it back, so calls
+// chain; `spawn` borrows, so one Command can start several children.
+//
+// The default is stdin and stdout on pipes with stderr merged into stdout. When stderr
+// is not merged, drain both streams, or the child can deadlock filling an unread pipe.
 pub struct Command {
     program: string,
     argv: Vec<string>,
@@ -453,18 +464,21 @@ impl Command {
         return c
     }
 
+    // Where the child's stdin comes from. `Pipe` by default.
     fn stdin(self: Command, mode: Stdio): Command {
         var c = self
         c.inMode = mode
         return c
     }
 
+    // Where the child's stdout goes. `Pipe` by default.
     fn stdout(self: Command, mode: Stdio): Command {
         var c = self
         c.outMode = mode
         return c
     }
 
+    // Where the child's stderr goes. `Merge` (into stdout) by default.
     fn stderr(self: Command, mode: Stdio): Command {
         var c = self
         c.errMode = mode

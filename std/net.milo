@@ -43,6 +43,8 @@ from "std/io" import {
 
 // ── NetError ──
 
+// Why a network operation failed. The payload is a short description; for `DnsFailure`
+// it is the hostname.
 pub enum NetError {
     DnsFailure(string),
     ConnectionFailed(string),
@@ -72,8 +74,6 @@ impl Drop for TcpStream {
     }
 }
 
-// Construct an IPv4 address from four octets.
-// Example: ip4(127, 0, 0, 1) for localhost.
 // Parse an IPv6 literal ("::1", "2001:db8::1") into its 16 raw bytes.
 // None if the text isn't a valid v6 address — inet_pton is strict, and a v4 literal like
 // "127.0.0.1" is NOT auto-mapped, so it returns None here rather than a v4-mapped address.
@@ -96,6 +96,8 @@ pub fn ip6(text: &string): Option<[u8; 16]> {
     }
 }
 
+// Construct an IPv4 address from four octets.
+// Example: ip4(127, 0, 0, 1) for localhost.
 pub fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
     let a32 = a as u32
     let b32 = b as u32
@@ -105,6 +107,7 @@ pub fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
 }
 
 impl TcpStream {
+    // Open a TCP connection to an IPv4 address (see `ip4`, `resolve`).
     fn connect(ip: u32, port: u16): Result<TcpStream, NetError> {
         ignoreSigpipe()
         let AF_INET: i32 = 2
@@ -147,6 +150,7 @@ impl TcpStream {
         })
     }
 
+    // Send `data`. Returns the number of bytes sent.
     fn send(self: &Self, data: &string): Result<i64, NetError> {
         let n = writeFd(self.fd, data, data.len)
         if n < 0 {
@@ -370,6 +374,7 @@ impl TcpListener {
 
 // ── DNS ──
 
+// DNS lookup: the first IPv4 address for `hostname`.
 pub fn resolve(hostname: &string): Result<u32, NetError> {
     var hints: [u8; 48] = [0; 48]
     unsafe {

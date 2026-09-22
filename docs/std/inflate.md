@@ -8,7 +8,8 @@
 fn Inflate.gzip(src: &string): Result<string, string>
 ```
 
-_Undocumented._
+Unwrap a gzip stream and decompress its body. Errs on malformed input or a
+checksum mismatch.
 
 ### `Inflate.raw`
 
@@ -16,7 +17,8 @@ _Undocumented._
 fn Inflate.raw(src: &string): Result<string, string>
 ```
 
-_Undocumented._
+Decompress a raw DEFLATE stream (no container header). Malformed input is an
+`Err`, not a crash.
 
 ### `Inflate.zlib`
 
@@ -24,4 +26,5 @@ _Undocumented._
 fn Inflate.zlib(src: &string): Result<string, string>
 ```
 
-_Undocumented._
+Unwrap a zlib stream and decompress its body. Errs on malformed input or a
+checksum mismatch.

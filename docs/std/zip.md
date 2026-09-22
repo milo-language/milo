@@ -8,4 +8,5 @@
 fn Zip.read(src: &string): Result<Vec<ZipEntry>, string>
 ```
 
-_Undocumented._
+Read every entry, decompressing and CRC-checking each. Errs on a malformed
+archive, an unsupported compression method, or a CRC mismatch.

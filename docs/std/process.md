@@ -8,7 +8,8 @@
 pub fn capture(cmd: &string): Result<string>
 ```
 
-_Undocumented._
+Run `cmd` through the shell and return its stdout and stderr, merged. Errs if the
+command exits non-zero.
 
 ### `Child.close`
 
@@ -186,7 +187,7 @@ after the fork, so spawn cannot know.
 fn Command.stderr(self: Command, mode: Stdio): Command
 ```
 
-_Undocumented._
+Where the child's stderr goes. `Merge` (into stdout) by default.
 
 ### `Command.stdin`
 
@@ -194,7 +195,7 @@ _Undocumented._
 fn Command.stdin(self: Command, mode: Stdio): Command
 ```
 
-_Undocumented._
+Where the child's stdin comes from. `Pipe` by default.
 
 ### `Command.stdout`
 
@@ -202,7 +203,7 @@ _Undocumented._
 fn Command.stdout(self: Command, mode: Stdio): Command
 ```
 
-_Undocumented._
+Where the child's stdout goes. `Pipe` by default.
 
 ### `exePath`
 
@@ -228,7 +229,7 @@ _Undocumented._
 fn Process.signal(self: &Process, sig: i32): Result<i32>
 ```
 
-_Undocumented._
+Send signal `sig` to the child. 0 on success.
 
 ### `Process.spawn`
 
@@ -236,7 +237,8 @@ _Undocumented._
 fn Process.spawn(path: &string): Result<Process>
 ```
 
-_Undocumented._
+Start the program at `path` in the background, with no arguments and no shell.
+For arguments, a working directory or redirection, use `Command`.
 
 ### `Process.wait`
 

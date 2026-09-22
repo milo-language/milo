@@ -9,6 +9,8 @@ pub extern fn localtime_r(timep: *u8, result: *u8): *u8
 
 pub extern fn tzset(): void
 
+// A broken-down calendar date and time. `month` is 1-based and `weekday` counts from 0
+// = Sunday.
 pub struct DateTime {
     year: i32,
     month: i32,
@@ -111,15 +113,18 @@ impl DateTime {
         return result
     }
 
+    // The date portion only: 2024-03-15.
     fn formatDate(self: &DateTime): string {
         return padI32(self.year, 4) + "-" + padI32(self.month, 2) + "-" + padI32(self.day, 2)
     }
 
+    // The time portion only: 14:30:00.
     fn formatTime(self: &DateTime): string {
         return padI32(self.hour, 2) + ":" + padI32(self.minute, 2) + ":" + padI32(self.second, 2)
     }
 }
 
+// English name for a weekday, 0 = Sunday.
 pub fn weekdayName(wd: i32): string {
     if wd == 0 {
         return "Sunday"
@@ -145,6 +150,7 @@ pub fn weekdayName(wd: i32): string {
     return "Unknown"
 }
 
+// English name for a month, 1 = January.
 pub fn monthName(m: i32): string {
     if m == 1 {
         return "January"

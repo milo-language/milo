@@ -8,7 +8,7 @@
 fn Regex.compile(pattern: string): Result<Regex>
 ```
 
-_Undocumented._
+Compile a POSIX extended regular expression.
 
 ### `Regex.compileFlags`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn Regex.compileFlags(pattern: string, flags: i32): Result<Regex>
 ```
 
-_Undocumented._
+Compile with explicit POSIX cflags: REG_EXTENDED=1, REG_ICASE=2.
 
 ### `Regex.find`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn Regex.find(self: &Regex, input: &string): Option<RegexMatch>
 ```
 
-_Undocumented._
+The first match, or None. `start` and `end` are byte offsets into `input`.
 
 ### `Regex.findAll`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn Regex.findAll(self: &Regex, input: &string): Vec<RegexMatch>
 ```
 
-_Undocumented._
+Every non-overlapping match, left to right.
 
 ### `Regex.isMatch`
 
@@ -40,4 +40,4 @@ _Undocumented._
 fn Regex.isMatch(self: &Regex, input: &string): bool
 ```
 
-_Undocumented._
+Whether the pattern matches anywhere in `input`.

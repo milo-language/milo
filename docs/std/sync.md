@@ -25,7 +25,7 @@ Share this atomic with another owner; freed when the last owner drops.
 fn AtomicBool.load(self: &AtomicBool): bool
 ```
 
-_Undocumented._
+Atomic read.
 
 ### `AtomicBool.new`
 
@@ -33,7 +33,7 @@ _Undocumented._
 fn AtomicBool.new(initial: bool): AtomicBool
 ```
 
-_Undocumented._
+An atomic holding `initial`.
 
 ### `AtomicBool.store`
 
@@ -41,7 +41,7 @@ _Undocumented._
 fn AtomicBool.store(self: &AtomicBool, val: bool): void
 ```
 
-_Undocumented._
+Atomic write.
 
 ### `AtomicBool.swap`
 
@@ -49,7 +49,7 @@ _Undocumented._
 fn AtomicBool.swap(self: &AtomicBool, val: bool): bool
 ```
 
-_Undocumented._
+Atomic swap. Returns the old value.
 
 ### `AtomicI32.add`
 
@@ -82,7 +82,7 @@ Share this atomic with another owner; freed when the last owner drops.
 fn AtomicI32.load(self: &AtomicI32): i32
 ```
 
-_Undocumented._
+Atomic read.
 
 ### `AtomicI32.new`
 
@@ -90,7 +90,7 @@ _Undocumented._
 fn AtomicI32.new(initial: i32): AtomicI32
 ```
 
-_Undocumented._
+An atomic holding `initial`.
 
 ### `AtomicI32.store`
 
@@ -98,7 +98,7 @@ _Undocumented._
 fn AtomicI32.store(self: &AtomicI32, val: i32): void
 ```
 
-_Undocumented._
+Atomic write.
 
 ### `AtomicI32.sub`
 
@@ -114,7 +114,7 @@ Returns the OLD value. Wraps on underflow.
 fn AtomicI32.swap(self: &AtomicI32, val: i32): i32
 ```
 
-_Undocumented._
+Atomic swap. Returns the old value.
 
 ### `AtomicI64.add`
 
@@ -122,7 +122,7 @@ _Undocumented._
 fn AtomicI64.add(self: &AtomicI64, val: i64): i64
 ```
 
-_Undocumented._
+Atomic add. Returns the OLD value. Wraps on overflow.
 
 ### `AtomicI64.cas`
 
@@ -148,7 +148,7 @@ dropped exactly once; the underlying storage is freed when the last owner drops.
 fn AtomicI64.load(self: &AtomicI64): i64
 ```
 
-_Undocumented._
+Atomic read.
 
 ### `AtomicI64.new`
 
@@ -156,7 +156,7 @@ _Undocumented._
 fn AtomicI64.new(initial: i64): AtomicI64
 ```
 
-_Undocumented._
+An atomic holding `initial`.
 
 ### `AtomicI64.store`
 
@@ -164,7 +164,7 @@ _Undocumented._
 fn AtomicI64.store(self: &AtomicI64, val: i64): void
 ```
 
-_Undocumented._
+Atomic write.
 
 ### `AtomicI64.sub`
 
@@ -172,7 +172,7 @@ _Undocumented._
 fn AtomicI64.sub(self: &AtomicI64, val: i64): i64
 ```
 
-_Undocumented._
+Atomic subtract. Returns the OLD value. Wraps on underflow.
 
 ### `AtomicI64.swap`
 
@@ -180,7 +180,7 @@ _Undocumented._
 fn AtomicI64.swap(self: &AtomicI64, val: i64): i64
 ```
 
-_Undocumented._
+Atomic swap. Returns the old value.
 
 ### `AtomicU64.add`
 
@@ -213,7 +213,7 @@ Share this atomic with another owner; freed when the last owner drops.
 fn AtomicU64.load(self: &AtomicU64): u64
 ```
 
-_Undocumented._
+Atomic read.
 
 ### `AtomicU64.new`
 
@@ -221,7 +221,7 @@ _Undocumented._
 fn AtomicU64.new(initial: u64): AtomicU64
 ```
 
-_Undocumented._
+An atomic holding `initial`.
 
 ### `AtomicU64.store`
 
@@ -229,7 +229,7 @@ _Undocumented._
 fn AtomicU64.store(self: &AtomicU64, val: u64): void
 ```
 
-_Undocumented._
+Atomic write.
 
 ### `AtomicU64.sub`
 
@@ -245,7 +245,7 @@ Returns the OLD value. Wraps on underflow.
 fn AtomicU64.swap(self: &AtomicU64, val: u64): u64
 ```
 
-_Undocumented._
+Atomic swap. Returns the old value.
 
 ### `Channel.clone`
 
@@ -274,7 +274,7 @@ Signal no more values will be sent. Pending items are still delivered.
 fn Channel.len(self: &Channel): i64
 ```
 
-_Undocumented._
+Number of values currently queued.
 
 ### `Channel.new`
 
@@ -282,7 +282,7 @@ _Undocumented._
 fn Channel.new(capacity: i64): Result<Channel<T>>
 ```
 
-_Undocumented._
+A channel holding at most `capacity` values.
 
 ### `Channel.next`
 
@@ -308,7 +308,7 @@ Raw ChannelInner pointer, for std/select arm hooks (channelArm*).
 fn Channel.recv(self: &Channel): Result<T>
 ```
 
-_Undocumented._
+Receive a value, blocking while the channel is empty.
 
 ### `Channel.send`
 
@@ -316,7 +316,7 @@ _Undocumented._
 fn Channel.send(self: &Channel, val: T): Result<i32>
 ```
 
-_Undocumented._
+Send `val`, blocking while the channel is full.
 
 ### `Channel.tryRecv`
 
@@ -324,7 +324,7 @@ _Undocumented._
 fn Channel.tryRecv(self: &Channel): Option<T>
 ```
 
-_Undocumented._
+Receive without blocking: None if the channel is empty.
 
 ### `Channel.trySend`
 
@@ -332,7 +332,7 @@ _Undocumented._
 fn Channel.trySend(self: &Channel, val: T): bool
 ```
 
-_Undocumented._
+Send without blocking: false if the channel is full.
 
 ### `ChannelHandle.retain`
 
@@ -366,7 +366,7 @@ this is a progress hint, never a substitute for `run`.
 fn Once.new(): Once
 ```
 
-_Undocumented._
+A guard whose initializer has not run yet.
 
 ### `Once.run`
 
@@ -379,13 +379,16 @@ Returns only once the initializer has completed exactly once, process-wide.
 @synchronized: `f` is a critical section. The embedded mutex serializes it and the
 atomic state word publishes its writes, so globals mutated in here are not racing.
 
+Re-entering `run` from inside its own initializer would wait for itself forever,
+so it aborts with that message instead of hanging.
+
 ### `WaitGroup.add`
 
 ```milo
 fn WaitGroup.add(self: &WaitGroup, n: i64): void
 ```
 
-_Undocumented._
+Add `n` to the counter. Call it before spawning the tasks it tracks.
 
 ### `WaitGroup.clone`
 
@@ -402,7 +405,7 @@ last owner drops. add/done/wait take &Self, so most uses need no clone.
 fn WaitGroup.done(self: &WaitGroup): void
 ```
 
-_Undocumented._
+Decrement the counter by one. Call it from each task when it finishes.
 
 ### `WaitGroup.new`
 
@@ -410,7 +413,7 @@ _Undocumented._
 fn WaitGroup.new(): WaitGroup
 ```
 
-_Undocumented._
+A wait group with a zero counter.
 
 ### `WaitGroup.wait`
 
@@ -418,4 +421,4 @@ _Undocumented._
 fn WaitGroup.wait(self: &WaitGroup): void
 ```
 
-_Undocumented._
+Block until the counter reaches zero.

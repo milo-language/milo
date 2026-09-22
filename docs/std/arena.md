@@ -97,7 +97,8 @@ fn Arena.modify(self: &mut Arena, h: Handle<T>, f: (T) => T): bool
 Update the slot by mapping its value through `f`. False (and `f` not
 called) if `h` is stale. Moves T out and back, so prefer modifyMut when T
 is large or you touch only a field or two. Absent when T carries Drop or
-@noCopy, for the same reason as `get`.
+@noCopy, for the same reason as `get`. The closure's parameter is
+immutable: rebind it as a `var`, change that, and return it.
 
 ### `Arena.modifyMut`
 
@@ -105,7 +106,9 @@ is large or you touch only a field or two. Absent when T carries Drop or
 fn Arena.modifyMut(self: &mut Arena, h: Handle<T>, f: (&mut T) => void): bool
 ```
 
-_Undocumented._
+Mutate the live value in place through `&mut T`. No copy in, no copy out.
+False (and `f` not called) if `h` is stale. This is the write counterpart
+to arenaWith and the right default for large T.
 
 ### `Arena.new`
 
@@ -122,9 +125,6 @@ A new empty arena with a fresh identity. Spell the type argument
 fn Arena.read(self: &Arena, h: Handle<T>, f: (&T) => void): bool
 ```
 
-Mutate the live value in place through `&mut T`. No copy in, no copy out.
-False (and `f` not called) if `h` is stale. This is the write counterpart
-to arenaWith and the right default for large T.
 Read the value at `h` by BORROW — no copy. Prefer this to `get` for any T
 that owns heap (a string, a Vec, a nested struct): `get` clones the whole
 value out of the slot on every call. False (and `f` not called) if `h` is

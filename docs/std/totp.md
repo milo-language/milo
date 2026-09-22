@@ -8,7 +8,8 @@
 fn Totp.generate(secret: &string, unixTime: i64, step: i64, digits: i64): string
 ```
 
-_Undocumented._
+TOTP value for a Unix timestamp (RFC 6238): HOTP over `floor(unixTime / step)`.
+Use `step = 30`, `digits = 6` for the common authenticator-app setup.
 
 ### `Totp.hotp`
 
@@ -16,7 +17,8 @@ _Undocumented._
 fn Totp.hotp(secret: &string, counter: i64, digits: i64): string
 ```
 
-_Undocumented._
+HOTP value for a moving counter (RFC 4226 §5.3), `digits` long (6 to 8 is
+typical), zero-padded.
 
 ### `Totp.verify`
 

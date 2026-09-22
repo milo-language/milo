@@ -16,7 +16,7 @@ New empty array builder.
 fn Json.asBool(self: &Json): Option<bool>
 ```
 
-_Undocumented._
+This node as a boolean, or None if it is not one.
 
 ### `Json.asF64`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn Json.asF64(self: &Json): Option<f64>
 ```
 
-_Undocumented._
+This node as a float, or None if it is not a number.
 
 ### `Json.asI64`
 
@@ -32,7 +32,8 @@ _Undocumented._
 fn Json.asI64(self: &Json): Option<i64>
 ```
 
-_Undocumented._
+This node as an integer, or None if it is not one. Fractional, exponent and
+out-of-range literals are None, as for `i64`.
 
 ### `Json.asStr`
 
@@ -40,7 +41,7 @@ _Undocumented._
 fn Json.asStr(self: &Json): Option<string>
 ```
 
-_Undocumented._
+This node as a string, or None if it is not one.
 
 ### `Json.at`
 
@@ -48,7 +49,8 @@ _Undocumented._
 fn Json.at(self: &Json, index: i64): Option<Json>
 ```
 
-_Undocumented._
+Element `index` of an array as its own `Json`, or None if this is not an array or
+the index is out of range. Deep-clones like `get`.
 
 ### `Json.bool`
 
@@ -56,7 +58,7 @@ _Undocumented._
 fn Json.bool(self: &Json, key: &string): Option<bool>
 ```
 
-_Undocumented._
+The boolean value of object key `key`, or None if absent or not a boolean.
 
 ### `Json.boolPath`
 
@@ -221,7 +223,8 @@ function answering both would make an object walked as an array look like it wor
 fn Json.f64(self: &Json, key: &string): Option<f64>
 ```
 
-_Undocumented._
+The numeric value of object key `key` as a float, or None if absent or not a
+number.
 
 ### `Json.f64Path`
 
@@ -237,7 +240,9 @@ _Undocumented._
 fn Json.get(self: &Json, key: &string): Option<Json>
 ```
 
-_Undocumented._
+The value of object key `key` as its own `Json`, or None if this is not an object
+or has no such key. Deep-clones the subtree on every call; for hot navigation use
+the cursor API (`curRoot`, `curField`, ...).
 
 ### `Json.i64`
 
@@ -245,7 +250,9 @@ _Undocumented._
 fn Json.i64(self: &Json, key: &string): Option<i64>
 ```
 
-_Undocumented._
+The integer value of object key `key`, or None if absent or not an integer. Only
+a literal that is an integer and fits i64 answers Some: `1.5`, `1e3` and
+out-of-range values are None, never a truncation.
 
 ### `Json.i64Path`
 
@@ -309,7 +316,7 @@ _Undocumented._
 fn Json.keys(self: &Json): Vec<string>
 ```
 
-_Undocumented._
+Every key of an object, in document order.
 
 ### `Json.len`
 
@@ -317,7 +324,7 @@ _Undocumented._
 fn Json.len(self: &Json): i64
 ```
 
-_Undocumented._
+Number of elements of an array or members of an object.
 
 ### `Json.obj`
 
@@ -371,7 +378,7 @@ parse went in with, only re-spaced (see jsonPretty).
 fn Json.rawStr(self: &Json): string
 ```
 
-_Undocumented._
+The raw JSON text of this node.
 
 ### `Json.str`
 
@@ -379,7 +386,7 @@ _Undocumented._
 fn Json.str(self: &Json, key: &string): Option<string>
 ```
 
-_Undocumented._
+The string value of object key `key`, or None if absent or not a string.
 
 ### `Json.strPath`
 

@@ -10,6 +10,8 @@ fn Hmac.sha1Bytes(key: &string, msg: &string): string
 
 HMAC-SHA1, 20 raw bytes.
 
+Needed by HOTP/TOTP (std/totp) and PBKDF2-HMAC-SHA1, both specified on SHA-1.
+
 ### `Hmac.sha256`
 
 ```milo

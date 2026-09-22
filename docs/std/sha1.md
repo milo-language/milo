@@ -8,7 +8,7 @@
 fn Sha1.bytes(input: &string): string
 ```
 
-_Undocumented._
+SHA-1 digest as 20 raw bytes (for HMAC-SHA1 and the WebSocket handshake).
 
 ### `Sha1.hash`
 
@@ -16,4 +16,4 @@ _Undocumented._
 fn Sha1.hash(input: &string): string
 ```
 
-_Undocumented._
+SHA-1 digest as a 40-char lowercase hex string.

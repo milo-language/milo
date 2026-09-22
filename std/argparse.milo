@@ -72,6 +72,8 @@ impl ArgParser {
 
     // Add a string flag with long name, short alias, help text, and default.
     // Example: parser.addString("output", "o", "Output file", "out.txt")
+    //
+    // Pass "" as `defaultVal` for no default.
     fn addString(self: &mut Self, long: string, short: string, help: string, defaultVal: string): void {
         self.flags.push(FlagDef {
             longName: long,
@@ -139,6 +141,10 @@ impl ArgParser {
 
     // Stop flag parsing after the first positional arg.
     // Remaining args collected as positionals without interpretation.
+    //
+    // For a runtime or wrapper: flags before the command are yours, everything after
+    // belongs to the child. A `--` separator always ends flag parsing, whatever this
+    // setting.
     fn enableTrailingArgs(self: &mut Self): void {
         self.trailingArgs = true
     }
@@ -220,6 +226,10 @@ impl ArgParser {
 
     // Parse command-line arguments and return ParsedArgs.
     // Automatically handles --help. Exits on invalid input.
+    //
+    // Returns no Result: a missing required flag prints usage and exits, so the value
+    // is always usable. `parseFrom` takes the argv vector instead, which is what a test
+    // wants.
     fn parse(self: &Self): ParsedArgs {
         return self.parseFrom(args())
     }

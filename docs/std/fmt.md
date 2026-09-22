@@ -8,7 +8,7 @@
 pub fn fmt1(template: &string, a: &string): string
 ```
 
-Replace the first {} with val.
+Replace the first {} with a.
 
 ### `fmt2`
 

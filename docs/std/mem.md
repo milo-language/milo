@@ -8,7 +8,8 @@
 fn Bump.alloc(self: &mut Bump, size: i64): Result<i64>
 ```
 
-_Undocumented._
+Bump-allocate `size` bytes (8-byte aligned) and return the address. Errs when the
+region is full.
 
 ### `Bump.new`
 
@@ -16,9 +17,8 @@ _Undocumented._
 fn Bump.new(capacity: i64): Result<Bump>
 ```
 
-Restate each callee's preconditions on the wrapper (Bump has no struct
-invariant the solver models): without them the wrapper can't discharge the
-free fn's `requires` — same restating pattern as Pool's free/live/available.
+Create a bump allocator over `capacity` bytes of heap. The whole region is freed
+when the Bump drops.
 
 ### `Bump.remaining`
 
@@ -26,7 +26,7 @@ free fn's `requires` — same restating pattern as Pool's free/live/available.
 fn Bump.remaining(self: &Bump): i64
 ```
 
-_Undocumented._
+Bytes still available.
 
 ### `Bump.reset`
 
@@ -34,7 +34,7 @@ _Undocumented._
 fn Bump.reset(self: &mut Bump): void
 ```
 
-_Undocumented._
+Reclaim every allocation at once by resetting the used count to zero.
 
 ### `mmapAnon`
 
