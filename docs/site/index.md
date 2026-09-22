@@ -1,5 +1,7 @@
 ---
 layout: home
+title: The Milo Programming Language
+titleTemplate: false
 hero:
   name: Milo
   text: "A memory-safe systems language with second-class references."
@@ -232,7 +234,7 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
       <a class="tile" href="https://github.com/milo-language/dapweb">
         <video class="tile-img" src="/showcase/dapweb.mp4" poster="/showcase/dapweb.png" autoplay muted loop playsinline preload="auto" aria-label="An agent drives dapweb from the CLI while the browser follows: breakpoint hit, locals expanded, the agent evaluates and continues, a person types an lldb command in the same session, and the program exits"></video>
         <h3>Debugger</h3>
-        <p>dapweb: an agent drives the debugger from the CLI while you watch, and type, in the same live session.</p>
+        <p>Debug Milo programs in the browser: source breakpoints, Milo structs in the locals, and an agent driving the same session from the CLI.</p>
         <div class="tile-tags"><span>HTTP server</span><span>WebSockets</span><span>JSON-RPC (DAP)</span><span>PTY</span><span>CLI API</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="git clone https://github.com/milo-language/dapweb && cd dapweb && src/web/ui/build.sh && milo build src/main.milo -o dapweb && ./dapweb web" title="git clone https://github.com/milo-language/dapweb && cd dapweb && src/web/ui/build.sh && milo build src/main.milo -o dapweb && ./dapweb web">⧉ copy run command</span>
       </a>

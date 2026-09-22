@@ -36,6 +36,10 @@ For a checked-in configuration — arguments, a working directory, or debugging 
 
 ## Graphical debugging with dapweb
 
+<video src="/showcase/dapweb.mp4" poster="/showcase/dapweb.png" autoplay muted loop playsinline style="width:100%;border-radius:8px" aria-label="dapweb debugging a Milo program: a breakpoint in addBonus, the Vec of Player structs in the locals, an agent evaluating from the CLI and a person typing an lldb command in the same session"></video>
+
+*A Milo program in dapweb: a source breakpoint, Milo structs in the locals, an agent driving from the CLI while a person types in the same session.*
+
 [dapweb](https://github.com/milo-language/dapweb) is a web + AI debugger written in Milo itself. It drives any DAP backend (`lldb-dap`, `debugpy`, `delve`), so it debugs Milo binaries directly — same DWARF, no plugin.
 
 ```bash

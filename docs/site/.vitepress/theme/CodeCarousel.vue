@@ -75,7 +75,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .cc {
-  margin: 24px 0 8px;
+  /* the prose column under it (.whatis) is 720px with 24px padding; a full-width
+     carousel above a narrow column read as two different pages */
+  max-width: 672px;
+  margin: 24px auto 8px;
   border: 1px solid var(--vp-c-divider);
   border-radius: 12px;
   overflow: hidden;
@@ -91,10 +94,11 @@ onBeforeUnmount(() => {
 }
 
 .cc-tab {
-  flex: 1 1 0;
-  min-width: 140px;
-  padding: 10px 16px;
-  text-align: left;
+  /* natural width, grown to fill: six fixed 140px tabs overflowed the 672px column */
+  flex: 1 0 auto;
+  white-space: nowrap;
+  padding: 10px 12px;
+  text-align: center;
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
