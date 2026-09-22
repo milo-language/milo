@@ -55,7 +55,6 @@ const SNIPPETS_NOT_YET_CHECKED = new Set([
   "docs/site/stdlib/regex.md",
   "docs/site/stdlib/set.md",
   "docs/site/stdlib/signal.md",
-  "docs/site/stdlib/sort.md",
   "docs/site/stdlib/subtle.md",
   "docs/site/stdlib/sync.md",
   "docs/site/stdlib/time.md",

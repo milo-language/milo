@@ -58,5 +58,3 @@ pub fn createUser(name: string): User {
 Imports are resolved recursively and deduplicated. The resolver merges all imported ASTs before type checking, so there's no separate compilation yet.
 
 Platform-specific modules use suffix-based selection: `std/platform.darwin.milo` vs `std/platform.linux.milo`. The resolver picks the right one for the host.
-
-Next: [C FFI](/features/ffi)

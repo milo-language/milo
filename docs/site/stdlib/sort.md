@@ -43,7 +43,7 @@ Reverses a vector of `i64` in-place.
 ## Example
 
 ```milo
-var nums = [3, 1, 4, 1, 5]
+var nums: Vec<i64> = [3, 1, 4, 1, 5]
 sortI64(&mut nums)
 // nums is now [1, 1, 3, 4, 5]
 

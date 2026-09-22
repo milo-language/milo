@@ -685,5 +685,3 @@ error: use of moved variable 'name'
 ```
 
 Inspired by Elm and Rust's error style — clear enough that you rarely need to search for what went wrong.
-
-Next: [Collections](./collections)

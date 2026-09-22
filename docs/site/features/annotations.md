@@ -341,5 +341,3 @@ Contract clauses — `requires`, `ensures`, `invariant`, `decreases` — are ord
 the declaration, not `@` annotations, because they are type-checked expressions rather than
 instructions to the compiler. `old(e)`, which names a parameter's entry value inside an
 `ensures`, is contract-only syntax for the same reason. See [Contracts & Safety](/language/safety).
-
-Next: [C FFI](./ffi)

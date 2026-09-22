@@ -112,5 +112,3 @@ if greeting == "hello" {
 ## FFI
 
 Strings auto-coerce to `*u8` when passed to `extern fn` declarations.
-
-Next: [Traits](./traits)

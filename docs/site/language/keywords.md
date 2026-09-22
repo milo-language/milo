@@ -385,5 +385,3 @@ Loops while the condition is true. `while let` loops as long as the pattern keep
 A loop may carry `invariant` clauses (proved by induction and then available after the loop) and a `decreases` measure that proves it terminates.
 
 <!-- /generated:keywords -->
-
-Next: [Warnings & Errors](./warnings-and-errors)

@@ -141,5 +141,3 @@ A green-task closure needs nothing more. `Promise.blocking` runs its closure on 
 ## Non-escaping restriction
 
 Regular closures cannot be returned from functions or stored in structs. This keeps the ownership model simple and guarantees captured references are valid. When you need a closure that escapes, use `move`.
-
-Next: [Modules](./modules)

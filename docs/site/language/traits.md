@@ -93,13 +93,48 @@ let sum = Vec2 { x: 3, y: 4 } + Vec2 { x: 5, y: 6 }
 print(sum.x)   // 8
 ```
 
+## Interfaces
+
+A trait call is resolved at compile time, once per concrete type. When the concrete type is only known at runtime (a list of mixed shapes, a plugin), use an `interface`. An interface lists methods. Any type that has those methods satisfies it, with no declaration naming the interface: inherent methods and trait impls both count. An interface value is a fat pointer to the data plus a table of that type's methods, and each call goes through the table.
+
+`&Greeter` as a parameter accepts any type that satisfies `Greeter`. `Heap<Greeter>` owns one, so a `Vec<Heap<Greeter>>` can hold mixed types. This is Milo's trait object.
+
+```milo
+interface Greeter {
+    fn greet(self: &Self): string
+}
+
+struct Dog { name: string }
+impl Dog {
+    fn greet(self: &Self): string { return "woof from " + self.name }
+}
+
+struct Cat {}
+impl Cat {
+    fn greet(self: &Self): string { return "meow" }
+}
+
+fn sayHello(g: &Greeter) {
+    print(g.greet())
+}
+
+fn main(): i32 {
+    sayHello(Dog { name: "Rex" })   // woof from Rex
+
+    var all: Vec<Heap<Greeter>> = Vec.new()
+    all.push(Heap(Dog { name: "Fido" }))
+    all.push(Heap(Cat {}))
+    for g in all {
+        print(g.greet())            // woof from Fido, meow
+    }
+    return 0
+}
+```
+
 ## What's not here yet
 
-- `dyn Trait`: a `trait` dispatches statically only, and `&Eq` is not a type
+- `dyn Trait`: a `trait` dispatches statically only, and `&Eq` is not a type. Use an [interface](#interfaces) for runtime dispatch.
 - Associated types
 - `where` clauses
 
-
-For runtime polymorphism (heterogeneous collections, virtual dispatch), use [interfaces](/language/#interfaces): a `&Shape` or `Heap<Shape>` over an `interface` is Milo's trait object. None of these items is planned; associated types are listed under [Not Planned](/roadmap#not-planned).
-
-Next: [Closures](./closures)
+None of these is planned; associated types are listed under [Not Planned](/roadmap#not-planned).
