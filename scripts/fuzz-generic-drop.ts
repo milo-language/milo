@@ -483,7 +483,7 @@ const IO_SEEDS: Record<string, string[]> = {
   "BufWriter.writeByte": [...IO_WRITER, "w.writeByte(100)!", "w.flush()!", "sink = sink + w.pending()"],
   "BufWriter.writeLine": [...IO_WRITER, "w.writeLine(\"abcdefghijklmnop\")!", "w.flush()!", "sink = sink + w.pending()"],
   "BufWriter.pending": [...IO_WRITER, "w.writeByte(100)!", "sink = sink + w.pending()", "w.flush()!"],
-  "copyStream": ["var src = BytesReader.new(\"hello world\")", "var dst = BytesWriter.new()", "sink = sink + copyStream(src, dst)!"],
+  "copyStream": ["var src = BytesReader.new(\"hello world\")", "var dst = BytesWriter.new()", "sink = sink + copyStream(&mut src, &mut dst)!"],
 };
 
 // ── program assembly ──────────────────────────────────────────────────────────
