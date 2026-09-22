@@ -30,6 +30,8 @@ interface Command {
 interface Payload {
   warnings: Warning[]; attributes: Attribute[]; keywords: string[]; softKeywords: string[];
   keywordDocs: Record<string, string>; commands: Command[]; cliOptions: { flag: string; help: string }[];
+  symbols: Record<string, string>; symbolDocs: Record<string, string>;
+  primitiveTypeInfo: { name: string; kind: string; bits?: number; signed?: boolean; aliasOf?: string }[];
 }
 
 function payload(): Payload {
@@ -157,11 +159,36 @@ function renderCommands(p: Payload): string {
   return lines.join("\n").trimEnd();
 }
 
+function renderOperators(p: Payload): string {
+  const lines = ["| Token | Meaning |", "|---|---|"];
+  for (const [member, spelling] of Object.entries(p.symbols)) {
+    lines.push(`| \`${cell(spelling)}\` | ${cell(p.symbolDocs[member]!)} |`);
+  }
+  return lines.join("\n");
+}
+
+// Keyed by the checker's type tag; a tag with no entry prints as itself rather than
+// vanishing, so a new kind of primitive still reaches the table.
+const KIND_NAMES: Record<string, string> = {
+  float: "floating point", bool: "`true` or `false`", void: "no value", string: "owned UTF-8 string",
+};
+
+function renderPrimitiveTypes(p: Payload): string {
+  const lines = ["| Type | Kind | Bits | Note |", "|---|---|---|---|"];
+  for (const t of p.primitiveTypeInfo) {
+    const kind = t.kind === "int" ? `${t.signed ? "signed" : "unsigned"} integer` : KIND_NAMES[t.kind] ?? t.kind;
+    lines.push(`| \`${t.name}\` | ${kind} | ${t.bits ?? ""} | ${t.aliasOf ? `alias of \`${t.aliasOf}\`` : ""} |`);
+  }
+  return lines.join("\n");
+}
+
 const REGIONS: { file: string; region: string; render: (p: Payload) => string }[] = [
   { file: "docs/site/language/warnings-and-errors.md", region: "warnings", render: p => renderWarnings(p.warnings) },
   { file: "docs/site/features/annotations.md", region: "attributes", render: p => renderAttributes(p.attributes) },
   { file: "docs/site/language/keywords.md", region: "keywords", render: p => renderKeywords(p) },
   { file: "docs/site/cli.md", region: "commands", render: p => renderCommands(p) },
+  { file: "docs/site/reference.md", region: "operators", render: p => renderOperators(p) },
+  { file: "docs/site/reference.md", region: "primitive-types", render: p => renderPrimitiveTypes(p) },
 ];
 
 function splice(body: string, region: string, content: string, file: string): string {
@@ -180,10 +207,13 @@ function splice(body: string, region: string, content: string, file: string): st
 
 export function generate(): { file: string; expected: string; actual: string }[] {
   const p = payload();
-  return REGIONS.map(r => {
-    const path = join(ROOT, r.file);
-    const actual = readFileSync(path, "utf-8");
-    return { file: r.file, expected: splice(actual, r.region, r.render(p), r.file), actual };
+  // Per file, not per region: a page with two regions must get both spliced into one
+  // result, or writing the second would overwrite the first with the stale original.
+  return [...new Set(REGIONS.map(r => r.file))].map(file => {
+    const actual = readFileSync(join(ROOT, file), "utf-8");
+    const expected = REGIONS.filter(r => r.file === file)
+      .reduce((body, r) => splice(body, r.region, r.render(p), file), actual);
+    return { file, expected, actual };
   });
 }
 

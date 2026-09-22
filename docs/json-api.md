@@ -3,7 +3,7 @@ system: tooling-api
 purpose: the compiler's machine-readable surfaces — what tooling reads instead of importing TypeScript
 key-files: src/api-search.ts, src/lang-info.ts, src/warnings.ts, src/main.ts (runCheck), tests/apiJson.test.ts, tests/langInfo.test.ts
 update-when: a JSON payload gains or loses a field, or a new machine-readable command lands
-last-verified: 2026-09-22 (lang --json schema 2 plus additive `commands`/`cliOptions`; schema 2: warning doc/fix/example; earlier: check --json schema 2 adds `fix`; earlier: warnings lose the error-by-default field)
+last-verified: 2026-09-22 (lang --json schema 2 plus additive `commands`/`cliOptions`/`symbolDocs`/`primitiveTypeInfo`; schema 2: warning doc/fix/example; earlier: check --json schema 2 adds `fix`; earlier: warnings lose the error-by-default field)
 -->
 
 # Machine-readable compiler API
@@ -92,6 +92,12 @@ need not rewrite it from the guide), `primitiveTypes`, `symbols` (operator token
 spelling), `builtinMembers` (receiver → the methods the checker dispatches by hand, with
 signatures and caveats), and `warnings` (name + `offByDefault`, i.e. what `--deny=` and `--allow=` accept, plus
 `doc`/`fix`/`example` once a warning's reference entry is written — schema 2).
+
+`symbolDocs` (additive) maps each `symbols` key to a one-line meaning, and
+`primitiveTypeInfo` (additive) is `[{ name, kind, bits?, signed?, aliasOf? }]` in declaration
+order, resolved through the checker's own type constructor (`int` is `aliasOf: "i64"`). The
+site's [quick reference](site/reference.md) renders its operator and primitive type tables
+from these.
 
 `attributes` lists every `@name` the checker accepts: `{ name, targets, takesArgs, doc }`,
 where `targets` is drawn from `fn`, `method`, `struct`, `enum`, `extern`, `global` and `field`.

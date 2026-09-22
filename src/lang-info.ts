@@ -11,8 +11,8 @@
 // This is a PUBLIC surface: bump `schema` on a breaking change. tests/langInfo.test.ts
 // pins the shape and holds every list to the compiler data it is derived from.
 import { KEYWORDS, SOFT_KEYWORDS, TokenKind } from "./tokens";
-import { KEYWORD_DOCS } from "./keyword-docs";
-import { PRIMITIVE_TYPE_NAMES } from "./types";
+import { KEYWORD_DOCS, SYMBOL_DOCS } from "./keyword-docs";
+import { PRIMITIVE_TYPE_NAMES, typeFromAst } from "./types";
 import { BUILTIN_MEMBERS } from "./builtin-members";
 import { WARNINGS } from "./warnings";
 import { ATTRIBUTES } from "./attributes";
@@ -31,6 +31,25 @@ export function langInfo() {
   for (const [member, value] of Object.entries(TokenKind)) {
     if (/^[A-Za-z_]/.test(value) || value === "EOF") continue;
     symbols[member] = value;
+  }
+
+  // Resolved through the checker's own type constructor, so the published width and
+  // signedness are what the compiler does, and an alias (`int`, `byte`, `float`) is
+  // detected as two names resolving to the same type rather than declared by hand.
+  const primitiveTypeInfo: { name: string; kind: string; bits?: number; signed?: boolean; aliasOf?: string }[] = [];
+  const seen = new Map<string, string>();
+  for (const name of PRIMITIVE_TYPE_NAMES) {
+    const t = typeFromAst({ name, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null });
+    const key = JSON.stringify(t);
+    const aliasOf = seen.get(key);
+    if (!aliasOf) seen.set(key, name);
+    primitiveTypeInfo.push({
+      name,
+      kind: t.tag,
+      ...("bits" in t ? { bits: t.bits } : {}),
+      ...("signed" in t ? { signed: t.signed } : {}),
+      ...(aliasOf ? { aliasOf } : {}),
+    });
   }
 
   const builtinMembers: Record<string, { name: string; signature: string; note?: string }[]> = {};
@@ -54,7 +73,11 @@ export function langInfo() {
     // the same hover the bundled LSP does instead of writing its own from the guide.
     keywordDocs: Object.fromEntries([...KEYWORDS, ...SOFT_KEYWORDS].sort().map(k => [k, KEYWORD_DOCS[k]])),
     primitiveTypes: [...PRIMITIVE_TYPE_NAMES].sort(),
+    // Width, signedness and aliasing per primitive, in declaration order (grouped by kind).
+    primitiveTypeInfo,
     symbols,
+    // One line of meaning per symbol, keyed like `symbols`.
+    symbolDocs: Object.fromEntries(Object.keys(symbols).map(k => [k, SYMBOL_DOCS[k]])),
     builtinMembers,
     // `doc`/`fix`/`example` are present once a warning's reference entry is written; the
     // site page is generated from them, so a consumer gets the same text the docs publish.

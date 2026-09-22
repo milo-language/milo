@@ -13,7 +13,7 @@ import { execFileSync, spawnSync } from "child_process";
 import { tmpdir } from "os";
 import { langInfo, LANG_JSON_SCHEMA, explainText, explainableNames } from "../src/lang-info";
 import { KEYWORDS, SOFT_KEYWORDS } from "../src/tokens";
-import { KEYWORD_DOCS } from "../src/keyword-docs";
+import { KEYWORD_DOCS, SYMBOL_DOCS } from "../src/keyword-docs";
 import { PRIMITIVE_TYPE_NAMES } from "../src/types";
 import { BUILTIN_MEMBERS } from "../src/builtin-members";
 import { WARNINGS, WARNING_NAMES, OFF_BY_DEFAULT, DOCUMENTED_FLOOR } from "../src/warnings";
@@ -92,6 +92,28 @@ test("every keyword carries hover documentation", () => {
   }
 });
 
+
+test("every symbol carries a one-line meaning, and no meaning outlives its symbol", () => {
+  // The quick reference's operator table is rendered from these; a symbol with no entry
+  // would publish a blank row, and an entry for a removed token would teach a lie.
+  const info = langInfo();
+  const members = Object.keys(info.symbols);
+  expect(members.filter(m => !SYMBOL_DOCS[m])).toEqual([]);
+  expect(Object.keys(SYMBOL_DOCS).filter(m => !members.includes(m))).toEqual([]);
+  expect(Object.keys(info.symbolDocs)).toEqual(members);
+});
+
+test("primitiveTypeInfo covers every primitive, with widths from the type constructor", () => {
+  const info = langInfo();
+  expect(info.primitiveTypeInfo.map(t => t.name).sort()).toEqual([...PRIMITIVE_TYPE_NAMES].sort());
+  const byName = Object.fromEntries(info.primitiveTypeInfo.map(t => [t.name, t]));
+  // Spot checks that pin the derivation, not the list: an alias is two names resolving
+  // to one type, and the canonical name is the one declared first.
+  expect(byName.int).toEqual({ name: "int", kind: "int", bits: 64, signed: true, aliasOf: "i64" });
+  expect(byName.u8).toEqual({ name: "u8", kind: "int", bits: 8, signed: false });
+  expect(byName.float!.aliasOf).toBe("f64");
+  expect(byName.string).toEqual({ name: "string", kind: "string" });
+});
 
 // The attribute vocabulary is a PUBLIC surface: an editor, linter or agent outside this
 // repo learns it from `milo lang --json` and cannot import TypeScript from the compiler.

@@ -103,3 +103,56 @@ export const CONTRACT_WORD_DOCS: Record<string, string> = {
 
   old: "```milo\nold(e): <type of e>\n```\nThe value `e` held at function entry. Legal only inside `ensures`, and only for a scalar (integer, float, bool) — a debug build snapshots it on entry, and copying a Vec or struct there would either alias or clone on every call.\n\nThis is what lets a contract describe a `&mut` parameter:\n```milo\nfn bump(n: &mut i64): void\nensures n == old(n) + 100\n```\nWithout it, `ensures` can only talk about `result`, so a mutating function has no expressible specification — and a caller learns nothing from it.",
 };
+
+// One line per operator and punctuation token, keyed by its TokenKind member name, for the
+// generated operator table on the docs site's quick reference and for `milo lang --json`
+// (`symbolDocs`). A symbol has no hover path of its own either, and a hand-typed cheat
+// table is what used to carry this. tests/langInfo.test.ts holds the keys to TokenKind's
+// symbols in both directions, so a new token cannot land undocumented.
+export const SYMBOL_DOCS: Record<string, string> = {
+  LParen: "Grouping, a call's arguments, a parameter list.",
+  RParen: "Closes `(`.",
+  LBrace: "A block, a struct literal, a declaration body.",
+  RBrace: "Closes `{`.",
+  LBracket: "An array literal `[1, 2, 3]` or `[0; 100]`, an index `v[i]`, a slice `s[a..b]`.",
+  RBracket: "Closes `[`.",
+  Colon: "Type annotation `let x: i32`, a parameter's type, a return type `fn f(): i32`, a struct field `Point { x: 1 }`.",
+  Semicolon: "Optional statement separator; the count in an array repeat `[0; 100]`.",
+  Comma: "Separates arguments, parameters, fields, elements.",
+  Dot: "Field access, method call, and paths: `Option.Some`, `Vec.new()`.",
+  Arrow: "Not used by the grammar: a return type follows `:`.",
+  Star: "Multiply; a raw pointer type `*T`; deref `*p` (unsafe for a raw pointer).",
+  Plus: "Add; string concatenation.",
+  Minus: "Subtract; negate.",
+  Slash: "Divide.",
+  Percent: "Remainder.",
+  Amp: "Bitwise and; a reference parameter type `&T` / `&mut T`; the `&mut x` argument marker. `&x` as an expression is an error: shared borrows are implicit, `f(x)`.",
+  AmpAmp: "Logical and (short-circuit).",
+  PipePipe: "Logical or (short-circuit).",
+  Eq: "Assignment and binding.",
+  EqEq: "Equal.",
+  FatArrow: "A match arm `Pat => expr`; a closure body `(x: i32) => x * 2`.",
+  ColonColon: "Not used by the grammar: paths use `.`, as in `Option.Some`.",
+  Neq: "Not equal.",
+  Lt: "Less than; opens type arguments `Vec<T>`; two adjacent, `<<`, shift left.",
+  Gt: "Greater than; closes type arguments; two adjacent, `>>`, shift right.",
+  LtEq: "Less than or equal.",
+  GtEq: "Greater than or equal.",
+  Bang: "Logical not; postfix unwrap `expr!` (traps on None or Err); `@!wrapping` applies an attribute to the whole file.",
+  DotDot: "Range `0..n` (end excluded), a slice `s[a..b]`, a range-constrained integer type `i32(0..100)`.",
+  DotDotDot: "Variadic tail of an `extern fn` parameter list.",
+  Question: "Postfix propagate `expr?` (returns None or Err early); `T?` is `Option<T>`; `?&T` is the nullable extern reference.",
+  QuestionQuestion: "Default: `opt ?? fallback`.",
+  Pipe: "Bitwise or.",
+  Caret: "Bitwise xor.",
+  Tilde: "Bitwise not.",
+  At: "An attribute `@derive(Eq)`, or a builtin sigil `@embedFile(\"path\")`.",
+  PlusEq: "Add and assign.",
+  MinusEq: "Subtract and assign.",
+  StarEq: "Multiply and assign.",
+  SlashEq: "Divide and assign.",
+  PercentEq: "Remainder and assign.",
+  AmpEq: "Bitwise and, and assign.",
+  PipeEq: "Bitwise or, and assign.",
+  CaretEq: "Bitwise xor, and assign.",
+};
