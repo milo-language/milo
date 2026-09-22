@@ -27,9 +27,11 @@ Milo moves fast, so build from source ([install](https://milo-language.github.io
 
 ## Second-class references
 
-A borrow ends when the call returns: `&T` and `&mut T` are parameters only. You cannot return a reference, store one in a struct, or keep one past the call. A type that means "I point into memory I do not own" is not expressible: you own the buffer and carry an index, a `Span`, or an arena handle, or you `clone()`.
+A value is *first-class* if you can store it, return it and pass it around, and *second-class* if you can only pass it down into a call. In Milo, references are second-class: `&T` and `&mut T` are parameters only. You cannot return one, store one in a struct, or keep one past the call.
 
-What that buys is **local reasoning**: the function you are reading is the whole story of the values it touches. No pointer into its locals can exist anywhere else, so every mutation is visible at the call site.
+That one restriction is what keeps the rest of the language simple. A reference that can outlive the call that made it is the reason C has dangling pointers, Rust has lifetime annotations, and Java and Go have a garbage collector. A reference that only travels down the call stack cannot outlive what it points to, because the owner is still alive in the caller until the call returns. So safety needs no annotations and no runtime. What you give up is pointing into memory you do not own: you own the buffer and carry an index, a `Span`, or an arena handle, or you `clone()`.
+
+It also buys **local reasoning**: the function you are reading is the whole story of the values it touches. No pointer into its locals can exist anywhere else, so every mutation is visible at the call site.
 
 ```milo
 fn zeroNegatives(values: &mut Vec<i64>): void {

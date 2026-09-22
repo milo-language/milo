@@ -121,9 +121,11 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
 
 ## Second-class references
 
-A borrow ends when the call returns: `&T` and `&mut T` exist only as function parameters. You can't return one, store one in a struct, or keep one past the call. Every value has one owner, and nothing else holds a pointer into it.
+A value is *first-class* if you can store it, return it and pass it around, and *second-class* if you can only pass it down into a call. In Milo, references are second-class: `&T` and `&mut T` exist only as function parameters. You can't return one, store one in a struct, or keep one past the call.
 
-That buys **local reasoning**: `&mut x` at a call site is the full blast radius of a mutation, and the checker settles every ownership question inside one function, never by a signature three modules away.
+A reference that can outlive its call is the reason C has dangling pointers, Rust has lifetime annotations, and Java and Go have a garbage collector. One that only travels down the call stack can't outlive its owner, so Milo needs none of the three.
+
+It also buys **local reasoning**: `&mut x` at a call site is the full blast radius of a mutation, and the checker settles every ownership question inside one function, never by a signature three modules away.
 
 ```milo
 fn zeroNegatives(values: &mut Vec<i64>): void {
