@@ -298,6 +298,19 @@ export default defineConfig({
 
   markdown: {
     languages: [miloGrammar],
+    config(md) {
+      // A `milo error` snippet is followed by the compiler's output, which names a
+      // line: number its gutter so the two can be matched without counting. Done here
+      // rather than as `:line-numbers` in the fence, because tests/docs.test.ts reads
+      // the fence's info string for its check/error/skip mode.
+      md.core.ruler.push('milo-error-line-numbers', (state) => {
+        // The landing carousel shows no compiler output, and a gutter pushed its code off the edge.
+        if (state.env?.relativePath === 'index.md') return
+        for (const t of state.tokens) {
+          if (t.type === 'fence' && /^milo\s+error\b/.test(t.info)) t.info = 'milo:line-numbers'
+        }
+      })
+    },
   },
 
   themeConfig: {

@@ -105,7 +105,7 @@ case above, caught:
 pub fn main(): i32 {
     var line = "host=localhost"
     let key = line[0..4]
-    line = "port=8080"
+    line = "port=8080"          // error: `key` still borrows `line`
     print(key)
     return 0
 }
@@ -113,8 +113,11 @@ pub fn main(): i32 {
 
 ```
 error: cannot assign to 'line' because it is borrowed
-  hint: a reference or slice into this variable is still live — the assignment would
-        invalidate it
+  ──> patterns.milo:4:5
+  │
+4 │     line = "port=8080"          // error: `key` still borrows `line`
+  │     ^
+  hint: a reference or slice into this variable is still live — the assignment would invalidate it
 ```
 
 :::
@@ -125,7 +128,7 @@ Views cannot be stored: no `Vec` of them, no struct field:
 ```milo error
 pub fn main(): i32 {
     let line = "host=localhost"
-    var keys: Vec<&string> = Vec.new()
+    var keys: Vec<&string> = Vec.new()     // error: a Vec cannot hold references
     keys.push(line[0..4])
     return 0
 }
@@ -133,6 +136,10 @@ pub fn main(): i32 {
 
 ```
 error: 'keys': references cannot be stored in a collection
+  ──> patterns.milo:3:5
+  │
+3 │     var keys: Vec<&string> = Vec.new()     // error: a Vec cannot hold references
+  │     ^
   hint: references are second-class — store owned values instead
 ```
 
@@ -772,7 +779,7 @@ fn exprAt(id: ExprId): i64 {
 
 pub fn main(): i32 {
     let s = StmtId { index: 3 }
-    print(exprAt(s).toString())
+    print(exprAt(s).toString())     // error: StmtId, not ExprId
     return 0
 }
 ```
@@ -781,7 +788,7 @@ pub fn main(): i32 {
 error: argument 1 of 'exprAt': expected ExprId, got StmtId
   ──> patterns.milo:10:18
    │
-10 │     print(exprAt(s).toString())
+10 │     print(exprAt(s).toString())     // error: StmtId, not ExprId
    │                  ^
 ```
 
