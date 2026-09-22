@@ -25,7 +25,7 @@ git clone https://github.com/milo-language/milo && cd milo
 
 Milo moves fast, so build from source ([install](https://milo-language.github.io/milo/getting-started/installation) has the details and prebuilt binaries).
 
-## The rule
+## Borrows end at the call
 
 `&T` and `&mut T` are parameters only. You cannot return a reference, store one in a struct, or keep one past the call. A type that means "I point into memory I do not own" is not expressible: you own the buffer and carry an index, a `Span`, or an arena handle, or you `clone()`.
 

@@ -117,7 +117,7 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
 
 <div class="whatis">
 
-## The rule
+## Borrows end at the call
 
 `&T` and `&mut T` exist only as function parameters. You can't return one, store one in a struct, or keep one past the call. Every value has one owner, and nothing else holds a pointer into it.
 
