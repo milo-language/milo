@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: language-reference
+purpose: every reserved word with its form and meaning, generated from the compiler's own keyword docs
+key-files: src/keyword-docs.ts, src/lang-info.ts, scripts/gen-lang-docs.ts, tests/langDocs.test.ts
+update-when: never by hand — edit src/keyword-docs.ts and run `bun run scripts/gen-lang-docs.ts`
+last-verified: generated
+-->
+
 # Keyword Reference
 
 Every word the language reserves, with the form it takes and what it means.
