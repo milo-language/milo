@@ -11,5 +11,3 @@ Notes from building Milo. Design decisions and what changed our minds, compiler 
 what we learn from writing real programs in the language.
 
 <BlogIndex />
-
-<Subscribe />

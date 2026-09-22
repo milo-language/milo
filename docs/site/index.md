@@ -287,6 +287,5 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
   <a class="cta-secondary" href="https://github.com/milo-language/milo">GitHub</a>
 </div>
 
-<Subscribe blurb="New posts, releases, and things people have built with Milo. No more than once a month. Unsubscribe in one click." />
 
 </div>
