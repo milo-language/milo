@@ -88,6 +88,7 @@ const docsSidebar = [
       { text: 'Concurrency', link: '/features/concurrency' },
       { text: 'Call C (FFI)', link: '/features/ffi' },
       { text: 'Contracts & proofs', link: '/language/safety' },
+      { text: 'Safety profiles', link: '/language/safety-profiles' },
       { text: 'Debugging', link: '/getting-started/debugging' },
       { text: 'Coding with AI agents', link: '/ai-coding' },
     ]
@@ -110,6 +111,7 @@ const docsSidebar = [
       { text: 'Syntax quick reference', link: '/reference' },
       { text: 'Keywords', link: '/language/keywords' },
       { text: 'Annotations & builtins', link: '/features/annotations' },
+      { text: 'Concurrency API', link: '/features/concurrency-api' },
       { text: 'Warnings & errors', link: '/language/warnings-and-errors' },
       { text: 'Standard library', link: '/stdlib/' },
     ]
@@ -282,9 +284,9 @@ export default defineConfig({
     nav: [
       { text: 'Get started', link: '/getting-started/installation', activeMatch: '^/(getting-started|tour)' },
       { text: 'Learn', link: '/language/variables', activeMatch: '^/(language/(variables|functions|ownership|structs|enums|collections|strings|error-handling|traits|closures|modules)|packages)' },
-      { text: 'How-to', link: '/language/patterns', activeMatch: '^/(language/(patterns|safety)|features/(concurrency|ffi)|ai-coding)' },
+      { text: 'How-to', link: '/language/patterns', activeMatch: '^/(language/(patterns|safety|safety-profiles)|features/(concurrency(?!-)|ffi)|ai-coding)' },
       { text: 'Why Milo', link: '/language/why-no-lifetimes', activeMatch: '^/(language/(why-no-lifetimes|vs-rust)|benchmarks|demos|roadmap)' },
-      { text: 'Reference', link: '/reference', activeMatch: '^/(reference|language/(keywords|warnings-and-errors)|features/annotations)' },
+      { text: 'Reference', link: '/reference', activeMatch: '^/(reference|language/(keywords|warnings-and-errors)|features/(annotations|concurrency-api))' },
       { text: 'Stdlib', link: '/stdlib/', activeMatch: '^/stdlib/' },
     ],
 

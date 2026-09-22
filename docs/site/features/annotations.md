@@ -258,4 +258,4 @@ that was built. Building and linking the archive is in
 Contract clauses — `requires`, `ensures`, `invariant`, `decreases` — are ordinary keywords in
 the declaration, not `@` annotations, because they are type-checked expressions rather than
 instructions to the compiler. `old(e)`, which names a parameter's entry value inside an
-`ensures`, is contract-only syntax for the same reason. See [Contracts & Safety](/language/safety).
+`ensures`, is contract-only syntax for the same reason. See [Contracts & proofs](/language/safety).

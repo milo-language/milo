@@ -1,18 +1,18 @@
 <!-- doc-meta
 system: contracts-safety-guide
-purpose: user guide to contracts, proof, loop invariants, runtime checks, and safety profiles
-key-files: src/verify.ts, src/prove-milo.ts, src/safety.ts, src/codegen.ts
-update-when: contract semantics, proof obligations, runtime checks, or safety profiles change
+purpose: how-to guide to contracts, proof, loop invariants and runtime checks (safety profiles live in safety-profiles.md)
+key-files: src/verify.ts, src/prove-milo.ts, src/codegen.ts
+update-when: contract semantics, proof obligations, runtime checks, or the solver change
 last-verified: 2026-07-24
 -->
 
-# Contracts & Safety
+# Contracts & proofs
 
 Milo lets you write down what your functions promise — and then prove it.
 
 - **Contracts** — `requires`, `ensures`, `invariant`, `decreases`: what a function expects, what it guarantees, what stays true in a loop or of a type, and why a recursion ends. Type-checked like the rest of your code.
 - **`milo prove`** checks that they hold — for every input, without running the program.
-- **Safety profiles** — DO-178C, ISO 26262, IEC 62304 and friends, enforced as compiler flags.
+- **Safety profiles** (DO-178C, ISO 26262, IEC 62304 and friends, enforced as compiler flags) have their own page: [Safety profiles](/language/safety-profiles).
 
 ## Walkthrough
 
@@ -349,62 +349,7 @@ By default `milo prove` uses `std/smt`, a solver written in Milo and shipped in 
 
 A recursive function *is* modelled — the self-call is handled by induction, assuming the function's own `ensures` — but that assumption is only sound if the recursion terminates, which is what `decreases` above is for. Whether the resulting obligation is decided is a separate question, and one the solver choice does affect: `std/smt` will report `no integer witness (rational-only)` on some it cannot settle, where Z3 answers.
 
-## Safety profiles — `milo safety`
 
-Safety-critical domains have coding standards that restrict what language features are allowed. Milo can check your code against these standards at compile time.
+## Safety profiles
 
-```bash
-milo safety flight_controller.milo --safety=do178c-a
-```
-
-### Available profiles
-
-```bash
-milo safety --list
-```
-
-| Domain | Standard | Profiles | Governs |
-|--------|----------|----------|---------|
-| Avionics | DO-178C | `do178c-a`, `do178c-b`, `do178c-c` | Airborne software (DAL A–C) |
-| Automotive | ISO 26262 | `iso26262-a` through `iso26262-d` | Vehicle ECUs, ADAS (ASIL A–D) |
-| Spacecraft | NASA-STD-8739.8 | `nasa-a`, `nasa-b` | Flight software (Class A–B) |
-| Industrial | IEC 61508 | `iec61508-3`, `iec61508-4` | Nuclear, rail signaling (SIL 3–4) |
-| Medical | IEC 62304 | `iec62304-a`, `iec62304-b`, `iec62304-c` | Device software (Class A–C) |
-
-### What gets checked
-
-Each profile is a combination of constraints, tuned to the standard's requirements:
-
-| Constraint | Description | Strictest at |
-|------------|-------------|-------------|
-| No recursion | Direct self-calls banned | DO-178C A, IEC 61508 SIL 4 |
-| Bounded loops | `while` loops must have `invariant` clauses | DO-178C A, NASA A |
-| No dynamic allocation | No Vec, String, HashMap construction | IEC 61508 SIL 4 |
-| Require contracts | All functions need `requires`/`ensures` | DO-178C A, NASA A |
-| No floating point | Integer-only arithmetic (no `f32`/`f64` in signatures, locals, casts, or literals) | IEC 61508 SIL 4 |
-| No recursive types | Self-referential types banned even through `Heap<T>` — recursive data has unbounded traversal depth | DO-178C A, IEC 61508 SIL 4 |
-| Max call depth | Longest static call chain bounded (call graph is a DAG since recursion is banned) | IEC 61508 SIL 4 (max 20) |
-| Complexity limit | Cyclomatic complexity cap per function | IEC 61508 SIL 4 (max 15) |
-| No unsafe blocks | `unsafe { }` banned entirely | All profiles |
-| Full match coverage | All `match` arms required (enforced by the type checker's exhaustiveness pass) | Most profiles |
-| Used results | A discarded `Option`, `Result` or `@mustUse` result (the `unused-result` warning) is an error | DO-178C A–C, NASA A–B |
-
-Example output when violations are found:
-
-```
-safety check failed: do178c-a — 3 violation(s)
-
-  error: [do178c-a] function 'processInput' must have requires/ensures contracts
-  error: [do178c-a] function 'processInput' contains recursion (banned at this safety level)
-  error: [do178c-a] while loop in 'processInput' must have an invariant clause for bounded execution
-```
-
-### Integrating with CI
-
-Add safety checking to your build pipeline:
-
-```bash
-milo safety src/controller.milo --safety=do178c-a || exit 1
-```
-
-The command exits with code 1 if any errors are found, making it suitable for CI gates.
+Checking code against DO-178C, ISO 26262 and other coding standards with `milo safety` has its own page: [Safety profiles](/language/safety-profiles).

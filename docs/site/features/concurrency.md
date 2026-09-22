@@ -6,6 +6,8 @@ Milo has **one** concurrency model: **green tasks** on a cooperative, single-thr
 
 For most concurrent work, reach for `Promise<T>`.
 
+Every function, each linked to the page that documents it: [Concurrency API](/features/concurrency-api).
+
 ## Which to Use
 
 | Need | Use |
@@ -55,7 +57,7 @@ print(p.await()!)   // hello world
 
 You can write `move` explicitly, and `Promise.blocking` requires it (its closure crosses to a real thread).
 
-### Promise.all — Run N Tasks, Collect All Results
+### Promise.all: Run N Tasks, Collect All Results
 
 `Promise.all()` takes a vector of promises and returns a single promise that resolves to a vector of all results, preserving order:
 
@@ -79,7 +81,7 @@ fn main(): i32 {
 }
 ```
 
-### Promise.race — First Result Wins
+### Promise.race: First Result Wins
 
 `Promise.race()` returns the first promise to complete and discards the rest:
 
@@ -158,7 +160,7 @@ fn main(): i32 {
 }
 ```
 
-## Promise.blocking — CPU-Bound Work and Blocking FFI
+## Promise.blocking: CPU-Bound Work and Blocking FFI
 
 The green scheduler is single-threaded and cooperative: a closure that spins on the CPU or calls a C function that blocks never yields, so it starves every other task. `Promise.blocking(fn)` runs `fn` on a real detached OS thread instead — the one escape hatch for work that can't cooperate. The result comes back through the same `await()`, so from the caller's side it is just a `Promise`. It requires explicit type args:
 
@@ -533,36 +535,3 @@ value, turning a cache into a per-access allocation.
 6. **Channels, `WaitGroup`, atomics, and `Once` are reference-counted handles.** `.clone()` to give another task or worker its own owner; the shared object frees itself when the last owner drops. There is no `.destroy()`.
 7. **Channels must be `close()`d** or the consumer's `for val in ch` never ends. `send` on a closed channel returns `Result.Err`, not a panic. Bounded `send` blocking when full is backpressure, not a bug — poll with `trySend`/`tryRecv`.
 8. **Move closures capture copies.** Mutating a captured `var` inside a task or worker is invisible outside. Communicate results through a `Channel`/`Promise`, or share through an atomic — never through captured locals.
-
-## Concurrency API
-
-| Function | Description |
-|----------|-------------|
-| `Task.spawn(move () => {...})` | Spawn a green task |
-| `t.join()` | Wait for a task to finish |
-| `Promise(fn)` / `Promise<T>.run(fn)` | Run `fn` on a green task, result via `await` |
-| `Promise<T>.blocking(fn)` | Run `fn` on an OS thread (CPU-bound / blocking FFI) |
-| `p.await()` | Wait for a promise's result |
-| `Promise.all(v)` / `Promise.race(v)` | Collect all results / first to finish |
-| `parallelMap(v, n, f)` | Divide a `Vec` across `n` OS threads, transform in place, reassemble (`std/shard`) |
-| `parallelMapWith(v, windows, states, f)` | The same cycle with per-worker state and a window queue |
-| `parallelScanStr(s, n, overlap, f)` | Divide a `string` into read-only windows and scan on `n` threads |
-| `Channel.new(cap)` | Create bounded channel |
-| `ch.send(val)` | Send value (blocks if full) |
-| `ch.recv()` | Receive value (blocks if empty) |
-| `ch.trySend(val)` | Non-blocking send, returns `bool` |
-| `ch.tryRecv()` | Non-blocking receive, returns `Option<T>` |
-| `ch.close()` | Signal no more values |
-| `ch.len()` | Current items in channel |
-| `WaitGroup.new()` | Create a wait group |
-| `wg.add(n)` / `wg.done()` / `wg.wait()` | Track and await a fleet of tasks |
-| `AtomicI64.new(v)` / `AtomicI32.new(v)` / `AtomicU64.new(v)` / `AtomicBool.new(v)` | Create atomic |
-| `a.load()` | Atomic read |
-| `a.store(v)` | Atomic write |
-| `a.add(v)` / `a.sub(v)` | Atomic add/sub, wrapping (returns old) |
-| `a.cas(exp, des)` | Compare-and-swap (returns old) |
-| `a.swap(v)` | Atomic swap (returns old) |
-| `Once.new()` | Create a run-exactly-once guard |
-| `o.run(fn)` | Run `fn` once; later callers block until it finishes |
-| `o.isDone()` | True once the initializer has completed |
-| `x.clone()` | Give another task/worker its own owner of a channel, wait group, atomic, or `Once` |

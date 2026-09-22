@@ -26,7 +26,7 @@ kept as a Milo regression fixture. `unsafe` and FFI are trust boundaries in both
 | Use-after-free through cyclic data | runtime | runtime | even |
 | Zero-copy read through an arena | compile time, `&T` out of the arena carries a lifetime | compile time, `arenaWith` / `arenaRead` scope the `&T` to a closure, so nothing aliases the arena | even |
 | Handle used against the wrong arena | runtime, `slotmap` / `generational-arena` return `None` or panic | runtime, `None` from the `arenaId` check; compile time once each role is [branded](/language/patterns#stop-two-kinds-of-index-from-being-mixed-up) | even |
-| Discarded fallible result | compile time, `#[must_use]` warning | compile time, `unused-result` warning on `Option`/`Result` and `@mustUse`, an error under the [safety profiles](/language/safety) | even |
+| Discarded fallible result | compile time, `#[must_use]` warning | compile time, `unused-result` warning on `Option`/`Result` and `@mustUse`, an error under the [safety profiles](/language/safety-profiles) | even |
 | Forged struct internals | compile time, private fields | compile time, `_`-prefixed fields are private to their file | even |
 | Integer overflow | runtime, debug builds only | runtime, every build | Milo ahead |
 | Contracts: `requires` / `ensures` / `invariant` | runtime, unstable | [compile time](/language/safety), for linear arithmetic | Milo ahead |
