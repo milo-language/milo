@@ -10,6 +10,11 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+# A newer push to main rebuilds `latest` from scratch, so an older main run is cancelled.
+# Each tag is its own group and never cancelled: a versioned release must finish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
 
 permissions:
   contents: write

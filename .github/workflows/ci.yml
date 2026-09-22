@@ -1,5 +1,10 @@
 name: CI
 on: [push, pull_request]
+# A newer push to the same branch or PR replaces the older run: the macOS runner queue
+# was backing up by an hour, and only the newest commit's result gets looked at.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: macos-latest
