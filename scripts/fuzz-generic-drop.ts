@@ -488,9 +488,29 @@ const IO_SEEDS: Record<string, string[]> = {
 
 // ── program assembly ──────────────────────────────────────────────────────────
 
+// `Promise.blocking` hands its value to a DETACHED OS thread, so `promiseRace` and
+// anything else built on it can still have a value in flight when `main` returns.
+// std/runtime documents that outcome ("any task still running dies with the process"), so
+// the undelivered value is an exit race, not a leak, and counting it as one made this
+// oracle report a phantom [drop-imbalance] on promiseRace: 70 of 400 runs under parallel
+// load, 0 of 400 with a drain, and never once on an unloaded machine, which is why it only
+// ever appeared on CI.
+//
+// Wait for the counts to settle. The deadline is what keeps this a fix rather than a
+// silencer: a genuine leak never balances, so it is still reported, one second later.
+const SETTLE = `    var __settleTries: i64 = 0
+    while gone < made && __settleTries < 200 {
+        sleepMs(5)
+        __settleTries = __settleTries + 1
+    }`;
+
 function render(path: Path, inst: Inst, sizeSeed: number): string {
   const sub = (s: string) => s.replace(/\bT\b/g, inst.T);
-  const imports = Object.entries(path.imports)
+  // std/time rides along for the settle loop below; the dedupe keeps a path that already
+  // imports sleepMs from declaring it twice (a resolver error).
+  const withTime: Record<string, string[]> = { ...path.imports };
+  withTime["std/time"] = [...(withTime["std/time"] ?? []), "sleepMs"];
+  const imports = Object.entries(withTime)
     .map(([mod, names]) => `from "${mod}" import {\n    ${[...new Set(names)].join(", ")}\n}`)
     .join("\n");
   const body = path.body.map(l => "        " + sub(l)).join("\n");
@@ -503,6 +523,7 @@ pub fn main(): i32 {
     if true {
 ${body}
     }
+${SETTLE}
     print(sink)
     print(made)
     print(gone)
