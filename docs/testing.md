@@ -65,6 +65,33 @@ comparison fails a correct program.
 `isolationCases.milo` — *not* `*_test.milo` — so a repo-wide `milo test` sweep stays green
 while the driver can still run them by explicit path.
 
+## `milo test --contracts`: property tests written by the contracts
+
+```bash
+milo test --contracts std examples        # what CI runs (both the macOS and Linux jobs)
+MILO_CONTRACT_SEED=7 milo test --contracts std/string.milo
+```
+
+`--contracts` scans **every** `.milo` file under the given paths (not just `*_test.milo`)
+and synthesizes one property test per fn carrying a `requires`/`ensures`. Each test draws
+200 inputs, discards those the `requires` rejects, calls the fn, and checks the `ensures`.
+A refutation prints the arguments that produced it. This is a different question from
+`milo prove`: the prover asks whether the contract is *provable*, this asks whether it is
+*true on drawn inputs*, and it finds the contract that is too weak rather than too strong.
+Its first sweep of std found five contracts promising results that exhaust memory
+(`strRepeat`, both pads, `Pool.new`, `inflate.zeros`) and one missing character-boundary
+precondition on `strCharAt`.
+
+The seed is fixed so a red run reproduces; `MILO_CONTRACT_SEED` draws a different sample.
+
+**What it does not reach.** A fn is skipped, with the reason printed, when it takes a
+`&mut` param (the harness cannot state what the call may change), a `&SomeStruct` the
+generator has no way to build, or a type parameter. Drawing arbitrary structs is
+deliberately not done: a `Bump { used: 1, cap: 0 }` violates the invariant every
+constructor maintains, so it would refute a contract that is true of every reachable
+value. Today that leaves about half the contract-bearing fns in std + examples untested by
+this sweep.
+
 ## The fixture protocol (no code changes to add a test)
 `tests/run.test.ts` walks two directories:
 - `tests/fixtures/*.milo` — **compiled + executed.** stdout must match the `// @expect: <line>` annotations, one per expected output line.

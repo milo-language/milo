@@ -20,7 +20,10 @@ export interface ContractDiscovery { tests: ContractTest[]; skipped: { name: str
 // the test. A property test that never ran is not green.
 const CASES = 200;
 const MAX_TRIES = 20000;
-const SEED = 20260921;
+// Fixed by default: a CI gate that draws different cases every run is a gate whose red is
+// not reproducible. `MILO_CONTRACT_SEED` lets a nightly or manual sweep draw a fresh
+// sample. The point of the default is determinism, not that this one sample is special.
+const SEED = Number(process.env.MILO_CONTRACT_SEED) || 20260921;
 
 const INT_TYPES: Record<string, { min: bigint; max: bigint }> = {
   i8: { min: -(2n ** 7n), max: 2n ** 7n - 1n },

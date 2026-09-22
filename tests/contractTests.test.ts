@@ -36,3 +36,25 @@ test("std/string's contracts hold under drawn inputs", () => {
   expect({ code, failed: json.failed, stderr: code === 0 ? "" : stderr }).toEqual({ code: 0, failed: 0, stderr: "" });
   expect(json.passed).toBeGreaterThanOrEqual(9);
 });
+
+test("a file with its own `fn main` is swept; the harness moves that main aside", () => {
+  const { code, json } = run("tests/contracts/contractTestsWithMain.milo");
+  expect({ code, failed: json.failed, compileErrors: json.compileErrors }).toEqual({
+    code: 0, failed: 0, compileErrors: [],
+  });
+  expect(json.tests.map((t: any) => t.name)).toEqual(["testContract_clampTo"]);
+});
+
+test("a file that will not compile is reported without aborting the rest of the sweep", () => {
+  const { code, json } = run(
+    "tests/contracts/contractTestsUncompilable.milo",
+    "tests/contracts/contractTestsWithMain.milo",
+  );
+  expect(code).toBe(1);
+  expect(json.compileErrors.map((c: any) => c.file)).toEqual([
+    "tests/contracts/contractTestsUncompilable.milo",
+  ]);
+  // The point of the test: the file AFTER the broken one still ran.
+  expect(json.tests.map((t: any) => t.name)).toEqual(["testContract_clampTo"]);
+  expect(json.passed).toBe(1);
+});

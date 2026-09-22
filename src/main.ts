@@ -12,6 +12,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
+import type { Program } from "./ast";
 import { TypeChecker } from "./checker";
 import { Codegen } from "./codegen";
 import { lower } from "./lower";
@@ -73,6 +74,22 @@ function cguCount(irLineCount: number, optFlag: string, emitDebug: boolean): num
   return Math.max(2, Math.min(CGU_MAX_UNITS, cores));
 }
 
+// A compile that reported diagnostics, raised instead of exiting. The CLI's one-file
+// commands want `process.exit(1)` right where the diagnostic is rendered; a sweep that
+// compiles many files (`milo test`) must survive one bad file and report it as a single
+// failure. `withThrowingDiagnostics` flips frontendToHIR between the two.
+class CompileFailure extends Error {}
+let diagnosticsThrow = false;
+function withThrowingDiagnostics<T>(fn: () => T): T {
+  const prev = diagnosticsThrow;
+  diagnosticsThrow = true;
+  try { return fn(); } finally { diagnosticsThrow = prev; }
+}
+function failCompile(what: string): never {
+  if (diagnosticsThrow) throw new CompileFailure(what);
+  process.exit(1);
+}
+
 function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig) {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
   let tokens, program;
@@ -89,7 +106,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
     } else {
       console.error(e.message);
     }
-    process.exit(1);
+    failCompile("parse failed");
   }
 
   const result = new TypeChecker(warningConfig).check(program);
@@ -108,7 +125,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
   for (const d of warnings) console.error(formatDiagnostic(d, source, filePath, resolveSource));
   if (errors.length > 0) {
     for (const d of errors) console.error(formatDiagnostic(d, source, filePath, resolveSource));
-    process.exit(1);
+    failCompile(`${errors.length} type error${errors.length === 1 ? "" : "s"}`);
   }
 
   const hir = lower(program, result, sourceDir, target.os, target.arch);
@@ -1346,6 +1363,23 @@ function discoverTests(source: string, file: string): TestDiscovery {
   return { tests, rejected };
 }
 
+// `--contracts` scans ordinary source files, not `*_test.milo`, and most of those define
+// `fn main`, as does the harness appended below. Rename the file's own main out of the
+// way (it is dead code in the harness binary; nothing dispatches to it) so the two do not
+// collide. Without this, every example with a main aborted the whole sweep.
+function renameUserMain(source: string, program: Program): string {
+  const main = program.functions.find(f => f.name === "main" && !f.isExtern);
+  if (!main?.span) return source;
+  const lines = source.split("\n");
+  const i = main.span.line - 1;
+  const line = lines[i];
+  if (line === undefined) return source;
+  const renamed = line.replace(/(\bfn\s+)main\b/, "$1__miloUserMain");
+  if (renamed === line) return source;
+  lines[i] = renamed;
+  return lines.join("\n");
+}
+
 /**
  * A `main` that runs ONE test, named by argv[1]. One compile per file, one process per
  * test: that is what buys isolation, because a test that traps (overflow, bounds, failed
@@ -1430,7 +1464,10 @@ async function runTests(
         const program = new Parser(new Lexer(source).tokenize(), source, file).parse();
         const ct = discoverContractTests(program);
         found = { tests: ct.tests.map(t => t.name), rejected: ct.skipped };
-        if (ct.tests.length > 0) source += "\n" + ct.tests.map(t => t.source).join("\n") + contractTestSupport(program);
+        if (ct.tests.length > 0) {
+          source = renameUserMain(source, program)
+            + "\n" + ct.tests.map(t => t.source).join("\n") + contractTestSupport(program);
+        }
       } else {
         found = discoverTests(source, file);
       }
@@ -1450,7 +1487,8 @@ async function runTests(
 
     let bin: string;
     try {
-      bin = compileSourceToBinary(source + testHarnessMain(found.tests), file, target, optFlag, warningConfig);
+      bin = withThrowingDiagnostics(() =>
+        compileSourceToBinary(source + testHarnessMain(found.tests), file, target, optFlag, warningConfig));
     } catch (e: any) {
       compileErrors.push({ file, message: e.message ?? String(e) });
       continue;

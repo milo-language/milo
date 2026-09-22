@@ -1,0 +1,19 @@
+// A contract-bearing file that also defines `fn main`: the shape of every example and
+// every real program, as opposed to a std module. The harness appends a `main` of its
+// own, so it must move this one out of the way; before it did, the collision aborted the
+// entire sweep at the first such file.
+
+// Clamp `v` into [lo, hi].
+fn clampTo(v: i64, lo: i64, hi: i64): i64
+requires lo <= hi
+ensures result >= lo && result <= hi
+{
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+
+fn main(): i32 {
+    print($"{clampTo(42, 0, 10)}")
+    return 0
+}

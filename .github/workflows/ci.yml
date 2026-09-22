@@ -54,6 +54,13 @@ jobs:
       # script builds every entry point through clang and executes the 32 that carry a
       # `// @run:` annotation. It existed and was wired to nothing.
       - run: bun run scripts/run-examples.ts
+      # `milo test --contracts` synthesizes a property test per contract-bearing fn and
+      # generates inputs for it. Its first (manual) sweep of std found five contracts that
+      # promised results which exhaust memory, and one missing character-boundary
+      # precondition, then nothing ever ran it again, because it was wired to no job.
+      # ~4s over std + examples; a refuted contract fails the step with its counterexample.
+      - name: Contract sweep
+        run: bun run src/main.ts test --contracts std examples
 
       # A fixture that leaks still prints the right bytes, so `bun test` cannot see one.
       # That blind spot let the self-hosted compiler leak every owned local for months
@@ -150,6 +157,10 @@ jobs:
       - run: bun test
       # Reads this runner's headers, so it's the only thing that can check the Linux decls.
       - run: bun run scripts/audit-extern-returns.ts
+      # Same sweep as macOS. The seed is fixed, so this is not a second draw: it is the
+      # same 200 cases against a different libc and codegen path.
+      - name: Contract sweep
+        run: bun run src/main.ts test --contracts std examples
 
   # Windows is a partial target: the compiler runs, resolves x86_64-pc-windows-msvc, and
   # builds+runs the fixture suite minus the parts that need APIs Windows has no

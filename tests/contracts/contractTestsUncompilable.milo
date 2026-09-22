@@ -1,0 +1,8 @@
+// Does not type-check: `n` is an i64 and the body returns a string. Used to prove one bad
+// file is reported as a compile error and does NOT abort the rest of the sweep. The
+// checker used to `process.exit(1)` mid-run, which killed every remaining file.
+fn widthOf(n: i64): i64
+requires n >= 0
+{
+    return "not an integer"
+}
