@@ -1,0 +1,74 @@
+// Fixture for tests/contractTests.test.ts: the struct and Vec generators of
+// `milo test --contracts`.
+//
+// `Counter` is only ever built by `counterNew`, never by a drawn struct literal, so every
+// Counter the harness tests is one the program itself could hold: `hits <= limit` holds by
+// construction. A literal `Counter { limit: 0, hits: 9 }` would refute `counterBump`'s
+// ensures with a value no constructor returns, which is a false alarm, not a bug.
+// `counterNew` is fallible, so a draw it rejects is a discarded draw and not a failure.
+//
+// `counterLimit` lies in its ensures and must be caught, with the CONSTRUCTOR ARGUMENTS in
+// the message: that is what reproduces the case, and a struct has no Display anyway.
+
+struct Counter {
+    limit: i64,
+    hits: i64,
+}
+
+fn counterNew(limit: i64): Result<Counter>
+requires limit > 0
+{
+    if limit > 4096 {
+        return Result.Err("counter limit too large")
+    }
+    return Result.Ok(Counter { limit: limit, hits: 0 })
+}
+
+// Consume up to `n` of the counter's remaining room.
+fn counterBump(c: &mut Counter, n: i64): i64
+requires n >= 0
+ensures result >= 0
+ensures result <= c.limit
+{
+    var room = c.limit - c.hits
+    if n < room {
+        room = n
+    }
+    c.hits = c.hits + room
+    return room
+}
+
+// Deliberately false: `counterNew` refuses a limit below 1, so the result is never
+// negative.
+fn counterLimit(c: &Counter): i64
+ensures result < 0
+{
+    return c.limit
+}
+
+// Deliberately unsatisfiable: the harness builds a Counter and never mutates it before
+// the call, so `hits > 0` is a state only `counterBump` reaches. The test must FAIL for
+// having run no case rather than pass on zero cases, the same shape as
+// `std/pool.milo::poolFree`, whose `requires p.liveCount > 0` needs an alloc first.
+fn counterDrained(c: &Counter): i64
+requires c.hits > 0
+ensures result >= 0
+{
+    return c.hits
+}
+
+// Clamp every element to `hi`, returning how many changed.
+fn vecClamp(v: &mut Vec<i64>, hi: i64): i64
+requires hi >= 0
+ensures result >= 0
+ensures result <= v.len
+{
+    var changed: i64 = 0
+    for i in 0..v.len {
+        if v[i] > hi {
+            v[i] = hi
+            changed += 1
+        }
+    }
+    return changed
+}

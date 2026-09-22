@@ -4792,7 +4792,11 @@ integers, bools, floats or strings (owned or `&string`) and whose contracts do n
 `old()`, it draws inputs (biased to 0, 1, -1 and the type's bounds; a `requires
 key.len == 32` is drawn at exactly that length), skips draws that fail `requires`,
 calls the fn and evaluates every `ensures` with `result` bound. A violation names the
-inputs. Generic fns, methods and `&mut` parameters are reported as skipped.
+inputs. A struct parameter is reached too, by calling a constructor the same file
+declares with drawn arguments that satisfy that constructor's own `requires`, never by
+drawing the struct's fields: a literal no constructor could return would refute a
+contract with an unreachable value. Generic fns, methods, and parameters whose type has
+no such constructor are reported as skipped.
 
 ```bash
 milo test --contracts std/string.milo

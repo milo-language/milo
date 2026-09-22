@@ -209,8 +209,11 @@ std/string.milo
 
 That second line is the kind of thing it finds: `requires n >= 0` promised that any
 count works, and `n = i64::MAX` exhausted memory instead. Its first sweep of the standard
-library tightened five contracts that way. Generic fns, methods and `&mut` parameters are
-reported as skipped rather than silently passed over; a test whose `requires` no draw
+library tightened five contracts that way. A struct parameter is built by calling a
+constructor the same file declares, with drawn arguments that satisfy that constructor's
+own `requires`, never by drawing the struct's fields, which would refute contracts with
+values no program can hold. Generic fns, methods and parameters with no such constructor
+are reported as skipped rather than silently passed over; a test whose `requires` no draw
 satisfies fails rather than passing on zero cases.
 
 ### Loop invariants

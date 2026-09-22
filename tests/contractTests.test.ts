@@ -37,6 +37,28 @@ test("std/string's contracts hold under drawn inputs", () => {
   expect(json.passed).toBeGreaterThanOrEqual(9);
 });
 
+test("a struct param is built by its constructor, and the refutation names the ctor args", () => {
+  const { code, json } = run("tests/contracts/contractTestsStructs.milo");
+  expect(code).toBe(1);
+  const byName = new Map<string, any>(json.tests.map((t: any) => [t.name, t]));
+  expect([...byName.keys()].sort()).toEqual([
+    "testContract_counterBump", "testContract_counterDrained", "testContract_counterLimit",
+    "testContract_counterNew", "testContract_vecClamp",
+  ]);
+  // `&mut Counter` and `&mut Vec<i64>` both run, and their honest contracts hold.
+  expect(byName.get("testContract_counterBump").ok).toBe(true);
+  expect(byName.get("testContract_vecClamp").ok).toBe(true);
+  // A struct has no Display: the message carries the constructor call that rebuilds it.
+  const lying = byName.get("testContract_counterLimit");
+  expect(lying.ok).toBe(false);
+  expect(lying.output).toMatch(/ensures \(result < 0\) failed: c=counterNew\(limit=\d+\) result=\d+/);
+  // The anti-vacuity gate still bites once structs are in play: a precondition the
+  // constructor cannot establish is a test that ran nothing, which is not a pass.
+  const vacuous = byName.get("testContract_counterDrained");
+  expect(vacuous.ok).toBe(false);
+  expect(vacuous.output).toMatch(/no drawn input satisfied requires/);
+});
+
 test("a file with its own `fn main` is swept; the harness moves that main aside", () => {
   const { code, json } = run("tests/contracts/contractTestsWithMain.milo");
   expect({ code, failed: json.failed, compileErrors: json.compileErrors }).toEqual({

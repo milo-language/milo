@@ -3,7 +3,7 @@ system: testing
 purpose: how to write/run tests, what to avoid, and an index of every test file and what it covers
 key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh
 update-when: a test file or out-of-band harness is added/removed/repurposed, or the fixture protocol changes
-last-verified: 2026-09-20 (corpus census gate listed; 09-19: known-red list added for the soundness-sweep reproducers)
+last-verified: 2026-09-22 (--contracts builds struct params from their constructors and draws Vec<int>; 09-20: corpus census gate listed)
 -->
 
 # Testing
@@ -84,13 +84,37 @@ precondition on `strCharAt`.
 
 The seed is fixed so a red run reproduces; `MILO_CONTRACT_SEED` draws a different sample.
 
-**What it does not reach.** A fn is skipped, with the reason printed, when it takes a
-`&mut` param (the harness cannot state what the call may change), a `&SomeStruct` the
-generator has no way to build, or a type parameter. Drawing arbitrary structs is
-deliberately not done: a `Bump { used: 1, cap: 0 }` violates the invariant every
-constructor maintains, so it would refute a contract that is true of every reachable
-value. Today that leaves about half the contract-bearing fns in std + examples untested by
-this sweep.
+**How a struct parameter is built.** Never field by field. A `Bump { used: 1, cap: 0 }`
+violates the invariant every constructor maintains, so it would refute a contract that is
+true of every value the program can reach, and a false refutation costs more trust than a
+skip does. Instead the harness looks for a **constructor** in the same file (a
+non-extern, non-generic, receiver-less fn returning `T`, `Result<T>` or `Option<T>` whose
+own parameters are all drawable scalars) and builds the value by calling it with drawn
+arguments that satisfy that constructor's own `requires`. A fallible constructor returning
+`Err`/`None` is a discarded draw, not a failure. The first qualifying constructor in
+declaration order wins, so one file always generates one harness. This is what puts
+`&mut Bump`, `&mut Pool`, `&Store` and `&mut Pid` in reach. A refutation prints the
+constructor call rather than the struct (`a=bumpNew(capacity=7)`), because that is what
+reproduces the case and a struct has no `Display` anyway.
+
+`Vec<T>` for an integer `T` is drawn directly: a length in `0..=32`, then that many drawn
+elements. A refutation prints the elements as they were *before* the call, so a fn that
+sorted its `&mut Vec` in place still shows the input that provoked it.
+
+**What it does not reach.** A fn is skipped, with the reason printed, when it has a type
+parameter, when a contract mentions `old()` (the harness cannot snapshot a value it does
+not own), or when a parameter is a type it cannot build: a struct with no qualifying
+constructor *in the same file* (the contracts path parses without resolving imports), a
+`Vec` of anything but integers, a pointer, an array. A `&mut` parameter of such a type
+still reports that it is `&mut`.
+
+There is a second limit that no skip line reports. The harness builds a value and calls
+the fn once, so a `requires` naming a state only a *mutation* reaches is never satisfied:
+`std/pool.milo::poolFree` wants `p.liveCount > 0`, which only `poolAlloc` produces. That
+test fails for having run zero cases rather than passing vacuously, which is intended: a
+property test that never ran is not green. The fix is to draw a *sequence* of calls, not
+one constructor. `tests/contracts/contractTestsStructs.milo`
+pins the shape.
 
 ## The fixture protocol (no code changes to add a test)
 `tests/run.test.ts` walks two directories:
