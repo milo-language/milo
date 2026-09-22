@@ -74,6 +74,7 @@ TUIs in [`examples/terminal/`](https://github.com/milo-language/milo/tree/main/e
 | [chihuahua](https://github.com/milo-language/milo/blob/main/examples/graphics/chihuahua.milo) | DVD-logo-style bouncing screensaver with a shaded pixel-art sprite |
 | [raytrace3d](https://github.com/milo-language/milo/blob/main/examples/graphics/raytrace3d.milo) | Real-time Whitted ray tracer: chrome spheres, shadows and rigid-body physics at 60fps on the CPU |
 | [raytracer](https://github.com/milo-language/milo/blob/main/examples/graphics/raytracer.milo) | Progressive Monte-Carlo path tracer: soft shadows and colour bleed from the bounce integral |
+| [render](https://github.com/milo-language/milo/blob/main/examples/graphics/render.milo) | Offline path tracer: glass, metal, a low sun and depth of field at 1920x1080, rendered across every core with std/shard and written by std/png |
 | [cloth](https://github.com/milo-language/milo/blob/main/examples/simulation/cloth.milo) | Position-based dynamics cloth; grab a node and fling it |
 | [phasespace](https://github.com/milo-language/milo/blob/main/examples/simulation/phasespace.milo) | Collisionless Vlasov plasma solver (MUSCL, Strang splitting) winding trapped-particle vortices |
 | [splitPty](https://github.com/milo-language/milo/blob/main/examples/terminal/splitPty.milo) | Two commands side-by-side in real PTYs; a mini tmux |

@@ -201,12 +201,12 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
         <div class="tile-tags"><span>OpenGL 3.3</span><span>GLSL</span><span>z-buffer</span><span>SDL</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="milo build examples/games/flight/main.milo -o /tmp/flyby --release &amp;&amp; /tmp/flyby" title="milo build examples/games/flight/main.milo -o /tmp/flyby --release &amp;&amp; /tmp/flyby">⧉ copy run command</span>
       </a>
-      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/graphics/raytrace3d.milo">
-        <img class="tile-img" src="/showcase/raytracer.png" alt="Chrome and coloured spheres reflecting each other on a checkerboard floor" loading="lazy">
-        <h3>Real-time Ray Tracer</h3>
-        <p>Chrome spheres bouncing in a mirrored box — reflections, hard shadows and rigid-body physics, traced per pixel every frame at 60fps. Pure CPU, no GPU.</p>
-        <div class="tile-tags"><span>Whitted tracing</span><span>Blinn-Phong</span><span>SDL</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/graphics/raytrace3d.milo" title="milo run examples/graphics/raytrace3d.milo">⧉ copy run command</span>
+      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/graphics/render.milo">
+        <img class="tile-img" src="/showcase/render.jpg" alt="Glass, gold and coloured spheres on a plain at golden hour, long soft shadows and reflections, rendered by the Milo path tracer" loading="lazy">
+        <h3>Path Tracer</h3>
+        <p>Glass, metal and a low sun at 1920×1080, 512 samples a pixel on every core. About two minutes, and pure Milo from ray to PNG.</p>
+        <div class="tile-tags"><span>Monte Carlo</span><span>depth of field</span><span>std/shard</span></div>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/graphics/render.milo --release" title="milo run examples/graphics/render.milo --release">⧉ copy run command</span>
       </a>
     </div>
   </div>
