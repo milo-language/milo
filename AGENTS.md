@@ -3,7 +3,7 @@ system: agent-router
 purpose: entry point that routes any agent to the right skill, doc, script, or convention
 key-files: AGENT_WORKFLOW.md, CONVENTIONS.md, CLAUDE.md, docs/, scripts/, docs/worksheets/
 update-when: a new skill/doc/script/convention is added, or a routing entry goes stale
-last-verified: 2026-09-21 (milo fix route, the milojs clone path; earlier: memory-safety row, sweep findings #3-#9 and the fuzzer gates)
+last-verified: 2026-09-22 (milo explain + the generated language reference; earlier: milo fix route, the milojs clone path; earlier: memory-safety row, sweep findings #3-#9 and the fuzzer gates)
 -->
 
 # AGENTS.md — Router
@@ -29,6 +29,7 @@ Every doc in this repo starts with a 7-line `<!-- doc-meta ... -->` block. To fi
 | Know what memory-safety Milo catches (compile vs runtime) vs Rust, or what it deliberately does not check | [docs/memory-safety-vs-rust.md](docs/memory-safety-vs-rust.md): battle-test matrix, 13 probes; finding #2 (move-out-of-borrow UAF) closed 2026-07-31, findings #3-#9 (the September soundness sweep: shard copy, owner-under-worker, global across a park, `ptr()` past a realloc, Drop copy-out, channel leak, impl-vs-trait signature) closed 2026-09-19/20. The sweep is fuzzer-gated now (`fuzz:tasks`, `fuzz:generic-drop` and the ASan sweep run in CI), scoped, not a no-UB proof; its last section is the three gaps Rust's stored references cover and Milo does not |
 | Write or run tests, or find what's covered | [docs/testing.md](docs/testing.md) |
 | Changing `src/verify.ts` or `src/prove-milo.ts` | ALWAYS run `bun test tests/verify-contracts.test.ts` before merging, whatever else is skipped: it is the only gate that notices a lost proof (WP6 lost four in `std/inflate.milo` and three merges went by) |
+| Find out what a warning means, or which flag silences it | `milo explain <warning \| @attribute \| keyword>` — doc, example, fix and flags, the same text the site and the LSP show. Warnings print their name (`warning[index-clone]: …`) |
 | A program fails with a mechanical diagnostic (`'x' is not imported`, a missing `&mut`, an unused `unsafe`, a bare `embedFile`) | `milo fix <entry.milo>` applies every fix `check --json` reports, in the imported modules too |
 | Changing `src/checker.ts` rules | ALWAYS run `bun run scripts/run-examples.ts` before merging: a false positive on a real program is a rule not finished |
 | Measure what the ownership model costs real programs (non-FFI `unsafe`, clones, friction comments) | `bun scripts/corpus-census.ts` over every `.milo` in the org; `--check` is the shrink-only gate on non-FFI `unsafe`, `--comments` lists each block's reason. Findings in [docs/memory-safety-vs-rust.md](docs/memory-safety-vs-rust.md) §What the corpus says |
@@ -161,6 +162,7 @@ Before you add a claim about the code to any doc, ask which of these it is:
 | a measured number | one source file, rendered into every place it appears | `benchmarks/results.json` → `scripts/gen-benchmarks.ts` |
 | a code snippet | make it compile in the doc-test harness | `tests/docs.test.ts` (```` ```milo ```` fences) |
 | a keyword/token list | derive it from `src/tokens.ts` | `scripts/gen-tmlanguage.ts`, `tests/grammar.test.ts` |
+| a published reference for a warning, attribute or keyword | write it on the compiler's own row and render every surface from there | `src/warnings.ts` + `src/attributes.ts` + `src/keyword-docs.ts` → `scripts/gen-lang-docs.ts`, gated by `tests/langDocs.test.ts` |
 | a link to a file | `tests/docLinks.test.ts` checks it resolves | — |
 
 If none fits, write the gate before you write the claim. Two rules that follow from this:
