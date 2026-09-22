@@ -57,23 +57,6 @@ The tradeoff is size (roughly +5MB) and losing system security updates for the b
 copy — a CVE means rebuilding and redistributing. Programs that don't use TLS or sqlite need
 neither the flag nor the thought.
 
-## See the compiler's intermediate forms
-
-```bash
-milo emit-ast hello.milo   # parsed AST as JSON — before types exist
-milo emit-hir hello.milo   # typed HIR as JSON — every expression carries its type
-milo emit-ir  hello.milo   # LLVM IR
-```
-
-Useful for understanding what the compiler generates at each stage. `emit-ast`/`emit-hir`
-default to the entry file; add `--all` for the full merged module.
-
-## Run the test suite
-
-```bash
-bun test
-```
-
 ## Something more interesting
 
 Create `greet.milo`:

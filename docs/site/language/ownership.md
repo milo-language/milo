@@ -63,9 +63,9 @@ print(a)           // still valid
 print(b)           // also valid
 ```
 
-## Borrowing — look but don't keep
+## Borrowing
 
-Sometimes a function just needs to *read* a value without taking it. That's a borrow: `&T`. A reference lives in exactly two places: a function parameter, or a local view such as `let mid = v[1..3]` or `let key = line[0..4]`. A view freezes its owner for the life of the binding. What a reference can never do is outlive the scope that made it: it cannot be stored in a struct or a collection, captured by a closure (a closure may borrow an owned local, never a reference), or returned. The one exception: a method may return a view of `self`.
+Sometimes a function just needs to *read* a value without taking it. That's a borrow: `&T`. A reference lives in exactly two places: a function parameter, or a local view such as `let mid = v[1..3]` or `let key = line[0..4]`. A view freezes its owner for the life of the binding. What a reference can never do is outlive the scope that made it: it cannot be stored in a struct or a collection, captured by a closure (a closure may borrow an owned local, never a reference), or returned. The one exception: a method may return a view of `self`. Because no reference is ever stored, nothing in the heap is aliased.
 
 ```milo skip
 // OK: borrow for the duration of the call
@@ -89,7 +89,7 @@ v.push(40)             // error: cannot call 'push' on 'v' because it is borrowe
 print(mid.len)
 ```
 
-This one restriction means you never write lifetime annotations. If you've seen Rust's `<'a>` on structs, impls, and everything they touch — that doesn't exist in Milo. You own the data instead. The restriction *is* the borrow checker, and it's simple enough to fit in one sentence.
+This one restriction means you never write lifetime annotations. If you've seen Rust's `<'a>` on structs, impls, and everything they touch: that doesn't exist in Milo. You own the data instead. The restriction *is* the borrow checker, and it's simple enough to fit in one sentence. What it costs is measured in [Why There Are No Lifetimes](/language/why-no-lifetimes).
 
 ## Mutable references
 
@@ -106,8 +106,8 @@ double(&mut n)          // n is now 42; the &mut is the one thing this call can 
 ```
 
 Reading `double(&mut n)` tells you `n` may be different afterwards without opening
-`double`. A bare `double(n)` is a compile error, and `bun scripts/explicit-mut.ts <file>`
-rewrites an older file. The marker goes on the argument, not the receiver: `v.push(1)` stays
+`double`. A bare `double(n)` is a compile error, and `milo fix <file>` adds the missing
+markers to an older file. The marker goes on the argument, not the receiver: `v.push(1)` stays
 as it is, because a method call already names the value it works on.
 
 ## Auto-borrow
@@ -127,7 +127,7 @@ print("age: ", u.age)  // u is still valid
 
 ## Isn't this too restrictive?
 
-In practice, the overwhelming majority of references are function arguments — "give me this value briefly, I won't keep it." The rare cases where you'd want to store a reference (iterators, self-referential structs) are handled differently: owned data, Vec indices, or [generational arenas](/stdlib/). [Patterns Without Lifetimes](/language/patterns) has the shape-by-shape translation.
+In practice, the overwhelming majority of references are function arguments ("give me this value briefly, I won't keep it"). The rare cases where you'd want to store a reference (iterators, self-referential structs) are handled differently: owned data, Vec indices, or [generational arenas](/stdlib/arena). [Patterns Without Lifetimes](/language/patterns) has the shape-by-shape translation.
 
 The tradeoff: a much simpler mental model and zero annotation overhead for the 95% case.
 

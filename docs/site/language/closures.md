@@ -127,7 +127,7 @@ let t = Task.spawn(move (): void => {
 t.join()
 ```
 
-A green-task closure needs nothing more. `Promise.blocking` runs its closure on a real OS thread, and that is the one place captures must be `Send`, which any type without a raw pointer already is. See [Thread Safety](/features/concurrency#thread-safety-send-sync).
+Only a closure that starts an OS thread (`Promise.blocking`) must have `Send` captures; see [Thread Safety](/features/concurrency#thread-safety-send-sync).
 
 ### When to use `move`
 

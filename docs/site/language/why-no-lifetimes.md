@@ -8,7 +8,8 @@ last-verified: 2026-08-24
 
 # Why There Are No Lifetimes
 
-Milo makes one big bet: **a reference can never be stored.**
+Milo makes one big bet: **a reference can never be stored**
+([the rule](/language/ownership#borrowing)).
 
 Whether that bet is worth taking comes down to a single question: how much real code can
 you still write? So we counted. Across five Rust codebases of deliberately different
@@ -30,16 +31,29 @@ which becomes a named runtime failure where Rust's invariant lifetime is a compi
 error. That is the whole price. Nothing degrades to `unsafe` or to unchecked
 access.
 
+## Local reasoning
+
 What the restructuring buys is local reasoning. A lifetime on a type is infectious:
 store a `Parser<'a>` and your struct grows `<'a>`, then the struct holding that one,
 until a signature three modules away carries an annotation whose reason is no longer
 visible from where it stands. Milo's substitutes (own the buffer, carry a `Span`, use
 a handle) keep every fact about a value readable at the value: no declaration means
-anything beyond what it says. The same property is why the concurrency story stays
-simple, since a type that cannot store a borrow is a type you can hand to another
-task with no `Send` proof to write: a green task needs none, and on an OS thread
-`Send` is derived from the fields, with no borrow chain behind it to unwind; see
-[Concurrency](/features/concurrency).
+anything beyond what it says.
+
+Since no reference is stored, nothing in the heap is aliased, and **the state a function
+can touch is its parameter list**. A mutation here cannot change something over there,
+because there is no other pointer into that data, and every argument the call may change
+is marked `&mut` where it is passed. Verifying a function means reading that function.
+Whole classes of bug are questions about global state in C++ or in Rust with
+`Rc<RefCell>`: a callback mutating a container someone else is iterating, a `&mut`
+handed out twice, a struct outliving the buffer it points into. Milo makes them
+unwritable rather than answerable. The errors are local for the same reason: an aliasing
+error names the call that breaks the rule, not an ownership restructuring three frames up.
+
+A type that cannot store a borrow also crosses to another task with no borrow chain to
+prove safe; see [Thread Safety](/features/concurrency#thread-safety-send-sync).
+
+## What it costs
 
 The cost is not uniform, so it is stated per pattern. A parser restructures
 gracefully and arguably reads better than its `<'a>` original. An iterator yielding

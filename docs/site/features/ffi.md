@@ -77,7 +77,9 @@ add` fetches third-party source — building a package must not be able to run o
 
 An `extern fn` or `extern struct` is a **claim** about C, and C linkage has no mangling to check it against. A wrong parameter type, a wrong arity, or a field at the wrong offset links fine and corrupts silently at the ABI seam. `unsafe` does not help — it tracks provenance, not layout.
 
-Milo verifies these claims at build time against the real headers.
+Milo verifies these claims at build time against the real headers. The checks run when a
+program is built (`milo build`, `milo run`, `milo build-lib`); `milo emit-ir` stops before
+that step and skips them.
 
 ### `@cSig` — check a function signature
 
@@ -398,7 +400,10 @@ milo build-lib mathlib.milo -o libmathlib.a             # static archive + libma
 ```
 
 `pub` is the API boundary. Only `pub` functions are declared in the header, so a helper
-you never marked `pub` stays out of the published surface:
+you never marked `pub` stays out of the published surface. A `pub` function that lives in an
+imported file also needs
+[`@externalLinkage`](./annotations#keeping-an-imported-function-for-c-callers), or it is
+dropped as unreachable:
 
 ```milo
 // mathlib.milo

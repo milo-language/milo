@@ -30,29 +30,12 @@ let s = identity("hello")  // T inferred as string
 | `print(args...)` | Print with trailing newline |
 | `exit(code)` | Exit the process |
 | `jsonStringify(val)` | Serialize a struct to JSON |
-| `@embedFile(path)` | Embed file contents at compile time |
-| `@targetOs()` | The OS being compiled for, as a string |
 
-The `@` marks a compiler-level construct: it runs while compiling, not at runtime. See
-[Annotations & Builtins](/features/annotations) for the full `@` surface.
+Builtins spelled with an `@` (`@embedFile`, `@targetOs`) run while compiling; they are
+listed under [compile-time builtins](/features/annotations#compile-time-builtins).
 
 ## Reference parameters
 
-Functions can borrow values with `&T` (immutable) or `&mut T` (mutable):
-
-```milo
-fn length(s: &string): i64 {
-    return s.len
-}
-
-fn double(x: &mut i32) {
-    x *= 2
-}
-
-var n: i32 = 21
-double(&mut n)          // n is now 42
-```
-
-A shared borrow is implicit: pass the value bare, as in `length(s)`, and the compiler borrows it. A `&mut` argument is spelled at the call site, `double(&mut n)`, so a reader can see the mutation. `&x` as an expression is an error; method receivers stay implicit (`v.push(1)`).
-
-See [Ownership](./ownership) for why references are restricted to function parameters.
+A parameter typed `&T` borrows its argument and `&mut T` may change it. The call passes a
+shared borrow bare, `length(s)`, and marks a mutable one, `double(&mut n)`.
+[Ownership](./ownership#borrowing) has the rules.

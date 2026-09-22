@@ -20,7 +20,7 @@ Primitive types, let/var bindings, if/else, while/for loops, functions, structs,
 
 - **Ownership**: single-owner move semantics, compiler-tracked drops, no GC, no reference counting
 - **Null safety**: `Option<T>` — no null pointers in safe code
-- **Race safety**: structural `Send`, checked only where a closure starts an OS thread (`Promise.blocking`); green tasks need nothing, and a `var` global written from an OS thread is a compile error
+- **Race safety**: structural `Send`, checked only where a closure starts an OS thread; see [Thread Safety](/features/concurrency#thread-safety-send-sync)
 - **Overflow safety**: compile-time range proof plus runtime traps on `+ - * -x` — and shift-out-of-range, divide-by-zero, `INT_MIN / -1` — in **every** build mode, release included. `--no-overflow-checks` opts back into wrapping, and `wrappingAdd`/`saturatingAdd`/`checkedAdd` name it per operation. Measured cost: 0–2% on float, parsing and allocation work, up to ~30% on tight loops over unconstrained integers (reproduce with `sh benchmarks/run-overflow.sh`)
 - **`unsafe` blocks**: pointer work is quarantined behind a grep target, with an unused-`unsafe` lint on by default
 - **Borrow invalidation**: ref-while-frozen, use-after-invalidate, and call-site exclusivity are compile errors
@@ -30,10 +30,7 @@ Primitive types, let/var bindings, if/else, while/for loops, functions, structs,
 
 ### Contracts & Proving
 
-- `requires` / `ensures` / `invariant` on functions and loops, checked at runtime in debug builds (`--contract-checks` forces them on at any optimization level)
-- **`milo prove`** discharges those obligations statically through `std/smt` — a solver written in Milo itself. `--solver=z3` swaps in Z3 for non-linear arithmetic; `--emit-smt` prints the SMT-LIB2 obligations
-- Loop invariants are proved by induction
-- An unproven obligation is reported as *unknown*, never as proven
+`requires` / `ensures` / `invariant` / `decreases`, checked at runtime in debug builds and proved for every input by `milo prove`. See [Contracts & Safety](/language/safety).
 
 ### Safety Profiles, WCET, Bare Metal
 

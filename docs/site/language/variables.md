@@ -14,8 +14,6 @@ let name = "Milo"   // type inference works
 
 `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=` and `^=` all exist, and the target can be any assignable place (`v[i] += 1`, `p.x -= dx`). There is no `++`.
 
-`let` maps to an SSA register and `var` maps to a stack allocation. What you write is what LLVM sees.
-
 ## Destructuring a struct
 
 `let { a, b } = e` binds fields of a struct value by name. `{ a: x }` renames, and

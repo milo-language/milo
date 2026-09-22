@@ -47,11 +47,12 @@ let d = Dog { age: 7 }
 print(d.getAge())
 ```
 
-## Private fields
+## Visibility and private fields
 
-A field whose name starts with `_` can be read, written, or named in a struct literal
-only inside the file that declares the struct. Other files use whatever constructor and
-accessors that file exports:
+A struct is file-private unless declared `pub struct`. There is no per-field `pub`: every
+field of a visible struct is visible, except a field whose name starts with `_`. That one
+can be read, written, or named in a struct literal only inside the file that declares the
+struct. Other files use whatever constructor and accessors that file exports:
 
 ```milo skip
 // counter.milo
@@ -86,23 +87,8 @@ only (a function named `_helper` is an ordinary function). Derived methods
 
 ## JSON serialization
 
-Any struct can be serialized with the built-in `jsonStringify`:
-
-```milo
-struct User {
-    name: string,
-    age: i32,
-    active: bool,
-}
-
-let user = User { name: "Alice", age: 30, active: true }
-let json = jsonStringify(user)
-// {"name":"Alice","age":30,"active":true}
-```
-
-## Visibility
-
-A struct is file-private unless declared `pub struct`. There is no per-field `pub`: every field of a visible struct is visible, except fields named with a leading `_`, which only the declaring file may touch (see [Private fields](#private-fields) above).
+The built-in `jsonStringify(user)` serializes a struct to a JSON string, with no import.
+Parsing is [std/json](/stdlib/json).
 
 ## Drop
 

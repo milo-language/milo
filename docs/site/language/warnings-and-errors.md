@@ -33,6 +33,8 @@ error: use of moved variable 'a'
         transfer: 'a.clone()'.
 ```
 
+Assignment moved the string to `b`. See [Moves](/language/ownership#moves).
+
 ### Move out of loop
 
 ```milo
@@ -42,7 +44,7 @@ while true {
 }
 ```
 
-On the first iteration `s` would be gone — the second iteration would be a use-after-move. The compiler catches this statically.
+The second iteration would use `s` after the first one moved it.
 
 ### Assign to immutable
 
@@ -73,24 +75,7 @@ struct Bad {
   hint: references are second-class — use an owned type instead
 ```
 
-### Missing `&mut` on a call argument
-
-A non-receiver argument bound to a `&mut` parameter is written `&mut x`, so the call
-shows which values it can change. The bare form is the hard error `implicit-mut-borrow`.
-It is not a warning, so no `--allow` or `milo.json` `lints` entry reaches it;
-`bun scripts/explicit-mut.ts <file>` rewrites a file from the checker's resolved
-signatures. Method receivers are exempt (`v.push(1)` stays as it is).
-
-```milo
-fn bump(p: &mut Point, by: i64): void { p.x = p.x + by }
-
-bump(p, 2)          // error: argument 'p' is passed to a '&mut' parameter without '&mut'
-bump(&mut p, 2)     // correct: the mutation is visible at the call site
-```
-
-```
-  hint: write 'bump(... &mut p ...)'; run 'bun scripts/explicit-mut.ts <file>' to rewrite the file
-```
+Store an owned value. The rule is in [Borrowing](/language/ownership#borrowing).
 
 ### Returning references
 
@@ -100,7 +85,19 @@ fn bad(): &string {    // error: cannot return a reference
 }
 ```
 
-Same rule — references live only as long as the function call. Return an owned value instead.
+Return an owned value. Only a method may return a reference, and only a view of `self`.
+
+### Missing `&mut` on a call argument
+
+```milo
+fn bump(p: &mut Point, by: i64): void { p.x = p.x + by }
+
+bump(p, 2)          // error: argument 'p' is passed to a '&mut' parameter without '&mut'
+bump(&mut p, 2)     // correct: the mutation is visible at the call site
+```
+
+This is a hard error, not a warning, so no `--allow` reaches it. `milo fix <file>` adds
+the markers. See [Mutable references](/language/ownership#mutable-references).
 
 ## Warnings
 

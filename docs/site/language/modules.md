@@ -40,21 +40,23 @@ Imports are paths relative to the project root. A file at `lib/auth.milo` is imp
 
 ## Visibility
 
-Declarations are private by default. Mark a function or struct `pub` to make it visible to other modules. A `pub struct` exposes its fields, except those whose name starts with `_`: they are private to the file that declares the struct, no keyword needed.
+Declarations are private to their file by default. Mark a function, struct, or enum `pub`
+to make it importable from other files. Field privacy inside a `pub struct` is covered
+under [Structs](/language/structs#visibility-and-private-fields).
 
 ```milo
-pub struct User {
-    name: string,
-    _age: i32,          // private: visible only in this file
+pub fn createUser(name: string): string {
+    return helper(name)
 }
 
-pub fn createUser(name: string): User {
-    return User { name: name, _age: 0 }
+fn helper(name: string): string {   // not pub: other files cannot import it
+    return name
 }
 ```
 
-## How it works
+## Platform-specific files
 
-Imports are resolved recursively and deduplicated. The resolver merges all imported ASTs before type checking, so there's no separate compilation yet.
-
-Platform-specific modules use suffix-based selection: `std/platform.darwin.milo` vs `std/platform.linux.milo`. The resolver picks the right one for the host.
+A file can come in per-OS variants named by suffix: `platform.darwin.milo`,
+`platform.linux.milo`, `platform.windows.milo`. With no plain `platform.milo` present, an
+import of `platform` picks the variant for the target OS, so every variant must export the
+same names.

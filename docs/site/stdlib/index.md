@@ -29,8 +29,8 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 
 | Module | What it provides |
 |--------|-----------------|
-| [`std/json`](json) | Zero-copy JSON parser — `Json.parse`, keyed accessors (`.str()`, `.i64()`, `.f64()`, `.bool()`), `Json.stringify` |
-| [`std/arena`](arena) | Generational arena for cyclic/graph data with safe `Handle<T>` |
+| [`std/json`](json) | Zero-copy JSON parser: `Json.parse`, keyed accessors (`.str()`, `.i64()`, `.f64()`, `.bool()`). Serializing a struct is the built-in `jsonStringify`, no import |
+| [`std/arena`](arena) | Generational arena for cyclic/graph data with safe `Handle<T>`; the how-to is [Patterns](/language/patterns#build-a-tree-or-graph-whose-nodes-refer-to-each-other) |
 | [`std/set`](set) | `HashSet<T>` — `s.add`, `s.contains`, `s.remove` |
 
 ## CLI & System
@@ -131,48 +131,3 @@ Pure-Milo DEFLATE (RFC 1951) and the gzip / zlib / zip containers built on it.
 | [`std/deflate`](deflate) | Compress — `Deflate.raw`, `Deflate.gzip`, `Deflate.zlib` |
 | [`std/inflate`](inflate) | Decompress — `Inflate.raw`, `Inflate.gzip`, `Inflate.zlib` |
 | [`std/zip`](zip) | Read ZIP archives — `Zip.read` (`.zip`/`.jar`/`.epub`/`.docx`) |
-
-## HTTP Server Example
-
-```milo
-from "std/http" import { Context, Response, Router, serveRouter }
-
-fn homeHandler(ctx: &mut Context): Response {
-    return ctx.html("<h1>Hello!</h1>")
-}
-
-fn jsonHandler(ctx: &mut Context): Response {
-    let name = ctx.query("name") ?? "world"
-    return ctx.json($"\{\"hello\": \"{name}\"}")
-}
-
-fn main(): i32 {
-    var r: Router = Router.new()
-    r.get("/", homeHandler)
-    r.get("/api", jsonHandler)
-    serveRouter(8080, r)
-    return 0
-}
-```
-
-## Arena Example
-
-For cyclic data (graphs, doubly-linked lists), use `std/arena`. Nodes reference each other via `Handle<T>` — typed indices — instead of pointers:
-
-```milo
-from "std/arena" import { Arena, Handle }
-
-struct DLNode {
-    value: i64,
-    prev: Option<Handle<DLNode>>,
-    next: Option<Handle<DLNode>>,
-}
-
-fn main(): i32 {
-    var arena: Arena<DLNode> = Arena<DLNode>.new()
-    let a = arena.alloc(DLNode { value: 1, prev: Option.None, next: Option.None })
-    let b = arena.alloc(DLNode { value: 2, prev: Option.Some(a), next: Option.None })
-    let _ = arena.modifyMut(a, (n: &mut DLNode): void => { n.next = Option.Some(b) })
-    return 0
-}
-```

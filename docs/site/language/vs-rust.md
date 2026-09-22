@@ -43,11 +43,6 @@ there, which is why that row is even. See [Ownership](/language/ownership) and
 [Why There Are No Lifetimes](/language/why-no-lifetimes) for how much code the bet
 actually touches.
 
-Second-class references — you cannot store one in a struct or a collection, and
-the only thing you can return is a view of a receiver's own data — mean nothing
-in the heap is ever aliased, which keeps both the mental model and the compiler
-drastically simpler.
-
 ## The Rust shape, and what to write instead
 
 A lookup table: find the Rust construct you were reaching for, read across. The three

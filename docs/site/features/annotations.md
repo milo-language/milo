@@ -12,20 +12,9 @@ last-verified: 2026-09-22 (attribute reference generated from lang --json)
 there is no preprocessor, no `#[cfg]`, no macro system. Everything spelled with an `@`
 is one of the constructs below.
 
-The attribute reference below is **generated** from the compiler itself
-(`bun run src/main.ts lang --json`) by `scripts/gen-lang-docs.ts` — it is the same text
-`milo lang --json` publishes and an editor shows on hover, so it cannot drift from what the
-checker enforces. Before it was generated this page was a retyped table, and it shipped
-missing five attributes, three of them safety-critical.
-
-## Compile-time builtins
-
-These two appear where a value does, and evaluate while compiling.
-
-| Construct | Goes on | What it does |
-|---|---|---|
-| `@embedFile(path)` | expression | Inlines a file's contents as a string at compile time |
-| `@targetOs()` | expression | The OS being compiled for, as a string |
+The attribute reference below is **generated** from the compiler's own vocabulary: it is
+the text `milo lang --json` publishes and an editor shows on hover, so it cannot drift from
+what the checker enforces.
 
 ## Attributes
 
@@ -139,8 +128,15 @@ there is no definition there to give linkage to).
 
 ## Compile-time builtins
 
-Both builtins also work without the `@`, but warn (`bare-embedfile`, `bare-targetos`) —
-the sigil is what tells a reader the call never happens at runtime.
+These appear where a value does, and evaluate while compiling.
+
+| Builtin | What it does |
+|---|---|
+| `@embedFile(path)` | Inlines a file's contents as a string at compile time |
+| `@targetOs()` | The OS being compiled for, as a string |
+
+Both also work without the `@`, but warn (`bare-embedfile`, `bare-targetos`): the sigil
+is what tells a reader the call never happens at runtime.
 
 ### `@embedFile(path)`
 
@@ -215,43 +211,19 @@ such comparisons.
 For a *C declaration* that differs by platform, prefer the stdlib filename split over
 `@targetOs()` — see [C FFI](./ffi#platform-specific-declarations).
 
-## Code generation
+## Notes on attributes
 
-### `@derive(Eq)`
+`@derive` is covered with [Traits](/language/traits#derive), and `@link` with
+[C FFI](./ffi#linking-a-library). `@cSig`, `@cLayout` and `@cValue` make the build check an
+`extern` declaration against the real C headers; the rules are in
+[C FFI](./ffi#verifying-declarations-against-c).
 
-```milo
-@derive(Eq)
-struct Point { x: i32, y: i32 }
+### Keeping an imported function for C callers
 
-print(Point { x: 1, y: 2 } == Point { x: 1, y: 2 })   // true
-```
-
-Three traits are built-in derivable: `Eq`, `Clone`, and `Json`. `Eq` and `Clone` are
-also derived automatically for any plain struct whose fields support them, so `==` and
-`.clone()` exist with no annotation at all. The exceptions are resource types: a struct
-with a `Drop` impl or `@noCopy` never gets an automatic `clone()`, because duplicating it
-would release the resource twice. A user-written trait becomes derivable with a
-`derive Trait { … }` template. Operators are implemented by hand — see
-[Traits](/language/traits) for overloading `Add`, `Sub`, `Mul`, and `Div`.
-
-## Linkage
-
-### `@link(lib)`
-
-Adds the `-l` flag, so the declaration and its link requirement stay together:
-
-```milo
-@link("SDL2")
-extern fn SDL_Init(flags: u32): i32
-```
-
-### `@externalLinkage`
-
-Forces external linkage on a function the compiler would otherwise see as unreachable
-and drop. There is one reason to need it, in two settings: the only caller is outside
-what reachability analysis can see. That is a `dlopen`'d library resolving a symbol back
-against this executable, or a C program linking a Milo archive — in both cases nothing
-inside the program calls the function, so nothing keeps it.
+`@externalLinkage` forces external linkage on a function the compiler would otherwise see as unreachable
+and drop. The only caller is outside what reachability analysis can see: a `dlopen`'d
+library resolving a symbol back against this executable, or a C program linking a Milo
+archive.
 
 ```milo
 @externalLinkage
@@ -260,14 +232,10 @@ pub fn pluginEntry(): i32 { return 7 }
 
 The rule is about *where the definition lives*, not about `pub`. Functions in the file
 being compiled get external linkage already; a function reached only through an `import`
-is `internal` by default, so dead-code elimination is free to drop it.
-`@externalLinkage` is what overrides that.
-
-`build-lib` shows the difference, since its header declares exactly the functions that
-kept external linkage:
+is `internal` by default, so dead-code elimination is free to drop it. With `build-lib`:
 
 ```milo skip
-// mathlib.milo — the file passed to build-lib. `./helpers` is the reader's own file,
+// mathlib.milo, the file passed to build-lib. `./helpers` is the reader's own file,
 // so this fence is illustrative rather than compiled.
 from "./helpers" import { miloAdd }
 
@@ -275,65 +243,15 @@ pub fn miloGreet(): void { print("hello from milo") }
 ```
 
 ```milo
-// helpers.milo — reached only by import, so it needs @externalLinkage
+// helpers.milo, reached only by import, so it needs @externalLinkage
 @externalLinkage
 pub fn miloAdd(a: i32, b: i32): i32 { return a + b }
 ```
 
-Drop the `@externalLinkage` and `miloAdd` vanishes from both the header and the archive,
-and the C side fails to link. `miloGreet` needs no annotation, being in the file that was
-built.
-
-```bash
-milo build-lib mathlib.milo -o libmathlib.a    # also writes libmathlib.h
-```
-
-```c
-/* host.c */
-#include <stdio.h>
-#include "libmathlib.h"
-
-int main(void) {
-    miloGreet();
-    printf("%d\n", miloAdd(2, 3));
-    return 0;
-}
-```
-
-```bash
-clang host.c libmathlib.a -o host && ./host
-# hello from milo
-# 5
-```
-
-No wrapper, no runtime to initialize, and no linker flags beyond the archive itself — the
-Milo runtime is inside it. What the generated header does and does not cover is in
+Drop the `@externalLinkage` and `miloAdd` vanishes from both the generated header and the
+archive, and the C side fails to link. `miloGreet` needs no annotation, being in the file
+that was built. Building and linking the archive is in
 [C FFI](./ffi#calling-milo-from-c).
-
-## Verifying claims about C
-
-`extern` declarations are claims about a C library, and C linkage has no mangling to
-check them against — a wrong return width or a field at the wrong offset links fine and
-corrupts silently. These three annotations make the **build** check the claim against the
-real headers.
-
-```milo
-@cSig("unistd.h", "long sysconf(int)")
-extern fn sysconf(name: i32): i64
-
-@cLayout("struct timespec", "time.h")
-extern struct Timespec {
-    tv_sec: i64,
-    tv_nsec: i64,
-}
-```
-
-The full rules — what is and isn't checked, prefix structs, `@cOpaque`, cross-compiles,
-and `--deny=unverified-extern` for finding declarations nobody annotated — are in
-[C FFI](./ffi#verifying-declarations-against-c).
-
-Note that the C checks run when a program is actually built (`milo build`, `milo run`,
-`milo build-lib`). `milo emit-ir` stops before that step and does not run them.
 
 ## Not annotations
 
