@@ -18,7 +18,9 @@ import { WARNINGS } from "./warnings";
 import { ATTRIBUTES } from "./attributes";
 import { writeStdout } from "./stdout";
 
-export const LANG_JSON_SCHEMA = 1;
+// 2: each warning carries `doc`/`fix`/`example` — the published reference is rendered
+// from this payload instead of being retyped on the site.
+export const LANG_JSON_SCHEMA = 2;
 
 export function langInfo() {
   // TokenKind's members are keywords, literal classes (INT, IDENT, …) and symbols. Only
@@ -53,7 +55,15 @@ export function langInfo() {
     primitiveTypes: [...PRIMITIVE_TYPE_NAMES].sort(),
     symbols,
     builtinMembers,
-    warnings: WARNINGS.map(w => ({ name: w.name, offByDefault: !!w.offByDefault })),
+    // `doc`/`fix`/`example` are present once a warning's reference entry is written; the
+    // site page is generated from them, so a consumer gets the same text the docs publish.
+    warnings: WARNINGS.map(w => ({
+      name: w.name,
+      offByDefault: !!w.offByDefault,
+      ...(w.doc ? { doc: w.doc } : {}),
+      ...(w.fix ? { fix: w.fix } : {}),
+      ...(w.example ? { example: w.example } : {}),
+    })),
     // The attribute vocabulary. Absent until 2026-08-22, which is how `@thread` and
     // `@synchronized` — both safety-critical — shipped invisible to every tool outside
     // this repo, and to the language's own author.

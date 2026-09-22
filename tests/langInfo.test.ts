@@ -7,15 +7,16 @@
 // a list by hand. The docs site did copy one, and shipped `char`/`String`/`Box` — words
 // Milo does not have — for months.
 import { test, expect } from "bun:test";
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "fs";
 import { join } from "path";
-import { execFileSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
+import { tmpdir } from "os";
 import { langInfo, LANG_JSON_SCHEMA } from "../src/lang-info";
 import { KEYWORDS, SOFT_KEYWORDS } from "../src/tokens";
 import { KEYWORD_DOCS } from "../src/keyword-docs";
 import { PRIMITIVE_TYPE_NAMES } from "../src/types";
 import { BUILTIN_MEMBERS } from "../src/builtin-members";
-import { WARNINGS, WARNING_NAMES, OFF_BY_DEFAULT } from "../src/warnings";
+import { WARNINGS, WARNING_NAMES, OFF_BY_DEFAULT, DOCUMENTED_FLOOR } from "../src/warnings";
 import { ATTRIBUTES, ATTRIBUTE_NAMES } from "../src/attributes";
 
 const ROOT = join(import.meta.dir, "..");
@@ -143,4 +144,52 @@ test("the published annotations table lists every attribute", () => {
     expect({ attribute: name, inTable: listed.includes(`@${name}`) })
       .toEqual({ attribute: name, inTable: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// The warning reference, as data.
+//
+// Before this, the site's warning coverage was hand-written prose that named 10 of the
+// 26 warnings the compiler ships; the other 16 existed only in `--help` output. The text
+// now lives on the WARNINGS row and is RENDERED to the site, the CLI and `lang --json`,
+// so there is one copy. These tests are what keep that copy honest.
+test("a documented warning carries a doc, a fix and an example", () => {
+  const documented = WARNINGS.filter(w => w.doc || w.fix || w.example);
+  // Partial entries are the failure mode: a doc with no example is a claim nothing checks.
+  expect(documented.filter(w => !(w.doc && w.fix && w.example)).map(w => w.name)).toEqual([]);
+  for (const w of documented) {
+    expect({ name: w.name, docLen: w.doc!.length > 40 }).toEqual({ name: w.name, docLen: true });
+    expect({ name: w.name, fixLen: w.fix!.length > 15 }).toEqual({ name: w.name, fixLen: true });
+  }
+  // Ratchet: entries may only be added. Raise DOCUMENTED_FLOOR when you write more.
+  expect(documented.length).toBeGreaterThanOrEqual(DOCUMENTED_FLOOR);
+});
+
+test("every documented example actually provokes its own warning", () => {
+  // The point of the whole exercise. A reference example that no longer trips the rule it
+  // illustrates is exactly the rot the copied lists had, moved one level in.
+  const documented = WARNINGS.filter(w => w.example);
+  expect(documented.length).toBeGreaterThanOrEqual(DOCUMENTED_FLOOR); // a scan that found nothing is not a pass
+  const dir = mkdtempSync(join(tmpdir(), "milo-warn-doc-"));
+  const wrong: string[] = [];
+  for (const w of documented) {
+    // NOT `${w.name}.milo`: the diagnostic prints the path, so a filename carrying the
+    // warning name makes `out.includes(name)` true for every example, broken ones too.
+    const f = join(dir, "case.milo");
+    writeFileSync(f, w.example!);
+    // `--expect=<name>`, not `--deny=`: it enables an off-by-default warning, suppresses
+    // the finding when it fires, and says so by name when it does NOT. Human-readable
+    // diagnostics never print the warning name, so this is the only name-keyed oracle.
+    const r = spawnSync("bun", [join(ROOT, "src", "main.ts"), "check", f, `--expect=${w.name}`], { encoding: "utf-8" });
+    const out = (r.stdout ?? "") + (r.stderr ?? "");
+    if (out.includes(`no '${w.name}' warning was reported`)) {
+      wrong.push(`${w.name}: example did not provoke it`);
+    } else if ((r.status ?? 1) !== 0) {
+      // The example must be otherwise clean: a program that fails to type-check would
+      // "provoke" nothing and teach a reader syntax that does not compile.
+      wrong.push(`${w.name}: example does not check clean\n${out.slice(0, 400)}`);
+    }
+  }
+  rmSync(dir, { recursive: true, force: true });
+  expect(wrong).toEqual([]);
 });

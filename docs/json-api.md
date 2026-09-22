@@ -3,7 +3,7 @@ system: tooling-api
 purpose: the compiler's machine-readable surfaces — what tooling reads instead of importing TypeScript
 key-files: src/api-search.ts, src/lang-info.ts, src/warnings.ts, src/main.ts (runCheck), tests/apiJson.test.ts, tests/langInfo.test.ts
 update-when: a JSON payload gains or loses a field, or a new machine-readable command lands
-last-verified: 2026-09-21 (check --json schema 2 adds `fix`; earlier: warnings lose the error-by-default field)
+last-verified: 2026-09-22 (lang --json schema 2: warning doc/fix/example; earlier: check --json schema 2 adds `fix`; earlier: warnings lose the error-by-default field)
 -->
 
 # Machine-readable compiler API
@@ -82,14 +82,20 @@ the signature has no return type. Struct `fields` mean a consumer never re-reads
 
 Works on any package, not just std: the same extractor backs `milo doc <file|dir>`.
 
-### `milo lang --json` (schema 1)
+### `milo lang --json` (schema 2)
 
 `keywords`, `softKeywords` (contextual — legal identifiers elsewhere, which a highlighter
 must know), `keywordDocs` (keyword → markdown help: the form in a fenced `milo` block,
 then what it means — the same text the bundled LSP shows on hover, so an editor plugin
 need not rewrite it from the guide), `primitiveTypes`, `symbols` (operator token name →
 spelling), `builtinMembers` (receiver → the methods the checker dispatches by hand, with
-signatures and caveats), and `warnings` (name + `offByDefault`, i.e. what `--deny=` and `--allow=` accept).
+signatures and caveats), and `warnings` (name + `offByDefault`, i.e. what `--deny=` and `--allow=` accept, plus
+`doc`/`fix`/`example` once a warning's reference entry is written — schema 2).
+
+The warning `example` is a whole program that provokes it: `tests/langInfo.test.ts` runs
+`milo check --expect=<name>` over each one and fails if the checker stays silent, so the
+published example cannot drift from the rule. The docs site renders its warning reference
+from this payload (`scripts/gen-lang-docs.ts`) rather than restating it.
 
 ### `milo check <file> --json` (schema 2)
 
