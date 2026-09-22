@@ -230,11 +230,17 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
     <h3 class="cat-head">Developer tools</h3>
     <div class="tile-grid">
       <a class="tile" href="https://github.com/milo-language/dapweb">
-        <img class="tile-img" src="/dapweb/debugging.png" alt="dapweb debugger stopped at a breakpoint" loading="lazy">
+        <video class="tile-img" src="/showcase/dapweb.mp4" poster="/showcase/dapweb.png" autoplay muted loop playsinline preload="auto" aria-label="An agent drives dapweb from the CLI while the browser follows: breakpoint hit, locals expanded, the agent evaluates and continues, a person types an lldb command in the same session, and the program exits"></video>
         <h3>Debugger</h3>
-        <p>dapweb: debug any program from the browser, with an AI in the loop.</p>
+        <p>dapweb: an agent drives the debugger from the CLI while you watch, and type, in the same live session.</p>
         <div class="tile-tags"><span>HTTP server</span><span>WebSockets</span><span>JSON-RPC (DAP)</span><span>PTY</span><span>CLI API</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="git clone https://github.com/milo-language/dapweb && cd dapweb && src/web/ui/build.sh && milo build src/main.milo -o dapweb && ./dapweb web" title="git clone https://github.com/milo-language/dapweb && cd dapweb && src/web/ui/build.sh && milo build src/main.milo -o dapweb && ./dapweb web">⧉ copy run command</span>
+      </a>
+      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/tools/java-dap">
+        <h3>Java Debugger</h3>
+        <p>A DAP-compliant debugger for the JVM, so dapweb debugs Java too.</p>
+        <div class="tile-tags"><span>JDWP</span><span>TCP sockets</span><span>binary protocol</span></div>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo build examples/tools/java-dap/src/main.milo -o java-dap" title="milo build examples/tools/java-dap/src/main.milo -o java-dap">⧉ copy run command</span>
       </a>
     </div>
   </div>
