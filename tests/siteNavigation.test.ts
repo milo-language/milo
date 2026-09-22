@@ -1,6 +1,7 @@
 // Gates on the docs site's hand-written navigation and its stdlib coverage.
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { langInfo } from "../src/lang-info";
 import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
@@ -72,5 +73,96 @@ describe("stdlib site coverage", () => {
   test("no site page documents a module that no longer exists", () => {
     const real = new Set(readdirSync(join(root, "std")).map(f => f.replace(/\.milo$/, "").split(".")[0]!));
     expect([...sitePages].filter(p => !real.has(p)).sort()).toEqual([]);
+  });
+});
+
+// A language feature that ships with no page on the docs site is invisible to everyone who
+// is not reading this repo. Struct destructuring landed in docs/language-reference.md, the
+// grammar, the spec, the error catalog, the roadmap and the backlog, and reached the site
+// only because someone happened to notice. The stdlib ratchet above has caught that shape
+// for std MODULES since 2026-08-15; nothing was watching the language itself.
+describe("language surface site coverage", () => {
+  const siteDir = join(root, "docs", "site");
+  const mdFiles = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+      e.isDirectory() ? (e.name.startsWith(".") ? [] : mdFiles(join(dir, e.name)))
+        : e.name.endsWith(".md") ? [join(dir, e.name)] : []);
+  const site = mdFiles(siteDir).map(f => readFileSync(f, "utf8")).join("\n");
+  // Identifier-boundary match, so `int` does not match `print` and `as` does not match
+  // `class`. Attributes are searched with their `@`.
+  const onSite = (s: string) =>
+    new RegExp(`(?<![A-Za-z0-9_])${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_])`).test(site);
+
+  // RATCHETS: an entry may only be REMOVED. Adding one waves through the exact failure
+  // these tests exist to catch, so a new keyword or warning goes on the site instead.
+  const KEYWORDS_OFF_SITE = new Set(["thread_local"]);
+  // The site's Warnings section documents 7 of 26 by name. The rest are real gaps, not
+  // decisions: burn this list down. (`milo lang --json` carries no doc text for a warning,
+  // so the page cannot be generated: each entry is prose someone has to write.)
+  const WARNINGS_OFF_SITE = new Set([
+    "arena-never-frees", "borrow-that-clones", "external-linkage-not-pub", "index-clone",
+    "manual-option-default", "nan-comparison", "opaque-call-on-thread", "shadows-stdlib-override",
+    "single-variant-match", "string-concat-in-loop", "unchecked-ffi-contract", "unfulfilled-expectation",
+    "unowned-pointer-copy", "unused-import", "unused-unsafe", "useless-forget",
+  ]);
+
+  const info = langInfo();
+  const keywords = [...info.keywords, ...info.softKeywords];
+  const warnings = info.warnings.map(w => w.name);
+  const attributes = info.attributes.map(a => a.name);
+
+  test("the site corpus was actually read", () => {
+    // A glob that matched nothing reports perfect coverage of everything.
+    expect(site.length).toBeGreaterThan(100_000);
+    expect(keywords.length).toBeGreaterThan(20);
+    expect(warnings.length).toBeGreaterThan(20);
+  });
+
+  test("every keyword appears on the site", () => {
+    expect(keywords.filter(k => !onSite(k) && !KEYWORDS_OFF_SITE.has(k)).sort()).toEqual([]);
+  });
+
+  test("every primitive type appears on the site", () => {
+    expect(info.primitiveTypes.filter(t => !onSite(t)).sort()).toEqual([]);
+  });
+
+  test("every attribute appears on the site", () => {
+    expect(attributes.filter(a => !onSite(`@${a}`)).sort()).toEqual([]);
+  });
+
+  test("every warning name appears on the site", () => {
+    expect(warnings.filter(w => !onSite(w) && !WARNINGS_OFF_SITE.has(w)).sort()).toEqual([]);
+  });
+
+  test("the ratchets only shrink", () => {
+    expect([...KEYWORDS_OFF_SITE].filter(onSite).sort()).toEqual([]);
+    expect([...WARNINGS_OFF_SITE].filter(onSite).sort()).toEqual([]);
+  });
+
+  // The checks above all key on a NAME. Syntax that ships without one slips past every
+  // single one of them: `let Point { x, y } = p` introduced no keyword, no attribute and
+  // no type, and its only enumerable trace anywhere in the repo is the `field_bindings`
+  // production. So the production list is pinned. When this fails, the failure is the
+  // question: does the syntax that was just added need a page on docs/site/language/?
+  // Answer it, THEN update this list.
+  const PINNED_PRODUCTIONS = [
+    "additive", "and_expr", "arg_list", "array_lit", "assign_stmt", "attribute", "attribute_arg",
+    "balanced_tokens", "base_type", "bitand_expr", "bitor_expr", "bitxor_expr", "block", "closure",
+    "coalesce", "comment", "comparison", "contract", "declaration", "derive_decl", "digit", "enum_decl",
+    "enum_variant", "escape", "expr", "extern_decl", "extern_fn", "extern_struct", "extern_type",
+    "field_bindings", "fn_decl", "for_stmt", "global_decl", "hexdigit", "if_expr", "if_stmt",
+    "impl_decl", "import_decl", "import_name", "interface_decl", "interface_method", "let_decl",
+    "letter", "loop_contract", "match_arm", "match_expr", "match_stmt", "multiplicative",
+    "nullable_ref", "or_expr", "param", "param_list", "pattern", "postfix", "primary", "program",
+    "range_bound", "return_stmt", "shift", "statement", "struct_decl", "struct_lit", "trait_decl",
+    "trait_method", "type", "type_alias", "type_args", "type_name", "type_params", "unary",
+    "unsafe_block", "var_decl", "while_stmt",
+  ];
+
+  test("no new grammar production has shipped without the site being considered", () => {
+    const grammar = readFileSync(join(root, "docs", "grammar.ebnf"), "utf8")
+      .replace(/\(\*[\s\S]*?\*\)/g, "");
+    const names = [...new Set([...grammar.matchAll(/^([a-z_][a-z0-9_]*)\s*=/gm)].map(m => m[1]!))].sort();
+    expect(names).toEqual([...PINNED_PRODUCTIONS].sort());
   });
 });
