@@ -1,725 +1,153 @@
 <!--
-  MiloLab — the single "learn + play" widget. Every lesson is a CodeMirror editor
-  preloaded with a concept, and a final Sandbox tab is a blank slate with an example
-  library. Lessons gate the next step on a run; Sandbox never gates.
-  The in-browser compiler (the JS backend's bundle) was removed with `milo emit-js`
-  on 2026-09-21 and returns once the compiler builds for LLVM's wasm64 target. Until
-  then every lesson replays its captured native output, flagged in the output header,
-  and the Sandbox points at the native toolchain.
+  MiloLab: the tour's lesson pager, one lesson at a time with its code over its
+  captured output. Lessons live in tourLessons.ts (tests/tour.test.ts runs each one
+  through the compiler); tour.data.ts highlights them at build time. Nothing runs in
+  the browser until the compiler builds for wasm64.
 -->
 <template>
   <div class="lab" ref="rootEl">
-    <div class="lab-head">
-      <a class="sub-link" :href="base + 'getting-started/installation'">In-browser runs are paused until the wasm64 port lands; install Milo to edit and run these →</a>
-    </div>
+    <nav class="picker" aria-label="Lessons">
+      <button class="step" :disabled="cur === 0" aria-label="Previous lesson" @click="go(cur - 1)">←<span class="word"> Prev</span></button>
+      <label class="pick">
+        <span class="pick-text"><span class="count">Lesson {{ cur + 1 }} of {{ data.length }}:</span> {{ l.title }}</span>
+        <svg class="caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        <!-- A real select laid transparently over the label: native keyboard and
+             mobile pickers, while the visible text stays one quiet line. -->
+        <select :value="cur" aria-label="Jump to lesson" @change="go(Number($event.target.value))">
+          <option v-for="(x, i) in data" :key="i" :value="i">{{ i + 1 }}. {{ x.title }}</option>
+        </select>
+      </label>
+      <button class="step" :disabled="cur === data.length - 1" aria-label="Next lesson" @click="go(cur + 1)"><span class="word">Next </span>→</button>
+    </nav>
 
-    <!-- rail: Sandbox (free play) first, then the 12 lessons -->
-    <div class="rail" role="tablist" aria-label="Lessons">
-      <button class="pip sb" :class="{ cur: sandbox }" title="Sandbox — free play" @click="openSandbox">Sandbox</button>
-      <span class="rail-label">Lessons</span>
-      <button
-        v-for="(c, i) in concepts" :key="i"
-        class="pip" :class="{ cur: i === cur && !sandbox, ok: ran[i], reachable: i <= maxReached }"
-        :aria-selected="i === cur && !sandbox"
-        :title="(i + 1) + '. ' + c.title"
-        @click="go(i)">
-        <span class="tick">{{ ran[i] ? '✓' : (i + 1) }}</span>{{ c.short }}
-      </button>
-    </div>
-
-    <!-- No :key here — a re-key would tear down and rebuild .cm-host, orphaning the
-         imperatively-mounted CodeMirror view. Content swaps happen via setDoc() instead. -->
-    <div class="card">
-      <div class="chead">
-        <template v-if="!sandbox">
-          <h3 class="ct" v-html="cur + 1 + '. ' + concepts[cur].title"></h3>
-          <p class="cd" v-html="concepts[cur].desc"></p>
-        </template>
-        <template v-else>
-          <span class="step">Sandbox</span>
-          <h3 class="ct">Free play</h3>
-          <p class="cd">Edit anything and run it. Load a starter below, or start from scratch. <kbd>⌘/Ctrl</kbd> + <kbd>Enter</kbd> runs.</p>
-          <div class="examples">
-            <button
-              v-for="(_, name) in examples" :key="name"
-              class="ex-btn" :class="{ active: sbExample === name }"
-              @click="loadExample(name)">{{ name }}</button>
-          </div>
-        </template>
+    <article class="lesson">
+      <h2 class="title">{{ l.title }}</h2>
+      <p class="desc" v-html="l.descHtml"></p>
+      <div class="run">
+        <div class="bar">{{ l.file }}</div>
+        <div class="code" v-html="l.codeHtml"></div>
+        <div class="bar">$ {{ l.cmd }}</div>
+        <pre class="out"><span v-for="(line, k) in l.out.split('\n')" :key="k" :class="{ err: ERR.test(line) }">{{ line }}
+</span></pre>
       </div>
+      <p class="take"><span class="take-label">Takeaway</span> <span v-html="l.takeHtml"></span></p>
+    </article>
 
-      <div class="panels">
-        <div class="pane">
-          <div class="ph">
-            <span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span>
-            <span class="fname">{{ sandbox ? 'sandbox.milo' : concepts[cur].file }}</span>
-            <span class="sp"></span>
-            <span v-if="edited" class="edited">edited</span>
-            <button v-if="edited" class="btn ghost" @click="reset">reset</button>
-            <button class="btn run" :disabled="running" @click="run">
-              <span class="tri">{{ running ? '▶' : (!sandbox && ran[cur] ? '↻' : '▶') }}</span>
-              {{ running ? 'Running' : (!sandbox && ran[cur] ? 'Run again' : 'Run') }}
-            </button>
-          </div>
-          <div class="editor"><div ref="cmEl" class="cm-host"></div></div>
-        </div>
-
-        <div class="pane">
-          <div class="ph">
-            <span class="fname dim">output</span>
-            <span class="sp"></span>
-            <span v-if="!sandbox && concepts[cur].native" class="native">native runtime</span>
-            <span v-else class="native">captured output</span>
-          </div>
-          <div class="term">
-            <div v-if="!outLines.length" class="idle">// press Run to see the captured output</div>
-            <template v-else>
-              <div class="ttag">{{ outTag }}</div>
-              <div v-for="(l, k) in outLines" :key="k" class="oline" :class="{ err: outErr }">
-                <span v-if="!outErr && l !== ''" class="arrow">› </span>{{ l === '' ? ' ' : l }}
-              </div>
-            </template>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="!sandbox" class="take">
-        <span class="tk">{{ concepts[cur].err ? 'safety' : (concepts[cur].native ? 'note' : 'takeaway') }}</span>
-        <span v-html="concepts[cur].take"></span>
-      </div>
-
-      <div v-if="!sandbox" class="foot">
-        <button class="nav" :disabled="cur === 0" @click="go(cur - 1)">← Back</button>
-        <span class="prog"><b>{{ ranCount }}</b> / {{ concepts.length }} run</span>
-        <span v-if="!ran[cur]" class="foot-hint">Run the program to unlock the next lesson</span>
-        <button v-if="cur < concepts.length - 1" class="nav next" :class="{ ready: ran[cur] }" :disabled="!ran[cur]" @click="next">Next →</button>
-        <button v-else class="nav next" :class="{ ready: ran[cur] }" :disabled="!ran[cur]" @click="openSandbox">Sandbox →</button>
-      </div>
-      <div v-else class="foot">
-        <span class="foot-hint sb-hint">Back to <a @click.prevent="go(0)" href="#">the lessons</a></span>
-      </div>
-    </div>
-
-    <div v-if="allDone && !sandbox" class="done">
-      🎉 You ran every lesson. Keep going in the <a @click.prevent="openSandbox" href="#">Sandbox</a>,
-      <a :href="base + 'getting-started/installation'">install Milo</a>, or read the <a :href="base + 'language/'">language guide</a>.
-    </div>
+    <nav class="pager" aria-label="Lesson pager">
+      <a v-if="cur > 0" class="card" href="#" @click.prevent="go(cur - 1, true)">
+        <span class="card-dir">Previous</span><span class="card-title">{{ data[cur - 1].title }}</span>
+      </a>
+      <span v-else></span>
+      <a v-if="cur < data.length - 1" class="card next" href="#" @click.prevent="go(cur + 1, true)">
+        <span class="card-dir">Next</span><span class="card-title">{{ data[cur + 1].title }}</span>
+      </a>
+      <a v-else class="card next" :href="base + 'getting-started/installation'">
+        <span class="card-dir">Next step</span><span class="card-title">Install Milo</span>
+      </a>
+    </nav>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch, shallowRef } from 'vue'
-import { EditorView, keymap } from '@codemirror/view'
-import { EditorState } from '@codemirror/state'
-import { StreamLanguage } from '@codemirror/language'
-import { oneDark } from '@codemirror/theme-one-dark'
-import { basicSetup } from 'codemirror'
-
-const props = defineProps({
-  // 'lesson' (default) opens on step 1; 'sandbox' opens the free-play tab.
-  startMode: { type: String, default: 'lesson' },
-})
+import { ref, computed, onMounted } from 'vue'
+import { data } from './tour.data'
 
 const base = import.meta.env.BASE_URL
-
-// ---- lessons: verified programs + captured native output (fallback) ----
-const concepts = [
-  { title: 'Immutable by default (let vs var)', short: 'Immutability', file: 'values.milo',
-    desc: 'A <code>let</code> binding is immutable; a <code>var</code> is mutable. You opt <em>in</em> to change.',
-    take: 'Immutable by default — you always know what can change out from under you.',
-    out: ['hello from Milo, count = 3'],
-    code: `fn main(): i32 {
-    let name = "Milo"        // immutable
-    var count = 0            // mutable
-    count = count + 3
-    print($"hello from {name}, count = {count}")
-    return 0
-}` },
-  { title: 'Structs and borrows', short: 'Structs', file: 'geometry.milo',
-    desc: 'Group data in a <code>struct</code>; functions borrow it with <code>&</code> — read access without taking ownership.',
-    take: 'A <code>&Point</code> is a second-class reference: usable as an argument, never stored or returned.',
-    out: ['distance = 5'],
-    code: `from "std/math" import { sqrt }
-
-struct Point { x: f64, y: f64 }
-
-fn dist(a: &Point, b: &Point): f64 {
-    let dx = a.x - b.x
-    let dy = a.y - b.y
-    return sqrt(dx * dx + dy * dy)
-}
-
-fn main(): i32 {
-    let origin = Point { x: 0.0, y: 0.0 }
-    let p = Point { x: 3.0, y: 4.0 }
-    print($"distance = {dist(origin, p)}")
-    return 0
-}` },
-  { title: 'Enums and exhaustive match', short: 'Enums', file: 'shapes.milo',
-    desc: 'Enums are sum types that carry data. <code>match</code> must handle every variant — miss one and it won’t compile.',
-    take: 'Forget a case and the checker stops you, so new variants surface everywhere they matter.',
-    out: ['circle: 12.5664', 'rect:   12'],
-    code: `enum Shape {
-    Circle(f64),
-    Rect(f64, f64),
-}
-
-fn area(s: &Shape): f64 {
-    match s {
-        Shape.Circle(r) => { return 3.14159 * r * r }
-        Shape.Rect(w, h) => { return w * h }
-    }
-}
-
-fn main(): i32 {
-    print($"circle: {area(Shape.Circle(2.0))}")
-    print($"rect:   {area(Shape.Rect(3.0, 4.0))}")
-    return 0
-}` },
-  { title: 'Collections', short: 'Collections', file: 'scores.milo',
-    desc: 'A growable <code>Vec</code> and a <code>HashMap</code> come built in. Lookups return an <code>Option</code>.',
-    take: 'A missing key is <code>Option.None</code>, not a crash — you handle it at the <code>match</code>.',
-    out: ['alice scored 92', 'players: 2'],
-    code: `fn main(): i32 {
-    var scores: HashMap<string, i32> = HashMap.new()
-    scores.insert("alice", 92)
-    scores.insert("bob", 87)
-
-    match scores.get("alice") {
-        Option.Some(s) => { print($"alice scored {s}") }
-        Option.None    => { print("no score") }
-    }
-    print($"players: {scores.len}")
-    return 0
-}` },
-  { title: 'Contracts — checked or proven', short: 'Contracts', file: 'clamp.milo', err: true,
-    desc: 'Annotate a function with <code>requires</code> (what the caller must guarantee) and <code>ensures</code> (what it promises back), written in ordinary Milo. This <code>clamp</code> has a bug you could easily type: the low branch returns <code>value</code> instead of <code>lo</code>. Run it with <code>milo run --debug</code>: the first call is fine, but <code>clamp(-5, 0, 10)</code> returns <code>-5</code>, which breaks <code>ensures</code>, and the contract check stops it. A plain <code>milo run</code> skips contract checks and prints <code>-5</code>. Fix line 5 to <code>return lo</code> and it passes.',
-    take: 'Here that check runs at runtime, as an assert in a debug build (<code>milo run --debug</code>, or <code>--contract-checks</code> at any level). <code>milo prove</code> checks the same conditions for every input at compile time with the solver built into the standard library, so there is nothing to install, and on this <code>clamp</code> it prints a counterexample before anything runs. Gradual verification, no hand-written proofs. Contracts prove the properties <em>you state</em>, not that the whole program is bug-free; memory safety (no use-after-free, no data races) is separate and always on.',
-    out: ['10', 'runtime error: ensures clause violated'],
-    code: `fn clamp(value: i64, lo: i64, hi: i64): i64
-requires lo <= hi
-ensures result >= lo && result <= hi
-{
-    if value < lo { return value }   // bug: should be \`return lo\`
-    if value > hi { return hi }
-    return value
-}
-
-fn main(): i32 {
-    print(clamp(42, 0, 10))   // 10 — fine
-    print(clamp(-5, 0, 10))   // returns -5 → violates ensures
-    return 0
-}` },
-  { title: 'Errors are values, not exceptions', short: 'Errors', file: 'errors.milo',
-    desc: 'Fallible functions return <code>Result</code>. The <code>?</code> operator unwraps success and returns the error early.',
-    take: 'Every failure is in the type signature; <code>?</code> keeps the happy path readable.',
-    out: ['next year: 43', 'error: empty input'],
-    code: `fn parseAge(s: string): Result<i32> {
-    if s == "" { return Result.Err("empty input") }
-    return Result.Ok(42)
-}
-
-fn nextYear(s: string): Result<i32> {
-    let age = parseAge(s)?      // unwraps Ok, or returns Err
-    return Result.Ok(age + 1)
-}
-
-fn main(): i32 {
-    match nextYear("hi") {
-        Result.Ok(v)  => { print($"next year: {v}") }
-        Result.Err(e) => { print($"error: {e}") }
-    }
-    match nextYear("") {
-        Result.Ok(v)  => { print($"next year: {v}") }
-        Result.Err(e) => { print($"error: {e}") }
-    }
-    return 0
-}` },
-  { title: 'Parse JSON into typed values', short: 'JSON', file: 'json.milo',
-    desc: '<code>jsonParse</code> returns a <code>Result</code>; <code>!</code> unwraps it or aborts. <code>.get()</code> returns an <code>Option</code> per key, and typed accessors like <code>asStr</code> / <code>asI64</code> pull each value out — an <code>Option</code> you must handle.',
-    take: 'JSON lives in the standard library, written in Milo. Values come out <em>typed</em> — <code>asI64</code>, <code>asStr</code>, <code>asBool</code> — no stringly-typed blobs, no unchecked casts.',
-    out: ['name: milo', 'stars: 42'],
-    code: `from "std/json" import { jsonParse }
-
-fn main(): i32 {
-    // The kind of document an HTTP body would carry — here as a literal.
-    let src = "{\\"name\\": \\"milo\\", \\"stars\\": 42, \\"safe\\": true}"
-
-    let doc = jsonParse(src)!                     // Result — ! unwraps or aborts
-    if let Option.Some(v) = doc.get("name") {
-        if let Option.Some(s) = v.asStr() { print($"name: {s}") }
-    }
-    if let Option.Some(v) = doc.get("stars") {
-        if let Option.Some(n) = v.asI64() { print($"stars: {n}") }
-    }
-    return 0
-}` },
-  { title: 'Closures and iterators', short: 'Closures', file: 'closures.milo',
-    desc: 'Pass a lambda to <code>.map</code>. Closures capture their environment and compose over collections.',
-    take: 'Functions are values — closures, <code>.map</code>, <code>.filter</code>, <code>for..in</code> all work as you’d hope.',
-    out: ['2', '4', '6'],
-    code: `fn main(): i32 {
-    var nums: Vec<i32> = Vec.new()
-    nums.push(1)
-    nums.push(2)
-    nums.push(3)
-    let doubled = nums.map((n: i32): i32 => n * 2)
-    for x in doubled {
-        print(x)
-    }
-    return 0
-}` },
-  { title: 'Generics, monomorphized', short: 'Generics', file: 'generics.milo',
-    desc: 'Write once over a type parameter; the compiler stamps out a specialized copy per concrete type — no boxing.',
-    take: 'Inference fills in the type params; monomorphization keeps it as fast as hand-written code.',
-    out: ['milo 42'],
-    code: `struct Pair<A, B> { first: A, second: B }
-
-fn swap<A, B>(p: Pair<A, B>): Pair<B, A> {
-    return Pair { first: p.second, second: p.first }
-}
-
-fn main(): i32 {
-    let p = swap(Pair { first: 42, second: "milo" })
-    print($"{p.first} {p.second}")
-    return 0
-}` },
-  { title: 'Interfaces and dynamic dispatch', short: 'Interfaces', file: 'traits.milo',
-    desc: 'An <code>interface</code> defines behavior; any struct with matching methods satisfies it. A <code>&Greeter</code> dispatches at runtime, so it is Milo\'s trait object (a <code>trait</code> only dispatches statically).',
-    take: 'One call site, many concrete types — dispatched through a fat pointer of data plus a method table.',
-    out: ['Woof', 'Meow'],
-    code: `interface Greeter {
-    fn greet(self: &Self): string
-}
-
-struct Dog {}
-impl Dog { fn greet(self: &Self): string { return "Woof" } }
-
-struct Cat {}
-impl Cat { fn greet(self: &Self): string { return "Meow" } }
-
-fn announce(g: &Greeter) {
-    print(g.greet())
-}
-
-fn main(): i32 {
-    announce(Dog {})
-    announce(Cat {})
-    return 0
-}` },
-  { title: 'Ownership and moves', short: 'Ownership', file: 'ownership.milo', err: true,
-    desc: 'A heap value like <code>string</code> has one owner. <code>let b = a</code> <em>moves</em> it, so using <code>a</code> after is a compile error. Run it as-is — then change line 3 to <code>a.clone()</code> and run again.',
-    take: 'Small types (<code>i32</code>, <code>f64</code>) copy automatically. For heap values you pick: <code>.clone()</code> for a real copy, or pass <code>a</code> to a <code>&string</code> parameter to lend it for one call (no <code>&</code> at the call site). Copies are never silent, and there’s no GC cleaning up behind you.',
-    out: ['error: use of moved variable \'a\'', '  ──> ownership.milo:4:11', '  │', '4 │     print(a)             // error: a was moved away', '  │           ^', '  hint: ownership of \'a\' was transferred earlier and it can no longer be used here. To keep it alive, clone it at the point of transfer: \'a.clone()\'.'],
-    code: `fn main(): i32 {
-    let a = "owned string"
-    let b = a            // moves a -> b   (try: let b = a.clone())
-    print(a)             // error: a was moved away
-    print(b)
-    return 0
-}` },
-  { title: 'Putting it together', short: 'Capstone', file: 'sales.milo',
-    desc: 'A small program using the pieces from earlier lessons at once: <code>struct</code>s in a <code>Vec</code>, a computed field, an <code>if</code> used as an expression, and <code>.filter</code> with a closure.',
-    take: 'Nothing new here — structs, a Vec, an if-expression, and a closure compose into a real program. That’s the whole surface for everyday code.',
-    out: ['widget: 3 x 250 = 750  <- big', 'gadget: 1 x 999 = 999  <- big', 'gizmo: 5 x 120 = 600', 'total = 2349 cents across 3 sales, 2 in bulk'],
-    code: `struct Sale { item: string, qty: i32, price: i32 }
-
-fn main(): i32 {
-    let sales: Vec<Sale> = [
-        Sale { item: "widget", qty: 3, price: 250 },
-        Sale { item: "gadget", qty: 1, price: 999 },
-        Sale { item: "gizmo",  qty: 5, price: 120 },
-    ]
-    var total: i32 = 0
-    for s in sales {
-        let line = s.qty * s.price
-        total = total + line
-        let flag = if line > 700 { "  <- big" } else { "" }
-        print($"{s.item}: {s.qty} x {s.price} = {line}{flag}")
-    }
-    let bulk = sales.filter((s) => s.qty >= 3)   // closure predicate
-    print($"total = {total} cents across {sales.len} sales, {bulk.len} in bulk")
-    return 0
-}` },
-]
-
-// ---- sandbox example library ----
-const examples = {
-  'FizzBuzz': `fn main(): i32 {
-    var i: i32 = 1
-    while i <= 20 {
-        if i % 15 == 0 {
-            print("FizzBuzz")
-        } else if i % 3 == 0 {
-            print("Fizz")
-        } else if i % 5 == 0 {
-            print("Buzz")
-        } else {
-            print(i)
-        }
-        i = i + 1
-    }
-    return 0
-}`,
-  'Structs': `struct Point { x: f64, y: f64 }
-
-fn manhattan(a: &Point, b: &Point): f64 {
-    var dx = a.x - b.x
-    var dy = a.y - b.y
-    if dx < 0.0 { dx = 0.0 - dx }
-    if dy < 0.0 { dy = 0.0 - dy }
-    return dx + dy
-}
-
-fn main(): i32 {
-    let p1 = Point { x: 1.0, y: 2.0 }
-    let p2 = Point { x: 4.0, y: 6.0 }
-    print($"distance = {manhattan(p1, p2)}")
-    return 0
-}`,
-  'Enums': `enum Shape {
-    Circle(f64),
-    Rect(f64, f64),
-}
-
-fn area(s: &Shape): f64 {
-    match s {
-        Shape.Circle(r) => { return 3.14159 * r * r }
-        Shape.Rect(w, h) => { return w * h }
-    }
-}
-
-fn main(): i32 {
-    let shapes: Vec<Shape> = [Shape.Circle(5.0), Shape.Rect(3.0, 4.0)]
-    for s in shapes { print($"area = {area(s)}") }
-    return 0
-}`,
-  'Closures': `fn main(): i32 {
-    var nums: Vec<i32> = [1, 2, 3, 4, 5]
-    let doubled = nums.map((x: i32): i32 => x * 2)
-    let evens = nums.filter((x: i32): bool => x % 2 == 0)
-    for d in doubled { print(d) }
-    for e in evens { print(e) }
-    return 0
-}`,
-  'Generics': `struct Pair<A, B> { first: A, second: B }
-
-fn swap<A, B>(p: Pair<A, B>): Pair<B, A> {
-    return Pair { first: p.second, second: p.first }
-}
-
-fn main(): i32 {
-    let p = swap(Pair { first: 42, second: "hello" })
-    print($"{p.first} {p.second}")
-    return 0
-}`,
-  'Vec': `fn main(): i32 {
-    var items: Vec<string> = ["apple", "banana", "cherry"]
-    print($"count: {items.len()}")
-    for item in items { print($"- {item}") }
-    items.push("date")
-    print($"after push: {items.len()}")
-    return 0
-}`,
-  'Errors': `fn parseAge(s: string): Result<i32> {
-    if s == "" { return Result.Err("empty input") }
-    return Result.Ok(42)
-}
-
-fn nextYear(s: string): Result<i32> {
-    let age = parseAge(s)?      // unwraps Ok, or returns Err early
-    return Result.Ok(age + 1)
-}
-
-fn main(): i32 {
-    match nextYear("bob") {
-        Result.Ok(v) => { print($"next year: {v}") }
-        Result.Err(e) => { print($"error: {e}") }
-    }
-    match nextYear("") {
-        Result.Ok(v) => { print($"next year: {v}") }
-        Result.Err(e) => { print($"error: {e}") }
-    }
-    return 0
-}`,
-  'Contracts': `// requires = caller's obligation, ensures = the function's promise.
-// In a debug build each becomes a checked runtime assertion;
-// 'milo prove' checks them for every input at compile time (built-in solver, nothing to install).
-fn clamp(value: i64, lo: i64, hi: i64): i64
-requires lo <= hi
-ensures result >= lo && result <= hi
-{
-    if value < lo { return lo }
-    if value > hi { return hi }
-    return value
-}
-
-fn main(): i32 {
-    print(clamp(42, 0, 10))
-    print(clamp(-5, 0, 10))
-    return 0
-}`,
-}
-
-// ---- syntax highlighting for CodeMirror ----
-const miloLang = StreamLanguage.define({
-  token(stream) {
-    if (stream.match(/\/\/.*/)) return 'comment'
-    if (stream.match(/\$?"([^"\\]|\\.)*"/)) return 'string'
-    if (stream.match(/\d+\.\d*/) || stream.match(/\d+/)) return 'number'
-    if (stream.match(/\b(fn|let|var|if|else|while|for|in|return|match|struct|enum|interface|impl|import|from|move|break|continue|unsafe|trait|pub|mut|as|is|requires|ensures)\b/))
-      return 'keyword'
-    if (stream.match(/\b(true|false|self|Self)\b/)) return 'atom'
-    if (stream.match(/\b(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|string|void|Vec|HashMap|Option|Result|Box|Channel|Task|Promise)\b/))
-      return 'typeName'
-    if (stream.match(/=>/) || stream.match(/[+\-*/%=!<>&|^~?]+/)) return 'operator'
-    if (stream.match(/[a-zA-Z_]\w*/)) return 'variableName'
-    stream.next()
-    return null
-  },
-})
-
-// ---- state ----
-// srcs holds per-lesson editor buffers plus a trailing slot (index = concepts.length)
-// for the sandbox, so switching tabs preserves every buffer's edits.
-const SB = concepts.length
+const ERR = /^(runtime )?error\b/
 const cur = ref(0)
-const sandbox = ref(false)
-const maxReached = ref(0)
-// Sandbox opens on a minimal skeleton, not a full program — a blank slate to type into.
-const sandboxStarter = `fn main(): i32 {
-    print("Hello from Milo!")
-    return 0
-}`
-const srcs = ref([...concepts.map(c => c.code), sandboxStarter])
-const sbExample = ref('')
-const ran = ref(concepts.map(() => false))
-const running = ref(false)
-const outLines = ref([])
-const outErr = ref(false)
-const outTag = ref('')
-
+const l = computed(() => data[cur.value])
 const rootEl = ref(null)
-const cmEl = ref(null)
-const view = shallowRef(null)
-let applying = false  // guard: suppress the update-listener while we set the doc programmatically
 
-const slot = computed(() => (sandbox.value ? SB : cur.value))
-const edited = computed(() => !sandbox.value && srcs.value[cur.value] !== concepts[cur.value].code)
-const ranCount = computed(() => ran.value.filter(Boolean).length)
-const allDone = computed(() => ran.value.every(Boolean))
-
-function setDoc(text) {
-  if (!view.value) return
-  applying = true
-  view.value.dispatch({ changes: { from: 0, to: view.value.state.doc.length, insert: text } })
-  applying = false
-}
-
-function reset() {
-  srcs.value[cur.value] = concepts[cur.value].code
-  setDoc(concepts[cur.value].code)
-}
-
-function loadExample(name) {
-  sbExample.value = name
-  srcs.value[SB] = examples[name]
-  setDoc(examples[name])
-  run()
-}
-
-function showOutput(lines, isErr, tag) {
-  outErr.value = isErr
-  outTag.value = tag
-  outLines.value = lines.slice()
-}
-
-function run() {
-  const file = sandbox.value ? 'sandbox.milo' : concepts[cur.value].file
-  running.value = true
-  const finishRun = () => { running.value = false; if (!sandbox.value) ran.value[cur.value] = true }
-
-  // Replay captured output: there is no in-browser compiler until the wasm64 port.
-  const c = sandbox.value ? null : concepts[cur.value]
-  if (c) showOutput(c.out, !!c.err, file + (c.native ? ' · native binary · exit 0' : (c.err ? ' · compile' : ' · exit 0')))
-  else showOutput(['The in-browser compiler is paused until Milo builds for wasm64.', 'Install Milo and run this file locally: milo run sandbox.milo'], false, file + ' · not run')
-  finishRun()
-}
-
-function go(i) {
-  if (i < 0 || i >= concepts.length) return
-  sandbox.value = false
+// The lesson number rides in the URL hash (#3) so a lesson can be linked.
+function go(i, fromBottom = false) {
+  if (i < 0 || i >= data.length) return
   cur.value = i
-  maxReached.value = Math.max(maxReached.value, i)
-  outLines.value = []
-  setDoc(srcs.value[i])
-  scrollToTop()
-}
-function next() { go(cur.value + 1) }
-function openSandbox() {
-  sandbox.value = true
-  outLines.value = []
-  setDoc(srcs.value[SB])
-  scrollToTop()
-}
-function scrollToTop() {
-  nextTick(() => { if (rootEl.value) rootEl.value.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }) })
+  history.replaceState(history.state, '', '#' + (i + 1))
+  if (fromBottom && rootEl.value) {
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
+    rootEl.value.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+  }
 }
 
 onMounted(() => {
-  if (typeof window === 'undefined') return
-
-  view.value = new EditorView({
-    state: EditorState.create({
-      doc: srcs.value[props.startMode === 'sandbox' ? SB : 0],
-      extensions: [
-        basicSetup,
-        miloLang,
-        oneDark,
-        keymap.of([{ key: 'Mod-Enter', run: () => { run(); return true } }]),
-        EditorView.updateListener.of(u => {
-          if (u.docChanged && !applying) srcs.value[slot.value] = u.state.doc.toString()
-        }),
-        EditorView.theme({
-          '&': { height: '100%', backgroundColor: 'transparent' },
-          '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--vp-font-family-mono)', fontSize: '12.75px', lineHeight: '1.6' },
-          '.cm-content': { padding: '10px 0' },
-          '.cm-gutters': { backgroundColor: 'transparent', border: 'none' },
-          '.cm-activeLine': { backgroundColor: 'rgba(255,255,255,0.03)' },
-          '.cm-activeLineGutter': { backgroundColor: 'transparent' },
-        }),
-      ],
-    }),
-    parent: cmEl.value,
-  })
-
-  if (props.startMode === 'sandbox') sandbox.value = true
+  const n = Number(location.hash.slice(1))
+  if (Number.isInteger(n) && n >= 1 && n <= data.length) cur.value = n - 1
 })
 </script>
 
 <style scoped>
-.lab {
-  --edge: var(--vp-c-divider);
-  --brand: var(--vp-c-brand-1);
-  /* Warm charcoal panels tuned to the site's warm dark palette (page bg is
-     ~#16130f, brand is amber). The old values were a cool navy (#0d1320) that
-     clashed — blue panels on a warm amber site read as a different theme. */
-  --con-bg: #17130e; --con-surf: #201a13; --con-edge: #37301f; --con-text: #e3dccb;
-  --c-com: #8a7f6a;
-  margin: 40px 0 8px; font-family: var(--vp-font-family-base);
-}
-.lab-head { text-align: center; margin-bottom: 16px; }
-.sub-link {
-  display: inline-block;
-  font-family: var(--vp-font-family-mono);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--brand);
-  text-decoration: none;
-}
-.sub-link:hover { text-decoration: underline; }
+.lab { margin-top: 24px; scroll-margin-top: calc(var(--vp-nav-height) + 16px); }
 
-.rail { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin: 0 0 20px; }
-.rail-label { font-family: var(--vp-font-family-mono); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--vp-c-text-3); margin: 0 2px 0 6px; }
-.pip {
-  height: 32px; padding: 0 11px; border-radius: 8px; border: 1px solid var(--edge);
-  background: var(--vp-c-bg-soft); color: var(--vp-c-text-2);
-  font-family: var(--vp-font-family-mono); font-size: 12.5px; font-weight: 600; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; transition: all .15s;
+.picker {
+  display: flex; align-items: stretch; gap: 4px;
+  border: 1px solid var(--vp-c-divider); border-radius: 10px; background: var(--vp-c-bg-soft);
+  padding: 4px;
 }
-.pip:hover { border-color: var(--brand); color: var(--vp-c-text-1); }
-.pip.cur { border-color: var(--brand); color: var(--brand); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 22%, transparent); }
-.pip.ok { color: #fff; background: var(--brand); border-color: var(--brand); }
-.pip.ok.cur { box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 30%, transparent); }
-/* Leading index badge; flips to a ✓ once the lesson is run. Muted vs the title so
-   the word reads first. */
-.pip .tick {
-  font-size: 11px; min-width: 15px; height: 15px; border-radius: 4px;
-  display: inline-grid; place-items: center; color: var(--vp-c-text-3);
-  background: color-mix(in srgb, var(--vp-c-text-3) 12%, transparent);
+.step {
+  flex-shrink: 0; padding: 6px 12px; border-radius: 7px;
+  font-size: 14px; font-weight: 500; color: var(--vp-c-text-2); cursor: pointer;
 }
-.pip.cur .tick { color: var(--brand); background: color-mix(in srgb, var(--brand) 15%, transparent); }
-.pip.ok .tick { color: #fff; background: rgba(255,255,255,.22); }
-/* Sandbox is a dashed text pill, sits first with a small gap before the lessons. */
-.pip.sb { margin-right: 6px; border-style: dashed; letter-spacing: .01em; }
-
-.card { border: 1px solid var(--edge); border-radius: 16px; overflow: hidden; background: var(--vp-c-bg); }
-.chead { padding: 22px 22px 4px; }
-.step { font-family: var(--vp-font-family-mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--brand); }
-.ct { font-size: 1.4rem; font-weight: 700; letter-spacing: -.015em; margin: 6px 0 4px; border: 0; padding: 0; }
-.cd { color: var(--vp-c-text-2); margin: 0; max-width: 64ch; }
-.cd :deep(code), .take :deep(code) { font-family: var(--vp-font-family-mono); font-size: .84em; background: color-mix(in srgb, var(--brand) 12%, transparent); color: var(--brand); padding: 1px 5px; border-radius: 4px; }
-.cd kbd { font-family: var(--vp-font-family-mono); font-size: .8em; border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
-
-.examples { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
-.ex-btn {
-  font-family: var(--vp-font-family-mono); font-size: 12px; padding: 4px 10px;
-  border: 1px solid var(--edge); border-radius: 6px; background: var(--vp-c-bg-soft);
-  color: var(--vp-c-text-2); cursor: pointer; transition: all .15s;
+.step:not(:disabled):hover { color: var(--vp-c-brand-1); background: var(--vp-c-default-soft); }
+.step:disabled { opacity: .35; cursor: default; }
+.pick {
+  position: relative; flex: 1; min-width: 0;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 6px 8px; border-radius: 7px; font-size: 15px; font-weight: 600; color: var(--vp-c-text-1);
 }
-.ex-btn:hover { border-color: var(--brand); color: var(--brand); }
-.ex-btn.active { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 14%, transparent); color: var(--brand); }
+.pick:hover, .pick:focus-within { background: var(--vp-c-default-soft); }
+.pick:focus-within { outline: 2px solid var(--vp-c-brand-1); outline-offset: -2px; }
+.pick-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.count { color: var(--vp-c-text-2); font-weight: 500; }
+.caret { flex-shrink: 0; width: 12px; height: 12px; color: var(--vp-c-text-3); }
+.pick select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
 
-.panels { display: grid; grid-template-columns: 1.12fr .88fr; gap: 0; margin: 18px 22px 0; border: 1px solid var(--con-edge); border-radius: 12px; overflow: hidden; background: var(--con-bg); }
-@media (max-width: 720px) { .panels { grid-template-columns: 1fr; } }
-.pane { min-width: 0; display: flex; flex-direction: column; }
-.pane:first-child { border-right: 1px solid var(--con-edge); }
-@media (max-width: 720px) { .pane:first-child { border-right: 0; border-bottom: 1px solid var(--con-edge); } }
-.ph { display: flex; align-items: center; gap: 7px; height: 40px; padding: 0 13px; background: var(--con-surf); border-bottom: 1px solid var(--con-edge); flex-shrink: 0; }
-/* The filename yields space first (truncates); the action buttons never clip. */
-.fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ph .btn, .ph .edited, .ph .native { flex-shrink: 0; white-space: nowrap; }
-.dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.d1 { background: #f2606a; } .d2 { background: #f0b866; } .d3 { background: #7bd88f; }
-.fname { font-family: var(--vp-font-family-mono); font-size: 12px; color: var(--con-text); margin-left: 3px; }
-.fname.dim { color: var(--c-com); margin-left: 0; }
-.sp { flex: 1; }
-.edited { font-family: var(--vp-font-family-mono); font-size: 11px; color: var(--brand); }
-.native { font-family: var(--vp-font-family-mono); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--c-com); border: 1px solid var(--con-edge); border-radius: 999px; padding: 3px 8px; }
-.btn { font-family: var(--vp-font-family-mono); font-size: 12px; font-weight: 600; border: 0; border-radius: 6px; padding: 5px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-.btn.run { background: var(--brand); color: #fff; }
-.btn.run:hover { filter: brightness(1.08); }
-.btn.run:disabled { opacity: .55; cursor: default; }
-.btn.ghost { background: transparent; color: var(--c-com); border: 1px solid var(--con-edge); }
-.btn.ghost:hover { color: var(--con-text); }
-.tri { font-size: 10px; }
+.lesson { margin-top: 28px; }
+.vp-doc .lesson .title { margin: 0 0 8px; padding: 0; border: 0; font-size: 24px; line-height: 1.3; }
+.vp-doc .lesson .desc { margin: 0 0 20px; color: var(--vp-c-text-2); }
 
-@keyframes cta {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 45%, transparent); }
-  50% { box-shadow: 0 0 0 6px transparent; }
+/* Filename bar, code, command bar and output read as one block. */
+.run { border-radius: 8px; overflow: hidden; background: var(--vp-code-block-bg); }
+.bar {
+  padding: 8px 24px; font-family: var(--vp-font-family-mono); font-size: 12px;
+  color: var(--vp-c-text-3); border-bottom: 1px solid var(--vp-c-divider);
+}
+.code + .bar { border-top: 1px solid var(--vp-c-divider); }
+.vp-doc .run .code :deep(div[class*='language-']) { margin: 0; border-radius: 0; }
+/* The filename bar already names the file, so the language badge is noise. */
+.vp-doc .run .code :deep(span.lang) { display: none; }
+/* Lessons keep lines short enough for the desktop column; on a phone, wrap instead
+   of hiding the end of a line behind a sideways scroll nobody notices. */
+.vp-doc .run .code :deep(pre) { overflow-x: hidden; }
+.vp-doc .run .code :deep(pre code) { width: auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.vp-doc .run .out {
+  margin: 0; padding: 16px 24px; overflow-x: auto; background: transparent;
+  font-family: var(--vp-font-family-mono); font-size: var(--vp-code-font-size); line-height: var(--vp-code-line-height);
+  color: var(--vp-c-text-1); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.out .err { color: var(--vp-c-danger-1); }
+
+.vp-doc .lesson .take { margin: 20px 0 0; font-size: 14px; line-height: 1.6; color: var(--vp-c-text-2); }
+.take-label {
+  margin-right: 6px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--vp-c-text-3);
 }
 
-.editor { min-height: 240px; max-height: 460px; overflow: hidden; }
-/* oneDark re-applies its cool #282c34 to .cm-editor; scoped :deep wins on
-   specificity and repaints the code surface warm to match the panels. */
-.editor :deep(.cm-editor) { background: var(--con-bg); }
-.cm-host { height: 100%; min-height: 240px; }
+.pager { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--vp-c-divider); }
+.vp-doc .pager .card {
+  display: flex; flex-direction: column; gap: 2px; padding: 11px 16px;
+  border: 1px solid var(--vp-c-divider); border-radius: 8px; text-decoration: none; transition: border-color .2s;
+}
+.vp-doc .pager .card:hover { border-color: var(--vp-c-brand-1); }
+.pager .next { text-align: right; }
+.card-dir { font-size: 12px; font-weight: 500; color: var(--vp-c-text-2); }
+.card-title { font-size: 14px; font-weight: 500; color: var(--vp-c-brand-1); }
 
-.term { padding: 14px 16px; font-family: var(--vp-font-family-mono); font-size: 12.5px; line-height: 1.7; min-height: 240px; max-height: 460px; overflow: auto; color: var(--con-text); }
-.idle { color: var(--c-com); }
-.ttag { font-family: var(--vp-font-family-mono); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--c-com); margin-bottom: 9px; }
-.oline { color: #7bd88f; white-space: pre-wrap; word-break: break-word; }
-.oline.err { color: #f2828a; }
-.arrow { color: var(--c-com); }
-
-.take { display: flex; gap: 10px; align-items: flex-start; padding: 16px 22px 0; color: var(--vp-c-text-2); font-size: .93rem; }
-.take .tk { font-family: var(--vp-font-family-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--brand); padding-top: 3px; white-space: nowrap; }
-
-.foot { display: flex; align-items: center; gap: 14px; padding: 18px 22px 22px; }
-.nav { font-family: var(--vp-font-family-base); font-size: 13.5px; font-weight: 600; border: 1px solid var(--edge); background: var(--vp-c-bg-soft); color: var(--vp-c-text-1); border-radius: 8px; padding: 8px 16px; cursor: pointer; }
-.nav:disabled { opacity: .45; cursor: default; }
-.nav:not(:disabled):hover { border-color: var(--brand); }
-/* Next pins right and stays present always (disabled until the lesson runs), so the
-   Run button never shifts. Once unlocked it pulses to point forward. */
-.nav.next { margin-left: auto; }
-.nav.next.ready { border-color: var(--brand); color: var(--brand); font-weight: 700; animation: cta 1.8s ease-in-out infinite; }
-.nav.next.ready:hover { background: var(--brand); color: #fff; }
-@media (prefers-reduced-motion: reduce) { .nav.next.ready { animation: none; } }
-.prog { color: var(--vp-c-text-2); font-size: 13px; }
-.prog b { color: var(--vp-c-text-1); }
-.foot-hint { margin-left: auto; color: var(--vp-c-text-3); font-size: 13px; }
-.foot-hint a { color: var(--brand); font-weight: 600; cursor: pointer; }
-
-.done { margin-top: 18px; text-align: center; padding: 16px; border: 1px solid var(--edge); border-radius: 12px; background: var(--vp-c-bg-soft); color: var(--vp-c-text-1); }
-.done a { color: var(--brand); font-weight: 600; cursor: pointer; }
+@media (max-width: 639px) {
+  .word { display: none; }
+  .pick { font-size: 14px; }
+  /* Full-bleed like every other code block on the site at this width. */
+  .run { margin: 0 -24px; border-radius: 0; }
+  /* One px smaller buys a few columns before a line has to wrap. */
+  .vp-doc .run .code :deep(code), .vp-doc .run .out { font-size: 13px; }
+}
 </style>

@@ -275,7 +275,7 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
 ### Take Milo for a walk
 
 <div class="cta-buttons">
-  <a class="cta-primary" href="/milo/tour">Learn the basics · 12 lessons</a>
+  <a class="cta-primary" href="/milo/tour">Learn the basics · 13 lessons</a>
   <a class="cta-secondary" href="/milo/language/variables">Learn Milo</a>
   <a class="cta-secondary" href="/milo/stdlib/">Standard library</a>
   <a class="cta-secondary" href="/milo/getting-started/installation">Get Started</a>

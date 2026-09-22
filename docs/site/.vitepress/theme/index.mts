@@ -1,6 +1,5 @@
 import { h } from 'vue'
 import DefaultTheme from 'vitepress/theme'
-import MiloLab from './MiloLab.vue'
 import BenchmarkChart from './BenchmarkChart.vue'
 import CodeCarousel from './CodeCarousel.vue'
 import BlogIndex from './BlogIndex.vue'
@@ -20,7 +19,6 @@ export default {
     })
   },
   enhanceApp({ app }) {
-    app.component('MiloLab', MiloLab)
     app.component('BenchmarkChart', BenchmarkChart)
     app.component('CodeCarousel', CodeCarousel)
     app.component('BlogIndex', BlogIndex)
