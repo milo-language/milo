@@ -188,7 +188,7 @@ broken suite look green. In `--json` mode nothing but the document reaches stdou
 
 | consumer | reads | why not import |
 |---|---|---|
-| `scripts/check-api-docs.ts` | `api --json`, `lang --json` | the question ("do these docs match the language") is one any package should be able to ask |
+| `scripts/gen-std-docs.ts` | `api --json`, `lang --json` | renders the API reference on every docs-site stdlib page; any package's docs could be built the same way |
 | `scripts/gen-tmlanguage.ts` | `lang --json` | an editor grammar is the canonical out-of-repo consumer; using the same door keeps it working |
 | editors / tree-sitter / highlighters | `lang --json` | cannot import TypeScript at all |
 | package tooling, doc sites | `api --json` | works on any package, not just std |

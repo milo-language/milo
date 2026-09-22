@@ -8,163 +8,20 @@ Timers, tickers and timeouts live in [`std/timer`](timer).
 from "std/time" import { Instant, Duration, now, elapsed, since, sleepMs, sleepFor, epochMillis }
 ```
 
-## Types
-
-### Instant
-
-```milo
-struct Instant {
-    sec: i64,
-    usec: i64,
-}
-```
-
-A point in time from the system clock.
-
-### Duration
-
-```milo
-struct Duration    // i64 nanoseconds
-```
-
-A signed span of time, stored as i64 nanoseconds: **±292.47 years, 1 ns
-resolution**. Nanoseconds are what benchmarks and profilers need, and nothing
-measures a span longer than a lifetime — anything that does is a *date* problem,
-so use epoch seconds and [`std/datetime`](datetime).
-
-Construction and arithmetic past the range trap like any other i64 overflow;
-Milo is checked by default and a duration that wrapped to negative is exactly the
-silent nonsense that causes. `Duration.parse` is the one exception — it takes
-untrusted text, so overflow is `None` rather than an abort.
-
-`now()` reads the wall clock, so a span measured across an NTP step inherits that
-step. There is no monotonic clock in std yet.
-
 ## Duration
 
-### Constructors
+A `Duration` is a signed span stored as i64 nanoseconds: about ±292 years at 1 ns
+resolution. Anything longer is a date problem; use epoch seconds and
+[`std/datetime`](datetime). Arithmetic past the range traps like any other overflow,
+except `Duration.parse`, which takes untrusted text and answers `None`.
 
-```milo
-Duration.zero()
-Duration.nanos(n: i64)
-Duration.micros(n: i64)
-Duration.millis(n: i64)
-Duration.secs(n: i64)
-Duration.mins(n: i64)
-Duration.hours(n: i64)
-Duration.days(n: i64)
-Duration.parse(text: &string): Option<Duration>
-```
+`Duration` supports `+`, `-`, `==` and `!=`. Scaling is `times` and `dividedBy`, not
+`*`: operator overloading in Milo is `Self x Self`, and a duration times a duration is
+meaningless. `toString` prints the Go-style form (`"1h30m0s"`) that `Duration.parse`
+reads back.
 
-`parse` accepts a Go-style duration: an optional sign, then one or more
-`<number><unit>` components — `"300ms"`, `"1h30m"`, `"-1.5h"`, `"2h45m10.5s"`,
-`"7d"`, `"0"`. Units are `ns`, `us` (or `µs`), `ms`, `s`, `m`, `h`, `d`.
-
-It returns `Option`, not `Result`: every failure — a stray character, a missing
-unit, a value past ±292 years — leaves the caller with the same move (reject the
-input and echo it back), and a duration string is short enough that a byte offset
-tells a user nothing their own eyes don't.
-
-### Accessors
-
-```milo
-d.toNanos(): i64      d.toSecs(): i64      d.toSecsF64(): f64
-d.toMicros(): i64     d.toMins(): i64      d.toMillisF64(): f64
-d.toMillis(): i64     d.toHours(): i64
-```
-
-Integer accessors truncate toward zero.
-
-### Arithmetic and comparison
-
-```milo
-a + b                          // Add
-a - b                          // Sub
-d.times(k: i64): Duration      // scale
-d.dividedBy(k: i64): Duration  // truncating; k == 0 traps like any division by zero
-d.ratio(other: &Duration): f64 // "how many times does other fit in d"
-d.negated(): Duration
-d.abs(): Duration
-
-a == b, a != b                 // @derive(Eq)
-a.compare(b): i64              // -1, 0, 1
-a.isLess(b): bool
-a.isGreater(b): bool
-d.isZero(): bool
-d.isNegative(): bool
-```
-
-Scaling is a method, not `*`: Milo's operator overloading is homogeneous (`Mul`
-is `Self × Self`) and a duration times a duration is meaningless.
-
-### Text
-
-```milo
-d.toString(): string
-```
-
-Go-style: `"0s"`, `"1.5ms"`, `"2m3.5s"`, `"1h30m0s"`. Round-trips through
-`Duration.parse`. Microseconds print as `"us"`, not `"µs"`, so the output is ASCII
-everywhere it lands; parse accepts both.
-
-## Functions
-
-### now
-
-```milo
-fn now(): Instant
-```
-
-The current time.
-
-### epochMillis / epochSecs
-
-```milo
-fn epochMillis(): i64
-fn epochSecs(): i64
-```
-
-Milliseconds / seconds since the Unix epoch.
-
-### elapsed
-
-```milo
-fn elapsed(start: Instant, end: Instant): Duration
-```
-
-The span between two instants.
-
-### since
-
-```milo
-fn since(start: Instant): Duration
-```
-
-The span from `start` until now.
-
-### sleepMs / sleepSecs / sleepFor
-
-```milo
-fn sleepMs(ms: i64): void
-fn sleepSecs(secs: i64): void
-fn sleepFor(d: &Duration): void
-```
-
-With a scheduler running, a sleep parks on a select timer arm: the caller is off
-the run queue for the whole interval and every other green task keeps running.
-Without one it is a plain `usleep`. `sleepFor` rounds a non-zero sub-millisecond
-span up to 1 ms once a scheduler exists — the event loop's deadlines are
-milliseconds, and rounding down would turn a 100 µs sleep into a busy spin.
-
-### ensureTimersLive
-
-```milo
-fn ensureTimersLive(): void
-```
-
-Make the green scheduler exist so timer and fd arms are live on a program that
-never spawned a task. `std/timer` calls this for you; it is exported for callers
-that arm a `Select` on the main context themselves.
+`now()` reads the wall clock, so a span measured across an NTP step inherits that step.
+There is no monotonic clock in std yet.
 
 ## Example
 
@@ -179,3 +36,336 @@ if d.isGreater(timeout) {
     print("over budget by ", (d - timeout).toString())
 }
 ```
+
+<!-- generated:api -->
+<!-- Do not edit between these markers: generated by scripts/gen-std-docs.ts from 'milo api --json'. Edit the doc comments in std/time*.milo. -->
+
+## API reference
+
+### `Duration`
+
+```milo
+pub struct Duration
+```
+
+A signed span of time, stored as i64 nanoseconds.
+
+RANGE: ±9223372036854775807 ns ≈ ±292.47 years, with 1 ns resolution. This is
+Go's representation and it is the deliberate trade: nanosecond resolution is
+what benchmarks and profilers need, and no program measures a span longer than
+a human lifetime. Anything that does (a certificate horizon, an astronomical
+interval) is a *date* problem — use epoch seconds and std/datetime.
+
+Construction and arithmetic past the range trap like any other i64 overflow —
+Milo is checked by default and a duration that wrapped to negative is exactly
+the silent nonsense that causes. `Duration.parse` is the one exception: it
+takes untrusted text, so it reports overflow as `None` instead of aborting.
+
+The clock behind `now()` is the wall clock, so a `Duration` measured across an
+NTP step or a manual clock change inherits that step. There is no monotonic
+clock in std yet.
+
+#### `Duration.abs`
+
+```milo
+fn Duration.abs(self: &Duration): Duration
+```
+
+#### `Duration.compare`
+
+```milo
+fn Duration.compare(self: &Duration, other: &Duration): i64
+```
+
+-1, 0 or 1. `==` and `!=` come from @derive(Eq); Milo has no Ord trait, so
+ordering is spelled out.
+
+#### `Duration.days`
+
+```milo
+fn Duration.days(n: i64): Duration
+```
+
+#### `Duration.dividedBy`
+
+```milo
+fn Duration.dividedBy(self: &Duration, k: i64): Duration
+```
+
+Divide by an integer factor, truncating toward zero. `k == 0` traps like
+any other division by zero.
+
+#### `Duration.hours`
+
+```milo
+fn Duration.hours(n: i64): Duration
+```
+
+#### `Duration.isGreater`
+
+```milo
+fn Duration.isGreater(self: &Duration, other: &Duration): bool
+```
+
+#### `Duration.isLess`
+
+```milo
+fn Duration.isLess(self: &Duration, other: &Duration): bool
+```
+
+#### `Duration.isNegative`
+
+```milo
+fn Duration.isNegative(self: &Duration): bool
+```
+
+#### `Duration.isZero`
+
+```milo
+fn Duration.isZero(self: &Duration): bool
+```
+
+#### `Duration.micros`
+
+```milo
+fn Duration.micros(n: i64): Duration
+```
+
+#### `Duration.millis`
+
+```milo
+fn Duration.millis(n: i64): Duration
+```
+
+#### `Duration.mins`
+
+```milo
+fn Duration.mins(n: i64): Duration
+```
+
+#### `Duration.nanos`
+
+```milo
+fn Duration.nanos(n: i64): Duration
+```
+
+#### `Duration.negated`
+
+```milo
+fn Duration.negated(self: &Duration): Duration
+```
+
+#### `Duration.parse`
+
+```milo
+fn Duration.parse(text: &string): Option<Duration>
+```
+
+Parse a Go-style duration: a sign, then one or more `<number><unit>`
+components, e.g. "300ms", "1h30m", "-1.5h", "2h45m10.5s". Units are ns,
+us (or µs), ms, s, m, h and d. "0" alone is accepted.
+
+Returns Option, not Result: every way this fails — a stray character, a
+missing unit, a value past ±292 years — leaves the caller with the same
+move (reject the input and echo it back), and a duration string is short
+enough that a byte offset tells a user nothing their own eyes don't.
+
+#### `Duration.ratio`
+
+```milo
+fn Duration.ratio(self: &Duration, other: &Duration): f64
+```
+
+How many times `other` fits in self, as a ratio. The answer to "divide a
+duration by a duration", which has no Duration result.
+
+#### `Duration.secs`
+
+```milo
+fn Duration.secs(n: i64): Duration
+```
+
+#### `Duration.times`
+
+```milo
+fn Duration.times(self: &Duration, k: i64): Duration
+```
+
+Scale by an integer factor. Milo's operator overloading is homogeneous
+(`Mul` is `Self × Self`), and a Duration times a Duration is meaningless,
+so scaling is a method rather than `*`.
+
+#### `Duration.toHours`
+
+```milo
+fn Duration.toHours(self: &Duration): i64
+```
+
+Whole hours, truncated toward zero.
+
+#### `Duration.toMicros`
+
+```milo
+fn Duration.toMicros(self: &Duration): i64
+```
+
+Whole microseconds, truncated toward zero.
+
+#### `Duration.toMillis`
+
+```milo
+fn Duration.toMillis(self: &Duration): i64
+```
+
+Whole milliseconds, truncated toward zero.
+
+#### `Duration.toMillisF64`
+
+```milo
+fn Duration.toMillisF64(self: &Duration): f64
+```
+
+#### `Duration.toMins`
+
+```milo
+fn Duration.toMins(self: &Duration): i64
+```
+
+Whole minutes, truncated toward zero.
+
+#### `Duration.toNanos`
+
+```milo
+fn Duration.toNanos(self: &Duration): i64
+```
+
+Whole nanoseconds.
+
+#### `Duration.toSecs`
+
+```milo
+fn Duration.toSecs(self: &Duration): i64
+```
+
+Whole seconds, truncated toward zero.
+
+#### `Duration.toSecsF64`
+
+```milo
+fn Duration.toSecsF64(self: &Duration): f64
+```
+
+Fractional seconds — the spelling for reporting a measurement.
+
+#### `Duration.toString`
+
+```milo
+fn Duration.toString(self: &Duration): string
+```
+
+Go-style: "0s", "1.5ms", "2m3.5s", "1h30m0s". Round-trips through
+Duration.parse.
+
+Deviation from Go: microseconds print as "us", not "µs", so the output is
+ASCII everywhere it lands (log lines, filenames, terminals with a broken
+locale). Parse accepts both.
+
+#### `Duration.zero`
+
+```milo
+fn Duration.zero(): Duration
+```
+
+### `Instant`
+
+```milo
+pub struct Instant
+```
+
+A point in time read from the wall clock by `now()`.
+
+Fields: `sec: i64`, `usec: i64`.
+
+### Functions
+
+#### `elapsed`
+
+```milo
+pub fn elapsed(start: Instant, end: Instant): Duration
+```
+
+Elapsed time between two instants.
+
+#### `ensureTimersLive`
+
+```milo
+pub fn ensureTimersLive(): void
+```
+
+Make the green scheduler exist so timer and fd arms are live even on a program
+that has not spawned a task. std/timer's timeouts call this; it is exported for
+callers that arm a Select on the main context themselves.
+
+#### `epochMillis`
+
+```milo
+pub fn epochMillis(): i64
+```
+
+Milliseconds since Unix epoch.
+
+#### `epochSecs`
+
+```milo
+pub fn epochSecs(): i64
+```
+
+Seconds since Unix epoch.
+
+#### `now`
+
+```milo
+pub fn now(): Instant
+```
+
+Capture the current wall-clock time.
+
+#### `since`
+
+```milo
+pub fn since(start: Instant): Duration
+```
+
+Elapsed time since an instant.
+
+#### `sleepFor`
+
+```milo
+pub fn sleepFor(d: &Duration): void
+```
+
+Sleep for a Duration. Sub-millisecond spans round up to 1 ms once a scheduler
+exists — the event loop's deadlines are milliseconds, and rounding down would
+turn a 100 µs sleep into a busy spin.
+
+#### `sleepMs`
+
+```milo
+pub fn sleepMs(ms: i64): void
+```
+
+Sleep for the given number of milliseconds.
+
+With a scheduler running, this parks on a select timer arm: the caller is off
+the run queue for the whole interval and every other green task keeps running.
+Without one, it is a plain usleep.
+
+#### `sleepSecs`
+
+```milo
+pub fn sleepSecs(secs: i64): void
+```
+
+Sleep for the given number of seconds.
+
+<!-- /generated:api -->

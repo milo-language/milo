@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { langInfo } from "../src/lang-info";
+import { apiEntries, pageOf } from "../scripts/gen-std-docs";
 import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
@@ -28,29 +29,21 @@ describe("site navigation resolves", () => {
   }
 });
 
-// A std module with no site page is invisible to anyone reading the docs site. The
-// site's stdlib section is hand-written prose, so it cannot be generated — but the
-// COVERAGE can be checked, and it had fallen 20 modules behind.
+// A std module with no site page is invisible to anyone reading the docs site. Each page's
+// API reference is generated (scripts/gen-std-docs.ts), so what this checks is coverage:
+// every module `milo api --json` reports has a page, the sidebar and the overview link it,
+// and no page outlives its module.
 describe("stdlib site coverage", () => {
-  // Platform arms are implementation splits behind one import path; the resolver picks
-  // by target OS, so `std/platform` is what a user writes and what gets a page. Modules
-  // listed here are deliberately internal and documented nowhere on the site.
-  const INTERNAL = new Set(["prelude", "cstr", "select", "keys", "checksum", "rng", "httpmw", "pool"]);
+  // Deliberately internal: bindings other std modules are built on, with nothing a program
+  // should call directly. `platform` is raw per-OS externs (std/os wraps it), `cryptosys` is
+  // std/crypto's per-OS backend, and `openssl` is the extern block std/fetch, std/tls and
+  // std/ws share.
+  const INTERNAL = new Set(["platform", "cryptosys", "openssl"]);
 
-  // Public modules that still have no site page, as of 2026-08-15. This list is a
-  // RATCHET, not an exemption: a module may only be removed from it, never added, so a
-  // newly added std module cannot ship without docs. Writing these pages is prose work,
-  // not something a generator can do — `milo doc` renders them almost entirely
-  // "_Undocumented._" because the sources carry no doc-comments (ansi 0/25, xxhash 0/2,
-  // zstd 0/3), and publishing that would be worse than the gap it fills.
-  const UNDOCUMENTED = new Set([
-    "ansi", "dl", "fetch", "https", "openssl", "os", "png", "smt", "tls", "unix", "ws", "xxhash", "zstd",
-  ]);
-
-  const stdModules = readdirSync(join(root, "std"))
-    .filter(f => f.endsWith(".milo"))
-    .map(f => f.replace(/\.milo$/, ""))
-    .filter(m => !m.includes("."))       // drop platform arms: foo.darwin, foo.linux
+  // From the payload, not a directory scan: this is the module list a reader of `milo api`
+  // sees. Platform arms (`std/pty.darwin`) fold to the one import path the resolver serves.
+  const allModules = new Set(apiEntries().map(e => pageOf(e.module)));
+  const stdModules = [...allModules]
     .filter(m => !INTERNAL.has(m))
     .sort();
   const sitePages = new Set(
@@ -58,22 +51,34 @@ describe("stdlib site coverage", () => {
       .filter(f => f.endsWith(".md") && f !== "index.md")
       .map(f => f.replace(/\.md$/, "")),
   );
+  const config = readFileSync(join(root, "docs", "site", ".vitepress", "config.mts"), "utf8");
+  const overview = readFileSync(join(root, "docs", "site", "stdlib", "index.md"), "utf8");
 
   test("the module scan finds std", () => {
-    expect(stdModules.length).toBeGreaterThan(40);
+    expect(stdModules.length).toBeGreaterThan(70);
   });
 
-  test("every public std module has a site page, or is on the ratchet", () => {
-    expect(stdModules.filter(m => !sitePages.has(m) && !UNDOCUMENTED.has(m))).toEqual([]);
+  test("every public std module has a site page", () => {
+    expect(stdModules.filter(m => !sitePages.has(m))).toEqual([]);
   });
 
-  test("the ratchet only shrinks — a documented module must come off it", () => {
-    expect([...UNDOCUMENTED].filter(m => sitePages.has(m)).sort()).toEqual([]);
+  test("an internal module really exists", () => {
+    // A renamed module would otherwise leave a stale exemption that exempts nothing.
+    expect([...INTERNAL].filter(m => !allModules.has(m)).sort()).toEqual([]);
+  });
+
+  test("every stdlib page is in the sidebar", () => {
+    expect([...sitePages].filter(p => !config.includes(`link: '/stdlib/${p}'`)).sort()).toEqual([]);
+  });
+
+  test("every public std module is linked from the stdlib overview", () => {
+    // Coverage, not wording: the tables are hand-written, but a module missing from them is
+    // a module a reader browsing the overview never finds.
+    expect(stdModules.filter(m => !overview.includes(`](${m})`)).sort()).toEqual([]);
   });
 
   test("no site page documents a module that no longer exists", () => {
-    const real = new Set(readdirSync(join(root, "std")).map(f => f.replace(/\.milo$/, "").split(".")[0]!));
-    expect([...sitePages].filter(p => !real.has(p)).sort()).toEqual([]);
+    expect([...sitePages].filter(p => !allModules.has(p)).sort()).toEqual([]);
   });
 });
 

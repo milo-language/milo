@@ -38,7 +38,6 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/audit-extern-returns.ts` | Audit every `extern fn` in std/ against the real C headers — no annotations needed. |
 | `scripts/build.sh` | Build a standalone, self-contained milo binary. |
 | `scripts/bundle-stdlib.ts` | Generates src/stdlib-bundle.ts, embedding every std/*.milo file as a string. |
-| `scripts/check-api-docs.ts` | Checks the signature listings on the docs-site stdlib pages against the real std API. |
 | `scripts/check-breaking.ts` | Detects source-level breaks in the public std surface since the last release tag, and requires each one to be written up in docs/breaking-changes.md. |
 | `scripts/check-packages.sh` | Run the sibling Milo packages' OWN test suites against this checkout's compiler. |
 | `scripts/corpus-census.ts` | Census of every .milo file in the org: what the ownership model costs real programs. |
@@ -69,7 +68,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/gen-spec.ts` | Generates docs/spec.md — the normative language specification, from the suites that already decide what the compiler does. |
 | `scripts/gen-src-doc.ts` | Regenerates the compiler-source index in docs/src.md from each src/*.ts file's own first comment line, so the map of the compiler cannot fall behind the directory. |
 | `scripts/gen-stats.ts` | Fills in the corpus counts quoted in prose, so a doc cannot claim a number the repo stopped matching. |
-| `scripts/gen-std-docs.ts` | Regenerate docs/std/<module>.md from the std doc-comments (source of truth). |
+| `scripts/gen-std-docs.ts` | Renders the API reference on every docs-site stdlib page from `milo api --json`. |
 | `scripts/gen-tmlanguage.ts` | Regenerates editors/vscode/syntaxes/milo.tmLanguage.json from the compiler's own keyword and primitive-type lists. |
 | `scripts/gen-vscode-icon.ts` | Renders the mascot to editors/vscode/icon.png. |
 | `scripts/guard.ts` | Guarded child execution: hard memory + wall-clock + CPU caps for every process the test harnesses spawn. |
