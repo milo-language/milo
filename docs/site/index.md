@@ -3,7 +3,7 @@ layout: home
 hero:
   name: Milo
   text: "A memory-safe systems language with second-class references."
-  tagline: "A reference lives only as long as the call it is passed to, so the function you are reading is the whole story of the values it touches. No lifetimes to write, no GC, one owner per value. Contracts and a prover cover what the type system cannot."
+  tagline: "The function you are reading is the whole story of the values it touches. No lifetimes, no GC, one owner per value."
   image:
     src: /logo.svg
     alt: Milo
@@ -20,7 +20,7 @@ system: site-landing
 purpose: the milo-language.github.io home page: pitch, code carousel, what it is and is not, showcase
 key-files: docs/site/.vitepress/config.mts, docs/site/.vitepress/theme
 update-when: the pitch changes, a showcase project is added or retired, or the carousel snippets change
-last-verified: 2026-09-21 (local reasoning leads; C / Rust / Milo table)
+last-verified: 2026-09-22 (trimmed: one statement of the rule, 10 showcase tiles, the rest on /demos)
 -->
 
 <div class="install-line">
@@ -28,17 +28,6 @@ last-verified: 2026-09-21 (local reasoning leads; C / Rust / Milo table)
 ```sh
 curl -fsSL https://milo-language.github.io/milo/install.sh | sh
 ```
-
-</div>
-
-<div class="intro">
-
-- [**Learn the basics**](/tour)
-- [**Why there are no lifetimes**](/language/why-no-lifetimes)
-- [**Compare to Rust's safety profile**](/language/vs-rust)
-- [**Contracts and formal verification**](/language/safety)
-- [**Browse the standard library**](/stdlib/)
-- [**Read the language reference**](/language/)
 
 </div>
 
@@ -126,55 +115,11 @@ fn main() {
 
 <div class="whatis">
 
-## What you get, and what you give up
+## The rule
 
-References are second-class: `&T` and `&mut T` exist only as function parameters. You can't return one, store one in a struct, or capture one past the call. Every value lives on the stack or in an explicit heap allocation (`Vec`, `Heap<T>`, `string`), with one owner and no hidden indirection.
+`&T` and `&mut T` exist only as function parameters. You can't return one, store one in a struct, or keep one past the call. Every value has one owner, and nothing else holds a pointer into it.
 
-**What you get:**  no lifetime annotations, local reasoning, single ownership settled inside one function, concurrency without `Send`/`Sync`, no GC, contracts with a prover.
-
-**What you lose:**  you cannot return or store a view. Use an index, an owned copy, or an arena handle instead. Where Rust hands out a borrow, Milo sometimes asks for a `clone()`.
-
-**Measured, not claimed.** 250k+ lines across the compiler (self-hosted), a JS engine, three emulator cores, a debugger and a dozen packages. Nearly every `unsafe` block is the C boundary, and not one exists because the ownership model rejected a program ([the numbers](/language/vs-rust)).
-
-### Local reasoning
-
-**The function you are reading is the whole story of the values it touches.** Nothing outside a function holds a pointer into its locals, because no such pointer can exist. `&mut x` at a call site is the full blast radius of a mutation, and every other effect is declared where it happens: `@unsafe` for C and raw memory, `@thread` and `@parks` for the two kinds of switch, `@mustUse` for a result that must not be dropped, `requires` / `ensures` for the contract. The checker's questions are settled inside one function, never by a signature three modules away, and so are yours.
-
-### The details
-
-**No lifetime annotations.** A borrow lives for one call. There is nothing to name and nothing to propagate through types.
-
-**Single ownership, answered locally.** Every value has one owner. A borrow ends at the call, so the checker's questions are settled inside one function.
-
-**Concurrency without `Send`/`Sync`.** A value that cannot hold a borrow can be handed to another task as is. The compiler checks the two doors OS threads start at and rejects a view into a global held across a park.
-
-**No GC, no RC, ordinary imperative code.** `var`, `for` and in-place mutation through `&mut` are the idiom. Compiles through LLVM to a static binary.
-
-**Contracts and a prover.** `requires`/`ensures` are part of the language. `milo prove` checks them for every input, not just the ones you tested.
-
-**Returning a view.** `fn longest(a: &str, b: &str): &str` cannot be written. Return an index, a `Span`, an owned copy, or move the work to the caller.
-
-**Storing a view.** `Parser<'a>`, an iterator over a borrowed slice, `struct Node { next: &Node }`: own the buffer and carry offsets, or use [`std/arena`](/stdlib/arena) (generational handles, checked at runtime). Across five Rust codebases, 13% of lifetime-carrying declarations are this shape ([the census](/language/why-no-lifetimes)).
-
-**One check moves to runtime.** The tie between a stored offset and its buffer is a named runtime failure where Rust's lifetime is a compile error. Nothing degrades to `unsafe`.
-
-### In C, in Rust, in Milo
-
-| What you want | C | Rust | Milo |
-|---|---|---|---|
-| Return a pointer into a buffer you still hold | `char *`, you promise it stays valid | `fn longest(...) -> &'a str` | Not expressible. Return an index, a `Span`, or an owned string. |
-| A parser that keeps the input | `struct Parser { char *src; }` | `struct Parser<'a> { src: &'a str }` | Not expressible. Own the input; store a cursor (`pos: i64`). |
-| Iterator over a collection | pointer into the array | `Iterator<Item = &T>` | Not a stored borrow. A cursor is a position; each step takes the store: `scanNext(&store, &mut cursor)`. |
-| Graph, parent pointer, DOM | `Node *next` | `Rc<RefCell<Node>>` or an arena crate | [`std/arena`](/stdlib/arena): `Arena<T>` plus `Handle<T>`. Lookup is checked at runtime. |
-| Temporary read in a call | pointer argument | `&T` | `&T`, auto-borrowed at the call. Same idea. |
-| Temporary mutation in a call | pointer argument | `&mut T` | `&mut T`, written at the call site: `f(&mut x)`. |
-| Two owners of one buffer | two pointers, good luck | lifetimes, or `clone` / `Arc` | `.clone()`, or `seal` the buffer and share a read-only copy. |
-
-Same memory-safety rows as Rust wherever both languages can say the program: use-after-move, use-after-free of owned data, no null. The rows Rust wins are one trade made twice: a view tied to its buffer is a compile error there and a named runtime check or a copy here. Nothing falls back to `unsafe` because the ownership model said no ([the full matrix](/language/vs-rust)).
-
-### Mutation is scoped, not banned
-
-Milo mutates freely, but only through `&mut` parameters, and a `&mut` borrow cannot outlive the call. That one rule gives you functional programming's "nothing else can change this" guarantee without the allocation and copying that immutability forces on hot loops.
+That buys **local reasoning**: `&mut x` at a call site is the full blast radius of a mutation, and the checker settles every ownership question inside one function, never by a signature three modules away.
 
 ```milo
 fn zeroNegatives(values: &mut Vec<i64>): void {
@@ -192,7 +137,22 @@ fn main(): void {
 }
 ```
 
-When you read `main`, you know `v` can only change inside `zeroNegatives` because that is the only call that borrows it mutably. No other pointer to `v` exists. That is local reasoning: the call site tells you the full blast radius of a mutation, and the compiler enforces it.
+**What you get:** no lifetime annotations, no GC or RC, concurrency without `Send`/`Sync`, `requires`/`ensures` contracts checked by `milo prove`.
+
+**What you give up:** returning or storing a view. Use an index, a `Span`, an owned copy, or an [arena handle](/stdlib/arena). The tie between a stored offset and its buffer becomes a named runtime check where Rust's lifetime is a compile error ([why that trade](/language/why-no-lifetimes)).
+
+### In C, in Rust, in Milo
+
+| What you want | C | Rust | Milo |
+|---|---|---|---|
+| Return a pointer into a buffer you still hold | `char *`, you promise it stays valid | `fn longest(...) -> &'a str` | Not expressible. Return an index, a `Span`, or an owned string. |
+| A parser that keeps the input | `struct Parser { char *src; }` | `struct Parser<'a> { src: &'a str }` | Own the input; store a cursor (`pos: i64`). |
+| Iterator over a collection | pointer into the array | `Iterator<Item = &T>` | A cursor; each step takes the store: `scanNext(&store, &mut cursor)`. |
+| Graph, parent pointer, DOM | `Node *next` | `Rc<RefCell<Node>>` or an arena crate | [`std/arena`](/stdlib/arena): `Arena<T>` plus `Handle<T>`, checked at runtime. |
+| Temporary read / mutation in a call | pointer argument | `&T` / `&mut T` | `&T` auto-borrowed; `&mut T` written at the call: `f(&mut x)`. |
+| Two owners of one buffer | two pointers, good luck | lifetimes, or `clone` / `Arc` | `.clone()`, or `seal` it and share a read-only copy. |
+
+Same memory-safety guarantees as Rust wherever both languages can express the program. 250k+ lines of Milo so far; nearly every `unsafe` block is the C boundary, and none exist because the ownership model said no ([the full matrix](/language/vs-rust)).
 
 </div>
 
@@ -244,27 +204,6 @@ When you read `main`, you know `v` can only change inside `zeroNegatives` becaus
         <div class="tile-tags"><span>Whitted tracing</span><span>Blinn-Phong</span><span>SDL</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/graphics/raytrace3d.milo" title="milo run examples/graphics/raytrace3d.milo">⧉ copy run command</span>
       </a>
-      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/graphics/raytracer.milo">
-        <img class="tile-img" src="/showcase/pathtracer.png" alt="Diffuse and metal spheres lit by indirect bounce light in the Milo path tracer" loading="lazy">
-        <h3>Path Tracer</h3>
-        <p>Unbiased Monte-Carlo global illumination on the CPU. Soft shadows and colour bleed fall out of the bounce integral — nothing is faked.</p>
-        <div class="tile-tags"><span>progressive</span><span>importance sampling</span><span>f64 math</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/graphics/raytracer.milo" title="milo run examples/graphics/raytracer.milo">⧉ copy run command</span>
-      </a>
-      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/simulation/cloth.milo">
-        <video class="tile-img" src="/showcase/cloth.mp4" poster="/showcase/cloth.png" autoplay muted loop playsinline preload="auto" aria-label="A cloth mesh being dragged and folding under position-based dynamics"></video>
-        <h3>Cloth</h3>
-        <p>Position-Based Dynamics — Verlet point masses woven by distance constraints, the method real cloth engines use. Grab a node and fling it.</p>
-        <div class="tile-tags"><span>PBD</span><span>Verlet</span><span>constraint solver</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/simulation/cloth.milo" title="milo run examples/simulation/cloth.milo">⧉ copy run command</span>
-      </a>
-      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/simulation/phasespace.milo">
-        <video class="tile-img" src="/showcase/phasespace.mp4" poster="/showcase/phasespace.png" autoplay muted loop playsinline preload="auto" aria-label="Two cat's-eye vortices winding up in the Vlasov phase-space distribution"></video>
-        <h3>Plasma Physics</h3>
-        <p>A collisionless Vlasov solver in (x, v) phase space — finite-volume MUSCL with Strang splitting, winding a Maxwellian into trapped-particle vortices.</p>
-        <div class="tile-tags"><span>Vlasov</span><span>MUSCL / minmod</span><span>Strang splitting</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/simulation/phasespace.milo" title="milo run examples/simulation/phasespace.milo">⧉ copy run command</span>
-      </a>
     </div>
   </div>
   <div class="cat cat-lang">
@@ -285,23 +224,6 @@ When you read `main`, you know `v` can only change inside `zeroNegatives` becaus
       </a>
     </div>
   </div>
-  <div class="cat cat-crypto">
-    <h3 class="cat-head">Cryptography &amp; compression</h3>
-    <div class="tile-grid">
-      <a class="tile" href="/milo/stdlib/#cryptography">
-        <h3>Cryptography</h3>
-        <p>Pure-Milo SHA-256, SHA-1, HMAC, JWT, TOTP and Base32 — hashing, MACs and 2FA with no C crypto dependency, matched bit-for-bit to the RFC vectors.</p>
-        <div class="tile-tags"><span>SHA-256</span><span>HMAC / JWT</span><span>constant-time</span><span>WCET-proven</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd='from "std/sha256" import { sha256 }' title='from "std/sha256" import { sha256 }'>⧉ copy import</span>
-      </a>
-      <a class="tile" href="/milo/stdlib/#compression">
-        <h3>Compression</h3>
-        <p>Pure-Milo DEFLATE, gzip, zlib and zip — the codec that gzip HTTP bodies, PNG and git objects need, no C dependency.</p>
-        <div class="tile-tags"><span>DEFLATE</span><span>gzip / zlib</span><span>zip</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd='from "std/deflate" import { gzipCompress }' title='from "std/deflate" import { gzipCompress }'>⧉ copy import</span>
-      </a>
-    </div>
-  </div>
   <div class="cat cat-dev">
     <h3 class="cat-head">Developer tools</h3>
     <div class="tile-grid">
@@ -311,12 +233,6 @@ When you read `main`, you know `v` can only change inside `zeroNegatives` becaus
         <p>dapweb: debug any program from the browser, with an AI in the loop.</p>
         <div class="tile-tags"><span>HTTP server</span><span>WebSockets</span><span>JSON-RPC (DAP)</span><span>PTY</span><span>CLI API</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="git clone https://github.com/milo-language/dapweb && cd dapweb && src/web/ui/build.sh && milo build src/main.milo -o dapweb && ./dapweb web" title="git clone https://github.com/milo-language/dapweb && cd dapweb && src/web/ui/build.sh && milo build src/main.milo -o dapweb && ./dapweb web">⧉ copy run command</span>
-      </a>
-      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/tools/java-dap">
-        <h3>Java Debugger</h3>
-        <p>A DAP-compliant debugger for the JVM, so dapweb debugs Java too.</p>
-        <div class="tile-tags"><span>JDWP</span><span>TCP sockets</span><span>binary protocol</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo build examples/tools/java-dap/src/main.milo -o java-dap" title="milo build examples/tools/java-dap/src/main.milo -o java-dap">⧉ copy run command</span>
       </a>
     </div>
   </div>
@@ -331,12 +247,6 @@ When you read `main`, you know `v` can only change inside `zeroNegatives` becaus
         <div class="tile-tags"><span>HTTP server</span><span>TLS fetch</span><span>JSON</span><span>17k-place index</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/net/weather/app.milo" title="milo run examples/net/weather/app.milo">⧉ copy run command</span>
       </a>
-      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/net/termpair">
-        <h3>termpair</h3>
-        <p>Share your terminal in the browser, end-to-end encrypted.</p>
-        <div class="tile-tags"><span>WebSockets</span><span>AES-GCM</span><span>PTY</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/net/termpair/server.milo" title="milo run examples/net/termpair/server.milo">⧉ copy run command</span>
-      </a>
     </div>
   </div>
   <div class="cat cat-term">
@@ -348,18 +258,6 @@ When you read `main`, you know `v` can only change inside `zeroNegatives` becaus
         <p>The classic, in your terminal.</p>
         <div class="tile-tags"><span>raw TTY</span><span>green tasks</span><span>channels</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/terminal/tetris.milo" title="milo run examples/terminal/tetris.milo">⧉ copy run command</span>
-      </a>
-      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/terminal/sysmon.milo">
-        <h3>System Monitor</h3>
-        <p>A live htop-style view of your machine.</p>
-        <div class="tile-tags"><span>TUI</span><span>syscalls</span><span>truecolor</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/terminal/sysmon.milo" title="milo run examples/terminal/sysmon.milo">⧉ copy run command</span>
-      </a>
-      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/terminal/splitPty.milo">
-        <h3>splitPty</h3>
-        <p>Two commands side by side in real PTYs — a mini tmux.</p>
-        <div class="tile-tags"><span>PTY</span><span>multiplexing</span><span>green tasks</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/terminal/splitPty.milo" title="milo run examples/terminal/splitPty.milo">⧉ copy run command</span>
       </a>
     </div>
   </div>

@@ -72,6 +72,10 @@ TUIs in [`examples/terminal/`](https://github.com/milo-language/milo/tree/main/e
 | [plasma](https://github.com/milo-language/milo/blob/main/examples/graphics/plasma.milo) | Full-screen truecolor animation; doubles as a render-throughput benchmark |
 | [aquarium](https://github.com/milo-language/milo/blob/main/examples/graphics/aquarium.milo) | Truecolor pixel aquarium: fish, bubbles, swaying seaweed |
 | [chihuahua](https://github.com/milo-language/milo/blob/main/examples/graphics/chihuahua.milo) | DVD-logo-style bouncing screensaver with a shaded pixel-art sprite |
+| [raytrace3d](https://github.com/milo-language/milo/blob/main/examples/graphics/raytrace3d.milo) | Real-time Whitted ray tracer: chrome spheres, shadows and rigid-body physics at 60fps on the CPU |
+| [raytracer](https://github.com/milo-language/milo/blob/main/examples/graphics/raytracer.milo) | Progressive Monte-Carlo path tracer: soft shadows and colour bleed from the bounce integral |
+| [cloth](https://github.com/milo-language/milo/blob/main/examples/simulation/cloth.milo) | Position-based dynamics cloth; grab a node and fling it |
+| [phasespace](https://github.com/milo-language/milo/blob/main/examples/simulation/phasespace.milo) | Collisionless Vlasov plasma solver (MUSCL, Strang splitting) winding trapped-particle vortices |
 | [splitPty](https://github.com/milo-language/milo/blob/main/examples/terminal/splitPty.milo) | Two commands side-by-side in real PTYs; a mini tmux |
 | [flightController](https://github.com/milo-language/milo/blob/main/examples/embedded/flightController.milo) | Single-axis PID altitude controller with an interactive TUI |
 | [menu](https://github.com/milo-language/milo-emulators/blob/main/menu.milo) | Fullscreen SDL retro-console front-end with a gamepad/keyboard ROM picker |
