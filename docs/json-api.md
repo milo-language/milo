@@ -16,6 +16,7 @@ milo api --json                      # every public std symbol: signature, param
 milo api --module std/json --json    # one module
 milo api "parse json" --json         # ranked search results
 milo lang --json                     # keywords (+ hover docs), primitive types, operators, builtin methods, warning names
+milo explain <name> [--json]         # one warning/attribute/keyword: doc, example, fix, flags
 milo check <file> --json             # diagnostics as data (exit 1 if any error)
 milo prove <file> --json             # per-obligation proof verdicts
 milo safety <file> --safety=X --json # safety-profile compliance

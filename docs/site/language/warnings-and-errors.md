@@ -98,6 +98,9 @@ Same rule — references live only as long as the function call. Return an owned
 
 Warnings won't stop compilation, but they usually mean something is wrong.
 
+Every warning prints its own name — `warning[index-clone]: ...` — and `milo explain
+index-clone` shows the entry below right in the terminal, without leaving the build.
+
 The reference below is **generated** from `src/warnings.ts` by `scripts/gen-lang-docs.ts`,
 through `milo lang --json`. Every example is a program the checker is run over in CI
 (`tests/langInfo.test.ts`), so an example that stopped provoking its warning fails the
