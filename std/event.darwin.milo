@@ -27,6 +27,8 @@ pub fn keventSize(): i64 {
     return 32
 }
 
+// A kqueue/epoll/IOCP poller handle. Create one with `EventLoop.new()`; release it with
+// `eventLoopClose`.
 pub struct EventLoop {
     kqfd: i32,
 }
@@ -43,11 +45,15 @@ pub fn eventLoopNew(): Result<EventLoop, string> {
 }
 
 impl EventLoop {
+    // Create a poller. Errs if the kernel will not hand one out.
     fn new(): Result<EventLoop, string> {
         return eventLoopNew()
     }
 }
 
+// Make `fd` non-blocking. 0 on success, -1 on error. Register only non-blocking fds: a
+// poller that reports ready and then hangs in `read` is the usual symptom otherwise,
+// because readiness says a byte was available, not that the next read will return.
 pub fn setNonblocking(fd: i32): i32 {
     let flags = fcntl(fd, fGetfl())
     if flags < 0 {
@@ -67,6 +73,7 @@ pub fn clearNonblocking(fd: i32): i32 {
     return fcntl(fd, fSetfl(), flags & ~oNonblock())
 }
 
+// Watch `fd` for readability.
 pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
     unsafe {
         var ev = Kevent {
@@ -81,6 +88,7 @@ pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
     }
 }
 
+// Watch `fd` for writability.
 pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
     unsafe {
         var ev = Kevent {
@@ -95,6 +103,7 @@ pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
     }
 }
 
+// Stop watching `fd`. `forWrite` picks the write registration rather than the read one.
 pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
     unsafe {
         var filter = evfiltRead()
@@ -116,6 +125,8 @@ pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
 // poll for ready events. readyFds: caller-allocated *i32 array with capacity >= maxEvents.
 // returns count of ready fds, or -1 on error.
 // timeoutMs < 0 means block indefinitely.
+//
+// A fixed `[i32; N]` array passes bare: it coerces to `*i32`.
 pub fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i32 {
     unsafe {
         let bufSize = maxEvents as i64 * keventSize()
@@ -159,6 +170,9 @@ pub fn wakeupIdentBase(): i32 {
     return 1073741824
 }
 
+// Arm a wakeup that breaks a blocked `eventPoll` from elsewhere; this is how a
+// `Promise.blocking` worker tells the scheduler its result is ready. Returns the id to
+// pass to eventLoopNotify, eventLoopDrainWakeup and eventLoopCloseWakeup.
 pub fn eventLoopInitWakeup(el: &EventLoop): i32 {
     unsafe {
         var ev = Kevent {
@@ -192,10 +206,12 @@ pub fn eventLoopNotify(el: &EventLoop, wakeupId: i32): i32 {
     }
 }
 
+// Consume a delivered wakeup so the next poll does not report it again.
 pub fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
     // EV_CLEAR already reset the event; nothing to consume on darwin
 }
 
+// Tear down a wakeup made by eventLoopInitWakeup.
 pub fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
     unsafe {
         var ev = Kevent {
@@ -210,16 +226,20 @@ pub fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
     }
 }
 
+// Wrap a poller that another runtime already owns. Does not take ownership: closing it
+// is still the original owner's job.
 pub fn eventLoopFromFd(fd: i32): EventLoop {
     return EventLoop {
         kqfd: fd
     }
 }
 
+// The poller's descriptor, to hand to another runtime's poller when embedding.
 pub fn eventLoopFd(el: &EventLoop): i32 {
     return el.kqfd
 }
 
+// Release the poller.
 pub fn eventLoopClose(el: &EventLoop): void {
     close(el.kqfd)
 }

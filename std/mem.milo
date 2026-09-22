@@ -144,19 +144,26 @@ impl Bump {
     // Restate each callee's preconditions on the wrapper (Bump has no struct
     // invariant the solver models): without them the wrapper can't discharge the
     // free fn's `requires` — same restating pattern as Pool's free/live/available.
+
+    // Create a bump allocator over `capacity` bytes of heap. The whole region is freed
+    // when the Bump drops.
     fn new(capacity: i64): Result<Bump>
     requires capacity > 0
     {
         return bumpNew(capacity)
     }
+    // Bump-allocate `size` bytes (8-byte aligned) and return the address. Errs when the
+    // region is full.
     fn alloc(self: &mut Self, size: i64): Result<i64>
     requires size > 0
     {
         return bumpAlloc(&mut self, size)
     }
+    // Reclaim every allocation at once by resetting the used count to zero.
     fn reset(self: &mut Self): void {
         bumpReset(&mut self)
     }
+    // Bytes still available.
     fn remaining(self: &Self): i64 {
         return bumpRemaining(self)
     }

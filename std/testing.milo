@@ -18,6 +18,7 @@ fn testFail(): void {
     exit(1)
 }
 
+// Abort if `cond` is false.
 pub fn assert(cond: bool): void {
     if !cond {
         eprint("  assertion failed")
@@ -25,6 +26,7 @@ pub fn assert(cond: bool): void {
     }
 }
 
+// Abort with `msg` if `cond` is false.
 pub fn assertMsg(cond: bool, msg: string): void {
     if !cond {
         eprint($"  assertion failed: {msg}")
@@ -94,6 +96,7 @@ pub fn assertContains(haystack: &string, needle: &string): void {
     }
 }
 
+// Assert two `i32` values are equal.
 pub fn assertEqual(got: i32, expected: i32): void {
     if got != expected {
         eprint($"  assertEqual failed: got {got}, expected {expected}")
@@ -101,6 +104,7 @@ pub fn assertEqual(got: i32, expected: i32): void {
     }
 }
 
+// Assert two `i64` values are equal.
 pub fn assertEqual64(got: i64, expected: i64): void {
     if got != expected {
         eprint($"  assertEqual64 failed: got {got}, expected {expected}")
@@ -108,6 +112,7 @@ pub fn assertEqual64(got: i64, expected: i64): void {
     }
 }
 
+// Assert two strings are equal.
 pub fn assertStrEqual(got: &string, expected: &string): void {
     if got != expected {
         eprint($"  assertStrEqual failed: got '{got}', expected '{expected}'")
@@ -115,6 +120,7 @@ pub fn assertStrEqual(got: &string, expected: &string): void {
     }
 }
 
+// Assert two booleans are equal.
 pub fn assertBool(got: bool, expected: bool): void {
     if got != expected {
         eprint($"  assertBool failed: got {got}, expected {expected}")

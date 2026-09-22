@@ -125,6 +125,7 @@ const stdlibSidebar = [
     text: 'Standard Library',
     items: [
       { text: 'Overview', link: '/stdlib/' },
+      { text: 'std/prelude', link: '/stdlib/prelude' },
     ]
   },
   {
@@ -147,6 +148,12 @@ const stdlibSidebar = [
       { text: 'std/mime', link: '/stdlib/mime' },
       { text: 'std/multipart', link: '/stdlib/multipart' },
       { text: 'std/url', link: '/stdlib/url' },
+      { text: 'std/fetch', link: '/stdlib/fetch' },
+      { text: 'std/tls', link: '/stdlib/tls' },
+      { text: 'std/https', link: '/stdlib/https' },
+      { text: 'std/ws', link: '/stdlib/ws' },
+      { text: 'std/httpmw', link: '/stdlib/httpmw' },
+      { text: 'std/unix', link: '/stdlib/unix' },
     ]
   },
   {
@@ -167,6 +174,14 @@ const stdlibSidebar = [
       { text: 'std/args', link: '/stdlib/args' },
       { text: 'std/process', link: '/stdlib/process' },
       { text: 'std/signal', link: '/stdlib/signal' },
+      { text: 'std/term', link: '/stdlib/term' },
+      { text: 'std/keys', link: '/stdlib/keys' },
+      { text: 'std/ansi', link: '/stdlib/ansi' },
+      { text: 'std/pty', link: '/stdlib/pty' },
+      { text: 'std/sysinfo', link: '/stdlib/sysinfo' },
+      { text: 'std/environ', link: '/stdlib/environ' },
+      { text: 'std/os', link: '/stdlib/os' },
+      { text: 'std/dl', link: '/stdlib/dl' },
     ]
   },
   {
@@ -177,6 +192,7 @@ const stdlibSidebar = [
       { text: 'std/base64', link: '/stdlib/base64' },
       { text: 'std/hex', link: '/stdlib/hex' },
       { text: 'std/binary', link: '/stdlib/binary' },
+      { text: 'std/png', link: '/stdlib/png' },
     ]
   },
   {
@@ -198,6 +214,7 @@ const stdlibSidebar = [
       { text: 'std/event', link: '/stdlib/event' },
       { text: 'std/seal', link: '/stdlib/seal' },
       { text: 'std/shard', link: '/stdlib/shard' },
+      { text: 'std/select', link: '/stdlib/select' },
     ]
   },
   {
@@ -216,6 +233,7 @@ const stdlibSidebar = [
     items: [
       { text: 'std/math', link: '/stdlib/math' },
       { text: 'std/random', link: '/stdlib/random' },
+      { text: 'std/rng', link: '/stdlib/rng' },
     ]
   },
   {
@@ -229,6 +247,9 @@ const stdlibSidebar = [
       { text: 'std/log', link: '/stdlib/log' },
       { text: 'std/mem', link: '/stdlib/mem' },
       { text: 'std/foreign', link: '/stdlib/foreign' },
+      { text: 'std/cstr', link: '/stdlib/cstr' },
+      { text: 'std/pool', link: '/stdlib/pool' },
+      { text: 'std/smt', link: '/stdlib/smt' },
     ]
   },
   {
@@ -255,6 +276,9 @@ const stdlibSidebar = [
       { text: 'std/deflate', link: '/stdlib/deflate' },
       { text: 'std/inflate', link: '/stdlib/inflate' },
       { text: 'std/zip', link: '/stdlib/zip' },
+      { text: 'std/zstd', link: '/stdlib/zstd' },
+      { text: 'std/checksum', link: '/stdlib/checksum' },
+      { text: 'std/xxhash', link: '/stdlib/xxhash' },
     ]
   },
 ]

@@ -60,6 +60,8 @@ impl Uuid {
     }
 
     // Random UUID (version 4): 122 random bits.
+    //
+    // The bits come from the OS CSPRNG.
     fn v4(): Uuid {
         var b: [u8; 16] = [0 as u8; 16]
         unsafe {
@@ -76,6 +78,10 @@ impl Uuid {
     // 12-bit monotonic counter, then random bits. Lexicographic order of the text
     // form matches creation order, which is what makes v7 the better default for
     // database keys.
+    //
+    // Ids minted inside the same millisecond still sort in creation order. The counter
+    // is per process and not synchronized across threads: a racing thread can reuse a
+    // counter value, which costs ordering but not uniqueness.
     fn v7(): Uuid {
         var ms = epochMillis()
         // Counter exhausted inside this millisecond: waiting for the next tick is

@@ -85,11 +85,16 @@ pub struct Pbkdf2 {
 
 impl Pbkdf2 {
     // PBKDF2-HMAC-SHA256. The default choice for new password storage.
+    //
+    // Returns `dkLen` raw derived bytes. Errs on a non-positive iteration count or
+    // `dkLen`, and on a `dkLen` longer than (2^32-1) x hLen.
     fn sha256(password: &string, salt: &string, iterations: i64, dkLen: i64): Result<string> {
         return pbkdf2Core(password, salt, iterations, dkLen, 32, (k: &string, m: &string) => Hmac.sha256Bytes(k, m))
     }
 
     // PBKDF2-HMAC-SHA512.
+    //
+    // Returns `dkLen` raw derived bytes. Errs like `sha256`.
     fn sha512(password: &string, salt: &string, iterations: i64, dkLen: i64): Result<string> {
         return pbkdf2Core(password, salt, iterations, dkLen, 64, (k: &string, m: &string) => Hmac.sha512Bytes(k, m))
     }
@@ -97,6 +102,8 @@ impl Pbkdf2 {
     // PBKDF2-HMAC-SHA1. Present for interoperating with existing stores (WPA2,
     // older Django/OpenSSL formats) and because RFC 6070's test vectors are
     // specified on it. Do not choose it for new password storage.
+    //
+    // Returns `dkLen` raw derived bytes. Errs like `sha256`.
     fn sha1(password: &string, salt: &string, iterations: i64, dkLen: i64): Result<string> {
         return pbkdf2Core(password, salt, iterations, dkLen, 20, (k: &string, m: &string) => Hmac.sha1Bytes(k, m))
     }

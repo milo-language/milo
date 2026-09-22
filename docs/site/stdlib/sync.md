@@ -14,340 +14,6 @@ Every type here is a reference-counted handle. `.clone()` gives another task or 
 
 **Every atomic operation on every type below is sequentially consistent (`seq_cst`)**, including both the success and failure orderings of a `cas`. There is no ordering parameter and no acquire/release/relaxed form. `add`/`sub` wrap on overflow, unlike ordinary Milo arithmetic, which traps.
 
-## Types
-
-### Channel
-
-```milo
-struct Channel {
-    h: *u8,
-}
-```
-
-Bounded FIFO channel for streaming values between green tasks and `Promise.blocking` workers. Blocks on send when full, blocks on recv when empty.
-
-### WaitGroup
-
-```milo
-struct WaitGroup {
-    _p: *u8,
-}
-```
-
-Counting barrier — `add` before spawning, `done` from each task, `wait` for the counter to reach zero.
-
-### Once
-
-```milo
-struct Once {
-    _p: *u8,
-}
-```
-
-Run-exactly-once initialization guard. Correct under green tasks and `Promise.blocking` threads alike — a green waiter parks, an OS-thread waiter blocks on a condition variable, and the main thread with a live scheduler drives it.
-
-### AtomicI64
-
-```milo
-struct AtomicI64 {
-    _ptr: *u8,
-}
-```
-
-Lock-free signed 64-bit atomic integer.
-
-### AtomicI32
-
-```milo
-struct AtomicI32 {
-    _ptr: *u8,
-}
-```
-
-Lock-free signed 32-bit atomic integer.
-
-### AtomicU64
-
-```milo
-struct AtomicU64 {
-    _ptr: *u8,
-}
-```
-
-Lock-free unsigned 64-bit atomic integer. Rides the same instructions as `AtomicI64` — 64-bit atomics are bit-level operations with no notion of sign — so `add`/`sub` wrap through the full u64 range.
-
-### AtomicBool
-
-```milo
-struct AtomicBool {
-    _ptr: *u8,
-}
-```
-
-Lock-free atomic boolean.
-
-There is no `AtomicPtr`. A raw pointer is only dereferenceable inside `unsafe`, so an `AtomicPtr` would be `AtomicI64` plus a cast with no safety added — and Milo cannot state that the pointee outlives the load, so a safe-looking `AtomicPtr` would be a lifetime claim nothing checks. Share an index into a `Vec` or an arena `Handle` instead.
-
-## Channel Methods
-
-### Channel.new
-
-```milo
-fn Channel.new(capacity: i64): Result<Channel<T>>
-```
-
-Create a bounded channel with the given capacity.
-
-### ch.send
-
-```milo
-fn Channel.send(self: &Channel, val: T): Result<i32>
-```
-
-Send a value into the channel. Blocks if full.
-
-### ch.recv
-
-```milo
-fn Channel.recv(self: &Channel): Result<T>
-```
-
-Receive a value from the channel. Blocks if empty.
-
-### ch.trySend
-
-```milo
-fn Channel.trySend(self: &Channel, val: T): bool
-```
-
-Non-blocking send. Returns true if sent, false if full.
-
-### ch.tryRecv
-
-```milo
-fn Channel.tryRecv(self: &Channel): Option<T>
-```
-
-Non-blocking receive. Returns `Option.None` if empty.
-
-### ch.len
-
-```milo
-fn Channel.len(self: &Channel): i64
-```
-
-Current number of items in the channel.
-
-### ch.clone
-
-```milo
-fn Channel.clone(self: &Channel): Channel<T>
-```
-
-Give another owner (a producer task, a worker thread) its own handle. The queue is torn down when the last one drops.
-
-## WaitGroup Methods
-
-### WaitGroup.new
-
-```milo
-fn WaitGroup.new(): WaitGroup
-```
-
-Create a new wait group with a zero counter.
-
-### wg.add
-
-```milo
-fn add(self: &WaitGroup, n: i64): void
-```
-
-Add `n` to the counter — call before spawning the tasks it tracks.
-
-### wg.done
-
-```milo
-fn done(self: &WaitGroup): void
-```
-
-Decrement the counter by one — call from each task when it finishes.
-
-### wg.wait
-
-```milo
-fn wait(self: &WaitGroup): void
-```
-
-Block until the counter reaches zero.
-
-### wg.clone
-
-```milo
-fn clone(self: &WaitGroup): WaitGroup
-```
-
-Give a worker its own owner. `add`/`done`/`wait` take `&Self`, so most uses need no clone.
-
-## Once Methods
-
-### Once.new
-
-```milo
-fn Once.new(): Once
-```
-
-Create a guard whose initializer has not run yet.
-
-### o.run
-
-```milo
-fn run(self: &Once, f: () => void): void
-```
-
-Run `f` if nobody has yet; otherwise block until whoever did is finished. Returns only once the initializer has completed exactly once, process-wide, and every caller that returns has seen its writes.
-
-Re-entering `run` from inside its own initializer would wait for itself forever; it aborts with that message rather than hanging.
-
-### o.isDone
-
-```milo
-fn isDone(self: &Once): bool
-```
-
-True once the initializer has completed. Still false while it is running, so this is a progress hint, never a substitute for `run`.
-
-### o.clone
-
-```milo
-fn clone(self: &Once): Once
-```
-
-Give another owner its own handle. `run` takes `&Self`, so a module-level `Once` never needs a clone.
-
-## AtomicI64 Methods
-
-### AtomicI64.new
-
-```milo
-fn AtomicI64.new(v: i64): AtomicI64
-```
-
-Create an atomic integer with initial value.
-
-### a.load
-
-```milo
-fn load(self: &AtomicI64): i64
-```
-
-Atomic read.
-
-### a.store
-
-```milo
-fn store(self: &AtomicI64, v: i64): void
-```
-
-Atomic write.
-
-### a.add
-
-```milo
-fn add(self: &AtomicI64, v: i64): i64
-```
-
-Atomic add, wrapping. Returns old value.
-
-### a.sub
-
-```milo
-fn sub(self: &AtomicI64, v: i64): i64
-```
-
-Atomic subtract, wrapping. Returns old value.
-
-### a.swap
-
-```milo
-fn swap(self: &AtomicI64, v: i64): i64
-```
-
-Atomic swap. Returns old value.
-
-### a.cas
-
-```milo
-fn cas(self: &AtomicI64, expected: i64, desired: i64): i64
-```
-
-Compare-and-swap. Returns the value that was there — equal to `expected` exactly when the swap happened.
-
-### a.clone
-
-```milo
-fn clone(self: &AtomicI64): AtomicI64
-```
-
-Give another owner its own handle; the storage frees when the last one drops.
-
-## AtomicI32 Methods
-
-`AtomicI32` carries the same surface as `AtomicI64` at 32 bits: `AtomicI32.new(v: i32)`, `load`, `store`, `add`, `sub`, `swap`, `cas`, `clone`.
-
-## AtomicU64 Methods
-
-`AtomicU64` carries the same surface as `AtomicI64` over `u64`: `AtomicU64.new(v: u64)`, `load`, `store`, `add`, `sub`, `swap`, `cas`, `clone`.
-
-## AtomicBool Methods
-
-### AtomicBool.new
-
-```milo
-fn AtomicBool.new(v: bool): AtomicBool
-```
-
-Create an atomic boolean with initial value.
-
-### a.load
-
-```milo
-fn load(self: &AtomicBool): bool
-```
-
-Atomic read.
-
-### a.store
-
-```milo
-fn store(self: &AtomicBool, v: bool): void
-```
-
-Atomic write.
-
-### a.swap
-
-```milo
-fn swap(self: &AtomicBool, v: bool): bool
-```
-
-Atomic swap. Returns old value.
-
-### a.cas
-
-```milo
-fn cas(self: &AtomicBool, expected: bool, desired: bool): bool
-```
-
-Compare-and-swap. Returns the value that was there, which is how a caller claims a one-shot flag: `f.cas(false, true) == false`.
-
-### a.clone
-
-```milo
-fn clone(self: &AtomicBool): AtomicBool
-```
-
-Give another owner its own handle; the storage frees when the last one drops.
-
 ## Example: Lazy static
 
 A module-level `var` already runs a real initializer in dependency order before `main`, so an *eager* static needs no `Once` at all. Reach for `Once` when the work must be deferred past the start of `main` or is expensive and usually unwanted. The shape is a global plus a guard function, because a getter cannot hand back a `&T`:
@@ -395,3 +61,542 @@ fn main(): i32 {
     return 0
 }
 ```
+
+<!-- generated:api -->
+<!-- Do not edit between these markers: generated by scripts/gen-std-docs.ts from 'milo api --json'. Edit the doc comments in std/sync*.milo. -->
+
+## API reference
+
+### `AtomicBool`
+
+```milo
+pub struct AtomicBool
+```
+
+Lock-free atomic boolean. There is no `AtomicPtr`: a safe-looking one would be a
+lifetime claim nothing checks. Share a Vec index or an arena `Handle` instead.
+
+#### `AtomicBool.cas`
+
+```milo
+fn AtomicBool.cas(self: &AtomicBool, expected: bool, desired: bool): bool
+```
+
+Returns the value that was there — equal to `expected` exactly when the swap
+happened, which is how a caller claims a one-shot flag: `f.cas(false, true) == false`.
+
+#### `AtomicBool.clone`
+
+```milo
+fn AtomicBool.clone(self: &AtomicBool): AtomicBool
+```
+
+Share this atomic with another owner; freed when the last owner drops.
+
+#### `AtomicBool.load`
+
+```milo
+fn AtomicBool.load(self: &AtomicBool): bool
+```
+
+Atomic read.
+
+#### `AtomicBool.new`
+
+```milo
+fn AtomicBool.new(initial: bool): AtomicBool
+```
+
+An atomic holding `initial`.
+
+#### `AtomicBool.store`
+
+```milo
+fn AtomicBool.store(self: &AtomicBool, val: bool): void
+```
+
+Atomic write.
+
+#### `AtomicBool.swap`
+
+```milo
+fn AtomicBool.swap(self: &AtomicBool, val: bool): bool
+```
+
+Atomic swap. Returns the old value.
+
+### `AtomicI32`
+
+```milo
+pub struct AtomicI32
+```
+
+Lock-free signed 32-bit atomic integer.
+
+#### `AtomicI32.add`
+
+```milo
+fn AtomicI32.add(self: &AtomicI32, val: i32): i32
+```
+
+Returns the OLD value. Wraps on overflow.
+
+#### `AtomicI32.cas`
+
+```milo
+fn AtomicI32.cas(self: &AtomicI32, expected: i32, desired: i32): i32
+```
+
+Store `desired` only if the current value is `expected`. Returns the value that
+was there — equal to `expected` exactly when the swap happened.
+
+#### `AtomicI32.clone`
+
+```milo
+fn AtomicI32.clone(self: &AtomicI32): AtomicI32
+```
+
+Share this atomic with another owner; freed when the last owner drops.
+
+#### `AtomicI32.load`
+
+```milo
+fn AtomicI32.load(self: &AtomicI32): i32
+```
+
+Atomic read.
+
+#### `AtomicI32.new`
+
+```milo
+fn AtomicI32.new(initial: i32): AtomicI32
+```
+
+An atomic holding `initial`.
+
+#### `AtomicI32.store`
+
+```milo
+fn AtomicI32.store(self: &AtomicI32, val: i32): void
+```
+
+Atomic write.
+
+#### `AtomicI32.sub`
+
+```milo
+fn AtomicI32.sub(self: &AtomicI32, val: i32): i32
+```
+
+Returns the OLD value. Wraps on underflow.
+
+#### `AtomicI32.swap`
+
+```milo
+fn AtomicI32.swap(self: &AtomicI32, val: i32): i32
+```
+
+Atomic swap. Returns the old value.
+
+### `AtomicI64`
+
+```milo
+pub struct AtomicI64
+```
+
+Lock-free signed 64-bit atomic integer.
+
+#### `AtomicI64.add`
+
+```milo
+fn AtomicI64.add(self: &AtomicI64, val: i64): i64
+```
+
+Atomic add. Returns the OLD value. Wraps on overflow.
+
+#### `AtomicI64.cas`
+
+```milo
+fn AtomicI64.cas(self: &AtomicI64, expected: i64, desired: i64): i64
+```
+
+Store `desired` only if the current value is `expected`. Returns the value that
+was there — equal to `expected` exactly when the swap happened.
+
+#### `AtomicI64.clone`
+
+```milo
+fn AtomicI64.clone(self: &AtomicI64): AtomicI64
+```
+
+Share this atomic with another owner (e.g. a spawned task). Each clone must be
+dropped exactly once; the underlying storage is freed when the last owner drops.
+
+#### `AtomicI64.load`
+
+```milo
+fn AtomicI64.load(self: &AtomicI64): i64
+```
+
+Atomic read.
+
+#### `AtomicI64.new`
+
+```milo
+fn AtomicI64.new(initial: i64): AtomicI64
+```
+
+An atomic holding `initial`.
+
+#### `AtomicI64.store`
+
+```milo
+fn AtomicI64.store(self: &AtomicI64, val: i64): void
+```
+
+Atomic write.
+
+#### `AtomicI64.sub`
+
+```milo
+fn AtomicI64.sub(self: &AtomicI64, val: i64): i64
+```
+
+Atomic subtract. Returns the OLD value. Wraps on underflow.
+
+#### `AtomicI64.swap`
+
+```milo
+fn AtomicI64.swap(self: &AtomicI64, val: i64): i64
+```
+
+Atomic swap. Returns the old value.
+
+### `AtomicU64`
+
+```milo
+pub struct AtomicU64
+```
+
+Lock-free unsigned 64-bit atomic integer. Uses the same instructions as `AtomicI64`
+(64-bit atomics have no notion of sign), so `add`/`sub` wrap through the full u64
+range.
+
+#### `AtomicU64.add`
+
+```milo
+fn AtomicU64.add(self: &AtomicU64, val: u64): u64
+```
+
+Returns the OLD value. Wraps on overflow.
+
+#### `AtomicU64.cas`
+
+```milo
+fn AtomicU64.cas(self: &AtomicU64, expected: u64, desired: u64): u64
+```
+
+Store `desired` only if the current value is `expected`. Returns the value that
+was there — equal to `expected` exactly when the swap happened.
+
+#### `AtomicU64.clone`
+
+```milo
+fn AtomicU64.clone(self: &AtomicU64): AtomicU64
+```
+
+Share this atomic with another owner; freed when the last owner drops.
+
+#### `AtomicU64.load`
+
+```milo
+fn AtomicU64.load(self: &AtomicU64): u64
+```
+
+Atomic read.
+
+#### `AtomicU64.new`
+
+```milo
+fn AtomicU64.new(initial: u64): AtomicU64
+```
+
+An atomic holding `initial`.
+
+#### `AtomicU64.store`
+
+```milo
+fn AtomicU64.store(self: &AtomicU64, val: u64): void
+```
+
+Atomic write.
+
+#### `AtomicU64.sub`
+
+```milo
+fn AtomicU64.sub(self: &AtomicU64, val: u64): u64
+```
+
+Returns the OLD value. Wraps on underflow.
+
+#### `AtomicU64.swap`
+
+```milo
+fn AtomicU64.swap(self: &AtomicU64, val: u64): u64
+```
+
+Atomic swap. Returns the old value.
+
+### `Channel`
+
+```milo
+pub struct Channel<T>
+```
+
+Bounded FIFO channel for streaming values between green tasks and `Promise.blocking`
+workers. `send` blocks when full, `recv` when empty; `for v in ch` drains it until
+`close`.
+
+Fields: `h: ChannelHandle`.
+
+#### `Channel.clone`
+
+```milo
+fn Channel.clone(self: &Channel): Channel<T>
+```
+
+Share this channel with another owner (a spawned producer/consumer). Each clone
+must be dropped exactly once; the queue is torn down when the last owner drops,
+and any payload still queued at that point is destroyed (its `Drop` runs once).
+Values already received are the receiver's and are not touched.
+send/recv take &Self, so a handle only needs cloning when moved into a task while
+the parent still uses it.
+
+#### `Channel.close`
+
+```milo
+fn Channel.close(self: &Channel): void
+```
+
+Signal no more values will be sent. Pending items are still delivered.
+
+#### `Channel.len`
+
+```milo
+fn Channel.len(self: &Channel): i64
+```
+
+Number of values currently queued.
+
+#### `Channel.new`
+
+```milo
+fn Channel.new(capacity: i64): Result<Channel<T>>
+```
+
+A channel holding at most `capacity` values.
+
+#### `Channel.next`
+
+```milo
+fn Channel.next(self: &mut Channel): Option<T>
+```
+
+Iterator protocol — enables `for val in channel { ... }`
+Uses match, not let-else: std must stay within the subset milo-self parses
+(src-milo has no let-else yet), or self-host can't compile std.
+
+#### `Channel.rawPtr`
+
+```milo
+fn Channel.rawPtr(self: &Channel): *u8
+```
+
+Raw ChannelInner pointer, for std/select arm hooks (channelArm*).
+
+#### `Channel.recv`
+
+```milo
+fn Channel.recv(self: &Channel): Result<T>
+```
+
+Receive a value, blocking while the channel is empty.
+
+#### `Channel.send`
+
+```milo
+fn Channel.send(self: &Channel, val: T): Result<i32>
+```
+
+Send `val`, blocking while the channel is full.
+
+#### `Channel.tryRecv`
+
+```milo
+fn Channel.tryRecv(self: &Channel): Option<T>
+```
+
+Receive without blocking: None if the channel is empty.
+
+#### `Channel.trySend`
+
+```milo
+fn Channel.trySend(self: &Channel, val: T): bool
+```
+
+Send without blocking: false if the channel is full.
+
+### `ChannelHandle`
+
+```milo
+pub struct ChannelHandle
+```
+
+Non-generic reference-counted owner of a ChannelInner. Channel&lt;T> holds one of these;
+the handle's Drop is the fallback for a handle that was never wrapped, and the
+refcount/free logic lives here once, free of T.
+
+#### `ChannelHandle.retain`
+
+```milo
+fn ChannelHandle.retain(self: &ChannelHandle): ChannelHandle
+```
+
+### `ChannelInner`
+
+```milo
+pub struct ChannelInner
+```
+
+Bounded FIFO channel for safe message passing between threads.
+Channel is a reference-counted handle — `.clone()` to share it with another owner
+(a task/worker); the queue frees itself when the last owner drops. No manual destroy.
+Payloads still queued when the last owner drops are destroyed (their `Drop` runs,
+once each); payloads already received belong to the receiver and are untouched.
+
+  let ch = Channel&lt;i64>.new(16)!
+  let chW = ch.clone()
+  let p = Promise&lt;i64>.blocking(move (): i64 => {
+      chW.send(42)!
+      return 0
+  })
+  let val = ch.recv()!
+  p.await()!
+  // ch (and chW, dropped by the worker) free the queue automatically
+
+Fields:
+
+- `mtx: *u8`
+- `condNotEmpty: *u8`
+- `condNotFull: *u8`
+- `buf: *u8`
+- `capacity: i64`
+- `len: i64`
+- `head: i64`
+- `tail: i64`
+- `closed: i64`
+- `recvWaitHead: *u8`: intrusive lists of parked green tasks; nodes live on the parked task's stack: [0..8) task ptr, [8..16) next ptr. pthread waiters use the conds.
+- `sendWaitHead: *u8`
+- `refcount: i64`: inlined Arc-style refcount. `Channel<T>.drop` takes the last-owner decrement itself (it must destroy queued payloads, which needs T) and then zeroes its ChannelHandle so the handle's own Drop below is a no-op.
+
+### `Once`
+
+```milo
+pub struct Once
+```
+
+Run-exactly-once initialization guard, correct under green tasks and
+`Promise.blocking` threads alike: a green waiter parks, an OS-thread waiter blocks
+on a condition variable, and the main thread with a live scheduler drives it.
+
+#### `Once.clone`
+
+```milo
+fn Once.clone(self: &Once): Once
+```
+
+Share this Once with another owner (a worker task/thread); freed when the last
+owner drops. `run` takes &Self, so a module-level Once never needs a clone.
+
+#### `Once.isDone`
+
+```milo
+fn Once.isDone(self: &Once): bool
+```
+
+True once the initializer has completed. Still false while it is running, so
+this is a progress hint, never a substitute for `run`.
+
+#### `Once.new`
+
+```milo
+fn Once.new(): Once
+```
+
+A guard whose initializer has not run yet.
+
+#### `Once.run`
+
+```milo
+fn Once.run(self: &Once, f: () => void): void
+```
+
+Run `f` if nobody has yet, otherwise block until whoever did is finished.
+Returns only once the initializer has completed exactly once, process-wide.
+@synchronized: `f` is a critical section. The embedded mutex serializes it and the
+atomic state word publishes its writes, so globals mutated in here are not racing.
+
+Re-entering `run` from inside its own initializer would wait for itself forever,
+so it aborts with that message instead of hanging.
+
+### `WaitGroup`
+
+```milo
+pub struct WaitGroup
+```
+
+Counting barrier: `add` before spawning, `done` from each task, `wait` until the
+counter reaches zero. Works across green tasks and OS threads alike.
+
+#### `WaitGroup.add`
+
+```milo
+fn WaitGroup.add(self: &WaitGroup, n: i64): void
+```
+
+Add `n` to the counter. Call it before spawning the tasks it tracks.
+
+#### `WaitGroup.clone`
+
+```milo
+fn WaitGroup.clone(self: &WaitGroup): WaitGroup
+```
+
+Share this WaitGroup with another owner (e.g. a worker task); freed when the
+last owner drops. add/done/wait take &Self, so most uses need no clone.
+
+#### `WaitGroup.done`
+
+```milo
+fn WaitGroup.done(self: &WaitGroup): void
+```
+
+Decrement the counter by one. Call it from each task when it finishes.
+
+#### `WaitGroup.new`
+
+```milo
+fn WaitGroup.new(): WaitGroup
+```
+
+A wait group with a zero counter.
+
+#### `WaitGroup.wait`
+
+```milo
+fn WaitGroup.wait(self: &WaitGroup): void
+```
+
+Block until the counter reaches zero.
+
+<!-- /generated:api -->

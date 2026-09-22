@@ -3,7 +3,7 @@ system: tooling-api
 purpose: the compiler's machine-readable surfaces — what tooling reads instead of importing TypeScript
 key-files: src/api-search.ts, src/lang-info.ts, src/warnings.ts, src/main.ts (runCheck), tests/apiJson.test.ts, tests/langInfo.test.ts
 update-when: a JSON payload gains or loses a field, or a new machine-readable command lands
-last-verified: 2026-09-22 (lang --json schema 2 plus additive `commands`/`cliOptions`/`symbolDocs`/`primitiveTypeInfo`; schema 2: warning doc/fix/example; earlier: check --json schema 2 adds `fix`; earlier: warnings lose the error-by-default field)
+last-verified: 2026-09-22 (api --json: additive enum `variants` and field `doc`; lang --json schema 2 plus additive `commands`/`cliOptions`/`symbolDocs`/`primitiveTypeInfo`; schema 2: warning doc/fix/example; earlier: check --json schema 2 adds `fix`; earlier: warnings lose the error-by-default field)
 -->
 
 # Machine-readable compiler API
@@ -80,6 +80,13 @@ published.
 `HashMap<string, i64>` or `(&Request, i64) => Response` itself. `returns` is `"void"` when
 the signature has no return type. Struct `fields` mean a consumer never re-reads
 `std/*.milo` to answer "does this type have that field".
+
+A struct field carries `doc` (additive) when a comment block sits directly above it, or a
+`// note` trails it on the same line. An enum type carries `variants` (additive, still
+schema 1): `[{ name, payload?, value?, doc? }]` in declaration order, where `payload` is the text inside `Name(...)`, `value` is an explicit
+discriminant (`Close = 8`), and `doc` is the comment block directly above the variant. The
+stdlib pages' generated API reference ([scripts/gen-std-docs.ts](../scripts/gen-std-docs.ts))
+renders its variant lists from this.
 
 Works on any package, not just std: the same extractor backs `milo doc <file|dir>`.
 
@@ -181,7 +188,7 @@ broken suite look green. In `--json` mode nothing but the document reaches stdou
 
 | consumer | reads | why not import |
 |---|---|---|
-| `scripts/check-api-docs.ts` | `api --json`, `lang --json` | the question ("do these docs match the language") is one any package should be able to ask |
+| `scripts/gen-std-docs.ts` | `api --json`, `lang --json` | renders the API reference on every docs-site stdlib page; any package's docs could be built the same way |
 | `scripts/gen-tmlanguage.ts` | `lang --json` | an editor grammar is the canonical out-of-repo consumer; using the same door keeps it working |
 | editors / tree-sitter / highlighters | `lang --json` | cannot import TypeScript at all |
 | package tooling, doc sites | `api --json` | works on any package, not just std |
@@ -189,12 +196,12 @@ broken suite look green. In `--json` mode nothing but the document reaches stdou
 | CI dashboards, flake trackers | `test --json` | the ✓/✗ log lines were never a contract |
 | certification workflows | `prove --json`, `safety --json` | a proof verdict per obligation is the artifact, not a table |
 
-Three things still import the compiler on purpose:
+What still imports the compiler on purpose:
 
 - **The fuzzers** (`scripts/fuzz-*.ts`) drive `Lexer`/`Parser`/`TypeChecker` in-process
   because they run millions of mutants; a subprocess per mutant is a thousand times
   slower. `milo check --json` is the out-of-repo equivalent for anyone who needs it.
-- **`scripts/gen-std-docs.ts`** renders the compiler's own reference markdown. Moving the
-  renderer into a script would give the repo two markdown renderers to keep in step, which
-  is the drift this whole document exists to prevent. `milo api --module <m> --markdown`
-  and `milo doc <file|dir> -o <dir>` are the public equivalents.
+
+`scripts/gen-std-docs.ts` used to import `src/api-search.ts` to write `docs/std/`; it now
+reads `api --json` and writes the API region of each docs-site stdlib page, and
+`docs/std/` is gone.

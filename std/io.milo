@@ -30,6 +30,8 @@ from "std/event" import {
 
 // ── IoError ──
 
+// Why an I/O operation failed. The four named variants carry the path; `Other` carries
+// a message (from a path operation, the path plus the OS reason).
 pub enum IoError {
     NotFound(string),
     PermissionDenied(string),
@@ -301,6 +303,7 @@ impl Drop for File {
 }
 
 impl File {
+    // Open a file for reading.
     fn openRead(path: &string): Result<File, IoError> {
         let fd = open(path, 0)
         if fd < 0 {
@@ -311,6 +314,7 @@ impl File {
         })
     }
 
+    // Open a file for writing, creating it or truncating it (mode 0644).
     fn openWrite(path: &string): Result<File, IoError> {
         let fd = open(path, oWriteCreateTrunc(), 420)
         if fd < 0 {
@@ -321,6 +325,7 @@ impl File {
         })
     }
 
+    // Open a file for appending, creating it if missing (mode 0644).
     fn openAppend(path: &string): Result<File, IoError> {
         let fd = open(path, oWriteCreateAppend(), 420)
         if fd < 0 {
@@ -331,6 +336,7 @@ impl File {
         })
     }
 
+    // Size of the open file in bytes. The read position is left where it was.
     fn size(self: &Self): i64 {
         let cur = lseek(self.fd, 0, 1)
         let size = lseek(self.fd, 0, 2)

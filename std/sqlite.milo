@@ -59,12 +59,16 @@ pub extern fn sqlite3_changes(db: *u8): i32
 
 pub extern fn sqlite3_last_insert_rowid(db: *u8): i64
 
+// An open SQLite3 connection. Close it with `dbClose`; nothing closes it on drop.
+//
 // Both handles own what sqlite handed back, so the pointer fields make them
 // move-tracked: a second copy would `close`/`finalize` the same object again.
 pub struct Database {
     _handle: *u8,
 }
 
+// A prepared SQL statement. Free it with `dbFinalize` when done; nothing finalizes it
+// on drop.
 pub struct Statement {
     _handle: *u8,
     _db: *u8,
@@ -86,6 +90,7 @@ impl Statement {
     }
 }
 
+// Open or create the database at `path`. `":memory:"` opens an in-memory database.
 pub fn dbOpen(path: string): Result<Database> {
     unsafe {
         var handle: *u8 = 0 as *u8
@@ -100,10 +105,13 @@ pub fn dbOpen(path: string): Result<Database> {
     }
 }
 
+// Close the connection. Nothing closes it on drop.
 pub fn dbClose(db: &Database): void {
     sqlite3_close(db._handle)
 }
 
+// Execute SQL that returns no rows (CREATE, INSERT, UPDATE, DELETE). Errs with sqlite's
+// message.
 pub fn dbExec(db: &Database, sql: string): Result<i32> {
     unsafe {
         let rc = sqlite3_exec(db._handle, sql, 0 as *u8, 0 as *u8, 0 as *u8)
@@ -115,6 +123,7 @@ pub fn dbExec(db: &Database, sql: string): Result<i32> {
     }
 }
 
+// Prepare a query for row-by-row iteration with `dbStep`.
 pub fn dbQuery(db: &Database, sql: string): Result<Statement> {
     unsafe {
         var handle: *u8 = 0 as *u8
@@ -127,22 +136,27 @@ pub fn dbQuery(db: &Database, sql: string): Result<Statement> {
     }
 }
 
+// Advance to the next row: true if a row is available, false when done.
 pub fn dbStep(stmt: &Statement): bool {
     return sqlite3_step(stmt._handle) == 100
 }
 
+// The column `col` (0-based) of the current row as an i32.
 pub fn dbColumnInt(stmt: &Statement, col: i32): i32 {
     return sqlite3_column_int(stmt._handle, col)
 }
 
+// The column `col` (0-based) of the current row as an i64.
 pub fn dbColumnInt64(stmt: &Statement, col: i32): i64 {
     return sqlite3_column_int64(stmt._handle, col)
 }
 
+// The column `col` (0-based) of the current row as an f64.
 pub fn dbColumnFloat(stmt: &Statement, col: i32): f64 {
     return sqlite3_column_double(stmt._handle, col)
 }
 
+// The column `col` (0-based) of the current row as a string.
 pub fn dbColumnText(stmt: &Statement, col: i32): string {
     unsafe {
         let ptr = sqlite3_column_text(stmt._handle, col)
@@ -153,18 +167,22 @@ pub fn dbColumnText(stmt: &Statement, col: i32): string {
     }
 }
 
+// Number of columns in the result set.
 pub fn dbColumnCount(stmt: &Statement): i32 {
     return sqlite3_column_count(stmt._handle)
 }
 
+// Whether column `col` (0-based) of the current row is NULL.
 pub fn dbColumnIsNull(stmt: &Statement, col: i32): bool {
     return sqlite3_column_type(stmt._handle, col) == 5
 }
 
+// Free the prepared statement.
 pub fn dbFinalize(stmt: &Statement): void {
     sqlite3_finalize(stmt._handle)
 }
 
+// Bind an i32 to parameter `idx`. Parameter indices are 1-based.
 pub fn dbBindInt(stmt: &Statement, idx: i32, val: i32): Result<i32> {
     let rc = sqlite3_bind_int(stmt._handle, idx, val)
     if rc != 0 {
@@ -173,6 +191,7 @@ pub fn dbBindInt(stmt: &Statement, idx: i32, val: i32): Result<i32> {
     return Result.Ok(0)
 }
 
+// Bind an i64 to parameter `idx` (1-based).
 pub fn dbBindInt64(stmt: &Statement, idx: i32, val: i64): Result<i32> {
     let rc = sqlite3_bind_int64(stmt._handle, idx, val)
     if rc != 0 {
@@ -181,6 +200,7 @@ pub fn dbBindInt64(stmt: &Statement, idx: i32, val: i64): Result<i32> {
     return Result.Ok(0)
 }
 
+// Bind a string to parameter `idx` (1-based).
 pub fn dbBindText(stmt: &Statement, idx: i32, val: string): Result<i32> {
     unsafe {
         let rc = sqlite3_bind_text(stmt._handle, idx, val, 0 - 1, (0 - 1) as *u8)
@@ -191,6 +211,7 @@ pub fn dbBindText(stmt: &Statement, idx: i32, val: string): Result<i32> {
     }
 }
 
+// Bind NULL to parameter `idx` (1-based).
 pub fn dbBindNull(stmt: &Statement, idx: i32): Result<i32> {
     let rc = sqlite3_bind_null(stmt._handle, idx)
     if rc != 0 {
@@ -199,10 +220,12 @@ pub fn dbBindNull(stmt: &Statement, idx: i32): Result<i32> {
     return Result.Ok(0)
 }
 
+// Reset the statement so it can run again with new bindings.
 pub fn dbReset(stmt: &Statement): void {
     sqlite3_reset(stmt._handle)
 }
 
+// The rowid of the most recent successful INSERT on this connection.
 pub fn dbLastInsertId(db: &Database): i64 {
     return sqlite3_last_insert_rowid(db._handle)
 }

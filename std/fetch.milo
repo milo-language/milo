@@ -69,6 +69,8 @@ impl Drop for TlsStream {
 }
 
 impl TlsStream {
+    // Open a TLS connection to an IPv4 address. `hostname` is used for SNI and
+    // certificate verification.
     fn connect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetError> {
         return TlsStream.connectWithCA(ip, port, hostname, "")
     }
@@ -168,6 +170,7 @@ impl TlsStream {
         }
     }
 
+    // Send `data` over the TLS connection. Returns the number of bytes sent.
     fn send(self: &Self, data: &string): Result<i64, NetError> {
         unsafe {
             let n = sslWriteFd(self.ssl as *u8, self.fd, data, data.len as i32)
@@ -578,6 +581,9 @@ pub fn formEncode(fields: &Vec<FormField>): string {
 // ── FetchOptions ──
 
 // HTTP request configuration: method, headers, and body.
+//
+// `headers` is a CRLF-joined block ("Accept: text/plain\r\nX-Id: 7") with no trailing
+// CRLF; leave it empty for none.
 pub struct FetchOptions {
     method: string,
     headers: string,
@@ -666,6 +672,8 @@ fn doFetch(url: string, opts: FetchOptions): Result<FetchResponse, NetError> {
 
 // ── Public API ──
 
+// HTTP GET. Resolves the host, uses TLS for an https URL, and follows 301/302/307/308
+// redirects.
 pub fn fetch(url: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
         method: "GET", headers: "", body: ""
@@ -673,10 +681,13 @@ pub fn fetch(url: &string): Result<FetchResponse, NetError> {
     return doFetch(url.clone(), opts)
 }
 
+// An HTTP request with full control over method, headers and body. Redirects are
+// followed as for `fetch`; a 301 or 302 turns the retry into a GET with no body.
 pub fn fetchWith(url: &string, opts: FetchOptions): Result<FetchResponse, NetError> {
     return doFetch(url.clone(), opts)
 }
 
+// HTTP POST of `body` with `Content-Type: application/json`.
 pub fn fetchPost(url: &string, body: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
         method: "POST",
@@ -698,6 +709,7 @@ pub fn fetchForm(url: &string, body: &string): Result<FetchResponse, NetError> {
     return doFetch(url.clone(), opts)
 }
 
+// HTTP PUT of `body` with `Content-Type: application/json`.
 pub fn fetchPut(url: &string, body: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
         method: "PUT",
@@ -707,6 +719,7 @@ pub fn fetchPut(url: &string, body: &string): Result<FetchResponse, NetError> {
     return doFetch(url.clone(), opts)
 }
 
+// HTTP DELETE.
 pub fn fetchDelete(url: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
         method: "DELETE", headers: "", body: ""
@@ -714,6 +727,7 @@ pub fn fetchDelete(url: &string): Result<FetchResponse, NetError> {
     return doFetch(url.clone(), opts)
 }
 
+// HTTP PATCH of `body` with `Content-Type: application/json`.
 pub fn fetchPatch(url: &string, body: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
         method: "PATCH",

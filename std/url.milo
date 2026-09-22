@@ -1,5 +1,6 @@
 // std/url — URL parsing into components
 
+// A parsed URL, split into its components. `raw` keeps the original string.
 pub struct Url {
     scheme: string,
     host: string,
@@ -192,12 +193,15 @@ fn urlString(u: &Url): string {
 
 // Url instance/static API — Url.parse(s), u.queryGet(key), u.toString().
 impl Url {
+    // Parse a URL string into its components.
     fn parse(s: string): Result<Url> {
         return urlParse(s)
     }
+    // The value of query parameter `key`, or None if the query has no such key.
     fn queryGet(self: &Self, key: &string): Option<string> {
         return urlQueryGet(self, key)
     }
+    // Reassemble the URL from its components.
     fn toString(self: &Self): string {
         return urlString(self)
     }

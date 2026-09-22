@@ -3,7 +3,7 @@
 // Usage: fmt2("hello {}, you are {} years old", name, age.toString())
 // Each {} is replaced left-to-right with the corresponding argument.
 
-// Replace the first {} with val.
+// Replace the first {} with a.
 pub fn fmt1(template: &string, a: &string): string {
     var result = ""
     var used = false

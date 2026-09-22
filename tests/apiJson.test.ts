@@ -2,7 +2,7 @@
 // that let tooling read the compiler without importing its TypeScript.
 //
 // The point is decoupling: docs generators, package tooling, editors and agents should
-// consume a documented payload, not `import { stdDocsByModule } from "../src/api-search"`,
+// consume a documented payload, not `import { ... } from "../src/api-search"`,
 // which only code inside this repo can do — and which pins the whole tooling ecosystem to
 // the compiler staying written in TypeScript.
 import { test, expect } from "bun:test";
@@ -40,6 +40,21 @@ test("api --json describes a module: signatures, split params, struct fields", (
   const json = doc.entries.find((e: any) => e.kind === "type" && e.name === "Json");
   expect(json.fields.map((f: any) => f.name)).toContain("source");
   expect(json.fields.map((f: any) => f.name)).not.toContain("raw");
+
+  // Enum variants too, with the comment above each one, so the site's generated reference
+  // can list them without re-reading std/*.milo.
+  const err = doc.entries.find((e: any) => e.kind === "type" && e.name === "JsonError");
+  expect(err.variants.map((v: any) => v.name)).toEqual(["Syntax", "Missing", "Mismatch"]);
+  expect(err.variants[0].payload).toBe("string");
+  expect(err.variants[0].doc).toContain("not JSON");
+  const val = doc.entries.find((e: any) => e.kind === "type" && e.name === "JsonVal");
+  expect(val.variants.find((v: any) => v.name === "JNull").payload).toBeUndefined();
+});
+
+test("api --json carries an explicit enum discriminant as the variant's value", () => {
+  const doc = JSON.parse(milo(["api", "--module", "std/ws", "--json"]).out);
+  const op = doc.entries.find((e: any) => e.kind === "type" && e.name === "WsOpcode");
+  expect(op.variants.find((v: any) => v.name === "Close")).toEqual({ name: "Close", value: "8" });
 });
 
 test("api --json with no query covers every module, including platform arms", () => {

@@ -19,8 +19,13 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | Module | What it provides |
 |--------|-----------------|
 | [`std/net`](net) | TCP, DNS |
-| [`std/fetch`](net#fetch) | HTTP client: `fetch` with TLS |
+| [`std/fetch`](fetch) | HTTP client: `fetch`, `fetchWith`, redirects, and the TLS client socket `TlsStream` |
+| [`std/tls`](tls) | TLS server transport: `TlsListener.bind`, `accept` |
+| [`std/https`](https) | HTTPS server: `serveTls`, `serveRouterTls` |
+| [`std/ws`](ws) | WebSocket client and server: `wsAccept`, `wsConnect`, `WsConn` |
+| [`std/unix`](unix) | Unix-domain sockets: `UnixListener`, `UnixStream` |
 | [`std/http`](http) | HTTP server with Hono-style router, context, middleware |
+| [`std/httpmw`](httpmw) | Optional HTTP middleware: `gzip`, `verifyBearer` |
 | [`std/html`](html) | HTML escaping — `Html.escapeText`, `Html.escapeAttr`, `Html.isSafeUrl` |
 | [`std/mime`](mime) | Media types by extension — `Mime.fromPath`, `Mime.contentType` |
 | [`std/multipart`](multipart) | `multipart/form-data` parsing — `Multipart.parse`, `Part.safeFilename` |
@@ -41,6 +46,14 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/args`](args) | Raw CLI arguments — `args()`, `getFlag`, `hasFlag` |
 | [`std/process`](process) | Command execution, `Process.spawn`/`.wait()`/`.signal()`, `run`, `capture` |
 | [`std/signal`](signal) | POSIX signal handling — `onSignal`, `ignoreSignal` |
+| [`std/term`](term) | Terminal raw mode and size: `enableRawMode`, `terminalSize` |
+| [`std/keys`](keys) | Decode terminal input bytes into keys: `decodeKey`, `KeyCode` |
+| [`std/ansi`](ansi) | Cursor, screen and 256/24-bit color escapes: `Ansi.cursorTo`, `Ansi.fg256` |
+| [`std/pty`](pty) | Pseudoterminals: `Pty.open`, `openAndSpawn` |
+| [`std/sysinfo`](sysinfo) | Host and process info: `hostname`, `cpuCount`, `totalMem`, `cwd` |
+| [`std/environ`](environ) | The whole environment: `envVars` |
+| [`std/os`](os) | Typed libc bindings the rest of std is built on |
+| [`std/dl`](dl) | Load shared libraries at run time: `dlOpen`, `Lib.sym` |
 
 ## Data Formats
 
@@ -50,6 +63,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/base64`](base64) | Base64 encode/decode — `Base64.encode`, `Base64.decode` |
 | [`std/hex`](hex) | Hex encode/decode — `Hex.encode`, `Hex.decode` |
 | [`std/binary`](binary) | Fixed-width int/float codecs — `Bytes.readU32Le`, `Bytes.writeI16Be`, both byte orders |
+| [`std/png`](png) | PNG encode/decode: `Png.encode`, `Png.decode` |
 
 ## Date, Time & IDs
 
@@ -67,6 +81,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/runtime`](runtime) | `Task.spawn`, `Promise` / `Promise.blocking`, green scheduler |
 | [`std/event`](event) | kqueue/epoll/IOCP readiness polling — the layer `std/runtime` drives |
 | [`std/sync`](sync) | `Channel`, `WaitGroup`, `AtomicI64`, `AtomicBool` — all method-based |
+| [`std/select`](select) | Wait on the first ready channel, fd or timeout: `Select` |
 | [`std/shard`](shard) | `parallelMap`, `parallelScanStr` — divide a buffer's ownership across cores, no copy, nothing shared |
 
 ## Database & Network
@@ -84,7 +99,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/seal`](seal) | `Sealed` — freeze a string so stored `Span`s can never be invalidated |
 | [`std/fmt`](fmt) | Template formatting (`fmt1`–`fmt4`), `padLeft`/`padRight`, `join` |
 | [`std/strconv`](strconv) | `parseInt`, `parseFloat`, `parseBool`, radix conversions, `formatFloat`, `quoteString`/`unquoteString` |
-| [`std/unicode`](unicode) | Character classification — `asciiIsDigit`, `asciiIsAlpha`, `asciiToLower` |
+| [`std/unicode`](unicode) | UTF-8 decoding, code points, display width: `codepoints`, `displayWidth` |
 
 ## Math & Random
 
@@ -92,6 +107,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 |--------|-----------------|
 | [`std/math`](math) | `Math.abs`, `Math.min`, `Math.max`, `Math.pow`, `Math.sqrt`, `Math.log`, trig |
 | [`std/random`](random) | `Random.int`, `Random.float`, `Random.range`, `Random.shuffleI64` |
+| [`std/rng`](rng) | Seedable, reproducible generator: `Rng.new(seed)` |
 
 ## Utilities
 
@@ -103,6 +119,11 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/testing`](testing) | `assert`, `assertEqual`, `assertStrEqual` |
 | [`std/log`](log) | Leveled structured logging — `Log`, `Logger`, `LogLevel`, `LogFormat` |
 | [`std/mem`](mem) | `mmapAnon`, `mmapFile`, `Bump` bump allocator |
+| [`std/pool`](pool) | Fixed-size block pool allocator: `Pool` |
+| [`std/foreign`](foreign) | Borrow and adopt foreign memory: `withRaw`, `adopt` |
+| [`std/cstr`](cstr) | NUL-terminated C string view: `CStr.wrap` |
+| [`std/smt`](smt) | The QF_LIA decision procedure behind `milo prove` |
+| [`std/prelude`](prelude) | Auto-imported: `Error`, `Unit`, `ErrorContext` |
 
 ## Cryptography
 
@@ -131,3 +152,6 @@ Pure-Milo DEFLATE (RFC 1951) and the gzip / zlib / zip containers built on it.
 | [`std/deflate`](deflate) | Compress — `Deflate.raw`, `Deflate.gzip`, `Deflate.zlib` |
 | [`std/inflate`](inflate) | Decompress — `Inflate.raw`, `Inflate.gzip`, `Inflate.zlib` |
 | [`std/zip`](zip) | Read ZIP archives — `Zip.read` (`.zip`/`.jar`/`.epub`/`.docx`) |
+| [`std/zstd`](zstd) | Zstandard: `Zstd.compress`, `Zstd.decompress` |
+| [`std/checksum`](checksum) | CRC-32 and Adler-32: `Checksum.crc32` |
+| [`std/xxhash`](xxhash) | XXH64: `Xxhash.hash64` |

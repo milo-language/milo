@@ -91,11 +91,14 @@ fn waitpidGreen(pid: i32, statusBuf: &mut [u8; 4]): i32 {
     return -1
 }
 
+// A child started by `Process.spawn`. `wait` for its exit status.
 pub struct Process {
     pid: i32,
 }
 
 impl Process {
+    // Start the program at `path` in the background, with no arguments and no shell.
+    // For arguments, a working directory or redirection, use `Command`.
     fn spawn(path: &string): Result<Process> {
         let pid = fork()
         if pid < 0 {
@@ -122,6 +125,7 @@ impl Process {
         return Result.Ok(raw)
     }
 
+    // Send signal `sig` to the child. 0 on success.
     fn signal(self: &Self, sig: i32): Result<i32> {
         let r = kill(self.pid, sig)
         if r < 0 {
@@ -279,6 +283,9 @@ impl Child {
 //
 // Three of these are direction-specific and a spawn that mixes them up is a hard error
 // naming the stream, never a stream silently left on the parent's terminal.
+//
+// Reading a stream that is not a pipe is a contract violation: `writeStdin`,
+// `readStdout` and `stdout()` require their fd, checked in debug builds.
 pub enum Stdio {
     // A pipe the parent holds the other end of: Child.writeStdin / stdout() / stderr().
     Pipe,
@@ -305,6 +312,12 @@ struct EnvChange {
     remove: bool,
 }
 
+// Builds a child process: program, arguments, working directory, environment, and where
+// each standard stream goes. Each method takes the builder and hands it back, so calls
+// chain; `spawn` borrows, so one Command can start several children.
+//
+// The default is stdin and stdout on pipes with stderr merged into stdout. When stderr
+// is not merged, drain both streams, or the child can deadlock filling an unread pipe.
 pub struct Command {
     program: string,
     argv: Vec<string>,
@@ -388,18 +401,21 @@ impl Command {
         return c
     }
 
+    // Where the child's stdin comes from. `Pipe` by default.
     fn stdin(self: Command, mode: Stdio): Command {
         var c = self
         c.inMode = mode
         return c
     }
 
+    // Where the child's stdout goes. `Pipe` by default.
     fn stdout(self: Command, mode: Stdio): Command {
         var c = self
         c.outMode = mode
         return c
     }
 
+    // Where the child's stderr goes. `Merge` (into stdout) by default.
     fn stderr(self: Command, mode: Stdio): Command {
         var c = self
         c.errMode = mode
@@ -782,6 +798,8 @@ pub fn freeArgv(argv: *u8, argc: i64): void {
     }
 }
 
+// Run `cmd` through the shell and return its stdout and stderr, merged. Errs if the
+// command exits non-zero.
 pub fn capture(cmd: &string): Result<string> {
     // Process-unique: a fixed path here let concurrent callers (e.g. milo-self
     // builds under the sweep harness) truncate/read each other's capture file

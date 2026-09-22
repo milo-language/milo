@@ -107,18 +107,27 @@ pub struct Path {
 }
 
 impl Path {
+    // File extension including the dot, or "" if there is none:
+    // `Path.ext("archive.tar.gz")` is ".gz".
     fn ext(path: &string): string {
         return pathExt(path)
     }
+    // Final component of the path: `Path.basename("/home/user/file.txt")` is
+    // "file.txt".
     fn basename(path: &string): string {
         return pathBasename(path)
     }
+    // Directory portion of the path: `Path.dirname("/home/user/file.txt")` is
+    // "/home/user".
     fn dirname(path: &string): string {
         return pathDirname(path)
     }
+    // Join two segments with a single "/": `Path.join("/home/user", "docs")` is
+    // "/home/user/docs".
     fn join(a: &string, b: &string): string {
         return pathJoin(a, b)
     }
+    // File name without its extension: `Path.stem("report.pdf")` is "report".
     fn stem(path: &string): string {
         return pathStem(path)
     }

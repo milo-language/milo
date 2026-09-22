@@ -158,7 +158,7 @@ Before you add a claim about the code to any doc, ask which of these it is:
 |---|---|---|
 | a count | `<!-- stat:<name> -->N<!-- /stat -->` marker | `scripts/gen-stats.ts`, gated by `tests/docStats.test.ts` |
 | a list of files | project it from the files' own headers | `scripts/gen-src-doc.ts`, `scripts/gen-scripts-doc.ts` |
-| an API signature | generate from doc-comments, or gate against the real API | `scripts/gen-std-docs.ts`, `scripts/check-api-docs.ts` |
+| an API signature | generate it from the doc-comments into the page's `generated:api` region | `scripts/gen-std-docs.ts`, gated by `tests/stdDocs.test.ts` |
 | a measured number | one source file, rendered into every place it appears | `benchmarks/results.json` → `scripts/gen-benchmarks.ts` |
 | a code snippet | make it compile in the doc-test harness | `tests/docs.test.ts` (```` ```milo ```` fences) |
 | a keyword/token list | derive it from `src/tokens.ts` | `scripts/gen-tmlanguage.ts`, `tests/grammar.test.ts` |

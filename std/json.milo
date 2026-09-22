@@ -108,6 +108,8 @@ fn jsonNodeKeyStart(n: &JsonNode): i64 {
     return n.b >> 32
 }
 
+// A parsed document: one flat pool of nodes over the original `source`, plus the index
+// side-tables the accessors walk. Treat the fields as internal and use the accessors.
 pub struct Json {
     source: string,
     nodes: Vec<JsonNode>,
@@ -413,6 +415,9 @@ impl Json {
 
     // ── Object field accessors ──
 
+    // The value of object key `key` as its own `Json`, or None if this is not an object
+    // or has no such key. Deep-clones the subtree on every call; for hot navigation use
+    // the cursor API (`curRoot`, `curField`, ...).
     fn get(self: &Self, key: &string): Option<Json> {
         let node = self.nodes[self.root]
         if node.kind != 5 {
@@ -427,6 +432,7 @@ impl Json {
         return Option.None
     }
 
+    // The string value of object key `key`, or None if absent or not a string.
     fn str(self: &Self, key: &string): Option<string> {
         let node = self.nodes[self.root]
         if node.kind != 5 {
@@ -444,6 +450,9 @@ impl Json {
         return Option.None
     }
 
+    // The integer value of object key `key`, or None if absent or not an integer. Only
+    // a literal that is an integer and fits i64 answers Some: `1.5`, `1e3` and
+    // out-of-range values are None, never a truncation.
     fn i64(self: &Self, key: &string): Option<i64> {
         let node = self.nodes[self.root]
         if node.kind != 5 {
@@ -461,6 +470,8 @@ impl Json {
         return Option.None
     }
 
+    // The numeric value of object key `key` as a float, or None if absent or not a
+    // number.
     fn f64(self: &Self, key: &string): Option<f64> {
         let node = self.nodes[self.root]
         if node.kind != 5 {
@@ -478,6 +489,7 @@ impl Json {
         return Option.None
     }
 
+    // The boolean value of object key `key`, or None if absent or not a boolean.
     fn bool(self: &Self, key: &string): Option<bool> {
         let node = self.nodes[self.root]
         if node.kind != 5 {
@@ -497,6 +509,8 @@ impl Json {
 
     // ── Array access ──
 
+    // Element `index` of an array as its own `Json`, or None if this is not an array or
+    // the index is out of range. Deep-clones like `get`.
     fn at(self: &Self, index: i64): Option<Json> {
         let node = self.nodes[self.root]
         if node.kind != 4 || index < 0 || index >= jsonNodeChildCount(node) {
@@ -663,6 +677,7 @@ impl Json {
 
     // ── Bare value extraction ──
 
+    // This node as a string, or None if it is not one.
     fn asStr(self: &Self): Option<string> {
         let node = self.nodes[self.root]
         if node.kind == 3 {
@@ -671,6 +686,8 @@ impl Json {
         return Option.None
     }
 
+    // This node as an integer, or None if it is not one. Fractional, exponent and
+    // out-of-range literals are None, as for `i64`.
     fn asI64(self: &Self): Option<i64> {
         let node = self.nodes[self.root]
         if node.kind == 2 {
@@ -679,6 +696,7 @@ impl Json {
         return Option.None
     }
 
+    // This node as a float, or None if it is not a number.
     fn asF64(self: &Self): Option<f64> {
         let node = self.nodes[self.root]
         if node.kind == 2 {
@@ -687,6 +705,7 @@ impl Json {
         return Option.None
     }
 
+    // This node as a boolean, or None if it is not one.
     fn asBool(self: &Self): Option<bool> {
         let node = self.nodes[self.root]
         if node.kind == 1 {
@@ -716,10 +735,12 @@ impl Json {
         return self.nodes[self.root].kind == 5
     }
 
+    // Number of elements of an array or members of an object.
     fn len(self: &Self): i64 {
         return jsonNodeChildCount(self.nodes[self.root])
     }
 
+    // The raw JSON text of this node.
     fn rawStr(self: &Self): string {
         return jsonNodeRawStr(self, self.root)
     }
@@ -845,6 +866,7 @@ impl Json {
         return jsonCurPack(self._docId, self.childIdx[jsonNodeChildStart(node) + index])
     }
 
+    // Every key of an object, in document order.
     fn keys(self: &Self): Vec<string> {
         var result: Vec<string> = Vec.new()
         let root = self.curRoot()

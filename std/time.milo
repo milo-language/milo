@@ -29,6 +29,7 @@ fn readI64FromBuf(buf: &[u8; 16], off: i64): i64 {
 
 // ── Instant — a point in time ──
 
+// A point in time read from the wall clock by `now()`.
 pub struct Instant {
     sec: i64,
     usec: i64,
@@ -161,26 +162,32 @@ impl Duration {
 
     // ── accessors, truncating toward zero ──
 
+    // Whole nanoseconds.
     fn toNanos(self: &Self): i64 {
         return self._nanos
     }
 
+    // Whole microseconds, truncated toward zero.
     fn toMicros(self: &Self): i64 {
         return self._nanos / nsPerUs()
     }
 
+    // Whole milliseconds, truncated toward zero.
     fn toMillis(self: &Self): i64 {
         return self._nanos / nsPerMs()
     }
 
+    // Whole seconds, truncated toward zero.
     fn toSecs(self: &Self): i64 {
         return self._nanos / nsPerSec()
     }
 
+    // Whole minutes, truncated toward zero.
     fn toMins(self: &Self): i64 {
         return self._nanos / nsPerMin()
     }
 
+    // Whole hours, truncated toward zero.
     fn toHours(self: &Self): i64 {
         return self._nanos / nsPerHour()
     }

@@ -281,6 +281,9 @@ pub fn channelUnarmSend(ptr: *u8, node: *u8): void {
     }
 }
 
+// Bounded FIFO channel for streaming values between green tasks and `Promise.blocking`
+// workers. `send` blocks when full, `recv` when empty; `for v in ch` drains it until
+// `close`.
 pub struct Channel<T> {
     h: ChannelHandle,
 }
@@ -297,6 +300,7 @@ impl Sync for Channel<T> {
 }
 
 impl Channel<T> {
+    // A channel holding at most `capacity` values.
     fn new(capacity: i64): Result<Channel<T>>
     requires
     capacity > 0
@@ -355,6 +359,7 @@ impl Channel<T> {
         }
     }
 
+    // Send `val`, blocking while the channel is full.
     fn send(self: &Self, val: T): Result<i32> {
         var v: T = val
         unsafe {
@@ -405,6 +410,7 @@ impl Channel<T> {
         }
     }
 
+    // Receive a value, blocking while the channel is empty.
     fn recv(self: &Self): Result<T> {
         unsafe {
             var val: T = zeroed<T>()
@@ -447,6 +453,7 @@ impl Channel<T> {
         }
     }
 
+    // Send without blocking: false if the channel is full.
     fn trySend(self: &Self, val: T): bool {
         var v: T = val
         unsafe {
@@ -473,6 +480,7 @@ impl Channel<T> {
         }
     }
 
+    // Receive without blocking: None if the channel is empty.
     fn tryRecv(self: &Self): Option<T> {
         unsafe {
             var val: T = zeroed<T>()
@@ -498,6 +506,7 @@ impl Channel<T> {
         }
     }
 
+    // Number of values currently queued.
     fn len(self: &Self): i64 {
         unsafe {
             let inner = self.h._ptr as *ChannelInner
@@ -615,6 +624,7 @@ impl Drop for Channel<T> {
 
 // ── AtomicI64 ──
 
+// Lock-free signed 64-bit atomic integer.
 pub struct AtomicI64 {
     _ptr: *u8,
 }
@@ -633,6 +643,7 @@ impl Sync for AtomicI64 {
 // into the same allocation as the payload (Arc-style) so a clone/drop is one atomic
 // op and one allocation — never a separate refcount box.
 impl AtomicI64 {
+    // An atomic holding `initial`.
     fn new(initial: i64): AtomicI64 {
         unsafe {
             let p = malloc(16)
@@ -651,22 +662,27 @@ impl AtomicI64 {
         }
     }
 
+    // Atomic read.
     fn load(self: &Self): i64 {
         return _atomicLoadI64(self._ptr)
     }
 
+    // Atomic write.
     fn store(self: &Self, val: i64): void {
         _atomicStoreI64(self._ptr, val)
     }
 
+    // Atomic add. Returns the OLD value. Wraps on overflow.
     fn add(self: &Self, val: i64): i64 {
         return _atomicAddI64(self._ptr, val)
     }
 
+    // Atomic subtract. Returns the OLD value. Wraps on underflow.
     fn sub(self: &Self, val: i64): i64 {
         return _atomicSubI64(self._ptr, val)
     }
 
+    // Atomic swap. Returns the old value.
     fn swap(self: &Self, val: i64): i64 {
         return _atomicSwapI64(self._ptr, val)
     }
@@ -696,6 +712,8 @@ impl Drop for AtomicI64 {
 
 // ── AtomicBool ──
 
+// Lock-free atomic boolean. There is no `AtomicPtr`: a safe-looking one would be a
+// lifetime claim nothing checks. Share a Vec index or an arena `Handle` instead.
 pub struct AtomicBool {
     _ptr: *u8,
 }
@@ -712,6 +730,7 @@ impl Sync for AtomicBool {
 
 // heap layout (16 bytes): 0 value(bool), 8 refcount(i64). Refcount inlined; see AtomicI64.
 impl AtomicBool {
+    // An atomic holding `initial`.
     fn new(initial: bool): AtomicBool {
         unsafe {
             let p = malloc(16)
@@ -729,14 +748,17 @@ impl AtomicBool {
         }
     }
 
+    // Atomic read.
     fn load(self: &Self): bool {
         return _atomicLoadBool(self._ptr)
     }
 
+    // Atomic write.
     fn store(self: &Self, val: bool): void {
         _atomicStoreBool(self._ptr, val)
     }
 
+    // Atomic swap. Returns the old value.
     fn swap(self: &Self, val: bool): bool {
         return _atomicSwapBool(self._ptr, val)
     }
@@ -765,6 +787,7 @@ impl Drop for AtomicBool {
 
 // ── AtomicI32 ──
 
+// Lock-free signed 32-bit atomic integer.
 pub struct AtomicI32 {
     _ptr: *u8,
 }
@@ -782,6 +805,7 @@ impl Sync for AtomicI32 {
 // heap layout (16 bytes): 0 value(i32), 8 refcount(i64). The 4 bytes between them are
 // padding — the refcount stays 8-aligned so its own atomics are single instructions.
 impl AtomicI32 {
+    // An atomic holding `initial`.
     fn new(initial: i32): AtomicI32 {
         unsafe {
             let p = malloc(16)
@@ -799,10 +823,12 @@ impl AtomicI32 {
         }
     }
 
+    // Atomic read.
     fn load(self: &Self): i32 {
         return _atomicLoadI32(self._ptr)
     }
 
+    // Atomic write.
     fn store(self: &Self, val: i32): void {
         _atomicStoreI32(self._ptr, val)
     }
@@ -817,6 +843,7 @@ impl AtomicI32 {
         return _atomicSubI32(self._ptr, val)
     }
 
+    // Atomic swap. Returns the old value.
     fn swap(self: &Self, val: i32): i32 {
         return _atomicSwapI32(self._ptr, val)
     }
@@ -845,6 +872,9 @@ impl Drop for AtomicI32 {
 
 // ── AtomicU64 ──
 
+// Lock-free unsigned 64-bit atomic integer. Uses the same instructions as `AtomicI64`
+// (64-bit atomics have no notion of sign), so `add`/`sub` wrap through the full u64
+// range.
 pub struct AtomicU64 {
     _ptr: *u8,
 }
@@ -866,6 +896,7 @@ impl Sync for AtomicU64 {
 // never range-check). add/sub therefore wrap in the full u64 range, which is what the
 // hardware does and what an unsigned counter wants.
 impl AtomicU64 {
+    // An atomic holding `initial`.
     fn new(initial: u64): AtomicU64 {
         unsafe {
             let p = malloc(16)
@@ -883,10 +914,12 @@ impl AtomicU64 {
         }
     }
 
+    // Atomic read.
     fn load(self: &Self): u64 {
         return _atomicLoadI64(self._ptr) as u64
     }
 
+    // Atomic write.
     fn store(self: &Self, val: u64): void {
         _atomicStoreI64(self._ptr, val as i64)
     }
@@ -901,6 +934,7 @@ impl AtomicU64 {
         return _atomicSubI64(self._ptr, val as i64) as u64
     }
 
+    // Atomic swap. Returns the old value.
     fn swap(self: &Self, val: u64): u64 {
         return _atomicSwapI64(self._ptr, val as i64) as u64
     }
@@ -941,6 +975,9 @@ impl Drop for AtomicU64 {
 
 // heap layout (40 bytes): 0 mtx, 8 cond, 16 count (i64), 24 greenWaitHead (*u8),
 // 32 refcount (i64, inlined Arc-style)
+
+// Counting barrier: `add` before spawning, `done` from each task, `wait` until the
+// counter reaches zero. Works across green tasks and OS threads alike.
 pub struct WaitGroup {
     _p: *u8,
 }
@@ -956,6 +993,7 @@ impl Sync for WaitGroup {
 }
 
 impl WaitGroup {
+    // A wait group with a zero counter.
     fn new(): WaitGroup {
         unsafe {
             let p = malloc(40)
@@ -980,6 +1018,7 @@ impl WaitGroup {
         }
     }
 
+    // Add `n` to the counter. Call it before spawning the tasks it tracks.
     fn add(self: &Self, n: i64): void {
         let p = self._p
         let mtx = nodeLoadPtr(p, 0)
@@ -988,6 +1027,7 @@ impl WaitGroup {
         pthread_mutex_unlock(mtx)
     }
 
+    // Decrement the counter by one. Call it from each task when it finishes.
     fn done(self: &Self): void {
         let p = self._p
         let mtx = nodeLoadPtr(p, 0)
@@ -1006,6 +1046,7 @@ impl WaitGroup {
         pthread_mutex_unlock(mtx)
     }
 
+    // Block until the counter reaches zero.
     fn wait(self: &Self): void {
         unsafe {
             let p = self._p
@@ -1105,6 +1146,10 @@ let ONCE_DONE: i64 = 2
 
 // heap layout (56 bytes): 0 mtx, 8 cond, 16 state (i64), 24 greenWaitHead (*u8),
 // 32 ownerTask (*u8), 40 ownerThread (i64), 48 refcount (i64, inlined Arc-style)
+
+// Run-exactly-once initialization guard, correct under green tasks and
+// `Promise.blocking` threads alike: a green waiter parks, an OS-thread waiter blocks
+// on a condition variable, and the main thread with a live scheduler drives it.
 pub struct Once {
     _p: *u8,
 }
@@ -1177,6 +1222,7 @@ fn onceRejectReentry(p: *u8, mtx: *u8): void {
 }
 
 impl Once {
+    // A guard whose initializer has not run yet.
     fn new(): Once {
         unsafe {
             let p = malloc(56)
@@ -1211,6 +1257,9 @@ impl Once {
     // Returns only once the initializer has completed exactly once, process-wide.
     // @synchronized: `f` is a critical section. The embedded mutex serializes it and the
     // atomic state word publishes its writes, so globals mutated in here are not racing.
+    //
+    // Re-entering `run` from inside its own initializer would wait for itself forever,
+    // so it aborts with that message instead of hanging.
     @synchronized
     fn run(self: &Self, f: () => void): void {
         if _atomicLoadI64(onceStatePtr(self._p)) == ONCE_DONE {

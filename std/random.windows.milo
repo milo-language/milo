@@ -86,27 +86,36 @@ pub struct Random {
 }
 
 impl Random {
+    // A random u32 in [0, 2^32).
     fn u32(): u32 {
         return randU32()
     }
+    // A random integer in [0, max). `max` must be positive.
     fn int(max: i64): i64 {
         return randInt(max)
     }
+    // A random integer in [min, max], both ends inclusive.
     fn range(min: i64, max: i64): i64 {
         return randRange(min, max)
     }
+    // A random float in [0.0, 1.0).
     fn float(): f64 {
         return randFloat()
     }
+    // A random float in [min, max).
     fn floatRange(min: f64, max: f64): f64 {
         return randFloatRange(min, max)
     }
+    // `true` or `false` with equal probability.
     fn bool(): bool {
         return randBool()
     }
+    // Shuffle the first `n` elements of `v` in place (Fisher-Yates). Pass `v.len()` for
+    // all.
     fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
         shuffleI64(&mut v, n)
     }
+    // Fill `buf` with `n` random bytes.
     fn bytes(buf: *u8, n: i64): void {
         randBytes(buf, n)
     }

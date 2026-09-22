@@ -13,6 +13,7 @@ pub extern fn regfree(_preg: *u8): void
 
 // ── Regex handle ──
 
+// A compiled POSIX extended regular expression. Compile once and reuse the value.
 pub struct Regex {
     _preg: [u8; 64],
     _valid: bool,
@@ -162,18 +163,23 @@ fn regexFindAll(re: &Regex, input: &string): Vec<RegexMatch> {
 }
 
 impl Regex {
+    // Compile a POSIX extended regular expression.
     fn compile(pattern: string): Result<Regex> {
         return regexNew(pattern)
     }
+    // Compile with explicit POSIX cflags: REG_EXTENDED=1, REG_ICASE=2.
     fn compileFlags(pattern: string, flags: i32): Result<Regex> {
         return regexNewFlags(pattern, flags)
     }
+    // Whether the pattern matches anywhere in `input`.
     fn isMatch(self: &Self, input: &string): bool {
         return regexMatch(self, input)
     }
+    // The first match, or None. `start` and `end` are byte offsets into `input`.
     fn find(self: &Self, input: &string): Option<RegexMatch> {
         return regexFind(self, input)
     }
+    // Every non-overlapping match, left to right.
     fn findAll(self: &Self, input: &string): Vec<RegexMatch> {
         return regexFindAll(self, input)
     }
