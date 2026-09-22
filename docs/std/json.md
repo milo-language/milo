@@ -485,6 +485,14 @@ pub fn jsonBoolStr(b: bool): string
 
 `true`/`false` as JSON text.
 
+### `jsoncParse`
+
+```milo
+pub fn jsoncParse(s: string): Result<Json>
+```
+
+_Undocumented._
+
 ### `JsonError.message`
 
 ```milo
@@ -652,6 +660,14 @@ to an `if` around each call.
 
 ```milo
 fn JsonObj.val(self: JsonObj, key: &string, val: JsonVal): JsonObj
+```
+
+_Undocumented._
+
+### `jsonParse`
+
+```milo
+pub fn jsonParse(s: string): Result<Json>
 ```
 
 _Undocumented._

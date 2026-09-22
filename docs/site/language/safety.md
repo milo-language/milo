@@ -190,6 +190,29 @@ The negative never reaches `sqrt` now — `raw < 0` returns `0`, a defined resul
 
 The precondition is discharged, and the prover still will not let that stand unqualified: the proof *assumes* `sqrt` meets its own postcondition, which this run did not establish, so it says so and counts it. `proven` means every input is handled in ordinary code; a runtime assert only backstops what you haven't established. Anything still `unknown` is yours to catch, and `milo prove` exits non-zero on a failure, so CI enforces the difference.
 
+### `milo test --contracts` — the same contracts as property tests
+
+Where the prover says *unknown* (a nonlinear `ensures`, a string, anything outside the
+linear fragment), the contracts can still be tested rather than proved. `milo test
+--contracts <files|dir>` writes one property test per contract-bearing fn: it draws
+inputs (edges first, and a `requires key.len == 32` is drawn at exactly that length),
+skips draws that fail `requires`, calls the fn, and checks every `ensures` with `result`
+bound. A violation names the inputs that refute it.
+
+```
+$ milo test --contracts std/string.milo
+std/string.milo
+  ✓ testContract_strIndexOfFrom [24ms]
+  ✗ testContract_strRepeat
+      [guard] SIGKILL: process tree exceeded 2048 MB
+```
+
+That second line is the kind of thing it finds: `requires n >= 0` promised that any
+count works, and `n = i64::MAX` exhausted memory instead. Its first sweep of the standard
+library tightened five contracts that way. Generic fns, methods and `&mut` parameters are
+reported as skipped rather than silently passed over; a test whose `requires` no draw
+satisfies fails rather than passing on zero cases.
+
 ### Loop invariants
 
 The prover does not unroll loops — the trip count usually isn't known. Everything a loop assigns is therefore unknown after it, and an `invariant` is what survives to say something about it.

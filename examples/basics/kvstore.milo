@@ -62,7 +62,13 @@ requires p >= 0 && p < s.pages.len()
     return None
 }
 
-pub fn get(s: &Store, key: &string): Option<string> {
+// A store always has at least one page (storeNew pushes it), and that is what makes
+// the pageFor/slotIn calls below legal, so it is stated here rather than assumed: the
+// prover checks a call against the callee's requires, not against how Store happens to
+// be built.
+pub fn get(s: &Store, key: &string): Option<string>
+requires s.pages.len() > 0
+{
     let p = pageFor(s, key)
     let Some(slot) = slotIn(s, p, key) else { return None }
     // copy-out, never a borrow into the page

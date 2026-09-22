@@ -16,6 +16,26 @@ let name = "Milo"   // type inference works
 
 `let` maps to an SSA register and `var` maps to a stack allocation. What you write is what LLVM sees.
 
+## Destructuring a struct
+
+`let { a, b } = e` binds fields of a struct value by name. `{ a: x }` renames, and
+`var { … }` makes the bindings mutable.
+
+```milo
+struct Match { start: i64, len: i64, text: string }
+
+let { start, text } = find()
+let m = find()
+let { len: n } = m      // renamed; m.start is still usable, only len was taken
+```
+
+It is the same as writing `let a = e.a` for each field (through a hidden temporary when
+`e` is not a place), so the ownership rules are a field read's: a Copy field is copied, a
+non-Copy field of a value moves out of it, a field of a `&S` cannot be moved out, and a
+struct with `Drop` cannot be taken apart. Fields you do not name stay where they were.
+
+There is no tuple type: two values come back as a named struct and are bound this way.
+
 ## Primitive types
 
 | Type | Description |
