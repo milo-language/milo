@@ -109,6 +109,7 @@ const docsSidebar = [
     collapsed: true,
     items: [
       { text: 'Syntax quick reference', link: '/reference' },
+      { text: 'Command-line reference', link: '/cli' },
       { text: 'Keywords', link: '/language/keywords' },
       { text: 'Annotations & builtins', link: '/features/annotations' },
       { text: 'Concurrency API', link: '/features/concurrency-api' },
@@ -286,7 +287,7 @@ export default defineConfig({
       { text: 'Learn', link: '/language/variables', activeMatch: '^/(language/(variables|functions|ownership|structs|enums|collections|strings|error-handling|traits|closures|modules)|packages)' },
       { text: 'How-to', link: '/language/patterns', activeMatch: '^/(language/(patterns|safety|safety-profiles)|features/(concurrency(?!-)|ffi)|ai-coding)' },
       { text: 'Why Milo', link: '/language/why-no-lifetimes', activeMatch: '^/(language/(why-no-lifetimes|vs-rust)|benchmarks|demos|roadmap)' },
-      { text: 'Reference', link: '/reference', activeMatch: '^/(reference|language/(keywords|warnings-and-errors)|features/(annotations|concurrency-api))' },
+      { text: 'Reference', link: '/reference', activeMatch: '^/(reference|cli|language/(keywords|warnings-and-errors)|features/(annotations|concurrency-api))' },
       { text: 'Stdlib', link: '/stdlib/', activeMatch: '^/stdlib/' },
     ],
 

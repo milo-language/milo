@@ -16,6 +16,7 @@ import { PRIMITIVE_TYPE_NAMES } from "./types";
 import { BUILTIN_MEMBERS } from "./builtin-members";
 import { WARNINGS } from "./warnings";
 import { ATTRIBUTES } from "./attributes";
+import { COMPILER_COMMANDS, PACKAGE_COMMANDS, OPTIONS } from "./cli-help";
 import { writeStdout } from "./stdout";
 
 // 2: each warning carries `doc`/`fix`/`example` — the published reference is rendered
@@ -73,6 +74,24 @@ export function langInfo() {
       takesArgs: !!a.takesArgs,
       doc: a.doc,
     })),
+    // The CLI surface, projected from the table `milo --help` renders, so the site's
+    // command reference and the banner are one list. Hidden commands are included (with
+    // the reason) because they are still accepted: a wrapper must not reject `lex`.
+    commands: [
+      ...COMPILER_COMMANDS.map(c => ({ c, group: "compiler" })),
+      ...PACKAGE_COMMANDS.map(c => ({ c, group: "package" })),
+    ].map(({ c, group }) => ({
+      name: c.name,
+      group,
+      usage: c.usage,
+      summary: c.summary,
+      ...(c.details ? { details: c.details.join(" ") } : {}),
+      ...(c.flags ? { flags: c.flags.map(f => ({ flag: f.flag, help: f.help })) } : {}),
+      ...(c.extraRows ? { forms: c.extraRows.map(e => ({ usage: e.usage, summary: e.help })) } : {}),
+      ...(c.hidden ? { hidden: c.hidden } : {}),
+    })),
+    // Options every compiling command accepts; per-command flags are on `commands[].flags`.
+    cliOptions: OPTIONS.map(o => ({ flag: o.flag, help: o.help.join(" ") })),
   };
 }
 
@@ -91,6 +110,7 @@ export function runLangInfo(args: string[]): number {
     `symbols         ${Object.values(info.symbols).join(" ")}\n` +
     `builtin methods ${receivers.join(", ")}\n` +
     `warnings        ${info.warnings.map(w => w.name + (w.offByDefault ? "*" : "")).join(" ")}   (* off by default)\n` +
+    `commands        ${info.commands.filter(c => !c.hidden).map(c => c.name).join(" ")}\n` +
     `\nfor tooling: milo lang --json\n`,
   );
   return 0;

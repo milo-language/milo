@@ -18,6 +18,7 @@ import { PRIMITIVE_TYPE_NAMES } from "../src/types";
 import { BUILTIN_MEMBERS } from "../src/builtin-members";
 import { WARNINGS, WARNING_NAMES, OFF_BY_DEFAULT, DOCUMENTED_FLOOR } from "../src/warnings";
 import { ATTRIBUTES, ATTRIBUTE_NAMES } from "../src/attributes";
+import { COMPILER_COMMANDS, PACKAGE_COMMANDS, OPTIONS } from "../src/cli-help";
 
 const ROOT = join(import.meta.dir, "..");
 const CHECKER = readFileSync(join(ROOT, "src", "checker.ts"), "utf-8");
@@ -227,4 +228,28 @@ test("a warning diagnostic prints the name, so the reference is reachable from t
   rmSync(dir, { recursive: true, force: true });
   expect(out).toContain("warning[index-clone]:");
   expect(explainText("index-clone")).toContain("--allow=index-clone");
+});
+
+// ---------------------------------------------------------------------------
+// The CLI surface, as data. docs/site/cli.md is generated from `commands` and
+// `cliOptions`; tests/cliHelp.test.ts holds the table to main.ts's dispatch chain, and
+// these hold the payload to the table and to that same dispatch chain directly, so a
+// command main.ts handles cannot be missing from what tooling and the site see.
+test("lang --json carries every dispatched command and every option", () => {
+  const info = langInfo();
+  const main = readFileSync(join(ROOT, "src", "main.ts"), "utf-8");
+  const dispatched = new Set([...main.matchAll(/cmd === "([a-z][a-z-]*)"/g)].map(m => m[1]!));
+  expect(dispatched.size).toBeGreaterThan(10); // the scan must actually find the chain
+  const names = info.commands.map(c => c.name);
+  expect([...dispatched].filter(c => !names.includes(c)).sort()).toEqual([]);
+  expect(names).toEqual([...COMPILER_COMMANDS, ...PACKAGE_COMMANDS].map(c => c.name));
+  for (const c of info.commands) {
+    expect({ name: c.name, group: c.group }).toEqual({
+      name: c.name, group: PACKAGE_COMMANDS.some(p => p.name === c.name) ? "package" : "compiler",
+    });
+    // A shown command needs a usage and a summary, or its generated entry is blank.
+    if (!c.hidden) expect({ name: c.name, usage: !!c.usage, summary: !!c.summary }).toEqual({ name: c.name, usage: true, summary: true });
+  }
+  expect(info.cliOptions.map(o => o.flag)).toEqual(OPTIONS.map(o => o.flag));
+  expect(info.cliOptions.length).toBeGreaterThan(20);
 });

@@ -1762,7 +1762,8 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
       heapSize = parsed;
     }
     else if (args[i] === "--") { rest.push(...args.slice(i + 1)); break; }
-    else if (!source) { source = args[i]; }
+    // A dash-led word is never the source: `milo check --json f.milo` used to read "--json" as the path.
+    else if (!source && !args[i].startsWith("-")) { source = args[i]; }
     else { rest.push(args[i]); }
   }
   // A misspelled warning name used to be accepted in silence, which is the failure this
@@ -2212,7 +2213,7 @@ async function main() {
   // `--help` was exempted from the unknown-command guard but nothing then printed the
   // banner: it fell through the whole dispatch to `unknown command: --help`, and `-h`
   // reached "error: no source file". Both are the first thing anyone types.
-  if (cmd === "--help" || cmd === "-h") {
+  if (cmd === "help" || cmd === "--help" || cmd === "-h") {
     console.log(renderHelp());
     process.exit(0);
   }
@@ -2402,7 +2403,17 @@ async function main() {
     return;
   }
 
+  // Only with no source: after one, `--help` is the program's own argument (`milo run app.milo --help`).
+  if (!source && (rest.includes("--help") || rest.includes("-h"))) { console.log(renderHelp()); process.exit(0); }
   if (!source && cmd !== "--help") { console.error("error: no source file"); process.exit(1); }
+  // A missing path, or a flag's value parseArgs does not know takes one
+  // (`milo safety --level do178c-a f.milo` makes `do178c-a` the source), reached
+  // readFileSync and died with a raw Bun stack trace instead of a usage error.
+  if (source && !existsSync(source)) {
+    console.error(`error: no such file or directory: ${source}`);
+    if (cmd === "safety") console.error("usage: milo safety <file> --safety=<level>   (milo safety --list shows the levels)");
+    process.exit(1);
+  }
 
   if (cmd === "prove" && rest.includes("--emit-smt")) {
     const src = readFileSync(source!, "utf-8");

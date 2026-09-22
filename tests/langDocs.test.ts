@@ -12,6 +12,7 @@ import { join } from "path";
 import { generate } from "../scripts/gen-lang-docs";
 import { WARNING_NAMES, WARNING_DOCS_URL } from "../src/warnings";
 import { ATTRIBUTE_NAMES } from "../src/attributes";
+import { langInfo } from "../src/lang-info";
 
 const ROOT = join(import.meta.dir, "..");
 
@@ -52,4 +53,17 @@ test("the editor link for a warning points at the page that carries its entry", 
   expect(site).toBeDefined();
   expect(WARNING_DOCS_URL).toBe(`${site}/language/warnings-and-errors`);
   expect(generate().some(r => r.file === "docs/site/language/warnings-and-errors.md")).toBe(true);
+});
+
+test("every shown command and option reaches the CLI reference page", () => {
+  const page = readFileSync(join(ROOT, "docs/site/cli.md"), "utf-8");
+  const start = page.indexOf("<!-- generated:commands -->");
+  const end = page.indexOf("<!-- /generated:commands -->");
+  expect(start !== -1 && end > start).toBe(true);
+  const region = page.slice(start, end);
+  const info = langInfo();
+  const shown = info.commands.filter(c => !c.hidden);
+  expect(shown.length).toBeGreaterThan(25); // an emptied table must not read as complete
+  for (const c of shown) expect({ command: c.name, published: region.includes(`### ${c.name}\n`) }).toEqual({ command: c.name, published: true });
+  for (const o of info.cliOptions) expect({ option: o.flag, published: region.includes(`\`${o.flag}\``) }).toEqual({ option: o.flag, published: true });
 });

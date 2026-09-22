@@ -23,8 +23,16 @@ const ROOT = join(import.meta.dir, "..");
 
 interface Warning { name: string; offByDefault: boolean; doc?: string; fix?: string; example?: string }
 interface Attribute { name: string; targets: string[]; takesArgs: boolean; doc: string }
+interface Command {
+  name: string; group: "compiler" | "package"; usage: string; summary: string; details?: string;
+  flags?: { flag: string; help: string }[]; forms?: { usage: string; summary: string }[]; hidden?: string;
+}
+interface Payload {
+  warnings: Warning[]; attributes: Attribute[]; keywords: string[]; softKeywords: string[];
+  keywordDocs: Record<string, string>; commands: Command[]; cliOptions: { flag: string; help: string }[];
+}
 
-function payload(): { warnings: Warning[]; attributes: Attribute[]; keywords: string[]; softKeywords: string[]; keywordDocs: Record<string, string> } {
+function payload(): Payload {
   const out = execFileSync("bun", ["run", join(ROOT, "src", "main.ts"), "lang", "--json"], {
     encoding: "utf-8", maxBuffer: 32 * 1024 * 1024,
   });
@@ -98,10 +106,62 @@ function renderKeywords(p: { keywords: string[]; softKeywords: string[]; keyword
   return lines.join("\n").trimEnd();
 }
 
-const REGIONS: { file: string; region: string; render: (p: ReturnType<typeof payload>) => string }[] = [
+// CLI help is terse lowercase fragments with `<pkg>`, `*_test.milo` and `a|b` in them;
+// in markdown those are an HTML tag, emphasis and a table cell break. Code spans are
+// left alone, everything else is escaped.
+function prose(text: string): string {
+  const escaped = text.split(/(`[^`]*`)/).map((part, i) => i % 2 ? part : part.replace(/([\\*_<>|[\]])/g, "\\$1")).join("");
+  const sentence = escaped.charAt(0).toUpperCase() + escaped.slice(1);
+  return /[.!?]$/.test(sentence) ? sentence : sentence + ".";
+}
+
+// Inside a table a bare `|` ends the cell even within a code span; GFM's escape is `\|`.
+const cell = (text: string) => text.replace(/\|/g, "\\|");
+
+// `init | new <name>` is one banner row for two verbs; in a shell block the `|` reads as a pipe.
+const invocations = (usage: string) => usage.split(" | ").map(u => `milo ${u}`);
+
+function renderCommands(p: Payload): string {
+  const lines: string[] = [];
+  const shown = p.commands.filter(c => !c.hidden);
+  for (const [group, title] of [["compiler", "Compiler commands"], ["package", "Package commands"]] as const) {
+    lines.push(`## ${title}`, "");
+    lines.push("| Command | What it does |", "|---|---|");
+    for (const c of shown.filter(c => c.group === group)) lines.push(`| [\`${cell(c.usage)}\`](#${c.name}) | ${prose(c.summary)} |`);
+    lines.push("");
+    for (const c of shown.filter(c => c.group === group)) {
+      lines.push(`### ${c.name}`, "");
+      lines.push("```sh", ...invocations(c.usage), ...(c.forms ?? []).map(f => `milo ${f.usage}`), "```", "");
+      lines.push(prose(c.summary) + (c.details ? " " + prose(c.details) : ""), "");
+      for (const f of c.forms ?? []) lines.push(`- \`milo ${f.usage}\`: ${prose(f.summary)}`);
+      if (c.forms) lines.push("");
+      if (c.flags) {
+        lines.push("| Flag | Effect |", "|---|---|");
+        for (const f of c.flags) lines.push(`| \`${cell(f.flag)}\` | ${prose(f.help)} |`);
+        lines.push("");
+      }
+    }
+  }
+  lines.push("## Options", "");
+  lines.push("Parsed by every command that takes a source file. Each acts on the ones that apply to it: an optimization level matters to `build` and `run`, not to `check`.", "");
+  lines.push("| Option | Effect |", "|---|---|");
+  for (const o of p.cliOptions) lines.push(`| \`${cell(o.flag)}\` | ${prose(o.help)} |`);
+  // `new` and `why` are hidden only because they share a row with `init` and `tree`;
+  // a hidden command with a usage of its own is a real command kept out of the banner.
+  const unlisted = p.commands.filter(c => c.hidden && c.usage);
+  if (unlisted.length) {
+    lines.push("");
+    lines.push("Also accepted, but left out of `milo --help`: " +
+      unlisted.map(c => `\`milo ${c.usage}\` (${c.hidden})`).join(", ") + ".");
+  }
+  return lines.join("\n").trimEnd();
+}
+
+const REGIONS: { file: string; region: string; render: (p: Payload) => string }[] = [
   { file: "docs/site/language/warnings-and-errors.md", region: "warnings", render: p => renderWarnings(p.warnings) },
   { file: "docs/site/features/annotations.md", region: "attributes", render: p => renderAttributes(p.attributes) },
   { file: "docs/site/language/keywords.md", region: "keywords", render: p => renderKeywords(p) },
+  { file: "docs/site/cli.md", region: "commands", render: p => renderCommands(p) },
 ];
 
 function splice(body: string, region: string, content: string, file: string): string {
@@ -114,7 +174,7 @@ function splice(body: string, region: string, content: string, file: string): st
     // report a clean bill of health for a page nothing regenerates.
     throw new Error(`${file}: missing '${open}' / '${close}' markers`);
   }
-  const note = `<!-- Do not edit between these markers: generated by scripts/gen-lang-docs.ts from 'milo lang --json'. Edit the compiler's own vocabulary: src/warnings.ts, src/attributes.ts, src/keyword-docs.ts. -->`;
+  const note = `<!-- Do not edit between these markers: generated by scripts/gen-lang-docs.ts from 'milo lang --json'. Edit the compiler's own vocabulary: src/warnings.ts, src/attributes.ts, src/keyword-docs.ts, src/cli-help.ts. -->`;
   return body.slice(0, start) + open + "\n" + note + "\n\n" + content + "\n\n" + body.slice(end);
 }
 

@@ -5,19 +5,32 @@
 // `lsp`, `lex` and `verify` were dispatched but absent from the banner, and five
 // implemented flags (--emit-header, --max-stack-array, --no-entry and --cycles)
 // were undocumented. The banner and the known-command set are now rendered
-// from here, and tests/cliHelp.test.ts holds the dispatch chain to it.
+// from here, and tests/cliHelp.test.ts holds the dispatch chain to it. `milo lang --json`
+// projects the same table as `commands`/`cliOptions`, which docs/site/cli.md is generated from.
 //
 // Package-manager verbs live in pkgcli.ts's PKG_COMMANDS; their help text is here so
 // the banner is one document, and the test checks the two agree.
 
 import { OFF_BY_DEFAULT } from "./warnings";
+
+/** A flag only one subcommand reads, listed under that subcommand. */
+interface CliFlag {
+  /** As typed, e.g. "--solver=z3" or "-t <pattern>". */
+  flag: string;
+  help: string;
+}
+
 interface CliCommand {
   /** The dispatch token, e.g. "emit-ir". */
   name: string;
   /** Full left column of the banner, e.g. "build <file> [-o out]". */
   usage: string;
-  /** Description, then any continuation lines shown indented under it. */
-  help: string[];
+  /** One line: what the command does. */
+  summary: string;
+  /** Prose continuation lines shown indented under the summary. */
+  details?: string[];
+  /** Flags this command reads that the global options block does not cover. */
+  flags?: CliFlag[];
   /** Dispatched but deliberately absent from the banner; the string says why. */
   hidden?: string;
   /** Extra banner rows for sub-verbs and alternate forms that deserve their own left column. */
@@ -25,82 +38,112 @@ interface CliCommand {
 }
 
 export const COMPILER_COMMANDS: CliCommand[] = [
-  { name: "run", usage: "run <file> [args]", help: ["compile and run (no artifacts left behind)"] },
-  { name: "build", usage: "build <file> [-o out]", help: ["compile to executable"] },
+  { name: "run", usage: "run <file> [args]", summary: "compile and run (no artifacts left behind)" },
+  { name: "build", usage: "build <file> [-o out]", summary: "compile to executable" },
   {
-    name: "test", usage: "test [file|dir...] [--contracts] [--json]",
-    help: [
-      "run tests (*_test.milo, recursive in a dir; cwd by default)",
-      "--contracts: instead, test every fn's requires/ensures on drawn inputs (any .milo)",
+    name: "test", usage: "test [file|dir...]",
+    summary: "run tests (*_test.milo, recursive in a dir; cwd by default)",
+    details: [
       "a test is a top-level `fn test*()` with no parameters;",
       "each runs in its own process, so a trap fails only that test",
-      "-t <pattern>  run only tests matching (substring or regex)",
-      "              long form: --test-name-pattern <pattern>",
+    ],
+    flags: [
+      { flag: "--contracts", help: "instead, test every fn's requires/ensures on drawn inputs (any .milo)" },
+      { flag: "-t <pattern>", help: "run only tests matching (substring or regex)" },
+      { flag: "--test-name-pattern <pattern>", help: "long form of -t" },
+      { flag: "--json", help: "machine-readable results" },
     ],
   },
   {
-    name: "check", usage: "check <file> [--json]",
-    help: ["type-check only — no codegen (--json for machine-readable diagnostics, each with its fix when one is mechanical)"],
+    name: "check", usage: "check <file>", summary: "type-check only, no codegen",
+    flags: [{ flag: "--json", help: "machine-readable diagnostics, each with its fix when one is mechanical" }],
   },
   {
     name: "fix", usage: "fix <file>",
-    help: ["apply every machine-applicable fix the check reports (&mut markers, imports, @ sigils, unused unsafe), in every file it reaches"],
+    summary: "apply every machine-applicable fix the check reports (&mut markers, imports, @ sigils, unused unsafe), in every file it reaches",
   },
-  { name: "emit-ast", usage: "emit-ast <file>", help: ["emit the parsed AST as JSON (--all imports, --spans keep spans)"] },
-  { name: "emit-hir", usage: "emit-hir <file>", help: ["emit the typed HIR as JSON (--all full module, --spans keep spans)"] },
-  { name: "emit-ir", usage: "emit-ir <file>", help: ["emit LLVM IR"] },
-  { name: "emit-obj", usage: "emit-obj <file>", help: ["compile to object file (.o)"] },
-  { name: "build-lib", usage: "build-lib <files...>", help: ["compile to static library (.a)"] },
-  { name: "fmt", usage: "fmt <file...>", help: ["format source files (-w to write in place)"] },
   {
-    name: "prove", usage: "prove <file> [--json]",
-    help: [
-      "prove contracts hold, via std/smt, the milo-native prover",
-      "  --solver=z3   use z3 instead (adds non-linear arithmetic)",
-      "  --emit-smt    print the SMT-LIB2 obligations instead of solving them",
-      "  --all         include imported stdlib",
+    name: "emit-ast", usage: "emit-ast <file>", summary: "emit the parsed AST as JSON",
+    flags: [{ flag: "--all", help: "include imported modules" }, { flag: "--spans", help: "keep source spans" }],
+  },
+  {
+    name: "emit-hir", usage: "emit-hir <file>", summary: "emit the typed HIR as JSON",
+    flags: [{ flag: "--all", help: "the full module, imports included" }, { flag: "--spans", help: "keep source spans" }],
+  },
+  { name: "emit-ir", usage: "emit-ir <file>", summary: "emit LLVM IR" },
+  { name: "emit-obj", usage: "emit-obj <file>", summary: "compile to object file (.o)" },
+  { name: "build-lib", usage: "build-lib <files...>", summary: "compile to static library (.a)" },
+  {
+    name: "fmt", usage: "fmt <file...>", summary: "format source files (to stdout unless -w)",
+    flags: [{ flag: "-w", help: "write in place, printing each file that changed" }],
+  },
+  {
+    name: "prove", usage: "prove <file>",
+    summary: "prove contracts hold, via std/smt, the milo-native prover",
+    flags: [
+      { flag: "--solver=z3", help: "use z3 instead (adds non-linear arithmetic)" },
+      { flag: "--emit-smt", help: "print the SMT-LIB2 obligations instead of solving them" },
+      { flag: "--all", help: "include imported stdlib" },
+      { flag: "--json", help: "machine-readable report" },
     ],
   },
   {
-    name: "safety", usage: "safety <file>", help: ["check safety profile compliance"],
+    name: "safety", usage: "safety <file> --safety=<level>", summary: "check safety profile compliance",
+    flags: [{ flag: "--json", help: "machine-readable violations" }],
     extraRows: [{ usage: "safety --list", help: "list available safety profiles" }],
   },
-  { name: "wcet", usage: "wcet <file>", help: ["emit OTAWA flow facts (loop bounds) for WCET analysis"] },
-  { name: "lsp", usage: "lsp", help: ["run the language server on stdio (what an editor launches)"] },
-  { name: "skill", usage: "skill", help: ["print language guide for LLMs"] },
   {
-    name: "lang", usage: "lang [--json]",
-    help: [
-      "the language's own vocabulary as data: keywords, primitive types,",
-      "operators, builtin methods, warning names (--json for tooling)",
-    ],
+    name: "wcet", usage: "wcet <file> [-o out]", summary: "emit OTAWA flow facts (loop bounds) for WCET analysis",
+    flags: [{ flag: "--cycles", help: "a Cortex-M cycle bound from the linked ELF (bare-metal ARM --target only)" }],
+  },
+  { name: "lsp", usage: "lsp", summary: "run the language server on stdio (what an editor launches)" },
+  { name: "skill", usage: "skill", summary: "print language guide for LLMs" },
+  { name: "help", usage: "help", summary: "print this help (also --help, -h)" },
+  {
+    name: "lang", usage: "lang",
+    summary: "the language's vocabulary as data: keywords, types, operators, builtins, warnings, attributes, commands",
+    flags: [{ flag: "--json", help: "the full payload, for tooling" }],
   },
   {
     name: "explain", usage: "explain <name>",
-    help: [
-      "what one warning, @attribute or keyword means, with an example",
-      "and how to silence it (--json for the raw entry)",
+    summary: "what one warning, @attribute or keyword means, with an example and how to silence it",
+    flags: [{ flag: "--json", help: "the raw entry" }],
+  },
+  {
+    name: "api", usage: "api <terms>", summary: "search std signatures by name/doc",
+    flags: [
+      { flag: "--module std/x", help: "dump one module's full API" },
+      { flag: "--markdown", help: "emit reference docs" },
+      { flag: "--json", help: "every std symbol" },
     ],
   },
-  { name: "api", usage: "api <terms>", help: ["search std signatures by name/doc (--module std/x to dump one, --markdown to emit reference docs)"] },
-  { name: "doc", usage: "doc <file|dir>", help: ["reference markdown from doc-comments (-o <dir> to write one .md per module)"] },
-  { name: "lex", usage: "lex <file>", help: ["dump the token stream as JSON"], hidden: "compiler-debug output, not a user-facing command" },
+  {
+    name: "doc", usage: "doc <file|dir>", summary: "reference markdown from doc-comments",
+    flags: [{ flag: "-o <dir>", help: "write one .md per module" }],
+  },
+  { name: "lex", usage: "lex <file>", summary: "dump the token stream as JSON", hidden: "compiler-debug output, not a user-facing command" },
 ];
 
 export const PACKAGE_COMMANDS: CliCommand[] = [
-  { name: "init", usage: "init | new <name>", help: ["create milo.json here / scaffold a new project"] },
-  { name: "new", usage: "", help: [], hidden: "shares the `init | new <name>` banner row" },
-  { name: "add", usage: "add [--dev] <pkg>", help: ["add a library dependency (milo.json + milo.lock)"] },
-  { name: "remove", usage: "remove <pkg>", help: ["drop a dependency and prune the lock"] },
-  { name: "install", usage: "install [--frozen]", help: ["sync this project from milo.lock (--frozen: fail if stale)"] },
-  { name: "update", usage: "update [pkg]", help: ["re-resolve tags and rewrite the lock"] },
-  { name: "tree", usage: "tree | why <pkg>", help: ["dependency graph / who pulls a package in"] },
-  { name: "why", usage: "", help: [], hidden: "shares the `tree | why <pkg>` banner row" },
-  { name: "vendor", usage: "vendor", help: ["copy deps into ./vendor and rewrite to local paths"] },
-  { name: "publish", usage: "publish", help: ["validate, tag, push"] },
+  { name: "init", usage: "init | new <name>", summary: "create milo.json here / scaffold a new project" },
+  { name: "new", usage: "", summary: "", hidden: "shares the `init | new <name>` banner row" },
+  {
+    name: "add", usage: "add <pkg>", summary: "add a library dependency (milo.json + milo.lock)",
+    flags: [{ flag: "--dev", help: "record it under devDeps" }],
+  },
+  { name: "remove", usage: "remove <pkg>", summary: "drop a dependency and prune the lock" },
+  {
+    name: "install", usage: "install", summary: "sync this project from milo.lock",
+    flags: [{ flag: "--frozen", help: "fail if the lock is stale" }],
+  },
+  { name: "update", usage: "update [pkg]", summary: "re-resolve tags and rewrite the lock" },
+  { name: "tree", usage: "tree | why <pkg>", summary: "dependency graph / who pulls a package in" },
+  { name: "why", usage: "", summary: "", hidden: "shares the `tree | why <pkg>` banner row" },
+  { name: "vendor", usage: "vendor", summary: "copy deps into ./vendor and rewrite to local paths" },
+  { name: "publish", usage: "publish", summary: "validate, tag, push" },
   {
     name: "tool", usage: "tool install <pkg>",
-    help: ["build and install a global executable (~/.local/bin)"],
+    summary: "build and install a global executable (~/.local/bin)",
     extraRows: [
       { usage: "tool uninstall <name>", help: "remove an installed executable" },
       { usage: "tool list [--repair]", help: "list installed executables (--repair: rebuild the index)" },
@@ -113,8 +156,6 @@ interface CliOption {
   /** The flag as written, e.g. "--target=<name>". Its name for matching is the leading `--word`. */
   flag: string;
   help: string[];
-  /** Only meaningful after a particular subcommand, so it is documented there instead. */
-  subcommandOnly?: string;
 }
 
 export const OPTIONS: CliOption[] = [
@@ -147,31 +188,17 @@ export const OPTIONS: CliOption[] = [
     flag: "--json",
     help: [
       "machine-readable output, for tooling instead of a human",
-      "(api, lang, check, prove, safety, test — see docs/json-api.md)",
+      "(api, lang, explain, check, prove, safety, test; see docs/json-api.md)",
     ],
   },
   { flag: "--safety=<level>", help: ["enforce safety profile (e.g. --safety=do178)"] },
   { flag: "--target=<name>", help: ["cross-compile target (e.g. cortex-m3)"] },
   { flag: "--heap-size=<N>", help: ["bare-metal heap cap in bytes or k/m (e.g. 64k); default: all free RAM"] },
   { flag: "--max-stack-array=<N>", help: ["large-stack-array warning threshold, bytes or k/m (default: 512k)"] },
-  { flag: "--no-entry", help: ["omit the C entry point — for a freestanding image with its own reset vector"] },
+  { flag: "--no-entry", help: ["omit the C entry point, for a freestanding image with its own reset vector"] },
   { flag: "--emit-header", help: ["with emit-obj, also write a C header for the exported symbols"] },
   { flag: "--version", help: ["print the compiler version and exit"] },
-
-  // Documented under their subcommand in the banner above, not in the options block.
-  { flag: "--all", help: [], subcommandOnly: "emit-ast / emit-hir / prove" },
-  { flag: "--spans", help: [], subcommandOnly: "emit-ast / emit-hir" },
-  { flag: "--emit-smt", help: [], subcommandOnly: "prove" },
-  { flag: "--solver=z3", help: [], subcommandOnly: "prove" },
-  { flag: "--list", help: [], subcommandOnly: "safety" },
-  { flag: "--cycles", help: [], subcommandOnly: "wcet" },
-  { flag: "--markdown", help: [], subcommandOnly: "api" },
-  { flag: "--module", help: [], subcommandOnly: "api" },
-  { flag: "--dev", help: [], subcommandOnly: "add" },
-  { flag: "--frozen", help: [], subcommandOnly: "install" },
-  { flag: "--repair", help: [], subcommandOnly: "tool list" },
-  { flag: "--test-name-pattern", help: [], subcommandOnly: "test (long form of -t)" },
-  { flag: "--help", help: [], subcommandOnly: "every command" },
+  { flag: "--help", help: ["print this help and exit (also -h)"] },
 ];
 
 /** Every command the CLI accepts, hidden ones included — a typo must still be rejected. */
@@ -191,9 +218,12 @@ function renderRows(cmds: CliCommand[]): string[] {
   const out: string[] = [];
   for (const c of cmds) {
     if (c.hidden) continue;
-    const [first, ...rest] = c.help;
-    out.push(row(c.usage, first ?? ""));
-    for (const line of rest) out.push(`${" ".repeat(USAGE_COL)}${line}`.trimEnd());
+    out.push(row(c.usage, c.summary));
+    const indent = " ".repeat(USAGE_COL);
+    for (const line of c.details ?? []) out.push(`${indent}${line}`.trimEnd());
+    // Aligned per command, so each command's flag block reads as its own small table.
+    const width = Math.max(0, ...(c.flags ?? []).map(f => f.flag.length));
+    for (const f of c.flags ?? []) out.push(`${indent}  ${f.flag.padEnd(width)}  ${f.help}`);
     for (const e of c.extraRows ?? []) out.push(row(e.usage, e.help));
   }
   return out;
@@ -209,7 +239,6 @@ export function renderHelp(): string {
     "options:",
   ];
   for (const o of OPTIONS) {
-    if (o.subcommandOnly) continue;
     const [first, ...rest] = o.help;
     lines.push(row(o.flag, first ?? ""));
     for (const line of rest) lines.push(`${" ".repeat(USAGE_COL)}${line}`.trimEnd());

@@ -3,7 +3,7 @@ system: tooling-api
 purpose: the compiler's machine-readable surfaces — what tooling reads instead of importing TypeScript
 key-files: src/api-search.ts, src/lang-info.ts, src/warnings.ts, src/main.ts (runCheck), tests/apiJson.test.ts, tests/langInfo.test.ts
 update-when: a JSON payload gains or loses a field, or a new machine-readable command lands
-last-verified: 2026-09-22 (lang --json schema 2: warning doc/fix/example; earlier: check --json schema 2 adds `fix`; earlier: warnings lose the error-by-default field)
+last-verified: 2026-09-22 (lang --json schema 2 plus additive `commands`/`cliOptions`; schema 2: warning doc/fix/example; earlier: check --json schema 2 adds `fix`; earlier: warnings lose the error-by-default field)
 -->
 
 # Machine-readable compiler API
@@ -15,7 +15,7 @@ JSON on stdout. Tooling reads *that* — never `import { … } from "../src/…"
 milo api --json                      # every public std symbol: signature, params, return, doc, struct fields
 milo api --module std/json --json    # one module
 milo api "parse json" --json         # ranked search results
-milo lang --json                     # keywords (+ hover docs), primitive types, operators, builtin methods, warning names
+milo lang --json                     # keywords (+ hover docs), primitive types, operators, builtin methods, warnings, attributes, CLI commands
 milo explain <name> [--json]         # one warning/attribute/keyword: doc, example, fix, flags
 milo check <file> --json             # diagnostics as data (exit 1 if any error)
 milo prove <file> --json             # per-obligation proof verdicts
@@ -92,6 +92,18 @@ need not rewrite it from the guide), `primitiveTypes`, `symbols` (operator token
 spelling), `builtinMembers` (receiver → the methods the checker dispatches by hand, with
 signatures and caveats), and `warnings` (name + `offByDefault`, i.e. what `--deny=` and `--allow=` accept, plus
 `doc`/`fix`/`example` once a warning's reference entry is written — schema 2).
+
+`attributes` lists every `@name` the checker accepts: `{ name, targets, takesArgs, doc }`,
+where `targets` is drawn from `fn`, `method`, `struct`, `enum`, `extern`, `global` and `field`.
+
+`commands` is the CLI surface, projected from the table `milo --help` renders (additive, so
+still schema 2): `{ name, group, usage, summary, details?, flags?, forms?, hidden? }`, where
+`group` is `"compiler"` or `"package"`, `flags` is `[{ flag, help }]` for flags only that
+command reads, `forms` is `[{ usage, summary }]` for sub-verbs and alternate spellings
+(`safety --list`, `tool uninstall <name>`), and `hidden` is the reason a command that is
+accepted is left out of the banner (`lex`). `cliOptions` is `[{ flag, help }]` for the options
+every source-taking command parses. The site's [command-line reference](site/cli.md) is
+generated from these two keys.
 
 The warning `example` is a whole program that provokes it: `tests/langInfo.test.ts` runs
 `milo check --expect=<name>` over each one and fails if the checker stays silent, so the
