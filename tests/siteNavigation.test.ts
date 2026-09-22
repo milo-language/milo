@@ -100,16 +100,19 @@ describe("language surface site coverage", () => {
 
   // RATCHETS: an entry may only be REMOVED. Adding one waves through the exact failure
   // these tests exist to catch, so a new keyword or warning goes on the site instead.
-  const KEYWORDS_OFF_SITE = new Set(["thread_local"]);
-  // The site's Warnings section documents 7 of 26 by name. The rest are real gaps, not
-  // decisions: burn this list down. (`milo lang --json` carries no doc text for a warning,
-  // so the page cannot be generated: each entry is prose someone has to write.)
-  const WARNINGS_OFF_SITE = new Set([
-    "arena-never-frees", "borrow-that-clones", "external-linkage-not-pub", "index-clone",
-    "manual-option-default", "nan-comparison", "opaque-call-on-thread", "shadows-stdlib-override",
-    "single-variant-match", "string-concat-in-loop", "unchecked-ffi-contract", "unfulfilled-expectation",
-    "unowned-pointer-copy", "unused-import", "unused-unsafe", "useless-forget",
-  ]);
+  // Empty, and it should stay that way: docs/site/language/keywords.md is generated from
+  // `keywordDocs` in the payload, so a keyword reaches the site the moment the compiler
+  // has a hover doc for it — which tests/langInfo.test.ts already requires of every one.
+  const KEYWORDS_OFF_SITE = new Set<string>([]);
+  // Every warning name now reaches the site through the GENERATED reference
+  // (docs/site/language/warnings-and-errors.md, scripts/gen-lang-docs.ts), so this list is
+  // empty and the name check below can no longer fail on its own — a new warning appears in
+  // the generated table the moment it is added. The real pressure moved to the entry check
+  // further down: a name in a table teaches nobody anything.
+  const WARNINGS_OFF_SITE = new Set<string>([]);
+
+  // Ceiling on warnings with no reference entry. RATCHET: may only go DOWN.
+  const UNDOCUMENTED_WARNINGS_CEILING = 24;
 
   const info = langInfo();
   const keywords = [...info.keywords, ...info.softKeywords];
@@ -137,6 +140,25 @@ describe("language surface site coverage", () => {
 
   test("every warning name appears on the site", () => {
     expect(warnings.filter(w => !onSite(w) && !WARNINGS_OFF_SITE.has(w)).sort()).toEqual([]);
+  });
+
+  // The check that still bites. `onSite` is satisfied by a row in the generated summary
+  // table, which every warning gets for free; a reader learns what the warning MEANS only
+  // from a reference entry, and an entry exists only where src/warnings.ts carries
+  // doc + fix + example. src/warnings.ts's DOCUMENTED_FLOOR is the ratchet that makes the
+  // undocumented set shrink; this is what proves the written ones actually got published.
+  test("every documented warning has a reference entry on the published page", () => {
+    const page = readFileSync(join(root, "docs/site/language/warnings-and-errors.md"), "utf8");
+    const documented = info.warnings.filter(w => w.doc && w.fix && w.example).map(w => w.name);
+    expect(documented.length).toBeGreaterThanOrEqual(2); // a payload that lost its docs is not a pass
+    expect(documented.filter(n => !page.includes(`### ${n}\n`)).sort()).toEqual([]);
+  });
+
+  test("the undocumented warnings are a shrinking set", () => {
+    // Not an assertion that it is empty — an inventory, so the number is visible in the
+    // test output and a regression (a new warning with no entry) shows up as growth.
+    const undocumented = info.warnings.filter(w => !(w.doc && w.fix && w.example)).map(w => w.name);
+    expect(undocumented.length).toBeLessThanOrEqual(UNDOCUMENTED_WARNINGS_CEILING);
   });
 
   test("the ratchets only shrink", () => {

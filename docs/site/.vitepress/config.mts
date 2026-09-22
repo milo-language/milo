@@ -122,6 +122,7 @@ const languageSidebar = [
       { text: 'Error Handling', link: '/language/error-handling' },
       { text: 'Contracts & Safety', link: '/language/safety' },
       { text: 'Warnings & Errors', link: '/language/warnings-and-errors' },
+      { text: 'Keyword Reference', link: '/language/keywords' },
     ]
   },
   {
