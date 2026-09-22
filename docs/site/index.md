@@ -176,14 +176,14 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
         <span class="tile-copy" role="button" tabindex="0" data-cmd="git clone https://github.com/milo-language/milo-emulators && milo-emulators/arcade.sh <rom.nes>" title="git clone https://github.com/milo-language/milo-emulators && milo-emulators/arcade.sh <rom.nes>">⧉ copy run command</span>
       </a>
       <a class="tile" href="https://github.com/milo-language/milo-emulators/tree/main/genesis" target="_blank" rel="noopener">
-        <img class="tile-img" src="/showcase/genesis.png" alt="Sonic the Hedgehog running on the Milo Genesis emulator" loading="lazy">
+        <video class="tile-img" src="/showcase/genesis.mp4" poster="/showcase/genesis-poster.png" autoplay muted loop playsinline preload="auto" aria-label="Sonic the Hedgehog running the Green Hill Zone demo on the Milo Genesis emulator: the hills, the loop and the water"></video>
         <h3>Genesis Emulator</h3>
         <p>A complete Sega Genesis. Sonic runs.</p>
         <div class="tile-tags"><span>68000 + Z80</span><span>DMA</span><span>SDL</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="git clone https://github.com/milo-language/milo-emulators && milo-emulators/arcade.sh <rom.md>" title="git clone https://github.com/milo-language/milo-emulators && milo-emulators/arcade.sh <rom.md>">⧉ copy run command</span>
       </a>
       <a class="tile" href="https://github.com/milo-language/milo-emulators/tree/main/snes" target="_blank" rel="noopener">
-        <img class="tile-img" src="/showcase/snes.png" alt="Super Mario World running on the Milo SNES emulator" loading="lazy">
+        <video class="tile-img" style="object-position: center 85%" src="/showcase/snes.mp4" poster="/showcase/snes-poster.png" autoplay muted loop playsinline preload="auto" aria-label="Super Mario World attract mode on the Milo SNES emulator: Mario on Yoshi, Koopas and shells"></video>
         <h3>SNES Emulator</h3>
         <p>A Super Nintendo. Mario World, Donkey Kong Country, Star Fox.</p>
         <div class="tile-tags"><span>Super FX GSU</span><span>bitwise</span><span>SDL</span></div>
