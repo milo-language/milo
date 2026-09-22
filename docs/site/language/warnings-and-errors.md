@@ -1,6 +1,6 @@
 <!-- doc-meta
 system: language-reference
-purpose: what the compiler rejects and what it warns about, with the warning reference generated from src/warnings.ts
+purpose: what the compiler rejects and what it warns about, with the warning reference generated from src/warnings.ts and errors pointing at the generated catalog
 key-files: src/warnings.ts, src/lang-info.ts, scripts/gen-lang-docs.ts, tests/langDocs.test.ts
 update-when: the prose sections change by hand; the warning reference regenerates with `bun run scripts/gen-lang-docs.ts`
 last-verified: 2026-09-22 (warning reference generated; every warning has an entry)
@@ -12,92 +12,9 @@ Milo's compiler catches bugs before your code runs. Errors stop compilation. War
 
 ## Errors
 
-Errors are compile errors: code the compiler refuses to build, because it breaks a rule of the language (a use after move, a type mismatch, a missing match arm). Nothing with an error in it ever runs.
+Errors are compile errors: code the compiler refuses to build, because it breaks a rule of the language (a use after move, a type mismatch, a missing match arm). Nothing with an error in it ever runs, and no flag turns one off.
 
-### Use after move
-
-```milo
-let a = "hello"
-let b = a
-print(a)           // error: use of moved variable 'a'
-```
-
-```
-error: use of moved variable 'a'
-  --> example.milo:3:7
-  |
-3 |     print(a)
-  |           ^
-  hint: ownership of 'a' was transferred earlier and it can no longer
-        be used here. To keep it alive, clone it at the point of
-        transfer: 'a.clone()'.
-```
-
-Assignment moved the string to `b`. See [Moves](/language/ownership#moves).
-
-### Move out of loop
-
-```milo
-let s = "hello"
-while true {
-    consume(s)     // error: cannot move 's' out of a loop
-}
-```
-
-The second iteration would use `s` after the first one moved it.
-
-### Assign to immutable
-
-```milo
-let x: i32 = 5
-x = 10             // error: cannot assign to immutable variable 'x'
-```
-
-```
-  hint: declare with 'var' instead of 'let' to make it mutable
-```
-
-### Type mismatches
-
-```milo
-let x: i32 = "hello"   // error: type mismatch: 'x' declared as i32 but got string
-```
-
-### Storing references
-
-```milo
-struct Bad {
-    ref: &string       // error: references cannot be stored in structs
-}
-```
-
-```
-  hint: references are second-class — use an owned type instead
-```
-
-Store an owned value. The rule is in [Borrowing](/language/ownership#borrowing).
-
-### Returning references
-
-```milo
-fn bad(): &string {    // error: cannot return a reference
-    ...
-}
-```
-
-Return an owned value. Only a method may return a reference, and only a view of `self`.
-
-### Missing `&mut` on a call argument
-
-```milo
-fn bump(p: &mut Point, by: i64): void { p.x = p.x + by }
-
-bump(p, 2)          // error: argument 'p' is passed to a '&mut' parameter without '&mut'
-bump(&mut p, 2)     // correct: the mutation is visible at the call site
-```
-
-This is a hard error, not a warning, so no `--allow` reaches it. `milo fix <file>` adds
-the markers. See [Mutable references](/language/ownership#mutable-references).
+Every error message the test suite pins is in the [compile error catalog](./errors), each with a program that provokes it and, where the fixture says, why the rule exists. Search it for the text the compiler printed. The rules behind the most common ones are explained with the language: [moves](/language/ownership#moves), [borrowing](/language/ownership#borrowing), and [mutable references](/language/ownership#mutable-references), where a missing `&mut` on a call argument is a hard error that `milo fix <file>` repairs.
 
 ## Warnings
 

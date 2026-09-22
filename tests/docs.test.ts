@@ -32,7 +32,6 @@ const SNIPPETS_NOT_YET_CHECKED = new Set([
   "docs/site/features/ffi.md",
   "docs/site/language/ownership.md",
   "docs/site/language/variables.md",
-  "docs/site/language/warnings-and-errors.md",
   "docs/site/packages.md",
   "docs/site/stdlib/arena.md",
   "docs/site/stdlib/argparse.md",

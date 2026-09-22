@@ -1,4 +1,4 @@
-// Gate on docs/errors.md — the compile-error reference, generated from tests/errors/.
+// Gate on docs/site/language/errors.md, the compile-error reference generated from tests/errors/.
 //
 // The suite pins 242 programs the compiler must reject, each with the message it must
 // produce and often a comment explaining why the rule exists. That was a reference
@@ -28,10 +28,10 @@ test("every error fixture carries an @error: annotation the driver can read", ()
 });
 
 test("the catalog documents every distinct message", () => {
-  const doc = readFileSync(join(ROOT, "docs", "errors.md"), "utf-8");
+  const doc = readFileSync(join(ROOT, "docs", "site", "language", "errors.md"), "utf-8");
   const messages = new Set(cases().map(c => c.message));
   expect(messages.size).toBeGreaterThan(100);
-  expect([...messages].filter(m => !doc.includes(`## ${m}`))).toEqual([]);
+  expect([...messages].filter(m => !doc.includes(`## \`${m}\``))).toEqual([]);
 });
 
 test("the annotation parser survives a CRLF checkout", () => {

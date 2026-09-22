@@ -92,7 +92,7 @@ sites are not countable by grep; step A1 counts them with the checker.
 - **A7. Flip** the warning to an error by default. Update `docs/design.md:118` (the
   argument against the marker was about soundness; keep it, add the reading argument),
   `language-reference.md`, `ownership-model.md`, `docs/site/language/ownership.md`,
-  the LSP inlay hint (now unnecessary for `&mut`; keep for `&`), `docs/errors.md`.
+  the LSP inlay hint (now unnecessary for `&mut`; keep for `&`), `docs/site/language/errors.md`.
 - Done: `implicit-mut-borrow` is an error, every repo green on its own gates, the
   count from A1 is zero, `docs/breaking-changes.md` has the entry.
 

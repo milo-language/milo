@@ -20,7 +20,7 @@
 //                                 running it SHALL write exactly these lines
 //
 // **The identifier is keyed to the FILE NAME, never the message.** A requirement id has to
-// survive rewording — `docs/errors.md` indexes by message text, which is right for a
+// survive rewording — `docs/site/language/errors.md` indexes by message text, which is right for a
 // lookup table and wrong for a requirement, because improving a diagnostic would silently
 // renumber the spec.
 //
