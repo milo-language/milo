@@ -21,9 +21,11 @@ interface Entry {
   docFull: string;   // the whole leading doc-comment (all lines), "" if none
   name: string;      // "strPadStart" or "String.split"
   fields?: Field[];  // struct fields, for kind === "type"
+  variants?: Variant[];  // enum variants, for kind === "type"
 }
 
-export interface Field { name: string; type: string }
+export interface Field { name: string; type: string; doc?: string }
+export interface Variant { name: string; payload?: string; value?: string; doc?: string }
 
 // One parameter of a function signature, split out so a consumer does not have to
 // re-implement the top-level comma scan (`HashMap<string, i64>` and `(&T) => U` both
@@ -94,11 +96,45 @@ function leadingDoc(lines: string[], idx: number): { first: string; full: string
 // have that field", which is the question tooling asks.
 function readFields(lines: string[], idx: number): Field[] {
   const out: Field[] = [];
+  // `pub struct Hex {}` closes on its own line; scanning on would read the next struct
+  // literal's `name: value` lines as this one's fields.
+  if (/\{\s*\}/.test(lines[idx]!)) return out;
+  let doc: string[] = [];
   for (let i = idx; i < lines.length; i++) {
-    const t = lines[i].trim();
-    if (i > idx && t === "}") break;
+    const raw = lines[i].trim();
+    if (i > idx && raw === "}") break;
+    if (raw.startsWith("//")) { doc.push(raw.replace(/^\/\/\s?/, "")); continue; }
+    // A trailing `// note` is not part of the type (`data: string, // decompressed`); it
+    // documents the field when no comment block sits above it.
+    const trailing = /\s\/\/\s?(.*)$/.exec(raw);
+    const t = trailing ? raw.slice(0, trailing.index).trim() : raw;
     const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+?),?$/.exec(t);
-    if (m && !t.startsWith("//")) out.push({ name: m[1]!, type: m[2]!.trim() });
+    const note = doc.length ? doc.join("\n") : trailing?.[1]?.trim();
+    if (m) out.push({ name: m[1]!, type: m[2]!.trim(), ...(note ? { doc: note } : {}) });
+    doc = [];
+  }
+  return out;
+}
+
+// Variant list of an enum declaration starting at `idx`: `Name`, `Name(T, U)` or
+// `Name = 8` (an enum with an explicit repr), each with the `//` comment block directly
+// above it. Read to the first line that is only `}`; a line that is not a variant (a
+// payload continued onto the next line) is skipped rather than guessed at.
+function readVariants(lines: string[], idx: number): Variant[] {
+  const out: Variant[] = [];
+  let doc: string[] = [];
+  for (let i = idx + 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t === "}") break;
+    if (t.startsWith("//")) { doc.push(t.replace(/^\/\/\s?/, "")); continue; }
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*(?:\((.*)\))?\s*(?:=\s*(-?[0-9A-Za-z_]+))?\s*,?\s*(?:\/\/.*)?$/.exec(t);
+    if (m) {
+      out.push({
+        name: m[1]!, ...(m[2] !== undefined ? { payload: m[2].trim() } : {}),
+        ...(m[3] !== undefined ? { value: m[3] } : {}), ...(doc.length ? { doc: doc.join("\n") } : {}),
+      });
+    }
+    doc = [];
   }
   return out;
 }
@@ -169,7 +205,11 @@ function parseModule(file: string, root?: string): Entry[] {
         const brace = trimmed.indexOf("{");
         const signature = (brace >= 0 ? trimmed.slice(0, brace) : trimmed).trim();
         const fields = typeMatch[1] === "struct" ? readFields(lines, i) : undefined;
-        entries.push({ kind: "type", module, signature, doc: ld.first, docFull: ld.full, name: typeMatch[2], ...(fields?.length ? { fields } : {}) });
+        const variants = typeMatch[1] === "enum" && brace >= 0 ? readVariants(lines, i) : undefined;
+        entries.push({
+          kind: "type", module, signature, doc: ld.first, docFull: ld.full, name: typeMatch[2],
+          ...(fields?.length ? { fields } : {}), ...(variants?.length ? { variants } : {}),
+        });
       }
     }
     const implMatch = trimmed.match(/^impl\s+([A-Za-z_][A-Za-z0-9_]*)/);
@@ -371,6 +411,7 @@ function apiJson(entries: Entry[]): string {
           // Split out so a consumer never re-implements the top-level comma scan.
           ...(e.kind === "function" ? { params, returns } : {}),
           ...(e.fields ? { fields: e.fields } : {}),
+          ...(e.variants ? { variants: e.variants } : {}),
           doc: e.doc,
           docFull: e.docFull,
         };
