@@ -237,6 +237,7 @@
   color: var(--cat);
 }
 /* category accent hues — tuned to read on both light and dark backgrounds */
+.cat-game { --cat: #f59e0b; }
 .cat-emu  { --cat: #a855f7; }
 .cat-lang { --cat: #c07d22; }
 .cat-dev  { --cat: #3b82f6; }

@@ -167,6 +167,39 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
     <h2>Built with Milo</h2>
     <p>Milo is young, still a puppy 🐶, but we dogfood it hard: every program below is real, and building them is how we find what needs fixing. It's ready for you to try today.</p>
   </div>
+  <div class="cat cat-game">
+    <h3 class="cat-head">Games</h3>
+    <div class="tile-grid">
+      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/games/plink">
+        <video class="tile-img" src="/showcase/plink.mp4" poster="/showcase/plink-poster.jpg" autoplay muted loop playsinline preload="auto" aria-label="PLINK: neon targets popping up and shattering in a midway shooting gallery"></video>
+        <h3>PLINK</h3>
+        <p>A neon shooting gallery on a midway: targets spring up across five decks, and you hit them with a tethered blaster.</p>
+        <div class="tile-tags"><span>OpenGL 3.3</span><span>7,100 lines</span></div>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/games/plink/main.milo --release" title="milo run examples/games/plink/main.milo --release">⧉ copy run command</span>
+      </a>
+      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/games/redline">
+        <video class="tile-img" src="/showcase/redline.mp4" poster="/showcase/redline-poster.jpg" autoplay muted loop playsinline preload="auto" aria-label="REDLINE: a red car racing through rainy neon streets at night"></video>
+        <h3>REDLINE</h3>
+        <p>A street race through a city at night, in the rain: a 2.8 km circuit between walls of lit buildings.</p>
+        <div class="tile-tags"><span>OpenGL 3.3</span><span>8,100 lines</span></div>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/games/redline/main.milo --release" title="milo run examples/games/redline/main.milo --release">⧉ copy run command</span>
+      </a>
+      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/games/yap">
+        <video class="tile-img" src="/showcase/yap.mp4" poster="/showcase/yap-poster.jpg" autoplay muted loop playsinline preload="auto" aria-label="YAP: a chihuahua flapping between red fire hydrants"></video>
+        <h3>YAP</h3>
+        <p>One-button flapper. Milo the chihuahua flaps his ears past fire hydrants.</p>
+        <div class="tile-tags"><span>pixel art</span><span>2,400 lines</span></div>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo build examples/games/yap/main.milo -o /tmp/yap --release &amp;&amp; /tmp/yap" title="milo build examples/games/yap/main.milo -o /tmp/yap --release &amp;&amp; /tmp/yap">⧉ copy run command</span>
+      </a>
+      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/games/volt">
+        <video class="tile-img" src="/showcase/volt.mp4" poster="/showcase/volt-poster.jpg" autoplay muted loop playsinline preload="auto" aria-label="VOLT: a dog running and jumping up grassy steps in a sunny platformer"></video>
+        <h3>VOLT</h3>
+        <p>A 2D momentum platformer. You are Milo, a chihuahua: three levels, hydrants for checkpoints, instant respawn.</p>
+        <div class="tile-tags"><span>platformer</span><span>5,300 lines</span></div>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo build examples/games/volt/main.milo -o /tmp/volt --release &amp;&amp; /tmp/volt" title="milo build examples/games/volt/main.milo -o /tmp/volt --release &amp;&amp; /tmp/volt">⧉ copy run command</span>
+      </a>
+    </div>
+  </div>
   <div class="cat cat-emu">
     <h3 class="cat-head">Emulators</h3>
     <div class="tile-grid">
