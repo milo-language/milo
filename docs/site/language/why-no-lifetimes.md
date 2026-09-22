@@ -37,7 +37,8 @@ visible from where it stands. Milo's substitutes (own the buffer, carry a `Span`
 a handle) keep every fact about a value readable at the value: no declaration means
 anything beyond what it says. The same property is why the concurrency story stays
 simple, since a type that cannot store a borrow is a type you can hand to another
-task without a `Send` proof unwinding a borrow chain behind it; see
+task with no `Send` proof to write: a green task needs none, and on an OS thread
+`Send` is derived from the fields, with no borrow chain behind it to unwind; see
 [Concurrency](/features/concurrency).
 
 The cost is not uniform, so it is stated per pattern. A parser restructures

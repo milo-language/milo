@@ -1,8 +1,8 @@
 # Concurrency
 
-Milo has **one** concurrency model: **green tasks** on a cooperative, single-threaded scheduler, with a **single OS-thread escape hatch** (`Promise.blocking`). There is no `async`/`await` and no function coloring — you write blocking code, and the runtime runs it concurrently.
+Milo has **one** concurrency model: **green tasks** on a cooperative, single-threaded scheduler, with **one OS-thread escape hatch** (`Promise.blocking`, which `std/shard`'s `parallelMap` family also runs on). There is no `async`/`await` and no function coloring: you write blocking code, and the runtime runs it concurrently.
 
-`Task.spawn` runs a closure on the green scheduler; `Promise<T>`, `Channel`, `select`, and `WaitGroup` all park the *task*, not the OS thread, so they compose freely. Blocking I/O and channel operations yield to other tasks automatically — there is no event loop to run by hand. The one way onto a real OS thread is [`Promise.blocking`](#promise-blocking-cpu-bound-work-and-blocking-ffi), for CPU-bound parallelism and blocking FFI.
+`Task.spawn` runs a closure on the green scheduler; `Promise<T>`, `Channel`, `select`, and `WaitGroup` all park the *task*, not the OS thread, so they compose freely. Blocking I/O and channel operations yield to other tasks automatically; there is no event loop to run by hand. Real OS threads come from [`Promise.blocking`](#promise-blocking-cpu-bound-work-and-blocking-ffi), for CPU-bound parallelism and blocking FFI; `parallelMap` and `parallelMapWith` run each worker on one.
 
 For most concurrent work, reach for `Promise<T>`.
 
@@ -306,7 +306,7 @@ The same calls work identically on a `Promise.blocking` thread — they just blo
 
 ## Thread Safety (Send / Sync)
 
-The compiler enforces thread safety at compile time. Because `Promise.blocking` runs its closure on a real OS thread, it requires every captured variable to implement `Send` — safe to transfer across threads. (Green `Task`/`Promise.run` closures stay on one thread and carry no such requirement.)
+There is no Send/Sync in everyday code. Green `Task`/`Promise.run` closures stay on one thread and need nothing. `Send` is checked only where a closure starts on a real OS thread: `Promise.blocking` (and the `parallelMap` family built on it) and the low-level `spawnOsThreadDetached`. Every captured variable there must be `Send`, and a `var` global the closure writes is a compile error too (use an atomic, `Once.run`, or `thread_local var`).
 
 **Send types** (safe to move to another thread): all primitives, `string`, `Heap<T>`, `Vec<T>`, `HashMap<K,V>`, and structs/enums where every field is Send. Ordinary types derive this structurally without annotations.
 
@@ -332,7 +332,7 @@ fn main(): i32 {
 }
 ```
 
-Pointer-backed primitives need an explicit unsafe implementation when their synchronization invariant is outside the type system:
+You write `unsafe impl Send` only for a struct that wraps a raw pointer, such as an FFI handle, when you can vouch for its thread safety. The std primitives (`Channel`, the atomics) already carry theirs:
 
 ```milo
 struct MyHandle {
@@ -529,7 +529,7 @@ value, turning a cache into a per-access allocation.
 2. **`main` returning abandons running tasks.** Exit semantics are Go's — wait explicitly (`join`, `WaitGroup`, `Promise`, channel, `schedulerRunToCompletion()`) or the work silently dies with the process. `exit(code)` terminates immediately from anywhere.
 3. **Call `Task.join()` immediately after `spawn`.** The registration must land before the task can complete; joining after you've yielded or blocked elsewhere is a lost wakeup.
 4. **The green scheduler is single-threaded and cooperative.** A task that spins on CPU or calls blocking FFI starves every other task — nothing preempts it. Move that work to `Promise.blocking`; long compute loops that must stay on a task should `schedulerYield()` periodically.
-5. **`Promise.blocking` is the only OS thread.** Its closure runs in parallel and its captures must be `Send`; a plain `Promise`/`Task` closure stays on the scheduler and has no such requirement. Use `blocking` only for CPU-bound work or blocking FFI — ordinary I/O already yields on a green task.
+5. **OS threads start only in `Promise.blocking`** (which `parallelMap` uses per worker) and the low-level `spawnOsThreadDetached`. Those closures run in parallel and their captures must be `Send`; a plain `Promise`/`Task` closure stays on the scheduler and has no such requirement. Use `blocking` only for CPU-bound work or blocking FFI, since ordinary I/O already yields on a green task.
 6. **Channels, `WaitGroup`, atomics, and `Once` are reference-counted handles.** `.clone()` to give another task or worker its own owner; the shared object frees itself when the last owner drops. There is no `.destroy()`.
 7. **Channels must be `close()`d** or the consumer's `for val in ch` never ends. `send` on a closed channel returns `Result.Err`, not a panic. Bounded `send` blocking when full is backpressure, not a bug — poll with `trySend`/`tryRecv`.
 8. **Move closures capture copies.** Mutating a captured `var` inside a task or worker is invisible outside. Communicate results through a `Channel`/`Promise`, or share through an atomic — never through captured locals.

@@ -5,7 +5,7 @@ An arena stores values and gives back handles instead of pointers. You use a han
 This is useful when values need to reference each other, such as nodes in a graph, entries in a cache, or entities in a game. Normal ownership can't model cycles (A owns B owns A?), but handles can.
 
 ```milo
-from "std/arena" import { Arena, Handle, arenaNew }
+from "std/arena" import { Arena, Handle }
 ```
 
 ## Quick start
@@ -13,10 +13,10 @@ from "std/arena" import { Arena, Handle, arenaNew }
 Store some values, get handles, look them up:
 
 ```milo
-from "std/arena" import { Arena, Handle, arenaNew }
+from "std/arena" import { Arena, Handle }
 
 fn main(): i32 {
-    var names: Arena<string> = arenaNew()
+    var names: Arena<string> = Arena<string>.new()
 
     let alice = names.alloc("Alice")
     let bob = names.alloc("Bob")
@@ -41,7 +41,7 @@ fn main(): i32 {
 
 **The lifecycle is simple:**
 
-1. **Create** — `arenaNew()` with a type annotation: `var a: Arena<string> = arenaNew()`
+1. **Create**: `var a = Arena<string>.new()`
 2. **Store** — `a.alloc(value)` puts a value in and returns a `Handle<T>`
 3. **Access** — `a.get(handle)` returns `Option<T>` — `Some` if alive, `None` if stale
 4. **Update** — `.set()` replaces a value; `.modify()` transforms it with a function
@@ -58,7 +58,7 @@ fn main(): i32 {
 Nodes that reference each other. Plain ownership can't express a cycle (who owns whom?); an arena can.
 
 ```milo
-from "std/arena" import { Arena, Handle, arenaNew }
+from "std/arena" import { Arena, Handle }
 
 struct Node {
     name: string,
@@ -66,17 +66,17 @@ struct Node {
 }
 
 fn main(): i32 {
-    var graph: Arena<Node> = arenaNew()
+    var graph: Arena<Node> = Arena<Node>.new()
 
     let a = graph.alloc(Node { name: "A", neighbors: Vec.new() })
     let b = graph.alloc(Node { name: "B", neighbors: Vec.new() })
     let c = graph.alloc(Node { name: "C", neighbors: Vec.new() })
 
     // wire up a cycle: A -> B -> C -> A
-    // modify takes a function: receive current value, return updated value
-    graph.modify(a, (node: Node): Node => { node.neighbors.push(b); node })
-    graph.modify(b, (node: Node): Node => { node.neighbors.push(c); node })
-    graph.modify(c, (node: Node): Node => { node.neighbors.push(a); node })
+    // modifyMut hands the closure the stored value to change in place
+    let _ = graph.modifyMut(a, (node: &mut Node): void => { node.neighbors.push(b) })
+    let _ = graph.modifyMut(b, (node: &mut Node): void => { node.neighbors.push(c) })
+    let _ = graph.modifyMut(c, (node: &mut Node): void => { node.neighbors.push(a) })
 
     // traverse: start at A, follow first neighbor twice
     let nodeA = graph.get(a)!
@@ -90,14 +90,14 @@ fn main(): i32 {
 
 ## Gotchas
 
-**`.get()` returns a copy.** Changing the returned value doesn't update the arena. Use `.modify()` or get/set:
+**`.get()` returns a copy.** Changing the returned value doesn't update the arena. Use `.modifyMut()` or get/set:
 
 ```milo
-let node = graph.get(handle)!
+var node = graph.get(handle)!
 node.name = "changed"                   // changes your local copy, not the arena
 
-// option 1: modify (safe one-liner)
-graph.modify(handle, (n: Node): Node => { n.name = "changed"; n })
+// option 1: modifyMut (changes the stored value in place)
+graph.modifyMut(handle, (n: &mut Node): void => { n.name = "changed" })
 
 // option 2: get, change, set (explicit)
 var node2 = graph.get(handle)!
@@ -193,10 +193,10 @@ Safe one-liner to update a value. The arena pulls the value out, hands it to you
 
 ```milo
 // one-liner: safe even if handle is stale
-arena.modify(handle, (n: Node): Node => { n.name = "updated"; n })
+arena.modify(handle, (n: Node): Node => { var m = n; m.name = "updated"; return m })
 ```
 
-The trailing `n` is required — your function returns the value to store back.
+The parameter is immutable, so rebind it as a `var` to change it, and `return` the value to store back. To change the value in place instead, `.modifyMut()` hands your function a `&mut T`.
 
 **Why not just get/set?** You can — but you have to handle the stale case yourself:
 
@@ -204,8 +204,9 @@ The trailing `n` is required — your function returns the value to store back.
 // equivalent, but more verbose
 match arena.get(handle) {
     Option.Some(n) => {
-        n.name = "updated"
-        arena.set(handle, n)
+        var m = n
+        m.name = "updated"
+        arena.set(handle, m)
     }
     Option.None => { /* stale handle */ }
 }

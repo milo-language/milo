@@ -214,7 +214,7 @@ For the full threat-by-threat breakdown — what Milo catches at compile time vs
 | Null | Raw pointers | `Option<T>` | `Option<T>` | Compiler forces null handling |
 | Memory safety | Manual | Borrow checker + lifetimes | Moves + second-class refs | Owned UAF = compile error; cyclic = runtime-caught |
 | Lifetime annotations | N/A | Required, complex | None, ever | No borrow checker fights |
-| Thread safety | Nothing enforced | Send/Sync | Send/Sync | Data races can't compile (both) |
+| Thread safety | Nothing enforced | Send/Sync bounds | Structural Send, checked only where an OS thread starts | Data races can't compile (both) |
 | Error handling | Exceptions (invisible) | `Result<T,E>` + `?` | `Result<T,E>` + `?` | Error paths can't be ignored (both) |
 | Effects visible in the signature | Nothing | `&mut` and `unsafe` | `&mut`, `unsafe`, and `@pure` | A `@pure` call needs no review |
 | Build complexity | Headers, includes, ODR | Cargo (good) | Single files, simple imports | Less surface area for confusion |

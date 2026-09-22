@@ -12,7 +12,7 @@ let result = apply((x: i32) => x * 2, 21)   // 42
 
 Milo has two kinds:
 
-- **Regular closures** capture by reference. Non-escaping: you can pass them around, but not return them from a function or store them in a struct. Captured references are always valid.
+- **Regular closures** capture by reference: they borrow the owned locals they use. Non-escaping: you can pass them around, but not return them from a function or store them in a struct. Captured references are always valid. A variable that is itself a reference (a `&T` parameter or a view) cannot be captured by any closure; `.clone()` it into an owned value first.
 - **Move closures** take ownership of captured variables. Because they own everything, they *can* be returned, stored, and sent to other threads.
 
 ## Block closures
@@ -127,7 +127,7 @@ let t = Task.spawn(move (): void => {
 t.join()
 ```
 
-`Promise.blocking` runs on a real OS thread, so captures must also be `Send`. See [Concurrency](/features/concurrency).
+A green-task closure needs nothing more. `Promise.blocking` runs its closure on a real OS thread, and that is the one place captures must be `Send`, which any type without a raw pointer already is. See [Thread Safety](/features/concurrency#thread-safety-send-sync).
 
 ### When to use `move`
 

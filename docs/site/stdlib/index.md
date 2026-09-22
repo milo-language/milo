@@ -18,7 +18,8 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 
 | Module | What it provides |
 |--------|-----------------|
-| [`std/net`](net) | TCP, DNS, `fetch` with TLS |
+| [`std/net`](net) | TCP, DNS |
+| [`std/fetch`](net#fetch) | HTTP client: `fetch` with TLS |
 | [`std/http`](http) | HTTP server with Hono-style router, context, middleware |
 | [`std/html`](html) | HTML escaping — `Html.escapeText`, `Html.escapeAttr`, `Html.isSafeUrl` |
 | [`std/mime`](mime) | Media types by extension — `Mime.fromPath`, `Mime.contentType` |
@@ -159,7 +160,7 @@ fn main(): i32 {
 For cyclic data (graphs, doubly-linked lists), use `std/arena`. Nodes reference each other via `Handle<T>` — typed indices — instead of pointers:
 
 ```milo
-from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaModify }
+from "std/arena" import { Arena, Handle }
 
 struct DLNode {
     value: i64,
@@ -168,14 +169,10 @@ struct DLNode {
 }
 
 fn main(): i32 {
-    var arena: Arena<DLNode> = arenaNew()
-    let a = arenaAlloc(&mut arena, DLNode { value: 1, prev: Option.None, next: Option.None })
-    let b = arenaAlloc(&mut arena, DLNode { value: 2, prev: Option.Some(a), next: Option.None })
-    arenaModify(&mut arena, a, (n: DLNode) => {
-        var updated = n
-        updated.next = Option.Some(b)
-        return updated
-    })
+    var arena: Arena<DLNode> = Arena<DLNode>.new()
+    let a = arena.alloc(DLNode { value: 1, prev: Option.None, next: Option.None })
+    let b = arena.alloc(DLNode { value: 2, prev: Option.Some(a), next: Option.None })
+    let _ = arena.modifyMut(a, (n: &mut DLNode): void => { n.next = Option.Some(b) })
     return 0
 }
 ```

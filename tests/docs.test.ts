@@ -38,7 +38,6 @@ const SNIPPETS_NOT_YET_CHECKED = new Set([
   "docs/site/stdlib/argparse.md",
   "docs/site/stdlib/args.md",
   "docs/site/stdlib/binary.md",
-  "docs/site/stdlib/color.md",
   "docs/site/stdlib/crypto.md",
   "docs/site/stdlib/csv.md",
   "docs/site/stdlib/env.md",

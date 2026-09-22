@@ -12,7 +12,7 @@ Milo's compiler catches bugs before your code runs. Errors stop compilation. War
 
 ## Errors
 
-Errors are things that *will* break at runtime — the compiler won't let them through.
+Errors are compile errors: code the compiler refuses to build, because it breaks a rule of the language (a use after move, a type mismatch, a missing match arm). Nothing with an error in it ever runs.
 
 ### Use after move
 
