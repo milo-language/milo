@@ -3444,7 +3444,7 @@ export class TypeChecker {
           // existed, so an unknown one here is a no-op the author believes is doing
           // something. Reject rather than inherit that.
           this.error(`'@${attr.name}' is not an attribute a global can carry`, g.span,
-            `only '@cValue(...)' applies to a global`);
+            `only ${attributesFor("global").map(a => `'@${a}'`).join(", ")} applies to a global`);
         }
       }
     }
@@ -4906,7 +4906,7 @@ export class TypeChecker {
           }
         } else if (attr.name !== "cOpaque") {
           this.error(`'@${attr.name}' is not supported on a struct field — '${s.name}.${f.name}'`, s.span,
-            `only '@cOpaque', '@iter' and '@json' apply to a field`);
+            `only ${attributesFor("field").map(a => `'@${a}'`).join(", ")} apply to a field`);
         } else if (!s.isExtern) {
           this.error(`@cOpaque on '${s.name}.${f.name}': only an 'extern struct' field can be C-invisible`, s.span,
             `a Milo struct has no C layout to be opaque against`);

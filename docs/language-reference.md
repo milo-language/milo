@@ -3446,7 +3446,21 @@ field's padding. Milo field names are used as the C field names.
 
 Declaring only a **prefix** of a C struct is supported and common: the struct's total
 size is checked with `>=`, not `==`, so you may stop early and ignore trailing platform
-fields. Field *order* must still match from the start.
+fields. Field *order* must still match from the start. A field marked `@cOpaque` is
+filler with no C counterpart: `@cLayout` skips it, but it still counts toward the size.
+
+`@cValue(cName, header)` does the same for a constant. It goes on an immutable global
+whose initializer is an integer literal, and the build checks that literal against the
+macro or enumerator it transcribes:
+
+```milo
+@cValue("SEEK_END", "stdio.h")
+pub let SEEK_END: i64 = 2
+
+fn main() {
+    print(SEEK_END)
+}
+```
 
 `@cLayout` is skipped for bare-metal targets, which are freestanding and cross-compiled —
 the host's headers are not the ones the program runs against.

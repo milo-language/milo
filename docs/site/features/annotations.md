@@ -65,6 +65,30 @@ _Goes on: `extern`, `fn`._
 
 Check an extern's signature against the real C header, e.g. `@cSig("unistd.h", "long sysconf(int)")`. Milo's types cannot express C type identity, so the header is the oracle.
 
+### `@cValue(…)`
+
+_Goes on: `global`._
+
+Check a transcribed integer constant against the C macro or enumerator it mirrors, e.g. `@cValue("SEEK_END", "stdio.h")` on `pub let SEEK_END: i64 = 2`. Goes on an immutable global whose initializer is an integer literal: a wrong pixel format or scancode otherwise links fine and runs wrong.
+
+### `@cOpaque`
+
+_Goes on: `field`._
+
+This `extern struct` field is filler with no C counterpart, so `@cLayout` skips it. For a struct padded out to the size C dictates (getrusage writes 144 bytes into a struct whose named fields cover 32); the field still counts toward Milo's own layout, so the size check stays meaningful.
+
+### `@iter`
+
+_Goes on: `field`._
+
+`for x in wrapper` walks this field exactly as it would walk the field itself: same bindings, same borrow, nothing allocated. Marks a `Vec`, `HashMap`, array or `string` field, at most one per struct.
+
+### `@json(…)`
+
+_Goes on: `field`._
+
+Rename this field on the wire, e.g. `@json("legacy_id")`, in a struct that has `@derive(Json)`. Rejected on a struct that does not derive Json, since nothing else reads it.
+
 ### `@wrapping`
 
 _Goes on: `fn`, `method`._
