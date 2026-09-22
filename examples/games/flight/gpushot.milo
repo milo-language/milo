@@ -250,14 +250,18 @@ pub fn main(): i32 {
         postBindWorld(p)
         drawSkyPass(gw, s, view, W as f64, H as f64, w.time)
         drawStreams(&mut gw, &mut s, view, W as f64, H as f64, w.time)
-        drawSpeedLines(&mut c, w)
-        drawGuide(&mut c, w, view)
-        drawFence(&mut c, w, view)
-        drawMarkBeam(&mut c, w, view)
-        drawMarkGuide(&mut c, w, view)
-        drawChecklist(&mut c, w)
-        drawFound(&mut c, w)
-        drawHud(&mut c, w, s, 60)
+        // FLYBY_SHOT_CLEAN=1 leaves out the HUD and the game's guides, for a frame
+        // that is only the world (the showcase picture).
+        if envF64("FLYBY_SHOT_CLEAN", 0.0) == 0.0 {
+            drawSpeedLines(&mut c, w)
+            drawGuide(&mut c, w, view)
+            drawFence(&mut c, w, view)
+            drawMarkBeam(&mut c, w, view)
+            drawMarkGuide(&mut c, w, view)
+            drawChecklist(&mut c, w)
+            drawFound(&mut c, w)
+            drawHud(&mut c, w, s, 60)
+        }
         if w.env.cloudsDirty {
             postSetClouds(p, w.env.clouds)
             gpuWorldSetClouds(gw, w.env.clouds)

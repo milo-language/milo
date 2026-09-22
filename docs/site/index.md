@@ -194,13 +194,6 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
   <div class="cat cat-sim">
     <h3 class="cat-head">Graphics &amp; simulation</h3>
     <div class="tile-grid">
-      <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/games/flight">
-        <img class="tile-img" src="/showcase/flyby.png" alt="Flying over downtown San Francisco in FLYBY, the Bay Bridge running out across the water behind it" loading="lazy">
-        <h3>FLYBY</h3>
-        <p>A 3D flying game over five real places — SRTM terrain, OpenStreetMap buildings and bridges, aerial imagery draped on top. One analytic sky model handles the atmosphere, distance haze, and sea reflections, keeping all three consistent; the water is raymarched with sun glitter and foam, and the waterfalls have spray and a rainbow at the angle refraction puts one.</p>
-        <div class="tile-tags"><span>OpenGL 3.3</span><span>GLSL</span><span>z-buffer</span><span>SDL</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo build examples/games/flight/main.milo -o /tmp/flyby --release &amp;&amp; /tmp/flyby" title="milo build examples/games/flight/main.milo -o /tmp/flyby --release &amp;&amp; /tmp/flyby">⧉ copy run command</span>
-      </a>
       <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/graphics/render.milo">
         <img class="tile-img" src="/showcase/render.jpg" alt="Glass, gold and coloured spheres on a plain at golden hour, long soft shadows and reflections, rendered by the Milo path tracer" loading="lazy">
         <h3>Path Tracer</h3>
