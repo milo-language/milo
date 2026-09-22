@@ -635,10 +635,13 @@ function generate(i: number): Case {
   return { name: `case${SEED}_${i}`, src: p.source(), shapes: p.shapes };
 }
 
+// Each seed is the rejection test a soundness hole became. 470f5d73 deleted the raw
+// reproducers under tests/holes-2026-09/ and left two of these paths pointing at nothing;
+// a missing seed only logged a line, so the fuzzer ran without them and stayed green.
 const SEEDS = [
-  "tests/fixtures/hole2-shards-owner-dropped-under-worker.milo",
+  "tests/errors/shardsManualPathPrivate.milo",
   "tests/errors/globalForInAcrossYield.milo",
-  "tests/holes-2026-09/hole4-vec-ptr-outlives-realloc.milo",
+  "tests/errors/vecPtrOutlivesRealloc.milo",
 ];
 
 // ── the oracles ───────────────────────────────────────────────────────────────
@@ -814,7 +817,10 @@ async function main() {
   if (!NO_SEEDS && FILTER === "") {
     for (const s of SEEDS) {
       const abs = join(ROOT, s);
-      if (!existsSync(abs)) { console.log(`seed missing: ${s}`); continue; }
+      if (!existsSync(abs)) {
+        console.error(`seed missing: ${s} (renamed or deleted? point SEEDS at what replaced it)`);
+        process.exit(2);
+      }
       cases.push({ name: `seed_${s.split("/").pop()!.replace(/\.milo$/, "")}`, src: readFileSync(abs, "utf-8"), shapes: [`seed:${s}`] });
     }
   }
