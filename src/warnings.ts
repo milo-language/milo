@@ -429,4 +429,14 @@ fn main() {
 ];
 
 export const WARNING_NAMES: string[] = WARNINGS.map(w => w.name);
+
+// Where a warning's published entry lives. The heading scripts/gen-lang-docs.ts writes is
+// `### <name>`, which VitePress anchors as `#<name>`. tests/langDocs.test.ts holds the
+// origin to `SITE` in docs/site/.vitepress/config.mts, so a moved site fails a test instead
+// of every editor link going dead.
+export const WARNING_DOCS_URL = "https://milo-language.github.io/milo/language/warnings-and-errors";
+
+export function warningDocUrl(name: string): string | undefined {
+  return WARNING_NAMES.includes(name) ? `${WARNING_DOCS_URL}#${name}` : undefined;
+}
 export const OFF_BY_DEFAULT: string[] = WARNINGS.filter(w => w.offByDefault).map(w => w.name);

@@ -12,6 +12,7 @@ import { TypeChecker, type CheckResult } from "./checker";
 import { BUILTIN_MEMBERS, memberDetail, type BuiltinMember, type BuiltinReceiver } from "./builtin-members";
 import { resolveImports } from "./resolver";
 import { ParseError, type Diagnostic } from "./diagnostics";
+import { warningDocUrl } from "./warnings";
 import { projectLints } from "./pkg";
 import type { Program, Function, Stmt, Expr, Span } from "./ast";
 import { declaredType } from "./ast";
@@ -331,6 +332,10 @@ function validateDocument(uri: string) {
       severity: d.severity === "error" ? 1 : d.severity === "warning" ? 2 : 3,
       source: "milo",
       message: d.hint ? `${d.message}\nhint: ${d.hint}` : d.message,
+      // The code is what `--allow=` takes, and the editor shows it next to the message;
+      // for a warning, codeDescription makes it a link to the generated reference entry.
+      ...(d.code ? { code: d.code } : {}),
+      ...(d.code && warningDocUrl(d.code) ? { codeDescription: { href: warningDocUrl(d.code) } } : {}),
     })),
   });
 }

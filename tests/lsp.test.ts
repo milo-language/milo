@@ -464,6 +464,9 @@ test("shadowing a stdlib fn with a different signature is a squiggled diagnostic
   // Squiggled on the fn name (`strIndexOf` starts at line 0, char 3), not floating at file top.
   expect(shadow.range.start.line).toBe(0);
   expect(shadow.range.start.character).toBe(3);
+  // An error's internal code is sent, but only a warning name gets a doc link.
+  expect(shadow.code).toBe("shadows-stdlib");
+  expect(shadow.codeDescription).toBeUndefined();
 });
 
 test("a lint denied in milo.json is published, squiggled on the match keyword", async () => {
@@ -482,6 +485,9 @@ test("a lint denied in milo.json is published, squiggled on the match keyword", 
   expect(d.range.end).toEqual({ line: 4, character: 9 });
   expect(d.severity).toBe(1); // denied, so an error
   expect(d.message).toContain("if let Option.Some(s) = o");
+  // The editor gets the name `--allow=` takes, linked to its generated reference entry.
+  expect(d.code).toBe("single-variant-match");
+  expect(d.codeDescription?.href).toEndWith("/language/warnings-and-errors#single-variant-match");
 });
 
 test("hover on builtin Vec instance methods (.push / .pop) shows a specialized sig", async () => {

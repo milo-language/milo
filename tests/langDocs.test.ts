@@ -10,7 +10,7 @@ import { test, expect } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { generate } from "../scripts/gen-lang-docs";
-import { WARNING_NAMES } from "../src/warnings";
+import { WARNING_NAMES, WARNING_DOCS_URL } from "../src/warnings";
 import { ATTRIBUTE_NAMES } from "../src/attributes";
 
 const ROOT = join(import.meta.dir, "..");
@@ -42,4 +42,14 @@ test("every warning and attribute reaches the published page", () => {
   for (const n of ATTRIBUTE_NAMES) {
     expect({ attribute: n, published: attributeRegion.includes(`@${n}`) }).toEqual({ attribute: n, published: true });
   }
+});
+
+test("the editor link for a warning points at the page that carries its entry", () => {
+  // The LSP sends `codeDescription.href = WARNING_DOCS_URL#<name>`. Both halves are checked:
+  // the origin is the site's own, and the path is the page the generator writes the region to.
+  const config = readFileSync(join(ROOT, "docs/site/.vitepress/config.mts"), "utf-8");
+  const site = config.match(/^const SITE = '([^']+)'/m)?.[1];
+  expect(site).toBeDefined();
+  expect(WARNING_DOCS_URL).toBe(`${site}/language/warnings-and-errors`);
+  expect(generate().some(r => r.file === "docs/site/language/warnings-and-errors.md")).toBe(true);
 });
