@@ -103,12 +103,22 @@ requires capacity > 0
 // Returns Err if it doesn't have enough space.
 fn bumpAlloc(a: &mut Bump, size: i64): Result<i64>
 requires size > 0
+// The invariant the overflow broke, and the one `a.used <= a.cap` cannot catch on its
+// own: a wrapped-negative `used` is still <= cap. Reported `unknown` rather than proven
+// because `aligned` is computed with a bitwise mask, which the solver does not model.
+ensures a.used >= 0
 ensures a.used <= a.cap
 {
     // align to 8 bytes
     let seven: i64 = 7
     let aligned = (a.used + seven) & ~seven
-    if aligned + size > a.cap {
+    // Subtract instead of adding: `aligned + size > a.cap` overflows for a large `size`
+    // once a previous allocation has made `aligned` positive, and the wrapped negative is
+    // not greater than `cap`, so the guard passed and handed out a pointer for an
+    // allocation the arena cannot hold. Found by `milo test --contracts` once it drew a
+    // SEQUENCE of calls: one alloc to make `aligned` positive, then `size = i64::MAX`.
+    // Checking `aligned` first is what makes `a.cap - aligned` safe to compute.
+    if aligned > a.cap || size > a.cap - aligned {
         return Result.Err("bump allocator out of memory")
     }
     let ptr = a.base + aligned

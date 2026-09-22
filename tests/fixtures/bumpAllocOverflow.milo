@@ -1,0 +1,27 @@
+// `bumpAlloc` guarded its capacity with `aligned + size > a.cap`. Once a previous
+// allocation made `aligned` positive, a large `size` overflowed that sum, and the wrapped
+// negative was not greater than `cap`, so the arena handed out a pointer for an allocation
+// it could not hold and left `used` negative. Under `--no-overflow-checks` / `--fast` that
+// was silent; otherwise it aborted a function whose whole job is to return `Err`.
+//
+// Found by `milo test --contracts` once it drew a SEQUENCE of calls: a single call can
+// never reach it, because `aligned` is 0 until something has been allocated.
+from "std/mem" import { Bump }
+
+fn main(): i32 {
+    var b: Bump = Bump.new(16)!
+    let first = b.alloc(8)
+    if let Result.Ok(_p) = first {
+        print("first alloc ok")
+    }
+    // i64::MAX: `aligned + size` is what used to wrap.
+    if let Result.Err(_e) = b.alloc(9223372036854775807) {
+        print("huge alloc rejected")
+    }
+    // The arena is still usable and its accounting is still sane.
+    print($"remaining {b.remaining()}")
+    return 0
+}
+// @expect: first alloc ok
+// @expect: huge alloc rejected
+// @expect: remaining 8

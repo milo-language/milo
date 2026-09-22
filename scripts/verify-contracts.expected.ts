@@ -62,7 +62,7 @@ export const EXPECTED: Record<string, Expected> = {
   // `Type.method()` call is normalized to a plain Call so the method's contracts verify
   // exactly as the free fns they replaced did.
   "std/math.milo": { proven: 4, unknown: 1, errors: 0 },
-  "std/mem.milo": { proven: 4, unknown: 1, errors: 0 },
+  "std/mem.milo": { proven: 4, unknown: 2, errors: 0 },
   // 15 = free-fn VCs plus the `impl Pool` wrappers, which restate poolLive/poolAvailable's
   // liveCount preconditions (Pool has no struct invariant to supply them).
   "std/pool.milo": { proven: 22, unknown: 1, errors: 0 },
