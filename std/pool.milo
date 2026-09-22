@@ -98,7 +98,7 @@ ensures p.liveCount <= p.blockCount
 fn poolFree(p: &mut Pool, block: i64): void
 requires block >= p.base
 requires block < p.base + p.blockCount * p.blockSize
-requires(block - p.base) % p.blockSize == 0
+requires (block - p.base) % p.blockSize == 0
 requires p.liveCount > 0
 ensures p.liveCount >= 0
 {

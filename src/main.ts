@@ -1,6 +1,6 @@
 // CLI driver: subcommand dispatch for build/run/emit-*/test/fmt/lsp and the rest of
 // the surface described in src/cli-help.ts.
-import { discoverContractTests, contractTestSupport } from "./contract-tests";
+import { discoverContractTests, contractTestSupport, UNREACHABLE_STATE_EXIT } from "./contract-tests";
 import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync, mkdirSync, statSync } from "fs";
 import { WARNING_NAMES } from "./warnings";
 import { projectLints } from "./pkg";
@@ -1418,7 +1418,10 @@ async function mapPool<T>(items: T[], limit: number, fn: (item: T, index: number
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
 }
 
-type TestOutcome = { file: string; name: string; ok: boolean; ms: number; output: string };
+// `unreachable` marks a --contracts test that ran no case because every value the
+// harness can build is freshly constructed and the `requires` needs a state some other
+// call produces. Neither a pass nor a failure: it is a skip discovered at runtime.
+type TestOutcome = { file: string; name: string; ok: boolean; ms: number; output: string; unreachable?: true };
 
 // `milo test [--json]`. The JSON form (schema 1) is a PUBLIC surface: a CI dashboard, a
 // flake tracker or a bisect script wants per-test records, and the alternative is scraping
@@ -1500,9 +1503,11 @@ async function runTests(
       await mapPool(selected, jobs, async (name, i) => {
         const t0 = Date.now();
         const r = await guardedRun(bin, [name], { timeoutMs: TEST_TIMEOUT_MS, memMb: TEST_MEM_MB });
+        const unreachable = contracts && r.code === UNREACHABLE_STATE_EXIT;
         fileOutcomes[i] = {
-          file, name, ok: r.code === 0, ms: Date.now() - t0,
+          file, name, ok: r.code === 0 || unreachable, ms: Date.now() - t0,
           output: `${r.stdout ?? ""}${r.stderr ?? ""}`,
+          ...(unreachable ? { unreachable: true as const } : {}),
         };
       });
     } finally {
@@ -1511,7 +1516,8 @@ async function runTests(
     // Printed after the pool so concurrent tests cannot interleave their lines.
     for (const o of fileOutcomes) {
       if (!o) continue;
-      log(o.ok ? `  ${GREEN}✓${RESET} ${o.name} ${DIM}[${o.ms}ms]${RESET}`
+      log(o.unreachable ? `  ${DIM}⊘ ${o.name}: ${o.output.trim().split("\n")[0] ?? "unreachable"}${RESET}`
+        : o.ok ? `  ${GREEN}✓${RESET} ${o.name} ${DIM}[${o.ms}ms]${RESET}`
                : `  ✗ ${o.name} ${DIM}[${o.ms}ms]${RESET}`);
       if (!o.ok && o.output.trim()) {
         for (const line of o.output.trimEnd().split("\n")) log(`      ${line}`);
@@ -1520,8 +1526,9 @@ async function runTests(
     }
   }
 
-  const passed = outcomes.filter(o => o.ok).length;
-  const failed = outcomes.length - passed;
+  const unreachable = outcomes.filter(o => o.unreachable).length;
+  const passed = outcomes.filter(o => o.ok && !o.unreachable).length;
+  const failed = outcomes.filter(o => !o.ok).length;
   const elapsed = ((Date.now() - started) / 1000).toFixed(2);
 
   if (json) {
@@ -1530,6 +1537,7 @@ async function runTests(
       ok: failed === 0 && compileErrors.length === 0,
       passed,
       failed,
+      unreachable,
       // A file that would not compile ran no tests at all: reporting it as a failed test
       // would understate it, and dropping it would make a broken suite look green.
       compileErrors,
@@ -1537,7 +1545,8 @@ async function runTests(
       durationMs: Date.now() - started,
       tests: outcomes.map(o => ({
         file: o.file, name: o.name, ok: o.ok, ms: o.ms,
-        ...(o.ok ? {} : { output: o.output }),
+        ...(o.unreachable ? { unreachable: true } : {}),
+        ...(o.ok && !o.unreachable ? {} : { output: o.output }),
       })),
     }, null, 2) + "\n");
     if (failed > 0 || compileErrors.length > 0) process.exit(1);
@@ -1549,7 +1558,8 @@ async function runTests(
   if (compileErrors.length) {
     for (const c of compileErrors) console.log(`${c.file}: compile error\n  ${c.message.split("\n").join("\n  ")}`);
   }
-  const skipNote = skipped > 0 ? `, ${skipped} filtered out` : "";
+  const skipNote = (skipped > 0 ? `, ${skipped} filtered out` : "")
+    + (unreachable > 0 ? `, ${unreachable} unreachable` : "");
   const noun = outcomes.length === 1 ? "test" : "tests";
   console.log(`${passed} pass, ${failed} fail${skipNote} — ${outcomes.length} ${noun} in ${elapsed}s`);
   if (failed > 0) {

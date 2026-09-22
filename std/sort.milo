@@ -30,8 +30,12 @@ pub fn reverseI64(v: &mut Vec<i64>): void {
 
 // ── quicksort i64 ──
 
+// `hi` indexes `v` directly (`let pivot = v[hi]`), so `requires lo >= 0` alone was a
+// partial spec: it let a caller pass any `hi` at all and read out of bounds. Found by
+// `milo test --contracts`, which drew lo=0, hi=48 against a 0-element Vec.
 fn qsortI64(v: &mut Vec<i64>, lo: i64, hi: i64): void
 requires lo >= 0
+requires hi < v.len
 {
     if lo >= hi {
         return
@@ -59,6 +63,7 @@ requires lo >= 0
 
 fn qsortI32(v: &mut Vec<i32>, lo: i32, hi: i32): void
 requires lo >= 0 as i32
+requires (hi as i64) < v.len
 {
     if lo >= hi {
         return

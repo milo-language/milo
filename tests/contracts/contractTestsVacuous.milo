@@ -1,0 +1,10 @@
+// A precondition no i64 satisfies. The harness draws over the whole type here, so zero
+// satisfying draws means the `requires` itself is unsatisfiable: a real defect, and a hard
+// failure. This is the half of the anti-vacuity gate that must NOT become a skip when a
+// constructed struct is in play (see contractTestsStructs.milo::counterDrained).
+fn neverCallable(n: i64): i64
+requires n > 0 && n < 0
+ensures result == n
+{
+    return n
+}

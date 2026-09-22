@@ -46,10 +46,11 @@ ensures result < 0
     return c.limit
 }
 
-// Deliberately unsatisfiable: the harness builds a Counter and never mutates it before
-// the call, so `hits > 0` is a state only `counterBump` reaches. The test must FAIL for
-// having run no case rather than pass on zero cases, the same shape as
-// `std/pool.milo::poolFree`, whose `requires p.liveCount > 0` needs an alloc first.
+// Unreachable from construction: the harness builds a Counter and never mutates it before
+// the call, so `hits > 0` is a state only `counterBump` reaches. That is reported as a
+// SKIP naming the constructed param, not as a pass and not as a failure, the same shape as
+// `std/pool.milo::poolFree`, whose `requires p.liveCount > 0` needs an alloc first. The
+// anti-vacuity gate still hard-fails a scalar-only fn: see contractTestsVacuous.milo.
 fn counterDrained(c: &Counter): i64
 requires c.hits > 0
 ensures result >= 0

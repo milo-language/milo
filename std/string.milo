@@ -601,7 +601,7 @@ fn strIsEmpty(s: &string): bool {
 // 0 <= idx < s.len. Bytes that are not text go through `s[idx]`, which is a byte.
 fn strCharAt(s: &string, idx: i64): string
 requires idx >= 0 && idx < s.len
-requires(s[idx] & 192) != 128
+requires (s[idx] & 192) != 128
 {
     if (s[idx] & 192) == 128 {
         eprint("milo: charAt(", idx, ") lands inside a multibyte UTF-8 character; charAt takes a byte offset, iterate with codePoints() for characters")

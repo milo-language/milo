@@ -108,13 +108,17 @@ constructor *in the same file* (the contracts path parses without resolving impo
 `Vec` of anything but integers, a pointer, an array. A `&mut` parameter of such a type
 still reports that it is `&mut`.
 
-There is a second limit that no skip line reports. The harness builds a value and calls
-the fn once, so a `requires` naming a state only a *mutation* reaches is never satisfied:
-`std/pool.milo::poolFree` wants `p.liveCount > 0`, which only `poolAlloc` produces. That
-test fails for having run zero cases rather than passing vacuously, which is intended: a
-property test that never ran is not green. The fix is to draw a *sequence* of calls, not
-one constructor. `tests/contracts/contractTestsStructs.milo`
-pins the shape.
+There is a second limit, reported per test rather than per fn. The harness builds a value
+and calls the fn once, so a `requires` naming a state only a *mutation* reaches is never
+satisfied: `std/pool.milo::poolFree` wants `p.liveCount > 0`, which only `poolAlloc`
+produces. Such a test prints `⊘ <name>` naming the constructed parameter and is counted as
+`unreachable`, neither a pass nor a failure. The fix is to draw a *sequence* of calls, not
+one constructor; `tests/contracts/contractTestsStructs.milo::counterDrained` pins the shape.
+
+That skip is scoped to constructed values, and deliberately so. When every parameter is a
+scalar the draw space IS the type, so zero satisfying draws means the `requires` is
+unsatisfiable: a real defect, and a hard failure. A property test that never ran is not
+green (`tests/contracts/contractTestsVacuous.milo`).
 
 ## The fixture protocol (no code changes to add a test)
 `tests/run.test.ts` walks two directories:

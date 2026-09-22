@@ -52,11 +52,24 @@ test("a struct param is built by its constructor, and the refutation names the c
   const lying = byName.get("testContract_counterLimit");
   expect(lying.ok).toBe(false);
   expect(lying.output).toMatch(/ensures \(result < 0\) failed: c=counterNew\(limit=\d+\) result=\d+/);
-  // The anti-vacuity gate still bites once structs are in play: a precondition the
-  // constructor cannot establish is a test that ran nothing, which is not a pass.
-  const vacuous = byName.get("testContract_counterDrained");
-  expect(vacuous.ok).toBe(false);
-  expect(vacuous.output).toMatch(/no drawn input satisfied requires/);
+  // A precondition the constructor cannot establish is not a pass and not a defect: the
+  // harness only ever reaches freshly-constructed states, so it says so and skips.
+  const unreachable = byName.get("testContract_counterDrained");
+  expect(unreachable.unreachable).toBe(true);
+  expect(unreachable.output).toMatch(/no constructed value satisfied requires.*\bc\b/);
+  expect(json.unreachable).toBe(1);
+});
+
+test("an unsatisfiable requires over scalars stays a hard failure, not a skip", () => {
+  // The skip above is scoped to constructed values. When the draw space IS the type,
+  // nothing satisfying the requires means the contract is unsatisfiable, and turning that
+  // into a skip would be the gate quietly giving up.
+  const { code, json } = run("tests/contracts/contractTestsVacuous.milo");
+  expect(code).toBe(1);
+  const t = json.tests[0];
+  expect({ name: t.name, ok: t.ok, unreachable: t.unreachable ?? false })
+    .toEqual({ name: "testContract_neverCallable", ok: false, unreachable: false });
+  expect(t.output).toMatch(/no drawn input satisfied requires/);
 });
 
 test("a file with its own `fn main` is swept; the harness moves that main aside", () => {

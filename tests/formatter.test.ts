@@ -288,3 +288,29 @@ test("formatting preserves the token stream and is idempotent, repo-wide", () =>
   expect(tokenChanged).toEqual([]);
   expect(notIdempotent).toEqual([]);
 }, 120_000); // spawns bin/milo-fmt twice per repo file (~200) — far past the 5s default
+
+// `requires`/`ensures`/`invariant`/`decreases` are keywords to the compiler but plain
+// idents to the formatter's own lexer, so the rule that hugs a call's parens rewrote
+// `requires (a + b) < 10` into `requires(a + b) < 10`: still valid, and reads as a call to
+// a fn named `requires`. Surfaced by a real contract, `std/sort.milo::qsortI32`.
+test("a contract keyword keeps its space before a parenthesised expression", () => {
+  const out = format(`fn f(a: i64, b: i64): i64
+requires (a + b) < 10
+ensures (result) >= 0
+{
+    return a + b
+}
+`);
+  expect(out).toContain("requires (a + b) < 10");
+  expect(out).toContain("ensures (result) >= 0");
+  expect(out).not.toContain("requires(");
+  expect(out).not.toContain("ensures(");
+});
+
+test("a call still hugs its parens", () => {
+  const out = format(`fn g(): i64 {
+    return h(1)
+}
+`);
+  expect(out).toContain("h(1)");
+});

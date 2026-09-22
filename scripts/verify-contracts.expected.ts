@@ -65,12 +65,12 @@ export const EXPECTED: Record<string, Expected> = {
   "std/mem.milo": { proven: 4, unknown: 1, errors: 0 },
   // 15 = free-fn VCs plus the `impl Pool` wrappers, which restate poolLive/poolAvailable's
   // liveCount preconditions (Pool has no struct invariant to supply them).
-  "std/pool.milo": { proven: 17, unknown: 1, errors: 0 },
+  "std/pool.milo": { proven: 22, unknown: 1, errors: 0 },
   "std/process.milo": { proven: 0, unknown: 0, errors: 0 },
   "std/process.windows.milo": { proven: 0, unknown: 0, errors: 0 },
   "std/pty.darwin.milo": { proven: 0, unknown: 0, errors: 0 },
   "std/pty.windows.milo": { proven: 0, unknown: 0, errors: 0 },
-  "std/sort.milo": { proven: 2, unknown: 0, errors: 0 },
+  "std/sort.milo": { proven: 4, unknown: 0, errors: 0 },
   "std/string.milo": { proven: 9, unknown: 21, errors: 0 },
   "std/sync.milo": { proven: 0, unknown: 0, errors: 0 },
 };

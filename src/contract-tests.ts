@@ -29,6 +29,11 @@ const SEED = Number(process.env.MILO_CONTRACT_SEED) || 20260921;
 // and "a few"; a 10,000-element draw only costs time.
 const MAX_VEC_LEN = 32;
 
+// Exit code a synthesized test uses to say "I could not reach a state this `requires`
+// accepts, because every value I can build comes straight out of a constructor". The
+// driver reports it as a skip with that reason rather than as a pass or a failure.
+export const UNREACHABLE_STATE_EXIT = 3;
+
 const INT_TYPES: Record<string, { min: bigint; max: bigint }> = {
   i8: { min: -(2n ** 7n), max: 2n ** 7n - 1n },
   i16: { min: -(2n ** 15n), max: 2n ** 15n - 1n },
@@ -251,6 +256,7 @@ function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
   // `if let`, so the emitter tracks depth and closes what it opened.
   let depth = 2;
   let open = 0;
+  const built: string[] = [];
   const emit = (s: string) => body.push("    ".repeat(depth) + s);
 
   for (const p of fn.params) {
@@ -286,6 +292,7 @@ function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
       continue;
     }
     const ctor = ctx.ctors.get(t.name)!;
+    built.push(p.name);
     const args: string[] = [];
     const rename = new Map<string, string>();
     for (const q of ctor.fn.params) {
@@ -361,9 +368,22 @@ function harnessFor(fn: Function, ctx: Ctx): string | { why: string } {
   lines.push(`        __tried += 1`);
   lines.push(...body);
   lines.push(`    }`);
+  // Zero satisfying draws means two different things, and conflating them makes one of
+  // them a gate nobody can turn green. For scalars the draw space IS the type, so nothing
+  // satisfying the `requires` means the precondition is unsatisfiable: a real defect, and
+  // a hard failure. For a constructed struct the harness only ever reaches states a
+  // constructor returns, never states some other call produces (`poolFree` requires
+  // `liveCount > 0`, and only `poolAlloc` makes that true), so it reports a SKIP naming
+  // the params it could only draw fresh. Closing that gap means drawing a sequence of
+  // calls, not weakening this check.
   lines.push(`    if __ran == 0 {`);
-  lines.push(`        eprint("no drawn input satisfied requires after ${MAX_TRIES} tries; the contract wants a shape the generator does not produce")`);
-  lines.push(`        exit(1)`);
+  if (built.length > 0) {
+    lines.push(`        eprint("no constructed value satisfied requires after ${MAX_TRIES} tries: ${built.join(", ")} can only be drawn fresh from a constructor, and this precondition needs a state another call produces")`);
+    lines.push(`        exit(${UNREACHABLE_STATE_EXIT})`);
+  } else {
+    lines.push(`        eprint("no drawn input satisfied requires after ${MAX_TRIES} tries; the contract wants a shape the generator does not produce")`);
+    lines.push(`        exit(1)`);
+  }
   lines.push(`    }`);
   lines.push(`    print($"{__ran} cases")`);
   lines.push(`}`);

@@ -870,6 +870,14 @@ pub fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     if tk == TokKind.LParen && isMoveFnType(tokens, i) {
         return true
     }
+    // `requires`/`ensures`/`invariant`/`decreases` lex as plain idents here, so the
+    // ident-hugs-its-call-parens rule printed `requires (a + b) < 10` as
+    // `requires(a + b) < 10`, which reads as a call to a fn named `requires`. A contract
+    // keyword introduces an expression, and a parenthesised one is still an expression.
+    if tk == TokKind.LParen && prev.kind == TokKind.Ident &&
+    isContractLeadKeyword(prev.text) {
+        return true
+    }
     // Never space after ( [ . ::
     if pk == TokKind.LParen || pk == TokKind.LBracket ||
     pk == TokKind.Dot || pk == TokKind.ColonColon {
