@@ -818,13 +818,13 @@ export function safetyJson(violations: SafetyViolation[], level: SafetyLevel, fi
 
 export function formatSafetyReport(violations: SafetyViolation[], level: SafetyLevel): string {
   if (violations.length === 0) {
-    return `safety check passed: ${level} — all constraints satisfied`;
+    return `safety check passed: ${level}, all constraints satisfied`;
   }
 
   const lines: string[] = [];
-  lines.push(`safety check failed: ${level} — ${violations.length} violation(s)\n`);
+  lines.push(`safety check failed: ${level}, ${violations.length} violation(s)\n`);
   for (const v of violations) {
-    const loc = v.span ? `:${v.span.line}:${v.span.col}` : "";
+    const loc = v.span ? ` (line ${v.span.line}:${v.span.col})` : "";
     lines.push(`  ${v.severity}: ${v.message}${loc}`);
   }
   return lines.join("\n");

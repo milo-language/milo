@@ -46,12 +46,15 @@ Each profile is a combination of constraints, tuned to the standard's requiremen
 | Full match coverage | All `match` arms required (enforced by the type checker's exhaustiveness pass) | Most profiles |
 | Used results | A discarded `Option`, `Result` or `@mustUse` result (the `unused-result` warning) is an error | DO-178C A–C, NASA A–B |
 
-Each violation is reported as an error naming the profile:
+The command exits nonzero and names the profile on every violation:
 
 ```
+safety check failed: do178c-a, 4 violation(s)
+
   error: [do178c-a] function 'processInput' must have requires/ensures contracts
-  error: [do178c-a] function 'processInput' contains recursion (banned at this safety level)
-  error: [do178c-a] while loop in 'processInput' must have an invariant clause for bounded execution
+  error: [do178c-a] while loop in 'processInput' must have an invariant clause for bounded execution (line 3:5)
+  error: [do178c-a] recursion detected: processInput -> processInput (banned at this safety level)
+  error: [do178c-a] static call depth (unbounded) starting at 'processInput' exceeds max 30
 ```
 
 ## Integrating with CI
