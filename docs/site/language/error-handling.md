@@ -203,5 +203,3 @@ fn main() {
 
 This is the `anyhow` shape: `Heap<Error>` where the type no longer matters, a typed
 enum where a caller will match on it.
-
-Next: [Ownership](./ownership)

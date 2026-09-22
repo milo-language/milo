@@ -97,5 +97,3 @@ fn find(id: i32): i32? {
     return Option.None
 }
 ```
-
-Next: [Error Handling](./error-handling)

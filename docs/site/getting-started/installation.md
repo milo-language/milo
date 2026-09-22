@@ -47,5 +47,3 @@ This installs to `~/.local/bin` (`MILO_INSTALL_DIR` to change, `MILO_TAG` to pin
 ::: warning macOS quarantines browser downloads
 A binary downloaded through a browser is quarantined and macOS refuses to run it. Use `curl`, or run `xattr -d com.apple.quarantine milo`.
 :::
-
-Next: [Your first program](./quickstart) · [IDE setup](./ide-setup)

@@ -177,7 +177,7 @@ fn main(): i32 {
 
 Whatever the closure captured is released before the result is sent, so by the time `await()` returns you a value, every destructor the closure owned has already run: a lock it held is free, a file it opened is closed, a reader handle it cloned is gone. That ordering is a guarantee rather than a race — a worker whose environment was torn down only after the send let a caller act on a result while the closure's resources were still alive, which is the kind of bug that shows up on one platform's scheduler and nowhere else.
 
-The closure's captures must be `Send` (it crosses to another thread) — the compiler enforces this exactly as the old `Thread.spawn` did (see [Thread Safety](#thread-safety-send-sync)). Use `Promise.blocking` **only** for CPU-bound work or FFI that must block; ordinary I/O already yields on a plain `Promise`, so a thread would only add overhead.
+The closure runs on another OS thread, so the compiler rejects any capture that is not `Send`. It applies the same check to `spawnOsThreadDetached` (see [Thread Safety](#thread-safety-send-sync)). Use `Promise.blocking` **only** for CPU-bound work or FFI that must block; ordinary I/O already yields on a plain `Promise`, so a thread would only add overhead.
 
 Split work across cores by fanning `Promise.blocking` handles into `Promise.all` — no dedicated parallel construct needed:
 

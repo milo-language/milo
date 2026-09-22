@@ -100,8 +100,6 @@ let json = jsonStringify(user)
 // {"name":"Alice","age":30,"active":true}
 ```
 
-Next: [Enums & Matching](./enums)
-
 ## Visibility
 
 A struct is file-private unless declared `pub struct`. There is no per-field `pub`: every field of a visible struct is visible, except fields named with a leading `_`, which only the declaring file may touch (see [Private fields](#private-fields) above).

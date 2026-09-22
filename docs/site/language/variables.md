@@ -118,7 +118,6 @@ while i < 10 {
 }
 ```
 
-
 ## For loops
 
 Iterate over ranges with `for .. in`:
@@ -137,5 +136,3 @@ for name in names {
     print(name)
 }
 ```
-
-Next: [Functions](./functions)

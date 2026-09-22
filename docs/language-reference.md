@@ -18,8 +18,8 @@ A memory-safe systems language with simple syntax — Rust's semantics with a li
 
 > **This file is the authoritative reference.** It is the exhaustive spec, kept in step with
 > `src/parser.ts` and `src/checker.ts`, and it is what agents and contributors should read.
-> The published [Language Overview](https://milo-language.github.io/milo/language/) is the
-> teaching version of the same material — shorter, example-led, and aimed at newcomers. When
+> The published [Learn Milo pages](https://milo-language.github.io/milo/language/) are the
+> teaching version of the same material: shorter, example-led, and aimed at newcomers. When
 > the two disagree, this file is right and the site page needs updating.
 
 ## Getting Started

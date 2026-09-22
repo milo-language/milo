@@ -105,7 +105,7 @@ print(sum(tree))   // 3
 
 ### Runtime polymorphism
 
-`Heap<Interface>` lets you store different concrete types in the same collection. The heap pointer carries an itable for virtual dispatch.
+`Heap<Interface>` stores different concrete types behind one [interface](/language/traits#interfaces), so they can share a collection.
 
 ```milo
 interface Shape {
@@ -127,7 +127,7 @@ fn main(): i32 {
     shapes.push(Heap(Circle { radius: 5.0 }))
     shapes.push(Heap(Square { side: 4.0 }))
     for s in shapes {
-        print(s.area())
+        print(s.area())    // method calls go through the Heap, no `*`
     }
     return 0
 }
@@ -135,38 +135,24 @@ fn main(): i32 {
 
 ### Dereference
 
-Use `*` to read through a heap pointer:
+Use `*` to read the value through a heap pointer:
 
 ```milo
 let h = Heap(42)
 print(*h)          // 42
 ```
 
-Methods are called directly — no `*` needed:
-
-```milo
-interface Shape {
-    fn area(self: &Self): f64
-}
-
-struct Circle {
-    radius: f64,
-}
-
-impl Circle {
-    fn area(self: &Self): f64 {
-        return 3.14159 * self.radius * self.radius
-    }
-}
-
-let s: Heap<Shape> = Heap(Circle { radius: 3.0 })
-print(s.area())    // auto-derefs through Heap, then dispatches via itable
-```
-
 ## Heap\<T\> vs Arena\<T\>
 
-`Heap<T>` is single-owner: one value, one pointer, freed on drop. `Arena<T>` is pool-based: many values in one allocation, referenced by copyable handles. Use Arena when you have graphs, caches, or cycles where ownership doesn't form a tree.
+`Heap<T>` is single-owner: one value, one pointer, freed on drop. [`Arena<T>`](/stdlib/arena) is pool-based: many values in one allocation, referenced by copyable handles. Use Arena when you have graphs, caches, or cycles where ownership doesn't form a tree.
+
+| | `Heap<T>` | `Arena<T>` |
+|---|---|---|
+| Holds | one value | many values of one type |
+| You keep | the owning pointer (moves) | a `Handle<T>` (copies) |
+| Freed | when the owner goes out of scope | one slot with `free`, all when the arena goes out of scope |
+| Stale access | ruled out at compile time | `get` returns `None` at runtime |
+| Use for | recursive types, interface values | graphs, parent pointers, caches, cycles |
+| Allocation | one per value | one growable buffer for all values |
 
 All heap types (Vec, HashMap, Heap) auto-free when they go out of scope. No GC pauses, no `free()`, no `defer`.
-
-Next: [Strings](./strings)

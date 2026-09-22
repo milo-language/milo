@@ -56,5 +56,3 @@ double(&mut n)          // n is now 42
 A shared borrow is implicit: pass the value bare, as in `length(s)`, and the compiler borrows it. A `&mut` argument is spelled at the call site, `double(&mut n)`, so a reader can see the mutation. `&x` as an expression is an error; method receivers stay implicit (`v.push(1)`).
 
 See [Ownership](./ownership) for why references are restricted to function parameters.
-
-Next: [Structs](./structs)

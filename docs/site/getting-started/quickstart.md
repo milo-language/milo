@@ -103,5 +103,3 @@ age: 30
 ```
 
 `&User` borrows the value without consuming it — `u` is still usable after the call. Milo auto-borrows at call sites, so you write `greet(u)` not `greet(&u)`.
-
-Next: [IDE Setup](./ide-setup) or jump to [Variables & Types](/language/variables)
