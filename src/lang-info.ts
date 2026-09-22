@@ -95,3 +95,79 @@ export function runLangInfo(args: string[]): number {
   );
   return 0;
 }
+
+/** Levenshtein distance, for "did you mean" on a misspelled name. */
+function distance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(prev[j]! + 1, row[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = row;
+  }
+  return prev[b.length]!;
+}
+
+/**
+ * `milo explain <name>` — the reference entry for one warning, attribute or keyword,
+ * rendered to the terminal from the same data the docs site and the LSP are rendered from.
+ *
+ * A warning the compiler reports names nothing a user can look up: the diagnostic prints a
+ * message, not a code, so "what is index-clone and how do I silence it" had no answer at
+ * the terminal even though the text exists in three other places.
+ */
+export function explainText(query: string, json = false): string | undefined {
+  const info = langInfo();
+  const name = query.replace(/^@/, "");
+  const warning = info.warnings.find(w => w.name === name);
+  const attribute = info.attributes.find(a => a.name === name);
+  const keywordDoc = info.keywordDocs[name];
+  if (!warning && !attribute && !keywordDoc) return undefined;
+  if (json) return JSON.stringify(warning ?? attribute ?? { name, doc: keywordDoc }, null, 2) + "\n";
+  if (warning) {
+    return `warning: ${warning.name}${warning.offByDefault ? "   (off by default)" : ""}\n\n` +
+      (warning.doc ? `${warning.doc}\n\n` : "no reference entry yet\n\n") +
+      (warning.example ? `example:\n${warning.example.replace(/^(?!$)/gm, "  ")}\n` : "") +
+      (warning.fix ? `fix: ${warning.fix}\n\n` : "") +
+      `silence it: --allow=${warning.name}   enforce it: --deny=${warning.name}\n`;
+  }
+  if (attribute) {
+    return `attribute: @${attribute.name}${attribute.takesArgs ? "(…)" : ""}\n` +
+      `goes on: ${attribute.targets.join(", ")}\n\n${attribute.doc}\n`;
+  }
+  return `keyword: ${name}\n\n${keywordDoc}\n`;
+}
+
+/** Names `explain` answers to, for the "did you mean" list and for tests. */
+export function explainableNames(): string[] {
+  const info = langInfo();
+  return [...info.warnings.map(w => w.name), ...info.attributes.map(a => `@${a.name}`), ...Object.keys(info.keywordDocs)];
+}
+
+export function runExplain(args: string[]): number {
+  const query = args.find(a => !a.startsWith("-"));
+  if (!query) {
+    writeStdout("usage: milo explain <warning|@attribute|keyword>   (milo lang lists them all)\n");
+    return 1;
+  }
+  const text = explainText(query, args.includes("--json"));
+  if (text) {
+    writeStdout(text);
+    return 0;
+  }
+  // A near-miss is the common case (`--deny=unused-varibale` was the bug that started all
+  // of this), so spend the extra line on candidates rather than a bare refusal. Edit
+  // distance, not substring: that typo shares no useful substring with `unused-variable`,
+  // and substring matching answered it with `var`.
+  const name = query.replace(/^@/, "");
+  const near = explainableNames()
+    .map(n => ({ n, d: distance(name, n.replace(/^@/, "")) }))
+    .filter(c => c.d <= Math.max(2, Math.floor(name.length / 4)))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 5)
+    .map(c => c.n);
+  writeStdout(`no warning, attribute or keyword named '${query}'\n` +
+    (near.length ? `did you mean: ${near.join(", ")}?\n` : "run 'milo lang' to see every name\n"));
+  return 1;
+}

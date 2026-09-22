@@ -75,6 +75,13 @@ export const COMPILER_COMMANDS: CliCommand[] = [
       "operators, builtin methods, warning names (--json for tooling)",
     ],
   },
+  {
+    name: "explain", usage: "explain <name>",
+    help: [
+      "what one warning, @attribute or keyword means, with an example",
+      "and how to silence it (--json for the raw entry)",
+    ],
+  },
   { name: "api", usage: "api <terms>", help: ["search std signatures by name/doc (--module std/x to dump one, --markdown to emit reference docs)"] },
   { name: "doc", usage: "doc <file|dir>", help: ["reference markdown from doc-comments (-o <dir> to write one .md per module)"] },
   { name: "lex", usage: "lex <file>", help: ["dump the token stream as JSON"], hidden: "compiler-debug output, not a user-facing command" },

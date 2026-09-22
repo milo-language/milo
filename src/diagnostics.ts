@@ -1,6 +1,7 @@
 // Elm-style error formatting: source context, carets and severity, shared by the CLI
 // and the LSP so a message reads the same in a terminal and an editor.
 import type { Span } from "./ast";
+import { WARNING_NAMES } from "./warnings";
 
 type Severity = "error" | "warning" | "hint";
 
@@ -61,6 +62,13 @@ export function formatDiagnostic(
 ): string {
   const lines: string[] = [];
   const color = SEV_COLOR[d.severity];
+  // A silenceable finding prints its name: `warning[index-clone]: ...`. Without it the
+  // message was the only thing a user had, so there was no way to know which `--allow=`
+  // or `--deny=` reaches this finding, and no name to look up — `milo explain <name>`
+  // has the doc, the example and the fix, all of it unreachable from here. Only warning
+  // names get the bracket, so the bracket MEANS "you can allow this one away"; an error
+  // that carries an internal code stays a bare `error:`.
+  const label = d.code && WARNING_NAMES.includes(d.code) ? `${d.severity}[${d.code}]` : d.severity;
 
   // A span may belong to a different file than the entry (imported code). Render
   // the header and snippet against that file, falling back to the entry source.
@@ -71,7 +79,7 @@ export function formatDiagnostic(
 
   if (d.span) {
     const loc = `${file}:${d.span.line}:${d.span.col}`;
-    lines.push(`${BOLD}${color}${d.severity}${RESET}${BOLD}: ${d.message}${RESET}`);
+    lines.push(`${BOLD}${color}${label}${RESET}${BOLD}: ${d.message}${RESET}`);
     lines.push(`  ${DIM}──>${RESET} ${loc}`);
 
     const srcLines = (effSource ?? "").split("\n");
@@ -84,7 +92,7 @@ export function formatDiagnostic(
       lines.push(`${DIM}${pad} │${RESET} ${" ".repeat(d.span.col - 1)}${color}${"^".repeat(Math.max(1, d.len ?? 1))}${RESET}`);
     }
   } else {
-    lines.push(`${BOLD}${color}${d.severity}${RESET}${BOLD}: ${d.message}${RESET}`);
+    lines.push(`${BOLD}${color}${label}${RESET}${BOLD}: ${d.message}${RESET}`);
   }
 
   if (d.hint) {

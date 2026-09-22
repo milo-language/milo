@@ -22,6 +22,7 @@ bun test tests/run.test.ts -t "arithmetic"                # single fixture by na
 bun run src/main.ts api <terms>                           # search std signatures (name + doc, ranked)
 bun run src/main.ts api --json                            # every std symbol as JSON (docs/json-api.md)
 bun run src/main.ts lang --json                           # keywords/types/operators/builtins/warnings as JSON
+bun run src/main.ts explain <warning|@attr|kw>            # one name: doc, example, fix, which flag silences it
 bun run src/main.ts check foo.milo --json                 # type-check only; diagnostics as JSON
 bun run src/main.ts doc <file|dir> [-o out]               # reference markdown from doc-comments
 bun run src/main.ts api --module std/json                 # dump one module's full API

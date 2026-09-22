@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { execFileSync, spawnSync } from "child_process";
 import { tmpdir } from "os";
-import { langInfo, LANG_JSON_SCHEMA } from "../src/lang-info";
+import { langInfo, LANG_JSON_SCHEMA, explainText, explainableNames } from "../src/lang-info";
 import { KEYWORDS, SOFT_KEYWORDS } from "../src/tokens";
 import { KEYWORD_DOCS } from "../src/keyword-docs";
 import { PRIMITIVE_TYPE_NAMES } from "../src/types";
@@ -177,4 +177,54 @@ test("every documented example actually provokes its own warning", () => {
   }
   rmSync(dir, { recursive: true, force: true });
   expect(wrong).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// `milo explain <name>` — the terminal's view of the same reference.
+//
+// A warning the compiler reports names nothing a user can look up: the diagnostic prints a
+// message, not a code. The text existed in `lang --json`, on the site and in the LSP, and
+// was unreachable from the place a user meets the warning.
+test("explain answers for every name the vocabulary has", () => {
+  const names = explainableNames();
+  expect(names.length).toBeGreaterThan(70); // warnings + attributes + keywords
+  const silent = names.filter(n => !explainText(n));
+  expect(silent).toEqual([]);
+  // Every warning's terminal entry has to carry the two things the site entry does, plus
+  // the flag — a user reads this one WHILE the build is failing.
+  for (const w of WARNINGS) {
+    const text = explainText(w.name)!;
+    expect({ name: w.name, hasFix: text.includes("fix: ") }).toEqual({ name: w.name, hasFix: true });
+    expect({ name: w.name, hasFlag: text.includes(`--allow=${w.name}`) }).toEqual({ name: w.name, hasFlag: true });
+  }
+});
+
+test("explain rejects an unknown name and suggests the near miss", () => {
+  expect(explainText("unused-varibale")).toBeUndefined();
+  const r = spawnSync("bun", [join(ROOT, "src", "main.ts"), "explain", "unused-varibale"], { encoding: "utf-8" });
+  expect(r.status).toBe(1);
+  // Substring matching answered this with `var`, which is the wrong answer stated
+  // confidently; the distance threshold is what makes the suggestion worth printing.
+  expect(r.stdout).toContain("did you mean: unused-variable");
+});
+
+test("explain --json hands back the payload entry itself", () => {
+  const r = execFileSync("bun", [join(ROOT, "src", "main.ts"), "explain", "index-clone", "--json"], { encoding: "utf-8" });
+  const entry = JSON.parse(r);
+  expect(entry.name).toBe("index-clone");
+  expect(entry).toEqual(langInfo().warnings.find(w => w.name === "index-clone"));
+});
+
+test("a warning diagnostic prints the name, so the reference is reachable from the terminal", () => {
+  // The whole chain in one assertion: the checker reports a finding, the renderer names it,
+  // and that name is what `milo explain` and `--allow=` accept. It was broken in the middle
+  // — the name existed in the payload and never reached the screen.
+  const dir = mkdtempSync(join(tmpdir(), "milo-diag-"));
+  const f = join(dir, "case.milo");
+  writeFileSync(f, WARNINGS.find(w => w.name === "index-clone")!.example!);
+  const r = spawnSync("bun", [join(ROOT, "src", "main.ts"), "check", f], { encoding: "utf-8" });
+  const out = ((r.stdout ?? "") + (r.stderr ?? "")).replace(/\x1b\[[0-9;]*m/g, "");
+  rmSync(dir, { recursive: true, force: true });
+  expect(out).toContain("warning[index-clone]:");
+  expect(explainText("index-clone")).toContain("--allow=index-clone");
 });
