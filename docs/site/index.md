@@ -201,6 +201,20 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
         <div class="tile-tags"><span>Monte Carlo</span><span>depth of field</span><span>std/shard</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/graphics/render.milo --release" title="milo run examples/graphics/render.milo --release">⧉ copy run command</span>
       </a>
+      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/simulation/cloth.milo">
+        <video class="tile-img" src="/showcase/cloth.mp4" poster="/showcase/cloth.png" autoplay muted loop playsinline preload="auto" aria-label="A cloth mesh being dragged and folding under position-based dynamics"></video>
+        <h3>Cloth</h3>
+        <p>Position-Based Dynamics — Verlet point masses woven by distance constraints, the method real cloth engines use. Grab a node and fling it.</p>
+        <div class="tile-tags"><span>PBD</span><span>Verlet</span><span>constraint solver</span></div>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/simulation/cloth.milo" title="milo run examples/simulation/cloth.milo">⧉ copy run command</span>
+      </a>
+      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/simulation/phasespace.milo">
+        <video class="tile-img" src="/showcase/phasespace.mp4" poster="/showcase/phasespace.png" autoplay muted loop playsinline preload="auto" aria-label="Two cat's-eye vortices winding up in the Vlasov phase-space distribution"></video>
+        <h3>Plasma Physics</h3>
+        <p>A collisionless Vlasov solver in (x, v) phase space — finite-volume MUSCL with Strang splitting, winding a Maxwellian into trapped-particle vortices.</p>
+        <div class="tile-tags"><span>Vlasov</span><span>MUSCL / minmod</span><span>Strang splitting</span></div>
+        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/simulation/phasespace.milo" title="milo run examples/simulation/phasespace.milo">⧉ copy run command</span>
+      </a>
     </div>
   </div>
   <div class="cat cat-lang">
@@ -249,18 +263,6 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
         <p>Forecast, UV index and air quality for any US city, served from a single static binary — live at chadsmith.dev/weather.</p>
         <div class="tile-tags"><span>HTTP server</span><span>TLS fetch</span><span>JSON</span><span>17k-place index</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/net/weather/app.milo" title="milo run examples/net/weather/app.milo">⧉ copy run command</span>
-      </a>
-    </div>
-  </div>
-  <div class="cat cat-term">
-    <h3 class="cat-head">Terminal &amp; CLI</h3>
-    <div class="tile-grid">
-      <a class="tile" href="https://github.com/milo-language/milo/blob/main/examples/terminal/tetris.milo">
-        <img class="tile-img" src="/showcase/tetris.png" alt="Milo Tetris in the terminal" loading="lazy">
-        <h3>Tetris</h3>
-        <p>The classic, in your terminal.</p>
-        <div class="tile-tags"><span>raw TTY</span><span>green tasks</span><span>channels</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/terminal/tetris.milo" title="milo run examples/terminal/tetris.milo">⧉ copy run command</span>
       </a>
     </div>
   </div>
