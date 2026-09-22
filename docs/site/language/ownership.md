@@ -10,9 +10,9 @@ last-verified: 2026-09-20 (explicit &mut on call arguments)
 
 In most languages, memory bugs hide until production. In Milo, the compiler catches them before your code runs — no garbage collector slowing things down, no manual `free()` to forget.
 
-The idea is simple: **every value has one owner.** When you hand a value to someone else, you don't have it anymore. That's it. The compiler enforces this rule, and from it you get memory safety, no dangling pointers, and no data races — all at zero runtime cost.
+The idea is simple: **every value has one owner.** When you hand a value to someone else, you don't have it anymore. That's it. The compiler enforces this rule, and from it you get memory safety, no dangling pointers, and no data races. The ownership and borrow checks happen at compile time and cost nothing at runtime; bounds checks, overflow traps and arena handle checks are the parts that run.
 
-Two mechanisms make this work: moves (transferring ownership) and borrows (temporary, read-only access).
+Two mechanisms make this work: moves (transferring ownership) and borrows (shared read-only or mutable access that never outlives the call or scope that made it).
 
 ## Moves
 
@@ -65,7 +65,7 @@ print(b)           // also valid
 
 ## Borrowing — look but don't keep
 
-Sometimes a function just needs to *read* a value without taking it. That's a borrow: `&T`. A reference lives in exactly two places: a function parameter, or a local view such as `let mid = v[1..3]` or `let key = line[0..4]`. A view freezes its owner for the life of the binding. What a reference can never do is outlive the scope that made it: it cannot be stored in a struct or a collection, captured by a closure, or returned. The one exception: a method may return a view of `self`.
+Sometimes a function just needs to *read* a value without taking it. That's a borrow: `&T`. A reference lives in exactly two places: a function parameter, or a local view such as `let mid = v[1..3]` or `let key = line[0..4]`. A view freezes its owner for the life of the binding. What a reference can never do is outlive the scope that made it: it cannot be stored in a struct or a collection, captured by a closure (a closure may borrow an owned local, never a reference), or returned. The one exception: a method may return a view of `self`.
 
 ```milo skip
 // OK: borrow for the duration of the call

@@ -95,11 +95,11 @@ print(sum.x)   // 8
 
 ## What's not here yet
 
-- `dyn Trait` (trait objects)
+- `dyn Trait`: a `trait` dispatches statically only, and `&Eq` is not a type
 - Associated types
 - `where` clauses
 
 
-For runtime polymorphism (heterogeneous collections, virtual dispatch), use [interfaces](/language/#interfaces) instead. These items are on the roadmap.
+For runtime polymorphism (heterogeneous collections, virtual dispatch), use [interfaces](/language/#interfaces): a `&Shape` or `Heap<Shape>` over an `interface` is Milo's trait object. None of these items is planned; associated types are listed under [Not Planned](/roadmap#not-planned).
 
 Next: [Closures](./closures)

@@ -43,6 +43,6 @@ fn Color.strikethrough(s: &string): string
 ## Example
 
 ```milo
-print(Color.bold(&Color.red("error:")) + " something went wrong")
+print(Color.bold(Color.red("error:")) + " something went wrong")
 print(Color.green("ok") + " " + Color.dim("(3 tests passed)"))
 ```

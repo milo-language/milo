@@ -130,7 +130,7 @@ fn name(param: T): Ret { … }
 ```
 Declares a function. Parameter types are mandatory and the return type follows the `:` — omit it and the function returns `void`.
 
-`fn name<T>(x: T): T` adds type parameters; generics are monomorphized, so a generic call costs nothing at run time. A `&T` / `&mut T` parameter is fed the value **bare** at the call site (`f(x)`, never `f(&x)`) — borrows are implicit and `&x` is not an expression.
+`fn name<T>(x: T): T` adds type parameters; generics are monomorphized, so a generic call costs nothing at run time. A `&T` parameter is fed the value **bare** at the call site (`f(x)`, never `f(&x)`): shared borrows are implicit and `&x` is not an expression. A `&mut T` argument is spelled `f(&mut x)`; the bare form is the error `implicit-mut-borrow`.
 
 ### `for`
 

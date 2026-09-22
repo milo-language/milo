@@ -13,7 +13,7 @@
       <a class="sub-link" :href="base + 'getting-started/installation'">In-browser runs are paused until the wasm64 port lands; install Milo to edit and run these →</a>
     </div>
 
-    <!-- rail: Sandbox (free play) first, then the 10 lessons -->
+    <!-- rail: Sandbox (free play) first, then the 12 lessons -->
     <div class="rail" role="tablist" aria-label="Lessons">
       <button class="pip sb" :class="{ cur: sandbox }" title="Sandbox — free play" @click="openSandbox">Sandbox</button>
       <span class="rail-label">Lessons</span>
@@ -194,7 +194,7 @@ fn main(): i32 {
 }` },
   { title: 'Contracts — checked or proven', short: 'Contracts', file: 'clamp.milo', err: true,
     desc: 'Annotate a function with <code>requires</code> (what the caller must guarantee) and <code>ensures</code> (what it promises back), written in ordinary Milo. This <code>clamp</code> has a bug you could easily type: the low branch returns <code>value</code> instead of <code>lo</code>. Run it — the first call is fine, but <code>clamp(-5, 0, 10)</code> returns <code>-5</code>, which breaks <code>ensures</code>, and the contract stops it. Fix line 5 to <code>return lo</code> and it passes.',
-    take: 'Here that check runs at runtime (the browser has no solver). With <code>z3</code>, <code>milo prove</code> discharges the same conditions at compile time and deletes the check — gradual verification, no hand-written proofs. Contracts prove the properties <em>you state</em>, not that the whole program is bug-free; memory safety (no use-after-free, no data races) is separate and always on.',
+    take: 'Here that check runs at runtime, as an assert in a debug build (<code>milo run --debug</code>, or <code>--contract-checks</code> at any level). <code>milo prove</code> checks the same conditions for every input at compile time with the solver built into the standard library, so there is nothing to install, and on this <code>clamp</code> it prints a counterexample before anything runs. Gradual verification, no hand-written proofs. Contracts prove the properties <em>you state</em>, not that the whole program is bug-free; memory safety (no use-after-free, no data races) is separate and always on.',
     out: ['10', 'runtime error: ensures clause violated'],
     code: `fn clamp(value: i64, lo: i64, hi: i64): i64
 requires lo <= hi
@@ -285,7 +285,7 @@ fn main(): i32 {
     return 0
 }` },
   { title: 'Interfaces and dynamic dispatch', short: 'Interfaces', file: 'traits.milo',
-    desc: 'An <code>interface</code> defines behavior; any struct can <code>impl</code> it. A <code>&Greeter</code> is a trait object.',
+    desc: 'An <code>interface</code> defines behavior; any struct with matching methods satisfies it. A <code>&Greeter</code> dispatches at runtime, so it is Milo\'s trait object (a <code>trait</code> only dispatches statically).',
     take: 'One call site, many concrete types — dispatched through a fat pointer of data plus a method table.',
     out: ['Woof', 'Meow'],
     code: `interface Greeter {
@@ -309,7 +309,7 @@ fn main(): i32 {
 }` },
   { title: 'Ownership and moves', short: 'Ownership', file: 'ownership.milo', err: true,
     desc: 'A heap value like <code>string</code> has one owner. <code>let b = a</code> <em>moves</em> it, so using <code>a</code> after is a compile error. Run it as-is — then change line 3 to <code>a.clone()</code> and run again.',
-    take: 'Small types (<code>i32</code>, <code>f64</code>) copy automatically. For heap values you pick: <code>.clone()</code> for a real copy, or <code>&a</code> to borrow and just read it. Copies are never silent, and there’s no GC cleaning up behind you.',
+    take: 'Small types (<code>i32</code>, <code>f64</code>) copy automatically. For heap values you pick: <code>.clone()</code> for a real copy, or pass <code>a</code> to a <code>&string</code> parameter to lend it for one call (no <code>&</code> at the call site). Copies are never silent, and there’s no GC cleaning up behind you.',
     out: ['error: use of moved variable \'a\'', '  ──> ownership.milo:4:11', '  │', '4 │     print(a)             // error: a was moved away', '  │           ^', '  hint: ownership of \'a\' was transferred earlier and it can no longer be used here. To keep it alive, clone it at the point of transfer: \'a.clone()\'.'],
     code: `fn main(): i32 {
     let a = "owned string"
@@ -443,8 +443,8 @@ fn main(): i32 {
     return 0
 }`,
   'Contracts': `// requires = caller's obligation, ensures = the function's promise.
-// With no solver, each becomes a checked runtime assertion;
-// 'milo prove' (with z3) discharges them at compile time for free.
+// In a debug build each becomes a checked runtime assertion;
+// 'milo prove' checks them for every input at compile time (built-in solver, nothing to install).
 fn clamp(value: i64, lo: i64, hi: i64): i64
 requires lo <= hi
 ensures result >= lo && result <= hi

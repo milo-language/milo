@@ -20,7 +20,7 @@ Primitive types, let/var bindings, if/else, while/for loops, functions, structs,
 
 - **Ownership**: single-owner move semantics, compiler-tracked drops, no GC, no reference counting
 - **Null safety**: `Option<T>` — no null pointers in safe code
-- **Race safety**: structural `Send`/`Sync` — the compiler rejects data races at `spawn()` boundaries
+- **Race safety**: structural `Send`, checked only where a closure starts an OS thread (`Promise.blocking`); green tasks need nothing, and a `var` global written from an OS thread is a compile error
 - **Overflow safety**: compile-time range proof plus runtime traps on `+ - * -x` — and shift-out-of-range, divide-by-zero, `INT_MIN / -1` — in **every** build mode, release included. `--no-overflow-checks` opts back into wrapping, and `wrappingAdd`/`saturatingAdd`/`checkedAdd` name it per operation. Measured cost: 0–2% on float, parsing and allocation work, up to ~30% on tight loops over unconstrained integers (reproduce with `sh benchmarks/run-overflow.sh`)
 - **`unsafe` blocks**: pointer work is quarantined behind a grep target, with an unused-`unsafe` lint on by default
 - **Borrow invalidation**: ref-while-frozen, use-after-invalidate, and call-site exclusivity are compile errors
@@ -48,7 +48,7 @@ One model — green tasks — with a single OS-thread escape hatch. No async/awa
 
 - **Green tasks** (`std/runtime`): stackful coroutines (64KB guarded stacks; kqueue, epoll, or Win32 events), cooperative scheduling — `Task.spawn()` for fire-and-forget, transparent async I/O (`stream.recv()`/`stream.send()` auto-yield on EAGAIN)
 - **Promises** (`std/runtime`): `Promise<T>.run()`, `.await()`, `Promise.all()`, `Promise.race()` — structured concurrency over green tasks
-- **OS-thread escape hatch**: `Promise<T>.blocking()` runs `Send` closures on a real thread for CPU-bound work or blocking FFI; the result returns through the same `.await()`
+- **OS-thread escape hatch**: `Promise<T>.blocking()` runs `Send` closures on a real thread for CPU-bound work or blocking FFI; the result returns through the same `.await()`, and `std/shard`'s `parallelMap` runs each worker on one
 - **Synchronization** (`std/sync`): `Channel<T>` (bounded FIFO, multi-producer, blocking + non-blocking), `WaitGroup`, `AtomicI64`, `AtomicBool`; `select` over fd, timer, channel, promise, and child-exit arms (`std/select`)
 - **Go exit semantics**: when `main` returns the process exits and outstanding tasks are abandoned — wait explicitly, or drive with `schedulerRunToCompletion()`
 - **`main` is itself a green task** in any program that can reach `spawn`, so a blocking call in `main` no longer starves the tasks that would satisfy it
