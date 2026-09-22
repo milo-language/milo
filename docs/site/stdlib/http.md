@@ -161,11 +161,12 @@ Value of query-string parameter `name`, or None if it was not in the URL.
 #### `Context.redirect`
 
 ```milo
-fn Context.redirect(self: &Context, url: string): Response
+fn Context.redirect(self: &mut Context, url: string): Response
 ```
 
-A 302 Found response with `url` as its body. It does not set a `Location` header;
-add one with `setHeader("Location", url)`.
+A redirect to `url`: sets the `Location` header and answers 302 Found, or the
+status from `setStatus` (301, 303, 307, 308) when one was set. The URL is also the
+body, for clients that show it.
 
 #### `Context.setCookie`
 

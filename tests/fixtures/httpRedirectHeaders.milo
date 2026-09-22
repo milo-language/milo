@@ -1,0 +1,62 @@
+// Context.redirect sets a Location header, and no header can smuggle a CR or LF onto
+// the wire.
+//
+// redirect used to answer 302 with the URL as the body and no Location header, so a
+// browser showed the URL as text instead of following it. And renderRaw wrote header
+// values as given: a redirect URL taken from a query string with "\r\n" in it ended the
+// header block early and injected its own (response splitting). Both are pinned here
+// through the real path, Context -> Response -> wire bytes.
+from "std/http" import {
+    Context, Request, Param, Response, renderResponse
+}
+
+pub fn mkCtx(): Context {
+    return Context {
+        req: Request {
+            method: "GET",
+            path: "/",
+            queryParams: [],
+            headers: [],
+            body: "",
+        }
+        ,
+        params: [],
+        statusCode: 200,
+        respHeaders: [],
+    }
+}
+
+pub fn show(s: &string): void {
+    var out: string = ""
+    for i in 0..s.len {
+        if s[i] == '\r' {
+            out.pushStr("\\r")
+        } else if s[i] == '\n' {
+            out.pushStr("\\n")
+        } else {
+            out.push(s[i])
+        }
+    }
+    print(out)
+}
+
+pub fn main(): i32 {
+    var plain = mkCtx()
+    let r1 = plain.redirect("/login")
+    show(renderResponse(r1, plain.respHeaders))
+
+    var moved = mkCtx()
+    moved.setStatus(301)
+    let r2 = moved.redirect("https://example.com/")
+    show(renderResponse(r2, moved.respHeaders))
+
+    var evil = mkCtx()
+    evil.setHeader("X-Note", "a\r\nSet-Cookie: session=stolen")
+    let r3 = evil.redirect("/x\r\n\r\n<script>")
+    show(renderResponse(r3, evil.respHeaders))
+    return 0
+}
+
+// @expect: HTTP/1.1 302 Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nLocation: /login\r\nConnection: close\r\nServer: milo\r\n\r\n/login
+// @expect: HTTP/1.1 301 Moved Permanently\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 20\r\nLocation: https://example.com/\r\nConnection: close\r\nServer: milo\r\n\r\nhttps://example.com/
+// @expect: HTTP/1.1 302 Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nX-Note: a  Set-Cookie: session=stolen\r\nLocation: /x    <script>\r\nConnection: close\r\nServer: milo\r\n\r\n/x\r\n\r\n<script>

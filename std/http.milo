@@ -160,9 +160,13 @@ impl Context {
         return Response.Html(body)
     }
 
-    // A 302 Found response with `url` as its body. It does not set a `Location` header;
-    // add one with `setHeader("Location", url)`.
-    fn redirect(self: &Self, url: string): Response {
+    // A redirect to `url`: sets the `Location` header and answers 302 Found, or the
+    // status from `setStatus` (301, 303, 307, 308) when one was set. The URL is also the
+    // body, for clients that show it.
+    fn redirect(self: &mut Self, url: string): Response {
+        self.respHeaders.push(Param {
+            name: "Location", value: url.clone()
+        })
         if self.statusCode != 200 {
             return Response.Status(self.statusCode, "text/plain; charset=utf-8", url)
         }
@@ -489,16 +493,33 @@ pub fn statusText(status: i32): string {
     return "200 OK"
 }
 
+// A header name or value with CR or LF in it would end the header early and let the
+// rest be read as more headers or as the body (response splitting), e.g. a redirect URL
+// taken from a query string. Replace them with spaces, as Go's net/http does, so every
+// setter (setHeader, setCookie, redirect, a Status content type) is safe at this one
+// point instead of each having to remember.
+fn headerSafe(s: &string): string {
+    var out: string = ""
+    for i in 0..s.len {
+        if s[i] == '\r' || s[i] == '\n' {
+            out.push(' ')
+        } else {
+            out.push(s[i])
+        }
+    }
+    return out
+}
+
 // The response bytes, built but not written. Split out of sendRaw so a transport that
 // is not a bare fd — std/https writes through SSL_write — reuses the exact wire format
 // instead of reimplementing it. std/http itself stays OpenSSL-free; that separation is
 // why TLS lives in another module.
 pub fn renderRaw(status: i32, contentType: &string, body: &string, extraHeaders: &Vec<Param>): string {
     var resp: string = "HTTP/1.1 " + statusText(status)
-    resp = resp + "\r\nContent-Type: " + contentType
+    resp = resp + "\r\nContent-Type: " + headerSafe(contentType)
     resp = resp + "\r\nContent-Length: " + body.len.toString()
     for i in 0..extraHeaders.len {
-        resp = resp + "\r\n" + extraHeaders[i].name + ": " + extraHeaders[i].value
+        resp = resp + "\r\n" + headerSafe(extraHeaders[i].name) + ": " + headerSafe(extraHeaders[i].value)
     }
     resp += "\r\nConnection: close"
     resp += "\r\nServer: milo"
