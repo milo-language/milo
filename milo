@@ -1,6 +1,6 @@
 #!/bin/sh
 # Dev wrapper for the from-source compiler: `./milo <args>` == `bun run src/main.ts <args>`.
-# End users install a prebuilt `milo` binary via install.sh; this is for repo clones.
+# This is the recommended install (clone + PATH symlink); install.sh fetches a prebuilt, older binary.
 # Resolve to the repo dir so the compiler finds src/ and std/ regardless of caller
 # cwd, and regardless of whether this wrapper was invoked via a symlink (e.g. one in
 # /usr/local/bin) — follow symlinks to the real script before taking its dirname.

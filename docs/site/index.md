@@ -26,20 +26,20 @@ last-verified: 2026-09-22 (trimmed: one statement of the rule, 10 showcase tiles
 <div class="install-line">
 
 ```sh
-curl -fsSL https://milo-language.github.io/milo/install.sh | sh
+git clone https://github.com/milo-language/milo && cd milo && ./milo run examples/hello.milo
 ```
 
 </div>
 
 <CodeCarousel
-  :titles="['Hello World', 'Functions', 'Contracts', 'Structs', 'Ownership', 'Promises']"
+  :titles="['Hello World', 'Ownership', 'Borrowing', 'No escape', 'Promises', 'Contracts']"
   :captions="[
     '',
-    'The same clamp, written as a plain function — no contracts yet.',
-    'requires and ensures are part of the language. The prover checks that clamp keeps its promise for every input, not just the ones you tested.',
-    'Plain data with methods. No inheritance, no header files, no surprises.',
     'Hand a value to someone else and you no longer have it. The compiler catches the mistake at compile time, not at 3am.',
-    'Two requests in flight at once. Green tasks, not OS threads, so thousands are cheap. Each task owns its data, so there is no mutex. Holding a view into a shared global across an await is a compile error, and OS threads start only at the two doors the compiler checks.',
+    'A borrow lasts one call. Reads are implicit; a mutation is spelled &mut at the call site, so the line that can change v is the one that says so.',
+    'A reference cannot be stored or returned. Nothing outside a function can hold a pointer into its values, which is why the function you are reading is the whole story.',
+    'Two requests in flight on green tasks. Each task owns its data, so there is no mutex and no Send/Sync to write.',
+    'requires and ensures are part of the language. milo prove checks clamp for every input, not just the ones you tested.',
   ]"
 >
 
@@ -47,45 +47,6 @@ curl -fsSL https://milo-language.github.io/milo/install.sh | sh
 fn main() {
     let name = "world"
     print($"hello, {name}")
-}
-```
-
-```milo
-fn clamp(x: i64, lo: i64, hi: i64): i64 {
-    if x < lo { return lo }
-    if x > hi { return hi }
-    return x
-}
-```
-
-```milo
-fn clamp(x: i64, lo: i64, hi: i64): i64
-    requires lo <= hi                       // the caller's obligation
-    ensures result >= lo && result <= hi    // proven, for every input that meets it
-{
-    if x < lo { return lo }
-    if x > hi { return hi }
-    return x
-}
-```
-
-```milo
-from "std/math" import { Math }
-
-struct Point {
-    x: f64,
-    y: f64,
-}
-
-impl Point {
-    fn dist(self: &Self): f64 {
-        return Math.sqrt(self.x * self.x + self.y * self.y)
-    }
-}
-
-fn main() {
-    let p = Point { x: 3.0, y: 4.0 }
-    print($"{p.dist()}")   // 5
 }
 ```
 
@@ -100,6 +61,36 @@ fn main() {
 ```
 
 ```milo
+fn total(xs: &Vec<i64>): i64 {
+    var sum = 0
+    for x in xs { sum += x }
+    return sum
+}
+
+fn double(xs: &mut Vec<i64>): void {
+    for i in 0..xs.len { xs[i] *= 2 }
+}
+
+fn main() {
+    var v: Vec<i64> = [1, 2, 3]
+    print(total(v))    // 6: a look for one call, v is still yours
+    double(&mut v)     // the only kind of line that can change v
+    print(v)           // [2, 4, 6]
+}
+```
+
+```milo error
+struct Parser {
+    src: &string,   // error: references cannot be stored in structs
+}
+
+fn longest(a: &string, b: &string): &string {   // error: cannot return a reference
+    if a.len > b.len { return a }
+    return b
+}
+```
+
+```milo
 from "std/fetch" import { fetch }
 from "std/runtime" import { Promise }
 
@@ -108,6 +99,17 @@ fn main() {
     let b = Promise<i32>.run(() => fetch("https://httpbin.org/get")!.status)
 
     print($"{a.await()!} {b.await()!}")   // 200 200
+}
+```
+
+```milo
+fn clamp(x: i64, lo: i64, hi: i64): i64
+    requires lo <= hi                       // the caller's obligation
+    ensures result >= lo && result <= hi    // proven, for every input that meets it
+{
+    if x < lo { return lo }
+    if x > hi { return hi }
+    return x
 }
 ```
 

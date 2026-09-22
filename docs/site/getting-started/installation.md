@@ -1,67 +1,21 @@
 <!-- doc-meta
 system: install
-purpose: how end users get a working milo (prebuilt binary first, source second)
+purpose: how end users get a working milo (source build first, since main moves faster than releases; prebuilt binary second)
 key-files: install.sh, .github/workflows/release.yml, milo, README.md
 update-when: the install script, release asset naming, or the source-build path changes
-last-verified: 2026-07-30
+last-verified: 2026-09-22
 -->
 
 # Installation
 
-```sh
-curl -fsSL https://milo-language.github.io/milo/install.sh | sh
-```
+Milo changes quickly, so build from source and `git pull` to stay current.
 
-That drops a single self-contained `milo` binary in `~/.local/bin`. The standard library is
-baked into it — there is nothing else to fetch.
-
-Then:
+You need **[Bun](https://bun.sh)** (the compiler is TypeScript) and **clang** (Milo emits LLVM IR and links with clang).
 
 ```sh
-milo --version
-```
-
-::: tip You also need clang
-Milo compiles to LLVM IR and shells out to `clang` to assemble and link. macOS:
-`xcode-select --install`. Debian/Ubuntu: `sudo apt install clang`. The installer warns you
-if it can't find one.
-:::
-
-## Options
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `MILO_INSTALL_DIR` | `~/.local/bin` | where the binary lands |
-| `MILO_TAG` | `latest` | which release tag to pull |
-
-```sh
-MILO_INSTALL_DIR=/usr/local/bin curl -fsSL https://milo-language.github.io/milo/install.sh | sh
-```
-
-## Manual download
-
-Prebuilt binaries for macOS and Linux, arm64 and x64, are on the
-[releases page](https://github.com/milo-language/milo/releases/latest).
-
-::: warning macOS quarantines browser downloads
-A binary downloaded through Safari or Chrome is quarantined, and macOS will refuse to run it
-(often deleting it outright). `curl -L` the tarball or use the installer above — neither sets
-the quarantine attribute. If you already downloaded it in a browser:
-`xattr -d com.apple.quarantine milo`.
-:::
-
-## Build from source
-
-You want this if you're working *on* the compiler rather than *with* it, or you're on a
-platform with no prebuilt binary.
-
-Dependencies: **[Bun](https://bun.sh)** (runs the compiler, which is TypeScript) and
-**LLVM/Clang**.
-
-```sh
-curl -fsSL https://bun.sh/install | bash          # bun
-brew install llvm                                  # macOS
-sudo apt install llvm clang                        # Debian/Ubuntu
+curl -fsSL https://bun.sh/install | bash   # bun
+xcode-select --install                     # macOS: clang
+sudo apt install clang                     # Debian/Ubuntu: clang
 ```
 
 ```sh
@@ -70,31 +24,28 @@ cd milo
 ./milo run examples/hello.milo
 ```
 
-The repo ships a `milo` wrapper — it's just `bun run src/main.ts <args>`. To use it from any
-directory, put it on your PATH:
-
-```sh
-# symlink (the wrapper follows the link back to the repo)
-sudo ln -s "$PWD/milo" /usr/local/bin/milo
-
-# — or — add the repo to PATH
-echo "export PATH=\"$PWD:\$PATH\"" >> ~/.zshrc && source ~/.zshrc
-```
-
-`git pull` keeps a source install current; the symlink keeps pointing at the repo.
-
-## Verify it works
-
-```sh
-milo run examples/hello.milo
-```
-
 ```
 Hello, Milo!
 ```
 
-## Editor support
+`./milo` runs `bun run src/main.ts`. To use `milo` from any directory, symlink it onto your PATH (the wrapper follows the link back to the repo):
 
-Milo ships an LSP server (`milo lsp`) and a VS Code extension. See [IDE Setup](./ide-setup).
+```sh
+sudo ln -s "$PWD/milo" /usr/local/bin/milo
+```
 
-Next: [Your first program](./quickstart)
+## Prebuilt binary
+
+Releases are single self-contained binaries (macOS and Linux, arm64 and x64) with the standard library built in. They lag `main`.
+
+```sh
+curl -fsSL https://milo-language.github.io/milo/install.sh | sh
+```
+
+This installs to `~/.local/bin` (`MILO_INSTALL_DIR` to change, `MILO_TAG` to pin a release). You still need clang. Tarballs are on the [releases page](https://github.com/milo-language/milo/releases/latest).
+
+::: warning macOS quarantines browser downloads
+A binary downloaded through a browser is quarantined and macOS refuses to run it. Use `curl`, or run `xattr -d com.apple.quarantine milo`.
+:::
+
+Next: [Your first program](./quickstart) · [IDE setup](./ide-setup)

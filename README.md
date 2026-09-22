@@ -19,9 +19,11 @@ fn main(): i32 {
 Compiles through LLVM to a static binary.
 
 ```sh
-curl -fsSL https://milo-language.github.io/milo/install.sh | sh
-milo run examples/hello.milo
+git clone https://github.com/milo-language/milo && cd milo
+./milo run examples/hello.milo     # needs bun and clang
 ```
+
+Milo moves fast, so build from source ([install](https://milo-language.github.io/milo/getting-started/installation) has the details and prebuilt binaries).
 
 ## The rule
 
