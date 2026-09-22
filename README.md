@@ -5,10 +5,13 @@
 [Docs](https://milo-language.github.io/milo/) · [Tour](https://milo-language.github.io/milo/tour) · [Stdlib](https://milo-language.github.io/milo/stdlib/)
 
 ```milo
-from "std/http" import { Request, Response, serve }
+from "std/http" import { Context, Response, Router, serveRouter }
 
 fn main(): i32 {
-    serve(8080, (req: &Request) => Response.Html("hello from milo"))!
+    var r = Router.new()
+    r.get("/", (c: &mut Context) => Response.Html("hello from milo"))
+    r.get("/users/:id", (c: &mut Context) => Response.Text($"user {c.param("id")!}"))
+    serveRouter(8080, r)!
     return 0
 }
 ```
@@ -63,7 +66,7 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
 - **Some zero-copy.** Where Rust hands out a borrow, Milo sometimes asks for a `clone()`.
 - **One check moves to runtime.** "This offset still belongs to that buffer" is a named runtime failure, not a compile error and not a segfault.
 
-Good fit: CLIs, services, compilers, emulators, anything you would write in careful C as a buffer plus integer ids. Poor fit: data models that are graphs of pointers.
+Good fit: CLIs, services, compilers, emulators, anything you would write in careful C as a buffer plus integer ids. Awkward fit: code that wants to keep an object graph as is (widget trees with parent pointers, intrusive lists, parsers that store slices of their input). Those become arenas and handles, and won't look like the original.
 
 ## Status
 
