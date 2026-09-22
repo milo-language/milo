@@ -261,7 +261,7 @@ fn bump(n: &mut i64): void
 ```
 Marks a reference parameter as mutable: `&mut T` may write through the borrow, `&T` may only read.
 
-`mut` appears **only** inside a reference type. A local is made mutable by declaring it `var`, not by writing `mut`. References are second-class — legal in parameter position only, never stored in a struct or returned — and the caller passes the value bare (`bump(n)`), since borrows are implicit.
+`mut` appears **only** inside a reference type. A local is made mutable by declaring it `var`, not by writing `mut`. References are second-class — legal in parameter position only, never stored in a struct or returned — and the caller marks the mutation at the call site (`bump(&mut n)`); a shared `&T` argument is passed bare.
 
 ### `null`
 

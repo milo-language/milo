@@ -41,7 +41,7 @@ a handle) keep every fact about a value readable at the value: no declaration me
 anything beyond what it says.
 
 Since no reference is stored, nothing in the heap is aliased, and **the state a function
-can touch is its parameter list**. A mutation here cannot change something over there,
+can touch is its parameter list, plus any global it names**. A mutation here cannot change something over there,
 because there is no other pointer into that data, and every argument the call may change
 is marked `&mut` where it is passed. Verifying a function means reading that function.
 Whole classes of bug are questions about global state in C++ or in Rust with

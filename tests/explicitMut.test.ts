@@ -60,7 +60,7 @@ test("a bare argument to a &mut parameter is an error, with the rewrite hint", (
   const r = check(write(bare));
   expect(r.code).toBe(1);
   expect(r.out).toContain("argument 'p' is passed to a '&mut' parameter without '&mut'");
-  expect(r.out).toContain("write 'bump(... &mut p ...)'; run 'bun scripts/explicit-mut.ts <file>' to rewrite the file");
+  expect(r.out).toContain("write 'bump(... &mut p ...)'; run 'milo fix <file>' to rewrite the file");
   expect(r.out).toContain("argument 'v[..]' is passed to a '&mut' parameter without '&mut'");
   expect(r.out).toContain("argument 'v' is passed to a '&mut' parameter without '&mut'");
   expect((r.out.match(new RegExp(WARN, "g")) ?? []).length).toBe(3);

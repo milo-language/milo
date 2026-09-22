@@ -8099,7 +8099,7 @@ export class TypeChecker {
     this.diagnostics.push({
       severity: "error", span: at, code: "implicit-mut-borrow",
       message: `argument '${text}' is passed to a '&mut' parameter without '&mut'`,
-      hint: `write '${shown}(... &mut ${text} ...)'; run 'bun scripts/explicit-mut.ts <file>' to rewrite the file`,
+      hint: `write '${shown}(... &mut ${text} ...)'; run 'milo fix <file>' to rewrite the file`,
     });
   }
 
