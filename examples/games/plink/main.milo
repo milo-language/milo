@@ -7,7 +7,8 @@
 // hold for a couple of seconds, and drop. Hit one anywhere and it shatters.
 //
 // `--shot out.png` renders one frame to a file and exits, which is how every
-// change to the lighting in this game was actually checked.
+// change to the lighting in this game was actually checked. `--frames N` also
+// writes the last N warmup frames as out.png-0000.png onward, for a clip.
 
 from "std/math" import {
     Math
@@ -20,6 +21,9 @@ from "std/fs" import {
 }
 from "std/png" import {
     encodePng
+}
+from "std/fmt" import {
+    zeroPad
 }
 from "gl" import {
     GlContext, Gpu, Mesh, Texture2D, Wrap, bindScreen, readPixelsRgba8
@@ -109,6 +113,25 @@ fn toRgb(px: &Vec<u32>, w: i64, h: i64): string {
         }
     }
     return out
+}
+
+fn writeShot(path: &string, dw: i64, dh: i64) {
+    let px = readPixelsRgba8(dw, dh)
+    match encodePng(toRgb(px, dw, dh), dw, dh, 3) {
+        Ok(bytes) => {
+            match writeFile(path, bytes) {
+                Ok(_v) => {
+                    print($"wrote {path}")
+                }
+                Err(e) => {
+                    print($"write: {e}")
+                }
+            }
+        }
+        Err(e) => {
+            print("png: " + e)
+        }
+    }
 }
 
 pub fn main(): i32 {
@@ -302,6 +325,7 @@ pub fn main(): i32 {
     // wave logic forward before it reads the framebuffer.
     var warmup = argValue("--warmup", "150").parseInt() ?? 150
     let autoFire = argValue("--boom", "0").parseInt() ?? 0
+    let clipFrames = argValue("--frames", "0").parseInt() ?? 0
     // `--attract` captures the title screen instead; without it a capture of a
     // quiet town is what you get.
     if headless && !argPresent("--attract") {
@@ -626,27 +650,15 @@ pub fn main(): i32 {
         gfx.drawHud(hud.verts, dw as i64, dh as i64)
 
         if headless && warmup > 0 {
+            if warmup <= clipFrames {
+                writeShot(shot + "-" + zeroPad(clipFrames - warmup, 4) + ".png", dw as i64, dh as i64)
+            }
             warmup -= 1
             SDL_GL_SwapWindow(win)
             continue
         }
         if headless {
-            let px = readPixelsRgba8(dw as i64, dh as i64)
-            match encodePng(toRgb(px, dw as i64, dh as i64), dw as i64, dh as i64, 3) {
-                Ok(bytes) => {
-                    match writeFile(shot, bytes) {
-                        Ok(_v) => {
-                            print($"wrote {shot}")
-                        }
-                        Err(e) => {
-                            print($"write: {e}")
-                        }
-                    }
-                }
-                Err(e) => {
-                    print("png: " + e)
-                }
-            }
+            writeShot(shot, dw as i64, dh as i64)
             quit = true
         }
 

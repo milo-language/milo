@@ -9,7 +9,8 @@
 // change to the lighting in this game was actually checked. `--s` puts the car
 // somewhere else on the lap for that capture, `--speed` gives it speed so the
 // camera sits where it would sit at pace, and `--warmup` runs the world forward
-// first.
+// first. `--frames N` also writes the last N warmup frames as out.png-0000.png
+// onward, for a clip.
 
 from "std/math" import {
     Math
@@ -22,6 +23,9 @@ from "std/fs" import {
 }
 from "std/png" import {
     encodePng
+}
+from "std/fmt" import {
+    zeroPad
 }
 from "gl" import {
     GlContext, Texture2D, Wrap, readPixelsRgba8
@@ -112,6 +116,25 @@ fn toRgb(px: &Vec<u32>, w: i64, h: i64): string {
         }
     }
     return out
+}
+
+fn writeShot(path: &string, dw: i64, dh: i64) {
+    let px = readPixelsRgba8(dw, dh)
+    match encodePng(toRgb(px, dw, dh), dw, dh, 3) {
+        Ok(bytes) => {
+            match writeFile(path, bytes) {
+                Ok(_v) => {
+                    print($"wrote {path}")
+                }
+                Err(e) => {
+                    print($"write: {e}")
+                }
+            }
+        }
+        Err(e) => {
+            print("png: " + e)
+        }
+    }
 }
 
 // Metres per second to the number on the dial.
@@ -260,6 +283,8 @@ pub fn main(): i32 {
     // still on top of it.
     var padCooldown = 0.0
     var warmup = argValue("--warmup", "0").parseInt() ?? 0
+    let clipFrames = argValue("--frames", "0").parseInt() ?? 0
+    let autoDrive = argPresent("--auto")
     let poseBoost = argPresent("--boost")
     let orbitDeg = argValue("--orbit", "-999").parseF64() ?? -999.0
     let orbitElev = argValue("--elev", "12").parseF64() ?? 12.0
@@ -333,6 +358,18 @@ pub fn main(): i32 {
             throttle = 1.0
             steer = poseSteer
             nitro = poseBoost
+            // `--auto` chases the centre line a speed-scaled distance ahead, so
+            // a clip laps the circuit instead of scraping the first wall.
+            if autoDrive {
+                let v = player.speed()
+                let aim = track.pointAt(player.s + 8.0 + v * 0.45, 0.0).sub(player.pos).norm()
+                // right() is +X at yaw 0, and a positive steer turns toward -X
+                steer = Math.clampF64(0.0 - player.right().dot(aim) * 3.0, -1.0, 1.0)
+                if Math.abs(track.curvatureAt(player.s + v * 0.8)) * v * v > 18.0 {
+                    throttle = 0.0
+                    brake = 0.6
+                }
+            }
         }
 
         // ── simulate ──────────────────────────────────────────────────────────
@@ -549,27 +586,15 @@ pub fn main(): i32 {
         gfx.drawHud(hud.verts, dw as i64, dh as i64)
 
         if headless && warmup > 0 {
+            if warmup <= clipFrames {
+                writeShot(shot + "-" + zeroPad(clipFrames - warmup, 4) + ".png", dw as i64, dh as i64)
+            }
             warmup -= 1
             SDL_GL_SwapWindow(win)
             continue
         }
         if headless {
-            let px = readPixelsRgba8(dw as i64, dh as i64)
-            match encodePng(toRgb(px, dw as i64, dh as i64), dw as i64, dh as i64, 3) {
-                Ok(bytes) => {
-                    match writeFile(shot, bytes) {
-                        Ok(_v) => {
-                            print($"wrote {shot}")
-                        }
-                        Err(e) => {
-                            print($"write: {e}")
-                        }
-                    }
-                }
-                Err(e) => {
-                    print("png: " + e)
-                }
-            }
+            writeShot(shot, dw as i64, dh as i64)
             quit = true
         }
 
