@@ -73,7 +73,7 @@ fn double(xs: &mut Vec<i64>): void {
 
 fn main() {
     var v: Vec<i64> = [1, 2, 3]
-    print(total(v))    // 6: a look for one call, v is still yours
+    print(total(v))    // 6: borrowed for this call, no &v needed
     double(&mut v)     // the only kind of line that can change v
     print(v)           // [2, 4, 6]
 }
