@@ -111,8 +111,9 @@ describe("language surface site coverage", () => {
   // further down: a name in a table teaches nobody anything.
   const WARNINGS_OFF_SITE = new Set<string>([]);
 
-  // Ceiling on warnings with no reference entry. RATCHET: may only go DOWN.
-  const UNDOCUMENTED_WARNINGS_CEILING = 24;
+  // Ceiling on warnings with no reference entry. RATCHET: may only go DOWN, and it is at
+  // the floor — a warning added to src/warnings.ts without doc/fix/example fails here.
+  const UNDOCUMENTED_WARNINGS_CEILING = 0;
 
   const info = langInfo();
   const keywords = [...info.keywords, ...info.softKeywords];

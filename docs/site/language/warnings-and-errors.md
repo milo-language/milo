@@ -108,32 +108,116 @@ build rather than quietly teaching the wrong thing.
 
 | Warning | Default |
 |---|---|
-| `unfulfilled-expectation` | warn |
-| `bare-embedfile` | warn |
-| `bare-targetos` | warn |
-| `external-linkage-not-pub` | warn |
-| `borrow-that-clones` | warn |
+| [`unfulfilled-expectation`](#unfulfilled-expectation) | warn |
+| [`bare-embedfile`](#bare-embedfile) | warn |
+| [`bare-targetos`](#bare-targetos) | warn |
+| [`external-linkage-not-pub`](#external-linkage-not-pub) | warn |
+| [`borrow-that-clones`](#borrow-that-clones) | warn |
 | [`index-clone`](#index-clone) | warn |
-| `large-stack-array` | allow |
-| `manual-option-default` | warn |
-| `adopt-raw-fields` | warn |
-| `arena-never-frees` | warn |
-| `missing-interpolation` | warn |
-| `mut-param-bundle` | allow |
-| `nan-comparison` | warn |
-| `opaque-call-on-thread` | allow |
-| `shadows-stdlib-override` | warn |
-| `single-variant-match` | allow |
-| `string-concat-in-loop` | warn |
-| `unused-import` | allow |
-| `unowned-pointer-copy` | allow |
-| `unchecked-ffi-contract` | allow |
-| `unused-move` | allow |
-| `unused-result` | warn |
-| `unused-unsafe` | warn |
+| [`large-stack-array`](#large-stack-array) | allow |
+| [`manual-option-default`](#manual-option-default) | warn |
+| [`adopt-raw-fields`](#adopt-raw-fields) | warn |
+| [`arena-never-frees`](#arena-never-frees) | warn |
+| [`missing-interpolation`](#missing-interpolation) | warn |
+| [`mut-param-bundle`](#mut-param-bundle) | allow |
+| [`nan-comparison`](#nan-comparison) | warn |
+| [`opaque-call-on-thread`](#opaque-call-on-thread) | allow |
+| [`shadows-stdlib-override`](#shadows-stdlib-override) | warn |
+| [`single-variant-match`](#single-variant-match) | allow |
+| [`string-concat-in-loop`](#string-concat-in-loop) | warn |
+| [`unused-import`](#unused-import) | allow |
+| [`unowned-pointer-copy`](#unowned-pointer-copy) | allow |
+| [`unchecked-ffi-contract`](#unchecked-ffi-contract) | allow |
+| [`unused-move`](#unused-move) | allow |
+| [`unused-result`](#unused-result) | warn |
+| [`unused-unsafe`](#unused-unsafe) | warn |
 | [`unused-variable`](#unused-variable) | warn |
-| `useless-forget` | warn |
-| `unverified-extern` | allow |
+| [`useless-forget`](#useless-forget) | warn |
+| [`unverified-extern`](#unverified-extern) | allow |
+
+### unfulfilled-expectation
+
+_On by default._
+
+`--expect=<name>` says a warning is known about and keeps the build quiet about it. This fires when the run finished and `<name>` never appeared, which means the code the suppression excused has since been fixed and the flag is now stale.
+
+```milo
+// Checked with '--expect=<some-warning>', but nothing in here warns any more.
+fn main() {
+  let greeting = "hello"
+  print(greeting)
+}
+```
+
+**Fix:** Drop the `--expect=` flag, or switch it to `--allow=` if the finding should stay silenced whatever happens.
+
+### bare-embedfile
+
+_On by default._
+
+`embedFile(...)` reads like an ordinary function call, but it is compile-time only: the argument has to be a string literal and the file's bytes are inlined into the binary while the program is compiled. Milo marks compiler-level constructs with an `@`.
+
+```milo
+fn main() {
+  let text = embedFile("banner.txt")
+  print(text)
+}
+```
+
+**Fix:** Write `@embedFile("path")` so the call site shows that the read happens at compile time.
+
+### bare-targetos
+
+_On by default._
+
+`targetOs()` is folded to a constant string (`"darwin"`, `"linux"`, `"windows"`) during compilation rather than called at runtime, so it belongs with the other `@`-marked builtins. Both arms of an `if @targetOs() == "linux"` still type-check; only the dead one is dropped.
+
+```milo
+fn main() {
+  let os = targetOs()
+  print(os)
+}
+```
+
+**Fix:** Write `@targetOs()` instead of `targetOs()`.
+
+### external-linkage-not-pub
+
+_On by default._
+
+`@externalLinkage` keeps a symbol visible to the C linker, which is a different question from whether Milo code in another file may call it. A function that carries the attribute but is not `pub` is usually one whose author wanted the second thing and reached for the first.
+
+```milo
+@externalLinkage
+fn miloCallback(x: i64): i64 {
+  return x * 2
+}
+
+fn main() {
+  print(miloCallback(21).toString())
+}
+```
+
+**Fix:** Add `pub` if the function should be importable from Milo, and keep both if a `dlopen`'d library resolves the symbol.
+
+### borrow-that-clones
+
+_On by default._
+
+`arenaWith` exists so a closure can read a value in place without copying it out of the arena. A closure whose entire body is `return x.clone()` throws that borrow away, paying for a closure, a callback and a nested match to get the copy `arenaGet` already returns.
+
+```milo
+from "std/arena" import { Arena, arenaWith }
+
+fn main() {
+  var names: Arena<string> = Arena<string>.new()
+  let h = names.alloc("ada")
+  let Some(n) = arenaWith(names, h, (s: &string): string => { return s.clone() }) else { return }
+  print(n)
+}
+```
+
+**Fix:** Call `arenaGet(arena, handle)` (or `arena.get(handle)`) and delete the closure.
 
 ### index-clone
 
@@ -152,6 +236,348 @@ fn main() {
 
 **Fix:** Bind a borrow with a method that lends (`v.at(i)`), or hoist the element out once instead of indexing in a loop.
 
+### large-stack-array
+
+_Off by default — enable with `--deny=large-stack-array` or `--expect=large-stack-array`._
+
+A fixed-size local array is a single stack allocation of its full size, made on entry to the function. A large one overflows the stack at runtime with no diagnostic at all, so this reports any local above the size limit (512 KiB by default). The limit is tunable with `--max-stack-array` (a `k`/`m` suffix is accepted, e.g. `--max-stack-array=256k`).
+
+```milo
+fn main() {
+  var buf: [u8; 1048576] = [0; 1048576]
+  buf[0] = 1
+  print(buf[0].toString())
+}
+```
+
+**Fix:** Move the buffer to the heap with `Vec<T>`, or make the array smaller.
+
+### manual-option-default
+
+_On by default._
+
+A `match` over an `Option` whose `Some` arm hands back the payload untouched and whose `None` arm hands back a constant is the `??` operator written out over five lines.
+
+```milo
+fn lookup(flag: bool): Option<i64> {
+  if flag { return Some(7) }
+  return None
+}
+
+fn main() {
+  let found = lookup(false)
+  let n = match found {
+    Some(v) => v
+    None => 0
+  }
+  print(n.toString())
+}
+```
+
+**Fix:** Write `<option> ?? <default>` in place of the match.
+
+### adopt-raw-fields
+
+_On by default._
+
+`adopt` and `adoptSlice` hand back a value that owns its allocation, but a raw pointer field owns nothing and gets no drop glue. Dropping the adopted value therefore frees the struct itself and not whatever its pointer fields address.
+
+```milo
+from "std/foreign" import { adopt }
+
+struct Node {
+  label: *u8,
+  id: i64,
+}
+
+fn main() {
+  unsafe {
+    let n = Heap(Node { label: 0 as *u8, id: 7 })
+    let raw = n.ptr()
+    forget(n)
+    let Some(owned) = adopt(raw) else { return }
+    print((*owned).id.toString())
+  }
+}
+```
+
+**Fix:** Free what the raw pointer fields address before the adopted value drops, or pass `--allow=adopt-raw-fields` when those fields are borrowed.
+
+### arena-never-frees
+
+_On by default._
+
+This arena is never freed or cleared, so every handle it hands out stays valid for the arena's whole life. `get` still returns an `Option`, so each read makes the caller unwrap a `None` that cannot occur.
+
+```milo
+from "std/arena" import { Arena }
+
+fn main() {
+  var nodes: Arena<i64> = Arena<i64>.new()
+  let h = nodes.alloc(7)
+  let Some(v) = nodes.get(h) else { return }
+  print(v.toString())
+}
+```
+
+**Fix:** Call `arena.sealGrowth()`, which keeps `alloc` and gives an infallible `get`, or `arena.freeze()`.
+
+### missing-interpolation
+
+_On by default._
+
+Only an f-string interpolates. A plain `"hi {name}"` compiles to exactly those characters with no error, which makes it the quietest way to produce wrong output. Reported only when the braced name really resolves in scope, so a literal holding shell, CSS or another tool's format string stays silent.
+
+```milo
+fn main() {
+  let name = "world"
+  print("hello {name}")
+}
+```
+
+**Fix:** Prefix the literal with `$`: `$"hi {name}"`.
+
+### mut-param-bundle
+
+_Off by default — enable with `--deny=mut-param-bundle` or `--expect=mut-param-bundle`._
+
+A free function with three or more `&mut` parameters is a struct's method with the struct taken apart. Every call site becomes a row of same-typed `&mut` arguments, and two of them can be swapped without the compiler noticing.
+
+```milo
+fn step(x: &mut i64, y: &mut i64, ticks: &mut i64): void {
+  x = x + 1
+  y = y + 2
+  ticks = ticks + 1
+}
+
+fn main() {
+  var x: i64 = 0
+  var y: i64 = 0
+  var ticks: i64 = 0
+  step(&mut x, &mut y, &mut ticks)
+  step(&mut x, &mut y, &mut ticks)
+  print($"{x} {y} {ticks}")
+}
+```
+
+**Fix:** Bundle the parameters into a struct and make the function a method on it, so the receiver needs no marker and the fields cannot be reordered.
+
+### nan-comparison
+
+_On by default._
+
+NaN compares equal to nothing, itself included, so `x == f64.NAN` is always false and `x != f64.NAN` is always true. Whichever branch the test guards is dead code.
+
+```milo
+fn main() {
+  let x: f64 = 0.0 / 0.0
+  if x == f64.NAN {
+    print("this branch can never run")
+  }
+}
+```
+
+**Fix:** Test with `isNan(x)` from `std/math`.
+
+### opaque-call-on-thread
+
+_Off by default — enable with `--deny=opaque-call-on-thread` or `--expect=opaque-call-on-thread`._
+
+This code runs on a real OS thread and calls through a function value: a closure, a function-typed parameter, or a C function pointer. Such a call has no statically known target, so nothing can check whether it reaches one of the program's unsynchronized mutable globals.
+
+```milo
+from "std/runtime" import { spawnOsThreadDetached }
+
+var ticks: i64 = 0
+
+fn main() {
+  let report = (): void => { print("worker started") }
+  spawnOsThreadDetached(move(): void => {
+    report()
+  })
+  print(ticks.toString())
+}
+```
+
+**Fix:** Call a named function instead, or make the globals it might touch atomics from `std/sync`.
+
+### shadows-stdlib-override
+
+_On by default._
+
+A function whose name and signature both match a standard-library function takes that name over everywhere, including inside the library's own calls to it. Milo's flat namespace makes this a supported override, but it silently rebinds code you did not write.
+
+```milo
+// std/string already defines a function with this exact name and signature.
+fn asciiIsWhitespace(ch: u8): bool {
+  return ch == 32
+}
+
+fn main() {
+  print(asciiIsWhitespace(9).toString())
+}
+```
+
+**Fix:** Rename the function, or pass `--allow=shadows-stdlib-override` when the override is deliberate.
+
+### single-variant-match
+
+_Off by default — enable with `--deny=single-variant-match` or `--expect=single-variant-match`._
+
+A `match` in which every arm but one has an empty body is an `if let` with extra punctuation. The empty arms carry no behaviour and bury the single arm that does.
+
+```milo
+enum Event {
+  Click(i64),
+  Scroll(i64),
+}
+
+fn main() {
+  let e = Event.Click(3)
+  match e {
+    Click(x) => { print($"clicked {x}") }
+    Scroll(y) => {}
+  }
+}
+```
+
+**Fix:** Write `if let Variant(x) = subject { ... }` in place of the match.
+
+### string-concat-in-loop
+
+_On by default._
+
+`out += piece` inside a loop allocates a fresh string the size of the whole accumulator on every iteration, so a loop that reads as linear is quadratic in the length of the result. `pushStr` appends in place and grows amortized.
+
+```milo
+fn main() {
+  var out = ""
+  for i in 0..5 {
+    out += "x"
+  }
+  print(out)
+}
+```
+
+**Fix:** Append in place: `out.pushStr(piece)` for a string, `out.push(byte)` for a single byte.
+
+### unused-import
+
+_Off by default — enable with `--deny=unused-import` or `--expect=unused-import`._
+
+A name in an import list that nothing in the file refers to. It costs every reader a lookup and hides which modules the file actually depends on.
+
+```milo
+from "std/json" import { Json }
+
+fn main() {
+  print("no JSON here yet")
+}
+```
+
+**Fix:** Remove the name from the import list, unless the import is there to force that module to link.
+
+### unowned-pointer-copy
+
+_Off by default — enable with `--deny=unowned-pointer-copy` or `--expect=unowned-pointer-copy`._
+
+`@copy` keeps a struct copyable although it holds a raw pointer, so every copy of the struct duplicates that pointer and all the copies address the same memory. That is exactly what the annotation asks for; this lint lists every place it was asked for so an audit can re-ask the question.
+
+```milo
+@copy
+struct Slice {
+  data: *u8,
+  len: i64,
+}
+
+fn main() {
+  print("Slice is Copy and borrows its bytes")
+}
+```
+
+**Fix:** Confirm the struct does not own what its pointer addresses, and remove `@copy` if it does, so the struct becomes move-tracked.
+
+### unchecked-ffi-contract
+
+_Off by default — enable with `--deny=unchecked-ffi-contract` or `--expect=unchecked-ffi-contract`._
+
+A `requires` clause is checked under `--debug` and compiled out at `-O2`. On a function whose body enters `unsafe`, that contract is the last guard before the value reaches C, and nothing in the body repeats the check, so an optimized build hands C a value nobody validated.
+
+```milo
+extern fn abs(x: i32): i32
+
+fn boundedAbs(x: i32): i32
+requires x > -1000
+{
+  unsafe {
+    return abs(x)
+  }
+}
+
+fn main() {
+  print(boundedAbs(-5).toString())
+}
+```
+
+**Fix:** Check the condition in the body as well (return an `Err`, or assert), or pass `--allow=unchecked-ffi-contract`.
+
+### unused-move
+
+_Off by default — enable with `--deny=unused-move` or `--expect=unused-move`._
+
+This parameter takes ownership of its argument, but the body never moves that value anywhere, so every caller gives up ownership for nothing.
+
+```milo
+fn shout(msg: string): i64 {
+  return msg.len()
+}
+
+fn main() {
+  print(shout("hello").toString())
+}
+```
+
+**Fix:** Take `&T` instead, so callers keep the value they pass.
+
+### unused-result
+
+_On by default._
+
+A `Result` or `Option` discarded as a statement, or the return value of a `@mustUse` function thrown away. The value being dropped is the one that says whether the operation failed.
+
+```milo
+fn firstEven(v: &Vec<i64>): Option<i64> {
+  for n in v {
+    if n % 2 == 0 { return Some(n) }
+  }
+  return None
+}
+
+fn main() {
+  var v: Vec<i64> = Vec.new()
+  v.push(3)
+  firstEven(v)
+}
+```
+
+**Fix:** Handle the value, or write `let _ = ...` to discard it on purpose.
+
+### unused-unsafe
+
+_On by default._
+
+Nothing inside this `unsafe` block actually requires it. An `unsafe` that guards nothing trains readers to skim past the ones that guard something.
+
+```milo
+fn main() {
+  unsafe {
+    print("nothing in here needs unsafe")
+  }
+}
+```
+
+**Fix:** Remove the `unsafe` wrapper.
+
 ### unused-variable
 
 _On by default._
@@ -167,7 +593,40 @@ fn main() {
 
 **Fix:** Delete the binding, or prefix the name with `_` to say the value is deliberately ignored.
 
-_24 warnings have no reference entry yet: `unfulfilled-expectation`, `bare-embedfile`, `bare-targetos`, `external-linkage-not-pub`, `borrow-that-clones`, `large-stack-array`, `manual-option-default`, `adopt-raw-fields`, `arena-never-frees`, `missing-interpolation`, `mut-param-bundle`, `nan-comparison`, `opaque-call-on-thread`, `shadows-stdlib-override`, `single-variant-match`, `string-concat-in-loop`, `unused-import`, `unowned-pointer-copy`, `unchecked-ffi-contract`, `unused-move`, `unused-result`, `unused-unsafe`, `useless-forget`, `unverified-extern`._
+### useless-forget
+
+_On by default._
+
+`forget` suppresses a value's drop, and a `Copy` value owns no resource and has no drop to suppress, so the call does nothing whatsoever.
+
+```milo
+fn main() {
+  let n: i64 = 7
+  forget(n)
+  print("done")
+}
+```
+
+**Fix:** Delete the `forget` call.
+
+### unverified-extern
+
+_Off by default — enable with `--deny=unverified-extern` or `--expect=unverified-extern`._
+
+An `extern struct` without `@cLayout`, or an `extern fn` without `@cSig`, is an unchecked claim about what C declares. A wrong field offset reads garbage, and a wrong pointee width lets the C side write past whatever the caller reserved.
+
+```milo
+extern struct Timespec {
+  tv_sec: i64,
+  tv_nsec: i64,
+}
+
+fn main() {
+  print("Timespec mirrors a C layout nothing has checked")
+}
+```
+
+**Fix:** Add `@cLayout("struct foo", "some/header.h")` or `@cSig("some/header.h", "<the C declaration>")` so the build checks the claim against the real header.
 
 <!-- /generated:warnings -->
 

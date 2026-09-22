@@ -114,7 +114,7 @@ fn main() {
   {
     name: "large-stack-array",
     offByDefault: true,
-    doc: "A fixed-size local array is a single stack allocation of its full size, made on entry to the function. A large one overflows the stack at runtime with no diagnostic at all, so this reports any local above the size limit (512 KiB by default).",
+    doc: "A fixed-size local array is a single stack allocation of its full size, made on entry to the function. A large one overflows the stack at runtime with no diagnostic at all, so this reports any local above the size limit (512 KiB by default). The limit is tunable with `--max-stack-array` (a `k`/`m` suffix is accepted, e.g. `--max-stack-array=256k`).",
     fix: "Move the buffer to the heap with `Vec<T>`, or make the array smaller.",
     example: `fn main() {
   var buf: [u8; 1048576] = [0; 1048576]
