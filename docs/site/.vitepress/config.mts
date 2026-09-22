@@ -67,85 +67,69 @@ async function generateFeed(config: SiteConfig) {
 }
 
 
-// Each top-level section owns its own sidebar, keyed by URL prefix. One combined tree
-// put all ~90 pages on every page of the site; a reader in std/json had the whole
-// language section open above them. Pages that keep a top-level URL for link stability
-// (/packages, /benchmarks, /reference, /tour) are mapped onto their section's sidebar
-// by an explicit key below, so the nav never disagrees with the sidebar.
-const gettingStartedSidebar = [
+// Two sidebars: the stdlib's (~60 module pages, which buried everything else when it
+// shared a tree) and one docs tree for every other page, grouped by what the reader
+// came for: start, learn in order, look up a task, weigh the design, or look up a fact.
+// File paths predate the grouping and are kept for link stability; the sidebar, not the
+// directory, is the structure.
+const docsSidebar = [
   {
-    text: 'Getting Started',
+    text: 'Get started',
     items: [
       { text: 'Installation', link: '/getting-started/installation' },
       { text: 'Your first program', link: '/getting-started/quickstart' },
-      { text: 'Tour of the language', link: '/tour' },
-      { text: 'IDE Setup', link: '/getting-started/ide-setup' },
-      { text: 'Debugging', link: '/getting-started/debugging' },
+      { text: 'Tour (12 lessons)', link: '/tour' },
+      { text: 'Editor setup', link: '/getting-started/ide-setup' },
     ]
   },
   {
-    text: 'Next',
+    text: 'Learn Milo',
     items: [
-      { text: 'Language', link: '/language/' },
-      { text: 'Features', link: '/features/' },
-      { text: 'Standard Library', link: '/stdlib/' },
-    ]
-  },
-]
-
-const languageSidebar = [
-  {
-    text: 'Language',
-    items: [
-      { text: 'Overview', link: '/language/' },
-      { text: 'Quick Reference', link: '/reference' },
-    ]
-  },
-  {
-    text: 'Basics',
-    items: [
-      { text: 'Variables & Types', link: '/language/variables' },
+      { text: 'Variables & control flow', link: '/language/variables' },
       { text: 'Functions', link: '/language/functions' },
+      { text: 'Ownership & borrowing', link: '/language/ownership' },
       { text: 'Structs', link: '/language/structs' },
-      { text: 'Enums & Matching', link: '/language/enums' },
+      { text: 'Enums & matching', link: '/language/enums' },
       { text: 'Collections', link: '/language/collections' },
       { text: 'Strings', link: '/language/strings' },
+      { text: 'Error handling', link: '/language/error-handling' },
       { text: 'Traits', link: '/language/traits' },
       { text: 'Closures', link: '/language/closures' },
       { text: 'Modules', link: '/language/modules' },
-    ]
-  },
-  {
-    text: 'Ownership & Safety',
-    items: [
-      { text: 'Ownership', link: '/language/ownership' },
-      { text: 'Error Handling', link: '/language/error-handling' },
-      { text: 'Contracts & Safety', link: '/language/safety' },
-      { text: 'Warnings & Errors', link: '/language/warnings-and-errors' },
-      { text: 'Keyword Reference', link: '/language/keywords' },
-    ]
-  },
-  {
-    text: 'Rationale',
-    items: [
-      { text: 'Memory Safety vs Rust', link: '/language/vs-rust' },
-      { text: 'Why There Are No Lifetimes', link: '/language/why-no-lifetimes' },
-      { text: 'Patterns Without Lifetimes', link: '/language/patterns' },
-    ]
-  },
-]
-
-const featuresSidebar = [
-  {
-    text: 'Features',
-    items: [
-      { text: 'Overview', link: '/features/' },
-      { text: 'Concurrency', link: '/features/concurrency' },
-      { text: 'C FFI', link: '/features/ffi' },
-      { text: 'Annotations & Builtins', link: '/features/annotations' },
       { text: 'Packages', link: '/packages' },
-      { text: 'AI-assisted development', link: '/ai-coding' },
+    ]
+  },
+  {
+    text: 'How-to',
+    items: [
+      { text: 'Patterns without lifetimes', link: '/language/patterns' },
+      { text: 'Concurrency', link: '/features/concurrency' },
+      { text: 'Call C (FFI)', link: '/features/ffi' },
+      { text: 'Contracts & proofs', link: '/language/safety' },
+      { text: 'Debugging', link: '/getting-started/debugging' },
+      { text: 'Coding with AI agents', link: '/ai-coding' },
+    ]
+  },
+  {
+    text: 'Why Milo',
+    collapsed: true,
+    items: [
+      { text: 'Why there are no lifetimes', link: '/language/why-no-lifetimes' },
+      { text: 'Memory safety vs Rust', link: '/language/vs-rust' },
       { text: 'Benchmarks', link: '/benchmarks' },
+      { text: 'Built with Milo', link: '/demos' },
+      { text: 'Roadmap', link: '/roadmap' },
+    ]
+  },
+  {
+    text: 'Reference',
+    collapsed: true,
+    items: [
+      { text: 'Syntax quick reference', link: '/reference' },
+      { text: 'Keywords', link: '/language/keywords' },
+      { text: 'Annotations & builtins', link: '/features/annotations' },
+      { text: 'Warnings & errors', link: '/language/warnings-and-errors' },
+      { text: 'Standard library', link: '/stdlib/' },
     ]
   },
 ]
@@ -289,28 +273,6 @@ const stdlibSidebar = [
   },
 ]
 
-// Landing, demos and roadmap belong to no section: give them the four
-// entry points rather than an arbitrary section's tree.
-const rootSidebar = [
-  {
-    text: 'Start here',
-    items: [
-      { text: 'Installation', link: '/getting-started/installation' },
-      { text: 'Tour of the language', link: '/tour' },
-    ]
-  },
-  {
-    text: 'Docs',
-    items: [
-      { text: 'Language', link: '/language/' },
-      { text: 'Features', link: '/features/' },
-      { text: 'Standard Library', link: '/stdlib/' },
-      { text: 'Built with Milo', link: '/demos' },
-      { text: 'Roadmap', link: '/roadmap' },
-    ]
-  },
-]
-
 export default defineConfig({
   title: 'Milo',
   description: 'A memory-safe systems language with second-class references: no lifetimes, no GC, one owner per value',
@@ -336,40 +298,19 @@ export default defineConfig({
     },
 
     nav: [
-      { text: 'Tour', link: '/tour' },
-      { text: 'Get Started', link: '/getting-started/installation' },
-      { text: 'Language', link: '/language/', activeMatch: '^/(language|reference)' },
-      { text: 'Features', link: '/features/', activeMatch: '^/(features|packages|ai-coding|benchmarks)' },
-      { text: 'Standard Library', link: '/stdlib/' },
-      { text: 'Blog', link: '/blog/', activeMatch: '/blog/' },
-      {
-        text: 'More',
-        items: [
-          { text: 'Built with Milo', link: '/demos' },
-          { text: 'Quick Reference', link: '/reference' },
-          { text: 'Roadmap', link: '/roadmap' },
-        ]
-      },
+      { text: 'Get started', link: '/getting-started/installation', activeMatch: '^/(getting-started|tour)' },
+      { text: 'Learn', link: '/language/variables', activeMatch: '^/(language/(variables|functions|ownership|structs|enums|collections|strings|error-handling|traits|closures|modules)|packages)' },
+      { text: 'How-to', link: '/language/patterns', activeMatch: '^/(language/(patterns|safety)|features/(concurrency|ffi)|ai-coding)' },
+      { text: 'Why Milo', link: '/language/why-no-lifetimes', activeMatch: '^/(language/(why-no-lifetimes|vs-rust)|benchmarks|demos|roadmap)' },
+      { text: 'Reference', link: '/reference', activeMatch: '^/(reference|language/(keywords|warnings-and-errors)|features/annotations)' },
+      { text: 'Stdlib', link: '/stdlib/', activeMatch: '^/stdlib/' },
     ],
 
     sidebar: {
-      // Blog pages get no sidebar — the docs tree is irrelevant while reading a post.
+      // Blog pages get no sidebar: the docs tree is irrelevant while reading a post.
       '/blog/': [],
-
-      '/getting-started/': gettingStartedSidebar,
-      '/tour': gettingStartedSidebar,
-
-      '/language/': languageSidebar,
-      '/reference': languageSidebar,
-
-      '/features/': featuresSidebar,
-      '/packages': featuresSidebar,
-      '/ai-coding': featuresSidebar,
-      '/benchmarks': featuresSidebar,
-
       '/stdlib/': stdlibSidebar,
-
-      '/': rootSidebar,
+      '/': docsSidebar,
     },
 
     socialLinks: [
