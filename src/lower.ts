@@ -4,7 +4,7 @@
 import type { Program, Function as AstFn, Stmt, Expr, Pattern } from "./ast";
 import { declaredType, floatNamespaceConst } from "./ast";
 import type { CheckResult, EnumInfo } from "./checker";
-import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, isForeignModule } from "./checker";
+import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, isForeignModule, userFnShadowsBuiltin } from "./checker";
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal, HIRContract } from "./hir";
 import type { TypeKind } from "./types";
 import { typeFromAst, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
@@ -621,11 +621,18 @@ class LowerCtx {
     return lowered;
   }
 
+  // The checker's own guard, asked of its result: a call the checker typed as a user fn
+  // must never lower as the builtin of the same name.
+  private shadowedByUserFn(name: string): boolean {
+    return userFnShadowsBuiltin(name, { functions: this.c.functions, genericFns: this.c.genericFnNames });
+  }
+
   private lowerExprInner(expr: Expr): HIRExpr {
     // `old(e)` is only reachable while lowering an `ensures` (the checker rejects it
     // anywhere else). It becomes a read of an entry-time snapshot local; lowerFn emits the
     // matching `let` and codegen materializes it only in a contract-checking build.
-    if (this.oldSlots && expr.kind === "Call" && expr.func === "old" && expr.args.length === 1) {
+    if (this.oldSlots && expr.kind === "Call" && expr.func === "old" && expr.args.length === 1
+        && !this.shadowedByUserFn("old")) {
       const value = this.lowerExpr(expr.args[0]!);
       const name = `__old${this.oldSlots.length}`;
       this.oldSlots.push({ name, value });
@@ -741,13 +748,13 @@ class LowerCtx {
           return { kind: "HeapCreate", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
         }
         // Memory intrinsics — gated identically to the checker (a user fn of the same name wins).
-        if (expr.func === "forget" && !this.c.functions.has("forget")) {
+        if (expr.func === "forget" && !this.shadowedByUserFn("forget")) {
           return { kind: "Forget", value: this.lowerExpr(expr.args[0]), type: { tag: "void" }, span: expr.span };
         }
         // `isNull(s.f)` is a plain null compare on the thin code pointer. It lowers to
         // the same shape the language already uses for a raw pointer (`p as i64 == 0`);
         // the builtin exists only so the field read itself never has to be a value.
-        if (expr.func === "isNull" && !this.c.functions.has("isNull")) {
+        if (expr.func === "isNull" && !this.shadowedByUserFn("isNull")) {
           const i64: TypeKind = { tag: "int", bits: 64, signed: true };
           return {
             kind: "BinOp", op: "==",
@@ -756,10 +763,10 @@ class LowerCtx {
             type: { tag: "bool" }, span: expr.span,
           };
         }
-        if (expr.func === "replace" && !this.c.functions.has("replace")) {
+        if (expr.func === "replace" && !this.shadowedByUserFn("replace")) {
           return { kind: "MemReplace", place: this.lowerExpr(expr.args[0]), value: this.lowerExpr(expr.args[1]), type, span: expr.span };
         }
-        if (expr.func === "swap" && !this.c.functions.has("swap")) {
+        if (expr.func === "swap" && !this.shadowedByUserFn("swap")) {
           return { kind: "MemSwap", a: this.lowerExpr(expr.args[0]), b: this.lowerExpr(expr.args[1]), type: { tag: "void" }, span: expr.span };
         }
         if (expr.func === "embedFile") {

@@ -1,0 +1,40 @@
+// @expect: one
+// @expect: 1
+// @expect: kept 7
+// @expect: true
+
+// A user fn named like a builtin (`swap`, `replace`, `forget`, `isNull`, `old`) takes the
+// call, generic or not. The builtin guards used to consult only the NON-generic function
+// table, so each generic fn below was silently replaced by the builtin: `swap(pair)`
+// reported "swap(a, b) takes exactly two arguments". Backlog #46; the checker and
+// lower.ts now ask one predicate, `userFnShadowsBuiltin`.
+struct Pair<A, B> {
+    a: A,
+    b: B,
+}
+
+fn swap<A, B>(p: Pair<A, B>): Pair<B, A> {
+    return Pair { a: p.b, b: p.a }
+}
+
+fn replace<T>(v: Vec<T>, _with: T): i64 {
+    return v.len()
+}
+
+fn forget<T>(_x: T): string {
+    return "kept"
+}
+
+fn isNull<T>(_x: T): bool {
+    return true
+}
+
+pub fn main(): i32 {
+    let q = swap(Pair { a: 1, b: "one" })
+    print(q.a)
+    let v: Vec<i64> = [5]
+    print(replace(v, 9))
+    print($"{forget(3)} 7")
+    print(isNull(0))
+    return 0
+}

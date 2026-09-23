@@ -304,6 +304,19 @@ function cNameOf(f: { attributes?: Attribute[] }): { cName?: string } {
   return n !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/.test(n) ? { cName: n } : {};
 }
 
+// Whether a user (or imported) fn named `name` takes the call instead of the builtin of
+// that name (`swap`, `replace`, `forget`, `isNull`, `old`). The one predicate every such
+// guard asks, in the checker and in lower.ts: the guards used to test `functions` alone,
+// and a GENERIC fn lives only in the generic table, so `fn swap<A, B>(p: Pair<A, B>)`
+// was silently replaced by the builtin (backlog #46). Imported fns are in the same two
+// tables after the resolver's merge, so they need no third source.
+export function userFnShadowsBuiltin(
+  name: string,
+  tables: { functions: { has(name: string): boolean }; genericFns: { has(name: string): boolean } },
+): boolean {
+  return tables.functions.has(name) || tables.genericFns.has(name);
+}
+
 interface StructInfo {
   // `iterDelegate`: `@iter` on the field — `for x in wrapper` iterates this field
   // instead of looking for a `next` method. Lets a newtype keep the container's
@@ -403,6 +416,8 @@ export interface CheckResult {
   autoWrappedOption: Map<Expr, string>;
   arrayToVecCoercions: Set<Expr>;
   functions: Map<string, FnSig>;
+  // Names of the user's generic fns; with `functions`, what `userFnShadowsBuiltin` reads.
+  genericFnNames: ReadonlySet<string>;
   structs: Map<string, StructInfo>;
   enums: Map<string, EnumInfo>;
   dropImpls: Set<string>;
@@ -2823,6 +2838,7 @@ export class TypeChecker {
       autoWrappedOption: this.autoWrappedOption,
       arrayToVecCoercions: this.arrayToVecCoercions,
       functions: this.functions,
+      genericFnNames: new Set(this.genericFns.keys()),
       structs: this.structs,
       enums: this.enums,
       dropImpls: this.dropImpls,
@@ -8808,13 +8824,17 @@ export class TypeChecker {
       "replace the whole call with 'arenaGet(arena, handle)' (or 'arena.get(handle)') — it returns the same Option<T>");
   }
 
+  private shadowedByUserFn(name: string): boolean {
+    return userFnShadowsBuiltin(name, { functions: this.functions, genericFns: this.genericFns });
+  }
+
   private checkCallExpr(expr: ExprOf<"Call">): TypeKind {
     const sp = expr.span;
     this.lintBorrowThatClones(expr);
     // `old(e)` is contract-only syntax, not a function: it names the value `e` held when
     // the function was entered. Recognised before the name lookup so a body-local
     // helper actually called `old` keeps working outside an `ensures`.
-    if (expr.func === "old" && !this.functions.has("old") && this.contractScope === "ensures") {
+    if (expr.func === "old" && !this.shadowedByUserFn("old") && this.contractScope === "ensures") {
       if (expr.args.length !== 1) { this.error(`old() takes exactly one argument`, sp); return this.setType(expr, { tag: "unknown" }); }
       const inner = this.checkExpr(expr.args[0]!);
       // A snapshot is a by-value copy taken at entry. Copying a Vec/string/struct there
@@ -8827,7 +8847,7 @@ export class TypeChecker {
       }
       return this.setType(expr, inner);
     }
-    if (expr.func === "old" && this.contractScope !== "ensures" && !this.functions.has("old")) {
+    if (expr.func === "old" && this.contractScope !== "ensures" && !this.shadowedByUserFn("old")) {
       this.error(`old() may only appear in an 'ensures' clause`, sp,
         `there is no pre-state to name in a ${this.contractScope === null ? "function body" : `'${this.contractScope}' clause`}`);
       return this.setType(expr, { tag: "unknown" });
@@ -8862,7 +8882,7 @@ export class TypeChecker {
     // safety. Deliberately not `unsafe`: forgetting a value is memory-SAFE (leaking is
     // safe), it is merely usually wrong, and requiring `unsafe` here would push callers
     // toward wrapping a whole region rather than this one call.
-    if (expr.func === "forget" && !this.functions.has("forget")) {
+    if (expr.func === "forget" && !this.shadowedByUserFn("forget")) {
       if (expr.args.length !== 1) {
         this.error(`'forget' takes exactly one argument`, sp);
         return this.setType(expr, { tag: "void" });
@@ -8882,7 +8902,7 @@ export class TypeChecker {
     // the field to an integer would be reading it as a value, which is what the
     // thin/fat split forbids. Deliberately narrow: it takes a `cfn` and nothing else, so
     // it does not become a second spelling for a raw-pointer null test.
-    if (expr.func === "isNull" && !this.functions.has("isNull")) {
+    if (expr.func === "isNull" && !this.shadowedByUserFn("isNull")) {
       if (expr.args.length !== 1) {
         this.error(`'isNull' takes exactly one argument`, sp);
         return this.setType(expr, { tag: "bool" });
@@ -8972,7 +8992,7 @@ export class TypeChecker {
     // caller's view the move rules are ordinary — a `&mut` borrow of the place(s) plus a
     // by-value move of `value` — so they need no exclusivity machinery, only load/store
     // codegen. Gated on the name being otherwise unbound, so a user fn of the same name wins.
-    if (expr.func === "replace" && !this.functions.has("replace")) {
+    if (expr.func === "replace" && !this.shadowedByUserFn("replace")) {
       if (expr.args.length !== 2) { this.error(`replace(place, value) takes exactly two arguments`, sp); return this.setType(expr, { tag: "unknown" }); }
       const place = this.resolveAssignTarget(expr.args[0]);
       // `replace` hands the old occupant back, so the place is genuinely READ here even
@@ -8988,7 +9008,7 @@ export class TypeChecker {
       this.tryMove(expr.args[1]);
       return this.setType(expr, place.type);
     }
-    if (expr.func === "swap" && !this.functions.has("swap")) {
+    if (expr.func === "swap" && !this.shadowedByUserFn("swap")) {
       if (expr.args.length !== 2) { this.error(`swap(a, b) takes exactly two arguments`, sp); return this.setType(expr, { tag: "void" }); }
       const a = this.resolveAssignTarget(expr.args[0]);
       const b = this.resolveAssignTarget(expr.args[1]);
