@@ -1,0 +1,376 @@
+// Turns a World into the instance list the shape pipeline draws (see GAME_VS in
+// shaders.milo for the layout and the shapes). The list is cleared and refilled each
+// frame, never reallocated once it has grown to its peak.
+//
+// Additive blending makes draw order irrelevant, so the list is filled in whatever
+// order is convenient, with sparks last: if a frame ever exceeds MAX_INST, it is
+// sparks that are dropped, never a ship or the HUD.
+
+from "./world" import {
+    ARENA_HH, ARENA_HW, COMBO_TIME, DT, INVULN, MINI, PLAYER_R, Rgb, SEEKER, SPLITTER, TELEGRAPH, WANDERER, World,
+    enemyColor, enemyRadius, rgb
+}
+from "std/math" import {
+    Math
+}
+
+pub let MAX_INST: i64 = 200000
+
+pub let INST_BYTES: i64 = 48
+
+let DOT: f32 = 0.0
+let RING: f32 = 1.0
+let DIAMOND: f32 = 2.0
+let SQUARE: f32 = 3.0
+let TRIANGLE: f32 = 4.0
+let CHEVRON: f32 = 5.0
+let LINE: f32 = 6.0
+let BOX: f32 = 7.0
+// Added to a shape id: the instance is in screen units (origin at the centre, y up),
+// untouched by the camera and the shake.
+let SCREEN: f32 = 16.0
+
+// 48 bytes, matching the shader's `struct Inst { float4 a; float4 b; float4 c; }`.
+pub struct Inst {
+    x: f32,
+    y: f32,
+    hx: f32,
+    hy: f32,
+    c: f32,
+    s: f32,
+    shape: f32,
+    width: f32,
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+}
+
+// What the HUD should say beyond the World itself.
+pub struct Hud {
+    paused: bool,
+    bot: bool,
+    // Real seconds since start, for blinking prompts while the World is frozen.
+    clock: f64,
+}
+
+fn put(out: &mut Vec<Inst>, x: f64, y: f64, hx: f64, hy: f64, c: f64, s: f64, shape: f32, width: f64, col: Rgb, a: f64) {
+    if out.len >= MAX_INST {
+        return
+    }
+    out.push(Inst {
+        x: x as f32,
+        y: y as f32,
+        hx: hx as f32,
+        hy: hy as f32,
+        c: c as f32,
+        s: s as f32,
+        shape: shape,
+        width: width as f32,
+        r: col.r as f32,
+        g: col.g as f32,
+        b: col.b as f32,
+        a: a as f32,
+    })
+}
+
+// The camera centre for this frame, screen shake included. The shake is a pair of
+// incommensurate sines of the tick, so it is deterministic and never repeats a beat.
+pub struct Cam {
+    x: f64,
+    y: f64,
+}
+
+pub fn camera(w: &World): Cam {
+    let t = (w.tick as f64) * DT
+    let mag = w.shake * w.shake * 20.0
+    return Cam {
+        x: w.camX + mag * Math.sin(t * 91.0),
+        y: w.camY + mag * Math.cos(t * 73.0 + 1.3),
+    }
+}
+
+fn white(c: Rgb, k: f64): Rgb {
+    return rgb(c.r + (1.0 - c.r) * k, c.g + (1.0 - c.g) * k, c.b + (1.0 - c.b) * k)
+}
+
+fn drawArena(out: &mut Vec<Inst>, w: &World) {
+    // A dim reference grid: without it, camera motion is invisible in an empty arena.
+    let step: f64 = 75.0
+    let grid = rgb(0.12, 0.16, 0.42)
+    var k: i64 = 1
+    var x = -ARENA_HW + step
+    while x < ARENA_HW - 1.0 {
+        var a: f64 = 0.12
+        if k % 4 == 0 {
+            a = 0.3
+        }
+        put(&mut out, x, 0.0, ARENA_HH, 0.0, 0.0, 1.0, LINE, 0.5, grid, a)
+        x += step
+        k += 1
+    }
+    k = 1
+    var y = -ARENA_HH + step
+    while y < ARENA_HH - 1.0 {
+        var a: f64 = 0.12
+        if k % 4 == 0 {
+            a = 0.3
+        }
+        put(&mut out, 0.0, y, ARENA_HW, 0.0, 1.0, 0.0, LINE, 0.5, grid, a)
+        y += step
+        k += 1
+    }
+    // The wall glows brighter the closer the player is to it.
+    let wall = rgb(0.3, 0.55, 1.0)
+    let nearX = 1.0 - Math.minF64((ARENA_HW - Math.abs(w.px)) / 300.0, 1.0)
+    let nearY = 1.0 - Math.minF64((ARENA_HH - Math.abs(w.py)) / 300.0, 1.0)
+    let side = if w.px > 0.0 { 1.0 } else { -1.0 }
+    let vert = if w.py > 0.0 { 1.0 } else { -1.0 }
+    put(&mut out, -ARENA_HW, 0.0, ARENA_HH, 0.0, 0.0, 1.0, LINE, 2.2, wall, 0.8 + (if side < 0.0 { nearX } else { 0.0 }) * 0.8)
+    put(&mut out, ARENA_HW, 0.0, ARENA_HH, 0.0, 0.0, 1.0, LINE, 2.2, wall, 0.8 + (if side > 0.0 { nearX } else { 0.0 }) * 0.8)
+    put(&mut out, 0.0, -ARENA_HH, ARENA_HW, 0.0, 1.0, 0.0, LINE, 2.2, wall, 0.8 + (if vert < 0.0 { nearY } else { 0.0 }) * 0.8)
+    put(&mut out, 0.0, ARENA_HH, ARENA_HW, 0.0, 1.0, 0.0, LINE, 2.2, wall, 0.8 + (if vert > 0.0 { nearY } else { 0.0 }) * 0.8)
+}
+
+fn drawEnemies(out: &mut Vec<Inst>, w: &World, cam: &Cam) {
+    // Enemies well off screen still cost a draw; skip them. The margin covers the
+    // largest shape plus its glow.
+    let vx0 = cam.x - 800.0 - 60.0
+    let vx1 = cam.x + 800.0 + 60.0
+    let vy0 = cam.y - 450.0 - 60.0
+    let vy1 = cam.y + 450.0 + 60.0
+    for i in 0..w.cache.len {
+        if w.cache[i].hp <= 0 {
+            continue
+        }
+        let e = w.cache[i]
+        if e.x < vx0 || e.x > vx1 || e.y < vy0 || e.y > vy1 {
+            continue
+        }
+        let base = enemyColor(e.kind)
+        let r = enemyRadius(e.kind)
+        if e.spawn > 0.0 {
+            // Telegraph: a ring that closes onto the spawn point and flickers.
+            let f = e.spawn / TELEGRAPH
+            let blink = if Math.sin(e.age * 40.0) > 0.0 { 1.0 } else { 0.35 }
+            let tr = r + 26.0 * Math.minF64(f, 1.5)
+            put(&mut out, e.x, e.y, tr, tr, 1.0, 0.0, RING, 1.3, base, 0.9 * blink)
+            put(&mut out, e.x, e.y, 3.0, 3.0, 1.0, 0.0, DOT, 0.0, base, 0.6 * blink)
+            continue
+        }
+        let col = if e.flash > 0.0 { white(base, 0.8) } else { base }
+        if e.kind == WANDERER {
+            let c = Math.cos(e.rot)
+            let s = Math.sin(e.rot)
+            put(&mut out, e.x, e.y, r * 0.78, r * 0.78, c, s, SQUARE, 1.7, col, 1.0)
+            put(&mut out, e.x, e.y, r * 0.5, r * 0.5, c, -s, DIAMOND, 1.2, col, 0.8)
+        } else if e.kind == SEEKER || e.kind == MINI {
+            // Pointed along its heading, so you can see which way it is coming.
+            put(&mut out, e.x, e.y, r * 1.15, r * 0.7, e.dirX, e.dirY, DIAMOND, 1.7, col, 1.0)
+            put(&mut out, e.x, e.y, 2.5, 2.5, 1.0, 0.0, DOT, 0.0, white(col, 0.5), 0.8)
+        } else if e.kind == SPLITTER {
+            let c = Math.cos(e.rot)
+            let s = Math.sin(e.rot)
+            put(&mut out, e.x, e.y, r, r, c, s, TRIANGLE, 2.0, col, 1.0)
+            put(&mut out, e.x, e.y, r * 0.45, r * 0.45, -c, s, TRIANGLE, 1.2, col, 0.85)
+        }
+    }
+}
+
+fn drawPlayer(out: &mut Vec<Inst>, w: &World) {
+    if w.waveOn {
+        let f = w.waveR / w.waveMax
+        put(&mut out, w.waveX, w.waveY, w.waveR, w.waveR, 1.0, 0.0, RING, 5.0, rgb(0.55, 0.8, 1.0), 1.0 - f * 0.8)
+    }
+    if !w.alive || w.gameOver {
+        return
+    }
+    // Blink while invulnerable, faster as it runs out.
+    if w.invuln > 0.0 {
+        let rate = 8.0 + (INVULN - w.invuln) * 6.0
+        if Math.sin(w.invuln * rate * 6.2831853) < -0.2 {
+            return
+        }
+        put(&mut out, w.px, w.py, PLAYER_R * 2.4, PLAYER_R * 2.4, 1.0, 0.0, RING, 1.0, rgb(0.6, 0.8, 1.0), 0.5)
+    }
+    let col = rgb(1.0, 0.95, 0.72)
+    put(&mut out, w.px, w.py, 18.0, 13.0, w.faceX, w.faceY, CHEVRON, 1.8, col, 1.0)
+    put(&mut out, w.px - w.faceX * 3.0, w.py - w.faceY * 3.0, 5.0, 5.0, 1.0, 0.0, DOT, 0.0, white(col, 0.6), 0.9)
+}
+
+fn drawBullets(out: &mut Vec<Inst>, w: &World) {
+    let col = rgb(1.0, 0.82, 0.35)
+    for i in 0..w.bullets.len {
+        let b = w.bullets[i]
+        let inv = 1.0 / Math.sqrt(b.vx * b.vx + b.vy * b.vy)
+        put(&mut out, b.x, b.y, 26.0, 3.6, b.vx * inv, b.vy * inv, DOT, 0.0, col, 1.3)
+    }
+}
+
+fn drawFx(out: &mut Vec<Inst>, w: &World) {
+    for i in 0..w.fx.len {
+        let f = w.fx[i]
+        let k = f.life / f.max
+        put(&mut out, f.x, f.y, f.rad, f.rad, 1.0, 0.0, RING, f.width * (0.4 + 0.6 * k), rgb(f.r, f.g, f.b), k)
+    }
+}
+
+fn drawSparks(out: &mut Vec<Inst>, w: &World, cam: &Cam) {
+    let vx0 = cam.x - 820.0
+    let vx1 = cam.x + 820.0
+    let vy0 = cam.y - 470.0
+    let vy1 = cam.y + 470.0
+    for i in 0..w.sparks.len {
+        let s = w.sparks[i]
+        if s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1 {
+            continue
+        }
+        let v = Math.sqrt(s.vx * s.vx + s.vy * s.vy)
+        var c: f64 = 1.0
+        var sn: f64 = 0.0
+        if v > 0.001 {
+            c = s.vx / v
+            sn = s.vy / v
+        }
+        let k = s.life / s.max
+        // Streaks stretch with speed and fade (and shrink) as they die.
+        let len = s.size + v * 0.03
+        put(&mut out, s.x, s.y, len, s.size * (0.45 + 0.55 * k), c, sn, DOT, 0.0, rgb(s.r, s.g, s.b), k * (0.5 + 0.5 * k) * 1.7)
+    }
+}
+
+// ── HUD ─────────────────────────────────────────────────────────────────────────────
+
+// One 5x7 glyph as filled boxes, top-left at (x, y), `px` units per font pixel.
+fn glyph(out: &mut Vec<Inst>, font: &Vec<i64>, ch: i64, x: f64, y: f64, px: f64, col: Rgb, a: f64) {
+    if ch < 0 || ch >= font.len {
+        return
+    }
+    let bits = font[ch]
+    if bits == 0 {
+        return
+    }
+    let half = px * 0.4
+    for row in 0..7 {
+        for colx in 0..5 {
+            if ((bits >> (row * 5 + colx)) & 1) != 0 {
+                put(&mut out, x + (colx as f64) * px + px * 0.5, y - (row as f64) * px - px * 0.5, half, half, 1.0, 0.0, BOX + SCREEN, 0.0, col, a)
+            }
+        }
+    }
+}
+
+// align: 0 = left edge at x, 1 = centred on x, 2 = right edge at x.
+fn text(out: &mut Vec<Inst>, font: &Vec<i64>, s: &string, x: f64, y: f64, px: f64, align: i64, col: Rgb, a: f64) {
+    let adv = px * 6.0
+    let wid = (s.len as f64) * adv - px
+    var x0 = x
+    if align == 1 {
+        x0 = x - wid * 0.5
+    } else if align == 2 {
+        x0 = x - wid
+    }
+    for i in 0..s.len {
+        var ch = s[i] as i64
+        if ch >= 97 && ch <= 122 && ch != 120 {
+            ch -= 32
+        }
+        glyph(&mut out, font, ch, x0 + (i as f64) * adv, y, px, col, a)
+    }
+}
+
+// A non-negative integer, without building a string (the HUD redraws every frame).
+fn number(out: &mut Vec<Inst>, font: &Vec<i64>, n: i64, x: f64, y: f64, px: f64, align: i64, col: Rgb, a: f64) {
+    var digits: [i64; 20] = [0; 20]
+    var count: i64 = 0
+    var v = if n < 0 { 0 } else { n }
+    while true {
+        digits[count] = v % 10
+        count += 1
+        v = v / 10
+        if v == 0 || count >= 20 {
+            break
+        }
+    }
+    let adv = px * 6.0
+    let wid = (count as f64) * adv - px
+    var x0 = x
+    if align == 1 {
+        x0 = x - wid * 0.5
+    } else if align == 2 {
+        x0 = x - wid
+    }
+    for i in 0..count {
+        glyph(&mut out, font, 48 + digits[count - 1 - i], x0 + (i as f64) * adv, y, px, col, a)
+    }
+}
+
+fn drawHud(out: &mut Vec<Inst>, w: &World, font: &Vec<i64>, hud: &Hud) {
+    let dimCol = rgb(0.45, 0.6, 1.0)
+    let scoreCol = rgb(0.85, 0.95, 1.0)
+    text(&mut out, font, "SCORE", -770.0, 432.0, 2.4, 0, dimCol, 0.9)
+    number(&mut out, font, w.score, -770.0, 410.0, 4.4, 0, scoreCol, 1.0)
+
+    // Multiplier, and under it the time left before it starts to drain.
+    let mult = w.multiplier()
+    let gold = rgb(1.0, 0.8, 0.3)
+    if mult > 1 {
+        text(&mut out, font, "x", -8.0, 424.0, 4.0, 2, gold, 1.0)
+        number(&mut out, font, mult, -2.0, 432.0, 5.0, 0, gold, 1.0)
+        let f = Math.minF64(w.comboT / COMBO_TIME, 1.0)
+        put(&mut out, 0.0, 388.0, 70.0 * f, 2.0, 1.0, 0.0, BOX + SCREEN, 0.0, gold, 0.7)
+    }
+
+    // Lives as little ships, bombs as rings, top right.
+    let shipCol = rgb(1.0, 0.95, 0.72)
+    for i in 0..w.lives {
+        put(&mut out, 760.0 - (i as f64) * 34.0, 418.0, 11.0, 8.0, 0.0, 1.0, CHEVRON + SCREEN, 1.3, shipCol, 0.9)
+    }
+    let bombCol = rgb(0.55, 0.8, 1.0)
+    for i in 0..w.bombs {
+        put(&mut out, 762.0 - (i as f64) * 28.0, 384.0, 8.0, 8.0, 1.0, 0.0, RING + SCREEN, 1.4, bombCol, 0.9)
+    }
+
+    // Elapsed time, bottom left.
+    let secs = w.time as i64
+    let tx = -770.0
+    number(&mut out, font, secs / 60, tx, -420.0, 2.6, 0, dimCol, 0.7)
+    let mw = if secs / 60 >= 10 { 2.0 } else { 1.0 }
+    text(&mut out, font, ":", tx + mw * 15.6, -420.0, 2.6, 0, dimCol, 0.7)
+    let s2 = secs % 60
+    let sx = tx + mw * 15.6 + 12.0
+    number(&mut out, font, s2 / 10, sx, -420.0, 2.6, 0, dimCol, 0.7)
+    number(&mut out, font, s2 % 10, sx + 15.6, -420.0, 2.6, 0, dimCol, 0.7)
+    if hud.bot {
+        text(&mut out, font, "AUTOPILOT", 770.0, -420.0, 2.6, 2, dimCol, 0.6)
+    }
+
+    let blink = if Math.sin(hud.clock * 5.0) > -0.3 { 1.0 } else { 0.25 }
+    if w.gameOver {
+        let red = rgb(1.0, 0.3, 0.45)
+        let fade = Math.minF64(w.overT / 0.6, 1.0)
+        text(&mut out, font, "GAME OVER", 0.0, 120.0, 12.0, 1, red, fade)
+        text(&mut out, font, "SCORE", 0.0, 10.0, 3.0, 1, dimCol, fade)
+        number(&mut out, font, w.score, 0.0, -18.0, 7.0, 1, scoreCol, fade)
+        text(&mut out, font, "PRESS SPACE TO PLAY AGAIN", 0.0, -120.0, 3.4, 1, gold, fade * blink)
+    } else if hud.paused {
+        text(&mut out, font, "PAUSED", 0.0, 60.0, 10.0, 1, scoreCol, 1.0)
+        text(&mut out, font, "ESC TO RESUME   Q TO QUIT", 0.0, -40.0, 3.0, 1, dimCol, blink)
+    } else if w.time < 3.0 && !hud.bot {
+        let a = Math.minF64(3.0 - w.time, 1.0)
+        text(&mut out, font, "SWARM", 0.0, 150.0, 12.0, 1, rgb(0.4, 0.8, 1.0), a)
+        text(&mut out, font, "MOVE WASD   AIM MOUSE   BOMB SPACE", 0.0, -130.0, 2.8, 1, dimCol, a)
+    }
+}
+
+// The whole frame. `cam` must be the camera the uniforms use this frame.
+pub fn buildFrame(out: &mut Vec<Inst>, w: &World, cam: &Cam, font: &Vec<i64>, hud: &Hud) {
+    out.clear()
+    drawHud(&mut out, w, font, hud)
+    drawPlayer(&mut out, w)
+    drawEnemies(&mut out, w, cam)
+    drawBullets(&mut out, w)
+    drawFx(&mut out, w)
+    drawArena(&mut out, w)
+    drawSparks(&mut out, w, cam)
+}

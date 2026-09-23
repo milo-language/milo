@@ -1,0 +1,642 @@
+// SWARM's rendering spike (milestone 0), kept as the renderer's stress test.
+//
+//   milo run examples/games/swarm/spike.milo --release                    # window, fps once a second
+//   milo run examples/games/swarm/spike.milo --release -- --count 250000
+//   milo run examples/games/swarm/spike.milo --release -- --frames 600    # benchmark, then exit
+//   milo run examples/games/swarm/spike.milo --release -- --offscreen --frames 600   # uncapped, no display
+//   milo run examples/games/swarm/spike.milo --release -- --shot m0.png   # headless frame to PNG
+//   milo run examples/games/swarm/spike.milo --release -- --threads 8     # sim across 8 workers
+//
+// A swarm of particles falls through four wandering gravity wells that also spin the
+// space around them, and each particle is drawn as one instanced, additively blended
+// glowing quad. The CPU steps the simulation, writes it into a transfer buffer and
+// uploads it every frame; the vertex shader pulls positions straight from a storage
+// buffer. Hold the left mouse button to drag a fifth well around.
+//
+// Per-frame work does not allocate on the single-threaded path: the particle Vec,
+// the transfer buffer and the GPU buffer are made once and reused, and the frame-time
+// log is preallocated. (The once-a-second stats line builds strings, and the --threads
+// path allocates a little per frame inside std/shard: a promise per worker.)
+
+from "./sdl3" import {
+    Event, SCANCODE_ESCAPE, SCANCODE_Q, initVideo, mouseState, openWindow, pollEvent, quit, ticksNs
+}
+from "./gpu" import {
+    BUFFERUSAGE_GRAPHICS_STORAGE_READ, Buffer, Device, FColor, Fence, Pipeline, PipelineDesc, PRESENTMODE_IMMEDIATE,
+    PRESENTMODE_MAILBOX, PRESENTMODE_VSYNC, TEXTUREFORMAT_R8G8B8A8_UNORM, TransferBuffer, createDevice
+}
+from "./shaders" import {
+    SWARM_FS, SWARM_FS_ENTRY, SWARM_VS, SWARM_VS_ENTRY
+}
+from "std/args" import {
+    args
+}
+from "std/fs" import {
+    writeFile
+}
+from "std/math" import {
+    Math
+}
+from "std/png" import {
+    encodePng
+}
+from "std/shard" import {
+    Shard, parallelMapWith
+}
+from "std/sort" import {
+    sortI64
+}
+from "std/strconv" import {
+    formatFloat, parseFloat, parseInt
+}
+
+// The world is laid out in window points with the origin at the centre, y up.
+let VIEW_W: i64 = 1600
+let VIEW_H: i64 = 900
+let HALF_W: f32 = 800.0
+let HALF_H: f32 = 450.0
+
+let WELLS: i64 = 5
+// Gravity softening radius squared: caps the pull near a well's centre, which is what
+// keeps an explicit Euler step stable without a speed limit.
+let SOFTEN: f32 = 3600.0
+
+// 16 bytes, matching the shader's `struct Particle { float2 pos; float2 vel; }`.
+struct Particle {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+}
+
+// Everything one simulation step needs. Copy, so every worker gets its own.
+struct Step {
+    dt: f32,
+    damp: f32,
+    wx: [f32; 5],
+    wy: [f32; 5],
+    pull: [f32; 5],
+    spin: [f32; 5],
+}
+
+struct Opts {
+    count: i64,
+    shot: string,
+    frames: i64,
+    threads: i64,
+    size: f64,
+    gain: f64,
+    vsync: bool,
+    offscreen: bool,
+}
+
+@wrapping
+fn xorshift(s: u64): u64 {
+    var x = s
+    x ^= (x << 13)
+    x ^= (x >> 7)
+    x ^= (x << 17)
+    return x
+}
+
+fn unit(s: u64): f32 {
+    return ((s >> 40) as f32) / 16777216.0
+}
+
+fn spawn(count: i64): Vec<Particle> {
+    var ps: Vec<Particle> = Vec.withCapacity(count)
+    var s: u64 = 0x9E3779B97F4A7C15
+    for _i in 0..count {
+        s = xorshift(s)
+        let x = (unit(s) * 2.0 - 1.0) * HALF_W
+        s = xorshift(s)
+        let y = (unit(s) * 2.0 - 1.0) * HALF_H
+        s = xorshift(s)
+        let vx = (unit(s) * 2.0 - 1.0) * 60.0
+        s = xorshift(s)
+        let vy = (unit(s) * 2.0 - 1.0) * 60.0
+        ps.push(Particle {
+            x: x,
+            y: y,
+            vx: vx,
+            vy: vy,
+        })
+    }
+    return ps
+}
+
+// The wells wander on slow Lissajous paths; alternate spin directions make the space
+// between two wells a shear band, which is where the streams form. `mouse` (world
+// coordinates) adds a strong fifth well while the button is held.
+fn makeStep(t: f64, dt: f64, mouseDown: bool, mx: f32, my: f32): Step {
+    var st = Step {
+        dt: dt as f32,
+        damp: (1.0 - 1.1 * dt) as f32,
+        wx: [0.0; 5],
+        wy: [0.0; 5],
+        pull: [0.0; 5],
+        spin: [0.0; 5],
+    }
+    st.wx[0] = (380.0 * Math.cos(0.31 * t)) as f32
+    st.wy[0] = (220.0 * Math.sin(0.47 * t)) as f32
+    st.pull[0] = 1.6e7
+    st.spin[0] = 1.5e5
+    st.wx[1] = (-420.0 * Math.cos(0.23 * t + 1.0)) as f32
+    st.wy[1] = (250.0 * Math.sin(0.37 * t + 2.0)) as f32
+    st.pull[1] = 1.3e7
+    st.spin[1] = -1.6e5
+    st.wx[2] = (260.0 * Math.sin(0.19 * t + 4.0)) as f32
+    st.wy[2] = (-210.0 * Math.cos(0.29 * t)) as f32
+    st.pull[2] = 1.0e7
+    st.spin[2] = 1.3e5
+    // A weak, fast-spinning well that crosses the whole field.
+    st.wx[3] = (640.0 * Math.sin(0.11 * t + 0.5)) as f32
+    st.wy[3] = (330.0 * Math.sin(0.17 * t + 3.0)) as f32
+    st.pull[3] = 4.0e6
+    st.spin[3] = -1.2e5
+    if mouseDown {
+        st.wx[4] = mx
+        st.wy[4] = my
+        st.pull[4] = 3.0e7
+        st.spin[4] = 0.0
+    }
+    return st
+}
+
+// One explicit Euler step: gravity plus a tangential swirl from every well, linear
+// drag, and a torus wrap at the view edges so streams leave one side and re-enter the
+// other instead of piling up.
+fn stepOne(p: Particle, st: &Step): Particle {
+    var ax: f32 = 0.0
+    var ay: f32 = 0.0
+    for k in 0..WELLS {
+        let dx = st.wx[k] - p.x
+        let dy = st.wy[k] - p.y
+        let r2 = dx * dx + dy * dy + SOFTEN
+        let inv = 1.0 / (Math.sqrt(r2 as f64) as f32)
+        let inv2 = inv * inv
+        let g = st.pull[k] * inv2 * inv
+        let w = st.spin[k] * inv2
+        ax += g * dx - w * dy
+        ay += g * dy + w * dx
+    }
+    let vx = (p.vx + ax * st.dt) * st.damp
+    let vy = (p.vy + ay * st.dt) * st.damp
+    var x = p.x + vx * st.dt
+    var y = p.y + vy * st.dt
+    if x > HALF_W {
+        x -= 2.0 * HALF_W
+    } else if x < -HALF_W {
+        x += 2.0 * HALF_W
+    }
+    if y > HALF_H {
+        y -= 2.0 * HALF_H
+    } else if y < -HALF_H {
+        y += 2.0 * HALF_H
+    }
+    return Particle {
+        x: x,
+        y: y,
+        vx: vx,
+        vy: vy,
+    }
+}
+
+fn stepAll(ps: &mut Vec<Particle>, st: &Step) {
+    for i in 0..ps.len {
+        ps[i] = stepOne(ps[i], st)
+    }
+}
+
+fn stepWindow(w: Shard<Particle>, st: &mut Step): Shard<Particle> {
+    for i in 0..w.len() {
+        w.set(i, stepOne(w.get(i), st))
+    }
+    return w
+}
+
+// Step the whole swarm. With threads > 1 the Vec's storage is divided into disjoint
+// windows, one per worker, and handed back whole afterwards (std/shard: no copy, no
+// shared reference).
+fn simulate(ps: Vec<Particle>, st: &Step, threads: i64): Vec<Particle> {
+    var v = ps
+    if threads <= 1 {
+        stepAll(&mut v, st)
+        return v
+    }
+    var states: Vec<Step> = Vec.withCapacity(threads)
+    for _i in 0..threads {
+        states.push(st)
+    }
+    match parallelMapWith(v, threads, states, stepWindow) {
+        Result.Ok(m) => {
+            return m.data
+        }
+        Result.Err(e) => {
+            return e.data
+        }
+    }
+}
+
+// The shader's `Uniforms` block, 8 floats. Brightness scales down as the count rises
+// so a million particles is a denser swarm, not a white screen.
+fn uniforms(o: &Opts, t: f64): [f32; 8] {
+    var intensity = o.gain * Math.sqrt(100000.0 / (o.count as f64))
+    if intensity > 2.0 * o.gain {
+        intensity = 2.0 * o.gain
+    }
+    return [2.0 / (VIEW_W as f32), 2.0 / (VIEW_H as f32), o.size as f32, intensity as f32, t as f32, 0.0, 0.0, 0.0]
+}
+
+fn parseOpts(): Result<Opts, string> {
+    let argv = args()
+    var o = Opts {
+        count: 100000,
+        shot: "",
+        frames: 0,
+        threads: 1,
+        size: 2.4,
+        gain: 0.55,
+        vsync: false,
+        offscreen: false,
+    }
+    var i: i64 = 1
+    while i < argv.len {
+        let a = argv[i].clone()
+        if a == "--vsync" || a == "--offscreen" {
+            if a == "--vsync" {
+                o.vsync = true
+            } else {
+                o.offscreen = true
+            }
+            i += 1
+            continue
+        }
+        if i + 1 >= argv.len {
+            return Result.Err("missing value after " + a)
+        }
+        let v = argv[i + 1].clone()
+        if a == "--count" {
+            o.count = parseInt(v) ?? 0
+        } else if a == "--frames" {
+            o.frames = parseInt(v) ?? 0
+        } else if a == "--threads" {
+            o.threads = parseInt(v) ?? 1
+        } else if a == "--size" {
+            o.size = parseFloat(v) ?? 2.4
+        } else if a == "--gain" {
+            o.gain = parseFloat(v) ?? 0.55
+        } else if a == "--shot" {
+            o.shot = v
+        } else {
+            return Result.Err("unknown flag " + a + " (flags: --count N, --frames N, --offscreen, --shot out.png, --threads N, --size S, --gain G, --vsync)")
+        }
+        i += 2
+    }
+    if o.offscreen && o.frames <= 0 {
+        return Result.Err("--offscreen is a benchmark: give it --frames N")
+    }
+    if o.count <= 0 {
+        return Result.Err("--count must be a positive integer")
+    }
+    return Result.Ok(o)
+}
+
+fn ms(ns: i64): string {
+    return formatFloat((ns as f64) / 1.0e6, 3)
+}
+
+// GPU state shared by the window and the headless paths.
+struct Scene {
+    pipe: Pipeline,
+    buf: Buffer,
+    xfer: TransferBuffer,
+    bytes: i64,
+}
+
+fn makeScene(dev: &mut Device, format: u32, count: i64): Result<Scene, string> {
+    let desc = PipelineDesc {
+        vsSource: SWARM_VS,
+        vsEntry: SWARM_VS_ENTRY,
+        fsSource: SWARM_FS,
+        fsEntry: SWARM_FS_ENTRY,
+        vsUniformBuffers: 1,
+        vsStorageBuffers: 1,
+        format: format,
+        additive: true,
+    }
+    let pipe = dev.createPipeline(desc)?
+    let bytes = count * 16
+    let buf = dev.createBuffer(BUFFERUSAGE_GRAPHICS_STORAGE_READ, bytes)?
+    let xfer = dev.createTransferBuffer(false, bytes)?
+    return Result.Ok(Scene {
+        pipe: pipe,
+        buf: buf,
+        xfer: xfer,
+        bytes: bytes,
+    })
+}
+
+fn clearColor(): FColor {
+    return FColor {
+        r: 0.004,
+        g: 0.003,
+        b: 0.012,
+        a: 1.0,
+    }
+}
+
+// Frame-time statistics for a benchmark run. Sorts `frameNs` in place.
+fn report(frameNs: &mut Vec<i64>, simTotal: i64, writeTotal: i64, frames: i64, o: &Opts, where: string) {
+    let n = frameNs.len
+    if n == 0 || frames == 0 {
+        return
+    }
+    var total: i64 = 0
+    for f in frameNs {
+        total += f
+    }
+    sortI64(&mut frameNs)
+    let avg = total / n
+    var idx = (n * 99) / 100
+    if idx >= n {
+        idx = n - 1
+    }
+    let p99 = frameNs[idx]
+    let fps = 1.0e9 / (avg as f64)
+    print($"bench ({where}): {n} frames, {o.count} particles, sim threads {o.threads}")
+    print($"  frame avg {ms(avg)} ms  p99 {ms(p99)} ms  ({formatFloat(fps, 1)} fps)")
+    print($"  cpu sim avg {ms(simTotal / frames)} ms  transfer write avg {ms(writeTotal / frames)} ms")
+}
+
+// Headless: no window, an offscreen RGBA8 target, frames paced by fences two deep (the
+// swapchain's usual depth) since there is no swapchain to block on.
+//
+// --shot: the target is the view size. The swarm is stepped for five seconds
+// unrendered so the streams have formed, then 60 frames are rendered exactly as the
+// window renders them and the last is written out as a PNG.
+//
+// --offscreen --frames N: the target is the window's Retina pixel size (2x), so the
+// fill cost is the real one, and nothing waits for a display refresh. This is the
+// throughput number; the window's is capped by the compositor.
+fn runOffscreen(o: &Opts): Result<Unit, string> {
+    let shot = o.shot.len > 0
+    var w = VIEW_W * 2
+    var h = VIEW_H * 2
+    var frames = o.frames
+    if shot {
+        w = VIEW_W
+        h = VIEW_H
+        frames = 60
+    }
+    var dev = createDevice(false)?
+    let tex = dev.createTargetTexture(w, h, TEXTUREFORMAT_R8G8B8A8_UNORM)?
+    let scene = makeScene(&mut dev, TEXTUREFORMAT_R8G8B8A8_UNORM, o.count)?
+    var ps = spawn(o.count)
+    let dt: f64 = 1.0 / 60.0
+    var t: f64 = 0.0
+    if shot {
+        for _i in 0..300 {
+            ps = simulate(ps, makeStep(t, dt, false, 0.0, 0.0), o.threads)
+            t += dt
+        }
+    } else {
+        print($"SWARM m0 offscreen: {o.count} particles, {w}x{h} px, driver {dev.driver()}, sim threads {o.threads}")
+    }
+    var frameNs: Vec<i64> = Vec.withCapacity(frames + 1)
+    var simTotal: i64 = 0
+    var writeTotal: i64 = 0
+    // Fence ring: `newer` and `older` are the two frames in flight; `waited` has
+    // signalled but is held for one more submit before release (see
+    // Device.releaseFence for the leak that releasing it sooner causes).
+    var waited: Option<Fence> = Option.None
+    var older: Option<Fence> = Option.None
+    var newer: Option<Fence> = Option.None
+    var last = ticksNs()
+    for f in 0..frames {
+        let t0 = ticksNs()
+        if f > 0 {
+            frameNs.push(t0 - last)
+        }
+        last = t0
+        ps = simulate(ps, makeStep(t, dt, false, 0.0, 0.0), o.threads)
+        t += dt
+        let t1 = ticksNs()
+        dev.write(scene.xfer, ps, true)
+        let t2 = ticksNs()
+        simTotal += t1 - t0
+        writeTotal += t2 - t1
+        var cmd = dev.begin()?
+        cmd.upload(dev, scene.xfer, scene.buf, scene.bytes, true)
+        cmd.pushVertexUniforms(0, uniforms(o, t))
+        var pass = cmd.beginPass(dev.textureTarget(tex), clearColor())?
+        pass.bindPipeline(dev, scene.pipe)
+        pass.bindVertexStorage(dev, 0, scene.buf)
+        pass.draw(6, o.count)
+        pass.end()
+        let fence = cmd.submitFenced()?
+        match waited {
+            Option.Some(x) => dev.releaseFence(x),
+            Option.None => {}
+        }
+        waited = Option.None
+        match older {
+            Option.Some(x) => {
+                dev.waitFor(x)
+                waited = Option.Some(x)
+            }
+            Option.None => {}
+        }
+        older = newer
+        newer = Option.Some(fence)
+    }
+    dev.waitIdle()
+    match waited {
+        Option.Some(x) => dev.releaseFence(x),
+        Option.None => {}
+    }
+    match older {
+        Option.Some(x) => dev.releaseFence(x),
+        Option.None => {}
+    }
+    match newer {
+        Option.Some(x) => dev.releaseFence(x),
+        Option.None => {}
+    }
+    if !shot {
+        report(&mut frameNs, simTotal, writeTotal, frames, o, "offscreen")
+        return Result.Ok(Unit {})
+    }
+    let down = dev.createTransferBuffer(true, w * h * 4)?
+    var px: Vec<u32> = Vec.new()
+    dev.readTexture(tex, down, &mut px)?
+    // Texel bytes are R,G,B,A in memory; a u32 read of them is little-endian.
+    var raw: string = ""
+    for p in px {
+        raw.push((p & 255) as u8)
+        raw.push(((p >> 8) & 255) as u8)
+        raw.push(((p >> 16) & 255) as u8)
+        raw.push(255)
+    }
+    let png = encodePng(raw, w, h, 4)?
+    match writeFile(o.shot, png) {
+        Result.Ok(_) => {}
+        Result.Err(_) => {
+            return Result.Err("could not write " + o.shot)
+        }
+    }
+    print($"{o.count} particles, {w}x{h} -> {o.shot}")
+    return Result.Ok(Unit {})
+}
+
+fn pickPresentMode(dev: &mut Device, vsync: bool): string {
+    if !vsync && dev.supportsPresentMode(PRESENTMODE_IMMEDIATE) {
+        dev.setPresentMode(PRESENTMODE_IMMEDIATE)
+        return "immediate"
+    }
+    if !vsync && dev.supportsPresentMode(PRESENTMODE_MAILBOX) {
+        dev.setPresentMode(PRESENTMODE_MAILBOX)
+        return "mailbox"
+    }
+    dev.setPresentMode(PRESENTMODE_VSYNC)
+    return "vsync"
+}
+
+fn runWindow(o: &Opts): Result<Unit, string> {
+    let win = openWindow("SWARM", VIEW_W, VIEW_H, false)?
+    let px = win.pixelSize()
+    var dev = createDevice(false)?
+    dev.claim(win)?
+    let mode = pickPresentMode(&mut dev, o.vsync)
+    let format = dev.swapchainFormat()
+    let scene = makeScene(&mut dev, format, o.count)?
+    print($"SWARM m0: {o.count} particles, {px.w}x{px.h} px, driver {dev.driver()}, present {mode}, sim threads {o.threads}")
+
+    var ps = spawn(o.count)
+    let bench = o.frames > 0
+    var frameNs: Vec<i64> = Vec.withCapacity(o.frames + 1)
+    var simTotal: i64 = 0
+    var writeTotal: i64 = 0
+    var t: f64 = 0.0
+    var last = ticksNs()
+    var secStart = last
+    var secFrames: i64 = 0
+    var secSim: i64 = 0
+    var secWrite: i64 = 0
+    var frames: i64 = 0
+    var running = true
+    while running {
+        while true {
+            match pollEvent() {
+                Event.Empty => {
+                    break
+                }
+                Event.Quit => {
+                    running = false
+                }
+                Event.KeyDown(sc) => {
+                    if sc == SCANCODE_ESCAPE || sc == SCANCODE_Q {
+                        running = false
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !running {
+            break
+        }
+
+        let now = ticksNs()
+        let frameTime = now - last
+        last = now
+        var dt = (frameTime as f64) / 1.0e9
+        if dt > 1.0 / 30.0 {
+            dt = 1.0 / 30.0
+        }
+        // The first frame's "frame time" is setup, not a frame.
+        if bench && frames > 0 {
+            frameNs.push(frameTime)
+        }
+
+        let m = mouseState()
+        let st = makeStep(t, dt, (m.buttons & 1) != 0, m.x - HALF_W, HALF_H - m.y)
+        t += dt
+        let t0 = ticksNs()
+        ps = simulate(ps, st, o.threads)
+        let t1 = ticksNs()
+        dev.write(scene.xfer, ps, true)
+        let t2 = ticksNs()
+        simTotal += t1 - t0
+        writeTotal += t2 - t1
+        secSim += t1 - t0
+        secWrite += t2 - t1
+
+        var cmd = dev.begin()?
+        cmd.upload(dev, scene.xfer, scene.buf, scene.bytes, true)
+        cmd.pushVertexUniforms(0, uniforms(o, t))
+        match cmd.acquireSwapchain(dev) {
+            Option.Some(target) => {
+                var pass = cmd.beginPass(target, clearColor())?
+                pass.bindPipeline(dev, scene.pipe)
+                pass.bindVertexStorage(dev, 0, scene.buf)
+                pass.draw(6, o.count)
+                pass.end()
+            }
+            Option.None => {}
+        }
+        cmd.submit()?
+
+        frames += 1
+        secFrames += 1
+        if now - secStart >= 1000000000 {
+            let span = now - secStart
+            let fps = (secFrames as f64) * 1.0e9 / (span as f64)
+            print($"fps {formatFloat(fps, 1)}  frame {ms(span / secFrames)} ms  sim {ms(secSim / secFrames)} ms  write {ms(secWrite / secFrames)} ms")
+            secStart = now
+            secFrames = 0
+            secSim = 0
+            secWrite = 0
+        }
+        if bench && frameNs.len >= o.frames {
+            running = false
+        }
+    }
+
+    if bench {
+        report(&mut frameNs, simTotal, writeTotal, frames, o, "window")
+    }
+    return Result.Ok(Unit {})
+}
+
+pub fn main(): i32 {
+    let o = match parseOpts() {
+        Result.Ok(v) => v,
+        Result.Err(e) => {
+            print("swarm: " + e)
+            return 2
+        }
+    }
+    match initVideo() {
+        Result.Ok(_) => {}
+        Result.Err(e) => {
+            print("swarm: " + e)
+            return 1
+        }
+    }
+    var r: Result<Unit, string> = Result.Ok(Unit {})
+    if o.shot.len > 0 || o.offscreen {
+        r = runOffscreen(o)
+    } else {
+        r = runWindow(o)
+    }
+    quit()
+    match r {
+        Result.Ok(_) => {
+            return 0
+        }
+        Result.Err(e) => {
+            print("swarm: " + e)
+            return 1
+        }
+    }
+}

@@ -1,0 +1,198 @@
+// SWARM's autopilot, for headless captures, the benchmark and `--bot` in the window.
+//
+// It reads the World the way a player reads the screen and produces the same Input a
+// player would: it steers for the least crowded nearby spot (judging enemies by where
+// they will be a quarter second from now, and keeping off the walls), fires at one
+// target until that target dies, and bombs when boxed in. It is
+// deterministic, so a seeded run with the bot replays frame for frame.
+
+from "./world" import {
+    ARENA_HH, ARENA_HW, BULLET_SPEED, Enemy, Input, World, noInput
+}
+from "std/arena" import {
+    Handle
+}
+from "std/math" import {
+    Math
+}
+
+let SCAN_R: f64 = 650.0
+let PROBE_R: f64 = 170.0
+let PROBES: i64 = 12
+let LOOKAHEAD: f64 = 0.25
+
+pub struct Bot {
+    // The enemy being shot at. A handle, so if it dies (and its arena slot is reused by
+    // a newly spawned enemy) the lookup comes back None instead of silently switching
+    // aim to the newcomer.
+    target: Option<Handle<Enemy>>,
+    // Unit vectors of the directions it considers moving in, and the last one taken.
+    dirX: [f64; 12],
+    dirY: [f64; 12],
+    lastX: f64,
+    lastY: f64,
+}
+
+pub fn newBot(): Bot {
+    var b = Bot {
+        target: Option.None,
+        dirX: [0.0; 12],
+        dirY: [0.0; 12],
+        lastX: 0.0,
+        lastY: 0.0,
+    }
+    for k in 0..PROBES {
+        let a = (k as f64) * 6.2831853 / (PROBES as f64)
+        b.dirX[k] = Math.cos(a)
+        b.dirY[k] = Math.sin(a)
+    }
+    return b
+}
+
+// Cost of standing at (x, y) as far as the walls go: prohibitive at the wall itself,
+// rising gently over the last 300 units so the bot turns away before it is pinned.
+fn wallCost(x: f64, y: f64): f64 {
+    let m = Math.minF64(ARENA_HW - Math.abs(x), ARENA_HH - Math.abs(y))
+    if m < 60.0 {
+        return 1.0
+    }
+    if m < 300.0 {
+        let k = (300.0 - m) / 300.0
+        return k * k * 0.0003
+    }
+    return 0.0
+}
+
+impl Bot {
+    fn think(self: &mut Self, w: &World): Input {
+        if !w.alive || w.gameOver {
+            return noInput()
+        }
+        // Score twelve points around the ship by how crowded they will be (each enemy
+        // at its position a quarter second from now adds 1/d^2), plus the walls, and
+        // head for the cheapest. The last direction gets a small discount so the choice
+        // does not flicker between two near-equal gaps.
+        var cost: [f64; 12] = [0.0; 12]
+        var boxed: i64 = 0
+        var closest: f64 = 1.0e9
+        var nearest: i64 = -1
+        var nearestD: f64 = 1.0e18
+        for i in 0..w.cache.len {
+            if w.cache[i].hp <= 0 {
+                continue
+            }
+            let e = w.cache[i]
+            let active = e.spawn <= 0.0
+            var ex = e.x
+            var ey = e.y
+            if active {
+                ex += e.dirX * e.spd * LOOKAHEAD
+                ey += e.dirY * e.spd * LOOKAHEAD
+            }
+            let dx = ex - w.px
+            let dy = ey - w.py
+            let d2 = dx * dx + dy * dy
+            if d2 < SCAN_R * SCAN_R {
+                // Telegraphs are a warning, not yet a threat.
+                let weight = if active { 1.0 } else { 0.5 }
+                for k in 0..PROBES {
+                    let qx = ex - (w.px + self.dirX[k] * PROBE_R)
+                    let qy = ey - (w.py + self.dirY[k] * PROBE_R)
+                    cost[k] += weight / (qx * qx + qy * qy + 1600.0)
+                }
+                if active {
+                    let d = Math.sqrt(d2)
+                    if d < 150.0 {
+                        boxed += 1
+                    }
+                    if d < closest {
+                        closest = d
+                    }
+                }
+            }
+            if active {
+                let rx = e.x - w.px
+                let ry = e.y - w.py
+                let r2 = rx * rx + ry * ry
+                if r2 < nearestD {
+                    nearestD = r2
+                    nearest = i
+                }
+            }
+        }
+        var best: i64 = 0
+        var bestCost: f64 = 1.0e18
+        var worstCost: f64 = 0.0
+        for k in 0..PROBES {
+            let cx = w.px + self.dirX[k] * PROBE_R
+            let cy = w.py + self.dirY[k] * PROBE_R
+            var c = cost[k] + wallCost(cx, cy) + (cx * cx + cy * cy) * 1.5e-10
+            let along = self.dirX[k] * self.lastX + self.dirY[k] * self.lastY
+            if along > 0.0 {
+                c = c * (1.0 - 0.15 * along)
+            }
+            if c < bestCost {
+                bestCost = c
+                best = k
+            }
+            if c > worstCost {
+                worstCost = c
+            }
+        }
+        var mx: f64 = 0.0
+        var my: f64 = 0.0
+        if worstCost - bestCost > 1.0e-6 {
+            mx = self.dirX[best]
+            my = self.dirY[best]
+        }
+        self.lastX = mx
+        self.lastY = my
+
+        // Keep the current target unless it died or something is much closer.
+        var aimX: f64 = 0.0
+        var aimY: f64 = 0.0
+        var have = false
+        match self.target {
+            Option.Some(h) => {
+                match w.enemies.get(h) {
+                    Option.Some(t) => {
+                        let rx = t.x - w.px
+                        let ry = t.y - w.py
+                        let r2 = rx * rx + ry * ry
+                        if t.spawn <= 0.0 && r2 < nearestD * 2.5 {
+                            aimX = rx
+                            aimY = ry
+                            have = true
+                            // Lead the shot by the bullet's flight time.
+                            let lead = Math.sqrt(r2) / BULLET_SPEED
+                            aimX += t.dirX * t.spd * lead
+                            aimY += t.dirY * t.spd * lead
+                        }
+                    }
+                    Option.None => {}
+                }
+            }
+            Option.None => {}
+        }
+        if !have {
+            self.target = Option.None
+            if nearest >= 0 {
+                self.target = Option.Some(w.live[nearest])
+                let t = w.cache[nearest]
+                let lead = Math.sqrt(nearestD) / BULLET_SPEED
+                aimX = t.x - w.px + t.dirX * t.spd * lead
+                aimY = t.y - w.py + t.dirY * t.spd * lead
+            }
+        }
+
+        let bomb = w.bombs > 0 && w.invuln <= 0.0 && (boxed >= 7 || closest < 34.0)
+        return Input {
+            mx: mx,
+            my: my,
+            ax: aimX,
+            ay: aimY,
+            fire: true,
+            bomb: bomb,
+        }
+    }
+}

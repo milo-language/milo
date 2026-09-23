@@ -1,0 +1,162 @@
+// Human input: keyboard + mouse, or a gamepad, turned into the World's Input.
+//
+// Whichever device was touched last drives aiming: moving the mouse hands aim to the
+// mouse, deflecting a stick hands it to the pad, so a pad player is not auto-firing
+// at a cursor they forgot about. The gun fires by itself whenever there is an aim,
+// because in this game there is never a reason not to shoot.
+
+from "./sdl3" import {
+    Gamepad, PAD_EAST, PAD_LEFTX, PAD_LEFTY, PAD_LEFT_SHOULDER, PAD_RIGHTX, PAD_RIGHTY, PAD_RIGHT_SHOULDER,
+    PAD_RIGHT_TRIGGER, PAD_SOUTH, PAD_START, SCANCODE_A, SCANCODE_D, SCANCODE_DOWN, SCANCODE_LEFT, SCANCODE_RIGHT, SCANCODE_S, SCANCODE_UP,
+    SCANCODE_W, keyDown, mouseState, openGamepad
+}
+from "./world" import {
+    Input, VIEW_HH, VIEW_HW, World
+}
+from "std/math" import {
+    Math
+}
+
+let STICK_DEAD: f64 = 0.18
+let AIM_DEAD: f64 = 0.3
+
+pub struct Controls {
+    pad: Option<Gamepad>,
+    padAim: bool,
+    lastMouseX: f32,
+    lastMouseY: f32,
+    // A bomb press seen since the last tick: the Space key event, or a pad button
+    // going down between polls.
+    bombQueued: bool,
+    padBombWas: bool,
+}
+
+pub fn newControls(): Controls {
+    return Controls {
+        pad: Option.None,
+        padAim: false,
+        lastMouseX: -1.0,
+        lastMouseY: -1.0,
+        bombQueued: false,
+        padBombWas: false,
+    }
+}
+
+// Radial deadzone, rescaled so the stick still reaches 1 at full tilt.
+fn dead(x: f64, y: f64, dz: f64): [f64; 2] {
+    let l = Math.sqrt(x * x + y * y)
+    if l < dz {
+        return [0.0, 0.0]
+    }
+    var k = (l - dz) / (1.0 - dz) / l
+    if l * k > 1.0 {
+        k = 1.0 / l
+    }
+    return [x * k, y * k]
+}
+
+impl Controls {
+    fn padAdded(self: &mut Self, id: u32) {
+        match self.pad {
+            Option.Some(_p) => {}
+            Option.None => {
+                self.pad = openGamepad(id)
+            }
+        }
+    }
+
+    fn padRemoved(self: &mut Self, id: u32) {
+        var gone = false
+        match self.pad {
+            Option.Some(p) => {
+                gone = p.id() == id
+            }
+            Option.None => {}
+        }
+        if gone {
+            self.pad = Option.None
+            self.padAim = false
+        }
+    }
+
+    fn queueBomb(self: &mut Self) {
+        self.bombQueued = true
+    }
+
+    // Polls the devices. Call once per frame after draining events. A queued bomb is
+    // consumed here, so the caller hands `bomb` to one tick only, not to every tick
+    // the frame runs.
+    fn read(self: &mut Self, w: &World): Input {
+        var mx: f64 = 0.0
+        var my: f64 = 0.0
+        if keyDown(SCANCODE_W) || keyDown(SCANCODE_UP) {
+            my += 1.0
+        }
+        if keyDown(SCANCODE_S) || keyDown(SCANCODE_DOWN) {
+            my -= 1.0
+        }
+        if keyDown(SCANCODE_A) || keyDown(SCANCODE_LEFT) {
+            mx -= 1.0
+        }
+        if keyDown(SCANCODE_D) || keyDown(SCANCODE_RIGHT) {
+            mx += 1.0
+        }
+
+        let m = mouseState()
+        if m.x != self.lastMouseX || m.y != self.lastMouseY {
+            if self.lastMouseX >= 0.0 {
+                self.padAim = false
+            }
+            self.lastMouseX = m.x
+            self.lastMouseY = m.y
+        }
+        // Window points map 1:1 onto the view; the camera (without shake) places it.
+        var ax = (m.x as f64) - VIEW_HW + w.camX - w.px
+        var ay = VIEW_HH - (m.y as f64) + w.camY - w.py
+
+        match self.pad {
+            Option.Some(p) => {
+                let l = dead(p.axis(PAD_LEFTX), -p.axis(PAD_LEFTY), STICK_DEAD)
+                if l[0] != 0.0 || l[1] != 0.0 {
+                    mx = l[0]
+                    my = l[1]
+                }
+                let r = dead(p.axis(PAD_RIGHTX), -p.axis(PAD_RIGHTY), AIM_DEAD)
+                if r[0] != 0.0 || r[1] != 0.0 {
+                    self.padAim = true
+                }
+                if self.padAim {
+                    ax = r[0]
+                    ay = r[1]
+                }
+                let b = p.button(PAD_LEFT_SHOULDER) || p.button(PAD_RIGHT_SHOULDER) || p.button(PAD_EAST) || p.axis(PAD_RIGHT_TRIGGER) > 0.5
+                if b && !self.padBombWas {
+                    self.bombQueued = true
+                }
+                self.padBombWas = b
+            }
+            Option.None => {}
+        }
+        let bomb = self.bombQueued
+        self.bombQueued = false
+        return Input {
+            mx: mx,
+            my: my,
+            ax: ax,
+            ay: ay,
+            fire: true,
+            bomb: bomb,
+        }
+    }
+
+    fn padRestart(self: &Self): bool {
+        match self.pad {
+            Option.Some(p) => {
+                return p.button(PAD_SOUTH) || p.button(PAD_START)
+            }
+            Option.None => {
+                return false
+            }
+        }
+    }
+}

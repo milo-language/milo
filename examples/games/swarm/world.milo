@@ -1,0 +1,1340 @@
+// SWARM's simulation: the arena, the player, enemies, bullets, sparks, scoring and the
+// spawn director, stepped at a fixed 120 Hz. Nothing here touches SDL or the GPU, so
+// one World runs the window, the headless captures and the benchmark, and a World
+// built from the same seed and fed the same inputs replays exactly.
+//
+// Enemies live in an Arena<Enemy> and are named by generational handles (the bot
+// tracks its target by handle, and a handle to an enemy that has since died reads as
+// None rather than as whatever took its slot). Each tick copies the live enemies into
+// `cache`, a dense Vec that every pass (movement, the spatial hash, collisions) walks
+// by index, then writes the survivors back and frees the dead. After a step, `cache[i]`
+// is the state of `live[i]`, which is what the renderer and the bot read.
+//
+// Steady state allocates nothing: every Vec here is cleared and refilled, never
+// dropped, and the arena reuses freed slots.
+
+from "std/arena" import {
+    Arena, Handle
+}
+from "std/math" import {
+    Math
+}
+
+pub let ARENA_HW: f64 = 1200.0
+
+pub let ARENA_HH: f64 = 675.0
+// The visible window onto the arena, in world units: 1600x900, like the window.
+pub let VIEW_HW: f64 = 800.0
+
+pub let VIEW_HH: f64 = 450.0
+
+pub let DT: f64 = 1.0 / 120.0
+
+pub let WANDERER: i32 = 0
+
+pub let SEEKER: i32 = 1
+
+pub let SPLITTER: i32 = 2
+
+pub let MINI: i32 = 3
+
+pub let PLAYER_R: f64 = 12.0
+
+pub let INVULN: f64 = 2.0
+
+pub let TELEGRAPH: f64 = 0.6
+
+pub let SWARM_TELEGRAPH: f64 = 1.0
+
+pub let COMBO_TIME: f64 = 1.5
+
+pub let START_LIVES: i64 = 3
+
+pub let START_BOMBS: i64 = 3
+
+// Spatial hash: 64-unit cells over the arena. The widest collision a query must see is
+// a splitter (26) against a bullet (5) plus a tick of movement, well inside one cell,
+// so a 3x3 neighbourhood around the querying point finds every candidate even though
+// the grid is built before the enemies move.
+let CELL: f64 = 64.0
+let GRID_W: i64 = 38
+let GRID_H: i64 = 22
+
+let PLAYER_ACCEL: f64 = 6200.0
+let PLAYER_DAMP: f64 = 11.0
+let FIRE_PERIOD: f64 = 1.0 / 12.0
+
+pub let BULLET_SPEED: f64 = 1300.0
+let BULLET_R: f64 = 5.0
+let SAFE_SPAWN: f64 = 280.0
+let BOMB_R: f64 = 900.0
+let WAVE_SPEED: f64 = 2600.0
+let DEATH_CLEAR_R: f64 = 650.0
+let RESPAWN_CLEAR_R: f64 = 420.0
+let RESPAWN_DELAY: f64 = 1.4
+let MAX_SPARKS: i64 = 60000
+let MAX_FX: i64 = 2000
+
+pub struct Enemy {
+    kind: i32,
+    x: f64,
+    y: f64,
+    // Heading as a unit vector, so steering is a rotation by a precomputed angle
+    // (no trig per enemy per tick) and the renderer can use it as (cos, sin) directly.
+    dirX: f64,
+    dirY: f64,
+    spd: f64,
+    // Drawn spin angle; only wanderers and splitters spin.
+    rot: f64,
+    seed: f64,
+    age: f64,
+    // Telegraph seconds left. Until it reaches 0 the enemy is a flashing ring that
+    // cannot move, collide or be shot.
+    spawn: f64,
+    hp: i32,
+    flash: f64,
+}
+
+pub struct Bullet {
+    x: f64,
+    y: f64,
+    vx: f64,
+    vy: f64,
+    life: f64,
+}
+
+pub struct Spark {
+    x: f64,
+    y: f64,
+    vx: f64,
+    vy: f64,
+    life: f64,
+    max: f64,
+    r: f64,
+    g: f64,
+    b: f64,
+    size: f64,
+}
+
+// An expanding ring effect: kill pops, bomb shockwaves, spawn and respawn flashes.
+pub struct Fx {
+    x: f64,
+    y: f64,
+    rad: f64,
+    vrad: f64,
+    life: f64,
+    max: f64,
+    r: f64,
+    g: f64,
+    b: f64,
+    width: f64,
+}
+
+struct Death {
+    idx: i64,
+    scored: bool,
+}
+
+// One tick of player intent, from the keyboard, a gamepad or the bot. Move is a
+// vector of length <= 1; aim is a direction (any length, zero = not aiming).
+pub struct Input {
+    mx: f64,
+    my: f64,
+    ax: f64,
+    ay: f64,
+    fire: bool,
+    bomb: bool,
+}
+
+pub fn noInput(): Input {
+    return Input {
+        mx: 0.0,
+        my: 0.0,
+        ax: 0.0,
+        ay: 0.0,
+        fire: false,
+        bomb: false,
+    }
+}
+
+pub struct Rgb {
+    r: f64,
+    g: f64,
+    b: f64,
+}
+
+pub fn rgb(r: f64, g: f64, b: f64): Rgb {
+    return Rgb {
+        r: r,
+        g: g,
+        b: b,
+    }
+}
+
+pub fn enemyColor(kind: i32): Rgb {
+    if kind == SEEKER {
+        return rgb(0.2, 0.75, 1.0)
+    }
+    if kind == SPLITTER {
+        return rgb(1.0, 0.25, 0.55)
+    }
+    if kind == MINI {
+        return rgb(1.0, 0.55, 0.2)
+    }
+    return rgb(0.7, 0.35, 1.0)
+}
+
+pub fn enemyRadius(kind: i32): f64 {
+    if kind == SPLITTER {
+        return 30.0
+    }
+    if kind == MINI {
+        return 11.0
+    }
+    if kind == SEEKER {
+        return 17.0
+    }
+    return 18.0
+}
+
+fn enemyPoints(kind: i32): i64 {
+    if kind == SPLITTER {
+        return 100
+    }
+    if kind == SEEKER {
+        return 50
+    }
+    return 25
+}
+
+@wrapping
+fn xorshift(s: u64): u64 {
+    var x = s
+    x ^= (x << 13)
+    x ^= (x >> 7)
+    x ^= (x << 17)
+    return x
+}
+
+// Scrambles a user seed so nearby seeds give unrelated streams, and never zero
+// (xorshift's one fixed point).
+@wrapping
+fn seedMix(seed: u64): u64 {
+    var z = seed + 0x9E3779B97F4A7C15
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+    z = z ^ (z >> 31)
+    if z == 0 {
+        return 1
+    }
+    return z
+}
+
+fn white(c: Rgb, k: f64): Rgb {
+    return rgb(c.r + (1.0 - c.r) * k, c.g + (1.0 - c.g) * k, c.b + (1.0 - c.b) * k)
+}
+
+fn clampF(x: f64, lo: f64, hi: f64): f64 {
+    if x < lo {
+        return lo
+    }
+    if x > hi {
+        return hi
+    }
+    return x
+}
+
+// Rotates a unit heading toward the unit vector (tx, ty) by at most the angle whose
+// cosine and sine are (c, s), snapping onto the target once it is within that angle.
+struct Dir {
+    x: f64,
+    y: f64,
+}
+
+fn steer(x: f64, y: f64, tx: f64, ty: f64, c: f64, s: f64): Dir {
+    let dot = x * tx + y * ty
+    if dot >= c {
+        return Dir {
+            x: tx,
+            y: ty,
+        }
+    }
+    let cross = x * ty - y * tx
+    if cross >= 0.0 {
+        return Dir {
+            x: x * c - y * s,
+            y: x * s + y * c,
+        }
+    }
+    return Dir {
+        x: x * c + y * s,
+        y: y * c - x * s,
+    }
+}
+
+pub struct World {
+    rng: u64,
+    tick: i64,
+    // Seconds of play; drives the difficulty ramp.
+    time: f64,
+
+    px: f64,
+    py: f64,
+    pvx: f64,
+    pvy: f64,
+    faceX: f64,
+    faceY: f64,
+    fireCd: f64,
+    alive: bool,
+    deadT: f64,
+    invuln: f64,
+    lives: i64,
+    bombs: i64,
+
+    score: i64,
+    combo: i64,
+    comboT: f64,
+    kills: i64,
+    gameOver: bool,
+    overT: f64,
+
+    enemies: Arena<Enemy>,
+    live: Vec<Handle<Enemy>>,
+    cache: Vec<Enemy>,
+    pending: Vec<Enemy>,
+    deaths: Vec<Death>,
+    cellStart: Vec<i64>,
+    cellFill: Vec<i64>,
+    cellItems: Vec<i64>,
+    cellOf: Vec<i64>,
+
+    bullets: Vec<Bullet>,
+    sparks: Vec<Spark>,
+    fx: Vec<Fx>,
+
+    // The one active clearing wave (a bomb, or the clear on death and respawn).
+    waveOn: bool,
+    waveX: f64,
+    waveY: f64,
+    waveR: f64,
+    waveMax: f64,
+
+    spawnAcc: f64,
+    nextSwarm: f64,
+    camX: f64,
+    camY: f64,
+    // Screen-shake trauma in [0, 1]; the renderer squares it.
+    shake: f64,
+
+    // Benchmark mode: the player cannot die, the director is off and the enemy count
+    // is topped back up to benchCount every tick.
+    bench: bool,
+    benchCount: i64,
+
+    // Per-tick factors, precomputed so the hot loops need no exp or trig.
+    playerDamp: f64,
+    sparkDamp: f64,
+    camK: f64,
+    seekC: f64,
+    seekS: f64,
+    miniC: f64,
+    miniS: f64,
+    splitC: f64,
+    splitS: f64,
+}
+
+pub fn newWorld(seed: u64): World {
+    let ncell = GRID_W * GRID_H
+    let seekTurn = 2.3 * DT
+    let miniTurn = 3.4 * DT
+    let splitTurn = 1.1 * DT
+    return World {
+        rng: seedMix(seed),
+        tick: 0,
+        time: 0.0,
+        px: 0.0,
+        py: 0.0,
+        pvx: 0.0,
+        pvy: 0.0,
+        faceX: 0.0,
+        faceY: 1.0,
+        fireCd: 0.0,
+        alive: true,
+        deadT: 0.0,
+        invuln: 0.0,
+        lives: START_LIVES,
+        bombs: START_BOMBS,
+        score: 0,
+        combo: 0,
+        comboT: 0.0,
+        kills: 0,
+        gameOver: false,
+        overT: 0.0,
+        enemies: Arena<Enemy>.new(),
+        live: Vec.withCapacity(4096),
+        cache: Vec.withCapacity(4096),
+        pending: Vec.withCapacity(256),
+        deaths: Vec.withCapacity(256),
+        cellStart: Vec.filled(ncell + 1, 0),
+        cellFill: Vec.filled(ncell, 0),
+        cellItems: Vec.withCapacity(4096),
+        cellOf: Vec.withCapacity(4096),
+        bullets: Vec.withCapacity(512),
+        sparks: Vec.withCapacity(MAX_SPARKS),
+        fx: Vec.withCapacity(MAX_FX),
+        waveOn: false,
+        waveX: 0.0,
+        waveY: 0.0,
+        waveR: 0.0,
+        waveMax: 0.0,
+        spawnAcc: 0.0,
+        nextSwarm: 32.0,
+        camX: 0.0,
+        camY: 0.0,
+        shake: 0.0,
+        bench: false,
+        benchCount: 0,
+        playerDamp: Math.exp(-PLAYER_DAMP * DT),
+        sparkDamp: Math.exp(-2.2 * DT),
+        camK: 1.0 - Math.exp(-5.0 * DT),
+        seekC: Math.cos(seekTurn),
+        seekS: Math.sin(seekTurn),
+        miniC: Math.cos(miniTurn),
+        miniS: Math.sin(miniTurn),
+        splitC: Math.cos(splitTurn),
+        splitS: Math.sin(splitTurn),
+    }
+}
+
+impl World {
+    // Uniform in [0, 1).
+    fn rand(self: &mut Self): f64 {
+        self.rng = xorshift(self.rng)
+        return ((self.rng >> 11) as f64) / 9007199254740992.0
+    }
+
+    fn multiplier(self: &Self): i64 {
+        let m = 1 + self.combo / 20
+        if m > 99 {
+            return 99
+        }
+        return m
+    }
+
+    fn enemyCount(self: &Self): i64 {
+        return self.live.len
+    }
+
+    // Everything one tick does, in order. Collisions run against the grid built from
+    // the positions at the start of the tick (see CELL).
+    fn step(self: &mut Self, inp: &Input) {
+        self.tick += 1
+        if !self.gameOver {
+            self.time += DT
+        } else {
+            self.overT += DT
+        }
+        self.updatePlayer(inp)
+        self.loadCache()
+        self.buildGrid()
+        self.moveEnemies()
+        self.moveBullets()
+        self.hitPlayer()
+        self.runWave()
+        self.processDeaths()
+        self.storeCache()
+        self.direct()
+        self.flushPending()
+        self.updateSparks()
+        self.updateFx()
+        self.updateCombo()
+        self.updateCamera()
+        self.shake -= 1.5 * DT
+        if self.shake < 0.0 {
+            self.shake = 0.0
+        }
+    }
+
+    fn addShake(self: &mut Self, amt: f64) {
+        self.shake += amt
+        if self.shake > 1.0 {
+            self.shake = 1.0
+        }
+    }
+
+    // ── Player ──────────────────────────────────────────────────────────────────────
+
+    fn updatePlayer(self: &mut Self, inp: &Input) {
+        if self.gameOver {
+            return
+        }
+        if !self.alive {
+            self.deadT -= DT
+            if self.deadT <= 0.0 {
+                if self.lives > 0 {
+                    self.respawn()
+                } else {
+                    // The last life: everything left on the field goes up in one sweep.
+                    self.gameOver = true
+                    self.overT = 0.0
+                    self.startWave(self.px, self.py, 3000.0)
+                }
+            }
+            return
+        }
+        self.invuln -= DT
+        if self.invuln < 0.0 {
+            self.invuln = 0.0
+        }
+        var mx = inp.mx
+        var my = inp.my
+        let ml = Math.sqrt(mx * mx + my * my)
+        if ml > 1.0 {
+            mx = mx / ml
+            my = my / ml
+        }
+        self.pvx = (self.pvx + mx * PLAYER_ACCEL * DT) * self.playerDamp
+        self.pvy = (self.pvy + my * PLAYER_ACCEL * DT) * self.playerDamp
+        self.px += self.pvx * DT
+        self.py += self.pvy * DT
+        let lim = ARENA_HW - PLAYER_R
+        let limY = ARENA_HH - PLAYER_R
+        if self.px < -lim || self.px > lim {
+            self.px = clampF(self.px, -lim, lim)
+            self.pvx = 0.0
+        }
+        if self.py < -limY || self.py > limY {
+            self.py = clampF(self.py, -limY, limY)
+            self.pvy = 0.0
+        }
+
+        let al = Math.sqrt(inp.ax * inp.ax + inp.ay * inp.ay)
+        let aiming = al > 0.2
+        if aiming {
+            self.faceX = inp.ax / al
+            self.faceY = inp.ay / al
+        } else {
+            let sp = Math.sqrt(self.pvx * self.pvx + self.pvy * self.pvy)
+            if sp > 40.0 {
+                self.faceX = self.pvx / sp
+                self.faceY = self.pvy / sp
+            }
+        }
+
+        self.fireCd -= DT
+        if inp.fire && aiming {
+            if self.fireCd <= 0.0 {
+                self.fireCd += FIRE_PERIOD
+                if self.fireCd < 0.0 {
+                    self.fireCd = 0.0
+                }
+                self.shoot(inp.ax / al, inp.ay / al)
+            }
+        } else if self.fireCd < 0.0 {
+            self.fireCd = 0.0
+        }
+
+        if inp.bomb && self.bombs > 0 {
+            self.bombs -= 1
+            self.startWave(self.px, self.py, BOMB_R)
+            self.addShake(0.65)
+            self.addFx(self.px, self.py, 10.0, WAVE_SPEED, 0.45, rgb(0.6, 0.85, 1.0), 7.0)
+            self.addFx(self.px, self.py, 0.0, WAVE_SPEED * 0.7, 0.55, rgb(1.0, 1.0, 1.0), 3.0)
+        }
+
+        // Engine exhaust: a thin trail of sparks out of the tail while thrusting.
+        if ml > 0.1 && self.tick % 2 == 0 {
+            let bx = self.px - self.faceX * 14.0
+            let by = self.py - self.faceY * 14.0
+            let jx = (self.rand() - 0.5) * 60.0
+            let jy = (self.rand() - 0.5) * 60.0
+            self.addSpark(bx, by, -mx * 260.0 + jx, -my * 260.0 + jy, 0.28, rgb(1.0, 0.55, 0.15), 2.0)
+        }
+    }
+
+    // Two parallel streams, 12 volleys a second.
+    fn shoot(self: &mut Self, ux: f64, uy: f64) {
+        let nx = -uy
+        let ny = ux
+        for side in 0..2 {
+            let off = (side as f64) * 14.0 - 7.0
+            self.bullets.push(Bullet {
+                x: self.px + ux * 18.0 + nx * off,
+                y: self.py + uy * 18.0 + ny * off,
+                vx: ux * BULLET_SPEED,
+                vy: uy * BULLET_SPEED,
+                life: 2.0,
+            })
+        }
+    }
+
+    fn killPlayer(self: &mut Self) {
+        self.alive = false
+        self.deadT = RESPAWN_DELAY
+        self.lives -= 1
+        self.combo = 0
+        self.comboT = 0.0
+        self.bullets.clear()
+        self.addShake(1.0)
+        self.burst(self.px, self.py, rgb(1.0, 0.9, 0.6), 260, 900.0, 1.6)
+        self.burst(self.px, self.py, rgb(1.0, 0.4, 0.2), 120, 500.0, 1.2)
+        self.addFx(self.px, self.py, 10.0, 900.0, 0.8, rgb(1.0, 0.8, 0.5), 5.0)
+        self.addFx(self.px, self.py, 10.0, 500.0, 1.0, rgb(1.0, 0.4, 0.2), 3.0)
+        self.startWave(self.px, self.py, DEATH_CLEAR_R)
+    }
+
+    fn respawn(self: &mut Self) {
+        self.alive = true
+        self.invuln = INVULN
+        self.bombs = START_BOMBS
+        self.pvx = 0.0
+        self.pvy = 0.0
+        self.startWave(self.px, self.py, RESPAWN_CLEAR_R)
+        self.addFx(self.px, self.py, 120.0, -160.0, 0.6, rgb(0.8, 0.9, 1.0), 3.0)
+        self.addFx(self.px, self.py, 10.0, 700.0, 0.6, rgb(0.8, 0.9, 1.0), 4.0)
+    }
+
+    fn startWave(self: &mut Self, x: f64, y: f64, r: f64) {
+        self.waveOn = true
+        self.waveX = x
+        self.waveY = y
+        self.waveR = 0.0
+        self.waveMax = r
+    }
+
+    // ── Enemies ─────────────────────────────────────────────────────────────────────
+
+    fn loadCache(self: &mut Self) {
+        self.cache.clear()
+        for i in 0..self.live.len {
+            let h = self.live[i]
+            match self.enemies.get(h) {
+                Option.Some(e) => self.cache.push(e),
+                Option.None => {
+                    // Unreachable while `live` holds only live handles; a dead
+                    // placeholder keeps cache and live aligned and is dropped at store.
+                    var dead = self.makeEnemy(WANDERER, 0.0, 0.0, 0.0)
+                    dead.hp = 0
+                    self.cache.push(dead)
+                }
+            }
+        }
+    }
+
+    // Survivors go back into the arena and the dead are freed; `live` and `cache` are
+    // compacted together so they stay index-aligned.
+    fn storeCache(self: &mut Self) {
+        var keep: i64 = 0
+        for i in 0..self.cache.len {
+            let h = self.live[i]
+            if self.cache[i].hp > 0 {
+                let e = self.cache[i]
+                let _stored = self.enemies.set(h, e)
+                self.live[keep] = h
+                self.cache[keep] = e
+                keep += 1
+            } else {
+                let _freed = self.enemies.free(h)
+            }
+        }
+        self.live.truncate(keep)
+        self.cache.truncate(keep)
+    }
+
+    fn flushPending(self: &mut Self) {
+        for i in 0..self.pending.len {
+            let e = self.pending[i]
+            let h = self.enemies.alloc(e)
+            self.live.push(h)
+            self.cache.push(e)
+        }
+        self.pending.clear()
+    }
+
+    fn cellX(self: &Self, x: f64): i64 {
+        let c = ((x + ARENA_HW) / CELL) as i64
+        if c < 0 {
+            return 0
+        }
+        if c >= GRID_W {
+            return GRID_W - 1
+        }
+        return c
+    }
+
+    fn cellY(self: &Self, y: f64): i64 {
+        let c = ((y + ARENA_HH) / CELL) as i64
+        if c < 0 {
+            return 0
+        }
+        if c >= GRID_H {
+            return GRID_H - 1
+        }
+        return c
+    }
+
+    // Counting sort of the active enemies into cells: cellItems[cellStart[c] ..
+    // cellStart[c+1]] are the cache indices in cell c.
+    fn buildGrid(self: &mut Self) {
+        let ncell = GRID_W * GRID_H
+        let n = self.cache.len
+        for c in 0..ncell + 1 {
+            self.cellStart[c] = 0
+        }
+        self.cellOf.clear()
+        for i in 0..n {
+            if self.cache[i].spawn > 0.0 || self.cache[i].hp <= 0 {
+                self.cellOf.push(-1)
+            } else {
+                let c = self.cellY(self.cache[i].y) * GRID_W + self.cellX(self.cache[i].x)
+                self.cellOf.push(c)
+                self.cellStart[c + 1] += 1
+            }
+        }
+        for c in 0..ncell {
+            self.cellStart[c + 1] += self.cellStart[c]
+            self.cellFill[c] = self.cellStart[c]
+        }
+        while self.cellItems.len < n {
+            self.cellItems.push(0)
+        }
+        for i in 0..n {
+            let c = self.cellOf[i]
+            if c >= 0 {
+                self.cellItems[self.cellFill[c]] = i
+                self.cellFill[c] += 1
+            }
+        }
+    }
+
+    fn moveEnemies(self: &mut Self) {
+        let chase = self.alive && !self.gameOver
+        for i in 0..self.cache.len {
+            var e = self.cache[i]
+            if e.hp <= 0 {
+                continue
+            }
+            e.age += DT
+            e.flash -= DT
+            if e.flash < 0.0 {
+                e.flash = 0.0
+            }
+            if e.spawn > 0.0 {
+                e.spawn -= DT
+                if e.spawn < 0.0 {
+                    e.spawn = 0.0
+                }
+                self.cache[i] = e
+                continue
+            }
+            let r = enemyRadius(e.kind)
+            var vx: f64 = 0.0
+            var vy: f64 = 0.0
+            if e.kind == WANDERER {
+                // A lazy heading drift plus a sideways weave.
+                let turn = Math.sin(e.age * 0.8 + e.seed) * 1.1 * DT
+                let nx = e.dirX - e.dirY * turn
+                let ny = e.dirY + e.dirX * turn
+                let nl = Math.sqrt(nx * nx + ny * ny)
+                e.dirX = nx / nl
+                e.dirY = ny / nl
+                let weave = Math.sin(e.age * 2.6 + e.seed * 3.0) * 55.0
+                vx = e.dirX * 95.0 - e.dirY * weave
+                vy = e.dirY * 95.0 + e.dirX * weave
+                e.rot += 1.7 * DT
+            } else {
+                var c = self.seekC
+                var s = self.seekS
+                var top: f64 = 290.0
+                var accel: f64 = 420.0
+                if e.kind == MINI {
+                    c = self.miniC
+                    s = self.miniS
+                    top = 360.0
+                    accel = 900.0
+                } else if e.kind == SPLITTER {
+                    c = self.splitC
+                    s = self.splitS
+                    top = 105.0
+                    accel = 160.0
+                    e.rot += 0.9 * DT
+                }
+                if chase {
+                    let dx = self.px - e.x
+                    let dy = self.py - e.y
+                    let dl = Math.sqrt(dx * dx + dy * dy)
+                    if dl > 0.001 {
+                        let d = steer(e.dirX, e.dirY, dx / dl, dy / dl, c, s)
+                        e.dirX = d.x
+                        e.dirY = d.y
+                    }
+                    e.spd += accel * DT
+                    if e.spd > top {
+                        e.spd = top
+                    }
+                } else {
+                    e.spd *= 0.99
+                }
+                vx = e.dirX * e.spd
+                vy = e.dirY * e.spd
+                if e.kind == SPLITTER {
+                    let weave = Math.sin(e.age * 1.7 + e.seed) * 40.0
+                    vx -= e.dirY * weave
+                    vy += e.dirX * weave
+                }
+            }
+            e.x += vx * DT
+            e.y += vy * DT
+            if e.kind != WANDERER {
+                self.separate(i, &mut e)
+            }
+            // Walls: wanderers bounce, everything else slides along.
+            if e.x < -ARENA_HW + r {
+                e.x = -ARENA_HW + r
+                if e.dirX < 0.0 && e.kind == WANDERER {
+                    e.dirX = -e.dirX
+                }
+            } else if e.x > ARENA_HW - r {
+                e.x = ARENA_HW - r
+                if e.dirX > 0.0 && e.kind == WANDERER {
+                    e.dirX = -e.dirX
+                }
+            }
+            if e.y < -ARENA_HH + r {
+                e.y = -ARENA_HH + r
+                if e.dirY < 0.0 && e.kind == WANDERER {
+                    e.dirY = -e.dirY
+                }
+            } else if e.y > ARENA_HH - r {
+                e.y = ARENA_HH - r
+                if e.dirY > 0.0 && e.kind == WANDERER {
+                    e.dirY = -e.dirY
+                }
+            }
+            self.cache[i] = e
+        }
+    }
+
+    // Pushes an enemy out of up to 6 overlapping neighbours in its own cell, so a pack
+    // of seekers spreads into a swarm instead of collapsing onto one line. The scan
+    // starts at a rotating offset so a crowded cell does not always test the same 6.
+    fn separate(self: &Self, i: i64, e: &mut Enemy) {
+        let c = self.cellOf[i]
+        if c < 0 {
+            return
+        }
+        let lo = self.cellStart[c]
+        let cnt = self.cellStart[c + 1] - lo
+        if cnt < 2 {
+            return
+        }
+        let r = enemyRadius(e.kind)
+        var looked: i64 = 0
+        var k = (i * 7 + self.tick) % cnt
+        let limit = if cnt < 7 { cnt } else { 7 }
+        while looked < limit {
+            let j = self.cellItems[lo + k]
+            k += 1
+            if k >= cnt {
+                k = 0
+            }
+            looked += 1
+            if j == i {
+                continue
+            }
+            let dx = e.x - self.cache[j].x
+            let dy = e.y - self.cache[j].y
+            let rr = r + enemyRadius(self.cache[j].kind)
+            let d2 = dx * dx + dy * dy
+            if d2 < rr * rr && d2 > 0.0001 {
+                let d = Math.sqrt(d2)
+                let push = (rr - d) / d * 0.35
+                e.x += dx * push
+                e.y += dy * push
+            }
+        }
+    }
+
+    // The first live enemy overlapping a bullet at (x, y), or -1.
+    fn bulletHit(self: &Self, x: f64, y: f64): i64 {
+        let cx = self.cellX(x)
+        let cy = self.cellY(y)
+        let y0 = if cy > 0 { cy - 1 } else { 0 }
+        let y1 = if cy < GRID_H - 1 { cy + 2 } else { GRID_H }
+        let x0 = if cx > 0 { cx - 1 } else { 0 }
+        let x1 = if cx < GRID_W - 1 { cx + 2 } else { GRID_W }
+        for gy in y0..y1 {
+            for gx in x0..x1 {
+                let c = gy * GRID_W + gx
+                for k in self.cellStart[c]..self.cellStart[c + 1] {
+                    let j = self.cellItems[k]
+                    if self.cache[j].hp > 0 {
+                        let dx = self.cache[j].x - x
+                        let dy = self.cache[j].y - y
+                        let rr = enemyRadius(self.cache[j].kind) + BULLET_R
+                        if dx * dx + dy * dy < rr * rr {
+                            return j
+                        }
+                    }
+                }
+            }
+        }
+        return -1
+    }
+
+    fn moveBullets(self: &mut Self) {
+        var i: i64 = 0
+        while i < self.bullets.len {
+            var b = self.bullets[i]
+            b.x += b.vx * DT
+            b.y += b.vy * DT
+            b.life -= DT
+            var gone = b.life <= 0.0
+            if b.x < -ARENA_HW || b.x > ARENA_HW || b.y < -ARENA_HH || b.y > ARENA_HH {
+                gone = true
+                let wx = clampF(b.x, -ARENA_HW, ARENA_HW)
+                let wy = clampF(b.y, -ARENA_HH, ARENA_HH)
+                for _s in 0..3 {
+                    let a = self.rand() * 6.2831853
+                    let sp = 80.0 + self.rand() * 220.0
+                    self.addSpark(wx, wy, Math.cos(a) * sp - b.vx * 0.1, Math.sin(a) * sp - b.vy * 0.1, 0.3, rgb(1.0, 0.8, 0.4), 1.6)
+                }
+            }
+            if !gone {
+                let j = self.bulletHit(b.x, b.y)
+                if j >= 0 {
+                    gone = true
+                    self.cache[j].hp -= 1
+                    self.cache[j].flash = 0.07
+                    if self.cache[j].kind == SPLITTER {
+                        // A shove along the shot: splitters take three hits, and this is
+                        // what makes each one read.
+                        self.cache[j].x += b.vx * 0.005
+                        self.cache[j].y += b.vy * 0.005
+                    }
+                    if self.cache[j].hp <= 0 {
+                        self.deaths.push(Death {
+                            idx: j,
+                            scored: true,
+                        })
+                    }
+                }
+            }
+            if gone {
+                let last = self.bullets.len - 1
+                self.bullets[i] = self.bullets[last]
+                self.bullets.truncate(last)
+            } else {
+                self.bullets[i] = b
+                i += 1
+            }
+        }
+    }
+
+    fn hitPlayer(self: &mut Self) {
+        if !self.alive || self.invuln > 0.0 || self.bench || self.gameOver {
+            return
+        }
+        let cx = self.cellX(self.px)
+        let cy = self.cellY(self.py)
+        let y0 = if cy > 0 { cy - 1 } else { 0 }
+        let y1 = if cy < GRID_H - 1 { cy + 2 } else { GRID_H }
+        let x0 = if cx > 0 { cx - 1 } else { 0 }
+        let x1 = if cx < GRID_W - 1 { cx + 2 } else { GRID_W }
+        for gy in y0..y1 {
+            for gx in x0..x1 {
+                let c = gy * GRID_W + gx
+                for k in self.cellStart[c]..self.cellStart[c + 1] {
+                    let j = self.cellItems[k]
+                    if self.cache[j].hp > 0 {
+                        let dx = self.cache[j].x - self.px
+                        let dy = self.cache[j].y - self.py
+                        // Hitboxes are smaller than the drawn shapes: a graze that
+                        // looks like a miss must be a miss.
+                        let rr = PLAYER_R * 0.7 + enemyRadius(self.cache[j].kind) * 0.75
+                        if dx * dx + dy * dy < rr * rr {
+                            self.killPlayer()
+                            return
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The clearing wave's front sweeps outward, killing (unscored) whatever it passes,
+    // telegraphing enemies included.
+    fn runWave(self: &mut Self) {
+        if !self.waveOn {
+            return
+        }
+        self.waveR += WAVE_SPEED * DT
+        let r2 = self.waveR * self.waveR
+        for i in 0..self.cache.len {
+            if self.cache[i].hp > 0 {
+                let dx = self.cache[i].x - self.waveX
+                let dy = self.cache[i].y - self.waveY
+                if dx * dx + dy * dy < r2 {
+                    self.cache[i].hp = 0
+                    self.deaths.push(Death {
+                        idx: i,
+                        scored: false,
+                    })
+                }
+            }
+        }
+        if self.waveR >= self.waveMax {
+            self.waveOn = false
+        }
+    }
+
+    fn processDeaths(self: &mut Self) {
+        let nd = self.deaths.len
+        if nd == 0 {
+            return
+        }
+        // A bomb can kill hundreds in a tick: share a spark budget between them so the
+        // screen reads as a wave of pops rather than one white smear.
+        var budget: i64 = 60
+        if nd > 10 {
+            budget = 600 / nd
+            if budget < 6 {
+                budget = 6
+            }
+        }
+        for k in 0..nd {
+            let d = self.deaths[k]
+            let e = self.cache[d.idx]
+            let col = enemyColor(e.kind)
+            var n = budget
+            var speed: f64 = 520.0
+            if e.kind == SPLITTER {
+                n = budget + budget / 2
+                speed = 640.0
+                self.addShake(0.12)
+            } else if e.kind == MINI {
+                n = budget / 2
+            }
+            self.burst(e.x, e.y, col, n, speed, 1.0)
+            // A hot flash at the centre, gone in a few frames: what makes a kill pop.
+            self.addSpark(e.x, e.y, 0.0, 0.0, 0.12, white(col, 0.4), enemyRadius(e.kind) * 1.1)
+            if nd < 40 {
+                self.addFx(e.x, e.y, enemyRadius(e.kind) * 0.6, 260.0, 0.25, col, 2.0)
+            }
+            if d.scored {
+                self.score += enemyPoints(e.kind) * self.multiplier()
+                self.combo += 1
+                self.comboT = COMBO_TIME
+                self.kills += 1
+                self.addShake(0.035)
+            }
+            if e.kind == SPLITTER && d.scored {
+                for m in 0..3 {
+                    let a = e.rot + (m as f64) * 2.0943951
+                    var kid = self.makeEnemy(MINI, e.x + Math.cos(a) * 14.0, e.y + Math.sin(a) * 14.0, 0.0)
+                    kid.dirX = Math.cos(a)
+                    kid.dirY = Math.sin(a)
+                    kid.spd = 360.0
+                    self.pending.push(kid)
+                }
+            }
+        }
+        self.deaths.clear()
+    }
+
+    fn makeEnemy(self: &mut Self, kind: i32, x: f64, y: f64, telegraph: f64): Enemy {
+        // Start facing the player, so a seeker's first move is toward you.
+        var dx = self.px - x
+        var dy = self.py - y
+        let dl = Math.sqrt(dx * dx + dy * dy)
+        if dl > 0.001 {
+            dx = dx / dl
+            dy = dy / dl
+        } else {
+            dx = 1.0
+            dy = 0.0
+        }
+        var hp: i32 = 1
+        var spd: f64 = 0.0
+        if kind == SPLITTER {
+            hp = 3
+        }
+        if kind == WANDERER {
+            // Wanderers set off in a random direction instead.
+            let a = self.rand() * 6.2831853
+            dx = Math.cos(a)
+            dy = Math.sin(a)
+            spd = 95.0
+        }
+        let rot = self.rand() * 6.2831853
+        let seed = self.rand() * 6.2831853
+        return Enemy {
+            kind: kind,
+            x: x,
+            y: y,
+            dirX: dx,
+            dirY: dy,
+            spd: spd,
+            rot: rot,
+            seed: seed,
+            age: 0.0,
+            spawn: telegraph,
+            hp: hp,
+            flash: 0.0,
+        }
+    }
+
+    // ── Director ────────────────────────────────────────────────────────────────────
+
+    fn pickKind(self: &mut Self, t: f64): i32 {
+        let ww = 1.0 - 0.6 * clampF(t / 120.0, 0.0, 1.0)
+        let ws = 0.9 * clampF((t - 8.0) / 40.0, 0.0, 1.0)
+        let wp = 0.3 * clampF((t - 35.0) / 60.0, 0.0, 1.0)
+        let roll = self.rand() * (ww + ws + wp)
+        if roll < ww {
+            return WANDERER
+        }
+        if roll < ww + ws {
+            return SEEKER
+        }
+        return SPLITTER
+    }
+
+    fn farFromPlayer(self: &Self, x: f64, y: f64, d: f64): bool {
+        let dx = x - self.px
+        let dy = y - self.py
+        return dx * dx + dy * dy >= d * d
+    }
+
+    // A random point in the arena at least SAFE_SPAWN from the player. Falls back to
+    // the point mirrored through the centre, which is far whenever the player is near
+    // an edge (the only way the samples all miss).
+    fn spawnPoint(self: &mut Self, margin: f64): Dir {
+        var x: f64 = 0.0
+        var y: f64 = 0.0
+        for _try in 0..10 {
+            x = (self.rand() * 2.0 - 1.0) * (ARENA_HW - margin)
+            y = (self.rand() * 2.0 - 1.0) * (ARENA_HH - margin)
+            if self.farFromPlayer(x, y, SAFE_SPAWN) {
+                return Dir {
+                    x: x,
+                    y: y,
+                }
+            }
+        }
+        return Dir {
+            x: clampF(-self.px, -ARENA_HW + margin, ARENA_HW - margin),
+            y: clampF(-self.py, -ARENA_HH + margin, ARENA_HH - margin),
+        }
+    }
+
+    fn spawnAt(self: &mut Self, kind: i32, x: f64, y: f64, telegraph: f64) {
+        let e = self.makeEnemy(kind, x, y, telegraph)
+        self.pending.push(e)
+    }
+
+    fn direct(self: &mut Self) {
+        if self.bench {
+            while self.live.len + self.pending.len < self.benchCount {
+                let t: f64 = 150.0
+                let kind = self.pickKind(t)
+                let p = self.spawnPoint(30.0)
+                self.spawnAt(kind, p.x, p.y, 0.0)
+            }
+            return
+        }
+        if !self.alive || self.gameOver {
+            return
+        }
+        let t = self.time
+        // Enemies a second: 3 at the start, ~15 at one minute, ~34 at two. Past about
+        // 25 a second the gun cannot keep up, which is where it turns into a swarm.
+        let rate = 3.0 + 0.12 * t + 0.0012 * t * t
+        self.spawnAcc += rate * DT
+        while self.spawnAcc >= 1.0 {
+            self.spawnAcc -= 1.0
+            let kind = self.pickKind(t)
+            if t > 15.0 && self.rand() < 0.2 {
+                // A pack at one spot, charged against the budget so the average rate
+                // holds. It is what makes corners dangerous.
+                let g = 4 + ((self.rand() * 3.0) as i64)
+                let p = self.spawnPoint(60.0)
+                for m in 0..g {
+                    let a = (m as f64) * 6.2831853 / (g as f64)
+                    self.spawnAt(kind, p.x + Math.cos(a) * 34.0, p.y + Math.sin(a) * 34.0, TELEGRAPH)
+                }
+                self.spawnAcc -= (g - 1) as f64
+            } else {
+                let p = self.spawnPoint(30.0)
+                self.spawnAt(kind, p.x, p.y, TELEGRAPH)
+            }
+        }
+        if t >= self.nextSwarm {
+            self.spawnSwarm(t)
+            var gap = 26.0 - t / 20.0
+            if gap < 17.0 {
+                gap = 17.0
+            }
+            self.nextSwarm = t + gap
+        }
+    }
+
+    // A ring of seekers around the player, telegraphed for a full second, then closing
+    // in. Points that the arena walls would push inside the safe radius are dropped.
+    fn spawnSwarm(self: &mut Self, t: f64) {
+        var n = 24 + ((t * 0.3) as i64)
+        if n > 80 {
+            n = 80
+        }
+        let rad: f64 = 540.0
+        for k in 0..n {
+            let a = (k as f64) * 6.2831853 / (n as f64)
+            let x = clampF(self.px + Math.cos(a) * rad, -ARENA_HW + 30.0, ARENA_HW - 30.0)
+            let y = clampF(self.py + Math.sin(a) * rad, -ARENA_HH + 30.0, ARENA_HH - 30.0)
+            if self.farFromPlayer(x, y, SAFE_SPAWN) {
+                self.spawnAt(SEEKER, x, y, SWARM_TELEGRAPH)
+            }
+        }
+        self.addFx(self.px, self.py, rad + 60.0, -60.0, SWARM_TELEGRAPH, rgb(0.2, 0.75, 1.0), 2.0)
+    }
+
+    // Fill a benchmark World with its enemies before timing starts.
+    fn populate(self: &mut Self, n: i64) {
+        self.bench = true
+        self.benchCount = n
+        self.direct()
+        self.flushPending()
+    }
+
+    // ── Effects ─────────────────────────────────────────────────────────────────────
+
+    fn addSpark(self: &mut Self, x: f64, y: f64, vx: f64, vy: f64, life: f64, c: Rgb, size: f64) {
+        if self.sparks.len >= MAX_SPARKS {
+            return
+        }
+        self.sparks.push(Spark {
+            x: x,
+            y: y,
+            vx: vx,
+            vy: vy,
+            life: life,
+            max: life,
+            r: c.r,
+            g: c.g,
+            b: c.b,
+            size: size,
+        })
+    }
+
+    fn burst(self: &mut Self, x: f64, y: f64, c: Rgb, n: i64, speed: f64, life: f64) {
+        for _k in 0..n {
+            if self.sparks.len >= MAX_SPARKS {
+                return
+            }
+            let a = self.rand() * 6.2831853
+            let u = self.rand()
+            // Most sparks fast, a few slow embers near the centre.
+            let s = speed * (0.15 + 0.85 * u * (2.0 - u))
+            let l = life * (0.45 + 0.55 * self.rand())
+            let sz = 2.0 + self.rand() * 1.8
+            // A touch of white in some sparks so a burst has a hot centre.
+            let w = self.rand() * 0.35
+            self.addSpark(x, y, Math.cos(a) * s, Math.sin(a) * s, l, rgb(c.r + (1.0 - c.r) * w, c.g + (1.0 - c.g) * w, c.b + (1.0 - c.b) * w), sz)
+        }
+    }
+
+    fn addFx(self: &mut Self, x: f64, y: f64, rad: f64, vrad: f64, life: f64, c: Rgb, width: f64) {
+        if self.fx.len >= MAX_FX {
+            return
+        }
+        self.fx.push(Fx {
+            x: x,
+            y: y,
+            rad: rad,
+            vrad: vrad,
+            life: life,
+            max: life,
+            r: c.r,
+            g: c.g,
+            b: c.b,
+            width: width,
+        })
+    }
+
+    fn updateSparks(self: &mut Self) {
+        let damp = self.sparkDamp
+        var i: i64 = 0
+        while i < self.sparks.len {
+            var s = self.sparks[i]
+            s.life -= DT
+            if s.life <= 0.0 {
+                let last = self.sparks.len - 1
+                self.sparks[i] = self.sparks[last]
+                self.sparks.truncate(last)
+                continue
+            }
+            s.vx *= damp
+            s.vy *= damp
+            s.x += s.vx * DT
+            s.y += s.vy * DT
+            // Sparks ricochet off the arena wall.
+            if s.x < -ARENA_HW || s.x > ARENA_HW {
+                s.vx = -s.vx * 0.6
+                s.x = clampF(s.x, -ARENA_HW, ARENA_HW)
+            }
+            if s.y < -ARENA_HH || s.y > ARENA_HH {
+                s.vy = -s.vy * 0.6
+                s.y = clampF(s.y, -ARENA_HH, ARENA_HH)
+            }
+            self.sparks[i] = s
+            i += 1
+        }
+    }
+
+    fn updateFx(self: &mut Self) {
+        var i: i64 = 0
+        while i < self.fx.len {
+            var f = self.fx[i]
+            f.life -= DT
+            if f.life <= 0.0 {
+                let last = self.fx.len - 1
+                self.fx[i] = self.fx[last]
+                self.fx.truncate(last)
+                continue
+            }
+            f.rad += f.vrad * DT
+            if f.rad < 0.0 {
+                f.rad = 0.0
+            }
+            self.fx[i] = f
+            i += 1
+        }
+    }
+
+    // After COMBO_TIME without a kill the multiplier drains one step every 0.35 s.
+    fn updateCombo(self: &mut Self) {
+        if self.combo <= 0 {
+            return
+        }
+        self.comboT -= DT
+        if self.comboT <= 0.0 {
+            self.combo = (self.combo / 20 - 1) * 20
+            if self.combo < 0 {
+                self.combo = 0
+            }
+            self.comboT = 0.35
+        }
+    }
+
+    fn updateCamera(self: &mut Self) {
+        let tx = self.px + self.pvx * 0.12
+        let ty = self.py + self.pvy * 0.12
+        self.camX += (tx - self.camX) * self.camK
+        self.camY += (ty - self.camY) * self.camK
+        // The view may run 90 units past the wall, enough to see it is a wall.
+        let mx = ARENA_HW - VIEW_HW + 90.0
+        let my = ARENA_HH - VIEW_HH + 90.0
+        self.camX = clampF(self.camX, -mx, mx)
+        self.camY = clampF(self.camY, -my, my)
+    }
+}

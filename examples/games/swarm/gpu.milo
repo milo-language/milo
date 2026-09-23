@@ -785,12 +785,17 @@ impl Device {
         }
     }
 
-    // Read `tex` back to the CPU: one command buffer, then wait for the GPU to go idle.
-    // Returns w*h packed pixels in the texture's own byte order.
-    fn readTexture(self: &mut Self, tex: Texture): Result<Vec<u32>, string> {
+    // Read `tex` back to the CPU into `out` (resized to w*h packed pixels in the
+    // texture's own byte order): one command buffer, then wait for the GPU to go idle.
+    // `xfer` is a download transfer buffer of at least w*h*4 bytes that the caller
+    // keeps: making one per call would grow the Device's resource list per frame.
+    fn readTexture(self: &Self, tex: Texture, xfer: TransferBuffer, out: &mut Vec<u32>): Result<Unit, string> {
         let bytes = tex.w * tex.h * 4
-        let xfer = self.createTransferBuffer(true, bytes)?
-        var out: Vec<u32> = Vec.filled(tex.w * tex.h, 0)
+        assert(bytes <= xfer.size, "gpu readTexture: transfer buffer too small")
+        while out.len < tex.w * tex.h {
+            out.push(0)
+        }
+        out.truncate(tex.w * tex.h)
         unsafe {
             let c = SDL_AcquireGPUCommandBuffer(self.raw)
             if c as i64 == 0 {
@@ -824,7 +829,7 @@ impl Device {
             memcpy(out.ptr() as *u8, p, bytes)
             SDL_UnmapGPUTransferBuffer(self.raw, self.transfers[xfer.id])
         }
-        return Result.Ok(out)
+        return Result.Ok(Unit {})
     }
 }
 

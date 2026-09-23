@@ -7,6 +7,8 @@
 
 pub extern type SDL_Window
 
+pub extern type SDL_Gamepad
+
 @link("SDL3")
 @cSig("SDL3/SDL.h", "bool SDL_Init(SDL_InitFlags)")
 extern fn SDL_Init(flags: u32): bool
@@ -36,8 +38,29 @@ extern fn SDL_GetTicksNS(): u64
 @cSig("SDL3/SDL.h", "SDL_MouseButtonFlags SDL_GetMouseState(float *, float *)")
 extern fn SDL_GetMouseState(x: *f32, y: *f32): u32
 
+@cSig("SDL3/SDL.h", "const bool *SDL_GetKeyboardState(int *)")
+extern fn SDL_GetKeyboardState(numkeys: *i32): *bool
+
+@cSig("SDL3/SDL.h", "SDL_Gamepad *SDL_OpenGamepad(SDL_JoystickID)")
+extern fn SDL_OpenGamepad(id: u32): *SDL_Gamepad
+
+@cSig("SDL3/SDL.h", "void SDL_CloseGamepad(SDL_Gamepad *)")
+extern fn SDL_CloseGamepad(g: *SDL_Gamepad): void
+
+@cSig("SDL3/SDL.h", "SDL_JoystickID SDL_GetGamepadID(SDL_Gamepad *)")
+extern fn SDL_GetGamepadID(g: *SDL_Gamepad): u32
+
+@cSig("SDL3/SDL.h", "Sint16 SDL_GetGamepadAxis(SDL_Gamepad *, SDL_GamepadAxis)")
+extern fn SDL_GetGamepadAxis(g: *SDL_Gamepad, axis: i32): i16
+
+@cSig("SDL3/SDL.h", "bool SDL_GetGamepadButton(SDL_Gamepad *, SDL_GamepadButton)")
+extern fn SDL_GetGamepadButton(g: *SDL_Gamepad, button: i32): bool
+
 @cValue("SDL_INIT_VIDEO", "SDL3/SDL.h")
 let SDL_INIT_VIDEO: u32 = 0x20
+
+@cValue("SDL_INIT_GAMEPAD", "SDL3/SDL.h")
+let SDL_INIT_GAMEPAD: u32 = 0x2000
 
 @cValue("SDL_WINDOW_HIDDEN", "SDL3/SDL.h")
 let SDL_WINDOW_HIDDEN: u64 = 0x8
@@ -54,11 +77,83 @@ let SDL_EVENT_WINDOW_CLOSE_REQUESTED: u32 = 0x210
 @cValue("SDL_EVENT_KEY_DOWN", "SDL3/SDL.h")
 let SDL_EVENT_KEY_DOWN: u32 = 0x300
 
+@cValue("SDL_EVENT_GAMEPAD_ADDED", "SDL3/SDL.h")
+let SDL_EVENT_GAMEPAD_ADDED: u32 = 0x653
+
+@cValue("SDL_EVENT_GAMEPAD_REMOVED", "SDL3/SDL.h")
+let SDL_EVENT_GAMEPAD_REMOVED: u32 = 0x654
+
 @cValue("SDL_SCANCODE_ESCAPE", "SDL3/SDL.h")
 pub let SCANCODE_ESCAPE: u32 = 41
 
 @cValue("SDL_SCANCODE_Q", "SDL3/SDL.h")
 pub let SCANCODE_Q: u32 = 20
+
+@cValue("SDL_SCANCODE_W", "SDL3/SDL.h")
+pub let SCANCODE_W: u32 = 26
+
+@cValue("SDL_SCANCODE_A", "SDL3/SDL.h")
+pub let SCANCODE_A: u32 = 4
+
+@cValue("SDL_SCANCODE_S", "SDL3/SDL.h")
+pub let SCANCODE_S: u32 = 22
+
+@cValue("SDL_SCANCODE_D", "SDL3/SDL.h")
+pub let SCANCODE_D: u32 = 7
+
+@cValue("SDL_SCANCODE_UP", "SDL3/SDL.h")
+pub let SCANCODE_UP: u32 = 82
+
+@cValue("SDL_SCANCODE_DOWN", "SDL3/SDL.h")
+pub let SCANCODE_DOWN: u32 = 81
+
+@cValue("SDL_SCANCODE_LEFT", "SDL3/SDL.h")
+pub let SCANCODE_LEFT: u32 = 80
+
+@cValue("SDL_SCANCODE_RIGHT", "SDL3/SDL.h")
+pub let SCANCODE_RIGHT: u32 = 79
+
+@cValue("SDL_SCANCODE_SPACE", "SDL3/SDL.h")
+pub let SCANCODE_SPACE: u32 = 44
+
+@cValue("SDL_SCANCODE_RETURN", "SDL3/SDL.h")
+pub let SCANCODE_RETURN: u32 = 40
+
+@cValue("SDL_SCANCODE_P", "SDL3/SDL.h")
+pub let SCANCODE_P: u32 = 19
+
+@cValue("SDL_GAMEPAD_AXIS_LEFTX", "SDL3/SDL.h")
+pub let PAD_LEFTX: i32 = 0
+
+@cValue("SDL_GAMEPAD_AXIS_LEFTY", "SDL3/SDL.h")
+pub let PAD_LEFTY: i32 = 1
+
+@cValue("SDL_GAMEPAD_AXIS_RIGHTX", "SDL3/SDL.h")
+pub let PAD_RIGHTX: i32 = 2
+
+@cValue("SDL_GAMEPAD_AXIS_RIGHTY", "SDL3/SDL.h")
+pub let PAD_RIGHTY: i32 = 3
+
+@cValue("SDL_GAMEPAD_AXIS_LEFT_TRIGGER", "SDL3/SDL.h")
+pub let PAD_LEFT_TRIGGER: i32 = 4
+
+@cValue("SDL_GAMEPAD_AXIS_RIGHT_TRIGGER", "SDL3/SDL.h")
+pub let PAD_RIGHT_TRIGGER: i32 = 5
+
+@cValue("SDL_GAMEPAD_BUTTON_SOUTH", "SDL3/SDL.h")
+pub let PAD_SOUTH: i32 = 0
+
+@cValue("SDL_GAMEPAD_BUTTON_EAST", "SDL3/SDL.h")
+pub let PAD_EAST: i32 = 1
+
+@cValue("SDL_GAMEPAD_BUTTON_START", "SDL3/SDL.h")
+pub let PAD_START: i32 = 6
+
+@cValue("SDL_GAMEPAD_BUTTON_LEFT_SHOULDER", "SDL3/SDL.h")
+pub let PAD_LEFT_SHOULDER: i32 = 9
+
+@cValue("SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER", "SDL3/SDL.h")
+pub let PAD_RIGHT_SHOULDER: i32 = 10
 
 // SDL_Event is a 128-byte union. Milo has no unions, so it is declared as its tag plus
 // opaque filler (C's first member is named `type`, a Milo keyword, hence @cOpaque), and
@@ -85,6 +180,14 @@ extern struct SdlKeyboardEvent {
     repeat: bool,
 }
 
+@cLayout("SDL_GamepadDeviceEvent", "SDL3/SDL.h")
+extern struct SdlGamepadDeviceEvent {
+    @cOpaque kind: u32,
+    reserved: u32,
+    timestamp: u64,
+    which: u32,
+}
+
 // SDL's last error message, copied into a Milo string.
 pub fn sdlError(): string {
     unsafe {
@@ -95,6 +198,15 @@ pub fn sdlError(): string {
 // Brings up the video subsystem (which implies events). Pair with `quit`.
 pub fn initVideo(): Result<Unit, string> {
     if !SDL_Init(SDL_INIT_VIDEO) {
+        return Result.Err("SDL_Init: " + sdlError())
+    }
+    return Result.Ok(Unit {})
+}
+
+// Video plus gamepads. Pads already plugged in arrive as GamepadAdded events on the
+// first polls, so opening them is the event loop's job, not this function's.
+pub fn initVideoAndGamepad(): Result<Unit, string> {
+    if !SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD) {
         return Result.Err("SDL_Init: " + sdlError())
     }
     return Result.Ok(Unit {})
@@ -192,6 +304,8 @@ pub enum Event {
     Empty,
     Quit,
     KeyDown(u32),
+    GamepadAdded(u32),
+    GamepadRemoved(u32),
     Other,
 }
 
@@ -211,8 +325,72 @@ pub fn pollEvent(): Event {
         }
         if ev.kind == SDL_EVENT_KEY_DOWN {
             let k = ev.addrOf() as *SdlKeyboardEvent
-            return Event.KeyDown((*k).scancode)
+            let k2 = *k
+            if k2.repeat {
+                return Event.Other
+            }
+            return Event.KeyDown(k2.scancode)
+        }
+        if ev.kind == SDL_EVENT_GAMEPAD_ADDED || ev.kind == SDL_EVENT_GAMEPAD_REMOVED {
+            let g = ev.addrOf() as *SdlGamepadDeviceEvent
+            let which = (*g).which
+            if ev.kind == SDL_EVENT_GAMEPAD_ADDED {
+                return Event.GamepadAdded(which)
+            }
+            return Event.GamepadRemoved(which)
         }
     }
     return Event.Other
+}
+
+// Whether a key (by scancode) is held right now. SDL owns the state array for the
+// life of the program and updates it as events are pumped, so read it after polling.
+pub fn keyDown(sc: u32): bool {
+    unsafe {
+        let ks = SDL_GetKeyboardState(0 as *i32)
+        return ks[sc as i64]
+    }
+}
+
+// One open gamepad, closed when dropped.
+pub struct Gamepad {
+    raw: *SDL_Gamepad,
+}
+
+impl Drop for Gamepad {
+    fn drop(self: &mut Self) {
+        unsafe {
+            if self.raw as i64 != 0 {
+                SDL_CloseGamepad(self.raw)
+            }
+        }
+    }
+}
+
+pub fn openGamepad(id: u32): Option<Gamepad> {
+    unsafe {
+        let raw = SDL_OpenGamepad(id)
+        if raw as i64 == 0 {
+            return Option.None
+        }
+        return Option.Some(Gamepad {
+            raw: raw,
+        })
+    }
+}
+
+impl Gamepad {
+    fn id(self: &Self): u32 {
+        return SDL_GetGamepadID(self.raw)
+    }
+
+    // An axis in [-1, 1] (triggers in [0, 1]). SDL's y axes are positive DOWN.
+    fn axis(self: &Self, a: i32): f64 {
+        let v = SDL_GetGamepadAxis(self.raw, a) as f64
+        return v / 32767.0
+    }
+
+    fn button(self: &Self, b: i32): bool {
+        return SDL_GetGamepadButton(self.raw, b)
+    }
 }

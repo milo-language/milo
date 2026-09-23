@@ -93,3 +93,186 @@ fragment float4 swarm_fs(VOut in [[stage_in]]) {
     return float4(in.color * (halo * 0.55 + core * 0.9), 1.0);
 }
 "
+
+// ── The game's shape pipeline ────────────────────────────────────────────────────────
+//
+// Everything in the game (ships, enemies, bullets, sparks, the arena, the HUD text) is
+// one instanced draw of this pipeline. Each instance is 48 bytes, three float4s, laid
+// out by draw.milo's `Inst`:
+//   a = (x, y, hx, hy)          centre and half extents, world units
+//   b = (cos, sin, shape, width) rotation, shape id (+16 = screen space), line half-width
+//   c = (r, g, b, alpha)         colour; additive, so alpha simply scales it
+//
+// Shapes are signed distance functions evaluated in world units, so a line is the same
+// thickness on a 10-unit mine and a 1200-unit wall, and every outline gets the same
+// glow: a white-hot core of half-width `width` plus a coloured falloff GLOW units wide.
+// The quad is grown by GLOW on every side so the falloff fits, and the falloff reaches
+// exactly zero at the quad edge so overlapping quads never show a seam.
+//
+// Uniforms: (scale.x, scale.y, cam.x, cam.y, time, gain, worldDim, 0). `scale` maps
+// world units to clip space, `cam` is the camera centre including screen shake, and
+// `worldDim` scales everything that is not HUD (dimmed behind the pause and game-over
+// text).
+
+pub let GAME_VS_ENTRY: string = "game_vs"
+
+pub let GAME_FS_ENTRY: string = "game_fs"
+
+pub let GAME_VS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct Inst { float4 a; float4 b; float4 c; };
+
+struct Uniforms {
+    float2 scale;
+    float2 cam;
+    float time;
+    float gain;
+    float worldDim;
+    float pad0;
+};
+
+struct VOut {
+    float4 pos [[position]];
+    float2 local;
+    float2 half_ext [[flat]];
+    float shape [[flat]];
+    float width [[flat]];
+    float4 color [[flat]];
+};
+
+constant float GLOW = 12.0;
+
+vertex VOut game_vs(uint vid [[vertex_id]],
+                    uint iid [[instance_id]],
+                    constant Uniforms& u [[buffer(0)]],
+                    const device Inst* is [[buffer(1)]]) {
+    const float2 corners[6] = {
+        float2(-1.0, -1.0), float2(1.0, -1.0), float2(1.0, 1.0),
+        float2(-1.0, -1.0), float2(1.0, 1.0), float2(-1.0, 1.0)
+    };
+    Inst it = is[iid];
+    float shape = it.b.z;
+    bool screen = shape >= 16.0;
+    if (screen) { shape -= 16.0; }
+    float2 h = it.a.zw;
+    // A dot (0) fades out inside its own quad; a filled box (7) has a short glow of
+    // its own (the fragment shader's falloff distance); outlines get the full GLOW.
+    float grow = GLOW;
+    if (shape < 0.5) { grow = 0.0; }
+    if (shape > 6.5) { grow = 0.6 * min(h.x, h.y) + 2.0; }
+    float2 local = corners[vid] * (h + grow);
+    float2 rot = float2(local.x * it.b.x - local.y * it.b.y, local.x * it.b.y + local.y * it.b.x);
+    float2 world = it.a.xy + rot;
+    VOut o;
+    float2 rel = screen ? world : (world - u.cam);
+    o.pos = float4(rel * u.scale, 0.0, 1.0);
+    o.local = local;
+    o.half_ext = h;
+    o.shape = shape;
+    o.width = it.b.w;
+    float k = u.gain;
+    if (!screen) {
+        k *= u.worldDim;
+        // Anything passing under the score, multiplier or lives readouts (see
+        // draw.milo's drawHud) is dimmed so the numbers stay legible.
+        float2 c = it.a.xy - u.cam;
+        if (c.y > 360.0 && (c.x < -540.0 || abs(c.x) < 120.0 || c.x > 640.0)) {
+            k *= 0.3;
+        }
+    }
+    o.color = float4(it.c.rgb * it.c.a * k, 1.0);
+    return o;
+}
+"
+
+pub let GAME_FS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct VOut {
+    float4 pos [[position]];
+    float2 local;
+    float2 half_ext [[flat]];
+    float shape [[flat]];
+    float width [[flat]];
+    float4 color [[flat]];
+};
+
+constant float GLOW = 12.0;
+
+// Distance to the segment a-b.
+static float segDist(float2 p, float2 a, float2 b) {
+    float2 pa = p - a;
+    float2 ba = b - a;
+    float t = saturate(dot(pa, ba) / dot(ba, ba));
+    return length(pa - ba * t);
+}
+
+// Unsigned distance to a closed polygon's outline. Outlines are all SWARM draws, so
+// the inside/outside sign is never needed.
+static float polyDist(float2 p, thread const float2* v, int n) {
+    float d = 1e9;
+    for (int i = 0; i < n; i++) {
+        d = min(d, segDist(p, v[i], v[(i + 1) % n]));
+    }
+    return d;
+}
+
+fragment float4 game_fs(VOut in [[stage_in]]) {
+    float2 p = in.local;
+    float2 h = in.half_ext;
+    int shape = int(in.shape + 0.5);
+    float3 col = in.color.rgb;
+
+    if (shape == 0) {
+        // Soft dot, anisotropic: a streak when hx > hy.
+        float2 uv = p / h;
+        float d2 = dot(uv, uv);
+        float core = exp(-d2 * 9.0);
+        float halo = max(1.0 - d2, 0.0);
+        halo *= halo;
+        float3 hot = mix(col, float3(length(col)), 0.35);
+        return float4(hot * core * 1.4 + col * halo * 0.5, 1.0);
+    }
+
+    float d;
+    if (shape == 1) {
+        d = abs(length(p) - h.x);
+    } else if (shape == 2) {
+        float2 v[4] = { float2(h.x, 0.0), float2(0.0, h.y), float2(-h.x, 0.0), float2(0.0, -h.y) };
+        d = polyDist(p, v, 4);
+    } else if (shape == 3) {
+        float2 q = abs(p) - h;
+        d = abs(length(max(q, 0.0)) + min(max(q.x, q.y), 0.0));
+    } else if (shape == 4) {
+        float2 v[3] = { float2(h.x, 0.0), float2(-0.5 * h.x, 0.866 * h.y), float2(-0.5 * h.x, -0.866 * h.y) };
+        d = polyDist(p, v, 3);
+    } else if (shape == 5) {
+        // Ship chevron: nose at +x, a notch cut into the tail.
+        float2 v[4] = { float2(h.x, 0.0), float2(-h.x, h.y), float2(-0.45 * h.x, 0.0), float2(-h.x, -h.y) };
+        d = polyDist(p, v, 4);
+    } else if (shape == 6) {
+        // A line along x, hx long (half), drawn at `width`.
+        d = segDist(p, float2(-h.x, 0.0), float2(h.x, 0.0));
+    } else {
+        // Filled box with a thin glow: font pixels and HUD bars.
+        float2 q = abs(p) - h;
+        float sd = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
+        float fill = saturate(0.5 - sd / max(fwidth(sd), 1e-4));
+        float x = saturate(sd / (0.6 * min(h.x, h.y) + 2.0));
+        float g = (1.0 - x) * (1.0 - x);
+        return float4(col * (fill * 1.1 + g * 0.35 * (1.0 - fill)), 1.0);
+    }
+
+    float w = in.width;
+    float aa = max(fwidth(d), 1e-4);
+    float core = saturate((w - d) / aa + 0.5);
+    float x = saturate((d - w) / GLOW);
+    float g = (1.0 - x);
+    float glow = g * g * g;
+    float3 hot = mix(col, float3(max(col.r, max(col.g, col.b))), 0.5);
+    return float4(hot * core * 1.5 + col * glow * 0.55, 1.0);
+}
+"
