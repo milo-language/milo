@@ -47,6 +47,35 @@ let d = Dog { age: 7 }
 print(d.getAge())
 ```
 
+A method with no `self` parameter is a static method, called on the type. It may carry
+its own type parameters, inferred from the arguments (or, failing that, from the type the
+result is assigned to). `std/math`'s `Math.min` and `Math.max` are written this way, so
+one name serves every numeric type:
+
+```milo
+struct Temp {
+    c: f64,
+}
+
+impl Temp {
+    fn fromF(f: f64): Temp {
+        return Temp { c: (f - 32.0) * 5.0 / 9.0 }
+    }
+
+    fn larger<T>(a: T, b: T): T {
+        if a > b {
+            return a
+        }
+        return b
+    }
+}
+
+let t = Temp.fromF(212.0)
+print(t.c)                     // 100
+print(Temp.larger(3, 9))       // 9
+print(Temp.larger(0.5, 0.25))  // 0.5
+```
+
 ## Destructuring
 
 `let { a, b } = e` binds fields of a struct value by name. `{ a: x }` renames, and

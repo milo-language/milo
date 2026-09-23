@@ -1,0 +1,20 @@
+// @error: cannot infer 'T' for 'Mk.empty'
+
+// A static method's own type parameter is inferred from the arguments, then from the
+// expected type (`let v: Vec<i64> = Mk.empty()` compiles). With neither there is nothing
+// to instantiate, and the error names the parameter rather than claiming the method is
+// missing.
+struct Mk {}
+
+impl Mk {
+    fn empty<T>(): Vec<T> {
+        let v: Vec<T> = Vec.new()
+        return v
+    }
+}
+
+pub fn main(): i32 {
+    let v = Mk.empty()
+    print(v.len())
+    return 0
+}

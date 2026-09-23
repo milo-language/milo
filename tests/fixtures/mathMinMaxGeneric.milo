@@ -1,0 +1,48 @@
+// @expect: 0.5
+// @expect: 1
+// @expect: 2
+// @expect: 7
+// @expect: 9
+// @expect: 300
+// @expect: 2.5
+// @expect: 1
+// @expect: 3
+// @expect: 1.5
+
+// `Math.min`/`Math.max` take any one type with `<`/`>`: a static method with its own
+// type parameter on the non-generic `Math` namespace. Before the static-call path
+// looked in the generic-method table this reported "type 'Math' has no static method
+// 'min'", which is why std only had the suffixed `minF64`/`minI32`/`minI64`.
+from "std/math" import { Math }
+
+struct Pick {}
+
+impl Pick {
+    // The same shape in user code.
+    fn first<T>(a: T, _b: T): T {
+        return a
+    }
+}
+
+fn clampUnit(x: f64): f64 {
+    return Math.max(0.0, Math.min(x, 1.0))
+}
+
+pub fn main(): i32 {
+    print(Math.min(0.5, 2.0))
+    print(clampUnit(3.0))
+    print(Math.max(1, 2))
+    let small: i32 = 7
+    // The literal takes the i32 from `small`, whichever side it is on.
+    print(Math.min(small, 9))
+    print(Math.max(9, small))
+    let wide: i64 = 300
+    print(Math.max(wide, 20))
+    let f: f32 = 2.5
+    print(Math.max(f, 1.0))
+    // The suffixed helpers are unchanged.
+    print(Math.minI64(1, 5))
+    print(Math.maxI32(3, 2))
+    print(Pick.first(1.5, 0.25))
+    return 0
+}

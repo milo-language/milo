@@ -1065,6 +1065,36 @@ let d = Dog { age: 7 }
 print(d.getAge())
 ```
 
+A method with no `self` parameter is a static method, called on the type (`Temp.fromF(212.0)`).
+A method may carry its own type parameters, static or not; they are inferred from the
+arguments, and a parameter no argument mentions is taken from the expected type
+(`let v: Vec<i64> = Mk.empty()`). A literal argument takes its type from the other arguments,
+so `Math.min(x, 1)` with `x: i32` instantiates `T = i32`. Each instantiation type-checks the
+body for its own `T`, so `Math.min` on a struct with no `<` is rejected at that instantiation.
+
+```milo
+struct Temp {
+    c: f64,
+}
+
+impl Temp {
+    fn fromF(f: f64): Temp {
+        return Temp { c: (f - 32.0) * 5.0 / 9.0 }
+    }
+
+    fn larger<T>(a: T, b: T): T {
+        if a > b {
+            return a
+        }
+        return b
+    }
+}
+
+let t = Temp.fromF(212.0)
+print(Temp.larger(3, 9))       // 9
+print(Temp.larger(0.5, 0.25))  // 0.5
+```
+
 ---
 
 ## Enums (Sum Types)

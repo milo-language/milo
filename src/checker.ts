@@ -7032,6 +7032,44 @@ export class TypeChecker {
     return generic.typeParams.map(tp => this.typeKindToMiloType(must(typeMap, tp, "type map")));
   }
 
+  // `Math.min(a, b)`: a static method carrying its own type parameters on a type that has
+  // none. The template sits in `genericMethods` exactly as an instance one does, but the
+  // static path only looked in `inherentImpls`, so the call reported "no static method".
+  // Arguments are typed twice, as in `inferGenericStaticTypeArgs`: once to unify (that
+  // pass's diagnostics are dropped), once against the substituted signature.
+  private checkGenericStaticMethodCall(expr: ExprOf<"EnumLit">, key: string, sp: Span | undefined): TypeKind {
+    const tpl = must(this.genericMethods, key, "generic methods");
+    const names = (tpl.decl.typeParams ?? []).map(t => t.name);
+    const typeMap = new Map<string, TypeKind>();
+    const n = Math.min(expr.args.length, tpl.decl.params.length);
+    // A bare literal binds last: `Math.min(9, x)` with `x: i32` means T = i32, and the
+    // literal then takes that type from the substituted parameter. Binding the literal's
+    // default first would pin T to i64 and reject `x`.
+    const isLit = (e: Expr) => e.kind === "IntLit" || e.kind === "FloatLit" || this.isConstIntExpr(e);
+    const order = [...Array(n).keys()].sort((a, b) => Number(isLit(expr.args[a]!)) - Number(isLit(expr.args[b]!)));
+    const mark = this.diagnostics.length;
+    for (const i of order) {
+      const argType = this.checkExpr(expr.args[i]!);
+      // An argument that did not type is the error to fix; keep its diagnostic.
+      if (argType.tag === "unknown") return this.setType(expr, { tag: "unknown" });
+      this.inferTypeParamsFromHint(declaredType(tpl.decl.params[i]!), argType, names, typeMap);
+    }
+    this.diagnostics.length = mark;
+    if (this.returnHint) this.inferTypeParamsFromHint(tpl.decl.retType, this.returnHint, names, typeMap);
+    const missing = names.filter(p => !typeMap.has(p));
+    if (missing.length > 0) {
+      this.error(`cannot infer '${missing.join("', '")}' for '${expr.enumName}.${expr.variant}'`, sp,
+        `nothing in the arguments or the expected type fixes it — annotate the result`);
+      return this.setType(expr, { tag: "unknown" });
+    }
+    const mangled = this.monomorphizeMethod(key, names.map(p => must(typeMap, p, "method type map")), sp);
+    if (!mangled) return this.setType(expr, { tag: "unknown" });
+    const sig = must(this.functions, mangled, "instantiated static method");
+    this.checkStaticCallArgs(sig, expr, sp);
+    this.staticCalls.set(expr, mangled);
+    return this.setType(expr, sig.ret);
+  }
+
   private inferTypeParamsFromHint(retType: MiloType, hint: TypeKind, typeParams: string[], typeMap: Map<string, TypeKind>) {
     // A bare type parameter (`T`, no further args) binds directly to the hint. First
     // binding wins; a later conflicting one surfaces as a field/arg type mismatch in the
@@ -9882,6 +9920,11 @@ export class TypeChecker {
           }
           return this.setType(expr, sig.ret);
         }
+      }
+      const genericKey = `${expr.enumName}$${expr.variant}`;
+      const genericTpl = this.genericMethods.get(genericKey);
+      if (genericTpl && genericTpl.decl.params[0]?.name !== "self") {
+        return this.checkGenericStaticMethodCall(expr, genericKey, sp);
       }
       const asMethod = this.staticCallOnVariable(expr);
       if (asMethod) return asMethod;

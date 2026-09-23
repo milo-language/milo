@@ -200,6 +200,26 @@ impl Math {
         return x
     }
 
+    // The smaller of two values of any one type with `<`: `Math.min(x, 1.0)` on f64,
+    // `Math.min(n, 10)` on an int of any width. A literal takes the other argument's type.
+    // NaN is not ordered, so a NaN `a` yields `b` (as `minF64` does).
+    @pure
+    fn min<T>(a: T, b: T): T {
+        if a < b {
+            return a
+        }
+        return b
+    }
+
+    // The larger of two values of any one type with `>`. See `Math.min`.
+    @pure
+    fn max<T>(a: T, b: T): T {
+        if a > b {
+            return a
+        }
+        return b
+    }
+
     @pure
     fn minI64(a: i64, b: i64): i64 {
         if a < b {

@@ -150,6 +150,14 @@ fn Math.log10(x: f64): f64
 fn Math.log2(x: f64): f64
 ```
 
+#### `Math.max`
+
+```milo
+fn Math.max<T>(a: T, b: T): T
+```
+
+The larger of two values of any one type with `>`. See `Math.min`.
+
 #### `Math.maxF64`
 
 ```milo
@@ -167,6 +175,16 @@ fn Math.maxI32(a: i32, b: i32): i32
 ```milo
 fn Math.maxI64(a: i64, b: i64): i64
 ```
+
+#### `Math.min`
+
+```milo
+fn Math.min<T>(a: T, b: T): T
+```
+
+The smaller of two values of any one type with `<`: `Math.min(x, 1.0)` on f64,
+`Math.min(n, 10)` on an int of any width. A literal takes the other argument's type.
+NaN is not ordered, so a NaN `a` yields `b` (as `minF64` does).
 
 #### `Math.minF64`
 

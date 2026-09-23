@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 358 distinct messages across 423 programs the compiler must reject.
+Every error message the test suite pins: 359 distinct messages across 424 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -155,6 +155,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot derive Clone for 'Q': field 'h' of type 'H' has no clone`](#cannot-derive-clone-for-q-field-h-of-type-h-has-no-clone)
 - [`cannot have type 'void'`](#cannot-have-type-void)
 - [`cannot infer 'R' for 'Holder.make'`](#cannot-infer-r-for-holder-make)
+- [`cannot infer 'T' for 'Mk.empty'`](#cannot-infer-t-for-mk-empty)
 - [`cannot infer type for parameter 'x'`](#cannot-infer-type-for-parameter-x)
 - [`cannot infer type parameter(s) 'T' for Option.None`](#cannot-infer-type-parameter-s-t-for-option-none)
 - [`cannot infer Vec element type`](#cannot-infer-vec-element-type)
@@ -3430,6 +3431,29 @@ fn main() {
 ```
 
 <sub>[tests/errors/genericMethodUninferable.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericMethodUninferable.milo)</sub>
+
+## `cannot infer 'T' for 'Mk.empty'` {#cannot-infer-t-for-mk-empty}
+
+A static method's own type parameter is inferred from the arguments, then from the expected type (`let v: Vec<i64> = Mk.empty()` compiles). With neither there is nothing to instantiate, and the error names the parameter rather than claiming the method is missing.
+
+```milo skip
+struct Mk {}
+
+impl Mk {
+    fn empty<T>(): Vec<T> {
+        let v: Vec<T> = Vec.new()
+        return v
+    }
+}
+
+pub fn main(): i32 {
+    let v = Mk.empty()
+    print(v.len())
+    return 0
+}
+```
+
+<sub>[tests/errors/genericStaticMethodNoInfer.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericStaticMethodNoInfer.milo)</sub>
 
 ## `cannot infer type for parameter 'x'` {#cannot-infer-type-for-parameter-x}
 
