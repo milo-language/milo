@@ -77,6 +77,12 @@ _Goes on: `field`._
 
 This `extern struct` field is filler with no C counterpart, so `@cLayout` skips it. For a struct padded out to the size C dictates (getrusage writes 144 bytes into a struct whose named fields cover 32); the field still counts toward Milo's own layout, so the size check stays meaningful.
 
+### `@cName(…)`
+
+_Goes on: `field`._
+
+The C name of this `extern struct` field, for a C field whose name Milo cannot spell: `@cName("type") kind: u32` is checked by `@cLayout` against the C field `type`, a Milo keyword. The Milo code reads and writes `kind`; the C header `build --emit-header` writes spells it `type`.
+
 ### `@iter`
 
 _Goes on: `field`._

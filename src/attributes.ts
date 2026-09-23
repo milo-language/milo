@@ -107,6 +107,16 @@ export const ATTRIBUTES: AttrInfo[] = [
       "layout, so the size check stays meaningful.",
   },
   {
+    name: "cName",
+    targets: ["field"],
+    takesArgs: true,
+    doc:
+      "The C name of this `extern struct` field, for a C field whose name Milo cannot " +
+      "spell: `@cName(\"type\") kind: u32` is checked by `@cLayout` against the C field " +
+      "`type`, a Milo keyword. The Milo code reads and writes `kind`; the C header " +
+      "`build --emit-header` writes spells it `type`.",
+  },
+  {
     name: "iter",
     targets: ["field"],
     doc:

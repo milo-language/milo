@@ -1,0 +1,10 @@
+// @error: @cName on 'Point.kind': only an 'extern struct' field has a C name
+// A Milo struct has no C counterpart, so a C name on its field would be read by nothing.
+struct Point {
+    @cName("type") kind: i32,
+}
+
+fn main() {
+    let p = Point { kind: 1 }
+    print(p.kind)
+}

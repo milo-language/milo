@@ -57,6 +57,18 @@ pub fn point_bump(p: ?&mut Point): i32 {
 // int32_t)` in the generated header. The C consumer builds one of these from its OWN
 // declaration of the struct and a C function, so Milo's layout claim is checked against
 // a real C compiler rather than against another copy of Milo.
+// `type` is a Milo keyword, so the Milo side names the field `kind`; C sees `type`.
+pub extern struct Tagged {
+    @cName("type") kind: i32,
+    value: i32,
+}
+
+pub fn tagged_kind(t: *Tagged): i32 {
+    unsafe {
+        return (*t).kind
+    }
+}
+
 pub extern struct Ops {
     read: (*u8, i32) => i32,
 }

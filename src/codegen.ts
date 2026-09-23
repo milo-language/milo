@@ -1335,15 +1335,19 @@ export class Codegen {
         if (f.cOpaque) return;
         const offset = this.structFieldOffset(fieldTypes, i);
         const size = this.typeSize(fieldTypes[i]!);
+        // @cName: the C field has a name Milo cannot spell (`type` is a keyword), so the
+        // assert names the C field and the message names both.
+        const cField = f.cName ?? f.name;
+        const label = f.cName ? `${s.name}.${f.name} (C '${f.cName}')` : `${s.name}.${f.name}`;
         out.push(
-          `_Static_assert(offsetof(${cType}, ${f.name}) == ${offset}, ` +
-          `"${s.name}.${f.name}: Milo says offset ${offset}, C header disagrees");`,
+          `_Static_assert(offsetof(${cType}, ${cField}) == ${offset}, ` +
+          `"${label}: Milo says offset ${offset}, C header disagrees");`,
         );
         // Offsets alone can't catch a wrong width on the last field, and elsewhere a
         // too-narrow field can hide inside the next field's padding.
         out.push(
-          `_Static_assert(sizeof(((${cType} *)0)->${f.name}) == ${size}, ` +
-          `"${s.name}.${f.name}: Milo says ${size} bytes, C header disagrees");`,
+          `_Static_assert(sizeof(((${cType} *)0)->${cField}) == ${size}, ` +
+          `"${label}: Milo says ${size} bytes, C header disagrees");`,
         );
       });
       // `>=`, not `==`: declaring a prefix of a C struct is legitimate and common —

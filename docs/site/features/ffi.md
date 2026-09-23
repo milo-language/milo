@@ -156,7 +156,7 @@ error[c-layout]: an extern struct's declared layout does not match the C header
   Timespec.tv_sec: Milo says offset 0, C header disagrees
 ```
 
-Every field is checked for both its offset and its own size — offsets alone miss a wrong width on the last field, and elsewhere a too-narrow field can hide inside the next field's padding. Milo field names are used as the C field names. If the layout ever drifts from an OS update or a new architecture, the **build breaks** instead of the program lying.
+Every field is checked for both its offset and its own size — offsets alone miss a wrong width on the last field, and elsewhere a too-narrow field can hide inside the next field's padding. Milo field names are used as the C field names; for a C field whose name is a Milo keyword (SDL's `SDL_GPUBufferCreateInfo.type`), write `@cName("type") kind: u32` and the guard checks `kind` against C's `type`. If the layout ever drifts from an OS update or a new architecture, the **build breaks** instead of the program lying.
 
 Declaring only a **prefix** of a C struct is supported and common: total size is checked with `>=`, not `==`, so you can stop early and ignore trailing platform fields. Field *order* must still match from the start. Mark a field `@cOpaque` to exclude it — filler with no C counterpart.
 

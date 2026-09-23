@@ -3478,7 +3478,9 @@ error[c-layout]: an extern struct's declared layout does not match the C header
 
 Each field is checked for both its offset and its own size — offsets alone miss a wrong
 width on the last field, and elsewhere a too-narrow field can hide inside the next
-field's padding. Milo field names are used as the C field names.
+field's padding. Milo field names are used as the C field names, unless the field
+carries `@cName("...")`: a C field named with a Milo keyword (SDL's `type`) is declared
+`@cName("type") kind: u32`, and the guard checks `kind` against C's `type`.
 
 Declaring only a **prefix** of a C struct is supported and common: the struct's total
 size is checked with `>=`, not `==`, so you may stop early and ignore trailing platform

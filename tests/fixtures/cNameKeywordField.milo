@@ -1,0 +1,22 @@
+// @skip-os: linux, win32
+// A C field whose name is a Milo keyword. `struct exception` (the SVID matherr record in
+// macOS's <math.h>) has `int type`, and `type` cannot name a Milo field, so before
+// `@cName` the binding had to mark it @cOpaque and leave it unchecked. Now `kind` is
+// verified against C's `type`: offset 0, 4 bytes. glibc dropped `struct exception` in
+// 2.27 and Windows has no such struct, hence the skips; cNameField.milo covers the
+// renaming itself on Linux.
+@cLayout("struct exception", "math.h")
+pub extern struct MathException {
+    @cName("type") kind: i32,
+    name: *u8,
+    arg1: f64,
+    arg2: f64,
+    retval: f64,
+}
+
+pub fn main() {
+    // @expect: true
+    print(sizeOf<MathException>() == 40)
+    // @expect: true
+    print(offsetOf<MathException>("arg1") == 16)
+}

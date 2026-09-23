@@ -1,0 +1,17 @@
+// @skip-os: linux, win32
+// @error: MathException.kind (C 'type'): Milo says 8 bytes, C header disagrees
+// The @cLayout guard checks a `@cName` field under its C name: this assertion can only
+// fire if the generated C reads `sizeof(((struct exception *)0)->type)`. C's `type` is an
+// `int`; declaring it i64 is the wrong-width drift the guard exists to catch.
+@cLayout("struct exception", "math.h")
+pub extern struct MathException {
+    @cName("type") kind: i64,
+    name: *u8,
+    arg1: f64,
+    arg2: f64,
+    retval: f64,
+}
+
+pub fn main() {
+    print(sizeOf<MathException>())
+}

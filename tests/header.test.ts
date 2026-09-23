@@ -74,6 +74,12 @@ describe("header generation", () => {
     expect(header).toContain("int32_t ops_apply(Ops* ops, int32_t v);");
   });
 
+  // `@cName("type") kind: i32` publishes the C name: a C consumer writes `t.type`.
+  test("a @cName field is declared under its C name", () => {
+    expect(header).toContain("int32_t type;");
+    expect(header).not.toContain("int32_t kind;");
+  });
+
   test("non-C and by-value-struct functions are skipped with a comment", () => {
     expect(header).toContain("/* skipped make_point:");
     expect(header).toContain("/* skipped build:");

@@ -295,11 +295,20 @@ function mustUseOf(decl: { attributes?: { name: string }[] } | undefined): { mus
   return decl?.attributes?.some(a => a.name === "mustUse") ? { mustUse: true } : {};
 }
 
+// `@cName("type")` on an extern struct field: the C spelling @cLayout checks it under.
+// Only a well-formed argument is carried; a malformed one is reported by
+// validateFieldAttributes and must not reach the guard TU as C source.
+function cNameOf(f: { attributes?: Attribute[] }): { cName?: string } {
+  const a = f.attributes?.find(x => x.name === "cName");
+  const n = a?.args.length === 1 && a.argKinds?.[0] === "string" ? a.args[0] : undefined;
+  return n !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/.test(n) ? { cName: n } : {};
+}
+
 interface StructInfo {
   // `iterDelegate`: `@iter` on the field — `for x in wrapper` iterates this field
   // instead of looking for a `next` method. Lets a newtype keep the container's
   // iteration without leaking the field or paying for a snapshot.
-  fields: { name: string; type: TypeKind; cOpaque?: boolean; iterDelegate?: boolean }[];
+  fields: { name: string; type: TypeKind; cOpaque?: boolean; cName?: string; iterDelegate?: boolean }[];
   baseName?: string;
   typeArgs?: TypeKind[];
   isExtern?: boolean;
@@ -2999,6 +3008,7 @@ export class TypeChecker {
         const fields = s.fields.map(f => ({
           name: f.name, type: this.thinFnField(s.isExtern, this.resolve(f.type)),
           ...(f.attributes?.some(a => a.name === "cOpaque") ? { cOpaque: true } : {}),
+          ...cNameOf(f),
           ...(f.attributes?.some(a => a.name === "iter") ? { iterDelegate: true } : {}),
         }));
         for (const f of fields) {
@@ -4911,6 +4921,19 @@ export class TypeChecker {
           if (!derivesJson) {
             this.error(`@json on '${s.name}.${f.name}': the struct does not derive Json`, s.span,
               `add '@derive(Json)' to '${s.name}', or drop the field attribute — nothing else reads it`);
+          }
+        } else if (attr.name === "cName") {
+          // The argument is pasted into `offsetof(struct T, <arg>)` in the guard TU, so it
+          // must be a C identifier and nothing more: anything else would be C source.
+          if (!s.isExtern) {
+            this.error(`@cName on '${s.name}.${f.name}': only an 'extern struct' field has a C name`, s.span,
+              `a Milo struct has no C counterpart to name`);
+          } else if (attr.args.length !== 1 || attr.argKinds?.[0] !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(attr.args[0]!)) {
+            this.error(`@cName on '${s.name}.${f.name}': expected one string argument naming a C identifier, e.g. @cName("type")`, s.span);
+          } else if (f.attributes.some(a => a.name === "cOpaque")) {
+            this.error(`@cName on '${s.name}.${f.name}': a @cOpaque field has no C counterpart to name`, s.span);
+          } else if (s.fields.some(o => o !== f && (o.attributes?.find(a => a.name === "cName")?.args[0] ?? o.name) === attr.args[0])) {
+            this.error(`@cName on '${s.name}.${f.name}': another field of '${s.name}' already maps to C field '${attr.args[0]}'`, s.span);
           }
         } else if (attr.name !== "cOpaque") {
           this.error(`'@${attr.name}' is not supported on a struct field — '${s.name}.${f.name}'`, s.span,

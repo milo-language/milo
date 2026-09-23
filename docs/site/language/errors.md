@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 361 distinct messages across 426 programs the compiler must reject.
+Every error message the test suite pins: 363 distinct messages across 428 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -105,6 +105,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'x' shadows an outer binding`](#x-shadows-an-outer-binding)
 - [`'yieldNow' can park this task while the loop variable is a reference into 'g's buffer`](#yieldnow-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
 - [`(via 'work' → 'record')`](#via-work-record)
+- [`@cName on 'Point.kind': only an 'extern struct' field has a C name`](#cname-on-point-kind-only-an-extern-struct-field-has-a-c-name)
 - [`a declaration does not match the C header it claims to describe`](#a-declaration-does-not-match-the-c-header-it-claims-to-describe)
 - [`a JSON object's keys are strings`](#a-json-object-s-keys-are-strings)
 - [`a nested fixed array`](#a-nested-fixed-array)
@@ -275,6 +276,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`let-else block must diverge`](#let-else-block-must-diverge)
 - [`manual 'Send' implementation for 'Handle' must be unsafe`](#manual-send-implementation-for-handle-must-be-unsafe)
 - [`mark 'Conn' @copy if it does not own what the pointer points at`](#mark-conn-copy-if-it-does-not-own-what-the-pointer-points-at)
+- [`MathException.kind (C 'type'): Milo says 8 bytes, C header disagrees`](#mathexception-kind-c-type-milo-says-8-bytes-c-header-disagrees)
 - [`Milo declares a 4-byte return`](#milo-declares-a-4-byte-return)
 - [`Milo declares i64 (8 bytes)`](#milo-declares-i64-8-bytes)
 - [`Milo has no '++' — write 'i += 1'`](#milo-has-no-write-i-1)
@@ -2392,6 +2394,23 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/threadGlobalRaceTransitive.milo](https://github.com/milo-language/milo/blob/main/tests/errors/threadGlobalRaceTransitive.milo)</sub>
+
+## `@cName on 'Point.kind': only an 'extern struct' field has a C name` {#cname-on-point-kind-only-an-extern-struct-field-has-a-c-name}
+
+A Milo struct has no C counterpart, so a C name on its field would be read by nothing.
+
+```milo skip
+struct Point {
+    @cName("type") kind: i32,
+}
+
+fn main() {
+    let p = Point { kind: 1 }
+    print(p.kind)
+}
+```
+
+<sub>[tests/errors/cNameNotExtern.milo](https://github.com/milo-language/milo/blob/main/tests/errors/cNameNotExtern.milo)</sub>
 
 ## `a declaration does not match the C header it claims to describe` {#a-declaration-does-not-match-the-c-header-it-claims-to-describe}
 
@@ -6184,6 +6203,27 @@ fn main() {
 ```
 
 <sub>[tests/errors/pointerFieldStructNotCopy.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pointerFieldStructNotCopy.milo)</sub>
+
+## `MathException.kind (C 'type'): Milo says 8 bytes, C header disagrees` {#mathexception-kind-c-type-milo-says-8-bytes-c-header-disagrees}
+
+The @cLayout guard checks a `@cName` field under its C name: this assertion can only fire if the generated C reads `sizeof(((struct exception *)0)->type)`. C's `type` is an `int`; declaring it i64 is the wrong-width drift the guard exists to catch.
+
+```milo skip
+@cLayout("struct exception", "math.h")
+pub extern struct MathException {
+    @cName("type") kind: i64,
+    name: *u8,
+    arg1: f64,
+    arg2: f64,
+    retval: f64,
+}
+
+pub fn main() {
+    print(sizeOf<MathException>())
+}
+```
+
+<sub>[tests/errors/cNameFieldMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/cNameFieldMismatch.milo)</sub>
 
 ## `Milo declares a 4-byte return` {#milo-declares-a-4-byte-return}
 

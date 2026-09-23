@@ -122,7 +122,7 @@ export function generateHeader(module: HIRModule, headerName: string): string {
       const fields: string[] = [];
       let skip = false;
       for (const f of s.fields) {
-        const c = cField(f.type, f.name);
+        const c = cField(f.type, f.cName ?? f.name);
         if (!c) { skip = true; break; }
         fields.push(`    ${c};`);
       }

@@ -1,0 +1,23 @@
+// @skip-os: win32
+// `@cName("c_name")` on an extern struct field: the Milo field keeps a Milo name and
+// @cLayout checks it against the C field the attribute names. The case it exists for is
+// a C field spelled with a Milo keyword (SDL's `SDL_GPUBufferCreateInfo.type`; see
+// cNameKeywordField.milo for one in a system header), which otherwise had to be marked
+// @cOpaque and so went unchecked. This one uses `struct timespec`, present on macOS and
+// Linux alike, so the renaming is exercised on both. Skipped on Windows because MSVC's
+// `tv_nsec` is a 32-bit `long`, so this 64-bit declaration is not its layout.
+@cLayout("struct timespec", "time.h")
+pub extern struct Duration {
+    @cName("tv_sec") seconds: i64,
+    @cName("tv_nsec") nanos: i64,
+}
+
+pub fn main() {
+    let d = Duration { seconds: 3, nanos: 500 }
+    // @expect: 3
+    print(d.seconds)
+    // @expect: 500
+    print(d.nanos)
+    // @expect: true
+    print(offsetOf<Duration>("nanos") == 8)
+}
