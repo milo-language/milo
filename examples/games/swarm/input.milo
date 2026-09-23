@@ -11,7 +11,7 @@ from "./sdl3" import {
     SCANCODE_W, keyDown, mouseState, openGamepad
 }
 from "./world" import {
-    Input, VIEW_HH, VIEW_HW, World
+    Input, SCREEN_HH, SCREEN_HW, VIEW_HW, World
 }
 from "std/math" import {
     Math
@@ -110,9 +110,11 @@ impl Controls {
             self.lastMouseX = m.x
             self.lastMouseY = m.y
         }
-        // Window points map 1:1 onto the view; the camera (without shake) places it.
-        var ax = (m.x as f64) - VIEW_HW + w.camX - w.px
-        var ay = VIEW_HH - (m.y as f64) + w.camY - w.py
+        // The window's points span the view (SCREEN units, zoomed to VIEW units); the
+        // camera (without shake) places it.
+        let k = VIEW_HW / SCREEN_HW
+        var ax = ((m.x as f64) - SCREEN_HW) * k + w.camX - w.px
+        var ay = (SCREEN_HH - (m.y as f64)) * k + w.camY - w.py
 
         match self.pad {
             Option.Some(p) => {

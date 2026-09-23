@@ -3,12 +3,16 @@
 // frame, never reallocated once it has grown to its peak.
 //
 // Additive blending makes draw order irrelevant, so the list is filled in whatever
-// order is convenient, with sparks last: if a frame ever exceeds MAX_INST, it is
-// sparks that are dropped, never a ship or the HUD.
+// order is convenient, with enemies last: if a frame ever exceeds MAX_INST (only a
+// benchmark gets near it), it is enemies that go undrawn, never a ship or the HUD.
+// Sparks are GPU particles (render.milo) and the grid has its own pipeline.
+//
+// Colours are display values (the shader linearises them). It already makes a rim's
+// core white-hot; alpha above 1 is how something is made to bloom harder than the rest.
 
 from "./world" import {
-    ARENA_HH, ARENA_HW, COMBO_TIME, DT, INVULN, MINI, PLAYER_R, Rgb, SEEKER, SPLITTER, TELEGRAPH, WANDERER, World,
-    enemyColor, enemyRadius, rgb
+    ARENA_HH, ARENA_HW, COMBO_TIME, DT, INVULN, MINI, Rgb, SCREEN_HH, SCREEN_HW, SEEKER, SPLITTER, TELEGRAPH,
+    VIEW_HH, VIEW_HW, WANDERER, World, enemyColor, enemyRadius, rgb
 }
 from "std/math" import {
     Math
@@ -20,12 +24,22 @@ pub let INST_BYTES: i64 = 48
 
 let DOT: f32 = 0.0
 let RING: f32 = 1.0
-let DIAMOND: f32 = 2.0
-let SQUARE: f32 = 3.0
-let TRIANGLE: f32 = 4.0
-let CHEVRON: f32 = 5.0
-let LINE: f32 = 6.0
-let BOX: f32 = 7.0
+let CHEVRON: f32 = 2.0
+let LINE: f32 = 3.0
+let BOX: f32 = 4.0
+// The enemies, each a filled silhouette with its inner mark in one instance.
+let WANDERER_SHAPE: f32 = 5.0
+let SEEKER_SHAPE: f32 = 6.0
+let SPLITTER_SHAPE: f32 = 7.0
+// The player: a filled chevron, drawn last and opaque (see GAME_FS).
+let SHIP_SHAPE: f32 = 8.0
+
+// Room for the player's instances, which have a list of their own.
+pub let MAX_TOP: i64 = 16
+
+pub let SHIP_HX: f64 = 27.0
+
+pub let SHIP_HY: f64 = 20.0
 // Added to a shape id: the instance is in screen units (origin at the centre, y up),
 // untouched by the camera and the shake.
 let SCREEN: f32 = 16.0
@@ -83,7 +97,7 @@ pub struct Cam {
 
 pub fn camera(w: &World): Cam {
     let t = (w.tick as f64) * DT
-    let mag = w.shake * w.shake * 20.0
+    let mag = w.shake * w.shake * 34.0
     return Cam {
         x: w.camX + mag * Math.sin(t * 91.0),
         y: w.camY + mag * Math.cos(t * 73.0 + 1.3),
@@ -95,33 +109,8 @@ fn white(c: Rgb, k: f64): Rgb {
 }
 
 fn drawArena(out: &mut Vec<Inst>, w: &World) {
-    // A dim reference grid: without it, camera motion is invisible in an empty arena.
-    let step: f64 = 75.0
-    let grid = rgb(0.12, 0.16, 0.42)
-    var k: i64 = 1
-    var x = -ARENA_HW + step
-    while x < ARENA_HW - 1.0 {
-        var a: f64 = 0.12
-        if k % 4 == 0 {
-            a = 0.3
-        }
-        put(&mut out, x, 0.0, ARENA_HH, 0.0, 0.0, 1.0, LINE, 0.5, grid, a)
-        x += step
-        k += 1
-    }
-    k = 1
-    var y = -ARENA_HH + step
-    while y < ARENA_HH - 1.0 {
-        var a: f64 = 0.12
-        if k % 4 == 0 {
-            a = 0.3
-        }
-        put(&mut out, 0.0, y, ARENA_HW, 0.0, 1.0, 0.0, LINE, 0.5, grid, a)
-        y += step
-        k += 1
-    }
     // The wall glows brighter the closer the player is to it.
-    let wall = rgb(0.3, 0.55, 1.0)
+    let wall = rgb(0.3, 0.5, 1.0)
     let nearX = 1.0 - Math.minF64((ARENA_HW - Math.abs(w.px)) / 300.0, 1.0)
     let nearY = 1.0 - Math.minF64((ARENA_HH - Math.abs(w.py)) / 300.0, 1.0)
     let side = if w.px > 0.0 { 1.0 } else { -1.0 }
@@ -135,10 +124,10 @@ fn drawArena(out: &mut Vec<Inst>, w: &World) {
 fn drawEnemies(out: &mut Vec<Inst>, w: &World, cam: &Cam) {
     // Enemies well off screen still cost a draw; skip them. The margin covers the
     // largest shape plus its glow.
-    let vx0 = cam.x - 800.0 - 60.0
-    let vx1 = cam.x + 800.0 + 60.0
-    let vy0 = cam.y - 450.0 - 60.0
-    let vy1 = cam.y + 450.0 + 60.0
+    let vx0 = cam.x - VIEW_HW - 60.0
+    let vx1 = cam.x + VIEW_HW + 60.0
+    let vy0 = cam.y - VIEW_HH - 60.0
+    let vy1 = cam.y + VIEW_HH + 60.0
     for i in 0..w.cache.len {
         if w.cache[i].hp <= 0 {
             continue
@@ -150,38 +139,95 @@ fn drawEnemies(out: &mut Vec<Inst>, w: &World, cam: &Cam) {
         let base = enemyColor(e.kind)
         let r = enemyRadius(e.kind)
         if e.spawn > 0.0 {
-            // Telegraph: a ring that closes onto the spawn point and flickers.
+            // Telegraph: a ring that closes onto the spawn point and flickers, warming
+            // up as it closes, but never as bright as a live enemy.
             let f = e.spawn / TELEGRAPH
-            let blink = if Math.sin(e.age * 40.0) > 0.0 { 1.0 } else { 0.35 }
-            let tr = r + 26.0 * Math.minF64(f, 1.5)
-            put(&mut out, e.x, e.y, tr, tr, 1.0, 0.0, RING, 1.3, base, 0.9 * blink)
-            put(&mut out, e.x, e.y, 3.0, 3.0, 1.0, 0.0, DOT, 0.0, base, 0.6 * blink)
+            let blink = if Math.sin(e.age * 40.0) > 0.0 { 1.0 } else { 0.45 }
+            let tr = r * 0.8 + 16.0 * Math.minF64(f, 1.2)
+            let heat = 0.45 + 0.55 * (1.0 - Math.minF64(f, 1.0))
+            put(&mut out, e.x, e.y, tr, tr, 1.0, 0.0, RING, 1.2, base, 0.7 * blink * heat)
+            let dot = 3.0 + 4.0 * (1.0 - Math.minF64(f, 1.0))
+            put(&mut out, e.x, e.y, dot, dot, 1.0, 0.0, DOT, 0.0, base, 0.8 * blink * heat)
             continue
         }
-        let col = if e.flash > 0.0 { white(base, 0.8) } else { base }
+        var col = base
+        var a: f64 = 1.0
+        if e.flash > 0.0 {
+            col = white(base, 0.8)
+            a = 1.8
+        }
         if e.kind == WANDERER {
-            let c = Math.cos(e.rot)
-            let s = Math.sin(e.rot)
-            put(&mut out, e.x, e.y, r * 0.78, r * 0.78, c, s, SQUARE, 1.7, col, 1.0)
-            put(&mut out, e.x, e.y, r * 0.5, r * 0.5, c, -s, DIAMOND, 1.2, col, 0.8)
+            put(&mut out, e.x, e.y, r * 0.8, r * 0.8, Math.cos(e.rot), Math.sin(e.rot), WANDERER_SHAPE, 2.0, col, a)
         } else if e.kind == SEEKER || e.kind == MINI {
             // Pointed along its heading, so you can see which way it is coming.
-            put(&mut out, e.x, e.y, r * 1.15, r * 0.7, e.dirX, e.dirY, DIAMOND, 1.7, col, 1.0)
-            put(&mut out, e.x, e.y, 2.5, 2.5, 1.0, 0.0, DOT, 0.0, white(col, 0.5), 0.8)
+            put(&mut out, e.x, e.y, r * 1.2, r * 0.75, e.dirX, e.dirY, SEEKER_SHAPE, 2.0, col, a)
         } else if e.kind == SPLITTER {
-            let c = Math.cos(e.rot)
-            let s = Math.sin(e.rot)
-            put(&mut out, e.x, e.y, r, r, c, s, TRIANGLE, 2.0, col, 1.0)
-            put(&mut out, e.x, e.y, r * 0.45, r * 0.45, -c, s, TRIANGLE, 1.2, col, 0.85)
+            put(&mut out, e.x, e.y, r, r, Math.cos(e.rot), Math.sin(e.rot), SPLITTER_SHAPE, 2.3, col, a)
         }
     }
 }
 
-fn drawPlayer(out: &mut Vec<Inst>, w: &World) {
-    if w.waveOn {
-        let f = w.waveR / w.waveMax
-        put(&mut out, w.waveX, w.waveY, w.waveR, w.waveR, 1.0, 0.0, RING, 5.0, rgb(0.55, 0.8, 1.0), 1.0 - f * 0.8)
+// Where a pack of chasers (or a swarm still telegraphing) is closing in from off
+// screen: a small arrow on the screen edge per direction, brighter the more are
+// coming. Directions are 32 sectors around the camera centre; one or two stragglers
+// show nothing.
+fn drawThreats(out: &mut Vec<Inst>, w: &World, cam: &Cam) {
+    var sectors: [i64; 32] = [0; 32]
+    var any = false
+    for i in 0..w.cache.len {
+        let e = w.cache[i]
+        if e.hp <= 0 || (e.kind != SEEKER && e.kind != MINI && e.spawn <= 0.0) {
+            continue
+        }
+        let dx = e.x - cam.x
+        let dy = e.y - cam.y
+        if Math.abs(dx) < VIEW_HW && Math.abs(dy) < VIEW_HH {
+            continue
+        }
+        if dx * dx + dy * dy > 1100.0 * 1100.0 {
+            continue
+        }
+        let a = Math.atan2(dy, dx)
+        var s = ((a + 3.14159265) / 6.2831853 * 32.0) as i64
+        if s >= 32 {
+            s = 0
+        }
+        sectors[s] += 1
+        any = true
     }
+    if !any {
+        return
+    }
+    let col = rgb(0.1, 0.8, 1.0)
+    let pulse = 0.75 + 0.25 * Math.sin((w.tick as f64) * 0.2)
+    for s in 0..32 {
+        let n = sectors[s]
+        if n < 3 {
+            continue
+        }
+        let a = ((s as f64) + 0.5) / 32.0 * 6.2831853 - 3.14159265
+        let c = Math.cos(a)
+        let sn = Math.sin(a)
+        // Onto the edge of the screen, inset so the whole marker shows and, at the top,
+        // clear of the HUD. A seeker's dart pointing outward: "they come from there".
+        let ex = (SCREEN_HW - 30.0) / Math.maxF64(Math.abs(c), 0.001)
+        let ey = (SCREEN_HH - 70.0) / Math.maxF64(Math.abs(sn), 0.001)
+        let d = Math.minF64(ex, ey)
+        let k = Math.minF64((n as f64) / 12.0, 1.0)
+        put(&mut out, c * d, sn * d, 14.0, 7.0, c, sn, SEEKER_SHAPE + SCREEN, 1.6, col, (0.6 + 0.9 * k) * pulse)
+    }
+}
+
+// Bomb and death shockwaves (a respawn clears a smaller circle without one).
+fn drawWaves(out: &mut Vec<Inst>, w: &World) {
+    if w.waveOn && w.waveMax >= 600.0 {
+        let f = w.waveR / w.waveMax
+        put(&mut out, w.waveX, w.waveY, w.waveR, w.waveR, 1.0, 0.0, RING, 5.0, rgb(0.55, 0.8, 1.0), 1.2 * (1.0 - f * 0.8))
+    }
+}
+
+// The ship goes in a list of its own, drawn after everything else and opaque.
+fn drawPlayer(out: &mut Vec<Inst>, top: &mut Vec<Inst>, w: &World) {
     if !w.alive || w.gameOver {
         return
     }
@@ -191,19 +237,32 @@ fn drawPlayer(out: &mut Vec<Inst>, w: &World) {
         if Math.sin(w.invuln * rate * 6.2831853) < -0.2 {
             return
         }
-        put(&mut out, w.px, w.py, PLAYER_R * 2.4, PLAYER_R * 2.4, 1.0, 0.0, RING, 1.0, rgb(0.6, 0.8, 1.0), 0.5)
+        put(&mut out, w.px, w.py, SHIP_HX * 1.7, SHIP_HX * 1.7, 1.0, 0.0, RING, 1.2, rgb(0.9, 0.95, 1.0), 0.6)
     }
-    let col = rgb(1.0, 0.95, 0.72)
-    put(&mut out, w.px, w.py, 18.0, 13.0, w.faceX, w.faceY, CHEVRON, 1.8, col, 1.0)
-    put(&mut out, w.px - w.faceX * 3.0, w.py - w.faceY * 3.0, 5.0, 5.0, 1.0, 0.0, DOT, 0.0, white(col, 0.6), 0.9)
+    let gold = rgb(1.0, 0.78, 0.3)
+    // Engine flame out of the tail, longer the faster it goes, under the ship.
+    let sp = Math.sqrt(w.pvx * w.pvx + w.pvy * w.pvy)
+    if sp > 40.0 {
+        let k = Math.minF64(sp / 520.0, 1.0)
+        let flick = 0.8 + 0.2 * Math.sin((w.tick as f64) * 1.9)
+        let len = (12.0 + 16.0 * k) * flick
+        let back = SHIP_HX * 0.55 + len * 0.7
+        put(&mut out, w.px - w.faceX * back, w.py - w.faceY * back, len, 6.0, w.faceX, w.faceY, DOT, 0.0, rgb(1.0, 0.55, 0.2), 2.4 * k * flick)
+    }
+    put(&mut top, w.px, w.py, SHIP_HX, SHIP_HY, w.faceX, w.faceY, SHIP_SHAPE, 2.4, gold, 1.0)
 }
 
 fn drawBullets(out: &mut Vec<Inst>, w: &World) {
-    let col = rgb(1.0, 0.82, 0.35)
+    let core = rgb(1.0, 0.95, 0.75)
+    let trail = rgb(1.0, 0.7, 0.3)
     for i in 0..w.bullets.len {
         let b = w.bullets[i]
         let inv = 1.0 / Math.sqrt(b.vx * b.vx + b.vy * b.vy)
-        put(&mut out, b.x, b.y, 26.0, 3.6, b.vx * inv, b.vy * inv, DOT, 0.0, col, 1.3)
+        let dx = b.vx * inv
+        let dy = b.vy * inv
+        // A white-hot slug with a short trail.
+        put(&mut out, b.x - dx * 20.0, b.y - dy * 20.0, 24.0, 2.2, dx, dy, DOT, 0.0, trail, 0.45)
+        put(&mut out, b.x, b.y, 14.0, 3.2, dx, dy, DOT, 0.0, core, 2.2)
     }
 }
 
@@ -212,30 +271,6 @@ fn drawFx(out: &mut Vec<Inst>, w: &World) {
         let f = w.fx[i]
         let k = f.life / f.max
         put(&mut out, f.x, f.y, f.rad, f.rad, 1.0, 0.0, RING, f.width * (0.4 + 0.6 * k), rgb(f.r, f.g, f.b), k)
-    }
-}
-
-fn drawSparks(out: &mut Vec<Inst>, w: &World, cam: &Cam) {
-    let vx0 = cam.x - 820.0
-    let vx1 = cam.x + 820.0
-    let vy0 = cam.y - 470.0
-    let vy1 = cam.y + 470.0
-    for i in 0..w.sparks.len {
-        let s = w.sparks[i]
-        if s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1 {
-            continue
-        }
-        let v = Math.sqrt(s.vx * s.vx + s.vy * s.vy)
-        var c: f64 = 1.0
-        var sn: f64 = 0.0
-        if v > 0.001 {
-            c = s.vx / v
-            sn = s.vy / v
-        }
-        let k = s.life / s.max
-        // Streaks stretch with speed and fade (and shrink) as they die.
-        let len = s.size + v * 0.03
-        put(&mut out, s.x, s.y, len, s.size * (0.45 + 0.55 * k), c, sn, DOT, 0.0, rgb(s.r, s.g, s.b), k * (0.5 + 0.5 * k) * 1.7)
     }
 }
 
@@ -364,13 +399,16 @@ fn drawHud(out: &mut Vec<Inst>, w: &World, font: &Vec<i64>, hud: &Hud) {
 }
 
 // The whole frame. `cam` must be the camera the uniforms use this frame.
-pub fn buildFrame(out: &mut Vec<Inst>, w: &World, cam: &Cam, font: &Vec<i64>, hud: &Hud) {
+// `out` is drawn additively; `top`, the player's ship, after it and opaque.
+pub fn buildFrame(out: &mut Vec<Inst>, top: &mut Vec<Inst>, w: &World, cam: &Cam, font: &Vec<i64>, hud: &Hud) {
     out.clear()
+    top.clear()
     drawHud(&mut out, w, font, hud)
-    drawPlayer(&mut out, w)
-    drawEnemies(&mut out, w, cam)
+    drawPlayer(&mut out, &mut top, w)
     drawBullets(&mut out, w)
+    drawWaves(&mut out, w)
     drawFx(&mut out, w)
     drawArena(&mut out, w)
-    drawSparks(&mut out, w, cam)
+    drawThreats(&mut out, w, cam)
+    drawEnemies(&mut out, w, cam)
 }

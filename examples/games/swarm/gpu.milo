@@ -40,6 +40,12 @@ pub extern type SDL_GPURenderPass
 
 pub extern type SDL_GPUFence
 
+pub extern type SDL_GPUSampler
+
+pub extern type SDL_GPUComputePipeline
+
+pub extern type SDL_GPUComputePass
+
 // ── Layout-verified create-info structs ──────────────────────────────────────────────
 
 @cLayout("SDL_GPUShaderCreateInfo", "SDL3/SDL.h")
@@ -246,6 +252,59 @@ extern struct TextureTransferInfo {
     rows_per_layer: u32,
 }
 
+@cLayout("SDL_GPUSamplerCreateInfo", "SDL3/SDL.h")
+extern struct SamplerCreateInfo {
+    min_filter: u32,
+    mag_filter: u32,
+    mipmap_mode: u32,
+    address_mode_u: u32,
+    address_mode_v: u32,
+    address_mode_w: u32,
+    mip_lod_bias: f32,
+    max_anisotropy: f32,
+    compare_op: u32,
+    min_lod: f32,
+    max_lod: f32,
+    enable_anisotropy: bool,
+    enable_compare: bool,
+    padding1: u8,
+    padding2: u8,
+    props: u32,
+}
+
+@cLayout("SDL_GPUTextureSamplerBinding", "SDL3/SDL.h")
+extern struct TextureSamplerBinding {
+    texture: *SDL_GPUTexture,
+    sampler: *SDL_GPUSampler,
+}
+
+@cLayout("SDL_GPUComputePipelineCreateInfo", "SDL3/SDL.h")
+extern struct ComputePipelineCreateInfo {
+    code_size: u64,
+    code: *u8,
+    entrypoint: *u8,
+    format: u32,
+    num_samplers: u32,
+    num_readonly_storage_textures: u32,
+    num_readonly_storage_buffers: u32,
+    num_readwrite_storage_textures: u32,
+    num_readwrite_storage_buffers: u32,
+    num_uniform_buffers: u32,
+    threadcount_x: u32,
+    threadcount_y: u32,
+    threadcount_z: u32,
+    props: u32,
+}
+
+@cLayout("SDL_GPUStorageBufferReadWriteBinding", "SDL3/SDL.h")
+extern struct StorageBufferReadWriteBinding {
+    buffer: *SDL_GPUBuffer,
+    cycle: bool,
+    padding1: u8,
+    padding2: u8,
+    padding3: u8,
+}
+
 // ── Functions ────────────────────────────────────────────────────────────────────────
 
 @link("SDL3")
@@ -366,6 +425,42 @@ extern fn SDL_PushGPUVertexUniformData(c: *SDL_GPUCommandBuffer, slot: u32, data
 @cSig("SDL3/SDL.h", "void SDL_DrawGPUPrimitives(SDL_GPURenderPass *, Uint32, Uint32, Uint32, Uint32)")
 extern fn SDL_DrawGPUPrimitives(p: *SDL_GPURenderPass, verts: u32, instances: u32, firstVert: u32, firstInst: u32): void
 
+@cSig("SDL3/SDL.h", "SDL_GPUSampler *SDL_CreateGPUSampler(SDL_GPUDevice *, const SDL_GPUSamplerCreateInfo *)")
+extern fn SDL_CreateGPUSampler(d: *SDL_GPUDevice, info: *SamplerCreateInfo): *SDL_GPUSampler
+
+@cSig("SDL3/SDL.h", "void SDL_ReleaseGPUSampler(SDL_GPUDevice *, SDL_GPUSampler *)")
+extern fn SDL_ReleaseGPUSampler(d: *SDL_GPUDevice, s: *SDL_GPUSampler): void
+
+@cSig("SDL3/SDL.h", "void SDL_BindGPUFragmentSamplers(SDL_GPURenderPass *, Uint32, const SDL_GPUTextureSamplerBinding *, Uint32)")
+extern fn SDL_BindGPUFragmentSamplers(p: *SDL_GPURenderPass, first: u32, bindings: *TextureSamplerBinding, n: u32): void
+
+@cSig("SDL3/SDL.h", "void SDL_PushGPUFragmentUniformData(SDL_GPUCommandBuffer *, Uint32, const void *, Uint32)")
+extern fn SDL_PushGPUFragmentUniformData(c: *SDL_GPUCommandBuffer, slot: u32, data: *f32, len: u32): void
+
+@cSig("SDL3/SDL.h", "SDL_GPUComputePipeline *SDL_CreateGPUComputePipeline(SDL_GPUDevice *, const SDL_GPUComputePipelineCreateInfo *)")
+extern fn SDL_CreateGPUComputePipeline(d: *SDL_GPUDevice, info: *ComputePipelineCreateInfo): *SDL_GPUComputePipeline
+
+@cSig("SDL3/SDL.h", "void SDL_ReleaseGPUComputePipeline(SDL_GPUDevice *, SDL_GPUComputePipeline *)")
+extern fn SDL_ReleaseGPUComputePipeline(d: *SDL_GPUDevice, p: *SDL_GPUComputePipeline): void
+
+@cSig("SDL3/SDL.h", "SDL_GPUComputePass *SDL_BeginGPUComputePass(SDL_GPUCommandBuffer *, const SDL_GPUStorageTextureReadWriteBinding *, Uint32, const SDL_GPUStorageBufferReadWriteBinding *, Uint32)")
+extern fn SDL_BeginGPUComputePass(c: *SDL_GPUCommandBuffer, textures: *u8, nt: u32, buffers: *StorageBufferReadWriteBinding, nb: u32): *SDL_GPUComputePass
+
+@cSig("SDL3/SDL.h", "void SDL_BindGPUComputePipeline(SDL_GPUComputePass *, SDL_GPUComputePipeline *)")
+extern fn SDL_BindGPUComputePipeline(p: *SDL_GPUComputePass, pipe: *SDL_GPUComputePipeline): void
+
+@cSig("SDL3/SDL.h", "void SDL_BindGPUComputeStorageBuffers(SDL_GPUComputePass *, Uint32, SDL_GPUBuffer *const *, Uint32)")
+extern fn SDL_BindGPUComputeStorageBuffers(p: *SDL_GPUComputePass, first: u32, bufs: **SDL_GPUBuffer, n: u32): void
+
+@cSig("SDL3/SDL.h", "void SDL_PushGPUComputeUniformData(SDL_GPUCommandBuffer *, Uint32, const void *, Uint32)")
+extern fn SDL_PushGPUComputeUniformData(c: *SDL_GPUCommandBuffer, slot: u32, data: *f32, len: u32): void
+
+@cSig("SDL3/SDL.h", "void SDL_DispatchGPUCompute(SDL_GPUComputePass *, Uint32, Uint32, Uint32)")
+extern fn SDL_DispatchGPUCompute(p: *SDL_GPUComputePass, x: u32, y: u32, z: u32): void
+
+@cSig("SDL3/SDL.h", "void SDL_EndGPUComputePass(SDL_GPUComputePass *)")
+extern fn SDL_EndGPUComputePass(p: *SDL_GPUComputePass): void
+
 // ── Constants ────────────────────────────────────────────────────────────────────────
 
 @cValue("SDL_GPU_SHADERFORMAT_MSL", "SDL3/SDL.h")
@@ -383,6 +478,9 @@ let TEXTUREFORMAT_INVALID: u32 = 0
 @cValue("SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM", "SDL3/SDL.h")
 pub let TEXTUREFORMAT_R8G8B8A8_UNORM: u32 = 4
 
+@cValue("SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT", "SDL3/SDL.h")
+pub let TEXTUREFORMAT_R16G16B16A16_FLOAT: u32 = 29
+
 @cValue("SDL_GPU_TEXTURETYPE_2D", "SDL3/SDL.h")
 let TEXTURETYPE_2D: u32 = 0
 
@@ -395,6 +493,12 @@ let TEXTUREUSAGE_SAMPLER: u32 = 1
 @cValue("SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ", "SDL3/SDL.h")
 pub let BUFFERUSAGE_GRAPHICS_STORAGE_READ: u32 = 8
 
+@cValue("SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ", "SDL3/SDL.h")
+pub let BUFFERUSAGE_COMPUTE_STORAGE_READ: u32 = 16
+
+@cValue("SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE", "SDL3/SDL.h")
+pub let BUFFERUSAGE_COMPUTE_STORAGE_WRITE: u32 = 32
+
 @cValue("SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD", "SDL3/SDL.h")
 let TRANSFERBUFFERUSAGE_UPLOAD: u32 = 0
 
@@ -404,17 +508,35 @@ let TRANSFERBUFFERUSAGE_DOWNLOAD: u32 = 1
 @cValue("SDL_GPU_PRIMITIVETYPE_TRIANGLELIST", "SDL3/SDL.h")
 let PRIMITIVETYPE_TRIANGLELIST: u32 = 0
 
+@cValue("SDL_GPU_PRIMITIVETYPE_TRIANGLESTRIP", "SDL3/SDL.h")
+let PRIMITIVETYPE_TRIANGLESTRIP: u32 = 1
+
 @cValue("SDL_GPU_BLENDFACTOR_ONE", "SDL3/SDL.h")
 let BLENDFACTOR_ONE: u32 = 2
 
+@cValue("SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA", "SDL3/SDL.h")
+let BLENDFACTOR_ONE_MINUS_SRC_ALPHA: u32 = 8
+
 @cValue("SDL_GPU_BLENDOP_ADD", "SDL3/SDL.h")
 let BLENDOP_ADD: u32 = 1
+
+@cValue("SDL_GPU_LOADOP_LOAD", "SDL3/SDL.h")
+let LOADOP_LOAD: u32 = 0
 
 @cValue("SDL_GPU_LOADOP_CLEAR", "SDL3/SDL.h")
 let LOADOP_CLEAR: u32 = 1
 
 @cValue("SDL_GPU_STOREOP_STORE", "SDL3/SDL.h")
 let STOREOP_STORE: u32 = 0
+
+@cValue("SDL_GPU_FILTER_LINEAR", "SDL3/SDL.h")
+let FILTER_LINEAR: u32 = 1
+
+@cValue("SDL_GPU_SAMPLERMIPMAPMODE_NEAREST", "SDL3/SDL.h")
+let SAMPLERMIPMAPMODE_NEAREST: u32 = 0
+
+@cValue("SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE", "SDL3/SDL.h")
+let SAMPLERADDRESSMODE_CLAMP_TO_EDGE: u32 = 2
 
 @cValue("SDL_GPU_SWAPCHAINCOMPOSITION_SDR", "SDL3/SDL.h")
 let SWAPCHAINCOMPOSITION_SDR: u32 = 0
@@ -450,6 +572,16 @@ pub struct Texture {
     h: i64,
 }
 
+pub struct Sampler {
+    id: i64,
+}
+
+pub struct ComputePipeline {
+    id: i64,
+    // Threads per group along x, as compiled into the pipeline: dispatches round up to it.
+    group: i64,
+}
+
 pub struct Device {
     raw: *SDL_GPUDevice,
     // The window this device presents to, if any. Its own Drop (SDL_DestroyWindow) runs
@@ -458,9 +590,11 @@ pub struct Device {
     window: Option<Window>,
     windowRaw: *SDL_Window,
     pipelines: Vec<*SDL_GPUGraphicsPipeline>,
+    computes: Vec<*SDL_GPUComputePipeline>,
     buffers: Vec<*SDL_GPUBuffer>,
     transfers: Vec<*SDL_GPUTransferBuffer>,
     textures: Vec<*SDL_GPUTexture>,
+    samplers: Vec<*SDL_GPUSampler>,
 }
 
 impl Drop for Device {
@@ -470,6 +604,12 @@ impl Drop for Device {
             SDL_WaitForGPUIdle(self.raw)
             for p in self.pipelines {
                 SDL_ReleaseGPUGraphicsPipeline(self.raw, p)
+            }
+            for p in self.computes {
+                SDL_ReleaseGPUComputePipeline(self.raw, p)
+            }
+            for s in self.samplers {
+                SDL_ReleaseGPUSampler(self.raw, s)
             }
             for b in self.buffers {
                 SDL_ReleaseGPUBuffer(self.raw, b)
@@ -500,16 +640,19 @@ pub fn createDevice(debug: bool): Result<Device, string> {
             window: Option.None,
             windowRaw: 0 as *SDL_Window,
             pipelines: Vec.new(),
+            computes: Vec.new(),
             buffers: Vec.new(),
             transfers: Vec.new(),
             textures: Vec.new(),
+            samplers: Vec.new(),
         })
     }
 }
 
-// Everything needed to build SWARM's one kind of pipeline: an instanced draw with no
-// vertex buffers (the vertex shader pulls from storage), one color target, optional
-// additive blending.
+// Everything needed to build SWARM's one kind of graphics pipeline: a draw with no
+// vertex buffers (the vertex shader pulls from storage, or makes a full-screen
+// triangle from the vertex id), one color target, optional blending, and
+// fragment-stage samplers and uniforms for the post-processing passes.
 pub struct PipelineDesc {
     vsSource: string,
     vsEntry: string,
@@ -517,20 +660,44 @@ pub struct PipelineDesc {
     fsEntry: string,
     vsUniformBuffers: u32,
     vsStorageBuffers: u32,
+    fsUniformBuffers: u32,
+    fsSamplers: u32,
     format: u32,
-    additive: bool,
+    // BLEND_NONE, BLEND_ADD or BLEND_OVER.
+    blend: i64,
+    // Triangle strip (4-vertex quads) instead of a triangle list.
+    strip: bool,
+}
+
+// Replace the target's colour.
+pub let BLEND_NONE: i64 = 0
+// Add to it (ONE, ONE): the output is the light a draw contributes.
+pub let BLEND_ADD: i64 = 1
+// Premultiplied "over" (ONE, ONE_MINUS_SRC_ALPHA): alpha is how much of what is
+// underneath the draw covers, and the colour is added on top.
+pub let BLEND_OVER: i64 = 2
+
+// A compute kernel reading `readonly` storage buffers and writing `readwrite` ones,
+// `group` threads per threadgroup along x (the MSL kernel must agree).
+pub struct ComputeDesc {
+    source: string,
+    entry: string,
+    uniformBuffers: u32,
+    readonly: u32,
+    readwrite: u32,
+    group: i64,
 }
 
 // Shaders are MSL SOURCE text: SDL_GPU's Metal backend compiles it at load. The C
 // strings are NUL-terminated by `cstr`, and code_size excludes the terminator.
-fn makeShader(dev: *SDL_GPUDevice, src: &string, entry: &string, stage: u32, uniforms: u32, storage: u32): *SDL_GPUShader {
+fn makeShader(dev: *SDL_GPUDevice, src: &string, entry: &string, stage: u32, uniforms: u32, storage: u32, samplers: u32): *SDL_GPUShader {
     var info = ShaderCreateInfo {
         code_size: src.len as u64,
         code: src.cstr(),
         entrypoint: entry.cstr(),
         format: SHADERFORMAT_MSL,
         stage: stage,
-        num_samplers: 0,
+        num_samplers: samplers,
         num_storage_textures: 0,
         num_storage_buffers: storage,
         num_uniform_buffers: uniforms,
@@ -576,28 +743,30 @@ impl Device {
     }
 
     fn createPipeline(self: &mut Self, d: &PipelineDesc): Result<Pipeline, string> {
-        let vs = makeShader(self.raw, d.vsSource, d.vsEntry, SHADERSTAGE_VERTEX, d.vsUniformBuffers, d.vsStorageBuffers)
+        let vs = makeShader(self.raw, d.vsSource, d.vsEntry, SHADERSTAGE_VERTEX, d.vsUniformBuffers, d.vsStorageBuffers, 0)
         if vs as i64 == 0 {
-            return Result.Err("vertex shader: " + sdlError())
+            return Result.Err("vertex shader " + d.vsEntry + ": " + sdlError())
         }
-        let fs = makeShader(self.raw, d.fsSource, d.fsEntry, SHADERSTAGE_FRAGMENT, 0, 0)
+        let fs = makeShader(self.raw, d.fsSource, d.fsEntry, SHADERSTAGE_FRAGMENT, d.fsUniformBuffers, 0, d.fsSamplers)
         if fs as i64 == 0 {
             unsafe {
                 SDL_ReleaseGPUShader(self.raw, vs)
             }
-            return Result.Err("fragment shader: " + sdlError())
+            return Result.Err("fragment shader " + d.fsEntry + ": " + sdlError())
         }
+        let over = d.blend == BLEND_OVER
+        let dst = if over { BLENDFACTOR_ONE_MINUS_SRC_ALPHA } else { BLENDFACTOR_ONE }
         var target = ColorTargetDescription {
             format: d.format,
             blend_state: ColorTargetBlendState {
                 src_color_blendfactor: BLENDFACTOR_ONE,
-                dst_color_blendfactor: BLENDFACTOR_ONE,
+                dst_color_blendfactor: dst,
                 color_blend_op: BLENDOP_ADD,
                 src_alpha_blendfactor: BLENDFACTOR_ONE,
-                dst_alpha_blendfactor: BLENDFACTOR_ONE,
+                dst_alpha_blendfactor: dst,
                 alpha_blend_op: BLENDOP_ADD,
                 color_write_mask: 0,
-                enable_blend: d.additive,
+                enable_blend: d.blend != BLEND_NONE,
                 enable_color_write_mask: false,
                 padding1: 0,
                 padding2: 0,
@@ -613,7 +782,7 @@ impl Device {
                     vertex_attributes: 0 as *u8,
                     num_vertex_attributes: 0,
                 },
-                primitive_type: PRIMITIVETYPE_TRIANGLELIST,
+                primitive_type: if d.strip { PRIMITIVETYPE_TRIANGLESTRIP } else { PRIMITIVETYPE_TRIANGLELIST },
                 rasterizer_state: RasterizerState {
                     fill_mode: 0,
                     cull_mode: 0,
@@ -751,6 +920,68 @@ impl Device {
         })
     }
 
+    // Bilinear, clamped at the edges: what the bloom chain's filters are written for.
+    fn createLinearSampler(self: &mut Self): Result<Sampler, string> {
+        var info = SamplerCreateInfo {
+            min_filter: FILTER_LINEAR,
+            mag_filter: FILTER_LINEAR,
+            mipmap_mode: SAMPLERMIPMAPMODE_NEAREST,
+            address_mode_u: SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+            address_mode_v: SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+            address_mode_w: SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+            mip_lod_bias: 0.0,
+            max_anisotropy: 1.0,
+            compare_op: 0,
+            min_lod: 0.0,
+            max_lod: 0.0,
+            enable_anisotropy: false,
+            enable_compare: false,
+            padding1: 0,
+            padding2: 0,
+            props: 0,
+        }
+        unsafe {
+            let s = SDL_CreateGPUSampler(self.raw, info.addrOf())
+            if s as i64 == 0 {
+                return Result.Err("SDL_CreateGPUSampler: " + sdlError())
+            }
+            self.samplers.push(s)
+        }
+        return Result.Ok(Sampler {
+            id: self.samplers.len - 1,
+        })
+    }
+
+    fn createComputePipeline(self: &mut Self, d: &ComputeDesc): Result<ComputePipeline, string> {
+        var info = ComputePipelineCreateInfo {
+            code_size: d.source.len as u64,
+            code: d.source.cstr(),
+            entrypoint: d.entry.cstr(),
+            format: SHADERFORMAT_MSL,
+            num_samplers: 0,
+            num_readonly_storage_textures: 0,
+            num_readonly_storage_buffers: d.readonly,
+            num_readwrite_storage_textures: 0,
+            num_readwrite_storage_buffers: d.readwrite,
+            num_uniform_buffers: d.uniformBuffers,
+            threadcount_x: d.group as u32,
+            threadcount_y: 1,
+            threadcount_z: 1,
+            props: 0,
+        }
+        unsafe {
+            let p = SDL_CreateGPUComputePipeline(self.raw, info.addrOf())
+            if p as i64 == 0 {
+                return Result.Err("compute " + d.entry + ": " + sdlError())
+            }
+            self.computes.push(p)
+        }
+        return Result.Ok(ComputePipeline {
+            id: self.computes.len - 1,
+            group: d.group,
+        })
+    }
+
     fn begin(self: &Self): Result<Commands, string> {
         unsafe {
             let c = SDL_AcquireGPUCommandBuffer(self.raw)
@@ -851,6 +1082,9 @@ impl Commands {
     // Copy a transfer buffer's first `bytes` into a GPU buffer. `cycle` as in write.
     fn upload(self: &mut Self, dev: &Device, src: TransferBuffer, dst: Buffer, bytes: i64, cycle: bool) {
         assert(bytes <= src.size && bytes <= dst.size, "gpu upload: region larger than a buffer")
+        if bytes <= 0 {
+            return
+        }
         unsafe {
             let cp = SDL_BeginGPUCopyPass(self.raw)
             var from = TransferBufferLocation {
@@ -895,13 +1129,70 @@ impl Commands {
         }
     }
 
+    // 16 floats (64 bytes) per stage: the post-processing and particle passes need more
+    // than the shape pipeline's 8.
+    fn pushVertexUniforms16(self: &mut Self, slot: u32, data: [f32; 16]) {
+        unsafe {
+            SDL_PushGPUVertexUniformData(self.raw, slot, data, 64)
+        }
+    }
+
+    fn pushFragmentUniforms(self: &mut Self, slot: u32, data: [f32; 16]) {
+        unsafe {
+            SDL_PushGPUFragmentUniformData(self.raw, slot, data, 64)
+        }
+    }
+
+    fn pushComputeUniforms(self: &mut Self, slot: u32, data: [f32; 16]) {
+        unsafe {
+            SDL_PushGPUComputeUniformData(self.raw, slot, data, 64)
+        }
+    }
+
+    // A compute pass that may write `rw` (bound to read-write storage slot 0). Never
+    // cycled: the buffer's contents carry over from frame to frame.
+    fn beginCompute(self: &mut Self, dev: &Device, rw: Buffer): Result<ComputePass, string> {
+        var binding = StorageBufferReadWriteBinding {
+            buffer: dev.buffers[rw.id],
+            cycle: false,
+            padding1: 0,
+            padding2: 0,
+            padding3: 0,
+        }
+        unsafe {
+            let p = SDL_BeginGPUComputePass(self.raw, 0 as *u8, 0, binding.addrOf(), 1)
+            if p as i64 == 0 {
+                return Result.Err("SDL_BeginGPUComputePass: " + sdlError())
+            }
+            return Result.Ok(ComputePass {
+                raw: p,
+            })
+        }
+    }
+
     fn beginPass(self: &mut Self, target: Target, clear: FColor): Result<Pass, string> {
+        return self.beginPassWith(target, clear, LOADOP_CLEAR)
+    }
+
+    // Draw on top of what the target already holds (the bloom chain's upsample passes
+    // add into the level below).
+    fn beginPassKeep(self: &mut Self, target: Target): Result<Pass, string> {
+        let none = FColor {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        }
+        return self.beginPassWith(target, none, LOADOP_LOAD)
+    }
+
+    fn beginPassWith(self: &mut Self, target: Target, clear: FColor, load: u32): Result<Pass, string> {
         var info = ColorTargetInfo {
             texture: target.raw,
             mip_level: 0,
             layer_or_depth_plane: 0,
             clear_color: clear,
-            load_op: LOADOP_CLEAR,
+            load_op: load,
             store_op: STOREOP_STORE,
             resolve_texture: 0 as *SDL_GPUTexture,
             resolve_mip_level: 0,
@@ -993,11 +1284,54 @@ impl Pass {
         }
     }
 
+    // `tex` for the fragment stage's [[texture(slot)]], read through [[sampler(slot)]].
+    fn bindFragmentTexture(self: &mut Self, dev: &Device, slot: u32, tex: Texture, s: Sampler) {
+        var b = TextureSamplerBinding {
+            texture: dev.textures[tex.id],
+            sampler: dev.samplers[s.id],
+        }
+        unsafe {
+            SDL_BindGPUFragmentSamplers(self.raw, slot, b.addrOf(), 1)
+        }
+    }
+
     fn draw(self: &mut Self, vertices: i64, instances: i64) {
         SDL_DrawGPUPrimitives(self.raw, vertices as u32, instances as u32, 0, 0)
     }
-
     fn end(self: Self) {
         SDL_EndGPURenderPass(self.raw)
+    }
+}
+
+// One compute pass. Consumed by `end`. Dispatches inside one pass run in order, each
+// seeing the writes of the one before (SDL's Metal backend encodes them serially).
+pub struct ComputePass {
+    raw: *SDL_GPUComputePass,
+}
+
+impl ComputePass {
+    fn bindPipeline(self: &mut Self, dev: &Device, p: ComputePipeline) {
+        SDL_BindGPUComputePipeline(self.raw, dev.computes[p.id])
+    }
+
+    // A read-only storage buffer, at read-only slot `slot`.
+    fn bindStorage(self: &mut Self, dev: &Device, slot: u32, b: Buffer) {
+        var raw = dev.buffers[b.id]
+        unsafe {
+            SDL_BindGPUComputeStorageBuffers(self.raw, slot, raw.addrOf(), 1)
+        }
+    }
+
+    // Enough groups of the pipeline's width to cover `threads`; the kernel bounds-checks.
+    fn dispatch(self: &mut Self, p: ComputePipeline, threads: i64) {
+        if threads <= 0 {
+            return
+        }
+        let groups = (threads + p.group - 1) / p.group
+        SDL_DispatchGPUCompute(self.raw, groups as u32, 1, 1)
+    }
+
+    fn end(self: Self) {
+        SDL_EndGPUComputePass(self.raw)
     }
 }

@@ -5,44 +5,48 @@
 //   milo run examples/games/swarm/main.milo --release -- --shot a.png --ticks 7200
 //   milo run examples/games/swarm/main.milo --release -- --clip f --from 7200 --to 8200
 //   milo run examples/games/swarm/main.milo --release -- --bench --enemies 10000
+//   milo run examples/games/swarm/main.milo --release -- --bench --enemies 100 --particles 500000
 //
 // WASD or arrows move, the mouse aims and the gun fires itself, Space bombs, Esc
 // pauses, Q quits. A gamepad works too: left stick moves, right stick aims, a
 // shoulder button or B bombs.
 //
 // The simulation (world.milo) runs at a fixed 120 Hz, decoupled from the display, and
-// the renderer draws the latest state. Every frame is one instanced draw of the shape
-// pipeline (shaders.milo) over an instance list built by draw.milo. The headless
-// modes run the same World with the autopilot (bot.milo) at the controls into an
-// offscreen texture: --shot writes the frame after N ticks, --clip writes every other
-// tick between A and B (60 fps) for video, --bench times the simulation and the
-// renderer with N enemies alive.
+// the renderer (render.milo) draws the latest state: the warp grid, one instanced draw
+// of the shape pipeline over an instance list built by draw.milo, and GPU particles,
+// into an HDR target that is bloomed and tonemapped. The headless modes run the same
+// World with the autopilot (bot.milo) at the controls into an offscreen texture:
+// --shot writes the frame after N ticks, --clip writes every other tick between A and
+// B (60 fps) for video, --bench times the simulation and the renderer with N enemies
+// (and optionally N particles) alive.
 
 from "./bot" import {
     newBot
 }
 from "./draw" import {
-    Cam, Hud, INST_BYTES, Inst, MAX_INST, buildFrame, camera
+    Hud, Inst, MAX_INST, MAX_TOP, buildFrame, camera
 }
 from "./font" import {
     fontTable
 }
 from "./gpu" import {
-    BUFFERUSAGE_GRAPHICS_STORAGE_READ, Buffer, Commands, Device, FColor, Fence, Pipeline, PipelineDesc,
-    PRESENTMODE_MAILBOX, PRESENTMODE_VSYNC, TEXTUREFORMAT_R8G8B8A8_UNORM, Target, TransferBuffer, createDevice
+    Fence, PRESENTMODE_MAILBOX, PRESENTMODE_VSYNC, TEXTUREFORMAT_R8G8B8A8_UNORM, TransferBuffer, createDevice
 }
 from "./input" import {
     newControls
+}
+from "./render" import {
+    FrameIn, PARTICLE_CAP, newRenderer
 }
 from "./sdl3" import {
     Event, SCANCODE_ESCAPE, SCANCODE_P, SCANCODE_Q, SCANCODE_RETURN, SCANCODE_SPACE, initVideo, initVideoAndGamepad,
     openWindow, pollEvent, quit, ticksNs
 }
-from "./shaders" import {
-    GAME_FS, GAME_FS_ENTRY, GAME_VS, GAME_VS_ENTRY
-}
 from "./world" import {
-    DT, Input, World, newWorld
+    DT, Input, World, newWorld, rgb
+}
+from "std/math" import {
+    Math
 }
 from "std/args" import {
     args
@@ -67,6 +71,8 @@ let VIEW_W: i64 = 1600
 let VIEW_H: i64 = 900
 // Seconds of game over before the autopilot starts a new game.
 let BOT_RESTART: f64 = 3.0
+// Ticks rendered, unsaved, before a headless capture (see runHeadless).
+let WARMUP: i64 = 240
 
 struct Opts {
     seed: i64,
@@ -79,6 +85,8 @@ struct Opts {
     to: i64,
     bench: bool,
     enemies: i64,
+    // Benchmark only: keep this many immortal particles in flight as well.
+    particles: i64,
     scale: f64,
     seconds: f64,
 }
@@ -96,6 +104,7 @@ fn parseOpts(): Result<Opts, string> {
         to: 0,
         bench: false,
         enemies: 10000,
+        particles: 0,
         scale: 1.0,
         seconds: 0.0,
     }
@@ -131,12 +140,14 @@ fn parseOpts(): Result<Opts, string> {
             o.to = parseInt(v) ?? 0
         } else if a == "--enemies" {
             o.enemies = parseInt(v) ?? 10000
+        } else if a == "--particles" {
+            o.particles = parseInt(v) ?? 0
         } else if a == "--scale" {
             o.scale = parseFloat(v) ?? 1.0
         } else if a == "--seconds" {
             o.seconds = parseFloat(v) ?? 0.0
         } else {
-            return Result.Err("unknown flag " + a + " (flags: --bot, --seed N, --novsync, --shot out.png --ticks N, --clip prefix --from A --to B, --bench --enemies N, --scale S, --seconds S)")
+            return Result.Err("unknown flag " + a + " (flags: --bot, --seed N, --novsync, --shot out.png --ticks N, --clip prefix --from A --to B, --bench --enemies N --particles N, --scale S, --seconds S)")
         }
         i += 2
     }
@@ -146,55 +157,14 @@ fn parseOpts(): Result<Opts, string> {
     if o.ticks <= 0 || o.enemies <= 0 || o.scale <= 0.0 {
         return Result.Err("--ticks, --enemies and --scale must be positive")
     }
+    if o.particles < 0 || o.particles > PARTICLE_CAP {
+        return Result.Err($"--particles must be in [0, {PARTICLE_CAP}]")
+    }
     return Result.Ok(o)
 }
 
 fn ms(ns: i64): string {
     return formatFloat((ns as f64) / 1.0e6, 3)
-}
-
-// GPU state for the one pipeline, shared by the window and the headless paths.
-struct Gfx {
-    pipe: Pipeline,
-    buf: Buffer,
-    xfer: TransferBuffer,
-}
-
-fn makeGfx(dev: &mut Device, format: u32): Result<Gfx, string> {
-    let desc = PipelineDesc {
-        vsSource: GAME_VS,
-        vsEntry: GAME_VS_ENTRY,
-        fsSource: GAME_FS,
-        fsEntry: GAME_FS_ENTRY,
-        vsUniformBuffers: 1,
-        vsStorageBuffers: 1,
-        format: format,
-        additive: true,
-    }
-    let pipe = dev.createPipeline(desc)?
-    let bytes = MAX_INST * INST_BYTES
-    let buf = dev.createBuffer(BUFFERUSAGE_GRAPHICS_STORAGE_READ, bytes)?
-    let xfer = dev.createTransferBuffer(false, bytes)?
-    return Result.Ok(Gfx {
-        pipe: pipe,
-        buf: buf,
-        xfer: xfer,
-    })
-}
-
-fn clearColor(): FColor {
-    return FColor {
-        r: 0.006,
-        g: 0.005,
-        b: 0.02,
-        a: 1.0,
-    }
-}
-
-// The shader's Uniforms block: world-to-clip scale, the camera, time, brightness, and
-// how far the world is dimmed behind the pause or game-over text.
-fn uniforms(cam: &Cam, t: f64, dim: f64): [f32; 8] {
-    return [2.0 / (VIEW_W as f32), 2.0 / (VIEW_H as f32), cam.x as f32, cam.y as f32, t as f32, 1.0, dim as f32, 0.0]
 }
 
 fn worldDim(w: &World, paused: bool): f64 {
@@ -206,20 +176,6 @@ fn worldDim(w: &World, paused: bool): f64 {
         return 0.35
     }
     return 1.0
-}
-
-// Upload this frame's instances and record the one pass that draws them. The upload
-// cycles the transfer and GPU buffers, so the frame still in flight keeps its copy.
-fn recordFrame(cmd: &mut Commands, dev: &Device, g: &Gfx, inst: &Vec<Inst>, cam: &Cam, t: f64, dim: f64, target: Target): Result<Unit, string> {
-    dev.write(g.xfer, inst, true)
-    cmd.upload(dev, g.xfer, g.buf, inst.len * INST_BYTES, true)
-    cmd.pushVertexUniforms(0, uniforms(cam, t, dim))
-    var pass = cmd.beginPass(target, clearColor())?
-    pass.bindPipeline(dev, g.pipe)
-    pass.bindVertexStorage(dev, 0, g.buf)
-    pass.draw(6, inst.len)
-    pass.end()
-    return Result.Ok(Unit {})
 }
 
 struct Stats {
@@ -281,6 +237,23 @@ fn hudFor(o: &Opts, clock: f64, paused: bool): Hud {
     }
 }
 
+// The particle benchmark's load: bursts of immortal particles across the view, no drag,
+// queued a few hundred thousand a frame until `n` are in flight. Returns how many have
+// been queued so far.
+fn feedParticles(w: &mut World, n: i64, queued: i64): i64 {
+    var q = queued
+    var k: i64 = 0
+    while q < n && k < 40 {
+        let m = Math.minI64(5000, n - q)
+        let x = ((k * 7 + q / 5000 * 3) % 13) as f64 * 120.0 - 720.0
+        let y = ((k * 5 + q / 5000) % 7) as f64 * 120.0 - 360.0
+        w.spray(w.camX + x, w.camY + y, 1.0, 0.0, 3.2, 60.0, 700.0, 0.0, 0.0, rgb(0.6, 0.5, 1.0), m, 100000.0, 2.2)
+        q += m
+        k += 1
+    }
+    return q
+}
+
 // Headless: the autopilot plays into an offscreen texture. Frames are paced by fences
 // two deep, as a swapchain would pace them; see Device.releaseFence for why a fence is
 // held for one more submit after its wait.
@@ -289,7 +262,7 @@ fn runHeadless(o: &Opts): Result<Unit, string> {
     let h = ((VIEW_H as f64) * o.scale) as i64
     var dev = createDevice(false)?
     let tex = dev.createTargetTexture(w, h, TEXTUREFORMAT_R8G8B8A8_UNORM)?
-    let g = makeGfx(&mut dev, TEXTUREFORMAT_R8G8B8A8_UNORM)?
+    var ren = newRenderer(&mut dev, w, h, TEXTUREFORMAT_R8G8B8A8_UNORM)?
     let capture = !o.bench
     var down = TransferBuffer {
         id: 0,
@@ -304,30 +277,51 @@ fn runHeadless(o: &Opts): Result<Unit, string> {
     var restarts: i64 = 0
     if o.bench {
         world.populate(o.enemies)
+        if o.particles > 0 {
+            ren.pinned = o.particles
+            ren.look.drag = 0.0
+        }
     }
+    let clip = o.clip.len > 0
     var total = o.ticks
-    if o.clip.len > 0 {
+    if clip {
         total = o.to
     } else if o.bench {
         total = 1200
     }
+    // Particles live on the GPU and move only when a frame is rendered, so a capture
+    // also renders (without saving) the WARMUP ticks before its first saved frame:
+    // longer than any particle lives. Bursts from ticks before that are never drawn.
+    let first = if clip { o.from } else { total }
+    var firstRender: i64 = 2
+    if !o.bench {
+        firstRender = first - 2 * Math.minI64(WARMUP / 2, (first - 1) / 2)
+    }
     var inst: Vec<Inst> = Vec.withCapacity(MAX_INST)
+    var top: Vec<Inst> = Vec.withCapacity(MAX_TOP)
     var px: Vec<u32> = Vec.new()
     var simNs: Vec<i64> = Vec.withCapacity(total + 1)
     var renderNs: Vec<i64> = Vec.withCapacity(total + 1)
     var instTotal: i64 = 0
-    var frame: i64 = 0
+    var saved: i64 = 0
+    var rendered: i64 = 0
+    var lastRender: i64 = 0
+    var fed: i64 = 0
     var waited: Option<Fence> = Option.None
     var older: Option<Fence> = Option.None
     var newer: Option<Fence> = Option.None
+    let wall0 = ticksNs()
     for tick in 1..total + 1 {
         let inp = bot.think(world)
         let livesBefore = world.lives
+        let bombsBefore = world.bombs
         let t0 = ticksNs()
         world.step(inp)
         simNs.push(ticksNs() - t0)
         if world.lives < livesBefore {
             print($"tick {tick}: life lost at {formatFloat(world.time, 1)} s, {world.enemyCount()} enemies")
+        } else if world.bombs < bombsBefore && !o.bench {
+            print($"tick {tick}: bomb at {formatFloat(world.time, 1)} s")
         }
         if world.gameOver && world.overT >= BOT_RESTART {
             restarts += 1
@@ -336,23 +330,32 @@ fn runHeadless(o: &Opts): Result<Unit, string> {
             bot = newBot()
         }
 
-        var render = false
-        if o.bench {
-            render = tick % 2 == 0
-        } else if o.clip.len > 0 {
-            render = tick >= o.from && (tick - o.from) % 2 == 0
-        } else {
-            render = tick == total
-        }
+        let render = tick >= firstRender && (tick - firstRender) % 2 == 0
         if !render {
+            if tick < firstRender - 2 {
+                world.bursts.clear()
+            }
             continue
         }
+        if o.particles > 0 {
+            fed = feedParticles(&mut world, o.particles, fed)
+        }
+        let save = capture && ((clip && tick >= o.from) || (!clip && tick == total))
         let r0 = ticksNs()
         let cam = camera(world)
-        buildFrame(&mut inst, world, cam, font, hudFor(o, (tick as f64) * DT, false))
+        buildFrame(&mut inst, &mut top, world, cam, font, hudFor(o, (tick as f64) * DT, false))
         instTotal += inst.len
+        let steps = if lastRender == 0 { 2 } else { tick - lastRender }
+        lastRender = tick
+        let fin = FrameIn {
+            cam: cam,
+            time: (tick as f64) * DT,
+            dt: (steps as f64) * DT,
+            worldDim: worldDim(world, false),
+        }
         var cmd = dev.begin()?
-        recordFrame(&mut cmd, dev, g, inst, cam, (tick as f64) * DT, worldDim(world, false), dev.textureTarget(tex))?
+        ren.frame(&mut cmd, dev, inst, top, world, fin, dev.textureTarget(tex))?
+        world.bursts.clear()
         let fence = cmd.submitFenced()?
         match waited {
             Option.Some(x) => dev.releaseFence(x),
@@ -369,17 +372,19 @@ fn runHeadless(o: &Opts): Result<Unit, string> {
         older = newer
         newer = Option.Some(fence)
         renderNs.push(ticksNs() - r0)
-        if capture {
+        rendered += 1
+        if save {
             dev.readTexture(tex, down, &mut px)?
             var path = o.shot.clone()
-            if o.clip.len > 0 {
-                path = o.clip + "-" + padLeft($"{frame}", 5, 48) + ".png"
+            if clip {
+                path = o.clip + "-" + padLeft($"{saved}", 5, 48) + ".png"
             }
             writePng(path, px, w, h)?
+            saved += 1
         }
-        frame += 1
     }
     dev.waitIdle()
+    let wallNs = ticksNs() - wall0
     match waited {
         Option.Some(x) => dev.releaseFence(x),
         Option.None => {}
@@ -393,16 +398,23 @@ fn runHeadless(o: &Opts): Result<Unit, string> {
         Option.None => {}
     }
 
-    let summary = $"t={formatFloat(world.time, 1)} s  score {world.score}  x{world.multiplier()}  lives {world.lives}  enemies {world.enemyCount()}  sparks {world.sparks.len}  kills {world.kills}"
+    let summary = $"t={formatFloat(world.time, 1)} s  score {world.score}  x{world.multiplier()}  lives {world.lives}  enemies {world.enemyCount()}  particles {ren.window}  kills {world.kills}"
     if o.bench {
+        // The grid is stepped inside every sim tick; time it on its own as well.
+        let g0 = ticksNs()
+        for _k in 0..1000 {
+            world.grid.step()
+        }
+        let gridNs = (ticksNs() - g0) / 1000
         let s = stats(&mut simNs)
         let r = stats(&mut renderNs)
-        print($"bench: {o.enemies} enemies, {total} ticks, {frame} frames at {w}x{h}, avg {instTotal / frame} instances/frame")
-        print($"  sim tick   avg {ms(s.avg)} ms  p99 {ms(s.p99)} ms  max {ms(s.max)} ms")
+        print($"bench: {o.enemies} enemies, {o.particles} particles, {total} ticks, {rendered} frames at {w}x{h}, avg {instTotal / rendered} instances/frame")
+        print($"  sim tick   avg {ms(s.avg)} ms  p99 {ms(s.p99)} ms  max {ms(s.max)} ms  (grid step {ms(gridNs)} ms of it)")
         print($"  render     avg {ms(r.avg)} ms  p99 {ms(r.p99)} ms  (build + upload + submit, paced two frames deep)")
+        print($"  wall       {ms(wallNs / rendered)} ms per frame (sim for two ticks included)")
         print("  " + summary)
-    } else if o.clip.len > 0 {
-        print($"{frame} frames -> {o.clip}-00000.png ..  {summary}")
+    } else if clip {
+        print($"{saved} frames -> {o.clip}-00000.png ..  {summary}")
     } else {
         print($"{o.shot}: {summary}")
     }
@@ -411,6 +423,7 @@ fn runHeadless(o: &Opts): Result<Unit, string> {
 
 fn runWindow(o: &Opts): Result<Unit, string> {
     let win = openWindow("SWARM", VIEW_W, VIEW_H, false)?
+    let size = win.pixelSize()
     var dev = createDevice(false)?
     dev.claim(win)?
     if o.vsync || !dev.supportsPresentMode(PRESENTMODE_MAILBOX) {
@@ -418,13 +431,14 @@ fn runWindow(o: &Opts): Result<Unit, string> {
     } else {
         dev.setPresentMode(PRESENTMODE_MAILBOX)
     }
-    let g = makeGfx(&mut dev, dev.swapchainFormat())?
+    var ren = newRenderer(&mut dev, size.w, size.h, dev.swapchainFormat())?
     let font = fontTable()
     var world = newWorld(o.seed as u64)
     var games: i64 = 1
     var bot = newBot()
     var controls = newControls()
     var inst: Vec<Inst> = Vec.withCapacity(MAX_INST)
+    var top: Vec<Inst> = Vec.withCapacity(MAX_TOP)
     var paused = false
     var running = true
     var acc: f64 = 0.0
@@ -513,11 +527,18 @@ fn runWindow(o: &Opts): Result<Unit, string> {
 
         let cam = camera(world)
         let clock = ((now - start) as f64) / 1.0e9
-        buildFrame(&mut inst, world, cam, font, hudFor(o, clock, paused))
+        buildFrame(&mut inst, &mut top, world, cam, font, hudFor(o, clock, paused))
+        let fin = FrameIn {
+            cam: cam,
+            time: clock,
+            dt: if paused { 0.0 } else { dt },
+            worldDim: worldDim(world, paused),
+        }
         var cmd = dev.begin()?
         match cmd.acquireSwapchain(dev) {
             Option.Some(target) => {
-                recordFrame(&mut cmd, dev, g, inst, cam, clock, worldDim(world, paused), target)?
+                ren.frame(&mut cmd, dev, inst, top, world, fin, target)?
+                world.bursts.clear()
             }
             Option.None => {}
         }

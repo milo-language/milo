@@ -22,7 +22,7 @@ from "./sdl3" import {
     Event, SCANCODE_ESCAPE, SCANCODE_Q, initVideo, mouseState, openWindow, pollEvent, quit, ticksNs
 }
 from "./gpu" import {
-    BUFFERUSAGE_GRAPHICS_STORAGE_READ, Buffer, Device, FColor, Fence, Pipeline, PipelineDesc, PRESENTMODE_IMMEDIATE,
+    BLEND_ADD, BUFFERUSAGE_GRAPHICS_STORAGE_READ, Buffer, Device, FColor, Fence, Pipeline, PipelineDesc, PRESENTMODE_IMMEDIATE,
     PRESENTMODE_MAILBOX, PRESENTMODE_VSYNC, TEXTUREFORMAT_R8G8B8A8_UNORM, TransferBuffer, createDevice
 }
 from "./shaders" import {
@@ -322,8 +322,11 @@ fn makeScene(dev: &mut Device, format: u32, count: i64): Result<Scene, string> {
         fsEntry: SWARM_FS_ENTRY,
         vsUniformBuffers: 1,
         vsStorageBuffers: 1,
+        fsUniformBuffers: 0,
+        fsSamplers: 0,
         format: format,
-        additive: true,
+        blend: BLEND_ADD,
+        strip: false,
     }
     let pipe = dev.createPipeline(desc)?
     let bytes = count * 16
