@@ -104,3 +104,41 @@ test("a parse error inside an interpolation is anchored at the f-string, not at 
   const lineLen = src.split("\n")[span!.line - 1]!.length;
   expect(span!.col).toBeLessThanOrEqual(lineLen);
 });
+
+// A binding initialized from an expression that failed is typed `unknown`, and
+// `unknown` is not Copy, so every second use of it used to report "use of moved
+// variable" on top of the real error; a method call on it reported "type '<unknown>'
+// has no method". Both are about a type nobody knows. The real mistakes around it
+// (a genuine use-after-move, an error inside the call's own arguments) must survive.
+test("a binding whose initializer failed does not cascade ownership errors", () => {
+  const errs = errorsOf(`struct V {
+    x: f64,
+}
+
+impl V {
+    fn make(x: f64): V {
+        return V { x: x }
+    }
+}
+
+fn scale(v: V, s: f64): V {
+    return V { x: v.x * s }
+}
+
+fn main() {
+    let n = V.make(1.0)
+    let cosT = V.nope(1.0)
+    let a = scale(n, cosT)
+    let b = scale(a, cosT * 2.0)
+    let c = cosT.len(missingArg)
+    let s = "owned"
+    let t = s
+    print(s)
+    print(b.x + cosT + c)
+}`);
+  expect(errs.filter(e => e.includes("has no static method 'nope'")).length).toBe(1);
+  expect(errs.some(e => e.includes("'cosT'"))).toBe(false);
+  expect(errs.some(e => e.includes("<unknown>"))).toBe(false);
+  expect(errs.some(e => e.includes("undefined variable 'missingArg'"))).toBe(true);
+  expect(errs.some(e => e.includes("use of moved variable 's'"))).toBe(true);
+});

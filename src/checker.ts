@@ -834,6 +834,16 @@ export class TypeChecker {
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
   }
 
+  // A value typed `unknown` came out of an expression that already failed to check, so
+  // anything said about it next is a guess about a type nobody knows: `let c = Math.nope()`
+  // then `use(c); use(c)` reported "use of moved variable 'c'" because `unknown` is not
+  // Copy. Requiring an error already on file is what keeps this from hiding anything: if
+  // no error was reported, an `unknown` is a checker bug and must not pass silently, and
+  // once one is on file the compile fails regardless of what is suppressed.
+  private isPoisoned(t: TypeKind): boolean {
+    return t.tag === "unknown" && this.diagnostics.some(d => d.severity === "error");
+  }
+
   // `void` has no runtime representation, so anything that gives it a storage slot (a
   // generic instantiated at void, a local bound to a void call) lowers to `alloca void`,
   // `call void @f(void void)` or `getelementptr void`, all of which LLVM rejects at the
@@ -7242,6 +7252,7 @@ export class TypeChecker {
           `'${expr.name}' is a reference — call .clone() to take an owned copy`);
         return;
       }
+      if (info && this.isPoisoned(info.type)) return;
       if (info && !this.isCopyType(info.type)) {
         // A pointer borrow does not forbid the move (the header moves, the buffer stays),
         // but the new owner may free that buffer at any time the checker cannot see, so
@@ -10174,6 +10185,13 @@ export class TypeChecker {
       expr.object = expr.object.operand;
     }
     const rawObjType = this.checkExpr(expr.object);
+    // No method can be looked up on a receiver whose own type failed; the arguments are
+    // still checked so a mistake inside them is reported, but nothing is moved into a
+    // signature nobody knows.
+    if (this.isPoisoned(rawObjType)) {
+      for (const a of expr.args) this.checkExpr(a.kind === "UnaryOp" && a.op === "&mut" ? a.operand : a);
+      return this.setType(expr, { tag: "unknown" });
+    }
     // auto-deref `&T` for method dispatch (mutating methods still need !isRootMutable to allow)
     const objTypeRaw = rawObjType.tag === "ref" ? rawObjType.inner : rawObjType;
     // A slice (`&[T]`, an array with no size) carries the SAME `%Vec` layout a Vec does —

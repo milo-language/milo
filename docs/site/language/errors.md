@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 359 distinct messages across 424 programs the compiler must reject.
+Every error message the test suite pins: 360 distinct messages across 425 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -336,6 +336,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`two fields map to the JSON name 'id'`](#two-fields-map-to-the-json-name-id)
 - [`type '[i64]' has no method 'push'`](#type-i64-has-no-method-push)
 - [`type 'Handle' has no method 'clone'`](#type-handle-has-no-method-clone)
+- [`type 'Math' has no static method 'minimum'`](#type-math-has-no-static-method-minimum)
 - [`type alias 'A' is cyclic`](#type-alias-a-is-cyclic)
 - [`type alias 'Loop' is cyclic`](#type-alias-loop-is-cyclic)
 - [`type alias 'Pair' takes 1 type argument(s), got 0`](#type-alias-pair-takes-1-type-argument-s-got-0)
@@ -7311,6 +7312,42 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/deriveCloneNoCopyAbsent.milo](https://github.com/milo-language/milo/blob/main/tests/errors/deriveCloneNoCopyAbsent.milo)</sub>
+
+## `type 'Math' has no static method 'minimum'` {#type-math-has-no-static-method-minimum}
+
+The binding `cosT` is initialized from a call that failed, so its type is unknown. Its later uses used to report "use of moved variable 'cosT'" twice on top of this error, because `unknown` is not Copy. tests/checkerRecovery.test.ts asserts that follow-on error is gone; this fixture pins the one that remains.
+
+```milo skip
+from "std/math" import { Math }
+
+struct V {
+    x: f64,
+    y: f64,
+}
+
+fn dot(a: V, b: V): f64 {
+    return a.x * b.x + a.y * b.y
+}
+
+fn scale(v: V, s: f64): V {
+    return V { x: v.x * s, y: v.y * s }
+}
+
+fn refract(a: V, n: V): V {
+    let cosT = Math.minimum(dot(a, n), 1.0)
+    let perp = scale(n, cosT)
+    let par = scale(a, cosT * 2.0)
+    return V { x: perp.x + par.x + cosT, y: perp.y + par.y }
+}
+
+pub fn main(): i32 {
+    let r = refract(V { x: 1.0, y: 0.0 }, V { x: 0.0, y: 1.0 })
+    print(r.x)
+    return 0
+}
+```
+
+<sub>[tests/errors/poisonedBindingNoCascade.milo](https://github.com/milo-language/milo/blob/main/tests/errors/poisonedBindingNoCascade.milo)</sub>
 
 ## `type alias 'A' is cyclic` {#type-alias-a-is-cyclic}
 

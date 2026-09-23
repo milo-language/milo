@@ -1,0 +1,33 @@
+// @error: type 'Math' has no static method 'minimum'
+
+// The binding `cosT` is initialized from a call that failed, so its type is unknown.
+// Its later uses used to report "use of moved variable 'cosT'" twice on top of this
+// error, because `unknown` is not Copy. tests/checkerRecovery.test.ts asserts that
+// follow-on error is gone; this fixture pins the one that remains.
+from "std/math" import { Math }
+
+struct V {
+    x: f64,
+    y: f64,
+}
+
+fn dot(a: V, b: V): f64 {
+    return a.x * b.x + a.y * b.y
+}
+
+fn scale(v: V, s: f64): V {
+    return V { x: v.x * s, y: v.y * s }
+}
+
+fn refract(a: V, n: V): V {
+    let cosT = Math.minimum(dot(a, n), 1.0)
+    let perp = scale(n, cosT)
+    let par = scale(a, cosT * 2.0)
+    return V { x: perp.x + par.x + cosT, y: perp.y + par.y }
+}
+
+pub fn main(): i32 {
+    let r = refract(V { x: 1.0, y: 0.0 }, V { x: 0.0, y: 1.0 })
+    print(r.x)
+    return 0
+}
