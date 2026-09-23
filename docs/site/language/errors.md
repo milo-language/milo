@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 357 distinct messages across 422 programs the compiler must reject.
+Every error message the test suite pins: 358 distinct messages across 423 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -211,6 +211,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`declared as string but got Result`](#declared-as-string-but-got-result)
 - [`decreases clause must be an integer measure`](#decreases-clause-must-be-an-integer-measure)
 - [`depends on itself through another global`](#depends-on-itself-through-another-global)
+- [`did you mean 'clampF64' or 'clampI64'?`](#did-you-mean-clampf64-or-clampi64)
 - [`did you mean 'toUpper'?`](#did-you-mean-toupper)
 - [`discriminant 2147483648 is out of range for i32`](#discriminant-2147483648-is-out-of-range-for-i32)
 - [`does not implement trait 'HasValue'`](#does-not-implement-trait-hasvalue)
@@ -4891,6 +4892,22 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/globalInitCycle.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalInitCycle.milo)</sub>
+
+## `did you mean 'clampF64' or 'clampI64'?` {#did-you-mean-clampf64-or-clampi64}
+
+A truncated name is the common mistake on a namespace whose members carry a type suffix. Edit distance alone cannot find `clampF64` from `clamp` (three letters short), and for `min` it used to answer 'sin'. A name that starts a longer member is suggested ahead of any edit-distance match, all of them when several do.
+
+```milo skip
+from "std/math" import { Math }
+
+pub fn main(): i32 {
+    let x = Math.clamp(1.5, 0.0, 1.0)
+    print(x)
+    return 0
+}
+```
+
+<sub>[tests/errors/staticMethodPrefixSuggestion.milo](https://github.com/milo-language/milo/blob/main/tests/errors/staticMethodPrefixSuggestion.milo)</sub>
 
 ## `did you mean 'toUpper'?` {#did-you-mean-toupper}
 

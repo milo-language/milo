@@ -6,7 +6,7 @@ import { resolve, dirname, sep } from "path";
 import { cacheRoot } from "./pkg";
 import type { Program, Span, DeclOrigins, DeclOrigin, ImportDecl, FileImports } from "./ast";
 import { ParseError } from "./diagnostics";
-import { closest, importHint, stdModuleNames } from "./suggest";
+import { suggestions, didYouMean, importHint, stdModuleNames } from "./suggest";
 import type { TargetInfo } from "./target";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
@@ -376,7 +376,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
       } catch {
         // A misspelled std module is the common case and the compiler knows the whole
         // list, so spell the fix out rather than making the user go read std/.
-        const near = imp.path.startsWith("std/") ? closest(imp.path, stdModuleNames()) : null;
+        const near = imp.path.startsWith("std/") ? didYouMean(suggestions(imp.path, stdModuleNames())) : undefined;
         throw new ParseError({
           severity: "error",
           code: "import",
@@ -384,10 +384,9 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
           len: imp.path.length + 7, // `from "` + path + `"`
           message: `cannot open module '${imp.path}'`,
           hint: near
-            ? `did you mean '${near}'?`
-            : imp.path.startsWith("std/")
+            ?? (imp.path.startsWith("std/")
               ? `no std module is named '${imp.path}' — run 'milo api <name>' to find the one that has what you want`
-              : `resolved to '${absPath}', which does not exist. Import paths without a leading 'std/' are relative to the importing file.`,
+              : `resolved to '${absPath}', which does not exist. Import paths without a leading 'std/' are relative to the importing file.`),
         }, readSourceSafe(unit.file), unit.file);
       }
 
@@ -409,14 +408,14 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
             // Two distinct fixes hide behind one message: a typo (the module has a
             // near-miss) and an import from the wrong module (some OTHER std module
             // exports this exact name). Only the second is worth a full import line.
-            const near = closest(name, available);
+            const near = didYouMean(suggestions(name, available));
             throw new ParseError({
               severity: "error",
               code: "import",
               span: imp.span,
               len: imp.path.length + 7, // `from "` + path + `"`
               message: `'${name}' is not exported by '${imp.path}'`,
-              hint: near ? `did you mean '${near}'?` : importHint(name),
+              hint: near ?? importHint(name),
             }, readSourceSafe(unit.file), unit.file);
           }
         }

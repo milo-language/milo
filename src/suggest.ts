@@ -55,21 +55,61 @@ function threshold(name: string): number {
   return 3;
 }
 
-// Best edit-distance match, or null when nothing is close enough. A
-// case-insensitive exact match always wins — `toUppercase` vs `toUpperCase` is
-// the same name, not a near miss.
-export function closest(name: string, candidates: Iterable<string>): string | null {
+// The typed name is a leading fragment or camelCase word of a longer candidate:
+// `min` for `minF64`, `Json` for `parseJson`. Edit distance cannot see these (one
+// letter off `sin` scores better than three letters short of `minF64`), yet a
+// truncated name is the more common mistake. Three characters minimum, or `a`
+// would match half of every member list.
+function fragmentRank(name: string, candidate: string): number {
+  if (name.length < 3 || candidate.length <= name.length) return 0;
+  const lower = name.toLowerCase();
+  const c = candidate.toLowerCase();
+  if (c.startsWith(lower)) return 2;
+  for (let i = c.indexOf(lower, 1); i > 0; i = c.indexOf(lower, i + 1)) {
+    const at = candidate[i]!;
+    if (candidate[i - 1] === "_" || (at >= "A" && at <= "Z")) return 1;
+  }
+  return 0;
+}
+
+// Ranked suggestions for `name`, best first; empty when nothing is close. A
+// case-insensitive exact match wins alone (`toUppercase` vs `toUpperCase` is the
+// same name, not a near miss). Next come candidates the name is a prefix of, then
+// ones it names a camelCase word of, shortest first; several are returned because
+// `min` on Math means one of `minF64`/`minI32`/`minI64` and the reader must choose.
+// Only when no candidate contains the name does edit distance pick a single typo fix.
+export function suggestions(name: string, candidates: Iterable<string>, limit = 3): string[] {
   const max = threshold(name);
   const lower = name.toLowerCase();
   let best: string | null = null;
   let bestDist = max + 1;
+  const fragments: { c: string; rank: number }[] = [];
   for (const c of candidates) {
     if (c === name) continue;
-    if (c.toLowerCase() === lower) return c;
+    if (c.toLowerCase() === lower) return [c];
+    const rank = fragmentRank(name, c);
+    if (rank > 0) { fragments.push({ c, rank }); continue; }
     const d = editDistance(name, c, max);
     if (d < bestDist) { bestDist = d; best = c; }
   }
-  return bestDist <= max ? best : null;
+  if (fragments.length > 0) {
+    fragments.sort((a, b) => b.rank - a.rank || a.c.length - b.c.length || (a.c < b.c ? -1 : a.c > b.c ? 1 : 0));
+    return [...new Set(fragments.map(f => f.c))].slice(0, limit);
+  }
+  return bestDist <= max && best !== null ? [best] : [];
+}
+
+// The single best suggestion, or null.
+export function closest(name: string, candidates: Iterable<string>): string | null {
+  return suggestions(name, candidates, 1)[0] ?? null;
+}
+
+// "did you mean 'a'?" / "did you mean 'a', 'b' or 'c'?", or undefined for none.
+export function didYouMean(names: string[]): string | undefined {
+  if (names.length === 0) return undefined;
+  const quoted = names.map(n => `'${n}'`);
+  const list = quoted.length === 1 ? quoted[0] : `${quoted.slice(0, -1).join(", ")} or ${quoted[quoted.length - 1]}`;
+  return `did you mean ${list}?`;
 }
 
 // Names that exist under a different spelling in Milo. Keys are what a developer
@@ -172,8 +212,8 @@ export function memberHint(name: string, candidates: Iterable<string>): string |
   if (alias && members.has(alias)) return `did you mean '${alias}'?`;
   const op = OPERATOR_FORMS.get(name);
   if (op) return op;
-  const near = closest(name, members);
-  if (near) return `did you mean '${near}'?`;
+  const near = didYouMean(suggestions(name, members));
+  if (near) return near;
   // The alias target isn't a member of this receiver, but naming it still beats
   // silence — it tells the reader what Milo calls the concept.
   if (alias) return `Milo spells this '${alias}'`;

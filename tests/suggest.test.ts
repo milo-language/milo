@@ -114,3 +114,25 @@ test("a bare static call whose arguments pin the type parameters needs no hint",
   const src = `struct Box<T> { v: T }\nimpl Box<T> { fn make(v: T): Box<T> { return Box { v: v } } }\nfn main() {\n  let b = Box.make(1)\n  print(b.v)\n}\n`;
   expect(errorFor(src)).toBeUndefined();
 });
+
+test("a name that starts a longer member beats a one-letter edit", () => {
+  // `min` is one substitution from `sin` and three letters short of `minF64`; the
+  // truncated name is the likelier mistake, and the reader has to pick a suffix.
+  const math = ["sin", "cos", "minF64", "minI32", "minI64", "maxF64"];
+  expect(memberHint("min", math)).toBe("did you mean 'minF64', 'minI32' or 'minI64'?");
+  expect(closest("min", math)).toBe("minF64");
+  // A camelCase word inside a member counts too, ranked after a prefix match.
+  expect(closest("json", ["parseJson", "jsonl"])).toBe("jsonl");
+  expect(closest("json", ["parseJson", "print"])).toBe("parseJson");
+  // Mid-word is not a word: `ount` inside `amount` is no fragment, so edit distance answers.
+  expect(memberHint("ount", ["count", "amount"])).toBe("did you mean 'count'?");
+  // Under three characters nothing is a fragment, or `a` would match every member.
+  expect(closest("ma", ["map", "max", "matches"])).toBe("map");
+  // Edit distance still answers a real typo.
+  expect(closest("lne", ["len", "lines"])).toBe("len");
+});
+
+test("more than three fragment matches keep the three shortest", () => {
+  expect(memberHint("push", ["pushStr", "pushAll", "pushFront", "pushBackMany"]))
+    .toBe("did you mean 'pushAll', 'pushStr' or 'pushFront'?");
+});

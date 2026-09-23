@@ -1,0 +1,13 @@
+// @error: did you mean 'clampF64' or 'clampI64'?
+
+// A truncated name is the common mistake on a namespace whose members carry a type
+// suffix. Edit distance alone cannot find `clampF64` from `clamp` (three letters
+// short), and for `min` it used to answer 'sin'. A name that starts a longer member
+// is suggested ahead of any edit-distance match, all of them when several do.
+from "std/math" import { Math }
+
+pub fn main(): i32 {
+    let x = Math.clamp(1.5, 0.0, 1.0)
+    print(x)
+    return 0
+}

@@ -12,7 +12,7 @@ import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
 import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
 import { checkPurity, checkEscapingClosures, checkThreadBoundary, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
-import { memberHint, closest, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
+import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError, formatMiloType } from "./derive-template";
 import { display } from "./mangle";
@@ -939,9 +939,8 @@ export class TypeChecker {
       ...this.genericStructs.keys(), ...this.genericEnums.keys(),
       ...stdExportNames(),
     ]);
-    const near = closest(typeName_, names);
     this.error(`unknown type '${typeName_}'`, sp,
-      near ? `did you mean '${near}'?` : `no type named '${typeName_}' is declared or imported here`);
+      didYouMean(suggestions(typeName_, names)) ?? `no type named '${typeName_}' is declared or imported here`);
   }
 
   // Nearest in-scope binding or function to a name that didn't resolve. Scopes are
@@ -950,8 +949,7 @@ export class TypeChecker {
     const seen = new Set<string>();
     for (let i = this.scopes.length - 1; i >= 0; i--) for (const k of this.scopes[i].keys()) seen.add(k);
     for (const k of this.functions.keys()) if (!k.includes("$")) seen.add(k);
-    const near = closest(name, seen);
-    return near ? `did you mean '${near}'?` : undefined;
+    return didYouMean(suggestions(name, seen));
   }
 
   // Field names readable on `t`. The builtin containers expose exactly one, which
