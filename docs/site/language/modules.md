@@ -38,6 +38,10 @@ myapp/
 
 Imports are paths relative to the project root. A file at `lib/auth.milo` is imported as `from "lib/auth" import { ... }`.
 
+A module may define its own `main`, so a library file can double as a standalone tool.
+Only the entry file's `main` runs; an imported module's `main` is left out of the build,
+and `import { main }` is an error.
+
 ## Visibility
 
 Declarations are private to their file by default. Mark a function, struct, or enum `pub`

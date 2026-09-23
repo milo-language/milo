@@ -404,6 +404,16 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         for (const i of imported.interfaces) available.add(i.name);
         for (const g of imported.globals) available.add(g.name);
         for (const name of imp.names) {
+          if (name === "main") {
+            throw new ParseError({
+              severity: "error",
+              code: "import",
+              span: imp.span,
+              len: imp.path.length + 7, // `from "` + path + `"`
+              message: `'main' cannot be imported from '${imp.path}'`,
+              hint: `a module's 'main' is its own program's entry point and is left out when the module is imported; move the code you want to share into a function and import that`,
+            }, readSourceSafe(unit.file), unit.file);
+          }
           if (!available.has(name)) {
             // Two distinct fixes hide behind one message: a typo (the module has a
             // near-miss) and an import from the wrong module (some OTHER std module
@@ -420,6 +430,11 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
           }
         }
       }
+      // An imported module's `main` is the entry point of that module run on its own (a
+      // core with a test driver, an emulator with a CLI), never of this program: the entry
+      // file's `main` is. Left in, it collided with the entry's in the flat namespace and
+      // made the whole module unimportable, which forced copies of its shared code.
+      imported.functions = imported.functions.filter(f => f.name !== "main");
       // merge everything — named imports validate but don't restrict (flat compilation)
       for (const f of imported.functions) f.sourceFile = absPath;
       // Impl methods carry origin too, so the verifier can attribute a method's VCs to its

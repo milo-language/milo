@@ -3024,6 +3024,12 @@ no import, since they are reached through their receiver, and the prelude's name
 (`Unit`, `asciiIsDigit`, ...) are in scope everywhere. `milo fix <file>` adds every
 name the checker reports missing.
 
+A module may have its own `main` and still be imported: a core that is also a standalone
+tool (`genesisCore.milo` with a `main` that runs one ROM) lends `runFrame` to a front end
+without a copy. The entry file's `main` is the program's; an imported module's `main` is
+left out of the build, so it neither runs nor collides. Naming it in an import list
+(`import { main }`) is an error.
+
 ```milo error
 from "std/os" import { getenv }
 

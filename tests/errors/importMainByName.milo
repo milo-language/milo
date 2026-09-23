@@ -1,0 +1,9 @@
+// @error: 'main' cannot be imported from './lib/frameCore'
+
+// An imported module's `main` is left out of the program (the entry file's `main` is
+// the only one), so naming it in an import list can never mean anything useful.
+from "./lib/frameCore" import { main }
+
+pub fn run(): i32 {
+    return 0
+}

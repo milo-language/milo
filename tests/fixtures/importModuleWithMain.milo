@@ -1,0 +1,14 @@
+// @expect: entry main
+// @expect: 10
+
+// lib/frameCore.milo has its own `pub fn main`. Importing `runFrame` from it used to fail
+// with "'fn main' is defined in two modules with different bodies", because every module
+// merges into one namespace. The entry file's `main` is the program's; an imported
+// module's `main` is left out, so it never runs and never collides.
+from "./lib/frameCore" import { runFrame }
+
+pub fn main(): i32 {
+    print("entry main")
+    print(runFrame(5))
+    return 0
+}

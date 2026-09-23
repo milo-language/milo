@@ -1,0 +1,16 @@
+// Helper for tests/fixtures/importModuleWithMain.milo: a module that is both a library
+// (`runFrame`) and a program of its own (`main`, with a private helper only `main` uses).
+
+pub fn runFrame(n: i64): i64 {
+    return n * 2
+}
+
+fn banner(): string {
+    return "frameCore standalone"
+}
+
+pub fn main(): i32 {
+    print(banner())
+    print(runFrame(21))
+    return 0
+}

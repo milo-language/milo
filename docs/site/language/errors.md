@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 360 distinct messages across 425 programs the compiler must reject.
+Every error message the test suite pins: 361 distinct messages across 426 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -62,6 +62,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'get' would copy 'Res' out of the HashMap: it carries Drop`](#get-would-copy-res-out-of-the-hashmap-it-carries-drop)
 - [`'id' shadows an outer binding`](#id-shadows-an-outer-binding)
 - [`'if' is an expression`](#if-is-an-expression)
+- [`'main' cannot be imported from './lib/frameCore'`](#main-cannot-be-imported-from-lib-framecore)
 - [`'main' must return i32 or void`](#main-must-return-i32-or-void)
 - [`'merge' in 'impl Merge for Box<i64>' takes 'other: &Box<string>'; the trait 'Merge' declares 'other: &Self'`](#merge-in-impl-merge-for-box-i64-takes-other-box-string-the-trait-merge-declares-other-self)
 - [`'Meters' is not a generic type`](#meters-is-not-a-generic-type)
@@ -1325,6 +1326,20 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/noTernaryOperator.milo](https://github.com/milo-language/milo/blob/main/tests/errors/noTernaryOperator.milo)</sub>
+
+## `'main' cannot be imported from './lib/frameCore'` {#main-cannot-be-imported-from-lib-framecore}
+
+An imported module's `main` is left out of the program (the entry file's `main` is the only one), so naming it in an import list can never mean anything useful.
+
+```milo skip
+from "./lib/frameCore" import { main }
+
+pub fn run(): i32 {
+    return 0
+}
+```
+
+<sub>[tests/errors/importMainByName.milo](https://github.com/milo-language/milo/blob/main/tests/errors/importMainByName.milo)</sub>
 
 ## `'main' must return i32 or void` {#main-must-return-i32-or-void}
 
