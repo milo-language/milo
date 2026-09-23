@@ -93,7 +93,8 @@ export interface UnaryOp { kind: "UnaryOp"; op: string; operand: Expr; span?: Sp
 // Only compile-time builtins accept it; it changes nothing about the semantics, it
 // just tells the checker not to warn about the bare spelling.
 export interface Call { kind: "Call"; func: string; args: Expr[]; typeArgs?: MiloType[]; sigil?: boolean; span?: Span }
-export interface StructLit { kind: "StructLit"; name: string; fields: { name: string; value: Expr }[]; span?: Span }
+// `typeArgs`: the explicit form `Pair<i64, string> { … }`; absent when inferred.
+export interface StructLit { kind: "StructLit"; name: string; fields: { name: string; value: Expr }[]; typeArgs?: MiloType[]; span?: Span }
 export interface FieldAccess { kind: "FieldAccess"; object: Expr; field: string; span?: Span }
 
 // `f64.NAN` / `f64.INF` / `f64.NEG_INF` (and f32) parse as a FieldAccess whose object is a

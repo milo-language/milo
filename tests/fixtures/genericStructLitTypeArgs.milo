@@ -1,0 +1,44 @@
+// @expect: 1 x
+// @expect: 0
+// @expect: 7
+// @expect: x 1
+
+// A generic struct literal may spell its type arguments, `Pair<i64, string> { … }`, the
+// way a generic call (`f<i64>(x)`) and a static call (`Pair<i64, string>.new()`) already
+// could. It used to be rejected with "'Pair<i64, string> { … }' is not a struct literal"
+// (backlog #40), which left no spelling for a parameter no field determines short of an
+// annotated binding.
+struct Pair<A, B> {
+    a: A,
+    b: B,
+}
+
+// `T` appears in no field value that fixes it: the empty Vec says nothing.
+struct Bag<T> {
+    items: Vec<T>,
+}
+
+impl Pair<A, B> {
+    // Inside the impl, `Pair<B, A>` is a different instance than the one being built,
+    // so its literal must not be renamed to the enclosing `Pair<A, B>`.
+    fn flip(self: Pair<A, B>): Pair<B, A> {
+        return Pair<B, A> { a: self.b, b: self.a }
+    }
+}
+
+fn count(b: Bag<i64>): i64 {
+    return b.items.len()
+}
+
+pub fn main(): i32 {
+    let p = Pair<i64, string> { a: 1, b: "x" }
+    print($"{p.a} {p.b}")
+    print(count(Bag<i64> { items: [] }))
+    // A literal field takes the spelled type: 7 is a u8 here, not the i64 default.
+    let small = Pair<u8, bool> { a: 7, b: true }
+    let widened: i64 = small.a as i64
+    print(widened)
+    let q = p.flip()
+    print($"{q.a} {q.b}")
+    return 0
+}

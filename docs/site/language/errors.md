@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 364 distinct messages across 429 programs the compiler must reject.
+Every error message the test suite pins: 365 distinct messages across 430 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -74,6 +74,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'p' used after its source 'v' was moved (from 'v.ptr()' on line 15)`](#p-used-after-its-source-v-was-moved-from-v-ptr-on-line-15)
 - [`'parallelMap<Conn>' is not allowed: 'parallelMap' is @copyOnly and 'Conn' is not a Copy type (it implements Drop)`](#parallelmap-conn-is-not-allowed-parallelmap-is-copyonly-and-conn-is-not-a-copy-type-it-implements-drop)
 - [`'parallelMap<string>' is not allowed: 'parallelMap' is @copyOnly and 'string' is not a Copy type (it owns heap memory)`](#parallelmap-string-is-not-allowed-parallelmap-is-copyonly-and-string-is-not-a-copy-type-it-owns-heap-memory)
+- [`'Point' is not generic, so 'Point<...> { … }' has no type arguments to take`](#point-is-not-generic-so-point-has-no-type-arguments-to-take)
 - [`'ptr' is not available on Heap<Shape>`](#ptr-is-not-available-on-heap-shape)
 - [`'S' is not imported`](#s-is-not-imported)
 - [`'s' may reallocate here while 'p' still points into its buffer (from 's.cstr()' on line 9)`](#s-may-reallocate-here-while-p-still-points-into-its-buffer-from-s-cstr-on-line-9)
@@ -235,6 +236,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`extern 'fcntl' declares 3 fixed parameters but C fixes only 2`](#extern-fcntl-declares-3-fixed-parameters-but-c-fixes-only-2)
 - [`field '_data' of 'Sealed' is private to 'std/seal.milo'`](#field-data-of-sealed-is-private-to-std-seal-milo)
 - [`field '_x' of 'S' is private to`](#field-x-of-s-is-private-to)
+- [`field 'a' of 'Pair': expected i64, got string`](#field-a-of-pair-expected-i64-got-string)
 - [`for range start must be an integer`](#for-range-start-must-be-an-integer)
 - [`from "std/json" import { Json }`](#from-std-json-import-json)
 - [`has more than one @iter field`](#has-more-than-one-iter-field)
@@ -265,7 +267,6 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`is not a constant`](#is-not-a-constant)
 - [`is not a library name`](#is-not-a-library-name)
 - [`is not a nullable extern reference, so 'let q = … else { … }' has nothing to unwrap`](#is-not-a-nullable-extern-reference-so-let-q-else-has-nothing-to-unwrap)
-- [`is not a struct literal`](#is-not-a-struct-literal)
 - [`is not C-representable`](#is-not-c-representable)
 - [`is not iterable`](#is-not-iterable)
 - [`is not supported on a struct field`](#is-not-supported-on-a-struct-field)
@@ -1644,6 +1645,23 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/shardStringRejected.milo](https://github.com/milo-language/milo/blob/main/tests/errors/shardStringRejected.milo)</sub>
+
+## `'Point' is not generic, so 'Point<...> { … }' has no type arguments to take` {#point-is-not-generic-so-point-has-no-type-arguments-to-take}
+
+Type arguments on a literal of a non-generic struct name nothing; saying so beats silently dropping them.
+
+```milo skip
+struct Point {
+    x: i64,
+}
+
+fn main() {
+    let p = Point<i64> { x: 1 }
+    print(p.x)
+}
+```
+
+<sub>[tests/errors/structLitTypeArgsNotGeneric.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structLitTypeArgsNotGeneric.milo)</sub>
 
 ## `'ptr' is not available on Heap<Shape>` {#ptr-is-not-available-on-heap-shape}
 
@@ -5386,6 +5404,24 @@ fn main(): i32 {
 
 <sub>[tests/errors/privateFieldWrite.milo](https://github.com/milo-language/milo/blob/main/tests/errors/privateFieldWrite.milo)</sub>
 
+## `field 'a' of 'Pair': expected i64, got string` {#field-a-of-pair-expected-i64-got-string}
+
+A struct literal that spells its type arguments is checked against them: the fields do not get to pick a different instance.
+
+```milo skip
+struct Pair<A, B> {
+    a: A,
+    b: B,
+}
+
+fn main() {
+    let p = Pair<i64, string> { a: "no", b: "x" }
+    print(p.b)
+}
+```
+
+<sub>[tests/errors/structLitTypeArgsMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structLitTypeArgsMismatch.milo)</sub>
+
 ## `for range start must be an integer` {#for-range-start-must-be-an-integer}
 
 ```milo skip
@@ -5527,9 +5563,6 @@ An unbounded recursive generic instantiates itself on an ever-growing type. The 
 struct Wrap<T> { v: T }
 fn grow<T>(x: T, n: i32): i32 {
     if n <= 0 { return 0 }
-    // annotated, not `Wrap<T> { … }`: that form is not a struct literal (see
-    // structTurbofishNotALiteral) and would fail at the parser, before the
-    // monomorphizer this fixture is actually testing ever runs.
     let w: Wrap<T> = Wrap { v: x }
     return grow<Wrap<T>>(w, n - 1)
 }
@@ -5969,24 +6002,6 @@ fn main() {
 ```
 
 <sub>[tests/errors/letElseNotNullableRef.milo](https://github.com/milo-language/milo/blob/main/tests/errors/letElseNotNullableRef.milo)</sub>
-
-## `is not a struct literal` {#is-not-a-struct-literal}
-
-`Name<T, U>.method()` IS valid, so `Name<T, U> { … }` reads like it should be. It is not, and it used to fail as `unexpected token ','` pointing at the type-argument comma — a character the author had no reason to suspect. The error names both ways out.
-
-```milo skip
-struct Pair<A, B> {
-    a: A,
-    b: B,
-}
-
-fn main() {
-    let p = Pair<i64, string> { a: 1, b: "x" }
-    print(p.a)
-}
-```
-
-<sub>[tests/errors/structTurbofishNotALiteral.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structTurbofishNotALiteral.milo)</sub>
 
 ## `is not C-representable` {#is-not-c-representable}
 

@@ -1048,6 +1048,18 @@ struct Pair<A, B> {
 let p = Pair { first: 42, second: "hello" }
 ```
 
+The type arguments come from the fields. When no field fixes one (an empty `Vec<T>`
+field), spell them on the literal, or annotate the binding:
+
+```milo
+struct Bag<T> {
+    items: Vec<T>,
+}
+
+let b = Bag<i64> { items: [] }
+let c: Bag<string> = Bag { items: [] }
+```
+
 A static method on a generic struct is called bare when its type arguments can be worked
 out: from the arguments (`Pair.of(1, "a")`), or, for a method whose arguments do not
 mention them, from the type the context expects of the call, which is a binding's

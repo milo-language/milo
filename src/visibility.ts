@@ -128,6 +128,7 @@ export function checkVisibility(prog: Program, builtinNames: ReadonlySet<string>
         break;
       case "StructLit":
         refType(e.name, sc, refFile, e.span);
+        for (const t of e.typeArgs ?? []) walkType(t, sc, refFile, e.span);
         for (const f of e.fields) walkExpr(f.value, sc, refFile);
         break;
       case "EnumLit":

@@ -1667,7 +1667,7 @@ export class Parser {
       // comparison. The trailing `.`/`(` requirement is the disambiguator.
       if (this.at(TokenKind.Lt)) {
         const saved = this.pos;
-        let badStructTurbofish: { name: string; args: string; tok: Token } | null = null;
+        let structTurbofish: { typeArgs: import("./ast").MiloType[]; pos: number } | null = null;
         try {
           this.advance(); // consume <
           const typeArgs: import("./ast").MiloType[] = [this.parseType()];
@@ -1698,30 +1698,21 @@ export class Parser {
             this.expect(TokenKind.RParen);
             return { kind: "Call", func: tok.value, args, typeArgs, span: s };
           }
-          // `Name<T, U> { … }` is not a struct-literal form. It reads like one because
-          // `Name<T, U>.method()` IS valid, so say what to write instead of restoring and
-          // letting `<` parse as a comparison — which reported `unexpected token ','` at
-          // the type-argument comma, pointing at a character the author had no reason to
-          // suspect. A struct literal takes its type arguments from the fields, or from
-          // the binding's annotation when the fields do not determine them.
+          // `Pair<i64, string> { … }`: a struct literal with its type arguments spelled,
+          // the same way `Pair<i64, string>.new()` and `f<i64>(x)` spell them. Recorded
+          // and parsed after the speculative block rather than inside it: a mistake in a
+          // field would otherwise be swallowed by the `catch`, which falls back to `<` as
+          // a comparison and reports `unexpected token ','` at the type-argument comma.
           if (this.at(TokenKind.LBrace) && typeSpelled(tok.value)) {
-            // Recorded, not thrown: this whole block is speculative and its `catch`
-            // restores, so raising here would be swallowed and the parse would fall back
-            // to `<`-as-comparison — which is how this reported `unexpected token ','` at
-            // the type-argument comma in the first place.
-            badStructTurbofish = { name: tok.value, args: typeArgs.map(t => t.name).join(", "), tok: this.peek() };
+            structTurbofish = { typeArgs, pos: this.pos };
           }
           this.pos = saved; // not a turbofish — fall through to `<` as comparison
         } catch {
           this.pos = saved;
         }
-        // `Name<T, U> { … }` is not a struct-literal form, and it reads like one because
-        // `Name<T, U>.method()` IS valid. Say what to write instead of failing at a comma
-        // the author had no reason to suspect.
-        if (badStructTurbofish) {
-          const b = badStructTurbofish;
-          this.error(`'${b.name}<${b.args}> { … }' is not a struct literal`, b.tok, undefined,
-            `a struct literal infers its type arguments from its fields — write '${b.name} { … }', or annotate the binding when the fields do not determine them: 'let x: ${b.name}<${b.args}> = ${b.name} { … }'`);
+        if (structTurbofish) {
+          this.pos = structTurbofish.pos;
+          return this.parseStructLit(tok.value, s, structTurbofish.typeArgs);
         }
       }
       // struct literal: Name { field: value, ... }
@@ -1809,7 +1800,7 @@ export class Parser {
     this.error(`unexpected token '${tok.kind}'`, tok);
   }
 
-  private parseStructLit(name: string, span: Span): Expr {
+  private parseStructLit(name: string, span: Span, typeArgs?: import("./ast").MiloType[]): Expr {
     this.expect(TokenKind.LBrace);
     const fields: { name: string; value: Expr }[] = [];
     while (!this.at(TokenKind.RBrace)) {
@@ -1825,7 +1816,7 @@ export class Parser {
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
-    return { kind: "StructLit", name, fields, span };
+    return { kind: "StructLit", name, fields, ...(typeArgs && { typeArgs }), span };
   }
 
   private parseCall(name: string, span: Span): Expr {

@@ -134,7 +134,7 @@ fn main() {
     let s = "owned"
     let t = s
     print(s)
-    print(b.x + cosT + c)
+    print(b.x + cosT + c + cosT.field)
 }`);
   expect(errs.filter(e => e.includes("has no static method 'nope'")).length).toBe(1);
   expect(errs.some(e => e.includes("'cosT'"))).toBe(false);

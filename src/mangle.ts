@@ -182,6 +182,7 @@ export function manglePackage(
         break;
       case "StructLit":
         e.name = resolveType(e.name, sc);
+        for (const t of e.typeArgs ?? []) walkType(t, sc);
         for (const f of e.fields) walkExpr(f.value, sc);
         break;
       case "EnumLit":

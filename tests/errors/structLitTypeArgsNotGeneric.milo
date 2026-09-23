@@ -1,0 +1,12 @@
+// @error: 'Point' is not generic, so 'Point<...> { … }' has no type arguments to take
+
+// Type arguments on a literal of a non-generic struct name nothing; saying so beats
+// silently dropping them.
+struct Point {
+    x: i64,
+}
+
+fn main() {
+    let p = Point<i64> { x: 1 }
+    print(p.x)
+}

@@ -2395,8 +2395,11 @@ export class TypeChecker {
           return { ...value, ...replaced };
         }
       }
-      // rewrite struct literal names: Channel { ... } → Channel_i64 { ... }
-      if (baseName && mangledName && value && typeof value === "object" && value.kind === "StructLit" && value.name === baseName) {
+      // rewrite struct literal names: Channel { ... } → Channel_i64 { ... }. Not one that
+      // spells its own type arguments: `Pair<B, A> { … }` inside `impl Pair<A, B>` is a
+      // different instance, and its (already substituted) `typeArgs` say which.
+      if (baseName && mangledName && value && typeof value === "object" && value.kind === "StructLit" && value.name === baseName
+          && !(value.typeArgs?.length > 0)) {
         return { ...value, name: mangledName };
       }
       return value;
@@ -8449,33 +8452,14 @@ export class TypeChecker {
         return hint;
       }
     }
-    // Generic struct literal with a monomorphized hint — use hint to resolve type params
-    if (hint && hint.tag === "struct" && expr.kind === "StructLit") {
+    // Generic struct literal with a monomorphized hint — use hint to resolve type params.
+    // A literal that spells its own type arguments ignores the hint: they are the
+    // instance, and a disagreeing annotation is reported against the binding.
+    if (hint && hint.tag === "struct" && expr.kind === "StructLit" && !expr.typeArgs?.length) {
       const genericInfo = this.genericStructs.get(expr.name);
       const hintInfo = this.structs.get(hint.name);
       if (genericInfo && hintInfo && hintInfo.baseName === expr.name) {
-        const sp = expr.span;
-        for (const f of expr.fields) {
-          const fieldDef = hintInfo.fields.find(d => d.name === f.name);
-          if (!fieldDef) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp, memberHint(f.name, hintInfo.fields.map(d => d.name))); continue; }
-          this.checkFieldPrivacy(hint.name, f.name, sp);
-          let valType = this.checkExprWithHint(f.value, fieldDef.type);
-          if (fieldDef.type.tag === "int" && valType.tag === "int" && !typeEq(fieldDef.type, valType) && this.isConstIntExpr(f.value)) {
-            this.retypeConstInt(f.value, fieldDef.type);
-            valType = fieldDef.type;
-          }
-          if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown" && !this.tryInterfaceCoercion(f.value, valType, fieldDef.type)) {
-            this.error(`field '${f.name}' of '${expr.name}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
-          }
-          this.tryMove(f.value);
-        }
-        for (const d of hintInfo.fields) {
-          if (!expr.fields.find(f => f.name === d.name)) {
-            this.error(`missing field '${d.name}' in struct '${expr.name}'`, sp);
-          }
-        }
-        this.rewrittenStructLits.set(expr, hint.name);
-        return this.setType(expr, hint);
+        return this.checkStructLitAsInstance(expr, hint);
       }
     }
     if (hint && expr.kind === "Closure" && hint.tag === "fn") {
@@ -9564,6 +9548,35 @@ export class TypeChecker {
     return this.setType(expr, sig.ret);
   }
 
+  // A generic struct literal checked against one concrete instance (`hint`, the
+  // monomorphized struct): from a binding's annotation, or from the literal's own
+  // `Pair<i64, string> { … }` type arguments.
+  private checkStructLitAsInstance(expr: ExprOf<"StructLit">, hint: Extract<TypeKind, { tag: "struct" }>): TypeKind {
+    const sp = expr.span;
+    const hintInfo = must(this.structs, hint.name, "struct instance");
+    for (const f of expr.fields) {
+      const fieldDef = hintInfo.fields.find(d => d.name === f.name);
+      if (!fieldDef) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp, memberHint(f.name, hintInfo.fields.map(d => d.name))); continue; }
+      this.checkFieldPrivacy(hint.name, f.name, sp);
+      let valType = this.checkExprWithHint(f.value, fieldDef.type);
+      if (fieldDef.type.tag === "int" && valType.tag === "int" && !typeEq(fieldDef.type, valType) && this.isConstIntExpr(f.value)) {
+        this.retypeConstInt(f.value, fieldDef.type);
+        valType = fieldDef.type;
+      }
+      if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown" && !this.tryInterfaceCoercion(f.value, valType, fieldDef.type)) {
+        this.error(`field '${f.name}' of '${expr.name}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
+      }
+      this.tryMove(f.value);
+    }
+    for (const d of hintInfo.fields) {
+      if (!expr.fields.find(f => f.name === d.name)) {
+        this.error(`missing field '${d.name}' in struct '${expr.name}'`, sp);
+      }
+    }
+    this.rewrittenStructLits.set(expr, hint.name);
+    return this.setType(expr, hint);
+  }
+
   private checkStructLitExpr(expr: ExprOf<"StructLit">): TypeKind {
     const sp = expr.span;
     // anonymous struct literal: { field: value, ... }
@@ -9582,6 +9595,22 @@ export class TypeChecker {
       return this.setType(expr, { tag: "struct", name: anonName });
     }
     const genericInfo = this.genericStructs.get(expr.name);
+    // `Pair<i64, string> { … }`: the instance is spelled, so the fields are checked
+    // against it rather than inferring it from them (backlog #40).
+    if (expr.typeArgs && expr.typeArgs.length > 0) {
+      if (!genericInfo) {
+        this.error(`'${expr.name}' is not generic, so '${expr.name}<...> { … }' has no type arguments to take`, sp,
+          `write '${expr.name} { … }'`);
+        return this.setType(expr, { tag: "unknown" });
+      }
+      if (expr.typeArgs.length !== genericInfo.typeParams.length) {
+        this.error(`'${expr.name}' takes ${genericInfo.typeParams.length} type argument(s), got ${expr.typeArgs.length}`, sp,
+          `'${expr.name}<${genericInfo.typeParams.join(", ")}>'`);
+        return this.setType(expr, { tag: "unknown" });
+      }
+      const mangled = this.monomorphizeStruct(expr.name, expr.typeArgs.map(t => this.resolve(t)), sp);
+      return this.checkStructLitAsInstance(expr, { tag: "struct", name: mangled });
+    }
     if (genericInfo) {
       const typeMap = new Map<string, TypeKind>();
       for (const f of expr.fields) {
@@ -9596,7 +9625,9 @@ export class TypeChecker {
       }
       const missing = genericInfo.typeParams.filter(p => !typeMap.has(p));
       if (missing.length > 0) {
-        this.error(`cannot infer type parameter(s) '${missing.join("', '")}' for struct '${expr.name}'`, sp);
+        const spelled = `${expr.name}<${genericInfo.typeParams.join(", ")}>`;
+        this.error(`cannot infer type parameter(s) '${missing.join("', '")}' for struct '${expr.name}'`, sp,
+          `no field fixes ${missing.length === 1 ? "it" : "them"}: spell the type arguments, '${spelled} { … }', or annotate the binding, 'let x: ${spelled} = ${expr.name} { … }'`);
         return this.setType(expr, { tag: "unknown" });
       }
       const typeArgs = genericInfo.typeParams.map(p => must(typeMap, p, "type map"));
@@ -9693,6 +9724,8 @@ export class TypeChecker {
     this.placeBaseDepth++;
     let objType = this.checkExpr(expr.object);
     this.placeBaseDepth--;
+    // A field of a value whose type already failed is not a new mistake (see isPoisoned).
+    if (this.isPoisoned(objType)) return this.setType(expr, { tag: "unknown" });
     // auto-deref through references for field access
     if (objType.tag === "ref") objType = objType.inner;
     // auto-deref through pointers for field access (requires unsafe)

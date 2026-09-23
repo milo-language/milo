@@ -5,9 +5,6 @@
 struct Wrap<T> { v: T }
 fn grow<T>(x: T, n: i32): i32 {
     if n <= 0 { return 0 }
-    // annotated, not `Wrap<T> { … }`: that form is not a struct literal (see
-    // structTurbofishNotALiteral) and would fail at the parser, before the
-    // monomorphizer this fixture is actually testing ever runs.
     let w: Wrap<T> = Wrap { v: x }
     return grow<Wrap<T>>(w, n - 1)
 }
