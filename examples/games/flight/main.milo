@@ -119,7 +119,7 @@ fn parseOpts(): ParsedArgs {
     p.addBool("maximized", "m", "Open maximised rather than in a 1280x720 window")
     p.addBool("cpu", "", "Bloom and tone-map on the CPU instead of the GPU (they should look the same)")
     p.addString("scale", "s", "Scene resolution as a percent of the window (100 native, 200 supersampled, 0 auto)", "0")
-    p.setEpilog(EPILOG)
+    p.setEpilog(EPILOG.clone())
     return p.parse()
 }
 

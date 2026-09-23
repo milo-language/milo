@@ -727,8 +727,8 @@ fn reader(): void {
 ```
 
 Iterate by index (`while i < g.len { let x = g[i]; ... }` copies the element out before
-the park), snapshot first (`for x in g.clone()`), or move the global into a value the
-task owns. A `&mut` to the global's *header* is not an element view and stays legal:
+the park), snapshot first (`for x in g.clone()`), or take it with `replace(g, [])` so the
+task owns it (a global cannot be moved from). A `&mut` to the global's *header* is not an element view and stays legal:
 `grow(&mut g)` with `fn grow(v: &mut Vec<i64>)` is fine, because the header survives a
 realloc and only the buffer does not. A `&[T]` parameter is a view into the buffer, so
 `total(g)` with `fn total(xs: &[i64])` is held to the rule even though `g` is passed
@@ -2441,6 +2441,26 @@ same predicate rejects the builtin copying reads on a `Vec` or `HashMap` of such
 element (`clone`, `get`/`first`/`last`, `keys`/`values`/`getOrDefault`), and reading
 `v[i]` by value anywhere (see [Ownership and Move Semantics](#ownership-and-move-semantics)). "Carries" is
 transitive: a `Vec<Option<Fd>>` element is as much a resource as an `Fd`.
+
+### Globals are read and borrowed, never moved
+
+A global (`let` or `var` at file scope) has no single owner: every function, and every
+later call of the same one, reads the same slot. So a non-Copy global, or a non-Copy
+field of one, can be read, borrowed (passed to a `&T` parameter, iterated, interpolated,
+matched when it is a `let`) and assigned to when it is a `var`, but never moved from.
+Clone it to take a copy of your own.
+
+```milo error
+let GREETING: string = "hello"
+
+fn take(s: string): i64 { return s.len }
+
+fn main() {
+    print(GREETING.len)            // fine: a read
+    print(take(GREETING.clone()))  // fine: the callee owns a copy
+    print(take(GREETING))          // error: cannot move out of global 'GREETING'
+}
+```
 
 ### Move in Branches
 

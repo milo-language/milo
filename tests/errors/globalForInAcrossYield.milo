@@ -1,8 +1,8 @@
 // A for-in binding is a reference into the global's buffer. `schedulerYield` parks this
 // task; the writer task then pushes 100000 elements, the buffer reallocs, and the next
 // iteration reads freed memory. This program printed `reader sees 4528` before the rule.
-// The fix is to iterate by index, snapshot with `.clone()`, or move the global into a
-// task-owned value (see tests/fixtures/globalIndexLoopAcrossYield.milo).
+// The fix is to iterate by index, snapshot with `.clone()`, or take the global with
+// `replace(g, [])` into a task-owned value (see tests/fixtures/globalIndexLoopAcrossYield.milo).
 // @error: 'schedulerYield' can park this task while the loop variable is a reference into 'g's buffer
 from "std/runtime" import {
     Task, schedulerYield, schedulerRunToCompletion

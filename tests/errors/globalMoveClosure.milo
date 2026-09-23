@@ -1,0 +1,20 @@
+// @error: cannot move out of global
+
+// Globals are never captured; a move closure's body that moves one moves the global itself.
+// A global has no single owner, so moving out of it left the slot zeroed and the
+// next reader (here, the second call of f) silently saw an empty value.
+let S: string = "hello"
+
+fn f(): i64 {
+    let c = move () => {
+        let t = S
+        return t.len
+    }
+    return c()
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}

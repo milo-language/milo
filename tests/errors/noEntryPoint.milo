@@ -8,5 +8,5 @@
 pub let GREETING: string = "hello"
 
 pub fn greet(): string {
-    return GREETING
+    return GREETING.clone()
 }

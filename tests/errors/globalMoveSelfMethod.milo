@@ -1,0 +1,26 @@
+// @error: cannot move out of global
+
+// A by-value `self: Self` receiver consumes the global it is called on.
+// A global has no single owner, so moving out of it left the slot zeroed and the
+// next reader (here, the second call of f) silently saw an empty value.
+struct P {
+    name: string,
+}
+
+impl P {
+    fn consume(self: Self): i64 {
+        return self.name.len
+    }
+}
+
+let G: P = P { name: "hello" }
+
+fn f(): i64 {
+    return G.consume()
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}

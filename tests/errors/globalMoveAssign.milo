@@ -1,0 +1,18 @@
+// @error: cannot move out of global
+
+// Assigning a global into a local moves it (assigning TO a var global stays legal).
+// A global has no single owner, so moving out of it left the slot zeroed and the
+// next reader (here, the second call of f) silently saw an empty value.
+var S: string = "hello"
+
+fn f(): i64 {
+    var y = "x"
+    y = S
+    return y.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}

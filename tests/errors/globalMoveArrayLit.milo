@@ -1,0 +1,15 @@
+// @error: cannot move out of global
+
+// An array literal element takes its value by move.
+let S: string = "hello"
+
+fn f(): i64 {
+    let a = [S]
+    return a[0].len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}

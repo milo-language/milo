@@ -1,0 +1,25 @@
+// @error: cannot move out of global
+
+// Moving a field two levels into a global.
+// A global has no single owner, so moving out of it left the slot zeroed and the
+// next reader (here, the second call of f) silently saw an empty value.
+struct In {
+    t: string,
+}
+
+struct Out {
+    i: In,
+}
+
+let G: Out = Out { i: In { t: "hello" } }
+
+fn f(): i64 {
+    let t = G.i.t
+    return t.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}

@@ -1,0 +1,16 @@
+// @error: cannot move out of global
+
+// `forget(S)` consumes its argument; on a global it would leave the slot zeroed for
+// every later reader.
+let S: string = "hello"
+
+fn f(): i64 {
+    forget(S)
+    return S.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}

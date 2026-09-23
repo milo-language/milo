@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 366 distinct messages across 431 programs the compiler must reject.
+Every error message the test suite pins: 368 distinct messages across 451 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -175,6 +175,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot move 'toks[...].e' out of 'toks': the element stays in the container, so the move would leave a zeroed 'e' behind`](#cannot-move-toks-e-out-of-toks-the-element-stays-in-the-container-so-the-move-would-leave-a-zeroed-e-behind)
 - [`cannot move 'toks[...].text' out of 'toks': the element stays in the container, so the move would leave a zeroed 'text' behind`](#cannot-move-toks-text-out-of-toks-the-element-stays-in-the-container-so-the-move-would-leave-a-zeroed-text-behind)
 - [`cannot move 'u.name' out of the borrowed 'u'`](#cannot-move-u-name-out-of-the-borrowed-u)
+- [`cannot move out of global`](#cannot-move-out-of-global)
+- [`cannot move out of global 'GE'`](#cannot-move-out-of-global-ge)
 - [`cannot move the borrowed value out of`](#cannot-move-the-borrowed-value-out-of)
 - [`cannot move the borrowed value out of 'line'`](#cannot-move-the-borrowed-value-out-of-line)
 - [`cannot open`](#cannot-open)
@@ -1816,7 +1818,7 @@ pub fn main(): i32 {
 
 ## `'schedulerYield' can park this task while the loop variable is a reference into 'g's buffer` {#scheduleryield-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer}
 
-A for-in binding is a reference into the global's buffer. `schedulerYield` parks this task; the writer task then pushes 100000 elements, the buffer reallocs, and the next iteration reads freed memory. This program printed `reader sees 4528` before the rule. The fix is to iterate by index, snapshot with `.clone()`, or move the global into a task-owned value (see tests/fixtures/globalIndexLoopAcrossYield.milo).
+A for-in binding is a reference into the global's buffer. `schedulerYield` parks this task; the writer task then pushes 100000 elements, the buffer reallocs, and the next iteration reads freed memory. This program printed `reader sees 4528` before the rule. The fix is to iterate by index, snapshot with `.clone()`, or take the global with `replace(g, [])` into a task-owned value (see tests/fixtures/globalIndexLoopAcrossYield.milo).
 
 ```milo skip
 from "std/runtime" import {
@@ -3897,6 +3899,449 @@ fn main() {
 ```
 
 <sub>[tests/errors/mapMoveFieldOutOfBorrow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mapMoveFieldOutOfBorrow.milo)</sub>
+
+## `cannot move out of global` {#cannot-move-out-of-global}
+
+Passing a global to a by-value parameter moves it. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+let S: string = "hello"
+
+fn take(s: string): i64 {
+    return s.len
+}
+
+fn f(): i64 {
+    return take(S)
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveArg.milo)</sub>
+
+An array literal element takes its value by move.
+
+```milo skip
+let S: string = "hello"
+
+fn f(): i64 {
+    let a = [S]
+    return a[0].len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveArrayLit.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveArrayLit.milo)</sub>
+
+Assigning a global into a local moves it (assigning TO a var global stays legal). A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+var S: string = "hello"
+
+fn f(): i64 {
+    var y = "x"
+    y = S
+    return y.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveAssign.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveAssign.milo)</sub>
+
+Globals are never captured; a move closure's body that moves one moves the global itself. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+let S: string = "hello"
+
+fn f(): i64 {
+    let c = move () => {
+        let t = S
+        return t.len
+    }
+    return c()
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveClosure.milo)</sub>
+
+A global enum with an owned payload, moved into a local before matching. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+enum E {
+    A(string),
+    B,
+}
+
+let G: E = E.A("hello")
+
+fn f(): i64 {
+    let x = G
+    match x {
+        E.A(s) => { return s.len }
+        E.B => { return 0 }
+    }
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveEnum.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveEnum.milo)</sub>
+
+Wrapping a global in `Some(...)` moves it into the payload. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+let S: string = "hello"
+
+fn f(): i64 {
+    let o = Some(S)
+    return o!.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveEnumLit.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveEnumLit.milo)</sub>
+
+Moving a non-Copy field out of a global struct. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+struct P {
+    name: string,
+    age: i64,
+}
+
+let G: P = P { name: "bob", age: 3 }
+
+fn f(): i64 {
+    let n = G.name
+    return n.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveField.milo)</sub>
+
+`forget(S)` consumes its argument; on a global it would leave the slot zeroed for every later reader.
+
+```milo skip
+let S: string = "hello"
+
+fn f(): i64 {
+    forget(S)
+    return S.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveForget.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveForget.milo)</sub>
+
+An if-expression consumes whichever tail ran, so a global tail is a move. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+let S: string = "hello"
+
+fn f(): i64 {
+    let x = if S.len > 0 { S } else { "zz" }
+    return x.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveIfTail.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveIfTail.milo)</sub>
+
+`let x = S` binds the global's value by move. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+let S: string = "hello"
+
+fn f(): i64 {
+    let x = S
+    return x.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveLet.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveLet.milo)</sub>
+
+Moving a field two levels into a global. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+struct In {
+    t: string,
+}
+
+struct Out {
+    i: In,
+}
+
+let G: Out = Out { i: In { t: "hello" } }
+
+fn f(): i64 {
+    let t = G.i.t
+    return t.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveNestedField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveNestedField.milo)</sub>
+
+Pushing a global into a Vec moves it into the Vec. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+let S: string = "hello"
+
+fn f(): i64 {
+    var v: Vec<string> = Vec.new()
+    v.push(S)
+    return v[0].len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMovePush.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMovePush.milo)</sub>
+
+`return S` hands the global's value to the caller. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+let S: string = "hello"
+
+fn g(): string {
+    return S
+}
+
+fn f(): i64 {
+    return g().len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveReturn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveReturn.milo)</sub>
+
+A by-value `self: Self` receiver consumes the global it is called on. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+struct P {
+    name: string,
+}
+
+impl P {
+    fn consume(self: Self): i64 {
+        return self.name.len
+    }
+}
+
+let G: P = P { name: "hello" }
+
+fn f(): i64 {
+    return G.consume()
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveSelfMethod.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveSelfMethod.milo)</sub>
+
+A global struct holding a string, moved whole. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+struct P {
+    name: string,
+    age: i64,
+}
+
+let G: P = P { name: "bob", age: 3 }
+
+fn f(): i64 {
+    let x = G
+    return x.name.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveStruct.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveStruct.milo)</sub>
+
+A struct literal field takes its value by move. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+let S: string = "hello"
+
+struct D {
+    s: string,
+}
+
+fn f(): i64 {
+    let d = D { s: S }
+    return d.s.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveStructLit.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveStructLit.milo)</sub>
+
+`S!` unwraps by moving the payload out of the Option. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+let S: Option<string> = Some("hello")
+
+fn f(): i64 {
+    let x = S!
+    return x.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveUnwrap.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveUnwrap.milo)</sub>
+
+A `var` global is no more movable than a `let` one; only assignment to it is legal. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+var S: string = "hello"
+
+fn f(): i64 {
+    let x = S
+    return x.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveVar.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveVar.milo)</sub>
+
+A Vec global moved into a local. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
+
+```milo skip
+var V: Vec<i64> = [1, 2, 3]
+
+fn f(): i64 {
+    let x = V
+    return x.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveVec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveVec.milo)</sub>
+
+## `cannot move out of global 'GE'` {#cannot-move-out-of-global-ge}
+
+Matching an immutable global binds its payloads as borrows (tests/fixtures/ globalReadBorrow.milo). A `var` global stays a move, which is rejected: an arm may call a function that reassigns the global, and nothing tracks a payload borrow across that call, so borrowing would free the string `s` still points at. Clone to match.
+
+```milo skip
+enum E {
+    A(string),
+    B,
+}
+
+var GE: E = E.A("hello")
+
+fn reset() {
+    GE = E.B
+}
+
+pub fn main(): i32 {
+    match GE {
+        E.A(s) => {
+            reset()
+            print(s)
+        }
+        E.B => {}
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/globalMoveVarMatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveVarMatch.milo)</sub>
 
 ## `cannot move the borrowed value out of` {#cannot-move-the-borrowed-value-out-of}
 
@@ -6470,7 +6915,7 @@ A module with no main() is a library: it type-checks fine (`milo check` says ok)
 pub let GREETING: string = "hello"
 
 pub fn greet(): string {
-    return GREETING
+    return GREETING.clone()
 }
 ```
 

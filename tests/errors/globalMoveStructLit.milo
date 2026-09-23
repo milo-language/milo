@@ -1,0 +1,21 @@
+// @error: cannot move out of global
+
+// A struct literal field takes its value by move.
+// A global has no single owner, so moving out of it left the slot zeroed and the
+// next reader (here, the second call of f) silently saw an empty value.
+let S: string = "hello"
+
+struct D {
+    s: string,
+}
+
+fn f(): i64 {
+    let d = D { s: S }
+    return d.s.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}

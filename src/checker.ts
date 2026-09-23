@@ -195,6 +195,10 @@ interface VarInfo {
   borrowed: boolean;
   read: boolean;
   span?: Span;
+  // Declared at module scope. A global has no single owner (every function, and every
+  // later call of the same function, reads the same slot), so it can be read and
+  // borrowed but never moved from. See the global branches of `tryMoveLeaf`.
+  isGlobal?: boolean;
   // A `?&mut T` / `?&T` parameter of an extern / @externalLinkage fn. Its `type` is the
   // `*T` the ABI actually passes; this records the reference the `let … else` unwrap
   // produces, and its presence is what makes EVERY other use of the binding an error.
@@ -3468,7 +3472,7 @@ export class TypeChecker {
       if (!g.type) continue;
       const t = this.resolve(g.type);
       globalTypes.set(g.name, t);
-      this.declare(g.name, { type: t, mutable: g.mutable, moved: false, borrowed: false, read: true, span: g.span });
+      this.declare(g.name, { type: t, mutable: g.mutable, moved: false, borrowed: false, read: true, span: g.span, isGlobal: true });
     }
     for (const g of program.globals) {
       const hint = g.type ? this.resolve(g.type) : null;
@@ -3491,7 +3495,7 @@ export class TypeChecker {
       // strips `@main`, so nothing ever calls `@__milo.global_init` and every global
       // in this list would silently stay zero. That path rejects on this list.
       if (!this.isConstGlobalInit(g.value)) this._nonConstGlobals.push(g.name);
-      if (!g.type) this.declare(g.name, { type: finalType, mutable: g.mutable, moved: false, borrowed: false, read: true, span: g.span });
+      if (!g.type) this.declare(g.name, { type: finalType, mutable: g.mutable, moved: false, borrowed: false, read: true, span: g.span, isGlobal: true });
       for (const attr of g.attributes ?? []) {
         if (attr.name === "cValue") this.checkCValue(g, attr, finalType);
         else {
@@ -7334,6 +7338,10 @@ export class TypeChecker {
         return;
       }
       if (info && this.isPoisoned(info.type)) return;
+      if (info?.isGlobal && !this.isCopyType(info.type)) {
+        this.errorMoveOutOfGlobal(expr, expr.name, expr.name);
+        return;
+      }
       if (info && !this.isCopyType(info.type)) {
         // A pointer borrow does not forbid the move (the header moves, the buffer stays),
         // but the new owner may free that buffer at any time the checker cannot see, so
@@ -7439,6 +7447,11 @@ export class TypeChecker {
       if (fieldType && !this.isCopyType(fieldType)) {
         const base = this.borrowBasePath(expr);
         if (base === null) {
+          const globalRoot = this.globalRootOf(expr);
+          if (globalRoot !== null) {
+            this.errorMoveOutOfGlobal(expr, this.describeExpr(expr), globalRoot);
+            return;
+          }
           const dropTy = this.dropTypeInPath(expr);
           if (dropTy) {
             this.error(`cannot move '${this.describeExpr(expr)}' out of '${dropTy}', which implements Drop`, expr.span,
@@ -7477,6 +7490,36 @@ export class TypeChecker {
         // users' buffers and double-freed on drop (a live abort, exit 133).
       }
     }
+  }
+
+  // Moving out of a global used to compile and zero the global's slot, so the next
+  // reader (another function, or the same function's next call) silently saw an empty
+  // value. Nothing owns a global, so there is no moment at which the move is sound.
+  private errorMoveOutOfGlobal(expr: Expr, what: string, global: string): void {
+    // A match subject reaches tryMove once per consuming arm; a local is marked moved the
+    // first time so later passes are quiet, but a global is never marked, so dedupe here.
+    // Against the diagnostics already on file, not a seen-set: a speculative pass that
+    // truncates `diagnostics` must not suppress the report its re-check makes.
+    const span = expr.span;
+    const message = `cannot move out of global '${global}'`;
+    if (this.diagnostics.some(d => d.message === message && d.span === span)) return;
+    // `replace` writes, so it is only offered where a write is legal: a `var` global.
+    const take = this.lookup(global)?.mutable
+      ? `, or 'replace(${what}, ...)' to take it and leave something in its place`
+      : "";
+    this.error(message, span,
+      `clone it ('${what}.clone()'), or borrow it by passing it to a '&T' parameter${take}`);
+  }
+
+  // The global a field access reaches into, when any place it names is rooted at one.
+  // Checked over the whole place set (not `soloPath`) so a fork like
+  // `(if c { G } else { l }).name` cannot hide the global half. A deref step leaves the
+  // global: a field read through a `*T` held in one moves out of the pointee, not the global.
+  private globalRootOf(expr: Expr): string | null {
+    for (const p of this.placesOf(expr)) {
+      if (p.tag === "path" && !p.steps.some(s => s.tag === "deref") && this.lookup(p.root)?.isGlobal) return p.root;
+    }
+    return null;
   }
 
   // Walks `a.b.c` and `v[i].f` down to the variable the read ultimately comes
@@ -11867,6 +11910,21 @@ export class TypeChecker {
       ...(refType.mutable && { freezes: [info] }) });
   }
 
+  // A match/if-let subject that names storage someone else keeps owning, so its non-Copy
+  // payloads bind as borrows instead of moving out. An immutable global is one: nothing
+  // owns it and nothing can rewrite it, so matching on it can only borrow. A `var` global
+  // is left out on purpose: an arm may call a function that reassigns it, and no rule
+  // tracks a payload borrow across that call (the same hole `match G.field` has today),
+  // so it stays a move, which tryMoveLeaf rejects with a hint to clone.
+  private isBorrowedMatchPlace(subject: Expr): boolean {
+    if (subject.kind === "FieldAccess" || subject.kind === "IndexAccess") return true;
+    if (subject.kind === "UnaryOp" && subject.op === "*") return true;
+    // ident-ok: a global is a property of the declaration the name resolves to
+    if (subject.kind !== "Ident") return false;
+    const info = this.lookup(subject.name);
+    return info?.isGlobal === true && !info.mutable;
+  }
+
   // Borrow-detection for if-let/let-else subjects, mirroring checkMatchLike: a
   // `&enum` or an enum place (s.field, v[i], *h) is read without being consumed,
   // so its non-Copy payload must bind as a borrow, not a move. Resolves the enum
@@ -11882,9 +11940,7 @@ export class TypeChecker {
       if (info && info.type.tag === "ref" && info.type.inner.tag === "enum") { subjIsRef = true; subjIsMut = info.type.mutable; subjType = info.type.inner; }
     }
     if (subjIsMut) this.matchSubjectMut.add(subject);
-    const subjIsPlace = !subjIsRef && subjType.tag === "enum" &&
-      (subject.kind === "FieldAccess" || subject.kind === "IndexAccess" ||
-       (subject.kind === "UnaryOp" && subject.op === "*"));
+    const subjIsPlace = !subjIsRef && subjType.tag === "enum" && this.isBorrowedMatchPlace(subject);
     const subjBorrows = subjIsRef || subjIsPlace ||
       (!subjIsRef && this.ownedInspectOnly(subject, subjType, patterns));
     if (subjBorrows) this.matchSubjectRef.add(subject);
@@ -12144,9 +12200,7 @@ export class TypeChecker {
     // the checker cannot track (a second `match v[i].f` read a zeroed enum;
     // `match *h` through a &Heap zeroed the pointee in place — both silent).
     // Bindings become borrows below.
-    const subjIsPlace = !subjIsRef && subjType.tag === "enum" &&
-      (subject.kind === "FieldAccess" || subject.kind === "IndexAccess" ||
-       (subject.kind === "UnaryOp" && subject.op === "*"));
+    const subjIsPlace = !subjIsRef && subjType.tag === "enum" && this.isBorrowedMatchPlace(subject);
     // Matching an OWNED enum local to inspect its shape shouldn't consume it when no
     // arm actually moves a non-Copy payload out — i.e. every non-Copy payload is
     // ignored (`_`). Then the match only reads, so borrow it (like the place case)

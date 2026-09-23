@@ -226,8 +226,8 @@ from `./milo check` on the named error test), the closing commit, and who found 
   into it.
 - **Now:** `error: 'schedulerYield' can park this task while the loop variable is a reference
   into 'g's buffer; another task may push to 'g' before it resumes`, with the hint `iterate by
-  index ('while i < g.len'), snapshot first ('g.clone()'), or move the global into a value the
-  task owns`. `@parks` is the attribute; it sits on `swapcontext` and "may park" is derived
+  index ('while i < g.len'), snapshot first ('g.clone()'), or take it with 'replace(g, ...)' so
+  the task owns it`. `@parks` is the attribute; it sits on `swapcontext` and "may park" is derived
   transitively, so `await`, channel ops, `Select.wait` and `sleepMs` all carry it without
   listing. Slices and `&` into an element are views too (`globalSliceAcrossPark`); a `&mut` to
   the global's header is not (the header survives a realloc, the buffer does not).

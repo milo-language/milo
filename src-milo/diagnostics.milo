@@ -17,9 +17,9 @@ pub let DIM = "\x1b[2m"
 
 pub fn formatDiagnostic(d: &Diagnostic, source: &string, filePath: &string): string {
     var lines: Vec<string> = Vec.new()
-    var color = RED
+    var color = RED.clone()
     if d.severity == "warning" {
-        color = YELLOW
+        color = YELLOW.clone()
     }
 
     match d.span {

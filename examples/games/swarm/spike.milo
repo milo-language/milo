@@ -316,10 +316,10 @@ struct Scene {
 
 fn makeScene(dev: &mut Device, format: u32, count: i64): Result<Scene, string> {
     let desc = PipelineDesc {
-        vsSource: SWARM_VS,
-        vsEntry: SWARM_VS_ENTRY,
-        fsSource: SWARM_FS,
-        fsEntry: SWARM_FS_ENTRY,
+        vsSource: SWARM_VS.clone(),
+        vsEntry: SWARM_VS_ENTRY.clone(),
+        fsSource: SWARM_FS.clone(),
+        fsEntry: SWARM_FS_ENTRY.clone(),
         vsUniformBuffers: 1,
         vsStorageBuffers: 1,
         fsUniformBuffers: 0,

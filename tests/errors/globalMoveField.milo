@@ -1,0 +1,22 @@
+// @error: cannot move out of global
+
+// Moving a non-Copy field out of a global struct.
+// A global has no single owner, so moving out of it left the slot zeroed and the
+// next reader (here, the second call of f) silently saw an empty value.
+struct P {
+    name: string,
+    age: i64,
+}
+
+let G: P = P { name: "bob", age: 3 }
+
+fn f(): i64 {
+    let n = G.name
+    return n.len
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}

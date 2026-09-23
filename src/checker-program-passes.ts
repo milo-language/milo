@@ -927,7 +927,7 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
   const isSliceParam = (t: { isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null } | undefined) =>
     !!t && (t.isRef || t.isRefMut) && t.isArray && t.arraySize === null;
   const parkHint = (g: string) =>
-    `iterate by index ('while i < ${g}.len'), snapshot first ('${g}.clone()'), or move the global into a value the task owns`;
+    `iterate by index ('while i < ${g}.len'), snapshot first ('${g}.clone()'), or take it with 'replace(${g}, ...)' so the task owns it`;
 
   for (const f of fns.values()) {
     if (!f.body) continue;

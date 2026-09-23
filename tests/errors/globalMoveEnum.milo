@@ -1,0 +1,25 @@
+// @error: cannot move out of global
+
+// A global enum with an owned payload, moved into a local before matching.
+// A global has no single owner, so moving out of it left the slot zeroed and the
+// next reader (here, the second call of f) silently saw an empty value.
+enum E {
+    A(string),
+    B,
+}
+
+let G: E = E.A("hello")
+
+fn f(): i64 {
+    let x = G
+    match x {
+        E.A(s) => { return s.len }
+        E.B => { return 0 }
+    }
+}
+
+pub fn main(): i32 {
+    print(f())
+    print(f())
+    return 0
+}

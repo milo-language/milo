@@ -1,0 +1,27 @@
+// @error: cannot move out of global 'GE'
+
+// Matching an immutable global binds its payloads as borrows (tests/fixtures/
+// globalReadBorrow.milo). A `var` global stays a move, which is rejected: an arm may
+// call a function that reassigns the global, and nothing tracks a payload borrow across
+// that call, so borrowing would free the string `s` still points at. Clone to match.
+enum E {
+    A(string),
+    B,
+}
+
+var GE: E = E.A("hello")
+
+fn reset() {
+    GE = E.B
+}
+
+pub fn main(): i32 {
+    match GE {
+        E.A(s) => {
+            reset()
+            print(s)
+        }
+        E.B => {}
+    }
+    return 0
+}

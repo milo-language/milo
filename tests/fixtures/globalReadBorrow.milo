@@ -1,0 +1,98 @@
+// A global can be read, borrowed and cloned, never moved from (tests/errors/globalMove*).
+// Every read below runs twice, so a form that silently moved the global would print an
+// empty value the second time.
+// @expect: 5 5 hello 5
+// @expect: 5 5 hello 5
+// @expect: 6
+// @expect: 42 2.5 true 7
+// @expect: world 5
+// @expect: bob 3 3
+// @expect: A 5
+// @expect: some 5
+// @expect: A 5
+// @expect: some 5
+// @expect: ["a", "bb"]
+
+let S: string = "hello"
+var W: string = "hi"
+var V: Vec<string> = ["a", "bb", "ccc"]
+let N: i64 = 42
+let F: f64 = 2.5
+let B: bool = true
+
+struct Pt {
+    x: i64,
+    y: i64,
+}
+
+let PT: Pt = Pt { x: 3, y: 4 }
+
+struct P {
+    name: string,
+    age: i64,
+}
+
+let G: P = P { name: "bob", age: 3 }
+
+enum E {
+    A(string),
+    B,
+}
+
+let GE: E = E.A("hello")
+let GO: Option<string> = Some("hello")
+
+fn byRef(s: &string): i64 {
+    return s.len
+}
+
+fn reads() {
+    let owned = S.clone()
+    print($"{S.len} {byRef(S)} {S} {owned.len}")
+}
+
+fn total(): i64 {
+    var n = 0
+    for x in V {
+        n = n + x.len
+    }
+    return n
+}
+
+fn copies() {
+    let n = N
+    let f = F
+    let b = B
+    let p = PT
+    print($"{n} {f} {b} {p.x + p.y}")
+}
+
+fn fields() {
+    let age = G.age
+    print($"{G.name} {byRef(G.name)} {age}")
+}
+
+fn matchGlobal() {
+    match GE {
+        E.A(s) => { print($"A {s.len}") }
+        E.B => { print("B") }
+    }
+    if let Some(s) = GO {
+        print($"some {s.len}")
+    }
+}
+
+pub fn main(): i32 {
+    reads()
+    reads()
+    print(total())
+    copies()
+    W = "world"
+    print($"{W} {W.clone().len}")
+    fields()
+    matchGlobal()
+    matchGlobal()
+    let _ = V.pop()
+    print(V)
+    return 0
+}
