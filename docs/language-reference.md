@@ -1048,6 +1048,34 @@ struct Pair<A, B> {
 let p = Pair { first: 42, second: "hello" }
 ```
 
+A static method on a generic struct is called bare when its type arguments can be worked
+out: from the arguments (`Pair.of(1, "a")`), or, for a method whose arguments do not
+mention them, from the type the context expects of the call, which is a binding's
+annotation, a parameter, or a return type:
+
+```milo
+struct Stack<T> {
+    items: Vec<T>,
+}
+
+impl Stack<T> {
+    fn new(): Stack<T> {
+        return Stack { items: [] }
+    }
+}
+
+fn fresh(): Stack<string> {
+    return Stack.new()           // T = string, from the return type
+}
+
+var s: Stack<i64> = Stack.new()  // T = i64, from the annotation
+let t = Stack<bool>.new()        // spelled out; always accepted
+```
+
+With nothing to infer from (`let u = Stack.new()`), the error says which type arguments
+are missing and shows both spellings. `std/arena`'s `var a: Arena<Node> = Arena.new()` is
+the same shape.
+
 ### Methods (Inherent `impl`)
 
 ```milo

@@ -566,6 +566,11 @@ export class TypeChecker {
   private aliasTypeParams = new Map<string, string[]>();
   private rangeCheckedExprs = new Map<Expr, { min: number; max: number; typeName: string }>();
   private returnHint: TypeKind | null = null;
+  // The expression `returnHint` was supplied FOR. `returnHint` itself stays set while that
+  // expression's children are checked, so on its own it cannot tell `let a: Arena<Node> =
+  // Arena.new()` (the hint is the call's type) from `let n: i64 = Arena.new().len()` (it
+  // is not). See `expectedTypeOf`.
+  private returnHintExpr: Expr | null = null;
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
   private monomorphizedStructDecls: StructDecl[] = [];
   private monomorphizedFns: Function[] = [];
@@ -959,6 +964,19 @@ export class TypeChecker {
       // `Arena.new()` finds nothing to call while `Arena<Node>.new()` works. The
       // empty candidate set would otherwise leave this error with no hint at all.
       const params = this.genericStructs.get(typeName_)?.typeParams ?? this.genericEnums.get(typeName_)?.typeParams;
+      // The generic impl's own declarations: the method exists, only its type arguments
+      // are unknown. Saying "no static method" here sent readers looking for a method
+      // that is right there in the impl.
+      const genericMethods = (this.genericImpls.get(typeName_) ?? []).flatMap(g => g.impl.methods);
+      const declared = genericMethods.find(m => m.name === member && m.params[0]?.name !== "self");
+      if (params && params.length > 0 && declared) {
+        const spelled = `${typeName_}<${params.join(", ")}>`;
+        this.error(`cannot infer the type arguments of '${typeName_}' for '${typeName_}.${member}(...)'`, sp,
+          `nothing in the arguments or the expected type fixes ${params.map(p => `'${p}'`).join(", ")}: ` +
+          `write them, '${spelled}.${member}(...)', or annotate the binding, 'let x: ${spelled} = ${typeName_}.${member}(...)'`);
+        return;
+      }
+      statics.push(...genericMethods.filter(m => m.params[0]?.name !== "self").map(m => m.name));
       const hint = memberHint(member, [...statics, ...variants]) ??
         (params && params.length > 0
           ? `'${typeName_}' is generic — spell its type arguments: '${typeName_}<${params.join(", ")}>.${member}(...)'`
@@ -7075,8 +7093,21 @@ export class TypeChecker {
     if (argFailed) return "argError";
     this.diagnostics.length = mark;
 
-    // A parameter no argument mentions stays unbound; there is no struct-level default
-    // to fall back on, so the turbofish is still the only spelling for that shape.
+    // A parameter no argument mentions comes from the type the context expects of the
+    // call: `var a: Arena<Node> = Arena.new()`, a `&mut Arena<Node>` parameter, a return
+    // type. `Self` in the declared return type means the generic type over its own
+    // parameters. Only the hint meant for this call counts (`expectedTypeOf`), and a
+    // wrong guess cannot slip through: the explicit path below re-checks the call
+    // against the substituted signature, and the binding against its annotation.
+    const expected = this.expectedTypeOf(expr);
+    if (expected && generic.typeParams.some(tp => !typeMap.has(tp))) {
+      const ret: MiloType = method.retType.name === "Self" && !method.retType.typeArgs?.length
+        ? { name: expr.enumName, typeArgs: generic.typeParams.map(tp => ({ name: tp })) } as MiloType
+        : method.retType;
+      this.inferTypeParamsFromHint(ret, expected, generic.typeParams, typeMap);
+    }
+    // Still unbound: nothing in the call or its context fixes it, and the turbofish is the
+    // only spelling left.
     if (generic.typeParams.some(tp => !typeMap.has(tp))) return null;
     return generic.typeParams.map(tp => this.typeKindToMiloType(must(typeMap, tp, "type map")));
   }
@@ -7104,7 +7135,8 @@ export class TypeChecker {
       this.inferTypeParamsFromHint(declaredType(tpl.decl.params[i]!), argType, names, typeMap);
     }
     this.diagnostics.length = mark;
-    if (this.returnHint) this.inferTypeParamsFromHint(tpl.decl.retType, this.returnHint, names, typeMap);
+    const expected = this.expectedTypeOf(expr);
+    if (expected) this.inferTypeParamsFromHint(tpl.decl.retType, expected, names, typeMap);
     const missing = names.filter(p => !typeMap.has(p));
     if (missing.length > 0) {
       this.error(`cannot infer '${missing.join("', '")}' for '${expr.enumName}.${expr.variant}'`, sp,
@@ -7117,6 +7149,13 @@ export class TypeChecker {
     this.checkStaticCallArgs(sig, expr, sp);
     this.staticCalls.set(expr, mangled);
     return this.setType(expr, sig.ret);
+  }
+
+  // The type the context expects `expr` itself to have (a binding's annotation, a
+  // parameter, a return type), or null when the only hint in scope belongs to an
+  // enclosing expression.
+  private expectedTypeOf(expr: Expr): TypeKind | null {
+    return this.returnHintExpr === expr ? this.returnHint : null;
   }
 
   private inferTypeParamsFromHint(retType: MiloType, hint: TypeKind, typeParams: string[], typeMap: Map<string, TypeKind>) {
@@ -8444,9 +8483,12 @@ export class TypeChecker {
       this.closureRetHint = hint.ret;
     }
     const prevHint = this.returnHint;
+    const prevHintExpr = this.returnHintExpr;
     this.returnHint = hint;
+    this.returnHintExpr = expr;
     const result = this.checkExpr(expr);
     this.returnHint = prevHint;
+    this.returnHintExpr = prevHintExpr;
     // Coerce a constant-int subtree (`-1`, `a + 1` where every leaf is a literal)
     // to an int hint — the bare-literal branch above only catches a lone `IntLit`,
     // so a UnaryOp/BinOp wrapper (`return -1`, `let x: i64 = -1`) would otherwise

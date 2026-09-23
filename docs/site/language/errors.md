@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 363 distinct messages across 428 programs the compiler must reject.
+Every error message the test suite pins: 364 distinct messages across 429 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -158,6 +158,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot have type 'void'`](#cannot-have-type-void)
 - [`cannot infer 'R' for 'Holder.make'`](#cannot-infer-r-for-holder-make)
 - [`cannot infer 'T' for 'Mk.empty'`](#cannot-infer-t-for-mk-empty)
+- [`cannot infer the type arguments of 'Arena' for 'Arena.new(...)'`](#cannot-infer-the-type-arguments-of-arena-for-arena-new)
 - [`cannot infer type for parameter 'x'`](#cannot-infer-type-for-parameter-x)
 - [`cannot infer type parameter(s) 'T' for Option.None`](#cannot-infer-type-parameter-s-t-for-option-none)
 - [`cannot infer Vec element type`](#cannot-infer-vec-element-type)
@@ -3489,6 +3490,22 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/genericStaticMethodNoInfer.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericStaticMethodNoInfer.milo)</sub>
+
+## `cannot infer the type arguments of 'Arena' for 'Arena.new(...)'` {#cannot-infer-the-type-arguments-of-arena-for-arena-new}
+
+`Arena.new()` takes no arguments and nothing here says what the arena holds, so there is nothing to infer `T` from. The method exists; the error says what is missing and the hint gives both fixes (`Arena<T>.new()`, or an annotated binding). It used to report "type 'Arena' has no static method 'new'", which sent readers looking for a method that is right there in the impl.
+
+```milo skip
+from "std/arena" import { Arena }
+
+pub fn main(): i32 {
+    let a = Arena.new()
+    print(a.len())
+    return 0
+}
+```
+
+<sub>[tests/errors/genericStaticNoTypeArgs.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericStaticNoTypeArgs.milo)</sub>
 
 ## `cannot infer type for parameter 'x'` {#cannot-infer-type-for-parameter-x}
 

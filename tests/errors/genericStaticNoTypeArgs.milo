@@ -1,0 +1,14 @@
+// @error: cannot infer the type arguments of 'Arena' for 'Arena.new(...)'
+
+// `Arena.new()` takes no arguments and nothing here says what the arena holds, so there
+// is nothing to infer `T` from. The method exists; the error says what is missing and the
+// hint gives both fixes (`Arena<T>.new()`, or an annotated binding). It used to report
+// "type 'Arena' has no static method 'new'", which sent readers looking for a method
+// that is right there in the impl.
+from "std/arena" import { Arena }
+
+pub fn main(): i32 {
+    let a = Arena.new()
+    print(a.len())
+    return 0
+}

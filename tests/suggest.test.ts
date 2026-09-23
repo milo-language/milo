@@ -106,8 +106,35 @@ test("a failed static call reports the real mistake, not 'unknown enum'", () => 
 // land here and now compiles — see tests/fixtures/genericStaticInfer.milo.
 test("a bare static call on a generic type says to spell the type arguments", () => {
   const src = `struct Box<T> { v: i64 }\nimpl Box<T> { fn make(): Box<T> { return Box { v: 0 } } }\nfn main() {\n  let b = Box.make()\n  print(1)\n}\n`;
-  expect(hintFor(src)).toContain("is generic");
+  // The method exists; only its type arguments are unknown, so "no static method" would
+  // be false. The message says what is missing and the hint gives both spellings.
+  expect(errorFor(src)).toBe("cannot infer the type arguments of 'Box' for 'Box.make(...)'");
   expect(hintFor(src)).toContain("Box<T>.make");
+  expect(hintFor(src)).toContain("let x: Box<T> = Box.make(...)");
+});
+
+test("a bare static call on a generic type takes its type arguments from the expected type", () => {
+  const src = `struct Box<T> { v: Vec<T> }
+impl Box<T> { fn make(): Box<T> { return Box { v: [] } } }
+fn take(b: Box<string>): i64 { return b.v.len() }
+fn main() {
+  let b: Box<i64> = Box.make()
+  print(b.v.len() + take(Box.make()))
+}
+`;
+  expect(errorFor(src)).toBeUndefined();
+});
+
+test("a method that does not exist on a generic type is still 'no static method', with a hint", () => {
+  const src = `struct Box<T> { v: i64 }
+impl Box<T> { fn make(): Box<T> { return Box { v: 0 } } }
+fn main() {
+  let b = Box.mkae()
+  print(1)
+}
+`;
+  expect(errorFor(src)).toBe("type 'Box' has no static method 'mkae'");
+  expect(hintFor(src)).toBe("did you mean 'make'?");
 });
 
 test("a bare static call whose arguments pin the type parameters needs no hint", () => {

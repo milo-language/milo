@@ -490,8 +490,9 @@ Ranked by how often real programs hit them.
   for x in s      → error: cannot iterate over type 'HashSet_i64': no 'next' method found
   HashSet.new()   → error: 'HashSet' is generic — spell its type arguments
   ```
-  (`HashSet.new()` still needs the turbofish after the 2026-08-16 inference change: it takes no
-  arguments, so there is nothing to infer the element type from. `BufReader.new(f)` does not.)
+  (`HashSet.new()` still needed the turbofish after the 2026-08-16 inference change: it takes no
+  arguments, so there is nothing to infer the element type from. Since 2026-09-22 the expected
+  type supplies it: `let s: HashSet<i64> = HashSet.new()`. `BufReader.new(f)` never did.)
   Five methods total (`add`/`contains`/`len`/`remove`/`new`). No iteration, no
   union/intersect/difference, no `fromVec`/`toVec`. Rust `HashSet`, Node `Set` (with ES2025 set
   ops) and Go's `map[T]struct{}` idiom all enumerate. A set you cannot enumerate is a bloom

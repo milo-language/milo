@@ -1,0 +1,59 @@
+// @expect: 1
+// @expect: 2
+// @expect: 0
+// @expect: 3
+
+// A bare static call on a generic struct (`Arena.new()` for `struct Arena<T>`) takes
+// the type arguments its arguments cannot supply from the type the context expects of
+// the call: a binding's annotation, a parameter, a return type. `new()` has no
+// arguments, so before this only the turbofish `Arena<Node>.new()` compiled and the
+// bare call reported "type 'Arena' has no static method 'new'".
+from "std/arena" import { Arena }
+
+struct Node {
+    v: i64,
+}
+
+struct Stack<T> {
+    items: Vec<T>,
+}
+
+impl Stack<T> {
+    fn new(): Self {
+        return Stack { items: [] }
+    }
+
+    fn push(self: &mut Stack<T>, x: T) {
+        self.items.push(x)
+    }
+}
+
+fn fill(a: &mut Arena<Node>) {
+    let _h = a.alloc(Node { v: 1 })
+}
+
+fn fresh(): Arena<Node> {
+    return Arena.new()
+}
+
+fn depth(s: Stack<string>): i64 {
+    return s.items.len()
+}
+
+pub fn main(): i32 {
+    var a: Arena<Node> = Arena.new()
+    fill(&mut a)
+    print(a.len())
+    var b = fresh()
+    fill(&mut b)
+    fill(&mut b)
+    print(b.len())
+    // A `Self` return type binds through the generic's own parameters.
+    print(depth(Stack.new()))
+    var s: Stack<i64> = Stack.new()
+    s.push(1)
+    s.push(2)
+    s.push(3)
+    print(s.items.len())
+    return 0
+}
